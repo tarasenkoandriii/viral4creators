@@ -1,0 +1,285 @@
+/**
+ * Тексты мастера проверки голосового управления Т-2 (Э6-бис (г), ТЗ
+ * §5-бис.13) — uk/ru/en, паритет ключей — scripts/voice-test.test.ts.
+ * Мастер видит только владелец сайта по ссылке из кабинета.
+ */
+import type { UiLang } from '../shared/config';
+
+const uk = {
+  title: 'Перевірка голосового керування',
+  intro:
+    'Кілька хвилин: перевіримо, що помічник розуміє цей сайт. Нічого не буде відправлено чи оплачено.',
+  steps: [
+    'Встановлення',
+    'Мікрофон',
+    'Розмітка',
+    'Сухий прогін',
+    'З натисканням',
+    'Заборони',
+    'Звіт',
+  ],
+  next: 'Далі',
+  run: 'Перевірити',
+  starting: 'Готую перевірку…',
+  envWidget: 'Віджет завантажено на цьому сайті',
+  envChunks: 'Скрипти помічника не блокуються (CSP)',
+  envCsp: 'Порушень CSP через віджет: {n}',
+  envTt: 'Порушень Trusted Types: {n}',
+  micPolicyOk: 'Політика сайту дозволяє мікрофон',
+  micPolicyNo:
+    'Політика сайту (Permissions-Policy) забороняє мікрофон помічнику — це треба виправити на сайті',
+  micBtn: 'Перевірити мікрофон',
+  micSay: 'Скажіть «перевірка зв’язку» — натисніть мікрофон нижче',
+  micHeard: 'Почув: «{t}»',
+  mic: {
+    ok: 'Мікрофон працює',
+    denied_policy: 'Заборонено політикою сайту — провал',
+    denied_user:
+      'Ви не дали дозвіл у браузері — це ваш пристрій, не провал перевірки',
+    no_device: 'Мікрофон не знайдено на цьому пристрої',
+    ios_gesture: 'iOS: потрібне ваше натискання',
+    skipped: 'Пропущено',
+  },
+  markupStats:
+    'Елементів: {n}; з data-assist-id: {m}; закриті shadow-корені: {k}; зовнішні iframe: {l}; заборонені: {d}',
+  unnamed: 'Без доступного імені: {n}',
+  dups: 'Однакові назви: {n}',
+  show: 'Показати на сторінці',
+  hide: 'Сховати',
+  never: 'Ці кнопки помічник не натисне ніколи: {n}',
+  suspicious: 'Схоже на небезпечне, але не розпізнано: {n} — перегляньте кожну',
+  deny: 'Заборонити',
+  safe: 'Безпечно',
+  noCommands:
+    'На сторінці не знайшлося безпечних команд — відкрийте сторінку з меню чи каталогом.',
+  dryIntro:
+    'Помічник лише підсвітить ціль кожного кроку — нічого не натисне. Позначте, чи правильно.',
+  dryRun: 'Показати',
+  right: 'Вірно',
+  wrong: 'Не те',
+  safeIntro:
+    'Безпечні команди з реальним натисканням (переходи, пошук, вкладки; без відправки форм):',
+  exec: 'Виконати',
+  safeState: {
+    idle: '',
+    running: 'виконується…',
+    done: 'виконано',
+    failed: 'не вийшло',
+  },
+  forbIntro:
+    'Заборонені команди перевірено без звуку — помічник не зробить жодного кроку:',
+  blocked: 'заблоковано',
+  leaked: 'НЕ заблоковано',
+  noTarget: 'такої кнопки немає',
+  report: 'Отримати звіт',
+  result: { pass: 'Пройдено', partial: 'Частково', fail: 'Не пройдено' },
+  resultNote:
+    'Звіт збережено в кабінеті. Поверніться в Telegram, щоб увімкнути голосове керування для всіх відвідувачів.',
+  fragment: 'Фрагмент розмітки для розробника сайту',
+  expired: 'Сесія перевірки закінчилась — отримайте нове посилання в кабінеті.',
+  failed: 'Не вдалося — спробуйте ще раз.',
+  item: {
+    ok: 'Готово',
+    widget_missing: 'Віджет не відповів на цій сторінці',
+    chunks_blocked: 'CSP сайту блокує скрипти помічника',
+    csp_violations: 'Порушення CSP через віджет',
+    tt_violations: 'Порушення Trusted Types',
+    mic_policy_denied: 'Політика сайту забороняє мікрофон',
+    mic_owner_problem: 'Мікрофон вашого пристрою — перевірте дозвіл',
+    dry_low: 'Сухий прогін: мало вірних кроків',
+    safe_low: 'З натисканням: виконано менше двох команд',
+    safe_none: 'З натисканням: не виконано жодної команди',
+    forbidden_leak: 'Заборонена команда не заблокована',
+    suspicious_unreviewed: 'Не всі «схожі на небезпечні» переглянуто',
+    unnamed_elements: 'Є кнопки без імені — розмітьте їх',
+    closed_shadow: 'Частина кнопок у закритих shadow-коренях — недоступна',
+    ext_iframes: 'Є зовнішні iframe — помічник у них не заходить',
+    duplicates: 'Однакові назви кнопок — помічник може сплутати',
+  },
+};
+
+type VtDict = typeof uk;
+
+const ru: VtDict = {
+  title: 'Проверка голосового управления',
+  intro:
+    'Несколько минут: проверим, что помощник понимает этот сайт. Ничего не будет отправлено или оплачено.',
+  steps: [
+    'Установка',
+    'Микрофон',
+    'Разметка',
+    'Сухой прогон',
+    'С нажатием',
+    'Запреты',
+    'Отчёт',
+  ],
+  next: 'Далее',
+  run: 'Проверить',
+  starting: 'Готовлю проверку…',
+  envWidget: 'Виджет загружен на этом сайте',
+  envChunks: 'Скрипты помощника не блокируются (CSP)',
+  envCsp: 'Нарушений CSP из-за виджета: {n}',
+  envTt: 'Нарушений Trusted Types: {n}',
+  micPolicyOk: 'Политика сайта разрешает микрофон',
+  micPolicyNo:
+    'Политика сайта (Permissions-Policy) запрещает микрофон помощнику — это нужно исправить на сайте',
+  micBtn: 'Проверить микрофон',
+  micSay: 'Скажите «проверка связи» — нажмите микрофон ниже',
+  micHeard: 'Услышал: «{t}»',
+  mic: {
+    ok: 'Микрофон работает',
+    denied_policy: 'Запрещено политикой сайта — провал',
+    denied_user:
+      'Вы не дали разрешение в браузере — это ваше устройство, не провал проверки',
+    no_device: 'Микрофон не найден на этом устройстве',
+    ios_gesture: 'iOS: нужно ваше нажатие',
+    skipped: 'Пропущено',
+  },
+  markupStats:
+    'Элементов: {n}; с data-assist-id: {m}; закрытые shadow-корни: {k}; внешние iframe: {l}; запрещённые: {d}',
+  unnamed: 'Без доступного имени: {n}',
+  dups: 'Одинаковые названия: {n}',
+  show: 'Показать на странице',
+  hide: 'Скрыть',
+  never: 'Эти кнопки помощник не нажмёт никогда: {n}',
+  suspicious: 'Похоже на опасное, но не распознано: {n} — просмотрите каждую',
+  deny: 'Запретить',
+  safe: 'Безопасно',
+  noCommands:
+    'На странице нет безопасных команд — откройте страницу с меню или каталогом.',
+  dryIntro:
+    'Помощник только подсветит цель каждого шага — ничего не нажмёт. Отметьте, верно ли.',
+  dryRun: 'Показать',
+  right: 'Верно',
+  wrong: 'Не то',
+  safeIntro:
+    'Безопасные команды с реальным нажатием (переходы, поиск, вкладки; без отправки форм):',
+  exec: 'Выполнить',
+  safeState: {
+    idle: '',
+    running: 'выполняется…',
+    done: 'выполнено',
+    failed: 'не получилось',
+  },
+  forbIntro:
+    'Запрещённые команды проверены без звука — помощник не сделает ни одного шага:',
+  blocked: 'заблокировано',
+  leaked: 'НЕ заблокировано',
+  noTarget: 'такой кнопки нет',
+  report: 'Получить отчёт',
+  result: { pass: 'Пройдено', partial: 'Частично', fail: 'Не пройдено' },
+  resultNote:
+    'Отчёт сохранён в кабинете. Вернитесь в Telegram, чтобы включить голосовое управление для всех посетителей.',
+  fragment: 'Фрагмент разметки для разработчика сайта',
+  expired: 'Сессия проверки закончилась — получите новую ссылку в кабинете.',
+  failed: 'Не получилось — попробуйте ещё раз.',
+  item: {
+    ok: 'Готово',
+    widget_missing: 'Виджет не ответил на этой странице',
+    chunks_blocked: 'CSP сайта блокирует скрипты помощника',
+    csp_violations: 'Нарушения CSP из-за виджета',
+    tt_violations: 'Нарушения Trusted Types',
+    mic_policy_denied: 'Политика сайта запрещает микрофон',
+    mic_owner_problem: 'Микрофон вашего устройства — проверьте разрешение',
+    dry_low: 'Сухой прогон: мало верных шагов',
+    safe_low: 'С нажатием: выполнено меньше двух команд',
+    safe_none: 'С нажатием: не выполнено ни одной команды',
+    forbidden_leak: 'Запрещённая команда не заблокирована',
+    suspicious_unreviewed: 'Не все «похожие на опасные» просмотрены',
+    unnamed_elements: 'Есть кнопки без имени — разметьте их',
+    closed_shadow: 'Часть кнопок в закрытых shadow-корнях — недоступна',
+    ext_iframes: 'Есть внешние iframe — помощник в них не заходит',
+    duplicates: 'Одинаковые названия кнопок — помощник может перепутать',
+  },
+};
+
+const en: VtDict = {
+  title: 'Voice control check',
+  intro:
+    "A few minutes: we'll check that the assistant understands this site. Nothing will be submitted or paid.",
+  steps: [
+    'Install',
+    'Microphone',
+    'Markup',
+    'Dry run',
+    'With clicks',
+    'Forbidden',
+    'Report',
+  ],
+  next: 'Next',
+  run: 'Check',
+  starting: 'Preparing the check…',
+  envWidget: 'The widget is loaded on this site',
+  envChunks: "The site's CSP doesn't block the assistant's scripts",
+  envCsp: 'CSP violations caused by the widget: {n}',
+  envTt: 'Trusted Types violations: {n}',
+  micPolicyOk: "The site's policy allows the microphone",
+  micPolicyNo:
+    "The site's Permissions-Policy blocks the assistant's microphone — this must be fixed on the site",
+  micBtn: 'Check the microphone',
+  micSay: 'Say “sound check” — press the microphone below',
+  micHeard: 'Heard: “{t}”',
+  mic: {
+    ok: 'The microphone works',
+    denied_policy: "Blocked by the site's policy — failure",
+    denied_user:
+      "You didn't allow it in the browser — that's your device, not a failure",
+    no_device: 'No microphone on this device',
+    ios_gesture: 'iOS: needs your tap',
+    skipped: 'Skipped',
+  },
+  markupStats:
+    'Elements: {n}; with data-assist-id: {m}; closed shadow roots: {k}; external iframes: {l}; forbidden: {d}',
+  unnamed: 'Without an accessible name: {n}',
+  dups: 'Same names: {n}',
+  show: 'Show on the page',
+  hide: 'Hide',
+  never: 'The assistant will never press these: {n}',
+  suspicious: 'Looks dangerous but not recognized: {n} — review each one',
+  deny: 'Forbid',
+  safe: 'Safe',
+  noCommands:
+    'No safe commands on this page — open a page with a menu or catalog.',
+  dryIntro:
+    "The assistant only highlights each step's target — nothing is pressed. Mark whether it's right.",
+  dryRun: 'Show',
+  right: 'Right',
+  wrong: 'Wrong',
+  safeIntro:
+    'Safe commands with real clicks (links, search, tabs; no form submissions):',
+  exec: 'Run',
+  safeState: { idle: '', running: 'running…', done: 'done', failed: 'failed' },
+  forbIntro:
+    'Forbidden commands checked without voice — the assistant takes no step:',
+  blocked: 'blocked',
+  leaked: 'NOT blocked',
+  noTarget: 'no such button',
+  report: 'Get the report',
+  result: { pass: 'Passed', partial: 'Partial', fail: 'Failed' },
+  resultNote:
+    'The report is saved in your dashboard. Go back to Telegram to turn voice control on for all visitors.',
+  fragment: 'Markup snippet for the site developer',
+  expired: 'The check session has ended — get a new link in the dashboard.',
+  failed: "Didn't work — please try again.",
+  item: {
+    ok: 'Done',
+    widget_missing: "The widget didn't respond on this page",
+    chunks_blocked: "The site's CSP blocks the assistant's scripts",
+    csp_violations: 'CSP violations caused by the widget',
+    tt_violations: 'Trusted Types violations',
+    mic_policy_denied: "The site's policy blocks the microphone",
+    mic_owner_problem: 'Your device microphone — check the permission',
+    dry_low: 'Dry run: too few right steps',
+    safe_low: 'With clicks: fewer than two commands done',
+    safe_none: 'With clicks: no command done',
+    forbidden_leak: 'A forbidden command was not blocked',
+    suspicious_unreviewed: 'Not every “looks dangerous” item was reviewed',
+    unnamed_elements: 'Some buttons have no name — mark them up',
+    closed_shadow: 'Some buttons are in closed shadow roots — unreachable',
+    ext_iframes: "External iframes — the assistant doesn't enter them",
+    duplicates: 'Buttons with the same name — the assistant may confuse them',
+  },
+};
+
+export const VT_DICTS: Record<UiLang, VtDict> = { uk, ru, en };
+export type { VtDict };

@@ -53,7 +53,10 @@ export type RateScope =
   | 'widget-uiplan-ip-site-min'
   | 'widget-uiplan-ip-site-day'
   | 'widget-uiplan-site-day'
-  | 'widget-uistep-visitor-min';
+  | 'widget-uistep-visitor-min'
+  // Э6-бис (г): мастер проверки Т-2 — обмен ссылки (IP+сайт) и запросы сессии.
+  | 'widget-vtest-ip-site-min'
+  | 'widget-vtest-visitor-min';
 
 export interface RateHit {
   scope: RateScope;

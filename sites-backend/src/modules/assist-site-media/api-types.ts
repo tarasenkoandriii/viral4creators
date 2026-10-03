@@ -73,6 +73,22 @@ export interface SiteUiMapView {
   /** Сначала страницы с устаревшими элементами (≤ 50). */
   items: SiteUiMapPage[];
   truncated: boolean;
+  /**
+   * Э6-бис (г), решение владельца п.4: точечный переобход страниц с
+   * устаревшими элементами (по тарифу — страниц в сутки; за счёт бюджета
+   * знаний). `recent` — последние 10 записей журнала.
+   */
+  recrawl?: {
+    perDay: number;
+    today: number;
+    recent: Array<{
+      host: string;
+      path: string;
+      status: 'requested' | 'budget';
+      staleElements: number;
+      createdAt: string;
+    }>;
+  };
 }
 
 /** PATCH /assist/sites/:id/videos/:vid */

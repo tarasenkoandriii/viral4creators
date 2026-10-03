@@ -140,6 +140,11 @@ export interface PublicConfig {
   voice: VoiceConfigPublic | null;
   /** Э6-бис: голосовое управление «Сайтом»; null — режима нет. */
   voiceControl: VoiceControlPublic | null;
+  /**
+   * Э6-бис (г): выпуск чанков виджета для сайта (канарейка, §5-бис.12) —
+   * ленивые чанки из `/v1/r/<release>/`; null — из `/v1/`.
+   */
+  release: string | null;
 }
 
 /**
@@ -217,10 +222,14 @@ export function defaultPublicConfig(): PublicConfig {
     handoff: null,
     voice: null,
     voiceControl: null,
+    release: null,
   };
 }
 
 type Obj = Record<string, unknown>;
+
+/** Имя выпуска чанков (`/v1/r/<имя>/`) — как RELEASE_RE сервера. */
+export const RELEASE_RE = /^[a-z0-9][a-z0-9.-]{0,23}$/;
 
 export function isObj(v: unknown): v is Obj {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -422,6 +431,11 @@ export function parseLoaderConfig(raw: unknown): PublicConfig {
     }
   }
   d.allowClientPreview = raw.allowClientPreview === true;
+  // Э6-бис (г): имя выпуска — каталог пути, только правильной формы.
+  d.release =
+    typeof raw.release == 'string' && RELEASE_RE.test(raw.release)
+      ? raw.release
+      : null;
   d.rawEngagement = raw.engagement;
   d.rawGoals = raw.goals;
   return d;

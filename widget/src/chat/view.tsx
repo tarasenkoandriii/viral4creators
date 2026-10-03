@@ -15,6 +15,8 @@ import type { LangText } from '../shared/engagement';
 import { parseMarkdown, safeHref, type Block, type Inline } from './markdown';
 import type { SiteAction, SiteAnswerSource } from './api';
 import type { LeadField } from '../shared/config';
+import type { VtDict } from './i18n-vt';
+import type { VoiceTestController } from './voice-test';
 
 function Svg({ d }: { d: string }) {
   return (
@@ -600,6 +602,317 @@ function PlanCards({ s, c }: { s: ChatState; c: ChatController }) {
   );
 }
 
+const fmtVt = (s: string, v: Record<string, string | number>) =>
+  s.replace(/\{(\w+)\}/g, (_m, k: string) => String(v[k] ?? ''));
+
+/**
+ * Э6-бис (г): мастер проверки голосового управления Т-2 (§5-бис.13) — только
+ * владельцу по ссылке из кабинета. Семь шагов, у каждого — итог «готово /
+ * проблема»; отчёт считает сервер.
+ */
+function VoiceTestPanel({
+  s,
+  vt,
+  t,
+}: {
+  s: ChatState;
+  vt: VoiceTestController;
+  t: VtDict;
+}) {
+  const u = s.vt;
+  const ok = (v: boolean, text: string) => (
+    <li class={v ? 'ok' : 'bad'}>
+      {v ? '✓' : '✗'} {text}
+    </li>
+  );
+  const next = (enabled = true) => (
+    <button
+      type="button"
+      class="lnk"
+      disabled={!enabled || u.busy}
+      onClick={() => vt.go(u.step + 1)}
+    >
+      {t.next} →
+    </button>
+  );
+  let body = null;
+  if (u.error === 'expired') body = <p>{t.expired}</p>;
+  else if (u.step === 0) body = <p>{t.starting}</p>;
+  else if (u.step === 1)
+    body = (
+      <>
+        {u.env ? (
+          <ul>
+            {ok(u.env.widget, t.envWidget)}
+            {ok(u.env.chunks, t.envChunks)}
+            {ok(u.env.csp === 0, fmtVt(t.envCsp, { n: u.env.csp }))}
+            {ok(u.env.tt === 0, fmtVt(t.envTt, { n: u.env.tt }))}
+          </ul>
+        ) : (
+          <button type="button" class="lnk" onClick={() => void vt.env()}>
+            {t.run}
+          </button>
+        )}
+        {next(!!u.env)}
+      </>
+    );
+  else if (u.step === 2)
+    body = (
+      <>
+        {u.env &&
+          (u.env.micPolicy === 'denied' ? (
+            <ul>{ok(false, t.micPolicyNo)}</ul>
+          ) : u.env.micPolicy === 'allowed' ? (
+            <ul>{ok(true, t.micPolicyOk)}</ul>
+          ) : null)}
+        {u.mic ? (
+          <ul>
+            {ok(u.mic === 'ok', t.mic[u.mic])}
+            {u.mic === 'ok' && (
+              <li>{u.heard ? fmtVt(t.micHeard, { t: u.heard }) : t.micSay}</li>
+            )}
+          </ul>
+        ) : (
+          <button type="button" class="lnk" onClick={() => void vt.mic()}>
+            {t.micBtn}
+          </button>
+        )}
+        {next()}
+      </>
+    );
+  else if (u.step === 3)
+    body = u.markup ? (
+      <>
+        <p>
+          {fmtVt(t.markupStats, {
+            n: u.markup.total,
+            m: u.markup.withId,
+            k: u.markup.closedShadow,
+            l: u.markup.extIframes,
+            d: u.markup.denied,
+          })}
+        </p>
+        {u.markup.unnamed.length > 0 && (
+          <p>
+            {fmtVt(t.unnamed, { n: u.markup.unnamed.length })}{' '}
+            <button
+              type="button"
+              class="lnk"
+              onClick={() => vt.mark(u.markup!.unnamed.map((x) => x.key))}
+            >
+              {u.marked.length ? t.hide : t.show}
+            </button>
+          </p>
+        )}
+        {u.markup.duplicates.length > 0 && (
+          <p>{fmtVt(t.dups, { n: u.markup.duplicates.length })}</p>
+        )}
+        <p>{fmtVt(t.never, { n: u.never.length })}</p>
+        <ul>
+          {u.never.slice(0, 10).map((n, i) => (
+            <li key={i}>⛔ {n.text}</li>
+          ))}
+        </ul>
+        {u.suspicious.length > 0 && (
+          <>
+            <p>{fmtVt(t.suspicious, { n: u.suspicious.length })}</p>
+            <ul class="vtsus">
+              {u.suspicious.map((x) => (
+                <li key={x.key}>
+                  <button
+                    type="button"
+                    class="lnk"
+                    onClick={() => vt.mark([x.key])}
+                  >
+                    {x.label || x.selector || x.tag}
+                  </button>{' '}
+                  <button
+                    type="button"
+                    class={`lnk ${u.reviewed[x.key] === 'deny' ? 'on' : ''}`}
+                    aria-pressed={u.reviewed[x.key] === 'deny'}
+                    onClick={() => vt.review(x.key, 'deny')}
+                  >
+                    {t.deny}
+                  </button>
+                  <button
+                    type="button"
+                    class={`lnk ${u.reviewed[x.key] === 'safe' ? 'on' : ''}`}
+                    aria-pressed={u.reviewed[x.key] === 'safe'}
+                    onClick={() => vt.review(x.key, 'safe')}
+                  >
+                    {t.safe}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {next()}
+      </>
+    ) : (
+      <button
+        type="button"
+        class="lnk"
+        disabled={u.busy}
+        onClick={() => void vt.markup(s.cfg.voiceControl)}
+      >
+        {t.run}
+      </button>
+    );
+  else if (u.step === 4)
+    body = (
+      <>
+        <p>{u.commands.length ? t.dryIntro : t.noCommands}</p>
+        <ul>
+          {u.commands.map((cmd) => {
+            const i = u.dry.findIndex((d) => d.command === cmd.text);
+            const d = i >= 0 ? u.dry[i] : null;
+            return (
+              <li key={cmd.text}>
+                «{cmd.text}»{' '}
+                {!d && (
+                  <button
+                    type="button"
+                    class="lnk"
+                    disabled={u.busy}
+                    onClick={() => void vt.dryRun(cmd.text)}
+                  >
+                    {t.dryRun}
+                  </button>
+                )}
+                {d && (
+                  <ol>
+                    {d.steps.map((st, j) => (
+                      <li key={j}>
+                        {st}{' '}
+                        <button
+                          type="button"
+                          class={`lnk ${d.ok[j] === true ? 'on' : ''}`}
+                          aria-pressed={d.ok[j] === true}
+                          onClick={() => vt.markDry(i, j, true)}
+                        >
+                          {t.right}
+                        </button>
+                        <button
+                          type="button"
+                          class={`lnk ${d.ok[j] === false ? 'on' : ''}`}
+                          aria-pressed={d.ok[j] === false}
+                          onClick={() => vt.markDry(i, j, false)}
+                        >
+                          {t.wrong}
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {next()}
+      </>
+    );
+  else if (u.step === 5)
+    body = (
+      <>
+        <p>{u.safe.length ? t.safeIntro : t.noCommands}</p>
+        <ul>
+          {u.safe.map((x, i) => (
+            <li key={i}>
+              «{x.command}»{' '}
+              {x.state === 'idle' ? (
+                <button
+                  type="button"
+                  class="lnk"
+                  disabled={u.busy || u.safe.some((y) => y.state === 'running')}
+                  onClick={() => void vt.safeRun(i)}
+                >
+                  {t.exec}
+                </button>
+              ) : (
+                <span
+                  class={
+                    x.state === 'done'
+                      ? 'ok'
+                      : x.state === 'failed'
+                        ? 'bad'
+                        : ''
+                  }
+                >
+                  {t.safeState[x.state]}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+        {next()}
+      </>
+    );
+  else if (u.step === 6)
+    body = (
+      <>
+        <p>{t.forbIntro}</p>
+        <ul>
+          {u.forbidden.map((f) => (
+            <li key={f.kind} class={f.blocked ? 'ok' : 'bad'}>
+              {f.blocked ? '✓' : '✗'} «{f.command}» —{' '}
+              {f.candidates ? (f.blocked ? t.blocked : t.leaked) : t.noTarget}
+            </li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          class="lnk"
+          disabled={u.busy}
+          onClick={() => void vt.report(u.env, u.mic)}
+        >
+          {t.report}
+        </button>
+      </>
+    );
+  else if (u.result)
+    body = (
+      <>
+        <p class={`vtres ${u.result.result}`}>{t.result[u.result.result]}</p>
+        <ul>
+          {u.result.items
+            .filter((x) => x.level !== 'ok')
+            .map((x, i) => (
+              <li key={i} class={x.level === 'fail' ? 'bad' : ''}>
+                {t.item[x.code as keyof typeof t.item] || x.code}
+              </li>
+            ))}
+        </ul>
+        <p>{t.resultNote}</p>
+        {u.result.fragment && (
+          <details>
+            <summary>{t.fragment}</summary>
+            <pre>{u.result.fragment}</pre>
+          </details>
+        )}
+        <button type="button" class="lnk" onClick={() => vt.close()}>
+          ✕
+        </button>
+      </>
+    );
+  return (
+    <section class="note vt" role="region" aria-label={t.title}>
+      <div class="vt-h">
+        <b>{t.title}</b>
+        {u.step >= 1 && u.step <= 7 && (
+          <span>
+            {' '}
+            {u.step}/7 · {t.steps[u.step - 1]}
+          </span>
+        )}
+      </div>
+      {u.step === 1 && !u.env && <p>{t.intro}</p>}
+      {u.error === 'failed' && <p class="bad">{t.failed}</p>}
+      {body}
+    </section>
+  );
+}
+
 /** Э5: индикатор открытого микрофона — точка, таймер, уровень (§5-бис.7). */
 function VoiceBar({ s, c }: { s: ChatState; c: ChatController }) {
   const t = s.t;
@@ -758,6 +1071,9 @@ export function App({
         aria-live="polite"
         onScroll={onScroll}
       >
+        {s.vt.active && s.vtT && c.vt && (
+          <VoiceTestPanel s={s} vt={c.vt} t={s.vtT} />
+        )}
         <div class="msg bot greet">
           <div class="bub">{greeting}</div>
         </div>
@@ -952,6 +1268,16 @@ export function App({
         {s.messages.length > 0 && (
           <button type="button" class="lnk" onClick={() => c.askForget(true)}>
             {t.forget}
+          </button>
+        )}
+        {/* Э6-бис (г), решение владельца п.3: отозвать «натискати за вас». */}
+        {s.cfg.voiceControl && c.plans.consented() && (
+          <button
+            type="button"
+            class="lnk"
+            onClick={() => c.plans.revokeConsent()}
+          >
+            {t.vcRevoke}
           </button>
         )}
         {v.brand.poweredBy && s.cfg.poweredByUrl && (

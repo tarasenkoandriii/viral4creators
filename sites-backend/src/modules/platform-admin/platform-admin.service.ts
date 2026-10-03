@@ -34,6 +34,16 @@ import {
 } from '../../common/platform-settings';
 import { KNOWLEDGE_DEFAULTS } from '../../config/assist-defaults';
 import {
+  parseWidgetRelease,
+  readVoiceControlPlatform,
+  readWidgetRelease,
+  resetVoiceControlPlatformCache,
+  VOICE_CONTROL_SETTINGS_KEY,
+  WIDGET_RELEASE_KEY,
+  writePlatformSetting,
+} from '../../common/voice-control-platform';
+import { voiceControlPlatformEnabled } from '../assist-site-voice-control/voice-control-config';
+import {
   widgetPlatformDailyCapMicroUsd,
   widgetPlatformEnabled,
 } from '../../config/widget-env';
@@ -436,7 +446,12 @@ export class PlatformAdmin {
   async setSite(
     siteId: string,
     actor: string,
-    body: { blocked?: boolean; dailyCapUsd?: number | null },
+    body: {
+      blocked?: boolean;
+      dailyCapUsd?: number | null;
+      /** Э6-бис (г), решение владельца п.2: потолок планов голосового управления в сутки. */
+      voiceControlPlansPerDay?: number | null;
+    },
   ) {
     const row = await this.prisma.assistSite.findUnique({
       where: { siteId },
@@ -452,13 +467,163 @@ export class PlatformAdmin {
       data.dailyCapMicroUsd =
         body.dailyCapUsd === null ? null : Math.round(body.dailyCapUsd * MICRO);
     }
+    if (body.voiceControlPlansPerDay !== undefined)
+      data.voiceControlPlansPerDay = body.voiceControlPlansPerDay;
     await this.prisma.assistSite.update({ where: { siteId }, data });
     await this.log(
       actor,
-      `site:${body.blocked !== undefined ? (body.blocked ? 'block' : 'unblock') : 'cap'}`,
+      `site:${body.blocked !== undefined ? (body.blocked ? 'block' : 'unblock') : body.voiceControlPlansPerDay !== undefined ? `vc-plans:${body.voiceControlPlansPerDay ?? 'plan'}` : 'cap'}`,
       siteId,
     );
     return this.account(row.accountId, actor);
+  }
+
+  // ── Э6-бис (г): голосовое управление — рубильник, канарейка, инциденты ──
+
+  /** Рубильник голосового управления платформы, выпуски виджета, журнал монитора. */
+  async voiceControl() {
+    resetVoiceControlPlatformCache();
+    const [platform, release, incidents, sites] = await Promise.all([
+      readVoiceControlPlatform(this.prisma),
+      readWidgetRelease(this.prisma),
+      this.prisma.assistSiteVoiceIncident.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+        select: {
+          siteId: true,
+          kind: true,
+          code: true,
+          metrics: true,
+          createdAt: true,
+        },
+      }),
+      // Сайты не в норме: подсказка (монитор/владелец) и выключенные нарушением.
+      this.prisma.assistSite.findMany({
+        where: {
+          OR: [
+            { voiceControlSiteState: 'degraded' },
+            { voiceControlSiteStateBy: 'violation' },
+          ],
+        },
+        select: {
+          siteId: true,
+          voiceControlSiteState: true,
+          voiceControlSiteStateBy: true,
+          voiceControlSiteStateReason: true,
+          voiceControlSiteStateAt: true,
+        },
+        take: 100,
+      }),
+    ]);
+    return {
+      platform,
+      envEnabled: voiceControlPlatformEnabled(this.env),
+      release,
+      incidents: incidents.map((i) => ({
+        ...i,
+        createdAt: i.createdAt.toISOString(),
+      })),
+      sites: sites.map((x) => ({
+        siteId: x.siteId,
+        state: x.voiceControlSiteState,
+        by: x.voiceControlSiteStateBy,
+        reason: x.voiceControlSiteStateReason,
+        at: x.voiceControlSiteStateAt?.toISOString() ?? null,
+      })),
+    };
+  }
+
+  async setVoiceControl(
+    actor: string,
+    patch: {
+      enabled?: boolean;
+      stable?: string | null;
+      canary?: string | null;
+      canaryPercent?: number;
+    },
+  ) {
+    const now = this.now();
+    if (patch.enabled !== undefined) {
+      await writePlatformSetting(
+        this.prisma,
+        VOICE_CONTROL_SETTINGS_KEY,
+        {
+          enabled: patch.enabled,
+          reason: patch.enabled ? null : 'operator',
+          at: now.toISOString(),
+        },
+        actor,
+      );
+      await this.log(actor, `voice-control:${patch.enabled ? 'on' : 'off'}`);
+    }
+    if (
+      patch.stable !== undefined ||
+      patch.canary !== undefined ||
+      patch.canaryPercent !== undefined
+    ) {
+      resetVoiceControlPlatformCache();
+      const cur = await readWidgetRelease(this.prisma);
+      const stable = patch.stable === undefined ? cur.stable : patch.stable;
+      const canary = patch.canary === undefined ? cur.canary : patch.canary;
+      const next = parseWidgetRelease({
+        stable,
+        canary,
+        canaryPercent: patch.canaryPercent ?? cur.canaryPercent,
+        // Новая канарейка — новое окно сравнения.
+        canarySince:
+          canary && canary !== cur.canary ? now.toISOString() : cur.canarySince,
+        rolledBack: cur.rolledBack,
+      });
+      if (canary && !next.canary) {
+        throw adminError(
+          'BAD_REQUEST',
+          'Канарейка — только вместе со стабильным выпуском и не равная ему',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      await writePlatformSetting(this.prisma, WIDGET_RELEASE_KEY, next, actor);
+      await this.log(
+        actor,
+        `widget-release:${next.stable ?? '-'}:${next.canary ?? '-'}:${next.canaryPercent}`,
+      );
+    }
+    return this.voiceControl();
+  }
+
+  /**
+   * Нарушение запрета по жалобе (§5-бис.14: «обнаружено разбором журнала,
+   * жалобой или регистратором») — сайт в `off`, инцидент. Включить снова —
+   * владелец после нового `pass` мастера.
+   */
+  async voiceIncident(siteId: string, actor: string, reason: string) {
+    const row = await this.prisma.assistSite.findUnique({
+      where: { siteId },
+      select: { accountId: true },
+    });
+    if (!row)
+      throw adminError('NOT_FOUND', 'Сайт не найден', HttpStatus.NOT_FOUND);
+    const code = /^[a-z0-9_]{1,30}$/.test(reason) ? reason : 'complaint';
+    await this.prisma.assistSite.update({
+      where: { siteId },
+      data: {
+        voiceControlSiteState: 'off',
+        voiceControlSiteTestId: null,
+        voiceControlSiteStateAt: this.now(),
+        voiceControlSiteStateBy: 'violation',
+        voiceControlSiteStateReason: code,
+      },
+    });
+    await this.prisma.assistSiteVoiceIncident.create({
+      data: {
+        accountId: row.accountId,
+        siteId,
+        kind: 'off',
+        code: 'violation',
+        metrics: { by: 'operator', reason: code },
+      },
+    });
+    await this.log(actor, `voice-control:incident:${code}`, siteId);
+    return this.voiceControl();
   }
 
   private async assertAccount(id: string) {

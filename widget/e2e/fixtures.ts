@@ -151,6 +151,9 @@ export interface SiteOpts {
     import('./stand/ui-plan-mock').ModelStep[] | 'not_command'
   >;
   voiceTexts?: string[];
+  // Э6-бис (г)
+  vtTokens?: string[];
+  release?: string;
 }
 
 /** Сайт в моке: по умолчанию разрешён A и SHOP (verified-хосты одного сайта). */
@@ -181,6 +184,8 @@ export async function site(pk: string, o: SiteOpts = {}) {
     vcRules: o.vcRules,
     vcModel: o.vcModel,
     voiceTexts: o.voiceTexts,
+    vtTokens: o.vtTokens,
+    release: o.release,
   });
 }
 

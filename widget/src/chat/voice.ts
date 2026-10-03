@@ -25,11 +25,14 @@ import type {
   RecordLimits,
   VoiceEngine,
 } from '../shared/voice-api';
-import { ApiError, headers, unwrap, type Auth } from './api';
+import { ApiError, CHUNK_BASE, headers, unwrap, type Auth } from './api';
 import type { Dict } from './i18n';
 
-/** Чанк голоса — тот же origin, путь стабильный (кэш — vercel.json). */
-export const VOICE_CHUNK_PATH = '/v1/voice.js';
+/**
+ * Чанк голоса — тот же origin, путь стабильный (кэш — vercel.json); (г)
+ * канарейка — из каталога выпуска, откуда загружен сам чат.
+ */
+export const VOICE_CHUNK_PATH = `${CHUNK_BASE}voice.js`;
 
 export interface VoiceUi {
   /** Кнопка микрофона (конфиг сайта + браузер умеет записывать). */

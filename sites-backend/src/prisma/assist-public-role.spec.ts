@@ -428,8 +428,10 @@ if (!RAW_URL) {
 
     it('Э6-бис: голосовое управление — ровно тот SQL, что шлёт assist-site-voice-control/public (настройки режима, план, журнал шагов)', async () => {
       for (const sql of [
-        `SELECT "voiceControlSiteState", "voiceControlSiteRules" FROM ${S}."assist_sites" WHERE "siteId" = 's'`,
-        `INSERT INTO ${S}."assist_site_ui_plans" ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "updatedAt") SELECT 'p', 'a', 's', 'c', 'v', 'u', 'typed', 'uk', 'https://x/', '[]'::jsonb, '{"u":"x","v":[]}'::jsonb, 0, 'proposed', true, NULL, now(), now(), now() WHERE false`,
+        // (г): + ручной потолок планов оператора.
+        `SELECT "voiceControlSiteState", "voiceControlSiteRules", "voiceControlPlansPerDay" FROM ${S}."assist_sites" WHERE "siteId" = 's'`,
+        // (г): + тестовая сессия мастера, сухой прогон, выпуск чанков.
+        `INSERT INTO ${S}."assist_site_ui_plans" ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "voiceTestId", "dryRun", "release", "updatedAt") SELECT 'p', 'a', 's', 'c', 'v', 'u', 'typed', 'uk', 'https://x/', '[]'::jsonb, '{"u":"x","v":[]}'::jsonb, 0, 'proposed', true, NULL, now(), now(), NULL, false, NULL, now() WHERE false`,
         `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl" FROM ${S}."assist_site_ui_plans" WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v'`,
         `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl" FROM ${S}."assist_site_ui_plans" WHERE "siteId" = 's' AND "visitorId" = 'v' AND "status" IN ('proposed', 'confirmed', 'running') AND "expiresAt" > now() ORDER BY "createdAt" DESC LIMIT 1`,
         `UPDATE ${S}."assist_site_ui_plans" SET "steps" = '[]'::jsonb, "liveValues" = NULL::jsonb, "currentStep" = 1, "status" = 'running', "needsConfirm" = false, "confirmedBy" = 'button', "confirmBefore" = COALESCE(NULL, "confirmBefore"), "updatedAt" = now() WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v' AND "status" = 'confirmed' AND "currentStep" = 0 AND "steps" = '[]'::jsonb RETURNING "id"`,
@@ -461,6 +463,75 @@ if (!RAW_URL) {
       ]) {
         await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
       }
+    });
+
+    it('Э6-бис (г): мастер Т-2 и предохранитель — ровно тот SQL, что шлёт assist-site-voice-control/public (обмен ссылки, сессия, отчёт, планы сессии, выключение при нарушении)', async () => {
+      for (const sql of [
+        `UPDATE ${S}."assist_site_voice_tests" SET "usedAt" = now(), "sessionHash" = 'h', "sessionExpiresAt" = now(), "visitorId" = 'v' WHERE "tokenHash" = 't' AND "siteId" = 's' AND "origin" = 'https://x' AND "usedAt" IS NULL AND "tokenExpiresAt" > now() RETURNING "id", "host", "testHost"`,
+        `SELECT "id", "host", "testHost" FROM ${S}."assist_site_voice_tests" WHERE "sessionHash" = 'h' AND "siteId" = 's' AND "visitorId" = 'v' AND "sessionExpiresAt" > now() AND "reportedAt" IS NULL`,
+        `SELECT "id", "status", "steps", "dryRun", "utteranceMasked", "pageUrl", "lang" FROM ${S}."assist_site_ui_plans" WHERE "voiceTestId" = 't' AND "siteId" = 's' AND "visitorId" = 'v' ORDER BY "createdAt" ASC LIMIT 50`,
+        `UPDATE ${S}."assist_site_voice_tests" SET "report" = '{}'::jsonb, "result" = 'pass', "validUntil" = now(), "release" = NULL, "pages" = '[]'::jsonb, "reportedAt" = now() WHERE "id" = 't' AND "siteId" = 's' AND "visitorId" = 'v' AND "reportedAt" IS NULL AND "sessionExpiresAt" > now() RETURNING "id"`,
+        // Предохранитель: функция умеет только выключить (сайта 's' нет — 0 строк).
+        `SELECT ${S}."assist_vc_trip"('s', 'violation:payment') AS ok`,
+        // Рубильник и выпуски платформы — тем же колоночным SELECT, что Э4.
+        `SELECT "value" FROM ${S}."assist_platform_settings" WHERE "key" = 'voice-control'`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+      for (const sql of [
+        // Строку теста создаёт кабинет; роль — ни вставки, ни удаления.
+        `INSERT INTO ${S}."assist_site_voice_tests" ("id", "accountId", "siteId", "host", "origin", "tokenHash", "tokenExpiresAt") SELECT 'x', 'a', 's', 'h', 'o', 't', now() WHERE false`,
+        `DELETE FROM ${S}."assist_site_voice_tests" WHERE false`,
+        // Отчёт роль пишет, но не читает; подтверждение partial и автора — нет.
+        `SELECT "report" FROM ${S}."assist_site_voice_tests" LIMIT 1`,
+        `SELECT "result" FROM ${S}."assist_site_voice_tests" LIMIT 1`,
+        `SELECT "startedBy" FROM ${S}."assist_site_voice_tests" LIMIT 1`,
+        `UPDATE ${S}."assist_site_voice_tests" SET "partialAckAt" = now() WHERE false`,
+        `UPDATE ${S}."assist_site_voice_tests" SET "tokenHash" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_voice_tests" SET "siteId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_voice_tests" SET "testHost" = true WHERE false`,
+        // Состояние сайта роль не меняет никак (только функцией — в off).
+        `UPDATE ${S}."assist_sites" SET "voiceControlSiteTestId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_sites" SET "voiceControlPlansPerDay" = 1 WHERE false`,
+        `SELECT "voiceControlSiteTestId" FROM ${S}."assist_sites" LIMIT 1`,
+        `SELECT "voiceControlCheckDeadline" FROM ${S}."assist_sites" LIMIT 1`,
+        // Новые колонки плана задаются только при создании.
+        `UPDATE ${S}."assist_site_ui_plans" SET "voiceTestId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "dryRun" = true WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "release" = 'x' WHERE false`,
+        // Контрольные команды, журнал монитора, журнал переобхода — ничего.
+        `SELECT 1 FROM ${S}."assist_site_voice_control_commands" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_voice_incidents" LIMIT 1`,
+        `INSERT INTO ${S}."assist_site_voice_incidents" ("id", "kind", "code") SELECT 'x', 'alert', 'x' WHERE false`,
+        `SELECT 1 FROM ${S}."assist_site_ui_recrawls" LIMIT 1`,
+        // Запись настроек платформы — только основной ролью.
+        `UPDATE ${S}."assist_platform_settings" SET "value" = '{}'::jsonb WHERE false`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
+    it('Э6-бис (г): функция-предохранитель ТОЛЬКО выключает: on → off, off остаётся off; других функций роль не исполняет', async () => {
+      // EXECUTE роли — ровно на одну функцию схемы (триггерные функции —
+      // `site_credential_audit_append_only` Ш2 — вызвать напрямую нельзя).
+      const { rows } = await client.query<{ f: string }>(
+        `SELECT p.proname AS f FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1 AND p.prorettype <> 'trigger'::regtype
+            AND has_function_privilege('assist_public', p.oid, 'EXECUTE')`,
+        [SITES_DB_SCHEMA],
+      );
+      expect(rows.map((r) => r.f)).toEqual(['assist_vc_trip']);
+      // Определение: только `off`, только по siteId, только если не `off`.
+      const def = await client.query<{ d: string }>(
+        `SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1 AND p.proname = 'assist_vc_trip'`,
+        [SITES_DB_SCHEMA],
+      );
+      const d = def.rows[0].d;
+      expect(d).toMatch(/SECURITY DEFINER/);
+      expect(d).toMatch(/"voiceControlSiteState" = 'off'/);
+      expect(d).not.toMatch(/'on'|'test'|'degraded'/);
+      expect(d).toMatch(/WHERE "siteId" = p_site/);
     });
 
     it('Э3 (решение 8): ON CONFLICT под ролью — с целью только там, где у роли SELECT на колонки цели; иначе без цели', async () => {
@@ -649,6 +720,9 @@ if (!RAW_URL) {
         // шагов — только дописывается.
         assist_site_ui_plans: ['SELECT', 'INSERT', 'column:UPDATE'],
         assist_site_ui_action_log: ['INSERT'],
+        // Э6-бис (г) (миграция _assist_voice_control_check): мастер Т-2 —
+        // обмен ссылки, своя сессия, сдача отчёта (строку создаёт кабинет).
+        assist_site_voice_tests: ['column:SELECT', 'column:UPDATE'],
         // Э-С Ш4: слитые элементы — чтение и счётчики промахов по виду;
         // журнал промахов — только вставка.
         site_ui_elements: ['column:SELECT', 'column:UPDATE'],

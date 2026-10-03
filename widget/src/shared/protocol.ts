@@ -52,6 +52,11 @@ export type ParentMessage =
       siteTheme: 'light' | 'dark' | null;
       /** Одноразовый токен `?v4c_preview=` — iframe обменяет его сам. */
       previewToken: string | null;
+      /**
+       * Э6-бис (г): одноразовая ссылка мастера проверки `?v4c_voicetest=` —
+       * iframe обменяет её на тестовую сессию (как предпросмотр).
+       */
+      voiceTest: string | null;
       /** Окно было открыто на прошлой странице (sessionStorage страницы). */
       restoreOpen: boolean;
     }
@@ -125,6 +130,12 @@ export type ParentMessage =
       planId: string;
       by: 'esc' | 'click' | 'key' | 'button';
     }
+  /**
+   * Э6-бис (г): ответ чанка проверки страницы мастера (`check.js`) на
+   * `vt-env`/`vt-markup` с тем же `rid`. Данные — подсчёты и короткие
+   * селекторы/подписи (маскированы); сервер разбирает их строго заново.
+   */
+  | { type: 'vt-result'; rid: string; op: 'env' | 'markup'; data: unknown }
   /** Э3 (§3.6 п.4–5): посетитель принял проактивный сигнал → префилл или сценарий. */
   | {
       type: 'proactive';
@@ -171,7 +182,16 @@ export type FrameMessage =
    * п.1), исполнить проверенные сервером шаги (`ui-run`), «dispatched
    * записан — нажимай» (`ui-ack`), стоп, пауза детектора речи.
    */
-  | UiCommand;
+  | UiCommand
+  /**
+   * Э6-бис (г): мастер проверки Т-2 (только тестовая сессия владельца) —
+   * окружение (CSP, Trusted Types, чанки), разметка страницы и два списка
+   * опасного, обводка пунктов списка на странице. Чанк `check.js` разбирает
+   * команды сам, строго.
+   */
+  | { type: 'vt-env'; rid: string }
+  | { type: 'vt-markup'; rid: string; deny: string[]; allow: string[] }
+  | { type: 'vt-mark'; keys: string[] };
 
 export type Envelope<T> = T & { ns: string; v: number };
 
@@ -354,6 +374,10 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
             ? m.siteTheme
             : null,
         previewToken,
+        voiceTest:
+          typeof m.voiceTest === 'string' && TOKEN_RE.test(m.voiceTest)
+            ? m.voiceTest
+            : null,
         restoreOpen: m.restoreOpen === true,
       };
     }
@@ -449,6 +473,24 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
         m.index <= 20
         ? { type: 'ui-need', planId: m.planId, index: m.index }
         : null;
+    case 'vt-result': {
+      if (
+        typeof m.rid !== 'string' ||
+        !RID.test(m.rid) ||
+        (m.op !== 'env' && m.op !== 'markup') ||
+        !isObj(m.data)
+      )
+        return null;
+      let size = 0;
+      try {
+        size = JSON.stringify(m.data).length;
+      } catch {
+        return null;
+      }
+      return size <= MAX_SNAPSHOT_JSON
+        ? { type: 'vt-result', rid: m.rid, op: m.op, data: m.data }
+        : null;
+    }
     case 'ui-stopped':
       return typeof m.planId === 'string' &&
         PLAN_ID.test(m.planId) &&
@@ -537,11 +579,15 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
     // Э6-бис: команды плана — загрузчик только узнаёт вид и отдаёт сырое
     // сообщение ленивому чанку act.js, который разбирает его СТРОГО
     // (`parseUiCommand`): разбор шагов не утяжеляет загрузчик (12 КБ).
+    // (г) `vt-*` — проверка страницы мастера: тем же путём чанку check.js.
     case 'ui-snap':
     case 'ui-run':
     case 'ui-ack':
     case 'ui-stop':
     case 'ui-pause':
+    case 'vt-env':
+    case 'vt-markup':
+    case 'vt-mark':
       return { type: 'ui-raw', raw: m };
     case 'handoff-state':
       return m.state === 'waiting' ||

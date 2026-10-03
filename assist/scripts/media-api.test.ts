@@ -139,6 +139,37 @@ const types = readFileSync(
   assert.equal(m.items[0].stale[0].label.length, 80);
   assert.equal(m.truncated, true);
   assert.equal(parseSiteUiMap(null).pages, 0);
+  assert.equal(parseSiteUiMap(null).recrawl, null);
+  // Э6-бис (г): сводка точечного переобхода — строго.
+  const rc = parseSiteUiMap({
+    recrawl: {
+      perDay: 5,
+      today: 2,
+      recent: [
+        {
+          host: 'a.example',
+          path: '/cart',
+          status: 'budget',
+          staleElements: 3,
+          createdAt: '2026-10-03T00:00:00.000Z',
+        },
+        {
+          host: 'a.example',
+          path: '/x',
+          status: 'evil',
+          createdAt: '2026-10-03T00:00:00.000Z',
+        },
+      ],
+    },
+  }).recrawl;
+  assert.equal(rc?.perDay, 5);
+  assert.equal(rc?.today, 2);
+  assert.equal(rc?.recent.length, 1);
+  assert.equal(rc?.recent[0].status, 'budget');
+  for (const d of [appUk, appRu, appEn]) {
+    assert.ok(d.media.map.recrawl.includes('{limit}'));
+    assert.ok(d.media.map.recrawlStatus.budget && d.media.map.recrawlOff);
+  }
   for (const d of [appRu, appUk, appEn]) {
     for (const s of UI_MAP_SOURCES) assert.ok(d.media.map.sources[s]);
     for (const v of [...UI_MAP_VIEWPORTS, 'both'] as const)

@@ -38,7 +38,12 @@ import {
   WIDGET_RESUME_COOKIE,
   widgetResumeCookieName,
 } from '../../src/shared/brand';
-import { freshVcLog, uiPlanRoute, type ModelStep } from './ui-plan-mock';
+import {
+  freshVcLog,
+  uiPlanRoute,
+  voiceTestRoute,
+  type ModelStep,
+} from './ui-plan-mock';
 import { vcStandRoute } from './vc-stands';
 
 const ROOT = path.resolve(
@@ -101,6 +106,10 @@ interface Site {
   vcRules?: unknown;
   vcModel?: Record<string, ModelStep[] | 'not_command'>;
   voiceTexts?: string[];
+  /** Э6-бис (г): одноразовые ссылки мастера проверки (ui-plan-mock.ts). */
+  vtTokens?: string[];
+  /** Э6-бис (г): выпуск чанков сайта (канарейка) — поле `release` конфига. */
+  release?: string;
 }
 interface Handoff {
   id: string;
@@ -635,6 +644,7 @@ async function api(
         ...(s.goals !== undefined ? { goals: s.goals } : {}),
         ...(s.handoff !== undefined ? { handoff: s.handoff } : {}),
         ...(s.voice !== undefined ? { voice: s.voice } : {}),
+        ...(s.release !== undefined ? { release: s.release } : {}),
         ...(s.voiceControl !== undefined
           ? {
               voiceControl: {
@@ -984,9 +994,15 @@ async function api(
     );
   }
   // ── Э6-бис: голосовое управление (ui-plan-mock.ts — настоящие проверки) ──
-  if (p.startsWith('/widget/v1/ui-plan')) {
+  if (
+    p.startsWith('/widget/v1/ui-plan') ||
+    p.startsWith('/widget/v1/voice-test')
+  ) {
     const site = [...M.sites.values()].find((x) => x.siteId === t.siteId);
-    await uiPlanRoute(
+    const route = p.startsWith('/widget/v1/ui-plan')
+      ? uiPlanRoute
+      : voiceTestRoute;
+    await route(
       req,
       p,
       t,

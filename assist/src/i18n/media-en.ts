@@ -29,6 +29,12 @@ export const mediaEn: MediaDictionary = {
     hide: 'Collapse',
     loadError: 'Could not load the map — try again later.',
     truncated: 'Showing the first 50 pages.',
+    recrawl:
+      'Targeted refresh of outdated pages: {today} of {limit} today (from the knowledge budget).',
+    recrawlOff:
+      'Targeted refresh of outdated pages is not available on your plan.',
+    recrawlItem: '{page} — {status}, {d}',
+    recrawlStatus: { requested: 'requested', budget: 'out of budget' },
     staleItem: '“{label}” — {view}',
     sources: {
       crawl: 'crawl',

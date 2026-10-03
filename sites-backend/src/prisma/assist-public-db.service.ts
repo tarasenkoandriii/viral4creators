@@ -54,6 +54,13 @@ export const ASSIST_PUBLIC_OMIT = {
     leadRetentionDays: true,
     // Э4: createdAt открыт роли — начало пробного периода (min по кабинету).
     updatedAt: true,
+    // Э6-бис (г): состояние голосового управления — кабинету и монитору
+    // (роли — только потолок планов `voiceControlPlansPerDay`).
+    voiceControlSiteTestId: true,
+    voiceControlSiteStateAt: true,
+    voiceControlSiteStateBy: true,
+    voiceControlSiteStateReason: true,
+    voiceControlCheckDeadline: true,
   },
   assistSiteFaq: {
     approvedByTelegramId: true,

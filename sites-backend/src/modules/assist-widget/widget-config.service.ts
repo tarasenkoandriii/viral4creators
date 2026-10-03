@@ -37,6 +37,10 @@ import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { WIDGET_POWERED_BY_URL } from '../../brand';
+import {
+  readWidgetRelease,
+  releaseForSite,
+} from '../../common/voice-control-platform';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import {
   previewFrameAncestors,
@@ -249,6 +253,19 @@ export class WidgetPublicConfigService {
           `voice access failed site=${site.siteId}: ${errName(err)}`,
         );
       }
+    }
+    // Э6-бис (г): выпуск чанков (канарейка по хешу siteId) — путь ленивых
+    // чанков загрузчика; сбой чтения — без поля (чанки из `/v1/`).
+    try {
+      const rel = releaseForSite(
+        site.siteId,
+        await readWidgetRelease(this.db, now.getTime()),
+      );
+      if (rel) out.release = rel;
+    } catch (err) {
+      this.logger.warn(
+        `release read failed site=${site.siteId}: ${errName(err)}`,
+      );
     }
     // Э6-бис (§5-бис.2, §5-бис.11): голосовое управление — только при
     // голосе (микрофон) и переключателе on/degraded; запреты кабинета —
@@ -544,6 +561,16 @@ export class WidgetPublicConfigService {
       expiresAt: sessionExpiresAt.toISOString(),
       config: withoutHosts(draft),
     };
+  }
+
+  /** Для /w/v1/frame: выпуск чанков сайта по pk (канарейка, §5-бис.12). */
+  async releaseFor(pk: string, now: Date = new Date()): Promise<string | null> {
+    const found = await findSiteByKey(this.db, pk);
+    if (!found) return null;
+    return releaseForSite(
+      found.site.siteId,
+      await readWidgetRelease(this.db, now.getTime()),
+    );
   }
 
   /** Для /w/v1/frame: строка CSP frame-ancestors по pk (кэш 5 мин). */

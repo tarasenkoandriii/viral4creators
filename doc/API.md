@@ -558,8 +558,8 @@ sites-backend, внутренний API генератора (HMAC Ш1 — `SITE
 
 ТЗ помощника §5-бис.3–10, §4-бис.5; развёртывание — `doc/DEPLOYMENT.md`
 §6.17. Проверки плана — код (`sites-backend/src/modules/assist-ui-core`,
-без базы); модель только предлагает. «Админка» (б) и мастер проверки/
-монитор/деградация (г) — не в этом этапе.
+без базы); модель только предлагает. «Админка» (б) — не в этом этапе; мастер проверки/
+монитор/деградация (г) — раздел ниже.
 
 sites-backend, кабинет (initData помощника, `productRoles.assist = manager`):
 
@@ -584,6 +584,55 @@ sites-backend, виджет (iframe, visitor-token; страница заказ�
 on\|degraded, denySelectors, allowSelectors, maxSteps } | null` (только при
 голосовом вводе). Журнал — `assist_site_ui_action_log` (план, шаги, отказы;
 значения полей — только маскированные).
+
+## Э6-бис помощника (г): мастер проверки Т-2, монитор Т-4, канарейка
+
+ТЗ помощника §5-бис.10 п.14–16, §5-бис.12–14; решения владельца 03.10.2026
+п.1–5 (план этапов «Э6-бис (г) — сделано»); развёртывание —
+`doc/DEPLOYMENT.md` §6.17. Т-3 (автотест на QA-воркере) отложен —
+QA-маршрутов (`SITES_QA_HMAC_SECRET`) нет, `kind: autotest` в отчётах —
+задел.
+
+Изменения маршрутов (а):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/voice-control/site` | + `stateBy: owner\|monitor\|transition\|violation\|operator\|null`, `stateAt`, `stateReason` (код монитора), `checkDeadline` (баннер перехода: `on` без отчёта — до этой даты, затем `test`), `lastTest: VoiceTestSummary\|null`, `plansPerDay` (тариф или оверрайд оператора), `monitor{ windowHours: 24, metrics{ plans, done, self, notFound, stoplistLive, cancelled, wrong, violations, latencyP50Ms, latencyP95Ms }, incidents[≤10]{ kind, code, createdAt } }\|null`; `reason` + `state_test` |
+| `PATCH /assist/sites/:id/voice-control/site` | `{ state: off\|test\|on\|degraded, rules?, risksVersion?, partialAck? }`: `off` — всегда; из `off` — риски и голос как раньше; `on` — только с годным отчётом мастера (решение п.1: `pass` или `partial` с `partialAck: true`, ≤ 30 дней, тот же выпуск загрузчика, разметка проверенных страниц не менялась после отчёта, отчёт новее последнего понижения — текущего, из журнала монитора или нарушения в журнале шагов, даже если сайт с тех пор переведён в `test`), иначе 409 `VOICE_CONTROL_TEST_REQUIRED` с `errors[0]{ path: test, code: none\|failed\|partial_ack\|expired\|loader_changed\|markup_changed\|older_than_state }`; `degraded` — только из `on`/`test` (иначе 400 `VOICE_CONTROL_INVALID`); смена состояния — условная («от прочитанного»): монитор/предохранитель изменил его за время запроса — 409 `VOICE_CONTROL_TEST_REQUIRED` `older_than_state` |
+| `POST /assist/sites/:id/voice-control/site/test-token` | `{ host?, testHost? }` → `{ testId, url: https://<хост>/?v4c_voicetest=<токен>, expiresAt }` — одноразовая ссылка мастера на 30 мин; хост — только подтверждённый https сайта (иначе 409 `VOICE_CONTROL_HOST_REQUIRED`); в базе — только хеш токена |
+| `GET /assist/sites/:id/voice-control/site/tests` | `{ items: VoiceTestSummary[] }` — `{ id, kind: wizard\|autotest, host, createdAt, reportedAt, result: pass\|partial\|fail\|null, validUntil, release, partialAck, problem }`, новые сначала |
+| `GET /assist/sites/:id/voice-control/site/tests/:tid` | `VoiceTestSummary + report: WizardReport\|null` (пункты по шагам 1–6 с кодами `widget_missing`, `chunks_blocked`, `csp_violations`, `tt_violations`, `mic_policy_denied`, `mic_owner_problem`, `dry_low`, `safe_low`, `safe_none`, `forbidden_leak`, `suspicious_unreviewed`, `unnamed_elements`, `closed_shadow`, `ext_iframes`, `duplicates`; «никогда» и подсказки в «Заборонені елементи»; запреты без звука; фрагмент разметки для разработчика); чужой — 404 `VOICE_CONTROL_TEST_NOT_FOUND` |
+
+sites-backend, виджет (iframe; ссылка мастера `?v4c_voicetest=` снимается
+загрузчиком с адреса и передаётся только в iframe; тестовая сессия — в
+заголовке `X-Assist-Voice-Test`, без неё ничего ниже недоступно):
+
+| Маршрут | Что |
+|---|---|
+| `POST /widget/v1/voice-test/session` | `{ token }` → `{ session, testId, expiresAt, testHost, voiceControl }` — обмен одноразовой ссылки на сессию этого посетителя (условный UPDATE, второй раз — 409 `VOICE_TEST_INVALID`; чужой сайт/origin/истёкшая — 409); 10/мин на IP+сайт |
+| `POST /widget/v1/voice-test/:tid/analyze` | `{ snapshot, lang? }` → `{ commands[], forbidden[]{ kind, command, blocked, candidates }, never[] }` — команды мастера (только безопасные: навигация, поиск, раскрытия), запреты без звука по «худшей модели» (кандидаты стоп-листа на странице), список «никогда»; 30/мин на посетителя |
+| `POST /widget/v1/voice-test/:tid/report` | `{ lang?, snapshot, env, mic, markup, suspicious, reviewed, dry }` → `{ testId, result, validUntil, report }` — вердикт СЧИТАЕТ СЕРВЕР по планам этой сессии в базе (сухие и с нажатием) и фактам страницы; один раз (повтор — 409); `validUntil` = +30 дней |
+| `POST /widget/v1/ui-plan` | + `dryRun: true` — только в тестовой сессии: план проверен, статус `done`, исполнить нельзя; тестовая сессия — режим `on` в любом состоянии сайта, единиц тарифа и потолка сайта не тратит; + `release` (выпуск чанков загрузчика) — в журнал для канарейки, только если совпадает с выпуском ЭТОГО сайта по настройке платформы (иначе `null`). Нарушение запрета на `dispatched`/`done` шага с эффектом (шаг попал в стоп-лист по коду на сервере) — 403 `VOICE_CONTROL_OFF`, план `stopped`, сайт сразу `off` (функция базы `assist_vc_trip`, умеет только выключить), инцидент монитора. Цель попала под запрет КАБИНЕТА (`denyWords`/`denyPaths`), введённый после плана, — не нарушение: 409 `PLAN_CONFLICT`, шаг `failed` (причина `denied`, «стоп-лист при исполнении»), план `failed`, сайт не выключается |
+
+Конфиг виджета (`GET /widget/v1/config`) — + `release: string\|null`
+(выпуск ленивых чанков сайта по канарейке: `/v1/r/<release>/act.js|check.js|vt.js|chat.*`).
+Потолок планов сайта в сутки — решение п.2: Business 300 / Pro 1000 или
+`voiceControlPlansPerDay` оператора; посетитель 8/мин и 60/сутки.
+
+internal admin (`/internal/admin/assist`, ключ админки):
+
+| Маршрут | Что |
+|---|---|
+| `PATCH sites/:siteId` | + `voiceControlPlansPerDay: 0…100000\|null` (0 — не принимать планы, null — по тарифу) — ручной оверрайд потолка планов сайта (решение п.2) |
+| `GET voice-control` | `{ enabled, stable, canary, canaryPercent }` — рубильник платформы в базе (`assist_platform_settings` ключ `voice-control`; вместе с `ASSIST_VOICE_CONTROL_ENABLED`) и выпуски (ключ `widget-release`) |
+| `PATCH voice-control` | `{ enabled?, stable?, canary?, canaryPercent? 1…50 }` — включить/выключить у всех, назначить стабильный и канареечный выпуск чанков; монитор откатывает канарейку сам (done на > 10 п.п. ниже стабильного при ≥ 50 планах) |
+| `POST voice-control/sites/:siteId/incident` | `{ reason? }` — оператор выключает режим сайта (жалоба): `off`, `stateBy: operator`, инцидент |
+
+Кабинет «Видео» — `GET /assist/sites/:id/ui-map` + `recrawl{ perDay, today,
+recent[≤20]{ host, path, status: requested\|budget, staleElements, createdAt } }`
+— точечный переобход устаревших страниц карты (решение п.4: Start 0 /
+Business 5 / Pro 20 страниц в сутки, страница ≤ 1/сутки, за счёт бюджета
+знаний; крон `assist-crawl-run`).
 
 ## Э-С Ш4: общие карты интерфейса сайтов
 

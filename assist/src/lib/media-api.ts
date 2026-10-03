@@ -74,6 +74,50 @@ export interface SiteUiMapView {
   lastCapturedAt: string | null;
   items: SiteUiMapPage[];
   truncated: boolean;
+  /** Э6-бис (г): точечный переобход устаревших страниц (null — сервер не прислал). */
+  recrawl: SiteUiRecrawlView | null;
+}
+
+export interface SiteUiRecrawlView {
+  perDay: number;
+  today: number;
+  recent: Array<{
+    host: string;
+    path: string;
+    status: 'requested' | 'budget';
+    staleElements: number;
+    createdAt: string;
+  }>;
+}
+
+export function parseUiRecrawl(v: unknown): SiteUiRecrawlView | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = obj(v);
+  return {
+    perDay: count(o.perDay),
+    today: count(o.today),
+    recent: arr(o.recent)
+      .map((x) => {
+        const r = obj(x);
+        const status =
+          r.status === 'budget'
+            ? 'budget'
+            : r.status === 'requested'
+              ? 'requested'
+              : null;
+        const createdAt = str(r.createdAt);
+        if (!status || !createdAt) return null;
+        return {
+          host: text(r.host),
+          path: text(r.path),
+          status,
+          staleElements: count(r.staleElements),
+          createdAt,
+        } as const;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+      .slice(0, 20),
+  };
 }
 
 export const MEDIA_CABINET_ERROR_CODES = [
@@ -197,6 +241,7 @@ export function parseSiteUiMap(v: unknown): SiteUiMapView {
       .filter((x): x is SiteUiMapPage => x !== null)
       .slice(0, 50),
     truncated: o.truncated === true,
+    recrawl: parseUiRecrawl(o.recrawl),
   };
 }
 

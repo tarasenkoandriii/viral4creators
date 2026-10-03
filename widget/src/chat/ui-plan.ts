@@ -9,6 +9,9 @@
  *    обработчиков ввода и голоса).
  *  - Первая команда-действие — «Помощник может нажимать кнопки… —
  *    разрешить?» (один раз на сайт, localStorage iframe, §5-бис.2).
+ *    Решение владельца 03.10.2026 п.3: согласие хранится с ВЕРСИЕЙ текста
+ *    (`VC_CONSENT_VERSION`) — сменили текст, спросим снова; отозвать — в
+ *    меню виджета (подвал окна).
  *  - Снимок страницы просит у загрузчика (одноразовый `rid`; чужой ответ —
  *    мимо), план строит сервер, исполняет загрузчик; здесь — строка плана,
  *    карточка «Да/Нет» с тем, ЧТО будет нажато (видимый текст), отчёты шагов
@@ -32,6 +35,14 @@ import {
   type UiStepResult,
 } from '../shared/ui-plan';
 import type { Dict } from './i18n';
+
+/**
+ * Версия текста согласия «нажимать за вас» (`vcConsent` в i18n.ts): текст
+ * поменялся — версию поднять, и каждый посетитель увидит вопрос заново
+ * (решение владельца 03.10.2026 п.3). Сверку «текст ↔ версия» держит
+ * scripts/voice-test.test.ts (отпечаток текстов).
+ */
+export const VC_CONSENT_VERSION = '1';
 
 export type UiPlanPhase =
   | 'idle'
@@ -137,6 +148,8 @@ export interface UiPlanHost {
   /** Микрофон на время плана (только если человек нажал его в этом документе). */
   listen(on: boolean): void;
   random(): string;
+  /** (г) Выпуск чанков (канарейка) — уходит в план для монитора. */
+  release?(): string | null;
 }
 
 const SNAP_TIMEOUT_MS = 4000;
@@ -193,7 +206,7 @@ export class UiPlanController {
       this.host.ui().phase === 'confirm'
     )
       this.stop('button');
-    if (this.host.storage('local', 'vcconsent') !== '1') {
+    if (!this.consented()) {
       this.pendingCmd = { text, source, ticket };
       this.host.setUi({ phase: 'consent' });
       return true;
@@ -210,8 +223,69 @@ export class UiPlanController {
     const p = this.pendingCmd;
     this.pendingCmd = null;
     if (!ok || !p) return this.host.setUi({ phase: 'idle' });
-    this.host.storage('local', 'vcconsent', '1');
+    this.host.storage('local', 'vcconsent', VC_CONSENT_VERSION);
     void this.build(p.text, p.source, p.ticket);
+  }
+
+  /** Согласие дано на ТЕКУЩИЙ текст (решение владельца п.3). */
+  consented(): boolean {
+    return this.host.storage('local', 'vcconsent') === VC_CONSENT_VERSION;
+  }
+
+  /** Отозвать согласие (меню виджета): следующая команда спросит заново. */
+  revokeConsent() {
+    if (this.active()) this.stop('button');
+    this.host.storage('local', 'vcconsent', null);
+    this.host.feed('assistant', this.host.t().vcRevoked);
+    this.host.setUi({ phase: 'idle' });
+  }
+
+  /** (г) Снимок страницы для мастера проверки (тот же, что у плана). */
+  snap(): Promise<unknown> {
+    return this.snapshot();
+  }
+
+  /**
+   * (г) Сухой прогон мастера Т-2: план строится и проверяется сервером
+   * (только в тестовой сессии), цели только ПОДСВЕЧИВАЮТСЯ — шаги
+   * превращаются в «подсветку» с той же целью (исполнитель ничего не
+   * нажимает и ничего не шлёт на сервер: план-«призрак» с префиксом `dry`).
+   */
+  async dry(text: string): Promise<PlanView | null> {
+    const snap = await this.snapshot();
+    if (!snap) return null;
+    let v: PlanView | null = null;
+    try {
+      v = parsePlanView(
+        await this.host.api('POST', '/widget/v1/ui-plan', {
+          text,
+          source: 'typed',
+          dryRun: true,
+          lang: this.host.lang(),
+          snapshot: snap,
+          release: this.host.release ? this.host.release() : null,
+        })
+      );
+    } catch {
+      return null;
+    }
+    if (!v || v.kind !== 'plan' || !v.planId) return v;
+    this.host.toParent({
+      type: 'ui-run',
+      planId: `dry${v.planId}`.slice(0, 64),
+      steps: v.steps.map((s) => ({
+        ...s,
+        kind: s.target ? 'highlight' : s.kind === 'say' ? 'say' : 'wait',
+        risk: 'auto',
+        nav: false,
+        expect: null,
+        value: null,
+        state: 'pending',
+      })),
+      from: 0,
+      lang: this.host.lang(),
+    });
+    return v;
   }
 
   private snapshot(): Promise<unknown> {
@@ -258,6 +332,7 @@ export class UiPlanController {
           conversationId: this.host.conversationId(),
           lang: this.host.lang(),
           snapshot: snap,
+          release: this.host.release ? this.host.release() : null,
         })
       );
     } catch {

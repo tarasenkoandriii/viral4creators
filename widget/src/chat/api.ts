@@ -7,6 +7,7 @@
  */
 import {
   WIDGET_PREVIEW_SESSION_HEADER,
+  WIDGET_VOICE_TEST_HEADER,
   WIDGET_VISITOR_TOKEN_HEADER,
 } from '../shared/brand';
 import {
@@ -541,7 +542,29 @@ export function unwrap(status: number, body: unknown): unknown {
 export interface Auth {
   token: string | null;
   preview: string | null;
+  /** Э6-бис (г): тестовая сессия мастера проверки голосового управления. */
+  vtest?: string | null;
 }
+
+/**
+ * Э6-бис (г), канарейка (§5-бис.12): выпуск, из которого загружен chat.js
+ * (`/v1/r/<выпуск>/chat.js` — так его отдаёт кадр iframe сайту из
+ * канарейки). Ленивые чанки чата (голос) — из того же каталога; выпуск
+ * уходит в план (монитор сравнивает `done` канарейки со стабильным).
+ */
+export const CHAT_RELEASE: string | null = (() => {
+  try {
+    const s =
+      typeof document !== 'undefined'
+        ? (document.currentScript as HTMLScriptElement | null)?.src || ''
+        : '';
+    const m = /\/v1\/r\/([a-z0-9][a-z0-9.-]{0,23})\//.exec(s);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+})();
+export const CHUNK_BASE = CHAT_RELEASE ? `/v1/r/${CHAT_RELEASE}/` : '/v1/';
 
 export function headers(
   auth: Auth,
@@ -550,6 +573,7 @@ export function headers(
   const h: Record<string, string> = { ...extra };
   if (auth.token) h[WIDGET_VISITOR_TOKEN_HEADER] = auth.token;
   if (auth.preview) h[WIDGET_PREVIEW_SESSION_HEADER] = auth.preview;
+  if (auth.vtest) h[WIDGET_VOICE_TEST_HEADER] = auth.vtest;
   return h;
 }
 

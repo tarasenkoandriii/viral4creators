@@ -2,7 +2,10 @@
  * Голосовое управление интерфейсом, режим «Сайт» (Э6-бис (а), ТЗ помощника
  * §5-бис): план посетителя (`public/` — под assist_public, его зовут
  * маршруты assist-widget `/widget/v1/ui-plan*`) и кабинет переключателя и
- * правил (`cabinet/` — основная роль). Проверки плана — нейтральный пакет
+ * правил (`cabinet/` — основная роль). (г) Мастер проверки Т-2 —
+ * `public/voice-test.service.ts` (тестовая сессия, анализ, отчёт); монитор
+ * Т-4 — `system/voice-monitor.service.ts` (основная роль; его зовёт крон
+ * `assist-analytics-run`, отдельного крона нет). Проверки плана — нейтральный пакет
  * `assist-ui-core` (без базы; его же возьмёт «Админка» в Э6-бис (б)).
  * Правило графа `public-zone-e6b`: публичный код других модулей берёт
  * отсюда только `public/`, типы, `*-config` и модуль.
@@ -15,6 +18,7 @@ import { SiteCoreModule } from '../site-core/site-core.module';
 import { VoiceControlSettingsController } from './cabinet/voice-control-settings.controller';
 import { VoiceControlSettingsService } from './cabinet/voice-control-settings.service';
 import { SiteUiPlanService } from './public/ui-plan.service';
+import { VoiceTestService } from './public/voice-test.service';
 
 @Module({
   imports: [
@@ -24,7 +28,7 @@ import { SiteUiPlanService } from './public/ui-plan.service';
     AssistSiteVoiceModule,
   ],
   controllers: [VoiceControlSettingsController],
-  providers: [SiteUiPlanService, VoiceControlSettingsService],
-  exports: [SiteUiPlanService],
+  providers: [SiteUiPlanService, VoiceTestService, VoiceControlSettingsService],
+  exports: [SiteUiPlanService, VoiceTestService],
 })
 export class AssistSiteVoiceControlModule {}

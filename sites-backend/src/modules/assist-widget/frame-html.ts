@@ -24,23 +24,31 @@
 /** Корень, в который монтируется чат W1 (`widget/src/chat/main.tsx`). */
 export const FRAME_ROOT_ID = 'app';
 
-const HTML = [
-  '<!doctype html>',
-  '<html lang="uk">',
-  '<head>',
-  '<meta charset="utf-8">',
-  '<meta name="viewport" content="width=device-width, initial-scale=1">',
-  '<meta name="robots" content="noindex, nofollow">',
-  '<link rel="stylesheet" href="/v1/chat.css">',
-  '<script src="/v1/chat.js" defer></script>',
-  '</head>',
-  `<body><div id="${FRAME_ROOT_ID}"></div></body>`,
-  '</html>',
-  '',
-].join('\n');
+/** Имя выпуска — каталог `/v1/r/<имя>/` (common/voice-control-platform.ts). */
+const RELEASE = /^[a-z0-9][a-z0-9.-]{0,23}$/;
 
-export function frameHtml(): string {
-  return HTML;
+/**
+ * Э6-бис (г), канарейка выпусков (§5-бис.12): у сайта в канарейке (или при
+ * заданном стабильном выпуске) чат берётся из `/v1/r/<выпуск>/`; без
+ * выпуска — `/v1/` (как раньше). Имя — только правильной формы: в HTML
+ * не попадает ничего, кроме пути своего origin.
+ */
+export function frameHtml(release: string | null = null): string {
+  const base = release && RELEASE.test(release) ? `/v1/r/${release}/` : '/v1/';
+  return [
+    '<!doctype html>',
+    '<html lang="uk">',
+    '<head>',
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    '<meta name="robots" content="noindex, nofollow">',
+    `<link rel="stylesheet" href="${base}chat.css">`,
+    `<script src="${base}chat.js" defer></script>`,
+    '</head>',
+    `<body><div id="${FRAME_ROOT_ID}"></div></body>`,
+    '</html>',
+    '',
+  ].join('\n');
 }
 
 /** Источник frame-ancestors: `'none'` или список origin (с `:*` для localhost). */

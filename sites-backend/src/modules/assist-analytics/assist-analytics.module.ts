@@ -21,6 +21,11 @@ import { EventCounts } from './public/event-counts.service';
 import { GoalIntake } from './public/goal-intake.service';
 import { StatsService } from './stats.service';
 import { AnalyticsRollup } from './system/analytics-rollup.service';
+// Э6-бис (г): монитор голосового управления Т-4 — без своего крона (Vercel
+// Hobby): проход зовёт этот же `assist-analytics-run`. Сервис ходит только
+// SitesDb/PrismaService (глобальные) — импорта модуля голосового управления
+// не нужно (он импортирует чат, а чат — этот модуль: был бы цикл).
+import { VoiceMonitorService } from '../assist-site-voice-control/system/voice-monitor.service';
 
 @Module({
   imports: [
@@ -44,6 +49,7 @@ import { AnalyticsRollup } from './system/analytics-rollup.service';
     ExportStorage,
     AnalyticsRollup,
     AnalyticsSettingsService,
+    VoiceMonitorService,
   ],
   exports: [
     GoalIntake,

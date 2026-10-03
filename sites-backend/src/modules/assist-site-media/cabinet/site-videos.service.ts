@@ -20,6 +20,7 @@ import { SitesDb } from '../../../prisma/sites-db.service';
 import { readState } from '../../assist-billing/public/entitlements';
 import type { AccountMembership } from '../../site-core/account/roles';
 import { uiMapSummary } from '../../site-core/ui-map/ui-map-store';
+import { UI_STALE_RECRAWL } from '../../assist-site-knowledge/ui-stale-recrawl-config';
 import type {
   MediaCabinetErrorCode,
   SiteUiMapView,
@@ -120,10 +121,54 @@ export class SiteVideosService {
     };
   }
 
-  /** Э-С Ш4: сводка общей карты интерфейса сайта (экран «Карта інтерфейсу»). */
+  /**
+   * Э-С Ш4: сводка общей карты интерфейса сайта (экран «Карта інтерфейсу»);
+   * Э6-бис (г): + точечный переобход устаревших страниц (решение п.4).
+   */
   async uiMap(m: AccountMembership, siteId: string): Promise<SiteUiMapView> {
     const db = await this.site(m, siteId);
-    return uiMapSummary(db, siteId);
+    const now = this.now();
+    const [summary, state, today, recent] = await Promise.all([
+      uiMapSummary(db, siteId),
+      readState(this.prisma, m.accountId, now),
+      db.assistSiteUiRecrawl.count({
+        where: {
+          siteId,
+          status: 'requested',
+          createdAt: {
+            gte: new Date(now.getTime() - UI_STALE_RECRAWL.perPageEveryMs),
+          },
+        },
+      }),
+      db.assistSiteUiRecrawl.findMany({
+        where: { siteId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: {
+          host: true,
+          path: true,
+          status: true,
+          staleElements: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+    return {
+      ...summary,
+      recrawl: {
+        perDay: state.planId
+          ? UI_STALE_RECRAWL.pagesPerDayByPlan[state.planId]
+          : 0,
+        today,
+        recent: recent.map((r) => ({
+          host: r.host,
+          path: r.path,
+          status: r.status === 'budget' ? 'budget' : 'requested',
+          staleElements: r.staleElements,
+          createdAt: r.createdAt.toISOString(),
+        })),
+      },
+    };
   }
 
   async patch(

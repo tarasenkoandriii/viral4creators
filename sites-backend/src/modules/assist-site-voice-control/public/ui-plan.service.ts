@@ -37,6 +37,12 @@
 import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { voiceTicketKey } from '../../../config/voice-env';
+import {
+  readVoiceControlPlatform,
+  readWidgetRelease,
+  releaseForSite,
+  RELEASE_RE,
+} from '../../../common/voice-control-platform';
 import { AssistPublicDb } from '../../../prisma/assist-public-db.service';
 import { maskSensitiveEcho } from '../../../shared/assist-chat-core/post-filter';
 import { estimateCost } from '../../../shared/ai-pricing';
@@ -75,6 +81,7 @@ import {
   buildPlanPrompt,
   parseModelPlan,
 } from '../../assist-ui-core/plan-prompt';
+import { neverViolation } from '../../assist-ui-core/wizard';
 import { zoneAllowed } from '../../assist-ui-core/rules';
 import {
   maskPageUrl,
@@ -99,6 +106,7 @@ import type {
   UiPlanView,
 } from '../api-types';
 import {
+  plansPerSitePerDay,
   VOICE_CONTROL_DEFAULTS,
   voiceControlAccess,
   voiceControlPlatformEnabled,
@@ -115,6 +123,7 @@ import {
   updatePlan,
   type PlanRow,
 } from './plan-store';
+import { tripVoiceControl } from './voice-test-store';
 
 export const UI_PLAN_PRICING_MODEL = GEMINI_MODEL;
 
@@ -128,6 +137,12 @@ export interface UiPlanCtx {
    * в журнале карты; без него — суточный `visitor.ipHash`.
    */
   voteIpHash?: string;
+  /**
+   * (г) Тестовая сессия мастера Т-2 (заголовок WIDGET_VOICE_TEST_HEADER,
+   * проверен VoiceTestService.session): режим в любом состоянии сайта, без
+   * расхода диалогов тарифа; планы помечаются `voiceTestId`.
+   */
+  voiceTest?: { testId: string; testHost: boolean } | null;
 }
 
 /** Отказы маршрутов плана — коды REST-ответа (assist-widget переводит). */
@@ -244,32 +259,50 @@ export class SiteUiPlanService {
     private readonly voice: SiteVoiceService,
   ) {}
 
-  /** Есть ли режим у посетителя (конфиг виджета и маршруты). */
+  /**
+   * Есть ли режим у посетителя (конфиг виджета и маршруты). (г) Рубильник
+   * платформы — env (верхняя граница) И настройка платформы в базе (её
+   * выключает монитор при нарушении запрета на ≥ 2 сайтах или оператор);
+   * `testSession` — тестовая сессия мастера (режим в любом состоянии).
+   */
   async access(
     site: Pick<WidgetSiteContext, 'siteId'>,
     state: Pick<SubscriptionState, 'planId'>,
-  ): Promise<VoiceControlAccess> {
-    const [row, voice] = await Promise.all([
+    testSession = false,
+  ): Promise<VoiceControlAccess & { plansPerDay: number | null }> {
+    const [row, voice, platform] = await Promise.all([
       readSiteVoiceControl(this.db, site.siteId),
       this.voice.access(site, state),
+      readVoiceControlPlatform(this.db),
     ]);
-    return voiceControlAccess({
-      platformEnabled: voiceControlPlatformEnabled(this.env),
-      voice,
-      state: row?.voiceControlSiteState,
-      rules: row?.voiceControlSiteRules ?? null,
-    });
+    return {
+      ...voiceControlAccess({
+        platformEnabled:
+          voiceControlPlatformEnabled(this.env) && platform.enabled,
+        voice,
+        state: row?.voiceControlSiteState,
+        rules: row?.voiceControlSiteRules ?? null,
+        testSession,
+      }),
+      plansPerDay: row?.voiceControlPlansPerDay ?? null,
+    };
   }
 
   /** Режим всё ещё включён (рубильник, голос, переключатель, правила) — иначе `off`. */
-  private async assertOn(ctx: UiPlanCtx): Promise<void> {
+  private async assertOn(ctx: UiPlanCtx): Promise<VoiceControlAccess> {
     const state = await readState(this.db, ctx.site.accountId, this.now());
-    const access = await this.access(ctx.site, state);
+    const access = await this.access(ctx.site, state, !!ctx.voiceTest);
     if (!access.mode || !access.rules) fail('off');
+    return access;
+  }
+
+  /** Адрес страницы — на хосте сайта (мастер Т-2 проверяет снимки тем же правилом). */
+  onHost(url: string, hosts: string[]): boolean {
+    return onSiteHost(url, hosts);
   }
 
   /** Подтверждённые хосты сайта + origin страницы (проверен гвардом). */
-  private async siteHosts(site: WidgetSiteContext): Promise<string[]> {
+  async siteHosts(site: WidgetSiteContext): Promise<string[]> {
     const rows = await this.db.siteHost.findMany({
       where: { siteId: site.siteId, status: 'verified' },
       select: { host: true },
@@ -310,9 +343,31 @@ export class SiteUiPlanService {
     } else return fail('bad_request');
 
     const state = await readState(this.db, site.accountId, now);
-    const access = await this.access(site, state);
+    const test = ctx.voiceTest ?? null;
+    const access = await this.access(site, state, !!test);
     if (!access.mode || !access.rules) return fail('off');
     const rules = access.rules;
+    // (г) Сухой прогон — только мастеру Т-2 (обычный посетитель — 400).
+    const dryRun = body.dryRun === true;
+    if (dryRun && !test) return fail('bad_request');
+    // Выпуск чанков — метка для канарейки монитора. Аудит (г) 03.10: со
+    // слов iframe — только если это ВЫПУСК ЭТОГО САЙТА по настройке
+    // платформы (канарейка по хешу или стабильный); иначе посетитель своего
+    // сайта вне канарейки метил бы планы канареечным выпуском и проваливал
+    // их — ложный откат выпуска всей платформе.
+    const release =
+      typeof body.release === 'string' &&
+      RELEASE_RE.test(body.release) &&
+      body.release ===
+        releaseForSite(
+          site.siteId,
+          await readWidgetRelease(this.db, now.getTime()),
+        )
+        ? body.release
+        : null;
+    // Тестовая сессия мастера, как предпросмотр, не тратит диалогов тарифа
+    // и потолка планов сайта (деньги дня — резервируются как обычно).
+    const free = site.preview || !!test;
 
     if (snapshotTooLarge(body.snapshot)) return fail('too_large');
     const snapshot = parseSnapshot(body.snapshot);
@@ -336,12 +391,11 @@ export class SiteUiPlanService {
     }
 
     // ── единицы и потолок планов сайта ──
-    if (!site.preview && !(await quotaLeft(this.db, site.accountId, state)))
+    if (!free && !(await quotaLeft(this.db, site.accountId, state)))
       return fail('quota');
-    const dayCap = state.planId
-      ? VOICE_CONTROL_DEFAULTS.plansPerSitePerDayByPlan[state.planId]
-      : 0;
-    if (!site.preview && !(await siteDayHit(dayCap))) return fail('site_limit');
+    // Потолок — оверрайд оператора (решение владельца п.2) или тариф.
+    const dayCap = plansPerSitePerDay(access.plansPerDay, state.planId);
+    if (!free && !(await siteDayHit(dayCap))) return fail('site_limit');
 
     // ── план: прямой путь или модель ──
     let raw: RawStep[] | null = directPlan(text, snapshot);
@@ -448,7 +502,7 @@ export class SiteUiPlanService {
         preview: site.preview,
       });
     if (
-      !site.preview &&
+      !free &&
       !(await claimPlanAnswer(this.db, {
         accountId: site.accountId,
         conversationId,
@@ -462,11 +516,15 @@ export class SiteUiPlanService {
       state: 'pending',
     }));
     const executable = steps.length > 0;
+    // Сухой прогон: план проверен и показан (подсветка в iframe мастера),
+    // исполнять нечего — сразу `done`, без сырых значений.
     const status: UiPlanStatus = !executable
       ? 'failed'
-      : checked.needsConfirm
-        ? 'proposed'
-        : 'confirmed';
+      : dryRun
+        ? 'done'
+        : checked.needsConfirm
+          ? 'proposed'
+          : 'confirmed';
     const confirmBefore = new Date(
       now.getTime() + VOICE_CONTROL_DEFAULTS.confirmWindowMs,
     );
@@ -485,10 +543,13 @@ export class SiteUiPlanService {
       pageUrl: snapshot.url,
       steps,
       status,
-      needsConfirm: checked.needsConfirm,
-      confirmedBy: checked.needsConfirm ? null : 'auto',
+      needsConfirm: !dryRun && checked.needsConfirm,
+      confirmedBy: dryRun ? 'dry' : checked.needsConfirm ? null : 'auto',
       confirmBefore,
       expiresAt,
+      voiceTestId: test?.testId ?? null,
+      dryRun,
+      release,
     });
     // Журнал: сам план и каждая отказанная цель (метрика «0 нарушений» Т-4
     // считает попытки по запрещённым целям — часть (г)).
@@ -505,8 +566,8 @@ export class SiteUiPlanService {
       target: null,
       url: snapshot.url,
       risk: top,
-      confirmedBy: checked.needsConfirm ? null : 'auto',
-      result: executable ? 'proposed' : 'skipped',
+      confirmedBy: dryRun ? 'dry' : checked.needsConfirm ? null : 'auto',
+      result: !executable ? 'skipped' : dryRun ? 'dryrun' : 'proposed',
       reason:
         checked.notes
           .map((n) => n.code)
@@ -543,7 +604,7 @@ export class SiteUiPlanService {
       steps,
       currentStep: 0,
       notes: checked.notes,
-      needsConfirm: checked.needsConfirm,
+      needsConfirm: !dryRun && checked.needsConfirm,
       stepsHash: stepsHash(steps),
       confirmBefore: confirmBefore.toISOString(),
       expiresAt: expiresAt.toISOString(),
@@ -796,8 +857,37 @@ export class SiteUiPlanService {
     // Выключение режима останавливает и идущий план: следующий клик
     // (`dispatched` ждёт записи) и продвижение плана сервер не принимает;
     // отказ/стоп/«нажмите сами» — принимает всегда.
-    if (result === 'dispatched' || result === 'done') await this.assertOn(ctx);
     const s = plan.steps[idx];
+    if (result === 'dispatched' || result === 'done') {
+      const access = await this.assertOn(ctx);
+      // (г) Последний рубеж (§5-бис.14 «нарушение запрета»): шаг, который
+      // вот-вот исполнится (или исполнен), — цель класса «никогда». Проверки
+      // плана такого не пропускают: это дефект кода или подмена шага. Сайт
+      // — в `off` сразу (функция базы умеет только выключить), шаг не
+      // подтверждается (`dispatched` без записи — клика не будет), монитор
+      // пишет инцидент и шлёт уведомления.
+      if (hasSideEffect(s)) {
+        const why = neverViolation(s, {
+          rules: access.rules as NonNullable<typeof access.rules>,
+          hosts: await this.siteHosts(ctx.site),
+        });
+        // Аудит (г) 03.10: запрет КАБИНЕТА (`denied` — слова/пути
+        // владельца) мог появиться ПОСЛЕ плана — владелец правит список во
+        // время идущего плана (мастер Т-2 сам предлагает запреты). Это не
+        // дефект кода: шаг не исполняется, план — провал, в журнал —
+        // «стоп-лист при исполнении»; ни предохранителя, ни счёта к
+        // рубильнику платформы (иначе любой кабинет выключал бы режим всей
+        // платформе правкой своих запретов на двух сайтах).
+        if (why === 'denied') {
+          await this.deniedLive(ctx, plan, idx, s);
+          return fail('conflict');
+        }
+        if (why) {
+          await this.violation(ctx, plan, idx, s, why);
+          return fail('off');
+        }
+      }
+    }
     const steps = plan.steps.map((x) => ({ ...x }));
     let currentStep = plan.currentStep;
     let status: UiPlanStatus = 'running';
@@ -901,6 +991,101 @@ export class SiteUiPlanService {
     return view({ ...plan, steps, currentStep, status });
   }
 
+  /**
+   * Цель шага попала под запрет кабинета, введённый после плана: шаг —
+   * `failed` (причина `denied`, монитор считает это «стоп-листом при
+   * исполнении»), план — провал; сайт не выключается.
+   */
+  private async deniedLive(
+    ctx: UiPlanCtx,
+    plan: PlanRow,
+    idx: number,
+    s: UiPlanStepView,
+  ): Promise<void> {
+    const steps = plan.steps.map((x) => ({ ...x }));
+    steps[idx].state = 'failed';
+    await updatePlan(this.db, plan, this.who(ctx), {
+      steps,
+      currentStep: plan.currentStep,
+      status: 'failed',
+      needsConfirm: plan.needsConfirm,
+      confirmedBy: plan.confirmedBy,
+    });
+    await insertActionLog(this.db, {
+      accountId: ctx.site.accountId,
+      siteId: ctx.site.siteId,
+      planId: plan.id,
+      stepIndex: idx,
+      action: s.kind,
+      target: s.target
+        ? {
+            role: s.target.role,
+            text: s.target.text,
+            assistId: s.target.assistId,
+            path: pathOf(s.target.href),
+          }
+        : null,
+      url: null,
+      risk: 'never',
+      confirmedBy: plan.confirmedBy,
+      result: 'failed',
+      reason: 'denied',
+      valueMasked: null,
+      durationMs: null,
+    });
+  }
+
+  /** Нарушение запрета: журнал, план стоп, сайт — `off` (предохранитель базы). */
+  private async violation(
+    ctx: UiPlanCtx,
+    plan: PlanRow,
+    idx: number,
+    s: UiPlanStepView,
+    why: string,
+  ): Promise<void> {
+    await insertActionLog(this.db, {
+      accountId: ctx.site.accountId,
+      siteId: ctx.site.siteId,
+      planId: plan.id,
+      stepIndex: idx,
+      action: 'violation',
+      target: s.target
+        ? {
+            role: s.target.role,
+            text: s.target.text,
+            assistId: s.target.assistId,
+            path: pathOf(s.target.href),
+          }
+        : null,
+      url: null,
+      risk: 'never',
+      confirmedBy: plan.confirmedBy,
+      result: 'failed',
+      reason: why,
+      valueMasked: null,
+      durationMs: null,
+    });
+    await updatePlan(this.db, plan, this.who(ctx), {
+      steps: plan.steps,
+      currentStep: plan.currentStep,
+      status: 'stopped',
+      needsConfirm: plan.needsConfirm,
+      confirmedBy: plan.confirmedBy,
+    });
+    // Тестовая сессия мастера сайт сразу не выключает — её план и так не
+    // на посетителях; нарушение в журнале, и монитор на ближайшем проходе
+    // (≤ 10 мин) выключит сайт и пришлёт инцидент (аудит (г): так задумано
+    // — нарушение запрета есть дефект кода и в тестовой сессии).
+    if (!ctx.voiceTest)
+      await tripVoiceControl(this.db, {
+        siteId: ctx.site.siteId,
+        reason: `violation:${why}`,
+      });
+    this.logger.error(
+      `ui-plan VIOLATION site=${ctx.site.siteId} plan=${plan.id} step=${idx} reason=${why}`,
+    );
+  }
+
   async stop(
     ctx: UiPlanCtx,
     id: string,
@@ -960,7 +1145,7 @@ export class SiteUiPlanService {
       return fail('conflict');
     const now = this.now();
     const state = await readState(this.db, ctx.site.accountId, now);
-    const access = await this.access(ctx.site, state);
+    const access = await this.access(ctx.site, state, !!ctx.voiceTest);
     if (!access.mode || !access.rules) return fail('off');
     if (snapshotTooLarge(body?.snapshot)) return fail('too_large');
     const snapshot = parseSnapshot(body?.snapshot);

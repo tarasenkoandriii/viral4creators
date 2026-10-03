@@ -122,6 +122,15 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   // сайта); кабинетный код (журнал, (б)/(г)) ходит с тенантом.
   AssistSiteUiPlan: 'accountId',
   AssistSiteUiActionLog: 'accountId',
+  // Э6-бис (г): отчёты мастера Т-2, контрольные команды, журнал точечного
+  // переобхода — строки кабинета (составной FK (siteId, accountId)). Отчёт
+  // пишет виджет сырым SQL под assist_public; кабинет читает с тенантом.
+  AssistSiteVoiceTest: 'accountId',
+  AssistSiteVoiceControlCommand: 'accountId',
+  AssistSiteUiRecrawl: 'accountId',
+  // Журнал монитора: у событий платформы (откат канарейки, рубильник)
+  // accountId = NULL — кабинету не видны; события сайта — строки кабинета.
+  AssistSiteVoiceIncident: 'accountId',
 };
 
 /**

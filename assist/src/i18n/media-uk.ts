@@ -29,6 +29,12 @@ export const mediaUk: MediaDictionary = {
     hide: 'Згорнути',
     loadError: 'Не вдалося завантажити карту — спробуйте пізніше.',
     truncated: 'Показано перші 50 сторінок.',
+    recrawl:
+      'Точкове оновлення застарілих сторінок: {today} з {limit} за сьогодні (з бюджету знань).',
+    recrawlOff:
+      'Точкове оновлення застарілих сторінок недоступне на вашому тарифі.',
+    recrawlItem: '{page} — {status}, {d}',
+    recrawlStatus: { requested: 'запитано', budget: 'бракує бюджету' },
     staleItem: '«{label}» — {view}',
     sources: {
       crawl: 'обхід',

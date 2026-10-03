@@ -32,6 +32,7 @@ import { WidgetStateService } from './widget-state.service';
 import { WidgetVoiceController } from './widget-voice.controller';
 import { WidgetMediaController } from './widget-media.controller';
 import { WidgetUiPlanController } from './widget-ui-plan.controller';
+import { WidgetVoiceTestController } from './widget-voice-test.controller';
 
 @Module({
   imports: [
@@ -54,6 +55,8 @@ import { WidgetUiPlanController } from './widget-ui-plan.controller';
     WidgetMediaController,
     // Э6-бис: план голосового управления, подтверждение, шаги, стоп.
     WidgetUiPlanController,
+    // Э6-бис (г): мастер проверки Т-2 (тестовая сессия, анализ, отчёт).
+    WidgetVoiceTestController,
     WidgetFrameController,
     LandingPublicController,
     AcquisitionController,

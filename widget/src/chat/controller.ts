@@ -65,6 +65,17 @@ import {
 import type { FrameMessage, ParentMessage } from '../shared/protocol';
 import { VoiceController, voiceOff, type VoiceUi } from './voice';
 import { UiPlanController, uiPlanOff, type UiPlanUi } from './ui-plan';
+import {
+  vtOff,
+  type VoiceTestController,
+  type VtHost,
+  type VtMicPolicy,
+  type VtMicStatus,
+  type VtUi,
+} from './voice-test';
+import type { VtDict } from './i18n-vt';
+import { CHAT_RELEASE, CHUNK_BASE } from './api';
+import type { VoiceControlPublic } from '../shared/config';
 import { looksLikeCommand } from '../shared/ui-plan';
 
 export interface UiMessage extends WidgetMessageView {
@@ -118,6 +129,10 @@ export interface ChatState {
   video: { url: string; title: string } | null;
   /** Э6-бис: голосовое управление — фаза плана, карточка подтверждения. */
   plan: UiPlanUi;
+  /** Э6-бис (г): мастер проверки голосового управления (только владельцу по ссылке). */
+  vt: VtUi;
+  /** Тексты мастера — из ленивого чанка vt.js (null — не загружен). */
+  vtT: VtDict | null;
 }
 
 /** Ответ проактивного сигнала/сценария, отмеченный для атрибуции цели. */
@@ -176,6 +191,10 @@ export class ChatController {
   /** Э5: голос (запись, озвучка) — кнопки зовут его методы напрямую. */
   readonly voice: VoiceController;
   readonly plans: UiPlanController;
+  /** Э6-бис (г): мастер проверки Т-2 — из ленивого чанка vt.js (у посетителей null). */
+  vt: VoiceTestController | null = null;
+  /** Режим тестовой сессии мастера (план iframe — как при `on`). */
+  private vtCfg: VoiceControlPublic | null = null;
   /** Э6-бис: «голосовое управление не включено» — одно уведомление на вкладку. */
   private vcOffShown = false;
   private subs: Array<() => void> = [];
@@ -242,6 +261,8 @@ export class ChatController {
       voice: voiceOff(),
       video: null,
       plan: uiPlanOff(),
+      vt: vtOff(),
+      vtT: null,
     };
     this.voice = new VoiceController({
       ui: () => this.state.voice,
@@ -263,11 +284,22 @@ export class ChatController {
     });
     this.plans = new UiPlanController({
       ui: () => this.state.plan,
-      setUi: (p) => this.set({ plan: { ...this.state.plan, ...p } }),
+      setUi: (p) => {
+        this.set({ plan: { ...this.state.plan, ...p } });
+        // Э6-бис (г): итог безопасной команды мастера.
+        const ph = p.phase;
+        if (ph === 'done' || ph === 'failed' || ph === 'stopped')
+          this.vt?.planDone(ph);
+      },
       t: () => this.state.t,
       lang: () => this.state.lang,
+      // (г) Тестовая сессия мастера — режим в любом состоянии сайта.
       cfg: () =>
-        this.state.cfg.status === 'active' ? this.state.cfg.voiceControl : null,
+        this.vtCfg ??
+        (this.state.cfg.status === 'active'
+          ? this.state.cfg.voiceControl
+          : null),
+      release: () => CHAT_RELEASE,
       api: (method, path, body) => this.api(method, path, body),
       toParent: (m) => this.toParent(m),
       conversationId: () => this.conversationId,
@@ -289,6 +321,55 @@ export class ChatController {
         void this.pollHandoff();
     });
   }
+
+  /**
+   * Э6-бис (г): мастер проверки — ленивый чанк vt.js (контроллер и тексты);
+   * грузится только по ссылке мастера или для незавершённого мастера вкладки.
+   */
+  private async vtLoad(): Promise<VoiceTestController | null> {
+    if (this.vt) return this.vt;
+    const host: VtHost = {
+      ui: () => this.state.vt,
+      setUi: (p) => this.set({ vt: { ...this.state.vt, ...p } }),
+      t: () => this.state.vtT as VtDict,
+      lang: () => this.state.lang,
+      api: (method, path, body) => this.api(method, path, body),
+      toParent: (m) => this.toParent(m),
+      storage: (name, value) => this.ss(name, value),
+      setSession: (s) => {
+        this.auth.vtest = s;
+      },
+      setVoiceControl: (cfg) => {
+        this.vtCfg = cfg;
+      },
+      random: () => uuid().replace(/-/g, '').slice(0, 16),
+      now: () => Date.now(),
+      micPolicy: () => micPolicy(),
+      micProbe: () => micProbe(),
+      listen: () => {
+        if (this.state.voice.mic) this.voice.press();
+      },
+      plans: {
+        snap: () => this.plans.snap(),
+        dry: (text) => this.plans.dry(text),
+        command: (text) => this.plans.command(text, 'typed', null),
+      },
+    };
+    try {
+      const m = (await import(/* @vite-ignore */ `${CHUNK_BASE}vt.js`)) as {
+        VoiceTestController: new (h: VtHost) => VoiceTestController;
+        VT_DICTS: Record<UiLang, VtDict>;
+      };
+      this.vt = new m.VoiceTestController(host);
+      this.set({ vtT: m.VT_DICTS[this.state.lang] });
+      this.vtDicts = m.VT_DICTS;
+      return this.vt;
+    } catch {
+      return null;
+    }
+  }
+
+  private vtDicts: Record<UiLang, VtDict> | null = null;
 
   // ── подписка UI ─────────────────────────────────────────────────────────
 
@@ -396,6 +477,9 @@ export class ChatController {
       case 'ui-need':
         // Э6-бис: снимок/итоги шагов — только своему плану (rid, planId).
         return this.plans.onParent(m);
+      case 'vt-result':
+        // Э6-бис (г): ответ чанка проверки — только ожидаемому запросу (rid).
+        return this.vt?.onResult(m.rid, m.data);
       case 'preview':
         // «к Л2»: второй замок — флаг из конфига сервера здесь же.
         if (this.state.cfg.allowClientPreview)
@@ -416,6 +500,7 @@ export class ChatController {
     this.set({
       lang,
       t: DICTS[lang],
+      vtT: this.vtDicts ? this.vtDicts[lang] : null,
       inline: m.mode === 'inline',
       siteFont: m.siteFont,
       dark: this.isDark(this.state.view, m.siteTheme),
@@ -423,7 +508,7 @@ export class ChatController {
     this.siteTheme = m.siteTheme;
     if (this.booted) return;
     this.booted = true;
-    void this.boot(m.previewToken);
+    void this.boot(m.previewToken, m.voiceTest);
   }
 
   private siteTheme: 'light' | 'dark' | null = null;
@@ -443,7 +528,7 @@ export class ChatController {
 
   // ── старт: конфиг, предпросмотр, сессия, состояние ─────────────────────
 
-  private async boot(previewToken: string | null) {
+  private async boot(previewToken: string | null, voiceTest: string | null) {
     try {
       const raw = await request(
         'GET',
@@ -474,6 +559,13 @@ export class ChatController {
       );
       await this.loadState(s ? s.resumed : false);
       this.openChannel();
+      // Э6-бис (г): ссылка мастера проверки — тестовая сессия; иначе —
+      // продолжить мастер этой вкладки после перехода страницы.
+      if (voiceTest || this.ss('vtsess')) {
+        const vt = await this.vtLoad();
+        if (vt && voiceTest) await vt.start(voiceTest);
+        else if (vt) vt.resume();
+      }
       // Э6-бис: голосовой план этой вкладки — продолжить на новой странице.
       void this.plans.resume();
     } catch (e) {
@@ -772,6 +864,8 @@ export class ChatController {
 
   /** Распознанная речь (Э5): план, ответ на карточку или обычный вопрос. */
   private async voiceText(text: string, ticket: string | null) {
+    // Э6-бис (г): «перевірка зв'язку» в мастере — не вопрос и не команда.
+    if (this.vt?.heard(text)) return;
     if (this.plans.active()) {
       if (await this.plans.planSpeech(text, ticket)) return;
     }
@@ -1547,5 +1641,47 @@ export class ChatController {
 
   savedScroll(): string | null {
     return this.ss('scroll');
+  }
+}
+
+/**
+ * Э6-бис (г): политика микрофона ДЛЯ ЭТОГО iframe — `featurePolicy` внутри
+ * iframe видит и Permissions-Policy сайта, и атрибут `allow` загрузчика
+ * (Chromium; в спецификации — `permissionsPolicy`; иначе — «неизвестно»,
+ * решит запрос микрофона).
+ */
+function micPolicy(): VtMicPolicy {
+  const d = document as Document & {
+    featurePolicy?: { allowsFeature(f: string): boolean };
+    permissionsPolicy?: { allowsFeature(f: string): boolean };
+  };
+  const p = d.permissionsPolicy || d.featurePolicy;
+  if (!p || typeof p.allowsFeature !== 'function') return 'unknown';
+  try {
+    return p.allowsFeature('microphone') ? 'allowed' : 'denied';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Э6-бис (г): запрос микрофона мастера — диагноз без записи. */
+async function micProbe(): Promise<VtMicStatus> {
+  const md = typeof navigator !== 'undefined' ? navigator.mediaDevices : null;
+  if (!md || typeof md.getUserMedia !== 'function')
+    return /iP(hone|ad|od)/.test(navigator.userAgent)
+      ? 'ios_gesture'
+      : 'no_device';
+  try {
+    const stream = await md.getUserMedia({ audio: true });
+    stream.getTracks().forEach((tr) => tr.stop());
+    return 'ok';
+  } catch (e) {
+    const name = (e as { name?: string }).name;
+    if (name === 'NotFoundError' || name === 'OverconstrainedError')
+      return 'no_device';
+    if (name === 'SecurityError') return 'denied_policy';
+    if (name === 'NotAllowedError')
+      return micPolicy() === 'denied' ? 'denied_policy' : 'denied_user';
+    return 'no_device';
   }
 }

@@ -115,6 +115,8 @@ function hydrate(row: DbRow): PlanRow {
 export interface SiteVcRow {
   voiceControlSiteState: string;
   voiceControlSiteRules: unknown;
+  /** (г) Ручной суточный потолок планов от оператора (решение п.2). */
+  voiceControlPlansPerDay: number | null;
 }
 
 export async function readSiteVoiceControl(
@@ -122,7 +124,7 @@ export async function readSiteVoiceControl(
   siteId: string,
 ): Promise<SiteVcRow | null> {
   const rows = await db.$queryRawUnsafe<SiteVcRow[]>(
-    `SELECT "voiceControlSiteState", "voiceControlSiteRules" FROM "sites"."assist_sites" WHERE "siteId" = $1`,
+    `SELECT "voiceControlSiteState", "voiceControlSiteRules", "voiceControlPlansPerDay" FROM "sites"."assist_sites" WHERE "siteId" = $1`,
     siteId,
   );
   return rows[0] ?? null;
@@ -147,12 +149,18 @@ export async function insertPlan(
     confirmedBy: string | null;
     confirmBefore: Date;
     expiresAt: Date;
+    /** (г) План тестовой сессии мастера Т-2 (в метрики Т-4 не идёт). */
+    voiceTestId?: string | null;
+    /** (г) Сухой прогон мастера — без исполнения. */
+    dryRun?: boolean;
+    /** (г) Выпуск чанков виджета (канарейка). */
+    release?: string | null;
   },
 ): Promise<string> {
   const id = randomUUID();
   await db.$executeRawUnsafe(
-    `INSERT INTO ${PLANS} ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $16::jsonb, 0, $11, $12, $13, $14, $15, now())`,
+    `INSERT INTO ${PLANS} ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "voiceTestId", "dryRun", "release", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $16::jsonb, 0, $11, $12, $13, $14, $15, $17, $18, $19, now())`,
     id,
     p.accountId,
     p.siteId,
@@ -171,6 +179,9 @@ export async function insertPlan(
     LIVE_PLAN_STATUSES.includes(p.status)
       ? liveValuesOf(p.utterance, p.steps)
       : null,
+    p.voiceTestId ?? null,
+    p.dryRun === true,
+    p.release ?? null,
   );
   return id;
 }

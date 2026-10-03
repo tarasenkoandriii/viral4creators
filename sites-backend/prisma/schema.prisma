@@ -193,6 +193,12 @@ model Site {
   // Э-С Ш2: тестовые учётные записи сайта (общие с QA).
   testAccounts SiteTestAccount[]
 
+  // Э6-бис (г): отчёты мастера проверки, контрольные команды, переобход
+  // устаревших страниц карты (решение владельца 03.10.2026 п.4).
+  voiceTests           AssistSiteVoiceTest[]
+  voiceControlCommands AssistSiteVoiceControlCommand[]
+  uiRecrawls           AssistSiteUiRecrawl[]
+
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
   @@unique([id, accountId])
@@ -875,6 +881,26 @@ model AssistSite {
   /// Правила кабинета: зоны, запреты, подтверждение заполнения, лимит шагов
   /// — форма assist-ui-core/rules.ts. Секретов нет: роль виджета читает.
   voiceControlSiteRules Json?
+
+  // ── Э6-бис (г): мастер проверки Т-2, монитор Т-4 (ТЗ §5-бис.11–14) ──
+  // Роль виджета читает из этих полей ТОЛЬКО `voiceControlPlansPerDay`
+  // (потолок планов сайта); остальное — кабинету, монитору и платформе.
+  /// Отчёт мастера Т-2 (assist_site_voice_tests.id), который «держит» `on`
+  /// (решение владельца 03.10.2026 п.1: `on` — только после «зелёного»
+  /// отчёта). null — `on` без отчёта (переходный период) или не `on`.
+  voiceControlSiteTestId      String?
+  /// Когда, кем (owner | monitor | transition | violation | operator) и
+  /// почему (код) состояние сменилось последний раз — для TMA и выхода из
+  /// `degraded` (нужен `pass` новее этой отметки).
+  voiceControlSiteStateAt     DateTime?
+  voiceControlSiteStateBy     String?
+  voiceControlSiteStateReason String?
+  /// Переходный период (решение п.1): сайт был в `on` до мастера — 14 дней
+  /// с баннером «пройдите проверку», затем монитор переводит в `test`.
+  voiceControlCheckDeadline   DateTime?
+  /// Ручной суточный потолок планов сайта от оператора платформы (решение
+  /// п.2, как `voiceDailyCapMicroUsd`); null — по тарифу (Business 300, Pro 1000).
+  voiceControlPlansPerDay     Int?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2724,12 +2750,23 @@ model AssistSiteUiPlan {
   confirmBefore   DateTime
   /// План живёт 10 минут (§4-бис.2: незавершённое подтверждение).
   expiresAt       DateTime
+  /// (г) План тестовой сессии мастера Т-2 (assist_site_voice_tests.id): в
+  /// метрики монитора Т-4 не идёт, диалоги тарифа не тратит.
+  voiceTestId     String?
+  /// (г) Сухой прогон мастера: план построен и проверен, цели только
+  /// подсвечиваются — исполнения нет (статус сразу `done`).
+  dryRun          Boolean                @default(false)
+  /// (г) Выпуск чанков виджета, на котором построен план (канарейка
+  /// загрузчика: доля `done` канарейки против стабильного).
+  release         String?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 
   actions AssistSiteUiActionLog[]
 
   @@unique([id, accountId])
+  @@index([siteId, createdAt])
+  @@index([voiceTestId])
   @@index([siteId, visitorId, createdAt])
   @@index([conversationId])
   @@index([accountId])
@@ -2768,6 +2805,126 @@ model AssistSiteUiActionLog {
   @@index([siteId, createdAt])
   @@index([accountId])
   @@map("assist_site_ui_action_log")
+}
+
+/// Э6-бис (г): проверка голосового управления на сайте заказчика — мастер
+/// Т-2 (`wizard`; Т-3 `autotest` — с общим QA-воркером, отложен). Строка
+/// создаётся кабинетом вместе с одноразовой ссылкой (`tokenHash`, 30 мин),
+/// iframe меняет ссылку на тестовую сессию (`sessionHash`, 30 мин,
+/// привязка к посетителю) и сдаёт отчёт (`report`, `result`); вердикт
+/// считает КОД (assist-ui-core/wizard.ts), безопасные прогоны — по планам
+/// этой сессии в базе, запреты — заново по снимку. Сырых значений и ПД нет:
+/// подписи элементов — маскированные, токены — только хешами.
+model AssistSiteVoiceTest {
+  id               String    @id @default(cuid())
+  accountId        String
+  siteId           String
+  site             Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// wizard | autotest
+  kind             String    @default("wizard")
+  /// Подтверждённый хост сайта, на котором идёт проверка, и его origin.
+  host             String
+  origin           String
+  /// Хост отмечен владельцем «тестовый» (staging): отправка форм — только тут.
+  testHost         Boolean   @default(false)
+  /// memberId кабинета, выдавшего ссылку.
+  startedBy        String?
+  tokenHash        String    @unique
+  tokenExpiresAt   DateTime
+  usedAt           DateTime?
+  sessionHash      String?   @unique
+  sessionExpiresAt DateTime?
+  visitorId        String?
+  /// Выпуск чанков виджета на момент отчёта («до смены загрузчика»).
+  release          String?
+  /// Проверенные страницы (пути) и отпечаток их разметки.
+  pages            Json?
+  /// Отчёт мастера (форма — assist-ui-core/wizard.ts `WizardReport`).
+  report           Json?
+  /// pass | partial | fail
+  result           String?
+  /// Годен для включения `on` до (30 дней от отчёта).
+  validUntil       DateTime?
+  reportedAt       DateTime?
+  /// `partial`: владелец подтвердил «понимаю, часть команд — „нажмите сами“».
+  partialAckBy     String?
+  partialAckAt     DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_voice_tests")
+}
+
+/// Э6-бис (г): контрольные команды сайта (§5-бис.13) — из отчёта мастера
+/// (`wizard`) и самые частые успешные команды боя (`production_top`, ≤ 20).
+/// Формулировка — маскированная, цели — только дескрипторы (роль, видимый
+/// текст, `data-assist-id`). Их разрешает Т-3 (общий QA-воркер — отложен).
+model AssistSiteVoiceControlCommand {
+  id              String    @id @default(cuid())
+  accountId       String
+  siteId          String
+  site            Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  testId          String?
+  pagePath        String
+  utteranceMasked String
+  lang            String?
+  /// [{ kind, role, text, assistId }] — дескрипторы целей шагов.
+  expected        Json
+  /// wizard | production_top
+  origin          String
+  lastCheckedAt   DateTime?
+  lastResult      String?
+  createdAt       DateTime  @default(now())
+
+  @@unique([siteId, origin, pagePath, utteranceMasked])
+  @@index([accountId])
+  @@map("assist_site_voice_control_commands")
+}
+
+/// Э6-бис (г): журнал монитора Т-4 (§5-бис.14) — тревоги, авто-деградация,
+/// выключение при нарушении запрета, конец переходного периода, откат
+/// канарейки, рубильник платформы. `siteId` null — событие платформы.
+/// Без внешнего ключа (события платформы — без сайта); срок — 90 дней
+/// (чистит сам монитор).
+model AssistSiteVoiceIncident {
+  id        String   @id @default(cuid())
+  accountId String?
+  siteId    String?
+  /// alert | degraded | off | transition | rollback | platform_off
+  kind      String
+  /// Причина: done_low, self_high, not_found_high, stoplist_live, violation, …
+  code      String
+  metrics   Json?
+  /// Сколько получателей получили сообщение (владельцы + служебный канал).
+  notified  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([createdAt])
+  @@map("assist_site_voice_incidents")
+}
+
+/// Решение владельца 03.10.2026 п.4: точечный переобход страницы, элементы
+/// карты которой устарели (Ш4) — только эта страница, ≤ 1 раза в сутки на
+/// страницу, ≤ N страниц в сутки на сайт по тарифу (Start 0, Business 5,
+/// Pro 20), за счёт бюджета знаний сайта. Журнал — для лимитов и сводки TMA.
+model AssistSiteUiRecrawl {
+  id            String   @id @default(cuid())
+  accountId     String
+  siteId        String
+  site          Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  host          String
+  path          String
+  staleElements Int
+  /// requested | budget (бюджет знаний исчерпан — повтор завтра)
+  status        String
+  runId         String?
+  createdAt     DateTime @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_ui_recrawls")
 }
 
 // ═══ Э6: видео-ответы и «показать на экране» (ТЗ §4.9, §4.11, §4.12; план,

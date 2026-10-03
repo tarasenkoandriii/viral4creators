@@ -54,3 +54,10 @@ export const WIDGET_HIGHLIGHT_PATH = '/v1/highlight.js';
 // Э6-бис: голосовое управление — снимок страницы и исполнитель шагов
 // (ленивый чанк загрузчика: только по команде своего iframe).
 export const WIDGET_ACT_PATH = '/v1/act.js';
+
+// Э6-бис (г): мастер проверки голосового управления (зеркало блока «Э6-бис
+// (г)» sites-backend/src/brand.ts) — параметр одноразовой ссылки, заголовок
+// тестовой сессии, ленивый чанк проверки страницы.
+export const WIDGET_VOICE_TEST_PARAM = 'v4c_voicetest';
+export const WIDGET_VOICE_TEST_HEADER = 'X-Assist-Voice-Test';
+export const WIDGET_CHECK_PATH = '/v1/check.js';

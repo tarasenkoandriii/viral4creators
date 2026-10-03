@@ -42,6 +42,7 @@ export const WIDGET_ERROR_STATUS: Record<WidgetErrorCode, number> = {
   PLAN_CONFLICT: 409,
   PLAN_CHANGED: 409,
   UI_PLAN_TOO_LARGE: 413,
+  VOICE_TEST_INVALID: 403,
 };
 
 const MESSAGE: Record<WidgetErrorCode, string> = {
@@ -73,6 +74,8 @@ const MESSAGE: Record<WidgetErrorCode, string> = {
   PLAN_CONFLICT: 'План уже изменился — обновите страницу',
   PLAN_CHANGED: 'План изменился — подтвердите заново',
   UI_PLAN_TOO_LARGE: 'Страница слишком большая для голосового управления',
+  VOICE_TEST_INVALID:
+    'Ссылка проверки недействительна или уже использована — получите новую в кабинете',
 };
 
 export function widgetError(

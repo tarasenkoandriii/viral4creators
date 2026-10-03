@@ -7,7 +7,11 @@
  * сюда не дотягивается — токен живёт в хранилище iframe.
  */
 import * as request from 'supertest';
-import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
+import { createHash, randomBytes } from 'crypto';
+import {
+  WIDGET_VISITOR_TOKEN_HEADER,
+  WIDGET_VOICE_TEST_HEADER,
+} from '../../brand';
 import { setPlan } from '../../modules/assist-billing/testing/billing-fixtures.testing';
 import { VOICE_CONTROL_DEFAULTS } from '../../modules/assist-site-voice-control/voice-control-config';
 import { SNAPSHOT_LIMITS } from '../../modules/assist-ui-core/snapshot';
@@ -296,6 +300,102 @@ describeDb('Э6-бис: голосовое управление по HTTP', () =
       url: `${f.hosts[0].origin}/delivery`,
     }).expect(200);
     expect(ok.body.data.status).toBe('done');
+  });
+
+  it('(г) режим `test`: конфиг без voiceControl, обычный посетитель — 403; ссылка мастера → тестовая сессия по заголовку → план и анализ; чужая/повторная ссылка — 403 VOICE_TEST_INVALID', async () => {
+    const f = await site('test');
+    const cfg = (
+      await request(srv()).get(`/widget/v1/config?pk=${f.pk}`).expect(200)
+    ).body.data;
+    expect(cfg.voiceControl).toBeUndefined();
+    expect(cfg.release).toBeUndefined();
+    const t = await token(f);
+    const post = (path: string, b: unknown, test?: string) => {
+      const r = request(srv())
+        .post(path)
+        .set('Origin', W_ORIGIN)
+        .set(WIDGET_VISITOR_TOKEN_HEADER, t);
+      if (test) r.set(WIDGET_VOICE_TEST_HEADER, test);
+      return r.send(b as object);
+    };
+    expect(
+      (
+        await post('/widget/v1/ui-plan', body(f, 'відкрий доставку')).expect(
+          403,
+        )
+      ).body.error.code,
+    ).toBe('VOICE_CONTROL_OFF');
+    // Ссылка мастера (строку создаёт кабинет; в базе — хеш).
+    const link = randomBytes(24).toString('base64url');
+    const host = await stack.prisma.siteHost.findFirst({
+      where: { siteId: f.siteId },
+    });
+    const row = await stack.prisma.assistSiteVoiceTest.create({
+      data: {
+        accountId: f.accountId,
+        siteId: f.siteId,
+        host: host!.host,
+        origin: f.hosts[0].origin,
+        tokenHash: createHash('sha256').update(link).digest('hex'),
+        tokenExpiresAt: new Date(Date.now() + 60_000),
+      },
+    });
+    expect(
+      (
+        await post('/widget/v1/voice-test/session', {
+          token: 'x'.repeat(32),
+        }).expect(403)
+      ).body.error.code,
+    ).toBe('VOICE_TEST_INVALID');
+    const ex = await post('/widget/v1/voice-test/session', {
+      token: link,
+    }).expect(200);
+    expect(ex.headers['cache-control']).toBe('no-store');
+    expect(ex.body.data).toMatchObject({
+      testId: row.id,
+      voiceControl: { mode: 'on' },
+    });
+    const sess = ex.body.data.session as string;
+    expect(
+      (await post('/widget/v1/voice-test/session', { token: link }).expect(403))
+        .body.error.code,
+    ).toBe('VOICE_TEST_INVALID');
+    // Тестовая сессия по заголовку — план есть; сухой прогон — тоже.
+    const p = await post(
+      '/widget/v1/ui-plan',
+      body(f, 'відкрий доставку'),
+      sess,
+    ).expect(200);
+    expect(p.body.data.status).toBe('confirmed');
+    const d = await post(
+      '/widget/v1/ui-plan',
+      { ...body(f, 'відкрий доставку'), dryRun: true },
+      sess,
+    ).expect(200);
+    expect(d.body.data.status).toBe('done');
+    const a = await post(
+      `/widget/v1/voice-test/${row.id}/analyze`,
+      { snapshot: body(f, '').snapshot },
+      sess,
+    ).expect(200);
+    expect(a.body.data.forbidden).toHaveLength(5);
+    // Без заголовка или с чужим тестом — 403.
+    expect(
+      (
+        await post(`/widget/v1/voice-test/${row.id}/analyze`, {
+          snapshot: body(f, '').snapshot,
+        }).expect(403)
+      ).body.error.code,
+    ).toBe('VOICE_TEST_INVALID');
+    expect(
+      (
+        await post(
+          '/widget/v1/voice-test/other/analyze',
+          { snapshot: body(f, '').snapshot },
+          sess,
+        ).expect(403)
+      ).body.error.code,
+    ).toBe('VOICE_TEST_INVALID');
   });
 
   it('лимит планов посетителя в минуту — 429 RATE_LIMITED', async () => {

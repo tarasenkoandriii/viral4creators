@@ -239,6 +239,27 @@ function UiMapDetail({ view }: { view: SiteUiMapView }) {
       {view.truncated && (
         <p className="text-xs text-silver-500">{t.truncated}</p>
       )}
+      {view.recrawl && (
+        <div className="text-xs text-silver-500 space-y-0.5 border-t border-silver-200 pt-2">
+          <p>
+            {view.recrawl.perDay === 0
+              ? t.recrawlOff
+              : fmt(t.recrawl, {
+                  today: String(view.recrawl.today),
+                  limit: String(view.recrawl.perDay),
+                })}
+          </p>
+          {view.recrawl.recent.map((r, i) => (
+            <div key={i} className="break-all">
+              {fmt(t.recrawlItem, {
+                page: `${r.host}${r.path}`,
+                status: t.recrawlStatus[r.status],
+                d: new Date(r.createdAt).toLocaleDateString(),
+              })}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

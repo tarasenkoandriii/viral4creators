@@ -13,3 +13,4 @@ export * from './rules';
 export * from './plan-checks';
 export * from './plan-prompt';
 export * from './direct-plan';
+export * from './wizard';

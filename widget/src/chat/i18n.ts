@@ -107,6 +107,9 @@ const uk = {
   vcNoSnapshot: 'Не вдалося прочитати сторінку — натисніть самі.',
   vcNothing: 'Не знайшов, що натиснути на цій сторінці.',
   vcOtherTab: 'Помічник працює в іншій вкладці.',
+  // Э6-бис (г), решение владельца п.3: отозвать согласие «натискати за вас».
+  vcRevoke: 'Заборонити помічнику натискати',
+  vcRevoked: 'Добре: помічник більше не натискатиме за вас без нового дозволу.',
   vcStep: {
     click: 'натисну «{t}»',
     fill: 'введу «{v}» у «{t}»',
@@ -238,6 +241,9 @@ const ru: Dict = {
   vcNoSnapshot: 'Не удалось прочитать страницу — нажмите сами.',
   vcNothing: 'Не нашёл, что нажать на этой странице.',
   vcOtherTab: 'Помощник работает в другой вкладке.',
+  vcRevoke: 'Запретить помощнику нажимать',
+  vcRevoked:
+    'Хорошо: помощник больше не будет нажимать за вас без нового разрешения.',
   vcStep: {
     click: 'нажму «{t}»',
     fill: 'введу «{v}» в «{t}»',
@@ -367,6 +373,8 @@ const en: Dict = {
   vcNoSnapshot: "Couldn't read the page — please press it yourself.",
   vcNothing: 'Found nothing to press on this page.',
   vcOtherTab: 'The assistant is working in another tab.',
+  vcRevoke: 'Stop the assistant from clicking',
+  vcRevoked: "OK: the assistant won't click for you without a new permission.",
   vcStep: {
     click: 'press “{t}”',
     fill: 'type “{v}” into “{t}”',

@@ -27,6 +27,7 @@ import * as snapNs from '../../../sites-backend/src/modules/assist-ui-core/snaps
 import * as directNs from '../../../sites-backend/src/modules/assist-ui-core/direct-plan';
 import * as wordsNs from '../../../sites-backend/src/modules/assist-ui-core/action-words';
 import * as normNs from '../../../sites-backend/src/modules/assist-ui-core/normalize';
+import * as wizardNs from '../../../sites-backend/src/modules/assist-ui-core/wizard';
 import type { RawStep } from '../../../sites-backend/src/modules/assist-ui-core/plan-checks';
 import type {
   UiPlanStep,
@@ -41,6 +42,15 @@ const { parseSnapshot } = cjs(snapNs);
 const { directPlan, looksLikeCommand } = cjs(directNs);
 const { replyKind } = cjs(wordsNs);
 const { normText } = cjs(normNs);
+const {
+  denySuggestions,
+  forbiddenProbes,
+  markupFragment,
+  neverList,
+  parseSuspicious,
+  suggestCommands,
+  wizardVerdict,
+} = cjs(wizardNs);
 
 /** Шаг «ответа модели» в фикстуре: цель — описанием, как её видит модель. */
 export interface ModelStep {
@@ -69,6 +79,12 @@ export interface VcSite {
   vcRules?: unknown;
   /** Нормализованный текст команды → «ответ модели» (или `not_command`). */
   vcModel?: Record<string, ModelStep[] | 'not_command'>;
+  /**
+   * Э6-бис (г): одноразовые ссылки мастера проверки Т-2 (как выдал бы
+   * кабинет). Сайт без `voiceControl` = режим `test`: план — только у
+   * тестовой сессии мастера (заголовок `X-Assist-Voice-Test`).
+   */
+  vtTokens?: string[];
 }
 
 type StepView = UiPlanStep & { state: string };
@@ -85,6 +101,9 @@ interface MockPlan {
   needsConfirm: boolean;
   confirmedBy: string | null;
   createdAt: number;
+  /** (г) План тестовой сессии мастера и сухой прогон. */
+  testId?: string | null;
+  dryRun?: boolean;
 }
 
 export interface VcLog {
@@ -114,6 +133,16 @@ export interface VcLog {
   stops: Array<{ planId: string; by: string }>;
   confirms: Array<{ planId: string; by: string }>;
   resumes: number;
+  /** (г) Мастер проверки: обмены ссылок, анализы, отчёты (тела как пришли). */
+  vt: {
+    sessions: Array<{ siteId: string; ok: boolean }>;
+    analyses: number;
+    reports: Array<{
+      body: Record<string, unknown>;
+      result: string;
+      items: unknown[];
+    }>;
+  };
 }
 
 export function freshVcLog(): VcLog {
@@ -124,7 +153,30 @@ export function freshVcLog(): VcLog {
     stops: [],
     confirms: [],
     resumes: 0,
+    vt: { sessions: [], analyses: 0, reports: [] },
   };
+}
+
+/** (г) Тестовые сессии мастера: сессия → тест, сайт, посетитель. */
+const VT_SESSIONS = new Map<
+  string,
+  { testId: string; siteId: string; visitorId: string; reported: boolean }
+>();
+const VT_USED = new Set<string>();
+
+/** Тестовая сессия из заголовка (как VoiceTestService.session). */
+export function vtSessionOf(
+  req: http.IncomingMessage,
+  tok: { visitorId: string; siteId: string }
+): string | null {
+  const h = req.headers['x-assist-voice-test'];
+  const v = typeof h === 'string' ? VT_SESSIONS.get(h) : undefined;
+  return v &&
+    v.siteId === tok.siteId &&
+    v.visitorId === tok.visitorId &&
+    !v.reported
+    ? v.testId
+    : null;
 }
 
 const PLANS = new Map<string, MockPlan>();
@@ -266,6 +318,10 @@ export async function uiPlanRoute(
     err(404, 'NOT_FOUND');
     return true;
   }
+  // (г) Тестовая сессия мастера: режим в любом состоянии сайта.
+  const test = vtSessionOf(req, tok);
+  if (test && !site.voiceControl)
+    site = { ...site, voiceControl: { mode: 'on' } };
   const mineActive = () =>
     [...PLANS.values()]
       .filter(
@@ -289,6 +345,12 @@ export async function uiPlanRoute(
       err(403, 'VOICE_CONTROL_OFF');
       return true;
     }
+    // (г) Сухой прогон — только мастеру.
+    if (b.dryRun === true && !test) {
+      err(400, 'BAD_REQUEST');
+      return true;
+    }
+    const dryRun = b.dryRun === true;
     const text = typeof b.text === 'string' ? b.text.trim() : '';
     const source = b.source;
     if (
@@ -369,13 +431,17 @@ export async function uiPlanRoute(
       steps,
       currentStep: 0,
       status: steps.length
-        ? checked.needsConfirm
-          ? 'proposed'
-          : 'confirmed'
+        ? dryRun
+          ? 'done'
+          : checked.needsConfirm
+            ? 'proposed'
+            : 'confirmed'
         : 'failed',
-      needsConfirm: checked.needsConfirm,
-      confirmedBy: checked.needsConfirm ? null : 'auto',
+      needsConfirm: !dryRun && checked.needsConfirm,
+      confirmedBy: dryRun ? 'dry' : checked.needsConfirm ? null : 'auto',
       createdAt: Date.now(),
+      testId: test,
+      dryRun,
     };
     PLANS.set(plan.id, plan);
     log.plans.push({
@@ -579,5 +645,190 @@ export async function uiPlanRoute(
       return true;
     }
   }
+  return true;
+}
+
+/**
+ * (г) Мастер проверки Т-2 — `/widget/v1/voice-test/*` (как
+ * assist-site-voice-control/public/voice-test.service.ts): обмен ссылки
+ * (один раз, сайт), анализ (команды, запреты без звука, список 1 —
+ * настоящий `assist-ui-core/wizard`), отчёт (вердикт — тем же кодом; планы
+ * сессии — из мока). Деньги, роль БД и годность — sites-backend.
+ */
+export async function voiceTestRoute(
+  req: http.IncomingMessage,
+  p: string,
+  tok: { visitorId: string; siteId: string },
+  site: VcSite | undefined,
+  body: () => Promise<{ raw: string; json: Record<string, unknown> }>,
+  log: VcLog,
+  reply: Reply
+): Promise<boolean> {
+  if (!p.startsWith('/widget/v1/voice-test')) return false;
+  const ok = (data: unknown) => reply(200, { success: true, data });
+  const err = (status: number, code: string) =>
+    reply(status, { success: false, error: { code, message: code } });
+  if (!site || req.method !== 'POST') {
+    err(404, 'NOT_FOUND');
+    return true;
+  }
+  const { json: b } = await body();
+  if (p === '/widget/v1/voice-test/session') {
+    const token = typeof b.token === 'string' ? b.token : '';
+    const valid = !!site.vtTokens?.includes(token) && !VT_USED.has(token);
+    log.vt.sessions.push({ siteId: tok.siteId, ok: valid });
+    if (!valid) {
+      err(403, 'VOICE_TEST_INVALID');
+      return true;
+    }
+    VT_USED.add(token);
+    const session = crypto.randomBytes(32).toString('base64url');
+    const testId = 'vt_' + crypto.randomBytes(6).toString('hex');
+    VT_SESSIONS.set(session, {
+      testId,
+      siteId: tok.siteId,
+      visitorId: tok.visitorId,
+      reported: false,
+    });
+    const r = rules(site);
+    ok({
+      session,
+      testId,
+      expiresAt: new Date(Date.now() + 1_800_000).toISOString(),
+      testHost: false,
+      voiceControl: {
+        mode: 'on',
+        denySelectors: r?.denySelectors ?? [],
+        allowSelectors: r?.allowSelectors ?? [],
+        maxSteps: r?.maxSteps ?? 6,
+      },
+    });
+    return true;
+  }
+  const m =
+    /^\/widget\/v1\/voice-test\/([A-Za-z0-9_-]{1,64})\/(analyze|report)$/.exec(
+      p
+    );
+  const test = vtSessionOf(req, tok);
+  if (!m || !test || test !== m[1]) {
+    err(403, 'VOICE_TEST_INVALID');
+    return true;
+  }
+  const snap = parseSnapshot(b.snapshot);
+  const r = rules(site);
+  const hosts = hostsOf(site);
+  if (!snap || !r || !onSiteHost(snap.url, hosts)) {
+    err(400, 'BAD_REQUEST');
+    return true;
+  }
+  const lang = b.lang === 'ru' || b.lang === 'en' ? b.lang : 'uk';
+  if (m[2] === 'analyze') {
+    log.vt.analyses++;
+    ok({
+      commands: suggestCommands({ snapshot: snap, rules: r, hosts, lang }),
+      forbidden: forbiddenProbes({ snapshot: snap, rules: r, hosts, lang }),
+      never: neverList({ snapshot: snap, rules: r, hosts }),
+    });
+    return true;
+  }
+  const mine = [...PLANS.values()].filter((x) => x.testId === test);
+  const exec = (x: MockPlan) =>
+    x.steps.filter((s) => s.risk === 'auto' || s.risk === 'confirm');
+  const okBy = new Map<string, number>();
+  for (const d of Array.isArray(b.dry) ? b.dry : []) {
+    const o = d as Record<string, unknown>;
+    if (typeof o.planId === 'string' && typeof o.ok === 'number')
+      okBy.set(o.planId, o.ok);
+  }
+  const dry = mine
+    .filter((x) => x.dryRun)
+    .map((x) => ({
+      planId: x.id,
+      command: x.transcript,
+      steps: exec(x).length,
+      ok: Math.min(okBy.get(x.id) ?? 0, exec(x).length),
+    }));
+  const safe = mine
+    .filter((x) => !x.dryRun)
+    .slice(-3)
+    .map((x) => ({
+      planId: x.id,
+      command: x.transcript,
+      status: x.status,
+      done:
+        x.status === 'done' &&
+        exec(x).every((s) => s.state === 'done') &&
+        !x.steps.some((s) => s.state === 'manual' || s.state === 'failed'),
+    }));
+  const env = (b.env ?? {}) as Record<string, unknown>;
+  const mic = (typeof b.mic === 'string' ? b.mic : 'skipped') as 'ok';
+  const suspicious = parseSuspicious(b.suspicious);
+  const reviewed = (b.reviewed ?? {}) as Record<string, 'deny' | 'safe'>;
+  const markupRaw = (b.markup ?? {}) as Record<string, unknown>;
+  const markup = {
+    total: Number(markupRaw.total) || 0,
+    withId: Number(markupRaw.withId) || 0,
+    unnamed: Array.isArray(markupRaw.unnamed)
+      ? (markupRaw.unnamed as Array<{
+          key: string;
+          tag: string;
+          selector: string;
+        }>)
+      : [],
+    closedShadow: Number(markupRaw.closedShadow) || 0,
+    extIframes: Number(markupRaw.extIframes) || 0,
+    duplicates: Array.isArray(markupRaw.duplicates)
+      ? (markupRaw.duplicates as Array<{ name: string; count: number }>)
+      : [],
+    denied: Number(markupRaw.denied) || 0,
+  };
+  const forbidden = forbiddenProbes({ snapshot: snap, rules: r, hosts, lang });
+  const verdict = wizardVerdict({
+    env: {
+      widget: env.widget === true,
+      chunks: env.chunks === true,
+      csp: Number(env.csp) || 0,
+      tt: Number(env.tt) || 0,
+      micPolicy:
+        env.micPolicy === 'denied' || env.micPolicy === 'allowed'
+          ? env.micPolicy
+          : 'unknown',
+      release: null,
+    },
+    mic,
+    markup,
+    suspicious,
+    reviewed,
+    dry,
+    safe,
+    forbidden,
+  });
+  VT_SESSIONS.forEach((v) => {
+    if (v.testId === test) v.reported = true;
+  });
+  log.vt.reports.push({
+    body: b,
+    result: verdict.result,
+    items: verdict.items,
+  });
+  ok({
+    testId: test,
+    result: verdict.result,
+    validUntil: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    report: {
+      items: verdict.items,
+      never: neverList({ snapshot: snap, rules: r, hosts }),
+      denySuggestions: denySuggestions(suspicious, reviewed),
+      fragment: markupFragment({
+        unnamed: markup.unnamed,
+        suspicious,
+        reviewed,
+        lang,
+      }),
+      dry,
+      safe,
+      forbidden,
+    },
+  });
   return true;
 }

@@ -72,10 +72,14 @@ interface PageOpts {
   csp: boolean;
   widget: string;
   lang?: string;
+  /** Э6-бис (г): `Permissions-Policy: microphone=()` (мастер: «политика сайта»). */
+  noMic?: boolean;
+  /** Э6-бис (г): кнопки без имени и «похожие на опасные» (мастер, шаг 3). */
+  unnamed?: boolean;
 }
 
 function q(o: PageOpts, extra = ''): string {
-  return `?pk=${encodeURIComponent(o.pk)}${o.marked ? '&m=1' : ''}${o.csp ? '&csp=1' : ''}${extra}`;
+  return `?pk=${encodeURIComponent(o.pk)}${o.marked ? '&m=1' : ''}${o.csp ? '&csp=1' : ''}${o.noMic ? '&pp=0' : ''}${o.unnamed ? '&ux=1' : ''}${extra}`;
 }
 
 function shell(
@@ -179,6 +183,15 @@ function polygon(o: PageOpts, page: string): string {
     ${o.csp ? '' : `<iframe id="same" src="/vc/polygon/inner${q(o)}" width="200" height="60"></iframe>`}
   </section>
   <section data-assist="never"><button id="never-btn">Скасувати замовлення адміном</button></section>
+  ${
+    o.unnamed
+      ? `<section id="ux"><h2>Іконки</h2>
+    <button id="ux-heart" class="icon"><svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/></svg></button>
+    <button id="ux-trash" class="btn-trash"><i class="icon-trash"></i></button>
+    <form method="post" action="/vc/polygon/"><button id="ux-post" type="submit"></button></form>
+  </section>`
+      : ''
+  }
   </main>`,
     ['/vc/polygon.js']
   );
@@ -421,16 +434,16 @@ export async function vcStandRoute(
     marked: url.searchParams.get('m') === '1',
     csp: url.searchParams.get('csp') === '1',
     widget,
+    noMic: url.searchParams.get('pp') === '0',
+    unnamed: url.searchParams.get('ux') === '1',
   };
   const html = (body: string) =>
-    send(
-      200,
-      'text/html; charset=utf-8',
-      body,
-      o.csp
+    send(200, 'text/html; charset=utf-8', body, {
+      ...(o.csp
         ? { 'Content-Security-Policy': POLYGON_CSP.replace(/\{W\}/g, widget) }
-        : {}
-    );
+        : {}),
+      ...(o.noMic ? { 'Permissions-Policy': 'microphone=()' } : {}),
+    });
   const back = (to: string) => {
     res.writeHead(303, { Location: to, 'Cache-Control': 'no-store' });
     res.end();

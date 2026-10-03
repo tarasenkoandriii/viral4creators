@@ -34,6 +34,7 @@ import {
   ownerPrisma,
 } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import { LearningReadApi } from '../../modules/assist-site-learning/learning-read.service';
+import { VoiceMonitorService } from '../../modules/assist-site-voice-control/system/voice-monitor.service';
 import { OWNER_PRODUCT_ROLES } from '../../modules/site-core/account/roles';
 import { SiteCoreModule } from '../../modules/site-core/site-core.module';
 import { TelegramAuthModule } from '../../modules/telegram-auth/telegram-auth.module';
@@ -105,6 +106,8 @@ describeDb(
             provide: AssistDigestService,
             useValue: { now: () => new Date(), run: jest.fn() },
           },
+          // Э6-бис (г): монитор голосового управления — в том же кроне.
+          { provide: VoiceMonitorService, useValue: { run: jest.fn() } },
         ],
       }).compile();
       app = mod.createNestApplication();

@@ -51,6 +51,24 @@ export const VOICE_CONTROL_DEFAULTS = {
   maxBodyBytes: 96 * 1024,
 } as const;
 
+/**
+ * Суточный потолок планов сайта: ручной оверрайд оператора платформы
+ * (`assist_sites.voiceControlPlansPerDay`, решение владельца 03.10.2026 п.2
+ * — продавать увеличение лимита) или тариф (Business 300, Pro 1000).
+ */
+export function plansPerSitePerDay(
+  override: number | null | undefined,
+  planId: AssistPlanId | null,
+): number {
+  if (
+    typeof override === 'number' &&
+    Number.isInteger(override) &&
+    override >= 0
+  )
+    return override;
+  return planId ? VOICE_CONTROL_DEFAULTS.plansPerSitePerDayByPlan[planId] : 0;
+}
+
 /** Публичный код видит режим только в этих состояниях (`test` — мастер Т-2, часть (г)). */
 export function stateOf(raw: unknown): VoiceControlState {
   return (VOICE_CONTROL_STATES as readonly unknown[]).includes(raw)
@@ -59,7 +77,12 @@ export function stateOf(raw: unknown): VoiceControlState {
 }
 
 export type VoiceControlOffReason =
-  'platform_off' | 'voice_off' | 'state_off' | 'rules_invalid';
+  | 'platform_off'
+  | 'voice_off'
+  | 'state_off'
+  /** (г) Режим `test`: только тестовая сессия мастера Т-2 (по токену). */
+  | 'state_test'
+  | 'rules_invalid';
 
 export interface VoiceControlAccess {
   /** `on` — исполняет; `degraded` — только подсветка и «нажмите здесь». */
@@ -75,12 +98,19 @@ export interface VoiceControlAccess {
  * доступен, только если включён голос»), переключатель `on`/`degraded`,
  * правила кабинета разбираются (битые запреты — режим выключен, а не
  * «без запретов»).
+ *
+ * (г) Тестовая сессия мастера Т-2 (`testSession`) получает полный режим
+ * (`on`) в ЛЮБОМ состоянии сайта (§5-бис.11: `test` — «только участник
+ * кабинета, открывший сайт по одноразовой ссылке мастера»; мастер нужен и
+ * чтобы выйти из `degraded`/`off`) — но не мимо рубильника, голоса и
+ * правил. Без сессии `test` — как выключено (`state_test`).
  */
 export function voiceControlAccess(p: {
   platformEnabled: boolean;
   voice: Pick<VoiceAccess, 'input' | 'reason'>;
   state: unknown;
   rules: unknown;
+  testSession?: boolean;
 }): VoiceControlAccess {
   const off = (reason: VoiceControlOffReason): VoiceControlAccess => ({
     mode: null,
@@ -90,6 +120,12 @@ export function voiceControlAccess(p: {
   if (!p.platformEnabled) return off('platform_off');
   if (!p.voice.input) return off('voice_off');
   const state = stateOf(p.state);
+  if (p.testSession) {
+    const rules = rulesOf(p.rules);
+    if (!rules) return off('rules_invalid');
+    return { mode: 'on', rules, reason: null };
+  }
+  if (state === 'test') return off('state_test');
   if (state !== 'on' && state !== 'degraded') return off('state_off');
   const rules = rulesOf(p.rules);
   if (!rules) return off('rules_invalid');

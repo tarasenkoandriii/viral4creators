@@ -1,7 +1,8 @@
 /**
  * Э6-бис (а): кабинет голосового управления «Сайтом» на реальном Postgres
- * (основная роль, тенант кабинета): переключатель off/on (§5-бис.2,
- * §5-бис.11), правила (строгий разбор), тарифный гейт «как у голоса»
+ * (основная роль, тенант кабинета): переключатель (§5-бис.2, §5-бис.11;
+ * (г): `on` — только с отчётом мастера, без него — `test`; полная проверка
+ * (г) — voice-control-check.spec.ts), правила (строгий разбор), тарифный гейт «как у голоса»
  * (Business+), «сначала включите микрофон», экран рисков текущей версии;
  * выключить — всегда. Права маршрута (владелец/менеджер; оператор — 403) —
  * общий `SiteAccountGuard` с REQUIRE_ASSIST_MANAGER, как у голоса Э5.
@@ -107,34 +108,54 @@ describeDb('Э6-бис: кабинет голосового управления
         svc.save(owner(s), s.siteId, { state: 'on', risksVersion: 'old' }),
       ),
     ).toEqual([400, 'VOICE_CONTROL_RISKS_REQUIRED']);
+    // Э6-бис (г), решение владельца п.1: `on` — только после мастера Т-2;
+    // без отчёта — 409, а `test` (только тестовая сессия) — можно.
+    expect(await code(svc.save(owner(s), s.siteId, on))).toEqual([
+      409,
+      'VOICE_CONTROL_TEST_REQUIRED',
+    ]);
     const v = await svc.save(owner(s), s.siteId, {
       ...on,
+      state: 'test',
       rules: {
         denySelectors: ['.account'],
         denyWords: ['видалити'],
         maxSteps: 4,
       },
     });
-    expect(v).toMatchObject({ state: 'on', available: true, reason: null });
+    expect(v).toMatchObject({
+      state: 'test',
+      available: true,
+      reason: 'state_test',
+    });
     expect(v.rules).toMatchObject({ denySelectors: ['.account'], maxSteps: 4 });
   });
 
-  it('выключить — всегда (и после снятия тарифа); test/degraded из кабинета (а) не ставятся', async () => {
+  it('выключить — всегда (и после снятия тарифа); (г) degraded — только из on/test; мусор — 400', async () => {
     const s = await st.site();
     await setPlan(st.owner, s.accountId, 'business');
     await mic(s, true);
     await svc.save(owner(s), s.siteId, {
-      state: 'on',
+      state: 'test',
       risksVersion: VOICE_CONTROL_RISKS_VERSION,
     });
     await setPlan(st.owner, s.accountId, 'start');
     expect((await svc.save(owner(s), s.siteId, { state: 'off' })).state).toBe(
       'off',
     );
-    for (const state of ['test', 'degraded', 'ON', undefined])
+    for (const state of ['ON', 'paused', undefined])
       expect(
         await code(svc.save(owner(s), s.siteId, { state } as never)),
       ).toEqual([400, 'VOICE_CONTROL_INVALID']);
+    await setPlan(st.owner, s.accountId, 'business');
+    expect(
+      await code(
+        svc.save(owner(s), s.siteId, {
+          state: 'degraded',
+          risksVersion: VOICE_CONTROL_RISKS_VERSION,
+        }),
+      ),
+    ).toEqual([409, 'VOICE_CONTROL_INVALID']);
   });
 
   it('правила — строго: лишний ключ, селектор с `<`, лимит 16 — 400 с путями; ничего не сохранилось', async () => {

@@ -28,11 +28,14 @@ export class WidgetFrameController {
     @Res() res: Response,
   ): Promise<void> {
     let ancestors = "'none'";
+    let release: string | null = null;
     try {
       ancestors = await this.config.frameAncestorsFor(
         typeof pk === 'string' ? pk : '',
         pv === '1',
       );
+      // Э6-бис (г): выпуск чанков сайта (канарейка) — путь chat.js.
+      release = await this.config.releaseFor(typeof pk === 'string' ? pk : '');
     } catch {
       // Сбой базы — тот же HTML, но встроить нельзя нигде (безопасный отказ).
       ancestors = "'none'";
@@ -50,6 +53,6 @@ export class WidgetFrameController {
     );
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.end(frameHtml());
+    res.end(frameHtml(release));
   }
 }

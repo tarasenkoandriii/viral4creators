@@ -236,3 +236,17 @@ export const GOAL_WEBHOOK_SIGNATURE_HEADER = 'X-Assist-Signature';
 export const WIDGET_NPM_PACKAGE = '@v4c/assist-widget';
 /** Слаг плагина WordPress/WooCommerce (каталог WordPress — ревью, план §6.3). */
 export const WP_PLUGIN_SLUG = 'v4c-assist';
+
+// ══ Э6-бис (г): мастер проверки голосового управления Т-2 (ТЗ §5-бис.13) ══
+// Зеркало — widget/src/shared/brand.ts (сверяет widget/scripts/brand.test.ts).
+
+/** `?v4c_voicetest=<токен>` — одноразовая ссылка мастера (30 мин, как предпросмотр). */
+export const WIDGET_VOICE_TEST_PARAM = 'v4c_voicetest';
+/** Заголовок тестовой сессии мастера (после обмена ссылки, 30 мин). */
+export const WIDGET_VOICE_TEST_HEADER = 'X-Assist-Voice-Test';
+/**
+ * Ленивый чанк проверки страницы мастера (окружение, CSP/Trusted Types,
+ * политика микрофона, разметка и два списка опасного) — грузится только в
+ * тестовой сессии владельца; act.js и загрузчик не растут.
+ */
+export const WIDGET_CHECK_PATH = '/v1/check.js';

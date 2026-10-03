@@ -30,7 +30,10 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
+import {
+  WIDGET_VISITOR_TOKEN_HEADER,
+  WIDGET_VOICE_TEST_HEADER,
+} from '../../brand';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import type {
   UiPlanConfirmRequest,
@@ -45,6 +48,7 @@ import {
   type UiPlanCtx,
   type UiPlanFailure,
 } from '../assist-site-voice-control/public/ui-plan.service';
+import { VoiceTestService } from '../assist-site-voice-control/public/voice-test.service';
 import { VOICE_CONTROL_DEFAULTS } from '../assist-site-voice-control/voice-control-config';
 import { visitorViewport } from '../site-core/ui-map/ui-map-model';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
@@ -56,6 +60,7 @@ import { WidgetSessionService } from './widget-session.service';
 import { widgetError } from './widget-errors';
 
 const TOKEN_HEADER = WIDGET_VISITOR_TOKEN_HEADER.toLowerCase();
+const TEST_HEADER = WIDGET_VOICE_TEST_HEADER.toLowerCase();
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
@@ -73,6 +78,65 @@ const FAILURE_CODE: Record<UiPlanFailure, WidgetErrorCode> = {
   too_large: 'UI_PLAN_TOO_LARGE',
 };
 
+/**
+ * Контекст маршрутов плана и мастера: сессия посетителя (visitor-token +
+ * гвард origin), вид вёрстки, хеш IP для голосов карты и (г) тестовая
+ * сессия мастера Т-2 из заголовка WIDGET_VOICE_TEST_HEADER (нет/чужая/
+ * истекла — обычный посетитель).
+ */
+export async function uiPlanContext(
+  deps: {
+    sessions: WidgetSessionService;
+    db: AssistPublicDb;
+    tests: VoiceTestService;
+    now: Date;
+    env: NodeJS.ProcessEnv;
+  },
+  token: string | undefined,
+  req: Request,
+  res: Response,
+): Promise<UiPlanCtx> {
+  res.setHeader('Cache-Control', 'no-store');
+  const ctx = await deps.sessions.authenticate({
+    token,
+    requestOrigin: tokenRequestOrigin(req),
+  });
+  const mobile = req.headers?.['sec-ch-ua-mobile'];
+  const test = req.headers?.[TEST_HEADER];
+  const base = { site: ctx.site, visitor: ctx.visitor };
+  return {
+    ...base,
+    viewport: visitorViewport({
+      userAgent: req.headers?.['user-agent'] ?? null,
+      chUaMobile: typeof mobile === 'string' ? mobile : null,
+    }),
+    // Ш4: голос «найден» снимком — от разных IP за окно (неделя).
+    voteIpHash: await uiVoteIpHash(deps.db, {
+      siteId: ctx.site.siteId,
+      req,
+      fallback: ctx.visitor.ipHash,
+      now: deps.now,
+      env: deps.env,
+    }),
+    voiceTest: await deps.tests.session(
+      base,
+      typeof test === 'string' ? test : undefined,
+    ),
+  };
+}
+
+/** Отказ сервиса плана/мастера → код REST виджета. */
+export function uiPlanFailure(
+  e: unknown,
+  notFound: WidgetErrorCode = 'NOT_FOUND',
+): never {
+  if (e instanceof UiPlanError)
+    throw widgetError(
+      e.failure === 'not_found' ? notFound : FAILURE_CODE[e.failure],
+    );
+  throw e;
+}
+
 @Controller('widget/v1/ui-plan')
 @PublicRoute(
   'голосовое управление виджета на сайте заказчика: допуск — гвард origin, visitor-token; план проверяет код',
@@ -86,43 +150,33 @@ export class WidgetUiPlanController {
     private readonly rate: WidgetRateLimit,
     private readonly plans: SiteUiPlanService,
     private readonly db: AssistPublicDb,
+    private readonly tests: VoiceTestService,
   ) {}
 
-  private async ctx(
+  private ctx(
     token: string | undefined,
     req: Request,
     res: Response,
   ): Promise<UiPlanCtx> {
-    res.setHeader('Cache-Control', 'no-store');
-    const ctx = await this.sessions.authenticate({
-      token,
-      requestOrigin: tokenRequestOrigin(req),
-    });
-    const mobile = req.headers?.['sec-ch-ua-mobile'];
-    return {
-      site: ctx.site,
-      visitor: ctx.visitor,
-      viewport: visitorViewport({
-        userAgent: req.headers?.['user-agent'] ?? null,
-        chUaMobile: typeof mobile === 'string' ? mobile : null,
-      }),
-      // Ш4: голос «найден» снимком — от разных IP за окно (неделя).
-      voteIpHash: await uiVoteIpHash(this.db, {
-        siteId: ctx.site.siteId,
-        req,
-        fallback: ctx.visitor.ipHash,
+    return uiPlanContext(
+      {
+        sessions: this.sessions,
+        db: this.db,
+        tests: this.tests,
         now: this.now(),
         env: this.env,
-      }),
-    };
+      },
+      token,
+      req,
+      res,
+    );
   }
 
   private async run(fn: () => Promise<UiPlanView>): Promise<UiPlanView> {
     try {
       return await fn();
     } catch (e) {
-      if (e instanceof UiPlanError) throw widgetError(FAILURE_CODE[e.failure]);
-      throw e;
+      return uiPlanFailure(e);
     }
   }
 

@@ -49,6 +49,8 @@ import {
   WIDGET_ORIGIN_DEFAULT,
   WIDGET_PICKER_PATH,
   WIDGET_PREVIEW_PARAM,
+  WIDGET_VOICE_TEST_PARAM,
+  WIDGET_CHECK_PATH,
   WIDGET_PROTOCOL_VERSION,
   WIDGET_STORAGE_PREFIX,
 } from '../shared/brand';
@@ -191,6 +193,9 @@ class Loader {
     goal: [],
   };
   private readonly pickerToken: string | null;
+  /** Э6-бис (г): одноразовая ссылка мастера проверки (`?v4c_voicetest=`). */
+  private readonly vt: string | null;
+  private chkQ: Promise<ActApi | null> | null = null;
   // ── Э3: вовлечение, счётчики, цели ──
   private readonly docId = rid();
   readonly t0 = Date.now();
@@ -236,6 +241,7 @@ class Loader {
     this.previewToken =
       this.takeParam(WIDGET_PREVIEW_PARAM) || attrs.previewToken;
     this.pickerToken = this.takeParam(WIDGET_GOAL_PICKER_PARAM);
+    this.vt = this.takeParam(WIDGET_VOICE_TEST_PARAM);
     try {
       const r = document.referrer && new URL(document.referrer);
       if (r && r.origin === location.origin) this.prevPath = r.pathname;
@@ -295,7 +301,8 @@ class Loader {
       if ((prev === 'open' || this.acting) && !this.ui?.frame && this.allowed())
         this.openFrame();
       this.later(() => this.ping(), 0);
-      if (location.hash === WIDGET_ANCHOR) this.open();
+      // Э6-бис (г): ссылка мастера — окно сразу (мастер живёт в iframe).
+      if (location.hash === WIDGET_ANCHOR || this.vt) this.open();
     };
     if (document.readyState === 'complete') this.later(afterLoad, 0);
     else N.on(window, 'load', afterLoad, { once: true });
@@ -685,6 +692,7 @@ class Loader {
       siteFont: this.siteFont(),
       siteTheme: this.siteTheme(),
       previewToken: this.previewToken,
+      voiceTest: this.vt,
       restoreOpen: !!this.ui?.isOpen(),
     });
   }
@@ -790,7 +798,7 @@ class Loader {
   private loadEngage() {
     if (this.engLoad || !this.engQ || this.destroyed) return;
     this.engLoad = true;
-    import(/* @vite-ignore */ this.origin + WIDGET_ENGAGE_PATH)
+    import(/* @vite-ignore */ this.chunk(WIDGET_ENGAGE_PATH))
       .then((m: { start: EngageStart }) => {
         const q = this.engQ || [];
         this.engQ = null;
@@ -857,7 +865,7 @@ class Loader {
   }) {
     if (this.ui?.isOpen() && this.ui.isMobile() && !this.isInline())
       this.close('min');
-    import(/* @vite-ignore */ this.origin + WIDGET_HIGHLIGHT_PATH)
+    import(/* @vite-ignore */ this.chunk(WIDGET_HIGHLIGHT_PATH))
       .then(
         (x: { highlight: (s: string, c: string, n: typeof N) => boolean }) =>
           x.highlight(m.selector, m.caption, N)
@@ -895,9 +903,21 @@ class Loader {
         this.writeUi();
       },
     };
-    (this.actQ ||= import(/* @vite-ignore */ this.origin + WIDGET_ACT_PATH)
-      .then((x: { start: (h: ActHost) => ActApi }) => x.start(host))
-      .catch(() => null)).then((a) => a && a.on(raw));
+    // Э6-бис (г): `vt-*` — проверка страницы мастера (чанк check.js).
+    const load = (p: string) =>
+      import(/* @vite-ignore */ this.chunk(p))
+        .then((x: { start: (h: ActHost) => ActApi }) => x.start(host))
+        .catch(() => null);
+    (String(raw.type).charAt(1) == 't'
+      ? (this.chkQ ||= load(WIDGET_CHECK_PATH))
+      : (this.actQ ||= load(WIDGET_ACT_PATH))
+    ).then((a) => a && a.on(raw));
+  }
+
+  /** Путь ленивого чанка: выпуск сайта (канарейка, §5-бис.12) или `/v1/`. */
+  chunk(p: string): string {
+    const r = this.cfg.release;
+    return this.origin + (r ? p.replace('/v1/', '/v1/r/' + r + '/') : p);
   }
 
   /** `?v4c_goal=` → чанк режима выбора цели. Trusted Types без политики — честный отказ (О-8). */

@@ -9,7 +9,7 @@
  *   POST   /internal/admin/assist/accounts/:id/plan      { planId, days, note? }
  *   POST   /internal/admin/assist/accounts/:id/extend    { days }
  *   POST   /internal/admin/assist/accounts/:id/message   { text }
- *   PATCH  /internal/admin/assist/sites/:siteId          { blocked?, dailyCapUsd? }
+ *   PATCH  /internal/admin/assist/sites/:siteId          { blocked?, dailyCapUsd?, voiceControlPlansPerDay? }
  *   GET    /internal/admin/assist/review?days=&limit=
  *   POST   /internal/admin/assist/review/:messageId/eval
  *   GET    /internal/admin/assist/abuse?days=
@@ -18,6 +18,11 @@
  *   GET    /internal/admin/assist/settings
  *   PATCH  /internal/admin/assist/settings              { enabled?, dailyCapUsd? }
  *   GET    /internal/admin/assist/costs?days=
+ *   (Э6-бис (г), голосовое управление: рубильник платформы, канарейка
+ *   выпусков виджета, инциденты монитора Т-4, нарушение по жалобе)
+ *   GET    /internal/admin/assist/voice-control
+ *   PATCH  /internal/admin/assist/voice-control         { enabled?, stable?, canary?, canaryPercent? }
+ *   POST   /internal/admin/assist/voice-control/sites/:siteId/incident  { reason? }
  */
 import {
   Body,
@@ -32,6 +37,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { RELEASE_RE } from '../../common/voice-control-platform';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { AdminActor, InternalSecretGuard } from './internal-secret.guard';
 import { PlatformAdmin, adminError } from './platform-admin.service';
@@ -143,7 +149,23 @@ export class PlatformAdminController {
     @AdminActor() actor: string,
     @Body() b: unknown,
   ) {
-    const o = body(b, ['blocked', 'dailyCapUsd']);
+    const o = body(b, ['blocked', 'dailyCapUsd', 'voiceControlPlansPerDay']);
+    if (
+      o.voiceControlPlansPerDay !== undefined &&
+      o.voiceControlPlansPerDay !== null &&
+      !(
+        typeof o.voiceControlPlansPerDay === 'number' &&
+        Number.isInteger(o.voiceControlPlansPerDay) &&
+        o.voiceControlPlansPerDay >= 0 &&
+        o.voiceControlPlansPerDay <= 100_000
+      )
+    ) {
+      throw adminError(
+        'BAD_REQUEST',
+        'voiceControlPlansPerDay — целое 0…100000 или null',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     if (o.blocked !== undefined && typeof o.blocked !== 'boolean') {
       throw adminError(
         'BAD_REQUEST',
@@ -169,7 +191,76 @@ export class PlatformAdminController {
     return this.admin.setSite(id(siteId), actor, {
       blocked: o.blocked as boolean | undefined,
       dailyCapUsd: o.dailyCapUsd as number | null | undefined,
+      voiceControlPlansPerDay: o.voiceControlPlansPerDay as
+        number | null | undefined,
     });
+  }
+
+  @Get('voice-control')
+  voiceControl() {
+    return this.admin.voiceControl();
+  }
+
+  @Patch('voice-control')
+  setVoiceControl(@AdminActor() actor: string, @Body() b: unknown) {
+    const o = body(b, ['enabled', 'stable', 'canary', 'canaryPercent']);
+    if (o.enabled !== undefined && typeof o.enabled !== 'boolean') {
+      throw adminError(
+        'BAD_REQUEST',
+        'enabled — boolean',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    for (const k of ['stable', 'canary'] as const) {
+      const v = o[k];
+      if (
+        v !== undefined &&
+        v !== null &&
+        !(typeof v === 'string' && RELEASE_RE.test(v))
+      ) {
+        throw adminError(
+          'BAD_REQUEST',
+          `${k} — имя выпуска (a-z0-9.-) или null`,
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+    if (
+      o.canaryPercent !== undefined &&
+      !(
+        typeof o.canaryPercent === 'number' &&
+        Number.isInteger(o.canaryPercent) &&
+        o.canaryPercent >= 1 &&
+        o.canaryPercent <= 50
+      )
+    ) {
+      throw adminError(
+        'BAD_REQUEST',
+        'canaryPercent — целое 1…50',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return this.admin.setVoiceControl(actor, {
+      enabled: o.enabled as boolean | undefined,
+      stable: o.stable as string | null | undefined,
+      canary: o.canary as string | null | undefined,
+      canaryPercent: o.canaryPercent as number | undefined,
+    });
+  }
+
+  @Post('voice-control/sites/:siteId/incident')
+  @HttpCode(200)
+  voiceIncident(
+    @Param('siteId') siteId: string,
+    @AdminActor() actor: string,
+    @Body() b: unknown,
+  ) {
+    const o = body(b ?? {}, ['reason']);
+    return this.admin.voiceIncident(
+      id(siteId),
+      actor,
+      typeof o.reason === 'string' ? o.reason : 'complaint',
+    );
   }
 
   @Get('review')

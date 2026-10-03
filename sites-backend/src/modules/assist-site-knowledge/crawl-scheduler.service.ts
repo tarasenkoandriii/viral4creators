@@ -14,11 +14,32 @@
  *
  * site-crawl о продукте не знает (правило графа crawl-product-neutral):
  * «когда обходить» и `assist_sites.lastCrawlRunId` — здесь.
+ *
+ * Э6-бис (г), решение владельца 03.10.2026 п.4 — ТОЧЕЧНЫЙ переобход
+ * страниц, элементы карты интерфейса которых устарели (Ш4): только эта
+ * страница (режим `hot` — условный запрос, неизменная страница эмбеддингов
+ * не тратит), не чаще раза в сутки на страницу и только если элемент
+ * устарел ПОСЛЕ прошлого переобхода, не больше N страниц в сутки на сайт по
+ * тарифу (Start 0, Business 5, Pro 20), за счёт бюджета знаний сайта
+ * (исчерпан — `budget`, ничего не запрашиваем), журнал
+ * `assist_site_ui_recrawls` (сводка — экран «Видео» TMA). Нового крона нет:
+ * проход — в этом же `assist-crawl-run` (ему принадлежит «что и когда
+ * обходить»; крон карты Ш4 живёт в site-core и продуктовый планировщик
+ * импортировать не может — граф/цикл модулей), не чаще раза в 30 минут.
  */
-import { Injectable, Logger, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ConflictException,
+  Optional,
+} from '@nestjs/common';
 import { CRAWL_DEFAULTS } from '../../config/assist-defaults';
 import { crawlMaxPages } from '../assist-billing/limits';
+import { readState } from '../assist-billing/public/entitlements';
 import { SitesDb } from '../../prisma/sites-db.service';
+import { LearningBudget } from '../site-ai/learning-budget';
+import { uiMapHost } from '../site-core/ui-map/ui-map';
+import { UI_STALE_RECRAWL } from './ui-stale-recrawl-config';
 import { siteCoreError } from '../site-core/site-core.constants';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
 import { SiteCrawlService } from '../site-crawl/crawl.service';
@@ -26,7 +47,11 @@ import { SiteCrawlService } from '../site-crawl/crawl.service';
 export interface CrawlScheduleResult {
   runsRequested: number;
   hotRunsRequested: number;
+  /** Э6-бис (г): точечных переобходов страниц с устаревшей картой. */
+  staleUiRecrawls?: number;
 }
+
+export { UI_STALE_RECRAWL } from './ui-stale-recrawl-config';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Нет подтверждённого хоста — заглянуть снова через… */
@@ -44,9 +69,13 @@ export function recrawlIntervalMs(every: string): number | null {
 export class AssistCrawlScheduler {
   private readonly logger = new Logger(AssistCrawlScheduler.name);
 
+  /** Последний проход точечного переобхода в ЭТОМ экземпляре. */
+  private staleAt = 0;
+
   constructor(
     private readonly sitesDb: SitesDb,
     private readonly crawl: SiteCrawlService,
+    @Optional() private readonly budget?: LearningBudget,
   ) {}
 
   async scheduleDue(now: Date): Promise<CrawlScheduleResult> {
@@ -134,7 +163,172 @@ export class AssistCrawlScheduler {
         this.logger.error(`горячие страницы ${s.siteId}: ${String(e)}`);
       }
     }
+    if (now.getTime() - this.staleAt >= UI_STALE_RECRAWL.passEveryMs) {
+      this.staleAt = now.getTime();
+      try {
+        out.staleUiRecrawls = await this.scheduleStaleUiPages(now);
+      } catch (e) {
+        this.logger.error(`переобход устаревших страниц: ${String(e)}`);
+      }
+    }
     return out;
+  }
+
+  /**
+   * Решение владельца п.4: страницы с элементами карты, устаревшими после
+   * прошлого переобхода этой страницы, — точечный обход `hot` одной
+   * страницы. Возвращает число запрошенных обходов.
+   */
+  async scheduleStaleUiPages(now: Date): Promise<number> {
+    const sys = this.sitesDb.system(
+      'точечный переобход: устаревшие элементы карт всех кабинетов',
+    );
+    const dayAgo = new Date(now.getTime() - UI_STALE_RECRAWL.perPageEveryMs);
+    const used = new Map<string, number>();
+    const limits = new Map<string, number>();
+    let requested = 0;
+    for (
+      let skip = 0;
+      skip < UI_STALE_RECRAWL.scanMax &&
+      requested < UI_STALE_RECRAWL.pagesPerPass;
+      skip += UI_STALE_RECRAWL.scanBatch
+    ) {
+      const pages = await sys.siteUiElement.groupBy({
+        by: ['accountId', 'siteId', 'host', 'path'],
+        where: {
+          OR: [
+            { staleDesktopAt: { not: null } },
+            { staleMobileAt: { not: null } },
+          ],
+        },
+        _count: { _all: true },
+        _max: { staleDesktopAt: true, staleMobileAt: true },
+        orderBy: [{ siteId: 'asc' }, { host: 'asc' }, { path: 'asc' }],
+        skip,
+        take: UI_STALE_RECRAWL.scanBatch,
+      });
+      for (const pg of pages) {
+        if (requested >= UI_STALE_RECRAWL.pagesPerPass) break;
+        if (
+          limits.has(pg.siteId) &&
+          (used.get(pg.siteId) ?? 0) >= (limits.get(pg.siteId) ?? 0)
+        )
+          continue;
+        requested += await this.staleUiPage(sys, pg, now, dayAgo, used, limits);
+      }
+      if (pages.length < UI_STALE_RECRAWL.scanBatch) break;
+    }
+    return requested;
+  }
+
+  /** Одна страница прохода `scheduleStaleUiPages`: 1 — обход запрошен. */
+  private async staleUiPage(
+    sys: ReturnType<SitesDb['system']>,
+    pg: {
+      accountId: string;
+      siteId: string;
+      host: string;
+      path: string;
+      _count: { _all: number };
+      _max: { staleDesktopAt: Date | null; staleMobileAt: Date | null };
+    },
+    now: Date,
+    dayAgo: Date,
+    used: Map<string, number>,
+    limits: Map<string, number>,
+  ): Promise<number> {
+    const db = this.sitesDb.forAccount(pg.accountId);
+    try {
+      const site = await db.assistSite.findFirst({
+        where: { siteId: pg.siteId, enabled: true },
+        select: { siteId: true },
+      });
+      if (!site) return 0;
+      if (!limits.has(pg.siteId)) {
+        const st = await readState(sys, pg.accountId, now);
+        limits.set(
+          pg.siteId,
+          st.planId ? UI_STALE_RECRAWL.pagesPerDayByPlan[st.planId] : 0,
+        );
+        used.set(
+          pg.siteId,
+          await db.assistSiteUiRecrawl.count({
+            where: {
+              siteId: pg.siteId,
+              status: 'requested',
+              createdAt: { gte: dayAgo },
+            },
+          }),
+        );
+      }
+      const limit = limits.get(pg.siteId) ?? 0;
+      if ((used.get(pg.siteId) ?? 0) >= limit) return 0;
+      const last = await db.assistSiteUiRecrawl.findFirst({
+        where: { siteId: pg.siteId, host: pg.host, path: pg.path },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      if (last && last.createdAt >= dayAgo) return 0;
+      const staleAt = Math.max(
+        pg._max.staleDesktopAt?.getTime() ?? 0,
+        pg._max.staleMobileAt?.getTime() ?? 0,
+      );
+      // Устарело ДО прошлого переобхода — он уже был (новых селекторов нет).
+      if (last && staleAt <= last.createdAt.getTime()) return 0;
+      const host = (
+        await db.siteHost.findMany({ where: { siteId: pg.siteId } })
+      ).find(
+        (h) =>
+          h.scheme === 'https' &&
+          h.port === 443 &&
+          uiMapHost(h.host) === pg.host &&
+          evaluateHostAccess(h, 'assist-crawl', now).ok,
+      );
+      // Адрес собирается строкой: путь — только абсолютный (`/…`), иначе
+      // `https://host` + `@evil/…` увёл бы обход на чужой хост.
+      if (!host || !pg.path.startsWith('/')) return 0;
+      const journal = {
+        accountId: pg.accountId,
+        siteId: pg.siteId,
+        host: pg.host,
+        path: pg.path,
+        staleElements: pg._count._all,
+      };
+      // Бюджет знаний сайта (эмбеддинги переобхода — из него): исчерпан —
+      // не запрашиваем, в журнал — `budget` (повтор — завтра).
+      if (this.budget) {
+        const b = await this.budget.status(pg.accountId, pg.siteId);
+        if (b.spentMicroUsd >= b.capMicroUsd) {
+          await db.assistSiteUiRecrawl.create({
+            data: { ...journal, status: 'budget' },
+          });
+          return 0;
+        }
+      }
+      const { runId, deduplicated } = await this.crawl.requestRun({
+        accountId: pg.accountId,
+        siteId: pg.siteId,
+        product: 'assist',
+        // Тот же вид, что «горячие страницы» (условный запрос одной страницы);
+        // отличие — журнал assist_site_ui_recrawls (runId).
+        trigger: 'hot',
+        mode: 'hot',
+        maxPages: 1,
+        urls: [`https://${host.host}${pg.path}`],
+        ...(await this.exclusions(pg.accountId, pg.siteId)),
+      });
+      // Идёт другой обход сайта (полный или «горячие страницы») — эту
+      // страницу он может не покрыть: без записи, повтор — следующим проходом.
+      if (deduplicated) return 0;
+      await db.assistSiteUiRecrawl.create({
+        data: { ...journal, status: 'requested', runId },
+      });
+      used.set(pg.siteId, (used.get(pg.siteId) ?? 0) + 1);
+    } catch (e) {
+      this.logger.error(`переобход ${pg.siteId}${pg.path}: ${String(e)}`);
+      return 0;
+    }
+    return 1;
   }
 
   /** Лимит страниц обхода — «страниц в знаниях» тарифа кабинета (§7.1). */

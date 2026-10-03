@@ -505,3 +505,45 @@ body {
   margin: 6px 0;
   padding-left: 18px;
 }
+
+/* Э6-бис (г): мастер проверки голосового управления (только владельцу). */
+.vt {
+  display: block;
+  text-align: left;
+}
+.vt .vt-h {
+  margin-bottom: 6px;
+}
+.vt ul,
+.vt ol {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+.vt li {
+  margin: 2px 0;
+}
+.vt .ok {
+  color: #15803d;
+}
+.vt .bad {
+  color: #b91c1c;
+}
+.vt .lnk.on {
+  font-weight: 700;
+  text-decoration: underline;
+}
+.vt pre {
+  white-space: pre-wrap;
+  font-size: 11px;
+  max-height: 160px;
+  overflow: auto;
+}
+.vt .vtres {
+  font-weight: 700;
+}
+.vt .vtres.pass {
+  color: #15803d;
+}
+.vt .vtres.fail {
+  color: #b91c1c;
+}

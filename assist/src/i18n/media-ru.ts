@@ -28,6 +28,12 @@ export const mediaRu = {
     hide: 'Свернуть',
     loadError: 'Не удалось загрузить карту — попробуйте позже.',
     truncated: 'Показаны первые 50 страниц.',
+    recrawl:
+      'Точечное обновление устаревших страниц: {today} из {limit} за сегодня (из бюджета знаний).',
+    recrawlOff:
+      'Точечное обновление устаревших страниц недоступно на вашем тарифе.',
+    recrawlItem: '{page} — {status}, {d}',
+    recrawlStatus: { requested: 'запрошено', budget: 'не хватает бюджета' },
     staleItem: '«{label}» — {view}',
     sources: {
       crawl: 'обход',

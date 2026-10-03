@@ -78,6 +78,12 @@ export interface WidgetPublicConfig {
    * нет (переключатель, голос, тариф, рубильник, lead_only).
    */
   voiceControl?: WidgetVoiceControlConfig;
+  /**
+   * Э6-бис (г) (необязательное): выпуск чанков виджета для этого сайта
+   * (канарейка по хешу siteId, §5-бис.12) — загрузчик берёт ленивые чанки
+   * из `/v1/r/<release>/`; нет поля — из `/v1/`.
+   */
+  release?: string;
 }
 
 /** POST /widget/v1/session — тело. resumeKey — из localStorage iframe ИЛИ CHIPS-cookie. */
@@ -347,5 +353,8 @@ export const WIDGET_ERROR_CODES = [
   // (VOICE_CONTROL_DEFAULTS.maxBodyBytes) или снимок больше
   // SNAPSHOT_LIMITS.bodyChars — 413 до разбора и любой работы.
   'UI_PLAN_TOO_LARGE',
+  // Э6-бис (г): ссылка мастера проверки Т-2 недействительна (чужой сайт или
+  // origin, истекла, уже обменяна) или тестовая сессия закончилась.
+  'VOICE_TEST_INVALID',
 ] as const;
 export type WidgetErrorCode = (typeof WIDGET_ERROR_CODES)[number];

@@ -40,6 +40,12 @@ export const BUDGETS = [
   // ленивый чанк загрузчика, только по команде своего iframe (после речи
   // или набора посетителя), исполняется в origin заказчика.
   { name: 'act', files: ['dist/v1/act.js'], maxGzip: 9 * KB },
+  // Э6-бис (г): мастер проверки Т-2 — окружение и разметка страницы; ленивый
+  // чанк загрузчика только в тестовой сессии владельца (у посетителей нет).
+  { name: 'check', files: ['dist/v1/check.js'], maxGzip: 6 * KB },
+  // Э6-бис (г): мастер проверки — логика и тексты (uk/ru/en); ленивый чанк
+  // iframe-чата только в тестовой сессии владельца (chat.js не растёт).
+  { name: 'vt', files: ['dist/v1/vt.js'], maxGzip: 10 * KB },
 ];
 
 export const LOADER_SINKS = [
@@ -88,6 +94,10 @@ for (const [label, file] of [
   ['чанк подсветки', 'dist/v1/highlight.js'],
   // Э6-бис: голосовое управление — в origin заказчика, как загрузчик.
   ['чанк голосового управления', 'dist/v1/act.js'],
+  // Э6-бис (г): мастер проверки — в origin заказчика, как загрузчик.
+  ['чанк проверки мастера', 'dist/v1/check.js'],
+  // Мастер в iframe: HTML-приёмников нет (Trusted Types iframe — 'none').
+  ['чанк мастера iframe', 'dist/v1/vt.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {
