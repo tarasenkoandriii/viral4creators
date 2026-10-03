@@ -28,20 +28,25 @@
  *    ролик) — `stale: true`, без изменений (отметка и замена — в ОДНОЙ
  *    транзакции: строка сайта блокируется условным UPDATE);
  *  - `uiMap` — элементы страницы из раунда обучалки (источник `tutorial`):
- *    только страница на подтверждённом хосте этого сайта.
+ *    только страница на подтверждённом хосте этого сайта. Э-С Ш4: приём —
+ *    общей дверью `ingestUiSnapshot` (версии, история, слияние с обходом и
+ *    QA); вид вёрстки — из тела или по умолчанию для обучалки (`mobile`:
+ *    исследователь снимает в 390×844), кандидаты селектора — по желанию.
  */
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { isAllowedVideoUrl } from '../../config/media-env';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { AccountService } from '../site-core/account/account.service';
 import { siteCoreError } from '../site-core/site-core.constants';
+import { uiMapHost, uiMapKey } from '../site-core/ui-map/ui-map';
 import {
-  cleanUiElements,
-  uiElementsHash,
-  uiMapHost,
-  uiMapKey,
-} from '../site-core/ui-map/ui-map';
+  UI_DEFAULT_VIEWPORT,
+  type UiMapViewport,
+} from '../site-core/ui-map/ui-map-model';
+import {
+  UiMapLimitError,
+  ingestUiSnapshot,
+} from '../site-core/ui-map/ui-map-store';
 
 /** Тот же потолок, что MEDIA_DEFAULTS.syncVideosMax (тело ≤ 8 КБ). */
 export const SYNC_VIDEOS_MAX = 15;
@@ -253,6 +258,7 @@ export class InternalSiteMediaService {
     url: string,
     rawElements: unknown,
     now = new Date(),
+    viewport: UiMapViewport = UI_DEFAULT_VIEWPORT.tutorial,
   ): Promise<{ siteId: string; path: string; elements: number }> {
     const site = await this.siteRow(siteId);
     if (!site || !(await this.managedAccounts(telegramId)).has(site.accountId))
@@ -270,39 +276,28 @@ export class InternalSiteMediaService {
         'Страница не на подтверждённом адресе этого сайта',
       );
     }
-    const elements = cleanUiElements(rawElements);
-    const where = {
-      siteId,
-      host: key.host,
-      path: key.path,
-      source: 'tutorial',
-    };
-    const db = this.db.forAccount(site.accountId);
-    if (!elements.length) {
-      await db.siteUiMap.deleteMany({ where });
-      return { siteId, path: key.path, elements: 0 };
-    }
-    const elementsHash = uiElementsHash(elements);
-    const existing = await db.siteUiMap.findFirst({
-      where,
-      select: { id: true, elementsHash: true },
-    });
-    const data = {
-      hostId: host.id,
-      elements: elements as unknown as Prisma.InputJsonValue,
-      elementsHash,
-      capturedAt: now,
-      ...(existing?.elementsHash !== elementsHash
-        ? { staleSignals: 0, lastStaleAt: null }
-        : {}),
-    };
-    if (existing) {
-      await db.siteUiMap.update({ where: { id: existing.id }, data });
-    } else {
-      await db.siteUiMap.create({
-        data: { ...data, ...where, accountId: site.accountId },
+    try {
+      const r = await ingestUiSnapshot(this.db.forAccount(site.accountId), {
+        accountId: site.accountId,
+        siteId,
+        hostId: host.id,
+        host: key.host,
+        path: key.path,
+        source: 'tutorial',
+        viewport,
+        elements: rawElements,
+        now,
       });
+      return { siteId, path: key.path, elements: r.elements };
+    } catch (e) {
+      if (e instanceof UiMapLimitError) {
+        throw new ForbiddenException({
+          error: e.code,
+          code: e.code,
+          message: e.message,
+        });
+      }
+      throw e;
     }
-    return { siteId, path: key.path, elements: elements.length };
   }
 }

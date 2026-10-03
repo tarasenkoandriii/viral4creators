@@ -24,6 +24,8 @@ const nReplace = history.replaceState;
 const nSetTimeout = W.setTimeout;
 const nQuery = D.querySelector;
 const nBeacon = navigator.sendBeacon;
+/** Э6-бис: нативный click() — активация ссылки/отправки для шагов плана. */
+const nClick = HTMLElement.prototype.click;
 
 export const natives = {
   on(
@@ -80,4 +82,5 @@ export const natives = {
     }
   },
   apply,
+  click: nClick,
 };

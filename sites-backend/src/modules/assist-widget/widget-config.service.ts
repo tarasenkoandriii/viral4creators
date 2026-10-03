@@ -76,6 +76,7 @@ import {
 import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
 import { SiteVoiceService } from '../assist-site-voice/public/site-voice.service';
 import { VOICE_DEFAULTS } from '../assist-site-voice/voice-config';
+import { SiteUiPlanService } from '../assist-site-voice-control/public/ui-plan.service';
 import type { WidgetSiteContext } from '../assist-site-chat/chat-types';
 import type {
   WidgetPreviewExchangeRequest,
@@ -167,6 +168,8 @@ export class WidgetPublicConfigService {
     private readonly goals: GoalIntake,
     // Э5: голос (микрофон/озвучка) — необязателен для тестов Э2–Э4.
     @Optional() private readonly voice?: SiteVoiceService,
+    // Э6-бис: голосовое управление — необязательно для тестов Э2–Э6.
+    @Optional() private readonly uiPlans?: SiteUiPlanService,
   ) {}
 
   async config(
@@ -244,6 +247,26 @@ export class WidgetPublicConfigService {
       } catch (err) {
         this.logger.warn(
           `voice access failed site=${site.siteId}: ${errName(err)}`,
+        );
+      }
+    }
+    // Э6-бис (§5-бис.2, §5-бис.11): голосовое управление — только при
+    // голосе (микрофон) и переключателе on/degraded; запреты кабинета —
+    // загрузчику для снимка (селекторы не секрет: они и так в DOM сайта).
+    if (this.uiPlans && plan && out.voice?.input) {
+      try {
+        const a = await this.uiPlans.access(site, plan);
+        if (a.mode && a.rules) {
+          out.voiceControl = {
+            mode: a.mode,
+            denySelectors: a.rules.denySelectors,
+            allowSelectors: a.rules.allowSelectors,
+            maxSteps: a.rules.maxSteps,
+          };
+        }
+      } catch (err) {
+        this.logger.warn(
+          `voice control access failed site=${site.siteId}: ${errName(err)}`,
         );
       }
     }

@@ -11,6 +11,11 @@ export interface RecordLimits {
   maxRecordMs: number;
   minSpeechMs: number;
   endSilenceMs: number;
+  /**
+   * Э6-бис (§5-бис.5 «стоп всегда»): начало речи — сразу, ДО конца фразы и
+   * распознавания (детектор на устройстве ставит план на паузу).
+   */
+  onSpeech?: () => void;
 }
 
 export type RecordEnd =

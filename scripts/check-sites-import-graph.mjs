@@ -85,10 +85,26 @@
  *     публичный код других модулей берёт из `assist-site-voice` только
  *     `public/**`, типы, `*-config` и `*.module`: кабинет голоса
  *     (`cabinet/`) ходит основным клиентом.
+ *     Э-С Ш4: основной ролью ходят и `site-core/ui-map/ui-map-store`,
+ *     `…/ui-map-maintenance.service` (запись и сводка общей карты) — их
+ *     публичный код не берёт (из ядра карты — только чистые `ui-map`,
+ *     `ui-map-model`).
  * 14. (Э6) `public-zone-e6`: видео и подсветка посетителя — папка `public/`
  *     модуля `assist-site-media` — публичная зона правила 8; публичный код
  *     других модулей берёт из `assist-site-media` только `public/**`, типы,
  *     `*-config` и `*.module`: кабинет экрана «Видео» (`cabinet/`) ходит
+ *     основным клиентом.
+ * 15. (Э6-бис) `ui-core-no-db` / `ui-core-names`: нейтральный пакет
+ *     голосового управления `assist-ui-core` (снимок, словарь действий,
+ *     проверки плана, промпт — §5-бис.3 п.3, У-19) — БЕЗ доступа к базе: не
+ *     импортирует ни `prisma/**`, ни `@prisma/client` и не называет таблиц
+ *     режимов (их передаёт модуль своего режима). Вместе с правилом 3
+ *     (`ui-core-neutral`) это и есть «пакет `assist-ui-core` и правило графа»
+ *     аудита 1.2.
+ * 16. (Э6-бис) `public-zone-e6b`: план посетителя — папка `public/` модуля
+ *     `assist-site-voice-control` — публичная зона правила 8; публичный код
+ *     других модулей берёт из него только `public/**`, типы, `*-config` и
+ *     `*.module`: кабинет переключателя и правил (`cabinet/`) ходит
  *     основным клиентом.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
@@ -220,6 +236,8 @@ const PUBLIC_ZONES = [
   { module: 'assist-site-voice', only: /^public\// },
   // Э6: ролики и карта интерфейса для посетителя под assist_public.
   { module: 'assist-site-media', only: /^public\// },
+  // Э6-бис: голосовой план посетителя под assist_public.
+  { module: 'assist-site-voice-control', only: /^public\// },
 ];
 const inPublicZone = (moduleName, inModule) =>
   !/\.spec\.ts$/.test(inModule) &&
@@ -240,12 +258,21 @@ const E5_VOICE = /^modules\/assist-site-voice\/(.+)$/;
 const E5_ALLOWED = /^(public\/.+|[\w-]*types|[\w-]+-config|[\w-]+\.module)$/;
 /** Э6: что публичный код может взять из assist-site-media (правило 14). */
 const E6_MEDIA = /^modules\/assist-site-media\/(.+)$/;
+/** Э6-бис: что публичный код может взять из assist-site-voice-control (правило 16). */
+const E6B_VC = /^modules\/assist-site-voice-control\/(.+)$/;
+/** Э6-бис: нейтральный пакет голосового управления без базы (правило 15). */
+const UI_CORE_DB_TARGETS = /^prisma(\/|$)/;
 const MAIN_DB_TARGETS = [
   /^prisma\/sites-db\.service$/,
   /^prisma\/prisma\.service$/,
   /^modules\/assist-site-knowledge\/site-knowledge\.service$/,
   /^modules\/assist-site-knowledge\/site-sources\.service$/,
   /^modules\/site-core\/ownership\/host-access\.service$/,
+  // Э-С Ш4: запись и сводка общей карты интерфейса — основной ролью
+  // (публичный код карты — assist-site-media/public/ui-map.ts под
+  // assist_public; из ядра он берёт только чистые ui-map и ui-map-model).
+  /^modules\/site-core\/ui-map\/ui-map-store$/,
+  /^modules\/site-core\/ui-map\/ui-map-maintenance\.service$/,
 ];
 export const PATH_RULES = [
   {
@@ -312,6 +339,22 @@ export const PATH_RULES = [
       return !E5_ALLOWED.test(m[1]);
     },
   },
+  {
+    id: 'public-zone-e6b',
+    why: 'Э6-бис: публичный код берёт из assist-site-voice-control только public/, *types, *-config и *.module (кабинет переключателя — основная роль)',
+    from: inPublicZone,
+    to: (target, moduleName) => {
+      const m = E6B_VC.exec(target.replace(SOURCE_RE, ''));
+      if (!m || moduleName === 'assist-site-voice-control') return false;
+      return !E5_ALLOWED.test(m[1]);
+    },
+  },
+  {
+    id: 'ui-core-no-db',
+    why: 'Э6-бис §5-бис.3 п.3: assist-ui-core — без доступа к базе (не импортирует prisma/**)',
+    from: (moduleName) => matches(moduleName, UI_CORE),
+    to: (target) => UI_CORE_DB_TARGETS.test(target.replace(SOURCE_RE, '')),
+  },
 ];
 
 /**
@@ -347,6 +390,14 @@ export const LITERAL_RULES = [
     why: 'Э1: нейтральный модуль не называет таблиц режимов — их передаёт модуль режима',
     in: (m) => matches(m, NEUTRAL),
     re: new RegExp(`${ADMIN_NAMES.source}|${SITE_NAMES.source}`),
+  },
+  {
+    id: 'ui-core-names',
+    why: 'Э6-бис: assist-ui-core не называет таблиц/моделей режимов и не берёт клиент Prisma (без базы)',
+    in: (m) => matches(m, UI_CORE),
+    re: new RegExp(
+      `${ADMIN_NAMES.source}|${SITE_NAMES.source}|['"]@prisma\\/client['"]|\\$(?:queryRaw|executeRaw)`,
+    ),
   },
 ];
 
@@ -700,6 +751,16 @@ function selfTest() {
       'public-zone-e5',
     ],
     [
+      'modules/assist-site-media/public/sh4a.ts',
+      `import { ingestUiSnapshot } from '../../site-core/ui-map/ui-map-store';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-widget/sh4b.ts',
+      `import { UiMapMaintenanceService } from '../site-core/ui-map/ui-map-maintenance.service';`,
+      'public-db',
+    ],
+    [
       'modules/assist-site-chat/ap.ts',
       `import { X } from '../assist-site-voice/cabinet/voice-errors';`,
       'public-zone-e5',
@@ -748,6 +809,41 @@ function selfTest() {
       'modules/internal-sites/as.ts',
       `import { promptVideos } from '../assist-site-media/public/site-videos';`,
       'internal-sites-scope',
+    ],
+    [
+      'modules/assist-ui-core/aw.ts',
+      `import { PrismaService } from '../../prisma/prisma.service';`,
+      'ui-core-no-db',
+    ],
+    [
+      'modules/assist-ui-core/ax.ts',
+      `import { Prisma } from '@prisma/client';`,
+      'ui-core-names',
+    ],
+    [
+      'modules/assist-ui-core/ay.ts',
+      `const sql = 'SELECT 1 FROM "sites"."assist_site_ui_plans"';`,
+      'ui-core-names',
+    ],
+    [
+      'modules/assist-ui-core/az.ts',
+      `export async function q(db) { return db.$queryRawUnsafe('SELECT 1'); }`,
+      'ui-core-names',
+    ],
+    [
+      'modules/assist-widget/ba.ts',
+      `import { VoiceControlSettingsService } from '../assist-site-voice-control/cabinet/voice-control-settings.service';`,
+      'public-zone-e6b',
+    ],
+    [
+      'modules/assist-site-voice-control/public/bb.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';`,
+      'public-db',
+    ],
+    [
+      'modules/assist-ui-core/bc.ts',
+      `import { SiteUiPlanService } from '../assist-site-voice-control/public/ui-plan.service';`,
+      'ui-core-neutral',
     ],
     [
       'shared/l.ts',
@@ -886,6 +982,22 @@ function selfTest() {
     [
       'modules/internal-sites/ok31.ts',
       `import { cleanUiElements } from '../site-core/ui-map/ui-map';\nimport { isAllowedVideoUrl } from '../../config/media-env';`,
+    ],
+    [
+      'modules/assist-site-media/public/oksh4.ts',
+      `import { cleanUiSnapshot } from '../../site-core/ui-map/ui-map-model';\nimport { uiMapKey } from '../../site-core/ui-map/ui-map';\nimport type { AssistPublicDb } from '../../../prisma/assist-public-db.service';`,
+    ],
+    [
+      'modules/assist-widget/ok32.ts',
+      `import { SiteUiPlanService } from '../assist-site-voice-control/public/ui-plan.service';\nimport type { UiPlanView } from '../assist-site-voice-control/api-types';\nimport { VOICE_CONTROL_DEFAULTS } from '../assist-site-voice-control/voice-control-config';\nimport { AssistSiteVoiceControlModule } from '../assist-site-voice-control/assist-site-voice-control.module';`,
+    ],
+    [
+      'modules/assist-site-voice-control/public/ok33.ts',
+      `import { AssistPublicDb } from '../../../prisma/assist-public-db.service';\nimport { checkPlan } from '../../assist-ui-core/plan-checks';\nimport { readState } from '../../assist-billing/public/entitlements';`,
+    ],
+    [
+      'modules/assist-ui-core/ok34.ts',
+      `import { maskSensitiveEcho } from '../../shared/assist-chat-core/post-filter';\nimport { dangerKindsFor } from '../../shared/danger-words';\nimport { uiMapHost } from '../site-core/ui-map/ui-map';\nimport { detectInjection } from '../assist-knowledge-core/injection';\n// assist_site_ui_plans — в комментарии можно`,
     ],
     [
       'shared/ok5.ts',

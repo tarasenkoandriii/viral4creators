@@ -64,6 +64,8 @@ import {
 } from '../shared/config';
 import type { FrameMessage, ParentMessage } from '../shared/protocol';
 import { VoiceController, voiceOff, type VoiceUi } from './voice';
+import { UiPlanController, uiPlanOff, type UiPlanUi } from './ui-plan';
+import { looksLikeCommand } from '../shared/ui-plan';
 
 export interface UiMessage extends WidgetMessageView {
   /** Вопрос этой вкладки, ещё не перечитанный с сервера (сырой текст — только в памяти). */
@@ -114,6 +116,8 @@ export interface ChatState {
   voice: VoiceUi;
   /** Э6: открытый ролик обучалки (подписанная ссылка своего origin). */
   video: { url: string; title: string } | null;
+  /** Э6-бис: голосовое управление — фаза плана, карточка подтверждения. */
+  plan: UiPlanUi;
 }
 
 /** Ответ проактивного сигнала/сценария, отмеченный для атрибуции цели. */
@@ -171,6 +175,9 @@ export class ChatController {
   state: ChatState;
   /** Э5: голос (запись, озвучка) — кнопки зовут его методы напрямую. */
   readonly voice: VoiceController;
+  readonly plans: UiPlanController;
+  /** Э6-бис: «голосовое управление не включено» — одно уведомление на вкладку. */
+  private vcOffShown = false;
   private subs: Array<() => void> = [];
   private auth: Auth = { token: null, preview: null };
   private pk: string;
@@ -234,6 +241,7 @@ export class ChatController {
       scen: null,
       voice: voiceOff(),
       video: null,
+      plan: uiPlanOff(),
     };
     this.voice = new VoiceController({
       ui: () => this.state.voice,
@@ -245,11 +253,33 @@ export class ChatController {
         await this.session(true);
       },
       // Идёт ответ — распознанное не теряется: в поле ввода (как V4CAssist('ask')).
-      ask: (text, ticket) =>
-        this.state.busy ? this.setDraft(text) : void this.ask(text, ticket),
+      // Э6-бис: команда-действие голосом — план, а не вопрос.
+      ask: (text, ticket) => void this.voiceText(text, ticket),
+      speech: (on) => this.plans.speech(on),
+      planText: (text, ticket) => void this.plans.planSpeech(text, ticket),
       storage: (kind, name, value) =>
         kind === 'local' ? this.ls(name, value) : this.ss(name, value),
       broadcast: (msg) => this.signal(msg),
+    });
+    this.plans = new UiPlanController({
+      ui: () => this.state.plan,
+      setUi: (p) => this.set({ plan: { ...this.state.plan, ...p } }),
+      t: () => this.state.t,
+      lang: () => this.state.lang,
+      cfg: () =>
+        this.state.cfg.status === 'active' ? this.state.cfg.voiceControl : null,
+      api: (method, path, body) => this.api(method, path, body),
+      toParent: (m) => this.toParent(m),
+      conversationId: () => this.conversationId,
+      setConversation: (id) => {
+        this.conversationId = id;
+      },
+      feed: (role, text, byVoice) => this.feedLocal(role, text, byVoice),
+      storage: (kind, name, value) =>
+        kind === 'local' ? this.ls(name, value) : this.ss(name, value),
+      pageUrl: () => this.page.url,
+      listen: (on) => this.voice.planListen(on),
+      random: () => uuid().replace(/-/g, '').slice(0, 16),
     });
     document.addEventListener('visibilitychange', () => {
       // Ушли со вкладки — открытый микрофон гаснет без отправки (§5-бис.7).
@@ -360,6 +390,12 @@ export class ChatController {
       case 'highlight-result':
         void this.highlightResult(m.elementId, m.found);
         return;
+      case 'ui-snapshot':
+      case 'ui-step':
+      case 'ui-stopped':
+      case 'ui-need':
+        // Э6-бис: снимок/итоги шагов — только своему плану (rid, planId).
+        return this.plans.onParent(m);
       case 'preview':
         // «к Л2»: второй замок — флаг из конфига сервера здесь же.
         if (this.state.cfg.allowClientPreview)
@@ -438,6 +474,8 @@ export class ChatController {
       );
       await this.loadState(s ? s.resumed : false);
       this.openChannel();
+      // Э6-бис: голосовой план этой вкладки — продолжить на новой странице.
+      void this.plans.resume();
     } catch (e) {
       this.fail(e);
     }
@@ -715,6 +753,81 @@ export class ChatController {
     });
     this.setDraft('');
     await this.send(p, false);
+  }
+
+  /**
+   * Набор в поле ввода iframe (жест посетителя внутри iframe). Э6-бис:
+   * команда-действие — план (§5-бис.6 п.1: «набранная команда» — только
+   * отсюда; `V4CAssist('ask')` идёт мимо — в `ask`).
+   */
+  async submit(text: string) {
+    const q = text.trim().slice(0, 600);
+    if (!q || this.state.busy || this.state.phase !== 'ready') return;
+    if (await this.tryCommand(q, 'typed', null)) {
+      this.setDraft('');
+      return;
+    }
+    await this.ask(q);
+  }
+
+  /** Распознанная речь (Э5): план, ответ на карточку или обычный вопрос. */
+  private async voiceText(text: string, ticket: string | null) {
+    if (this.plans.active()) {
+      if (await this.plans.planSpeech(text, ticket)) return;
+    }
+    if (await this.tryCommand(text, 'voice', ticket)) return;
+    if (this.state.busy) this.setDraft(text);
+    else await this.ask(text, ticket);
+  }
+
+  private async tryCommand(
+    text: string,
+    source: 'voice' | 'typed',
+    ticket: string | null
+  ): Promise<boolean> {
+    if (!looksLikeCommand(text)) return false;
+    if (!this.plans.available()) {
+      // §5-бис.10 п.6: режим выключен — сказать и ответить текстом, ничего не нажимая.
+      if (!this.vcOffShown && this.state.cfg.voice) {
+        this.vcOffShown = true;
+        this.feedLocal('assistant', this.state.t.vcOff);
+      }
+      return false;
+    }
+    return this.plans.command(text, source, ticket);
+  }
+
+  /** Строка плана в ленте — только локально (сервер хранит план, не реплики). */
+  private feedLocal(
+    role: 'visitor' | 'assistant',
+    text: string,
+    byVoice = false
+  ) {
+    const id = 'local-vc-' + uuid();
+    this.set({
+      messages: [
+        ...this.state.messages,
+        {
+          id,
+          role,
+          text,
+          sources: [],
+          actions: [],
+          streamState: 'complete',
+          rating: null,
+          createdAt: new Date().toISOString(),
+          local: true,
+          ...(byVoice ? { byVoice: true } : {}),
+        },
+      ],
+    });
+  }
+
+  /** Esc в iframe во время плана — стоп плана, а не закрытие окна. */
+  stopPlanIfRunning(): boolean {
+    if (!this.plans.active()) return false;
+    this.plans.stop('esc');
+    return true;
   }
 
   /** Повтор после «ответ прервался»: новый вопрос с тем же текстом. */

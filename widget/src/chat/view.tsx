@@ -541,6 +541,65 @@ function ScenarioButtons({
   );
 }
 
+/**
+ * Э6-бис: согласие посетителя на нажатия (один раз на сайт), «смотрю на
+ * страницу…» и карточка подтверждения: ЧТО будет нажато — видимый текст цели
+ * и значение (§5-бис.5, §5-бис.6 п.7); «Да» — кнопкой или голосом.
+ */
+function PlanCards({ s, c }: { s: ChatState; c: ChatController }) {
+  const t = s.t;
+  const p = s.plan;
+  if (p.phase === 'consent')
+    return (
+      <div class="note vconsent" role="alertdialog" aria-label={t.vcConsent}>
+        <span>{t.vcConsent}</span>
+        <button type="button" class="lnk" onClick={() => c.plans.consent(true)}>
+          {t.vcConsentYes}
+        </button>
+        <button
+          type="button"
+          class="lnk"
+          onClick={() => c.plans.consent(false)}
+        >
+          {t.cancel}
+        </button>
+      </div>
+    );
+  if (p.phase === 'thinking')
+    return (
+      <div class="note" role="status">
+        {t.vcThinking}
+      </div>
+    );
+  if (p.phase !== 'confirm') return null;
+  return (
+    <div class="note pconfirm" role="alertdialog" aria-label={t.vcConfirm}>
+      <span>{t.vcConfirm}</span>
+      <ul>
+        {p.confirmSteps.map((x, i) => (
+          <li key={i}>
+            «{x.text}»{x.value ? ` — ${x.value}` : ''}
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        class="lnk pyes"
+        onClick={() => void c.plans.confirm(true)}
+      >
+        {t.vcYes}
+      </button>
+      <button
+        type="button"
+        class="lnk pno"
+        onClick={() => void c.plans.confirm(false)}
+      >
+        {t.vcNo}
+      </button>
+    </div>
+  );
+}
+
 /** Э5: индикатор открытого микрофона — точка, таймер, уровень (§5-бис.7). */
 function VoiceBar({ s, c }: { s: ChatState; c: ChatController }) {
   const t = s.t;
@@ -645,7 +704,8 @@ export function App({
   const leadOnly = s.cfg.status === 'lead_only';
   const send = (e: Event) => {
     e.preventDefault();
-    void c.ask(s.draft);
+    // Набор в поле iframe: команда-действие — план (Э6-бис), иначе вопрос.
+    void c.submit(s.draft);
   };
   return (
     <div
@@ -750,6 +810,7 @@ export function App({
           </div>
         )}
         {s.lead !== 'hidden' && <LeadForm s={s} c={c} />}
+        <PlanCards s={s} c={c} />
         {s.voice.phase === 'consent' && (
           <div class="note vconsent" role="alertdialog" aria-label={t.voiceMic}>
             <span>{t.voiceConsent}</span>
@@ -813,6 +874,18 @@ export function App({
           </div>
         )}
       </div>
+      {!leadOnly && s.plan.phase === 'running' && (
+        <div class="pbar" role="status" aria-live="polite">
+          <span>{t.vcRunning}</span>
+          <button
+            type="button"
+            class="pstop"
+            onClick={() => c.plans.stop('button')}
+          >
+            ■ {t.vcStop}
+          </button>
+        </div>
+      )}
       {!leadOnly &&
         (s.voice.phase === 'recording' || s.voice.phase === 'sending') && (
           <VoiceBar s={s} c={c} />

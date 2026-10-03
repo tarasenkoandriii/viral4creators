@@ -53,6 +53,10 @@
     {
       "path": "/cron/site-credentials-retention",
       "schedule": "50 3 * * *"
+    },
+    {
+      "path": "/cron/site-ui-map-maintenance",
+      "schedule": "35 3 * * *"
     }
   ]
 }

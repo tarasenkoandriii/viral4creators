@@ -43,7 +43,24 @@
  * обычной кнопке, а предупреждение, которое срабатывает постоянно,
  * перестают читать.
  */
-const DANGER_PATTERNS: Array<{ re: RegExp; what: string }> = [
+/**
+ * Категории необратимого (аудит 1.2 ТЗ помощника §5-бис.5): голосовое
+ * управление виджета помощника (sites-backend, копия
+ * `scripts/sync-sites-shared.mjs`) сопоставляет их классу риска клика —
+ * оплата, удаление, оформление заказа, отмена подписки → «никогда»,
+ * отправка сообщения → «с подтверждением». Здесь только ярлыки; что с ними
+ * делать, решает потребитель (обучалка по-прежнему ничего не блокирует).
+ */
+export const DANGER_KINDS = [
+  'оплата',
+  'удаление',
+  'оформление заказа',
+  'отправка сообщения',
+  'отмена подписки',
+] as const;
+export type DangerKind = (typeof DANGER_KINDS)[number];
+
+const DANGER_PATTERNS: Array<{ re: RegExp; what: DangerKind }> = [
   // `(?<!\p{L})` — совпадение только с НАЧАЛА слова. Без него
   // «Неоплаченные заказы» в меню сайта давало бы «похоже на оплату» на
   // каждом раунде, а предупреждение, которое горит всегда, перестают
@@ -78,7 +95,19 @@ const DANGER_PATTERNS: Array<{ re: RegExp; what: string }> = [
  * километровый одинаково законны и одинаково не должны ничего ронять.
  */
 export function dangerWarningFor(text: string | undefined): string | undefined {
-  if (!text) return undefined;
+  const unique = dangerKindsFor(text);
+  if (unique.length === 0) return undefined;
+  return `Похоже на необратимое действие на сайте заказчика (${unique.join(', ')}). Шаг выполнится по-настоящему — убедитесь, что это тестовые данные.`;
+}
+
+/**
+ * Категории необратимого действия по видимому тексту элемента — без
+ * повторов, в порядке словаря; пусто — не похоже. Та же проверка, что у
+ * `dangerWarningFor` (первые 300 символов, совпадение с начала слова), —
+ * предупреждение обучалки и стоп-лист кликов помощника не расходятся.
+ */
+export function dangerKindsFor(text: string | undefined): DangerKind[] {
+  if (!text) return [];
   // Длинный текст обрезается до разумного: кнопка с абзацем внутри —
   // это не кнопка, а промах селектора, и гонять по ней пять регулярок
   // целиком незачем.
@@ -86,7 +115,5 @@ export function dangerWarningFor(text: string | undefined): string | undefined {
   const hits = DANGER_PATTERNS.filter((p) => p.re.test(probe)).map(
     (p) => p.what,
   );
-  if (hits.length === 0) return undefined;
-  const unique = [...new Set(hits)];
-  return `Похоже на необратимое действие на сайте заказчика (${unique.join(', ')}). Шаг выполнится по-настоящему — убедитесь, что это тестовые данные.`;
+  return [...new Set(hits)];
 }

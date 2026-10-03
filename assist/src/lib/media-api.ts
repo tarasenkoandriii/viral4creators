@@ -23,7 +23,57 @@ export interface SiteVideosView {
   planAllowsVideo: boolean;
   videos: SiteVideoView[];
   tutorialLink: string | null;
-  uiMap: { pages: number; stalePages: number; lastCapturedAt: string | null };
+  uiMap: {
+    pages: number;
+    stalePages: number;
+    /** Э-С Ш4: устаревших элементов (порог промахов по виду вёрстки). */
+    staleElements: number;
+    lastCapturedAt: string | null;
+  };
+}
+
+// ── Э-С Ш4: общая карта интерфейса (GET /assist/sites/:id/ui-map) ────────
+
+export const UI_MAP_SOURCES = [
+  'crawl',
+  'tutorial',
+  'loader',
+  'qa',
+  'manual',
+] as const;
+export type UiMapSource = (typeof UI_MAP_SOURCES)[number];
+export const UI_MAP_VIEWPORTS = ['any', 'desktop', 'mobile'] as const;
+export type UiMapViewport = (typeof UI_MAP_VIEWPORTS)[number];
+
+export interface SiteUiMapStaleElement {
+  label: string;
+  tag: string;
+  viewport: 'desktop' | 'mobile' | 'both';
+  staleAt: string;
+}
+
+export interface SiteUiMapPage {
+  host: string;
+  path: string;
+  viewports: UiMapViewport[];
+  sources: UiMapSource[];
+  elements: number;
+  staleElements: number;
+  stale: SiteUiMapStaleElement[];
+  lastCapturedAt: string | null;
+}
+
+export interface SiteUiMapView {
+  siteId: string;
+  pages: number;
+  elements: number;
+  staleElements: number;
+  stalePages: number;
+  bySource: Partial<Record<UiMapSource, number>>;
+  byStability: { strong: number; medium: number; fragile: number };
+  lastCapturedAt: string | null;
+  items: SiteUiMapPage[];
+  truncated: boolean;
 }
 
 export const MEDIA_CABINET_ERROR_CODES = [
@@ -72,8 +122,81 @@ export function parseSiteVideos(v: unknown): SiteVideosView {
     uiMap: {
       pages: count(m.pages),
       stalePages: count(m.stalePages),
+      staleElements: count(m.staleElements),
       lastCapturedAt: str(m.lastCapturedAt),
     },
+  };
+}
+
+function member<T extends string>(list: readonly T[], v: unknown): T | null {
+  return typeof v === 'string' && (list as readonly string[]).includes(v)
+    ? (v as T)
+    : null;
+}
+
+/** Подпись и путь — текст чужого сайта: только строка, обрезанная. */
+function parseStale(v: unknown): SiteUiMapStaleElement | null {
+  const o = obj(v);
+  const viewport = member(['desktop', 'mobile', 'both'] as const, o.viewport);
+  const label = text(o.label).slice(0, 80);
+  if (!viewport || !label) return null;
+  return {
+    label,
+    tag: text(o.tag).slice(0, 16),
+    viewport,
+    staleAt: text(o.staleAt),
+  };
+}
+
+function parsePage(v: unknown): SiteUiMapPage | null {
+  const o = obj(v);
+  const host = text(o.host).slice(0, 253);
+  const path = text(o.path).slice(0, 300);
+  if (!host || !path.startsWith('/')) return null;
+  return {
+    host,
+    path,
+    viewports: arr(o.viewports)
+      .map((x) => member(UI_MAP_VIEWPORTS, x))
+      .filter((x): x is UiMapViewport => x !== null),
+    sources: arr(o.sources)
+      .map((x) => member(UI_MAP_SOURCES, x))
+      .filter((x): x is UiMapSource => x !== null),
+    elements: count(o.elements),
+    staleElements: count(o.staleElements),
+    stale: arr(o.stale)
+      .map(parseStale)
+      .filter((x): x is SiteUiMapStaleElement => x !== null)
+      .slice(0, 5),
+    lastCapturedAt: str(o.lastCapturedAt),
+  };
+}
+
+export function parseSiteUiMap(v: unknown): SiteUiMapView {
+  const o = obj(v);
+  const bs = obj(o.bySource);
+  const st = obj(o.byStability);
+  const bySource: Partial<Record<UiMapSource, number>> = {};
+  for (const k of UI_MAP_SOURCES)
+    if (bs[k] !== undefined) bySource[k] = count(bs[k]);
+  return {
+    siteId: text(o.siteId),
+    pages: count(o.pages),
+    elements: count(o.elements),
+    staleElements: count(o.staleElements),
+    stalePages: count(o.stalePages),
+    bySource,
+    byStability: {
+      strong: count(st.strong),
+      medium: count(st.medium),
+      fragile: count(st.fragile),
+    },
+    lastCapturedAt: str(o.lastCapturedAt),
+    items: arr(o.items)
+      .map(parsePage)
+      .filter((x): x is SiteUiMapPage => x !== null)
+      .slice(0, 50),
+    truncated: o.truncated === true,
   };
 }
 
@@ -94,6 +217,8 @@ export function duration(ms: number | null): string {
 
 export interface MediaApi {
   list(siteId: string): Promise<SiteVideosView>;
+  /** Э-С Ш4: сводка общей карты интерфейса. */
+  uiMap(siteId: string): Promise<SiteUiMapView>;
   setEnabled(
     siteId: string,
     videoId: string,
@@ -110,6 +235,10 @@ export function createMediaApi(client: ApiClient): MediaApi {
   const p = (id: string) => `/assist/sites/${seg(id)}/videos`;
   return {
     list: async (id) => parseSiteVideos(await client.request('GET', p(id))),
+    uiMap: async (id) =>
+      parseSiteUiMap(
+        await client.request('GET', `/assist/sites/${seg(id)}/ui-map`)
+      ),
     setEnabled: async (id, vid, enabled) => {
       const v = parseVideo(
         await client.request('PATCH', `${p(id)}/${seg(vid)}`, { enabled })

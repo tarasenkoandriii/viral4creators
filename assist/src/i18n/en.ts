@@ -1,5 +1,6 @@
 import { billingEn } from './billing-en';
 import { mediaEn } from './media-en';
+import { voiceControlEn } from './voice-control-en';
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
 import { e3En } from './e3-en';
@@ -432,4 +433,6 @@ export const appEn: AppDictionary = {
   billing: billingEn,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
   media: mediaEn,
+  /** Э6-бис: голосовое управление «Сайтом». */
+  voiceControl: voiceControlEn,
 };

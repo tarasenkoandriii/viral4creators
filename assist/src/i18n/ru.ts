@@ -1,5 +1,6 @@
 import { billingRu } from './billing-ru';
 import { mediaRu } from './media-ru';
+import { voiceControlRu } from './voice-control-ru';
 import { setupRu } from './setup-ru';
 import { e3Ru } from './e3-ru';
 
@@ -425,6 +426,8 @@ export const appRu = {
   billing: billingRu,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
   media: mediaRu,
+  /** Э6-бис: голосовое управление «Сайтом». */
+  voiceControl: voiceControlRu,
 };
 
 export type AppDictionary = typeof appRu;

@@ -38,6 +38,8 @@ import {
   WIDGET_RESUME_COOKIE,
   widgetResumeCookieName,
 } from '../../src/shared/brand';
+import { freshVcLog, uiPlanRoute, type ModelStep } from './ui-plan-mock';
+import { vcStandRoute } from './vc-stands';
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -85,6 +87,20 @@ interface Site {
   voice?: unknown;
   voiceMode?: 'ok' | 'limit' | 'not_heard' | 'unavailable';
   voiceText?: string;
+  /**
+   * Э6-бис: голосовое управление — `voiceControl` конфига, правила кабинета,
+   * «ответы модели плана» по командам (ui-plan-mock.ts) и очередь
+   * распознанных фраз (`POST /widget/v1/voice` отдаёт их по одной).
+   */
+  voiceControl?: {
+    mode: 'on' | 'degraded';
+    denySelectors?: string[];
+    allowSelectors?: string[];
+    maxSteps?: number;
+  };
+  vcRules?: unknown;
+  vcModel?: Record<string, ModelStep[] | 'not_command'>;
+  voiceTexts?: string[];
 }
 interface Handoff {
   id: string;
@@ -196,6 +212,10 @@ function fresh() {
       elementId: string;
       pageUrl: string;
     }>,
+    // Э6-бис
+    vc: freshVcLog(),
+    /** Т-1 способ 2: отдавать тестовую сборку voice.js (хук WebAudio). */
+    testAudio: false,
   };
 }
 
@@ -615,6 +635,16 @@ async function api(
         ...(s.goals !== undefined ? { goals: s.goals } : {}),
         ...(s.handoff !== undefined ? { handoff: s.handoff } : {}),
         ...(s.voice !== undefined ? { voice: s.voice } : {}),
+        ...(s.voiceControl !== undefined
+          ? {
+              voiceControl: {
+                mode: s.voiceControl.mode,
+                denySelectors: s.voiceControl.denySelectors ?? [],
+                allowSelectors: s.voiceControl.allowSelectors ?? [],
+                maxSteps: s.voiceControl.maxSteps ?? 6,
+              },
+            }
+          : {}),
       },
       h
     );
@@ -942,12 +972,41 @@ async function api(
     if (mode === 'limit') return fail(res, 429, 'VOICE_LIMIT');
     if (mode === 'unavailable') return fail(res, 403, 'VOICE_UNAVAILABLE');
     if (mode === 'not_heard') return fail(res, 422, 'VOICE_NOT_HEARD');
-    const text = site?.voiceText ?? 'Скільки коштує доставка?';
+    // Э6-бис: очередь фраз (команда, затем «стоп»/«так») — по одной на запись.
+    const queued = site?.voiceTexts?.length
+      ? site.voiceTexts.shift()
+      : undefined;
+    const text = queued ?? site?.voiceText ?? 'Скільки коштує доставка?';
     return ok(
       res,
       { text, lang: 'uk', voiceTicket: `v1.9999999999.${'T'.repeat(43)}` },
       { 'Cache-Control': 'no-store' }
     );
+  }
+  // ── Э6-бис: голосовое управление (ui-plan-mock.ts — настоящие проверки) ──
+  if (p.startsWith('/widget/v1/ui-plan')) {
+    const site = [...M.sites.values()].find((x) => x.siteId === t.siteId);
+    await uiPlanRoute(
+      req,
+      p,
+      t,
+      site,
+      async () => {
+        const chunks: Buffer[] = [];
+        for await (const c of req) chunks.push(c as Buffer);
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let json: Record<string, unknown> = {};
+        try {
+          json = JSON.parse(raw || '{}');
+        } catch {
+          json = {};
+        }
+        return { raw, json };
+      },
+      M.vc,
+      (status, body) => send(res, status, body, { 'Cache-Control': 'no-store' })
+    );
+    return;
   }
   // ── Э6: ссылка на ролик и сигнал «карта устарела» (упрощённо как
   // assist-widget/widget-media.controller.ts: барьеры сайта — sites-backend).
@@ -1330,7 +1389,15 @@ async function widgetServer(
     return res.end(toneWav(1));
   }
   if (p.startsWith('/v1/')) {
-    const file = path.join(ROOT, 'dist', path.normalize(p).replace(/^\/+/, ''));
+    // Э6-бис (Т-1 способ 2): тестовая сборка чанка голоса с хуком WebAudio —
+    // только по флагу мока (боевая сборка хука не содержит).
+    const testAudio =
+      M.testAudio &&
+      p === '/v1/voice.js' &&
+      fs.existsSync(path.join(ROOT, 'dist-test/v1/voice.js'));
+    const file = testAudio
+      ? path.join(ROOT, 'dist-test/v1/voice.js')
+      : path.join(ROOT, 'dist', path.normalize(p).replace(/^\/+/, ''));
     if (!file.startsWith(path.join(ROOT, 'dist')) || !fs.existsSync(file))
       return fail(res, 404, 'NOT_FOUND');
     res.writeHead(200, {
@@ -1419,6 +1486,7 @@ async function control(
       if (typeof b.tokenDelayMs === 'number') M.tokenDelayMs = b.tokenDelayMs;
       if (typeof b.sessionDelayMs === 'number')
         M.sessionDelayMs = b.sessionDelayMs;
+      if (typeof b.testAudio === 'boolean') M.testAudio = b.testAudio;
       return ok(res, {});
     case '/__mock/log':
       return ok(res, {
@@ -1448,6 +1516,7 @@ async function control(
         videoLinks: M.videoLinks,
         videoRedirects: M.videoRedirects,
         highlightMisses: M.highlightMisses,
+        vc: M.vc,
       });
   }
   return fail(res, 404, 'NOT_FOUND');
@@ -1609,6 +1678,9 @@ function siteServer(req: http.IncomingMessage, res: http.ServerResponse) {
   const host = req.headers.host || 'localhost';
   const url = new URL(req.url || '/', `http://${host}`);
   const p = url.pathname;
+  // Э6-бис: стенды голосового управления (React/Vue/jQuery/MPA, полигон).
+  if (p.startsWith('/vc/'))
+    return void vcStandRoute(req, res, url, host, WIDGET);
   if (p === '/stand.css') {
     res.writeHead(200, { 'Content-Type': 'text/css' });
     return res.end(STAND_CSS);

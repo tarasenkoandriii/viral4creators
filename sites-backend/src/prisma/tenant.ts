@@ -105,11 +105,23 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   // assist_public) и карта интерфейса страниц (обход кабинета, Ш4 — общая).
   AssistSiteVideo: 'accountId',
   SiteUiMap: 'accountId',
+  // Э-С Ш4: история карт, слитые элементы и журнал промахов — строки
+  // кабинета (составные FK держат то же в базе). Промахи пишет публичный
+  // код сырым SQL под assist_public (accountId — из контекста сайта).
+  SiteUiMapVersion: 'accountId',
+  SiteUiElement: 'accountId',
+  SiteUiElementMiss: 'accountId',
   // Э-С Ш2: тестовые учётные записи сайта, их секреты и аренды — строки
   // кабинета (составной FK держит то же в базе).
   SiteTestAccount: 'accountId',
   SiteCredential: 'accountId',
   SiteCredentialLease: 'accountId',
+  // Э6-бис (а): планы голосового управления и журнал действий — строки
+  // кабинета (составные FK (conversationId|planId, accountId)). Пишет
+  // публичный маршрут сырым SQL под assist_public (accountId — из контекста
+  // сайта); кабинетный код (журнал, (б)/(г)) ходит с тенантом.
+  AssistSiteUiPlan: 'accountId',
+  AssistSiteUiActionLog: 'accountId',
 };
 
 /**

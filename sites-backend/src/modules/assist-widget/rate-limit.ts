@@ -43,7 +43,17 @@ export type RateScope =
   | 'widget-video-visitor-min'
   | 'widget-video-ip-site-min'
   | 'widget-uimiss-visitor-min'
-  | 'widget-uimiss-ip-site-min';
+  | 'widget-uimiss-ip-site-min'
+  // Э-С Ш4: сигналов «элемент не найден» с IP на сайт в сутки.
+  | 'widget-uimiss-ip-site-day'
+  // Э6-бис: планы голосового управления (посетитель, IP+сайт, потолок сайта
+  // в сутки) и отчёты шагов.
+  | 'widget-uiplan-visitor-min'
+  | 'widget-uiplan-visitor-day'
+  | 'widget-uiplan-ip-site-min'
+  | 'widget-uiplan-ip-site-day'
+  | 'widget-uiplan-site-day'
+  | 'widget-uistep-visitor-min';
 
 export interface RateHit {
   scope: RateScope;

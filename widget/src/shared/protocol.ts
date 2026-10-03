@@ -24,6 +24,12 @@ import {
 } from './brand';
 import { POSITIONS, UI_LANGS, cleanOrigin, isObj, oneOf, text } from './config';
 import { ENG_KEY, GOAL_KEY, ORDER_ID } from './engagement';
+import {
+  PLAN_ID,
+  STEP_RESULTS,
+  type UiCommand,
+  type UiStepResult,
+} from './ui-plan';
 
 type Obj = Record<string, unknown>;
 
@@ -86,6 +92,39 @@ export type ParentMessage =
    * может любой скрипт страницы — последствие: лишний сигнал своему же сайту.
    */
   | { type: 'highlight-result'; elementId: string; found: boolean }
+  /**
+   * Э6-бис (§5-бис.3 п.2): снимок интерактивных элементов страницы — ответ
+   * на `ui-snap` с тем же `rid` (iframe принимает только ожидаемый ответ;
+   * сервер разбирает снимок строго заново). Подписи уже маскированы.
+   */
+  | { type: 'ui-snapshot'; rid: string; snapshot: unknown }
+  /**
+   * Э6-бис: итог шага плана у загрузчика (`dispatched` — ДО навигационного
+   * клика; клик — только после `ui-ack`). Подделать может скрипт страницы —
+   * последствие: план своего посетителя остановится/продвинется на сервере;
+   * действий вне проверенного сервером плана это не даёт.
+   */
+  | {
+      type: 'ui-step';
+      planId: string;
+      index: number;
+      result: UiStepResult;
+      reason: string | null;
+      url: string | null;
+      ms: number;
+    }
+  /**
+   * Э6-бис: дальше шаг «после перехода» (SPA сменила страницу без
+   * перезагрузки) — iframe снимет новый снимок, сервер найдёт цель и
+   * проверит её тем же кодом, затем — новый `ui-run` с этого шага.
+   */
+  | { type: 'ui-need'; planId: string; index: number }
+  /** Э6-бис: человек взял управление (Esc, свой клик/клавиша, «Стоп» на странице). */
+  | {
+      type: 'ui-stopped';
+      planId: string;
+      by: 'esc' | 'click' | 'key' | 'button';
+    }
   /** Э3 (§3.6 п.4–5): посетитель принял проактивный сигнал → префилл или сценарий. */
   | {
       type: 'proactive';
@@ -123,7 +162,16 @@ export type FrameMessage =
    * `querySelectorAll` и ставит подпись `textContent` — ничего больше
    * из ответа модели на страницу заказчика не попадает.
    */
-  | { type: 'highlight'; elementId: string; selector: string; caption: string };
+  | { type: 'highlight'; elementId: string; selector: string; caption: string }
+  /** Э6-бис: команда плана для чанка act.js (разбирает её сам, строго). */
+  | { type: 'ui-raw'; raw: Record<string, unknown> }
+  /**
+   * Э6-бис (§5-бис.3): команды плана — снять снимок (`ui-snap`; начать его
+   * может только iframe: план — только из речи/набора в iframe, §5-бис.6
+   * п.1), исполнить проверенные сервером шаги (`ui-run`), «dispatched
+   * записан — нажимай» (`ui-ack`), стоп, пауза детектора речи.
+   */
+  | UiCommand;
 
 export type Envelope<T> = T & { ns: string; v: number };
 
@@ -140,6 +188,10 @@ const CONTEXT_KEY_RE = /^[A-Za-z0-9_.-]{1,40}$/;
 export const MAX_QUESTION = 600;
 export const MAX_CONTEXT_JSON = 500;
 const MAX_PREVIEW_JSON = 4096;
+/** Э6-бис: снимок (≤ 150 элементов) — до разбора сервером. */
+export const MAX_SNAPSHOT_JSON = 90_000;
+/** Э6-бис: одноразовый id запроса снимка. */
+const RID = /^[a-z0-9]{8,32}$/;
 
 export function isPk(v: unknown): v is string {
   return typeof v === 'string' && PK_RE.test(v);
@@ -346,6 +398,66 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
         typeof m.found === 'boolean'
         ? { type: 'highlight-result', elementId: m.elementId, found: m.found }
         : null;
+    case 'ui-snapshot': {
+      if (typeof m.rid !== 'string' || !RID.test(m.rid) || !isObj(m.snapshot))
+        return null;
+      let size = 0;
+      try {
+        size = JSON.stringify(m.snapshot).length;
+      } catch {
+        return null;
+      }
+      return size <= MAX_SNAPSHOT_JSON
+        ? { type: 'ui-snapshot', rid: m.rid, snapshot: m.snapshot }
+        : null;
+    }
+    case 'ui-step': {
+      const result = m.result as UiStepResult;
+      if (
+        typeof m.planId !== 'string' ||
+        !PLAN_ID.test(m.planId) ||
+        typeof m.index !== 'number' ||
+        !Number.isInteger(m.index) ||
+        m.index < 0 ||
+        m.index > 20 ||
+        STEP_RESULTS.indexOf(result) < 0
+      )
+        return null;
+      const ms =
+        typeof m.ms === 'number' && isFinite(m.ms)
+          ? Math.max(0, Math.min(600000, Math.round(m.ms)))
+          : 0;
+      return {
+        type: 'ui-step',
+        planId: m.planId,
+        index: m.index,
+        result,
+        reason:
+          typeof m.reason === 'string' && /^[a-z_]{1,40}$/.test(m.reason)
+            ? m.reason
+            : null,
+        url: pageUrl(m.url),
+        ms,
+      };
+    }
+    case 'ui-need':
+      return typeof m.planId === 'string' &&
+        PLAN_ID.test(m.planId) &&
+        typeof m.index === 'number' &&
+        Number.isInteger(m.index) &&
+        m.index >= 0 &&
+        m.index <= 20
+        ? { type: 'ui-need', planId: m.planId, index: m.index }
+        : null;
+    case 'ui-stopped':
+      return typeof m.planId === 'string' &&
+        PLAN_ID.test(m.planId) &&
+        (m.by === 'esc' ||
+          m.by === 'click' ||
+          m.by === 'key' ||
+          m.by === 'button')
+        ? { type: 'ui-stopped', planId: m.planId, by: m.by }
+        : null;
     case 'proactive': {
       const action = m.action;
       if (
@@ -422,6 +534,15 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
         ? { type: 'highlight', elementId: m.elementId, selector, caption }
         : null;
     }
+    // Э6-бис: команды плана — загрузчик только узнаёт вид и отдаёт сырое
+    // сообщение ленивому чанку act.js, который разбирает его СТРОГО
+    // (`parseUiCommand`): разбор шагов не утяжеляет загрузчик (12 КБ).
+    case 'ui-snap':
+    case 'ui-run':
+    case 'ui-ack':
+    case 'ui-stop':
+    case 'ui-pause':
+      return { type: 'ui-raw', raw: m };
     case 'handoff-state':
       return m.state === 'waiting' ||
         m.state === 'active' ||

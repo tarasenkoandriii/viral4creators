@@ -50,3 +50,7 @@ export const WIDGET_GOAL_SUBMIT_ATTR = 'data-assist-goal-submit';
 // чанк загрузчика: грузится только по клику посетителя на «Показать на
 // странице» (бюджет загрузчика 12 КБ не поднимается).
 export const WIDGET_HIGHLIGHT_PATH = '/v1/highlight.js';
+
+// Э6-бис: голосовое управление — снимок страницы и исполнитель шагов
+// (ленивый чанк загрузчика: только по команде своего iframe).
+export const WIDGET_ACT_PATH = '/v1/act.js';

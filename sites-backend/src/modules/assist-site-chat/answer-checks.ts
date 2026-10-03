@@ -112,6 +112,8 @@ export function cleanLabel(raw: unknown): string | null {
 export interface MediaAllowed {
   videos: PromptVideo[];
   elements: UiMapElement[];
+  /** Страница карты элементов (`хост` + `путь`) — в действие `highlight`. */
+  page?: string | null;
 }
 
 /** `E1`… → элемент карты (номер — позиция в промпте). */
@@ -202,6 +204,7 @@ export function validateSiteActions(
         elementId: e.id,
         selector: e.selector,
         caption: e.label,
+        ...(media.page ? { page: media.page } : {}),
       };
     }
     return { kind: a.kind, label };

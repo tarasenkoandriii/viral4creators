@@ -8,7 +8,10 @@
  *   POST /internal/sites/tutorial/site-videos  { siteId, asOf, videos[] } → полный набор роликов сайта
  *        (`asOf` — мс часов генератора, взятые ДО чтения его базы; набор
  *        старше последнего принятого → 200 `{ stale: true }`, без изменений)
- *   POST /internal/sites/tutorial/ui-map       { telegramId, siteId, url, elements[] } → карта страницы
+ *   POST /internal/sites/tutorial/ui-map       { telegramId, siteId, url, elements[], viewport? } → карта страницы
+ *        (Э-С Ш4: `viewport` — desktop|mobile|any, по умолчанию mobile —
+ *        окно исследователя обучалки; элементы — форма Э6 или с
+ *        `candidates`/`assistId`/`role`, site-core/ui-map/ui-map-model.ts)
  *
  * Отдельный файл (не internal-sites.controller.ts Ш1): маршруты Э6 —
  * свой контроллер и свой модуль `InternalSiteMediaModule` в той же папке
@@ -24,6 +27,7 @@ import {
   type ExecutionContext,
 } from '@nestjs/common';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
+import { parseUiViewport } from '../site-core/ui-map/ui-map-model';
 import { parseTelegramId } from './internal-sites.service';
 import {
   InternalSiteMediaService,
@@ -151,16 +155,21 @@ export class InternalSiteMediaController {
   @Post('ui-map')
   @HttpCode(200)
   uiMap(@InternalBody() b: unknown) {
-    const o = obj(b, ['telegramId', 'siteId', 'url', 'elements']);
+    const o = obj(b, ['telegramId', 'siteId', 'url', 'elements', 'viewport']);
     if (typeof o.url !== 'string' || o.url.length > 2048)
       throw bad('url — строка до 2048');
     if (!Array.isArray(o.elements) || o.elements.length > 100)
       throw bad('elements — массив до 100');
+    const viewport =
+      o.viewport === undefined ? undefined : parseUiViewport(o.viewport);
+    if (viewport === null) throw bad('viewport — desktop | mobile | any');
     return this.svc.uiMap(
       parseTelegramId(o.telegramId),
       id(o.siteId, 'siteId'),
       o.url,
       o.elements,
+      undefined,
+      viewport,
     );
   }
 }

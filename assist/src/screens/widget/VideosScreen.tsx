@@ -3,7 +3,9 @@
  * одобренные модератором, с переключателем «показывать в виджете», кнопка
  * «Снять новое обучение» (deep-link в визард обучалки генератора с
  * привязкой к сайту) и сводка карты интерфейса для «показать на экране»
- * (§4.12: сигнал «карта устарела»).
+ * (§4.12: сигнал «карта устарела»). Э-С Ш4: сводка общей карты —
+ * устаревшие ЭЛЕМЕНТЫ (порог промахов по виду вёрстки), источники и вид по
+ * страницам (`GET /assist/sites/:id/ui-map`, раскрывается по кнопке).
  */
 import { useState } from 'react';
 import { Clapperboard } from 'lucide-react';
@@ -13,6 +15,7 @@ import { useAssist } from '../../lib/assist-context';
 import {
   duration,
   mediaErrorCode,
+  type SiteUiMapView,
   type SiteVideosView,
 } from '../../lib/media-api';
 import { openExternal } from '../../lib/open-link';
@@ -128,23 +131,114 @@ function Videos({
           ))}
         </ul>
       )}
-      <Card className="space-y-1">
-        <div className="font-semibold text-sm">{t.map.title}</div>
-        {view.uiMap.pages === 0 ? (
-          <p className="text-xs text-silver-500">{t.map.empty}</p>
-        ) : (
-          <>
-            <p className="text-xs text-silver-500">
-              {fmt(t.map.pages, { n: String(view.uiMap.pages) })}
-            </p>
-            {view.uiMap.stalePages > 0 && (
-              <Alert tone="warning">
-                {fmt(t.map.stale, { n: String(view.uiMap.stalePages) })}
-              </Alert>
+      <UiMapCard siteId={siteId} summary={view.uiMap} />
+    </div>
+  );
+}
+
+/** Э-С Ш4: карта интерфейса — сводка и (по кнопке) страницы. */
+function UiMapCard({
+  siteId,
+  summary,
+}: {
+  siteId: string;
+  summary: SiteVideosView['uiMap'];
+}) {
+  const { appDict, media } = useAssist();
+  const t = appDict.media.map;
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<SiteUiMapView | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const toggle = async () => {
+    if (open) return setOpen(false);
+    setOpen(true);
+    if (detail) return;
+    try {
+      setDetail(await media.uiMap(siteId));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    }
+  };
+
+  return (
+    <Card className="space-y-2">
+      <div className="font-semibold text-sm">{t.title}</div>
+      {summary.pages === 0 ? (
+        <p className="text-xs text-silver-500">{t.empty}</p>
+      ) : (
+        <>
+          <p className="text-xs text-silver-500">
+            {fmt(t.pages, { n: String(summary.pages) })}
+          </p>
+          {summary.staleElements > 0 && (
+            <Alert tone="warning">
+              {fmt(t.stale, {
+                e: String(summary.staleElements),
+                n: String(summary.stalePages),
+              })}
+            </Alert>
+          )}
+          <Button variant="outline" onClick={() => void toggle()}>
+            {open ? t.hide : t.details}
+          </Button>
+          {open && failed && <Alert tone="danger">{t.loadError}</Alert>}
+          {open && !detail && !failed && <Spinner />}
+          {open && detail && <UiMapDetail view={detail} />}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function UiMapDetail({ view }: { view: SiteUiMapView }) {
+  const { appDict } = useAssist();
+  const t = appDict.media.map;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-silver-500">
+        {fmt(t.stability, {
+          s: String(view.byStability.strong),
+          n: String(view.elements),
+        })}
+      </p>
+      <ul className="space-y-2">
+        {view.items.map((p) => (
+          <li
+            key={`${p.host}${p.path}`}
+            className="text-xs space-y-0.5 border-t border-silver-200 pt-2"
+          >
+            <div className="font-medium break-all">
+              {p.host}
+              {p.path}
+            </div>
+            <div className="text-silver-500">
+              {fmt(t.elements, { n: String(p.elements) })} ·{' '}
+              {p.sources.map((s) => t.sources[s]).join(', ')} ·{' '}
+              {p.viewports.map((v) => t.views[v]).join(', ')}
+            </div>
+            {p.lastCapturedAt && (
+              <div className="text-silver-500">
+                {fmt(t.updated, {
+                  d: new Date(p.lastCapturedAt).toLocaleDateString(),
+                })}
+              </div>
             )}
-          </>
-        )}
-      </Card>
+            {p.stale.map((e, i) => (
+              <div key={i} className="text-amber-600">
+                {fmt(t.staleItem, {
+                  label: e.label,
+                  view: t.views[e.viewport],
+                })}
+              </div>
+            ))}
+          </li>
+        ))}
+      </ul>
+      {view.truncated && (
+        <p className="text-xs text-silver-500">{t.truncated}</p>
+      )}
     </div>
   );
 }

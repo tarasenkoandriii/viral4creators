@@ -36,6 +36,10 @@ export const BUDGETS = [
   // Э6: «показать на экране» — ленивый чанк загрузчика, только по клику
   // посетителя на «Показать на странице» (исполняется в origin заказчика).
   { name: 'highlight', files: ['dist/v1/highlight.js'], maxGzip: 3 * KB },
+  // Э6-бис: голосовое управление — снимок страницы и исполнитель шагов;
+  // ленивый чанк загрузчика, только по команде своего iframe (после речи
+  // или набора посетителя), исполняется в origin заказчика.
+  { name: 'act', files: ['dist/v1/act.js'], maxGzip: 9 * KB },
 ];
 
 export const LOADER_SINKS = [
@@ -82,6 +86,8 @@ for (const [label, file] of [
   ['чанк голоса', 'dist/v1/voice.js'],
   // Э6: подсветка — в origin заказчика, как загрузчик.
   ['чанк подсветки', 'dist/v1/highlight.js'],
+  // Э6-бис: голосовое управление — в origin заказчика, как загрузчик.
+  ['чанк голосового управления', 'dist/v1/act.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {
@@ -90,5 +96,15 @@ for (const [label, file] of [
       console.error(`${label}: найден запрещённый приёмник ${re} (§4.12)`);
     }
   }
+}
+// Э6-бис (§5-бис.10 п.13): в боевом чанке голоса нет тестового хука WebAudio.
+{
+  const voice = fs.readFileSync(path.join(ROOT, 'dist/v1/voice.js'), 'utf8');
+  if (/__v4cTestAudio|createMediaStreamDestination/.test(voice)) {
+    ok = false;
+    console.error(
+      'чанк голоса: в боевой сборке найден тестовый хук WebAudio (§5-бис.12)'
+    );
+  } else console.log('ok   чанк голоса: тестового хука WebAudio нет');
 }
 process.exit(ok ? 0 : 1);

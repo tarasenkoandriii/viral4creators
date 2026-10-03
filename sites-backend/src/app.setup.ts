@@ -20,6 +20,7 @@ import { VALIDATION_PIPE_OPTIONS } from './common/validation-pipe';
 import { corsDeniedHandler, corsOptionsDelegate } from './common/cors';
 import { SitesConfig } from './config/configuration';
 import { VOICE_DEFAULTS } from './modules/assist-site-voice/voice-config';
+import { VOICE_CONTROL_DEFAULTS } from './modules/assist-site-voice-control/voice-control-config';
 
 /**
  * Э2: картинка бренда приходит JSON-ом `{ kind, mime, dataBase64 }` —
@@ -56,6 +57,9 @@ export const INTERNAL_SITES_BODY_LIMIT = '8kb';
 /** Э-С Ш2: хранилище учётных данных — куки сессии до 256 КБ (свой потолок). */
 export const INTERNAL_CREDENTIALS_PATH = '/internal/sites/credentials';
 export const INTERNAL_CREDENTIALS_BODY_LIMIT = '320kb';
+/** Э-С Ш4: карта интерфейса от Flow-QA — снимок с кандидатами (свой потолок). */
+export const INTERNAL_QA_UI_MAP_PATH = '/internal/sites/qa/ui-map';
+export const INTERNAL_QA_UI_MAP_BODY_LIMIT = '64kb';
 
 /**
  * Э5: запись вопроса голосом приходит сырыми байтами (`Content-Type:
@@ -64,6 +68,15 @@ export const INTERNAL_CREDENTIALS_BODY_LIMIT = '320kb';
  * конверте ещё до маршрута (тело дальше не читается).
  */
 export const WIDGET_VOICE_PATH = '/widget/v1/voice';
+
+/**
+ * Э6-бис (аудит 03.10.2026): маршруты голосового плана (`/widget/v1/ui-plan`
+ * и его `:id/confirm|step|stop|resume`) — JSON ≤ 96 КБ
+ * (VOICE_CONTROL_DEFAULTS.maxBodyBytes: снимок ≤ 150 элементов), а не
+ * общие 100 КБ Nest. Больше — 413 `UI_PLAN_TOO_LARGE` в общем конверте до
+ * маршрута (тело дальше не читается, сессия и лимиты не трогаются).
+ */
+export const WIDGET_UI_PLAN_PATH = '/widget/v1/ui-plan';
 
 export function configureApp(app: INestApplication, config: SitesConfig) {
   // API отдаёт только JSON: CSP/COEP ему не нужны, а nosniff, HSTS и
@@ -131,6 +144,20 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       credentialsText(req, res, next);
     },
   );
+  const qaUiMapText = text({
+    type: () => true,
+    limit: INTERNAL_QA_UI_MAP_BODY_LIMIT,
+  });
+  app.use(
+    INTERNAL_QA_UI_MAP_PATH,
+    function internalQaUiMapRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      qaUiMapText(req, res, next);
+    },
+  );
   const internalText = text({
     type: () => true,
     limit: INTERNAL_SITES_BODY_LIMIT,
@@ -163,6 +190,29 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
           meta: {
             timestamp: new Date().toISOString(),
             path: WIDGET_VOICE_PATH,
+          },
+        });
+      });
+    },
+  );
+  const uiPlanJson = json({ limit: VOICE_CONTROL_DEFAULTS.maxBodyBytes });
+  app.use(
+    WIDGET_UI_PLAN_PATH,
+    function widgetUiPlanJson(req: Request, res: Response, next: NextFunction) {
+      uiPlanJson(req, res, (err?: unknown) => {
+        if (!err) return next();
+        const tooLarge = (err as { type?: string }).type === 'entity.too.large';
+        res.status(tooLarge ? 413 : 400).json({
+          success: false,
+          error: tooLarge
+            ? {
+                code: 'UI_PLAN_TOO_LARGE',
+                message: 'Страница слишком большая для голосового управления',
+              }
+            : { code: 'BAD_REQUEST', message: 'Неверный запрос' },
+          meta: {
+            timestamp: new Date().toISOString(),
+            path: WIDGET_UI_PLAN_PATH,
           },
         });
       });

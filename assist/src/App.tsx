@@ -73,6 +73,7 @@ import { createLearningApi } from './lib/learning-api';
 import { createStatsApi } from './lib/stats-api';
 import { createPersonaApi } from './lib/persona-api';
 import { createVoiceApi } from './lib/voice-api';
+import { createVoiceControlApi } from './lib/voice-control-api';
 import { createMediaApi } from './lib/media-api';
 import { createWidgetApi } from './lib/widget-api';
 import { launchAction, type LaunchAction } from './lib/widget-view';
@@ -215,6 +216,10 @@ export function App({ startParam }: { startParam: string | null }) {
   const statsApi = useMemo(() => createStatsApi(client), [client]);
   const billingApi = useMemo(() => createBillingApi(client), [client]);
   const voiceApi = useMemo(() => createVoiceApi(client), [client]);
+  const voiceControlApi = useMemo(
+    () => createVoiceControlApi(client),
+    [client]
+  );
   const mediaApi = useMemo(() => createMediaApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
@@ -228,6 +233,7 @@ export function App({ startParam }: { startParam: string | null }) {
       stats: statsApi,
       billing: billingApi,
       voice: voiceApi,
+      voiceControl: voiceControlApi,
       media: mediaApi,
     }),
     [
@@ -241,6 +247,7 @@ export function App({ startParam }: { startParam: string | null }) {
       statsApi,
       billingApi,
       voiceApi,
+      voiceControlApi,
       mediaApi,
     ]
   );

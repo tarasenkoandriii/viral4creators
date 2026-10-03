@@ -366,6 +366,103 @@ if (!RAW_URL) {
       }
     });
 
+    it('Э-С Ш4: общая карта — ровно тот SQL, что шлёт assist-site-media/public/ui-map.ts (элементы страницы, квитанция показа, промах по виду, подтверждение снимком)', async () => {
+      for (const sql of [
+        `SELECT "elementId", "elementKey", "selector", "tag", "label", "viewport", "sourceRank", "position", "staleDesktopAt", "staleMobileAt" FROM ${S}."site_ui_elements" WHERE "siteId" = 's' AND "host" = 'h' AND "path" = '/'`,
+        `SELECT 1 AS "ok" FROM ${S}."assist_site_messages" m JOIN ${S}."assist_site_conversations" c ON c."id" = m."conversationId" WHERE m."siteId" = 's' AND c."siteId" = 's' AND c."visitorId" = 'v' AND m."role" = 'assistant' AND m."createdAt" >= now()::timestamp(3) AND m."actions" @> '[{"kind":"highlight","elementId":"u00000000"}]'::jsonb LIMIT 1`,
+        `SELECT "id" FROM ${S}."site_ui_elements" WHERE "siteId" = 's' AND "host" = 'h' AND "path" = '/' AND "elementId" = 'u00000000' AND "viewport" IN ('mobile', 'any') ORDER BY ("viewport" = 'mobile') DESC LIMIT 1`,
+        `INSERT INTO ${S}."site_ui_element_misses" ("id", "accountId", "siteId", "elementRowId", "viewport", "kind", "ipHash", "visitorId", "createdAt") SELECT 'm', 'a', 's', 'e', 'mobile', 'miss', 'ip', 'v', now()::timestamp(3) WHERE false ON CONFLICT DO NOTHING`,
+        // Аудит Ш4: голос «найден» снимком загрузчика — тот же журнал, род `seen`.
+        `INSERT INTO ${S}."site_ui_element_misses" ("id", "accountId", "siteId", "elementRowId", "viewport", "kind", "ipHash", "visitorId", "createdAt") SELECT 'm', 'a', 's', 'e', 'desktop', 'seen', 'ip', 'v', now()::timestamp(3) WHERE false ON CONFLICT DO NOTHING`,
+        `UPDATE ${S}."site_ui_elements" SET "missCountMobile" = CASE WHEN ("missSinceMobile" IS NULL OR "missSinceMobile" < now()::timestamp(3)) THEN 1 ELSE "missCountMobile" + 1 END, "missSinceMobile" = CASE WHEN ("missSinceMobile" IS NULL OR "missSinceMobile" < now()::timestamp(3)) THEN now()::timestamp(3) ELSE "missSinceMobile" END, "staleMobileAt" = CASE WHEN "staleMobileAt" IS NULL AND (CASE WHEN ("missSinceMobile" IS NULL OR "missSinceMobile" < now()::timestamp(3)) THEN 1 ELSE "missCountMobile" + 1 END) >= 3 THEN now()::timestamp(3) ELSE "staleMobileAt" END, "lastMissAt" = now()::timestamp(3) WHERE "id" = 'e' RETURNING "staleMobileAt" AS "stale"`,
+        `UPDATE ${S}."site_ui_elements" SET "missCountDesktop" = 1, "missSinceDesktop" = now()::timestamp(3), "staleDesktopAt" = NULL, "lastMissAt" = now()::timestamp(3) WHERE "id" = 'e' RETURNING "staleDesktopAt" AS "stale"`,
+        `UPDATE ${S}."site_ui_elements" SET "lastSeenAt" = now()::timestamp(3) WHERE "siteId" = 's' AND "host" = 'h' AND "path" = '/' AND "viewport" IN ('desktop', 'any') AND "elementKey" = ANY('{i:buy}'::text[]) RETURNING "id", ("missCountDesktop" > 0 OR "staleDesktopAt" IS NOT NULL) AS "doubt"`,
+        `UPDATE ${S}."site_ui_elements" SET "seenCountMobile" = CASE WHEN (CASE WHEN ("seenSinceMobile" IS NULL OR "seenSinceMobile" < now()::timestamp(3)) THEN 1 ELSE "seenCountMobile" + 1 END) >= 3 THEN 0 ELSE (CASE WHEN ("seenSinceMobile" IS NULL OR "seenSinceMobile" < now()::timestamp(3)) THEN 1 ELSE "seenCountMobile" + 1 END) END, "seenSinceMobile" = CASE WHEN ("seenSinceMobile" IS NULL OR "seenSinceMobile" < now()::timestamp(3)) THEN now()::timestamp(3) ELSE "seenSinceMobile" END, "missCountMobile" = 0, "missSinceMobile" = NULL, "staleMobileAt" = NULL WHERE "id" = 'e'`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+      for (const sql of [
+        // Кандидаты, источники, уверенность, хост и кабинет — не виджету;
+        // элементы пишут обход и внутренний API основной ролью.
+        `SELECT "candidates" FROM ${S}."site_ui_elements" LIMIT 1`,
+        `SELECT "sources" FROM ${S}."site_ui_elements" LIMIT 1`,
+        `SELECT "accountId" FROM ${S}."site_ui_elements" LIMIT 1`,
+        `SELECT "lastSeenAt" FROM ${S}."site_ui_elements" LIMIT 1`,
+        `UPDATE ${S}."site_ui_elements" SET "selector" = '#x' WHERE false`,
+        `UPDATE ${S}."site_ui_elements" SET "label" = 'x' WHERE false`,
+        `UPDATE ${S}."site_ui_elements" SET "viewport" = 'any' WHERE false`,
+        `DELETE FROM ${S}."site_ui_elements" WHERE false`,
+        `INSERT INTO ${S}."site_ui_elements" ("id", "accountId", "siteId", "hostId", "host", "path", "viewport", "elementKey", "elementId", "tag", "label", "candidates", "stability", "confidence", "sources", "sourceRank", "position", "firstSeenAt", "lastSeenAt", "updatedAt") SELECT 'e', 'a', 's', 'h', 'h', '/', 'any', 'k', 'u00000000', 'a', 'x', '[]', 'strong', 1, '{}', 0, 0, now(), now(), now() WHERE false`,
+        // Журнал промахов и голосов: прочитать, поправить или стереть — нельзя.
+        `SELECT "ipHash" FROM ${S}."site_ui_element_misses" LIMIT 1`,
+        `SELECT "kind" FROM ${S}."site_ui_element_misses" LIMIT 1`,
+        `SELECT "elementRowId" FROM ${S}."site_ui_element_misses" LIMIT 1`,
+        `DELETE FROM ${S}."site_ui_element_misses" WHERE false`,
+        `UPDATE ${S}."site_ui_element_misses" SET "visitorId" = 'x' WHERE false`,
+        // С целью конфликта ON CONFLICT требует SELECT — код шлёт без цели.
+        `INSERT INTO ${S}."site_ui_element_misses" ("id", "accountId", "siteId", "elementRowId", "viewport", "kind", "ipHash", "visitorId", "createdAt") SELECT 'm', 'a', 's', 'e', 'mobile', 'miss', 'ip', 'v', now() WHERE false ON CONFLICT ("elementRowId", "viewport", "kind", "ipHash") DO NOTHING`,
+        // История карт — роли ничего; вид и версия снимка — тоже.
+        `SELECT 1 FROM ${S}."site_ui_map_versions" LIMIT 1`,
+        `SELECT "viewport" FROM ${S}."site_ui_maps" LIMIT 1`,
+        `SELECT "version" FROM ${S}."site_ui_maps" LIMIT 1`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+      // Публичный код шлёт вставку в журнал без цели конфликта.
+      const fs = await import('fs');
+      const path = await import('path');
+      const code = fs.readFileSync(
+        path.join(
+          __dirname,
+          '..',
+          'modules',
+          'assist-site-media',
+          'public',
+          'ui-map.ts',
+        ),
+        'utf8',
+      );
+      expect(code).toMatch(/ON CONFLICT DO NOTHING/);
+      expect(code).not.toMatch(/ON CONFLICT \(/);
+    });
+
+    it('Э6-бис: голосовое управление — ровно тот SQL, что шлёт assist-site-voice-control/public (настройки режима, план, журнал шагов)', async () => {
+      for (const sql of [
+        `SELECT "voiceControlSiteState", "voiceControlSiteRules" FROM ${S}."assist_sites" WHERE "siteId" = 's'`,
+        `INSERT INTO ${S}."assist_site_ui_plans" ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "updatedAt") SELECT 'p', 'a', 's', 'c', 'v', 'u', 'typed', 'uk', 'https://x/', '[]'::jsonb, '{"u":"x","v":[]}'::jsonb, 0, 'proposed', true, NULL, now(), now(), now() WHERE false`,
+        `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl" FROM ${S}."assist_site_ui_plans" WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v'`,
+        `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl" FROM ${S}."assist_site_ui_plans" WHERE "siteId" = 's' AND "visitorId" = 'v' AND "status" IN ('proposed', 'confirmed', 'running') AND "expiresAt" > now() ORDER BY "createdAt" DESC LIMIT 1`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "steps" = '[]'::jsonb, "liveValues" = NULL::jsonb, "currentStep" = 1, "status" = 'running', "needsConfirm" = false, "confirmedBy" = 'button', "confirmBefore" = COALESCE(NULL, "confirmBefore"), "updatedAt" = now() WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v' AND "status" = 'confirmed' AND "currentStep" = 0 AND "steps" = '[]'::jsonb RETURNING "id"`,
+        // Аудит: сырые значения неживых планов СВОЕГО посетителя — обнулить.
+        `UPDATE ${S}."assist_site_ui_plans" SET "liveValues" = NULL WHERE "siteId" = 's' AND "visitorId" = 'v' AND "liveValues" IS NOT NULL AND ("status" NOT IN ('proposed', 'confirmed', 'running', 'paused') OR "expiresAt" <= now())`,
+        `INSERT INTO ${S}."assist_site_ui_action_log" ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs") SELECT 'l', 'a', 's', 'p', 0, 'click', NULL, NULL, 'auto', NULL, 'done', NULL, NULL, 1 WHERE false`,
+        // Единица за команду — тот же SQL, что claimDialog чата.
+        `UPDATE ${S}."assist_site_conversations" SET "dialogCounted" = true WHERE "id" = 'c' AND NOT "dialogCounted" RETURNING "id"`,
+        `UPDATE ${S}."assist_site_conversations" SET "answers" = "answers" + 1 WHERE "id" = 'c' RETURNING "answers", "voice"`,
+      ]) {
+        await expect(asPublic(sql)).resolves.toBeUndefined();
+      }
+      for (const sql of [
+        // Переключатель и правила — только кабинет.
+        `UPDATE ${S}."assist_sites" SET "voiceControlSiteState" = 'on' WHERE false`,
+        `UPDATE ${S}."assist_sites" SET "voiceControlSiteRules" = NULL WHERE false`,
+        // План: ни удаления, ни правки команды/источника/страницы/сроков/владельца.
+        `DELETE FROM ${S}."assist_site_ui_plans" WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "utteranceMasked" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "source" = 'voice' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "visitorId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "siteId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "expiresAt" = now() WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "pageUrl" = 'x' WHERE false`,
+        // Журнал только дописывается: ни чтения, ни правки, ни удаления.
+        `SELECT 1 FROM ${S}."assist_site_ui_action_log" LIMIT 1`,
+        `UPDATE ${S}."assist_site_ui_action_log" SET "result" = 'done' WHERE false`,
+        `DELETE FROM ${S}."assist_site_ui_action_log" WHERE false`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
     it('Э3 (решение 8): ON CONFLICT под ролью — с целью только там, где у роли SELECT на колонки цели; иначе без цели', async () => {
       // С целью конфликта Postgres требует SELECT на её колонки (и на
       // RETURNING). Ровно те UPSERT, что шлёт публичный код Э3:
@@ -547,6 +644,15 @@ if (!RAW_URL) {
         // страницы и счётчик промахов «карта устарела».
         assist_site_videos: ['column:SELECT'],
         site_ui_maps: ['column:SELECT', 'column:UPDATE'],
+        // Э6-бис (миграция _assist_voice_control): план посетителя —
+        // создать/прочитать свой/условно перевести статус и шаг; журнал
+        // шагов — только дописывается.
+        assist_site_ui_plans: ['SELECT', 'INSERT', 'column:UPDATE'],
+        assist_site_ui_action_log: ['INSERT'],
+        // Э-С Ш4: слитые элементы — чтение и счётчики промахов по виду;
+        // журнал промахов — только вставка.
+        site_ui_elements: ['column:SELECT', 'column:UPDATE'],
+        site_ui_element_misses: ['column:INSERT'],
         // Лендинг: только запись.
         assist_widget_drafts: ['INSERT'],
         assist_landing_events: ['INSERT'],

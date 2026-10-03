@@ -132,6 +132,13 @@ function v4c_assist_parse_settings($raw)
         'order_goal_key' => $goal,
         'identify' => !empty($raw['identify']),
         'order_goals' => !empty($raw['order_goals']),
+        // Э6-бис: разметка data-assist-id для голосового управления — по
+        // умолчанию включена (сохранённые до Э6-бис настройки ключа не имеют).
+        // Форма настроек шлёт маркер `assist_ids_present`: снятая галочка
+        // не приходит вовсе — без маркера её нельзя было бы выключить.
+        'assist_ids' => array_key_exists('assist_ids_present', $raw)
+            ? !empty($raw['assist_ids'])
+            : (!array_key_exists('assist_ids', $raw) || !empty($raw['assist_ids'])),
     );
 }
 
@@ -298,4 +305,91 @@ function v4c_assist_should_retry($httpCode)
         return true;
     }
     return false;
+}
+
+// ── Э6-бис: разметка data-assist-id для голосового управления ─────────
+//
+// ТЗ помощника §5-бис.4: «Плагин WordPress/WooCommerce расставляет
+// data-assist-id на стандартных элементах темы автоматически». Разметка —
+// самый надёжный путь поиска цели голосовой командой; а `add-to-cart` —
+// единственное, что снимает ложный стоп-лист со слов «Купити/Купить» на
+// кнопке «В кошик» (§5-бис.5). Свою разметку темы плагин не перетирает.
+
+/** Ключ разметки: латиница, цифры, «-» (как ASSIST_ID_RE сервера). */
+function v4c_assist_clean_assist_id($v)
+{
+    $v = strtolower(preg_replace('/[^A-Za-z0-9-]+/', '-', (string) $v));
+    $v = trim($v, '-');
+    if ($v === '' || strlen($v) > 60) {
+        return '';
+    }
+    return $v;
+}
+
+/** Кнопка «В кошик» в списке товаров (фильтр woocommerce_loop_add_to_cart_args). */
+function v4c_assist_loop_add_to_cart_args($args)
+{
+    if (!is_array($args)) {
+        return $args;
+    }
+    if (!isset($args['attributes']) || !is_array($args['attributes'])) {
+        $args['attributes'] = array();
+    }
+    if (!isset($args['attributes']['data-assist-id'])) {
+        $args['attributes']['data-assist-id'] = 'add-to-cart';
+    }
+    return $args;
+}
+
+/** Поле поиска формы темы (фильтр get_search_form): первое поле name="s". */
+function v4c_assist_search_form_html($html)
+{
+    if (!is_string($html) || strpos($html, 'data-assist-id') !== false) {
+        return $html;
+    }
+    return preg_replace('/<input\b(?=[^>]*\bname=(["\'])s\1)/i', '<input data-assist-id="search"', $html, 1);
+}
+
+/**
+ * Ссылка меню (фильтр nav_menu_link_attributes): `nav-<последний сегмент
+ * пути>` (`/dostavka/` → `nav-dostavka`); главная — `nav-home`; чужой
+ * домен и якоря — без разметки.
+ */
+function v4c_assist_menu_link_attrs($atts, $siteHost)
+{
+    if (!is_array($atts) || isset($atts['data-assist-id']) || empty($atts['href'])) {
+        return $atts;
+    }
+    $u = parse_url((string) $atts['href']);
+    if (!is_array($u)) {
+        return $atts;
+    }
+    if (!empty($u['host']) && strtolower($u['host']) !== strtolower((string) $siteHost)) {
+        return $atts;
+    }
+    $path = isset($u['path']) ? trim($u['path'], '/') : '';
+    $parts = $path === '' ? array() : explode('/', $path);
+    $last = $parts ? rawurldecode(end($parts)) : 'home';
+    $id = v4c_assist_clean_assist_id($last);
+    if ($id !== '') {
+        $atts['data-assist-id'] = 'nav-' . $id;
+    }
+    return $atts;
+}
+
+/**
+ * Кнопки, у которых в WooCommerce нет фильтра атрибутов (кнопка «В кошик» на
+ * странице товара), — маленький встроенный скрипт без HTML-приёмников:
+ * только setAttribute на элементах стандартных классов темы.
+ */
+function v4c_assist_assist_ids_script()
+{
+    $map = array(
+        '.single_add_to_cart_button' => 'add-to-cart',
+        '.woocommerce-product-search-field' => 'search',
+        '.woocommerce-widget-layered-nav-dropdown__submit' => 'apply-filter',
+    );
+    $js = '(function(){var m=' . json_encode($map, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) . ';'
+        . 'Object.keys(m).forEach(function(s){document.querySelectorAll(s+\':not([data-assist-id])\').forEach(function(e){e.setAttribute(\'data-assist-id\',m[s])})})})();';
+    return $js;
 }

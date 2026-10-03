@@ -138,6 +138,19 @@ export interface PublicConfig {
   handoff: HandoffInfo | null;
   /** Э5: голос (микрофон/озвучка); null — голоса на сайте нет. */
   voice: VoiceConfigPublic | null;
+  /** Э6-бис: голосовое управление «Сайтом»; null — режима нет. */
+  voiceControl: VoiceControlPublic | null;
+}
+
+/**
+ * Э6-бис: `voiceControl` публичного конфига (assist-site-voice-control/
+ * api-types.ts WidgetVoiceControlConfig): режим и запреты для снимка.
+ */
+export interface VoiceControlPublic {
+  mode: 'on' | 'degraded';
+  denySelectors: string[];
+  allowSelectors: string[];
+  maxSteps: number;
 }
 
 /** Э5: `voice` публичного конфига (assist-site-voice/api-types.ts WidgetVoiceConfig). */
@@ -203,6 +216,7 @@ export function defaultPublicConfig(): PublicConfig {
     rawGoals: null,
     handoff: null,
     voice: null,
+    voiceControl: null,
   };
 }
 
@@ -430,6 +444,29 @@ export function parseVoice(v: unknown): VoiceConfigPublic | null {
   };
 }
 
+/** Селекторы запретов/зон: печатный CSS без `<`, обратных кавычек и управляющих. */
+function selectors(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.slice(0, 30).filter(
+    (x): x is string =>
+      typeof x === 'string' &&
+      x.length > 0 &&
+      x.length <= 200 &&
+      // eslint-disable-next-line no-control-regex
+      !/[\u0000-\u001f\u007f<`]/.test(x)
+  );
+}
+
+export function parseVoiceControl(v: unknown): VoiceControlPublic | null {
+  if (!isObj(v) || (v.mode !== 'on' && v.mode !== 'degraded')) return null;
+  return {
+    mode: v.mode,
+    denySelectors: selectors(v.denySelectors),
+    allowSelectors: selectors(v.allowSelectors),
+    maxSteps: intIn(v.maxSteps, 1, 15, 6),
+  };
+}
+
 export function parsePublicConfig(raw: unknown): PublicConfig {
   const d = parseLoaderConfig(raw);
   if (!isObj(raw)) return d;
@@ -473,6 +510,9 @@ export function parsePublicConfig(raw: unknown): PublicConfig {
   }
   d.handoff = parseHandoff(raw.handoff);
   d.voice = parseVoice(raw.voice);
+  // Э6-бис: голосовое управление — только вместе с микрофоном (§5-бис.2).
+  d.voiceControl =
+    d.voice && d.voice.input ? parseVoiceControl(raw.voiceControl) : null;
   d.engagement = parseEngagement(raw.engagement);
   d.goals = parseGoals(raw.goals);
   return d;

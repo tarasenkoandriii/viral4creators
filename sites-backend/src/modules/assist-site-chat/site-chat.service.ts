@@ -105,7 +105,11 @@ import {
   promptVideos,
   videoAllowedByPlan,
 } from '../assist-site-media/public/site-videos';
-import { pageUiElements } from '../assist-site-media/public/ui-map';
+import {
+  pageUiElements,
+  visitorPageKey,
+} from '../assist-site-media/public/ui-map';
+import { uiMapPageRef } from '../site-core/ui-map/ui-map';
 import {
   maskForJournal,
   postFilterAnswer,
@@ -1582,11 +1586,13 @@ export class SiteChatService {
         videoAllowed ? promptVideos(this.db, siteId) : Promise.resolve([]),
         pageUiElements(this.db, siteId, pageUrl, hosts),
       ]);
+      const key = visitorPageKey(pageUrl, hosts);
       return {
         videos: videos.filter((v) => !detectInjection(v.title).quarantine),
         elements: elements
           .filter((e) => !detectInjection(e.label).quarantine)
           .slice(0, MEDIA_DEFAULTS.promptElements),
+        page: key ? uiMapPageRef(key) : null,
       };
     } catch (e) {
       this.logger.warn(

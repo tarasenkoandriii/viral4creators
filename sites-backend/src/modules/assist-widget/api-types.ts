@@ -23,6 +23,7 @@ import type { LeadField } from '../assist-site-setup/leads-config';
 import type { WidgetConfig } from '../assist-site-setup/widget-config';
 import type { VisitorHandoffView } from '../assist-site-handoff/public/handoff-intake.service';
 import type { WidgetVoiceConfig } from '../assist-site-voice/api-types';
+import type { WidgetVoiceControlConfig } from '../assist-site-voice-control/api-types';
 
 export type {
   SiteAction,
@@ -71,6 +72,12 @@ export interface WidgetPublicConfig {
    * нет поля — голоса нет (тариф, владелец, рубильник, ключ, lead_only).
    */
   voice?: WidgetVoiceConfig;
+  /**
+   * Э6-бис (необязательное): голосовое управление «Сайтом» — режим
+   * (`on`/`degraded`), запреты для снимка, лимит шагов; нет поля — режима
+   * нет (переключатель, голос, тариф, рубильник, lead_only).
+   */
+  voiceControl?: WidgetVoiceControlConfig;
 }
 
 /** POST /widget/v1/session — тело. resumeKey — из localStorage iframe ИЛИ CHIPS-cookie. */
@@ -327,5 +334,18 @@ export const WIDGET_ERROR_CODES = [
   // Э6: ролик выключен владельцем, снят за логином, чужого сайта, тариф без
   // видео или ссылка истекла — посетителю одно «видео недоступно».
   'VIDEO_UNAVAILABLE',
+  // Э6-бис (голосовое управление, assist-site-voice-control): режим на сайте
+  // не включён (переключатель, голос, тариф, рубильник, правила); план
+  // истёк (10 мин / окно подтверждения 60 с); план уже изменился
+  // (параллельный отчёт, стоп, `dispatched` повторно); карточка показывала
+  // другие шаги — нужно новое подтверждение.
+  'VOICE_CONTROL_OFF',
+  'PLAN_EXPIRED',
+  'PLAN_CONFLICT',
+  'PLAN_CHANGED',
+  // Аудит Э6-бис: тело `POST /widget/v1/ui-plan*` больше потолка
+  // (VOICE_CONTROL_DEFAULTS.maxBodyBytes) или снимок больше
+  // SNAPSHOT_LIMITS.bodyChars — 413 до разбора и любой работы.
+  'UI_PLAN_TOO_LARGE',
 ] as const;
 export type WidgetErrorCode = (typeof WIDGET_ERROR_CODES)[number];

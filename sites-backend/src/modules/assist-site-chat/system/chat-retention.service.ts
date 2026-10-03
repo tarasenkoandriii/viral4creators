@@ -5,7 +5,9 @@
  * предпросмотра, кэш, окна лимитов; строки денег дня старше 40 дней;
  * версии вида/персоны сверх последних 20 (кроме опубликованной); события
  * лендинга старше 90 дней; черновики `wd_` после expiresAt; (Э5) озвучка
- * ответов после expiresAt (7 дней).
+ * ответов после expiresAt (7 дней); (Э6-бис, аудит) сырые значения
+ * голосовых планов (`assist_site_ui_plans.liveValues`) у неживых и
+ * истёкших планов — сами планы и журнал шагов уходят каскадом с диалогом.
  * Пачками с бюджетом времени (функция Vercel). Зовётся из
  * AssistRetentionController (assist-sandbox/sandbox-retention.controller.ts —
  * правку вызова делает W3).
@@ -36,6 +38,8 @@ export interface ChatRetentionResult {
   widgetDraftsDeleted: number;
   /** Э5: просроченная озвучка ответов (7 дней, §4.10). */
   ttsCacheDeleted: number;
+  /** Э6-бис: обнулено сырых значений планов (завершены/истекли без визита). */
+  uiPlanValuesCleared: number;
 }
 
 /** Строки денег дня храним 40 дней (сверка с отчётом расходов за месяц). */
@@ -68,6 +72,7 @@ export class ChatRetention {
       landingEventsDeleted: 0,
       widgetDraftsDeleted: 0,
       ttsCacheDeleted: 0,
+      uiPlanValuesCleared: 0,
     };
     // Диалоги — по сроку СВОЕГО сайта (30–365, §6.3); сообщения — каскадом,
     // лиды — SET NULL (у лида свой срок).
@@ -158,6 +163,17 @@ export class ChatRetention {
       deadline,
       `DELETE FROM ${S}."assist_site_tts_cache" WHERE "id" IN (
          SELECT "id" FROM ${S}."assist_site_tts_cache" WHERE "expiresAt" < $1 LIMIT $2)`,
+      now,
+    );
+    // Э6-бис: значения полей и текст команды держатся, только пока план
+    // живой (plan-store.ts); посетитель ушёл, не дождавшись конца, — здесь.
+    r.uiPlanValuesCleared = await this.drain(
+      deadline,
+      `UPDATE ${S}."assist_site_ui_plans" SET "liveValues" = NULL WHERE "id" IN (
+         SELECT "id" FROM ${S}."assist_site_ui_plans"
+          WHERE "liveValues" IS NOT NULL
+            AND ("expiresAt" <= $1 OR "status" NOT IN ('proposed', 'confirmed', 'running', 'paused'))
+          LIMIT $2)`,
       now,
     );
     this.logger.log(`ретенция виджета: ${JSON.stringify(r)}`);

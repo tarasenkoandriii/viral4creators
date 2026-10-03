@@ -62,6 +62,45 @@ function v4c_assist_render_footer()
     echo $tag . "\n"; // phpcs:ignore WordPress.Security.EscapeOutput
 }
 
+// ── Э6-бис: разметка data-assist-id для голосового управления ─────────
+
+add_filter('woocommerce_loop_add_to_cart_args', 'v4c_assist_filter_loop_add_to_cart', 20, 1);
+add_filter('get_search_form', 'v4c_assist_filter_search_form', 20, 1);
+add_filter('nav_menu_link_attributes', 'v4c_assist_filter_menu_link', 20, 1);
+add_action('wp_footer', 'v4c_assist_render_assist_ids', 30);
+
+function v4c_assist_filter_loop_add_to_cart($args)
+{
+    return v4c_assist_settings()['assist_ids'] ? v4c_assist_loop_add_to_cart_args($args) : $args;
+}
+
+function v4c_assist_filter_search_form($html)
+{
+    return v4c_assist_settings()['assist_ids'] ? v4c_assist_search_form_html($html) : $html;
+}
+
+function v4c_assist_filter_menu_link($atts)
+{
+    if (!v4c_assist_settings()['assist_ids']) {
+        return $atts;
+    }
+    $host = (string) parse_url(home_url('/'), PHP_URL_HOST);
+    return v4c_assist_menu_link_attrs($atts, $host);
+}
+
+function v4c_assist_render_assist_ids()
+{
+    if (is_admin() || !v4c_assist_settings()['assist_ids'] || !function_exists('is_woocommerce')) {
+        return;
+    }
+    $script = v4c_assist_assist_ids_script();
+    if (function_exists('wp_print_inline_script_tag')) {
+        wp_print_inline_script_tag($script);
+    } else {
+        echo '<script>' . $script . '</script>'; // константы, JSON_HEX_*
+    }
+}
+
 // ── Цели заказов WooCommerce (s2s, повтор через wp-cron) ───────────────
 
 foreach (V4C_ASSIST_ORDER_STATUSES as $v4c_status) {
@@ -187,6 +226,7 @@ function v4c_assist_settings_page()
     }
     $row(__('Положение кнопки', 'v4c-assist'), $pos . '</select>');
     $row(__('Не показывать на страницах (маска в строке, например /checkout*)', 'v4c-assist'), '<textarea class="large-text" rows="3" name="' . esc_attr($name) . '[hide_on]">' . esc_textarea(implode("\n", $s['hide_on'])) . '</textarea>');
+    $row(__('Разметка для голосового управления', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[assist_ids]" value="1"' . checked($s['assist_ids'], true, false) . '> ' . esc_html__('data-assist-id на кнопках «В корзину», поиске и меню (помощник находит их надёжнее)', 'v4c-assist') . '</label><input type="hidden" name="' . esc_attr($name) . '[assist_ids_present]" value="1">');
     $row(__('Узнавать вошедших покупателей', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[identify]" value="1"' . checked($s['identify'], true, false) . '> ' . esc_html__('имя, e-mail и проверенный id покупателя (userHash)', 'v4c-assist') . '</label>');
     $row(__('Секрет идентичности', 'v4c-assist'), '<input type="password" autocomplete="new-password" class="regular-text" name="' . esc_attr($name) . '[identity_secret]" placeholder="' . esc_attr($has(V4C_ASSIST_OPTION_IDENTITY_SECRET) ? __('сохранён — оставьте пустым, чтобы не менять', 'v4c-assist') : '') . '">');
     $row(__('Заказы WooCommerce — целями', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[order_goals]" value="1"' . checked($s['order_goals'], true, false) . '> completed / refunded / cancelled</label>');

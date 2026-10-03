@@ -163,6 +163,25 @@ export const ASSIST_PUBLIC_OMIT = {
     lastStaleAt: true,
     createdAt: true,
     updatedAt: true,
+    // Э-С Ш4: вид и версия снимка — роли не нужны (она читает элементы).
+    viewport: true,
+    version: true,
+  },
+  // Э-С Ш4 (миграция …_site_ui_maps_shared): слитые элементы — публичный
+  // код ходит сырым SQL; без кандидатов, источников, уверенности и кабинета.
+  siteUiElement: {
+    accountId: true,
+    hostId: true,
+    role: true,
+    candidates: true,
+    stability: true,
+    confidence: true,
+    sources: true,
+    firstSeenAt: true,
+    lastSeenAt: true,
+    lastMissAt: true,
+    createdAt: true,
+    updatedAt: true,
   },
 } as const satisfies Prisma.GlobalOmitConfig;
 

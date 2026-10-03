@@ -1,6 +1,6 @@
 /**
  * Кабинет «Видео» — Э6 (ТЗ §4.11, §8 API: `GET /assist/sites/:id/videos ;
- * PATCH …/videos/:vid`). Права: @AllowApps('assist'), SiteAccountGuard,
+ * PATCH …/videos/:vid`; Э-С Ш4 — `GET /assist/sites/:id/ui-map`). Права: @AllowApps('assist'), SiteAccountGuard,
  * productRoles.assist = manager (как голос и персона; оператор — 403).
  */
 import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
@@ -26,6 +26,12 @@ export class SiteVideosController {
   @Get(':id/videos')
   list(@Membership() m: AccountMembership, @Param('id') id: string) {
     return this.videos.list(m, id);
+  }
+
+  /** Э-С Ш4: сводка общей карты интерфейса сайта. */
+  @Get(':id/ui-map')
+  uiMap(@Membership() m: AccountMembership, @Param('id') id: string) {
+    return this.videos.uiMap(m, id);
   }
 
   @Patch(':id/videos/:vid')

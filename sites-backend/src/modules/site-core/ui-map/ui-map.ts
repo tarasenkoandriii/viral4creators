@@ -15,8 +15,22 @@
  * (assist-site-chat/prompt.ts), а в загрузчике ставится `textContent`.
  */
 import { createHash } from 'crypto';
+import type { UiRole, UiSelectorCandidate } from './ui-map-model';
 
-export const UI_MAP_SOURCES = ['crawl', 'tutorial'] as const;
+/**
+ * Источники снимков карты. Э6: `crawl` (обход без браузера), `tutorial`
+ * (раунды обучалки). Э-С Ш4: `loader` (снимок загрузчика Э6-бис — только
+ * подтверждает уже известные элементы, сам не сохраняется), `qa` (Flow-QA,
+ * внутренний HMAC-маршрут), `manual` (ручная разметка — редактор Э6-тер).
+ * Порядок доверия и правила слияния — ui-map-model.ts.
+ */
+export const UI_MAP_SOURCES = [
+  'crawl',
+  'tutorial',
+  'loader',
+  'qa',
+  'manual',
+] as const;
 export type UiMapSource = (typeof UI_MAP_SOURCES)[number];
 
 export const UI_ELEMENT_TAGS = [
@@ -35,6 +49,12 @@ export interface UiMapElement {
   tag: UiElementTag;
   /** Доступное имя: label/aria-label/placeholder/текст — ≤ 80 символов. */
   label: string;
+  /**
+   * Э-С Ш4 (необязательно): все кандидаты селектора по надёжности и роль —
+   * для слияния источников (ui-map-model.ts). Читатели Э6 их не берут.
+   */
+  candidates?: UiSelectorCandidate[];
+  role?: UiRole;
 }
 
 export const UI_MAP_LIMITS = {
@@ -77,6 +97,16 @@ export function uiMapKey(raw: unknown): { host: string; path: string } | null {
   const path = u.pathname.replace(/\/+$/, '') || '/';
   if (path.length > UI_MAP_LIMITS.path) return null;
   return { host: uiMapHost(u.hostname), path };
+}
+
+/**
+ * Страница карты одной строкой — `хост` + `путь` (`shop.example/cart`):
+ * привязка квитанции показа (`highlight.page`) к странице, где элемент
+ * взят из карты (аудит Ш4: id элемента — хеш селектора, один на всех
+ * страницах сайта).
+ */
+export function uiMapPageRef(key: { host: string; path: string }): string {
+  return `${key.host}${key.path}`;
 }
 
 // Управляющие и двунаправленные символы: подпись — текст, а не разметка.

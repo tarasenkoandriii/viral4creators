@@ -37,6 +37,7 @@
  */
 import { natives as N } from './natives';
 import {
+  WIDGET_ACT_PATH,
   WIDGET_ANCHOR,
   WIDGET_ENGAGE_PATH,
   WIDGET_FRAME_PATH,
@@ -64,6 +65,7 @@ import {
   type ViewConfig,
 } from '../shared/config';
 import type { EngageApi, EngageStart, EngEvent, GoalMsg } from '../engage/host';
+import type { ActApi, ActHost } from '../act/index';
 import {
   cleanContext,
   cleanIdentify,
@@ -198,6 +200,9 @@ class Loader {
   /** Визит (вкладка): показано сигналов, посетитель закрыл сигнал/окно. */
   shown = 0;
   stop = false;
+  /** Э6-бис: идёт голосовой план — на следующей странице поднять iframe. */
+  private acting = false;
+  private actQ: Promise<ActApi | null> | null = null;
   private batch: Array<{ kind: string; key: string | null }> = [];
   private viewed = false;
   prevPath = '';
@@ -286,7 +291,8 @@ class Loader {
     const afterLoad = () => {
       // Восстановление открытого окна — iframe сразу после load (§4-бис.1),
       // иначе лениво по первому клику (§4.12).
-      if (prev === 'open' && !this.ui?.frame && this.allowed())
+      // Э6-бис: идёт голосовой план — iframe нужен и при свёрнутом окне.
+      if ((prev === 'open' || this.acting) && !this.ui?.frame && this.allowed())
         this.openFrame();
       this.later(() => this.ping(), 0);
       if (location.hash === WIDGET_ANCHOR) this.open();
@@ -307,6 +313,7 @@ class Loader {
     // Э3: счётчик сигналов визита и «закрыл» — в том же значении (без нового ключа).
     this.shown = Number(p[2]) || 0;
     this.stop = p[3] === '1';
+    this.acting = p[4] === '1';
     return s === 'open' || s === 'min' || s === 'closed'
       ? (this.uiState = s)
       : null;
@@ -317,7 +324,7 @@ class Loader {
     try {
       storage()?.setItem(
         this.uiKey,
-        `${s}:${Date.now()}:${this.shown}:${this.stop ? 1 : 0}`
+        `${s}:${Date.now()}:${this.shown}:${this.stop ? 1 : 0}:${this.acting ? 1 : 0}`
       );
     } catch {
       /* хранилище недоступно — окно просто не восстановится */
@@ -577,6 +584,9 @@ class Loader {
           break;
         case 'highlight':
           this.highlight(m);
+          break;
+        case 'ui-raw':
+          this.act(m.raw);
           break;
         case 'resize':
           break;
@@ -863,6 +873,31 @@ class Loader {
             found: found === true,
           });
       });
+  }
+
+  // ── Э6-бис: голосовое управление — ленивый чанк act.js ───────────────
+
+  /**
+   * Команда своего iframe (снимок, шаги, стоп, пауза) — сырой отдаётся
+   * чанку, он разбирает её строго. Чанк не загрузился (CSP без script-src
+   * виджета) — iframe не получит ответа и скажет «нажмите сами».
+   */
+  private act(raw: Record<string, unknown>) {
+    const host: ActHost = {
+      N,
+      post: (m) => this.post(m),
+      min: () => {
+        if (this.ui?.isOpen() && this.ui.isMobile() && !this.isInline())
+          this.close('min');
+      },
+      mark: (on) => {
+        this.acting = on;
+        this.writeUi();
+      },
+    };
+    (this.actQ ||= import(/* @vite-ignore */ this.origin + WIDGET_ACT_PATH)
+      .then((x: { start: (h: ActHost) => ActApi }) => x.start(host))
+      .catch(() => null)).then((a) => a && a.on(raw));
   }
 
   /** `?v4c_goal=` → чанк режима выбора цели. Trusted Types без политики — честный отказ (О-8). */

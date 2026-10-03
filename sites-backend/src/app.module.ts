@@ -29,6 +29,7 @@ import { AssistBillingModule } from './modules/assist-billing/assist-billing.mod
 import { PlatformAdminModule } from './modules/platform-admin/platform-admin.module';
 import { InternalSitesModule } from './modules/internal-sites/internal-sites.module';
 import { AssistSiteVoiceModule } from './modules/assist-site-voice/assist-site-voice.module';
+import { AssistSiteVoiceControlModule } from './modules/assist-site-voice-control/assist-site-voice-control.module';
 import { AssistSiteMediaModule } from './modules/assist-site-media/assist-site-media.module';
 import { InternalSiteMediaModule } from './modules/internal-sites/site-media.module';
 import { SiteCredentialsModule } from './modules/site-credentials/site-credentials.module';
@@ -71,6 +72,7 @@ import { SiteCredentialsModule } from './modules/site-credentials/site-credentia
     InternalSitesModule,
     // Э5 «Голос»: микрофон и озвучка виджета (Soniox), кабинет голоса.
     AssistSiteVoiceModule,
+    AssistSiteVoiceControlModule,
     // Э6 «Видео и подсветка»: экран «Видео» кабинета (публичная часть — в
     // конвейере ответа и маршрутах виджета); ролики и карта из обучалки
     // генератора — внутренний API (HMAC, тот же канал Ш1).

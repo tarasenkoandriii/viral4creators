@@ -16,11 +16,33 @@ export const mediaEn: MediaDictionary = {
   saved: 'Saved.',
   duration: 'Duration: {d}',
   map: {
-    title: 'Page map for highlighting',
+    title: 'Interface map for highlighting',
     pages: 'Pages in the map: {n}',
     stale:
-      'The layout changed on {n} page(s) — the map updates on the next crawl.',
+      '{e} elements are no longer found on {n} pages — the layout has changed. Record a new tutorial or wait for the next crawl.',
     empty: 'The map appears after the site is crawled.',
+    elements: 'Elements: {n}',
+    stability:
+      'Reliable selectors: {s} of {n}. Adding data-assist-id to buttons keeps highlighting and voice stable when the layout changes.',
+    updated: 'Updated: {d}',
+    details: 'Details by page',
+    hide: 'Collapse',
+    loadError: 'Could not load the map — try again later.',
+    truncated: 'Showing the first 50 pages.',
+    staleItem: '“{label}” — {view}',
+    sources: {
+      crawl: 'crawl',
+      tutorial: 'tutorial',
+      loader: 'widget',
+      qa: 'QA',
+      manual: 'manual',
+    },
+    views: {
+      any: 'all screens',
+      desktop: 'desktop',
+      mobile: 'phone',
+      both: 'desktop and phone',
+    },
   },
   errors: {
     SITE_NOT_FOUND: 'Site not found.',

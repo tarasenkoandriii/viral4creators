@@ -132,6 +132,31 @@ same(v4c_assist_retry_delay(5), null, 'дальше — сдаёмся');
 check(v4c_assist_should_retry(0) && v4c_assist_should_retry(503) && v4c_assist_should_retry(429), 'сеть/5xx/429 — повтор');
 check(!v4c_assist_should_retry(204) && !v4c_assist_should_retry(401) && !v4c_assist_should_retry(422), '2xx/401/422 — без повтора');
 
+// ── Э6-бис: data-assist-id для голосового управления ────────────────────
+same(v4c_assist_parse_settings(array())['assist_ids'], true, 'разметка по умолчанию включена (старые настройки)');
+same(v4c_assist_parse_settings(array('assist_ids_present' => '1'))['assist_ids'], false, 'галочку снять можно');
+same(v4c_assist_parse_settings(array('assist_ids_present' => '1', 'assist_ids' => '1'))['assist_ids'], true, 'галочка стоит');
+$a = v4c_assist_loop_add_to_cart_args(array('class' => 'button', 'attributes' => array('aria-label' => 'Add')));
+same($a['attributes']['data-assist-id'], 'add-to-cart', 'кнопка «В кошик» в списке — add-to-cart');
+same($a['attributes']['aria-label'], 'Add', 'чужие атрибуты целы');
+$own = v4c_assist_loop_add_to_cart_args(array('attributes' => array('data-assist-id' => 'buy-x')));
+same($own['attributes']['data-assist-id'], 'buy-x', 'разметку темы не перетираем');
+same(v4c_assist_loop_add_to_cart_args('x'), 'x', 'не массив — как есть');
+$form = '<form role="search"><input type="search" class="search-field" name="s" value=""><input type="submit" name="go"></form>';
+$out = v4c_assist_search_form_html($form);
+check(strpos($out, '<input data-assist-id="search" type="search"') !== false, 'поиск размечен');
+same(substr_count($out, 'data-assist-id'), 1, 'размечено ровно одно поле');
+same(v4c_assist_search_form_html('<input data-assist-id="q" name="s">'), '<input data-assist-id="q" name="s">', 'своя разметка поиска — не трогаем');
+same(v4c_assist_menu_link_attrs(array('href' => 'https://shop.example.com/dostavka/'), 'shop.example.com')['data-assist-id'], 'nav-dostavka', 'меню: nav-<сегмент>');
+same(v4c_assist_menu_link_attrs(array('href' => 'https://shop.example.com/'), 'shop.example.com')['data-assist-id'], 'nav-home', 'главная');
+same(v4c_assist_menu_link_attrs(array('href' => '/shop/%D0%BA%D0%BE%D1%88%D0%B8%D0%BA/'), 'shop.example.com')['data-assist-id'] ?? null, null, 'кириллический слаг без латиницы — без разметки');
+same(isset(v4c_assist_menu_link_attrs(array('href' => 'https://evil.example/x'), 'shop.example.com')['data-assist-id']), false, 'чужой домен — без разметки');
+same(v4c_assist_menu_link_attrs(array('href' => '/a', 'data-assist-id' => 'mine'), 'h')['data-assist-id'], 'mine', 'своя разметка меню — не трогаем');
+same(v4c_assist_clean_assist_id('Нова Пошта'), '', 'ключ — только латиница');
+$js = v4c_assist_assist_ids_script();
+check(strpos($js, '<') === false && strpos($js, 'innerHTML') === false, 'скрипт разметки без «<» и HTML-приёмников');
+check(strpos($js, 'single_add_to_cart_button') !== false && strpos($js, 'add-to-cart') !== false, 'кнопка «В кошик» на странице товара');
+
 if ($failures) {
     fwrite(STDERR, "wordpress: провалов $failures из $checks\n");
     exit(1);

@@ -9,6 +9,9 @@
  *  - PATCH — включить/выключить показ. Включить можно только ролик НЕ за
  *    логином (закрытый отказ §4.3-бис, У-7) и только на тарифе с видео;
  *    выключить — всегда.
+ *  - Э-С Ш4: GET …/ui-map — сводка общей карты интерфейса (страницы,
+ *    источники, вид вёрстки, устаревшие ЭЛЕМЕНТЫ — по порогу промахов, а не
+ *    «страница после первого промаха»); та же сводка — кратко в «Видео».
  */
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { generatorTutorialLink } from '../../../config/media-env';
@@ -16,8 +19,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import { readState } from '../../assist-billing/public/entitlements';
 import type { AccountMembership } from '../../site-core/account/roles';
+import { uiMapSummary } from '../../site-core/ui-map/ui-map-store';
 import type {
   MediaCabinetErrorCode,
+  SiteUiMapView,
   SiteVideoView,
   SiteVideosView,
 } from '../api-types';
@@ -91,31 +96,34 @@ export class SiteVideosService {
 
   async list(m: AccountMembership, siteId: string): Promise<SiteVideosView> {
     const db = await this.site(m, siteId);
-    const [rows, maps, state] = await Promise.all([
+    const [rows, map, state] = await Promise.all([
       db.assistSiteVideo.findMany({
         where: { siteId },
         orderBy: [{ title: 'asc' }, { id: 'asc' }],
         select: VIDEO_SELECT,
       }),
-      db.siteUiMap.findMany({
-        where: { siteId },
-        select: { staleSignals: true, capturedAt: true },
-      }),
+      uiMapSummary(db, siteId),
       readState(this.prisma, m.accountId, this.now()),
     ]);
-    let last: Date | null = null;
-    for (const r of maps) if (!last || r.capturedAt > last) last = r.capturedAt;
     return {
       siteId,
       planAllowsVideo: videoAllowedByPlan(state.planId),
       videos: (rows as VideoRow[]).map(view),
       tutorialLink: generatorTutorialLink(siteId, this.env),
       uiMap: {
-        pages: maps.length,
-        stalePages: maps.filter((r) => r.staleSignals > 0).length,
-        lastCapturedAt: last ? last.toISOString() : null,
+        pages: map.pages,
+        // Ш4: страницы с устаревшими ЭЛЕМЕНТАМИ (порог промахов по виду).
+        stalePages: map.stalePages,
+        staleElements: map.staleElements,
+        lastCapturedAt: map.lastCapturedAt,
       },
     };
+  }
+
+  /** Э-С Ш4: сводка общей карты интерфейса сайта (экран «Карта інтерфейсу»). */
+  async uiMap(m: AccountMembership, siteId: string): Promise<SiteUiMapView> {
+    const db = await this.site(m, siteId);
+    return uiMapSummary(db, siteId);
   }
 
   async patch(

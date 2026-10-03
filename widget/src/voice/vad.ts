@@ -21,6 +21,12 @@ export interface VadOptions {
    * ~0.3 с после нажатия, а гул комнаты иначе сразу сошёл бы за речь.
    */
   calibrateMs?: number;
+  /**
+   * Э6-бис: множитель порога в моменте — пока звучит собственная озвучка
+   * помощника, порог выше (порог перебивания `bargeInFactor` TMA,
+   * §5-бис.5): своя реплика не ставит план на паузу.
+   */
+  boost?: () => number;
 }
 
 export type VadStep = 'listen' | 'end' | 'max';
@@ -50,7 +56,9 @@ export class Vad {
     if (this.started < 0) this.started = t;
     const dt = this.lastT < 0 ? 0 : Math.max(0, t - this.lastT);
     this.lastT = t;
-    const threshold = Math.max(this.minThreshold, this.floor * this.ratio);
+    const threshold =
+      Math.max(this.minThreshold, this.floor * this.ratio) *
+      (this.o.boost ? this.o.boost() : 1);
     const calibrating = t - this.started < this.calibrateMs;
     if (!calibrating && level > threshold) {
       this.speechMs += dt;

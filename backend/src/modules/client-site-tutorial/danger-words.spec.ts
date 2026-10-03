@@ -7,7 +7,7 @@
  * горит всегда, перестают читать — и тогда оно не работает вовсе).
  */
 
-import { dangerWarningFor } from './danger-words';
+import { DANGER_KINDS, dangerKindsFor, dangerWarningFor } from './danger-words';
 
 describe('ловит настоящие необратимые действия', () => {
   const dangerous = [
@@ -90,5 +90,52 @@ describe('вход с чужой страницы не должен ничего
     // километрового абзаца это не кнопка, а промах селектора.
     expect(dangerWarningFor(long)).toBeUndefined();
     expect(dangerWarningFor(`Оплатить ${'а'.repeat(50_000)}`)).toBeDefined();
+  });
+});
+
+/**
+ * Аудит 1.2 ТЗ помощника §5-бис.5: экспорт категорий для стоп-листа кликов
+ * голосового управления — БЕЗ изменения поведения `dangerWarningFor`.
+ */
+describe('dangerKindsFor — категории для стоп-листа кликов помощника', () => {
+  it.each([
+    ['Оплатить заказ', ['оплата']],
+    ['Видалити', ['удаление']],
+    ['Купити', ['оформление заказа']],
+    ['Place order', ['оформление заказа']],
+    ['Отправить заявку', ['отправка сообщения']],
+    ['Скасувати підписку', ['отмена подписки']],
+    ['Удалить и оплатить, удалить', ['оплата', 'удаление']],
+  ])('«%s» → %j', (text, kinds) => {
+    expect(dangerKindsFor(text)).toEqual(kinds);
+  });
+
+  it('пусто, undefined и обычные кнопки — пустой список', () => {
+    expect(dangerKindsFor(undefined)).toEqual([]);
+    expect(dangerKindsFor('')).toEqual([]);
+    expect(dangerKindsFor('Неоплаченные заказы')).toEqual([]);
+    expect(dangerKindsFor('Add to cart')).toEqual([]);
+  });
+
+  it('категории — ровно словарь DANGER_KINDS', () => {
+    expect([...DANGER_KINDS]).toEqual([
+      'оплата',
+      'удаление',
+      'оформление заказа',
+      'отправка сообщения',
+      'отмена подписки',
+    ]);
+  });
+
+  it('dangerWarningFor не изменился: тот же текст, что и до экспорта категорий', () => {
+    expect(dangerWarningFor('Удалить и оплатить заново, удалить')).toBe(
+      'Похоже на необратимое действие на сайте заказчика (оплата, удаление). Шаг выполнится по-настоящему — убедитесь, что это тестовые данные.',
+    );
+    for (const t of ['Оплатить', 'Купить', 'Unsubscribe', 'Send message']) {
+      const kinds = dangerKindsFor(t);
+      expect(dangerWarningFor(t)).toBe(
+        `Похоже на необратимое действие на сайте заказчика (${kinds.join(', ')}). Шаг выполнится по-настоящему — убедитесь, что это тестовые данные.`,
+      );
+    }
   });
 });

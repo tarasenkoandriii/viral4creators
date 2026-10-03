@@ -13,6 +13,12 @@
  * раундов обучалки (источник `tutorial`) говорят на одном языке, и Ш4
  * сможет их сливать.
  *
+ * Э-С Ш4: первым — `[data-assist-id]` (разметка заказчика, §5-бис.4), и
+ * у каждого элемента — ВСЕ единственные в документе кандидаты
+ * (`candidates`: assist-id, id, тестовый атрибут, `[aria-label]` с ролью,
+ * `[name]`, путь) и роль из `role=…`: по ним карта обхода сливается со
+ * снимками обучалки, QA и загрузчика (site-core/ui-map/ui-map-model.ts).
+ *
  * Отличия от браузерной версии (честно): видимость — только по разметке
  * (`hidden`, `aria-hidden`, inline `display:none`/`visibility:hidden`,
  * `type=hidden`), CSS не вычисляется; элементы, которые дорисовывает JS,
@@ -24,8 +30,16 @@ import { parseDocument } from 'htmlparser2';
 import {
   UI_ELEMENT_TAGS,
   cleanUiElements,
+  type UiElementTag,
   type UiMapElement,
 } from '../../site-core/ui-map/ui-map';
+import {
+  UI_MAP_SHARED,
+  UI_ROLES,
+  candidateFromSelector,
+  type UiRole,
+  type UiSelectorCandidate,
+} from '../../site-core/ui-map/ui-map-model';
 
 const TAGS = new Set<string>(UI_ELEMENT_TAGS);
 /** Поддеревья, где интерактивных элементов для посетителя нет. */
@@ -40,6 +54,14 @@ const SKIP_SUBTREE = new Set([
   'object',
 ]);
 const MAX_SCAN = 400;
+/** Атрибуты-кандидаты по порядку надёжности (после `id`, кроме первого). */
+const UNIQUE_ATTRS = [
+  'data-assist-id',
+  'data-testid',
+  'data-test',
+  'name',
+  'aria-label',
+] as const;
 
 function attr(el: Element, name: string): string | null {
   const v = getAttributeValue(el, name);
@@ -96,7 +118,7 @@ function collect(root: AnyNode[]): {
       if (SKIP_SUBTREE.has(tag)) continue;
       const id = attr(n, 'id');
       if (id) bump(`#${id}`);
-      for (const a of ['data-testid', 'data-test', 'name', 'aria-label']) {
+      for (const a of UNIQUE_ATTRS) {
         const v = attr(n, a);
         if (v) bump(`${tag}|${a}=${v}`);
       }
@@ -137,23 +159,38 @@ function cssPath(el: Element): string {
   return parts.join(' > ');
 }
 
-function selectorFor(
+/** Все единственные в документе селекторы элемента — по надёжности. */
+function uniqueSelectors(
   el: Element,
   tag: string,
   byAttr: Map<string, number>,
-): string {
+): string[] {
+  const out: string[] = [];
+  const aid = attr(el, 'data-assist-id');
+  if (aid && byAttr.get(`${tag}|data-assist-id=${aid}`) === 1) {
+    out.push(`${tag}[data-assist-id="${quote(aid)}"]`);
+  }
   const id = attr(el, 'id');
   if (id && byAttr.get(`#${id}`) === 1) {
-    if (/^[A-Za-z][\w-]*$/.test(id)) return `#${id}`;
-    return `${tag}[id="${quote(id)}"]`;
+    out.push(
+      /^[A-Za-z][\w-]*$/.test(id) ? `#${id}` : `${tag}[id="${quote(id)}"]`,
+    );
   }
-  for (const a of ['data-testid', 'data-test', 'name', 'aria-label']) {
+  for (const a of UNIQUE_ATTRS.slice(1)) {
     const v = attr(el, a);
     if (v && byAttr.get(`${tag}|${a}=${v}`) === 1) {
-      return `${tag}[${a}="${quote(v)}"]`;
+      out.push(`${tag}[${a}="${quote(v)}"]`);
     }
   }
-  return cssPath(el);
+  out.push(cssPath(el));
+  return out;
+}
+
+function roleOf(el: Element): UiRole | undefined {
+  const r = (attr(el, 'role') ?? '').trim().toLowerCase();
+  return (UI_ROLES as readonly string[]).includes(r)
+    ? (r as UiRole)
+    : undefined;
 }
 
 function labelFor(c: Collected, labels: Map<string, Element>): string | null {
@@ -227,15 +264,31 @@ export function extractUiElements(
   const { found, byAttr, labels } = collect(doc.children);
   const raw: Array<{ selector: string; tag: string; label: string | null }> =
     [];
+  const extra = new Map<
+    string,
+    { candidates: UiSelectorCandidate[]; role?: UiRole }
+  >();
   for (const c of found) {
     const type = (attr(c.el, 'type') ?? '').toLowerCase();
     if (c.tag === 'input' && type === 'hidden') continue;
     if (c.tag === 'a' && !sameOrigin(attr(c.el, 'href'), base)) continue;
-    raw.push({
-      selector: selectorFor(c.el, c.tag, byAttr),
-      tag: c.tag,
-      label: labelFor(c, labels),
-    });
+    const all = uniqueSelectors(c.el, c.tag, byAttr);
+    raw.push({ selector: all[0], tag: c.tag, label: labelFor(c, labels) });
+    if (!extra.has(all[0])) {
+      extra.set(all[0], {
+        candidates: all
+          .slice(0, UI_MAP_SHARED.candidatesPerElement)
+          .map((sel) => candidateFromSelector(sel, c.tag as UiElementTag)),
+        role: roleOf(c.el),
+      });
+    }
   }
-  return cleanUiElements(raw);
+  // Форма Э6 ({id, selector, tag, label}) — та же чистка; кандидаты и роль
+  // — дополнительно (их строго чистит приём карты, ui-map-model.ts).
+  return cleanUiElements(raw).map((e) => {
+    const x = extra.get(e.selector);
+    return x
+      ? { ...e, candidates: x.candidates, ...(x.role ? { role: x.role } : {}) }
+      : e;
+  });
 }

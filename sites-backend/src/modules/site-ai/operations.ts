@@ -6,7 +6,7 @@
  *  - платформы (онбординг/лендинг, суточный потолок): assist-sandbox-*;
  *  - виджета (суточный потолок сайта + платформы, `assist_budget_days`):
  *    assist-chat, assist-classify; голос (Э5) — ещё и потолок голоса сайта:
- *    assist-stt, assist-tts.
+ *    assist-stt, assist-tts; Э6-бис — план голосового управления assist-ui-plan.
  */
 export const SITE_AI_OPERATIONS = [
   'assist-embed',
@@ -32,6 +32,10 @@ export const SITE_AI_OPERATIONS = [
   // потолок голоса сайта (§4.10, §7.3); не бюджет обучения.
   'assist-stt',
   'assist-tts',
+  // Э6-бис: план голосового управления (снимок страницы + команда → JSON
+  // шагов, §5-бис.9, §7.3). Платит суточный бюджет сайта+платформы, как
+  // ответ посетителю; у сайта ещё и суточный потолок ЧИСЛА планов.
+  'assist-ui-plan',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

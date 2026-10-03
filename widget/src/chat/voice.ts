@@ -67,6 +67,10 @@ export interface VoiceHost {
   auth(): Auth;
   refreshSession(): Promise<void>;
   ask(text: string, ticket: string | null): void;
+  /** Э6-бис: начало речи во время плана — пауза (детектор на устройстве). */
+  speech?(on: boolean): void;
+  /** Э6-бис: фраза, сказанная во время плана («стоп», «да», новая команда). */
+  planText?(text: string, ticket: string | null): void;
   storage(
     kind: 'local' | 'session',
     name: string,
@@ -89,6 +93,12 @@ export class VoiceController {
   private rec: Recording | null = null;
   private cfg: VoiceCfg | null = null;
   private gaveUp = false;
+  /**
+   * Э6-бис: микрофон держится открытым на время плана — только если человек
+   * САМ нажал микрофон в этом документе (после перехода — нет, Р-28).
+   */
+  private pressedHere = false;
+  private planMode = false;
   /** id вкладки — отличить своё сообщение канала от чужого. */
   readonly tab = Math.random().toString(36).slice(2, 10);
 
@@ -150,10 +160,11 @@ export class VoiceController {
     this.start();
   }
 
-  private start() {
+  private start(plan = false) {
     const cfg = this.cfg;
     const engine = this.engine;
     if (!cfg) return;
+    if (!plan) this.pressedHere = true;
     if (!engine) {
       // Чанк ещё не пришёл: догрузить и попросить нажать ещё раз (жест
       // пользователя к этому времени истёк — Safari микрофон не даст).
@@ -166,10 +177,36 @@ export class VoiceController {
     this.host.storage('session', 'voice', 'armed');
     this.host.setUi({ phase: 'recording', since: Date.now(), level: 0 });
     this.rec = engine.record(
-      cfg,
+      {
+        ...cfg,
+        // Пока ждём «да» на карточке — порог TMA 150 мс (короткое «да» —
+        // законный ответ, §5-бис.7); во время плана — тоже.
+        minSpeechMs: plan ? Math.min(cfg.minSpeechMs, 150) : cfg.minSpeechMs,
+        onSpeech: () => {
+          if (this.planMode && this.host.speech) this.host.speech(true);
+        },
+      },
       (level) => this.host.setUi({ level }),
       (end) => void this.ended(end)
     );
+  }
+
+  /**
+   * Э6-бис (§5-бис.5): на время плана микрофон открыт (видимый индикатор),
+   * любое начало речи — пауза плана ещё до распознавания; фраза уходит на
+   * распознавание только пока план идёт. Только в документе, где человек
+   * сам нажал микрофон.
+   */
+  planListen(on: boolean) {
+    if (!on) {
+      const was = this.planMode;
+      this.planMode = false;
+      if (was && this.rec) this.rec.cancel();
+      return;
+    }
+    if (!this.pressedHere || !this.engine || !this.cfg || this.gaveUp) return;
+    this.planMode = true;
+    if (!this.rec) this.start(true);
   }
 
   /** Вкладку скрыли: запись бросается (озвучка доигрывает — это не микрофон). */
@@ -200,8 +237,14 @@ export class VoiceController {
       return this.host.setUi({ phase: 'idle', level: 0 });
     if (end.reason === 'short') {
       this.host.setUi({ phase: 'idle', level: 0 });
+      if (this.planMode) {
+        // Шум во время плана — снять паузу и слушать дальше, без уведомления.
+        if (this.host.speech) this.host.speech(false);
+        return this.start(true);
+      }
       return this.host.notify(t.voiceNotHeard);
     }
+    if (end.reason === 'error') this.planMode = false;
     if (end.reason === 'error') {
       this.host.setUi({ phase: 'idle', level: 0 });
       return this.host.notify(
@@ -222,15 +265,23 @@ export class VoiceController {
       this.host.setUi({ phase: 'idle' });
       const text =
         typeof data.text === 'string' ? data.text.trim().slice(0, 600) : '';
-      if (!text) return this.host.notify(t.voiceNotHeard);
       const ticket =
         typeof data.voiceTicket === 'string' && data.voiceTicket.length <= 200
           ? data.voiceTicket
           : null;
+      if (this.planMode && this.host.planText) {
+        this.host.planText(text, ticket);
+        // План ещё идёт — слушаем дальше («стоп» голосом доступен).
+        if (this.planMode && !this.rec) this.start(true);
+        return;
+      }
+      if (!text) return this.host.notify(t.voiceNotHeard);
       this.host.ask(text, ticket);
     } catch (e) {
       this.host.setUi({ phase: 'idle' });
       this.failed(e);
+      // Во время плана сбой распознавания не оставляет план на паузе.
+      if (this.planMode && this.host.speech) this.host.speech(false);
     }
   }
 

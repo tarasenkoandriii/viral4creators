@@ -142,10 +142,17 @@ function start() {
 
   // Клавиатура: Esc закрывает окно, Tab не выходит из чата (фокус-ловушка, §4.12).
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !c.state.inline) {
-      e.preventDefault();
-      close();
-      return;
+    if (e.key === 'Escape') {
+      // Э6-бис: идёт голосовой план — Esc останавливает его, окно остаётся.
+      if (c.stopPlanIfRunning()) {
+        e.preventDefault();
+        return;
+      }
+      if (!c.state.inline) {
+        e.preventDefault();
+        close();
+        return;
+      }
     }
     if (e.key !== 'Tab') return;
     const box = root.querySelector('.v4c-chat');

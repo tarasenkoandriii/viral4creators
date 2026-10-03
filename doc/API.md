@@ -540,7 +540,7 @@ sites-backend, виджет (iframe, visitor-token; `GET` ссылки — бе�
 | `POST /widget/v1/highlight-miss` | `{ elementId: u<8 hex>, pageUrl }` → `{ ok, recorded }` — сигнал «карта устарела»: счётчик промахов карты этой страницы этого сайта (только если такой элемент в карте есть) + событие `highlight_miss`; 10/мин на посетителя |
 
 Действия ответа чата (`event: actions`): `{ kind: "video", label, videoId,
-title }` и `{ kind: "highlight", label, elementId, selector, caption }` —
+title }` и `{ kind: "highlight", label, elementId, selector, caption, page? }` —
 id ролика, селектор и подпись берёт сервер из списков этого запроса
 (модель называет только `V#`/`E#`), не больше одного каждого; подсветка в
 семантический кэш не кладётся, ролик из кэша сверяется заново.
@@ -553,3 +553,75 @@ sites-backend, внутренний API генератора (HMAC Ш1 — `SITE
 | `/internal/sites/tutorial/site-link` | `{ telegramId, siteId }` → `{ siteId, siteName, hosts[] }`; не владелец/менеджер помощника кабинета сайта или сайта нет — 403 `SITE_LINK_FORBIDDEN` |
 | `/internal/sites/tutorial/site-videos` | `{ siteId, asOf, videos[≤15]{ externalId, draftId, ownerTelegramId, title, locale, durationMs, url, requiresLogin, stepHosts[] } }` → `{ siteId, accepted, removed, rejected[{ externalId, reason: owner\|url }], stale? }` — ПОЛНЫЙ набор сайта (замена); `asOf` — обязательная отметка набора (целое мс часов генератора > 0, взята ДО чтения его базы): набор старше последнего принятого (`site_sites.assistVideosAsOf`) — 200 `{ accepted: 0, removed: 0, rejected: [], stale: true }` без изменений (гонка двух синхронизаций), равный — принимается (повтор); хозяин каждого — владелец/менеджер помощника кабинета сайта; адрес — из `ASSIST_VIDEO_HOSTS`; шаг на неподтверждённом хосте → «за логином» и выключен |
 | `/internal/sites/tutorial/ui-map` | `{ telegramId, siteId, url, elements[≤100]{ selector, tag, label } }` → `{ siteId, path, elements }` — карта страницы из раунда обучалки (источник `tutorial`); страница — только на подтверждённом хосте этого сайта (иначе 403 `HOST_NOT_VERIFIED`) |
+
+## Э6-бис помощника: голосовое управление «Сайтом» (а)
+
+ТЗ помощника §5-бис.3–10, §4-бис.5; развёртывание — `doc/DEPLOYMENT.md`
+§6.17. Проверки плана — код (`sites-backend/src/modules/assist-ui-core`,
+без базы); модель только предлагает. «Админка» (б) и мастер проверки/
+монитор/деградация (г) — не в этом этапе.
+
+sites-backend, кабинет (initData помощника, `productRoles.assist = manager`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/voice-control/site` | `{ siteId, state: off\|test\|on\|degraded, rules{ schema: 1, allowPaths[], allowSelectors[], denySelectors[], denyPaths[], denyWords[], confirmFill, maxSteps ≤ 15 }, available, reason: platform_off\|voice_off\|state_off\|rules_invalid\|null, risksVersion }` |
+| `PATCH /assist/sites/:id/voice-control/site` | `{ state: off\|on, rules?, risksVersion? }`; включить — только с тарифом с голосом (402 `VOICE_CONTROL_PLAN_REQUIRED`), включённым голосовым вводом (409 `VOICE_CONTROL_VOICE_REQUIRED`) и принятым текстом рисков `risksVersion = site-risks-1` (400 `VOICE_CONTROL_RISKS_REQUIRED`); негодные правила — 400 `VOICE_CONTROL_INVALID`; выключить — всегда. `test`/`degraded` ставит мастер (г) |
+
+sites-backend, виджет (iframe, visitor-token; страница заказчика токена не
+видит — `V4CAssist('ask')`/`postMessage` страницы план не начинают):
+
+| Маршрут | Что |
+|---|---|
+| `POST /widget/v1/ui-plan` | `{ text ≤ 600, source: voice\|typed, voiceTicket? (голос — обязателен, на ЭТОТ текст), conversationId?, lang?, snapshot{ url, title, elements[≤150]{ ref e1…, role, tag, text, hiddenLabel, assistId, inputType, href, disabled, checked, selected, options, heading, submit, inForm, confirmZone, pd, toggle, gesture, inView } } }` → `UiPlanView{ kind: plan\|not_command, planId, conversationId, status: proposed\|running\|…, steps[{ i, kind, target{ ref, assistId, role, text, selector, href }, value, expect, risk: auto\|confirm\|manual\|never, reason, nav, say, state }], currentStep, notes[], needsConfirm, stepsHash, confirmBefore, expiresAt }`. Выключено — 403 `VOICE_CONTROL_OFF`; лимиты: 8/мин и 60/сутки на посетителя, втрое на IP+сайт, на сайт в сутки — Business 300 / Pro 1000 (429 `VOICE_LIMIT`); квота единиц тарифа — 429 `SITE_QUOTA`; бюджет платформы — 503 `PLATFORM_BUDGET`. Аудит (03.10.2026): тело любого `/widget/v1/ui-plan*` > 96 КБ (`VOICE_CONTROL_DEFAULTS.maxBodyBytes`) или снимок > 60 000 знаков JSON (`SNAPSHOT_LIMITS.bodyChars`) — 413 `UI_PLAN_TOO_LARGE` до работы; путь `snapshot.url` с ПД (e-mail, телефон с `+`, ≥ 9 цифр, ключ) хранится и уходит в промпт/журнал маской `:email`/`:phone`/`:n`/`:token`; значения `steps[].value` в ответе — сырые, пока план живой (в базе — маска) |
+| `GET /widget/v1/ui-plan/active` | `{ plan: UiPlanView \| null }` — живой план посетителя (продолжение после перехода страницы) |
+| `POST /widget/v1/ui-plan/:id/confirm` | `{ by: button\|voice, stepsHash, text?, voiceTicket? }` → `UiPlanView`; окно 60 с (409 `PLAN_EXPIRED`), шаги изменились — 409 `PLAN_CHANGED`; голосом — только «да» из закрытого списка с билетом на этот текст; «нет» — стоп; повтор — тот же ответ |
+| `POST /widget/v1/ui-plan/:id/step` | `{ index, result: dispatched\|done\|failed\|skipped\|manual\|stopped, reason?, durationMs?, url? }` → `UiPlanView`; `dispatched` — до действия с побочным эффектом (клик, поле, список, флажок, переход; аудит 03.10.2026 — не только навигация) и ровно один раз, `done` такого шага без `dispatched` — 409 `PLAN_CONFLICT`; `done` навигационного шага с `expect.path` — только с `url` (иначе 400 `BAD_REQUEST`), не та страница — план `failed`; шаг `dispatched` после перезагрузки страницы не повторяется: навигационный — `done` с адресом, остальные — `skipped` с `reason: interrupted`; не по порядку — 409 `PLAN_CONFLICT`; 120/мин на посетителя |
+| `POST /widget/v1/ui-plan/:id/stop` | `{ by: button\|esc\|click\|voice\|close }` → `UiPlanView` |
+| `POST /widget/v1/ui-plan/:id/resume` | `{ snapshot }` → `UiPlanView` — цели шагов «после перехода» из нового снимка, тем же проверкам |
+
+Конфиг виджета (`GET /widget/v1/config`) — поле `voiceControl: { mode:
+on\|degraded, denySelectors, allowSelectors, maxSteps } | null` (только при
+голосовом вводе). Журнал — `assist_site_ui_action_log` (план, шаги, отказы;
+значения полей — только маскированные).
+
+## Э-С Ш4: общие карты интерфейса сайтов
+
+План «Э-С: слияние», Ш4; аудит слияния §3.2; развёртывание —
+`doc/DEPLOYMENT.md` §6.18. Одна карта на подсветку Э6, голос Э6-бис,
+редактор Э6-тер и Flow-QA: снимки источников (`crawl | tutorial | loader |
+qa | manual`) по (сайт, хост, путь, источник, вид вёрстки `any | desktop |
+mobile`) с версией и историей; элементы, слитые по стабильному ключу
+(`data-assist-id` > id > тестовый атрибут > роль+имя > `[name]` > текст >
+css-путь), с кандидатами, устойчивостью (`strong | medium | fragile`),
+уверенностью 0–100, источниками, `lastSeenAt` и промахами по виду.
+
+Изменения маршрутов Э6 (совместимы по форме):
+
+| Маршрут | Что нового |
+|---|---|
+| `POST /widget/v1/highlight-miss` | `{ elementId, pageUrl }` → `{ ok, recorded }` как раньше, но `recorded: true` только если (1) ЭТОМУ посетителю в его диалоге на этом сайте ассистент выдал `highlight` ЭТОГО элемента не раньше 30 мин назад (квитанция показа), (2) элемент есть в карте страницы для вида посетителя (по `Sec-CH-UA-Mobile`/User-Agent iframe), (3) от посетителя и от хеша IP по элементу и виду промаха ещё не было. Аудит (03.10.2026): квитанция привязана к СТРАНИЦЕ — в действии `highlight` поле `page` (`хост` + `путь` страницы карты), промах засчитывается только на ней (id элемента — хеш селектора, один на всех страницах); хеш IP журнала — с солью на окно 7 дней (а не суточный токена). Снимок загрузчика (план Э6-бис) «устарел» сразу не снимает — голос «найден» с тем же порогом (3 разных посетителя и IP за окно). Элемент «устарел» для вида — 3 промаха за 7 дней; лимиты: 10/мин на посетителя, 30/мин и 20/сутки на IP+сайт (429 `RATE_LIMITED`) |
+| `GET /assist/sites/:id/videos` | `uiMap{ pages, stalePages, staleElements, lastCapturedAt }` — `stalePages` теперь страницы с устаревшими ЭЛЕМЕНТАМИ |
+| `/internal/sites/tutorial/ui-map` | тело + `viewport?` (`desktop \| mobile \| any`, умолчание `mobile` — окно исследователя обучалки 390×844); элементы — форма Э6 или с `candidates[{ kind, selector?, role?, name? }]`, `assistId`, `role`; пустой массив — снимок обучалки страницы снимается; страниц в карте сайта > 1000 — 403 `UI_MAP_PAGES_LIMIT` |
+
+sites-backend, кабинет (initData помощника, `productRoles.assist = manager`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/ui-map` | `{ siteId, pages, elements, staleElements, stalePages, bySource{ crawl?, tutorial?, loader?, qa?, manual? }, byStability{ strong, medium, fragile }, lastCapturedAt, items[≤50]{ host, path, viewports[], sources[], elements, staleElements, stale[≤5]{ label, tag, viewport: desktop\|mobile\|both, staleAt }, lastCapturedAt }, truncated }` — сначала страницы с устаревшими элементами; чужой сайт — 404 `SITE_NOT_FOUND` |
+
+sites-backend, внутренний API Flow-QA (HMAC как у Ш1, но СВОЙ секрет
+`SITES_QA_HMAC_SECRET` и вызывающий `qa-flow`; метка ±5 мин, одноразовый
+id; тело ≤ 64 КБ; нет секрета или он совпал с секретом обучалки — 503
+`INTERNAL_NOT_CONFIGURED`), все `POST`;
+права: владелец кабинета сайта или `productRoles.qa` — `admin` (чтение и
+запись) / `viewer` (чтение); чужой и несуществующий сайт — 403
+`UI_MAP_FORBIDDEN`:
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `/internal/sites/qa/ui-map/read` | `{ telegramId, siteId, url?, viewport? }` → без `url`: `{ siteId, pages, staleElements, items[{ host, path, viewports, sources, elements, staleElements, lastCapturedAt }], truncated }`; с `url`: `{ siteId, host, path, snapshots[{ source, viewport, version, capturedAt, hash }], elements[{ elementId, key, viewport, tag, label, role, selector, candidates, stability, confidence, sources, lastSeenAt, missCountDesktop, missCountMobile, staleDesktopAt, staleMobileAt }] }` |
+| `/internal/sites/qa/ui-map/write` | `{ telegramId, siteId, url, viewport, elements[≤100] }` → `{ siteId, path, source: "qa", viewport, elements, version, changed }` — снимок прогона QA (≤ 60 элементов после чистки); страница — только на подтверждённом хосте этого сайта (403 `HOST_NOT_VERIFIED`); браузерный снимок снимает промахи своего вида у известных элементов |
+
+Крон: `GET /cron/site-ui-map-maintenance` (`CRON_SECRET`) → `{
+versionsDeleted, missesDeleted, staleExpired, pagesRebuilt }`.

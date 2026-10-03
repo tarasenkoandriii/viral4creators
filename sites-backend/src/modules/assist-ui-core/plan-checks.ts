@@ -1,0 +1,733 @@
+/**
+ * Проверка плана КОДОМ, не моделью (§5-бис.3 п.4, §5-бис.5, §5-бис.6):
+ *  - цель существует в снимке (или в карте интерфейса страницы);
+ *  - цель не в denylist кабинета и не в стоп-листе (`actionKindsFor`,
+ *    по ВСЕМУ тексту цели, включая скрытую подпись — запрет только растёт);
+ *  - значение поля взято из сказанного (`valueSaid`);
+ *  - переход — только по ссылке со страницы и только на подтверждённый
+ *    хост этого сайта; страница оплаты — никогда;
+ *  - шаг, требующий настоящего жеста (`gesture`), — «нажмите сами»;
+ *  - число шагов ≤ лимита правил;
+ *  - класс риска считает код и может только ПОВЫСИТЬ мнение модели;
+ *  - цель должна быть связана с командой по ВИДИМОМУ тексту или
+ *    `data-assist-id` (скрытая подпись не засчитывается, §5-бис.6 п.7) —
+ *    иначе «с подтверждением».
+ * Первый шаг `manual`/`never` — последний: дальше план не идёт (то, что
+ * после, обычно от него зависит), а человек видит подсветку и «нажмите сами».
+ *
+ * Шаги ПОСЛЕ навигации ссылаются не на снимок (его ещё нет), а на описание
+ * цели (`after`: видимый текст/разметка/роль). Их проверяет тот же код
+ * дважды: при построении — по описанию (стоп-лист, значения), при
+ * продолжении на новой странице — по найденному элементу нового снимка
+ * (`resolveAfterSteps`).
+ */
+import { uiMapHost } from '../site-core/ui-map/ui-map';
+import {
+  ADD_TO_CART_ID,
+  ASSIST_ID_SYNONYMS,
+  CONFIRM_KINDS,
+  NEVER_KINDS,
+  REVERSIBLE_ASSIST_IDS,
+  actionKindsFor,
+  paymentPath,
+} from './action-words';
+import {
+  assistIdWords,
+  normText,
+  overlaps,
+  saysFind,
+  valueSaid,
+} from './normalize';
+import { pathMatches } from './rules';
+import { ASSIST_ID_RE, SNAP_REF_RE, cleanText } from './snapshot';
+import {
+  UI_RISKS,
+  UI_ROLES,
+  UI_STEP_KINDS,
+  type UiExpect,
+  type UiGesture,
+  type UiPlanNote,
+  type UiPlanStep,
+  type UiRisk,
+  type UiRole,
+  type UiSnapElement,
+  type UiSnapshot,
+  type UiStepKind,
+  type UiStopReason,
+  type UiTarget,
+  type VoiceControlRules,
+} from './types';
+
+/** Элемент карты интерфейса страницы в промпте: `m1`…`m30`. */
+export interface UiMapRef {
+  ref: string;
+  selector: string;
+  label: string;
+  tag: string;
+}
+
+export const MAP_REF_RE = /^m([1-9]\d?)$/;
+
+/** Шаг, как его предложила модель (до проверки). */
+export interface RawStep {
+  kind: unknown;
+  target?: unknown;
+  value?: unknown;
+  expect?: unknown;
+  risk?: unknown;
+  say?: unknown;
+}
+
+export interface PlanCheckInput {
+  transcript: string;
+  snapshot: UiSnapshot;
+  map: UiMapRef[];
+  steps: unknown;
+  rules: VoiceControlRules;
+  /** Подтверждённые хосты сайта (verified). */
+  hosts: string[];
+  /** `degraded` — только подсветка и «нажмите здесь» (§5-бис.11). */
+  state: 'on' | 'degraded';
+}
+
+export interface CheckedPlan {
+  steps: UiPlanStep[];
+  notes: UiPlanNote[];
+  /** Есть шаг «с подтверждением» — нужна карточка «Да/Нет». */
+  needsConfirm: boolean;
+}
+
+/** Факты о цели, по которым считается риск (элемент снимка или карты). */
+export interface TargetFacts {
+  text: string;
+  hiddenLabel: string | null;
+  assistId: string | null;
+  role: UiRole | null;
+  tag: string;
+  href: string | null;
+  submit: boolean;
+  inForm: boolean;
+  confirmZone: boolean;
+  pd: boolean;
+  toggle: boolean;
+  gesture: UiGesture | null;
+  inputType: string | null;
+  disabled: boolean;
+  heading: string | null;
+  options: string[];
+}
+
+const RANK: Record<UiRisk, number> = {
+  auto: 0,
+  confirm: 1,
+  manual: 2,
+  never: 3,
+};
+
+/** Риск только растёт: код поднимает мнение модели, но никогда не опускает. */
+export function raise(a: UiRisk, b: UiRisk): UiRisk {
+  return RANK[a] >= RANK[b] ? a : b;
+}
+
+const TEXT_ROLES = new Set<UiRole>(['textbox', 'searchbox', 'combobox']);
+
+/**
+ * Поле ПД по ПОДПИСИ (§5-бис.5: «по autocomplete, type, подписи») — загрузчик
+ * ставит `pd` по атрибутам; подпись «Ваше ім'я» без них — тоже ПД.
+ */
+export const PD_FIELD_LABEL =
+  /(?<!\p{L})(ім'я|імʼя|имя|name|прізвище|фамилия|surname|по батькові|отчество|телефон|phone|mobile|e-?mail|пошта|почта|адрес\p{L}*|address|вулиц\p{L}*|улиц\p{L}*|street|квартир\p{L}*|індекс|индекс|zip|postcode|postal|дата народження|дата рождения|birth)(?!\p{L})/iu;
+
+/** Слова, которые снимает разметка `add-to-cart` (порт `BUY` загрузчика). */
+const BUY_WORDS = /(?<!\p{L})(купить|купити|buy now)/giu;
+
+/** Подпись поля пароля, карты, одноразового кода (uk/ru/en). */
+export const SENSITIVE_FIELD_LABEL =
+  /(?<!\p{L})(парол\p{L}*|password|passcode|passwd|cvv2?|cvc2?|csc|номер карт\p{L}*|card number|credit card|debit card|одноразов\p{L}* код|код (?:з|із|из) смс|sms[- ]?code|one[- ]time|otp|pin|пін|пин)(?!\p{L})/iu;
+
+function factsOfElement(e: UiSnapElement): TargetFacts {
+  return {
+    text: e.text,
+    hiddenLabel: e.hiddenLabel,
+    assistId: e.assistId,
+    role: e.role,
+    tag: e.tag,
+    href: e.href,
+    submit: e.submit,
+    inForm: e.inForm,
+    confirmZone: e.confirmZone,
+    pd: e.pd,
+    toggle: e.toggle,
+    gesture: e.gesture,
+    inputType: e.inputType,
+    disabled: e.disabled,
+    heading: e.heading,
+    options: e.options,
+  };
+}
+
+function factsOfMap(m: UiMapRef): TargetFacts {
+  const role: UiRole =
+    m.tag === 'a'
+      ? 'link'
+      : m.tag === 'input' || m.tag === 'textarea'
+        ? 'textbox'
+        : m.tag === 'select'
+          ? 'combobox'
+          : 'button';
+  return {
+    text: m.label,
+    hiddenLabel: null,
+    assistId: null,
+    role,
+    tag: m.tag,
+    href: null,
+    // Карта не знает формы — консервативно: кнопка карты — «отправка».
+    submit: m.tag === 'button',
+    inForm: m.tag === 'button',
+    confirmZone: false,
+    pd: false,
+    toggle: false,
+    gesture: null,
+    inputType: null,
+    disabled: false,
+    heading: null,
+    options: [],
+  };
+}
+
+/** Хост ссылки — среди подтверждённых хостов сайта (без www и регистра). */
+export function onSiteHost(href: string, hosts: string[]): boolean {
+  let h: string;
+  try {
+    h = uiMapHost(new URL(href).hostname);
+  } catch {
+    return false;
+  }
+  return hosts.some((x) => uiMapHost(x) === h);
+}
+
+function hrefPath(href: string | null): string | null {
+  if (!href) return null;
+  try {
+    return new URL(href).pathname;
+  } catch {
+    return null;
+  }
+}
+
+/** Цель связана с командой: видимый текст или разметка (НЕ скрытая подпись). */
+export function targetMatches(t: TargetFacts, transcript: string): boolean {
+  const own = [
+    t.text,
+    assistIdWords(t.assistId),
+    t.assistId ? (ASSIST_ID_SYNONYMS[t.assistId] ?? '') : '',
+  ].join(' ');
+  return overlaps(transcript, own);
+}
+
+/**
+ * Риск и причина для одного шага по фактам о цели. `null` в `risk` — шаг
+ * вычёркивается (`reason` — почему).
+ */
+export function judgeStep(
+  kind: UiStepKind,
+  t: TargetFacts,
+  value: string | null,
+  ctx: {
+    transcript: string;
+    rules: VoiceControlRules;
+    hosts: string[];
+    pagePath: string | null;
+    state: 'on' | 'degraded';
+  },
+): { risk: UiRisk | null; reason: UiStopReason | null; nav: boolean } {
+  const no = (reason: UiStopReason) => ({ risk: null, reason, nav: false });
+  const never = (reason: UiStopReason) => ({
+    risk: 'never' as UiRisk,
+    reason,
+    nav: false,
+  });
+  const manual = (reason: UiStopReason) => ({
+    risk: 'manual' as UiRisk,
+    reason,
+    nav: false,
+  });
+  if (t.disabled && kind !== 'highlight' && kind !== 'scroll')
+    return no('disabled');
+  if (t.inputType === 'password' || t.inputType === 'file')
+    return no('sensitive_field');
+
+  // Запреты кабинета: слова в любой подписи, пути ссылок и самой страницы.
+  const allText = normText(
+    [t.text, t.hiddenLabel ?? '', assistIdWords(t.assistId)].join(' '),
+  );
+  if (ctx.rules.denyWords.some((w) => w && allText.includes(normText(w))))
+    return never('denied');
+  const path = hrefPath(t.href);
+  if (path && ctx.rules.denyPaths.some((m) => pathMatches(path, m)))
+    return never('denied');
+
+  // Показать и прокрутить можно к любой цели снимка (ничего не меняет).
+  if (kind === 'highlight' || kind === 'scroll')
+    return { risk: 'auto', reason: null, nav: false };
+
+  // Стоп-лист — по ВСЕМУ тексту (скрытая подпись только поднимает запрет).
+  // `add-to-cart` снимает ТОЛЬКО «Купить/Купити/Buy now» (ложный
+  // срабатыватель), не «Оформить заказ»/checkout рядом — как загрузчик.
+  const probe = [t.text, t.hiddenLabel ?? '', assistIdWords(t.assistId)].join(
+    ' ',
+  );
+  const kinds = actionKindsFor(
+    t.assistId === ADD_TO_CART_ID ? probe.replace(BUY_WORDS, ' ') : probe,
+    t.heading,
+  );
+  if (kinds.includes('оплата')) return never('payment');
+  if (path && paymentPath(path)) return never('payment');
+  if (kinds.some((k) => NEVER_KINDS.has(k))) return never('danger');
+
+  if (t.href && !onSiteHost(t.href, ctx.hosts)) return manual('offhost');
+  if (t.gesture) return manual('gesture');
+  if (ctx.state === 'degraded') return manual('degraded');
+
+  // Поле поиска связано с командой «знайди/найди/find …» само по себе.
+  const searchBox =
+    t.role === 'searchbox' ||
+    t.inputType === 'search' ||
+    t.assistId === 'search';
+  const matches =
+    targetMatches(t, ctx.transcript) || (searchBox && saysFind(ctx.transcript));
+  const isText =
+    (t.role !== null && TEXT_ROLES.has(t.role)) ||
+    t.tag === 'textarea' ||
+    (t.tag === 'input' && t.role !== 'checkbox' && t.role !== 'radio');
+
+  // Поле пароля/карты/кода по ПОДПИСИ (§5-бис.5 «никогда»): сайты часто не
+  // ставят `autocomplete=cc-*`/`type=password` — подпись видит человек.
+  if (
+    (kind === 'fill' || kind === 'select') &&
+    SENSITIVE_FIELD_LABEL.test(
+      [t.text, t.hiddenLabel ?? '', assistIdWords(t.assistId)].join(' '),
+    )
+  )
+    return no('sensitive_field');
+
+  switch (kind) {
+    case 'fill': {
+      if (!isText || t.tag === 'select') return no('bad_kind');
+      if (!value || !valueSaid(value, ctx.transcript))
+        return no('value_not_said');
+      const pd =
+        t.pd || PD_FIELD_LABEL.test([t.text, t.hiddenLabel ?? ''].join(' '));
+      const risk: UiRisk =
+        pd || ctx.rules.confirmFill || !matches ? 'confirm' : 'auto';
+      return { risk, reason: null, nav: false };
+    }
+    case 'select': {
+      if (t.tag !== 'select' && t.role !== 'combobox') return no('bad_kind');
+      if (!value || !valueSaid(value, ctx.transcript))
+        return no('value_not_said');
+      if (
+        t.options.length &&
+        !t.options.some((o) => normText(o) === normText(value))
+      )
+        return no('value_not_said');
+      return {
+        risk: ctx.rules.confirmFill || !matches ? 'confirm' : 'auto',
+        reason: null,
+        nav: false,
+      };
+    }
+    case 'check': {
+      if (t.role !== 'checkbox' && t.role !== 'radio' && t.role !== 'switch')
+        return no('bad_kind');
+      return { risk: matches ? 'auto' : 'confirm', reason: null, nav: false };
+    }
+    case 'click': {
+      if (t.role === 'link' || t.tag === 'a') {
+        // Ссылка без адреса (`#`, javascript:) — это кнопка сайта.
+        if (t.href)
+          return {
+            risk: matches ? 'auto' : 'confirm',
+            reason: null,
+            nav: true,
+          };
+      }
+      if (t.toggle && !t.submit)
+        return { risk: matches ? 'auto' : 'confirm', reason: null, nav: false };
+      if (
+        t.assistId &&
+        REVERSIBLE_ASSIST_IDS.has(t.assistId) &&
+        matches &&
+        !t.confirmZone
+      )
+        return { risk: 'auto', reason: null, nav: t.submit };
+      if (kinds.some((k) => CONFIRM_KINDS.has(k)))
+        return { risk: 'confirm', reason: null, nav: t.submit || t.inForm };
+      // Любая другая кнопка — с подтверждением (класс по умолчанию не «сразу»).
+      return { risk: 'confirm', reason: null, nav: t.submit || t.inForm };
+    }
+    default:
+      return no('bad_kind');
+  }
+}
+
+function cleanExpect(raw: unknown): UiExpect | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const out: UiExpect = {};
+  if (
+    typeof o.path === 'string' &&
+    o.path.length <= 300 &&
+    /^\/[A-Za-z0-9\-._~%!$&'()*+,;=:@/]*$/.test(o.path)
+  )
+    out.path = o.path;
+  const appear = cleanText(o.appear, 80);
+  if (appear) out.appear = appear;
+  if (o.textChange === true) out.textChange = true;
+  return Object.keys(out).length ? out : null;
+}
+
+function cleanSay(raw: unknown): string | null {
+  return cleanText(raw, 200);
+}
+
+/** Описание цели шага после навигации (страницы ещё нет в снимке). */
+export interface AfterTarget {
+  text: string;
+  assistId: string | null;
+  role: UiRole | null;
+}
+
+function cleanAfter(raw: unknown): AfterTarget | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const text = cleanText(o.text, 80) ?? '';
+  const assistId =
+    typeof o.assistId === 'string' && ASSIST_ID_RE.test(o.assistId)
+      ? o.assistId
+      : null;
+  const role =
+    typeof o.role === 'string' &&
+    (UI_ROLES as readonly string[]).includes(o.role)
+      ? (o.role as UiRole)
+      : null;
+  if (!text && !assistId) return null;
+  return { text, assistId, role };
+}
+
+function afterFacts(a: AfterTarget): TargetFacts {
+  return {
+    text: a.text,
+    hiddenLabel: null,
+    assistId: a.assistId,
+    role: a.role,
+    tag: a.role === 'link' ? 'a' : 'button',
+    href: null,
+    submit: false,
+    inForm: false,
+    confirmZone: false,
+    pd: false,
+    // Вкладка по описанию — переключатель; окончательно решит новый снимок.
+    toggle: a.role === 'tab',
+    gesture: null,
+    inputType: null,
+    disabled: false,
+    heading: null,
+    options: [],
+  };
+}
+
+function targetOf(
+  ref: string,
+  f: TargetFacts,
+  selector: string | null,
+): UiTarget {
+  return {
+    ref,
+    assistId: f.assistId,
+    role: f.role,
+    text: f.text || f.assistId || '',
+    selector,
+    href: f.href,
+  };
+}
+
+/**
+ * Проверить план модели. Возвращает исполнимые шаги (с риском, причиной и
+ * пометкой навигации) и заметки «чего не сделаю и почему».
+ */
+export function checkPlan(p: PlanCheckInput): CheckedPlan {
+  const notes: UiPlanNote[] = [];
+  const out: UiPlanStep[] = [];
+  const raw = Array.isArray(p.steps) ? p.steps : [];
+  const byRef = new Map(p.snapshot.elements.map((e) => [e.ref, e]));
+  const byMap = new Map(p.map.map((m) => [m.ref, m]));
+  const byHref = new Map<string, UiSnapElement>();
+  for (const e of p.snapshot.elements)
+    if (e.href && !byHref.has(e.href)) byHref.set(e.href, e);
+  let pagePath: string | null = null;
+  try {
+    pagePath = new URL(p.snapshot.url).pathname;
+  } catch {
+    pagePath = null;
+  }
+  const ctx = {
+    transcript: p.transcript,
+    rules: p.rules,
+    hosts: p.hosts,
+    pagePath,
+    state: p.state,
+  };
+  let afterNav = false;
+  let stopped = false;
+
+  for (const item of raw) {
+    if (stopped) break;
+    if (out.length >= p.rules.maxSteps) {
+      notes.push({ code: 'limit', target: null });
+      break;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const s = item as RawStep;
+    let kind = s.kind as UiStepKind;
+    if (!(UI_STEP_KINDS as readonly unknown[]).includes(kind)) {
+      notes.push({ code: 'bad_kind', target: null });
+      continue;
+    }
+    const modelRisk: UiRisk = (UI_RISKS as readonly unknown[]).includes(s.risk)
+      ? (s.risk as UiRisk)
+      : 'auto';
+    const i = out.length;
+    if (kind === 'say') {
+      const say = cleanSay(s.say);
+      if (say)
+        out.push({
+          i,
+          kind,
+          target: null,
+          value: null,
+          expect: null,
+          risk: 'auto',
+          reason: null,
+          nav: false,
+          say,
+        });
+      continue;
+    }
+    if (kind === 'wait') {
+      out.push({
+        i,
+        kind,
+        target: null,
+        value: null,
+        expect: cleanExpect(s.expect),
+        risk: 'auto',
+        reason: null,
+        nav: false,
+        say: null,
+      });
+      continue;
+    }
+
+    // ── цель ──
+    let facts: TargetFacts | null = null;
+    let target: UiTarget | null = null;
+    let after: AfterTarget | null = null;
+    const ref = typeof s.target === 'string' ? s.target : null;
+    // Переход ПОСЛЕ перехода — ссылка новой страницы: только по описанию
+    // (`after`), не по ref/адресу старого снимка (иначе на новой странице
+    // загрузчик нажмёт элемент с тем же номером — другую цель).
+    if (kind === 'navigate' && afterNav) kind = 'click';
+    if (kind === 'navigate') {
+      // Переход — только по ссылке со страницы: адрес «из головы» модели
+      // не принимается (§5-бис.3 п.4), это клик по найденной ссылке.
+      const href = typeof s.target === 'string' ? s.target : null;
+      const el =
+        (href && byRef.get(href)) ||
+        (href ? byHref.get(stripQuery(href) ?? '') : undefined);
+      if (!el || !el.href) {
+        notes.push({
+          code:
+            href && !SNAP_REF_RE.test(href) && !onSiteHost(href, p.hosts)
+              ? 'offhost'
+              : 'no_target',
+          target: null,
+        });
+        continue;
+      }
+      kind = 'click';
+      facts = factsOfElement(el);
+      target = targetOf(el.ref, facts, null);
+    } else if (ref && SNAP_REF_RE.test(ref) && !afterNav) {
+      const el = byRef.get(ref);
+      if (el) {
+        facts = factsOfElement(el);
+        target = targetOf(el.ref, facts, null);
+      }
+    } else if (ref && MAP_REF_RE.test(ref) && !afterNav) {
+      const m = byMap.get(ref);
+      if (m) {
+        facts = factsOfMap(m);
+        target = targetOf(m.ref, facts, m.selector);
+      }
+    } else if (afterNav) {
+      after = cleanAfter(s.target);
+      if (after) {
+        facts = afterFacts(after);
+        target = {
+          ref: 'after',
+          assistId: after.assistId,
+          role: after.role,
+          text: after.text,
+          selector: null,
+          href: null,
+        };
+      }
+    } else if (kind === 'scroll' && s.target === undefined) {
+      out.push({
+        i,
+        kind,
+        target: null,
+        value: null,
+        expect: null,
+        risk: 'auto',
+        reason: null,
+        nav: false,
+        say: null,
+      });
+      continue;
+    }
+    if (!facts || !target) {
+      notes.push({ code: 'no_target', target: null });
+      continue;
+    }
+    const value =
+      kind === 'fill' || kind === 'select'
+        ? typeof s.value === 'string'
+          ? s.value.trim().slice(0, 200)
+          : null
+        : null;
+    const j = judgeStep(kind, facts, value, ctx);
+    if (j.risk === null) {
+      notes.push({
+        code: j.reason ?? 'no_target',
+        target: target.text || null,
+      });
+      continue;
+    }
+    const risk = raise(j.risk, modelRisk);
+    let expect = cleanExpect(s.expect);
+    if (j.nav && facts.href && !expect?.path) {
+      const hp = hrefPath(facts.href);
+      if (hp) expect = { ...(expect ?? {}), path: hp };
+    }
+    const step: UiPlanStep = {
+      i,
+      kind,
+      target,
+      value,
+      expect,
+      risk,
+      reason:
+        risk === 'manual' || risk === 'never' ? (j.reason ?? 'danger') : null,
+      nav: j.nav,
+      say: null,
+    };
+    out.push(step);
+    if (risk === 'manual' || risk === 'never') {
+      notes.push({
+        code: step.reason as UiStopReason,
+        target: target.text || null,
+      });
+      stopped = true;
+    }
+    if (j.nav) afterNav = true;
+  }
+  return {
+    steps: out,
+    notes,
+    needsConfirm: out.some((s) => s.risk === 'confirm'),
+  };
+}
+
+function stripQuery(href: string): string | null {
+  try {
+    const u = new URL(href);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Продолжение на новой странице (§4-бис.5, §5-бис.3 п.7): шаги `after`
+ * получают настоящую цель из НОВОГО снимка (разметка → видимый текст с
+ * ролью) и проходят те же проверки. Риск только растёт относительно
+ * подтверждённого: стал «с подтверждением», а план шёл без карточки, —
+ * `needsConfirm`; стал «никогда/нажмите сами» — шаг подсветки и конец.
+ * Не нашлась цель — `unresolved` (план останавливается «нажмите сами»).
+ */
+export function resolveAfterSteps(p: {
+  steps: UiPlanStep[];
+  from: number;
+  snapshot: UiSnapshot;
+  transcript: string;
+  rules: VoiceControlRules;
+  hosts: string[];
+  state: 'on' | 'degraded';
+}): { steps: UiPlanStep[]; needsConfirm: boolean; unresolved: number | null } {
+  const steps = p.steps.map((s) => ({ ...s }));
+  let needsConfirm = false;
+  let pagePath: string | null = null;
+  try {
+    pagePath = new URL(p.snapshot.url).pathname;
+  } catch {
+    pagePath = null;
+  }
+  const ctx = {
+    transcript: p.transcript,
+    rules: p.rules,
+    hosts: p.hosts,
+    pagePath,
+    state: p.state,
+  };
+  let navSeen = false;
+  for (let k = p.from; k < steps.length; k++) {
+    const s = steps[k];
+    if (navSeen) break; // следующая страница — следующее продолжение
+    if (!s.target || s.target.ref !== 'after') {
+      if (s.nav) navSeen = true;
+      continue;
+    }
+    const want = s.target;
+    const norm = normText(want.text);
+    let found = p.snapshot.elements.filter((e) =>
+      want.assistId ? e.assistId === want.assistId : normText(e.text) === norm,
+    );
+    // Роль из описания модели — только чтобы различить одинаковые подписи.
+    if (found.length > 1 && want.role)
+      found = found.filter((e) => e.role === want.role);
+    if (found.length !== 1) return { steps, needsConfirm, unresolved: k };
+    const el = found[0];
+    const facts = factsOfElement(el);
+    const j = judgeStep(s.kind, facts, s.value, ctx);
+    if (j.risk === null) return { steps, needsConfirm, unresolved: k };
+    const risk = raise(j.risk, s.risk);
+    if (risk === 'confirm' && s.risk !== 'confirm') needsConfirm = true;
+    steps[k] = {
+      ...s,
+      target: targetOf(el.ref, facts, null),
+      risk,
+      reason:
+        risk === 'manual' || risk === 'never' ? (j.reason ?? 'danger') : null,
+      nav: j.nav,
+    };
+    if (risk === 'manual' || risk === 'never') {
+      steps.length = k + 1;
+      break;
+    }
+    if (j.nav) navSeen = true;
+  }
+  return { steps, needsConfirm, unresolved: null };
+}

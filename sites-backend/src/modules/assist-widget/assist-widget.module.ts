@@ -11,6 +11,7 @@ import { AssistSiteChatModule } from '../assist-site-chat/assist-site-chat.modul
 import { AssistSiteHandoffModule } from '../assist-site-handoff/assist-site-handoff.module';
 import { AssistSiteLearningModule } from '../assist-site-learning/assist-site-learning.module';
 import { AssistSiteVoiceModule } from '../assist-site-voice/assist-site-voice.module';
+import { AssistSiteVoiceControlModule } from '../assist-site-voice-control/assist-site-voice-control.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { AcquisitionController } from './cabinet/acquisition.controller';
 import { AcquisitionService } from './cabinet/acquisition.service';
@@ -30,6 +31,7 @@ import { WidgetSessionService } from './widget-session.service';
 import { WidgetStateService } from './widget-state.service';
 import { WidgetVoiceController } from './widget-voice.controller';
 import { WidgetMediaController } from './widget-media.controller';
+import { WidgetUiPlanController } from './widget-ui-plan.controller';
 
 @Module({
   imports: [
@@ -41,6 +43,8 @@ import { WidgetMediaController } from './widget-media.controller';
     AssistSiteLearningModule,
     // Э5: голос посетителя (публичная часть — public/ модуля голоса).
     AssistSiteVoiceModule,
+    // Э6-бис: голосовое управление «Сайтом» (публичная часть — public/ модуля).
+    AssistSiteVoiceControlModule,
   ],
   controllers: [
     WidgetPublicController,
@@ -48,6 +52,8 @@ import { WidgetMediaController } from './widget-media.controller';
     WidgetVoiceController,
     // Э6: ссылка на ролик, редирект по ней, сигнал «карта устарела».
     WidgetMediaController,
+    // Э6-бис: план голосового управления, подтверждение, шаги, стоп.
+    WidgetUiPlanController,
     WidgetFrameController,
     LandingPublicController,
     AcquisitionController,

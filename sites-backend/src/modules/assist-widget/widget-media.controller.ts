@@ -11,6 +11,9 @@
  *                                  могли снять (аудит Э6)
  *   POST /widget/v1/highlight-miss { elementId, pageUrl } — загрузчик не
  *                                  нашёл элемент карты: сигнал «карта устарела»
+ *                                  (Э-С Ш4: по элементу и виду вёрстки, с
+ *                                  квитанцией показа, порогом и окном —
+ *                                  assist-site-media/public/ui-map.ts)
  *
  * Ссылка (третий барьер против ролика чужого сайта, шапка
  * assist-site-media/public/site-videos.ts): ролик ищется по siteId
@@ -45,13 +48,21 @@ import {
   playableVideo,
   videoAllowedByPlan,
 } from '../assist-site-media/public/site-videos';
-import { markUiMapStale } from '../assist-site-media/public/ui-map';
+import {
+  markUiMapStale,
+  recordUiMiss,
+} from '../assist-site-media/public/ui-map';
+import {
+  UI_MAP_STALE,
+  visitorViewport,
+} from '../site-core/ui-map/ui-map-model';
 import {
   signVideoLink,
   verifyVideoLink,
 } from '../assist-site-media/public/video-link';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { WidgetRateLimit } from './rate-limit';
+import { uiVoteIpHash } from './vote-ip-hash';
 import { tokenRequestOrigin } from './widget-public.controller';
 import { WidgetSessionService } from './widget-session.service';
 import { findSiteById } from './site-access';
@@ -59,6 +70,7 @@ import { widgetError } from './widget-errors';
 
 const TOKEN_HEADER = WIDGET_VISITOR_TOKEN_HEADER.toLowerCase();
 const MINUTE = 60_000;
+const DAY = 24 * 60 * MINUTE;
 
 export class WidgetVideoLinkDto {
   @IsString()
@@ -237,6 +249,13 @@ export class WidgetMediaController {
           limit: MEDIA_DEFAULTS.highlightMissPerIpPerMinute,
           windowMs: MINUTE,
         },
+        // Ш4: и в сутки с IP на сайт — накрутка устаревания с одного адреса.
+        {
+          scope: 'widget-uimiss-ip-site-day',
+          key: `${ctx.site.siteId}:${ctx.visitor.ipHash}`,
+          limit: UI_MAP_STALE.missesPerIpSitePerDay,
+          windowMs: DAY,
+        },
       ],
       now,
     );
@@ -250,12 +269,43 @@ export class WidgetMediaController {
     } catch {
       /* origin уже проверен гвардом */
     }
-    const recorded = await markUiMapStale(this.db, {
+    // Вид вёрстки — по заголовкам iframe (тот же браузер, что страница):
+    // элемент, скрытый мобильной вёрсткой, не делает карту устаревшей для
+    // компьютера (Ш4).
+    const viewport = visitorViewport({
+      userAgent: req.headers?.['user-agent'] ?? null,
+      chUaMobile:
+        (req.headers?.['sec-ch-ua-mobile'] as string | undefined) ?? null,
+    });
+    const miss = await recordUiMiss(this.db, {
+      accountId: ctx.site.accountId,
       siteId: ctx.site.siteId,
+      visitorId: ctx.visitor.visitorId,
+      // Хеш IP с солью на окно (неделя): «разные IP за 7 дней» не
+      // обходится сменой суток (суточный ipHash токена — только лимиты).
+      ipHash: await uiVoteIpHash(this.db, {
+        siteId: ctx.site.siteId,
+        req,
+        fallback: ctx.visitor.ipHash,
+        now,
+        env: this.env,
+      }),
       pageUrl: dto.pageUrl,
       siteHosts,
       elementId: dto.elementId,
+      viewport,
+      now,
     });
+    const recorded = miss.outcome === 'recorded';
+    if (recorded) {
+      // Э6: справочный счётчик снимков страницы (сводка истории).
+      await markUiMapStale(this.db, {
+        siteId: ctx.site.siteId,
+        pageUrl: dto.pageUrl,
+        siteHosts,
+        elementId: dto.elementId,
+      });
+    }
     if (recorded && !ctx.site.preview) {
       await this.counts
         .record({

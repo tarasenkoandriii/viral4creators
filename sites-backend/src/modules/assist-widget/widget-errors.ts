@@ -36,6 +36,12 @@ export const WIDGET_ERROR_STATUS: Record<WidgetErrorCode, number> = {
   AUDIO_INVALID: 400,
   // Э6:
   VIDEO_UNAVAILABLE: 404,
+  // Э6-бис:
+  VOICE_CONTROL_OFF: 403,
+  PLAN_EXPIRED: 409,
+  PLAN_CONFLICT: 409,
+  PLAN_CHANGED: 409,
+  UI_PLAN_TOO_LARGE: 413,
 };
 
 const MESSAGE: Record<WidgetErrorCode, string> = {
@@ -62,6 +68,11 @@ const MESSAGE: Record<WidgetErrorCode, string> = {
   VOICE_NOT_HEARD: 'Не расслышал — повторите или напишите текстом',
   AUDIO_INVALID: 'Запись не подходит — повторите или напишите текстом',
   VIDEO_UNAVAILABLE: 'Видео сейчас недоступно',
+  VOICE_CONTROL_OFF: 'Голосовое управление на этом сайте не включено',
+  PLAN_EXPIRED: 'Предложение устарело — повторите команду',
+  PLAN_CONFLICT: 'План уже изменился — обновите страницу',
+  PLAN_CHANGED: 'План изменился — подтвердите заново',
+  UI_PLAN_TOO_LARGE: 'Страница слишком большая для голосового управления',
 };
 
 export function widgetError(

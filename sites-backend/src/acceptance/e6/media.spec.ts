@@ -687,19 +687,38 @@ describeDb('Приёмка Э6 — видео и подсветка', () => {
       where: { siteId: s.siteId },
     });
     const el = (map!.elements as Array<{ id: string }>)[0].id;
-    as(s);
-    const ok = await widget.highlightMiss(
-      undefined,
-      { elementId: el, pageUrl: s.url('/delivery') },
-      origin,
-    );
+    const v = as(s);
+    // Э-С Ш4: снимок обучалки — мобильная вёрстка (окно исследователя);
+    // промах засчитывается только по квитанции показа — ассистент выдал
+    // ЭТОМУ посетителю подсветку ЭТОГО элемента.
+    const phone = {
+      headers: {
+        origin: 'https://w.test',
+        'user-agent':
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148',
+      },
+      method: 'POST',
+    } as never;
+    const dto0 = { elementId: el, pageUrl: s.url('/delivery') };
+    expect(await widget.highlightMiss(undefined, dto0, phone)).toEqual({
+      ok: true,
+      recorded: false,
+    });
+    script = answer([
+      { kind: 'highlight', label: 'Показати на сторінці', element: 'E1' },
+    ]);
+    await st.ask(s, 'Скільки коштує доставка?', {
+      visitor: v.visitor,
+      page: { url: s.url('/delivery'), title: null },
+    });
+    const ok = await widget.highlightMiss(undefined, dto0, phone);
     expect(ok).toEqual({ ok: true, recorded: true });
     for (const dto of [
       { elementId: 'u00000000', pageUrl: s.url('/delivery') },
       { elementId: el, pageUrl: s.url('/payment') },
       { elementId: el, pageUrl: 'https://evil.example/delivery' },
     ]) {
-      expect(await widget.highlightMiss(undefined, dto, origin)).toEqual({
+      expect(await widget.highlightMiss(undefined, dto, phone)).toEqual({
         ok: true,
         recorded: false,
       });
@@ -736,16 +755,27 @@ describeDb('Приёмка Э6 — видео и подсветка', () => {
     await internal.uiMap(s.ownerTelegramId, s.siteId, s.url('/delivery'), [
       { selector: '#a', tag: 'button', label: 'A' },
     ]);
+    // Э-С Ш4: справочный счётчик Э6 сам по себе страницу устаревшей не
+    // делает (шумный сигнал), устаревает ЭЛЕМЕНТ — по порогу промахов.
     await st.owner.siteUiMap.updateMany({
       where: { siteId: s.siteId },
       data: { staleSignals: 2 },
+    });
+    expect((await cabinet.list(owner(s), s.siteId)).uiMap).toMatchObject({
+      pages: 1,
+      stalePages: 0,
+      staleElements: 0,
+    });
+    await st.owner.siteUiElement.updateMany({
+      where: { siteId: s.siteId },
+      data: { staleMobileAt: new Date() },
     });
     const v = await cabinet.list(owner(s), s.siteId);
     expect(v).toMatchObject({
       siteId: s.siteId,
       planAllowsVideo: true,
       tutorialLink: `https://t.me/gen_bot/app?startapp=cst_${s.siteId}`,
-      uiMap: { pages: 1, stalePages: 1 },
+      uiMap: { pages: 1, stalePages: 1, staleElements: 1 },
     });
     expect(v.videos.map((x) => [x.title, x.enabled, x.requiresLogin])).toEqual([
       ['Перше відео', true, false],

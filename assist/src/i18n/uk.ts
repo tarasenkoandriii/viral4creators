@@ -1,5 +1,6 @@
 import { billingUk } from './billing-uk';
 import { mediaUk } from './media-uk';
+import { voiceControlUk } from './voice-control-uk';
 import type { AppDictionary } from './ru';
 import { setupUk } from './setup-uk';
 import { e3Uk } from './e3-uk';
@@ -423,4 +424,6 @@ export const appUk: AppDictionary = {
   billing: billingUk,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
   media: mediaUk,
+  /** Э6-бис: голосовое управление «Сайтом». */
+  voiceControl: voiceControlUk,
 };

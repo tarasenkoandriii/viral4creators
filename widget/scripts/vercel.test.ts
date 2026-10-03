@@ -65,7 +65,16 @@ assert.match(
 );
 assert.equal(header('/v1/highlight.js', 'Access-Control-Allow-Origin'), '*');
 assert.equal(header('/v1/highlight.js', 'X-Content-Type-Options'), 'nosniff');
+// Э6-бис: чанк голосового управления — тоже import() загрузчика с origin
+// виджета на странице заказчика (CORS), короткий кэш: откат версии — 5 мин.
+assert.match(
+  header('/v1/act.js', 'Cache-Control') ?? '',
+  /max-age=300\b/,
+  'act.js — короткий кэш'
+);
+assert.equal(header('/v1/act.js', 'Access-Control-Allow-Origin'), '*');
+assert.equal(header('/v1/act.js', 'X-Content-Type-Options'), 'nosniff');
 assert.ok(cfg.ignoreCommand, 'ignoreCommand пропал');
 console.log(
-  'vercel.json: шрифты immutable, загрузчик, engage.js, voice.js и highlight.js — 5 мин'
+  'vercel.json: шрифты immutable, загрузчик, engage.js, voice.js, highlight.js и act.js — 5 мин'
 );

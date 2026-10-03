@@ -34,7 +34,8 @@ import { CRAWL_DEFAULTS } from '../../config/assist-defaults';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { registrableDomain } from '../site-core/hosts/host-normalize';
-import { uiElementsHash, uiMapKey } from '../site-core/ui-map/ui-map';
+import { uiMapKey } from '../site-core/ui-map/ui-map';
+import { ingestUiSnapshot } from '../site-core/ui-map/ui-map-store';
 import {
   evaluateHostAccess,
   HostPurpose,
@@ -900,11 +901,13 @@ export class SiteCrawlService {
   }
 
   /**
-   * Э6 (§4.12): карта интерфейса страницы — `site_ui_maps`, источник
-   * `crawl`. Другой набор элементов (вёрстка сменилась) — счётчик промахов
-   * подсветки с нуля: сигнал «карта устарела» относился к старой карте.
-   * Нет элементов — карта обхода снимается (подсвечивать нечего). Сбой
-   * записи карты прогон не роняет: знания важнее подсветки.
+   * Э6 (§4.12): карта интерфейса страницы — источник `crawl`, вид `any`
+   * (браузера у обхода нет). Э-С Ш4: общая дверь `ingestUiSnapshot` —
+   * версия и история при новом наборе, слияние с обучалкой и QA по
+   * стабильному ключу; обход только отмечает «видели» (`lastSeenAt`), а
+   * промахи посетителей не снимает (разметка ≠ видимость). Нет элементов —
+   * снимок обхода снимается. Сбой записи карты (в т.ч. потолок страниц
+   * карты) прогон не роняет: знания важнее подсветки.
    */
   private async storeUiMap(
     ctx: RunCtx,
@@ -914,39 +917,18 @@ export class SiteCrawlService {
   ): Promise<void> {
     const key = uiMapKey(page.url);
     if (!key) return;
-    const where = {
-      siteId: ctx.run.siteId,
-      host: key.host,
-      path: key.path,
-      source: 'crawl',
-    };
     try {
-      const elements = page.uiElements ?? [];
-      if (!elements.length) {
-        await ctx.db.siteUiMap.deleteMany({ where });
-        return;
-      }
-      const elementsHash = uiElementsHash(elements);
-      const existing = await ctx.db.siteUiMap.findFirst({
-        where,
-        select: { id: true, elementsHash: true },
-      });
-      const data = {
+      await ingestUiSnapshot(ctx.db, {
+        accountId: ctx.run.accountId,
+        siteId: ctx.run.siteId,
         hostId: host.id,
-        elements: elements as unknown as Prisma.InputJsonValue,
-        elementsHash,
-        capturedAt: now,
-        ...(existing?.elementsHash !== elementsHash
-          ? { staleSignals: 0, lastStaleAt: null }
-          : {}),
-      };
-      if (existing) {
-        await ctx.db.siteUiMap.update({ where: { id: existing.id }, data });
-      } else {
-        await ctx.db.siteUiMap.create({
-          data: { ...data, ...where, accountId: ctx.run.accountId },
-        });
-      }
+        host: key.host,
+        path: key.path,
+        source: 'crawl',
+        viewport: 'any',
+        elements: page.uiElements ?? [],
+        now,
+      });
     } catch (e) {
       this.logger.warn(
         `карта интерфейса ${key.host}${key.path}: ${e instanceof Error ? e.name : 'error'}`,

@@ -49,7 +49,19 @@ export const INTERNAL_SITES_BODY_LIMIT_BYTES = 8 * 1024;
 export const INTERNAL_CREDENTIALS_PATH = '/internal/sites/credentials';
 export const INTERNAL_CREDENTIALS_BODY_LIMIT_BYTES = 320 * 1024;
 
+/**
+ * Э-С Ш4: карта интерфейса от Flow-QA — до 60 элементов с кандидатами
+ * селектора (≈ 30–40 КБ) — свой потолок.
+ */
+export const INTERNAL_QA_UI_MAP_PATH = '/internal/sites/qa/ui-map';
+export const INTERNAL_QA_UI_MAP_BODY_LIMIT_BYTES = 64 * 1024;
+
 export function internalBodyLimit(path: string): number {
+  if (
+    path === INTERNAL_QA_UI_MAP_PATH ||
+    path.startsWith(`${INTERNAL_QA_UI_MAP_PATH}/`)
+  )
+    return INTERNAL_QA_UI_MAP_BODY_LIMIT_BYTES;
   return path === INTERNAL_CREDENTIALS_PATH ||
     path.startsWith(`${INTERNAL_CREDENTIALS_PATH}/`)
     ? INTERNAL_CREDENTIALS_BODY_LIMIT_BYTES
@@ -69,17 +81,40 @@ export class TutorialHmacGuard implements CanActivate {
   /** Тесты подменяют env и часы. */
   env: NodeJS.ProcessEnv = process.env;
   now: () => Date = () => new Date();
+  /**
+   * Секрет и вызывающий направления (Э-С Ш4: Flow-QA — свой секрет и свой
+   * вызывающий, `QaHmacGuard`; П-С3 «отдельный секрет на направление»).
+   */
+  protected readonly secretEnv: string = 'SITES_TUTORIAL_HMAC_SECRET';
+  protected readonly caller: string = SITES_CALLER_TUTORIAL;
+  protected readonly product: string = 'обучалки';
+  /**
+   * Секрет другого направления, с которым этот совпадать НЕ должен (аудит
+   * Ш4): при равных секретах держатель одного подписал бы и чужой
+   * вызывающий (он — заголовок) — маршруты закрыты, как без секрета.
+   */
+  protected readonly distinctFromEnv: string | null = null;
 
   constructor(private readonly ledger: InternalRequestLedger) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<InternalRequest>();
-    const secret = this.env.SITES_TUTORIAL_HMAC_SECRET?.trim();
+    const secret = this.env[this.secretEnv]?.trim();
     if (!isUsableSitesSecret(secret)) {
       throw err(
         ServiceUnavailableException,
         'INTERNAL_NOT_CONFIGURED',
-        'SITES_TUTORIAL_HMAC_SECRET не задан (≥ 32 символа) — внутренний API обучалки закрыт',
+        `${this.secretEnv} не задан (≥ 32 символа) — внутренний API ${this.product} закрыт`,
+      );
+    }
+    if (
+      this.distinctFromEnv &&
+      this.env[this.distinctFromEnv]?.trim() === secret
+    ) {
+      throw err(
+        ServiceUnavailableException,
+        'INTERNAL_NOT_CONFIGURED',
+        `${this.secretEnv} совпадает с ${this.distinctFromEnv} — внутренний API ${this.product} закрыт`,
       );
     }
     const raw = typeof req.body === 'string' ? req.body : '';
@@ -98,7 +133,7 @@ export class TutorialHmacGuard implements CanActivate {
       body: raw,
       headers: req.headers,
       nowSeconds: Math.floor(now.getTime() / 1000),
-      expectedCaller: SITES_CALLER_TUTORIAL,
+      expectedCaller: this.caller,
     });
     if (!check.ok) {
       throw err(

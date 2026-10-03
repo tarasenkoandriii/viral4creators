@@ -12,7 +12,13 @@ import {
   describeDb,
   randomV6Prefix,
 } from '../../modules/assist-sandbox/testing/k3-stack.testing';
-import { uiElementId } from '../../modules/site-core/ui-map/ui-map';
+import { SitesDb } from '../../prisma/sites-db.service';
+import {
+  uiElementId,
+  uiMapKey,
+  uiMapPageRef,
+} from '../../modules/site-core/ui-map/ui-map';
+import { ingestUiSnapshot } from '../../modules/site-core/ui-map/ui-map-store';
 import {
   W_ORIGIN,
   domain,
@@ -134,23 +140,19 @@ describeDb('Э6: видео и подсветка по HTTP', () => {
     }
   });
 
-  it('сигнал «карта устарела» по HTTP: счётчик карты страницы растёт, лимит посетителя — RATE_LIMITED', async () => {
+  it('сигнал «карта устарела» по HTTP (Э-С Ш4): прямой вызов без квитанции показа — не засчитан; с квитанцией — промах элемента и справочный счётчик страницы; повтор посетителя — нет; лимит посетителя — RATE_LIMITED', async () => {
     const a = await site();
     const el = uiElementId('#buy');
-    await stack.prisma.siteUiMap.create({
-      data: {
-        accountId: a.accountId,
-        siteId: a.siteId,
-        hostId: a.hosts[0].id,
-        host: a.hosts[0].host,
-        path: '/cart',
-        source: 'crawl',
-        elements: [
-          { id: el, selector: '#buy', tag: 'button', label: 'Купити' },
-        ],
-        elementsHash: 'h',
-        capturedAt: new Date(),
-      },
+    const key = uiMapKey(`${a.hosts[0].origin}/cart`)!;
+    await ingestUiSnapshot(new SitesDb(stack.prisma).forAccount(a.accountId), {
+      accountId: a.accountId,
+      siteId: a.siteId,
+      hostId: a.hosts[0].id,
+      host: key.host,
+      path: key.path,
+      source: 'crawl',
+      viewport: 'any',
+      elements: [{ selector: '#buy', tag: 'button', label: 'Купити' }],
     });
     const t = await token(a);
     const miss = () =>
@@ -159,15 +161,66 @@ describeDb('Э6: видео и подсветка по HTTP', () => {
         .set('Origin', W_ORIGIN)
         .set(WIDGET_VISITOR_TOKEN_HEADER, t)
         .send({ elementId: el, pageUrl: `${a.hosts[0].origin}/cart/` });
+    const map = () =>
+      stack.prisma.siteUiMap.findFirst({ where: { siteId: a.siteId } });
+    // Накрутка прямым вызовом (хвост Э6) — ничего не трогает.
+    expect((await miss().expect(200)).body.data).toEqual({
+      ok: true,
+      recorded: false,
+    });
+    expect((await map())!.staleSignals).toBe(0);
+    // Квитанция показа: ассистент выдал ЭТОМУ посетителю подсветку `#buy`.
+    const { visitorId } = JSON.parse(
+      Buffer.from(t.split('.')[0], 'base64url').toString('utf8'),
+    ) as { visitorId: string };
+    const conv = await stack.prisma.assistSiteConversation.create({
+      data: {
+        accountId: a.accountId,
+        siteId: a.siteId,
+        visitorId,
+        ipHash: 'ip',
+        parentOrigin: a.hosts[0].origin,
+      },
+    });
+    await stack.prisma.assistSiteMessage.create({
+      data: {
+        accountId: a.accountId,
+        siteId: a.siteId,
+        conversationId: conv.id,
+        role: 'assistant',
+        text: 'Ось кнопка.',
+        flags: [],
+        actions: [
+          {
+            kind: 'highlight',
+            label: 'Показати',
+            elementId: el,
+            selector: '#buy',
+            caption: 'Купити',
+            // Квитанция — на странице карты (аудит Ш4).
+            page: uiMapPageRef(key),
+          },
+        ],
+      },
+    });
     const r = await miss().expect(200);
     expect(r.body.data).toEqual({ ok: true, recorded: true });
-    const map = await stack.prisma.siteUiMap.findFirst({
-      where: { siteId: a.siteId },
+    expect((await map())!.staleSignals).toBe(1);
+    const row = await stack.prisma.siteUiElement.findFirst({
+      where: { siteId: a.siteId, elementId: el },
     });
-    expect(map!.staleSignals).toBe(1);
+    // Вид — по заголовкам (без мобильного UA — компьютер); один промах —
+    // ещё не «устарел» (порог).
+    expect([row!.missCountDesktop, row!.missCountMobile]).toEqual([1, 0]);
+    expect(row!.staleDesktopAt).toBeNull();
     expect(stack.events.batches.filter((x) => x.siteId === a.siteId)).toEqual([
       { siteId: a.siteId, events: [{ kind: 'highlight_miss', key: el }] },
     ]);
+    // Тот же посетитель ещё раз — не засчитывается.
+    expect((await miss().expect(200)).body.data).toEqual({
+      ok: true,
+      recorded: false,
+    });
     let limited = false;
     for (let i = 0; i < 12 && !limited; i++) {
       limited = (await miss()).status === 429;

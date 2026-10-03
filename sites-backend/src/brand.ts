@@ -221,6 +221,12 @@ export const WIDGET_ENGAGE_PATH = '/v1/engage.js';
  * интерфейса) — загрузчик берёт его только по клику посетителя.
  */
 export const WIDGET_HIGHLIGHT_PATH = '/v1/highlight.js';
+/**
+ * Э6-бис: ленивый чанк голосового управления (снимок страницы и исполнитель
+ * шагов) — загрузчик берёт его только по команде своего iframe (после речи
+ * или набора посетителя), бюджет загрузчика 12 КБ не растёт.
+ */
+export const WIDGET_ACT_PATH = '/v1/act.js';
 /** Разметка цели в вёрстке заказчика: клик и отправка формы. */
 export const WIDGET_GOAL_ATTR = 'data-assist-goal';
 export const WIDGET_GOAL_SUBMIT_ATTR = 'data-assist-goal-submit';

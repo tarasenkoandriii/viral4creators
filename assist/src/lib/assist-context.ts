@@ -15,6 +15,7 @@ import type { StatsApi } from './stats-api';
 import type { PersonaApi } from './persona-api';
 import type { WidgetApi } from './widget-api';
 import type { VoiceApi } from './voice-api';
+import type { VoiceControlApi } from './voice-control-api';
 import type { MediaApi } from './media-api';
 import type { WizardApi } from './wizard-api';
 
@@ -33,6 +34,8 @@ export interface AssistValue {
   billing: BillingApi;
   /** Э5: голос виджета (раздел экрана характера). */
   voice: VoiceApi;
+  /** Э6-бис: голосовое управление «Сайтом» (раздел рядом с голосом). */
+  voiceControl: VoiceControlApi;
   /** Э6: экран «Видео» (ролики обучалки, карта интерфейса). */
   media: MediaApi;
 }

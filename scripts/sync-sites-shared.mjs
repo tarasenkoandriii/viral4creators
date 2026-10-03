@@ -99,6 +99,18 @@ const ENTRIES = [
   { from: 'backend/src/common/soniox.ts', to: 'soniox.ts' },
   { from: 'backend/src/common/soniox-stt-core.ts', to: 'soniox-stt-core.ts' },
   { from: 'backend/src/common/soniox-stt-core.spec.ts', to: 'soniox-stt-core.spec.ts' },
+  // Э6-бис (голосовое управление, ТЗ помощника §5-бис.5, аудит 1.2):
+  // стоп-лист необратимых действий обучалки — категории `dangerKindsFor`
+  // для класса риска клика (`assist-ui-core/action-words.ts`); поведение
+  // `dangerWarningFor` обучалки не меняется (его спек — в копии тоже).
+  {
+    from: 'backend/src/modules/client-site-tutorial/danger-words.ts',
+    to: 'danger-words.ts',
+  },
+  {
+    from: 'backend/src/modules/client-site-tutorial/danger-words.spec.ts',
+    to: 'danger-words.spec.ts',
+  },
 ];
 
 /** Импорты, которых в общем коде быть не может (см. шапку). */

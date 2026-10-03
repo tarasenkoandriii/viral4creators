@@ -36,6 +36,8 @@ function audioCtx(): Ctx | null {
 }
 
 const TICK_MS = 50;
+/** Порог речи, пока звучит своя озвучка (`bargeInFactor` TMA, §5-бис.5). */
+const BARGE_IN_FACTOR = 3;
 
 function canRecord(): boolean {
   const md = navigator.mediaDevices;
@@ -89,7 +91,10 @@ export function createVoice(): VoiceEngine {
         minSpeechMs: limits.minSpeechMs,
         endSilenceMs: limits.endSilenceMs,
         maxMs: limits.maxRecordMs,
+        // Звучит своя озвучка — порог перебивания выше (§5-бис.5).
+        boost: () => (source || element ? BARGE_IN_FACTOR : 1),
       });
+      let spoke = false;
       let why: 'ok' | 'max' = 'ok';
 
       const release = () => {
@@ -171,6 +176,11 @@ export function createVoice(): VoiceEngine {
             const level = rms(buf);
             onLevel(Math.min(1, level * 4));
             const step = vad.push(level, Date.now() - t0);
+            // Э6-бис: начало речи — сразу (план на паузу до распознавания).
+            if (!spoke && vad.heardSpeech) {
+              spoke = true;
+              if (limits.onSpeech) limits.onSpeech();
+            }
             if (step !== 'listen') stopNow(step === 'max' ? 'max' : 'ok');
           }, TICK_MS);
         })
@@ -251,3 +261,47 @@ export function createVoice(): VoiceEngine {
     stopPlayback,
   };
 }
+
+// ── Т-1, способ 2: подача звука через WebAudio (ТОЛЬКО тестовая сборка) ──
+
+/**
+ * Хук тестовой сборки (§5-бис.12): `getUserMedia` отдаёт поток
+ * `MediaStreamAudioDestinationNode`, а тест подаёт в него декодированную
+ * фикстуру в нужный момент (`window.__v4cTestAudio.feed(pcm, rate)` →
+ * время начала подачи). В боевой сборке этого кода нет (define = false,
+ * проверка отсутствия маркера — scripts/size-budget.mjs).
+ */
+function installTestAudio() {
+  const C = audioCtx();
+  const md = navigator.mediaDevices;
+  if (!C || !md) return;
+  let ctx: AudioContext | null = null;
+  let dest: MediaStreamAudioDestinationNode | null = null;
+  let opened = 0;
+  md.getUserMedia = async () => {
+    if (!ctx) ctx = new C();
+    if (ctx.state === 'suspended') await ctx.resume();
+    dest = ctx.createMediaStreamDestination();
+    opened++;
+    return dest.stream;
+  };
+  (window as unknown as Record<string, unknown>).__v4cTestAudio = {
+    feed(pcm: number[], rate: number): Promise<number> {
+      if (!ctx || !dest) return Promise.resolve(-1);
+      const buf = ctx.createBuffer(1, pcm.length, rate);
+      buf.getChannelData(0).set(pcm);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(dest);
+      const at = Date.now();
+      src.start();
+      return new Promise((r) => {
+        src.onended = () => r(at);
+      });
+    },
+    /** Сколько раз открыт «микрофон» (каждая запись — новый поток). */
+    opened: () => opened,
+  };
+}
+if (typeof __V4C_TEST_AUDIO__ !== 'undefined' && __V4C_TEST_AUDIO__)
+  installTestAudio();

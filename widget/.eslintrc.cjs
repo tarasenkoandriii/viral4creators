@@ -23,7 +23,7 @@ module.exports = {
     'plugin:@typescript-eslint/recommended',
     'plugin:prettier/recommended',
   ],
-  ignorePatterns: ['dist', 'node_modules', 'test-results', 'playwright-report', '.eslintrc.cjs'],
+  ignorePatterns: ['dist', 'dist-test', 'node_modules', 'test-results', 'playwright-report', '.eslintrc.cjs'],
   parser: '@typescript-eslint/parser',
   rules: {
     '@typescript-eslint/no-explicit-any': 'error',

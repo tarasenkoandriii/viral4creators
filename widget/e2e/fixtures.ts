@@ -4,7 +4,16 @@
  * iframe чата.
  */
 import { expect, test, type Page, type FrameLocator } from '@playwright/test';
-import { encodeSpec, type StandSpec } from './stand/server';
+import type { StandSpec } from './stand/server';
+
+/**
+ * Спецификация страницы стенда в адресе (повтор `encodeSpec` стенда): сам
+ * стенд тянет мок с проверками sites-backend (CommonJS вне корня e2e), а
+ * процессу тестов Playwright он не нужен — только тип.
+ */
+function encodeSpec(s: StandSpec): string {
+  return Buffer.from(JSON.stringify(s)).toString('base64url');
+}
 import {
   WIDGET_MESSAGE_NS,
   WIDGET_PROTOCOL_VERSION,
@@ -102,6 +111,8 @@ export interface MockLog {
   videoLinks: Array<{ pk: string; videoId: string; ok: boolean }>;
   videoRedirects: number;
   highlightMisses: Array<{ pk: string; elementId: string; pageUrl: string }>;
+  // Э6-бис
+  vc: import('./stand/ui-plan-mock').VcLog;
 }
 
 export async function log(): Promise<MockLog> {
@@ -127,6 +138,19 @@ export interface SiteOpts {
   voice?: unknown;
   voiceMode?: 'ok' | 'limit' | 'not_heard' | 'unavailable';
   voiceText?: string;
+  // Э6-бис
+  voiceControl?: {
+    mode: 'on' | 'degraded';
+    denySelectors?: string[];
+    allowSelectors?: string[];
+    maxSteps?: number;
+  };
+  vcRules?: unknown;
+  vcModel?: Record<
+    string,
+    import('./stand/ui-plan-mock').ModelStep[] | 'not_command'
+  >;
+  voiceTexts?: string[];
 }
 
 /** Сайт в моке: по умолчанию разрешён A и SHOP (verified-хосты одного сайта). */
@@ -153,6 +177,10 @@ export async function site(pk: string, o: SiteOpts = {}) {
     voice: o.voice,
     voiceMode: o.voiceMode,
     voiceText: o.voiceText,
+    voiceControl: o.voiceControl,
+    vcRules: o.vcRules,
+    vcModel: o.vcModel,
+    voiceTexts: o.voiceTexts,
   });
 }
 

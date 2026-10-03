@@ -478,3 +478,30 @@ body {
   max-height: 60vh;
   background: #000;
 }
+
+/* Э6-бис: голосовой план — полоса «выполняю» с большой кнопкой «Стоп»
+   (§5-бис.5 «стоп всегда»), карточка подтверждения. */
+.pbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--v4c-line, #e5e7eb);
+  font-size: 13px;
+}
+.pstop {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pconfirm ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}

@@ -28,6 +28,7 @@ import {
 } from '../knowledge/parts';
 import { Field, HistoryList, Select } from './controls';
 import { VoiceSection } from './VoiceSection';
+import { VoiceControlSection } from './VoiceControlSection';
 
 /** «Характер помощника» (§3.5): тон, языки, запреты, стоп-фразы, примеры. */
 export function PersonaScreen({ siteId }: { siteId: string }) {
@@ -244,6 +245,7 @@ function PersonaForm({
           ) ?? 'uk'
         }
       />
+      <VoiceControlSection siteId={siteId} />
       <ProceduresCard
         value={draft.procedures ?? []}
         onChange={(procedures) => setDraft({ ...draft, procedures })}

@@ -180,6 +180,9 @@ model Site {
   // Э6: ролики обучалки генератора и карты интерфейса (§4.11, §4.12).
   siteVideos AssistSiteVideo[]
   uiMaps     SiteUiMap[]
+  // Э-С Ш4: история карт и слитые элементы (общие с голосом, редактором, QA).
+  uiMapVersions SiteUiMapVersion[]
+  uiElements    SiteUiElement[]
   /// Отметка (`asOf`, мс часов генератора) последнего ПРИНЯТОГО полного
   /// набора роликов от генератора (internal-sites/site-media.service.ts):
   /// набор старше — гонка двух синхронизаций в обратном порядке — не
@@ -241,6 +244,9 @@ model SiteHost {
   pages      SitePage[]
   /// Э6: карты интерфейса страниц хоста (удалили хост — карта ни к чему).
   uiMaps     SiteUiMap[]
+  /// Э-С Ш4: история карт и слитые элементы страниц хоста — туда же.
+  uiMapVersions SiteUiMapVersion[]
+  uiElements    SiteUiElement[]
 
   /// Дубль хоста в кабинете — ошибка при добавлении (QA §2.2), а не второй
   /// Site; разные кабинеты один хост иметь могут.
@@ -859,6 +865,16 @@ model AssistSite {
   /// Суточный денежный потолок голоса сайта (§4.10, «по образцу VoiceCapKey»)
   /// — ставит оператор платформы; null — по тарифу (VOICE_DEFAULTS).
   voiceDailyCapMicroUsd Int?
+
+  // ── Э6-бис: голосовое управление «Сайтом» (ТЗ §5-бис.2, §5-бис.9, §5-бис.11) ──
+  /// Переключатель `off | test | on | degraded` (аудит 1.3). Э6-бис (а) —
+  /// `off`/`on` из кабинета; `test` (мастер Т-2) и авто-`degraded`
+  /// (монитор Т-4) — часть (г). Роль виджета читает (публичный код решает,
+  /// показывать ли режим посетителю).
+  voiceControlSiteState String @default("off")
+  /// Правила кабинета: зоны, запреты, подтверждение заполнения, лимит шагов
+  /// — форма assist-ui-core/rules.ts. Секретов нет: роль виджета читает.
+  voiceControlSiteRules Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1670,6 +1686,8 @@ model AssistSiteConversation {
   handoffs      AssistSiteHandoff[]
   learningItems AssistSiteLearningItem[]
   goalEvents    AssistSiteGoalEvent[]
+  // Э6-бис: голосовые планы диалога (каскад с диалогом — ретенция и forget).
+  uiPlans       AssistSiteUiPlan[]
   faqFrom       AssistSiteFaq[]          @relation("FaqFromConversation")
   evalCasesFrom AssistSiteEvalCase[]     @relation("EvalCaseFromConversation")
 
@@ -2661,6 +2679,97 @@ model AssistSiteTtsCache {
   @@map("assist_site_tts_cache")
 }
 
+// ═══ Э6-бис: голосовое управление интерфейсом, режим «Сайт» (ТЗ §5-бис.3,
+// §5-бис.9; план, Приложение А «Этап 6-бис» (а)) ═══
+
+/// Голосовой план посетителя (§5-бис.3 п.7, §4-бис.5): шаги, проверенные
+/// кодом (`assist-ui-core/plan-checks.ts`), и номер текущего шага — на
+/// сервере, чтобы после перехода страницы план продолжился и ни один
+/// `dispatched`-шаг не повторился. Снимок страницы НЕ хранится (§5-бис.3
+/// п.2) — только шаги с описанием целей; текст команды — маскированный.
+/// Пишет публичный код (роль assist_public), удаляется каскадом с диалогом
+/// (ретенция диалогов §6.3, «удалить мой диалог»). «Админка» — своя модель
+/// `assist_admin_ui_plans` в Э6-бис (б), не эта (аудит 1.2, У-17).
+model AssistSiteUiPlan {
+  id              String                 @id @default(cuid())
+  accountId       String
+  siteId          String
+  conversationId  String
+  conversation    AssistSiteConversation @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Чей план: исполнять/подтверждать/останавливать — только этот посетитель.
+  visitorId       String
+  /// Команда — маскированной (`maskSensitiveEcho`), ≤ 600.
+  utteranceMasked String
+  /// voice — с годным билетом голоса; typed — набрано в поле iframe.
+  source          String
+  lang            String?
+  /// Страница, где отдана команда (без query).
+  pageUrl         String
+  /// Проверенные шаги (`UiPlanStep[]`) и состояние каждого (dispatched/done…).
+  /// Значения полей здесь — МАСКИРОВАННЫЕ (аудит Э6-бис, минимизация ПД).
+  steps           Json
+  /// Пока план живой — сырые значения шагов и текст команды
+  /// (`{ u: команда, v: [значение шага i | null] }`): нужны исполнителю и
+  /// продолжению после перехода (телефон/e-mail сверяются посимвольно).
+  /// Обнуляется при завершении, стопе, отказе и истечении (публичный код —
+  /// в том же UPDATE, что статус; крон ретенции — у истёкших без визита).
+  liveValues      Json?
+  currentStep     Int                    @default(0)
+  /// proposed | confirmed | running | paused | done | stopped | failed | expired
+  status          String                 @default("proposed")
+  needsConfirm    Boolean
+  /// voice | button | auto — кто и как подтвердил (§5-бис.9).
+  confirmedBy     String?
+  /// Окно подтверждения — 60 с (§5-бис.5, как CONSENT_WINDOW_MS TMA).
+  confirmBefore   DateTime
+  /// План живёт 10 минут (§4-бис.2: незавершённое подтверждение).
+  expiresAt       DateTime
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  actions AssistSiteUiActionLog[]
+
+  @@unique([id, accountId])
+  @@index([siteId, visitorId, createdAt])
+  @@index([conversationId])
+  @@index([accountId])
+  @@map("assist_site_ui_plans")
+}
+
+/// Журнал шагов голосового управления «Сайта» (§5-бис.9): план, шаг,
+/// действие, ОПИСАНИЕ цели (роль, видимый текст, `data-assist-id`, путь),
+/// страница, класс риска, кто подтвердил, итог, длительность. Значения
+/// полей — маскированные. Только дописывается (у роли — INSERT); срок — по
+/// ретенции диалогов (каскад с планом). Точка расширения Т-4 (§5-бис.14,
+/// часть (г)): метрики `done`/«не туда»/«нажмите сами» считаются отсюда.
+model AssistSiteUiActionLog {
+  id          String           @id @default(cuid())
+  accountId   String
+  siteId      String
+  planId      String
+  plan        AssistSiteUiPlan @relation(fields: [planId, accountId], references: [id, accountId], onDelete: Cascade)
+  stepIndex   Int
+  /// scroll | click | fill | select | check | wait | highlight | say | plan | stop
+  action      String
+  /// { role, text, assistId, path } — без значений полей.
+  target      Json?
+  /// Страница шага (без query).
+  url         String?
+  risk        String
+  confirmedBy String?
+  /// dispatched | done | skipped | failed | stopped | manual | proposed
+  result      String
+  reason      String?
+  valueMasked String?
+  durationMs  Int?
+  createdAt   DateTime         @default(now())
+
+  @@index([planId])
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_ui_action_log")
+}
+
 // ═══ Э6: видео-ответы и «показать на экране» (ТЗ §4.9, §4.11, §4.12; план,
 // Приложение А «Этап 6») ═══
 
@@ -2721,19 +2830,146 @@ model SiteUiMap {
   host         String
   /// Путь без query и фрагмента, без концевого `/` (кроме корня).
   path         String
-  /// crawl | tutorial
+  /// crawl | tutorial | loader | qa | manual (Ш4 — site-core/ui-map/ui-map-model.ts)
   source       String
-  /// [{ id, selector, tag, label }] — форма в site-core/ui-map/ui-map.ts.
+  /// Ш4: вид вёрстки снимка — any (обход без браузера) | desktop | mobile.
+  viewport     String    @default("any")
+  /// Ш4: номер набора — растёт, когда набор элементов меняется; прежние
+  /// наборы — в site_ui_map_versions (история, а не перезапись).
+  version      Int       @default(1)
+  /// [{ id, selector, tag, label, key?, candidates?, stability? }] — форма в
+  /// site-core/ui-map (Э6-читатели берут id/selector/tag/label).
   elements     Json
   elementsHash String
   capturedAt   DateTime
+  /// Э6: принятых сигналов «элемент не найден» на этой странице (справочно;
+  /// Ш4 решает об устаревании по ЭЛЕМЕНТУ — site_ui_elements).
   staleSignals Int       @default(0)
   lastStaleAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  @@unique([siteId, host, path, source])
+  @@unique([siteId, host, path, source, viewport])
   @@index([hostId])
   @@index([accountId])
   @@map("site_ui_maps")
+}
+
+/// Э-С Ш4: история карты страницы — каждый принятый НОВЫЙ набор элементов
+/// источника (сайт, хост, путь, источник, вид). Срок и число версий —
+/// крон site-ui-map-maintenance (UI_MAP_SHARED в site-core/ui-map).
+model SiteUiMapVersion {
+  id           String   @id @default(cuid())
+  accountId    String
+  siteId       String
+  site         Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  hostId       String
+  hostRow      SiteHost @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  host         String
+  path         String
+  source       String
+  viewport     String
+  version      Int
+  elements     Json
+  elementsHash String
+  elementCount Int
+  capturedAt   DateTime
+  createdAt    DateTime @default(now())
+
+  @@unique([siteId, host, path, source, viewport, version])
+  @@index([hostId])
+  @@index([accountId])
+  @@index([createdAt])
+  @@map("site_ui_map_versions")
+}
+
+/// Э-С Ш4: элемент страницы, СЛИТЫЙ из снимков всех источников по
+/// стабильному ключу (`elementKey`: data-assist-id > id > test-id > роль+имя
+/// > текст > css-путь) — один на (сайт, хост, путь, вид). Его читают
+/// подсветка (Э6), голос (Э6-бис), редактор (Э6-тер) и Flow-QA; на нём же —
+/// промахи и устаревание по виду вёрстки.
+model SiteUiElement {
+  id               String              @id @default(cuid())
+  accountId        String
+  siteId           String
+  site             Site                @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  hostId           String
+  hostRow          SiteHost            @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  host             String
+  path             String
+  /// any | desktop | mobile — вид снимков, из которых слит элемент.
+  viewport         String
+  elementKey       String
+  /// `u` + 8 hex — id элемента для виджета (от лучшего CSS-селектора).
+  elementId        String
+  tag              String
+  label            String
+  role             String?
+  /// Лучший CSS-кандидат (подсветка Э6); null — только роль/текст.
+  selector         String?
+  /// [{ kind, selector?, role?, name? }] — по убыванию надёжности.
+  candidates       Json
+  /// strong | medium | fragile
+  stability        String
+  /// 0–100: надёжность селектора + источники.
+  confidence       Int
+  sources          String[]
+  /// Ранг лучшего источника (manual 0 … crawl 3) и место в его снимке —
+  /// порядок выдачи (E1…En в промпте).
+  sourceRank       Int
+  position         Int
+  firstSeenAt      DateTime
+  lastSeenAt       DateTime
+  /// Промахи посетителей по виду: окно `miss*Since`, порог — UI_MAP_STALE.
+  missCountDesktop Int                 @default(0)
+  missSinceDesktop DateTime?
+  staleDesktopAt   DateTime?
+  missCountMobile  Int                 @default(0)
+  missSinceMobile  DateTime?
+  staleMobileAt    DateTime?
+  lastMissAt       DateTime?
+  /// Голоса «найден» от снимков загрузчика (данные посетителя) по виду: тот
+  /// же порог и окно, что промахи; набрался порог — промахи и «устарел»
+  /// вида сняты (мгновенный сброс — только браузерные источники сервера).
+  seenCountDesktop Int                 @default(0)
+  seenSinceDesktop DateTime?
+  seenCountMobile  Int                 @default(0)
+  seenSinceMobile  DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  misses           SiteUiElementMiss[]
+
+  @@unique([siteId, host, path, viewport, elementKey])
+  /// Цель составного ключа журнала промахов (elementRowId, accountId).
+  @@unique([id, accountId])
+  @@index([siteId, host, path])
+  @@index([hostId])
+  @@index([accountId])
+  @@map("site_ui_elements")
+}
+
+/// Э-С Ш4: журнал принятых промахов и голосов «найден» (защита от
+/// накрутки): один голос каждого рода на элемент и вид от одного посетителя
+/// и от одного хеша IP. Хеш IP — с солью на окно устаревания (неделя), а не
+/// суточной: «разные IP за 7 дней» не обходится сменой суток. Срок — окно
+/// устаревания (крон site-ui-map-maintenance).
+model SiteUiElementMiss {
+  id           String        @id
+  accountId    String
+  siteId       String
+  elementRowId String
+  element      SiteUiElement @relation(fields: [elementRowId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// desktop | mobile
+  viewport     String
+  /// miss — «не найден» по квитанции показа; seen — снимок загрузчика нашёл.
+  kind         String        @default("miss")
+  ipHash       String
+  visitorId    String
+  createdAt    DateTime      @default(now())
+
+  @@unique([elementRowId, viewport, kind, ipHash])
+  @@unique([elementRowId, viewport, kind, visitorId])
+  @@index([createdAt])
+  @@index([accountId])
+  @@map("site_ui_element_misses")
 }
