@@ -88,6 +88,7 @@ import {
       denySelectors: [],
       allowSelectors: [],
       maxSteps: 6,
+      memos: false,
     }),
     api: async () => null,
     toParent: () => undefined,
@@ -354,6 +355,13 @@ async function wizard() {
         notes: [],
         needsConfirm: false,
         stepsHash: 'h',
+        marks: ['nav'],
+        pnr: null,
+        pnrConfirm: false,
+        memo: null,
+        repeat: false,
+        goalStatus: null,
+        chainStatus: null,
       }),
       command: async (text) => {
         plansRun.push(text);
@@ -369,6 +377,7 @@ async function wizard() {
     denySelectors: ['#x'],
     allowSelectors: [],
     maxSteps: 6,
+    memos: false,
   });
   assert.equal(ui.step, 1);
   assert.deepEqual(ui.env, {
@@ -391,6 +400,7 @@ async function wizard() {
     denySelectors: ['#x'],
     allowSelectors: [],
     maxSteps: 6,
+    memos: false,
   });
   const mk = sent.find((m) => m.type === 'vt-markup') as Extract<
     FrameMessage,
@@ -511,6 +521,7 @@ await wizard();
     'engage.js',
     'highlight.js',
     'act.js',
+    'undo.js',
     'check.js',
     'vt.js',
   ])

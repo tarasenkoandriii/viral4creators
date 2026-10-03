@@ -279,6 +279,9 @@ export class WidgetPublicConfigService {
             denySelectors: a.rules.denySelectors,
             allowSelectors: a.rules.allowSelectors,
             maxSteps: a.rules.maxSteps,
+            // (е) Только признак «мемо есть» — ни имён, ни фраз.
+            memos:
+              a.mode === 'on' && (await this.uiPlans.hasMemos(site.siteId)),
           };
         }
       } catch (err) {

@@ -475,6 +475,7 @@ export class ChatController {
       case 'ui-step':
       case 'ui-stopped':
       case 'ui-need':
+      case 'ui-undone':
         // Э6-бис: снимок/итоги шагов — только своему плану (rid, planId).
         return this.plans.onParent(m);
       case 'vt-result':
@@ -879,7 +880,8 @@ export class ChatController {
     source: 'voice' | 'typed',
     ticket: string | null
   ): Promise<boolean> {
-    if (!looksLikeCommand(text)) return false;
+    // (д)+(е): «отмени последнее», «що ти вмієш», фразы мемо — тоже в план.
+    if (!looksLikeCommand(text) && !this.plans.wants(text)) return false;
     if (!this.plans.available()) {
       // §5-бис.10 п.6: режим выключен — сказать и ответить текстом, ничего не нажимая.
       if (!this.vcOffShown && this.state.cfg.voice) {

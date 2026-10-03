@@ -1,0 +1,120 @@
+/* Чат сотрудника «Админки» (Э7): системный шрифт, без внешних ресурсов
+   (CSP iframe: style-src/img-src/font-src 'self'). Контраст ≥ 4.5:1. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #fff;
+}
+#app {
+  height: 100%;
+}
+.wa {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font:
+    14px/1.45 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  color: #1a1a1a;
+}
+.wa-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #1f2937;
+  color: #fff;
+}
+.wa-t {
+  font-weight: 600;
+}
+.wa-x {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+}
+.wa-b {
+  padding: 6px 12px;
+  background: #fff7d6;
+  color: #5b4500;
+  font-size: 12px;
+}
+.wa-n {
+  padding: 6px 12px;
+  color: #545a63;
+  font-size: 13px;
+}
+.wa-l {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+.wa-m {
+  max-width: 88%;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.wa-m p {
+  margin: 0 0 6px;
+}
+.wa-m p:last-of-type {
+  margin-bottom: 0;
+}
+.wa-me {
+  margin-left: auto;
+  background: #e8eefc;
+}
+.wa-ai {
+  background: #f0f2f5;
+}
+.wa-fb {
+  margin-top: 4px;
+}
+.wa-fb button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.wa-fb button.on {
+  opacity: 1;
+}
+.wa-fix textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+}
+.wa-f {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid #d5d9de;
+}
+.wa-i {
+  flex: 1;
+  resize: none;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #d5d9de;
+  border-radius: 8px;
+}
+.wa-s {
+  border: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #1f2937;
+  color: #fff;
+  cursor: pointer;
+}
+.wa-s:disabled {
+  opacity: 0.5;
+}

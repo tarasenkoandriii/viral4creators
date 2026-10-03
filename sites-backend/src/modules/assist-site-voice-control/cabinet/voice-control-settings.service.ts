@@ -311,6 +311,10 @@ export class VoiceControlSettingsService {
       available: platform && assistPlanAllows(plan, 'voice') && voice.input,
       reason: access.reason,
       risksVersion: VOICE_CONTROL_RISKS_VERSION,
+      // (д) Р-67: включено по прежней редакции рисков — баннер, без `test`.
+      risksBanner:
+        stateOf(row.voiceControlSiteState) !== 'off' &&
+        row.voiceControlRisksVersion !== VOICE_CONTROL_RISKS_VERSION,
       stateBy: row.voiceControlSiteStateBy,
       stateAt: row.voiceControlSiteStateAt?.toISOString() ?? null,
       stateReason: row.voiceControlSiteStateReason,
@@ -369,6 +373,11 @@ export class VoiceControlSettingsService {
     const data: Prisma.AssistSiteUpdateInput = {
       voiceControlSiteRules: rules as unknown as Prisma.InputJsonValue,
     };
+    // (д) Р-67, В-69: владелец прочитал ТЕКУЩУЮ редакцию рисков (при
+    // включении — обязательно, у включённых — «прочитано» по баннеру).
+    // Новую редакцию уже включённым не требуем: режим не понижается.
+    if (body?.risksVersion === VOICE_CONTROL_RISKS_VERSION)
+      data.voiceControlRisksVersion = VOICE_CONTROL_RISKS_VERSION;
     if (changed) {
       if (prev === 'off' && state !== 'off')
         await this.assertCanEnable(m, row, body?.risksVersion);
@@ -415,7 +424,7 @@ export class VoiceControlSettingsService {
     } else await db.assistSite.update({ where: { id: row.id }, data });
     // Журнал кабинета — кто и какую версию рисков принял (без ПД, §6.6).
     this.logger.log(
-      `voice-control site=${siteId} state=${state} member=${m.memberId} risks=${changed && prev === 'off' ? VOICE_CONTROL_RISKS_VERSION : '-'}`,
+      `voice-control site=${siteId} state=${state} member=${m.memberId} risks=${body?.risksVersion === VOICE_CONTROL_RISKS_VERSION ? VOICE_CONTROL_RISKS_VERSION : '-'}`,
     );
     return this.get(m, siteId);
   }
@@ -548,7 +557,8 @@ export class VoiceControlSettingsService {
     const db = this.db(m);
     const { row } = await loadAssistSite(db, m.accountId, siteId);
     const list = await db.assistSiteVoiceTest.findMany({
-      where: { siteId },
+      // Сухие прогоны мемо (`memo`) — в карточке мемо, не в отчётах мастера.
+      where: { siteId, kind: { in: ['wizard', 'autotest'] } },
       orderBy: { createdAt: 'desc' },
       take: 20,
       select: TEST_SELECT,

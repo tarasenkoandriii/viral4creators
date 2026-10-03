@@ -8,6 +8,11 @@
  *   POST /widget/v1/ui-plan/:id/step      итог шага (dispatched|done|failed|…)
  *   POST /widget/v1/ui-plan/:id/stop      стоп (кнопка, Esc, клик человека, голос)
  *   POST /widget/v1/ui-plan/:id/resume    новый снимок → цели шагов после перехода
+ *   (д) POST /widget/v1/ui-plan/:id/undo         «Вернуть / Оставить», «отмени
+ *                                         последнее» → что вернуть (поля — у
+ *                                         загрузчика, серверное — «уберите сами»)
+ *   (д) POST /widget/v1/ui-plan/:id/undo-report  итог возврата полей → статус цепочки
+ *   (е) GET  /widget/v1/ui-plan/skills    «Я умею»: до 5 имён мемо (В-74)
  * Зовёт iframe со своего origin (CORS — как у остальных `/widget/v1/*`);
  * допуск — visitor-token и гвард origin. Страница заказчика сюда не
  * дотягивается: токен посетителя живёт в хранилище iframe (другой origin),
@@ -26,6 +31,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   Req,
   Res,
 } from '@nestjs/common';
@@ -41,6 +47,10 @@ import type {
   UiPlanStepReport,
   UiPlanStopRequest,
   UiPlanView,
+  UiSkillsView,
+  UiUndoReport,
+  UiUndoRequest,
+  UiUndoView,
 } from '../assist-site-voice-control/api-types';
 import {
   SiteUiPlanService,
@@ -190,6 +200,30 @@ export class WidgetUiPlanController {
   ): Promise<UiPlanView> {
     const ctx = await this.ctx(token, req, res);
     const now = this.now();
+    await this.planLimits(ctx, now);
+    return this.run(() =>
+      this.plans.create(ctx, body ?? ({} as UiPlanRequest), (limit) =>
+        this.siteDayHit(ctx, limit, now),
+      ),
+    );
+  }
+
+  /** Потолок планов сайта в сутки (тариф/оверрайд) — один счётчик. */
+  private siteDayHit(ctx: UiPlanCtx, limit: number, now: Date) {
+    return this.rate.hit({
+      scope: 'widget-uiplan-site-day',
+      key: ctx.site.siteId,
+      limit,
+      windowMs: DAY,
+      now,
+    });
+  }
+
+  /**
+   * Потолки планов посетителя (минута/сутки) и IP+сайт (втрое). Их же
+   * тратит «отмени последнее» (Р-65: в потолке планов — да, единиц — нет).
+   */
+  private async planLimits(ctx: UiPlanCtx, now: Date): Promise<void> {
     const key = `${ctx.site.siteId}:${ctx.visitor.visitorId}`;
     const ipKey = `${ctx.site.siteId}:${ctx.visitor.ipHash}`;
     await this.rate.enforce(
@@ -224,17 +258,19 @@ export class WidgetUiPlanController {
       if (!(await this.rate.hit({ ...h, windowMs: DAY, now })))
         throw widgetError('VOICE_LIMIT');
     }
-    return this.run(() =>
-      this.plans.create(ctx, body ?? ({} as UiPlanRequest), (limit) =>
-        this.rate.hit({
-          scope: 'widget-uiplan-site-day',
-          key: ctx.site.siteId,
-          limit,
-          windowMs: DAY,
-          now,
-        }),
-      ),
-    );
+  }
+
+  /** (е) «Я умею» — до 5 имён мемо (без номеров и фраз). */
+  @Get('skills')
+  async skills(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Query('lang') lang: string | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UiSkillsView> {
+    const ctx = await this.ctx(token, req, res);
+    await this.reportLimit(ctx);
+    return this.plans.skills(ctx, lang);
   }
 
   @Get('active')
@@ -316,5 +352,50 @@ export class WidgetUiPlanController {
     const ctx = await this.ctx(token, req, res);
     await this.reportLimit(ctx);
     return this.run(() => this.plans.resume(ctx, id, body));
+  }
+
+  /** (д) «Вернуть / Оставить», «отмени последнее» — в потолке планов. */
+  @Post(':id/undo')
+  @HttpCode(200)
+  async undo(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Param('id') id: string,
+    @Body() body: UiUndoRequest,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UiUndoView> {
+    const ctx = await this.ctx(token, req, res);
+    const now = this.now();
+    const keep = body?.decision === 'keep';
+    if (keep) await this.reportLimit(ctx);
+    else await this.planLimits(ctx, now);
+    try {
+      return await this.plans.undo(
+        ctx,
+        id,
+        body ?? ({} as UiUndoRequest),
+        (limit) => this.siteDayHit(ctx, limit, now),
+      );
+    } catch (e) {
+      return uiPlanFailure(e);
+    }
+  }
+
+  @Post(':id/undo-report')
+  @HttpCode(200)
+  async undoReport(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Param('id') id: string,
+    @Body() body: UiUndoReport,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<UiUndoView> {
+    const ctx = await this.ctx(token, req, res);
+    await this.reportLimit(ctx);
+    try {
+      return await this.plans.undoReport(ctx, id, body ?? ({} as UiUndoReport));
+    } catch (e) {
+      return uiPlanFailure(e);
+    }
   }
 }

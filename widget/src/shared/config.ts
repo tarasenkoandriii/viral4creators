@@ -156,6 +156,8 @@ export interface VoiceControlPublic {
   denySelectors: string[];
   allowSelectors: string[];
   maxSteps: number;
+  /** (е) У сайта есть мемо: в план идут и тексты без глагола-команды. */
+  memos: boolean;
 }
 
 /** Э5: `voice` публичного конфига (assist-site-voice/api-types.ts WidgetVoiceConfig). */
@@ -478,6 +480,7 @@ export function parseVoiceControl(v: unknown): VoiceControlPublic | null {
     denySelectors: selectors(v.denySelectors),
     allowSelectors: selectors(v.allowSelectors),
     maxSteps: intIn(v.maxSteps, 1, 15, 6),
+    memos: v.memos === true,
   };
 }
 

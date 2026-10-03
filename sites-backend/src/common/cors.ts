@@ -92,12 +92,21 @@ const WIDGET_PAGE_PATHS = [
   /^\/widget\/v1\/goal-picker\/(session|pick)(\?|$)/,
 ];
 const WIDGET_PATHS = /^\/(widget|w)\/v1\//;
+/**
+ * Э7: чат сотрудника «Админки» — iframe на ОТДЕЛЬНОМ origin `wa.` (§4.12,
+ * У-13), API через тот же rewrite Vercel. Браузер шлёт `Origin` и на
+ * same-origin POST — без своего правила общий список CORS отверг бы его
+ * (403 `ORIGIN_DENIED`). Отражается ТОЛЬКО origin «Админки», без cookie
+ * (сессия — заголовок); чужой origin — без CORS-заголовков.
+ */
+const ADMIN_PATHS = /^\/(assist-admin|wa)\/v1\//;
 
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'];
 
 export function corsOptionsDelegate(cfg: {
   corsOrigins: readonly string[];
   widgetOrigin: string;
+  adminWidgetOrigin?: string;
 }) {
   const general = corsOriginCheck(cfg.corsOrigins);
   const delegate: CorsOptionsDelegate<Pick<Request, 'url' | 'headers'>> = (
@@ -119,6 +128,17 @@ export function corsOptionsDelegate(cfg: {
         methods: ['POST', 'OPTIONS'],
         credentials: false,
         maxAge: 600,
+      });
+    }
+    if (ADMIN_PATHS.test(url)) {
+      const origin = req.headers.origin;
+      return callback(null, {
+        origin:
+          cfg.adminWidgetOrigin && origin === cfg.adminWidgetOrigin
+            ? origin
+            : false,
+        methods: METHODS,
+        credentials: false,
       });
     }
     if (WIDGET_PATHS.test(url)) {

@@ -11,6 +11,8 @@ import { defineConfig } from 'vite';
 // Библиотечный ES-формат Vite не сжимает пробелы и имена сам; чанк
 // исполняется на чужой странице и считается в gzip-бюджете — сжимаем
 // esbuild'ом на выходе (экспорт `start` при этом сохраняется).
+// (д) es2020: чанку нужен `import.meta.url` — путь своего выпуска для
+// ленивого `undo.js` (рядом, тот же выпуск канарейки).
 export default defineConfig({
   publicDir: false,
   plugins: [
@@ -24,7 +26,7 @@ export default defineConfig({
             await transform(f.code, {
               minify: true,
               format: 'esm',
-              target: 'es2019',
+              target: 'es2020',
             })
           ).code;
         }
@@ -34,7 +36,7 @@ export default defineConfig({
   build: {
     outDir: 'dist/v1',
     emptyOutDir: false,
-    target: 'es2019',
+    target: 'es2020',
     sourcemap: false,
     lib: {
       entry: 'src/act/index.ts',

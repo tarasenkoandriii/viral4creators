@@ -17,6 +17,7 @@ import type { SiteAction, SiteAnswerSource } from './api';
 import type { LeadField } from '../shared/config';
 import type { VtDict } from './i18n-vt';
 import type { VoiceTestController } from './voice-test';
+import { MARK_SYMBOL } from './ui-plan';
 
 function Svg({ d }: { d: string }) {
   return (
@@ -573,14 +574,56 @@ function PlanCards({ s, c }: { s: ChatState; c: ChatController }) {
         {t.vcThinking}
       </div>
     );
+  // (д) «Вернуть как было? [Вернуть] [Оставить]» после сбоя/стопа (В-66).
+  if (p.phase === 'offer' && p.offer)
+    return (
+      <div
+        class="note pconfirm poffer"
+        role="alertdialog"
+        aria-label={t.vcOffer}
+      >
+        <span>{t.vcOffer}</span>
+        <ul>
+          {p.offer.fields.map((x, i) => (
+            <li key={`f${i}`}>↺ «{x}»</li>
+          ))}
+          {p.offer.manual.map((x, i) => (
+            <li key={`m${i}`}>⇄ «{x}»</li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          class="lnk pyes"
+          onClick={() => void c.plans.offerAnswer(true)}
+        >
+          {t.vcOfferUndo}
+        </button>
+        <button
+          type="button"
+          class="lnk pno"
+          onClick={() => void c.plans.offerAnswer(false)}
+        >
+          {t.vcOfferKeep}
+        </button>
+      </div>
+    );
   if (p.phase !== 'confirm') return null;
+  // (д) Второе «Да» перед точкой невозврата; (е) мемо и «повторить?».
+  const title = p.pnrCard ? t.vcPnrCard : p.repeat ? t.vcRepeat : t.vcConfirm;
   return (
-    <div class="note pconfirm" role="alertdialog" aria-label={t.vcConfirm}>
-      <span>{t.vcConfirm}</span>
+    <div class="note pconfirm" role="alertdialog" aria-label={title}>
+      {p.memo && p.memo.name ? (
+        <strong>
+          «{p.memo.name}»{p.memo.goal ? ` — ${p.memo.goal}` : ''}
+        </strong>
+      ) : null}
+      <span>{title}</span>
       <ul>
         {p.confirmSteps.map((x, i) => (
           <li key={i}>
-            «{x.text}»{x.value ? ` — ${x.value}` : ''}
+            {x.mark && MARK_SYMBOL[x.mark] ? `${MARK_SYMBOL[x.mark]} ` : ''}«
+            {x.text}»{x.value ? ` — ${x.value}` : ''}
+            {x.mark === 'irrev' ? ` ${t.vcPnrTail}` : ''}
           </li>
         ))}
       </ul>
@@ -636,7 +679,60 @@ function VoiceTestPanel({
     </button>
   );
   let body = null;
+  const m = u.memo;
   if (u.error === 'expired') body = <p>{t.expired}</p>;
+  else if (m)
+    // (е) Сухой прогон мемо: страницы шагов по одной, итог — сервер.
+    body = (
+      <>
+        <p>
+          <strong>{fmtVt(t.memoTitle, { n: m.number, name: m.name })}</strong>
+        </p>
+        <p>
+          {fmtVt(t.memoIntro, {
+            pages: m.pages.join(', '),
+            goal: m.goalPage,
+          })}
+        </p>
+        <ul>
+          {m.checked.map((c, i) => (
+            <li key={i} class={c.bad ? 'bad' : 'ok'}>
+              {c.bad
+                ? fmtVt(t.memoPageBad, { path: c.path, n: c.bad })
+                : fmtVt(t.memoPageOk, { path: c.path })}
+              {c.goal
+                ? ` · ${c.goal === 'ok' ? t.memoGoalOk : t.memoGoalMissing}`
+                : ''}
+            </li>
+          ))}
+        </ul>
+        {m.result ? (
+          <p class={m.result === 'fail' ? 'bad' : 'ok'}>
+            {t.memoResult[m.result]}
+          </p>
+        ) : (
+          <>
+            <button
+              type="button"
+              class="lnk"
+              disabled={u.busy}
+              onClick={() => void vt.memoPage()}
+            >
+              {t.memoCheck}
+            </button>
+            <button
+              type="button"
+              class="lnk"
+              disabled={u.busy || !m.tokens.length}
+              onClick={() => void vt.memoFinish()}
+            >
+              {t.memoFinish}
+            </button>
+          </>
+        )}
+        {u.error === 'failed' ? <p>{t.failed}</p> : null}
+      </>
+    );
   else if (u.step === 0) body = <p>{t.starting}</p>;
   else if (u.step === 1)
     body = (

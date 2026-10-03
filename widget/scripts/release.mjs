@@ -27,6 +27,8 @@ export const RELEASE_FILES = [
   'engage.js',
   'highlight.js',
   'act.js',
+  // Э6-бис (д): «Вернуть» для полей — рядом с act.js того же выпуска.
+  'undo.js',
   'check.js',
   'vt.js',
 ];

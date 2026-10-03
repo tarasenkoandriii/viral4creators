@@ -9,7 +9,24 @@ import assert from 'node:assert/strict';
 import * as wordsNs from '../../sites-backend/src/modules/assist-ui-core/action-words';
 import * as directNs from '../../sites-backend/src/modules/assist-ui-core/direct-plan';
 import * as snapNs from '../../sites-backend/src/modules/assist-ui-core/snapshot';
+import * as decisionsNs from '../../sites-backend/src/modules/assist-ui-core/decisions';
+import { DICTS } from '../src/chat/i18n';
 import {
+  MARK_SYMBOL,
+  OFFER_TIMEOUT_MS,
+  UiPlanController,
+  parsePlanView,
+  uiPlanOff,
+  type UiPlanUi,
+} from '../src/chat/ui-plan';
+import {
+  parseFrameMessage,
+  parseParentMessage,
+  envelope,
+} from '../src/shared/protocol';
+import {
+  skillsPhrase,
+  undoPhrase,
   looksLikeCommand,
   maskLabel,
   neverTarget,
@@ -290,3 +307,352 @@ for (const [p, want] of [
 console.log(
   'ui-plan: сверка с сервером (стоп-лист, оплата, команда, да/нет/стоп, маски), разбор шагов и команд — ok'
 );
+
+// ══ Э6-бис (д)+(е): цепочки, возврат, мемо — сторона iframe ═════════════
+
+// Решения владельца — одно место на сервере, повтор здесь сверяется (В-66).
+{
+  const d = cjs(decisionsNs);
+  assert.equal(OFFER_TIMEOUT_MS, d.CHAIN_DECISIONS.offerTimeoutMs);
+  assert.equal(d.CHAIN_DECISIONS.maxUndoSteps, 3);
+  assert.deepEqual(MARK_SYMBOL, {
+    none: '',
+    nav: '',
+    local: '↺',
+    comp: '⇄',
+    irrev: '⚠',
+    manual: '✋',
+  });
+}
+
+// «Отмени последнее» и «що ти вмієш» — закрытые списки (одиночное «скасуй» — «нет»).
+{
+  for (const t of [
+    'Отмени последнее',
+    'поверни як було!',
+    'будь ласка, скасуй останнє',
+    'Undo',
+    'верни как было',
+  ])
+    assert.equal(undoPhrase(t), true, t);
+  for (const t of ['скасуй', 'отмени', 'ні', 'верни деньги', 'відкрий кошик'])
+    assert.equal(undoPhrase(t), false, t);
+  assert.equal(skillsPhrase('Що ти вмієш?'), true);
+  assert.equal(skillsPhrase('what can you do'), true);
+  assert.equal(skillsPhrase('що ти вмієш робити з оплатою'), false);
+}
+
+// §5-бис.15 п.13 п.9: в текстах виджета нет «откатил/отменил/вернул всё как было».
+{
+  const bad =
+    /(откат|відкот|rolled back|roll(ed)? back|отменил|скасував|всё вернул|все повернув|reverted)/iu;
+  for (const lang of ['uk', 'ru', 'en'] as const) {
+    const d = DICTS[lang] as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(d)) {
+      if (!k.startsWith('vc')) continue;
+      const list =
+        typeof v === 'string'
+          ? [v]
+          : v && typeof v === 'object'
+            ? Object.values(v as Record<string, string>)
+            : [];
+      for (const x of list)
+        assert.ok(
+          !bad.test(String(x)),
+          `${lang}.${k}: «${x}» — запрещённое слово`
+        );
+    }
+    // Новые ключи есть во всех языках.
+    for (const k of [
+      'vcPnrTail',
+      'vcPnrCard',
+      'vcDoneList',
+      'vcOffer',
+      'vcOfferUndo',
+      'vcOfferKeep',
+      'vcFieldBack',
+      'vcFieldsGone',
+      'vcUnknownPnr',
+      'vcMemoDone',
+      'vcRepeat',
+      'vcSkills',
+    ])
+      assert.ok(
+        typeof d[k] === 'string' && (d[k] as string).length > 0,
+        `${lang}.${k}`
+      );
+  }
+}
+
+// Протокол: `ui-undo` — к чанку act.js сырым; итог `ui-undone` — только номера и итоги.
+{
+  const f = parseFrameMessage(
+    envelope({ type: 'ui-undo', planId: 'p1', idx: [2, 0] })
+  );
+  assert.equal(f && f.type, 'ui-raw');
+  const ok = parseParentMessage(
+    envelope({
+      type: 'ui-undone',
+      planId: 'p1',
+      results: [{ i: 2, result: 'done', value: 'Київ' }],
+    })
+  );
+  assert.deepEqual(ok, {
+    type: 'ui-undone',
+    planId: 'p1',
+    results: [{ i: 2, result: 'done' }],
+  });
+  assert.equal(
+    parseParentMessage(
+      envelope({
+        type: 'ui-undone',
+        planId: 'p1',
+        results: [{ i: 1, result: 'ok' }],
+      })
+    ),
+    null
+  );
+}
+
+// Ответ плана: пометки, ТН, второе «Да», мемо, итоги — строгий разбор.
+const STEP = (
+  kind: string,
+  text: string,
+  over: Record<string, unknown> = {}
+) => ({
+  i: 0,
+  kind,
+  target: {
+    ref: 'e1',
+    assistId: null,
+    role: 'button',
+    text,
+    selector: null,
+    href: null,
+  },
+  value: null,
+  expect: null,
+  risk: 'confirm',
+  reason: null,
+  nav: false,
+  say: null,
+  state: 'pending',
+  ...over,
+});
+{
+  const v = parsePlanView({
+    kind: 'plan',
+    planId: 'p1',
+    steps: [
+      STEP('select', 'Розмір', { value: 'M' }),
+      STEP('click', 'В кошик'),
+      STEP('click', 'Надіслати'),
+    ],
+    marks: ['local', 'comp', 'evil'],
+    pnr: 2,
+    pnrConfirm: true,
+    memo: { name: 'Кошик', goal: 'x'.repeat(500) },
+    repeat: true,
+    goalStatus: 'reached',
+    chainStatus: '<b>',
+  })!;
+  assert.deepEqual(v.marks, ['local', 'comp', 'irrev']);
+  assert.equal(v.pnr, 2);
+  assert.equal(v.pnrConfirm, true);
+  assert.equal(v.memo!.goal.length, 160);
+  assert.equal(v.goalStatus, 'reached');
+  assert.equal(v.chainStatus, null);
+}
+
+// Контроллер: строка цепочки с пометками; второе «Да» перед ТН (стоп ДО
+// клика); сбой — перечень и «Вернуть / Оставить»; возврат полей —
+// загрузчику номерами, на сервер — только итоги (без значений).
+void (async () => {
+  let ui: UiPlanUi = uiPlanOff();
+  const feed: string[] = [];
+  const toParent: Array<Record<string, unknown>> = [];
+  const calls: Array<{ path: string; body: unknown }> = [];
+  const store = new Map<string, string>([['vcconsent', '1']]);
+  let reply: (path: string, body: unknown) => unknown = () => null;
+  const pc = new UiPlanController({
+    ui: () => ui,
+    setUi: (p) => (ui = { ...ui, ...p }),
+    t: () => DICTS.uk,
+    lang: () => 'uk',
+    cfg: () => ({
+      mode: 'on',
+      denySelectors: [],
+      allowSelectors: [],
+      maxSteps: 6,
+      memos: true,
+    }),
+    api: async (_m, path, body) => {
+      calls.push({ path, body });
+      return reply(path, body);
+    },
+    toParent: (m) => toParent.push(m as unknown as Record<string, unknown>),
+    conversationId: () => null,
+    setConversation: () => undefined,
+    feed: (_r, t) => feed.push(t),
+    storage: (_k, n, v) => {
+      if (v === undefined) return store.get(n) ?? null;
+      if (v === null) store.delete(n);
+      else store.set(n, v);
+      return null;
+    },
+    pageUrl: () => 'https://shop.example.com/p/1',
+    listen: () => undefined,
+    random: () => 'r'.repeat(16),
+  });
+  // Снимок отдаёт «загрузчик».
+  const snapReply = () =>
+    setTimeout(() => {
+      const m = toParent.find((x) => x.type === 'ui-snap');
+      if (m)
+        pc.onParent({
+          type: 'ui-snapshot',
+          rid: m.rid as string,
+          snapshot: {
+            url: 'https://shop.example.com/p/1',
+            title: '',
+            elements: [],
+          },
+        });
+    }, 0);
+  const view = {
+    kind: 'plan',
+    planId: 'p1',
+    status: 'confirmed',
+    steps: [
+      STEP('select', 'Розмір', { value: 'M', risk: 'auto' }),
+      STEP('click', 'В кошик', { i: 1, risk: 'auto' }),
+      STEP('click', 'Надіслати', { i: 2 }),
+    ],
+    marks: ['local', 'comp', 'irrev'],
+    pnr: 2,
+    currentStep: 0,
+    stepsHash: 'h1',
+  };
+  reply = (path) => (path === '/widget/v1/ui-plan' ? view : null);
+  snapReply();
+  // «запис…» без глагола: у сайта есть мемо — тоже в план.
+  assert.equal(pc.wants('запис на консультацію'), true);
+  assert.equal(
+    await pc.command('вибери M, додай в кошик і надішли', 'typed', null),
+    true
+  );
+  const line = feed.at(-1)!;
+  assert.match(
+    line,
+    /1 ↺ виберу «M» у «Розмір» · 2 ⇄ натисну «В кошик» · 3 ⚠ натисну «Надіслати» \(після цього скасувати не можна\)/
+  );
+  assert.equal(
+    store.get('last'),
+    'p1',
+    '«отмени последнее» — последняя цепочка вкладки'
+  );
+  // Шаг 0 и 1 сделаны; на шаге 2 сервер просит второе «Да».
+  const stepReply = (
+    states: string[],
+    status: string,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    ...view,
+    status,
+    steps: view.steps.map((x, i) => ({ ...x, state: states[i] })),
+    ...extra,
+  });
+  reply = () => stepReply(['done', 'pending', 'pending'], 'running');
+  pc.onParent({
+    type: 'ui-step',
+    planId: 'p1',
+    index: 0,
+    result: 'done',
+    reason: null,
+    url: null,
+    ms: 1,
+  });
+  await new Promise((r) => setTimeout(r, 5));
+  reply = () =>
+    stepReply(['done', 'done', 'pending'], 'proposed', {
+      pnrConfirm: true,
+      currentStep: 2,
+    });
+  toParent.length = 0;
+  pc.onParent({
+    type: 'ui-step',
+    planId: 'p1',
+    index: 2,
+    result: 'dispatched',
+    reason: null,
+    url: null,
+    ms: 1,
+  });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(
+    toParent.map((m) => m.type),
+    ['ui-stop'],
+    'второе «Да»: исполнитель стоп ДО клика, ack нет'
+  );
+  assert.equal(ui.phase, 'confirm');
+  assert.equal(ui.pnrCard, true);
+  assert.deepEqual(
+    ui.confirmSteps.map((x) => x.mark),
+    ['irrev']
+  );
+  // Сбой: перечень сделанного и «Вернуть / Оставить».
+  ui = { ...ui, phase: 'running' };
+  reply = () =>
+    stepReply(['done', 'done', 'failed'], 'failed', { chainStatus: 'kept' });
+  pc.onParent({
+    type: 'ui-step',
+    planId: 'p1',
+    index: 2,
+    result: 'failed',
+    reason: 'no_target',
+    url: null,
+    ms: 1,
+  });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.match(
+    feed.join('\n'),
+    /Уже зроблено: ↺ виберу «M» у «Розмір», ⇄ натисну «В кошик»/
+  );
+  assert.equal(ui.phase, 'offer');
+  assert.deepEqual(ui.offer, { fields: ['Розмір'], manual: ['В кошик'] });
+  // «Вернуть» — сервер говорит, что вернуть; загрузчику — номера шагов.
+  reply = (path) =>
+    path.endsWith('/undo')
+      ? {
+          fields: [{ i: 0, text: 'Розмір' }],
+          manual: [{ i: 1, text: 'В кошик' }],
+          refused: null,
+        }
+      : { chainStatus: 'partially_compensated' };
+  toParent.length = 0;
+  await pc.offerAnswer(true);
+  assert.deepEqual(toParent, [{ type: 'ui-undo', planId: 'p1', idx: [0] }]);
+  assert.match(feed.at(-1)!, /Приберіть самі: «В кошик»/);
+  pc.onParent({
+    type: 'ui-undone',
+    planId: 'p1',
+    results: [{ i: 0, result: 'done' }],
+  });
+  await new Promise((r) => setTimeout(r, 5));
+  const rep = calls.find((c) => c.path.endsWith('/undo-report'));
+  assert.deepEqual(rep?.body, { results: [{ i: 0, result: 'done' }] });
+  assert.match(feed.at(-1)!, /Повернув попереднє значення поля «Розмір»/);
+  // «Відміни останнє» — прямой путь по последней цепочке вкладки.
+  calls.length = 0;
+  reply = () => ({ fields: [], manual: [], refused: 'after_pnr' });
+  assert.equal(await pc.command('відміни останнє', 'typed', null), true);
+  assert.equal(calls[0].path, '/widget/v1/ui-plan/p1/undo');
+  assert.deepEqual(calls[0].body, { by: 'command' });
+  assert.equal(feed.at(-1), DICTS.uk.vcAfterPnr);
+  console.log(
+    'ui-plan (д)+(е): решения владельца, «отмени последнее», словарь без «откатил», протокол возврата, пометки ↺/⇄/⚠, второе «Да», «Вернуть/Оставить» — ok'
+  );
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

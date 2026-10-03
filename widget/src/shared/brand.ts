@@ -61,3 +61,15 @@ export const WIDGET_ACT_PATH = '/v1/act.js';
 export const WIDGET_VOICE_TEST_PARAM = 'v4c_voicetest';
 export const WIDGET_VOICE_TEST_HEADER = 'X-Assist-Voice-Test';
 export const WIDGET_CHECK_PATH = '/v1/check.js';
+
+// Э7: «Админка» — помощник сотрудника (зеркало блока «Э7»
+// sites-backend/src/brand.ts). Отдельный origin iframe (`wa.`, У-13): тег
+// загрузчика в админке заказчика — с этого origin и `data-mode="admin"`;
+// загрузчик только отдаёт управление ленивому чанку `admin.js`.
+export const WIDGET_ADMIN_ORIGIN_DEFAULT = 'https://wa.v4c.example.invalid';
+export const WIDGET_ADMIN_PATH = '/v1/admin.js';
+export const WIDGET_ADMIN_FRAME_PATH = '/wa/v1/frame';
+export const WIDGET_ADMIN_MODE = 'admin';
+export const ADMIN_SESSION_HEADER = 'X-Assist-Admin-Session';
+export const ADMIN_MESSAGE_NS = 'v4c-admin';
+export const ADMIN_CHANNEL_PREFIX = 'v4c-admin';

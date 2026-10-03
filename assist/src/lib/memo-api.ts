@@ -1,0 +1,478 @@
+/**
+ * Мемо «Сайта» в TMA (Э6-бис (е), ТЗ §5-бис.17 п.12, п.14; решения
+ * владельца Р-68…Р-72) — повтор типов
+ * `sites-backend/src/modules/assist-site-voice-control/api-types.ts`
+ * (`Memo*`) и `assist-ui-core/memo.ts` (сверку держит
+ * scripts/voice-control-api.test.ts) и клиент `/assist/sites/:id/memos*`.
+ * Разбор строгий: мусор — умолчания. Номер `М-N` виден только в кабинете
+ * (посетителю — никогда, В-70).
+ */
+import type { ApiClient } from '../kit';
+import { arr, obj, text } from './widget-api';
+
+export const MEMO_STATUSES = [
+  'draft',
+  'checking',
+  'published',
+  'held',
+  'needs_review',
+  'disabled',
+  'removed',
+] as const;
+export type MemoStatus = (typeof MEMO_STATUSES)[number];
+
+export const MEMO_VERSION_STATUSES = [
+  'building',
+  'checking',
+  'published',
+  'held',
+  'discarded',
+] as const;
+export type MemoVersionStatus = (typeof MEMO_VERSION_STATUSES)[number];
+
+/** Коды ворот кода (assist-ui-core/memo.ts MemoGateCode). */
+export const MEMO_GATE_CODES = [
+  'no_name',
+  'no_steps',
+  'too_many_steps',
+  'too_many_slots',
+  'no_target',
+  'never_step',
+  'two_pnr',
+  'effect_after_pnr',
+  'value_not_slot',
+  'unknown_slot',
+  'const_forbidden',
+  'const_in_pii',
+  'no_goal',
+  'goal_slot',
+  'risk_lowering_forbidden',
+  'text',
+  'phrase_conflict',
+  'undeclared_compensation',
+] as const;
+export type MemoGateCode = (typeof MEMO_GATE_CODES)[number];
+
+export type MemoLang = 'uk' | 'ru' | 'en';
+export const MEMO_LANGS: readonly MemoLang[] = ['uk', 'ru', 'en'];
+
+export interface MemoStepView {
+  page: string;
+  action: string;
+  target: { text: string; role: string | null; assistId: string | null } | null;
+  value: { slot: string } | { const: string } | null;
+}
+
+export interface MemoDraftView {
+  names: Partial<Record<MemoLang, string>>;
+  triggers: Partial<Record<MemoLang, string[]>>;
+  suggested: Partial<Record<MemoLang, string[]>>;
+  goal: {
+    text: Partial<Record<MemoLang, string>>;
+    expect: Array<{
+      kind: string;
+      path?: string;
+      text?: string;
+      slot?: string;
+    }>;
+  };
+  slots: Array<{ name: string; kind: string; pii: boolean; options: string[] }>;
+  steps: MemoStepView[];
+  view: 'any' | 'desktop' | 'mobile';
+  /** Сырой черновик — для операции `set` (сервер разбирает строго). */
+  raw: Record<string, unknown>;
+}
+
+export interface MemoSummary {
+  number: number;
+  key: string;
+  status: MemoStatus;
+  name: string | null;
+  view: 'any' | 'desktop' | 'mobile';
+  listed: boolean;
+  origin: string;
+  publishedVersion: number | null;
+  staleViews: string[];
+  runs30: number;
+  reached30: number;
+  lastRunAt: string | null;
+  reviewCode: string | null;
+}
+
+export interface MemoVersionView {
+  number: number;
+  status: MemoVersionStatus;
+  gateOk: boolean | null;
+  gateProblems: Array<{ code: MemoGateCode; path: string }>;
+  undo: string[];
+  risk: string[];
+  check: 'pass' | 'partial' | 'fail' | null;
+  rollbackOf: number | null;
+  createdAt: string;
+  publishedAt: string | null;
+}
+
+export interface MemoDetail extends MemoSummary {
+  draft: MemoDraftView;
+  draftRevision: number;
+  gates: {
+    ok: boolean;
+    problems: Array<{ code: MemoGateCode; path: string }>;
+    undo: string[];
+    risk: string[];
+  };
+  versions: MemoVersionView[];
+}
+
+export interface MemoList {
+  items: MemoSummary[];
+  used: number;
+  limit: number;
+  candidates: number;
+}
+
+export interface MemoSuggestion {
+  planId: string;
+  page: string;
+  steps: Array<{ kind: string; text: string }>;
+  visitors: number;
+  phrases: string[];
+}
+
+export interface MemoStats {
+  windowDays: number;
+  runs: number;
+  reached: number;
+  notReached: number;
+  unknown: number;
+  direct: number;
+  lite: number;
+  pinMismatch: number;
+  self: number;
+  cancelled: number;
+  failuresByStep: Record<string, number>;
+}
+
+export type MemoOp =
+  | {
+      op: 'set';
+      field:
+        | 'names'
+        | 'triggers'
+        | 'goal'
+        | 'slots'
+        | 'steps'
+        | 'view'
+        | 'suggested';
+      value: unknown;
+    }
+  | { op: 'acceptSuggested'; lang: MemoLang; phrase: string }
+  | { op: 'removeStep'; index: number }
+  | { op: 'moveStep'; from: number; to: number }
+  | { op: 'listed'; value: boolean }
+  | { op: 'key'; value: string };
+
+const num = (v: unknown): number =>
+  typeof v === 'number' && Number.isFinite(v) ? v : 0;
+const iso = (v: unknown): string | null =>
+  typeof v === 'string' && !isNaN(Date.parse(v)) ? v : null;
+const oneOf = <T extends string>(list: readonly T[], v: unknown): T | null =>
+  (list as readonly unknown[]).includes(v) ? (v as T) : null;
+const strs = (v: unknown, max = 120): string[] =>
+  arr(v)
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => x.slice(0, max));
+const langMap = (v: unknown): Partial<Record<MemoLang, string>> => {
+  const o = obj(v);
+  const out: Partial<Record<MemoLang, string>> = {};
+  for (const l of MEMO_LANGS)
+    if (typeof o[l] === 'string') out[l] = (o[l] as string).slice(0, 160);
+  return out;
+};
+const langLists = (v: unknown): Partial<Record<MemoLang, string[]>> => {
+  const o = obj(v);
+  const out: Partial<Record<MemoLang, string[]>> = {};
+  for (const l of MEMO_LANGS)
+    if (Array.isArray(o[l])) out[l] = strs(o[l], 60).slice(0, 10);
+  return out;
+};
+const viewOf = (v: unknown): 'any' | 'desktop' | 'mobile' =>
+  v === 'desktop' || v === 'mobile' ? v : 'any';
+const problems = (v: unknown) =>
+  arr(v)
+    .map(obj)
+    .map((p) => ({ code: oneOf(MEMO_GATE_CODES, p.code), path: text(p.path) }))
+    .filter((p): p is { code: MemoGateCode; path: string } => !!p.code);
+
+export function parseMemoSummary(v: unknown): MemoSummary | null {
+  const o = obj(v);
+  const status = oneOf(MEMO_STATUSES, o.status);
+  if (typeof o.number !== 'number' || !status) return null;
+  const rr = obj(o.reviewReason);
+  return {
+    number: o.number,
+    key: text(o.key),
+    status,
+    name: typeof o.name === 'string' ? o.name.slice(0, 60) : null,
+    view: viewOf(o.view),
+    listed: o.listed !== false,
+    origin: text(o.origin),
+    publishedVersion:
+      typeof o.publishedVersion === 'number' ? o.publishedVersion : null,
+    staleViews: strs(o.staleViews, 10),
+    runs30: num(o.runs30),
+    reached30: num(o.reached30),
+    lastRunAt: iso(o.lastRunAt),
+    reviewCode: typeof rr.code === 'string' ? rr.code.slice(0, 30) : null,
+  };
+}
+
+function parseDraft(v: unknown): MemoDraftView {
+  const o = obj(v);
+  const goal = obj(o.goal);
+  return {
+    names: langMap(o.names),
+    triggers: langLists(o.triggers),
+    suggested: langLists(o.suggested),
+    goal: {
+      text: langMap(goal.text),
+      expect: arr(goal.expect)
+        .map(obj)
+        .map((g) => ({
+          kind: text(g.kind),
+          ...(typeof g.path === 'string' ? { path: g.path } : {}),
+          ...(typeof g.text === 'string' ? { text: g.text } : {}),
+          ...(typeof g.slot === 'string' ? { slot: g.slot } : {}),
+        }))
+        .slice(0, 3),
+    },
+    slots: arr(o.slots)
+      .map(obj)
+      .map((s) => ({
+        name: text(s.name),
+        kind: text(s.kind),
+        pii: s.pii === true,
+        options: arr(s.options)
+          .map(obj)
+          .map((x) => text(x.value))
+          .filter(Boolean),
+      }))
+      .slice(0, 5),
+    steps: arr(o.steps)
+      .map(obj)
+      .map((s) => {
+        const t = s.target ? obj(obj(s.target).pin) : null;
+        const val = s.value ? obj(s.value) : null;
+        return {
+          page: text(s.page),
+          action: text(s.action),
+          target: t
+            ? {
+                text: text(t.text),
+                role: typeof t.role === 'string' ? t.role : null,
+                assistId: typeof t.assistId === 'string' ? t.assistId : null,
+              }
+            : null,
+          value: val
+            ? typeof val.slot === 'string'
+              ? { slot: val.slot }
+              : typeof val.const === 'string'
+                ? { const: val.const }
+                : null
+            : null,
+        };
+      })
+      .slice(0, 20),
+    view: viewOf(o.view),
+    raw: o,
+  };
+}
+
+function parseVersion(v: unknown): MemoVersionView | null {
+  const o = obj(v);
+  const status = oneOf(MEMO_VERSION_STATUSES, o.status);
+  if (typeof o.number !== 'number' || !status) return null;
+  const g = o.gateReport ? obj(o.gateReport) : null;
+  const c = o.checkReport ? obj(o.checkReport) : null;
+  return {
+    number: o.number,
+    status,
+    gateOk: g ? g.ok === true : null,
+    gateProblems: g ? problems(g.problems) : [],
+    undo: g ? strs(obj(g.computed).undo, 10) : [],
+    risk: g ? strs(obj(g.computed).risk, 10) : [],
+    check: c ? oneOf(['pass', 'partial', 'fail'] as const, c.result) : null,
+    rollbackOf: typeof o.rollbackOf === 'number' ? o.rollbackOf : null,
+    createdAt: iso(o.createdAt) ?? '',
+    publishedAt: iso(o.publishedAt),
+  };
+}
+
+export function parseMemoDetail(v: unknown): MemoDetail | null {
+  const s = parseMemoSummary(v);
+  if (!s) return null;
+  const o = obj(v);
+  const g = obj(o.gates);
+  return {
+    ...s,
+    draft: parseDraft(o.draft),
+    draftRevision: num(o.draftRevision),
+    gates: {
+      ok: g.ok === true,
+      problems: problems(g.problems),
+      undo: strs(obj(g.computed).undo, 10),
+      risk: strs(obj(g.computed).risk, 10),
+    },
+    versions: arr(o.versions)
+      .map(parseVersion)
+      .filter((x): x is MemoVersionView => !!x),
+  };
+}
+
+export function parseMemoList(v: unknown): MemoList {
+  const o = obj(v);
+  return {
+    items: arr(o.items)
+      .map(parseMemoSummary)
+      .filter((x): x is MemoSummary => !!x),
+    used: num(o.used),
+    limit: num(o.limit),
+    candidates: num(o.candidates),
+  };
+}
+
+export interface MemoApi {
+  list(siteId: string): Promise<MemoList>;
+  create(
+    siteId: string,
+    body: { name: string; lang: MemoLang; key?: string }
+  ): Promise<MemoDetail | null>;
+  get(siteId: string, n: number): Promise<MemoDetail | null>;
+  patch(
+    siteId: string,
+    n: number,
+    expectedRevision: number,
+    ops: MemoOp[]
+  ): Promise<MemoDetail | null>;
+  build(siteId: string, n: number): Promise<MemoDetail | null>;
+  checkToken(
+    siteId: string,
+    n: number
+  ): Promise<{ url: string; version: number }>;
+  publish(siteId: string, n: number, v: number): Promise<MemoDetail | null>;
+  discard(siteId: string, n: number, v: number): Promise<MemoDetail | null>;
+  rollback(siteId: string, n: number, v: number): Promise<MemoDetail | null>;
+  disable(siteId: string, n: number): Promise<MemoDetail | null>;
+  enable(siteId: string, n: number): Promise<MemoDetail | null>;
+  remove(siteId: string, n: number): Promise<void>;
+  stats(siteId: string, n: number, days: 7 | 30): Promise<MemoStats>;
+  suggestions(siteId: string): Promise<MemoSuggestion[]>;
+  fromSuggestion(siteId: string, planId: string): Promise<MemoDetail | null>;
+}
+
+const SEG = /^[A-Za-z0-9_-]{1,64}$/;
+function seg(id: string): string {
+  if (!SEG.test(id)) throw new Error('bad id');
+  return id;
+}
+function n(x: number): string {
+  if (!Number.isInteger(x) || x < 1) throw new Error('bad number');
+  return String(x);
+}
+
+export function createMemoApi(client: ApiClient): MemoApi {
+  const base = (id: string) => `/assist/sites/${seg(id)}`;
+  const m = (id: string, x: number) => `${base(id)}/memos/${n(x)}`;
+  return {
+    list: async (id) =>
+      parseMemoList(await client.request('GET', `${base(id)}/memos`)),
+    create: async (id, body) =>
+      parseMemoDetail(await client.request('POST', `${base(id)}/memos`, body)),
+    get: async (id, x) =>
+      parseMemoDetail(await client.request('GET', m(id, x))),
+    patch: async (id, x, expectedRevision, ops) =>
+      parseMemoDetail(
+        await client.request('PATCH', `${m(id, x)}/draft`, {
+          expectedRevision,
+          ops,
+        })
+      ),
+    build: async (id, x) =>
+      parseMemoDetail(await client.request('POST', `${m(id, x)}/versions`)),
+    checkToken: async (id, x) => {
+      const o = obj(
+        await client.request('POST', `${m(id, x)}/check-token`, {})
+      );
+      const url = text(o.url);
+      if (!/^https:\/\//.test(url)) throw new Error('bad url');
+      return { url, version: num(o.version) };
+    },
+    publish: async (id, x, v) =>
+      parseMemoDetail(
+        await client.request('POST', `${m(id, x)}/versions/${n(v)}/publish`)
+      ),
+    discard: async (id, x, v) =>
+      parseMemoDetail(
+        await client.request('POST', `${m(id, x)}/versions/${n(v)}/discard`)
+      ),
+    rollback: async (id, x, v) =>
+      parseMemoDetail(
+        await client.request('POST', `${m(id, x)}/versions/${n(v)}/rollback`)
+      ),
+    disable: async (id, x) =>
+      parseMemoDetail(await client.request('POST', `${m(id, x)}/disable`)),
+    enable: async (id, x) =>
+      parseMemoDetail(await client.request('POST', `${m(id, x)}/enable`)),
+    remove: async (id, x) => {
+      await client.request('DELETE', m(id, x));
+    },
+    stats: async (id, x, days) => {
+      const o = obj(
+        await client.request('GET', `${m(id, x)}/stats?days=${days}`)
+      );
+      const fb = obj(o.failuresByStep);
+      return {
+        windowDays: num(o.windowDays),
+        runs: num(o.runs),
+        reached: num(o.reached),
+        notReached: num(o.notReached),
+        unknown: num(o.unknown),
+        direct: num(o.direct),
+        lite: num(o.lite),
+        pinMismatch: num(o.pinMismatch),
+        self: num(o.self),
+        cancelled: num(o.cancelled),
+        failuresByStep: Object.fromEntries(
+          Object.entries(fb)
+            .filter(([k, v]) => /^\d{1,2}$/.test(k) && typeof v === 'number')
+            .map(([k, v]) => [k, v as number])
+        ),
+      };
+    },
+    suggestions: async (id) =>
+      arr(
+        obj(await client.request('GET', `${base(id)}/memo-suggestions`)).items
+      )
+        .map(obj)
+        .filter(
+          (s) => typeof s.planId === 'string' && SEG.test(s.planId as string)
+        )
+        .map((s) => ({
+          planId: s.planId as string,
+          page: text(s.page),
+          steps: arr(s.steps)
+            .map(obj)
+            .map((x) => ({ kind: text(x.kind), text: text(x.text) }))
+            .slice(0, 15),
+          visitors: num(s.visitors),
+          phrases: strs(s.phrases, 120).slice(0, 5),
+        })),
+    fromSuggestion: async (id, planId) =>
+      parseMemoDetail(
+        await client.request(
+          'POST',
+          `${base(id)}/memo-suggestions/${seg(planId)}`
+        )
+      ),
+  };
+}

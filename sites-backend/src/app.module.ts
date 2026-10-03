@@ -33,6 +33,9 @@ import { AssistSiteVoiceControlModule } from './modules/assist-site-voice-contro
 import { AssistSiteMediaModule } from './modules/assist-site-media/assist-site-media.module';
 import { InternalSiteMediaModule } from './modules/internal-sites/site-media.module';
 import { SiteCredentialsModule } from './modules/site-credentials/site-credentials.module';
+import { AssistAdminModeModule } from './modules/assist-admin-mode/assist-admin-mode.module';
+import { AssistAdminChatModule } from './modules/assist-admin-chat/assist-admin-chat.module';
+import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admin-crawl.module';
 
 @Module({
   imports: [
@@ -82,6 +85,13 @@ import { SiteCredentialsModule } from './modules/site-credentials/site-credentia
     // секретов — экран кабинета и крон сроков; канал генератора — в
     // InternalSitesModule.
     SiteCredentialsModule,
+    // Э7 «Админка: чтение»: кабинет режима и коннекторы OpenAPI (read через
+    // SSRF-guard, журнал вызовов), помощник сотрудника (7a TMA, 7b
+    // встраивание по employee-JWT, iframe на отдельном origin `wa.`), обход
+    // админки за логином (задания воркеру Ш3).
+    AssistAdminModeModule,
+    AssistAdminChatModule,
+    AssistAdminCrawlModule,
   ],
 })
 export class AppModule {}

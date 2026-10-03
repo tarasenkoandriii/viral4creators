@@ -7,7 +7,10 @@
  * лендинга старше 90 дней; черновики `wd_` после expiresAt; (Э5) озвучка
  * ответов после expiresAt (7 дней); (Э6-бис, аудит) сырые значения
  * голосовых планов (`assist_site_ui_plans.liveValues`) у неживых и
- * истёкших планов — сами планы и журнал шагов уходят каскадом с диалогом.
+ * истёкших планов — сами планы и журнал шагов уходят каскадом с диалогом;
+ * (Э6-бис (е)) история мемо и неопубликованные версии старше 180 дней,
+ * удалённые мемо через 180 дней (ключ освобождается, номер — никогда:
+ * счётчик сайта не уменьшается), §5-бис.17 п.4.
  * Пачками с бюджетом времени (функция Vercel). Зовётся из
  * AssistRetentionController (assist-sandbox/sandbox-retention.controller.ts —
  * правку вызова делает W3).
@@ -40,7 +43,14 @@ export interface ChatRetentionResult {
   ttsCacheDeleted: number;
   /** Э6-бис: обнулено сырых значений планов (завершены/истекли без визита). */
   uiPlanValuesCleared: number;
+  /** Э6-бис (е): история мемо, старые версии и удалённые мемо (180 дней). */
+  memoChangesDeleted?: number;
+  memoVersionsDeleted?: number;
+  memosPurged?: number;
 }
+
+/** Э6-бис (е): история и метаданные мемо, ключ удалённого мемо — 180 дней. */
+export const MEMO_KEEP_DAYS = 180;
 
 /** Строки денег дня храним 40 дней (сверка с отчётом расходов за месяц). */
 export const BUDGET_DAYS_KEEP = 40;
@@ -175,6 +185,33 @@ export class ChatRetention {
             AND ("expiresAt" <= $1 OR "status" NOT IN ('proposed', 'confirmed', 'running', 'paused'))
           LIMIT $2)`,
       now,
+    );
+    // Э6-бис (е): мемо — история и неопубликованные версии 180 дней,
+    // удалённое мемо — через 180 дней целиком (ключ свободен, номер — нет).
+    const memoCutoff = new Date(now.getTime() - MEMO_KEEP_DAYS * day);
+    r.memoChangesDeleted = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_memo_changes" WHERE "id" IN (
+         SELECT "id" FROM ${S}."assist_site_memo_changes" WHERE "createdAt" < $1 LIMIT $2)`,
+      memoCutoff,
+    );
+    r.memoVersionsDeleted = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_memo_versions" WHERE "id" IN (
+         SELECT v."id" FROM ${S}."assist_site_memo_versions" v
+           JOIN ${S}."assist_site_memos" m ON m."id" = v."memoId"
+          WHERE v."createdAt" < $1
+            AND v."number" IS DISTINCT FROM m."publishedVersion"
+            AND v."status" <> 'checking'
+          LIMIT $2)`,
+      memoCutoff,
+    );
+    r.memosPurged = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_memos" WHERE "id" IN (
+         SELECT "id" FROM ${S}."assist_site_memos"
+          WHERE "status" = 'removed' AND "removedAt" < $1 LIMIT $2)`,
+      memoCutoff,
     );
     this.logger.log(`ретенция виджета: ${JSON.stringify(r)}`);
     return r;

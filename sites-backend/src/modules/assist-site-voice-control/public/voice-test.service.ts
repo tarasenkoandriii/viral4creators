@@ -11,6 +11,9 @@
  *  - `session` — сессия из заголовка (или null — обычный посетитель);
  *  - `analyze` — снимок страницы → команды сухого прогона и прогона с
  *    нажатием, «запреты без звука», список 1 (бесплатно, без модели);
+ *  - (е) `memoPage`/`memoReport` — сухой прогон версии мемо (`kind = memo`):
+ *    страницы образца по одной в браузере владельца, итог страницы — код и
+ *    подпись, отчёт — по подписанным итогам + проверка фраз прямым путём;
  *  - `report` — итог: вердикт считает КОД (assist-ui-core/wizard.ts);
  *    безопасные прогоны и сухие планы — по планам ЭТОЙ сессии в базе, запреты
  *    — заново по присланному снимку (клиенту в этом не верим), выпуск
@@ -24,7 +27,19 @@ import {
   releaseForSite,
 } from '../../../common/voice-control-platform';
 import { AssistPublicDb } from '../../../prisma/assist-public-db.service';
+import { voiceTicketKey } from '../../../config/voice-env';
 import { readState } from '../../assist-billing/public/entitlements';
+import {
+  directMemo,
+  memoCheckPage,
+  memoCheckVerdict,
+  memoGates,
+  memoPhrases,
+  MEMO_LANGS,
+  MEMO_LIMITS,
+  type MemoCheckPage,
+} from '../../assist-ui-core/memo';
+import { pathMatches } from '../../assist-ui-core/rules';
 import {
   maskLabel,
   parseSnapshot,
@@ -49,6 +64,10 @@ import {
   type WizardSafeRun,
 } from '../../assist-ui-core/wizard';
 import type {
+  MemoCheckPageView,
+  MemoCheckReport,
+  MemoCheckReportRequest,
+  MemoCheckSessionView,
   VoiceTestAnalyzeRequest,
   VoiceTestAnalyzeView,
   VoiceTestReportRequest,
@@ -61,6 +80,8 @@ import {
   type UiPlanCtx,
   SiteUiPlanService,
 } from './ui-plan.service';
+import { signMemoPage, verifyMemoPage } from './memo-check';
+import { readMemoCheck, readPublishedMemos } from './memo-store';
 import {
   exchangeTestToken,
   readTestPlans,
@@ -209,7 +230,9 @@ export class VoiceTestService {
     this.logger.log(
       `voice-test session site=${ctx.site.siteId} test=${row.id}`,
     );
+    const memo = await this.memoSession(ctx, row.id);
     return {
+      memo,
       session,
       testId: row.id,
       expiresAt: expiresAt.toISOString(),
@@ -221,6 +244,156 @@ export class VoiceTestService {
         maxSteps: access.rules.maxSteps,
       },
     };
+  }
+
+  /** (е) Сессия сухого прогона мемо: номер, имя, маски страниц шагов. */
+  private async memoSession(
+    ctx: UiPlanCtx,
+    testId: string,
+  ): Promise<MemoCheckSessionView | null> {
+    const v = await readMemoCheck(this.db, {
+      siteId: ctx.site.siteId,
+      testId,
+    });
+    if (!v) return null;
+    const pages: string[] = [];
+    for (const s of v.content.steps)
+      if (s.target && !pages.includes(s.page)) pages.push(s.page);
+    const url = v.content.goal.expect.find((g) => g.kind === 'url') as
+      { kind: 'url'; path: string } | undefined;
+    const name =
+      MEMO_LANGS.map((l) => v.content.names[l]).find(Boolean) ?? v.key;
+    return {
+      number: v.number,
+      name,
+      pages,
+      goalPage: url?.path ?? pages[pages.length - 1] ?? '/',
+    };
+  }
+
+  /** (е) Проверка одной страницы образца: итог — кодом, подписанный. */
+  async memoPage(
+    ctx: UiPlanCtx,
+    tid: string,
+    body: { snapshot?: unknown } | null,
+  ): Promise<MemoCheckPageView> {
+    const { rules, hosts } = await this.mine(ctx, tid);
+    const v = await readMemoCheck(this.db, {
+      siteId: ctx.site.siteId,
+      testId: tid,
+    });
+    if (!v) return fail('not_found');
+    const snapshot = this.snapshotOf(body?.snapshot, hosts);
+    const host = (() => {
+      try {
+        return new URL(snapshot.url).hostname;
+      } catch {
+        return hosts[0] ?? '';
+      }
+    })();
+    const computed = memoGates(v.content, { rules, host }).computed;
+    const page = memoCheckPage(v.content, computed, snapshot, { rules, hosts });
+    const key = voiceTicketKey(this.plans.env);
+    if (!key) return fail('off');
+    return { ...page, token: signMemoPage(key, tid, page) };
+  }
+
+  /**
+   * (е) Отчёт сухого прогона: подписанные итоги страниц + фразы вызова ×
+   * языки через прямой путь (≤ 10 на язык; модель не зовём — бюджет
+   * обучения не нужен). Сдаётся один раз; публикует человек в TMA.
+   */
+  async memoReport(
+    ctx: UiPlanCtx,
+    tid: string,
+    body: MemoCheckReportRequest | null,
+  ): Promise<{
+    testId: string;
+    result: MemoCheckReport['result'];
+    report: MemoCheckReport;
+  }> {
+    await this.mine(ctx, tid);
+    const v = await readMemoCheck(this.db, {
+      siteId: ctx.site.siteId,
+      testId: tid,
+    });
+    if (!v) return fail('not_found');
+    const key = voiceTicketKey(this.plans.env);
+    const pages: MemoCheckPage[] = [];
+    for (const t of (Array.isArray(body?.tokens) ? body.tokens : []).slice(
+      0,
+      20,
+    )) {
+      const p = verifyMemoPage(key, tid, t);
+      if (p) pages.push(p);
+    }
+    const now = this.now();
+    // Фразы: прямой путь среди опубликованных мемо сайта + этой версии.
+    const others = (await readPublishedMemos(this.db, ctx.site.siteId)).filter(
+      (m) => m.memoId !== v.memoId,
+    );
+    const self = {
+      memoId: v.memoId,
+      number: v.number,
+      key: v.key,
+      version: v.version,
+      view: v.content.view,
+      listed: true,
+      staleViews: [],
+      content: v.content,
+    };
+    const conflicts: MemoCheckReport['phraseConflicts'] = [];
+    for (const lang of MEMO_LANGS) {
+      const phrases = memoPhrases(v.content)
+        .filter((p) => p.lang === lang)
+        .slice(0, MEMO_LIMITS.triggersPerLang);
+      const firstPage = v.content.steps[0]?.page ?? '/';
+      for (const ph of phrases) {
+        const hit = directMemo(
+          ph.norm,
+          [
+            self,
+            ...others.filter((m) =>
+              pathMatches(
+                firstPage.replace(/\*$/, ''),
+                m.content.steps[0]?.page ?? '/',
+              ),
+            ),
+          ],
+          now,
+        );
+        if (hit && hit.memo.memoId !== v.memoId)
+          conflicts.push({ lang, phrase: ph.norm });
+      }
+    }
+    const verdict = memoCheckVerdict(v.content, pages, conflicts.length);
+    const report: MemoCheckReport = {
+      v: 1,
+      kind: 'memo',
+      memoId: v.memoId,
+      version: v.version,
+      contentHash: v.contentHash,
+      result: verdict.result,
+      steps: verdict.steps,
+      goal: verdict.goal,
+      phraseConflicts: conflicts,
+    };
+    const ok = await writeTestReport(this.db, {
+      id: tid,
+      siteId: ctx.site.siteId,
+      visitorId: ctx.visitor.visitorId,
+      report,
+      result: verdict.result,
+      validUntil: new Date(now.getTime() + MEMO_LIMITS.checkTokenTtlMs * 48),
+      release: null,
+      pages: pages.map((p) => p.path),
+      now,
+    });
+    if (!ok) return fail('conflict');
+    this.logger.log(
+      `memo-check report site=${ctx.site.siteId} test=${tid} memo=${v.number} v=${v.version} result=${verdict.result}`,
+    );
+    return { testId: tid, result: verdict.result, report };
   }
 
   private async mine(ctx: UiPlanCtx, tid: string) {

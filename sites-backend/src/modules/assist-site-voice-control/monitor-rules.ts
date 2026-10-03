@@ -48,6 +48,11 @@ export const MONITOR_THRESHOLDS = {
   sitesPerRun: 200,
   /** Строк журнала шагов на сайт за окно (Pro — ≤ 1000 планов в сутки). */
   logRowsPerSite: 20_000,
+  /**
+   * (д) §5-бис.15 п.12: успешность возврата < 80% на ≥ 10 попытках за 24 ч —
+   * тревога владельцу «разметка отмены устарела» (без деградации).
+   */
+  undo: { minAttempts: 10, successBelow: 0.8 },
 } as const;
 
 /** Причины журнала шагов, означающие «стоп-лист сработал при исполнении». */
@@ -67,6 +72,8 @@ export interface MonitorPlanRow {
   createdAt: Date;
   release: string | null;
   steps: unknown;
+  /** (д) Статус цепочки (§5-бис.15 п.11); нет — старый план. */
+  chainStatus?: string | null;
 }
 
 export interface MonitorLogRow {
@@ -97,6 +104,18 @@ export interface SiteVoiceMetrics {
   /** «Конец фразы → первая подсветка» (план → первый отчёт шага), мс. */
   latencyP50Ms: number | null;
   latencyP95Ms: number | null;
+  /** (д) Цепочки со сбоем/стопом после первого эффекта (знаменатель «следов»). */
+  chainsBroken?: number;
+  /** (д) …из них со следами: `kept` + `partially_compensated` + `unknown`. */
+  chainsWithTraces?: number;
+  /** (д) Предложений «Вернуть» принято / «Оставить». */
+  undoAccepted?: number;
+  undoKept?: number;
+  /** (д) Возвратов полей: попыток и успешных (проверено загрузчиком). */
+  undoAttempts?: number;
+  undoDone?: number;
+  /** (д) Сбой на точке невозврата после `dispatched` — «не знаю, отправилось ли». */
+  pnrUnknown?: number;
 }
 
 interface StepLike {
@@ -143,6 +162,13 @@ export function computeMetrics(
   };
   const lat: number[] = [];
   const perVisitor = new Map<string, number>();
+  m.chainsBroken = 0;
+  m.chainsWithTraces = 0;
+  m.undoAccepted = 0;
+  m.undoKept = 0;
+  m.undoAttempts = 0;
+  m.undoDone = 0;
+  m.pnrUnknown = 0;
   for (const p of plans) {
     const rows = (byPlan.get(p.id) ?? []).sort(
       (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
@@ -156,6 +182,30 @@ export function computeMetrics(
       perVisitor.set(p.visitorId, n + 1);
     }
     const steps = stepsOf(p.steps);
+    // (д) Цепочки (§5-бис.15 п.12): следы после сбоя, «Вернуть»/«Оставить»,
+    // успешность возврата полей, неизвестный итог на точке невозврата.
+    const cs = p.chainStatus ?? null;
+    if (cs && cs !== 'clean' && cs !== 'committed') m.chainsBroken++;
+    if (cs === 'kept' || cs === 'partially_compensated' || cs === 'unknown')
+      m.chainsWithTraces++;
+    for (const r of rows) {
+      if (r.action !== 'undo') continue;
+      if (r.result === 'proposed') m.undoAccepted++;
+      else if (r.reason === 'keep') m.undoKept++;
+      else {
+        m.undoAttempts++;
+        if (r.result === 'done') m.undoDone++;
+      }
+    }
+    if (
+      steps.some(
+        (s) =>
+          (s as { undo?: unknown }).undo === 'irrev' &&
+          (s as { fx?: unknown }).fx === true &&
+          s.state !== 'done',
+      )
+    )
+      m.pnrUnknown++;
     m.stoplistLive += rows.filter(
       (r) =>
         r.action !== 'violation' &&
@@ -230,7 +280,13 @@ export function computeMetrics(
 }
 
 export type MonitorCode =
-  'done_low' | 'self_high' | 'not_found_high' | 'stoplist_live' | 'violation';
+  | 'done_low'
+  | 'self_high'
+  | 'not_found_high'
+  | 'stoplist_live'
+  | 'violation'
+  /** (д) Возврат полей не удаётся — «разметка отмены устарела» (только тревога). */
+  | 'undo_low';
 
 export interface SiteDecision {
   action: 'none' | 'alert' | 'degrade' | 'off';
@@ -263,6 +319,11 @@ export function decideSite(m: SiteVoiceMetrics, state: string): SiteDecision {
     if (rate(m.self, m.plans) > T.alert.selfAbove) alert.push('self_high');
   }
   if (m.stoplistLive > T.stoplistLive.alertAbove) alert.push('stoplist_live');
+  if (
+    (m.undoAttempts ?? 0) >= T.undo.minAttempts &&
+    rate(m.undoDone ?? 0, m.undoAttempts ?? 0) < T.undo.successBelow
+  )
+    alert.push('undo_low');
   return alert.length
     ? { action: 'alert', codes: alert }
     : { action: 'none', codes: [] };
@@ -302,4 +363,65 @@ export function decideCanary(p: {
   return drop > T.dropPp
     ? { rollback: true, code: 'done_drop' }
     : { rollback: false, code: null };
+}
+
+// ── (е) Мемо: «требует проверки» (§5-бис.17 п.8) ─────────────────────────
+
+export interface MemoReviewInput {
+  view: 'any' | 'desktop' | 'mobile';
+  /** Виды вёрстки, где элемент шага помечен Ш4 «устарел». */
+  staleViews: ReadonlyArray<'desktop' | 'mobile'>;
+  /** Сбои/`pinMismatch` по шагам за 7 дней: разные посетители и хеши IP. */
+  stepFailures: ReadonlyMap<
+    number,
+    { visitors: ReadonlySet<string>; ips: ReadonlySet<string>; pin: boolean }
+  >;
+  /** Запуски с итогом цели за 7 дней и сколько дошли до цели. */
+  goalRuns: number;
+  goalReached: number;
+  thresholds: { minVisitors: number; goalMinRuns: number; goalBelow: number };
+}
+
+export interface MemoReviewDecision {
+  /** null — мемо работает; иначе — `needs_review` с причиной. */
+  review: {
+    code: 'stale' | 'pin_mismatch' | 'failures' | 'goal_low';
+    step: number | null;
+  } | null;
+  /** Виды, где мемо не исполняется (устаревший элемент), — остальным работает. */
+  staleViews: Array<'desktop' | 'mobile'>;
+}
+
+/**
+ * `needs_review` (§5-бис.17 п.8): (1) элемент шага устарел (Ш4) для вида
+ * мемо — у `any` только по виду, где устарел (на другом мемо работает), оба
+ * вида — `needs_review`; (4) сбой или `pinMismatch` на одном шаге у ≥ 3
+ * разных посетителей И хешей IP за 7 дней (один посетитель не «выключит»
+ * мемо, подделав свой DOM); (5) успех цели < 60% на ≥ 10 запусках.
+ * Само-лечения нет: выход — новая версия с прогоном и подтверждением.
+ */
+export function decideMemoReview(i: MemoReviewInput): MemoReviewDecision {
+  const stale = [...new Set(i.staleViews)];
+  const wanted: Array<'desktop' | 'mobile'> =
+    i.view === 'any' ? ['desktop', 'mobile'] : [i.view];
+  const staleOwn = stale.filter((v) => wanted.includes(v));
+  if (staleOwn.length === wanted.length)
+    return { review: { code: 'stale', step: null }, staleViews: staleOwn };
+  for (const [step, f] of [...i.stepFailures.entries()].sort(
+    (a, b) => a[0] - b[0],
+  ))
+    if (
+      f.visitors.size >= i.thresholds.minVisitors &&
+      f.ips.size >= i.thresholds.minVisitors
+    )
+      return {
+        review: { code: f.pin ? 'pin_mismatch' : 'failures', step },
+        staleViews: staleOwn,
+      };
+  if (
+    i.goalRuns >= i.thresholds.goalMinRuns &&
+    i.goalReached / i.goalRuns < i.thresholds.goalBelow
+  )
+    return { review: { code: 'goal_low', step: null }, staleViews: staleOwn };
+  return { review: null, staleViews: staleOwn };
 }

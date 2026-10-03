@@ -250,3 +250,28 @@ export const WIDGET_VOICE_TEST_HEADER = 'X-Assist-Voice-Test';
  * тестовой сессии владельца; act.js и загрузчик не растут.
  */
 export const WIDGET_CHECK_PATH = '/v1/check.js';
+
+// ══ Э7: «Админка» — помощник сотрудника заказчика (ТЗ §5.1, §4.12, §4-бис.8) ══
+// Отдельный origin iframe «Админки» (У-13, §4.12): у публичного чата и чата
+// сотрудника разные storage/BroadcastChannel/cookie — XSS в публичном чате не
+// достаёт сессию сотрудника. Заказчик вставляет в свою админку тег загрузчика
+// С ЭТОГО origin (`<script src="https://wa.<домен>/v1/loader.js"
+// data-site="pk_live_…" data-mode="admin" data-identity="<JWT>">`): тогда и
+// чанк, и iframe — с `wa.`. Домен — заглушка до В-1 (временный —
+// `assist-wa.viral4creators.app`, doc/DEPLOYMENT.md §6.0, §6.19). Зеркало —
+// widget/src/shared/brand.ts (сверяет widget/scripts/brand.test.ts).
+
+/** Origin iframe «Админки» (тот же Vercel-проект `widget`, второй домен). */
+export const WIDGET_ADMIN_ORIGIN_DEFAULT = 'https://wa.v4c.example.invalid';
+/** Ленивый чанк «Админки» на странице админки заказчика (загрузчик не растёт). */
+export const WIDGET_ADMIN_PATH = '/v1/admin.js';
+/** HTML iframe чата сотрудника: отдаёт sites-backend с frame-ancestors хостов админки. */
+export const WIDGET_ADMIN_FRAME_PATH = '/wa/v1/frame';
+/** Значение `data-mode` тега загрузчика для режима «Админка». */
+export const WIDGET_ADMIN_MODE = 'admin';
+/** Заголовок сессии сотрудника (после обмена JWT, только память/sessionStorage `wa.`). */
+export const ADMIN_SESSION_HEADER = 'X-Assist-Admin-Session';
+/** Метка протокола postMessage чанк «Админки» ↔ iframe `wa.` (отдельно от `v4c-widget`). */
+export const ADMIN_MESSAGE_NS = 'v4c-admin';
+/** BroadcastChannel вкладок `wa.`: `<префикс>:<pk>` (сброс при смене сотрудника). */
+export const ADMIN_CHANNEL_PREFIX = 'v4c-admin';

@@ -69,6 +69,20 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistAdminKnowledgeVersion: 'accountId',
   AssistAdminFaq: 'accountId',
   AssistAdminExclusion: 'accountId',
+  // Э7 «Админка»: чтение — строки кабинета (составные FK (siteId, accountId)
+  // держат то же в базе; у журнала вызовов FK нет — он переживает удаление
+  // коннектора, но accountId несёт). Сессию встраивания маршрут находит по
+  // хешу токена системным чтением (кабинета в запросе сотрудника ещё нет) —
+  // дальше всё идёт с кабинетом сессии.
+  AssistAdminConnector: 'accountId',
+  AssistAdminOperation: 'accountId',
+  AssistAdminActionLog: 'accountId',
+  AssistAdminConversation: 'accountId',
+  AssistAdminMessage: 'accountId',
+  AssistAdminSession: 'accountId',
+  AssistAdminLearningItem: 'accountId',
+  AssistAdminCrawlJob: 'accountId',
+  AssistAdminPage: 'accountId',
   // Э2: виджет «Сайта». Публичные маршруты ходят в эти таблицы клиентом
   // AssistPublicDb (без extension, по siteId/visitorId/хешам) — тенант
   // держит кабинетный код (экраны, Э3-лента диалогов) и составной FK.
@@ -131,6 +145,13 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   // Журнал монитора: у событий платформы (откат канарейки, рубильник)
   // accountId = NULL — кабинету не видны; события сайта — строки кабинета.
   AssistSiteVoiceIncident: 'accountId',
+  // Э6-бис (е): мемо «Сайта», версии, история и индекс фраз — строки
+  // кабинета (составные FK (siteId|memoId, accountId)). Публичный код их не
+  // трогает (только представления миграции _assist_chains_memo).
+  AssistSiteMemo: 'accountId',
+  AssistSiteMemoVersion: 'accountId',
+  AssistSiteMemoChange: 'accountId',
+  AssistSitePhrase: 'accountId',
 };
 
 /**

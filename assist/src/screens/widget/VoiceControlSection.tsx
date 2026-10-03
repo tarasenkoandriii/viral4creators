@@ -14,6 +14,9 @@
  *    рисков перед первым включением (версия текста — на сервер).
  * Доступно при включённом голосе сайта (тариф Business+, микрофон);
  * выключить — всегда.
+ * (д) Р-67: включено по прежней редакции рисков — баннер «текст обновлён»
+ * и «Прочитал(а)» (без перевода в `test`); метрики цепочек в мониторе.
+ * (е) «Голос → Мемо» — `MemoSection` под монитором.
  */
 import { useState } from 'react';
 import { ExternalLink, FileText, Save, ShieldCheck } from 'lucide-react';
@@ -41,6 +44,7 @@ import {
 } from '../../lib/voice-control-api';
 import { NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
+import { MemoSection } from './MemoSection';
 
 export function VoiceControlSection({ siteId }: { siteId: string }) {
   const { voiceControl } = useAssist();
@@ -142,6 +146,24 @@ function VoiceControlForm({
     }
   };
 
+  /** (д) Р-67: новая редакция рисков прочитана — без смены состояния. */
+  const ackRisks = async () => {
+    setBusy(true);
+    try {
+      setView(
+        await voiceControl.save(siteId, {
+          state: view.state,
+          rules: view.rules,
+          risksVersion: view.risksVersion,
+        })
+      );
+    } catch (e) {
+      setNotice({ tone: 'danger', text: errText(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const showReport = async () => {
     if (!last) return;
     if (report) return setReport(null);
@@ -196,6 +218,23 @@ function VoiceControlForm({
         <Alert tone="neutral">{t.reasons[view.reason]}</Alert>
       )}
       {changed && <Alert tone="warning">{changed}</Alert>}
+      {view.risksBanner && (
+        <Alert tone="warning">
+          <div className="space-y-2">
+            <div>{t.risksBanner}</div>
+            <ul className="list-disc pl-5 text-xs">
+              <li>{t.risks.items[t.risks.items.length - 1]}</li>
+            </ul>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void ackRisks()}
+            >
+              {t.risksAck}
+            </Button>
+          </div>
+        </Alert>
+      )}
       <NoticeBar notice={notice} />
 
       {/* Состояние */}
@@ -409,6 +448,14 @@ function VoiceControlForm({
             <span>{m.cancelled}</span>
             <span>{t.monitor.stoplist}</span>
             <span>{m.stoplistLive}</span>
+            <span>{t.monitor.chains}</span>
+            <span>
+              {m.chainsWithTraces} / {m.chainsBroken}
+            </span>
+            <span>{t.monitor.undo}</span>
+            <span>{pct(m.undoDone, m.undoAttempts)}</span>
+            <span>{t.monitor.pnrUnknown}</span>
+            <span>{m.pnrUnknown}</span>
             <span>{t.monitor.latency}</span>
             <span>
               {m.latencyP50Ms !== null
@@ -438,6 +485,9 @@ function VoiceControlForm({
           )}
         </div>
       )}
+
+      {/* (е) Мемо */}
+      {view.state !== 'off' && <MemoSection siteId={siteId} />}
 
       {/* Правила */}
       <div className="font-semibold text-sm">{t.rules.title}</div>

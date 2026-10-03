@@ -48,6 +48,23 @@ export interface PlanRow {
   source: string;
   lang: string | null;
   pageUrl: string;
+  /** (е) model | direct | memo — кто построил шаги. */
+  planOrigin: string;
+  memoId: string | null;
+  memoVersion: number | null;
+  goalFrom: number | null;
+  goalStatus: string | null;
+  /** (д) Статус цепочки (§5-бис.15 п.11); null — план ещё живой. */
+  chainStatus: string | null;
+  /** (д) С какого шага показана последняя карточка. */
+  cardFrom: number;
+  /** (д) Отдельное «Да» перед точкой невозврата получено. */
+  pnrConfirmedAt: Date | null;
+  createdAt: Date;
+  /** (е) Пока план живой: значения, признанные кодом мемо (option, дата). */
+  trusted: string[];
+  /** (е) Пока план живой: имя мемо и описание цели (язык посетителя). */
+  memoText: { name: string; goal: string } | null;
 }
 
 /** Живые статусы: пока план в них, сырые значения держатся в `liveValues`. */
@@ -71,10 +88,26 @@ export function maskedSteps(steps: UiPlanStepView[]): UiPlanStepView[] {
 interface LiveValues {
   u: string;
   v: Array<string | null>;
+  /** (е) Значения слотов мемо, признанные кодом (option, разобранная дата). */
+  t?: string[];
+  /** (е) Имя мемо и описание цели — для «Готово: …» после перехода. */
+  m?: { name: string; goal: string } | null;
 }
 
-function liveValuesOf(utterance: string, steps: UiPlanStepView[]): string {
+/** Живые доп. данные плана мемо (только пока план живой, как значения). */
+export interface LiveExtra {
+  trusted?: string[];
+  memoText?: { name: string; goal: string } | null;
+}
+
+function liveValuesOf(
+  utterance: string,
+  steps: UiPlanStepView[],
+  extra: LiveExtra = {},
+): string {
   const live: LiveValues = { u: utterance, v: steps.map((s) => s.value) };
+  if (extra.trusted?.length) live.t = extra.trusted;
+  if (extra.memoText) live.m = extra.memoText;
   return JSON.stringify(live);
 }
 
@@ -82,13 +115,24 @@ function parseLive(raw: unknown): LiveValues | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
   if (typeof o.u !== 'string' || !Array.isArray(o.v)) return null;
+  const m = o.m as Record<string, unknown> | null | undefined;
   return {
     u: o.u,
     v: o.v.map((x) => (typeof x === 'string' ? x : null)),
+    t: Array.isArray(o.t)
+      ? o.t.filter((x): x is string => typeof x === 'string').slice(0, 20)
+      : [],
+    m:
+      m && typeof m.name === 'string' && typeof m.goal === 'string'
+        ? { name: m.name, goal: m.goal }
+        : null,
   };
 }
 
-type DbRow = Omit<PlanRow, 'storedSteps' | 'utterance'> & {
+type DbRow = Omit<
+  PlanRow,
+  'storedSteps' | 'utterance' | 'trusted' | 'memoText'
+> & {
   liveValues: unknown;
 };
 
@@ -109,6 +153,8 @@ function hydrate(row: DbRow): PlanRow {
     steps,
     storedSteps: row.steps,
     utterance: live?.u ?? row.utteranceMasked,
+    trusted: live?.t ?? [],
+    memoText: live?.m ?? null,
   };
 }
 
@@ -155,12 +201,22 @@ export async function insertPlan(
     dryRun?: boolean;
     /** (г) Выпуск чанков виджета (канарейка). */
     release?: string | null;
+    /** (е) model | direct | memo. */
+    planOrigin?: 'model' | 'direct' | 'memo';
+    memoId?: string | null;
+    memoVersion?: number | null;
+    memoSlotsHash?: string | null;
+    goalFrom?: number | null;
+    /** (д) План без исполнимых шагов — статус цепочки сразу (`clean`). */
+    chainStatus?: string | null;
+    /** (е) Живые доп. данные мемо (признанные значения, имя и цель). */
+    extra?: LiveExtra;
   },
 ): Promise<string> {
   const id = randomUUID();
   await db.$executeRawUnsafe(
-    `INSERT INTO ${PLANS} ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "voiceTestId", "dryRun", "release", "updatedAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $16::jsonb, 0, $11, $12, $13, $14, $15, $17, $18, $19, now())`,
+    `INSERT INTO ${PLANS} ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "voiceTestId", "dryRun", "release", "planOrigin", "memoId", "memoVersion", "memoSlotsHash", "goalFrom", "chainStatus", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $16::jsonb, 0, $11, $12, $13, $14, $15, $17, $18, $19, $20, $21, $22, $23, $24, $25, now())`,
     id,
     p.accountId,
     p.siteId,
@@ -177,16 +233,22 @@ export async function insertPlan(
     p.confirmBefore,
     p.expiresAt,
     LIVE_PLAN_STATUSES.includes(p.status)
-      ? liveValuesOf(p.utterance, p.steps)
+      ? liveValuesOf(p.utterance, p.steps, p.extra)
       : null,
     p.voiceTestId ?? null,
     p.dryRun === true,
     p.release ?? null,
+    p.planOrigin ?? 'model',
+    p.memoId ?? null,
+    p.memoVersion ?? null,
+    p.memoSlotsHash ?? null,
+    p.goalFrom ?? null,
+    p.chainStatus ?? null,
   );
   return id;
 }
 
-const COLS = `"id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl"`;
+const COLS = `"id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl", "planOrigin", "memoId", "memoVersion", "goalFrom", "goalStatus", "chainStatus", "cardFrom", "pnrConfirmedAt", "createdAt"`;
 
 /** План ЭТОГО посетителя этого сайта; чужой id неотличим от несуществующего. */
 export async function readPlan(
@@ -254,6 +316,14 @@ export async function updatePlan(
     confirmedBy: string | null;
     /** Новое окно подтверждения (карточка после продолжения); null — прежнее. */
     confirmBefore?: Date | null;
+    /** (д) Статус цепочки (при завершении); null — прежний. */
+    chainStatus?: string | null;
+    /** (е) Итог цели мемо (при завершении); null — прежний. */
+    goalStatus?: string | null;
+    /** (д) Шаг, с которого показана новая карточка; null — прежний. */
+    cardFrom?: number | null;
+    /** (д) Отдельное «Да» перед точкой невозврата; null — прежнее. */
+    pnrConfirmedAt?: Date | null;
   },
 ): Promise<boolean> {
   // Завершён/остановлен/истёк — сырые значения и команда обнуляются тем же
@@ -261,7 +331,8 @@ export async function updatePlan(
   const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
     `UPDATE ${PLANS}
         SET "steps" = $4::jsonb, "liveValues" = $13::jsonb, "currentStep" = $5, "status" = $6, "needsConfirm" = $7, "confirmedBy" = $8,
-            "confirmBefore" = COALESCE($12, "confirmBefore"), "updatedAt" = now()
+            "confirmBefore" = COALESCE($12, "confirmBefore"), "chainStatus" = COALESCE($14, "chainStatus"), "goalStatus" = COALESCE($15, "goalStatus"),
+            "cardFrom" = COALESCE($16, "cardFrom"), "pnrConfirmedAt" = COALESCE($17, "pnrConfirmedAt"), "updatedAt" = now()
       WHERE "id" = $1 AND "siteId" = $2 AND "visitorId" = $3
         AND "status" = $9 AND "currentStep" = $10 AND "steps" = $11::jsonb
       RETURNING "id"`,
@@ -278,8 +349,69 @@ export async function updatePlan(
     JSON.stringify(prev.storedSteps),
     next.confirmBefore ?? null,
     LIVE_PLAN_STATUSES.includes(next.status)
-      ? liveValuesOf(prev.utterance, next.steps)
+      ? liveValuesOf(prev.utterance, next.steps, {
+          trusted: prev.trusted,
+          memoText: prev.memoText,
+        })
       : null,
+    next.chainStatus ?? null,
+    next.goalStatus ?? null,
+    next.cardFrom ?? null,
+    next.pnrConfirmedAt ?? null,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * (д) Статус цепочки ПОСЛЕ плана (возврат полей, «оставить») — условно, из
+ * того статуса, что видели: два отчёта возврата не запишутся дважды.
+ */
+export async function updateChainStatus(
+  db: PlanDb,
+  p: {
+    id: string;
+    siteId: string;
+    visitorId: string;
+    from: string | null;
+    to: string;
+  },
+): Promise<boolean> {
+  const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE ${PLANS} SET "chainStatus" = $5, "updatedAt" = now()
+      WHERE "id" = $1 AND "siteId" = $2 AND "visitorId" = $3 AND "chainStatus" IS NOT DISTINCT FROM $4
+      RETURNING "id"`,
+    p.id,
+    p.siteId,
+    p.visitorId,
+    p.from,
+    p.to,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * (е) Повтор того же мемо тем же посетителем с теми же слотами в окне
+ * (§5-бис.17 п.5 п.11) — вопрос «повторить ещё раз?», а не тихое исполнение.
+ */
+export async function recentSameMemo(
+  db: PlanDb,
+  p: {
+    siteId: string;
+    visitorId: string;
+    memoId: string;
+    slotsHash: string;
+    since: Date;
+  },
+): Promise<boolean> {
+  const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    `SELECT "id" FROM ${PLANS}
+      WHERE "siteId" = $1 AND "visitorId" = $2 AND "memoId" = $3 AND "memoSlotsHash" = $4
+        AND "createdAt" > $5 AND NOT "dryRun" LIMIT 1`,
+    p.siteId,
+    p.visitorId,
+    p.memoId,
+    p.slotsHash,
+    p.since,
   );
   return rows.length > 0;
 }
@@ -301,11 +433,15 @@ export async function insertActionLog(
     reason: string | null;
     valueMasked: string | null;
     durationMs: number | null;
+    /** (е) Живая цель не совпала с отпечатком шага мемо. */
+    pinMismatch?: boolean;
+    /** (д) Строка возврата: номер возвращённого шага. */
+    undoOf?: number | null;
   },
 ): Promise<void> {
   await db.$executeRawUnsafe(
-    `INSERT INTO ${LOG} ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs")
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14)`,
+    `INSERT INTO ${LOG} ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs", "pinMismatch", "undoOf")
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     randomUUID(),
     p.accountId,
     p.siteId,
@@ -322,5 +458,7 @@ export async function insertActionLog(
     p.reason,
     p.valueMasked,
     p.durationMs,
+    p.pinMismatch === true,
+    p.undoOf ?? null,
   );
 }

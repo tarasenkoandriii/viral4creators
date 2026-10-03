@@ -80,6 +80,9 @@
  *     `site-credentials/credential-crypto` (ключи и расшифровка) не
  *     импортирует никто вне модуля; `credentials-names` — имён таблиц и
  *     моделей хранилища нет в коде других модулей (сырой SQL мимо сервиса).
+ *     Э7: `assist-admin-crawl` (обход админки за логином, opt-in) — третий
+ *     допущенный потребитель: читает реестр учёток без секретов; аренду
+ *     возьмёт браузерный воркер Ш3. Прочие `assist-admin-*` — нет.
  * 13. (Э5) `public-zone-e5`: голос посетителя — папка `public/` модуля
  *     `assist-site-voice` — публичная зона правила 8 (только assist_public);
  *     публичный код других модулей берёт из `assist-site-voice` только
@@ -106,6 +109,15 @@
  *     других модулей берёт из него только `public/**`, типы, `*-config` и
  *     `*.module`: кабинет переключателя и правил (`cabinet/`) ходит
  *     основным клиентом.
+ *
+ * 17. (Э6-бис (е)) `memo-public-views`: публичный код (зоны правила 8)
+ *     не называет таблиц и моделей мемо (`assist_site_memos`,
+ *     `assist_site_memo_versions`, `assist_site_memo_changes`,
+ *     `assist_site_phrases`, `AssistSiteMemo…`, `AssistSitePhrase`):
+ *     черновики, история и индекс фраз — только кабинету; публичный код
+ *     читает ТОЛЬКО представления `assist_site_memo_published` и
+ *     `assist_site_memo_checks` (§5-бис.17 п.12). Слой 2 к правам роли
+ *     (слой 3, миграция _assist_chains_memo).
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -141,7 +153,10 @@ const DIGEST = 'assist-digest';
 const INTERNAL_SITES = 'internal-sites';
 /** Э-С Ш2: зона секретов — тестовые учётки и их шифротексты (правило 14). */
 const CREDENTIALS = 'site-credentials';
-const CREDENTIALS_CONSUMERS = [/^internal-sites$/, /^qa-/];
+// Э7: `assist-admin-crawl` — обход админки за логином (opt-in): читает
+// реестр тестовых учёток (без секретов), аренду для воркера Ш3 — позже.
+// Остальные модули «Админки» и весь «Сайт» к реестру дороги не имеют.
+const CREDENTIALS_CONSUMERS = [/^internal-sites$/, /^qa-/, /^assist-admin-crawl$/];
 const MODE_MODULES = [
   /^assist-site-/,
   /^assist-admin-/,
@@ -201,7 +216,7 @@ export const RULES = [
   },
   {
     id: 'credentials-zone',
-    why: 'Э-С Ш2: site-credentials импортируют только internal-sites и qa-* — помощник и публичный код к секретам дороги не имеют',
+    why: 'Э-С Ш2: site-credentials импортируют только internal-sites, qa-* и (Э7) assist-admin-crawl — остальной помощник и публичный код к секретам дороги не имеют',
     from: (m) => m !== CREDENTIALS && !matches(m, CREDENTIALS_CONSUMERS),
     to: (m) => m === CREDENTIALS,
   },
@@ -364,6 +379,9 @@ export const PATH_RULES = [
  */
 const ADMIN_NAMES = /assist_admin_|\bAssistAdmin[A-Z]?\w*|\bassistAdmin[A-Z]\w*/;
 const SITE_NAMES = /assist_site_|\bAssistSite[A-Z]\w*|\bassistSite[A-Z]\w*/;
+/** Э6-бис (е): таблицы/модели мемо (представления `_published`/`_checks` — можно). */
+const MEMO_TABLE_NAMES =
+  /\bassist_site_memos\b|\bassist_site_memo_versions\b|\bassist_site_memo_changes\b|\bassist_site_phrases\b|\bAssistSiteMemo(?:Version|Change)?\b|\bAssistSitePhrase\b|\bassistSiteMemo(?:Version|Change)?\b|\bassistSitePhrase\b/;
 const CREDENTIAL_NAMES =
   /\b(site_test_accounts|site_credentials|site_credential_leases|site_credential_audit|user_site_sessions|user_site_secrets)\b|\b(siteTestAccount|siteCredential|siteCredentialLease|siteCredentialAudit|userSiteSession|userSiteSecret)\b/;
 export const LITERAL_RULES = [
@@ -398,6 +416,12 @@ export const LITERAL_RULES = [
     re: new RegExp(
       `${ADMIN_NAMES.source}|${SITE_NAMES.source}|['"]@prisma\\/client['"]|\\$(?:queryRaw|executeRaw)`,
     ),
+  },
+  {
+    id: 'memo-public-views',
+    why: 'Э6-бис (е) §5-бис.17 п.12: публичный код читает мемо только через представления (assist_site_memo_published/_checks) — не таблицы мемо, историю и индекс фраз',
+    in: (m, inModule) => inPublicZone(m, inModule ?? ''),
+    re: MEMO_TABLE_NAMES,
   },
 ];
 
@@ -477,8 +501,9 @@ export function findViolations(srcDir) {
     const source = fs.readFileSync(abs, 'utf8');
     if (fromZone.kind === 'module') {
       const code = stripComments(source);
+      const inModule = rel.split('/').slice(2).join('/');
       for (const rule of LITERAL_RULES) {
-        if (!rule.in(fromZone.name)) continue;
+        if (!rule.in(fromZone.name, inModule)) continue;
         const hit = code.match(rule.re);
         if (hit) {
           violations.push({ file: rel, spec: hit[0], rule: rule.id, why: rule.why });
@@ -555,6 +580,17 @@ function selfTest() {
 
   // Каждая фикстура-нарушитель — ровно одно нарушение своего правила.
   const bad = [
+    // Э6-бис (е): публичный код мемо — только представления.
+    [
+      'modules/assist-site-voice-control/public/mp1.ts',
+      'const q = `SELECT "draft" FROM "sites"."assist_site_memos" WHERE "siteId" = $1`;',
+      'memo-public-views',
+    ],
+    [
+      'modules/assist-widget/mp2.ts',
+      'const rows = await db.assistSitePhrase.findMany({});',
+      'memo-public-views',
+    ],
     [
       'modules/assist-site-chat/a.ts',
       `import { X } from '../assist-admin-knowledge/repo';`,
@@ -790,6 +826,33 @@ function selfTest() {
       `const rows = await db.siteCredential.findMany({});`,
       'credentials-names',
     ],
+    // Э7: «Админка» — к реестру учёток только модуль обхода за логином;
+    // публичный код «Сайта» не берёт ничего из «Админки».
+    [
+      'modules/assist-admin-chat/aw.ts',
+      `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';`,
+      'credentials-zone',
+    ],
+    [
+      'modules/assist-widget/ax.ts',
+      `import { AdminSessionService } from '../assist-admin-chat/admin-session.service';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-site-chat/ay.ts',
+      `import { executeRead } from '../assist-admin-mode/connector-exec';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-admin-chat/az.ts',
+      `import { WidgetChatService } from '../assist-widget/widget-chat.service';`,
+      'admin↛site',
+    ],
+    [
+      'modules/assist-admin-mode/ba.ts',
+      `const n = await db.assistSiteConversation.count();`,
+      'admin-names↛site',
+    ],
     [
       'modules/site-core/av.ts',
       `const sql = 'SELECT 1 FROM "sites"."user_site_secrets"';`,
@@ -859,6 +922,15 @@ function selfTest() {
   // Разрешённое: своё внутри модуля, общий код, site-crawl из «Админки»,
   // пакеты, импорт в комментарии, «Админка» → «Админка».
   const good = [
+    // Э6-бис (е): представления мемо — публичному коду можно; кабинету — таблицы.
+    [
+      'modules/assist-site-voice-control/public/mok1.ts',
+      'const q = `SELECT "content" FROM "sites"."assist_site_memo_published" WHERE "siteId" = $1`;\nconst c = `SELECT "id" FROM "sites"."assist_site_memo_checks"`;',
+    ],
+    [
+      'modules/assist-site-voice-control/cabinet/mok2.ts',
+      'const rows = await db.assistSiteMemo.findMany({}); // assist_site_phrases',
+    ],
     [
       'modules/assist-site-chat/ok1.ts',
       `import { A } from './local';\nimport { B } from '../assist-site-knowledge/repo';\nimport { C } from '../../shared/assist-chat-core';\nimport { D } from '../site-core/x';\nimport { Injectable } from '@nestjs/common';`,
@@ -966,6 +1038,14 @@ function selfTest() {
     [
       'modules/qa-runs/ok30.ts',
       `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';`,
+    ],
+    [
+      'modules/assist-admin-crawl/ok35.ts',
+      `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';\nimport { AdminModeService } from '../assist-admin-mode/admin-mode.service';`,
+    ],
+    [
+      'modules/assist-admin-chat/ok36.ts',
+      `import { pinnedFetch } from '../site-crawl/net/pinned-fetch';\nimport { AdminKnowledgeService } from '../assist-admin-knowledge/admin-knowledge.service';\nimport { readState } from '../assist-billing/public/entitlements';`,
     ],
     [
       'modules/site-credentials/ok31.ts',

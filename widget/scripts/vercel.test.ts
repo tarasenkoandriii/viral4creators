@@ -74,6 +74,47 @@ assert.match(
 );
 assert.equal(header('/v1/act.js', 'Access-Control-Allow-Origin'), '*');
 assert.equal(header('/v1/act.js', 'X-Content-Type-Options'), 'nosniff');
+// Э6-бис (д): «Вернуть» для полей — import() из act.js с origin виджета.
+assert.match(header('/v1/undo.js', 'Cache-Control') ?? '', /max-age=300\b/);
+assert.equal(header('/v1/undo.js', 'Access-Control-Allow-Origin'), '*');
+assert.equal(header('/v1/undo.js', 'X-Content-Type-Options'), 'nosniff');
+// Э7: «Админка» — отдельный origin (`wa.`, ТЗ §4.12, У-13). На домене
+// «Админки» Vercel пропускает к API ТОЛЬКО `/wa/v1/*` и `/assist-admin/v1/*`,
+// на домене виджета — только публичные `/w/v1/*` и `/widget/v1/*`: публичный
+// чат не открывается на origin сотрудника (и наоборот) даже при ошибке ссылки.
+type Cond = Array<{ type: string; value: string }>;
+const rewrites = (
+  cfg as unknown as {
+    rewrites: Array<{ source: string; has?: Cond; missing?: Cond }>;
+  }
+).rewrites;
+const rw = (src: string) => rewrites.find((r) => r.source === src);
+const adminHost = rw('/wa/v1/:path*')?.has?.find(
+  (c) => c.type === 'host'
+)?.value;
+assert.ok(adminHost, '/wa/v1/* — только на домене «Админки» (has host)');
+assert.equal(
+  rw('/assist-admin/v1/:path*')?.has?.find((c) => c.type === 'host')?.value,
+  adminHost,
+  '/assist-admin/v1/* — только на домене «Админки»'
+);
+for (const pub of ['/w/v1/:path*', '/widget/v1/:path*']) {
+  assert.equal(
+    rw(pub)?.missing?.find((c) => c.type === 'host')?.value,
+    adminHost,
+    `${pub} не должен работать на домене «Админки»`
+  );
+}
+assert.equal(header('/v1/admin.js', 'Access-Control-Allow-Origin'), '*');
+assert.match(header('/v1/admin.js', 'Cache-Control') ?? '', /max-age=300\b/);
+assert.match(
+  header('/v1/admin-chat.js', 'Cache-Control') ?? '',
+  /max-age=300\b/
+);
+assert.equal(
+  header('/v1/admin-chat.js', 'Access-Control-Allow-Origin'),
+  undefined
+);
 assert.ok(cfg.ignoreCommand, 'ignoreCommand пропал');
 console.log(
   'vercel.json: шрифты immutable, загрузчик, engage.js, voice.js, highlight.js и act.js — 5 мин'

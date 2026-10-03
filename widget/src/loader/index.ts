@@ -38,6 +38,8 @@
 import { natives as N } from './natives';
 import {
   WIDGET_ACT_PATH,
+  WIDGET_ADMIN_MODE,
+  WIDGET_ADMIN_PATH,
   WIDGET_ANCHOR,
   WIDGET_ENGAGE_PATH,
   WIDGET_FRAME_PATH,
@@ -1087,6 +1089,14 @@ function boot() {
   const existing = W[WIDGET_GLOBAL];
   if (existing && existing.l) return; // второй тег загрузчика — игнор
   const script = findScript();
+  // Э7: «Админка» — отдельный ленивый чанк с origin тега (`wa.`, §4.12,
+  // У-13); загрузчик здесь только развилка — его бюджет 12 КБ не растёт.
+  if (script && script.getAttribute('data-mode') === WIDGET_ADMIN_MODE) {
+    import(/* @vite-ignore */ widgetOrigin(script) + WIDGET_ADMIN_PATH)
+      .then((m: { start: (s: HTMLScriptElement) => void }) => m.start(script))
+      .catch(() => null);
+    return;
+  }
   const attrs = readAttrs((n) => (script ? script.getAttribute(n) : null));
   if (!attrs.pk) return;
   const queue = (existing && existing.q) || [];

@@ -100,7 +100,10 @@ describeDb('Приёмка Э2 п.7 — лиды (leads)', () => {
     expect(row.consentText).toBe(CONSENT.uk);
     expect(row.pageUrl).toBe(`${s.origin}/catalog/kettle-k200`);
     expect(row.fieldNames.sort()).toEqual(['comment', 'name', 'phone']);
-    expect(row.fieldsEnc).not.toContain('765');
+    // Полный номер, а не «765»: три цифры изредка встречаются в случайном
+    // шифротексте сами по себе (ложное падение CI).
+    expect(row.fieldsEnc).not.toContain('765 43 21');
+    expect(row.fieldsEnc).not.toContain('380677654321');
     expect(row.fieldsEnc).not.toContain('Олена');
     expect(
       decryptLeadFields(

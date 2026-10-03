@@ -6,6 +6,9 @@
  *   POST /widget/v1/voice-test/:tid/analyze   снимок → команды мастера,
  *                                             «запреты без звука», список 1
  *   POST /widget/v1/voice-test/:tid/report    итог мастера (вердикт — сервер)
+ *   (е) POST /widget/v1/voice-test/:tid/memo-page    сухой прогон мемо: одна
+ *                                             страница образца → подписанный итог
+ *   (е) POST /widget/v1/voice-test/:tid/memo-report  итог сухого прогона мемо
  * Зовёт iframe со своего origin; допуск — visitor-token и гвард origin, для
  * `analyze`/`report` — ещё и тестовая сессия (заголовок
  * WIDGET_VOICE_TEST_HEADER) именно этого теста. Страница заказчика токена
@@ -26,6 +29,9 @@ import type { Request, Response } from 'express';
 import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import type {
+  MemoCheckPageView,
+  MemoCheckReport,
+  MemoCheckReportRequest,
   VoiceTestAnalyzeRequest,
   VoiceTestAnalyzeView,
   VoiceTestReportRequest,
@@ -153,6 +159,42 @@ export class WidgetVoiceTestController {
     await this.limit(ctx);
     try {
       return await this.tests.report(ctx, tid, body ?? null);
+    } catch (e) {
+      return uiPlanFailure(e, 'VOICE_TEST_INVALID');
+    }
+  }
+
+  @Post(':tid/memo-page')
+  @HttpCode(200)
+  async memoPage(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Param('tid') tid: string,
+    @Body() body: { snapshot?: unknown },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<MemoCheckPageView> {
+    const ctx = await this.ctx(token, req, res);
+    await this.limit(ctx);
+    try {
+      return await this.tests.memoPage(ctx, tid, body ?? null);
+    } catch (e) {
+      return uiPlanFailure(e, 'VOICE_TEST_INVALID');
+    }
+  }
+
+  @Post(':tid/memo-report')
+  @HttpCode(200)
+  async memoReport(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Param('tid') tid: string,
+    @Body() body: MemoCheckReportRequest,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ testId: string; result: string; report: MemoCheckReport }> {
+    const ctx = await this.ctx(token, req, res);
+    await this.limit(ctx);
+    try {
+      return await this.tests.memoReport(ctx, tid, body ?? null);
     } catch (e) {
       return uiPlanFailure(e, 'VOICE_TEST_INVALID');
     }

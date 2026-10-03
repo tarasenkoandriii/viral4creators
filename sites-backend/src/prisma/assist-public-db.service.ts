@@ -61,6 +61,9 @@ export const ASSIST_PUBLIC_OMIT = {
     voiceControlSiteStateBy: true,
     voiceControlSiteStateReason: true,
     voiceControlCheckDeadline: true,
+    // Э6-бис (д)+(е): счётчик номеров мемо и версия рисков — только кабинет.
+    memoCounter: true,
+    voiceControlRisksVersion: true,
   },
   assistSiteFaq: {
     approvedByTelegramId: true,

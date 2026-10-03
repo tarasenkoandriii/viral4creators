@@ -110,6 +110,30 @@ const uk = {
   // Э6-бис (г), решение владельца п.3: отозвать согласие «натискати за вас».
   vcRevoke: 'Заборонити помічнику натискати',
   vcRevoked: 'Добре: помічник більше не натискатиме за вас без нового дозволу.',
+  // Э6-бис (д): цепочки — пометки, точка невозврата, «Вернуть/Оставить»
+  // (§5-бис.15 п.10: для серверних дій слів «відкотив/скасував» немає).
+  vcPnrTail: '(після цього скасувати не можна)',
+  vcPnrCard: 'Зараз натисну — після цього скасувати не можна. Так?',
+  vcDoneList: 'Уже зроблено: {list}.',
+  vcOffer: 'Повернути як було?',
+  vcOfferUndo: 'Повернути',
+  vcOfferKeep: 'Залишити',
+  vcKept: 'Добре, залишаю як є.',
+  vcFieldBack: 'Повернув попереднє значення поля «{t}».',
+  vcFieldUnknown: 'Не знаю, чи повернулося поле «{t}» — перевірте.',
+  vcFieldsGone: 'Поля на попередній сторінці повернути не можу.',
+  vcManualUndo: 'Приберіть самі: «{t}» — серверну дію помічник не повертає.',
+  vcUnknownPnr: 'Не знаю, чи відправилося — перевірте пошту або сторінку.',
+  vcAfterPnr: 'Форму вже відправлено — повернути не можу.',
+  vcUndoNothing: 'Повертати нічого.',
+  vcUndoExpired: 'Минуло більше 10 хвилин — зробіть це самі.',
+  vcUndoUnknown: 'Не знаю, що саме спрацювало, — перевірте сторінку самі.',
+  vcUndoSelf: 'Зараз помічник лише підказує — поверніть самі.',
+  // Э6-бис (е): мемо.
+  vcMemoDone: 'Готово: {g}.',
+  vcMemoNotReached: 'Не дійшов до мети «{g}» — перевірте сторінку.',
+  vcRepeat: 'Ви щойно це робили. Повторити ще раз?',
+  vcSkills: 'Я вмію: {list}.',
   vcStep: {
     click: 'натисну «{t}»',
     fill: 'введу «{v}» у «{t}»',
@@ -134,6 +158,8 @@ const uk = {
     degraded: '«{t}» — натисніть тут самі',
     limit: 'за раз — не більше кількох кроків',
     disabled: '«{t}» зараз недоступна',
+    second_pnr: '«{t}» — окремою командою після відправки',
+    pin_mismatch: '«{t}» — кнопка на сторінці змінилася, натисніть самі',
   },
 };
 
@@ -244,6 +270,28 @@ const ru: Dict = {
   vcRevoke: 'Запретить помощнику нажимать',
   vcRevoked:
     'Хорошо: помощник больше не будет нажимать за вас без нового разрешения.',
+  vcPnrTail: '(после этого отменить нельзя)',
+  vcPnrCard: 'Сейчас нажму — после этого отменить нельзя. Да?',
+  vcDoneList: 'Уже сделано: {list}.',
+  vcOffer: 'Вернуть как было?',
+  vcOfferUndo: 'Вернуть',
+  vcOfferKeep: 'Оставить',
+  vcKept: 'Хорошо, оставляю как есть.',
+  vcFieldBack: 'Вернул прежнее значение поля «{t}».',
+  vcFieldUnknown: 'Не знаю, вернулось ли поле «{t}» — проверьте.',
+  vcFieldsGone: 'Поля на прежней странице вернуть не могу.',
+  vcManualUndo:
+    'Уберите сами: «{t}» — серверное действие помощник не возвращает.',
+  vcUnknownPnr: 'Не знаю, отправилось ли — проверьте почту или страницу.',
+  vcAfterPnr: 'Форма уже отправлена — вернуть не могу.',
+  vcUndoNothing: 'Возвращать нечего.',
+  vcUndoExpired: 'Прошло больше 10 минут — сделайте это сами.',
+  vcUndoUnknown: 'Не знаю, что именно сработало, — проверьте страницу сами.',
+  vcUndoSelf: 'Сейчас помощник только подсказывает — верните сами.',
+  vcMemoDone: 'Готово: {g}.',
+  vcMemoNotReached: 'Не дошёл до цели «{g}» — проверьте страницу.',
+  vcRepeat: 'Вы только что это делали. Повторить ещё раз?',
+  vcSkills: 'Я умею: {list}.',
   vcStep: {
     click: 'нажму «{t}»',
     fill: 'введу «{v}» в «{t}»',
@@ -268,6 +316,8 @@ const ru: Dict = {
     degraded: '«{t}» — нажмите здесь сами',
     limit: 'за раз — не больше нескольких шагов',
     disabled: '«{t}» сейчас недоступна',
+    second_pnr: '«{t}» — отдельной командой после отправки',
+    pin_mismatch: '«{t}» — кнопка на странице изменилась, нажмите сами',
   },
 };
 
@@ -375,6 +425,31 @@ const en: Dict = {
   vcOtherTab: 'The assistant is working in another tab.',
   vcRevoke: 'Stop the assistant from clicking',
   vcRevoked: "OK: the assistant won't click for you without a new permission.",
+  vcPnrTail: '(this cannot be undone)',
+  vcPnrCard: 'I am about to press it — this cannot be undone. Proceed?',
+  vcDoneList: 'Already done: {list}.',
+  vcOffer: 'Put things back as they were?',
+  vcOfferUndo: 'Put back',
+  vcOfferKeep: 'Keep',
+  vcKept: 'Okay, leaving everything as it is.',
+  vcFieldBack: 'Restored the previous value of “{t}”.',
+  vcFieldUnknown: 'Not sure whether “{t}” was restored — please check.',
+  vcFieldsGone: 'I cannot restore fields on the previous page.',
+  vcManualUndo:
+    'Please remove it yourself: “{t}” — the assistant does not reverse server actions.',
+  vcUnknownPnr:
+    'Not sure whether it was sent — please check your email or the page.',
+  vcAfterPnr: 'The form has already been sent — I cannot put it back.',
+  vcUndoNothing: 'Nothing to put back.',
+  vcUndoExpired: 'More than 10 minutes have passed — please do it yourself.',
+  vcUndoUnknown:
+    'Not sure what exactly happened — please check the page yourself.',
+  vcUndoSelf:
+    'The assistant is only giving hints right now — please do it yourself.',
+  vcMemoDone: 'Done: {g}.',
+  vcMemoNotReached: 'Did not reach the goal “{g}” — please check the page.',
+  vcRepeat: 'You just did this. Do it again?',
+  vcSkills: 'I can: {list}.',
   vcStep: {
     click: 'press “{t}”',
     fill: 'type “{v}” into “{t}”',
@@ -399,6 +474,9 @@ const en: Dict = {
     degraded: '“{t}” — please press it here yourself',
     limit: 'only a few steps at a time',
     disabled: '“{t}” is unavailable right now',
+    second_pnr: '“{t}” — as a separate command after sending',
+    pin_mismatch:
+      '“{t}” — the button on the page has changed, please press it yourself',
   },
 };
 

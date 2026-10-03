@@ -8,6 +8,7 @@
  * Разбор строгий.
  */
 import { ApiError, type ApiClient } from '../kit';
+import { createMemoApi, type MemoApi } from './memo-api';
 import { arr, obj, text } from './widget-api';
 
 export const VOICE_CONTROL_STATES = ['off', 'test', 'on', 'degraded'] as const;
@@ -65,6 +66,8 @@ export const MONITOR_CODES = [
   'stoplist_live',
   'violation',
   'transition_expired',
+  // Э6-бис (д): возврат полей не удаётся — «разметка отмены устарела».
+  'undo_low',
 ] as const;
 
 export interface VoiceControlRules {
@@ -126,6 +129,13 @@ export interface VoiceMetrics {
   violations: number;
   latencyP50Ms: number | null;
   latencyP95Ms: number | null;
+  /** (д) Цепочки: со следами после сбоя, «Вернуть» принято, возвраты полей. */
+  chainsBroken: number;
+  chainsWithTraces: number;
+  undoAccepted: number;
+  undoAttempts: number;
+  undoDone: number;
+  pnrUnknown: number;
 }
 
 export interface VoiceControlSettingsView {
@@ -135,6 +145,8 @@ export interface VoiceControlSettingsView {
   available: boolean;
   reason: VoiceControlOffReason | null;
   risksVersion: string;
+  /** (д) Р-67: включено по прежней редакции рисков — баннер без перевода в `test`. */
+  risksBanner: boolean;
   stateBy: string | null;
   stateAt: string | null;
   stateReason: string | null;
@@ -156,6 +168,18 @@ export const VOICE_CONTROL_CABINET_ERROR_CODES = [
   'VOICE_CONTROL_TEST_REQUIRED',
   'VOICE_CONTROL_HOST_REQUIRED',
   'VOICE_CONTROL_TEST_NOT_FOUND',
+  // (е) мемо
+  'MEMO_NOT_FOUND',
+  'MEMO_INVALID',
+  'MEMO_CONFLICT',
+  'MEMO_LIMIT',
+  'MEMO_KEY_LOCKED',
+  'MEMO_NAME_TAKEN',
+  'MEMO_RISK_LOWERING_FORBIDDEN',
+  'MEMO_GATES',
+  'MEMO_CHECK_REQUIRED',
+  'MEMO_PHRASE_CONFLICT',
+  'MEMO_PLAN_NOT_ELIGIBLE',
 ] as const;
 export type VoiceControlCabinetErrorCode =
   (typeof VOICE_CONTROL_CABINET_ERROR_CODES)[number];
@@ -274,6 +298,12 @@ function parseMetrics(v: unknown): VoiceMetrics {
     violations: num(o.violations),
     latencyP50Ms: ms(o.latencyP50Ms),
     latencyP95Ms: ms(o.latencyP95Ms),
+    chainsBroken: Math.round(num(o.chainsBroken)),
+    chainsWithTraces: Math.round(num(o.chainsWithTraces)),
+    undoAccepted: Math.round(num(o.undoAccepted)),
+    undoAttempts: Math.round(num(o.undoAttempts)),
+    undoDone: Math.round(num(o.undoDone)),
+    pnrUnknown: Math.round(num(o.pnrUnknown)),
   };
 }
 
@@ -310,6 +340,7 @@ export function parseVoiceControlSettings(
       /^[a-z0-9-]{1,40}$/.test(o.risksVersion)
         ? o.risksVersion
         : '',
+    risksBanner: o.risksBanner === true,
     stateBy: code(o.stateBy),
     stateAt: iso(o.stateAt),
     stateReason: code(o.stateReason),
@@ -373,6 +404,8 @@ export interface VoiceControlApi {
   ): Promise<{ testId: string; url: string; expiresAt: string }>;
   tests(siteId: string): Promise<VoiceTestSummary[]>;
   test(siteId: string, testId: string): Promise<VoiceTestDetail | null>;
+  /** (е) Мемо «Сайта» — раздел «Голос → Мемо». */
+  memo: MemoApi;
 }
 
 const SEG = /^[A-Za-z0-9_-]{1,64}$/;
@@ -406,5 +439,6 @@ export function createVoiceControlApi(client: ApiClient): VoiceControlApi {
       parseTestDetail(
         await client.request('GET', `${p(id)}/tests/${seg(tid)}`)
       ),
+    memo: createMemoApi(client),
   };
 }

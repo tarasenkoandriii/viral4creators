@@ -70,6 +70,10 @@ import { createBillingApi } from './lib/billing-api';
 import { createHandoffApi } from './lib/handoff-api';
 import { createKnowledgeApi } from './lib/knowledge-api';
 import { createLearningApi } from './lib/learning-api';
+import { createAdminModeApi } from './lib/admin-mode-api';
+import { AdminModeScreen } from './screens/admin/AdminModeScreen';
+import { AdminChatScreen } from './screens/admin/AdminChatScreen';
+import { AdminModeButton } from './screens/admin/AdminModeButton';
 import { createStatsApi } from './lib/stats-api';
 import { createPersonaApi } from './lib/persona-api';
 import { createVoiceApi } from './lib/voice-api';
@@ -221,6 +225,7 @@ export function App({ startParam }: { startParam: string | null }) {
     [client]
   );
   const mediaApi = useMemo(() => createMediaApi(client), [client]);
+  const adminModeApi = useMemo(() => createAdminModeApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
       knowledge: knowledgeApi,
@@ -235,6 +240,7 @@ export function App({ startParam }: { startParam: string | null }) {
       voice: voiceApi,
       voiceControl: voiceControlApi,
       media: mediaApi,
+      adminMode: adminModeApi,
     }),
     [
       knowledgeApi,
@@ -249,6 +255,7 @@ export function App({ startParam }: { startParam: string | null }) {
       voiceApi,
       voiceControlApi,
       mediaApi,
+      adminModeApi,
     ]
   );
 
@@ -495,6 +502,8 @@ function navActive(key: string, route: Route): boolean {
       'sandbox-transfer',
       'plan',
       'test-accounts',
+      'admin-mode',
+      'admin-chat',
     ].includes(route.name);
   }
   if (key === 'members') {
@@ -813,6 +822,7 @@ function Screen({
             <SiteSetupButtons siteId={route.siteId} />
             <SiteE3Buttons siteId={route.siteId} />
             <TestAccountsButton siteId={route.siteId} />
+            <AdminModeButton siteId={route.siteId} />
           </div>
           <SiteScreen
             key={route.siteId}
@@ -884,6 +894,16 @@ function Screen({
       return <VideosScreen key={route.siteId} siteId={route.siteId} />;
     case 'test-accounts':
       return <TestAccountsScreen key={route.siteId} siteId={route.siteId} />;
+    case 'admin-mode':
+      return (
+        <AdminModeScreen
+          key={route.siteId}
+          siteId={route.siteId}
+          tab={route.tab}
+        />
+      );
+    case 'admin-chat':
+      return <AdminChatScreen key={route.siteId} siteId={route.siteId} />;
     case 'wizard':
       return <WizardScreen key={route.siteId} siteId={route.siteId} />;
     case 'plan':

@@ -264,7 +264,6 @@ for (const bad of [
   '#/sites/s1/stats/money',
   '#/sites/s1/learning/site/queue',
   '#/sites/s1/learning/site/nope',
-  '#/sites/s1/learning/admin',
   '#/sites/s1/dialogs/a.b',
   '#/sites/s1/dialogs/c1/x',
   '#/sites/s1/goals/x',
@@ -275,5 +274,31 @@ for (const bad of [
 }
 // Мастер «Научите помощника» остаётся на своём адресе.
 assert.equal(parseRoute('#/sites/s1/learning/site/onboarding').name, 'wizard');
+
+// Э7: «Админка» — кабинет режима (вкладки), «Обучение (сотрудники)» по
+// адресу ТЗ §4-тер.14 (`…/learning/admin`) и чат сотрудника (7a).
+const E7_ROUTES: Route[] = [
+  { name: 'admin-mode', siteId: 's1', tab: 'settings' },
+  { name: 'admin-mode', siteId: 's1', tab: 'connectors' },
+  { name: 'admin-mode', siteId: 's1', tab: 'log' },
+  { name: 'admin-mode', siteId: 's1', tab: 'learning' },
+  { name: 'admin-mode', siteId: 's1', tab: 'stats' },
+  { name: 'admin-chat', siteId: 's1' },
+];
+for (const r of E7_ROUTES) assert.deepEqual(parseRoute(routeHref(r)), r);
+assert.equal(routeHref(E7_ROUTES[0]), '#/sites/s1/admin-mode');
+assert.deepEqual(parseRoute('#/sites/s1/learning/admin'), {
+  name: 'admin-mode',
+  siteId: 's1',
+  tab: 'learning',
+});
+for (const bad of [
+  '#/sites/s1/admin-mode/settings',
+  '#/sites/s1/admin-mode/nope',
+  '#/sites/s1/admin-chat/x',
+  '#/sites/s1/learning/admin/queue',
+]) {
+  assert.equal(parseRoute(bad).name, 'not-found', bad);
+}
 
 console.log('router: ok');

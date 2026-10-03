@@ -78,6 +78,20 @@ const uk = {
   fragment: 'Фрагмент розмітки для розробника сайту',
   expired: 'Сесія перевірки закінчилась — отримайте нове посилання в кабінеті.',
   failed: 'Не вдалося — спробуйте ще раз.',
+  memoTitle: 'Перевірка мемо М-{n} «{name}»',
+  memoIntro:
+    'Відкривайте по черзі сторінки кроків і на кожній натисніть «Перевірити сторінку». Нічого не натискається. Сторінки: {pages}; мета — {goal}.',
+  memoCheck: 'Перевірити сторінку',
+  memoFinish: 'Завершити перевірку',
+  memoPageOk: '{path}: усе знайдено',
+  memoPageBad: '{path}: проблем — {n}',
+  memoGoalOk: 'мета на сторінці є',
+  memoGoalMissing: 'мети на сторінці не видно',
+  memoResult: {
+    pass: 'Пройдено — підтвердіть публікацію мемо в кабінеті.',
+    partial: 'Пройдено з попередженнями — подивіться звіт у кабінеті.',
+    fail: 'Не пройдено — виправте кроки мемо в кабінеті.',
+  },
   item: {
     ok: 'Готово',
     widget_missing: 'Віджет не відповів на цій сторінці',
@@ -173,6 +187,20 @@ const ru: VtDict = {
   fragment: 'Фрагмент разметки для разработчика сайта',
   expired: 'Сессия проверки закончилась — получите новую ссылку в кабинете.',
   failed: 'Не получилось — попробуйте ещё раз.',
+  memoTitle: 'Проверка мемо М-{n} «{name}»',
+  memoIntro:
+    'Открывайте по очереди страницы шагов и на каждой нажмите «Проверить страницу». Ничего не нажимается. Страницы: {pages}; цель — {goal}.',
+  memoCheck: 'Проверить страницу',
+  memoFinish: 'Завершить проверку',
+  memoPageOk: '{path}: всё найдено',
+  memoPageBad: '{path}: проблем — {n}',
+  memoGoalOk: 'цель на странице есть',
+  memoGoalMissing: 'цели на странице не видно',
+  memoResult: {
+    pass: 'Пройдено — подтвердите публикацию мемо в кабинете.',
+    partial: 'Пройдено с предупреждениями — посмотрите отчёт в кабинете.',
+    fail: 'Не пройдено — исправьте шаги мемо в кабинете.',
+  },
   item: {
     ok: 'Готово',
     widget_missing: 'Виджет не ответил на этой странице',
@@ -261,6 +289,20 @@ const en: VtDict = {
   fragment: 'Markup snippet for the site developer',
   expired: 'The check session has ended — get a new link in the dashboard.',
   failed: "Didn't work — please try again.",
+  memoTitle: 'Memo check M-{n} “{name}”',
+  memoIntro:
+    'Open the step pages one by one and press “Check this page” on each. Nothing is pressed. Pages: {pages}; goal — {goal}.',
+  memoCheck: 'Check this page',
+  memoFinish: 'Finish the check',
+  memoPageOk: '{path}: everything found',
+  memoPageBad: '{path}: problems — {n}',
+  memoGoalOk: 'the goal is on the page',
+  memoGoalMissing: 'the goal is not visible on the page',
+  memoResult: {
+    pass: 'Passed — confirm publishing the memo in the dashboard.',
+    partial: 'Passed with warnings — see the report in the dashboard.',
+    fail: 'Failed — fix the memo steps in the dashboard.',
+  },
   item: {
     ok: 'Done',
     widget_missing: "The widget didn't respond on this page",

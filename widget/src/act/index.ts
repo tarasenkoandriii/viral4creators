@@ -11,7 +11,7 @@
  */
 import type { ParentMessage } from '../shared/protocol';
 import { parseUiCommand } from '../shared/ui-plan';
-import { Runner, type ActNatives } from './exec';
+import { mem, Runner, type ActNatives } from './exec';
 import { takeSnapshot } from './snapshot';
 
 export interface ActHost {
@@ -35,6 +35,14 @@ export function start(host: ActHost): ActApi {
   let runner: Runner | null = null;
   return {
     on(raw) {
+      // (д) «Вернуть»: прежние значения полей — из памяти этой страницы;
+      // возврат — ленивый чанк своего выпуска (act.js не растёт).
+      if (raw.type == 'ui-undo')
+        return void import(
+          /* @vite-ignore */ new URL('undo.js', import.meta.url).href
+        ).then((x: { undo: (r: unknown, m: unknown, h: ActHost) => void }) =>
+          x.undo(raw, mem, host)
+        );
       const m = parseUiCommand(raw);
       if (!m) return;
       switch (m.type) {

@@ -19,6 +19,14 @@
  *     базе: сервер сам смотрит планы сессии);
  *  6. запреты без звука — результат сервера по снимку;
  *  7. отчёт: вердикт считает сервер; здесь — показать.
+ *
+ * (е) Сухой прогон мемо (ссылка «Проверить мемо» из карточки мемо в TMA,
+ * §5-бис.17 п.7): вместо семи шагов — страницы шагов мемо по одной. На
+ * каждой владелец жмёт «Перевірити сторінку» — снимок уходит на сервер, тот
+ * проверяет цели шагов по отпечатку и класс риска по живому DOM и отдаёт
+ * ПОДПИСАННЫЙ итог страницы (хранится в sessionStorage этой вкладки —
+ * переживает переходы MPA); «Завершити» — отчёт по подписанным итогам.
+ * Ничего не нажимается: переходы между страницами делает сам владелец.
  */
 import type { VoiceControlPublic } from '../shared/config';
 import type { FrameMessage } from '../shared/protocol';
@@ -102,6 +110,19 @@ export interface VtUi {
     items: Array<{ step: number; level: string; code: string }>;
     fragment: string;
   } | null;
+  /** (е) Сухой прогон мемо — страницы шагов и подписанные итоги. */
+  memo: VtMemo | null;
+}
+
+/** (е) Состояние сухого прогона мемо (без ПД: пути, номера шагов, подписи). */
+export interface VtMemo {
+  number: number;
+  name: string;
+  pages: string[];
+  goalPage: string;
+  checked: Array<{ path: string; bad: number; goal: 'ok' | 'missing' | null }>;
+  tokens: string[];
+  result: VtResult | null;
 }
 
 export function vtOff(): VtUi {
@@ -124,6 +145,7 @@ export function vtOff(): VtUi {
     safe: [],
     forbidden: [],
     result: null,
+    memo: null,
   };
 }
 
@@ -276,13 +298,109 @@ export class VoiceTestController {
             .slice(0, 30)
         : [],
       maxSteps: typeof vc.maxSteps === 'number' ? vc.maxSteps : 6,
+      memos: false,
     };
     this.host.storage('vtsess', JSON.stringify({ s: session, e: exp, cfg }));
     this.host.setSession(session);
     this.host.setVoiceControl(cfg);
+    // (е) Ссылка сухого прогона мемо — свой режим, без семи шагов мастера.
+    const mm = OBJ(r.memo);
+    if (typeof mm.number === 'number') {
+      const list = (v: unknown) =>
+        (Array.isArray(v) ? v : [])
+          .filter((x): x is string => typeof x === 'string')
+          .map((x) => x.slice(0, 120))
+          .slice(0, 12);
+      this.set({
+        ...vtOff(),
+        active: true,
+        testId,
+        step: 0,
+        memo: {
+          number: int(mm.number),
+          name: str(mm.name, 60),
+          pages: list(mm.pages),
+          goalPage: str(mm.goalPage, 120),
+          checked: [],
+          tokens: [],
+          result: null,
+        },
+      });
+      return true;
+    }
     this.set({ ...vtOff(), active: true, testId, step: 1 });
     await this.env();
     return true;
+  }
+
+  // ── (е) сухой прогон мемо ───────────────────────────────────────────────
+
+  /** «Перевірити сторінку»: снимок → сервер → подписанный итог страницы. */
+  async memoPage() {
+    const u = this.host.ui();
+    const m = u.memo;
+    if (!u.testId || !m) return;
+    this.host.setUi({ busy: true, error: null });
+    const snap = await this.host.plans.snap();
+    if (!snap) return this.host.setUi({ busy: false, error: 'failed' });
+    let r: Record<string, unknown>;
+    try {
+      r = OBJ(
+        await this.host.api(
+          'POST',
+          `/widget/v1/voice-test/${u.testId}/memo-page`,
+          { snapshot: snap }
+        )
+      );
+    } catch {
+      return this.host.setUi({ busy: false, error: 'failed' });
+    }
+    const token = str(r.token, 4000);
+    const path = str(r.path, 300);
+    const steps = Array.isArray(r.steps) ? r.steps.map(OBJ) : [];
+    const goal: 'ok' | 'missing' | null =
+      r.goal === 'ok' || r.goal === 'missing' ? r.goal : null;
+    if (!token) return this.host.setUi({ busy: false, error: 'failed' });
+    this.set({
+      busy: false,
+      memo: {
+        ...m,
+        checked: [
+          ...m.checked.filter((c) => c.path !== path),
+          { path, bad: steps.filter((x) => x.ok !== true).length, goal },
+        ].slice(-12),
+        tokens: [...m.tokens, token].slice(-20),
+      },
+    });
+  }
+
+  /** «Завершити перевірку» — вердикт считает сервер по подписанным итогам. */
+  async memoFinish() {
+    const u = this.host.ui();
+    const m = u.memo;
+    if (!u.testId || !m) return;
+    this.host.setUi({ busy: true, error: null });
+    let r: Record<string, unknown>;
+    try {
+      r = OBJ(
+        await this.host.api(
+          'POST',
+          `/widget/v1/voice-test/${u.testId}/memo-report`,
+          { tokens: m.tokens, lang: this.host.lang() }
+        )
+      );
+    } catch {
+      return this.host.setUi({ busy: false, error: 'failed' });
+    }
+    const res = r.result;
+    this.set({
+      busy: false,
+      memo: {
+        ...m,
+        result:
+          res === 'pass' || res === 'partial' || res === 'fail' ? res : 'fail',
+      },
+    });
   }
 
   /** Новая страница (MPA) во время мастера — продолжить с того же шага. */

@@ -24,6 +24,17 @@
  *    сервер — без него `done` не примут), остальные («В кошик», поле) —
  *    могли уже выполниться: «проверьте сами», шаг `skipped/interrupted`,
  *    план стоп.
+ *  - (д) Цепочки (§5-бис.15; Р-63…Р-65): строка плана — шаги с пометками
+ *    ↺ вернётся / ⇄ можно отменить / ⚠ после этого отменить нельзя / ✋
+ *    нажмёте сами; точка невозврата после перехода или 60 с — отдельная
+ *    карточка «после этого отменить нельзя»; при сбое и стопе — перечень
+ *    сделанного и «Вернуть / Оставить» (без ответа 60 с — «оставлено»);
+ *    «отмени последнее» — та же вкладка (sessionStorage), прямой путь без
+ *    модели. Поля возвращает загрузчик из памяти страницы (`ui-undo`),
+ *    сюда приходят только итоги по номерам. Слов «откатил/отменил» нет.
+ *  - (е) Мемо (§5-бис.17): карточка — имя и цель мемо, «повторить ещё
+ *    раз?» для того же мемо в 60 с, «Готово: <цель>» только при
+ *    `goalStatus = reached`; «що ти вмієш» — до 5 имён (без номеров).
  */
 import type { VoiceControlPublic } from '../shared/config';
 import type { FrameMessage, ParentMessage } from '../shared/protocol';
@@ -31,6 +42,8 @@ import {
   looksLikeCommand,
   parseSteps,
   replyKind,
+  skillsPhrase,
+  undoPhrase,
   type UiStep,
   type UiStepResult,
 } from '../shared/ui-plan';
@@ -52,17 +65,59 @@ export type UiPlanPhase =
   | 'running'
   | 'done'
   | 'stopped'
-  | 'failed';
+  | 'failed'
+  /** (д) «Вернуть как было? [Вернуть] [Оставить]» после сбоя/стопа. */
+  | 'offer';
+
+/** (д) Пометка шага (§5-бис.15 п.5) — класс обратимости или «нажмёте сами». */
+export type UiMark = 'none' | 'nav' | 'local' | 'comp' | 'irrev' | 'manual';
+export const MARK_SYMBOL: Record<UiMark, string> = {
+  none: '',
+  nav: '',
+  local: '↺',
+  comp: '⇄',
+  irrev: '⚠',
+  manual: '✋',
+};
+
+/**
+ * (д) Решения владельца в iframe (повтор `CHAIN_DECISIONS` сервера, сверка —
+ * scripts/ui-plan.test.ts): «Вернуть/Оставить» без ответа 60 с — «оставлено».
+ */
+export const OFFER_TIMEOUT_MS = 60_000;
+/** Ответ загрузчика о возврате полей — не дольше (чанк undo.js не загрузился). */
+const UNDO_TIMEOUT_MS = 5_000;
 
 export interface UiPlanUi {
   phase: UiPlanPhase;
   planId: string | null;
   /** Шаги «с подтверждением» — что покажет карточка (видимый текст и значение). */
-  confirmSteps: Array<{ kind: string; text: string; value: string | null }>;
+  confirmSteps: Array<{
+    kind: string;
+    text: string;
+    value: string | null;
+    mark?: UiMark;
+  }>;
+  /** (д) Карточка прямо перед точкой невозврата: «после этого отменить нельзя». */
+  pnrCard?: boolean;
+  /** (е) План мемо: имя и цель (номера посетителю не показываются). */
+  memo?: { name: string; goal: string } | null;
+  /** (е) «Повторить ещё раз?» — то же мемо и слоты в 60 с. */
+  repeat?: boolean;
+  /** (д) «Вернуть / Оставить»: что вернётся (поля) и что убрать самим. */
+  offer?: { fields: string[]; manual: string[] } | null;
 }
 
 export function uiPlanOff(): UiPlanUi {
-  return { phase: 'idle', planId: null, confirmSteps: [] };
+  return {
+    phase: 'idle',
+    planId: null,
+    confirmSteps: [],
+    pnrCard: false,
+    memo: null,
+    repeat: false,
+    offer: null,
+  };
 }
 
 export interface PlanView {
@@ -75,7 +130,26 @@ export interface PlanView {
   notes: Array<{ code: string; target: string | null }>;
   needsConfirm: boolean;
   stepsHash: string | null;
+  /** (д) Пометки по шагам; ТН; карточка второго «Да». */
+  marks: UiMark[];
+  pnr: number | null;
+  pnrConfirm: boolean;
+  /** (е) Мемо: имя и цель; карточка «повторить?»; итог цели. */
+  memo: { name: string; goal: string } | null;
+  repeat: boolean;
+  goalStatus: string | null;
+  /** (д) Что осталось на сайте после плана. */
+  chainStatus: string | null;
 }
+
+const MARKS: readonly string[] = [
+  'none',
+  'nav',
+  'local',
+  'comp',
+  'irrev',
+  'manual',
+];
 
 /** Строгий разбор ответа маршрутов плана. */
 export function parsePlanView(v: unknown): PlanView | null {
@@ -100,6 +174,14 @@ export function parsePlanView(v: unknown): PlanView | null {
         .slice(0, 20)
     : [];
   const cur = o.currentStep;
+  const memo =
+    o.memo && typeof o.memo === 'object' && !Array.isArray(o.memo)
+      ? (o.memo as Record<string, unknown>)
+      : null;
+  const short = (x: unknown, max: number) =>
+    typeof x === 'string' ? x.slice(0, max) : '';
+  const word = (x: unknown) =>
+    typeof x === 'string' && /^[a-z_]{1,24}$/.test(x) ? x : null;
   return {
     kind: o.kind === 'not_command' ? 'not_command' : 'plan',
     planId: id(o.planId),
@@ -122,6 +204,55 @@ export function parsePlanView(v: unknown): PlanView | null {
       typeof o.stepsHash === 'string' &&
       /^[A-Za-z0-9_-]{1,64}$/.test(o.stepsHash)
         ? o.stepsHash
+        : null,
+    marks: steps.map((_s, i) => {
+      const m = Array.isArray(o.marks) ? o.marks[i] : null;
+      return (MARKS.indexOf(m as string) >= 0 ? m : 'irrev') as UiMark;
+    }),
+    pnr:
+      typeof o.pnr === 'number' &&
+      Number.isInteger(o.pnr) &&
+      o.pnr >= 0 &&
+      o.pnr < steps.length
+        ? o.pnr
+        : null,
+    pnrConfirm: o.pnrConfirm === true,
+    memo: memo
+      ? { name: short(memo.name, 60), goal: short(memo.goal, 160) }
+      : null,
+    repeat: o.repeat === true,
+    goalStatus: word(o.goalStatus),
+    chainStatus: word(o.chainStatus),
+  };
+}
+
+/** (д) Ответ маршрута возврата (`/undo`). */
+interface UndoView {
+  fields: Array<{ i: number; text: string }>;
+  manual: Array<{ i: number; text: string }>;
+  refused: string | null;
+}
+
+function parseUndoView(v: unknown): UndoView | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const list = (x: unknown) =>
+    (Array.isArray(x) ? x : [])
+      .filter(
+        (y): y is Record<string, unknown> =>
+          !!y && typeof y === 'object' && typeof y.i === 'number'
+      )
+      .slice(0, 3)
+      .map((y) => ({
+        i: y.i as number,
+        text: typeof y.text === 'string' ? y.text.slice(0, 81) : '',
+      }));
+  return {
+    fields: list(o.fields),
+    manual: list(o.manual),
+    refused:
+      typeof o.refused === 'string' && /^[a-z_]{1,20}$/.test(o.refused)
+        ? o.refused
         : null,
   };
 }
@@ -169,6 +300,15 @@ export class UiPlanController {
   private plan: PlanView | null = null;
   private queue: Promise<void> = Promise.resolve();
   private building: Promise<void> = Promise.resolve();
+  /** (д) «Вернуть / Оставить»: план и таймер «оставлено» (60 с). */
+  private offerPlan: string | null = null;
+  private offerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** (д) Ждём итог возврата полей от загрузчика. */
+  private undoWait: {
+    planId: string;
+    fields: Array<{ i: number; text: string }>;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
 
   constructor(private readonly host: UiPlanHost) {}
 
@@ -179,11 +319,29 @@ export class UiPlanController {
   /** Идёт ли план (для голоса: «стоп» и пауза, а не новый вопрос). */
   active(): boolean {
     const p = this.host.ui().phase;
-    return p === 'running' || p === 'confirm' || p === 'thinking';
+    return (
+      p === 'running' || p === 'confirm' || p === 'thinking' || p === 'offer'
+    );
   }
 
   isCommand(text: string): boolean {
     return looksLikeCommand(text);
+  }
+
+  /**
+   * Текст — для плана, хотя не начинается с глагола-команды: «отмени
+   * последнее», «що ти вмієш», и (е) любой текст, если у сайта есть мемо
+   * (сервер сам скажет «не команда» — тогда это вопрос в чат).
+   */
+  wants(text: string): boolean {
+    const cfg = this.host.cfg();
+    return (
+      !!cfg &&
+      (looksLikeCommand(text) ||
+        undoPhrase(text) ||
+        skillsPhrase(text) ||
+        cfg.memos === true)
+    );
   }
 
   // ── команда ─────────────────────────────────────────────────────────────
@@ -197,10 +355,25 @@ export class UiPlanController {
     source: 'voice' | 'typed',
     ticket: string | null
   ): Promise<boolean> {
-    if (!this.available() || !looksLikeCommand(text)) return false;
+    if (!this.available()) return false;
+    // (д) «Отмени последнее / верни как было / скасуй» — последняя цепочка
+    // ЭТОЙ вкладки, прямой путь без модели (единиц не тратит, Р-65).
+    if (undoPhrase(text)) {
+      const last = this.host.storage('session', 'last');
+      if (!last) return false;
+      this.host.feed('visitor', text, source === 'voice');
+      this.closeOffer();
+      await this.undoRun(last, 'command');
+      return true;
+    }
+    // (е) «Що ти вмієш?» — до 5 имён мемо (В-74); пусто — обычный вопрос.
+    if (skillsPhrase(text)) return this.skills(text, source);
+    if (!looksLikeCommand(text) && this.host.cfg()?.memos !== true)
+      return false;
     // Одна команда за раз: новая ждёт, пока прошлая построится (снимок,
     // план); идущий план новая команда останавливает.
     await this.building;
+    this.closeOffer();
     if (
       this.host.ui().phase === 'running' ||
       this.host.ui().phase === 'confirm'
@@ -355,6 +528,8 @@ export class UiPlanController {
       return true;
     }
     this.host.storage('session', 'plan', v.planId);
+    // (д) «Отмени последнее» — последняя цепочка этой вкладки.
+    this.host.storage('session', 'last', v.planId);
     if (v.status === 'proposed') {
       this.showCard(v);
       return true;
@@ -363,19 +538,40 @@ export class UiPlanController {
     return true;
   }
 
-  /** «Открою „Доставка“, выберу „Нова Пошта“» + чего не сделаю и почему. */
+  /** Шаг словами: «натисну „В кошик“». */
+  private stepText(s: UiStep): string {
+    return fmt(this.host.t().vcStep[s.kind], {
+      t: (s.target && s.target.text) || '',
+      v: s.value || '',
+    });
+  }
+
+  /**
+   * «Открою „Доставка“, выберу „Нова Пошта“» + чего не сделаю и почему.
+   * (д) Цепочка (> 1 шага с эффектом или точка невозврата) — номерами с
+   * пометками ↺/⇄/⚠/✋ (§5-бис.15 п.5); (е) мемо — имя и цель впереди.
+   */
   summary(v: PlanView): string {
     const t = this.host.t();
-    const parts = v.steps
+    const marks = v.marks || [];
+    const chain =
+      v.pnr !== null ||
+      marks.filter((m) => m === 'local' || m === 'comp' || m === 'irrev')
+        .length > 1;
+    const shown = v.steps
+      .map((s, i) => ({ s, m: marks[i] || 'irrev' }))
       .filter(
-        (s) => s.risk !== 'manual' && s.risk !== 'never' && s.kind !== 'say'
-      )
-      .map((s) =>
-        fmt(t.vcStep[s.kind], {
-          t: (s.target && s.target.text) || '',
-          v: s.value || '',
-        })
+        ({ s }) =>
+          s.kind !== 'say' &&
+          s.kind !== 'wait' &&
+          (chain || (s.risk !== 'manual' && s.risk !== 'never'))
       );
+    const parts = shown.map(({ s, m }, n) => {
+      const txt = this.stepText(s);
+      if (!chain) return txt;
+      const sym = MARK_SYMBOL[m];
+      return `${n + 1}${sym ? ' ' + sym : ''} ${txt}${m === 'irrev' ? ' ' + t.vcPnrTail : ''}`;
+    });
     const says = v.steps
       .filter((s) => s.kind === 'say' && s.say)
       .map((s) => s.say as string);
@@ -385,23 +581,37 @@ export class UiPlanController {
       })
     );
     const out: string[] = [];
-    if (parts.length) out.push(fmt(t.vcPlan, { steps: parts.join(', ') }));
+    if (v.memo && v.memo.name)
+      out.push(
+        v.memo.goal ? `«${v.memo.name}» — ${v.memo.goal}.` : `«${v.memo.name}».`
+      );
+    if (parts.length)
+      out.push(fmt(t.vcPlan, { steps: parts.join(chain ? ' · ' : ', ') }));
     out.push(...says);
     if (why.length) out.push(why.join('; ') + '.');
     return out.join(' ');
   }
 
   private showCard(v: PlanView) {
+    const marks = v.marks || [];
+    // Второе «Да» прямо перед точкой невозврата — только этот шаг.
+    const steps = v.steps
+      .map((s, i) => ({ s, i }))
+      .filter(({ s, i }) =>
+        v.pnrConfirm ? i === v.pnr : s.risk === 'confirm' && i >= v.currentStep
+      );
     this.host.setUi({
       phase: 'confirm',
       planId: v.planId,
-      confirmSteps: v.steps
-        .filter((s) => s.risk === 'confirm')
-        .map((s) => ({
-          kind: s.kind,
-          text: (s.target && s.target.text) || '',
-          value: s.value,
-        })),
+      pnrCard: v.pnrConfirm,
+      memo: v.memo,
+      repeat: v.repeat,
+      confirmSteps: steps.map(({ s, i }) => ({
+        kind: s.kind,
+        text: (s.target && s.target.text) || '',
+        value: s.value,
+        mark: marks[i] || 'irrev',
+      })),
     });
   }
 
@@ -472,9 +682,16 @@ export class UiPlanController {
   onParent(
     m: Extract<
       ParentMessage,
-      { type: 'ui-snapshot' | 'ui-step' | 'ui-stopped' | 'ui-need' }
+      {
+        type:
+          'ui-snapshot' | 'ui-step' | 'ui-stopped' | 'ui-need' | 'ui-undone';
+      }
     >
   ) {
+    if (m.type === 'ui-undone') {
+      void this.undoDone(m.planId, m.results);
+      return;
+    }
     if (m.type === 'ui-snapshot') {
       const w = this.snapWait;
       // Только ответ на СВОЙ запрос (одноразовый rid); чужие — мимо.
@@ -489,7 +706,9 @@ export class UiPlanController {
       return;
     if (m.type === 'ui-stopped') {
       this.queue = this.queue.then(() =>
-        this.post('stop', { by: m.by }).then(() => undefined)
+        this.post('stop', { by: m.by }).then((r) =>
+          this.traces(r ? { ...v, ...r, marks: v.marks, memo: v.memo } : v)
+        )
       );
       return this.finish('stopped');
     }
@@ -549,7 +768,17 @@ export class UiPlanController {
       steps: r.steps,
       currentStep: r.currentStep,
       status: r.status,
+      goalStatus: r.goalStatus,
+      chainStatus: r.chainStatus,
+      pnrConfirm: r.pnrConfirm,
     };
+    if (result === 'dispatched' && r.status === 'proposed') {
+      // (д) Р-60: точка невозврата после перехода/60 с — исполнитель
+      // останавливается ДО клика, отдельное «Да» «после этого отменить нельзя».
+      this.host.toParent({ type: 'ui-stop', planId: v.planId });
+      this.host.listen(false);
+      return this.showCard(this.plan);
+    }
     if (result === 'dispatched') {
       this.host.toParent({ type: 'ui-ack', planId: v.planId, index });
       return;
@@ -561,8 +790,10 @@ export class UiPlanController {
         'assistant',
         fmt(this.host.t().vcInterrupted, { t: text })
       );
-      return this.finish('failed');
+      this.finish('failed');
+      return this.traces(this.plan);
     }
+    const goal = this.plan.memo && this.plan.memo.goal;
     if (result === 'manual' || result === 'failed' || result === 'skipped') {
       const why =
         step && (step.risk === 'manual' || step.risk === 'never') && step.reason
@@ -570,16 +801,232 @@ export class UiPlanController {
               t: text,
             })
           : '';
+      const goalStep = step && step.kind === 'wait' && !!goal;
       this.host.feed(
         'assistant',
-        why ? why + '.' : fmt(this.host.t().vcSelf, { t: text })
+        goalStep
+          ? fmt(this.host.t().vcMemoNotReached, { g: goal || '' })
+          : why
+            ? why + '.'
+            : fmt(this.host.t().vcSelf, { t: text })
       );
-      return this.finish(result === 'manual' ? 'done' : 'failed');
+      this.finish(result === 'manual' ? 'done' : 'failed');
+      return this.traces(this.plan);
     }
     if (r.status === 'done') {
-      this.host.feed('assistant', this.host.t().vcDone);
+      this.host.feed(
+        'assistant',
+        r.goalStatus === 'reached' && goal
+          ? fmt(this.host.t().vcMemoDone, { g: goal })
+          : this.host.t().vcDone
+      );
       this.finish('done');
     }
+  }
+
+  // ── (д) что уже сделано и «Вернуть / Оставить» ─────────────────────────
+
+  /**
+   * После сбоя/стопа: перечень сделанного с пометками (§5-бис.15 п.10) и,
+   * если есть что вернуть (поля, корзина), — «Вернуть как было?» (В-66).
+   * Сбой на точке невозврата после клика — «не знаю, отправилось ли».
+   */
+  private traces(v: PlanView | null) {
+    if (!v || !v.planId) return;
+    const t = this.host.t();
+    const marks = v.marks || [];
+    const done = v.steps
+      .map((s, i) => ({ s, i, m: marks[i] || 'irrev' }))
+      .filter(
+        ({ s, m }) =>
+          s.state === 'done' && (m === 'local' || m === 'comp' || m === 'irrev')
+      );
+    const pnrUnknown =
+      v.pnr !== null &&
+      (v.steps[v.pnr].state === 'dispatched' ||
+        v.steps[v.pnr].state === 'skipped' ||
+        (v.steps[v.pnr].state === 'failed' && v.chainStatus === 'unknown'));
+    if (pnrUnknown) this.host.feed('assistant', t.vcUnknownPnr);
+    if (!done.length) return;
+    this.host.feed(
+      'assistant',
+      fmt(t.vcDoneList, {
+        list: done
+          .map(({ s, m }) => `${MARK_SYMBOL[m]} ${this.stepText(s)}`.trim())
+          .join(', '),
+      })
+    );
+    // После выполненной ТН (форма отправлена) возвращать нечего (п.4 п.4).
+    if (done.some(({ m }) => m === 'irrev')) return;
+    const fields = done
+      .filter(
+        ({ s }) =>
+          s.kind === 'fill' || s.kind === 'select' || s.kind === 'check'
+      )
+      .map(({ s }) => (s.target && s.target.text) || '');
+    const manual = done
+      .filter(({ m, s }) => m === 'comp' && s.kind === 'click')
+      .map(({ s }) => (s.target && s.target.text) || '');
+    if (!fields.length && !manual.length) return;
+    this.offerPlan = v.planId;
+    this.host.setUi({ phase: 'offer', offer: { fields, manual } });
+    if (this.offerTimer) clearTimeout(this.offerTimer);
+    this.offerTimer = setTimeout(() => {
+      // Без ответа 60 с — «оставлено» (В-66).
+      if (this.host.ui().phase === 'offer') void this.offerAnswer(false);
+    }, OFFER_TIMEOUT_MS);
+  }
+
+  private closeOffer() {
+    if (this.offerTimer) clearTimeout(this.offerTimer);
+    this.offerTimer = null;
+    if (this.host.ui().phase === 'offer')
+      this.host.setUi({ phase: 'idle', offer: null });
+    this.offerPlan = null;
+  }
+
+  /** «Вернуть» / «Оставить» (кнопкой или голосом «так/ні»). */
+  async offerAnswer(yes: boolean) {
+    const planId = this.offerPlan;
+    if (!planId || this.host.ui().phase !== 'offer') return;
+    this.closeOffer();
+    if (!yes) {
+      try {
+        await this.host.api('POST', `/widget/v1/ui-plan/${planId}/undo`, {
+          by: 'offer',
+          decision: 'keep',
+        });
+      } catch {
+        /* «оставлено» и так — статус цепочки уже kept */
+      }
+      this.host.feed('assistant', this.host.t().vcKept);
+      return;
+    }
+    await this.undoRun(planId, 'offer');
+  }
+
+  /**
+   * Возврат: сервер говорит, ЧТО можно вернуть (поля этой страницы —
+   * номерами шагов, серверное — «уберите сами»), загрузчик возвращает поля
+   * из памяти страницы и присылает итог `ui-undone`.
+   */
+  private async undoRun(planId: string, by: 'offer' | 'command') {
+    const t = this.host.t();
+    let u: UndoView | null = null;
+    try {
+      u = parseUndoView(
+        await this.host.api('POST', `/widget/v1/ui-plan/${planId}/undo`, {
+          by,
+        })
+      );
+    } catch {
+      u = null;
+    }
+    if (!u) {
+      this.host.feed('assistant', t.vcUndoNothing);
+      return;
+    }
+    const refused: Record<string, string> = {
+      after_pnr: t.vcAfterPnr,
+      expired: t.vcUndoExpired,
+      nothing: t.vcUndoNothing,
+      unknown: t.vcUndoUnknown,
+      degraded: t.vcUndoSelf,
+    };
+    if (u.refused) {
+      this.host.feed('assistant', refused[u.refused] || t.vcUndoNothing);
+      return;
+    }
+    if (u.manual.length)
+      this.host.feed(
+        'assistant',
+        fmt(t.vcManualUndo, { t: u.manual.map((x) => x.text).join('», «') })
+      );
+    if (!u.fields.length) return;
+    if (this.undoWait) clearTimeout(this.undoWait.timer);
+    this.undoWait = {
+      planId,
+      fields: u.fields,
+      timer: setTimeout(() => {
+        // Загрузчик не ответил (чанк не загрузился/страница сменилась) —
+        // вернуть поля не можем: так и скажем и запишем итог.
+        const w = this.undoWait;
+        if (!w || w.planId !== planId) return;
+        void this.undoDone(
+          planId,
+          w.fields.map((f) => ({ i: f.i, result: 'gone' as const }))
+        );
+      }, UNDO_TIMEOUT_MS),
+    };
+    this.host.toParent({
+      type: 'ui-undo',
+      planId,
+      idx: u.fields.map((f) => f.i),
+    });
+  }
+
+  private async undoDone(
+    planId: string,
+    results: Array<{
+      i: number;
+      result: 'done' | 'failed' | 'unknown' | 'gone';
+    }>
+  ) {
+    const w = this.undoWait;
+    if (!w || w.planId !== planId) return;
+    clearTimeout(w.timer);
+    this.undoWait = null;
+    const t = this.host.t();
+    const text = (i: number) =>
+      (w.fields.find((f) => f.i === i) || { text: '' }).text;
+    const lines: string[] = [];
+    if (results.some((r) => r.result === 'gone')) lines.push(t.vcFieldsGone);
+    for (const r of results) {
+      if (r.result === 'done') lines.push(fmt(t.vcFieldBack, { t: text(r.i) }));
+      else if (r.result === 'unknown')
+        lines.push(fmt(t.vcFieldUnknown, { t: text(r.i) }));
+      else if (r.result === 'failed')
+        lines.push(fmt(t.vcSelf, { t: text(r.i) }));
+    }
+    if (lines.length) this.host.feed('assistant', lines.join(' '));
+    try {
+      await this.host.api('POST', `/widget/v1/ui-plan/${planId}/undo-report`, {
+        results,
+      });
+    } catch {
+      /* журнал — справочно */
+    }
+  }
+
+  /** (е) «Що ти вмієш?» — до 5 имён мемо; пусто — обычный вопрос в чат. */
+  private async skills(
+    text: string,
+    source: 'voice' | 'typed'
+  ): Promise<boolean> {
+    let names: string[] = [];
+    try {
+      const r = (await this.host.api(
+        'GET',
+        `/widget/v1/ui-plan/skills?lang=${this.host.lang()}`
+      )) as { names?: unknown } | null;
+      names = Array.isArray(r && r.names)
+        ? (r!.names as unknown[])
+            .filter((x): x is string => typeof x === 'string')
+            .map((x) => x.slice(0, 60))
+            .slice(0, 5)
+        : [];
+    } catch {
+      names = [];
+    }
+    if (!names.length) return false;
+    this.host.feed('visitor', text, source === 'voice');
+    this.host.feed(
+      'assistant',
+      fmt(this.host.t().vcSkills, {
+        list: names.map((n) => `«${n}»`).join(', '),
+      })
+    );
+    return true;
   }
 
   /** SPA: шаги «после перехода» — новый снимок, проверка сервером, продолжение. */
@@ -619,8 +1066,13 @@ export class UiPlanController {
     const p = this.host.ui().phase;
     if (p !== 'running' && p !== 'confirm' && p !== 'thinking') return;
     this.host.toParent({ type: 'ui-stop', planId: v.planId });
+    const running = p === 'running';
     this.queue = this.queue.then(() =>
-      this.post('stop', { by }).then(() => undefined)
+      this.post('stop', { by }).then((r) => {
+        // (д) Стоп посреди цепочки — перечень сделанного и «Вернуть?».
+        if (running)
+          this.traces(r ? { ...v, ...r, marks: v.marks, memo: v.memo } : v);
+      })
     );
     this.host.feed('assistant', this.host.t().vcStopped);
     this.finish('stopped');
@@ -638,6 +1090,16 @@ export class UiPlanController {
    */
   async planSpeech(text: string, ticket: string | null): Promise<boolean> {
     const phase = this.host.ui().phase;
+    if (phase === 'offer') {
+      // «Вернуть как было?» — «так»/«ні» по тому же закрытому списку.
+      const r = replyKind(text);
+      if (r === 'yes' || r === 'no' || r === 'stop') {
+        await this.offerAnswer(r === 'yes');
+        return true;
+      }
+      this.closeOffer();
+      return false;
+    }
     if (phase === 'confirm') {
       await this.confirmVoice(text, ticket);
       return true;
@@ -659,7 +1121,12 @@ export class UiPlanController {
   private finish(phase: 'done' | 'stopped' | 'failed') {
     this.host.listen(false);
     this.host.storage('session', 'plan', null);
-    this.host.setUi({ phase, confirmSteps: [] });
+    this.host.setUi({
+      phase,
+      confirmSteps: [],
+      pnrCard: false,
+      repeat: false,
+    });
   }
 
   // ── продолжение после перехода (§4-бис.5) ──────────────────────────────

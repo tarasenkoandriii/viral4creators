@@ -45,6 +45,7 @@ import {
   type ModelStep,
 } from './ui-plan-mock';
 import { vcStandRoute } from './vc-stands';
+import { adminReset, adminRoute, isAdminHost } from './admin-mock';
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1386,6 +1387,12 @@ async function widgetServer(
 ) {
   const url = new URL(req.url || '/', WIDGET);
   const p = url.pathname;
+  // Э7: сброс мока «Админки» (admin-mock.ts) — до общего control.
+  if (p === '/__mock/admin-reset') {
+    adminReset();
+    res.writeHead(204);
+    return res.end();
+  }
   if (p.startsWith('/__mock/')) return control(req, res, p);
   if (p === '/evil-frame.html') {
     // Страница ТОГО ЖЕ origin виджета, но не наш iframe: подделка source.
@@ -1424,6 +1431,10 @@ async function widgetServer(
     });
     return res.end(fs.readFileSync(file));
   }
+  // Э7: origin «Админки» (127.0.0.1:<порт>) — только /wa/v1/frame и
+  // /assist-admin/v1/* (как `has host` в vercel.json); публичное — 404.
+  if (isAdminHost(req))
+    return adminRoute(req, res, url, `http://*.localhost:${SITE_PORT}`);
   if (BACKEND && (p.startsWith('/widget/v1/') || p.startsWith('/w/v1/')))
     return proxy(req, res);
   if (p === '/w/v1/frame') {
@@ -1561,6 +1572,8 @@ export interface StandSpec {
   long?: boolean;
   /** Без тега загрузчика (замер «без виджета»). */
   noWidget?: boolean;
+  /** Э7: origin тега загрузчика (режим «Админка» — `http://127.0.0.1:<порт>`). */
+  loaderOrigin?: string;
   /** iframe виджета напрямую, без загрузчика (проверка frame-ancestors). */
   directFrame?: boolean;
   /** Чужой iframe (другой origin), который шлёт поддельные сообщения. */
@@ -1665,7 +1678,7 @@ function standHtml(spec: StandSpec, host: string): string {
   if (spec.goalsKit) parts.push(`<script src="/snippets/goals.js"></script>`);
   if (!spec.noWidget && !spec.directFrame)
     parts.push(
-      `<script async src="${WIDGET}/v1/loader.js" data-site="${esc(spec.pk)}"${attrs}></script>`
+      `<script async src="${spec.loaderOrigin && /^http:\/\/127\.0\.0\.1:\d+$/.test(spec.loaderOrigin) ? spec.loaderOrigin : WIDGET}/v1/loader.js" data-site="${esc(spec.pk)}"${attrs}></script>`
     );
   parts.push(`</body></html>`);
   return parts.join('\n');

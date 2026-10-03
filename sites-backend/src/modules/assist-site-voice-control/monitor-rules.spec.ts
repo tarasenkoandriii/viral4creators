@@ -6,6 +6,7 @@
 import {
   computeMetrics,
   decideCanary,
+  decideMemoReview,
   decideSite,
   MONITOR_THRESHOLDS,
   platformTrip,
@@ -277,5 +278,116 @@ describe('аудит (г) 03.10: накрутка метрик и рубильн
     expect(platformTrip([{ accountId: 'a' }, { accountId: 'a' }])).toBe(false);
     expect(platformTrip([{ accountId: 'a' }])).toBe(false);
     expect(platformTrip([{ accountId: 'a' }, { accountId: 'b' }])).toBe(true);
+  });
+});
+
+describe('(е) мемо «требует проверки» (§5-бис.17 п.8; приёмка п.8–9)', () => {
+  it('needs_review: один посетитель 10 раз — нет; 3 разных посетителя и IP — да; успех цели < 60% на ≥ 10 — да; устарело на одном виде — только этот вид', () => {
+    const T = { minVisitors: 3, goalMinRuns: 10, goalBelow: 0.6 };
+    const one = new Map([
+      [1, { visitors: new Set(['v1']), ips: new Set(['i1']), pin: true }],
+    ]);
+    expect(
+      decideMemoReview({
+        view: 'any',
+        staleViews: [],
+        stepFailures: one,
+        goalRuns: 10,
+        goalReached: 9,
+        thresholds: T,
+      }).review,
+    ).toBeNull();
+    const three = new Map([
+      [
+        1,
+        {
+          visitors: new Set(['v1', 'v2', 'v3']),
+          ips: new Set(['i1', 'i2', 'i3']),
+          pin: true,
+        },
+      ],
+    ]);
+    expect(
+      decideMemoReview({
+        view: 'any',
+        staleViews: [],
+        stepFailures: three,
+        goalRuns: 0,
+        goalReached: 0,
+        thresholds: T,
+      }).review,
+    ).toEqual({ code: 'pin_mismatch', step: 1 });
+    expect(
+      decideMemoReview({
+        view: 'any',
+        staleViews: [],
+        stepFailures: new Map(),
+        goalRuns: 10,
+        goalReached: 5,
+        thresholds: T,
+      }).review,
+    ).toEqual({ code: 'goal_low', step: null });
+    const d = decideMemoReview({
+      view: 'any',
+      staleViews: ['mobile'],
+      stepFailures: new Map(),
+      goalRuns: 0,
+      goalReached: 0,
+      thresholds: T,
+    });
+    expect(d).toEqual({ review: null, staleViews: ['mobile'] });
+    expect(
+      decideMemoReview({
+        view: 'mobile',
+        staleViews: ['mobile'],
+        stepFailures: new Map(),
+        goalRuns: 0,
+        goalReached: 0,
+        thresholds: T,
+      }).review,
+    ).toEqual({ code: 'stale', step: null });
+  });
+});
+
+describe('(д) метрики цепочек (§5-бис.15 п.12)', () => {
+  it('следы после сбоя, «Вернуть»/«Оставить», успешность возврата; < 80% на ≥ 10 — тревога undo_low (без деградации)', () => {
+    const plans: MonitorPlanRow[] = Array.from({ length: 12 }, (_, i) => ({
+      id: `p${i}`,
+      visitorId: `v${i}`,
+      status: 'failed',
+      confirmedBy: 'button',
+      createdAt: at(0),
+      release: null,
+      steps: [{ risk: 'confirm', state: 'failed', undo: 'local', fx: true }],
+      chainStatus: i < 2 ? 'kept' : 'partially_compensated',
+    }));
+    const logs: MonitorLogRow[] = plans.flatMap((p, i) => [
+      {
+        planId: p.id,
+        stepIndex: 0,
+        action: 'undo',
+        result: 'proposed',
+        reason: null,
+        createdAt: at(1000),
+      },
+      {
+        planId: p.id,
+        stepIndex: 0,
+        action: 'undo',
+        result: i < 5 ? 'done' : 'failed',
+        reason: null,
+        createdAt: at(2000),
+      },
+    ]);
+    const m = computeMetrics(plans, logs);
+    expect(m.chainsBroken).toBe(12);
+    expect(m.chainsWithTraces).toBe(12);
+    expect(m.undoAccepted).toBe(12);
+    expect(m.undoAttempts).toBe(12);
+    expect(m.undoDone).toBe(5);
+    expect(m.pnrUnknown).toBe(0);
+    const d = decideSite(m, 'on');
+    expect(d.codes).toContain('undo_low');
+    expect(d.action).not.toBe('degrade');
   });
 });

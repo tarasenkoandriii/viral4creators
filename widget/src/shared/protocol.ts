@@ -124,6 +124,20 @@ export type ParentMessage =
    * проверит её тем же кодом, затем — новый `ui-run` с этого шага.
    */
   | { type: 'ui-need'; planId: string; index: number }
+  /**
+   * Э6-бис (д): итог возврата полей чанком undo.js — по номерам шагов, БЕЗ
+   * значений (прежние значения не покидают страницу, §5-бис.15 п.7).
+   * Подделать может скрипт страницы — последствие: статус цепочки своего
+   * же посетителя в журнале.
+   */
+  | {
+      type: 'ui-undone';
+      planId: string;
+      results: Array<{
+        i: number;
+        result: 'done' | 'failed' | 'unknown' | 'gone';
+      }>;
+    }
   /** Э6-бис: человек взял управление (Esc, свой клик/клавиша, «Стоп» на странице). */
   | {
       type: 'ui-stopped';
@@ -183,6 +197,8 @@ export type FrameMessage =
    * записан — нажимай» (`ui-ack`), стоп, пауза детектора речи.
    */
   | UiCommand
+  /** Э6-бис (д): вернуть поля этих шагов из памяти страницы (чанк undo.js). */
+  | { type: 'ui-undo'; planId: string; idx: number[] }
   /**
    * Э6-бис (г): мастер проверки Т-2 (только тестовая сессия владельца) —
    * окружение (CSP, Trusted Types, чанки), разметка страницы и два списка
@@ -491,6 +507,34 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
         ? { type: 'vt-result', rid: m.rid, op: m.op, data: m.data }
         : null;
     }
+    case 'ui-undone': {
+      if (
+        typeof m.planId !== 'string' ||
+        !PLAN_ID.test(m.planId) ||
+        !Array.isArray(m.results) ||
+        m.results.length > 3
+      )
+        return null;
+      const results: Array<{
+        i: number;
+        result: 'done' | 'failed' | 'unknown' | 'gone';
+      }> = [];
+      for (const x of m.results) {
+        if (!isObj(x)) return null;
+        const i = x.i;
+        const r = x.result;
+        if (
+          typeof i !== 'number' ||
+          !Number.isInteger(i) ||
+          i < 0 ||
+          i > 20 ||
+          (r !== 'done' && r !== 'failed' && r !== 'unknown' && r !== 'gone')
+        )
+          return null;
+        results.push({ i, result: r });
+      }
+      return { type: 'ui-undone', planId: m.planId, results };
+    }
     case 'ui-stopped':
       return typeof m.planId === 'string' &&
         PLAN_ID.test(m.planId) &&
@@ -585,6 +629,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
     case 'ui-ack':
     case 'ui-stop':
     case 'ui-pause':
+    case 'ui-undo':
     case 'vt-env':
     case 'vt-markup':
     case 'vt-mark':

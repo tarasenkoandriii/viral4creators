@@ -107,6 +107,8 @@ describeDb('Э6-бис: голосовое управление по HTTP', () =
       denySelectors: ['#admin-panel'],
       allowSelectors: [],
       maxSteps: 6,
+      // (е) Опубликованных мемо нет — iframe не спрашивает «Я умею».
+      memos: false,
     });
     expect((await cfg(off)).voiceControl).toBeUndefined();
     expect((await cfg(noMic)).voiceControl).toBeUndefined();

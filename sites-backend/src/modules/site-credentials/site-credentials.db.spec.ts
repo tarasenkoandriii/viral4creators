@@ -5,6 +5,21 @@
  * удаление (crypto-shred), личные записи режима B, ротация ключа, сроки.
  */
 import { randomUUID } from 'crypto';
+
+/**
+ * Открытый текст «утёк» в шифротекст: строкой ИЛИ байтами любого сегмента
+ * конверта после base64url-декодирования. Маркер — длинный (≥ 16 символов):
+ * короткая подстрока (`pw`) в случайном base64 встречается сама по себе
+ * (≈ 1/4096 на позицию) и давала ложные падения.
+ */
+function leaksPlaintext(ciphertext: string, plain: string): boolean {
+  if (plain.length < 16) throw new Error('маркер короче 16 символов');
+  if (ciphertext.includes(plain)) return true;
+  const needle = Buffer.from(plain, 'utf8');
+  return ciphertext
+    .split('.')
+    .some((seg) => Buffer.from(seg, 'base64url').includes(needle));
+}
 import type { PrismaService } from '../../prisma/prisma.service';
 import { verifyAuditChain, type AuditRow } from './credential-audit.service';
 import { LEASE_TTL_MS } from './site-credentials.service';
@@ -69,7 +84,7 @@ describeDb('site-credentials на реальной базе', () => {
         role: 'customer',
         plan: 'Pro',
         username: 'qa@example.com',
-        password: 'S3cret-pass',
+        password: 'S3cret-pass-0123456789',
         hostIds: [f.verifiedHostId],
         products: ['tutorial'],
         confirmedTestAccount: true,
@@ -96,7 +111,9 @@ describeDb('site-credentials на реальной базе', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ purpose: 'password', keyVersion: 'v1' });
     expect(rows[0].ciphertext).toMatch(/^sc1\.v1\./);
-    expect(rows[0].ciphertext).not.toContain('S3cret');
+    expect(leaksPlaintext(rows[0].ciphertext, 'S3cret-pass-0123456789')).toBe(
+      false,
+    );
     const list = await s.svc.list(f.accountId, f.siteId);
     expect(list.map((x) => x.id)).toEqual([a.id]);
   });
@@ -142,7 +159,7 @@ describeDb('site-credentials на реальной базе', () => {
       runRef: 'draft:abc',
     });
     const got = await s.svc.redeem(f.accountId, lease.leaseId, 'generator:1');
-    expect(got.secrets).toEqual({ password: 'S3cret-pass' });
+    expect(got.secrets).toEqual({ password: 'S3cret-pass-0123456789' });
     await expect(
       status(s.svc.redeem(f.accountId, lease.leaseId, 'generator:1')),
     ).resolves.toBe('CREDENTIAL_LEASE_INVALID:used');
@@ -516,6 +533,8 @@ describeDb('site-credentials на реальной базе', () => {
   });
 
   describe('режим B: личные записи', () => {
+    const PW_MARKER = 'pw-marker-7Qz2Lk9Xv4';
+    const LOGIN_FIELDS = `[{"selector":"#p","value":"${PW_MARKER}"}]`;
     const owner = () => {
       const r = `gen:${randomUUID().slice(0, 12)}`;
       ownerRefs.push(r);
@@ -529,12 +548,7 @@ describeDb('site-credentials на реальной базе', () => {
         clientRef: 'project:p1',
       });
       expect(sess.products).toEqual(['tutorial']);
-      await s.svc.putUserSecret(
-        me,
-        sess.id,
-        'login-fields',
-        '[{"selector":"#p","value":"pw"}]',
-      );
+      await s.svc.putUserSecret(me, sess.id, 'login-fields', LOGIN_FIELDS);
       await s.svc.putUserSecret(
         me,
         sess.id,
@@ -555,7 +569,7 @@ describeDb('site-credentials на реальной базе', () => {
         s.svc.readUserSecrets(me, sess.id, 'draft:d'),
       ).resolves.toEqual({
         secrets: {
-          'login-fields': '[{"selector":"#p","value":"pw"}]',
+          'login-fields': LOGIN_FIELDS,
           'session-cookies': '[{"name":"sid"}]',
         },
       });
@@ -571,7 +585,9 @@ describeDb('site-credentials на реальной базе', () => {
       const rows = await prisma.userSiteSecret.findMany({
         where: { sessionId: sess.id },
       });
-      expect(rows.every((r) => !r.ciphertext.includes('pw'))).toBe(true);
+      expect(rows.every((r) => !leaksPlaintext(r.ciphertext, PW_MARKER))).toBe(
+        true,
+      );
       await expect(s.svc.deleteUserSession(stranger, sess.id)).resolves.toEqual(
         {
           deleted: false,
@@ -680,7 +696,9 @@ describeDb('site-credentials на реальной базе', () => {
     });
     await expect(
       s.svc.redeem(f.accountId, lease.leaseId, 'generator:1'),
-    ).resolves.toMatchObject({ secrets: { password: 'S3cret-pass' } });
+    ).resolves.toMatchObject({
+      secrets: { password: 'S3cret-pass-0123456789' },
+    });
     await expect(s.svc.readUserSecrets(me, sess.id, null)).resolves.toEqual({
       secrets: { password: 'b-pass' },
     });

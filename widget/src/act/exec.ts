@@ -23,7 +23,11 @@
  *  - стоп: кнопка «Стоп» на странице, `Esc`, любой СОБСТВЕННЫЙ клик или
  *    клавиша человека (`isTrusted`; наши события его не имеют); пауза —
  *    локальный детектор речи в iframe;
- *  - пауза между шагами ≥ 300 мс (антибот, §5-бис.8).
+ *  - пауза между шагами ≥ 300 мс (антибот, §5-бис.8);
+ *  - (д) перед `fill/select/check` — прежнее значение поля в ПАМЯТИ этой
+ *    страницы (`mem`; не sessionStorage, не сервер, не журнал — §5-бис.15
+ *    п.7): «Вернуть»/«отмени последнее» возвращает его ленивый чанк
+ *    `undo.js`; переход/перезагрузка стирают память — честно «не могу».
  */
 import {
   neverTarget,
@@ -57,6 +61,11 @@ export interface ActNatives {
 }
 
 export type StopBy = 'esc' | 'click' | 'key' | 'button';
+
+/** (д) Прежнее значение поля: план, шаг, элемент, значение, флажок. */
+export type Prior = [string, number, Element, string, boolean | null];
+/** (д) Память прежних значений — только последний план этой страницы. */
+export const mem: Prior[] = [];
 
 export interface RunHost {
   N: ActNatives;
@@ -518,6 +527,11 @@ export class Runner {
   }
 
   private act(step: UiStep, el: Element): boolean {
+    if (step.kind == 'fill' || step.kind == 'select' || step.kind == 'check') {
+      if (mem[0] && mem[0][0] != this.planId) mem.length = 0;
+      const x = el as HTMLInputElement;
+      mem.push([this.planId, step.i, el, x.value, x.checked ?? null]);
+    }
     switch (step.kind) {
       case 'click':
         this.pointerSequence(el);

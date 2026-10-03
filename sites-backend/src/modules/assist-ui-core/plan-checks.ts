@@ -23,6 +23,12 @@
  */
 import { uiMapHost } from '../site-core/ui-map/ui-map';
 import {
+  allowedAfterPnr,
+  provisionalUndo,
+  undoClass,
+  worseUndo,
+} from './chain';
+import {
   ADD_TO_CART_ID,
   ASSIST_ID_SYNONYMS,
   CONFIRM_KINDS,
@@ -46,6 +52,7 @@ import {
   UI_STEP_KINDS,
   type UiExpect,
   type UiGesture,
+  type UiPin,
   type UiPlanNote,
   type UiPlanStep,
   type UiRisk,
@@ -55,6 +62,7 @@ import {
   type UiStepKind,
   type UiStopReason,
   type UiTarget,
+  type UiUndo,
   type VoiceControlRules,
 } from './types';
 
@@ -88,6 +96,21 @@ export interface PlanCheckInput {
   hosts: string[];
   /** `degraded` — только подсветка и «нажмите здесь» (§5-бис.11). */
   state: 'on' | 'degraded';
+  /**
+   * (мемо, §5-бис.17 п.3) Значения, которые КОД признал сказанными:
+   * объявленные владельцем варианты слота `option`, чья голосовая форма
+   * есть в команде, и даты, разобранные из сказанного слова. Модель сюда
+   * ничего не добавляет — список собирает публичный код мемо.
+   */
+  trusted?: readonly string[];
+  /**
+   * (мемо) Закреплённые отпечатки целей по номеру СЫРОГО шага — переносятся
+   * в проверенный шаг (сверка после перехода, `resolveAfterSteps`). Только
+   * из версии мемо; поле `pin` в ответе модели не читается.
+   */
+  pins?: ReadonlyArray<UiPin | null>;
+  /** (мемо) Шаги проверки цели сверх лимита шагов (ожидание без эффекта). */
+  extraSteps?: number;
 }
 
 export interface CheckedPlan {
@@ -95,6 +118,10 @@ export interface CheckedPlan {
   notes: UiPlanNote[];
   /** Есть шаг «с подтверждением» — нужна карточка «Да/Нет». */
   needsConfirm: boolean;
+  /** (цепочки) Точка невозврата — номер шага или null (§5-бис.15 п.4). */
+  pnr: number | null;
+  /** Номер сырого шага для каждого проверенного (мемо: цепочка без дыр). */
+  from: number[];
 }
 
 /** Факты о цели, по которым считается риск (элемент снимка или карты). */
@@ -240,6 +267,7 @@ export function judgeStep(
     hosts: string[];
     pagePath: string | null;
     state: 'on' | 'degraded';
+    trusted?: readonly string[];
   },
 ): { risk: UiRisk | null; reason: UiStopReason | null; nav: boolean } {
   const no = (reason: UiStopReason) => ({ risk: null, reason, nav: false });
@@ -290,6 +318,12 @@ export function judgeStep(
   if (t.gesture) return manual('gesture');
   if (ctx.state === 'degraded') return manual('degraded');
 
+  // Значение «сказано»: в команде — или признано кодом мемо (объявленный
+  // вариант слота, разобранная дата; `trusted` собирает код, не модель).
+  const said = (v: string) =>
+    valueSaid(v, ctx.transcript) ||
+    (ctx.trusted ?? []).some((x) => normText(x) === normText(v));
+
   // Поле поиска связано с командой «знайди/найди/find …» само по себе.
   const searchBox =
     t.role === 'searchbox' ||
@@ -315,8 +349,7 @@ export function judgeStep(
   switch (kind) {
     case 'fill': {
       if (!isText || t.tag === 'select') return no('bad_kind');
-      if (!value || !valueSaid(value, ctx.transcript))
-        return no('value_not_said');
+      if (!value || !said(value)) return no('value_not_said');
       const pd =
         t.pd || PD_FIELD_LABEL.test([t.text, t.hiddenLabel ?? ''].join(' '));
       const risk: UiRisk =
@@ -325,8 +358,7 @@ export function judgeStep(
     }
     case 'select': {
       if (t.tag !== 'select' && t.role !== 'combobox') return no('bad_kind');
-      if (!value || !valueSaid(value, ctx.transcript))
-        return no('value_not_said');
+      if (!value || !said(value)) return no('value_not_said');
       if (
         t.options.length &&
         !t.options.some((o) => normText(o) === normText(value))
@@ -460,6 +492,7 @@ function targetOf(
 export function checkPlan(p: PlanCheckInput): CheckedPlan {
   const notes: UiPlanNote[] = [];
   const out: UiPlanStep[] = [];
+  const from: number[] = [];
   const raw = Array.isArray(p.steps) ? p.steps : [];
   const byRef = new Map(p.snapshot.elements.map((e) => [e.ref, e]));
   const byMap = new Map(p.map.map((m) => [m.ref, m]));
@@ -478,13 +511,17 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     hosts: p.hosts,
     pagePath,
     state: p.state,
+    trusted: p.trusted,
   };
   let afterNav = false;
   let stopped = false;
+  /** Точка невозврата (§5-бис.15 п.4) — первый исполнимый `irrev`. */
+  let pnr: number | null = null;
+  const maxSteps = p.rules.maxSteps + Math.max(0, p.extraSteps ?? 0);
 
-  for (const item of raw) {
+  for (const [rawIndex, item] of raw.entries()) {
     if (stopped) break;
-    if (out.length >= p.rules.maxSteps) {
+    if (out.length >= maxSteps) {
       notes.push({ code: 'limit', target: null });
       break;
     }
@@ -501,21 +538,23 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     const i = out.length;
     if (kind === 'say') {
       const say = cleanSay(s.say);
-      if (say)
-        out.push({
-          i,
-          kind,
-          target: null,
-          value: null,
-          expect: null,
-          risk: 'auto',
-          reason: null,
-          nav: false,
-          say,
-        });
+      if (say) from.push(rawIndex);
+      out.push({
+        i,
+        kind,
+        target: null,
+        value: null,
+        expect: null,
+        risk: 'auto',
+        reason: null,
+        nav: false,
+        say,
+        undo: 'none',
+      });
       continue;
     }
     if (kind === 'wait') {
+      from.push(rawIndex);
       out.push({
         i,
         kind,
@@ -526,6 +565,7 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
         reason: null,
         nav: false,
         say: null,
+        undo: 'none',
       });
       continue;
     }
@@ -585,6 +625,7 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
         };
       }
     } else if (kind === 'scroll' && s.target === undefined) {
+      from.push(rawIndex);
       out.push({
         i,
         kind,
@@ -595,6 +636,7 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
         reason: null,
         nav: false,
         say: null,
+        undo: 'none',
       });
       continue;
     }
@@ -616,7 +658,20 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
       });
       continue;
     }
-    const risk = raise(j.risk, modelRisk);
+    // Класс обратимости — КОДОМ (поле `undo` ответа модели не читается).
+    const undo: UiUndo = after
+      ? provisionalUndo(kind, after)
+      : undoClass(kind, facts, j.nav);
+    // Необратимый шаг — всегда не ниже «с подтверждением» (§5-бис.15 п.3 п.4).
+    let risk = raise(j.risk, modelRisk);
+    if (undo === 'irrev') risk = raise(risk, 'confirm');
+    const executable = risk === 'auto' || risk === 'confirm';
+    // Р-60: после ТН — только шаги без эффекта и переходы; второй
+    // необратимый шаг — отдельной командой (план обрезается до него).
+    if (executable && pnr !== null && !allowedAfterPnr(undo)) {
+      notes.push({ code: 'second_pnr', target: target.text || null });
+      break;
+    }
     let expect = cleanExpect(s.expect);
     if (j.nav && facts.href && !expect?.path) {
       const hp = hrefPath(facts.href);
@@ -633,7 +688,11 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
         risk === 'manual' || risk === 'never' ? (j.reason ?? 'danger') : null,
       nav: j.nav,
       say: null,
+      undo,
+      ...(p.pins?.[rawIndex] ? { pin: p.pins[rawIndex] } : {}),
     };
+    if (executable && undo === 'irrev' && pnr === null) pnr = out.length;
+    from.push(rawIndex);
     out.push(step);
     if (risk === 'manual' || risk === 'never') {
       notes.push({
@@ -648,6 +707,8 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     steps: out,
     notes,
     needsConfirm: out.some((s) => s.risk === 'confirm'),
+    pnr,
+    from,
   };
 }
 
@@ -676,7 +737,14 @@ export function resolveAfterSteps(p: {
   rules: VoiceControlRules;
   hosts: string[];
   state: 'on' | 'degraded';
-}): { steps: UiPlanStep[]; needsConfirm: boolean; unresolved: number | null } {
+  trusted?: readonly string[];
+}): {
+  steps: UiPlanStep[];
+  needsConfirm: boolean;
+  unresolved: number | null;
+  /** Почему цель не принята: нет/неоднозначна, вторая ТН, не тот отпечаток. */
+  reason?: 'no_target' | 'second_pnr' | 'pin_mismatch';
+} {
   const steps = p.steps.map((s) => ({ ...s }));
   let needsConfirm = false;
   let pagePath: string | null = null;
@@ -691,8 +759,11 @@ export function resolveAfterSteps(p: {
     hosts: p.hosts,
     pagePath,
     state: p.state,
+    trusted: p.trusted,
   };
   let navSeen = false;
+  const isPnr = (s: UiPlanStep) =>
+    s.undo === 'irrev' && (s.risk === 'auto' || s.risk === 'confirm');
   for (let k = p.from; k < steps.length; k++) {
     const s = steps[k];
     if (navSeen) break; // следующая страница — следующее продолжение
@@ -708,12 +779,29 @@ export function resolveAfterSteps(p: {
     // Роль из описания модели — только чтобы различить одинаковые подписи.
     if (found.length > 1 && want.role)
       found = found.filter((e) => e.role === want.role);
-    if (found.length !== 1) return { steps, needsConfirm, unresolved: k };
+    if (found.length !== 1)
+      return { steps, needsConfirm, unresolved: k, reason: 'no_target' };
     const el = found[0];
+    // (мемо) Закреплённый отпечаток: та же разметка, но другая кнопка
+    // («Купить в 1 клик» вместо «В кошик») — шаг не исполняется (§5-бис.17 п.5).
+    if (s.pin && !pinMatches(s.pin, el))
+      return { steps, needsConfirm, unresolved: k, reason: 'pin_mismatch' };
     const facts = factsOfElement(el);
     const j = judgeStep(s.kind, facts, s.value, ctx);
-    if (j.risk === null) return { steps, needsConfirm, unresolved: k };
-    const risk = raise(j.risk, s.risk);
+    if (j.risk === null)
+      return { steps, needsConfirm, unresolved: k, reason: 'no_target' };
+    // Класс обратимости по настоящей цели — только ухудшение (§5-бис.15 п.3).
+    const undo = worseUndo(s.undo ?? 'irrev', undoClass(s.kind, facts, j.nav));
+    let risk = raise(j.risk, s.risk);
+    if (undo === 'irrev') risk = raise(risk, 'confirm');
+    const executable = risk === 'auto' || risk === 'confirm';
+    // Р-60: ТН уже была раньше — второй необратимый/эффект после ТН — стоп.
+    if (
+      executable &&
+      !allowedAfterPnr(undo) &&
+      steps.slice(0, k).some((x) => isPnr(x))
+    )
+      return { steps, needsConfirm, unresolved: k, reason: 'second_pnr' };
     if (risk === 'confirm' && s.risk !== 'confirm') needsConfirm = true;
     steps[k] = {
       ...s,
@@ -722,6 +810,7 @@ export function resolveAfterSteps(p: {
       reason:
         risk === 'manual' || risk === 'never' ? (j.reason ?? 'danger') : null,
       nav: j.nav,
+      undo,
     };
     if (risk === 'manual' || risk === 'never') {
       steps.length = k + 1;
@@ -730,4 +819,17 @@ export function resolveAfterSteps(p: {
     if (j.nav) navSeen = true;
   }
   return { steps, needsConfirm, unresolved: null };
+}
+
+/**
+ * Отпечаток совпал с живой целью (§5-бис.17 п.5): роль (если закреплена),
+ * разметка и нормализованный видимый текст (подпись с «…» — по началу).
+ */
+export function pinMatches(pin: UiPin, el: UiSnapElement): boolean {
+  if (pin.role && el.role !== pin.role) return false;
+  if ((pin.assistId ?? null) !== (el.assistId ?? null)) return false;
+  const want = normText(pin.text).replace(/…$/u, '');
+  const live = normText(el.text).replace(/…$/u, '');
+  if (!want) return !!pin.assistId;
+  return live === want || (want.length >= 60 && live.startsWith(want));
 }

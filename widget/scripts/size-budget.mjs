@@ -40,12 +40,24 @@ export const BUDGETS = [
   // ленивый чанк загрузчика, только по команде своего iframe (после речи
   // или набора посетителя), исполняется в origin заказчика.
   { name: 'act', files: ['dist/v1/act.js'], maxGzip: 9 * KB },
+  // Э6-бис (д): «Вернуть как было» для полей — ленивый чанк act.js (только
+  // после «Вернуть»/«отмени последнее» посетителя); act.js не растёт.
+  { name: 'undo', files: ['dist/v1/undo.js'], maxGzip: 2 * KB },
   // Э6-бис (г): мастер проверки Т-2 — окружение и разметка страницы; ленивый
   // чанк загрузчика только в тестовой сессии владельца (у посетителей нет).
   { name: 'check', files: ['dist/v1/check.js'], maxGzip: 6 * KB },
   // Э6-бис (г): мастер проверки — логика и тексты (uk/ru/en); ленивый чанк
   // iframe-чата только в тестовой сессии владельца (chat.js не растёт).
   { name: 'vt', files: ['dist/v1/vt.js'], maxGzip: 10 * KB },
+  // Э7: «Админка» — ленивый чанк на странице админки заказчика (кнопка,
+  // iframe `wa.`, JWT сотрудника) и чат сотрудника в iframe `wa.`; загрузчик
+  // только отдаёт управление (его бюджет 12 КБ не растёт).
+  { name: 'admin', files: ['dist/v1/admin.js'], maxGzip: 4 * KB },
+  {
+    name: 'admin-chat',
+    files: ['dist/v1/admin-chat.js', 'dist/v1/admin-chat.css'],
+    maxGzip: 12 * KB,
+  },
 ];
 
 export const LOADER_SINKS = [
@@ -94,10 +106,15 @@ for (const [label, file] of [
   ['чанк подсветки', 'dist/v1/highlight.js'],
   // Э6-бис: голосовое управление — в origin заказчика, как загрузчик.
   ['чанк голосового управления', 'dist/v1/act.js'],
+  // Э6-бис (д): возврат полей — в origin заказчика, как загрузчик.
+  ['чанк возврата полей', 'dist/v1/undo.js'],
   // Э6-бис (г): мастер проверки — в origin заказчика, как загрузчик.
   ['чанк проверки мастера', 'dist/v1/check.js'],
   // Мастер в iframe: HTML-приёмников нет (Trusted Types iframe — 'none').
   ['чанк мастера iframe', 'dist/v1/vt.js'],
+  // Э7: «Админка» — чанк в origin админки заказчика и чат сотрудника `wa.`.
+  ['чанк «Админки»', 'dist/v1/admin.js'],
+  ['чат сотрудника', 'dist/v1/admin-chat.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {

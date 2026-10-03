@@ -6,11 +6,43 @@
   "rewrites": [
     {
       "source": "/widget/v1/:path*",
-      "destination": "https://assist-api.viral4creators.app/widget/v1/:path*"
+      "destination": "https://assist-api.viral4creators.app/widget/v1/:path*",
+      "missing": [
+        {
+          "type": "host",
+          "value": "assist-wa.viral4creators.app"
+        }
+      ]
     },
     {
       "source": "/w/v1/:path*",
-      "destination": "https://assist-api.viral4creators.app/w/v1/:path*"
+      "destination": "https://assist-api.viral4creators.app/w/v1/:path*",
+      "missing": [
+        {
+          "type": "host",
+          "value": "assist-wa.viral4creators.app"
+        }
+      ]
+    },
+    {
+      "source": "/wa/v1/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "assist-wa.viral4creators.app"
+        }
+      ],
+      "destination": "https://assist-api.viral4creators.app/wa/v1/:path*"
+    },
+    {
+      "source": "/assist-admin/v1/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "assist-wa.viral4creators.app"
+        }
+      ],
+      "destination": "https://assist-api.viral4creators.app/assist-admin/v1/:path*"
     }
   ],
   "headers": [
@@ -135,6 +167,23 @@
       ]
     },
     {
+      "source": "/v1/undo.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=600"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      ]
+    },
+    {
       "source": "/v1/highlight.js",
       "headers": [
         {
@@ -187,6 +236,36 @@
     },
     {
       "source": "/v1/vt.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=600"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    },
+    {
+      "source": "/v1/admin.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=600"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      ]
+    },
+    {
+      "source": "/v1/(admin-chat.js|admin-chat.css)",
       "headers": [
         {
           "key": "Cache-Control",

@@ -52,6 +52,7 @@ export async function loadWindow(
       createdAt: true,
       release: true,
       steps: true,
+      chainStatus: true,
     },
     orderBy: { createdAt: 'desc' },
     take: MONITOR_THRESHOLDS.logRowsPerSite,

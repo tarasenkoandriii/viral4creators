@@ -20,7 +20,12 @@
  *     или нарушение на канарейке → откат (`canary: null`);
  *  5. контрольные команды: из отчёта мастера и до 20 частых успешных
  *     команд боя (Т-3 их разрешает — с общим QA-воркером, отложен);
- *  6. срок журнала монитора — 90 дней.
+ *  6. срок журнала монитора — 90 дней;
+ *  7. (е) мемо «требует проверки» (§5-бис.17 п.8): элемент шага устарел
+ *     (Ш4, по виду), сбой/`pinMismatch` на шаге у ≥ 3 разных посетителей и
+ *     хешей IP за 7 дней, успех цели < 60% на ≥ 10 запусках — мемо в
+ *     `needs_review` (в бою не исполняется), владельцу — сигнал; само-
+ *     лечения нет. (д) Тревога «возврат полей не удаётся» — в п.3.
  * Служебный канал — `ASSIST_OPS_CHAT_ID` (Telegram, тот же бот помощника);
  * нет — только лог.
  */
@@ -40,9 +45,12 @@ import {
   sendToMembers,
   type FetchLike,
 } from '../../assist-knowledge-core/notify';
+import { MEMO_REVIEW, parseMemoContent } from '../../assist-ui-core/memo';
+import { pathMatches } from '../../assist-ui-core/rules';
 import {
   computeMetrics,
   decideCanary,
+  decideMemoReview,
   decideSite,
   MONITOR_THRESHOLDS,
   platformTrip,
@@ -59,6 +67,8 @@ export interface VoiceMonitorResult {
   degraded: number;
   rolledBack: boolean;
   commands: number;
+  /** (е) Мемо, переведённых в «требует проверки» за проход. */
+  memoReviews: number;
 }
 
 const DAY = 24 * 60 * 60_000;
@@ -73,6 +83,10 @@ const OWNER_TEXT: Record<string, string> = {
     'Голосове керування сайтом працює погано — переведено в режим підказки (лише підсвічує). Пройдіть перевірку ще раз, щоб повернути натискання.',
   alert:
     'Голосове керування сайтом працює погано на частині сторінок. Перегляньте промахи і пройдіть перевірку ще раз.',
+  undo_low:
+    'Помічник не може повернути поля після збою — розмітка відміни на сайті, схоже, застаріла. Перевірте сторінки з формами.',
+  memo_review:
+    'Мемо М-{n} потребує перевірки: сайт змінився або мемо часто не доходить до мети. Поки що помічник виконує команди звичайним шляхом. Відкрийте «Голос → Мемо».',
 };
 
 @Injectable()
@@ -118,6 +132,7 @@ export class VoiceMonitorService {
       degraded: 0,
       rolledBack: false,
       commands: 0,
+      memoReviews: 0,
     };
     out.transitions = await this.transitions(now);
     const v = await this.violations(now);
@@ -128,6 +143,7 @@ export class VoiceMonitorService {
     out.degraded = m.degraded;
     out.rolledBack = await this.canary(now);
     out.commands = await this.commands(now);
+    out.memoReviews = await this.memoReviews(now);
     await this.sys().assistSiteVoiceIncident.deleteMany({
       where: {
         createdAt: {
@@ -419,7 +435,9 @@ export class VoiceMonitorService {
           const notified = await this.notifyOwners(
             s.accountId,
             s.siteId,
-            OWNER_TEXT.alert,
+            d.codes.length === 1 && d.codes[0] === 'undo_low'
+              ? OWNER_TEXT.undo_low
+              : OWNER_TEXT.alert,
           );
           await this.incident({
             accountId: s.accountId,
@@ -436,6 +454,201 @@ export class VoiceMonitorService {
       }
     }
     return { alerts, degraded };
+  }
+
+  // ── 7. мемо: «требует проверки» ────────────────────────────────────────
+
+  private async memoReviews(now: Date): Promise<number> {
+    const since = new Date(now.getTime() - MEMO_REVIEW.windowMs);
+    const memos = await this.sys().assistSiteMemo.findMany({
+      where: {
+        status: 'published',
+        ...(this.onlyAccountIds
+          ? { accountId: { in: this.onlyAccountIds } }
+          : {}),
+      },
+      select: {
+        id: true,
+        accountId: true,
+        siteId: true,
+        number: true,
+        view: true,
+        staleViews: true,
+        publishedVersion: true,
+      },
+      take: 2_000,
+    });
+    let changed = 0;
+    for (const memo of memos) {
+      try {
+        const db = this.sitesDb.forAccount(memo.accountId);
+        const ver = await db.assistSiteMemoVersion.findFirst({
+          where: { memoId: memo.id, number: memo.publishedVersion ?? -1 },
+          select: { content: true },
+        });
+        if (!ver) continue;
+        const content = parseMemoContent(ver.content).content;
+        // (1) Ш4: элементы шагов, устаревшие для вида.
+        const els = await db.siteUiElement.findMany({
+          where: {
+            siteId: memo.siteId,
+            OR: [
+              { staleDesktopAt: { not: null } },
+              { staleMobileAt: { not: null } },
+            ],
+          },
+          select: {
+            id: true,
+            path: true,
+            elementKey: true,
+            staleDesktopAt: true,
+            staleMobileAt: true,
+          },
+          take: 5_000,
+        });
+        const staleViews: Array<'desktop' | 'mobile'> = [];
+        for (const st of content.steps) {
+          if (!st.target) continue;
+          const pin = st.target.pin;
+          const key = pin.assistId
+            ? `a:${pin.assistId}`
+            : pin.role
+              ? `r:${pin.role}|${pin.text.toLowerCase()}`
+              : null;
+          for (const e of els) {
+            const same =
+              (st.target.uiElementId && e.id === st.target.uiElementId) ||
+              (key !== null &&
+                e.elementKey === key &&
+                pathMatches(e.path, st.page));
+            if (!same) continue;
+            if (e.staleDesktopAt) staleViews.push('desktop');
+            if (e.staleMobileAt) staleViews.push('mobile');
+          }
+        }
+        // (4)–(5) Сбои по шагам и успех цели за 7 дней (без тестовых сессий)
+        // — только ОПУБЛИКОВАННОЙ версии (аудит 03.10): сбои старой версии,
+        // из-за которых мемо уже было «требует проверки», не возвращают
+        // туда исправленную версию сразу после публикации.
+        const plans = await db.assistSiteUiPlan.findMany({
+          where: {
+            siteId: memo.siteId,
+            memoId: memo.id,
+            memoVersion: memo.publishedVersion ?? -1,
+            voiceTestId: null,
+            createdAt: { gte: since },
+          },
+          select: {
+            id: true,
+            visitorId: true,
+            goalStatus: true,
+            conversation: { select: { ipHash: true } },
+          },
+          take: 5_000,
+        });
+        const byPlan = new Map(plans.map((p) => [p.id, p]));
+        const logs = plans.length
+          ? await db.assistSiteUiActionLog.findMany({
+              where: { planId: { in: plans.map((p) => p.id) } },
+              select: {
+                planId: true,
+                stepIndex: true,
+                action: true,
+                result: true,
+                pinMismatch: true,
+              },
+              take: 50_000,
+            })
+          : [];
+        const failures = new Map<
+          number,
+          { visitors: Set<string>; ips: Set<string>; pin: boolean }
+        >();
+        for (const l of logs) {
+          const bad =
+            l.pinMismatch ||
+            ((l.result === 'failed' || l.result === 'manual') &&
+              ![
+                'plan',
+                'refused',
+                'violation',
+                'undo',
+                'stop',
+                'confirm',
+              ].includes(l.action));
+          if (!bad) continue;
+          const p = byPlan.get(l.planId);
+          if (!p) continue;
+          const f = failures.get(l.stepIndex) ?? {
+            visitors: new Set<string>(),
+            ips: new Set<string>(),
+            pin: false,
+          };
+          f.visitors.add(p.visitorId);
+          if (p.conversation?.ipHash) f.ips.add(p.conversation.ipHash);
+          if (l.pinMismatch) f.pin = true;
+          failures.set(l.stepIndex, f);
+        }
+        const withGoal = plans.filter((p) => p.goalStatus !== null);
+        const d = decideMemoReview({
+          view:
+            memo.view === 'desktop' || memo.view === 'mobile'
+              ? memo.view
+              : 'any',
+          staleViews,
+          stepFailures: failures,
+          goalRuns: withGoal.length,
+          goalReached: withGoal.filter((p) => p.goalStatus === 'reached')
+            .length,
+          thresholds: MEMO_REVIEW,
+        });
+        const sameStale =
+          JSON.stringify([...(memo.staleViews ?? [])].sort()) ===
+          JSON.stringify([...d.staleViews].sort());
+        if (!d.review) {
+          if (!sameStale)
+            await db.assistSiteMemo.updateMany({
+              where: { id: memo.id, status: 'published' },
+              data: { staleViews: d.staleViews },
+            });
+          continue;
+        }
+        const r = await db.assistSiteMemo.updateMany({
+          where: { id: memo.id, status: 'published' },
+          data: {
+            status: 'needs_review',
+            staleViews: d.staleViews,
+            reviewReason: {
+              code: d.review.code,
+              step: d.review.step,
+              at: now.toISOString(),
+            },
+          },
+        });
+        if (!r.count) continue;
+        changed++;
+        const notified = await this.notifyOwners(
+          memo.accountId,
+          memo.siteId,
+          OWNER_TEXT.memo_review.replace('{n}', String(memo.number)),
+        );
+        await this.incident({
+          accountId: memo.accountId,
+          siteId: memo.siteId,
+          kind: 'memo_review',
+          code: d.review.code,
+          metrics: {
+            memo: memo.number,
+            step: d.review.step,
+            runs: withGoal.length,
+          },
+          notified,
+        });
+      } catch (e) {
+        this.logger.error(`монитор мемо ${memo.siteId}: ${(e as Error).name}`);
+      }
+    }
+    return changed;
   }
 
   private async recentlyAlerted(

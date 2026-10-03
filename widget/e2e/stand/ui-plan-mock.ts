@@ -28,6 +28,7 @@ import * as directNs from '../../../sites-backend/src/modules/assist-ui-core/dir
 import * as wordsNs from '../../../sites-backend/src/modules/assist-ui-core/action-words';
 import * as normNs from '../../../sites-backend/src/modules/assist-ui-core/normalize';
 import * as wizardNs from '../../../sites-backend/src/modules/assist-ui-core/wizard';
+import * as chainNs from '../../../sites-backend/src/modules/assist-ui-core/chain';
 import type { RawStep } from '../../../sites-backend/src/modules/assist-ui-core/plan-checks';
 import type {
   UiPlanStep,
@@ -51,6 +52,9 @@ const {
   suggestCommands,
   wizardVerdict,
 } = cjs(wizardNs);
+// Э6-бис (д): цепочки — те же правила, что на сервере (возврат, статус).
+const { chainAfterUndo, chainStatusOf, pointOfNoReturn, undoCandidates } =
+  cjs(chainNs);
 
 /** Шаг «ответа модели» в фикстуре: цель — описанием, как её видит модель. */
 export interface ModelStep {
@@ -87,7 +91,7 @@ export interface VcSite {
   vtTokens?: string[];
 }
 
-type StepView = UiPlanStep & { state: string };
+type StepView = UiPlanStep & { state: string; fx?: boolean };
 
 interface MockPlan {
   id: string;
@@ -104,6 +108,8 @@ interface MockPlan {
   /** (г) План тестовой сессии мастера и сухой прогон. */
   testId?: string | null;
   dryRun?: boolean;
+  /** (д) Статус цепочки после завершения и возврата. */
+  chainStatus?: string | null;
 }
 
 export interface VcLog {
@@ -133,6 +139,8 @@ export interface VcLog {
   stops: Array<{ planId: string; by: string }>;
   confirms: Array<{ planId: string; by: string }>;
   resumes: number;
+  /** (д) Возвраты: запросы `/undo` и итоги `/undo-report` (тела как пришли). */
+  undos: Array<{ planId: string; kind: 'undo' | 'report'; raw: string }>;
   /** (г) Мастер проверки: обмены ссылок, анализы, отчёты (тела как пришли). */
   vt: {
     sessions: Array<{ siteId: string; ok: boolean }>;
@@ -153,6 +161,7 @@ export function freshVcLog(): VcLog {
     stops: [],
     confirms: [],
     resumes: 0,
+    undos: [],
     vt: { sessions: [], analyses: 0, reports: [] },
   };
 }
@@ -236,6 +245,16 @@ function view(
     stepsHash: hash(p.steps),
     confirmBefore: new Date(p.createdAt + 60_000).toISOString(),
     expiresAt: new Date(p.createdAt + 600_000).toISOString(),
+    // (д) Пометки ↺/⇄/⚠/✋ и точка невозврата — как у сервера.
+    marks: p.steps.map((s) =>
+      s.risk === 'manual' || s.risk === 'never' ? 'manual' : (s.undo ?? 'irrev')
+    ),
+    pnr: pointOfNoReturn(p.steps),
+    pnrConfirm: false,
+    memo: null,
+    repeat: false,
+    goalStatus: null,
+    chainStatus: p.chainStatus ?? null,
   };
 }
 
@@ -461,7 +480,7 @@ export async function uiPlanRoute(
     return true;
   }
   const m =
-    /^\/widget\/v1\/ui-plan\/([A-Za-z0-9_-]{1,64})\/(confirm|step|stop|resume)$/.exec(
+    /^\/widget\/v1\/ui-plan\/([A-Za-z0-9_-]{1,64})\/(confirm|step|stop|resume|undo|undo-report)$/.exec(
       p
     );
   if (!m || req.method !== 'POST') {
@@ -485,7 +504,60 @@ export async function uiPlanRoute(
     err(403, 'VOICE_CONTROL_OFF');
     return true;
   }
+  const end = () => {
+    if (!live.includes(plan.status))
+      plan.chainStatus = chainStatusOf(plan.steps, plan.status);
+  };
   switch (m[2]) {
+    case 'undo': {
+      log.undos.push({ planId: plan.id, kind: 'undo', raw: JSON.stringify(b) });
+      if (live.includes(plan.status)) {
+        plan.status = 'stopped';
+        end();
+      }
+      if (b.decision === 'keep') {
+        ok({
+          planId: plan.id,
+          fields: [],
+          manual: [],
+          chainStatus: plan.chainStatus,
+          refused: 'nothing',
+        });
+        return true;
+      }
+      const c = undoCandidates(plan.steps);
+      const t = (i: number) => ({ i, text: plan.steps[i]?.target?.text ?? '' });
+      ok({
+        planId: plan.id,
+        fields: c.refused ? [] : c.fields.map(t),
+        manual: c.refused ? [] : c.manual.map(t),
+        chainStatus: plan.chainStatus ?? null,
+        refused: c.refused,
+      });
+      return true;
+    }
+    case 'undo-report': {
+      log.undos.push({
+        planId: plan.id,
+        kind: 'report',
+        raw: JSON.stringify(b),
+      });
+      const results = Array.isArray(b.results)
+        ? (b.results as Array<{
+            i: number;
+            result: 'done' | 'failed' | 'unknown' | 'gone';
+          }>)
+        : [];
+      plan.chainStatus = chainAfterUndo(plan.steps, results);
+      ok({
+        planId: plan.id,
+        fields: [],
+        manual: [],
+        chainStatus: plan.chainStatus,
+        refused: null,
+      });
+      return true;
+    }
     case 'confirm': {
       if (plan.status !== 'proposed') {
         if (plan.confirmedBy && plan.status !== 'expired') ok(view(plan));
@@ -531,6 +603,7 @@ export async function uiPlanRoute(
       if (live.includes(plan.status)) {
         plan.status = 'stopped';
         log.stops.push({ planId: plan.id, by: String(b.by) });
+        end();
       }
       ok(view(plan));
       return true;
@@ -557,6 +630,7 @@ export async function uiPlanRoute(
           return true;
         }
         s.state = 'dispatched';
+        s.fx = true;
         plan.status = 'running';
       } else if (result === 'done') {
         if (!auto || (effect(s) && s.state !== 'dispatched')) {
@@ -604,6 +678,7 @@ export async function uiPlanRoute(
         reason: typeof b.reason === 'string' ? b.reason : null,
         logged,
       });
+      end();
       ok(view(plan));
       return true;
     }

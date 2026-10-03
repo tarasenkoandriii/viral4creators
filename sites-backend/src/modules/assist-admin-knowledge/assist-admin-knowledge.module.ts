@@ -13,6 +13,7 @@ import { AdminIndexingService } from './admin-indexing.service';
 import { AdminKnowledgeController } from './admin-knowledge.controller';
 import { AdminKnowledgeService } from './admin-knowledge.service';
 import { AdminLearningController } from './admin-learning.controller';
+import { AdminLearningQueueService } from './admin-learning-queue.service';
 import { AdminSourcesService } from './admin-sources.service';
 import { AssistAdminEmbedRunController } from './cron/assist-admin-embed-run.controller';
 
@@ -27,6 +28,8 @@ import { AssistAdminEmbedRunController } from './cron/assist-admin-embed-run.con
     AdminKnowledgeService,
     AdminIndexingService,
     AdminSourcesService,
+    // Э7: очередь обучения «Админки» (контур (г)).
+    AdminLearningQueueService,
     // Э3: факты для утренней сводки/отчёта недели (A, assist-digest).
     AdminDigestSource,
   ],

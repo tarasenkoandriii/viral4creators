@@ -19,6 +19,7 @@ import {
   type LearningTab,
   type StatsTab,
 } from './e3-view';
+import { isAdminModeTab, type AdminModeTab } from './admin-mode-api';
 
 export type Section = 'knowledge' | 'widget' | 'dialogs';
 
@@ -68,6 +69,9 @@ export type Route =
   | { name: 'videos'; siteId: string }
   // Э-С Ш2: тестовые учётные записи сайта (общие с обучалкой и QA).
   | { name: 'test-accounts'; siteId: string }
+  // Э7: «Админка» — кабинет режима (владелец) и чат сотрудника (7a).
+  | { name: 'admin-mode'; siteId: string; tab: AdminModeTab }
+  | { name: 'admin-chat'; siteId: string }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -158,6 +162,31 @@ export function parseRoute(hash: string): Route {
     }
     if (p.length === 3 && p[2] === 'test-accounts' && ID.test(p[1])) {
       return { name: 'test-accounts', siteId: p[1] };
+    }
+    // Э7: #/sites/:id/admin-mode[/вкладка]; #/sites/:id/learning/admin —
+    // «Обучение (сотрудники)» (§4-тер.13); #/sites/:id/admin-chat — 7a.
+    if (
+      (p.length === 3 || p.length === 4) &&
+      p[2] === 'admin-mode' &&
+      ID.test(p[1]) &&
+      (p.length === 3 || (isAdminModeTab(p[3]) && p[3] !== 'settings'))
+    ) {
+      return {
+        name: 'admin-mode',
+        siteId: p[1],
+        tab: p.length === 4 ? (p[3] as AdminModeTab) : 'settings',
+      };
+    }
+    if (
+      p.length === 4 &&
+      p[2] === 'learning' &&
+      p[3] === 'admin' &&
+      ID.test(p[1])
+    ) {
+      return { name: 'admin-mode', siteId: p[1], tab: 'learning' };
+    }
+    if (p.length === 3 && p[2] === 'admin-chat' && ID.test(p[1])) {
+      return { name: 'admin-chat', siteId: p[1] };
     }
     if (p.length === 3 && p[2] === 'dialogs' && ID.test(p[1])) {
       return { name: 'dialogs', siteId: p[1] };
@@ -270,6 +299,12 @@ export function routeHref(r: Route): string {
       return `#/sites/${r.siteId}/videos`;
     case 'test-accounts':
       return `#/sites/${r.siteId}/test-accounts`;
+    case 'admin-mode':
+      return `#/sites/${r.siteId}/admin-mode${
+        r.tab === 'settings' ? '' : `/${r.tab}`
+      }`;
+    case 'admin-chat':
+      return `#/sites/${r.siteId}/admin-chat`;
     case 'wizard':
       return `#/sites/${r.siteId}/learning/site/onboarding`;
     case 'plan':

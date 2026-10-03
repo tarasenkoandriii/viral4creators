@@ -634,6 +634,69 @@ recent[≤20]{ host, path, status: requested\|budget, staleElements, createdAt }
 Business 5 / Pro 20 страниц в сутки, страница ≤ 1/сутки, за счёт бюджета
 знаний; крон `assist-crawl-run`).
 
+## Э6-бис помощника (д)+(е): цепочки действий, откат, мемо
+
+ТЗ помощника §5-бис.15–18; решения владельца 03.10.2026 Р-63…Р-72
+(константы — `sites-backend/src/modules/assist-ui-core/decisions.ts`);
+развёртывание — `doc/DEPLOYMENT.md` §6.17 п.11–13. Мемо «Админки» и
+компенсации через коннектор — Э8; запись мемо кликами — Э6-тер.
+
+Изменения ответа плана (`UiPlanView`, все маршруты `/widget/v1/ui-plan*`):
+`steps[].undo: none|nav|local|comp|irrev` (класс обратимости — кодом, поле
+модели не читается; `irrev` — не ниже `confirm`), `steps[].fx` (шаг дошёл
+до `dispatched`), `marks[]` (пометки карточки ↺/⇄/⚠/✋), `pnr` (номер точки
+невозврата, ≤ 1 на команду — вторая обрезает план с пометкой
+`second_pnr`), `pnrConfirm` (карточка — второе «Да» прямо перед ТН после
+перехода страницы или > 60 с), `memo{ name, goal }|null`, `repeat`,
+`goalFrom`, `goalStatus: reached|not_reached|unknown|null`, `chainStatus:
+clean|committed|kept|compensated|partially_compensated|unknown|null`.
+Новые причины стопа: `second_pnr`, `pin_mismatch` (элемент мемо не
+совпал с отпечатком `pin`), `memo_off` (мемо снято во время плана —
+409 `PLAN_CONFLICT`). `POST /widget/v1/ui-plan` + `repeat: true` —
+подтверждённый повтор того же мемо с теми же слотами в 60 с. Мемо
+прямым путём (фраза из индекса) единиц не тратит, но входит в потолок
+планов сайта; номер мемо посетителю не показывается и вызова по номеру
+на сайте нет.
+
+sites-backend, виджет:
+
+| Маршрут | Что |
+|---|---|
+| `POST /widget/v1/ui-plan/:id/undo` | `{ by: offer\|command, decision?: undo\|keep }` → `{ planId, fields[]{ i, text }, manual[]{ i, text }, chainStatus, refused: after_pnr\|expired\|nothing\|unknown\|degraded\|null }` — «Вернуть / Оставить» после сбоя (`keep` или 60 с без ответа — `kept`) и «отмени последнее» (последняя цепочка этого посетителя, окно 10 мин, ≤ 3 шагов, не после отправки формы). Идущий план сначала останавливается. Поля загрузчик возвращает из памяти страницы; прежние значения на сервер не приходят. Единиц не тратит; потолки посетителя — как у планов |
+| `POST /widget/v1/ui-plan/:id/undo-report` | `{ results[≤3]{ i, result: done\|unknown\|gone\|failed } }` → `UiPlanView` — итог возврата у загрузчика → `chainStatus` (`compensated`/`partially_compensated`/`unknown`), строки `undoOf` в журнале; повтор — 409 |
+| `GET /widget/v1/ui-plan/skills?lang=` | `{ names[≤5] }` — «Я умею»: мемо `listed` с успехом цели ≥ 80% за 7 дней (без номеров и фраз); выключено/нет мемо — пусто |
+| `POST /widget/v1/voice-test/:tid/memo-page` | `{ snapshot }` (адрес — из снимка, только хосты сайта) → `{ path, token, steps[]{ i, ok, problem: missing\|ambiguous\|pin_mismatch\|risk_up\|never\|null }, goal: ok\|missing\|null }` — сухой прогон мемо в тестовой сессии мастера (`kind = memo`): проверка одной страницы, итог подписан HMAC (без состояния на сервере) |
+| `POST /widget/v1/voice-test/:tid/memo-report` | `{ tokens[], lang? }` → `MemoCheckReport{ v, kind: memo, memoId, version, contentHash, result: pass\|partial\|fail, steps[] }` — один раз; версия переходит в `checking` → ждёт подтверждения в TMA |
+
+`POST /widget/v1/voice-test/session` для ссылки сухого прогона мемо
+возвращает + `memo{ number, name, pages[], goalPage }`. Конфиг виджета —
+`voiceControl.memos: boolean` (есть опубликованные мемо — iframe понимает
+«що ти вмієш»).
+
+Кабинет (TMA, `@AllowApps('assist')`, владелец/менеджер — как голосовая
+карта; лимит мемо на сайт — Business 20 / Pro 100, Start/Trial 0):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/memos` | `{ items: MemoSummary[], used, limit, candidates }` — номер `М-N`, ключ, статус `draft\|checking\|published\|held\|needs_review\|disabled\|removed`, имя, вид, `listed`, опубликованная версия, успех цели за 30 дней |
+| `POST /assist/sites/:id/memos` | `{ name, lang, key? }` → `MemoDetailView`; лимит — 402 `MEMO_LIMIT`; имя занято — 422 `MEMO_NAME_TAKEN` |
+| `POST /assist/sites/:id/ui-plans/:planId/save-as-memo` | удачный план → черновик мемо (значения полей не переносятся; фраза — предложением); неподходящий — 422 `MEMO_PLAN_NOT_ELIGIBLE` |
+| `GET\|POST /assist/sites/:id/memo-suggestions[/:planId]` | кандидаты из боя (одна последовательность целей у ≥ 3 разных посетителей и хешей IP за 7 дней) и «сохранить кандидата» |
+| `GET /assist/sites/:id/memos/:n` | `MemoDetailView` — черновик, `draftRevision`, ворота кода сейчас, версии (≤ 20) |
+| `PATCH /assist/sites/:id/memos/:n/draft` | `{ expectedRevision, ops[] }` (`set`, `acceptSuggested`, `removeStep`, `moveStep`, `listed`, `key`) — несовпадение ревизии — 409 `MEMO_CONFLICT`; разбор — 422 `MEMO_INVALID` (`errors[]{ path, code }`); ключ после публикации — 422 `MEMO_KEY_LOCKED`; риск ниже расчёта кода — 422 `MEMO_RISK_LOWERING_FORBIDDEN` |
+| `GET /assist/sites/:id/memos/:n/history` | журнал изменений черновика |
+| `POST /assist/sites/:id/memos/:n/versions` / `GET …/versions/:v` | собрать неизменяемую версию из черновика (ворота не пройдены — 409 `MEMO_GATES`) / версия с отчётами ворот и прогона |
+| `POST /assist/sites/:id/memos/:n/check-token` | `{ testId, url, expiresAt, version }` — одноразовая ссылка сухого прогона на сайте (30 мин) |
+| `POST /assist/sites/:id/memos/:n/versions/:v/publish\|discard\|rollback` | публикация — только с годным отчётом прогона этой версии (иначе 409 `MEMO_CHECK_REQUIRED`) и без конфликта фраз (409 `MEMO_PHRASE_CONFLICT`); выключенное мемо — 409 `MEMO_CONFLICT` (сначала `enable`); у мемо не в `published` (`needs_review`, после `enable`) отчёт прошлой версии не наследуется — нужен новый прогон; откат — новой версией с прогоном |
+| `GET /assist/sites/:id/memos/:n/stats?days=7\|30` | запуски, цель достигнута/нет/неизвестно, прямой путь/lite, `pinMismatch`, «сам», отмены, сбои по шагам |
+| `POST …/memos/:n/disable\|enable`, `DELETE …/memos/:n` | выключить/включить; удалить (статус `removed`, номер не переиспользуется) |
+
+`GET|PATCH /assist/sites/:id/voice-control/site` — версия текста рисков
+`site-risks-2`; + `risksBanner: boolean` (режим не `off`, принята прежняя редакция —
+баннер в TMA; `PATCH { risksVersion: "site-risks-2" }` его снимает, режим не
+меняется). Монитор: + метрики цепочек и код `undo_low` (только
+оповещение), инциденты `memo_review` (мемо → `needs_review`).
+
 ## Э-С Ш4: общие карты интерфейса сайтов
 
 План «Э-С: слияние», Ш4; аудит слияния §3.2; развёртывание —
@@ -674,3 +737,64 @@ id; тело ≤ 64 КБ; нет секрета или он совпал с се
 
 Крон: `GET /cron/site-ui-map-maintenance` (`CRON_SECRET`) → `{
 versionsDeleted, missesDeleted, staleExpired, pagesRebuilt }`.
+
+## Э7 помощника: «Админка» — чтение
+
+ТЗ помощника §5, §3.8, §4-бис.8, §4-тер.6, §4.12, §5-тер.13; план этапов
+«Э7 — сделано»; развёртывание — `doc/DEPLOYMENT.md` §6.19. Только таблицы
+`assist_admin_*` (роль `assist_public` прав не имеет ни на одну); в Э7
+исполняются только `read`-операции коннекторов (write/danger — Э8).
+
+sites-backend, кабинет (initData помощника); права — **только**
+`productRoles.assistAdmin = owner` (менеджер/оператор «Сайта» и сотрудник
+«Админки» — 403 `PRODUCT_ROLE_REQUIRED`; тест `acceptance/e7/admin-routes-rights`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/admin-mode` | `{ siteId, enabled, access: tma\|script\|both, siteVerified, planAllows, hosts[{ id, host, status, verified }], adminHostIds[], identitySecret{ set, setAt }, instructions, roleMap{ <роль JWT>: <роль помощника> }, tmaEmployeeRole, statsPerEmployee, snippet{ origin, tag, csp }\|null }` — секрета нет никогда |
+| `PATCH /assist/sites/:id/admin-mode` | `{ enabled?, access?, adminHostIds?[≤10], instructions?≤2000, roleMap?(≤30 пар, роль помощника `a-z0-9_-`), tmaEmployeeRole?, statsPerEmployee? }`; включить — нужен verified-хост сайта (409 `ADMIN_SITE_NOT_VERIFIED`) и тариф Business/Pro (402 `ADMIN_PLAN_REQUIRED`); `script\|both` — нужен хост админки (409 `ADMIN_ACCESS_INVALID`); хост не этого сайта — 400 `ADMIN_HOST_INVALID`, не подтверждён — 409 |
+| `POST /assist/sites/:id/admin-mode/identity-secret` | → `{ secret (43 знака base64url, показ ОДИН раз), setAt, alg: HS256, aud: <siteId>, maxTtlSec: 900 }`; прежний секрет и все сессии сотрудников гаснут; нет `ASSIST_SECRETS_KEY` — 503 `ADMIN_SECRETS_UNAVAILABLE` |
+| `GET /assist/sites/:id/admin-mode/stats?days=7\|30` | `{ days, conversations, questions, refusedShare, thumbsDown, learningNew, topQuestions[≤10]{ clusterKey, sample, count }, tools[{ operation, ok, failed }], byRole[{ role, conversations, questions }], byEmployee[{ employee, questions }]\|null }` — разрез по сотруднику только при `statsPerEmployee` |
+| `GET\|POST /assist/sites/:id/connectors` | список `ConnectorView[]`; создать — `{ name, specUrl \| specText (OpenAPI 3.x JSON ≤ 2 МБ), baseUrl?, saasAcknowledged? }` → `ConnectorView{ id, name, baseUrl, allowedHosts[], hostVerified, saasAcknowledged, specTitle, specVersion, authKind, authHeaderName, secret{ set, tail, setAt }, status: active\|paused\|auth_failed, lastCallAt, operations[OperationView] }`; спецификация по URL — через IP-pin/SSRF-guard (422 `CONNECTOR_SPEC_UNREACHABLE`), не OpenAPI 3/не JSON/http-сервер — 422 `CONNECTOR_SPEC_INVALID`; хост API не verified и нет отметки SaaS — 409 `CONNECTOR_HOST_NOT_ALLOWED` |
+| `GET\|PATCH\|DELETE /assist/sites/:id/connectors/:cn` | `PATCH { name?, status?: active\|paused, saasAcknowledged? }`; `DELETE` — секрет стирается сразу со строкой |
+| `PATCH /assist/sites/:id/connectors/:cn/operations/:op` | `{ enabled?, kind?: read\|write\|danger, roles?[≤20], dailyLimit?\|null }` → `OperationView{ id, operationId, method, path, summary, autoKind, kind, kindReason, enabled, roles, dailyLimit, unsupported, params[{ name, in: path\|query, required, type, enum? }] }`; класс ниже автоклассификации — 409 `OPERATION_KIND_LOWER`; включить write/danger — 409 `ADMIN_ACTIONS_NEXT_STAGE` (Э8); обязательный заголовок — 409 `OPERATION_UNSUPPORTED` |
+| `PUT\|DELETE /assist/sites/:id/connectors/:cn/secret` | `{ authKind: bearer\|basic\|header, headerName?, secret (4–4096, без управляющих символов/CR/LF) }` → `ConnectorView` (только `tail`); служебное имя заголовка (`Host`, `Content-Length`, `Content-Type`, `Transfer-Encoding`, `Connection`, `Accept`, `Accept-Encoding`, `Proxy-*`, `X-V4C-Actor` …) — 400 `CONNECTOR_SPEC_INVALID`; новый секрет снимает `auth_failed` |
+| `GET /assist/sites/:id/action-log?actor=&outcome=&operation=` | `[{ id, at, actor (jwt:<sub>\|tg:<id>), actorRole, channel: embed\|tma, operation, kind, outcome: ok\|http_error\|timeout\|blocked\|denied\|invalid_params\|bad_response\|auth_failed\|limit, httpStatus, durationMs, request{ method, path, query }, responseBytes, error }]` (≤ 500); журнал только дописывается (триггер БД), цепочка хешей |
+| `GET\|PUT /assist/sites/:id/admin-mode/private-crawl` | `{ enabled, hostId, testAccountId, startPath, hosts[], testAccounts[{ id, label, hostIds, status }], jobs[≤10], worker: waiting_sh3 }`; `PUT { enabled, hostId?, testAccountId?, startPath? }` (`startPath` — путь своего хоста «/…», не «//хост» и без обратной косой черты — иначе 400) — хост — verified этого сайта, учётка — активная тестовая из реестра Ш2 на этом хосте (409 `PRIVATE_CRAWL_INVALID`) |
+| `POST /assist/sites/:id/admin-mode/private-crawl/run` | → `{ jobId, status: waiting_worker, worker: waiting_sh3 }` — задание браузерному воркеру Ш3 (до него ничего не исполняется) |
+| `GET /assist/sites/:id/learning/admin/queue?status=new\|accepted\|rejected` | очередь «Обучение (сотрудники)»: `[{ id, kind: thumbs_down\|employee_fix\|refused\|tool_param_error\|tool_failure, status, question, answer (ответ по данным API не хранится), proposedAnswer, clusterKey, clusterSize, faqId, createdAt }]` |
+| `POST /assist/sites/:id/learning/admin/queue/:itemId/accept\|reject` | `accept { question?, answer }` → `{ faqId }` — проверенный ответ «Админки» (`assist_admin_faq`, `origin = golden`), весь кластер решён; в «Сайт» не копируется никогда |
+
+Чат сотрудника в TMA — 7a (`productRoles.assistAdmin = owner|employee`;
+владелец — все включённые read-операции, сотрудник — роль `tmaEmployeeRole`
+или только знания):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/admin-chat/state` | `{ conversationId, version, messages[≤50]{ id, role: employee\|assistant, text, sources[{ n, url, title }], tools[{ operation, outcome, httpStatus }], answerPath: knowledge\|tool\|refused\|error, rating, createdAt }, employee{ name, role, tools }, statsPerEmployee }` |
+| `POST /assist/sites/:id/admin-chat` | `{ text ≤ 2000, clientRequestId? }` → `{ question, answer, version }`; повтор `clientRequestId` — тот же ответ без модели; режим выключен/способ без TMA — 403 `ADMIN_MODE_OFF`; тариф — 402 `ADMIN_PLAN_REQUIRED`/`ADMIN_LIMIT` (диалог «Админки» — 3 единицы) |
+| `POST /assist/sites/:id/admin-chat/messages/:mid/feedback` | `{ rating: 1\|-1, correction? ≤ 2000 }` — 👎 и «правильно так» → кандидаты очереди; чужое сообщение — 404 |
+
+Встраивание — 7b, без Telegram (только iframe на origin `wa.`; сессия —
+заголовок `X-Assist-Admin-Session`, только память/sessionStorage `wa.`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /wa/v1/frame?pk=` | HTML чата сотрудника; CSP `frame-ancestors` — verified-хосты САМОЙ админки (`adminHostIds`), иначе `'none'`; `trusted-types 'none'` |
+| `POST /assist-admin/v1/session` | `{ pk, jwt }` → `{ session, expiresAt (= exp JWT), sub, employee{ name, role }, statsPerEmployee }`; JWT — HS256 секретом сайта, `aud = siteId`, `exp ≤ 15 мин`, `iat` не из будущего: иначе 401 `ADMIN_IDENTITY_REJECTED` (код причины без токена); режим выключен/способ `tma` — 403 `ADMIN_MODE_OFF`; секрет не выпущен — 403 `ADMIN_IDENTITY_NOT_SET`; 20/мин с IP на сайт — 429 `ADMIN_RATE_LIMITED` |
+| `GET /assist-admin/v1/state` | как TMA-состояние, только диалог ЭТОГО `sub` (≤ 8 ч); сессия истекла — 401 `ADMIN_SESSION_INVALID` |
+| `POST /assist-admin/v1/chat` | как TMA; 10/мин и 120/ч на сотрудника — 429 `ADMIN_RATE_LIMITED`; суточный денежный потолок «Админки» сайта (себестоимость месячного лимита тарифа / 10, сумма `costMicroUsd` ответов сотрудников за UTC-сутки) — 429 `ADMIN_DAILY_BUDGET` до модели (то же в TMA) |
+| `POST /assist-admin/v1/messages/:id/feedback` | как TMA |
+| `POST /assist-admin/v1/logout` | конец сессии |
+
+Ход ответа: поиск по знаниям «Админки» → план read-вызовов моделью по
+каталогу операций роли (≤ 3 за ход, ≤ 10 за диалог-минуту, аргументы
+проверяет код по схеме; ошибка — один повтор, затем «не смог собрать
+запрос») → вызов через IP-pin (только `allowedHosts`, https:443, без
+редиректов, 10 с, ≤ 1 МБ, 5xx/таймаут — один повтор) → любой сбой —
+ответ пишет код без модели («система не отвечает», без данных) → ответ
+модели по `<source>`/`<data>`, цифры только из источников. Секрет — только
+в заголовке запроса к API; эхо секрета в ответе API вырезается до модели.
+
+Крон: `GET /cron/assist-admin-retention` (`CRON_SECRET`) → `{ ran, sessions,
+conversations, log }`.

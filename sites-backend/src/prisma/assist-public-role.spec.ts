@@ -430,14 +430,25 @@ if (!RAW_URL) {
       for (const sql of [
         // (г): + ручной потолок планов оператора.
         `SELECT "voiceControlSiteState", "voiceControlSiteRules", "voiceControlPlansPerDay" FROM ${S}."assist_sites" WHERE "siteId" = 's'`,
-        // (г): + тестовая сессия мастера, сухой прогон, выпуск чанков.
-        `INSERT INTO ${S}."assist_site_ui_plans" ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "voiceTestId", "dryRun", "release", "updatedAt") SELECT 'p', 'a', 's', 'c', 'v', 'u', 'typed', 'uk', 'https://x/', '[]'::jsonb, '{"u":"x","v":[]}'::jsonb, 0, 'proposed', true, NULL, now(), now(), NULL, false, NULL, now() WHERE false`,
-        `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl" FROM ${S}."assist_site_ui_plans" WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v'`,
-        `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl" FROM ${S}."assist_site_ui_plans" WHERE "siteId" = 's' AND "visitorId" = 'v' AND "status" IN ('proposed', 'confirmed', 'running') AND "expiresAt" > now() ORDER BY "createdAt" DESC LIMIT 1`,
-        `UPDATE ${S}."assist_site_ui_plans" SET "steps" = '[]'::jsonb, "liveValues" = NULL::jsonb, "currentStep" = 1, "status" = 'running', "needsConfirm" = false, "confirmedBy" = 'button', "confirmBefore" = COALESCE(NULL, "confirmBefore"), "updatedAt" = now() WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v' AND "status" = 'confirmed' AND "currentStep" = 0 AND "steps" = '[]'::jsonb RETURNING "id"`,
+        // (г): + тестовая сессия мастера, сухой прогон, выпуск чанков;
+        // (д)+(е): + источник шагов, мемо и версия, слоты (хеш), цель, цепочка.
+        `INSERT INTO ${S}."assist_site_ui_plans" ("id", "accountId", "siteId", "conversationId", "visitorId", "utteranceMasked", "source", "lang", "pageUrl", "steps", "liveValues", "currentStep", "status", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "voiceTestId", "dryRun", "release", "planOrigin", "memoId", "memoVersion", "memoSlotsHash", "goalFrom", "chainStatus", "updatedAt") SELECT 'p', 'a', 's', 'c', 'v', 'u', 'typed', 'uk', 'https://x/', '[]'::jsonb, '{"u":"x","v":[]}'::jsonb, 0, 'proposed', true, NULL, now(), now(), NULL, false, NULL, 'memo', 'm', 1, 'h', 3, NULL, now() WHERE false`,
+        `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl", "planOrigin", "memoId", "memoVersion", "goalFrom", "goalStatus", "chainStatus", "cardFrom", "pnrConfirmedAt", "createdAt" FROM ${S}."assist_site_ui_plans" WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v'`,
+        `SELECT "id", "conversationId", "status", "steps", "liveValues", "currentStep", "needsConfirm", "confirmedBy", "confirmBefore", "expiresAt", "utteranceMasked", "source", "lang", "pageUrl", "planOrigin", "memoId", "memoVersion", "goalFrom", "goalStatus", "chainStatus", "cardFrom", "pnrConfirmedAt", "createdAt" FROM ${S}."assist_site_ui_plans" WHERE "siteId" = 's' AND "visitorId" = 'v' AND "status" IN ('proposed', 'confirmed', 'running') AND "expiresAt" > now() ORDER BY "createdAt" DESC LIMIT 1`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "steps" = '[]'::jsonb, "liveValues" = NULL::jsonb, "currentStep" = 1, "status" = 'running', "needsConfirm" = false, "confirmedBy" = 'button', "confirmBefore" = COALESCE(NULL, "confirmBefore"), "chainStatus" = COALESCE(NULL, "chainStatus"), "goalStatus" = COALESCE(NULL, "goalStatus"), "cardFrom" = COALESCE(NULL, "cardFrom"), "pnrConfirmedAt" = COALESCE(NULL, "pnrConfirmedAt"), "updatedAt" = now() WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v' AND "status" = 'confirmed' AND "currentStep" = 0 AND "steps" = '[]'::jsonb RETURNING "id"`,
+        // (д) Статус цепочки после возврата — условно «из того, что видели».
+        `UPDATE ${S}."assist_site_ui_plans" SET "chainStatus" = 'compensated', "updatedAt" = now() WHERE "id" = 'p' AND "siteId" = 's' AND "visitorId" = 'v' AND "chainStatus" IS NOT DISTINCT FROM 'kept' RETURNING "id"`,
+        // (е) Повтор того же мемо в 60 с; успех цели по мемо («Я умею»).
+        `SELECT "id" FROM ${S}."assist_site_ui_plans" WHERE "siteId" = 's' AND "visitorId" = 'v' AND "memoId" = 'm' AND "memoSlotsHash" = 'h' AND "createdAt" > now() AND NOT "dryRun" LIMIT 1`,
+        `SELECT "memoId", count(*)::int AS "runs", count(*) FILTER (WHERE "goalStatus" = 'reached')::int AS "reached" FROM ${S}."assist_site_ui_plans" WHERE "siteId" = 's' AND "memoId" IS NOT NULL AND "goalStatus" IS NOT NULL AND "createdAt" > now() AND "voiceTestId" IS NULL GROUP BY "memoId"`,
+        // (е) Мемо — только представления: опубликованные и версии на проверке.
+        `SELECT "memoId", "number", "key", "listed", "view", "staleViews", "version", "content" FROM ${S}."assist_site_memo_published" WHERE "siteId" = 's' ORDER BY "number" ASC LIMIT 200`,
+        `SELECT "memoId" FROM ${S}."assist_site_memo_published" WHERE "siteId" = 's' AND "memoId" = 'm'`,
+        `SELECT "memoVersionId" FROM ${S}."assist_site_voice_tests" WHERE "id" = 't' AND "siteId" = 's'`,
+        `SELECT "id", "memoId", "version", "number", "key", "content", "contentHash" FROM ${S}."assist_site_memo_checks" WHERE "id" = 'v' AND "siteId" = 's'`,
         // Аудит: сырые значения неживых планов СВОЕГО посетителя — обнулить.
         `UPDATE ${S}."assist_site_ui_plans" SET "liveValues" = NULL WHERE "siteId" = 's' AND "visitorId" = 'v' AND "liveValues" IS NOT NULL AND ("status" NOT IN ('proposed', 'confirmed', 'running', 'paused') OR "expiresAt" <= now())`,
-        `INSERT INTO ${S}."assist_site_ui_action_log" ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs") SELECT 'l', 'a', 's', 'p', 0, 'click', NULL, NULL, 'auto', NULL, 'done', NULL, NULL, 1 WHERE false`,
+        `INSERT INTO ${S}."assist_site_ui_action_log" ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs", "pinMismatch", "undoOf") SELECT 'l', 'a', 's', 'p', 0, 'undo', NULL, NULL, 'auto', NULL, 'done', NULL, NULL, 1, false, 0 WHERE false`,
         // Единица за команду — тот же SQL, что claimDialog чата.
         `UPDATE ${S}."assist_site_conversations" SET "dialogCounted" = true WHERE "id" = 'c' AND NOT "dialogCounted" RETURNING "id"`,
         `UPDATE ${S}."assist_site_conversations" SET "answers" = "answers" + 1 WHERE "id" = 'c' RETURNING "answers", "voice"`,
@@ -456,6 +467,23 @@ if (!RAW_URL) {
         `UPDATE ${S}."assist_site_ui_plans" SET "siteId" = 'x' WHERE false`,
         `UPDATE ${S}."assist_site_ui_plans" SET "expiresAt" = now() WHERE false`,
         `UPDATE ${S}."assist_site_ui_plans" SET "pageUrl" = 'x' WHERE false`,
+        // (е) Источник шагов и мемо плана — только при создании.
+        `UPDATE ${S}."assist_site_ui_plans" SET "planOrigin" = 'memo' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "memoId" = 'x' WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "memoVersion" = 2 WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "goalFrom" = 1 WHERE false`,
+        `UPDATE ${S}."assist_site_ui_plans" SET "memoSlotsHash" = 'x' WHERE false`,
+        // (е) Мемо: черновики, версии, история и индекс фраз — роли ничего.
+        `SELECT 1 FROM ${S}."assist_site_memos" LIMIT 1`,
+        `SELECT "draft" FROM ${S}."assist_site_memos" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_memo_versions" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_memo_changes" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_phrases" LIMIT 1`,
+        `INSERT INTO ${S}."assist_site_phrases" ("siteId", "accountId", "lang", "norm", "owner", "kind") SELECT 's', 'a', 'uk', 'x', 'memo:x', 'memo-name' WHERE false`,
+        `UPDATE ${S}."assist_site_memos" SET "status" = 'published' WHERE false`,
+        `SELECT "memoCounter" FROM ${S}."assist_sites" LIMIT 1`,
+        `SELECT "voiceControlRisksVersion" FROM ${S}."assist_sites" LIMIT 1`,
+        `UPDATE ${S}."assist_site_voice_tests" SET "memoVersionId" = 'x' WHERE false`,
         // Журнал только дописывается: ни чтения, ни правки, ни удаления.
         `SELECT 1 FROM ${S}."assist_site_ui_action_log" LIMIT 1`,
         `UPDATE ${S}."assist_site_ui_action_log" SET "result" = 'done' WHERE false`,

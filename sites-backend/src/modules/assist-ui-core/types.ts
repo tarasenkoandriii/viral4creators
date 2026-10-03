@@ -132,6 +132,40 @@ export interface UiTarget {
   href: string | null;
 }
 
+/**
+ * Класс обратимости шага (§5-бис.15 п.3) — считает КОД, мнение модели
+ * игнорируется; код может только ухудшить к `irrev`:
+ *  - `none`  — без эффекта (прокрутка, подсветка, ожидание, реплика);
+ *  - `nav`   — переход по ссылке (GET) на подтверждённом хосте;
+ *  - `local` — поле внутри неотправленной формы, раскрытие меню/вкладки
+ *              (возврат — прежнее значение из памяти `act.js`, §5-бис.15 п.7);
+ *  - `comp`  — обратимое действие посетителя над своим состоянием (корзина,
+ *              избранное, сравнение, фильтр) и поле вне формы (сохраняется
+ *              сразу) — возврат объявленной компенсацией (Э6-тер (и)) или
+ *              «тем же полем — прежнее значение»;
+ *  - `irrev` — всё остальное с эффектом (отправка, «Сохранить», подписка):
+ *              точка невозврата (ТН), не ниже `confirm`.
+ */
+export const UI_UNDO_CLASSES = [
+  'none',
+  'nav',
+  'local',
+  'comp',
+  'irrev',
+] as const;
+export type UiUndo = (typeof UI_UNDO_CLASSES)[number];
+
+/**
+ * Закреплённый отпечаток цели шага мемо (§5-бис.17 п.3): роль, разметка,
+ * нормализованный видимый текст (маскированный). В бою цель сверяется с
+ * ним (п.5 п.5): не сошлось — `pinMismatch`, шаг не исполняется.
+ */
+export interface UiPin {
+  role: UiRole | null;
+  assistId: string | null;
+  text: string;
+}
+
 /** Проверенный шаг — то, что исполняет загрузчик. */
 export interface UiPlanStep {
   i: number;
@@ -147,6 +181,10 @@ export interface UiPlanStep {
   nav: boolean;
   /** Реплика `say` (≤ 200) — только текст в iframe. */
   say: string | null;
+  /** Класс обратимости (§5-бис.15 п.3) — только код. */
+  undo: UiUndo;
+  /** (мемо) Закреплённый отпечаток цели из версии мемо — сверка в бою. */
+  pin?: UiPin | null;
 }
 
 /** Почему шаг вычеркнут/не исполняется — словарь для журнала и TMA. */
@@ -163,6 +201,10 @@ export const UI_STOP_REASONS = [
   'degraded',
   'limit',
   'disabled',
+  /** (цепочки) Второй необратимый шаг или эффект после ТН — отдельной командой (Р-60). */
+  'second_pnr',
+  /** (мемо) Живая цель не совпала с закреплённым отпечатком (§5-бис.17 п.5). */
+  'pin_mismatch',
 ] as const;
 export type UiStopReason = (typeof UI_STOP_REASONS)[number];
 
@@ -224,3 +266,25 @@ export const UI_STEP_RESULTS = [
   'manual',
 ] as const;
 export type UiStepResult = (typeof UI_STEP_RESULTS)[number];
+
+/**
+ * Статус цепочки (§5-бис.15 п.11) — что осталось на сайте после плана:
+ * `clean` — сбой до первого эффекта; `committed` — все шаги или ТН сделаны;
+ * `kept` — сбой/стоп, следы остались, человек выбрал «оставить» или не
+ * ответил; `compensated` — все обратимые следы возвращены и проверены;
+ * `partially_compensated`; `unknown` — шаг `dispatched` без результата или
+ * проверка возврата невозможна.
+ */
+export const CHAIN_STATUSES = [
+  'clean',
+  'committed',
+  'kept',
+  'compensated',
+  'partially_compensated',
+  'unknown',
+] as const;
+export type ChainStatus = (typeof CHAIN_STATUSES)[number];
+
+/** Цель мемо в конце (§5-бис.17 п.5 п.7). */
+export const GOAL_STATUSES = ['reached', 'not_reached', 'unknown'] as const;
+export type GoalStatus = (typeof GOAL_STATUSES)[number];
