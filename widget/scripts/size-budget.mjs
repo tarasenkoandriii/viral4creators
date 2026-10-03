@@ -58,6 +58,11 @@ export const BUDGETS = [
     files: ['dist/v1/admin-chat.js', 'dist/v1/admin-chat.css'],
     maxGzip: 12 * KB,
   },
+  // Э3-бис: связанный режим по согласию (ленивый чанк engage.js, только при
+  // поле `analytics` конфига) и поведение (ленивый чанк ana.js, только с
+  // согласием и включённым поведением; §5-тер.8 — ≤ 4 КБ gzip).
+  { name: 'ana', files: ['dist/v1/ana.js'], maxGzip: 4 * KB },
+  { name: 'bf', files: ['dist/v1/bf.js'], maxGzip: 4 * KB },
 ];
 
 export const LOADER_SINKS = [
@@ -115,6 +120,9 @@ for (const [label, file] of [
   // Э7: «Админка» — чанк в origin админки заказчика и чат сотрудника `wa.`.
   ['чанк «Админки»', 'dist/v1/admin.js'],
   ['чат сотрудника', 'dist/v1/admin-chat.js'],
+  // Э3-бис: связанный режим и поведение — в origin заказчика.
+  ['чанк связанного режима', 'dist/v1/ana.js'],
+  ['чанк поведения', 'dist/v1/bf.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {

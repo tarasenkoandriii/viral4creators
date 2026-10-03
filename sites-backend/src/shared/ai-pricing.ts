@@ -454,6 +454,22 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
   // нет — только вход. Ставка из ТЗ помощника, источник вторичный; из этой
   // среды официальная страница недоступна. PRICING_VERSION не поднята —
   // прежние ставки не менялись (как при добавлении grok-imagine-image).
+  // ИИ-помощник, Э3-бис (sites-backend, ТЗ помощника §5-тер.3, §4.5):
+  // разметка диалогов и выводы недели — «самая дешёвая lite-модель»; без
+  // ставки разметка не запускается (модель задаёт ASSIST_LITE_MODEL, а
+  // unpriced-модель sites-backend отвергает — потолок денег иначе не
+  // держится). Ставка — опубликованная при запуске 2.5 Flash-Lite, из этой
+  // среды официальная страница недоступна: ПРОВЕРИТЬ
+  // ai.google.dev/gemini-api/docs/pricing (и доступность модели новым
+  // ключам — см. историю с 2.5-flash выше). PRICING_VERSION не поднята —
+  // прежние ставки не менялись.
+  'gemini-2.5-flash-lite': {
+    provider: 'GEMINI',
+    inputPerMTok: 0.1 * USD,
+    cachedInputPerMTok: 0.025 * USD,
+    outputPerMTok: 0.4 * USD,
+    note: 'ставка при запуске модели, 2026-10-03 — ПРОВЕРИТЬ ai.google.dev/gemini-api/docs/pricing; кеш — четверть входной',
+  },
   'gemini-embedding-001': {
     provider: 'GEMINI',
     inputPerMTok: 0.15 * USD,

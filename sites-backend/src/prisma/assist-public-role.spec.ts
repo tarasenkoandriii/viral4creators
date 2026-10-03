@@ -755,6 +755,22 @@ if (!RAW_URL) {
         // журнал промахов — только вставка.
         site_ui_elements: ['column:SELECT', 'column:UPDATE'],
         site_ui_element_misses: ['column:INSERT'],
+        // Э3-бис (миграция _assist_ai_analytics): идущий эксперимент
+        // (колонки конфига), единица эксперимента (включение, конверсия),
+        // итог просмотра (вставка/перезапись по pvId). Разметке, выводам,
+        // калибровке, расходу и свёртке поведения — ничего.
+        assist_site_experiments: ['column:SELECT'],
+        assist_site_experiment_units: [
+          'DELETE',
+          'column:SELECT',
+          'column:INSERT',
+          'column:UPDATE',
+        ],
+        assist_site_page_views: [
+          'column:SELECT',
+          'column:INSERT',
+          'column:UPDATE',
+        ],
         // Лендинг: только запись.
         assist_widget_drafts: ['INSERT'],
         assist_landing_events: ['INSERT'],

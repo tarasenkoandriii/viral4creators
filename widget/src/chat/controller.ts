@@ -133,6 +133,12 @@ export interface ChatState {
   vt: VtUi;
   /** Тексты мастера — из ленивого чанка vt.js (null — не загружен). */
   vtT: VtDict | null;
+  /**
+   * Э3-бис: вариант B эксперимента (только группа b посетителя с согласием)
+   * — приветствие и подсказки по языкам; null — как в опубликованном виде.
+   */
+  expGreeting: Partial<Record<UiLang, string>> | null;
+  expSuggestions: Partial<Record<UiLang, string[]>> | null;
 }
 
 /** Ответ проактивного сигнала/сценария, отмеченный для атрибуции цели. */
@@ -225,6 +231,29 @@ export class ChatController {
   private missedSeen: string | null = null;
   /** Цели, пришедшие до сессии (см. sendGoal). */
   private goalQ: Array<Extract<ParentMessage, { type: 'goal' }>> = [];
+  /** Э3-бис: ключ визита посетителя с согласием (только память iframe). */
+  private visit: string | null = null;
+  private linked = '';
+
+  /**
+   * Э3-бис (§5-тер.9): связанный режим — диалог этого посетителя ↔ визит
+   * (сервер пишет только хеш, и только при связанном режиме сайта): цель на
+   * другой странице получит «с участием». Раз на пару диалог+визит.
+   */
+  private linkVisit() {
+    const c = this.conversationId;
+    const v = this.visit;
+    if (!c || !v || !this.auth.token || this.linked === c + v) return;
+    this.linked = c + v;
+    fetch('/widget/v1/visit', {
+      method: 'POST',
+      credentials: 'omit',
+      headers: headers(this.auth, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ conversationId: c, v }),
+    }).catch(() => {
+      this.linked = '';
+    });
+  }
 
   constructor(
     pk: string,
@@ -263,6 +292,8 @@ export class ChatController {
       plan: uiPlanOff(),
       vt: vtOff(),
       vtT: null,
+      expGreeting: null,
+      expSuggestions: null,
     };
     this.voice = new VoiceController({
       ui: () => this.state.voice,
@@ -467,6 +498,12 @@ export class ChatController {
         return this.onProactive(m);
       case 'goal':
         void this.sendGoal(m);
+        return;
+      case 'ana':
+        // Э3-бис: согласие посетителя (ключ визита) и вариант эксперимента.
+        this.visit = m.visit;
+        this.set({ expGreeting: m.greeting, expSuggestions: m.suggestions });
+        this.linkVisit();
         return;
       case 'highlight-result':
         void this.highlightResult(m.elementId, m.found);
@@ -726,6 +763,7 @@ export class ChatController {
       return;
     }
     this.conversationId = c.id;
+    this.linkVisit();
     this.stateVersion = c.stateVersion;
     this.setHandoff(c.handoff);
     if (this.state.busy) return; // свой стрим допишет сам
@@ -1000,6 +1038,7 @@ export class ChatController {
       switch (ev.type) {
         case 'meta':
           this.conversationId = ev.conversationId;
+          this.linkVisit();
           replaceText = this.rename(mid, ev.messageId);
           mid = ev.messageId;
           this.following.add(mid);
@@ -1477,6 +1516,8 @@ export class ChatController {
         ? new Date(this.lastClick).toISOString()
         : null,
       assist: this.marks,
+      // Э3-бис: только с согласием посетителя (связанный режим).
+      ...(this.visit ? { visit: this.visit } : {}),
     });
     const go = () =>
       fetch('/widget/v1/goal', {

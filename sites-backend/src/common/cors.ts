@@ -90,6 +90,8 @@ const WIDGET_PAGE_PATHS = [
   /^\/widget\/v1\/event(\?|$)/,
   /^\/widget\/v1\/goal(\?|$)/,
   /^\/widget\/v1\/goal-picker\/(session|pick)(\?|$)/,
+  // Э3-бис: связанный режим со страницы — эксперимент, итог просмотра, ref.
+  /^\/widget\/v1\/(exp|pv|ref)(\?|$)/,
 ];
 const WIDGET_PATHS = /^\/(widget|w)\/v1\//;
 /**

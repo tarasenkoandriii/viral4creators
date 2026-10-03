@@ -40,6 +40,12 @@ export const SITE_AI_OPERATIONS = [
   // знаниям «Админки» и данным API (§5.4). Платит тариф (единицы диалога
   // «Админки», вес 3); не бюджет обучения.
   'assist-admin-chat',
+  // Э3-бис: аналитика с ИИ — разметка закрытого диалога «Сайта» (lite-модель,
+  // ASSIST_LITE_MODEL) и выводы недели. Платит месячный бюджет аналитики
+  // подписки (Р-50, доля сайта) и суточный потолок платформы
+  // (assist_budget_days scope='analytics'); не бюджет обучения и не ответов.
+  'assist-label',
+  'assist-insight',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

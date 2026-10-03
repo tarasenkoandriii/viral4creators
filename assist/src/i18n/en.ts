@@ -4,6 +4,7 @@ import { voiceControlEn } from './voice-control-en';
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
 import { e3En } from './e3-en';
+import { e3bEn } from './e3b-en';
 
 export const appEn: AppDictionary = {
   nav: {
@@ -429,6 +430,8 @@ export const appEn: AppDictionary = {
   setup: setupEn,
   // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
   e3: e3En,
+  // Э3-бис: аналитика с ИИ, эксперименты, поведение, согласие.
+  e3b: e3bEn,
   // Э4: тариф и оплата, Условия и DPA.
   billing: billingEn,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).

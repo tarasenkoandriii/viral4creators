@@ -36,6 +36,7 @@ import { SiteCredentialsModule } from './modules/site-credentials/site-credentia
 import { AssistAdminModeModule } from './modules/assist-admin-mode/assist-admin-mode.module';
 import { AssistAdminChatModule } from './modules/assist-admin-chat/assist-admin-chat.module';
 import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admin-crawl.module';
+import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-admin-actions.module';
 
 @Module({
   imports: [
@@ -92,6 +93,8 @@ import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admi
     AssistAdminModeModule,
     AssistAdminChatModule,
     AssistAdminCrawlModule,
+    // Э8 «Админка»: действия — предложения «Да», компенсации, мемо АМ-N.
+    AssistAdminActionsModule,
   ],
 })
 export class AppModule {}

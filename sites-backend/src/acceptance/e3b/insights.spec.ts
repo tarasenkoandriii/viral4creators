@@ -1,0 +1,333 @@
+/**
+ * Приёмка Э3-бис (а) — находки недели, выводы модели с проверкой чисел,
+ * «Сделано» → до/после, калибровка score (ТЗ §5-тер.4–5, §5-тер.16 п.11).
+ */
+import { randomUUID } from 'crypto';
+import type { ChatSite } from '../../modules/assist-site-chat/testing/chat-stack.testing';
+import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
+import {
+  RUN_CODE,
+  lastWeekStart,
+} from '../../modules/assist-analytics/ai/insights.service';
+import { addDays, dayRangeUtc } from '../../modules/assist-analytics/site-time';
+import { AiStack } from '../../modules/assist-analytics/testing/ai-stack.testing';
+
+jest.setTimeout(120_000);
+
+const TZ = 'Europe/Kyiv';
+
+describeDb('Приёмка Э3-бис (а): выводы недели и калибровка', () => {
+  const st = new AiStack();
+  beforeAll(async () => {
+    await st.init();
+  });
+  afterAll(async () => {
+    await st.close();
+  });
+
+  const now = new Date();
+  const week = lastWeekStart(now, TZ);
+  const midWeek = new Date(
+    dayRangeUtc(addDays(week, 2), TZ).start.getTime() + 12 * 3600_000,
+  );
+
+  /** Размеченный диалог прошедшей недели (основной ролью, как после крона). */
+  async function labeled(
+    s: ChatSite,
+    p: {
+      page?: string;
+      failureReason?: string | null;
+      score?: number;
+      visitHash?: string | null;
+      createdAt?: Date;
+      question?: string;
+    } = {},
+  ): Promise<string> {
+    const createdAt = p.createdAt ?? midWeek;
+    const c = await st.owner.assistSiteConversation.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        visitorId: `v-${randomUUID()}`,
+        ipHash: 'ip',
+        parentOrigin: s.origin,
+        pageUrl: s.url(p.page ?? '/product/sneakers'),
+        createdAt,
+        lastMessageAt: new Date(createdAt.getTime() + 60_000),
+        visitHash: p.visitHash ?? null,
+      },
+    });
+    await st.owner.assistSiteMessage.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        conversationId: c.id,
+        role: 'visitor',
+        text: p.question ?? 'Є 44 розмір? Мій номер +380671234567',
+        createdAt,
+      },
+    });
+    const score = p.score ?? 40;
+    await st.owner.assistSiteConversationLabel.create({
+      data: {
+        conversationId: c.id,
+        accountId: s.accountId,
+        siteId: s.siteId,
+        status: 'ok',
+        promptVersion: 'label-v1',
+        intent: 'availability',
+        stage: 'decide',
+        outcome: p.failureReason ? 'unresolved' : 'resolved',
+        failureReason: p.failureReason ?? null,
+        leadScore: score,
+        leadBucket: score >= 60 ? 'hot' : score >= 30 ? 'warm' : 'cold',
+        buyingSignals: [],
+        qualityFlags: [],
+        topics: [],
+        entities: [],
+      },
+    });
+    return c.id;
+  }
+
+  async function site(plan: 'business' | 'start' | 'pro'): Promise<ChatSite> {
+    const s = await st.site();
+    await st.plan(s, plan);
+    await st.analytics(s, { linked: true, linkedWindowDays: 7 });
+    return s;
+  }
+
+  async function seedN3(s: ChatSite): Promise<void> {
+    for (let i = 0; i < 40; i++) {
+      await labeled(s, {
+        failureReason:
+          i < 10 ? 'out_of_stock' : i < 14 ? 'price_too_high' : null,
+      });
+    }
+  }
+
+  it('Business: находка N3 кодом + вывод модели с числами находки; повторный тик недели не зовёт модель', async () => {
+    const s = await site('business');
+    await seedN3(s);
+    st.text.queue.push((req) => {
+      // Примеры — только замаскированные (вход модели).
+      expect(req.user).not.toMatch(/380671234567/);
+      const f = JSON.parse(/<findings>(.*)<\/findings>/s.exec(req.user)![1]);
+      const n3 = f.findIndex(
+        (x: { code: string; reason: string }) =>
+          x.code === 'N3' && x.reason === 'out_of_stock',
+      );
+      return JSON.stringify({
+        insights: [
+          {
+            findingIds: [n3],
+            title: 'Нет нужного размера',
+            what: `На /product/sneakers 10 из 40 диалогов без конверсии (25%) — нет в наличии.`,
+            action: 'Покажите наличие размеров на карточке товара.',
+          },
+        ],
+      });
+    });
+    const before = st.text.calls.length;
+    const r = await st.weekly.tick({
+      now,
+      deadline: Date.now() + 30_000,
+      maxSites: 5,
+      scope: st.scope(s),
+    });
+    expect(r.sites).toBe(1);
+    expect(st.text.calls.length - before).toBe(1);
+    const rows = await st.owner.assistSiteInsight.findMany({
+      where: { siteId: s.siteId, weekStart: week },
+    });
+    const n3 = rows.find(
+      (x) =>
+        x.code === 'N3' &&
+        (x.finding as { reason: string }).reason === 'out_of_stock',
+    );
+    expect(n3).toBeDefined();
+    expect(n3!.finding).toMatchObject({
+      n: 40,
+      x: 10,
+      share: 0.25,
+      page: '/product/sneakers',
+    });
+    expect(n3!.text).toMatchObject({ title: 'Нет нужного размера' });
+    expect(rows.some((x) => x.code === RUN_CODE)).toBe(true);
+    const usage = await st.owner.siteAiUsage.count({
+      where: { siteId: s.siteId, operation: 'assist-insight' },
+    });
+    expect(usage).toBe(1);
+    // Повтор — неделя уже обработана: ни модели, ни новых строк.
+    await st.weekly.tick({
+      now,
+      deadline: Date.now() + 30_000,
+      maxSites: 5,
+      scope: st.scope(s),
+    });
+    expect(st.text.calls.length - before).toBe(1);
+  });
+
+  it('подменённый ответ с числом, которого нет в находках, — вывод выброшен, находка сухой строкой', async () => {
+    const s = await site('business');
+    await seedN3(s);
+    st.text.queue.push(
+      JSON.stringify({
+        insights: [
+          {
+            findingIds: [0],
+            title: 'Рост',
+            what: 'Конверсия вырастет на 37%',
+            action: 'Сделайте X',
+          },
+        ],
+      }),
+    );
+    await st.weekly.runSite(s.accountId, s.siteId, week, now);
+    const rows = await st.owner.assistSiteInsight.findMany({
+      where: { siteId: s.siteId, weekStart: week, code: { not: RUN_CODE } },
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((x) => x.text === null)).toBe(true);
+    expect(rows.some((x) => x.textSkipped === 'numbers')).toBe(true);
+    const m = await st.member(s, 'owner');
+    const view = await st.cabinet.insights(m, s.siteId, week);
+    expect(view.items.every((i) => i.code !== RUN_CODE)).toBe(true);
+    expect(view.items[0].text).toBeNull();
+  });
+
+  it('аудит: e-mail/номер заказа в пути — во вход модели путь :id (страницы склеены); внешняя ссылка в выводе — сухая строка', async () => {
+    const s = await site('business');
+    for (let i = 0; i < 40; i++) {
+      await labeled(s, {
+        page: `/orders/${7_000_000 + i}/ivan${i}@example.com`,
+        failureReason: i < 10 ? 'out_of_stock' : null,
+      });
+    }
+    st.text.queue.push((req) => {
+      expect(req.user).not.toMatch(/7000\d{3}|@example|ivan/);
+      const f = JSON.parse(/<findings>(.*)<\/findings>/s.exec(req.user)![1]);
+      const n3 = f.findIndex(
+        (x: { code: string; page: string | null }) =>
+          x.code === 'N3' && x.page === '/orders/:id/:id',
+      );
+      expect(n3).toBeGreaterThanOrEqual(0);
+      expect(f[n3]).toMatchObject({ n: 40, x: 10 });
+      // Примеры вопросов к находке страницы — нашлись по нормализованному пути.
+      expect(f[n3].examples.length).toBeGreaterThan(0);
+      return JSON.stringify({
+        insights: [
+          {
+            findingIds: [n3],
+            title: 'Нет в наличии',
+            what: 'На /orders/:id/:id 10 из 40 диалогов — нет в наличии.',
+            action: 'Подробная инструкция — на evil-helper.com',
+          },
+        ],
+      });
+    });
+    await st.weekly.runSite(s.accountId, s.siteId, week, now);
+    const rows = await st.owner.assistSiteInsight.findMany({
+      where: { siteId: s.siteId, weekStart: week, code: 'N3' },
+    });
+    const n3 = rows.find(
+      (x) => (x.finding as { page: string | null }).page === '/orders/:id/:id',
+    );
+    expect(n3).toMatchObject({ text: null, textSkipped: 'links' });
+  });
+
+  it('Start: находки кодом без модели (textSkipped = plan)', async () => {
+    const s = await site('start');
+    await seedN3(s);
+    const before = st.text.calls.length;
+    await st.weekly.runSite(s.accountId, s.siteId, week, now);
+    expect(st.text.calls.length).toBe(before);
+    const rows = await st.owner.assistSiteInsight.findMany({
+      where: { siteId: s.siteId, weekStart: week, code: { not: RUN_CODE } },
+    });
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.textSkipped === 'plan')).toBe(true);
+  });
+
+  it('«Сделано» → через 14 дней сравнение до/после; 👍 и неверная отметка', async () => {
+    const s = await site('business');
+    await seedN3(s);
+    await st.weekly.runSite(s.accountId, s.siteId, week, now);
+    const m = await st.member(s, 'manager');
+    const [first] = (await st.cabinet.insights(m, s.siteId, week)).items;
+    await st.cabinet.patchInsight(m, s.siteId, first.id, {
+      status: 'done',
+      feedback: 1,
+    });
+    await expect(
+      st.cabinet.patchInsight(m, s.siteId, first.id, { status: 'archived' }),
+    ).rejects.toMatchObject({ status: 400 });
+    await st.owner.assistSiteInsight.update({
+      where: { id: first.id },
+      data: { doneAt: new Date(now.getTime() - 15 * 86_400_000) },
+    });
+    const n = await st.weekly.followUps(s.accountId, s.siteId, TZ, now);
+    expect(n).toBe(1);
+    const row = await st.owner.assistSiteInsight.findUnique({
+      where: { id: first.id },
+    });
+    expect(row!.feedback).toBe(1);
+    expect(row!.followUp).toMatchObject({
+      note: 'coincidence_not_proof',
+      before: expect.anything(),
+    });
+  });
+
+  it('Pro: калибровка Platt на известных исходах (≥ 50 конверсий, ≥ 200 диалогов); без согласия «не купил» не идёт', async () => {
+    const s = await site('pro');
+    const goal = await st.goal(s, {
+      key: 'order',
+      detectors: [{ kind: 'js', config: {} }],
+    });
+    const old = new Date(now.getTime() - 20 * 86_400_000);
+    for (let i = 0; i < 260; i++) {
+      const positive = i < 60;
+      const score = positive ? 50 + (i % 40) : 10 + (i % 50);
+      const cid = await labeled(s, {
+        score,
+        createdAt: old,
+        // Отрицательные — только связанный режим (иначе «не купил» ненадёжно).
+        visitHash: positive || i < 220 ? `vh-${i}` : null,
+      });
+      if (positive) {
+        await st.owner.assistSiteGoalEvent.create({
+          data: {
+            accountId: s.accountId,
+            siteId: s.siteId,
+            goalId: goal,
+            occurredAt: old,
+            source: 'iframe',
+            trust: 'page',
+            attribution: 'direct',
+            conversationId: cid,
+            clientEventId: `cal-${cid}`,
+          },
+        });
+      }
+    }
+    const ok = await st.weekly.calibrate(
+      s.accountId,
+      s.siteId,
+      { linked: true, linkedWindowDays: 7 },
+      now,
+    );
+    expect(ok).toBe(true);
+    const cal = await st.owner.assistSiteLeadCalibration.findFirst({
+      where: { siteId: s.siteId },
+    });
+    expect(cal).toMatchObject({ method: 'platt', positives: 60, total: 220 });
+    expect(cal!.auc).toBeGreaterThan(0.7);
+    const m = await st.member(s, 'owner');
+    const sum = await st.cabinet.summary(m, s.siteId, {
+      from: addDays(week, -30),
+      to: addDays(week, 13),
+    });
+    expect(sum.calibration).toMatchObject({ method: 'platt', version: 1 });
+    expect(sum.plan.leadCalibration).toBe(true);
+  });
+});

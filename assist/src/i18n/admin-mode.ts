@@ -10,7 +10,7 @@ export interface AdminModeTexts {
   open: string;
   openChat: string;
   tabs: Record<
-    'settings' | 'connectors' | 'log' | 'learning' | 'stats',
+    'settings' | 'connectors' | 'log' | 'memos' | 'learning' | 'stats',
     string
   >;
   noAccess: string;
@@ -77,7 +77,6 @@ export interface AdminModeTexts {
     dailyLimit: string;
     raise: string;
     kind: Record<'read' | 'write' | 'danger', string>;
-    writeNextStage: string;
     unsupported: string;
     remove: string;
   };
@@ -126,6 +125,7 @@ const uk: AdminModeTexts = {
     settings: 'Режим',
     connectors: 'API',
     log: 'Журнал',
+    memos: 'Мемо АМ',
     learning: 'Навчання (співробітники)',
     stats: 'Статистика (співробітники)',
   },
@@ -200,7 +200,6 @@ const uk: AdminModeTexts = {
     dailyLimit: 'Ліміт/добу',
     raise: 'Підвищити клас',
     kind: { read: 'читання', write: 'зміна', danger: 'небезпечно' },
-    writeNextStage: 'Зміни — наступний етап (з підтвердженням «Так»).',
     unsupported: 'Обов’язковий заголовок — помічник не викличе',
     remove: 'Видалити API',
   },
@@ -259,6 +258,7 @@ const ru: AdminModeTexts = {
     settings: 'Режим',
     connectors: 'API',
     log: 'Журнал',
+    memos: 'Мемо АМ',
     learning: 'Обучение (сотрудники)',
     stats: 'Статистика (сотрудники)',
   },
@@ -335,7 +335,6 @@ const ru: AdminModeTexts = {
     dailyLimit: 'Лимит/сутки',
     raise: 'Поднять класс',
     kind: { read: 'чтение', write: 'изменение', danger: 'опасно' },
-    writeNextStage: 'Изменения — следующий этап (с подтверждением «Да»).',
     unsupported: 'Обязательный заголовок — помощник не вызовет',
     remove: 'Удалить API',
   },
@@ -395,6 +394,7 @@ const en: AdminModeTexts = {
     settings: 'Mode',
     connectors: 'API',
     log: 'Log',
+    memos: 'AM memos',
     learning: 'Training (staff)',
     stats: 'Statistics (staff)',
   },
@@ -467,7 +467,6 @@ const en: AdminModeTexts = {
     dailyLimit: 'Limit/day',
     raise: 'Raise class',
     kind: { read: 'read', write: 'write', danger: 'danger' },
-    writeNextStage: 'Changes come next (with a “Yes” confirmation).',
     unsupported: 'Required header — the assistant cannot call it',
     remove: 'Remove API',
   },

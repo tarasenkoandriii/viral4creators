@@ -277,7 +277,12 @@ export class AdminSessionService {
       employeeRef: employeeRefOfSub(row.sub),
       customerRole: row.role,
       name: row.name,
-      role: row.role && map[row.role] ? map[row.role] : null,
+      // Только собственный ключ карты (аудит Э8): роль «constructor» из JWT
+      // давала Function вместо строки — 500 на каталоге действий.
+      role:
+        row.role && Object.prototype.hasOwnProperty.call(map, row.role)
+          ? map[row.role]
+          : null,
       expiresAt: row.expiresAt,
     };
   }

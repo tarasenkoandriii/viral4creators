@@ -15,6 +15,12 @@
  *    закінчилась», история на сервере ждёт до 8 ч.
  * Ответ модели — враждебный текст: только textContent, без ссылок и
  * картинок (§4.3-бис «Админка → внешний мир»).
+ *
+ * Э8: карточка подтверждения действия (§5.4 п.5): «было → станет», пометка
+ * «без вашей просьбы», для danger — слово подтверждения; «Да» — отдельный
+ * POST `/proposals/:id/confirm` с хешем параметров, которые видел
+ * сотрудник; итог и восстановление после перезагрузки — из `state`
+ * (§4-бис.5: повторного исполнения нет — решает сервер).
  */
 import './admin-chat.css';
 import { ADMIN_CHANNEL_PREFIX, ADMIN_SESSION_HEADER } from '../shared/brand';
@@ -31,6 +37,38 @@ interface Msg {
   text: string;
   answerPath: string | null;
   rating: number | null;
+  /** Э8: карточка подтверждения при этом сообщении. */
+  proposalId?: string | null;
+}
+
+/** Э8: строка карточки «было → станет». */
+interface Field {
+  name: string;
+  before?: string | string[] | null;
+  after: string | string[];
+}
+
+/** Э8: предложение действия (сервер — источник правды, §4-бис.5). */
+interface Proposal {
+  id: string;
+  status: string;
+  kind: string;
+  title: string;
+  fields: Field[];
+  paramsHash: string;
+  unrequested: boolean;
+  confirmPhrase: string | null;
+  idempotent: boolean;
+  undoDeclared: boolean;
+  undoAvailable: boolean;
+  checkAvailable: boolean;
+  dryRun: string;
+  dryRunStatus: string | null;
+  dryRunNote: string | null;
+  amount: number | null;
+  errorText: string | null;
+  compensationOf: string | null;
+  memo: { step: number } | null;
 }
 
 const S = {
@@ -46,6 +84,9 @@ const S = {
   refreshTimer: 0 as number,
   messages: [] as Msg[],
   banner: false,
+  /** Э8: карточки по id (восстанавливаются из `state` после перезагрузки). */
+  proposals: new Map<string, Proposal>(),
+  acting: false,
 };
 
 let channel: BroadcastChannel | null = null;
@@ -103,8 +144,197 @@ function renderStatic() {
   banner.style.display = S.banner ? '' : 'none';
 }
 
+// ── Э8: карточка подтверждения (порт автомата voice-confirm: propose →
+// confirm | cancel; «Да» — отдельный запрос, ничего молча) ───────────────
+const CARD_DONE = new Set(['done', 'failed', 'unknown', 'rejected', 'expired']);
+
+function btn(text: string, cls: string, on: () => void): HTMLButtonElement {
+  const b = el('button', cls, text);
+  b.type = 'button';
+  b.disabled = S.acting;
+  b.addEventListener('click', on);
+  return b;
+}
+
+function shown(v: string | string[] | null | undefined): string {
+  if (v === null || v === undefined) return '—';
+  return Array.isArray(v) ? v.join(', ') : v;
+}
+
+function card(p: Proposal): HTMLElement {
+  const c = el('div', `wa-card wa-${p.kind === 'danger' ? 'danger' : 'write'}`);
+  c.dataset.status = p.status;
+  c.appendChild(
+    el(
+      'div',
+      'wa-card-t',
+      `${p.compensationOf ? t().cardUndoTitle : t().cardTitle} ${p.title}`
+    )
+  );
+  if (p.memo)
+    c.appendChild(el('div', 'wa-card-m', `${t().memoStep} ${p.memo.step + 1}`));
+  const ul = el('ul', 'wa-card-f');
+  for (const f of p.fields) {
+    const li = el('li');
+    li.appendChild(el('b', '', `${f.name}: `));
+    if (f.before !== undefined) {
+      li.appendChild(el('s', '', shown(f.before)));
+      li.appendChild(document.createTextNode(' → '));
+    }
+    li.appendChild(el('span', '', shown(f.after)));
+    ul.appendChild(li);
+  }
+  c.appendChild(ul);
+  const warn = (text: string) => c.appendChild(el('div', 'wa-card-w', text));
+  if (p.unrequested) warn(t().unrequested);
+  if (p.kind === 'danger' && !p.undoDeclared) warn(t().noUndo);
+  if (p.dryRun === 'none' && p.status === 'pending') warn(t().noPreview);
+  if (p.dryRunStatus === 'failed' && p.dryRunNote)
+    warn(`${t().dryFailed} ${p.dryRunNote}`);
+  const row = el('div', 'wa-card-a');
+  if (p.status === 'pending') {
+    let phrase: HTMLInputElement | null = null;
+    if (p.confirmPhrase) {
+      c.appendChild(
+        el('div', 'wa-card-p', `${t().phraseHint} ${p.confirmPhrase}`)
+      );
+      phrase = el('input', 'wa-card-i');
+      phrase.autocomplete = 'off';
+      phrase.setAttribute('aria-label', t().phraseHint);
+      c.appendChild(phrase);
+    }
+    row.append(
+      btn(
+        t().yes,
+        'wa-yes',
+        () =>
+          void act(p, 'confirm', {
+            paramsHash: p.paramsHash,
+            ...(phrase ? { phrase: phrase.value } : {}),
+          })
+      ),
+      btn(t().edit, 'wa-edit', () => {
+        void act(p, 'reject', {});
+        input.placeholder = t().editHint;
+        input.focus();
+      }),
+      btn(t().no, 'wa-no', () => void act(p, 'reject', {}))
+    );
+  } else if (p.status === 'executing') {
+    c.appendChild(el('div', 'wa-card-s', t().executing));
+  } else {
+    const label: Record<string, string> = {
+      done: t().stDone,
+      failed: t().stFailed,
+      unknown: t().stUnknown,
+      rejected: t().stRejected,
+      expired: t().stExpired,
+    };
+    c.appendChild(
+      el(
+        'div',
+        'wa-card-s',
+        `${label[p.status] ?? p.status}${p.errorText ? ` ${p.errorText}` : ''}`
+      )
+    );
+    if (p.status === 'done' && p.undoAvailable) {
+      row.appendChild(
+        btn(t().undo, 'wa-undo', () => void act(p, 'compensate', {}))
+      );
+    }
+    if (p.status === 'unknown') {
+      if (p.checkAvailable) {
+        row.appendChild(btn(t().check, 'wa-check', () => void check(p, c)));
+      }
+      // danger: повтор после unknown — тоже со словом подтверждения (сервер
+      // требует его на каждое «Да»; без поля повтор был невозможен).
+      let again: HTMLInputElement | null = null;
+      if (p.confirmPhrase) {
+        c.appendChild(
+          el('div', 'wa-card-p', `${t().phraseHint} ${p.confirmPhrase}`)
+        );
+        again = el('input', 'wa-card-i');
+        again.autocomplete = 'off';
+        again.setAttribute('aria-label', t().phraseHint);
+        c.appendChild(again);
+      }
+      let ack: HTMLInputElement | null = null;
+      if (!p.idempotent) {
+        const l = el('label', 'wa-card-k');
+        ack = el('input');
+        ack.type = 'checkbox';
+        l.append(ack, document.createTextNode(` ${t().retryAck}`));
+        c.appendChild(l);
+      }
+      row.appendChild(
+        btn(
+          t().retry,
+          'wa-retry',
+          () =>
+            void act(p, 'confirm', {
+              paramsHash: p.paramsHash,
+              ...(again ? { phrase: again.value } : {}),
+              ...(ack ? { acknowledgeRisk: ack.checked } : {}),
+            })
+        )
+      );
+    }
+  }
+  if (row.childNodes.length) c.appendChild(row);
+  return c;
+}
+
+async function act(
+  p: Proposal,
+  what: 'confirm' | 'reject' | 'compensate',
+  b: object
+) {
+  if (!S.session || S.acting) return;
+  S.acting = true;
+  renderMessages();
+  let ok = false;
+  try {
+    const r = await api<{ proposal: Proposal | null }>(
+      `/assist-admin/v1/proposals/${encodeURIComponent(p.id)}/${what}?lang=${S.lang}`,
+      { method: 'POST', body: JSON.stringify(b) }
+    );
+    if (r.status === 401) {
+      S.acting = false;
+      return expired();
+    }
+    ok = r.status === 200;
+  } catch {
+    ok = false;
+  } finally {
+    S.acting = false;
+  }
+  // Итог (и следующий шаг мемо) — с сервера: он же переживает перезагрузку.
+  await loadState();
+  if (!ok) setNote(t().actionError);
+}
+
+async function check(p: Proposal, c: HTMLElement) {
+  const r = await api<{
+    available: boolean;
+    fields: Array<{ name: string; now: string | string[] | null }>;
+  }>(
+    `/assist-admin/v1/proposals/${encodeURIComponent(p.id)}/check?lang=${S.lang}`,
+    {
+      method: 'POST',
+      body: '{}',
+    }
+  );
+  const box = el('div', 'wa-card-c');
+  if (r.status === 200 && r.data && r.data.available) {
+    for (const f of r.data.fields)
+      box.appendChild(el('div', '', `${f.name}: ${shown(f.now)}`));
+  } else box.textContent = t().checkNone;
+  c.appendChild(box);
+}
+
 function renderMessages() {
   list.replaceChildren();
+  const shownCards = new Set<string>();
   for (const m of S.messages) {
     const row = el('div', m.role === 'employee' ? 'wa-m wa-me' : 'wa-m wa-ai');
     for (const para of m.text.split(/\n{2,}/))
@@ -121,6 +351,18 @@ function renderMessages() {
       fb.append(up, down);
       row.appendChild(fb);
     }
+    const p = m.proposalId ? S.proposals.get(m.proposalId) : undefined;
+    if (p && !shownCards.has(p.id)) {
+      shownCards.add(p.id);
+      row.appendChild(card(p));
+    }
+    list.appendChild(row);
+  }
+  // Карточки без своего сообщения (следующий шаг мемо, незавершённые).
+  for (const p of S.proposals.values()) {
+    if (shownCards.has(p.id) || CARD_DONE.has(p.status)) continue;
+    const row = el('div', 'wa-m wa-ai');
+    row.appendChild(card(p));
     list.appendChild(row);
   }
   list.scrollTop = list.scrollHeight;
@@ -147,6 +389,7 @@ function clearLocal() {
   S.sub = null;
   S.exp = 0;
   S.messages = [];
+  S.proposals.clear();
   try {
     sessionStorage.removeItem(storageKey());
   } catch {
@@ -201,12 +444,16 @@ async function api<R>(
 }
 
 async function loadState() {
-  const r = await api<{ messages: Msg[]; statsPerEmployee: boolean }>(
-    '/assist-admin/v1/state'
-  );
+  const r = await api<{
+    messages: Msg[];
+    statsPerEmployee: boolean;
+    proposals?: Proposal[];
+  }>('/assist-admin/v1/state');
   if (r.status === 401) return expired();
   if (r.status !== 200 || !r.data) return setNote(t().unavailable);
   S.messages = r.data.messages;
+  S.proposals.clear();
+  for (const p of r.data.proposals ?? []) S.proposals.set(p.id, p);
   S.banner = !!r.data.statsPerEmployee;
   renderStatic();
   renderMessages();
@@ -286,17 +533,20 @@ async function ask(text: string) {
   renderMessages();
   setNote(t().thinking);
   try {
-    const r = await api<{ question: Msg; answer: Msg }>(
-      '/assist-admin/v1/chat',
-      {
-        method: 'POST',
-        body: JSON.stringify({ text, clientRequestId: rid }),
-      }
-    );
+    const r = await api<{
+      question: Msg;
+      answer: Msg & { proposal?: Proposal | null };
+    }>('/assist-admin/v1/chat', {
+      method: 'POST',
+      body: JSON.stringify({ text, clientRequestId: rid }),
+    });
     if (r.status === 401) return expired();
     if (r.status !== 200 || !r.data) return setNote(t().unavailable);
     S.messages = S.messages.filter((m) => m.id !== rid);
     S.messages.push(r.data.question, r.data.answer);
+    if (r.data.answer.proposal)
+      S.proposals.set(r.data.answer.proposal.id, r.data.answer.proposal);
+    input.placeholder = t().placeholder;
     renderMessages();
     setNote('');
   } catch {

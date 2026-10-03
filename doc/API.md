@@ -757,7 +757,7 @@ sites-backend, кабинет (initData помощника); права — **т
 | `GET /assist/sites/:id/admin-mode/stats?days=7\|30` | `{ days, conversations, questions, refusedShare, thumbsDown, learningNew, topQuestions[≤10]{ clusterKey, sample, count }, tools[{ operation, ok, failed }], byRole[{ role, conversations, questions }], byEmployee[{ employee, questions }]\|null }` — разрез по сотруднику только при `statsPerEmployee` |
 | `GET\|POST /assist/sites/:id/connectors` | список `ConnectorView[]`; создать — `{ name, specUrl \| specText (OpenAPI 3.x JSON ≤ 2 МБ), baseUrl?, saasAcknowledged? }` → `ConnectorView{ id, name, baseUrl, allowedHosts[], hostVerified, saasAcknowledged, specTitle, specVersion, authKind, authHeaderName, secret{ set, tail, setAt }, status: active\|paused\|auth_failed, lastCallAt, operations[OperationView] }`; спецификация по URL — через IP-pin/SSRF-guard (422 `CONNECTOR_SPEC_UNREACHABLE`), не OpenAPI 3/не JSON/http-сервер — 422 `CONNECTOR_SPEC_INVALID`; хост API не verified и нет отметки SaaS — 409 `CONNECTOR_HOST_NOT_ALLOWED` |
 | `GET\|PATCH\|DELETE /assist/sites/:id/connectors/:cn` | `PATCH { name?, status?: active\|paused, saasAcknowledged? }`; `DELETE` — секрет стирается сразу со строкой |
-| `PATCH /assist/sites/:id/connectors/:cn/operations/:op` | `{ enabled?, kind?: read\|write\|danger, roles?[≤20], dailyLimit?\|null }` → `OperationView{ id, operationId, method, path, summary, autoKind, kind, kindReason, enabled, roles, dailyLimit, unsupported, params[{ name, in: path\|query, required, type, enum? }] }`; класс ниже автоклассификации — 409 `OPERATION_KIND_LOWER`; включить write/danger — 409 `ADMIN_ACTIONS_NEXT_STAGE` (Э8); обязательный заголовок — 409 `OPERATION_UNSUPPORTED` |
+| `PATCH /assist/sites/:id/connectors/:cn/operations/:op` | `{ enabled?, kind?: read\|write\|danger, roles?[≤20], dailyLimit?\|null }` → `OperationView{ id, operationId, method, path, summary, autoKind, kind, kindReason, enabled, roles, dailyLimit, unsupported, params[{ name, in: path\|query, required, type, enum? }] }`; класс ниже автоклассификации — 409 `OPERATION_KIND_LOWER`; включить write/danger — с Э8 разрешено в тарифе Pro (иначе 402 `ADMIN_ACTIONS_PLAN`), поля Э8 — раздел «Э8» ниже; обязательный заголовок — 409 `OPERATION_UNSUPPORTED` |
 | `PUT\|DELETE /assist/sites/:id/connectors/:cn/secret` | `{ authKind: bearer\|basic\|header, headerName?, secret (4–4096, без управляющих символов/CR/LF) }` → `ConnectorView` (только `tail`); служебное имя заголовка (`Host`, `Content-Length`, `Content-Type`, `Transfer-Encoding`, `Connection`, `Accept`, `Accept-Encoding`, `Proxy-*`, `X-V4C-Actor` …) — 400 `CONNECTOR_SPEC_INVALID`; новый секрет снимает `auth_failed` |
 | `GET /assist/sites/:id/action-log?actor=&outcome=&operation=` | `[{ id, at, actor (jwt:<sub>\|tg:<id>), actorRole, channel: embed\|tma, operation, kind, outcome: ok\|http_error\|timeout\|blocked\|denied\|invalid_params\|bad_response\|auth_failed\|limit, httpStatus, durationMs, request{ method, path, query }, responseBytes, error }]` (≤ 500); журнал только дописывается (триггер БД), цепочка хешей |
 | `GET\|PUT /assist/sites/:id/admin-mode/private-crawl` | `{ enabled, hostId, testAccountId, startPath, hosts[], testAccounts[{ id, label, hostIds, status }], jobs[≤10], worker: waiting_sh3 }`; `PUT { enabled, hostId?, testAccountId?, startPath? }` (`startPath` — путь своего хоста «/…», не «//хост» и без обратной косой черты — иначе 400) — хост — verified этого сайта, учётка — активная тестовая из реестра Ш2 на этом хосте (409 `PRIVATE_CRAWL_INVALID`) |
@@ -797,4 +797,136 @@ sites-backend, кабинет (initData помощника); права — **т
 в заголовке запроса к API; эхо секрета в ответе API вырезается до модели.
 
 Крон: `GET /cron/assist-admin-retention` (`CRON_SECRET`) → `{ ran, sessions,
-conversations, log }`.
+conversations, log, proposalsPurged, proposalsDeleted, memoRuns }` (поля
+предложений и мемо — с Э8).
+
+## Э8 помощника: «Админка» — действия
+
+ТЗ помощника §5.2–5.7, §4-бис.5, §5-бис.15 п.14, §5-бис.17 п.10; план этапов
+«Э8 — сделано»; развёртывание — `doc/DEPLOYMENT.md` §6.20. Модель только
+ПРЕДЛАГАЕТ write/danger; исполняет отдельный запрос «Да» того же сотрудника
+после повторной проверки роли, тарифа (Pro — `ASSIST_PLANS.adminActions`),
+включённости и класса операции, схемы, `paramsHash`, слова danger и
+потолков. Таблицы — только `assist_admin_*` (`assist_admin_action_proposals`,
+`assist_admin_memos`, `…_memo_versions`, `assist_admin_phrases`,
+`assist_admin_memo_runs`); роль `assist_public` прав не имеет.
+
+**Импорт OpenAPI (дополнение к Э7):** параметры — и поля JSON-тела верхнего
+уровня (`in: body`; скаляры и массивы скаляров ≤ 100; вложенный обязательный
+объект — операция `unsupported`); расширения операции:
+`x-assist-idempotent: true`; `x-assist-preview: { operationId (read),
+params: { <имя>: "$.request.<путь>" } }`; `x-assist-compensation: {
+operationId, params: { <имя>: "$.request.<путь>" | "$.preview.<путь>" } }` —
+операция есть, класса не ниже исходной, все обязательные параметры
+отображены, `$.preview` — только при `x-assist-preview`; иначе 422
+`CONNECTOR_SPEC_INVALID`. Числовой параметр суммы изменяющей операции
+(`amount`, `total`, `price`, `…_amount`) находится автоматически
+(`autoAmountParam`) и не снимается.
+
+Кабинет, только `assistAdmin: owner`:
+
+| Маршрут | Что |
+|---|---|
+| `PATCH /assist/sites/:id/admin-mode` | дополнительно `{ actionsDailyCap?: 0–10000 (исполнений write/danger сайта за UTC-сутки, по умолчанию 100), notifyDanger?: boolean }`; в `GET` — ещё `planAllowsActions`, `actionsDailyCap`, `notifyDanger` |
+| `PATCH /assist/sites/:id/connectors/:cn/operations/:op` | дополнительно `{ idempotent?, preview?: { operationId, params }\|null, compensation?: { operationId, params }\|null, dryRunParam?: <булев параметр>\|null, amountParam?, maxAmount?, dailyAmountCap?, confirmWord? (буквы, ≤ 30) }`; связи проверяются как при импорте (409 `OPERATION_CONFIG_INVALID`); включить write/danger без Pro — 402 `ADMIN_ACTIONS_PLAN`; денежная операция без `maxAmount` и `dailyAmountCap` не включается (409); `OperationView` несёт эти поля и `autoAmountParam`; поднятый класс выключает операцию |
+| `POST /assist/sites/:id/connectors/:cn/signing-secret` | → `{ secret (показ ОДИН раз, `no-store`), setAt, header: X-V4C-Signature, format }`; изменяющие запросы подписываются `t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<METHOD>.<Idempotency-Key>.<path?query>.<тело>")>` (ключ идемпотентности — в подписи, аудит Э8); в `ConnectorView` — `signing{ set, setAt }` |
+| `GET /assist/sites/:id/action-log?kind=read\|write\|danger\|proposal\|decision\|chain\|memo\|actions` | журнал (Э7) с фильтром класса записи; `actions` — исполнения, предложения, решения |
+| `GET /assist/sites/:id/action-log/proposals?chain=review` | действия сайта `ProposalView[] + { actor, channel }` (≤ 300); `review` — `unknown`, неудачные/неизвестные компенсации, «без вашей просьбы» |
+| `POST /assist/sites/:id/action-log/:pid/rollback` | предложить компенсацию исполненного действия под «Да» владельца (TMA): `{ proposal, text }`; не объявлена/окно 7 дней закрыто/уже компенсировано/операция выключена — 409 `COMPENSATION_UNAVAILABLE`; чужой сайт — 404 |
+| `GET /assist/sites/:id/action-log/export` | CSV журнала (`text/csv`, `no-store`): маскированные строки с `prevHash`/`hash` |
+| `GET /assist/sites/:id/action-log/verify` | `{ ok, brokenAt }` — проверка цепочки хешей |
+| `GET\|POST /assist/sites/:id/admin-mode/memos` | `{ limit (Pro 50, иначе 0), used, memos[{ number, key, name, status, publishedVersion, draftRevision, updatedAt }] }`; создать — `{ key?, draft? }` → `AdminMemoView` (номер АМ-N из счётчика сайта, не переиспользуется); Business — 402, лимит — 409 `MEMO_LIMIT`; шаг-клик в черновике — 422 `MEMO_INVALID` |
+| `GET /assist/sites/:id/admin-mode/memos/:n` | `{ …, draft{ names, triggers, goal{ text }, slots[{ name, kind: text\|number\|date\|option, pii, options }], steps[{ action: api, op (id операции), opKey, args{ <параметр>: { slot }\|{ const } } } \| { action: say, say }] }, versions[≤20]{ number, status, gateReport{ result, problems, warnings, kinds }, … } }` |
+| `PATCH /assist/sites/:id/admin-mode/memos/:n/draft` | `{ expectedRevision, draft, key? }` — расхождение ревизии 409 `MEMO_REVISION`; ключ после публикации — 422 |
+| `POST /assist/sites/:id/admin-mode/memos/:n/versions` | собрать версию: ворота кода + каталог коннекторов → `{ version, status: checking\|held, gateReport }` |
+| `POST /assist/sites/:id/admin-mode/memos/:n/versions/:v/publish\|rollback` | публикация (только `checking`; фраза занята другим мемо — 409 `MEMO_CONFLICT`); `rollback` — новая версия с содержимым `v` и новыми воротами |
+| `POST /assist/sites/:id/admin-mode/memos/:n/disable\|enable`; `DELETE …/memos/:n` | выключить/включить; удалить мягко (номер не освобождается) |
+
+`ProposalView`: `{ id, status: pending|executing|done|failed|unknown|rejected|expired,
+kind: write|danger, operation, title, connectorName, fields[{ name, in, before?, after }],
+paramsHash, unrequested, confirmPhrase, idempotent, undoDeclared, undoAvailable,
+checkAvailable, dryRun: none|preview|native|native+preview, dryRunStatus, dryRunNote,
+amount, outcome, httpStatus, errorText, chainStatus, compensationOf,
+memo{ runId, step }|null, attempts, expiresAt, createdAt, executedAt, note }` —
+параметров запроса, кроме строк карточки, в ответах нет.
+
+«Да» сотрудника — встраивание (сессия `X-Assist-Admin-Session`, тот же
+`sub`) и TMA 7a (`assistAdmin: owner|employee`); «Да»/«Нет»/«Проверить»/
+компенсация — 20 в минуту на сотрудника в обоих каналах (TMA — с аудита Э8),
+429 `ADMIN_RATE_LIMITED`:
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist-admin/v1/proposals/:id` · `GET /assist/sites/:id/admin-chat/proposals/:pid` | карточка; чужая/другого сотрудника/другого кабинета — 404 |
+| `POST …/proposals/:id/confirm` | `{ paramsHash (64 hex — то, что видел сотрудник), phrase? (danger), acknowledgeRisk? }` → `{ proposal, text, next (следующий шаг мемо) \| null }`; повтор после исполнения — тот же итог без запроса; хеш/схема/класс изменились — 409 `PROPOSAL_CHANGED`; истекло (10 мин) — 410 `PROPOSAL_EXPIRED`; отклонено — 409 `PROPOSAL_DECIDED`; роль/операция недоступна — 403 `OPERATION_FORBIDDEN`; слово — 422 `PROPOSAL_PHRASE`; повтор после `unknown` неидемпотентной операции без `acknowledgeRisk` — 409 `PROPOSAL_RISK_ACK`; потолки — 429 `ACTION_LIMIT`/`ACTION_AMOUNT_LIMIT`; тариф — 402 `ADMIN_ACTIONS_PLAN`; коннектор недоступен — 409 `ACTION_UNAVAILABLE`; другая компенсация того же действия уже исполняется/исполнена — 409 `COMPENSATION_UNAVAILABLE`; danger-повтор после `unknown` — тоже со словом |
+| `POST …/proposals/:id/reject` | «Нет» → карточка `rejected` (шаг мемо — запуск остановлен) |
+| `POST …/proposals/:id/check` | «Проверить» (после `unknown`) read-операцией предпросмотра — только включённой и доступной роли сотрудника (иначе, как и «было» в карточке, `available: false`) → `{ available, fields[{ name, now, expected }] }` |
+| `POST …/proposals/:id/compensate` | объявленная компенсация своего исполненного действия → `{ proposal, text }` (новая карточка со своим «Да»); компенсацию не компенсируют — 409 `COMPENSATION_UNAVAILABLE` (`undoAvailable: false`) |
+
+`GET /assist-admin/v1/state` и `GET /assist/sites/:id/admin-chat/state` —
+дополнительно `proposals[]` (карточки сотрудника за 8 ч: незавершённые
+восстанавливаются после перезагрузки с тем же `expiresAt`), у сообщений —
+`proposalId`; ответ `chat` — `answer.proposal` (`answerPath: action`).
+Мемо: «виконай АМ-5 1042» / фраза владельца → шаги по порядку (read — сразу,
+write/danger — карточка), значения слотов — только из текста сотрудника.
+
+Исполнение: `Idempotency-Key` = id предложения (повтор «Да» после `unknown`
+— тот же ключ), `X-V4C-Actor` (`sub`; вне печатного ASCII — percent-encoding
+UTF-8), `X-V4C-Signature` (если выпущен секрет; подписан и ключ),
+секрет коннектора — только в заголовке; IP-pin, только `allowedHosts`,
+без редиректов, 10 с; 5xx/таймаут/обрыв — `unknown` без автоповтора; 4xx —
+`failed` с текстом ошибки API (усечён, маскирован, без секрета); 401/403 —
+коннектор `auth_failed` и уведомление владельцу; каждое исполнение danger —
+уведомление владельцам (`notifyDanger`). Журнал: записи `proposal`,
+`write`/`danger` (ключ `exec:<id>:<попытка>`), `decision`, `chain`
+(статус цепочки компенсации — новой записью), `memo`.
+
+
+## Э3-бис помощника: аналитика с ИИ
+
+ТЗ помощника §5-тер.2–5, 8–10, 14–17; план этапов «Э3-бис — сделано»;
+развёртывание — `doc/DEPLOYMENT.md` §6.21. Числа считает код; модель (lite,
+`ASSIST_LITE_MODEL`) только размечает закрытые диалоги и формулирует
+выводы по готовым находкам — на тексте с замаскированными ПД, в пределах
+денежного потолка сайта и платформы (резерв до вызова). Связанный режим,
+эксперименты и поведение — **только для посетителей с согласием** из
+баннера сайта (`V4CAssist('consent', { analytics: true })`; GPC/DNT —
+всегда «без согласия»). Тарифы: разметка, выводы моделью, эксперименты,
+поведение (100 тыс. просмотров) — Business; + калибровка вероятности,
+окно 30 дней, 500 тыс. — Pro; Trial/Start — сухие находки кодом.
+
+Кабинет (`assist: manager|owner`; оператор — 403; ключи согласия и
+эксперименты — только `owner`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/ai/summary?from&to` | `{ plan{ planId, aiAnalytics, leadCalibration, experiments, linkedWindowDays, behaviorViewsPerMonth }, model{ ok, reason }, budget{ period, capMicroUsd, spentMicroUsd }, coverage{ closed, labeled, failed, skipped, injection, pending, sampled }, buckets{ hot, warm, cold, hotNoLead }, intents[{ key, n }], stages[], outcomes[], failureReasons[], overridden, calibration{ version, method, positives, total, auc, brier, ece, createdAt }\|null }` (веса выборки учтены) |
+| `GET /assist/sites/:id/ai/dialogs?from&to&bucket&intent&stage&failure&cursor` | `{ items[≤50]{ conversationId, createdAt, pagePath, status, intent, stage, outcome, failureReason, leadScore, leadBucket, leadProb (только после калибровки), features[{ f, c }] (вклад признаков), intentNote, failureNote, converted, lead, handoff, weight, overridden }, nextCursor }` — текста диалога нет |
+| `PATCH /assist/sites/:id/conversations/:cid/label` | `{ intent?, stage?, outcome?, failureReason?, leadBucket? }` (значение — из перечня или `null` — снять исправление) → `{ ok, humanOverride }`; исправление человека сильнее модели; 400 `LABEL_INVALID`, 404 `LABEL_NOT_FOUND` |
+| `GET /assist/sites/:id/stats/insights?week=YYYY-MM-DD` | `{ weeks[], weekStart, items[{ id, code: N2…N10, impact, finding{ n, x, share, ciLow, ciHigh, base, page, topic, reason, field, metric, value, trigger }, text{ title, what, action }\|null, textSkipped: plan\|model\|budget\|numbers\|links\|null, status: new\|done\|dismissed, doneAt, followUp{ before, after }, feedback }], plan, model }` |
+| `PATCH /assist/sites/:id/insights/:iid` | `{ status?: new\|done\|dismissed, feedback?: 1\|-1\|0 }`; «Сделано» → сравнение до/после через 14 дней; 400 `INSIGHT_INVALID`, 404 `INSIGHT_NOT_FOUND` |
+| `GET /assist/sites/:id/stats/behavior?from&to` | `{ enabled, reason: plan\|settings\|null, quota{ used, limit }, pages[≤200]{ path, views, activeMsMedian, scrollMedian, deepScrollShare, backNav, rage, jsErrors, formStarts, formAbandons, topAbandonField, lcpP75, inpP75, clsP75, chatOpens }, totalViews }` |
+| `GET /assist/sites/:id/experiments` | `ExperimentView[]`: `{ id, kind: holdout\|greeting\|suggestions, goalKey, share, status: running\|done\|invalid\|stopped, horizonDays, startedAt, endsAt, stopReason, mdeRel, minUnitsPerArm, units{ a, b }, srmP, result\|null }`; `result{ nA, nB, xA, xB, rateA, rateB, diff, ciLow, ciHigh, p, liftRel, verdict: significant\|not_significant\|insufficient_sample }` — **только у `done`** |
+| `POST /assist/sites/:id/experiments/preview` | `{ kind, goalKey, share? (holdout 0.05–0.2), horizonDays? (14–56, 28), variant? }` → `PowerView{ units28, conversions28, baseRate, unitsPerDay, expectedUnits, mdeRel, minUnitsPerArm, ok, reason: no_traffic\|no_conversions\|underpowered\|null }` |
+| `POST /assist/sites/:id/experiments` | то же тело (`variant`: greeting — `{ uk?, ru?, en?: текст ≤ 300 }`, suggestions — `{ <язык>: ≤ 4 × ≤ 80 }`) → `ExperimentView`; только владелец (403 `EXPERIMENT_OWNER_ONLY`), Business+ (402 `EXPERIMENT_PLAN`), связанный режим (409 `EXPERIMENT_NEEDS_CONSENT`), один на сайт (409 `EXPERIMENT_RUNNING`), активная цель (для holdout — не только встроенная заявка; 400 `EXPERIMENT_GOAL`), MDE ≤ 30% (409 `EXPERIMENT_UNDERPOWERED`) |
+| `POST /assist/sites/:id/experiments/:eid/stop` | владелец → `stopped` (`stopReason: owner`), **без итога**; 404 `EXPERIMENT_NOT_FOUND` |
+| `PATCH /assist/sites/:id/analytics-settings` | теперь **частичная** правка `config` поверх сохранённого; новые ключи `aiLabeling`, `vertical: shop\|services\|saas\|other`, `linked`, `linkedGcm`, `linkedWindowDays` (1–30, не больше тарифа), `behavior`; ключи согласия и поведения меняет только владелец (403 `ANALYTICS_OWNER_ONLY`) |
+
+Публичные (виджет; страница — `Origin` + `pk`, допущенный хост; 30
+запросов/мин с адреса на сайт; тела `exp`/`pv` — и `text/plain` для
+`sendBeacon`; без ключа визита ничего не принимается):
+
+| Маршрут | Что |
+|---|---|
+| `GET /widget/v1/config` | дополнительно `analytics{ consent{ gcm }, behavior: { excluded[] }\|null, experiment{ id, kind, share, salt, variant }\|null }` — только при связанном режиме и тарифе |
+| `POST /widget/v1/exp` | `{ pk, x (id эксперимента), v (ключ визита) }` → 204; группа считается сервером (FNV-1a `salt:visitHash`), повтор без дубля |
+| `POST /widget/v1/pv` | итог просмотра короткими ключами (`pk, pv, v, p, pp, rh, us, um, uc, d, sc, ac, to, ck, rg, er, eg, fs, fb, fa, fi, bk, l, i, c, ch`); лишнее поле — 400 `EVENT_INVALID`; сверх квоты тарифа — не принимается; сверх 120 итогов в минуту с адреса на сайт (счётчик в памяти экземпляра, аудит Э3-бис) — 204 без записи |
+| `POST /widget/v1/ref` | `{ pk, v }` → `{ ref: "r1.<exp>.<visitHash>.<подпись>" \| null }` (HMAC, 2 суток) — для `V4CAssist('ref', cb)` |
+| `POST /widget/v1/visit` | iframe, `X-Visitor-Token`: `{ conversationId, v }` → 204 — привязка диалога к визиту |
+| `POST /widget/v1/goal` | дополнительно `visit` (ключ визита) — конверсия на другой странице «с участием» диалога визита в окне тарифа |
+| `POST /assist/v1/sites/:id/goal-events` (s2s) | дополнительно `assistRef` из `V4CAssist('ref', cb)` — заказ на сервере связывается с диалогом и экспериментом |
+
+API страницы: `V4CAssist('consent', { analytics: true|false })`,
+`V4CAssist('group', cb)` → `cb('h'|'w'|null)` (контрольная группа без
+помощника / с ним / нет эксперимента), `V4CAssist('ref', cb)` →
+`cb(ref|null)` — колбэки, не Promise.

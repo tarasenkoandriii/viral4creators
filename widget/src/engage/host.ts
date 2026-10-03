@@ -55,7 +55,21 @@ export interface EngageHost {
   post(m: ParentMessage): void;
   later(fn: () => void, ms: number): void;
   readonly cleanups: Array<() => void>;
+  // ── Э3-бис: стык с чанком ana.js (связанный режим по согласию) ──
+  /** Origin виджета (API `/widget/v1/*`) и ключ сайта. */
+  readonly origin: string;
+  readonly pk: string;
+  /** Путь ленивого чанка с учётом выпуска сайта. */
+  chunk(p: string): string;
+  /** Тот же вход, что `V4CAssist(...)` (hide/show/on). */
+  call(args: unknown[]): void;
 }
+
+/** Э3-бис: чанк ana.js — вызовы consent/group/ref страницы. */
+export interface AnaApi {
+  call(args: unknown[]): void;
+}
+export type AnaStart = (h: EngageHost, queue: unknown[][]) => AnaApi;
 
 /** Что чанк возвращает загрузчику. */
 export interface EngageApi {

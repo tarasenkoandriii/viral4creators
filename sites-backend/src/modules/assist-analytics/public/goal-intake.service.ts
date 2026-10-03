@@ -41,6 +41,7 @@ import type {
   WidgetVisitor,
 } from '../../assist-site-chat/chat-types';
 import { effectiveAnalyticsConfig, ipInCidrs } from '../analytics-config';
+import { AiIntake, validVisitKey, visitHashOf } from './ai-intake.service';
 import { decideAttribution } from '../attribution';
 import {
   CURRENCY,
@@ -66,6 +67,13 @@ export interface GoalHit {
   value: number | null;
   currency: string | null;
   occurredAt: Date;
+  /**
+   * Э3-бис: ключ визита посетителя, давшего согласие (связанный режим,
+   * §5-тер.9) — цель на другой странице связывается с диалогом визита в
+   * окне атрибуции и отмечает конверсию единицы эксперимента. Без согласия
+   * — нет.
+   */
+  visit?: string | null;
 }
 
 export type GoalIntakeResult =
@@ -114,8 +122,12 @@ export function cleanGoalPath(raw: string | null): string | null {
 export class GoalIntake {
   private readonly logger = new Logger(GoalIntake.name);
   now: () => Date = () => new Date();
+  /** Э3-бис: связанный режим и эксперименты (тот же клиент роли виджета). */
+  private readonly ai: AiIntake;
 
-  constructor(readonly db: AssistPublicDb) {}
+  constructor(readonly db: AssistPublicDb) {
+    this.ai = new AiIntake(db);
+  }
 
   /** Активные цели сайта для загрузчика (WidgetPublicConfig.goals, W). */
   async publicGoals(siteId: string): Promise<PublicGoal[]> {
@@ -238,10 +250,34 @@ export class GoalIntake {
       assist: Prisma.DbNull,
       conversationId: p.conversationId,
     }));
-    await this.db.assistSiteGoalEvent.createMany({
-      data,
+    // Э3-бис: заявка из диалога визита с согласием — конверсия единицы
+    // эксперимента (варианты приветствия/подсказок меряются заявками).
+    let visitHash: string | null = null;
+    if (p.conversationId) {
+      const conv = await this.db.assistSiteConversation.findFirst({
+        where: { id: p.conversationId, siteId: p.siteId },
+        select: { visitHash: true },
+      });
+      visitHash = conv?.visitHash ?? null;
+    }
+    const r = await this.db.assistSiteGoalEvent.createMany({
+      data: data.map((d) => ({ ...d, visitHash })),
       skipDuplicates: true,
     });
+    if (visitHash && r.count > 0) {
+      const keys = await this.db.assistSiteGoal.findMany({
+        where: { id: { in: builtin.map((g) => g.id) } },
+        select: { key: true },
+      });
+      for (const k of keys) {
+        await this.ai.markConversion({
+          siteId: p.siteId,
+          goalKey: k.key,
+          visitHash,
+          at: p.occurredAt,
+        });
+      }
+    }
     this.logger.log(`цель builtin записана (site ${p.siteId})`);
   }
 
@@ -277,7 +313,7 @@ export class GoalIntake {
     if (site.preview) return 'ignored';
     const row = await this.db.assistSite.findUnique({
       where: { siteId: site.siteId },
-      select: { analytics: true },
+      select: { analytics: true, ipSalt: true },
     });
     if (!row) return 'ignored';
     const cfg = effectiveAnalyticsConfig(row.analytics);
@@ -348,13 +384,39 @@ export class GoalIntake {
     ) {
       occurredAt = now;
     }
-    const attribution: GoalAttribution = decideAttribution({
+    let attribution: GoalAttribution = decideAttribution({
       source: p.source,
       occurredAt,
       lastAssistClickAt: p.lastAssistClickAt,
       conversationHasAnswer: hasAnswer,
       conversationId,
     });
+    // Э3-бис, связанный режим (§5-тер.2, §5-тер.9): только с согласием
+    // посетителя (ключ визита) и при окне атрибуции тарифа/владельца > 0 —
+    // цель без диалога в этом документе получает «с участием», если в окне
+    // был диалог визита с ответом помощника.
+    let visitHash: string | null = null;
+    if (validVisitKey(hit.visit)) {
+      const windowDays = await this.ai.linkedWindow(
+        { accountId: site.accountId, analytics: row.analytics },
+        now,
+      );
+      if (windowDays > 0) {
+        visitHash = visitHashOf(site.siteId, row.ipSalt, hit.visit);
+        if (attribution === 'unassisted' && !conversationId) {
+          const linked = await this.ai.linkedConversation({
+            siteId: site.siteId,
+            visitHash,
+            windowDays,
+            at: occurredAt,
+          });
+          if (linked) {
+            attribution = 'assisted';
+            conversationId = linked;
+          }
+        }
+      }
+    }
 
     let value: Prisma.Decimal | number | null = null;
     let currency: string | null = null;
@@ -398,10 +460,19 @@ export class GoalIntake {
           attribution,
           assist: assist ?? Prisma.DbNull,
           conversationId,
+          visitHash,
         },
       ],
       skipDuplicates: true,
     });
+    if (r.count === 1 && visitHash) {
+      await this.ai.markConversion({
+        siteId: site.siteId,
+        goalKey: goal.key,
+        visitHash,
+        at: occurredAt,
+      });
+    }
     return r.count === 1 ? 'recorded' : 'duplicate';
   }
 }

@@ -74,7 +74,13 @@ export class AdminStatsService {
     }
     const logs = await db.assistAdminActionLog.groupBy({
       by: ['operation', 'outcome'],
-      where: { siteId, at: { gte: since } },
+      // Э8: только вызовы API (чтение и исполнения «Да»), без записей
+      // предложений, решений, цепочек и изменений мемо.
+      where: {
+        siteId,
+        at: { gte: since },
+        kind: { in: ['read', 'write', 'danger'] },
+      },
       _count: { _all: true },
     });
     const tools = new Map<string, { ok: number; failed: number }>();

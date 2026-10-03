@@ -7,6 +7,7 @@
  *   GET|PATCH|DELETE /assist/sites/:id/connectors/:cn
  *   PATCH     /assist/sites/:id/connectors/:cn/operations/:op
  *   PUT|DELETE /assist/sites/:id/connectors/:cn/secret
+ *   POST      /assist/sites/:id/connectors/:cn/signing-secret  Э8: подпись X-V4C-Signature
  *   GET       /assist/sites/:id/action-log
  * Права — ТОЛЬКО `assistAdmin: owner` (§3.2, К-9): менеджер и оператор
  * «Сайта», сотрудник «Админки» — 403.
@@ -152,6 +153,18 @@ export class AdminModeController {
     @Body() dto: PutConnectorSecretDto,
   ) {
     return this.connectors.putSecret(m, id, cn, dto);
+  }
+
+  /** Э8: секрет подписи изменяющих запросов `X-V4C-Signature` (показ 1 раз). */
+  @Post(':id/connectors/:cn/signing-secret')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  signingSecret(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Param('cn') cn: string,
+  ) {
+    return this.connectors.issueSigningSecret(m, id, cn);
   }
 
   @Delete(':id/connectors/:cn/secret')

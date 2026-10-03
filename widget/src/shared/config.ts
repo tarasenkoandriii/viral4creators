@@ -134,6 +134,8 @@ export interface PublicConfig {
    */
   rawEngagement: unknown;
   rawGoals: unknown;
+  /** Э3-бис: поле `analytics` конфига как есть (разбор — чанк ana.js). */
+  rawAna: unknown;
   /** Э3: передача человеку (null — сервер Э2 или сбой у H). */
   handoff: HandoffInfo | null;
   /** Э5: голос (микрофон/озвучка); null — голоса на сайте нет. */
@@ -221,6 +223,7 @@ export function defaultPublicConfig(): PublicConfig {
     goals: [],
     rawEngagement: null,
     rawGoals: null,
+    rawAna: null,
     handoff: null,
     voice: null,
     voiceControl: null,
@@ -440,6 +443,8 @@ export function parseLoaderConfig(raw: unknown): PublicConfig {
       : null;
   d.rawEngagement = raw.engagement;
   d.rawGoals = raw.goals;
+  // Э3-бис: связанный режим (согласие) — разбирает чанк ana.js строго.
+  d.rawAna = raw.analytics;
   return d;
 }
 

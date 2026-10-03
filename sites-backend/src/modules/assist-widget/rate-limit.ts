@@ -56,7 +56,12 @@ export type RateScope =
   | 'widget-uistep-visitor-min'
   // Э6-бис (г): мастер проверки Т-2 — обмен ссылки (IP+сайт) и запросы сессии.
   | 'widget-vtest-ip-site-min'
-  | 'widget-vtest-visitor-min';
+  | 'widget-vtest-visitor-min'
+  // Э3-бис: связанный режим — включение в эксперимент, ref для вебхука,
+  // привязка визита к диалогу (IP+сайт). Итог просмотра лимита в Postgres не
+  // имеет — стена там квота тарифа (§5-тер.14) и счётчик в памяти экземпляра
+  // (`PV_PER_IP_PER_MINUTE`, аудит Э3-бис).
+  | 'widget-ana-ip-min';
 
 export interface RateHit {
   scope: RateScope;

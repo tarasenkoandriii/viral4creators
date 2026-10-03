@@ -1103,11 +1103,16 @@ export function App({
   const v = s.view;
   const name = v.brand.name || t.name;
   const texts = v.texts[s.lang];
-  const greeting = (texts && texts.greeting) || t.greeting;
+  // Э3-бис: вариант B эксперимента (группа b посетителя с согласием).
+  const expG = s.expGreeting && s.expGreeting[s.lang];
+  const expS = s.expSuggestions && s.expSuggestions[s.lang];
+  const greeting = expG || (texts && texts.greeting) || t.greeting;
   const suggestions = (
-    texts && texts.suggestions.length
-      ? texts.suggestions
-      : s.cfg.suggestedQuestions
+    expS && expS.length
+      ? expS
+      : texts && texts.suggestions.length
+        ? texts.suggestions
+        : s.cfg.suggestedQuestions
   ).slice(0, 3);
   const avatar = v.brand.avatar;
   const leadOnly = s.cfg.status === 'lead_only';

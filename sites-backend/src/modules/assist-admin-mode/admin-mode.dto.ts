@@ -9,6 +9,7 @@ import {
   IsBoolean,
   IsIn,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -17,7 +18,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 /** Роль помощника (значение roleMap, роль операции). */
 export const ASSIST_ROLE_RE = /^[a-z0-9_-]{1,32}$/;
@@ -55,6 +58,18 @@ export class PatchAdminModeDto {
   @IsOptional()
   @IsBoolean()
   statsPerEmployee?: boolean;
+
+  /** Э8: потолок исполнений write/danger сайта за UTC-сутки. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  actionsDailyCap?: number;
+
+  /** Э8: уведомлять владельцев о каждом исполнении danger. */
+  @IsOptional()
+  @IsBoolean()
+  notifyDanger?: boolean;
 }
 
 export class CreateConnectorDto {
@@ -102,6 +117,16 @@ export class PatchConnectorDto {
   saasAcknowledged?: boolean;
 }
 
+/** Э8: связь операции — `x-assist-compensation` / `x-assist-preview`. */
+export class LinkedOperationDto {
+  @IsString()
+  @Matches(/^[A-Za-z0-9_.-]{1,100}$/)
+  operationId!: string;
+
+  @IsObject()
+  params!: Record<string, string>;
+}
+
 export class PatchOperationDto {
   @IsOptional()
   @IsBoolean()
@@ -123,6 +148,49 @@ export class PatchOperationDto {
   @Min(1)
   @Max(100_000)
   dailyLimit?: number | null;
+
+  // ── Э8: действия ──
+  @IsOptional()
+  @IsBoolean()
+  idempotent?: boolean;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LinkedOperationDto)
+  compensation?: LinkedOperationDto | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LinkedOperationDto)
+  preview?: LinkedOperationDto | null;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9_.-]{1,64}$/)
+  dryRunParam?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9_.-]{1,64}$/)
+  amountParam?: string | null;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0.01)
+  @Max(1e12)
+  maxAmount?: number | null;
+
+  @IsOptional()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(0.01)
+  @Max(1e13)
+  dailyAmountCap?: number | null;
+
+  /** Слово подтверждения danger: буквы и пробелы, ≤ 30. */
+  @IsOptional()
+  @IsString()
+  @Matches(/^[\p{L} ]{2,30}$/u)
+  confirmWord?: string | null;
 }
 
 export class PutConnectorSecretDto {
@@ -162,6 +230,28 @@ export class ActionLogQueryDto {
   @IsString()
   @MaxLength(200)
   operation?: string;
+
+  /** Хвост аудита Э7 (ж): сервис принимал `limit`, DTO — нет (400). */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  limit?: number;
+
+  /** Э8: read | write | danger | proposal | decision | chain | memo | actions. */
+  @IsOptional()
+  @IsIn([
+    'read',
+    'write',
+    'danger',
+    'proposal',
+    'decision',
+    'chain',
+    'memo',
+    'actions',
+  ])
+  kind?: string;
 }
 
 export class PutPrivateCrawlDto {

@@ -222,7 +222,7 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
     expect(pub.headers['access-control-allow-origin']).toBeUndefined();
   });
 
-  it('коннектор: импорт OpenAPI по URL, автоклассификация, класс не опускается, write в Э7 не включается', async () => {
+  it('коннектор: импорт OpenAPI по URL, автоклассификация, класс не опускается, write без «Админка: действия» (Pro) не включается', async () => {
     const r = await request(st.srv())
       .post(`/assist/sites/${S.siteId}/connectors`)
       .set(st.as(S.ownerTg))
@@ -254,11 +254,14 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
       .set(st.as(S.ownerTg))
       .send({ kind: 'read' })
       .expect(409);
-    await request(st.srv())
+    // Э8: write/danger включаются только в тарифе с «Админка: действия»
+    // (Pro); на Business — 402 (было 409 «следующий этап» в Э7).
+    const pro = await request(st.srv())
       .patch(`${base}/createOrder`)
       .set(st.as(S.ownerTg))
       .send({ enabled: true })
-      .expect(409);
+      .expect(402);
+    expect(JSON.stringify(pro.body)).toMatch(/ADMIN_ACTIONS_PLAN/);
     await request(st.srv())
       .patch(`${base}/listOrders`)
       .set(st.as(S.ownerTg))
@@ -655,7 +658,7 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
     expect(hits().some((h) => h.startsWith(S.adminHost))).toBe(false);
   });
 
-  it('аудит Э7: TRUNCATE журнала — отказ; класс не опустить и не включить write даже прямым UPDATE', async () => {
+  it('аудит Э7: TRUNCATE журнала — отказ; класс не опустить даже прямым UPDATE (Э8: write включается — исполняет только «Да»)', async () => {
     await expect(
       st.prisma.$executeRawUnsafe(`TRUNCATE "sites"."assist_admin_action_log"`),
     ).rejects.toThrow(/только дописывается|42501/);
@@ -673,12 +676,18 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
         op.id,
       ),
     ).rejects.toThrow(/класс нельзя опустить/);
+    // Э8 (миграция …_assist_admin_actions) сняла «включается только read»:
+    // включённая write исполняется только предложением и «Да» (acceptance/e8).
     await expect(
       st.prisma.$executeRawUnsafe(
         `UPDATE "sites"."assist_admin_operations" SET "enabled" = true WHERE "id" = $1`,
         op.id,
       ),
-    ).rejects.toThrow(/включается только read/);
+    ).resolves.toBe(1);
+    await st.prisma.$executeRawUnsafe(
+      `UPDATE "sites"."assist_admin_operations" SET "enabled" = false WHERE "id" = $1`,
+      op.id,
+    );
   });
 
   it('аудит Э7: служебное имя заголовка ключа, CR/LF в ключе, «//хост» в пути обхода — 400', async () => {

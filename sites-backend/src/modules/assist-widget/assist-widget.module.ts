@@ -25,6 +25,9 @@ import { WidgetRateLimit } from './rate-limit';
 import { WidgetChatService } from './widget-chat.service';
 import { WidgetPublicConfigService } from './widget-config.service';
 import { WidgetEngagementController } from './widget-engagement.controller';
+// Э3-бис: связанный режим (согласие), эксперименты, итог просмотра.
+import { WidgetAnalyticsController } from './widget-analytics.controller';
+import { WidgetAnalyticsService } from './widget-analytics.service';
 import { WidgetEngagementService } from './widget-engagement.service';
 import { WidgetPublicController } from './widget-public.controller';
 import { WidgetSessionService } from './widget-session.service';
@@ -50,6 +53,7 @@ import { WidgetVoiceTestController } from './widget-voice-test.controller';
   controllers: [
     WidgetPublicController,
     WidgetEngagementController,
+    WidgetAnalyticsController,
     WidgetVoiceController,
     // Э6: ссылка на ролик, редирект по ней, сигнал «карта устарела».
     WidgetMediaController,
@@ -70,6 +74,7 @@ import { WidgetVoiceTestController } from './widget-voice-test.controller';
     WidgetChatService,
     WidgetPublicConfigService,
     WidgetEngagementService,
+    WidgetAnalyticsService,
     LandingService,
     AcquisitionService,
     LandingDraftService,

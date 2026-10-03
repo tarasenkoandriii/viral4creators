@@ -275,3 +275,16 @@ export const ADMIN_SESSION_HEADER = 'X-Assist-Admin-Session';
 export const ADMIN_MESSAGE_NS = 'v4c-admin';
 /** BroadcastChannel вкладок `wa.`: `<префикс>:<pk>` (сброс при смене сотрудника). */
 export const ADMIN_CHANNEL_PREFIX = 'v4c-admin';
+
+// ── Э3-бис: связанный режим (согласие), эксперименты, поведение ──────────
+// Зеркало — widget/src/shared/brand.ts (сверяет widget/scripts/brand.test.ts).
+
+/**
+ * Ленивый чанк связанного режима: согласие посетителя на аналитику
+ * (`V4CAssist('consent')`, Google Consent Mode, GPC/DNT), ключ визита — только
+ * с согласием, эксперименты, `V4CAssist('group'|'ref')`. Грузится только при
+ * поле `analytics` в конфиге (связанный режим владельца) — загрузчик не растёт.
+ */
+export const WIDGET_ANA_PATH = '/v1/ana.js';
+/** Ленивый чанк поведения страниц (только с согласием и при включённом поведении). */
+export const WIDGET_BF_PATH = '/v1/bf.js';

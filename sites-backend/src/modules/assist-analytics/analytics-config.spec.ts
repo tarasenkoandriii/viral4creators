@@ -32,6 +32,7 @@ describe('analytics-config (A)', () => {
     expect(ok).toEqual({
       ok: true,
       config: {
+        ...defaultAnalyticsConfig(),
         schema: 1,
         minutesPerQuestion: 4.5,
         officeCidrs: ['203.0.113.0/24', '2001:db8::/32'],
@@ -53,5 +54,41 @@ describe('analytics-config (A)', () => {
       defaultAnalyticsConfig(),
     );
     expect(defaultAnalyticsConfig().minutesPerQuestion).toBe(3);
+  });
+
+  it('Э3-бис: разметка, вертикаль, связанный режим, поведение — строгий разбор', () => {
+    const d = defaultAnalyticsConfig();
+    expect(d).toMatchObject({
+      aiLabeling: true,
+      vertical: 'other',
+      linked: false,
+      linkedGcm: false,
+      linkedWindowDays: 7,
+      behavior: false,
+    });
+    const ok = parseAnalyticsConfig({
+      aiLabeling: false,
+      vertical: 'shop',
+      linked: true,
+      linkedGcm: true,
+      linkedWindowDays: 30,
+      behavior: true,
+    });
+    expect(ok.ok && ok.config).toMatchObject({
+      aiLabeling: false,
+      vertical: 'shop',
+      linked: true,
+      linkedWindowDays: 30,
+      behavior: true,
+    });
+    const bad = parseAnalyticsConfig({
+      aiLabeling: 'yes',
+      vertical: 'casino',
+      linkedWindowDays: 31,
+      behavior: 1,
+    });
+    expect(bad.ok ? [] : bad.errors.map((e) => e.path).sort()).toEqual(
+      ['aiLabeling', 'behavior', 'linkedWindowDays', 'vertical'].sort(),
+    );
   });
 });

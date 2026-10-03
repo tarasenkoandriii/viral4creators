@@ -7,12 +7,14 @@
  * секрет подписи JWT приходит ОДИН раз — из ответа выпуска.
  */
 import type { ApiClient } from '../kit';
+import { type Proposal, parseProposal } from './admin-actions-api';
 import { seg } from './handoff-api';
 
 export const ADMIN_MODE_TABS = [
   'settings',
   'connectors',
   'log',
+  'memos',
   'learning',
   'stats',
 ] as const;
@@ -36,14 +38,24 @@ export interface AdminModeView {
   roleMap: Record<string, string>;
   tmaEmployeeRole: string | null;
   statsPerEmployee: boolean;
+  /** Э8: тариф Pro — «Админка: действия». */
+  planAllowsActions: boolean;
+  actionsDailyCap: number;
+  notifyDanger: boolean;
   snippet: { origin: string; tag: string; csp: string } | null;
 }
 
 export interface OperationParamView {
   name: string;
-  in: 'path' | 'query';
+  in: 'path' | 'query' | 'body';
   required: boolean;
   type: string;
+}
+
+/** Э8: `x-assist-compensation` / `x-assist-preview`. */
+export interface LinkedOperationView {
+  operationId: string;
+  params: Record<string, string>;
 }
 
 export interface OperationView {
@@ -60,6 +72,16 @@ export interface OperationView {
   dailyLimit: number | null;
   unsupported: boolean;
   params: OperationParamView[];
+  // Э8
+  idempotent: boolean;
+  compensation: LinkedOperationView | null;
+  preview: LinkedOperationView | null;
+  dryRunParam: string | null;
+  amountParam: string | null;
+  autoAmountParam: string | null;
+  maxAmount: number | null;
+  dailyAmountCap: number | null;
+  confirmWord: string | null;
 }
 
 export interface ConnectorView {
@@ -74,6 +96,7 @@ export interface ConnectorView {
   secret: { set: boolean; tail: string | null; setAt: string | null };
   status: string;
   lastCallAt: string | null;
+  signing: { set: boolean; setAt: string | null };
   operations: OperationView[];
 }
 
@@ -131,11 +154,15 @@ export interface AdminChatMessage {
   answerPath: string | null;
   rating: number | null;
   tools: Array<{ operation: string; outcome: string }>;
+  /** Э8: карточка подтверждения при сообщении. */
+  proposalId: string | null;
 }
 
 export interface AdminChatState {
   messages: AdminChatMessage[];
   tools: boolean;
+  /** Э8: карточки за 8 ч (восстановление после перезагрузки, §4-бис.5). */
+  proposals: Proposal[];
 }
 
 type Obj = Record<string, unknown>;
@@ -182,11 +209,24 @@ export function parseAdminMode(v: unknown): AdminModeView {
     roleMap: rm,
     tmaEmployeeRole: strOrNull(o.tmaEmployeeRole),
     statsPerEmployee: o.statsPerEmployee === true,
+    planAllowsActions: o.planAllowsActions === true,
+    actionsDailyCap: numOrNull(o.actionsDailyCap) ?? 100,
+    notifyDanger: o.notifyDanger !== false,
     snippet:
       typeof sn.tag === 'string'
         ? { origin: str(sn.origin), tag: str(sn.tag), csp: str(sn.csp) }
         : null,
   };
+}
+
+function parseLink(v: unknown): LinkedOperationView | null {
+  const o = obj(v);
+  if (typeof o.operationId !== 'string') return null;
+  const params: Record<string, string> = {};
+  for (const [k, x] of Object.entries(obj(o.params))) {
+    if (typeof x === 'string') params[k] = x;
+  }
+  return { operationId: o.operationId, params };
 }
 
 export function parseOperation(v: unknown): OperationView {
@@ -208,11 +248,20 @@ export function parseOperation(v: unknown): OperationView {
       const x = obj(p);
       return {
         name: str(x.name),
-        in: x.in === 'query' ? 'query' : 'path',
+        in: x.in === 'query' ? 'query' : x.in === 'body' ? 'body' : 'path',
         required: x.required === true,
         type: str(x.type),
       };
     }),
+    idempotent: o.idempotent === true,
+    compensation: parseLink(o.compensation),
+    preview: parseLink(o.preview),
+    dryRunParam: strOrNull(o.dryRunParam),
+    amountParam: strOrNull(o.amountParam),
+    autoAmountParam: strOrNull(o.autoAmountParam),
+    maxAmount: numOrNull(o.maxAmount),
+    dailyAmountCap: numOrNull(o.dailyAmountCap),
+    confirmWord: strOrNull(o.confirmWord),
   };
 }
 
@@ -235,6 +284,10 @@ export function parseConnector(v: unknown): ConnectorView {
     },
     status: str(o.status),
     lastCallAt: strOrNull(o.lastCallAt),
+    signing: {
+      set: obj(o.signing).set === true,
+      setAt: strOrNull(obj(o.signing).setAt),
+    },
     operations: arr(o.operations).map(parseOperation),
   };
 }
@@ -251,6 +304,7 @@ export function parseChatMessage(v: unknown): AdminChatMessage {
       const x = obj(t);
       return { operation: str(x.operation), outcome: str(x.outcome) };
     }),
+    proposalId: strOrNull(o.proposalId),
   };
 }
 
@@ -266,6 +320,8 @@ export interface AdminModeApi {
       roleMap: Record<string, string>;
       tmaEmployeeRole: string | null;
       statsPerEmployee: boolean;
+      actionsDailyCap: number;
+      notifyDanger: boolean;
     }>
   ): Promise<AdminModeView>;
   issueIdentitySecret(siteId: string): Promise<{ secret: string; aud: string }>;
@@ -290,6 +346,15 @@ export interface AdminModeApi {
       kind: OperationKind;
       roles: string[];
       dailyLimit: number | null;
+      // Э8
+      idempotent: boolean;
+      compensation: LinkedOperationView | null;
+      preview: LinkedOperationView | null;
+      dryRunParam: string | null;
+      amountParam: string | null;
+      maxAmount: number | null;
+      dailyAmountCap: number | null;
+      confirmWord: string | null;
     }>
   ): Promise<OperationView>;
   putSecret(
@@ -322,7 +387,7 @@ export interface AdminModeApi {
     siteId: string,
     text: string,
     clientRequestId: string
-  ): Promise<AdminChatMessage[]>;
+  ): Promise<{ messages: AdminChatMessage[]; proposal: Proposal | null }>;
   chatFeedback(
     siteId: string,
     mid: string,
@@ -508,6 +573,7 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
       return {
         messages: arr(o.messages).map(parseChatMessage),
         tools: obj(o.employee).tools === true,
+        proposals: arr(o.proposals).map(parseProposal),
       };
     },
     chatAsk: async (s, text, clientRequestId) => {
@@ -517,7 +583,11 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
           clientRequestId,
         })
       );
-      return [parseChatMessage(o.question), parseChatMessage(o.answer)];
+      const ans = obj(o.answer);
+      return {
+        messages: [parseChatMessage(o.question), parseChatMessage(ans)],
+        proposal: ans.proposal ? parseProposal(ans.proposal) : null,
+      };
     },
     chatFeedback: async (s, mid, rating, correction) => {
       await client.request(

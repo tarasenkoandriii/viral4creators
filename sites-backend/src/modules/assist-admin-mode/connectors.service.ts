@@ -8,10 +8,13 @@
  * подтверждение могло истечь) или SaaS-аккаунтом заказчика с явной отметкой
  * владельца «это наш аккаунт в X» (`saasAcknowledged`).
  *
- * Э7 — только чтение: включить можно лишь `read`-операцию; write/danger
- * видны в списке (класс можно поднять), но включаются в Э8 (подтверждение
- * «Да», журнал с откатом).
+ * Э8: write/danger включаются (тариф Pro — «Админка: действия»), но
+ * исполняются ТОЛЬКО предложением и отдельным «Да» сотрудника
+ * (assist-admin-actions); здесь — настройка операции: роли, лимиты,
+ * предпросмотр, компенсация (проверка как при импорте), денежный потолок,
+ * слово подтверждения danger; секрет подписи изменяющих запросов.
  */
+import { randomBytes } from 'crypto';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -47,9 +50,11 @@ import {
 import {
   OPENAPI_MAX_BYTES,
   OpenApiImportError,
+  type LinkedOperation,
   type OperationKind,
   type OperationParam,
   canSetKind,
+  checkLinks,
   parseOpenApi,
 } from './openapi-import';
 
@@ -67,6 +72,16 @@ export interface OperationView {
   dailyLimit: number | null;
   unsupported: boolean;
   params: OperationParam[];
+  // Э8
+  idempotent: boolean;
+  compensation: LinkedOperation | null;
+  preview: LinkedOperation | null;
+  dryRunParam: string | null;
+  amountParam: string | null;
+  autoAmountParam: string | null;
+  maxAmount: number | null;
+  dailyAmountCap: number | null;
+  confirmWord: string | null;
 }
 
 export interface ConnectorView {
@@ -84,8 +99,39 @@ export interface ConnectorView {
   secret: { set: boolean; tail: string | null; setAt: string | null };
   status: string;
   lastCallAt: string | null;
+  /** Э8: секрет подписи `X-V4C-Signature` выпущен (значение — один раз). */
+  signing: { set: boolean; setAt: string | null };
   operations: OperationView[];
 }
+
+/** Строка операции → связь (`compensation`/`preview`) или null. */
+export function linkOfJson(v: Prisma.JsonValue | null): LinkedOperation | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.operationId !== 'string') return null;
+  const params: Record<string, string> = {};
+  if (o.params && typeof o.params === 'object' && !Array.isArray(o.params)) {
+    for (const [k, x] of Object.entries(o.params as Record<string, unknown>)) {
+      if (typeof x === 'string') params[k] = x;
+    }
+  }
+  return { operationId: o.operationId, params };
+}
+
+/** Доступ к коннектору для вызова (Э8: и read, и write). */
+export type CallAccess =
+  | {
+      ok: true;
+      connector: {
+        id: string;
+        name: string;
+        baseUrl: string;
+        allowedHosts: string[];
+      };
+      auth: ConnectorAuth;
+      signSecret: string | null;
+    }
+  | { ok: false; outcome: 'denied' | 'blocked'; reason: string };
 
 /** Операция, доступная модели в этом ходе (§5.4 п.1). */
 export interface ToolOperation {
@@ -163,6 +209,15 @@ export class ConnectorsService {
     dailyLimit: number | null;
     unsupported: boolean;
     params: Prisma.JsonValue;
+    idempotent: boolean;
+    compensation: Prisma.JsonValue | null;
+    preview: Prisma.JsonValue | null;
+    dryRunParam: string | null;
+    amountParam: string | null;
+    autoAmountParam: string | null;
+    maxAmount: number | null;
+    dailyAmountCap: number | null;
+    confirmWord: string | null;
   }): OperationView {
     return {
       id: o.id,
@@ -180,6 +235,15 @@ export class ConnectorsService {
       params: Array.isArray(o.params)
         ? (o.params as unknown as OperationParam[])
         : [],
+      idempotent: o.idempotent,
+      compensation: linkOfJson(o.compensation),
+      preview: linkOfJson(o.preview),
+      dryRunParam: o.dryRunParam,
+      amountParam: o.amountParam,
+      autoAmountParam: o.autoAmountParam,
+      maxAmount: o.maxAmount,
+      dailyAmountCap: o.dailyAmountCap,
+      confirmWord: o.confirmWord,
     };
   }
 
@@ -220,6 +284,10 @@ export class ConnectorsService {
       },
       status: c.status,
       lastCallAt: c.lastCallAt?.toISOString() ?? null,
+      signing: {
+        set: !!c.signSecretEnc,
+        setAt: c.signSetAt?.toISOString() ?? null,
+      },
       operations: c.operations.map((o) => this.opView(o)),
     };
   }
@@ -340,6 +408,13 @@ export class ConnectorsService {
           enabled: false,
           params: o.params as unknown as Prisma.InputJsonValue,
           unsupported: o.unsupported,
+          idempotent: o.idempotent,
+          compensation: (o.compensation ??
+            Prisma.DbNull) as unknown as Prisma.InputJsonValue,
+          preview: (o.preview ??
+            Prisma.DbNull) as unknown as Prisma.InputJsonValue,
+          amountParam: o.autoAmountParam,
+          autoAmountParam: o.autoAmountParam,
         })),
       });
       return c;
@@ -410,6 +485,11 @@ export class ConnectorsService {
     if (!o) throw adminError(404, 'OPERATION_NOT_FOUND', 'Операция не найдена');
     const data: Prisma.AssistAdminOperationUpdateManyMutationInput = {};
     const kind = (dto.kind ?? o.kind) as OperationKind;
+    const params = Array.isArray(o.params)
+      ? (o.params as unknown as OperationParam[])
+      : [];
+    const bad = (message: string) =>
+      adminError(409, 'OPERATION_CONFIG_INVALID', message);
     if (dto.kind !== undefined) {
       if (!canSetKind(o.autoKind as OperationKind, dto.kind)) {
         throw adminError(
@@ -419,27 +499,119 @@ export class ConnectorsService {
         );
       }
       data.kind = dto.kind;
-      if (dto.kind !== 'read') data.enabled = false;
+      // Поднятый класс — новое решение владельца: включить заново осознанно.
+      if (dto.kind !== o.kind) data.enabled = false;
     }
+    // ── Э8: предпросмотр и компенсация — та же проверка, что при импорте ──
+    const preview =
+      dto.preview !== undefined ? dto.preview : linkOfJson(o.preview);
+    const compensation =
+      dto.compensation !== undefined
+        ? dto.compensation
+        : linkOfJson(o.compensation);
+    if (
+      dto.preview !== undefined ||
+      dto.compensation !== undefined ||
+      dto.kind !== undefined
+    ) {
+      const index = new Map(c.operations.map((x) => [x.operationId, x]));
+      const problem = checkLinks(
+        { operationId: o.operationId, params, kind, preview, compensation },
+        (id) => {
+          const t = index.get(id);
+          return t
+            ? {
+                kind: t.kind as OperationKind,
+                params: Array.isArray(t.params)
+                  ? (t.params as unknown as OperationParam[])
+                  : [],
+              }
+            : null;
+        },
+      );
+      if (problem) throw bad(`${problem.field}: ${problem.problem}`);
+      if (dto.preview !== undefined) {
+        data.preview = (dto.preview ??
+          Prisma.DbNull) as unknown as Prisma.InputJsonValue;
+      }
+      if (dto.compensation !== undefined) {
+        data.compensation = (dto.compensation ??
+          Prisma.DbNull) as unknown as Prisma.InputJsonValue;
+      }
+    }
+    if (dto.dryRunParam !== undefined) {
+      if (
+        dto.dryRunParam !== null &&
+        !params.some((p) => p.name === dto.dryRunParam && p.type === 'boolean')
+      ) {
+        throw bad(
+          'Сухой прогон: нужен булев параметр операции (dryRun/validateOnly)',
+        );
+      }
+      data.dryRunParam = dto.dryRunParam;
+    }
+    const amountParam =
+      dto.amountParam !== undefined ? dto.amountParam : o.amountParam;
+    if (dto.amountParam !== undefined) {
+      if (dto.amountParam === null && o.autoAmountParam) {
+        throw bad(
+          `Параметр суммы «${o.autoAmountParam}» найден автоматически — снять его нельзя, можно указать другой`,
+        );
+      }
+      if (
+        dto.amountParam !== null &&
+        !params.some(
+          (p) =>
+            p.name === dto.amountParam &&
+            p.in !== 'path' &&
+            (p.type === 'number' || p.type === 'integer'),
+        )
+      ) {
+        throw bad('Параметр суммы — числовой параметр запроса или тела');
+      }
+      data.amountParam = dto.amountParam;
+    }
+    if (dto.maxAmount !== undefined) data.maxAmount = dto.maxAmount;
+    if (dto.dailyAmountCap !== undefined) {
+      data.dailyAmountCap = dto.dailyAmountCap;
+    }
+    if (dto.confirmWord !== undefined) {
+      data.confirmWord = dto.confirmWord?.trim().toUpperCase() || null;
+    }
+    if (dto.idempotent !== undefined) data.idempotent = dto.idempotent;
+    const enabled = dto.enabled ?? (data.enabled === false ? false : o.enabled);
     if (dto.enabled === true) {
       if (o.unsupported) {
         throw adminError(
           409,
           'OPERATION_UNSUPPORTED',
-          'У операции обязательный параметр в заголовке/cookie — помощник не сможет её вызвать',
+          'У операции обязательный параметр в заголовке/cookie или вложенный объект в теле — помощник не сможет её вызвать',
         );
       }
-      if (kind !== 'read') {
+      if (
+        kind !== 'read' &&
+        !(await this.mode.planAllowsActions(m.accountId))
+      ) {
         throw adminError(
-          409,
-          'ADMIN_ACTIONS_NEXT_STAGE',
-          'Изменяющие операции (write/danger) — следующий этап: подтверждение «Да» сотрудником',
+          402,
+          'ADMIN_ACTIONS_PLAN',
+          '«Админка: действия» (write/danger с подтверждением «Да») — в тарифе Pro',
         );
       }
     }
-    if (dto.enabled !== undefined && !(dto.enabled && kind !== 'read')) {
-      data.enabled = dto.enabled;
+    if (enabled && kind !== 'read' && amountParam) {
+      const max = dto.maxAmount !== undefined ? dto.maxAmount : o.maxAmount;
+      const cap =
+        dto.dailyAmountCap !== undefined
+          ? dto.dailyAmountCap
+          : o.dailyAmountCap;
+      if (!max || !cap) {
+        throw bad(
+          `Денежная операция (параметр «${amountParam}»): задайте максимум за действие и сумму за сутки`,
+        );
+      }
     }
+    if (dto.enabled !== undefined) data.enabled = dto.enabled;
     if (dto.roles !== undefined) data.roles = [...new Set(dto.roles)];
     if (dto.dailyLimit !== undefined) data.dailyLimit = dto.dailyLimit;
     await this.db
@@ -449,6 +621,140 @@ export class ConnectorsService {
       .forAccount(m.accountId)
       .assistAdminOperation.findFirstOrThrow({ where: { id: o.id } });
     return this.opView(fresh);
+  }
+
+  /**
+   * Э8: выпустить (перевыпустить) секрет подписи изменяющих запросов
+   * `X-V4C-Signature` (§5.5). Открытый текст — только в этом ответе.
+   */
+  async issueSigningSecret(
+    m: AccountMembership,
+    siteId: string,
+    cn: string,
+  ): Promise<{
+    secret: string;
+    setAt: string;
+    header: string;
+    format: string;
+  }> {
+    await this.mode.requireSite(m.accountId, siteId);
+    const c = await this.connectorRow(m.accountId, siteId, cn);
+    const secret = randomBytes(32).toString('base64url');
+    const sealed = sealAdminSecret(
+      secret,
+      {
+        accountId: m.accountId,
+        siteId,
+        ownerId: c.id,
+        purpose: 'connector-signing',
+      },
+      this.keyring(),
+    );
+    const now = new Date();
+    await this.db.forAccount(m.accountId).assistAdminConnector.updateMany({
+      where: { id: c.id },
+      data: {
+        signSecretEnc: sealed.ciphertext,
+        signKeyVersion: sealed.keyVersion,
+        signSetAt: now,
+      },
+    });
+    return {
+      secret,
+      setAt: now.toISOString(),
+      header: 'X-V4C-Signature',
+      format:
+        't=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<METHOD>.<Idempotency-Key>.<path?query>.<body>")>',
+    };
+  }
+
+  /**
+   * Э8: коннектор для вызова — активен, хост годен (verified сейчас или
+   * SaaS с отметкой), секрет и секрет подписи открыты (только в памяти).
+   */
+  async openForCall(
+    accountId: string,
+    siteId: string,
+    connectorId: string,
+  ): Promise<CallAccess> {
+    const c = await this.db
+      .forAccount(accountId)
+      .assistAdminConnector.findFirst({ where: { id: connectorId, siteId } });
+    if (!c || c.status !== 'active') {
+      return { ok: false, outcome: 'denied', reason: 'connector_inactive' };
+    }
+    const hostOk = c.hostId
+      ? await this.mode.hostVerified(accountId, c.hostId)
+      : c.saasAcknowledged;
+    if (!hostOk) {
+      return { ok: false, outcome: 'blocked', reason: 'host_not_verified' };
+    }
+    let auth: ConnectorAuth = { kind: 'none' };
+    let signSecret: string | null = null;
+    try {
+      const keyring = loadAdminKeyring(this.mode.env);
+      if (c.secretEnc && c.authKind !== 'none') {
+        auth = {
+          kind: c.authKind as ConnectorAuth['kind'],
+          headerName: c.authHeaderName,
+          secret: openAdminSecret(
+            { ciphertext: c.secretEnc, keyVersion: c.secretKeyVersion },
+            {
+              accountId,
+              siteId,
+              ownerId: c.id,
+              purpose: 'connector-secret',
+            },
+            keyring,
+          ),
+        };
+      }
+      if (c.signSecretEnc) {
+        signSecret = openAdminSecret(
+          { ciphertext: c.signSecretEnc, keyVersion: c.signKeyVersion },
+          {
+            accountId,
+            siteId,
+            ownerId: c.id,
+            purpose: 'connector-signing',
+          },
+          keyring,
+        );
+      }
+    } catch (e) {
+      return {
+        ok: false,
+        outcome: 'denied',
+        reason: `secret_${e instanceof AdminSecretsError ? e.code : 'error'}`,
+      };
+    }
+    return {
+      ok: true,
+      connector: {
+        id: c.id,
+        name: c.name,
+        baseUrl: c.baseUrl,
+        allowedHosts: c.allowedHosts,
+      },
+      auth,
+      signSecret,
+    };
+  }
+
+  /** 401/403 — коннектор на паузу до нового секрета (§5.7); отметка вызова. */
+  async markCalled(
+    accountId: string,
+    connectorId: string,
+    authFailed: boolean,
+    now = new Date(),
+  ): Promise<void> {
+    await this.db.forAccount(accountId).assistAdminConnector.updateMany({
+      where: { id: connectorId },
+      data: {
+        lastCallAt: now,
+        ...(authFailed ? { status: 'auth_failed' } : {}),
+      },
+    });
   }
 
   async putSecret(
@@ -625,20 +931,18 @@ export class ConnectorsService {
       await this.logResult(ctx, op, r);
       return r;
     };
-    const c = await db.assistAdminConnector.findFirst({
-      where: { id: op.connectorId, siteId: ctx.siteId },
-    });
-    if (!c || c.status !== 'active')
-      return deny('denied', 'connector_inactive');
-    const hostOk = c.hostId
-      ? await this.mode.hostVerified(ctx.accountId, c.hostId)
-      : c.saasAcknowledged;
-    if (!hostOk) return deny('blocked', 'host_not_verified');
+    const access = await this.openForCall(
+      ctx.accountId,
+      ctx.siteId,
+      op.connectorId,
+    );
+    if (!access.ok) return deny(access.outcome, access.reason);
     if (ctx.conversationId) {
       const recent = await db.assistAdminActionLog.count({
         where: {
           siteId: ctx.siteId,
           conversationId: ctx.conversationId,
+          kind: 'read',
           at: { gte: new Date(now.getTime() - 60_000) },
         },
       });
@@ -652,37 +956,15 @@ export class ConnectorsService {
         where: {
           siteId: ctx.siteId,
           operationRowId: op.rowId,
+          kind: 'read',
           at: { gte: day },
           outcome: 'ok',
         },
       });
       if (used >= op.dailyLimit) return deny('limit', 'daily_limit');
     }
-    let auth: ConnectorAuth = { kind: 'none' };
-    if (c.secretEnc && c.authKind !== 'none') {
-      try {
-        auth = {
-          kind: c.authKind as ConnectorAuth['kind'],
-          headerName: c.authHeaderName,
-          secret: openAdminSecret(
-            { ciphertext: c.secretEnc, keyVersion: c.secretKeyVersion },
-            {
-              accountId: ctx.accountId,
-              siteId: ctx.siteId,
-              ownerId: c.id,
-              purpose: 'connector-secret',
-            },
-            loadAdminKeyring(this.mode.env),
-          ),
-        };
-      } catch (e) {
-        // Код — без шифротекста и ключа.
-        return deny(
-          'denied',
-          `secret_${e instanceof AdminSecretsError ? e.code : 'error'}`,
-        );
-      }
-    }
+    let auth: ConnectorAuth = access.auth;
+    const c = access.connector;
     const r = await executeRead(
       {
         baseUrl: c.baseUrl,
@@ -700,14 +982,13 @@ export class ConnectorsService {
     );
     auth = { kind: 'none' };
     await this.logResult(ctx, op, r);
-    await db.assistAdminConnector.updateMany({
-      where: { id: c.id },
-      data: {
-        lastCallAt: now,
-        // 401/403 — коннектор на паузу до нового секрета (§5.7).
-        ...(r.outcome === 'auth_failed' ? { status: 'auth_failed' } : {}),
-      },
-    });
+    // 401/403 — коннектор на паузу до нового секрета (§5.7).
+    await this.markCalled(
+      ctx.accountId,
+      c.id,
+      r.outcome === 'auth_failed',
+      now,
+    );
     return r;
   }
 }

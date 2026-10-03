@@ -4,6 +4,7 @@ import { voiceControlUk } from './voice-control-uk';
 import type { AppDictionary } from './ru';
 import { setupUk } from './setup-uk';
 import { e3Uk } from './e3-uk';
+import { e3bUk } from './e3b-uk';
 
 export const appUk: AppDictionary = {
   nav: {
@@ -420,6 +421,8 @@ export const appUk: AppDictionary = {
   setup: setupUk,
   // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
   e3: e3Uk,
+  // Э3-бис: аналитика с ИИ, эксперименты, поведение, согласие.
+  e3b: e3bUk,
   // Э4: тариф и оплата, Условия и DPA.
   billing: billingUk,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).

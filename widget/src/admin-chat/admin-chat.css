@@ -118,3 +118,82 @@ body {
 .wa-s:disabled {
   opacity: 0.5;
 }
+/* Э8: карточка подтверждения действия. */
+.wa-card {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #c7ced8;
+  border-left: 4px solid #2563eb;
+  border-radius: 8px;
+  background: #fff;
+  white-space: normal;
+}
+.wa-card.wa-danger {
+  border-left-color: #b91c1c;
+}
+.wa-card-t {
+  font-weight: 600;
+}
+.wa-card-m,
+.wa-card-s,
+.wa-card-p {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #374151;
+}
+.wa-card-f {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.wa-card-f s {
+  color: #6b7280;
+}
+.wa-card-w {
+  margin-top: 4px;
+  padding: 4px 6px;
+  background: #fff4e5;
+  color: #7a3e00;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.wa-card-i {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 6px;
+  font: inherit;
+  border: 1px solid #c7ced8;
+  border-radius: 6px;
+}
+.wa-card-k {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.wa-card-a {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.wa-card-a button {
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  padding: 4px 10px;
+  background: #fff;
+  color: #1f2937;
+  cursor: pointer;
+  font: inherit;
+}
+.wa-card-a .wa-yes {
+  background: #1f2937;
+  color: #fff;
+}
+.wa-card-a button:disabled {
+  opacity: 0.5;
+}
+.wa-card-c {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #374151;
+}

@@ -3,6 +3,7 @@ import { mediaRu } from './media-ru';
 import { voiceControlRu } from './voice-control-ru';
 import { setupRu } from './setup-ru';
 import { e3Ru } from './e3-ru';
+import { e3bRu } from './e3b-ru';
 
 /**
  * Тексты, которые есть только у TMA Помощника (онбординг, разделы).
@@ -422,6 +423,8 @@ export const appRu = {
   setup: setupRu,
   // Э3 (T): диалоги, передача, вовлечение, статистика, цели, интеграции, обучение.
   e3: e3Ru,
+  // Э3-бис: аналитика с ИИ, эксперименты, поведение, согласие.
+  e3b: e3bRu,
   // Э4: тариф и оплата, Условия и DPA.
   billing: billingRu,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).

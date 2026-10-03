@@ -82,6 +82,7 @@ import { SiteVoiceService } from '../assist-site-voice/public/site-voice.service
 import { VOICE_DEFAULTS } from '../assist-site-voice/voice-config';
 import { SiteUiPlanService } from '../assist-site-voice-control/public/ui-plan.service';
 import type { WidgetSiteContext } from '../assist-site-chat/chat-types';
+import { AiIntake } from '../assist-analytics/public/ai-intake.service';
 import type {
   WidgetPreviewExchangeRequest,
   WidgetPreviewExchangeResponse,
@@ -174,6 +175,9 @@ export class WidgetPublicConfigService {
     @Optional() private readonly voice?: SiteVoiceService,
     // Э6-бис: голосовое управление — необязательно для тестов Э2–Э6.
     @Optional() private readonly uiPlans?: SiteUiPlanService,
+    // Э3-бис: связанный режим, эксперимент, поведение — необязательно для
+    // тестов Э2–Э7.
+    @Optional() private readonly ai?: AiIntake,
   ) {}
 
   async config(
@@ -234,6 +238,29 @@ export class WidgetPublicConfigService {
           : WIDGET_POWERED_BY_URL,
     };
     await this.addE3(out, published, site, kind, now);
+    // Э3-бис (§5-тер.9): связанный режим только на боевом ключе и при
+    // показанном виджете; нет поля — чанк ana.js не грузится вовсе.
+    if (this.ai && kind === 'live' && out.status !== 'off') {
+      try {
+        const a = await this.db.assistSite.findUnique({
+          where: { siteId: site.siteId },
+          select: { analytics: true },
+        });
+        const ana = await this.ai.publicAnalytics(
+          {
+            siteId: site.siteId,
+            accountId: site.accountId,
+            analytics: a?.analytics ?? null,
+          },
+          now,
+        );
+        if (ana) out.analytics = ana;
+      } catch (err) {
+        this.logger.warn(
+          `analytics failed site=${site.siteId}: ${errName(err)}`,
+        );
+      }
+    }
     // Э5 (§4.10): голос — только при активном чате и тарифе с голосом;
     // потолки решаются в момент запроса (кэш конфига — 5 минут).
     if (this.voice && plan && out.status === 'active') {

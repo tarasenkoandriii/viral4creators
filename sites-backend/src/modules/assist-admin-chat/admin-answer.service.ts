@@ -42,16 +42,23 @@ import { validateArgs } from '../assist-admin-mode/connector-exec';
 import { GeminiText, TextModelError } from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
+  type ActionOperation,
+  type ActorCtx,
+  ProposalsService,
+  type ProposalView,
+} from '../assist-admin-actions/proposals.service';
+import {
   ADMIN_MAX_CALLS_PER_TURN,
   ADMIN_TEXT,
   buildAdminAnswerPrompt,
   buildPlanPrompt,
   parsePlan,
+  parseProposal,
   type DataBlock,
   type PlannedCall,
 } from './admin-prompt';
 
-export type AnswerPath = 'knowledge' | 'tool' | 'refused' | 'error';
+export type AnswerPath = 'knowledge' | 'tool' | 'refused' | 'error' | 'action';
 
 export interface ToolSummary {
   operation: string;
@@ -71,6 +78,8 @@ export interface TurnResult {
   costMicroUsd: number;
   /** Для очереди обучения: ошибка параметров / сбой инструмента. */
   learning: 'tool_param_error' | 'tool_failure' | 'refused' | null;
+  /** Э8: карточка подтверждения, созданная в этом ходе (не исполнена!). */
+  proposal: ProposalView | null;
 }
 
 export interface TurnInput {
@@ -95,6 +104,7 @@ export class AdminAnswerService {
     private readonly connectors: ConnectorsService,
     private readonly text: GeminiText,
     private readonly usage: AiUsageRecorder,
+    private readonly proposals: ProposalsService,
   ) {}
 
   private async record(
@@ -162,6 +172,7 @@ export class AdminAnswerService {
   private async plan(
     input: TurnInput,
     tools: ToolOperation[],
+    actions: ActionOperation[],
     acc: {
       model: string | null;
       inTokens: number;
@@ -170,14 +181,17 @@ export class AdminAnswerService {
     },
   ): Promise<{
     calls: Array<{ op: ToolOperation; args: Record<string, unknown> }>;
+    proposal: { op: ActionOperation; args: Record<string, unknown> } | null;
     paramError: boolean;
   }> {
     const byKey = new Map(tools.map((t) => [t.key, t]));
+    const actionByKey = new Map(actions.map((t) => [t.key, t]));
     let paramError: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       const prompt = buildPlanPrompt({
         question: input.question,
         catalog: tools,
+        actions,
         history: input.history,
         paramError,
       });
@@ -210,9 +224,29 @@ export class AdminAnswerService {
         }
         calls.push({ op, args: c.args });
       }
-      if (!paramError) return { calls, paramError: false };
+      // Э8: предложение — только из каталога действий роли и по схеме.
+      // Исполнения здесь нет и быть не может: только строка `pending`.
+      let proposal: {
+        op: ActionOperation;
+        args: Record<string, unknown>;
+      } | null = null;
+      const pr = actions.length ? parseProposal(gen.text) : null;
+      if (!paramError && pr) {
+        const aop = actionByKey.get(pr.operation);
+        if (!aop) {
+          paramError = `дії ${pr.operation.slice(0, 80)} немає в каталозі дій`;
+        } else {
+          try {
+            validateArgs(aop.params, pr.args);
+            proposal = { op: aop, args: pr.args };
+          } catch (e) {
+            paramError = `${aop.key}: ${(e as Error).message.slice(0, 200)}`;
+          }
+        }
+      }
+      if (!paramError) return { calls, proposal, paramError: false };
     }
-    return { calls: [], paramError: true };
+    return { calls: [], proposal: null, paramError: true };
   }
 
   async turn(input: TurnInput): Promise<TurnResult> {
@@ -238,6 +272,7 @@ export class AdminAnswerService {
       outTokens: acc.outTokens,
       costMicroUsd: acc.cost,
       learning: null,
+      proposal: null,
       ...extra,
     });
 
@@ -261,16 +296,38 @@ export class AdminAnswerService {
       input.ctx.siteId,
       input.role,
     );
+    const actions = await this.proposals.catalog(
+      input.ctx.accountId,
+      input.ctx.siteId,
+      input.role,
+    );
     const data: DataBlock[] = [];
     const summaries: ToolSummary[] = [];
+    let proposal: { text: string; view: ProposalView } | null = null;
+    let refusal: string | null = null;
     try {
-      if (tools.length) {
-        const planned = await this.plan(input, tools, acc);
+      if (tools.length || actions.length) {
+        const planned = await this.plan(input, tools, actions, acc);
         if (planned.paramError) {
           return base(ADMIN_TEXT.badParams[lang], 'error', {
             learning: 'tool_param_error',
             flags: ['tool_param_error'],
           });
+        }
+        if (planned.proposal) {
+          const actor: ActorCtx = {
+            ...input.ctx,
+            assistRole: input.role,
+            lang,
+          };
+          const r = await this.proposals.propose(
+            actor,
+            planned.proposal.op,
+            planned.proposal.args,
+            input.question,
+          );
+          if (r.ok) proposal = { text: r.text, view: r.proposal };
+          else refusal = r.text;
         }
         for (const call of planned.calls) {
           const r = await this.connectors.runRead(
@@ -300,6 +357,20 @@ export class AdminAnswerService {
             json: r.data,
           });
         }
+      }
+      if (proposal && data.length === 0) {
+        // Только предложение: текст пишет КОД, модель ответа не нужна.
+        return base(proposal.text, 'action', {
+          tools: summaries,
+          proposal: proposal.view,
+          flags: proposal.view.unrequested ? ['action_unrequested'] : [],
+        });
+      }
+      if (refusal && data.length === 0) {
+        return base(refusal, 'refused', {
+          tools: summaries,
+          flags: ['action_refused'],
+        });
       }
       if (hits.length === 0 && data.length === 0) {
         return base(ADMIN_TEXT.noKnowledge[lang], 'refused', {
@@ -351,6 +422,17 @@ export class AdminAnswerService {
           learning: 'refused',
           flags: ['unsupported_number'],
         });
+      }
+      if (proposal || refusal) {
+        return base(
+          `${answer}\n\n${proposal?.text ?? refusal}`,
+          proposal ? 'action' : 'tool',
+          {
+            tools: summaries,
+            proposal: proposal?.view ?? null,
+            flags: proposal?.view.unrequested ? ['action_unrequested'] : [],
+          },
+        );
       }
       return base(answer, data.length ? 'tool' : 'knowledge', {
         tools: summaries,

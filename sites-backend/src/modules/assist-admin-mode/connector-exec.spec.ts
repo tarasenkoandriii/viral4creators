@@ -259,6 +259,9 @@ describe('connector-exec', () => {
       'Proxy-Authorization',
       'x-v4c-actor',
       'accept-encoding',
+      // аудит Э8: заголовки изменяющего запроса
+      'Idempotency-Key',
+      'X-V4C-Signature',
     ]) {
       expect(authHeaderNameAllowed(n)).toBe(false);
     }

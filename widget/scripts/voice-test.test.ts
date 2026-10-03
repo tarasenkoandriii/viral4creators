@@ -524,6 +524,9 @@ await wizard();
     'undo.js',
     'check.js',
     'vt.js',
+    // Э3-бис: связанный режим и поведение.
+    'ana.js',
+    'bf.js',
   ])
     writeFileSync(join(dir, 'v1', f), `/* ${f} */`);
   const cfgPath = join(dir, 'release.json');

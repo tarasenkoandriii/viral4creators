@@ -568,6 +568,26 @@ export const e3En: E3Dictionary = {
     IDEMPOTENCY_KEY_REQUIRED: 'Idempotency-Key is required.',
     WEBHOOK_BODY_INVALID: 'The webhook body failed validation.',
     ENGAGEMENT_INVALID: 'Triggers or scenarios failed validation.',
+    // Э3-бис.
+    ANALYTICS_OWNER_ONLY:
+      'Only the account owner changes consent mode and behavior.',
+    AI_PLAN: 'Not available on your plan.',
+    LABEL_INVALID: 'This label correction is not valid.',
+    LABEL_NOT_FOUND: 'The dialog is not labeled yet.',
+    INSIGHT_NOT_FOUND: 'Insight not found — refresh the week.',
+    INSIGHT_INVALID: 'This insight mark is not valid.',
+    EXPERIMENT_INVALID: 'Check the experiment parameters.',
+    EXPERIMENT_OWNER_ONLY: 'Only the account owner starts an experiment.',
+    EXPERIMENT_PLAN: 'Experiments are on Business and Pro plans.',
+    EXPERIMENT_NEEDS_CONSENT:
+      'Turn on linked mode first: experiments run only on consenting visitors.',
+    EXPERIMENT_RUNNING:
+      'An experiment is already running — wait for the result or stop it.',
+    EXPERIMENT_GOAL:
+      'An active site goal is required (for a control group — not only the assistant lead).',
+    EXPERIMENT_UNDERPOWERED:
+      'Your traffic is too small to measure a difference.',
+    EXPERIMENT_NOT_FOUND: 'No running experiment.',
   },
   fieldErrors: {
     type: 'wrong value type',

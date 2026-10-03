@@ -101,6 +101,13 @@ export interface MockLog {
   }>;
   goals: Array<Record<string, unknown>>;
   goalCalls: number;
+  // Э3-бис: связанный режим (exp, pv, ref, visit).
+  ana: Array<{
+    path: string;
+    origin: string | null;
+    contentType: string;
+    body: Record<string, unknown>;
+  }>;
   handoffs: Array<Record<string, unknown>>;
   cancels: number;
   picks: Array<Record<string, unknown>>;
@@ -154,6 +161,8 @@ export interface SiteOpts {
   // Э6-бис (г)
   vtTokens?: string[];
   release?: string;
+  /** Э3-бис: поле `analytics` конфига (связанный режим по согласию). */
+  analytics?: unknown;
 }
 
 /** Сайт в моке: по умолчанию разрешён A и SHOP (verified-хосты одного сайта). */
@@ -186,6 +195,7 @@ export async function site(pk: string, o: SiteOpts = {}) {
     voiceTexts: o.voiceTexts,
     vtTokens: o.vtTokens,
     release: o.release,
+    analytics: o.analytics,
   });
 }
 

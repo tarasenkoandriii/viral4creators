@@ -37,6 +37,8 @@ import {
   validOrderId,
 } from './goal-types';
 import { IntegrationsService } from './integrations.service';
+import type { AssistPublicDb } from '../../prisma/assist-public-db.service';
+import { AiIntake, verifyRef } from './public/ai-intake.service';
 import { dayInTz, siteTz } from './site-time';
 import { AnalyticsRollup } from './system/analytics-rollup.service';
 import { verifyGoalWebhook } from './webhook-signature';
@@ -104,6 +106,11 @@ export function parseWebhookEvent(
       currency: (b.currency as string | null | undefined) ?? null,
       status: b.status as GoalWebhookEvent['status'],
       occurredAt: b.occurredAt,
+      // Э3-бис: проверяется подписью позже (verifyRef); мусор — просто нет связи.
+      assistRef:
+        typeof b.assistRef === 'string' && b.assistRef.length <= 120
+          ? b.assistRef
+          : null,
     },
   };
 }
@@ -206,7 +213,12 @@ export class GoalWebhookService {
     }
     const site = await this.prisma.assistSite.findUnique({
       where: { siteId: p.siteId },
-      select: { accountId: true, siteId: true, timezone: true },
+      select: {
+        accountId: true,
+        siteId: true,
+        timezone: true,
+        analytics: true,
+      },
     });
     if (!site) throw this.unauthorized();
     if (!(await this.rateOk(site.siteId, now))) {
@@ -291,6 +303,13 @@ export class GoalWebhookService {
       currency,
       now,
     });
+    if (
+      ev.assistRef &&
+      ev.status === 'completed' &&
+      (result === 'created' || result === 'merged')
+    ) {
+      await this.linkRef(site, goal.id, ev, parsed.occurredAt, now);
+    }
     await this.integrations.touchWebhook(site.siteId);
     this.logger.log(`вебхук целей: ${result} (site ${site.siteId})`);
     return { result };
@@ -402,6 +421,54 @@ export class GoalWebhookService {
         `вебхук целей: пересчёт дня не удался (site ${siteId}): ${(e as Error | null)?.name ?? 'Error'}`,
       );
     }
+  }
+
+  /**
+   * Э3-бис (§5-тер.1 `assistRef`, §5-тер.9): ref посетителя с согласием —
+   * заказ без диалога в документе получает «с участием», если в окне
+   * связанного режима был диалог визита с ответом помощника; конверсия
+   * единицы эксперимента. Неверная/просроченная подпись ref — без связи
+   * (событие уже принято: ref — подсказка, а не допуск).
+   */
+  private async linkRef(
+    site: { siteId: string; accountId: string; analytics: unknown },
+    goalId: string,
+    ev: GoalWebhookEvent,
+    occurredAt: Date,
+    now: Date,
+  ): Promise<void> {
+    const visitHash = verifyRef(site.siteId, ev.assistRef, now);
+    if (!visitHash) return;
+    // Те же правила, что у приёма виджета; сырой SQL — основной ролью.
+    const ai = new AiIntake(this.prisma as unknown as AssistPublicDb);
+    const windowDays = await ai.linkedWindow(site, now);
+    if (windowDays <= 0) return;
+    const conv = await ai.linkedConversation({
+      siteId: site.siteId,
+      visitHash,
+      windowDays,
+      at: occurredAt,
+    });
+    await this.prisma.$executeRawUnsafe(
+      `UPDATE "sites"."assist_site_goal_events"
+          SET "visitHash" = $4,
+              "attribution" = CASE WHEN $5::text IS NOT NULL AND "conversationId" IS NULL
+                                    AND "attribution" IN ('unknown', 'unassisted')
+                                   THEN 'assisted' ELSE "attribution" END,
+              "conversationId" = COALESCE("conversationId", $5)
+        WHERE "siteId" = $1 AND "goalId" = $2 AND "orderId" = $3`,
+      site.siteId,
+      goalId,
+      ev.orderId,
+      visitHash,
+      conv,
+    );
+    await ai.markConversion({
+      siteId: site.siteId,
+      goalKey: ev.goalKey,
+      visitHash,
+      at: occurredAt,
+    });
   }
 
   /** 120 событий в минуту на сайт (§6 контракта) — окно в assist_rate_buckets. */

@@ -6,7 +6,7 @@
  * не открывается. Подпись JWT, роли и тариф — acceptance/e7 (сервер).
  */
 import { test, expect, type Page, type Frame } from '@playwright/test';
-import { mock, newPk, stand } from './fixtures';
+import { WIDGET, mock, newPk, stand } from './fixtures';
 import { testJwt } from './stand/admin-mock';
 
 const ADMIN = 'http://127.0.0.1:5181';
@@ -182,4 +182,82 @@ test('аудит Э7: повторный init с чужим pk iframe игнор
   );
   await expect.poll(() => sessionPks.length).toBeGreaterThan(1);
   expect(sessionPks.every((p) => p === pk)).toBe(true);
+});
+
+/** Э8: журнал мока «Админки» — сколько «Да» дошло до «API». */
+async function execs(): Promise<string[]> {
+  const r = await fetch(`${WIDGET}/__mock/admin-log`, { method: 'POST' });
+  return ((await r.json()) as { execs: string[] }).execs;
+}
+
+test('Э8 §4-бис.10 п.4 (а)(б): карточка «Да» переживает перезагрузку; после «Да» — ровно одно исполнение', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await page.goto(adminPage(pk, 'emp-A'));
+  const f = await adminFrame(page);
+  await askIn(f, 'Зміни статус замовлення 1042 на shipped');
+  const card = f.locator('.wa-card');
+  await expect(card).toBeVisible();
+  // «было → станет» и кнопки — до «Да» ничего не исполнено.
+  await expect(card.locator('.wa-card-f')).toContainText('paid');
+  await expect(card.locator('.wa-card-f')).toContainText('shipped');
+  expect(await execs()).toHaveLength(0);
+
+  // (а) перезагрузка до «Да» — карточка на месте (с сервера).
+  await page.reload();
+  const g = await adminFrame(page);
+  await expect(g.locator('.wa-card .wa-yes')).toBeVisible();
+
+  // (б) «Да» → одно исполнение; перезагрузка — итог, без второго.
+  await g.locator('.wa-card .wa-yes').click();
+  await expect(g.locator('.wa-card[data-status="done"]').first()).toBeVisible();
+  expect(await execs()).toHaveLength(1);
+  await page.reload();
+  const h = await adminFrame(page);
+  await expect(h.locator('.wa-card[data-status="done"]').first()).toBeVisible();
+  await expect(h.locator('.wa-card .wa-yes')).toHaveCount(0);
+  expect(await execs()).toHaveLength(1);
+});
+
+test('Э8 danger: без слова подтверждения «Да» не исполняется; ответ модели — только текстом', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await page.goto(adminPage(pk, 'emp-A'));
+  const f = await adminFrame(page);
+  await askIn(f, 'Видали замовлення 1042');
+  const card = f.locator('.wa-card.wa-danger');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('ПІДТВЕРДЖУЮ 1');
+  await card.locator('.wa-yes').click();
+  await expect(f.locator('.wa-n')).toBeVisible();
+  expect(await execs()).toHaveLength(0);
+  await card.locator('.wa-card-i').fill('підтверджую 1');
+  await card.locator('.wa-yes').click();
+  await expect(f.locator('.wa-card[data-status="done"]')).toBeVisible();
+  expect(await execs()).toHaveLength(1);
+  // В карточке нет HTML-приёмников: ни ссылок, ни картинок.
+  expect(await f.locator('.wa-card a, .wa-card img').count()).toBe(0);
+});
+
+test('аудит Э8: danger после unknown — повтор со словом подтверждения из карточки', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await page.goto(adminPage(pk, 'emp-U'));
+  const f = await adminFrame(page);
+  await askIn(f, 'Видали замовлення 1042 (таймаут)');
+  const card = f.locator('.wa-card.wa-danger');
+  await card.locator('.wa-card-i').fill('підтверджую 1');
+  await card.locator('.wa-yes').click();
+  const unk = f.locator('.wa-card[data-status="unknown"]');
+  await expect(unk).toBeVisible();
+  expect(await execs()).toHaveLength(1);
+  // Сервер требует слово на КАЖДОЕ «Да» danger — поле есть и у повтора.
+  await unk.locator('.wa-card-i').fill('підтверджую 1');
+  await unk.locator('.wa-card-k input').check();
+  await unk.locator('.wa-retry').click();
+  await expect(f.locator('.wa-card[data-status="done"]')).toBeVisible();
+  expect(await execs()).toHaveLength(2);
 });

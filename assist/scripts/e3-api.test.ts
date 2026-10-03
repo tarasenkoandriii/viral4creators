@@ -57,6 +57,7 @@ import {
 import * as ST from '../src/lib/stats-types';
 import { createWidgetApi, parseWidgetConfig } from '../src/lib/widget-api';
 import { goalWebhookUrl, publicApiBase } from '../src/lib/public-api';
+import { parseAiSettings } from '../src/lib/ai-api';
 // Серверные модули — чистые: сверяем ими напрямую.
 import * as SE from '../../sites-backend/src/modules/assist-site-setup/engagement-config';
 import { defaultWidgetConfig } from '../../sites-backend/src/modules/assist-site-setup/widget-config';
@@ -513,6 +514,9 @@ assert.deepEqual(
     minutesPerQuestion: 3,
     officeCidrs: [],
     excludedPaths: [],
+    // Э3-бис: ключи ИИ-аналитики и согласия правит карточка `ai-api.ts`
+    // (частичный PATCH — сервер сливает с сохранённым).
+    ...parseAiSettings({}),
   }),
   AC.get('AnalyticsConfig')
 );

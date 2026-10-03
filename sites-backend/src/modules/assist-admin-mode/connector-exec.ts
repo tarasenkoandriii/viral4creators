@@ -93,15 +93,70 @@ export class ParamValidationError extends Error {
 
 const PATH_VALUE = /^[A-Za-z0-9_\-.~@:+=,]{1,200}$/;
 
+/** Скаляр по схеме параметра → типизированное значение. Бросает ParamValidationError. */
+function scalarValue(
+  p: Pick<
+    OperationParam,
+    'name' | 'enum' | 'maxLength' | 'minimum' | 'maximum'
+  >,
+  type: 'string' | 'integer' | 'number' | 'boolean',
+  v: unknown,
+): string | number | boolean {
+  let out: string | number | boolean;
+  if (type === 'integer' || type === 'number') {
+    const n =
+      typeof v === 'number'
+        ? v
+        : typeof v === 'string' && v.trim()
+          ? Number(v)
+          : NaN;
+    if (!Number.isFinite(n) || (type === 'integer' && !Number.isInteger(n))) {
+      throw new ParamValidationError(`${p.name}: не число`);
+    }
+    if (p.minimum !== undefined && n < p.minimum) {
+      throw new ParamValidationError(`${p.name}: меньше минимума`);
+    }
+    if (p.maximum !== undefined && n > p.maximum) {
+      throw new ParamValidationError(`${p.name}: больше максимума`);
+    }
+    out = n;
+  } else if (type === 'boolean') {
+    if (v !== true && v !== false && v !== 'true' && v !== 'false') {
+      throw new ParamValidationError(`${p.name}: не true/false`);
+    }
+    out = v === true || v === 'true';
+  } else {
+    if (typeof v !== 'string' && typeof v !== 'number') {
+      throw new ParamValidationError(`${p.name}: не строка`);
+    }
+    out = String(v);
+    const max = Math.min(p.maxLength ?? 200, 500);
+    if (out.length > max)
+      throw new ParamValidationError(`${p.name}: длиннее ${max}`);
+  }
+  if (p.enum && !p.enum.map(String).includes(String(out))) {
+    throw new ParamValidationError(`${p.name}: не из списка`);
+  }
+  return out;
+}
+
+/** Проверенные аргументы: путь и запрос — строками, тело — типизированным JSON. */
+export interface ValidatedArgs {
+  path: Record<string, string>;
+  query: Record<string, string | string[]>;
+  body: Record<string, unknown> | null;
+}
+
 /**
  * Проверить аргументы модели по параметрам операции (§5.4 п.3). Лишние —
  * отказ (модель не подставляет то, чего нет в схеме), обязательные — есть,
- * типы/enum/диапазоны — по схеме. Бросает ParamValidationError.
+ * типы/enum/диапазоны — по схеме; массив — только из скаляров, не длиннее
+ * `maxItems`. Бросает ParamValidationError.
  */
 export function validateArgs(
   params: readonly OperationParam[],
   args: Record<string, unknown>,
-): { path: Record<string, string>; query: Record<string, string> } {
+): ValidatedArgs {
   if (args === null || typeof args !== 'object' || Array.isArray(args)) {
     throw new ParamValidationError('аргументы — объект');
   }
@@ -111,58 +166,53 @@ export function validateArgs(
       throw new ParamValidationError(`неизвестный параметр ${k}`);
   }
   const path: Record<string, string> = {};
-  const query: Record<string, string> = {};
+  const query: Record<string, string | string[]> = {};
+  let body: Record<string, unknown> | null = params.some((p) => p.in === 'body')
+    ? {}
+    : null;
   for (const p of params) {
     const v = args[p.name];
-    if (v === undefined || v === null || v === '') {
+    if (
+      v === undefined ||
+      v === null ||
+      v === '' ||
+      (Array.isArray(v) && v.length === 0)
+    ) {
       if (p.required) throw new ParamValidationError(`нет параметра ${p.name}`);
       continue;
     }
-    let s: string;
-    if (p.type === 'integer' || p.type === 'number') {
-      const n = typeof v === 'number' ? v : Number(v);
-      if (
-        !Number.isFinite(n) ||
-        (p.type === 'integer' && !Number.isInteger(n))
-      ) {
-        throw new ParamValidationError(`${p.name}: не число`);
+    if (p.type === 'array') {
+      if (!Array.isArray(v)) {
+        throw new ParamValidationError(`${p.name}: нужен список`);
       }
-      if (p.minimum !== undefined && n < p.minimum) {
-        throw new ParamValidationError(`${p.name}: меньше минимума`);
+      const max = Math.min(p.maxItems ?? 100, 100);
+      if (v.length > max) {
+        throw new ParamValidationError(`${p.name}: больше ${max} элементов`);
       }
-      if (p.maximum !== undefined && n > p.maximum) {
-        throw new ParamValidationError(`${p.name}: больше максимума`);
-      }
-      s = String(n);
-    } else if (p.type === 'boolean') {
-      if (v !== true && v !== false && v !== 'true' && v !== 'false') {
-        throw new ParamValidationError(`${p.name}: не true/false`);
-      }
-      s = String(v);
-    } else {
-      if (typeof v !== 'string' && typeof v !== 'number') {
-        throw new ParamValidationError(`${p.name}: не строка`);
-      }
-      s = String(v);
-      const max = Math.min(p.maxLength ?? 200, 500);
-      if (s.length > max)
-        throw new ParamValidationError(`${p.name}: длиннее ${max}`);
+      const items = v.map((x) => scalarValue(p, p.items ?? 'string', x));
+      if (p.in === 'body') body = { ...(body ?? {}), [p.name]: items };
+      else if (p.in === 'query') query[p.name] = items.map(String);
+      continue;
     }
-    if (p.enum && !p.enum.map(String).includes(s)) {
-      throw new ParamValidationError(`${p.name}: не из списка`);
+    if (Array.isArray(v) || (typeof v === 'object' && v !== null)) {
+      throw new ParamValidationError(`${p.name}: не скаляр`);
     }
+    const val = scalarValue(p, p.type, v);
     if (p.in === 'path') {
+      const s = String(val);
       if (!PATH_VALUE.test(s) || /^\.+$/.test(s)) {
         throw new ParamValidationError(
           `${p.name}: недопустимые символы в пути`,
         );
       }
       path[p.name] = s;
+    } else if (p.in === 'query') {
+      query[p.name] = String(val);
     } else {
-      query[p.name] = s;
+      body = { ...(body ?? {}), [p.name]: val };
     }
   }
-  return { path, query };
+  return { path, query, body };
 }
 
 /** Собрать URL: baseUrl + путь с подстановкой, query. Бросает при `{}` без значения. */
@@ -170,7 +220,7 @@ export function buildUrl(
   baseUrl: string,
   pathTemplate: string,
   path: Record<string, string>,
-  query: Record<string, string>,
+  query: Record<string, string | string[]>,
 ): URL {
   const filled = pathTemplate.replace(/\{([^}]+)\}/g, (_m, name: string) => {
     const v = path[name];
@@ -179,7 +229,11 @@ export function buildUrl(
     return encodeURIComponent(v);
   });
   const u = new URL(`${baseUrl}${filled}`);
-  for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(query)) {
+    // Массив — повтором ключа (OpenAPI form/explode по умолчанию).
+    if (Array.isArray(v)) for (const x of v) u.searchParams.append(k, x);
+    else u.searchParams.set(k, v);
+  }
   return u;
 }
 
@@ -214,6 +268,10 @@ const FORBIDDEN_AUTH_HEADERS = new Set([
   'accept',
   'accept-encoding',
   'x-v4c-actor',
+  // Э8 (аудит): ключ API не занимает заголовки изменяющего запроса — иначе
+  // секрет уходил бы как Idempotency-Key (один на все «Да») или как подпись.
+  'idempotency-key',
+  'x-v4c-signature',
 ]);
 
 export function authHeaderNameAllowed(name: string): boolean {
@@ -225,7 +283,7 @@ export function authHeaderNameAllowed(name: string): boolean {
   );
 }
 
-function authHeaders(auth: ConnectorAuth): Record<string, string> {
+export function authHeaders(auth: ConnectorAuth): Record<string, string> {
   if (auth.kind === 'none' || !auth.secret) return {};
   if (auth.kind === 'bearer') return { authorization: `Bearer ${auth.secret}` };
   if (auth.kind === 'basic') {
@@ -273,18 +331,20 @@ export function scrubSecret(
   return out;
 }
 
-function maskedRequest(
+export function maskedRequest(
   method: string,
   pathTemplate: string,
   path: Record<string, string>,
-  query: Record<string, string>,
+  query: Record<string, string | string[]>,
   mask: (s: string) => string,
 ): ExecResult['requestMasked'] {
   const p = pathTemplate.replace(/\{([^}]+)\}/g, (_m, n: string) =>
     path[n] !== undefined ? mask(path[n]) : `{${n}}`,
   );
   const q: Record<string, string> = {};
-  for (const [k, v] of Object.entries(query)) q[k] = mask(v);
+  for (const [k, v] of Object.entries(query)) {
+    q[k] = Array.isArray(v) ? v.map(mask).join(',') : mask(v);
+  }
   return { method, path: p, query: q };
 }
 
@@ -309,7 +369,7 @@ export async function executeRead(
     data: null,
     error: null,
   };
-  let parts: { path: Record<string, string>; query: Record<string, string> };
+  let parts: ValidatedArgs;
   try {
     parts = validateArgs(req.params, req.args);
   } catch (e) {

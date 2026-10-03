@@ -35,9 +35,20 @@ import {
 } from '../shared/engagement';
 import { cleanQuestion } from '../shared/protocol';
 import { roleOf, textOf } from '../shared/dom';
-import { WIDGET_GOAL_ATTR, WIDGET_GOAL_SUBMIT_ATTR } from '../shared/brand';
+import {
+  WIDGET_ANA_PATH,
+  WIDGET_GOAL_ATTR,
+  WIDGET_GOAL_SUBMIT_ATTR,
+} from '../shared/brand';
 import { isObj } from '../shared/config';
-import type { EngageApi, EngageHost, EngEvent, GoalMsg } from './host';
+import type {
+  AnaApi,
+  AnaStart,
+  EngageApi,
+  EngageHost,
+  EngEvent,
+  GoalMsg,
+} from './host';
 
 const HIDE = {
   uk: 'Закрити підказку',
@@ -309,6 +320,37 @@ export function start(h: EngageHost): EngageApi {
     h.later(tick, 1000);
   }
 
+  // ── Э3-бис: связанный режим — ленивый чанк ana.js (согласие посетителя,
+  // ключ визита, эксперимент, поведение). Нет поля `analytics` в конфиге —
+  // чанка нет; group/ref отвечают null (без согласия связи нет).
+  let anaQ: unknown[][] | null = [];
+  let anaApi: AnaApi | null = null;
+  const anaOn = isObj(h.cfg.rawAna);
+  const ana = (args: unknown[]) => {
+    if (anaApi) return anaApi.call(args);
+    if (!anaOn || !anaQ) {
+      const cb = args[1];
+      if (typeof cb == 'function' && args[0] != 'consent')
+        h.later(() => (cb as (v: null) => void)(null), 0);
+      return;
+    }
+    if (anaQ.length < 20) anaQ.push(args);
+  };
+  if (anaOn && h.analytics)
+    import(/* @vite-ignore */ h.chunk(WIDGET_ANA_PATH))
+      .then((m: { start: AnaStart }) => {
+        if (h.destroyed) return;
+        anaApi = m.start(h, anaQ || []);
+        anaQ = null;
+      })
+      .catch(() => {
+        // Чанк не загрузился (CSP, сеть) — без связанного режима.
+        const q = anaQ || [];
+        anaQ = null;
+        for (const a of q) ana(a);
+      });
+  else anaQ = null;
+
   if (eng.triggers.length) {
     const onOut = (e: Event) => {
       const m = e as MouseEvent;
@@ -330,7 +372,8 @@ export function start(h: EngageHost): EngageApi {
       else if (e[0] === 'c') hits('click', e[1], WIDGET_GOAL_ATTR, e[2], e[3]);
       else if (e[0] === 's')
         hits('form_submit', e[1], WIDGET_GOAL_SUBMIT_ATTR, '', e[3], e[2]);
-      else jsGoal(e[1]);
+      else if (e[1][0] === 'goal') jsGoal(e[1]);
+      else ana(e[1]);
     },
     unbubble,
   };

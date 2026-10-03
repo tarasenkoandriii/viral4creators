@@ -52,7 +52,16 @@ export function dialogViews(me: AccountMember): ConversationViewKind[] {
 
 // ── Вкладки ──────────────────────────────────────────────────────────
 
-export const STATS_TABS = ['overview', 'conversions', 'topics'] as const;
+export const STATS_TABS = [
+  'overview',
+  'conversions',
+  'topics',
+  // Э3-бис: аналитика с ИИ.
+  'ai',
+  'insights',
+  'experiments',
+  'behavior',
+] as const;
 export type StatsTab = (typeof STATS_TABS)[number];
 export const isStatsTab = (v: unknown): v is StatsTab =>
   typeof v === 'string' && (STATS_TABS as readonly string[]).includes(v);

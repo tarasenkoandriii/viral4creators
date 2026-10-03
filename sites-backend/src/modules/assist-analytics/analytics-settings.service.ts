@@ -22,6 +22,9 @@ import type {
 import { CURRENCY } from './goal-types';
 import { siteTz, validTimezone } from './site-time';
 
+/** Э3-бис: ключи, которые меняет только владелец (обработка данных посетителей). */
+const PRIVACY_KEYS = ['linked', 'linkedGcm', 'linkedWindowDays', 'behavior'];
+
 @Injectable()
 export class AnalyticsSettingsService {
   constructor(private readonly sitesDb: SitesDb) {}
@@ -94,8 +97,35 @@ export class AnalyticsSettingsService {
       }
     }
     const data: Prisma.AssistSiteUpdateInput = {};
+    const { db, a } = await this.row(m, siteId);
     if (b.config !== undefined) {
-      const r = parseAnalyticsConfig(b.config);
+      // Э3-бис: частичная правка — поверх сохранённого (экраны TMA правят
+      // разные поля: цели/CIDR — одни, разметку и согласие — другие).
+      const current = effectiveAnalyticsConfig(a.analytics);
+      const patch =
+        b.config && typeof b.config === 'object' && !Array.isArray(b.config)
+          ? (b.config as Record<string, unknown>)
+          : null;
+      // Режим согласия и поведение меняют обработку данных посетителей —
+      // только владелец кабинета (§5-тер.13: настройки — владелец).
+      if (
+        patch &&
+        m.role !== 'owner' &&
+        PRIVACY_KEYS.some(
+          (k) =>
+            patch[k] !== undefined &&
+            patch[k] !== (current as unknown as Record<string, unknown>)[k],
+        )
+      ) {
+        throw analyticsError(
+          HttpStatus.FORBIDDEN,
+          'ANALYTICS_OWNER_ONLY',
+          'Режим согласия и поведенческие факторы меняет владелец кабинета',
+        );
+      }
+      const r = parseAnalyticsConfig(
+        patch ? { ...current, ...patch } : b.config,
+      );
       if (!r.ok) {
         errors.push(
           ...r.errors.map((e) => ({ ...e, path: `config.${e.path}` })),
@@ -113,7 +143,6 @@ export class AnalyticsSettingsService {
       } else data.currency = b.currency;
     }
     if (errors.length) throw bad(errors);
-    const { db, a } = await this.row(m, siteId);
     if (Object.keys(data).length) {
       await db.assistSite.update({
         where: { id: a.id },

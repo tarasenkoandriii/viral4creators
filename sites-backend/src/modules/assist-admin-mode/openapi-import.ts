@@ -36,6 +36,11 @@ export const OPERATION_KINDS: readonly OperationKind[] = [
 ];
 const RANK: Record<OperationKind, number> = { read: 0, write: 1, danger: 2 };
 
+/** Ранг класса: read 0 < write 1 < danger 2. */
+export function kindRank(k: OperationKind): number {
+  return RANK[k];
+}
+
 /** Поднять можно, опустить ниже автоклассификации — нет (§5.2). */
 export function canSetKind(auto: OperationKind, next: OperationKind): boolean {
   return RANK[next] >= RANK[auto];
@@ -52,7 +57,9 @@ export type OpenApiImportCode =
   | 'no_server'
   | 'bad_server'
   | 'no_operations'
-  | 'too_many_operations';
+  | 'too_many_operations'
+  | 'bad_compensation'
+  | 'bad_preview';
 
 export class OpenApiImportError extends Error {
   constructor(
@@ -64,20 +71,45 @@ export class OpenApiImportError extends Error {
   }
 }
 
-export type ParamType = 'string' | 'integer' | 'number' | 'boolean';
+export type ScalarType = 'string' | 'integer' | 'number' | 'boolean';
+export type ParamType = ScalarType | 'array';
 
-/** Параметр операции — то, что модель может подставить (path/query). */
+/**
+ * Параметр операции — то, что модель может подставить: path/query (Э7) и
+ * поля JSON-тела верхнего уровня (Э8, write/danger). Массив — только из
+ * скаляров (`items`), до `maxItems` (≤ 100) — массовая операция.
+ */
 export interface OperationParam {
   name: string;
-  in: 'path' | 'query';
+  in: 'path' | 'query' | 'body';
   required: boolean;
   type: ParamType;
+  items?: ScalarType;
+  maxItems?: number;
   enum?: Array<string | number>;
   maxLength?: number;
   minimum?: number;
   maximum?: number;
   description?: string;
 }
+
+/**
+ * Откуда брать значение параметра компенсации/предпросмотра (ТЗ §5-бис.15
+ * п.14): `$.request.<параметр>[.путь]` — из исходного запроса,
+ * `$.preview.<путь>` — из снимка «было» (`x-assist-preview`).
+ */
+export type ValueRef = string;
+export const VALUE_REF_RE =
+  /^\$\.(request|preview)\.[A-Za-z0-9_-]{1,64}(\.[A-Za-z0-9_-]{1,64}|\[\d{1,3}\]){0,8}$/;
+
+/** `x-assist-compensation` / `x-assist-preview` (по operationId). */
+export interface LinkedOperation {
+  operationId: string;
+  params: Record<string, ValueRef>;
+}
+
+/** Массивов в параметре — не больше (массовая операция = одна карточка). */
+export const PARAM_MAX_ITEMS = 100;
 
 export interface ImportedOperation {
   operationId: string;
@@ -89,6 +121,14 @@ export interface ImportedOperation {
   params: OperationParam[];
   /** Обязательный параметр в заголовке/cookie — модель его не подставит. */
   unsupported: boolean;
+  /** Э8: `x-assist-idempotent: true`. */
+  idempotent: boolean;
+  /** Э8: `x-assist-compensation` (проверено `checkLinks`). */
+  compensation: LinkedOperation | null;
+  /** Э8: `x-assist-preview` — read-операция «было». */
+  preview: LinkedOperation | null;
+  /** Э8: числовой параметр суммы изменяющей операции (денежный потолок). */
+  autoAmountParam: string | null;
 }
 
 export interface ImportedSpec {
@@ -187,15 +227,51 @@ function paramOf(spec: Obj, raw: unknown): OperationParam | 'header' | null {
   if (!/^[A-Za-z0-9_.\-[\]]{1,64}$/.test(p.name)) return null;
   const schema = resolveRef(spec, p.schema);
   const s = isObj(schema) ? schema : {};
-  const t = s.type;
-  const type: ParamType =
-    t === 'integer' || t === 'number' || t === 'boolean' ? t : 'string';
-  const out: OperationParam = {
+  const out = scalarOrArray(spec, s, {
     name: p.name,
     in: p.in,
     required: p.in === 'path' ? true : p.required === true,
-    type,
-  };
+  });
+  if (!out) return p.required === true || p.in === 'path' ? 'header' : null;
+  const d = clip(p.description, 200);
+  if (d) out.description = d;
+  return out;
+}
+
+/** Схема скаляра или массива скаляров → параметр; иначе null. */
+function scalarOrArray(
+  spec: Obj,
+  s: Obj,
+  base: Pick<OperationParam, 'name' | 'in' | 'required'>,
+): OperationParam | null {
+  const t = s.type;
+  if (t === 'object') return null;
+  if (t === 'array') {
+    if (base.in === 'path') return null;
+    const it = resolveRef(spec, s.items);
+    const itObj = isObj(it) ? it : {};
+    const itT = itObj.type;
+    if (itT === 'object' || itT === 'array') return null;
+    const items: ScalarType =
+      itT === 'integer' || itT === 'number' || itT === 'boolean'
+        ? itT
+        : 'string';
+    const maxItems =
+      typeof s.maxItems === 'number' && s.maxItems > 0
+        ? Math.min(s.maxItems, PARAM_MAX_ITEMS)
+        : PARAM_MAX_ITEMS;
+    const out: OperationParam = { ...base, type: 'array', items, maxItems };
+    if (Array.isArray(itObj.enum)) {
+      const e = itObj.enum
+        .filter((x) => typeof x === 'string' || typeof x === 'number')
+        .slice(0, 50) as Array<string | number>;
+      if (e.length) out.enum = e;
+    }
+    return out;
+  }
+  const type: ScalarType =
+    t === 'integer' || t === 'number' || t === 'boolean' ? t : 'string';
+  const out: OperationParam = { ...base, type };
   if (Array.isArray(s.enum)) {
     const e = s.enum
       .filter((x) => typeof x === 'string' || typeof x === 'number')
@@ -205,9 +281,186 @@ function paramOf(spec: Obj, raw: unknown): OperationParam | 'header' | null {
   if (typeof s.maxLength === 'number') out.maxLength = s.maxLength;
   if (typeof s.minimum === 'number') out.minimum = s.minimum;
   if (typeof s.maximum === 'number') out.maximum = s.maximum;
-  const d = clip(p.description, 200);
-  if (d) out.description = d;
   return out;
+}
+
+/**
+ * Поля JSON-тела верхнего уровня (Э8): скаляры и массивы скаляров. Вложенный
+ * объект или тело не JSON: обязательное — операция `unsupported` (модель его
+ * не соберёт), необязательное — пропускается.
+ */
+function bodyParams(
+  spec: Obj,
+  op: Obj,
+): { params: OperationParam[]; unsupported: boolean } {
+  const body = resolveRef(spec, op.requestBody);
+  if (!isObj(body)) return { params: [], unsupported: false };
+  const required = body.required === true;
+  const content = isObj(body.content) ? body.content : {};
+  const media = content['application/json'];
+  if (!isObj(media)) return { params: [], unsupported: required };
+  const schema = resolveRef(spec, media.schema);
+  if (!isObj(schema) || schema.type !== 'object' || !isObj(schema.properties)) {
+    return { params: [], unsupported: required };
+  }
+  const req = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter((x): x is string => typeof x === 'string')
+      : [],
+  );
+  const params: OperationParam[] = [];
+  let unsupported = false;
+  for (const [name, raw] of Object.entries(schema.properties).slice(0, 60)) {
+    const ps = resolveRef(spec, raw);
+    const isReq = req.has(name);
+    if (!/^[A-Za-z0-9_.\-]{1,64}$/.test(name) || !isObj(ps)) {
+      if (isReq) unsupported = true;
+      continue;
+    }
+    if (ps.readOnly === true) continue;
+    const p = scalarOrArray(spec, ps, { name, in: 'body', required: isReq });
+    if (!p) {
+      if (isReq) unsupported = true;
+      continue;
+    }
+    const d = clip(ps.description, 200);
+    if (d) p.description = d;
+    params.push(p);
+  }
+  return { params, unsupported };
+}
+
+const AMOUNT_NAME =
+  /amount|^(sum|total|price)$|[_-](sum|total|price)$|^(sum|total|price)[_-]/i;
+
+/** Числовой параметр суммы изменяющей операции — денежный потолок (Э8). */
+export function detectAmountParam(
+  kind: OperationKind,
+  params: readonly OperationParam[],
+): string | null {
+  if (kind === 'read') return null;
+  const p = params.find(
+    (x) =>
+      (x.type === 'number' || x.type === 'integer') &&
+      x.in !== 'path' &&
+      AMOUNT_NAME.test(x.name),
+  );
+  return p?.name ?? null;
+}
+
+function linkOf(raw: unknown): LinkedOperation | null | 'bad' {
+  if (raw === undefined || raw === null) return null;
+  if (!isObj(raw) || typeof raw.operationId !== 'string') return 'bad';
+  const params: Record<string, ValueRef> = {};
+  const rp = raw.params === undefined ? {} : raw.params;
+  if (!isObj(rp)) return 'bad';
+  for (const [k, v] of Object.entries(rp)) {
+    if (typeof v !== 'string' || !VALUE_REF_RE.test(v)) return 'bad';
+    params[k] = v;
+  }
+  return { operationId: raw.operationId.slice(0, 100), params };
+}
+
+/**
+ * Проверка связей операций (ТЗ §5-бис.15 п.14; приёмка Э8 п.6). Компенсация:
+ * исходная — изменяющая; целевая есть, класса не ниже исходной; каждый её
+ * параметр — известный, обязательные — все отображены; `$.request.<имя>` —
+ * параметр исходной; `$.preview.*` — только при объявленном предпросмотре.
+ * Предпросмотр: целевая — `read`, обязательные отображены из `$.request.*`.
+ * Возвращает текст первой проблемы или null.
+ */
+export function checkLinks(
+  op: Pick<ImportedOperation, 'operationId' | 'params'> & {
+    kind: OperationKind;
+    preview: LinkedOperation | null;
+    compensation: LinkedOperation | null;
+  },
+  byId: (
+    operationId: string,
+  ) => { kind: OperationKind; params: OperationParam[] } | null,
+): { field: 'compensation' | 'preview'; problem: string } | null {
+  const own = new Set(op.params.map((p) => p.name));
+  const refsOk = (
+    link: LinkedOperation,
+    target: { params: OperationParam[] },
+    allowPreview: boolean,
+  ): string | null => {
+    const names = new Set(target.params.map((p) => p.name));
+    for (const [k, v] of Object.entries(link.params)) {
+      if (!names.has(k)) return `параметра ${k} нет у ${link.operationId}`;
+      const m = /^\$\.(request|preview)\.([A-Za-z0-9_-]+)/.exec(v);
+      if (!m) return `${k}: неверная ссылка`;
+      if (m[1] === 'request' && !own.has(m[2])) {
+        return `${k}: у ${op.operationId} нет параметра ${m[2]}`;
+      }
+      if (m[1] === 'preview' && !allowPreview) {
+        return `${k}: $.preview без x-assist-preview`;
+      }
+    }
+    for (const p of target.params) {
+      if (p.required && !(p.name in link.params)) {
+        return `обязательный параметр ${p.name} операции ${link.operationId} не отображён`;
+      }
+    }
+    return null;
+  };
+  if (op.preview) {
+    const t = byId(op.preview.operationId);
+    if (op.kind === 'read') {
+      return {
+        field: 'preview',
+        problem: 'предпросмотр — только у изменяющей операции',
+      };
+    }
+    if (!t) {
+      return {
+        field: 'preview',
+        problem: `операции ${op.preview.operationId} нет`,
+      };
+    }
+    if (t.kind !== 'read') {
+      return {
+        field: 'preview',
+        problem: `${op.preview.operationId} — не чтение`,
+      };
+    }
+    const bad = refsOk(op.preview, t, false);
+    if (bad) return { field: 'preview', problem: bad };
+  }
+  if (op.compensation) {
+    const t = byId(op.compensation.operationId);
+    if (op.kind === 'read') {
+      return {
+        field: 'compensation',
+        problem: 'компенсация — только у изменяющей операции',
+      };
+    }
+    if (!t) {
+      return {
+        field: 'compensation',
+        problem: `компенсирующей операции ${op.compensation.operationId} нет`,
+      };
+    }
+    if (
+      op.compensation.operationId === op.operationId &&
+      op.kind === 'danger'
+    ) {
+      // Сама себя «отменяет» только запись (вернуть прежнее значение поля).
+      return {
+        field: 'compensation',
+        problem: 'danger не компенсируется сам собой',
+      };
+    }
+    if (RANK[t.kind] < RANK[op.kind]) {
+      return {
+        field: 'compensation',
+        problem: `компенсация ${op.compensation.operationId} (${t.kind}) ниже классом, чем ${op.kind}`,
+      };
+    }
+    const bad = refsOk(op.compensation, t, !!op.preview);
+    if (bad) return { field: 'compensation', problem: bad };
+  }
+  return null;
 }
 
 /** Похоже ли, что параметр/тело — массив идентификаторов (массовая операция). */
@@ -447,6 +700,32 @@ export function parseOpenApi(
         if (p === 'header') unsupported = true;
         else if (p) byKey.set(`${p.in}:${p.name}`, p);
       }
+      if (method !== 'get' && method !== 'head') {
+        const b = bodyParams(spec, op);
+        if (b.unsupported) unsupported = true;
+        for (const p of b.params) {
+          // Одно имя в теле и в пути/запросе — аргумент модели неоднозначен.
+          if ([...byKey.values()].some((x) => x.name === p.name)) {
+            if (p.required) unsupported = true;
+            continue;
+          }
+          byKey.set(`body:${p.name}`, p);
+        }
+      }
+      const comp = linkOf(op['x-assist-compensation']);
+      const prev = linkOf(op['x-assist-preview']);
+      if (comp === 'bad') {
+        throw new OpenApiImportError(
+          'bad_compensation',
+          `${operationId}: x-assist-compensation — { operationId, params: { имя: "$.request.…" | "$.preview.…" } }`,
+        );
+      }
+      if (prev === 'bad') {
+        throw new OpenApiImportError(
+          'bad_preview',
+          `${operationId}: x-assist-preview — { operationId, params: { имя: "$.request.…" } }`,
+        );
+      }
       const summary = clip(op.summary, 300);
       const description = clip(op.description, 1000);
       const cls = classifyOperation({
@@ -457,6 +736,7 @@ export function parseOpenApi(
         description,
         massIds: hasIdArray(spec, op, rawParams),
       });
+      const params = [...byKey.values()];
       ops.push({
         operationId,
         method: method.toUpperCase(),
@@ -464,8 +744,12 @@ export function parseOpenApi(
         summary: summary ?? clip(description, 300),
         autoKind: cls.kind,
         kindReason: cls.reason,
-        params: [...byKey.values()],
+        params,
         unsupported,
+        idempotent: op['x-assist-idempotent'] === true,
+        compensation: comp,
+        preview: prev,
+        autoAmountParam: detectAmountParam(cls.kind, params),
       });
     }
   }
@@ -474,6 +758,20 @@ export function parseOpenApi(
       'no_operations',
       'В спецификации нет операций',
     );
+  }
+  // Связи операций — после разбора всех (ссылка может идти вперёд).
+  const index = new Map(ops.map((o) => [o.operationId, o]));
+  for (const o of ops) {
+    const bad = checkLinks({ ...o, kind: o.autoKind }, (id) => {
+      const t = index.get(id);
+      return t ? { kind: t.autoKind, params: t.params } : null;
+    });
+    if (bad) {
+      throw new OpenApiImportError(
+        bad.field === 'compensation' ? 'bad_compensation' : 'bad_preview',
+        `${o.operationId}: x-assist-${bad.field} — ${bad.problem}`,
+      );
+    }
   }
   return {
     title: clip(info.title, 200),

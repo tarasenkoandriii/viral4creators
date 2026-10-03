@@ -247,6 +247,8 @@ export type GoalParse =
       currency: string | null;
       conversationId: string | null;
       lastAssistClickAt: string | null;
+      /** Э3-бис: ключ визита посетителя с согласием (связанный режим). */
+      visit: string | null;
       assist: {
         proactive: string | null;
         scenario: string | null;
@@ -267,6 +269,8 @@ const GOAL_FIELDS = [
   'conversationId',
   'lastAssistClickAt',
   'assist',
+  // Э3-бис: ключ визита — только с согласием посетителя (чанк ana.js).
+  'visit',
 ] as const;
 const IFRAME_ONLY = ['conversationId', 'lastAssistClickAt', 'assist'] as const;
 
@@ -355,6 +359,15 @@ export function parseGoalRequest(raw: unknown, fromIframe: boolean): GoalParse {
     }
     lastAssistClickAt = raw.lastAssistClickAt;
   }
+  let visit: string | null = null;
+  if (raw.visit !== undefined && raw.visit !== null) {
+    if (
+      typeof raw.visit !== 'string' ||
+      !/^[A-Za-z0-9_-]{16,64}$/.test(raw.visit)
+    )
+      return bad;
+    visit = raw.visit;
+  }
   let assist: Extract<GoalParse, { ok: true }>['assist'] = null;
   if (raw.assist !== undefined && raw.assist !== null) {
     const a = raw.assist;
@@ -384,6 +397,7 @@ export function parseGoalRequest(raw: unknown, fromIframe: boolean): GoalParse {
     currency,
     conversationId,
     lastAssistClickAt,
+    visit,
     assist,
   };
 }

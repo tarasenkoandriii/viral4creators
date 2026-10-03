@@ -155,6 +155,13 @@ model Site {
   adminLearningItems  AssistAdminLearningItem[]
   adminCrawlJobs      AssistAdminCrawlJob[]
   adminPages          AssistAdminPage[]
+  // Э8 «Админка»: действия — предложения с «Да», мемо АМ-N (ТЗ §5.4–5.7,
+  // §5-бис.15 п.14, §5-бис.17 п.10).
+  adminProposals      AssistAdminActionProposal[]
+  adminMemos          AssistAdminMemo[]
+  adminMemoVersions   AssistAdminMemoVersion[]
+  adminPhrases        AssistAdminPhrase[]
+  adminMemoRuns       AssistAdminMemoRun[]
   sandboxes           AssistSandbox[]
 
   // Э2: виджет режима «Сайт» (контракт /tmp/k/CONTRACT-E2.md).
@@ -215,6 +222,16 @@ model Site {
   memoVersions AssistSiteMemoVersion[]
   memoChanges  AssistSiteMemoChange[]
   phrases      AssistSitePhrase[]
+
+  // Э3-бис: аналитика с ИИ — разметка диалогов, lead score, выводы недели,
+  // эксперименты, поведенческие факторы (ТЗ §5-тер.3–5, §5-тер.8–10).
+  conversationLabels AssistSiteConversationLabel[]
+  analyticsSpend     AssistAnalyticsSpend[]
+  leadCalibrations   AssistSiteLeadCalibration[]
+  insights           AssistSiteInsight[]
+  experiments        AssistSiteExperiment[]
+  pageViews          AssistSitePageView[]
+  dailyPages         AssistSiteDailyPage[]
 
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
@@ -1468,6 +1485,15 @@ model AssistAdminSettings {
   privateCrawlTestAccountId     String?
   privateCrawlStartPath         String?
 
+  // ── Э8 «Админка»: действия (ТЗ §5.2–5.7, §5-бис.17 п.10) ──
+  /// Количественный потолок сайта: исполнений write/danger за UTC-сутки
+  /// (сверх лимитов операций и сотрудника).
+  actionsDailyCap               Int       @default(100)
+  /// Уведомлять владельцев в Telegram о каждом исполнении `danger`.
+  notifyDanger                  Boolean   @default(true)
+  /// Счётчик номеров мемо «Админки» АМ-N (не переиспользуется).
+  memoCounter                   Int       @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1708,6 +1734,12 @@ model AssistAdminConnector {
   status           String   @default("active")
   lastCallAt       DateTime?
   createdByTelegramId BigInt?
+  /// Э8: секрет подписи изменяющих запросов `X-V4C-Signature` (§5.5) —
+  /// шифротекст ASSIST_SECRETS_KEY (AAD — коннектор, назначение); открытый
+  /// текст показывается владельцу ОДИН раз при выпуске.
+  signSecretEnc    String?
+  signKeyVersion   String?
+  signSetAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1721,8 +1753,8 @@ model AssistAdminConnector {
 }
 
 /// Операция коннектора (§5.2): класс — автоклассификация при импорте; поднять
-/// владелец может (read → write), опустить write/danger — нет. В Э7 исполняются
-/// только `read` (Э8 — write/danger с подтверждением).
+/// владелец может (read → write), опустить write/danger — нет. `read`
+/// исполняется сразу (Э7), write/danger — только предложением и «Да» (Э8).
 model AssistAdminOperation {
   id          String               @id @default(cuid())
   accountId   String
@@ -1749,6 +1781,28 @@ model AssistAdminOperation {
   /// Обязательный параметр в заголовке/cookie — модель его не подставит,
   /// операцию включить нельзя.
   unsupported Boolean  @default(false)
+
+  // ── Э8: действия (§5.4–5.5, §5-бис.15 п.14) ──
+  /// `x-assist-idempotent: true` (или отметка владельца): повтор после
+  /// `unknown` с тем же Idempotency-Key дубля не создаёт.
+  idempotent      Boolean  @default(false)
+  /// Компенсирующая операция (`x-assist-compensation` или владелец):
+  /// { operationId, params: { имя: "$.request.<путь>" | "$.preview.<путь>" } }.
+  /// Проверена при сохранении: операция есть, класс не ниже, всё отображено.
+  compensation    Json?
+  /// Предпросмотр «было» (`x-assist-preview` или владелец): read-операция
+  /// { operationId, params: { имя: "$.request.<путь>" } }.
+  preview         Json?
+  /// Сухой прогон `native`: булев параметр операции (`dryRun`/`validateOnly`).
+  dryRunParam     String?
+  /// Денежный потолок: числовой параметр суммы, максимум за действие и сумма
+  /// за UTC-сутки по операции. Найден автоматически — снять нельзя.
+  amountParam     String?
+  autoAmountParam String?
+  maxAmount       Float?
+  dailyAmountCap  Float?
+  /// Слово подтверждения danger («СКАСУВАТИ»); к нему код добавляет число строк.
+  confirmWord     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1821,6 +1875,7 @@ model AssistAdminConversation {
 
   messages      AssistAdminMessage[]
   learningItems AssistAdminLearningItem[]
+  proposals     AssistAdminActionProposal[]
 
   @@unique([id, accountId])
   @@index([siteId, employeeRef, lastActivityAt])
@@ -1853,6 +1908,8 @@ model AssistAdminMessage {
   inTokens        Int      @default(0)
   outTokens       Int      @default(0)
   costMicroUsd    Int      @default(0)
+  /// Э8: карточка подтверждения при этом ответе (предложение write/danger).
+  proposalId      String?
 
   createdAt DateTime @default(now())
 
@@ -1969,6 +2026,202 @@ model AssistAdminPage {
   @@map("assist_admin_pages")
 }
 
+// ══ Э8 «Админка»: действия (ТЗ §5.4–5.7, §4-бис.5, §5-бис.15 п.14,
+// §5-бис.17 п.10; план «Этап 8») — роли assist_public НЕДОСТУПНЫ ══
+
+/// Предложение изменяющего действия (§5.4 п.5–7): модель только ПРЕДЛАГАЕТ,
+/// исполняет отдельный запрос «Да» того же сотрудника (`actor`) после
+/// повторной проверки роли, срока, `paramsHash`, лимитов. Переход
+/// `pending → executing` — условным UPDATE (повторное «Да» после перезагрузки
+/// исполнения не даёт, §4-бис.5). `Idempotency-Key` = id. Параметры и снимок
+/// «было» — значения сотрудника (не модели): стираются ретенцией после окна
+/// компенсации; журнал хранит только маску.
+model AssistAdminActionProposal {
+  id             String                   @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site                     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  conversationId String?
+  conversation   AssistAdminConversation? @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// embed | tma
+  channel        String
+  /// `jwt:<sub>` | `tg:<telegramId>` — «Да» принимается только от него.
+  actor          String
+  /// `X-V4C-Actor` (sub или tg:<id>) — для аудита заказчика.
+  actorExternal  String
+  /// Роль у заказчика (JWT) / кабинета (TMA) — для журнала.
+  actorRole      String?
+  /// Роль помощника, по которой выдано право (`*` — владелец «Админки»).
+  assistRole     String
+  connectorId    String
+  operationRowId String
+  /// `<коннектор>.<operationId>`
+  operation      String
+  /// write | danger (класс на момент предложения; при «Да» — не ниже).
+  kind           String
+  /// Аргументы по схеме OpenAPI (path/query/body); NULL после ретенции.
+  params         Json?
+  /// SHA-256 канонического JSON (операция + аргументы) — «Да» сверяет его.
+  paramsHash     String
+  /// [{ name, in, before?, after }] — строки карточки «было → станет».
+  fields         Json?
+  /// Снимок `preview` («было», ≤ 8 КБ) — для карточки и `$.preview.*`.
+  preview        Json?
+  /// none | native | preview | native+preview
+  dryRun         String   @default("none")
+  /// ok | failed | skipped
+  dryRunStatus   String?
+  dryRunNote     String?
+  /// «Ассистент предложил это сам, без вашей просьбы» (§5.7) — флаг на ревью.
+  unrequested    Boolean  @default(false)
+  /// danger: слово подтверждения с числом строк («СКАСУВАТИ 3»).
+  confirmPhrase  String?
+  /// Сумма из `amountParam` (денежный потолок).
+  amount         Float?
+  /// Компенсация: id исходного предложения (§5-бис.15 п.14).
+  compensationOf String?
+  /// Шаг мемо «Админки» (АМ-N): каждый write/danger — своё «Да».
+  memoRunId      String?
+  memoStep       Int?
+  /// pending | executing | done | failed | unknown | rejected | expired
+  status         String   @default("pending")
+  attempts       Int      @default(0)
+  /// ok | http_error | timeout | blocked | auth_failed | bad_response …
+  outcome        String?
+  httpStatus     Int?
+  /// Текст ошибки API 4xx — усечён, маскирован (§5.7).
+  errorText      String?
+  /// committed | compensated | compensation_failed | unknown (витрина; правда —
+  /// записи `chain` в журнале).
+  chainStatus    String?
+  expiresAt      DateTime
+  decidedBy      String?
+  decidedAt      DateTime?
+  executedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([memoRunId, memoStep])
+  @@index([siteId, actor, createdAt])
+  @@index([siteId, status])
+  @@index([accountId])
+  @@map("assist_admin_action_proposals")
+}
+
+/// Мемо «Админки» АМ-N (§5-бис.17 п.10): второй экземпляр, редактирует
+/// только `assistAdmin: owner`; серверные эффекты — только шаги `api`
+/// (операция коннектора), каждый write/danger — отдельное «Да». Журнал
+/// изменений — записи `memo` в assist_admin_action_log.
+model AssistAdminMemo {
+  id               String                   @id @default(cuid())
+  accountId        String
+  siteId           String
+  site             Site                     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// АМ-N — порядковый в сайте (assist_admin_settings.memoCounter), не переиспользуется.
+  number           Int
+  key              String
+  /// draft | checking | published | held | needs_review | disabled | removed
+  status           String                   @default("draft")
+  publishedVersion Int?
+  draftRevision    Int                      @default(0)
+  draft            Json
+  /// manual | import
+  origin           String                   @default("manual")
+  reviewReason     Json?
+  createdBy        String
+  updatedBy        String
+  removedAt        DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  versions         AssistAdminMemoVersion[]
+
+  @@unique([siteId, number])
+  @@unique([siteId, key])
+  @@unique([id, accountId])
+  @@index([accountId])
+  @@map("assist_admin_memos")
+}
+
+model AssistAdminMemoVersion {
+  id          String          @id @default(cuid())
+  accountId   String
+  siteId      String
+  site        Site            @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  memoId      String
+  memo        AssistAdminMemo @relation(fields: [memoId, accountId], references: [id, accountId], onDelete: Cascade)
+  number      Int
+  /// checking | published | held | discarded
+  status      String
+  content     Json
+  contentHash String
+  gateReport  Json?
+  /// Проверка по живому каталогу коннекторов: { result: pass | fail, problems }.
+  checkReport Json?
+  rollbackOf  Int?
+  requestedBy String
+  publishedBy String?
+  createdAt   DateTime        @default(now())
+  publishedAt DateTime?
+
+  @@unique([memoId, number])
+  @@index([siteId])
+  @@index([accountId])
+  @@map("assist_admin_memo_versions")
+}
+
+/// Индекс фраз мемо «Админки»: одна нормализованная фраза (язык) — одно мемо.
+model AssistAdminPhrase {
+  siteId    String
+  accountId String
+  site      Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  lang      String
+  norm      String
+  /// memo:<id>
+  owner     String
+  /// memo-name | memo-trigger
+  kind      String
+  createdAt DateTime @default(now())
+
+  @@id([siteId, lang, norm])
+  @@index([accountId])
+  @@index([siteId, owner])
+  @@map("assist_admin_phrases")
+}
+
+/// Запуск мемо АМ-N сотрудником: версия закреплена, шаги идут по порядку;
+/// write/danger — предложение и «Да». Значения слотов — только здесь, пока
+/// запуск жив (стираются по завершении/истечении).
+model AssistAdminMemoRun {
+  id             String   @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  memoId         String
+  memoNumber     Int
+  memoVersion    Int
+  conversationId String?
+  actor          String
+  channel        String
+  /// running | waiting | done | failed | stopped | expired
+  status         String   @default("running")
+  /// Следующий шаг (индекс).
+  step           Int      @default(0)
+  slots          Json?
+  /// [{ i, operation, outcome }] — что уже сделано (без значений).
+  progress       Json     @default("[]")
+  /// reached | not_reached | unknown
+  goalStatus     String?
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([siteId, actor])
+  @@index([accountId])
+  @@map("assist_admin_memo_runs")
+}
+
 // ══ Э2: виджет режима «Сайт» (ТЗ §3-бис, §4-бис, §4.5, §4.12–§4.13, §6.3) ══
 //
 // Публичные маршруты /widget/v1/* работают под ролью assist_public
@@ -2058,6 +2311,10 @@ model AssistSiteConversation {
   /// Э3 (§5-тер.12 п.10): кто начал диалог — user | proactive:<триггер> |
   /// scenario:<ключ>. Пишет виджет при создании диалога.
   openedBy      String?
+  /// Э3-бис (§5-тер.9): хеш ключа визита — ТОЛЬКО в связанном режиме (с
+  /// согласием посетителя на аналитику); связывает цель на другой странице с
+  /// диалогом в окне атрибуции. Без согласия — null.
+  visitHash     String?
   /// Растёт с каждым изменением диалога — `GET /widget/v1/state?since=`.
   stateVersion  Int      @default(0)
   lastMessageAt DateTime @default(now())
@@ -2074,6 +2331,8 @@ model AssistSiteConversation {
   goalEvents    AssistSiteGoalEvent[]
   // Э6-бис: голосовые планы диалога (каскад с диалогом — ретенция и forget).
   uiPlans       AssistSiteUiPlan[]
+  // Э3-бис: разметка диалога моделью — живёт и удаляется с диалогом (§5-тер.15).
+  label         AssistSiteConversationLabel?
   faqFrom       AssistSiteFaq[]          @relation("FaqFromConversation")
   evalCasesFrom AssistSiteEvalCase[]     @relation("EvalCaseFromConversation")
 
@@ -2713,6 +2972,9 @@ model AssistSiteGoalEvent {
   /// Диалог (если был в этом документе). forget/ретенция — ссылка обнуляется.
   conversationId String?
   conversation   AssistSiteConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  /// Э3-бис: хеш ключа визита (только связанный режим, §5-тер.9) — связь с
+  /// диалогом на другой странице и конверсия единицы эксперимента.
+  visitHash      String?
 
   @@unique([siteId, goalId, orderId])
   @@unique([siteId, clientEventId])
@@ -3643,4 +3905,291 @@ model SiteUiElementMiss {
   @@index([createdAt])
   @@index([accountId])
   @@map("site_ui_element_misses")
+}
+
+// ── Э3-бис: аналитика с ИИ (ТЗ помощника §5-тер.3–5, §5-тер.8–10,
+// §5-тер.14–17; план «Э3-бис — сделано»). Миграция
+// 20261005220000_assist_ai_analytics. Всё — режим «Сайт» (У-23…У-27):
+// таблиц «Админки» здесь нет.
+
+/// Разметка закрытого диалога дешёвой моделью (Р-43) и lead score кодом
+/// (Р-44). Вход модели — только замаскированный текст; поля — перечни,
+/// проверенные кодом (assist-analytics/ai/label-schema.ts). Живёт и
+/// удаляется с диалогом (FK каскад: forget, ретенция — §5-тер.15).
+model AssistSiteConversationLabel {
+  conversationId String                 @id
+  accountId      String
+  siteId         String
+  conversation   AssistSiteConversation @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+  site           Site                   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  /// ok | failed | injection_suspect | retry (временный сбой модели) |
+  /// skipped (вне выборки при исчерпании бюджета, §5-тер.3)
+  status         String
+  model          String?
+  promptVersion  String
+  intent         String?
+  intentNote     String?
+  stage          String?
+  buyingSignals  String[]
+  /// Сырая оценка модели 0–100 — один из признаков, не score; при
+  /// подозрении на инъекцию — null (не учитывается).
+  llmLikelihood  Int?
+  outcome        String?
+  failureReason  String?
+  failureNote    String?
+  sentimentStart Int?
+  sentimentEnd   Int?
+  frustration    Boolean   @default(false)
+  answerQuality  Int?
+  qualityFlags   String[]
+  topics         String[]
+  /// Только названия из словаря сайта (заголовки документов) — кодом.
+  entities       String[]
+  /// Lead score 0–100 и корзина hot | warm | cold — считает КОД по признакам.
+  leadScore      Int?
+  leadBucket     String?
+  /// Объяснение score: [{ f: признак, c: вклад }] — без текста посетителя.
+  leadFeatures   Json?
+  /// Вероятность после калибровки сайта (Pro, ≥ 50 известных исходов).
+  leadProb       Float?
+  /// Вес выборки: 1 — разметка без выборки; 5 — «случайные 20%»; 0 — skipped.
+  weight         Float     @default(1)
+  attempts       Int       @default(0)
+  /// Исправление владельцем/менеджером («неверно размечено», §5-тер.16).
+  humanOverride  Json?
+  overriddenBy   String?
+  overriddenAt   DateTime?
+  costMicroUsd   Int       @default(0)
+  labeledAt      DateTime  @default(now())
+
+  /// Цель 1:1 составного ключа с диалогом (Prisma требует уникальности).
+  @@unique([conversationId, accountId])
+  @@index([siteId, labeledAt])
+  @@index([accountId])
+  @@map("assist_site_conversation_labels")
+}
+
+/// Расход бюджета аналитики (`assist-label`, `assist-insight`) — месячный
+/// потолок ПОДПИСКИ (Р-50, Р-58), доля сайта — поровну между сайтами
+/// кабинета с помощником. Резерв — условный UPDATE до вызова модели.
+model AssistAnalyticsSpend {
+  accountId     String
+  siteId        String
+  site          Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// YYYY-MM (UTC).
+  period        String
+  spentMicroUsd BigInt   @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@id([siteId, period])
+  @@index([accountId, period])
+  @@map("assist_analytics_spend")
+}
+
+/// Калибровка lead score сайта (§5-тер.4): Platt по диалогам с ИЗВЕСТНЫМ
+/// исходом; только Pro и только при ≥ 50 положительных и ≥ 200 размеченных.
+model AssistSiteLeadCalibration {
+  id        String   @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  version   Int
+  /// prior | platt
+  method    String
+  /// { a, b } — p = 1 / (1 + exp(-(a·logit(score) + b))).
+  params    Json
+  positives Int
+  total     Int
+  auc       Float?
+  brier     Float?
+  ece       Float?
+  createdAt DateTime @default(now())
+
+  @@unique([siteId, version])
+  @@index([accountId])
+  @@map("assist_site_lead_calibrations")
+}
+
+/// Находка недели (код, Н-1…Н-11) и вывод модели по ней (Р-45): числа —
+/// только из находки (проверка кодом), не прошло — `text` null и сухая строка.
+model AssistSiteInsight {
+  id           String    @id @default(cuid())
+  accountId    String
+  siteId       String
+  site         Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Понедельник недели (YYYY-MM-DD, пояс сайта).
+  weekStart    String
+  /// Код находки: N2 | N3 | N4 | N5 | N7 | N8 | N10 (ТЗ Н-…).
+  code         String
+  /// Ключ дедупа внутри недели: `<code>:<измерение>`.
+  findingKey   String
+  /// Числа и измерения находки — кодом (n, доля, база, интервал Вильсона…).
+  finding      Json
+  /// high | medium | low — по доле затронутых просмотров/диалогов (код).
+  impact       String
+  /// { title, what, action } — текст модели; null — без модели/не прошёл проверку.
+  text         Json?
+  /// Почему текста нет: plan | budget | model | numbers | links | null.
+  textSkipped  String?
+  model        String?
+  /// new | done | dismissed
+  status       String    @default("new")
+  doneAt       DateTime?
+  /// Сравнение до/после через 14 дней после «Сделано» (совпадение во времени).
+  followUp     Json?
+  /// 👍 = 1, 👎 = -1.
+  feedback     Int?
+  costMicroUsd Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([siteId, weekStart, findingKey])
+  @@index([siteId, weekStart])
+  @@index([accountId])
+  @@map("assist_site_insights")
+}
+
+/// Эксперимент сайта (§5-тер.2, Р-42; решение Э3-бис: только посетители с
+/// согласием на аналитику): holdout (без виджета) | greeting | suggestions.
+/// Фиксированный горизонт без подглядывания; SRM; авто-остановка.
+model AssistSiteExperiment {
+  id             String    @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// holdout | greeting | suggestions
+  kind           String
+  /// Ключ цели — основная метрика (у holdout — не встроенная заявка).
+  goalKey        String
+  /// Доля группы B (holdout — «без виджета», 0.05–0.2; варианты — 0.5).
+  share          Float
+  /// Соль назначения группы (не секрет: группа — не идентификатор).
+  salt           String
+  /// Вариант B: greeting — { uk?, ru?, en? }; suggestions — { uk?: [...], … }.
+  variant        Json?
+  /// running | done | invalid | stopped
+  status         String
+  horizonDays    Int
+  /// Минимальный эффект (относительный), который эксперимент обязан увидеть.
+  mdeRel         Float
+  /// Нужно единиц на группу (α = 0.05, мощность 80%) — для «недостаточно данных».
+  minUnitsPerArm Int
+  /// Расчёт мощности на старте (база, единиц/сутки, ожидаемо к горизонту).
+  power          Json
+  startedAt      DateTime
+  endsAt         DateTime
+  stoppedAt      DateTime?
+  /// horizon | srm | owner | plan
+  stopReason     String?
+  /// Итог — ТОЛЬКО после горизонта (без подглядывания).
+  result         Json?
+  srmP           Float?
+  startedBy      String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  units AssistSiteExperimentUnit[]
+
+  @@index([siteId, status])
+  @@index([status, endsAt])
+  @@index([accountId])
+  @@map("assist_site_experiments")
+}
+
+/// Единица эксперимента — посетитель с согласием (хеш ключа визита с солью
+/// сайта). Пишет виджет (assist_public) при включении в эксперимент и при
+/// конверсии основной цели. Удаляется вместе с экспериментом (через 30 дней
+/// после итога — агрегаты остаются в `result`).
+model AssistSiteExperimentUnit {
+  experimentId String
+  experiment   AssistSiteExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  unitHash     String
+  /// a | b
+  arm          String
+  enrolledAt   DateTime             @default(now())
+  converted    Boolean              @default(false)
+  convertedAt  DateTime?
+
+  @@id([experimentId, unitHash])
+  @@map("assist_site_experiment_units")
+}
+
+/// Итог просмотра страницы (§5-тер.8, Р-46) — ТОЛЬКО с согласием на
+/// аналитику (решение Э3-бис) и на Business+; без ввода, значений полей,
+/// координат, отпечатка, click-id. Сырые — 7 дней, затем только свёртка.
+model AssistSitePageView {
+  /// pvId — случайный id просмотра из памяти документа (перезапись итога).
+  id               String
+  siteId           String
+  site             Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  /// YYYY-MM-DD (UTC) — свёртка переводит в сутки сайта по startedAt.
+  day              String
+  startedAt        DateTime @default(now())
+  path             String
+  prevPath         String?
+  /// direct | search | social | ads | messenger | link | email
+  source           String
+  refHost          String?
+  utmCampaign      String?
+  /// mobile | tablet | desktop
+  device           String
+  os               String
+  browser          String
+  scrollMax        Int      @default(0)
+  activeMs         Int      @default(0)
+  totalMs          Int      @default(0)
+  clicks           Int      @default(0)
+  rageClicks       Int      @default(0)
+  jsErrors         Int      @default(0)
+  /// ≤ 3 групп: { h: хеш, m: сообщение (маска, ≤ 120), s: хост скрипта }.
+  errorGroups      Json?
+  formStarted      Boolean  @default(false)
+  formSubmitted    Boolean  @default(false)
+  /// Имя поля, на котором ушли (name/id ≤ 30, без значения).
+  formAbandonField String?
+  formInvalid      Int      @default(0)
+  backNav          Boolean  @default(false)
+  lcpMs            Int?
+  inpMs            Int?
+  cls              Float?
+  chatOpened       Boolean  @default(false)
+  updatedAt        DateTime @default(now())
+
+  @@id([siteId, id])
+  @@index([siteId, day])
+  @@index([day])
+  @@map("assist_site_page_views")
+}
+
+/// Суточная свёртка поведения по страницам (топ-200 + «*») — отчёты и экран
+/// читают только её; 13 мес (§5-тер.10).
+model AssistSiteDailyPage {
+  accountId      String
+  siteId         String
+  site           Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// YYYY-MM-DD в поясе сайта.
+  day            String
+  path           String
+  views          Int      @default(0)
+  activeMsMedian Int      @default(0)
+  scrollMedian   Int      @default(0)
+  /// Просмотров с прокруткой ≥ 75%.
+  deepScroll     Int      @default(0)
+  backNav        Int      @default(0)
+  rage           Int      @default(0)
+  jsErrors       Int      @default(0)
+  formStarts     Int      @default(0)
+  formAbandons   Int      @default(0)
+  /// Поле → число уходов (топ-5).
+  abandonFields  Json     @default("{}")
+  lcpP75         Int?
+  inpP75         Int?
+  clsP75         Float?
+  chatOpens      Int      @default(0)
+  computedAt     DateTime @default(now())
+
+  @@id([siteId, day, path])
+  @@index([accountId])
+  @@map("assist_site_daily_pages")
 }

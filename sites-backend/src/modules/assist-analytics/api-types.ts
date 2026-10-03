@@ -190,7 +190,12 @@ export interface GoalWebhookEvent {
   currency?: string | null;
   status: 'completed' | 'refunded' | 'cancelled';
   occurredAt: string;
-  /** Э3-бис (контрольная группа / связанный режим) — принимаются и игнорируются. */
+  /**
+   * Э3-бис: `assistGroup` принимается и игнорируется (группа эксперимента
+   * сервер знает по визиту); `assistRef` — `V4CAssist('ref')` посетителя с
+   * согласием: заказ связывается с диалогом визита в окне атрибуции
+   * («с участием») и отмечает конверсию единицы эксперимента.
+   */
   assistGroup?: 'w' | 'h' | null;
   assistRef?: string | null;
 }
@@ -246,5 +251,20 @@ export const ANALYTICS_ERROR_CODES = [
   'SIGNATURE_INVALID',
   'IDEMPOTENCY_KEY_REQUIRED',
   'WEBHOOK_BODY_INVALID',
+  // Э3-бис: аналитика с ИИ, эксперименты, связанный режим.
+  'ANALYTICS_OWNER_ONLY',
+  'AI_PLAN',
+  'LABEL_INVALID',
+  'LABEL_NOT_FOUND',
+  'INSIGHT_NOT_FOUND',
+  'INSIGHT_INVALID',
+  'EXPERIMENT_INVALID',
+  'EXPERIMENT_OWNER_ONLY',
+  'EXPERIMENT_PLAN',
+  'EXPERIMENT_NEEDS_CONSENT',
+  'EXPERIMENT_RUNNING',
+  'EXPERIMENT_GOAL',
+  'EXPERIMENT_UNDERPOWERED',
+  'EXPERIMENT_NOT_FOUND',
 ] as const;
 export type AnalyticsErrorCode = (typeof ANALYTICS_ERROR_CODES)[number];

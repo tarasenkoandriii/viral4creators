@@ -281,6 +281,8 @@ const E7_ROUTES: Route[] = [
   { name: 'admin-mode', siteId: 's1', tab: 'settings' },
   { name: 'admin-mode', siteId: 's1', tab: 'connectors' },
   { name: 'admin-mode', siteId: 's1', tab: 'log' },
+  // Э8: мемо «Админки» АМ-N — своя вкладка.
+  { name: 'admin-mode', siteId: 's1', tab: 'memos' },
   { name: 'admin-mode', siteId: 's1', tab: 'learning' },
   { name: 'admin-mode', siteId: 's1', tab: 'stats' },
   { name: 'admin-chat', siteId: 's1' },

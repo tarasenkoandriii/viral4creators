@@ -55,6 +55,15 @@ export interface AssistPlan {
   adminActions: boolean;
   strictNumbers: boolean;
   aiAnalytics: boolean;
+  // ── Э3-бис (§5-тер.17, решения «Э3-бис — сделано» плана) ──
+  /** Калибровка lead score по сайту → вероятность вместо корзин (§5-тер.4). */
+  leadCalibration: boolean;
+  /** Эксперименты (holdout, варианты приветствия/подсказок) — по одному на сайт. */
+  experiments: boolean;
+  /** Связанный режим (с согласием): окно атрибуции, дней; 0 — только документ. */
+  linkedWindowDays: number;
+  /** Поведенческие факторы: просмотров в месяц на подписку (Р-58); 0 — нет. */
+  behaviorViewsPerMonth: number;
   removePoweredBy: boolean;
   ownLoaderDomain: boolean;
 }
@@ -85,6 +94,10 @@ export const ASSIST_PLANS: Readonly<Record<AssistPlanId, AssistPlan>> = {
     adminActions: false,
     strictNumbers: false,
     aiAnalytics: false,
+    leadCalibration: false,
+    experiments: false,
+    linkedWindowDays: 0,
+    behaviorViewsPerMonth: 0,
     removePoweredBy: false,
     ownLoaderDomain: false,
   },
@@ -111,6 +124,10 @@ export const ASSIST_PLANS: Readonly<Record<AssistPlanId, AssistPlan>> = {
     adminActions: false,
     strictNumbers: false,
     aiAnalytics: false,
+    leadCalibration: false,
+    experiments: false,
+    linkedWindowDays: 0,
+    behaviorViewsPerMonth: 0,
     removePoweredBy: false,
     ownLoaderDomain: false,
   },
@@ -137,6 +154,10 @@ export const ASSIST_PLANS: Readonly<Record<AssistPlanId, AssistPlan>> = {
     adminActions: false,
     strictNumbers: true,
     aiAnalytics: true,
+    leadCalibration: false,
+    experiments: true,
+    linkedWindowDays: 7,
+    behaviorViewsPerMonth: 100_000,
     removePoweredBy: true,
     ownLoaderDomain: false,
   },
@@ -163,6 +184,10 @@ export const ASSIST_PLANS: Readonly<Record<AssistPlanId, AssistPlan>> = {
     adminActions: true,
     strictNumbers: true,
     aiAnalytics: true,
+    leadCalibration: true,
+    experiments: true,
+    linkedWindowDays: 30,
+    behaviorViewsPerMonth: 500_000,
     removePoweredBy: true,
     ownLoaderDomain: true,
   },
@@ -189,6 +214,8 @@ export type AssistFeature =
   | 'adminActions'
   | 'strictNumbers'
   | 'aiAnalytics'
+  | 'leadCalibration'
+  | 'experiments'
   | 'removePoweredBy'
   | 'ownLoaderDomain'
   | 'overage';

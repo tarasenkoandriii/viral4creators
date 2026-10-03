@@ -21,23 +21,99 @@ interface AdminMsg {
   text: string;
   answerPath: string | null;
   rating: number | null;
+  proposalId?: string | null;
+}
+
+/** Э8: предложение действия — форма ответа sites-backend (ProposalView). */
+interface AdminProposal {
+  id: string;
+  sub: string;
+  status: string;
+  kind: 'write' | 'danger';
+  title: string;
+  fields: Array<{ name: string; before?: string | null; after: string }>;
+  paramsHash: string;
+  unrequested: boolean;
+  confirmPhrase: string | null;
+  idempotent: boolean;
+  undoDeclared: boolean;
+  undoAvailable: boolean;
+  checkAvailable: boolean;
+  dryRun: string;
+  dryRunStatus: string | null;
+  dryRunNote: string | null;
+  amount: number | null;
+  errorText: string | null;
+  compensationOf: string | null;
+  memo: null;
+  /** Мок: первое «Да» — `unknown` (API не ответил вовремя). */
+  flaky?: boolean;
 }
 
 const A = {
   sessions: new Map<string, { sub: string; exp: number }>(),
   dialogs: new Map<string, AdminMsg[]>(),
   log: [] as Array<{ path: string; sub: string | null }>,
+  proposals: new Map<string, AdminProposal>(),
+  /** Исполнения «Да» на «стенд-API» (приёмка §4-бис.10 п.4 (б): ровно одно). */
+  execs: [] as string[],
 };
 
 export function adminReset(): void {
   A.sessions.clear();
   A.dialogs.clear();
   A.log.length = 0;
+  A.proposals.clear();
+  A.execs.length = 0;
 }
 
 export function adminLog() {
-  return { log: A.log, dialogs: Object.fromEntries(A.dialogs) };
+  return {
+    log: A.log,
+    dialogs: Object.fromEntries(A.dialogs),
+    execs: A.execs,
+  };
 }
+
+function proposalFor(sub: string, text: string): AdminProposal | null {
+  const danger = /видали|удали|delete/i.test(text);
+  if (!danger && !/зміни|измени|change/i.test(text)) return null;
+  return {
+    id: crypto.randomUUID(),
+    sub,
+    status: 'pending',
+    kind: danger ? 'danger' : 'write',
+    title: danger ? 'Видалити замовлення' : 'Змінити статус замовлення',
+    fields: danger
+      ? [{ name: 'id', after: '1042' }]
+      : [
+          { name: 'id', after: '1042' },
+          { name: 'status', before: 'paid', after: 'shipped' },
+        ],
+    paramsHash: crypto.createHash('sha256').update(text).digest('hex'),
+    unrequested: false,
+    confirmPhrase: danger ? 'ПІДТВЕРДЖУЮ 1' : null,
+    idempotent: false,
+    undoDeclared: !danger,
+    undoAvailable: false,
+    checkAvailable: false,
+    dryRun: danger ? 'none' : 'preview',
+    dryRunStatus: danger ? null : 'ok',
+    dryRunNote: null,
+    amount: null,
+    errorText: null,
+    compensationOf: null,
+    memo: null,
+    flaky: /таймаут/i.test(text),
+  };
+}
+
+const view = (p: AdminProposal) => {
+  const { sub: _sub, flaky: _flaky, ...rest } = p;
+  void _sub;
+  void _flaky;
+  return rest;
+};
 
 export function isAdminHost(req: http.IncomingMessage): boolean {
   return (req.headers.host || '').startsWith(ADMIN_HOST_PREFIX);
@@ -153,7 +229,66 @@ export async function adminRoute(
       messages: A.dialogs.get(sess!.sub) ?? [],
       employee: { name: null, role: null, tools: false },
       statsPerEmployee: false,
+      proposals: [...A.proposals.values()]
+        .filter((x) => x.sub === sess!.sub)
+        .map(view),
     });
+  }
+  const pm =
+    /^\/assist-admin\/v1\/proposals\/([0-9a-f-]{36})\/(confirm|reject)$/.exec(
+      p
+    );
+  if (req.method === 'POST' && pm) {
+    const pr = A.proposals.get(pm[1]);
+    if (!pr || pr.sub !== sess!.sub) {
+      return json(res, 404, { code: 'PROPOSAL_NOT_FOUND', message: 'nf' });
+    }
+    const b = await body(req);
+    if (pm[2] === 'reject') {
+      if (pr.status === 'pending') pr.status = 'rejected';
+      return json(res, 200, { proposal: view(pr), text: '', next: null });
+    }
+    if (pr.status !== 'pending' && pr.status !== 'unknown') {
+      // Повторное «Да» (перезагрузка) — тот же итог, без исполнения.
+      return json(res, 200, { proposal: view(pr), text: '', next: null });
+    }
+    if (b.paramsHash !== pr.paramsHash) {
+      return json(res, 409, { code: 'PROPOSAL_CHANGED', message: 'changed' });
+    }
+    if (
+      pr.confirmPhrase &&
+      String(b.phrase ?? '')
+        .trim()
+        .toUpperCase() !== pr.confirmPhrase
+    ) {
+      return json(res, 422, { code: 'PROPOSAL_PHRASE', message: 'phrase' });
+    }
+    if (
+      pr.status === 'unknown' &&
+      !pr.idempotent &&
+      b.acknowledgeRisk !== true
+    ) {
+      return json(res, 409, { code: 'PROPOSAL_RISK_ACK', message: 'ack' });
+    }
+    A.execs.push(pr.id);
+    if (pr.flaky && pr.status === 'pending') {
+      // Как sites-backend: таймаут write — `unknown`, повтор — новым «Да».
+      pr.status = 'unknown';
+      return json(res, 200, { proposal: view(pr), text: '', next: null });
+    }
+    pr.status = 'done';
+    pr.undoAvailable = pr.undoDeclared;
+    const list = A.dialogs.get(sess!.sub) ?? [];
+    list.push({
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      text: `Готово: ${pr.title}.`,
+      answerPath: 'action',
+      rating: null,
+      proposalId: pr.id,
+    });
+    A.dialogs.set(sess!.sub, list);
+    return json(res, 200, { proposal: view(pr), text: 'Готово', next: null });
   }
   if (req.method === 'POST' && p === '/assist-admin/v1/chat') {
     const b = await body(req);
@@ -165,16 +300,25 @@ export async function adminRoute(
       answerPath: null,
       rating: null,
     };
+    const prop = proposalFor(sess!.sub, q.text);
+    if (prop) A.proposals.set(prop.id, prop);
     const a: AdminMsg = {
       id: crypto.randomUUID(),
       role: 'assistant',
-      text: `Відповідь для ${sess!.sub}: регламент знайдено.`,
-      answerPath: 'knowledge',
+      text: prop
+        ? `Я збираюсь: ${prop.title}. Підтвердьте у картці.`
+        : `Відповідь для ${sess!.sub}: регламент знайдено.`,
+      answerPath: prop ? 'action' : 'knowledge',
       rating: null,
+      proposalId: prop?.id ?? null,
     };
     list.push(q, a);
     A.dialogs.set(sess!.sub, list);
-    return json(res, 200, { question: q, answer: a, version: list.length });
+    return json(res, 200, {
+      question: q,
+      answer: { ...a, proposal: prop ? view(prop) : null },
+      version: list.length,
+    });
   }
   if (req.method === 'POST' && p === '/assist-admin/v1/logout') {
     A.sessions.delete(token);

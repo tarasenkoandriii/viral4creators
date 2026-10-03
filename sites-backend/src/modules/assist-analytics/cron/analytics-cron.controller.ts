@@ -2,8 +2,11 @@
  * Кроны аналитики — A (ТЗ §5-тер.14):
  *   GET /cron/assist-analytics-run     — каждые 10 минут (+ Э6-бис (г):
  *       проход монитора голосового управления Т-4 `assist-voice-monitor`
- *       ТЗ §5-бис.14 — отдельного крона нет, Vercel Hobby)
- *   GET /cron/assist-analytics-rollup  — 04:40 UTC
+ *       ТЗ §5-бис.14 — отдельного крона нет, Vercel Hobby; + Э3-бис:
+ *       эксперименты, ИИ-разметка пачкой, недельные находки и выводы —
+ *       AiAnalyticsRunner, тоже без своего крона)
+ *   GET /cron/assist-analytics-rollup  — 04:40 UTC (+ Э3-бис: свёртка
+ *       поведения страниц и уборка сырых просмотров)
  * withCronLock + CRON_SECRET, как кроны Э1–Э2.
  */
 import { Controller, Get, Headers, Logger } from '@nestjs/common';
@@ -11,6 +14,7 @@ import { withCronLock } from '../../../common/cron-job-lock';
 import { assertCronSecret } from '../../../common/cron-secret';
 import { PublicRoute } from '../../telegram-auth/allow-apps.decorator';
 import { AnalyticsRollup } from '../system/analytics-rollup.service';
+import { AiAnalyticsRunner, type AiRunResult } from '../ai/ai-runner.service';
 import {
   VoiceMonitorService,
   type VoiceMonitorResult,
@@ -29,6 +33,7 @@ export class AssistAnalyticsCronController {
   constructor(
     private readonly rollup: AnalyticsRollup,
     private readonly voice: VoiceMonitorService,
+    private readonly ai: AiAnalyticsRunner,
   ) {}
 
   @Get('assist-analytics-run')
@@ -37,6 +42,7 @@ export class AssistAnalyticsCronController {
     sites?: number;
     exports?: number;
     voice?: VoiceMonitorResult | null;
+    ai?: AiRunResult | null;
   }> {
     assertCronSecret(authHeader);
     const r = await withCronLock(
@@ -55,22 +61,45 @@ export class AssistAnalyticsCronController {
             `монитор голосового управления: ${(e as Error).name}`,
           );
         }
-        return { ...a, voice };
+        // Э3-бис: сбой не роняет свёртки и монитор (и наоборот) — каждая
+        // часть раннера обёрнута сама; здесь — последний рубеж.
+        let ai: AiRunResult | null = null;
+        try {
+          ai = await this.ai.run(this.rollup.now());
+        } catch (e) {
+          ai = null;
+          this.logger.error(`аналитика с ИИ: ${(e as Error).name}`);
+        }
+        return { ...a, voice, ai };
       },
     );
     return r.ran && r.result ? { ran: true, ...r.result } : { ran: false };
   }
 
   @Get('assist-analytics-rollup')
-  async daily(
-    @Headers('authorization') authHeader?: string,
-  ): Promise<{ ran: boolean; sites?: number; staleGoals?: number }> {
+  async daily(@Headers('authorization') authHeader?: string): Promise<{
+    ran: boolean;
+    sites?: number;
+    staleGoals?: number;
+    behavior?: { sites: number; rows: number; purged: number } | null;
+  }> {
     assertCronSecret(authHeader);
     const r = await withCronLock(
       this.rollup.prisma,
       'assist-analytics-rollup',
       DAILY_LOCK_MS,
-      () => this.rollup.daily(this.rollup.now()),
+      async () => {
+        const now = this.rollup.now();
+        const d = await this.rollup.daily(now);
+        let behavior: { sites: number; rows: number; purged: number } | null =
+          null;
+        try {
+          behavior = await this.ai.daily(now);
+        } catch (e) {
+          this.logger.error(`поведение: ${(e as Error).name}`);
+        }
+        return { ...d, behavior };
+      },
     );
     return r.ran && r.result ? { ran: true, ...r.result } : { ran: false };
   }

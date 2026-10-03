@@ -37,6 +37,12 @@ import { useE3ErrorNotice, useE3ErrorText } from '../../lib/use-error-text';
 import { LoadError, NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, NumberInput, Select, Toggle } from '../widget/controls';
 import { ManagerOnly, MasksInput, MiniTable } from './parts';
+import {
+  AiTab,
+  BehaviorTab,
+  ExperimentsTab,
+  InsightsTab,
+} from './AiAnalyticsScreens';
 
 function PeriodPicker({
   value,
@@ -160,9 +166,21 @@ export function StatsScreen({
         label={t.title}
         active={tab}
         onChange={(k) => navigate({ name: 'stats', siteId, tab: k }, true)}
-        tabs={STATS_TABS.map((k) => ({ key: k, label: t.tabs[k] }))}
+        tabs={STATS_TABS.map((k) => ({
+          key: k,
+          label:
+            k in t.tabs
+              ? t.tabs[k as keyof typeof t.tabs]
+              : appDict.e3b.tabs[k as keyof typeof appDict.e3b.tabs],
+        }))}
       />
-      <PeriodPicker value={preset} onChange={setPreset} />
+      {tab !== 'insights' && tab !== 'experiments' && (
+        <PeriodPicker value={preset} onChange={setPreset} />
+      )}
+      {tab === 'ai' && <AiTab siteId={siteId} preset={preset} />}
+      {tab === 'insights' && <InsightsTab siteId={siteId} />}
+      {tab === 'experiments' && <ExperimentsTab siteId={siteId} />}
+      {tab === 'behavior' && <BehaviorTab siteId={siteId} preset={preset} />}
       {tab === 'overview' && <Overview siteId={siteId} preset={preset} />}
       {tab === 'conversions' && <Conversions siteId={siteId} preset={preset} />}
       {tab === 'topics' && <Topics siteId={siteId} preset={preset} />}

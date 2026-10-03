@@ -7,6 +7,7 @@
  */
 import { isIP } from 'net';
 import { ANALYTICS_DEFAULTS } from '../../config/assist-defaults';
+import { isVertical, type Vertical } from './ai/lead-score';
 
 export interface AnalyticsConfig {
   schema: 1;
@@ -16,6 +17,24 @@ export interface AnalyticsConfig {
   officeCidrs: string[];
   /** Маски путей, где цели загрузчика не принимаются. */
   excludedPaths: string[];
+  // ── Э3-бис (§5-тер.3–4, §5-тер.8–9; тариф решает, действует ли) ──
+  /** ИИ-разметка закрытых диалогов (Business+); владелец может выключить. */
+  aiLabeling: boolean;
+  /** Вертикаль для приоров lead score: shop | services | saas | other. */
+  vertical: Vertical;
+  /**
+   * Связанный режим (§5-тер.9): сайт передаёт решение своего баннера
+   * `V4CAssist('consent', { analytics })`; только с согласием посетителя —
+   * ключ визита, связь цели с диалогом между страницами, эксперименты,
+   * поведение. GPC/DNT — всегда «без согласия».
+   */
+  linked: boolean;
+  /** Читать согласие и из Google Consent Mode v2 (`analytics_storage`). */
+  linkedGcm: boolean;
+  /** Окно атрибуции связанного режима, дни (потолок — тариф). */
+  linkedWindowDays: number;
+  /** Поведенческие факторы страниц (Business+, только с согласием). */
+  behavior: boolean;
 }
 
 export function defaultAnalyticsConfig(): AnalyticsConfig {
@@ -24,6 +43,12 @@ export function defaultAnalyticsConfig(): AnalyticsConfig {
     minutesPerQuestion: ANALYTICS_DEFAULTS.minutesPerQuestion,
     officeCidrs: [],
     excludedPaths: [],
+    aiLabeling: true,
+    vertical: 'other',
+    linked: false,
+    linkedGcm: false,
+    linkedWindowDays: 7,
+    behavior: false,
   };
 }
 
@@ -65,6 +90,12 @@ export function parseAnalyticsConfig(
         'minutesPerQuestion',
         'officeCidrs',
         'excludedPaths',
+        'aiLabeling',
+        'vertical',
+        'linked',
+        'linkedGcm',
+        'linkedWindowDays',
+        'behavior',
       ].includes(k)
     ) {
       errors.push({ path: k, code: 'unknown' });
@@ -115,10 +146,44 @@ export function parseAnalyticsConfig(
       });
     }
   }
+  const flag = (k: 'aiLabeling' | 'linked' | 'linkedGcm' | 'behavior') => {
+    const v = input[k];
+    if (v === undefined) return d[k];
+    if (typeof v !== 'boolean') errors.push({ path: k, code: 'type' });
+    return v === true;
+  };
+  const aiLabeling = flag('aiLabeling');
+  const linked = flag('linked');
+  const linkedGcm = flag('linkedGcm');
+  const behavior = flag('behavior');
+  let vertical = d.vertical;
+  if (input.vertical !== undefined) {
+    if (!isVertical(input.vertical)) {
+      errors.push({ path: 'vertical', code: 'enum' });
+    } else vertical = input.vertical;
+  }
+  let linkedWindowDays = d.linkedWindowDays;
+  if (input.linkedWindowDays !== undefined) {
+    const w = input.linkedWindowDays;
+    if (typeof w !== 'number' || !Number.isInteger(w) || w < 1 || w > 30) {
+      errors.push({ path: 'linkedWindowDays', code: 'range' });
+    } else linkedWindowDays = w;
+  }
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
-    config: { schema: 1, minutesPerQuestion, officeCidrs, excludedPaths },
+    config: {
+      schema: 1,
+      minutesPerQuestion,
+      officeCidrs,
+      excludedPaths,
+      aiLabeling,
+      vertical,
+      linked,
+      linkedGcm,
+      linkedWindowDays,
+      behavior,
+    },
   };
 }
 

@@ -268,6 +268,15 @@ export async function pinnedFetch(
   const redirects: string[] = [];
   const signal = AbortSignal.timeout(opts.timeoutMs);
   const method = opts.method ?? 'GET';
+  // Э8: изменяющий запрос не следует редиректам (тело не уйдёт на другой
+  // адрес), тело — только у изменяющего метода.
+  const mutating = method !== 'GET' && method !== 'HEAD';
+  if ((mutating || opts.body !== undefined) && opts.maxRedirects !== 0) {
+    throw new SsrfBlockedError('изменяющий запрос — без редиректов');
+  }
+  if (opts.body !== undefined && !mutating) {
+    throw new SsrfBlockedError('тело у GET/HEAD');
+  }
 
   for (let hop = 0; ; hop++) {
     const pinned = await resolveAndCheck(current.hostname, d.lookupAll);
@@ -291,6 +300,7 @@ export async function pinnedFetch(
           method,
           headers,
           signal,
+          ...(opts.body !== undefined ? { body: opts.body } : {}),
         });
       } catch (e) {
         if (isAbort(e, signal)) throw new FetchTimeoutError();

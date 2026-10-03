@@ -71,10 +71,12 @@ import { createHandoffApi } from './lib/handoff-api';
 import { createKnowledgeApi } from './lib/knowledge-api';
 import { createLearningApi } from './lib/learning-api';
 import { createAdminModeApi } from './lib/admin-mode-api';
+import { createAdminActionsApi } from './lib/admin-actions-api';
 import { AdminModeScreen } from './screens/admin/AdminModeScreen';
 import { AdminChatScreen } from './screens/admin/AdminChatScreen';
 import { AdminModeButton } from './screens/admin/AdminModeButton';
 import { createStatsApi } from './lib/stats-api';
+import { createAiApi } from './lib/ai-api';
 import { createPersonaApi } from './lib/persona-api';
 import { createVoiceApi } from './lib/voice-api';
 import { createVoiceControlApi } from './lib/voice-control-api';
@@ -218,6 +220,7 @@ export function App({ startParam }: { startParam: string | null }) {
   const handoffApi = useMemo(() => createHandoffApi(client), [client]);
   const learningApi = useMemo(() => createLearningApi(client), [client]);
   const statsApi = useMemo(() => createStatsApi(client), [client]);
+  const aiApi = useMemo(() => createAiApi(client), [client]);
   const billingApi = useMemo(() => createBillingApi(client), [client]);
   const voiceApi = useMemo(() => createVoiceApi(client), [client]);
   const voiceControlApi = useMemo(
@@ -226,6 +229,10 @@ export function App({ startParam }: { startParam: string | null }) {
   );
   const mediaApi = useMemo(() => createMediaApi(client), [client]);
   const adminModeApi = useMemo(() => createAdminModeApi(client), [client]);
+  const adminActionsApi = useMemo(
+    () => createAdminActionsApi(client),
+    [client]
+  );
   const assist = useMemo<AssistValue>(
     () => ({
       knowledge: knowledgeApi,
@@ -241,6 +248,8 @@ export function App({ startParam }: { startParam: string | null }) {
       voiceControl: voiceControlApi,
       media: mediaApi,
       adminMode: adminModeApi,
+      adminActions: adminActionsApi,
+      ai: aiApi,
     }),
     [
       knowledgeApi,
@@ -256,6 +265,8 @@ export function App({ startParam }: { startParam: string | null }) {
       voiceControlApi,
       mediaApi,
       adminModeApi,
+      adminActionsApi,
+      aiApi,
     ]
   );
 

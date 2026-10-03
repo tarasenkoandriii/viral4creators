@@ -73,3 +73,8 @@ export const WIDGET_ADMIN_MODE = 'admin';
 export const ADMIN_SESSION_HEADER = 'X-Assist-Admin-Session';
 export const ADMIN_MESSAGE_NS = 'v4c-admin';
 export const ADMIN_CHANNEL_PREFIX = 'v4c-admin';
+
+// Э3-бис (зеркало блока «Э3-бис» sites-backend/src/brand.ts): связанный режим
+// по согласию посетителя и поведение — ленивые чанки, загрузчик не растёт.
+export const WIDGET_ANA_PATH = '/v1/ana.js';
+export const WIDGET_BF_PATH = '/v1/bf.js';

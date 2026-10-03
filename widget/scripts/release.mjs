@@ -31,7 +31,16 @@ export const RELEASE_FILES = [
   'undo.js',
   'check.js',
   'vt.js',
+  // Э3-бис: связанный режим и поведение (грузятся из выпуска сайта).
+  'ana.js',
+  'bf.js',
 ];
+/**
+ * Чанки, которых в выпусках ДО Э3-бис не было: при сохранении старого
+ * выпуска (`keep`) их отсутствие — не ошибка (сайт этого выпуска просто
+ * без связанного режима, пока выпуск не сменится).
+ */
+const NEW_IN_E3B = new Set(['ana.js', 'bf.js']);
 
 const cfgPath =
   process.env.WIDGET_RELEASE_CONFIG || path.join(ROOT, 'release.json');
@@ -77,6 +86,10 @@ for (const r of keep) {
   fs.mkdirSync(dir, { recursive: true });
   for (const f of RELEASE_FILES) {
     const res = await fetch(`${origin}/v1/r/${r}/${f}`);
+    if (!res.ok && res.status === 404 && NEW_IN_E3B.has(f)) {
+      console.warn(`release: ${r}/${f} — нет в старом выпуске, пропущен`);
+      continue;
+    }
     if (!res.ok) {
       // Без стабильного выпуска канарейку откатывать некуда — сборка падает.
       console.error(`release: ${r}/${f} — HTTP ${res.status}`);

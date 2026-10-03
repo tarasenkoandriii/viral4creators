@@ -171,8 +171,9 @@ function storage(): Storage | null {
  */
 class Loader {
   readonly N = N;
-  private readonly origin: string;
-  private readonly pk: string;
+  /** Э3-бис: origin API и pk — чанку ana.js (стык EngageHost). */
+  readonly origin: string;
+  readonly pk: string;
   private readonly attrs: TagAttrs;
   readonly lang: UiLang;
   private readonly uiKey: string;
@@ -781,7 +782,8 @@ class Loader {
     const g = this.cfg.rawGoals;
     if (!(
       (this.analytics && Array.isArray(g) && g.length) ||
-      (isObj(e) && Array.isArray(e.triggers) && e.triggers.length)
+      (isObj(e) && Array.isArray(e.triggers) && e.triggers.length) ||
+      isObj(this.cfg.rawAna)
     ))
       return void (this.engQ = null);
     if (this.engQ && this.engQ.some((x) => x[0] !== 'r'))
@@ -1058,7 +1060,12 @@ class Loader {
             b as (e: { type: EventName; at: number }) => void
           );
         return;
+      // Э3-бис: согласие CMP сайта, группа эксперимента, ref для вебхука —
+      // тем же путём, что цель: чанк engage.js передаёт их чанку ana.js.
       case 'goal':
+      case 'consent':
+      case 'group':
+      case 'ref':
         // До чанка (и до конфига) — в очередь: вызов со страницы «спасибо»
         // (часто — из очереди до загрузки) не теряется; разбор — в чанке.
         return this.ev(['g', args]);

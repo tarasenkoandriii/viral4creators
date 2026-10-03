@@ -31,7 +31,16 @@ export interface FakeRoute {
   delayMs?: number;
 }
 
-export type RouteHandler = (req: IncomingMessage) => FakeRoute;
+/** `body` — тело запроса (Э8: изменяющие вызовы коннектора «Админки»). */
+export type RouteHandler = (req: IncomingMessage, body: string) => FakeRoute;
+
+/** Запрос, дошедший до стенда, с методом, заголовками и телом (Э8). */
+export interface SeenRequest {
+  key: string;
+  method: string;
+  headers: IncomingMessage['headers'];
+  body: string;
+}
 
 export class LocalSites {
   private server: Server | null = null;
@@ -40,6 +49,8 @@ export class LocalSites {
   readonly routes = new Map<string, FakeRoute | RouteHandler>();
   /** Запросы, дошедшие до сервера: `host/path`. */
   readonly hits: string[] = [];
+  /** Те же запросы с методом, заголовками и телом. */
+  readonly requests: SeenRequest[] = [];
   /** Имя → адреса (или функция — для rebinding: новый ответ на каждый вызов). */
   readonly dns = new Map<string, string[] | (() => string[])>();
   readonly lookups: string[] = [];
@@ -108,9 +119,27 @@ export class LocalSites {
   }
 
   private handle(req: IncomingMessage, res: ServerResponse): void {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () =>
+      this.dispatch(req, res, Buffer.concat(chunks).toString('utf8')),
+    );
+  }
+
+  private dispatch(
+    req: IncomingMessage,
+    res: ServerResponse,
+    reqBody: string,
+  ): void {
     const host = (req.headers.host ?? '').replace(/:\d+$/, '');
     const key = `${host}${req.url ?? '/'}`;
     this.hits.push(key);
+    this.requests.push({
+      key,
+      method: req.method ?? 'GET',
+      headers: req.headers,
+      body: reqBody,
+    });
     const entry = this.routes.get(key);
     const route: FakeRoute = !entry
       ? {
@@ -119,7 +148,7 @@ export class LocalSites {
           headers: { 'content-type': 'text/html' },
         }
       : typeof entry === 'function'
-        ? entry(req)
+        ? entry(req, reqBody)
         : entry;
     let body: Buffer = Buffer.isBuffer(route.body)
       ? route.body

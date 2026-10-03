@@ -74,8 +74,14 @@ export type SkipReason =
 
 /** Опции IP-pinned запроса (net/pinned-fetch.ts). */
 export interface PinnedFetchOptions {
-  method?: 'GET' | 'HEAD';
+  /**
+   * Э8: изменяющие методы — только для API-коннектора «Админки» и только с
+   * `maxRedirects: 0` (тело не пересылается на другой адрес никогда).
+   */
+  method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   headers?: Record<string, string>;
+  /** Тело запроса (JSON-текст) — только с изменяющим методом. */
+  body?: string;
   /** Тело больше — `BodyTooLargeError` (поток обрывается, память ограничена). */
   maxBytes: number;
   timeoutMs: number;

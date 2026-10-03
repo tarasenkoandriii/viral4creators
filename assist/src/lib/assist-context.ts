@@ -19,6 +19,8 @@ import type { VoiceControlApi } from './voice-control-api';
 import type { MediaApi } from './media-api';
 import type { WizardApi } from './wizard-api';
 import type { AdminModeApi } from './admin-mode-api';
+import type { AdminActionsApi } from './admin-actions-api';
+import type { AiApi } from './ai-api';
 
 export interface AssistValue {
   knowledge: KnowledgeApi;
@@ -41,6 +43,10 @@ export interface AssistValue {
   media: MediaApi;
   /** Э7: «Админка» — режим, коннекторы, журнал, обучение и чат сотрудника. */
   adminMode: AdminModeApi;
+  /** Э8: «Админка: действия» — «Да», журнал с откатом, мемо АМ-N. */
+  adminActions: AdminActionsApi;
+  /** Э3-бис: аналитика с ИИ, выводы, эксперименты, поведение. */
+  ai: AiApi;
 }
 
 export const AssistContext = createContext<AssistValue | null>(null);

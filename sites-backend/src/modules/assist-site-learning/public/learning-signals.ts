@@ -60,6 +60,8 @@ const SIGNALS = new Set([
   'repeat',
   'handoff_after_answer',
   'operator',
+  // Э3-бис: сигнал ИИ-разметки (крон, основная роль) — kind 'wrong'.
+  'label',
 ]);
 
 /** Почему сигнал не записан (код для лога) или null — годен. */

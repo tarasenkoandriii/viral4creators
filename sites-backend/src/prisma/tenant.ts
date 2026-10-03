@@ -83,6 +83,13 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistAdminLearningItem: 'accountId',
   AssistAdminCrawlJob: 'accountId',
   AssistAdminPage: 'accountId',
+  // Э8 «Админка»: действия — предложения «Да», мемо АМ-N (составные FK
+  // (siteId, accountId); «Да» ищет предложение по id И сотруднику сессии).
+  AssistAdminActionProposal: 'accountId',
+  AssistAdminMemo: 'accountId',
+  AssistAdminMemoVersion: 'accountId',
+  AssistAdminPhrase: 'accountId',
+  AssistAdminMemoRun: 'accountId',
   // Э2: виджет «Сайта». Публичные маршруты ходят в эти таблицы клиентом
   // AssistPublicDb (без extension, по siteId/visitorId/хешам) — тенант
   // держит кабинетный код (экраны, Э3-лента диалогов) и составной FK.
@@ -152,6 +159,17 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteMemoVersion: 'accountId',
   AssistSiteMemoChange: 'accountId',
   AssistSitePhrase: 'accountId',
+  // Э3-бис: аналитика с ИИ — разметка диалогов, расход бюджета аналитики,
+  // калибровка score, выводы недели, эксперименты, свёртка поведения —
+  // строки кабинета (составные FK (siteId|conversationId, accountId)).
+  // Пишет системный код (крон) и кабинет; публичный код читает только
+  // идущий эксперимент (колонки) — сырым SQL под assist_public.
+  AssistSiteConversationLabel: 'accountId',
+  AssistAnalyticsSpend: 'accountId',
+  AssistSiteLeadCalibration: 'accountId',
+  AssistSiteInsight: 'accountId',
+  AssistSiteExperiment: 'accountId',
+  AssistSiteDailyPage: 'accountId',
 };
 
 /**
@@ -216,6 +234,12 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   UserSiteSecret: 'секрет личной записи режима B — по sessionId',
   SiteCredentialAudit:
     'журнал доступа к учётным данным: обе зоны (кабинет и личные записи), без FK',
+  // Э3-бис: пишет публичный маршрут виджета (кабинета в запросе посетителя
+  // нет): единица эксперимента — по experimentId, итог просмотра — по siteId.
+  AssistSiteExperimentUnit:
+    'единица эксперимента (хеш визита) — по experimentId, пишет виджет',
+  AssistSitePageView:
+    'сырой итог просмотра страницы (7 дней) — по siteId, пишет виджет',
 };
 
 const WHERE_OPERATIONS = new Set([

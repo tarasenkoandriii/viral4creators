@@ -29,10 +29,18 @@ import {
   textareaClass,
   type Notice,
 } from '../knowledge/parts';
+import {
+  ActionsLog,
+  ActionsSettingsCard,
+  MemosTab,
+  OperationActionSettings,
+  SigningSecret,
+} from './AdminActionsParts';
 
 /**
  * «Админка» (Э7, ТЗ §3.8): режим и секрет подписи, коннекторы API, журнал
- * вызовов, «Обучение (сотрудники)», «Статистика (сотрудники)». Только
+ * вызовов, «Обучение (сотрудники)», «Статистика (сотрудники)»; Э8 —
+ * действия write/danger, журнал действий с откатом, мемо АМ-N. Только
  * `assistAdmin: owner` — остальные видят отказ (сервер всё равно 403).
  */
 export function AdminModeScreen({
@@ -56,9 +64,20 @@ export function AdminModeScreen({
         onChange={(k) => navigate({ name: 'admin-mode', siteId, tab: k }, true)}
         tabs={ADMIN_MODE_TABS.map((k) => ({ key: k, label: t.tabs[k] }))}
       />
-      {tab === 'settings' && <Settings siteId={siteId} />}
+      {tab === 'settings' && (
+        <div className="space-y-4">
+          <Settings siteId={siteId} />
+          <ActionsSettingsCard siteId={siteId} />
+        </div>
+      )}
       {tab === 'connectors' && <Connectors siteId={siteId} />}
-      {tab === 'log' && <Log siteId={siteId} />}
+      {tab === 'log' && (
+        <div className="space-y-4">
+          <ActionsLog siteId={siteId} />
+          <Log siteId={siteId} />
+        </div>
+      )}
+      {tab === 'memos' && <MemosTab siteId={siteId} />}
       {tab === 'learning' && <StaffLearning siteId={siteId} />}
       {tab === 'stats' && <Stats siteId={siteId} />}
     </div>
@@ -583,12 +602,17 @@ function ConnectorCard({
           {t.connectors.saveSecret}
         </Button>
       </div>
-      <div className="text-xs text-silver-500">
-        {t.connectors.writeNextStage}
-      </div>
+      <SigningSecret siteId={siteId} c={c} onChange={onChange} />
       <div className="space-y-2">
         {c.operations.map((o) => (
-          <OperationRow key={o.id} siteId={siteId} cn={c.id} o={o} act={act} />
+          <OperationRow
+            key={o.id}
+            siteId={siteId}
+            cn={c.id}
+            o={o}
+            all={c.operations}
+            act={act}
+          />
         ))}
       </div>
       <ConfirmButton
@@ -605,11 +629,13 @@ function OperationRow({
   siteId,
   cn,
   o,
+  all,
   act,
 }: {
   siteId: string;
   cn: string;
   o: OperationView;
+  all: OperationView[];
   act: (p: Promise<unknown>) => void;
 }) {
   const { adminMode } = useAssist();
@@ -636,7 +662,7 @@ function OperationRow({
           <input
             type="checkbox"
             checked={o.enabled}
-            disabled={o.kind !== 'read' || o.unsupported}
+            disabled={o.unsupported}
             onChange={(e) =>
               act(
                 adminMode.patchOperation(siteId, cn, o.id, {
@@ -678,6 +704,15 @@ function OperationRow({
           </Button>
         )}
       </div>
+      {o.kind !== 'read' && (
+        <OperationActionSettings
+          siteId={siteId}
+          cn={cn}
+          o={o}
+          all={all}
+          act={act}
+        />
+      )}
     </div>
   );
 }

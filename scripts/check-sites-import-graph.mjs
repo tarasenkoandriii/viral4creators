@@ -853,6 +853,34 @@ function selfTest() {
       `const n = await db.assistSiteConversation.count();`,
       'admin-names↛site',
     ],
+    // Э8: «Админка: действия» — предложения/«Да»/мемо АМ-N только в зоне
+    // «Админки»: публичный код и мемо «Сайта» к ним дороги не имеют, а сами
+    // действия «Сайт» (план голосового управления, мемо «Сайта») не берут.
+    [
+      'modules/assist-widget/bb.ts',
+      `import { ProposalsService } from '../assist-admin-actions/proposals.service';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-site-voice-control/cabinet/bc.ts',
+      `import { AdminMemoService } from '../../assist-admin-actions/admin-memo.service';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-admin-actions/bd.ts',
+      `import { MemoService } from '../assist-site-voice-control/cabinet/memo.service';`,
+      'admin↛site',
+    ],
+    [
+      'modules/assist-admin-actions/be.ts',
+      `const m = await db.assistSiteMemo.findMany();`,
+      'admin-names↛site',
+    ],
+    [
+      'modules/assist-ui-core/bf.ts',
+      `import { adminMemoGates } from '../assist-admin-actions/admin-memo';`,
+      'ui-core-neutral',
+    ],
     [
       'modules/site-core/av.ts',
       `const sql = 'SELECT 1 FROM "sites"."user_site_secrets"';`,
@@ -1042,6 +1070,10 @@ function selfTest() {
     [
       'modules/assist-admin-crawl/ok35.ts',
       `import { SiteCredentialsService } from '../site-credentials/site-credentials.service';\nimport { AdminModeService } from '../assist-admin-mode/admin-mode.service';`,
+    ],
+    [
+      'modules/assist-admin-actions/ok37.ts',
+      `import { phraseNorm } from '../assist-ui-core/memo';\nimport { ConnectorsService } from '../assist-admin-mode/connectors.service';\nimport { pinnedFetch } from '../site-crawl/net/pinned-fetch';\nconst r = db.assistAdminActionProposal;`,
     ],
     [
       'modules/assist-admin-chat/ok36.ts',

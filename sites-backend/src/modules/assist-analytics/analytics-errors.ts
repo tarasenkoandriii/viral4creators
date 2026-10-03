@@ -21,7 +21,10 @@ export function analyticsError(
   status: HttpStatus,
   code: AnalyticsCode,
   message: string,
-  extra: { errors?: Array<{ path: string; code: string }> } = {},
+  extra: {
+    errors?: Array<{ path: string; code: string }>;
+    [k: string]: unknown;
+  } = {},
 ): HttpException {
   return new HttpException({ error: code, code, message, ...extra }, status);
 }

@@ -36,7 +36,11 @@ const KEY_LABEL = 'assist-admin-secrets-v1';
 /** Потолок открытого текста: токен API / пара логин:пароль / секрет JWT. */
 export const ADMIN_SECRET_MAX_BYTES = 8 * 1024;
 
-export type AdminSecretPurpose = 'connector-secret' | 'identity-secret';
+export type AdminSecretPurpose =
+  | 'connector-secret'
+  | 'identity-secret'
+  /** Э8: секрет подписи изменяющих запросов `X-V4C-Signature`. */
+  | 'connector-signing';
 
 export type AdminSecretsCode =
   | 'not_configured'

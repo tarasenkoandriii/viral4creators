@@ -276,6 +276,7 @@ export class WidgetEngagementService {
         value: g.value,
         currency: g.currency,
         occurredAt: now,
+        visit: g.visit,
       },
       rawIp: p.ip,
     });
@@ -308,6 +309,7 @@ export class WidgetEngagementService {
         value: g.value,
         currency: g.currency,
         occurredAt: now,
+        visit: g.visit,
       },
       rawIp: p.ip,
     });

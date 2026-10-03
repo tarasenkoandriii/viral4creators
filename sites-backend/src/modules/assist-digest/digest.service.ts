@@ -35,6 +35,8 @@ import { SitesDb } from '../../prisma/sites-db.service';
 import { AdminDigestSource } from '../assist-admin-knowledge/admin-digest';
 import { effectiveAnalyticsConfig } from '../assist-analytics/analytics-config';
 import { sumConversions } from '../assist-analytics/exports.service';
+import { dryFindingLine, type Finding } from '../assist-analytics/ai/findings';
+import { RUN_CODE } from '../assist-analytics/ai/insights.service';
 import {
   addDays,
   dayInTz,
@@ -282,6 +284,34 @@ export class AssistDigestService {
           `сводка ${s.siteId}: факты обучения недоступны (${(e as Error | null)?.name ?? 'Error'})`,
         );
       }
+    }
+    // Э3-бис (§5-тер.7 п.2): выводы недели — текст модели (Business+,
+    // прошёл проверку чисел) или сухая строка кода (Start, без модели,
+    // отброшен проверкой); «Не актуально» не попадает в отчёт.
+    if (weekly) {
+      const rank: Record<string, number> = { high: 0, medium: 1, low: 2 };
+      const rows = await this.prisma.assistSiteInsight.findMany({
+        where: {
+          siteId: s.siteId,
+          weekStart: from,
+          code: { not: RUN_CODE },
+          status: { not: 'dismissed' },
+        },
+        select: { impact: true, text: true, finding: true },
+        take: 20,
+      });
+      const lines = rows
+        .sort((a, b) => (rank[a.impact] ?? 3) - (rank[b.impact] ?? 3))
+        .map((r) => {
+          const t = r.text as { title?: unknown; action?: unknown } | null;
+          return t &&
+            typeof t.title === 'string' &&
+            typeof t.action === 'string'
+            ? `${t.title} — ${t.action}`
+            : dryFindingLine(r.finding as unknown as Finding);
+        })
+        .filter((x) => x);
+      findings = [...lines, ...findings];
     }
     const missed = sum(cur, (d) => d.handoffsMissed);
     if (weekly && missed > 0) {

@@ -17,6 +17,7 @@ import type {
   WidgetIdentity,
 } from '../assist-site-chat/chat-types';
 import type { PublicGoal } from '../assist-analytics/goal-types';
+import type { WidgetAnalyticsPublic } from '../assist-analytics/public/ai-intake.service';
 import type { WidgetEventKind } from '../assist-analytics/public/event-counts.service';
 import type { PublicEngagementConfig } from '../assist-site-setup/engagement-config';
 import type { LeadField } from '../assist-site-setup/leads-config';
@@ -84,6 +85,13 @@ export interface WidgetPublicConfig {
    * из `/v1/r/<release>/`; нет поля — из `/v1/`.
    */
   release?: string;
+  /**
+   * Э3-бис (необязательное): связанный режим по согласию посетителя
+   * (§5-тер.9) — чанк ana.js слушает `V4CAssist('consent')`, ведёт ключ
+   * визита только с согласием, включает в идущий эксперимент и (если
+   * включено) поведение bf.js. Нет поля — ничего из этого не грузится.
+   */
+  analytics?: WidgetAnalyticsPublic;
 }
 
 /** POST /widget/v1/session — тело. resumeKey — из localStorage iframe ИЛИ CHIPS-cookie. */

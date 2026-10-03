@@ -56,6 +56,10 @@ export interface AdminModeView {
   roleMap: Record<string, string>;
   tmaEmployeeRole: string | null;
   statsPerEmployee: boolean;
+  /** Э8: тариф даёт «Админка: действия» (Pro). */
+  planAllowsActions: boolean;
+  actionsDailyCap: number;
+  notifyDanger: boolean;
   /** Код вставки в админку (7b): null — нет публичного ключа сайта. */
   snippet: { origin: string; tag: string; csp: string } | null;
 }
@@ -118,6 +122,15 @@ export class AdminModeService {
     return !!state.planId && ASSIST_PLANS[state.planId].adminRead;
   }
 
+  /** Э8: тариф даёт «Админка: действия» (§5.2 слой 1 — Pro). */
+  async planAllowsActions(
+    accountId: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    const state = await readState(this.prisma, accountId, now);
+    return !!state.planId && ASSIST_PLANS[state.planId].adminActions;
+  }
+
   private async hostsOf(accountId: string, siteId: string, now: Date) {
     const rows = await this.db.forAccount(accountId).siteHost.findMany({
       where: { siteId },
@@ -160,6 +173,9 @@ export class AdminModeService {
       roleMap: parseRoleMap(s.roleMap) ?? {},
       tmaEmployeeRole: s.tmaEmployeeRole,
       statsPerEmployee: s.statsPerEmployee,
+      planAllowsActions: await this.planAllowsActions(m.accountId, now),
+      actionsDailyCap: s.actionsDailyCap,
+      notifyDanger: s.notifyDanger,
       snippet: pk
         ? {
             origin,
@@ -251,6 +267,10 @@ export class AdminModeService {
     if (dto.statsPerEmployee !== undefined) {
       data.statsPerEmployee = dto.statsPerEmployee;
     }
+    if (dto.actionsDailyCap !== undefined) {
+      data.actionsDailyCap = dto.actionsDailyCap;
+    }
+    if (dto.notifyDanger !== undefined) data.notifyDanger = dto.notifyDanger;
     if (Object.keys(data).length) {
       await this.db
         .forAccount(m.accountId)

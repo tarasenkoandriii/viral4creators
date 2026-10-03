@@ -26,17 +26,31 @@ import { AnalyticsRollup } from './system/analytics-rollup.service';
 // SitesDb/PrismaService (глобальные) — импорта модуля голосового управления
 // не нужно (он импортирует чат, а чат — этот модуль: был бы цикл).
 import { VoiceMonitorService } from '../assist-site-voice-control/system/voice-monitor.service';
+// Э3-бис: аналитика с ИИ — разметка, lead score, выводы, эксперименты,
+// согласие, поведение (без новых кронов: AiAnalyticsRunner в кронах выше).
+import { SiteAiModule } from '../site-ai/site-ai.module';
+import { AiAnalyticsController } from './ai-analytics.controller';
+import { AiCabinetService } from './ai/ai-cabinet.service';
+import { AiAnalyticsRunner } from './ai/ai-runner.service';
+import { AnalyticsBudget } from './ai/analytics-budget';
+import { WeeklyInsights } from './ai/insights.service';
+import { ConversationLabeler } from './ai/labeler.service';
+import { BehaviorRollup } from './behavior/behavior-rollup.service';
+import { ExperimentsService } from './exp/experiments.service';
+import { AiIntake } from './public/ai-intake.service';
 
 @Module({
   imports: [
     SiteCoreModule,
     AssistKnowledgeCoreModule,
     AssistSiteLearningModule,
+    SiteAiModule,
   ],
   controllers: [
     AnalyticsController,
     GoalWebhookController,
     AssistAnalyticsCronController,
+    AiAnalyticsController,
   ],
   providers: [
     GoalIntake,
@@ -50,8 +64,17 @@ import { VoiceMonitorService } from '../assist-site-voice-control/system/voice-m
     AnalyticsRollup,
     AnalyticsSettingsService,
     VoiceMonitorService,
+    AnalyticsBudget,
+    ConversationLabeler,
+    WeeklyInsights,
+    ExperimentsService,
+    BehaviorRollup,
+    AiAnalyticsRunner,
+    AiCabinetService,
+    AiIntake,
   ],
   exports: [
+    AiIntake,
     GoalIntake,
     EventCounts,
     IntegrationsService,

@@ -35,6 +35,7 @@ import {
 } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import { LearningReadApi } from '../../modules/assist-site-learning/learning-read.service';
 import { VoiceMonitorService } from '../../modules/assist-site-voice-control/system/voice-monitor.service';
+import { AiAnalyticsRunner } from '../../modules/assist-analytics/ai/ai-runner.service';
 import { OWNER_PRODUCT_ROLES } from '../../modules/site-core/account/roles';
 import { SiteCoreModule } from '../../modules/site-core/site-core.module';
 import { TelegramAuthModule } from '../../modules/telegram-auth/telegram-auth.module';
@@ -108,6 +109,11 @@ describeDb(
           },
           // Э6-бис (г): монитор голосового управления — в том же кроне.
           { provide: VoiceMonitorService, useValue: { run: jest.fn() } },
+          // Э3-бис: аналитика с ИИ — в тех же кронах (свои спеки — e3b/).
+          {
+            provide: AiAnalyticsRunner,
+            useValue: { run: jest.fn(), daily: jest.fn() },
+          },
         ],
       }).compile();
       app = mod.createNestApplication();

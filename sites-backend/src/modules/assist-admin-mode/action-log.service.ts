@@ -28,7 +28,13 @@ export interface ActionLogEntry {
   connectorId: string | null;
   operationRowId: string | null;
   operation: string;
-  kind?: 'read';
+  /**
+   * read — вызов чтения (Э7); write/danger — исполнение «Да» (Э8);
+   * proposal — предложение создано; decision — «Нет»/истекло; chain —
+   * статус цепочки (компенсация, §5-бис.15 п.11); memo — изменение мемо
+   * АМ-N (§5-бис.17 п.10).
+   */
+  kind?: ActionLogKind;
   outcome: string;
   httpStatus: number | null;
   durationMs: number | null;
@@ -36,6 +42,9 @@ export interface ActionLogEntry {
   responseBytes: number | null;
   error: string | null;
 }
+
+export type ActionLogKind =
+  'read' | 'write' | 'danger' | 'proposal' | 'decision' | 'chain' | 'memo';
 
 export interface ActionLogView {
   id: string;
@@ -101,9 +110,17 @@ export function actionLogHash(
 export class AdminActionLogService {
   constructor(private readonly db: SitesDb) {}
 
-  async append(e: ActionLogEntry, now = new Date()): Promise<string> {
+  /**
+   * `key` — уникальный ключ строки (Э8: `exec:<предложение>:<попытка>` —
+   * одно исполнение не попадёт в журнал дважды); без него — случайный.
+   */
+  async append(
+    e: ActionLogEntry,
+    now = new Date(),
+    key?: string,
+  ): Promise<string> {
     const db = this.db.forAccount(e.accountId);
-    const idempotencyKey = `read:${randomUUID()}`;
+    const idempotencyKey = key ?? `${e.kind ?? 'read'}:${randomUUID()}`;
     return db.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`assist-admin-log:${e.siteId}`}))`;
       const last = await tx.assistAdminActionLog.findFirst({
@@ -149,7 +166,13 @@ export class AdminActionLogService {
   async list(
     accountId: string,
     siteId: string,
-    q: { actor?: string; outcome?: string; operation?: string; limit?: number },
+    q: {
+      actor?: string;
+      outcome?: string;
+      operation?: string;
+      kind?: string;
+      limit?: number;
+    },
   ): Promise<ActionLogView[]> {
     const rows = await this.db
       .forAccount(accountId)
@@ -159,6 +182,11 @@ export class AdminActionLogService {
           ...(q.actor ? { actor: q.actor } : {}),
           ...(q.outcome ? { outcome: q.outcome } : {}),
           ...(q.operation ? { operation: q.operation } : {}),
+          ...(q.kind === 'actions'
+            ? { kind: { in: ['write', 'danger', 'proposal', 'decision'] } }
+            : q.kind
+              ? { kind: q.kind }
+              : {}),
         },
         orderBy: [{ at: 'desc' }, { id: 'desc' }],
         take: Math.max(1, Math.min(q.limit ?? 100, 500)),
@@ -178,6 +206,73 @@ export class AdminActionLogService {
       responseBytes: r.responseBytes,
       error: r.error,
     }));
+  }
+
+  /**
+   * Экспорт журнала сайта в CSV (§5.7 «экспорт CSV»): строки уже маскированы
+   * при записи (секретов и тел ответа нет по построению); хеш и prevHash —
+   * чтобы получатель мог сам проверить цепочку. Ячейки — с защитой от формул.
+   */
+  async exportCsv(accountId: string, siteId: string): Promise<string> {
+    const rows = await this.db
+      .forAccount(accountId)
+      .assistAdminActionLog.findMany({
+        where: { siteId },
+        orderBy: [{ at: 'asc' }, { id: 'asc' }],
+        take: 50_000,
+      });
+    const cell = (v: unknown): string => {
+      let s =
+        v === null || v === undefined
+          ? ''
+          : typeof v === 'object'
+            ? canonicalJson(v)
+            : String(v);
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const head = [
+      'at',
+      'actor',
+      'actorRole',
+      'channel',
+      'operation',
+      'kind',
+      'outcome',
+      'httpStatus',
+      'durationMs',
+      'request',
+      'responseBytes',
+      'error',
+      'key',
+      'prevHash',
+      'hash',
+    ];
+    const lines = [head.join(',')];
+    for (const r of rows) {
+      lines.push(
+        [
+          r.at.toISOString(),
+          r.actor,
+          r.actorRole,
+          r.channel,
+          r.operation,
+          r.kind,
+          r.outcome,
+          r.httpStatus,
+          r.durationMs,
+          r.requestMasked,
+          r.responseBytes,
+          r.error,
+          r.idempotencyKey,
+          r.prevHash,
+          r.hash,
+        ]
+          .map(cell)
+          .join(','),
+      );
+    }
+    return `${lines.join('\n')}\n`;
   }
 
   /** Проверка цепочки сайта (для тестов и экспорта): индекс первой битой строки или -1. */
@@ -201,7 +296,7 @@ export class AdminActionLogService {
         connectorId: r.connectorId,
         operationRowId: r.operationRowId,
         operation: r.operation,
-        kind: r.kind as 'read',
+        kind: r.kind as ActionLogKind,
         outcome: r.outcome,
         httpStatus: r.httpStatus,
         durationMs: r.durationMs,

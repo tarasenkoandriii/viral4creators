@@ -31,6 +31,14 @@ import { adminError } from '../assist-admin-mode/admin-errors';
 import { AdminModeService } from '../assist-admin-mode/admin-mode.service';
 import type { CallerCtx } from '../assist-admin-mode/connectors.service';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
+import { questionLang } from '../assist-knowledge-core/answer/prompt';
+import { AdminMemoService } from '../assist-admin-actions/admin-memo.service';
+import {
+  type ActorCtx,
+  ProposalsService,
+  type ProposalView,
+} from '../assist-admin-actions/proposals.service';
+import type { ActionLang } from '../assist-admin-actions/action-core';
 import { AdminAnswerService, type TurnResult } from './admin-answer.service';
 
 /** Диалог сотрудника продолжается, если последняя активность не старше 8 ч (§4-бис.8). */
@@ -64,6 +72,10 @@ export interface AdminMessageView {
   answerPath: string | null;
   rating: number | null;
   createdAt: string;
+  /** Э8: id карточки подтверждения при этом сообщении. */
+  proposalId: string | null;
+  /** Э8: сама карточка — в ответе `chat` (в `state` — массив `proposals`). */
+  proposal?: ProposalView | null;
 }
 
 export interface AdminStateView {
@@ -72,6 +84,30 @@ export interface AdminStateView {
   messages: AdminMessageView[];
   employee: { name: string | null; role: string | null; tools: boolean };
   statsPerEmployee: boolean;
+  /**
+   * Э8: карточки этого сотрудника за 8 ч — незавершённые восстанавливаются
+   * после перезагрузки с тем же сроком (§4-бис.5), исполненные — с итогом.
+   */
+  proposals: ProposalView[];
+}
+
+/** Сотрудник «Админки» → действующее лицо предложений (язык — по вопросу). */
+export function actorOf(
+  ctx: EmployeeCtx,
+  conversationId: string | null,
+  lang: ActionLang = 'uk',
+): ActorCtx {
+  return {
+    accountId: ctx.accountId,
+    siteId: ctx.siteId,
+    actor: ctx.employeeRef,
+    actorRole: ctx.customerRole,
+    actorExternal: ctx.actorExternal,
+    channel: ctx.channel,
+    conversationId,
+    assistRole: ctx.role,
+    lang,
+  };
 }
 
 /** Нормализованный вопрос → ключ кластера очереди (те же слова — один кластер). */
@@ -94,6 +130,7 @@ function view(r: {
   answerPath: string | null;
   rating: number | null;
   createdAt: Date;
+  proposalId?: string | null;
 }): AdminMessageView {
   return {
     id: r.id,
@@ -106,6 +143,7 @@ function view(r: {
     answerPath: r.answerPath,
     rating: r.rating,
     createdAt: r.createdAt.toISOString(),
+    proposalId: r.proposalId ?? null,
   };
 }
 
@@ -116,6 +154,8 @@ export class AdminChatService {
     private readonly prisma: PrismaService,
     private readonly mode: AdminModeService,
     private readonly answers: AdminAnswerService,
+    private readonly proposals: ProposalsService,
+    private readonly memos: AdminMemoService,
   ) {}
 
   /** 7a/7b общее: режим включён, тариф даёт «Админку», у сайта есть verified-хост. */
@@ -185,6 +225,12 @@ export class AdminChatService {
         tools: ctx.role !== null,
       },
       statsPerEmployee: s.statsPerEmployee,
+      proposals: await this.proposals.forState(
+        ctx.accountId,
+        ctx.siteId,
+        ctx.employeeRef,
+        now,
+      ),
     };
   }
 
@@ -348,14 +394,40 @@ export class AdminChatService {
       channel: ctx.channel,
       conversationId: conv.id,
     };
-    const turn: TurnResult = await this.answers.turn({
-      ctx: caller,
-      role: ctx.role,
-      question: q,
-      history,
-      siteName: site?.name ?? null,
-      instructions: s.instructions,
-    });
+    // Э8: мемо АМ-N (по номеру или фразе) — прямой путь без модели (§5-бис.17
+    // п.10, Р-68); права сотрудника — на каждую операцию мемо.
+    const lang = questionLang(q) as ActionLang;
+    const actor = actorOf(ctx, conv.id, lang);
+    const memo = ctx.role !== null ? await this.memos.match(actor, q) : null;
+    let turn: TurnResult;
+    if (memo) {
+      const r =
+        memo.kind === 'memo'
+          ? await this.memos.start(actor, memo, now)
+          : { text: this.memos.unknownText(lang, memo.number), proposal: null };
+      turn = {
+        text: r.text,
+        sources: [],
+        tools: [],
+        answerPath: r.proposal ? 'action' : 'tool',
+        flags: [memo.kind === 'memo' ? 'memo' : 'memo_missing'],
+        model: null,
+        inTokens: 0,
+        outTokens: 0,
+        costMicroUsd: 0,
+        learning: null,
+        proposal: r.proposal,
+      };
+    } else {
+      turn = await this.answers.turn({
+        ctx: caller,
+        role: ctx.role,
+        question: q,
+        history,
+        siteName: site?.name ?? null,
+        instructions: s.instructions,
+      });
+    }
     const aRow = await db.assistAdminMessage.create({
       data: {
         accountId: ctx.accountId,
@@ -371,6 +443,7 @@ export class AdminChatService {
         inTokens: turn.inTokens,
         outTokens: turn.outTokens,
         costMicroUsd: turn.costMicroUsd,
+        proposalId: turn.proposal?.id ?? null,
         createdAt: new Date(now.getTime() + 1),
       },
     });
@@ -390,7 +463,7 @@ export class AdminChatService {
     }
     return {
       question: view(qRow),
-      answer: view(aRow),
+      answer: { ...view(aRow), proposal: turn.proposal },
       version: updated.stateVersion,
     };
   }

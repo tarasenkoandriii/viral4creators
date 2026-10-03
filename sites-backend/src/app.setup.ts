@@ -44,7 +44,13 @@ export const GOAL_WEBHOOK_PATH = '/assist/v1/sites/:id/goal-events';
  * (text/plain — простой запрос без preflight, переживает закрытие вкладки):
  * text/plain на этих путях — строкой ≤ 4 КБ, JSON — как обычно.
  */
-export const WIDGET_BEACON_PATHS = ['/widget/v1/event', '/widget/v1/goal'];
+export const WIDGET_BEACON_PATHS = [
+  '/widget/v1/event',
+  '/widget/v1/goal',
+  // Э3-бис: итог просмотра и включение в эксперимент (sendBeacon при скрытии).
+  '/widget/v1/pv',
+  '/widget/v1/exp',
+];
 export const SMALL_BODY_LIMIT = '4kb';
 /**
  * Э-С Ш1 (П-С3): внутренний API обучалки генератора подписан HMAC по СЫРОМУ

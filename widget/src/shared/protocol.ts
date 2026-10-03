@@ -98,6 +98,21 @@ export type ParentMessage =
    */
   | { type: 'highlight-result'; elementId: string; found: boolean }
   /**
+   * Э3-бис (§5-тер.9): связанный режим — посетитель дал согласие на
+   * аналитику (чанк ana.js): ключ визита (null — согласие отозвано) и
+   * вариант B идущего эксперимента для группы b (приветствие/подсказки по
+   * языкам). Подделать может скрипт страницы — последствие: свой же
+   * посетитель увидит другой текст приветствия; ключ визита сервер
+   * принимает только при связанном режиме сайта.
+   */
+  | {
+      type: 'ana';
+      /** Не `v`: это имя занято версией конверта протокола. */
+      visit: string | null;
+      greeting: Partial<Record<UiLang3, string>> | null;
+      suggestions: Partial<Record<UiLang3, string[]>> | null;
+    }
+  /**
    * Э6-бис (§5-бис.3 п.2): снимок интерактивных элементов страницы — ответ
    * на `ui-snap` с тем же `rid` (iframe принимает только ожидаемый ответ;
    * сервер разбирает снимок строго заново). Подписи уже маскированы.
@@ -360,6 +375,50 @@ export function cleanQuestion(v: unknown): string | null {
   return t && t.length <= MAX_QUESTION ? t : null;
 }
 
+type UiLang3 = 'uk' | 'ru' | 'en';
+/** Э3-бис: ключ визита — случайная строка чанка ana.js. */
+export const VISIT_KEY = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** Тексты варианта по языкам: строки ≤ max, массивы ≤ 4 (подсказки). */
+function langMap<T>(
+  v: unknown,
+  item: (x: unknown) => T | null
+): Partial<Record<UiLang3, T>> | null | false {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) return false;
+  const out: Partial<Record<UiLang3, T>> = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    if (k !== 'uk' && k !== 'ru' && k !== 'en') return false;
+    const t = item(x);
+    if (t === null) return false;
+    out[k] = t;
+  }
+  return out;
+}
+
+function cleanAna(m: Record<string, unknown>): ParentMessage | null {
+  if (
+    m.visit !== null &&
+    (typeof m.visit !== 'string' || !VISIT_KEY.test(m.visit))
+  )
+    return null;
+  const str = (max: number) => (x: unknown) =>
+    typeof x === 'string' && x.trim() && x.length <= max ? x.trim() : null;
+  const greeting = langMap(m.greeting, str(300));
+  const suggestions = langMap(m.suggestions, (x) => {
+    if (!Array.isArray(x) || !x.length || x.length > 4) return null;
+    const out = x.map(str(80));
+    return out.every((y) => y !== null) ? (out as string[]) : null;
+  });
+  if (greeting === false || suggestions === false) return null;
+  return {
+    type: 'ana',
+    visit: m.visit as string | null,
+    greeting,
+    suggestions,
+  };
+}
+
 /** Строгий разбор сообщения родителя; null — игнорировать. */
 export function parseParentMessage(data: unknown): ParentMessage | null {
   const m = envelopeType(data);
@@ -432,6 +491,8 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
     }
     case 'goal':
       return cleanGoal(m);
+    case 'ana':
+      return cleanAna(m);
     case 'highlight-result':
       return typeof m.elementId === 'string' &&
         UI_ELEMENT_ID.test(m.elementId) &&

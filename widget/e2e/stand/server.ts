@@ -45,7 +45,7 @@ import {
   type ModelStep,
 } from './ui-plan-mock';
 import { vcStandRoute } from './vc-stands';
-import { adminReset, adminRoute, isAdminHost } from './admin-mock';
+import { adminLog, adminReset, adminRoute, isAdminHost } from './admin-mock';
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -79,6 +79,8 @@ interface Site {
   unpublished?: boolean;
   /** Э3: публичная часть вовлечения/цели/передача — как отдаёт config. */
   engagement?: unknown;
+  /** Э3-бис: поле `analytics` конфига (связанный режим по согласию). */
+  analytics?: unknown;
   goals?: unknown;
   handoff?: unknown;
   /** Ответ POST handoff: human (по умолчанию) или lead. */
@@ -201,6 +203,13 @@ function fresh() {
     }>,
     goals: [] as Array<Record<string, unknown>>,
     goalCalls: 0,
+    // Э3-бис: запросы связанного режима (exp, pv, ref, visit).
+    ana: [] as Array<{
+      path: string;
+      origin: string | null;
+      contentType: string;
+      body: Record<string, unknown>;
+    }>,
     handoffs: [] as Array<Record<string, unknown>>,
     cancels: 0,
     picks: [] as Array<Record<string, unknown>>,
@@ -515,6 +524,8 @@ const EVENT_KINDS = [
   'scenario_started',
   'scenario_done',
   'link_click',
+  // Э3-бис: согласие посетителя → ключ визита (раз на визит).
+  'visit_new',
 ];
 const ONLY = (o: Record<string, unknown>, keys: string[]) =>
   Object.keys(o).every((k) => keys.includes(k));
@@ -551,6 +562,8 @@ const GOAL_FIELDS = [
   'conversationId',
   'lastAssistClickAt',
   'assist',
+  // Э3-бис: ключ визита посетителя с согласием.
+  'visit',
 ];
 
 /** Формат цели — как parseGoalRequest (W): null — 400, 'ORDER' — 422. */
@@ -642,6 +655,7 @@ async function api(
         ],
         poweredByUrl: 'https://powered.example/assistant?utm_source=widget',
         ...(s.engagement !== undefined ? { engagement: s.engagement } : {}),
+        ...(s.analytics !== undefined ? { analytics: s.analytics } : {}),
         ...(s.goals !== undefined ? { goals: s.goals } : {}),
         ...(s.handoff !== undefined ? { handoff: s.handoff } : {}),
         ...(s.voice !== undefined ? { voice: s.voice } : {}),
@@ -665,7 +679,11 @@ async function api(
     p === '/widget/v1/event' ||
     p === '/widget/v1/goal' ||
     p === '/widget/v1/goal-picker/session' ||
-    p === '/widget/v1/goal-picker/pick';
+    p === '/widget/v1/goal-picker/pick' ||
+    // Э3-бис: связанный режим со страницы.
+    p === '/widget/v1/exp' ||
+    p === '/widget/v1/pv' ||
+    p === '/widget/v1/ref';
   const reqOrigin = (req.headers.origin as string) || '';
   const cors: Record<string, string> =
     pageRoute && reqOrigin
@@ -678,6 +696,44 @@ async function api(
       : {};
   if (pageRoute && req.method === 'OPTIONS') {
     res.writeHead(204, cors);
+    return res.end();
+  }
+  // Э3-бис: связанный режим (форма — sites-backend; здесь запись для e2e).
+  if (
+    req.method === 'POST' &&
+    (p === '/widget/v1/exp' || p === '/widget/v1/pv' || p === '/widget/v1/ref')
+  ) {
+    const b = await readPageBody(req);
+    const s = b && siteOfPk(b.pk);
+    if (!s || !s.allowedOrigins.includes(reqOrigin))
+      return send(
+        res,
+        403,
+        { success: false, error: { code: 'ORIGIN_DENIED', message: '' } },
+        cors
+      );
+    M.ana.push({
+      path: p,
+      origin: reqOrigin,
+      contentType: String(req.headers['content-type'] || ''),
+      body: b as Record<string, unknown>,
+    });
+    if (p === '/widget/v1/ref')
+      return send(res, 200, { success: true, data: { ref: 'r1.test' } }, cors);
+    res.writeHead(204, cors);
+    return res.end();
+  }
+  if (req.method === 'POST' && p === '/widget/v1/visit') {
+    const visitor = auth(req);
+    if (!visitor) return fail(res, 401, 'SESSION_EXPIRED');
+    const b = await readPageBody(req);
+    M.ana.push({
+      path: p,
+      origin: (req.headers.origin as string) || null,
+      contentType: String(req.headers['content-type'] || ''),
+      body: b as Record<string, unknown>,
+    });
+    res.writeHead(204);
     return res.end();
   }
   if (req.method === 'POST' && p === '/widget/v1/event') {
@@ -1393,6 +1449,11 @@ async function widgetServer(
     res.writeHead(204);
     return res.end();
   }
+  // Э8: журнал мока «Админки» (исполнения «Да» — для п.4 (б) §4-бис.10).
+  if (p === '/__mock/admin-log') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(adminLog()));
+  }
   if (p.startsWith('/__mock/')) return control(req, res, p);
   if (p === '/evil-frame.html') {
     // Страница ТОГО ЖЕ origin виджета, но не наш iframe: подделка source.
@@ -1535,6 +1596,7 @@ async function control(
         events: M.events,
         goals: M.goals,
         goalCalls: M.goalCalls,
+        ana: M.ana,
         handoffs: M.handoffs,
         cancels: M.cancels,
         picks: M.picks,

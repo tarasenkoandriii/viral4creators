@@ -26,6 +26,11 @@ export interface GenerateRequest {
   /** Ответ строго JSON (responseMimeType application/json). */
   json?: boolean;
   timeoutMs?: number;
+  /**
+   * Э3-бис: модель вызова (lite-модель разметки, ASSIST_LITE_MODEL); не
+   * задана — GEMINI_MODEL. Ставку проверяет вызывающий (unpriced — не зовём).
+   */
+  model?: string;
 }
 
 export interface GenerateResult {
@@ -78,7 +83,7 @@ export class GeminiText {
       firstTokenMs: timeoutMs,
       totalMs: timeoutMs,
     });
-    const model = GEMINI_MODEL;
+    const model = req.model || GEMINI_MODEL;
     try {
       const res = await this.getClient().models.generateContent({
         model,

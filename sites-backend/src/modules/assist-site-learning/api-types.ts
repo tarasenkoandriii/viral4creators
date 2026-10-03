@@ -24,7 +24,10 @@ export type LearningSignalSource =
   | `flag:${string}`
   | 'repeat'
   | 'handoff_after_answer'
-  | 'operator';
+  | 'operator'
+  // Э3-бис: ИИ-разметка — answerQuality ≤ 2 или ungrounded_suspect (§5-тер.3
+  // «Связь с обучением»; ниже по приоритету, чем 👎 и флаги пост-фильтра).
+  | 'label';
 
 /** Элемент очереди глазами экрана: кластер или кандидат оператора. */
 export type QueueEntryView =

@@ -408,6 +408,30 @@ export class WidgetStateService {
         ids.map((c) => c.id),
       );
     }
+    // Э3-бис (§5-тер.15): связанный режим — единицы экспериментов этого
+    // посетителя (хеш его ключа визита) удаляются вместе с диалогами (хеш
+    // визита диалога уходит с диалогом). У событий целей хеш визита роль не
+    // видит (SELECT на события закрыт) — без ключа в браузере (чанк удаляет
+    // его при отзыве согласия) он ни с чем не связывается и обнуляется
+    // ретенцией через 35 дней (assist-analytics-rollup).
+    const visits = await this.db.assistSiteConversation.findMany({
+      where: { ...where, visitHash: { not: null } },
+      select: { visitHash: true },
+      distinct: ['visitHash'],
+    });
+    const hashes = visits
+      .map((v) => v.visitHash)
+      .filter((h): h is string => typeof h === 'string');
+    if (hashes.length) {
+      await this.db.$executeRawUnsafe(
+        `DELETE FROM "sites"."assist_site_experiment_units" u
+          USING "sites"."assist_site_experiments" e
+          WHERE e."id" = u."experimentId" AND e."siteId" = $1
+            AND u."unitHash" = ANY($2::text[])`,
+        ctx.site.siteId,
+        hashes,
+      );
+    }
     const [, convs] = await this.db.$transaction([
       this.db.assistSiteLead.updateMany({
         where,

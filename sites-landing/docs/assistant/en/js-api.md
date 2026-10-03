@@ -26,6 +26,9 @@ Table: %%global%% commands
 | `%%global%%('hide')`, `('show')` | Hide and show the button |
 | `%%global%%('route')` | Report an SPA navigation if your router does not use the History API |
 | `%%global%%('goal', 'purchase', { value, currency, orderId })` | A goal was reached — see [goals](/%%loc%%/docs/assistant/goals) |
+| `%%global%%('consent', { analytics: true })` | Visitor's analytics consent from your cookie banner (`false` withdraws it); without consent or with GPC/DNT no visit analytics is collected |
+| `%%global%%('group', fn)` | The visitor's experiment group: `fn('h')` — without the assistant, `fn('w')` — with it, `fn(null)` — no experiment |
+| `%%global%%('ref', fn)` | A signed visit key for server-side orders: `fn(ref)` → pass it as `assistRef` in the server goal event |
 | `%%global%%('on', 'open', fn)` | Subscribe to an event: `open`, `close`, `lead`, `handoff`, `goal` |
 | `%%global%%('destroy')` | Remove the widget from the page |
 

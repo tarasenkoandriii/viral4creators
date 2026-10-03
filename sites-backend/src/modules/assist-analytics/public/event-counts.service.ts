@@ -30,6 +30,11 @@ export const WIDGET_EVENT_KINDS = [
   // найден на странице (сигнал «карта устарела»).
   'video_play',
   'highlight_miss',
+  // Э3-бис: посетитель дал согласие на аналитику и получил ключ визита
+  // (раз на визит, чанк ana.js) — база мощности экспериментов (§5-тер.2);
+  // итог просмотра принят сервером (квота поведения, §5-тер.10).
+  'visit_new',
+  'bf_pv',
 ] as const;
 export type WidgetEventKind = (typeof WIDGET_EVENT_KINDS)[number];
 
@@ -41,6 +46,7 @@ export type WidgetEventKind = (typeof WIDGET_EVENT_KINDS)[number];
 export const SERVER_EVENT_KINDS: readonly WidgetEventKind[] = [
   'video_play',
   'highlight_miss',
+  'bf_pv',
 ];
 
 /** Ключ триггера/сценария: короткий идентификатор конфигурации вида. */
