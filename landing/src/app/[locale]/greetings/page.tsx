@@ -15,7 +15,6 @@ import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
 import {
   greetingFrame,
   greetingFramesAreReal,
-  greetingHero,
 } from '../../../lib/greeting-frames';
 import { frameSizes } from '../../../lib/tutorial-frames';
 import {
@@ -149,7 +148,7 @@ export default function GreetingsLandingPage({
   const ctaHref = `${TMA_URL}?entry=greetings#/projects/new`;
   /** Сняты ли для локали настоящие кадры — см. `lib/greeting-frames.ts`. */
   const realFrames = greetingFramesAreReal(locale);
-  const hero = greetingHero(locale);
+  const hero = { src: '/illustrations/greetings-hero-v2.avif', width: 1536, height: 1024 };
 
   /**
    * Каждая секция — по своему идентификатору из `lib/greeting-sections.ts`.
@@ -185,6 +184,7 @@ export default function GreetingsLandingPage({
               alt=""
               width={hero.width}
               height={hero.height}
+              sizes="(min-width: 900px) 46vw, 100vw"
               priority
               unoptimized
             />

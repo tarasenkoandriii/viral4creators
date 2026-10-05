@@ -132,20 +132,8 @@ export default function SiteTutorialLandingPage({
           `.faq p` без этой обёртки уехали бы на главную, поздравления,
           блог и правовые страницы. */}
       <main id="top" className="tutorial-page">
-        {/* Этап E ТЗ: до него первый экран был текстом на градиенте, без
-            единого изображения. Кадр продукта справа от текста на
-            ≥900px, под текстом — ниже.
-
-            Сознательно НЕ рисунок в духе §1 брифа главной («до/после»,
-            кликбейт): этот hero продаёт не эффектность результата, а
-            безопасность способа — «не нужно ставить расширение и давать
-            доступ к рабочему компьютеру». Кликбейтная картинка
-            противоречила бы ровно этому обещанию.
-
-            `hero.note` остаётся на месте: первая редакция ТЗ предлагала
-            заменить его плитками, и это была правка контента при
-            запрете трогать тексты — «работает в браузере и как Telegram
-            Mini App» больше нигде на странице не сказано. */}
+        {/* 06.10.2026: по запросу владельца — отдельная иллюстрация hero.
+            Реальные демонстрации интерфейса остаются в секциях ниже. */}
         <section className="hero">
           <div className="wrap hero-grid">
             <div className="hero-copy">
@@ -168,10 +156,11 @@ export default function SiteTutorialLandingPage({
                 проверять замером. */}
             <div className="hero-shot frame-shot">
               <Image
-                src="/illustrations/tutorial-hero.svg"
+                src="/illustrations/tutorial-hero-v2.avif"
                 alt=""
-                width={960}
-                height={620}
+                width={1536}
+                height={1024}
+                sizes="(min-width: 900px) 46vw, 100vw"
                 priority
                 unoptimized
               />

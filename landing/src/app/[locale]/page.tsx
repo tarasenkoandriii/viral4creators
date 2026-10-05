@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { TutorialDemoGallery } from '../../components/TutorialDemoGallery';
 import { Header } from '../../components/Header';
 import { Faq } from '../../components/Faq';
@@ -29,19 +30,25 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
 
       <main id="top">
         <section className="hero">
-          <div className="wrap">
-            <span className="badge">{dict.hero.badge}</span>
-            <h1>{dict.hero.title}</h1>
-            <p>{dict.hero.subtitle}</p>
-            <div className="hero-actions">
-              <a className="cta" href={TMA_URL}>
-                {dict.hero.ctaPrimary}
-              </a>
-              <a className="cta cta-ghost" href="#demo">
-                {dict.hero.ctaDemo}
-              </a>
+          <div className="wrap hero-grid">
+            <div className="hero-copy">
+              <span className="badge">{dict.hero.badge}</span>
+              <h1>{dict.hero.title}</h1>
+              <p>{dict.hero.subtitle}</p>
+              <div className="hero-actions">
+                <a className="cta" href={TMA_URL}>
+                  {dict.hero.ctaPrimary}
+                </a>
+                <a className="cta cta-ghost" href="#demo">
+                  {dict.hero.ctaDemo}
+                </a>
+              </div>
+              <p className="hero-note">{dict.hero.note}</p>
             </div>
-            <p className="hero-note">{dict.hero.note}</p>
+            <div className="hero-shot frame-shot">
+              <Image src="/illustrations/ads-hero-v2.avif" alt="" width={1536} height={1024}
+                sizes="(min-width: 900px) 46vw, 100vw" priority unoptimized />
+            </div>
           </div>
         </section>
 
