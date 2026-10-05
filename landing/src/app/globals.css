@@ -94,6 +94,8 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 24px;
+  max-width: 1200px;
   height: 64px;
 }
 
@@ -103,6 +105,7 @@ a {
   align-items: center;
   min-height: 44px;
   font-weight: 700;
+  flex-shrink: 0;
   font-size: 17px;
   color: var(--fg);
   text-decoration: none;
@@ -111,15 +114,15 @@ a {
 .site-nav {
   display: flex;
   align-items: center;
-  gap: 28px;
+  gap: 16px;
 }
 
 /* Ссылка шапки — 20px текста, и на телефоне по ней промахивались (аудит
    2026-09-06, А-3.12). Высота доводится до рекомендованных 44px без
    единого лишнего пикселя в раскладке: шапка и так 64px, ссылки в ней
    просто центрируются. */
-/* Б-4.12: «FAQ» — 28px по ширине. Горизонтальный паддинг добирает цель
-   до 44px, отрицательный отступ гасит прирост, чтобы шапка не разъехалась. */
+/* Горизонтальный паддинг добирает цель до 44px. Реальные отступы
+   между ссылками сохраняют раздельные области нажатия. */
 .site-nav a:not(.cta) {
   display: inline-flex;
   align-items: center;
@@ -127,7 +130,8 @@ a {
   min-height: 44px;
   min-width: 44px;
   padding: 0 6px;
-  margin: 0 -6px;
+  margin: 0;
+  white-space: nowrap;
   color: var(--muted);
   text-decoration: none;
   font-size: 14px;
@@ -146,7 +150,7 @@ a {
   border: none;
   cursor: pointer;
   padding: 8px;
-  /* Б-4.3: бургер — единственный вход в меню на ≤720px, и был 38×32.
+  /* Б-4.3: бургер — вход в компактное меню, и был 38×32.
      Ссылки внутри меню этап 40 довёл до 44px, до кнопки, которая их
      открывает, правка не дошла. Полоски внутри не меняются. */
   min-width: 44px;
@@ -163,14 +167,18 @@ a {
   border-radius: 1px;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1199px) {
   .menu-toggle {
     display: flex;
   }
 
   .site-nav {
     position: absolute;
-    top: 64px;
+    top: 100%;
+    max-height: calc(100vh - 65px);
+    max-height: calc(100dvh - 65px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     left: 0;
     right: 0;
     background: var(--bg);
@@ -221,7 +229,7 @@ a {
   color: var(--fg);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 1199px) {
   .locale-switcher {
     margin-top: 16px;
     align-self: flex-start;
@@ -503,7 +511,7 @@ section h2 {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 24px;
 }
 
@@ -977,7 +985,7 @@ footer {
 /* ── Юридические документы (spec §20) ─────────────────────────────── */
 
 .legal-page {
-  padding: 48px 0 72px;
+  padding-block: 48px 72px;
 }
 
 /* Б-4.12: «← На главную» — единственный путь назад со страницы оферты
@@ -1057,7 +1065,7 @@ footer {
 /* ── Блог/новости (этап 58, TODO §II.3) ───────────────────────────────── */
 
 .blog-page {
-  padding: 48px 0 72px;
+  padding-block: 48px 72px;
 }
 
 .blog-lead {
@@ -1069,7 +1077,7 @@ footer {
 /* ---------- How it works (выделенная страница, этап 79) ---------- */
 
 .how-it-works-page {
-  padding: 48px 0 72px;
+  padding-block: 48px 72px;
 }
 
 .how-it-works-lead {
@@ -1230,7 +1238,7 @@ footer {
 /* ── Публичная страница ролика (ТЗ §40, этап 60) ──────────────────────── */
 
 .shared-video-page {
-  padding: 48px 0 72px;
+  padding-block: 48px 72px;
   max-width: 640px;
 }
 
@@ -1384,14 +1392,19 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
    чтобы поле ввода не «прыгало» между двумя местами виджета. */
 .how-it-works-layout {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 32px;
   align-items: start;
 }
 
+.how-it-works-main,
+.how-it-works-assistant {
+  min-width: 0;
+}
+
 @media (min-width: 1100px) {
   .how-it-works-layout {
-    grid-template-columns: 1fr 360px;
+    grid-template-columns: minmax(0, 1fr) 360px;
   }
   .how-it-works-assistant {
     position: sticky;
@@ -1413,7 +1426,7 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
 
 @media (min-width: 1100px) {
   .how-it-works-layout:has(.how-it-works-assistant:empty) {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { TMA_URL } from '../lib/content';
 import { useDictionary } from '../lib/dictionary-context';
 import { LocaleSwitcher } from './LocaleSwitcher';
@@ -17,11 +18,15 @@ import { LocaleSwitcher } from './LocaleSwitcher';
  * внутри, пока меню открыто.
  *
  * Этап 55: подписи и ссылки читаются из словаря текущей локали, ссылки на
- * якоря (#how, #features…) от языка не зависят — сами секции остаются на
- * одной странице /[locale], меняется только их подпись в меню.
+ * якоря (#how, #features…) ведут к секциям /[locale]. На внутренних
+ * страницах добавляется путь главной страницы текущей локали.
  */
 export function Header() {
   const { dict, locale } = useDictionary();
+  const pathname = usePathname();
+  const homePath = `/${locale}`;
+  const sectionHref = (href: string) =>
+    pathname === homePath || pathname === `${homePath}/` ? href : `${homePath}${href}`;
   const [menuOpen, setMenuOpen] = useState(false);
   const navRef = useRef<HTMLElement | null>(null);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
@@ -77,7 +82,7 @@ export function Header() {
   return (
     <header className="site-header">
       <div className="wrap site-header-inner">
-        <a href="#top" className="brand" onClick={() => setMenuOpen(false)}>
+        <a href={sectionHref('#top')} className="brand" onClick={() => setMenuOpen(false)}>
           viral4creators
         </a>
 
@@ -88,7 +93,7 @@ export function Header() {
           aria-label={dict.header.navAriaLabel}
         >
           {dict.header.nav.map((link) => (
-            <a key={link.href} href={link.href} onClick={() => setMenuOpen(false)}>
+            <a key={link.href} href={sectionHref(link.href)} onClick={() => setMenuOpen(false)}>
               {link.label}
             </a>
           ))}
