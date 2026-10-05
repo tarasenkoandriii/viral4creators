@@ -3,6 +3,7 @@ import Image from 'next/image';
 import { Fragment, type ReactNode } from 'react';
 import { Faq } from '../../../components/Faq';
 import { GreetingSampleGallery } from '../../../components/GreetingSampleGallery';
+import { TutorialDemoGallery } from '../../../components/TutorialDemoGallery';
 import { IllustrationIcon } from '../../../components/IllustrationIcon';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../../lib/i18n';
@@ -38,7 +39,7 @@ import { PersonaSection } from './PersonaSection';
  *
  * Чего здесь НЕТ и почему:
  *
- *  - демо-ролика с главной (`DEMO_YOUTUBE_EMBED_URL`) — это реклама
+ *  - рекламных демо с главной — это реклама
  *    товара, а человек пришёл за поздравлением (§7 ТЗ);
  *  - секции `features` ГЛАВНОЙ — она описывает разбор референса и
  *    анализ аудитории, к поздравлению неприменимые (§7 ТЗ). Своя
@@ -212,6 +213,7 @@ export default function GreetingsLandingPage({
        а текст потом. У схемы `alt` пустой — смысл несёт подпись; у
        настоящего снимка — нет. */
     how: () => (
+      <>
       <section className="frames" id="how">
         <div className="wrap">
           <h2>{g.how.title}</h2>
@@ -250,6 +252,8 @@ export default function GreetingsLandingPage({
           </ol>
         </div>
       </section>
+      <TutorialDemoGallery scenario="greetings" locale={locale} dict={dict} />
+      </>
     ),
 
     occasions: () => (

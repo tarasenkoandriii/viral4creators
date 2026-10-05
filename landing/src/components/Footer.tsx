@@ -4,7 +4,6 @@ import { GREETING_SITE_URL } from '../lib/greeting-host';
 import { TUTORIAL_SITE_URL } from '../lib/tutorial-host';
 import {
   CLAUDE_REFERRAL_URL,
-  DEMO_YOUTUBE_URL,
   GITHUB_REPO_URL,
   MARKETPLACE_URL,
   SPEC_KIT_URL,
@@ -34,7 +33,7 @@ export function Footer({ dict, locale }: { dict: Dictionary; locale: Locale }) {
       <div className="wrap footer-inner">
         <span>© {new Date().getFullYear()} viral4creators</span>
         <nav className="footer-links">
-          <a href={DEMO_YOUTUBE_URL} target="_blank" rel="noreferrer">
+          <a href={`/${locale}#demo`}>
             {dict.footer.demo}
           </a>
           <a href={`${GREETING_SITE_URL}/${locale}`}>{dict.footer.greetings}</a>

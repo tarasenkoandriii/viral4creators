@@ -25,11 +25,6 @@ export const TMA_URL = process.env.NEXT_PUBLIC_TMA_URL ?? 'http://localhost:5173
 export const MARKETPLACE_URL =
   process.env.NEXT_PUBLIC_MARKETPLACE_URL ?? 'https://market.viral4creators.app';
 
-/** youtu.be/Ylw-e1AayGE — реальная демо-ссылка из README.md. */
-export const DEMO_YOUTUBE_ID = 'Ylw-e1AayGE';
-export const DEMO_YOUTUBE_URL = `https://youtu.be/${DEMO_YOUTUBE_ID}`;
-export const DEMO_YOUTUBE_EMBED_URL = `https://www.youtube-nocookie.com/embed/${DEMO_YOUTUBE_ID}`;
-
 export const GITHUB_REPO_URL = 'https://github.com/IuriiD/viral4creators';
 export const SPEC_KIT_URL = 'https://github.com/github/spec-kit';
 

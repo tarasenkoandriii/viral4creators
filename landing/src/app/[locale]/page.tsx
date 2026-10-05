@@ -1,3 +1,4 @@
+import { TutorialDemoGallery } from '../../components/TutorialDemoGallery';
 import { Header } from '../../components/Header';
 import { Faq } from '../../components/Faq';
 import { HowItWorks } from '../../components/HowItWorks';
@@ -8,8 +9,6 @@ import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
 import { GREETING_SITE_URL } from '../../lib/greeting-host';
 import {
-  DEMO_YOUTUBE_EMBED_URL,
-  DEMO_YOUTUBE_URL,
   MARKETPLACE_URL,
   TMA_URL,
 } from '../../lib/content';
@@ -46,27 +45,7 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
           </div>
         </section>
 
-        <section className="demo" id="demo">
-          <div className="wrap">
-            <h2>{dict.demo.title}</h2>
-            <p className="section-lead">{dict.demo.lead}</p>
-            <div className="demo-frame">
-              <iframe
-                src={DEMO_YOUTUBE_EMBED_URL}
-                title={dict.demo.iframeTitle}
-                loading="lazy"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
-            </div>
-            <p className="demo-link">
-              {dict.demo.noVideo}{' '}
-              <a href={DEMO_YOUTUBE_URL} target="_blank" rel="noreferrer">
-                {dict.demo.openYoutube}
-              </a>
-            </p>
-          </div>
-        </section>
+        <TutorialDemoGallery scenario="ads" locale={locale} dict={dict} />
 
         <section className="features" id="features">
           <div className="wrap">

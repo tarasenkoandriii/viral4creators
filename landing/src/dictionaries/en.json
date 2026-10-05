@@ -56,10 +56,11 @@
   },
   "demo": {
     "title": "What it looks like in practice",
-    "lead": "The full path from a reference video to a finished ad video — in one demo.",
-    "iframeTitle": "viral4creators — demo",
-    "noVideo": "Video not loading?",
-    "openYoutube": "Open on YouTube"
+    "lead": "Short demonstrations of individual steps in the app. Choose a topic.",
+    "openVideo": "Open video",
+    "unavailable": "No video is available in this language yet. See the workflow below.",
+    "chooseTopic": "Choose a demo topic",
+    "viewSteps": "View the steps"
   },
   "features": {
     "title": "Features",
@@ -957,7 +958,7 @@
     "cta": "Open viral4creators"
   },
   "footer": {
-    "demo": "Demo on YouTube",
+    "demo": "Watch demo",
     "github": "GitHub",
     "offer": "Public Offer",
     "terms": "Terms of Use",

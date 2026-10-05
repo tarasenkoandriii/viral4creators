@@ -56,10 +56,11 @@
   },
   "demo": {
     "title": "So sieht es in der Praxis aus",
-    "lead": "Der komplette Weg vom Referenzvideo zum fertigen Werbevideo — in einer einzigen Demo.",
-    "iframeTitle": "viral4creators — Demo",
-    "noVideo": "Video lädt nicht?",
-    "openYoutube": "Auf YouTube öffnen"
+    "lead": "Kurze Demonstrationen einzelner Schritte in der App. Wählen Sie ein Thema.",
+    "openVideo": "Video öffnen",
+    "unavailable": "Für diese Sprache gibt es noch kein Video. Sehen Sie sich den Ablauf unten an.",
+    "chooseTopic": "Demo-Thema auswählen",
+    "viewSteps": "Schritte ansehen"
   },
   "features": {
     "title": "Funktionen",
@@ -957,7 +958,7 @@
     "cta": "viral4creators öffnen"
   },
   "footer": {
-    "demo": "Demo auf YouTube",
+    "demo": "Demo ansehen",
     "github": "GitHub",
     "offer": "Vertragsangebot",
     "terms": "Nutzungsbedingungen",

@@ -56,10 +56,11 @@
   },
   "demo": {
     "title": "Cómo se ve en la práctica",
-    "lead": "El recorrido completo desde un video de referencia hasta un video publicitario terminado — en una sola demo.",
-    "iframeTitle": "viral4creators — demo",
-    "noVideo": "¿El video no carga?",
-    "openYoutube": "Abrir en YouTube"
+    "lead": "Demostraciones breves de los pasos de la aplicación. Elige un tema.",
+    "openVideo": "Abrir vídeo",
+    "unavailable": "Todavía no hay vídeo en este idioma. Consulta el proceso a continuación.",
+    "chooseTopic": "Elige un tema de demostración",
+    "viewSteps": "Ver los pasos"
   },
   "features": {
     "title": "Funciones",
@@ -957,7 +958,7 @@
     "cta": "Abrir viral4creators"
   },
   "footer": {
-    "demo": "Demo en YouTube",
+    "demo": "Ver demo",
     "github": "GitHub",
     "offer": "Oferta pública",
     "terms": "Términos de uso",
