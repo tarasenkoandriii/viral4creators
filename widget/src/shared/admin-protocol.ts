@@ -28,12 +28,54 @@ export type AdminParentMessage =
       pk: string;
       parentOrigin: string;
       lang: 'uk' | 'ru' | 'en' | null;
+      /** Э6-бис (б): токен ссылки мастера проверки (`?v4c_voicetest=`). */
+      vt?: string | null;
     }
   | { type: 'identity'; jwt: string }
-  | { type: 'logout' };
+  | { type: 'logout' }
+  /**
+   * Э6-бис (б): голосовое управление — ответы чанка `admin-act.js` со
+   * страницы (снимок, итоги шагов, стоп человеком, регистратор мастера).
+   * Сырой объект: строго его разбирает чанк `admin-vc.js` iframe.
+   */
+  | { type: 'ui'; raw: Record<string, unknown> };
 
 export type AdminFrameMessage =
-  { type: 'ready' } | { type: 'need-identity' } | { type: 'close' };
+  | { type: 'ready' }
+  | { type: 'need-identity' }
+  | { type: 'close' }
+  /**
+   * Э6-бис (б): команды плана iframe → страница (снимок, шаги, стоп,
+   * пауза, возврат полей, проверки мастера). `admin.js` только узнаёт вид
+   * и отдаёт сырое `admin-act.js` — разбор строгий там (`parseUiCommand`).
+   */
+  | { type: 'ui-raw'; raw: Record<string, unknown> };
+
+/** Виды команд плана iframe → страница (Э6-бис (б)). */
+const UI_TO_PAGE = [
+  'ui-snap',
+  'ui-run',
+  'ui-ack',
+  'ui-stop',
+  'ui-pause',
+  'ui-undo',
+  'vt-env',
+  'vt-markup',
+  'vt-mark',
+  'vt-arm',
+];
+/** Виды ответов страницы → iframe (Э6-бис (б)). */
+const UI_TO_FRAME = [
+  'ui-snapshot',
+  'ui-step',
+  'ui-need',
+  'ui-stopped',
+  'ui-undone',
+  'ui-attempt',
+  'vt-result',
+  'vt-submit',
+];
+const VT_TOKEN = /^[A-Za-z0-9_-]{20,100}$/;
 
 const JWT =
   /^[A-Za-z0-9_-]{2,1000}\.[A-Za-z0-9_-]{2,3000}\.[A-Za-z0-9_-]{2,200}$/;
@@ -80,19 +122,24 @@ export function parseAdminParentMessage(
     }
     const lang =
       o.lang === 'uk' || o.lang === 'ru' || o.lang === 'en' ? o.lang : null;
-    return { type: 'init', pk: o.pk, parentOrigin: o.parentOrigin, lang };
+    const vt = typeof o.vt === 'string' && VT_TOKEN.test(o.vt) ? o.vt : null;
+    return { type: 'init', pk: o.pk, parentOrigin: o.parentOrigin, lang, vt };
   }
   if (o.type === 'identity')
     return isJwt(o.jwt) ? { type: 'identity', jwt: o.jwt } : null;
   if (o.type === 'logout') return { type: 'logout' };
+  if (typeof o.type === 'string' && UI_TO_FRAME.indexOf(o.type) >= 0)
+    return { type: 'ui', raw: o };
   return null;
 }
 
 export function parseAdminFrameMessage(raw: unknown): AdminFrameMessage | null {
   const o = base(raw);
   if (!o) return null;
-  return o.type === 'ready' || o.type === 'need-identity' || o.type === 'close'
-    ? { type: o.type }
+  if (o.type === 'ready' || o.type === 'need-identity' || o.type === 'close')
+    return { type: o.type };
+  return typeof o.type === 'string' && UI_TO_PAGE.indexOf(o.type) >= 0
+    ? { type: 'ui-raw', raw: o }
     : null;
 }
 

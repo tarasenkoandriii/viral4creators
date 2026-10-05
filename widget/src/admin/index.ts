@@ -15,7 +15,18 @@
  *    `V4CAssist('identify-admin', jwt)` из SPA. Нет JWT — помощник не
  *    показывается и iframe получает `logout` (§4-бис.8).
  *  - В хранилище страницы админки ничего не пишется: ни `sub`, ни сессия
- *    (их держит только iframe `wa.`).
+ *    (их держит только iframe `wa.`). Э6-бис (б): единственное исключение —
+ *    флаг «план голосового управления идёт» (`v4c-admin-act` = `1` в
+ *    sessionStorage вкладки, без данных): после перехода окно помощника
+ *    поднимается само и iframe продолжает план.
+ *
+ * Э6-бис (б) «голосовое управление „Админкой“» (ТЗ §5-бис.3): команды
+ * плана своего iframe (`ui-*`, `vt-*`) уходят ленивому чанку
+ * `/v1/admin-act.js` (снимок, исполнитель, регистратор мастера) — сырыми,
+ * разбор строгий там; ответы — назад своему iframe. Нативные `click`,
+ * `addEventListener`, `setTimeout`, `createElement` запоминаются ЗДЕСЬ, при
+ * старте чанка (до того, как их подменит скрипт страницы). Ссылка мастера
+ * `?v4c_voicetest=` снимается с адреса сразу и отдаётся только iframe.
  */
 import { WIDGET_ADMIN_FRAME_PATH, WIDGET_GLOBAL } from '../shared/brand';
 import {
@@ -24,6 +35,43 @@ import {
   isJwt,
   parseAdminFrameMessage,
 } from '../shared/admin-protocol';
+import { WIDGET_VOICE_TEST_PARAM } from '../shared/brand';
+
+// Нативные методы — при старте чанка (§4.12: страница может их подменить).
+const nClick = HTMLElement.prototype.click;
+const nAdd = EventTarget.prototype.addEventListener;
+const nRemove = EventTarget.prototype.removeEventListener;
+const nTimeout = window.setTimeout;
+const nCreate = document.createElement;
+const N = {
+  el: <K extends keyof HTMLElementTagNameMap>(t: K) =>
+    nCreate.call(document, t) as HTMLElementTagNameMap[K],
+  on: (
+    t: EventTarget,
+    type: string,
+    fn: EventListener,
+    o?: boolean | AddEventListenerOptions
+  ) => nAdd.call(t, type, fn, o),
+  off: (t: EventTarget, type: string, fn: EventListener, o?: boolean) =>
+    nRemove.call(t, type, fn, o),
+  later: (fn: () => void, ms: number) => nTimeout.call(window, fn, ms),
+  click: nClick,
+};
+const ACT_KEY = 'v4c-admin-act';
+
+/** Ссылка мастера: снять с адреса сразу (история без токена). */
+function takeVoiceTest(): string | null {
+  try {
+    const u = new URL(location.href);
+    const t = u.searchParams.get(WIDGET_VOICE_TEST_PARAM);
+    if (!t) return null;
+    u.searchParams.delete(WIDGET_VOICE_TEST_PARAM);
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    return /^[A-Za-z0-9_-]{20,100}$/.test(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
 
 type Api = ((...args: unknown[]) => void) & { q?: unknown[][]; l?: number };
 
@@ -73,7 +121,10 @@ export function start(script: HTMLScriptElement): void {
     }
   }
 
+  const vt = takeVoiceTest();
   const host = document.createElement('div');
+  // Свой корень: в снимок голосового управления не попадает (§5-бис.3 п.2).
+  host.setAttribute('data-v4c', '');
   const root = host.attachShadow({ mode: 'closed' });
   try {
     const sheet = new CSSStyleSheet();
@@ -141,6 +192,8 @@ export function start(script: HTMLScriptElement): void {
     frame = document.createElement('iframe');
     frame.title = LABEL[lang];
     frame.setAttribute('referrerpolicy', 'origin');
+    // Э6-бис (б): микрофон голосовых команд сотрудника — только этому iframe.
+    frame.setAttribute('allow', 'microphone');
     frame.src = `${origin}${WIDGET_ADMIN_FRAME_PATH}?pk=${encodeURIComponent(pk!)}`;
     panel.appendChild(frame);
   }
@@ -151,6 +204,32 @@ export function start(script: HTMLScriptElement): void {
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
+  // Э6-бис (б): исполнитель плана — ленивый чанк своего origin.
+  type ActApi = { on(raw: Record<string, unknown>): void };
+  let actQ: Promise<ActApi | null> | null = null;
+  const act = (raw: Record<string, unknown>) => {
+    actQ ||= import(/* @vite-ignore */ `${origin}/v1/admin-act.js`)
+      .then((x: { start: (h: unknown) => ActApi }) =>
+        x.start({
+          N,
+          post: (m: object) => send(m),
+          min: () => {
+            if (innerWidth < 720) setOpen(false);
+          },
+          mark: (on: boolean) => {
+            try {
+              if (on) sessionStorage.setItem(ACT_KEY, '1');
+              else sessionStorage.removeItem(ACT_KEY);
+            } catch {
+              /* хранилище недоступно — продолжение после перехода вручную */
+            }
+          },
+        })
+      )
+      .catch(() => null);
+    void actQ.then((a) => a && a.on(raw));
+  };
+
   btn.addEventListener('click', () => setOpen(panel.className === 'p'));
   window.addEventListener('message', (e: MessageEvent) => {
     if (!frame || e.source !== frame.contentWindow || e.origin !== origin)
@@ -159,8 +238,10 @@ export function start(script: HTMLScriptElement): void {
     if (!m) return;
     if (m.type === 'ready') {
       ready = true;
-      send({ type: 'init', pk, parentOrigin: location.origin, lang });
+      send({ type: 'init', pk, parentOrigin: location.origin, lang, vt });
       void giveIdentity();
+    } else if (m.type === 'ui-raw') {
+      act(m.raw);
     } else if (m.type === 'need-identity') {
       void giveIdentity();
     } else if (m.type === 'close') {
@@ -188,4 +269,12 @@ export function start(script: HTMLScriptElement): void {
   for (const args of queued) api(...args);
   if (!jwt && !endpoint) host.style.display = 'none';
   (document.body || document.documentElement).appendChild(host);
+  // План шёл до перехода или открыта ссылка мастера — окно поднимается само.
+  let acting = false;
+  try {
+    acting = sessionStorage.getItem(ACT_KEY) === '1';
+  } catch {
+    acting = false;
+  }
+  if ((acting || vt) && (jwt || endpoint)) setOpen(true);
 }

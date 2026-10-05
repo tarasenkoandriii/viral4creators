@@ -222,6 +222,17 @@ export async function adminRoute(
       message: 'expired',
     });
   }
+  // Э6-бис (б): голосовое управление «Админкой» (admin-vc-mock.ts; модуль
+  // тянет проверки sites-backend — грузится только процессом стенда, не
+  // процессом тестов, который берёт отсюда `testJwt`).
+  if (
+    /^\/assist-admin\/v1\/(voice-control|voice|ui-plan|voice-test)(\/|$)/.test(
+      p
+    )
+  ) {
+    const m = await import('./admin-vc-mock');
+    return m.adminVcRoute(req, res, p, sess!.sub, 'admin.example.localhost');
+  }
   if (req.method === 'GET' && p === '/assist-admin/v1/state') {
     return json(res, 200, {
       conversationId: null,

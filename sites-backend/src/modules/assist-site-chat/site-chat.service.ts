@@ -157,6 +157,7 @@ import {
   type TemplateKind,
 } from './templates';
 import { insertOnlyUsageDb, recordSiteChatUsage } from './usage';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 
 type Emit = (ev: WidgetChatEvent) => void;
 
@@ -1647,13 +1648,16 @@ export class SiteChatService {
     return s?.name ?? '';
   }
 
-  /** Подтверждённые хосты сайта (+ origin родителя, уже проверенный гвардом W2). */
+  /**
+   * Подтверждённые хосты «Сайта» (+ origin родителя, уже проверенный гвардом
+   * W2); хосты «Админки» — не хосты сайта (ТЗ §10, аудит Э6-бис (б) (8)).
+   */
   private async siteHosts(
     siteId: string,
     parentOrigin: string,
   ): Promise<string[]> {
     const rows = await this.db.siteHost.findMany({
-      where: { siteId, status: 'verified' },
+      where: { siteId, status: 'verified', ...PUBLIC_SITE_HOST },
       select: { host: true },
     });
     const out = new Set(rows.map((r) => r.host.toLowerCase()));

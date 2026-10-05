@@ -32,7 +32,8 @@ export interface ActionLogEntry {
    * read — вызов чтения (Э7); write/danger — исполнение «Да» (Э8);
    * proposal — предложение создано; decision — «Нет»/истекло; chain —
    * статус цепочки (компенсация, §5-бис.15 п.11); memo — изменение мемо
-   * АМ-N (§5-бис.17 п.10).
+   * АМ-N (§5-бис.17 п.10); Э6-бис (б): ui-plan / ui-step / ui-test /
+   * voice-control — голосовое управление «Админкой».
    */
   kind?: ActionLogKind;
   outcome: string;
@@ -44,7 +45,20 @@ export interface ActionLogEntry {
 }
 
 export type ActionLogKind =
-  'read' | 'write' | 'danger' | 'proposal' | 'decision' | 'chain' | 'memo';
+  | 'read'
+  | 'write'
+  | 'danger'
+  | 'proposal'
+  | 'decision'
+  | 'chain'
+  | 'memo'
+  // Э6-бис (б): голосовое управление «Админкой» (§5-бис.9, §5-бис.13):
+  // план и «Да»/стоп, каждый шаг (значения — маской), отчёт мастера,
+  // смена переключателя и принятые риски («журнал кабинета» §5-бис.2).
+  | 'ui-plan'
+  | 'ui-step'
+  | 'ui-test'
+  | 'voice-control';
 
 export interface ActionLogView {
   id: string;

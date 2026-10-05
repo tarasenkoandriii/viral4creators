@@ -59,6 +59,7 @@ import {
 } from '../../assist-ui-core/wizard';
 import type { AccountMembership } from '../../site-core/account/roles';
 import { evaluateHostAccess } from '../../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../../site-core/ownership/host-roles';
 import { uiMapHost } from '../../site-core/ui-map/ui-map';
 import {
   VOICE_CONTROL_RISKS_VERSION,
@@ -506,8 +507,9 @@ export class VoiceControlSettingsService {
     const { row } = await loadAssistSite(db, m.accountId, siteId);
     await this.assertVoice(m, row);
     const now = this.now();
+    // Мастер «Сайта» — только на хостах «Сайта» (не «Админки», ТЗ §10).
     const hosts = await db.siteHost.findMany({
-      where: { siteId },
+      where: { siteId, ...PUBLIC_SITE_HOST },
       orderBy: { createdAt: 'asc' },
     });
     const ok = hosts.filter((h) => {

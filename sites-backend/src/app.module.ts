@@ -30,6 +30,7 @@ import { PlatformAdminModule } from './modules/platform-admin/platform-admin.mod
 import { InternalSitesModule } from './modules/internal-sites/internal-sites.module';
 import { AssistSiteVoiceModule } from './modules/assist-site-voice/assist-site-voice.module';
 import { AssistSiteVoiceControlModule } from './modules/assist-site-voice-control/assist-site-voice-control.module';
+import { AssistSiteVoiceMapModule } from './modules/assist-site-voice-map/assist-site-voice-map.module';
 import { AssistSiteMediaModule } from './modules/assist-site-media/assist-site-media.module';
 import { InternalSiteMediaModule } from './modules/internal-sites/site-media.module';
 import { SiteCredentialsModule } from './modules/site-credentials/site-credentials.module';
@@ -37,6 +38,7 @@ import { AssistAdminModeModule } from './modules/assist-admin-mode/assist-admin-
 import { AssistAdminChatModule } from './modules/assist-admin-chat/assist-admin-chat.module';
 import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admin-crawl.module';
 import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-admin-actions.module';
+import { AssistAdminVoiceModule } from './modules/assist-admin-voice/assist-admin-voice.module';
 
 @Module({
   imports: [
@@ -77,6 +79,7 @@ import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-
     // Э5 «Голос»: микрофон и озвучка виджета (Soniox), кабинет голоса.
     AssistSiteVoiceModule,
     AssistSiteVoiceControlModule,
+    AssistSiteVoiceMapModule,
     // Э6 «Видео и подсветка»: экран «Видео» кабинета (публичная часть — в
     // конвейере ответа и маршрутах виджета); ролики и карта из обучалки
     // генератора — внутренний API (HMAC, тот же канал Ш1).
@@ -95,6 +98,10 @@ import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-
     AssistAdminCrawlModule,
     // Э8 «Админка»: действия — предложения «Да», компенсации, мемо АМ-N.
     AssistAdminActionsModule,
+    // Э6-бис (б): голосовое управление «Админкой» — переключатель и мастер
+    // (кабинет), планы кликов сотрудника (iframe `wa.`), мемо АМ-N с шагами
+    // на странице.
+    AssistAdminVoiceModule,
   ],
 })
 export class AppModule {}

@@ -36,12 +36,14 @@ import {
   OperationActionSettings,
   SigningSecret,
 } from './AdminActionsParts';
+import { AdminVoiceSection } from './AdminVoiceSection';
 
 /**
  * «Админка» (Э7, ТЗ §3.8): режим и секрет подписи, коннекторы API, журнал
  * вызовов, «Обучение (сотрудники)», «Статистика (сотрудники)»; Э8 —
  * действия write/danger, журнал действий с откатом, мемо АМ-N. Только
  * `assistAdmin: owner` — остальные видят отказ (сервер всё равно 403).
+ * Э6-бис (б): «Голос» — голосовое управление админкой (AdminVoiceSection).
  */
 export function AdminModeScreen({
   siteId,
@@ -80,6 +82,7 @@ export function AdminModeScreen({
       {tab === 'memos' && <MemosTab siteId={siteId} />}
       {tab === 'learning' && <StaffLearning siteId={siteId} />}
       {tab === 'stats' && <Stats siteId={siteId} />}
+      {tab === 'voice' && <AdminVoiceSection siteId={siteId} />}
     </div>
   );
 }

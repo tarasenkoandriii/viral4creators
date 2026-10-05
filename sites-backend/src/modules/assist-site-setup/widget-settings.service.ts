@@ -19,6 +19,7 @@ import { SitesDb } from '../../prisma/sites-db.service';
 import { qualified } from '../assist-knowledge-core/tables';
 import type { AccountMembership } from '../site-core/account/roles';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 import { notFoundSite } from '../site-core/site-core.constants';
 import type {
   AssetView,
@@ -605,9 +606,16 @@ export class WidgetSettingsService {
     );
   }
 
+  /**
+   * Хосты вида «Сайта»: хосты «Админки» (`assistRole = 'admin'`, ТЗ §10,
+   * аудит Э6-бис (б) (8)) исключены — их нет в списке экрана, умолчании
+   * черновика, проверке ссылок и публикуемом `hosts[]` (сохранённый
+   * черновик со ссылкой на такой хост теряет её при чтении, явная ссылка
+   * в сохранении — `host_unknown`).
+   */
   private hosts(db: Db, siteId: string): Promise<HostRow[]> {
     return db.siteHost.findMany({
-      where: { siteId },
+      where: { siteId, ...PUBLIC_SITE_HOST },
       orderBy: { createdAt: 'asc' },
       select: HOST_SELECT,
     });

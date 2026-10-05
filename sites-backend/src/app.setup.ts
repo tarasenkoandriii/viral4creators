@@ -21,6 +21,7 @@ import { corsDeniedHandler, corsOptionsDelegate } from './common/cors';
 import { SitesConfig } from './config/configuration';
 import { VOICE_DEFAULTS } from './modules/assist-site-voice/voice-config';
 import { VOICE_CONTROL_DEFAULTS } from './modules/assist-site-voice-control/voice-control-config';
+import { ADMIN_STT } from './modules/assist-admin-voice/admin-stt';
 
 /**
  * Э2: картинка бренда приходит JSON-ом `{ kind, mime, dataBase64 }` —
@@ -83,6 +84,18 @@ export const WIDGET_VOICE_PATH = '/widget/v1/voice';
  * маршрута (тело дальше не читается, сессия и лимиты не трогаются).
  */
 export const WIDGET_UI_PLAN_PATH = '/widget/v1/ui-plan';
+
+/**
+ * Э6-бис (б): голосовое управление «Админкой» — запись команды сотрудника
+ * (`/assist-admin/v1/voice`, `audio/*` ≤ 1 МБ, Buffer только в памяти
+ * запроса) и план/мастер (`/assist-admin/v1/ui-plan*`, `…/voice-test/*` —
+ * JSON ≤ 96 КБ, как у «Сайта»; больше — 413 `ADMIN_VC_TOO_LARGE`).
+ */
+export const ADMIN_VOICE_PATH = '/assist-admin/v1/voice';
+export const ADMIN_UI_PLAN_PATHS = [
+  '/assist-admin/v1/ui-plan',
+  '/assist-admin/v1/voice-test',
+];
 
 export function configureApp(app: INestApplication, config: SitesConfig) {
   // API отдаёт только JSON: CSP/COEP ему не нужны, а nosniff, HSTS и
@@ -224,6 +237,57 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       });
     },
   );
+  const adminVoiceRaw = raw({
+    type: (req) => /^audio\//i.test(String(req.headers['content-type'] ?? '')),
+    limit: ADMIN_STT.maxAudioBytes,
+  });
+  app.use(
+    ADMIN_VOICE_PATH,
+    function adminVoiceRawAudio(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      adminVoiceRaw(req, res, (err?: unknown) => {
+        if (!err) return next();
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'ADMIN_VC_AUDIO_INVALID',
+            message: 'Запись не подходит — повторите или напишите текстом',
+          },
+          meta: { timestamp: new Date().toISOString(), path: ADMIN_VOICE_PATH },
+        });
+      });
+    },
+  );
+  const adminPlanJson = json({ limit: VOICE_CONTROL_DEFAULTS.maxBodyBytes });
+  for (const path of ADMIN_UI_PLAN_PATHS) {
+    app.use(
+      path,
+      function adminUiPlanJson(
+        req: Request,
+        res: Response,
+        next: NextFunction,
+      ) {
+        adminPlanJson(req, res, (err?: unknown) => {
+          if (!err) return next();
+          const tooLarge =
+            (err as { type?: string }).type === 'entity.too.large';
+          res.status(tooLarge ? 413 : 400).json({
+            success: false,
+            error: tooLarge
+              ? {
+                  code: 'ADMIN_VC_TOO_LARGE',
+                  message: 'Страница слишком большая для голосового управления',
+                }
+              : { code: 'BAD_REQUEST', message: 'Неверный запрос' },
+            meta: { timestamp: new Date().toISOString(), path },
+          });
+        });
+      },
+    );
+  }
   app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());

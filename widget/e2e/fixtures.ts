@@ -151,6 +151,9 @@ export interface SiteOpts {
     denySelectors?: string[];
     allowSelectors?: string[];
     maxSteps?: number;
+    /** Э6-тер: у сайта есть мемо; «Я вмію» — имена мемо (skills). */
+    memos?: boolean;
+    skills?: string[];
   };
   vcRules?: unknown;
   vcModel?: Record<

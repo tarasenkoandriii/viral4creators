@@ -58,10 +58,26 @@ export const BUDGETS = [
     files: ['dist/v1/admin-chat.js', 'dist/v1/admin-chat.css'],
     maxGzip: 12 * KB,
   },
+  // Э6-бис (б): голосовое управление «Админкой» — исполнитель на странице
+  // админки (ленивый чанк admin.js по команде своего iframe `wa.`; снимок с
+  // фильтром строк таблиц, регистратор мастера) и сторона iframe `wa.`
+  // (ленивый чанк admin-chat.js, только при включённом режиме или ссылке
+  // мастера). admin.js, admin-chat.js и act.js не растут.
+  { name: 'admin-act', files: ['dist/v1/admin-act.js'], maxGzip: 11 * KB },
+  { name: 'admin-vc', files: ['dist/v1/admin-vc.js'], maxGzip: 22 * KB },
   // Э3-бис: связанный режим по согласию (ленивый чанк engage.js, только при
   // поле `analytics` конфига) и поведение (ленивый чанк ana.js, только с
   // согласием и включённым поведением; §5-тер.8 — ≤ 4 КБ gzip).
   { name: 'ana', files: ['dist/v1/ana.js'], maxGzip: 4 * KB },
+  // Э6-тер: редактор голосовой карты — пикер в origin заказчика (только по
+  // ссылке владельца `?v4c_edit=`; ТЗ §5-кватер.3: ≤ 40 КБ) и панель в
+  // iframe `we.`; загрузчик лишь отдаёт управление.
+  { name: 'editor', files: ['dist/v1/editor.js'], maxGzip: 40 * KB },
+  {
+    name: 'editor-panel',
+    files: ['dist/v1/editor-panel.js', 'dist/v1/editor-panel.css'],
+    maxGzip: 16 * KB,
+  },
   { name: 'bf', files: ['dist/v1/bf.js'], maxGzip: 4 * KB },
 ];
 
@@ -120,9 +136,16 @@ for (const [label, file] of [
   // Э7: «Админка» — чанк в origin админки заказчика и чат сотрудника `wa.`.
   ['чанк «Админки»', 'dist/v1/admin.js'],
   ['чат сотрудника', 'dist/v1/admin-chat.js'],
+  // Э6-бис (б): исполнитель «Админки» — в origin админки заказчика; сторона
+  // iframe `wa.` — Trusted Types 'none'.
+  ['исполнитель «Админки»', 'dist/v1/admin-act.js'],
+  ['голосовое управление «Админкой» (iframe)', 'dist/v1/admin-vc.js'],
   // Э3-бис: связанный режим и поведение — в origin заказчика.
   ['чанк связанного режима', 'dist/v1/ana.js'],
   ['чанк поведения', 'dist/v1/bf.js'],
+  // Э6-тер: пикер редактора — в origin заказчика; панель — iframe `we.`.
+  ['пикер редактора', 'dist/v1/editor.js'],
+  ['панель редактора', 'dist/v1/editor-panel.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {

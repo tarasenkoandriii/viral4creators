@@ -10,7 +10,13 @@ export interface AdminModeTexts {
   open: string;
   openChat: string;
   tabs: Record<
-    'settings' | 'connectors' | 'log' | 'memos' | 'learning' | 'stats',
+    | 'settings'
+    | 'connectors'
+    | 'log'
+    | 'memos'
+    | 'learning'
+    | 'stats'
+    | 'voice',
     string
   >;
   noAccess: string;
@@ -128,6 +134,7 @@ const uk: AdminModeTexts = {
     memos: 'Мемо АМ',
     learning: 'Навчання (співробітники)',
     stats: 'Статистика (співробітники)',
+    voice: 'Голос',
   },
   noAccess: 'Розділ лише для власника «Адмінки».',
   settings: {
@@ -261,6 +268,7 @@ const ru: AdminModeTexts = {
     memos: 'Мемо АМ',
     learning: 'Обучение (сотрудники)',
     stats: 'Статистика (сотрудники)',
+    voice: 'Голос',
   },
   noAccess: 'Раздел только для владельца «Админки».',
   settings: {
@@ -397,6 +405,7 @@ const en: AdminModeTexts = {
     memos: 'AM memos',
     learning: 'Training (staff)',
     stats: 'Statistics (staff)',
+    voice: 'Voice',
   },
   noAccess: 'Only the admin-mode owner can open this section.',
   settings: {

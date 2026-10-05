@@ -2,7 +2,7 @@
  * Э3-бис: статистика экспериментов (§5-тер.2, §5-тер.16 п.14) — назначение
  * группы, мощность, SRM, итог без подглядывания.
  */
-import { randomBytes } from 'crypto';
+import { createHash } from 'crypto';
 import {
   MAX_MDE_REL,
   analyze,
@@ -21,14 +21,49 @@ describe('эксперименты: математика (Э3-бис)', () => {
     expect(fnv1a32('foobar')).toBe(0xbf9cf968);
   });
 
-  it('10 000 случайных ключей визита: доля группы b — 10% ± 0.6 п.п., детерминированно', () => {
-    let b = 0;
-    for (let i = 0; i < 10_000; i++) {
-      const v = randomBytes(12).toString('base64url');
-      if (armOf('salt-1', v, 0.1) === 'b') b++;
-      expect(armOf('salt-1', v, 0.1)).toBe(armOf('salt-1', v, 0.1));
+  // Детерминированный набор ключей (раньше — randomBytes: допуск 0.6 п.п. при
+  // N=10 000 и p=0.1 — это ≈2σ, тест падал в ~5% прогонов). Ключи — 12 байт
+  // sha256 от счётчика в base64url (тот же вид, что настоящий ключ визита).
+  const VISITS = 40_000;
+  const visitKey = (i: number): string =>
+    createHash('sha256')
+      .update(`e3bis-visit-${i}`)
+      .digest()
+      .subarray(0, 12)
+      .toString('base64url');
+  const KEYS = Array.from({ length: VISITS }, (_, i) => visitKey(i));
+
+  it.each([
+    ['salt-1', 0.1],
+    ['salt-2', 0.1],
+    ['salt-1', 0.5],
+    ['salt-2', 0.5],
+  ])(
+    '40 000 ключей визита, соль %s: доля группы b = %s ± 4σ, детерминированно',
+    (salt, share) => {
+      let b = 0;
+      for (const v of KEYS) {
+        if (armOf(salt, v, share) === 'b') b++;
+        expect(armOf(salt, v, share)).toBe(armOf(salt, v, share));
+      }
+      const sigma = Math.sqrt((share * (1 - share)) / VISITS);
+      // p=0.1: 4σ = 0.6 п.п. (прежний допуск, но теперь при вчетверо большей N).
+      expect(Math.abs(b / VISITS - share)).toBeLessThan(4 * sigma);
+    },
+  );
+
+  it('хеш равномерен по всему диапазону: χ² по 20 корзинам < 43.8 (df=19, p=0.001)', () => {
+    const bins = new Array<number>(20).fill(0);
+    for (const v of KEYS) {
+      bins[Math.floor((fnv1a32(`salt-1:${v}`) / 4294967296) * 20)]++;
     }
-    expect(Math.abs(b / 10_000 - 0.1)).toBeLessThan(0.006);
+    const e = VISITS / 20;
+    const chi2 = bins.reduce((s, o) => s + ((o - e) * (o - e)) / e, 0);
+    expect(chi2).toBeLessThan(43.82);
+    // и доля через armOf совпадает с корзинами: share=0.05 → первая корзина
+    expect(KEYS.filter((v) => armOf('salt-1', v, 0.05) === 'b').length).toBe(
+      bins[0],
+    );
   });
 
   it('SRM: правильная доля — p высокое; перекос — p < 0.001', () => {

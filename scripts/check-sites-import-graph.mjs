@@ -119,6 +119,16 @@
  *     `assist_site_memo_checks` (§5-бис.17 п.12). Слой 2 к правам роли
  *     (слой 3, миграция _assist_chains_memo).
  *
+ * 18. (Э6-тер) `voice-map-public-views`: публичный код (зоны правила 8)
+ *     не называет таблиц и моделей голосовой карты (`assist_site_voice_maps`,
+ *     `assist_site_voice_map_versions`, `assist_site_voice_map_changes`,
+ *     `assist_site_voice_map_editor_sessions`, `AssistSiteVoiceMap…`):
+ *     черновик, версии, журнал и сессии редактора — только кабинету и панели
+ *     `we.` (основная роль); публичный код читает ТОЛЬКО представление
+ *     `assist_site_voice_map_published` (§5-кватер.9, миграция
+ *     _assist_visual_editor). Модуль `assist-site-voice-map` — режим «Сайт»
+ *     (правило 1 по префиксу `assist-site-`).
+ *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
  * относительные и от `baseUrl` (`src/…`). Тесты (*.spec.ts) проверяются
@@ -382,6 +392,9 @@ const SITE_NAMES = /assist_site_|\bAssistSite[A-Z]\w*|\bassistSite[A-Z]\w*/;
 /** Э6-бис (е): таблицы/модели мемо (представления `_published`/`_checks` — можно). */
 const MEMO_TABLE_NAMES =
   /\bassist_site_memos\b|\bassist_site_memo_versions\b|\bassist_site_memo_changes\b|\bassist_site_phrases\b|\bAssistSiteMemo(?:Version|Change)?\b|\bAssistSitePhrase\b|\bassistSiteMemo(?:Version|Change)?\b|\bassistSitePhrase\b/;
+/** Э6-тер: таблицы/модели голосовой карты (представление `_published` — можно). */
+const VOICE_MAP_TABLE_NAMES =
+  /\bassist_site_voice_maps\b|\bassist_site_voice_map_(?:versions|changes|editor_sessions)\b|\bAssistSiteVoiceMap(?:Version|Change|EditorSession)?\b|\bassistSiteVoiceMap(?:Version|Change|EditorSession)?\b/;
 const CREDENTIAL_NAMES =
   /\b(site_test_accounts|site_credentials|site_credential_leases|site_credential_audit|user_site_sessions|user_site_secrets)\b|\b(siteTestAccount|siteCredential|siteCredentialLease|siteCredentialAudit|userSiteSession|userSiteSecret)\b/;
 export const LITERAL_RULES = [
@@ -422,6 +435,12 @@ export const LITERAL_RULES = [
     why: 'Э6-бис (е) §5-бис.17 п.12: публичный код читает мемо только через представления (assist_site_memo_published/_checks) — не таблицы мемо, историю и индекс фраз',
     in: (m, inModule) => inPublicZone(m, inModule ?? ''),
     re: MEMO_TABLE_NAMES,
+  },
+  {
+    id: 'voice-map-public-views',
+    why: 'Э6-тер §5-кватер.9: публичный код читает голосовую карту только через представление assist_site_voice_map_published — не черновик, версии, журнал и сессии редактора',
+    in: (m, inModule) => inPublicZone(m, inModule ?? ''),
+    re: VOICE_MAP_TABLE_NAMES,
   },
 ];
 
@@ -580,6 +599,17 @@ function selfTest() {
 
   // Каждая фикстура-нарушитель — ровно одно нарушение своего правила.
   const bad = [
+    // Э6-тер: публичный код голосовой карты — только представление.
+    [
+      'modules/assist-site-voice-control/public/vm1.ts',
+      'const q = `SELECT "draft" FROM "sites"."assist_site_voice_maps" WHERE "siteId" = $1`;',
+      'voice-map-public-views',
+    ],
+    [
+      'modules/assist-widget/vm2.ts',
+      'const rows = await db.assistSiteVoiceMapEditorSession.findMany({});',
+      'voice-map-public-views',
+    ],
     // Э6-бис (е): публичный код мемо — только представления.
     [
       'modules/assist-site-voice-control/public/mp1.ts',
@@ -881,6 +911,34 @@ function selfTest() {
       `import { adminMemoGates } from '../assist-admin-actions/admin-memo';`,
       'ui-core-neutral',
     ],
+    // Э6-бис (б): голосовое управление «Админкой» — модуль зоны «Админки»:
+    // «Сайт» (виджет, план и кабинет голосового управления) его не берёт, он
+    // не берёт «Сайт» и не называет его таблиц; ядро — нейтрально.
+    [
+      'modules/assist-widget/bg.ts',
+      `import { AdminUiPlanService } from '../assist-admin-voice/admin-ui-plan.service';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-site-voice-control/cabinet/bh.ts',
+      `import { checkAdminPlan } from '../../assist-admin-voice/admin-voice-rules';`,
+      'site↛admin',
+    ],
+    [
+      'modules/assist-admin-voice/bi.ts',
+      `import { SiteUiPlanService } from '../assist-site-voice-control/public/ui-plan.service';`,
+      'admin↛site',
+    ],
+    [
+      'modules/assist-admin-voice/bj.ts',
+      `const n = await db.assistSiteUiPlan.count();`,
+      'admin-names↛site',
+    ],
+    [
+      'modules/assist-ui-core/bk.ts',
+      `import { checkAdminPlan } from '../assist-admin-voice/admin-voice-rules';`,
+      'ui-core-neutral',
+    ],
     [
       'modules/site-core/av.ts',
       `const sql = 'SELECT 1 FROM "sites"."user_site_secrets"';`,
@@ -950,6 +1008,20 @@ function selfTest() {
   // Разрешённое: своё внутри модуля, общий код, site-crawl из «Админки»,
   // пакеты, импорт в комментарии, «Админка» → «Админка».
   const good = [
+    // Э6-бис (б): голосовое управление «Админкой» берёт ядро и «Админку».
+    [
+      'modules/assist-admin-voice/okv.ts',
+      `import { checkPlan } from '../assist-ui-core/plan-checks';\nimport { AdminMemoService } from '../assist-admin-actions/admin-memo.service';\nconst q = 'SELECT 1 FROM "sites"."assist_admin_ui_plans"';`,
+    ],
+    // Э6-тер: представление карты — публичному коду можно; модулю карты — таблицы.
+    [
+      'modules/assist-site-voice-control/public/vmok1.ts',
+      'const q = `SELECT "content" FROM "sites"."assist_site_voice_map_published" WHERE "siteId" = $1`;',
+    ],
+    [
+      'modules/assist-site-voice-map/vmok2.ts',
+      'const rows = await db.assistSiteVoiceMapEditorSession.findMany({});',
+    ],
     // Э6-бис (е): представления мемо — публичному коду можно; кабинету — таблицы.
     [
       'modules/assist-site-voice-control/public/mok1.ts',

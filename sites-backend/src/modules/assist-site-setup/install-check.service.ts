@@ -23,6 +23,7 @@ import { widgetOrigin as envWidgetOrigin } from '../../config/widget-env';
 import { SitesDb } from '../../prisma/sites-db.service';
 import type { AccountMembership } from '../site-core/account/roles';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 import { notFoundSite } from '../site-core/site-core.constants';
 import {
   PINNED_HTTP_DEPS,
@@ -279,8 +280,9 @@ export class InstallCheckService {
     const keys = [assist.publicKey, assist.testKey].filter(
       (k): k is string => !!k,
     );
+    // Хосты «Админки» — не хосты виджета «Сайта» (ТЗ §10).
     const hosts = await db.siteHost.findMany({
-      where: { siteId },
+      where: { siteId, ...PUBLIC_SITE_HOST },
       orderBy: { createdAt: 'asc' },
       take: 20,
       select: {

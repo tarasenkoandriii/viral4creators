@@ -47,6 +47,9 @@ export interface ChatRetentionResult {
   memoChangesDeleted?: number;
   memoVersionsDeleted?: number;
   memosPurged?: number;
+  /** Э6-тер: истёкшие ссылки/сессии редактора голосовой карты (сутки после срока) и журнал карты (180 дней). */
+  editorSessionsDeleted?: number;
+  voiceMapChangesDeleted?: number;
 }
 
 /** Э6-бис (е): история и метаданные мемо, ключ удалённого мемо — 180 дней. */
@@ -211,6 +214,23 @@ export class ChatRetention {
       `DELETE FROM ${S}."assist_site_memos" WHERE "id" IN (
          SELECT "id" FROM ${S}."assist_site_memos"
           WHERE "status" = 'removed' AND "removedAt" < $1 LIMIT $2)`,
+      memoCutoff,
+    );
+    // Э6-тер: ссылки и сессии редактора — через сутки после срока/отзыва
+    // (§5-кватер.13 «Кроны: новых нет»); журнал карты — 180 дней.
+    r.editorSessionsDeleted = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_voice_map_editor_sessions" WHERE "id" IN (
+         SELECT "id" FROM ${S}."assist_site_voice_map_editor_sessions"
+          WHERE ("exchangedAt" IS NULL AND "linkExpiresAt" < $1)
+             OR "absoluteExpiresAt" < $1 OR "revokedAt" < $1
+          LIMIT $2)`,
+      new Date(now.getTime() - day),
+    );
+    r.voiceMapChangesDeleted = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_voice_map_changes" WHERE "id" IN (
+         SELECT "id" FROM ${S}."assist_site_voice_map_changes" WHERE "createdAt" < $1 LIMIT $2)`,
       memoCutoff,
     );
     this.logger.log(`ретенция виджета: ${JSON.stringify(r)}`);

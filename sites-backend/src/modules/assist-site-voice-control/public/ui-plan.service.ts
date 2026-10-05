@@ -164,6 +164,14 @@ import {
   type VoiceControlAccess,
 } from '../voice-control-config';
 import { memoAlive, memoGoalRates, readPublishedMemos } from './memo-store';
+import { readPublishedVoiceMap } from './voice-map-store';
+import {
+  directMapPlan,
+  mapHintsOf,
+  mapRefsForPrompt,
+  resolveVoiceMap,
+  type ResolvedMap,
+} from '../../assist-ui-core/voice-map';
 import { claimPlanAnswer, quotaLeft } from './plan-billing';
 import {
   clearDeadLiveValues,
@@ -178,6 +186,7 @@ import {
   type PlanRow,
 } from './plan-store';
 import { tripVoiceControl } from './voice-test-store';
+import { PUBLIC_SITE_HOST } from '../../site-core/ownership/host-roles';
 
 export const UI_PLAN_PRICING_MODEL = GEMINI_MODEL;
 
@@ -224,6 +233,20 @@ export class UiPlanError extends Error {
 const fail = (f: UiPlanFailure): never => {
   throw new UiPlanError(f);
 };
+
+/**
+ * Шаги для ответа виджету: без `mapKey` (ключ цели голосовой карты владельца
+ * — транслит её имени, аудит Э6-тер (1)). В базе плана ключ остаётся (журнал
+ * шагов, Т-4); отпечаток `stepsHash` по нему не считается, а виджет его
+ * только возвращает — сверка подтверждения не меняется.
+ */
+export function publicSteps(steps: UiPlanStepView[]): UiPlanStepView[] {
+  return steps.map((s) => {
+    if (s.mapKey === undefined) return s;
+    const { mapKey: _k, ...rest } = s;
+    return rest;
+  });
+}
 
 /** Отпечаток шагов карточки: подтверждение относится ровно к ним (§5-бис.5). */
 export function stepsHash(steps: UiPlanStepView[]): string {
@@ -355,10 +378,14 @@ export class SiteUiPlanService {
     return onSiteHost(url, hosts);
   }
 
-  /** Подтверждённые хосты сайта + origin страницы (проверен гвардом). */
+  /**
+   * Подтверждённые хосты «Сайта» + origin страницы (проверен гвардом). Хосты
+   * «Админки» — не хосты сайта (ТЗ §10): снимок, ссылка шага или адрес шага
+   * на admin-хосте — `bad_request`/«никогда», как чужой хост.
+   */
   async siteHosts(site: WidgetSiteContext): Promise<string[]> {
     const rows = await this.db.siteHost.findMany({
-      where: { siteId: site.siteId, status: 'verified' },
+      where: { siteId: site.siteId, status: 'verified', ...PUBLIC_SITE_HOST },
       select: { host: true },
     });
     const hosts = rows.map((h) => h.host);
@@ -444,6 +471,26 @@ export class SiteUiPlanService {
       return refusedView('denied');
     }
 
+    // ── (Э6-тер) голосовая карта: подсказка, а не разрешение (Р-51) ──
+    // Опубликованная версия (представление, кэш 5 мин): цели шаблона
+    // страницы разрешаются по снимку кодом; denylist карты — вон из снимка
+    // до плана; риск карты — только нижняя граница в `checkPlan`.
+    const vmap = await this.voiceMapFor(site.siteId);
+    const resolved: ResolvedMap | null = vmap
+      ? resolveVoiceMap(vmap.content, snapshot, pagePath)
+      : null;
+    const work =
+      resolved && resolved.denyRefs.length
+        ? {
+            ...snapshot,
+            elements: snapshot.elements.filter(
+              (e) => !resolved.denyRefs.includes(e.ref),
+            ),
+          }
+        : snapshot;
+    const direct = resolved ? directMapPlan(text, resolved) : null;
+    const mapMiss = direct && 'miss' in direct ? direct.miss : null;
+
     // ── (е) мемо: прямой путь по фразе — до единиц и денег ──
     // Мемо — только в `on` (и тестовой сессии мастера); в `degraded` план
     // мемо ниже станет подсветкой первого шага (`checkPlan` со state).
@@ -463,7 +510,8 @@ export class SiteUiPlanService {
     // Lite-выбор — только если команда делит слово с именем/фразой/целью
     // какого-то мемо шаблона («поклади футболку і покажи кошик»).
     const memoish = !memo && memos.some((m) => memoMentioned(text, m.content));
-    if (!memo && !memoish && !looksLikeCommand(text)) return notCommandView();
+    if (!memo && !memoish && !direct && !looksLikeCommand(text))
+      return notCommandView();
 
     // ── единицы и потолок планов сайта ──
     // В-72 (Р-70): мемо прямым путём единиц не тратит; потолок — общий.
@@ -524,18 +572,26 @@ export class SiteUiPlanService {
         ];
       else if (comp.missingAt !== null)
         memoNotes = [{ code: 'no_target', target: stepText(comp.missingAt) }];
+    } else if (direct && 'raw' in direct) {
+      // (Э6-тер) прямой путь по карте: фраза = имя/синоним ровно одной цели.
+      raw = direct.raw;
+      origin = 'direct';
     } else {
-      raw = directPlan(text, snapshot);
+      raw = directPlan(text, work);
       if (raw) origin = 'direct';
     }
     let command = true;
     const map = memo ? [] : await this.mapRefs(ctx, snapshot.url, hosts);
+    // Аудит Э6-тер: ссылки Ш4 (`mN`) получают подсказки карты (denylist —
+    // «никогда», риск карты — нижняя граница); цели denylist — не в промпт.
+    const hints = resolved ? mapHintsOf(resolved, map) : null;
     if (!raw) {
       const prompt = buildPlanPrompt({
         transcript: text,
-        snapshot,
-        map,
+        snapshot: work,
+        map: hints ? mapRefsForPrompt(map, hints) : map,
         lang: lang ?? 'uk',
+        voiceMap: resolved?.hits.map((h) => ({ ref: h.ref, names: h.names })),
       });
       const est = estimateCost(UI_PLAN_PRICING_MODEL, {
         inputTokens: Math.max(
@@ -562,12 +618,13 @@ export class SiteUiPlanService {
     // ── проверка кодом (мемо — подсказка, а не разрешение: те же проверки) ──
     const checked = checkPlan({
       transcript: text,
-      snapshot,
+      snapshot: work,
       map,
       steps: raw,
       rules,
       hosts,
       state: access.mode,
+      ...(hints ? { mapHints: hints } : {}),
       ...(memo
         ? {
             trusted,
@@ -691,7 +748,11 @@ export class SiteUiPlanService {
       planId,
       stepIndex: 0,
       action: 'plan',
-      target: memo ? { memo: memo.memo.number, via: memo.via } : null,
+      target: memo
+        ? { memo: memo.memo.number, via: memo.via }
+        : direct && 'raw' in direct
+          ? { map: direct.key, via: 'direct' }
+          : null,
       url: snapshot.url,
       risk: top,
       confirmedBy: dryRun ? 'dry' : askFirst ? null : 'auto',
@@ -703,6 +764,8 @@ export class SiteUiPlanService {
           .slice(0, 200) || null,
       valueMasked: null,
       durationMs: null,
+      mapKey: direct && 'raw' in direct ? direct.key : null,
+      mapMiss: mapMiss !== null,
     });
     for (const n of notes)
       await insertActionLog(this.db, {
@@ -731,7 +794,7 @@ export class SiteUiPlanService {
       planId,
       conversationId,
       status,
-      steps,
+      steps: publicSteps(steps),
       currentStep: 0,
       notes,
       needsConfirm: !dryRun && askFirst,
@@ -752,6 +815,18 @@ export class SiteUiPlanService {
   /** (е) Есть ли у сайта опубликованные мемо (признак для конфига iframe). */
   async hasMemos(siteId: string): Promise<boolean> {
     return (await this.memosFor(siteId)).length > 0;
+  }
+
+  /** (Э6-тер) Опубликованная голосовая карта (представление; сбой — как будто карты нет, В-53). */
+  private async voiceMapFor(siteId: string) {
+    try {
+      return await readPublishedVoiceMap(this.db, siteId, this.now().getTime());
+    } catch (e) {
+      this.logger.warn(
+        `voice-map read failed site=${siteId}: ${(e as Error | null)?.name ?? 'Error'}`,
+      );
+      return null;
+    }
   }
 
   /** Опубликованные мемо сайта (представление; сбой — как будто мемо нет). */
@@ -1341,6 +1416,7 @@ export class SiteUiPlanService {
       confirmedBy: plan.confirmedBy,
       result: logged,
       reason: reasonCode,
+      mapKey: typeof s.mapKey === 'string' ? s.mapKey.slice(0, 40) : null,
       valueMasked: s.value ? maskSensitiveEcho(s.value) : null,
       durationMs:
         typeof body.durationMs === 'number' && Number.isFinite(body.durationMs)
@@ -1545,10 +1621,25 @@ export class SiteUiPlanService {
     await this.confirmSeen(ctx, snapshot, hosts, now);
     if (!zoneAllowed(pathOf(snapshot.url) ?? '/', access.rules))
       return this.stop(ctx, id, { by: 'close' });
+    // Аудит Э6-тер: карта действует и после перехода — denylist новой
+    // страницы вон из снимка, риск карты — нижняя граница (Р-51).
+    const vmap = await this.voiceMapFor(ctx.site.siteId);
+    const resolved = vmap
+      ? resolveVoiceMap(vmap.content, snapshot, pathOf(snapshot.url) ?? '/')
+      : null;
     const r = resolveAfterSteps({
       steps: plan.steps,
       from: plan.currentStep,
-      snapshot,
+      snapshot:
+        resolved && resolved.denyRefs.length
+          ? {
+              ...snapshot,
+              elements: snapshot.elements.filter(
+                (e) => !resolved.denyRefs.includes(e.ref),
+              ),
+            }
+          : snapshot,
+      ...(resolved ? { mapHints: mapHintsOf(resolved) } : {}),
       // Сырой текст команды (пока план живой): значения с телефоном/e-mail
       // сверяются посимвольно — маска их не нашла бы.
       transcript: plan.utterance,
@@ -1910,7 +2001,7 @@ function view(plan: PlanRow): UiPlanView {
     planId: plan.id,
     conversationId: plan.conversationId,
     status: plan.status,
-    steps: plan.steps,
+    steps: publicSteps(plan.steps),
     currentStep: plan.currentStep,
     notes: [],
     needsConfirm: plan.needsConfirm,

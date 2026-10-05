@@ -115,6 +115,18 @@ assert.equal(
   header('/v1/admin-chat.js', 'Access-Control-Allow-Origin'),
   undefined
 );
+// Э6-бис (б): исполнитель «Админки» — import() со страницы админки
+// заказчика (нужен CORS); чанк iframe `wa.` — со своего origin (CORS нет).
+assert.equal(header('/v1/admin-act.js', 'Access-Control-Allow-Origin'), '*');
+assert.match(
+  header('/v1/admin-act.js', 'Cache-Control') ?? '',
+  /max-age=300\b/
+);
+assert.equal(
+  header('/v1/admin-vc.js', 'Access-Control-Allow-Origin'),
+  undefined
+);
+assert.equal(header('/v1/admin-vc.js', 'X-Content-Type-Options'), 'nosniff');
 assert.ok(cfg.ignoreCommand, 'ignoreCommand пропал');
 console.log(
   'vercel.json: шрифты immutable, загрузчик, engage.js, voice.js, highlight.js и act.js — 5 мин'

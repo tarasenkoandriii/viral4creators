@@ -21,6 +21,12 @@
  * POST `/proposals/:id/confirm` с хешем параметров, которые видел
  * сотрудник; итог и восстановление после перезагрузки — из `state`
  * (§4-бис.5: повторного исполнения нет — решает сервер).
+ *
+ * Э6-бис (б): голосовое управление «Админкой» — ленивый чанк
+ * `/v1/admin-vc.js` своего origin, только когда режим включён для этой
+ * сессии (`GET /assist-admin/v1/voice-control`) или открыта ссылка мастера;
+ * набранная команда сначала идёт ему (вопросы — как раньше, в чат), ответы
+ * страницы (`ui-*`, `vt-*`) — тоже ему.
  */
 import './admin-chat.css';
 import { ADMIN_CHANNEL_PREFIX, ADMIN_SESSION_HEADER } from '../shared/brand';
@@ -30,6 +36,7 @@ import {
   parseAdminParentMessage,
 } from '../shared/admin-protocol';
 import { T, type AdminLang } from './i18n';
+import type { VcApi, VcConfig } from '../admin-vc';
 
 interface Msg {
   id: string;
@@ -123,11 +130,61 @@ input.maxLength = 2000;
 const sendBtn = el('button', 'wa-s');
 sendBtn.type = 'submit';
 form.append(input, sendBtn);
-shell.append(head, banner, note, list, form);
+const vcBox = el('div', 'wa-vc');
+shell.append(head, banner, note, list, vcBox, form);
 app.appendChild(shell);
 
 function t() {
   return T[S.lang];
+}
+
+// ── Э6-бис (б): голосовое управление «Админкой» (ленивый чанк) ──────────
+let vc: VcApi | null = null;
+let vcLoading = false;
+let vtToken: string | null = null;
+
+async function vcLoad() {
+  if (vc || vcLoading || !S.session) return;
+  const r = await api<VcConfig>('/assist-admin/v1/voice-control');
+  const cfg = r.status === 200 ? r.data : null;
+  if (!cfg || (!cfg.mode && !vtToken && cfg.state !== 'test')) return;
+  vcLoading = true;
+  try {
+    const m = (await import(
+      /* @vite-ignore */ `${location.origin}/v1/admin-vc.js`
+    )) as { start: (h: unknown) => VcApi };
+    vc = m.start({
+      lang: () => S.lang,
+      pk: () => S.pk,
+      session: () => S.session,
+      feed: (role: 'employee' | 'assistant', text: string) => {
+        S.messages.push({
+          id: `l${Date.now().toString(36)}${S.messages.length}`,
+          role,
+          text,
+          answerPath: null,
+          rating: null,
+        });
+        renderMessages();
+      },
+      ask: (text: string) => void ask(text),
+      refresh: () => void loadState(),
+      post: (raw: Record<string, unknown>) => {
+        if (S.parentOrigin)
+          window.parent.postMessage(adminEnvelope(raw), S.parentOrigin);
+      },
+      box: vcBox,
+      form,
+      send: sendBtn,
+      vt: vtToken,
+      cfg,
+    });
+    vtToken = null;
+  } catch {
+    vc = null;
+  } finally {
+    vcLoading = false;
+  }
 }
 
 function setNote(text: string) {
@@ -390,6 +447,7 @@ function clearLocal() {
   S.exp = 0;
   S.messages = [];
   S.proposals.clear();
+  if (vc) vc.reset();
   try {
     sessionStorage.removeItem(storageKey());
   } catch {
@@ -516,6 +574,7 @@ async function identity(jwt: string) {
   }
   scheduleRefresh();
   await loadState();
+  await vcLoad();
 }
 
 async function ask(text: string) {
@@ -577,7 +636,11 @@ form.addEventListener('submit', (e) => {
   e.preventDefault();
   const v = input.value.trim();
   input.value = '';
-  void ask(v);
+  if (!v) return;
+  void (async () => {
+    if (vc && !S.busy && (await vc.typed(v))) return;
+    await ask(v);
+  })();
 });
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -602,6 +665,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     S.parentOrigin = e.origin;
     S.pk = m.pk;
     S.lang = m.lang ?? 'uk';
+    vtToken = m.vt ?? null;
     renderStatic();
     if (typeof BroadcastChannel === 'function' && !channel) {
       channel = new BroadcastChannel(`${ADMIN_CHANNEL_PREFIX}:${S.pk}`);
@@ -624,7 +688,9 @@ window.addEventListener('message', (e: MessageEvent) => {
   }
   if (!S.parentOrigin || e.origin !== S.parentOrigin) return;
   if (m.type === 'identity') void identity(m.jwt);
-  else if (m.type === 'logout') {
+  else if (m.type === 'ui') {
+    if (vc) vc.page(m.raw);
+  } else if (m.type === 'logout') {
     const had = S.session;
     if (had)
       void fetch('/assist-admin/v1/logout', {

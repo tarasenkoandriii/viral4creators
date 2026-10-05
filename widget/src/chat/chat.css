@@ -426,6 +426,14 @@ body {
   display: inline-flex;
   align-items: center;
 }
+/* Э6-тер: «Я вмію: …» под микрофоном (Р-72). */
+.skl {
+  margin: 0;
+  padding: 0 var(--pad) 4px;
+  font-size: 12px;
+  color: var(--mut);
+}
+
 .ft {
   display: flex;
   justify-content: space-between;

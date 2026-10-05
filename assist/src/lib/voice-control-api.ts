@@ -9,6 +9,7 @@
  */
 import { ApiError, type ApiClient } from '../kit';
 import { createMemoApi, type MemoApi } from './memo-api';
+import { createVoiceMapApi, type VoiceMapApi } from './voice-map-api';
 import { arr, obj, text } from './widget-api';
 
 export const VOICE_CONTROL_STATES = ['off', 'test', 'on', 'degraded'] as const;
@@ -406,6 +407,8 @@ export interface VoiceControlApi {
   test(siteId: string, testId: string): Promise<VoiceTestDetail | null>;
   /** (е) Мемо «Сайта» — раздел «Голос → Мемо». */
   memo: MemoApi;
+  /** Э6-тер: голосовая карта — визуальный редактор (ссылка, версии, публикация). */
+  voiceMap: VoiceMapApi;
 }
 
 const SEG = /^[A-Za-z0-9_-]{1,64}$/;
@@ -440,5 +443,6 @@ export function createVoiceControlApi(client: ApiClient): VoiceControlApi {
         await client.request('GET', `${p(id)}/tests/${seg(tid)}`)
       ),
     memo: createMemoApi(client),
+    voiceMap: createVoiceMapApi(client),
   };
 }

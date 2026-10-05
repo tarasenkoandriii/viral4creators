@@ -162,6 +162,10 @@ model Site {
   adminMemoVersions   AssistAdminMemoVersion[]
   adminPhrases        AssistAdminPhrase[]
   adminMemoRuns       AssistAdminMemoRun[]
+  // Э6-бис (б): голосовое управление «Админкой» — планы и мастер проверки
+  // (ТЗ §5-бис.2, §5-бис.9, §5-бис.13; только assist_admin_*).
+  adminUiPlans        AssistAdminUiPlan[]
+  adminVoiceTests     AssistAdminVoiceTest[]
   sandboxes           AssistSandbox[]
 
   // Э2: виджет режима «Сайт» (контракт /tmp/k/CONTRACT-E2.md).
@@ -223,6 +227,12 @@ model Site {
   memoChanges  AssistSiteMemoChange[]
   phrases      AssistSitePhrase[]
 
+  // Э6-тер: голосовая карта «Сайта» — визуальный редактор (ТЗ §5-кватер).
+  voiceMap               AssistSiteVoiceMap?
+  voiceMapVersions       AssistSiteVoiceMapVersion[]
+  voiceMapChanges        AssistSiteVoiceMapChange[]
+  voiceMapEditorSessions AssistSiteVoiceMapEditorSession[]
+
   // Э3-бис: аналитика с ИИ — разметка диалогов, lead score, выводы недели,
   // эксперименты, поведенческие факторы (ТЗ §5-тер.3–5, §5-тер.8–10).
   conversationLabels AssistSiteConversationLabel[]
@@ -274,6 +284,12 @@ model SiteHost {
   /// «удалить и добавить заново» обходило бы блокировку.
   reverifyBlockedAt          DateTime?
   reverifyBlockedByAccountId String?
+  /// Роль хоста в помощнике (ТЗ §3.3, §10 «Админка → Сайт»): `public` |
+  /// `admin`. Зеркало `assist_admin_settings.adminHostIds`, которое держит
+  /// ТРИГГЕР БД (аудит Э6-бис (б) (8)): роль виджета читает эту колонку
+  /// (колоночный GRANT), а настройки «Админки» — нет. На `admin`-хосте
+  /// публичный виджет «Сайта» не работает вовсе (гвард, конфиг, вид).
+  assistRole                 String    @default("public")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1494,6 +1510,32 @@ model AssistAdminSettings {
   /// Счётчик номеров мемо «Админки» АМ-N (не переиспользуется).
   memoCounter                   Int       @default(0)
 
+  // ── Э6-бис (б): голосовое управление «Админкой» (ТЗ §5-бис.2, §5-бис.9,
+  // §5-бис.11, §5-бис.13–14; аудит 1.2 — флаги только здесь, не в
+  // assist_sites, которую читает роль assist_public) ──
+  /// off | test | on | degraded. Включает (из `off`) только `assistAdmin:
+  /// owner` после экрана рисков и ввода имени сайта; `on` — только с годным
+  /// отчётом мастера «Админки» (решение владельца 03.10.2026 п.1).
+  voiceControlAdminState        String    @default("off")
+  /// Правила (форма VoiceControlRules «Сайта»; лимит шагов «Админки» — 10).
+  voiceControlAdminRules        Json?
+  /// Кто включил (telegramId участника, `tg:<id>`) — журнал кабинета §5-бис.2.
+  voiceControlAdminEnabledBy    String?
+  /// Принятая редакция текста рисков «Админки» и когда.
+  voiceControlAdminRisksVersion String?
+  voiceControlAdminRisksAt      DateTime?
+  /// Отчёт мастера, по которому включено `on` (assist_admin_voice_tests.id).
+  voiceControlAdminTestId       String?
+  voiceControlAdminStateAt      DateTime?
+  /// owner | monitor | violation — кто сменил состояние.
+  voiceControlAdminStateBy      String?
+  voiceControlAdminStateReason  String?
+  /// Хосты САМОЙ админки, отмеченные владельцем «тестовый» (staging): только
+  /// там мастер исполняет «Сохранить» (§5-бис.13 «Т-2 для Админки»).
+  voiceControlAdminTestHostIds  String[]  @default([])
+  /// Последняя тревога владельцу «работает плохо» (не чаще раза в сутки).
+  voiceControlAdminAlertAt      DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1876,6 +1918,7 @@ model AssistAdminConversation {
   messages      AssistAdminMessage[]
   learningItems AssistAdminLearningItem[]
   proposals     AssistAdminActionProposal[]
+  uiPlans       AssistAdminUiPlan[]
 
   @@unique([id, accountId])
   @@index([siteId, employeeRef, lastActivityAt])
@@ -2220,6 +2263,112 @@ model AssistAdminMemoRun {
   @@index([siteId, actor])
   @@index([accountId])
   @@map("assist_admin_memo_runs")
+}
+
+/// Э6-бис (б): голосовой план сотрудника в админке заказчика (ТЗ §5-бис.3,
+/// §5-бис.9 — вторая модель, без поля «режим»; аудит 1.2). Исполняет чанк
+/// `admin-act.js` на странице админки (origin заказчика), команда — только
+/// из iframe `wa.` (голос с билетом или набор). Журнал шагов — строки
+/// `ui-plan`/`ui-step`/`chain` в append-only assist_admin_action_log.
+model AssistAdminUiPlan {
+  id              String                   @id @default(cuid())
+  accountId       String
+  siteId          String
+  site            Site                     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Диалог сотрудника (команда и итог — сообщения диалога); у плана
+  /// тестовой сессии мастера диалога нет.
+  conversationId  String?
+  conversation    AssistAdminConversation? @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// `jwt:<sub>` — исполнять/подтверждать/останавливать только ему.
+  actor           String
+  /// Сессия встраивания, в которой построен план.
+  sessionId       String
+  /// Команда — маскированной (`maskSensitiveEcho`), ≤ 600.
+  utteranceMasked String
+  /// voice | typed
+  source          String
+  lang            String?
+  /// Страница админки (без query, путь — маской ПД).
+  pageUrl         String
+  /// Проверенные шаги и состояние каждого. Пока план живой — значения как
+  /// сказаны (их видит сотрудник в карточке); при завершении — маской.
+  steps           Json
+  /// Пока план живой — сырой текст команды (сверка значений «после перехода»).
+  liveUtterance   String?
+  currentStep     Int                      @default(0)
+  /// proposed | confirmed | running | done | stopped | failed | expired
+  status          String                   @default("proposed")
+  needsConfirm    Boolean
+  /// voice | button | auto | dry
+  confirmedBy     String?
+  confirmBefore   DateTime
+  expiresAt       DateTime
+  cardFrom        Int                      @default(0)
+  pnrConfirmedAt  DateTime?
+  /// clean | committed | kept | compensated | partially_compensated | unknown
+  chainStatus     String?
+  /// model | direct | memo
+  planOrigin      String                   @default("model")
+  /// Мемо АМ-N: запуск и отрезок шагов `ui` версии, который исполняет план.
+  memoRunId       String?
+  memoFrom        Int?
+  memoTo          Int?
+  /// Мастер «Админки»: тестовая сессия и сухой прогон.
+  voiceTestId     String?
+  dryRun          Boolean                  @default(false)
+  /// Деньги плана (модель) — в суточный потолок «Админки».
+  costMicroUsd    Int                      @default(0)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@unique([id, accountId])
+  @@index([siteId, actor, createdAt])
+  @@index([siteId, createdAt])
+  @@index([voiceTestId])
+  @@index([accountId])
+  @@map("assist_admin_ui_plans")
+}
+
+/// Э6-бис (б): мастер проверки голосового управления «Админки» Т-2
+/// (§5-бис.13 «Т-2 для Админки»; У-22 — своя таблица, не общая с «Сайтом»).
+/// Ссылку выдаёт только `assistAdmin: owner`; обмен — в сессии сотрудника
+/// (`wa.`), отчёт — сюда и строкой `ui-test` в журнал действий «Админки».
+model AssistAdminVoiceTest {
+  id               String    @id @default(cuid())
+  accountId        String
+  siteId           String
+  site             Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Хост админки (verified, из adminHostIds) и его origin.
+  hostId           String
+  host             String
+  origin           String
+  /// Хост отмечен владельцем «тестовый» — только тут «Сохранить».
+  testHost         Boolean   @default(false)
+  /// Кто выдал ссылку (`tg:<telegramId>`).
+  startedBy        String
+  tokenHash        String    @unique
+  tokenExpiresAt   DateTime
+  usedAt           DateTime?
+  /// Сессия сотрудника `wa.`, обменявшая ссылку, и её `sub` — до конца мастера.
+  sessionId        String?
+  actor            String?
+  sessionExpiresAt DateTime?
+  /// Попытки исполнить шаг на цели класса «никогда» (регистратор загрузчика
+  /// + отказы сервера) — в отчёте «попыток нажать запрещённое».
+  attempts         Int       @default(0)
+  report           Json?
+  /// pass | partial | fail
+  result           String?
+  validUntil       DateTime?
+  reportedAt       DateTime?
+  release          String?
+  partialAckBy     String?
+  partialAckAt     DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_admin_voice_tests")
 }
 
 // ══ Э2: виджет режима «Сайт» (ТЗ §3-бис, §4-бис, §4.5, §4.12–§4.13, §6.3) ══
@@ -3447,6 +3596,10 @@ model AssistSiteUiActionLog {
   pinMismatch Boolean          @default(false)
   /// (д) Строка возврата (`action: undo`) — номер возвращённого шага плана.
   undoOf      Int?
+  /// (Э6-тер) Ключ цели голосовой карты, по которой найден элемент шага.
+  mapKey      String?
+  /// (Э6-тер) Команда назвала цель карты, а в снимке её не нашлось (Т-4).
+  mapMiss     Boolean          @default(false)
   createdAt   DateTime         @default(now())
 
   @@index([planId])
@@ -3578,6 +3731,123 @@ model AssistSitePhrase {
   @@index([accountId])
   @@index([siteId, owner])
   @@map("assist_site_phrases")
+}
+
+// ═══ Э6-тер: голосовая карта «Сайта» — визуальный редактор голосового
+// управления (ТЗ помощника §5-кватер; Р-51…Р-54, Р-73…Р-82). «Админка» —
+// свои таблицы `assist_admin_voice_map*` после Э6-бис (б) (К-9), не эти. ═══
+
+/// Голосовая карта сайта: черновик (assist-ui-core/voice-map.ts
+/// `VoiceMapContent`: цели, шаблоны страниц, термины) с ревизией (409 при
+/// расхождении — две вкладки), номер опубликованной версии. Пишет только
+/// кабинет и сессия редактора (основная роль); публичный код читает ТОЛЬКО
+/// представление `assist_site_voice_map_published` (миграция).
+model AssistSiteVoiceMap {
+  siteId           String    @id
+  accountId        String
+  site             Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Опубликованная версия (0 — карты нет: снимок + модель, В-53).
+  publishedVersion Int       @default(0)
+  /// Последний выданный номер версии.
+  versionSeq       Int       @default(0)
+  draftRevision    Int       @default(0)
+  draft            Json
+  /// Применённый шаблон платформы (`woocommerce@1`), если был.
+  platformTemplate String?
+  /// «Сказать сейчас»: проверки за сутки (день UTC и счётчик).
+  tryDay           String?
+  tryCount         Int       @default(0)
+  /// Запросы публикации из сессии редактора за сутки (день UTC и счётчик;
+  /// аудит Э6-тер (2): каждый — версия и сообщение в бот).
+  publishReqDay    String?
+  publishReqCount  Int       @default(0)
+  updatedBy        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([siteId, accountId])
+  @@index([accountId])
+  @@map("assist_site_voice_maps")
+}
+
+/// Неизменяемая версия карты: сборка → ворота кода (`held`) → запрос
+/// публикации → подтверждение человеком в TMA (В-50). Откат — новая версия
+/// с содержимым N. Последние 20; метаданные — 180 дней.
+model AssistSiteVoiceMapVersion {
+  id           String    @id @default(cuid())
+  accountId    String
+  siteId       String
+  site         Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  number       Int
+  /// building | checking | published | held | discarded
+  status       String
+  content      Json
+  contentHash  String
+  gateReport   Json?
+  rollbackOf   Int?
+  requestedBy  String
+  /// editor | tma — откуда пришёл запрос публикации.
+  requestedVia String
+  publishedBy  String?
+  createdAt    DateTime  @default(now())
+  publishedAt  DateTime?
+
+  @@unique([siteId, number])
+  @@index([accountId])
+  @@map("assist_site_voice_map_versions")
+}
+
+/// Журнал изменений черновика: кто, когда, источник
+/// (`editor|tma|import|template|suggestion|rollback`), что (без подписей
+/// страницы и значений полей). 180 дней.
+model AssistSiteVoiceMapChange {
+  id        String   @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  revision  Int
+  actor     String
+  source    String
+  op        Json
+  createdAt DateTime @default(now())
+
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_site_voice_map_changes")
+}
+
+/// Ссылка и сессия редактора (§5-кватер.2–3, §5-кватер.11 п.3): ссылка —
+/// одноразовая, 10 мин, только verified-хост «Сайта» без льготы; сессия —
+/// 30 мин скользящих, ≤ 4 ч; привязка к сайту, хосту, origin родителя,
+/// участнику и его праву. Токены — только SHA-256.
+model AssistSiteVoiceMapEditorSession {
+  id                String    @id @default(cuid())
+  accountId         String
+  siteId            String
+  site              Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  memberId          String
+  hostId            String
+  host              String
+  parentOrigin      String
+  pagePath          String    @default("/")
+  /// Цель, открытая по ссылке из TMA (`focus`, находка Т-3/Т-4).
+  focusKey          String?
+  linkTokenHash     String    @unique
+  sessionTokenHash  String?   @unique
+  linkExpiresAt     DateTime
+  exchangedAt       DateTime?
+  expiresAt         DateTime?
+  absoluteExpiresAt DateTime?
+  lastSeenAt        DateTime?
+  revokedAt         DateTime?
+  revokeReason      String?
+  /// Последний запрос публикации из этой сессии (не чаще 1 в минуту).
+  lastPublishRequestAt DateTime?
+  createdAt         DateTime  @default(now())
+
+  @@index([siteId])
+  @@index([accountId])
+  @@map("assist_site_voice_map_editor_sessions")
 }
 
 /// Э6-бис (г): проверка голосового управления на сайте заказчика — мастер

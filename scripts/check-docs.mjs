@@ -4234,11 +4234,14 @@ checkVoiceRetentionSeam();
  * сервис голоса — затирать буфер записи в `finally`. Поведение (успех,
  * отказ, таймаут, 409) проверяют спеки acceptance/e5/voice.spec.ts.
  */
-function checkSitesVoiceRetentionSeam() {
-  const DIR = "sites-backend/src/modules/assist-site-voice/public";
+function checkSitesVoiceRetentionSeam(
+  DIR = "sites-backend/src/modules/assist-site-voice/public",
+  who = "посетителя",
+  tag = "Э5",
+) {
   const problems = [];
   if (!fs.existsSync(path.join(ROOT, DIR))) {
-    console.log("FAIL голос посетителя: нет папки " + DIR + " — шов ослеп");
+    console.log(`FAIL голос ${who}: нет папки ${DIR} — шов ослеп`);
     failed++;
     return;
   }
@@ -4275,28 +4278,35 @@ function checkSitesVoiceRetentionSeam() {
         /method:\s*['"]DELETE['"]/.test(src) &&
         fins.some((b) => /\/files\/\$\{/.test(b) && /\/transcriptions\/\$\{/.test(b));
       if (!ok)
-        problems.push(`${DIR}/${f}: звук посетителя уходит к Soniox, но удаление файла и транскрипции не стоит в finally`);
+        problems.push(`${DIR}/${f}: звук ${who} уходит к Soniox, но удаление файла и транскрипции не стоит в finally`);
     }
     if (/\btranscribe\s*\(\s*ctx\b/.test(src) || /async transcribe\(\s*ctx/.test(src)) {
       wipes++;
       if (!fins.some((b) => /\baudio\.fill\(0\)/.test(b)))
-        problems.push(`${DIR}/${f}: запись посетителя не затирается в finally (audio.fill(0))`);
+        problems.push(`${DIR}/${f}: запись ${who} не затирается в finally (audio.fill(0))`);
     }
   }
   if (uploaders === 0) problems.push(`${DIR}: не нашёл отправки звука в Soniox — шов ослеп, поправьте его`);
-  if (wipes === 0) problems.push(`${DIR}: не нашёл сервиса распознавания посетителя — шов ослеп`);
+  if (wipes === 0) problems.push(`${DIR}: не нашёл сервиса распознавания ${who} — шов ослеп`);
   if (problems.length) {
     failed++;
-    console.log("FAIL голос посетителя не остаётся (Э5):");
+    console.log(`FAIL голос ${who} не остаётся (${tag}):`);
     for (const x of problems) console.log(`  - ${x}`);
   } else {
     console.log(
-      `ok   голос посетителя не остаётся (Э5): отправок в Soniox ${uploaders}, все с уборкой файла и транскрипции в finally; запись затирается в finally (${wipes})`,
+      `ok   голос ${who} не остаётся (${tag}): отправок в Soniox ${uploaders}, все с уборкой файла и транскрипции в finally; запись затирается в finally (${wipes})`,
     );
   }
 }
 
 checkSitesVoiceRetentionSeam();
+// Э6-бис (б): команда сотрудника «Админки» — тот же шов в своём модуле
+// (admin↛site: своя копия сетевой части Soniox).
+checkSitesVoiceRetentionSeam(
+  "sites-backend/src/modules/assist-admin-voice",
+  "сотрудника «Админки»",
+  "Э6-бис (б)",
+);
 
 /**
  * Шов «субподрядчики в коде = субподрядчики в Условиях» (29.09.2026).

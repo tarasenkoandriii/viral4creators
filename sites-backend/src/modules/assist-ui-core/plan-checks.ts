@@ -111,6 +111,15 @@ export interface PlanCheckInput {
   pins?: ReadonlyArray<UiPin | null>;
   /** (мемо) Шаги проверки цели сверх лимита шагов (ожидание без эффекта). */
   extraSteps?: number;
+  /**
+   * (Э6-тер) Подсказки голосовой карты по ссылке элемента снимка: имена и
+   * синонимы владельца засчитываются как совпадение «цель ↔ команда»
+   * (§5-кватер.8 п.5), риск карты — только НИЖНЯЯ граница (Р-51).
+   */
+  mapHints?: ReadonlyMap<
+    string,
+    { key: string; names: readonly string[]; floor: UiRisk }
+  >;
 }
 
 export interface CheckedPlan {
@@ -268,6 +277,8 @@ export function judgeStep(
     pagePath: string | null;
     state: 'on' | 'degraded';
     trusted?: readonly string[];
+    /** (Э6-тер) Имена цели в голосовой карте — тоже «цель ↔ команда». */
+    names?: readonly string[];
   },
 ): { risk: UiRisk | null; reason: UiStopReason | null; nav: boolean } {
   const no = (reason: UiStopReason) => ({ risk: null, reason, nav: false });
@@ -330,7 +341,9 @@ export function judgeStep(
     t.inputType === 'search' ||
     t.assistId === 'search';
   const matches =
-    targetMatches(t, ctx.transcript) || (searchBox && saysFind(ctx.transcript));
+    targetMatches(t, ctx.transcript) ||
+    (searchBox && saysFind(ctx.transcript)) ||
+    (ctx.names ?? []).some((n) => overlaps(ctx.transcript, n));
   const isText =
     (t.role !== null && TEXT_ROLES.has(t.role)) ||
     t.tag === 'textarea' ||
@@ -650,7 +663,14 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
           ? s.value.trim().slice(0, 200)
           : null
         : null;
-    const j = judgeStep(kind, facts, value, ctx);
+    const hint =
+      !after && p.mapHints ? (p.mapHints.get(target.ref) ?? null) : null;
+    const j = judgeStep(
+      kind,
+      facts,
+      value,
+      hint ? { ...ctx, names: hint.names } : ctx,
+    );
     if (j.risk === null) {
       notes.push({
         code: j.reason ?? 'no_target',
@@ -665,6 +685,8 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     // Необратимый шаг — всегда не ниже «с подтверждением» (§5-бис.15 п.3 п.4).
     let risk = raise(j.risk, modelRisk);
     if (undo === 'irrev') risk = raise(risk, 'confirm');
+    // Р-51: риск карты — нижняя граница, итог = max(расчёт кода, карта).
+    if (hint) risk = raise(risk, hint.floor);
     const executable = risk === 'auto' || risk === 'confirm';
     // Р-60: после ТН — только шаги без эффекта и переходы; второй
     // необратимый шаг — отдельной командой (план обрезается до него).
@@ -685,11 +707,14 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
       expect,
       risk,
       reason:
-        risk === 'manual' || risk === 'never' ? (j.reason ?? 'danger') : null,
+        risk === 'manual' || risk === 'never'
+          ? (j.reason ?? (hint?.floor === 'never' ? 'denied' : 'danger'))
+          : null,
       nav: j.nav,
       say: null,
       undo,
       ...(p.pins?.[rawIndex] ? { pin: p.pins[rawIndex] } : {}),
+      ...(hint ? { mapKey: hint.key } : {}),
     };
     if (executable && undo === 'irrev' && pnr === null) pnr = out.length;
     from.push(rawIndex);
@@ -738,6 +763,11 @@ export function resolveAfterSteps(p: {
   hosts: string[];
   state: 'on' | 'degraded';
   trusted?: readonly string[];
+  /**
+   * (Э6-тер, аудит) Подсказки голосовой карты НОВОЙ страницы — как в
+   * `checkPlan`: риск карты — нижняя граница и после перехода (Р-51).
+   */
+  mapHints?: PlanCheckInput['mapHints'];
 }): {
   steps: UiPlanStep[];
   needsConfirm: boolean;
@@ -787,13 +817,20 @@ export function resolveAfterSteps(p: {
     if (s.pin && !pinMatches(s.pin, el))
       return { steps, needsConfirm, unresolved: k, reason: 'pin_mismatch' };
     const facts = factsOfElement(el);
-    const j = judgeStep(s.kind, facts, s.value, ctx);
+    const hint = p.mapHints?.get(el.ref) ?? null;
+    const j = judgeStep(
+      s.kind,
+      facts,
+      s.value,
+      hint ? { ...ctx, names: hint.names } : ctx,
+    );
     if (j.risk === null)
       return { steps, needsConfirm, unresolved: k, reason: 'no_target' };
     // Класс обратимости по настоящей цели — только ухудшение (§5-бис.15 п.3).
     const undo = worseUndo(s.undo ?? 'irrev', undoClass(s.kind, facts, j.nav));
     let risk = raise(j.risk, s.risk);
     if (undo === 'irrev') risk = raise(risk, 'confirm');
+    if (hint) risk = raise(risk, hint.floor);
     const executable = risk === 'auto' || risk === 'confirm';
     // Р-60: ТН уже была раньше — второй необратимый/эффект после ТН — стоп.
     if (
@@ -808,9 +845,12 @@ export function resolveAfterSteps(p: {
       target: targetOf(el.ref, facts, null),
       risk,
       reason:
-        risk === 'manual' || risk === 'never' ? (j.reason ?? 'danger') : null,
+        risk === 'manual' || risk === 'never'
+          ? (j.reason ?? (hint?.floor === 'never' ? 'denied' : 'danger'))
+          : null,
       nav: j.nav,
       undo,
+      ...(hint ? { mapKey: hint.key } : {}),
     };
     if (risk === 'manual' || risk === 'never') {
       steps.length = k + 1;

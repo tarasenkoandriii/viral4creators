@@ -1,6 +1,8 @@
+import { voiceMapEn } from './voice-map-en';
 import type { VoiceControlDictionary } from './voice-control-ru';
 
 export const voiceControlEn: VoiceControlDictionary = {
+  voiceMap: voiceMapEn,
   title: 'Voice control of the site',
   intro:
     'A visitor says “open delivery” or “add the blue one, size M, to the cart” — the assistant scrolls, presses and fills in fields on your site by itself, in front of the visitor. Steps that change anything happen only after their “Yes”. Off by default.',

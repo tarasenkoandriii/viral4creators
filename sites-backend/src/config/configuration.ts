@@ -10,6 +10,7 @@
 import { devFakeGeminiProblem } from './dev-ai-env';
 import { widgetOrigin } from './widget-env';
 import { adminWidgetOrigin } from './admin-env';
+import { editorWidgetOrigin } from './editor-env';
 
 export interface SitesConfig {
   nodeEnv: string;
@@ -22,6 +23,8 @@ export interface SitesConfig {
   widgetOrigin: string;
   /** Э7: origin iframe «Админки» (ASSIST_ADMIN_WIDGET_ORIGIN, отдельный от виджета). */
   adminWidgetOrigin?: string;
+  /** Э6-тер: origin iframe панели редактора голосовой карты (ASSIST_EDITOR_WIDGET_ORIGIN, `we.`). */
+  editorWidgetOrigin?: string;
   /** Ошибка: dev-заглушка Gemini включена в production (dev-ai-env.ts). */
   devFakeGeminiProblem?: string | null;
 }
@@ -46,6 +49,7 @@ export function loadConfiguration(
     databaseUrl: env.SITES_DATABASE_URL || undefined,
     widgetOrigin: widgetOrigin(env),
     adminWidgetOrigin: adminWidgetOrigin(env),
+    editorWidgetOrigin: editorWidgetOrigin(env),
     devFakeGeminiProblem: devFakeGeminiProblem(env),
   };
 }

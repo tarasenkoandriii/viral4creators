@@ -62,6 +62,16 @@ export const WIDGET_VOICE_TEST_PARAM = 'v4c_voicetest';
 export const WIDGET_VOICE_TEST_HEADER = 'X-Assist-Voice-Test';
 export const WIDGET_CHECK_PATH = '/v1/check.js';
 
+// Э6-тер: визуальный редактор голосового управления (зеркало блока «Э6-тер»
+// sites-backend/src/brand.ts): параметр ссылки, ленивый чанк пикера в origin
+// заказчика, чанк и HTML панели в iframe `we.`, заголовок сессии, протокол.
+export const WIDGET_EDITOR_PARAM = 'v4c_edit';
+export const WIDGET_EDITOR_PATH = '/v1/editor.js';
+export const WIDGET_EDITOR_PANEL_PATH = '/v1/editor-panel.js';
+export const WIDGET_EDITOR_FRAME_PATH = '/we/v1/frame';
+export const EDITOR_SESSION_HEADER = 'X-Assist-Editor';
+export const EDITOR_MESSAGE_NS = 'v4c-editor';
+
 // Э7: «Админка» — помощник сотрудника (зеркало блока «Э7»
 // sites-backend/src/brand.ts). Отдельный origin iframe (`wa.`, У-13): тег
 // загрузчика в админке заказчика — с этого origin и `data-mode="admin"`;

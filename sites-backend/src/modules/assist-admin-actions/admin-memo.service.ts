@@ -61,6 +61,7 @@ import {
   phrasePrefix,
   stepArgs,
 } from './admin-memo';
+import type { AdminMemoUiStep } from '../assist-admin-voice/admin-voice-rules';
 import {
   type ActorCtx,
   ProposalsService,
@@ -144,7 +145,32 @@ const MEMO_TEXT = {
     ru: 'запрос к системе не удался',
     en: 'the system request failed',
   },
+  // Э6-бис (б): шаги на странице (Р-Э6б-10).
+  uiNeedsPage: {
+    uk: (n: number) =>
+      `АМ-${n} має кроки на сторінці адмінки — запустіть його в помічнику на сторінці з увімкненим голосовим керуванням.`,
+    ru: (n: number) =>
+      `В АМ-${n} есть шаги на странице админки — запустите его в помощнике на странице с включённым голосовым управлением.`,
+    en: (n: number) =>
+      `AM-${n} has steps on the admin page — run it from the assistant on the page with voice control enabled.`,
+  },
+  uiNext: {
+    uk: (i: number, total: number) => `Крок ${i} з ${total} — на сторінці.`,
+    ru: (i: number, total: number) => `Шаг ${i} из ${total} — на странице.`,
+    en: (i: number, total: number) => `Step ${i} of ${total} is on the page.`,
+  },
 } as const;
+
+/** Отрезок шагов на странице, который ждёт исполнения (Э6-бис (б)). */
+export interface MemoUiSegment {
+  runId: string;
+  memoNumber: number;
+  name: string;
+  from: number;
+  to: number;
+  steps: AdminMemoUiStep[];
+  slots: Record<string, string>;
+}
 
 type MemoRow = Prisma.AssistAdminMemoGetPayload<object>;
 
@@ -687,7 +713,13 @@ export class AdminMemoService {
     ctx: ActorCtx,
     hit: { memo: MemoRow; content: AdminMemoContent; rest: string },
     now = new Date(),
-  ): Promise<{ text: string; proposal: ProposalView | null }> {
+    /** Э6-бис (б): запуск со страницы (голосовое управление) — шаги `ui` можно. */
+    page = false,
+  ): Promise<{
+    text: string;
+    proposal: ProposalView | null;
+    ui?: { runId: string; from: number; to: number } | null;
+  }> {
     const lang = ctx.lang as MemoLang;
     const n = hit.memo.number;
     const catalog = await this.catalog(ctx.accountId, ctx.siteId);
@@ -731,8 +763,12 @@ export class AdminMemoService {
         },
       });
     const head = MEMO_TEXT.started[lang](n, adminMemoName(hit.content, lang));
-    const r = await this.advance(ctx, run.id, hit.content, 0, now);
-    return { text: `${head}\n\n${r.text}`, proposal: r.proposal };
+    const r = await this.advance(ctx, run.id, hit.content, 0, now, page);
+    return {
+      text: `${head}\n\n${r.text}`,
+      proposal: r.proposal,
+      ui: r.ui ? { runId: run.id, ...r.ui } : null,
+    };
   }
 
   /** Исполнять шаги с `from` до первого write/danger (предложение) или конца. */
@@ -742,7 +778,12 @@ export class AdminMemoService {
     content: AdminMemoContent,
     from: number,
     now: Date,
-  ): Promise<{ text: string; proposal: ProposalView | null }> {
+    page = false,
+  ): Promise<{
+    text: string;
+    proposal: ProposalView | null;
+    ui?: { from: number; to: number } | null;
+  }> {
     const db = this.db.forAccount(ctx.accountId);
     const lang = ctx.lang as MemoLang;
     const run = await db.assistAdminMemoRun.findFirstOrThrow({
@@ -782,6 +823,31 @@ export class AdminMemoService {
       if (s.action === 'say') {
         lines.push(s.say[lang] ?? s.say.uk ?? s.say.ru ?? s.say.en ?? '');
         continue;
+      }
+      if (s.action === 'ui') {
+        // Э6-бис (б): шаги на странице — отрезком подряд; исполняет план
+        // голосового управления в виджете (те же проверки кода). Без
+        // страницы (TMA, чат без голосового управления) — честный стоп.
+        if (!page) {
+          lines.push(MEMO_TEXT.uiNeedsPage[lang](run.memoNumber));
+          return stop(i, 'not_reached');
+        }
+        let to = i;
+        while (to < total && content.steps[to].action === 'ui') to++;
+        await db.assistAdminMemoRun.updateMany({
+          where: { id: runId },
+          data: {
+            status: 'ui',
+            step: i,
+            progress: progress as unknown as Prisma.InputJsonValue,
+          },
+        });
+        lines.push(MEMO_TEXT.uiNext[lang](i + 1, total));
+        return {
+          text: lines.filter(Boolean).join('\n'),
+          proposal: null,
+          ui: { from: i, to },
+        };
       }
       const op = catalog.get(s.op);
       const allowed =
@@ -925,7 +991,148 @@ export class AdminMemoService {
       });
       return { next: null, text: null };
     }
-    const r = await this.advance(ctx, runId, content, step + 1, now);
+    const r = await this.advance(
+      ctx,
+      runId,
+      content,
+      step + 1,
+      now,
+      ctx.channel === 'embed',
+    );
     return { next: r.proposal, text: r.text };
+  }
+
+  // ── Э6-бис (б): шаги на странице ───────────────────────────────────────
+
+  /** Запуск этого сотрудника, ждущий шагов на странице (статус `ui`). */
+  async pendingUi(ctx: ActorCtx, now = new Date()): Promise<string | null> {
+    const run = await this.db
+      .forAccount(ctx.accountId)
+      .assistAdminMemoRun.findFirst({
+        where: {
+          siteId: ctx.siteId,
+          actor: ctx.actor,
+          status: 'ui',
+          expiresAt: { gt: now },
+        },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      });
+    return run?.id ?? null;
+  }
+
+  /**
+   * Отрезок шагов `ui`, который ждёт запуск ЭТОГО сотрудника: версия
+   * закреплена в запуске; права роли перепроверены в `start`.
+   */
+  async uiSegment(
+    ctx: ActorCtx,
+    runId: string,
+    now = new Date(),
+  ): Promise<MemoUiSegment | null> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(runId)) return null;
+    const db = this.db.forAccount(ctx.accountId);
+    const run = await db.assistAdminMemoRun.findFirst({
+      where: { id: runId, siteId: ctx.siteId, actor: ctx.actor },
+    });
+    if (!run || run.status !== 'ui' || run.expiresAt.getTime() <= now.getTime())
+      return null;
+    const ver = await db.assistAdminMemoVersion.findFirst({
+      where: { memoId: run.memoId, number: run.memoVersion },
+    });
+    if (!ver) return null;
+    const content = parseAdminMemo(ver.content).content;
+    let to = run.step;
+    while (to < content.steps.length && content.steps[to].action === 'ui') to++;
+    const steps = content.steps
+      .slice(run.step, to)
+      .filter((x): x is AdminMemoUiStep => x.action === 'ui');
+    if (!steps.length) return null;
+    return {
+      runId: run.id,
+      memoNumber: run.memoNumber,
+      name: adminMemoName(content, ctx.lang as MemoLang),
+      from: run.step,
+      to,
+      steps,
+      slots: (run.slots ?? {}) as Record<string, string>,
+    };
+  }
+
+  /**
+   * Итог отрезка шагов на странице (план голосового управления закончился):
+   * `done` — запуск продолжается со следующего шага (предложение API,
+   * следующий отрезок или «выполнено»); иначе — стоп с перечнем сделанного.
+   */
+  async afterUi(
+    ctx: ActorCtx,
+    runId: string,
+    from: number,
+    to: number,
+    status: 'done' | 'failed' | 'stopped',
+    now = new Date(),
+  ): Promise<{
+    text: string | null;
+    proposal: ProposalView | null;
+    nextUi: boolean;
+  }> {
+    const db = this.db.forAccount(ctx.accountId);
+    const run = await db.assistAdminMemoRun.findFirst({
+      where: { id: runId, siteId: ctx.siteId, actor: ctx.actor },
+    });
+    if (!run || run.status !== 'ui' || run.step !== from)
+      return { text: null, proposal: null, nextUi: false };
+    const ver = await db.assistAdminMemoVersion.findFirst({
+      where: { memoId: run.memoId, number: run.memoVersion },
+    });
+    if (!ver) return { text: null, proposal: null, nextUi: false };
+    const content = parseAdminMemo(ver.content).content;
+    const progress = Array.isArray(run.progress)
+      ? (run.progress as Array<{
+          i: number;
+          operation: string;
+          outcome: string;
+        }>)
+      : [];
+    for (let i = from; i < to; i++)
+      progress.push({
+        i,
+        operation: 'ui',
+        outcome: status === 'done' ? 'done' : status,
+      });
+    if (status !== 'done' || run.expiresAt.getTime() <= now.getTime()) {
+      await db.assistAdminMemoRun.updateMany({
+        where: { id: runId, status: 'ui' },
+        data: {
+          status: status === 'stopped' ? 'stopped' : 'failed',
+          goalStatus: 'not_reached',
+          slots: Prisma.DbNull,
+          progress: progress as unknown as Prisma.InputJsonValue,
+        },
+      });
+      const done = progress
+        .filter((p) => p.outcome === 'ok' || p.outcome === 'done')
+        .map((p) => p.operation)
+        .join(', ');
+      return {
+        text: MEMO_TEXT.stopped[ctx.lang as MemoLang](
+          run.memoNumber,
+          from + 1,
+          done,
+        ),
+        proposal: null,
+        nextUi: false,
+      };
+    }
+    const moved = await db.assistAdminMemoRun.updateMany({
+      where: { id: runId, status: 'ui', step: from },
+      data: {
+        status: 'running',
+        progress: progress as unknown as Prisma.InputJsonValue,
+      },
+    });
+    if (moved.count !== 1) return { text: null, proposal: null, nextUi: false };
+    const r = await this.advance(ctx, runId, content, to, now, true);
+    return { text: r.text, proposal: r.proposal, nextUi: !!r.ui };
   }
 }

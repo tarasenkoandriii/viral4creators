@@ -72,6 +72,24 @@ function maskPathSegment(seg: string): string {
   return m === d ? seg : m;
 }
 
+/**
+ * Путь (`/u/ivan@x.com`) с теми же масками ПД, что у адреса страницы, —
+ * для пути ссылки в дескрипторе голосовой карты (аудит Э6-тер (3)):
+ * замаскированный сегмент — в percent-кодировке (`:` — как есть), чтобы путь
+ * оставался ASCII-путём; маскирование идемпотентно (`/u/:email` → тот же).
+ * Пикер редактора маскирует путь тем же правилом
+ * (`widget/src/shared/editor-protocol.ts`, `maskHrefPath`).
+ */
+export function maskPagePath(path: string): string {
+  return path
+    .split('/')
+    .map((seg) => {
+      const m = maskPathSegment(seg);
+      return m === seg ? seg : encodeURIComponent(m).replace(/%3A/gi, ':');
+    })
+    .join('/');
+}
+
 /** Адрес страницы (`origin` + путь) с масками ПД в пути; не адрес — как есть. */
 export function maskPageUrl(url: string): string {
   let u: URL;

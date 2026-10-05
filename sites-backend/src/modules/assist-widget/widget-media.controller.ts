@@ -67,6 +67,7 @@ import { tokenRequestOrigin } from './widget-public.controller';
 import { WidgetSessionService } from './widget-session.service';
 import { findSiteById } from './site-access';
 import { widgetError } from './widget-errors';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 
 const TOKEN_HEADER = WIDGET_VISITOR_TOKEN_HEADER.toLowerCase();
 const MINUTE = 60_000;
@@ -259,8 +260,13 @@ export class WidgetMediaController {
       ],
       now,
     );
+    // Хосты «Админки» — не хосты сайта (ТЗ §10, аудит Э6-бис (б) (8)).
     const hosts = await this.db.siteHost.findMany({
-      where: { siteId: ctx.site.siteId, status: 'verified' },
+      where: {
+        siteId: ctx.site.siteId,
+        status: 'verified',
+        ...PUBLIC_SITE_HOST,
+      },
       select: { host: true },
     });
     const siteHosts = hosts.map((h) => h.host);

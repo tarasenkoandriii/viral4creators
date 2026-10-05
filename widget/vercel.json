@@ -11,6 +11,10 @@
         {
           "type": "host",
           "value": "assist-wa.viral4creators.app"
+        },
+        {
+          "type": "host",
+          "value": "assist-we.viral4creators.app"
         }
       ]
     },
@@ -21,6 +25,10 @@
         {
           "type": "host",
           "value": "assist-wa.viral4creators.app"
+        },
+        {
+          "type": "host",
+          "value": "assist-we.viral4creators.app"
         }
       ]
     },
@@ -43,6 +51,26 @@
         }
       ],
       "destination": "https://assist-api.viral4creators.app/assist-admin/v1/:path*"
+    },
+    {
+      "source": "/we/v1/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "assist-we.viral4creators.app"
+        }
+      ],
+      "destination": "https://assist-api.viral4creators.app/we/v1/:path*"
+    },
+    {
+      "source": "/editor/v1/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "assist-we.viral4creators.app"
+        }
+      ],
+      "destination": "https://assist-api.viral4creators.app/editor/v1/:path*"
     }
   ],
   "headers": [
@@ -300,6 +328,36 @@
     },
     {
       "source": "/v1/(admin-chat.js|admin-chat.css)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=600"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    },
+    {
+      "source": "/v1/admin-act.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=600"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        }
+      ]
+    },
+    {
+      "source": "/v1/admin-vc.js",
       "headers": [
         {
           "key": "Cache-Control",

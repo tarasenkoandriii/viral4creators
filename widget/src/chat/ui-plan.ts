@@ -998,26 +998,33 @@ export class UiPlanController {
     }
   }
 
-  /** (е) «Що ти вмієш?» — до 5 имён мемо; пусто — обычный вопрос в чат. */
-  private async skills(
-    text: string,
-    source: 'voice' | 'typed'
-  ): Promise<boolean> {
-    let names: string[] = [];
+  /**
+   * (е) «Я умею» (Р-72): до 5 имён мемо с успехом цели ≥ 80% — без номеров
+   * и фраз; сбой — пусто. Э6-тер: и подсказка под микрофоном.
+   */
+  async skillNames(): Promise<string[]> {
     try {
       const r = (await this.host.api(
         'GET',
         `/widget/v1/ui-plan/skills?lang=${this.host.lang()}`
       )) as { names?: unknown } | null;
-      names = Array.isArray(r && r.names)
+      return Array.isArray(r && r.names)
         ? (r!.names as unknown[])
             .filter((x): x is string => typeof x === 'string')
             .map((x) => x.slice(0, 60))
             .slice(0, 5)
         : [];
     } catch {
-      names = [];
+      return [];
     }
+  }
+
+  /** (е) «Що ти вмієш?» — до 5 имён мемо; пусто — обычный вопрос в чат. */
+  private async skills(
+    text: string,
+    source: 'voice' | 'typed'
+  ): Promise<boolean> {
+    const names = await this.skillNames();
     if (!names.length) return false;
     this.host.feed('visitor', text, source === 'voice');
     this.host.feed(

@@ -284,13 +284,91 @@ export class AdminChatService {
         where: { siteId: ctx.siteId, createdAt: { gte: day } },
         _sum: { costMicroUsd: true },
       });
-    if ((agg._sum.costMicroUsd ?? 0) >= cap) {
+    // Э6-бис (б): голосовое управление «Админкой» — распознавание и планы
+    // платят тот же суточный потолок (операции assist-admin-stt|ui-plan).
+    const voice = await this.db
+      .forAccount(ctx.accountId)
+      .siteAiUsage.aggregate({
+        where: {
+          siteId: ctx.siteId,
+          operation: { in: ['assist-admin-stt', 'assist-admin-ui-plan'] },
+          createdAt: { gte: day },
+        },
+        _sum: { costMicroUsd: true },
+      });
+    if ((agg._sum.costMicroUsd ?? 0) + (voice._sum.costMicroUsd ?? 0) >= cap) {
       throw adminError(
         429,
         'ADMIN_DAILY_BUDGET',
         'Суточный лимит помощника сотрудников исчерпан — продолжим завтра',
       );
     }
+  }
+
+  /**
+   * Э6-бис (б): ход голосового управления — тот же диалог сотрудника и те
+   * же единицы тарифа (30 мин тишины — новый диалог), суточный потолок
+   * денег «Админки» — до вызова модели.
+   */
+  async openTurn(ctx: EmployeeCtx, now = new Date()): Promise<string> {
+    await this.assertUsable(ctx, now);
+    await this.assertDailyBudget(ctx, now);
+    let conv = await this.currentConversation(ctx, now);
+    if (
+      conv &&
+      now.getTime() - conv.lastActivityAt.getTime() > DIALOG_IDLE_MS
+    ) {
+      await this.claimDialog(ctx, now);
+    }
+    conv ??= await this.openConversation(ctx, now);
+    return conv.id;
+  }
+
+  /**
+   * Э6-бис (б): команда сотрудника и итог плана — сообщения его диалога
+   * (видны после перезагрузки; деньги плана — в `costMicroUsd` ответа не
+   * пишутся: они в site_ai_usage и в потолке выше).
+   */
+  async recordTurn(
+    ctx: EmployeeCtx,
+    conversationId: string,
+    question: string,
+    answer: string,
+    opts: { proposalId?: string | null; flags?: string[]; now?: Date } = {},
+  ): Promise<void> {
+    const now = opts.now ?? new Date();
+    const db = this.db.forAccount(ctx.accountId);
+    if (question)
+      await db.assistAdminMessage.create({
+        data: {
+          accountId: ctx.accountId,
+          siteId: ctx.siteId,
+          conversationId,
+          role: 'employee',
+          text: maskSensitiveEcho(question).slice(0, 4000),
+          flags: ['voice-control'],
+          createdAt: now,
+        },
+      });
+    if (answer)
+      await db.assistAdminMessage.create({
+        data: {
+          accountId: ctx.accountId,
+          siteId: ctx.siteId,
+          conversationId,
+          role: 'assistant',
+          text: answer.slice(0, 4000),
+          flags: opts.flags ?? ['voice-control'],
+          answerPath: opts.proposalId ? 'action' : 'tool',
+          proposalId: opts.proposalId ?? null,
+          createdAt: new Date(now.getTime() + 1),
+        },
+      });
+    await db.assistAdminConversation.update({
+      where: { id: conversationId },
+      data: { lastActivityAt: now, stateVersion: { increment: 1 } },
+      select: { id: true },
+    });
   }
 
   private async openConversation(ctx: EmployeeCtx, now: Date) {

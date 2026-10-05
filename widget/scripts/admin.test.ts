@@ -66,7 +66,59 @@ assert.deepEqual(
       lang: 'xx',
     })
   ),
-  { type: 'init', pk, parentOrigin: 'https://admin.shop.com', lang: null }
+  {
+    type: 'init',
+    pk,
+    parentOrigin: 'https://admin.shop.com',
+    lang: null,
+    vt: null,
+  }
+);
+// Э6-бис (б): токен ссылки мастера — только своего формата.
+assert.equal(
+  (
+    parseAdminParentMessage(
+      adminEnvelope({
+        type: 'init',
+        pk,
+        parentOrigin: 'https://admin.shop.com',
+        vt: 'abcDEF0123456789_-xyz01',
+      })
+    ) as { vt?: string | null }
+  ).vt,
+  'abcDEF0123456789_-xyz01'
+);
+assert.equal(
+  (
+    parseAdminParentMessage(
+      adminEnvelope({
+        type: 'init',
+        pk,
+        parentOrigin: 'https://admin.shop.com',
+        vt: '<script>',
+      })
+    ) as { vt?: string | null }
+  ).vt,
+  null
+);
+// Ответы страницы (`ui-*`, `vt-*`) — сырыми чанку admin-vc.js; команды
+// iframe — сырыми чанку admin-act.js; чужие виды — мимо.
+assert.equal(
+  parseAdminParentMessage(adminEnvelope({ type: 'ui-step', planId: 'p1' }))
+    ?.type,
+  'ui'
+);
+assert.equal(
+  parseAdminParentMessage(adminEnvelope({ type: 'ui-run', planId: 'p1' })),
+  null
+);
+assert.equal(
+  parseAdminFrameMessage(adminEnvelope({ type: 'ui-run', planId: 'p1' }))?.type,
+  'ui-raw'
+);
+assert.equal(
+  parseAdminFrameMessage(adminEnvelope({ type: 'ui-step', planId: 'p1' })),
+  null
 );
 // Из iframe наружу — только ready/need-identity/close: «отдай историю» нет.
 assert.deepEqual(parseAdminFrameMessage(adminEnvelope({ type: 'ready' })), {
@@ -96,13 +148,28 @@ for (const f of walk(src)) {
   const rel = f.slice(src.length + 1);
   const specs = importsOf(f);
   if (
-    !/^(admin|admin-chat)\//.test(rel) &&
+    !/^(admin|admin-chat|admin-act|admin-vc)\//.test(rel) &&
     !rel.endsWith('shared/admin-protocol.ts')
   ) {
     assert.ok(
-      !specs.some((s) => /(^|\/)(admin|admin-chat)\/|admin-protocol/.test(s)),
+      !specs.some((s) =>
+        /(^|\/)(admin|admin-chat|admin-act|admin-vc)\/?|admin-protocol/.test(s)
+      ),
       `${rel}: публичный код виджета импортирует «Админку»`
     );
+  }
+  // Э6-бис (б): чанки голосового управления «Админкой» переиспользуют
+  // исполнитель «Сайта» (act/exec, act/snapshot) и контроллер плана
+  // (chat/ui-plan) — и ничего больше из публичного кода; публичный код их
+  // не импортирует (правило выше: `admin-` в пути).
+  if (/^admin-(act|vc)\//.test(rel)) {
+    for (const s of specs.filter((x) => x.startsWith('..')))
+      assert.ok(
+        /^\.\.\/(act(\/exec|\/snapshot)?|chat\/(ui-plan|i18n)|shared\/[a-z-]+|admin-vc\/i18n)$/.test(
+          s
+        ) || s === './i18n',
+        `${rel}: недопустимый импорт ${s}`
+      );
   }
   if (/^(admin|admin-chat)\//.test(rel)) {
     assert.ok(
@@ -116,3 +183,35 @@ for (const f of walk(src)) {
   }
 }
 console.log('admin: протокол «Админки» и граница кода — ок');
+
+// Аудит Э6-бис (б): стоп-лист «Админки» сверх «Сайта» — копия в admin-act
+// (живая цель) совпадает с sites-backend (план): каждое выражение — дословно.
+{
+  const lits = (src: string, from: string, to: string) => {
+    const a = src.indexOf(from);
+    const seg = src.slice(a, src.indexOf(to, a));
+    return seg.match(/\/\(\?(?:<!|:)[^\n]*?\/[iu]+/g) ?? [];
+  };
+  const w = readFileSync(
+    new URL('../src/admin-act/index.ts', import.meta.url),
+    'utf8'
+  );
+  const b = readFileSync(
+    new URL(
+      '../../sites-backend/src/modules/assist-admin-voice/admin-voice-rules.ts',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  const wl = [
+    ...lits(w, 'const ADMIN_WORDS', '];'),
+    ...lits(w, 'const DANGER_HREF', ';\n'),
+  ];
+  const bl = [
+    ...lits(b, 'const ADMIN_NEVER_WORDS', '];'),
+    ...lits(b, 'export const ADMIN_DANGER_HREF', ';\n'),
+  ];
+  assert.equal(wl.length, 4, 'admin-act: 3 глагола + адрес');
+  assert.deepEqual(wl, bl, 'стоп-лист «Админки»: admin-act ≡ sites-backend');
+  console.log('admin: стоп-лист «Админки» admin-act ≡ sites-backend');
+}

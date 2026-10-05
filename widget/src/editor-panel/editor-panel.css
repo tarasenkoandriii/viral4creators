@@ -1,0 +1,173 @@
+/* Панель редактора голосовой карты (iframe `we.`, Э6-тер). */
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font:
+    13px/1.45 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  color: #111827;
+  background: #fff;
+}
+#app {
+  padding: 8px 10px 16px;
+}
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding-bottom: 4px;
+}
+.tabs button {
+  flex: 1;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  border-radius: 7px;
+  padding: 6px 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.tabs button.on {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}
+label {
+  display: block;
+  margin: 6px 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+label input,
+label select {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+}
+label.chk {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 400;
+}
+label.chk input {
+  width: auto;
+  margin: 0;
+}
+input,
+select {
+  font: inherit;
+  padding: 5px 7px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+fieldset {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  margin: 6px 0;
+  padding: 6px;
+}
+legend {
+  font-weight: 600;
+  font-size: 12px;
+}
+.row {
+  display: flex;
+  gap: 6px;
+  margin: 3px 0;
+}
+.row input {
+  flex: 1;
+  min-width: 0;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  border-radius: 7px;
+  padding: 6px 10px;
+  margin: 4px 4px 0 0;
+}
+button.pri {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+.pick {
+  font-weight: 600;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.hint {
+  color: #6b7280;
+}
+.warn {
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 6px;
+  padding: 6px;
+}
+.ok {
+  color: #166534;
+}
+.note {
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-radius: 6px;
+  padding: 6px;
+  margin: 0 0 6px;
+}
+.fatal {
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: 8px;
+  padding: 10px;
+}
+.snip {
+  margin: 6px 0;
+  font-size: 12px;
+}
+.snip code {
+  display: block;
+  background: #f3f4f6;
+  border-radius: 5px;
+  padding: 4px 6px;
+  margin: 3px 0;
+  word-break: break-all;
+}
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.list li button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 3px 0;
+}
+.list li.green button {
+  border-left: 4px solid #16a34a;
+}
+.list li.yellow button {
+  border-left: 4px solid #ca8a04;
+}
+.list li.violet button {
+  border-left: 4px solid #7c3aed;
+}
+.off {
+  opacity: 0.55;
+}
+.cnt {
+  font-weight: 600;
+}
+.undo {
+  margin-top: 12px;
+}

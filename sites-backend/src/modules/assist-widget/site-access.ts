@@ -17,6 +17,7 @@ import {
   evaluateHostAccess,
   type HostAccessDecision,
 } from '../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 
 export type KeyKind = 'live' | 'test';
 
@@ -141,14 +142,22 @@ export function originOfHost(h: {
     : `${h.scheme}://${h.host}:${h.port}`;
 }
 
-/** Все хосты сайта с решением ядра для `assist-widget` на момент `now`. */
+/**
+ * Все хосты «Сайта» с решением ядра для `assist-widget` на момент `now`.
+ *
+ * Хосты «Админки» (`assistRole = 'admin'`, аудит Э6-бис (б) (8), ТЗ §10)
+ * сюда НЕ попадают вовсе: для гварда, конфига, frame-ancestors, предпросмотра
+ * и страницы (`event`/`goal`/`pv`) такой хост — «не хост этого сайта», отказ
+ * тот же, что у чужого origin (ничего не говорит о том, что это админка),
+ * даже если владелец включил его в `hosts[]` вида.
+ */
 export async function siteHostAccess(
   db: AssistPublicDb,
   siteId: string,
   now: Date,
 ): Promise<SiteHostAccess[]> {
   const rows = await db.siteHost.findMany({
-    where: { siteId },
+    where: { siteId, ...PUBLIC_SITE_HOST },
     select: {
       id: true,
       accountId: true,

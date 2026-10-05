@@ -195,7 +195,7 @@ const uk: AdminActionsTexts = {
       '[{"name":"order","kind":"number"}] — kind: text|number|date|option',
     steps: 'Кроки (JSON)',
     stepsHint:
-      '[{"action":"api","op":"<id операції>","args":{"id":{"slot":"order"},"status":{"const":"shipped"}}}] — кліків немає',
+      '[{"action":"ui","kind":"navigate","target":{"text":"Замовлення","role":"link"}}, {"action":"api","op":"<id операції>","args":{"id":{"slot":"order"},"status":{"const":"shipped"}}}] — на сторінці лише посилання, вкладки, поля до «Зберегти» (голосове керування); кнопки збереження й видалення кліком — ні',
     saveDraft: 'Зберегти чернетку',
     build: 'Перевірити (ворота)',
     publish: 'Опублікувати версію',
@@ -309,7 +309,7 @@ const ru: AdminActionsTexts = {
       '[{"name":"order","kind":"number"}] — kind: text|number|date|option',
     steps: 'Шаги (JSON)',
     stepsHint:
-      '[{"action":"api","op":"<id операции>","args":{"id":{"slot":"order"},"status":{"const":"shipped"}}}] — кликов нет',
+      '[{"action":"ui","kind":"navigate","target":{"text":"Заказы","role":"link"}}, {"action":"api","op":"<id операции>","args":{"id":{"slot":"order"},"status":{"const":"shipped"}}}] — на странице только ссылки, вкладки, поля до «Сохранить» (голосовое управление); кнопки сохранения и удаления кликом — нет',
     saveDraft: 'Сохранить черновик',
     build: 'Проверить (ворота)',
     publish: 'Опубликовать версию',
@@ -425,7 +425,7 @@ const en: AdminActionsTexts = {
       '[{"name":"order","kind":"number"}] — kind: text|number|date|option',
     steps: 'Steps (JSON)',
     stepsHint:
-      '[{"action":"api","op":"<operation id>","args":{"id":{"slot":"order"},"status":{"const":"shipped"}}}] — no clicks',
+      '[{"action":"ui","kind":"navigate","target":{"text":"Orders","role":"link"}}, {"action":"api","op":"<operation id>","args":{"id":{"slot":"order"},"status":{"const":"shipped"}}}] — on the page only links, tabs, fields before “Save” (voice control); save and delete buttons by click — never',
     saveDraft: 'Save draft',
     build: 'Check (gates)',
     publish: 'Publish version',

@@ -90,6 +90,11 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistAdminMemoVersion: 'accountId',
   AssistAdminPhrase: 'accountId',
   AssistAdminMemoRun: 'accountId',
+  // Э6-бис (б): голосовое управление «Админкой» — планы сотрудников и
+  // мастер проверки (составные FK (siteId, accountId)); сессию сотрудника
+  // маршрут находит по хешу токена, дальше — кабинет сессии.
+  AssistAdminUiPlan: 'accountId',
+  AssistAdminVoiceTest: 'accountId',
   // Э2: виджет «Сайта». Публичные маршруты ходят в эти таблицы клиентом
   // AssistPublicDb (без extension, по siteId/visitorId/хешам) — тенант
   // держит кабинетный код (экраны, Э3-лента диалогов) и составной FK.
@@ -159,6 +164,15 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteMemoVersion: 'accountId',
   AssistSiteMemoChange: 'accountId',
   AssistSitePhrase: 'accountId',
+  // Э6-тер: голосовая карта «Сайта» — черновик, версии, журнал, ссылки и
+  // сессии редактора — строки кабинета (составной FK (siteId, accountId)).
+  // Публичный код их не трогает (только представление миграции
+  // _assist_visual_editor); сессию редактора по хешу токена находит
+  // системное чтение, дальше — клиент тенанта.
+  AssistSiteVoiceMap: 'accountId',
+  AssistSiteVoiceMapVersion: 'accountId',
+  AssistSiteVoiceMapChange: 'accountId',
+  AssistSiteVoiceMapEditorSession: 'accountId',
   // Э3-бис: аналитика с ИИ — разметка диалогов, расход бюджета аналитики,
   // калибровка score, выводы недели, эксперименты, свёртка поведения —
   // строки кабинета (составные FK (siteId|conversationId, accountId)).

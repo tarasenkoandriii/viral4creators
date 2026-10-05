@@ -448,7 +448,10 @@ if (!RAW_URL) {
         `SELECT "id", "memoId", "version", "number", "key", "content", "contentHash" FROM ${S}."assist_site_memo_checks" WHERE "id" = 'v' AND "siteId" = 's'`,
         // Аудит: сырые значения неживых планов СВОЕГО посетителя — обнулить.
         `UPDATE ${S}."assist_site_ui_plans" SET "liveValues" = NULL WHERE "siteId" = 's' AND "visitorId" = 'v' AND "liveValues" IS NOT NULL AND ("status" NOT IN ('proposed', 'confirmed', 'running', 'paused') OR "expiresAt" <= now())`,
-        `INSERT INTO ${S}."assist_site_ui_action_log" ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs", "pinMismatch", "undoOf") SELECT 'l', 'a', 's', 'p', 0, 'undo', NULL, NULL, 'auto', NULL, 'done', NULL, NULL, 1, false, 0 WHERE false`,
+        // Э6-тер: + цель голосовой карты шага и промах карты.
+        `INSERT INTO ${S}."assist_site_ui_action_log" ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs", "pinMismatch", "undoOf", "mapKey", "mapMiss") SELECT 'l', 'a', 's', 'p', 0, 'undo', NULL, NULL, 'auto', NULL, 'done', NULL, NULL, 1, false, 0, 'k', true WHERE false`,
+        // Э6-тер: голосовая карта — только представление опубликованной версии.
+        `SELECT "version", "content" FROM ${S}."assist_site_voice_map_published" WHERE "siteId" = 's' LIMIT 1`,
         // Единица за команду — тот же SQL, что claimDialog чата.
         `UPDATE ${S}."assist_site_conversations" SET "dialogCounted" = true WHERE "id" = 'c' AND NOT "dialogCounted" RETURNING "id"`,
         `UPDATE ${S}."assist_site_conversations" SET "answers" = "answers" + 1 WHERE "id" = 'c' RETURNING "answers", "voice"`,
@@ -484,6 +487,14 @@ if (!RAW_URL) {
         `SELECT "memoCounter" FROM ${S}."assist_sites" LIMIT 1`,
         `SELECT "voiceControlRisksVersion" FROM ${S}."assist_sites" LIMIT 1`,
         `UPDATE ${S}."assist_site_voice_tests" SET "memoVersionId" = 'x' WHERE false`,
+        // Э6-тер: черновик карты, версии, журнал, ссылки и сессии редактора — роли ничего.
+        `SELECT 1 FROM ${S}."assist_site_voice_maps" LIMIT 1`,
+        `SELECT "draft" FROM ${S}."assist_site_voice_maps" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_voice_map_versions" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_voice_map_changes" LIMIT 1`,
+        `SELECT 1 FROM ${S}."assist_site_voice_map_editor_sessions" LIMIT 1`,
+        `UPDATE ${S}."assist_site_voice_maps" SET "publishedVersion" = 1 WHERE false`,
+        `INSERT INTO ${S}."assist_site_voice_map_versions" ("id", "accountId", "siteId", "number", "status", "content", "contentHash", "requestedBy", "requestedVia") SELECT 'v', 'a', 's', 1, 'published', '{}'::jsonb, 'h', 'm', 'tma' WHERE false`,
         // Журнал только дописывается: ни чтения, ни правки, ни удаления.
         `SELECT 1 FROM ${S}."assist_site_ui_action_log" LIMIT 1`,
         `UPDATE ${S}."assist_site_ui_action_log" SET "result" = 'done' WHERE false`,

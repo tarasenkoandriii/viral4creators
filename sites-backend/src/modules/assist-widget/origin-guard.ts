@@ -16,9 +16,11 @@
  * Сессия предпросмотра (sessionHash в assist_site_preview_tokens) с
  * purpose=tma допускает parentOrigin из previewFrameAncestors().
  *
- * Э2: «роль public» у хоста — все хосты сайта (роли хостов `public|admin`
- * появятся с «Админкой», Э7); виджет «Сайта» включается на хосте только
- * через `hosts[]` опубликованного вида.
+ * «Роль public» у хоста — `site_hosts.assistRole = 'public'`: хосты
+ * «Админки» (`adminHostIds`, Э7; зеркало держит триггер БД) siteHostAccess
+ * не возвращает вовсе — на них виджет «Сайта» не работает, даже если хост
+ * включён в `hosts[]` опубликованного вида (аудит Э6-бис (б) (8), ТЗ §10);
+ * отказ — тот же ORIGIN_DENIED, что у чужого origin.
  */
 import { Injectable } from '@nestjs/common';
 import { previewFrameAncestors, widgetOrigin } from '../../config/widget-env';

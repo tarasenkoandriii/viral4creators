@@ -882,6 +882,72 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 (статус цепочки компенсации — новой записью), `memo`.
 
 
+## Э6-бис помощника (б): голосовое управление «Админкой»
+
+ТЗ помощника §5-бис.2–6 «Админка», §5-бис.13, §5-бис.15, §5-бис.17 п.10;
+план «Э6-бис (б) — сделано»; решения ТЗ §12.1 Р-Э6б-1…12; развёртывание —
+`doc/DEPLOYMENT.md` §6.20-бис. Модуль `assist-admin-voice` (зона «Админки»,
+граф `admin↛site`); таблицы — только `assist_admin_ui_plans`,
+`assist_admin_voice_tests` (+ поля `voiceControlAdmin*` в
+`assist_admin_settings`); роль `assist_public` прав не имеет. План строит и
+проверяет сервер (`checkPlan` из `assist-ui-core` + правила «Админки»
+`checkAdminPlan`); исполняет страница админки (`/v1/admin-act.js`), команды
+— только из iframe `wa.` (`/v1/admin-vc.js`). Коды отказов —
+`ADMIN_VC_*` (`{ error: { code, message, details } }`).
+
+Хосты «Админки» и публичный виджет «Сайта» (аудит Э6-бис (б) (8),
+инвариант «Админка → Сайт», ТЗ §10): хост из `adminHostIds` для публичных
+маршрутов «Сайта» НЕ существует, даже если он включён в `hosts[]`
+опубликованного вида. `GET /widget/v1/config` — его нет в `hosts`; CSP
+`frame-ancestors` `GET /w/v1/frame` — нет; `POST /widget/v1/session`,
+обмен предпросмотра, запросы со страницы (`event`, `goal`, `pv`, `exp`,
+`ref`, пинг) и все маршруты по visitor-token (в т.ч. токен, выданный до
+отметки) — тот же отказ, что у чужого origin (403 `ORIGIN_DENIED` /
+`PREVIEW_INVALID`; ничего не говорит, что это админка); адрес снимка, шага
+или ссылки ответа на admin-хосте — не адрес сайта. Кабинет вида «Сайта»
+(`GET/PUT /assist/sites/:id/widget…`, публикация, ссылка «посмотреть на
+сайте», проверка установки, ссылка мастера Т-2 — 409
+`VOICE_CONTROL_HOST_REQUIRED`) admin-хост не показывает и не принимает
+(`host_unknown`). Роль виджета
+видит только колонку `site_hosts.assistRole` (`public|admin`, зеркало
+`adminHostIds` — триггер БД), настроек «Админки» — нет.
+
+Кабинет, только `assistAdmin: owner` (Pro; менеджер/оператор «Сайта» и
+сотрудник — 403):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/admin-mode/voice-control` | `{ siteId, siteName, state: off\|test\|on\|degraded, stateAt, stateBy, stateReason, rules{ allowPaths, allowSelectors, denySelectors, denyPaths, denyWords, confirmFill, maxSteps (по умолчанию 10, ≤ 15) }, risksVersion (admin-risks-1), risksAccepted, enabledBy, planAllows, adminModeOk, voiceAvailable, platformOn, hosts[{ id, host, verified, test }], report (последний тест), onProblem, metrics{ plans, done, manual, failed, stopped, violations, expectMisses } }` |
+| `PATCH /assist/sites/:id/admin-mode/voice-control` | `{ state?, rules?, risksVersion?, siteName?, partialAck?, testHostIds? }`: из `off` — только с `risksVersion` = текущей и `siteName` = названию сайта (400 `ADMIN_VC_RISKS_REQUIRED` / `ADMIN_VC_SITE_NAME`); не Pro — 402 `ADMIN_VC_PLAN_REQUIRED`; «Админка» выключена/нет хоста — 409 `ADMIN_VC_MODE_REQUIRED`; `on` без годного отчёта мастера — 409 `ADMIN_VC_TEST_REQUIRED` (`details.errors[0].code` — причина: `none\|failed\|partial_ack\|expired\|older_than_state`; БД отвергает и прямой UPDATE); `off` — всегда; `testHostIds` — только `verified` хосты админки; журнал — `voice-control` |
+| `POST /assist/sites/:id/admin-mode/voice-control/test-token` | `{ hostId?, path? (от корня) }` → `{ testId, url (https-хост админки + ?v4c_voicetest=<токен>), expiresAt (30 мин), testHost }` (`no-store`); до рисков — 400; хоста нет — 409 `ADMIN_VC_HOST_REQUIRED` |
+| `GET /assist/sites/:id/admin-mode/voice-control/tests` · `…/tests/:tid` | тесты мастера `{ id, host, testHost, createdAt, reportedAt, result, validUntil, attempts, problem, partialAck }`; деталь — ещё `report{ v, lang, host, page, testHost, result, items, attempts, submitsBlocked, forbidden[{ kind, command, blocked, api }], dangerButtons, dry, safe, save, suspicious, reviewed }` |
+
+Сотрудник — встраивание (сессия `X-Assist-Admin-Session`, origin `wa.`;
+тестовая сессия мастера — заголовок `X-Assist-Admin-Voice-Test: <testId>`,
+привязан к этой сессии и `sub`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist-admin/v1/voice-control` | `{ mode: on\|degraded\|null, state, denySelectors, allowSelectors, maxSteps, voice, consentVersion (admin-consent-1) }` |
+| `POST /assist-admin/v1/voice` | сырые байты записи (`audio/webm\|ogg\|mp4\|wav`, ≤ 1 МБ — иначе 413 `ADMIN_VC_TOO_LARGE`; тип — по байтам) → `{ text, lang, voiceTicket }` (билет — на этого сотрудника, сайт и текст); 12/мин, 400/сутки на сотрудника; файл и транскрипция у провайдера удаляются в `finally` |
+| `POST /assist-admin/v1/ui-plan` | `{ text, source: voice\|typed, voiceTicket?, snapshot{ url (только хост админки — иначе 400), title, elements[≤150] }, lang?, testId?, dryRun?, memoRunId? }` (JSON ≤ 96 КБ) → `{ kind: plan\|not_command\|api\|memo, planId, status: proposed\|running\|…, steps[{ i, kind, target{ ref, assistId, role, text, href }, value, expect, risk, reason, nav, undo, state }], currentStep, notes[{ code, target }], needsConfirm, stepsHash, confirmBefore, expiresAt, marks, pnr, pnrConfirm, fields[{ i, label, value }] (перечень полей карточки), chainStatus, api{ key }\|null (изменение ушло в предложение API — команду в чат), apiMissing, memo{ number, name, text, proposalId, nextUi }\|null }`; 8/мин, 200/сутки на сотрудника, 1000/сутки на сайт (мастер — без лимитов) |
+| `GET /assist-admin/v1/ui-plan/active` | `{ plan, memoRunId }` — живой план сотрудника и ждущий отрезок мемо на странице |
+| `POST /assist-admin/v1/ui-plan/:id/confirm` | `{ stepsHash, by: button\|voice, text?, voiceTicket? }`; отпечаток (с значениями полей) не совпал — 409 `ADMIN_VC_CHANGED`; истёк (60 с) — 410 `ADMIN_VC_EXPIRED` |
+| `POST /assist-admin/v1/ui-plan/:id/step` | `{ index, result: dispatched\|done\|failed\|manual\|skipped\|stopped, reason?, url, durationMs? }`; `dispatched` — до действия с эффектом, один раз; шаг по цели «никогда» — режим `off` сразу (журнал `violation`, уведомление владельцу) |
+| `POST /assist-admin/v1/ui-plan/:id/stop\|resume\|undo\|undo-report` | стоп `{ by }`; продолжение после перехода `{ snapshot }`; «верни як було» `{ by, decision? }` → `{ planId, fields[{ i, text }], refused: after_pnr\|nothing\|unknown\|expired\|degraded\|null, chainStatus }` (только поля до «Сохранить»); итог возврата `{ results[{ i, result }] }` |
+| `POST /assist-admin/v1/voice-test/session` | `{ token }` → `{ testId, testHost, host, expiresAt }` — один раз, только этому сайту; дальше снимки тестовой сессии (план, продолжение, анализ, отчёт) — только с `host` ссылки, иной хост админки — 400 (аудит 05.10) |
+| `POST /assist-admin/v1/voice-test/:tid/analyze` | `{ snapshot, lang }` → `{ commands[{ text, safe }], forbidden[{ kind, command, blocked, api }], never, dangerButtons }` |
+| `POST /assist-admin/v1/voice-test/:tid/attempt` | регистратор страницы `{ kind: never\|submit, n, text? }` → `{ attempts }` (попытки только растут) |
+| `POST /assist-admin/v1/voice-test/:tid/report` | `{ lang, snapshot, env, mic, markup, suspicious, reviewed, dry[{ planId, ok }], submitsBlocked }` → `{ testId, result, validUntil, report }`; попытка > 0 или отправка на рабочем хосте — `fail`; сданный отчёт неизменен (повтор — 404/409) |
+
+Журнал `assist_admin_action_log` — записи `ui-plan`, `ui-step`, `chain`,
+`ui-test`, `voice-control` (значения полей после конца плана — маской).
+Мемо «Админки» — шаг `{ action: ui, kind: navigate|click|fill|select|check|scroll|highlight|wait, target{ text, role?, assistId? }, value?{ slot }|{ const } }`:
+клик/переход — только ссылка, вкладка, пункт меню; кнопка («Зберегти»,
+«Видалити») — 422 `MEMO_INVALID` (`click_forbidden`); ворота — `kinds` с `ui`;
+отрезок на странице исполняется только из виджета с голосовым управлением
+(из чата/TMA — честный стоп).
+
 ## Э3-бис помощника: аналитика с ИИ
 
 ТЗ помощника §5-тер.2–5, 8–10, 14–17; план этапов «Э3-бис — сделано»;
@@ -930,3 +996,69 @@ API страницы: `V4CAssist('consent', { analytics: true|false })`,
 `V4CAssist('group', cb)` → `cb('h'|'w'|null)` (контрольная группа без
 помощника / с ним / нет эксперимента), `V4CAssist('ref', cb)` →
 `cb(ref|null)` — колбэки, не Promise.
+
+## Э6-тер помощника: визуальный редактор голосовой карты «Сайта»
+
+ТЗ помощника §5-кватер (приёмка §5-кватер.14); план этапов «Э6-тер —
+сделано»; развёртывание — `doc/DEPLOYMENT.md` §6.22; решения — ТЗ §12.1
+Р-Э6т-1…14. Карта — подсказка, а не разрешение (Р-51): риск шага в бою
+считает код по живой цели, карта — только нижняя граница; владелец может
+только ужесточить. Публикация — только в TMA (В-50).
+
+Кабинет TMA (`@AllowApps('assist')`, `SiteAccountGuard`, `assist: manager`
+или владелец; оператор — 403; чужой сайт — 404). Ошибки — конверт
+`{ success:false, error{ code, message, details{ code, errors[{ path,
+code }] } } }`:
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/voice-map/site` | сводка: `{ publishedVersion, draftRevision, targets, denylisted, templates, fragile, draftGates (MapGateReport), draftDirty, versions[≤20] (VoiceMapVersionSummary), activeSessions, templateSuggestions[{ pathPattern, pages, samplePages }], hosts[] }` |
+| `GET /assist/sites/:id/voice-map/site/draft` | `{ revision, publishedVersion, content{ schemaVersion:1, targets[], templates[], terms[] }, gates }` |
+| `PATCH /assist/sites/:id/voice-map/site/draft` | `{ expectedRevision, ops[≤50] }` → `{ revision, applied }`; операции: `upsert-target {target}`, `remove-target|restore-target {key}`, `rebind-target {key, descriptor}`, `add-synonym {key, lang, text}`, `sample {key, path, found}`, `upsert-template {template{ id?, name, pathPattern (`*` только в конце), samplePages[≤5] }}`, `remove-template {id}`, `set-terms {terms[≤100]}`; пакет целиком или 422 `VOICE_MAP_INVALID` (`errors[].code`: `risk_lowering_forbidden`, `never_target_named`, `never_attr_denylist_only`, `text_invalid`, `bad_key`, `bad_target`, `not_found`, `limit`, `bad_template`, `bad_op`); чужая ревизия — 409 `VOICE_MAP_CONFLICT` |
+| `POST /assist/sites/:id/voice-map/site/editor-link` | `{ host?, path?, focus? }` → `{ url: "https://<verified-хост><path>?v4c_edit=<токен>", expiresAt (10 мин), host }`; хоста нет (не verified L1 `assist-crawl`, льгота, admin-хост, не https) — 409 `VOICE_MAP_HOST_REQUIRED`; в базе — SHA-256 токена |
+| `GET /assist/sites/:id/voice-map/site/editor-sessions` | `{ items[{ id, host, pagePath, memberId, createdAt, exchangedAt, expiresAt, lastSeenAt }] }` — живые ссылки и сессии |
+| `DELETE /assist/sites/:id/voice-map/site/editor-sessions[/:sid]` | «завершить все» / одну → `{ revoked }`; следующая операция панели — 401 |
+| `POST /assist/sites/:id/voice-map/site/versions` | собрать версию из черновика → `VoiceMapVersionView{ number, status: checking\|held, requestedVia, rollbackOf, createdAt, publishedAt, ok, problems, warnings, diff{ added, changed, removed }, gateReport, content, diffKeys }` |
+| `GET /assist/sites/:id/voice-map/site/versions[/:n]` | `{ items[≤20] }` / одна версия с диффом к опубликованной и отчётом ворот; 404 `VOICE_MAP_VERSION_NOT_FOUND` |
+| `POST /assist/sites/:id/voice-map/site/versions/:n/publish` | только `checking`; ворота пересчитываются (не прошли — `held`, 409 `VOICE_MAP_HELD`); индекс фраз сайта — гонка с мемо 409 `VOICE_MAP_PHRASE_TAKEN`; другой статус — 409 `VOICE_MAP_VERSION_STATE` |
+| `POST /assist/sites/:id/voice-map/site/versions/:n/discard` | `checking\|held` → `discarded` |
+| `POST /assist/sites/:id/voice-map/site/versions/:n/rollback` | бывшая опубликованная N → НОВАЯ версия с её содержимым (ворота и публикация — как обычно) |
+| `POST /assist/sites/:id/voice-map/site/platform-template` | `{ platform: woocommerce, expectedRevision }` → `{ revision, applied }` — цели шаблона в черновик (`origin: template`); неизвестная платформа — 400 |
+| `GET /assist/sites/:id/voice-map/site/export` | `{ name: "voice-map.<site>.site.v<N>.json", file{ schemaVersion, kind: site, templates[{ ref, name, pathPattern }], targets[], terms[], signature (HMAC) } }` — без id, образцов, журнала и ПД |
+| `POST /assist/sites/:id/voice-map/site/import` | `{ expectedRevision, file }` → `{ revision, accepted, rejected[{ index, key, code }], signed }`; `kind: admin` — 422 `VOICE_MAP_IMPORT_KIND`; не файл карты — 422 `VOICE_MAP_IMPORT_FORMAT` |
+
+Ворота версии (`gateReport.problems[].code`, блокируют): `risk_lowered`,
+`never_named`, `never_attr`, `phrase_conflict`, `memo_phrase`, `text`,
+`not_found` (> 30% целей не найдены на образцах), `empty`; предупреждения:
+`not_found` (каждая), `fragile`, `memo_affected`.
+
+Панель редактора — iframe на origin `we.` (заголовок `X-Assist-Editor:
+<сессия>`; CORS — только origin редактора, без cookie; основная роль):
+
+| Маршрут | Что |
+|---|---|
+| `GET /we/v1/frame?pk=` | HTML панели (`/v1/editor-panel.js`, `.css`), CSP `script-src 'self'`, `require-trusted-types-for 'script'`, `frame-ancestors` = verified-хосты «Сайта» без льготы (`pk_test_` — ещё `localhost`); неизвестный pk — `'none'`; `Cache-Control: no-store` |
+| `POST /editor/v1/session` | `{ token (из #t=), parentOrigin }` → `{ session, expiresAt (30 мин скольз.), absoluteExpiresAt (4 ч), pagePath, focusKey, host }`; повтор, срок 10 мин, чужой origin, хост/право больше не годны — один код 403 `EDITOR_LINK_INVALID` |
+| `GET /editor/v1/map?path=` | `{ revision, publishedVersion, path, template, templates[], targets[] (действующие на странице + удалённые до публикации), keys[], gates, hosts[] }` |
+| `POST /editor/v1/ops` | как `PATCH …/draft` (источник `editor`) |
+| `POST /editor/v1/try` | `{ text (≤ 200), snapshot (снимок act.js) }` → `{ heard, via: map\|direct\|model_needed\|none, key, phrase, steps[], notes[], left }` — по ЧЕРНОВИКУ, без плана в базе и без нажатий; 100 в сутки на сайт (429 `EDITOR_TRY_LIMIT`) |
+| `POST /editor/v1/publish-request` | собрать версию (`requestedVia: editor`) + уведомление владельцам/менеджерам в бот; не чаще 1 в минуту на сессию и не больше 10 в сутки (UTC) на сайт — сверх 429 `EDITOR_PUBLISH_LIMIT` `{ scope: session\|site, retryAfterSec }`, версия не собирается и в бот ничего не уходит (аудит Э6-тер (2); сборка в TMA — без этих потолков) |
+| `POST /editor/v1/publish` | всегда 403 `EDITOR_PUBLISH_FORBIDDEN` — публикация только в TMA |
+| `POST /editor/v1/exit` | сессия гаснет |
+| любой (кроме `session`) | сессия истекла/отозвана, роль участника или хост больше не годны — 401 `EDITOR_SESSION_EXPIRED` |
+
+Загрузчик: `?v4c_edit=<токен>` снимается с адреса до любой работы; на этой
+вкладке поднимается только ленивый чанк `/v1/editor.js` (публичного чата
+нет); новых команд `V4CAssist(…)`, атрибутов и событий нет. Публичный
+план (`POST /widget/v1/ui-plan`): цели опубликованной карты разрешаются
+по снимку (прямой путь по имени/синониму без модели, denylist карты — вон
+из снимка, риск карты — нижняя граница, блок `<voice_map>` в промпте);
+в журнале шагов — `mapKey`, `mapMiss`. Ключ цели карты (`mapKey`) хранится
+в шагах плана в базе, но в шагах ответа `/widget/v1/ui-plan*` его НЕТ
+(аудит Э6-тер (1)); `stepsHash` по нему не считается — сверка подтверждения
+не менялась. Имена и синонимы карты в ответы `/widget/v1/*` не уходят.
+Путь ссылки в дескрипторе (`descriptor.hrefPath`) сервер маскирует
+(`/u/ivan@x.com/orders/123456789012` → `/u/:email/orders/:n`, маски
+`maskPagePath` — те же, что у адреса страницы; изменённый сегмент — в
+percent-кодировке); пикер шлёт его уже маской и ищет цель по маске пути
+(аудит Э6-тер (3)).

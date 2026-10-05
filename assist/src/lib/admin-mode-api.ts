@@ -9,6 +9,7 @@
 import type { ApiClient } from '../kit';
 import { type Proposal, parseProposal } from './admin-actions-api';
 import { seg } from './handoff-api';
+import { createAdminVoiceApi, type AdminVoiceApi } from './admin-voice-api';
 
 export const ADMIN_MODE_TABS = [
   'settings',
@@ -17,6 +18,8 @@ export const ADMIN_MODE_TABS = [
   'memos',
   'learning',
   'stats',
+  // Э6-бис (б): голосовое управление «Админкой».
+  'voice',
 ] as const;
 export type AdminModeTab = (typeof ADMIN_MODE_TABS)[number];
 export const isAdminModeTab = (v: string): v is AdminModeTab =>
@@ -394,6 +397,8 @@ export interface AdminModeApi {
     rating: 1 | -1,
     correction?: string
   ): Promise<void>;
+  /** Э6-бис (б): голосовое управление «Админкой» (вкладка «Голос»). */
+  voice: AdminVoiceApi;
 }
 
 function parseCrawl(v: unknown): PrivateCrawlView {
@@ -596,5 +601,6 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
         correction ? { rating, correction } : { rating }
       );
     },
+    voice: createAdminVoiceApi(client),
   };
 }

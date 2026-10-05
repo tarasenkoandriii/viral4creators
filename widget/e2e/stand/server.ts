@@ -46,6 +46,14 @@ import {
 } from './ui-plan-mock';
 import { vcStandRoute } from './vc-stands';
 import { adminLog, adminReset, adminRoute, isAdminHost } from './admin-mock';
+import { adminVcLog, adminVcReset, adminVcSet } from './admin-vc-mock';
+import {
+  editorLink,
+  editorLog,
+  editorReset,
+  editorRoute,
+  isEditorHost,
+} from './editor-mock';
 
 const ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -105,6 +113,9 @@ interface Site {
     denySelectors?: string[];
     allowSelectors?: string[];
     maxSteps?: number;
+    /** Э6-тер: у сайта есть мемо; «Я вмію» — имена мемо (skills). */
+    memos?: boolean;
+    skills?: string[];
   };
   vcRules?: unknown;
   vcModel?: Record<string, ModelStep[] | 'not_command'>;
@@ -667,6 +678,7 @@ async function api(
                 denySelectors: s.voiceControl.denySelectors ?? [],
                 allowSelectors: s.voiceControl.allowSelectors ?? [],
                 maxSteps: s.voiceControl.maxSteps ?? 6,
+                memos: s.voiceControl.memos === true,
               },
             }
           : {}),
@@ -1446,13 +1458,45 @@ async function widgetServer(
   // Э7: сброс мока «Админки» (admin-mock.ts) — до общего control.
   if (p === '/__mock/admin-reset') {
     adminReset();
+    adminVcReset();
     res.writeHead(204);
     return res.end();
+  }
+  // Э6-бис (б): голосовое управление «Админкой» — режим, «ответы модели»,
+  // «дефект сервера», ссылка мастера (admin-vc-mock.ts).
+  if (p === '/__mock/admin-vc') {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    let b: Record<string, unknown> = {};
+    try {
+      b = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    } catch {
+      b = {};
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(adminVcSet(b)));
   }
   // Э8: журнал мока «Админки» (исполнения «Да» — для п.4 (б) §4-бис.10).
   if (p === '/__mock/admin-log') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify(adminLog()));
+    // Э6-бис (б): + планы, снимки и мастер голосового управления.
+    return res.end(JSON.stringify({ ...adminLog(), vc: adminVcLog() }));
+  }
+  // Э6-тер: мок редактора голосовой карты (editor-mock.ts).
+  if (p === '/__mock/editor-reset') {
+    editorReset();
+    res.writeHead(204);
+    return res.end();
+  }
+  if (p === '/__mock/editor-link') {
+    const b = (await readBody(req)) as { token?: string; origin?: string };
+    editorLink(String(b.token || ''), String(b.origin || ''));
+    res.writeHead(204);
+    return res.end();
+  }
+  if (p === '/__mock/editor-log') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(editorLog()));
   }
   if (p.startsWith('/__mock/')) return control(req, res, p);
   if (p === '/evil-frame.html') {
@@ -1496,6 +1540,10 @@ async function widgetServer(
   // /assist-admin/v1/* (как `has host` в vercel.json); публичное — 404.
   if (isAdminHost(req))
     return adminRoute(req, res, url, `http://*.localhost:${SITE_PORT}`);
+  // Э6-тер: origin панели редактора (127.0.0.2:<порт>) — только /we/v1/frame
+  // и /editor/v1/* (как `has host` в vercel.json).
+  if (isEditorHost(req))
+    return editorRoute(req, res, url, `http://*.localhost:${SITE_PORT}`);
   if (BACKEND && (p.startsWith('/widget/v1/') || p.startsWith('/w/v1/')))
     return proxy(req, res);
   if (p === '/w/v1/frame') {
@@ -1652,6 +1700,22 @@ export interface StandSpec {
    * элемента под одним селектором (неоднозначно — не подсвечиваем).
    */
   uiKit?: 'v1' | 'v2' | 'dup';
+  /**
+   * Э6-тер: элементы для редактора голосовой карты — «В кошик» с разметкой
+   * (счётчик кликов сайта), ссылка, «Оплатити», кликабельный div без роли,
+   * поле с ВВЕДЁННЫМ значением (не должно уйти в панель).
+   */
+  editorKit?: boolean;
+  /** Аудит Э6-тер (3): ссылка с ПД в пути (`/u/<e-mail>/orders/<номер>`). */
+  editorPdLink?: boolean;
+  /** Э6-тер: «злой скрипт» шлёт поддельные сообщения пикеру и панели. */
+  editorEvil?: boolean;
+  /**
+   * Э6-бис (б): страница админки — меню, таблица заказов с ПД клиентов и
+   * «Видалити» в строках, форма «Нотатка/Статус/Зберегти» (счётчики
+   * сохранений и удалений — snippets/admin-kit.js).
+   */
+  adminKit?: boolean;
 }
 
 export function encodeSpec(s: StandSpec): string {
@@ -1725,6 +1789,34 @@ function standHtml(spec: StandSpec, host: string): string {
     parts.push(
       `<p><button id="cta-buy" type="button">Купить</button><button id="cta-buy" type="button">Купить 2</button></p>`
     );
+  if (spec.editorKit)
+    parts.push(
+      `<section id="ed-kit"><h2>Футболка синя</h2>` +
+        `<button id="ed-cart" type="button" data-assist-id="add-to-cart">В кошик</button> ` +
+        `<a id="ed-delivery" href="/page?s=${encodeSpec({ ...spec, n: 2 })}">Доставка</a> ` +
+        `<button id="ed-pay" type="button">Оплатити</button> ` +
+        `<div id="ed-div" class="clicky">Іконка кошика</div>` +
+        `<input id="ed-email" name="email" value="owner.secret@example.com"> ` +
+        (spec.editorPdLink
+          ? `<a class="ed-profile" href="/u/ivan.petrenko@example.com/orders/123456789012">Мій кабінет</a> `
+          : '') +
+        `<span id="ed-clicks">0</span></section>`
+    );
+  if (spec.adminKit)
+    parts.push(
+      `<nav id="ak-nav"><a href="${link(1)}">Замовлення</a> <a href="${link(2)}">Клієнти</a></nav>` +
+        `<table id="ak-table"><tr><th>№</th><th>Клієнт</th><th>Дії</th></tr>` +
+        `<tr><td>1042</td><td><a href="#c1">Іван Петренко</a></td><td><button type="button" class="ak-del">Видалити</button> <a href="#o1042">Деталі 1042</a></td></tr>` +
+        `<tr><td>1043</td><td><a href="#c2">Олена Коваль</a></td><td><button type="button" class="ak-del">Видалити</button> <a href="#o1043">Деталі 1043</a></td></tr></table>` +
+        `<p><button id="ak-del-all" type="button" class="ak-del">Видалити вибрані</button></p>` +
+        // Аудит Э6-бис (б): голый глагол, иконка с подписью внутри, ссылка
+        // с действием в адресе, список клиентов `li` вне навигации.
+        `<p><button id="ak-cancel" type="button" class="ak-del">Скасувати</button> <button id="ak-icon" type="button" class="ak-del">⋯<i title="Видалити"></i></button> <a id="ak-link-del" class="ak-del" href="/admin/orders/1042/delete">Деталі замовлення</a></p>` +
+        `<ul id="ak-list"><li><a href="#c3">Петро Сидоренко</a></li></ul>` +
+        `<form id="ak-auto-form" action="/admin/autosave" method="get"><label>Пріоритет <select id="ak-prio" name="prio"><option>Звичайний</option><option>Високий</option></select></label></form>` +
+        `<form id="ak-form"><label>Нотатка <input id="ak-note" name="note"></label> <label>Коментар <input id="ak-comment" name="comment"></label> <label>Місто <input id="ak-city" name="city"></label> <button id="ak-save" type="submit">Зберегти</button></form>` +
+        `<p>Збережено: <span id="ak-saves">0</span>, видалено: <span id="ak-deletes">0</span></p>`
+    );
   if (spec.long) parts.push(`<div class="long">длинная страница</div>`);
   if (spec.evilFrame)
     parts.push(
@@ -1738,6 +1830,12 @@ function standHtml(spec: StandSpec, host: string): string {
   if (spec.ownButton) parts.push(`<script src="/snippets/own.js"></script>`);
   if (spec.spa) parts.push(`<script src="/snippets/spa.js"></script>`);
   if (spec.goalsKit) parts.push(`<script src="/snippets/goals.js"></script>`);
+  if (spec.editorKit)
+    parts.push(`<script src="/snippets/editor-kit.js"></script>`);
+  if (spec.editorEvil)
+    parts.push(`<script src="/snippets/editor-evil.js"></script>`);
+  if (spec.adminKit)
+    parts.push(`<script src="/snippets/admin-kit.js"></script>`);
   if (!spec.noWidget && !spec.directFrame)
     parts.push(
       `<script async src="${spec.loaderOrigin && /^http:\/\/127\.0\.0\.1:\d+$/.test(spec.loaderOrigin) ? spec.loaderOrigin : WIDGET}/v1/loader.js" data-site="${esc(spec.pk)}"${attrs}></script>`
@@ -1747,6 +1845,18 @@ function standHtml(spec: StandSpec, host: string): string {
 }
 
 const SNIPPETS: Record<string, string> = {
+  // Э6-тер: действие сайта на «В кошик» — счётчик (выбор в редакторе его не трогает).
+  '/snippets/editor-kit.js':
+    "window.__siteClicks=0;document.getElementById('ed-cart').addEventListener('click',function(){window.__siteClicks++;document.getElementById('ed-clicks').textContent=String(window.__siteClicks);});document.getElementById('ed-div').style.cursor='pointer';",
+  // Э6-тер: злой скрипт страницы — поддельные pick/ops/publish/exit всем окнам.
+  '/snippets/editor-evil.js':
+    "(function(){var m=function(o){o.ns='v4c-editor';o.v=1;return o;};var d={tag:'button',role:'button',text:'Оплатити',assistId:'add-to-cart',unique:true};setInterval(function(){var t=[window];for(var i=0;i<window.frames.length;i++)t.push(window.frames[i]);t.forEach(function(w){try{w.postMessage(m({type:'pick',descriptor:d,how:'assist-id',stability:'strong',never:false,crumbs:[]}),'*');w.postMessage(m({type:'ops',expectedRevision:0,ops:[{op:'upsert-target',target:{key:'evil',descriptor:d,names:{uk:'В кошик'}}}]}),'*');w.postMessage(m({type:'publish-request'}),'*');w.postMessage(m({type:'exit'}),'*');w.postMessage(m({type:'targets',items:[]}),'*');}catch(e){}});},150);})();",
+  // Э6-бис (б): «сохранение» формы админки (AJAX) и «удаление» — счётчики.
+  '/snippets/admin-kit.js':
+    "document.getElementById('ak-form').addEventListener('submit',function(e){e.preventDefault();var s=document.getElementById('ak-saves');s.textContent=String(Number(s.textContent)+1);});" +
+    "document.querySelectorAll('.ak-del').forEach(function(b){b.addEventListener('click',function(e){if(b.tagName==='A')e.preventDefault();var d=document.getElementById('ak-deletes');d.textContent=String(Number(d.textContent)+1);});});" +
+    // Автосохранение старых админок: `form.submit()` в `onchange` (без события submit).
+    "document.getElementById('ak-prio').addEventListener('change',function(){this.form.submit();});",
   '/snippets/queue.js':
     'window.V4CAssist = window.V4CAssist || function(){(V4CAssist.q=V4CAssist.q||[]).push(arguments)};',
   '/snippets/own.js':

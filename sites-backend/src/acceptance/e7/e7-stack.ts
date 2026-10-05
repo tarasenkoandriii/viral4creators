@@ -14,6 +14,7 @@ import {
   Logger,
   LoggerService,
   Module,
+  Type,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { configureApp } from '../../app.setup';
@@ -212,6 +213,11 @@ export class E7Stack {
   private saved: Record<string, string | undefined> = {};
   readonly accounts: string[] = [];
 
+  /** Э6-бис (б): модули сверх «Админки» Э7/Э8 (стенд голосового управления). */
+  protected extraModules(): Array<Type | DynamicModule> {
+    return [];
+  }
+
   async init(): Promise<this> {
     for (const k of ENV_KEYS) this.saved[k] = process.env[k];
     process.env.ASSIST_BOT_TOKEN = TEST_ASSIST_TOKEN;
@@ -236,6 +242,7 @@ export class E7Stack {
         AssistAdminChatModule,
         SiteCredentialsModule,
         AssistAdminCrawlModule,
+        ...this.extraModules(),
       ],
     })
       .overrideProvider(GeminiText)

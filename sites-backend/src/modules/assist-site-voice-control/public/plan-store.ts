@@ -437,11 +437,14 @@ export async function insertActionLog(
     pinMismatch?: boolean;
     /** (д) Строка возврата: номер возвращённого шага. */
     undoOf?: number | null;
+    /** (Э6-тер) Цель голосовой карты шага; команда назвала цель, её нет в снимке. */
+    mapKey?: string | null;
+    mapMiss?: boolean;
   },
 ): Promise<void> {
   await db.$executeRawUnsafe(
-    `INSERT INTO ${LOG} ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs", "pinMismatch", "undoOf")
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+    `INSERT INTO ${LOG} ("id", "accountId", "siteId", "planId", "stepIndex", "action", "target", "url", "risk", "confirmedBy", "result", "reason", "valueMasked", "durationMs", "pinMismatch", "undoOf", "mapKey", "mapMiss")
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
     randomUUID(),
     p.accountId,
     p.siteId,
@@ -460,5 +463,7 @@ export async function insertActionLog(
     p.durationMs,
     p.pinMismatch === true,
     p.undoOf ?? null,
+    p.mapKey ?? null,
+    p.mapMiss === true,
   );
 }

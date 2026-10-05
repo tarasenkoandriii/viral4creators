@@ -7,10 +7,13 @@
  *    только из слотов (сказанного сотрудником) или констант владельца,
  *    проверка — схемой OpenAPI; write/danger — отдельное предложение и «Да»
  *    на КАЖДЫЙ шаг (§5.4: одно подтверждение — одно изменение);
- *  - `say` — реплика сотруднику.
- * Клики в мемо «Админки» до голосового управления «Админкой» (Э6-бис (б))
- * не сохраняются вовсе (422), а серверные клики «Сохранить/Удалить» — НИКОГДА
- * (§5-бис.15 п.3 п.3): серверный эффект — только шаг `api`.
+ *  - `say` — реплика сотруднику;
+ *  - (Э6-бис (б), Р-Э6б-10) `ui` — шаг на странице админки БЕЗ серверного
+ *    эффекта (`none/nav/local`: переход по ссылке, вкладка, поле до
+ *    «Сохранить», прокрутка); исполняет голосовое управление «Админкой».
+ * Серверные клики «Сохранить/Удалить» — НИКОГДА (§5-бис.15 п.3 п.3; 422):
+ * серверный эффект — только шаг `api`; клик-действие старой формы
+ * (`action: click`) — тоже 422.
  *
  * Вызов: по номеру «АМ-5» (Р-68 — в «Админке» да) или фразой владельца
  * (индекс фраз `assist_admin_phrases`); слоты — детерминированно из того,
@@ -31,6 +34,12 @@ import {
   ParamValidationError,
   validateArgs,
 } from '../assist-admin-mode/connector-exec';
+import {
+  adminMemoUiProblem,
+  type AdminMemoUiStep,
+} from '../assist-admin-voice/admin-voice-rules';
+import { ASSIST_ID_RE } from '../assist-ui-core/snapshot';
+import { UI_ROLES } from '../assist-ui-core/types';
 import type {
   OperationKind,
   OperationParam,
@@ -75,7 +84,15 @@ export type AdminMemoStep =
       opKey: string;
       args: Record<string, AdminMemoArg>;
     }
-  | { action: 'say'; say: Partial<Record<MemoLang, string>> };
+  | { action: 'say'; say: Partial<Record<MemoLang, string>> }
+  /**
+   * Э6-бис (б), Р-Э6б-10: шаг на странице админки — только без серверного
+   * эффекта (`none/nav/local`): переход по ссылке, вкладка/меню, поле до
+   * «Сохранить», прокрутка, подсветка, ожидание. Исполняет голосовое
+   * управление «Админкой» в виджете (те же проверки кода, что живой план);
+   * «Сохранить/Удалить» кликом — не сохраняется никогда (422).
+   */
+  | AdminMemoUiStep;
 
 export interface AdminMemoContent {
   schema: 1;
@@ -289,6 +306,11 @@ export function parseAdminMemo(raw: unknown): {
         issues.push({ path: p, code: 'type' });
         return;
       }
+      if (st.action === 'ui') {
+        const ui = parseUiStep(st, p, issues);
+        if (ui) c.steps.push(ui);
+        return;
+      }
       if (typeof st.action === 'string' && CLICK_ACTIONS.has(st.action)) {
         issues.push({ path: `${p}.action`, code: 'click_forbidden' });
         return;
@@ -356,6 +378,87 @@ export function parseAdminMemo(raw: unknown): {
   return { content: c, issues };
 }
 
+const UI_KINDS: ReadonlyArray<AdminMemoUiStep['kind']> = [
+  'navigate',
+  'click',
+  'fill',
+  'select',
+  'check',
+  'scroll',
+  'highlight',
+  'wait',
+];
+
+/**
+ * Шаг на странице (Р-Э6б-10): строгий разбор; серверный эффект кликом —
+ * `click_forbidden` (сервис отвечает 422, как раньше на любой клик).
+ */
+function parseUiStep(
+  st: Record<string, unknown>,
+  p: string,
+  issues: AdminMemoIssue[],
+): AdminMemoUiStep | null {
+  const kind = (UI_KINDS as readonly unknown[]).includes(st.kind)
+    ? (st.kind as AdminMemoUiStep['kind'])
+    : null;
+  if (!kind) {
+    issues.push({ path: `${p}.kind`, code: 'invalid' });
+    return null;
+  }
+  let target: AdminMemoUiStep['target'] = null;
+  if (st.target !== undefined && st.target !== null) {
+    const t = isObj(st.target) ? st.target : null;
+    const assistId =
+      t && typeof t.assistId === 'string' && ASSIST_ID_RE.test(t.assistId)
+        ? t.assistId
+        : null;
+    const text =
+      t && typeof t.text === 'string' && t.text.trim()
+        ? cleanText(t.text, `${p}.target.text`, 80, issues)
+        : '';
+    const role =
+      t &&
+      typeof t.role === 'string' &&
+      (UI_ROLES as readonly string[]).includes(t.role)
+        ? t.role
+        : null;
+    if (!t || text === null || (!text && !assistId)) {
+      issues.push({ path: `${p}.target`, code: 'invalid' });
+      return null;
+    }
+    target = { assistId, text: text ?? '', role };
+  }
+  let value: AdminMemoUiStep['value'] = null;
+  if (st.value !== undefined && st.value !== null) {
+    const v = isObj(st.value) ? st.value : null;
+    if (v && typeof v.slot === 'string' && SLOT_NAME_RE.test(v.slot))
+      value = { slot: v.slot };
+    else if (v && typeof v.const === 'string') {
+      const t = cleanText(
+        v.const,
+        `${p}.value.const`,
+        ADMIN_MEMO_LIMITS.constChars,
+        issues,
+      );
+      if (t === null) return null;
+      value = { const: t };
+    } else {
+      issues.push({ path: `${p}.value`, code: 'invalid' });
+      return null;
+    }
+  }
+  const step: AdminMemoUiStep = { action: 'ui', kind, target, value };
+  const problem = adminMemoUiProblem(step);
+  if (problem) {
+    issues.push({
+      path: problem === 'click_forbidden' ? `${p}.target` : p,
+      code: problem,
+    });
+    return null;
+  }
+  return step;
+}
+
 /** Операция каталога для ворот и исполнения (по id строки). */
 export interface MemoCatalogOp {
   rowId: string;
@@ -371,8 +474,8 @@ export interface AdminMemoGateReport {
   result: 'pass' | 'fail';
   problems: AdminMemoIssue[];
   warnings: AdminMemoIssue[];
-  /** Классы шагов `api` (вычисляет код) — для карточки «2 × Так». */
-  kinds: Array<OperationKind | 'say'>;
+  /** Классы шагов `api` (вычисляет код) — для карточки «2 × Так»; `ui` — шаг на странице. */
+  kinds: Array<OperationKind | 'say' | 'ui'>;
 }
 
 const PII_PARAM =
@@ -401,7 +504,7 @@ export function adminMemoGates(
 ): AdminMemoGateReport {
   const problems: AdminMemoIssue[] = [];
   const warnings: AdminMemoIssue[] = [];
-  const kinds: Array<OperationKind | 'say'> = [];
+  const kinds: Array<OperationKind | 'say' | 'ui'> = [];
   if (!Object.keys(c.names).length)
     problems.push({ path: 'names', code: 'empty' });
   if (!Object.keys(c.goal.text).length)
@@ -409,13 +512,24 @@ export function adminMemoGates(
   if (!c.steps.length) problems.push({ path: 'steps', code: 'empty' });
   if (c.steps.length > ADMIN_MEMO_LIMITS.steps)
     problems.push({ path: 'steps', code: 'too_many' });
-  if (!c.steps.some((s) => s.action === 'api'))
+  // Э6-бис (б): мемо из одних шагов на странице (переход, фильтр) — тоже
+  // мемо; пустое по сути (только реплики) — нет.
+  if (!c.steps.some((s) => s.action === 'api' || s.action === 'ui'))
     problems.push({ path: 'steps', code: 'no_api' });
   const usedSlots = new Set<string>();
   c.steps.forEach((s, i) => {
     const p = `steps[${i}]`;
     if (s.action === 'say') {
       kinds.push('say');
+      return;
+    }
+    if (s.action === 'ui') {
+      kinds.push('ui');
+      if (s.value && 'slot' in s.value) {
+        if (!c.slots.some((x) => x.name === (s.value as { slot: string }).slot))
+          problems.push({ path: `${p}.value`, code: 'slot_missing' });
+        else usedSlots.add(s.value.slot);
+      }
       return;
     }
     const op = catalog.get(s.op);

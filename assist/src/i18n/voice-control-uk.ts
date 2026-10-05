@@ -1,6 +1,8 @@
+import { voiceMapUk } from './voice-map-uk';
 import type { VoiceControlDictionary } from './voice-control-ru';
 
 export const voiceControlUk: VoiceControlDictionary = {
+  voiceMap: voiceMapUk,
   title: 'Голосове керування сайтом',
   intro:
     'Відвідувач каже «відкрий доставку» чи «додай у кошик синю, розмір M» — помічник сам прокручує, натискає й заповнює поля на вашому сайті, у відвідувача на очах. Кроки, що щось змінюють, — лише після його «Так». За замовчуванням вимкнено.',

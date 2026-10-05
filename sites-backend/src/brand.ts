@@ -251,6 +251,25 @@ export const WIDGET_VOICE_TEST_HEADER = 'X-Assist-Voice-Test';
  */
 export const WIDGET_CHECK_PATH = '/v1/check.js';
 
+// ══ Э6-тер: визуальный редактор голосового управления (ТЗ §5-кватер) ══
+// Зеркало — widget/src/shared/brand.ts (сверяет widget/scripts/brand.test.ts).
+
+/** `?v4c_edit=<токен>` — одноразовая ссылка редактора (10 мин, один обмен). */
+export const WIDGET_EDITOR_PARAM = 'v4c_edit';
+/**
+ * Ленивый чанк пикера редактора в origin заказчика (наведение, подсветка,
+ * дескриптор, покрытие) — только у владельца по ссылке; загрузчик не растёт.
+ */
+export const WIDGET_EDITOR_PATH = '/v1/editor.js';
+/** Чанк панели редактора в iframe `we.` (карточка цели, формы, «Сказать сейчас»). */
+export const WIDGET_EDITOR_PANEL_PATH = '/v1/editor-panel.js';
+/** HTML iframe панели: отдаёт sites-backend с frame-ancestors verified-хостов «Сайта». */
+export const WIDGET_EDITOR_FRAME_PATH = '/we/v1/frame';
+/** Заголовок сессии редактора (после обмена ссылки, только память/sessionStorage `we.`). */
+export const EDITOR_SESSION_HEADER = 'X-Assist-Editor';
+/** Метка протокола postMessage пикер ↔ панель `we.` (отдельно от `v4c-widget`). */
+export const EDITOR_MESSAGE_NS = 'v4c-editor';
+
 // ══ Э7: «Админка» — помощник сотрудника заказчика (ТЗ §5.1, §4.12, §4-бис.8) ══
 // Отдельный origin iframe «Админки» (У-13, §4.12): у публичного чата и чата
 // сотрудника разные storage/BroadcastChannel/cookie — XSS в публичном чате не

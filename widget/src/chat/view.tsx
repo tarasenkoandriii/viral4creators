@@ -7,7 +7,7 @@
  * только у ответов модели; передача (подтверждение «~N минут», ожидание с
  * отменой, «оператор в чате»), сценарии (шаги и финал).
  */
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import type { ChatController, ChatState, UiMessage } from './controller';
 import type { Scenario } from '../shared/scenarios';
@@ -1353,6 +1353,11 @@ export function App({
           </button>
         </form>
       )}
+      {!leadOnly &&
+        s.voice.mic &&
+        s.cfg.voiceControl &&
+        s.cfg.voiceControl.memos &&
+        s.messages.length === 0 && <SkillsHint c={c} t={t.vcSkills} />}
       <footer class="ft">
         {s.cfg.handoff &&
           s.cfg.handoff.enabled &&
@@ -1393,5 +1398,27 @@ export function App({
         )}
       </footer>
     </div>
+  );
+}
+
+/**
+ * Э6-тер (хвост Э6-бис (е), Р-72): «Я вмію: …» под микрофоном — до 5 имён
+ * мемо с успехом цели ≥ 80% (без номеров и фраз); пусто — ничего. Один
+ * запрос на открытое окно, только пока лента пуста.
+ */
+function SkillsHint({ c, t }: { c: ChatController; t: string }) {
+  const [names, setNames] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    void c.plans.skillNames().then((n) => live && setNames(n));
+    return () => {
+      live = false;
+    };
+  }, [c]);
+  if (!names.length) return null;
+  return (
+    <p class="skl">
+      {t.replace('{list}', names.map((n) => `«${n}»`).join(', '))}
+    </p>
   );
 }

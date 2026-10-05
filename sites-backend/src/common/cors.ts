@@ -102,6 +102,12 @@ const WIDGET_PATHS = /^\/(widget|w)\/v1\//;
  * (сессия — заголовок); чужой origin — без CORS-заголовков.
  */
 const ADMIN_PATHS = /^\/(assist-admin|wa)\/v1\//;
+/**
+ * Э6-тер: панель редактора голосовой карты — iframe на ОТДЕЛЬНОМ origin
+ * `we.` (§5-кватер.3, В-51), API через rewrite Vercel. Как «Админка»:
+ * отражается ТОЛЬКО origin редактора, без cookie (сессия — заголовок).
+ */
+const EDITOR_PATHS = /^\/(editor|we)\/v1\//;
 
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'];
 
@@ -109,6 +115,7 @@ export function corsOptionsDelegate(cfg: {
   corsOrigins: readonly string[];
   widgetOrigin: string;
   adminWidgetOrigin?: string;
+  editorWidgetOrigin?: string;
 }) {
   const general = corsOriginCheck(cfg.corsOrigins);
   const delegate: CorsOptionsDelegate<Pick<Request, 'url' | 'headers'>> = (
@@ -137,6 +144,17 @@ export function corsOptionsDelegate(cfg: {
       return callback(null, {
         origin:
           cfg.adminWidgetOrigin && origin === cfg.adminWidgetOrigin
+            ? origin
+            : false,
+        methods: METHODS,
+        credentials: false,
+      });
+    }
+    if (EDITOR_PATHS.test(url)) {
+      const origin = req.headers.origin;
+      return callback(null, {
+        origin:
+          cfg.editorWidgetOrigin && origin === cfg.editorWidgetOrigin
             ? origin
             : false,
         methods: METHODS,

@@ -79,6 +79,9 @@ export interface VcSite {
     denySelectors?: string[];
     allowSelectors?: string[];
     maxSteps?: number;
+    /** Э6-тер: у сайта есть мемо; «Я вмію» — имена мемо (skills). */
+    memos?: boolean;
+    skills?: string[];
   };
   vcRules?: unknown;
   /** Нормализованный текст команды → «ответ модели» (или `not_command`). */
@@ -352,6 +355,11 @@ export async function uiPlanRoute(
       )
       .sort((a, b) => b.createdAt - a.createdAt)[0];
 
+  // (е)/Э6-тер: «Я вмію» — имена мемо сайта (как `skills` сервера).
+  if (req.method === 'GET' && p === '/widget/v1/ui-plan/skills') {
+    ok({ names: site.voiceControl?.skills ?? [] });
+    return true;
+  }
   if (req.method === 'GET' && p === '/widget/v1/ui-plan/active') {
     const a = mineActive();
     ok({ plan: a ? view(a) : null });

@@ -45,6 +45,7 @@ import {
 import { NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
 import { MemoSection } from './MemoSection';
+import { VoiceMapSection } from './VoiceMapSection';
 
 export function VoiceControlSection({ siteId }: { siteId: string }) {
   const { voiceControl } = useAssist();
@@ -488,6 +489,10 @@ function VoiceControlForm({
 
       {/* (е) Мемо */}
       {view.state !== 'off' && <MemoSection siteId={siteId} />}
+
+      {/* Э6-тер: голосовая карта — редактор на сайте (в любом состоянии,
+          включая `off`: способ подготовить сайт до мастера, §5-кватер.2) */}
+      <VoiceMapSection siteId={siteId} />
 
       {/* Правила */}
       <div className="font-semibold text-sm">{t.rules.title}</div>

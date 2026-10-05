@@ -53,6 +53,8 @@ import {
   WIDGET_PREVIEW_PARAM,
   WIDGET_VOICE_TEST_PARAM,
   WIDGET_CHECK_PATH,
+  WIDGET_EDITOR_PARAM,
+  WIDGET_EDITOR_PATH,
   WIDGET_PROTOCOL_VERSION,
   WIDGET_STORAGE_PREFIX,
 } from '../shared/brand';
@@ -199,6 +201,8 @@ class Loader {
   /** Э6-бис (г): одноразовая ссылка мастера проверки (`?v4c_voicetest=`). */
   private readonly vt: string | null;
   private chkQ: Promise<ActApi | null> | null = null;
+  /** Э6-тер: одноразовая ссылка редактора голосовой карты (`?v4c_edit=`). */
+  private readonly ed: string | null;
   // ── Э3: вовлечение, счётчики, цели ──
   private readonly docId = rid();
   readonly t0 = Date.now();
@@ -245,6 +249,11 @@ class Loader {
       this.takeParam(WIDGET_PREVIEW_PARAM) || attrs.previewToken;
     this.pickerToken = this.takeParam(WIDGET_GOAL_PICKER_PARAM);
     this.vt = this.takeParam(WIDGET_VOICE_TEST_PARAM);
+    // Переход по сайту во вкладке редактора (MPA): флаг пикера в хранилище
+    // вкладки — панель продолжит по своей сессии `we.` (токена тут нет).
+    this.ed =
+      this.takeParam(WIDGET_EDITOR_PARAM) ||
+      (storage()?.getItem(WIDGET_EDITOR_PARAM) ? '-' : null);
     try {
       const r = document.referrer && new URL(document.referrer);
       if (r && r.origin === location.origin) this.prevPath = r.pathname;
@@ -290,6 +299,14 @@ class Loader {
   }
 
   start(queue: QueuedCall[]) {
+    // Э6-тер: вкладка редактора — только ленивый чанк пикера (панель — iframe
+    // `we.`), публичный чат здесь не поднимается (§5-кватер.3 п.1).
+    if (this.ed)
+      return void import(/* @vite-ignore */ this.origin + WIDGET_EDITOR_PATH)
+        .then((m: { start: (...a: string[]) => void }) =>
+          m.start(this.ed as string, this.pk, this.origin, this.lang)
+        )
+        .catch(() => null);
     const prev = this.readUi();
     this.mount(prev === 'open');
     this.listen();
