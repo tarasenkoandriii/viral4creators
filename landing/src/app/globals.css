@@ -505,6 +505,16 @@ section h2 {
   margin: -11px 0;
 }
 
+/* Честная подпись под плеером демо обучающего лендинга («сайт в роликах —
+   наш полигон»): тот же тихий тон, что у ссылки на ролик. */
+.demo-note {
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  margin: 8px auto 0;
+  max-width: 560px;
+}
+
 /* ---------- Features ---------- */
 
 .features-grid {

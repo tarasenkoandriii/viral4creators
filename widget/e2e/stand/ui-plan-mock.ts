@@ -53,8 +53,15 @@ const {
   wizardVerdict,
 } = cjs(wizardNs);
 // Э6-бис (д): цепочки — те же правила, что на сервере (возврат, статус).
-const { chainAfterUndo, chainStatusOf, pointOfNoReturn, undoCandidates } =
-  cjs(chainNs);
+const {
+  chainAfterUndo,
+  chainStatusOf,
+  compRemoves,
+  nextUndo,
+  pointOfNoReturn,
+  undoCandidates,
+  undoResults,
+} = cjs(chainNs);
 
 /** Шаг «ответа модели» в фикстуре: цель — описанием, как её видит модель. */
 export interface ModelStep {
@@ -94,7 +101,12 @@ export interface VcSite {
   vtTokens?: string[];
 }
 
-type StepView = UiPlanStep & { state: string; fx?: boolean };
+type StepView = UiPlanStep & {
+  state: string;
+  fx?: boolean;
+  /** (Э6-тер (и)) Состояние возврата шага (как `undone` сервера). */
+  undone?: 'dispatched' | 'done' | 'failed' | 'unknown' | 'gone' | null;
+};
 
 interface MockPlan {
   id: string;
@@ -321,6 +333,62 @@ function rules(site: VcSite): VoiceControlRules | null {
   return r;
 }
 
+/** (Э6-тер (и)) Ответ возврата — как `UiUndoView` сервера. */
+function undoView(plan: MockPlan, fields: number[]) {
+  const c = undoCandidates(plan.steps);
+  const t = (i: number) => ({ i, text: plan.steps[i]?.target?.text ?? '' });
+  return {
+    planId: plan.id,
+    fields: fields.map(t),
+    manual: c.manual.map(t),
+    comp: null as unknown,
+    chainStatus: plan.chainStatus ?? null,
+    refused: null,
+  };
+}
+
+/** Компенсация для загрузчика — как `compView` сервера. */
+function compViewMock(plan: MockPlan, i: number, dispatched: boolean) {
+  const s = plan.steps[i];
+  const c = s.comp;
+  if (!c) return null;
+  const variant: string[] = [];
+  for (let k = i - 1; k >= 0 && variant.length < 2; k--) {
+    const x = plan.steps[k];
+    if (x.nav) break;
+    if (x.kind === 'select' && x.state === 'done' && x.value)
+      variant.push(x.value);
+  }
+  return {
+    i,
+    text: s.target?.text ?? '',
+    row: c.row,
+    assistId: c.assistId,
+    at: c.at,
+    variant,
+    allow: [
+      ...(compRemoves(c.assistId) ? ['remove'] : []),
+      ...(c.sub ? ['unsubscribe'] : []),
+    ],
+    dispatched,
+  };
+}
+
+/** Следующая работа возврата или итог цепочки (как `undoNext` сервера). */
+function undoNextMock(plan: MockPlan) {
+  for (let guard = 0; guard < 4; guard++) {
+    const n = nextUndo(plan.steps);
+    if (n.kind === 'fields') return undoView(plan, n.idx);
+    if (n.kind === 'comp')
+      return { ...undoView(plan, []), comp: compViewMock(plan, n.i, false) };
+    if (n.kind === 'end') break;
+    plan.steps[n.i].undone = 'unknown';
+  }
+  const r = undoResults(plan.steps);
+  if (r.length) plan.chainStatus = chainAfterUndo(plan.steps, r);
+  return undoView(plan, []);
+}
+
 type Reply = (status: number, body: unknown) => void;
 
 export async function uiPlanRoute(
@@ -444,6 +512,8 @@ export async function uiPlanRoute(
       rules: r,
       hosts,
       state: site.voiceControl.mode,
+      // Э6-тер (и): компенсации объявленных пар — как у сервера.
+      compensations: true,
     });
     const steps = checked.steps.map((s) => ({ ...s, state: 'pending' }));
     const plan: MockPlan = {
@@ -528,20 +598,41 @@ export async function uiPlanRoute(
           planId: plan.id,
           fields: [],
           manual: [],
+          comp: null,
           chainStatus: plan.chainStatus,
           refused: 'nothing',
         });
         return true;
       }
       const c = undoCandidates(plan.steps);
-      const t = (i: number) => ({ i, text: plan.steps[i]?.target?.text ?? '' });
-      ok({
-        planId: plan.id,
-        fields: c.refused ? [] : c.fields.map(t),
-        manual: c.refused ? [] : c.manual.map(t),
-        chainStatus: plan.chainStatus ?? null,
-        refused: c.refused,
-      });
+      if (c.refused) {
+        ok({
+          planId: plan.id,
+          fields: [],
+          manual: [],
+          comp: null,
+          chainStatus: plan.chainStatus ?? null,
+          refused: c.refused,
+        });
+        return true;
+      }
+      // `degraded` — компенсаций нет (как у сервера).
+      if (site.voiceControl?.mode === 'degraded') {
+        const t = (i: number) => ({
+          i,
+          text: plan.steps[i]?.target?.text ?? '',
+        });
+        ok({
+          planId: plan.id,
+          fields: [],
+          manual: [...c.fields, ...c.manual, ...c.comp].map(t),
+          comp: null,
+          chainStatus: plan.chainStatus ?? null,
+          refused: 'degraded',
+        });
+        return true;
+      }
+      ok(undoNextMock(plan));
       return true;
     }
     case 'undo-report': {
@@ -550,20 +641,39 @@ export async function uiPlanRoute(
         kind: 'report',
         raw: JSON.stringify(b),
       });
-      const results = Array.isArray(b.results)
-        ? (b.results as Array<{
-            i: number;
-            result: 'done' | 'failed' | 'unknown' | 'gone';
-          }>)
-        : [];
-      plan.chainStatus = chainAfterUndo(plan.steps, results);
-      ok({
-        planId: plan.id,
-        fields: [],
-        manual: [],
-        chainStatus: plan.chainStatus,
-        refused: null,
-      });
+      const n = nextUndo(plan.steps);
+      // Э6-тер (и): отметка «начат» компенсации — один раз, ДО действия.
+      if (b.dispatch !== undefined) {
+        if (n.kind !== 'comp' || n.i !== b.dispatch) {
+          err(409, 'PLAN_CONFLICT');
+          return true;
+        }
+        plan.steps[n.i].undone = 'dispatched';
+        ok({ ...undoView(plan, []), comp: compViewMock(plan, n.i, true) });
+        return true;
+      }
+      if (b.next === true) {
+        ok(undoNextMock(plan));
+        return true;
+      }
+      const allowed =
+        n.kind === 'fields' ? n.idx : n.kind === 'stale' ? [n.i] : [];
+      const results = (
+        Array.isArray(b.results)
+          ? (b.results as Array<{
+              i: number;
+              result: 'done' | 'failed' | 'unknown' | 'gone';
+            }>)
+          : []
+      ).filter((r) => allowed.includes(r.i));
+      if (!results.length) {
+        err(400, 'BAD_REQUEST');
+        return true;
+      }
+      for (const r of results) plan.steps[r.i].undone = r.result;
+      for (const i of allowed)
+        if (!plan.steps[i].undone) plan.steps[i].undone = 'gone';
+      ok(undoNextMock(plan));
       return true;
     }
     case 'confirm': {
@@ -710,6 +820,7 @@ export async function uiPlanRoute(
         rules: r,
         hosts: hostsOf(site),
         state: site.voiceControl.mode,
+        compensations: true,
       });
       plan.steps = out.steps.map((s, k) => ({
         ...s,

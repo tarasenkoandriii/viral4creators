@@ -195,17 +195,24 @@ export default function OverviewPage() {
           <div className="card attention-quality">
             {quality?.status === 'not_configured' || !quality ? (
               <>
-                <span className="badge-status badge-status-warning">не настроено</span>
+                <span className="badge-status badge-status-warning">выключено</span>
                 <p className="muted">
-                  Автоматическая проверка роликов (Gemini по монтажному manifest) ещё не подключена.
-                  Здесь появятся критические дефекты, утечки и исчерпанные повторы проверок —
-                  до тех пор качество демо проверяется вручную на вкладке «Консультант лендинга».
+                  ИИ-проверка роликов демо (Gemini по монтажному manifest) выключена — включается переменной
+                  TUTORIAL_DEMO_QUALITY_ENABLED. Уже записанные вердикты fail/warn всё равно показаны карточками
+                  выше; качество новых роликов до включения проверяется вручную на вкладке «Видео-контент».
                 </p>
               </>
             ) : quality.status === 'error' ? (
               <p className="critical">{quality.error ?? 'Не удалось проверить'}</p>
             ) : (
-              <p className="muted">Проверка подключена.</p>
+              <>
+                <span className="badge-status badge-status-ok">подключено · наблюдение</span>
+                <p className="muted">
+                  Каждый новый собранный ролик проверяется в кроне сборок. Демо с вердиктом fail — карточка
+                  «Решения оператора», warn и сбои проверки — «К сведению»; переход открывает отчёт с таймкодами на
+                  вкладке «Видео-контент». Одобрение роликов проверка не меняет.
+                </p>
+              </>
             )}
           </div>
         </section>

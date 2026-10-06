@@ -78,6 +78,10 @@ assert.equal(header('/v1/act.js', 'X-Content-Type-Options'), 'nosniff');
 assert.match(header('/v1/undo.js', 'Cache-Control') ?? '', /max-age=300\b/);
 assert.equal(header('/v1/undo.js', 'Access-Control-Allow-Origin'), '*');
 assert.equal(header('/v1/undo.js', 'X-Content-Type-Options'), 'nosniff');
+// Э6-тер (и): компенсации — import() из undo.js с origin виджета.
+assert.match(header('/v1/comp.js', 'Cache-Control') ?? '', /max-age=300\b/);
+assert.equal(header('/v1/comp.js', 'Access-Control-Allow-Origin'), '*');
+assert.equal(header('/v1/comp.js', 'X-Content-Type-Options'), 'nosniff');
 // Э7: «Админка» — отдельный origin (`wa.`, ТЗ §4.12, У-13). На домене
 // «Админки» Vercel пропускает к API ТОЛЬКО `/wa/v1/*` и `/assist-admin/v1/*`,
 // на домене виджета — только публичные `/w/v1/*` и `/widget/v1/*`: публичный

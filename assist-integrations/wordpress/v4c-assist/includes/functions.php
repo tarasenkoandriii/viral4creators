@@ -326,8 +326,35 @@ function v4c_assist_clean_assist_id($v)
     return $v;
 }
 
-/** Кнопка «В кошик» в списке товаров (фильтр woocommerce_loop_add_to_cart_args). */
-function v4c_assist_loop_add_to_cart_args($args)
+/**
+ * Путь страницы корзины (`wc_get_cart_url()`) для `data-assist-undo-at`:
+ * только путь своего сайта (`/cart/`), без query; чужой хост — null.
+ */
+function v4c_assist_cart_path($cartUrl, $siteHost)
+{
+    $u = parse_url((string) $cartUrl);
+    if (!is_array($u) || empty($u['path'])) {
+        return null;
+    }
+    if (!empty($u['host']) && strtolower($u['host']) !== strtolower((string) $siteHost)) {
+        return null;
+    }
+    $path = (string) $u['path'];
+    if ($path[0] !== '/' || strlen($path) > 200 || !preg_match('#^/[A-Za-z0-9\-._~%!$&\'()*+,;=:@/]*$#', $path)) {
+        return null;
+    }
+    return $path;
+}
+
+/**
+ * Кнопка «В кошик» в списке товаров (фильтр woocommerce_loop_add_to_cart_args).
+ * Э6-тер (и): обе стороны пары компенсации (ТЗ §5-бис.15 п.6) — у прямой
+ * кнопки объявлена обратная (`data-assist-undo="remove-from-cart"`) и
+ * страница, где она есть (`data-assist-undo-at`, путь корзины); обратную
+ * («Видалити» в строке корзины и мини-корзины) размечает
+ * v4c_assist_cart_item_remove_link. Разметку темы не перетираем.
+ */
+function v4c_assist_loop_add_to_cart_args($args, $cartPath = null)
 {
     if (!is_array($args)) {
         return $args;
@@ -338,7 +365,28 @@ function v4c_assist_loop_add_to_cart_args($args)
     if (!isset($args['attributes']['data-assist-id'])) {
         $args['attributes']['data-assist-id'] = 'add-to-cart';
     }
+    if ($args['attributes']['data-assist-id'] === 'add-to-cart' && !isset($args['attributes']['data-assist-undo'])) {
+        $args['attributes']['data-assist-undo'] = 'remove-from-cart';
+        if (is_string($cartPath) && $cartPath !== '') {
+            $args['attributes']['data-assist-undo-at'] = $cartPath;
+        }
+    }
     return $args;
+}
+
+/**
+ * Э6-тер (и): «Видалити» строки корзины и мини-корзины (фильтр
+ * woocommerce_cart_item_remove_link — один для обеих) — стандартная
+ * разметка обратной цели `remove-from-cart`. Только она снимает стоп-лист
+ * «удаление» для компенсации, и только в строке того же товара (сверяет
+ * загрузчик); по тексту кнопки — никогда. Свою разметку темы не трогаем.
+ */
+function v4c_assist_cart_item_remove_link($html)
+{
+    if (!is_string($html) || strpos($html, 'data-assist-id') !== false) {
+        return $html;
+    }
+    return preg_replace('/<a\b/i', '<a data-assist-id="remove-from-cart"', $html, 1);
 }
 
 /** Поле поиска формы темы (фильтр get_search_form): первое поле name="s". */
@@ -355,7 +403,7 @@ function v4c_assist_search_form_html($html)
  * пути>` (`/dostavka/` → `nav-dostavka`); главная — `nav-home`; чужой
  * домен и якоря — без разметки.
  */
-function v4c_assist_menu_link_attrs($atts, $siteHost)
+function v4c_assist_menu_link_attrs($atts, $siteHost, $cartPath = null)
 {
     if (!is_array($atts) || isset($atts['data-assist-id']) || empty($atts['href'])) {
         return $atts;
@@ -365,6 +413,13 @@ function v4c_assist_menu_link_attrs($atts, $siteHost)
         return $atts;
     }
     if (!empty($u['host']) && strtolower($u['host']) !== strtolower((string) $siteHost)) {
+        return $atts;
+    }
+    // Э6-тер (и): ссылка на корзину — `nav-cart` при любом слаге («koshyk»):
+    // по ней сервер находит страницу отмены «В кошик» (STANDARD_UNDO_PAGES).
+    if (is_string($cartPath) && $cartPath !== '' && isset($u['path'])
+        && rtrim($u['path'], '/') === rtrim($cartPath, '/')) {
+        $atts['data-assist-id'] = 'nav-cart';
         return $atts;
     }
     $path = isset($u['path']) ? trim($u['path'], '/') : '';
@@ -382,14 +437,24 @@ function v4c_assist_menu_link_attrs($atts, $siteHost)
  * странице товара), — маленький встроенный скрипт без HTML-приёмников:
  * только setAttribute на элементах стандартных классов темы.
  */
-function v4c_assist_assist_ids_script()
+function v4c_assist_assist_ids_script($cartPath = null)
 {
     $map = array(
         '.single_add_to_cart_button' => 'add-to-cart',
         '.woocommerce-product-search-field' => 'search',
         '.woocommerce-widget-layered-nav-dropdown__submit' => 'apply-filter',
+        // Э6-тер (и): обратная сторона пары — «Видалити» строки корзины и
+        // мини-корзины (тема без фильтра woocommerce_cart_item_remove_link),
+        // «Кошик» шапки Storefront — страница отмены.
+        '.woocommerce-mini-cart-item .remove_from_cart_button' => 'remove-from-cart',
+        '.woocommerce-cart-form .product-remove .remove' => 'remove-from-cart',
+        'a.cart-contents' => 'nav-cart',
     );
-    $js = '(function(){var m=' . json_encode($map, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES) . ';'
-        . 'Object.keys(m).forEach(function(s){document.querySelectorAll(s+\':not([data-assist-id])\').forEach(function(e){e.setAttribute(\'data-assist-id\',m[s])})})})();';
+    // Прямая кнопка «В кошик» — объявленная обратная и страница корзины.
+    $undo = array('remove-from-cart', is_string($cartPath) ? $cartPath : '');
+    $flags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES;
+    $js = '(function(){var m=' . json_encode($map, $flags) . ',u=' . json_encode($undo, $flags) . ';'
+        . 'Object.keys(m).forEach(function(s){document.querySelectorAll(s+\':not([data-assist-id])\').forEach(function(e){e.setAttribute(\'data-assist-id\',m[s])})});'
+        . 'document.querySelectorAll(\'[data-assist-id="add-to-cart"]:not([data-assist-undo])\').forEach(function(e){e.setAttribute(\'data-assist-undo\',u[0]);if(u[1])e.setAttribute(\'data-assist-undo-at\',u[1])})})();';
     return $js;
 }

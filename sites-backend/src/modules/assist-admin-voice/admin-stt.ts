@@ -167,6 +167,8 @@ export class AdminSonioxStt {
     audio: Buffer;
     mimeType: string;
     languageHints: readonly string[];
+    /** `context.terms` — имена и фразы мемо «Админки» (admin-stt-terms.ts). */
+    terms?: readonly string[];
   }): Promise<AdminSttResult> {
     const key = sonioxApiKey(this.env);
     const none = (reason: AdminSttResult['reason']): AdminSttResult => ({
@@ -216,6 +218,7 @@ export class AdminSonioxStt {
           body: JSON.stringify(
             sonioxTranscriptionBody(fileId, {
               languageHints: req.languageHints,
+              terms: req.terms ?? [],
             }),
           ),
         },

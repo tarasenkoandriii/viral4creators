@@ -67,7 +67,7 @@ model Session {
   ///
   /// Читатели видят одну сессию: `SessionService.toSession` сливает обе
   /// колонки, и снаружи `Session` выглядит ровно как раньше.
-  liveData       Json     @default("{}")
+  liveData Json @default("{}")
 
   /// Софт-delete (этап 89): `DELETE /sessions/:id` (пользователь,
   /// «Постпрод») и админское удаление больше не сносят строку сразу —
@@ -162,35 +162,35 @@ model User {
   // принудительно, чтобы локальный стенд не требовал ручного шага.
   isOperator Boolean @default(false)
 
-  sessions           Session[]
-  adminSessions      AdminSession[]
-  userSessions       UserSession[]
-  projects           Project[]
-  brandManifests     BrandManifest[]
-  serpApiUsage       SerpApiUsage[]
-  youtubeSearchUsage YoutubeSearchUsage[]
+  sessions                Session[]
+  adminSessions           AdminSession[]
+  userSessions            UserSession[]
+  projects                Project[]
+  brandManifests          BrandManifest[]
+  serpApiUsage            SerpApiUsage[]
+  youtubeSearchUsage      YoutubeSearchUsage[]
   clientSiteTutorialUsage ClientSiteTutorialUsage[]
   // Э-С Ш1 (П-Т2): подтверждения прав на аккаунт чужого сайта (режим B).
-  siteTutorialConsents SiteTutorialAccountConsent[]
-  publications       PublicationRequest[]
-  moderated          PublicationRequest[] @relation("PublicationModerator")
-  libraryEntries     AnalysisLibraryEntry[]
-  moderatedLibrary   AnalysisLibraryEntry[] @relation("LibraryModerator")
-  moderatedBlogPosts BlogPost[]             @relation("BlogPostModerator")
-  sharedVideoPages   SharedVideoPage[]
-  moderatedShares    SharedVideoPage[]      @relation("SharedVideoModerator")
-  sharedVideoLikes   SharedVideoLike[]
-  publishingChannels PublishingChannel[]
+  siteTutorialConsents    SiteTutorialAccountConsent[]
+  publications            PublicationRequest[]
+  moderated               PublicationRequest[]         @relation("PublicationModerator")
+  libraryEntries          AnalysisLibraryEntry[]
+  moderatedLibrary        AnalysisLibraryEntry[]       @relation("LibraryModerator")
+  moderatedBlogPosts      BlogPost[]                   @relation("BlogPostModerator")
+  sharedVideoPages        SharedVideoPage[]
+  moderatedShares         SharedVideoPage[]            @relation("SharedVideoModerator")
+  sharedVideoLikes        SharedVideoLike[]
+  publishingChannels      PublishingChannel[]
 
   // Оплата (этап 62, ТЗ §41): история платежей, текущая подписка (одна
   // активная на пользователя — см. Subscription.userId @unique) и леджер
   // купленных/потраченных кредитов на генерацию.
-  payments      Payment[]
-  subscription  Subscription?
-  creditLedger  CreditLedger[]
+  payments     Payment[]
+  subscription Subscription?
+  creditLedger CreditLedger[]
 
   // Ключи внешнего API (этап 144, docs-tz/TZ-Vneshnee-API.md).
-  apiKeys ApiKey[]
+  apiKeys      ApiKey[]
   // Заявки внешнего API на ролик (этап 145).
   apiVideoJobs ApiVideoJob[]
 
@@ -234,12 +234,12 @@ model User {
   // поэтому это просто поле, а не покупка. Матрица возможностей —
   // common/plans.ts, в БД её нет намеренно: границы пакетов будут
   // двигаться чаще, чем схема.
-  plan        UserPlan  @default(LITE)
-  planSince   DateTime?
+  plan            UserPlan  @default(LITE)
+  planSince       DateTime?
   /// Режим выбран самим пользователем, пока оплаты нет (этап 54, Б-3.8):
   /// функции режима ему доступны, а суточный потолок расхода остаётся
   /// как у Lite. Оператор, назначая режим из админки, сбрасывает флаг.
-  planSelfService Boolean @default(false)
+  planSelfService Boolean   @default(false)
 
   // Блокировка (ТЗ §25.3, этап 31). Заблокированному запрещены ПЛАТНЫЕ
   // вызовы — разбор, релевантность, промпт, генерация, аудит и всё, что
@@ -255,8 +255,8 @@ model User {
   /// EARNED (семь приглашений + подписка), GRANDFATHERED (строка
   /// миграции: зарегистрированным до 24.09.2026, ровно как обещает
   /// пункт 6.9.3 оферты) и OPERATOR (выдано вручную).
-  liteUnlockedAt   DateTime?
-  liteUnlockSource LiteUnlockSource?
+  liteUnlockedAt    DateTime?
+  liteUnlockSource  LiteUnlockSource?
   /// Отозвано оператором — с причиной и датой, а не молчаливой правкой
   /// liteUnlockedAt в NULL: «почему у меня пропал доступ» должно иметь
   /// ответ в базе. Доступ есть, когда liteUnlockedAt заполнен И
@@ -266,15 +266,15 @@ model User {
   liteRevokedReason String?
 
   /// Подтверждённая подписка на канал (этап 133) — одна на человека.
-  unlockCheck UnlockCheck?
+  unlockCheck          UnlockCheck?
   youtubeUnlockSession YoutubeUnlockSession?
 
   /// Приглашения (этап 134): своя ссылка, приведённые и — если пришёл
   /// по чужой ссылке — строка о том, кто привёл его самого.
   referralCode      ReferralCode?
-  referralsInvited  Referral[]    @relation("ReferralInviter")
+  referralsInvited  Referral[]     @relation("ReferralInviter")
   testerInvites     TesterInvite[] @relation("TesterInviteUser")
-  referralAsInvitee Referral?     @relation("ReferralInvitee")
+  referralAsInvitee Referral?      @relation("ReferralInvitee")
 
   /// Тестовый аккаунт (TODO §III п.37, common/test-user-scenarios.ts).
   /// Снимает СУТОЧНЫЙ ПОТОЛОК РАСХОДА на отмеченных сценариях и не
@@ -282,11 +282,11 @@ model User {
   /// видит ровно тот набор функций, который увидит пользователь. Перевод
   /// тестировщика в Premium вместо этого флага проверял бы не тот
   /// продукт.
-  isTestUser Boolean @default(false)
+  isTestUser         Boolean      @default(false)
   /// До какого момента действует тестовый доступ (этап 155). NULL —
   /// бессрочно, как было до приглашений. Проверяется там же, где
   /// `isTestUser`, — в `PlanService`.
-  testAccessUntil DateTime?
+  testAccessUntil    DateTime?
   /// Когда человек НАЖАЛ START в личке с ботом (этап 155).
   ///
   /// Это НЕ то же, что наличие `telegramId`: идентификатор появляется
@@ -295,17 +295,17 @@ model User {
   /// initiate conversation with a user`, и `dm()` глотает это молча.
   /// Это поле — единственный признак, по которому право известно ДО
   /// отправки.
-  botChatOpenedAt DateTime?
+  botChatOpenedAt    DateTime?
   /// Находки, о которых он сообщил (этап 157). Каскад: удаляем
   /// пользователя — уходят и его тикеты вместе с окружением в них.
-  testTickets TestTicket[]
+  testTickets        TestTicket[]
   /// Сценарии, на которых потолок снят, — значения `FreeScenario`
   /// (`PRODUCT_VIDEO`, `CLIENT_SITE`, `GREETING_VIDEO`). Массив строк, а
   /// не enum, сознательно: это ГРУППИРОВКА типов проектов (SINGLE и LINE
   /// — один сценарий), и границы групп будут двигаться чаще схемы;
   /// неизвестное значение в колонке ничего не открывает
   /// (`normalizeFreeScenarios`). Действует только вместе с `isTestUser`.
-  freeScenarios String[] @default([])
+  freeScenarios      String[]     @default([])
   /// Операции ВНЕ проекта: клон голоса, озвучка, ИИ-скетч, поиск на
   /// YouTube (этап 159, §4.1 ТЗ на работу с тестировщиком).
   ///
@@ -315,12 +315,12 @@ model User {
   /// идёт за его счёт, и узнавал он об этом в середине прогона.
   /// Миграция проставила её тем, у кого стояли все три, — поведение
   /// живых строк не изменилось.
-  freeOutsideProject Boolean @default(false)
+  freeOutsideProject Boolean      @default(false)
   /// Свой суточный потолок расхода, в долларах (§4.3). NULL — общий
   /// `DAILY_SPEND_LIMIT_USD_TEST_USER`. Нужен потому, что общий потолок
   /// — НА КАЖДОГО тестировщика: трое это втрое больше денег в сутки, и
   /// до этого этапа сказать «этому меньше» было нечем.
-  testDailyLimitUsd Int?
+  testDailyLimitUsd  Int?
   /// Окружение последнего запуска мини-аппа (этап 156,
   /// `common/environment.ts`): поверхность (ТМА/браузер), вид
   /// устройства, семейство и версия ОС, платформа и версия клиента
@@ -337,10 +337,10 @@ model User {
   /// — самая крупная таблица проекта, и обновлять её на каждом запуске
   /// у каждого ради данных, которые прочтёт только вкладка тикетов,
   /// незачем.
-  lastEnvironment   Json?
-  lastEnvironmentAt DateTime?
+  lastEnvironment    Json?
+  lastEnvironmentAt  DateTime?
 
-  aiUsage AiUsage[]
+  aiUsage        AiUsage[]
   /// Свёртка журнала расходов (этап 118) — та же судьба при удалении
   /// аккаунта, что и у сырых строк.
   aiUsageMonthly AiUsageMonthly[]
@@ -499,11 +499,11 @@ model Project {
   /// пакетной генерации/A-B-теста/импорта фида (doc/STORAGE-AUDIT.md).
   deletedAt DateTime?
 
-  items        ProductItem[]
-  sessions     Session[]
-  publications PublicationRequest[]
-  catalogBatchRuns CatalogBatchRun[]
-  abTestRuns   AbTestRun[]
+  items                 ProductItem[]
+  sessions              Session[]
+  publications          PublicationRequest[]
+  catalogBatchRuns      CatalogBatchRun[]
+  abTestRuns            AbTestRun[]
   productFeedImportRuns ProductFeedImportRun[]
   /// Красная линия (docs-tz/TZ-Tonkaya-Krasnaya-Liniya.md §3): советы ИИ
   /// на шагах мастера. Включается ТОЛЬКО в начале сценария, снимается в
@@ -516,19 +516,19 @@ model Project {
   /// проектах хочет разного. Умолчание `false` — по той же причине, по
   /// которой выключен лендинговый ассистент: фича, тратящая деньги на
   /// каждом шаге у каждого пользователя, включается сознательно.
-  aiGuideEnabled Boolean @default(false)
+  aiGuideEnabled        Boolean                @default(false)
   /// Советник «голосом» (ТЗ Greeting 2.0 §4А.4–4А.5, решение В-10):
   /// реплики советника озвучиваются. Отдельный переключатель рядом с
   /// чекбоксом советника, по умолчанию выключен — синтез стоит денег на
   /// каждой новой подсказке. Смысл имеет только при `aiGuideEnabled`:
   /// сервис сбрасывает его вместе с советником.
-  aiGuideVoice   Boolean @default(false)
+  aiGuideVoice          Boolean                @default(false)
 
   clientSiteTutorialDraft ClientSiteTutorialDraft?
   /// Бриф ролика-поздравления (ТЗ TZ-Greeting-Video-Project-Type.md §3.2)
   /// — только для `type = GREETING_VIDEO`, по тому же образцу, что
   /// `clientSiteTutorialDraft` у `CLIENT_SITE`.
-  greetingBrief GreetingBrief?
+  greetingBrief           GreetingBrief?
 
   @@index([userId])
   @@index([brandManifestId])
@@ -587,7 +587,6 @@ model ProductItem {
   price       Decimal?           @db.Decimal(12, 2) // в валюте проекта (project.currency)
   priceSource ProductPriceSource @default(MANUAL)
 
-
   /// Применённый ИИ-скетч вместо фото товара (§6.1 ТЗ скетча).
   activeSketchId    String?      @unique
   activeSketch      ImageSketch? @relation("ActiveSketchProductItem", fields: [activeSketchId], references: [id], onDelete: SetNull)
@@ -606,9 +605,9 @@ model ProductItem {
   /// `purgeSoftDeletedProjects()` делает то же самое за один DELETE.
   deletedAt DateTime?
 
-  analogs      ProductAnalog[]
-  sessions     Session[]
-  publications PublicationRequest[]
+  analogs           ProductAnalog[]
+  sessions          Session[]
+  publications      PublicationRequest[]
   catalogBatchItems CatalogBatchItem[]
 
   @@index([projectId])
@@ -808,11 +807,11 @@ model BrandManifest {
   /// Умолчание 'voiceover' (миграция 20260914120000_voiceover_default,
   /// см. common/voice-mode.ts DEFAULT_VOICE_MODE): модели читают
   /// кириллицу с неверными ударениями, свой синтез — правило.
-  voiceMode  String  @default("voiceover")
+  voiceMode   String  @default("voiceover")
   /// Голос провайдера синтеза; пусто — голос по умолчанию стенда.
-  ttsVoiceId String?
+  ttsVoiceId  String?
   /// Модель провайдера синтеза; пусто — модель по умолчанию стенда.
-  ttsModel   String?
+  ttsModel    String?
   /// Какой провайдер выпустил ttsVoiceId ('elevenlabs' | 'resemble' | ...) —
   /// doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md §4.2/6.2. null — запись до
   /// этого поля (провайдер на момент записи не восстановим постфактум)
@@ -827,7 +826,7 @@ model BrandManifest {
   /// раньше, push-in — медленный непрерывный наезд. Часть стиля серии,
   /// поэтому здесь, а не в параметрах генерации: замораживается в
   /// снимке манифеста вместе с голосом.
-  cameraMove String  @default("none")
+  cameraMove String @default("none")
 
   /// Жёстко вшитые субтитры (TODO §Уровень 2.7, этап 67): off — как
   /// раньше, on — субтитры выжигаются в ролик тем же проходом ffmpeg,
@@ -873,15 +872,15 @@ model BrandManifest {
   /// Стиль карточек: { font, color } — сегодня карточки жёстко Arial белым.
   cardStyle     Json?
 
-  projects        Project[]
-  characters      BrandCharacter[]
-  scenes          BrandScene[]
-  auctionListings AuctionListing[]
+  projects               Project[]
+  characters             BrandCharacter[]
+  scenes                 BrandScene[]
+  auctionListings        AuctionListing[]
   /// GREETING_VIDEO CORPORATE-поздравления, использующие этот манифест
   /// (ТЗ TZ-Greeting-Video-Project-Type.md §5.4) — без этого поля
   /// `prisma validate` отклонил бы схему (обратная сторона `brandManifest`
   /// на `GreetingBrief` выше).
-  greetingBriefs  GreetingBrief[]
+  greetingBriefs         GreetingBrief[]
   /// Виртуальная студия (ТЗ TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §2,
   /// Этап 3) — ANALYSIS-фрагменты, аудитующие этот брендбук рядом с
   /// видео. Без этого поля `prisma validate` отклонил бы схему (та же
@@ -905,7 +904,6 @@ model BrandCharacter {
   label       String // как показывать в UI, напр. "Модель 1"
   photoUrl    String? // Vercel Blob; «скин» — уходит в Veo как referenceImage (§10.2, лимит 3 на запрос — §10.3)
   description String? // текстовое описание внешности — в промпт, когда фото нет или не поместилось в лимит
-
 
   /// Применённый ИИ-скетч вместо фото (doc/AI-SKETCH-SPEC.md §6.1): всё, что уходит в генерацию, читает его через common/active-image.ts.
   activeSketchId    String?      @unique
@@ -933,7 +931,6 @@ model BrandScene {
   label       String // «Шоурум», «Кухня студии»
   photoUrl    String? // Vercel Blob; в Veo как referenceImage (§17), лимит 3 на запрос
   description String? // словами — когда фото нет или не поместилось в слот
-
 
   /// Применённый ИИ-скетч вместо фото сцены (§6.1 ТЗ скетча).
   activeSketchId    String?      @unique
@@ -1080,7 +1077,7 @@ model PublicationRequest {
   /// задаёт, С КАКОГО языка переводить заголовок и описание на
   /// остальные локали. В снимке, а не по ссылке на сессию, по той же
   /// причине, что и заголовок рядом: заявка переживает TTL сессии.
-  language      String   @default("ru")
+  language String @default("ru")
 
   /// Субтитры оригинального языка в формате `.srt` — снимком, вместе с
   /// заголовком и описанием (этап 137). Загружаются на YouTube после
@@ -1089,12 +1086,12 @@ model PublicationRequest {
   /// что и всё остальное здесь: заявка переживает TTL сессии, а у
   /// ролика, собранного без субтитров, `.srt` вообще не существует —
   /// он собирается здесь из реплик, без ffmpeg.
-  subtitlesSrt String?
+  subtitlesSrt       String?
   /// Когда субтитры приняты площадкой. Пусто и без ошибки — не
   /// загружались (у канала нет права либо текста нет).
   captionsUploadedAt DateTime?
   /// Почему не загрузились — на человеческом языке, для оператора.
-  captionsError String?
+  captionsError      String?
 
   moderatorId  String?
   moderator    User?     @relation("PublicationModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
@@ -1127,7 +1124,7 @@ model PublicationRequest {
   /// вместо открытия новой, чтобы не плодить дубль на площадке. TikTok —
   /// publish_id между init и poll status. Смысл зависит от platform,
   /// отдельных колонок не заводим.
-  uploadJobId String?
+  uploadJobId   String?
 
   /// Г-2.11 (аудит round4, этап 64): атомарный claim строки воркером
   /// выгрузки. Cron `*/2` мин, а загрузка ролика в YouTube длится минуты
@@ -1175,7 +1172,6 @@ model PublicationRequest {
  * ВНЕШНЮЮ площадку с последующей выгрузкой) — здесь страница живёт на
  * самом сервисе (`landing/`), у неё свой постоянный URL, счётчики
  * просмотров/конверсий и форк-механика «Сделать такой же».
- *
  * Тот же принцип снимка, что у PublicationRequest: sessionId — строка
  * без FK (страница переживает TTL-очистку сессий), всё нужное для показа
  * СКОПИРОВАНО при публикации, собственная копия видео и фото товара —
@@ -1211,12 +1207,10 @@ model SharedVideoPage {
 
   /**
    * Кадр-постер: `og:image` публичной страницы и `poster` у `<video>`.
-   *
    * Вынимается из УЖЕ готового файла в момент публикации
    * (`SharedVideoPosterService`), поэтому показывает ровно то, что
    * человек откроет по ссылке, — с титрами, наклейкой и в нужном
    * формате кадра.
-   *
    * NULL — постера нет, и это НОРМАЛЬНОЕ состояние, а не сбой:
    * ffmpeg-сервис может быть не настроен на стенде, задача может не
    * успеть за отведённое ожидание. Страница тогда берёт запасную
@@ -1230,7 +1224,6 @@ model SharedVideoPage {
    * Тип проекта, из которого сделан ролик — нужен витрине поздравлений
    * (docs-tz/TZ-Greeting-Video-Landing.md §5), чтобы не смешивать в
    * одной выдаче товарные ролики и поздравления.
-   *
    * NULL — товарный ролик (SINGLE/LINE): сессия не знает, какой именно
    * из двух, и витрине это не нужно. Отбор поздравлений идёт ТОЛЬКО по
    * явному равенству `GREETING_VIDEO`, никогда по «не NULL» — поэтому
@@ -1242,20 +1235,20 @@ model SharedVideoPage {
    */
   projectType ProjectType?
 
-  /** Повод из `Session.greetingBriefSnapshot` — фильтр витрины по поводу
-   * (§5 ТЗ лендинга). NULL для всего, что не поздравление. */
+  /**
+   * Повод из `Session.greetingBriefSnapshot` — фильтр витрины по поводу
+   * (§5 ТЗ лендинга). NULL для всего, что не поздравление.
+   */
   occasion GreetingOccasion?
 
   /**
    * Кураторский отбор оператора: страница показана в публичной витрине
    * (§5 ТЗ лендинга — «витрина показывает только featured, не любой
    * публично расшаренный ролик подряд»). NULL — не в витрине.
-   *
    * Отметка времени, а не булево, по тем же двум причинам, что у
    * `featuredInBroadcastAt` ниже: даёт порядок для выдачи и сохраняет,
    * когда оператор это сделал. Публичная проекция отдаёт наружу
    * производное `featured: boolean` — контракт, который просит ТЗ.
-   *
    * Отдельное поле, а НЕ переиспользование `featuredInBroadcastAt`:
    * то — «уже показана в выпуске рассылки, не повторять», это —
    * «показывать постоянно». Смыслы противоположны.
@@ -1293,24 +1286,30 @@ model SharedVideoPage {
   moderatedAt  DateTime?
   rejectReason String?
 
-  /** Переходы на страницу и сессии, дошедшие до первой генерации — best-effort. */
+  /**
+   * Переходы на страницу и сессии, дошедшие до первой генерации — best-effort.
+   */
   viewCount            Int @default(0)
   firstGenerationCount Int @default(0)
 
-  /** Лента (этап 80, TODO §III.9) — денормализованные счётчики, тот же
+  /**
+   * Лента (этап 80, TODO §III.9) — денормализованные счётчики, тот же
    * приём, что viewCount выше: сортировка/отображение в ленте не должны
    * каждый раз считать COUNT(*) по SharedVideoLike. shareCount бампает
    * и кнопка «Поделиться» в ленте, и та же кнопка в ShareVideoPanel
    * (владелец делится собственным роликом) — один счётчик, две точки
-   * входа, см. doc/SOCIAL-FEED-SPEC.md §5. */
-  likeCount  Int @default(0)
-  shareCount Int @default(0)
+   * входа, см. doc/SOCIAL-FEED-SPEC.md §5.
+   */
+  likeCount  Int               @default(0)
+  shareCount Int               @default(0)
   likes      SharedVideoLike[]
 
-  /** Когда страница вошла в выпуск рассылки (ТЗ §42, этап 63) — NULL,
+  /**
+   * Когда страница вошла в выпуск рассылки (ТЗ §42, этап 63) — NULL,
    * пока не показана ни разу. Отбор следующего выпуска берёт только
    * PUBLISHED-страницы с этим полем пустым, чтобы не повторять одну и
-   * ту же карточку в каждом выпуске. */
+   * ту же карточку в каждом выпуске.
+   */
   featuredInBroadcastAt DateTime?
 
   createdAt DateTime @default(now())
@@ -1321,8 +1320,10 @@ model SharedVideoPage {
   @@index([sessionId])
   @@index([moderatorId])
   @@index([status, featuredInBroadcastAt])
-  /** Выдача витрины: `status/projectType/occasion` фильтруют, `showcasedAt`
-   * и сортирует, и отсекает некурированные (IS NOT NULL). */
+  /**
+   * Выдача витрины: `status/projectType/occasion` фильтруют, `showcasedAt`
+   * и сортирует, и отсекает некурированные (IS NOT NULL).
+   */
   @@index([status, projectType, showcasedAt])
   @@map("shared_video_pages")
 }
@@ -1366,9 +1367,9 @@ enum ChannelStatus {
 /// в логах/ответах API; оператор в админке видит канал только как
 /// справочник (название/статус), без токенов вообще.
 model PublishingChannel {
-  id     String              @id @default(cuid())
-  userId String
-  user   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id       String              @id @default(cuid())
+  userId   String
+  user     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   platform PublicationPlatform
 
   /// YouTube channelId / TikTok open_id.
@@ -1385,11 +1386,11 @@ model PublishingChannel {
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
 
-  publications      PublicationRequest[]
-  projectsAsYoutube Project[]      @relation("ProjectYoutubeChannel")
-  projectsAsTiktok  Project[]      @relation("ProjectTiktokChannel")
-  manifestsAsYoutube BrandManifest[] @relation("ManifestYoutubeChannel")
-  manifestsAsTiktok  BrandManifest[] @relation("ManifestTiktokChannel")
+  publications       PublicationRequest[]
+  projectsAsYoutube  Project[]            @relation("ProjectYoutubeChannel")
+  projectsAsTiktok   Project[]            @relation("ProjectTiktokChannel")
+  manifestsAsYoutube BrandManifest[]      @relation("ManifestYoutubeChannel")
+  manifestsAsTiktok  BrandManifest[]      @relation("ManifestTiktokChannel")
 
   @@unique([platform, externalId])
   @@index([userId])
@@ -1441,7 +1442,7 @@ model VideoAudioTrack {
   /// Session.id без FK — дорожка переживает TTL-очистку сессий, как и
   /// заявка на публикацию: файл уже отдан оператору, и терять карточку
   /// вместе с сессией нельзя.
-  sessionId String
+  sessionId        String
   /// К КАКОЙ версии ролика относится дорожка. Перегенерация делает
   /// прежние дорожки негодными: картинка другая, и речь под неё уже не
   /// ложится. Поле хранится именно для того, чтобы это было видно.
@@ -1452,7 +1453,7 @@ model VideoAudioTrack {
   status AudioTrackStatus @default(FAILED)
 
   /// Переведённая под хронометраж реплика — то, что произносит дорожка.
-  speech String?
+  speech        String?
   /// Синтезированный голос в хранилище (не готовый микс: сборка полного
   /// звука — отдельный шаг тем же рецептом ffmpeg, что у оригинала).
   voicePathname String?
@@ -1464,22 +1465,22 @@ model VideoAudioTrack {
   overflowSeconds Float?
   /// Во сколько раз ускорить речь при сборке, если без этого не влезает
   /// (`atempo`). Пусто — подгонка не нужна.
-  tempoRate Float?
+  tempoRate       Float?
   /// Сколько раз просили перевод: второй заход — «на N % короче».
-  attempts Int @default(0)
+  attempts        Int     @default(0)
   /// Почему отдано человеку — на человеческом языке, для карточки.
-  note String?
+  note            String?
 
   /// Задача ffmpeg на сборку полного звука (этап 138). Пока она есть, а
   /// `trackUrl` пуст — дорожка собирается; так же, как у постобработки
   /// ролика, отдельного статуса «собирается» для этого не нужно.
-  mixJobId String?
+  mixJobId      String?
   /// Готовый файл дорожки: полный звук ролика на другом языке, который
   /// оператор заливает в Studio (API дорожек у YouTube нет вовсе).
   trackPathname String?
   trackUrl      String?
   /// Почему сборка не удалась — отдельно от `note` про длину речи.
-  mixError String?
+  mixError      String?
 
   /// Субтитры этой дорожки (этап 141): тайминг от ОРИГИНАЛА — биты
   /// ролика от языка не переезжают, — текст от построчного перевода.
@@ -1514,14 +1515,14 @@ model ApiKey {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// Имя, которое дал человек: «CI релизов», «скрипт Пети».
-  name String
+  name       String
   /// Открытое начало ключа — по нему он узнаётся в списке и в логах.
-  hint String
+  hint       String
   /// Куда сообщать об исходе заявки (этап 146). Адрес на КЛЮЧЕ, а не
   /// на заявке: вебхук — свойство интеграции, а не отдельного ролика.
   webhookUrl String?
   /// sha-256 от секрета. Сам секрет показан один раз при выдаче.
-  keyHash String @unique
+  keyHash    String  @unique
 
   /// Последнее использование — с точностью до часа (см.
   /// `shouldTouchLastUsed`): запись на каждый вызов была бы платой за
@@ -1529,7 +1530,7 @@ model ApiKey {
   lastUsedAt DateTime?
   /// Отзыв, а не удаление: «этого ключа никогда не было» — ответ хуже,
   /// чем «отозван тогда-то».
-  revokedAt DateTime?
+  revokedAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -1564,7 +1565,7 @@ model ApiVideoJob {
   /// интегратору занимать ключ другому.
   idempotencyKey String?
   /// Отпечаток тела запроса: тот же ключ с другим телом — не повтор.
-  fingerprint String
+  fingerprint    String
 
   productItemId  String
   projectId      String
@@ -1629,11 +1630,11 @@ model ApiWebhookDelivery {
 }
 
 model AnalysisLibraryEntry {
-  id        String @id @default(cuid())
-  sourceKey String @unique // yt:<videoId> | sha256:<hex>
-  sourceType String // youtube | upload
-  sourceUrl  String? // публичная YouTube-ссылка; для файла — null
-  title      String? // название: YouTube-title (если знали) или первая сцена
+  id           String  @id @default(cuid())
+  sourceKey    String  @unique // yt:<videoId> | sha256:<hex>
+  sourceType   String // youtube | upload
+  sourceUrl    String? // публичная YouTube-ссылка; для файла — null
+  title        String? // название: YouTube-title (если знали) или первая сцена
   thumbnailUrl String? // превью первой сцены (Blob) или i.ytimg.com
 
   analysis Json // полный VideoAnalysis (sceneBreakdown, characters, scenes, extras, audience, promotedProduct)
@@ -1660,11 +1661,11 @@ model AnalysisLibraryEntry {
   // Модерация и приватность (ТЗ §21.1/§21.3). Выставляются оператором в
   // админке либо при создании записи (загрузка файла → PRIVATE) и НЕ
   // перезаписываются повторным анализом того же источника.
-  visibility     LibraryVisibility @default(PUBLIC)
-  hiddenReason   String? // причина скрытия — видна только оператору
-  moderatedAt    DateTime?
-  moderatedById  String?
-  moderatedBy    User?     @relation("LibraryModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
+  visibility    LibraryVisibility @default(PUBLIC)
+  hiddenReason  String? // причина скрытия — видна только оператору
+  moderatedAt   DateTime?
+  moderatedById String?
+  moderatedBy   User?             @relation("LibraryModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
 
   sessionId String? // сессия-источник (без FK: сессии живут по TTL)
   userId    String?
@@ -1693,7 +1694,6 @@ model AnalysisLibraryEntry {
   @@index([sourceKey(ops: raw("gin_trgm_ops"))], type: Gin, map: "analysis_library_sourceKey_trgm_idx")
   @@map("analysis_library")
 }
-
 
 /// Журнал расходов на внешние платные вызовы (ТЗ §26, этап 31).
 ///
@@ -1725,37 +1725,37 @@ model AiUsage {
 
   /// GEMINI | OPENAI | VEO | SERPAPI | YOUTUBE | FFMPEG | ELEVENLABS —
   /// кто выставит счёт.
-  provider String
+  provider  String
   /// Что именно делали: analysis, relevance, audit, transcribe,
   /// product-photo, prompt, generation, analog-search, video-search,
   /// reframe, voiceover.
   operation String
   /// Идентификатор модели/эндпоинта как он ушёл в запрос.
-  model String
+  model     String
 
   /// Все входные токены запроса, включая кешированные — как их считает
   /// провайдер.
-  inputTokens  Int @default(0)
+  inputTokens       Int @default(0)
   /// Из них повторно использованные (кеш): тарифицируются заметно дешевле
   /// (§26.1). До этапа 32 их не было, и расход завышался.
   cachedInputTokens Int @default(0)
-  outputTokens Int @default(0)
+  outputTokens      Int @default(0)
   /// Секунды сгенерированного видео (Veo) — там счёт идёт за них.
-  seconds      Int @default(0)
+  seconds           Int @default(0)
   /// Вызовы с поштучной ценой (SerpApi, YouTube) — там счёт за запрос.
-  calls        Int @default(1)
+  calls             Int @default(1)
   /// Символы синтезированной речи (ElevenLabs) — у TTS счёт идёт за них,
   /// а не за токены (§15.3, этап 35).
-  characters   Int @default(0)
+  characters        Int @default(0)
 
-  costMicroUsd Int @default(0)
+  costMicroUsd   Int     @default(0)
   /// Версия прайса, по которой посчитано (common/ai-pricing.ts). Без неё
   /// нельзя объяснить, почему одинаковые вызовы стоят разное.
   pricingVersion String
   /// true, если ставки для модели в прайсе не нашлось: объём записан,
   /// деньги — нули. Интерфейс обязан показать это отдельно, иначе ноль
   /// читается как «бесплатно».
-  unpriced Boolean @default(false)
+  unpriced       Boolean @default(false)
 
   createdAt DateTime @default(now())
 
@@ -1804,7 +1804,7 @@ model AiUsageMonthly {
   /// Ставки в прайсе не нашлось: объём записан, деньги — нули.
   unpriced  Boolean @default(false)
 
-  calls Int @default(0)
+  calls        Int    @default(0)
   /// BigInt, а не Int: сумма за месяц по одной модели легко переваливает
   /// за 2 147 долларов, и переполнение было бы молчаливым и необратимым
   /// — пересчитать после удаления сырых строк не из чего.
@@ -1813,7 +1813,7 @@ model AiUsageMonthly {
   /// без них отчёт «за всё время» терял бы объём синтеза в момент
   /// свёртки. Int, а не BigInt, как у денег: два миллиарда символов за
   /// месяц на одного — это счёт синтеза на полмиллиона долларов.
-  characters Int @default(0)
+  characters   Int    @default(0)
 
   createdAt DateTime @default(now())
 
@@ -1840,11 +1840,11 @@ model AiUsageMonthly {
 /// (`elevenlabs`/`resemble`/`veo`), заводить сериализацию под будущие
 /// настройки, которых ещё нет, было бы преждевременно.
 model PlatformSetting {
-  key         String   @id
-  value       String
-  updatedAt   DateTime @default(now()) @updatedAt
+  key       String   @id
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt
   /// Кто менял — для админского аудита, не для логики.
-  updatedBy   String?
+  updatedBy String?
 
   @@map("platform_settings")
 }
@@ -1913,7 +1913,7 @@ model AssistantEvent {
 
   /// 'open' | 'ask' | 'action_click' | 'close' | 'proactive_shown' |
   /// 'proactive_dismissed' | 'proactive_engaged'.
-  kind String
+  kind   String
   /// `open` — 'user'|'proactive'; `action_click` — kind кнопки;
   /// `proactive_*` — имя триггера (§6.6.1). Свободная строка, не enum —
   /// то же соображение, что и `triggeredBy` выше.
@@ -2216,21 +2216,21 @@ enum CreditLedgerReason {
 /// НЕ удаляется никогда — это финансовая история, TTL-уборка её не касается
 /// (в отличие от Session).
 model Payment {
-  id     String        @id @default(cuid())
+  id     String @id @default(cuid())
   userId String
   /// М-5.5 седьмого аудита: `Restrict`, не `Cascade` — финансовая
   /// история переживает удаление аккаунта (providerRef/rawPayload —
   /// единственные следы для споров и идемпотентности вебхуков);
   /// удаление пользователя с платежами должно анонимизировать, а не
   /// стирать (миграция 20261026090000_finance_restrict).
-  user   User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   method  PaymentMethod
   purpose PaymentPurpose
-  status  PaymentStatus @default(PENDING)
+  status  PaymentStatus  @default(PENDING)
 
   /// Заполнено только для purpose=SUBSCRIPTION — какой режим покупали.
-  plan UserPlan?
+  plan           UserPlan?
   /// Заполнено только для purpose=CREDIT_PACK — сколько кредитов начислит
   /// успешная оплата (сама операция начисления — CreditLedger.grant()).
   creditsGranted Int?
@@ -2259,7 +2259,7 @@ model Payment {
   subscriptionId String?
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
-  creditLedger CreditLedger[]
+  creditLedger   CreditLedger[]
   /// Аукцион (ТЗ на маркетплейс §22, Этап 2) — заполнена только для
   /// purpose=AUCTION, обратная сторона AuctionPayment.paymentId.
   auctionPayment AuctionPayment?
@@ -2362,7 +2362,7 @@ model YoutubeUnlockSession {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// Тем же ключом, что токены каналов публикации (`CHANNEL_TOKEN_KEY`).
-  accessTokenEnc String
+  accessTokenEnc  String
   /// Канал Google-аккаунта — им же проверяется уникальность в UnlockCheck.
   googleChannelId String
   expiresAt       DateTime
@@ -2399,12 +2399,12 @@ model Subscription {
   method PaymentMethod
   status SubscriptionStatus @default(ACTIVE)
 
-  currentPeriodEnd DateTime
+  currentPeriodEnd  DateTime
   /// Пользователь запросил отмену через PATCH /api/me/plan {plan:'LITE'} —
   /// доступ остаётся до конца УЖЕ оплаченного периода (нечестно понижать
   /// сразу после оплаты); billing-renewal переводит в CANCELED и понижает
   /// User.plan, когда currentPeriodEnd наступит, вместо попытки продлить.
-  cancelAtPeriodEnd Boolean @default(false)
+  cancelAtPeriodEnd Boolean  @default(false)
 
   /// Зашифрован token-crypto.ts (тот же формат, что PublishingChannel.
   /// accessTokenEnc), ключ — PAYMENT_TOKEN_KEY, отдельный от
@@ -2552,22 +2552,22 @@ model MarketingDelivery {
 /// Доступна только Premium — тем же признаком пакета 'library', без
 /// отдельной строки в матрице возможностей.
 model CatalogBatchRun {
-  id        String   @id @default(cuid())
+  id        String  @id @default(cuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   libraryEntryId  String
   /// Чья сессия дала стиль партии — только для истории/UI, без FK (та
   /// же логика "снимок, не ссылка", что у остальных полей ниже).
   sourceSessionId String
   /// VideoQuality исходного ролика — тот же для всей партии (единый стиль).
-  quality     String
-  aspectRatio String?
+  quality         String
+  aspectRatio     String?
   /// UI-локаль инициатора (этап 59/64) — прокидывается в каждую
   /// дочернюю сессию воркером.
-  locale      String?
+  locale          String?
 
   /// Доп. запрос владельца продукта: Grok как провайдер (ТЗ
   /// VEO-MODEL-VERSION-CHOICE-SPEC.md §10–11, §13, этап 2 плана §14).
@@ -2623,11 +2623,11 @@ enum CatalogBatchItemStatus {
 /// повторной записи сюда: экран статуса партии читает это состояние
 /// живьём из сессии в момент запроса (см. CatalogBatchService.getStatus).
 model CatalogBatchItem {
-  id            String      @id @default(cuid())
+  id            String          @id @default(cuid())
   batchId       String
   batch         CatalogBatchRun @relation(fields: [batchId], references: [id], onDelete: Cascade)
   productItemId String
-  productItem   ProductItem @relation(fields: [productItemId], references: [id], onDelete: Cascade)
+  productItem   ProductItem     @relation(fields: [productItemId], references: [id], onDelete: Cascade)
 
   /// Появляется, когда воркер создал дочернюю сессию для этого товара.
   sessionId String?
@@ -2689,10 +2689,10 @@ model TesterInvite {
   label String
 
   /// Что открыть при активации — коды из `common/test-user-scenarios.ts`.
-  freeScenarios String[] @default([])
+  freeScenarios      String[]  @default([])
   /// Открыть ли операции вне проекта (этап 159). Переносится на
   /// пользователя при активации, как и сценарии.
-  freeOutsideProject Boolean @default(false)
+  freeOutsideProject Boolean   @default(false)
   /// Что проверять — текст брифа для экрана `#/testing` (аудит этапа
   /// 161, §2.3 ТЗ).
   ///
@@ -2701,11 +2701,11 @@ model TesterInvite {
   /// читает инструкцию для кого-то другого. Живёт здесь, а не на
   /// пользователе: при отзыве уходит вместе с приглашением, а история
   /// «кому что поручали» остаётся.
-  brief String?
+  brief              String?
   /// Свой суточный потолок в долларах. NULL — общий для тестовых.
-  dailyLimitUsd Int?
+  dailyLimitUsd      Int?
   /// До какого момента ссылка действует. NULL — бессрочно.
-  expiresAt DateTime?
+  expiresAt          DateTime?
 
   /// Кто активировал — `User.id`. NULL, пока не активировано.
   userId      String?
@@ -2736,32 +2736,32 @@ model TesterInvite {
 /// таблицам значило бы дважды писать очередь разбора и дважды её
 /// фильтровать.
 model TestTicket {
-  id String @id @default(cuid())
+  id     String @id @default(cuid())
   /// Человекочитаемый номер — он уходит тестировщику в подтверждение.
   /// Последовательность, а не `id`: «принято, #14» в переписке
   /// работает, `cmfz3k…` — нет.
-  number Int @unique @default(autoincrement())
+  number Int    @unique @default(autoincrement())
 
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// По какому приглашению он тестирует. NULL — доступ выдан руками
   /// оператора, без приглашения.
   inviteId String?
   invite   TesterInvite? @relation(fields: [inviteId], references: [id], onDelete: SetNull)
 
   /// `BOT` или `APP` — откуда пришло.
-  source String
-  text   String
+  source        String
+  text          String
   /// Вложения: наш URL, тип и размер (§3.3). Json, а не таблица, — их
   /// читают целиком вместе с тикетом и никогда по отдельности.
-  attachments Json @default("[]")
+  attachments   Json   @default("[]")
   /// Переписка по тикету: подтверждения бота, комментарии тестировщика
   /// ответом на них, ответы оператора. Та же причина, что у вложений.
-  comments Json @default("[]")
+  comments      Json   @default("[]")
   /// Идентификаторы НАШИХ сообщений в личке, относящихся к этому
   /// тикету. По ним `reply_to_message` находит тикет, и ответ
   /// тестировщика ложится комментарием, а не новой находкой в очередь.
-  botMessageIds Int[] @default([])
+  botMessageIds Int[]  @default([])
 
   /// Заполняется только из мини-аппа.
   sessionId String?
@@ -2771,15 +2771,15 @@ model TestTicket {
   /// Локаль ИНТЕРФЕЙСА — на каком языке было НАРИСОВАНО увиденное.
   /// Обязательна: неточности перевода и поехавшая вёрстка видны только
   /// в своём языке.
-  uiLocale String
+  uiLocale      String
   /// Локаль РОЛИКА — другой перевод и другая команда. «Субтитры на
   /// немецком с ошибкой» искать в словарях интерфейса бесполезно.
   sessionLocale String?
 
   /// Окружение — чем воспроизводить (§3.4).
-  env Json?
+  env           Json?
   /// Короткий ключ окружения для группировки похожих (§3.7).
-  envKey String?
+  envKey        String?
   /// Когда окружение снято. Может быть заметно РАНЬШЕ `createdAt` — из
   /// бота берётся последнее известное, и это само по себе сигнал, что
   /// к находке оно, скорее всего, отношения не имеет.
@@ -2799,8 +2799,8 @@ model TestTicket {
   replySentAt   DateTime?
   replyFailedAt DateTime?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
   /// Когда тестировщик писал в этот тикет в последний раз — по нему, и
   /// только по нему, считается окно склейки (аудит этапа 157).
   ///
@@ -2833,11 +2833,11 @@ model AbTestRun {
   sourceSessionId String
   /// Тот же товар, что у исходной сессии — воркеру нужен для
   /// createFromItem при создании каждой дочерней сессии-варианта.
-  productItemId String
+  productItemId   String
   /// Разбор, который воркер применит к каждой дочерней сессии. NULL —
   /// когда сцену задаёт приём, а не референс (этап 152): у такой сессии
   /// записи в библиотеке нет и не будет.
-  libraryEntryId String?
+  libraryEntryId  String?
   /// Приём сцены — вторая возможная форма источника. Ровно одна из двух
   /// колонок заполнена, это держит CHECK в миграции: «ни одной» — прогон,
   /// которому нечего передать детям, «обе» — спор двух источников.
@@ -2893,8 +2893,8 @@ model AbTestVariant {
   nextAttemptAt DateTime?
   /// Claim перед обработкой строки в этом тике — тот же приём, что у
   /// CatalogBatchItem.lockedUntil.
-  lockedUntil DateTime?
-  error       String?
+  lockedUntil   DateTime?
+  error         String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -2931,10 +2931,10 @@ model ProductFeedImportRun {
 
   sourceUrl String
 
-  status ProductFeedImportRunStatus @default(PENDING)
+  status        ProductFeedImportRunStatus @default(PENDING)
   /// Claim/бэкофф для тика «забрать фид» (см. product-feed-import-worker.service.ts) —
   /// тот же приём, что у CatalogBatchItem.attempts/nextAttemptAt/lockedUntil.
-  attempts      Int       @default(0)
+  attempts      Int                        @default(0)
   nextAttemptAt DateTime?
   lockedUntil   DateTime?
   error         String?
@@ -3021,7 +3021,7 @@ enum CronRunStatus {
 }
 
 model CronRunLog {
-  id  String @id @default(cuid())
+  id     String @id @default(cuid())
   /// Ключ джоба — 'report' | 'blog' | 'publish' | 'billing-renew' |
   /// 'marketing-broadcast' | 'catalog-batch-run' | 'ab-test-run' |
   /// 'feed-import-run' | 'export-sync-run' | 'cleanup-sessions' |
@@ -3471,7 +3471,7 @@ model TutorialScenario {
   /// 31/32): оператор должен увидеть предупреждение явно, а не
   /// молчаливую цифру — добавлено при реализации, не было в
   /// первоначальном черновике модели в ТЗ §4.10.
-  costUnpriced Boolean @default(false)
+  costUnpriced          Boolean @default(false)
 
   /// Явное одобрение оператора ПЕРЕД тем, как costly=true сценарий
   /// разрешено исполнять автоматически (§4.11 ТЗ) — независимо от
@@ -3572,7 +3572,7 @@ model TutorialVideoAsset {
   /// Заполняется, когда сборка (см. ниже) успешно завершилась — публичная
   /// ссылка в НАШЕМ Blob (§4.3 ТЗ: скачано с внешнего ffmpeg-api и
   /// перезалито к себе, тот же приём, что PostProductionService.poll).
-  blobUrl String?
+  blobUrl     String?
   /// Заполняется, если видео ушло во внешний хостинг (Фаза 3, §4.3-б),
   /// пока не используется.
   externalUrl String?
@@ -3658,7 +3658,7 @@ model TutorialVideoAsset {
   /// (`tutorial-tempo.ts`). NULL — ролик собран до manifest и темп для
   /// него недоступен (явно non-editable, пересобрать из черновика).
   /// Формат и версия — `tutorial-manifest.ts` (`manifestVersion`).
-  tempoManifest Json?
+  tempoManifest   Json?
   /// Какая версия сейчас отдаётся вместо исходного файла
   /// (`TutorialVideoVersion.id`); NULL — исходный ролик. `blobUrl` и
   /// длительность строки при активации переписываются на файл версии —
@@ -3666,6 +3666,9 @@ model TutorialVideoAsset {
   /// читают строку как раньше и неактивных версий не видят вовсе.
   activeVersionId String?
   versions        TutorialVideoVersion[]
+  /// Проверки качества демо через Gemini (doc/TUTORIAL-DEMO-QUALITY-SPEC.md).
+  /// Ролика без записи ИИ не проверял — админка так и показывает.
+  qualityChecks   TutorialDemoQualityCheck[]
 
   @@index([subjectKey, locale, createdAt])
   /// Горячий путь чтения консультанта (§4.8 ТЗ, будущий этап) — «какие
@@ -3701,16 +3704,16 @@ model TutorialVideoVersion {
   asset   TutorialVideoAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   /// 'source' | 'tempo'
-  kind String
+  kind            String
   /// Множитель паузы (пресеты 1.5 / 1 / 0.4, ползунок 0..2 с шагом 0.05);
   /// NULL у 'source'.
-  tempoFactor Float?
+  tempoFactor     Float?
   /// Режим движения, с которым собрана версия (`SLIDESHOW_MOTIONS`).
-  motion String
+  motion          String
   manifestVersion Int
   /// sha256(sourceHash + manifestVersion + темп + переходы) — двойной клик
   /// и повтор крона не создают вторую платную сборку.
-  idempotencyKey String
+  idempotencyKey  String
 
   /// 'preparing' | 'pending' | 'complete' | 'failed' — тот же смысл, что у
   /// `TutorialVideoAsset.assemblyStatus`, но своё поле: версия не
@@ -3731,17 +3734,102 @@ model TutorialVideoVersion {
   /// Публичное (сценарное) демо: версия становится активной только
   /// после повторного одобрения оператором. Обучалка клиента — после
   /// технической проверки, без оператора (решение владельца 06.10.2026).
-  requiresApproval Boolean @default(false)
+  requiresApproval Boolean   @default(false)
   approvedBy       String?
   approvedAt       DateTime?
   /// Кто заказал: id пользователя (обучалка клиента) или оператора.
-  requestedBy String
-  activatedAt DateTime?
+  requestedBy      String
+  activatedAt      DateTime?
 
   @@unique([assetId, idempotencyKey])
   /// Опрос незавершённых сборок версий — на каждом тике крона.
   @@index([status])
   @@map("tutorial_video_versions")
+}
+
+/// Проверка качества демо через Gemini (doc/TUTORIAL-DEMO-QUALITY-SPEC.md,
+/// 06.10.2026). Фаза НАБЛЮДЕНИЯ: запись только сообщает оператору —
+/// `TutorialVideoAsset.reviewed` проверка не ставит и не снимает.
+///
+/// Очередь живёт в кроне `tutorial-assembly-poll` под его замком:
+/// `upload` (скачать, техпроверка, загрузка в Gemini Files) → `wait`
+/// (файл ACTIVE) → `analyze` (рубрика по JSON Schema). Фаза сохраняется
+/// между тиками; захват — атомарный `updateMany` с арендой
+/// (`leaseOwner`/`leaseUntil`), упавший тик подбирается по истечении
+/// аренды. Записи заводятся только для новых собранных роликов и по
+/// кнопке оператора — без массового заполнения старых.
+model TutorialDemoQualityCheck {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assetId     String
+  asset       TutorialVideoAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  /// Мягкая ссылка на `TutorialVideoVersion.id`: проверяемый файл — версия
+  /// темпа (активная или кандидат); NULL — исходный файл ролика.
+  versionId   String?
+  /// Публичная ссылка проверяемого файла на момент постановки в очередь.
+  videoUrl    String
+  /// 'assembly' | 'operator' | 'approved-backfill'
+  trigger     String
+  requestedBy String?
+
+  /// sha256 байтов проверяемого MP4 — известен при сборке или после
+  /// скачивания в фазе `upload`.
+  contentSha    String?
+  rubricVersion String
+  modelId       String
+  /// sha256(assetId | contentSha | rubricVersion | modelId): повторный
+  /// крон или кнопка не оплачивают уже выполненную проверку.
+  dedupeKey     String?
+  /// Результат скопирован из завершённой проверки с тем же ключом.
+  reusedFromId  String?
+
+  /// 'pending' | 'running' | 'complete' | 'error'
+  status        String    @default("pending")
+  /// 'upload' | 'wait' | 'analyze'
+  phase         String    @default("upload")
+  /// Неудачных попыток (сеть, 429, 5xx, таймаут, упавший тик); на третьей — `error`.
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  leaseOwner    String?
+  leaseUntil    DateTime?
+
+  /// Имя файла Gemini Files — сохраняется сразу после загрузки, чтобы
+  /// уборка нашла его и после падения функции.
+  providerFileName String?
+  providerFileUri  String?
+  providerFileMime String?
+  uploadedAt       DateTime?
+
+  /// 'ok' | 'warn' | 'fail' — только у `complete`; вычисляет сервер.
+  verdict      String?
+  /// Отчёт: оценки, замечания с таймкодами, категории, серьёзность.
+  report       Json?
+  /// Итог технической проверки MP4 (бесплатной, до Gemini).
+  preflight    Json?
+  error        String?
+  /// Стоимость анализа в микродолларах; `unpriced` — ставки модели нет,
+  /// ноль тогда не правда.
+  costMicroUsd Int?
+  unpriced     Boolean @default(false)
+  tokenUsage   Json?
+
+  /// Снимок метаданных ролика на момент проверки.
+  durationMs   Int?
+  theme        String?
+  locale       String
+  captureBuild String?
+  /// 'browser' | 'tma'; NULL — режим съёмки не записан (не выдаётся за TMA).
+  captureMode  String?
+  checkedAt    DateTime?
+
+  @@index([assetId, createdAt])
+  /// Выборка очереди тиком: `pending` с наступившим сроком и
+  /// `running` с истёкшей арендой.
+  @@index([status, nextAttemptAt])
+  @@index([dedupeKey])
+  @@map("tutorial_demo_quality_checks")
 }
 
 /// Часть А ТЗ (§3, этап 100) — метаданные крон-обхода интерфейса
@@ -3759,14 +3847,14 @@ model UiSnapshot {
   locale   String
   /// Единственное значение в MVP — 'light' (§3.8 ТЗ); поле на будущее,
   /// не enum, тот же приём, что jobKey у CronRunLog.
-  theme String @default("light")
+  theme    String @default("light")
 
   /// Отсутствует, когда снимок не удалось СНЯТЬ (см. `error` ниже) —
   /// отклонение от исходного черновика схемы в §3.4 ТЗ (обязательный
   /// String), сделанное по пункту 6 аудита (§10): «маршрут не изменился»
   /// и «маршрут не удалось проверить» — разные состояния, которые
   /// нельзя путать молча.
-  blobUrl String?
+  blobUrl       String?
   /// URL снимка, с которым сравнивали; null у самого первого снимка
   /// этой комбинации routeKey+locale+theme.
   comparedToUrl String?
@@ -3775,11 +3863,11 @@ model UiSnapshot {
   /// него сравнение со следующим снимком требовало бы заново скачивать
   /// и перехэшировать предыдущий PNG из Blob на каждом тике, вместо
   /// одного дешёвого чтения строки из этой же таблицы.
-  diffHash String?
+  diffHash      String?
   /// Нормализованное расстояние Хэмминга между dHash-ами (0..1) —
   /// осмысленно, только когда error=null (см. UiSnapshotRunnerService).
-  diffScore Float?
-  changed   Boolean @default(false)
+  diffScore     Float?
+  changed       Boolean @default(false)
 
   /// Заполняется вместо blobUrl/diffScore/changed, когда сам ЗАХВАТ
   /// снимка провалился (браузер, навигация, Blob) — по пункту 6 аудита
@@ -3945,13 +4033,13 @@ model ClientSiteTutorialDraft {
   /// каждом действии, которое водит браузер по сайту, и при подтверждении.
   /// sites-backend недоступен — `B`. NULL — черновик до Ш1 (до первой
   /// проверки читается как `B`).
-  siteMode String?
+  siteMode          String?
   /// Когда режим проверялся последний раз (раунд, экран черновика в работе,
   /// «проверить снова» после подтверждения сайта).
   siteModeCheckedAt DateTime?
   /// Id хоста в кабинете `sites-backend` (ссылка между базами, без FK) —
   /// для ссылки «подтвердить сайт» и для Ш2 (реестр учётных записей).
-  siteHostId String?
+  siteHostId        String?
 
   /// Э-С Ш2: где лежат данные входа черновика, когда хранилище
   /// `sites-backend` включено (`SITE_TUTORIAL_CREDENTIALS_STORE=sites`).
@@ -3964,8 +4052,8 @@ model ClientSiteTutorialDraft {
   /// (хранилище не настроено или черновик ещё не перенесён скриптом
   /// `scripts/move-client-site-credentials.ts`). Колонки удаляются отдельной
   /// миграцией после переноса на проде (doc/TODO.md I-М).
-  siteTestAccountId String?
-  userSiteSessionId String?
+  siteTestAccountId   String?
+  userSiteSessionId   String?
   /// В хранилище есть поля формы входа (`login-fields`) — для
   /// `hasCredentials` без похода в sites-backend на каждом показе черновика.
   storeHasCredentials Boolean @default(false)
@@ -3998,7 +4086,7 @@ model ClientSiteTutorialDraft {
   /// Язык озвучки и подписей — язык интерфейса, в котором человек
   /// записывал черновик (`ru`/`uk`/`en`/`de`/`es`). NULL у черновиков до
   /// колонки — озвучка тогда по-русски, как всё прежнее.
-  locale String?
+  locale       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -4065,17 +4153,17 @@ enum ClientSiteTutorialDraftStatus {
 /// count < limit`, потому что дорог здесь не ИИ, а секунды владения
 /// контейнером с Chromium.
 model ClientSiteTutorialUsage {
-  id     String @id @default(cuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String @id @default(cuid())
+  userId       String
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// UTC-сутки в формате YYYY-MM-DD — строкой, чтобы ключ был точным, без
   /// таймзонных сюрпризов DateTime (тот же приём, что у SerpApiUsage).
-  day    String
+  day          String
   /// Раунды визарда (/explore + /step + /login + /undo) за эти сутки.
-  rounds Int    @default(0)
+  rounds       Int    @default(0)
   /// Live-сессии входа за эти сутки — отдельный, более дорогой ресурс
   /// (§7.4.8: постоянный контейнер, плата за секунды владения).
-  liveSessions Int @default(0)
+  liveSessions Int    @default(0)
 
   updatedAt DateTime @default(now()) @updatedAt
 
@@ -4095,16 +4183,16 @@ model ImageSketch {
 
   /// SketchTargetType: session-character | session-product | session-scene
   /// | brand-character | brand-scene | project-item
-  targetType String
+  targetType  String
   /// sessionId | brandManifestId | productItemId
-  targetId   String
+  targetId    String
   /// characterId | sceneId; пусто у товара
   targetSubId String?
 
   /// from-image | from-text
-  mode  String
+  mode    String
   /// SketchStyle
-  style String
+  style   String
   /// SketchOptions: anonymizeFace, removeLogos, keepColors, sketchRendering
   options Json
 
@@ -4179,16 +4267,16 @@ model CreatorProfile {
   niches        String[]
   priceRangeMin Float?
   priceRangeMax Float?
-  bio           String? @db.Text
+  bio           String?  @db.Text
 
   /// Обратимый переключатель (ТЗ §21.8) — выключение сразу прячет профиль
   /// из каталога и подбора (§21.3), но не удаляет лайки/портфолио.
-  isAcceptingOrders Boolean @default(true)
+  isAcceptingOrders Boolean  @default(true)
   /// Явное согласие из квиза исполнителя (ТЗ §21.8) — момент согласия
   /// фиксируется отдельно, а не булевым флагом, ради аудита.
-  consentGivenAt DateTime
+  consentGivenAt    DateTime
   /// Доп. контакт, если Telegram-аккаунта по умолчанию недостаточно.
-  contactHandle String?
+  contactHandle     String?
 
   socialLinks     CreatorSocialLink[]
   portfolioItems  PortfolioItem[]
@@ -4283,7 +4371,7 @@ model PortfolioItem {
   /// Обязателен только при sourceType = CONTRACT (Фаза 2, ещё не строится).
   contractId String?
   /// Заполняется, если публикация выросла из брифа CreatorInquiry (§21).
-  inquiryId String?
+  inquiryId  String?
 
   videoUrl     String
   title        String
@@ -4298,9 +4386,9 @@ model PortfolioItem {
   customerConsent Boolean @default(false)
   anonymized      Boolean @default(false)
 
-  likeCount Int @default(0)
+  likeCount     Int     @default(0)
   /// Публичный счётчик просмотров (§20 №13) — best-effort инкремент.
-  viewCount Int @default(0)
+  viewCount     Int     @default(0)
   /// Тематическая подборка (§20 №20) — свободная строка, не enum: список
   /// подборок задаёт оператор по ходу дела, заводить миграцию под каждую
   /// новую тему не хочется.
@@ -4437,7 +4525,7 @@ model AuctionListing {
   /// запись. Следующему этапу (сервисный слой) нужно самому решать,
   /// когда withdrawPortfolioItem() блокировать — а не полагаться на то,
   /// что схема просто разрешит/запретит удаление молча.
-  portfolioItem PortfolioItem @relation(fields: [portfolioItemId], references: [id], onDelete: Restrict)
+  portfolioItem   PortfolioItem @relation(fields: [portfolioItemId], references: [id], onDelete: Restrict)
 
   /// Тот брендбук, по которому снято видео, если был — необязателен
   /// независимо от includeBrandManifest ниже (можно указать «снято по
@@ -4455,7 +4543,7 @@ model AuctionListing {
   /// Вычисляется из auctionType в момент перехода в ACTIVE: created +
   /// 48ч (BLITZ) либо + 3..7 дней, выбранных продавцом (STANDARD).
   /// null, пока заявка не покинула очередь (PENDING_MODERATION/QUEUED).
-  expiresAt DateTime?
+  expiresAt   DateTime?
 
   /// Антиснайпер (ТЗ на живой аукцион §7.3) — явный чекбокс продавца при
   /// подаче заявки, НЕ поведение по умолчанию для всех лотов (осознанное
@@ -4468,7 +4556,7 @@ model AuctionListing {
   /// не сам факт включения (см. antiSnipeEnabled выше). Растёт только
   /// при фактическом продлении в placeBid(), не на каждую позднюю
   /// ставку (см. формулу там же).
-  extensions Int @default(0)
+  extensions       Int     @default(0)
 
   /// Живой аукцион (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §7,
   /// Этап 5/ПРАВКА 1.4) — явное согласие ПРОДАВЦА при подаче заявки на
@@ -4505,7 +4593,7 @@ model AuctionListing {
 
   /// ИИ-оценка видео от Gemini-пайплайна (§16, по образцу video-audit)
   /// — сводка для оператора, не автоматическое решение.
-  aiAssessment String? @db.Text
+  aiAssessment         String? @db.Text
   /// Отдельный аудит брендбука, только если includeBrandManifest: true
   /// — необратимость продажи брендбука требует отдельной проверки.
   /// Оба поля выше видны не только оператору в очереди модерации, но и
@@ -4538,12 +4626,12 @@ model AuctionListing {
   startingPrice Int
   /// null = равен startingPrice; ставки ниже не приводят к продаже,
   /// лот уходит в EXPIRED, даже если ставки были. Минорные единицы, см. startingPrice.
-  reservePrice Int?
+  reservePrice  Int?
   /// Ставка на эту сумму сразу завершает торги (WON), минуя expiresAt.
   /// Валидируется в сервисе: должна быть >= reservePrice. Минорные единицы, см. startingPrice.
-  buyNowPrice Int?
+  buyNowPrice   Int?
 
-  status AuctionListingStatus @default(PENDING_MODERATION)
+  status          AuctionListingStatus @default(PENDING_MODERATION)
   /// Видна исполнителю (та же прозрачность, что у PortfolioItem.rejectionReason, §9).
   rejectionReason String?
 
@@ -4591,7 +4679,7 @@ model Bid {
 
   wonPayment AuctionPayment?
   /// Живой аукцион (§7, Этап 5) — подсказка озвучки, спровоцированная этой ставкой (BID_STATS).
-  voiceCue AuctionLiveVoiceCue?
+  voiceCue   AuctionLiveVoiceCue?
 
   @@index([listingId])
   @@index([buyerId])
@@ -4611,26 +4699,26 @@ model AuctionPayment {
   /// удалении лота, а лот не должен быть удаляемым, пока по нему есть
   /// подтверждённый платёж. Совпадает буквально с migration.sql, чтобы
   /// повторная генерация схемой не разошлась с уже применённой миграцией.
-  listing AuctionListing @relation(fields: [listingId], references: [id], onDelete: Restrict)
+  listing   AuctionListing @relation(fields: [listingId], references: [id], onDelete: Restrict)
 
   winningBidId String @unique
   winningBid   Bid    @relation(fields: [winningBidId], references: [id], onDelete: Restrict)
 
   /// Минорные единицы (копейки/центы) — см. AuctionListing.startingPrice. = выигравшая Bid.amount
-  amount Int
+  amount     Int
   /// 30% для BLITZ, 20% для STANDARD, от AuctionListing.auctionType —
   /// не Escrow.commission тендера (см. развязку выше). Минорные единицы.
   commission Int
   /// Ссылка на реальный Payment из billing (Этап 2 self-serve чек-аут,
   /// WayForPay — см. BillingService.startAuctionCheckout). null, пока
   /// покупатель не начал оплату; уникален — на один платёж один лот.
-  paymentId String?  @unique
+  paymentId  String?   @unique
   /// Explicit SetNull (не default) — Payment "НЕ удаляется никогда"
   /// (см. его собственный доккомментарий), но явно на случай если это
   /// когда-то изменится: обнулить ссылку безопаснее, чем унести с собой
   /// финансовую запись аукциона.
-  payment Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
-  paidAt    DateTime?
+  payment    Payment?  @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  paidAt     DateTime?
 
   createdAt DateTime @default(now())
 
@@ -4657,14 +4745,14 @@ model CreatorInquiry {
   goal               String?
   /// instagram_reels / tiktok / youtube_shorts / youtube_long / other —
   /// от значения зависит совет по формату генерации, §21.4.
-  targetPlatform String
-  budgetHint     Float?
+  targetPlatform     String
+  budgetHint         Float?
   /// Прикреплённый брендбук (ТЗ §21.7) — существующий BrandManifest,
   /// не новая связь Prisma: brand-manifest уже независим от Project
   /// (userId на User), здесь просто храним ссылку строкой, без
   /// @relation, чтобы не тянуть модуль brand-manifest в зависимости
   /// creator-inquiry ради одного nullable-поля.
-  brandManifestId String?
+  brandManifestId    String?
 
   status InquiryStatus @default(DRAFT)
 
@@ -4718,8 +4806,8 @@ model VirtualStudio {
   status VirtualStudioStatus @default(DRAFT)
 
   createdBy String // id оператора (admin user)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   variants  VirtualStudioVariant[]
@@ -4745,7 +4833,7 @@ model VirtualStudioVariant {
   imageUrl String
   /// Фактически использованный промпт (мог отличаться от studio.refPrompt,
   /// если оператор правил перед повторной генерацией).
-  prompt String
+  prompt   String
 
   /// Обратная сторона VirtualStudioFragment.variant — VIDEO-фрагменты,
   /// анимированные с этого варианта (image-to-video). Prisma требует
@@ -4800,7 +4888,7 @@ model VirtualStudioFragment {
   /// Обратная связь на BrandManifest.virtualStudioFragments — без неё
   /// `prisma validate` отказал бы этот relation (та же причина, что у
   /// BrandManifest.auctionListings).
-  brandManifest BrandManifest? @relation(fields: [brandManifestId], references: [id], onDelete: SetNull)
+  brandManifest   BrandManifest? @relation(fields: [brandManifestId], references: [id], onDelete: SetNull)
 
   /// Результат: VIDEO → resultUrl (mp4), VOICE → resultUrl (mp3),
   /// ANALYSIS → resultText (сводка + черновик сценария).
@@ -4874,11 +4962,11 @@ enum VoiceCueTrigger {
 /// одно и постоянно на весь эфир (см. VirtualStudioFragment.liveAuctionListingId),
 /// меняется только voiceFragment.
 model AuctionLiveVoiceCue {
-  id        String @id @default(cuid())
+  id        String         @id @default(cuid())
   listingId String
   listing   AuctionListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
-  seq         Int             // порядок в подсказках этого лота — назначается сериализованно (pg_advisory_xact_lock), см. LiveAuctionOrchestratorService.reserveSeq
+  seq         Int // порядок в подсказках этого лота — назначается сериализованно (pg_advisory_xact_lock), см. LiveAuctionOrchestratorService.reserveSeq
   kind        VoiceCueKind
   triggeredBy VoiceCueTrigger @default(PREGEN)
 
@@ -4900,7 +4988,7 @@ model AuctionLiveVoiceCue {
   /// Та же строка GenerationStatus, что у VirtualStudioFragment.status.
   status String @default("pending")
 
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   readyAt   DateTime?
 
   @@unique([listingId, seq])
@@ -4959,25 +5047,25 @@ model PersonaLook {
   personaId String
   persona   Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
 
-  label        String
+  label          String
   /// Пресет ('business' | 'evening' | 'festive' | 'sport' | 'winter') или NULL.
-  preset       String?
-  prompt       String?  @db.Text
-  targetAge    Int?
+  preset         String?
+  prompt         String?      @db.Text
+  targetAge      Int?
   /// NULL — из селфи (базовый образ); иначе из другого образа.
-  sourceLookId String?
-  isBase       Boolean  @default(false)
-  photoPathname String?
-  photoUrl      String?
+  sourceLookId   String?
+  isBase         Boolean      @default(false)
+  photoPathname  String?
+  photoUrl       String?
   /// Скетч-аватар образа — тем же приёмом, что BrandCharacter.activeSketchId.
   activeSketchId String?      @unique
   activeSketch   ImageSketch? @relation("ActiveSketchPersonaLook", fields: [activeSketchId], references: [id], onDelete: SetNull)
   /// pending | ready | failed
-  status       String   @default("pending")
-  error        String?
-  deletedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  status         String       @default("pending")
+  error          String?
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   presenterForBriefs GreetingBrief[] @relation("GreetingPresenterLook")
   defaultForBrands   BrandManifest[] @relation("BrandDefaultLook")

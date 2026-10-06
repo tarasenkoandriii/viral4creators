@@ -29,6 +29,8 @@ export const RELEASE_FILES = [
   'act.js',
   // Э6-бис (д): «Вернуть» для полей — рядом с act.js того же выпуска.
   'undo.js',
+  // Э6-тер (и): компенсации — рядом с undo.js того же выпуска.
+  'comp.js',
   'check.js',
   'vt.js',
   // Э3-бис: связанный режим и поведение (грузятся из выпуска сайта).
@@ -41,6 +43,11 @@ export const RELEASE_FILES = [
  * без связанного режима, пока выпуск не сменится).
  */
 const NEW_IN_E3B = new Set(['ana.js', 'bf.js']);
+/**
+ * Э6-тер (и): `comp.js` — нового чанка нет в выпусках до компенсаций; его
+ * отсутствие в `keep` — не ошибка (undo.js того выпуска его и не просит).
+ */
+const NEW_IN_E6T_I = new Set(['comp.js']);
 
 const cfgPath =
   process.env.WIDGET_RELEASE_CONFIG || path.join(ROOT, 'release.json');
@@ -86,7 +93,11 @@ for (const r of keep) {
   fs.mkdirSync(dir, { recursive: true });
   for (const f of RELEASE_FILES) {
     const res = await fetch(`${origin}/v1/r/${r}/${f}`);
-    if (!res.ok && res.status === 404 && NEW_IN_E3B.has(f)) {
+    if (
+      !res.ok &&
+      res.status === 404 &&
+      (NEW_IN_E3B.has(f) || NEW_IN_E6T_I.has(f))
+    ) {
       console.warn(`release: ${r}/${f} — нет в старом выпуске, пропущен`);
       continue;
     }

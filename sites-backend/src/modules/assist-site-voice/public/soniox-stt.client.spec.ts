@@ -84,6 +84,32 @@ describe('SiteSonioxStt', () => {
     expect(logs.join('\n')).not.toMatch(/bad|Секретний|0671234567/);
   });
 
+  it('термины сайта — в context.terms тела транскрипции, в лог не идут; без терминов — без context', async () => {
+    const fake = new FakeSoniox();
+    logs.length = 0;
+    await client(fake).transcribe({
+      audio: fakeRecording(),
+      mimeType: 'audio/webm',
+      languageHints: ['uk'],
+      terms: ['Запис на консультацію', 'Кошик'],
+    });
+    expect(
+      fake.calls.find((c) => c.path === '/transcriptions')?.body,
+    ).toMatchObject({
+      context: { terms: ['Запис на консультацію', 'Кошик'] },
+    });
+    expect(logs.join('\n')).not.toMatch(/консультацію|Кошик/);
+    const bare = new FakeSoniox();
+    await client(bare).transcribe({
+      audio: fakeRecording(),
+      mimeType: 'audio/webm',
+      languageHints: ['uk'],
+    });
+    expect(
+      bare.calls.find((c) => c.path === '/transcriptions')?.body,
+    ).not.toHaveProperty('context');
+  });
+
   it('ни одна строка лога не содержит распознанного текста', async () => {
     const fake = new FakeSoniox();
     fake.transcript = 'Мій телефон 0671234567';

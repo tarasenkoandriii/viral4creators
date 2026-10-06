@@ -41,7 +41,12 @@
  *  - при завершении — статус цепочки (`chainStatus`); после сбоя/стопа
  *    iframe предлагает «Вернуть / Оставить», «отмени последнее» — тот же
  *    маршрут `undo` (поля — из памяти загрузчика, серверное — «уберите
- *    сами» до Э6-тер (и)); единицы не тратятся, потолок планов — да.
+ *    сами»); единицы не тратятся, потолок планов — да.
+ *  - (Э6-тер (и)) компенсации объявленных пар (стандартная разметка,
+ *    «Как отменить» карты): стек — в шагах плана (`comp`), исполнение по
+ *    одной в обратном порядке через `undo-report` (`dispatch` ДО действия,
+ *    итог, `next` после перехода на страницу отмены); сбой компенсации —
+ *    стоп остальных; отданная без итога — `unknown`, без повтора.
  * Мемо (Э6-бис (е), §5-бис.17; Р-61, Р-62, Р-68…Р-72):
  *  - выбор: прямой путь по фразе опубликованного мемо (без модели, без
  *    единиц) → lite-выбор БЕЗ снимка страницы → обычный план;
@@ -89,9 +94,14 @@ import { replyKind } from '../../assist-ui-core/action-words';
 import {
   chainAfterUndo,
   chainStatusOf,
+  compAtOk,
+  compPairSafe,
+  compRemoves,
   needsSecondYes,
+  nextUndo,
   pointOfNoReturn,
   undoCandidates,
+  undoResults,
   type UndoResult,
 } from '../../assist-ui-core/chain';
 import {
@@ -128,6 +138,7 @@ import {
 import { neverViolation } from '../../assist-ui-core/wizard';
 import { zoneAllowed } from '../../assist-ui-core/rules';
 import {
+  cleanText,
   maskPageUrl,
   parseSnapshot,
   snapshotTooLarge,
@@ -142,10 +153,13 @@ import {
   type UiRisk,
   type UiSnapshot,
   type UiStepResult,
+  type UiUndoState,
+  type VoiceControlRules,
 } from '../../assist-ui-core/types';
 import { GeminiText } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type {
+  UiCompView,
   UiPlanConfirmRequest,
   UiPlanRequest,
   UiPlanStepReport,
@@ -184,6 +198,7 @@ import {
   recentSameMemo,
   updateChainStatus,
   updatePlan,
+  updateUndoSteps,
   type PlanRow,
 } from './plan-store';
 import { tripVoiceControl } from './voice-test-store';
@@ -241,14 +256,22 @@ const fail = (f: UiPlanFailure): never => {
 
 /**
  * Шаги для ответа виджету: без `mapKey` (ключ цели голосовой карты владельца
- * — транслит её имени, аудит Э6-тер (1)). В базе плана ключ остаётся (журнал
+ * — транслит её имени, аудит Э6-тер (1)) и без стека компенсаций (`comp`,
+ * `undone`). В базе плана ключ остаётся (журнал
  * шагов, Т-4); отпечаток `stepsHash` по нему не считается, а виджет его
  * только возвращает — сверка подтверждения не меняется.
  */
 export function publicSteps(steps: UiPlanStepView[]): UiPlanStepView[] {
   return steps.map((s) => {
-    if (s.mapKey === undefined) return s;
-    const { mapKey: _k, ...rest } = s;
+    if (
+      s.mapKey === undefined &&
+      s.comp === undefined &&
+      s.undone === undefined
+    )
+      return s;
+    // (Э6-тер (и)) Стек компенсаций — на сервере: обратная цель уходит
+    // загрузчику только командой «Вернуть» (`UiCompView`), не в плане.
+    const { mapKey: _k, comp: _c, undone: _u, ...rest } = s;
     return rest;
   });
 }
@@ -644,6 +667,8 @@ export class SiteUiPlanService {
       hosts,
       state: access.mode,
       ...(hints ? { mapHints: hints } : {}),
+      // Э6-тер (и): «Сайт» компенсирует объявленные пары (§5-бис.15 п.6).
+      compensations: true,
       ...(memo
         ? {
             trusted,
@@ -1693,6 +1718,7 @@ export class SiteUiPlanService {
             }
           : snapshot,
       ...(resolved ? { mapHints: mapHintsOf(resolved) } : {}),
+      compensations: true,
       // Сырой текст команды (пока план живой): значения с телефоном/e-mail
       // сверяются посимвольно — маска их не нашла бы.
       transcript: plan.utterance,
@@ -1771,9 +1797,12 @@ export class SiteUiPlanService {
   /**
    * Что вернуть (§5-бис.15 п.6 п.4–8, п.7; Р-64, Р-65): поля этой страницы
    * — из памяти загрузчика (сервер прежних значений не знает и не хранит),
-   * серверные действия — «уберите сами» (компенсации — Э6-тер (и)). Только
+   * серверные действия с объявленной парой — компенсацией (Э6-тер (и), по
+   * одной, `dispatched` до действия), без пары — «уберите сами». Только
    * план ЭТОГО посетителя, в окне 10 мин, не после отправки формы, ≤ 3 шагов.
    * «Оставить» (или 60 с без ответа) — статус `kept`. Единицы не тратит.
+   * Ответ — СЛЕДУЮЩАЯ работа в обратном порядке (пачка полей или одна
+   * компенсация); дальше — `undoReport`.
    */
   async undo(
     ctx: UiPlanCtx,
@@ -1793,6 +1822,7 @@ export class SiteUiPlanService {
       planId: p.id,
       fields: fields.map((i) => ({ i, text: p.steps[i]?.target?.text ?? '' })),
       manual: manual.map((i) => ({ i, text: p.steps[i]?.target?.text ?? '' })),
+      comp: null,
       chainStatus: (p.chainStatus as ChainStatus | null) ?? null,
       refused,
     });
@@ -1829,7 +1859,8 @@ export class SiteUiPlanService {
     }
     const c = undoCandidates(plan.steps);
     if (c.refused) return out(plan, c.refused);
-    // `degraded` — только подсветка (§5-бис.15 п.8): полей не трогаем.
+    // `degraded` — только подсветка (§5-бис.15 п.8): полей не трогаем,
+    // компенсаций не исполняем — «уберите сами».
     const state = await readState(this.db, ctx.site.accountId, now);
     const access = await this.access(ctx.site, state, !!ctx.voiceTest);
     // Р-65: «отмени последнее» — в суточном потолке планов сайта (единиц — нет).
@@ -1840,7 +1871,7 @@ export class SiteUiPlanService {
     )
       return fail('site_limit');
     if (access.mode !== 'on')
-      return out(plan, 'degraded', [], [...c.fields, ...c.manual]);
+      return out(plan, 'degraded', [], [...c.fields, ...c.manual, ...c.comp]);
     await insertActionLog(this.db, {
       accountId: ctx.site.accountId,
       siteId: ctx.site.siteId,
@@ -1852,17 +1883,20 @@ export class SiteUiPlanService {
       risk: 'auto',
       confirmedBy: by,
       result: 'proposed',
-      reason: `fields:${c.fields.length},manual:${c.manual.length}`,
+      reason: `fields:${c.fields.length},manual:${c.manual.length},comp:${c.comp.length}`,
       valueMasked: null,
       durationMs: null,
     });
-    return out(plan, null, c.fields, c.manual);
+    return this.undoNext(ctx, plan, access.rules);
   }
 
   /**
-   * Итог возврата полей у загрузчика (по одной строке журнала `undo` на
-   * шаг, значений нет — прежние значения не покидают браузер, §5-бис.15
-   * п.7) → статус цепочки (`compensated`/`partially_compensated`/`unknown`).
+   * Итог возврата у загрузчика (по одной строке журнала `undo` на шаг,
+   * значений нет — прежние значения не покидают браузер, §5-бис.15 п.7) и
+   * (Э6-тер (и)) шаги компенсации: `dispatch` — отметка «начат» ДО
+   * действия (условно, один раз), `results` — итог, `next` — что дальше.
+   * Работы больше нет или компенсация не удалась — статус цепочки
+   * (`compensated`/`partially_compensated`/`unknown`).
    */
   async undoReport(
     ctx: UiPlanCtx,
@@ -1872,7 +1906,8 @@ export class SiteUiPlanService {
     const plan = await this.load(ctx, id);
     // Итог возврата — только в окне «Вернуть» (10 мин жизни плана) и ещё
     // минуту на исполнение в загрузчике (карточка живёт 60 с): позже отчёт
-    // не меняет статус цепочки (аудит Э6-бис (е) (1)).
+    // не меняет статус цепочки (аудит Э6-бис (е) (1)). Компенсации — в том
+    // же окне (Э6-тер (и)).
     if (this.now().getTime() - plan.createdAt.getTime() > UNDO_REPORT_WINDOW_MS)
       return fail('expired');
     if (LIVE.has(plan.status)) return fail('conflict');
@@ -1881,8 +1916,51 @@ export class SiteUiPlanService {
       plan.chainStatus === 'partially_compensated'
     )
       return fail('conflict');
-    const c = undoCandidates(plan.steps);
-    const allowed = new Set(c.fields);
+    if (undoCandidates(plan.steps).refused) return fail('conflict');
+    const rules = await this.undoRules(ctx);
+    const next = nextUndo(plan.steps);
+
+    // ── компенсация: «начат» до действия (§5-бис.15 п.6 п.2, §4-бис.5) ──
+    if (body?.dispatch !== undefined) {
+      const i = body.dispatch;
+      if (typeof i !== 'number' || next.kind !== 'comp' || next.i !== i)
+        return fail('conflict');
+      if (!rules || !this.compView(plan, i, false, rules))
+        return fail('conflict');
+      const steps = this.withUndone(plan, [{ i, state: 'dispatched' }]);
+      if (!(await updateUndoSteps(this.db, plan, this.who(ctx), steps)))
+        return fail('conflict');
+      await insertActionLog(this.db, {
+        accountId: ctx.site.accountId,
+        siteId: ctx.site.siteId,
+        planId: plan.id,
+        stepIndex: i,
+        action: 'undo',
+        target: { text: plan.steps[i]?.target?.text ?? null },
+        url: null,
+        risk: plan.steps[i]?.risk ?? 'auto',
+        confirmedBy: null,
+        result: 'dispatched',
+        reason: 'comp',
+        valueMasked: null,
+        durationMs: null,
+        undoOf: i,
+      });
+      const fresh: PlanRow = { ...plan, steps, storedSteps: steps };
+      return {
+        ...this.undoView(fresh, null),
+        comp: this.compView(fresh, i, true, rules),
+      };
+    }
+    if (body?.next === true) return this.undoNext(ctx, plan, rules);
+
+    // ── итог: пачка полей или отданная компенсация ──
+    const allowed =
+      next.kind === 'fields'
+        ? new Set(next.idx)
+        : next.kind === 'stale'
+          ? new Set([next.i])
+          : new Set<number>();
     const seen = new Set<number>();
     const results: Array<{ i: number; result: UndoResult }> = [];
     for (const r of Array.isArray(body?.results) ? body.results : []) {
@@ -1900,14 +1978,20 @@ export class SiteUiPlanService {
       results.push({ i, result: res as UndoResult });
     }
     if (!results.length) return fail('bad_request');
-    const next = chainAfterUndo(plan.steps, results);
-    const ok = await updateChainStatus(this.db, {
-      id: plan.id,
-      ...this.who(ctx),
-      from: plan.chainStatus,
-      to: next,
-    });
-    if (!ok) return fail('conflict');
+    // Поля пачки без итога — «вернуть не смог» (иначе пачка вечно «следующая»).
+    const missing =
+      next.kind === 'fields'
+        ? next.idx
+            .filter((i) => !seen.has(i))
+            .map((i) => ({ i, result: 'gone' as const }))
+        : [];
+    const all = [...results, ...missing];
+    const steps = this.withUndone(
+      plan,
+      all.map((r) => ({ i: r.i, state: r.result })),
+    );
+    if (!(await updateUndoSteps(this.db, plan, this.who(ctx), steps)))
+      return fail('conflict');
     for (const r of results)
       await insertActionLog(this.db, {
         accountId: ctx.site.accountId,
@@ -1932,16 +2016,142 @@ export class SiteUiPlanService {
         durationMs: null,
         undoOf: r.i,
       });
+    return this.undoNext(ctx, { ...plan, steps, storedSteps: steps }, rules);
+  }
+
+  /** Правила режима для компенсаций (зоны/запреты могли смениться); null — режим не `on`. */
+  private async undoRules(ctx: UiPlanCtx): Promise<VoiceControlRules | null> {
+    const state = await readState(this.db, ctx.site.accountId, this.now());
+    const access = await this.access(ctx.site, state, !!ctx.voiceTest);
+    return access.mode === 'on' && access.rules ? access.rules : null;
+  }
+
+  /** Шаги (как в базе — маска значений) с новым состоянием возврата. */
+  private withUndone(
+    plan: PlanRow,
+    marks: ReadonlyArray<{ i: number; state: UiUndoState }>,
+  ): UiPlanStepView[] {
+    const by = new Map(marks.map((m) => [m.i, m.state]));
+    return plan.storedSteps.map((s, i) =>
+      by.has(i) ? { ...s, undone: by.get(i) as UiUndoState } : s,
+    );
+  }
+
+  private undoView(
+    plan: PlanRow,
+    chainStatus: ChainStatus | null,
+    fields: number[] = [],
+  ): UiUndoView {
+    const c = undoCandidates(plan.steps);
+    const text = (i: number) => plan.steps[i]?.target?.text ?? '';
     return {
       planId: plan.id,
-      fields: [],
-      manual: c.manual.map((i) => ({
-        i,
-        text: plan.steps[i]?.target?.text ?? '',
-      })),
-      chainStatus: next,
+      fields: fields.map((i) => ({ i, text: text(i) })),
+      manual: c.manual.map((i) => ({ i, text: text(i) })),
+      comp: null,
+      chainStatus:
+        chainStatus ?? (plan.chainStatus as ChainStatus | null) ?? null,
       refused: null,
     };
+  }
+
+  /**
+   * Компенсация для загрузчика (§5-бис.15 п.6): обратная цель, страница,
+   * строка и варианты товара (значения `select` той же страницы — маской,
+   * как в базе). Пара и страница перепроверяются по ТЕКУЩИМ правилам
+   * (зону могли запретить после плана) — не годится — null.
+   */
+  private compView(
+    plan: PlanRow,
+    i: number,
+    dispatched: boolean,
+    rules: VoiceControlRules,
+  ): UiCompView | null {
+    const s = plan.steps[i];
+    const c = s?.comp;
+    if (!c || !compPairSafe(c.assistId, c.sub === true)) return null;
+    if (compRemoves(c.assistId) && !c.row) return null;
+    if (c.at !== null && (!compAtOk(c.at) || !zoneAllowed(c.at, rules)))
+      return null;
+    const variant: string[] = [];
+    for (let k = i - 1; k >= 0 && variant.length < 2; k--) {
+      const x = plan.storedSteps[k];
+      // Шаг с переходом — дальше другая страница (другой товар).
+      if (x.nav) break;
+      if (x.kind === 'select' && x.state === 'done' && x.value) {
+        const v = cleanText(x.value, 40);
+        if (v) variant.push(v);
+      }
+    }
+    return {
+      i,
+      text: s.target?.text ?? '',
+      row: c.row,
+      assistId: c.assistId,
+      at: c.at,
+      variant,
+      allow: [
+        ...(compRemoves(c.assistId) ? (['remove'] as const) : []),
+        ...(c.sub ? (['unsubscribe'] as const) : []),
+      ],
+      dispatched,
+    };
+  }
+
+  /**
+   * Следующая работа возврата (`nextUndo`) или итог цепочки. Компенсация,
+   * отданная без итога (перезагрузка), — `unknown` без повтора; компенсация,
+   * которую правила больше не пускают, — `failed` без действия (0 кликов).
+   */
+  private async undoNext(
+    ctx: UiPlanCtx,
+    plan: PlanRow,
+    rules: VoiceControlRules | null,
+  ): Promise<UiUndoView> {
+    let cur = plan;
+    for (let guard = 0; guard < 4; guard++) {
+      const n = nextUndo(cur.steps);
+      if (n.kind === 'fields') return this.undoView(cur, null, n.idx);
+      if (n.kind === 'comp') {
+        const v = rules ? this.compView(cur, n.i, false, rules) : null;
+        if (v) return { ...this.undoView(cur, null), comp: v };
+      }
+      if (n.kind === 'end') break;
+      const i = n.i;
+      const state: UiUndoState = n.kind === 'stale' ? 'unknown' : 'failed';
+      const steps = this.withUndone(cur, [{ i, state }]);
+      if (!(await updateUndoSteps(this.db, cur, this.who(ctx), steps)))
+        return fail('conflict');
+      await insertActionLog(this.db, {
+        accountId: ctx.site.accountId,
+        siteId: ctx.site.siteId,
+        planId: cur.id,
+        stepIndex: i,
+        action: 'undo',
+        target: { text: cur.steps[i]?.target?.text ?? null },
+        url: null,
+        risk: cur.steps[i]?.risk ?? 'auto',
+        confirmedBy: null,
+        result: n.kind === 'stale' ? 'skipped' : 'failed',
+        reason: n.kind === 'stale' ? 'unknown' : 'rules',
+        valueMasked: null,
+        durationMs: null,
+        undoOf: i,
+      });
+      cur = { ...cur, steps, storedSteps: steps };
+    }
+    // Работы нет: итог цепочки по состоянию шагов (п.6 п.6–7, п.11).
+    const results = undoResults(cur.steps);
+    if (!results.length) return this.undoView(cur, null);
+    const to = chainAfterUndo(cur.steps, results);
+    const ok = await updateChainStatus(this.db, {
+      id: cur.id,
+      ...this.who(ctx),
+      from: cur.chainStatus,
+      to,
+    });
+    if (!ok) return fail('conflict');
+    return this.undoView({ ...cur, chainStatus: to }, to);
   }
 
   /**

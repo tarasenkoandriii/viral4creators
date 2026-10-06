@@ -48,7 +48,10 @@ export type AttentionKind =
   | 'client-draft-review'
   | 'demo-theme-gap'
   | 'demo-missing'
-  | 'demo-stale';
+  | 'demo-stale'
+  | 'demo-quality-fail'
+  | 'demo-quality-warn'
+  | 'demo-quality-error';
 
 export interface AttentionItem {
   /** Стабильный ключ «тип:объект» — дедупликация и React key. */
@@ -992,4 +995,104 @@ export function assemblyStuckItems(
       now,
     ),
   ];
+}
+
+// ── Проверка качества демо (Gemini) ───────────────────────────────────
+
+/** Последняя проверка ролика (`TutorialDemoQualityCheck`). */
+export interface QualityCheckRow {
+  assetId: string;
+  status: string;
+  verdict: string | null;
+  checkedAt: Date | string | null;
+  updatedAt: Date | string;
+  subjectKey: string;
+  locale: string;
+  theme: string | null;
+  /** Краткое содержание отчёта (`report.summary`); проходит `scrubText`. */
+  summary: string | null;
+  issueCount: number;
+}
+
+/** Поимённых карточек на вердикт — страховка: роликов десятки. */
+export const QUALITY_CARDS_CAP = 50;
+
+/**
+ * Карточки качества демо: по одной на ролик, чья ПОСЛЕДНЯЯ проверка
+ * завершена с `fail` (решение оператора) или `warn` (к сведению), и одна
+ * агрегированная на проверки, исчерпавшие повторы. Проверка в очереди
+ * карточки не даёт; новая проверка того же ролика заменяет прежнюю.
+ * Фаза наблюдения: карточка ведёт к ролику, одобрение не меняет.
+ */
+export function qualityItems(
+  rows: QualityCheckRow[],
+  now: Date,
+): AttentionItem[] {
+  const out: AttentionItem[] = [];
+  const byVerdict = { fail: 0, warn: 0 };
+  const errors: QualityCheckRow[] = [];
+  for (const r of rows) {
+    if (r.status === 'error') {
+      errors.push(r);
+      continue;
+    }
+    if (r.status !== 'complete') continue;
+    if (r.verdict !== 'fail' && r.verdict !== 'warn') continue;
+    if (byVerdict[r.verdict] >= QUALITY_CARDS_CAP) continue;
+    byVerdict[r.verdict] += 1;
+    const fail = r.verdict === 'fail';
+    const theme =
+      r.theme === 'light' || r.theme === 'dark' ? ` · ${r.theme}` : '';
+    const summary = scrubText(r.summary, 160);
+    out.push(
+      makeItem(
+        {
+          id: `demo-quality-${r.verdict}:${r.assetId}`,
+          severity: fail ? 'decision' : 'info',
+          kind: fail ? 'demo-quality-fail' : 'demo-quality-warn',
+          title: `${fail ? 'Демо не прошло проверку качества' : 'Демо: замечания проверки качества'}: ${pairLabel(
+            r.subjectKey,
+            r.locale,
+          )}${theme}`,
+          reason: `${
+            fail
+              ? 'ИИ-проверка нашла блокирующий дефект'
+              : 'ИИ-проверка просит взгляда оператора'
+          }${r.issueCount > 0 ? ` (замечаний: ${r.issueCount})` : ''}${
+            summary ? `: ${summary}` : '.'
+          } Одобрение ролика проверка не меняет.`,
+          owner: 'operator',
+          href: `/assistant${query({
+            tab: 'videos',
+            subjectKey: r.subjectKey,
+            locale: r.locale,
+            quality: r.assetId,
+          })}`,
+        },
+        toDate(r.checkedAt) ?? toDate(r.updatedAt) ?? now,
+        now,
+      ),
+    );
+  }
+  if (errors.length > 0) {
+    out.push(
+      makeItem(
+        {
+          id: 'demo-quality-error',
+          severity: 'info',
+          kind: 'demo-quality-error',
+          title: 'Проверка качества демо не удалась',
+          reason: `Повторы исчерпаны: ${listWithTail(
+            errors.map((e) => pairLabel(e.subjectKey, e.locale)),
+          )}. Это сбой проверки, а не вердикт ролику — запустите «Проверить» заново.`,
+          owner: 'operator',
+          href: '/assistant?tab=videos',
+          count: errors.length,
+        },
+        minDate(...errors.map((e) => toDate(e.updatedAt))) ?? now,
+        now,
+      ),
+    );
+  }
+  return out;
 }

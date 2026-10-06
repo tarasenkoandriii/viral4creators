@@ -8,15 +8,22 @@
  * «Я умею», версии с отчётами ворот и прогона, «Проверить на сайте»
  * (ссылка мастера), «Опубликовать» (подтверждение человеком), «Вернуть
  * версию N» (с новым прогоном), выключение и удаление, статистика.
- * Запись кликами и перепривязка мышкой — редактор (Э6-тер).
+ * Запись кликами и перепривязка мышкой — редактор (Э6-тер); с телефона —
+ * «Додати крок» и «Замінити ціль» выбором элемента карты интерфейса Ш4
+ * (`MemoStepPicker`), «Відкрити в редакторі» на нужном шаге (`focus=memo-
+ * <N>-<шаг>`, для `needs_review` — шаг причины) и «Запропонувати фрази
+ * (ІІ)» — 3–5 фраз запуска в «Запропоновано» (бюджет навчання).
  */
 import { useState } from 'react';
 import {
   ArrowUp,
+  Crosshair,
   ExternalLink,
+  PenLine,
   PlusCircle,
   Save,
   ShieldCheck,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { fmt, formatDate, useAsync, useKit } from '../../kit';
@@ -25,6 +32,7 @@ import { useAssist } from '../../lib/assist-context';
 import {
   MEMO_LANGS,
   goalExpectForSave,
+  memoEditorFocus,
   memoReadOnly,
   type MemoDetail,
   type MemoLang,
@@ -39,6 +47,7 @@ import { NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
 import { MemoFromTemplate } from './MemoFromTemplate';
 import { MemoFromTutorial } from './MemoFromTutorial';
+import { MemoStepPicker, type MemoPickMode } from './MemoStepPicker';
 
 const MARK: Record<string, string> = {
   local: '↺',
@@ -294,6 +303,7 @@ function MemoCard({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [link, setLink] = useState<string | null>(null);
+  const [pick, setPick] = useState<MemoPickMode | null>(null);
   const [edit, setEdit] = useState<{
     names: Partial<Record<MemoLang, string>>;
     triggers: Partial<Record<MemoLang, string>>;
@@ -370,6 +380,58 @@ function MemoCard({
     ]);
   };
 
+  const applyElement = (uiElementId: string, page: string) =>
+    run(async () => {
+      const r = await api.applyElement(siteId, n, {
+        expectedRevision: d.draftRevision,
+        uiElementId,
+        ...(pick?.kind === 'replace'
+          ? { mode: 'replace' as const, index: pick.index }
+          : { mode: 'add' as const, page }),
+      });
+      setPick(null);
+      return r;
+    });
+
+  const suggest = async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const r = await api.suggestPhrases(siteId, n, d.draftRevision);
+      if (r.memo) loaded.setData(r.memo);
+      setEdit(null);
+      onChanged();
+      const got = r.langs
+        .filter((l) => (r.kept[l] ?? 0) > 0)
+        .map((l) => `${l}: ${r.kept[l]}`);
+      setNotice(
+        got.length
+          ? {
+              tone: 'success',
+              text: fmt(t.suggestDone, { list: got.join(', ') }),
+            }
+          : { tone: 'warning', text: t.suggestNone }
+      );
+    } catch (err) {
+      const code = voiceControlErrorCode(err);
+      setNotice({
+        tone: 'danger',
+        text: code ? tv.errors[code] : errText(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const focus = memoEditorFocus(d);
+  const openEditor = () =>
+    void voiceControl.voiceMap
+      .editorLink(siteId, focus)
+      .then((l) => openExternal(l.url))
+      .catch((err: unknown) =>
+        setNotice({ tone: 'danger', text: errText(err) })
+      );
+
   const latest = d.versions[0] ?? null;
   const checking = d.versions.find((v) => v.status === 'checking') ?? null;
 
@@ -431,6 +493,17 @@ function MemoCard({
           )}
         </Field>
       ))}
+      <div className="space-y-1">
+        <Button
+          variant="outline"
+          icon={<Sparkles size={16} />}
+          disabled={busy}
+          onClick={() => void suggest()}
+        >
+          {t.suggestPhrases}
+        </Button>
+        <p className="text-[11px] text-silver-500">{t.suggestHint}</p>
+      </div>
       <div className="font-medium text-sm">{t.goal}</div>
       <Field label={t.goalText} htmlFor={`mg-${n}`}>
         <input
@@ -500,6 +573,16 @@ function MemoCard({
               <span className="text-silver-500">{s.page}</span>
             </span>
             <span className="flex gap-1">
+              {!['wait', 'say', 'scroll'].includes(s.action) && (
+                <Button
+                  variant="ghost"
+                  aria-label={t.replaceTarget}
+                  title={t.replaceTarget}
+                  disabled={busy}
+                  icon={<Crosshair size={14} />}
+                  onClick={() => setPick({ kind: 'replace', index: i })}
+                />
+              )}
               <Button
                 variant="ghost"
                 aria-label={t.up}
@@ -520,6 +603,39 @@ function MemoCard({
           </li>
         ))}
       </ol>
+      {pick ? (
+        <MemoStepPicker
+          siteId={siteId}
+          memo={d}
+          mode={pick}
+          busy={busy}
+          onPick={(id, page) => void applyElement(id, page)}
+          onCancel={() => setPick(null)}
+        />
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            icon={<PlusCircle size={16} />}
+            disabled={busy || draft.steps.length >= 20}
+            onClick={() => setPick({ kind: 'add' })}
+          >
+            {t.addStep}
+          </Button>
+          <Button
+            variant="outline"
+            icon={<PenLine size={16} />}
+            disabled={busy}
+            onClick={openEditor}
+          >
+            {d.status === 'needs_review'
+              ? fmt(t.openEditorStep, {
+                  n: Number(focus.focus.split('-').pop()),
+                })
+              : t.openEditor}
+          </Button>
+        </div>
+      )}
       {draft.slots.length > 0 && (
         <div className="text-xs">
           <div className="font-medium">{t.slots}</div>

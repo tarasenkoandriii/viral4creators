@@ -124,6 +124,8 @@ export const voiceControlEn: VoiceControlDictionary = {
       closed_shadow: 'Some buttons are in closed shadow roots',
       ext_iframes: "External iframes — the assistant doesn't enter them",
       duplicates: 'Buttons with the same name',
+      undo_unresolved:
+        'No way to undo some actions was found (a “Remove” button, the cart page)',
     },
     never: 'The assistant will never press these',
     forbidden: 'Forbidden actions, checked without voice',
@@ -257,6 +259,34 @@ export const voiceControlEn: VoiceControlDictionary = {
     goalCounter: 'Counter “{t}” changes by {d}',
     goalField: 'Field “{t}” = value of “{slot}”',
     goalSlot: 'The page shows the value of “{slot}”',
+    // Phone editing (interface map elements), editor, AI phrases.
+    addStep: 'Add step',
+    replaceTarget: 'Replace target',
+    pickTitleAdd: 'New step — pick an element of page {page}',
+    pickTitleReplace: 'Step {n} — new target from page {page}',
+    pickPage: 'Page (path or mask /catalog/*)',
+    pickLoad: 'Show elements',
+    pickEmpty:
+      'The interface map for this page is still empty — open the page on the site with the assistant or record the step in the editor.',
+    pickHint:
+      'Step risk is computed by code; payment, deletion, passwords and cards cannot be added to a memo.',
+    pickStale: 'changed on the site',
+    pickFragile: 'fragile — with confirmation',
+    pickCancel: 'Cancel',
+    pickActions: {
+      click: 'click',
+      fill: 'fill (slot)',
+      select: 'choose (slot)',
+      check: 'tick',
+    },
+    openEditor: 'Open in editor',
+    openEditorStep: 'Open in editor at step {n}',
+    suggestPhrases: 'Suggest phrases (AI)',
+    suggestHint:
+      'The model suggests 3–5 launch phrases in the site’s languages — from the learning budget; accept the ones you like.',
+    suggestDone: 'Suggested: {list}.',
+    suggestNone:
+      'No phrase passed the checks (taken, service words or personal data) — try again later.',
     template: {
       open: 'From the {platform} template',
       intro:
@@ -313,5 +343,13 @@ export const voiceControlEn: VoiceControlDictionary = {
       'The memo phrase is taken by another memo — change it.',
     MEMO_PLAN_NOT_ELIGIBLE:
       'Only a plan completed to the end can be saved as a memo.',
+    MEMO_SUGGEST_LIMIT:
+      'Phrase suggestions: at most once a minute per memo and 30 a day per site.',
+    MEMO_SUGGEST_BUDGET:
+      'This month’s learning budget is used up — phrase suggestions resume next month.',
+    MEMO_SUGGEST_UNAVAILABLE:
+      'The model is unavailable right now — try again later.',
+    MEMO_ELEMENT_NOT_FOUND:
+      'Element not found on a verified site address — refresh the list.',
   },
 };

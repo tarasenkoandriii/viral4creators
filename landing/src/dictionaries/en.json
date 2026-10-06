@@ -200,6 +200,17 @@
         }
       ]
     },
+    "demo": {
+      "title": "Example tutorial videos",
+      "lead": "Short examples made on our own test site. Pick one.",
+      "openVideo": "Open video",
+      "unavailable": "Coming soon: example videos made on our own test site. We never show customer sites. Meanwhile, see the workflow above.",
+      "chooseTopic": "Choose an example",
+      "viewSteps": "View the workflow",
+      "loadFailed": "The example videos are temporarily unavailable. See how it works in the workflow above.",
+      "play": "Play video",
+      "note": "The site in these videos is our own test site; all data in it is made up."
+    },
     "compare": {
       "title": "How this differs from the usual tools",
       "lead": "Honest both ways: where we lose, it says so.",

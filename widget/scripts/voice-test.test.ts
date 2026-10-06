@@ -523,6 +523,8 @@ await wizard();
     'highlight.js',
     'act.js',
     'undo.js',
+    // Э6-тер (и): компенсации — рядом с undo.js.
+    'comp.js',
     'check.js',
     'vt.js',
     // Э3-бис: связанный режим и поведение.

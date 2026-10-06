@@ -64,6 +64,8 @@ export const WIZARD_ITEM_CODES = [
   'closed_shadow',
   'ext_iframes',
   'duplicates',
+  // Э6-тер (и): обратная цель компенсации не разрешима (§5-бис.15 п.16).
+  'undo_unresolved',
 ] as const;
 export type WizardItemCode = (typeof WIZARD_ITEM_CODES)[number];
 
@@ -189,6 +191,11 @@ export const VOICE_CONTROL_CABINET_ERROR_CODES = [
   'MEMO_CHECK_REQUIRED',
   'MEMO_PHRASE_CONFLICT',
   'MEMO_PLAN_NOT_ELIGIBLE',
+  // ИИ-предложения фраз мемо и правка с телефона (элементы Ш4).
+  'MEMO_SUGGEST_LIMIT',
+  'MEMO_SUGGEST_BUDGET',
+  'MEMO_SUGGEST_UNAVAILABLE',
+  'MEMO_ELEMENT_NOT_FOUND',
 ] as const;
 export type VoiceControlCabinetErrorCode =
   (typeof VOICE_CONTROL_CABINET_ERROR_CODES)[number];

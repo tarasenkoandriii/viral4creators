@@ -5525,3 +5525,151 @@ describe('темп в постпродакшене: раннер и сервис
     ).toBeLessThan(wipe);
   });
 });
+
+describe('проверка качества демо в тике сборок (06.10.2026)', () => {
+  function withQuality() {
+    const built = build([]);
+    const quality = {
+      enqueueAssembled: jest.fn().mockResolvedValue(true),
+      processQueue: jest.fn().mockResolvedValue({
+        processed: 1,
+        completed: 1,
+        deferred: 0,
+        retried: 0,
+        errors: 0,
+      }),
+    };
+    const service = new TutorialScenarioRunnerService(
+      built.prisma as any,
+      built.notify as any,
+      built.blob as any,
+      built.ffmpeg as any,
+      built.settings as any,
+      built.tts as any,
+      built.aiUsage as any,
+      undefined,
+      undefined,
+      quality as any,
+    );
+    return { ...built, service, quality };
+  }
+
+  function completeOne(
+    built: ReturnType<typeof withQuality>,
+    over: Record<string, unknown> = {},
+  ) {
+    built.ffmpeg.configured.mockReturnValue(true);
+    built.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'tutorial.mp4': 'https://ffmpeg.example/out.mp4' },
+    });
+    const pending = {
+      id: 'tva-q',
+      subjectKey: '1',
+      locale: 'ru',
+      scenarioId: 'ts-1',
+      clientSiteDraftId: null,
+      assemblyJobId: 'job-1',
+      assemblyStartedAt: new Date(),
+      width: 720,
+      height: 1560,
+      ...over,
+    };
+    built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+      async (args: any) =>
+        args?.where?.assemblyStatus === 'pending' ? [pending] : [],
+    );
+    return jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array(4096).fill(7).buffer,
+    } as any);
+  }
+
+  it('собранный ролик демо — в очередь проверки с байтами файла', async () => {
+    const built = withQuality();
+    const fetchSpy = completeOne(built);
+    await built.service.pollAssemblies();
+    fetchSpy.mockRestore();
+    expect(built.quality.enqueueAssembled).toHaveBeenCalledTimes(1);
+    const [id, bytes] = built.quality.enqueueAssembled.mock.calls[0];
+    expect(id).toBe('tva-q');
+    expect(Buffer.isBuffer(bytes) && bytes.length).toBe(4096);
+    // Сборка остаётся успешной — статус пишет опрос, не проверка.
+    expect(
+      built.prisma.tutorialVideoAsset.update.mock.calls.some(
+        (c: any[]) => c[0].data.assemblyStatus === 'complete',
+      ),
+    ).toBe(true);
+  });
+
+  it('ролик по сайту заказчика в очередь проверки демо не идёт', async () => {
+    const built = withQuality();
+    const fetchSpy = completeOne(built, { clientSiteDraftId: 'draft-1' });
+    built.prisma.clientSiteTutorialDraft = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    await built.service.pollAssemblies();
+    fetchSpy.mockRestore();
+    expect(built.quality.enqueueAssembled).not.toHaveBeenCalled();
+  });
+
+  it('проваленная сборка в очередь не идёт', async () => {
+    const built = withQuality();
+    built.ffmpeg.configured.mockReturnValue(true);
+    built.ffmpeg.status.mockResolvedValue({ status: 'failed', error: 'x' });
+    built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+      async (args: any) =>
+        args?.where?.assemblyStatus === 'pending'
+          ? [
+              {
+                id: 'tva-f',
+                subjectKey: '1',
+                locale: 'ru',
+                scenarioId: 'ts-1',
+                clientSiteDraftId: null,
+                assemblyJobId: 'job-1',
+                assemblyStartedAt: new Date(),
+              },
+            ]
+          : [],
+    );
+    await built.service.pollAssemblies();
+    expect(built.quality.enqueueAssembled).not.toHaveBeenCalled();
+  });
+
+  it('очередь качества — последней в тике, с ограниченным бюджетом; итог в журнале', async () => {
+    const built = withQuality();
+    const result = await built.service.pollAssemblies();
+    expect(built.quality.processQueue).toHaveBeenCalledTimes(1);
+    const [{ budgetMs }] = built.quality.processQueue.mock.calls[0];
+    expect(budgetMs).toBeGreaterThan(0);
+    expect(budgetMs).toBeLessThanOrEqual(60_000);
+    expect(result).toMatchObject({ qualityProcessed: 1, qualityCompleted: 1 });
+  });
+
+  it('выключенная проверка — полей в журнале нет', async () => {
+    const built = withQuality();
+    built.quality.processQueue.mockResolvedValue({
+      skipped: 'выключено',
+      processed: 0,
+      completed: 0,
+      deferred: 0,
+      retried: 0,
+      errors: 0,
+    });
+    const result = await built.service.pollAssemblies();
+    expect(result).not.toHaveProperty('qualityProcessed');
+  });
+
+  it('занятый замок — очередь качества не трогается', async () => {
+    const built = withQuality();
+    built.prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique'), { code: 'P2002' }),
+    );
+    built.prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+    const result = await built.service.pollAssemblies();
+    expect(result.skipped).toBeDefined();
+    expect(built.quality.processQueue).not.toHaveBeenCalled();
+  });
+});

@@ -25,6 +25,9 @@ import { MemoFromTutorialService } from './cabinet/memo-from-tutorial.service';
 import { MemoService } from './cabinet/memo.service';
 import { MemoTemplatesController } from './cabinet/memo-templates.controller';
 import { MemoTemplatesService } from './cabinet/memo-templates.service';
+import { MemoElementsService } from './cabinet/memo-elements.service';
+import { MemoPhraseSuggestService } from './cabinet/memo-phrase-suggest.service';
+import { MemoTmaEditController } from './cabinet/memo-tma-edit.controller';
 import { VoiceControlSettingsController } from './cabinet/voice-control-settings.controller';
 import { VoiceControlSettingsService } from './cabinet/voice-control-settings.service';
 import { SiteUiPlanService } from './public/ui-plan.service';
@@ -44,6 +47,8 @@ import { VoiceTestService } from './public/voice-test.service';
     MemoFromTutorialController,
     // Э6-тер (к): мемо из шаблона платформы, публикация пакетом.
     MemoTemplatesController,
+    // Правка мемо с телефона (элементы Ш4) и ИИ-предложения фраз.
+    MemoTmaEditController,
   ],
   providers: [
     SiteUiPlanService,
@@ -53,6 +58,8 @@ import { VoiceTestService } from './public/voice-test.service';
     MemoFromTutorialService,
     GeneratorMemoStepsClient,
     MemoTemplatesService,
+    MemoElementsService,
+    MemoPhraseSuggestService,
   ],
   exports: [SiteUiPlanService, VoiceTestService],
 })

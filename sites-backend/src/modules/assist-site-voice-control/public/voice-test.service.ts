@@ -46,6 +46,8 @@ import {
   snapshotTooLarge,
 } from '../../assist-ui-core/snapshot';
 import type { UiSnapshot } from '../../assist-ui-core/types';
+import { mapHintsOf, resolveVoiceMap } from '../../assist-ui-core/voice-map';
+import { readPublishedVoiceMap } from './voice-map-store';
 import {
   denySuggestions,
   forbiddenProbes,
@@ -53,6 +55,7 @@ import {
   neverList,
   parseSuspicious,
   suggestCommands,
+  undoTargetsCheck,
   WIZARD_LIMITS,
   wizardVerdict,
   type MicPolicy,
@@ -509,6 +512,27 @@ export class VoiceTestService {
         };
       });
     const forbidden = forbiddenProbes({ snapshot, rules, hosts, lang });
+    // (Э6-тер (и)) Обратные цели компенсаций этой страницы — тем же кодом,
+    // что ставит компенсацию в бою; «Как отменить» — из опубликованной карты.
+    const vmap = await readPublishedVoiceMap(
+      this.db,
+      ctx.site.siteId,
+      now.getTime(),
+    );
+    const declared = new Map<string, { assistId: string; at: string | null }>();
+    if (vmap) {
+      let path = '/';
+      try {
+        path = new URL(snapshot.url).pathname;
+      } catch {
+        /* разобран выше */
+      }
+      for (const [ref, h] of mapHintsOf(
+        resolveVoiceMap(vmap.content, snapshot, path),
+      ))
+        if (h.undo) declared.set(ref, h.undo);
+    }
+    const undo = undoTargetsCheck({ snapshot, hosts, rules, declared });
     const verdict = wizardVerdict({
       env,
       mic,
@@ -518,6 +542,7 @@ export class VoiceTestService {
       dry,
       safe,
       forbidden,
+      undo,
     });
     let page = '/';
     try {
@@ -555,6 +580,7 @@ export class VoiceTestService {
         reviewed,
         lang,
       }),
+      undo,
     };
     const validUntil = new Date(now.getTime() + WIZARD_LIMITS.validMs);
     const ok = await writeTestReport(this.db, {

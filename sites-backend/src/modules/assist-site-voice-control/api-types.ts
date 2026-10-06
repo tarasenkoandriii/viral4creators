@@ -23,6 +23,7 @@ import type {
   UiPlanStep,
   UiStepResult,
   UiUndo,
+  UiUndoState,
   VoiceControlRules,
   VoiceControlState,
 } from '../assist-ui-core/types';
@@ -32,6 +33,7 @@ import type {
   NeverItem,
   ReportProblem,
   SuspiciousItem,
+  UndoTargetsCheck,
   WizardCommand,
   WizardDryRun,
   WizardEnvFacts,
@@ -89,6 +91,8 @@ export interface UiPlanStepView extends UiPlanStep {
   state: UiStepState;
   /** (д) Шаг дошёл до `dispatched` — действие могло произойти (след на сайте). */
   fx?: boolean;
+  /** (Э6-тер (и)) Возврат шага после «Вернуть»: `dispatched` компенсации, итог. */
+  undone?: UiUndoState | null;
 }
 
 /** Ответ маршрутов плана. */
@@ -136,18 +140,62 @@ export interface UiUndoRequest {
 
 export interface UiUndoView {
   planId: string;
-  /** Поля, которые загрузчик вернёт из памяти страницы (обратный порядок). */
+  /**
+   * Поля, которые загрузчик вернёт из памяти страницы — СЛЕДУЮЩАЯ пачка в
+   * обратном порядке (без компенсаций между ними — все поля разом).
+   */
   fields: Array<{ i: number; text: string }>;
-  /** Серверные действия — «уберите сами» (компенсации — Э6-тер (и)). */
+  /** Серверные действия без объявленной пары — «уберите сами». */
   manual: Array<{ i: number; text: string }>;
+  /**
+   * (Э6-тер (и)) Следующая компенсация (одна за раз, обратный порядок):
+   * сначала `dispatched` (`undo-report` с `dispatch`), затем загрузчик
+   * исполняет обратную цель и шлёт итог; null — компенсаций дальше нет.
+   */
+  comp?: UiCompView | null;
   chainStatus: ChainStatus | null;
   /** Почему нечего вернуть: после отправки формы, окно истекло, нечего, неизвестно. */
   refused: 'after_pnr' | 'expired' | 'nothing' | 'unknown' | 'degraded' | null;
 }
 
-/** (д) POST /widget/v1/ui-plan/:id/undo-report — итог возврата полей у загрузчика. */
+/**
+ * (Э6-тер (и)) Компенсация для загрузчика (`comp.js`, ТЗ §5-бис.15 п.6):
+ * ЧТО нажать решил сервер (объявленная пара); загрузчик лишь находит
+ * обратную цель по разметке в строке того же товара и проверяет её теми
+ * же запретами (стоп-лист, denylist, оплата, чужой origin, жест).
+ */
+export interface UiCompView {
+  i: number;
+  /** Видимый текст исходного шага («В кошик») — для текста посетителю. */
+  text: string;
+  /** Описание строки товара (заголовок при добавлении); null — без строк. */
+  row: string | null;
+  /** `data-assist-id` обратной цели. */
+  assistId: string;
+  /** Путь страницы обратной цели на том же хосте; null — эта страница. */
+  at: string | null;
+  /** Варианты товара из шагов той же страницы («M») — сверка строки. */
+  variant: string[];
+  /**
+   * Исключения стоп-листа — только для обратной цели с этой разметкой:
+   * `remove` — «удаление» своей строки, `unsubscribe` — отписка от
+   * бесплатной подписки. Оплата/оформление — никогда.
+   */
+  allow: Array<'remove' | 'unsubscribe'>;
+  /** Отметка `dispatched` записана — загрузчик может нажимать. */
+  dispatched: boolean;
+}
+
+/**
+ * (д) POST /widget/v1/ui-plan/:id/undo-report — итог возврата полей у
+ * загрузчика; (Э6-тер (и)) — и шаги компенсации: `dispatch` — отметка
+ * «начат» ДО действия (один раз), `results` — итог, `next` — что дальше
+ * (продолжение после перехода на страницу отмены). Окно — 10 мин + 60 с.
+ */
 export interface UiUndoReport {
-  results: Array<{ i: number; result: UndoResult }>;
+  results?: Array<{ i: number; result: UndoResult }>;
+  dispatch?: number;
+  next?: boolean;
 }
 
 /** (е) GET /widget/v1/ui-plan/skills — «Я умею» (В-74): до 5 имён мемо. */
@@ -301,6 +349,11 @@ export interface WizardReport {
   safe: WizardSafeRun[];
   forbidden: ForbiddenProbeResult[];
   fragment: string;
+  /**
+   * (Э6-тер (и)) Обратные цели компенсаций на странице: целей с парой и
+   * неразрешимые (текст цели, разметка обратной, причина) — без ПД.
+   */
+  undo?: UndoTargetsCheck;
 }
 
 export interface VoiceTestReportView {
@@ -557,6 +610,12 @@ export const VOICE_CONTROL_CABINET_ERROR_CODES = [
   'MEMO_CHECK_REQUIRED',
   'MEMO_PHRASE_CONFLICT',
   'MEMO_PLAN_NOT_ELIGIBLE',
+  // ИИ-предложения фраз мемо: частота (429), бюджет обучения (402), модель (503).
+  'MEMO_SUGGEST_LIMIT',
+  'MEMO_SUGGEST_BUDGET',
+  'MEMO_SUGGEST_UNAVAILABLE',
+  // Правка с телефона: элемент Ш4 не этого сайта/хоста «Сайта» (404).
+  'MEMO_ELEMENT_NOT_FOUND',
 ] as const;
 export type VoiceControlCabinetErrorCode =
   (typeof VOICE_CONTROL_CABINET_ERROR_CODES)[number];

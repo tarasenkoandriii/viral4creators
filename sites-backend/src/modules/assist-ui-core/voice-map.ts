@@ -1674,15 +1674,31 @@ export function directMapPlan(
   return { raw: [{ kind, target: hit.ref }], key: t.key, phrase };
 }
 
-/** Подсказки карты для `checkPlan`: ссылка → имена и нижняя граница риска. */
+/**
+ * Подсказки карты для `checkPlan`: ссылка → имена и нижняя граница риска;
+ * (Э6-тер (и)) и «Как отменить» цели — объявленная владельцем пара
+ * компенсации (карта компенсаций «цель → обратная цель», §5-бис.15 п.6).
+ */
 export function mapHintsOf(
   resolved: ResolvedMap,
   map: ReadonlyArray<{ ref: string; selector: string; label: string }> = [],
-): Map<string, { key: string; names: string[]; floor: UiRisk }> {
-  const out = new Map(
+): Map<
+  string,
+  { key: string; names: string[]; floor: UiRisk; undo?: MapUndo | null }
+> {
+  const undoOf = new Map(resolved.targets.map((t) => [t.key, t.undo]));
+  const out = new Map<
+    string,
+    { key: string; names: string[]; floor: UiRisk; undo?: MapUndo | null }
+  >(
     resolved.hits.map((h) => [
       h.ref,
-      { key: h.key, names: h.names, floor: h.floor },
+      {
+        key: h.key,
+        names: h.names,
+        floor: h.floor,
+        ...(undoOf.get(h.key) ? { undo: undoOf.get(h.key) } : {}),
+      },
     ]),
   );
   // Аудит Э6-тер: ссылки общей карты Ш4 (`mN`) — тот же элемент другим

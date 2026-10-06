@@ -157,6 +157,37 @@ $js = v4c_assist_assist_ids_script();
 check(strpos($js, '<') === false && strpos($js, 'innerHTML') === false, 'скрипт разметки без «<» и HTML-приёмников');
 check(strpos($js, 'single_add_to_cart_button') !== false && strpos($js, 'add-to-cart') !== false, 'кнопка «В кошик» на странице товара');
 
+// ── Э6-тер (и): обе стороны пары компенсации (ТЗ §5-бис.15 п.6) ─────────
+same(v4c_assist_cart_path('https://shop.example.com/koshyk/?x=1', 'shop.example.com'), '/koshyk/', 'путь корзины — без query');
+same(v4c_assist_cart_path('https://evil.example/cart/', 'shop.example.com'), null, 'чужой хост — не страница отмены');
+same(v4c_assist_cart_path('/cart/', 'shop.example.com'), '/cart/', 'относительный путь');
+same(v4c_assist_cart_path('javascript:alert(1)', 'shop.example.com'), null, 'не путь — null');
+$u = v4c_assist_loop_add_to_cart_args(array('attributes' => array()), '/cart/');
+same($u['attributes']['data-assist-undo'], 'remove-from-cart', 'прямая кнопка: объявлена обратная — remove-from-cart (пара не перепутана)');
+same($u['attributes']['data-assist-undo-at'], '/cart/', 'и страница корзины');
+$u0 = v4c_assist_loop_add_to_cart_args(array('attributes' => array()));
+same($u0['attributes']['data-assist-undo'], 'remove-from-cart', 'без пути корзины — обратная на этой странице');
+same(isset($u0['attributes']['data-assist-undo-at']), false, 'и без -at');
+$theme = v4c_assist_loop_add_to_cart_args(array('attributes' => array('data-assist-id' => 'buy-x')), '/cart/');
+same(isset($theme['attributes']['data-assist-undo']), false, 'чужая разметка темы — пару не объявляем');
+$mine = v4c_assist_loop_add_to_cart_args(array('attributes' => array('data-assist-undo' => 'del-x')), '/cart/');
+same($mine['attributes']['data-assist-undo'], 'del-x', 'своя пара темы — не трогаем');
+$rm = '<a href="https://shop.example.com/cart/?remove_item=abc&#038;_wpnonce=1" class="remove" aria-label="Видалити цей товар" data-product_id="7">&times;</a>';
+$rmOut = v4c_assist_cart_item_remove_link($rm);
+check(strpos($rmOut, '<a data-assist-id="remove-from-cart" href=') === 0, '«Видалити» строки — remove-from-cart');
+same(substr_count($rmOut, 'data-assist-id'), 1, 'ровно одна разметка');
+same(v4c_assist_cart_item_remove_link('<a data-assist-id="x" href="#">×</a>'), '<a data-assist-id="x" href="#">×</a>', 'своя разметка — не трогаем');
+same(v4c_assist_cart_item_remove_link(null), null, 'не строка — как есть');
+same(v4c_assist_menu_link_attrs(array('href' => 'https://shop.example.com/koshyk/'), 'shop.example.com', '/koshyk/')['data-assist-id'], 'nav-cart', 'меню: ссылка на корзину — nav-cart при любом слаге');
+same(v4c_assist_menu_link_attrs(array('href' => 'https://shop.example.com/koshyk'), 'shop.example.com', '/koshyk/')['data-assist-id'], 'nav-cart', 'и без хвостового /');
+same(v4c_assist_menu_link_attrs(array('href' => 'https://shop.example.com/dostavka/'), 'shop.example.com', '/koshyk/')['data-assist-id'], 'nav-dostavka', 'остальные — как раньше');
+same(isset(v4c_assist_menu_link_attrs(array('href' => 'https://evil.example/koshyk/'), 'shop.example.com', '/koshyk/')['data-assist-id']), false, 'чужой домен — без разметки и для корзины');
+$js2 = v4c_assist_assist_ids_script('/cart/');
+check(strpos($js2, '<') === false && strpos($js2, 'innerHTML') === false, 'скрипт пары без «<» и HTML-приёмников');
+check(strpos($js2, 'remove_from_cart_button') !== false && strpos($js2, '"remove-from-cart"') !== false, 'мини-корзина: «Видалити» — remove-from-cart');
+check(strpos($js2, 'data-assist-undo-at') !== false && strpos($js2, '"/cart/"') !== false, '«В кошик» страницы товара — пара и страница корзины');
+check(strpos($js2, 'a.cart-contents') !== false && strpos($js2, 'nav-cart') !== false, '«Кошик» шапки — nav-cart');
+
 if ($failures) {
     fwrite(STDERR, "wordpress: провалов $failures из $checks\n");
     exit(1);

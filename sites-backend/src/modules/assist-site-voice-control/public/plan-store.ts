@@ -390,6 +390,35 @@ export async function updateChainStatus(
 }
 
 /**
+ * (Э6-тер (и)) Состояние возврата шагов ПОСЛЕ плана (стек компенсаций в
+ * шагах: `undone` — `dispatched` до действия, затем итог) — условно, из
+ * тех шагов и того статуса цепочки, что прочитаны: два отчёта/две отметки
+ * `dispatched` одного шага не запишутся дважды (§4-бис.5). План не живой —
+ * в `steps` и так только маска значений; `liveValues` не трогается.
+ */
+export async function updateUndoSteps(
+  db: PlanDb,
+  prev: PlanRow,
+  p: { siteId: string; visitorId: string },
+  steps: UiPlanStepView[],
+): Promise<boolean> {
+  const rows = await db.$queryRawUnsafe<Array<{ id: string }>>(
+    `UPDATE ${PLANS} SET "steps" = $4::jsonb, "updatedAt" = now()
+      WHERE "id" = $1 AND "siteId" = $2 AND "visitorId" = $3
+        AND "status" = $5 AND "steps" = $6::jsonb AND "chainStatus" IS NOT DISTINCT FROM $7
+      RETURNING "id"`,
+    prev.id,
+    p.siteId,
+    p.visitorId,
+    JSON.stringify(maskedSteps(steps)),
+    prev.status,
+    JSON.stringify(prev.storedSteps),
+    prev.chainStatus,
+  );
+  return rows.length > 0;
+}
+
+/**
  * (е) Повтор того же мемо тем же посетителем с теми же слотами в окне
  * (§5-бис.17 п.5 п.11) — вопрос «повторить ещё раз?», а не тихое исполнение.
  */

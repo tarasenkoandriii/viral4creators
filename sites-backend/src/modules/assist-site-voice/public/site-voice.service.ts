@@ -57,6 +57,7 @@ import {
   voiceAccess,
   type VoiceAccess,
 } from './voice-access';
+import { siteSttTerms } from './stt-terms';
 import { markVoiceDialog } from './voice-dialog';
 import { issueVoiceTicket } from './voice-ticket';
 
@@ -159,12 +160,21 @@ export class SiteVoiceService {
         return { ok: false, failure: 'limit' };
       }
       let actual = 0;
+      let termsCount = 0;
       let r: Awaited<ReturnType<SiteSonioxStt['transcribe']>>;
       try {
+        // Подсказки распознаванию — только опубликованное ЭТОГО сайта
+        // («Сайт»; «Админка» — свои, admin-stt-terms.ts), в лог — число.
+        const [languageHints, terms] = await Promise.all([
+          this.siteLanguages(site),
+          siteSttTerms(this.db, site.siteId),
+        ]);
+        termsCount = terms.length;
         r = await this.stt.transcribe({
           audio,
           mimeType: mime,
-          languageHints: await this.siteLanguages(site),
+          languageHints,
+          terms,
         });
         if (r.billable) {
           actual = await this.record(site, 'assist-stt', STT_PRICING_MODEL, {
@@ -175,7 +185,7 @@ export class SiteVoiceService {
         await this.budget.settle(this.db, reserved.reservation, actual);
       }
       this.logger.log(
-        `voice site=${site.siteId} bytes=${audio.length} s=${r.seconds} ok=${!!r.text} reason=${r.reason ?? '-'}`,
+        `voice site=${site.siteId} bytes=${audio.length} s=${r.seconds} ok=${!!r.text} reason=${r.reason ?? '-'} terms=${termsCount}`,
       );
       if (!r.text) {
         return {

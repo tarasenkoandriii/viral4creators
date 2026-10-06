@@ -272,6 +272,17 @@
 `captureBuild` — первые 7 символов `VERCEL_GIT_COMMIT_SHA` сборки фронтенда
 (`<meta name="app-build">` в `index.html`) или `dev`.
 
+Заход 4–5 (06.10.2026): `GET /api/admin/tutorial-demo-quality?assetIds=a,b`
+→ `{enabled, checks}`; `POST /api/admin/tutorial-demo-quality/assets/:id/check`
+`{versionId?}`; `POST /api/admin/tutorial-demo-quality/approved/check`
+(оператор). Помощник (sites-backend): `POST /assist/sites/:id/memos/:n/suggest-phrases`
+`{expectedRevision}` (бюджет обучения; 402 `MEMO_SUGGEST_BUDGET`, 429
+`MEMO_SUGGEST_LIMIT`, 503 `MEMO_SUGGEST_UNAVAILABLE`), `GET …/memos/:n/elements?step=|page=`,
+`POST …/memos/:n/steps/element` `{expectedRevision, uiElementId, mode: add|replace, index?, page?}`
+(404 `MEMO_ELEMENT_NOT_FOUND`); `/widget/v1/ui-plan/:id/undo` и `undo-report` —
+поле `comp` (компенсация) и тело `{results?}|{dispatch}|{next}`; Soniox получает
+`context.terms` (опубликованные мемо и карта; «Сайт» и «Админка» раздельно).
+
 ## Идентичность, оферта, админка
 
 | Метод и путь | Доступ | Назначение |

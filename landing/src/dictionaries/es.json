@@ -200,6 +200,17 @@
         }
       ]
     },
+    "demo": {
+      "title": "Vídeos tutoriales de ejemplo",
+      "lead": "Ejemplos breves creados en nuestro propio sitio de pruebas. Elige uno.",
+      "openVideo": "Abrir vídeo",
+      "unavailable": "Muy pronto aquí habrá vídeos de ejemplo creados en nuestro propio sitio de pruebas. No mostramos sitios de clientes. Mientras tanto, consulta el proceso de arriba.",
+      "chooseTopic": "Elige un ejemplo",
+      "viewSteps": "Ver el proceso",
+      "loadFailed": "Los vídeos de ejemplo no están disponibles temporalmente. Consulta el proceso de arriba.",
+      "play": "Reproducir vídeo",
+      "note": "El sitio de los vídeos es nuestro propio sitio de pruebas; todos los datos son ficticios."
+    },
     "compare": {
       "title": "En qué se diferencia de las herramientas habituales",
       "lead": "Honesto en ambos sentidos: donde perdemos, así está escrito.",

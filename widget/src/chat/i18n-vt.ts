@@ -109,6 +109,8 @@ const uk = {
     closed_shadow: 'Частина кнопок у закритих shadow-коренях — недоступна',
     ext_iframes: 'Є зовнішні iframe — помічник у них не заходить',
     duplicates: 'Однакові назви кнопок — помічник може сплутати',
+    undo_unresolved:
+      'Для частини дій не знайдено, як їх скасувати (кнопка «Прибрати», сторінка кошика) — «Повернути» буде лише підказкою',
   },
 };
 
@@ -218,6 +220,8 @@ const ru: VtDict = {
     closed_shadow: 'Часть кнопок в закрытых shadow-корнях — недоступна',
     ext_iframes: 'Есть внешние iframe — помощник в них не заходит',
     duplicates: 'Одинаковые названия кнопок — помощник может перепутать',
+    undo_unresolved:
+      'Для части действий не найдено, как их отменить (кнопка «Убрать», страница корзины) — «Вернуть» будет только подсказкой',
   },
 };
 
@@ -320,6 +324,8 @@ const en: VtDict = {
     closed_shadow: 'Some buttons are in closed shadow roots — unreachable',
     ext_iframes: "External iframes — the assistant doesn't enter them",
     duplicates: 'Buttons with the same name — the assistant may confuse them',
+    undo_unresolved:
+      'For some actions there is no way to undo them (a “Remove” button, the cart page) — “Put back” will only be a hint',
   },
 };
 

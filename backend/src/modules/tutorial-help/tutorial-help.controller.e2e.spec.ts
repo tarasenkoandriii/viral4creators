@@ -111,6 +111,33 @@ describe('GET /api/tutorial-help/:subjectKey (e2e)', () => {
     expect(res.body.data.variants).toEqual({});
   });
 
+  it('client-site — 404 и база не спрашивается (ролики сайтов заказчиков не публичны)', async () => {
+    findFirst.mockResolvedValue({ ...ROW, clientSiteDraftId: 'draft_1' });
+    await request(app.getHttpServer())
+      .get('/api/tutorial-help/client-site?locale=ru')
+      .expect(404);
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('слот демо обучающего лендинга: текст есть, без отметки оператора — роликов нет', async () => {
+    // Сервиса настроек в модуле теста нет — семейство закрыто, и даже
+    // «одобренная» строка из базы не выдаётся.
+    findFirst.mockResolvedValue({
+      ...ROW,
+      id: 'a1',
+      subjectKey: 'site-tutorial-demo-1',
+      clientSiteDraftId: null,
+    });
+    const res = await request(app.getHttpServer())
+      .get('/api/tutorial-help/site-tutorial-demo-1?locale=en')
+      .expect(200);
+    expect(res.body.data.subjectKey).toBe('site-tutorial-demo-1');
+    expect(res.body.data.title).toEqual(expect.any(String));
+    expect(res.body.data.videoUrl).toBeNull();
+    expect(res.body.data.variants).toEqual({});
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
   it('несуществующая тема — 404', async () => {
     await request(app.getHttpServer())
       .get('/api/tutorial-help/nonsense-topic?locale=ru')

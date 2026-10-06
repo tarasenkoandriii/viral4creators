@@ -200,6 +200,17 @@
         }
       ]
     },
+    "demo": {
+      "title": "Beispiel-Erklärvideos",
+      "lead": "Kurze Beispiele, erstellt auf unserer eigenen Testseite. Wählen Sie eines aus.",
+      "openVideo": "Video öffnen",
+      "unavailable": "Bald finden Sie hier Beispielvideos, erstellt auf unserer eigenen Testseite. Kundenseiten zeigen wir nicht. Bis dahin: der Ablauf oben.",
+      "chooseTopic": "Beispiel auswählen",
+      "viewSteps": "Ablauf ansehen",
+      "loadFailed": "Die Beispielvideos sind vorübergehend nicht verfügbar. Wie alles funktioniert, zeigt der Ablauf oben.",
+      "play": "Video abspielen",
+      "note": "Die Website in den Videos ist unsere eigene Testseite; alle Daten darin sind erfunden."
+    },
     "compare": {
       "title": "Was das von den üblichen Werkzeugen unterscheidet",
       "lead": "Ehrlich in beide Richtungen: wo wir verlieren, steht es auch so da.",

@@ -42,12 +42,28 @@
  * или самый свежий), ответ несёт `variants` — по одобренному ролику на
  * каждую тему, у которой он есть. Темы без одобренного ролика в
  * `variants` нет вовсе (не `null`): «ключ есть» значит «можно играть».
+ *
+ * ## Закрытые ключи и семейство демо обучающего лендинга (06.10.2026)
+ *
+ * `client-site` (ролики по сайтам заказчиков) закрыт явно, до каталога
+ * тем, и строки с `clientSiteDraftId` не выбираются ни под каким ключом.
+ * Семейство `site-tutorial-demo-1..N` — публичные слоты демо на
+ * `/site-tutorial` со своим, более строгим барьером: вычитан + без
+ * `clientSiteDraftId` + id в отметке оператора. Подробно —
+ * `site-tutorial-demo.ts`.
  */
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { tutorialStepFor } from '../tutorial-scenario/tutorial-locales';
 import { DEFAULT_LOCALE, isSupportedLocale } from '../../common/locale';
+import {
+  isClosedHelpSubjectKey,
+  parseSiteTutorialDemoAssetIds,
+  SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
+  siteTutorialDemoTopicFor,
+} from './site-tutorial-demo';
 
 export interface TutorialHelpView {
   subjectKey: string;
@@ -156,7 +172,32 @@ const ASSET_SELECT = {
   captureBuild: true,
 } as const;
 
+/**
+ * Выборка семейства демо обучающего лендинга (`site-tutorial-demo.ts`):
+ * те же поля плюс три служебных — только для повторной проверки барьера
+ * в коде. Наружу они не уходят: ответ собирается поимённо.
+ */
+const DEMO_ASSET_SELECT = {
+  ...ASSET_SELECT,
+  id: true,
+  subjectKey: true,
+  clientSiteDraftId: true,
+} as const;
+
+/**
+ * Какие строки допустимы для темы. `open` — обычная тема справки (шаг
+ * мастера, тема поздравления). `marked` — семейство демо обучающего
+ * лендинга: только строки из отметки оператора.
+ */
+type HelpGate = { kind: 'open' } | { kind: 'marked'; ids: readonly string[] };
+
+const OPEN_GATE: HelpGate = { kind: 'open' };
+
 interface HelpAssetRow {
+  /** Только у выборки семейства демо (`DEMO_ASSET_SELECT`). */
+  id?: string;
+  subjectKey?: string;
+  clientSiteDraftId?: string | null;
   blobUrl: string | null;
   externalUrl: string | null;
   durationMs: number | null;
@@ -170,7 +211,15 @@ interface HelpAssetRow {
 
 @Injectable()
 export class TutorialHelpService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /**
+     * Отметка оператора для семейства демо обучающего лендинга.
+     * Необязателен: без него семейство закрыто (роликов нет), остальные
+     * темы работают как раньше.
+     */
+    @Optional() private readonly settings?: PlatformSettingsService,
+  ) {}
 
   /**
    * `theme` — пожелание, а не фильтр: есть одобренный ролик этой темы —
@@ -182,8 +231,18 @@ export class TutorialHelpService {
     rawLocale?: string,
     rawTheme?: string,
   ): Promise<TutorialHelpView> {
+    // Закрытые ключи — ДО каталога тем: `client-site` (ролики сайтов
+    // заказчиков) не выдаётся, даже если тема с таким именем однажды
+    // появится в каталоге. Ответ тот же, что у несуществующей темы, —
+    // наружу не сообщается, что за ключом что-то есть.
+    if (isClosedHelpSubjectKey(subjectKey)) {
+      throw new NotFoundException(
+        `Справки по теме «${subjectKey}» нет: такой темы обучалки не существует.`,
+      );
+    }
     const locale = isSupportedLocale(rawLocale) ? rawLocale : DEFAULT_LOCALE;
-    const topic = tutorialStepFor(subjectKey, locale);
+    const demoTopic = siteTutorialDemoTopicFor(subjectKey, locale);
+    const topic = demoTopic ?? tutorialStepFor(subjectKey, locale);
     if (!topic) {
       // 404 именно на ТЕМУ, а не пустой ответ: пустой ответ клиент
       // покажет как «справки нет», и опечатка в ключе будет выглядеть
@@ -193,11 +252,14 @@ export class TutorialHelpService {
       );
     }
     const wanted = parseTutorialHelpTheme(rawTheme);
+    // Семейство демо обучающего лендинга — только отмеченные оператором
+    // строки (`site-tutorial-demo.ts`); остальные темы — как раньше.
+    const gate = demoTopic ? await this.siteTutorialDemoGate() : OPEN_GATE;
     // По одобренному ролику на тему — они же `variants` и они же
     // кандидаты в верхние поля по `?theme=`.
     const byTheme = await Promise.all(
       TUTORIAL_HELP_THEMES.map((theme) =>
-        this.findApproved(subjectKey, locale, theme),
+        this.findApproved(subjectKey, locale, theme, gate),
       ),
     );
     const variants: TutorialHelpView['variants'] = {};
@@ -213,7 +275,7 @@ export class TutorialHelpService {
         ? byTheme[TUTORIAL_HELP_THEMES.indexOf(wanted)]
         : null;
     const asset =
-      wantedRow ?? (await this.findApproved(subjectKey, locale, null));
+      wantedRow ?? (await this.findApproved(subjectKey, locale, null, gate));
     const { width, height } = canvas(asset);
     return {
       subjectKey,
@@ -234,22 +296,59 @@ export class TutorialHelpService {
     };
   }
 
+  /**
+   * Отметка оператора для семейства демо обучающего лендинга. Закрыто по
+   * умолчанию: нет сервиса настроек, нет значения, значение негодное или
+   * чтение упало — пустой список, то есть ни одного ролика.
+   */
+  private async siteTutorialDemoGate(): Promise<HelpGate> {
+    if (!this.settings) return { kind: 'marked', ids: [] };
+    try {
+      const raw = await this.settings.get(
+        SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
+      );
+      return { kind: 'marked', ids: parseSiteTutorialDemoAssetIds(raw) };
+    } catch {
+      return { kind: 'marked', ids: [] };
+    }
+  }
+
   private async findApproved(
     subjectKey: string,
     locale: string,
     theme: TutorialHelpTheme | null,
+    gate: HelpGate,
   ): Promise<HelpAssetRow | null> {
-    return (await this.prisma.tutorialVideoAsset.findFirst({
+    // Отметка пуста — спрашивать базу незачем: ответ заранее «нет».
+    if (gate.kind === 'marked' && gate.ids.length === 0) return null;
+    const row = (await this.prisma.tutorialVideoAsset.findFirst({
       where: {
         subjectKey,
         locale,
         reviewed: true,
+        // Ролики обучалки по сайту заказчика публичная справка не
+        // выдаёт ни под каким ключом (§6.2 CLIENT-SITE-TUTORIAL-SPEC).
+        clientSiteDraftId: null,
+        ...(gate.kind === 'marked' ? { id: { in: [...gate.ids] } } : {}),
         ...(theme ? { theme } : {}),
         // Ролик без ссылки — это строка сборки, а не ролик.
         OR: [{ blobUrl: { not: null } }, { externalUrl: { not: null } }],
       },
       orderBy: { createdAt: 'desc' },
-      select: ASSET_SELECT,
+      select: gate.kind === 'marked' ? DEMO_ASSET_SELECT : ASSET_SELECT,
     })) as HelpAssetRow | null;
+    if (!row || gate.kind === 'open') return row;
+    // Семейство демо: барьер ещё раз — в коде, а не только в `where`.
+    // Сбой выборки (или подмена запроса) не должен выдать ролик сайта
+    // заказчика, чужой темы или без отметки оператора.
+    if (
+      row.clientSiteDraftId != null ||
+      row.subjectKey !== subjectKey ||
+      typeof row.id !== 'string' ||
+      !gate.ids.includes(row.id)
+    ) {
+      return null;
+    }
+    return row;
   }
 }

@@ -15,13 +15,17 @@
  *
  * ## Проверка качества демо (Gemini)
  *
- * Ещё не реализована — источник `quality` всегда `not_configured`, без
- * выдуманных карточек. Когда появится модель проверки, её карточки
- * встанут сюда тем же приёмом, что и остальные источники.
+ * Источник `quality` — последние проверки `TutorialDemoQualityCheck`
+ * по роликам демо: `fail` — решение оператора, `warn` и исчерпанные
+ * повторы — к сведению (`qualityItems`). Состояние источника `ok`,
+ * когда проверка включена (`TUTORIAL_DEMO_QUALITY_ENABLED`), иначе
+ * `not_configured` — но уже записанные вердикты показываются и тогда:
+ * это факты о роликах, а не о флаге.
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
+import { readDemoQualityConfig } from '../tutorial-quality/demo-quality-queue';
 import { JOB_LOCK_MS } from '../../common/cron-job-lock';
 import { AdminCronService } from '../cron/admin-cron.service';
 import { DemoStatusService } from '../ops-status/demo-status.service';
@@ -52,6 +56,8 @@ import {
   moderationItems,
   onlySkipItems,
   PendingReviewGroup,
+  QualityCheckRow,
+  qualityItems,
   scrubText,
   snapshotChangedItems,
   SnapshotChangedGroup,
@@ -66,6 +72,8 @@ import {
 export const CLIENT_DRAFTS_CAP = 50;
 /** Версий темпа-кандидатов за один ответ. */
 export const TEMPO_CANDIDATES_CAP = 200;
+/** Последних проверок качества за один ответ (по одной на ролик). */
+export const QUALITY_CHECKS_SCAN = 500;
 /** «Текущая» сборка фронтенда — по съёмке не старше этого. */
 export const CURRENT_BUILD_FRESH_MS = 48 * HOUR_MS;
 
@@ -92,6 +100,7 @@ export class AdminAttentionService {
       ['moderation', (n) => this.moderationSource(n)],
       ['client-drafts', (n) => this.clientDraftsSource(n)],
       ['assembly', (n) => this.assemblySource(n)],
+      ['quality', (n) => this.qualitySource(n)],
     ];
     const results = await Promise.all(
       collectors.map(async ([key, collect]) => {
@@ -104,9 +113,14 @@ export class AdminAttentionService {
         }
       }),
     );
+    const qualityOn = readDemoQualityConfig().enabled;
     const sources: AttentionSource[] = results.map(({ key, error }) =>
       error === null
-        ? { key, label: SOURCE_LABELS[key], status: 'ok' }
+        ? {
+            key,
+            label: SOURCE_LABELS[key],
+            status: key === 'quality' && !qualityOn ? 'not_configured' : 'ok',
+          }
         : {
             key,
             label: SOURCE_LABELS[key],
@@ -114,11 +128,6 @@ export class AdminAttentionService {
             error: `не удалось проверить: ${scrubText(error, 120) ?? 'ошибка'}`,
           },
     );
-    sources.push({
-      key: 'quality',
-      label: SOURCE_LABELS.quality,
-      status: 'not_configured',
-    });
     return buildView(
       results.flatMap((r) => r.items),
       sources,
@@ -353,6 +362,59 @@ export class AdminAttentionService {
       },
       now,
     );
+  }
+
+  /**
+   * Последняя проверка качества каждого ролика демо (не обучалок по
+   * сайтам заказчиков — у них своя очередь). Самые свежие первыми; из
+   * каждой пары (ролик) берётся первая встреченная.
+   */
+  private async qualitySource(now: Date): Promise<AttentionItem[]> {
+    const rows = (await this.prisma.tutorialDemoQualityCheck.findMany({
+      where: { asset: { clientSiteDraftId: null } },
+      orderBy: { createdAt: 'desc' },
+      take: QUALITY_CHECKS_SCAN,
+      select: {
+        assetId: true,
+        status: true,
+        verdict: true,
+        checkedAt: true,
+        updatedAt: true,
+        report: true,
+        asset: { select: { subjectKey: true, locale: true, theme: true } },
+      },
+    })) as Array<{
+      assetId: string;
+      status: string;
+      verdict: string | null;
+      checkedAt: Date | null;
+      updatedAt: Date;
+      report: unknown;
+      asset: { subjectKey: string; locale: string; theme: string | null };
+    }>;
+    const seen = new Set<string>();
+    const latest: QualityCheckRow[] = [];
+    for (const r of rows) {
+      if (seen.has(r.assetId)) continue;
+      seen.add(r.assetId);
+      const report = (r.report ?? {}) as {
+        summary?: unknown;
+        issues?: unknown;
+      };
+      latest.push({
+        assetId: r.assetId,
+        status: r.status,
+        verdict: r.verdict,
+        checkedAt: r.checkedAt,
+        updatedAt: r.updatedAt,
+        subjectKey: r.asset.subjectKey,
+        locale: r.asset.locale,
+        theme: r.asset.theme,
+        summary: typeof report.summary === 'string' ? report.summary : null,
+        issueCount: Array.isArray(report.issues) ? report.issues.length : 0,
+      });
+    }
+    return qualityItems(latest, now);
   }
 
   private async assemblySource(now: Date): Promise<AttentionItem[]> {

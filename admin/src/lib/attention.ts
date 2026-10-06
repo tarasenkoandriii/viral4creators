@@ -104,6 +104,9 @@ const ACTION_LABEL: Record<string, string> = {
   'demo-theme-gap': 'Открыть матрицу',
   'demo-missing': 'Открыть матрицу',
   'demo-stale': 'Открыть матрицу',
+  'demo-quality-fail': 'Открыть отчёт',
+  'demo-quality-warn': 'Открыть отчёт',
+  'demo-quality-error': 'Открыть ролики',
 };
 
 export function actionLabel(kind: string): string {

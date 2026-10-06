@@ -14,6 +14,9 @@ import {
   moderationItems,
   onlySkipItems,
   pairLabel,
+  QUALITY_CARDS_CAP,
+  QualityCheckRow,
+  qualityItems,
   scrubText,
   snapshotChangedItems,
   snapshotErrorItems,
@@ -898,5 +901,109 @@ describe('очереди решений', () => {
     );
     expect(one.reason).toContain('роликов: 1');
     expect(one.reason).not.toContain('версий темпа');
+  });
+});
+
+describe('qualityItems — проверка качества демо', () => {
+  const row = (over: Partial<QualityCheckRow> = {}): QualityCheckRow => ({
+    assetId: 'a1',
+    status: 'complete',
+    verdict: 'fail',
+    checkedAt: ago(3 * HOUR_MS),
+    updatedAt: ago(3 * HOUR_MS),
+    subjectKey: '2',
+    locale: 'ru',
+    theme: 'dark',
+    summary: 'чёрный кадр на 0:03, почта user@example.com',
+    issueCount: 2,
+    ...over,
+  });
+
+  it('fail — решение оператора, со ссылкой на ролик и возрастом от проверки', () => {
+    const [item] = qualityItems([row()], NOW);
+    expect(item).toMatchObject({
+      id: 'demo-quality-fail:a1',
+      severity: 'decision',
+      kind: 'demo-quality-fail',
+      owner: 'operator',
+      href: '/assistant?tab=videos&subjectKey=2&locale=ru&quality=a1',
+      ageMs: 3 * HOUR_MS,
+    });
+    expect(item.title).toContain('шаг 2 · ru · dark');
+    expect(item.reason).toContain('замечаний: 2');
+    expect(item.reason).not.toContain('user@example.com');
+    expect(item.reason).toContain('Одобрение ролика проверка не меняет');
+  });
+
+  it('warn — к сведению; ok, в очереди и без вердикта — без карточки', () => {
+    const items = qualityItems(
+      [
+        row({ assetId: 'w', verdict: 'warn' }),
+        row({ assetId: 'o', verdict: 'ok' }),
+        row({ assetId: 'p', status: 'pending', verdict: null }),
+        row({ assetId: 'r', status: 'running', verdict: 'fail' }),
+      ],
+      NOW,
+    );
+    expect(items.map((i) => [i.id, i.severity])).toEqual([
+      ['demo-quality-warn:w', 'info'],
+    ]);
+  });
+
+  it('исчерпанные повторы — одна агрегированная карточка, не вердикт', () => {
+    const items = qualityItems(
+      [
+        row({
+          assetId: 'e1',
+          status: 'error',
+          verdict: null,
+          updatedAt: ago(HOUR_MS),
+        }),
+        row({
+          assetId: 'e2',
+          status: 'error',
+          verdict: null,
+          updatedAt: ago(5 * HOUR_MS),
+          subjectKey: '7',
+        }),
+      ],
+      NOW,
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: 'demo-quality-error',
+      kind: 'demo-quality-error',
+      severity: 'info',
+      count: 2,
+      ageMs: 5 * HOUR_MS,
+    });
+    expect(items[0].reason).toContain('шаг 7 · ru');
+  });
+
+  it('без темы — без суффикса; без даты проверки — возраст от обновления', () => {
+    const [item] = qualityItems(
+      [
+        row({
+          theme: null,
+          checkedAt: null,
+          updatedAt: ago(2 * HOUR_MS),
+          summary: null,
+          issueCount: 0,
+        }),
+      ],
+      NOW,
+    );
+    expect(item.title.endsWith('шаг 2 · ru')).toBe(true);
+    expect(item.ageMs).toBe(2 * HOUR_MS);
+    expect(item.reason).toBe(
+      'ИИ-проверка нашла блокирующий дефект. Одобрение ролика проверка не меняет.',
+    );
+  });
+
+  it('поимённых карточек на вердикт не больше потолка', () => {
+    const rows = Array.from({ length: QUALITY_CARDS_CAP + 5 }, (_, i) =>
+      row({ assetId: `a${i}` }),
+    );
+    expect(qualityItems(rows, NOW)).toHaveLength(QUALITY_CARDS_CAP);
   });
 });

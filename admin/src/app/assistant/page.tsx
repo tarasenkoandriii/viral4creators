@@ -19,17 +19,21 @@
 // Включение/выключение и сама настройка консультанта (бюджет, модель,
 // проактивный режим) по-прежнему живут на /settings (AssistantSettingsCard).
 
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   getAssistantAdmin,
+  getDemoQualityChecks,
   getTutorialVideoAssets,
   getTutorialVideoDataStatus,
   publishTutorialVideo,
+  requestDemoQualityApproved,
+  requestDemoQualityCheck,
   setTutorialVideoReviewed,
 } from '../../lib/endpoints';
 import type {
   AssistantAdminResult,
   AssistantExchangeRow,
+  DemoQualityCheck,
   PublicationPlatform,
   PublicationPrivacy,
   TutorialVideoAssetRow,
@@ -37,6 +41,18 @@ import type {
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 import { TutorialTempoPanel } from './TutorialTempoPanel';
+import {
+  categoryLabel,
+  checkResultLabel,
+  enqueueMessage,
+  formatCost,
+  formatTimecode,
+  freshnessLabel,
+  qualityBadge,
+  SEVERITY_LABEL,
+  SEVERITY_TONE,
+  sortIssues,
+} from '../../lib/demo-quality';
 
 const PLATFORM_LABEL: Record<PublicationPlatform, string> = { YOUTUBE: 'YouTube', TIKTOK: 'TikTok' };
 const PRIVACY_LABEL: Record<PublicationPrivacy, string> = {
@@ -87,12 +103,14 @@ const TABS: Array<{ key: Tab; label: string }> = [
 
 /** Переход с «Обзора» (дашборд внимания): `?tab=videos&reviewed=false
  * &subjectKey=2&locale=ru&tempo=<assetId>` — открыть нужную вкладку с
- * фильтром и, если указан `tempo`, панель темпа этого ролика. */
+ * фильтром и, если указан `tempo`, панель темпа этого ролика; `quality`
+ * — отчёт проверки качества этого ролика. */
 interface VideoTabInit {
   subjectKey: string;
   locale: string;
   reviewed: '' | 'true' | 'false';
   tempo: string | null;
+  quality: string | null;
 }
 
 function readDeepLink(): { tab: Tab | null; video: VideoTabInit } {
@@ -106,6 +124,7 @@ function readDeepLink(): { tab: Tab | null; video: VideoTabInit } {
       locale: p.get('locale') ?? '',
       reviewed: r === 'true' || r === 'false' ? r : '',
       tempo: p.get('tempo'),
+      quality: p.get('quality'),
     },
   };
 }
@@ -425,6 +444,17 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   // Темп (06.10.2026): панель версий с другим темпом под строкой ролика.
   const [tempoId, setTempoId] = useState<string | null>(init?.tempo ?? null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Проверка качества демо (06.10.2026): последняя проверка каждого ролика
+  // страницы, раскрытый отчёт и плееры для перемотки к таймкоду. Фаза
+  // наблюдения — одобрение отсюда не меняется.
+  const [quality, setQuality] = useState<Record<string, DemoQualityCheck>>({});
+  const [qualityEnabled, setQualityEnabled] = useState<boolean | null>(null);
+  const [qualityError, setQualityError] = useState<string | null>(null);
+  const [qualityMsg, setQualityMsg] = useState<string | null>(null);
+  const [reportId, setReportId] = useState<string | null>(init?.quality ?? null);
+  const [approvedBusy, setApprovedBusy] = useState(false);
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const [seek, setSeek] = useState<{ id: string; ms: number; n: number } | null>(null);
   // Этап 101 (ТЗ §4.7, Фаза 3) — публикация в YouTube/TikTok прямо с
   // этой вкладки, тот же приём формы, что «Одобрить/Отклонить» на
   // /admin/publications: раскрывается по клику, channelId — свободный
@@ -451,6 +481,76 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadQuality = useCallback((ids: string[]) => {
+    if (ids.length === 0) {
+      setQuality({});
+      return;
+    }
+    getDemoQualityChecks(ids)
+      .then((res) => {
+        setQuality(res.checks);
+        setQualityEnabled(res.enabled);
+        setQualityError(null);
+      })
+      .catch((e) => setQualityError(errText(e)));
+  }, []);
+
+  useEffect(() => {
+    if (result) loadQuality(result.rows.map((r) => r.id));
+  }, [result, loadQuality]);
+
+  // Клик по таймкоду: открыть плеер ролика и перемотать. Плеер может ещё
+  // не иметь метаданных — тогда перемотка после `loadedmetadata`.
+  useEffect(() => {
+    if (!seek) return;
+    const el = videoRefs.current[seek.id];
+    if (!el) return;
+    const apply = () => {
+      el.currentTime = seek.ms / 1000;
+    };
+    if (el.readyState >= 1) apply();
+    else el.addEventListener('loadedmetadata', apply, { once: true });
+    el.scrollIntoView({ block: 'nearest' });
+  }, [seek, previewId]);
+
+  const seekTo = useCallback((id: string, ms: number) => {
+    setPreviewId(id);
+    setSeek((prev) => ({ id, ms, n: (prev?.n ?? 0) + 1 }));
+  }, []);
+
+  const checkQuality = useCallback(async (row: TutorialVideoAssetRow) => {
+    setBusyId(row.id);
+    setQualityMsg(null);
+    setError(null);
+    try {
+      const res = await requestDemoQualityCheck(row.id);
+      setQualityMsg(enqueueMessage(res));
+      setQuality((prev) => ({ ...prev, [row.id]: res.check }));
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setBusyId(null);
+    }
+  }, []);
+
+  const checkApproved = useCallback(async () => {
+    setApprovedBusy(true);
+    setQualityMsg(null);
+    setError(null);
+    try {
+      const res = await requestDemoQualityApproved();
+      setQualityMsg(
+        `Поставлено в очередь: ${res.queued} (потолок за нажатие — ${res.cap}); уже проверены или в очереди: ${res.skipped}` +
+          (res.remaining > 0 ? `; осталось ${res.remaining} — нажмите ещё раз позже.` : '.'),
+      );
+      if (result) loadQuality(result.rows.map((r) => r.id));
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setApprovedBusy(false);
+    }
+  }, [result, loadQuality]);
 
   const totalPages = result ? Math.max(Math.ceil(result.total / result.pageSize), 1) : 1;
 
@@ -512,6 +612,28 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
         Кадры-слайдшоу, собранные исполнителем сценариев (этап 98), становятся доступны консультанту на лендинге
         ТОЛЬКО после одобрения здесь — иначе они физически недоступны никому, кроме прямого запроса к базе.
       </p>
+
+      <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          onClick={() => void checkApproved()}
+          disabled={approvedBusy || qualityEnabled === false}
+          title="Поставить одобренные ролики в очередь ИИ-проверки качества (с потолком за нажатие)"
+        >
+          {approvedBusy ? 'Ставим…' : 'Проверить все одобренные'}
+        </button>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {qualityEnabled === false
+            ? 'ИИ-проверка качества выключена (TUTORIAL_DEMO_QUALITY_ENABLED).'
+            : 'ИИ-проверка качества — режим наблюдения: отчёт и сигнал, одобрение она не меняет.'}
+        </span>
+      </div>
+      {qualityMsg && (
+        <p className="muted" role="status" style={{ marginTop: 0 }}>
+          {qualityMsg}
+        </p>
+      )}
+      {qualityError && <p className="critical">Проверки качества не загрузились: {qualityError}</p>}
 
       <div className="filters" style={{ marginBottom: 16, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <input
@@ -575,8 +697,10 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                   <th>Когда</th>
                   <th>subjectKey / локаль</th>
                   <th>Заголовок</th>
+                  <th>Тема</th>
                   <th>Сборка</th>
                   <th>Кадры</th>
+                  <th>Качество</th>
                   <th>Одобрено</th>
                   <th></th>
                 </tr>
@@ -592,6 +716,9 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                         {row.subjectKey} / {row.locale}
                       </td>
                       <td style={{ maxWidth: 280 }}>{row.title}</td>
+                      <td className="muted" title="Тема интерфейса на съёмке">
+                        {row.theme === 'light' ? 'светлая' : row.theme === 'dark' ? 'тёмная' : '—'}
+                      </td>
                       <td>
                         <span
                           className={`badge-status ${
@@ -612,6 +739,9 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                       </td>
                       <td className="muted">{row.frameCount ?? '—'}</td>
                       <td>
+                        <QualityBadge check={quality[row.id]} />
+                      </td>
+                      <td>
                         {row.reviewed ? (
                           <span className="badge-status badge-status-ok">одобрено</span>
                         ) : (
@@ -622,6 +752,21 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                         {row.blobUrl && (
                           <button type="button" onClick={() => setPreviewId(previewId === row.id ? null : row.id)}>
                             {previewId === row.id ? 'Скрыть' : 'Просмотр'}
+                          </button>
+                        )}
+                        {row.assemblyStatus === 'complete' && row.blobUrl && (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id || qualityEnabled === false}
+                            onClick={() => void checkQuality(row)}
+                            title="Поставить ролик в очередь ИИ-проверки качества"
+                          >
+                            Проверить
+                          </button>
+                        )}
+                        {quality[row.id] && (
+                          <button type="button" onClick={() => setReportId(reportId === row.id ? null : row.id)}>
+                            {reportId === row.id ? 'Скрыть отчёт' : 'Отчёт'}
                           </button>
                         )}
                         {row.assemblyStatus === 'complete' && row.blobUrl && (
@@ -656,24 +801,42 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                     </tr>
                     {previewId === row.id && row.blobUrl && (
                       <tr>
-                        <td colSpan={7} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <div style={{ padding: '8px 4px' }}>
                             {/* eslint-disable-next-line jsx-a11y/media-has-caption -- служебный предпросмотр слайдшоу для оператора, не публичный контент */}
-                            <video controls src={row.blobUrl} style={{ maxWidth: 480, width: '100%' }} />
+                            <video
+                              controls
+                              src={row.blobUrl}
+                              style={{ maxWidth: 480, width: '100%' }}
+                              ref={(el) => {
+                                videoRefs.current[row.id] = el;
+                              }}
+                            />
                           </div>
+                        </td>
+                      </tr>
+                    )}
+                    {reportId === row.id && quality[row.id] && (
+                      <tr>
+                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                          <QualityReportPanel
+                            check={quality[row.id]}
+                            canSeek={!!row.blobUrl}
+                            onSeek={(ms) => seekTo(row.id, ms)}
+                          />
                         </td>
                       </tr>
                     )}
                     {tempoId === row.id && (
                       <tr>
-                        <td colSpan={7} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <TutorialTempoPanel assetId={row.id} onChanged={load} />
                         </td>
                       </tr>
                     )}
                     {publishingId === row.id && (
                       <tr>
-                        <td colSpan={7} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 4px', maxWidth: 320 }}>
                             <span className="muted" style={{ fontSize: 12 }}>
                               Канал должен быть подключён именно вашим оператором-аккаунтом
@@ -753,6 +916,134 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Проверка качества демо (06.10.2026) ──
+
+function QualityBadge({ check }: { check: DemoQualityCheck | undefined }) {
+  const badge = qualityBadge(check);
+  if (badge.tone === 'muted') {
+    return (
+      <span className="muted" style={{ whiteSpace: 'nowrap' }}>
+        {badge.label}
+      </span>
+    );
+  }
+  return <span className={`badge-status badge-status-${badge.tone}`}>{badge.label}</span>;
+}
+
+/** Раскрываемый отчёт: сводка, оценки, тема/язык/актуальность и
+ *  замечания с таймкодами (клик — перемотка плеера ролика). */
+function QualityReportPanel({
+  check,
+  canSeek,
+  onSeek,
+}: {
+  check: DemoQualityCheck;
+  canSeek: boolean;
+  onSeek: (ms: number) => void;
+}) {
+  const report = check.report;
+  return (
+    <div style={{ padding: '8px 4px', display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 760 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <strong>ИИ-проверка качества</strong>
+        <QualityBadge check={check} />
+        <span className="muted" style={{ fontSize: 12 }}>
+          {check.modelId} · {check.rubricVersion}
+          {check.versionId ? ` · версия ${check.versionId}` : ''}
+          {check.checkedAt ? ` · ${new Date(check.checkedAt).toLocaleString('ru-RU')}` : ''}
+          {check.status === 'complete' ? ` · ${formatCost(check)}` : ''}
+          {check.reusedFromId ? ' · результат прежней проверки того же файла' : ''}
+        </span>
+      </div>
+      {check.status === 'error' && (
+        <p className="critical" style={{ margin: 0 }}>
+          Сбой проверки (не вердикт ролику): {check.error ?? 'без текста'}. Нажмите «Проверить», чтобы запустить заново.
+        </p>
+      )}
+      {(check.status === 'pending' || check.status === 'running') && (
+        <p className="muted" style={{ margin: 0 }}>
+          В работе: фаза «{check.phase === 'upload' ? 'загрузка' : check.phase === 'wait' ? 'ожидание' : 'анализ'}»
+          {check.attempts > 0 ? `, попытка ${check.attempts + 1} из 3` : ''}
+          {check.nextAttemptAt ? `, не раньше ${new Date(check.nextAttemptAt).toLocaleString('ru-RU')}` : ''}
+          {check.error ? ` — ${check.error}` : ''}.
+        </p>
+      )}
+      {report && (
+        <>
+          {report.summary && <p style={{ margin: 0 }}>{report.summary}</p>}
+          {report.invalid && (
+            <p className="muted" style={{ margin: 0 }}>
+              Ответ модели не принят: {report.invalid} — нужен взгляд оператора.
+            </p>
+          )}
+          {report.scores && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Читаемость {report.scores.readability} · шаги/подписи {report.scores.stepMatch} · темп {report.scores.pacing} ·
+              согласованность {report.scores.consistency} (порог ok — 80)
+            </div>
+          )}
+          <div className="muted" style={{ fontSize: 12 }}>
+            Тема: {checkResultLabel(report.theme.result)} (заявлена {report.theme.expected ?? '—'}, видна {report.theme.observed}) · Язык{' '}
+            {report.language.expected}: {checkResultLabel(report.language.result)} (речь {report.language.speech}, подписи{' '}
+            {report.language.captions}) · {freshnessLabel(report.freshness)}
+          </div>
+          {report.issues.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              Замечаний нет.
+            </p>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {sortIssues(report.issues).map((issue, i) => (
+                <li key={`${issue.startMs}-${i}`}>
+                  {canSeek ? (
+                    <button
+                      type="button"
+                      onClick={() => onSeek(issue.startMs)}
+                      title="Перемотать плеер к этому месту"
+                      style={{ fontFamily: 'monospace', marginRight: 6 }}
+                    >
+                      {formatTimecode(issue.startMs)}
+                    </button>
+                  ) : (
+                    <span style={{ fontFamily: 'monospace', marginRight: 6 }}>{formatTimecode(issue.startMs)}</span>
+                  )}
+                  <span
+                    className={
+                      SEVERITY_TONE[issue.severity] === 'muted'
+                        ? 'muted'
+                        : `badge-status badge-status-${SEVERITY_TONE[issue.severity]}`
+                    }
+                    style={{ marginRight: 6 }}
+                  >
+                    {SEVERITY_LABEL[issue.severity] ?? issue.severity}
+                  </span>
+                  <span className="muted" style={{ marginRight: 6 }}>
+                    {categoryLabel(issue.category)}
+                  </span>
+                  {issue.explanation}
+                </li>
+              ))}
+            </ul>
+          )}
+          {report.missingEvidence.length > 0 && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Не удалось проверить: {report.missingEvidence.join('; ')}
+            </div>
+          )}
+          {report.droppedIssues > 0 && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              Отброшено замечаний без проверяемого таймкода: {report.droppedIssues}
+            </div>
+          )}
+        </>
+      )}
+      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+        Режим наблюдения: проверка не ставит и не снимает одобрение — решение за оператором.
+      </p>
     </div>
   );
 }

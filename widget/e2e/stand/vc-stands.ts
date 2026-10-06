@@ -14,7 +14,11 @@
  *  /vc/react/*    React 18 + React Router: контролируемые поля, кошик, заявка;
  *  /vc/vue/*      Vue 3 + Vue Router: `v-model`, фильтры, кошик, заявка;
  *  /vc/jquery/*   jQuery + плагин select (MPA): фильтр размера, кошик;
- *  /vc/mpa/*      чистый MPA из 5 страниц (кошик на сервере стенда).
+ *  /vc/mpa/*      чистый MPA из 5 страниц (кошик на сервере стенда);
+ *  /vc/shop/*     (Э6-тер (и)) магазин в духе WooCommerce: товар, кошик на
+ *                 сервере стенда, «В кошик»/«Видалити» AJAX, мини-кошик
+ *                 (`&mini=1`), кнопки «Видалити» без разметки (`&rx=0`);
+ *                 pk и разметка — и из cookie (страница отмены без query).
  * Разметка `data-assist-id` — `?m=1` (размеченные) или без неё (неразмеченные).
  * Что нажималось — `window.__stand` (клики с isTrusted) и сервер стенда
  * (`/vc/state?pk=`), запрещённые цели — отдельным списком (`danger`).
@@ -364,6 +368,69 @@ function mpaPage(o: PageOpts, page: string): string {
   return shell(o, names[page] || 'MPA', `${nav}<main>${main}</main>`, []);
 }
 
+// ── Э6-тер (и): магазин в духе WooCommerce (компенсации) ──────────────────
+
+/** Кошик магазина на сервере стенда: строка — товар и вариант. */
+const SHOP = new Map<string, Array<{ t: string; v: string }>>();
+const shopCart = (pk: string) => {
+  let c = SHOP.get(pk);
+  if (!c) SHOP.set(pk, (c = []));
+  return c;
+};
+
+interface ShopOpts extends PageOpts {
+  /** Мини-кошик на странице товара, «Кошик» шапки без разметки (`at` — эта страница). */
+  mini: boolean;
+  /** Кнопки «Видалити» без разметки `remove-from-cart`. */
+  rawRemove: boolean;
+}
+
+function shopRows(o: ShopOpts, tag: 'li' | 'tr'): string {
+  const rid =
+    o.marked && !o.rawRemove ? ' data-assist-id="remove-from-cart"' : '';
+  return shopCart(o.pk)
+    .map((x, i) =>
+      tag === 'tr'
+        ? `<tr class="cart_item"><td>${esc(x.t)}</td><td>Розмір: ${esc(x.v)}</td><td><a href="/vc/shop/cart?remove=${i}" class="remove" data-i="${i}"${rid}>Видалити</a></td></tr>`
+        : `<li class="mini-item">${esc(x.t)} — ${esc(x.v)} <button type="button" class="remove" data-i="${i}"${rid}>×</button></li>`
+    )
+    .join('');
+}
+
+function shopPage(o: ShopOpts, page: 'product' | 'cart'): string {
+  const n = shopCart(o.pk).length;
+  const cartId = o.mini ? '' : A(o, 'nav-cart');
+  const nav = `<header><nav><a id="s-home" href="/vc/shop/product">Магазин</a> <a id="s-cart" href="/vc/shop/cart"${cartId}>Кошик (<span id="s-n">${n}</span>)</a></nav></header>`;
+  if (page === 'cart')
+    return shell(
+      o,
+      'Кошик — Магазин',
+      `${nav}<main><h1>Кошик</h1><table id="s-table"><tbody>${shopRows(o, 'tr')}</tbody></table></main>`,
+      ['/vc/shop.js']
+    );
+  return shell(
+    o,
+    'Футболка синя — Магазин',
+    `${nav}<main><h1>Футболка синя</h1><p>Бавовна, 450 грн.</p>
+    <form id="s-form" class="cart"><label for="s-size">Розмір</label>
+    <select id="s-size" name="size"${A(o, 'size')}><option value="">Оберіть</option><option value="S">S</option><option value="M">M</option><option value="L">L</option></select>
+    <button id="s-add" type="button"${A(o, 'add-to-cart')}>В кошик</button></form>
+    <p><a id="s-request" href="/vc/shop/request">Залишити заявку</a></p>
+    ${o.mini ? `<aside id="s-mini"><h3>Мій кошик</h3><ul id="s-mini-list"${o.marked && !o.rawRemove ? ' data-rid="remove-from-cart"' : ''}>${shopRows(o, 'li')}</ul></aside>` : ''}</main>`,
+    ['/vc/shop.js']
+  );
+}
+
+/** AJAX «В кошик»/«Видалити» (как фрагменты WooCommerce), без HTML-приёмников. */
+const SHOP_JS = `(function(){
+function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b}).then(function(r){return r.json()})}
+var add=document.getElementById('s-add');
+if(add)add.addEventListener('click',function(){var s=document.getElementById('s-size');post('/vc/shop/add','v='+encodeURIComponent(s?s.value:'')).then(function(r){document.getElementById('s-n').textContent=String(r.n);window.__stand.cart.push(r.n);
+ var ul=document.getElementById('s-mini-list');if(ul){var li=document.createElement('li');li.className='mini-item';li.textContent='Футболка синя — '+(s?s.value:'')+' ';var b=document.createElement('button');b.type='button';b.className='remove';b.textContent='×';b.setAttribute('data-i',String(r.n-1));var rid=ul.getAttribute('data-rid');if(rid)b.setAttribute('data-assist-id',rid);li.appendChild(b);ul.appendChild(li)}})});
+document.addEventListener('click',function(e){var t=e.target;if(!t||!t.classList||!t.classList.contains('remove'))return;e.preventDefault();window.__stand.removes=(window.__stand.removes||0)+1;
+ var row=t.closest('tr,li');post('/vc/shop/remove','i='+t.getAttribute('data-i')+'&text='+encodeURIComponent(row?row.textContent:'')).then(function(r){if(row)row.remove();var n=document.getElementById('s-n');if(n)n.textContent=String(r.n)})});
+})();`;
+
 const STAND_CSS = `body{font-family:Georgia,serif;margin:0;padding:16px}nav a{margin-right:8px}section{margin:24px 0}
 #cookie-banner{position:fixed;left:0;bottom:0;width:60%;background:#333;color:#fff;padding:8px;z-index:10}
 .card{margin:6px 0}.nice-box{display:inline-block;border:1px solid #999;padding:2px 8px;margin-left:6px}`;
@@ -419,6 +486,7 @@ export async function vcStandRoute(
     '/vc/react.js': REACT_JS,
     '/vc/vue.js': VUE_JS,
     '/vc/jquery.js': JQUERY_JS,
+    '/vc/shop.js': SHOP_JS,
   };
   if (js[p]) return send(200, 'text/javascript; charset=utf-8', js[p]);
   if (p === '/vc/stand.css') return send(200, 'text/css', STAND_CSS);
@@ -427,7 +495,10 @@ export async function vcStandRoute(
     return send(
       200,
       'application/json',
-      JSON.stringify(STATE.get(pk) || { cart: [], submits: [], loads: {} })
+      JSON.stringify({
+        ...(STATE.get(pk) || { cart: [], submits: [], loads: {} }),
+        shop: SHOP.get(pk) || [],
+      })
     );
   const o: PageOpts = {
     pk,
@@ -469,5 +540,52 @@ export async function vcStandRoute(
   if (m) return html(jqueryPage(o, m[1]));
   m = /^\/vc\/mpa\/(home|catalog|delivery|contacts|cart)\/?$/.exec(p);
   if (m) return html(mpaPage(o, m[1]));
+  // Э6-тер (и): магазин — pk/разметка и из cookie (страница отмены без query).
+  if (p.startsWith('/vc/shop/')) {
+    const ck = new URLSearchParams(
+      (req.headers.cookie || '')
+        .split(/;\s*/)
+        .find((c) => c.startsWith('vcshop='))
+        ?.slice('vcshop='.length)
+        .replace(/!/g, '&') || ''
+    );
+    const so: ShopOpts = {
+      ...o,
+      pk: pk || ck.get('pk') || '',
+      marked: o.marked || (!pk && ck.get('m') === '1'),
+      mini: url.searchParams.get('mini') === '1',
+      rawRemove: (pk ? url.searchParams : ck).get('rx') === '0',
+    };
+    const cart = shopCart(so.pk);
+    const json = (b: unknown) =>
+      send(200, 'application/json', JSON.stringify(b));
+    if (req.method === 'POST' && p === '/vc/shop/add') {
+      const f = await readForm(req);
+      cart.push({ t: 'Футболка синя', v: f.v || '' });
+      return json({ n: cart.length });
+    }
+    if (req.method === 'POST' && p === '/vc/shop/remove') {
+      const f = await readForm(req);
+      const i = Number(f.i);
+      if (Number.isInteger(i) && cart[i]) cart.splice(i, 1);
+      return json({ n: cart.length });
+    }
+    const seed = url.searchParams.get('seed');
+    if (seed && !cart.length)
+      for (const x of seed.split(',')) {
+        const [t, v] = x.split(':');
+        cart.push({ t, v: v || '' });
+      }
+    m = /^\/vc\/shop\/(product|cart)\/?$/.exec(p);
+    if (m) {
+      const cookie = `vcshop=pk=${encodeURIComponent(so.pk)}!m=${so.marked ? 1 : 0}!rx=${so.rawRemove ? 0 : 1}; Path=/vc/shop`;
+      return send(
+        200,
+        'text/html; charset=utf-8',
+        shopPage(so, m[1] as 'product' | 'cart'),
+        pk ? { 'Set-Cookie': cookie } : {}
+      );
+    }
+  }
   send(404, 'text/plain', 'no');
 }

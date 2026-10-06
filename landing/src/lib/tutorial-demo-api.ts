@@ -1,10 +1,25 @@
 import type { Locale } from './i18n';
 
 const API_BASE_URL = (process.env.API_BASE_URL ?? 'http://localhost:3000/api').replace(/\/+$/, '');
-export type DemoScenario = 'ads' | 'greetings';
+export type DemoScenario = 'ads' | 'greetings' | 'siteTutorial';
+
+/**
+ * Слоты демо обучающего лендинга (`/site-tutorial`) — отдельное публичное
+ * семейство тем справки со своим барьером на бэкенде
+ * (`backend/src/modules/tutorial-help/site-tutorial-demo.ts`): только
+ * вычитанные ролики с НАШЕГО полигона, отмеченные оператором; ролики
+ * сайтов заказчиков (`client-site`) сюда не попадают никогда. Ключи —
+ * слоты, а не имена сценариев: какой сценарий в каком слоте, решает
+ * владелец (`doc/TUTORIAL-LANDING-DEMO-SCENARIO-DRAFT.md`). Число слотов
+ * совпадает с `SITE_TUTORIAL_DEMO_SLOTS` бэкенда — сверяет
+ * `scripts/site-tutorial-demo.test.ts`.
+ */
+export const SITE_TUTORIAL_DEMO_KEYS: readonly string[] = ['site-tutorial-demo-1', 'site-tutorial-demo-2', 'site-tutorial-demo-3'];
+
 const TOPICS: Record<DemoScenario, readonly string[]> = {
   ads: Array.from({ length: 10 }, (_, i) => String(i + 1)),
   greetings: ['greeting-brief', 'greeting-references', 'greeting-script', 'greeting-settings', 'greeting-video'],
+  siteTutorial: SITE_TUTORIAL_DEMO_KEYS,
 };
 
 export type DemoTheme = 'light' | 'dark';

@@ -342,7 +342,13 @@ describe('статус цепочки и возврат (§5-бис.15 п.6, п.
       st({ kind: 'fill', undo: 'local', state: 'done', fx: true }),
       st({ undo: 'irrev', state: 'done', fx: true }),
     ]);
-    expect(c).toEqual({ fields: [], manual: [], refused: 'after_pnr' });
+    expect(c).toEqual({
+      fields: [],
+      manual: [],
+      comp: [],
+      order: [],
+      refused: 'after_pnr',
+    });
   });
   it('итог возврата: все следы — compensated; часть — partially; непроверяемо — unknown', () => {
     const steps = [

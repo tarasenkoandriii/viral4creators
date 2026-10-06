@@ -72,7 +72,13 @@ export const MEMO_LANGS: readonly MemoLang[] = ['uk', 'ru', 'en'];
 export interface MemoStepView {
   page: string;
   action: string;
-  target: { text: string; role: string | null; assistId: string | null } | null;
+  target: {
+    text: string;
+    role: string | null;
+    assistId: string | null;
+    /** Ключ цели голосовой карты (причина `voice_map` — найти шаг). */
+    mapKey: string | null;
+  } | null;
   value: { slot: string } | { const: string } | null;
 }
 
@@ -113,6 +119,10 @@ export interface MemoSummary {
   reached30: number;
   lastRunAt: string | null;
   reviewCode: string | null;
+  /** Шаг причины `needs_review` (с 0) — монитор сбоев/подмены. */
+  reviewStep: number | null;
+  /** Цель карты причины `voice_map`. */
+  reviewKey: string | null;
   /**
    * Опубликовано, но сверх лимита тарифа (после понижения): посетителям не
    * исполняется — бейдж «сверх тарифа».
@@ -193,6 +203,86 @@ export type MemoOp =
   | { op: 'listed'; value: boolean }
   | { op: 'key'; value: string };
 
+/**
+ * Элемент карты интерфейса Ш4 страницы шага (`GET …/memos/:n/elements`):
+ * подпись (маска ПД), действие, которое получит шаг, пометки. Отпечаток
+ * строит сервер — TMA шлёт только `uiElementId`.
+ */
+export interface MemoElement {
+  uiElementId: string;
+  path: string;
+  viewport: 'any' | 'desktop' | 'mobile';
+  label: string;
+  tag: string;
+  role: string | null;
+  action: string;
+  stability: 'strong' | 'medium' | 'fragile' | null;
+  stale: boolean;
+}
+
+export interface MemoElements {
+  page: string;
+  view: 'any' | 'desktop' | 'mobile';
+  items: MemoElement[];
+}
+
+/** Причины отсева фраз модели (сервер `PhraseDropCode`). */
+export const MEMO_PHRASE_DROPS = [
+  'text',
+  'service_word',
+  'own',
+  'duplicate',
+  'phrase_conflict',
+  'name_taken',
+  'overflow',
+] as const;
+export type MemoPhraseDrop = (typeof MEMO_PHRASE_DROPS)[number];
+
+export interface MemoPhraseSuggestResult {
+  memo: MemoDetail | null;
+  langs: MemoLang[];
+  kept: Partial<Record<MemoLang, number>>;
+  dropped: Partial<Record<MemoPhraseDrop, number>>;
+}
+
+/**
+ * «Открыть в редакторе» из карточки мемо: `focus=memo-<номер>-<шаг с 1>`
+ * (формат панели редактора). Шаг — причины `needs_review` (монитор — шаг с
+ * 0, +1; карта — шаг с этой целью), иначе первый. Страница — страница шага,
+ * если это путь, а не маска (маску браузер не откроет).
+ */
+export function memoEditorFocus(
+  d: Pick<
+    MemoDetail,
+    'number' | 'status' | 'reviewStep' | 'reviewKey' | 'draft'
+  >
+): { focus: string; path?: string } {
+  let step = 0;
+  if (d.status === 'needs_review') {
+    if (
+      d.reviewStep !== null &&
+      d.reviewStep >= 0 &&
+      d.reviewStep < Math.max(1, d.draft.steps.length)
+    )
+      step = d.reviewStep;
+    else if (d.reviewKey) {
+      const i = d.draft.steps.findIndex(
+        (s) => s.target?.mapKey === d.reviewKey
+      );
+      if (i >= 0) step = i;
+    }
+  }
+  const page = d.draft.steps[step]?.page ?? '';
+  const path =
+    /^\/[A-Za-z0-9\-._~%!$&'()+,;=:@/]*$/.test(page) && page.length <= 300
+      ? page
+      : undefined;
+  return {
+    focus: `memo-${d.number}-${Math.min(step + 1, 99)}`,
+    ...(path ? { path } : {}),
+  };
+}
+
 const num = (v: unknown): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : 0;
 const iso = (v: unknown): string | null =>
@@ -262,6 +352,17 @@ export function parseMemoSummary(v: unknown): MemoSummary | null {
     reached30: num(o.reached30),
     lastRunAt: iso(o.lastRunAt),
     reviewCode: typeof rr.code === 'string' ? rr.code.slice(0, 30) : null,
+    reviewStep:
+      typeof rr.step === 'number' &&
+      Number.isInteger(rr.step) &&
+      rr.step >= 0 &&
+      rr.step < 100
+        ? rr.step
+        : null,
+    reviewKey:
+      typeof rr.key === 'string' && /^[a-z0-9-]{1,40}$/.test(rr.key)
+        ? rr.key
+        : null,
     overPlan: o.overPlan === true,
   };
 }
@@ -324,6 +425,10 @@ function parseDraft(v: unknown): MemoDraftView {
                 text: text(t.text),
                 role: typeof t.role === 'string' ? t.role : null,
                 assistId: typeof t.assistId === 'string' ? t.assistId : null,
+                mapKey:
+                  typeof obj(s.target).mapKey === 'string'
+                    ? (obj(s.target).mapKey as string).slice(0, 40)
+                    : null,
               }
             : null,
           value: val
@@ -394,6 +499,58 @@ export function parseMemoList(v: unknown): MemoList {
   };
 }
 
+const ELEMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function parseMemoElements(v: unknown): MemoElements {
+  const o = obj(v);
+  return {
+    page: text(o.page).slice(0, 300),
+    view: viewOf(o.view),
+    items: arr(o.items)
+      .map(obj)
+      .filter(
+        (e) =>
+          typeof e.uiElementId === 'string' && ELEMENT_ID.test(e.uiElementId)
+      )
+      .map((e) => ({
+        uiElementId: e.uiElementId as string,
+        path: text(e.path).slice(0, 300),
+        viewport: viewOf(e.viewport),
+        label: text(e.label).slice(0, 80),
+        tag: text(e.tag).slice(0, 10),
+        role: typeof e.role === 'string' ? e.role.slice(0, 20) : null,
+        action: text(e.action).slice(0, 10),
+        stability: oneOf(['strong', 'medium', 'fragile'] as const, e.stability),
+        stale: e.stale === true,
+      }))
+      .slice(0, 150),
+  };
+}
+
+export function parsePhraseSuggest(v: unknown): MemoPhraseSuggestResult {
+  const o = obj(v);
+  const r = obj(o.report);
+  const kept = obj(r.kept);
+  const dropped = obj(r.dropped);
+  return {
+    memo: parseMemoDetail(o.memo),
+    langs: arr(r.langs).filter((l): l is MemoLang =>
+      (MEMO_LANGS as readonly unknown[]).includes(l)
+    ),
+    kept: Object.fromEntries(
+      MEMO_LANGS.filter((l) => typeof kept[l] === 'number').map((l) => [
+        l,
+        num(kept[l]),
+      ])
+    ),
+    dropped: Object.fromEntries(
+      MEMO_PHRASE_DROPS.filter((c) => typeof dropped[c] === 'number').map(
+        (c) => [c, num(dropped[c])]
+      )
+    ),
+  };
+}
+
 export interface MemoApi {
   list(siteId: string): Promise<MemoList>;
   create(
@@ -421,6 +578,30 @@ export interface MemoApi {
   stats(siteId: string, n: number, days: 7 | 30): Promise<MemoStats>;
   suggestions(siteId: string): Promise<MemoSuggestion[]>;
   fromSuggestion(siteId: string, planId: string): Promise<MemoDetail | null>;
+  /** Элементы Ш4 страницы шага (`step` с 0) или страницы `page`. */
+  elements(
+    siteId: string,
+    n: number,
+    q: { step?: number; page?: string }
+  ): Promise<MemoElements>;
+  /** «Добавить шаг» / «заменить цель» выбором элемента Ш4. */
+  applyElement(
+    siteId: string,
+    n: number,
+    body: {
+      expectedRevision: number;
+      uiElementId: string;
+      mode: 'add' | 'replace';
+      index?: number;
+      page?: string;
+    }
+  ): Promise<MemoDetail | null>;
+  /** 3–5 фраз запуска на язык сайта — в «Запропоновано» (бюджет обучения). */
+  suggestPhrases(
+    siteId: string,
+    n: number,
+    expectedRevision: number
+  ): Promise<MemoPhraseSuggestResult>;
 }
 
 const SEG = /^[A-Za-z0-9_-]{1,64}$/;
@@ -520,6 +701,28 @@ export function createMemoApi(client: ApiClient): MemoApi {
           visitors: num(s.visitors),
           phrases: strs(s.phrases, 120).slice(0, 5),
         })),
+    elements: async (id, x, q) => {
+      const p = new URLSearchParams();
+      if (q.step !== undefined && Number.isInteger(q.step) && q.step >= 0)
+        p.set('step', String(q.step));
+      else if (q.page) p.set('page', q.page.slice(0, 300));
+      const qs = p.toString();
+      return parseMemoElements(
+        await client.request('GET', `${m(id, x)}/elements${qs ? `?${qs}` : ''}`)
+      );
+    },
+    applyElement: async (id, x, body) => {
+      if (!ELEMENT_ID.test(body.uiElementId)) throw new Error('bad id');
+      return parseMemoDetail(
+        await client.request('POST', `${m(id, x)}/steps/element`, body)
+      );
+    },
+    suggestPhrases: async (id, x, expectedRevision) =>
+      parsePhraseSuggest(
+        await client.request('POST', `${m(id, x)}/suggest-phrases`, {
+          expectedRevision,
+        })
+      ),
     fromSuggestion: async (id, planId) =>
       parseMemoDetail(
         await client.request(

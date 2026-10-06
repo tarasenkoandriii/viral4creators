@@ -390,4 +390,39 @@ describe('(д) метрики цепочек (§5-бис.15 п.12)', () => {
     expect(d.codes).toContain('undo_low');
     expect(d.action).not.toBe('degrade');
   });
+
+  it('(Э6-тер (и)) отметка «компенсация начата» (`dispatched`) — не попытка: успешность считается по итогам', () => {
+    const plans: MonitorPlanRow[] = Array.from({ length: 10 }, (_, i) => ({
+      id: `c${i}`,
+      visitorId: `v${i}`,
+      status: 'failed',
+      confirmedBy: 'button',
+      createdAt: at(0),
+      release: null,
+      steps: [{ risk: 'auto', state: 'done', undo: 'comp', fx: true }],
+      chainStatus: 'compensated',
+    }));
+    const logs: MonitorLogRow[] = plans.flatMap((p) => [
+      {
+        planId: p.id,
+        stepIndex: 0,
+        action: 'undo',
+        result: 'dispatched',
+        reason: 'comp',
+        createdAt: at(1000),
+      },
+      {
+        planId: p.id,
+        stepIndex: 0,
+        action: 'undo',
+        result: 'done',
+        reason: null,
+        createdAt: at(2000),
+      },
+    ]);
+    const m = computeMetrics(plans, logs);
+    expect(m.undoAttempts).toBe(10);
+    expect(m.undoDone).toBe(10);
+    expect(decideSite(m, 'on').codes).not.toContain('undo_low');
+  });
 });

@@ -17,6 +17,8 @@ import {
   frameSizes,
   hasRealFrames,
 } from '../../../lib/tutorial-frames';
+import { TutorialDemoGallery } from '../../../components/TutorialDemoGallery';
+import { siteTutorialDemoFromEnv } from '../../../lib/site-tutorial-demo';
 
 /**
  * Посадочная страница третьего типа проекта — обучающего видео по сайту
@@ -126,6 +128,12 @@ export default function SiteTutorialLandingPage({
   const ctaHref = browserEntryLink('site-tutorial', TMA_URL);
   /** Сняты ли для этой локали настоящие кадры — см. `lib/tutorial-frames.ts`. */
   const realFrames = hasRealFrames(locale);
+  /**
+   * Галерея демо обучающего лендинга — за флагом и выключена по
+   * умолчанию (`lib/site-tutorial-demo.ts`): сценарий демонстрации ждёт
+   * согласования владельца. Выключено — ни секции, ни запроса в API.
+   */
+  const demoGallery = siteTutorialDemoFromEnv();
 
   return (
     <>
@@ -258,6 +266,22 @@ export default function SiteTutorialLandingPage({
             </ol>
           </div>
         </section>
+
+        {/* Демо обучающего лендинга — СВОИ ролики (слоты
+            `site-tutorial-demo-*`), а не рекламные шаги главной: снятые на
+            нашем полигоне и отмеченные оператором, роликов сайтов
+            заказчиков здесь не бывает (барьер — на бэкенде). Схемы выше
+            остаются как есть; пока роликов нет, секция честно говорит
+            «скоро» и ведёт к ним. */}
+        {demoGallery ? (
+          <TutorialDemoGallery
+            scenario="siteTutorial"
+            locale={locale}
+            dict={dict}
+            texts={t.demo}
+            note={t.demo.note}
+          />
+        ) : null}
 
         <section className="compare" id="compare">
           <div className="wrap">

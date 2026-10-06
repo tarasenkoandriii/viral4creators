@@ -24,6 +24,7 @@
 import { uiMapHost } from '../site-core/ui-map/ui-map';
 import {
   allowedAfterPnr,
+  compFor,
   provisionalUndo,
   undoClass,
   worseUndo,
@@ -46,12 +47,13 @@ import {
   valueSaid,
 } from './normalize';
 import { withGoalExtras } from './memo-goal';
-import { pathMatches } from './rules';
+import { pathMatches, zoneAllowed } from './rules';
 import { ASSIST_ID_RE, SNAP_REF_RE, cleanText } from './snapshot';
 import {
   UI_RISKS,
   UI_ROLES,
   UI_STEP_KINDS,
+  type UiComp,
   type UiExpect,
   type UiGesture,
   type UiPin,
@@ -118,10 +120,22 @@ export interface PlanCheckInput {
    * синонимы владельца засчитываются как совпадение «цель ↔ команда»
    * (§5-кватер.8 п.5), риск карты — только НИЖНЯЯ граница (Р-51).
    */
-  mapHints?: ReadonlyMap<
-    string,
-    { key: string; names: readonly string[]; floor: UiRisk }
-  >;
+  mapHints?: ReadonlyMap<string, MapHint>;
+  /**
+   * (Э6-тер (и)) Ставить шагам `comp` объявленную компенсацию (§5-бис.15
+   * п.6): режим «Сайт». «Админка» кликами серверное не компенсирует
+   * (п.3 п.3) — флаг не передаёт.
+   */
+  compensations?: boolean;
+}
+
+/** Подсказка голосовой карты для элемента снимка. */
+export interface MapHint {
+  key: string;
+  names: readonly string[];
+  floor: UiRisk;
+  /** (Э6-тер (и)) «Как отменить» цели карты — объявленная пара владельца. */
+  undo?: { assistId: string; at: string | null } | null;
 }
 
 export interface CheckedPlan {
@@ -546,6 +560,40 @@ function afterFacts(a: AfterTarget): TargetFacts {
   };
 }
 
+/**
+ * (Э6-тер (и)) Компенсация клика по цели снимка: пара — объявленная
+ * (`hint.undo`) или встроенная стандартной разметки; страница отмены —
+ * объявленная или адрес ссылки стандартной разметки ЭТОГО снимка на
+ * подтверждённом хосте (`nav-cart`); страница вне разрешённых зон или под
+ * запретом — компенсации нет («уберите сами»).
+ */
+function compOfStep(
+  kind: UiStepKind,
+  facts: TargetFacts,
+  hint: MapHint | null,
+  snapshot: UiSnapshot,
+  hosts: string[],
+  rules: VoiceControlRules,
+): UiComp | null {
+  if (kind !== 'click' || facts.submit) return null;
+  const c = compFor({
+    facts: {
+      assistId: facts.assistId,
+      heading: facts.heading,
+      text: facts.text,
+    },
+    declared: hint?.undo ?? null,
+    navPath: (navId) => {
+      const links = snapshot.elements.filter(
+        (e) => e.assistId === navId && !!e.href && onSiteHost(e.href, hosts),
+      );
+      return links.length ? hrefPath(links[0].href) : null;
+    },
+  });
+  if (c && c.at !== null && !zoneAllowed(c.at, rules)) return null;
+  return c;
+}
+
 function targetOf(
   ref: string,
   f: TargetFacts,
@@ -750,10 +798,15 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
       });
       continue;
     }
+    // (Э6-тер (и)) Объявленная компенсация — кодом, по разметке/карте.
+    const comp =
+      p.compensations && !after
+        ? compOfStep(kind, facts, hint, p.snapshot, p.hosts, p.rules)
+        : null;
     // Класс обратимости — КОДОМ (поле `undo` ответа модели не читается).
     const undo: UiUndo = after
       ? provisionalUndo(kind, after)
-      : undoClass(kind, facts, j.nav);
+      : undoClass(kind, facts, j.nav, comp?.src === 'map');
     // Необратимый шаг — всегда не ниже «с подтверждением» (§5-бис.15 п.3 п.4).
     let risk = raise(j.risk, modelRisk);
     if (undo === 'irrev') risk = raise(risk, 'confirm');
@@ -802,6 +855,7 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
       undo,
       ...(p.pins?.[rawIndex] ? { pin: p.pins[rawIndex] } : {}),
       ...(hint ? { mapKey: hint.key } : {}),
+      ...(comp && undo === 'comp' && executable ? { comp } : {}),
     };
     if (executable && undo === 'irrev' && pnr === null) pnr = out.length;
     from.push(rawIndex);
@@ -862,6 +916,8 @@ export function resolveAfterSteps(p: {
    * `checkPlan`: риск карты — нижняя граница и после перехода (Р-51).
    */
   mapHints?: PlanCheckInput['mapHints'];
+  /** (Э6-тер (и)) Как в `checkPlan`: компенсации шагам `comp` («Сайт»). */
+  compensations?: boolean;
 }): {
   steps: UiPlanStep[];
   needsConfirm: boolean;
@@ -920,8 +976,14 @@ export function resolveAfterSteps(p: {
     );
     if (j.risk === null)
       return { steps, needsConfirm, unresolved: k, reason: 'no_target' };
+    const comp = p.compensations
+      ? compOfStep(s.kind, facts, hint, p.snapshot, p.hosts, p.rules)
+      : null;
     // Класс обратимости по настоящей цели — только ухудшение (§5-бис.15 п.3).
-    const undo = worseUndo(s.undo ?? 'irrev', undoClass(s.kind, facts, j.nav));
+    const undo = worseUndo(
+      s.undo ?? 'irrev',
+      undoClass(s.kind, facts, j.nav, comp?.src === 'map'),
+    );
     let risk = raise(j.risk, s.risk);
     if (undo === 'irrev') risk = raise(risk, 'confirm');
     if (hint) risk = raise(risk, hint.floor);
@@ -934,8 +996,9 @@ export function resolveAfterSteps(p: {
     )
       return { steps, needsConfirm, unresolved: k, reason: 'second_pnr' };
     if (risk === 'confirm' && s.risk !== 'confirm') needsConfirm = true;
+    const { comp: _prev, ...rest } = s;
     steps[k] = {
-      ...s,
+      ...rest,
       target: targetOf(el.ref, facts, null),
       risk,
       reason:
@@ -945,6 +1008,7 @@ export function resolveAfterSteps(p: {
       nav: j.nav,
       undo,
       ...(hint ? { mapKey: hint.key } : {}),
+      ...(comp && undo === 'comp' && executable ? { comp } : {}),
     };
     if (risk === 'manual' || risk === 'never') {
       steps.length = k + 1;

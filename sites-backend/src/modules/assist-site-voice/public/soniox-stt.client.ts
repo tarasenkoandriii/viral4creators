@@ -39,6 +39,12 @@ export interface SiteSttRequest {
   mimeType: string;
   /** Языки сайта по порядку (персона): подсказка, не ограничение. */
   languageHints: readonly string[];
+  /**
+   * `context.terms` — имена и фразы опубликованных мемо и карты сайта
+   * (`stt-terms.ts`; отбор и потолки — `assist-ui-core/stt-terms.ts`).
+   * Только в тело запроса провайдеру — не в лог.
+   */
+  terms?: readonly string[];
 }
 
 export interface SiteSttResult {
@@ -145,6 +151,7 @@ export class SiteSonioxStt {
           body: JSON.stringify(
             sonioxTranscriptionBody(fileId, {
               languageHints: req.languageHints,
+              terms: req.terms ?? [],
             }),
           ),
         },

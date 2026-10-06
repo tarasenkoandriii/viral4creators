@@ -1422,6 +1422,90 @@ export interface TutorialVideoAssetRow {
   assemblyError: string | null;
   assemblyJobId: string | null;
   assemblyStartedAt: string | null;
+  /** 'light' | 'dark' — тема интерфейса на съёмке; null — не записана. */
+  theme?: string | null;
+  capturedAt?: string | null;
+  captureBuild?: string | null;
+  activeVersionId?: string | null;
+}
+
+// ── Проверка качества демо через Gemini (06.10.2026,
+// doc/TUTORIAL-DEMO-QUALITY-SPEC.md; backend/src/modules/tutorial-quality) ──
+// Фаза наблюдения: отчёт и сигнал оператору, одобрение не меняется.
+
+export type DemoQualityStatus = 'pending' | 'running' | 'complete' | 'error';
+export type DemoQualityPhase = 'upload' | 'wait' | 'analyze';
+export type DemoQualityVerdict = 'ok' | 'warn' | 'fail';
+export type DemoQualitySeverity = 'critical' | 'major' | 'minor';
+
+export interface DemoQualityIssue {
+  category: string;
+  severity: DemoQualitySeverity;
+  startMs: number;
+  endMs: number;
+  explanation: string;
+  confidence: number;
+  source: 'model' | 'server' | 'preflight';
+}
+
+export type DemoQualityCheckResult = 'match' | 'mismatch' | 'unknown' | 'not_applicable';
+
+export interface DemoQualityReport {
+  rubricVersion: string;
+  summary: string;
+  scores: { readability: number; stepMatch: number; pacing: number; consistency: number } | null;
+  issues: DemoQualityIssue[];
+  missingEvidence: string[];
+  theme: { expected: string | null; observed: string; result: DemoQualityCheckResult };
+  language: { expected: string; speech: string; captions: string; result: DemoQualityCheckResult };
+  freshness: 'current' | 'stale_candidate' | 'unknown';
+  invalid: string | null;
+  droppedIssues: number;
+}
+
+export interface DemoQualityCheck {
+  id: string;
+  assetId: string;
+  versionId: string | null;
+  trigger: string;
+  status: DemoQualityStatus;
+  phase: DemoQualityPhase;
+  verdict: DemoQualityVerdict | null;
+  attempts: number;
+  nextAttemptAt: string | null;
+  error: string | null;
+  report: DemoQualityReport | null;
+  preflight: { ok: boolean; problems: string[]; durationMs: number } | null;
+  costMicroUsd: number | null;
+  unpriced: boolean;
+  modelId: string;
+  rubricVersion: string;
+  reusedFromId: string | null;
+  durationMs: number | null;
+  theme: string | null;
+  locale: string;
+  captureBuild: string | null;
+  captureMode: string | null;
+  createdAt: string;
+  checkedAt: string | null;
+}
+
+export interface DemoQualityLatest {
+  enabled: boolean;
+  checks: Record<string, DemoQualityCheck>;
+}
+
+export interface DemoQualityEnqueueResult {
+  check: DemoQualityCheck;
+  created: boolean;
+  reason: 'already-queued' | 'already-checked' | 'retry' | null;
+}
+
+export interface DemoQualityApprovedResult {
+  queued: number;
+  skipped: number;
+  remaining: number;
+  cap: number;
 }
 
 // ── Темп обучалок в постпродакшене (06.10.2026,

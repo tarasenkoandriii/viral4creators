@@ -202,6 +202,8 @@ import {
   selectSweepableAssets,
 } from './tutorial-video-retention';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
+import { TutorialDemoQualityService } from '../tutorial-quality/demo-quality.service';
+import { TICK_BUDGET_MS as DEMO_QUALITY_TICK_BUDGET_MS } from '../tutorial-quality/demo-quality-queue';
 import {
   attachFixtureToken,
   fixtureApiOrigin,
@@ -579,6 +581,12 @@ export interface TutorialScenarioRunResult {
  */
 const ASSEMBLY_POLL_LOCK = 'tutorial-assembly-poll';
 
+/** Весь тик опроса сборок должен уложиться в функцию Vercel (300 с) с
+ *  запасом; проверке качества демо достаётся остаток, но не больше
+ *  её собственного потолка. */
+const ASSEMBLY_TICK_TOTAL_MS = 240_000;
+const QUALITY_TICK_BUDGET_MS = DEMO_QUALITY_TICK_BUDGET_MS;
+
 /**
  * Сколько раз пробовать собрать ОДНО И ТО ЖЕ содержимое, прежде чем
  * перестать (сквозной аудит 29.09.2026).
@@ -648,6 +656,11 @@ export interface TutorialAssemblyPollResult {
    *  числом: до сквозного аудита 29.09.2026 провал сборки нигде, кроме
    *  логов функции и цветного бейджа, не проявлялся. */
   failed?: number;
+  /** Проверка качества демо (06.10.2026): сколько проверок взято в
+   *  работу за тик и сколько из них завершено. Нет полей — проверка
+   *  выключена или модуля нет. */
+  qualityProcessed?: number;
+  qualityCompleted?: number;
 }
 
 /**
@@ -744,6 +757,10 @@ export class TutorialScenarioRunnerService {
     // же кроне, перенос исходников при `complete`, уборка версий вместе
     // с роликом. Необязателен — стенды и тесты без модуля темпа.
     @Optional() private readonly versions?: TutorialVideoVersionsService,
+    // Проверка качества демо через Gemini (06.10.2026): очередь в этом
+    // же тике и под этим же замком. Необязательна — стенды и тесты без
+    // модуля качества работают как раньше.
+    @Optional() private readonly quality?: TutorialDemoQualityService,
   ) {}
 
   /**
@@ -3041,6 +3058,7 @@ export class TutorialScenarioRunnerService {
       return { skipped: 'предыдущий опрос ещё не завершился', polled: 0 };
     }
     this.failedThisTick = 0;
+    const tickStartedAt = Date.now();
     try {
       // Счётчик — ПОСЛЕ опроса и по факту: сколько строк осталось
       // висеть. Прежняя редакция считала до опроса, и в журнале после
@@ -3083,7 +3101,30 @@ export class TutorialScenarioRunnerService {
         );
       }
       const failed = this.failedThisTick;
-      return { polled, pending, abandoned, swept, failed };
+      // Проверка качества демо — ПОСЛЕДНЕЙ и ограниченным куском: опрос
+      // сборок уже сделан, очередь получает остаток бюджета функции, но
+      // не больше своего потолка (`TICK_BUDGET_MS`). Никогда не бросает.
+      const quality = this.quality
+        ? await this.quality.processQueue({
+            budgetMs: Math.min(
+              QUALITY_TICK_BUDGET_MS,
+              ASSEMBLY_TICK_TOTAL_MS - (Date.now() - tickStartedAt),
+            ),
+          })
+        : null;
+      return {
+        polled,
+        pending,
+        abandoned,
+        swept,
+        failed,
+        ...(quality && !quality.skipped
+          ? {
+              qualityProcessed: quality.processed,
+              qualityCompleted: quality.completed,
+            }
+          : {}),
+      };
     } finally {
       await releaseJobLock(this.prisma, ASSEMBLY_POLL_LOCK, acquired);
     }
@@ -3460,6 +3501,9 @@ export class TutorialScenarioRunnerService {
       return;
     }
 
+    // Байты собранного ролика — для ключа дедупликации проверки качества
+    // (sha содержимого), чтобы не скачивать его второй раз.
+    let assembledBytes: Buffer | null = null;
     try {
       const bytes = await this.downloadBytes(url);
       // Пустой или обрезанный ответ — НЕ готовый ролик (сквозной аудит
@@ -3526,6 +3570,7 @@ export class TutorialScenarioRunnerService {
       this.logger.log(
         `сценарий ${asset.subjectKey}: слайд-шоу собрано (${bytes.length} байт)`,
       );
+      assembledBytes = bytes;
     } catch (err) {
       // Задача у сервиса УДАЛАСЬ — сбой у нас, на скачивании или в
       // Blob. В счёт попыток содержимого не идёт.
@@ -3641,6 +3686,14 @@ export class TutorialScenarioRunnerService {
     // не бросает: сбой сети не делает собранный ролик несобранным.
     if (asset.clientSiteDraftId && this.siteMedia) {
       await this.siteMedia.syncForDraft(asset.clientSiteDraftId);
+    }
+
+    // Проверка качества демо (06.10.2026): новый собранный ролик — в
+    // очередь Gemini. Только демо продукта: обучалки по сайту заказчика
+    // одобряются на своей вкладке. Никогда не бросает — ошибка
+    // постановки не меняет статус успешной сборки.
+    if (!asset.clientSiteDraftId && this.quality && assembledBytes) {
+      await this.quality.enqueueAssembled(asset.id, assembledBytes);
     }
   }
 

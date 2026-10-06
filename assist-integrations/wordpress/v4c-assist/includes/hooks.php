@@ -65,13 +65,28 @@ function v4c_assist_render_footer()
 // ── Э6-бис: разметка data-assist-id для голосового управления ─────────
 
 add_filter('woocommerce_loop_add_to_cart_args', 'v4c_assist_filter_loop_add_to_cart', 20, 1);
+add_filter('woocommerce_cart_item_remove_link', 'v4c_assist_filter_cart_remove_link', 20, 1);
 add_filter('get_search_form', 'v4c_assist_filter_search_form', 20, 1);
 add_filter('nav_menu_link_attributes', 'v4c_assist_filter_menu_link', 20, 1);
 add_action('wp_footer', 'v4c_assist_render_assist_ids', 30);
 
+/** Э6-тер (и): путь корзины WooCommerce этого сайта (страница отмены «В кошик»). */
+function v4c_assist_site_cart_path()
+{
+    if (!function_exists('wc_get_cart_url')) {
+        return null;
+    }
+    return v4c_assist_cart_path(wc_get_cart_url(), (string) parse_url(home_url('/'), PHP_URL_HOST));
+}
+
 function v4c_assist_filter_loop_add_to_cart($args)
 {
-    return v4c_assist_settings()['assist_ids'] ? v4c_assist_loop_add_to_cart_args($args) : $args;
+    return v4c_assist_settings()['assist_ids'] ? v4c_assist_loop_add_to_cart_args($args, v4c_assist_site_cart_path()) : $args;
+}
+
+function v4c_assist_filter_cart_remove_link($html)
+{
+    return v4c_assist_settings()['assist_ids'] ? v4c_assist_cart_item_remove_link($html) : $html;
 }
 
 function v4c_assist_filter_search_form($html)
@@ -85,7 +100,7 @@ function v4c_assist_filter_menu_link($atts)
         return $atts;
     }
     $host = (string) parse_url(home_url('/'), PHP_URL_HOST);
-    return v4c_assist_menu_link_attrs($atts, $host);
+    return v4c_assist_menu_link_attrs($atts, $host, v4c_assist_site_cart_path());
 }
 
 function v4c_assist_render_assist_ids()
@@ -93,7 +108,7 @@ function v4c_assist_render_assist_ids()
     if (is_admin() || !v4c_assist_settings()['assist_ids'] || !function_exists('is_woocommerce')) {
         return;
     }
-    $script = v4c_assist_assist_ids_script();
+    $script = v4c_assist_assist_ids_script(v4c_assist_site_cart_path());
     if (function_exists('wp_print_inline_script_tag')) {
         wp_print_inline_script_tag($script);
     } else {
@@ -226,7 +241,7 @@ function v4c_assist_settings_page()
     }
     $row(__('Положение кнопки', 'v4c-assist'), $pos . '</select>');
     $row(__('Не показывать на страницах (маска в строке, например /checkout*)', 'v4c-assist'), '<textarea class="large-text" rows="3" name="' . esc_attr($name) . '[hide_on]">' . esc_textarea(implode("\n", $s['hide_on'])) . '</textarea>');
-    $row(__('Разметка для голосового управления', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[assist_ids]" value="1"' . checked($s['assist_ids'], true, false) . '> ' . esc_html__('data-assist-id на кнопках «В корзину», поиске и меню (помощник находит их надёжнее)', 'v4c-assist') . '</label><input type="hidden" name="' . esc_attr($name) . '[assist_ids_present]" value="1">');
+    $row(__('Разметка для голосового управления', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[assist_ids]" value="1"' . checked($s['assist_ids'], true, false) . '> ' . esc_html__('data-assist-id на кнопках «В корзину», «Удалить» в корзине, поиске и меню (помощник находит их надёжнее и может убрать добавленное из корзины)', 'v4c-assist') . '</label><input type="hidden" name="' . esc_attr($name) . '[assist_ids_present]" value="1">');
     $row(__('Узнавать вошедших покупателей', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[identify]" value="1"' . checked($s['identify'], true, false) . '> ' . esc_html__('имя, e-mail и проверенный id покупателя (userHash)', 'v4c-assist') . '</label>');
     $row(__('Секрет идентичности', 'v4c-assist'), '<input type="password" autocomplete="new-password" class="regular-text" name="' . esc_attr($name) . '[identity_secret]" placeholder="' . esc_attr($has(V4C_ASSIST_OPTION_IDENTITY_SECRET) ? __('сохранён — оставьте пустым, чтобы не менять', 'v4c-assist') : '') . '">');
     $row(__('Заказы WooCommerce — целями', 'v4c-assist'), '<label><input type="checkbox" name="' . esc_attr($name) . '[order_goals]" value="1"' . checked($s['order_goals'], true, false) . '> completed / refunded / cancelled</label>');

@@ -58,6 +58,7 @@ function freshPrisma() {
     auctionListing: { aggregate: jest.fn().mockResolvedValue(emptyAgg) },
     blogPost: { aggregate: jest.fn().mockResolvedValue(emptyAgg) },
     clientSiteTutorialDraft: { findMany: jest.fn().mockResolvedValue([]) },
+    tutorialDemoQualityCheck: { findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 
@@ -109,6 +110,9 @@ describe('GET /api/admin/attention (e2e)', () => {
     await app.init();
   });
   afterAll(() => app.close());
+  afterEach(() => {
+    delete process.env.TUTORIAL_DEMO_QUALITY_ENABLED;
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     prisma = freshPrisma();
@@ -140,6 +144,7 @@ describe('GET /api/admin/attention (e2e)', () => {
     expect(adminCron.getSummary).not.toHaveBeenCalled();
     expect(demoStatus.get).not.toHaveBeenCalled();
     expect(prisma.clientSiteTutorialDraft.findMany).not.toHaveBeenCalled();
+    expect(prisma.tutorialDemoQualityCheck.findMany).not.toHaveBeenCalled();
   });
 
   it('оператор, всё пусто — 200, форма ответа, no-store, качество «не настроено»', async () => {
@@ -368,5 +373,79 @@ describe('GET /api/admin/attention (e2e)', () => {
     const [missing] = res.body.data.items;
     expect(missing.kind).toBe('demo-missing');
     expect(missing.count).toBe(2);
+  });
+  describe('проверка качества демо', () => {
+    const check = (over: Record<string, unknown>) => ({
+      assetId: 'a1',
+      status: 'complete',
+      verdict: 'fail',
+      checkedAt: ago(2 * HOUR),
+      updatedAt: ago(2 * HOUR),
+      report: { summary: 'пустой кадр', issues: [{}, {}] },
+      asset: { subjectKey: '3', locale: 'ru', theme: 'dark' },
+      ...over,
+    });
+
+    it('включена — источник ok; fail — решение, warn — к сведению, ссылки на ролик', async () => {
+      process.env.TUTORIAL_DEMO_QUALITY_ENABLED = '1';
+      prisma.tutorialDemoQualityCheck.findMany.mockResolvedValue([
+        check({}),
+        // Более старая проверка того же ролика — не вторая карточка.
+        check({ verdict: 'warn', checkedAt: ago(9 * HOUR) }),
+        check({
+          assetId: 'a2',
+          verdict: 'warn',
+          asset: { subjectKey: '4', locale: 'en', theme: 'light' },
+        }),
+        check({ assetId: 'a3', verdict: 'ok' }),
+        check({ assetId: 'a4', status: 'pending', verdict: null }),
+      ]);
+      const res = await asOperator().expect(200);
+      const data = res.body.data;
+      const quality = data.sources.find(
+        (s: { key: string }) => s.key === 'quality',
+      );
+      expect(quality.status).toBe('ok');
+      expect(
+        data.items.map((i: { id: string; severity: string }) => [
+          i.id,
+          i.severity,
+        ]),
+      ).toEqual([
+        ['demo-quality-fail:a1', 'decision'],
+        ['demo-quality-warn:a2', 'info'],
+      ]);
+      expect(data.items[0].href).toBe(
+        '/assistant?tab=videos&subjectKey=3&locale=ru&quality=a1',
+      );
+      // Только ролики демо, не обучалки по сайтам заказчиков.
+      const where =
+        prisma.tutorialDemoQualityCheck.findMany.mock.calls[0][0].where;
+      expect(where).toEqual({ asset: { clientSiteDraftId: null } });
+    });
+
+    it('выключена — «не настроено», но записанный вердикт виден', async () => {
+      prisma.tutorialDemoQualityCheck.findMany.mockResolvedValue([check({})]);
+      const res = await asOperator().expect(200);
+      const quality = res.body.data.sources.find(
+        (s: { key: string }) => s.key === 'quality',
+      );
+      expect(quality.status).toBe('not_configured');
+      expect(res.body.data.items.map((i: { id: string }) => i.id)).toEqual([
+        'demo-quality-fail:a1',
+      ]);
+    });
+
+    it('отказ источника качества — «не удалось проверить», не зелёный ноль', async () => {
+      process.env.TUTORIAL_DEMO_QUALITY_ENABLED = '1';
+      prisma.tutorialDemoQualityCheck.findMany.mockRejectedValue(
+        new Error('relation does not exist'),
+      );
+      const res = await asOperator().expect(200);
+      const quality = res.body.data.sources.find(
+        (s: { key: string }) => s.key === 'quality',
+      );
+      expect(quality.status).toBe('error');
+    });
   });
 });

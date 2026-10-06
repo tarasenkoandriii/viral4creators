@@ -71,6 +71,9 @@ import type {
   TutorialTempoEstimate,
   TutorialVersionRow,
   TutorialVideoAssetRow,
+  DemoQualityLatest,
+  DemoQualityEnqueueResult,
+  DemoQualityApprovedResult,
   TutorialScenarioListResult,
   TutorialScenarioRow,
   FixtureSeedResult,
@@ -1004,6 +1007,27 @@ export function approveTutorialVersion(id: string, versionId: string) {
 
 export function revertTutorialTempo(id: string) {
   return apiPost<TutorialVersionRow>(`/admin/tutorial-video-assets/${id}/revert`);
+}
+
+// ── Проверка качества демо через Gemini (06.10.2026,
+// backend/src/modules/tutorial-quality/demo-quality-admin.controller.ts).
+// Кнопки только ставят проверку в очередь крона сборок. ──
+
+export function getDemoQualityChecks(assetIds: string[]) {
+  return apiGet<DemoQualityLatest>('/admin/tutorial-demo-quality', {
+    assetIds: assetIds.join(','),
+  });
+}
+
+export function requestDemoQualityCheck(assetId: string, versionId?: string) {
+  return apiPost<DemoQualityEnqueueResult>(
+    `/admin/tutorial-demo-quality/assets/${assetId}/check`,
+    versionId ? { versionId } : {},
+  );
+}
+
+export function requestDemoQualityApproved() {
+  return apiPost<DemoQualityApprovedResult>('/admin/tutorial-demo-quality/approved/check');
 }
 
 // ── Маркетплейс исполнителей — Этап 0 (backend/src/modules/creator-profile, ТЗ §20 №19) ──

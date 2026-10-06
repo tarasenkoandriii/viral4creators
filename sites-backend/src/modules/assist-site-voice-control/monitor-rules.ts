@@ -192,6 +192,9 @@ export function computeMetrics(
       if (r.action !== 'undo') continue;
       if (r.result === 'proposed') m.undoAccepted++;
       else if (r.reason === 'keep') m.undoKept++;
+      // (Э6-тер (и)) Отметка «компенсация начата» — не попытка: итог придёт
+      // отдельной строкой (или `unknown` после перезагрузки).
+      else if (r.result === 'dispatched') continue;
       else {
         m.undoAttempts++;
         if (r.result === 'done') m.undoDone++;

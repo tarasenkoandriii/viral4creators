@@ -62,6 +62,19 @@ export const STANDARD_UNDO_PAIRS: Readonly<Record<string, string>> = {
   'add-to-compare': 'remove-from-compare',
 };
 
+/**
+ * (Э6-тер (и)) Где искать обратную цель встроенной пары, если владелец не
+ * указал страницу («Как отменить» → `at`): адрес ссылки стандартной
+ * разметки этой страницы (`nav-cart` — «Кошик» шапки, его ставит плагин
+ * WordPress). Нет такой ссылки в снимке — обратная цель ищется на той же
+ * странице (мини-корзина). Адрес — только путь того же подтверждённого хоста.
+ */
+export const STANDARD_UNDO_PAGES: Readonly<Record<string, string>> = {
+  'remove-from-cart': 'nav-cart',
+  'remove-from-wishlist': 'nav-wishlist',
+  'remove-from-compare': 'nav-compare',
+};
+
 export const MEMO_DECISIONS = {
   /** В-70 → Р-68: вызов мемо по номеру («М-3») — в «Сайте» нет, в TMA/редакторе — да. */
   numberCallOnSite: false,

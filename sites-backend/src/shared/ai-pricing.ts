@@ -226,6 +226,12 @@ export type AiOperation =
   // валидатор принимал любой ключ отсюда, и каждая новая строка отчёта
   // молча расширяла словарь модели.
   | 'tutorial-voiceover'
+  // Проверка качества готового демо обучалки через Gemini
+  // (doc/TUTORIAL-DEMO-QUALITY-SPEC.md, 06.10.2026) — отдельно от
+  // 'audit': тот судит ролик пользователя по сессии и стоит из его
+  // потолка, этот — наше демо в кроне сборок, со своим суточным
+  // потолком (`TUTORIAL_DEMO_QUALITY_DAILY_USD`).
+  | 'tutorial-demo-quality'
   // ИИ-оценка видео и (опционально) брендбука для аукциона (ТЗ на
   // маркетплейс §22, Этап 3) — отдельно от 'audit'/'analysis': та
   // операция разбирает СЕССИЮ генерации по sessionId, эта — уже готовое
@@ -352,6 +358,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'tutorial-scenario-generate': 'Генерация сценария обучающего видео',
   'tutorial-video-assembly': 'Сборка обучающего видео (ffmpeg)',
   'tutorial-voiceover': 'Озвучка обучающего видео',
+  'tutorial-demo-quality': 'Проверка качества демо обучалки',
   'auction-assessment': 'ИИ-оценка лота аукциона',
   watermark: 'Водяной знак на превью',
   'greeting-prompt': 'Сценарий ролика-поздравления',

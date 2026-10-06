@@ -35,6 +35,9 @@
  *  - `markupFragment` — готовый фрагмент разметки для разработчика сайта.
  */
 import { actionKindsFor, ADD_TO_CART_ID, paymentPath } from './action-words';
+import { compFor, compPairSafe, compRemoves, compRow } from './chain';
+import { STANDARD_UNDO_PAIRS } from './decisions';
+import { zoneAllowed } from './rules';
 import { assistIdWords, normText } from './normalize';
 import {
   checkPlan,
@@ -528,7 +531,9 @@ export type WizardItemCode =
   | 'unnamed_elements'
   | 'closed_shadow'
   | 'ext_iframes'
-  | 'duplicates';
+  | 'duplicates'
+  /** (Э6-тер (и)) Обратная цель компенсации не разрешима (§5-бис.15 п.6, п.16). */
+  | 'undo_unresolved';
 
 export interface WizardItem {
   step: 1 | 2 | 3 | 4 | 5 | 6;
@@ -549,6 +554,8 @@ export interface WizardVerdictInput {
   dry: WizardDryRun[];
   safe: WizardSafeRun[];
   forbidden: ForbiddenProbeResult[];
+  /** (Э6-тер (и)) Проверка обратных целей компенсаций на странице. */
+  undo?: UndoTargetsCheck;
 }
 
 export interface WizardVerdict {
@@ -611,6 +618,13 @@ export function wizardVerdict(v: WizardVerdictInput): WizardVerdict {
   if (v.markup.extIframes) warn(3, 'ext_iframes', { n: v.markup.extIframes });
   if (v.markup.duplicates.length)
     warn(3, 'duplicates', { n: v.markup.duplicates.length });
+  // (Э6-тер (и)) Обратные цели компенсаций — подсказка (итог не меняет):
+  // без них «Вернуть» после сбоя — «уберите сами».
+  if (v.undo && v.undo.unresolved.length)
+    warn(3, 'undo_unresolved', {
+      n: v.undo.unresolved.length,
+      of: v.undo.pairs,
+    });
   if (!unreviewed) items.push({ step: 3, level: 'ok', code: 'ok' });
 
   // 4. Сухой прогон: ≥ 3 шагов «верно» из (до) 5.
@@ -833,4 +847,100 @@ export function neverViolation(
   // `add-to-cart` снимает только «Купити» (как в проверках плана).
   if (j.risk === 'never') return j.reason ?? 'danger';
   return null;
+}
+
+// ── Э6-тер (и): обратные цели компенсаций (§5-бис.15 п.6, п.16) ─────────
+
+export type UndoTargetProblem =
+  /** Обратная цель из стоп-листа (оплата, оформление…) или страница отмены не годится. */
+  | 'unsafe'
+  /** «Удалить строку» без описания строки товара (нет заголовка карточки). */
+  | 'no_row'
+  /** Страница отмены вне разрешённых зон / под запретом кабинета. */
+  | 'zone'
+  /** Страница отмены не известна, а на этой странице обратной цели нет. */
+  | 'no_reverse';
+
+export interface UndoTargetsCheck {
+  /** Целей с объявленной парой на странице. */
+  pairs: number;
+  unresolved: Array<{
+    text: string;
+    reverse: string;
+    problem: UndoTargetProblem;
+  }>;
+}
+
+/**
+ * Мастер Т-2 проверяет разрешимость обратных целей (§5-бис.15 п.16): для
+ * каждой цели снимка с объявленной парой (стандартная разметка или «Как
+ * отменить» карты — `declared` по ссылке элемента) — тем же кодом, что
+ * ставит компенсацию в бою (`compFor`): пара безопасна, есть описание
+ * строки, страница отмены разрешена, а без неё — обратная цель есть на
+ * этой странице. Цели других страниц не проверяются (проверю на месте).
+ */
+export function undoTargetsCheck(p: {
+  snapshot: UiSnapshot;
+  hosts: string[];
+  rules: VoiceControlRules;
+  declared?: ReadonlyMap<string, { assistId: string; at: string | null }>;
+}): UndoTargetsCheck {
+  const out: UndoTargetsCheck = { pairs: 0, unresolved: [] };
+  const navPath = (navId: string) => {
+    const e = p.snapshot.elements.find(
+      (x) => x.assistId === navId && !!x.href && onSiteHost(x.href, p.hosts),
+    );
+    if (!e?.href) return null;
+    try {
+      return new URL(e.href).pathname;
+    } catch {
+      return null;
+    }
+  };
+  for (const e of p.snapshot.elements) {
+    const declared = p.declared?.get(e.ref) ?? null;
+    const std = e.assistId ? (STANDARD_UNDO_PAIRS[e.assistId] ?? null) : null;
+    const reverse = declared?.assistId ?? std;
+    if (!reverse || e.submit) continue;
+    out.pairs++;
+    const bad = (problem: UndoTargetProblem) =>
+      out.unresolved.push({
+        text: e.text || e.assistId || '',
+        reverse,
+        problem,
+      });
+    const kinds = actionKindsFor(
+      `${e.text} ${assistIdWords(e.assistId)}`,
+      e.heading,
+    );
+    const sub =
+      kinds.includes('подписка') && !kinds.includes('платная подписка');
+    if (!compPairSafe(reverse, sub)) {
+      bad('unsafe');
+      continue;
+    }
+    if (compRemoves(reverse) && !compRow(e.heading)) {
+      bad('no_row');
+      continue;
+    }
+    const c = compFor({
+      facts: { assistId: e.assistId, heading: e.heading, text: e.text },
+      declared,
+      navPath,
+    });
+    if (!c) {
+      bad('unsafe');
+      continue;
+    }
+    if (c.at !== null && !zoneAllowed(c.at, p.rules)) {
+      bad('zone');
+      continue;
+    }
+    if (
+      c.at === null &&
+      !p.snapshot.elements.some((x) => x.assistId === reverse)
+    )
+      bad('no_reverse');
+  }
+  return out;
 }

@@ -88,6 +88,12 @@ export const MARK_SYMBOL: Record<UiMark, string> = {
 export const OFFER_TIMEOUT_MS = 60_000;
 /** Ответ загрузчика о возврате полей — не дольше (чанк undo.js не загрузился). */
 const UNDO_TIMEOUT_MS = 5_000;
+/**
+ * (Э6-тер (и)) Ответ загрузчика о компенсации: подсветка 0,6 с + проверка
+ * результата до ~4,3 с + загрузка чанков. Нет ответа — `unknown`
+ * («проверьте сами»): действие могло произойти — повтора нет.
+ */
+const COMP_TIMEOUT_MS = 12_000;
 /** (Э6-тер (к)) Проверка цели: чанк ждёт счётчик до 4 с + загрузка чанка. */
 const GOAL_TIMEOUT_MS = 6_000;
 
@@ -240,11 +246,67 @@ export function parsePlanView(v: unknown): PlanView | null {
   };
 }
 
-/** (д) Ответ маршрута возврата (`/undo`). */
+/** (д) Ответ маршрута возврата (`/undo`, `/undo-report`). */
 interface UndoView {
   fields: Array<{ i: number; text: string }>;
   manual: Array<{ i: number; text: string }>;
+  /** (Э6-тер (и)) Следующая компенсация (одна за раз). */
+  comp: CompView | null;
+  chainStatus: string | null;
   refused: string | null;
+}
+
+/**
+ * (Э6-тер (и)) Компенсация от сервера: обратная цель по разметке, страница
+ * отмены, строка и варианты товара, исключения стоп-листа для ЭТОЙ
+ * разметки; `dispatched` — отметка «начат» записана, можно нажимать.
+ */
+export interface CompView {
+  i: number;
+  text: string;
+  row: string | null;
+  assistId: string;
+  at: string | null;
+  variant: string[];
+  allow: Array<'remove' | 'unsubscribe'>;
+  dispatched: boolean;
+}
+
+const ASSIST_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+const COMP_AT =
+  /^\/[A-Za-z0-9\-._~%!$&'()*+,;=:@][A-Za-z0-9\-._~%!$&'()*+,;=:@/]*$|^\/$/;
+
+export function parseCompView(v: unknown): CompView | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const i = o.i;
+  if (
+    typeof i !== 'number' ||
+    !Number.isInteger(i) ||
+    i < 0 ||
+    i > 20 ||
+    typeof o.assistId !== 'string' ||
+    !ASSIST_ID.test(o.assistId) ||
+    (o.at !== null &&
+      (typeof o.at !== 'string' || o.at.length > 200 || !COMP_AT.test(o.at))) ||
+    (o.row !== null && (typeof o.row !== 'string' || o.row.length > 80))
+  )
+    return null;
+  return {
+    i,
+    text: typeof o.text === 'string' ? o.text.slice(0, 81) : '',
+    row: o.row as string | null,
+    assistId: o.assistId,
+    at: o.at as string | null,
+    variant: (Array.isArray(o.variant) ? o.variant : [])
+      .filter((x): x is string => typeof x === 'string' && x.length <= 40)
+      .slice(0, 2),
+    allow: (Array.isArray(o.allow) ? o.allow : []).filter(
+      (x): x is 'remove' | 'unsubscribe' =>
+        x === 'remove' || x === 'unsubscribe'
+    ),
+    dispatched: o.dispatched === true,
+  };
 }
 
 function parseUndoView(v: unknown): UndoView | null {
@@ -264,12 +326,20 @@ function parseUndoView(v: unknown): UndoView | null {
   return {
     fields: list(o.fields),
     manual: list(o.manual),
+    comp: parseCompView(o.comp),
+    chainStatus:
+      typeof o.chainStatus === 'string' && /^[a-z_]{1,24}$/.test(o.chainStatus)
+        ? o.chainStatus
+        : null,
     refused:
       typeof o.refused === 'string' && /^[a-z_]{1,20}$/.test(o.refused)
         ? o.refused
         : null,
   };
 }
+
+/** Итог возврата у загрузчика (поле или компенсация) — по номеру шага. */
+type UndoResult = 'done' | 'failed' | 'unknown' | 'gone';
 
 export interface UiPlanHost {
   ui(): UiPlanUi;
@@ -326,11 +396,12 @@ export class UiPlanController {
     timer: ReturnType<typeof setTimeout>;
     resolve: (ok: boolean) => void;
   } | null = null;
-  /** (д) Ждём итог возврата полей от загрузчика. */
+  /** (д) Ждём итог возврата полей/компенсации от загрузчика. */
   private undoWait: {
     planId: string;
-    fields: Array<{ i: number; text: string }>;
+    idx: number[];
     timer: ReturnType<typeof setTimeout>;
+    resolve: (r: Array<{ i: number; result: UndoResult }>) => void;
   } | null = null;
 
   constructor(private readonly host: UiPlanHost) {}
@@ -724,7 +795,17 @@ export class UiPlanController {
     >
   ) {
     if (m.type === 'ui-undone') {
-      void this.undoDone(m.planId, m.results);
+      const w = this.undoWait;
+      // Только ожидаемым шагам своего плана; чужие — мимо.
+      if (
+        w &&
+        w.planId === m.planId &&
+        m.results.every((r) => w.idx.indexOf(r.i) >= 0)
+      ) {
+        clearTimeout(w.timer);
+        this.undoWait = null;
+        w.resolve(m.results);
+      }
       return;
     }
     if (m.type === 'ui-goal') {
@@ -982,9 +1063,10 @@ export class UiPlanController {
   }
 
   /**
-   * Возврат: сервер говорит, ЧТО можно вернуть (поля этой страницы —
-   * номерами шагов, серверное — «уберите сами»), загрузчик возвращает поля
-   * из памяти страницы и присылает итог `ui-undone`.
+   * Возврат: сервер говорит, ЧТО можно вернуть — по одной работе в
+   * обратном порядке: пачка полей (загрузчик возвращает их из памяти
+   * страницы и присылает итог `ui-undone`) или (Э6-тер (и)) одна
+   * компенсация объявленной пары. Без пары — «уберите сами».
    */
   private async undoRun(planId: string, by: 'offer' | 'command') {
     const t = this.host.t();
@@ -1018,43 +1100,156 @@ export class UiPlanController {
         'assistant',
         fmt(t.vcManualUndo, { t: u.manual.map((x) => x.text).join('», «') })
       );
-    if (!u.fields.length) return;
-    if (this.undoWait) clearTimeout(this.undoWait.timer);
-    this.undoWait = {
-      planId,
-      fields: u.fields,
-      timer: setTimeout(() => {
-        // Загрузчик не ответил (чанк не загрузился/страница сменилась) —
-        // вернуть поля не можем: так и скажем и запишем итог.
-        const w = this.undoWait;
-        if (!w || w.planId !== planId) return;
-        void this.undoDone(
-          planId,
-          w.fields.map((f) => ({ i: f.i, result: 'gone' as const }))
+    // Дальше — по ответам загрузчика (кнопка/голос не ждут исполнения).
+    void this.undoLoop(planId, u, false);
+  }
+
+  /** (Э6-тер (и)) Отчёт возврата: итог, «начат» компенсации, «что дальше». */
+  private async undoReport(
+    planId: string,
+    body: Record<string, unknown>
+  ): Promise<UndoView | null> {
+    try {
+      return parseUndoView(
+        await this.host.api(
+          'POST',
+          `/widget/v1/ui-plan/${planId}/undo-report`,
+          body
+        )
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Работа возврата по очереди сервера: поля — разом; компенсация — переход
+   * на страницу отмены (если она другая), отметка `dispatched` на сервере,
+   * затем загрузчик (`comp.js`) и итог. `nav` — мы на странице отмены после
+   * перехода (загрузчик снимет флаг «план идёт»).
+   */
+  private async undoLoop(planId: string, first: UndoView, nav: boolean) {
+    const t = this.host.t();
+    let u: UndoView | null = first;
+    for (let guard = 0; u && guard < 8; guard++) {
+      const c: CompView | null = u.comp;
+      if (c) {
+        const name = c.row || c.text;
+        if (!c.dispatched && c.at) {
+          const here = pathOfUrl(this.host.pageUrl());
+          if (here === null || !samePath(here, c.at)) {
+            const key = `${planId}:${c.i}`;
+            // Уже переходили, а страница всё не та (редирект) — не ходим по кругу.
+            if (this.host.storage('session', 'compgo') !== key) {
+              this.host.storage('session', 'comp', planId);
+              this.host.storage('session', 'compgo', key);
+              this.host.feed('assistant', fmt(t.vcCompGo, { t: name }));
+              this.host.toParent(compMessage(planId, { go: c.at }));
+              return;
+            }
+            u = await this.undoReport(planId, { dispatch: c.i });
+            u =
+              u && u.comp && u.comp.dispatched
+                ? await this.undoReport(planId, {
+                    results: [{ i: c.i, result: 'gone' }],
+                  })
+                : null;
+            this.host.feed('assistant', fmt(t.vcCompFailed, { t: name }));
+            continue;
+          }
+        }
+        if (!c.dispatched) {
+          // Отметка «начат» ДО действия (один раз): нет записи — нет клика.
+          const d = await this.undoReport(planId, { dispatch: c.i });
+          if (!d || !d.comp || !d.comp.dispatched || d.comp.i !== c.i) {
+            this.host.feed('assistant', t.vcUndoUnknown);
+            break;
+          }
+        }
+        const cfg = this.host.cfg();
+        const result = (
+          await this.waitUndone(
+            planId,
+            [c.i],
+            compMessage(planId, {
+              i: c.i,
+              id: c.assistId,
+              row: c.row,
+              variant: c.variant,
+              allow: c.allow,
+              deny: cfg ? cfg.denySelectors : [],
+              zones: cfg ? cfg.allowSelectors : [],
+              nav: nav ? 1 : 0,
+            }),
+            COMP_TIMEOUT_MS,
+            'unknown'
+          )
+        )[0].result;
+        this.host.feed(
+          'assistant',
+          fmt(
+            result === 'done'
+              ? t.vcCompDone
+              : result === 'unknown'
+                ? t.vcCompUnknown
+                : t.vcCompFailed,
+            { t: name }
+          )
         );
-      }, UNDO_TIMEOUT_MS),
-    };
-    this.host.toParent({
-      type: 'ui-undo',
-      planId,
-      idx: u.fields.map((f) => f.i),
+        u = await this.undoReport(planId, { results: [{ i: c.i, result }] });
+        continue;
+      }
+      if (!u.fields.length) break;
+      const fields = u.fields;
+      const results = await this.waitUndone(
+        planId,
+        fields.map((f) => f.i),
+        { type: 'ui-undo', planId, idx: fields.map((f) => f.i) },
+        UNDO_TIMEOUT_MS,
+        'gone'
+      );
+      this.fieldLines(fields, results);
+      u = await this.undoReport(planId, { results });
+    }
+    this.host.storage('session', 'comp', null);
+    this.host.storage('session', 'compgo', null);
+  }
+
+  /** Команда загрузчику и ожидание `ui-undone` по этим шагам (иначе — `miss`). */
+  private waitUndone(
+    planId: string,
+    idx: number[],
+    msg: FrameMessage,
+    ms: number,
+    miss: UndoResult
+  ): Promise<Array<{ i: number; result: UndoResult }>> {
+    return new Promise((resolve) => {
+      if (this.undoWait) {
+        clearTimeout(this.undoWait.timer);
+        this.undoWait.resolve(
+          this.undoWait.idx.map((i) => ({ i, result: miss }))
+        );
+      }
+      const timer = setTimeout(() => {
+        // Загрузчик не ответил (чанк не загрузился/страница сменилась).
+        const w = this.undoWait;
+        if (!w || w.timer !== timer) return;
+        this.undoWait = null;
+        resolve(idx.map((i) => ({ i, result: miss })));
+      }, ms);
+      this.undoWait = { planId, idx, timer, resolve };
+      this.host.toParent(msg);
     });
   }
 
-  private async undoDone(
-    planId: string,
-    results: Array<{
-      i: number;
-      result: 'done' | 'failed' | 'unknown' | 'gone';
-    }>
+  /** Тексты итога возврата полей (без слов «откатил/отменил»). */
+  private fieldLines(
+    fields: Array<{ i: number; text: string }>,
+    results: Array<{ i: number; result: UndoResult }>
   ) {
-    const w = this.undoWait;
-    if (!w || w.planId !== planId) return;
-    clearTimeout(w.timer);
-    this.undoWait = null;
     const t = this.host.t();
     const text = (i: number) =>
-      (w.fields.find((f) => f.i === i) || { text: '' }).text;
+      (fields.find((f) => f.i === i) || { text: '' }).text;
     const lines: string[] = [];
     if (results.some((r) => r.result === 'gone')) lines.push(t.vcFieldsGone);
     for (const r of results) {
@@ -1065,13 +1260,25 @@ export class UiPlanController {
         lines.push(fmt(t.vcSelf, { t: text(r.i) }));
     }
     if (lines.length) this.host.feed('assistant', lines.join(' '));
-    try {
-      await this.host.api('POST', `/widget/v1/ui-plan/${planId}/undo-report`, {
-        results,
-      });
-    } catch {
-      /* журнал — справочно */
+  }
+
+  /**
+   * (Э6-тер (и)) На странице отмены после перехода: та же вкладка
+   * (sessionStorage iframe) — компенсация продолжается (`next`), сервер
+   * помнит, что уже сделано; окно — как у отчёта (10 мин + 60 с).
+   */
+  async undoResume(): Promise<boolean> {
+    const planId = this.host.storage('session', 'comp');
+    if (!planId || !/^[A-Za-z0-9_-]{1,64}$/.test(planId)) return false;
+    const u = await this.undoReport(planId, { next: true });
+    if (!u) {
+      this.host.storage('session', 'comp', null);
+      this.host.storage('session', 'compgo', null);
+      this.host.feed('assistant', this.host.t().vcUndoUnknown);
+      return true;
     }
+    void this.undoLoop(planId, u, true);
+    return true;
   }
 
   /**
@@ -1221,6 +1428,8 @@ export class UiPlanController {
    */
   async resume() {
     if (!this.available()) return;
+    // (Э6-тер (и)) Перешли на страницу отмены — продолжаем компенсацию.
+    if (await this.undoResume()) return;
     const mine = this.host.storage('session', 'plan');
     let v: PlanView | null = null;
     try {
@@ -1337,4 +1546,19 @@ function samePath(path: string, want: string): boolean {
   return want.endsWith('*')
     ? n(path).indexOf(n(want.slice(0, -1))) === 0
     : n(path) === n(want);
+}
+
+/**
+ * (Э6-тер (и)) `ui-undo` с полем `comp` — загрузчик отдаёт команду сырой
+ * (act.js → undo.js → comp.js разбирает строго): форма протокола
+ * (`shared/protocol.ts`) не меняется.
+ */
+function compMessage(
+  planId: string,
+  comp: Record<string, unknown>
+): FrameMessage {
+  const m: Extract<FrameMessage, { type: 'ui-undo' }> & {
+    comp: Record<string, unknown>;
+  } = { type: 'ui-undo', planId, idx: [], comp };
+  return m;
 }

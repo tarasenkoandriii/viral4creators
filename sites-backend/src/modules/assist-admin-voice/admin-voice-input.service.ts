@@ -21,6 +21,7 @@ import {
   issueAdminVoiceTicket,
   sniffAdminAudio,
 } from './admin-stt';
+import { adminSttTerms } from './admin-stt-terms';
 import { adminVoiceError } from './admin-voice-errors';
 import { AdminVoiceSettingsService } from './admin-voice-settings.service';
 import { AdminUiPlanService, type AdminVcCtx } from './admin-ui-plan.service';
@@ -78,10 +79,15 @@ export class AdminVoiceInputService {
       }
       // Деньги — до провайдера (суточный потолок «Админки» сайта).
       await this.chat.assertDailyBudget(this.plans.employee(s), now);
+      // Подсказки распознаванию — только мемо «Админки» этого сайта.
       const r = await this.stt.transcribe({
         audio,
         mimeType: mime,
         languageHints: ['uk', 'ru', 'en'],
+        terms: await adminSttTerms(this.sitesDb, {
+          accountId: s.accountId,
+          siteId: s.siteId,
+        }),
       });
       if (r.billable) {
         await this.usage

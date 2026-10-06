@@ -123,6 +123,11 @@ const uk = {
   vcFieldUnknown: 'Не знаю, чи повернулося поле «{t}» — перевірте.',
   vcFieldsGone: 'Поля на попередній сторінці повернути не можу.',
   vcManualUndo: 'Приберіть самі: «{t}» — серверну дію помічник не повертає.',
+  // Э6-тер (и): компенсація оголошеної пари — кажемо, ЩО зроблено (§5-бис.15 п.10).
+  vcCompGo: 'Відкриваю сторінку, де можна прибрати «{t}»…',
+  vcCompDone: 'Прибрав «{t}» — перевірте, будь ласка.',
+  vcCompUnknown: 'Не знаю, чи прибралося «{t}», — перевірте самі.',
+  vcCompFailed: 'Не зміг прибрати «{t}» — приберіть самі.',
   vcUnknownPnr: 'Не знаю, чи відправилося — перевірте пошту або сторінку.',
   vcAfterPnr: 'Форму вже відправлено — повернути не можу.',
   vcUndoNothing: 'Повертати нічого.',
@@ -283,6 +288,10 @@ const ru: Dict = {
   vcFieldsGone: 'Поля на прежней странице вернуть не могу.',
   vcManualUndo:
     'Уберите сами: «{t}» — серверное действие помощник не возвращает.',
+  vcCompGo: 'Открываю страницу, где можно убрать «{t}»…',
+  vcCompDone: 'Убрал «{t}» — проверьте, пожалуйста.',
+  vcCompUnknown: 'Не знаю, убралось ли «{t}», — проверьте сами.',
+  vcCompFailed: 'Не смог убрать «{t}» — уберите сами.',
   vcUnknownPnr: 'Не знаю, отправилось ли — проверьте почту или страницу.',
   vcAfterPnr: 'Форма уже отправлена — вернуть не могу.',
   vcUndoNothing: 'Возвращать нечего.',
@@ -439,6 +448,10 @@ const en: Dict = {
   vcFieldsGone: 'I cannot restore fields on the previous page.',
   vcManualUndo:
     'Please remove it yourself: “{t}” — the assistant does not reverse server actions.',
+  vcCompGo: 'Opening the page where “{t}” can be removed…',
+  vcCompDone: 'Removed “{t}” — please check.',
+  vcCompUnknown: 'Not sure whether “{t}” was removed — please check yourself.',
+  vcCompFailed: 'Could not remove “{t}” — please remove it yourself.',
   vcUnknownPnr:
     'Not sure whether it was sent — please check your email or the page.',
   vcAfterPnr: 'The form has already been sent — I cannot put it back.',
