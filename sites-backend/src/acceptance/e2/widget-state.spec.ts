@@ -27,6 +27,11 @@ import {
   type WidgetFixture,
   type WidgetStack,
 } from '../../modules/assist-widget/testing/widget-stack.testing';
+import { awaitHourHeadroom, awaitMinuteHeadroom } from '../window-headroom';
+
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию;
+// ожидание запаса до конца окна лимита (../window-headroom) — до 20 с.
+jest.setTimeout(60_000);
 
 /** Свой адрес (IPv6 /64) у каждого вызова: окна лимитов в базе живут между прогонами. */
 function freshIp(): string {
@@ -155,6 +160,8 @@ describeDb('Состояние, чат и forget виджета по HTTP (W2: �
   it('частота: 10 сообщений в минуту на посетителя, 11-е — RATE_LIMITED до конвейера', async () => {
     const f = await widgetFixture(stack, [{ host: domain() }]);
     const token = await visitor(f);
+    // Окно — минута по часам: серия на смене минуты делится между окнами.
+    await awaitMinuteHeadroom();
     for (let i = 0; i < WIDGET_DEFAULTS.messagesPerVisitorPerMinute; i++) {
       await chatJson(token, {}).expect(200);
     }
@@ -508,6 +515,8 @@ describeDb('Состояние, чат и forget виджета по HTTP (W2: �
       pageUrl: null,
     };
     const before = stack.leads.inputs.length;
+    // Окно — час по часам: серия на смене часа делится между окнами.
+    await awaitHourHeadroom();
     for (let i = 0; i < WIDGET_DEFAULTS.leadsPerVisitorPerHour; i++) {
       await authed('post', '/widget/v1/lead', v).send(body).expect(200);
     }

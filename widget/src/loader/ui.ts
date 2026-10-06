@@ -100,6 +100,16 @@ export class WidgetUi {
     this.view = opts.view;
     this.host = N.el('div');
     this.host.setAttribute('data-v4c', '');
+    // Стили страницы не ломают хост (аудит 06.10): `body>div{z-index:1;
+    // position:relative}` запер бы z-index окна в контекст наложения,
+    // transform/filter/contain делают хост containing block для fixed-кнопки.
+    // Inline `!important` сильнее любых правил страницы (display — visible()).
+    for (const d of 'position:static;transform:none;filter:none;contain:none;opacity:1'.split(
+      ';'
+    )) {
+      const [k, v] = d.split(':');
+      this.host.style.setProperty(k, v, 'important');
+    }
     const sr = N.shadow(this.host);
     try {
       const sheet = new CSSStyleSheet();
@@ -244,10 +254,9 @@ export class WidgetUi {
 
   /** Скрыть/показать целиком (hide/show API, маски путей, unavailable). */
   visible(on: boolean) {
-    this.host.style.setProperty(
-      'display',
-      on ? (this.opts.inline ? 'block' : '') : 'none'
-    );
+    // `!important`: `div:empty{display:none}` страницы (хост без детей в
+    // light DOM — :empty) не прячет кнопку.
+    this.host.style.setProperty('display', on ? 'block' : 'none', 'important');
   }
 
   setHideOnScroll(hidden: boolean) {
@@ -320,16 +329,16 @@ export class WidgetUi {
       Math.ceil(
         pos.indexOf('bottom') === 0 ? r.bottom - o.top : o.bottom - r.top
       ) + 12;
-    if (
-      need + r.height + 2 * r.height < window.innerHeight / 2 &&
-      !at(pos, need)
-    )
-      return null;
+    // Сдвиг помещается (ниже середины экрана)? Полноэкранный fixed-слой
+    // (обёртка SPA, модалка) даёт need ≈ высота экрана — такой сдвиг увёл
+    // бы кнопку за верх экрана (аудит 06.10): тогда остаёмся в углу.
+    const fits = need + 3 * r.height < innerHeight / 2;
+    if (fits && !at(pos, need)) return null;
     const other = pos.replace(/right|left/, (m) =>
       m === 'right' ? 'left' : 'right'
     );
     if (!at(other, 0)) return other;
-    at(pos, need);
+    at(pos, fits ? need : 0);
     return null;
   }
 

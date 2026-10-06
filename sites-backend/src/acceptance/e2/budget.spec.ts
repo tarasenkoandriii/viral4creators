@@ -162,9 +162,14 @@ describeDb('Приёмка Э2 п.5 — бюджет и квота (budget)', ()
       est + est2,
     );
     const after = new Date(t0.getTime() + WIDGET_DEFAULTS.reservationTtlMs + 1);
+    // Только резервы СВОЕГО сайта: sweep без siteId «в 2030 году» снял бы
+    // живые резервы всех файлов, идущих параллельно на той же базе (так
+    // падал e5/voice.spec «потолок голоса атомарный»). Общий крон без
+    // siteId проверяет тест «крон assist-budget-sweep» ниже — по настоящим
+    // часам, где снимаются только действительно просроченные резервы.
     const [a, b] = await Promise.all([
-      st.budget.sweep(st.owner, after),
-      st.budget.sweep(st.owner, after),
+      st.budget.sweep(st.owner, after, s.siteId),
+      st.budget.sweep(st.owner, after, s.siteId),
     ]);
     expect(a + b).toBeGreaterThanOrEqual(1);
     const mine = await st.owner.assistBudgetReservation.count({
@@ -176,7 +181,7 @@ describeDb('Приёмка Э2 п.5 — бюджет и квота (budget)', ()
       platformBefore - est,
     );
     // Ещё один sweep — ничего не вычитает второй раз.
-    await st.budget.sweep(st.owner, after);
+    await st.budget.sweep(st.owner, after, s.siteId);
     expect((await st.budgetRow('site', s.siteId, day))!.reserved).toBe(est2);
     // Функция «ожила» и списывает факт — резерв уже снят, только spent.
     await st.budget.settle(st.publicDb, r.reservation, 1_234);

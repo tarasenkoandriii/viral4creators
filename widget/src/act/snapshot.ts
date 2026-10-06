@@ -30,7 +30,7 @@ import {
 export const SNAP_MAX = 150;
 const TEXT_MAX = 80;
 
-const INTERACTIVE =
+export const INTERACTIVE =
   'a[href],button,input,select,textarea,summary,label[for],[role],[data-assist-id],[onclick]';
 /** Пользовательский контент: отзывы, комментарии, вопросы покупателей (§5-бис.6 п.8). */
 const UGC =
@@ -154,6 +154,15 @@ export function visibleText(el: Element): string {
       (lab && (lab as HTMLElement).innerText) || f.placeholder || ''
     );
   }
+  // Аудит 06.10: поле не-INPUT (contenteditable, role=textbox/searchbox/
+  // combobox) — его innerText это ВВОД человека (ПД): только подпись.
+  if (
+    (el as HTMLElement).isContentEditable ||
+    /^(textbox|searchbox|combobox)$/.test(roleOf(el) || '')
+  )
+    return clean(
+      el.getAttribute('aria-label') || el.getAttribute('placeholder') || ''
+    );
   const t = clean((el as HTMLElement).innerText || '');
   if (t) return t;
   const img = el.querySelector('img[alt]');
@@ -193,15 +202,18 @@ function gestureOf(el: Element, text: string): UiGesture | null {
   if (
     el.hasAttribute('data-clipboard-text') ||
     el.hasAttribute('data-clipboard-target') ||
-    /(?<!\p{L})(скопі|скопир|копіюв|копиров|copy)/iu.test(text)
+    /(?:^|[^\p{L}])(скопі|скопир|копіюв|копиров|copy)/iu.test(text)
   )
     return 'copy';
   return null;
 }
 
-/** Поле, которого в снимке не бывает: пароль, карта, код, файл, скрытое. */
+/**
+ * Поле, которого в снимке не бывает: пароль, карта, код, файл, скрытое;
+ * список с autocomplete `cc-*` (срок/тип карты) — тоже.
+ */
 export function sensitiveField(el: Element): boolean {
-  if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return false;
+  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return false;
   const t = (el as HTMLInputElement).type;
   if (t === 'password' || t === 'file' || t === 'hidden') return true;
   return SENSITIVE_AUTOCOMPLETE.test(
@@ -258,14 +270,9 @@ export function factsOf(el: Element): Facts | null {
   const role = roleOf(el);
   if (!role) return null;
   const tag = el.tagName.toLowerCase();
-  const t: SnapElement['tag'] =
-    tag === 'a' ||
-    tag === 'button' ||
-    tag === 'input' ||
-    tag === 'select' ||
-    tag === 'textarea'
-      ? tag
-      : 'other';
+  const t = (
+    /^(a|button|input|select|textarea)$/.test(tag) ? tag : 'other'
+  ) as SnapElement['tag'];
   const text = visibleText(el);
   const hidden = hiddenLabel(el, text);
   const assistId = el.getAttribute('data-assist-id');

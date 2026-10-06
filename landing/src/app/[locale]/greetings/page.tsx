@@ -163,7 +163,9 @@ export default function GreetingsLandingPage({
        правила этапа E обучалки). Кадр — статичный файл из `public/`, а
        не ролик из витрины: витрину меняет оператор, а лица из роликов
        пользователей в рекламном первом экране требуют отдельного
-       согласия (§5.2 п.1). `priority` — кандидат в LCP. */
+       согласия (§5.2 п.1). Без `priority`: на телефоне кадр ниже первого
+       экрана, предзагрузка с высоким приоритетом там только мешала;
+       `loading="eager"` — на десктопе кадр в первом экране. */
     hero: () => (
       <section className="hero">
         <div className="wrap hero-grid">
@@ -185,7 +187,7 @@ export default function GreetingsLandingPage({
               width={hero.width}
               height={hero.height}
               sizes="(min-width: 900px) 46vw, 100vw"
-              priority
+              loading="eager"
               unoptimized
             />
           </div>

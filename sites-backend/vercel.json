@@ -65,6 +65,10 @@
     {
       "path": "/cron/browser-jobs-retention",
       "schedule": "55 3 * * *"
+    },
+    {
+      "path": "/cron/browser-jobs-reap",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

@@ -202,6 +202,40 @@ test('inline: data-container — чат внутри контейнера, бе�
   ).toBeUndefined();
 });
 
+test('inline: Tab уходит из чата на страницу (ловушки фокуса нет, WCAG 2.1.2)', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.goto(
+    stand('example.localhost', {
+      pk,
+      container: true,
+      attrs: { 'data-container': '#help-chat' },
+    })
+  );
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+  const frame = page.frames().find((f) => f.url().includes('/w/v1/frame'))!;
+  // Фокус на последний фокусируемый элемент чата и Tab: в плавающем окне
+  // ловушка вернула бы его на первый, в inline — фокус уходит дальше.
+  const wrapped = await frame.evaluate(() => {
+    const els = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '.v4c-chat a[href],.v4c-chat button:not([disabled]),.v4c-chat textarea:not([disabled]),.v4c-chat input:not([disabled])'
+      )
+    ).filter((el) => el.offsetParent !== null);
+    els[els.length - 1].focus();
+    const ev = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.activeElement!.dispatchEvent(ev);
+    return ev.defaultPrevented || document.activeElement === els[0];
+  });
+  expect(wrapped).toBe(false);
+});
+
 test('«не перекрывать чужое»: фиксированный баннер в углу — кнопка сдвигается или уходит в соседний угол', async ({
   page,
 }) => {
@@ -224,6 +258,86 @@ test('«не перекрывать чужое»: фиксированный б�
   await page.waitForTimeout(800);
   const b2 = (await launcher(page).boundingBox())!;
   expect(Math.round(VH - b2.y - b2.height)).toBe(20);
+});
+
+test('«не перекрывать чужое»: полноэкранный fixed-слой (обёртка SPA) — кнопка не уезжает за экран', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.setViewportSize({ width: VW, height: VH });
+  // Слой на весь экран: в каждой точке кнопки — «помеха» высотой с экран.
+  await page.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const d = document.createElement('div');
+      d.id = 'fs-layer';
+      d.style.cssText = 'position:fixed;inset:0;z-index:10';
+      document.body.appendChild(d);
+    });
+  });
+  await page.goto(stand('example.localhost', { pk }));
+  await expect(launcher(page)).toBeVisible();
+  await expect(page.locator('#fs-layer')).toHaveCount(1);
+  // Первый проход сразу после конфига, второй — через 2 с.
+  await page.waitForTimeout(2500);
+  const b = (await launcher(page).boundingBox())!;
+  expect(b.y).toBeGreaterThanOrEqual(0);
+  expect(b.x).toBeGreaterThanOrEqual(0);
+  expect(b.y + b.height).toBeLessThanOrEqual(VH);
+  expect(b.x + b.width).toBeLessThanOrEqual(VW);
+  // Сдвига нет: кнопка в своём углу с отступом по умолчанию.
+  expect(Math.round(VH - b.y - b.height)).toBe(20);
+});
+
+test('стили страницы не ломают хост: div:empty, body>div{z-index;transform;filter}', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.setViewportSize({ width: VW, height: VH });
+  await page.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const st = document.createElement('style');
+      st.textContent =
+        'div:empty{display:none!important}' +
+        'body>div{position:relative;z-index:1;transform:translateX(40px);filter:blur(0);contain:paint;opacity:.5}';
+      document.head.appendChild(st);
+    });
+  });
+  await page.goto(stand('example.localhost', { pk }));
+  await expect(launcher(page)).toBeVisible();
+  const b = (await launcher(page).boundingBox())!;
+  // fixed-кнопка — от экрана (не от хоста с transform): правый нижний угол.
+  expect(Math.round(VW - b.x - b.width)).toBe(20);
+  expect(Math.round(VH - b.y - b.height)).toBe(20);
+  const hs = await page.locator('[data-v4c]').evaluate((h) => {
+    const cs = getComputedStyle(h);
+    return [cs.display, cs.transform, cs.filter, cs.position, cs.opacity];
+  });
+  expect(hs).toEqual(['block', 'none', 'none', 'static', '1']);
+});
+
+test('SPA с заменой <body> (Turbo/htmx): кнопка и чат возвращаются', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.goto(stand('example.localhost', { pk }));
+  await openChat(page);
+  // Turbo Drive: новый <body> целиком и pushState.
+  await page.evaluate(() => {
+    const nb = document.createElement('body');
+    const h = document.createElement('h1');
+    h.textContent = 'Нова сторінка';
+    nb.appendChild(h);
+    document.body.replaceWith(nb);
+    history.pushState({}, '', '/page/next');
+  });
+  await expect(page.locator('h1')).toHaveText('Нова сторінка');
+  await expect(page.locator('[data-v4c]')).toHaveCount(1);
+  await expect(launcher(page)).toBeVisible();
+  // iframe перезагрузился при вставке — новое окно снова отвечает.
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
 });
 
 test('доступность: Esc в чате закрывает и возвращает фокус на кнопку; Tab не выходит из чата', async ({

@@ -13,7 +13,9 @@
  *    подписывал бы и запросы обучалки;
  *  - ротация по отдельности (П-С3: «отдельный секрет на направление»).
  *
- * Нет секрета — маршруты ЗАКРЫТЫ (503), а не открыты. Подпись не сошлась,
+ * Нет секрета или он совпал с любым другим секретом процесса (аудит Н-2,
+ * `config/internal-secrets-distinct.ts`) — маршруты ЗАКРЫТЫ (503), а не
+ * открыты. Подпись не сошлась,
  * метка вне окна ±5 мин, id уже был — 401 с машинным кодом (генератор
  * переводит это в режим B, а не роняет обучалку).
  *
@@ -27,6 +29,7 @@ import {
   ExecutionContext,
   HttpException,
   Injectable,
+  Logger,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -37,6 +40,10 @@ import {
   verifySitesRequest,
 } from '../../shared/sites-internal-signature';
 import { InternalRequestLedger } from './request-ledger';
+import { internalSecretCollision } from '../../config/internal-secrets-distinct';
+
+/** Совпадение секретов пишется в лог один раз на пару переменных (не на каждый запрос). */
+const loggedCollisions = new Set<string>();
 
 export type InternalRequest = Request & { internalBody?: unknown };
 
@@ -88,13 +95,7 @@ export class TutorialHmacGuard implements CanActivate {
   protected readonly secretEnv: string = 'SITES_TUTORIAL_HMAC_SECRET';
   protected readonly caller: string = SITES_CALLER_TUTORIAL;
   protected readonly product: string = 'обучалки';
-  /**
-   * Секрет другого направления, с которым этот совпадать НЕ должен (аудит
-   * Ш4): при равных секретах держатель одного подписал бы и чужой
-   * вызывающий (он — заголовок) — маршруты закрыты, как без секрета.
-   */
-  protected readonly distinctFromEnv: string | null = null;
-
+  private readonly logger = new Logger('InternalHmacGuard');
   constructor(private readonly ledger: InternalRequestLedger) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -107,14 +108,23 @@ export class TutorialHmacGuard implements CanActivate {
         `${this.secretEnv} не задан (≥ 32 символа) — внутренний API ${this.product} закрыт`,
       );
     }
-    if (
-      this.distinctFromEnv &&
-      this.env[this.distinctFromEnv]?.trim() === secret
-    ) {
+    // Аудит Н-2: секрет направления не должен совпадать НИ с одним другим
+    // секретом процесса (секрет другого направления, кроны, KEK учёток,
+    // ключ «Админки» и его старые версии, секрет воркера, …) — как у воркера
+    // (`internal-secrets-distinct.ts`). Совпал — закрыто, как без секрета;
+    // в лог и ответ — только имена переменных, не значение.
+    const other = internalSecretCollision(this.env, this.secretEnv, secret);
+    if (other) {
+      const message = `${this.secretEnv} совпадает с ${other} — внутренний API ${this.product} закрыт`;
+      const key = `${this.secretEnv}=${other}`;
+      if (!loggedCollisions.has(key)) {
+        loggedCollisions.add(key);
+        this.logger.error(`${message} (нужен свой секрет на направление)`);
+      }
       throw err(
         ServiceUnavailableException,
         'INTERNAL_NOT_CONFIGURED',
-        `${this.secretEnv} совпадает с ${this.distinctFromEnv} — внутренний API ${this.product} закрыт`,
+        message,
       );
     }
     const raw = typeof req.body === 'string' ? req.body : '';

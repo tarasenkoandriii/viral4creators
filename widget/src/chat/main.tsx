@@ -154,12 +154,14 @@ function start() {
         return;
       }
     }
-    if (e.key !== 'Tab') return;
+    // Inline-режим (`data-container`): чат — часть страницы, Tab должен
+    // уходить к остальному сайту (WCAG 2.1.2 «без ловушки клавиатуры»).
+    if (e.key !== 'Tab' || c.state.inline) return;
     const box = root.querySelector('.v4c-chat');
     if (!box) return;
     const els = Array.prototype.filter.call(
       box.querySelectorAll(
-        'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled])'
+        'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),summary,video[controls],[tabindex]:not([tabindex="-1"])'
       ),
       (el: HTMLElement) => el.offsetParent !== null
     ) as HTMLElement[];

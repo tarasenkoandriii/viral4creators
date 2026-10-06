@@ -29,6 +29,7 @@ import {
   undoPhrase,
   looksLikeCommand,
   maskLabel,
+  NEVER_PATTERNS,
   neverTarget,
   parseStep,
   parseSteps,
@@ -94,6 +95,20 @@ const server = { ...cjs(wordsNs), ...cjs(directNs), ...cjs(snapNs) };
   assert.equal(neverTarget('Купити', 'add-to-cart'), false);
   assert.equal(neverTarget('Купити і оплатити', 'add-to-cart'), true);
   assert.equal(neverTarget('Оплатити', 'add-to-cart'), true);
+  // Мутант M10b: add-to-cart снимает только «Купити», а не соседнее
+  // «підтвердити замовлення» той же категории.
+  assert.equal(
+    neverTarget('Купити — підтвердити замовлення', 'add-to-cart'),
+    true
+  );
+  assert.equal(neverTarget('Купити зараз', 'add-to-cart'), false);
+  assert.equal(neverTarget('Швидко купити', 'add-to-cart'), false);
+  // Аудит 06.10: начало слова — без lookbehind (Safari < 16.4), а «внутри
+  // слова» по-прежнему не срабатывает.
+  for (const re of NEVER_PATTERNS)
+    assert.ok(!/\(\?<[=!]/.test(re.source), `lookbehind: ${re.source}`);
+  assert.equal(neverTarget('Перепаковка', null), false, 'не с начала слова');
+  assert.equal(neverTarget('(Оплатити)', null), true, 'после скобки');
   // Скрытая подпись проверяется так же (вызов с текстом aria-label).
   assert.equal(neverTarget('Детальніше Оформити замовлення', null), true);
 }
@@ -170,11 +185,13 @@ for (const [p, want] of [
     'ключ sk-abcdefghijklmnop',
     'Синя футболка — 450 грн',
     'Розмір M',
+    'Дзвоніть (67) 123-45-67',
   ];
   for (const l of labels)
     assert.equal(maskLabel(l), server.maskLabel(l), `maskLabel «${l}»`);
   assert.ok(!maskLabel('ivan.petrenko@example.com').includes('@'));
   assert.ok(!/\d{4}/.test(maskLabel('Замовлення 4111 1111 1111 1111')));
+  assert.ok(!/45-67/.test(maskLabel('Дзвоніть (67) 123-45-67')));
   assert.equal(maskLabel('Синя футболка — 450 грн'), 'Синя футболка — 450 грн');
 }
 
@@ -467,6 +484,15 @@ const STEP = (
 // Контроллер: строка цепочки с пометками; второе «Да» перед ТН (стоп ДО
 // клика); сбой — перечень и «Вернуть / Оставить»; возврат полей —
 // загрузчику номерами, на сервер — только итоги (без значений).
+// Контроллер на промисах: «повисшее» ожидание опустошит цикл событий, и
+// Node выйдет с кодом 0, не дойдя до конца, — такой выход считаем провалом.
+let finished = false;
+process.on('exit', (code) => {
+  if (!finished && code === 0) {
+    console.error('ui-plan.test: не дошли до конца (повисшее ожидание)');
+    process.exitCode = 1;
+  }
+});
 void (async () => {
   let ui: UiPlanUi = uiPlanOff();
   const feed: string[] = [];
@@ -649,9 +675,79 @@ void (async () => {
   assert.equal(calls[0].path, '/widget/v1/ui-plan/p1/undo');
   assert.deepEqual(calls[0].body, { by: 'command' });
   assert.equal(feed.at(-1), DICTS.uk.vcAfterPnr);
+  // Аудит 06.10: двойное «Да» (клик + клик, голос + клик), пока confirm в
+  // пути, — один POST и один `ui-run`; кнопки карточки недоступны.
+  {
+    let cui: UiPlanUi = uiPlanOff();
+    const cParent: Array<Record<string, unknown>> = [];
+    const cCalls: string[] = [];
+    const held: Array<() => void> = [];
+    const cc = new UiPlanController({
+      ui: () => cui,
+      setUi: (p) => (cui = { ...cui, ...p }),
+      t: () => DICTS.uk,
+      lang: () => 'uk',
+      cfg: () => ({
+        mode: 'on',
+        denySelectors: [],
+        allowSelectors: [],
+        maxSteps: 6,
+        memos: false,
+      }),
+      api: async (_m, path) => {
+        cCalls.push(path);
+        if (path === '/widget/v1/ui-plan')
+          return { ...view, status: 'proposed' };
+        await new Promise<void>((r) => held.push(r));
+        return { ...view, status: 'confirmed' };
+      },
+      toParent: (m) => cParent.push(m as unknown as Record<string, unknown>),
+      conversationId: () => null,
+      setConversation: () => undefined,
+      feed: () => undefined,
+      storage: (_k, n) => (n === 'vcconsent' ? '1' : null),
+      pageUrl: () => 'https://shop.example.com/p/1',
+      listen: () => undefined,
+      random: () => 'q'.repeat(16),
+    });
+    setTimeout(() => {
+      const m = cParent.find((x) => x.type === 'ui-snap');
+      if (m)
+        cc.onParent({
+          type: 'ui-snapshot',
+          rid: m.rid as string,
+          snapshot: { url: 'https://shop.example.com/p/1', elements: [] },
+        });
+    }, 0);
+    await cc.command('надішли заявку', 'typed', null);
+    assert.equal(cui.phase, 'confirm');
+    const c1 = cc.confirm(true);
+    const c2 = cc.confirm(true);
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(
+      cui.busy,
+      true,
+      'кнопки «Да/Ні» недоступны, пока confirm в пути'
+    );
+    // Отпускаем ВСЕ ответы: и второй POST (если бы он ушёл) завершится.
+    for (const r of held.splice(0)) r();
+    await Promise.all([c1, c2]);
+    assert.equal(
+      cCalls.filter((p) => p.endsWith('/confirm')).length,
+      1,
+      'один POST confirm'
+    );
+    assert.equal(
+      cParent.filter((m) => m.type === 'ui-run').length,
+      1,
+      'один ui-run'
+    );
+    assert.equal(cui.busy, false);
+  }
   console.log(
     'ui-plan (д)+(е): решения владельца, «отмени последнее», словарь без «откатил», протокол возврата, пометки ↺/⇄/⚠, второе «Да», «Вернуть/Оставить» — ok'
   );
+  finished = true;
 })().catch((e) => {
   console.error(e);
   process.exit(1);

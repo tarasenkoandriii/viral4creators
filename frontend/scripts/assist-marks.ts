@@ -17,6 +17,14 @@
  * при отрисовке, объект с обработчиками в аргументе, `useEffect`), — не
  * «всё хорошо», а отдельная находка (`loose`/`auto`), которую тест
  * требует либо разметить, либо внести в allowlist с обоснованием.
+ * Находка по элементу (кнопке) allowlist'ом не снимается никогда — только
+ * пометкой (аудит P2, 06.10.2026).
+ *
+ * Аудит P3 (06.10.2026) закрыл дыры разбора: кнопка без `type` в форме —
+ * submit; `import * as X` и `X.fn`; `data-assist` с веткой `undefined`
+ * или не-литералом — «не помечено»; обёртки, экспортированные через
+ * `export { f }`/`export { f as g }`/`export default`; capture-события
+ * исполнителя.
  */
 import ts from 'typescript';
 
@@ -86,6 +94,13 @@ const EXECUTOR_EVENTS = new Set([
   'onMouseUp',
   'onMouseEnter',
   'onMouseOver',
+  // Capture-фаза тех же событий срабатывает раньше обычной — исполнитель
+  // вызывает их той же последовательностью (аудит P3).
+  'onPointerDownCapture',
+  'onMouseDownCapture',
+  'onSubmitCapture',
+  'onChangeCapture',
+  'onFocusCapture',
 ]);
 
 type Opening = ts.JsxOpeningElement | ts.JsxSelfClosingElement;
@@ -105,8 +120,16 @@ interface Ctx {
 
 interface Imp {
   local: string;
+  /** Имя в модуле; `*` — `import * as local` (обращения `local.fn`). */
   imported: string;
   module: string;
+}
+
+/** Ссылка на экспорт другого модуля: идентификатор или `ns.fn`. */
+interface ImportRef {
+  file: string;
+  node: ts.Expression;
+  local: string;
 }
 
 function normalize(p: string): string {
@@ -192,18 +215,69 @@ function attrOf(el: Opening, name: string): ts.JsxAttribute | undefined {
   return undefined;
 }
 
-/** Уровень по `data-assist` самого элемента; выражение с обеими ветками — слабейший. */
+/**
+ * Возможные значения выражения `data-assist`: литерал — сам уровень (или
+ * `null` для иного текста), ветки `?:`/`&&`/`||`/`??` — объединение, всё
+ * прочее (`undefined`, переменная, вызов) — `null`.
+ */
+function tiersOfExpr(
+  e: ts.Expression | undefined,
+  out: Set<Tier | null>
+): void {
+  if (!e) return void out.add(null);
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    out.add(e.text === 'never' || e.text === 'confirm' ? e.text : null);
+    return;
+  }
+  if (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isSatisfiesExpression(e) ||
+    ts.isTypeAssertionExpression(e)
+  )
+    return tiersOfExpr(e.expression, out);
+  if (ts.isConditionalExpression(e)) {
+    tiersOfExpr(e.whenTrue, out);
+    tiersOfExpr(e.whenFalse, out);
+    return;
+  }
+  if (ts.isBinaryExpression(e)) {
+    const op = e.operatorToken.kind;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) {
+      out.add(null); // ложная ветка — `false`/`0`/`''`, не пометка
+      tiersOfExpr(e.right, out);
+      return;
+    }
+    if (
+      op === ts.SyntaxKind.BarBarToken ||
+      op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      tiersOfExpr(e.left, out);
+      tiersOfExpr(e.right, out);
+      return;
+    }
+  }
+  out.add(null);
+}
+
+/**
+ * Уровень по `data-assist` самого элемента. Выражение — слабейший из
+ * возможных: обе ветки-литерала → `confirm`, если есть; ветка
+ * `undefined`/не-литерал — `null` (аудит P3: раньше `x ? 'confirm' :
+ * undefined` считался пометкой).
+ */
 function ownMark(el: Opening): Tier | null {
   const a = attrOf(el, 'data-assist');
   if (!a?.initializer) return null;
-  const vals = new Set<string>();
-  walk(a.initializer, (n) => {
-    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n))
-      vals.add(n.text);
-  });
+  const vals = new Set<Tier | null>();
+  if (ts.isStringLiteral(a.initializer)) tiersOfExpr(a.initializer, vals);
+  else if (ts.isJsxExpression(a.initializer))
+    tiersOfExpr(a.initializer.expression, vals);
+  else vals.add(null);
+  if (vals.has(null) || vals.size === 0) return null;
   if (vals.has('confirm')) return 'confirm';
-  if (vals.has('never')) return 'never';
-  return null;
+  return 'never';
 }
 
 /**
@@ -262,16 +336,41 @@ function effectiveMark(el: Opening, skipSelf = false): Tier | null {
   return out;
 }
 
-/** Кнопки `type="submit"` внутри формы. */
+/** Литеральное значение атрибута (`"x"` или `{'x'}`); иначе `undefined`. */
+function literalAttr(el: Opening, name: string): string | null | undefined {
+  const a = attrOf(el, name);
+  if (!a) return null; // атрибута нет
+  const init = a.initializer;
+  if (init && ts.isStringLiteral(init)) return init.text;
+  if (
+    init &&
+    ts.isJsxExpression(init) &&
+    init.expression &&
+    (ts.isStringLiteral(init.expression) ||
+      ts.isNoSubstitutionTemplateLiteral(init.expression))
+  )
+    return init.expression.text;
+  return undefined; // выражение — значение неизвестно
+}
+
+/**
+ * Элементы, отправляющие форму: `<button>`/`<Button>` — всё, кроме
+ * `type="button"`/`"reset"` (без `type` кнопка в форме — submit, а
+ * `Button` UI-кита своего `type` не ставит; аудит P3); `<input>`/`<Input>`
+ * с `type="submit"|"image"`. Неизвестное выражение в `type` — считаем
+ * submit (консервативно).
+ */
 function submitButtons(form: ts.JsxOpeningElement): Opening[] {
   const out: Opening[] = [];
   walk(form.parent, (n) => {
     if (!(ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n))) return;
     const tag = n.tagName.getText();
-    if (tag !== 'button' && tag !== 'Button') return;
-    const t = attrOf(n, 'type');
-    if (t?.initializer && ts.isStringLiteral(t.initializer))
-      if (t.initializer.text === 'submit') out.push(n);
+    const t = literalAttr(n, 'type');
+    if (tag === 'button' || tag === 'Button') {
+      if (t !== 'button' && t !== 'reset') out.push(n);
+    } else if (tag === 'input' || tag === 'Input') {
+      if (t === undefined || t === 'submit' || t === 'image') out.push(n);
+    }
   });
   return out;
 }
@@ -336,6 +435,8 @@ export function analyzeAssistMarks(
           module: mod,
         });
       const nb = st.importClause.namedBindings;
+      if (nb && ts.isNamespaceImport(nb))
+        out.push({ local: nb.name.text, imported: '*', module: mod });
       if (nb && ts.isNamedImports(nb))
         for (const s of nb.elements)
           if (!s.isTypeOnly)
@@ -383,19 +484,15 @@ export function analyzeAssistMarks(
     return { file, name };
   };
 
-  /** Локальные имена, под которыми `name` из `file` импортирован в другие модули. */
-  const importersOf = (
-    file: string,
-    name: string
-  ): Array<{ file: string; local: string }> => {
-    const out: Array<{ file: string; local: string }> = [];
-    for (const f of files.keys())
-      for (const imp of importsOf(f)) {
-        const o = origin(imp.module, imp.imported);
-        if (o.file === file && o.name === name)
-          out.push({ file: f, local: imp.local });
-      }
-    return out;
+  const originCache = new Map<string, { file: string; name: string }>();
+  const originOf = (file: string, name: string) => {
+    const k = `${file}|${name}`;
+    let hit = originCache.get(k);
+    if (!hit) {
+      hit = origin(file, name);
+      originCache.set(k, hit);
+    }
+    return hit;
   };
 
   const refsIn = (scope: ts.Node, name: string): ts.Identifier[] => {
@@ -403,6 +500,111 @@ export function analyzeAssistMarks(
     walk(scope, (n) => {
       if (ts.isIdentifier(n) && n.text === name && isValueRef(n)) out.push(n);
     });
+    return out;
+  };
+
+  /**
+   * Обращения к `name` из `file` в других модулях: по именованному/
+   * default-импорту — ссылки на локальное имя; по `import * as X` —
+   * `X.name` (и `X.alias`, если `alias` в `file` реэкспортирует `name`).
+   * Пространство имён, ушедшее целиком (`f(X)`, `X[k]`), — в `whole`.
+   */
+  const refsCache = new Map<string, ts.Identifier[]>();
+  const refsOfLocal = (file: string, local: string): ts.Identifier[] => {
+    const k = `${file}|${local}`;
+    let hit = refsCache.get(k);
+    if (!hit) {
+      hit = refsIn(files.get(file)!, local);
+      refsCache.set(k, hit);
+    }
+    return hit;
+  };
+
+  const importRefs = (
+    file: string,
+    name: string
+  ): { refs: ImportRef[]; whole: ImportRef[] } => {
+    const refs: ImportRef[] = [];
+    const whole: ImportRef[] = [];
+    for (const f of files.keys())
+      for (const imp of importsOf(f)) {
+        if (imp.imported !== '*') {
+          const o = originOf(imp.module, imp.imported);
+          if (o.file === file && o.name === name)
+            for (const r of refsOfLocal(f, imp.local))
+              refs.push({ file: f, node: r, local: imp.local });
+          continue;
+        }
+        // `import * as X` модуля, который `name` не отдаёт, нас не касается.
+        if (!exportsName(imp.module, file, name)) continue;
+        for (const r of refsOfLocal(f, imp.local)) {
+          const pa = r.parent;
+          if (ts.isPropertyAccessExpression(pa) && pa.expression === r) {
+            const o = originOf(imp.module, pa.name.text);
+            if (o.file === file && o.name === name)
+              refs.push({ file: f, node: pa, local: imp.local });
+          } else whole.push({ file: f, node: r, local: imp.local });
+        }
+      }
+    return { refs, whole };
+  };
+
+  /** Модуль `mod` (или его реэкспорт) отдаёт `name` из `file`. */
+  const exportsName = (mod: string, file: string, name: string): boolean => {
+    if (mod === file) return true;
+    const sf = files.get(mod);
+    if (!sf) return false;
+    for (const st of sf.statements) {
+      if (!ts.isExportDeclaration(st) || !st.moduleSpecifier) continue;
+      if (!st.exportClause) {
+        const sub = resolve(mod, (st.moduleSpecifier as ts.StringLiteral).text);
+        if (sub) {
+          const o = originOf(sub, name);
+          if (o.file === file && o.name === name) return true;
+        }
+      } else if (ts.isNamedExports(st.exportClause)) {
+        for (const s of st.exportClause.elements) {
+          const o = originOf(mod, s.name.text);
+          if (o.file === file && o.name === name) return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  /** Файлы-потребители экспорта `name` из `file` (любым видом импорта). */
+  const importersOf = (file: string, name: string): string[] => [
+    ...new Set(importRefs(file, name).refs.map((r) => r.file)),
+  ];
+
+  /**
+   * Под какими именами модуль `file` экспортирует локальное `name`:
+   * `export function/const name` → `name`, `export default function
+   * name` → `default`, `export { name }`/`export { name as alias }` →
+   * `name`/`alias` (аудит P3: раньше видели только модификатор `export`).
+   * `export default name;` разбирает `valueAt` (ссылка в ExportAssignment).
+   */
+  const exportNamesOf = (
+    file: string,
+    name: string,
+    decl: ts.Node
+  ): string[] => {
+    const out: string[] = [];
+    const holder = ts.isVariableDeclaration(decl) ? decl.parent.parent : decl;
+    if (hasModifier(holder, ts.SyntaxKind.ExportKeyword))
+      out.push(
+        hasModifier(holder, ts.SyntaxKind.DefaultKeyword) ? 'default' : name
+      );
+    for (const st of files.get(file)?.statements ?? [])
+      if (
+        ts.isExportDeclaration(st) &&
+        !st.moduleSpecifier &&
+        !st.isTypeOnly &&
+        st.exportClause &&
+        ts.isNamedExports(st.exportClause)
+      )
+        for (const s of st.exportClause.elements)
+          if ((s.propertyName ?? s.name).text === name) out.push(s.name.text);
     return out;
   };
 
@@ -488,8 +690,13 @@ export function analyzeAssistMarks(
     }
     if (ts.isFunctionDeclaration(cur)) {
       if (cur.name) return named(file, cur.name.text, cur, ctx);
+      if (hasModifier(cur, ts.SyntaxKind.DefaultKeyword))
+        return consumers(file, 'default', step(ctx, 'export default'));
       return fail('loose', file, cur, ctx, 'безымянная функция');
     }
+    // `export default f;` / `export default () => …` — потребители default.
+    if (ts.isExportAssignment(p) && !p.isExportEquals)
+      return consumers(file, 'default', step(ctx, 'export default'));
     if (ts.isMethodDeclaration(cur))
       return fail('loose', file, cur, ctx, 'метод класса');
     if (ts.isVariableDeclaration(p) && p.initializer === cur) {
@@ -551,15 +758,24 @@ export function analyzeAssistMarks(
     const scope = scopeOf(decl);
     for (const r of refsIn(scope, name)) valueAt(file, r, next);
     // Экспорт верхнего уровня — потребители в других модулях.
-    const exported =
-      ts.isSourceFile(scope) &&
-      (hasModifier(decl, ts.SyntaxKind.ExportKeyword) ||
-        (ts.isVariableDeclaration(decl) &&
-          hasModifier(decl.parent.parent, ts.SyntaxKind.ExportKeyword)));
-    if (exported)
-      for (const imp of importersOf(file, name))
-        for (const r of refsIn(files.get(imp.file)!, imp.local))
-          valueAt(imp.file, r, step(next, imp.file));
+    if (ts.isSourceFile(scope))
+      for (const exp of exportNamesOf(file, name, decl))
+        consumers(file, exp, next);
+  };
+
+  /** Потребители экспорта `exp` модуля `file` — каждый как опасное значение. */
+  const consumers = (file: string, exp: string, ctx: Ctx): void => {
+    if (!once(`x|${file}|${exp}`, ctx)) return;
+    const { refs, whole } = importRefs(file, exp);
+    for (const r of refs) valueAt(r.file, r.node, step(ctx, r.file));
+    for (const w of whole)
+      fail(
+        'loose',
+        w.file,
+        w.node,
+        ctx,
+        `пространство имён ${w.local} уходит целиком`
+      );
   };
 
   /** Опасное значение лежит в объектном литерале по пути `path`. */
@@ -636,11 +852,8 @@ export function analyzeAssistMarks(
   ): void => {
     if (!once(`m|${file}|${fnName}|${path.join('.')}`, ctx)) return;
     const next = step(ctx, `${fnName}().${path.join('.')}`);
-    const consumers = new Set([
-      file,
-      ...importersOf(file, fnName).map((i) => i.file),
-    ]);
-    for (const c of consumers)
+    const users = new Set([file, ...importersOf(file, fnName)]);
+    for (const c of users)
       walk(files.get(c)!, (n) => {
         if (ts.isPropertyAccessExpression(n) && endsWithPath(n, path))
           valueAt(c, n, next);
@@ -815,20 +1028,26 @@ export function analyzeAssistMarks(
     record(file, el, prop, ctx, own);
   };
 
-  // ── посев: импорты функций из списка ───────────────────────────────
-  for (const [file, sf] of files) {
-    if (paid[file]) continue; // сами API-модули не разбираем
-    for (const imp of importsOf(file)) {
-      const o = origin(imp.module, imp.imported);
-      const tier = paid[o.file]?.[o.name];
-      if (!tier) continue;
-      const ctx: Ctx = { api: o.name, tier, trail: [o.name], via: [] };
-      for (const r of refsIn(sf, imp.local)) {
+  // ── посев: обращения к функциям из списка ──────────────────────────
+  for (const [mod, fns] of Object.entries(paid))
+    for (const [name, tier] of Object.entries(fns)) {
+      const ctx: Ctx = { api: name, tier, trail: [name], via: [] };
+      const { refs, whole } = importRefs(mod, name);
+      for (const r of refs) {
+        if (paid[r.file]) continue; // сами API-модули не разбираем
         seeds += 1;
-        valueAt(file, r, ctx);
+        valueAt(r.file, r.node, ctx);
       }
+      for (const w of whole)
+        if (!paid[w.file])
+          fail(
+            'loose',
+            w.file,
+            w.node,
+            ctx,
+            `пространство имён ${w.local} уходит целиком`
+          );
     }
-  }
 
   return { elements: [...elements.values()], loose, seeds };
 }

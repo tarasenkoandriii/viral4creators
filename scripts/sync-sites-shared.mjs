@@ -32,8 +32,12 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHARED = 'sites-backend/src/shared';
 
-/** Список копий. Порядок не важен; дубли `to` запрещены. */
-const ENTRIES = [
+/**
+ * Список копий. Порядок не важен; дубли `to` запрещены. Экспортируется:
+ * по нему scripts/ci-changes.mjs строит правило джобы sites-backend
+ * (запуск — на правку любого источника копии, а не всего backend/src/common).
+ */
+export const ENTRIES = [
   // SSRF-защита: проверка файла/меты владения (QA §5.1) и обход (Э1).
   { from: 'backend/src/common/external-url-guard.ts', to: 'external-url-guard.ts' },
   { from: 'backend/src/common/external-url-guard.spec.ts', to: 'external-url-guard.spec.ts' },
@@ -268,4 +272,8 @@ function main() {
   console.log(`sync-sites-shared: ${expected.size} копий актуальны`);
 }
 
-main();
+// CLI — только при прямом запуске: `import { ENTRIES }` из ci-changes.mjs
+// не должен ни писать копии, ни сверять их.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

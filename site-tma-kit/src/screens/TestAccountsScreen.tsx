@@ -6,6 +6,7 @@ import { formatDate } from '../format';
 import { ApiError } from '../envelope';
 import { errorText } from '../errors';
 import { canManage } from '../account-select';
+import { AccountContextNote } from '../ui/AccountContextNote';
 import { useAsync } from '../use-async';
 import { hostView } from '../verification';
 import {
@@ -189,6 +190,8 @@ export function TestAccountsScreen({ siteId }: { siteId: string }) {
         {t.title}
       </ScreenTitle>
       <p className="text-sm text-silver-500">{t.intro}</p>
+      {/* Аудит Н-1: пароли учёток видит и этот кабинет. */}
+      <AccountContextNote />
       {notice && <Alert tone={notice.tone}>{notice.text}</Alert>}
       {editing === 'new' && <Card>{formView(true)}</Card>}
       {accounts.length === 0 && editing !== 'new' && (

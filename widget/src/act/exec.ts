@@ -41,6 +41,7 @@ import {
   deepQuery,
   excluded,
   factsOf,
+  INTERACTIVE,
   sensitiveField,
   visible,
   visibleText,
@@ -62,8 +63,21 @@ export interface ActNatives {
 
 export type StopBy = 'esc' | 'click' | 'key' | 'button';
 
-/** (д) Прежнее значение поля: план, шаг, элемент, значение, флажок. */
-export type Prior = [string, number, Element, string, boolean | null];
+/**
+ * (д) Прежнее значение поля: план, шаг, элемент, значение, флажок, ранее
+ * отмеченная радиокнопка группы; после действия — значение и флажок,
+ * которые поставил помощник (возврат — только если поле их ещё держит).
+ */
+export type Prior = [
+  string,
+  number,
+  Element,
+  string,
+  boolean | null,
+  Element | null,
+  string?,
+  (boolean | null)?,
+];
 /** (д) Память прежних значений — только последний план этой страницы. */
 export const mem: Prior[] = [];
 
@@ -117,6 +131,28 @@ const norm = (s: string) =>
 const sleep = (N: ActNatives, ms: number) =>
   new Promise<void>((r) => N.later(r, ms));
 
+/** Опция списка по тексту или значению шага. */
+const optionOf = (el: Element, v: string | null) => {
+  const want = norm(v || '');
+  for (const o of (el as HTMLSelectElement).options || [])
+    if (norm(o.text) === want || norm(o.value) === want) return o;
+  return null;
+};
+
+/** (д) Отмеченная сейчас радиокнопка той же группы (вернуть — её). */
+const radioOn = (x: HTMLInputElement): Element | null => {
+  if (x.type == 'radio' && x.name)
+    for (const r of (x.form || (x.getRootNode() as Document)).querySelectorAll(
+      'input[type=radio]'
+    ))
+      if (
+        (r as HTMLInputElement).name == x.name &&
+        (r as HTMLInputElement).checked
+      )
+        return r;
+  return null;
+};
+
 /** Что сервер вычищает из подписей: управляющие, bidi/zero-width, `<>`. */
 /* eslint-disable no-control-regex */
 const SERVER_STRIPS =
@@ -145,56 +181,58 @@ export function sameTarget(el: Element, t: UiTarget): boolean {
   return t.text.slice(-1) === '…' ? live.indexOf(want) === 0 : live === want;
 }
 
-function css(e: HTMLElement, props: Record<string, string>) {
-  for (const k in props) e.style.setProperty(k, props[k], 'important');
+/** Стили — `!important` (страница не перебьёт); `decl` — ПОСТОЯННЫЕ строки и наши числа. */
+const put = (e: Element) =>
+  (document.body || document.documentElement).appendChild(e);
+
+function css(e: HTMLElement, decl: string) {
+  for (const d of decl.split(';')) {
+    const i = d.indexOf(':');
+    e.style.setProperty(d.slice(0, i), d.slice(i + 1), 'important');
+  }
 }
 
-/** Нативный сеттер значения прототипа (React/Vue видят изменение). */
+/**
+ * Нативный сеттер значения прототипа (React/Vue видят изменение): React
+ * вешает свой `value` на сам узел — берём сеттер с прототипа узла
+ * (HTMLInputElement/HTMLTextAreaElement/HTMLSelectElement.prototype).
+ */
 function setNativeValue(
   el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string
 ) {
-  const proto =
-    el instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : el instanceof HTMLSelectElement
-        ? HTMLSelectElement.prototype
-        : HTMLInputElement.prototype;
-  const d = Object.getOwnPropertyDescriptor(proto, 'value');
+  const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
   if (d && d.set) d.set.call(el, value);
   else el.value = value;
 }
 
+/**
+ * Синтетическое событие: pointer- и mouse-события — отменяемые, `input`/`change` —
+ * нет (как у браузера). Лишние поля словаря конструктор просто игнорирует.
+ */
 function fire(el: Element, type: string, init: Record<string, unknown> = {}) {
-  const opts = {
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-    view: window,
-    ...init,
-  };
-  let ev: Event;
-  if (type.indexOf('pointer') === 0 && typeof PointerEvent === 'function')
-    ev = new PointerEvent(type, {
+  const p = type[0] == 'p';
+  const E =
+    p && typeof PointerEvent == 'function'
+      ? PointerEvent
+      : type[0] == 'm'
+        ? MouseEvent
+        : type == 'input' && typeof InputEvent == 'function'
+          ? InputEvent
+          : Event;
+  el.dispatchEvent(
+    new E(type, {
+      bubbles: true,
+      cancelable: p || type[0] == 'm',
+      composed: true,
+      view: window,
       pointerId: 1,
       pointerType: 'mouse',
       isPrimary: true,
-      ...opts,
-    });
-  else if (type.indexOf('mouse') === 0) ev = new MouseEvent(type, opts);
-  else if (type === 'input' && typeof InputEvent === 'function')
-    ev = new InputEvent(type, {
-      bubbles: true,
-      composed: true,
       inputType: 'insertText',
       ...init,
-    });
-  else
-    ev = new Event(type, {
-      bubbles: true,
-      cancelable: type !== 'input' && type !== 'change',
-    });
-  el.dispatchEvent(ev);
+    })
+  );
 }
 
 export class Runner {
@@ -225,12 +263,13 @@ export class Runner {
 
   // ── управление ──────────────────────────────────────────────────────────
 
-  stop(by: StopBy | null) {
+  /** `keep` — флаг «план идёт» не снимать (уход страницы в bfcache). */
+  stop(by: StopBy | null, keep?: 1) {
     if (this.stoppedFlag) return;
     this.stoppedFlag = true;
     if (this.ackWait) this.ackWait.resolve(false);
     this.wake();
-    this.teardown();
+    this.teardown(keep);
     if (by) this.host.stopped(by);
   }
 
@@ -264,51 +303,28 @@ export class Runner {
     host.setAttribute('data-v4c-act', '');
     const root = host.attachShadow({ mode: 'closed' });
     const bar = N.el('div');
-    css(bar, {
-      position: 'fixed',
-      left: '50%',
-      bottom: '16px',
-      transform: 'translateX(-50%)',
-      'z-index': '2147483647',
-      display: 'flex',
-      'align-items': 'center',
-      gap: '10px',
-      background: '#111827',
-      color: '#fff',
-      'border-radius': '999px',
-      padding: '8px 10px 8px 16px',
-      font: '600 14px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif',
-      'box-shadow': '0 6px 24px rgba(0,0,0,.25)',
-      'max-width': 'calc(100vw - 24px)',
-    });
+    css(
+      bar,
+      `position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:2147483647;display:flex;align-items:center;gap:10px;background:#111827;color:#fff;border-radius:999px;padding:8px 10px 8px 16px;font:600 14px/1.3 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.25);max-width:calc(100vw - 24px)`
+    );
     const live = N.el('span');
     live.setAttribute('role', 'status');
     live.setAttribute('aria-live', 'polite');
     live.textContent = this.L.doing;
-    css(live, {
-      overflow: 'hidden',
-      'text-overflow': 'ellipsis',
-      'white-space': 'nowrap',
-    });
+    css(live, `overflow:hidden;text-overflow:ellipsis;white-space:nowrap`);
     const btn = N.el('button');
     btn.type = 'button';
     btn.textContent = '■ ' + this.L.stop;
     btn.setAttribute('data-act-stop', '');
-    css(btn, {
-      background: '#dc2626',
-      color: '#fff',
-      border: '0',
-      'border-radius': '999px',
-      padding: '8px 14px',
-      font: 'inherit',
-      cursor: 'pointer',
-      'min-height': '40px',
-    });
+    css(
+      btn,
+      `background:#dc2626;color:#fff;border:0;border-radius:999px;padding:8px 14px;font:inherit;cursor:pointer;min-height:40px`
+    );
     N.on(btn, 'click', () => this.stop('button'));
     bar.appendChild(live);
     bar.appendChild(btn);
     root.appendChild(bar);
-    (document.body || document.documentElement).appendChild(host);
+    put(host);
     this.overlay = host;
     this.live = live;
 
@@ -337,12 +353,12 @@ export class Runner {
     });
   }
 
-  private teardown() {
+  private teardown(keep?: 1) {
     for (const c of this.cleanups.splice(0)) c();
     this.unring();
     if (this.overlay) this.overlay.remove();
     this.overlay = null;
-    this.host.mark(false);
+    if (!keep) this.host.mark(false);
   }
 
   private say(text: string) {
@@ -356,40 +372,18 @@ export class Runner {
     ring.setAttribute('data-v4c-highlight', '');
     ring.setAttribute('aria-hidden', 'true');
     const r = el.getBoundingClientRect();
-    css(ring, {
-      position: 'fixed',
-      'z-index': '2147483646',
-      'pointer-events': 'none',
-      'box-sizing': 'border-box',
-      border: `3px solid ${COLOR}`,
-      'border-radius': '8px',
-      'box-shadow': '0 0 0 4px rgba(37,99,235,.25)',
-      margin: '0',
-      padding: '0',
-      top: `${r.top - 6}px`,
-      left: `${r.left - 6}px`,
-      width: `${r.width + 12}px`,
-      height: `${r.height + 12}px`,
-    });
+    css(
+      ring,
+      `position:fixed;z-index:2147483646;pointer-events:none;box-sizing:border-box;border:3px solid ${COLOR};border-radius:8px;box-shadow:0 0 0 4px rgba(37,99,235,.25);margin:0;padding:0;top:${r.top - 6}px;left:${r.left - 6}px;width:${r.width + 12}px;height:${r.height + 12}px`
+    );
     const tip = N.el('div');
     tip.textContent = caption;
-    css(tip, {
-      position: 'absolute',
-      top: '100%',
-      left: '0',
-      'margin-top': '6px',
-      background: COLOR,
-      color: '#fff',
-      font: '600 13px/1.3 system-ui,sans-serif',
-      padding: '4px 8px',
-      'border-radius': '6px',
-      'white-space': 'nowrap',
-      'max-width': '260px',
-      overflow: 'hidden',
-      'text-overflow': 'ellipsis',
-    });
+    css(
+      tip,
+      `position:absolute;top:100%;left:0;margin-top:6px;background:${COLOR};color:#fff;font:600 13px/1.3 system-ui,sans-serif;padding:4px 8px;border-radius:6px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis`
+    );
     if (caption) ring.appendChild(tip);
-    (document.body || document.documentElement).appendChild(ring);
+    put(ring);
     this.ring = ring;
   }
 
@@ -401,10 +395,7 @@ export class Runner {
   // ── поиск цели ──────────────────────────────────────────────────────────
 
   private candidates(): Element[] {
-    return deepQuery(
-      document,
-      'a[href],button,input,select,textarea,summary,label[for],[role],[data-assist-id],[onclick]'
-    ).filter(
+    return deepQuery(document, INTERACTIVE).filter(
       (e) => !excluded(e, this.host.deny, this.host.allow) && visible(e)
     );
   }
@@ -446,11 +437,9 @@ export class Runner {
     if (t.selector) {
       let list: Element[] = [];
       try {
-        list = Array.prototype.slice.call(
-          document.querySelectorAll(t.selector)
-        );
+        list = [...document.querySelectorAll(t.selector)];
       } catch {
-        list = [];
+        /* селектор карты не разобрался — «не нашёл» */
       }
       return pick(
         list.filter(
@@ -486,21 +475,21 @@ export class Runner {
       (f.assistId || '').replace(/[-_.:]+/g, ' '),
     ].join(' ');
     if (neverTarget(words, f.assistId)) return 'danger';
-    // Сервер проверял ссылку, а живая цель — уже не ссылка.
-    if (step.target && step.target.href && !f.href) return 'offhost';
-    if (f.href) {
-      try {
-        if (paymentPath(new URL(f.href).pathname)) return 'payment';
-      } catch {
-        return 'offhost';
-      }
-      // Ссылка поменялась после проверки сервером — не нажимаем.
-      if (step.target && step.target.href && step.target.href !== f.href)
-        return 'offhost';
-      if (!step.target || !step.target.href) {
-        if (new URL(f.href).origin !== location.origin) return 'offhost';
-      }
+    // Н-4: выбираемая опция списка — тот же стоп-лист («Скасувати
+    // замовлення», «Видалити акаунт» в <select>).
+    if (step.kind == 'select') {
+      const o = optionOf(el, step.value);
+      if (o && neverTarget(o.text, null)) return 'danger';
     }
+    // `f.href` — origin+путь http(s) (cleanHref), разбирается всегда.
+    if (f.href && paymentPath(new URL(f.href).pathname)) return 'payment';
+    // Сервер проверял ссылку, а живая цель — уже не ссылка или ссылка
+    // поменялась; без проверенной ссылки — только свой origin.
+    const th = step.target && step.target.href;
+    if (
+      th ? th !== f.href : f.href && new URL(f.href).origin !== location.origin
+    )
+      return 'offhost';
     if (f.gesture) return 'gesture';
     return null;
   }
@@ -527,11 +516,23 @@ export class Runner {
   }
 
   private act(step: UiStep, el: Element): boolean {
+    const x = el as HTMLInputElement;
+    let p: Prior | null = null;
     if (step.kind == 'fill' || step.kind == 'select' || step.kind == 'check') {
       if (mem[0] && mem[0][0] != this.planId) mem.length = 0;
-      const x = el as HTMLInputElement;
-      mem.push([this.planId, step.i, el, x.value, x.checked ?? null]);
+      mem.push(
+        (p = [this.planId, step.i, el, x.value, x.checked ?? null, radioOn(x)])
+      );
     }
+    const ok = this.go(step, el);
+    if (p) {
+      p[6] = x.value;
+      p[7] = x.checked ?? null;
+    }
+    return ok;
+  }
+
+  private go(step: UiStep, el: Element): boolean {
     switch (step.kind) {
       case 'click':
         this.pointerSequence(el);
@@ -556,19 +557,10 @@ export class Runner {
         return true;
       }
       case 'select': {
-        if (!(el instanceof HTMLSelectElement)) return false;
-        const want = norm(step.value || '');
-        let val: string | null = null;
-        for (let i = 0; i < el.options.length; i++) {
-          const o = el.options[i];
-          if (norm(o.text) === want || norm(o.value) === want) {
-            val = o.value;
-            break;
-          }
-        }
-        if (val === null) return false;
+        const o = optionOf(el, step.value);
+        if (!o || !(el instanceof HTMLSelectElement)) return false;
         el.focus({ preventScroll: true });
-        setNativeValue(el, val);
+        setNativeValue(el, o.value);
         fire(el, 'input');
         fire(el, 'change');
         return true;
@@ -616,12 +608,11 @@ export class Runner {
     const e = step.expect;
     if (!e) return true;
     if (e.path) {
-      const want = e.path;
+      // `/catalog/*` — префикс пути; иначе — путь целиком (без хвостовых `/`).
+      const star = e.path.slice(-1) == '*';
       const p = location.pathname.replace(/\/+$/, '') || '/';
-      const w = want.endsWith('*')
-        ? want.slice(0, -1).replace(/\/+$/, '')
-        : want.replace(/\/+$/, '') || '/';
-      if (want.endsWith('*') ? p.indexOf(w) !== 0 : p !== w) return false;
+      const w = (star ? e.path.slice(0, -1) : e.path).replace(/\/+$/, '');
+      if (star ? p.indexOf(w) != 0 : p != (w || '/')) return false;
     }
     if (e.appear) {
       const want = norm(e.appear);
@@ -656,14 +647,7 @@ export class Runner {
 
   /** Шаг меняет страницу/данные — исполняется не более одного раза. */
   private effect(step: UiStep): boolean {
-    return (
-      step.nav ||
-      step.kind === 'click' ||
-      step.kind === 'fill' ||
-      step.kind === 'select' ||
-      step.kind === 'check' ||
-      step.kind === 'navigate'
-    );
+    return step.nav || /^(click|fill|select|check|navigate)$/.test(step.kind);
   }
 
   /** Сверка адреса для `dispatched`-шага после перехода — без повтора клика. */
@@ -690,34 +674,31 @@ export class Runner {
       if (!(await this.gate())) return;
       const step = this.steps[i];
       const t0 = Date.now();
+      const rep = (r: UiStepResult, why: string | null = null) =>
+        host.report(i, r, why, Date.now() - t0);
       if (step.state === 'dispatched' && !step.nav) {
         // Аудит Э6-бис: действие могло сработать до перезагрузки — не
         // повторяем; iframe скажет «проверьте сами».
-        host.report(i, 'skipped', 'interrupted', Date.now() - t0);
+        rep('skipped', 'interrupted');
         return this.finish();
       }
       if (step.state === 'dispatched') {
         // §4-бис.5: шаг уже нажат на прошлой странице — НИКОГДА не повторять.
         const r = this.resumeDispatched(step);
-        host.report(i, r, r === 'failed' ? 'expect' : null, Date.now() - t0);
+        rep(r, r === 'failed' ? 'expect' : null);
         if (r === 'failed') return this.finish();
         continue;
       }
       if (step.state !== 'pending') continue;
       if (step.kind === 'say') {
         if (step.say) this.say(step.say);
-        host.report(i, 'done', null, 0);
+        rep('done');
         continue;
       }
       if (step.kind === 'wait') {
         await this.settle();
         const ok = this.expectOk(step, null, '');
-        host.report(
-          i,
-          ok ? 'done' : 'failed',
-          ok ? null : 'expect',
-          Date.now() - t0
-        );
+        rep(ok ? 'done' : 'failed', ok ? null : 'expect');
         if (!ok) return this.finish();
         continue;
       }
@@ -729,18 +710,23 @@ export class Runner {
       }
       const el = step.target ? this.find(step) : null;
       if (!el) {
-        host.report(
-          i,
+        rep(
           step.risk === 'manual' || step.risk === 'never' ? 'manual' : 'failed',
-          'no_target',
-          Date.now() - t0
+          'no_target'
         );
         this.say(this.L.self);
         return this.finish(true);
       }
       const caption = (step.target && step.target.text) || visibleText(el);
+      // `instant` — поверх `scroll-behavior: smooth` сайта: рамка (fixed)
+      // считается от прямоугольника ПОСЛЕ прокрутки, а не до неё. Старый
+      // браузер без `instant` бросает TypeError — тогда как умеет.
       try {
-        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+        el.scrollIntoView({
+          block: 'center',
+          inline: 'nearest',
+          behavior: 'instant',
+        });
       } catch {
         el.scrollIntoView();
       }
@@ -756,66 +742,71 @@ export class Runner {
       // Не исполняется: «никогда»/«нажмите сами» — подсветка и сообщение.
       if (step.risk === 'manual' || step.risk === 'never') {
         this.say(`${this.L.self}: ${caption}`);
-        host.report(i, 'manual', step.reason, Date.now() - t0);
+        rep('manual', step.reason);
         return this.finish(true);
       }
       const refusal = this.liveRefusal(step, el);
       if (refusal) {
         this.say(`${this.L.self}: ${caption}`);
-        host.report(i, 'failed', refusal, Date.now() - t0);
+        rep('failed', refusal);
         return this.finish(true);
       }
       if (step.kind === 'highlight' || step.kind === 'scroll') {
-        host.report(i, 'done', null, Date.now() - t0);
+        rep('done');
         await sleep(host.N, BETWEEN_MS);
         continue;
       }
       if (this.effect(step)) {
         // Отметка «начат» на сервере (один раз) — ДО действия: перезагрузка
         // между действием и `done` не приведёт к повтору.
-        host.report(i, 'dispatched', null, Date.now() - t0);
+        rep('dispatched');
         if (!(await this.waitAck(i))) {
-          if (!this.stoppedFlag)
-            host.report(i, 'failed', 'ack', Date.now() - t0);
+          if (!this.stoppedFlag) rep('failed', 'ack');
           return this.finish(true);
         }
         if (!(await this.gate())) return;
         // Пока ждали записи `dispatched`, цель могли подменить — ещё раз.
         const late = this.liveRefusal(step, el);
         if (late) {
-          host.report(i, 'failed', late, Date.now() - t0);
+          rep('failed', late);
           return this.finish(true);
         }
       }
       const before = norm(visibleText(el));
       this.unring();
       if (!this.act(step, el)) {
-        host.report(i, 'failed', 'action', Date.now() - t0);
+        rep('failed', 'action');
         this.ringAround(el, caption);
         return this.finish(true);
       }
       await this.settle();
       if (this.stoppedFlag) return;
       if (!this.expectOk(step, el, before)) {
-        host.report(i, 'failed', 'expect', Date.now() - t0);
+        rep('failed', 'expect');
         if (el.isConnected) this.ringAround(el, caption);
         this.say(`${this.L.self}: ${caption}`);
         return this.finish(true);
       }
-      host.report(i, 'done', null, Date.now() - t0);
+      rep('done');
       await sleep(host.N, BETWEEN_MS);
     }
     this.finish();
   }
 
-  /** Конец: панель убирается; при «нажмите сами» подсветка держится 6 с. */
+  /**
+   * Конец: панель убирается; при «нажмите сами» подсветка держится 6 с.
+   * Уже остановленный через stop() раннер (новый `ui-run`, «Стоп») не
+   * трогает ничего: его teardown был, а `mark(false)` после `mark(true)`
+   * нового раннера сбросил бы флаг «план идёт».
+   */
   private finish(keepRing = false) {
+    if (this.stoppedFlag) return;
     const ring = this.ring;
     this.ring = null;
     this.stoppedFlag = true;
     this.teardown();
     if (keepRing && ring) {
-      (document.body || document.documentElement).appendChild(ring);
+      put(ring);
       this.host.N.later(() => ring.remove(), 6000);
     }
   }

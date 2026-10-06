@@ -17,50 +17,29 @@
  */
 import { isUsableSitesSecret } from '../shared/sites-internal-signature';
 import { isUsableSealKey } from '../modules/browser-jobs/worker-seal';
+import {
+  INTERNAL_SECRET_ENVS,
+  internalSecretCollision,
+} from './internal-secrets-distinct';
 
 export const WORKER_SECRET_ENV = 'SITES_WORKER_HMAC_SECRET';
 /**
  * Секреты, с которыми секрет воркера совпадать не должен: других
  * направлений внутреннего API и — аудит Ш3 — ВСЕ прочие секреты
- * sites-backend той же длины. Воркер живёт рядом с чужим JS: одно значение,
- * скопированное оператором и в `CRON_SECRET`, или — хуже — в KEK реестра
- * учёток `ASSIST_SECRETS_KEY`, превратило бы утечку env воркера в доступ к
- * кронам или к расшифровке всех учёток Ш2.
+ * sites-backend (кроны, KEK учёток Ш2, ключ «Админки» и его старые версии).
+ * Список и сверка — общие для всех HMAC-гвардов (`internal-secrets-distinct.ts`,
+ * аудит Н-2).
  */
-export const WORKER_DISTINCT_FROM = [
-  'SITES_TUTORIAL_HMAC_SECRET',
-  'SITES_QA_HMAC_SECRET',
-  'SITES_INTERNAL_SECRET',
-  'CRON_SECRET',
-  'ASSIST_SECRETS_KEY',
-  'ASSIST_ANALYTICS_REF_SECRET',
-  'ASSIST_WEBHOOK_SECRET',
-  'QA_WEBHOOK_SECRET',
-  'BLOB_READ_WRITE_TOKEN',
-] as const;
+export const WORKER_DISTINCT_FROM = INTERNAL_SECRET_ENVS.filter(
+  (e) => e !== WORKER_SECRET_ENV,
+);
 
-/** Ключи хранилища учёток Ш2 (`v1:<ключ>,v2:<ключ>`) — сверяется каждый. */
-const CREDENTIAL_KEYS_ENV = 'SITE_CREDENTIALS_KEYS';
-
-/**
- * Имя переменной, с которой совпал секрет воркера (или `null`). Кроме
- * списка `WORKER_DISTINCT_FROM` — каждый ключ `SITE_CREDENTIALS_KEYS`
- * (KEK реестра учёток Ш2): равенство всей строке его не поймало бы.
- */
+/** Имя переменной, с которой совпал секрет воркера (или `null`). */
 export function workerSecretCollision(
   env: NodeJS.ProcessEnv,
   secret: string,
 ): string | null {
-  for (const other of WORKER_DISTINCT_FROM) {
-    if (env[other]?.trim() === secret) return other;
-  }
-  for (const part of (env[CREDENTIAL_KEYS_ENV] ?? '').split(',')) {
-    const p = part.trim();
-    if (!p) continue;
-    const key = p.slice(p.indexOf(':') + 1).trim();
-    if (p === secret || key === secret) return CREDENTIAL_KEYS_ENV;
-  }
-  return null;
+  return internalSecretCollision(env, WORKER_SECRET_ENV, secret);
 }
 
 export function browserWorkerEnabled(

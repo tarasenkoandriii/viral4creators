@@ -46,7 +46,7 @@ import {
   clearPendingAssistSite,
   pendingAssistSite,
 } from '../../lib/assist-site-link';
-import { deleteProject } from '../../services/projects-api';
+import { rollbackCreatedProject } from '../../services/projects-api';
 import { usePlanState } from '../../lib/plan-context';
 import { allows, lockLabel } from '../../lib/plan';
 import {
@@ -283,7 +283,7 @@ export function ProjectCreateScreen() {
         // Пустой проект после неудачного первого шага — мусор в списке
         // пользователя; убираем сразу, не дожидаясь, пока он сам его
         // найдёт и удалит.
-        await deleteProject(projectId).catch(() => undefined);
+        await rollbackCreatedProject(projectId).catch(() => undefined);
       }
       setSubmitting(false);
     }

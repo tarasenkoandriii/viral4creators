@@ -17,6 +17,24 @@
  *   SH3_WORKER_INTEGRATION=1 SITES_DIRECT_URL=… npx jest src/acceptance/sh3/browser-worker.real
  * Под root — без песочницы; с `SH3_WORKER_UID=<uid непривилегированного>` —
  * воркер запускается этим пользователем С песочницей Chromium (как в образе).
+ *
+ * ВНИМАНИЕ: в CI (`npx jest --ci`, джоба sites-backend) все три теста этого
+ * файла ПРОПУСКАЮТСЯ (describe.skip) — SH3_WORKER_INTEGRATION там не задан,
+ * собранного воркера и Chromium нет. Зелёный CI их НЕ проверяет; «skipped» в
+ * отчёте jest — ожидаемо, а не потерянный тест.
+ *
+ * Когда запускать (обязательно): после деплоя браузерного воркера на VPS
+ * (doc/DEPLOYMENT.md §6.25 «Браузерный воркер») и после любой правки протокола
+ * задач Ш3 / конверта учёток Ш2 / прокси воркера — на VPS воркера (или любой
+ * машине с полным клоном репозитория, Postgres с миграциями sites-backend и
+ * Chromium Playwright):
+ *   cd browser-worker && npm ci && npm run build && cd ../sites-backend
+ *   SH3_WORKER_INTEGRATION=1 SITES_DIRECT_URL='postgresql://…?schema=sites' \
+ *     SITES_DATABASE_URL="$SITES_DIRECT_URL" BROWSER_WORKER_CHROMIUM_PATH=… \
+ *     npx jest -i src/acceptance/sh3/browser-worker.real
+ * Ожидаемо «Tests: 3 passed». «3 skipped» — значит, не выполнилось одно из
+ * условий ENABLED ниже (переменная, SITES_DIRECT_URL, browser-worker/dist/main.js,
+ * Chromium по BROWSER_WORKER_CHROMIUM_PATH или /opt/pw-browsers/chromium).
  */
 import { spawn, type ChildProcess } from 'child_process';
 import { existsSync } from 'fs';

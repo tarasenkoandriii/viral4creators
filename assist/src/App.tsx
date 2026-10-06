@@ -25,9 +25,16 @@ import {
   createWebAuthApi,
   detectAuthMode,
   errorText,
+  fmt,
   getDictionary,
   getTelegramWebApp,
+  inviteBlocksAccount,
+  inviteFlowNext,
+  inviteJoinNotice,
   inviteTokenFromLaunch,
+  pendingInviteToken,
+  shortAccountId,
+  startInviteFlow,
   readStoredAccountId,
   readStoredLocale,
   resolveLocale,
@@ -39,6 +46,7 @@ import {
   useKit,
   type AccountInfo,
   type AuthMode,
+  type InviteFlow,
   type KitValue,
   type Locale,
   type TelegramLoginPayload,
@@ -49,6 +57,7 @@ import { LanguageSwitcher } from './kit/ui/LanguageSwitcher';
 import { AddSiteScreen } from './kit/screens/AddSiteScreen';
 import { AuthorizationsScreen } from './kit/screens/AuthorizationsScreen';
 import { HostVerifyScreen } from './kit/screens/HostVerifyScreen';
+import { InviteAcceptScreen } from './kit/screens/InviteAcceptScreen';
 import { InviteScreen } from './kit/screens/InviteScreen';
 import { MembersScreen } from './kit/screens/MembersScreen';
 import { SiteScreen } from './kit/screens/SiteScreen';
@@ -125,7 +134,12 @@ import { StatsScreen, StatsSitesScreen } from './screens/e3/StatsScreens';
  */
 type Phase = 'checking' | 'login' | 'ready';
 
-type Notice = { tone: 'success' | 'danger'; text: string };
+type Notice = {
+  tone: 'success' | 'danger' | 'neutral';
+  text: string;
+  /** Явное действие тоста («Переключиться» после приглашения). */
+  action?: { label: string; onClick: () => void };
+};
 
 function initialLanguage(mode: AuthMode): string | undefined {
   // В браузере Telegram язык не сообщает — берём язык браузера (явная
@@ -172,16 +186,19 @@ export function App({ startParam }: { startParam: string | null }) {
   const [notice, setNotice] = useState<Notice | null>(null);
 
   // Приглашение из запуска: startapp=inv_… (TMA) или ?invite= (веб).
-  const inviteRef = useRef<string | null>(
-    inviteTokenFromLaunch(
-      startParam,
-      typeof window !== 'undefined' ? window.location.search : ''
+  // Аудит Н-1: НЕ принимается само — сначала экран подтверждения с
+  // превью сервера, «Принять» только по кнопке; выбранный кабинет после
+  // принятия не меняется (тост «Переключиться»). Пока решения нет, кабинет
+  // не грузится: новичку GET /sites/account создал бы пустой «свой».
+  const [inviteFlow, setInviteFlow] = useState<InviteFlow>(() =>
+    startInviteFlow(
+      inviteTokenFromLaunch(
+        startParam,
+        typeof window !== 'undefined' ? window.location.search : ''
+      )
     )
   );
-  // Принятие — один раз за запуск, даже если загрузка кабинета
-  // перезапустится (StrictMode, смена фазы): иначе второй параллельный
-  // GET /sites/account успел бы создать новичку пустой «свой» кабинет.
-  const inviteJob = useRef<Promise<void> | null>(null);
+  const inviteBlocks = inviteBlocksAccount(inviteFlow);
   // Payload лендинга (startapp=lp_/pl_/sb_/wd_…) — экран и атрибуция один
   // раз за запуск: после «Не сейчас» человек не должен попадать туда снова.
   const launch = useRef<LaunchAction | null>(launchAction(startParam));
@@ -293,39 +310,53 @@ export function App({ startParam }: { startParam: string | null }) {
     };
   }, [mode, phase, webAuth, checkTick]);
 
-  const acceptInvite = useCallback(
-    async (token: string) => {
-      try {
-        const joined = await api.acceptInvite(token);
-        accountIdRef.current = joined.account.id;
-        storeAccountId(joined.account.id);
-        setNotice({ tone: 'success', text: dictRef.current.invite.accepted });
-        inviteRef.current = null;
-        clearInviteFromUrl();
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
-          // Сессия кончилась — приглашение ждёт следующего входа.
-          inviteJob.current = null;
-          throw e;
-        }
-        inviteRef.current = null;
-        clearInviteFromUrl();
-        setNotice({ tone: 'danger', text: errorText(e, dictRef.current) });
-      }
-    },
-    [api]
+  // Тот же токен на шагах confirm и accepting — превью не перезапрашивается.
+  const invitePreviewToken = pendingInviteToken(inviteFlow);
+  const loadInvitePreview = useCallback(
+    () => api.invitePreview(invitePreviewToken ?? ''),
+    [api, invitePreviewToken]
   );
 
-  // Кабинет: сначала приглашение (новичок должен попасть в кабинет
-  // пригласившего, а не получить автосозданный пустой), затем
-  // GET /sites/account — кабинет создаётся при первом входе (ТЗ §4.16).
-  const account = useAsync<AccountInfo | null>(async () => {
-    if (phase !== 'ready') return null;
-    const token = inviteRef.current;
-    if (token) {
-      inviteJob.current ??= acceptInvite(token);
-      await inviteJob.current;
+  // «Принять» — только с экрана подтверждения. Выбор кабинета НЕ трогаем:
+  // accountIdRef остаётся прежним (или пустым — тогда сервер откроет свой
+  // кабинет, а новичку без своего — этот).
+  const acceptInvite = async () => {
+    if (inviteFlow.step !== 'confirm') return;
+    const flow = inviteFlow;
+    setInviteFlow((f) => inviteFlowNext(f, { type: 'accept' }));
+    try {
+      const joined = await api.acceptInvite(flow.token);
+      clearInviteFromUrl();
+      setNotice(null);
+      setInviteFlow((f) =>
+        inviteFlowNext(f, {
+          type: 'accepted',
+          accountId: joined.account.id,
+          role: joined.me.role,
+        })
+      );
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        // Сессия кончилась — приглашение ждёт входа (экран покажется снова).
+        setInviteFlow((f) => inviteFlowNext(f, { type: 'unauthorized' }));
+        return;
+      }
+      clearInviteFromUrl();
+      setNotice({ tone: 'danger', text: errorText(e, dictRef.current) });
+      setInviteFlow((f) => inviteFlowNext(f, { type: 'failed' }));
     }
+  };
+
+  const declineInvite = () => {
+    clearInviteFromUrl();
+    setNotice({ tone: 'neutral', text: dictRef.current.inviteAccept.declined });
+    setInviteFlow((f) => inviteFlowNext(f, { type: 'decline' }));
+  };
+
+  // Кабинет: GET /sites/account — создаётся при первом входе (ТЗ §4.16).
+  // Пока приглашение ждёт решения — не грузим (см. inviteFlow).
+  const account = useAsync<AccountInfo | null>(async () => {
+    if (phase !== 'ready' || inviteBlocks) return null;
     try {
       return await api.account();
     } catch (e) {
@@ -342,7 +373,7 @@ export function App({ startParam }: { startParam: string | null }) {
       }
       throw e;
     }
-  }, [api, phase, acceptInvite]);
+  }, [api, phase, inviteBlocks]);
 
   const setLocale = (l: Locale) => {
     setLocaleState(l);
@@ -353,6 +384,8 @@ export function App({ startParam }: { startParam: string | null }) {
     accountIdRef.current = id;
     storeAccountId(id);
     setNotice(null);
+    // Явный выбор — тост «Переключиться» больше не нужен.
+    setInviteFlow((f) => inviteFlowNext(f, { type: 'dismiss' }));
     navigate({ name: 'home' }, true);
     account.reload();
   };
@@ -409,11 +442,27 @@ export function App({ startParam }: { startParam: string | null }) {
         dict={dict}
         botUsername={ASSIST_BOT_USERNAME}
         onAuth={onLogin}
-        hint={inviteRef.current ? dict.auth.inviteWaiting : undefined}
+        hint={
+          pendingInviteToken(inviteFlow) ? dict.auth.inviteWaiting : undefined
+        }
       />
     );
   }
-  if (account.loading && !account.data) {
+  if (inviteBlocks) {
+    return (
+      <Frame>
+        {header}
+        <InviteAcceptScreen
+          dict={dict}
+          locale={locale}
+          loadPreview={loadInvitePreview}
+          onAccept={acceptInvite}
+          onDecline={declineInvite}
+        />
+      </Frame>
+    );
+  }
+  if (account.loading || (!account.data && !account.error)) {
     return (
       <Frame>
         <Spinner label={dict.common.loading} />
@@ -438,6 +487,26 @@ export function App({ startParam }: { startParam: string | null }) {
     );
   }
 
+  // Тост после принятия: добавленный кабинет — явным «Переключиться».
+  const join = inviteJoinNotice(inviteFlow, account.data.account.id);
+  const joinedId = join?.accountId;
+  const shownNotice: Notice | null =
+    join && inviteFlow.step === 'joined'
+      ? join.kind === 'switch' && joinedId
+        ? {
+            tone: 'success',
+            text: fmt(dict.invite.joined, {
+              id: shortAccountId(joinedId),
+              role: dict.members.roles[inviteFlow.role],
+            }),
+            action: {
+              label: dict.invite.switchTo,
+              onClick: () => switchAccount(joinedId),
+            },
+          }
+        : { tone: 'success', text: dict.invite.accepted }
+      : notice;
+
   const kit: KitValue = {
     app: APP_ID,
     locale,
@@ -461,7 +530,7 @@ export function App({ startParam }: { startParam: string | null }) {
           key={account.data.account.id}
           appDict={appDict}
           created={account.data.created}
-          notice={notice}
+          notice={shownNotice}
           onSwitchAccount={switchAccount}
           onLogout={mode === 'web' ? logout : undefined}
           consumeLaunch={consumeLaunch}
@@ -631,7 +700,16 @@ function Shell({
     <>
       {notice && (
         <div className="mb-4">
-          <Alert tone={notice.tone}>{notice.text}</Alert>
+          <Alert tone={notice.tone}>
+            {notice.text}
+            {notice.action && (
+              <div className="mt-2">
+                <Button variant="outline" onClick={notice.action.onClick}>
+                  {notice.action.label}
+                </Button>
+              </div>
+            )}
+          </Alert>
         </div>
       )}
       {web && !isRoot(route) && (

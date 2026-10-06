@@ -13,6 +13,9 @@
  * нативным кликом); через 300 мс проверка: значение равно прежнему —
  * `done`; контролируемое поле его откатило — `unknown` («проверьте поле»);
  * элемента уже нет (переход SPA, перерисовка) — `gone` («вернуть не могу»).
+ * Возврат — только если поле всё ещё держит то, что поставил помощник
+ * (иначе `unknown`, чужой ввод не перетирается); радио — отметкой прежней
+ * кнопки группы (по себе радио кликом не снимается).
  * Серверные действия («В кошик») здесь не возвращаются никогда.
  */
 import type { Prior } from '../act/exec';
@@ -40,10 +43,23 @@ const isFlag = (el: Element) =>
   el instanceof HTMLInputElement &&
   (el.type === 'checkbox' || el.type === 'radio');
 
-const same = (p: Prior) => {
+/** Поле держит значение `v`/флажок `c` (по умолчанию — прежние). */
+const same = (p: Prior, v = p[3], c = p[4]) => {
   const el = p[2] as HTMLInputElement;
-  return isFlag(el) ? el.checked === p[4] : el.value === p[3];
+  return isFlag(el) ? el.checked === c : el.value === v;
 };
+
+/** Радиокнопка без прежней в группе: снять отметку нативным сеттером. */
+function uncheck(el: HTMLInputElement) {
+  const d = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    'checked'
+  );
+  if (d && d.set) d.set.call(el, false);
+  else el.checked = false;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
 
 export function undo(raw: unknown, mem: Prior[], host: ActHost): void {
   const r = raw as Record<string, unknown> | null;
@@ -56,6 +72,11 @@ export function undo(raw: unknown, mem: Prior[], host: ActHost): void {
   )
     return;
   const planId = r.planId;
+  const click = (el: Element) => {
+    const c = host.N.click;
+    if (c && el instanceof HTMLElement) c.call(el);
+    else (el as HTMLElement).click();
+  };
   const todo: Array<{ i: number; p: Prior | null; res: Result }> = [];
   for (const i of r.idx) {
     if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i > 20)
@@ -66,14 +87,21 @@ export function undo(raw: unknown, mem: Prior[], host: ActHost): void {
       todo.push({ i, p: null, res: 'gone' });
       continue;
     }
-    const el = p[2];
+    // Аудит 06.10: поле уже не держит то, что поставил помощник (человек
+    // или страница поменяли его после шага) — не перетираем чужой ввод.
+    if (!same(p, p[6], p[7])) {
+      todo.push({ i, p: null, res: 'unknown' });
+      continue;
+    }
+    const el = p[2] as HTMLInputElement;
     try {
-      if (isFlag(el)) {
-        if (!same(p)) {
-          const c = host.N.click;
-          if (c && el instanceof HTMLElement) c.call(el);
-          else (el as HTMLElement).click();
-        }
+      if (el.type === 'radio' && el instanceof HTMLInputElement) {
+        // Радио не снимается кликом по себе: отмечаем прежнюю кнопку группы.
+        const prev = p[5];
+        if (prev && prev !== el) click(prev);
+        else if (!prev && !same(p)) uncheck(el);
+      } else if (isFlag(el)) {
+        if (!same(p)) click(el);
       } else setValue(el, p[3]);
       todo.push({ i, p, res: 'done' });
     } catch {

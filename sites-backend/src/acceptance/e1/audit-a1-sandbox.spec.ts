@@ -31,6 +31,9 @@ import {
 import { GeminiEmbedder } from '../../modules/site-ai/embedder';
 import { AiUsageRecorder } from '../../modules/site-ai/usage-recorder';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 describeDb('Аудит Э1 (A1): деньги публичной песочницы', () => {
   let prisma: PrismaService;
   let publicDb: AssistPublicDb;

@@ -149,11 +149,12 @@ export default function SiteTutorialLandingPage({
             </div>
             {/* Та же оправа `.frame-shot`, что у кадров ниже: одна
                 визуальная система, а не второй способ показывать
-                картинку. `priority` — кадр в первом экране и кандидат в
-                LCP-элемент; пока это SVG на семь килобайт, цена
-                предзагрузки близка к нулю, но при Уровне 2, когда здесь
-                окажется растровый снимок, бюджет ≤90 КБ из §3 придётся
-                проверять замером. */}
+                картинку. Кадр — растровый AVIF (~55 КБ; бюджет держит
+                `scripts/greeting-frames.test.ts`). Без `priority`: на
+                телефоне (360px) он ниже первого экрана, и предзагрузка с
+                высоким приоритетом отнимала канал у CSS/JS;
+                `loading="eager"` — чтобы на десктопе, где кадр в первом
+                экране, он не ждал ленивой загрузки. */}
             <div className="hero-shot frame-shot">
               <Image
                 src="/illustrations/tutorial-hero-v2.avif"
@@ -161,7 +162,7 @@ export default function SiteTutorialLandingPage({
                 width={1536}
                 height={1024}
                 sizes="(min-width: 900px) 46vw, 100vw"
-                priority
+                loading="eager"
                 unoptimized
               />
             </div>

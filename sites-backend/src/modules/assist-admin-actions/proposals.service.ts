@@ -16,7 +16,9 @@
  *     текущий статус). Исполнение — `executeWrite` (Idempotency-Key = id,
  *     без автоповтора).
  *  3. Итог — журнал (append-only, цепочка хешей), карточка, сообщение в
- *     диалоге; danger — уведомление владельцам; 401/403 — коннектор на паузу.
+ *     диалоге; danger — уведомление владельцам; отказ по ключу коннектора
+ *     (401 с вызовом Bearer/кодом ключа) — коннектор на паузу, 403 — нет
+ *     (аудит Н-3, `ConnectorsService.markCalled`).
  *  4. Откат — ТОЛЬКО объявленная компенсация (`x-assist-compensation` или
  *     владелец), новым предложением со своим «Да»; иначе «отменить нельзя»
  *     и ручной разбор по журналу.
@@ -1160,12 +1162,15 @@ export class ProposalsService {
       },
       `exec:${row.id}:${attempt}`,
     );
-    await this.connectors.markCalled(
+    // Пауза коннектора — только отказ по ключу (аудит Н-3): 403 и одиночный
+    // неясный 401 — отказ по сотруднику, коннектор исправен.
+    const paused = await this.connectors.markCalled(
       ctx.accountId,
       op.connectorId,
-      r.outcome === 'auth_failed',
+      r.authReject,
     );
-    if (r.outcome === 'auth_failed') {
+    const keyRejected = paused || r.outcome === 'auth_failed';
+    if (paused) {
       await this.notifier.authFailed({
         accountId: ctx.accountId,
         siteId: ctx.siteId,
@@ -1225,7 +1230,7 @@ export class ProposalsService {
     const text =
       finalStatus === 'done'
         ? ACTION_TEXT.done[lang](what)
-        : r.outcome === 'auth_failed'
+        : keyRejected
           ? ACTION_TEXT.authFailed[lang](op.connectorName)
           : finalStatus === 'failed'
             ? ACTION_TEXT.failed[lang](what, r.errorText)

@@ -27,6 +27,7 @@ import { AdminActionsNotifier } from '../../modules/assist-admin-actions/action-
 import { AssistAdminRetentionController } from '../../modules/assist-admin-chat/cron/assist-admin-retention.controller';
 import type { E7Site } from '../e7/e7-stack';
 import { E8Stack, ShopApi, actionsSpec, describeE8 } from './e8-stack';
+import { awaitMinuteHeadroom } from '../window-headroom';
 
 jest.setTimeout(120_000);
 
@@ -981,6 +982,9 @@ describeE8('Э8 «Админка: действия» — приёмка по HTT
   it('аудит Э8: TMA — тот же минутный лимит решений, что у встраивания', async () => {
     const emp = await st.member(S, 'operator', { assistAdmin: 'employee' });
     const codes: number[] = [];
+    // Окно лимита — минута по часам: 21 запрос на смене минуты делятся
+    // между двумя окнами, и 21-й — 404 вместо 429.
+    await awaitMinuteHeadroom();
     for (let i = 0; i < 21; i++) {
       const r = await request(st.srv())
         .post(

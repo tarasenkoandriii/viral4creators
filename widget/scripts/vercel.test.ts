@@ -127,6 +127,17 @@ assert.equal(
   undefined
 );
 assert.equal(header('/v1/admin-vc.js', 'X-Content-Type-Options'), 'nosniff');
+// Э6-тер (аудит 06.10): пикер редактора — import() загрузчика с origin
+// виджета на странице заказчика (без CORS модуль не исполнится, как act.js);
+// панель — классический <script> и <link> своего origin `we.` (CORS не нужен).
+assert.equal(header('/v1/editor.js', 'Access-Control-Allow-Origin'), '*');
+assert.match(header('/v1/editor.js', 'Cache-Control') ?? '', /max-age=300\b/);
+assert.equal(header('/v1/editor.js', 'X-Content-Type-Options'), 'nosniff');
+for (const f of ['/v1/editor-panel.js', '/v1/editor-panel.css']) {
+  assert.match(header(f, 'Cache-Control') ?? '', /max-age=300\b/, f);
+  assert.equal(header(f, 'X-Content-Type-Options'), 'nosniff', f);
+  assert.equal(header(f, 'Access-Control-Allow-Origin'), undefined, f);
+}
 assert.ok(cfg.ignoreCommand, 'ignoreCommand пропал');
 console.log(
   'vercel.json: шрифты immutable, загрузчик, engage.js, voice.js, highlight.js и act.js — 5 мин'

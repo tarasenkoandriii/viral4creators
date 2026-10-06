@@ -19,7 +19,7 @@
  *  - ссылка редактора: только владелец/менеджер (гвард маршрута), только
  *    verified-хост «Сайта» без льготы и не admin-хост; в базе — SHA-256.
  */
-import { createHash, createHmac, randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { WIDGET_EDITOR_PARAM } from '../../brand';
@@ -120,6 +120,11 @@ interface VersionRow {
   createdAt: Date;
   publishedAt: Date | null;
 }
+
+/** Метка производного ключа подписи экспорта карты (аудит Н-5). */
+const VOICE_MAP_EXPORT_LABEL = 'voice-map-export-v1';
+/** Без ключа подпись формальна (формат файла), «нашим» файл не признаётся. */
+const UNSIGNED_EXPORT_KEY = 'v4c-voice-map-export-unsigned';
 
 @Injectable()
 export class VoiceMapService {
@@ -912,18 +917,34 @@ export class VoiceMapService {
 
   // ── экспорт / импорт (§5-кватер.12) ────────────────────────────────────
 
-  private signKey(): string {
-    return (
-      this.env.ASSIST_VOICE_MAP_EXPORT_KEY?.trim() ||
-      this.env.ASSIST_SECRETS_KEY?.trim() ||
-      'v4c-voice-map-export-unsigned'
-    );
+  /**
+   * Ключ подписи экспорта (аудит Н-5): свой `ASSIST_VOICE_MAP_EXPORT_KEY`
+   * или ПРОИЗВОДНЫЙ от `ASSIST_SECRETS_KEY` с меткой — сам KEK как ключ
+   * HMAC файла, который уходит владельцу, не используется (тот же приём,
+   * что lead-crypto). Нет ни того, ни другого — `null`: подпись в файле
+   * есть (формат), но признаком «наш файл» не считается.
+   */
+  private signKey(): Buffer | null {
+    const own = this.env.ASSIST_VOICE_MAP_EXPORT_KEY?.trim();
+    if (own) return Buffer.from(own, 'utf8');
+    const kek = this.env.ASSIST_SECRETS_KEY?.trim();
+    if (kek)
+      return createHmac('sha256', kek).update(VOICE_MAP_EXPORT_LABEL).digest();
+    return null;
   }
 
   private signature(payload: unknown): string {
-    return createHmac('sha256', this.signKey())
+    return createHmac('sha256', this.signKey() ?? UNSIGNED_EXPORT_KEY)
       .update(canonicalJson(payload))
       .digest('base64url');
+  }
+
+  /** Подпись файла сошлась (за постоянное время; без ключа — никогда). */
+  private signatureValid(payload: unknown, got: unknown): boolean {
+    if (typeof got !== 'string' || !this.signKey()) return false;
+    const a = Buffer.from(got, 'utf8');
+    const b = Buffer.from(this.signature(payload), 'utf8');
+    return a.length === b.length && timingSafeEqual(a, b);
   }
 
   async exportFile(
@@ -974,8 +995,7 @@ export class VoiceMapService {
           : 'Это не файл голосовой карты',
       );
     const { signature, ...payload } = file as Record<string, unknown>;
-    const signed =
-      typeof signature === 'string' && signature === this.signature(payload);
+    const signed = this.signatureValid(payload, signature);
     // Проверка по одной операции: отклонённая цель не валит пакет.
     const row = await this.loadMap(db, m.accountId, siteId);
     if (row.draftRevision !== b.expectedRevision) throw this.conflict();

@@ -16,8 +16,13 @@
  *
  * Сбои (§5.7): 5xx/таймаут — один повтор с паузой, затем честный отказ
  * (данных модели не передаём — ответ сотруднику пишет код, не модель);
- * 401/403 — `auth_failed` (коннектор на паузу — решает сервис); прочие
- * 4xx — `http_error` (только код); не JSON — `bad_response`.
+ * 401 с признаком отказа ПО КЛЮЧУ коннектора (`authRejection`: вызов
+ * `WWW-Authenticate` со схемой ключа или код ключа в теле) — `auth_failed`
+ * (коннектор на паузу — решает сервис); 401 без признака — `http_error`
+ * с `authReject: 'unclear'` (пауза — только после отказов разным
+ * сотрудникам, `ConnectorsService.markCalled`); 403 — `http_error`: это
+ * отказ по сотруднику (`X-V4C-Actor`), коннектор исправен (аудит Н-3);
+ * прочие 4xx — `http_error` (только код); не JSON — `bad_response`.
  *
  * Секрет: подставляется только в заголовок запроса; в результат, журнал и
  * ошибки не попадает; если API эхом вернул секрет в теле — он вырезается до
@@ -82,6 +87,74 @@ export interface ExecResult {
   data: string | null;
   /** Код ошибки для журнала (без тела ответа). */
   error: string | null;
+  /** 401: отказ по ключу коннектора или неясный (аудит Н-3). */
+  authReject?: AuthRejection;
+}
+
+/**
+ * Чем был 401/403 API заказчика (аудит Н-3):
+ *  - `key` — отказ по КЛЮЧУ коннектора: 401 и вызов `WWW-Authenticate` со
+ *    схемой ключа (Bearer, для Basic-ключа — Basic; RFC 6750 §3 / RFC 7617)
+ *    или машинный код ключа в теле (`invalid_token`, `invalid_api_key`, …).
+ *    Генератор (guide-connector.guard) отвечает так ТОЛЬКО на неверный
+ *    ключ — коннектор на паузу сразу;
+ *  - `unclear` — 401 без признака: мог быть и ключ, и сотрудник — одиночный
+ *    отказ коннектор не паузит;
+ *  - `null` — не 401. 403 — всегда отказ по сотруднику (у генератора
+ *    `ACTOR_INVALID`), коннектор НЕ паузит никогда.
+ */
+export type AuthRejection = 'key' | 'unclear';
+
+const KEY_REJECT_CODES = new Set([
+  'invalid_token',
+  'invalid_api_key',
+  'invalid_key',
+  'api_key_invalid',
+  'key_invalid',
+  'token_invalid',
+  'invalid_credentials',
+  'connector_key_invalid',
+]);
+
+function bodyKeyCode(body: Buffer | string): boolean {
+  const text = (typeof body === 'string' ? body : body.toString('utf8')).slice(
+    0,
+    4096,
+  );
+  if (!text.trim().startsWith('{')) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  const codes: unknown[] = [];
+  const o = parsed as Record<string, unknown> | null;
+  if (o && typeof o === 'object') {
+    codes.push(o.code, o.error, o.error_code, o.errorCode);
+    const e = o.error as Record<string, unknown> | null;
+    if (e && typeof e === 'object') codes.push(e.code, e.type);
+  }
+  return codes.some(
+    (c) =>
+      typeof c === 'string' && KEY_REJECT_CODES.has(c.trim().toLowerCase()),
+  );
+}
+
+export function authRejection(
+  status: number,
+  headers: Record<string, string | string[] | undefined> | undefined,
+  body: Buffer | string,
+  authKind: ConnectorAuth['kind'],
+): AuthRejection | null {
+  if (status !== 401) return null;
+  const raw = headers?.['www-authenticate'];
+  const challenge = Array.isArray(raw) ? raw.join(', ') : (raw ?? '');
+  const schemes = authKind === 'basic' ? 'bearer|basic' : 'bearer';
+  if (new RegExp(`(?:^|,)\\s*(?:${schemes})(?:\\s|,|$)`, 'i').test(challenge)) {
+    return 'key';
+  }
+  return bodyKeyCode(body) ? 'key' : 'unclear';
 }
 
 export class ParamValidationError extends Error {
@@ -478,8 +551,22 @@ export async function executeRead(
     if (status >= 300 && status < 400) {
       return { ...common, outcome: 'blocked', error: 'redirect' };
     }
-    if (status === 401 || status === 403) {
-      return { ...common, outcome: 'auth_failed', error: `http_${status}` };
+    const reject = authRejection(status, res.headers, res.body, req.auth.kind);
+    if (reject === 'key') {
+      return {
+        ...common,
+        outcome: 'auth_failed',
+        error: 'http_401',
+        authReject: reject,
+      };
+    }
+    if (reject === 'unclear') {
+      return {
+        ...common,
+        outcome: 'http_error',
+        error: 'http_401',
+        authReject: reject,
+      };
     }
     if (status >= 400) {
       return { ...common, outcome: 'http_error', error: `http_${status}` };

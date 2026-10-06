@@ -16,6 +16,7 @@ import {
   collect,
 } from '../../modules/assist-site-chat/testing/chat-stack.testing';
 import { STANDS } from '../../modules/assist-site-chat/eval/stands';
+import { awaitUtcDayHeadroom } from '../window-headroom';
 
 jest.setTimeout(60_000);
 
@@ -219,6 +220,9 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
   });
 
   it('разрыв соединения не обрывает генерацию: ответ дописан в базу, резерв снят', async () => {
+    // Строка бюджета — день UTC резерва; «сегодня» берётся после ответа —
+    // полночь UTC посередине теста дала бы чужой день.
+    await awaitUtcDayHeadroom(10_000);
     const s = await st.stand('shop');
     st.model.delayMs = 10;
     const it = st.chat
@@ -259,10 +263,24 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
       conversationId: string;
       messageId: string;
     };
-    await new Promise((r) => setTimeout(r, 900));
-    const mid = await st.owner.assistSiteMessage.findUniqueOrThrow({
+    // Первый сброс — не раньше streamFlushMs (500 мс) после начала потока;
+    // фиксированные 900 мс под нагрузкой CI не успевали. Ждём текст в базе
+    // с дедлайном (опрос выходит и на конце потока — тогда проверка
+    // streamState ниже честно падает, как и раньше).
+    const until = Date.now() + 5_000;
+    let mid = await st.owner.assistSiteMessage.findUniqueOrThrow({
       where: { id: meta.messageId },
     });
+    while (
+      mid.text.length === 0 &&
+      mid.streamState === 'streaming' &&
+      Date.now() < until
+    ) {
+      await new Promise((r) => setTimeout(r, 50));
+      mid = await st.owner.assistSiteMessage.findUniqueOrThrow({
+        where: { id: meta.messageId },
+      });
+    }
     expect(mid.streamState).toBe('streaming');
     expect(mid.text.length).toBeGreaterThan(0);
     expect(mid.streamOffset).toBe(mid.text.length);
@@ -288,6 +306,9 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
   });
 
   it('обрыв модели посреди ответа → partial + error upstream (без текста провайдера), деньги — по факту', async () => {
+    // Строка бюджета — день UTC резерва; «сегодня» берётся после ответа —
+    // полночь UTC посередине теста дала бы чужой день.
+    await awaitUtcDayHeadroom(10_000);
     const s = await st.stand('shop');
     st.model.mode = 'fail-midway';
     const r = await st.ask(s, 'Скільки коштує доставка Новою поштою?');
@@ -305,6 +326,9 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
   });
 
   it('неожиданный сбой конвейера (поиск упал) → error upstream, сообщение partial (не «streaming» навсегда), резерв снят', async () => {
+    // Строка бюджета — день UTC резерва; «сегодня» берётся после ответа —
+    // полночь UTC посередине теста дала бы чужой день.
+    await awaitUtcDayHeadroom(10_000);
     const s = await st.stand('shop');
     const spy = jest
       .spyOn(st.search, 'search')

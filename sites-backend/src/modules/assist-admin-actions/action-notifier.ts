@@ -76,7 +76,7 @@ export class AdminActionsNotifier {
     await this.send(
       p.accountId,
       p.siteId,
-      `API «${p.connector.slice(0, 80)}» отклонило ключ помощника (401/403): коннектор на паузе до нового ключа.`,
+      `API «${p.connector.slice(0, 80)}» отклонило ключ помощника (401): коннектор на паузе до нового ключа.`,
     );
   }
 }

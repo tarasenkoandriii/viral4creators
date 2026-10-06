@@ -46,3 +46,20 @@ export function canManage(role: AccountRole): boolean {
 export function shortAccountId(id: string): string {
   return id.length > 6 ? `…${id.slice(-6)}` : id;
 }
+
+/**
+ * В каком кабинете человек сейчас действует (аудит Н-1): экраны добавления
+ * сайта и подтверждения хоста показывают это рядом с токеном. `own` —
+ * человек его владелец; иначе всё, что он здесь подтвердит или заведёт,
+ * достаётся владельцу чужого кабинета.
+ */
+export function accountContext(info: {
+  account: { id: string };
+  me: { role: AccountRole };
+}): { own: boolean; label: string; role: AccountRole } {
+  return {
+    own: info.me.role === 'owner',
+    label: shortAccountId(info.account.id),
+    role: info.me.role,
+  };
+}

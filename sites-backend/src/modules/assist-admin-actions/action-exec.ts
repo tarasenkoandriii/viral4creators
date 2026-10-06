@@ -10,17 +10,23 @@
  *    `X-V4C-Signature` (если владелец выпустил секрет подписи), секрет
  *    коннектора — только в заголовке;
  *  - 4xx — `failed` с текстом ошибки API (усечён, маскирован, секрет
- *    вырезан); 401/403 — `auth_failed`; 3xx — `unknown` (POST мог
- *    исполниться до редиректа, по которому мы не идём).
+ *    вырезан); 401 с признаком отказа по КЛЮЧУ коннектора
+ *    (`authRejection`) — `auth_failed`; 401 без признака — `failed` с
+ *    `authReject: 'unclear'` (пауза — решает сервис по отказам разным
+ *    сотрудникам); 403 — обычный `failed`: отказ по сотруднику, коннектор
+ *    исправен (аудит Н-3); 3xx — `unknown` (POST мог исполниться до
+ *    редиректа, по которому мы не идём).
  */
 import { BodyTooLargeError } from '../../shared/external-url-guard';
 import {
+  type AuthRejection,
   type ConnectorAuth,
   EXEC_MAX_BYTES,
   EXEC_MODEL_DATA_BYTES,
   EXEC_TIMEOUT_MS,
   ParamValidationError,
   authHeaders,
+  authRejection,
   buildUrl,
   hostAllowed,
   maskedRequest,
@@ -86,6 +92,8 @@ export interface WriteResult {
   error: string | null;
   /** Тело ответа 2xx (JSON-текст, секрет вырезан, усечён) — для `native`. */
   data: string | null;
+  /** 401: отказ по ключу коннектора или неясный (аудит Н-3). */
+  authReject?: AuthRejection;
 }
 
 /** Маска тела для журнала: строки — `mask`, числа и флаги — как есть. */
@@ -248,16 +256,19 @@ export async function executeWrite(
   if (status >= 300 && status < 400) {
     return fail('unknown', 'unknown', 'redirect', requestMasked, common);
   }
-  if (status === 401 || status === 403) {
-    return fail('auth_failed', 'failed', `http_${status}`, requestMasked, {
+  const reject = authRejection(status, res.headers, res.body, req.auth.kind);
+  if (reject === 'key') {
+    return fail('auth_failed', 'failed', 'http_401', requestMasked, {
       ...common,
       errorText: null,
+      authReject: reject,
     });
   }
   if (status >= 400) {
     return fail('http_error', 'failed', `http_${status}`, requestMasked, {
       ...common,
       errorText: apiErrorText(text(), mask),
+      ...(reject ? { authReject: reject } : {}),
     });
   }
   let data: string | null = null;

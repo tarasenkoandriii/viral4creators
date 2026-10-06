@@ -12,6 +12,7 @@ import {
   ConflictException,
   HttpException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
@@ -103,6 +104,60 @@ function memberView(m: AccountMembership): MemberView {
 
 const canManage = (role: AccountRole) => role === 'owner' || role === 'manager';
 
+/**
+ * Кабинет по умолчанию (запрос без `X-Site-Account`), аудит Н-1: СВОЙ
+ * (`owner`), иначе самый ранний по членству. НЕ «последний, куда
+ * добавили»: иначе одно принятое приглашение молча переносило бы человека
+ * в чужой кабинет, и сайт/подтверждение домена/тестовые учётки с паролями
+ * он заводил бы там, думая, что у себя. `all` — как отдаёт
+ * `memberships()`: новые первыми, поэтому самый ранний — последний.
+ */
+export function defaultMembership(
+  all: readonly AccountMembership[],
+): AccountMembership | null {
+  return all.find((m) => m.role === 'owner') ?? all[all.length - 1] ?? null;
+}
+
+/** Хвост id кабинета для превью приглашения — различимо, но не весь id. */
+export function accountTail(id: string): string {
+  return id.slice(-6);
+}
+
+/**
+ * `GET /sites/account/invites/:token/preview` (аудит Н-1): что человек
+ * увидит ДО принятия. Только то, что нужно для решения: чей кабинет (хвост
+ * id, тип), кто пригласил (если известно), какая роль и права, срок. Ни
+ * полного id кабинета, ни токена, ни участников, ни сайтов.
+ */
+export interface InvitePreview {
+  account: { tail: string; type: 'owner' | 'agency' };
+  /**
+   * Имя пригласившего в Telegram — из его последнего входа в веб-кабинет
+   * (в базе имён участников нет). `null` — неизвестно.
+   */
+  inviter: { username: string | null; firstName: string | null } | null;
+  role: 'manager' | 'operator';
+  productRoles: ProductRoles;
+  expiresAt: Date;
+  /** Человек уже в этом кабинете — принятие ничего не изменит. */
+  alreadyMember: boolean;
+}
+
+/** `inv_<токен>` или голый токен → токен; битый — `null`. */
+function inviteTokenOf(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const token = raw.startsWith(INVITE_START_PREFIX)
+    ? raw.slice(INVITE_START_PREFIX.length)
+    : raw;
+  return /^[A-Za-z0-9_-]{16,128}$/.test(token) ? token : null;
+}
+
+const inviteInvalid = () =>
+  forbidden(
+    'INVITE_INVALID',
+    'Приглашение недействительно или уже использовано — попросите новое',
+  );
+
 /** Коды участников (Э3, H) — конверт как у siteCoreError (`error` + `code`). */
 function memberError(
   Ctor: new (body: Record<string, unknown>) => HttpException,
@@ -114,6 +169,8 @@ function memberError(
 
 @Injectable()
 export class AccountService {
+  private readonly logger = new Logger(AccountService.name);
+
   constructor(private readonly db: SitesDb) {}
 
   /** Все членства человека — новые первыми. Вход — вне одного кабинета. */
@@ -131,8 +188,9 @@ export class AccountService {
 
   /**
    * Членство для запроса. Явно запрошенный кабинет (заголовок) — только
-   * если человек в нём состоит; иначе — последний, куда его добавили
-   * (принятое приглашение важнее автосозданного пустого кабинета).
+   * если человек в нём состоит; иначе — свой (`owner`), а нет своего —
+   * самый ранний (`defaultMembership`, аудит Н-1). Новичок по приглашению
+   * своего кабинета не имеет — он и так попадает в кабинет пригласившего.
    */
   async resolveMembership(
     telegramId: bigint,
@@ -142,7 +200,7 @@ export class AccountService {
     if (requestedAccountId) {
       return all.find((m) => m.accountId === requestedAccountId) ?? null;
     }
-    return all[0] ?? null;
+    return defaultMembership(all);
   }
 
   /**
@@ -166,10 +224,15 @@ export class AccountService {
     const lockKey = `site-account:${identity.telegramId.toString()}`;
     const result = await system.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
-      const existing = (await tx.siteAccountMember.findFirst({
-        where: { telegramId: identity.telegramId },
-        orderBy: { createdAt: 'desc' },
-      })) as MemberRow | null;
+      // Тот же выбор, что у resolveMembership: свой, иначе самый ранний.
+      const existing = ((await tx.siteAccountMember.findFirst({
+        where: { telegramId: identity.telegramId, role: 'owner' },
+        orderBy: { createdAt: 'asc' },
+      })) ??
+        (await tx.siteAccountMember.findFirst({
+          where: { telegramId: identity.telegramId },
+          orderBy: { createdAt: 'asc' },
+        }))) as MemberRow | null;
       if (existing) return { row: existing, created: false };
       const account = await tx.siteAccount.create({
         data: { verifyToken: newVerifyToken() },
@@ -270,6 +333,87 @@ export class AccountService {
     return { token, startParam: `${INVITE_START_PREFIX}${token}`, expiresAt };
   }
 
+  /** Живое приглашение по токену (не использовано, не истекло) или 403. */
+  private async liveInvite(rawToken: unknown, now: Date) {
+    const token = inviteTokenOf(rawToken);
+    if (!token) throw inviteInvalid();
+    const invite = await this.db
+      .system('приглашение: поиск по хешу токена')
+      .siteAccountInvite.findUnique({
+        where: { tokenHash: hashInviteToken(token) },
+      });
+    if (!invite || invite.usedAt || invite.expiresAt <= now) {
+      throw inviteInvalid();
+    }
+    return invite;
+  }
+
+  /**
+   * Превью приглашения БЕЗ принятия (аудит Н-1): экран «Вас приглашают в
+   * чужой кабинет» показывает это до кнопки «Принять». Ничего не пишет,
+   * токен не тратит; недействительное — тот же `INVITE_INVALID`, что у
+   * принятия (по ответу не отличить «нет такого» от «использовано»).
+   */
+  async previewInvite(
+    identity: RequestIdentity,
+    rawToken: unknown,
+    now = new Date(),
+  ): Promise<InvitePreview> {
+    const invite = await this.liveInvite(rawToken, now);
+    const role = parseAccountRole(invite.role);
+    if (role !== 'manager' && role !== 'operator') throw inviteInvalid();
+    const account = await this.db
+      .forAccount(invite.accountId)
+      .siteAccount.findUnique({ where: { id: invite.accountId } });
+    if (!account) throw inviteInvalid();
+    const alreadyMember = (await this.memberships(identity.telegramId)).some(
+      (m) => m.accountId === invite.accountId,
+    );
+    return {
+      account: {
+        tail: accountTail(account.id),
+        type: account.type === 'agency' ? 'agency' : 'owner',
+      },
+      inviter: await this.inviterName(invite.createdByTelegramId),
+      role,
+      productRoles: parseProductRoles(invite.productRoles),
+      expiresAt: invite.expiresAt,
+      alreadyMember,
+    };
+  }
+
+  /**
+   * Имя пригласившего: имён участников в базе нет, есть только у сессий
+   * веб-кабинета (данные виджета входа Telegram). Не нашли или сбой —
+   * `null`: превью без имени лучше, чем без превью.
+   */
+  private async inviterName(
+    telegramId: bigint,
+  ): Promise<InvitePreview['inviter']> {
+    try {
+      const row = await this.db
+        .system('превью приглашения: имя пригласившего из его веб-входа')
+        .siteWebSession.findFirst({
+          where: {
+            telegramId,
+            OR: [{ username: { not: null } }, { firstName: { not: null } }],
+          },
+          orderBy: { createdAt: 'desc' },
+          select: { username: true, firstName: true },
+        });
+      if (!row) return null;
+      return {
+        username: row.username ? row.username.slice(0, 64) : null,
+        firstName: row.firstName ? row.firstName.slice(0, 64) : null,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `превью приглашения: имя пригласившего не прочитано (${String(e)})`,
+      );
+      return null;
+    }
+  }
+
   /**
    * Принять приглашение (`startapp=inv_<token>` из любого бота).
    * Одноразовость — условным UPDATE (`usedAt IS NULL`): два параллельных
@@ -280,20 +424,9 @@ export class AccountService {
     rawToken: string,
     now = new Date(),
   ): Promise<AccountMembership> {
-    const token = rawToken.startsWith(INVITE_START_PREFIX)
-      ? rawToken.slice(INVITE_START_PREFIX.length)
-      : rawToken;
-    const invalid = () =>
-      forbidden(
-        'INVITE_INVALID',
-        'Приглашение недействительно или уже использовано — попросите новое',
-      );
-    if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) throw invalid();
-    const system = this.db.system('приглашение: поиск по хешу токена');
-    const invite = await system.siteAccountInvite.findUnique({
-      where: { tokenHash: hashInviteToken(token) },
-    });
-    if (!invite || invite.usedAt || invite.expiresAt <= now) throw invalid();
+    const invalid = inviteInvalid;
+    const invite = await this.liveInvite(rawToken, now);
+    const system = this.db.system('приглашение: одноразовое принятие');
 
     const existing = (await this.memberships(identity.telegramId)).find(
       (m) => m.accountId === invite.accountId,

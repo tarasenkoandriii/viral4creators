@@ -33,6 +33,11 @@ export function start(host: ActHost): ActApi {
   let deny: string[] = [];
   let allow: string[] = [];
   let runner: Runner | null = null;
+  // Страница уходит в bfcache: раннер стоп без отчёта (иначе при «Назад»
+  // оживёт посреди чужого плана); флаг «план идёт» — для следующей страницы.
+  host.N.on(window, 'pagehide', (e) => {
+    if ((e as PageTransitionEvent).persisted && runner) runner.stop(null, 1);
+  });
   return {
     on(raw) {
       // (д) «Вернуть»: прежние значения полей — из памяти этой страницы;
@@ -40,9 +45,11 @@ export function start(host: ActHost): ActApi {
       if (raw.type == 'ui-undo')
         return void import(
           /* @vite-ignore */ new URL('undo.js', import.meta.url).href
-        ).then((x: { undo: (r: unknown, m: unknown, h: ActHost) => void }) =>
-          x.undo(raw, mem, host)
-        );
+        )
+          .then((x: { undo: (r: unknown, m: unknown, h: ActHost) => void }) =>
+            x.undo(raw, mem, host)
+          )
+          .catch(() => null);
       const m = parseUiCommand(raw);
       if (!m) return;
       switch (m.type) {
@@ -55,7 +62,12 @@ export function start(host: ActHost): ActApi {
           return;
         }
         case 'ui-run': {
-          if (runner && !runner.stopped) runner.stop(null);
+          // Аудит 06.10: повтор `ui-run` того же плана, пока раннер жив
+          // (двойное «Да»), — не второй исполнитель поверх первого.
+          if (runner && !runner.stopped) {
+            if (runner.planId == m.planId) return;
+            runner.stop(null);
+          }
           const r = new Runner(
             {
               N: host.N,

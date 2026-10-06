@@ -27,6 +27,9 @@ import {
   type WidgetStack,
 } from '../../modules/assist-widget/testing/widget-stack.testing';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 /** Подменяем ТОЛЬКО Date: таймеры, pg и supertest живут по настоящему времени. */
 function setClock(at: Date): void {
   jest.useFakeTimers({

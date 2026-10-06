@@ -12,6 +12,7 @@ import {
   ParamValidationError,
   authHeaderNameAllowed,
   buildUrl,
+  authRejection,
   executeRead,
   hostAllowed,
   scrubSecret,
@@ -54,6 +55,21 @@ describe('connector-exec', () => {
       '/v1/orders/1042?status=paid': order,
       '/v1/orders/500': { status: 503, body: 'down' },
       '/v1/orders/401': { status: 401, body: '{}' },
+      '/v1/orders/401k': {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer error="invalid_token"' },
+        body: '{}',
+      },
+      '/v1/orders/401c': {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ error: { code: 'invalid_api_key' } }),
+      },
+      '/v1/orders/403': {
+        status: 403,
+        headers: { 'www-authenticate': 'Bearer error="insufficient_scope"' },
+        body: JSON.stringify({ code: 'ACTOR_INVALID' }),
+      },
       '/v1/orders/html': {
         status: 200,
         headers: { 'content-type': 'text/html' },
@@ -160,11 +176,60 @@ describe('connector-exec', () => {
     ).toBe(2);
   });
 
-  it('401 — auth_failed; не JSON — bad_response', async () => {
+  it('аудит Н-3: 401 с вызовом Bearer или кодом ключа — auth_failed (key); голый 401 — http_error (unclear); 403 — http_error без паузы', async () => {
+    const run = async (id: string) =>
+      executeRead({ ...base, args: { id } }, net.deps(), mask, 1);
+    expect(await run('401k')).toMatchObject({
+      outcome: 'auth_failed',
+      authReject: 'key',
+      httpStatus: 401,
+    });
+    expect(await run('401c')).toMatchObject({
+      outcome: 'auth_failed',
+      authReject: 'key',
+    });
+    expect(await run('401')).toMatchObject({
+      outcome: 'http_error',
+      authReject: 'unclear',
+      error: 'http_401',
+    });
+    const forbidden = await run('403');
+    expect(forbidden).toMatchObject({ outcome: 'http_error', httpStatus: 403 });
+    expect(forbidden.authReject).toBeUndefined();
+  });
+
+  it('authRejection: схема вызова и коды ключа', () => {
+    const b = Buffer.from('{}');
     expect(
-      (await executeRead({ ...base, args: { id: '401' } }, net.deps(), mask, 1))
-        .outcome,
-    ).toBe('auth_failed');
+      authRejection(401, { 'www-authenticate': 'Bearer' }, b, 'bearer'),
+    ).toBe('key');
+    expect(
+      authRejection(401, { 'www-authenticate': 'Basic realm="x"' }, b, 'basic'),
+    ).toBe('key');
+    // Basic-вызов при ключе в заголовке — не признак ключа.
+    expect(
+      authRejection(
+        401,
+        { 'www-authenticate': 'Basic realm="x"' },
+        b,
+        'header',
+      ),
+    ).toBe('unclear');
+    expect(
+      authRejection(401, { 'www-authenticate': 'BearerX' }, b, 'bearer'),
+    ).toBe('unclear');
+    expect(
+      authRejection(401, {}, Buffer.from('{"code":"INVALID_TOKEN"}'), 'bearer'),
+    ).toBe('key');
+    expect(
+      authRejection(401, {}, Buffer.from('{"code":"ACTOR_INVALID"}'), 'bearer'),
+    ).toBe('unclear');
+    expect(
+      authRejection(403, { 'www-authenticate': 'Bearer' }, b, 'bearer'),
+    ).toBeNull();
+  });
+
+  it('не JSON — bad_response', async () => {
     expect(
       (
         await executeRead(

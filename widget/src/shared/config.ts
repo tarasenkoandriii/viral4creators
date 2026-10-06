@@ -314,10 +314,12 @@ export function cleanOrigin(v: unknown): string | null {
  * Разбор `config` (вид без hosts) поверх базы: каждое поле — по своему
  * правилу, неизвестные ключи отбрасываются. Используется и для полного
  * конфига (база — умолчание), и для `preview(partial)` (база — текущий).
- * `mergeLook` — бренд и раскладка (всё, что рисует ЗАГРУЗЧИК: бюджет
- * 12 КБ, тексты чата ему не нужны), `mergeView` — плюс тексты (iframe).
+ * `mergeButton` — только то, что рисует ЗАГРУЗЧИК (цвет и текст кнопки,
+ * логотип, иконка, пресет, раскладка; бюджет 12 КБ): аватар, имя, шрифт,
+ * тема и «powered by» — только iframe. `mergeLook` — весь бренд и
+ * раскладка, `mergeView` — плюс тексты (iframe).
  */
-export function mergeLook(base: ViewConfig, raw: unknown): ViewConfig {
+export function mergeButton(base: ViewConfig, raw: unknown): ViewConfig {
   const out: ViewConfig = JSON.parse(JSON.stringify(base));
   if (!isObj(raw)) return out;
   const b = raw.brand;
@@ -335,24 +337,9 @@ export function mergeLook(base: ViewConfig, raw: unknown): ViewConfig {
         typeof b.logoAssetId === 'string' && ASSET_ID.test(b.logoAssetId)
           ? b.logoAssetId
           : null;
-    if (isObj(b.avatar)) {
-      const a = b.avatar;
-      if (
-        a.kind === 'asset' &&
-        typeof a.assetId === 'string' &&
-        ASSET_ID.test(a.assetId)
-      )
-        ob.avatar = { kind: 'asset', assetId: a.assetId };
-      else if (a.kind === 'icon')
-        ob.avatar = { kind: 'icon', icon: oneOf(ICONS, a.icon, 'chat') };
-    }
     if ('launcherIcon' in b)
       ob.launcherIcon = oneOf(ICONS, b.launcherIcon, ob.launcherIcon);
-    if ('name' in b) ob.name = text(b.name, LIMITS.name) ?? ob.name;
-    if ('font' in b) ob.font = oneOf(FONTS, b.font, ob.font);
     if ('preset' in b) ob.preset = oneOf(PRESETS, b.preset, ob.preset);
-    if ('theme' in b) ob.theme = oneOf(THEMES, b.theme, ob.theme);
-    if ('poweredBy' in b) ob.poweredBy = bool(b.poweredBy, ob.poweredBy);
   }
   const l = raw.layout;
   if (isObj(l)) {
@@ -383,6 +370,31 @@ export function mergeLook(base: ViewConfig, raw: unknown): ViewConfig {
   return out;
 }
 
+export function mergeLook(base: ViewConfig, raw: unknown): ViewConfig {
+  const out = mergeButton(base, raw);
+  if (!isObj(raw)) return out;
+  const b = raw.brand;
+  if (isObj(b)) {
+    const ob = out.brand;
+    if (isObj(b.avatar)) {
+      const a = b.avatar;
+      if (
+        a.kind === 'asset' &&
+        typeof a.assetId === 'string' &&
+        ASSET_ID.test(a.assetId)
+      )
+        ob.avatar = { kind: 'asset', assetId: a.assetId };
+      else if (a.kind === 'icon')
+        ob.avatar = { kind: 'icon', icon: oneOf(ICONS, a.icon, 'chat') };
+    }
+    if ('name' in b) ob.name = text(b.name, LIMITS.name) ?? ob.name;
+    if ('font' in b) ob.font = oneOf(FONTS, b.font, ob.font);
+    if ('theme' in b) ob.theme = oneOf(THEMES, b.theme, ob.theme);
+    if ('poweredBy' in b) ob.poweredBy = bool(b.poweredBy, ob.poweredBy);
+  }
+  return out;
+}
+
 /** Тексты приветствия и подсказок по языкам (только iframe). */
 function mergeTexts(out: ViewConfig, raw: unknown): ViewConfig {
   if (!isObj(raw)) return out;
@@ -409,9 +421,10 @@ export function mergeView(base: ViewConfig, raw: unknown): ViewConfig {
 
 /**
  * Разбор ответа `GET /widget/v1/config` для ЗАГРУЗЧИКА: статус, хосты, вид
- * кнопки (бренд и раскладка), предпросмотр, вовлечение и цели. Форма лида,
- * тексты, подсказки и передача — только iframe (`parsePublicConfig`): в
- * бюджет загрузчика 12 КБ их разбор не входит, поля остаются умолчаниями.
+ * кнопки (`mergeButton`), предпросмотр, вовлечение и цели. Форма лида,
+ * тексты, подсказки, передача и остальной бренд (аватар, имя, шрифт, тема)
+ * — только iframe (`parsePublicConfig`): в бюджет загрузчика 12 КБ их
+ * разбор не входит, поля остаются умолчаниями.
  */
 export function parseLoaderConfig(raw: unknown): PublicConfig {
   const d = defaultPublicConfig();
@@ -422,7 +435,7 @@ export function parseLoaderConfig(raw: unknown): PublicConfig {
     'active'
   );
   d.widgetVersion = intIn(raw.widgetVersion, 0, 1e9, 0);
-  d.config = mergeLook(defaultViewConfig(), raw.config);
+  d.config = mergeButton(defaultViewConfig(), raw.config);
   if (Array.isArray(raw.hosts)) {
     for (const h of raw.hosts.slice(0, LIMITS.hosts)) {
       if (!isObj(h)) continue;
@@ -551,9 +564,9 @@ export function applyPreviewPatch(
   return mergeView(base, partial);
 }
 
-/** То же для загрузчика: только бренд и раскладка кнопки (тексты рисует iframe). */
+/** То же для загрузчика: только то, что рисует кнопка (остальное — iframe). */
 export function applyLookPatch(base: ViewConfig, partial: unknown): ViewConfig {
-  return mergeLook(base, partial);
+  return mergeButton(base, partial);
 }
 
 /** Относительная яркость WCAG 2.x для `#rrggbb`. */

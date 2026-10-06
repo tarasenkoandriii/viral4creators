@@ -6,7 +6,7 @@
  * Без базы и без модели.
  */
 import { maskSensitiveEcho } from '../../shared/assist-chat-core/post-filter';
-import { actionKindsFor, replyKind } from './action-words';
+import { actionKindsFor, paymentPath, replyKind } from './action-words';
 import { directPlan, looksLikeCommand } from './direct-plan';
 import { sameWord, valueSaid } from './normalize';
 import {
@@ -464,6 +464,122 @@ describe('значение поля — только из сказанного (
     ).toHaveLength(0);
   });
 
+  it('аудит Н-4: опасное значение списка (и подпись выбранного варианта) — «никогда», даже если сказано', () => {
+    const bulk = el({
+      text: 'Дія',
+      role: 'combobox',
+      tag: 'select',
+      options: [
+        'Архівувати',
+        'Видалити',
+        'Скасувати замовлення',
+        'Оплатити',
+        'У кошик',
+        'opt-x',
+      ],
+    });
+    for (const [value, reason] of [
+      ['Видалити', 'danger'],
+      ['Скасувати замовлення', 'danger'],
+      ['Оплатити', 'payment'],
+      ['У кошик', 'danger'],
+      ['Move to trash', 'danger'],
+    ] as const) {
+      const r = check(`вибери ${value}`, snap([bulk]), [
+        { kind: 'select', target: bulk.ref, value },
+      ]);
+      expect(r.steps[0]).toMatchObject({
+        kind: 'select',
+        risk: 'never',
+        reason,
+      });
+    }
+    // Безопасное значение — как раньше.
+    const safe = check('вибери архівувати', snap([bulk]), [
+      { kind: 'select', target: bulk.ref, value: 'Архівувати' },
+    ]).steps[0];
+    expect(safe).toMatchObject({ kind: 'select', reason: null });
+    expect(['auto', 'confirm']).toContain(safe.risk);
+  });
+
+  it('аудит Н-4: подпись выбранного варианта проверяется, даже если значение нейтральное', () => {
+    const s = el({
+      text: 'Статус',
+      role: 'combobox',
+      tag: 'select',
+      options: ['Refund order'],
+    });
+    expect(
+      check('вибери refund order', snap([s]), [
+        { kind: 'select', target: s.ref, value: 'refund order' },
+      ]).steps[0],
+    ).toMatchObject({ risk: 'never', reason: 'danger' });
+    // Значение в полной ширине («ｄｅｌｅｔｅ») стоп-лист сам не узнаёт, но
+    // совпадает с вариантом «Delete» после нормализации — решает подпись.
+    const del = el({
+      text: 'Bulk',
+      role: 'combobox',
+      tag: 'select',
+      options: ['Archive', 'Delete'],
+    });
+    expect(
+      check('вибери другий варіант', snap([del]), [
+        { kind: 'select', target: del.ref, value: 'ｄｅｌｅｔｅ' },
+      ]).steps[0],
+    ).toMatchObject({ risk: 'never', reason: 'danger' });
+  });
+
+  it('аудит Н-4: команда с разрушительным глаголом — шаг с эффектом «никогда»; переход по ссылке — можно; обратимая разметка — с подтверждением', () => {
+    const icon = el({ text: '', hiddenLabel: null, assistId: 'row-x' });
+    const r = check('видали цей товар', snap([icon]), [
+      { kind: 'click', target: icon.ref },
+    ]);
+    expect(r.steps[0]).toMatchObject({ risk: 'never', reason: 'danger' });
+    const link = el({
+      text: 'Мої замовлення',
+      role: 'link',
+      tag: 'a',
+      href: page('/orders'),
+    });
+    expect(
+      check('скасуй замовлення', snap([link]), [
+        { kind: 'click', target: link.ref },
+      ]).steps[0],
+    ).toMatchObject({ risk: 'auto', nav: true });
+    const cart = el({ text: 'Кошик', assistId: 'add-to-cart' });
+    expect(
+      check('видали з кошика', snap([cart]), [
+        { kind: 'click', target: cart.ref },
+      ]).steps[0],
+    ).toMatchObject({ risk: 'confirm' });
+    // Без разрушительного глагола — как раньше.
+    expect(
+      check('натисни на кнопку', snap([icon]), [
+        { kind: 'click', target: icon.ref },
+      ]).steps[0],
+    ).toMatchObject({ risk: 'confirm' });
+  });
+
+  it('аудит тестов: путь платёжного шлюза — оплата (liqpay, wayforpay, fondy, stripe, paypal)', () => {
+    for (const p of [
+      '/liqpay/form',
+      '/wayforpay',
+      '/pay-fondy/fondy',
+      '/checkout.stripe/session',
+      '/paypal_return',
+    ])
+      expect(paymentPath(p)).toBe(true);
+    for (const p of ['/stripes-shirt', '/paypalooza', '/blog/fondyuk'])
+      expect(paymentPath(p)).toBe(false);
+  });
+
+  it('без lookbehind: стоп-лист — с начала слова (Safari < 16.4)', () => {
+    expect(actionKindsFor('Повернення коштів')).toContain('возврат');
+    expect(actionKindsFor('(refund)')).toContain('возврат');
+    expect(actionKindsFor('Безповернення')).not.toContain('возврат');
+    expect(actionKindsFor('prerefund')).not.toContain('возврат');
+  });
+
   it('аудит: поле карты/CVV/пароля/кода БЕЗ autocomplete и type=password — по подписи никогда не заполняется', () => {
     const t = 'введи 4111111111111111 і 123 і 0000';
     for (const [text, hiddenLabel] of [
@@ -710,6 +826,17 @@ describe('снимок: ПД маскируются, чувствительны�
     expect(maskLabel('Привіт, ivan@example.com')).not.toContain('ivan@');
     expect(maskLabel('Тел. +380 50 123 45 67')).not.toMatch(/\d{3}/);
     expect(maskLabel('Картка 4111 1111 1111 1111')).not.toMatch(/4111/);
+    // Аудит тестов: 9 цифр со скобкой и пробелом подряд — тоже телефон.
+    for (const raw of [
+      'Тел. (67) 123-45-67',
+      '(067) 123-45-67',
+      '67 123 45 67',
+    ])
+      expect(maskLabel(raw)).not.toMatch(/\d{2}/);
+    // Короче 9 цифр — как есть.
+    expect(maskLabel('Розмір 42, артикул 12345')).toBe(
+      'Розмір 42, артикул 12345',
+    );
     const t = 'Пишіть a.b@c.ua або 0501234567';
     expect(maskLabel(t)).toBe(
       maskSensitiveEcho(t, {

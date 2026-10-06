@@ -433,7 +433,11 @@ describeDb(
 
     it('лимит 120 событий в минуту на сайт — 429 RATE_LIMITED', async () => {
       const { s, secret } = await shop();
-      const fixed = new Date(Math.floor(Date.now() / 60_000) * 60_000 + 1000);
+      // Часы — в БУДУЩЕМ (начало минуты + 1 с): строка лимита живёт до конца
+      // «замороженной» минуты, а ретенция параллельных файлов сносит строки
+      // с expiresAt < now. Минута «сейчас» кончалась посреди 121 запроса —
+      // строку удаляли, счёт начинался заново, 429 не было.
+      const fixed = new Date('2099-01-01T12:00:01Z');
       st.webhook.now = () => fixed;
       const t = Math.floor(fixed.getTime() / 1000);
       const statuses: number[] = [];

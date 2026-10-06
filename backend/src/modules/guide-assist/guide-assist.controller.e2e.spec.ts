@@ -171,23 +171,43 @@ describe('Ш6 — маршруты гида «Админка» (e2e)', () => {
 
   const actor = () => actorOf('u1', SECRET);
 
-  it('факты: без ключа коннектора / чужой ключ / без actor — 401', async () => {
+  it('факты: без ключа коннектора / чужой ключ — 401 с WWW-Authenticate (Н-3)', async () => {
     const s = request(app.getHttpServer());
-    await s.get('/api/guide-assist/v1/projects').expect(401);
-    await s
+    const none = await s.get('/api/guide-assist/v1/projects').expect(401);
+    expect(none.headers['www-authenticate']).toBe(
+      'Bearer error="invalid_token"',
+    );
+    const wrong = await s
       .get('/api/guide-assist/v1/projects')
       .set('authorization', `Bearer ${'x'.repeat(40)}`)
       .set('x-v4c-actor', actor())
       .expect(401);
-    await s
-      .get('/api/guide-assist/v1/projects')
-      .set('authorization', `Bearer ${KEY}`)
-      .expect(401);
-    await s
-      .get('/api/guide-assist/v1/projects')
-      .set('authorization', `Bearer ${KEY}`)
-      .set('x-v4c-actor', 'u1')
-      .expect(401);
+    expect(wrong.headers['www-authenticate']).toBe(
+      'Bearer error="invalid_token"',
+    );
+    expect(wrong.body.error.code).toBe('UNAUTHORIZED');
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+  });
+
+  it('факты: верный ключ, плохой актор — 403 ACTOR_INVALID, не 401 (Н-3)', async () => {
+    const s = request(app.getHttpServer());
+    const bad: Array<string | undefined> = [
+      undefined, // нет заголовка
+      'u1', // не псевдоним
+      actorOf('u1', 'z'.repeat(40)), // чужая подпись
+      ((t) => t.slice(0, -1) + (t.endsWith('A') ? 'B' : 'A'))(actor()), // испорченная подпись
+      actorOf('ghost', SECRET), // подпись наша, пользователя нет
+    ];
+    for (const a of bad) {
+      let r = s
+        .get('/api/guide-assist/v1/projects')
+        .set('authorization', `Bearer ${KEY}`);
+      if (a !== undefined) r = r.set('x-v4c-actor', a);
+      const res = await r.expect(403);
+      expect(res.headers['www-authenticate']).toBeUndefined();
+      expect(res.body.error.code).toBe('ACTOR_INVALID');
+      expect(res.body.error.details).toEqual({ code: 'ACTOR_INVALID' });
+    }
     expect(prisma.project.findMany).not.toHaveBeenCalled();
   });
 

@@ -55,6 +55,7 @@ import {
   runUiMapMaintenance,
 } from '../../modules/site-core/ui-map/ui-map-store';
 import { extractUiElements } from '../../modules/site-crawl/extract/ui-map';
+import { awaitUtcDayHeadroom } from '../window-headroom';
 
 jest.setTimeout(180_000);
 
@@ -584,6 +585,9 @@ describeDb('Приёмка Э-С Ш4 — общие карты интерфей�
       }) as never;
     current = { site: s.ctx(), visitor: st.visitor({ ipHash: ip }) };
     await receipt(s, current.visitor.visitorId, buy);
+    // Суточное окно IP+сайт — сутки UTC (floor(now / сутки)): 21 вызов на
+    // полуночи делится между двумя окнами, и RATE_LIMITED не наступает.
+    await awaitUtcDayHeadroom();
     expect(
       await widget.highlightMiss(
         undefined,

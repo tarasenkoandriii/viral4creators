@@ -42,6 +42,7 @@ import {
   secretTail,
 } from './admin-secrets-crypto';
 import {
+  type AuthRejection,
   type ConnectorAuth,
   type ExecResult,
   authHeaderNameAllowed,
@@ -163,6 +164,14 @@ export interface CallerCtx {
 export const READS_PER_CONVERSATION_MINUTE = 10;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Неясный 401 (без вызова `WWW-Authenticate`/кода ключа) ставит коннектор
+ * на паузу, только если за окно его получили столько РАЗНЫХ сотрудников
+ * (аудит Н-3): у одного сотрудника беда с актором, у трёх — с ключом.
+ */
+export const AUTH_UNCLEAR_ACTORS = 3;
+export const AUTH_UNCLEAR_WINDOW_MS = 15 * 60 * 1000;
 
 @Injectable()
 export class ConnectorsService {
@@ -741,20 +750,46 @@ export class ConnectorsService {
     };
   }
 
-  /** 401/403 — коннектор на паузу до нового секрета (§5.7); отметка вызова. */
+  /**
+   * Отметка вызова и пауза коннектора до нового секрета (§5.7, аудит Н-3).
+   * На паузу — ТОЛЬКО отказ по ключу коннектора:
+   *  - `key` (401 с вызовом Bearer/кодом ключа, `authRejection`) — сразу;
+   *  - `unclear` (401 без признака) — если за `AUTH_UNCLEAR_WINDOW_MS`
+   *    401 получили ≥ `AUTH_UNCLEAR_ACTORS` РАЗНЫХ сотрудников (журнал
+   *    вызовов, текущий вызов уже записан): один сотрудник с битым
+   *    `X-V4C-Actor` коннектор всем не выключает;
+   *  - 403 и прочее — никогда (отказ по сотруднику, коннектор исправен).
+   * `true` — коннектор поставлен на паузу этим вызовом.
+   */
   async markCalled(
     accountId: string,
     connectorId: string,
-    authFailed: boolean,
+    reject: AuthRejection | null | undefined,
     now = new Date(),
-  ): Promise<void> {
-    await this.db.forAccount(accountId).assistAdminConnector.updateMany({
+  ): Promise<boolean> {
+    const db = this.db.forAccount(accountId);
+    let pause = reject === 'key';
+    if (reject === 'unclear') {
+      const rows = await db.assistAdminActionLog.findMany({
+        where: {
+          connectorId,
+          httpStatus: 401,
+          at: { gte: new Date(now.getTime() - AUTH_UNCLEAR_WINDOW_MS) },
+        },
+        distinct: ['actor'],
+        select: { actor: true },
+        take: AUTH_UNCLEAR_ACTORS,
+      });
+      pause = rows.length >= AUTH_UNCLEAR_ACTORS;
+    }
+    const r = await db.assistAdminConnector.updateMany({
       where: { id: connectorId },
       data: {
         lastCallAt: now,
-        ...(authFailed ? { status: 'auth_failed' } : {}),
+        ...(pause ? { status: 'auth_failed' } : {}),
       },
     });
+    return pause && r.count > 0;
   }
 
   async putSecret(
@@ -982,13 +1017,16 @@ export class ConnectorsService {
     );
     auth = { kind: 'none' };
     await this.logResult(ctx, op, r);
-    // 401/403 — коннектор на паузу до нового секрета (§5.7).
-    await this.markCalled(
+    // Отказ по ключу — коннектор на паузу до нового секрета (§5.7); 403 и
+    // одиночный неясный 401 — нет (аудит Н-3, `markCalled`).
+    const paused = await this.markCalled(
       ctx.accountId,
       c.id,
-      r.outcome === 'auth_failed',
+      r.authReject,
       now,
     );
-    return r;
+    return paused && r.outcome !== 'auth_failed'
+      ? { ...r, outcome: 'auth_failed' }
+      : r;
   }
 }

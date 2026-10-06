@@ -57,7 +57,15 @@ const FAIL_NOTES: Record<string, string> = {
   egress_blocked: 'адрес недоступен из изолированной сети воркера',
   cancelled: 'отменено',
   job_timeout: 'воркер не успел — попробуйте позже',
+  worker_disabled: 'браузерный воркер выключен — запустите обход позже',
+  internal: 'сбой при сохранении результата — запустите обход ещё раз',
 };
+
+/**
+ * Запись обхода «идёт» дольше этого без живого задания воркера — сверка
+ * (`reconcile`) доводит её до итога задания (аудит Ш3 P2).
+ */
+export const ADMIN_CRAWL_RECONCILE_AFTER_MS = 10 * 60_000;
 
 export interface PrivateCrawlView {
   enabled: boolean;
@@ -110,7 +118,86 @@ export class AdminCrawlService implements OnModuleInit {
           code === 'cancelled' ? 'cancelled' : 'failed',
           FAIL_NOTES[code] ?? 'обход не удался',
         ),
+      reconcile: (now) => this.reconcile(now),
     });
+  }
+
+  /**
+   * Сверка с очередью воркера (крон `browser-jobs-reap`, аудит Ш3 P2):
+   * обход `queued`/`running`, чьё задание уже кончилось (функция
+   * оборвалась между переходом задания и обработчиком, обработчик отказа
+   * упал) или пропало (ретенция, постановка не дошла), — доводится до
+   * итога задания. Живое задание (`queued`/`running`) и «сдано, обработчик
+   * ещё пишет» (`result.pending`) не трогаются: их доведёт очередь.
+   */
+  async reconcile(now = new Date()): Promise<number> {
+    const sys = this.db.system('сверка обходов «Админки» с очередью воркера');
+    const stuck = await sys.assistAdminCrawlJob.findMany({
+      where: {
+        status: { in: ['queued', 'running'] },
+        updatedAt: {
+          lt: new Date(now.getTime() - ADMIN_CRAWL_RECONCILE_AFTER_MS),
+        },
+      },
+      orderBy: { updatedAt: 'asc' },
+      take: 100,
+    });
+    let fixed = 0;
+    for (const c of stuck) {
+      const bj = await this.jobs.latest(c.accountId, {
+        siteId: c.siteId,
+        origin: 'assist-admin-crawl',
+        refId: c.id,
+      });
+      let status: string;
+      let note: string;
+      if (!bj) {
+        status = 'failed';
+        note = 'задание воркера не найдено — запустите обход ещё раз';
+      } else if (bj.status === 'queued' || bj.status === 'running') {
+        continue;
+      } else if (bj.status === 'done') {
+        const r = bj.result;
+        if (
+          r &&
+          typeof r === 'object' &&
+          (r as { pending?: unknown }).pending === true
+        )
+          continue;
+        const pages =
+          r &&
+          typeof r === 'object' &&
+          typeof (r as { pages?: unknown }).pages === 'number'
+            ? (r as { pages: number }).pages
+            : null;
+        const loggedIn = !(
+          r &&
+          typeof r === 'object' &&
+          (r as { loggedIn?: unknown }).loggedIn === false
+        );
+        status = loggedIn ? 'done' : 'failed';
+        note = loggedIn
+          ? pages !== null
+            ? `страниц: ${pages}`
+            : 'обход завершён'
+          : FAIL_NOTES.login_failed;
+      } else {
+        const code = bj.errorCode ?? '';
+        status =
+          bj.status === 'cancelled' || code === 'cancelled'
+            ? 'cancelled'
+            : 'failed';
+        note = FAIL_NOTES[code] ?? 'обход не удался';
+      }
+      const u = await this.db
+        .forAccount(c.accountId)
+        .assistAdminCrawlJob.updateMany({
+          where: { id: c.id, status: { in: ['queued', 'running'] } },
+          data: { status, note },
+        });
+      fixed += u.count;
+    }
+    return fixed;
   }
 
   private worker(): 'waiting_sh3' | 'ready' {

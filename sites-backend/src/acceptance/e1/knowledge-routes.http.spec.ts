@@ -58,6 +58,9 @@ import {
   signInitData,
 } from '../../modules/telegram-auth/test-init-data';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 /** Домены http-спека (у sandbox-acceptance — 1–28). */
 const POOL = K3_DOMAINS.slice(28);
 const DAY = 24 * 60 * 60 * 1000;
@@ -1221,7 +1224,16 @@ describeDb(
 
       it('url-preview (шаг 2): без записи; http:// — 400 URL_REJECTED', async () => {
         const f = await fixture(false, true);
-        const before = await prisma.assistSandbox.count();
+        // Счёт — по хосту и кабинету фикстуры: песочницы параллельных файлов
+        // (e1/sandbox-acceptance и др.) меняют общий count() в любой момент.
+        const mine = {
+          OR: [
+            { host: f.host },
+            { accountId: f.accountId },
+            { siteId: f.siteId },
+          ],
+        };
+        const before = await prisma.assistSandbox.count({ where: mine });
         const r = await request(srv())
           .post('/assist/url-preview')
           .set(as(f.owner))
@@ -1235,7 +1247,7 @@ describeDb(
           sitemapFound: false,
           themeColor: null,
         });
-        expect(await prisma.assistSandbox.count()).toBe(before);
+        expect(await prisma.assistSandbox.count({ where: mine })).toBe(before);
         const bad = await request(srv())
           .post('/assist/url-preview')
           .set(as(f.owner))

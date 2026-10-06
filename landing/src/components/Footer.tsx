@@ -26,14 +26,20 @@ import {
  * это тот же компромисс, что был во встроенной версии, и он
  * сознательный: альтернатива — держать страницу динамической ради
  * четырёх цифр.
+ *
+ * `demoHref` — якорь ссылки «Демо» на главной: главная знает, есть ли
+ * ролики для локали (та же загрузка, что у галереи), и без них ведёт к
+ * шагам (`#how`). Остальные страницы ленту не грузят (how-it-works
+ * статическая) — у них ссылка на `#demo` главной, где без роликов стоит
+ * текст со ссылкой на шаги.
  */
-export function Footer({ dict, locale }: { dict: Dictionary; locale: Locale }) {
+export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary; locale: Locale; demoHref?: '#demo' | '#how' }) {
   return (
     <footer>
       <div className="wrap footer-inner">
         <span>© {new Date().getFullYear()} viral4creators</span>
         <nav className="footer-links">
-          <a href={`/${locale}#demo`}>
+          <a href={`/${locale}${demoHref}`}>
             {dict.footer.demo}
           </a>
           <a href={`${GREETING_SITE_URL}/${locale}`}>{dict.footer.greetings}</a>

@@ -5,6 +5,7 @@ import { fmt } from '../i18n';
 import { errorText } from '../errors';
 import { parseHostInput, validateHostList, wwwTwin } from '../hosts';
 import { Alert, Button, Card, ScreenTitle } from '../ui';
+import { AccountContextNote } from '../ui/AccountContextNote';
 
 /**
  * «Добавить сайт»: имя + несколько хостов. Правила охвата показаны
@@ -72,6 +73,8 @@ export function AddSiteScreen({
   return (
     <div className="space-y-4">
       <ScreenTitle>{t.title}</ScreenTitle>
+      {/* Аудит Н-1: в какой кабинет ляжет сайт. */}
+      <AccountContextNote />
 
       <Card className="space-y-4">
         <label className="block">

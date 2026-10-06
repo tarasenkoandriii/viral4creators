@@ -578,7 +578,15 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
   });
 
   it('401 от API — коннектор на паузу (auth_failed), новый секрет снимает', async () => {
-    st.net.site(S.apiHost, { '/v1/orders/401': { status: 401, body: '{}' } });
+    st.net.site(S.apiHost, {
+      '/v1/orders/401': {
+        status: 401,
+        body: '{}',
+        // Отказ по КЛЮЧУ коннектора: только такой 401 ставит паузу
+        // (аудит 06.10.2026, Н-3: голый 401 и 403 — отказ по сотруднику).
+        headers: { 'www-authenticate': 'Bearer error="invalid_token"' },
+      },
+    });
     const sess = await session({ sub: 'emp-D' });
     const r = await request(st.srv())
       .post('/assist-admin/v1/chat')

@@ -237,9 +237,15 @@ export const PromptEditor: React.FC<PromptEditorProps> = ({
             {dict.promptEditor.saveEdits}
           </Button>
         )}
+        {/* Р-Ш6-11 (аудит P2): утверждение промпта — шаг к платному
+            рендеру, гид жмёт его только после карточки подтверждения;
+            «утвердить несмотря на модерацию» — решение человека, never.
+            Литералы в обеих ветках: разбор `assist-marks.ts` считает
+            ветку без литерала непомеченной. */}
         <Button
           className="flex-1"
           data-qa="prompt-approve"
+          data-assist={isFlagged ? 'never' : 'confirm'}
           onClick={() => void handleApprove()}
           loading={isApproving}
           disabled={isApproving || isUpdating || !editedText.trim()}

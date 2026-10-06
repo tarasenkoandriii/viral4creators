@@ -24,7 +24,6 @@ import {
   GREETING_REAL_FRAME_LOCALES,
   greetingFrame,
   greetingFramesAreReal,
-  greetingHero,
   greetingPersonaScheme,
 } from '../src/lib/greeting-frames';
 
@@ -67,12 +66,6 @@ for (const locale of locales) {
       );
     }
   }
-
-  // Hero — всегда схема: такого экрана в продукте нет, снять его нельзя.
-  const hero = greetingHero(locale);
-  assert.equal(hero.real, false, `${locale}: hero не может быть «снимком»`);
-  assert.equal(hero.src, '/illustrations/greet-hero.svg');
-  assert.deepEqual([hero.width, hero.height], [840, 540]);
 }
 
 // Схема «Вы в кадре» (этап J) — всегда схема, тот же холст: настоящий
@@ -95,8 +88,11 @@ for (const bad of [0, GREETING_FRAME_COUNT + 1, 1.5, Number.NaN]) {
 
 /**
  * Файлы схем: на месте, в бюджете, и без того, что Уровень 1 запрещает.
- * Бюджеты — §5.3 ТЗ (≤90 КБ hero, ≤120 КБ кадр; схема «Вы в кадре» —
- * кадр, этап J).
+ * Бюджеты — §5.3 ТЗ (≤120 КБ кадр; схема «Вы в кадре» — кадр, этап J).
+ * `greet-hero.svg` на странице больше не показывается (hero — AVIF, см.
+ * ниже), но остаётся исходником OG-карточек (`scripts/og-greetings-cards.mjs`)
+ * и сверяется `scripts/check-docs.mjs` — поэтому правила схем держим и
+ * для него, с прежним бюджетом 90 КБ.
  *
  * «Без текста» проверяется по элементам, а не по символам: цифры в
  * SVG — это координаты. `<text>` сделал бы картинку зависимой от
@@ -135,6 +131,37 @@ for (const { file, max } of schemes) {
   );
   // Схема не должна остаться заглушкой первого шага этапа.
   assert.ok(!svg.includes('Заглушка'), `${file}: всё ещё заглушка`);
+}
+
+/**
+ * Hero трёх страниц — растровые AVIF 1536×1024 (`*-hero-v2.avif`; главная,
+ * поздравления, обучалки). Бюджет — фактический вес на момент замены
+ * плюс ~20% запаса: картинка в первом экране и кандидат в LCP, и
+ * пересохранение «без оглядки на вес» должно ронять тест, а не страницу.
+ * Размер сверяется по коробке `ispe` файла с тем, что объявляет разметка
+ * (`width={1536} height={1024}`), иначе оправа растянет кадр.
+ */
+{
+  const heroes = [
+    { file: 'ads-hero-v2.avif', max: 128 * 1024 },
+    { file: 'greetings-hero-v2.avif', max: 80 * 1024 },
+    { file: 'tutorial-hero-v2.avif', max: 68 * 1024 },
+  ];
+  for (const { file, max } of heroes) {
+    const bytes = readFileSync(path.join(PUBLIC, 'illustrations', file));
+    assert.ok(
+      bytes.length <= max,
+      `${file}: ${Math.round(bytes.length / 1024)} КБ при бюджете ${max / 1024} КБ`,
+    );
+    assert.equal(bytes.subarray(4, 12).toString('latin1'), 'ftypavif', `${file}: не AVIF`);
+    const ispe = bytes.indexOf('ispe', 0, 'latin1');
+    assert.ok(ispe > 0, `${file}: нет коробки ispe`);
+    assert.deepEqual(
+      [bytes.readUInt32BE(ispe + 8), bytes.readUInt32BE(ispe + 12)],
+      [1536, 1024],
+      `${file}: не 1536×1024`,
+    );
+  }
 }
 
 /**
@@ -187,7 +214,7 @@ for (const { file, max } of schemes) {
 }
 
 console.log(
-  `greeting-frames: ok (${locales.length} локалей × ${GREETING_FRAME_COUNT} кадров + hero; ` +
+  `greeting-frames: ok (${locales.length} локалей × ${GREETING_FRAME_COUNT} кадров; hero AVIF в бюджете; ` +
     `с настоящими кадрами: ${GREETING_REAL_FRAME_LOCALES.length || 'ни одной, пока схемы'}; ` +
     'схема «Вы в кадре» в бюджете)',
 );

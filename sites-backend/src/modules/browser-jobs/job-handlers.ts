@@ -35,6 +35,14 @@ export interface BrowserJobHandler {
   onDone?(job: HandlerJob, result: BrowserJobResult): Promise<unknown>;
   /** Задание окончательно не выполнено (без повтора) или отменено. */
   onFailed?(job: HandlerJob, code: string): Promise<void>;
+  /**
+   * Сверка продукта с очередью (аудит Ш3, P2): крон `browser-jobs-reap`
+   * зовёт её после своих шагов — записи продукта, которые всё ещё «идут»,
+   * хотя их задание уже кончилось (функция оборвалась между переходом
+   * задания и обработчиком) или пропало, продукт доводит сам. Возвращает
+   * число исправленных записей.
+   */
+  reconcile?(now: Date): Promise<number>;
 }
 
 @Injectable()
@@ -47,5 +55,9 @@ export class BrowserJobHandlers {
 
   get(origin: BrowserJobOrigin): BrowserJobHandler | null {
     return this.map.get(origin) ?? null;
+  }
+
+  all(): Array<[BrowserJobOrigin, BrowserJobHandler]> {
+    return [...this.map];
   }
 }

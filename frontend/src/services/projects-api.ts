@@ -223,6 +223,19 @@ export async function deleteProject(projectId: string): Promise<void> {
 }
 
 /**
+ * Откат только что созданного проекта, когда первый шаг после создания
+ * не удался (обучалка сайта: `ProjectCreateScreen`, сбой `exploreSite`), —
+ * не удаление по просьбе человека. Отдельное имя нужно обратной проверке
+ * разметки помощника (`scripts/guide-assist.test.ts`): `deleteProject` там
+ * «никогда», а находку по кнопке allowlist не снимает (аудит P2,
+ * 06.10.2026). Шов теста держит этот вызов только в `catch` функции,
+ * которая сама создала проект (`createProject`).
+ */
+export async function rollbackCreatedProject(projectId: string): Promise<void> {
+  await api.delete(`/projects/${projectId}`);
+}
+
+/**
  * «Умный» алерт удаления (этап 89): точные счётчики того, что каскадом
  * уйдёт из БД вместе с проектом — до самого `deleteProject`, чтобы
  * диалог подтверждения мог показать их пользователю, а не общую фразу.

@@ -930,9 +930,10 @@ Next.js-маршруты `/assistant/video-content` ради одной стра
 реально доступно в рантайме бэкенда:
 
 - `ASSISTANT_KNOWLEDGE_BUILT_AT`/`ASSISTANT_KNOWLEDGE_COMMIT`
-  (`backend/src/modules/assistant/knowledge/generated.ts:8-9`) — уже
+  (`backend/src/common/tutorial-knowledge/generated.ts:8-9`; до Ш5 —
+  `backend/src/modules/assistant/knowledge/`, путь обновлён 06.10.2026) — уже
   существующие константы, УЖЕ выставляются автоматически на каждом
-  деплое: `build-assistant-knowledge.ts:553-554` пишет
+  деплое: `build-assistant-knowledge.ts:692-693` пишет
   `new Date().toISOString()` и `process.env.VERCEL_GIT_COMMIT_SHA`, а
   сборка знаний — `prebuild`-скрипт (`backend/package.json:13`), то есть
   реально перезапускается при каждом деплое бэкенда, не только вручную
@@ -2096,9 +2097,10 @@ Blob». Оба места владелец продукта подтвердил
   `assistant.service.ts:321-322,357-358` (`PrismaService`,
   `parseActions`) — механизм `action`'ов консультанта, точка расширения
   под `kind: 'video'` (§4.8).
-- `backend/src/modules/assistant/knowledge/generated.ts:8-9`
-  (`ASSISTANT_KNOWLEDGE_BUILT_AT`, `ASSISTANT_KNOWLEDGE_COMMIT`),
-  `backend/scripts/build-assistant-knowledge.ts:553-554`,
+- `backend/src/common/tutorial-knowledge/generated.ts:8-9`
+  (`ASSISTANT_KNOWLEDGE_BUILT_AT`, `ASSISTANT_KNOWLEDGE_COMMIT`; путь
+  обновлён 06.10.2026 — база перенесена Ш5),
+  `backend/scripts/build-assistant-knowledge.ts:692-693`,
   `backend/package.json:13` (`prebuild`) — уже существующие метаданные
   сборки базы знаний, источник вкладки «Состояние данных» (§4.9).
 - `admin/src/components/AdminNav.tsx` (в т.ч. строки 12-17, 50-60),

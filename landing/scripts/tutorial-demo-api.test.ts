@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { listTutorialDemos } from '../src/lib/tutorial-demo-api';
+import { listTutorialDemos, loadTutorialDemos } from '../src/lib/tutorial-demo-api';
 
 async function main() {
   const originalFetch = globalThis.fetch;
@@ -26,11 +26,21 @@ async function main() {
     const greetings = await listTutorialDemos('greetings', 'ru');
     assert.equal(greetings.length, 5);
     assert.ok(requested.every((path) => path.includes('/greeting-')));
+    // Partial outage with videos present is not a failure: show what came.
+    assert.equal((await loadTutorialDemos('ads', 'ru')).failed, false);
     globalThis.fetch = async () => { throw new Error('offline'); };
     assert.deepEqual(await listTutorialDemos('ads', 'ru'), []);
+    // Outage/timeout: the page must not claim "no video in this language".
+    assert.deepEqual(await loadTutorialDemos('ads', 'ru'), { items: [], failed: true });
+    // Healthy API, nothing approved for the locale: an honest "no video yet".
+    globalThis.fetch = async (input) => {
+      const key = new URL(String(input)).pathname.split('/').pop();
+      return Response.json({ success: true, data: { subjectKey: key, locale: 'ru', title: 'T', videoUrl: null } });
+    };
+    assert.deepEqual(await loadTutorialDemos('ads', 'ru'), { items: [], failed: false });
   } finally {
     globalThis.fetch = originalFetch;
   }
-  console.log('tutorial-demo-api: approved topic feeds, malformed responses and outages checked');
+  console.log('tutorial-demo-api: approved topic feeds, malformed responses, outages and empty-vs-failed checked');
 }
 void main();

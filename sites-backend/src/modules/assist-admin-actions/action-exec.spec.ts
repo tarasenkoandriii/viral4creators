@@ -67,6 +67,16 @@ describe('action-exec: executeWrite', () => {
         }),
       }),
       '/v1/orders/401': { status: 401, body: '{}' },
+      '/v1/orders/401k': {
+        status: 401,
+        headers: { 'www-authenticate': 'Bearer error="invalid_token"' },
+        body: '{}',
+      },
+      '/v1/orders/403': {
+        status: 403,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ code: 'ACTOR_INVALID', message: 'actor' }),
+      },
       '/v1/orders/302': {
         status: 302,
         headers: { location: 'https://evil.example/steal' },
@@ -176,11 +186,34 @@ describe('action-exec: executeWrite', () => {
     expect(r.errorText).not.toContain(SECRET);
     expect(r.errorText).not.toContain('a.b@shop.ua');
     const a = await executeWrite(
+      req({ args: { id: '401k', status: 'paid' } }),
+      net.deps(),
+      mask,
+    );
+    expect(a).toMatchObject({
+      status: 'failed',
+      outcome: 'auth_failed',
+      authReject: 'key',
+    });
+    // Аудит Н-3: голый 401 — неясно (ключ или сотрудник), 403 — отказ по
+    // сотруднику: обычный failed, коннектор не паузится.
+    const u = await executeWrite(
       req({ args: { id: '401', status: 'paid' } }),
       net.deps(),
       mask,
     );
-    expect(a).toMatchObject({ status: 'failed', outcome: 'auth_failed' });
+    expect(u).toMatchObject({
+      status: 'failed',
+      outcome: 'http_error',
+      authReject: 'unclear',
+    });
+    const f = await executeWrite(
+      req({ args: { id: '403', status: 'paid' } }),
+      net.deps(),
+      mask,
+    );
+    expect(f).toMatchObject({ status: 'failed', outcome: 'http_error' });
+    expect(f.authReject).toBeUndefined();
   });
 
   it('3xx — редирект не исполняется (unknown), на чужой хост не идём', async () => {

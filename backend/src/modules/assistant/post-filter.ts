@@ -6,31 +6,13 @@
  * модель их повторила из вопроса, и (2) помечает `flagged` для ревью в
  * админке (§10), не влияя на то, что уже увидел посетитель.
  *
- * Механика (шаблоны маскирования, поиск фраз) — в общем ядре
- * `assist-chat-core`; здесь — список стоп-фраз лендинга.
+ * Сам код — в общем ядре `common/assist-chat-core` (маскирование —
+ * `post-filter.ts`, стоп-фразы генератора — `forbidden-promises.ts`;
+ * аудит Ш5, хвост A14: гид мастера больше не импортирует чужой модуль).
+ * Здесь — реэкспорт, чтобы прежний путь (`assistant.service`, спеки)
+ * продолжал работать.
  */
-import { containsAnyPhrase } from '../../common/assist-chat-core';
-
-// Маскирование — как есть из ядра (подписи по умолчанию — лендинга);
-// реэкспорт держит прежний путь для `wizard-guide` и спеков.
-export { maskSensitiveEcho } from '../../common/assist-chat-core';
-
-/**
- * Короткий ручной список — не для НЛП-анализа, а для явных фраз,
- * которых консультанту в принципе не следует говорить (§5.5): признак
- * того, что модель нарушила §5.1 «не выдумывать возможностей», а не
- * доказательство конкретной лжи.
- */
-const FORBIDDEN_PROMISES = [
-  'безлимит',
-  'бесплатно навсегда',
-  'гарантируем просмотры',
-  'unlimited',
-  'guaranteed views',
-  'free forever',
-];
-
-/** true — ответ стоит показать оператору на ревью (§10), не блокирует отправку. */
-export function containsForbiddenPromise(text: string): boolean {
-  return containsAnyPhrase(text, FORBIDDEN_PROMISES);
-}
+export {
+  maskSensitiveEcho,
+  containsForbiddenPromise,
+} from '../../common/assist-chat-core';

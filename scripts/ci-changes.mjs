@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ENTRIES as SITES_SHARED_ENTRIES } from './sync-sites-shared.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -32,31 +33,73 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  * зависимостей — то, что джоба реально читает:
  *  - backend: prebuild собирает базу знаний консультанта из словарей
  *    landing/ и frontend/; sync-legal сверяет doc/legal с TERMS_VERSION;
- *  - sites_backend: копии backend/src/common (sync-sites-shared) и правила
- *    графа импортов;
+ *  - sites_backend: ИСТОЧНИКИ копий sync-sites-shared (точные пути из его
+ *    `ENTRIES`, а не весь backend/src/common: правка базы знаний
+ *    консультанта гоняла джобу зря — аудит P3-6; а danger-words.ts из
+ *    modules/ префикс common/ не ловил вовсе — P2-1) и правила графа
+ *    импортов;
  *  - assist: тесты сверяют формы с исходниками sites-backend/src, кит —
  *    site-tma-kit (sync-site-tma-kit);
- *  - widget: тест бренда импортирует sites-backend/src/brand.ts;
+ *  - widget: unit-скрипты и стенды e2e импортируют ядро интерфейса
+ *    помощника (assist-ui-core), карту UI, голосовые правила «Админки»,
+ *    математику экспериментов, бренд и конфиги sites-backend и через них —
+ *    копии src/shared (аудит P2-2: список сверен с импортами
+ *    widget/scripts/*.test.ts и widget/e2e/stand/*, транзитивно);
  *  - assist_integrations (Э3: npm-пакет, плагин WordPress, GTM): зеркала
  *    бренда сверяются с sites-backend/src/brand.ts; векторы подписи
  *    вебхука целей (assist-integrations/fixtures/) читает и спек
  *    sites-backend — поэтому они же запускают sites_backend;
- *  - frontend: unit-скрипты импортируют backend/src.
+ *  - frontend: unit-скрипты импортируют backend/src;
+ *  - backend: спеки guide-assist сверяются с разбором OpenAPI и подписью
+ *    employee-JWT платформы (assist-admin-mode, аудит P2-3);
+ *  - assist_integrations: тест GTM исполняет snippet.ts (и его импорты) —
+ *    тег должен совпасть с тегом TMA (аудит P3-5).
  * Тест «джобы ↔ правила» ниже падает, если в ci.yml появилась джоба без
  * условия или условие без правила.
  */
+/** Источники копий sync-sites-shared: файл — точно, папка — префиксом. */
+export const SITES_SHARED_SOURCES = SITES_SHARED_ENTRIES.map((e) => (e.fromDir ? `${e.fromDir}/` : e.from));
+
 export const FILTERS = {
-  backend: ['backend/', 'landing/src/dictionaries/', 'frontend/src/dictionaries/', 'doc/legal/'],
+  backend: [
+    'backend/',
+    'landing/src/dictionaries/',
+    'frontend/src/dictionaries/',
+    'doc/legal/',
+    // Спеки guide-assist импортируют их (сверка контракта коннектора).
+    'sites-backend/src/modules/assist-admin-mode/identity-jwt.ts',
+    'sites-backend/src/modules/assist-admin-mode/openapi-import.ts',
+  ],
   sites_backend: [
     'sites-backend/',
-    'backend/src/common/',
+    ...SITES_SHARED_SOURCES,
     'scripts/sync-sites-shared.mjs',
     'scripts/check-sites-import-graph.mjs',
     'assist-integrations/fixtures/',
   ],
   assist: ['assist/', 'site-tma-kit/', 'sites-backend/src/', 'scripts/sync-site-tma-kit.mjs'],
-  widget: ['widget/', 'sites-backend/src/brand.ts'],
-  assist_integrations: ['assist-integrations/', 'sites-backend/src/brand.ts'],
+  widget: [
+    'widget/',
+    'sites-backend/src/brand.ts',
+    'sites-backend/src/modules/assist-ui-core/',
+    'sites-backend/src/modules/site-core/ui-map/',
+    'sites-backend/src/shared/',
+    'sites-backend/src/config/editor-env.ts',
+    'sites-backend/src/config/widget-env.ts',
+    'sites-backend/src/config/assist-defaults.ts',
+    'sites-backend/src/modules/assist-knowledge-core/injection.ts',
+    'sites-backend/src/modules/assist-analytics/exp/',
+    'sites-backend/src/modules/assist-admin-voice/admin-voice-rules.ts',
+  ],
+  assist_integrations: [
+    'assist-integrations/',
+    'sites-backend/src/brand.ts',
+    // gtm.test.ts исполняет snippet.ts — с его импортами.
+    'sites-backend/src/modules/assist-site-setup/snippet.ts',
+    'sites-backend/src/modules/assist-site-setup/keys.ts',
+    'sites-backend/src/modules/assist-site-setup/widget-config.ts',
+    'sites-backend/src/modules/assist-site-setup/engagement-config.ts',
+  ],
   // Лендинг (Л2–Л3): CI собирает виджет и гоняет его e2e на стенде; тест
   // контракта читает формы событий/черновиков и контраст из sites-backend;
   // deeplink `wd_` — из кита.
@@ -164,7 +207,9 @@ async function changedFiles() {
 
 function selfTest() {
   let failed = 0;
+  let cases = 0;
   const eq = (name, got, want) => {
+    cases++;
     if (JSON.stringify(got) !== JSON.stringify(want)) {
       failed++;
       console.error(`FAIL ${name}: ${JSON.stringify(got)} ≠ ${JSON.stringify(want)}`);
@@ -182,7 +227,11 @@ function selfTest() {
   eq('векторы подписи — интеграции, бэк и лендинг', on(['assist-integrations/fixtures/goal-webhook-vectors.json']), ['sites_backend', 'assist_integrations', 'sites_landing']);
   eq('модуль sites-backend — бэк и assist', on(['sites-backend/src/modules/x.ts']), ['sites_backend', 'assist']);
   eq('миграция sites-backend — только бэк', on(['sites-backend/prisma/schema.prisma']), ['sites_backend']);
-  eq('общий модуль backend — три джобы', on(['backend/src/common/plans.ts']), ['backend', 'sites_backend', 'frontend']);
+  eq('общий модуль backend без копии — без sites_backend (P3-6)', on(['backend/src/common/plans.ts']), ['backend', 'frontend']);
+  eq('база знаний консультанта — без sites_backend (P3-6)', on(['backend/src/common/tutorial-knowledge/ru.ts']), ['backend', 'frontend']);
+  eq('источник копии sites-backend — бэк, копии, фронт', on(['backend/src/common/token-crypto.ts']), ['backend', 'sites_backend', 'frontend']);
+  eq('папка-источник копий (assist-chat-core) — и sites_backend', on(['backend/src/common/assist-chat-core/post-filter.ts']), ['backend', 'sites_backend', 'frontend']);
+  eq('источник копии вне common (telegram-auth) — и sites_backend (P2-1)', on(['backend/src/modules/telegram-auth/telegram-init-data.util.ts']), ['backend', 'sites_backend', 'frontend']);
   eq('словарь лендинга — backend и landing', on(['landing/src/dictionaries/uk.json']), ['backend', 'landing']);
   eq('кит TMA', on(['site-tma-kit/src/telegram.ts']), ['assist']);
   eq('next_apps', decide(['admin/src/a.tsx']).next_apps, ['admin']);
@@ -190,10 +239,27 @@ function selfTest() {
   eq('точный файл, не префикс', on(['scripts/sync-sites-shared.mjs.bak']), []);
   eq('реле — только своя джоба', on(['live-login-relay/src/session.ts']), ['live_login_relay']);
   eq('скрипт правил хоста реле', on(['doc/relay-egress-docker-user.sh']), ['live_login_relay']);
-  eq('фильтр исходящего трафика — бэк, его копии, реле и воркер', on(['backend/src/common/egress-filter-proxy.ts']), ['backend', 'sites_backend', 'frontend', 'live_login_relay', 'browser_worker']);
+  eq('фильтр исходящего трафика — бэк, реле и воркер (в sites-backend не копируется)', on(['backend/src/common/egress-filter-proxy.ts']), ['backend', 'frontend', 'live_login_relay', 'browser_worker']);
+  eq('SSRF-защита — бэк, копии sites-backend, реле и воркер', on(['backend/src/common/external-url-guard.ts']), ['backend', 'sites_backend', 'frontend', 'live_login_relay', 'browser_worker']);
   eq('воркер Ш3 — только своя джоба', on(['browser-worker/src/runner.ts']), ['browser_worker']);
   eq('протокол очереди воркера — бэк сайтов, assist и воркер', on(['sites-backend/src/modules/browser-jobs/protocol.ts']), ['sites_backend', 'assist', 'browser_worker']);
-  eq('стоп-лист обучалки — бэк, его копии и воркер', on(['backend/src/modules/client-site-tutorial/danger-words.ts']), ['backend', 'frontend', 'browser_worker']);
+  eq('стоп-лист обучалки — бэк, копия sites-backend и воркер (P2-1)', on(['backend/src/modules/client-site-tutorial/danger-words.ts']), ['backend', 'sites_backend', 'frontend', 'browser_worker']);
+  // P2-2: зависимости widget/scripts и стендов e2e в sites-backend.
+  eq('ядро интерфейса помощника — и widget', on(['sites-backend/src/modules/assist-ui-core/rules.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('карта UI — и widget', on(['sites-backend/src/modules/site-core/ui-map/ui-map-model.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('копия src/shared — и widget', on(['sites-backend/src/shared/danger-words.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('env редактора — и widget', on(['sites-backend/src/config/editor-env.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('математика экспериментов — и widget', on(['sites-backend/src/modules/assist-analytics/exp/experiment-math.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('голосовые правила «Админки» — и widget', on(['sites-backend/src/modules/assist-admin-voice/admin-voice-rules.ts']), ['sites_backend', 'assist', 'widget']);
+  eq('сервис «Админки» — без widget', on(['sites-backend/src/modules/assist-admin-voice/admin-voice.service.ts']), ['sites_backend', 'assist']);
+  // P2-3: спеки guide-assist бэкенда.
+  eq('подпись employee-JWT — и backend', on(['sites-backend/src/modules/assist-admin-mode/identity-jwt.ts']), ['backend', 'sites_backend', 'assist']);
+  eq('разбор OpenAPI — и backend', on(['sites-backend/src/modules/assist-admin-mode/openapi-import.ts']), ['backend', 'sites_backend', 'assist']);
+  eq('прочее в assist-admin-mode — без backend', on(['sites-backend/src/modules/assist-admin-mode/connector-exec.ts']), ['sites_backend', 'assist']);
+  // P3-5: тег установки — тест GTM интеграций.
+  eq('тег установки — интеграции и лендинг', on(['sites-backend/src/modules/assist-site-setup/snippet.ts']), ['sites_backend', 'assist', 'assist_integrations', 'sites_landing']);
+  // Список источников sync-sites-shared и правило sites_backend — одно и то же.
+  for (const src of SITES_SHARED_SOURCES) eq(`источник копии ${src} — sites_backend`, decide([src.endsWith('/') ? `${src}x.ts` : src]).sites_backend, true);
   eq('скрипт копий воркера', on(['scripts/sync-worker-shared.mjs']), ['browser_worker']);
 
   // Каждая джоба ci.yml, кроме changes и repo, запускается по своему правилу.
@@ -235,7 +301,7 @@ function selfTest() {
     console.error(`ci-changes --self-test: ${failed} ошибок`);
     process.exit(1);
   }
-  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 24 случая`);
+  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — ${cases} случаев`);
 }
 
 if (process.argv.includes('--self-test')) {

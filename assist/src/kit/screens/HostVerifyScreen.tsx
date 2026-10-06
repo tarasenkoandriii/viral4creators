@@ -17,6 +17,7 @@ import {
 import { hapticResult } from '../telegram';
 import { Alert, Button, Card, CopyField, ScreenTitle, Spinner } from '../ui';
 import { StatusBadge } from '../ui/StatusBadge';
+import { AccountContextNote } from '../ui/AccountContextNote';
 import type { SiteHost, VerifyMethod } from '../types';
 import type { ChallengeResult } from '../sites-api';
 
@@ -195,6 +196,8 @@ export function HostVerifyScreen({
 
       {canVerify && (
         <>
+          {/* Аудит Н-1: токен — ЭТОГО кабинета; чужой — предупредить. */}
+          <AccountContextNote />
           <p className="text-sm text-silver-500">{t.intro}</p>
           {methods.length === 1 && (
             <Alert tone="warning">{t.platformOnlyDns}</Alert>

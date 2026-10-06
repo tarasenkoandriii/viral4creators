@@ -27,11 +27,15 @@ export const en: Dictionary = {
     loginFailed: 'Could not sign in with Telegram — please try again.',
     logout: 'Sign out',
     inviteWaiting:
-      'After signing in you will join the account from the invitation.',
+      'After signing in you will see the invitation and decide yourself whether to accept or decline it.',
   },
   account: {
     label: 'Account',
     item: '{id} · {role}',
+    ownContext: 'Your account {id}',
+    foreignContext: 'Account {id} is NOT yours (your role: {role})',
+    foreignWarning:
+      'Everything you do here — sites, domain verification (the token in DNS, a file or a meta tag), test accounts with passwords — goes to the owner of this account. Verify your own domains in your own account.',
   },
   errors: {
     api: {
@@ -258,6 +262,34 @@ export const en: Dictionary = {
       'The role applies to the whole account: the member will see all of its sites. Do not invite an agency’s end clients — handing a site over to a client comes later.',
     another: 'Create another',
     accepted: 'You have joined the account from the invitation.',
+    joined:
+      'Account {id} added (your role: {role}). Your previous account is still open — switch if you need to.',
+    switchTo: 'Switch',
+  },
+  inviteAccept: {
+    title: 'Invitation to someone else’s account',
+    loading: 'Checking the invitation…',
+    account: 'Account',
+    types: {
+      owner: 'personal',
+      agency: 'agency',
+    },
+    inviter: 'Invited by',
+    inviterUnknown: 'unknown — the service has no name for the inviter',
+    role: 'Your role',
+    expires: 'Valid until',
+    warningTitle: 'This is NOT your account',
+    warning:
+      'You will get access to someone else’s account. Do not verify your own domains there and do not enter your sites’ passwords — the owner of that account will see and get all of it.',
+    stays:
+      'Your current account stays selected — you can switch to the other one later yourself.',
+    unsure: 'Don’t know who sent the link? Decline.',
+    alreadyMember:
+      'You are already a member of this account — accepting changes nothing.',
+    accept: 'Accept',
+    decline: 'Decline',
+    close: 'Close',
+    declined: 'Invitation declined.',
   },
   access: {
     title: 'Host access',

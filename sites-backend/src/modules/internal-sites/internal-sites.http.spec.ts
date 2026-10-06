@@ -202,6 +202,37 @@ describe('internal-sites по HTTP (П-С3)', () => {
     expect(res.body.error.code).toBe('INTERNAL_NOT_CONFIGURED');
   });
 
+  it.each([
+    ['SITES_INTERNAL_SECRET', SECRET],
+    ['CRON_SECRET', ` ${SECRET} `],
+    ['ASSIST_SECRETS_KEY', SECRET],
+    ['ASSIST_SECRETS_KEYS_OLD', `v1:${'o'.repeat(40)},v2:${SECRET}`],
+    ['SITE_CREDENTIALS_KEYS', `v1:${'o'.repeat(40)}, v2:${SECRET}`],
+    ['SITES_WORKER_HMAC_SECRET', SECRET],
+    ['ASSIST_ANALYTICS_REF_SECRET', SECRET],
+    ['SITES_QA_HMAC_SECRET', SECRET],
+  ])(
+    'аудит Н-2: секрет обучалки совпал с %s — 503, в ответе нет значения',
+    async (other, value) => {
+      guard.env = { SITES_TUTORIAL_HMAC_SECRET: SECRET, [other]: value };
+      const res = await post(STATUS, body, signed(STATUS, body)).expect(503);
+      expect(res.body.error.code).toBe('INTERNAL_NOT_CONFIGURED');
+      expect(res.body.error.message).toContain(other);
+      expect(JSON.stringify(res.body)).not.toContain(SECRET);
+    },
+  );
+
+  it('аудит Н-2: чужие секреты другие — канал работает', async () => {
+    guard.env = {
+      SITES_TUTORIAL_HMAC_SECRET: SECRET,
+      SITES_INTERNAL_SECRET: 'i'.repeat(40),
+      CRON_SECRET: 'c'.repeat(40),
+      ASSIST_SECRETS_KEY: 'k'.repeat(40),
+      SITE_CREDENTIALS_KEYS: `v1:${'o'.repeat(40)}`,
+    };
+    await post(STATUS, body, signed(STATUS, body)).expect(200);
+  });
+
   it('лишнее поле и не-JSON — 400', async () => {
     const extra = JSON.stringify({
       telegramId: '1',

@@ -459,6 +459,34 @@
 — 400): режим выключен флагом. Его отдают и `PATCH …/brand-manifest`, и
 `POST …/postprod/revoice`.
 
+## Э-С Ш1: внутренний API обучалки генератора (режим сайта A/B)
+
+sites-backend, `sites-backend/src/modules/internal-sites/internal-sites.controller.ts`
+(сервис — `internal-sites.service.ts`). Зовёт только backend генератора
+(`modules/sites-internal`). Оба маршрута — `POST`, ответ 200, тело — JSON
+**ровно** `{ telegramId, url }` (лишнее поле — 400), до 8 КБ.
+
+Подпись (П-С3, `backend/src/common/sites-internal-signature.ts`, копия —
+`sites-backend/src/shared/`): заголовки `X-Sites-Caller: generator-tutorial`,
+`X-Sites-Timestamp` (unix-секунды, окно ±5 мин), `X-Sites-Request-Id`
+(одноразовый, журнал `site_internal_requests`), `X-Sites-Signature:
+v1=<hex HMAC-SHA256>` от строки `SITES-HMAC-V1\n<caller>\n<METHOD>\n<path>\n<ts>\n<requestId>\n<sha256hex(тело)>`
+секретом `SITES_TUTORIAL_HMAC_SECRET` (≥ 32 символа, свой на направление).
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `POST /internal/sites/tutorial/host-status` | `{ telegramId, url }` → `{ mode: A\|B, host, registrableDomain, hostId, status: pending\|verified\|expired\|revoked\|none, expiresAt, optedOut, reason, canRegister }` — ТОЛЬКО чтение (кабинет не создаётся). A — хост или его родитель в пределах регистрируемого домена подтверждён для `tutorial` (L1 без льготы 72 ч) в кабинете, где человек владелец/менеджер, и домен не в реестре отказов. `reason` (почему B): `no_account`, `not_registered`, `not_verified`, `expired`, `revoked`, `role` (только оператор), `opted_out`; у A — `null`. `canRegister` — может ли человек завести хост (оператор — `false`) |
+| `POST /internal/sites/tutorial/register-host` | `{ telegramId, url }` → ответ `host-status` + `{ hostId, siteId, created, accountCreated }` — по кнопке «Это мой сайт»: хост заводится `pending` в СВОЙ кабинет (иначе тот, где человек менеджер; нет — кабинет создаётся, как первый вход в TMA помощника); хост уже есть или покрыт подтверждённым родителем — `created: false`. Подтверждение владения (DNS/файл/мета) — в TMA помощника/кабинете, не здесь |
+
+Отказы: 503 `INTERNAL_NOT_CONFIGURED` (секрета нет или он совпал с другим
+секретом процесса); 401 `INTERNAL_SIGNATURE_MISSING|MALFORMED|STALE|MISMATCH|CALLER`,
+`INTERNAL_REPLAY` (генератор переводит в режим B, обучалка не падает);
+400 `INTERNAL_BAD_BODY` (не JSON, лишнее поле, `url` не строка или > 2048,
+тело > 8 КБ); 400 `HOST_INVALID` (не https, не порт 443, IP вместо имени,
+логин в адресе); 403 `ACCOUNT_REQUIRED` (`telegramId` — не строка цифр);
+`register-host`: 403 `ACCOUNT_ROLE_REQUIRED` (человек только оператор),
+403 `HOST_OPTED_OUT` (домен в реестре отказов).
+
 ## Э-С Ш2: тестовые учётные записи сайта и хранилище данных входа
 
 Генератор (backend), за `TelegramIdentityGuard`, владение проектом — как у
@@ -1204,4 +1232,48 @@ assist-admin`); канал генератора `assist-admin` не ставит
 учётку своим списком, не снимает.
 
 Крон: `GET /cron/browser-jobs-retention` (`CRON_SECRET`) → `{
-artifactsPurged, jobsPurged, blobErrors }`.
+artifactsPurged, jobsPurged, blobErrors, reaped }` (сначала вызывает
+`reap`). Крон `GET /cron/browser-jobs-reap` (`CRON_SECRET`, каждые 5 мин,
+аудит 06.10.2026) — без проверки флага: истёкшая аренда при выключенном
+воркере → `failed` с кодом `worker_disabled` (иначе — повтор по правилам
+claim); ожидающие с `cancelRequestedAt` → `cancelled`; сданное
+(`result.pending`), но не дописанное продуктом дольше 15 мин → `failed
+internal`; затем хуки `reconcile` продуктов (обход «Админки» доводит до
+итога записи старше 10 мин без живого задания). Новые коды канала
+воркера: 409 `WORKER_ARTIFACT_CONFLICT` (одновременная загрузка одного
+`idx`), 503 `WORKER_STORAGE_UNAVAILABLE` (старый Blob не удалился —
+строка не меняется). `claim` не выдаёт протухшие (`expiresAt`) и
+отменённые задания; потолки на кабинет и сайт считаются под
+`pg_advisory_xact_lock`.
+
+### Сквозной аудит 06.10.2026 — изменения контрактов
+
+- `GET /sites/account/invites/:token/preview` (TMA обоих ботов и
+  веб-кабинет, кабинет не нужен; ничего не пишет и токен не тратит) →
+  `{ account: { tail, type }, inviter: { username, firstName } | null,
+  role, productRoles: { qa, assist, assistAdmin }, expiresAt,
+  alreadyMember }`; недействительное приглашение — 403 `INVITE_INVALID`
+  (как у принятия), > 30/мин на человека — 429. Клиент показывает экран
+  подтверждения; принятие (`POST …/invites/accept`) не меняет выбранный
+  кабинет. Без `X-Site-Account` кабинет по умолчанию — СВОЙ (`owner`),
+  иначе самый ранний по членству (раньше — последний, куда добавили).
+- Коннектор «Админки» (Э7): паузу `auth_failed` ставит только отказ по
+  ключу — 401 с `WWW-Authenticate: Bearer`/`Basic` или кодом ключа в
+  теле; неясный 401 — пауза лишь при ≥ 3 разных акторах за 15 мин;
+  403 — никогда (отказ по сотруднику). API фактов генератора: неверный
+  ключ — 401 + `WWW-Authenticate: Bearer error="invalid_token"`, проблема
+  `X-V4C-Actor` — 403 `ACTOR_INVALID`.
+- employee-JWT «Админки»: `aud` массивом отвергается.
+- Голосовая карта: подпись экспорта без `ASSIST_VOICE_MAP_EXPORT_KEY` —
+  ключом HMAC(`ASSIST_SECRETS_KEY`, `voice-map-export-v1`); файлы,
+  подписанные раньше сырым ключом, на импорте помечаются «не наши»
+  (пометка, не запрет).
+- План действий: `select` с опасным значением/подписью варианта (отмена,
+  удаление, оплата, «в корзину/кошик/trash») — `never`; в «Сайте»
+  разрушительный глагол в команде делает шаги с эффектом `never`
+  (обратимая разметка — `confirm`, переход по ссылке — можно).
+- Внутренние HMAC-секреты обучалки/QA/воркера сверяются со всеми
+  остальными секретами sites-backend; совпадение — 503
+  `INTERNAL_NOT_CONFIGURED` (в логе только имена переменных).
+- `sites-backend/prisma.config.ts`: `SITES_DIRECT_URL` без
+  `?schema=sites` — сборка падает с понятным текстом.

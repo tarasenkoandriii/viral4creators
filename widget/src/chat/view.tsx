@@ -189,8 +189,14 @@ function Message({
       </div>
     );
   const server = m.id.indexOf('p-') !== 0;
+  // Аудит 06.10: ответ ещё пишется — экранный диктор (role=log) не читает
+  // его по кускам, а дожидается конца стрима (aria-busy снимается по done).
   return (
-    <div class="msg bot" data-mid={m.id}>
+    <div
+      class="msg bot"
+      data-mid={m.id}
+      aria-busy={m.streamState === 'streaming'}
+    >
       <div class="who ai">{t.ai}</div>
       <div class="bub">
         {m.text ? (
@@ -630,6 +636,7 @@ function PlanCards({ s, c }: { s: ChatState; c: ChatController }) {
       <button
         type="button"
         class="lnk pyes"
+        disabled={!!p.busy}
         onClick={() => void c.plans.confirm(true)}
       >
         {t.vcYes}
@@ -637,6 +644,7 @@ function PlanCards({ s, c }: { s: ChatState; c: ChatController }) {
       <button
         type="button"
         class="lnk pno"
+        disabled={!!p.busy}
         onClick={() => void c.plans.confirm(false)}
       >
         {t.vcNo}

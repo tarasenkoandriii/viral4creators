@@ -34,6 +34,9 @@ import {
 import { LocalSites } from '../../modules/site-crawl/testing/local-sites.testing';
 import type { ExtractedBlock } from '../../modules/site-crawl/types';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 const A = 'k1a.polygon.example';
 const B = 'k1b.polygon.example';
 const C = 'k1c.polygon.example';

@@ -25,6 +25,11 @@ import {
   type WidgetFixture,
   type WidgetStack,
 } from '../../modules/assist-widget/testing/widget-stack.testing';
+import { awaitHourHeadroom } from '../window-headroom';
+
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию;
+// ожидание запаса до конца окна лимита (../window-headroom) — до 20 с.
+jest.setTimeout(60_000);
 
 const ENGAGEMENT = {
   schema: 1,
@@ -182,6 +187,8 @@ describeDb('Э3 (W): передача человеку — сторона вид
     const f = await widgetFixture(stack, [{ host: domain() }]);
     const token = await visitor(f);
     const before = stack.handoff.requests.length;
+    // Окно — час по часам: серия на смене часа делится между окнами.
+    await awaitHourHeadroom();
     for (let i = 0; i < HANDOFF_DEFAULTS.requestsPerVisitorPerHour; i++) {
       await post('/widget/v1/handoff', token, {}).expect(200);
     }

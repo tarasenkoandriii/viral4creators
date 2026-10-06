@@ -64,6 +64,12 @@ describe('API знаний: подпись', () => {
     expect(verifyKnowledgeApiRequest(SECRET, req, old, NOW)).toBe('stale');
     const edge = signKnowledgeApiRequest(SECRET, req, NOW - 300);
     expect(verifyKnowledgeApiRequest(SECRET, req, edge, NOW)).toBe('ok');
+    // Аудит тестов: метка из БУДУЩЕГО за окном — тоже stale (|Δt|), на
+    // границе окна — ok.
+    const future = signKnowledgeApiRequest(SECRET, req, NOW + 301);
+    expect(verifyKnowledgeApiRequest(SECRET, req, future, NOW)).toBe('stale');
+    const futureEdge = signKnowledgeApiRequest(SECRET, req, NOW + 300);
+    expect(verifyKnowledgeApiRequest(SECRET, req, futureEdge, NOW)).toBe('ok');
     expect(verifyKnowledgeApiRequest(SECRET, req, undefined, NOW)).toBe(
       'missing',
     );
@@ -161,6 +167,28 @@ describe('API знаний: тело и ключ', () => {
     expect(
       parseKnowledgeApiBody(JSON.stringify({ title: 't', content: '  ' })),
     ).toEqual({ ok: false, reason: 'content' });
+    // Аудит тестов: заголовок — до titleMax включительно.
+    const T = KNOWLEDGE_API_DEFAULTS.titleMax;
+    expect(
+      parseKnowledgeApiBody(
+        JSON.stringify({ title: 'т'.repeat(T), content: 'c' }),
+      ),
+    ).toMatchObject({ ok: true });
+    expect(
+      parseKnowledgeApiBody(
+        JSON.stringify({ title: 'т'.repeat(T + 1), content: 'c' }),
+      ),
+    ).toEqual({ ok: false, reason: 'title' });
+    // Аудит тестов: потолок СЫРОГО тела — до разбора, даже когда поля в
+    // пределах (пробелы JSON, экранирование раздувают тело).
+    const padded = `{"title":"t","content":"c"${' '.repeat(KNOWLEDGE_API_DEFAULTS.bodyMaxBytes)}}`;
+    expect(parseKnowledgeApiBody(padded)).toEqual({
+      ok: false,
+      reason: 'too_large',
+    });
+    const atCap = `{"title":"t","content":"c"${' '.repeat(KNOWLEDGE_API_DEFAULTS.bodyMaxBytes - 27)}}`;
+    expect(Buffer.byteLength(atCap)).toBe(KNOWLEDGE_API_DEFAULTS.bodyMaxBytes);
+    expect(parseKnowledgeApiBody(atCap)).toMatchObject({ ok: true });
     const big = 'я'.repeat(KNOWLEDGE_API_DEFAULTS.contentMaxBytes / 2 + 1);
     expect(
       parseKnowledgeApiBody(JSON.stringify({ title: 't', content: big })),

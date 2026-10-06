@@ -37,7 +37,8 @@ export const PRODUCT_ROLES_KEY = 'sites:product-roles';
 
 /**
  * Какой кабинет открыть, если человек состоит в нескольких (агентство +
- * свой). Без заголовка — последний, куда добавили.
+ * свой). Без заголовка — свой (`owner`), иначе самый ранний по членству
+ * (`defaultMembership`, аудит Н-1), но не последний, куда добавили.
  */
 export const SITE_ACCOUNT_HEADER = 'x-site-account';
 

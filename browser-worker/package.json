@@ -18,7 +18,7 @@
     "test:e2e": "jest -c jest.e2e.config.js --runInBand"
   },
   "dependencies": {
-    "playwright-core": "1.56.1"
+    "playwright-core": "1.63.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.2",

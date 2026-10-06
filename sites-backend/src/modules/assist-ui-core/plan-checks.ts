@@ -29,6 +29,7 @@ import {
   worseUndo,
 } from './chain';
 import {
+  type ActionKind,
   ADD_TO_CART_ID,
   ASSIST_ID_SYNONYMS,
   CONFIRM_KINDS,
@@ -172,14 +173,66 @@ const TEXT_ROLES = new Set<UiRole>(['textbox', 'searchbox', 'combobox']);
  * ставит `pd` по атрибутам; подпись «Ваше ім'я» без них — тоже ПД.
  */
 export const PD_FIELD_LABEL =
-  /(?<!\p{L})(ім'я|імʼя|имя|name|прізвище|фамилия|surname|по батькові|отчество|телефон|phone|mobile|e-?mail|пошта|почта|адрес\p{L}*|address|вулиц\p{L}*|улиц\p{L}*|street|квартир\p{L}*|індекс|индекс|zip|postcode|postal|дата народження|дата рождения|birth)(?!\p{L})/iu;
+  /(?:^|[^\p{L}])(ім'я|імʼя|имя|name|прізвище|фамилия|surname|по батькові|отчество|телефон|phone|mobile|e-?mail|пошта|почта|адрес\p{L}*|address|вулиц\p{L}*|улиц\p{L}*|street|квартир\p{L}*|індекс|индекс|zip|postcode|postal|дата народження|дата рождения|birth)(?!\p{L})/iu;
 
 /** Слова, которые снимает разметка `add-to-cart` (порт `BUY` загрузчика). */
-const BUY_WORDS = /(?<!\p{L})(купить|купити|buy now)/giu;
+const BUY_WORDS = /(^|[^\p{L}])(купить|купити|buy now)/giu;
 
 /** Подпись поля пароля, карты, одноразового кода (uk/ru/en). */
 export const SENSITIVE_FIELD_LABEL =
-  /(?<!\p{L})(парол\p{L}*|password|passcode|passwd|cvv2?|cvc2?|csc|номер карт\p{L}*|card number|credit card|debit card|одноразов\p{L}* код|код (?:з|із|из) смс|sms[- ]?code|one[- ]time|otp|pin|пін|пин)(?!\p{L})/iu;
+  /(?:^|[^\p{L}])(парол\p{L}*|password|passcode|passwd|cvv2?|cvc2?|csc|номер карт\p{L}*|card number|credit card|debit card|одноразов\p{L}* код|код (?:з|із|из) смс|sms[- ]?code|one[- ]time|otp|pin|пін|пин)(?!\p{L})/iu;
+
+/**
+ * Значение списка «в корзину/у кошик/trash» — это корзина-«мусор»
+ * (массовые действия, статус записи), а не корзина магазина: у `select`
+ * смысла «добавить в корзину» нет (аудит Н-4).
+ */
+const SELECT_TRASH =
+  /(?:^|[^\p{L}])(корзин\p{L}*|кошик\p{L}*|trash)(?!\p{L})/iu;
+
+/**
+ * Опасность выбранного значения списка (аудит Н-4): значение и подпись
+ * выбранного варианта проходят тот же стоп-лист, что подпись цели клика
+ * (`actionKindsFor`): «Удалить»/«Отменить заказ»/«Оплатить»/«В корзину»
+ * в списке действий — это то же нажатие. `null` — не опасно.
+ */
+export function selectValueDanger(text: string): 'payment' | 'danger' | null {
+  const kinds = actionKindsFor(text);
+  if (kinds.includes('оплата')) return 'payment';
+  if (kinds.some((k) => NEVER_KINDS.has(k)) || SELECT_TRASH.test(text))
+    return 'danger';
+  return null;
+}
+
+/**
+ * Разрушительные глаголы повелительного наклонения в КОМАНДЕ (аудит Н-4;
+ * то же, что «Админка» берёт для `apiPreference`): стоп-лист цели ловит
+ * подпись «Скасувати замовлення», а человек говорит «скасуй», «видали»,
+ * «спиши» — и целью модель может выбрать кнопку-иконку без подписи.
+ * Текст — после `normText` (нижний регистр, пробелы).
+ */
+export const DESTRUCTIVE_COMMAND_VERBS: ReadonlyArray<
+  readonly [RegExp, ActionKind]
+> = [
+  [
+    /(^|\s)(видали(ть)?|видаліть|вилучи(ть)?|удали(те)?|delete|remove)(\s|$)/u,
+    'удаление',
+  ],
+  [/(^|\s)(скасуй(те)?|отмени(те)?|cancel)(\s|$)/u, 'отмена заказа'],
+  [
+    /(^|\s)(поверни(ть)? (кошти|гроші)|оформи(ть)? повернення|верни(те)? деньги|оформи(те)? возврат|refund)(\s|$)/u,
+    'возврат',
+  ],
+  [/(^|\s)(спиши(ть)?|списати|charge)(\s|$)/u, 'списание'],
+];
+
+/** Категории разрушительных глаголов команды (пусто — команда не такая). */
+export function destructiveCommandKinds(transcript: string): ActionKind[] {
+  const t = normText(transcript);
+  return DESTRUCTIVE_COMMAND_VERBS.filter(([re]) => re.test(t)).map(
+    ([, k]) => k,
+  );
+}
 
 function factsOfElement(e: UiSnapElement): TargetFacts {
   return {
@@ -318,7 +371,7 @@ export function judgeStep(
     ' ',
   );
   const kinds = actionKindsFor(
-    t.assistId === ADD_TO_CART_ID ? probe.replace(BUY_WORDS, ' ') : probe,
+    t.assistId === ADD_TO_CART_ID ? probe.replace(BUY_WORDS, '$1 ') : probe,
     t.heading,
   );
   if (kinds.includes('оплата')) return never('payment');
@@ -371,6 +424,15 @@ export function judgeStep(
     }
     case 'select': {
       if (t.tag !== 'select' && t.role !== 'combobox') return no('bad_kind');
+      // Аудит Н-4: выбор варианта — то же нажатие; значение и подпись
+      // выбранного варианта — через стоп-лист (до «сказано ли»: опасное —
+      // «никогда», а не тихо вычеркнутый шаг).
+      if (value) {
+        const chosen =
+          t.options.find((o) => normText(o) === normText(value)) ?? '';
+        const danger = selectValueDanger(`${value} ${chosen}`);
+        if (danger) return never(danger);
+      }
       if (!value || !said(value)) return no('value_not_said');
       if (
         t.options.length &&
@@ -528,6 +590,12 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
   };
   let afterNav = false;
   let stopped = false;
+  // Аудит Н-4: команда с разрушительным глаголом («видали», «скасуй»,
+  // «спиши») — шаги с эффектом (не переход по ссылке) кликами не
+  // исполняются: цель могла остаться без подписи (иконка), и стоп-лист цели
+  // её не увидел. Обратимая разметка посетителя (корзина, избранное,
+  // фильтр) — только «с подтверждением».
+  const destructiveCommand = destructiveCommandKinds(p.transcript).length > 0;
   /** Точка невозврата (§5-бис.15 п.4) — первый исполнимый `irrev`. */
   let pnr: number | null = null;
   const maxSteps = p.rules.maxSteps + Math.max(0, p.extraSteps ?? 0);
@@ -687,6 +755,19 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     if (undo === 'irrev') risk = raise(risk, 'confirm');
     // Р-51: риск карты — нижняя граница, итог = max(расчёт кода, карта).
     if (hint) risk = raise(risk, hint.floor);
+    let reason: UiStopReason | null = null;
+    if (
+      destructiveCommand &&
+      (risk === 'auto' || risk === 'confirm') &&
+      sideEffectKind(kind, facts)
+    ) {
+      if (facts.assistId && REVERSIBLE_ASSIST_IDS.has(facts.assistId))
+        risk = raise(risk, 'confirm');
+      else {
+        risk = 'never';
+        reason = 'danger';
+      }
+    }
     const executable = risk === 'auto' || risk === 'confirm';
     // Р-60: после ТН — только шаги без эффекта и переходы; второй
     // необратимый шаг — отдельной командой (план обрезается до него).
@@ -708,7 +789,9 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
       risk,
       reason:
         risk === 'manual' || risk === 'never'
-          ? (j.reason ?? (hint?.floor === 'never' ? 'denied' : 'danger'))
+          ? (reason ??
+            j.reason ??
+            (hint?.floor === 'never' ? 'denied' : 'danger'))
           : null,
       nav: j.nav,
       say: null,
@@ -735,6 +818,13 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     pnr,
     from,
   };
+}
+
+/** Шаг меняет данные (не переход по ссылке, не поле ввода). */
+function sideEffectKind(kind: UiStepKind, t: TargetFacts): boolean {
+  if (kind === 'select' || kind === 'check') return true;
+  if (kind !== 'click') return false;
+  return !(t.href && (t.role === 'link' || t.tag === 'a'));
 }
 
 function stripQuery(href: string): string | null {

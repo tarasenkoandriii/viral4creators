@@ -12,6 +12,7 @@ import {
   defaultViewConfig,
   mergeView,
   onColor,
+  parseLoaderConfig,
   parsePublicConfig,
   pathMatches,
   shownOn,
@@ -172,6 +173,56 @@ assert.equal(
 );
 assert.equal(onColor('#1f5fd6', '#ffffff'), '#ffffff');
 assert.ok(contrast('#000000', '#ffffff') > 20.9);
+// Мутант M4: порог заданного цвета — 4.5 (AA), не 3 (крупный текст): белый
+// на #808080 — 3.95:1, между 3 и 4.5 → «авто» (чёрный, 5.32:1).
+assert.ok(contrast('#808080', '#ffffff') > 3);
+assert.ok(contrast('#808080', '#ffffff') < 4.5);
+assert.equal(onColor('#808080', '#ffffff'), '#000000', 'M4: 3.95:1 — мало');
+assert.equal(onColor('#767676', '#ffffff'), '#ffffff', '4.54:1 — держит AA');
+
+// Рецепт B (аудит 06.10): загрузчик разбирает только то, что рисует кнопка;
+// аватар, имя, шрифт, тема и «powered by» — iframe (parsePublicConfig).
+{
+  const raw = {
+    config: {
+      brand: {
+        primaryColor: '#123456',
+        buttonTextColor: '#ffffff',
+        logoAssetId: 'logo_1',
+        launcherIcon: 'headset',
+        preset: 'compact',
+        name: 'Магазин',
+        font: 'inter',
+        theme: 'dark',
+        poweredBy: false,
+        avatar: { kind: 'asset', assetId: 'av_1' },
+      },
+      layout: { position: 'top-left', zIndex: 5, launcher: 'none' },
+    },
+  };
+  const lb = parseLoaderConfig(raw).config;
+  assert.equal(lb.brand.primaryColor, '#123456');
+  assert.equal(lb.brand.buttonTextColor, '#ffffff');
+  assert.equal(lb.brand.logoAssetId, 'logo_1');
+  assert.equal(lb.brand.launcherIcon, 'headset');
+  assert.equal(lb.brand.preset, 'compact');
+  assert.deepEqual(lb.layout.position, 'top-left');
+  assert.equal(lb.layout.zIndex, 5);
+  assert.equal(lb.layout.launcher, 'none');
+  assert.deepEqual(
+    [lb.brand.name, lb.brand.font, lb.brand.theme, lb.brand.poweredBy],
+    [d.brand.name, d.brand.font, d.brand.theme, d.brand.poweredBy],
+    'загрузчику не нужны'
+  );
+  const full = parsePublicConfig(raw).config;
+  assert.deepEqual(
+    [full.brand.name, full.brand.font, full.brand.theme, full.brand.poweredBy],
+    ['Магазин', 'inter', 'dark', false],
+    'iframe разбирает весь бренд'
+  );
+  assert.deepEqual(full.brand.avatar, { kind: 'asset', assetId: 'av_1' });
+  assert.equal(full.brand.preset, 'compact');
+}
 
 // маски путей и где показывать
 assert.ok(pathMatches('/catalog/*', '/catalog/shoes/1'));

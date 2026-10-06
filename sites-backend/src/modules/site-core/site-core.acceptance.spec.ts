@@ -588,14 +588,18 @@ describe('кабинет при входе', () => {
     ).toBe('INVITE_INVALID');
   });
 
-  it('принятое приглашение становится кабинетом по умолчанию', async () => {
+  it('принятое приглашение НЕ становится кабинетом по умолчанию (аудит Н-1)', async () => {
     const s = setup();
     const owner = await login(s, 1);
     const other = await login(s, 2); // свой автосозданный кабинет
     const inv = await s.accounts.createInvite(owner.m, { role: 'manager' });
     await s.accounts.acceptInvite(identity(2, 'assist'), inv.token);
+    // Без заголовка — свой кабинет, чужой — только явным выбором.
     const m = (await s.accounts.resolveMembership(2n)) as AccountMembership;
-    expect(m.accountId).toBe(owner.m.accountId);
+    expect(m.accountId).toBe(other.m.accountId);
+    expect(
+      (await s.accounts.resolveMembership(2n, owner.m.accountId))?.accountId,
+    ).toBe(owner.m.accountId);
     // Явный выбор своего — работает; чужого, где не состоит, — нет.
     expect(
       (await s.accounts.resolveMembership(2n, other.m.accountId))?.accountId,

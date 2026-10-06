@@ -60,7 +60,9 @@
     "openVideo": "Open video",
     "unavailable": "No video is available in this language yet. See the workflow below.",
     "chooseTopic": "Choose a demo topic",
-    "viewSteps": "View the steps"
+    "viewSteps": "View the steps",
+    "loadFailed": "The demos are temporarily unavailable. In the meantime, see how it works step by step.",
+    "play": "Play video"
   },
   "features": {
     "title": "Features",

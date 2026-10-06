@@ -62,6 +62,7 @@ import { SiteCoreModule } from '../../modules/site-core/site-core.module';
 import { SiteCrawlModule } from '../../modules/site-crawl/site-crawl.module';
 import { TelegramAuthModule } from '../../modules/telegram-auth/telegram-auth.module';
 import { TEST_ASSIST_TOKEN } from '../../modules/telegram-auth/test-init-data';
+import { awaitUtcDayHeadroom } from '../window-headroom';
 
 jest.setTimeout(120_000);
 
@@ -500,7 +501,12 @@ describeDb('Приёмка Э-С Ш5: системный API знаний сай
 
   it('лимит частоты сайта — 429', async () => {
     const t = await tenant();
-    const fixed = new Date('2026-10-05T12:00:30Z');
+    // Часы — в БУДУЩЕМ: строка лимита живёт до конца «замороженной» минуты
+    // (expiresAt), а ретенция параллельных файлов (chat-retention) сносит
+    // строки с expiresAt < now. С часами в прошлом строка «истекла» сразу и
+    // пропадала посреди цикла — счёт начинался заново, 429 не было. Подпись —
+    // по тем же часам (окно подписи меряется от svc.now()).
+    const fixed = new Date('2099-01-01T12:00:30Z');
     svc.now = () => fixed;
     try {
       const statuses: number[] = [];
@@ -575,6 +581,9 @@ describeDb('Приёмка Э-С Ш5: системный API знаний сай
   });
 
   it('аудит Ш5: суточный лимит изменений — 429; unchanged не считается и проходит', async () => {
+    // Счётчик — строка дня UTC (chargeChange): полночь UTC между первым PUT
+    // и `day` ниже — UPDATE не той строки, и 429 не наступает.
+    await awaitUtcDayHeadroom(10_000);
     const t = await tenant();
     const md = '# База\n\nТарифы Lite.';
     await call('PUT', t, 'gen-kb-ru', doc(md)).expect(200);

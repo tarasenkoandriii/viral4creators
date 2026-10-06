@@ -44,7 +44,11 @@ export const natives = {
   },
   /** postMessage окна ДРУГОГО origin нельзя подменить скриптом страницы — берём со свежего WindowProxy. */
   post(win: Window, data: unknown, targetOrigin: string) {
-    win.postMessage(data, targetOrigin);
+    try {
+      win.postMessage(data, targetOrigin);
+    } catch {
+      /* DataCloneError: `V4CAssist('context', {fn})` — сообщение просто не уходит */
+    }
   },
   el<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
     return apply(nCreate, D, [tag]) as HTMLElementTagNameMap[K];

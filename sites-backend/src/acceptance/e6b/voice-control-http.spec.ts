@@ -27,6 +27,7 @@ import {
   type WidgetFixture,
   type WidgetStack,
 } from '../../modules/assist-widget/testing/widget-stack.testing';
+import { awaitMinuteHeadroom } from '../window-headroom';
 
 jest.setTimeout(120_000);
 
@@ -404,6 +405,9 @@ describeDb('Э6-бис: голосовое управление по HTTP', () =
     const f = await site();
     const t = await token(f);
     let limited = false;
+    // Окно — минута по часам: серия на смене минуты набирает лимит заново
+    // и за 12 попыток до 429 не доходит.
+    await awaitMinuteHeadroom();
     for (let i = 0; i < 12 && !limited; i++) {
       const r = await request(srv())
         .post('/widget/v1/ui-plan')

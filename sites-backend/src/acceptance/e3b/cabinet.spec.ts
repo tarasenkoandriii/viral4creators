@@ -7,7 +7,6 @@
  *    доля — поровну между сайтами кабинета (Р-58);
  *  - вебхук заказа с `assistRef` → «с участием» диалога визита.
  */
-import { randomUUID } from 'crypto';
 import type { ChatSite } from '../../modules/assist-site-chat/testing/chat-stack.testing';
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import { analyticsPeriod } from '../../modules/assist-analytics/ai/analytics-budget';
@@ -16,7 +15,11 @@ import {
   visitHashOf,
 } from '../../modules/assist-analytics/public/ai-intake.service';
 import { signGoalWebhook } from '../../modules/assist-analytics/webhook-signature';
-import { addDays } from '../../modules/assist-analytics/site-time';
+import {
+  addDays,
+  dayInTz,
+  siteTz,
+} from '../../modules/assist-analytics/site-time';
 import {
   AiStack,
   labelJson,
@@ -53,11 +56,26 @@ describeDb('Приёмка Э3-бис: кабинет аналитики и бю
     await st.analytics(s, { linked: true });
     return s;
   }
-  const today = new Date().toISOString().slice(0, 10);
-  const q = { from: addDays(today, -3), to: today };
+  /**
+   * Период «последние 4 дня» — в сутках САЙТА (сервис режет `from`/`to` по
+   * поясу сайта, §5-тер.10), «сегодня» — в момент теста, а не при загрузке
+   * модуля. По UTC было нельзя: с 21:00/22:00 UTC в Киеве уже завтра, и
+   * диалог «2 ч назад» (createdAt фикстуры) с 23:00 UTC летом оказывался
+   * после конца `to` — сводка пустая. Диалог «2 ч назад» может попасть во
+   * вчера по Киеву (после полуночи) — `from` на 3 дня раньше его покрывает.
+   */
+  async function lastDays(s: ChatSite): Promise<{ from: string; to: string }> {
+    const a = await st.owner.assistSite.findFirst({
+      where: { siteId: s.siteId },
+      select: { timezone: true },
+    });
+    const today = dayInTz(new Date(), siteTz(a?.timezone));
+    return { from: addDays(today, -3), to: today };
+  }
 
   it('сводка и лента: покрытие, корзины, фильтры, объяснение; исправление разметки поверх модели', async () => {
     const s = await biz();
+    const q = await lastDays(s);
     const a = await st.conversation(s);
     const b = await st.conversation(s);
     st.text.queue.push(
@@ -217,8 +235,11 @@ describeDb('Приёмка Э3-бис: кабинет аналитики и бю
       });
     };
     const ref = issueRef(s.siteId, vh, new Date())!;
-    await send(`A-${randomUUID().slice(0, 8)}`, ref);
-    await send(`B-${randomUUID().slice(0, 8)}`, ref.replace(/.{4}$/, 'AAAA'));
+    // orderId — постоянные: сайт у теста свой (уникальность — siteId, goalId,
+    // orderId). Случайные `A-<8 hex>` из одних цифр (≈2,3 % на id) validOrderId
+    // принимал за телефон → 422 GOAL_ORDER_ID_INVALID.
+    await send('A-1042', ref);
+    await send('B-1043', ref.replace(/.{4}$/, 'AAAA'));
     const evs = await st.owner.assistSiteGoalEvent.findMany({
       where: { siteId: s.siteId },
       orderBy: { orderId: 'asc' },

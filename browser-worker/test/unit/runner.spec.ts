@@ -1,7 +1,8 @@
 /**
  * Цикл воркера без браузера: фейковый API и фейковые исполнители.
  * Аренда/heartbeat/повтор: «отменить» → `cancelled`, 409 → тихий обрыв без
- * `fail`, стена времени → `job_timeout`, код исполнителя → `fail(code)`,
+ * `fail`, heartbeat не проходит дольше `leaseMs` (сеть, 5xx, зависание) —
+ * тот же тихий обрыв, короткий сбой — нет; стена времени → `job_timeout`, код исполнителя → `fail(code)`,
  * чужой результат (хост вне замка) не уходит в `complete`, конкурентность,
  * остановка → `shutdown`.
  */
@@ -52,6 +53,12 @@ class FakeApi implements WorkerApi {
   heartbeats = 0;
   cancel = new Set<string>();
   lost = new Set<string>();
+  /** Сеть до sites-backend лежит: каждый heartbeat — ошибка не-HTTP. */
+  down = new Set<string>();
+  /** 503 на первые N heartbeat задания, потом — норма. */
+  flaky = new Map<string, number>();
+  /** heartbeat повисает навсегда. */
+  hang = new Set<string>();
   maxSeen = 0;
   async claim(_k: unknown, max: number) {
     this.maxSeen = Math.max(this.maxSeen, max);
@@ -60,6 +67,13 @@ class FakeApi implements WorkerApi {
   async heartbeat(id: string) {
     this.heartbeats += 1;
     if (this.lost.has(id)) throw new ApiError(409, 'WORKER_LEASE_LOST');
+    if (this.down.has(id)) throw new TypeError('fetch failed');
+    if (this.hang.has(id)) return new Promise<never>(() => undefined);
+    const left = this.flaky.get(id) ?? 0;
+    if (left > 0) {
+      this.flaky.set(id, left - 1);
+      throw new ApiError(503, 'UNAVAILABLE');
+    }
     return { cancel: this.cancel.has(id) };
   }
   async complete(id: string) {
@@ -156,6 +170,73 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
     await runner.shutdown();
     expect(api.failed).toEqual([['x', 'cancelled']]);
     expect(api.completed).toEqual([]);
+  });
+
+  it('heartbeat не проходит дольше leaseMs (сеть, зависание) → lease_lost без fail; короткий сбой — не обрыв', async () => {
+    const api = new FakeApi();
+    api.queue = [job('net'), job('hung'), job('blip')];
+    api.down.add('net');
+    api.hang.add('hung');
+    api.flaky.set('blip', 2); // ~30 мс сбоя при аренде 150 мс
+    const aborted: string[] = [];
+    const { runner } = make(
+      api,
+      (ctx) =>
+        new Promise((resolve, reject) => {
+          const t = setTimeout(
+            () => resolve(okResult),
+            ctx.job.id === 'blip' ? 250 : 5_000,
+          );
+          ctx.signal.addEventListener('abort', () => {
+            clearTimeout(t);
+            aborted.push(ctx.job.id);
+            reject(
+              new Error('Target page, context or browser has been closed'),
+            );
+          });
+        }),
+      3,
+      { leaseMs: 150 },
+    );
+    runner.start();
+    for (
+      let i = 0;
+      i < 200 && (aborted.length < 2 || api.completed.length < 1);
+      i++
+    )
+      await tick();
+    await tick(50);
+    await runner.shutdown();
+    expect(aborted.sort()).toEqual(['hung', 'net']);
+    expect(api.failed).toEqual([]);
+    expect(api.completed).toEqual(['blip']);
+  });
+
+  it('аренда отсчитывается от последнего удачного heartbeat, а не от взятия', async () => {
+    let t = 0;
+    const api = new FakeApi();
+    api.queue = [job('long')];
+    const { runner } = make(
+      api,
+      (ctx) =>
+        new Promise((resolve, reject) => {
+          // Логические часы: каждый тик heartbeat — +40 «мс» при аренде 100.
+          const timer = setTimeout(() => resolve(okResult), 200);
+          ctx.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('closed'));
+          });
+        }),
+      1,
+      { leaseMs: 100, now: () => (t += 40) },
+    );
+    runner.start();
+    for (let i = 0; i < 100 && api.completed.length < 1; i++) await tick();
+    await runner.shutdown();
+    // Каждый удачный heartbeat сдвигает отсчёт — за 200 мс работы
+    // (≈ 13 тиков × 40 «мс» ≫ 100) обрыва нет.
+    expect(api.completed).toEqual(['long']);
+    expect(api.failed).toEqual([]);
   });
 
   it('стена времени → job_timeout; код исполнителя → fail(code); непонятная ошибка → internal', async () => {

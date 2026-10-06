@@ -90,6 +90,9 @@ const LABEL: Record<string, string> = {
 
 export function start(script: HTMLScriptElement): void {
   const W = window as unknown as Record<string, unknown>;
+  // Два тега «Админки» на странице: оба загрузчика успевают взять чанк до
+  // того, как первый займёт глобал, — второй start() не рисует вторую кнопку.
+  if ((W[WIDGET_GLOBAL] as Api | undefined)?.l) return;
   const pk = script.getAttribute('data-site');
   if (!isAdminPk(pk)) return;
   let origin: string;

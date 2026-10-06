@@ -118,6 +118,21 @@ export interface Invite {
   expiresAt: string | null;
 }
 
+/**
+ * `GET /sites/account/invites/:token/preview` (аудит Н-1) — что будет,
+ * если принять: показывается ДО кнопки «Принять». Полного id кабинета
+ * нет — только хвост (как в переключателе кабинетов).
+ */
+export interface InvitePreview {
+  account: { tail: string; type: 'owner' | 'agency' };
+  /** Имя пригласившего в Telegram; `null` — сервис его не знает. */
+  inviter: { username: string | null; firstName: string | null } | null;
+  role: 'manager' | 'operator';
+  productRoles: ProductRoles;
+  expiresAt: string | null;
+  alreadyMember: boolean;
+}
+
 /** Чужая строка того же хоста (другой кабинет). */
 export interface ForeignAuthorization {
   hostId: string;

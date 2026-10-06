@@ -27,6 +27,7 @@ import {
   type WidgetFixture,
   type WidgetStack,
 } from '../../modules/assist-widget/testing/widget-stack.testing';
+import { awaitMinuteHeadroom } from '../window-headroom';
 
 jest.setTimeout(120_000);
 
@@ -222,6 +223,10 @@ describeDb('Э6: видео и подсветка по HTTP', () => {
       recorded: false,
     });
     let limited = false;
+    // Окно — минута по часам: цикл на смене минуты набирает лимит заново и
+    // за 12 попыток до 429 не доходит. Запас — перед циклом: если три вызова
+    // выше остались в прошлой минуте, в новой 12 попыток хватает (лимит 10).
+    await awaitMinuteHeadroom();
     for (let i = 0; i < 12 && !limited; i++) {
       limited = (await miss()).status === 429;
     }

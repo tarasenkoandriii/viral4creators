@@ -8,6 +8,7 @@
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import type { SearchHit } from '../../modules/assist-knowledge-core/types';
 import { HandoffStack } from '../../modules/assist-site-handoff/testing/handoff-stack.testing';
+import { awaitUtcDayHeadroom } from '../window-headroom';
 
 jest.setTimeout(60_000);
 
@@ -88,6 +89,9 @@ describeDb('Э3 H — сводка, черновик, перевод (handoff-ai
   });
 
   it('№14 сбой модели — fallback; резерв дня снят (не завис)', async () => {
+    // Строка бюджета — день UTC резерва; полночь UTC посередине — `day` ниже
+    // чужой, строки нет, и `?? 0` давал ложный зелёный.
+    await awaitUtcDayHeadroom(10_000);
     st.htext.fail = true;
     const { s, id } = await handoffOf();
     expect((await st.handoffRow(id)).summary).toMatchObject({

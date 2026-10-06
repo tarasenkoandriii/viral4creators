@@ -20,6 +20,7 @@
 
 import { Module } from '@nestjs/common';
 import { AccountService } from './account/account.service';
+import { InvitePreviewController } from './account/invite-preview.controller';
 import { SiteAccountGuard } from './account/site-account.guard';
 import { SiteOwnershipRecheckController } from './cron/site-ownership-recheck.controller';
 import { SiteUiMapMaintenanceController } from './cron/site-ui-map-maintenance.controller';
@@ -34,6 +35,8 @@ import { UiMapMaintenanceService } from './ui-map/ui-map-maintenance.service';
 @Module({
   controllers: [
     SiteAccountController,
+    // Аудит Н-1: превью приглашения до принятия.
+    InvitePreviewController,
     SitesController,
     SiteOwnershipRecheckController,
     // Э-С Ш4: ретенция и достройка общей карты интерфейса.

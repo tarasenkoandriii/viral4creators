@@ -30,6 +30,9 @@ import {
   type SiteFixture,
 } from './k2-fixtures';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 const BOT = 9001n;
 
 if (!RAW_URL) {

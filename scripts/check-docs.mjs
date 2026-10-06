@@ -19,6 +19,18 @@
  * приблизительными быть не могут: либо совпадают, либо нет.
  *
  * Запуск: `node scripts/check-docs.mjs` (и в CI, .github/workflows/ci.yml).
+ *
+ * Отчёт jest (аудит, 06.10.2026):
+ *   --require-jest  — отчёт обязан быть (джоба backend; там же это
+ *                     включается и само по GITHUB_JOB=backend): нет его —
+ *                     падение, а не skip;
+ *   --no-jest       — отчёта здесь не бывает (джоба repo): счётчики тестов
+ *                     пропускаются с явным предупреждением.
+ * Без флагов (локально) — нет отчёта → предупреждение и пропуск.
+ * Отчёт, если он есть, проверяется на честность: `success: false`,
+ * упавшие тесты, наборы с ошибкой запуска или число наборов, не равное
+ * числу spec-файлов backend/src (старый отчёт), — падение: число тестов
+ * из такого отчёта сверять нельзя.
  */
 
 import fs from "node:fs";
@@ -173,18 +185,75 @@ const specFiles = walk(path.join(ROOT, "backend/src")).filter((f) =>
  * притворяется, что всё сошлось. Наборы — это файлы спеков, их видно и
  * без запуска.
  */
+const JEST_REPORT_FILE = process.env.CHECK_DOCS_JEST_REPORT
+  ? path.resolve(process.env.CHECK_DOCS_JEST_REPORT)
+  : path.join(ROOT, "backend/jest-results.json");
+const NO_JEST = process.argv.includes("--no-jest");
+const REQUIRE_JEST =
+  !NO_JEST &&
+  (process.argv.includes("--require-jest") ||
+    process.env.GITHUB_JOB === "backend");
+
+/** Проблемы самого отчёта jest — каждая роняет прогон. */
+const jestProblems = [];
+
 function jestReport() {
-  const file = path.join(ROOT, "backend/jest-results.json");
-  if (!fs.existsSync(file)) return null;
-  try {
-    const json = JSON.parse(fs.readFileSync(file, "utf8"));
-    return {
-      tests: json.numTotalTests,
-      suites: json.numTotalTestSuites,
-    };
-  } catch {
+  if (NO_JEST) return null;
+  const file = JEST_REPORT_FILE;
+  if (!fs.existsSync(file)) {
+    if (REQUIRE_JEST)
+      jestProblems.push(
+        `нет ${path.relative(ROOT, file)} — в этой джобе отчёт jest обязан быть ` +
+          "(npx jest --json --outputFile=jest-results.json перед check-docs)",
+      );
     return null;
   }
+  let json;
+  try {
+    json = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    // Битый отчёт — не «отчёта нет»: раньше это был молчаливый skip.
+    jestProblems.push(
+      `${path.relative(ROOT, file)} не читается как JSON (${e instanceof Error ? e.message : e})`,
+    );
+    return null;
+  }
+  const num = (k) => (Number.isInteger(json[k]) ? json[k] : null);
+  if (json.success !== true)
+    jestProblems.push(`отчёт jest: success = ${JSON.stringify(json.success)}`);
+  if (num("numFailedTests") !== 0)
+    jestProblems.push(`отчёт jest: numFailedTests = ${json.numFailedTests}`);
+  if (num("numRuntimeErrorTestSuites") !== 0)
+    jestProblems.push(
+      `отчёт jest: numRuntimeErrorTestSuites = ${json.numRuntimeErrorTestSuites}`,
+    );
+  if (num("numTotalTests") === null || num("numTotalTestSuites") === null)
+    jestProblems.push("отчёт jest: нет numTotalTests/numTotalTestSuites");
+  else if (json.numTotalTestSuites !== specFiles.length) {
+    // Старый отчёт (спеки добавили/удалили после прогона) или прогон по
+    // части файлов (`jest src/x`) — его числа не про весь набор.
+    const ran = new Set(
+      (Array.isArray(json.testResults) ? json.testResults : []).map((r) =>
+        path.resolve(String(r.name ?? r.testFilePath ?? "")),
+      ),
+    );
+    const missing = specFiles.filter((f) => !ran.has(path.resolve(f)));
+    jestProblems.push(
+      `отчёт jest: наборов ${json.numTotalTestSuites}, spec-файлов в backend/src ` +
+        `${specFiles.length} — отчёт устарел или прогон был неполным` +
+        (missing.length
+          ? ` (нет в отчёте: ${missing
+              .slice(0, 5)
+              .map((f) => path.relative(ROOT, f))
+              .join(", ")}${missing.length > 5 ? ", …" : ""})`
+          : ""),
+    );
+  }
+  if (jestProblems.length) return null;
+  return {
+    tests: json.numTotalTests,
+    suites: json.numTotalTestSuites,
+  };
 }
 
 const report = jestReport();
@@ -360,10 +429,24 @@ const CHECKS = [
 let failed = 0;
 console.log("Реальность:", JSON.stringify(actual));
 
+for (const p of jestProblems) {
+  failed++;
+  console.log(`FAIL ${p}`);
+}
+if (report === null && !jestProblems.length) {
+  const why = NO_JEST
+    ? "--no-jest (в этой джобе отчёта jest нет — счётчики тестов сверяет джоба backend)"
+    : `нет ${path.relative(ROOT, JEST_REPORT_FILE)}`;
+  // Явное предупреждение, а не тихий skip: в логе GitHub — аннотация.
+  const msg = `check-docs: счётчики тестов НЕ проверены — ${why}`;
+  console.log(process.env.GITHUB_ACTIONS ? `::warning::${msg}` : `ВНИМАНИЕ: ${msg}`);
+}
+
 for (const check of CHECKS) {
   if (check.needsJest && report === null) {
+    if (jestProblems.length) continue; // уже FAIL выше
     console.log(
-      `skip ${check.file} — ${check.label}: нет backend/jest-results.json; ` +
+      `skip ${check.file} — ${check.label}: отчёта jest нет; ` +
         `запустите тесты с --json --outputFile=jest-results.json, чтобы проверить и это число`,
     );
     continue;

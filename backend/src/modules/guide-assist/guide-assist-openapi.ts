@@ -39,7 +39,13 @@ export function buildGuideOpenApi(serverUrl: string): Record<string, unknown> {
     description: 'id проекта из списка проектов пользователя',
     schema: { type: 'string', maxLength: 64 },
   };
-  const err = { description: 'Нет доступа или проекта' };
+  const err = { description: 'Проекта нет или он чужой' };
+  // Аудит Н-3: 401 — только неверный ключ коннектора (платформа ставит
+  // коннектор на паузу), 403 ACTOR_INVALID — неверный X-V4C-Actor.
+  const keyErr = { description: 'Неверный ключ коннектора' };
+  const actorErr = {
+    description: 'X-V4C-Actor не распознан (код ACTOR_INVALID)',
+  };
   return {
     openapi: '3.0.3',
     info: {
@@ -64,7 +70,11 @@ export function buildGuideOpenApi(serverUrl: string): Record<string, unknown> {
           description:
             'До 20 последних проектов: id, номер, тип, сценарий мастера и давность. Названий нет. ' +
             FACTS_NOTE,
-          responses: { '200': { description: 'Список проектов' }, '401': err },
+          responses: {
+            '200': { description: 'Список проектов' },
+            '401': keyErr,
+            '403': actorErr,
+          },
         },
       },
       '/projects/{projectId}/facts': {
@@ -77,7 +87,8 @@ export function buildGuideOpenApi(serverUrl: string): Record<string, unknown> {
           parameters: [projectParam],
           responses: {
             '200': { description: 'Факты проекта' },
-            '401': err,
+            '401': keyErr,
+            '403': actorErr,
             '404': err,
           },
         },
@@ -87,7 +98,11 @@ export function buildGuideOpenApi(serverUrl: string): Record<string, unknown> {
           operationId: 'getAccountSummary',
           summary: 'Сводка аккаунта',
           description: 'Тариф (LITE | STANDARD | PREMIUM) и число проектов.',
-          responses: { '200': { description: 'Сводка' }, '401': err },
+          responses: {
+            '200': { description: 'Сводка' },
+            '401': keyErr,
+            '403': actorErr,
+          },
         },
       },
     },

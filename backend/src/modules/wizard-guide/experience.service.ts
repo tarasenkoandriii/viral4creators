@@ -25,7 +25,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { maskSensitiveEcho } from '../assistant/post-filter';
+import { maskSensitiveEcho } from '../../common/assist-chat-core';
 import { renderUiKeys } from './ui-keys';
 import {
   experienceLine,

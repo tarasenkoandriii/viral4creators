@@ -4,9 +4,9 @@ import { Header } from '../../components/Header';
 import { Faq } from '../../components/Faq';
 import { HowItWorks } from '../../components/HowItWorks';
 import { IllustrationIcon } from '../../components/IllustrationIcon';
-import { AssistantWidget } from '../../components/AssistantWidget';
-import { PlatformAssist } from '../../components/PlatformAssist';
+import { FloatingAssistantWidget, LazyPlatformAssist } from '../../components/AssistLazy';
 import { assistWidgetFromBuildEnv, platformLang } from '../../lib/assist-widget';
+import { loadTutorialDemos } from '../../lib/tutorial-demo-api';
 import { Footer } from '../../components/Footer';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
@@ -20,13 +20,18 @@ export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export default function LandingPage({ params }: { params: { locale: string } }) {
+export default async function LandingPage({ params }: { params: { locale: string } }) {
   // Валидность локали уже проверена в app/[locale]/layout.tsx (notFound()
   // там же) — здесь просто безопасно сужаем тип для getDictionary().
   const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
   const dict = getDictionary(locale);
   // Э-С Ш5: старый консультант или виджет платформы — переключатель сборки.
   const assist = assistWidgetFromBuildEnv();
+  // Лента демо — один раз на страницу: галерея, кнопка первого экрана и
+  // футер. Роликов для локали нет (или API не ответил) — «Смотреть демо»
+  // ведёт к шагам (#how), а не в секцию без видео.
+  const demos = await loadTutorialDemos('ads', locale);
+  const demoHref = demos.items.length ? '#demo' : '#how';
 
   return (
     <>
@@ -43,20 +48,25 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
                 <a className="cta" href={TMA_URL}>
                   {dict.hero.ctaPrimary}
                 </a>
-                <a className="cta cta-ghost" href="#demo">
+                <a className="cta cta-ghost" href={demoHref}>
                   {dict.hero.ctaDemo}
                 </a>
               </div>
               <p className="hero-note">{dict.hero.note}</p>
             </div>
+            {/* Без `priority`: на телефоне (360px) кадр ниже первого экрана
+                (верх ≈745px), и предзагрузка с fetchpriority=high отнимала
+                канал у CSS/JS ради невидимой картинки. `loading="eager"` —
+                чтобы на десктопе, где кадр в первом экране, он не ждал
+                ленивой загрузки (там его поднимает сам браузер). */}
             <div className="hero-shot frame-shot">
               <Image src="/illustrations/ads-hero-v2.avif" alt="" width={1536} height={1024}
-                sizes="(min-width: 900px) 46vw, 100vw" priority unoptimized />
+                sizes="(min-width: 900px) 46vw, 100vw" loading="eager" unoptimized />
             </div>
           </div>
         </section>
 
-        <TutorialDemoGallery scenario="ads" locale={locale} dict={dict} />
+        <TutorialDemoGallery scenario="ads" locale={locale} dict={dict} feed={demos} />
 
         <section className="features" id="features">
           <div className="wrap">
@@ -244,19 +254,19 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
         </section>
       </main>
 
-      <Footer dict={dict} locale={locale} />
+      <Footer dict={dict} locale={locale} demoHref={demoHref} />
 
       {/* Плавающая кнопка + панель ИИ-консультанта (§4.1, §6 ТЗ) — вне
           <main>, фиксированное позиционирование через CSS. */}
       {assist.mode === 'platform' ? (
-        <PlatformAssist
+        <LazyPlatformAssist
           src={assist.src}
           siteKey={assist.siteKey}
           lang={platformLang(locale)}
           askPrefill={dict.assistant.askAboutPrefill}
         />
       ) : (
-        <AssistantWidget locale={locale} dict={dict.assistant} page="home" variant="floating" />
+        <FloatingAssistantWidget locale={locale} dict={dict.assistant} page="home" variant="floating" />
       )}
     </>
   );

@@ -19,6 +19,9 @@ import { PRODUCT_ROLES_KEY } from '../../modules/site-core/account/site-account.
 import type { ProductRoleRequirement } from '../../modules/site-core/account/roles';
 import { PUBLIC_ROUTE_KEY } from '../../modules/telegram-auth/allow-apps.decorator';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 interface RouteInfo {
   path: string;
   method: string;

@@ -161,4 +161,24 @@ describe('Ш6 — ключи API фактов', () => {
       }),
     ).not.toBeNull();
   });
+
+  it('секреты — с trim(): хвостовой перевод строки и пробелы не входят в ключ (P3)', () => {
+    const cfg = readGuideFactsConfig({
+      WIZARD_GUIDE_ASSIST_CONNECTOR_KEY: ` ${'k'.repeat(40)}\n`,
+      WIZARD_GUIDE_ASSIST_JWT_SECRET: `${SECRET}\r\n`,
+    });
+    expect(cfg).toEqual({ connectorKey: 'k'.repeat(40), jwtSecret: SECRET });
+    const r = readGuideAssistConfig({
+      ...FULL,
+      WIZARD_GUIDE_ASSIST_JWT_SECRET: `  ${SECRET}\n`,
+    });
+    expect(r.config!.jwtSecret).toBe(SECRET);
+    // Пробелы не добирают длину до минимума.
+    expect(
+      readGuideFactsConfig({
+        WIZARD_GUIDE_ASSIST_CONNECTOR_KEY: 'k'.repeat(20) + ' '.repeat(30),
+        WIZARD_GUIDE_ASSIST_JWT_SECRET: SECRET,
+      }),
+    ).toBeNull();
+  });
 });

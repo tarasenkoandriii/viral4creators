@@ -6,7 +6,10 @@
  *    пустая очередь — опрос реже (до `idlePollMaxMs`);
  *  - на задание: новый контекст и свой прокси (`browser/context.ts`),
  *    heartbeat каждые 15 с (продление аренды; ответ «отменить» — отмена;
- *    409 «аренда потеряна» — тихий обрыв без `fail`), стена времени
+ *    409 «аренда потеряна» — тихий обрыв без `fail`; ни одного удачного
+ *    heartbeat дольше `leaseMs` — любая ошибка, сеть, зависший запрос —
+ *    тот же тихий обрыв `lease_lost`: аренда на сервере уже истекла, и
+ *    задание, возможно, отдано другому воркеру), стена времени
  *    `wallMs` → `job_timeout`;
  *  - итог: `complete` (результат проверен тем же разбором, что на
  *    сервере) | `fail` с кодом из закрытого списка (повтор решает сервер);
@@ -44,6 +47,10 @@ export interface RunnerOptions {
   egress: EgressOptions;
   sealPrivateKey: string | null;
   heartbeatMs?: number;
+  /** Срок аренды без удачного heartbeat (тесты); по умолчанию `WORKER_LIMITS.leaseMs`. */
+  leaseMs?: number;
+  /** Часы (тесты). */
+  now?: () => number;
   executors?: Partial<Record<BrowserJobKind, JobExecutor>>;
   /** Тесты: открыть контекст без настоящего браузера. */
   openJobBrowser?: (b: Browser, job: ClaimedJob) => Promise<JobBrowser>;
@@ -189,13 +196,33 @@ export class Runner {
       attempt: job.attempt,
     });
     const hbMs = this.o.heartbeatMs ?? WORKER_LIMITS.heartbeatMs;
+    const leaseMs = this.o.leaseMs ?? WORKER_LIMITS.leaseMs;
+    const now = this.o.now ?? Date.now;
+    // Аудит P3: раньше задание обрывалось только по 409. Сеть до
+    // sites-backend легла (или 5xx/таймауты) — воркер продолжал работу
+    // вслепую, хотя аренда на сервере истекла через `leaseMs` и задание
+    // ушло другому воркеру: два браузера на одном сайте, второй `complete`.
+    // Отсчёт — от взятия задания (claim выдаёт аренду на `leaseMs`) и от
+    // каждого удачного heartbeat; проверка — и на ошибке, и на каждом
+    // тике (зависший запрос ошибкой не кончается).
+    let leaseOkAt = now();
+    const leaseExpired = () => now() - leaseOkAt >= leaseMs;
     const hb = setInterval(() => {
+      if (leaseExpired()) {
+        log.warn('heartbeat не проходит дольше срока аренды', {
+          jobId: job.id,
+          ms: leaseMs,
+        });
+        this.cancel(r, 'lease_lost');
+        return;
+      }
       this.o.api.heartbeat(job.id, job.leaseToken).then(
         (h) => {
+          leaseOkAt = now();
           if (h.cancel) this.cancel(r, 'cancelled');
         },
         (e: unknown) => {
-          if (e instanceof ApiError && e.status === 409)
+          if ((e instanceof ApiError && e.status === 409) || leaseExpired())
             this.cancel(r, 'lease_lost');
         },
       );

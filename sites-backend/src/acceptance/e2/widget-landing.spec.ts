@@ -33,6 +33,11 @@ import {
   TEST_ASSIST_TOKEN,
   signInitData,
 } from '../../modules/telegram-auth/test-init-data';
+import { awaitMinuteHeadroom, awaitUtcDayHeadroom } from '../window-headroom';
+
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию;
+// ожидание запаса до конца окна лимита (../window-headroom) — до 20 с.
+jest.setTimeout(60_000);
 
 const LANDING = LANDING_ORIGIN;
 /** Свой адрес (IPv6 /64) у каждого вызова: окна лимитов в базе живут между прогонами. */
@@ -139,6 +144,8 @@ describeDb(
 
       it('лимит батчей на ipHash в минуту — RATE_LIMITED', async () => {
         const ip = freshIp();
+        // Окно — минута по часам: серия на смене минуты делится между окнами.
+        await awaitMinuteHeadroom();
         for (let i = 0; i < LANDING_DEFAULTS.eventBatchesPerMinute; i++) {
           await events({ events: [{ name: 'rl_probe' }] }, ip).expect(204);
         }
@@ -219,6 +226,8 @@ describeDb(
 
       it('не больше 10 черновиков в сутки на ipHash', async () => {
         const ip = freshIp();
+        // Окно — сутки UTC: серия на полуночи делится между окнами.
+        await awaitUtcDayHeadroom(10_000);
         for (let i = 0; i < LANDING_DEFAULTS.widgetDraftsPerIpPerDay; i++) {
           await draft(cfg(), ip).expect(200);
         }

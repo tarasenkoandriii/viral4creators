@@ -38,6 +38,11 @@ import {
 } from '../../modules/assist-widget/testing/widget-stack.testing';
 import { verifyVisitorToken } from '../../modules/assist-widget/visitor-token';
 import { widgetTokenKey } from '../../config/widget-env';
+import { awaitMinuteHeadroom } from '../window-headroom';
+
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию;
+// ожидание запаса до конца окна лимита (../window-headroom) — до 20 с.
+jest.setTimeout(60_000);
 
 function setClock(at: Date): void {
   jest.useFakeTimers({
@@ -366,6 +371,8 @@ describeDb(
       const d = domain();
       const f = await widgetFixture(stack, [{ host: d }]);
       const ip = freshIp();
+      // Окно — минута по часам: серия на смене минуты делится между окнами.
+      await awaitMinuteHeadroom();
       for (let i = 0; i < WIDGET_DEFAULTS.sessionsPerIpPerMinute; i++) {
         await session(
           { pk: f.pk, parentOrigin: `https://${d}` },

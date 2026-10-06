@@ -231,7 +231,7 @@ export function parseSteps(v: unknown): UiStep[] | null {
 const EMAIL = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const PHONE = /(?:\+?\d[\s().-]?){7,}\d/g;
 const TOKEN = /\b(sk-[A-Za-z0-9]{10,}|AIza[A-Za-z0-9_-]{10,})\b/g;
-const LONG_DIGITS = /\d(?:[\s-]?\d){8,}/g;
+const LONG_DIGITS = /\(?\d(?:[\s()-]{0,2}\d){8,}/g;
 
 /** Маска подписи ДО отправки: e-mail, ключи, телефоны, длинные цифры. */
 export function maskLabel(s: string): string {
@@ -251,18 +251,23 @@ export function maskLabel(s: string): string {
  * списание, массовые, «оформить»). Сверку держит scripts/ui-plan.test.ts.
  */
 export const NEVER_PATTERNS: RegExp[] = [
-  /(?<!\p{L})(оплат|оплач|сплат|заплат|pay|payment|checkout)/iu,
-  /(?<!\p{L})(удал|видал|вилуч|delete|remove|erase)/iu,
-  /(?<!\p{L})(оформить заказ|подтвердить заказ|оформити замовлення|підтвердити замовлення|confirm order|place order|submit order|buy now|купить|купити)/iu,
-  /(?<!\p{L})(отменить подписку|скасувати підписку|cancel subscription|unsubscribe)/iu,
-  /(?<!\p{L})(отменить заказ|отмените заказ|отмена заказа|скасувати замовлення|скасуйте замовлення|скасування замовлення|cancel order)/iu,
-  /(?<!\p{L})(возврат|вернуть деньги|оформить возврат|повернення|повернути кошти|refund|return order)/iu,
-  /(?<!\p{L})(списать|списание|списати|списання|начислить|нарахувати|charge|payout|withdraw|вывести средства|вивести кошти)/iu,
-  /(?<!\p{L})(выбрать все|выделить все|отметить все|вибрати все|виділити все|позначити все|select all|check all)/iu,
-  /(?<!\p{L})(оформ(?:ить|ити|ление|лення|и)|до оформлення|к оформлению|proceed to checkout|checkout)/iu,
+  /(?:^|[^\p{L}])(оплат|оплач|сплат|заплат|pay|payment|checkout)/iu,
+  /(?:^|[^\p{L}])(удал|видал|вилуч|delete|remove|erase)/iu,
+  /(?:^|[^\p{L}])(оформить заказ|подтвердить заказ|оформити замовлення|підтвердити замовлення|confirm order|place order|submit order|buy now|купить|купити)/iu,
+  /(?:^|[^\p{L}])(отменить подписку|скасувати підписку|cancel subscription|unsubscribe)/iu,
+  /(?:^|[^\p{L}])(отменить заказ|отмените заказ|отмена заказа|скасувати замовлення|скасуйте замовлення|скасування замовлення|cancel order)/iu,
+  /(?:^|[^\p{L}])(возврат|вернуть деньги|оформить возврат|повернення|повернути кошти|refund|return order)/iu,
+  /(?:^|[^\p{L}])(списать|списание|списати|списання|начислить|нарахувати|charge|payout|withdraw|вывести средства|вивести кошти)/iu,
+  /(?:^|[^\p{L}])(выбрать все|выделить все|отметить все|вибрати все|виділити все|позначити все|select all|check all)/iu,
+  /(?:^|[^\p{L}])(оформ(?:ить|ити|ление|лення|и)|до оформлення|к оформлению|proceed to checkout|checkout)/iu,
 ];
-/** «Купить/Купити/Buy now» — снимает только разметка `add-to-cart`. */
-const BUY = /(?<!\p{L})(купить|купити|buy now)/iu;
+/**
+ * «Купить/Купити/Buy now» — снимает только разметка `add-to-cart`. Начало
+ * слова — группой `(^|не-буква)`, а не lookbehind `(?<!\p{L})`: lookbehind
+ * роняет разбор всего чанка в Safari < 16.4 (act.js/admin-act.js/editor.js).
+ * Захваченный префикс в replace возвращается (`$1`).
+ */
+const BUY = /(^|[^\p{L}])(купить|купити|buy now)/iu;
 
 /** Живая цель под стоп-листом (текст, скрытая подпись, разметка). */
 export function neverTarget(text: string, assistId: string | null): boolean {
@@ -271,7 +276,7 @@ export function neverTarget(text: string, assistId: string | null): boolean {
     if (!re.test(probe)) continue;
     // add-to-cart снимает только «Купить» (ложный срабатыватель), не «Оплатить».
     if (assistId === 'add-to-cart' && re.source.indexOf('купити') >= 0) {
-      const rest = probe.replace(new RegExp(BUY.source, 'giu'), ' ');
+      const rest = probe.replace(new RegExp(BUY.source, 'giu'), '$1 ');
       if (!re.test(rest)) continue;
     }
     return true;

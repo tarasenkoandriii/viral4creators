@@ -193,6 +193,23 @@ describe('internal-sites Ш4 по HTTP (карта интерфейса для F
     expect(calls.map((c) => c[0])).toEqual(['read']);
   });
 
+  it.each([
+    'CRON_SECRET',
+    'SITES_INTERNAL_SECRET',
+    'ASSIST_SECRETS_KEY',
+    'SITES_WORKER_HMAC_SECRET',
+  ])('аудит Н-2: секрет QA совпал с %s — 503', async (other) => {
+    qaGuard.env = {
+      SITES_QA_HMAC_SECRET: QA_SECRET,
+      SITES_TUTORIAL_HMAC_SECRET: TUTORIAL_SECRET,
+      [other]: QA_SECRET,
+    };
+    const r = await post(READ, readBody).expect(503);
+    expect(r.body.error.code).toBe('INTERNAL_NOT_CONFIGURED');
+    expect(JSON.stringify(r.body)).not.toContain(QA_SECRET);
+    expect(calls).toEqual([]);
+  });
+
   it('чтение: url и вид по желанию; строгий разбор', async () => {
     await post(
       READ,

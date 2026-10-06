@@ -67,4 +67,14 @@ describe('env браузерного воркера Ш3 (sites-backend)', () => 
       ),
     ).toBeNull();
   });
+
+  it('аудит Н-2: старые ключи «Админки» (ASSIST_SECRETS_KEYS_OLD) — тоже совпадение', () => {
+    const key = 'm'.repeat(44);
+    expect(
+      workerSecretCollision({ ASSIST_SECRETS_KEYS_OLD: `v1:${key}` }, key),
+    ).toBe('ASSIST_SECRETS_KEYS_OLD');
+    expect(
+      workerSecretCollision({ SITES_WORKER_HMAC_SECRET: key }, key),
+    ).toBeNull();
+  });
 });

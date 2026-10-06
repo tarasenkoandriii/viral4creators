@@ -106,6 +106,8 @@ export interface UiPlanUi {
   repeat?: boolean;
   /** (д) «Вернуть / Оставить»: что вернётся (поля) и что убрать самим. */
   offer?: { fields: string[]; manual: string[] } | null;
+  /** «Да» отправлено, ответа ещё нет — кнопки карточки недоступны. */
+  busy?: boolean;
 }
 
 export function uiPlanOff(): UiPlanUi {
@@ -117,6 +119,7 @@ export function uiPlanOff(): UiPlanUi {
     memo: null,
     repeat: false,
     offer: null,
+    busy: false,
   };
 }
 
@@ -298,6 +301,8 @@ export class UiPlanController {
     ticket: string | null;
   } | null = null;
   private plan: PlanView | null = null;
+  /** Подтверждение в пути (одно на карточку). */
+  private confirming = false;
   private queue: Promise<void> = Promise.resolve();
   private building: Promise<void> = Promise.resolve();
   /** (д) «Вернуть / Оставить»: план и таймер «оставлено» (60 с). */
@@ -638,7 +643,11 @@ export class UiPlanController {
 
   private async sendConfirm(body: Record<string, unknown>, byVoice = false) {
     const v = this.plan;
-    if (!v || !v.planId) return;
+    // Аудит 06.10: двойной клик «Да» (или «да» голосом + кнопка) — второй
+    // confirm, пока первый в пути, дал бы второй `ui-run` того же плана.
+    if (!v || !v.planId || this.confirming) return;
+    this.confirming = true;
+    this.host.setUi({ busy: true });
     try {
       const r = parsePlanView(
         await this.host.api(
@@ -660,6 +669,9 @@ export class UiPlanController {
           : this.host.t().vcFailed
       );
       this.finish('failed');
+    } finally {
+      this.confirming = false;
+      this.host.setUi({ busy: false });
     }
   }
 

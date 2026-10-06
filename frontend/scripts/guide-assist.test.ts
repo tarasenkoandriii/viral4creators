@@ -316,6 +316,11 @@ const CONFIRM: Array<[string, string]> = [
     'src/features/persona/PersonaLooks.tsx',
     '{busy ? t.creating : t.createLook}',
   ],
+  // Аудит P2 (06.10.2026): кнопки повторной проверки соответствия раньше
+  // прикрывала запись ASSIST_ALLOW по паре (файл, функция) — снятие
+  // пометки не ловилось.
+  ['src/features/generation/RelevancePanel.tsx', 'data-qa="relevance-check"'],
+  ['src/features/generation/RelevancePanel.tsx', 'data-qa="relevance-recheck"'],
 ];
 
 it('Р-Ш6-11: разовые платные действия — data-assist="confirm"', () => {
@@ -327,6 +332,13 @@ it('Р-Ш6-11: разовые платные действия — data-assist="c
         `${file}: «${needle}» без data-assist="confirm"`
       );
   }
+});
+
+it('утверждение промпта: confirm, «несмотря на модерацию» — never (аудит P2)', () => {
+  const src = readFileSync('src/components/PromptEditor.tsx', 'utf8');
+  const tag = tagAround(src, 'onClick={() => void handleApprove()}');
+  assert.ok(tag.includes('data-qa="prompt-approve"'));
+  assert.ok(tag.includes("data-assist={isFlagged ? 'never' : 'confirm'}"));
 });
 
 // ── Обратная проверка (хвост (12)): платный вызов → пометка ─────────
@@ -384,6 +396,8 @@ const PAID: PaidApis = {
     generateVideo: N,
     generatePrompt: C,
     triggerAnalysis: C,
+    // Аудит P2: утверждение — шаг к платному рендеру (Р-Ш6-11).
+    approvePrompt: C,
   },
   'src/services/ab-test-api.ts': { startAbTest: N },
   'src/services/catalog-batch-api.ts': {
@@ -440,29 +454,51 @@ const PAID: PaidApis = {
 };
 
 /**
- * Пути, которые разметить нельзя или не нужно, — с обоснованием. Запись
- * снимает функцию `api` с находок в файле `file` (элемент, `useEffect`,
- * непрослеженный путь). Неиспользованная запись — тоже падение.
+ * Пути, которые разметить нельзя или не нужно, — с обоснованием.
+ *
+ * Аудит P2 (06.10.2026): запись по паре (файл, функция) снимала ВСЕ
+ * находки этой функции в файле — и непрослеженный путь, и кнопки; снятие
+ * `data-assist` с кнопки или новая кнопка с тем же вызовом не ловились.
+ * Теперь запись снимает ровно одну находку разбора без элемента: её вид
+ * (`auto` — `useEffect`, `loose` — непрослеженный путь), функцию, след
+ * (`trail` целиком) и фрагмент строки (`near`). Находку по элементу
+ * (кнопке, полю) allowlist не снимает НИКОГДА — только пометка.
+ * Неиспользованная запись — тоже падение.
  */
-const ASSIST_ALLOW: Array<{ file: string; api: string; why: string }> = [
+interface AllowEntry {
+  kind: LooseHit['kind'];
+  file: string;
+  api: string;
+  /** След разбора целиком, как в сообщении: `api ← обработчик ← …`. */
+  trail: string;
+  /** Фрагмент строки находки (не номер: номера съезжают от правок). */
+  near: string;
+  why: string;
+}
+
+const ASSIST_ALLOW: AllowEntry[] = [
   {
-    file: 'src/features/projects/ProjectCreateScreen.tsx',
-    api: 'deleteProject',
-    why: 'откат только что созданного проекта обучалки при сбое первого разбора — не удаление по просьбе; кнопка «Исследовать» — confirm (exploreSite)',
-  },
-  {
+    kind: 'auto',
     file: 'src/features/generation/RelevancePanel.tsx',
     api: 'runRelevance',
-    why: 'автозапуск в useEffect при первом открытии панели без отчёта — не кнопка; повтор — кнопки с confirm',
+    trail: 'runRelevance ← run',
+    near: 'useEffect(() => {',
+    why: 'автозапуск в useEffect при первом открытии панели без отчёта — не кнопка; повтор — кнопки с confirm (CONFIRM)',
   },
   {
+    kind: 'loose',
     file: 'src/features/projects/greeting/ScriptStep.tsx',
     api: 'generateGreetingPrompt',
+    trail: 'generateGreetingPrompt ← generate',
+    near: ': {', // объект команды в `useVoiceCommand('regenerate-script', …)`
     why: 'голосовая команда «пересобери сценарий» (K3) старого голосового помощника — своя карточка «я понял так» и «Да» человека; кнопки — confirm',
   },
   {
+    kind: 'loose',
     file: 'src/features/projects/greeting/VideoStep.tsx',
     api: 'startGreetingVideo',
+    trail: 'startGreetingVideo ← start',
+    near: 'useRenderVoiceConsent({',
     why: 'голосовое согласие на рендер (K7) — сводка с ценой и «Да» человека; сама кнопка рендера — never',
   },
 ];
@@ -481,20 +517,27 @@ const TIER_OF = tiersOf(PAID);
 /** Нарушения разметки с учётом allowlist (строки для сообщения). */
 function violations(
   report: { elements: ElementHit[]; loose: LooseHit[] },
-  allow: typeof ASSIST_ALLOW,
+  allow: AllowEntry[],
   tiers: Map<string, Tier>,
   used = new Set<number>()
 ): string[] {
-  const allowed = (file: string, api: string) => {
-    const i = allow.findIndex((a) => a.file === file && a.api === api);
+  const allowed = (l: LooseHit) => {
+    const i = allow.findIndex(
+      (a) =>
+        a.kind === l.kind &&
+        a.file === l.file &&
+        a.api === l.api &&
+        a.trail === l.trail &&
+        l.lineText.includes(a.near)
+    );
     if (i >= 0) used.add(i);
     return i >= 0;
   };
   const out: string[] = [];
   for (const e of report.elements) {
     if (!e.executor) continue; // двойной клик, клавиатура — не исполнитель
-    const apis = [...e.apis].filter((a) => !allowed(e.file, a));
-    if (!apis.length) continue;
+    // Элементы allowlist не снимает (аудит P2) — только пометка.
+    const apis = [...e.apis];
     const required = apis.some((a) => tiers.get(a) === N) ? N : C;
     // «никогда» строже «с подтверждением» и для confirm-действия допустимо.
     if (e.marked === required || (required === C && e.marked === N)) continue;
@@ -504,10 +547,11 @@ function violations(
     );
   }
   for (const l of report.loose) {
-    if (allowed(l.file, l.api)) continue;
+    if (allowed(l)) continue;
     out.push(
-      `${l.file}:${l.line} ${l.api}: ${l.why} (${l.trail}) — разметьте ` +
-        'кнопку или внесите путь в ASSIST_ALLOW с обоснованием'
+      `${l.file}:${l.line} ${l.kind} ${l.api}: ${l.why} (${l.trail}) — ` +
+        'разметьте кнопку или внесите находку в ASSIST_ALLOW (вид, след, ' +
+        `строка «${l.lineText.slice(0, 60)}») с обоснованием`
     );
   }
   return out;
@@ -597,6 +641,150 @@ export function S() {
   );
 });
 
+it('разбор (аудит P3): submit без type, import * as, ветка undefined, export { f }/default, capture', () => {
+  const sources: Record<string, string> = {
+    'src/services/x-api.ts': `export async function pay() {}
+export async function gen() {}`,
+    'src/lib/wrap.ts': `import { pay } from '../services/x-api';
+async function wipe() { await pay(); }
+async function other() { await pay(); }
+export { wipe, other as renamed };`,
+    'src/lib/wrap-default.ts': `import { pay } from '../services/x-api';
+export default async function wipe2() { await pay(); }`,
+    'src/lib/wrap-default2.ts': `import { gen } from '../services/x-api';
+const g = async () => { await gen(); };
+export default g;`,
+    'src/S.tsx': `import * as X from './services/x-api';
+import { wipe, renamed } from './lib/wrap';
+import wipe2 from './lib/wrap-default';
+import g2 from './lib/wrap-default2';
+export function S({ on }: { on: boolean }) {
+  return (<>
+    <form onSubmit={() => void X.gen()}><Button data-assist="confirm" type="submit">a</Button><Button>b</Button></form>
+    <form onSubmit={() => void X.gen()}><Button data-assist="confirm">c</Button><Button type="button">d</Button></form>
+    <button data-assist={on ? 'confirm' : undefined} onClick={() => void X.gen()}>e</button>
+    <button data-assist={on && 'never'} onClick={() => void X.pay()}>f</button>
+    <button onClick={() => void wipe()}>g</button>
+    <button onClick={() => void renamed()}>h</button>
+    <button onClick={() => void wipe2()}>i</button>
+    <button onClick={() => void g2()}>j</button>
+    <button onPointerDownCapture={() => void X.pay()}>k</button>
+    <form onSubmit={() => void X.gen()}><input type="submit" /></form>
+  </>);
+}`,
+    'src/W.tsx': `import * as X from './services/x-api';
+export function W() { useThing(X); return null; }`,
+  };
+  const paid: PaidApis = { 'src/services/x-api.ts': { pay: N, gen: C } };
+  const r = analyzeAssistMarks(sources, paid);
+  const at = (line: number) =>
+    r.elements.filter((e) => e.file === 'src/S.tsx' && e.line === line);
+  // Кнопка без type в форме — submit: форма не помечена целиком.
+  assert.equal(at(7)[0]?.marked, null);
+  // Без type, но помечена; type="button" не отправляет — форма помечена.
+  assert.equal(at(8)[0]?.marked, C);
+  // Ветка undefined / `&&` — не пометка; при этом X.fn прослежен.
+  assert.equal(at(9)[0]?.marked, null);
+  assert.ok(at(9)[0]?.apis.has('gen'));
+  assert.equal(at(10)[0]?.marked, null);
+  assert.ok(at(10)[0]?.apis.has('pay'));
+  // export { f }, export { f as g }, export default function, export default f.
+  assert.ok(at(11)[0]?.apis.has('pay'));
+  assert.ok(at(12)[0]?.apis.has('pay'));
+  assert.ok(at(13)[0]?.apis.has('pay'));
+  assert.ok(at(14)[0]?.apis.has('gen'));
+  // Capture-событие — исполнитель.
+  assert.equal(at(15)[0]?.executor, true);
+  // <input type="submit"> без пометки — форма не помечена.
+  assert.equal(at(16)[0]?.marked, null);
+  // Пространство имён целиком — непрослеженный путь, а не «чисто».
+  assert.ok(
+    r.loose.some(
+      (l) => l.file === 'src/W.tsx' && /пространство имён X/.test(l.why)
+    )
+  );
+  const v = violations(r, [], tiersOf(paid));
+  for (const line of [7, 9, 10, 11, 12, 13, 14, 15, 16])
+    assert.ok(
+      v.some((m) => m.startsWith(`src/S.tsx:${line} `)),
+      `строка ${line} не поймана:\n${v.join('\n')}`
+    );
+  assert.ok(!v.some((m) => m.startsWith('src/S.tsx:8 ')));
+});
+
+it('allowlist (аудит P2): снимает только находку без элемента — по виду, следу и строке', () => {
+  const r = analyzeAssistMarks(
+    {
+      'src/services/x-api.ts': 'export async function pay() {}',
+      'src/S.tsx': `import { pay } from './services/x-api';
+import { useEffect } from 'react';
+export function S() {
+  const run = () => void pay();
+  useEffect(() => { run(); }, []);
+  return <button onClick={run}>x</button>;
+}`,
+    },
+    { 'src/services/x-api.ts': { pay: N } }
+  );
+  const tiers = new Map<string, Tier>([['pay', N]]);
+  const entry: AllowEntry = {
+    kind: 'auto',
+    file: 'src/S.tsx',
+    api: 'pay',
+    trail: 'pay ← run',
+    near: 'useEffect(',
+    why: 'тест',
+  };
+  const used = new Set<number>();
+  const v = violations(r, [entry], tiers, used);
+  // useEffect снят, кнопка — нет.
+  assert.deepEqual(
+    v.map((m) => m.split(' ')[0]),
+    ['src/S.tsx:6']
+  );
+  assert.ok(used.has(0));
+  // Другой вид или след — запись не подходит.
+  for (const bad of [
+    { ...entry, kind: 'loose' as const },
+    { ...entry, trail: 'pay' },
+    { ...entry, near: 'useLayoutEffect(' },
+  ]) {
+    const u = new Set<number>();
+    assert.equal(violations(r, [bad], tiers, u).length, 2);
+    assert.equal(u.size, 0);
+  }
+});
+
+it('откат созданного проекта — только в catch рядом с createProject', () => {
+  for (const p of ts.sys.readDirectory('src', ['.ts', '.tsx'])) {
+    if (p === 'src/services/projects-api.ts') continue;
+    const text = readFileSync(p, 'utf8');
+    if (!text.includes('rollbackCreatedProject')) continue;
+    const sf = ts.createSourceFile(p, text, ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node) => {
+      if (
+        ts.isCallExpression(n) &&
+        ts.isIdentifier(n.expression) &&
+        n.expression.text === 'rollbackCreatedProject'
+      ) {
+        let inCatch = false;
+        let fn: ts.Node | undefined = n.parent;
+        for (; fn; fn = fn.parent) {
+          if (ts.isCatchClause(fn)) inCatch = true;
+          if (ts.isArrowFunction(fn) || ts.isFunctionLike(fn)) break;
+        }
+        assert.ok(inCatch, `${p}: rollbackCreatedProject вне catch`);
+        assert.ok(
+          fn && /\bcreateProject\(/.test(fn.getText(sf)),
+          `${p}: rollbackCreatedProject в функции без createProject`
+        );
+      }
+      n.forEachChild(visit);
+    };
+    visit(sf);
+  }
+});
+
 it('обратная проверка: каждый платный вызов TMA ведёт к размеченной кнопке', () => {
   const sources: Record<string, string> = {};
   for (const p of ts.sys.readDirectory('src', ['.ts', '.tsx']))
@@ -623,7 +811,10 @@ it('обратная проверка: каждый платный вызов TM
   const bad = violations(report, ASSIST_ALLOW, TIER_OF, used);
   assert.deepEqual(bad, [], `\n${bad.join('\n')}`);
   ASSIST_ALLOW.forEach((a, i) =>
-    assert.ok(used.has(i), `ASSIST_ALLOW устарел: ${a.file} ${a.api}`)
+    assert.ok(
+      used.has(i),
+      `ASSIST_ALLOW устарел: ${a.kind} ${a.file} ${a.api} (${a.trail})`
+    )
   );
   const marked = report.elements.filter((e) => e.executor);
   console.log(

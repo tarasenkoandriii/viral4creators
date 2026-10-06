@@ -1969,6 +1969,11 @@ employee-JWT, iframe на **отдельном origin**; коннекторы AP
 5. **Обход за логином** — до воркера Ш3 только ставится в очередь
    (`assist_admin_crawl_jobs`, статус `waiting_worker`); браузер на Vercel
    не запускается. Тестовая учётка — из реестра Ш2 (§6.16) на хосте админки.
+   *Обновлено 06.10.2026:* воркер построен (Э-С Ш3) — исполнение включает
+   `BROWSER_WORKER_ENABLED` в sites-backend после деплоя воркера по §6.25:
+   с ним задание становится `queued` и уходит в очередь `browser-jobs`
+   (ожидавшие `waiting_worker` — при следующем «Запустить»); учётке нужен
+   продукт `assist-admin` («Помічник: обхід «Адмінки»»).
 6. **Проверка после деплоя:** в TMA владелец включает режим на тестовом
    сайте, выпускает секрет; на стенд-странице с JWT (подписать локально
    `node -e` по примеру из `identity-jwt.ts signEmployeeJwt`) чат отвечает
@@ -2485,6 +2490,17 @@ sites-backend по HMAC (`/internal/worker/v1/*`) — входящих порт�
    или `rsync -a browser-worker/ vps:~/browser-worker/`). Дальше все
    команды — **из этой папки** (путь к seccomp-профилю в compose
    относительный).
+
+   **2а. Свежесть Chromium — условие деплоя (перед ПЕРВОЙ сборкой образа и
+   перед каждой пересборкой после `git pull`).** Версия `playwright-core` в
+   `browser-worker/package.json` — **не старше 1 месяца** (дата релиза:
+   `npm view playwright-core time --json | grep '"<версия>"'`; последняя —
+   `npm view playwright-core version`). Chromium образа ставится
+   `npx playwright-core install` той же версии (`Dockerfile`), поэтому
+   старый пакет = старый браузер с известными уязвимостями V8. Старше
+   месяца — сначала обновить пакет в репозитории (`npm install
+   playwright-core@<новая> --save-exact` в `browser-worker/`, прогнать
+   `npm test` и e2e, CI), потом собирать. (TODO I-М, Ш3-хвост (8).)
 3. **Секреты:**
    - `SITES_WORKER_HMAC_SECRET` — `openssl rand -hex 32` (СВОЙ, не секрет
      обучалки `SITES_TUTORIAL_HMAC_SECRET`, Flow-QA и админки и не любой
@@ -2530,6 +2546,20 @@ sites-backend по HMAC (`/internal/worker/v1/*`) — входящих порт�
    WantedBy=multi-user.target
    ```
    `sudo systemctl enable --now bworker-egress`.
+   **Самозащиты скрипта (аудит 06.10.2026)** — до любых изменений он
+   откажет, если: на мосту висит адрес хоста или через мост идёт маршрут
+   по умолчанию; адрес моста вне `WORKER_SUBNET`; подсеть сети Docker
+   (`bworker-egress` или `<проект>_bworker-egress`; имя — `WORKER_NETWORK`)
+   не совпадает с `WORKER_SUBNET`; у сети включён IPv6 (`enable_ipv6` —
+   убрать и пересоздать сеть). DNS (53) открыт только к резолверам хоста:
+   `WORKER_DNS_RESOLVERS` (через пробел/запятую), иначе из
+   `/etc/resolv.conf` (у Hetzner 185.12.64.1/2). Сначала прогнать без
+   аргументов (план) и сверить строку «DNS 53 — только к: …», затем
+   `--apply`; проверка: `docker compose exec browser-worker getent hosts example.com`.
+   Порядок загрузки: unit с `After=docker.service` применяет правила уже
+   после старта контейнера (`restart: unless-stopped`) — после
+   перезагрузки VPS проверить `sudo systemctl status bworker-egress`
+   (если `--apply` упал — запустить вручную).
 7. **Проверка изоляции:**
    `docker compose exec browser-worker node -e "fetch('http://169.254.169.254/',{signal:AbortSignal.timeout(3000)}).then(()=>console.log('ОТКРЫТО — ошибка'),()=>console.log('закрыто — ок'))"`
    — «закрыто — ок»; то же для `http://<IP хоста>:22` и любого `10.x`.
@@ -2550,7 +2580,8 @@ sites-backend по HMAC (`/internal/worker/v1/*`) — входящих порт�
     `cd ~/browser-worker && git pull && docker compose build --pull && docker compose up -d`.
     Новый Chromium приходит с обновлением `playwright-core` в
     `browser-worker/package.json` (версия браузера = версия пакета) — его
-    обновлять в репозитории не реже раза в месяц (TODO).
+    обновлять в репозитории не реже раза в месяц (TODO); перед сборкой —
+    проверка шага 2а.
 
 **Вариант 2 (тот же сервер Hetzner):** те же шаги 2–9 по SSH, но:
 воркер поднимается обычным `docker compose` из своей папки, **не** через
@@ -2564,7 +2595,11 @@ Dokploy и **не** в `dokploy-network`/сети реле (своя `bworker-eg
 
 **Откат (мгновенно):** `BROWSER_WORKER_ENABLED=false` на Vercel и redeploy —
 claim пуст, идущие задания гасятся на ближайшем heartbeat (≤ 15 с),
-продукты возвращаются к поведению до Ш3. Затем на VPS `docker compose down`
+продукты возвращаются к поведению до Ш3. Если воркер к этому моменту уже
+лежал (heartbeat'а нет), зависшие `running` дочищает крон
+`/cron/browser-jobs-reap` (каждые 5 мин, аудит 06.10.2026): истёкшая
+аренда при выключенном флаге → `failed` с кодом `worker_disabled`, запись
+продукта (обход «Админки», сверка карты) доводится до итога. Затем на VPS `docker compose down`
 и `sudo sh deploy/worker-egress-docker-user.sh --remove`. Задания и
 артефакты дочищает крон `browser-jobs-retention`.
 

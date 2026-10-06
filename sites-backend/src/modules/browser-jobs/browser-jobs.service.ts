@@ -23,7 +23,19 @@
  *  - справедливость: за один claim — не больше одного задания кабинета и
  *    не больше `RUNNING_PER_ACCOUNT` идущих на кабинет;
  *  - выключатель `BROWSER_WORKER_ENABLED`: выключен — продукты не ставят,
- *    claim пуст, heartbeat идущих отвечает «отменить».
+ *    claim пуст, heartbeat идущих отвечает «отменить»;
+ *  - уборка (`reap`, крон `browser-jobs-reap` каждые 5 мин и ретенция —
+ *    БЕЗ проверки выключателя, аудит Ш3 P2): истёкшая аренда — повтор или
+ *    отказ (выключен — сразу отказ `worker_disabled`), ожидающее с
+ *    запросом отмены — `cancelled`, «сданное» задание, чей обработчик
+ *    продукта оборвался (`result: {pending:true}` дольше
+ *    `DONE_PENDING_GRACE_MS`), — `failed: internal` с уведомлением
+ *    продукта; затем сверка продуктов (`reconcile` обработчиков). Иначе
+ *    задание и запись продукта висели бы `running` навсегда;
+ *  - лимиты «прочитал — создал» (`activePerSite`/`dailyPerSite` при
+ *    постановке, `RUNNING_PER_ACCOUNT` при выдаче) — под
+ *    `pg_advisory_xact_lock` сайта/кабинета в короткой транзакции: две
+ *    параллельные постановки или два воркера лимит не перешагнут.
  *
  * Межкабинетные запросы (claim, аренда, ретенция) — только системным
  * клиентом с причиной; продукты ставят и читают задания своего кабинета.
@@ -132,6 +144,32 @@ function sameHash(a: string | null, b: string): boolean {
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
+/**
+ * Код отказа, которым уборка закрывает идущее задание при ВЫКЛЮЧЕННОМ
+ * воркере (аренда истекла, а heartbeat уже некому слать) — только сервер,
+ * в протоколе воркера его нет.
+ */
+export const WORKER_DISABLED_CODE = 'worker_disabled';
+type FinalCode = WorkerErrorCode | typeof WORKER_DISABLED_CODE;
+
+/**
+ * Сколько «сданное» задание может ждать обработчик продукта
+ * (`result: {pending:true}`), прежде чем уборка сочтёт, что функция
+ * оборвалась (больше потолка длительности функции Vercel).
+ */
+export const DONE_PENDING_GRACE_MS = 15 * 60_000;
+
+/** Ограничение уборки и ретенции своими кабинетами (тесты на общей базе). */
+export type JobScope = { accountIds: string[] } | null;
+
+export interface ReapReport {
+  requeued: number;
+  failed: number;
+  cancelledQueued: number;
+  pendingFailed: number;
+  reconciled: number;
+}
+
 const JPEG = Buffer.from([0xff, 0xd8, 0xff]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -206,54 +244,59 @@ export class BrowserJobsService {
       });
       if (same) return this.toView(same);
     }
-    const [active, daily] = await Promise.all([
-      db.siteBrowserJob.count({
-        where: {
-          siteId: input.siteId,
-          origin: input.origin,
-          status: { in: ['queued', 'running'] },
-        },
-      }),
-      db.siteBrowserJob.count({
-        where: {
-          siteId: input.siteId,
-          origin: input.origin,
-          createdAt: { gt: new Date(now.getTime() - 24 * 3600_000) },
-        },
-      }),
-    ]);
-    if (active >= rule.activePerSite) {
-      throw jobError(
-        HttpStatus.TOO_MANY_REQUESTS,
-        'BROWSER_JOB_BUSY',
-        'Предыдущие задания этого вида ещё выполняются — попробуйте позже',
-      );
-    }
-    if (daily >= rule.dailyPerSite) {
-      throw jobError(
-        HttpStatus.TOO_MANY_REQUESTS,
-        'BROWSER_JOB_DAILY_LIMIT',
-        'Суточный лимит заданий этого вида для сайта исчерпан',
-      );
-    }
+    // Аудит Ш3 P3: «посчитал — создал» под замком сайта и источника —
+    // параллельные постановки не перешагнут `activePerSite`/`dailyPerSite`.
     try {
-      const row = await db.siteBrowserJob.create({
-        data: {
-          accountId,
-          siteId: input.siteId,
-          hostId: input.hostId,
-          kind: rule.kind,
-          origin: input.origin,
-          refId: input.refId ?? null,
-          params: params as unknown as Prisma.InputJsonValue,
-          testAccountId: input.testAccountId ?? null,
-          idempotencyKey: input.idempotencyKey ?? null,
-          priority: rule.priority,
-          maxAttempts: rule.maxAttempts,
-          requestedBy: input.requestedBy,
-          availableAt: now,
-          expiresAt: new Date(now.getTime() + rule.ttlMs),
-        },
+      const row = await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`browser-jobs:site:${input.siteId}:${input.origin}`}))`;
+        const [active, daily] = await Promise.all([
+          tx.siteBrowserJob.count({
+            where: {
+              siteId: input.siteId,
+              origin: input.origin,
+              status: { in: ['queued', 'running'] },
+            },
+          }),
+          tx.siteBrowserJob.count({
+            where: {
+              siteId: input.siteId,
+              origin: input.origin,
+              createdAt: { gt: new Date(now.getTime() - 24 * 3600_000) },
+            },
+          }),
+        ]);
+        if (active >= rule.activePerSite) {
+          throw jobError(
+            HttpStatus.TOO_MANY_REQUESTS,
+            'BROWSER_JOB_BUSY',
+            'Предыдущие задания этого вида ещё выполняются — попробуйте позже',
+          );
+        }
+        if (daily >= rule.dailyPerSite) {
+          throw jobError(
+            HttpStatus.TOO_MANY_REQUESTS,
+            'BROWSER_JOB_DAILY_LIMIT',
+            'Суточный лимит заданий этого вида для сайта исчерпан',
+          );
+        }
+        return tx.siteBrowserJob.create({
+          data: {
+            accountId,
+            siteId: input.siteId,
+            hostId: input.hostId,
+            kind: rule.kind,
+            origin: input.origin,
+            refId: input.refId ?? null,
+            params: params as unknown as Prisma.InputJsonValue,
+            testAccountId: input.testAccountId ?? null,
+            idempotencyKey: input.idempotencyKey ?? null,
+            priority: rule.priority,
+            maxAttempts: rule.maxAttempts,
+            requestedBy: input.requestedBy,
+            availableAt: now,
+            expiresAt: new Date(now.getTime() + rule.ttlMs),
+          },
+        });
       });
       return this.toView(row);
     } catch (e) {
@@ -391,7 +434,7 @@ export class BrowserJobsService {
   /** Окончательный отказ задания (без повтора) + уведомление продукта. */
   private async finalFail(
     row: JobRow,
-    code: WorkerErrorCode,
+    code: FinalCode,
     where: Prisma.SiteBrowserJobWhereInput,
     now: Date,
   ): Promise<boolean> {
@@ -412,40 +455,169 @@ export class BrowserJobsService {
     return count === 1;
   }
 
-  /** Истёкшие аренды: повтор, если попытки есть, иначе отказ. */
-  private async reapExpired(now: Date): Promise<void> {
+  /**
+   * Истёкшие аренды: повтор, если попытки есть и воркер включён, иначе
+   * отказ (`cancelled` — была отмена, `worker_disabled` — выключатель,
+   * `job_timeout` — попытки кончились). Без проверки выключателя: при
+   * выключенном воркере heartbeat некому слать, и без этого задание (и
+   * запись продукта) висели бы `running` навсегда (аудит Ш3 P2).
+   */
+  private async reapLeases(
+    now: Date,
+    scope: JobScope = null,
+  ): Promise<{ requeued: number; failed: number }> {
     const db = this.sys('истёкшие аренды');
-    const expired = await db.siteBrowserJob.findMany({
-      where: { status: 'running', leaseUntil: { lt: now } },
-      take: 20,
+    const acc = scope ? { accountId: { in: scope.accountIds } } : {};
+    const enabled = this.enabled();
+    let requeued = 0;
+    let failed = 0;
+    const seen = new Set<string>();
+    for (let round = 0; round < 10; round++) {
+      const expired = await db.siteBrowserJob.findMany({
+        where: {
+          status: 'running',
+          leaseUntil: { lt: now },
+          ...acc,
+          ...(seen.size ? { id: { notIn: [...seen] } } : {}),
+        },
+        orderBy: { leaseUntil: 'asc' },
+        take: 50,
+      });
+      if (!expired.length) break;
+      for (const row of expired) {
+        seen.add(row.id);
+        const cond = {
+          status: 'running',
+          leaseTokenHash: row.leaseTokenHash,
+          leaseUntil: { lt: now },
+        };
+        if (
+          enabled &&
+          row.attempts < row.maxAttempts &&
+          !row.cancelRequestedAt
+        ) {
+          const { count } = await db.siteBrowserJob.updateMany({
+            where: { id: row.id, ...cond, cancelRequestedAt: null },
+            data: {
+              status: 'queued',
+              leaseOwner: null,
+              leaseTokenHash: null,
+              leaseUntil: null,
+              errorCode: 'job_timeout',
+              availableAt: new Date(now.getTime() + retryDelayMs(row.attempts)),
+            },
+          });
+          requeued += count;
+        } else {
+          const code: FinalCode = row.cancelRequestedAt
+            ? 'cancelled'
+            : enabled
+              ? 'job_timeout'
+              : WORKER_DISABLED_CODE;
+          if (await this.finalFail(row, code, cond, now)) failed += 1;
+        }
+      }
+      if (expired.length < 50) break;
+    }
+    return { requeued, failed };
+  }
+
+  /**
+   * Ожидающее с запросом отмены (`cancelRequestedAt`): отмену запросили,
+   * пока оно шло, а повтор успел вернуть его в очередь, — claim его не
+   * выдаёт, значит, закрываем как `cancelled` (иначе ждало бы срока).
+   */
+  private async reapCancelledQueued(
+    now: Date,
+    scope: JobScope = null,
+  ): Promise<number> {
+    const db = this.sys('ожидающие с запросом отмены');
+    const rows = await db.siteBrowserJob.findMany({
+      where: {
+        status: 'queued',
+        cancelRequestedAt: { not: null },
+        ...(scope ? { accountId: { in: scope.accountIds } } : {}),
+      },
+      take: 200,
     });
-    for (const row of expired) {
-      const cond = {
-        status: 'running',
-        leaseTokenHash: row.leaseTokenHash,
-        leaseUntil: { lt: now },
-      };
-      if (row.attempts < row.maxAttempts && !row.cancelRequestedAt) {
-        await db.siteBrowserJob.updateMany({
-          where: { id: row.id, ...cond },
-          data: {
-            status: 'queued',
-            leaseOwner: null,
-            leaseTokenHash: null,
-            leaseUntil: null,
-            errorCode: 'job_timeout',
-            availableAt: new Date(now.getTime() + retryDelayMs(row.attempts)),
-          },
-        });
-      } else {
+    let n = 0;
+    for (const row of rows) {
+      if (
         await this.finalFail(
           row,
-          row.cancelRequestedAt ? 'cancelled' : 'job_timeout',
-          cond,
+          'cancelled',
+          { status: 'queued', cancelRequestedAt: { not: null } },
           now,
-        );
+        )
+      )
+        n += 1;
+    }
+    return n;
+  }
+
+  /**
+   * «Сдано», но обработчик продукта не дописал (`complete` ставит
+   * `result: {pending:true}` до `onDone`): функция оборвалась между ними —
+   * задание `done`, а продукт «идёт». Старше `DONE_PENDING_GRACE_MS` —
+   * `failed: internal` и уведомление продукта (как сбой обработчика).
+   */
+  private async reapPendingDone(
+    now: Date,
+    scope: JobScope = null,
+  ): Promise<number> {
+    const db = this.sys('сданные задания без обработчика продукта');
+    const pending = { path: ['pending'], equals: true };
+    const rows = await db.siteBrowserJob.findMany({
+      where: {
+        status: 'done',
+        result: pending,
+        finishedAt: { lt: new Date(now.getTime() - DONE_PENDING_GRACE_MS) },
+        ...(scope ? { accountId: { in: scope.accountIds } } : {}),
+      },
+      take: 100,
+    });
+    let n = 0;
+    for (const row of rows) {
+      const { count } = await db.siteBrowserJob.updateMany({
+        where: { id: row.id, status: 'done', result: pending },
+        data: {
+          status: 'failed',
+          errorCode: 'internal',
+          result: Prisma.DbNull,
+        },
+      });
+      if (count === 1) {
+        n += 1;
+        await this.notifyFailed(row, 'internal');
       }
     }
+    return n;
+  }
+
+  /**
+   * Уборка очереди (крон `browser-jobs-reap` и ретенция; без проверки
+   * выключателя): аренды, ожидающие с отменой, оборванные обработчики,
+   * затем сверка продуктов (`reconcile` обработчиков; сбой одного
+   * продукта не мешает остальным).
+   */
+  async reap(now = this.now(), scope: JobScope = null): Promise<ReapReport> {
+    const leases = await this.reapLeases(now, scope);
+    const cancelledQueued = await this.reapCancelledQueued(now, scope);
+    const pendingFailed = await this.reapPendingDone(now, scope);
+    let reconciled = 0;
+    if (!scope) {
+      for (const [origin, h] of this.handlers.all()) {
+        if (!h.reconcile) continue;
+        try {
+          reconciled += await h.reconcile(now);
+        } catch (e) {
+          this.logger.warn(
+            `сверка продукта ${origin}: ${e instanceof Error ? e.name : 'error'}`,
+          );
+        }
+      }
+    }
+    return { ...leases, cancelledQueued, pendingFailed, reconciled };
   }
 
   async claim(
@@ -455,7 +627,8 @@ export class BrowserJobsService {
   ): Promise<ClaimedJob[]> {
     if (!this.enabled()) return [];
     const now = this.now();
-    await this.reapExpired(now);
+    await this.reapLeases(now);
+    await this.reapCancelledQueued(now);
     const db = this.sys('выдача заданий воркеру (все кабинеты)');
     // Без открытого ключа конверта учётку воркер не получит — обход за
     // логином не выдаётся вовсе (иначе он упал бы на входе).
@@ -484,6 +657,9 @@ export class BrowserJobsService {
       where: {
         status: 'queued',
         availableAt: { lte: now },
+        // Аудит Ш3 P3: просроченное ждёт ретенции (`job_timeout`), а не
+        // выдачи; с запросом отмены — не выдаётся (уборка закроет).
+        expiresAt: { gt: now },
         cancelRequestedAt: null,
         kind: { in: allowedKinds },
         ...(full.length ? { accountId: { notIn: full } } : {}),
@@ -524,20 +700,41 @@ export class BrowserJobsService {
       }
       const token = randomBytes(32).toString('base64url');
       const leaseUntil = new Date(now.getTime() + WORKER_LIMITS.leaseMs);
-      const { count } = await db.siteBrowserJob.updateMany({
-        where: { id: row.id, status: 'queued', attempts: row.attempts },
-        data: {
-          status: 'running',
-          attempts: { increment: 1 },
-          leaseOwner: workerId,
-          leaseTokenHash: hashToken(token),
-          leaseUntil,
-          heartbeatAt: now,
-          startedAt: now,
-          errorCode: null,
-        },
+      // Аудит Ш3 P3: потолок идущих на кабинет — «посчитал — выдал» под
+      // замком кабинета: два воркера разом не выдадут сверх
+      // RUNNING_PER_ACCOUNT. Переход — условный (`queued` + та же попытка):
+      // одно задание не выдаётся дважды.
+      const taken1 = await db.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`browser-jobs:account:${row.accountId}`}))`;
+        const running = await tx.siteBrowserJob.count({
+          where: { accountId: row.accountId, status: 'running' },
+        });
+        if (running >= RUNNING_PER_ACCOUNT) return { count: 0, running };
+        const r = await tx.siteBrowserJob.updateMany({
+          where: {
+            id: row.id,
+            status: 'queued',
+            attempts: row.attempts,
+            cancelRequestedAt: null,
+            expiresAt: { gt: now },
+          },
+          data: {
+            status: 'running',
+            attempts: { increment: 1 },
+            leaseOwner: workerId,
+            leaseTokenHash: hashToken(token),
+            leaseUntil,
+            heartbeatAt: now,
+            startedAt: now,
+            errorCode: null,
+          },
+        });
+        return { count: r.count, running };
       });
-      if (count !== 1) continue;
+      if (taken1.count !== 1) {
+        busy.set(row.accountId, taken1.running);
+        continue;
+      }
       taken.add(row.accountId);
       busy.set(row.accountId, (busy.get(row.accountId) ?? 0) + 1);
       out.push({
@@ -622,7 +819,9 @@ export class BrowserJobsService {
       const { count } = await this.sys(
         'повтор задания',
       ).siteBrowserJob.updateMany({
-        where: { id: jobId, ...cond },
+        // Отмену могли запросить между чтением и повтором — тогда не в
+        // очередь (там её claim не выдаст), а отказ `cancelled` ниже.
+        where: { id: jobId, ...cond, cancelRequestedAt: null },
         data: {
           status: 'queued',
           errorCode: code,
@@ -632,8 +831,12 @@ export class BrowserJobsService {
           availableAt: new Date(now.getTime() + retryDelayMs(row.attempts)),
         },
       });
-      if (count !== 1) throw leaseLost();
-      return { ok: true, retry: true };
+      if (count === 1) return { ok: true, retry: true };
+      const again = await this.leased(jobId, token);
+      if (!again.cancelRequestedAt) throw leaseLost();
+      if (!(await this.finalFail(again, 'cancelled', cond, now)))
+        throw leaseLost();
+      return { ok: true, retry: false };
     }
     const final: WorkerErrorCode = row.cancelRequestedAt ? 'cancelled' : code;
     if (!(await this.finalFail(row, final, cond, now))) throw leaseLost();
@@ -832,13 +1035,43 @@ export class BrowserJobsService {
     const prev = await db.siteBrowserArtifact.findFirst({
       where: { jobId, idx: a.idx },
     });
+    const conflict = () =>
+      jobError(
+        HttpStatus.CONFLICT,
+        'WORKER_ARTIFACT_CONFLICT',
+        'Этот артефакт задания уже загружается или загружен другим запросом',
+      );
+    // Аудит Ш3 P3: старый Blob (повтор попытки с тем же номером) удаляется
+    // ДО загрузки нового — не вышло, запрос отклоняется (503, воркер
+    // повторит), и строка по-прежнему указывает на существующий Blob:
+    // сирот в хранилище не остаётся.
+    if (prev) {
+      try {
+        await this.storage.remove(prev.pathname);
+      } catch {
+        throw jobError(
+          HttpStatus.SERVICE_UNAVAILABLE,
+          'WORKER_STORAGE_UNAVAILABLE',
+          'Хранилище артефактов недоступно — повторите загрузку',
+        );
+      }
+    }
     const pathname = artifactPathname({
       accountId: row.accountId,
       jobId,
       idx: a.idx,
       contentType: a.contentType,
     });
-    await this.storage.put(pathname, body, a.contentType);
+    try {
+      await this.storage.put(pathname, body, a.contentType);
+    } catch (e) {
+      // Старый Blob уже удалён — строка без файла не нужна.
+      if (prev)
+        await db.siteBrowserArtifact.deleteMany({
+          where: { id: prev.id, pathname: prev.pathname },
+        });
+      throw e;
+    }
     const data = {
       pathname,
       contentType: a.contentType,
@@ -848,13 +1081,38 @@ export class BrowserJobsService {
       height: a.height,
       expiresAt: row.expiresAt,
     };
-    if (prev) {
-      await db.siteBrowserArtifact.updateMany({ where: { id: prev.id }, data });
-      await this.storage.remove(prev.pathname).catch(() => undefined);
-    } else {
-      await db.siteBrowserArtifact.create({
-        data: { ...data, accountId: row.accountId, jobId, idx: a.idx },
+    /** Свой новый Blob — убрать: строку занял параллельный запрос. */
+    const dropOwn = () =>
+      this.storage.remove(pathname).catch(() => {
+        this.logger.warn(`артефакт ${jobId}/${a.idx}: Blob не удалён`);
       });
+    if (prev) {
+      // Условно: параллельная загрузка того же номера уже заменила строку —
+      // 409, а не «последний победил» с потерянным Blob.
+      const { count } = await db.siteBrowserArtifact.updateMany({
+        where: { id: prev.id, pathname: prev.pathname },
+        data,
+      });
+      if (count !== 1) {
+        await dropOwn();
+        throw conflict();
+      }
+    } else {
+      try {
+        await db.siteBrowserArtifact.create({
+          data: { ...data, accountId: row.accountId, jobId, idx: a.idx },
+        });
+      } catch (e) {
+        // Одновременная загрузка одного номера: (jobId, idx) уникален.
+        if (
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002'
+        ) {
+          await dropOwn();
+          throw conflict();
+        }
+        throw e;
+      }
     }
     return { ok: true, idx: a.idx, bytes: body.length };
   }
@@ -864,24 +1122,37 @@ export class BrowserJobsService {
   /**
    * Сроки: артефакты — по `expiresAt` (Blob, затем строка), задания — по
    * `expiresAt` (ожидавшие — с уведомлением продукта `job_timeout`).
-   * Идущие не трогаются: их держит аренда.
+   * Сначала — уборка (`reap`, без проверки выключателя): идущие с
+   * истёкшей арендой закрываются, остальные идущие держит аренда.
+   * Blob не удалился — строка артефакта (и задание, к которому она
+   * привязана) остаётся до следующего прогона: иначе Blob стал бы сиротой
+   * без ссылки на себя (аудит Ш3 P3).
    */
   async runRetention(
     now = this.now(),
     /** Только тесты на общей базе (`common/cron-scope.ts`): свои кабинеты. */
-    scope: { accountIds: string[] } | null = null,
+    scope: JobScope = null,
   ): Promise<{
     artifactsPurged: number;
     jobsPurged: number;
     blobErrors: number;
+    reaped: ReapReport;
   }> {
+    const reaped = await this.reap(now, scope);
     const db = this.sys('ретенция очереди и артефактов');
     const acc = scope ? { accountId: { in: scope.accountIds } } : {};
     let artifactsPurged = 0;
     let blobErrors = 0;
+    /** Артефакты, чей Blob не удалился в этом прогоне (строки остаются). */
+    const kept = new Set<string>();
+    const keptJobs = new Set<string>();
     for (;;) {
       const batch = await db.siteBrowserArtifact.findMany({
-        where: { expiresAt: { lte: now }, ...acc },
+        where: {
+          expiresAt: { lte: now },
+          ...acc,
+          ...(kept.size ? { id: { notIn: [...kept] } } : {}),
+        },
         take: 200,
         orderBy: { expiresAt: 'asc' },
       });
@@ -891,6 +1162,9 @@ export class BrowserJobsService {
           await this.storage.remove(a.pathname);
         } catch {
           blobErrors += 1;
+          kept.add(a.id);
+          keptJobs.add(a.jobId);
+          continue;
         }
         await db.siteBrowserArtifact.deleteMany({ where: { id: a.id } });
         artifactsPurged += 1;
@@ -909,6 +1183,7 @@ export class BrowserJobsService {
       where: {
         ...acc,
         job: { expiresAt: { lte: now }, status: { not: 'running' } },
+        ...(kept.size ? { id: { notIn: [...kept] } } : {}),
       },
       take: 1000,
     });
@@ -917,12 +1192,20 @@ export class BrowserJobsService {
         await this.storage.remove(a.pathname);
       } catch {
         blobErrors += 1;
+        keptJobs.add(a.jobId);
+        continue;
       }
+      await db.siteBrowserArtifact.deleteMany({ where: { id: a.id } });
     }
     const { count } = await db.siteBrowserJob.deleteMany({
-      where: { expiresAt: { lte: now }, status: { not: 'running' }, ...acc },
+      where: {
+        expiresAt: { lte: now },
+        status: { not: 'running' },
+        ...acc,
+        ...(keptJobs.size ? { id: { notIn: [...keptJobs] } } : {}),
+      },
     });
-    return { artifactsPurged, jobsPurged: count, blobErrors };
+    return { artifactsPurged, jobsPurged: count, blobErrors, reaped };
   }
 
   /** Сводка для чек-листа деплоя и TMA: включён ли воркер и что ждёт. */

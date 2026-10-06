@@ -145,7 +145,10 @@ export function readGuideAssistConfig(
 
   const siteId = (env.WIZARD_GUIDE_ASSIST_SITE_ID ?? '').trim();
   const pk = (env.WIZARD_GUIDE_ASSIST_PK ?? '').trim();
-  const jwtSecret = env.WIZARD_GUIDE_ASSIST_JWT_SECRET ?? '';
+  // Аудит P3: секреты — с trim(), как все соседние ключи. Хвостовой
+  // перевод строки из панели Vercel иначе становится частью секрета, и
+  // подпись расходится с той, что ждёт платформа.
+  const jwtSecret = (env.WIZARD_GUIDE_ASSIST_JWT_SECRET ?? '').trim();
   const role =
     (env.WIZARD_GUIDE_ASSIST_ROLE ?? '').trim() || GUIDE_DEFAULT_ROLE;
   if (!SITE_ID_RE.test(siteId)) {
@@ -205,8 +208,8 @@ export function readGuideAssistConfig(
 export function readGuideFactsConfig(
   env: GuideAssistEnv,
 ): GuideFactsConfig | null {
-  const connectorKey = env.WIZARD_GUIDE_ASSIST_CONNECTOR_KEY ?? '';
-  const jwtSecret = env.WIZARD_GUIDE_ASSIST_JWT_SECRET ?? '';
+  const connectorKey = (env.WIZARD_GUIDE_ASSIST_CONNECTOR_KEY ?? '').trim();
+  const jwtSecret = (env.WIZARD_GUIDE_ASSIST_JWT_SECRET ?? '').trim();
   if (
     connectorKey.length < GUIDE_SECRET_MIN_LEN ||
     jwtSecret.length < GUIDE_SECRET_MIN_LEN ||

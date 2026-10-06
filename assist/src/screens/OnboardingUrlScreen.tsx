@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Globe, Map as MapIcon, MessageSquare } from 'lucide-react';
 import { canManage, fmt, useKit } from '../kit';
 import { Alert, Button, Card } from '../kit/ui';
+import { AccountContextNote } from '../kit/ui/AccountContextNote';
 import { useAssist } from '../lib/assist-context';
 import type { UrlPreview } from '../lib/knowledge-types';
 import { normalizeSiteUrl } from '../lib/knowledge-view';
@@ -92,6 +93,8 @@ export function OnboardingUrlScreen() {
     <div className="space-y-4">
       <div className="text-xs text-silver-500">{fmt(t.step, { n: 2 })}</div>
       <h1 className="text-xl font-bold tracking-tight">{t.urlTitle}</h1>
+      {/* Аудит Н-1: в какой кабинет ляжет сайт. */}
+      <AccountContextNote />
       <Card className="space-y-3">
         <form
           className="flex gap-2"

@@ -209,6 +209,34 @@ describeDb('site-credentials на реальной базе', () => {
     ).resolves.toBe('CREDENTIAL_LEASE_INVALID:expired');
   });
 
+  it('аудит тестов: погашение ровно в момент expiresAt — уже истекла; за 1 мс до — ещё действует', async () => {
+    const a = await account();
+    const t0 = new Date();
+    const req = {
+      testAccountId: a.id,
+      product: 'tutorial' as const,
+      hostId: f.verifiedHostId,
+      actor: 'generator:1',
+    };
+    const l1 = await s.svc.lease(f.accountId, req, t0);
+    await expect(
+      status(
+        s.svc.redeem(f.accountId, l1.leaseId, 'generator:1', l1.expiresAt),
+      ),
+    ).resolves.toBe('CREDENTIAL_LEASE_INVALID:expired');
+    const l2 = await s.svc.lease(f.accountId, req, t0);
+    await expect(
+      status(
+        s.svc.redeem(
+          f.accountId,
+          l2.leaseId,
+          'generator:1',
+          new Date(l2.expiresAt.getTime() - 1),
+        ),
+      ),
+    ).resolves.toBe('ok');
+  });
+
   it('аренда: чужой продукт, чужой хост, неподтверждённый хост, заморожена, истекла — отказ с причиной', async () => {
     const a = await account({ hostIds: [f.verifiedHostId, f.pendingHostId] });
     const req = {

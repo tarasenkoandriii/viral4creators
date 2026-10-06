@@ -35,7 +35,9 @@ import {
 } from '../assist-ui-core/normalize';
 import {
   checkPlan,
+  DESTRUCTIVE_COMMAND_VERBS,
   raise,
+  selectValueDanger,
   SENSITIVE_FIELD_LABEL,
   type CheckedPlan,
   type PlanCheckInput,
@@ -170,14 +172,14 @@ export function adminStateOf(raw: unknown): VoiceControlState {
  */
 const ADMIN_NEVER_WORDS: ReadonlyArray<readonly [RegExp, ActionKind]> = [
   [
-    /(?<!\p{L})(скасувати|скасуйте|скасуй|відмінити|відмініть|відміна|отменить|отмените|отмени|отмена|аннулировать|аннулируйте|анулювати|анулюйте|cancel|void)(?!\p{L})/iu,
+    /(?:^|[^\p{L}])(скасувати|скасуйте|скасуй|відмінити|відмініть|відміна|отменить|отмените|отмени|отмена|аннулировать|аннулируйте|анулювати|анулюйте|cancel|void)(?!\p{L})/iu,
     'отмена заказа',
   ],
   [
-    /(?<!\p{L})(повернути|поверніть|поверни|вернуть|верните|верни|return)(?!\p{L})(?!\s+(?:to|back|до|к|назад)(?!\p{L}))/iu,
+    /(?:^|[^\p{L}])(повернути|поверніть|поверни|вернуть|верните|верни|return)(?!\p{L})(?!\s+(?:to|back|до|к|назад)(?!\p{L}))/iu,
     'возврат',
   ],
-  [/(?<!\p{L})(trash|destroy|purge)(?!\p{L})/iu, 'удаление'],
+  [/(?:^|[^\p{L}])(trash|destroy|purge)(?!\p{L})/iu, 'удаление'],
 ];
 
 /**
@@ -220,19 +222,34 @@ export function adminNeverTarget(
   return adminExtraKinds(words).length > 0 || adminDangerHref(t.href);
 }
 
-/** Виды шагов, к которым относится стоп-лист цели (не поля и не показ). */
-const CLICK_KINDS = new Set(['click', 'navigate', 'check']);
+/**
+ * Виды шагов, к которым относится стоп-лист цели (не поля ввода и не
+ * показ). `select` — тоже (аудит Н-4): выбор «Скасувати»/«Trash» в списке
+ * действий — то же нажатие.
+ */
+const CLICK_KINDS = new Set(['click', 'navigate', 'check', 'select']);
 
-/** Шаг-клик «Админки» по цели «никогда» (подписи/адрес; `el` — из снимка). */
+/**
+ * Шаг-клик «Админки» по цели «никогда» (подписи/адрес; `el` — из снимка).
+ * У `select` проверяются и значение, и подпись выбранного варианта.
+ */
 export function adminNeverStep(
-  s: Pick<UiPlanStep, 'kind' | 'target'>,
-  el?: Pick<UiSnapElement, 'hiddenLabel'> | null,
+  s: Pick<UiPlanStep, 'kind' | 'target'> & { value?: string | null },
+  el?:
+    | (Pick<UiSnapElement, 'hiddenLabel'> & {
+        options?: readonly string[];
+      })
+    | null,
 ): boolean {
-  return (
-    CLICK_KINDS.has(s.kind) &&
-    !!s.target &&
-    adminNeverTarget({ ...s.target, hiddenLabel: el?.hiddenLabel ?? null })
-  );
+  if (!CLICK_KINDS.has(s.kind) || !s.target) return false;
+  if (adminNeverTarget({ ...s.target, hiddenLabel: el?.hiddenLabel ?? null }))
+    return true;
+  if (s.kind !== 'select' || !s.value) return false;
+  const value = s.value;
+  const chosen =
+    el?.options?.find((o) => normText(o) === normText(value)) ?? '';
+  const probe = `${value} ${chosen}`;
+  return adminExtraKinds(probe).length > 0 || selectValueDanger(probe) !== null;
 }
 
 // ── проверки плана «Админки» ──────────────────────────────────────────────
@@ -428,20 +445,10 @@ const CHANGE_VERB =
 
 /**
  * Разрушительные глаголы повелительного наклонения (стоп-лист цели ловит
- * «Скасувати замовлення», а сотрудник говорит «скасуй», «видали», «спиши»).
+ * «Скасувати замовлення», а сотрудник говорит «скасуй», «видали», «спиши»)
+ * — общий список с «Сайтом» (`DESTRUCTIVE_COMMAND_VERBS`, аудит Н-4).
  */
-const DESTRUCTIVE_VERBS: Array<[RegExp, string]> = [
-  [
-    /(^|\s)(видали(ть)?|видаліть|вилучи(ть)?|удали(те)?|delete|remove)(\s|$)/u,
-    'удаление',
-  ],
-  [/(^|\s)(скасуй(те)?|отмени(те)?|cancel)(\s|$)/u, 'отмена заказа'],
-  [
-    /(^|\s)(поверни(ть)? (кошти|гроші)|оформи(ть)? повернення|верни(те)? деньги|оформи(те)? возврат|refund)(\s|$)/u,
-    'возврат',
-  ],
-  [/(^|\s)(спиши(ть)?|списати|charge)(\s|$)/u, 'списание'],
-];
+const DESTRUCTIVE_VERBS = DESTRUCTIVE_COMMAND_VERBS;
 
 /** Категории стоп-листа, у которых есть смысл искать операцию API. */
 const API_KINDS = new Set<string>([
@@ -529,8 +536,10 @@ function destructiveKinds(text: string): Set<string> {
 /** Номера (≥ 3 цифр) из команды: «відкрий замовлення 1042» → ['1042']. */
 export function rowNumbersOf(transcript: string): string[] {
   const out: string[] = [];
-  for (const m of transcript.matchAll(/(?<![\p{L}\p{N}])\d{3,12}(?![\p{N}])/gu))
-    if (!out.includes(m[0])) out.push(m[0]);
+  for (const m of transcript.matchAll(
+    /(?:^|[^\p{L}\p{N}])(\d{3,12})(?![\p{N}])/gu,
+  ))
+    if (!out.includes(m[1])) out.push(m[1]);
   return out.slice(0, 5);
 }
 
@@ -797,7 +806,7 @@ export interface AdminMemoUiStep {
 }
 
 const SAVE_WORDS =
-  /(?<!\p{L})(зберег\p{L}*|збереж\p{L}*|сохран\p{L}*|save|submit|apply|застосу\p{L}*|примен\p{L}*|надісл\p{L}*|відправ\p{L}*|отправ\p{L}*|send|підтверд\p{L}*|подтверд\p{L}*|confirm|оновит\p{L}*|обновит\p{L}*)(?!\p{L})/iu;
+  /(?:^|[^\p{L}])(зберег\p{L}*|збереж\p{L}*|сохран\p{L}*|save|submit|apply|застосу\p{L}*|примен\p{L}*|надісл\p{L}*|відправ\p{L}*|отправ\p{L}*|send|підтверд\p{L}*|подтверд\p{L}*|confirm|оновит\p{L}*|обновит\p{L}*)(?!\p{L})/iu;
 
 /**
  * Можно ли сохранить шаг-клик в мемо «Админки»: только без серверного

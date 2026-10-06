@@ -229,8 +229,11 @@ a {
   color: var(--fg);
 }
 
+/* Только в выпадающем меню главной (.site-nav). Голый `.locale-switcher`
+   задевал шапку поддоменов (SubdomainHeader, .subdomain-nav): там селект
+   стоит в строке и на 721–1199px съезжал вниз на 16px. */
 @media (max-width: 1199px) {
-  .locale-switcher {
+  .site-nav .locale-switcher {
     margin-top: 16px;
     align-self: flex-start;
   }
@@ -382,15 +385,72 @@ section h2 {
 }
 
 .tutorial-demo-player h3 { margin-bottom: 16px; }
-.tutorial-demo-player video {
-  display: block;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: 70vh;
-  object-fit: contain;
+/* Ролики обучалки вертикальные (720×1560, tutorial-video-assembly.ts).
+   Сцена — вертикальная рамка по центру: высота до min(80vh, 720px),
+   ширина от неё по пропорции ролика, но не шире колонки. Размер задан
+   до загрузки метаданных (preload нет), поэтому ничего не прыгает. */
+.demo-stage {
+  width: min(100%, calc(min(80vh, 720px) * 720 / 1560));
+  aspect-ratio: 720 / 1560;
+  margin: 0 auto;
+  overflow: hidden;
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  background: #000;
+  background: var(--surface-sunken);
+}
+.demo-stage video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface-sunken);
+}
+/* Кадра-постера API не отдаёт: до нажатия — нейтральная сцена с
+   кнопкой воспроизведения, а не серый <video> с полосой управления. */
+.demo-play {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  border: 0;
+  background: radial-gradient(circle at 50% 45%, var(--accent-soft), transparent 70%), var(--surface-raised);
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.demo-play:hover,
+.demo-play:focus-visible {
+  color: var(--fg);
+}
+.demo-play:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
+}
+.demo-play-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: var(--shadow-lift);
+}
+.demo-play-icon::after {
+  content: '';
+  position: absolute;
+  top: 20px;
+  left: 25px;
+  border-style: solid;
+  border-width: 12px 0 12px 20px;
+  border-color: transparent transparent transparent var(--accent-fg);
+}
+.demo-play:hover .demo-play-icon,
+.demo-play:focus-visible .demo-play-icon {
+  box-shadow: 0 0 0 6px var(--accent-ring);
 }
 
 .demo-link {
@@ -2239,8 +2299,9 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
    прежняя центрированная раскладка, кадр уходит под текст.
 
    Кадр НЕ прячется на телефоне, хотя в 342px композиция нечитаема по
-   деталям. Причины две. Он весит семь килобайт, то есть экономить
-   нечего. И `display: none` по ширине окна — ловушка сопровождения:
+   деталям. Причины две. Он один (AVIF ~55 КБ, без предзагрузки — на
+   телефоне он ниже первого экрана), то есть экономить почти нечего. И
+   `display: none` по ширине окна — ловушка сопровождения:
    картинку всё равно скачивают, а человек, который через полгода
    будет искать, почему на телефоне «пусто», найдёт это правило
    последним. Нечитаемый в деталях кадр всё ещё говорит «это настоящий

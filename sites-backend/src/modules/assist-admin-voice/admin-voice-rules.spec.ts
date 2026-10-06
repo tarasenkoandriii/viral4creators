@@ -15,6 +15,7 @@ import {
   adminDangerButtons,
   adminForbiddenProbes,
   adminizeResolved,
+  adminNeverStep,
   adminNeverTarget,
   adminMemoUiProblem,
   adminRulesOf,
@@ -391,6 +392,44 @@ describe('аудит Э6-бис (б): «Админка» строже стоп-�
     expect(c.steps[0]).toMatchObject({ risk: 'never', reason: 'danger' });
     expect(c.notes.map((n) => n.code)).toContain('danger');
     expect(c.needsConfirm).toBe(false);
+  });
+
+  it('аудит Н-4: select — значение и подпись выбранного варианта под стоп-листом «Админки»', () => {
+    const snapshot = parseSnapshot({
+      url: `https://${HOST}/admin/orders`,
+      title: 'Замовлення',
+      elements: [
+        el('e1', 'combobox', 'Масова дія', {
+          options: ['Позначити', 'Скасувати', 'void', 'Перемістити в кошик'],
+        }),
+        el('e2', 'combobox', 'Статус', { options: ['Новий', 'Виконано'] }),
+      ],
+    })!;
+    const sel = (value: string, target = 'e1') =>
+      checkAdminPlan({
+        ...base([{ kind: 'select', target, value }], `вибери ${value}`),
+        snapshot,
+      }).steps[0];
+    for (const v of ['Скасувати', 'void', 'Перемістити в кошик'])
+      expect(sel(v)).toMatchObject({ risk: 'never', reason: 'danger' });
+    expect(sel('Позначити').risk).not.toBe('never');
+    expect(sel('Виконано', 'e2').risk).not.toBe('never');
+    // Последний рубеж (`adminNeverStep` без снимка) — по значению шага.
+    const step = {
+      kind: 'select' as const,
+      target: {
+        ref: 'e1',
+        assistId: null,
+        role: 'combobox' as const,
+        text: 'Масова дія',
+        selector: null,
+        href: null,
+      },
+      value: 'Скасувати',
+    };
+    expect(adminNeverStep(step)).toBe(true);
+    expect(adminNeverStep({ ...step, value: 'Новий' })).toBe(false);
+    expect(adminNeverStep({ ...step, kind: 'fill' as const })).toBe(false);
   });
 
   it('не глаголы действия и поле «Причина скасування» — исполнимы', () => {

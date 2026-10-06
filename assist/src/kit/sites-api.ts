@@ -26,6 +26,7 @@ import type {
   HostAuthorizations,
   HostCheck,
   Invite,
+  InvitePreview,
   ProductRoles,
   RevokeResult,
   Site,
@@ -221,6 +222,34 @@ export function parseInvite(v: unknown): Invite {
   return { token, startParam, expiresAt: str(o.expiresAt) };
 }
 
+/**
+ * Превью приглашения. Роль — строго `manager`/`operator`: иное (в т.ч.
+ * `owner`) — ошибка разбора, экран тогда не предложит «Принять».
+ */
+export function parseInvitePreview(v: unknown): InvitePreview {
+  const o = obj(v);
+  const account = obj(o.account);
+  const tail = str(account.tail);
+  const role = o.role;
+  if (!tail || (role !== 'manager' && role !== 'operator')) {
+    throw new Error('Сервер не вернул приглашение');
+  }
+  const inviter = obj(o.inviter);
+  const username = str(inviter.username);
+  const firstName = str(inviter.firstName);
+  return {
+    account: {
+      tail,
+      type: account.type === 'agency' ? 'agency' : 'owner',
+    },
+    inviter: username || firstName ? { username, firstName } : null,
+    role,
+    productRoles: parseRoles(o.productRoles),
+    expiresAt: str(o.expiresAt),
+    alreadyMember: o.alreadyMember === true,
+  };
+}
+
 function parseForeign(v: unknown): ForeignAuthorization {
   const o = obj(v);
   return {
@@ -282,7 +311,21 @@ export function createSitesApi(client: ApiClient) {
           ...(productRoles ? { productRoles } : {}),
         })
       ),
-    /** Принять приглашение; ответ — кабинет, куда человек вошёл. */
+    /**
+     * Превью приглашения без принятия (аудит Н-1): кто зовёт, в какой
+     * кабинет, с какой ролью. Токен не тратится, кабинет не создаётся.
+     */
+    invitePreview: async (token: string) =>
+      parseInvitePreview(
+        await client.request(
+          'GET',
+          `/sites/account/invites/${encodeURIComponent(token)}/preview`
+        )
+      ),
+    /**
+     * Принять приглашение — только по кнопке экрана подтверждения. Ответ —
+     * кабинет, куда человека добавили; выбранным он НЕ становится.
+     */
     acceptInvite: async (token: string) =>
       parseAccountInfo(
         await client.request('POST', '/sites/account/invites/accept', {

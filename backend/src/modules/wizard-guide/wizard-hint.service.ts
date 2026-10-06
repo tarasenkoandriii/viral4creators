@@ -37,7 +37,7 @@ import { estimateCost } from '../../common/ai-pricing';
 import {
   maskSensitiveEcho,
   containsForbiddenPromise,
-} from '../assistant/post-filter';
+} from '../../common/assist-chat-core';
 import { DEFAULT_LOCALE, SupportedLocale } from '../../common/locale';
 import {
   scenarioOfProjectType,

@@ -155,6 +155,25 @@ for (const [label, file] of [
     }
   }
 }
+// Аудит 06.10: lookbehind `(?<=…)`/`(?<!…)` в регулярке — SyntaxError разбора
+// ВСЕГО чанка в Safari < 16.4 (iOS 15/16.3): чанк не исполняется вовсе.
+// Начало слова — группой `(?:^|[^\p{L}])`; проверяем собранное (могло
+// прийти из зависимостей/портов).
+export const LOOKBEHIND = /\(\?<[=!]/;
+for (const b of BUDGETS) {
+  for (const f of b.files) {
+    if (!f.endsWith('.js')) continue;
+    const code = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const m = LOOKBEHIND.exec(code);
+    if (m) {
+      ok = false;
+      console.error(
+        `ОШИБКА ${f}: lookbehind в регулярке («${code.slice(m.index, m.index + 40)}…») — ` +
+          'чанк не разберётся в Safari < 16.4; замените на (?:^|[^\\p{L}])'
+      );
+    }
+  }
+}
 // Э6-бис (§5-бис.10 п.13): в боевом чанке голоса нет тестового хука WebAudio.
 {
   const voice = fs.readFileSync(path.join(ROOT, 'dist/v1/voice.js'), 'utf8');

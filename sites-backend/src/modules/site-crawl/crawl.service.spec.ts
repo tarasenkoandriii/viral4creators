@@ -22,6 +22,13 @@ const H = 'k1svc.polygon.example';
 const BIG = 'k1big.polygon.example';
 /** Сайт с медленной страницей (lease строки очереди). */
 const SLOW = 'k1slow.polygon.example';
+/**
+ * Кэш robots (`site_crawl_robots`) — общий по origin и переживает прогон:
+ * неудачная загрузка robots кэшируется на ~30 мин (ROBOTS_ERROR_TTL_MS), и
+ * следующие прогоны на той же базе не обходили BIG/SLOW («больше одного
+ * батча», «lease строки очереди» — 0 страниц). Свои origin чистим до и после.
+ */
+const ROBOTS_ORIGINS = [H, BIG, SLOW].map((h) => `https://${h}`);
 
 describeDb('SiteCrawlService (реальный Postgres)', () => {
   const net = new LocalSites();
@@ -40,6 +47,7 @@ describeDb('SiteCrawlService (реальный Postgres)', () => {
   beforeAll(async () => {
     await net.start();
     prisma = testPrisma();
+    await dropRobots(prisma, ROBOTS_ORIGINS);
     crawl = crawlStack(prisma, net, accounts).crawl;
     net.site(H, {
       '/robots.txt': { status: 404 },
@@ -87,7 +95,7 @@ describeDb('SiteCrawlService (реальный Postgres)', () => {
 
   afterAll(async () => {
     await dropAccounts(prisma, accounts);
-    await dropRobots(prisma, [`https://${H}`]);
+    await dropRobots(prisma, ROBOTS_ORIGINS);
     await prisma.$disconnect();
     await net.stop();
   });

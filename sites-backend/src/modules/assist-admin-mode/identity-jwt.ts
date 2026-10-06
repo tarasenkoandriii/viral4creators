@@ -8,7 +8,7 @@
  * Проверка строгая и закрытая: только `alg = HS256` (никаких `none`, RS256,
  * «алгоритм из заголовка»), подпись сравнивается за постоянное время,
  * `exp` обязателен и не дальше 15 минут (+ допуск часов), `aud` — ровно
- * этот сайт, `iat` не из будущего. Любое сомнение — отказ с кодом (без
+ * этот сайт строкой (не массивом), `iat` и `nbf` не из будущего. Любое сомнение — отказ с кодом (без
  * текста токена в ошибке и в логе).
  *
  * Чистый модуль: ни базы, ни Nest.
@@ -130,11 +130,11 @@ export function verifyEmployeeJwt(
   if (typeof p.nbf === 'number' && p.nbf > now + IDENTITY_CLOCK_SKEW_SEC) {
     throw new IdentityJwtError('not_yet_valid');
   }
-  const aud = p.aud;
-  const audOk =
-    (typeof aud === 'string' && aud === siteId) ||
-    (Array.isArray(aud) && aud.length === 1 && aud[0] === siteId);
-  if (!audOk) throw new IdentityJwtError('audience');
+  // `aud` — ровно строка id сайта (§5.1). Массив не принимается даже из
+  // одного элемента (аудит тестов): один формат — одна проверка, токен
+  // «для нескольких получателей» сотруднику «Админки» не нужен.
+  if (typeof p.aud !== 'string' || p.aud !== siteId)
+    throw new IdentityJwtError('audience');
   if (typeof p.sub !== 'string' || !SUB_RE.test(p.sub)) {
     throw new IdentityJwtError('claims');
   }

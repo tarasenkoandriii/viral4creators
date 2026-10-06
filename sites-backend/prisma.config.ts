@@ -15,9 +15,31 @@ import 'dotenv/config';
 import path from 'node:path';
 import { defineConfig } from 'prisma/config';
 
+const url = process.env.SITES_DIRECT_URL;
+
+// Аудит P2-4: строка без `?schema=sites` (или с другой схемой) — отказ ДО
+// любой команды migrate: иначе миграции сайтов молча уехали бы в `public`
+// генератора. Значение строки (пароль) в сообщение не попадает. Не задана —
+// как раньше: Prisma сама скажет, что строки нет.
+if (url) {
+  let schema: string | null = null;
+  try {
+    schema = new URL(url).searchParams.get('schema');
+  } catch {
+    throw new Error(
+      'SITES_DIRECT_URL: не разбирается как URL — ожидается postgresql://…?schema=sites',
+    );
+  }
+  if (schema !== 'sites') {
+    throw new Error(
+      `SITES_DIRECT_URL: нужен параметр ?schema=sites (сейчас: ${schema === null ? 'нет' : `«${schema}»`}) — иначе миграции sites-backend попадут в чужую схему (doc/DEPLOYMENT.md)`,
+    );
+  }
+}
+
 export default defineConfig({
   schema: path.join(__dirname, 'prisma/schema.prisma'),
   datasource: {
-    url: process.env.SITES_DIRECT_URL,
+    url,
   },
 });

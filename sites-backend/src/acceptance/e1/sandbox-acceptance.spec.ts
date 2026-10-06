@@ -43,6 +43,9 @@ import { SitemapService } from '../../modules/site-crawl/sitemap';
 import { K3Sites } from '../../modules/assist-sandbox/testing/k3-sites.testing';
 import { K3_DOMAINS } from '../../modules/assist-sandbox/testing/k3-tls.testing';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 const DAY = 24 * 60 * 60 * 1000;
 
 async function codeOf(p: Promise<unknown>): Promise<string | undefined> {

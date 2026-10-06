@@ -73,10 +73,8 @@ import {
 import type { EngageApi, EngageStart, EngEvent, GoalMsg } from '../engage/host';
 import type { ActApi, ActHost } from '../act/index';
 import {
-  cleanContext,
-  cleanIdentify,
-  cleanQuestion,
   envelope,
+  MAX_QUESTION,
   parseFrameMessage,
   type ParentMessage,
 } from '../shared/protocol';
@@ -329,7 +327,11 @@ class Loader {
   }
 
   later(fn: () => void, ms: number) {
-    this.timers.push(N.later(() => !this.destroyed && fn(), ms));
+    // Тик чанка engage.js — раз в секунду весь визит: старые id не копим
+    // (сработавший таймер destroy() снимать не нужно, колбэк и так под
+    // проверкой `destroyed`).
+    if (this.timers.push(N.later(() => !this.destroyed && fn(), ms)) > 40)
+      this.timers.shift();
   }
 
   // ── хранилище страницы: ТОЛЬКО состояние окна (§4-бис.2) ────────────────
@@ -665,11 +667,16 @@ class Loader {
       if (navApi) N.off(navApi, 'navigatesuccess', nav);
     });
 
-    // Тема «как на сайте»: data-theme на <html> (§3-бис.1).
-    const mo = new MutationObserver(() => this.ready && this.sendInit());
+    // Тема «как на сайте»: data-theme на <html> (§3-бис.1). childList —
+    // замена <body> целиком (Turbo `body.replaceWith`) до/без pushState.
+    const mo = new MutationObserver(() => {
+      this.reattach();
+      if (this.ready) this.sendInit();
+    });
     mo.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],
+      childList: true,
     });
     this.cleanups.push(() => mo.disconnect());
   }
@@ -691,14 +698,17 @@ class Loader {
   }
 
   private page() {
-    let url = location.href;
+    // Только origin+путь: в query бывают ПД (e-mail, токены, utm с id);
+    // сервер всё равно хранит без query (cleanPageUrl).
     // Макет страницы в конфигураторе TMA — about:blank (§3-бис.4): iframe
     // принимает только http(s)-адрес и без него отбросил бы init — чат не
     // стартовал бы. Адрес кабинета целиком не отдаём — только origin.
-    if (!/^https?:/.test(url)) url = pageOrigin() + '/';
-    const i = url.indexOf('#');
-    if (i >= 0) url = url.slice(0, i);
-    return { url, title: (document.title || '').slice(0, 200) };
+    return {
+      url: /^https?:/.test(location.href)
+        ? location.origin + location.pathname
+        : pageOrigin() + '/',
+      title: (document.title || '').slice(0, 200),
+    };
   }
 
   private sendInit() {
@@ -726,7 +736,27 @@ class Loader {
     N.post(this.frameWin, envelope(m), this.origin);
   }
 
+  /**
+   * Turbo/htmx/Swup меняют <body> целиком — хост выпал из документа:
+   * вставляем заново (inline — в контейнер по селектору заново). iframe
+   * при вставке перезагружается: новое окно, ждём его `ready` заново.
+   */
+  private reattach() {
+    const u = this.ui;
+    if (u && !u.host.isConnected) {
+      (this.isInline()
+        ? N.query(this.attrs.container as string)
+        : document.body
+      )?.appendChild(u.host);
+      if (u.frame) {
+        this.frameWin = N.frameWindow(u.frame);
+        this.ready = false;
+      }
+    }
+  }
+
   private route() {
+    this.reattach();
     const href = location.href;
     if (href === this.lastHref) return;
     const pathChanged = href.split('#')[0] !== this.lastHref.split('#')[0];
@@ -925,14 +955,16 @@ class Loader {
       },
     };
     // Э6-бис (г): `vt-*` — проверка страницы мастера (чанк check.js).
-    const load = (p: string) =>
-      import(/* @vite-ignore */ this.chunk(p))
-        .then((x: { start: (h: ActHost) => ActApi }) => x.start(host))
-        .catch(() => null);
-    (String(raw.type).charAt(1) == 't'
-      ? (this.chkQ ||= load(WIDGET_CHECK_PATH))
-      : (this.actQ ||= load(WIDGET_ACT_PATH))
-    ).then((a) => a && a.on(raw));
+    // Не загрузился (сеть) — не запоминаем отказ навсегда: следующая
+    // команда попробует снова.
+    const k = String(raw.type).charAt(1) == 't' ? 'chkQ' : 'actQ';
+    (this[k] ||= import(
+      /* @vite-ignore */ this.chunk(
+        k == 'chkQ' ? WIDGET_CHECK_PATH : WIDGET_ACT_PATH
+      )
+    )
+      .then((x: { start: (h: ActHost) => ActApi }) => x.start(host))
+      .catch(() => (this[k] = null))).then((a) => a && a.on(raw));
   }
 
   /** Путь ленивого чанка: выпуск сайта (канарейка, §5-бис.12) или `/v1/`. */
@@ -1038,23 +1070,25 @@ class Loader {
         return this.close();
       case 'toggle':
         return this.toggle();
-      case 'ask': {
-        const q = cleanQuestion(a);
-        if (!q) return;
+      // ask/identify/context: строгий разбор — в iframe (parseParentMessage:
+      // длины, ключи, типы); здесь только форма — бюджет загрузчика 12 КБ.
+      // Неклонируемое (функция, DOM) — DataCloneError ловит N.post.
+      case 'ask':
+        if (typeof a != 'string' || !a.trim() || a.length > MAX_QUESTION)
+          return;
         this.open();
-        this.post({ type: 'ask', question: q });
+        this.post({ type: 'ask', question: a });
         return;
-      }
-      case 'identify': {
-        const m = cleanIdentify(a);
-        if (m) this.post(m);
+      case 'identify':
+        if (isObj(a)) this.post({ ...a, type: 'identify' });
         return;
-      }
-      case 'context': {
-        const data = cleanContext(a);
-        if (data) this.post({ type: 'context', data });
+      case 'context':
+        if (isObj(a))
+          this.post({
+            type: 'context',
+            data: a as Record<string, string | number>,
+          });
         return;
-      }
       case 'position':
         if ((POSITIONS as readonly unknown[]).includes(a))
           this.position(a as Position);

@@ -239,14 +239,14 @@ export interface ForbiddenProbeResult {
 }
 
 /** «Купить/Купити/Buy now» снимает только разметка `add-to-cart` (как judgeStep). */
-const BUY_WORDS = /(?<!\p{L})(купить|купити|buy now)/giu;
+const BUY_WORDS = /(^|[^\p{L}])(купить|купити|buy now)/giu;
 
 function kindsOf(e: UiSnapElement): string[] {
   const probe = [e.text, e.hiddenLabel ?? '', assistIdWords(e.assistId)].join(
     ' ',
   );
   return actionKindsFor(
-    e.assistId === ADD_TO_CART_ID ? probe.replace(BUY_WORDS, ' ') : probe,
+    e.assistId === ADD_TO_CART_ID ? probe.replace(BUY_WORDS, '$1 ') : probe,
     e.heading,
   );
 }

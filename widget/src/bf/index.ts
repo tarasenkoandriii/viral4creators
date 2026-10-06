@@ -16,6 +16,7 @@
  */
 import type { EngageHost } from '../engage/host';
 import { fnv1a32, shiftOf } from '../shared/ana';
+import { maskLabel } from '../shared/ui-plan';
 
 type Num = number;
 
@@ -179,7 +180,9 @@ export function start(h: EngageHost, visit: string): () => void {
   on(W, 'error', (e) => {
     errs++;
     const ev = e as ErrorEvent;
-    const msg = String(ev.message || 'error').slice(0, 120);
+    // Аудит 06.10: текст ошибки сайта бывает с ПД («user ivan@…», номер
+    // карты/телефона, ключ в URL) — маскируем ДО хеша и отправки.
+    const msg = maskLabel(String(ev.message || 'error')).slice(0, 120);
     const hh = fnv1a32(msg).toString(16);
     if (groups.length < 3 && !groups.some((g) => g.h === hh)) {
       let s = '';

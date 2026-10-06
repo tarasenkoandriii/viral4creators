@@ -69,6 +69,21 @@ describe('стоп-лист кликов и переходов воркера', 
     ['https://other.test/admin', 'Зовнішній', 'offhost'],
     ['https://u:p@admin.shop.test/', 'Логін в адресі', 'scheme'],
     ['javascript:alert(1)', 'js', 'scheme'],
+    // Аудит 06.10.2026: выжившие мутации стоп-листа — нейтральный текст,
+    // опасный путь; закодированный путь; платёжные шлюзы.
+    ['https://admin.shop.test/orders/5/refund', 'Деталі', 'danger'],
+    ['https://admin.shop.test/payments/7/void', 'Деталі', 'danger'],
+    ['https://admin.shop.test/reviews/3/approve', 'Деталі', 'danger'],
+    ['https://admin.shop.test/reviews/3/reject', 'Деталі', 'danger'],
+    ['https://admin.shop.test/news/unsubscribe', 'Деталі', 'danger'],
+    ['https://admin.shop.test/tables/logs/truncate', 'Деталі', 'danger'],
+    ['https://admin.shop.test/orders/5/%64elete', 'Деталі', 'danger'],
+    ['https://admin.shop.test/liqpay/redirect', 'Деталі', 'danger'],
+    ['https://admin.shop.test/wayforpay/return', 'Деталі', 'danger'],
+    ['https://admin.shop.test/fondy/callback', 'Деталі', 'danger'],
+    ['https://admin.shop.test/stripe/session', 'Деталі', 'danger'],
+    ['https://admin.shop.test/paypal/redirect', 'Деталі', 'danger'],
+    ['https://admin.shop.test/admin/approvals-history', 'Деталі', null],
   ])('%s «%s» → %s', (href, text, want) => {
     expect(linkRefusal(href, text, H)).toBe(want);
   });

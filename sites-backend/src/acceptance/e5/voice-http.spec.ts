@@ -32,19 +32,11 @@ import {
   type WidgetFixture,
   type WidgetStack,
 } from '../../modules/assist-widget/testing/widget-stack.testing';
+// Окна лимитов фиксированные: перед серией — запас до конца минуты
+// (так упал CI на 1bfb425 в 18:48:00), см. ../window-headroom.
+import { awaitMinuteHeadroom } from '../window-headroom';
 
 jest.setTimeout(120_000);
-
-/**
- * Окна лимитов фиксированные (floor(now / минута)): серия запросов,
- * попавшая на смену минуты, начинается в одном окне и кончается в
- * другом — лимит «не срабатывает» (так упал CI на 1bfb425 в 18:48:00).
- * Перед серией ждём начала минуты, если до её конца меньше 20 с.
- */
-async function awaitMinuteHeadroom(needMs = 20_000): Promise<void> {
-  const left = 60_000 - (Date.now() % 60_000);
-  if (left < needMs) await new Promise((r) => setTimeout(r, left + 50));
-}
 
 describeDb('Э5: голос виджета по HTTP', () => {
   let stack: WidgetStack;

@@ -39,6 +39,9 @@ import {
 } from '../../modules/site-crawl/testing/local-sites.testing';
 import { UnsafeExternalUrlError } from '../../shared/external-url-guard';
 
+// Поднятие стенда и HTTP-серии под нагрузкой CI дольше 5 с по умолчанию.
+jest.setTimeout(30_000);
+
 const SITE = 'shop.ssrf.example';
 const OPTS = {
   maxBytes: 1024 * 1024,

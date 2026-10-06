@@ -4,8 +4,9 @@
  * и id, журнал id против повтора, тело строкой), но СВОЙ секрет
  * `SITES_QA_HMAC_SECRET` и свой вызывающий `qa-flow` (П-С3: «отдельный
  * секрет на направление» — утечка секрета обучалки не открывает карту QA
- * и наоборот). Нет секрета или он совпал с секретом обучалки — маршруты
- * закрыты (503).
+ * и наоборот). Нет секрета или он совпал с секретом обучалки либо любым
+ * другим секретом процесса (`internal-secrets-distinct.ts`, аудит Н-2) —
+ * маршруты закрыты (503).
  */
 import { Injectable } from '@nestjs/common';
 import { TutorialHmacGuard } from './tutorial-hmac.guard';
@@ -18,6 +19,4 @@ export class QaHmacGuard extends TutorialHmacGuard {
   protected readonly secretEnv: string = 'SITES_QA_HMAC_SECRET';
   protected readonly caller: string = SITES_CALLER_QA;
   protected readonly product: string = 'Flow-QA';
-  protected readonly distinctFromEnv: string | null =
-    'SITES_TUTORIAL_HMAC_SECRET';
 }

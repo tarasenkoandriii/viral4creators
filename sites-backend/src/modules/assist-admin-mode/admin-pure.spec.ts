@@ -109,6 +109,18 @@ describe('employee-JWT', () => {
     expect(id).toMatchObject({ sub: 'emp-17', role: 'manager', name: 'Оля' });
   });
 
+  it('аудит тестов: границы — exp на секунду внутри допуска, nbf ровно на допуске, exp − iat ровно 15 мин — принимаются', () => {
+    for (const p of [
+      { ...good, iat: t - 600, exp: t - 59 },
+      { ...good, nbf: t + 60 },
+      { ...good, iat: t - 60, exp: t + 840 },
+    ]) {
+      expect(
+        verifyEmployeeJwt(signEmployeeJwt(p, SECRET), SECRET, 'site1', now),
+      ).toMatchObject({ sub: 'emp-17' });
+    }
+  });
+
   it.each([
     ['чужая подпись', signEmployeeJwt(good, 'other-secret'), 'signature'],
     [
@@ -151,6 +163,31 @@ describe('employee-JWT', () => {
     ],
     ['без sub', signEmployeeJwt({ ...good, sub: '' }, SECRET), 'claims'],
     ['мусор', 'a.b', 'malformed'],
+    [
+      'аудит тестов: aud массивом (даже [siteId])',
+      signEmployeeJwt({ ...good, aud: ['site1'] }, SECRET),
+      'audience',
+    ],
+    [
+      'аудит тестов: aud массивом с чужим сайтом',
+      signEmployeeJwt({ ...good, aud: ['site1', 'site2'] }, SECRET),
+      'audience',
+    ],
+    [
+      'аудит тестов: exp − iat > 15 мин при exp в пределах окна',
+      signEmployeeJwt({ ...good, iat: t - 61, exp: t + 840 }, SECRET),
+      'ttl_too_long',
+    ],
+    [
+      'аудит тестов: nbf из будущего за допуском',
+      signEmployeeJwt({ ...good, nbf: t + 61 }, SECRET),
+      'not_yet_valid',
+    ],
+    [
+      'аудит тестов: exp ровно на границе допуска',
+      signEmployeeJwt({ ...good, iat: t - 600, exp: t - 60 }, SECRET),
+      'expired',
+    ],
   ])('%s — отказ', (_n, token, code) => {
     expect(() => verifyEmployeeJwt(token, SECRET, 'site1', now)).toThrow(
       expect.objectContaining({ code }),

@@ -11,6 +11,7 @@ export * from './protocol';
 export * from './delimiter-buffer';
 export * from './actions-parser';
 export * from './post-filter';
+export * from './forbidden-promises';
 export * from './ip-hash';
 export * from './timeouts';
 export * from './stream-chat';

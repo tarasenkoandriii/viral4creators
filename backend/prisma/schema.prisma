@@ -3441,7 +3441,7 @@ model TutorialScenario {
   createdAt DateTime @default(now())
 
   /// Индекс шага обучалки (1..10, строкой — см. ASSISTANT_STEPS в
-  /// backend/src/modules/assistant/knowledge/generated.ts) — свободная
+  /// backend/src/common/tutorial-knowledge/generated.ts) — свободная
   /// строка, не число: тот же приём, что jobKey у CronRunLog, задел на
   /// будущие свободные ключи воркфлоу за пределами обучалки (§4.4 того
   /// же ТЗ), хотя эта итерация генератора заполняет только шаги.

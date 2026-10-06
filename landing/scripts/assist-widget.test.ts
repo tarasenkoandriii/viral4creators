@@ -6,7 +6,9 @@
  *     (опечатка в env не убирает консультанта со страницы).
  *  2. Обе страницы, где стоял старый консультант, ветвятся по переключателю
  *     и не вставляют загрузчик синхронно (только `PlatformAssist`, который
- *     грузит его после `load`/idle — бюджет JS лендинга не растёт).
+ *     грузит его после `load`/idle — бюджет JS лендинга не растёт), а
+ *     неиспользуемый в этом режиме виджет — через `next/dynamic`
+ *     (`components/AssistLazy.tsx`), не в First Load JS.
  *  3. CSP: у лендинга своего CSP нет. Если он появится — в нём обязан
  *     быть origin виджета (иначе загрузчик молча не загрузится).
  */
@@ -90,9 +92,30 @@ for (const page of ['src/app/[locale]/page.tsx', 'src/app/[locale]/how-it-works/
   const src = read(page);
   assert.match(src, /assistWidgetFromBuildEnv\(\)/, `${page}: читает переключатель`);
   assert.match(src, /assist\.mode === '(?:platform|legacy)'/, `${page}: ветвится по нему`);
-  assert.match(src, /<AssistantWidget/, `${page}: старый консультант остался (за флагом)`);
-  assert.match(src, /<PlatformAssist/, `${page}: виджет платформы`);
+  assert.match(src, /<(?:Floating)?AssistantWidget/, `${page}: старый консультант остался (за флагом)`);
+  assert.match(src, /<(?:Lazy)?PlatformAssist/, `${page}: виджет платформы`);
   assert.doesNotMatch(src, /<script/i, `${page}: загрузчик не вставляется тегом в разметку`);
+}
+// Аудит лендинга: на главной оба виджета плавающие, и неиспользуемый в
+// этом режиме не должен попадать в First Load JS — оба через next/dynamic.
+// На how-it-works — нет: встроенная панель стоит в сетке и нужна в HTML,
+// а ленивый загрузчик платформы там дороже (рантайм next/dynamic), чем
+// сам загрузчик (замер сборкой — см. комментарий в AssistLazy.tsx).
+{
+  const home = read('src/app/[locale]/page.tsx');
+  for (const name of ['AssistantWidget', 'PlatformAssist']) {
+    assert.doesNotMatch(
+      home,
+      new RegExp(`from '[./]+/components/${name}'`),
+      `главная: ${name} импортирован статически`,
+    );
+  }
+}
+{
+  const lazy = read('src/components/AssistLazy.tsx');
+  assert.match(lazy, /^'use client';/, 'AssistLazy: клиентский модуль');
+  assert.match(lazy, /dynamic\(\s*\(\) => import\('\.\/AssistantWidget'\)/, 'AssistLazy: AssistantWidget через next/dynamic');
+  assert.match(lazy, /dynamic\(\s*\(\) => import\('\.\/PlatformAssist'\)/, 'AssistLazy: PlatformAssist через next/dynamic');
 }
 const comp = read('src/components/PlatformAssist.tsx');
 assert.match(comp, /requestIdleCallback/, 'загрузчик — после load + idle');

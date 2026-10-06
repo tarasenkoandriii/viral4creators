@@ -60,7 +60,9 @@
     "openVideo": "Abrir vídeo",
     "unavailable": "Todavía no hay vídeo en este idioma. Consulta el proceso a continuación.",
     "chooseTopic": "Elige un tema de demostración",
-    "viewSteps": "Ver los pasos"
+    "viewSteps": "Ver los pasos",
+    "loadFailed": "Las demostraciones no están disponibles temporalmente. Mientras tanto, consulta el proceso paso a paso.",
+    "play": "Reproducir vídeo"
   },
   "features": {
     "title": "Funciones",

@@ -13,6 +13,10 @@ import { defineConfig } from 'vite';
 // esbuild'ом на выходе (экспорт `start` при этом сохраняется).
 // (д) es2020: чанку нужен `import.meta.url` — путь своего выпуска для
 // ленивого `undo.js` (рядом, тот же выпуск канарейки).
+// `charset: 'utf8'`: кириллица подписей — байтами UTF-8, а не `\uXXXX`
+// (втрое короче). Безопасно ТОЛЬКО для ES-модуля: `import()` всегда
+// декодирует модуль как UTF-8, независимо от кодировки страницы заказчика
+// (классический загрузчик так не сжимаем — страница в windows-1251).
 export default defineConfig({
   publicDir: false,
   plugins: [
@@ -27,6 +31,7 @@ export default defineConfig({
               minify: true,
               format: 'esm',
               target: 'es2020',
+              charset: 'utf8',
             })
           ).code;
         }
