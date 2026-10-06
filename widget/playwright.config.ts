@@ -20,7 +20,9 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   globalSetup: './e2e/global-setup.ts',
-  reporter: [['list']],
+  // В CI ещё и `github`: упавший e2e виден аннотацией проверки (публичный
+  // API без входа) — иначе причину видно только в логах джобы (CI d19fddf).
+  reporter: process.env.CI ? [['list'], ['github']] : [['list']],
   use: {
     trace: 'retain-on-failure',
   },
