@@ -33,7 +33,7 @@ import { normText, sameWord, tokens } from '../assist-ui-core/normalize';
 import {
   ParamValidationError,
   validateArgs,
-} from '../assist-admin-mode/connector-exec';
+} from '../assist-admin-mode/connector-args';
 import {
   adminMemoUiProblem,
   type AdminMemoUiStep,
