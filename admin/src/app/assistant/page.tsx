@@ -29,6 +29,7 @@ import {
   requestDemoQualityApproved,
   requestDemoQualityCheck,
   setTutorialVideoReviewed,
+  setTutorialVideoSiteTutorialDemo,
 } from '../../lib/endpoints';
 import type {
   AssistantAdminResult,
@@ -431,14 +432,23 @@ function assemblyStatusLabel(status: TutorialVideoAssetRow['assemblyStatus']): s
   }
 }
 
+/** Слот демо обучающего лендинга — ровно один из трёх (бэкенд проверяет
+ *  то же самое и откажет любому другому ключу). */
+function isSiteTutorialDemoSlot(subjectKey: string): boolean {
+  return /^site-tutorial-demo-[1-3]$/.test(subjectKey);
+}
+
 function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   const [subjectKey, setSubjectKey] = useState(init?.subjectKey ?? '');
   const [locale, setLocale] = useState(init?.locale ?? '');
   const [reviewed, setReviewedFilter] = useState<'' | 'true' | 'false'>(init?.reviewed ?? '');
   const [page, setPage] = useState(1);
-  const [result, setResult] = useState<{ rows: TutorialVideoAssetRow[]; total: number; pageSize: number } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{
+    rows: TutorialVideoAssetRow[];
+    total: number;
+    pageSize: number;
+    siteTutorialDemoAssetIds?: string[];
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   // Темп (06.10.2026): панель версий с другим темпом под строкой ролика.
@@ -563,9 +573,13 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
       // публикацию».
       if (!row.reviewed) {
         const ok = window.confirm(
-          `Одобрить видео «${row.title}» (${row.subjectKey}, ${row.locale})?\n\n` +
-            'Оно станет доступно посетителям лендинга НЕМЕДЛЕННО — консультант сможет ' +
-            'предлагать его в ответах прямо со следующего запроса.',
+          isSiteTutorialDemoSlot(row.subjectKey)
+            ? `Одобрить видео «${row.title}» (${row.subjectKey}, ${row.locale})?\n\n` +
+                'Это демо обучающего лендинга: консультант его не предлагает, а на лендинг ' +
+                'оно попадёт только после галочки «В демо обучающего лендинга».'
+            : `Одобрить видео «${row.title}» (${row.subjectKey}, ${row.locale})?\n\n` +
+                'Оно станет доступно посетителям лендинга НЕМЕДЛЕННО — консультант сможет ' +
+                'предлагать его в ответах прямо со следующего запроса.',
         );
         if (!ok) return;
       }
@@ -573,6 +587,33 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
       setError(null);
       try {
         await setTutorialVideoReviewed(row.id, !row.reviewed);
+        load();
+      } catch (e) {
+        setError(errText(e));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load],
+  );
+
+  const markedDemo = new Set(result?.siteTutorialDemoAssetIds ?? []);
+
+  const toggleSiteTutorialDemo = useCallback(
+    async (row: TutorialVideoAssetRow, marked: boolean) => {
+      if (marked) {
+        const ok = window.confirm(
+          `Показать «${row.title}» (${row.subjectKey}, ${row.locale}, ${row.theme ?? 'светлая'}) ` +
+            'в демо обучающего лендинга?\n\n' +
+            'Ролик станет виден посетителям /site-tutorial, как только на лендинге включён ' +
+            'SITE_TUTORIAL_DEMO_GALLERY (с учётом кеша — до ~10 минут).',
+        );
+        if (!ok) return;
+      }
+      setBusyId(row.id);
+      setError(null);
+      try {
+        await setTutorialVideoSiteTutorialDemo(row.id, marked);
         load();
       } catch (e) {
         setError(errText(e));
@@ -611,6 +652,8 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
       <p className="muted" style={{ marginBottom: 16 }}>
         Кадры-слайдшоу, собранные исполнителем сценариев (этап 98), становятся доступны консультанту на лендинге
         ТОЛЬКО после одобрения здесь — иначе они физически недоступны никому, кроме прямого запроса к базе.
+        Ролики демо обучающего лендинга (<code>site-tutorial-demo-1..3</code>, витрина-полигон) консультанту
+        не выдаются: на лендинг их выводит только галочка «В демо обучающего лендинга» у одобренного ролика.
       </p>
 
       <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -702,6 +745,9 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                   <th>Кадры</th>
                   <th>Качество</th>
                   <th>Одобрено</th>
+                  <th title="Отметка оператора: ролик выдаётся в галерее /site-tutorial (только слоты site-tutorial-demo-1..3)">
+                    В демо обучающего лендинга
+                  </th>
                   <th></th>
                 </tr>
               </thead>
@@ -746,6 +792,31 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                           <span className="badge-status badge-status-ok">одобрено</span>
                         ) : (
                           <span className="muted">нет</span>
+                        )}
+                      </td>
+                      <td>
+                        {isSiteTutorialDemoSlot(row.subjectKey) ? (
+                          <label
+                            style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 12 }}
+                            title={
+                              row.reviewed && row.blobUrl
+                                ? 'Показывать в демо обучающего лендинга'
+                                : 'Отметить можно только одобренный собранный ролик'
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              checked={markedDemo.has(row.id)}
+                              disabled={
+                                busyId === row.id ||
+                                (!markedDemo.has(row.id) && !(row.reviewed && row.blobUrl))
+                              }
+                              onChange={(e) => void toggleSiteTutorialDemo(row, e.target.checked)}
+                            />
+                            {markedDemo.has(row.id) ? 'в демо' : 'нет'}
+                          </label>
+                        ) : (
+                          <span className="muted">—</span>
                         )}
                       </td>
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -801,7 +872,7 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                     </tr>
                     {previewId === row.id && row.blobUrl && (
                       <tr>
-                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={10} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <div style={{ padding: '8px 4px' }}>
                             {/* eslint-disable-next-line jsx-a11y/media-has-caption -- служебный предпросмотр слайдшоу для оператора, не публичный контент */}
                             <video
@@ -818,7 +889,7 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                     )}
                     {reportId === row.id && quality[row.id] && (
                       <tr>
-                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={10} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <QualityReportPanel
                             check={quality[row.id]}
                             canSeek={!!row.blobUrl}
@@ -829,14 +900,14 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                     )}
                     {tempoId === row.id && (
                       <tr>
-                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={10} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <TutorialTempoPanel assetId={row.id} onChanged={load} />
                         </td>
                       </tr>
                     )}
                     {publishingId === row.id && (
                       <tr>
-                        <td colSpan={9} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                        <td colSpan={10} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 4px', maxWidth: 320 }}>
                             <span className="muted" style={{ fontSize: 12 }}>
                               Канал должен быть подключён именно вашим оператором-аккаунтом

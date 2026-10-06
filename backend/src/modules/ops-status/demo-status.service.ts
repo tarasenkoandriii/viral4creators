@@ -41,6 +41,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SUPPORTED_LOCALES } from '../../common/locale';
 import { ASSISTANT_STEPS } from '../../common/tutorial-knowledge/generated';
 import { greetingTopicKeys } from '../tutorial-scenario/tutorial-locales';
+import {
+  isSiteTutorialDemoFamilyKey,
+  SITE_TUTORIAL_DEMO_KEYS,
+} from '../tutorial-help/site-tutorial-demo';
 
 /** Кроны, от которых зависит демо, в порядке конвейера. */
 export const DEMO_CRON_JOB_KEYS = [
@@ -137,6 +141,17 @@ export interface DemoTutorialCell {
   byTheme: Record<DemoTheme, DemoThemeCell>;
 }
 
+/**
+ * Ячейка демо обучающего лендинга (`site-tutorial-demo-*`, витрина-
+ * полигон): та же форма, что у матрицы, но отдельным списком — это не
+ * обучалка продукта, и в «пробелы» матрицы (сводка внимания) она не
+ * идёт. Публикует ролик семейства не одобрение, а отдельная отметка
+ * оператора; здесь — только что снято и что одобрено.
+ */
+export interface DemoSiteTutorialCell extends Omit<DemoTutorialCell, 'family'> {
+  family: 'site-tutorial-demo';
+}
+
 export interface DemoUiSnapshot {
   routeKey: string;
   locale: string;
@@ -162,6 +177,12 @@ export interface DemoStatusView {
       pendingReview: number;
       /** Ячеек с одобренным роликом каждой темы. */
       withApprovedByTheme: Record<DemoTheme, number>;
+    };
+    /** Демо обучающего лендинга — отдельно от матрицы и её итогов. */
+    siteTutorialDemo: {
+      cells: DemoSiteTutorialCell[];
+      withApproved: number;
+      pendingReview: number;
     };
   };
   uiSnapshots: {
@@ -285,6 +306,109 @@ export function catalogSubjects(
   ];
 }
 
+interface PendingGroup {
+  subjectKey: string;
+  locale: string;
+  theme: string | null;
+  _count: { _all: number };
+}
+
+/**
+ * Ячейки матрицы по готовым строкам: сначала пары каталога в порядке
+ * экрана, потом — пары, которых в каталоге нет, но ролики у них есть
+ * (`extraFamily`). Одна функция на матрицу продукта и на демо
+ * обучающего лендинга, чтобы правила ячейки у них не разошлись.
+ */
+function buildCells<F extends string>(
+  approvedRows: readonly AssetRow[],
+  pendingGroups: readonly PendingGroup[],
+  catalog: readonly { subjectKey: string; locale: string; family: F }[],
+  extraFamily: F,
+): (Omit<DemoTutorialCell, 'family'> & { family: F })[] {
+  const key = (subjectKey: string, locale: string) =>
+    `${locale}\u0000${subjectKey}`;
+  // Строки уже от новых к старым: первая встреченная — самая свежая.
+  const approvedByPair = new Map<string, AssetRow[]>();
+  for (const row of approvedRows) {
+    const k = key(row.subjectKey, row.locale);
+    const list = approvedByPair.get(k);
+    if (list) list.push(row);
+    else approvedByPair.set(k, [row]);
+  }
+  const pendingByPair = new Map<string, number>();
+  const pendingByTheme = new Map<string, number>();
+  for (const g of pendingGroups) {
+    const k = key(g.subjectKey, g.locale);
+    pendingByPair.set(k, (pendingByPair.get(k) ?? 0) + g._count._all);
+    const kt = `${k}\u0000${demoTheme(g.theme)}`;
+    pendingByTheme.set(kt, (pendingByTheme.get(kt) ?? 0) + g._count._all);
+  }
+
+  const cells: (Omit<DemoTutorialCell, 'family'> & { family: F })[] = [];
+  const seen = new Set<string>();
+  const cellFor = (subjectKey: string, locale: string, family: F) => {
+    const k = key(subjectKey, locale);
+    seen.add(k);
+    const rows = approvedByPair.get(k) ?? [];
+    // Строки — от новых к старым: первая своей темы — самая свежая.
+    const byTheme = Object.fromEntries(
+      DEMO_THEMES.map((theme) => [
+        theme,
+        {
+          approved: approvedVideo(
+            rows.find((r) => demoTheme(r.theme) === theme),
+          ),
+          pendingReview: pendingByTheme.get(`${k}\u0000${theme}`) ?? 0,
+        },
+      ]),
+    ) as Record<DemoTheme, DemoThemeCell>;
+    return {
+      subjectKey,
+      locale,
+      family,
+      approved: approvedVideo(rows[0]),
+      approvedThemes: [...new Set(rows.map((r) => r.theme))],
+      pendingReview: pendingByPair.get(k) ?? 0,
+      byTheme,
+    };
+  };
+
+  for (const { subjectKey, locale, family } of catalog) {
+    cells.push(cellFor(subjectKey, locale, family));
+  }
+  // Ролики по ключам вне каталога — не прятать: они тоже кому-то
+  // показываются (свободный ключ воркфлоу) или висят после удаления
+  // темы из каталога.
+  const extra = new Map<string, { subjectKey: string; locale: string }>();
+  for (const row of approvedRows) {
+    extra.set(key(row.subjectKey, row.locale), row);
+  }
+  for (const g of pendingGroups) {
+    extra.set(key(g.subjectKey, g.locale), g);
+  }
+  for (const [k, { subjectKey, locale }] of extra) {
+    if (!seen.has(k)) cells.push(cellFor(subjectKey, locale, extraFamily));
+  }
+  return cells;
+}
+
+function approvedVideo(row: AssetRow | undefined): DemoApprovedVideo | null {
+  if (!row) return null;
+  const width = positive(row.width);
+  const height = positive(row.height);
+  const sized = width !== null && height !== null;
+  return {
+    theme: row.theme,
+    approvedRowCreatedAt: row.createdAt.toISOString(),
+    capturedAt: iso(row.capturedAt),
+    captureBuild: row.captureBuild,
+    durationMs: row.durationMs,
+    width: sized ? width : null,
+    height: sized ? height : null,
+    hasPoster: Boolean(row.posterUrl),
+  };
+}
+
 @Injectable()
 export class DemoStatusService {
   constructor(private readonly prisma: PrismaService) {}
@@ -378,102 +502,38 @@ export class DemoStatusService {
         by: ['subjectKey', 'locale', 'theme'],
         where: { ...ours, reviewed: false, assemblyStatus: 'complete' },
         _count: { _all: true },
-      }) as unknown as Promise<
-        {
-          subjectKey: string;
-          locale: string;
-          theme: string | null;
-          _count: { _all: number };
-        }[]
-      >,
+      }) as unknown as Promise<PendingGroup[]>,
     ]);
 
-    const key = (subjectKey: string, locale: string) =>
-      `${locale}\u0000${subjectKey}`;
-    // Строки уже от новых к старым: первая встреченная — самая свежая.
-    const approvedByPair = new Map<string, AssetRow[]>();
-    for (const row of approvedRows) {
-      const k = key(row.subjectKey, row.locale);
-      const list = approvedByPair.get(k);
-      if (list) list.push(row);
-      else approvedByPair.set(k, [row]);
-    }
-    const pendingByPair = new Map<string, number>();
-    const pendingByTheme = new Map<string, number>();
-    for (const g of pendingGroups) {
-      const k = key(g.subjectKey, g.locale);
-      pendingByPair.set(k, (pendingByPair.get(k) ?? 0) + g._count._all);
-      const kt = `${k}\u0000${demoTheme(g.theme)}`;
-      pendingByTheme.set(kt, (pendingByTheme.get(kt) ?? 0) + g._count._all);
-    }
-    const approvedVideo = (row: AssetRow | undefined) => {
-      if (!row) return null;
-      const width = positive(row.width);
-      const height = positive(row.height);
-      const sized = width !== null && height !== null;
-      return {
-        theme: row.theme,
-        approvedRowCreatedAt: row.createdAt.toISOString(),
-        capturedAt: iso(row.capturedAt),
-        captureBuild: row.captureBuild,
-        durationMs: row.durationMs,
-        width: sized ? width : null,
-        height: sized ? height : null,
-        hasPoster: Boolean(row.posterUrl),
-      };
-    };
-
-    const cells: DemoTutorialCell[] = [];
-    const seen = new Set<string>();
-    const cellFor = (
-      subjectKey: string,
-      locale: string,
-      family: DemoTutorialCell['family'],
-    ): DemoTutorialCell => {
-      const k = key(subjectKey, locale);
-      seen.add(k);
-      const rows = approvedByPair.get(k) ?? [];
-      // Строки — от новых к старым: первая своей темы — самая свежая.
-      const byTheme = Object.fromEntries(
-        DEMO_THEMES.map((theme) => [
-          theme,
-          {
-            approved: approvedVideo(
-              rows.find((r) => demoTheme(r.theme) === theme),
-            ),
-            pendingReview: pendingByTheme.get(`${k}\u0000${theme}`) ?? 0,
-          },
-        ]),
-      ) as Record<DemoTheme, DemoThemeCell>;
-      return {
-        subjectKey,
-        locale,
-        family,
-        approved: approvedVideo(rows[0]),
-        approvedThemes: [...new Set(rows.map((r) => r.theme))],
-        pendingReview: pendingByPair.get(k) ?? 0,
-        byTheme,
-      };
-    };
-
-    for (const locale of SUPPORTED_LOCALES) {
-      for (const { subjectKey, family } of catalogSubjects(locale)) {
-        cells.push(cellFor(subjectKey, locale, family));
-      }
-    }
-    // Ролики по ключам вне каталога — не прятать: они тоже кому-то
-    // показываются (свободный ключ воркфлоу) или висят после удаления
-    // темы из каталога.
-    const extra = new Map<string, { subjectKey: string; locale: string }>();
-    for (const row of approvedRows) {
-      extra.set(key(row.subjectKey, row.locale), row);
-    }
-    for (const g of pendingGroups) {
-      extra.set(key(g.subjectKey, g.locale), g);
-    }
-    for (const [k, { subjectKey, locale }] of extra) {
-      if (!seen.has(k)) cells.push(cellFor(subjectKey, locale, 'other'));
-    }
+    // Демо обучающего лендинга — отдельным списком (раздел 5.3
+    // черновика демо): ни в матрицу, ни в её итоги, ни в «другие» — это
+    // не обучалка продукта, и пробелом матрицы она не считается.
+    const isFamily = (r: { subjectKey: string }) =>
+      isSiteTutorialDemoFamilyKey(r.subjectKey);
+    const cells = buildCells(
+      approvedRows.filter((r) => !isFamily(r)),
+      pendingGroups.filter((g) => !isFamily(g)),
+      SUPPORTED_LOCALES.flatMap((locale) =>
+        catalogSubjects(locale).map(({ subjectKey, family }) => ({
+          subjectKey,
+          locale,
+          family,
+        })),
+      ),
+      'other',
+    );
+    const familyCells = buildCells(
+      approvedRows.filter(isFamily),
+      pendingGroups.filter(isFamily),
+      SUPPORTED_LOCALES.flatMap((locale) =>
+        SITE_TUTORIAL_DEMO_KEYS.map((subjectKey) => ({
+          subjectKey,
+          locale,
+          family: 'site-tutorial-demo' as const,
+        })),
+      ),
+      'site-tutorial-demo',
+    );
 
     return {
       locales: [...SUPPORTED_LOCALES],
@@ -488,6 +548,11 @@ export class DemoStatusService {
             cells.filter((c) => c.byTheme[theme].approved).length,
           ]),
         ) as Record<DemoTheme, number>,
+      },
+      siteTutorialDemo: {
+        cells: familyCells,
+        withApproved: familyCells.filter((c) => c.approved).length,
+        pendingReview: familyCells.reduce((n, c) => n + c.pendingReview, 0),
       },
     };
   }

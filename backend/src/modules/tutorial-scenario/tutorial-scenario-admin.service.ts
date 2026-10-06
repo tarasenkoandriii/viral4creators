@@ -20,6 +20,29 @@ import { BlobService } from '../storage/blob.service';
 import { voiceoverCachePrefix } from '../tutorial-runner/tutorial-voice';
 import { validateScenarioSteps } from './tutorial-scenario-prompt';
 import { estimateScenarioCost } from './scenario-cost';
+import { ScenarioStep } from './scenario-steps.types';
+import { stableStringify } from '../../common/stable-json';
+import { siteTutorialDemoSeed } from '../tutorial-runner/site-tutorial-demo-seed';
+import { polygonOrigin } from '../tutorial-runner/polygon-scenario';
+
+/** Итог засева демо обучающего лендинга — по парам, чтобы оператор видел,
+ *  что сделала кнопка, не открывая список. */
+export interface SiteTutorialDemoSeedResult {
+  total: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  pairs: Array<{
+    subjectKey: string;
+    locale: string;
+    scenario: string;
+    outcome: 'created' | 'updated' | 'unchanged';
+  }>;
+  /** Origin полигона, против которого пойдёт съёмка; `null` —
+   *  `LANDING_PUBLIC_URL` не задан или не https, и раннер семейство не
+   *  снимает (строки при этом засеяны). */
+  polygonOrigin: string | null;
+}
 
 export interface TutorialScenarioListFilter {
   subjectKey?: string;
@@ -28,6 +51,41 @@ export interface TutorialScenarioListFilter {
   approved?: boolean;
   page: number;
   pageSize: number;
+}
+
+/**
+ * Поля строки сценария, шаги которой переписал ЧЕЛОВЕК — ручной правкой
+ * (`replaceSteps`) или засевом демо обучающего лендинга
+ * (`seedSiteTutorialDemo`). Одно место на оба пути: что сбрасывается
+ * при перезаписи шагов, не должно разойтись между ними.
+ *
+ * `generatedBy: 'manual'` — договор «генератор строку не трогает».
+ * Одобрение и результат прошлого прогона относились к прежним шагам.
+ */
+function manualStepsData(steps: ScenarioStep[]) {
+  const cost = estimateScenarioCost(steps);
+  return {
+    steps: steps as object,
+    generatedBy: 'manual',
+    costly: cost.costly,
+    estimatedCostMicroUsd: cost.estimatedCostMicroUsd,
+    costUnpriced: cost.unpriced,
+    approved: false,
+    approvedBy: null,
+    approvedAt: null,
+    lastRunStatus: null,
+    lastRunError: null,
+    // Отметка о вычитке реплик снимается вместе с шагами (§3-бис.5
+    // ТЗ, этап D): вычитан был ПРЕЖНИЙ текст, и переносить
+    // подпись человека на новый значит подписаться за то, чего он
+    // не читал. Снимается безусловно — даже когда реплики не
+    // менялись: разобрать, «та же ли это реплика», можно, но
+    // тогда правка селектора в шаге с репликой оставляла бы
+    // отметку, а правка самой реплики снимала бы, и оператор
+    // должен был бы держать это правило в голове.
+    narrationReviewedBy: null,
+    narrationReviewedAt: null,
+  };
 }
 
 @Injectable()
@@ -129,31 +187,9 @@ export class TutorialScenarioAdminService {
       );
     }
 
-    const cost = estimateScenarioCost(parsed.steps);
     const updated = await this.prisma.tutorialScenario.update({
       where: { id },
-      data: {
-        steps: parsed.steps as object,
-        generatedBy: 'manual',
-        costly: cost.costly,
-        estimatedCostMicroUsd: cost.estimatedCostMicroUsd,
-        costUnpriced: cost.unpriced,
-        approved: false,
-        approvedBy: null,
-        approvedAt: null,
-        lastRunStatus: null,
-        lastRunError: null,
-        // Отметка о вычитке реплик снимается вместе с шагами (§3-бис.5
-        // ТЗ, этап D): вычитан был ПРЕЖНИЙ текст, и переносить
-        // подпись человека на новый значит подписаться за то, чего он
-        // не читал. Снимается безусловно — даже когда реплики не
-        // менялись: разобрать, «та же ли это реплика», можно, но
-        // тогда правка селектора в шаге с репликой оставляла бы
-        // отметку, а правка самой реплики снимала бы, и оператор
-        // должен был бы держать это правило в голове.
-        narrationReviewedBy: null,
-        narrationReviewedAt: null,
-      },
+      data: manualStepsData(parsed.steps),
     });
     const droppedNote =
       parsed.droppedNarrations.length > 0
@@ -169,6 +205,111 @@ export class TutorialScenarioAdminService {
     // видел зелёное «сохранено» и не находил её потом в списке
     // (находка аудита этапа D). Спрашивает-то как раз он.
     return { ...updated, droppedNarrations: parsed.droppedNarrations };
+  }
+
+  /**
+   * Засев ручных сценариев демо обучающего лендинга из вшитого сида
+   * (`tutorial-runner/seeds/site-tutorial-demo.json`, решение владельца
+   * 06.10.2026: путь А, слоты С3/С2/С4 × пять локалей).
+   *
+   * Единственный способ СОЗДАТЬ строку `TutorialScenario` руками — и
+   * только для семейства: генератор его не трогает никогда, а маршрута
+   * «создать произвольный сценарий» по-прежнему нет.
+   *
+   * Правила:
+   *  - шаги каждой пары идут через тот же `validateScenarioSteps`, что
+   *    у ответа модели и у ручной правки (для семейства он проверяет по
+   *    каталогу витрины и таблице полигона);
+   *  - всё-или-ничего: одна негодная пара — отказ всему сиду ДО первой
+   *    записи. Отброшенная реплика здесь тоже отказ: это наш собственный
+   *    текст, и молча озвучить половину сценария хуже, чем не засеять;
+   *  - идемпотентно: пара с теми же шагами и `generatedBy: 'manual'` не
+   *    переписывается (вычитка реплик и результат прогона остаются);
+   *    изменившаяся — переписывается как при ручной правке (вычитка,
+   *    одобрение и прошлый прогон сбрасываются: они относились к другим
+   *    шагам);
+   *  - запись — `upsert` по `(subjectKey, locale)`: двойное нажатие не
+   *    падает на уникальном ключе.
+   */
+  async seedSiteTutorialDemo(by: string): Promise<SiteTutorialDemoSeedResult> {
+    let entries: ReturnType<typeof siteTutorialDemoSeed>;
+    try {
+      entries = siteTutorialDemoSeed();
+    } catch (e) {
+      throw new BadRequestException(
+        `Сид демо обучающего лендинга не разобрался: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    const prepared = entries.map((entry) => {
+      const parsed = validateScenarioSteps(entry.steps, entry.subjectKey);
+      if (!parsed.ok) {
+        throw new BadRequestException(
+          `Сид не принят: ${entry.subjectKey}/${entry.locale} — ${parsed.reason ?? 'шаги не разобрались'}`,
+        );
+      }
+      if (parsed.droppedNarrations.length > 0) {
+        const first = parsed.droppedNarrations[0];
+        throw new BadRequestException(
+          `Сид не принят: ${entry.subjectKey}/${entry.locale} — реплика шага ${first.stepNumber}: ${first.reason}`,
+        );
+      }
+      return {
+        entry,
+        steps: parsed.steps,
+        cost: estimateScenarioCost(parsed.steps),
+      };
+    });
+
+    const result: SiteTutorialDemoSeedResult = {
+      total: prepared.length,
+      created: 0,
+      updated: 0,
+      unchanged: 0,
+      pairs: [],
+      polygonOrigin: polygonOrigin(),
+    };
+    for (const { entry, steps } of prepared) {
+      const { subjectKey, locale } = entry;
+      const existing = (await this.prisma.tutorialScenario.findUnique({
+        where: { subjectKey_locale: { subjectKey, locale } },
+        select: { steps: true, generatedBy: true },
+      })) as { steps: unknown; generatedBy: string } | null;
+      let outcome: 'created' | 'updated' | 'unchanged';
+      if (
+        existing &&
+        existing.generatedBy === 'manual' &&
+        stableStringify(existing.steps) === stableStringify(steps)
+      ) {
+        outcome = 'unchanged';
+      } else {
+        // Те же поля и сбросы, что у ручной правки: сид — тоже человек,
+        // переписавший шаги, и правила у них одни.
+        const data = manualStepsData(steps);
+        await this.prisma.tutorialScenario.upsert({
+          where: { subjectKey_locale: { subjectKey, locale } },
+          create: { subjectKey, locale, ...data },
+          update: data,
+        });
+        outcome = existing ? 'updated' : 'created';
+      }
+      result[outcome]++;
+      result.pairs.push({
+        subjectKey,
+        locale,
+        scenario: entry.scenario,
+        outcome,
+      });
+    }
+    this.logger.log(
+      `демо обучающего лендинга засеяно оператором ${by}: новых ${result.created}, переписано ${result.updated}, без изменений ${result.unchanged} из ${result.total}${
+        result.polygonOrigin
+          ? ''
+          : ' — LANDING_PUBLIC_URL не задан (https), съёмки не будет'
+      }`,
+    );
+    return result;
   }
 
   /**

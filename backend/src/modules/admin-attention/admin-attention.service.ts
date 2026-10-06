@@ -29,6 +29,7 @@ import { readDemoQualityConfig } from '../tutorial-quality/demo-quality-queue';
 import { JOB_LOCK_MS } from '../../common/cron-job-lock';
 import { AdminCronService } from '../cron/admin-cron.service';
 import { DemoStatusService } from '../ops-status/demo-status.service';
+import { NOT_SITE_TUTORIAL_DEMO_WHERE } from '../tutorial-help/site-tutorial-demo';
 import {
   parseTutorialLocales,
   TUTORIAL_LOCALES_SETTING_KEY,
@@ -159,6 +160,10 @@ export class AdminAttentionService {
       this.prisma.tutorialVideoAsset.findFirst({
         where: {
           clientSiteDraftId: null,
+          // Ролики демо обучающего лендинга сняты с ЛЕНДИНГА, и их
+          // отметка сборки — не версия фронтенда TMA: взятая за
+          // «текущую», она объявила бы устаревшими все ролики продукта.
+          ...NOT_SITE_TUTORIAL_DEMO_WHERE,
           captureBuild: { not: null },
           capturedAt: { gte: new Date(now.getTime() - CURRENT_BUILD_FRESH_MS) },
         },

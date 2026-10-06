@@ -420,6 +420,42 @@ describe('DemoStatusService — матрица роликов', () => {
     expect(cell?.approved).not.toBeNull();
   });
 
+  it('демо обучающего лендинга — не в матрице и не в её итогах, а отдельным списком', async () => {
+    const { service } = build({
+      assets: [
+        asset({ subjectKey: 'site-tutorial-demo-1', theme: 'light' }),
+        asset({
+          subjectKey: 'site-tutorial-demo-2',
+          reviewed: false,
+          theme: 'dark',
+        }),
+        asset({ subjectKey: 'site-tutorial-demo-99' }),
+      ],
+    });
+    const view = await service.get(NOW);
+    expect(
+      view.tutorials.cells.some((c) =>
+        c.subjectKey.startsWith('site-tutorial-demo-'),
+      ),
+    ).toBe(false);
+    expect(view.tutorials.totals.withApproved).toBe(0);
+    expect(view.tutorials.totals.pendingReview).toBe(0);
+
+    const demo = view.tutorials.siteTutorialDemo;
+    // Три слота × пять локалей + ключ вне слотов (его не прячем).
+    expect(demo.cells).toHaveLength(16);
+    expect(demo.cells.every((c) => c.family === 'site-tutorial-demo')).toBe(
+      true,
+    );
+    expect(demo.withApproved).toBe(2);
+    expect(demo.pendingReview).toBe(1);
+    const slot1 = demo.cells.find(
+      (c) => c.subjectKey === 'site-tutorial-demo-1' && c.locale === 'ru',
+    );
+    expect(slot1?.byTheme.light.approved).not.toBeNull();
+    expect(slot1?.byTheme.dark.approved).toBeNull();
+  });
+
   it('наружу — ни id строки, ни сценария, ни ссылки на ролик', async () => {
     const { service } = build({ assets: [asset({})] });
     const text = JSON.stringify((await service.get(NOW)).tutorials);

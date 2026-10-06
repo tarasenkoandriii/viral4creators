@@ -29,6 +29,12 @@ import {
   recordApprovalStamp,
 } from './tutorial-video-retention';
 import {
+  isSiteTutorialDemoKey,
+  parseSiteTutorialDemoAssetIds,
+  SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
+  SITE_TUTORIAL_DEMO_MAX_MARKED,
+} from '../tutorial-help/site-tutorial-demo';
+import {
   ASSISTANT_KNOWLEDGE_BUILT_AT,
   ASSISTANT_KNOWLEDGE_COMMIT,
   ASSISTANT_STEPS,
@@ -119,7 +125,109 @@ export class TutorialVideoAdminService {
       }),
       this.prisma.tutorialVideoAsset.count({ where }),
     ]);
-    return { rows, total, page: filter.page, pageSize: filter.pageSize };
+    return {
+      rows,
+      total,
+      page: filter.page,
+      pageSize: filter.pageSize,
+      // Галочка «В демо обучающего лендинга» — по этому списку. Сбой
+      // чтения — пустой список: список роликов важнее галочки.
+      siteTutorialDemoAssetIds: await this.readSiteTutorialDemoIds().catch(
+        () => [] as string[],
+      ),
+    };
+  }
+
+  private async readSiteTutorialDemoIds(): Promise<string[]> {
+    if (!this.settings) return [];
+    return parseSiteTutorialDemoAssetIds(
+      await this.settings.get(SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY),
+    );
+  }
+
+  /**
+   * Галочка «В демо обучающего лендинга» — отметка оператора
+   * `tutorial.siteTutorialDemoAssets` (JSON-массив id), по которой
+   * публичная справка выдаёт ролики слотов `site-tutorial-demo-1..3`
+   * (`tutorial-help/site-tutorial-demo.ts`).
+   *
+   * Отметить можно только строку, годную в публичное демо, — и это
+   * проверяется ЗДЕСЬ, а не в разметке: ключ — ровно один из слотов
+   * семейства, нет `clientSiteDraftId` (ролик сайта заказчика сюда не
+   * попадает ни при каком нажатии), строка вычитана (`reviewed`) и
+   * собрана (`blobUrl`). Снять отметку можно всегда — снятие ничего не
+   * публикует.
+   *
+   * Значение настройки переписывается целиком: прочитали, поправили,
+   * записали. Значение, которое не разбирается, при отметке НЕ
+   * затирается молча — отказ с причиной: в нём могли быть отметки,
+   * которые оператор не видит, и «починка» нажатием их бы потеряла.
+   */
+  async setSiteTutorialDemo(id: string, marked: boolean, by?: string) {
+    if (!this.settings) {
+      throw new BadRequestException(
+        'Настройки платформы недоступны — отметку записать некуда',
+      );
+    }
+    const row = (await this.prisma.tutorialVideoAsset.findUnique({
+      where: { id },
+    })) as {
+      id: string;
+      subjectKey: string;
+      clientSiteDraftId?: string | null;
+      reviewed?: boolean;
+      blobUrl?: string | null;
+    } | null;
+    if (!row) throw new NotFoundException('Видео не найдено');
+    if (marked) {
+      if (row.clientSiteDraftId) {
+        throw new BadRequestException(
+          'Это ролик обучалки по сайту заказчика — в публичное демо он не попадает никогда',
+        );
+      }
+      if (!isSiteTutorialDemoKey(row.subjectKey)) {
+        throw new BadRequestException(
+          `Ролик темы «${row.subjectKey}» — не из демо обучающего лендинга (site-tutorial-demo-1..3)`,
+        );
+      }
+      if (!row.blobUrl) {
+        throw new BadRequestException('Ролик ещё не собран — отмечать нечего');
+      }
+      if (!row.reviewed) {
+        throw new BadRequestException(
+          'Сначала одобрите ролик — в демо попадает только вычитанное',
+        );
+      }
+    }
+    const raw = await this.settings.get(SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY);
+    const ids = parseSiteTutorialDemoAssetIds(raw);
+    const trimmed = raw?.trim() ?? '';
+    if (ids.length === 0 && trimmed !== '' && trimmed !== '[]') {
+      throw new BadRequestException(
+        `Настройка ${SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY} не разбирается — поправьте её в «Настройках» (JSON-массив id), отметка не записана`,
+      );
+    }
+    const next = marked
+      ? [...new Set([...ids, row.id])]
+      : ids.filter((x) => x !== row.id);
+    if (next.length > SITE_TUTORIAL_DEMO_MAX_MARKED) {
+      throw new BadRequestException(
+        `Отмечено уже ${ids.length} роликов — больше ${SITE_TUTORIAL_DEMO_MAX_MARKED} справка не примет; снимите лишние`,
+      );
+    }
+    const changed =
+      next.length !== ids.length || next.some((x, i) => x !== ids[i]);
+    if (changed) {
+      await this.settings.set(
+        SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
+        JSON.stringify(next),
+        by,
+      );
+      this.logger.log(
+        `ролик ${row.id} (${row.subjectKey}) ${marked ? 'отмечен' : 'снят'} в демо обучающего лендинга${by ? ` оператором ${by}` : ''}`,
+      );
+    }
+    return { id: row.id, marked, siteTutorialDemoAssetIds: next };
   }
 
   /**

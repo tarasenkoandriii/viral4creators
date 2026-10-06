@@ -623,6 +623,26 @@ describe('demoMatrixItems', () => {
     ).toEqual([]);
   });
 
+  it('ячейки демо обучающего лендинга не считаются ни пробелом, ни пропуском, ни устаревшими', () => {
+    const items = demoMatrixItems(
+      [
+        cell({ subjectKey: 'site-tutorial-demo-1', approvedThemes: ['light'] }),
+        cell({
+          subjectKey: 'site-tutorial-demo-2',
+          approved: null,
+          approvedThemes: [],
+        }),
+        cell({
+          subjectKey: 'site-tutorial-demo-3',
+          approved: approved({ captureBuild: 'landing:zzz' }),
+        }),
+      ],
+      { requiredLocales: ['ru'], currentBuild: 'abc1234' },
+      NOW,
+    );
+    expect(items).toEqual([]);
+  });
+
   it('пробел темы — одна decision-карточка на все пары', () => {
     const items = demoMatrixItems(
       [

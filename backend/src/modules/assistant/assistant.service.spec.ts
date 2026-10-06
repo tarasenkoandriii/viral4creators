@@ -295,9 +295,47 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
             blobUrl: { not: null },
             clientSiteDraftId: null,
             OR: [{ theme: null }, { theme: 'light' }],
+            NOT: { subjectKey: { startsWith: 'site-tutorial-demo-' } },
           },
         }),
       );
+    });
+
+    it('демо обучающего лендинга в промпт не попадает — даже если база его вернула', async () => {
+      // Раздел 5.3 черновика демо: ролики витрины-полигона — для секции
+      // одного лендинга, консультант их не предлагает. Барьер — в
+      // запросе (проверено выше) И в коде: здесь база «забыла» `NOT`.
+      generateContentStream.mockResolvedValue(fakeStream([{ text: 'ок' }]));
+      const { svc } = build({
+        videoSubjectKeys: ['plan-upgrade', 'site-tutorial-demo-1'],
+      });
+      await drain(svc.streamChat(baseRequest, '1.2.3.4'));
+      const prompt = generateContentStream.mock.calls[0][0].config
+        .systemInstruction as string;
+      expect(prompt).toContain('plan-upgrade');
+      expect(prompt).not.toContain('site-tutorial-demo-1');
+    });
+
+    it('kind:video с ключом демо обучающего лендинга выбрасывается без запроса к базе', async () => {
+      generateContentStream.mockResolvedValue(
+        fakeStream([
+          { text: 'Вот видео.' },
+          { text: '<<<actions>>>' },
+          {
+            text: '{"items":[{"kind":"video","subjectKey":"site-tutorial-demo-2"}]}',
+          },
+        ]),
+      );
+      const { svc, prisma } = build({
+        videoAsset: {
+          blobUrl: 'https://blob.example/demo.mp4',
+          title: 'Как оформить заказ',
+        },
+      });
+      const events = await drain(svc.streamChat(baseRequest, '1.2.3.4'));
+      const actionsEvent = events.find((e) => e.type === 'actions');
+      expect(actionsEvent?.items ?? []).toEqual([]);
+      expect(prisma.tutorialVideoAsset.findFirst).not.toHaveBeenCalled();
     });
 
     it('без одобренных видео раздел в промпт не добавляется', async () => {
@@ -350,6 +388,7 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
             blobUrl: { not: null },
             clientSiteDraftId: null,
             OR: [{ theme: null }, { theme: 'light' }],
+            NOT: { subjectKey: { startsWith: 'site-tutorial-demo-' } },
           },
         }),
       );

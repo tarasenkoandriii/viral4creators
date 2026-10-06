@@ -37,10 +37,13 @@
  * роликов тоже. Текст темы при этом отдаётся, как у любой темы справки:
  * лендинг по нему показывает честное «скоро».
  *
- * Маршрута, который ставит отметку, пока нет сознательно: сценарий
- * демонстрации ещё не согласован владельцем, и до решения публиковать
- * нечего. Минимальное расширение (админ-ручка рядом с `setReviewed`) —
- * в черновике сценариев, раздел «Как ролики попадут в семейство».
+ * Отметку ставит оператор галочкой «В демо обучающего лендинга» на
+ * вкладке «Видео-контент» (`PATCH /admin/tutorial-video-assets/:id/
+ * site-tutorial-demo`, `TutorialVideoAdminService.setSiteTutorialDemo`):
+ * только строке семейства, без `clientSiteDraftId`, вычитанной и
+ * собранной. Ролики семейства снимает сценарный путь раннера на
+ * витрине `/qa/demo-shop` (решение владельца 06.10.2026, путь А;
+ * `tutorial-runner/polygon-scenario.ts`).
  */
 
 /** Сколько слотов демо у обучающего лендинга. Владелец выбирает 2–3
@@ -55,6 +58,31 @@ export const SITE_TUTORIAL_DEMO_KEYS: readonly string[] = Array.from(
 export function isSiteTutorialDemoKey(subjectKey: string): boolean {
   return SITE_TUTORIAL_DEMO_KEYS.includes(subjectKey);
 }
+
+/**
+ * Префикс семейства — для ИСКЛЮЧЕНИЯ у чужих потребителей роликов
+ * (консультант главной, набор роликов лендинга-тенанта, сводки демо).
+ *
+ * Выдача и съёмка работают по точному списку (`isSiteTutorialDemoKey`),
+ * а исключение — по префиксу, и это разные стороны одной осторожности:
+ * пускать — только известное, не пускать — всё, что похоже. Строка
+ * `site-tutorial-demo-99` не выдаётся справкой и не должна всплыть у
+ * консультанта.
+ */
+export const SITE_TUTORIAL_DEMO_PREFIX = 'site-tutorial-demo-';
+
+export function isSiteTutorialDemoFamilyKey(subjectKey: string): boolean {
+  return (
+    typeof subjectKey === 'string' &&
+    subjectKey.startsWith(SITE_TUTORIAL_DEMO_PREFIX)
+  );
+}
+
+/** Условие Prisma «не семейство демо обучающего лендинга» — одно на
+ *  всех потребителей, чтобы префикс не расходился между запросами. */
+export const NOT_SITE_TUTORIAL_DEMO_WHERE = {
+  NOT: { subjectKey: { startsWith: SITE_TUTORIAL_DEMO_PREFIX } },
+} as const;
 
 /**
  * Ключи, которые публичная справка не выдаёт НИКОГДА — ни текстом, ни

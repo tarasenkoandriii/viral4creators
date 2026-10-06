@@ -24,6 +24,8 @@
  * новую.
  */
 
+import { isSiteTutorialDemoFamilyKey } from '../tutorial-help/site-tutorial-demo';
+
 export type AttentionSeverity = 'blocker' | 'decision' | 'info';
 export type AttentionOwner = 'operator' | 'owner' | 'system';
 
@@ -610,7 +612,12 @@ export function demoMatrixItems(
   now: Date,
 ): AttentionItem[] {
   const out: AttentionItem[] = [];
-  const catalog = cells.filter((c) => c.family !== 'other');
+  // Демо обучающего лендинга (`site-tutorial-demo-*`) — не обучалка
+  // продукта: ни пробелом темы, ни «нет ролика», ни «устарел» оно здесь
+  // не считается. Сводка демо и так отдаёт его отдельным списком; фильтр
+  // — на случай, если ячейка семейства однажды окажется в общей матрице.
+  const own = cells.filter((c) => !isSiteTutorialDemoFamilyKey(c.subjectKey));
+  const catalog = own.filter((c) => c.family !== 'other');
 
   const gaps: { label: string; since: Date }[] = [];
   for (const c of catalog) {
@@ -675,7 +682,7 @@ export function demoMatrixItems(
 
   const current = isRealBuild(opts.currentBuild) ? opts.currentBuild : null;
   const stale: { label: string; since: Date }[] = [];
-  for (const c of cells) {
+  for (const c of own) {
     if (!c.approved) continue;
     const captured =
       toDate(c.approved.capturedAt) ??

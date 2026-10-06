@@ -873,6 +873,14 @@ Telegram-логин, который их и породил.
      оператором в настройке `tutorial.siteTutorialDemoAssets`). Включать после
      деплоя backend с этим семейством и согласования сценариев
      (`doc/TUTORIAL-LANDING-DEMO-SCENARIO-DRAFT.md`). Заход 5, 06.10.2026.
+     Порядок включения (решение владельца 07.10.2026, путь А): backend
+     `LANDING_PUBLIC_URL` (https) и тестовая фикстура `FIXTURE_TELEGRAM_ID`
+     → админка «Сценарии демо» → «Засеять демо обучающего лендинга» (15
+     строк: 3 сценария × 5 языков; языки съёмки — настройка
+     `tutorial.scenarioLocales`) → прогоны `tutorial-scenario-run` (витрина
+     `/qa/demo-shop` идёт после TMA) → «Видео-контент»: одобрить ролики
+     `site-tutorial-demo-*` по темам и отметить «В демо обучающего лендинга»
+     → `SITE_TUTORIAL_DEMO_GALLERY=on`.
    - `SITE_URL` = `https://<домен-этого-проекта>.vercel.app` (или
      кастомный домен) — абсолютный адрес самого лендинга, нужен
      `sitemap.xml`/`sitemap-news.xml`/RSS (там `<loc>`/`<link>` обязаны

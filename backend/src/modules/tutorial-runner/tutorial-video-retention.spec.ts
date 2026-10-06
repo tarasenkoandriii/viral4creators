@@ -312,3 +312,26 @@ describe('пара — с темой (заход 3 «Актуального де
     ]);
   });
 });
+
+describe('отмеченные в демо обучающего лендинга — не удаляются никогда', () => {
+  it('отмеченная строка остаётся, даже если ни одной роли не заняла', () => {
+    const rows = [
+      asset({ id: 'new', reviewed: true }),
+      asset({ id: 'marked', reviewed: true }),
+      asset({ id: 'plain', reviewed: true }),
+    ];
+    expect(
+      selectSweepableAssets(rows, 0, new Set(), new Set(['marked'])).map(
+        (r) => r.id,
+      ),
+    ).toEqual(['plain']);
+  });
+
+  it('без отметки — прежнее правило', () => {
+    const rows = [
+      asset({ id: 'new', reviewed: true }),
+      asset({ id: 'marked', reviewed: true }),
+    ];
+    expect(doomed(rows)).toEqual(['marked']);
+  });
+});

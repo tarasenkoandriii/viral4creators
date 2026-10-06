@@ -27,6 +27,7 @@ import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { PublicationService } from '../publication/publication.service';
 import { PublishTutorialVideoDto } from '../publication/dto/publication.dto';
 import { SetTutorialVideoReviewedDto } from './dto/set-tutorial-video-reviewed.dto';
+import { SetTutorialVideoSiteTutorialDemoDto } from './dto/set-tutorial-video-site-tutorial-demo.dto';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { TutorialTempoRequestDto } from '../postprod/dto/tutorial-tempo.dto';
@@ -90,6 +91,22 @@ export class TutorialVideoAdminController {
     await this.adminPanel.assertOperator(req.userId);
     if (!id) throw new BadRequestException('id обязателен');
     return this.videoAdmin.setReviewed(id, dto.reviewed);
+  }
+
+  /**
+   * Галочка «В демо обучающего лендинга» (решение владельца 06.10.2026,
+   * путь А). Годность строки проверяет сервис — см.
+   * `TutorialVideoAdminService.setSiteTutorialDemo`.
+   */
+  @Patch(':id/site-tutorial-demo')
+  async siteTutorialDemo(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: SetTutorialVideoSiteTutorialDemoDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    if (!id) throw new BadRequestException('id обязателен');
+    return this.videoAdmin.setSiteTutorialDemo(id, dto.marked, req.userId);
   }
 
   /**

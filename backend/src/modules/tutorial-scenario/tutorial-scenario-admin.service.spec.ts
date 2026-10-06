@@ -474,3 +474,195 @@ describe('TutorialScenarioAdminService.approve', () => {
     });
   });
 });
+
+describe('TutorialScenarioAdminService.seedSiteTutorialDemo — засев демо обучающего лендинга', () => {
+  /** Таблица сценариев в памяти: `findUnique`/`upsert` по паре. */
+  function withTable() {
+    const table = new Map<string, Record<string, unknown>>();
+    const k = (w: {
+      subjectKey_locale: { subjectKey: string; locale: string };
+    }) => `${w.subjectKey_locale.subjectKey}/${w.subjectKey_locale.locale}`;
+    const prisma = {
+      tutorialScenario: {
+        findUnique: jest.fn(
+          async ({ where }: any) => table.get(k(where)) ?? null,
+        ),
+        upsert: jest.fn(async ({ where, create, update }: any) => {
+          const key = k(where);
+          const prev = table.get(key);
+          const next = prev ? { ...prev, ...update } : { id: key, ...create };
+          table.set(key, next);
+          return next;
+        }),
+      },
+    };
+    const blob = {
+      listByPrefix: jest.fn().mockResolvedValue({ blobs: [], cursor: null }),
+      deleteMany: jest.fn(),
+    };
+    const service = new TutorialScenarioAdminService(
+      prisma as any,
+      blob as any,
+    );
+    return { service, prisma, table };
+  }
+
+  const envBefore = process.env.LANDING_PUBLIC_URL;
+  afterEach(() => {
+    if (envBefore === undefined) delete process.env.LANDING_PUBLIC_URL;
+    else process.env.LANDING_PUBLIC_URL = envBefore;
+    jest.restoreAllMocks();
+  });
+
+  it('первый засев — 15 строк generatedBy: manual, бесплатных, без вычитки', async () => {
+    process.env.LANDING_PUBLIC_URL = 'https://landing.example/ru';
+    const { service, table } = withTable();
+
+    const res = await service.seedSiteTutorialDemo('op-1');
+
+    expect(res).toEqual(
+      expect.objectContaining({
+        total: 15,
+        created: 15,
+        updated: 0,
+        unchanged: 0,
+        polygonOrigin: 'https://landing.example',
+      }),
+    );
+    expect(table.size).toBe(15);
+    for (const row of table.values()) {
+      expect(row).toEqual(
+        expect.objectContaining({
+          generatedBy: 'manual',
+          costly: false,
+          approved: false,
+          narrationReviewedAt: null,
+        }),
+      );
+      expect(String(row.subjectKey)).toMatch(/^site-tutorial-demo-[123]$/);
+    }
+  });
+
+  it('повторный засев идемпотентен: ни одной записи, вычитка остаётся', async () => {
+    const { service, prisma, table } = withTable();
+    await service.seedSiteTutorialDemo('op-1');
+    // Оператор вычитал реплики одной пары после первого засева.
+    const pair = table.get('site-tutorial-demo-1/ru') as Record<
+      string,
+      unknown
+    >;
+    pair.narrationReviewedAt = new Date('2026-10-06T10:00:00Z');
+    prisma.tutorialScenario.upsert.mockClear();
+
+    const res = await service.seedSiteTutorialDemo('op-1');
+
+    expect(res).toEqual(
+      expect.objectContaining({ created: 0, updated: 0, unchanged: 15 }),
+    );
+    expect(prisma.tutorialScenario.upsert).not.toHaveBeenCalled();
+    expect(table.get('site-tutorial-demo-1/ru')?.narrationReviewedAt).toEqual(
+      new Date('2026-10-06T10:00:00Z'),
+    );
+  });
+
+  it('строка, правленная после засева, переписывается сидом и теряет вычитку и одобрение', async () => {
+    const { service, table } = withTable();
+    await service.seedSiteTutorialDemo('op-1');
+    const pair = table.get('site-tutorial-demo-2/en') as Record<
+      string,
+      unknown
+    >;
+    pair.steps = [{ kind: 'goto', route: 'qa-demo-shop' }];
+    pair.narrationReviewedAt = new Date();
+    pair.lastRunStatus = 'ok';
+
+    const res = await service.seedSiteTutorialDemo('op-1');
+
+    expect(res.updated).toBe(1);
+    expect(res.unchanged).toBe(14);
+    expect(table.get('site-tutorial-demo-2/en')).toEqual(
+      expect.objectContaining({
+        narrationReviewedAt: null,
+        lastRunStatus: null,
+        generatedBy: 'manual',
+      }),
+    );
+  });
+
+  it('строка, которую писал генератор, переписывается (ручной договор)', async () => {
+    const { service, table } = withTable();
+    await service.seedSiteTutorialDemo('op-1');
+    (
+      table.get('site-tutorial-demo-3/de') as Record<string, unknown>
+    ).generatedBy = 'ai';
+    const res = await service.seedSiteTutorialDemo('op-1');
+    expect(res.updated).toBe(1);
+    expect(table.get('site-tutorial-demo-3/de')?.generatedBy).toBe('manual');
+  });
+
+  it('одна негодная пара — отказ всему сиду до первой записи', async () => {
+    const seedModule = jest.requireActual(
+      '../tutorial-runner/site-tutorial-demo-seed',
+    );
+    const good = seedModule.siteTutorialDemoSeed();
+    jest.spyOn(seedModule, 'siteTutorialDemoSeed').mockReturnValue([
+      ...good.slice(0, 3),
+      {
+        ...good[3],
+        steps: [
+          { kind: 'goto', route: 'qa-demo-shop' },
+          { kind: 'click', selector: '[data-qa="reference-card"]' },
+        ],
+      },
+    ]);
+    const { service, prisma } = withTable();
+
+    await expect(service.seedSiteTutorialDemo('op-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(prisma.tutorialScenario.upsert).not.toHaveBeenCalled();
+  });
+
+  it('без https LANDING_PUBLIC_URL строки засеваются, но ответ предупреждает', async () => {
+    process.env.LANDING_PUBLIC_URL = 'http://landing.example';
+    const { service } = withTable();
+    const res = await service.seedSiteTutorialDemo('op-1');
+    expect(res.created).toBe(15);
+    expect(res.polygonOrigin).toBeNull();
+  });
+});
+
+describe('TutorialScenarioAdminService.replaceSteps — строка семейства демо', () => {
+  it('правка шагов витрины проверяется каталогом витрины, а не TMA', async () => {
+    const { service, prisma } = build();
+    prisma.tutorialScenario.findUnique.mockResolvedValue({
+      id: 'ts-d',
+      subjectKey: 'site-tutorial-demo-1',
+      locale: 'ru',
+    });
+    prisma.tutorialScenario.update.mockImplementation(
+      async ({ data }: any) => data,
+    );
+
+    await expect(
+      service.replaceSteps(
+        'ts-d',
+        [
+          { kind: 'goto', route: 'qa-demo-shop' },
+          { kind: 'click', selector: '[data-qa="reference-card"]' },
+        ],
+        'op-1',
+      ),
+    ).rejects.toThrow(/каталога витрины/);
+
+    const ok = await service.replaceSteps(
+      'ts-d',
+      [
+        { kind: 'goto', route: 'qa-demo-shop' },
+        { kind: 'click', selector: '[data-qa="demo-shop-nav-delivery"]' },
+      ],
+      'op-1',
+    );
+    expect(ok.generatedBy).toBe('manual');
+  });
+});

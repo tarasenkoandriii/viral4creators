@@ -14,7 +14,9 @@ import { NotFoundException } from '@nestjs/common';
 import { TutorialHelpService } from './tutorial-help.service';
 import {
   CLOSED_HELP_SUBJECT_KEYS,
+  isSiteTutorialDemoFamilyKey,
   isSiteTutorialDemoKey,
+  NOT_SITE_TUTORIAL_DEMO_WHERE,
   parseSiteTutorialDemoAssetIds,
   SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
   SITE_TUTORIAL_DEMO_KEYS,
@@ -423,5 +425,25 @@ describe('TutorialHelpService — семейство site-tutorial-demo', () => 
       brokenWhere: true,
     });
     expect((await service.get(KEY, 'ru')).videoUrl).toBeNull();
+  });
+});
+
+describe('исключение семейства у чужих потребителей — по префиксу', () => {
+  it.each([
+    ['site-tutorial-demo-1', true],
+    ['site-tutorial-demo-99', true],
+    ['site-tutorial-demo-', true],
+    ['1', false],
+    ['client-site', false],
+    ['greeting-brief', false],
+    ['xsite-tutorial-demo-1', false],
+  ])('%s → %s', (key, expected) => {
+    expect(isSiteTutorialDemoFamilyKey(key)).toBe(expected);
+  });
+
+  it('условие Prisma — тот же префикс', () => {
+    expect(NOT_SITE_TUTORIAL_DEMO_WHERE).toEqual({
+      NOT: { subjectKey: { startsWith: 'site-tutorial-demo-' } },
+    });
   });
 });

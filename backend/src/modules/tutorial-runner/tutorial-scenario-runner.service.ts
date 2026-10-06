@@ -237,6 +237,21 @@ import {
   THEME_RUNS_SETTING_KEY,
   ThemeRuns,
 } from './tutorial-theme-rotation';
+import {
+  isSiteTutorialDemoFamilyKey,
+  isSiteTutorialDemoKey,
+  parseSiteTutorialDemoAssetIds,
+  SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
+  SITE_TUTORIAL_DEMO_KEYS,
+  SITE_TUTORIAL_DEMO_PREFIX,
+} from '../tutorial-help/site-tutorial-demo';
+import {
+  polygonOrigin,
+  resolvePolygonRoute,
+  validatePolygonScenarioSteps,
+  withPolygonReadyWait,
+} from './polygon-scenario';
+import { siteTutorialDemoTitle } from './site-tutorial-demo-seed';
 
 /** Сколько сценариев БЕРЁМ из базы за один тик — 30. Это верхняя граница
  * выборки, а не пропускная способность: на деле за тик успевает около
@@ -482,6 +497,11 @@ const ASSET_DELETE_LIMIT = 100;
  * ключ воркфлоу, §4.4 ТЗ) — сам ключ, раз человекочитаемого заголовка
  * взять неоткуда. */
 function resolveTutorialVideoTitle(subjectKey: string, locale: string): string {
+  // Демо обучающего лендинга — заголовок сценария из сида («Как найти
+  // условия доставки»), а не ключ слота.
+  if (isSiteTutorialDemoKey(subjectKey)) {
+    return siteTutorialDemoTitle(subjectKey, locale);
+  }
   return tutorialStepFor(subjectKey, locale)?.title ?? subjectKey;
 }
 
@@ -531,6 +551,26 @@ export interface TutorialScenarioRunOutcome {
   /** Кадры сняты НЕ в той теме — ролик не собирается: тёмный ролик со
    *  светлыми кадрами хуже, чем никакого. Шаги при этом прошли. */
   themeMismatch?: true;
+  /** Прогон прошёл, а ролик не собирался: владельца расхода нет
+   *  (демо витрины без тестовой фикстуры — см. `polygonSpendOwner`). */
+  assemblySkipped?: 'no-spend-owner';
+}
+
+/**
+ * Сводка прохода демо обучающего лендинга (витрина `/qa/demo-shop`) —
+ * отдельным полем, потому что этот проход идёт и тогда, когда проход TMA
+ * пропущен (фикстура не настроена): `skipped` в результате тогда про TMA,
+ * а не про витрину.
+ */
+export interface PolygonPassSummary {
+  /** Origin полигона, против которого шла съёмка. */
+  origin: string;
+  total: number;
+  executed: number;
+  passed: number;
+  failed: number;
+  /** Прошли, но ролик не собирался — нет владельца расхода. */
+  assemblyWithoutOwner: number;
 }
 
 export interface TutorialScenarioRunResult {
@@ -572,6 +612,9 @@ export interface TutorialScenarioRunResult {
    *  (см. `themeMismatch`). Необязательное — его нет у пропусков. */
   themeMismatches?: number;
   outcomes: TutorialScenarioRunOutcome[];
+  /** Проход демо обучающего лендинга этого тика; нет поля — его не было
+   *  (полигон не настроен, строк семейства нет или снимать нечего). */
+  polygon?: PolygonPassSummary;
 }
 
 /**
@@ -1309,6 +1352,35 @@ export class TutorialScenarioRunnerService {
       );
     }
 
+    const tma = await this.runTmaScenarios(tickStartedAt);
+
+    // Демо обучающего лендинга (путь А, решение владельца 06.10.2026) —
+    // ПОСЛЕ сценариев TMA и в остаток того же бюджета: демо витрины не
+    // должно отнимать тик у демо продукта (черновик, раздел 4.1 п. 6).
+    // От фикстуры TMA проход не зависит и идёт, даже если проход TMA
+    // пропущен. Свой `catch`: сбой витрины не должен перекрасить уже
+    // записанный результат TMA.
+    let polygon: PolygonPass | null = null;
+    try {
+      polygon = await this.runPolygonScenarios(tickStartedAt);
+    } catch (err) {
+      this.logger.warn(
+        `демо обучающего лендинга: проход витрины не удался — ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    return polygon ? mergePolygonPass(tma, polygon) : tma;
+  }
+
+  /**
+   * Сценарии TMA: фикстурный вход, пересев, тема «как в Telegram». Строки
+   * семейства демо обучающего лендинга сюда не попадают — у них свой
+   * проход (`runPolygonScenarios`) без всей этой обвязки.
+   */
+  private async runTmaScenarios(
+    tickStartedAt: number,
+  ): Promise<TutorialScenarioRunResult> {
     const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
     const token = process.env.FIXTURE_USER_TOKEN?.trim();
     const tmaBaseUrl = process.env.TMA_PUBLIC_URL?.trim();
@@ -1408,9 +1480,13 @@ export class TutorialScenarioRunnerService {
     const locales = parseTutorialLocales(
       await this.settings.get(TUTORIAL_LOCALES_SETTING_KEY),
     );
-    const rows = await this.prisma.tutorialScenario.findMany({
+    const allRows = (await this.prisma.tutorialScenario.findMany({
       where: {
         locale: { in: locales },
+        // Семейство демо обучающего лендинга — не сюда: его маршруты не
+        // резолвятся в TMA, и прогон здесь только красил бы строки
+        // провалом. По префиксу — и в запросе, и ещё раз в коде ниже.
+        NOT: { subjectKey: { startsWith: SITE_TUTORIAL_DEMO_PREFIX } },
         // Правило «прошедший на тех же шагах — не чаще
         // `OK_RERUN_INTERVAL_MS`» с захода 3 решается не здесь, а в
         // `planThemedRuns` — ПО ТЕМЕ: колонка `lastRunAt` у строки одна,
@@ -1430,7 +1506,10 @@ export class TutorialScenarioRunnerService {
         { createdAt: 'asc' },
       ],
       take: SCENARIO_SCAN_LIMIT,
-    });
+    })) as ScenarioRunRow[];
+    const rows = allRows.filter(
+      (r) => !isSiteTutorialDemoFamilyKey(r.subjectKey),
+    );
     // По-темные отметки прогонов. Сбой чтения — пустая карта: все тёмные
     // темы выглядят неснятыми и встают первыми, светлые читаются из
     // колонок строки. Лишний прогон — безопасная сторона.
@@ -1665,6 +1744,361 @@ export class TutorialScenarioRunnerService {
       themeMismatches: outcomes.filter((o) => o.themeMismatch).length,
       outcomes,
     };
+  }
+
+  /**
+   * Проход демо обучающего лендинга — сценарии семейства
+   * `site-tutorial-demo-*` на витрине `/qa/demo-shop` (путь А, решение
+   * владельца 06.10.2026; правила маршрутов и шагов —
+   * `polygon-scenario.ts`).
+   *
+   * ## Чего здесь нет — и почему
+   *
+   * Ни фикстурного входа, ни `initData`, ни пересева, ни Telegram
+   * `themeParams`: витрина — обычная страница лендинга без пользователя.
+   * Поэтому нет и проверки `isTestUser` — некого проверять. Тема — только
+   * `prefers-color-scheme` (витрина красится CSS-переменными по системной
+   * теме), и замер после прогона — тот же медиазапрос на странице.
+   *
+   * ## Что то же самое
+   *
+   * Вьюпорт и плотность (390×844 @2), бюджет сценария (90 с), чередование
+   * тем и их отметки, отпечаток сборки, счёт провалов, озвучка, подписи,
+   * подметальщик — всё общее с TMA: ролик семейства — обычная строка
+   * `TutorialVideoAsset` той же пары (ключ, локаль, тема).
+   *
+   * ## Деньги
+   *
+   * Синтез и сборка пишутся в расход на владельца — тестовую фикстуру,
+   * если `FIXTURE_TELEGRAM_ID` указывает на `isTestUser` (только чтение,
+   * без пересева и оферты). Нет её — прогон всё равно идёт (regression
+   * витрины), но платного не начинается: строка расхода без владельца
+   * выбрала бы общий суточный потолок анонимных посетителей лендинга.
+   *
+   * `null` — проходить нечего: полигон не настроен (`LANDING_PUBLIC_URL`
+   * не https), строк семейства нет, все темы свежие, бюджет выбран.
+   */
+  private async runPolygonScenarios(
+    tickStartedAt: number,
+  ): Promise<PolygonPass | null> {
+    const origin = polygonOrigin();
+    if (!origin) return null;
+    const locales = parseTutorialLocales(
+      await this.settings.get(TUTORIAL_LOCALES_SETTING_KEY),
+    );
+    const found = (await this.prisma.tutorialScenario.findMany({
+      where: {
+        locale: { in: locales },
+        // Точный список слотов, а не префикс: снимаем только то, что
+        // справка умеет выдать.
+        subjectKey: { in: [...SITE_TUTORIAL_DEMO_KEYS] },
+        AND: [{ OR: [{ costly: false }, { approved: true }] }],
+      },
+      orderBy: [
+        { lastRunAt: { sort: 'asc', nulls: 'first' } },
+        { createdAt: 'asc' },
+      ],
+      take: SCENARIO_SCAN_LIMIT,
+    })) as ScenarioRunRow[];
+    // Ещё раз в коде: строка чужой темы не должна поехать на витрину
+    // даже при сбое `where`.
+    const rows = found.filter((r) => isSiteTutorialDemoKey(r.subjectKey));
+    if (rows.length === 0) return null;
+    const themeRuns = parseThemeRuns(
+      await this.settings.get(THEME_RUNS_SETTING_KEY).catch(() => null),
+    );
+    const planned = planThemedRuns(
+      rows,
+      themeRuns,
+      Date.now(),
+      OK_RERUN_INTERVAL_MS,
+      RUN_BATCH_LIMIT,
+    );
+    if (planned.length === 0) return null;
+    const deadline = tickStartedAt + RUN_DEADLINE_MS;
+    if (Date.now() >= deadline) {
+      this.logger.warn(
+        `демо обучающего лендинга: бюджет тика выбран сценариями TMA — ${planned.length} прогонов витрины отложено до следующего тика`,
+      );
+      return null;
+    }
+    const budget = await this.openBudget();
+    if (budgetExhausted(budget)) {
+      this.logger.warn(
+        'демо обучающего лендинга: суточный потолок расхода обучалки выбран — проход витрины отложен до завтра',
+      );
+      return null;
+    }
+    const ownerId = await this.polygonSpendOwner();
+
+    const summary: PolygonPassSummary = {
+      origin,
+      total: planned.length,
+      executed: 0,
+      passed: 0,
+      failed: 0,
+      assemblyWithoutOwner: 0,
+    };
+    const scenarios = planned.map((p) => p.scenario);
+    const launched = await launchHeadlessBrowser();
+    if ('error' in launched) {
+      this.logger.warn(
+        `демо обучающего лендинга: headless-браузер недоступен: ${launched.error}`,
+      );
+      await this.recordInfraFailure(scenarios, launched.error);
+      for (const p of planned) {
+        recordThemeRun(themeRuns, p.scenario, p.theme, {
+          at: new Date().toISOString(),
+          status: 'failed',
+          error: launched.error,
+          stepsSha: p.stepsSha,
+        });
+      }
+      await this.saveThemeRuns(themeRuns);
+      await this.notify.alert(
+        'tutorial-scenario-run:polygon-browser',
+        `Демо обучающего лендинга: браузер не запустился. ${launched.error}`,
+      );
+      summary.failed = planned.length;
+      return {
+        summary,
+        result: {
+          ...this.emptyRunResult(),
+          total: planned.length,
+          failed: planned.length,
+          outcomes: planned.map(({ scenario: s, theme }) => ({
+            id: s.id,
+            subjectKey: s.subjectKey,
+            locale: s.locale,
+            theme,
+            ok: false,
+            error: launched.error,
+          })),
+        },
+      };
+    }
+
+    const { browser } = launched;
+    const outcomes: TutorialScenarioRunOutcome[] = [];
+    const failures: string[] = [];
+    try {
+      for (const { scenario, theme, lastError, stepsSha } of planned) {
+        if (Date.now() >= deadline) {
+          this.logger.warn(
+            `демо обучающего лендинга: тик исчерпал бюджет — ${planned.length - outcomes.length} прогонов витрины отложено`,
+          );
+          break;
+        }
+        const outcome = await this.runPolygonOne(
+          browser,
+          { ...scenario, lastRunError: lastError },
+          origin,
+          ownerId,
+          budget,
+          theme,
+        );
+        outcomes.push(outcome);
+        recordThemeRun(themeRuns, scenario, theme, {
+          at: new Date().toISOString(),
+          status: outcome.ok ? 'ok' : 'failed',
+          error: outcome.error ?? null,
+          stepsSha,
+        });
+        await this.saveThemeRuns(themeRuns);
+        if (!outcome.ok) {
+          failures.push(`${scenario.subjectKey}/${scenario.locale}/${theme}`);
+          if (failures.length <= ALERT_DETAIL_LIMIT && !outcome.repeatFailure) {
+            await this.notify.alert(
+              `tutorial-scenario-run:${scenario.subjectKey}:${scenario.locale}:${theme}`,
+              `Демо обучающего лендинга «${scenario.subjectKey}» (${scenario.locale}, тема ${theme}) провалилось на витрине: ${outcome.error}`,
+            );
+          }
+        }
+      }
+    } finally {
+      await browser.close().catch(() => undefined);
+    }
+
+    summary.executed = outcomes.length;
+    summary.passed = outcomes.filter((o) => o.ok).length;
+    summary.failed = outcomes.filter((o) => !o.ok).length;
+    summary.assemblyWithoutOwner = outcomes.filter(
+      (o) => o.assemblySkipped === 'no-spend-owner',
+    ).length;
+    return {
+      summary,
+      result: {
+        ...this.emptyRunResult(),
+        total: planned.length,
+        executed: outcomes.length,
+        passed: summary.passed,
+        failed: summary.failed,
+        narrationFallbacks: outcomes.filter((o) => o.narrationFallback).length,
+        framesMissed: outcomes.reduce((n, o) => n + (o.framesMissed ?? 0), 0),
+        withoutFrames: outcomes.filter((o) => o.noFrames).length,
+        lostRaces: outcomes.filter((o) => o.lostRace).length,
+        repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
+        assemblyTimeouts: outcomes.filter((o) => o.assemblyTimedOut).length,
+        themeMismatches: outcomes.filter((o) => o.themeMismatch).length,
+        outcomes,
+      },
+    };
+  }
+
+  /** Нулевой результат прогона — основа для прохода витрины. */
+  private emptyRunResult(): TutorialScenarioRunResult {
+    return {
+      total: 0,
+      passed: 0,
+      failed: 0,
+      paidClicksSkipped: 0,
+      narrationFallbacks: 0,
+      framesMissed: 0,
+      withoutFrames: 0,
+      lostRaces: 0,
+      assemblyTimeouts: 0,
+      repeatFailures: 0,
+      outcomes: [],
+    };
+  }
+
+  /**
+   * Владелец расхода прохода витрины — тестовая фикстура, если она есть.
+   * Только ЧТЕНИЕ: ни пересева, ни оферты, ни проверки состояния
+   * фикстуры для съёмки — витрине она не нужна, она нужна журналу
+   * расходов. Не тестовый аккаунт или его нет — `null`, и ролики витрины
+   * не собираются (см. `runPolygonScenarios`).
+   */
+  private async polygonSpendOwner(): Promise<string | null> {
+    const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
+    if (!telegramId) return null;
+    try {
+      const user = (await this.prisma.user.findUnique({
+        where: { telegramId },
+      })) as { id: string; isTestUser?: boolean } | null;
+      return user?.isTestUser ? user.id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Один прогон сценария витрины в одной теме. Никогда не бросает. */
+  private async runPolygonOne(
+    browser: import('puppeteer-core').Browser,
+    scenario: {
+      id: string;
+      subjectKey: string;
+      locale: string;
+      steps: unknown;
+      narrationReviewedAt?: Date | null;
+      lastRunError?: string | null;
+    },
+    origin: string,
+    ownerId: string | null,
+    budget: TutorialBudget,
+    theme: ScenarioTheme,
+  ): Promise<TutorialScenarioRunOutcome> {
+    let page: import('puppeteer-core').Page | undefined;
+    try {
+      // Шаги — ещё раз через правила витрины, теперь перед браузером:
+      // строку могли поправить в базе мимо сида и ручной правки, а
+      // исполняется она здесь каждую ночь.
+      const checked = validatePolygonScenarioSteps(
+        scenario.steps,
+        scenario.subjectKey,
+      );
+      if (!checked.ok) {
+        throw new Error(
+          `шаги не проходят правила витрины: ${checked.reason ?? 'не разобрались'}`,
+        );
+      }
+      page = await browser.newPage();
+      // Тот же телефонный кадр, что у роликов TMA: формат ролика один.
+      await page.setViewport({
+        ...CAPTURE_VIEWPORT,
+        deviceScaleFactor: CAPTURE_DEVICE_SCALE_FACTOR,
+      });
+      // Тема — только системная (`prefers-color-scheme`): у витрины нет
+      // ни SDK Telegram, ни явного выбора темы.
+      const emulateMedia = (
+        page as unknown as {
+          emulateMediaFeatures?: (
+            f: { name: string; value: string }[],
+          ) => Promise<void>;
+        }
+      ).emulateMediaFeatures;
+      if (typeof emulateMedia === 'function') {
+        await emulateMedia.call(page, [
+          { name: 'prefers-color-scheme', value: theme },
+        ]);
+      }
+      const result = await withTimeout(
+        runScenario(
+          withPolygonReadyWait(page as unknown as ScenarioPage),
+          checked.steps,
+          (routeName: string) =>
+            resolvePolygonRoute(routeName, origin, scenario.locale),
+          undefined,
+          true,
+        ),
+        SCENARIO_TIMEOUT_MS,
+        `сценарий не уложился в ${Math.round(SCENARIO_TIMEOUT_MS / 1000)}с`,
+      );
+      // Версия витрины — если лендинг кладёт `<meta name="app-build">`;
+      // с приставкой, чтобы её нельзя было спутать с версией TMA в
+      // сводках «устаревших» роликов.
+      const build = await readCaptureBuild(page);
+      const capture = {
+        capturedAt: new Date(),
+        captureBuild: build
+          ? `landing:${build}`.slice(0, CAPTURE_BUILD_MAX_LENGTH)
+          : null,
+      };
+      const themeVia = polygonThemeVia(
+        theme,
+        await readPolygonColorScheme(page),
+      );
+      // Страница ушла с полигона (ссылка на витрине, редирект) — кадры
+      // сняты не с нашего сайта, ролика быть не должно.
+      const landed = pageOrigin(page);
+      const forcedError =
+        result.ok && landed !== null && landed !== origin
+          ? `страница ушла с полигона на ${landed} — кадры не с нашего сайта, ролик не собирается`
+          : undefined;
+      return await this.finishScenarioRun(scenario, result, {
+        capture,
+        themeVia,
+        theme,
+        budget,
+        userId: ownerId,
+        forcedError,
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      await this.prisma.tutorialScenario
+        .update({
+          where: { id: scenario.id },
+          data: {
+            lastRunAt: new Date(),
+            lastRunStatus: 'failed',
+            lastRunError: error,
+          },
+        })
+        .catch(() => undefined);
+      return {
+        id: scenario.id,
+        subjectKey: scenario.subjectKey,
+        locale: scenario.locale,
+        theme,
+        ok: false,
+        error,
+        ...(clipRunError(error) === clipRunError(scenario.lastRunError)
+          ? { repeatFailure: true as const }
+          : {}),
+      };
+    } finally {
+      await page?.close().catch(() => undefined);
+    }
   }
 
   /** Записать карту по-темных отметок. Не бросает: без записи худшее —
@@ -1948,118 +2382,13 @@ export class TutorialScenarioRunnerService {
       // странице. `null` — замерить не удалось: решения нет, ролик
       // собирается как прежде (замер — страховка, не условие).
       const themeVia = captureThemeVia(theme, await readCaptureTheme(page));
-      if (themeVia === 'mismatch') {
-        this.logger.warn(
-          `сценарий ${scenario.subjectKey} (${scenario.locale}): заказана тема ${theme}, а страница нарисована другой — ролик не собирается`,
-        );
-      }
-
-      // Кадр не снялся — прогон прошёл, а ролик будет короче
-      // сценария. В журнал поимённо: это единственный след частичного
-      // успеха, и до сквозного аудита 29.09.2026 его не было вовсе.
-      for (const miss of result.skippedFrames) {
-        this.logger.warn(
-          `сценарий ${scenario.subjectKey} (${scenario.locale}): кадр шага ${miss.stepIndex + 1} не снялся (${miss.error}) — в ролике его не будет`,
-        );
-      }
-
-      const failedStep = result.steps.find((s) => !s.ok);
-      const error = failedStep
-        ? `шаг ${failedStep.index + 1} (${failedStep.step.kind}): ${failedStep.error}`
-        : undefined;
-
-      await this.prisma.tutorialScenario.update({
-        where: { id: scenario.id },
-        data: {
-          lastRunAt: new Date(),
-          lastRunStatus: result.ok ? 'ok' : 'failed',
-          lastRunError: error ?? null,
-        },
-      });
-
-      // Видео — необязательный побочный продукт успешного прогона
-      // (см. доккомментарий модуля): best-effort, никогда не бросает и
-      // не меняет уже записанный regression-результат выше.
-      const assemblyNotes: {
-        narrationFallback?: true;
-        noFrames?: true;
-        lostRace?: true;
-        assemblyTimedOut?: true;
-      } = {};
-      if (result.ok && themeVia !== 'mismatch') {
-        // Дедлайн — снаружи метода, а не внутри: обрывать надо всю
-        // отправку целиком, а не каждый её вызов по отдельности.
-        // Десять заливок по пять секунд укладываются в любой
-        // повызовный таймаут и всё равно уводят тик за потолок.
-        //
-        // `catch` обязателен и не является проглатыванием ошибки:
-        // метод объявлен best-effort и сам не бросает, а брошенное
-        // ЗДЕСЬ — это только наш собственный таймаут. Дать ему уйти
-        // выше значило бы перекрасить уже записанный успешный
-        // regression-результат в провал из-за необязательного
-        // побочного продукта.
-        //
-        // И сигнал отмены ВНУТРЬ (аудит кронов 06.10.2026): `withTimeout`
-        // только перестаёт ждать, а сама отправка продолжалась в фоне —
-        // синтез, заливки и ОПЛАЧЕННЫЙ `ffmpeg.submit` уже после того,
-        // как тик объявил «ролика не будет». Теперь метод проверяет
-        // сигнал перед каждой заливкой, синтезом и submit и по отмене
-        // закрывает строку `failed` с инфраструктурной причиной, не
-        // отправляя задачу. Уже начатый вызов сигнал не прерывает — он
-        // доходит, и следующий шаг не начинается.
-        const abort = new AbortController();
-        await withTimeout(
-          this.submitVideoAssembly(
-            scenario,
-            result.frames,
-            budget,
-            userId,
-            assemblyNotes,
-            capture,
-            abort.signal,
-            theme,
-          ),
-          ASSEMBLY_SUBMIT_TIMEOUT_MS,
-          `сборка не уложилась в ${Math.round(ASSEMBLY_SUBMIT_TIMEOUT_MS / 1000)}с`,
-        ).catch((e: unknown) => {
-          abort.abort();
-          assemblyNotes.assemblyTimedOut = true;
-          this.logger.warn(
-            `сценарий ${scenario.subjectKey} (${scenario.locale}): отправка сборки оборвана по времени (${e instanceof Error ? e.message : String(e)}) — прогон засчитан, ролика не будет`,
-          );
-        });
-      }
-
-      return {
-        id: scenario.id,
-        subjectKey: scenario.subjectKey,
-        locale: scenario.locale,
+      return await this.finishScenarioRun(scenario, result, {
+        capture,
+        themeVia,
         theme,
-        ok: result.ok,
-        error,
-        ...(themeVia && themeVia !== 'mismatch' ? { themeVia } : {}),
-        ...(themeVia === 'mismatch' ? { themeMismatch: true as const } : {}),
-        ...(result.skippedPaidClicks.length > 0
-          ? { paidClicksSkipped: result.skippedPaidClicks.length }
-          : {}),
-        ...(assemblyNotes.narrationFallback
-          ? { narrationFallback: true as const }
-          : {}),
-        ...(result.skippedFrames.length > 0
-          ? { framesMissed: result.skippedFrames.length }
-          : {}),
-        ...(assemblyNotes.noFrames ? { noFrames: true as const } : {}),
-        ...(assemblyNotes.lostRace ? { lostRace: true as const } : {}),
-        ...(assemblyNotes.assemblyTimedOut
-          ? { assemblyTimedOut: true as const }
-          : {}),
-        // Та же причина, что в прошлую ночь — значит поломка
-        // известная, и поимённая тревога о ней уже была. Сличение —
-        // обрезанных текстов: в карте тем ошибка хранится обрезанной.
-        ...(error && clipRunError(error) === clipRunError(scenario.lastRunError)
-          ? { repeatFailure: true as const }
-          : {}),
-      };
+        budget,
+        userId,
+      });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       await this.prisma.tutorialScenario
@@ -2083,6 +2412,168 @@ export class TutorialScenarioRunnerService {
     } finally {
       await page?.close().catch(() => undefined);
     }
+  }
+
+  /**
+   * Всё, что происходит ПОСЛЕ шагов сценария: журнал пропавших кадров,
+   * запись regression-результата в строку, сборка ролика и исход для
+   * журнала крона. Общее у TMA (`runOne`) и витрины демо обучающего
+   * лендинга (`runPolygonOne`) — два пути съёмки, одна сборка: тот же
+   * отпечаток, озвучка, подписи и счёт провалов по паре с темой.
+   *
+   * Бросает только то, что бросает запись в базу, — вызывающий ловит
+   * это своим `catch` и пишет провал прогона.
+   */
+  private async finishScenarioRun(
+    scenario: {
+      id: string;
+      subjectKey: string;
+      locale: string;
+      steps: unknown;
+      narrationReviewedAt?: Date | null;
+      lastRunError?: string | null;
+    },
+    result: Awaited<ReturnType<typeof runScenario>>,
+    opts: {
+      capture: { capturedAt: Date; captureBuild: string | null };
+      themeVia: CaptureThemeVia | null;
+      theme: ScenarioTheme;
+      budget: TutorialBudget;
+      /** Владелец расхода; `null` — ролик не собирается (см. выше). */
+      userId: string | null;
+      /** Провал, найденный после шагов (страница ушла с полигона). */
+      forcedError?: string;
+    },
+  ): Promise<TutorialScenarioRunOutcome> {
+    const { capture, themeVia, theme, budget, userId } = opts;
+    if (themeVia === 'mismatch') {
+      this.logger.warn(
+        `сценарий ${scenario.subjectKey} (${scenario.locale}): заказана тема ${theme}, а страница нарисована другой — ролик не собирается`,
+      );
+    }
+
+    // Кадр не снялся — прогон прошёл, а ролик будет короче
+    // сценария. В журнал поимённо: это единственный след частичного
+    // успеха, и до сквозного аудита 29.09.2026 его не было вовсе.
+    for (const miss of result.skippedFrames) {
+      this.logger.warn(
+        `сценарий ${scenario.subjectKey} (${scenario.locale}): кадр шага ${miss.stepIndex + 1} не снялся (${miss.error}) — в ролике его не будет`,
+      );
+    }
+
+    const failedStep = result.steps.find((s) => !s.ok);
+    // Провал, найденный ПОСЛЕ шагов (страница ушла с полигона), важнее
+    // зелёных шагов: кадры такого прогона снимали не наш сайт.
+    const error =
+      opts.forcedError ??
+      (failedStep
+        ? `шаг ${failedStep.index + 1} (${failedStep.step.kind}): ${failedStep.error}`
+        : undefined);
+    const ok = result.ok && !opts.forcedError;
+
+    await this.prisma.tutorialScenario.update({
+      where: { id: scenario.id },
+      data: {
+        lastRunAt: new Date(),
+        lastRunStatus: ok ? 'ok' : 'failed',
+        lastRunError: error ?? null,
+      },
+    });
+
+    // Видео — необязательный побочный продукт успешного прогона
+    // (см. доккомментарий модуля): best-effort, никогда не бросает и
+    // не меняет уже записанный regression-результат выше.
+    const assemblyNotes: {
+      narrationFallback?: true;
+      noFrames?: true;
+      lostRace?: true;
+      assemblyTimedOut?: true;
+    } = {};
+    // Владельца расхода нет (демо витрины без тестовой фикстуры, см.
+    // `polygonSpendOwner`) — платного не начинаем вовсе: строка расхода
+    // без владельца выбрала бы общий потолок анонимных посетителей.
+    // Regression-результат при этом записан выше.
+    const noSpendOwner = ok && themeVia !== 'mismatch' && userId === null;
+    if (noSpendOwner) {
+      this.logger.warn(
+        `сценарий ${scenario.subjectKey} (${scenario.locale}, ${theme}): прошёл, но владельца расхода нет (FIXTURE_TELEGRAM_ID не указывает на тестовый аккаунт) — ролик не собирается`,
+      );
+    }
+    if (ok && themeVia !== 'mismatch' && userId !== null) {
+      // Дедлайн — снаружи метода, а не внутри: обрывать надо всю
+      // отправку целиком, а не каждый её вызов по отдельности.
+      // Десять заливок по пять секунд укладываются в любой
+      // повызовный таймаут и всё равно уводят тик за потолок.
+      //
+      // `catch` обязателен и не является проглатыванием ошибки:
+      // метод объявлен best-effort и сам не бросает, а брошенное
+      // ЗДЕСЬ — это только наш собственный таймаут. Дать ему уйти
+      // выше значило бы перекрасить уже записанный успешный
+      // regression-результат в провал из-за необязательного
+      // побочного продукта.
+      //
+      // И сигнал отмены ВНУТРЬ (аудит кронов 06.10.2026): `withTimeout`
+      // только перестаёт ждать, а сама отправка продолжалась в фоне —
+      // синтез, заливки и ОПЛАЧЕННЫЙ `ffmpeg.submit` уже после того,
+      // как тик объявил «ролика не будет». Теперь метод проверяет
+      // сигнал перед каждой заливкой, синтезом и submit и по отмене
+      // закрывает строку `failed` с инфраструктурной причиной, не
+      // отправляя задачу. Уже начатый вызов сигнал не прерывает — он
+      // доходит, и следующий шаг не начинается.
+      const abort = new AbortController();
+      await withTimeout(
+        this.submitVideoAssembly(
+          scenario,
+          result.frames,
+          budget,
+          userId,
+          assemblyNotes,
+          capture,
+          abort.signal,
+          theme,
+        ),
+        ASSEMBLY_SUBMIT_TIMEOUT_MS,
+        `сборка не уложилась в ${Math.round(ASSEMBLY_SUBMIT_TIMEOUT_MS / 1000)}с`,
+      ).catch((e: unknown) => {
+        abort.abort();
+        assemblyNotes.assemblyTimedOut = true;
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}): отправка сборки оборвана по времени (${e instanceof Error ? e.message : String(e)}) — прогон засчитан, ролика не будет`,
+        );
+      });
+    }
+
+    return {
+      id: scenario.id,
+      subjectKey: scenario.subjectKey,
+      locale: scenario.locale,
+      theme,
+      ok,
+      error,
+      ...(noSpendOwner ? { assemblySkipped: 'no-spend-owner' as const } : {}),
+      ...(themeVia && themeVia !== 'mismatch' ? { themeVia } : {}),
+      ...(themeVia === 'mismatch' ? { themeMismatch: true as const } : {}),
+      ...(result.skippedPaidClicks.length > 0
+        ? { paidClicksSkipped: result.skippedPaidClicks.length }
+        : {}),
+      ...(assemblyNotes.narrationFallback
+        ? { narrationFallback: true as const }
+        : {}),
+      ...(result.skippedFrames.length > 0
+        ? { framesMissed: result.skippedFrames.length }
+        : {}),
+      ...(assemblyNotes.noFrames ? { noFrames: true as const } : {}),
+      ...(assemblyNotes.lostRace ? { lostRace: true as const } : {}),
+      ...(assemblyNotes.assemblyTimedOut
+        ? { assemblyTimedOut: true as const }
+        : {}),
+      // Та же причина, что в прошлую ночь — значит поломка
+      // известная, и поимённая тревога о ней уже была. Сличение —
+      // обрезанных текстов: в карте тем ошибка хранится обрезанной.
+      ...(error && clipRunError(error) === clipRunError(scenario.lastRunError)
+        ? { repeatFailure: true as const }
+        : {}),
+    };
   }
 
   /** Браузер вообще не поднялся — ни один сценарий не мог быть
@@ -3289,10 +3780,24 @@ export class TutorialScenarioRunnerService {
     const approvals = parseApprovalStamps(
       await this.settings.get(APPROVAL_STAMPS_SETTING_KEY).catch(() => null),
     );
+    // Ролики, отмеченные в демо обучающего лендинга, не удаляются вовсе
+    // (решение: «не удалять отмеченное», а не «переносить отметку на
+    // преемника»). Перенос значил бы, что в публичное демо без человека
+    // попадает ролик, которого оператор не видел; удаление — что слот
+    // молча становится «скоро». Отмеченный ролик живёт, пока оператор
+    // не снимет галочку. Отметка не прочиталась или не разобралась —
+    // строки семейства в этот тик не трогаем вовсе: не знаем, какие
+    // отмечены, значит, не удаляем ни одну.
+    const demoMarks = await this.readDemoMarks();
+    const sweepRows =
+      demoMarks === null
+        ? rows.filter((r) => !isSiteTutorialDemoFamilyKey(r.subjectKey))
+        : rows;
     const doomed = selectSweepableAssets(
-      rows,
+      sweepRows,
       MAX_ASSEMBLY_ATTEMPTS,
-      pairsInApprovalGrace(rows, approvals, Date.now()),
+      pairsInApprovalGrace(sweepRows, approvals, Date.now()),
+      demoMarks ?? new Set<string>(),
     ).slice(0, ASSET_DELETE_LIMIT);
     if (doomed.length === 0) return 0;
 
@@ -3355,6 +3860,25 @@ export class TutorialScenarioRunnerService {
       );
     }
     return deleted;
+  }
+
+  /**
+   * Отметка оператора «в демо обучающего лендинга» — множество id, или
+   * `null`, если отметку нельзя прочесть уверенно: чтение упало, или
+   * значение непустое, а разбор (закрытый по умолчанию) не дал ни одного
+   * id. Пустое множество — отметки честно нет.
+   */
+  private async readDemoMarks(): Promise<Set<string> | null> {
+    let raw: string | null;
+    try {
+      raw = await this.settings.get(SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY);
+    } catch {
+      return null;
+    }
+    const ids = parseSiteTutorialDemoAssetIds(raw);
+    const trimmed = raw?.trim() ?? '';
+    if (ids.length === 0 && trimmed !== '' && trimmed !== '[]') return null;
+    return new Set(ids);
   }
 
   /** @returns сколько строк успели опросить. */
@@ -4238,6 +4762,111 @@ async function readCaptureBuild(page: unknown): Promise<string | null> {
     if (typeof raw !== 'string') return null;
     const build = raw.trim();
     return build && build.length <= CAPTURE_BUILD_MAX_LENGTH ? build : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Строка сценария в том виде, в каком её читают оба прохода. */
+interface ScenarioRunRow {
+  id: string;
+  subjectKey: string;
+  locale: string;
+  steps: unknown;
+  createdAt?: Date | null;
+  lastRunAt?: Date | null;
+  lastRunStatus?: string | null;
+  lastRunError?: string | null;
+  narrationReviewedAt?: Date | null;
+}
+
+/** Проход витрины: сводка для журнала и результат в общей форме. */
+interface PolygonPass {
+  summary: PolygonPassSummary;
+  result: TutorialScenarioRunResult;
+}
+
+/**
+ * Результат тика = TMA + витрина. `skipped` остаётся от TMA: пропуск
+ * прохода TMA (фикстура не настроена) — то, о чём журнал крона и сводка
+ * демо обязаны сказать, даже когда витрина отработала; её итог — в
+ * `polygon`.
+ */
+export function mergePolygonPass(
+  tma: TutorialScenarioRunResult,
+  pass: PolygonPass,
+): TutorialScenarioRunResult {
+  const poly = pass.result;
+  const mismatches =
+    tma.themeMismatches === undefined && poly.themeMismatches === undefined
+      ? undefined
+      : (tma.themeMismatches ?? 0) + (poly.themeMismatches ?? 0);
+  return {
+    ...tma,
+    total: tma.total + poly.total,
+    executed: (tma.executed ?? 0) + (poly.executed ?? 0),
+    passed: tma.passed + poly.passed,
+    failed: tma.failed + poly.failed,
+    paidClicksSkipped: tma.paidClicksSkipped + poly.paidClicksSkipped,
+    narrationFallbacks: tma.narrationFallbacks + poly.narrationFallbacks,
+    framesMissed: tma.framesMissed + poly.framesMissed,
+    withoutFrames: tma.withoutFrames + poly.withoutFrames,
+    lostRaces: tma.lostRaces + poly.lostRaces,
+    repeatFailures: tma.repeatFailures + poly.repeatFailures,
+    assemblyTimeouts: tma.assemblyTimeouts + poly.assemblyTimeouts,
+    ...(mismatches === undefined ? {} : { themeMismatches: mismatches }),
+    outcomes: [...tma.outcomes, ...poly.outcomes],
+    polygon: pass.summary,
+  };
+}
+
+/**
+ * Системная тема, которой на деле нарисована витрина, — тот же
+ * медиазапрос, по которому она красится. `null` — страница не умеет
+ * `evaluate` или чтение не удалось: решения нет, ролик собирается.
+ */
+async function readPolygonColorScheme(
+  page: unknown,
+): Promise<'light' | 'dark' | null> {
+  const evaluate = (page as { evaluate?: unknown } | null)?.evaluate;
+  if (typeof evaluate !== 'function') return null;
+  try {
+    const raw: unknown = await withTimeout(
+      (evaluate as (fn: () => unknown) => Promise<unknown>).call(page, () =>
+        typeof window.matchMedia === 'function'
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          : null,
+      ),
+      CAPTURE_BUILD_READ_TIMEOUT_MS,
+      'тема витрины не прочиталась',
+    );
+    if (typeof raw !== 'boolean') return null;
+    return raw ? 'dark' : 'light';
+  } catch {
+    return null;
+  }
+}
+
+/** Замер темы витрины → `media-query` | `mismatch` | `null` (нет замера). */
+export function polygonThemeVia(
+  wanted: ScenarioTheme,
+  measured: 'light' | 'dark' | null,
+): CaptureThemeVia | null {
+  if (measured === null) return null;
+  return measured === wanted ? 'media-query' : 'mismatch';
+}
+
+/** Origin страницы после прогона, или `null` — страница не говорит. */
+function pageOrigin(page: unknown): string | null {
+  const url = (page as { url?: unknown } | null)?.url;
+  if (typeof url !== 'function') return null;
+  try {
+    const raw: unknown = (url as () => unknown).call(page);
+    if (typeof raw !== 'string' || !raw) return null;
+    const u = new URL(raw);
+    // `about:blank` и прочие не-веб схемы — не «ушла на другой сайт», а
+    // «страница не открылась»; это ловят сами шаги.
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin : null;
   } catch {
     return null;
   }

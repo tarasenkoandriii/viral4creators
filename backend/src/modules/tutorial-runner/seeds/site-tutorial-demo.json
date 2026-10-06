@@ -1,0 +1,636 @@
+{
+  "version": 1,
+  "family": "site-tutorial-demo",
+  "scenarios": [
+    {
+      "subjectKey": "site-tutorial-demo-1",
+      "scenario": "C3-delivery",
+      "locale": "uk",
+      "title": "Як знайти умови доставки",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Де на сайті умови доставки? Покажемо за три кроки."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-delivery\"]",
+          "narration": "Відкриваємо розділ «Доставка й оплата»."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-delivery-courier\"]",
+          "narration": "Обираємо доставку кур’єром."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-delivery-terms\"]",
+          "narration": "Тут терміни й вартість. Це все."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-1",
+      "scenario": "C3-delivery",
+      "locale": "ru",
+      "title": "Как найти условия доставки",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Где на сайте условия доставки? Покажем за три шага."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-delivery\"]",
+          "narration": "Открываем раздел «Доставка и оплата»."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-delivery-courier\"]",
+          "narration": "Выбираем доставку курьером."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-delivery-terms\"]",
+          "narration": "Здесь сроки и стоимость. Всё."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-1",
+      "scenario": "C3-delivery",
+      "locale": "en",
+      "title": "How to find the delivery terms",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Where are the delivery terms? Three steps."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-delivery\"]",
+          "narration": "Open “Delivery & payment”."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-delivery-courier\"]",
+          "narration": "Choose courier delivery."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-delivery-terms\"]",
+          "narration": "Here are the times and prices. That’s it."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-1",
+      "scenario": "C3-delivery",
+      "locale": "de",
+      "title": "So finden Sie die Lieferbedingungen",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Wo stehen die Lieferbedingungen? Wir zeigen es in drei Schritten."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-delivery\"]",
+          "narration": "Wir öffnen „Lieferung & Zahlung“."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-delivery-courier\"]",
+          "narration": "Wir wählen die Lieferung per Kurier."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-delivery-terms\"]",
+          "narration": "Hier stehen Lieferzeiten und Preise. Das war’s."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-1",
+      "scenario": "C3-delivery",
+      "locale": "es",
+      "title": "Cómo encontrar las condiciones de envío",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "¿Dónde están las condiciones de envío? Lo mostramos en tres pasos."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-delivery\"]",
+          "narration": "Abrimos «Envío y pago»."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-delivery-courier\"]",
+          "narration": "Elegimos el envío por mensajero."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-delivery-terms\"]",
+          "narration": "Aquí están los plazos y los precios. Eso es todo."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-2",
+      "scenario": "C2-order",
+      "locale": "uk",
+      "title": "Як оформити замовлення в магазині",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Тестовий магазин. Покажемо, як оформити замовлення."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-product-mug-add\"]",
+          "narration": "Обираємо товар і додаємо його в кошик."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-cart\"]",
+          "narration": "Відкриваємо кошик."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-name\"]",
+          "value": "Олена Тестова",
+          "narration": "Заповнюємо контактні дані."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-phone\"]",
+          "value": "+380 00 000 00 00"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-pickup\"]",
+          "narration": "Обираємо спосіб отримання."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-submit\"]",
+          "narration": "Підтверджуємо замовлення."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-order-confirmed\"]",
+          "narration": "Готово: замовлення прийнято. Це тестовий магазин — справжніх покупок немає."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-2",
+      "scenario": "C2-order",
+      "locale": "ru",
+      "title": "Как оформить заказ в магазине",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Тестовый магазин. Покажем, как оформить заказ."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-product-mug-add\"]",
+          "narration": "Выбираем товар и добавляем его в корзину."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-cart\"]",
+          "narration": "Открываем корзину."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-name\"]",
+          "value": "Елена Тестова",
+          "narration": "Заполняем контактные данные."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-phone\"]",
+          "value": "+380 00 000 00 00"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-pickup\"]",
+          "narration": "Выбираем способ получения."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-submit\"]",
+          "narration": "Подтверждаем заказ."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-order-confirmed\"]",
+          "narration": "Готово: заказ принят. Это тестовый магазин — настоящих покупок нет."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-2",
+      "scenario": "C2-order",
+      "locale": "en",
+      "title": "How to place an order in a shop",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "A test shop. Let’s place an order."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-product-mug-add\"]",
+          "narration": "Pick a product and add it to the cart."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-cart\"]",
+          "narration": "Open the cart."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-name\"]",
+          "value": "Test Customer",
+          "narration": "Fill in the contact details."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-phone\"]",
+          "value": "+380 00 000 00 00"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-pickup\"]",
+          "narration": "Choose how to receive the order."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-submit\"]",
+          "narration": "Confirm the order."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-order-confirmed\"]",
+          "narration": "Done — the order is placed. It’s a test shop, nothing is really bought."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-2",
+      "scenario": "C2-order",
+      "locale": "de",
+      "title": "So geben Sie im Shop eine Bestellung auf",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Ein Testshop. Wir zeigen, wie man bestellt."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-product-mug-add\"]",
+          "narration": "Wir wählen ein Produkt und legen es in den Warenkorb."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-cart\"]",
+          "narration": "Wir öffnen den Warenkorb."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-name\"]",
+          "value": "Test Customer",
+          "narration": "Wir geben die Kontaktdaten ein."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-phone\"]",
+          "value": "+380 00 000 00 00"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-pickup\"]",
+          "narration": "Wir wählen, wie wir die Bestellung erhalten."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-submit\"]",
+          "narration": "Wir bestätigen die Bestellung."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-order-confirmed\"]",
+          "narration": "Fertig: Die Bestellung ist aufgegeben. Das ist ein Testshop – echte Käufe gibt es hier nicht."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-2",
+      "scenario": "C2-order",
+      "locale": "es",
+      "title": "Cómo hacer un pedido en la tienda",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Una tienda de prueba. Mostramos cómo hacer un pedido."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-product-mug-add\"]",
+          "narration": "Elegimos un producto y lo añadimos al carrito."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-cart\"]",
+          "narration": "Abrimos el carrito."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-name\"]",
+          "value": "Test Customer",
+          "narration": "Rellenamos los datos de contacto."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-checkout-phone\"]",
+          "value": "+380 00 000 00 00"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-pickup\"]",
+          "narration": "Elegimos cómo recibir el pedido."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-checkout-submit\"]",
+          "narration": "Confirmamos el pedido."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-order-confirmed\"]",
+          "narration": "Listo: el pedido está hecho. Es una tienda de prueba, aquí no se compra nada de verdad."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-3",
+      "scenario": "C4-booking",
+      "locale": "uk",
+      "title": "Як записатися на консультацію",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Покажемо, як записатися на консультацію."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-booking\"]",
+          "narration": "Відкриваємо розділ «Запис на консультацію»."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-open\"]",
+          "narration": "Відкриваємо форму запису."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-slot-mon-10\"]",
+          "narration": "Обираємо зручний час."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-name\"]",
+          "value": "Test Client",
+          "narration": "Вказуємо ім’я та пошту."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-email\"]",
+          "value": "client@example.com"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-submit\"]",
+          "narration": "Підтверджуємо запис."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-booking-confirmed\"]",
+          "narration": "Готово: запис створено."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-3",
+      "scenario": "C4-booking",
+      "locale": "ru",
+      "title": "Как записаться на консультацию",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Покажем, как записаться на консультацию."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-booking\"]",
+          "narration": "Открываем раздел «Запись на консультацию»."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-open\"]",
+          "narration": "Открываем форму записи."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-slot-mon-10\"]",
+          "narration": "Выбираем удобное время."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-name\"]",
+          "value": "Test Client",
+          "narration": "Указываем имя и почту."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-email\"]",
+          "value": "client@example.com"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-submit\"]",
+          "narration": "Подтверждаем запись."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-booking-confirmed\"]",
+          "narration": "Готово: запись создана."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-3",
+      "scenario": "C4-booking",
+      "locale": "en",
+      "title": "How to book a consultation",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Let’s book a consultation."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-booking\"]",
+          "narration": "Open the “Book a consultation” section."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-open\"]",
+          "narration": "Open the booking form."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-slot-mon-10\"]",
+          "narration": "Pick a time slot."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-name\"]",
+          "value": "Test Client",
+          "narration": "Enter a name and email."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-email\"]",
+          "value": "client@example.com"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-submit\"]",
+          "narration": "Confirm the booking."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-booking-confirmed\"]",
+          "narration": "Done — you’re booked."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-3",
+      "scenario": "C4-booking",
+      "locale": "de",
+      "title": "So buchen Sie eine Beratung",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Wir zeigen, wie man eine Beratung bucht."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-booking\"]",
+          "narration": "Wir öffnen den Bereich „Beratung buchen“."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-open\"]",
+          "narration": "Wir öffnen das Buchungsformular."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-slot-mon-10\"]",
+          "narration": "Wir wählen einen passenden Termin."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-name\"]",
+          "value": "Test Client",
+          "narration": "Wir geben Name und E-Mail ein."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-email\"]",
+          "value": "client@example.com"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-submit\"]",
+          "narration": "Wir bestätigen die Buchung."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-booking-confirmed\"]",
+          "narration": "Fertig: Der Termin ist gebucht."
+        }
+      ]
+    },
+    {
+      "subjectKey": "site-tutorial-demo-3",
+      "scenario": "C4-booking",
+      "locale": "es",
+      "title": "Cómo reservar una consulta",
+      "steps": [
+        {
+          "kind": "goto",
+          "route": "qa-demo-shop",
+          "narration": "Mostramos cómo reservar una consulta."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-nav-booking\"]",
+          "narration": "Abrimos la sección «Reservar una consulta»."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-open\"]",
+          "narration": "Abrimos el formulario de reserva."
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-slot-mon-10\"]",
+          "narration": "Elegimos un horario conveniente."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-name\"]",
+          "value": "Test Client",
+          "narration": "Indicamos el nombre y el correo."
+        },
+        {
+          "kind": "fill",
+          "selector": "[data-qa=\"demo-shop-booking-email\"]",
+          "value": "client@example.com"
+        },
+        {
+          "kind": "click",
+          "selector": "[data-qa=\"demo-shop-booking-submit\"]",
+          "narration": "Confirmamos la reserva."
+        },
+        {
+          "kind": "assertVisible",
+          "selector": "[data-qa=\"demo-shop-booking-confirmed\"]",
+          "narration": "Listo: la reserva está hecha."
+        }
+      ]
+    }
+  ]
+}

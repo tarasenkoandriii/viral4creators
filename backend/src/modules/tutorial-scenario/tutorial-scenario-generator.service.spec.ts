@@ -1134,3 +1134,85 @@ describe('TutorialScenarioGeneratorService — ротация пар по дав
     expect(Object.keys(JSON.parse(writes[0][1]))).toHaveLength(1);
   });
 });
+
+describe('генератор и демо обучающего лендинга (site-tutorial-demo-*)', () => {
+  const GOOD_RESPONSE = {
+    text: JSON.stringify({
+      steps: [{ kind: 'goto', route: 'generate', narration: 'Открываем.' }],
+    }),
+    usageMetadata: {},
+  };
+
+  it('ночной прогон не спрашивает, не пишет и не генерирует ни одной пары семейства', async () => {
+    generateContent.mockReset();
+    generateContent.mockResolvedValue(GOOD_RESPONSE);
+    const { service, prisma } = build('["ru","en"]');
+
+    await service.run();
+
+    const touched = [
+      ...prisma.tutorialScenario.findUnique.mock.calls,
+      ...prisma.tutorialScenario.create.mock.calls,
+      ...prisma.tutorialScenario.update.mock.calls,
+    ].map((c: any[]) => JSON.stringify(c[0]));
+    expect(touched.length).toBeGreaterThan(0);
+    expect(touched.some((t) => t.includes('site-tutorial-demo'))).toBe(false);
+    const prompts = generateContent.mock.calls.map((c: any[]) =>
+      JSON.stringify(c[0]),
+    );
+    expect(prompts.some((p) => p.includes('site-tutorial-demo'))).toBe(false);
+  });
+
+  it('пара семейства, попавшая в круг, не доходит ни до базы, ни до модели', async () => {
+    generateContent.mockReset();
+    generateContent.mockResolvedValue(GOOD_RESPONSE);
+    const { service, prisma, aiUsage } = build();
+    const result = {
+      pairs: 1,
+      locales: [],
+      skippedManual: 0,
+      deferred: 0,
+      generated: 0,
+      costly: 0,
+      failed: 0,
+      failures: [],
+      narrationsDropped: 0,
+    };
+    const pair = {
+      locale: 'ru',
+      key: 'site-tutorial-demo-1',
+      item: { title: 'Демо', text: 'Демо', details: [] },
+    };
+
+    await (service as any).runPairs(
+      [pair],
+      new Map(),
+      [pair],
+      result,
+      Date.now() + 60_000,
+      undefined,
+      { limitMicroUsd: null, spentMicroUsd: 0 },
+      'grok',
+    );
+
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).not.toHaveBeenCalled();
+    expect(prisma.tutorialScenario.findUnique).not.toHaveBeenCalled();
+    expect(prisma.tutorialScenario.create).not.toHaveBeenCalled();
+    expect(result.generated).toBe(0);
+  });
+
+  it('запись строки семейства генератором невозможна', async () => {
+    const { service, prisma } = build();
+    const wrote = await (service as any).writeScenario(
+      'site-tutorial-demo-2',
+      'ru',
+      [{ kind: 'goto', route: 'qa-demo-shop' }],
+      { costly: false, estimatedCostMicroUsd: 0, unpriced: false },
+    );
+    expect(wrote).toBe(false);
+    expect(prisma.tutorialScenario.findUnique).not.toHaveBeenCalled();
+    expect(prisma.tutorialScenario.create).not.toHaveBeenCalled();
+    expect(prisma.tutorialScenario.update).not.toHaveBeenCalled();
+  });
+});

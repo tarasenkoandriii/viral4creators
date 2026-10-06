@@ -32,6 +32,12 @@
 // способ сбросить устаревшее одобрение — кнопки «отозвать» нет, а
 // генератор снимает его только при изменившихся платных шагах.
 // Удалённая строка пересоздаётся ближайшей ночью, уже неодобренной.
+//
+// «Засеять демо обучающего лендинга» (решение владельца 06.10.2026, путь
+// А) — единственный способ завести строки слотов `site-tutorial-demo-*`:
+// генератор их не пишет никогда, а сценарии ходят на витрину-полигон
+// `/qa/demo-shop`. Идемпотентно; удалённая строка семейства ночью НЕ
+// пересоздаётся — только повторным засевом.
 
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -40,6 +46,7 @@ import {
   setTutorialScenarioNarrationReviewed,
   deleteTutorialScenario,
   getTutorialScenarios,
+  seedSiteTutorialDemoScenarios,
 } from '../../lib/endpoints';
 import type { TutorialScenarioRow } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
@@ -100,6 +107,8 @@ export default function TutorialScenariosPage() {
   // Черновик правки шагов. Живёт рядом с раскрытой строкой: правят по
   // одному сценарию за раз, второй буфер тут лишний.
   const [draft, setDraft] = useState('');
+  const [seeding, setSeeding] = useState(false);
+  const [seedNote, setSeedNote] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -231,6 +240,34 @@ export default function TutorialScenariosPage() {
     [load],
   );
 
+  const seedDemo = useCallback(async () => {
+    const ok = window.confirm(
+      'Засеять ручные сценарии демо обучающего лендинга?\n\n' +
+        'Слоты site-tutorial-demo-1..3 (условия доставки, оформление заказа, запись на ' +
+        'консультацию) × 5 языков. Пары с теми же шагами не меняются; изменённые ' +
+        'переписываются, и их вычитка реплик и результат прогона сбрасываются.',
+    );
+    if (!ok) return;
+    setSeeding(true);
+    setError(null);
+    setSeedNote(null);
+    try {
+      const res = await seedSiteTutorialDemoScenarios();
+      setSeedNote(
+        `Демо обучающего лендинга: новых ${res.created}, переписано ${res.updated}, ` +
+          `без изменений ${res.unchanged} из ${res.total}. ` +
+          (res.polygonOrigin
+            ? `Съёмка — на ${res.polygonOrigin}/qa/demo-shop с ближайшего прогона крона tutorial-scenario-run.`
+            : 'Внимание: LANDING_PUBLIC_URL бэкенда не задан (https) — съёмка витрины не пойдёт.'),
+      );
+      load();
+    } catch (e) {
+      setError(errText(e));
+    } finally {
+      setSeeding(false);
+    }
+  }, [load]);
+
   return (
     <div className="page">
       <h1 style={{ fontSize: 20, marginBottom: 4 }}>Сценарии обучалки</h1>
@@ -241,6 +278,18 @@ export default function TutorialScenariosPage() {
         платные шаги автоматически — без фикстурного пользователя (см. «Настройки») сам прогон
         всё равно будет пропускаться, одобрение этого не меняет.
       </p>
+      <p className="muted" style={{ marginBottom: 12 }}>
+        Демо обучающего лендинга (<code>site-tutorial-demo-1..3</code>) — ручные сценарии на
+        витрине-полигоне <code>/qa/demo-shop</code>; генератор их не пишет.{' '}
+        <button type="button" onClick={seedDemo} disabled={seeding}>
+          {seeding ? 'Засеваем…' : 'Засеять демо обучающего лендинга'}
+        </button>
+      </p>
+      {seedNote && (
+        <p className="muted" style={{ marginBottom: 16 }}>
+          {seedNote}
+        </p>
+      )}
 
       <div
         className="filters"

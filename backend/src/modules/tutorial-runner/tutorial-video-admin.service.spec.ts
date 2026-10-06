@@ -79,6 +79,7 @@ describe('TutorialVideoAdminService.list (§4.9, этап 99)', () => {
       total: 3,
       page: 1,
       pageSize: 10,
+      siteTutorialDemoAssetIds: [],
     });
   });
 });
@@ -343,5 +344,122 @@ describe('TutorialVideoAdminService.setReviewed — отметка одобре�
     const { service, settings } = withSettings();
     settings.set.mockRejectedValue(new Error('база'));
     await expect(service.setReviewed('tva-1', true)).resolves.toBeDefined();
+  });
+});
+
+describe('TutorialVideoAdminService.setSiteTutorialDemo — отметка «в демо обучающего лендинга»', () => {
+  const KEY = 'tutorial.siteTutorialDemoAssets';
+
+  function withSettings(initial: string | null = null) {
+    const store = new Map<string, string>();
+    if (initial !== null) store.set(KEY, initial);
+    const settings = {
+      get: jest.fn(async (k: string) => store.get(k) ?? null),
+      set: jest.fn(async (k: string, v: string) => {
+        store.set(k, v);
+      }),
+    };
+    const prisma = {
+      tutorialVideoAsset: {
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
+    };
+    const service = new TutorialVideoAdminService(
+      prisma as any,
+      undefined,
+      settings as any,
+    );
+    return { service, prisma, settings, store };
+  }
+
+  const GOOD = {
+    id: 'tva-demo-1',
+    subjectKey: 'site-tutorial-demo-1',
+    clientSiteDraftId: null,
+    reviewed: true,
+    blobUrl: 'https://blob.example/demo.mp4',
+  };
+
+  it('годная строка — id дописывается в отметку, повтор ничего не меняет', async () => {
+    const { service, prisma, settings, store } = withSettings('["old-1"]');
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue(GOOD);
+
+    const res = await service.setSiteTutorialDemo(GOOD.id, true, 'op-1');
+
+    expect(res.siteTutorialDemoAssetIds).toEqual(['old-1', GOOD.id]);
+    expect(JSON.parse(store.get(KEY) as string)).toEqual(['old-1', GOOD.id]);
+    expect(settings.set).toHaveBeenCalledWith(
+      KEY,
+      JSON.stringify(['old-1', GOOD.id]),
+      'op-1',
+    );
+    settings.set.mockClear();
+    await service.setSiteTutorialDemo(GOOD.id, true, 'op-1');
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'ролик сайта заказчика',
+      { clientSiteDraftId: 'draft-1' },
+      /сайту заказчика/,
+    ],
+    ['тема не из семейства', { subjectKey: '3' }, /не из демо/],
+    [
+      'ключ похож, но не слот',
+      { subjectKey: 'site-tutorial-demo-99' },
+      /не из демо/,
+    ],
+    ['не одобрен', { reviewed: false }, /одобрите/],
+    ['не собран', { blobUrl: null }, /не собран/],
+  ])('%s — отказ, отметка не пишется', async (_label, patch, message) => {
+    const { service, prisma, settings } = withSettings('[]');
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      ...GOOD,
+      ...patch,
+    });
+    await expect(
+      service.setSiteTutorialDemo(GOOD.id, true, 'op-1'),
+    ).rejects.toThrow(message);
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
+  it('снять отметку можно у любой строки (снятие ничего не публикует)', async () => {
+    const { service, prisma, store } = withSettings(
+      JSON.stringify(['a-1', GOOD.id]),
+    );
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      ...GOOD,
+      reviewed: false,
+    });
+    const res = await service.setSiteTutorialDemo(GOOD.id, false, 'op-1');
+    expect(res.siteTutorialDemoAssetIds).toEqual(['a-1']);
+    expect(JSON.parse(store.get(KEY) as string)).toEqual(['a-1']);
+  });
+
+  it('негодное значение настройки не затирается молча', async () => {
+    const { service, prisma, settings } = withSettings('{"broken":true}');
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue(GOOD);
+    await expect(
+      service.setSiteTutorialDemo(GOOD.id, true, 'op-1'),
+    ).rejects.toThrow(/не разбирается/);
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
+  it('несуществующий id — NotFoundException', async () => {
+    const { service, prisma } = withSettings();
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue(null);
+    await expect(
+      service.setSiteTutorialDemo('nope', true),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('список отдаёт отмеченные id для галочки', async () => {
+    const { service } = withSettings(JSON.stringify([GOOD.id]));
+    const res = await service.list({ page: 1, pageSize: 10 });
+    expect(res.siteTutorialDemoAssetIds).toEqual([GOOD.id]);
   });
 });

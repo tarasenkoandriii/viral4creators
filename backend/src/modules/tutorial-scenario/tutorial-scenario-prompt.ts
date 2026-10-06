@@ -34,6 +34,8 @@ import {
   ROUTE_DESCRIPTIONS,
 } from '../tutorial-runner/route-templates';
 import { knownQaHook, qaSelector, QA_HOOKS } from './qa-hooks';
+import { validatePolygonScenarioSteps } from '../tutorial-runner/polygon-scenario';
+import { isSiteTutorialDemoFamilyKey } from '../tutorial-help/site-tutorial-demo';
 import { languageNameForLocale } from '../../common/locale';
 import { TUTORIAL_DEMO_PRODUCT } from '../../common/tutorial-demo-product';
 
@@ -422,6 +424,19 @@ export function parseScenarioResponse(
   text: string,
   subjectKey?: string,
 ): ParseScenarioResult {
+  // Семейство демо обучающего лендинга модель не пишет НИКОГДА
+  // (решение владельца 06.10.2026): его сценарии — ручные, из сида, и
+  // ходят на витрину-полигон, а не в мастер. Ответ модели с таким ключом
+  // отвергается целиком, ещё до разбора, — какой бы годный он ни был.
+  if (subjectKey && isSiteTutorialDemoFamilyKey(subjectKey)) {
+    return {
+      ok: false,
+      steps: [],
+      reason: `тема «${subjectKey}» — демо обучающего лендинга, генератор её не пишет`,
+      droppedNarrations: [],
+      droppedPaidOperations: [],
+    };
+  }
   const json = extractJson(text);
   if (!json) {
     return {
@@ -467,6 +482,15 @@ export function validateScenarioSteps(
    * граница не проверяется (старые вызовы). */
   subjectKey?: string,
 ): ParseScenarioResult {
+  // Семейство демо обучающего лендинга — свои правила целиком: селекторы
+  // из каталога витрины (`DEMO_SHOP_HOOKS`), маршруты из таблицы
+  // полигона, без `triggerPaidOperation` (`polygon-scenario.ts`).
+  // Проверка по ПРЕФИКСУ: ключ, похожий на семейство, но вне слотов,
+  // не должен проскочить в правила TMA — его отвергнет валидатор
+  // полигона с названной причиной.
+  if (subjectKey && isSiteTutorialDemoFamilyKey(subjectKey)) {
+    return validatePolygonScenarioSteps(rawSteps, subjectKey);
+  }
   const parsed = parseScenarioSteps(rawSteps);
   if (!parsed.ok) return parsed;
   return dropDanglingPaidOperations(

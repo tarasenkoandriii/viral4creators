@@ -11,6 +11,8 @@
  * `clientSiteDraftId` выбрасывается, даже если запрос её вернул), а в
  * обратную сторону — `ClientSiteMediaService` не даёт привязать к сайту
  * лендинга черновик обучалки по чужому сайту и не шлёт туда их набор.
+ * Ролики демо обучающего лендинга (`site-tutorial-demo-*`, витрина-
+ * полигон) в набор не идут — тоже в запросе и повторно в коде.
  *
  * Набор — ПОЛНЫЙ (замена, как у Э6): потолок платформы 15 роликов и 8 КБ
  * тела, поэтому порядок — по языкам лендинга (ru, uk, en, de, es), внутри
@@ -25,6 +27,10 @@ import {
   type SitesVideoInput,
 } from '../sites-internal/sites-internal.client';
 import { landingAssistConfig } from './landing-assist-config';
+import {
+  isSiteTutorialDemoFamilyKey,
+  NOT_SITE_TUTORIAL_DEMO_WHERE,
+} from '../tutorial-help/site-tutorial-demo';
 
 /** Те же потолки, что у роликов сайтов заказчиков (sites-backend Э6). */
 export const LANDING_SYNC_VIDEOS_MAX = 15;
@@ -70,6 +76,10 @@ export class LandingVideosService {
         // Лендинг светлый — только светлые ролики (заход 3, 06.10.2026:
         // у пары появился тёмный ролик). NULL — строки до колонки темы.
         OR: [{ theme: null }, { theme: 'light' }],
+        // Демо обучающего лендинга (`site-tutorial-demo-*`) — ролики
+        // витрины-полигона для секции обучающего лендинга, а не обучалка
+        // продукта: в набор тенанта не идут (черновик демо, раздел 5.3).
+        ...NOT_SITE_TUTORIAL_DEMO_WHERE,
       },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -87,6 +97,7 @@ export class LandingVideosService {
     for (const r of rows) {
       // Повторная проверка барьера в коде: запрос — первая линия, это — вторая.
       if (r.clientSiteDraftId || !r.reviewed || !r.blobUrl) continue;
+      if (isSiteTutorialDemoFamilyKey(r.subjectKey)) continue;
       if (!/^[a-z]{2}$/.test(r.locale)) continue;
       const k = `${r.subjectKey}\u001f${r.locale}`;
       if (!latest.has(k)) latest.set(k, r); // строки — от новых к старым

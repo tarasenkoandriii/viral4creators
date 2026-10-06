@@ -85,6 +85,14 @@ export function selectSweepableAssets<T extends SweepableAsset>(
    * держится ещё и предыдущий одобренный (пятая роль ниже).
    */
   approvalGracePairs: ReadonlySet<string> = new Set(),
+  /**
+   * Строки, которые не удаляются НИКОГДА, какую бы роль они ни занимали:
+   * ролики, отмеченные оператором в демо обучающего лендинга
+   * (`tutorial.siteTutorialDemoAssets`). Справка выдаёт семейство только
+   * по id из отметки, и удалённая отмеченная строка — это слот «скоро»
+   * до новой отметки. Отметку снимает оператор, а не подметальщик.
+   */
+  protectedIds: ReadonlySet<string> = new Set(),
 ): T[] {
   const failedKept = new Map<string, number>();
   const seenPair = new Set<string>();
@@ -141,6 +149,7 @@ export function selectSweepableAssets<T extends SweepableAsset>(
       failedKept.set(pair, (failedKept.get(pair) ?? 0) + 1);
       keep = true;
     }
+    if (protectedIds.has(row.id)) keep = true;
     if (!keep) doomed.push(row);
   }
 

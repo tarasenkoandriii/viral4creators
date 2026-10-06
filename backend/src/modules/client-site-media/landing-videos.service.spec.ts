@@ -112,7 +112,22 @@ describe('LandingVideosService — барьер лендинга', () => {
       clientSiteDraftId: null,
       // Лендинг светлый: тёмные ролики пары (заход 3) в набор не идут.
       OR: [{ theme: null }, { theme: 'light' }],
+      // Демо обучающего лендинга (витрина-полигон) — не в набор тенанта.
+      NOT: { subjectKey: { startsWith: 'site-tutorial-demo-' } },
     });
+  });
+
+  it('ролики демо обучающего лендинга не уходят в набор — даже если база их вернула', async () => {
+    const { svc } = setup(
+      [
+        asset({ id: 'ok', subjectKey: '1' }),
+        asset({ id: 'demo', subjectKey: 'site-tutorial-demo-1' }),
+        asset({ id: 'demo-x', subjectKey: 'site-tutorial-demo-99' }),
+      ],
+      { ignoreWhere: true },
+    );
+    const out = await svc.collect('1001', ['viral4creators.example']);
+    expect(out.map((v) => v.externalId)).toEqual(['ok']);
   });
 
   it('ролик по сайту заказчика, неодобренный и несобранный не уходят — даже если база их вернула', async () => {

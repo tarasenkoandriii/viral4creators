@@ -37,6 +37,9 @@ const ENV_KEYS = [
   'FIXTURE_USER_TOKEN',
   'TMA_PUBLIC_URL',
   'API_PUBLIC_URL',
+  // Origin полигона демо обучающего лендинга: без него проход витрины
+  // не идёт, и прежние тесты не должны зависеть от окружения машины.
+  'LANDING_PUBLIC_URL',
 ];
 const envBefore: Record<string, string | undefined> = {};
 
@@ -46,6 +49,7 @@ beforeEach(() => {
   process.env.FIXTURE_USER_TOKEN = 'sekret';
   process.env.TMA_PUBLIC_URL = 'https://app.example.com';
   process.env.API_PUBLIC_URL = 'https://api.example.com/api';
+  delete process.env.LANDING_PUBLIC_URL;
 });
 const fetchBefore = global.fetch;
 
@@ -5671,5 +5675,398 @@ describe('проверка качества демо в тике сборок (0
     const result = await built.service.pollAssemblies();
     expect(result.skipped).toBeDefined();
     expect(built.quality.processQueue).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Демо обучающего лендинга — сценарный путь на витрине `/qa/demo-shop`
+ * (решение владельца 06.10.2026, путь А; `polygon-scenario.ts`).
+ */
+describe('TutorialScenarioRunnerService — демо обучающего лендинга (витрина)', () => {
+  const LANDING = 'https://landing.example';
+  const DEMO_STEPS = [
+    { kind: 'goto', route: 'qa-demo-shop', narration: 'Покажем.' },
+    {
+      kind: 'click',
+      selector: '[data-qa="demo-shop-nav-delivery"]',
+      narration: 'Открываем раздел.',
+    },
+    {
+      kind: 'assertVisible',
+      selector: '[data-qa="demo-shop-delivery-terms"]',
+      narration: 'Всё.',
+    },
+  ];
+  const DEMO_ROW = {
+    id: 'ts-demo-1',
+    subjectKey: 'site-tutorial-demo-1',
+    locale: 'ru',
+    costly: false,
+    steps: DEMO_STEPS,
+  };
+
+  /** Страница витрины: адрес после прогона и замер системной темы. */
+  function polygonPage(opts: { url?: string; dark?: boolean | null } = {}) {
+    const page = buildFakePage({ screenshot: true }) as ReturnType<
+      typeof buildFakePage
+    > &
+      Record<string, jest.Mock>;
+    page.emulateMediaFeatures = jest.fn().mockResolvedValue(undefined);
+    page.url = jest
+      .fn()
+      .mockReturnValue(opts.url ?? `${LANDING}/qa/demo-shop?lang=ru`);
+    page.evaluate = jest.fn(async (fn: unknown) =>
+      String(fn).includes('prefers-color-scheme') ? (opts.dark ?? false) : null,
+    );
+    return page;
+  }
+
+  function withBrowser(page: unknown) {
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    return browser;
+  }
+
+  /** Строки базы: проход витрины спрашивает слоты (`subjectKey.in`),
+   *  проход TMA — всё остальное. Двойник различает их, как база. */
+  function rowsFor(
+    built: ReturnType<typeof build>,
+    rows: { tma?: unknown[]; demo?: unknown[] },
+  ) {
+    built.prisma.tutorialScenario.findMany.mockImplementation(
+      async (args: { where?: { subjectKey?: { in?: string[] } } }) =>
+        args?.where?.subjectKey?.in ? (rows.demo ?? []) : (rows.tma ?? []),
+    );
+  }
+
+  beforeEach(() => {
+    process.env.LANDING_PUBLIC_URL = `${LANDING}/ru`;
+  });
+
+  it('снимается на витрине: origin лендинга + /qa/ + ?lang, без фикстуры, initData и themeParams', async () => {
+    const seed = jest
+      .spyOn(fixtureSeedModule, 'seedFixtureUser')
+      .mockResolvedValue({} as never);
+    // Фикстурный вход TMA не настроен — проход TMA пропущен, витрина
+    // идёт всё равно: ей фикстура не нужна.
+    delete process.env.FIXTURE_USER_TOKEN;
+    const page = polygonPage();
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+
+    const result = await built.service.run();
+
+    expect(result.skipped).toBeDefined();
+    expect(result.polygon).toEqual(
+      expect.objectContaining({
+        origin: LANDING,
+        executed: 1,
+        passed: 1,
+        failed: 0,
+      }),
+    );
+    expect(page.goto).toHaveBeenCalledWith(
+      `${LANDING}/qa/demo-shop?lang=ru`,
+      expect.anything(),
+    );
+    // После перехода — ожившая витрина, а не случайная пауза.
+    expect(page.waitForSelector).toHaveBeenCalledWith(
+      '[data-qa="demo-shop-root"][data-demo-ready="true"]',
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    );
+    // Ни подсева TMA (локаль/сессия/themeParams), ни фикстурного токена.
+    expect(page.evaluateOnNewDocument).not.toHaveBeenCalled();
+    expect(page.setRequestInterception).not.toHaveBeenCalled();
+    expect(seed).not.toHaveBeenCalled();
+    // Тема — только системная; кадр — тот же телефонный.
+    expect(page.emulateMediaFeatures).toHaveBeenCalledWith([
+      { name: 'prefers-color-scheme', value: 'light' },
+    ]);
+    expect(page.setViewport).toHaveBeenCalledWith({
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+    });
+    expect(built.prisma.tutorialScenario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'ts-demo-1' },
+        data: expect.objectContaining({ lastRunStatus: 'ok' }),
+      }),
+    );
+  });
+
+  it('с тестовой фикстурой ролик собирается как у обычных пар: заголовок из сида, тема, расход на фикстуру', async () => {
+    const page = polygonPage();
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+    built.ffmpeg.configured.mockReturnValue(true);
+    built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-d', status: 'queued' });
+
+    const result = await built.service.run();
+
+    expect(result.polygon?.passed).toBe(1);
+    expect(built.prisma.tutorialVideoAsset.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          subjectKey: 'site-tutorial-demo-1',
+          locale: 'ru',
+          title: 'Как найти условия доставки',
+          theme: 'light',
+          scenarioId: 'ts-demo-1',
+          // У лендинга нет `<meta name="app-build">` — версии нет.
+          captureBuild: null,
+        }),
+      }),
+    );
+    expect(built.ffmpeg.submit).toHaveBeenCalled();
+    expect(built.aiUsage.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'tutorial-video-assembly',
+        userId: 'usr_fixture',
+      }),
+    );
+  });
+
+  it('без тестовой фикстуры — прогон есть, платного нет: ролик не собирается', async () => {
+    const page = polygonPage();
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+    built.prisma.user.findUnique.mockResolvedValue({
+      id: 'usr_live',
+      isTestUser: false,
+    });
+    built.ffmpeg.configured.mockReturnValue(true);
+    built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-d', status: 'queued' });
+
+    const result = await built.service.run();
+
+    expect(result.polygon).toEqual(
+      expect.objectContaining({ passed: 1, assemblyWithoutOwner: 1 }),
+    );
+    expect(built.prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+    expect(built.ffmpeg.submit).not.toHaveBeenCalled();
+    expect(built.aiUsage.record).not.toHaveBeenCalled();
+  });
+
+  it('страница ушла с полигона — прогон провален, ролика нет', async () => {
+    const page = polygonPage({ url: 'https://evil.example/qa/demo-shop' });
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+    built.ffmpeg.configured.mockReturnValue(true);
+
+    const result = await built.service.run();
+
+    expect(result.polygon?.failed).toBe(1);
+    expect(result.outcomes[0].error).toMatch(/ушла с полигона/);
+    expect(built.prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['маршрут TMA', [{ kind: 'goto', route: 'generate' }], /правила витрины/],
+    [
+      'селектор вне каталога витрины',
+      [
+        { kind: 'goto', route: 'qa-demo-shop' },
+        { kind: 'click', selector: '[data-qa="demo-shop-pay-now"]' },
+      ],
+      /каталога витрины/,
+    ],
+    [
+      'хук TMA',
+      [
+        { kind: 'goto', route: 'qa-demo-shop' },
+        { kind: 'click', selector: '[data-qa="reference-card"]' },
+      ],
+      /каталога витрины/,
+    ],
+  ])(
+    'строка в базе с «%s» не исполняется — даже в обход сида',
+    async (_l, steps, message) => {
+      const page = polygonPage();
+      withBrowser(page);
+      const built = build([]);
+      rowsFor(built, { demo: [{ ...DEMO_ROW, steps }] });
+
+      const result = await built.service.run();
+
+      expect(result.polygon?.failed).toBe(1);
+      expect(result.outcomes[0].error).toMatch(message);
+      expect(page.goto).not.toHaveBeenCalled();
+    },
+  );
+
+  it('витрина не ожила после перехода — шаг goto падает с названной причиной', async () => {
+    const page = polygonPage();
+    page.waitForSelector.mockImplementation(async (selector: string) => {
+      if (selector.includes('data-demo-ready')) throw new Error('timeout');
+    });
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+
+    const result = await built.service.run();
+
+    expect(result.polygon?.failed).toBe(1);
+    expect(result.outcomes[0].error).toMatch(/шаг 1 \(goto\).*не ожила/);
+  });
+
+  it('тёмная тема не нарисовалась — ролик не собирается', async () => {
+    const page = polygonPage({ dark: true });
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+    built.ffmpeg.configured.mockReturnValue(true);
+
+    const result = await built.service.run();
+
+    // Первой снимается светлая (ни разу не снятая); страница — тёмная.
+    expect(result.outcomes[0]).toEqual(
+      expect.objectContaining({ theme: 'light', themeMismatch: true }),
+    );
+    expect(built.prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+  });
+
+  it('проход витрины берёт только слоты — даже если база вернула чужую строку', async () => {
+    const page = polygonPage();
+    withBrowser(page);
+    const built = build([]);
+    rowsFor(built, {
+      demo: [
+        { ...DEMO_ROW, id: 'ts-3', subjectKey: '3' },
+        { ...DEMO_ROW, id: 'ts-99', subjectKey: 'site-tutorial-demo-99' },
+      ],
+    });
+
+    const result = await built.service.run();
+
+    expect(result.polygon).toBeUndefined();
+    expect(page.goto).not.toHaveBeenCalled();
+    const where = built.prisma.tutorialScenario.findMany.mock.calls
+      .map((c: Array<{ where?: { subjectKey?: { in?: string[] } } }>) => c[0])
+      .find(
+        (a: { where?: { subjectKey?: { in?: string[] } } }) =>
+          a?.where?.subjectKey?.in,
+      )?.where;
+    expect(where?.subjectKey?.in).toEqual([
+      'site-tutorial-demo-1',
+      'site-tutorial-demo-2',
+      'site-tutorial-demo-3',
+    ]);
+  });
+
+  it('проход TMA строки семейства не берёт: ни в запросе, ни в коде', async () => {
+    // Полигон не настроен — прохода витрины нет вовсе.
+    delete process.env.LANDING_PUBLIC_URL;
+    const page = buildFakePage({ screenshot: true });
+    withBrowser(page);
+    // База «забыла» условие: строка семейства пришла в выборку TMA.
+    const built = build([DEMO_ROW]);
+
+    const result = await built.service.run();
+
+    const where = built.prisma.tutorialScenario.findMany.mock.calls[0][0].where;
+    expect(where.NOT).toEqual({
+      subjectKey: { startsWith: 'site-tutorial-demo-' },
+    });
+    expect(result.total).toBe(0);
+    expect(page.goto).not.toHaveBeenCalled();
+    expect(result.polygon).toBeUndefined();
+  });
+
+  it.each([
+    ['http', 'http://landing.example'],
+    ['учётные данные', 'https://user:pw@landing.example'],
+    ['мусор', 'not a url'],
+  ])('LANDING_PUBLIC_URL с «%s» — прохода витрины нет', async (_l, value) => {
+    process.env.LANDING_PUBLIC_URL = value;
+    withBrowser(polygonPage());
+    const built = build([]);
+    rowsFor(built, { demo: [DEMO_ROW] });
+
+    const result = await built.service.run();
+
+    expect(result.polygon).toBeUndefined();
+    const askedSlots = built.prisma.tutorialScenario.findMany.mock.calls.some(
+      ([args]: [{ where?: { subjectKey?: { in?: unknown } } }]) =>
+        !!args?.where?.subjectKey?.in,
+    );
+    expect(askedSlots).toBe(false);
+  });
+
+  describe('подметальщик и отметка «в демо обучающего лендинга»', () => {
+    function demoVideo(id: string, over: Record<string, unknown> = {}) {
+      return {
+        id,
+        subjectKey: 'site-tutorial-demo-1',
+        locale: 'ru',
+        theme: 'light',
+        assemblyStatus: 'complete',
+        reviewed: true,
+        clientSiteDraftId: null,
+        blobUrl: `https://blob.example.com/tutorial-videos/d/${id}.mp4`,
+        ...over,
+      };
+    }
+
+    it('отмеченный ролик не удаляется, хотя новый одобренный его вытесняет', async () => {
+      const built = build([]);
+      stubAssets(built.prisma, [
+        demoVideo('demo-new'),
+        demoVideo('demo-marked'),
+        demoVideo('demo-unmarked'),
+      ]);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.siteTutorialDemoAssets' ? '["demo-marked"]' : null,
+      );
+
+      await built.service.pollAssemblies();
+
+      const deleted = built.prisma.tutorialVideoAsset.delete.mock.calls.map(
+        (c: { where: { id: string } }[]) => c[0].where.id,
+      );
+      expect(deleted).toEqual(['demo-unmarked']);
+    });
+
+    it('отметка не читается — строки семейства не трогаются вовсе, остальные метутся', async () => {
+      const built = build([]);
+      stubAssets(built.prisma, [
+        demoVideo('demo-new'),
+        demoVideo('demo-marked'),
+        { ...demoVideo('p-new'), subjectKey: '1', reviewed: false },
+        { ...demoVideo('p-old'), subjectKey: '1', reviewed: false },
+      ]);
+      built.settings.get.mockImplementation(async (key: string) => {
+        if (key === 'tutorial.siteTutorialDemoAssets') {
+          throw new Error('база недоступна');
+        }
+        return null;
+      });
+
+      await built.service.pollAssemblies();
+
+      const deleted = built.prisma.tutorialVideoAsset.delete.mock.calls.map(
+        (c: { where: { id: string } }[]) => c[0].where.id,
+      );
+      expect(deleted).toEqual(['p-old']);
+    });
+
+    it('негодное значение отметки — тоже «не знаем», семейство не метётся', async () => {
+      const built = build([]);
+      stubAssets(built.prisma, [demoVideo('demo-new'), demoVideo('demo-old')]);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.siteTutorialDemoAssets' ? '{"x":1}' : null,
+      );
+
+      await built.service.pollAssemblies();
+
+      expect(built.prisma.tutorialVideoAsset.delete).not.toHaveBeenCalled();
+    });
   });
 });

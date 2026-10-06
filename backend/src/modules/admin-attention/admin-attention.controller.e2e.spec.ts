@@ -180,6 +180,17 @@ describe('GET /api/admin/attention (e2e)', () => {
     expect(until.getTime() - since.getTime()).toBe(24 * HOUR);
   });
 
+  it('«текущая сборка» ищется без роликов демо обучающего лендинга (их сборка — лендинга)', async () => {
+    await asOperator().expect(200);
+    const call = prisma.tutorialVideoAsset.findFirst.mock.calls.find(
+      (c: Array<{ where?: { captureBuild?: unknown } }>) =>
+        c[0]?.where?.captureBuild !== undefined,
+    );
+    expect(call?.[0].where.NOT).toEqual({
+      subjectKey: { startsWith: 'site-tutorial-demo-' },
+    });
+  });
+
   it('критическая ошибка выше ожидающего ролика; форма карточки; без ПД', async () => {
     adminCron.getSummary.mockResolvedValue({
       lockMs: 11 * 60_000,

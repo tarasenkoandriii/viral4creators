@@ -44,6 +44,10 @@ import {
   AssistantChatRequest,
   AssistantErrorCode,
 } from './assistant.types';
+import {
+  isSiteTutorialDemoFamilyKey,
+  NOT_SITE_TUTORIAL_DEMO_WHERE,
+} from '../tutorial-help/site-tutorial-demo';
 
 export type AssistantStreamEvent = ChatStreamEvent<
   AssistantAction,
@@ -380,11 +384,18 @@ export class AssistantService {
           // свежий одобренный мог бы оказаться тёмным. NULL — старые
           // строки до колонки темы (светлые).
           OR: [{ theme: null }, { theme: 'light' }],
+          // Демо обучающего лендинга (`site-tutorial-demo-*`) — ролики
+          // витрины-полигона для одной секции одного лендинга, а не
+          // обучалка продукта: консультант их не предлагает (черновик
+          // демо, раздел 5.3). По префиксу — и ещё раз в коде ниже.
+          ...NOT_SITE_TUTORIAL_DEMO_WHERE,
         },
         select: { subjectKey: true },
         distinct: ['subjectKey'],
       });
-      return rows.map((r) => r.subjectKey);
+      return rows
+        .map((r: { subjectKey: string }) => r.subjectKey)
+        .filter((key: string) => !isSiteTutorialDemoFamilyKey(key));
     } catch (error) {
       // Мягкий отказ — как и весь остальной консультант (§7.4): сбой
       // этого доп. запроса не должен ронять ответ, просто модель в этот
@@ -413,6 +424,12 @@ export class AssistantService {
   ): Promise<AssistantAction[]> {
     const videoAction = actions.find((a) => a.kind === 'video');
     if (!videoAction || !videoAction.subjectKey) return actions;
+    // Ключ демо обучающего лендинга модель назвать могла (выдумала или
+    // увидела в старом промпте) — такое действие выбрасывается без
+    // запроса к базе, как и любое неодобренное.
+    if (isSiteTutorialDemoFamilyKey(videoAction.subjectKey)) {
+      return actions.filter((a) => a !== videoAction);
+    }
 
     let asset: { blobUrl: string | null; title: string } | null = null;
     try {
@@ -424,6 +441,7 @@ export class AssistantService {
           blobUrl: { not: null },
           clientSiteDraftId: null,
           OR: [{ theme: null }, { theme: 'light' }],
+          ...NOT_SITE_TUTORIAL_DEMO_WHERE,
         },
         orderBy: { createdAt: 'desc' },
         select: { blobUrl: true, title: true },

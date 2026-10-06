@@ -1344,6 +1344,24 @@ export interface TutorialScenarioListResult {
   pageSize: number;
 }
 
+/** Итог «Засеять демо обучающего лендинга» (бэкенд
+ *  `TutorialScenarioAdminService.seedSiteTutorialDemo`). */
+export interface SiteTutorialDemoSeedResult {
+  total: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  pairs: {
+    subjectKey: string;
+    locale: string;
+    scenario: string;
+    outcome: 'created' | 'updated' | 'unchanged';
+  }[];
+  /** `null` — `LANDING_PUBLIC_URL` бэкенда не задан или не https:
+   *  строки засеяны, но съёмка витрины не пойдёт. */
+  polygonOrigin: string | null;
+}
+
 // ── Обучалки по сайту заказчика (doc/CLIENT-SITE-TUTORIAL-SPEC.md §5.2,
 // §8.3; backend/src/modules/client-site-tutorial, этап 113) — вкладка
 // «Обучалки по сайтам» ──
@@ -1563,6 +1581,9 @@ export interface TutorialVideoListResult {
   total: number;
   page: number;
   pageSize: number;
+  /** Id роликов, отмеченных «В демо обучающего лендинга»
+   *  (`tutorial.siteTutorialDemoAssets`). Нет поля — старый бэкенд. */
+  siteTutorialDemoAssetIds?: string[];
 }
 
 export interface TutorialVideoCoverageCell {

@@ -75,6 +75,7 @@ import type {
   DemoQualityEnqueueResult,
   DemoQualityApprovedResult,
   TutorialScenarioListResult,
+  SiteTutorialDemoSeedResult,
   TutorialScenarioRow,
   FixtureSeedResult,
   PublicationListResult,
@@ -916,6 +917,17 @@ export function deleteTutorialScenario(id: string) {
 }
 
 /**
+ * «Засеять демо обучающего лендинга» — ручные сценарии слотов
+ * `site-tutorial-demo-1..3` (С3/С2/С4 × 5 локалей) из сида бэкенда.
+ * Идемпотентно: повторное нажатие без изменений сида ничего не пишет.
+ */
+export function seedSiteTutorialDemoScenarios() {
+  return apiPost<SiteTutorialDemoSeedResult>(
+    '/admin/tutorial-scenarios/site-tutorial-demo/seed',
+  );
+}
+
+/**
  * Заводит/обновляет фикстурного пользователя для регресс-раннера
  * обучалки (§3.3 ТЗ, этап 105) — то же самое, что раньше требовало
  * ручного CLI-запуска `scripts/seed-fixture-user.ts` с прод
@@ -950,6 +962,15 @@ export function setTutorialVideoReviewed(id: string, reviewed: boolean) {
   return apiPatch<TutorialVideoAssetRow>(`/admin/tutorial-video-assets/${id}/review`, {
     reviewed,
   });
+}
+
+/** Галочка «В демо обучающего лендинга» — только для вычитанного и
+ *  собранного ролика слота `site-tutorial-demo-*` (проверяет бэкенд). */
+export function setTutorialVideoSiteTutorialDemo(id: string, marked: boolean) {
+  return apiPatch<{ id: string; marked: boolean; siteTutorialDemoAssetIds: string[] }>(
+    `/admin/tutorial-video-assets/${id}/site-tutorial-demo`,
+    { marked },
+  );
 }
 
 export function getTutorialVideoDataStatus() {

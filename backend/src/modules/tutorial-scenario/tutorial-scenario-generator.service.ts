@@ -72,6 +72,7 @@ import {
 import { ScenarioStep } from './scenario-steps.types';
 import { mergeNarration } from './scenario-steps';
 import { stableStringify } from '../../common/stable-json';
+import { isSiteTutorialDemoFamilyKey } from '../tutorial-help/site-tutorial-demo';
 import {
   buildScenarioPrompt,
   parseScenarioResponse,
@@ -246,7 +247,7 @@ export class TutorialScenarioGeneratorService {
     // локали не генерировались никогда (пункт A1 обучалок). Плоский
     // список нужен, чтобы ротация могла поставить впереди пару из любой
     // локали, а не только локаль целиком.
-    const circle: RotationPair[] = [];
+    const allPairs: RotationPair[] = [];
     for (const locale of locales) {
       // Словарь шагов у каждой локали свой и уже переведён — это и
       // есть весь «перевод» в этом этапе. Локали без словаря
@@ -270,7 +271,7 @@ export class TutorialScenarioGeneratorService {
        * Порядок — сначала мастер: при равной давности (первая ночь,
        * отметок ещё нет) бюджет отложит менее обжитую половину.
        */
-      circle.push(
+      allPairs.push(
         ...steps.map((item, i) => ({ locale, key: String(i + 1), item })),
         ...greetingTopicKeys(locale).flatMap((key) => {
           const item = tutorialStepFor(key, locale);
@@ -278,6 +279,13 @@ export class TutorialScenarioGeneratorService {
         }),
       );
     }
+    // Семейство демо обучающего лендинга генератор не трогает НИКОГДА
+    // (решение владельца 06.10.2026): его сценарии — ручные, из сида, и
+    // идут на витрину-полигон. Сегодня круг собирается из каталогов
+    // мастера и поздравлений, и ключей семейства в нём нет по
+    // построению; фильтр — на случай, если каталог однажды их получит.
+    // Ещё два замка — в `runPairs` и `writeScenario`.
+    const circle = allPairs.filter((p) => !isSiteTutorialDemoFamilyKey(p.key));
     result.pairs = circle.length;
 
     // Ротация по давности — тот же приём, что `lastRunAt asc nulls
@@ -378,6 +386,14 @@ export class TutorialScenarioGeneratorService {
     steps: ScenarioStep[],
     cost: ScenarioCostEstimate,
   ): Promise<boolean> {
+    // Третий замок: даже дошедший сюда ответ не пишется в строку
+    // семейства демо обучающего лендинга (ручные сценарии из сида).
+    if (isSiteTutorialDemoFamilyKey(subjectKey)) {
+      this.logger.warn(
+        `сценарий ${subjectKey} (${locale}) — демо обучающего лендинга, генератор строку не пишет`,
+      );
+      return false;
+    }
     const existing = (await this.prisma.tutorialScenario.findUnique({
       where: { subjectKey_locale: { subjectKey, locale } },
       select: {
@@ -560,6 +576,14 @@ export class TutorialScenarioGeneratorService {
     const taken = new Set<string>();
     for (let i = 0; i < pairs.length; i++) {
       const { locale, key: subjectKey, item: step } = pairs[i];
+      // Второй замок семейства демо обучающего лендинга — до модели, до
+      // базы и до отметки ротации: пару не берём в работу вовсе.
+      if (isSiteTutorialDemoFamilyKey(subjectKey)) {
+        this.logger.warn(
+          `тема ${subjectKey} (${locale}) — демо обучающего лендинга, генератор её не трогает`,
+        );
+        continue;
+      }
       if (Date.now() >= deadline) {
         result.deferred = pairs.length - i;
         this.logger.warn(

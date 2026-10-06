@@ -19,6 +19,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -131,6 +132,19 @@ export class TutorialScenarioAdminController {
       );
     }
     return this.scenarioAdmin.replaceSteps(id, parsed, req.userId);
+  }
+
+  /**
+   * «Засеять демо обучающего лендинга» — ручные сценарии семейства
+   * `site-tutorial-demo-*` из вшитого сида (решение владельца
+   * 06.10.2026). Идемпотентно: повторное нажатие ничего не меняет, если
+   * сид не менялся. Статический путь не пересекается с `:id/…`: у тех
+   * второй сегмент — имя действия, и методы другие.
+   */
+  @Post('site-tutorial-demo/seed')
+  async seedSiteTutorialDemo(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.scenarioAdmin.seedSiteTutorialDemo(req.userId);
   }
 
   /**
