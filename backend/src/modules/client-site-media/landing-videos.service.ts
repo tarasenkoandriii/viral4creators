@@ -67,6 +67,9 @@ export class LandingVideosService {
         reviewed: true,
         blobUrl: { not: null },
         clientSiteDraftId: null,
+        // Лендинг светлый — только светлые ролики (заход 3, 06.10.2026:
+        // у пары появился тёмный ролик). NULL — строки до колонки темы.
+        OR: [{ theme: null }, { theme: 'light' }],
       },
       orderBy: { createdAt: 'desc' },
       select: {

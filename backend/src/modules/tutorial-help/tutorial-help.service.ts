@@ -33,6 +33,15 @@
  * размеру ставит пропорцию плеера до загрузки ролика, оператор по
  * времени и версии видит, не устарел ли он. Ничего сверх этих полей —
  * ни id строки, ни сценария, ни состояния сборки — наружу не уходит.
+ *
+ * ## Обе темы одним запросом (заход 3 «Актуального демо», 06.10.2026)
+ *
+ * Светлый и тёмный ролики — отдельные ролики пары, и лендинг со
+ * светлой/тёмной страницей должен уметь переключать плеер без второго
+ * запроса. Поэтому, кроме верхних полей (как раньше: ролик по `?theme=`
+ * или самый свежий), ответ несёт `variants` — по одобренному ролику на
+ * каждую тему, у которой он есть. Темы без одобренного ролика в
+ * `variants` нет вовсе (не `null`): «ключ есть» значит «можно играть».
  */
 
 import { Injectable, NotFoundException } from '@nestjs/common';
@@ -64,6 +73,23 @@ export interface TutorialHelpView {
   capturedAt: string | null;
   /** Версия фронтенда на съёмке (`<meta name="app-build">`). */
   captureBuild: string | null;
+  /**
+   * Одобренный ролик КАЖДОЙ темы — у которой он есть. Верхние поля
+   * ответа — один из них (по `?theme=`) или самый свежий; здесь — оба,
+   * чтобы лендинг переключал тему без второго запроса.
+   */
+  variants: Partial<Record<TutorialHelpTheme, TutorialHelpVariant>>;
+}
+
+/** Ролик одной темы — без `theme` (она в ключе) и без текста справки. */
+export interface TutorialHelpVariant {
+  videoUrl: string;
+  posterUrl: string | null;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  capturedAt: string | null;
+  captureBuild: string | null;
 }
 
 export const TUTORIAL_HELP_THEMES = ['light', 'dark'] as const;
@@ -83,6 +109,38 @@ function pixels(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
     ? value
     : null;
+}
+
+/** Размер холста — парой или никак: половины пары не бывает. */
+function canvas(asset: HelpAssetRow | null): {
+  width: number | null;
+  height: number | null;
+} {
+  const width = pixels(asset?.width);
+  const height = pixels(asset?.height);
+  return width !== null && height !== null
+    ? { width, height }
+    : { width: null, height: null };
+}
+
+/** Строка базы → ролик темы; без ссылки или ЧУЖОЙ темы — не ролик
+ *  этой темы (вторая проверка поверх фильтра запроса: ключ `variants`
+ *  обещает тему, и обещание держится в коде, а не только в `where`).
+ *  Набор полей — ровно `TutorialHelpVariant`, ничего сверх. */
+function toVariant(
+  asset: HelpAssetRow | null,
+  theme: TutorialHelpTheme,
+): TutorialHelpVariant | null {
+  const videoUrl = asset?.blobUrl ?? asset?.externalUrl ?? null;
+  if (!asset || !videoUrl || asset.theme !== theme) return null;
+  return {
+    videoUrl,
+    posterUrl: asset.posterUrl ?? null,
+    ...canvas(asset),
+    durationMs: asset.durationMs ?? null,
+    capturedAt: asset.capturedAt ? asset.capturedAt.toISOString() : null,
+    captureBuild: asset.captureBuild ?? null,
+  };
 }
 
 /** Строки базы, нужные справке, — и ничего сверх них. */
@@ -135,12 +193,28 @@ export class TutorialHelpService {
       );
     }
     const wanted = parseTutorialHelpTheme(rawTheme);
+    // По одобренному ролику на тему — они же `variants` и они же
+    // кандидаты в верхние поля по `?theme=`.
+    const byTheme = await Promise.all(
+      TUTORIAL_HELP_THEMES.map((theme) =>
+        this.findApproved(subjectKey, locale, theme),
+      ),
+    );
+    const variants: TutorialHelpView['variants'] = {};
+    TUTORIAL_HELP_THEMES.forEach((theme, i) => {
+      const variant = toVariant(byTheme[i], theme);
+      if (variant) variants[theme] = variant;
+    });
+    // Верхние поля — как до `variants`: ролик заказанной темы, а нет
+    // его — самый свежий одобренный ЛЮБОЙ темы (и без темы тоже: строка,
+    // собранная до тем, — светлая, но могла остаться без отметки).
+    const wantedRow =
+      wanted && variants[wanted]
+        ? byTheme[TUTORIAL_HELP_THEMES.indexOf(wanted)]
+        : null;
     const asset =
-      (wanted ? await this.findApproved(subjectKey, locale, wanted) : null) ??
-      (await this.findApproved(subjectKey, locale, null));
-    const width = pixels(asset?.width);
-    const height = pixels(asset?.height);
-    const sized = width !== null && height !== null;
+      wantedRow ?? (await this.findApproved(subjectKey, locale, null));
+    const { width, height } = canvas(asset);
     return {
       subjectKey,
       locale,
@@ -150,12 +224,13 @@ export class TutorialHelpService {
       // и переживает нас не дольше договора с ним.
       videoUrl: asset?.blobUrl ?? asset?.externalUrl ?? null,
       durationMs: asset?.durationMs ?? null,
-      width: sized ? width : null,
-      height: sized ? height : null,
+      width,
+      height,
       posterUrl: asset?.posterUrl ?? null,
       theme: parseTutorialHelpTheme(asset?.theme),
       capturedAt: asset?.capturedAt ? asset.capturedAt.toISOString() : null,
       captureBuild: asset?.captureBuild ?? null,
+      variants,
     };
   }
 

@@ -1038,6 +1038,9 @@
       "OTHER": "Besonderer Anlass"
     }
   },
+  "entryActions": {
+    "telegramCta": "In Telegram öffnen"
+  },
   "referral": {
     "metaTitle": "Einladung zu viral4creators",
     "metaDescription": "Sie wurden eingeladen, viral4creators auszuprobieren: ein kurzes Video aus einer Produktbeschreibung oder einem Anlass — in wenigen Minuten. Die erste Generierung ist kostenlos.",

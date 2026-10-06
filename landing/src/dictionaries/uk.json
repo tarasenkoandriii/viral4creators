@@ -1038,6 +1038,9 @@
       "OTHER": "Особлива подія"
     }
   },
+  "entryActions": {
+    "telegramCta": "Відкрити в Telegram"
+  },
   "referral": {
     "metaTitle": "Запрошення до viral4creators",
     "metaDescription": "Вас запросили спробувати viral4creators: коротке відео з опису товару або з приводу — за пару хвилин. Перша генерація безкоштовно.",

@@ -12,6 +12,11 @@
  * `UiSnapshot.changed = true` и шлёт тревогу через уже существующий
  * `TelegramNotifyService` (§3.7 ТЗ).
  *
+ * С захода 3 «Актуального демо» (06.10.2026) крон снимает не только
+ * `light`: тема чередуется по тикам (`SNAPSHOT_THEMES`,
+ * `nextComparisonTheme`), и каждая сравнивается со своим прошлым
+ * снимком.
+ *
  * ## Явный, сознательный пропуск Фазы 0 (§10, пункт 1 аудита; §6.1 ТЗ)
  *
  * §6.1 дорожной карты и пункт 1 аудита (§10) рекомендуют СНАЧАЛА один
@@ -142,6 +147,20 @@ import {
  * снимок получается ровно той комбинации, которой подписан. */
 const DEFAULT_LOCALE = 'ru';
 const DEFAULT_THEME: SnapshotTheme = 'light';
+
+/**
+ * Темы, между которыми чередуется СРАВНИВАЕМЫЙ прогон без явной темы —
+ * то есть крон (заход 3 «Актуального демо», 06.10.2026). Порядок —
+ * предпочтение при равной давности: светлая — прежнее умолчание, у неё
+ * уже есть база сравнения.
+ *
+ * Чередование — по тикам, а не по маршрутам внутри тика: бюджет тика
+ * (`RUN_TIME_BUDGET_MS`) не растёт, а каждая тема сравнивается со
+ * своим прошлым снимком (выборка `previous` — по комбинации маршрут ×
+ * локаль × тема), так что смена темы между тиками ложного «изменилось»
+ * не даёт.
+ */
+export const SNAPSHOT_THEMES: readonly SnapshotTheme[] = ['light', 'dark'];
 
 /** Пять маршрутов §3.8 ТЗ — те же, что нужны Части Б для сценариев
  * обучающих видео (§4.5 ТЗ), фикстуры и обоснование выбора не
@@ -348,7 +367,12 @@ export type SnapshotTheme = 'light' | 'dark';
 export interface UiSnapshotRunOptions {
   /** Код локали продукта (`ru`/`uk`/`en`/…). По умолчанию `ru`. */
   locale?: string;
-  /** По умолчанию `light`. */
+  /**
+   * Не задана: у сравниваемого прогона (крон) — тема по очереди, та, чей
+   * последний снимок этих маршрутов в этой локали давнее
+   * (`SNAPSHOT_THEMES`, заход 3); у немаскированного — `light`, как
+   * раньше.
+   */
   theme?: SnapshotTheme;
   /** Подмножество маршрутов. По умолчанию — те же пять, что у крона. */
   routeKeys?: readonly string[];
@@ -512,6 +536,8 @@ export interface UiSnapshotRunResult {
    * списка другое, и разбираться приходилось глазами.
    */
   deferred?: number;
+  /** Тема, в которой снимал этот прогон (у крона — по очереди). */
+  theme?: SnapshotTheme;
 }
 
 @Injectable()
@@ -526,7 +552,6 @@ export class UiSnapshotRunnerService {
 
   async run(options: UiSnapshotRunOptions = {}): Promise<UiSnapshotRunResult> {
     const locale = options.locale?.trim() || DEFAULT_LOCALE;
-    const theme = options.theme ?? DEFAULT_THEME;
     const unmasked = options.unmasked === true;
     const alerts = options.alerts !== false;
     const deviceScaleFactor = options.deviceScaleFactor ?? 1;
@@ -605,6 +630,14 @@ export class UiSnapshotRunnerService {
       return this.skip('фикстурный пользователь не заведён');
     }
 
+    // Тема — после проверок окружения: пропуск по ненастроенной фикстуре
+    // не должен трогать базу (а выбор темы её читает).
+    const theme =
+      options.theme ??
+      (unmasked
+        ? DEFAULT_THEME
+        : await this.nextComparisonTheme(locale, routeKeys));
+
     const ctx = await this.resolveFixtureContext(user.id);
     // Служебная сессия нужна ровно одному маршруту — мастеру
     // (`generate`), который без неё создаёт новую на каждом
@@ -633,6 +666,7 @@ export class UiSnapshotRunnerService {
           changed: false,
           error: launched.error,
         })),
+        theme,
       };
     }
 
@@ -690,7 +724,50 @@ export class UiSnapshotRunnerService {
       failed: outcomes.filter((o) => o.error).length,
       outcomes,
       ...(deferred > 0 ? { deferred } : {}),
+      theme,
     };
+  }
+
+  /**
+   * Тема очередного сравниваемого прогона: та, чей последний снимок этих
+   * маршрутов в этой локали давнее; ни разу не снимавшаяся — первой; при
+   * равенстве — порядок `SNAPSHOT_THEMES`. Строки со сбоем тоже
+   * считаются: тема, которую пытались снять и не смогли, своё в очереди
+   * отстояла — иначе сломанная тёмная вёрстка забирала бы каждый тик и
+   * светлую не снимал бы никто.
+   *
+   * Сбой чтения — умолчание (`light`): снимок той же комбинации, что и
+   * до чередования, сравним с прошлым.
+   */
+  private async nextComparisonTheme(
+    locale: string,
+    routeKeys: readonly string[],
+  ): Promise<SnapshotTheme> {
+    try {
+      let best: { theme: SnapshotTheme; at: number | null } | null = null;
+      for (const theme of SNAPSHOT_THEMES) {
+        const last = (await this.prisma.uiSnapshot.findFirst({
+          where: { locale, theme, routeKey: { in: [...routeKeys] } },
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true },
+        })) as { createdAt?: Date | null } | null;
+        const at =
+          last?.createdAt instanceof Date ? last.createdAt.getTime() : null;
+        if (
+          !best ||
+          (at !== best.at &&
+            (at === null || (best.at !== null && at < best.at)))
+        ) {
+          best = { theme, at };
+        }
+      }
+      return best?.theme ?? DEFAULT_THEME;
+    } catch (e) {
+      this.logger.warn(
+        `тема очередного прогона не выбрана (${e instanceof Error ? e.message : String(e)}) — снимаем ${DEFAULT_THEME}`,
+      );
+      return DEFAULT_THEME;
+    }
   }
 
   private async captureOne(

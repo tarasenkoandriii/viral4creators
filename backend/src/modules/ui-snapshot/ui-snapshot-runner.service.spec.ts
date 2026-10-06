@@ -1475,3 +1475,119 @@ describe('UiSnapshotRunnerService — кадр не зависит от моме
     }
   });
 });
+
+describe('UiSnapshotRunnerService — тема крона по очереди (заход 3)', () => {
+  function okBrowser() {
+    const page = buildFakePage();
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    return page;
+  }
+
+  /** Таблица снимков как в базе: `create` пишет, `findFirst` ищет по
+   *  комбинации и отдаёт самый свежий. */
+  function snapshotTable(prisma: ReturnType<typeof build>['prisma']) {
+    const rows: Array<Record<string, any>> = [];
+    let tick = 0;
+    prisma.uiSnapshot.create.mockImplementation(async ({ data }: any) => {
+      rows.push({ ...data, createdAt: new Date(1_000_000 + ++tick) });
+    });
+    prisma.uiSnapshot.findFirst.mockImplementation(async ({ where }: any) => {
+      const hit = rows
+        .filter(
+          (r) =>
+            r.locale === where.locale &&
+            r.theme === where.theme &&
+            (where.routeKey?.in
+              ? where.routeKey.in.includes(r.routeKey)
+              : r.routeKey === where.routeKey) &&
+            (where.error === null ? !r.error : true),
+        )
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+      return hit ?? null;
+    });
+    return rows;
+  }
+
+  it('тики чередуют светлую и тёмную, каждая сравнивается со своей', async () => {
+    okBrowser();
+    const { service, prisma } = build();
+    const rows = snapshotTable(prisma);
+
+    const r1 = await service.run();
+    const r2 = await service.run();
+    const r3 = await service.run();
+
+    expect([r1.theme, r2.theme, r3.theme]).toEqual(['light', 'dark', 'light']);
+    // Первый тёмный снимок сравнивать не с чем — светлый ему не база.
+    const darkFirst = rows.filter((r) => r.theme === 'dark');
+    expect(darkFirst).toHaveLength(5);
+    expect(darkFirst.every((r) => r.comparedToUrl === null)).toBe(true);
+    // Второй светлый — со своим, светлым.
+    const light2 = rows.filter((r) => r.theme === 'light').slice(5);
+    expect(light2.every((r) => r.comparedToUrl !== null)).toBe(true);
+  });
+
+  it('ни разу не снятая тема — первой; иначе — та, чей снимок давнее', async () => {
+    okBrowser();
+    const { service, prisma } = build();
+    prisma.uiSnapshot.findFirst.mockImplementation(
+      async ({ where, select }: any) =>
+        select?.createdAt
+          ? where.theme === 'light'
+            ? { createdAt: new Date('2026-10-06T10:00:00Z') }
+            : { createdAt: new Date('2026-10-06T09:00:00Z') }
+          : null,
+    );
+    expect((await service.run()).theme).toBe('dark');
+
+    prisma.uiSnapshot.findFirst.mockImplementation(
+      async ({ where, select }: any) =>
+        select?.createdAt && where.theme === 'dark'
+          ? { createdAt: new Date('2026-10-06T10:00:00Z') }
+          : null,
+    );
+    expect((await service.run()).theme).toBe('light');
+  });
+
+  it('явная тема и немаскированный прогон — без очереди', async () => {
+    okBrowser();
+    const { service, prisma } = build();
+    const r = await service.run({ theme: 'dark', routeKeys: ['projects'] });
+    expect(r.theme).toBe('dark');
+    expect(
+      prisma.uiSnapshot.findFirst.mock.calls.some(
+        ([a]: any) => a.select?.createdAt,
+      ),
+    ).toBe(false);
+
+    const r2 = await service.run({ unmasked: true, routeKeys: ['projects'] });
+    expect(r2.theme).toBe('light');
+    expect(prisma.uiSnapshot.findFirst).not.toHaveBeenCalledWith(
+      expect.objectContaining({ select: { createdAt: true } }),
+    );
+  });
+
+  it('сбой чтения очереди — светлая, прогон идёт', async () => {
+    okBrowser();
+    const { service, prisma } = build();
+    prisma.uiSnapshot.findFirst.mockImplementation(async ({ select }: any) => {
+      if (select?.createdAt) throw new Error('база');
+      return null;
+    });
+    const r = await service.run();
+    expect(r.theme).toBe('light');
+    expect(r.total).toBe(5);
+  });
+
+  it('пропуск по ненастроенной фикстуре базу не трогает', async () => {
+    delete process.env.FIXTURE_USER_TOKEN;
+    const { service, prisma } = build();
+    await service.run();
+    expect(prisma.uiSnapshot.findFirst).not.toHaveBeenCalled();
+  });
+});

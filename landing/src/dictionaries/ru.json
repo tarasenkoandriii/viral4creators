@@ -1038,6 +1038,9 @@
       "OTHER": "Особый повод"
     }
   },
+  "entryActions": {
+    "telegramCta": "Открыть в Telegram"
+  },
   "referral": {
     "metaTitle": "Приглашение в viral4creators",
     "metaDescription": "Вас пригласили попробовать viral4creators: короткое видео из описания товара или из повода — за пару минут. Первая генерация бесплатно.",

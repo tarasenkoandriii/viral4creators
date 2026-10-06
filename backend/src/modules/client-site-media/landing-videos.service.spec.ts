@@ -110,6 +110,8 @@ describe('LandingVideosService — барьер лендинга', () => {
       reviewed: true,
       blobUrl: { not: null },
       clientSiteDraftId: null,
+      // Лендинг светлый: тёмные ролики пары (заход 3) в набор не идут.
+      OR: [{ theme: null }, { theme: 'light' }],
     });
   });
 

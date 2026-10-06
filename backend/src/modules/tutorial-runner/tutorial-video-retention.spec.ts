@@ -254,3 +254,61 @@ describe('прежний одобренный ролик и сутки посл�
     expect(parseApprovalStamps('[1,2]').size).toBe(0);
   });
 });
+
+describe('пара — с темой (заход 3 «Актуального демо», 06.10.2026)', () => {
+  it('свежий тёмный ролик не вытесняет единственный светлый', () => {
+    // Без темы в ключе тёмный занимал роли «последняя попытка» и
+    // «проигрываемый» за всю пару, и светлый уходил — чередование тем
+    // стирало бы ролики друг друга каждый тик.
+    expect(
+      doomed([
+        asset({ id: 'dark', theme: 'dark' }),
+        asset({ id: 'light', theme: 'light' }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it('одобренный светлый держится при свежем одобренном тёмном', () => {
+    expect(
+      doomed([
+        asset({ id: 'dark-ok', theme: 'dark', reviewed: true }),
+        asset({ id: 'dark-old', theme: 'dark' }),
+        asset({ id: 'light-ok', theme: 'light', reviewed: true }),
+        asset({ id: 'light-old', theme: 'light' }),
+      ]),
+    ).toEqual(['dark-old', 'light-old']);
+  });
+
+  it('строка без темы — светлая (до тем всё снималось светлым)', () => {
+    expect(sweepPairKey({ subjectKey: '1', locale: 'ru', theme: null })).toBe(
+      sweepPairKey({ subjectKey: '1', locale: 'ru', theme: 'light' }),
+    );
+    expect(sweepPairKey({ subjectKey: '1', locale: 'ru' })).not.toBe(
+      sweepPairKey({ subjectKey: '1', locale: 'ru', theme: 'dark' }),
+    );
+    // Прежний светлый без темы уходит, когда есть свежий светлый с темой.
+    expect(
+      doomed([
+        asset({ id: 'new', theme: 'light' }),
+        asset({ id: 'legacy', theme: null }),
+      ]),
+    ).toEqual(['legacy']);
+  });
+
+  it('отсрочка одобрения — тоже по теме: тёмное одобрение не держит прежний светлый', () => {
+    const rows = [
+      asset({ id: 'dark-ok', theme: 'dark', reviewed: true }),
+      asset({ id: 'light-ok', theme: 'light', reviewed: true }),
+      asset({ id: 'light-prev', theme: 'light', reviewed: true }),
+    ];
+    const now = Date.now();
+    const grace = pairsInApprovalGrace(
+      rows,
+      new Map([['dark-ok', now - 60_000]]),
+      now,
+    );
+    expect(selectSweepableAssets(rows, 0, grace).map((r) => r.id)).toEqual([
+      'light-prev',
+    ]);
+  });
+});

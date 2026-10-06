@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import type { DemoTheme, TutorialDemo } from './tutorial-demo-api';
 
 /**
  * Пропорция сцены плеера демо (`.demo-stage` в `globals.css`).
@@ -44,4 +45,48 @@ export function demoStageStyle(size: DemoSize): CSSProperties {
     '--demo-ar': `${size.width} / ${size.height}`,
     '--demo-ratio': String(ratio),
   } as CSSProperties;
+}
+
+/**
+ * Что показывает сцена: ролик, постер и размер одной темы.
+ *
+ * Тема лендинга на этот выбор не влияет (решение владельца: переключателя
+ * темы на лендинге нет) — только системная тема посетителя,
+ * `prefers-color-scheme`. Старшинство:
+ *
+ *  1. вариант темы посетителя;
+ *  2. верхние поля, если записано, что сняты в этой теме;
+ *  3. вариант другой темы — какой есть;
+ *  4. верхние поля — прежнее поведение.
+ *
+ * `scheme === null` — тема ещё неизвестна (сервер, первый проход
+ * гидрации): верхние поля, ровно как до вариантов, чтобы HTML сервера не
+ * зависел от них.
+ */
+export interface DemoChoice {
+  videoUrl: string;
+  posterUrl: string | null;
+  width: number | null;
+  height: number | null;
+  theme: DemoTheme | null;
+}
+
+export function pickDemoVariant(item: TutorialDemo, scheme: DemoTheme | null): DemoChoice {
+  const top: DemoChoice = {
+    videoUrl: item.videoUrl, posterUrl: item.posterUrl, width: item.width, height: item.height, theme: item.theme,
+  };
+  if (!scheme) return top;
+  const own = item.variants?.[scheme];
+  if (own) return { ...own, theme: scheme };
+  if (item.theme === scheme) return top;
+  const other: DemoTheme = scheme === 'dark' ? 'light' : 'dark';
+  const fallback = item.variants?.[other];
+  return fallback ? { ...fallback, theme: other } : top;
+}
+
+/** Запрос системной темы — один на сцену и тест. */
+export const DARK_SCHEME_QUERY = '(prefers-color-scheme: dark)';
+
+export function schemeFromMatches(darkMatches: boolean): DemoTheme {
+  return darkMatches ? 'dark' : 'light';
 }

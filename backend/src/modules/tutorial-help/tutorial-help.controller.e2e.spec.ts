@@ -66,17 +66,34 @@ describe('GET /api/tutorial-help/:subjectKey (e2e)', () => {
       theme: 'light',
       capturedAt: '2026-10-05T08:00:00.000Z',
       captureBuild: '1a2b3c4',
+      // Обе темы одним запросом (заход 3); тёмного ролика нет — и ключа нет.
+      variants: {
+        light: {
+          videoUrl: ROW.blobUrl,
+          posterUrl: ROW.posterUrl,
+          width: 1080,
+          height: 1080,
+          durationMs: 31000,
+          capturedAt: '2026-10-05T08:00:00.000Z',
+          captureBuild: '1a2b3c4',
+        },
+      },
     });
   });
 
   it('?theme=dark доезжает до выборки; нет такого — запасной без темы', async () => {
-    findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(ROW);
+    findFirst.mockImplementation(async (args: { where: { theme?: string } }) =>
+      args.where.theme === 'dark' ? null : ROW,
+    );
     const res = await request(app.getHttpServer())
       .get('/api/tutorial-help/2?locale=ru&theme=dark')
       .expect(200);
-    expect(findFirst.mock.calls[0][0].where.theme).toBe('dark');
-    expect(findFirst.mock.calls[1][0].where).not.toHaveProperty('theme');
+    const themes = findFirst.mock.calls.map(
+      ([a]: [{ where: { theme?: string } }]) => a.where.theme,
+    );
+    expect(themes).toEqual(['light', 'dark', undefined]);
     expect(res.body.data.theme).toBe('light');
+    expect(Object.keys(res.body.data.variants)).toEqual(['light']);
   });
 
   it('?theme=мусор — 200 и обычная выдача', async () => {
@@ -84,9 +101,14 @@ describe('GET /api/tutorial-help/:subjectKey (e2e)', () => {
     const res = await request(app.getHttpServer())
       .get('/api/tutorial-help/2?locale=ru&theme=%3Cscript%3E')
       .expect(200);
-    expect(findFirst).toHaveBeenCalledTimes(1);
+    expect(
+      findFirst.mock.calls.some(
+        ([a]: [{ where: { theme?: string } }]) => a.where.theme === '<script>',
+      ),
+    ).toBe(false);
     expect(res.body.data.videoUrl).toBeNull();
     expect(res.body.data.width).toBeNull();
+    expect(res.body.data.variants).toEqual({});
   });
 
   it('несуществующая тема — 404', async () => {

@@ -177,7 +177,7 @@ jobs:
       #  - modules/plan — кто и что вправе делать за деньги;
       #  - квоты SerpApi/YouTube и служебный канал (этап 49).
       - name: тесты и покрытие опасных файлов
-        run: npx jest --ci --coverage --coverageReporters=text-summary --json --outputFile=jest-results.json
+        run: npx jest --ci --coverage --coverageReporters=text-summary --json --outputFile=jest-results.json --reporters=default --reporters=github-actions
         working-directory: backend
 
       # Числа в документах разъезжались с реальностью на этапах 25, 28 и
@@ -290,7 +290,11 @@ jobs:
       # под ролью assist_public падает. При CI=true без базы набор не
       # пропускается, а падает.
       - name: тесты (в том числе изоляция под assist_public)
-        run: npx jest --ci
+        # github-actions — упавшие тесты видны аннотациями проверки (публичный
+        # API без входа); workerIdleMemoryLimit в package.json — воркер jest
+        # перезапускается, если после файла держит > 1 ГБ (набор вырос до
+        # ~2850 тестов на одной базе).
+        run: npx jest --ci --reporters=default --reporters=github-actions
         working-directory: sites-backend
 
       # Копии чистых модулей backend/ в sites-backend/src/shared совпадают

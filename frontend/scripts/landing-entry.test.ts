@@ -56,6 +56,25 @@ it('незнакомая метка источника игнорируется,
   assert.equal(projectTypeFromSearch('?entry=нечто'), null);
 });
 
+it('метка главной (ads) открывает форму товарного ролика', () => {
+  // Тот же тип, что и умолчание формы, но метка нужна входу из
+  // Telegram (`startapp=e_ads`, `lib/start-param.ts`).
+  assert.equal(projectTypeFromSearch('?entry=ads'), 'SINGLE');
+});
+
+it('имя свойства Object.prototype — не метка', () => {
+  // До закрытого списка `ENTRY_PROJECT_TYPES[entry]` отдавал на
+  // `?entry=toString` функцию, и она становилась «типом проекта».
+  for (const key of [
+    'toString',
+    'constructor',
+    '__proto__',
+    'hasOwnProperty',
+  ]) {
+    assert.equal(projectTypeFromSearch(`?entry=${key}`), null, key);
+  }
+});
+
 it('каждая метка в таблице ведёт на существующий тип проекта', () => {
   // Таблица — единственное место, где строка из чужого репозитория
   // (`landing/`) превращается в тип проекта; опечатка здесь молча

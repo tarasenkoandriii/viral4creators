@@ -164,6 +164,16 @@ export default function SiteTutorialDraftsPage() {
     }
   }, [openId]);
 
+  // Переход с «Обзора» (дашборд внимания): `?open=<id>` сразу
+  // раскрывает карточку этого черновика — один раз, при входе.
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current) return;
+    deepLinked.current = true;
+    const id = new URLSearchParams(window.location.search).get('open');
+    if (id) void open(id);
+  }, [open]);
+
   async function act(run: () => Promise<unknown>) {
     setBusy(true);
     setError(null);

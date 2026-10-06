@@ -127,6 +127,7 @@ describe('GET /api/ops/demo-status (e2e)', () => {
       [
         'approved',
         'approvedThemes',
+        'byTheme',
         'family',
         'locale',
         'pendingReview',
@@ -134,8 +135,16 @@ describe('GET /api/ops/demo-status (e2e)', () => {
       ].sort(),
     );
     expect(data.tutorials.totals).toEqual(
-      expect.objectContaining({ withApproved: 0, pendingReview: 0 }),
+      expect.objectContaining({
+        withApproved: 0,
+        pendingReview: 0,
+        withApprovedByTheme: { light: 0, dark: 0 },
+      }),
     );
+    expect(Object.keys(data.tutorials.cells[0].byTheme).sort()).toEqual([
+      'dark',
+      'light',
+    ]);
     expect(data.uiSnapshots).toEqual({ sinceDays: 30, items: [] });
   });
 

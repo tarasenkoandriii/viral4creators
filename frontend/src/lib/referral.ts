@@ -23,19 +23,14 @@
  * того, как он представился.
  */
 
+import {
+  REFERRAL_START_PREFIX,
+  currentStartParam,
+  normalizeReferralCode as normalize,
+  parseStartParam,
+} from './start-param';
+
 const KEY = 'referralCode';
-
-/** Префикс `startapp`: Telegram отдаёт один параметр на все нужды. */
-const START_PARAM_PREFIX = 'r_';
-
-/** Тот же алфавит и длина, что на сервере (`common/referral.ts`). */
-const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/;
-
-function normalize(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const code = raw.trim().toUpperCase();
-  return CODE_RE.test(code) ? code : null;
-}
 
 /**
  * Достать код из адреса и запомнить. Зовётся один раз при старте, до
@@ -45,14 +40,10 @@ export function captureReferralCode(): void {
   if (typeof window === 'undefined') return;
   try {
     const fromQuery = new URLSearchParams(window.location.search).get('ref');
-    const hash = window.location.hash.startsWith('#')
-      ? window.location.hash.slice(1)
-      : window.location.hash;
-    const startParam = new URLSearchParams(hash).get('tgWebAppStartParam');
-    const fromStart = startParam?.startsWith(START_PARAM_PREFIX)
-      ? startParam.slice(START_PARAM_PREFIX.length)
-      : null;
-    const code = normalize(fromQuery) ?? normalize(fromStart);
+    // `startapp` бывает и составным — `e_<сценарий>__r_<код>` с
+    // лендинга; формат и строгий разбор — в `start-param.ts`.
+    const fromStart = parseStartParam(currentStartParam()).referralCode;
+    const code = normalize(fromQuery) ?? fromStart;
     if (!code) return;
     // Первое касание выигрывает — и на клиенте тоже: человек, открывший
     // вторую ссылку, остаётся за первым пригласившим. Сервер решает то
@@ -106,5 +97,5 @@ export function telegramReferralLink(
 ): string | null {
   const bot = botUsername?.trim().replace(/^@/, '');
   if (!bot) return null;
-  return `https://t.me/${bot}/app?startapp=${START_PARAM_PREFIX}${code}`;
+  return `https://t.me/${bot}/app?startapp=${REFERRAL_START_PREFIX}${code}`;
 }

@@ -52,11 +52,16 @@ describe('TutorialHelpService', () => {
    * Главное правило. Реплики пишет модель, и невычитанный ролик — это
    * её текст, показанный пользователю от имени продукта.
    */
-  it('невычитанный ролик не отдаётся — фильтр стоит в запросе', async () => {
+  it('невычитанный ролик не отдаётся — фильтр стоит в КАЖДОМ запросе', async () => {
     const { service, findFirst } = build(null);
     const view = await service.get('greeting-brief', 'ru');
     expect(view.videoUrl).toBeNull();
-    expect(findFirst.mock.calls[0][0].where.reviewed).toBe(true);
+    expect(view.variants).toEqual({});
+    // По запросу на тему (`variants`) и запасной — у всех одно правило.
+    expect(findFirst).toHaveBeenCalledTimes(3);
+    for (const [args] of findFirst.mock.calls) {
+      expect(args.where.reviewed).toBe(true);
+    }
   });
 
   it('текст есть и без ролика — человек просил помощи, а не отказа', async () => {
@@ -162,6 +167,7 @@ describe('TutorialHelpService', () => {
           'theme',
           'capturedAt',
           'captureBuild',
+          'variants',
         ].sort(),
       );
       expect(Object.keys(findFirst.mock.calls[0][0].select).sort()).toEqual(
@@ -222,32 +228,53 @@ describe('TutorialHelpService', () => {
   });
 
   describe('пожелание темы', () => {
-    it('без темы — один запрос, без фильтра по теме', async () => {
+    /** База с одобренными роликами по темам: `findFirst` отдаёт ролик
+     *  заказанной темы, а без темы — самый свежий из всех. */
+    function byTheme(rows: Record<string, unknown>[]) {
+      const built = build();
+      built.findFirst.mockImplementation(
+        async (args: { where: { theme?: string } }) =>
+          (args.where.theme
+            ? rows.find((r) => r.theme === args.where.theme)
+            : rows[0]) ?? null,
+      );
+      return built;
+    }
+
+    it('без темы — запасной запрос без фильтра по теме', async () => {
       const { service, findFirst } = build(ASSET);
       await service.get('greeting-brief', 'ru');
-      expect(findFirst).toHaveBeenCalledTimes(1);
-      expect(findFirst.mock.calls[0][0].where).not.toHaveProperty('theme');
+      const unfiltered = findFirst.mock.calls.filter(
+        ([a]: [{ where: object }]) => !('theme' in a.where),
+      );
+      expect(unfiltered).toHaveLength(1);
     });
 
-    it('тема есть у одобренного — отдаётся ролик этой темы', async () => {
-      const { service, findFirst } = build({ ...ASSET, ...META });
+    it('тема есть у одобренного — отдаётся ролик этой темы, без запасного запроса', async () => {
+      const { service, findFirst } = byTheme([
+        { ...ASSET, ...META, theme: 'light', blobUrl: 'https://blob/l.mp4' },
+        { ...ASSET, ...META, theme: 'dark', blobUrl: 'https://blob/d.mp4' },
+      ]);
       const view = await service.get('greeting-brief', 'ru', 'dark');
-      expect(findFirst).toHaveBeenCalledTimes(1);
-      expect(findFirst.mock.calls[0][0].where.theme).toBe('dark');
-      expect(findFirst.mock.calls[0][0].where.reviewed).toBe(true);
+      expect(findFirst).toHaveBeenCalledTimes(2);
+      expect(
+        findFirst.mock.calls.map(
+          ([a]: [{ where: { theme?: string } }]) => a.where.theme,
+        ),
+      ).toEqual(['light', 'dark']);
       expect(view.theme).toBe('dark');
+      expect(view.videoUrl).toBe('https://blob/d.mp4');
     });
 
     it('ролика этой темы нет — самый свежий одобренный любой темы', async () => {
-      const { service, findFirst } = build();
-      findFirst
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce({ ...ASSET, ...META, theme: 'light' });
+      const { service, findFirst } = byTheme([
+        { ...ASSET, ...META, theme: 'light' },
+      ]);
       const view = await service.get('greeting-brief', 'ru', 'dark');
-      expect(findFirst).toHaveBeenCalledTimes(2);
-      expect(findFirst.mock.calls[1][0].where).not.toHaveProperty('theme');
+      expect(findFirst).toHaveBeenCalledTimes(3);
+      expect(findFirst.mock.calls[2][0].where).not.toHaveProperty('theme');
       // Запасной запрос — те же правила: только вычитанный.
-      expect(findFirst.mock.calls[1][0].where.reviewed).toBe(true);
+      expect(findFirst.mock.calls[2][0].where.reviewed).toBe(true);
       expect(view.videoUrl).toBe(ASSET.blobUrl);
       expect(view.theme).toBe('light');
     });
@@ -255,8 +282,121 @@ describe('TutorialHelpService', () => {
     it('неизвестная тема — как без темы, а не 400', async () => {
       const { service, findFirst } = build(ASSET);
       await service.get('greeting-brief', 'ru', 'purple');
-      expect(findFirst).toHaveBeenCalledTimes(1);
-      expect(findFirst.mock.calls[0][0].where).not.toHaveProperty('theme');
+      expect(
+        findFirst.mock.calls.some(
+          ([a]: [{ where: { theme?: string } }]) => a.where.theme === 'purple',
+        ),
+      ).toBe(false);
+      expect(findFirst.mock.calls[2][0].where).not.toHaveProperty('theme');
+    });
+  });
+
+  describe('variants — обе темы одним запросом (заход 3)', () => {
+    const LIGHT = {
+      ...ASSET,
+      ...META,
+      theme: 'light',
+      blobUrl: 'https://blob/l.mp4',
+      posterUrl: 'https://blob/tutorial-video-posters/l.png',
+      capturedAt: new Date('2026-10-04T08:00:00.000Z'),
+      captureBuild: 'build-l',
+      // Служебное строки — наружу не идёт.
+      id: 'asset_l',
+      contentHash: 'deadbeef',
+    };
+    const DARK = {
+      ...ASSET,
+      ...META,
+      theme: 'dark',
+      blobUrl: 'https://blob/d.mp4',
+      posterUrl: 'https://blob/tutorial-video-posters/d.png',
+      capturedAt: new Date('2026-10-05T08:00:00.000Z'),
+      captureBuild: 'build-d',
+      durationMs: 29000,
+    };
+    function db(rows: Record<string, unknown>[]) {
+      const built = build();
+      built.findFirst.mockImplementation(
+        async (args: { where: { theme?: string } }) =>
+          (args.where.theme
+            ? rows.find((r) => r.theme === args.where.theme)
+            : rows[rows.length - 1]) ?? null,
+      );
+      return built;
+    }
+
+    it('обе темы одобрены — обе в variants, ровно с полями ролика', async () => {
+      const { service } = db([LIGHT, DARK]);
+      const view = await service.get('greeting-brief', 'ru');
+      expect(Object.keys(view.variants).sort()).toEqual(['dark', 'light']);
+      for (const v of Object.values(view.variants)) {
+        expect(Object.keys(v!).sort()).toEqual(
+          [
+            'videoUrl',
+            'posterUrl',
+            'width',
+            'height',
+            'durationMs',
+            'capturedAt',
+            'captureBuild',
+          ].sort(),
+        );
+      }
+      expect(view.variants.light).toEqual({
+        videoUrl: 'https://blob/l.mp4',
+        posterUrl: 'https://blob/tutorial-video-posters/l.png',
+        width: 1920,
+        height: 1080,
+        durationMs: 31000,
+        capturedAt: '2026-10-04T08:00:00.000Z',
+        captureBuild: 'build-l',
+      });
+      expect(view.variants.dark).toEqual(
+        expect.objectContaining({
+          videoUrl: 'https://blob/d.mp4',
+          durationMs: 29000,
+          captureBuild: 'build-d',
+        }),
+      );
+    });
+
+    it('только одобренные: темы без одобренного ролика в variants нет вовсе', async () => {
+      const { service, findFirst } = db([LIGHT]);
+      const view = await service.get('greeting-brief', 'ru');
+      expect(view.variants).toEqual({
+        light: expect.objectContaining({ videoUrl: 'https://blob/l.mp4' }),
+      });
+      expect('dark' in view.variants).toBe(false);
+      // Выборка вариантов — только вычитанные и только со ссылкой.
+      for (const [a] of findFirst.mock.calls) {
+        expect(a.where.reviewed).toBe(true);
+        expect(a.where.OR).toEqual([
+          { blobUrl: { not: null } },
+          { externalUrl: { not: null } },
+        ]);
+      }
+    });
+
+    it('строка чужой темы (сбой выборки) в вариант не попадает', async () => {
+      const { service } = build(LIGHT); // на любой запрос — светлая
+      const view = await service.get('greeting-brief', 'ru');
+      expect(Object.keys(view.variants)).toEqual(['light']);
+    });
+
+    it('верхние поля — по ?theme=, variants — обе', async () => {
+      const { service } = db([LIGHT, DARK]);
+      const view = await service.get('greeting-brief', 'ru', 'light');
+      expect(view.videoUrl).toBe('https://blob/l.mp4');
+      expect(view.theme).toBe('light');
+      expect(Object.keys(view.variants).sort()).toEqual(['dark', 'light']);
+    });
+
+    it('ролик без размера — в варианте размер null парой', async () => {
+      const { service } = db([{ ...LIGHT, width: 720, height: null }]);
+      const view = await service.get('greeting-brief', 'ru');
+      expect([view.variants.light!.width, view.variants.light!.height]).toEqual(
+        [null, null],
+      );
     });
   });
 });

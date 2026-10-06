@@ -24,7 +24,26 @@ export interface TutorialDemo {
   posterUrl: string | null;
   /** Тема интерфейса на съёмке; `null` — не записана. */
   theme: DemoTheme | null;
+  /**
+   * Одобренные ролики каждой темы (`variants` ответа API). Верхние поля —
+   * как раньше (их показывает сервер до того, как браузер узнал тему
+   * посетителя); вариант выбирает сцена плеера по `prefers-color-scheme`
+   * (`pickDemoVariant` в `demo-stage.ts`). Пусто — прежнее поведение.
+   */
+  variants: DemoVariants;
 }
+
+/** Ролик одной темы: те же поля и те же проверки, что у верхних. */
+export interface DemoVariant {
+  videoUrl: string;
+  posterUrl: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+export type DemoVariants = Partial<Record<DemoTheme, DemoVariant>>;
+
+export const DEMO_THEMES: readonly DemoTheme[] = ['light', 'dark'];
 
 /** Границы размера: меньше 16 px — не кадр, больше 8K — не наш ролик.
  * Вне них — мусор, который сломал бы `aspect-ratio` сцены. */
@@ -75,6 +94,36 @@ export function demoSize(width: unknown, height: unknown): { width: number; heig
 }
 
 /**
+ * Один вариант темы. Без годного `videoUrl` варианта нет; размер и
+ * постер, как у верхних полей, отбрасываются по одному.
+ */
+export function parseDemoVariant(raw: unknown): DemoVariant | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const data = raw as Record<string, unknown>;
+  const videoUrl = safeMediaUrl(data.videoUrl);
+  if (!videoUrl) return null;
+  const size = demoSize(data.width, data.height);
+  return { videoUrl, posterUrl: safeMediaUrl(data.posterUrl), width: size?.width ?? null, height: size?.height ?? null };
+}
+
+/**
+ * `variants` ответа: только ключи `light`/`dark`, каждый — через
+ * `parseDemoVariant`. Нет поля, не объект, всё негодное — `{}`, то есть
+ * прежнее поведение по верхним полям.
+ */
+export function parseDemoVariants(raw: unknown): DemoVariants {
+  const out: DemoVariants = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const theme of DEMO_THEMES) {
+    // Только собственные поля: `{ __proto__: … }` из JSON — не тема.
+    if (!Object.prototype.hasOwnProperty.call(raw, theme)) continue;
+    const variant = parseDemoVariant((raw as Record<string, unknown>)[theme]);
+    if (variant) out[theme] = variant;
+  }
+  return out;
+}
+
+/**
  * Only the public, reviewed tutorial feed; never raw cron snapshots.
  *
  * Страница вызывает это ОДИН раз и раздаёт результат галерее, кнопке
@@ -110,6 +159,7 @@ export async function loadTutorialDemos(scenario: DemoScenario, locale: Locale):
         height: size?.height ?? null,
         posterUrl: safeMediaUrl(data.posterUrl),
         theme: data.theme === 'light' || data.theme === 'dark' ? data.theme : null,
+        variants: parseDemoVariants(data.variants),
       };
     } catch {
       // A missing approval or API failure must not break the landing.

@@ -22,6 +22,8 @@
 import { readStoredThemePreference } from './theme';
 import { captureReferralCode } from './referral';
 import { assistSiteEntryUrl, captureAssistSiteLink } from './assist-site-link';
+import { currentStartParam, parseStartParam } from './start-param';
+import { entryLaunchUrl } from '../features/projects/landing-entry';
 
 export interface TelegramWebApp {
   initData: string;
@@ -31,7 +33,11 @@ export interface TelegramWebApp {
   // Accept-Language браузера. Не используется для авторизации — это
   // делает исключительно валидируемый на бэкенде initData (см.
   // getAuthHeaders() ниже).
-  initDataUnsafe?: { user?: { language_code?: string } };
+  //
+  // `start_param` — тот же `startapp`, что и `tgWebAppStartParam` в hash'е
+  // запуска (`lib/start-param.ts`); запасной источник для клиентов, у
+  // которых в hash его нет.
+  initDataUnsafe?: { user?: { language_code?: string }; start_param?: string };
   ready: () => void;
   expand: () => void;
   /**
@@ -170,6 +176,12 @@ export function initTelegramWebApp(): void {
   captureReferralCode();
   // Э6 помощника: deep-link «снять обучение для сайта» — тоже до очистки.
   const assistLink = captureAssistSiteLink();
+  // Кнопка «Открыть в Telegram» на лендинге: `startapp=e_<сценарий>`
+  // (возможно, с `__r_<код>` — его забрал `captureReferralCode` выше).
+  // Тоже до очистки: после неё `tgWebAppStartParam` из адреса уже нет.
+  const launchEntry = assistLink
+    ? null
+    : parseStartParam(currentStartParam()).entry;
   stripTelegramLaunchHash();
   if (assistLink && typeof window !== 'undefined') {
     // Сразу форма нового проекта «сайт заказчика» (роутер ещё не читал hash).
@@ -177,6 +189,19 @@ export function initTelegramWebApp(): void {
       null,
       '',
       assistSiteEntryUrl(window.location.pathname)
+    );
+  } else if (launchEntry && typeof window !== 'undefined') {
+    // Тот же адрес, что у браузерной кнопки лендинга (`?entry=…`):
+    // форма прочитает его как обычно, и сценарий в Telegram и в
+    // браузере открывается одним и тем же путём.
+    window.history.replaceState(
+      null,
+      '',
+      entryLaunchUrl(
+        window.location.pathname,
+        window.location.search,
+        launchEntry
+      )
     );
   }
   applyTheme();

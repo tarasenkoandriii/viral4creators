@@ -85,8 +85,40 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'data-status', label: 'Состояние данных' },
 ];
 
+/** Переход с «Обзора» (дашборд внимания): `?tab=videos&reviewed=false
+ * &subjectKey=2&locale=ru&tempo=<assetId>` — открыть нужную вкладку с
+ * фильтром и, если указан `tempo`, панель темпа этого ролика. */
+interface VideoTabInit {
+  subjectKey: string;
+  locale: string;
+  reviewed: '' | 'true' | 'false';
+  tempo: string | null;
+}
+
+function readDeepLink(): { tab: Tab | null; video: VideoTabInit } {
+  const p = new URLSearchParams(window.location.search);
+  const t = p.get('tab');
+  const r = p.get('reviewed');
+  return {
+    tab: t === 'exchanges' || t === 'videos' || t === 'data-status' ? t : null,
+    video: {
+      subjectKey: p.get('subjectKey') ?? '',
+      locale: p.get('locale') ?? '',
+      reviewed: r === 'true' || r === 'false' ? r : '',
+      tempo: p.get('tempo'),
+    },
+  };
+}
+
 export default function AssistantAdminPage() {
   const [tab, setTab] = useState<Tab>('exchanges');
+  const [videoInit, setVideoInit] = useState<VideoTabInit | null>(null);
+
+  useEffect(() => {
+    const link = readDeepLink();
+    if (link.tab) setTab(link.tab);
+    setVideoInit(link.video);
+  }, []);
 
   return (
     <div className="page">
@@ -117,7 +149,7 @@ export default function AssistantAdminPage() {
       </div>
 
       {tab === 'exchanges' && <ExchangesTab />}
-      {tab === 'videos' && <VideoContentTab />}
+      {tab === 'videos' && <VideoContentTab key={videoInit ? 'linked' : 'plain'} init={videoInit} />}
       {tab === 'data-status' && <DataStatusTab />}
     </div>
   );
@@ -380,10 +412,10 @@ function assemblyStatusLabel(status: TutorialVideoAssetRow['assemblyStatus']): s
   }
 }
 
-function VideoContentTab() {
-  const [subjectKey, setSubjectKey] = useState('');
-  const [locale, setLocale] = useState('');
-  const [reviewed, setReviewedFilter] = useState<'' | 'true' | 'false'>('');
+function VideoContentTab({ init }: { init: VideoTabInit | null }) {
+  const [subjectKey, setSubjectKey] = useState(init?.subjectKey ?? '');
+  const [locale, setLocale] = useState(init?.locale ?? '');
+  const [reviewed, setReviewedFilter] = useState<'' | 'true' | 'false'>(init?.reviewed ?? '');
   const [page, setPage] = useState(1);
   const [result, setResult] = useState<{ rows: TutorialVideoAssetRow[]; total: number; pageSize: number } | null>(
     null,
@@ -391,7 +423,7 @@ function VideoContentTab() {
   const [error, setError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   // Темп (06.10.2026): панель версий с другим темпом под строкой ролика.
-  const [tempoId, setTempoId] = useState<string | null>(null);
+  const [tempoId, setTempoId] = useState<string | null>(init?.tempo ?? null);
   const [busyId, setBusyId] = useState<string | null>(null);
   // Этап 101 (ТЗ §4.7, Фаза 3) — публикация в YouTube/TikTok прямо с
   // этой вкладки, тот же приём формы, что «Одобрить/Отклонить» на

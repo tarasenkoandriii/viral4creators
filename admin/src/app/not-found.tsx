@@ -13,7 +13,7 @@ export default function NotFound() {
         Такого раздела в админке нет или ссылка устарела.
       </p>
       <p>
-        <Link href="/sessions">К сессиям</Link>
+        <Link href="/">К обзору</Link>
       </p>
     </main>
   );

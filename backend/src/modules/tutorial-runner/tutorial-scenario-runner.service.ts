@@ -70,8 +70,22 @@
  * та пересборка, ради которой отпечаток и заводился.
  *
  * Второй — убирать лишнее. `sweepOldAssets` ходит вместе с опросом
- * сборок и держит на пару (шаг, локаль) до трёх строк, по одной на
+ * сборок и держит на пару (шаг, локаль, тема) до трёх строк, по одной на
  * роль; подробности и границы — в его доккомментарии.
+ *
+ * ## Светлая и тёмная темы (заход 3 «Актуального демо», 06.10.2026)
+ *
+ * Каждый сценарий снимается в двух темах, и это два ОТДЕЛЬНЫХ ролика:
+ * пара — (subjectKey, locale, theme). Тик берёт столько же сценариев,
+ * сколько и раньше, и каждый — в одной теме, той, что дольше не
+ * снималась (`tutorial-theme-rotation.ts`). Отпечаток кадров, счёт
+ * провалов, подметальщик и одобрение — по паре с темой.
+ *
+ * Тема ставится «как внутри Telegram»: явный выбор темы человеком
+ * (`v4c_theme`) НЕ пишется, а SDK Telegram получает `themeParams`
+ * нужной темы — и фронтенд красится тем же путём, что в настоящем
+ * клиенте (`applyTheme()` следует `WebApp.colorScheme`). Что этот
+ * приём подтверждает и чего не подтверждает — у `runOne`.
  *
  * ## Почему платные сценарии не тратят деньги на этом прогоне
  *
@@ -202,6 +216,25 @@ import {
   SPA_SESSION_STORAGE_KEY,
   SPA_THEME_STORAGE_KEY,
 } from '../../common/spa-storage-keys';
+import {
+  assetTheme,
+  assetThemeWhere,
+  CaptureThemeProbe,
+  captureThemeVia,
+  CaptureThemeVia,
+  clipRunError,
+  isScenarioTheme,
+  parseThemeRuns,
+  planThemedRuns,
+  recordThemeRun,
+  ScenarioTheme,
+  serializeThemeRuns,
+  TELEGRAM_SDK_INIT_PARAMS_KEY,
+  TELEGRAM_SDK_THEME_PARAMS_KEY,
+  TELEGRAM_THEME_PARAMS,
+  THEME_RUNS_SETTING_KEY,
+  ThemeRuns,
+} from './tutorial-theme-rotation';
 
 /** Сколько сценариев БЕРЁМ из базы за один тик — 30. Это верхняя граница
  * выборки, а не пропускная способность: на деле за тик успевает около
@@ -212,6 +245,20 @@ import {
  * выборка их вмещает целиком; при пяти локалях строк 75 — больше
  * лимита, и справедливость держит именно ротация, а не это число. */
 const RUN_BATCH_LIMIT = 30;
+
+/**
+ * Сколько строк сценариев читать, чтобы выбрать из них `RUN_BATCH_LIMIT`
+ * прогонов (заход 3 «Актуального демо», 06.10.2026).
+ *
+ * До тем выборка отсекала «прошедшие недавно» прямо в SQL и брала
+ * первые тридцать. С темами так нельзя: сценарий, прошедший час назад
+ * в светлой теме, может ни разу не сниматься в тёмной, а колонка
+ * `lastRunAt` у строки одна. Поэтому строки читаются шире, а «кому
+ * сейчас нужен прогон и в какой теме» решает `planThemedRuns` по
+ * по-темным отметкам. Сценариев сегодня 75 при пяти локалях — потолок
+ * с большим запасом и при этом не «вся таблица навсегда».
+ */
+const SCENARIO_SCAN_LIMIT = 500;
 
 /**
  * Потолок жизни функции Vercel, под которым считается весь тик: сверх
@@ -387,10 +434,13 @@ const RUN_SKIP_ALERT_SETTING_KEY = 'tutorial.runSkipAlerted';
  * провалившейся, а не «всё ещё идёт» навсегда. */
 const ASSEMBLY_DEADLINE_MS = 10 * 60 * 1000;
 
-/** Тема интерфейса на съёмке. Светлая — та же, что по умолчанию у
- * снимков мастера (`ui-snapshot-runner`), чтобы кадры обучалки и
- * кадры лендинга выглядели одним продуктом, а не двумя. */
-const SCENARIO_THEME = 'light';
+/*
+ * Тема интерфейса на съёмке — с захода 3 «Актуального демо» (06.10.2026)
+ * не константа: крон чередует светлую и тёмную по паре
+ * (`tutorial-theme-rotation.ts`), и каждая тема — отдельный ролик пары
+ * (subjectKey, locale, theme). До этого здесь стояла `SCENARIO_THEME =
+ * 'light'`, и тёмного ролика не было ни одного.
+ */
 
 /** Сколько провалов назвать поимённо, прежде чем перейти на одно
  * итоговое сообщение. Три — чтобы единичная поломка приходила со
@@ -439,6 +489,9 @@ export interface TutorialScenarioRunOutcome {
   /** Язык прогона. Без него в журнале крона пять локалей выглядят
    *  пятью одинаковыми строками (правка аудита этапа C). */
   locale: string;
+  /** Тема прогона (заход 3 «Актуального демо»): одна пара в двух темах
+   *  — два разных прогона, и в журнале они обязаны различаться. */
+  theme: ScenarioTheme;
   ok: boolean;
   error?: string;
   /** Сколько платных кликов прогон пропустил, не нажимая (см.
@@ -466,6 +519,16 @@ export interface TutorialScenarioRunOutcome {
    *  прошли, ролика не будет. Без этой отметки обрыв выглядел бы как
    *  чистый успех: regression-результат к этому моменту уже записан. */
   assemblyTimedOut?: true;
+  /**
+   * Как на деле нарисована тема кадров (см. `CaptureThemeVia`):
+   * `telegram` — через SDK Telegram, как в клиенте; `media-query` — SDK
+   * не дал темы, фронтенд взял её из `prefers-color-scheme`. Нет поля —
+   * замер не удался (страница не умеет `evaluate`).
+   */
+  themeVia?: Exclude<CaptureThemeVia, 'mismatch'>;
+  /** Кадры сняты НЕ в той теме — ролик не собирается: тёмный ролик со
+   *  светлыми кадрами хуже, чем никакого. Шаги при этом прошли. */
+  themeMismatch?: true;
 }
 
 export interface TutorialScenarioRunResult {
@@ -503,6 +566,9 @@ export interface TutorialScenarioRunResult {
    *  `ASSEMBLY_SUBMIT_TIMEOUT_MS`, и это разговор о самой сборке, а
    *  не о бюджете тика. */
   assemblyTimeouts: number;
+  /** У скольких прогонов кадры сняты не в той теме, и ролик не собран
+   *  (см. `themeMismatch`). Необязательное — его нет у пропусков. */
+  themeMismatches?: number;
   outcomes: TutorialScenarioRunOutcome[];
 }
 
@@ -545,6 +611,23 @@ const MIN_ASSEMBLED_VIDEO_BYTES = 1024;
 function scenarioFramePrefix(assetId: string): string {
   return `tutorial-video-frames/${assetId}/`;
 }
+
+/**
+ * Имя кадра под префиксом актива: `{номер шага}-{тема}.png` (заход 3
+ * «Актуального демо», 06.10.2026; до него — `{номер шага}.png`). Номер
+ * шага первым — по нему ищется постер (`SCENARIO_FRAME_NAME_RE`).
+ */
+export function scenarioFrameName(
+  stepIndex: number,
+  theme: ScenarioTheme,
+): string {
+  return `${stepIndex}-${theme}.png`;
+}
+
+/** Кадр под префиксом актива — в обоих форматах имени: прежнем
+ *  `{шаг}.png` (строки, собранные до тем) и `{шаг}-{тема}.png`. Не
+ *  подписи (`captions.ass`). */
+export const SCENARIO_FRAME_NAME_RE = /^(\d+)(?:-(?:light|dark))?\.png$/;
 
 export interface TutorialAssemblyPollResult {
   /** Заполнено, когда опрос пропущен: замок держит другой прогон. */
@@ -1308,29 +1391,15 @@ export class TutorialScenarioRunnerService {
     const locales = parseTutorialLocales(
       await this.settings.get(TUTORIAL_LOCALES_SETTING_KEY),
     );
-    const scenarios = await this.prisma.tutorialScenario.findMany({
+    const rows = await this.prisma.tutorialScenario.findMany({
       where: {
         locale: { in: locales },
-        AND: [
-          { OR: [{ costly: false }, { approved: true }] },
-          // Прошедший на тех же шагах — не чаще `OK_RERUN_INTERVAL_MS`.
-          // Через `OR` из четырёх веток, а не `NOT { ok И свежий }`:
-          // `NOT` над сравнением с NULL в SQL даёт NULL, и сценарии, ни
-          // разу не исполнявшиеся (`lastRunStatus`/`lastRunAt` пусты),
-          // выпали бы из выборки навсегда.
-          {
-            OR: [
-              { lastRunStatus: null },
-              { lastRunStatus: { not: 'ok' } },
-              { lastRunAt: null },
-              {
-                lastRunAt: {
-                  lt: new Date(Date.now() - OK_RERUN_INTERVAL_MS),
-                },
-              },
-            ],
-          },
-        ],
+        // Правило «прошедший на тех же шагах — не чаще
+        // `OK_RERUN_INTERVAL_MS`» с захода 3 решается не здесь, а в
+        // `planThemedRuns` — ПО ТЕМЕ: колонка `lastRunAt` у строки одна,
+        // и свежий светлый прогон отсекал бы в SQL ни разу не снятую
+        // тёмную тему (см. `SCENARIO_SCAN_LIMIT`).
+        AND: [{ OR: [{ costly: false }, { approved: true }] }],
       },
       // Сперва те, что дольше всех не исполнялись (`nulls: 'first'` —
       // ни разу не исполнявшиеся впереди всех). По `createdAt asc`
@@ -1343,9 +1412,23 @@ export class TutorialScenarioRunnerService {
         { lastRunAt: { sort: 'asc', nulls: 'first' } },
         { createdAt: 'asc' },
       ],
-      take: RUN_BATCH_LIMIT,
+      take: SCENARIO_SCAN_LIMIT,
     });
-    if (scenarios.length === 0) {
+    // По-темные отметки прогонов. Сбой чтения — пустая карта: все тёмные
+    // темы выглядят неснятыми и встают первыми, светлые читаются из
+    // колонок строки. Лишний прогон — безопасная сторона.
+    const themeRuns = parseThemeRuns(
+      await this.settings.get(THEME_RUNS_SETTING_KEY).catch(() => null),
+    );
+    const planned = planThemedRuns(
+      rows,
+      themeRuns,
+      Date.now(),
+      OK_RERUN_INTERVAL_MS,
+      RUN_BATCH_LIMIT,
+    );
+    const scenarios = planned.map((p) => p.scenario);
+    if (planned.length === 0) {
       return {
         total: 0,
         passed: 0,
@@ -1402,6 +1485,15 @@ export class TutorialScenarioRunnerService {
     if ('error' in launched) {
       this.logger.warn(`headless-браузер недоступен: ${launched.error}`);
       await this.recordInfraFailure(scenarios, launched.error);
+      for (const p of planned) {
+        recordThemeRun(themeRuns, p.scenario, p.theme, {
+          at: new Date().toISOString(),
+          status: 'failed',
+          error: launched.error,
+          stepsSha: p.stepsSha,
+        });
+      }
+      await this.saveThemeRuns(themeRuns);
       await this.notify.alert(
         'tutorial-scenario-run:browser',
         `Исполнитель сценариев обучающих видео: браузер не запустился. ${launched.error}`,
@@ -1425,10 +1517,11 @@ export class TutorialScenarioRunnerService {
         // журнале, ради которой поле и заводили на этапе C —
         // в ветке, где не исполнился НИ ОДИН сценарий (находка
         // сквозного аудита A+B+C).
-        outcomes: scenarios.map((s) => ({
+        outcomes: planned.map(({ scenario: s, theme }) => ({
           id: s.id,
           subjectKey: s.subjectKey,
           locale: s.locale,
+          theme,
           ok: false,
           error: launched.error,
         })),
@@ -1440,7 +1533,7 @@ export class TutorialScenarioRunnerService {
     const failures: string[] = [];
     const deadline = tickStartedAt + RUN_DEADLINE_MS;
     try {
-      for (const scenario of scenarios) {
+      for (const { scenario, theme, lastError, stepsSha } of planned) {
         if (Date.now() >= deadline) {
           this.logger.warn(
             `тик исчерпал бюджет времени — ${scenarios.length - outcomes.length} сценариев отложено до следующего прогона`,
@@ -1449,7 +1542,10 @@ export class TutorialScenarioRunnerService {
         }
         const outcome = await this.runOne(
           browser,
-          scenario,
+          // «Чем упал в прошлый раз» — у ЭТОЙ темы, а не у строки:
+          // колонка строки помнит последний прогон любой темы, и тёмная
+          // поломка иначе глушила бы тревогу о светлой (и наоборот).
+          { ...scenario, lastRunError: lastError },
           ctx,
           // Владелец расхода этого прогона — фикстурный пользователь
           // (см. `synthesizeNarration`). Тянется параметром, а не
@@ -1461,10 +1557,21 @@ export class TutorialScenarioRunnerService {
           apiOrigin,
           tmaBaseUrl,
           budget,
+          theme,
         );
         outcomes.push(outcome);
+        // Отметка темы — после КАЖДОГО прогона, а не в конце тика:
+        // функцию могут убить на потолке, и тогда недописанные отметки
+        // означали бы лишний прогон тех же тем — безопасно, но зря.
+        recordThemeRun(themeRuns, scenario, theme, {
+          at: new Date().toISOString(),
+          status: outcome.ok ? 'ok' : 'failed',
+          error: outcome.error ?? null,
+          stepsSha,
+        });
+        await this.saveThemeRuns(themeRuns);
         if (!outcome.ok) {
-          failures.push(`${scenario.subjectKey}/${scenario.locale}`);
+          failures.push(`${scenario.subjectKey}/${scenario.locale}/${theme}`);
           // Локаль в fingerprint И в тексте. Без неё пять локалей
           // схлопывались в одно сообщение: `TelegramNotifyService`
           // давит повторы по fingerprint в окне 10 минут, а весь
@@ -1494,8 +1601,8 @@ export class TutorialScenarioRunnerService {
           // журнале крона провал виден всегда.
           if (failures.length <= ALERT_DETAIL_LIMIT && !outcome.repeatFailure) {
             await this.notify.alert(
-              `tutorial-scenario-run:${scenario.subjectKey}:${scenario.locale}`,
-              `Сценарий обучающего видео «${scenario.subjectKey}» (${scenario.locale}) провалился на regression-прогоне: ${outcome.error}`,
+              `tutorial-scenario-run:${scenario.subjectKey}:${scenario.locale}:${theme}`,
+              `Сценарий обучающего видео «${scenario.subjectKey}» (${scenario.locale}, тема ${theme}) провалился на regression-прогоне: ${outcome.error}`,
             );
           }
         }
@@ -1538,8 +1645,24 @@ export class TutorialScenarioRunnerService {
       lostRaces: outcomes.filter((o) => o.lostRace).length,
       repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
       assemblyTimeouts: outcomes.filter((o) => o.assemblyTimedOut).length,
+      themeMismatches: outcomes.filter((o) => o.themeMismatch).length,
       outcomes,
     };
+  }
+
+  /** Записать карту по-темных отметок. Не бросает: без записи худшее —
+   *  та же тема снимется ещё раз на следующем тике. */
+  private async saveThemeRuns(runs: ThemeRuns): Promise<void> {
+    try {
+      await this.settings.set(
+        THEME_RUNS_SETTING_KEY,
+        serializeThemeRuns(runs, Date.now()),
+      );
+    } catch (e) {
+      this.logger.warn(
+        `отметки тем прогонов не записаны: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
 
   private async runOne(
@@ -1567,6 +1690,38 @@ export class TutorialScenarioRunnerService {
     tmaBaseUrl: string,
     /** Суточный денежный потолок тика — один на все сценарии прогона. */
     budget: TutorialBudget,
+    /**
+     * Тема съёмки (заход 3 «Актуального демо»). По умолчанию светлая —
+     * прежнее поведение для вызова без темы.
+     *
+     * ## Как ставится и что это подтверждает
+     *
+     * Как внутри Telegram: явный выбор человека (`v4c_theme`) из
+     * хранилища УБИРАЕТСЯ, а SDK Telegram (`telegram-web-app.js`,
+     * подключён в `index.html` фронтенда) находит в `sessionStorage`
+     * параметры темы клиента — ровно те ключи, куда он сам кладёт
+     * параметры запуска (`__telegram__initParams`/`__telegram__themeParams`).
+     * Из `bg_color` SDK выводит `WebApp.colorScheme`, и фронтенд красится
+     * своей ветвью «внутри Telegram» (`applyTheme()`: нет явного выбора —
+     * следуем `colorScheme`). Запасной путь — `prefers-color-scheme`
+     * нужной темы: если SDK не загрузился (сеть до telegram.org), фронтенд
+     * возьмёт тему из системной. После прогона тема ЗАМЕРЯЕТСЯ на
+     * странице (`themeVia`), и кадры не той темы в ролик не идут.
+     *
+     * Подтверждает: ветвь темы «как в Telegram» — SDK, `colorScheme`,
+     * `applyTheme()` и вся тёмная/светлая вёрстка при ней; телефонный
+     * вьюпорт и плотность.
+     *
+     * НЕ подтверждает (мобильный вьюпорт сам по себе — не Telegram):
+     * настоящий WebView клиента (iOS WKWebView / Android WebView / tdesktop
+     * — здесь headless Chromium), подпись `initData` (вход — фикстурным
+     * токеном, `initData` пуст, и ветви, зависящие от него, идут как в
+     * браузере), шапку и фон клиента (`setHeaderColor`/`setBackgroundColor`
+     * уходят в никуда), живую смену темы (`themeChanged`), safe-area,
+     * клавиатуру, `viewportChanged`, `openLink`/`openInvoice` и прочие
+     * методы моста, которым нужен сам клиент.
+     */
+    theme: ScenarioTheme = 'light',
   ): Promise<TutorialScenarioRunOutcome> {
     const steps = scenario.steps as unknown as ScenarioStep[];
 
@@ -1652,11 +1807,13 @@ export class TutorialScenarioRunnerService {
       // текст в русском интерфейсе» не находится и выглядит как
       // сломанный интерфейс, а не как несовпадение языков.
       //
-      // Тема — константа: у `TutorialScenario` поля темы нет, и
-      // заводить его незачем. Ролики снимаются в светлой теме, как
-      // и раньше по умолчанию; важно здесь только то, что тема
-      // задана ЯВНО и не зависит от системной у машины, где
-      // случился прогон.
+      // Тема — НЕ этим ключом с захода 3: явный выбор человека
+      // перебил бы тему Telegram, и съёмка шла бы мимо ветви «внутри
+      // Telegram». Ключ темы здесь УДАЛЯЕТСЯ (страница могла остаться
+      // от прошлого прогона), а тема приходит через SDK Telegram —
+      // см. второй подсев ниже и доккомментарий параметра `theme`.
+      // Тема по-прежнему не зависит от системной у машины прогона:
+      // `prefers-color-scheme` выставлен той же темы.
       //
       // Тем же способом подсевается и СЕССИЯ мастера (находка второго
       // боевого прогона 29.09.2026, маршрут `generate-ready`): у
@@ -1670,7 +1827,6 @@ export class TutorialScenarioRunnerService {
       await page.evaluateOnNewDocument(
         (
           locale: string,
-          theme: string,
           localeKey: string,
           themeKey: string,
           sessionId: string,
@@ -1678,7 +1834,7 @@ export class TutorialScenarioRunnerService {
         ) => {
           try {
             window.localStorage.setItem(localeKey, locale);
-            window.localStorage.setItem(themeKey, theme);
+            window.localStorage.removeItem(themeKey);
             if (sessionId) {
               window.localStorage.setItem(sessionKey, sessionId);
             } else {
@@ -1691,12 +1847,58 @@ export class TutorialScenarioRunnerService {
           }
         },
         scenario.locale,
-        SCENARIO_THEME,
         SPA_LOCALE_STORAGE_KEY,
         SPA_THEME_STORAGE_KEY,
         seededSessionId,
         SPA_SESSION_STORAGE_KEY,
       );
+
+      // Тема «как внутри Telegram» — отдельным подсевом и в своём
+      // `try`: `sessionStorage` бывает недоступен там, где
+      // `localStorage` есть, и сбой здесь не должен отменять локаль и
+      // сессию выше. Параметры кладутся ДО загрузки SDK — он читает их
+      // при подключении скрипта.
+      await page.evaluateOnNewDocument(
+        (
+          params: Record<string, string>,
+          initKey: string,
+          themeParamsKey: string,
+        ) => {
+          try {
+            const raw = window.sessionStorage.getItem(initKey);
+            const init = (raw ? JSON.parse(raw) : {}) as Record<
+              string,
+              unknown
+            >;
+            init.tgWebAppThemeParams = JSON.stringify(params);
+            window.sessionStorage.setItem(initKey, JSON.stringify(init));
+            window.sessionStorage.setItem(
+              themeParamsKey,
+              JSON.stringify(params),
+            );
+          } catch {
+            // Нет `sessionStorage` — останется `prefers-color-scheme`
+            // ниже, а замер после прогона скажет, какой путь сработал.
+          }
+        },
+        { ...TELEGRAM_THEME_PARAMS[theme] },
+        TELEGRAM_SDK_INIT_PARAMS_KEY,
+        TELEGRAM_SDK_THEME_PARAMS_KEY,
+      );
+      // Запасной путь — системная тема страницы той же темы. Метода у
+      // поддельной страницы может не быть — тогда без него.
+      const emulateMedia = (
+        page as unknown as {
+          emulateMediaFeatures?: (
+            f: { name: string; value: string }[],
+          ) => Promise<void>;
+        }
+      ).emulateMediaFeatures;
+      if (typeof emulateMedia === 'function') {
+        await emulateMedia.call(page, [
+          { name: 'prefers-color-scheme', value: theme },
+        ]);
+      }
 
       const base = tmaBaseUrl.replace(/\/+$/, '');
       const resolveRoute = (routeName: string) => {
@@ -1725,6 +1927,15 @@ export class TutorialScenarioRunnerService {
         capturedAt: new Date(),
         captureBuild: await readCaptureBuild(page),
       };
+      // Какой темой на деле нарисованы кадры — тоже на открытой
+      // странице. `null` — замерить не удалось: решения нет, ролик
+      // собирается как прежде (замер — страховка, не условие).
+      const themeVia = captureThemeVia(theme, await readCaptureTheme(page));
+      if (themeVia === 'mismatch') {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}): заказана тема ${theme}, а страница нарисована другой — ролик не собирается`,
+        );
+      }
 
       // Кадр не снялся — прогон прошёл, а ролик будет короче
       // сценария. В журнал поимённо: это единственный след частичного
@@ -1758,7 +1969,7 @@ export class TutorialScenarioRunnerService {
         lostRace?: true;
         assemblyTimedOut?: true;
       } = {};
-      if (result.ok) {
+      if (result.ok && themeVia !== 'mismatch') {
         // Дедлайн — снаружи метода, а не внутри: обрывать надо всю
         // отправку целиком, а не каждый её вызов по отдельности.
         // Десять заливок по пять секунд укладываются в любой
@@ -1789,6 +2000,7 @@ export class TutorialScenarioRunnerService {
             assemblyNotes,
             capture,
             abort.signal,
+            theme,
           ),
           ASSEMBLY_SUBMIT_TIMEOUT_MS,
           `сборка не уложилась в ${Math.round(ASSEMBLY_SUBMIT_TIMEOUT_MS / 1000)}с`,
@@ -1805,8 +2017,11 @@ export class TutorialScenarioRunnerService {
         id: scenario.id,
         subjectKey: scenario.subjectKey,
         locale: scenario.locale,
+        theme,
         ok: result.ok,
         error,
+        ...(themeVia && themeVia !== 'mismatch' ? { themeVia } : {}),
+        ...(themeVia === 'mismatch' ? { themeMismatch: true as const } : {}),
         ...(result.skippedPaidClicks.length > 0
           ? { paidClicksSkipped: result.skippedPaidClicks.length }
           : {}),
@@ -1822,8 +2037,9 @@ export class TutorialScenarioRunnerService {
           ? { assemblyTimedOut: true as const }
           : {}),
         // Та же причина, что в прошлую ночь — значит поломка
-        // известная, и поимённая тревога о ней уже была.
-        ...(error && error === scenario.lastRunError
+        // известная, и поимённая тревога о ней уже была. Сличение —
+        // обрезанных текстов: в карте тем ошибка хранится обрезанной.
+        ...(error && clipRunError(error) === clipRunError(scenario.lastRunError)
           ? { repeatFailure: true as const }
           : {}),
       };
@@ -1843,6 +2059,7 @@ export class TutorialScenarioRunnerService {
         id: scenario.id,
         subjectKey: scenario.subjectKey,
         locale: scenario.locale,
+        theme,
         ok: false,
         error,
       };
@@ -2192,6 +2409,9 @@ export class TutorialScenarioRunnerService {
     /** Отмена извне — дедлайн отправки (`ASSEMBLY_SUBMIT_TIMEOUT_MS`)
      *  в `runOne`. Проверяется перед каждым синтезом, заливкой и submit. */
     signal?: AbortSignal,
+    /** Тема съёмки — часть пары: отпечаток, счёт провалов, строка и
+     *  имена кадров — по (subjectKey, locale, theme). */
+    theme: ScenarioTheme = 'light',
   ): Promise<void> {
     if (frames.length === 0) {
       // Молчать тут нельзя (сквозной аудит 29.09.2026). Сценарий из
@@ -2363,6 +2583,10 @@ export class TutorialScenarioRunnerService {
     // успешный сценарий каждую ночь, получая побайтово тот же mp4, а
     // подметальщик той же ночью выносил вчерашний. Теперь вход
     // сравнивается с отпечатком последнего СОБРАННОГО ролика пары.
+    //
+    // Пары — С ТЕМОЙ (заход 3 «Актуального демо»): без неё темы,
+    // чередуясь, сличались бы каждая с роликом другой, отпечаток не
+    // совпадал бы никогда, и каждый прогон заказывал бы платную сборку.
     const contentHash = slideshowFingerprint(
       planFrames,
       narration.mode === 'whole' ? narration.url : null,
@@ -2379,6 +2603,7 @@ export class TutorialScenarioRunnerService {
           locale: scenario.locale,
           assemblyStatus: 'complete',
           blobUrl: { not: null },
+          AND: [assetThemeWhere(theme)],
         },
         orderBy: { createdAt: 'desc' },
         select: { id: true, contentHash: true },
@@ -2404,7 +2629,7 @@ export class TutorialScenarioRunnerService {
       // история. Regression-результат прогона уже записан выше по
       // стеку, он от сборки не зависит.
       this.logger.log(
-        `сценарий ${scenario.subjectKey} (${scenario.locale}): кадры и озвучка не изменились с ролика ${previous?.id} — сборка не нужна`,
+        `сценарий ${scenario.subjectKey} (${scenario.locale}, ${theme}): кадры и озвучка не изменились с ролика ${previous?.id} — сборка не нужна`,
       );
       return;
     }
@@ -2441,6 +2666,7 @@ export class TutorialScenarioRunnerService {
     const failedSameContent = await this.failedSameContentCount(
       scenario.subjectKey,
       scenario.locale,
+      theme,
       contentHash,
     );
     if (failedSameContent >= MAX_ASSEMBLY_ATTEMPTS) {
@@ -2479,7 +2705,7 @@ export class TutorialScenarioRunnerService {
           // фронтенда сняты кадры. Постер дописывает опрос при `complete`.
           width: CANVAS.width,
           height: CANVAS.height,
-          theme: SCENARIO_THEME,
+          theme,
           capturedAt: capture.capturedAt,
           captureBuild: capture.captureBuild,
         },
@@ -2516,8 +2742,10 @@ export class TutorialScenarioRunnerService {
           await this.abortedAssembly(asset.id, scenario, 'заливки кадров');
           return;
         }
+        // Тема — в имени кадра (заход 3): по пути в консоли хранилища
+        // видно, какой темы кадр, не открывая строку ролика.
         const { url } = await this.blob.uploadBuffer(
-          `${scenarioFramePrefix(asset.id)}${frame.stepIndex}.png`,
+          `${scenarioFramePrefix(asset.id)}${scenarioFrameName(frame.stepIndex, theme)}`,
           Buffer.from(frame.bytes),
           'image/png',
         );
@@ -2542,7 +2770,7 @@ export class TutorialScenarioRunnerService {
           stepIndex: frame.stepIndex,
           image: {
             url,
-            pathname: `${scenarioFramePrefix(asset.id)}${frame.stepIndex}.png`,
+            pathname: `${scenarioFramePrefix(asset.id)}${scenarioFrameName(frame.stepIndex, theme)}`,
           },
           baseSeconds: frame.seconds,
           speech: track
@@ -2620,7 +2848,7 @@ export class TutorialScenarioRunnerService {
         },
         assetContentHash: contentHash,
         locale: scenario.locale,
-        theme: SCENARIO_THEME,
+        theme,
         motion,
         // Подписи — только если они действительно легли в ролик: не
         // залились — исходник без них, и версия темпа их не добавит.
@@ -2928,7 +3156,7 @@ export class TutorialScenarioRunnerService {
    *
    * ## Кого оставляем: три роли, а не «последние N»
    *
-   * На пару (шаг, локаль) остаются до трёх строк, и каждая держится
+   * На пару (шаг, локаль, тема) остаются до трёх строк, и каждая держится
    * за СВОЙ вопрос, а не за место в списке:
    *
    *  1. **Самая свежая любого статуса** — то, что оператор видит на
@@ -3000,6 +3228,9 @@ export class TutorialScenarioRunnerService {
         // (аудит 01.10.2026).
         blobUrl: true,
         assemblyStatus: true,
+        // Тема — часть пары (заход 3): светлый и тёмный ролики держат
+        // роли каждый в своей теме и не вытесняют друг друга.
+        theme: true,
       },
     })) as {
       id: string;
@@ -3008,6 +3239,7 @@ export class TutorialScenarioRunnerService {
       reviewed: boolean;
       blobUrl: string | null;
       assemblyStatus: string;
+      theme: string | null;
     }[];
 
     // Прежний одобренный ролик держится сутки после одобрения нового —
@@ -3166,6 +3398,8 @@ export class TutorialScenarioRunnerService {
     contentHash?: string | null;
     width?: number | null;
     height?: number | null;
+    /** Тема ролика — в путь mp4 и в пару счёта попыток. */
+    theme?: string | null;
   }): Promise<void> {
     if (!asset.assemblyJobId) {
       await this.failAssembly(
@@ -3246,8 +3480,13 @@ export class TutorialScenarioRunnerService {
         );
         return;
       }
+      // Тема — в пути (заход 3): `tutorial-videos/{шаг}/{тема}/{id}.mp4`.
+      // Строки без темы (до тем, обучалка по сайту заказчика) — без
+      // сегмента, как раньше. Обратно путь читают только по префиксу
+      // `tutorial-videos/` (публикация и подметальщик) — сегмент им не
+      // мешает.
       const { url: ourUrl } = await this.blob.uploadBuffer(
-        `tutorial-videos/${asset.subjectKey}/${asset.id}.mp4`,
+        `tutorial-videos/${asset.subjectKey}/${isScenarioTheme(asset.theme) ? `${asset.theme}/` : ''}${asset.id}.mp4`,
         bytes,
         'video/mp4',
       );
@@ -3413,6 +3652,7 @@ export class TutorialScenarioRunnerService {
       clientSiteDraftId?: string | null;
       locale?: string;
       contentHash?: string | null;
+      theme?: string | null;
     },
     reason: string,
     /** Инфраструктурный провал в счёт попыток содержимого не идёт —
@@ -3618,6 +3858,8 @@ export class TutorialScenarioRunnerService {
   private async failedSameContentCount(
     subjectKey: string,
     locale: string,
+    /** Пара — с темой: провалы тёмного ролика не останавливают светлый. */
+    theme: ScenarioTheme,
     contentHash: string,
   ): Promise<number> {
     const rest = fingerprintRest(contentHash);
@@ -3634,6 +3876,7 @@ export class TutorialScenarioRunnerService {
           locale,
           assemblyStatus: 'failed',
           contentHash: { contains: `|${rest}|` },
+          AND: [assetThemeWhere(theme)],
         },
         orderBy: { createdAt: 'desc' },
         take: FAILED_CANDIDATES_TAKE,
@@ -3664,18 +3907,21 @@ export class TutorialScenarioRunnerService {
     clientSiteDraftId?: string | null;
     locale?: string;
     contentHash?: string | null;
+    theme?: string | null;
   }): Promise<void> {
     if (asset.clientSiteDraftId || !asset.locale || !asset.contentHash) return;
+    const theme = assetTheme(asset.theme);
     try {
       const failed = await this.failedSameContentCount(
         asset.subjectKey,
         asset.locale,
+        theme,
         asset.contentHash,
       );
       if (failed !== MAX_ASSEMBLY_ATTEMPTS) return;
       await this.notify.alert(
-        `tutorial-assembly:giveup:${asset.subjectKey}:${asset.locale}`,
-        `Сборка ролика обучалки ${asset.subjectKey}/${asset.locale} провалилась ${failed} раз(а) на одном и том же содержимом — попытки остановлены, пока не изменятся кадры или реплики. Посмотрите последнюю ошибку во вкладке «Видео-контент».`,
+        `tutorial-assembly:giveup:${asset.subjectKey}:${asset.locale}:${theme}`,
+        `Сборка ролика обучалки ${asset.subjectKey}/${asset.locale} (тема ${theme}) провалилась ${failed} раз(а) на одном и том же содержимом — попытки остановлены, пока не изменятся кадры или реплики. Посмотрите последнюю ошибку во вкладке «Видео-контент».`,
       );
     } catch (e) {
       this.logger.warn(
@@ -3710,7 +3956,9 @@ export class TutorialScenarioRunnerService {
         const page = await this.blob.listByPrefix(prefix, { cursor });
         for (const b of page.blobs) {
           // Только `<номер шага>.png` прямо под префиксом — не подписи.
-          const m = /^(\d+)\.png$/.exec(b.pathname.slice(prefix.length));
+          const m = SCENARIO_FRAME_NAME_RE.exec(
+            b.pathname.slice(prefix.length),
+          );
           if (!m) continue;
           const step = Number(m[1]);
           if (!first || step < first.step)
@@ -3869,6 +4117,55 @@ export function greetingContext(
  */
 const CAPTURE_BUILD_READ_TIMEOUT_MS = 5_000;
 const CAPTURE_BUILD_MAX_LENGTH = 100;
+
+/**
+ * Какой темой на деле нарисована страница (заход 3 «Актуального демо»):
+ * класс `dark` на `<html>` и что о теме знает SDK Telegram. `null` —
+ * страница не умеет `evaluate`, чтение зависло или ответ не того вида.
+ */
+async function readCaptureTheme(
+  page: unknown,
+): Promise<CaptureThemeProbe | null> {
+  const evaluate = (page as { evaluate?: unknown } | null)?.evaluate;
+  if (typeof evaluate !== 'function') return null;
+  try {
+    const raw: unknown = await withTimeout(
+      (evaluate as (fn: () => unknown) => Promise<unknown>).call(page, () => {
+        const w = window as unknown as {
+          Telegram?: {
+            WebApp?: {
+              colorScheme?: unknown;
+              themeParams?: { bg_color?: unknown };
+            };
+          };
+        };
+        const tg = w.Telegram?.WebApp;
+        return {
+          dark: document.documentElement.classList.contains('dark'),
+          tgColorScheme:
+            typeof tg?.colorScheme === 'string' ? tg.colorScheme : null,
+          tgBgColor:
+            typeof tg?.themeParams?.bg_color === 'string'
+              ? tg.themeParams.bg_color
+              : null,
+        };
+      }),
+      CAPTURE_BUILD_READ_TIMEOUT_MS,
+      'тема страницы не прочиталась',
+    );
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as Record<string, unknown>;
+    if (typeof r.dark !== 'boolean') return null;
+    return {
+      dark: r.dark,
+      tgColorScheme:
+        typeof r.tgColorScheme === 'string' ? r.tgColorScheme : null,
+      tgBgColor: typeof r.tgBgColor === 'string' ? r.tgBgColor : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 async function readCaptureBuild(page: unknown): Promise<string | null> {
   const evaluate = (page as { evaluate?: unknown } | null)?.evaluate;

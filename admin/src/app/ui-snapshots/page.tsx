@@ -62,7 +62,12 @@ export default function UiSnapshotsPage() {
   const [summary, setSummary] = useState<UiSnapshotSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
+  // `?route=<routeKey>` — переход с «Обзора» сразу на ленту маршрута.
   const [route, setRoute] = useState<string | null>(null);
+  useEffect(() => {
+    const linked = new URLSearchParams(window.location.search).get('route');
+    if (linked) setRoute(linked);
+  }, []);
   const [changedOnly, setChangedOnly] = useState(true);
   const [items, setItems] = useState<UiSnapshotItem[]>([]);
   const [nextBefore, setNextBefore] = useState<string | null>(null);

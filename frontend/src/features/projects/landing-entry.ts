@@ -29,15 +29,36 @@ import {
 } from '../../types/project';
 
 /**
+ * Закрытый список меток источника — по одной на лендинг: главная
+ * (рекламный ролик), поздравления, обучалка по сайту. Тот же список
+ * разбирает `startapp=e_<метка>` в Telegram (`lib/start-param.ts`) и
+ * собирает лендинг (`landing/src/lib/telegram-entry.ts`).
+ */
+export const LANDING_ENTRIES = ['ads', 'greetings', 'site-tutorial'] as const;
+export type LandingEntry = (typeof LANDING_ENTRIES)[number];
+
+export function isLandingEntry(value: unknown): value is LandingEntry {
+  return (
+    typeof value === 'string' &&
+    (LANDING_ENTRIES as readonly string[]).includes(value)
+  );
+}
+
+/**
  * Метка источника → тип проекта, который должен быть выбран сразу.
  *
  * Ключи — те самые значения, которые лендинги уже кладут в ссылку;
- * менять их здесь в отрыве от `landing/` нельзя.
+ * менять их здесь в отрыве от `landing/` нельзя. `ads` — главная:
+ * рекламный ролик товара, тот же тип, что и умолчание формы, но метка
+ * нужна, чтобы вход из Telegram (`startapp=e_ads`) вёл туда же, куда
+ * кнопка главной в браузере, — в форму нового проекта, а не в список.
  */
-export const ENTRY_PROJECT_TYPES: Readonly<Record<string, ProjectType>> = {
-  greetings: 'GREETING_VIDEO',
-  'site-tutorial': 'CLIENT_SITE',
-};
+export const ENTRY_PROJECT_TYPES: Readonly<Record<LandingEntry, ProjectType>> =
+  {
+    ads: 'SINGLE',
+    greetings: 'GREETING_VIDEO',
+    'site-tutorial': 'CLIENT_SITE',
+  };
 
 /**
  * Повод поздравления из `?occasion=`. Неизвестный код игнорируется:
@@ -63,8 +84,24 @@ export function occasionFromSearch(search: string): GreetingOccasion | null {
 export function projectTypeFromSearch(search: string): ProjectType | null {
   if (occasionFromSearch(search)) return 'GREETING_VIDEO';
   const entry = new URLSearchParams(search).get('entry');
-  if (!entry) return null;
-  return ENTRY_PROJECT_TYPES[entry] ?? null;
+  return isLandingEntry(entry) ? ENTRY_PROJECT_TYPES[entry] : null;
+}
+
+/**
+ * Адрес, на который мини-апп переписывает себя при запуске с
+ * `startapp=e_<метка>`: ровно тот, что лендинг даёт браузерной кнопке
+ * (`?entry=<метка>#/projects/new`), — дальше форма разбирает его тем же
+ * `projectTypeFromSearch`, и двух путей в один сценарий не появляется.
+ * Прочие query-параметры адреса запуска сохраняются.
+ */
+export function entryLaunchUrl(
+  pathname: string,
+  search: string,
+  entry: LandingEntry
+): string {
+  const params = new URLSearchParams(search);
+  params.set('entry', entry);
+  return `${pathname}?${params.toString()}#/projects/new`;
 }
 
 /**

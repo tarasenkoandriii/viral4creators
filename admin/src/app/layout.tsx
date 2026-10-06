@@ -14,7 +14,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <AdminAuthProvider>
           <AdminNav />
-          {children}
+          {/* Сосед панели навигации: на десктопе сдвинут на её ширину
+              (`.admin-sidebar ~ .admin-content` в globals.css). */}
+          <div className="admin-content">{children}</div>
         </AdminAuthProvider>
       </body>
     </html>

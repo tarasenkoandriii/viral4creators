@@ -13,9 +13,9 @@
 // его child-узлом внутрь ref'нутого контейнера.
 //
 // Перенесено из проекта Devil's Advocate
-// (apps/admin/src/app/login/page.tsx), с редиректом на /sessions вместо
-// /moderation/library — у этого продукта нет модерации контента, см.
-// doc/TELEGRAM-ADMIN.md.
+// (apps/admin/src/app/login/page.tsx). Оба успешных входа (виджет и
+// dev-вход) ведут на «Обзор» (`/`, очередь внимания) — раньше на
+// /sessions (аудит навигации 06.10.2026: менять вместе с root).
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -49,7 +49,7 @@ export default function LoginPage() {
     setError(null);
     try {
       await devLogin(DEV_USER_ID);
-      router.replace('/sessions');
+      router.replace('/');
     } catch (err) {
       setError(
         err instanceof ApiRequestError
@@ -66,7 +66,7 @@ export default function LoginPage() {
       setError(null);
       try {
         await telegramCallback(payload);
-        router.replace('/sessions');
+        router.replace('/');
       } catch (err) {
         setError(err instanceof ApiRequestError ? err.message : 'Не удалось войти');
         setSubmitting(false);

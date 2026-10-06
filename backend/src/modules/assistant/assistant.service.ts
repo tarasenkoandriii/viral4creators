@@ -375,6 +375,11 @@ export class AssistantService {
           reviewed: true,
           blobUrl: { not: null },
           clientSiteDraftId: null,
+          // Консультант лендинга (светлый) — только светлые ролики: с
+          // заходом 3 (06.10.2026) у пары есть и тёмный ролик, а самый
+          // свежий одобренный мог бы оказаться тёмным. NULL — старые
+          // строки до колонки темы (светлые).
+          OR: [{ theme: null }, { theme: 'light' }],
         },
         select: { subjectKey: true },
         distinct: ['subjectKey'],
@@ -418,6 +423,7 @@ export class AssistantService {
           reviewed: true,
           blobUrl: { not: null },
           clientSiteDraftId: null,
+          OR: [{ theme: null }, { theme: 'light' }],
         },
         orderBy: { createdAt: 'desc' },
         select: { blobUrl: true, title: true },

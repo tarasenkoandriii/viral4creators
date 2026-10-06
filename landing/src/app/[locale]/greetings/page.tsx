@@ -11,7 +11,9 @@ import { GREETING_SITE_URL, greetingPageUrl } from '../../../lib/greeting-host';
 import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import { localeAlternates } from '../../../lib/alternates';
 import { SubdomainHeader } from '../../../components/SubdomainHeader';
-import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
+import { CLAUDE_REFERRAL_URL, SITE_URL, TELEGRAM_BOT_USERNAME, TMA_URL } from '../../../lib/content';
+import { EntryActions } from '../../../components/EntryActions';
+import { browserEntryLink } from '../../../lib/telegram-entry';
 import {
   greetingFrame,
   greetingFramesAreReal,
@@ -144,8 +146,10 @@ export default function GreetingsLandingPage({
   const dict = getDictionary(locale);
   const g = dict.greetingsLanding;
   // Метка источника для воронки (§4 п.1 ТЗ) — по ней потом отличить
-  // трафик этой страницы от общего входа в мастер.
-  const ctaHref = `${TMA_URL}?entry=greetings#/projects/new`;
+  // трафик этой страницы от общего входа в мастер. Рядом с браузерной
+  // кнопкой — «Открыть в Telegram» с тем же сценарием
+  // (`startapp=e_greetings`, `lib/telegram-entry.ts`).
+  const ctaHref = browserEntryLink('greetings', TMA_URL);
   /** Сняты ли для локали настоящие кадры — см. `lib/greeting-frames.ts`. */
   const realFrames = greetingFramesAreReal(locale);
   const hero = { src: '/illustrations/greetings-hero-v2.avif', width: 1536, height: 1024 };
@@ -174,9 +178,13 @@ export default function GreetingsLandingPage({
             <h1>{g.hero.title}</h1>
             <p>{g.hero.subtitle}</p>
             <div className="hero-actions">
-              <a className="cta" href={ctaHref}>
-                {g.hero.cta}
-              </a>
+              <EntryActions
+                entry="greetings"
+                tmaUrl={TMA_URL}
+                botUsername={TELEGRAM_BOT_USERNAME}
+                browserLabel={g.hero.cta}
+                telegramLabel={dict.entryActions.telegramCta}
+              />
             </div>
             <p className="hero-note">{g.hero.note}</p>
           </div>
@@ -390,9 +398,15 @@ export default function GreetingsLandingPage({
         <div className="wrap">
           <h2>{g.finalCta.title}</h2>
           <p>{g.finalCta.text}</p>
-          <a className="cta" href={ctaHref}>
-            {g.finalCta.cta}
-          </a>
+          <div className="entry-actions">
+            <EntryActions
+              entry="greetings"
+              tmaUrl={TMA_URL}
+              botUsername={TELEGRAM_BOT_USERNAME}
+              browserLabel={g.finalCta.cta}
+              telegramLabel={dict.entryActions.telegramCta}
+            />
+          </div>
         </div>
       </section>
     ),

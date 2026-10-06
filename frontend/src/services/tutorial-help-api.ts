@@ -26,8 +26,16 @@ export async function getTutorialHelp(
 ): Promise<TutorialHelpView> {
   // Язык — в строке запроса, а не заголовком: ответ кешируется на пять
   // минут, и один кеш на все языки отдал бы русскую справку немцу.
+  // Тема — та, в которой сейчас нарисован мини-апп (класс `dark` на
+  // <html>, его ставит applyTheme): справка показывает ролик той же темы,
+  // сервер при отсутствии берёт любой одобренный (заход 3, 06.10.2026).
+  const theme =
+    typeof document !== 'undefined' &&
+    document.documentElement.classList.contains('dark')
+      ? 'dark'
+      : 'light';
   const res = await api.get<TutorialHelpView>(
-    `/tutorial-help/${encodeURIComponent(subjectKey)}?locale=${encodeURIComponent(locale)}`
+    `/tutorial-help/${encodeURIComponent(subjectKey)}?locale=${encodeURIComponent(locale)}&theme=${theme}`
   );
   if (res.data === undefined) throw new Error('Пустой ответ: tutorial-help');
   return res.data;

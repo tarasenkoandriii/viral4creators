@@ -8,7 +8,9 @@ import { TUTORIAL_SITE_URL, tutorialPageUrl } from '../../../lib/tutorial-host';
 import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import { localeAlternates } from '../../../lib/alternates';
 import { SubdomainHeader } from '../../../components/SubdomainHeader';
-import { CLAUDE_REFERRAL_URL, SITE_URL, TMA_URL } from '../../../lib/content';
+import { CLAUDE_REFERRAL_URL, SITE_URL, TELEGRAM_BOT_USERNAME, TMA_URL } from '../../../lib/content';
+import { EntryActions } from '../../../components/EntryActions';
+import { browserEntryLink } from '../../../lib/telegram-entry';
 import { COMPARE_VERDICTS } from '../../../lib/compare-verdicts';
 import {
   frameImage,
@@ -117,9 +119,11 @@ export default function SiteTutorialLandingPage({
    * теперь ЧИТАЮТ: `ProjectCreateScreen` открывает мастер сразу на
    * третьем типе проекта (`landing-entry.ts`, находка Б-1). До этой
    * правки параметр писался и не читался нигде, и ссылка отсюда вела бы
-   * на форму товарного ролика.
+   * на форму товарного ролика. Рядом с браузерной кнопкой — «Открыть в
+   * Telegram» с тем же сценарием (`startapp=e_site-tutorial`,
+   * `lib/telegram-entry.ts`).
    */
-  const ctaHref = `${TMA_URL}?entry=site-tutorial#/projects/new`;
+  const ctaHref = browserEntryLink('site-tutorial', TMA_URL);
   /** Сняты ли для этой локали настоящие кадры — см. `lib/tutorial-frames.ts`. */
   const realFrames = hasRealFrames(locale);
 
@@ -141,9 +145,13 @@ export default function SiteTutorialLandingPage({
               <h1>{t.hero.title}</h1>
               <p>{t.hero.subtitle}</p>
               <div className="hero-actions">
-                <a className="cta" href={ctaHref}>
-                  {t.hero.cta}
-                </a>
+                <EntryActions
+                  entry="site-tutorial"
+                  tmaUrl={TMA_URL}
+                  botUsername={TELEGRAM_BOT_USERNAME}
+                  browserLabel={t.hero.cta}
+                  telegramLabel={dict.entryActions.telegramCta}
+                />
               </div>
               <p className="hero-note">{t.hero.note}</p>
             </div>
@@ -328,9 +336,15 @@ export default function SiteTutorialLandingPage({
           <div className="wrap">
             <h2>{t.finalCta.title}</h2>
             <p>{t.finalCta.text}</p>
-            <a className="cta" href={ctaHref}>
-              {t.finalCta.cta}
-            </a>
+            <div className="entry-actions">
+              <EntryActions
+                entry="site-tutorial"
+                tmaUrl={TMA_URL}
+                botUsername={TELEGRAM_BOT_USERNAME}
+                browserLabel={t.finalCta.cta}
+                telegramLabel={dict.entryActions.telegramCta}
+              />
+            </div>
           </div>
         </section>
       </main>

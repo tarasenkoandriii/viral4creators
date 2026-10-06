@@ -30,6 +30,7 @@ jest.mock('../../common/headless-chromium', () => ({
 import { GenerationStatus } from '../../common/types/generation.types';
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
 import * as assembly from './tutorial-video-assembly';
+import * as themes from './tutorial-theme-rotation';
 
 const ENV_KEYS = [
   'FIXTURE_TELEGRAM_ID',
@@ -412,6 +413,46 @@ function stubAssets(
   );
 }
 
+/**
+ * Настройки как хранилище: что записано `set`, то и читает `get` (заход
+ * 3 — по-темные отметки прогонов переживают тик). Начальная карта тем —
+ * в ключ `tutorial.scenarioThemeRuns`.
+ */
+function themeStore(
+  built: { settings: { get: jest.Mock; set: jest.Mock } },
+  initialRuns: Record<string, unknown>,
+): Map<string, string> {
+  const store = new Map<string, string>();
+  if (Object.keys(initialRuns).length > 0) {
+    store.set(themes.THEME_RUNS_SETTING_KEY, JSON.stringify(initialRuns));
+  }
+  built.settings.get.mockImplementation(
+    async (key: string) => store.get(key) ?? null,
+  );
+  built.settings.set.mockImplementation(async (key: string, v: string) => {
+    store.set(key, v);
+  });
+  return store;
+}
+
+/** Двойник условия темы (`assetThemeWhere` внутри `AND`) — так, как его
+ *  исполнила бы база. Без условия — любая тема. */
+function matchesTheme(
+  theme: string | null,
+  and?: Array<Record<string, unknown>>,
+): boolean {
+  if (!and) return true;
+  return and.every((cond) => {
+    if ('theme' in cond) return cond.theme === theme;
+    if (Array.isArray(cond.OR)) {
+      return (cond.OR as Array<{ theme?: unknown }>).some(
+        (c) => c.theme === theme,
+      );
+    }
+    return true;
+  });
+}
+
 describe('TutorialScenarioRunnerService', () => {
   it('без FIXTURE_USER_TOKEN/FIXTURE_TELEGRAM_ID — пропуск, ни одного запроса к БД', async () => {
     delete process.env.FIXTURE_USER_TOKEN;
@@ -566,7 +607,9 @@ describe('TutorialScenarioRunnerService', () => {
     // Тема задана ЯВНО: кадр не должен зависеть от системной темы
     // машины, где случился прогон.
     // Ключа сессии тут быть не должно: сценарий идёт на ЧИСТЫЙ мастер.
-    expect(stored).toEqual({ v4c_locale: 'es', v4c_theme: 'light' });
+    // Темы среди ключей НЕТ (заход 3): явный выбор человека перебил бы
+    // тему Telegram, и съёмка шла бы мимо ветви «внутри Telegram».
+    expect(stored).toEqual({ v4c_locale: 'es' });
   });
 
   it('generate-ready — сессия фикстуры подсевается ДО загрузки SPA', async () => {
@@ -590,7 +633,6 @@ describe('TutorialScenarioRunnerService', () => {
 
     expect(runStorageSeeds(page)).toEqual({
       v4c_locale: 'ru',
-      v4c_theme: 'light',
       sessionId: 'sess-fixture',
     });
   });
@@ -1110,7 +1152,7 @@ describe('TutorialScenarioRunnerService', () => {
       // Локаль в fingerprint: без неё пять локалей схлопывались в
       // одно сообщение (окно дедупликации 10 минут против прогона в
       // 4) — находка аудита этапа C.
-      'tutorial-scenario-run:2:ru',
+      'tutorial-scenario-run:2:ru:light',
       expect.stringContaining('провалился'),
     );
   });
@@ -1278,7 +1320,7 @@ describe('TutorialScenarioRunnerService', () => {
       expect(blob.uploadBuffer).toHaveBeenCalledWith(
         // Префикс по id АКТИВА, а не по scenarioId: иначе повторный
         // прогон затирал кадры предыдущего (аудит 27.09.2026).
-        'tutorial-video-frames/tva-new/0.png',
+        'tutorial-video-frames/tva-new/0-light.png',
         expect.any(Buffer),
         // Puppeteer без аргументов снимает PNG. Раньше кадры звались
         // .jpg с image/jpeg: ffmpeg разбирался по содержимому, а Blob
@@ -1337,7 +1379,7 @@ describe('TutorialScenarioRunnerService', () => {
       const frameNames = blob.uploadBuffer.mock.calls
         .map(([pathname]: [string]) => pathname)
         .filter((n: string) => n.startsWith('tutorial-video-frames/'));
-      expect(frameNames).toEqual(['tutorial-video-frames/tva-new/1.png']);
+      expect(frameNames).toEqual(['tutorial-video-frames/tva-new/1-light.png']);
       // И, главное, номер доезжает до ПЛАНА, а не теряется на
       // границе (правка аудита этапа A): ключ входа ffmpeg — `frame1`,
       // не `frame0`. На этапе B по этому же номеру к кадру
@@ -1645,7 +1687,7 @@ describe('TutorialScenarioRunnerService', () => {
           ]);
           // Транзитный путь кадра — тот, что потом копируется в исходники.
           expect(m.frames[0].image.pathname).toBe(
-            'tutorial-video-frames/tva-new/0.png',
+            'tutorial-video-frames/tva-new/0-light.png',
           );
           // Длительность кадра в manifest — ровно та, что ушла в команду.
           const cmd = built.ffmpeg.submit.mock.calls[0][0].commands[0];
@@ -4344,34 +4386,562 @@ describe('TutorialScenarioRunnerService — аудит кронов 06.10.2026',
     });
   });
 
-  describe('прошедший сценарий не повторяется 20 ч (находка 9)', () => {
-    it('выборка отсекает свежие ok, но не пустые, не упавшие и не старые', async () => {
+  describe('прошедший сценарий не повторяется 20 ч (находка 9) — по теме', () => {
+    it('SQL отсекает только платность; «свежий ok» решается по теме в памяти', async () => {
       const built = build([]);
-      const before = Date.now();
       await built.service.run();
-      const where = built.prisma.tutorialScenario.findMany.mock.calls[0][0]
-        .where as {
-        AND: Array<{ OR: Array<Record<string, unknown>> }>;
-      };
-      const fresh = where.AND[1].OR;
-      expect(fresh).toEqual(
-        expect.arrayContaining([
-          { lastRunStatus: null },
-          { lastRunStatus: { not: 'ok' } },
-          { lastRunAt: null },
-          { lastRunAt: { lt: expect.any(Date) } },
-        ]),
-      );
-      const cutoff = (
-        fresh.find((b) => (b.lastRunAt as { lt?: Date } | undefined)?.lt)!
-          .lastRunAt as { lt: Date }
-      ).lt.getTime();
-      expect(before - cutoff).toBeGreaterThanOrEqual(20 * 3600_000 - 1000);
-      expect(before - cutoff).toBeLessThanOrEqual(20 * 3600_000 + 1000);
-      // Фильтр платности на месте.
-      expect(where.AND[0]).toEqual({
-        OR: [{ costly: false }, { approved: true }],
+      const args = built.prisma.tutorialScenario.findMany.mock.calls[0][0];
+      // Свежесть строки в SQL больше не фильтруется: колонка
+      // `lastRunAt` одна на обе темы, и свежий светлый прогон отсекал
+      // бы ни разу не снятую тёмную тему.
+      expect(args.where.AND).toEqual([
+        { OR: [{ costly: false }, { approved: true }] },
+      ]);
+      expect(args.take).toBe(500);
+    });
+
+    it('светлая прошла 1 ч назад, тёмной не было — снимается тёмная', async () => {
+      const { page } = okBrowser();
+      const built = build([
+        {
+          ...SCENARIO_OK,
+          lastRunAt: new Date(Date.now() - 3600_000),
+          lastRunStatus: 'ok',
+        },
+      ]);
+      const result = await built.service.run();
+      expect(result.outcomes.map((o) => o.theme)).toEqual(['dark']);
+      expect(page.goto).toHaveBeenCalled();
+    });
+
+    it('обе темы прошли на тех же шагах меньше 20 ч назад — не снимается ни одна', async () => {
+      okBrowser();
+      const at = new Date(Date.now() - 3600_000).toISOString();
+      const sha = themes.stepsSha(SCENARIO_OK.steps);
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(at), lastRunStatus: 'ok' },
+      ]);
+      themeStore(built, {
+        [SCENARIO_OK.id]: {
+          light: { at, status: 'ok', error: null, stepsSha: sha },
+          dark: { at, status: 'ok', error: null, stepsSha: sha },
+        },
       });
+      const result = await built.service.run();
+      expect(result.total).toBe(0);
+      expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+    });
+
+    it('тёмная прошла на ДРУГИХ шагах — снимается снова, не дожидаясь 20 ч', async () => {
+      okBrowser();
+      const at = new Date(Date.now() - 3600_000).toISOString();
+      const sha = themes.stepsSha(SCENARIO_OK.steps);
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(at), lastRunStatus: 'ok' },
+      ]);
+      themeStore(built, {
+        [SCENARIO_OK.id]: {
+          light: { at, status: 'ok', error: null, stepsSha: sha },
+          dark: { at, status: 'ok', error: null, stepsSha: 'другие-шаги' },
+        },
+      });
+      const result = await built.service.run();
+      expect(result.outcomes.map((o) => o.theme)).toEqual(['dark']);
+    });
+  });
+
+  describe('светлая и тёмная темы — отдельные ролики пары (заход 3)', () => {
+    it('темы чередуются по тикам: светлая, тёмная, затем обе свежие — тишина', async () => {
+      okBrowser();
+      const built = build([SCENARIO_OK]);
+      const store = themeStore(built, {});
+      const r1 = await built.service.run();
+      // Строка «прочитана заново» — как прочла бы база после прогона.
+      built.prisma.tutorialScenario.findMany.mockResolvedValue([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      const r2 = await built.service.run();
+      const r3 = await built.service.run();
+      expect(r1.outcomes.map((o) => o.theme)).toEqual(['light']);
+      expect(r2.outcomes.map((o) => o.theme)).toEqual(['dark']);
+      expect(r3.outcomes).toEqual([]);
+      const saved = JSON.parse(store.get(themes.THEME_RUNS_SETTING_KEY)!);
+      expect(Object.keys(saved[SCENARIO_OK.id]).sort()).toEqual([
+        'dark',
+        'light',
+      ]);
+    });
+
+    it('тёмный прогон засевает светлую отметку из колонок строки, пока они светлые', async () => {
+      okBrowser();
+      const lightAt = new Date(Date.now() - 2 * 3600_000);
+      const built = build([
+        {
+          ...SCENARIO_OK,
+          lastRunAt: lightAt,
+          lastRunStatus: 'failed',
+          lastRunError: 'светлая поломка',
+        },
+      ]);
+      const store = themeStore(built, {});
+      await built.service.run();
+      const saved = JSON.parse(store.get(themes.THEME_RUNS_SETTING_KEY)!);
+      expect(saved[SCENARIO_OK.id].light).toEqual({
+        at: lightAt.toISOString(),
+        status: 'failed',
+        error: 'светлая поломка',
+        stepsSha: '',
+      });
+      expect(saved[SCENARIO_OK.id].dark.status).toBe('ok');
+    });
+
+    it('ротация по давности ТЕМЫ: ни разу не снятая тема — первой, потом самая давняя', async () => {
+      okBrowser();
+      const h = (n: number) => new Date(Date.now() - n * 3600_000);
+      const sha = themes.stepsSha(SCENARIO_OK.steps);
+      const rec = (d: Date) => ({
+        at: d.toISOString(),
+        status: 'ok',
+        error: null,
+        stepsSha: sha,
+      });
+      // Порядок базы — по колонке строки; ротация обязана его
+      // переставить по давности выбранной темы.
+      const a = {
+        ...SCENARIO_OK,
+        id: 'a',
+        subjectKey: '1',
+        lastRunAt: h(21),
+        lastRunStatus: 'ok',
+      };
+      const b = {
+        ...SCENARIO_OK,
+        id: 'b',
+        subjectKey: '2',
+        lastRunAt: h(22),
+        lastRunStatus: 'ok',
+      };
+      const c = {
+        ...SCENARIO_OK,
+        id: 'c',
+        subjectKey: '3',
+        lastRunAt: h(23),
+        lastRunStatus: 'ok',
+      };
+      const built = build([a, b, c]);
+      themeStore(built, {
+        a: { light: rec(h(21)), dark: rec(h(48)) },
+        b: { light: rec(h(22)) },
+        c: { light: rec(h(23)), dark: rec(h(30)) },
+      });
+      const result = await built.service.run();
+      expect(result.outcomes.map((o) => `${o.id}/${o.theme}`)).toEqual([
+        'b/dark',
+        'a/dark',
+        'c/dark',
+      ]);
+    });
+
+    it('тик берёт не больше 30 сценариев, каждый — в одной теме', async () => {
+      okBrowser();
+      const many = Array.from({ length: 31 }, (_, i) => ({
+        ...SCENARIO_OK,
+        id: `s${i}`,
+        subjectKey: String(i + 1),
+      }));
+      const built = build(many);
+      const result = await built.service.run();
+      expect(result.total).toBe(30);
+      expect(new Set(result.outcomes.map((o) => o.id)).size).toBe(30);
+    });
+
+    it('тёмная тема ставится «как в Telegram»: themeParams в sessionStorage, prefers-color-scheme, без v4c_theme', async () => {
+      const page = Object.assign(buildFakePage({ screenshot: true }), {
+        emulateMediaFeatures: jest.fn().mockResolvedValue(undefined),
+      });
+      okBrowser(page);
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      await built.service.run();
+
+      const local: Record<string, string> = {};
+      const session: Record<string, string> = {};
+      const g = globalThis as unknown as { window?: unknown };
+      g.window = {
+        localStorage: {
+          setItem: (k: string, v: string) => (local[k] = v),
+          removeItem: (k: string) => delete local[k],
+        },
+        sessionStorage: {
+          getItem: (k: string) => session[k] ?? null,
+          setItem: (k: string, v: string) => (session[k] = v),
+        },
+      };
+      local.v4c_theme = 'light'; // остаток прошлого прогона
+      try {
+        for (const call of page.evaluateOnNewDocument.mock.calls) {
+          const [fn, ...args] = call as [
+            (...a: unknown[]) => void,
+            ...unknown[],
+          ];
+          fn(...args);
+        }
+      } finally {
+        delete g.window;
+      }
+      expect(local).toEqual({ v4c_locale: 'ru' });
+      const params = JSON.parse(session.__telegram__themeParams);
+      expect(params.bg_color).toBe('#17212b');
+      expect(
+        JSON.parse(
+          JSON.parse(session.__telegram__initParams).tgWebAppThemeParams,
+        ).bg_color,
+      ).toBe('#17212b');
+      expect(page.emulateMediaFeatures).toHaveBeenCalledWith([
+        { name: 'prefers-color-scheme', value: 'dark' },
+      ]);
+    });
+
+    it('тёмный ролик: тема в строке, в manifest и в именах кадров', async () => {
+      okBrowser();
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-1' });
+      await built.service.run();
+      expect(
+        built.prisma.tutorialVideoAsset.create.mock.calls[0][0].data.theme,
+      ).toBe('dark');
+      expect(built.blob.uploadBuffer).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-new/0-dark.png',
+        expect.any(Buffer),
+        'image/png',
+      );
+      const pending =
+        built.prisma.tutorialVideoAsset.updateMany.mock.calls.find(
+          ([a]: [{ data?: { tempoManifest?: { theme?: string } } }]) =>
+            a.data?.tempoManifest,
+        );
+      expect(pending[0].data.tempoManifest.theme).toBe('dark');
+    });
+
+    it('отпечаток сличается только с роликом ТОЙ ЖЕ темы', async () => {
+      okBrowser();
+      // Первый прогон (светлый) — узнать отпечаток содержимого.
+      const first = build([SCENARIO_OK]);
+      first.ffmpeg.configured.mockReturnValue(true);
+      first.ffmpeg.submit.mockResolvedValue({ jobId: 'job-1' });
+      const hash = await firstRunHash(first);
+
+      // Тёмный прогон с теми же байтами кадров: собранный светлый ролик
+      // с тем же отпечатком есть, тёмного — нет. Двойник базы честно
+      // фильтрует по теме, как фильтрует база.
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-2' });
+      const rows = [{ id: 'tva-light', theme: 'light', contentHash: hash }];
+      built.prisma.tutorialVideoAsset.findFirst.mockImplementation(
+        async (args: { where: { AND?: Array<Record<string, unknown>> } }) =>
+          rows.find((r) => matchesTheme(r.theme, args.where.AND)) ?? null,
+      );
+      await built.service.run();
+      expect(built.prisma.tutorialVideoAsset.create).toHaveBeenCalledTimes(1);
+      expect(built.ffmpeg.submit).toHaveBeenCalledTimes(1);
+
+      // И обратно: светлый прогон находит свой светлый ролик и не собирает.
+      const again = build([SCENARIO_OK]);
+      again.ffmpeg.configured.mockReturnValue(true);
+      again.prisma.tutorialVideoAsset.findFirst.mockImplementation(
+        async (args: { where: { AND?: Array<Record<string, unknown>> } }) =>
+          rows.find((r) => matchesTheme(r.theme, args.where.AND)) ?? null,
+      );
+      okBrowser();
+      await again.service.run();
+      expect(again.prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+    });
+
+    it('счёт провалов того же содержимого — по теме: провалы светлой не останавливают тёмную', async () => {
+      okBrowser();
+      const first = build([SCENARIO_OK]);
+      first.ffmpeg.configured.mockReturnValue(true);
+      first.ffmpeg.submit.mockResolvedValue({ jobId: 'job-1' });
+      const hash = await firstRunHash(first);
+
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-2' });
+      const failed = [1, 2, 3].map(() => ({
+        theme: 'light',
+        contentHash: hash,
+      }));
+      built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+        async (args: {
+          where?: {
+            assemblyStatus?: unknown;
+            AND?: Array<Record<string, unknown>>;
+          };
+        }) =>
+          args?.where?.assemblyStatus === 'failed'
+            ? failed.filter((r) => matchesTheme(r.theme, args.where!.AND))
+            : [],
+      );
+      okBrowser();
+      await built.service.run();
+      expect(built.ffmpeg.submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('кадры не той темы — ролик не собирается, исход помечен', async () => {
+      const page = Object.assign(buildFakePage({ screenshot: true }), {
+        evaluate: jest.fn().mockResolvedValue({
+          dark: false,
+          tgColorScheme: 'light',
+          tgBgColor: '#ffffff',
+        }),
+      });
+      okBrowser(page);
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      const result = await built.service.run();
+      expect(result.outcomes[0]).toEqual(
+        expect.objectContaining({
+          theme: 'dark',
+          ok: true,
+          themeMismatch: true,
+        }),
+      );
+      expect(result.themeMismatches).toBe(1);
+      expect(built.prisma.tutorialVideoAsset.create).not.toHaveBeenCalled();
+    });
+
+    it('тема нарисована через SDK Telegram — исход говорит «telegram», иначе «media-query»', async () => {
+      const page = Object.assign(buildFakePage({ screenshot: true }), {
+        evaluate: jest.fn().mockResolvedValue({
+          dark: true,
+          tgColorScheme: 'dark',
+          tgBgColor: '#17212b',
+        }),
+      });
+      okBrowser(page);
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      const r1 = await built.service.run();
+      expect(r1.outcomes[0].themeVia).toBe('telegram');
+
+      page.evaluate.mockResolvedValue({
+        dark: true,
+        tgColorScheme: 'light',
+        tgBgColor: null,
+      });
+      const built2 = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      const r2 = await built2.service.run();
+      expect(r2.outcomes[0].themeVia).toBe('media-query');
+      expect(r2.outcomes[0].themeMismatch).toBeUndefined();
+    });
+
+    it('«та же поломка» — по теме: ошибка светлой не глушит тревогу о тёмной', async () => {
+      const page = buildFakePage({ failClick: true });
+      okBrowser(page);
+      const at = new Date(Date.now() - 3600_000);
+      const built = build([
+        {
+          ...SCENARIO_FAIL,
+          lastRunAt: at,
+          lastRunStatus: 'failed',
+          lastRunError: 'шаг 1 (click): элемент не найден',
+        },
+      ]);
+      // Светлая уже падала ровно так; тёмная — ни разу не снималась.
+      themeStore(built, {
+        [SCENARIO_FAIL.id]: {
+          light: {
+            at: at.toISOString(),
+            status: 'failed',
+            error: 'шаг 1 (click): элемент не найден',
+            stepsSha: themes.stepsSha(SCENARIO_FAIL.steps),
+          },
+        },
+      });
+      const result = await built.service.run();
+      expect(result.outcomes[0].theme).toBe('dark');
+      expect(result.outcomes[0].repeatFailure).toBeUndefined();
+      expect(built.notify.alert).toHaveBeenCalledWith(
+        'tutorial-scenario-run:2:ru:dark',
+        expect.stringContaining('тема dark'),
+      );
+    });
+
+    it('та же поломка ТОЙ ЖЕ темы — повтор, без тревоги', async () => {
+      const page = buildFakePage({ failClick: true });
+      okBrowser(page);
+      const at = new Date(Date.now() - 3600_000).toISOString();
+      const built = build([
+        { ...SCENARIO_FAIL, lastRunAt: new Date(at), lastRunStatus: 'failed' },
+      ]);
+      themeStore(built, {
+        [SCENARIO_FAIL.id]: {
+          light: { at, status: 'ok', error: null, stepsSha: 'x' },
+          dark: {
+            at,
+            status: 'failed',
+            error: 'шаг 1 (click): элемент не найден',
+            stepsSha: 'x',
+          },
+        },
+      });
+      const result = await built.service.run();
+      expect(result.outcomes[0].theme).toBe('light');
+      // Светлая в прошлый раз прошла — её падение новое.
+      expect(result.outcomes[0].repeatFailure).toBeUndefined();
+      const r2 = await built.service.run();
+      // Теперь светлая отмечена свежим провалом, тёмная давнее — тёмная,
+      // и её ошибка та же, что в прошлый раз.
+      expect(r2.outcomes[0].theme).toBe('dark');
+      expect(r2.outcomes[0].repeatFailure).toBe(true);
+    });
+
+    it('собранный ролик ложится в путь с темой: tutorial-videos/{шаг}/{тема}/{id}.mp4', async () => {
+      const built = build([]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.status.mockResolvedValue({
+        status: 'complete',
+        outputs: { out: 'https://ffmpeg.example.com/out.mp4' },
+      });
+      stubAssets(built.prisma, [
+        {
+          id: 'tva-d',
+          subjectKey: '3',
+          locale: 'ru',
+          theme: 'dark',
+          scenarioId: 'ts-1',
+          clientSiteDraftId: null,
+          assemblyStatus: 'pending',
+          assemblyJobId: 'job-d',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new Uint8Array(4096).buffer,
+      } as unknown as Response);
+      try {
+        await built.service.pollAssemblies();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+      expect(built.blob.uploadBuffer).toHaveBeenCalledWith(
+        'tutorial-videos/3/dark/tva-d.mp4',
+        expect.any(Buffer),
+        'video/mp4',
+      );
+    });
+
+    it('постер находится и по новому имени кадра {шаг}-{тема}.png', async () => {
+      const built = build([]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.status.mockResolvedValue({
+        status: 'complete',
+        outputs: { out: 'https://ffmpeg.example.com/out.mp4' },
+      });
+      stubAssets(built.prisma, [
+        {
+          id: 'tva-d',
+          subjectKey: '3',
+          locale: 'ru',
+          theme: 'dark',
+          scenarioId: 'ts-1',
+          clientSiteDraftId: null,
+          assemblyStatus: 'pending',
+          assemblyJobId: 'job-d',
+          assemblyStartedAt: new Date(),
+        },
+      ]);
+      built.blob.listByPrefix.mockImplementation(async (prefix: string) =>
+        prefix === 'tutorial-video-frames/tva-d/'
+          ? {
+              blobs: [
+                { pathname: 'tutorial-video-frames/tva-d/captions.ass' },
+                { pathname: 'tutorial-video-frames/tva-d/2-dark.png' },
+                { pathname: 'tutorial-video-frames/tva-d/1-dark.png' },
+              ],
+              cursor: null,
+            }
+          : { blobs: [], cursor: null },
+      );
+      const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new Uint8Array(4096).buffer,
+      } as unknown as Response);
+      try {
+        await built.service.pollAssemblies();
+      } finally {
+        fetchSpy.mockRestore();
+      }
+      expect(built.blob.copyBlob).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-d/1-dark.png',
+        'tutorial-video-posters/tva-d.png',
+        'image/png',
+      );
+    });
+
+    it('подметальщик: свежий тёмный ролик не вытесняет одобренный светлый', async () => {
+      const built = build([]);
+      const t = (n: number) => new Date(Date.now() - n * 60_000);
+      const row = (
+        id: string,
+        theme: string,
+        reviewed: boolean,
+        n: number,
+      ) => ({
+        id,
+        subjectKey: '1',
+        locale: 'ru',
+        theme,
+        reviewed,
+        blobUrl: `https://b/tutorial-videos/1/${id}.mp4`,
+        assemblyStatus: 'complete',
+        clientSiteDraftId: null,
+        createdAt: t(n),
+      });
+      // Строки — в порядке базы (внутри пары от свежей к старой), темы
+      // вперемешку: тёмные свежее светлых.
+      stubAssets(built.prisma, [
+        row('dark-new', 'dark', true, 1),
+        row('dark-old', 'dark', false, 2),
+        row('light-ok', 'light', true, 60),
+        row('light-old', 'light', false, 120),
+      ]);
+      await built.service.pollAssemblies();
+      const deleted = built.prisma.tutorialVideoAsset.delete.mock.calls.map(
+        ([a]: [{ where: { id: string } }]) => a.where.id,
+      );
+      expect(deleted).toEqual(['dark-old', 'light-old']);
+    });
+
+    it('браузер не поднялся — отметка провала пишется заказанной теме', async () => {
+      launchHeadlessBrowserMock.mockResolvedValue({ error: 'нет chromium' });
+      const built = build([
+        { ...SCENARIO_OK, lastRunAt: new Date(), lastRunStatus: 'ok' },
+      ]);
+      const store = themeStore(built, {});
+      const result = await built.service.run();
+      expect(result.outcomes[0].theme).toBe('dark');
+      const saved = JSON.parse(store.get(themes.THEME_RUNS_SETTING_KEY)!);
+      expect(saved[SCENARIO_OK.id].dark).toEqual(
+        expect.objectContaining({ status: 'failed', error: 'нет chromium' }),
+      );
     });
   });
 
@@ -4549,7 +5119,7 @@ describe('TutorialScenarioRunnerService — аудит кронов 06.10.2026',
       await built.service.pollAssemblies();
 
       expect(built.notify.alert).toHaveBeenCalledWith(
-        'tutorial-assembly:giveup:1:ru',
+        'tutorial-assembly:giveup:1:ru:light',
         expect.stringContaining('попытки остановлены'),
       );
     });

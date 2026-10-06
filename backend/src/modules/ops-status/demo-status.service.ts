@@ -7,9 +7,12 @@
  *
  * 1. Живы ли кроны обучалки — когда был последний НАСТОЯЩИЙ успех
  *    (не пропуск по замку), последний провал и последний пропуск.
- * 2. Что из роликов можно показывать — матрица «тема × локаль»: есть
- *    ли одобренный ролик, какой он темы, когда снят и какой версией
- *    интерфейса, сколько собранных ждут одобрения.
+ * 2. Что из роликов можно показывать — матрица «тема обучалки × локаль
+ *    × тема интерфейса»: есть ли одобренный ролик, какой он темы, когда
+ *    снят и какой версией интерфейса, сколько собранных ждут одобрения.
+ *    Светлая и тёмная — отдельные ролики пары (заход 3 «Актуального
+ *    демо», 06.10.2026), поэтому у ячейки есть `byTheme`: свой
+ *    одобренный и своя очередь на одобрение у каждой темы.
  * 3. Свежи ли снимки интерфейса — последний снимок каждой комбинации
  *    маршрут × локаль × тема.
  *
@@ -99,6 +102,23 @@ export interface DemoApprovedVideo {
   hasPoster: boolean;
 }
 
+/** Темы интерфейса, по которым снимаются ролики — столбцы `byTheme`. */
+export const DEMO_THEMES = ['light', 'dark'] as const;
+export type DemoTheme = (typeof DEMO_THEMES)[number];
+
+/** Тема строки ролика для матрицы: без темы — светлая (до тем всё
+ *  снималось светлым; `approvedThemes` при этом честно покажет `null`). */
+function demoTheme(raw: string | null): DemoTheme {
+  return raw === 'dark' ? 'dark' : 'light';
+}
+
+export interface DemoThemeCell {
+  /** Самый свежий одобренный ролик ЭТОЙ темы; `null` — его нет. */
+  approved: DemoApprovedVideo | null;
+  /** Собранные ролики этой темы, ждущие одобрения. */
+  pendingReview: number;
+}
+
 export interface DemoTutorialCell {
   subjectKey: string;
   locale: string;
@@ -112,6 +132,9 @@ export interface DemoTutorialCell {
   approvedThemes: (string | null)[];
   /** Собранные (`complete`), но ещё не одобренные. */
   pendingReview: number;
+  /** То же по каждой теме интерфейса — светлый и тёмный ролики пары
+   *  одобряются и устаревают независимо. */
+  byTheme: Record<DemoTheme, DemoThemeCell>;
 }
 
 export interface DemoUiSnapshot {
@@ -133,7 +156,13 @@ export interface DemoStatusView {
   tutorials: {
     locales: string[];
     cells: DemoTutorialCell[];
-    totals: { cells: number; withApproved: number; pendingReview: number };
+    totals: {
+      cells: number;
+      withApproved: number;
+      pendingReview: number;
+      /** Ячеек с одобренным роликом каждой темы. */
+      withApprovedByTheme: Record<DemoTheme, number>;
+    };
   };
   uiSnapshots: {
     sinceDays: number;
@@ -346,11 +375,16 @@ export class DemoStatusService {
         },
       }) as Promise<AssetRow[]>,
       this.prisma.tutorialVideoAsset.groupBy({
-        by: ['subjectKey', 'locale'],
+        by: ['subjectKey', 'locale', 'theme'],
         where: { ...ours, reviewed: false, assemblyStatus: 'complete' },
         _count: { _all: true },
       }) as unknown as Promise<
-        { subjectKey: string; locale: string; _count: { _all: number } }[]
+        {
+          subjectKey: string;
+          locale: string;
+          theme: string | null;
+          _count: { _all: number };
+        }[]
       >,
     ]);
 
@@ -365,9 +399,29 @@ export class DemoStatusService {
       else approvedByPair.set(k, [row]);
     }
     const pendingByPair = new Map<string, number>();
+    const pendingByTheme = new Map<string, number>();
     for (const g of pendingGroups) {
-      pendingByPair.set(key(g.subjectKey, g.locale), g._count._all);
+      const k = key(g.subjectKey, g.locale);
+      pendingByPair.set(k, (pendingByPair.get(k) ?? 0) + g._count._all);
+      const kt = `${k}\u0000${demoTheme(g.theme)}`;
+      pendingByTheme.set(kt, (pendingByTheme.get(kt) ?? 0) + g._count._all);
     }
+    const approvedVideo = (row: AssetRow | undefined) => {
+      if (!row) return null;
+      const width = positive(row.width);
+      const height = positive(row.height);
+      const sized = width !== null && height !== null;
+      return {
+        theme: row.theme,
+        approvedRowCreatedAt: row.createdAt.toISOString(),
+        capturedAt: iso(row.capturedAt),
+        captureBuild: row.captureBuild,
+        durationMs: row.durationMs,
+        width: sized ? width : null,
+        height: sized ? height : null,
+        hasPoster: Boolean(row.posterUrl),
+      };
+    };
 
     const cells: DemoTutorialCell[] = [];
     const seen = new Set<string>();
@@ -379,28 +433,26 @@ export class DemoStatusService {
       const k = key(subjectKey, locale);
       seen.add(k);
       const rows = approvedByPair.get(k) ?? [];
-      const top = rows[0];
-      const width = positive(top?.width ?? null);
-      const height = positive(top?.height ?? null);
-      const sized = width !== null && height !== null;
+      // Строки — от новых к старым: первая своей темы — самая свежая.
+      const byTheme = Object.fromEntries(
+        DEMO_THEMES.map((theme) => [
+          theme,
+          {
+            approved: approvedVideo(
+              rows.find((r) => demoTheme(r.theme) === theme),
+            ),
+            pendingReview: pendingByTheme.get(`${k}\u0000${theme}`) ?? 0,
+          },
+        ]),
+      ) as Record<DemoTheme, DemoThemeCell>;
       return {
         subjectKey,
         locale,
         family,
-        approved: top
-          ? {
-              theme: top.theme,
-              approvedRowCreatedAt: top.createdAt.toISOString(),
-              capturedAt: iso(top.capturedAt),
-              captureBuild: top.captureBuild,
-              durationMs: top.durationMs,
-              width: sized ? width : null,
-              height: sized ? height : null,
-              hasPoster: Boolean(top.posterUrl),
-            }
-          : null,
+        approved: approvedVideo(rows[0]),
         approvedThemes: [...new Set(rows.map((r) => r.theme))],
         pendingReview: pendingByPair.get(k) ?? 0,
+        byTheme,
       };
     };
 
@@ -430,6 +482,12 @@ export class DemoStatusService {
         cells: cells.length,
         withApproved: cells.filter((c) => c.approved).length,
         pendingReview: cells.reduce((n, c) => n + c.pendingReview, 0),
+        withApprovedByTheme: Object.fromEntries(
+          DEMO_THEMES.map((theme) => [
+            theme,
+            cells.filter((c) => c.byTheme[theme].approved).length,
+          ]),
+        ) as Record<DemoTheme, number>,
       },
     };
   }

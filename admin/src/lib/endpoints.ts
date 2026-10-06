@@ -1,4 +1,5 @@
 import { apiGet, apiGetBlob, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
+import type { AttentionView } from './attention';
 import type {
   AudioTracksResult,
   AudioTrackView,
@@ -140,6 +141,12 @@ export function devLogin(devUserId: string) {
 
 export function getMe() {
   return apiGet<AdminMe>('/admin/auth/me');
+}
+
+// ── Дашборд внимания (backend/src/modules/admin-attention) ──
+
+export function getAttention() {
+  return apiGet<AttentionView>('/admin/attention');
 }
 
 // ── Сессии (backend/src/modules/admin-panel) ──

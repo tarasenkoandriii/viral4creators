@@ -294,6 +294,7 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
             reviewed: true,
             blobUrl: { not: null },
             clientSiteDraftId: null,
+            OR: [{ theme: null }, { theme: 'light' }],
           },
         }),
       );
@@ -348,6 +349,7 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
             reviewed: true,
             blobUrl: { not: null },
             clientSiteDraftId: null,
+            OR: [{ theme: null }, { theme: 'light' }],
           },
         }),
       );

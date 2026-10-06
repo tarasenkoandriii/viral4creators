@@ -2858,3 +2858,13 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
     align-items: center;
   }
 }
+
+/* Две дороги в один сценарий (`components/EntryActions.tsx`): браузерная
+   кнопка и «Открыть в Telegram» в финальном призыве — рядом, а на
+   узком экране друг под другом, как в первом экране. */
+.entry-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}

@@ -13,8 +13,10 @@ import { isLocale, locales, type Locale } from '../../lib/i18n';
 import { GREETING_SITE_URL } from '../../lib/greeting-host';
 import {
   MARKETPLACE_URL,
+  TELEGRAM_BOT_USERNAME,
   TMA_URL,
 } from '../../lib/content';
+import { EntryActions } from '../../components/EntryActions';
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
@@ -45,9 +47,11 @@ export default async function LandingPage({ params }: { params: { locale: string
               <h1>{dict.hero.title}</h1>
               <p>{dict.hero.subtitle}</p>
               <div className="hero-actions">
-                <a className="cta" href={TMA_URL}>
-                  {dict.hero.ctaPrimary}
-                </a>
+                {/* Главная — рекламный сценарий (`entry=ads`): и браузер, и
+                    Telegram открывают форму товарного ролика, а не список
+                    проектов (`lib/telegram-entry.ts`). */}
+                <EntryActions entry="ads" tmaUrl={TMA_URL} botUsername={TELEGRAM_BOT_USERNAME}
+                  browserLabel={dict.hero.ctaPrimary} telegramLabel={dict.entryActions.telegramCta} />
                 <a className="cta cta-ghost" href={demoHref}>
                   {dict.hero.ctaDemo}
                 </a>
@@ -247,9 +251,10 @@ export default async function LandingPage({ params }: { params: { locale: string
           <div className="wrap">
             <h2>{dict.finalCta.title}</h2>
             <p>{dict.finalCta.text}</p>
-            <a className="cta" href={TMA_URL}>
-              {dict.finalCta.cta}
-            </a>
+            <div className="entry-actions">
+              <EntryActions entry="ads" tmaUrl={TMA_URL} botUsername={TELEGRAM_BOT_USERNAME}
+                browserLabel={dict.finalCta.cta} telegramLabel={dict.entryActions.telegramCta} />
+            </div>
           </div>
         </section>
       </main>

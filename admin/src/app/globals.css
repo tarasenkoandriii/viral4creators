@@ -146,116 +146,408 @@ td {
   overflow-wrap: break-word;
 }
 
-/* Шапка переносится: семь ссылок плюс id и «Выйти» в одну нерушимую
-   строку требовали 797px, и документ имел эту ширину на КАЖДОЙ странице
-   админки — со смартфона были видны только первые две вкладки (аудит
-   2026-09-06, А-3.1). Список успел вырасти до шестнадцати пунктов и
-   переноситься на две строки уже на десктопе — свёрнут в пять пунктов
-   верхнего уровня через выпадающие группы (`.admin-nav-group` ниже);
-   `flex-wrap` остаётся как страховка на узких экранах, а не как
-   основной способ уместить меню. */
-.admin-nav {
+/* ---------- Навигация: боковая панель / выдвижная панель ----------
+   Аудит навигации 06.10.2026 (doc/ADMIN-NAV-AUDIT-2026-10-06.md). Было:
+   строка вкладок с выпадающими группами, «Система» на 12 ссылок,
+   абсолютный список без max-height. Стало: на десктопе (≥ 960px) —
+   постоянная боковая панель со своей прокруткой, контент сдвинут вправо;
+   уже — шапка с кнопкой «Меню» и выдвижная панель поверх контента, тоже
+   со своей прокруткой. Разметка — `components/AdminNav.tsx`, каталог —
+   `lib/nav.ts`. */
+
+:root {
+  --sidebar-width: 256px;
+}
+
+.admin-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 40;
+  width: var(--sidebar-width);
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 16px;
-  padding: 8px 20px;
+  flex-direction: column;
+  background: #101013;
+  border-right: 1px solid var(--border);
+}
+
+/* Контент — следующий сосед панели (layout.tsx): отступ только там, где
+   панель есть (на /login её нет). */
+.admin-sidebar ~ .admin-content {
+  padding-left: var(--sidebar-width);
+}
+
+.admin-sidebar-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 16px 16px 12px;
   border-bottom: 1px solid var(--border);
-}
-
-/* Ссылка сама по себе — строка текста высотой 19px; вертикальный
-   паддинг доводит цель нажатия до высоты соседней кнопки, а заодно
-   разводит перенесённые строки. */
-.admin-nav a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  text-decoration: none;
-}
-
-/* Этап 50 (В-5.18): текущая вкладка отличается — раньше семь ссылок
-   были одного цвета и веса, и оператор не видел, где он. */
-.admin-nav a[aria-current='page'] {
-  color: var(--accent);
-  font-weight: 600;
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-/* Прижимает «кто вошёл + Выйти» к правому краю — и на общей строке со
-   ссылками, и на своей собственной после переноса. */
-.admin-nav-me {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-}
-
-/* Двухуровневое меню (шестнадцать разделов свёрнуты в пять пунктов
-   верхнего уровня — «Сессии» + четыре выпадающих группы): у группы своя
-   кнопка-триггер и абсолютно позиционированный список под ней. */
-.admin-nav-group {
-  position: relative;
-}
-
-/* Кнопка группы выглядит как соседняя ссылка `.admin-nav a`, а не как
-   обычная `button` (border/фон из общего правила `button` в этом файле
-   были бы чужеродны в строке навигации). */
-.admin-nav-group-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 44px;
-  background: none;
-  border: none;
-  padding: 0;
-  color: inherit;
-  font: inherit;
   font-size: 13px;
 }
 
-.admin-nav-group-btn-active {
-  color: var(--accent);
-  font-weight: 600;
+.admin-sidebar-brand {
+  font-weight: 700;
+  font-size: 14px;
 }
 
-.admin-nav-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 20;
-  margin: 4px 0 0;
-  padding: 6px;
+.admin-sidebar-close {
+  margin-left: auto;
+  min-width: 44px;
+  padding: 0;
+  align-self: center;
+}
+
+/* Своя прокрутка: восемь раскрытых групп выше любого экрана, а страница
+   под панелью прокручиваться не должна. */
+.admin-sidebar-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+}
+
+.admin-nav-groups,
+.admin-nav-links {
   list-style: none;
-  background: #141417;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  min-width: 200px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  margin: 0;
+  padding: 0;
 }
 
-.admin-nav-dropdown li + li {
-  margin-top: 2px;
+.admin-nav-links[hidden] {
+  display: none;
 }
 
-.admin-nav-dropdown a {
+.admin-nav-links {
+  padding: 2px 0 6px 8px;
+}
+
+.admin-nav-link {
   display: flex;
   align-items: center;
   min-height: 40px;
-  padding: 0 10px;
+  padding: 6px 10px;
   border-radius: 6px;
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.25;
+  /* Длинная подпись переносится, а не уезжает за край телефона. */
+  overflow-wrap: anywhere;
+}
+
+.admin-nav-link:hover {
+  background: #1c1c20;
+}
+
+.admin-nav-link[aria-current='page'] {
+  color: var(--accent);
+  font-weight: 600;
+  background: rgba(110, 168, 254, 0.12);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.admin-nav-overview {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* Кнопка группы — заголовок раздела, а не обычная кнопка формы. */
+.admin-nav-group-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.admin-nav-group-btn:hover {
+  color: var(--fg);
+  background: #18181c;
+}
+
+.admin-nav-group-btn-active {
+  color: var(--fg);
+}
+
+.admin-nav-chevron {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+
+.admin-sidebar a:focus-visible,
+.admin-sidebar button:focus-visible,
+.admin-topbar button:focus-visible,
+.attention-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.admin-sidebar-me {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+/* Мобильная шапка видна только без постоянной панели. */
+.admin-topbar {
+  display: none;
+}
+
+.admin-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 959px) {
+  .admin-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .admin-topbar-title {
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Выдвижная панель: вне экрана и вне порядка Tab, пока закрыта. */
+  .admin-sidebar {
+    width: min(320px, 86vw);
+    max-height: 100dvh;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.18s ease, visibility 0s linear 0.18s;
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.5);
+  }
+
+  .admin-sidebar-open {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.18s ease;
+  }
+
+  .admin-sidebar ~ .admin-content {
+    padding-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-sidebar,
+  .admin-sidebar-open {
+    transition: none;
+  }
+}
+
+/* ---------- Обзор: очередь внимания ---------- */
+
+.attention-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.attention-refresh {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.stat-grid.attention-counts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.attention-sources {
+  margin-top: 16px;
+  border-color: var(--signal-warning);
+  font-size: 13px;
+}
+
+.attention-sources ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.attention-calm {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.attention-calm h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: var(--signal-ok);
+}
+
+.attention-calm p {
+  margin: 0;
+}
+
+.attention-section {
+  margin-top: 24px;
+}
+
+.attention-section h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.attention-hint {
+  margin: 4px 0 10px;
+  font-size: 12px;
+}
+
+.attention-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.attention-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 14px 16px;
+  border-left-width: 3px;
+}
+
+.attention-card-blocker {
+  border-left-color: var(--signal-critical);
+}
+
+.attention-card-decision {
+  border-left-color: var(--signal-warning);
+}
+
+.attention-card-info {
+  border-left-color: var(--border);
+}
+
+.attention-card-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.attention-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.attention-card-title h3 {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.attention-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.attention-reason {
+  margin: 6px 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.attention-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.attention-meta div {
+  display: flex;
+  gap: 6px;
+}
+
+.attention-meta dt {
+  color: var(--muted);
+}
+
+.attention-meta dd {
+  margin: 0;
+}
+
+.attention-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #1c1c20;
+  font-size: 13px;
   text-decoration: none;
   white-space: nowrap;
 }
 
-.admin-nav-dropdown a:hover {
-  background: #1c1c20;
+.attention-action:hover {
+  border-color: var(--accent);
 }
 
-/* Внутри выпадающего списка активный пункт отмечен только цветом/весом —
-   нижнее подчёркивание из общего правила `.admin-nav a[aria-current='page']`
-   уместно на горизонтальной строке вкладок, но не на строке списка. */
-.admin-nav-dropdown a[aria-current='page'] {
-  box-shadow: none;
+.attention-quality p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .attention-card {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .attention-action {
+    align-self: stretch;
+    justify-content: center;
+  }
+
+  .stat-grid.attention-counts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .page {
@@ -415,11 +707,6 @@ td {
    поля вокруг. До этого этапа во всём CSS админки не было ни одного
    `@media` (аудит 2026-09-06, А-3.4). */
 @media (max-width: 720px) {
-  .admin-nav {
-    gap: 2px 14px;
-    padding: 6px 12px;
-  }
-
   .page,
   .admin-main {
     padding: 16px 12px;

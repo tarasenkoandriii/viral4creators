@@ -1038,6 +1038,9 @@
       "OTHER": "Special occasion"
     }
   },
+  "entryActions": {
+    "telegramCta": "Open in Telegram"
+  },
   "referral": {
     "metaTitle": "An invitation to viral4creators",
     "metaDescription": "You've been invited to try viral4creators: a short video from a product description or an occasion, in a couple of minutes. The first generation is free.",

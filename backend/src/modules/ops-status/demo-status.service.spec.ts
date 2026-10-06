@@ -296,6 +296,83 @@ describe('DemoStatusService — матрица роликов', () => {
     expect(cell.approvedThemes.sort()).toEqual(['dark', 'light']);
   });
 
+  it('матрица по темам: свой одобренный и своя дата съёмки у каждой темы', async () => {
+    const { service } = build({
+      assets: [
+        asset({
+          theme: 'light',
+          createdAt: at(48),
+          capturedAt: at(49),
+          captureBuild: 'light01',
+        }),
+        // Более старый светлый — не «одобренный светлой».
+        asset({ theme: 'light', createdAt: at(72), captureBuild: 'light00' }),
+        asset({
+          theme: 'dark',
+          createdAt: at(5),
+          capturedAt: at(6),
+          captureBuild: 'dark001',
+        }),
+        // Тёмный ждёт одобрения — в очередь тёмной, не светлой.
+        asset({ theme: 'dark', reviewed: false, createdAt: at(1) }),
+        asset({ theme: 'light', reviewed: false, createdAt: at(2) }),
+        asset({ theme: 'light', reviewed: false, createdAt: at(3) }),
+      ],
+    });
+    const view = await service.get(NOW);
+    const cell = view.tutorials.cells.find(
+      (c) => c.locale === 'ru' && c.subjectKey === '2',
+    )!;
+    expect(cell.byTheme.light.approved).toEqual(
+      expect.objectContaining({
+        theme: 'light',
+        approvedRowCreatedAt: at(48).toISOString(),
+        capturedAt: at(49).toISOString(),
+        captureBuild: 'light01',
+      }),
+    );
+    expect(cell.byTheme.dark.approved).toEqual(
+      expect.objectContaining({
+        theme: 'dark',
+        capturedAt: at(6).toISOString(),
+        captureBuild: 'dark001',
+      }),
+    );
+    expect(cell.byTheme.light.pendingReview).toBe(2);
+    expect(cell.byTheme.dark.pendingReview).toBe(1);
+    expect(cell.pendingReview).toBe(3);
+    // Верхний «что увидит посетитель» — самый свежий любой темы.
+    expect(cell.approved?.theme).toBe('dark');
+    expect(view.tutorials.totals.withApprovedByTheme).toEqual({
+      light: 1,
+      dark: 1,
+    });
+    // Ячейка без роликов — обе темы пусты, а не отсутствуют.
+    const empty = view.tutorials.cells.find(
+      (c) => c.locale === 'ru' && c.subjectKey === '1',
+    )!;
+    expect(empty.byTheme).toEqual({
+      light: { approved: null, pendingReview: 0 },
+      dark: { approved: null, pendingReview: 0 },
+    });
+  });
+
+  it('ролик без темы (до тем) — в столбце светлой', async () => {
+    const { service } = build({
+      assets: [
+        asset({ theme: null }),
+        asset({ theme: null, reviewed: false, createdAt: at(1) }),
+      ],
+    });
+    const cell = (await service.get(NOW)).tutorials.cells.find(
+      (c) => c.locale === 'ru' && c.subjectKey === '2',
+    )!;
+    expect(cell.approvedThemes).toEqual([null]);
+    expect(cell.byTheme.light.approved).not.toBeNull();
+    expect(cell.byTheme.light.pendingReview).toBe(1);
+    expect(cell.byTheme.dark.approved).toBeNull();
+  });
+
   it('ожидающие одобрения считаются; неодобренный не становится «одобренным»', async () => {
     const { service } = build({
       assets: [
