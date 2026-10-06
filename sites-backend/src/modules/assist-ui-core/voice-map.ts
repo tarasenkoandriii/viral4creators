@@ -1338,6 +1338,54 @@ function groupOverlap(
  * мемо), невалидный текст, > 30% целей не найдены на образцах. Показывают:
  * каждая ненайденная, хрупкие, затронутые мемо.
  */
+/**
+ * Мемо, затронутые картой (аудит Э6-бис (е) (2), Э6-тер): шаг нажимает
+ * цель — по разметке (`assistId`) или по ключу карты (`mapKey`), — которая
+ * стала «никогда» (риск/denylist) или удалена (была в прежней версии, нет
+ * в этой; ключ мемо не найден ни там, ни там). После публикации карты
+ * такие мемо уходят в `needs_review` (в бою не исполняются).
+ */
+export function memoAffected(
+  content: VoiceMapContent,
+  ctx: {
+    memoAssistIds?: ReadonlyMap<string, number[]>;
+    memoMapKeys?: ReadonlyMap<string, number[]>;
+    previous?: VoiceMapContent | null;
+  },
+): Array<{ code: 'memo_affected'; key: string; memo: number }> {
+  const out: Array<{ code: 'memo_affected'; key: string; memo: number }> = [];
+  if (!ctx.memoAssistIds && !ctx.memoMapKeys) return out;
+  const seen = new Set<string>();
+  const push = (key: string, nums: readonly number[]) => {
+    for (const memo of nums) {
+      const k = `${key}|${memo}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push({ code: 'memo_affected', key, memo });
+    }
+  };
+  const users = (t: VoiceMapTarget): number[] => [
+    ...((t.descriptor.assistId &&
+      ctx.memoAssistIds?.get(t.descriptor.assistId)) ||
+      []),
+    ...(ctx.memoMapKeys?.get(t.key) ?? []),
+  ];
+  const active = new Set(
+    content.targets.filter((t) => t.status === 'active').map((t) => t.key),
+  );
+  for (const t of content.targets)
+    if (t.status === 'removed' || t.denylisted || effectiveRisk(t) === 'never')
+      push(t.key, users(t));
+  const known = new Set(content.targets.map((t) => t.key));
+  for (const t of ctx.previous?.targets ?? []) {
+    known.add(t.key);
+    if (t.status === 'active' && !active.has(t.key)) push(t.key, users(t));
+  }
+  for (const [key, nums] of ctx.memoMapKeys ?? [])
+    if (!known.has(key)) push(key, nums);
+  return out;
+}
+
 export function voiceMapGates(
   content: VoiceMapContent,
   ctx: {
@@ -1345,6 +1393,13 @@ export function voiceMapGates(
     memoPhrases?: ReadonlySet<string>;
     /** Мемо, чьи шаги ссылаются на разметку целей: assistId → номера. */
     memoAssistIds?: ReadonlyMap<string, number[]>;
+    /** Мемо, чьи шаги найдены по цели карты (`MemoTarget.mapKey`): ключ → номера. */
+    memoMapKeys?: ReadonlyMap<string, number[]>;
+    /**
+     * Опубликованная (прежняя) версия: её цели, которых в этой нет, —
+     * «удалены» для мемо (версия хранит только активные цели).
+     */
+    previous?: VoiceMapContent | null;
   } = {},
 ): MapGateReport {
   const problems: MapGateProblem[] = [];
@@ -1398,16 +1453,7 @@ export function voiceMapGates(
     problems.push({ code: 'not_found' });
   const fragile = active.filter((t) => t.stability === 'fragile');
   for (const t of fragile) warnings.push({ code: 'fragile', key: t.key });
-  // Мемо, чьи шаги нажимают разметку цели, ставшей «никогда»/удалённой.
-  if (ctx.memoAssistIds)
-    for (const t of content.targets) {
-      const id = t.descriptor.assistId;
-      if (!id) continue;
-      const nums = ctx.memoAssistIds.get(id);
-      if (nums && (t.status === 'removed' || effectiveRisk(t) === 'never'))
-        for (const n of nums)
-          warnings.push({ code: 'memo_affected', key: t.key, memo: n });
-    }
+  warnings.push(...memoAffected(content, ctx));
   if (!active.length) problems.push({ code: 'empty' });
   return {
     ok: problems.length === 0,

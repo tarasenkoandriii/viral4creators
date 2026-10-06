@@ -8,6 +8,7 @@
  */
 import { Module } from '@nestjs/common';
 import { AssistAdminModeModule } from '../assist-admin-mode/assist-admin-mode.module';
+import { SiteAiModule } from '../site-ai/site-ai.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { AdminActionsController } from './actions.controller';
 import { AdminActionsNotifier } from './action-notifier';
@@ -15,7 +16,7 @@ import { AdminMemoService } from './admin-memo.service';
 import { ProposalsService } from './proposals.service';
 
 @Module({
-  imports: [SiteCoreModule, AssistAdminModeModule],
+  imports: [SiteCoreModule, SiteAiModule, AssistAdminModeModule],
   controllers: [AdminActionsController],
   providers: [ProposalsService, AdminMemoService, AdminActionsNotifier],
   exports: [ProposalsService, AdminMemoService, AdminActionsNotifier],

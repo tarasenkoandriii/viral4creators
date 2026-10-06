@@ -1092,4 +1092,45 @@ describe('TutorialScenarioGeneratorService — ротация пар по дав
 
     expect(result.generated).toBe(2);
   });
+
+  it('вызов модели ограничен остатком бюджета прогона (аудит кронов 06.10.2026)', async () => {
+    // Бюджет проверялся только между парами, а сам вызов не был
+    // ограничен ничем — зависшее соединение уводило функцию за потолок.
+    const { service } = build();
+    generateContent.mockResolvedValue({ text: FREE_SCENARIO_TEXT });
+
+    await service.run();
+
+    for (const [args] of generateContent.mock.calls) {
+      const config = (args as { config: Record<string, any> }).config;
+      expect(config.httpOptions.timeout).toBeGreaterThan(0);
+      expect(config.httpOptions.timeout).toBeLessThanOrEqual(
+        GENERATE_DEADLINE_MS,
+      );
+      expect(config.abortSignal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('отметки ротации пишутся после КАЖДОЙ пары, а не в конце', async () => {
+    // Обрыв посреди прогона (зависший вызов, смерть функции) больше не
+    // теряет отметки уже взятых пар — следующая ночь не платит за них
+    // повторно.
+    const { service, settings } = build();
+    let calls = 0;
+    generateContent.mockImplementation(() => {
+      calls++;
+      if (calls === 2) throw new Error('соединение оборвано');
+      return { text: FREE_SCENARIO_TEXT };
+    });
+
+    await service.run();
+
+    const writes = settings.set.mock.calls.filter(
+      ([key]: [string]) => key === GENERATE_ROTATION_SETTING_KEY,
+    );
+    // Три пары (ru:1, ru:2, ru:greeting-brief) — три записи.
+    expect(writes).toHaveLength(3);
+    // Уже ПЕРВАЯ запись несёт отметку первой пары.
+    expect(Object.keys(JSON.parse(writes[0][1]))).toHaveLength(1);
+  });
 });

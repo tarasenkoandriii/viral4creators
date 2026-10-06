@@ -39,10 +39,19 @@ import type {
   OperationParam,
 } from '../assist-admin-mode/openapi-import';
 import {
+  buildMemoChoicePrompt,
+  memoMentioned,
+  parseMemoChoice,
   suggestMemoKey,
   MEMO_LIMITS,
   type MemoLang,
 } from '../assist-ui-core/memo';
+import { adminSpentToday } from '../assist-admin-mode/admin-budget';
+import { siteDailyCapFromPlan } from '../assist-billing/plans';
+import { GeminiText } from '../site-ai/text-model';
+import { AiUsageRecorder } from '../site-ai/usage-recorder';
+import { estimateCost } from '../../shared/ai-pricing';
+import { GEMINI_MODEL } from '../../shared/gemini-model';
 import type { AccountMembership } from '../site-core/account/roles';
 import { ACTION_LIMITS } from './action-core';
 import {
@@ -55,6 +64,7 @@ import {
   adminMemoPhrases,
   emptyAdminMemo,
   fillAdminSlots,
+  liteAdminSlotsRest,
   markPii,
   memoNumberIn,
   parseAdminMemo,
@@ -187,6 +197,8 @@ export class AdminMemoService {
     private readonly connectors: ConnectorsService,
     private readonly proposals: ProposalsService,
     private readonly log: AdminActionLogService,
+    private readonly text: GeminiText,
+    private readonly usage: AiUsageRecorder,
   ) {
     this.proposals.onSettled = (ctx, row, status) =>
       this.afterStep(ctx, row.memoRunId!, row.memoStep!, status);
@@ -357,9 +369,6 @@ export class AdminMemoService {
     await this.mode.requireSite(m.accountId, siteId);
     const limit = await this.limit(m.accountId);
     const db = this.db.forAccount(m.accountId);
-    const used = await db.assistAdminMemo.count({
-      where: { siteId, status: { not: 'removed' } },
-    });
     if (limit === 0) {
       throw adminError(
         402,
@@ -367,13 +376,12 @@ export class AdminMemoService {
         'Мемо «Админки» — в тарифе Pro',
       );
     }
-    if (used >= limit) {
-      throw adminError(
+    const overLimit = () =>
+      adminError(
         409,
         'MEMO_LIMIT',
         `Мемо «Админки» — не больше ${limit} на сайт`,
       );
-    }
     const parsed = parseAdminMemo(body.draft ?? emptyAdminMemo());
     if (parsed.issues.length) throw this.invalid(parsed.issues);
     const name = adminMemoName(parsed.content, 'uk');
@@ -395,11 +403,19 @@ export class AdminMemoService {
         if (body.key) throw adminError(409, 'MEMO_CONFLICT', 'Ключ уже занят');
         key = `${key.slice(0, 33)}-${Date.now().toString(36).slice(-6)}`;
       }
+      // UPDATE счётчика блокирует строку настроек сайта до конца
+      // транзакции: лимит считаем ПОСЛЕ него — параллельные создания не
+      // проходят сверх лимита (аудит Э6-бис (е) (4)); отказ откатывает и
+      // счётчик.
       const s = await tx.assistAdminSettings.update({
         where: { siteId },
         data: { memoCounter: { increment: 1 } },
         select: { memoCounter: true },
       });
+      const used = await tx.assistAdminMemo.count({
+        where: { siteId, status: { not: 'removed' } },
+      });
+      if (used >= limit) throw overLimit();
       return tx.assistAdminMemo.create({
         data: {
           accountId: m.accountId,
@@ -679,7 +695,8 @@ export class AdminMemoService {
       if (!phrases.length) return null;
       const index = new Map(phrases.map((p) => [p.norm, p.owner]));
       const hit = phrasePrefix(text, (n) => index.has(n));
-      if (!hit) return null;
+      // Ни номера, ни фразы — lite-выбор моделью (как у «Сайта»).
+      if (!hit) return this.liteMatch(ctx, text);
       const owner = index.get(hit.norm)!;
       memo = await db.assistAdminMemo.findFirst({
         where: { siteId: ctx.siteId, id: owner.replace(/^memo:/, '') },
@@ -701,6 +718,122 @@ export class AdminMemoService {
       memo,
       content: parseAdminMemo(ver.content).content,
       rest,
+    };
+  }
+
+  /**
+   * Lite-выбор мемо АМ-N моделью (аудит Э8-хвост (2); ТЗ §5-бис.17 п.5 п.3 —
+   * как у «Сайта»): только если команда делит слово с именем/фразой/целью
+   * опубликованного мемо; модель видит ТОЛЬКО команду и список мемо блоком
+   * данных (`buildMemoChoicePrompt`), отвечает ключом из списка
+   * (`parseMemoChoice`); слоты — код (`liteAdminSlotsRest`). Суточный
+   * потолок денег «Админки» — до вызова (с оценкой вызова); сбой, отказ,
+   * потолок — null (обычный ход). Права на операции — в `start()`, как
+   * всегда.
+   */
+  private async liteMatch(
+    ctx: ActorCtx,
+    text: string,
+    now = new Date(),
+  ): Promise<null | {
+    kind: 'memo';
+    memo: MemoRow;
+    content: AdminMemoContent;
+    rest: string;
+  }> {
+    const db = this.db.forAccount(ctx.accountId);
+    const memos = await db.assistAdminMemo.findMany({
+      where: {
+        siteId: ctx.siteId,
+        status: 'published',
+        publishedVersion: { not: null },
+      },
+      orderBy: { number: 'asc' },
+      take: MEMO_LIMITS.choiceMaxMemos * 3,
+    });
+    if (!memos.length) return null;
+    const vers = await db.assistAdminMemoVersion.findMany({
+      where: {
+        OR: memos.map((m) => ({ memoId: m.id, number: m.publishedVersion! })),
+      },
+      select: { memoId: true, content: true },
+    });
+    const byId = new Map(vers.map((v) => [v.memoId, v.content]));
+    const cands = memos
+      .map((memo) => ({
+        memo,
+        key: memo.key,
+        content: parseAdminMemo(byId.get(memo.id)).content,
+      }))
+      .filter((c) => byId.has(c.memo.id) && memoMentioned(text, c.content))
+      .slice(0, MEMO_LIMITS.choiceMaxMemos);
+    if (!cands.length) return null;
+    const lang = (
+      ['uk', 'ru', 'en'].includes(ctx.lang) ? ctx.lang : 'uk'
+    ) as MemoLang;
+    const prompt = buildMemoChoicePrompt({
+      transcript: text,
+      memos: cands,
+      lang,
+      actor: 'employee',
+    });
+    // Потолок «Админки» (тот же расчёт, что у хода чата) — с оценкой вызова.
+    const st = await readState(this.prisma, ctx.accountId, now);
+    const est = estimateCost(GEMINI_MODEL, {
+      inputTokens: Math.max(
+        MEMO_LIMITS.choiceReserveInputTokens,
+        Math.ceil((prompt.system.length + prompt.user.length) / 2),
+      ),
+      outputTokens: MEMO_LIMITS.choiceMaxOutputTokens,
+    }).costMicroUsd;
+    const spent = await adminSpentToday(db, ctx.siteId, now);
+    if (spent + est > siteDailyCapFromPlan(st.planId)) return null;
+    let out: string;
+    try {
+      const gen = await this.text.generate({
+        system: prompt.system,
+        user: prompt.user,
+        json: true,
+        temperature: 0,
+        maxOutputTokens: MEMO_LIMITS.choiceMaxOutputTokens,
+        timeoutMs: MEMO_LIMITS.choiceTimeoutMs,
+      });
+      out = gen.text;
+      try {
+        await this.usage.record(
+          this.db.system(
+            'учёт расходов «Админки»: строка site_ai_usage с accountId сайта',
+          ),
+          {
+            accountId: ctx.accountId,
+            siteId: ctx.siteId,
+            operation: 'assist-admin-memo',
+            model: gen.model,
+            units: {
+              inputTokens: gen.inputTokens,
+              outputTokens: gen.outputTokens,
+              cachedInputTokens: gen.cachedInputTokens,
+            },
+          },
+        );
+      } catch {
+        /* учёт — не повод отказать в ходе */
+      }
+    } catch {
+      return null;
+    }
+    const choice = parseMemoChoice(out, cands);
+    if (!choice) return null;
+    return {
+      kind: 'memo',
+      memo: choice.memo.memo,
+      content: choice.memo.content,
+      rest: liteAdminSlotsRest(
+        choice.memo.content.slots,
+        text,
+        choice.slots,
+        now,
+      ),
     };
   }
 

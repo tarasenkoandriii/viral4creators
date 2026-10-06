@@ -107,6 +107,11 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
     const r = result as { text?: string };
     if (typeof r.text === 'string') return r.text;
   }
+  // Любой пропуск — одной строкой с причиной (аудит кронов 06.10.2026).
+  // Ветки ниже про отдельные джобы остаются как были: они давали ту же
+  // форму, а этот общий случай ловит тех, о ком ветку забыли завести.
+  const skip = skipReasonOf(result);
+  if (skip && jobKey !== 'cleanup-sessions') return `пропущен — ${skip}`;
   // Найдено доп. аудитом (MEDIUM, вместе с добавлением джоб-замка у
   // `runCleanupSessions`): без этой ветки пропущенный (заблокированный
   // другим прогоном) запуск выглядел бы в журнале как «всё по нулям» —
@@ -198,4 +203,70 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
     return summarizeCounters(result as Record<string, unknown>);
   }
   return String(result);
+}
+
+/**
+ * Исход прогона «пропущен» (аудит кронов 06.10.2026).
+ *
+ * Прогон, который отработал, но работу не делал — замок держит другой,
+ * фикстура не настроена, денежный потолок выбран, — писался в журнал
+ * статусом SUCCESS и в сводке «Кронов» был неотличим от настоящего
+ * успеха: зелёная строка и «последний успех» у крона, который неделю не
+ * делал ничего. Колонки под исход в `CronRunLog` нет, и схема ради него
+ * не меняется: отметка кладётся в уже существующее JSON-поле
+ * `debugLog` (`{cronOutcome: 'SKIPPED', reason, result}`), а сводка и
+ * история читают её оттуда.
+ */
+export const CRON_OUTCOME_SKIPPED = 'SKIPPED' as const;
+export type CronOutcome = typeof CRON_OUTCOME_SKIPPED;
+
+const LOCK_SKIP_REASON = 'предыдущий прогон ещё держал замок';
+
+/**
+ * Причина пропуска, если результат джоба — пропуск; иначе `null`.
+ *
+ * Три формы, которые сегодня есть у джобов: `skipped` строкой (причина
+ * названа), `skipped: true` (джоб-замок) и `action: 'skipped-locked'`
+ * (водяной знак портфолио). Вложенные `skipped` (у блога —
+ * `generation.skipped`) пропуском всего прогона не считаются.
+ */
+export function skipReasonOf(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as { skipped?: unknown; action?: unknown };
+  if (typeof r.skipped === 'string' && r.skipped.trim()) return r.skipped;
+  if (r.skipped === true) return LOCK_SKIP_REASON;
+  if (r.action === 'skipped-locked') return LOCK_SKIP_REASON;
+  return null;
+}
+
+/** Поля успешно завершённой строки журнала — общие для ручного запуска
+ *  и настоящего крона. */
+export function successLogFields(
+  jobKey: string,
+  result: unknown,
+  debugMode: boolean,
+): { summary: string; debugLog: object | undefined } {
+  const summary = buildRunSummary(jobKey, result);
+  const skip = skipReasonOf(result);
+  if (skip) {
+    return {
+      summary,
+      debugLog: {
+        cronOutcome: CRON_OUTCOME_SKIPPED,
+        reason: skip,
+        result: result as object,
+      },
+    };
+  }
+  return { summary, debugLog: debugMode ? (result as object) : undefined };
+}
+
+/** Исход строки журнала по её `debugLog`; `null` — обычный. */
+export function cronOutcomeOf(debugLog: unknown): CronOutcome | null {
+  return debugLog &&
+    typeof debugLog === 'object' &&
+    !Array.isArray(debugLog) &&
+    (debugLog as { cronOutcome?: unknown }).cronOutcome === CRON_OUTCOME_SKIPPED
+    ? CRON_OUTCOME_SKIPPED
+    : null;
 }

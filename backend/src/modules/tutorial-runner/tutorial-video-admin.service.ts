@@ -23,6 +23,11 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { SUPPORTED_LOCALES, SupportedLocale } from '../../common/locale';
 import { LandingVideosService } from '../client-site-media/landing-videos.service';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
+import {
+  APPROVAL_STAMPS_SETTING_KEY,
+  recordApprovalStamp,
+} from './tutorial-video-retention';
 import {
   ASSISTANT_KNOWLEDGE_BUILT_AT,
   ASSISTANT_KNOWLEDGE_COMMIT,
@@ -67,6 +72,11 @@ export class TutorialVideoAdminService {
     // (виджет платформы). Необязательный — тесты и окружение без
     // sites-backend работают как раньше.
     @Optional() private readonly landingVideos?: LandingVideosService,
+    // Когда одобрен ролик (аудит кронов 06.10.2026): подметальщик
+    // держит ПРЕДЫДУЩИЙ одобренный ещё сутки, пока кеши по дороге к
+    // посетителю отдают его ссылку. Необязательный — без него
+    // поведение прежнее (прежний одобренный уходит на ближайшем тике).
+    @Optional() private readonly settings?: PlatformSettingsService,
   ) {}
 
   async list(filter: TutorialVideoListFilter) {
@@ -150,6 +160,7 @@ export class TutorialVideoAdminService {
       where: { id },
       data: { reviewed },
     });
+    if (reviewed) await this.stampApproval(id);
     // Набор роликов лендинга в тенанте — тем же барьером (clientSiteDraftId
     // уже отсеян выше). Не ждём сети и не роняем одобрение: сбой — в лог,
     // следующее одобрение пришлёт набор целиком.
@@ -163,6 +174,29 @@ export class TutorialVideoAdminService {
         );
     }
     return updated;
+  }
+
+  /**
+   * Отметка «одобрен тогда-то» в карте `APPROVAL_STAMPS_SETTING_KEY`.
+   * Не бросает: одобрение уже записано, а без отметки худшее — прежний
+   * одобренный ролик уйдёт на ближайшем тике подметальщика, как до
+   * правки.
+   */
+  private async stampApproval(id: string): Promise<void> {
+    if (!this.settings) return;
+    try {
+      const raw = await this.settings.get(APPROVAL_STAMPS_SETTING_KEY);
+      await this.settings.set(
+        APPROVAL_STAMPS_SETTING_KEY,
+        recordApprovalStamp(raw, id, Date.now()),
+      );
+    } catch (e) {
+      this.logger.warn(
+        `отметка одобрения ролика ${id} не записана (${
+          e instanceof Error ? e.message : String(e)
+        }) — прежний одобренный ролик пары подметётся без суточной отсрочки`,
+      );
+    }
   }
 
   /** «Состояние данных» (§4.9) — агрегированная сводка, без фильтров. */

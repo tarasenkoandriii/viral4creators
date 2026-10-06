@@ -8,8 +8,9 @@ import { readFileSync } from 'node:fs';
 import { appEn } from '../src/i18n/en';
 import { appRu } from '../src/i18n/ru';
 import { appUk } from '../src/i18n/uk';
-import type { ApiClient } from '../src/kit';
+import { ApiError, type AccountMember, type ApiClient } from '../src/kit';
 import {
+  memoReadOnly,
   MEMO_GATE_CODES,
   MEMO_STATUSES,
   MEMO_VERSION_STATUSES,
@@ -50,6 +51,40 @@ for (const d of [appUk, appRu, appEn]) {
   };
   for (const s of MEMO_STATUSES) assert.ok(m.status[s], `нет статуса ${s}`);
   for (const c of MEMO_GATE_CODES) assert.ok(m.gates[c], `нет ворот ${c}`);
+}
+
+// 2-бис. Оператору — плашка «редактирует владелец/менеджер» вместо 403
+// (запрос не уходит); владельцу и менеджеру — раздел; 403 сервера — плашка.
+{
+  const me = (role: string, assist: string) =>
+    ({
+      memberId: 'm1',
+      telegramId: '1',
+      role,
+      productRoles: { qa: 'none', assist, assistAdmin: 'none' },
+    }) as unknown as AccountMember;
+  assert.equal(memoReadOnly(me('operator', 'manager'), null), true);
+  assert.equal(memoReadOnly(me('manager', 'operator'), null), true);
+  assert.equal(memoReadOnly(me('owner', 'operator'), null), false);
+  assert.equal(memoReadOnly(me('manager', 'manager'), null), false);
+  assert.equal(
+    memoReadOnly(
+      me('manager', 'manager'),
+      new ApiError('PRODUCT_ROLE_REQUIRED', 'x', 403)
+    ),
+    true
+  );
+  assert.equal(
+    memoReadOnly(me('manager', 'manager'), new ApiError('X', 'x', 500)),
+    false
+  );
+  for (const d of [appUk, appRu, appEn]) {
+    const m = d.voiceControl.memo as unknown as {
+      readOnly: string;
+      review: Record<string, string>;
+    };
+    assert.ok(m.readOnly && m.review.voice_map);
+  }
 }
 
 // 3. Разбор строгий.

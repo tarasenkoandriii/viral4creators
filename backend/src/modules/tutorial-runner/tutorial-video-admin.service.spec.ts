@@ -296,3 +296,52 @@ describe('Э-С Ш5: одобрение → набор роликов сайта
     });
   });
 });
+
+describe('TutorialVideoAdminService.setReviewed — отметка одобрения (аудит кронов 06.10.2026)', () => {
+  function withSettings(raw: string | null = null) {
+    const prisma = {
+      tutorialVideoAsset: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'tva-1',
+          clientSiteDraftId: null,
+          blobUrl: 'https://blob.example.com/tutorial-videos/1/tva-1.mp4',
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'tva-1', reviewed: true }),
+      },
+    };
+    const settings = {
+      get: jest.fn().mockResolvedValue(raw),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new TutorialVideoAdminService(
+      prisma as any,
+      undefined,
+      settings as any,
+    );
+    return { service, prisma, settings };
+  }
+
+  it('одобрение пишет время в карту — по нему подметальщик держит прежний ролик сутки', async () => {
+    const { service, settings } = withSettings();
+    const before = Date.now();
+    await service.setReviewed('tva-1', true);
+    expect(settings.set).toHaveBeenCalledWith(
+      'tutorial.videoApprovedAt',
+      expect.any(String),
+    );
+    const map = JSON.parse(settings.set.mock.calls[0][1]);
+    expect(Date.parse(map['tva-1'])).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('снятие одобрения карту не трогает', async () => {
+    const { service, settings } = withSettings();
+    await service.setReviewed('tva-1', false);
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+
+  it('сбой записи карты одобрение не роняет', async () => {
+    const { service, settings } = withSettings();
+    settings.set.mockRejectedValue(new Error('база'));
+    await expect(service.setReviewed('tva-1', true)).resolves.toBeDefined();
+  });
+});

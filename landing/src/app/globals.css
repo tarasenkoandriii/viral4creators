@@ -385,13 +385,19 @@ section h2 {
 }
 
 .tutorial-demo-player h3 { margin-bottom: 16px; }
-/* Ролики обучалки вертикальные (720×1560, tutorial-video-assembly.ts).
-   Сцена — вертикальная рамка по центру: высота до min(80vh, 720px),
-   ширина от неё по пропорции ролика, но не шире колонки. Размер задан
-   до загрузки метаданных (preload нет), поэтому ничего не прыгает. */
+/* Сцена берёт пропорцию ролика ДО загрузки (preload нет): плеер ставит
+   --demo-ar (w / h, для aspect-ratio) и --demo-ratio (w÷h, для ширины)
+   из размера в ответе API, а после нажатия — из размера самого <video>
+   (lib/demo-stage.ts). Без размера — прежняя вертикаль 720×1560
+   (tutorial-video-assembly.ts). Высота до min(80vh, 720px), ширина от неё
+   по пропорции, но не шире колонки: вертикальный ролик — узкая рамка по
+   центру, горизонтальный 16:9 — во всю колонку. */
 .demo-stage {
-  width: min(100%, calc(min(80vh, 720px) * 720 / 1560));
-  aspect-ratio: 720 / 1560;
+  --demo-ar: 720 / 1560;
+  --demo-ratio: 0.461538;
+  position: relative;
+  width: min(100%, calc(min(80vh, 720px) * var(--demo-ratio)));
+  aspect-ratio: var(--demo-ar);
   margin: 0 auto;
   overflow: hidden;
   border-radius: var(--radius);
@@ -405,8 +411,19 @@ section h2 {
   object-fit: contain;
   background: var(--surface-sunken);
 }
-/* Кадра-постера API не отдаёт: до нажатия — нейтральная сцена с
-   кнопкой воспроизведения, а не серый <video> с полосой управления. */
+/* Постер — первый кадр ролика той же пропорции; contain, а не cover:
+   если размер в API разошёлся с кадром, лучше поля, чем обрезанный
+   интерфейс. */
+.demo-poster {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/* До нажатия — кнопка воспроизведения поверх постера или нейтральной
+   сцены, а не серый <video> с полосой управления. */
 .demo-play {
   display: flex;
   flex-direction: column;
@@ -426,6 +443,26 @@ section h2 {
 .demo-play:hover,
 .demo-play:focus-visible {
   color: var(--fg);
+}
+/* Поверх постера кнопка прозрачная: кадр должен быть виден, подпись —
+   читаема на любом кадре (светлом и тёмном). */
+.has-poster .demo-play {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 55%, rgba(0, 0, 0, 0.55));
+  color: #fff;
+  justify-content: flex-end;
+  padding-bottom: 24px;
+}
+.has-poster .demo-play:hover,
+.has-poster .demo-play:focus-visible {
+  color: #fff;
+}
+.has-poster .demo-play-icon {
+  margin: auto 0;
+}
+.has-poster .demo-play-text {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 .demo-play:focus-visible {
   outline: 2px solid var(--accent);

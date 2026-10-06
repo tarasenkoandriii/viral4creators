@@ -7,8 +7,21 @@
  * Разбор строгий: мусор — умолчания. Номер `М-N` виден только в кабинете
  * (посетителю — никогда, В-70).
  */
-import type { ApiClient } from '../kit';
+import { ApiError, type AccountMember, type ApiClient } from '../kit';
 import { arr, obj, text } from './widget-api';
+import { canManageWidget } from './widget-view';
+
+/**
+ * Мемо правят только владелец и менеджер Помічника (сервер — 403 остальным,
+ * как голосовая карта, В-49): оператору раздел «Голос → Мемо» показывает
+ * плашку «редактирует владелец/менеджер» вместо ошибки — без списка и без
+ * кнопок правки (запрос не уходит); 403 сервера (роль сменили) — так же.
+ */
+export function memoReadOnly(me: AccountMember, error: unknown): boolean {
+  return (
+    !canManageWidget(me) || (error instanceof ApiError && error.status === 403)
+  );
+}
 
 export const MEMO_STATUSES = [
   'draft',

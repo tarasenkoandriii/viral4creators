@@ -41,10 +41,12 @@ import {
 } from '../../modules/site-core/account/site-account.guard';
 import { ALLOW_APPS_KEY } from '../../modules/telegram-auth/allow-apps.decorator';
 import { SitesDb } from '../../prisma/sites-db.service';
+import { serializeDbTests } from '../../prisma/serial-lock.testing';
 
 jest.setTimeout(300_000);
 
 describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат и мемо', () => {
+  serializeDbTests('voice-monitor');
   const st = new ChatStack();
   const fake = new FakeSoniox();
   let plans: SiteUiPlanService;

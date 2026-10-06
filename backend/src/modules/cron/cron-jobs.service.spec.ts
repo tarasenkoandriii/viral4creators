@@ -814,6 +814,35 @@ describe('CronJobsService — метла ходит по пяти префикс
     expect(result.byKind).toMatchObject({ voice: 1 });
   });
 
+  it('постеры роликов обучалки: живой ролик — постер на месте, удалённый — постер подметается (06.10.2026)', async () => {
+    const { service, prisma, blobService, byPrefix } = build();
+    byPrefix['sessions/'] = [];
+    byPrefix['tutorial-video-posters/'] = [
+      { pathname: 'tutorial-video-posters/tva-live.png', uploadedAt: old() },
+      { pathname: 'tutorial-video-posters/tva-gone.png', uploadedAt: old() },
+    ];
+    const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+    p.tutorialVideoAsset = {
+      ...(p.tutorialVideoAsset ?? {}),
+      findMany: jest.fn().mockResolvedValue([{ id: 'tva-live' }]),
+    };
+    blobService.deleteMany.mockResolvedValue(1);
+
+    const result = await service.runSweepOrphans({});
+
+    expect(p.tutorialVideoAsset.findMany).toHaveBeenCalledWith({
+      where: { id: { in: expect.arrayContaining(['tva-live', 'tva-gone']) } },
+      select: { id: true },
+    });
+    expect(blobService.deleteMany).toHaveBeenCalledWith([
+      'tutorial-video-posters/tva-gone.png',
+    ]);
+    expect(result.byScope['tutorial-video-posters']).toMatchObject({
+      scanned: 2,
+      orphans: 1,
+    });
+  });
+
   it('dryRun считает файлы всех областей и не удаляет ничего', async () => {
     const { service, blobService, byPrefix } = build();
     byPrefix['projects/'] = [
@@ -1112,11 +1141,11 @@ describe('CronJobsService — метла идёт до конца курсора
     const { service, blobService } = buildPaged();
     const res = await service.runSweepOrphans({});
     expect(blobService.listByPrefix).toHaveBeenCalledTimes(
-      // три страницы projects/ + по одной пустой у остальных шести
+      // три страницы projects/ + по одной пустой у остальных семи
       // областей (sessions, brand-manifests, publications, shared-videos,
-      // users, tutorial-video-frames — три последние добавлялись позже
-      // исходного теста, отсюда 6, а не 3).
-      3 + 6,
+      // users, tutorial-video-frames, tutorial-video-posters — четыре
+      // последние добавлялись позже исходного теста, отсюда 7, а не 3).
+      3 + 7,
     );
     expect(blobService.deleteMany).toHaveBeenCalledWith([
       'projects/p-dead/items/i9/photo.png',
@@ -1234,6 +1263,83 @@ describe('CronJobsService.runAndLog — история настоящего Verc
   });
 });
 
+describe('CronJobsService.runAndLog — исход «пропущен» (аудит кронов 06.10.2026)', () => {
+  it('пропуск пишется SUCCESS с отметкой SKIPPED и причиной — и без debug', async () => {
+    const { service, prisma } = build();
+    const result = {
+      skipped: 'фикстурный вход не настроен',
+      total: 0,
+      passed: 0,
+    };
+    const task = jest.fn().mockResolvedValue(result);
+
+    await service.runAndLog(
+      'tutorial-scenario-run',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      task,
+    );
+
+    expect(prisma.cronRunLog.update).toHaveBeenCalledWith({
+      where: { id: 'run-log-1' },
+      data: expect.objectContaining({
+        status: 'SUCCESS',
+        summary: 'пропущен — фикстурный вход не настроен',
+        debugLog: {
+          cronOutcome: 'SKIPPED',
+          reason: 'фикстурный вход не настроен',
+          result,
+        },
+      }),
+    });
+  });
+
+  it('пропуск по замку (`skipped: true`) — тоже SKIPPED', async () => {
+    const { service, prisma } = build();
+    const task = jest
+      .fn()
+      .mockResolvedValue({ deleted: 0, failed: 0, skipped: true });
+
+    await service.runAndLog(
+      'voice-uploads-sweep',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      task,
+    );
+
+    expect(prisma.cronRunLog.update).toHaveBeenCalledWith({
+      where: { id: 'run-log-1' },
+      data: expect.objectContaining({
+        summary: 'пропущен — предыдущий прогон ещё держал замок',
+        debugLog: expect.objectContaining({ cronOutcome: 'SKIPPED' }),
+      }),
+    });
+  });
+
+  it('генерация сценариев под чужим замком — пропуск с причиной, а не нули', async () => {
+    const { service, prisma } = build();
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('unique constraint'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+
+    await service.runAndLog(
+      'tutorial-scenario-generate',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => service.runTutorialScenarioGenerate(),
+    );
+
+    expect(prisma.cronRunLog.update).toHaveBeenCalledWith({
+      where: { id: 'run-log-1' },
+      data: expect.objectContaining({
+        summary: 'пропущен — предыдущий прогон ещё не завершился',
+        debugLog: expect.objectContaining({ cronOutcome: 'SKIPPED' }),
+      }),
+    });
+  });
+});
+
 describe('CronJobsService.runExportSyncRun — крон-аналог для автоэкспорта яруса B (Е-2.3 шестого аудита, этап 76)', () => {
   it('делегирует ExportService.runSyncTick и отдаёт его результат как есть', async () => {
     const { service, exportService } = build();
@@ -1285,6 +1391,9 @@ describe('CronJobsService.runTutorialScenarioGenerate — генерация с�
 
     expect(tutorialScenarioGenerator.run).not.toHaveBeenCalled();
     expect(result).toEqual({
+      // Пропуск назван (аудит кронов 06.10.2026): без `skipped` он
+      // писался в журнал нулями и успехом.
+      skipped: 'предыдущий прогон ещё не завершился',
       pairs: 0,
       // Пустой список локалей, а не `['ru']`: прогона не было
       // вовсе, и сказать, на каких языках генерировали, нечего
@@ -1721,6 +1830,7 @@ describe('CronJobsService — client-site-retention (Ш0.5/Ш0.6 аудита 02
       secretsOneShot: 0,
       framesPurged: 0,
       framesFailed: 0,
+      pendingReviewWarned: 0,
     });
     expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
       expect.objectContaining({

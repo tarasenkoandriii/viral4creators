@@ -336,6 +336,34 @@ async function main() {
     assert.deepEqual((h.posts.at(-1) as { results: unknown }).results, [
       { i: 1, result: 'done' },
     ]);
+    // Аудит (е) (2): узел прежней кнопки отдан другой группе (перерисовка
+    // без ключей) — не кликаем, `unknown`; чужая группа не меняется.
+    const c = new FakeInput('radio');
+    c.name = 'size';
+    const d = new FakeInput('radio');
+    d.name = 'size';
+    d.checked = true;
+    doc.body.appendChild(c);
+    doc.body.appendChild(d);
+    const p4: Prior = ['p4', 2, E(d), 'on', false, E(c), 'on', true];
+    c.name = 'color';
+    const clicks = c.clicks;
+    undo({ planId: 'p4', idx: [2] }, [p4], h.host);
+    await wait(30);
+    assert.equal(c.clicks, clicks, 'кнопку другой группы не нажимаем');
+    assert.equal(c.checked, false);
+    assert.equal(d.checked, true);
+    assert.deepEqual((h.posts.at(-1) as { results: unknown }).results, [
+      { i: 2, result: 'unknown' },
+    ]);
+    // Прежняя кнопка ушла со страницы — тоже `unknown`.
+    c.name = 'size';
+    c.remove();
+    undo({ planId: 'p4', idx: [2] }, [p4], h.host);
+    await wait(30);
+    assert.deepEqual((h.posts.at(-1) as { results: unknown }).results, [
+      { i: 2, result: 'unknown' },
+    ]);
   }
 
   console.log(

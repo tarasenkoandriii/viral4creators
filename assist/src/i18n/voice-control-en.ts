@@ -157,6 +157,8 @@ export const voiceControlEn: VoiceControlDictionary = {
   },
   memo: {
     title: 'Memos — saved actions',
+    readOnly:
+      'Memos are edited by the account owner or an Assistant manager — your role cannot view or edit memos.',
     intro:
       'A memo is a checked chain of steps with a clear goal: “add to cart and open the cart”, “book a consultation for ‹date›”. A visitor calls it by name or phrase, the assistant runs the steps from the published version — each passes the same checks as a regular command. Publishing happens only after a check on your site and your confirmation.',
     used: 'Memos: {used} of {limit}',
@@ -184,6 +186,7 @@ export const voiceControlEn: VoiceControlDictionary = {
       failures: 'a step often fails',
       goal_low: 'the memo rarely reaches its goal',
       owner: 'disabled by you',
+      voice_map: 'the voice-map target became “never” or was removed',
     },
     open: 'Open',
     close: 'Collapse',

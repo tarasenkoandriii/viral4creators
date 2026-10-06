@@ -9,6 +9,7 @@ import {
   DEFAULT_TUTORIAL_DAILY_BUDGET_USD,
   parseTutorialBudgetSetting,
 } from './tutorial-voice';
+import { countExpectedRuns } from '../cron/cron-schedule';
 
 describe('parseTutorialBudgetSetting', () => {
   it('число — потолок в долларах', () => {
@@ -147,7 +148,9 @@ describe('RUN_DEADLINE_MS выведен из потолка функции', ()
   // читает выражение как ноль и проходит впустую — что и случилось
   // при первом заходе этой правки.
   const reserve = () =>
-    lit('SCENARIO_TIMEOUT_MS') + lit('ASSEMBLY_SUBMIT_TIMEOUT_MS');
+    lit('SCENARIO_TIMEOUT_MS') +
+    lit('ASSEMBLY_SUBMIT_TIMEOUT_MS') +
+    lit('TICK_EXIT_RESERVE_MS');
   const deadline = () => lit('TICK_CEILING_MS') - reserve();
 
   it('дедлайн = потолок минус запас на хвост, а не круглое число', () => {
@@ -160,12 +163,25 @@ describe('RUN_DEADLINE_MS выведен из потолка функции', ()
     expect(lit('TICK_CEILING_MS')).toBe(300_000);
   });
 
-  it('запас на хвост — сумма двух границ, а не замер', () => {
+  it('запас на хвост — сумма двух границ и резерва на выход, а не замер', () => {
     // Именно выражение, а не число: замер стареет молча, сумма —
     // нет. Поменяли любое слагаемое — запас поехал следом.
-    expect(src).toContain(
-      'const TICK_TAIL_RESERVE_MS = SCENARIO_TIMEOUT_MS + ASSEMBLY_SUBMIT_TIMEOUT_MS',
+    expect(src.replace(/\s+/g, ' ')).toContain(
+      'const TICK_TAIL_RESERVE_MS = SCENARIO_TIMEOUT_MS + ASSEMBLY_SUBMIT_TIMEOUT_MS + TICK_EXIT_RESERVE_MS',
     );
+  });
+
+  it('после хвоста под потолком остаётся резерв на выход — не меньше 15 с', () => {
+    // Аудит кронов 06.10.2026: сумма двух таймаутов была ровно 150 с,
+    // и закрытие браузера, итоговая тревога и запись журнала крона в
+    // арифметику не входили вовсе.
+    expect(lit('TICK_EXIT_RESERVE_MS')).toBeGreaterThanOrEqual(15_000);
+    expect(
+      lit('TICK_CEILING_MS') -
+        (deadline() +
+          lit('SCENARIO_TIMEOUT_MS') +
+          lit('ASSEMBLY_SUBMIT_TIMEOUT_MS')),
+    ).toBeGreaterThanOrEqual(15_000);
   });
 
   it('худший случай помещается под потолок функции', () => {
@@ -240,11 +256,32 @@ describe('RUN_DEADLINE_MS выведен из потолка функции', ()
     expect(launch).toBeLessThan(deadline());
   });
 
-  it('двух тиков хватает на девять сценариев по замеренной скорости', () => {
+  it('тиков в сутки хватает на полный круг одной локали по замеренной скорости', () => {
     // Пятый прогон: 8 сценариев за 298.6 с — ≈37 с на сценарий.
-    // Стартов в тике: сколько их влезает до дедлайна.
+    // Стартов в тике: сколько их влезает до дедлайна. Тиков — сколько
+    // их в сутках по расписанию `vercel.json` (решение владельца:
+    // тики, а не длинная функция). Тем на локаль — 15 (десять шагов
+    // мастера и пять тем поздравления).
+    //
+    // Пяти локалям (75 пар) круг за сутки не помещается (≈60 стартов),
+    // и это осознанно: прошедший сценарий с неизменными шагами
+    // повторяется не чаще `OK_RERUN_INTERVAL_MS`, а круг в сутки с
+    // четвертью регрессу интерфейса хватает.
     const perScenarioMs = 37_000;
     const startsPerTick = Math.floor((deadline() - 1) / perScenarioMs) + 1;
-    expect(startsPerTick * 2).toBeGreaterThanOrEqual(9);
+    const vercel = JSON.parse(
+      readFileSync(join(__dirname, '..', '..', '..', 'vercel.json'), 'utf8'),
+    ) as { crons: Array<{ path: string; schedule: string }> };
+    const run = vercel.crons.find(
+      (c) => c.path === '/api/cron/tutorial-scenario-run',
+    );
+    expect(run).toBeDefined();
+    const day = Date.UTC(2026, 9, 6);
+    const ticksPerDay = countExpectedRuns(
+      run!.schedule,
+      new Date(day),
+      new Date(day + 86_400_000),
+    );
+    expect(startsPerTick * ticksPerDay).toBeGreaterThanOrEqual(15);
   });
 });

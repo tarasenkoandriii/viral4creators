@@ -304,6 +304,20 @@ describe('AdminCronService — debug у девяти джобов только �
     });
     const row = await service.run('tutorial-scenario-run', 'admin-1', false);
     expect(row.summary).toContain('фикстурный вход не настроен');
+    // И исход — «пропущен», а не «успех» (аудит кронов 06.10.2026).
+    expect(row.status).toBe('SUCCESS');
+    expect(row.outcome).toBe('SKIPPED');
+    expect(row.debugLog).toMatchObject({
+      cronOutcome: 'SKIPPED',
+      reason: 'фикстурный вход не настроен',
+    });
+  });
+
+  it('обычный успех — исхода «пропущен» нет', async () => {
+    const { service } = build();
+    const row = await service.run('tutorial-scenario-run', 'admin-1', false);
+    expect(row.outcome).toBeNull();
+    expect(row.debugLog).toBeUndefined();
   });
 
   it('tutorial-assembly-poll: делегирует CronJobsService.runTutorialAssemblyPoll (аудит 27.09.2026, Д-2)', async () => {
@@ -439,6 +453,7 @@ describe('AdminCronService — сводка за период', () => {
     window?: unknown[];
     first?: unknown[];
     failures?: unknown[];
+    outcomes?: unknown[];
   }) {
     const groupBy = jest.fn(
       (args: {
@@ -461,11 +476,67 @@ describe('AdminCronService — сводка за период', () => {
         groupBy,
         findMany: jest.fn().mockResolvedValue(opts.failures ?? []),
       },
-      $queryRaw: jest.fn().mockResolvedValue(opts.medians ?? []),
+      // Два сырых запроса: медианы и исходы (пропуски, последний успех
+      // и провал — аудит кронов 06.10.2026). Различаются по тексту.
+      $queryRaw: jest.fn((strings: TemplateStringsArray) =>
+        Promise.resolve(
+          strings.join('?').includes('lastSuccessAt')
+            ? (opts.outcomes ?? [])
+            : (opts.medians ?? []),
+        ),
+      ),
     };
     const service = new AdminCronService({} as never, prisma as never);
     return { service, prisma };
   }
+
+  it('пропуски, последний НАСТОЯЩИЙ успех и последний провал — по джобу (аудит кронов 06.10.2026)', async () => {
+    const lastOk = new Date('2026-09-27T09:05:12Z');
+    const lastFail = new Date('2026-09-29T10:05:00Z');
+    const { service, prisma } = buildSummary({
+      groups: [
+        {
+          jobKey: 'tutorial-scenario-run',
+          status: 'SUCCESS',
+          triggeredBy: 'vercel-cron',
+          _count: { _all: 15 },
+          _max: { durationMs: 900 },
+        },
+      ],
+      outcomes: [
+        {
+          jobKey: 'tutorial-scenario-run',
+          skipped: BigInt(15),
+          lastSuccessAt: lastOk,
+          lastFailureAt: lastFail.toISOString(),
+        },
+      ],
+    });
+    const s = await service.getSummary({ since, until }, now);
+    const job = s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run');
+    expect(job).toMatchObject({
+      byStatus: { SUCCESS: 15, FAILED: 0, RUNNING: 0 },
+      skipped: 15,
+      lastSuccessAt: lastOk,
+      lastFailureAt: lastFail,
+    });
+    // Джоб без строк — нули и null, а не undefined.
+    expect(s.jobs.find((j) => j.jobKey === 'report')).toMatchObject({
+      skipped: 0,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+    });
+    // Запрос отсекает пропуски от «успеха» и ограничен концом периода.
+    const call = prisma.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as unknown as string[]).join('?').includes('lastSuccessAt'),
+    )!;
+    const sql = (call[0] as unknown as string[]).join('?');
+    expect(sql).toMatch(/IS DISTINCT FROM \?/);
+    expect(sql).toMatch(/"startedAt" < \?/);
+    expect(call.slice(1)).toEqual(
+      expect.arrayContaining(['SKIPPED', since, until]),
+    );
+  });
 
   it('ожидалось по vercel.json vs было, статусы, длительности', async () => {
     const { service } = buildSummary({

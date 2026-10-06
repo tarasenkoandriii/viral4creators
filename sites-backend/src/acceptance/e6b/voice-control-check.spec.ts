@@ -53,10 +53,12 @@ import { VoiceMonitorService } from '../../modules/assist-site-voice-control/sys
 import { GeminiText } from '../../modules/site-ai/text-model';
 import type { AccountMembership } from '../../modules/site-core/account/roles';
 import { SitesDb } from '../../prisma/sites-db.service';
+import { serializeDbTests } from '../../prisma/serial-lock.testing';
 
 jest.setTimeout(240_000);
 
 describeDb('Приёмка Э6-бис (г) — мастер Т-2, монитор Т-4, состояния', () => {
+  serializeDbTests('voice-monitor');
   const st = new ChatStack();
   const fake = new FakeSoniox();
   let plans: SiteUiPlanService;

@@ -94,10 +94,21 @@ export function undo(raw: unknown, mem: Prior[], host: ActHost): void {
       continue;
     }
     const el = p[2] as HTMLInputElement;
+    const prev = p[5] as HTMLInputElement | null;
+    // Аудит (е) (2): прежняя кнопка радио — всё ещё той же группы (имя и
+    // форма) и на странице; перерисовка без ключей могла отдать узел другой
+    // группе — тогда не кликаем (`unknown`), чужое поле не трогаем.
+    if (
+      prev &&
+      prev !== el &&
+      (!prev.isConnected || prev.name !== el.name || prev.form !== el.form)
+    ) {
+      todo.push({ i, p: null, res: 'unknown' });
+      continue;
+    }
     try {
       if (el.type === 'radio' && el instanceof HTMLInputElement) {
         // Радио не снимается кликом по себе: отмечаем прежнюю кнопку группы.
-        const prev = p[5];
         if (prev && prev !== el) click(prev);
         else if (!prev && !same(p)) uncheck(el);
       } else if (isFlag(el)) {

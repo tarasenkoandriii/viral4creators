@@ -9,7 +9,13 @@
  * |---|---|
  * | `credentialsEnc` + `cookiesEnc` (Ш2: или запись хранилища sites-backend по `siteTestAccountId`/`userSiteSessionId`) | через `SECRETS_RETENTION_DAYS` после последней записи раундом (`secretsUsedAt`; у строк до Ш0.5 — `updatedAt`) |
  * | то же, «одноразово» (`secretsOneShot`) | после первой успешной сборки ролика (сборщик стирает сразу, здесь — страховка) |
- * | кадры в Blob (весь префикс черновика) | одобрен и ролик собран, или отклонён — через `DECIDED_FRAMES_RETENTION_DAYS` без движения; брошенный в работе — через `ABANDONED_FRAMES_RETENTION_DAYS` |
+ * | кадры в Blob (весь префикс черновика) | одобрен и ролик собран, или отклонён — через `DECIDED_FRAMES_RETENTION_DAYS` без движения; брошенный в работе или на одобрении (`PENDING_REVIEW`) — через `ABANDONED_FRAMES_RETENTION_DAYS` |
+ *
+ * Черновик на одобрении (`PENDING_REVIEW`) до аудита кронов 06.10.2026
+ * не попадал ни под одно правило: снимки авторизованного кабинета
+ * заказчика лежали в публичном Blob бессрочно, пока оператор не решит.
+ * Теперь он стирается как брошенный, а за `PENDING_REVIEW_WARN_DAYS` до
+ * стирания оператор получает одну тревогу со списком.
  *
  * До Ш0 ни то ни другое не стиралось вовсе: креды и живая сессия
  * заказчика лежали, пока жив черновик, а снимки его авторизованного
@@ -39,6 +45,9 @@ import type { DraftSecretsRow, DraftSecretsStore } from './draft-secrets-store';
 export const SECRETS_RETENTION_DAYS = 30;
 export const DECIDED_FRAMES_RETENTION_DAYS = 14;
 export const ABANDONED_FRAMES_RETENTION_DAYS = 30;
+/** За сколько дней до стирания кадров черновика на одобрении
+ *  предупредить оператора. */
+export const PENDING_REVIEW_WARN_DAYS = 7;
 /** Черновиков за один прогон — потолок времени функции, остаток завтра. */
 export const FRAMES_PURGE_BATCH = 50;
 
@@ -49,6 +58,8 @@ export interface ClientSiteRetentionResult {
   secretsOneShot: number;
   framesPurged: number;
   framesFailed: number;
+  /** Черновиков на одобрении, о скором стирании которых предупредили. */
+  pendingReviewWarned: number;
   skipped?: boolean;
 }
 
@@ -89,6 +100,11 @@ export class ClientSiteDraftRetention {
     ),
     /** Э-С Ш2: стирание записей хранилища sites-backend; без него — только колонки (запись истечёт по сроку хранилища). */
     private readonly secrets?: Pick<DraftSecretsStore, 'forget' | 'userOf'>,
+    /** Тревога оператору о скором стирании кадров черновика на
+     *  одобрении; без неё — только правило. */
+    private readonly notify?: {
+      alert(fingerprint: string, text: string): Promise<unknown>;
+    },
   ) {}
 
   /**
@@ -141,6 +157,7 @@ export class ClientSiteDraftRetention {
     // секретов ниже его сдвигает. Обратный порядок откладывал бы уборку
     // кадров брошенного черновика ещё на срок.
     const frames = await this.purgeFrames(now);
+    const pendingReviewWarned = await this.warnPendingReview(now);
     const secretsExpired = await this.expireSecrets(now);
     const secretsOneShot = await this.forgetOneShotAfterBuild();
     const result = {
@@ -148,6 +165,7 @@ export class ClientSiteDraftRetention {
       secretsOneShot,
       framesPurged: frames.purged,
       framesFailed: frames.failed,
+      pendingReviewWarned,
     };
     this.logger.log(`client-site-retention: ${JSON.stringify(result)}`);
     return result;
@@ -203,6 +221,45 @@ export class ClientSiteDraftRetention {
     return count;
   }
 
+  /**
+   * Одна тревога оператору о черновиках на одобрении, кадры которых
+   * сотрутся через `PENDING_REVIEW_WARN_DAYS`. Окно — одни сутки
+   * (крон суточный), так что каждый черновик попадает в тревогу один
+   * раз; повтор ручным запуском в те же сутки гасит дедупликация канала.
+   */
+  async warnPendingReview(now: Date): Promise<number> {
+    if (!this.notify) return 0;
+    const purgeAt = ABANDONED_FRAMES_RETENTION_DAYS - PENDING_REVIEW_WARN_DAYS;
+    const windowEnd = new Date(now.getTime() - purgeAt * DAY_MS);
+    const windowStart = new Date(windowEnd.getTime() - DAY_MS);
+    const soon = (await this.prisma.clientSiteTutorialDraft.findMany({
+      where: {
+        status: 'PENDING_REVIEW',
+        framesPurgedAt: null,
+        updatedAt: { gte: windowStart, lt: windowEnd },
+      },
+      select: { id: true, title: true, baseUrl: true },
+      orderBy: { updatedAt: 'asc' },
+      take: FRAMES_PURGE_BATCH,
+    })) as Array<{ id: string; title: string | null; baseUrl: string }>;
+    if (soon.length === 0) return 0;
+    try {
+      await this.notify.alert(
+        'client-site-retention:pending-review',
+        `Обучалка по сайту заказчика: ${soon.length} черновик(ов) ждут одобрения ${purgeAt} дн. — через ${PENDING_REVIEW_WARN_DAYS} дн. их кадры будут стёрты (снимки кабинета заказчика не хранятся бессрочно). Одобрите или отклоните: ${soon
+          .map((d) => d.title ?? d.baseUrl)
+          .join(', ')}.`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `client-site-retention: тревога о черновиках на одобрении не ушла (${
+          err instanceof Error ? err.message : String(err)
+        })`,
+      );
+    }
+    return soon.length;
+  }
+
   /** Кадры решённых и брошенных черновиков. */
   async purgeFrames(now: Date): Promise<{ purged: number; failed: number }> {
     const decided = new Date(
@@ -211,15 +268,44 @@ export class ClientSiteDraftRetention {
     const abandoned = new Date(
       now.getTime() - ABANDONED_FRAMES_RETENTION_DAYS * DAY_MS,
     );
+    // Одобренный — только если ролик уже СОБРАН: кадры и есть вход
+    // сборки, и до `complete` (в том числе после неудачной попытки,
+    // которая вернёт черновик на одобрение) они нужны.
+    //
+    // Отбор — В ЗАПРОСЕ, а не после него (аудит кронов 06.10.2026):
+    // раньше одобренные без сборки попадали в пачку `FRAMES_PURGE_BATCH`
+    // и пропускались уже в цикле. Старейшие по `updatedAt`, они
+    // занимали голову пачки каждый день — и полсотни таких останавливали
+    // уборку всех остальных навсегда.
+    const built = (await this.prisma.tutorialVideoAsset.findMany({
+      where: {
+        clientSiteDraftId: { not: null },
+        assemblyStatus: 'complete',
+      },
+      select: { clientSiteDraftId: true },
+      distinct: ['clientSiteDraftId'],
+    })) as Array<{ clientSiteDraftId: string | null }>;
+    const builtIds = [
+      ...new Set(
+        built
+          .map((b) => b.clientSiteDraftId)
+          .filter((id): id is string => !!id),
+      ),
+    ];
     const candidates = (await this.prisma.clientSiteTutorialDraft.findMany({
       where: {
         framesPurgedAt: null,
         OR: [
           {
-            status: { in: ['APPROVED', 'REJECTED'] },
+            status: 'APPROVED',
+            id: { in: builtIds },
             updatedAt: { lt: decided },
           },
-          { status: 'DRAFTING', updatedAt: { lt: abandoned } },
+          { status: 'REJECTED', updatedAt: { lt: decided } },
+          {
+            status: { in: ['DRAFTING', 'PENDING_REVIEW'] },
+            updatedAt: { lt: abandoned },
+          },
         ],
       },
       select: {
@@ -238,31 +324,9 @@ export class ClientSiteDraftRetention {
     }>;
     if (candidates.length === 0) return { purged: 0, failed: 0 };
 
-    // Одобренный — только если ролик уже СОБРАН: кадры и есть вход
-    // сборки, и до `complete` (в том числе после неудачной попытки,
-    // которая вернёт черновик на одобрение) они нужны.
-    const approvedIds = candidates
-      .filter((c) => c.status === 'APPROVED')
-      .map((c) => c.id);
-    const builtIds = new Set<string>();
-    if (approvedIds.length > 0) {
-      const built = (await this.prisma.tutorialVideoAsset.findMany({
-        where: {
-          clientSiteDraftId: { in: approvedIds },
-          assemblyStatus: 'complete',
-        },
-        select: { clientSiteDraftId: true },
-      })) as Array<{ clientSiteDraftId: string | null }>;
-      for (const b of built) {
-        if (b.clientSiteDraftId) builtIds.add(b.clientSiteDraftId);
-      }
-    }
-
     let purged = 0;
     let failed = 0;
     for (const draft of candidates) {
-      if (draft.status === 'APPROVED' && !builtIds.has(draft.id)) continue;
-
       // Захват строки ДО стирания: условие на `updatedAt` гарантирует,
       // что черновик не тронули с момента выборки (человек вернул его в
       // работу и снимает раунды — его кадры не наши).

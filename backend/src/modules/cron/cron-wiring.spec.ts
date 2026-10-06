@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { JOB_LOCK_MS } from '../../common/cron-job-lock';
+import { countExpectedRuns, parseCronExpression } from './cron-schedule';
 
 const BACKEND_ROOT = join(__dirname, '..', '..', '..');
 
@@ -41,6 +42,20 @@ function vercelCrons(): Array<{ path: string; schedule: string }> {
     readFileSync(join(BACKEND_ROOT, 'vercel.json'), 'utf8'),
   ) as { crons?: Array<{ path: string; schedule: string }> };
   return json.crons ?? [];
+}
+
+/** Минуты суток (от полуночи UTC), в которые стартует расписание. */
+function dayTicks(schedule: string): number[] {
+  const cron = parseCronExpression(schedule);
+  const day = Date.UTC(2026, 9, 6);
+  const out: number[] = [];
+  for (let minute = 0; minute < 24 * 60; minute += 1) {
+    const at = day + minute * 60_000;
+    if (countExpectedRuns(cron, new Date(at), new Date(at + 60_000)) > 0) {
+      out.push(minute);
+    }
+  }
+  return out;
 }
 
 function registryKeys(): string[] {
@@ -101,32 +116,59 @@ describe('швы крон-подсистемы: маршрут ↔ распис�
    * прежним.
    */
   /*
-   * Пять локалей × 15 тем = 75 пар, тик берёт ≈5 сценариев (бюджет
-   * `RUN_DEADLINE_MS`, ≈37 с на сценарий) — чтобы полный круг укладывался
-   * в сутки, тиков нужно не меньше 15 (решение владельца 30.09.2026:
-   * тики, а не длинная функция).
+   * Тиков не меньше 15 (решение владельца 30.09.2026: тики, а не длинная
+   * функция). С аудита кронов 06.10.2026 тик берёт ≈4 сценария (бюджет
+   * `RUN_DEADLINE_MS` уменьшен на резерв выхода из тика), то есть ≈60
+   * стартов в сутки: одной локали (15 тем) с избытком, пяти (75 пар) —
+   * круг за сутки с четвертью; прошедший сценарий с теми же шагами и
+   * не нужен чаще раза в 20 ч (`OK_RERUN_INTERVAL_MS`).
    */
   it('прогон сценариев обучалки идёт не меньше чем 15 тиками в сутки, разнесёнными дальше замка', () => {
     const run = vercelCrons().find(
       (c) => c.path === '/api/cron/tutorial-scenario-run',
     );
     expect(run).toBeDefined();
-    const [minute, hour] = run!.schedule.trim().split(/\s+/);
-    const hours = hour
-      .split(',')
-      .map(Number)
-      .sort((a, b) => a - b);
-    const minutes = minute
-      .split(',')
-      .map(Number)
-      .sort((a, b) => a - b);
-    expect(hours.every((h) => Number.isInteger(h))).toBe(true);
-    expect(minutes.every((m) => Number.isInteger(m))).toBe(true);
-    const ticks = hours
-      .flatMap((h) => minutes.map((m) => h * 60 + m))
-      .sort((a, b) => a - b);
+    // Разбор тем же парсером, что считает «ожидалось» во вкладке
+    // «Кроны» (`cron-schedule.ts`): прежняя редакция теста разбирала
+    // только списки через запятую, и диапазон `9-23` читался бы как NaN.
+    const ticks = dayTicks(run!.schedule);
     expect(ticks.length).toBeGreaterThanOrEqual(15);
     const gaps = ticks.slice(1).map((t, i) => (t - ticks[i]) * 60 * 1000);
     expect(Math.min(...gaps)).toBeGreaterThan(JOB_LOCK_MS);
+  });
+
+  /**
+   * Разведение тяжёлых кронов по минутам (аудит кронов 06.10.2026).
+   *
+   * В :00 стартовали одновременно прогон сценариев (Chromium), обход
+   * интерфейса (второй Chromium), опрос сборок и шесть двухминутных
+   * воркеров. Прогон сценариев — в :05 (нечётная минута, ни один
+   * двухминутный тик на неё не попадает), обход — в :10/:25/:40/:55.
+   */
+  it('прогон сценариев и обход интерфейса не стартуют в одну минуту ни друг с другом, ни в :00', () => {
+    const find = (path: string) => {
+      const c = vercelCrons().find((x) => x.path === path);
+      expect(c).toBeDefined();
+      return c!;
+    };
+    const run = parseCronExpression(
+      find('/api/cron/tutorial-scenario-run').schedule,
+    );
+    const snap = parseCronExpression(
+      find('/api/cron/ui-snapshot-run').schedule,
+    );
+    expect(run.minutes).not.toContain(0);
+    expect(snap.minutes).not.toContain(0);
+    expect(run.minutes.filter((m) => snap.minutes.includes(m))).toEqual([]);
+    // Двухминутные тики стартуют в чётные минуты — прогон сценариев
+    // ни с одним из них не совпадает.
+    const everyTwo = vercelCrons().filter((c) =>
+      /^\*\/2 /.test(c.schedule.trim()),
+    );
+    expect(everyTwo.length).toBeGreaterThan(0);
+    for (const c of everyTwo) {
+      const m = parseCronExpression(c.schedule).minutes;
+      expect(run.minutes.filter((x) => m.includes(x))).toEqual([]);
+    }
   });
 });

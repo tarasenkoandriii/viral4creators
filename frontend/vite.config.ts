@@ -1,5 +1,6 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { appBuildVersion, injectAppBuildMeta } from './app-build-meta';
 
 /**
  * Штамп сборки (этап 154). Конфиг выполняется В МОМЕНТ СБОРКИ — это
@@ -30,9 +31,23 @@ function buildStamp(): string {
   return short ? `${date}-${short}` : date;
 }
 
+/**
+ * `<meta name="app-build">` — коммит сборки для съёмки обучалки (см.
+ * `app-build-meta.ts`). `transformIndexHtml`, а не `%VITE_*%`: та
+ * подстановка берёт только переменные с префиксом и тихо оставляет
+ * заглушку как есть, если переменной нет.
+ */
+function appBuildMetaPlugin(): Plugin {
+  const version = appBuildVersion(process.env);
+  return {
+    name: 'app-build-meta',
+    transformIndexHtml: (html) => injectAppBuildMeta(html, version),
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), appBuildMetaPlugin()],
   define: {
     __APP_BUILD__: JSON.stringify(buildStamp()),
   },

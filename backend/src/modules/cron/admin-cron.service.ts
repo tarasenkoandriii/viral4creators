@@ -23,7 +23,12 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JOB_LOCK_MS } from '../../common/cron-job-lock';
 import { CronJobsService, VERCEL_CRON_TRIGGERED_BY } from './cron-jobs.service';
-import { buildRunSummary } from './cron-run-summary';
+import {
+  CronOutcome,
+  cronOutcomeOf,
+  CRON_OUTCOME_SKIPPED,
+  successLogFields,
+} from './cron-run-summary';
 import {
   CronHistoryQuery,
   CronSummaryQuery,
@@ -58,6 +63,12 @@ export interface CronRunLogRow {
   summary: string | null;
   debugLog: unknown;
   errorMessage: string | null;
+  /**
+   * Исход сверх статуса (аудит кронов 06.10.2026): `SKIPPED` — прогон
+   * отработал, но работу пропустил (замок, не настроено, потолок).
+   * Выводится из отметки в `debugLog` — колонки под него нет.
+   */
+  outcome?: CronOutcome | null;
 }
 
 /** Сколько последних неуспешных прогонов на джоб отдаёт сводка. */
@@ -106,6 +117,17 @@ export interface CronJobSummary {
   expectedSinceJob: Date;
   total: number;
   byStatus: Record<CronRunStatusValue, number>;
+  /**
+   * Из `byStatus.SUCCESS` — сколько прогонов за период были ПРОПУСКОМ
+   * (исход `SKIPPED`): статус успешный, а работы не было. Настоящих
+   * успехов — `byStatus.SUCCESS − skipped`.
+   */
+  skipped: number;
+  /** Последний НАСТОЯЩИЙ успех (не пропуск) до конца периода, в пределах
+   *  срока хранения журнала; null — ни одного. */
+  lastSuccessAt: Date | null;
+  /** Последний провал (FAILED) до конца периода; null — ни одного. */
+  lastFailureAt: Date | null;
   medianDurationMs: number | null;
   maxDurationMs: number | null;
   /** RUNNING-строки, начатые раньше, чем `now − JOB_LOCK_MS`: замок
@@ -318,13 +340,13 @@ export class AdminCronService {
         ...(query.until ? { lt: query.until } : {}),
       };
     }
-    const rows = await this.prisma.cronRunLog.findMany({
+    const rows = (await this.prisma.cronRunLog.findMany({
       where,
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       take: limit,
       ...(query.before ? { cursor: { id: query.before }, skip: 1 } : {}),
-    });
-    return rows as CronRunLogRow[];
+    })) as CronRunLogRow[];
+    return rows.map(withOutcome);
   }
 
   /**
@@ -357,7 +379,7 @@ export class AdminCronService {
     );
     const windowOpen = expectedUntil.getTime() > expectedSince.getTime();
 
-    const [groups, medians, stuckGroups, windowGroups, firstGroups] =
+    const [groups, medians, stuckGroups, windowGroups, firstGroups, outcomes] =
       await Promise.all([
         this.prisma.cronRunLog.groupBy({
           by: ['jobKey', 'status', 'triggeredBy'],
@@ -412,6 +434,33 @@ export class AdminCronService {
           : Promise.resolve(
               [] as Array<{ jobKey: string; _min: { startedAt: Date | null } }>,
             ),
+        // Пропуски за период, последний настоящий успех и последний
+        // провал (аудит кронов 06.10.2026). Исход «пропущен» живёт в
+        // JSON `debugLog` (см. `CRON_OUTCOME_SKIPPED`), поэтому сырой
+        // запрос: Prisma не умеет `FILTER` у агрегатов, а `NOT` над
+        // путём JSON в её фильтре теряет строки с `debugLog IS NULL`.
+        // «Последний» — до конца периода и в пределах срока хранения:
+        // журнал старше уже убран уборкой.
+        this.prisma.$queryRaw<
+          Array<{
+            jobKey: string;
+            skipped: number | bigint | string | null;
+            lastSuccessAt: Date | string | null;
+            lastFailureAt: Date | string | null;
+          }>
+        >`SELECT "jobKey",
+          COUNT(*) FILTER (
+            WHERE "status" = 'SUCCESS' AND "startedAt" >= ${since}
+              AND ("debugLog"->>'cronOutcome') = ${CRON_OUTCOME_SKIPPED}
+          ) AS "skipped",
+          MAX("startedAt") FILTER (
+            WHERE "status" = 'SUCCESS'
+              AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}
+          ) AS "lastSuccessAt",
+          MAX("startedAt") FILTER (WHERE "status" = 'FAILED') AS "lastFailureAt"
+        FROM "cron_run_logs"
+        WHERE "startedAt" < ${until}
+        GROUP BY "jobKey"`,
       ]);
 
     const schedules = loadVercelSchedules();
@@ -476,6 +525,9 @@ export class AdminCronService {
         floorToMinute(firstScheduledRunAt).getTime() > expectedSince.getTime()
           ? floorToMinute(firstScheduledRunAt)
           : expectedSince;
+      const outcomeRow = outcomes.find((r) => r.jobKey === jobKey);
+      const toDate = (v: Date | string | null | undefined) =>
+        v == null ? null : new Date(v);
       const schedule = schedules?.[jobKey] ?? null;
       let expected: number | null = null;
       if (schedule) {
@@ -511,6 +563,9 @@ export class AdminCronService {
         expectedSinceJob,
         total: byStatus.RUNNING + byStatus.SUCCESS + byStatus.FAILED,
         byStatus,
+        skipped: Number(outcomeRow?.skipped ?? 0),
+        lastSuccessAt: toDate(outcomeRow?.lastSuccessAt),
+        lastFailureAt: toDate(outcomeRow?.lastFailureAt),
         medianDurationMs,
         maxDurationMs,
         stuckRunning,
@@ -569,7 +624,9 @@ export class AdminCronService {
     try {
       const result = await this.dispatch(jobKey, debugMode);
       const durationMs = Date.now() - startedAt;
-      const summary = buildRunSummary(jobKey, result);
+      // Пропуск — с отметкой исхода, как у настоящего крона
+      // (`CronJobsService.runAndLog`, аудит кронов 06.10.2026).
+      const { summary, debugLog } = successLogFields(jobKey, result, debugMode);
       const updated = (await this.prisma.cronRunLog.update({
         where: { id: row.id },
         data: {
@@ -577,13 +634,13 @@ export class AdminCronService {
           finishedAt: new Date(),
           durationMs,
           summary,
-          debugLog: debugMode ? (result as object) : undefined,
+          debugLog,
         },
       })) as CronRunLogRow;
       this.logger.log(
         `Ручной запуск ${jobKey} (оператор ${triggeredBy}): ${summary}`,
       );
-      return updated;
+      return withOutcome(updated);
     } catch (error) {
       const durationMs = Date.now() - startedAt;
       const errorMessage =
@@ -671,4 +728,9 @@ export class AdminCronService {
         throw new BadRequestException(`Неизвестный крон: ${jobKey}`);
     }
   }
+}
+
+/** Строка журнала с выведенным исходом (см. `CronRunLogRow.outcome`). */
+function withOutcome(row: CronRunLogRow): CronRunLogRow {
+  return { ...row, outcome: cronOutcomeOf(row.debugLog) };
 }

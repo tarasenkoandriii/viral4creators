@@ -84,6 +84,7 @@ import { GreetingSessionEditModule } from './modules/greeting-session-edit/greet
 // Справка по теме мастера: текст всегда, вычитанный ролик если есть
 // (§11-септдециес docs-tz/TZ-Tutorial-Video-Voiced.md).
 import { TutorialHelpModule } from './modules/tutorial-help/tutorial-help.module';
+import { OpsStatusModule } from './modules/ops-status/ops-status.module';
 // Маркетплейс исполнителей — Этап 0 / Фаза 1 (ТЗ на маркетплейс §19–§21,
 // ТЗ на бэкенд §6). Tender/Contract/Escrow сознательно не подключены —
 // они не существуют в коде, пока не появится сигнал спроса (§19.4).
@@ -173,6 +174,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     GreetingScenesModule,
     GreetingSessionEditModule,
     TutorialHelpModule,
+    OpsStatusModule,
     CreatorProfileModule,
     PortfolioModule,
     CreatorInquiryModule,

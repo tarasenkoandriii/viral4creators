@@ -375,3 +375,44 @@ describe('транзитные голосовые записи', () => {
     expect(plan.byKind.voice).toBe(2);
   });
 });
+
+describe('область tutorial-video-posters (06.10.2026)', () => {
+  it('владелец — имя файла; всё прочее под префиксом не опознаётся', () => {
+    expect(SWEEP_PREFIX['tutorial-video-posters']).toBe(
+      'tutorial-video-posters/',
+    );
+    expect(
+      ownerIdOf('tutorial-video-posters/tva-7.png', 'tutorial-video-posters'),
+    ).toBe('tva-7');
+    expect(
+      ownerIdOf('tutorial-video-posters/x/tva-7.png', 'tutorial-video-posters'),
+    ).toBeNull();
+    expect(
+      ownerIdOf('tutorial-video-posters/tva-7.jpg', 'tutorial-video-posters'),
+    ).toBeNull();
+    expect(
+      sweepFileKind(
+        'tutorial-video-posters/tva-7.png',
+        'tutorial-video-posters',
+      ),
+    ).toBe('previews');
+  });
+
+  it('постер живого ролика не трогается; сирота старше порога — удаляется', () => {
+    const plan = orphanSweepPlan(
+      [
+        blob('tutorial-video-posters/live.png', 30 * DAY),
+        blob('tutorial-video-posters/gone.png', 2 * DAY),
+        blob('tutorial-video-posters/fresh.png', 60 * 1000),
+        blob('tutorial-video-posters/readme.txt', 30 * DAY),
+      ],
+      ['live'],
+      NOW,
+      DAY,
+      'tutorial-video-posters',
+    );
+    expect(plan.delete).toEqual(['tutorial-video-posters/gone.png']);
+    expect(plan.skippedTooNew).toBe(1);
+    expect(plan.skippedUnknown).toBe(1);
+  });
+});

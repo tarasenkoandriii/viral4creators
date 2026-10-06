@@ -14,6 +14,15 @@ const ASSET = {
   durationMs: 31000,
 };
 
+const META = {
+  width: 1920,
+  height: 1080,
+  posterUrl: 'https://blob/tutorial-video-posters/a.png',
+  theme: 'dark',
+  capturedAt: new Date('2026-10-05T08:30:00.000Z'),
+  captureBuild: 'abc1234',
+};
+
 function build(asset: unknown = null) {
   const findFirst = jest.fn().mockResolvedValue(asset);
   const prisma = { tutorialVideoAsset: { findFirst } };
@@ -112,5 +121,142 @@ describe('TutorialHelpService', () => {
     await expect(service.get('greeting-nonsense', 'ru')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  describe('метаданные ролика', () => {
+    it('размер, постер, тема, время и версия съёмки — в ответе', async () => {
+      const { service } = build({ ...ASSET, ...META });
+      const view = await service.get('greeting-brief', 'ru');
+      expect(view).toMatchObject({
+        width: 1920,
+        height: 1080,
+        posterUrl: META.posterUrl,
+        theme: 'dark',
+        capturedAt: '2026-10-05T08:30:00.000Z',
+        captureBuild: 'abc1234',
+      });
+    });
+
+    it('наружу — ровно поля справки, ничего из строки сборки', async () => {
+      // id строки, сценарий, задача ffmpeg, отпечаток кадров — служебное.
+      const { service, findFirst } = build({
+        ...ASSET,
+        ...META,
+        id: 'asset_1',
+        scenarioId: 'scn_1',
+        assemblyJobId: 'job_1',
+        contentHash: 'deadbeef',
+      });
+      const view = await service.get('greeting-brief', 'ru');
+      expect(Object.keys(view).sort()).toEqual(
+        [
+          'subjectKey',
+          'locale',
+          'title',
+          'text',
+          'videoUrl',
+          'durationMs',
+          'width',
+          'height',
+          'posterUrl',
+          'theme',
+          'capturedAt',
+          'captureBuild',
+        ].sort(),
+      );
+      expect(Object.keys(findFirst.mock.calls[0][0].select).sort()).toEqual(
+        [
+          'blobUrl',
+          'externalUrl',
+          'durationMs',
+          'width',
+          'height',
+          'posterUrl',
+          'theme',
+          'capturedAt',
+          'captureBuild',
+        ].sort(),
+      );
+    });
+
+    it('ролика нет — все метаданные null, а не undefined', async () => {
+      const { service } = build(null);
+      const view = await service.get('greeting-brief', 'ru');
+      expect(view).toMatchObject({
+        width: null,
+        height: null,
+        posterUrl: null,
+        theme: null,
+        capturedAt: null,
+        captureBuild: null,
+      });
+    });
+
+    it('старый ролик без метаданных — null, ролик всё равно отдаётся', async () => {
+      const { service } = build(ASSET);
+      const view = await service.get('greeting-brief', 'ru');
+      expect(view.videoUrl).toBe(ASSET.blobUrl);
+      expect(view.width).toBeNull();
+      expect(view.capturedAt).toBeNull();
+    });
+
+    it('половина размера или негодный размер — оба null', async () => {
+      // По одной стороне пропорцию не поставить, а ноль/дробь сломали
+      // бы aspect-ratio лендинга.
+      for (const bad of [
+        { width: 720, height: null },
+        { width: 0, height: 1560 },
+        { width: 720.5, height: 1560 },
+        { width: -720, height: 1560 },
+      ]) {
+        const { service } = build({ ...ASSET, ...META, ...bad });
+        const view = await service.get('greeting-brief', 'ru');
+        expect([view.width, view.height]).toEqual([null, null]);
+      }
+    });
+
+    it('тема из базы вне light/dark — null', async () => {
+      const { service } = build({ ...ASSET, ...META, theme: 'purple' });
+      expect((await service.get('greeting-brief', 'ru')).theme).toBeNull();
+    });
+  });
+
+  describe('пожелание темы', () => {
+    it('без темы — один запрос, без фильтра по теме', async () => {
+      const { service, findFirst } = build(ASSET);
+      await service.get('greeting-brief', 'ru');
+      expect(findFirst).toHaveBeenCalledTimes(1);
+      expect(findFirst.mock.calls[0][0].where).not.toHaveProperty('theme');
+    });
+
+    it('тема есть у одобренного — отдаётся ролик этой темы', async () => {
+      const { service, findFirst } = build({ ...ASSET, ...META });
+      const view = await service.get('greeting-brief', 'ru', 'dark');
+      expect(findFirst).toHaveBeenCalledTimes(1);
+      expect(findFirst.mock.calls[0][0].where.theme).toBe('dark');
+      expect(findFirst.mock.calls[0][0].where.reviewed).toBe(true);
+      expect(view.theme).toBe('dark');
+    });
+
+    it('ролика этой темы нет — самый свежий одобренный любой темы', async () => {
+      const { service, findFirst } = build();
+      findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ ...ASSET, ...META, theme: 'light' });
+      const view = await service.get('greeting-brief', 'ru', 'dark');
+      expect(findFirst).toHaveBeenCalledTimes(2);
+      expect(findFirst.mock.calls[1][0].where).not.toHaveProperty('theme');
+      // Запасной запрос — те же правила: только вычитанный.
+      expect(findFirst.mock.calls[1][0].where.reviewed).toBe(true);
+      expect(view.videoUrl).toBe(ASSET.blobUrl);
+      expect(view.theme).toBe('light');
+    });
+
+    it('неизвестная тема — как без темы, а не 400', async () => {
+      const { service, findFirst } = build(ASSET);
+      await service.get('greeting-brief', 'ru', 'purple');
+      expect(findFirst).toHaveBeenCalledTimes(1);
+      expect(findFirst.mock.calls[0][0].where).not.toHaveProperty('theme');
+    });
   });
 });

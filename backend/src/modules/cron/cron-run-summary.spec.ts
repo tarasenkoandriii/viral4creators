@@ -9,7 +9,13 @@
  * строке, а в бессерверном деплое логи оператор не читает.
  */
 
-import { buildRunSummary, summarizeCounters } from './cron-run-summary';
+import {
+  buildRunSummary,
+  cronOutcomeOf,
+  skipReasonOf,
+  successLogFields,
+  summarizeCounters,
+} from './cron-run-summary';
 
 describe('summarizeCounters', () => {
   it('собирает числовые поля, нечисловые не выдумывает', () => {
@@ -144,5 +150,54 @@ describe('buildRunSummary — пропуск генерации сценарие
         failed: 0,
       }),
     ).toContain('пропущен — суточный потолок');
+  });
+});
+
+describe('исход «пропущен» (аудит кронов 06.10.2026)', () => {
+  it('три формы пропуска — строкой, `skipped: true`, `skipped-locked`', () => {
+    expect(skipReasonOf({ skipped: 'потолок выбран' })).toBe('потолок выбран');
+    expect(skipReasonOf({ skipped: true, deleted: 0 })).toBe(
+      'предыдущий прогон ещё держал замок',
+    );
+    expect(skipReasonOf({ action: 'skipped-locked' })).toBe(
+      'предыдущий прогон ещё держал замок',
+    );
+  });
+
+  it('не пропуск: пустая строка, вложенный skipped у блога, счётчики skipped*', () => {
+    expect(skipReasonOf({ skipped: '' })).toBeNull();
+    expect(skipReasonOf({ generation: { skipped: true } })).toBeNull();
+    expect(skipReasonOf({ skippedManual: 3, generated: 1 })).toBeNull();
+    expect(skipReasonOf(null)).toBeNull();
+  });
+
+  it('любой джоб с пропуском получает сводку «пропущен — причина»', () => {
+    expect(buildRunSummary('voice-uploads-sweep', { skipped: true })).toBe(
+      'пропущен — предыдущий прогон ещё держал замок',
+    );
+    expect(
+      buildRunSummary('portfolio-watermark', { action: 'skipped-locked' }),
+    ).toBe('пропущен — предыдущий прогон ещё держал замок');
+  });
+
+  it('пропуск — отметка исхода в debugLog и без debug; обычный — как раньше', () => {
+    const skipped = successLogFields(
+      'tutorial-scenario-run',
+      { skipped: 'нет фикстуры', total: 0 },
+      false,
+    );
+    expect(skipped.debugLog).toEqual({
+      cronOutcome: 'SKIPPED',
+      reason: 'нет фикстуры',
+      result: { skipped: 'нет фикстуры', total: 0 },
+    });
+    expect(cronOutcomeOf(skipped.debugLog)).toBe('SKIPPED');
+
+    const plain = successLogFields('publish', { published: 2 }, false);
+    expect(plain.debugLog).toBeUndefined();
+    expect(cronOutcomeOf(plain.debugLog)).toBeNull();
+    const debug = successLogFields('publish', { published: 2 }, true);
+    expect(debug.debugLog).toEqual({ published: 2 });
+    expect(cronOutcomeOf(debug.debugLog)).toBeNull();
   });
 });

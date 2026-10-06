@@ -27,6 +27,7 @@ import { maskSensitiveEcho } from '../../shared/assist-chat-core';
 import { claimUnits, readState } from '../assist-billing/public/entitlements';
 import { ASSIST_PLANS, siteDailyCapFromPlan } from '../assist-billing/plans';
 import { DIALOG_BASE_UNITS, DIALOG_IDLE_MS } from '../assist-billing/units';
+import { adminSpentToday } from '../assist-admin-mode/admin-budget';
 import { adminError } from '../assist-admin-mode/admin-errors';
 import { AdminModeService } from '../assist-admin-mode/admin-mode.service';
 import type { CallerCtx } from '../assist-admin-mode/connectors.service';
@@ -275,28 +276,15 @@ export class AdminChatService {
   async assertDailyBudget(ctx: EmployeeCtx, now: Date): Promise<void> {
     const st = await readState(this.prisma, ctx.accountId, now);
     const cap = siteDailyCapFromPlan(st.planId);
-    const day = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
-    const agg = await this.db
-      .forAccount(ctx.accountId)
-      .assistAdminMessage.aggregate({
-        where: { siteId: ctx.siteId, createdAt: { gte: day } },
-        _sum: { costMicroUsd: true },
-      });
     // Э6-бис (б): голосовое управление «Админкой» — распознавание и планы
-    // платят тот же суточный потолок (операции assist-admin-stt|ui-plan).
-    const voice = await this.db
-      .forAccount(ctx.accountId)
-      .siteAiUsage.aggregate({
-        where: {
-          siteId: ctx.siteId,
-          operation: { in: ['assist-admin-stt', 'assist-admin-ui-plan'] },
-          createdAt: { gte: day },
-        },
-        _sum: { costMicroUsd: true },
-      });
-    if ((agg._sum.costMicroUsd ?? 0) + (voice._sum.costMicroUsd ?? 0) >= cap) {
+    // платят тот же суточный потолок (операции assist-admin-stt|ui-plan);
+    // аудит Э6-бис (е): и lite-выбор мемо АМ-N (assist-admin-memo).
+    const spent = await adminSpentToday(
+      this.db.forAccount(ctx.accountId),
+      ctx.siteId,
+      now,
+    );
+    if (spent >= cap) {
       throw adminError(
         429,
         'ADMIN_DAILY_BUDGET',

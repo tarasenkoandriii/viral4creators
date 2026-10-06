@@ -82,7 +82,7 @@ import {
   pruneAssistantExchanges,
   pruneAssistantEvents,
 } from '../assistant/assistant-prune';
-import { buildRunSummary } from './cron-run-summary';
+import { successLogFields } from './cron-run-summary';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import {
   ClientSiteDraftRetention,
@@ -280,14 +280,18 @@ export class CronJobsService {
     try {
       const result = await task();
       const durationMs = Date.now() - startedAt;
+      // Пропуск (замок, не настроено, потолок) — тоже SUCCESS по
+      // статусу, но с отметкой исхода в `debugLog`: см.
+      // `CRON_OUTCOME_SKIPPED` (аудит кронов 06.10.2026).
+      const { summary, debugLog } = successLogFields(jobKey, result, debugMode);
       await this.prisma.cronRunLog.update({
         where: { id: row.id },
         data: {
           status: 'SUCCESS',
           finishedAt: new Date(),
           durationMs,
-          summary: buildRunSummary(jobKey, result),
-          debugLog: debugMode ? (result as object) : undefined,
+          summary,
+          debugLog,
         },
       });
       return result;
@@ -583,7 +587,11 @@ export class CronJobsService {
       'tutorial-scenario-generate',
     );
     if (!acquired) {
+      // `skipped` обязателен (аудит кронов 06.10.2026): без него пропуск
+      // по замку писался в журнал нулями и успехом — неотличимо от
+      // прогона, которому нечего было делать.
       return {
+        skipped: 'предыдущий прогон ещё не завершился',
         pairs: 0,
         locales: [],
         skippedManual: 0,
@@ -664,9 +672,10 @@ export class CronJobsService {
    * сравнивает с предыдущим снимком той же комбинации маршрут×локаль×
    * тема, при расхождении шлёт тревогу. Джоб-лок тем же приёмом, что у
    * `runTutorialScenarioRun` — прогон держит headless-браузер открытым
-   * несколько минут, повторный запуск (расписание раз в две минуты,
-   * `backend/vercel.json`, тот же темп, что у `catalog-batch-run` и
-   * соседей) не должен открывать второй Chromium поверх ещё идущего.
+   * несколько минут, повторный запуск (расписание `10-59/15` — :10, :25,
+   * :40, :55, `backend/vercel.json`; прежняя строка здесь говорила «раз
+   * в две минуты», и это было неправдой) или ручной запуск из админки не
+   * должен открывать второй Chromium поверх ещё идущего.
    */
   async runUiSnapshotRun(): Promise<UiSnapshotRunResult> {
     const acquired = await tryAcquireJobLock(this.prisma, 'ui-snapshot-run');
@@ -832,6 +841,7 @@ export class CronJobsService {
         secretsOneShot: 0,
         framesPurged: 0,
         framesFailed: 0,
+        pendingReviewWarned: 0,
         skipped: true,
       };
     }
@@ -842,6 +852,9 @@ export class CronJobsService {
         undefined,
         // Э-С Ш2: данные входа в хранилище sites-backend стираются там же.
         defaultDraftSecretsStore(this.prisma),
+        // Тревога за неделю до стирания кадров черновика на одобрении
+        // (аудит кронов 06.10.2026).
+        this.notify,
       ).run();
     } finally {
       await releaseJobLock(this.prisma, 'client-site-retention', acquired);
@@ -1401,7 +1414,14 @@ export class CronJobsService {
                   ? // 'users' (Е-5.2 шестого аудита, этап 76) — владелец
                     // `users/<userId>/voices/…` — сама таблица users.
                     await this.prisma.user.findMany({ where, select })
-                  : await this.liveFrameOwners(ids);
+                  : scope === 'tutorial-video-posters'
+                    ? // Постер ролика обучалки — владелец сама строка
+                      // ролика (06.10.2026): жива строка — жив постер.
+                      await this.prisma.tutorialVideoAsset.findMany({
+                        where,
+                        select,
+                      })
+                    : await this.liveFrameOwners(ids);
     return rows.map((r) => r.id);
   }
 

@@ -24,6 +24,7 @@ import { Alert, Badge, Button, CopyField, inputClass } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
 import {
   MEMO_LANGS,
+  memoReadOnly,
   type MemoDetail,
   type MemoLang,
   type MemoOp,
@@ -32,6 +33,7 @@ import {
 import { openExternal } from '../../lib/open-link';
 import { useSetupErrorText } from '../../lib/use-error-text';
 import { pct, voiceControlErrorCode } from '../../lib/voice-control-api';
+import { canManageWidget } from '../../lib/widget-view';
 import { NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
 
@@ -55,13 +57,14 @@ function statusTone(s: MemoStatus) {
 
 export function MemoSection({ siteId }: { siteId: string }) {
   const { appDict, voiceControl } = useAssist();
-  const { locale } = useKit();
+  const { locale, account } = useKit();
   const t = appDict.voiceControl.memo;
   const tv = appDict.voiceControl;
   const errText = useSetupErrorText();
+  const canEdit = canManageWidget(account.me);
   const list = useAsync(
-    () => voiceControl.memo.list(siteId),
-    [voiceControl, siteId]
+    () => (canEdit ? voiceControl.memo.list(siteId) : Promise.resolve(null)),
+    [voiceControl, siteId, canEdit]
   );
   const [name, setName] = useState('');
   const [open, setOpen] = useState<number | null>(null);
@@ -74,6 +77,13 @@ export function MemoSection({ siteId }: { siteId: string }) {
     const code = voiceControlErrorCode(e);
     setNotice({ tone: 'danger', text: code ? tv.errors[code] : errText(e) });
   };
+  if (memoReadOnly(account.me, list.error))
+    return (
+      <div className="space-y-2 rounded-xl border border-silver-200 dark:border-silver-800 p-3">
+        <div className="font-semibold text-sm">{t.title}</div>
+        <Alert tone="warning">{t.readOnly}</Alert>
+      </div>
+    );
   if (!list.data) return null;
   const l = list.data;
 

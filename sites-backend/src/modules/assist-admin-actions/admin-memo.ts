@@ -797,6 +797,43 @@ export function fillAdminSlots(
   };
 }
 
+/**
+ * Слоты мемо, выбранного моделью (lite-выбор АМ-N, аудит Э8-хвост (2)):
+ * `option`/`date`/`number` — ТОЛЬКО детерминированно из текста сотрудника
+ * (`fillAdminSlots`, модель их не задаёт); `text` — предложение модели,
+ * если оно дословно есть в тексте (≤ 200, без кавычек). Итог — явные пары
+ * `имя="значение"` для `start()` (тот же разбор, что у фразы); не найденное
+ * — пропущено, `start()` попросит указать.
+ */
+export function liteAdminSlotsRest(
+  slots: readonly AdminMemoSlot[],
+  text: string,
+  proposed: Readonly<Record<string, unknown>>,
+  now: Date,
+): string {
+  const fixed = fillAdminSlots(
+    slots.filter((s) => s.kind !== 'text'),
+    text,
+    now,
+  ).values;
+  const said = normText(text);
+  const pairs: string[] = [];
+  for (const s of slots) {
+    let v: string | undefined = fixed[s.name];
+    if (s.kind === 'text') {
+      const raw = proposed[s.name];
+      const t = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : '';
+      const nt = normText(t);
+      v =
+        nt && t.length <= 200 && !t.includes('"') && said.includes(nt)
+          ? t
+          : undefined;
+    }
+    if (v !== undefined && !v.includes('"')) pairs.push(`${s.name}="${v}"`);
+  }
+  return pairs.join(' ');
+}
+
 /** Аргументы шага `api`: слоты и константы → объект для `validateArgs`. */
 export function stepArgs(
   step: Extract<AdminMemoStep, { action: 'api' }>,

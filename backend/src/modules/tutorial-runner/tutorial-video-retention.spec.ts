@@ -1,5 +1,10 @@
 import {
+  APPROVAL_GRACE_MS,
+  pairsInApprovalGrace,
+  parseApprovalStamps,
+  recordApprovalStamp,
   selectSweepableAssets,
+  sweepPairKey,
   SweepableAsset,
 } from './tutorial-video-retention';
 
@@ -200,3 +205,52 @@ describe('selectSweepableAssets', () => {
 function doomed2(rows: SweepableAsset[], keep: number): string[] {
   return selectSweepableAssets(rows, keep).map((r) => r.id);
 }
+
+describe('прежний одобренный ролик и сутки после одобрения нового (аудит кронов 06.10.2026)', () => {
+  const NOW = Date.UTC(2026, 9, 6, 12);
+  const rows = () => [
+    asset({ id: 'new', reviewed: true }),
+    asset({ id: 'old', reviewed: true }),
+    asset({ id: 'older', reviewed: true }),
+  ];
+
+  it('без отсрочки — прежний одобренный уходит (как раньше)', () => {
+    expect(doomed(rows())).toEqual(['old', 'older']);
+  });
+
+  it('в отсрочке — держится ровно ОДИН прежний одобренный', () => {
+    const grace = new Set([sweepPairKey({ subjectKey: '1', locale: 'ru' })]);
+    expect(selectSweepableAssets(rows(), 0, grace).map((r) => r.id)).toEqual([
+      'older',
+    ]);
+  });
+
+  it('отсрочка — по отметке САМОГО СВЕЖЕГО одобренного и не дольше суток', () => {
+    const fresh = new Map([['new', NOW - 60 * 60 * 1000]]);
+    expect([...pairsInApprovalGrace(rows(), fresh, NOW)]).toEqual([
+      sweepPairKey({ subjectKey: '1', locale: 'ru' }),
+    ]);
+    const stale = new Map([['new', NOW - APPROVAL_GRACE_MS - 1]]);
+    expect(pairsInApprovalGrace(rows(), stale, NOW).size).toBe(0);
+    // Отметка у прежнего, а не у свежего, отсрочки не даёт.
+    const wrong = new Map([['old', NOW - 1000]]);
+    expect(pairsInApprovalGrace(rows(), wrong, NOW).size).toBe(0);
+  });
+
+  it('одобренный без файла в отсрочку не идёт', () => {
+    const r = [asset({ id: 'nofile', reviewed: true, blobUrl: null })];
+    expect(pairsInApprovalGrace(r, new Map([['nofile', NOW]]), NOW).size).toBe(
+      0,
+    );
+  });
+
+  it('карта отметок: запись добавляет, старше недели выпадает, мусор — пустая карта', () => {
+    const old = recordApprovalStamp(null, 'a', NOW - 8 * 24 * 3600_000);
+    const raw = recordApprovalStamp(old, 'b', NOW);
+    const parsed = parseApprovalStamps(raw);
+    expect(parsed.get('b')).toBe(NOW);
+    expect(parsed.has('a')).toBe(false);
+    expect(parseApprovalStamps('не json').size).toBe(0);
+    expect(parseApprovalStamps('[1,2]').size).toBe(0);
+  });
+});

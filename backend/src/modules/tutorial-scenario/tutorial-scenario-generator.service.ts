@@ -291,6 +291,7 @@ export class TutorialScenarioGeneratorService {
     const taken = await this.runPairs(
       orderByStaleness(circle, stamps),
       stamps,
+      circle,
       result,
       deadline,
       ownerId,
@@ -302,7 +303,6 @@ export class TutorialScenarioGeneratorService {
     // целиком уйти на завтра, и рапортовать «генерировали на de», не
     // сгенерировав ничего, нельзя (правка аудита этапа C).
     result.locales = locales.filter((l) => taken.has(l));
-    await this.saveStamps(stamps, circle);
 
     this.logger.log(
       `сценарии обучалки: локалей ${result.locales.length} (${result.locales.join(', ')}), ` +
@@ -503,10 +503,17 @@ export class TutorialScenarioGeneratorService {
   }
 
   /**
-   * Пишет карту отметок ротации. Одна запись за прогон, а не по записи
-   * на пару: тридцать upsert-ов в `PlatformSetting` ради одной карты
-   * ничего не дают — прогон и так укладывается в свой бюджет времени
-   * именно для того, чтобы дойти до этой строки.
+   * Пишет карту отметок ротации — после КАЖДОЙ пары (аудит кронов
+   * 06.10.2026).
+   *
+   * Прежде запись была одна, в конце прогона, с доводом «прогон
+   * укладывается в свой бюджет времени именно для того, чтобы дойти до
+   * этой строки». Довод держался на том, что каждый вызов модели
+   * короткий, — а таймаута у вызова не было: одно зависшее соединение
+   * уводило функцию за потолок платформы, и карта не записывалась
+   * вовсе. Следующая ночь начинала с тех же пар — и снова платила за
+   * них. Запись после каждой пары — десятки upsert-ов одной строки за
+   * ночь, цена ничтожная против повторной оплаты.
    *
    * Неудача — предупреждение, а не исключение: сценарии уже записаны,
    * и ронять из-за отметки весь отчёт прогона (а с ним `failures[]`)
@@ -539,6 +546,8 @@ export class TutorialScenarioGeneratorService {
     pairs: ReadonlyArray<RotationPair>,
     /** Карта «когда пару последний раз брали в работу». */
     stamps: Map<string, number>,
+    /** Весь круг пар — для записи карты (`saveStamps` пишет только его). */
+    circle: ReadonlyArray<RotationPair>,
     result: TutorialScenarioGenerateResult,
     deadline: number,
     /** Фикстурный пользователь — владелец расхода (см. `run`). */
@@ -600,10 +609,21 @@ export class TutorialScenarioGeneratorService {
           step,
           videoProvider,
         );
+        // Таймаут вызова — не дольше остатка бюджета прогона (аудит
+        // кронов 06.10.2026). Бюджет проверялся только МЕЖДУ парами, а
+        // сам вызов модели не был ограничен ничем: зависшее соединение
+        // на последней паре уводило функцию за потолок платформы.
+        // Остаток не меньше секунды — иначе вызов с нулевым таймаутом
+        // упал бы, ещё не начавшись, и выглядел бы как отказ модели.
+        const callTimeoutMs = Math.max(1_000, deadline - Date.now());
         const res = await this.genai.models.generateContent({
           model: GEMINI_MODEL,
           contents: [{ text: prompt }],
-          config: { responseMimeType: 'application/json' },
+          config: {
+            responseMimeType: 'application/json',
+            httpOptions: { timeout: callTimeoutMs },
+            abortSignal: AbortSignal.timeout(callTimeoutMs),
+          },
         });
         await this.aiUsage.recordGemini(res, {
           operation: 'tutorial-scenario-generate',
@@ -696,6 +716,11 @@ export class TutorialScenarioGeneratorService {
         this.logger.warn(
           `сценарий для шага ${subjectKey} (${locale}) упал с ошибкой: ${reason}`,
         );
+      } finally {
+        // По ходу, а не в конце: см. `saveStamps`. В `finally` — чтобы
+        // и `continue` (правлена руками, отказ модели), и исключение
+        // оставили отметку взятой пары.
+        await this.saveStamps(stamps, circle);
       }
     }
     return taken;

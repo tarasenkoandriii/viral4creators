@@ -108,6 +108,7 @@ import {
   MEMO_LANGS,
   MEMO_LIMITS,
   memoApplies,
+  memosWithinPlan,
   parseMemoChoice,
   type MemoLang,
   type MemoSlotValues,
@@ -207,6 +208,10 @@ export interface UiPlanCtx {
    */
   voiceTest?: { testId: string; testHost: boolean } | null;
 }
+
+/** Окно отчёта о возврате полей: окно «Вернуть» + время карточки (60 с). */
+export const UNDO_REPORT_WINDOW_MS =
+  CHAIN_DECISIONS.undoWindowMs + CHAIN_DECISIONS.offerTimeoutMs;
 
 /** Отказы маршрутов плана — коды REST-ответа (assist-widget переводит). */
 export type UiPlanFailure =
@@ -496,7 +501,7 @@ export class SiteUiPlanService {
     // мемо ниже станет подсветкой первого шага (`checkPlan` со state).
     const memos = dryRun
       ? []
-      : (await this.memosFor(site.siteId)).filter((m) =>
+      : (await this.memosFor(site.siteId, state)).filter((m) =>
           memoApplies(m, pagePath, ctx.viewport ?? null),
         );
     let memo: MemoPick | null = null;
@@ -543,11 +548,9 @@ export class SiteUiPlanService {
     let trusted: string[] = [];
     let goalRaw: number | null = null;
     let pinMismatchAt: number | null = null;
+    let missingAt: number | null = null;
     let origin: 'model' | 'direct' | 'memo' = 'model';
     if (memo) {
-      const comp = compileMemo(memo.memo.content, memo.values, snapshot);
-      raw = comp.raw;
-      pins = comp.pins;
       // Признанные кодом значения: слоты (`checkSlots`) и константы ВЕРСИИ
       // (их проверили ворота: не ПД, не свободный текст формы, §5-бис.17
       // п.3). Без констант `select`/поиск с константой вычёркивался
@@ -559,8 +562,24 @@ export class SiteUiPlanService {
           s.value && 'const' in s.value ? [s.value.const] : [],
         ),
       ];
+      // Переход после клика — тем же `judgeStep` и той же командой, что в
+      // `checkPlan` ниже (подсказки карты мемо — без `mN`): раскрывашка в
+      // форме не переход (аудит Э6-бис (е) (6)).
+      const memoHints = resolved ? mapHintsOf(resolved, []) : null;
+      const comp = compileMemo(memo.memo.content, memo.values, snapshot, {
+        transcript: text,
+        rules,
+        hosts,
+        pagePath: pathOf(snapshot.url),
+        state: access.mode,
+        trusted,
+        namesOf: memoHints ? (ref) => memoHints.get(ref)?.names : undefined,
+      });
+      raw = comp.raw;
+      pins = comp.pins;
       goalRaw = comp.goalFrom;
       pinMismatchAt = comp.pinMismatchAt;
+      missingAt = comp.missingAt;
       origin = 'memo';
       const stepText = (i: number | null) =>
         i === null
@@ -748,11 +767,17 @@ export class SiteUiPlanService {
       planId,
       stepIndex: 0,
       action: 'plan',
-      target: memo
-        ? { memo: memo.memo.number, via: memo.via }
-        : direct && 'raw' in direct
-          ? { map: direct.key, via: 'direct' }
-          : null,
+      // Хеш IP плана — с солью на окно (неделя), не суточный хеш диалога:
+      // пороги «≥ 3 разных IP» (`needs_review` мемо, кандидаты из боя) не
+      // обходятся одним адресом на следующий день (аудит Э6-бис (е) (7)).
+      target: {
+        ...(memo
+          ? { memo: memo.memo.number, via: memo.via }
+          : direct && 'raw' in direct
+            ? { map: direct.key, via: 'direct' }
+            : {}),
+        ip: ctx.voteIpHash ?? visitor.ipHash,
+      },
       url: snapshot.url,
       risk: top,
       confirmedBy: dryRun ? 'dry' : askFirst ? null : 'auto',
@@ -767,14 +792,29 @@ export class SiteUiPlanService {
       mapKey: direct && 'raw' in direct ? direct.key : null,
       mapMiss: mapMiss !== null,
     });
-    for (const n of notes)
+    for (const [k, n] of notes.entries()) {
+      // Отказ сборки мемо (цель шага не найдена/подменена на странице) —
+      // с номером ШАГА МЕМО: монитор считает его сбоем шага для
+      // `needs_review` (аудит Э6-бис (е) (5)); отказы `checkPlan` — как были.
+      const memoStep =
+        k < memoNotes.length
+          ? n.code === 'pin_mismatch'
+            ? pinMismatchAt
+            : missingAt
+          : null;
       await insertActionLog(this.db, {
         accountId: site.accountId,
         siteId: site.siteId,
         planId,
-        stepIndex: n.code === 'pin_mismatch' ? (pinMismatchAt ?? 0) : 0,
+        stepIndex: memoStep ?? 0,
         action: 'refused',
-        target: n.target ? { text: n.target } : null,
+        target:
+          n.target || memoStep !== null
+            ? {
+                ...(n.target ? { text: n.target } : {}),
+                ...(memoStep !== null ? { memoStep } : {}),
+              }
+            : null,
         url: snapshot.url,
         risk: n.code === 'second_pnr' ? 'confirm' : 'never',
         confirmedBy: null,
@@ -784,6 +824,7 @@ export class SiteUiPlanService {
         durationMs: null,
         pinMismatch: n.code === 'pin_mismatch',
       });
+    }
     await this.touch(conversationId, now);
     this.logger.log(
       `ui-plan site=${site.siteId} plan=${planId} steps=${steps.length} confirm=${askFirst} notes=${notes.length} origin=${origin}${memo ? ` memo=${memo.memo.number} via=${memo.via}` : ''}`,
@@ -829,10 +870,22 @@ export class SiteUiPlanService {
     }
   }
 
-  /** Опубликованные мемо сайта (представление; сбой — как будто мемо нет). */
-  private async memosFor(siteId: string): Promise<PublishedMemo[]> {
+  /**
+   * Опубликованные мемо сайта (представление; сбой — как будто мемо нет).
+   * С тарифом — только первые N по номеру (лимит после понижения тарифа:
+   * остальные «сверх тарифа» и не исполняются, аудит Э6-бис (е) (4)).
+   */
+  private async memosFor(
+    siteId: string,
+    state?: Pick<SubscriptionState, 'planId'>,
+  ): Promise<PublishedMemo[]> {
     try {
-      return await readPublishedMemos(this.db, siteId);
+      const all = await readPublishedMemos(this.db, siteId);
+      if (!state) return all;
+      return memosWithinPlan(
+        all,
+        state.planId ? MEMO_DECISIONS.limitByPlan[state.planId] : 0,
+      );
     } catch (e) {
       this.logger.warn(
         `memo read failed site=${siteId}: ${(e as Error | null)?.name ?? 'Error'}`,
@@ -1817,6 +1870,11 @@ export class SiteUiPlanService {
     body: UiUndoReport,
   ): Promise<UiUndoView> {
     const plan = await this.load(ctx, id);
+    // Итог возврата — только в окне «Вернуть» (10 мин жизни плана) и ещё
+    // минуту на исполнение в загрузчике (карточка живёт 60 с): позже отчёт
+    // не меняет статус цепочки (аудит Э6-бис (е) (1)).
+    if (this.now().getTime() - plan.createdAt.getTime() > UNDO_REPORT_WINDOW_MS)
+      return fail('expired');
     if (LIVE.has(plan.status)) return fail('conflict');
     if (
       plan.chainStatus === 'compensated' ||
@@ -1898,7 +1956,7 @@ export class SiteUiPlanService {
     const state = await readState(this.db, ctx.site.accountId, now);
     const access = await this.access(ctx.site, state, !!ctx.voiceTest);
     if (access.mode !== 'on') return { names: [] };
-    const memos = (await this.memosFor(ctx.site.siteId)).filter(
+    const memos = (await this.memosFor(ctx.site.siteId, state)).filter(
       (m) => m.listed,
     );
     if (!memos.length) return { names: [] };

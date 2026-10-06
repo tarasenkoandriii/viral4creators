@@ -181,7 +181,11 @@ function build(scenarios: unknown[]) {
   const notify = { alert: jest.fn().mockResolvedValue(true) };
   const prisma = {
     user: {
-      findUnique: jest.fn().mockResolvedValue({ id: 'usr_fixture' }),
+      // Тестовый аккаунт: с аудита кронов 06.10.2026 прогон идёт
+      // ТОЛЬКО по нему (`isTestUser`), иначе пропуск.
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: 'usr_fixture', isTestUser: true }),
       update: jest.fn().mockResolvedValue(undefined),
     },
     tutorialScenario: {
@@ -257,6 +261,13 @@ function build(scenarios: unknown[]) {
     // Уборка кадров идёт по префиксу, а не по счётчику.
     listByPrefix: jest.fn().mockResolvedValue({ blobs: [], cursor: null }),
     deleteMany: jest.fn().mockResolvedValue(undefined),
+    // Постер собранного ролика — копией первого кадра (заход 1
+    // метаданных, 06.10.2026).
+    copyBlob: jest
+      .fn()
+      .mockImplementation(
+        async (_from: string, to: string) => `https://blob.example.com/${to}`,
+      ),
   };
   const ffmpeg = {
     // По умолчанию не настроен — большинство тестов о regression-
@@ -1698,10 +1709,34 @@ describe('TutorialScenarioRunnerService', () => {
           await built.service.run();
 
           expect(built.ffmpeg.submit).not.toHaveBeenCalled();
-          expect(built.notify.alert).toHaveBeenCalledWith(
+          // Тревога об остановке — НЕ отсюда (аудит кронов 06.10.2026):
+          // отсюда она шла каждый прогон пары, до пяти раз в сутки. Её
+          // поднимает опрос в момент записи третьего провала — см. блок
+          // «тревога об остановке попыток».
+          expect(built.notify.alert).not.toHaveBeenCalledWith(
             expect.stringContaining('giveup'),
-            expect.stringContaining('провалилась'),
+            expect.anything(),
           );
+        });
+
+        it('три ИНФРАСТРУКТУРНЫХ провала того же содержимого — пробуем снова', async () => {
+          // Потолок денег, зависшая подготовка, сеть, Blob — не про
+          // содержимое. Раньше три таких навсегда запирали пару.
+          const built = narratedRun();
+          const hash = await firstRunHash(built);
+          built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+            async (args: { where?: { assemblyStatus?: unknown } }) =>
+              args?.where?.assemblyStatus === 'failed'
+                ? [1, 2, 3].map(() => ({
+                    contentHash: hash,
+                    assemblyError: 'infra: сеть недоступна',
+                  }))
+                : [],
+          );
+
+          await built.service.run();
+
+          expect(built.ffmpeg.submit).toHaveBeenCalled();
         });
 
         it('падало дважды — ещё пробуем', async () => {
@@ -3004,9 +3039,13 @@ describe('TutorialScenarioRunnerService', () => {
       expect(prisma.tutorialVideoAsset.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'tva-new', assemblyStatus: 'preparing' },
+          // Сеть — инфраструктура, а не содержимое (аудит кронов
+          // 06.10.2026): пометка `infra:` и без отпечатка — в счёт
+          // попыток этого содержимого такой провал не идёт.
           data: expect.objectContaining({
             assemblyStatus: 'failed',
-            assemblyError: 'сеть недоступна',
+            assemblyError: 'infra: сеть недоступна',
+            contentHash: null,
           }),
         }),
       );
@@ -3774,9 +3813,12 @@ describe('TutorialScenarioRunnerService', () => {
         const result = await service.pollAssemblies();
 
         expect(result.swept).toBe(2);
+        // mp4 и постер (заход 1 метаданных, 06.10.2026) — оба до строки.
         expect(blob.deleteBlob.mock.calls.map((c: string[]) => c[0])).toEqual([
           'tutorial-videos/1/yesterday.mp4',
+          'tutorial-video-posters/yesterday.png',
           'tutorial-videos/1/earlier.mp4',
+          'tutorial-video-posters/earlier.png',
         ]);
         expect(
           prisma.tutorialVideoAsset.delete.mock.calls.map(
@@ -3852,9 +3894,13 @@ describe('TutorialScenarioRunnerService', () => {
         const result = await service.pollAssemblies();
 
         expect(result.swept).toBe(1);
-        expect(blob.deleteBlob).toHaveBeenCalledTimes(1);
+        // mp4 и постер ролика без заявки; у ролика с заявкой — ничего.
+        expect(blob.deleteBlob).toHaveBeenCalledTimes(2);
         expect(blob.deleteBlob).toHaveBeenCalledWith(
           'tutorial-videos/1/plain.mp4',
+        );
+        expect(blob.deleteBlob).toHaveBeenCalledWith(
+          'tutorial-video-posters/plain.png',
         );
       });
 
@@ -4163,6 +4209,605 @@ describe('TutorialScenarioRunnerService', () => {
       expect(blob.listByPrefix).toHaveBeenCalledWith(
         'tutorial-video-frames/tva-1/',
         expect.anything(),
+      );
+    });
+  });
+});
+
+/**
+ * Аудит кронов обучалки 06.10.2026 — находки 1, 2, 3, 9, 10, 12.
+ */
+describe('TutorialScenarioRunnerService — аудит кронов 06.10.2026', () => {
+  function okBrowser(page = buildFakePage({ screenshot: true })) {
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    return { browser, page };
+  }
+
+  describe('только тестовый аккаунт (находка 1)', () => {
+    function liveUser(built: ReturnType<typeof build>) {
+      built.prisma.user.findUnique.mockResolvedValue({
+        id: 'usr_live',
+        isTestUser: false,
+      });
+    }
+
+    it('живой аккаунт — прогон пропущен: ни пересева, ни оферты, ни браузера', async () => {
+      const seed = jest
+        .spyOn(fixtureSeedModule, 'seedFixtureUser')
+        .mockResolvedValue({} as never);
+      okBrowser();
+      const built = build([SCENARIO_OK]);
+      liveUser(built);
+
+      const result = await built.service.run();
+
+      expect(result.skipped).toMatch(/isTestUser/);
+      expect(seed).not.toHaveBeenCalled();
+      expect(built.prisma.user.update).not.toHaveBeenCalled();
+      expect(built.prisma.tutorialScenario.findMany).not.toHaveBeenCalled();
+      expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+      expect(built.notify.alert).toHaveBeenCalledWith(
+        'tutorial-scenario-run:skipped',
+        expect.stringContaining('isTestUser'),
+      );
+      // Вид причины запомнен — следующий тик тревоги не даст.
+      expect(built.settings.set).toHaveBeenCalledWith(
+        'tutorial.runSkipAlerted',
+        'not-test-user',
+      );
+    });
+
+    it('та же причина второй раз — пропуск без тревоги', async () => {
+      const built = build([SCENARIO_OK]);
+      liveUser(built);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.runSkipAlerted' ? 'not-test-user' : null,
+      );
+
+      const result = await built.service.run();
+
+      expect(result.skipped).toBeDefined();
+      expect(built.notify.alert).not.toHaveBeenCalled();
+    });
+
+    it('другая причина — тревога есть', async () => {
+      const built = build([SCENARIO_OK]);
+      built.prisma.user.findUnique.mockResolvedValue(null);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.runSkipAlerted' ? 'not-test-user' : null,
+      );
+
+      await built.service.run();
+
+      expect(built.notify.alert).toHaveBeenCalledWith(
+        'tutorial-scenario-run:skipped',
+        expect.any(String),
+      );
+    });
+
+    it('прогон пошёл — отметка о пропуске стирается', async () => {
+      const built = build([]);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.runSkipAlerted' ? 'not-test-user' : null,
+      );
+
+      await built.service.run();
+
+      expect(built.settings.set).toHaveBeenCalledWith(
+        'tutorial.runSkipAlerted',
+        '',
+      );
+    });
+  });
+
+  describe('прошедший сценарий не повторяется 20 ч (находка 9)', () => {
+    it('выборка отсекает свежие ok, но не пустые, не упавшие и не старые', async () => {
+      const built = build([]);
+      const before = Date.now();
+      await built.service.run();
+      const where = built.prisma.tutorialScenario.findMany.mock.calls[0][0]
+        .where as {
+        AND: Array<{ OR: Array<Record<string, unknown>> }>;
+      };
+      const fresh = where.AND[1].OR;
+      expect(fresh).toEqual(
+        expect.arrayContaining([
+          { lastRunStatus: null },
+          { lastRunStatus: { not: 'ok' } },
+          { lastRunAt: null },
+          { lastRunAt: { lt: expect.any(Date) } },
+        ]),
+      );
+      const cutoff = (
+        fresh.find((b) => (b.lastRunAt as { lt?: Date } | undefined)?.lt)!
+          .lastRunAt as { lt: Date }
+      ).lt.getTime();
+      expect(before - cutoff).toBeGreaterThanOrEqual(20 * 3600_000 - 1000);
+      expect(before - cutoff).toBeLessThanOrEqual(20 * 3600_000 + 1000);
+      // Фильтр платности на месте.
+      expect(where.AND[0]).toEqual({
+        OR: [{ costly: false }, { approved: true }],
+      });
+    });
+  });
+
+  describe('метаданные ролика (заход 1)', () => {
+    it('строка ролика несёт холст, тему, время съёмки и версию фронтенда', async () => {
+      const page = buildFakePage({ screenshot: true }) as ReturnType<
+        typeof buildFakePage
+      > & { evaluate: jest.Mock };
+      page.evaluate = jest.fn().mockResolvedValue('  web-2026.10.06-abc  ');
+      okBrowser(page);
+      const built = build([SCENARIO_OK]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-1' });
+      const before = Date.now();
+
+      await built.service.run();
+
+      const data = built.prisma.tutorialVideoAsset.create.mock.calls[0][0]
+        .data as Record<string, unknown>;
+      expect(data).toEqual(
+        expect.objectContaining({
+          width: assembly.CANVAS.width,
+          height: assembly.CANVAS.height,
+          theme: 'light',
+          captureBuild: 'web-2026.10.06-abc',
+        }),
+      );
+      expect((data.capturedAt as Date).getTime()).toBeGreaterThanOrEqual(
+        before,
+      );
+    });
+
+    it('тега версии нет или страница не умеет evaluate — captureBuild null', async () => {
+      okBrowser();
+      const built = build([SCENARIO_OK]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-1' });
+
+      await built.service.run();
+
+      expect(
+        built.prisma.tutorialVideoAsset.create.mock.calls[0][0].data
+          .captureBuild,
+      ).toBeNull();
+    });
+
+    function completedAsset(
+      built: ReturnType<typeof build>,
+      row: Record<string, unknown>,
+    ) {
+      built.ffmpeg.configured.mockReturnValue(true);
+      stubAssets(built.prisma, [
+        {
+          subjectKey: '1',
+          assemblyJobId: 'job-1',
+          assemblyStartedAt: new Date(),
+          ...row,
+        },
+      ]);
+      built.ffmpeg.status.mockResolvedValue({
+        status: 'completed',
+        outputs: { 'tutorial.mp4': 'https://ffmpeg-api.example.com/out.mp4' },
+      });
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => FAKE_MP4.buffer,
+      }) as unknown as typeof fetch;
+    }
+
+    it('собран — постер из кадра с наименьшим номером шага, ДО уборки кадров', async () => {
+      const built = build([]);
+      completedAsset(built, { id: 'tva-1', scenarioId: 'ts-1' });
+      built.blob.listByPrefix.mockResolvedValue({
+        blobs: [
+          { pathname: 'tutorial-video-frames/tva-1/captions.ass' },
+          { pathname: 'tutorial-video-frames/tva-1/12.png' },
+          { pathname: 'tutorial-video-frames/tva-1/3.png' },
+          { pathname: 'tutorial-video-frames/tva-1/7.png' },
+        ],
+        cursor: null,
+      });
+
+      await built.service.pollAssemblies();
+
+      expect(built.blob.copyBlob).toHaveBeenCalledWith(
+        'tutorial-video-frames/tva-1/3.png',
+        'tutorial-video-posters/tva-1.png',
+        'image/png',
+      );
+      expect(built.prisma.tutorialVideoAsset.update).toHaveBeenCalledWith({
+        where: { id: 'tva-1' },
+        data: {
+          posterUrl:
+            'https://blob.example.com/tutorial-video-posters/tva-1.png',
+        },
+      });
+      // Порядок: копия постера раньше, чем кадры стёрты.
+      const copiedAt = built.blob.copyBlob.mock.invocationCallOrder[0];
+      const wipedAt = built.blob.deleteMany.mock.invocationCallOrder[0];
+      expect(copiedAt).toBeLessThan(wipedAt);
+    });
+
+    it('собран — холст дописывается строкам, которые его не записали', async () => {
+      const built = build([]);
+      completedAsset(built, {
+        id: 'tva-cs',
+        scenarioId: null,
+        clientSiteDraftId: 'draft-1',
+        width: null,
+        height: null,
+      });
+
+      await built.service.pollAssemblies();
+
+      expect(built.prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'tva-cs' },
+          data: expect.objectContaining({
+            assemblyStatus: 'complete',
+            width: assembly.CANVAS.width,
+            height: assembly.CANVAS.height,
+          }),
+        }),
+      );
+      // Ролик по сайту заказчика постера не получает: его кадры —
+      // снимки кабинета заказчика со своим сроком хранения.
+      expect(built.blob.copyBlob).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('инфраструктурные провалы и тревога об остановке (находка 2)', () => {
+    const HASH = 'exact|rest-part|raw:кадр';
+
+    function pendingThenFailed(
+      built: ReturnType<typeof build>,
+      failedCount: number,
+    ) {
+      built.ffmpeg.configured.mockReturnValue(true);
+      built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+        async (args: { where?: { assemblyStatus?: unknown } }) => {
+          const status = args?.where?.assemblyStatus;
+          if (status === 'pending') {
+            return [
+              {
+                id: 'tva-1',
+                subjectKey: '1',
+                locale: 'ru',
+                scenarioId: 'ts-1',
+                clientSiteDraftId: null,
+                contentHash: HASH,
+                assemblyJobId: 'job-1',
+                assemblyStartedAt: new Date(),
+              },
+            ];
+          }
+          if (status === 'failed') {
+            return Array.from({ length: failedCount }, () => ({
+              contentHash: HASH,
+              assemblyError: 'кодек',
+            }));
+          }
+          return [];
+        },
+      );
+      built.ffmpeg.status.mockResolvedValue({
+        status: 'failed',
+        error: 'кодек',
+      });
+    }
+
+    it('провал содержимого, ставший третьим, — одна тревога об остановке', async () => {
+      const built = build([]);
+      pendingThenFailed(built, 3);
+
+      await built.service.pollAssemblies();
+
+      expect(built.notify.alert).toHaveBeenCalledWith(
+        'tutorial-assembly:giveup:1:ru',
+        expect.stringContaining('попытки остановлены'),
+      );
+    });
+
+    it('второй провал — тревоги об остановке нет', async () => {
+      const built = build([]);
+      pendingThenFailed(built, 2);
+
+      await built.service.pollAssemblies();
+
+      expect(built.notify.alert).not.toHaveBeenCalledWith(
+        expect.stringContaining('giveup'),
+        expect.anything(),
+      );
+    });
+
+    it('скачать/перезалить не вышло — провал инфраструктуры: infra:, без отпечатка, без тревоги об остановке', async () => {
+      const built = build([]);
+      pendingThenFailed(built, 3);
+      built.ffmpeg.status.mockResolvedValue({
+        status: 'completed',
+        outputs: { 'tutorial.mp4': 'https://ffmpeg-api.example.com/out.mp4' },
+      });
+      global.fetch = jest
+        .fn()
+        .mockRejectedValue(new Error('сеть')) as unknown as typeof fetch;
+
+      await built.service.pollAssemblies();
+
+      expect(built.prisma.tutorialVideoAsset.update).toHaveBeenCalledWith({
+        where: { id: 'tva-1' },
+        data: {
+          assemblyStatus: 'failed',
+          assemblyError: expect.stringMatching(/^infra: /),
+          contentHash: null,
+        },
+      });
+      expect(built.notify.alert).not.toHaveBeenCalledWith(
+        expect.stringContaining('giveup'),
+        expect.anything(),
+      );
+    });
+
+    it('зависшая подготовка — провал инфраструктуры', async () => {
+      const built = build([]);
+      stubAssets(built.prisma, [
+        {
+          id: 'tva-stuck',
+          subjectKey: '1',
+          assemblyStatus: 'preparing',
+          clientSiteDraftId: null,
+          createdAt: new Date(Date.now() - 60 * 60 * 1000),
+        },
+      ]);
+
+      await built.service.pollAssemblies();
+
+      expect(built.prisma.tutorialVideoAsset.updateMany).toHaveBeenCalledWith({
+        where: { id: 'tva-stuck', assemblyStatus: 'preparing' },
+        data: {
+          assemblyStatus: 'failed',
+          assemblyError: expect.stringMatching(/^infra: подготовка оборвалась/),
+          contentHash: null,
+        },
+      });
+    });
+
+    it('потолок денег перед submit — провал инфраструктуры', async () => {
+      // Синтез выбирает потолок по дороге, проверка перед submit
+      // закрывает строку — и это не про содержимое.
+      okBrowser();
+      const built = build([
+        {
+          id: 'ts-n',
+          subjectKey: '1',
+          locale: 'ru',
+          steps: [
+            { kind: 'goto', route: 'generate', narration: 'Открываем мастер.' },
+            {
+              kind: 'click',
+              selector: '#next',
+              narration: 'Нажимаем «Далее».',
+            },
+          ],
+        },
+      ]);
+      built.ffmpeg.configured.mockReturnValue(true);
+      const settings: Record<string, string> = {
+        'postprod.tutorialVoice': 'on',
+        'postprod.tutorialDailyBudgetUsd': '0.000001',
+      };
+      built.settings.get.mockImplementation(
+        async (key: string) => settings[key] ?? null,
+      );
+
+      await built.service.run();
+
+      expect(built.ffmpeg.submit).not.toHaveBeenCalled();
+      expect(built.prisma.tutorialVideoAsset.updateMany).toHaveBeenCalledWith({
+        where: { id: 'tva-new', assemblyStatus: 'preparing' },
+        data: {
+          assemblyStatus: 'failed',
+          assemblyError: 'infra: суточный потолок расхода обучалки выбран',
+          contentHash: null,
+        },
+      });
+    });
+  });
+
+  describe('отмена отправки по дедлайну (находка 3)', () => {
+    it('после обрыва фон не заливает дальше и НЕ отправляет оплачиваемую задачу', async () => {
+      jest.useFakeTimers();
+      try {
+        okBrowser();
+        const built = build([
+          {
+            ...SCENARIO_OK,
+            steps: [
+              { kind: 'goto', route: 'generate' },
+              { kind: 'goto', route: 'generate' },
+            ],
+          },
+        ]);
+        built.ffmpeg.configured.mockReturnValue(true);
+        built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-late' });
+        // Первая заливка кадра идёт 70 с — дольше дедлайна в 60 с.
+        built.blob.uploadBuffer.mockImplementation(
+          () =>
+            new Promise((resolve) =>
+              setTimeout(
+                () => resolve({ url: 'https://blob.example.com/f.png' }),
+                70_000,
+              ),
+            ),
+        );
+
+        const running = built.service.run();
+        let settled = false;
+        void running.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        for (let i = 0; i < 40 && !settled; i += 1) {
+          await jest.advanceTimersByTimeAsync(10_000);
+        }
+        const result = await running;
+        expect(result.assemblyTimeouts).toBe(1);
+        // Даём фону дожить: заливка кончается на 70-й секунде.
+        for (let i = 0; i < 5; i += 1) {
+          await jest.advanceTimersByTimeAsync(10_000);
+        }
+
+        expect(built.ffmpeg.submit).not.toHaveBeenCalled();
+        // Второй кадр уже не заливался.
+        expect(built.blob.uploadBuffer).toHaveBeenCalledTimes(1);
+        expect(built.prisma.tutorialVideoAsset.updateMany).toHaveBeenCalledWith(
+          {
+            where: { id: 'tva-new', assemblyStatus: 'preparing' },
+            data: {
+              assemblyStatus: 'failed',
+              assemblyError: expect.stringMatching(
+                /^infra: отправка не уложилась/,
+              ),
+              contentHash: null,
+            },
+          },
+        );
+        expect(built.aiUsage.record).not.toHaveBeenCalledWith(
+          expect.objectContaining({ operation: 'tutorial-video-assembly' }),
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    }, 20_000);
+  });
+
+  describe('отмена отправки по дедлайну — последняя проверка перед submit (находка 3)', () => {
+    it('обрыв пришёлся на заливку подписей — оплачиваемая задача не уходит', async () => {
+      // Кадры залиты быстро, подписи — дольше дедлайна. После них
+      // остаётся единственная проверка — прямо перед `ffmpeg.submit`.
+      jest.useFakeTimers();
+      try {
+        okBrowser();
+        const built = build([
+          {
+            id: 'ts-n',
+            subjectKey: '1',
+            locale: 'ru',
+            steps: [
+              {
+                kind: 'goto',
+                route: 'generate',
+                narration: 'Открываем мастер.',
+              },
+            ],
+          },
+        ]);
+        built.ffmpeg.configured.mockReturnValue(true);
+        built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-late' });
+        built.blob.uploadBuffer.mockImplementation((pathname: string) =>
+          /captions/.test(pathname)
+            ? new Promise((resolve) =>
+                setTimeout(
+                  () => resolve({ url: 'https://blob.example.com/c.ass' }),
+                  70_000,
+                ),
+              )
+            : Promise.resolve({ url: 'https://blob.example.com/f.png' }),
+        );
+
+        const running = built.service.run();
+        let settled = false;
+        void running.then(
+          () => (settled = true),
+          () => (settled = true),
+        );
+        for (let i = 0; i < 40 && !settled; i += 1) {
+          await jest.advanceTimersByTimeAsync(10_000);
+        }
+        const result = await running;
+        expect(result.assemblyTimeouts).toBe(1);
+        for (let i = 0; i < 5; i += 1) {
+          await jest.advanceTimersByTimeAsync(10_000);
+        }
+
+        // Подписи действительно заливались — обрыв пришёлся на них.
+        expect(
+          built.blob.uploadBuffer.mock.calls.some(([p]: [string]) =>
+            /captions/.test(p),
+          ),
+        ).toBe(true);
+        expect(built.ffmpeg.submit).not.toHaveBeenCalled();
+        expect(built.prisma.tutorialVideoAsset.updateMany).toHaveBeenCalledWith(
+          {
+            where: { id: 'tva-new', assemblyStatus: 'preparing' },
+            data: {
+              assemblyStatus: 'failed',
+              assemblyError: expect.stringMatching(/до отправки задачи$/),
+              contentHash: null,
+            },
+          },
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    }, 20_000);
+  });
+
+  describe('прежний одобренный ролик живёт сутки (находка 10)', () => {
+    function video(id: string, over: Record<string, unknown> = {}) {
+      return {
+        id,
+        subjectKey: '1',
+        locale: 'ru',
+        assemblyStatus: 'complete',
+        reviewed: true,
+        clientSiteDraftId: null,
+        blobUrl: `https://blob.example.com/tutorial-videos/1/${id}.mp4`,
+        ...over,
+      };
+    }
+
+    it('новый одобрен час назад — прежний одобренный и его постер на месте', async () => {
+      const built = build([]);
+      stubAssets(built.prisma, [video('new'), video('old')]);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.videoApprovedAt'
+          ? JSON.stringify({
+              new: new Date(Date.now() - 3600_000).toISOString(),
+            })
+          : null,
+      );
+
+      const result = await built.service.pollAssemblies();
+
+      expect(result.swept).toBe(0);
+      expect(built.blob.deleteBlob).not.toHaveBeenCalled();
+    });
+
+    it('новый одобрен больше суток назад — прежний уходит вместе с постером', async () => {
+      const built = build([]);
+      stubAssets(built.prisma, [video('new'), video('old')]);
+      built.settings.get.mockImplementation(async (key: string) =>
+        key === 'tutorial.videoApprovedAt'
+          ? JSON.stringify({
+              new: new Date(Date.now() - 25 * 3600_000).toISOString(),
+            })
+          : null,
+      );
+
+      const result = await built.service.pollAssemblies();
+
+      expect(result.swept).toBe(1);
+      expect(built.blob.deleteBlob).toHaveBeenCalledWith(
+        'tutorial-videos/1/old.mp4',
+      );
+      expect(built.blob.deleteBlob).toHaveBeenCalledWith(
+        'tutorial-video-posters/old.png',
       );
     });
   });

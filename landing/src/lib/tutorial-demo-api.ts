@@ -7,11 +7,29 @@ const TOPICS: Record<DemoScenario, readonly string[]> = {
   greetings: ['greeting-brief', 'greeting-references', 'greeting-script', 'greeting-settings', 'greeting-video'],
 };
 
+export type DemoTheme = 'light' | 'dark';
+
 export interface TutorialDemo {
   subjectKey: string;
   title: string;
   videoUrl: string;
+  /**
+   * Размер холста ролика — сцена плеера ставит по нему пропорцию ДО
+   * загрузки видео (`preload="none"`). Оба `null`, если API размера не
+   * дал или дал негодный: тогда прежняя вертикаль 720:1560.
+   */
+  width: number | null;
+  height: number | null;
+  /** Первый кадр ролика, показывается до нажатия; `null` — нет. */
+  posterUrl: string | null;
+  /** Тема интерфейса на съёмке; `null` — не записана. */
+  theme: DemoTheme | null;
 }
+
+/** Границы размера: меньше 16 px — не кадр, больше 8K — не наш ролик.
+ * Вне них — мусор, который сломал бы `aspect-ratio` сцены. */
+export const DEMO_MIN_SIDE = 16;
+export const DEMO_MAX_SIDE = 7680;
 
 /**
  * Лента демо одной локали. `failed` — роликов нет, и хотя бы одна тема не
@@ -32,6 +50,28 @@ function parseUrl(raw: string): URL | null {
   } catch {
     return null;
   }
+}
+
+/** Публичная ссылка на медиа: только https и без логина/пароля в адресе. */
+export function safeMediaUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const url = parseUrl(raw);
+  if (!url || url.protocol !== 'https:' || url.username || url.password) return null;
+  return url.href;
+}
+
+function side(raw: unknown): number | null {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= DEMO_MIN_SIDE && raw <= DEMO_MAX_SIDE
+    ? raw
+    : null;
+}
+
+/** Размер кадра — оба целых в границах или оба `null`: по одной
+ * стороне пропорцию не поставить. */
+export function demoSize(width: unknown, height: unknown): { width: number; height: number } | null {
+  const w = side(width);
+  const h = side(height);
+  return w !== null && h !== null ? { width: w, height: h } : null;
 }
 
 /**
@@ -57,9 +97,20 @@ export async function loadTutorialDemos(scenario: DemoScenario, locale: Locale):
       // Ответ корректный, но ролика для этой локали нет (не вычитан, или
       // API отдал тему на языке по умолчанию).
       if (data.locale !== locale || !data.title.trim() || typeof data.videoUrl !== 'string') return 'none';
-      const url = parseUrl(data.videoUrl);
-      if (!url || url.protocol !== 'https:' || url.username || url.password) return 'none';
-      return { subjectKey, title: data.title, videoUrl: url.href };
+      const videoUrl = safeMediaUrl(data.videoUrl);
+      if (!videoUrl) return 'none';
+      // Метаданные — улучшение, а не условие: негодный размер или постер
+      // отбрасываются по одному, ролик остаётся.
+      const size = demoSize(data.width, data.height);
+      return {
+        subjectKey,
+        title: data.title,
+        videoUrl,
+        width: size?.width ?? null,
+        height: size?.height ?? null,
+        posterUrl: safeMediaUrl(data.posterUrl),
+        theme: data.theme === 'light' || data.theme === 'dark' ? data.theme : null,
+      };
     } catch {
       // A missing approval or API failure must not break the landing.
       return 'error';

@@ -4,6 +4,11 @@
  * Без входа и без данных пользователя, как `GET /greeting/policy`: это
  * каталог продукта, а не чьи-то данные. Ключ темы и язык — всё, что
  * нужно; кто спрашивает, здесь не важно.
+ *
+ * `?theme=light|dark` — необязательное пожелание темы ролика (лендинг
+ * со светлой/тёмной страницей). Неизвестное значение молча
+ * игнорируется, а не даёт 400: ответ кешируется публично, и опечатка в
+ * параметре не должна стоить посетителю справки.
  */
 
 import { Controller, Get, Header, Param, Query } from '@nestjs/common';
@@ -20,7 +25,8 @@ export class TutorialHelpController {
   get(
     @Param('subjectKey') subjectKey: string,
     @Query('locale') locale?: string,
+    @Query('theme') theme?: string,
   ): Promise<TutorialHelpView> {
-    return this.help.get(subjectKey, locale);
+    return this.help.get(subjectKey, locale, theme);
   }
 }

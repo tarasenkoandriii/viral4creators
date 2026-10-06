@@ -80,7 +80,7 @@
     },
     {
       "path": "/api/cron/tutorial-scenario-run",
-      "schedule": "0 9,10,11,12,13,14,15,16,17,18,19,20,21,22,23 * * *"
+      "schedule": "5 9-23 * * *"
     },
     {
       "path": "/api/cron/tutorial-assembly-poll",
@@ -88,7 +88,7 @@
     },
     {
       "path": "/api/cron/ui-snapshot-run",
-      "schedule": "*/15 * * * *"
+      "schedule": "10-59/15 * * * *"
     },
     {
       "path": "/api/cron/voice-uploads-sweep",

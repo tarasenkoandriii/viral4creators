@@ -51,6 +51,7 @@ import {
   type MapGateReport,
   type VoiceMapContent,
 } from '../assist-ui-core/voice-map';
+import { parseMemoContent } from '../assist-ui-core/memo';
 import type { AccountMembership } from '../site-core/account/roles';
 import { adminHostIdsOf } from '../site-core/ownership/host-roles';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
@@ -203,14 +204,125 @@ export class VoiceMapService {
     return new Set(rows.map((r) => `${r.lang}:${r.norm}`));
   }
 
+  /**
+   * Опубликованные мемо сайта (и «требует проверки») — на какие цели
+   * ссылаются их шаги: разметка `assistId` и ключ цели карты `mapKey`
+   * (ворота «затронутые мемо», аудит Э6-бис (е) (2)).
+   */
+  private async memoTargets(
+    db: Db,
+    siteId: string,
+  ): Promise<{ ids: Map<string, number[]>; keys: Map<string, number[]> }> {
+    const ids = new Map<string, number[]>();
+    const keys = new Map<string, number[]>();
+    const memos = await db.assistSiteMemo.findMany({
+      where: {
+        siteId,
+        status: { in: ['published', 'needs_review'] },
+        publishedVersion: { not: null },
+      },
+      select: { id: true, number: true, publishedVersion: true },
+      take: 500,
+    });
+    if (!memos.length) return { ids, keys };
+    const num = new Map(memos.map((m) => [m.id, m.number]));
+    const vers = await db.assistSiteMemoVersion.findMany({
+      where: {
+        OR: memos.map((m) => ({ memoId: m.id, number: m.publishedVersion! })),
+      },
+      select: { memoId: true, content: true },
+    });
+    const add = (
+      map: Map<string, number[]>,
+      k: string | null | undefined,
+      n: number,
+    ) => {
+      if (!k) return;
+      const list = map.get(k) ?? [];
+      if (!list.includes(n)) list.push(n);
+      map.set(k, list);
+    };
+    for (const v of vers) {
+      const n = num.get(v.memoId);
+      if (n === undefined) continue;
+      for (const st of parseMemoContent(v.content).content.steps) {
+        if (!st.target) continue;
+        add(ids, st.target.pin.assistId, n);
+        add(keys, st.target.mapKey, n);
+      }
+    }
+    return { ids, keys };
+  }
+
+  /**
+   * Ворота версии/черновика. `previous` — опубликованная версия карты (её
+   * цели, которых нет в `content`, для мемо — «удалены»); не передана —
+   * читается текущая опубликованная.
+   */
   async gatesOf(
     db: Db,
     siteId: string,
     content: VoiceMapContent,
+    previous?: VoiceMapContent | null,
   ): Promise<MapGateReport> {
+    const memo = await this.memoTargets(db, siteId);
+    let prev = previous;
+    if (prev === undefined) {
+      const cur = await db.assistSiteVoiceMap.findFirst({
+        where: { siteId },
+        select: { publishedVersion: true },
+      });
+      prev = await this.publishedContent(
+        db,
+        siteId,
+        cur?.publishedVersion ?? 0,
+      );
+    }
     return voiceMapGates(content, {
       memoPhrases: await this.memoPhrases(db, siteId),
+      memoAssistIds: memo.ids,
+      memoMapKeys: memo.keys,
+      previous: prev,
     });
+  }
+
+  /**
+   * После публикации карты: опубликованные мемо, чьи шаги нажимают цель,
+   * ставшую «никогда» или удалённой, — `needs_review` (в бою не
+   * исполняются; выход — новая версия мемо с прогоном, §5-бис.17 п.8).
+   */
+  private async memosToReview(
+    db: Db,
+    siteId: string,
+    gates: MapGateReport,
+    version: number,
+    now: Date,
+  ): Promise<number[]> {
+    const byMemo = new Map<number, string>();
+    for (const w of gates.warnings)
+      if (w.code === 'memo_affected' && w.memo !== undefined && w.key)
+        if (!byMemo.has(w.memo)) byMemo.set(w.memo, w.key);
+    const moved: number[] = [];
+    for (const [number, key] of byMemo) {
+      const r = await db.assistSiteMemo.updateMany({
+        where: { siteId, number, status: 'published' },
+        data: {
+          status: 'needs_review',
+          reviewReason: {
+            code: 'voice_map',
+            key,
+            mapVersion: version,
+            at: now.toISOString(),
+          },
+        },
+      });
+      if (r.count) moved.push(number);
+    }
+    if (moved.length)
+      this.logger.log(
+        `voice-map publish site=${siteId} v=${version}: memo needs_review ${moved.join(',')}`,
+      );
+    return moved;
   }
 
   async draft(
@@ -525,7 +637,12 @@ export class VoiceMapService {
         `Версия в статусе «${v.status}» — публикуется только версия на проверке`,
       );
     const content = parseVoiceMapContent(v.content);
-    const gates = await this.gatesOf(db, siteId, content);
+    const gates = await this.gatesOf(
+      db,
+      siteId,
+      content,
+      await this.publishedContent(db, siteId, row.publishedVersion),
+    );
     if (!gates.ok) {
       await db.assistSiteVoiceMapVersion.updateMany({
         where: { id: v.id, status: 'checking' },
@@ -613,6 +730,7 @@ export class VoiceMapService {
       throw e;
     }
     await this.toSharedMap(m.accountId, siteId, content, now);
+    await this.memosToReview(db, siteId, gates, v.number, now);
     this.logger.log(
       `voice-map publish site=${siteId} v=${v.number} member=${m.memberId}`,
     );

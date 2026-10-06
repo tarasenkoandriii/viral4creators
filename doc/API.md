@@ -260,6 +260,16 @@
 | `POST /api/assistant/chat` | открыто (`PublicOriginGuard` + `RateLimitGuard`, 10/мин и 60/час) | вопрос посетителя → потоковый ответ; SSE при `Accept: text/event-stream`, иначе JSON-запасной вариант `{text,actions,usage}` (§4.3) — единственный маршрут во всём бэкенде, что сам пишет `@Res()` в обход `ResponseInterceptor` |
 | `POST /api/assistant/event` | открыто (`PublicOriginGuard` + `RateLimitGuard`, 30/мин) | батч клиентской телеметрии виджета (open/ask/action_click/close/proactive_*) — best-effort, ошибка записи не возвращается как ошибка ответа |
 
+## Ролики обучалки и статус демо (заход 1 после аудита кронов, 06.10.2026)
+
+| Метод и путь | Доступ | Назначение |
+| --- | --- | --- |
+| `GET /api/tutorial-help/:subjectKey?locale=&theme=` | открыто, `Cache-Control: public, max-age=300` | самый свежий ОДОБРЕННЫЙ ролик пары (тема шага × локаль): `{subjectKey, locale, title, text, videoUrl, durationMs, width, height, posterUrl, theme, capturedAt, captureBuild}` (нет данных — `null`; размер — только парой положительных целых). `theme=light\|dark` необязателен: сначала ролик этой темы, иначе любой; неизвестное значение игнорируется (не 400 — ответ кешируется). Нет одобренного — 404 |
+| `GET /api/ops/demo-status` | сессия админки (`AdminSessionGuard`) + только оператор (иначе 401/403), `no-store` | только чтение, без ПД и ссылок на видео: по кронам `tutorial-scenario-generate`, `tutorial-scenario-run`, `tutorial-assembly-poll`, `ui-snapshot-run` — `lastRun`, `lastSuccess` (настоящий, без пропусков), `lastFailure`, `lastSkip`; матрица тем × 5 локалей (`approved {theme, capturedAt, captureBuild, durationMs, width, height, hasPoster}`, `approvedThemes`, `pendingReview`), ролики сайтов заказчиков исключены; последние снимки интерфейса по маршрутам и темам за 30 дней |
+
+`captureBuild` — первые 7 символов `VERCEL_GIT_COMMIT_SHA` сборки фронтенда
+(`<meta name="app-build">` в `index.html`) или `dev`.
+
 ## Идентичность, оферта, админка
 
 | Метод и путь | Доступ | Назначение |

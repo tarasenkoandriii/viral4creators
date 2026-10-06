@@ -7,8 +7,11 @@
  */
 
 import {
+  ABANDONED_FRAMES_RETENTION_DAYS,
   ClientSiteDraftRetention,
   DECIDED_FRAMES_RETENTION_DAYS,
+  FRAMES_PURGE_BATCH,
+  PENDING_REVIEW_WARN_DAYS,
   SECRETS_RETENTION_DAYS,
 } from './draft-retention';
 
@@ -63,6 +66,7 @@ function matches(r: any, where: any): boolean {
     if (cond instanceof Date) return v?.getTime() === cond.getTime();
     if (typeof cond === 'object') {
       if ('not' in cond) return cond.not === null ? v !== null : v !== cond.not;
+      if ('gte' in cond && !(v !== null && v >= cond.gte)) return false;
       if ('lt' in cond) return v !== null && v < cond.lt;
       if ('in' in cond) return cond.in.includes(v);
     }
@@ -120,10 +124,17 @@ function retention(
   assets: any[] = [],
   blob = fakeBlob([]),
   secrets?: any,
+  notify?: { alert: jest.Mock },
 ) {
   const prisma = fakePrisma(rows, assets);
   return {
-    r: new ClientSiteDraftRetention(prisma as any, blob as any, quiet, secrets),
+    r: new ClientSiteDraftRetention(
+      prisma as any,
+      blob as any,
+      quiet,
+      secrets,
+      notify,
+    ),
     prisma,
     blob,
   };
@@ -263,10 +274,11 @@ describe('Ш0.6: срок жизни кадров в публичном Blob', (
       status: 'DRAFTING',
       updatedAt: daysAgo(20),
     });
+    // На одобрении меньше срока брошенного — ещё живой.
     const review = row({
       id: 'review',
       status: 'PENDING_REVIEW',
-      updatedAt: daysAgo(90),
+      updatedAt: daysAgo(ABANDONED_FRAMES_RETENTION_DAYS - 1),
     });
     const blob = fakeBlob([
       'tutorial-video-frames/recent/0.png',
@@ -364,5 +376,79 @@ describe('Э-С Ш2: данные входа в хранилище sites-backend
     await r.run(NOW);
     expect(old.userSiteSessionId).toBeNull();
     expect(old.credentialsEnc).toBeNull();
+  });
+
+  describe('черновик на одобрении и пачка уборки (аудит кронов 06.10.2026)', () => {
+    it('на одобрении дольше срока брошенного — кадры стёрты (снимки кабинета не хранятся бессрочно)', async () => {
+      const review = row({
+        id: 'review',
+        status: 'PENDING_REVIEW',
+        updatedAt: daysAgo(ABANDONED_FRAMES_RETENTION_DAYS + 1),
+      });
+      const blob = fakeBlob(['tutorial-video-frames/review/0.png']);
+      const { r } = retention([review], [], blob);
+      const res = await r.run(NOW);
+      expect(res.framesPurged).toBe(1);
+      expect(blob.store.size).toBe(0);
+      expect(review.framesPurgedAt).toEqual(NOW);
+    });
+
+    it('одобренные без сборки не занимают пачку — остальные убираются', async () => {
+      // Раньше полсотни старейших одобренных без ролика забивали
+      // `FRAMES_PURGE_BATCH` и пропускались уже в цикле — каждый день.
+      const stuck = Array.from({ length: FRAMES_PURGE_BATCH }, (_, i) =>
+        row({
+          id: `stuck-${i}`,
+          status: 'APPROVED',
+          updatedAt: daysAgo(400 - i),
+        }),
+      );
+      const rej = row({
+        id: 'rej',
+        status: 'REJECTED',
+        updatedAt: daysAgo(DECIDED_FRAMES_RETENTION_DAYS + 1),
+      });
+      const blob = fakeBlob(['tutorial-video-frames/rej/0.png']);
+      const { r } = retention([...stuck, rej], [], blob);
+      const res = await r.run(NOW);
+      expect(res.framesPurged).toBe(1);
+      expect(blob.store.size).toBe(0);
+      expect(stuck.every((d) => d.framesPurgedAt === null)).toBe(true);
+    });
+
+    it('за неделю до стирания — одна тревога оператору со списком', async () => {
+      const warnAt = ABANDONED_FRAMES_RETENTION_DAYS - PENDING_REVIEW_WARN_DAYS;
+      const due = row({
+        id: 'due',
+        status: 'PENDING_REVIEW',
+        updatedAt: new Date(daysAgo(warnAt).getTime() - 3600_000),
+      });
+      (due as any).title = 'Сайт Ромашка';
+      const early = row({
+        id: 'early',
+        status: 'PENDING_REVIEW',
+        updatedAt: daysAgo(warnAt - 2),
+      });
+      const late = row({
+        id: 'late',
+        status: 'PENDING_REVIEW',
+        updatedAt: daysAgo(warnAt + 2),
+      });
+      const notify = { alert: jest.fn().mockResolvedValue(true) };
+      const { r } = retention(
+        [due, early, late],
+        [],
+        fakeBlob([]),
+        undefined,
+        notify,
+      );
+      const res = await r.run(NOW);
+      expect(res.pendingReviewWarned).toBe(1);
+      expect(notify.alert).toHaveBeenCalledTimes(1);
+      expect(notify.alert).toHaveBeenCalledWith(
+        'client-site-retention:pending-review',
+        expect.stringContaining('Сайт Ромашка'),
+      );
+    });
   });
 });

@@ -267,9 +267,20 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     // Сравниваемые снимки — под префиксом, который знает уборка по сроку
     // хранения (`ui-snapshot-retention.ts`): чужой префикс она не трогает,
     // и файлы копились бы вечно.
+    // И адрес неугадываемый (аудит кронов 06.10.2026): после времени —
+    // случайный ключ в 24 знака base64url (144 бита), как у кадров
+    // обучалки по сайту заказчика. Голое время подбиралось перебором.
+    const keys = new Set<string>();
     for (const [pathname] of blob.uploadBuffer.mock.calls as Array<[string]>) {
-      expect(pathname).toMatch(/^qa-snapshots\/[a-z-]+\/ru\/light\/\d+\.png$/);
+      const m =
+        /^qa-snapshots\/[a-z-]+\/ru\/light\/\d+-([A-Za-z0-9_-]{24})\.png$/.exec(
+          pathname,
+        );
+      expect(m).not.toBeNull();
+      keys.add(m![1]);
     }
+    // Ключ у каждого снимка свой.
+    expect(keys.size).toBe(blob.uploadBuffer.mock.calls.length);
     expect(prisma.uiSnapshot.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -384,7 +395,10 @@ describe('UiSnapshotRunnerService — успешный обход', () => {
     // Отдельный префикс: снимок «на показ» нельзя спутать с базовым ни
     // глазами в консоли хранилища, ни скриптом.
     expect(blob.uploadBuffer).toHaveBeenCalledWith(
-      expect.stringMatching(/^qa-shots\/projects\/ru\/dark\//),
+      // …и с неугадываемым ключом папки перед именем файла (06.10.2026).
+      expect.stringMatching(
+        /^qa-shots\/projects\/ru\/dark\/[A-Za-z0-9_-]{24}\/\d+\.png$/,
+      ),
       expect.anything(),
       'image/png',
     );

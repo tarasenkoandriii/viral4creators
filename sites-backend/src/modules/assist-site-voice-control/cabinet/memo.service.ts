@@ -39,9 +39,11 @@ import {
   memoFromPlan,
   memoGates,
   memoPhrases,
+  memosWithinPlan,
   memoTextProblem,
   parseMemoContent,
   phraseNorm,
+  planIpOf,
   planSignature,
   suggestMemoKey,
   type MemoContent,
@@ -55,6 +57,7 @@ import {
 import { defaultVoiceControlRules, rulesOf } from '../../assist-ui-core/rules';
 import type { AccountMembership } from '../../site-core/account/roles';
 import { evaluateHostAccess } from '../../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../../site-core/ownership/host-roles';
 import type {
   MemoChangeView,
   MemoCheckReport,
@@ -158,8 +161,9 @@ export class MemoService {
     const row = await this.site(m, siteId);
     const rules =
       rulesOf(row.voiceControlSiteRules) ?? defaultVoiceControlRules();
+    // Хост «Сайта» (не «Админки», ТЗ §10): факты ссылок шагов — его.
     const h = await this.db(m).siteHost.findFirst({
-      where: { siteId, status: 'verified' },
+      where: { siteId, status: 'verified', ...PUBLIC_SITE_HOST },
       orderBy: { createdAt: 'asc' },
       select: { host: true },
     });
@@ -267,9 +271,23 @@ export class MemoService {
     return out;
   }
 
+  /**
+   * Опубликованные мемо сверх лимита тарифа (после понижения) — в бою не
+   * исполняются (первые N по номеру — исполняются, `memosWithinPlan`).
+   */
+  private overPlanIds(
+    rows: ReadonlyArray<Pick<MemoRow, 'id' | 'number' | 'status'>>,
+    limit: number,
+  ): Set<string> {
+    const pub = rows.filter((r) => r.status === 'published');
+    const within = new Set(memosWithinPlan(pub, limit).map((r) => r.id));
+    return new Set(pub.filter((r) => !within.has(r.id)).map((r) => r.id));
+  }
+
   private summary(
     row: MemoRow,
     stat: { runs: number; reached: number; last: Date | null } | undefined,
+    overPlan = false,
   ): MemoSummary {
     const c = parseMemoContent(row.draft).content;
     return {
@@ -287,6 +305,7 @@ export class MemoService {
       lastRunAt: stat?.last?.toISOString() ?? null,
       reviewReason: row.reviewReason ?? null,
       updatedAt: row.updatedAt.toISOString(),
+      overPlan,
     };
   }
 
@@ -307,10 +326,12 @@ export class MemoService {
     const candidates = MEMO_DECISIONS.candidates
       ? (await this.suggestions(m, siteId)).length
       : 0;
+    const limit = await this.limit(m);
+    const over = this.overPlanIds(rows, limit);
     return {
-      items: rows.map((r) => this.summary(r, rates.get(r.id))),
+      items: rows.map((r) => this.summary(r, rates.get(r.id), over.has(r.id))),
       used: rows.length,
-      limit: await this.limit(m),
+      limit,
       candidates,
     };
   }
@@ -328,16 +349,14 @@ export class MemoService {
     },
   ): Promise<MemoRow> {
     const db = this.db(m);
-    const used = await db.assistSiteMemo.count({
-      where: { siteId, status: { not: 'removed' } },
-    });
     const limit = await this.limit(m);
-    if (used >= limit)
-      throw voiceControlError(
+    const overLimit = () =>
+      voiceControlError(
         HttpStatus.PAYMENT_REQUIRED,
         'MEMO_LIMIT',
         `Мемо на этом тарифе — не больше ${limit}`,
       );
+    if (limit <= 0) throw overLimit();
     const taken = await this.nameTaken(db, siteId, null, p.content);
     if (taken)
       throw voiceControlError(
@@ -371,11 +390,18 @@ export class MemoService {
     }
     const row = await db.$transaction(async (tx) => {
       // Номер — из счётчика сайта атомарно; удалённый номер не вернётся.
+      // UPDATE счётчика блокирует строку сайта до конца транзакции: лимит
+      // считаем ПОСЛЕ него — два параллельных создания не дают 21 из 20
+      // (аудит Э6-бис (е) (4)); отказ откатывает и счётчик.
       const site = await tx.assistSite.update({
         where: { siteId },
         data: { memoCounter: { increment: 1 } },
         select: { memoCounter: true },
       });
+      const used = await tx.assistSiteMemo.count({
+        where: { siteId, status: { not: 'removed' } },
+      });
+      if (used >= limit) throw overLimit();
       return tx.assistSiteMemo.create({
         data: {
           accountId: m.accountId,
@@ -543,6 +569,20 @@ export class MemoService {
       orderBy: { createdAt: 'desc' },
       take: 2_000,
     });
+    // Хеш IP плана — из строки журнала `plan` (соль на окно 7 дней, аудит
+    // Э6-бис (е) (7)); старые планы — хеш диалога (суточная соль).
+    const planIp = new Map<string, string>();
+    if (plans.length) {
+      const rows = await db.assistSiteUiActionLog.findMany({
+        where: { planId: { in: plans.map((p) => p.id) }, action: 'plan' },
+        select: { planId: true, target: true },
+        take: 5_000,
+      });
+      for (const r of rows) {
+        const ip = planIpOf(r.target);
+        if (ip) planIp.set(r.planId, ip);
+      }
+    }
     // Уже сохранённые как мемо подписи — не предлагаем.
     const memos = await db.assistSiteMemo.findMany({
       where: { siteId, status: { not: 'removed' } },
@@ -598,7 +638,8 @@ export class MemoService {
         phrases: new Set<string>(),
       };
       g.visitors.add(p.visitorId);
-      if (p.conversation?.ipHash) g.ips.add(p.conversation.ipHash);
+      const ip = planIp.get(p.id) ?? p.conversation?.ipHash;
+      if (ip) g.ips.add(ip);
       if (g.phrases.size < 5 && !memoTextProblem(p.utteranceMasked, 120))
         g.phrases.add(p.utteranceMasked);
       groups.set(sig, g);
@@ -679,8 +720,18 @@ export class MemoService {
         checkReport: v.checkReport ?? (await this.checkReportOf(db, v)),
       })),
     );
+    const over =
+      row.status === 'published'
+        ? this.overPlanIds(
+            await db.assistSiteMemo.findMany({
+              where: { siteId, status: 'published' },
+              select: { id: true, number: true, status: true },
+            }),
+            await this.limit(m),
+          )
+        : new Set<string>();
     return {
-      ...this.summary(row, rates.get(row.id)),
+      ...this.summary(row, rates.get(row.id), over.has(row.id)),
       draft,
       draftRevision: row.draftRevision,
       gates: this.gates(
@@ -1078,8 +1129,10 @@ export class MemoService {
         'Сначала соберите версию, прошедшую ворота',
       );
     const now = this.now();
+    // Сухой прогон мемо «Сайта» — только на хосте «Сайта»: на хосте
+    // «Админки» сессию мастера отклонит гвард (ТЗ §10), ссылку туда не даём.
     const hosts = await db.siteHost.findMany({
-      where: { siteId },
+      where: { siteId, ...PUBLIC_SITE_HOST },
       orderBy: { createdAt: 'asc' },
     });
     const ok = hosts.filter((h) => {

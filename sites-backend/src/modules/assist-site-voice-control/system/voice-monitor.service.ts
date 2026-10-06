@@ -45,7 +45,11 @@ import {
   sendToMembers,
   type FetchLike,
 } from '../../assist-knowledge-core/notify';
-import { MEMO_REVIEW, parseMemoContent } from '../../assist-ui-core/memo';
+import {
+  MEMO_REVIEW,
+  parseMemoContent,
+  planIpOf,
+} from '../../assist-ui-core/memo';
 import { pathMatches } from '../../assist-ui-core/rules';
 import {
   computeMetrics,
@@ -555,18 +559,36 @@ export class VoiceMonitorService {
                 stepIndex: true,
                 action: true,
                 result: true,
+                reason: true,
+                target: true,
                 pinMismatch: true,
               },
               take: 50_000,
             })
           : [];
+        // Хеш IP плана — из строки `plan` (соль на окно, аудит (7)); у
+        // старых планов её нет — хеш диалога.
+        const planIp = new Map<string, string>();
+        for (const l of logs)
+          if (l.action === 'plan') {
+            const ip = planIpOf(l.target);
+            if (ip) planIp.set(l.planId, ip);
+          }
         const failures = new Map<
           number,
           { visitors: Set<string>; ips: Set<string>; pin: boolean }
         >();
         for (const l of logs) {
+          // Цель шага мемо не найдена на странице при сборке плана (отказ
+          // `no_target` с номером шага мемо) — тоже сбой шага (аудит (5)).
+          const missing =
+            l.action === 'refused' &&
+            l.reason === 'no_target' &&
+            typeof (l.target as { memoStep?: unknown } | null)?.memoStep ===
+              'number';
           const bad =
             l.pinMismatch ||
+            missing ||
             ((l.result === 'failed' || l.result === 'manual') &&
               ![
                 'plan',
@@ -585,7 +607,8 @@ export class VoiceMonitorService {
             pin: false,
           };
           f.visitors.add(p.visitorId);
-          if (p.conversation?.ipHash) f.ips.add(p.conversation.ipHash);
+          const ip = planIp.get(p.id) ?? p.conversation?.ipHash;
+          if (ip) f.ips.add(ip);
           if (l.pinMismatch) f.pin = true;
           failures.set(l.stepIndex, f);
         }

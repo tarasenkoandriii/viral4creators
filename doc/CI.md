@@ -1,8 +1,8 @@
 # CI — что проверяется автоматически и почему именно это
 
 `.github/workflows/ci.yml`, появился на этапе 33. До него все проверки
-прогонялись руками на каждом этапе: тогда 442 теста (сейчас 8191), 17
-написанных вручную (сейчас 124)
+прогонялись руками на каждом этапе: тогда 442 теста (сейчас 8270), 17
+написанных вручную (сейчас 125)
 миграций и `sync-legal --check`, специально сделанный «для CI»,
 существовали — но запускал их только человек и только когда вспоминал.
 
@@ -44,7 +44,7 @@ PRISMA_SCHEMA_ENGINE_BINARY=/tmp/se PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
 | Джоба | Что делает |
 | --- | --- |
 | `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах |
-| `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 81 unit-скриптов `npx tsx frontend/scripts/*.test.ts`, `vite build` |
+| `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 82 unit-скриптов `npx tsx frontend/scripts/*.test.ts`, `vite build` |
 | `sites-landing` | `tsc`, `next lint --max-warnings 0`, unit-скрипты `npx tsx sites-landing/scripts/*.test.ts`, «сборка без `SITE_URL` падает», `next build`, проверка собранного HTML (`check:built`: canonical/hreflang/OG, реестр утверждений, секреты формы не в бандле), бюджет JS первой загрузки ≤ 110 КБ gzip, axe (WCAG 2.2 A/AA, обе темы, 360 px), Lighthouse CI (медиана 5 прогонов, бюджеты ТЗ лендинга §9) |
 | `next-apps` | матрица `admin` / `landing`: `tsc`, `next lint --max-warnings 0` (этап 53), `next build` |
 | `live-login-relay` | `sync-relay-shared --check` (копии фильтра исходящего трафика браузера из `backend/src/common`), eslint `--max-warnings 0`, jest, `tsc`-сборка; запускается правкой `live-login-relay/`, источников копий или скрипта синхронизации (Э-С Ш0.2) |

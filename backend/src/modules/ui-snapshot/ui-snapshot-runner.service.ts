@@ -79,6 +79,7 @@
  * маршрутов батча.
  */
 
+import { randomBytes } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ProjectType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -817,6 +818,13 @@ export class UiSnapshotRunnerService {
       // ровно так снимаются мгновенные состояния, которых нет в базе
       // (см. `UiSnapshotRunOptions.steps`).
       const shots: UiSnapshotStepShot[] = [];
+      // Неугадываемый сегмент пути (аудит кронов 06.10.2026, тот же
+      // приём, что `newFrameKey` у кадров обучалки по сайту заказчика).
+      // Blob публичный, листинга у него нет, но путь
+      // `маршрут/локаль/тема/<время>.png` подбирался перебором минут — а
+      // на кадрах кабинет фикстуры. Один ключ на снимок вида: кадры
+      // одного прогона по-прежнему лежат рядом.
+      const shotKey = randomBytes(18).toString('base64url');
       let stepsDone = 0;
       let stepsError: string | undefined;
       if (view.steps.length > 0) {
@@ -851,7 +859,7 @@ export class UiSnapshotRunnerService {
         // единственное место, где обе нумерации встречаются.
         for (const frame of result.frames) {
           const { url } = await this.blob.uploadBuffer(
-            `qa-shots/${routeKey}/${view.locale}/${view.theme}/${Date.now()}-${
+            `qa-shots/${routeKey}/${view.locale}/${view.theme}/${shotKey}/${Date.now()}-${
               frame.stepIndex + 1
             }.png`,
             Buffer.from(frame.bytes),
@@ -916,7 +924,7 @@ export class UiSnapshotRunnerService {
       // Отдельный префикс в Blob, чтобы его нельзя было спутать с
       // базовым, ни глазами в консоли хранилища, ни скриптом.
       if (view.unmasked) {
-        const shotPath = `qa-shots/${routeKey}/${view.locale}/${view.theme}/${Date.now()}.png`;
+        const shotPath = `qa-shots/${routeKey}/${view.locale}/${view.theme}/${shotKey}/${Date.now()}.png`;
         const { url } = await this.blob.uploadBuffer(
           shotPath,
           buffer,
@@ -949,7 +957,8 @@ export class UiSnapshotRunnerService {
 
       // Префикс — общий с уборкой по сроку хранения
       // (`ui-snapshot-retention.ts`): она удаляет только файлы под ним.
-      const pathname = `${UI_SNAPSHOT_BLOB_PREFIX}${routeKey}/${view.locale}/${view.theme}/${Date.now()}.png`;
+      // Время — для глаз в консоли хранилища, ключ — от подбора адреса.
+      const pathname = `${UI_SNAPSHOT_BLOB_PREFIX}${routeKey}/${view.locale}/${view.theme}/${Date.now()}-${shotKey}.png`;
       const { url: blobUrl } = await this.blob.uploadBuffer(
         pathname,
         buffer,

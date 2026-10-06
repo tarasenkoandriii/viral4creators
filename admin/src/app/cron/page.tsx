@@ -13,6 +13,10 @@
 // местному времени браузера): по каждому джобу сколько прогонов
 // ожидалось по расписанию vercel.json и сколько было, статусы,
 // медиана/максимум длительности, зависшие RUNNING и последние ошибки.
+// Пропуски (исход SKIPPED: замок, не настроено, потолок) — отдельной
+// колонкой «Холостые» и бейджем «Пропуск», а не успехом; у каждого
+// джоба — когда был последний НАСТОЯЩИЙ успех и последний провал
+// (аудит кронов 06.10.2026).
 // До этого история отдавала только 50 последних строк — у
 // двухминутных кронов это ≈1,5 часа, и сутки целиком проверить было
 // нельзя. У каждой карточки — «история за день» с подгрузкой страниц.
@@ -95,6 +99,24 @@ function formatTime(iso: string): string {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+function formatDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Бейдж строки журнала: пропуск (SKIPPED) — статус SUCCESS, но работы
+ * не было (замок, не настроено, потолок) — показывается отдельно от
+ * успеха (аудит кронов 06.10.2026). */
+function runBadge(run: CronRunLog): { label: string; severity: 'ok' | 'warning' | 'critical' } {
+  if (run.outcome === 'SKIPPED') return { label: 'Пропуск', severity: 'warning' };
+  return { label: STATUS_LABEL[run.status], severity: STATUS_SEVERITY[run.status] };
 }
 
 /** Джоб требует внимания: ошибки, пропуски по расписанию, зависшие. */
@@ -376,10 +398,15 @@ export default function CronPage() {
                   <th>Пропущено</th>
                   <th>Вручную</th>
                   <th>Успех</th>
+                  <th title="Прогон состоялся, но работу пропустил: замок, не настроено, потолок">
+                    Холостые
+                  </th>
                   <th>Ошибки</th>
                   <th>Выполняется</th>
                   <th>Медиана</th>
                   <th>Макс.</th>
+                  <th>Последний успех</th>
+                  <th>Последний провал</th>
                 </tr>
               </thead>
               <tbody>
@@ -406,7 +433,8 @@ export default function CronPage() {
                       {j.missed ?? '—'}
                     </td>
                     <td>{j.manualRuns}</td>
-                    <td>{j.byStatus.SUCCESS}</td>
+                    <td>{j.byStatus.SUCCESS - (j.skipped ?? 0)}</td>
+                    <td className={(j.skipped ?? 0) > 0 ? 'muted' : undefined}>{j.skipped ?? 0}</td>
                     <td className={j.byStatus.FAILED > 0 ? 'critical' : undefined}>
                       {j.byStatus.FAILED}
                     </td>
@@ -423,6 +451,17 @@ export default function CronPage() {
                     </td>
                     <td>{formatMs(j.medianDurationMs)}</td>
                     <td>{formatMs(j.maxDurationMs)}</td>
+                    <td>{formatDateTime(j.lastSuccessAt ?? null)}</td>
+                    <td
+                      className={
+                        j.lastFailureAt &&
+                        (!j.lastSuccessAt || j.lastFailureAt > j.lastSuccessAt)
+                          ? 'critical'
+                          : undefined
+                      }
+                    >
+                      {formatDateTime(j.lastFailureAt ?? null)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -474,8 +513,8 @@ export default function CronPage() {
                     <p className="muted" style={{ fontSize: 13 }}>{job.description}</p>
                   </div>
                   {last && (
-                    <span className={`badge-status badge-status-${STATUS_SEVERITY[last.status]}`}>
-                      {STATUS_LABEL[last.status]}
+                    <span className={`badge-status badge-status-${runBadge(last).severity}`}>
+                      {runBadge(last).label}
                     </span>
                   )}
                 </div>
@@ -601,9 +640,9 @@ export default function CronPage() {
                                 <td>{formatTime(r.startedAt)}</td>
                                 <td>
                                   <span
-                                    className={`badge-status badge-status-${STATUS_SEVERITY[r.status]}`}
+                                    className={`badge-status badge-status-${runBadge(r).severity}`}
                                   >
-                                    {STATUS_LABEL[r.status]}
+                                    {runBadge(r).label}
                                   </span>
                                 </td>
                                 <td>

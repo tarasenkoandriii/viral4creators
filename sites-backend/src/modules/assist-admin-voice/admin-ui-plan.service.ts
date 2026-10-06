@@ -1563,6 +1563,13 @@ export class AdminUiPlanService {
     body: { results?: unknown },
   ): Promise<AdminUndoView> {
     const row = await this.load(ctx, id);
+    // Окно «Вернуть» (10 мин) + время карточки — позже отчёт не меняет
+    // статус цепочки (аудит Э6-бис (е) (1), как у «Сайта»).
+    if (
+      this.now().getTime() - row.createdAt.getTime() >
+      CHAIN_DECISIONS.undoWindowMs + CHAIN_DECISIONS.offerTimeoutMs
+    )
+      return failPlan('expired');
     if (LIVE.has(row.status)) return failPlan('conflict');
     if (
       row.chainStatus === 'compensated' ||

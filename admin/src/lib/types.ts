@@ -960,6 +960,10 @@ export interface CronJobInfo {
 
 export type CronRunStatus = 'RUNNING' | 'SUCCESS' | 'FAILED';
 
+/** Исход сверх статуса: SKIPPED — прогон отработал, но работу пропустил
+ * (замок, не настроено, потолок). Статус у такого прогона SUCCESS. */
+export type CronRunOutcome = 'SKIPPED';
+
 // ── Снимки интерфейса крона ui-snapshot-run
 // (backend/src/modules/ui-snapshot/ui-snapshot-query.service.ts) ──────
 
@@ -1024,6 +1028,8 @@ export interface CronRunLog {
   summary: string | null;
   debugLog: unknown;
   errorMessage: string | null;
+  /** SKIPPED — пропуск; null/нет — обычный исход по статусу. */
+  outcome?: CronRunOutcome | null;
 }
 
 /** Сводка за период — `GET /admin/cron/summary` (AdminCronService.getSummary). */
@@ -1052,6 +1058,12 @@ export interface CronJobSummary {
   expectedSinceJob: string;
   total: number;
   byStatus: Record<CronRunStatus, number>;
+  /** Из byStatus.SUCCESS — сколько были пропуском (исход SKIPPED). */
+  skipped: number;
+  /** Последний настоящий успех (не пропуск) до конца периода; null — нет. */
+  lastSuccessAt: string | null;
+  /** Последний провал до конца периода; null — нет. */
+  lastFailureAt: string | null;
   medianDurationMs: number | null;
   maxDurationMs: number | null;
   /** RUNNING дольше замка JOB_LOCK_MS — зависший/убитый прогон. */

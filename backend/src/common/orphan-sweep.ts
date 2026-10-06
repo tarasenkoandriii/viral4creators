@@ -92,6 +92,13 @@ export const SWEEP_SCOPES = [
   // из этого только необходимость заводить строку первой — случай
   // «строку завели, а уборка всё равно не прошла» не рассматривался.
   'tutorial-video-frames',
+  // Постеры роликов обучалки (заход 1 метаданных, 06.10.2026):
+  // `tutorial-video-posters/<assetId>.png` — копия первого кадра в
+  // постоянном префиксе. Основная уборка — `sweepOldAssets` вместе с
+  // mp4; здесь — страховка на случай, когда строку удалили, а файл нет
+  // (сбой Blob, удаление строки в обход подметальщика). Владелец — строка
+  // `TutorialVideoAsset`: пока она жива, постер не трогается.
+  'tutorial-video-posters',
 ] as const;
 
 export type SweepScope = (typeof SWEEP_SCOPES)[number];
@@ -105,6 +112,7 @@ export const SWEEP_PREFIX: Record<SweepScope, string> = {
   'shared-videos': 'shared-videos/',
   users: 'users/',
   'tutorial-video-frames': 'tutorial-video-frames/',
+  'tutorial-video-posters': 'tutorial-video-posters/',
 };
 
 export interface BlobRef {
@@ -213,6 +221,9 @@ export function sweepFileKind(
       // слайд-шоу; `…/captions.ass` — подписи. Всё под префиксом
       // транзитное: готовый ролик живёт в `tutorial-videos/`.
       return rest.endsWith('.png') ? 'previews' : 'other';
+    case 'tutorial-video-posters':
+      // Постер — файл прямо под префиксом, без папки владельца.
+      return pathname.endsWith('.png') ? 'previews' : 'other';
   }
 }
 
@@ -256,11 +267,22 @@ export function isTransientVoiceRecording(
   return (TRANSIENT_VOICE[scope] ?? []).some((re) => re.test(pathname));
 }
 
-/** `<префикс>/<id>/что-угодно` → id; всё остальное → null. */
+/**
+ * `<префикс>/<id>/что-угодно` → id; всё остальное → null.
+ *
+ * Исключение — постеры: у них файл лежит прямо под префиксом и id
+ * владельца — имя файла (`tutorial-video-posters/<assetId>.png`).
+ * Всё прочее под этим префиксом — «неопознанный путь», и метла его не
+ * трогает.
+ */
 export function ownerIdOf(
   pathname: string,
   scope: SweepScope = 'sessions',
 ): string | null {
+  if (scope === 'tutorial-video-posters') {
+    const poster = pathname.match(/^tutorial-video-posters\/([^/.]+)\.png$/);
+    return poster ? poster[1] : null;
+  }
   const m = pathname.match(new RegExp(`^${SWEEP_PREFIX[scope]}([^/]+)/`));
   return m ? m[1] : null;
 }

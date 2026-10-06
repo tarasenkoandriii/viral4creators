@@ -132,6 +132,7 @@ import {
   captionsPathname,
 } from './tutorial-captions';
 import {
+  CANVAS,
   CAPTURE_DEVICE_SCALE_FACTOR,
   CAPTURE_VIEWPORT,
   evenFrameSeconds,
@@ -174,7 +175,12 @@ import {
   voiceoverSlotPrefix,
 } from './tutorial-voice';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
-import { selectSweepableAssets } from './tutorial-video-retention';
+import {
+  APPROVAL_STAMPS_SETTING_KEY,
+  pairsInApprovalGrace,
+  parseApprovalStamps,
+  selectSweepableAssets,
+} from './tutorial-video-retention';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import {
   attachFixtureToken,
@@ -234,15 +240,31 @@ const SCENARIO_TIMEOUT_MS = 90_000;
  * Обрыв по времени здесь безопасен ровно потому, что метод объявлен
  * best-effort: regression-результат сценария уже записан в базу ДО
  * него, и ни его исход, ни его обрыв на этот результат не влияют.
- * Недоделанная сборка остаётся строкой в `preparing`, которую подберёт
- * `sweepStalledAssemblies`, а её кадры — метла по префиксу
- * `tutorial-video-frames` (сквозной аудит 29.09.2026).
+ *
+ * Обрыв ОТМЕНЯЕТ отправку, а не только перестаёт её ждать (аудит
+ * кронов 06.10.2026): `runOne` передаёт в метод сигнал, и тот перед
+ * каждым синтезом, заливкой и submit проверяет его — недоделанная
+ * сборка закрывается строкой `failed` с причиной `infra:` и без
+ * оплаченной задачи. Уже начатый сетевой вызов сигнал не прерывает;
+ * если обрыв пришёлся на сам submit, задача уйдёт, и строка честно
+ * станет `pending`. Строку, оставшуюся в `preparing` после смерти
+ * процесса, подбирает `abandonStalePreparing`, её кадры — метла по
+ * префиксу `tutorial-video-frames` (сквозной аудит 29.09.2026).
  */
 const ASSEMBLY_SUBMIT_TIMEOUT_MS = 60_000;
 
 /**
+ * Резерв на выход из тика ПОСЛЕ последней сборки (аудит кронов
+ * 06.10.2026): закрытие страницы и браузера, итоговая тревога, запись
+ * результата и строки журнала крона. Сумма двух таймаутов ниже была
+ * ровно 150 с — то есть «впритык» к потолку при худшем случае обоих, и
+ * всё, что идёт после них, в арифметику не входило вовсе.
+ */
+const TICK_EXIT_RESERVE_MS = 15_000;
+
+/**
  * Запас на «хвост» тика: сценарий, уже начатый к моменту дедлайна,
- * плюс отправка его сборки.
+ * плюс отправка его сборки, плюс выход из тика.
  *
  * Это СУММА ДВУХ НАСТОЯЩИХ ГРАНИЦ, а не замер. Так было не всегда: до
  * пятого прогона здесь стояли 55 с, выведенные из среднего (≈46 с на
@@ -252,7 +274,8 @@ const ASSEMBLY_SUBMIT_TIMEOUT_MS = 60_000;
  * съел 53.6 с из отведённых 55. Держалось это пять прогонов только
  * потому, что обычная сборка быстрая.
  */
-const TICK_TAIL_RESERVE_MS = SCENARIO_TIMEOUT_MS + ASSEMBLY_SUBMIT_TIMEOUT_MS;
+const TICK_TAIL_RESERVE_MS =
+  SCENARIO_TIMEOUT_MS + ASSEMBLY_SUBMIT_TIMEOUT_MS + TICK_EXIT_RESERVE_MS;
 
 /**
  * Общий бюджет времени на весь тик. Не круглое «четыре минуты», а
@@ -273,10 +296,13 @@ const TICK_TAIL_RESERVE_MS = SCENARIO_TIMEOUT_MS + ASSEMBLY_SUBMIT_TIMEOUT_MS;
  * отложенные идут первыми.
  *
  * Арифметика покрытия: при ≈37 с на сценарий (пятый прогон: 8 за
- * 298.6 с) в 150 с бюджета помещается пять стартов. С 30.09.2026 тиков
- * 15 в сутки (раз в час 9:00–23:00, `vercel.json`, решение владельца:
- * тики, а не длинная функция) — ≈75 стартов, то есть полный круг пяти
- * локалей × 15 тем за сутки. Держит число тиков `cron-wiring.spec.ts`.
+ * 298.6 с) в 135 с бюджета (300 − 90 − 60 − 15) помещается четыре
+ * старта. Тиков 15 в сутки (в :05 каждого часа 9–23 UTC, `vercel.json`,
+ * решение владельца: тики, а не длинная функция) — ≈60 стартов в сутки.
+ * Одной локали (15 тем) это с избытком; пяти локалям (75 пар) круг
+ * больше суток — но и не нужен каждый день: прошедший сценарий с
+ * неизменными шагами повторно берётся не раньше `OK_RERUN_INTERVAL_MS`.
+ * Держит число тиков `cron-wiring.spec.ts`.
  *
  * Сценарии, не уложившиеся в бюджет, остаются на следующий прогон —
  * `lastRunAt` у них просто не обновится сегодня.
@@ -288,6 +314,66 @@ const RUN_DEADLINE_MS = TICK_CEILING_MS - TICK_TAIL_RESERVE_MS;
  * браузера, но всё равно не должны есть бюджет, отведённый на сами
  * сценарии (`RUN_DEADLINE_MS`). */
 const POLL_DEADLINE_MS = 60_000;
+
+/**
+ * Не чаще какого интервала повторять сценарий, прошедший (`ok`) на тех
+ * же шагах (аудит кронов 06.10.2026).
+ *
+ * При одной локали пятнадцать пар против ≈60 стартов в сутки давали
+ * каждой паре по четыре-пять прогонов в день — браузер, кадры,
+ * сравнение отпечатка, — и всё ради того же «ok». Регресс по
+ * интерфейсу ловит и суточный повтор; двадцать часов, а не сутки, —
+ * чтобы прогон не уползал каждый день на тик позже.
+ *
+ * «Те же шаги» держится без отдельного хеша: оба места, которые
+ * переписывают шаги (генератор при `changed` и ручная правка в
+ * админке), стирают `lastRunStatus`, — и пара с переписанными шагами
+ * уходит в прогон на ближайшем тике. Провалившиеся интервала не ждут.
+ */
+const OK_RERUN_INTERVAL_MS = 20 * 60 * 60 * 1000;
+
+/**
+ * Пометка «провал инфраструктуры, а не содержимого» в
+ * `assemblyError` (аудит кронов 06.10.2026).
+ *
+ * Потолок попыток (`MAX_ASSEMBLY_ATTEMPTS`) считает провалы ОДНОГО
+ * содержимого — его смысл в том, чтобы не платить вечно за кадр, на
+ * котором спотыкается внешний сервис. Но в тот же счёт попадали и
+ * провалы, к содержимому отношения не имеющие: выбранный денежный
+ * потолок, зависшая подготовка, сетевой сбой submit, икота Blob. Три
+ * таких — и пара не пересобиралась больше никогда (до смены кадров), а
+ * тревога «попытки остановлены» шла каждый прогон. Такие строки теперь
+ * помечаются этим префиксом и теряют `contentHash` — в счёт попыток они
+ * не попадают ни одним из двух признаков.
+ */
+const INFRA_ERROR_PREFIX = 'infra: ';
+
+/** Вид провала сборки — см. `INFRA_ERROR_PREFIX`. */
+type AssemblyFailureKind = 'infra' | 'content';
+
+/**
+ * Постер ролика — первый кадр, скопированный в ПОСТОЯННЫЙ префикс до
+ * уборки кадров-транзитов (аудит кронов 06.10.2026). Живёт столько же,
+ * сколько строка: `sweepOldAssets` удаляет его вместе с mp4, а сирот
+ * подбирает метла `sweep-orphans` (область `tutorial-video-posters`).
+ */
+export const TUTORIAL_POSTER_PREFIX = 'tutorial-video-posters/';
+
+export function tutorialPosterPathname(assetId: string): string {
+  return `${TUTORIAL_POSTER_PREFIX}${assetId}.png`;
+}
+
+/**
+ * Какой пропуск прогона уже поднимал тревогу (аудит кронов 06.10.2026).
+ *
+ * Пропуск громкий намеренно (см. `skipLoudly`), но при пятнадцати тиках в
+ * сутки одна и та же причина давала пятнадцать одинаковых тревог —
+ * дедупликация канала держит только десять минут. Тревога теперь одна
+ * на ВИД причины, пока прогон не пойдёт снова: тогда отметка стирается,
+ * и следующий пропуск снова громкий. Журнал крона при этом пишет
+ * каждый пропуск (исход SKIPPED).
+ */
+const RUN_SKIP_ALERT_SETTING_KEY = 'tutorial.runSkipAlerted';
 
 /** Дедлайн одной сборки слайд-шоу — тот же порядок величины, что
  * `POSTPROD_DEADLINE_MS` у переозвучки/кропа (минуты, не часы): если
@@ -646,6 +732,9 @@ export class TutorialScenarioRunnerService {
     /** Суточный потолок тика. Синтез — самая дробная из трёх трат, и
      *  именно он обязан уметь остановиться посередине сценария. */
     budget: TutorialBudget,
+    /** Отмена отправки по дедлайну (см. `runOne`): синтез — платный, и
+     *  после отмены не начинается ни один. */
+    signal?: AbortSignal,
   ): Promise<NarrationOutcome> {
     // Реплики читаются ПЕРВЫМИ и независимо от выключателя озвучки:
     // подписям синтез не нужен, им нужен текст.
@@ -725,6 +814,7 @@ export class TutorialScenarioRunnerService {
               );
               break;
             }
+            if (signal?.aborted) break;
             const track = await this.voiceTrack(
               scenario,
               String(stepIndex),
@@ -791,6 +881,7 @@ export class TutorialScenarioRunnerService {
         );
         return silent();
       }
+      if (signal?.aborted) return silent();
       const track = await this.voiceTrack(
         scenario,
         VOICE_SLOT_WHOLE,
@@ -1098,11 +1189,12 @@ export class TutorialScenarioRunnerService {
     const tmaBaseUrl = process.env.TMA_PUBLIC_URL?.trim();
     if (!telegramId || !token) {
       return this.skipLoudly(
+        'no-fixture-env',
         'фикстурный вход не настроен (FIXTURE_USER_TOKEN/FIXTURE_TELEGRAM_ID, см. .env.example)',
       );
     }
     if (!tmaBaseUrl) {
-      return this.skipLoudly('TMA_PUBLIC_URL не настроен');
+      return this.skipLoudly('no-tma-url', 'TMA_PUBLIC_URL не настроен');
     }
     // Токен несём только на origin своего API (`fixture-token-page.ts`).
     // Без адреса API отличить свой запрос от чужого нечем, а слать
@@ -1111,6 +1203,7 @@ export class TutorialScenarioRunnerService {
     const apiOrigin = fixtureApiOrigin();
     if (!apiOrigin) {
       return this.skipLoudly(
+        'no-api-url',
         'API_PUBLIC_URL не настроен или не разбирается — без него фикстурный токен ушёл бы и сторонним сайтам',
       );
     }
@@ -1120,9 +1213,31 @@ export class TutorialScenarioRunnerService {
     });
     if (!user) {
       return this.skipLoudly(
+        'no-fixture-user',
         `фикстурный пользователь telegramId=${telegramId} не заведён — запустите npm run seed:fixture-user`,
       );
     }
+
+    // Только ТЕСТОВЫЙ аккаунт (аудит кронов 06.10.2026, решение
+    // владельца). Ниже прогон пересевает фикстуру — `seedFixtureUser`
+    // ставит `isTestUser`/`freeOutsideProject` и переписывает сессии и
+    // проекты, — принимает за неё оферту и снимает её экраны в ролики.
+    // До правки защита стояла только у оферты, а пересев шёл безусловно:
+    // `FIXTURE_TELEGRAM_ID`, указавший на живого человека, пятнадцать
+    // раз в сутки превращал его в тестовый аккаунт с бесплатной
+    // генерацией, перезаписывал его сессии и тащил его данные в ролики.
+    //
+    // Перевод аккаунта в фикстуру — только явным действием оператора:
+    // кнопка «Завести фикстуру» (`POST /admin/tutorial-runner/seed-
+    // fixture-user`). Крон сам этого не делает никогда.
+    if (!user.isTestUser) {
+      return this.skipLoudly(
+        'not-test-user',
+        `аккаунт telegramId=${telegramId} из FIXTURE_TELEGRAM_ID не помечен тестовым (isTestUser) — крон работает только с фикстурой; если это и есть фикстура, заведите её кнопкой «Завести фикстуру» в админке, если живой человек — исправьте FIXTURE_TELEGRAM_ID`,
+      );
+    }
+    // Все условия запуска выполнены — пропуск, если он был, кончился.
+    await this.forgetSkipAlert();
 
     // Оферта фикстуры — текущей версии (просмотр роликов прода
     // 01.10.2026). `TERMS_VERSION` сменился 29.09.2026, фикстура
@@ -1133,10 +1248,9 @@ export class TutorialScenarioRunnerService {
     // тестового аккаунта (`isTestUser` ставит сидирование фикстуры):
     // `FIXTURE_TELEGRAM_ID` может указывать и на живого человека, а
     // принимать документы за него исполнитель права не имеет.
-    if (
-      user.isTestUser &&
-      (user.termsVersion !== TERMS_VERSION || !user.termsAcceptedAt)
-    ) {
+    // `isTestUser` здесь уже проверен выше — целиком прогон идёт только
+    // по тестовому аккаунту.
+    if (user.termsVersion !== TERMS_VERSION || !user.termsAcceptedAt) {
       try {
         await this.prisma.user.update({
           where: { id: user.id },
@@ -1172,7 +1286,26 @@ export class TutorialScenarioRunnerService {
     const scenarios = await this.prisma.tutorialScenario.findMany({
       where: {
         locale: { in: locales },
-        OR: [{ costly: false }, { approved: true }],
+        AND: [
+          { OR: [{ costly: false }, { approved: true }] },
+          // Прошедший на тех же шагах — не чаще `OK_RERUN_INTERVAL_MS`.
+          // Через `OR` из четырёх веток, а не `NOT { ok И свежий }`:
+          // `NOT` над сравнением с NULL в SQL даёт NULL, и сценарии, ни
+          // разу не исполнявшиеся (`lastRunStatus`/`lastRunAt` пусты),
+          // выпали бы из выборки навсегда.
+          {
+            OR: [
+              { lastRunStatus: null },
+              { lastRunStatus: { not: 'ok' } },
+              { lastRunAt: null },
+              {
+                lastRunAt: {
+                  lt: new Date(Date.now() - OK_RERUN_INTERVAL_MS),
+                },
+              },
+            ],
+          },
+        ],
       },
       // Сперва те, что дольше всех не исполнялись (`nulls: 'first'` —
       // ни разу не исполнявшиеся впереди всех). По `createdAt asc`
@@ -1559,6 +1692,14 @@ export class TutorialScenarioRunnerService {
         SCENARIO_TIMEOUT_MS,
         `сценарий не уложился в ${Math.round(SCENARIO_TIMEOUT_MS / 1000)}с`,
       );
+      // Метаданные съёмки для строки ролика (заход 1 метаданных,
+      // 06.10.2026): когда сняты кадры и какой сборкой фронтенда.
+      // Версию читаем на ещё открытой странице — после `finally` её
+      // уже нет.
+      const capture = {
+        capturedAt: new Date(),
+        captureBuild: await readCaptureBuild(page),
+      };
 
       // Кадр не снялся — прогон прошёл, а ролик будет короче
       // сценария. В журнал поимённо: это единственный след частичного
@@ -1604,6 +1745,16 @@ export class TutorialScenarioRunnerService {
         // выше значило бы перекрасить уже записанный успешный
         // regression-результат в провал из-за необязательного
         // побочного продукта.
+        //
+        // И сигнал отмены ВНУТРЬ (аудит кронов 06.10.2026): `withTimeout`
+        // только перестаёт ждать, а сама отправка продолжалась в фоне —
+        // синтез, заливки и ОПЛАЧЕННЫЙ `ffmpeg.submit` уже после того,
+        // как тик объявил «ролика не будет». Теперь метод проверяет
+        // сигнал перед каждой заливкой, синтезом и submit и по отмене
+        // закрывает строку `failed` с инфраструктурной причиной, не
+        // отправляя задачу. Уже начатый вызов сигнал не прерывает — он
+        // доходит, и следующий шаг не начинается.
+        const abort = new AbortController();
         await withTimeout(
           this.submitVideoAssembly(
             scenario,
@@ -1611,10 +1762,13 @@ export class TutorialScenarioRunnerService {
             budget,
             userId,
             assemblyNotes,
+            capture,
+            abort.signal,
           ),
           ASSEMBLY_SUBMIT_TIMEOUT_MS,
           `сборка не уложилась в ${Math.round(ASSEMBLY_SUBMIT_TIMEOUT_MS / 1000)}с`,
         ).catch((e: unknown) => {
+          abort.abort();
           assemblyNotes.assemblyTimedOut = true;
           this.logger.warn(
             `сценарий ${scenario.subjectKey} (${scenario.locale}): отправка сборки оборвана по времени (${e instanceof Error ? e.message : String(e)}) — прогон засчитан, ролика не будет`,
@@ -1793,7 +1947,7 @@ export class TutorialScenarioRunnerService {
        * свежая из них — НЕ та, что нужна. `ui-snapshot-runner`
        * держит служебную сессию (`data.qaFixture`, статус `created`,
        * без ролика), чтобы обход мастера не плодил пустые строки
-       * каждые две минуты; её `createdAt` новее фикстурной. Плюс
+       * каждый тик; её `createdAt` новее фикстурной. Плюс
        * каждый сценарий, идущий на ЧИСТЫЙ мастер, заводит ещё одну
        * пустую сессию — таков сам мастер.
        *
@@ -1913,14 +2067,46 @@ export class TutorialScenarioRunnerService {
    *
    * Ключ дедупликации — без причины: разные причины одного и того же
    * («прогона не было») не должны давать четыре разных сообщения.
+   *
+   * И одна тревога на ВИД причины, а не на тик (аудит кронов
+   * 06.10.2026): см. `RUN_SKIP_ALERT_SETTING_KEY`. Каждый пропуск
+   * по-прежнему виден в журнале крона — исходом SKIPPED.
    */
-  private async skipLoudly(reason: string): Promise<TutorialScenarioRunResult> {
+  private async skipLoudly(
+    /** Вид причины — стабильный ключ, без переменных частей текста. */
+    kind: string,
+    reason: string,
+  ): Promise<TutorialScenarioRunResult> {
     this.logger.warn(reason);
+    const alerted = await this.settings
+      .get(RUN_SKIP_ALERT_SETTING_KEY)
+      .catch(() => null);
+    if (alerted === kind) return this.skip(reason);
     await this.notify.alert(
       'tutorial-scenario-run:skipped',
-      `Сценарии обучающего видео: прогон не состоялся — ${reason}. Витрина сценариев показывает результат ПРОШЛОГО прогона, не сегодняшнего.`,
+      `Сценарии обучающего видео: прогон не состоялся — ${reason}. Витрина сценариев показывает результат ПРОШЛОГО прогона, не сегодняшнего. Пока причина та же, следующие пропуски тревог не дают — смотрите журнал крона.`,
     );
+    try {
+      await this.settings.set(RUN_SKIP_ALERT_SETTING_KEY, kind);
+    } catch (e) {
+      // Не запомнили — значит следующий тик скажет ещё раз. Громче, а
+      // не тише: это безопасная сторона.
+      this.logger.warn(
+        `отметка о тревоге пропуска не записана: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     return this.skip(reason);
+  }
+
+  /** Пропуск кончился — следующий снова поднимет тревогу. */
+  private async forgetSkipAlert(): Promise<void> {
+    try {
+      const alerted = await this.settings.get(RUN_SKIP_ALERT_SETTING_KEY);
+      if (alerted) await this.settings.set(RUN_SKIP_ALERT_SETTING_KEY, '');
+    } catch {
+      // Не стёрли — следующий пропуск той же причины промолчит. Журнал
+      // крона его всё равно покажет; ронять прогон из-за этого нечего.
+    }
   }
 
   private skip(reason: string): TutorialScenarioRunResult {
@@ -1973,6 +2159,14 @@ export class TutorialScenarioRunnerService {
       noFrames?: true;
       lostRace?: true;
     },
+    /** Когда и какой сборкой фронтенда сняты кадры — в строку ролика. */
+    capture: { capturedAt: Date; captureBuild: string | null } = {
+      capturedAt: new Date(),
+      captureBuild: null,
+    },
+    /** Отмена извне — дедлайн отправки (`ASSEMBLY_SUBMIT_TIMEOUT_MS`)
+     *  в `runOne`. Проверяется перед каждым синтезом, заливкой и submit. */
+    signal?: AbortSignal,
   ): Promise<void> {
     if (frames.length === 0) {
       // Молчать тут нельзя (сквозной аудит 29.09.2026). Сценарий из
@@ -2030,8 +2224,17 @@ export class TutorialScenarioRunnerService {
       frames.map((f) => f.stepIndex),
       userId,
       budget,
+      signal,
     );
     if (narrationFallback) assemblyNotes.narrationFallback = true;
+    // Отменено ещё до строки — заводить её незачем: ни заливок, ни
+    // задачи не было, и сирот нет.
+    if (signal?.aborted) {
+      this.logger.warn(
+        `сценарий ${scenario.subjectKey} (${scenario.locale}): отправка сборки отменена по времени до заведения строки — ничего не залито и не отправлено`,
+      );
+      return;
+    }
     // Подписи включены по умолчанию, в отличие от самой озвучки:
     // ролик смотрят без звука чаще, чем со звуком, и подпись —
     // единственное, что в этом случае объясняет кадр (§5 ТЗ).
@@ -2205,32 +2408,19 @@ export class TutorialScenarioRunnerService {
     // потолок не наступал бы никогда. Кандидаты — провалы с теми же
     // входами, кроме картинки (средняя часть отпечатка), их сличает
     // `sameSlideshowContent`.
-    const rest = fingerprintRest(contentHash);
-    const failedRows = rest
-      ? ((await this.prisma.tutorialVideoAsset
-          .findMany({
-            where: {
-              subjectKey: scenario.subjectKey,
-              locale: scenario.locale,
-              assemblyStatus: 'failed',
-              contentHash: { contains: `|${rest}|` },
-            },
-            orderBy: { createdAt: 'desc' },
-            take: FAILED_CANDIDATES_TAKE,
-            select: { contentHash: true },
-          })
-          .catch(() => [])) as { contentHash: string | null }[])
-      : [];
-    const failedSameContent = failedRows.filter((r) =>
-      sameSlideshowContent(r.contentHash, contentHash, sensitivity),
-    ).length;
+    //
+    // Тревога об остановке — НЕ здесь (аудит кронов 06.10.2026): здесь
+    // она шла каждый прогон пары, то есть до пяти раз в сутки об одном
+    // и том же. Её поднимает `failAssembly` ровно в момент перехода —
+    // когда записан провал, ставший `MAX_ASSEMBLY_ATTEMPTS`-м.
+    const failedSameContent = await this.failedSameContentCount(
+      scenario.subjectKey,
+      scenario.locale,
+      contentHash,
+    );
     if (failedSameContent >= MAX_ASSEMBLY_ATTEMPTS) {
       this.logger.warn(
         `сценарий ${scenario.subjectKey} (${scenario.locale}): сборка этого содержимого проваливалась ${failedSameContent} раз(а) — больше не пробуем, пока не изменятся кадры или реплики`,
-      );
-      await this.notify.alert(
-        `tutorial-assembly:giveup:${scenario.subjectKey}:${scenario.locale}`,
-        `Сборка ролика обучалки ${scenario.subjectKey}/${scenario.locale} провалилась ${failedSameContent} раз(а) на одном и том же содержимом — попытки остановлены. Посмотрите последнюю ошибку во вкладке «Видео-контент».`,
       );
       return;
     }
@@ -2258,6 +2448,15 @@ export class TutorialScenarioRunnerService {
           frameCount: frames.length,
           assemblyStatus: 'preparing',
           contentHash,
+          // Метаданные ролика (заход 1, 06.10.2026) — для плеера
+          // помощника и лендинга: размер холста (кадр приводится к нему
+          // планом `planSlideshow`), тема съёмки, когда и какой сборкой
+          // фронтенда сняты кадры. Постер дописывает опрос при `complete`.
+          width: CANVAS.width,
+          height: CANVAS.height,
+          theme: SCENARIO_THEME,
+          capturedAt: capture.capturedAt,
+          captureBuild: capture.captureBuild,
         },
       })) as { id: string };
     } catch (err) {
@@ -2283,6 +2482,10 @@ export class TutorialScenarioRunnerService {
       //
       const slides: SlideshowFrame[] = [];
       for (const frame of planFrames) {
+        if (signal?.aborted) {
+          await this.abortedAssembly(asset.id, scenario, 'заливки кадров');
+          return;
+        }
         const { url } = await this.blob.uploadBuffer(
           `${scenarioFramePrefix(asset.id)}${frame.stepIndex}.png`,
           Buffer.from(frame.bytes),
@@ -2313,6 +2516,10 @@ export class TutorialScenarioRunnerService {
       // общий `try` сборки: икота Blob уводила задачу в
       // `abandonAssembly`, и mp4 не появлялся вовсе.
       let captionsUrl: string | null = null;
+      if (signal?.aborted) {
+        await this.abortedAssembly(asset.id, scenario, 'заливки подписей');
+        return;
+      }
       try {
         if (captionsAss) {
           const { url } = await this.blob.uploadBuffer(
@@ -2348,7 +2555,11 @@ export class TutorialScenarioRunnerService {
         // Кадры уже залиты — снимаем их и строку за собой, иначе
         // получили бы ровно ту сироту, ради которой всё это и
         // переставлено.
-        await this.abandonAssembly(asset.id, 'кадры не годятся для сборки');
+        await this.abandonAssembly(
+          asset.id,
+          'кадры не годятся для сборки',
+          'content',
+        );
         return;
       }
 
@@ -2372,7 +2583,15 @@ export class TutorialScenarioRunnerService {
         await this.abandonAssembly(
           asset.id,
           'суточный потолок расхода обучалки выбран',
+          'infra',
         );
+        return;
+      }
+
+      // Последняя проверка отмены — прямо перед ОПЛАЧИВАЕМЫМ вызовом:
+      // после неё задача уйдёт и будет оплачена, что бы ни случилось.
+      if (signal?.aborted) {
+        await this.abortedAssembly(asset.id, scenario, 'отправки задачи');
         return;
       }
 
@@ -2442,9 +2661,12 @@ export class TutorialScenarioRunnerService {
         `сценарий ${scenario.subjectKey}: слайд-шоу отправлено на сборку (задача ${job.jobId}, ${frames.length} кадров)`,
       );
     } catch (err) {
+      // Заливки и submit — сеть и хранилище, а не содержимое: такой
+      // провал в счёт попыток одного содержимого не идёт.
       await this.abandonAssembly(
         asset.id,
         err instanceof Error ? err.message : String(err),
+        'infra',
       );
       this.logger.warn(
         `сценарий ${scenario.subjectKey}: не удалось отправить слайд-шоу на сборку: ${
@@ -2588,7 +2810,7 @@ export class TutorialScenarioRunnerService {
     for (const row of stale) {
       const reason =
         'подготовка оборвалась: строка застряла в preparing, задача не была отправлена';
-      await this.abandonAssembly(row.id, reason);
+      await this.abandonAssembly(row.id, reason, 'infra');
       // Черновик заказчика обязан вернуться на одобрение — иначе он
       // остаётся `APPROVED` с брошенной сборкой, и повторить её
       // нечем. У сценарного пути этого шага нет: там откатывать
@@ -2697,10 +2919,17 @@ export class TutorialScenarioRunnerService {
       assemblyStatus: string;
     }[];
 
-    const doomed = selectSweepableAssets(rows, MAX_ASSEMBLY_ATTEMPTS).slice(
-      0,
-      ASSET_DELETE_LIMIT,
+    // Прежний одобренный ролик держится сутки после одобрения нового —
+    // см. пятую роль `selectSweepableAssets`. Сбой чтения карты —
+    // поведение прежнее, а не отказ подметальщика.
+    const approvals = parseApprovalStamps(
+      await this.settings.get(APPROVAL_STAMPS_SETTING_KEY).catch(() => null),
     );
+    const doomed = selectSweepableAssets(
+      rows,
+      MAX_ASSEMBLY_ATTEMPTS,
+      pairsInApprovalGrace(rows, approvals, Date.now()),
+    ).slice(0, ASSET_DELETE_LIMIT);
     if (doomed.length === 0) return 0;
 
     // Заявки публикации — одним запросом на всех кандидатов, а не по
@@ -2735,6 +2964,13 @@ export class TutorialScenarioRunnerService {
       const pathname = pathnameFromBlobUrl(row.blobUrl, 'tutorial-videos/');
       try {
         if (pathname) await this.blob.deleteBlob(pathname);
+        // Постер — по пути из id, а не из `posterUrl`: копия могла
+        // залиться, а запись ссылки — нет. Только у собранного (постер
+        // заводится на `complete`). Не удалился — его подберёт метла
+        // `sweep-orphans`, когда строки не станет.
+        if (row.blobUrl) {
+          await this.blob.deleteBlob(tutorialPosterPathname(row.id));
+        }
         await this.prisma.tutorialVideoAsset.delete({ where: { id: row.id } });
         deleted++;
       } catch (e) {
@@ -2784,6 +3020,7 @@ export class TutorialScenarioRunnerService {
         await this.failAssembly(
           asset,
           'ключ внешнего сервиса сборки не настроен, а срок задачи истёк',
+          'infra',
         );
         closed++;
       }
@@ -2829,19 +3066,29 @@ export class TutorialScenarioRunnerService {
     clientSiteDraftId: string | null;
     assemblyJobId: string | null;
     assemblyStartedAt: Date | null;
+    /** Для счёта попыток одного содержимого (см. `failAssembly`). */
+    locale?: string;
+    contentHash?: string | null;
+    width?: number | null;
+    height?: number | null;
   }): Promise<void> {
     if (!asset.assemblyJobId) {
       await this.failAssembly(
         asset,
         'сборка помечена ожидающей, но задача не была отправлена (процесс оборвался между записью строки и submit)',
+        'infra',
       );
       return;
     }
 
     if (this.assemblyOverdue(asset)) {
+      // Содержимое, а не инфраструктура: задача принята и оплачена, и
+      // ролик, на котором внешний сервис стабильно зависает, иначе
+      // оплачивался бы каждый прогон без конца.
       await this.failAssembly(
         asset,
         `сборка не завершилась за ${ASSEMBLY_DEADLINE_MS / 60000} мин`,
+        'content',
       );
       return;
     }
@@ -2867,6 +3114,7 @@ export class TutorialScenarioRunnerService {
       await this.failAssembly(
         asset,
         status.error ?? 'ffmpeg-api вернул ошибку без текста',
+        'content',
       );
       return;
     }
@@ -2878,6 +3126,7 @@ export class TutorialScenarioRunnerService {
       await this.failAssembly(
         asset,
         'задача завершилась, но ffmpeg-api не вернул файла',
+        'content',
       );
       return;
     }
@@ -2898,6 +3147,7 @@ export class TutorialScenarioRunnerService {
         await this.failAssembly(
           asset,
           `ffmpeg-api отдал ${bytes.length} байт — это не готовый ролик`,
+          'content',
         );
         return;
       }
@@ -2912,6 +3162,14 @@ export class TutorialScenarioRunnerService {
           assemblyStatus: 'complete',
           blobUrl: ourUrl,
           assemblyError: null,
+          // Размер холста — у строк, которые его не записали при
+          // отправке: путь обучалки по сайту заказчика
+          // (`client-site-tutorial-admin.service.ts`) собирает тем же
+          // `planSlideshow`, то есть в тот же `CANVAS`, и строки,
+          // отправленные до заведения полей.
+          ...(asset.width == null || asset.height == null
+            ? { width: CANVAS.width, height: CANVAS.height }
+            : {}),
           // `durationMs` здесь НЕ пишется: он записан при отправке, из
           // `plan.durationMs` — того самого плана, по которому собран
           // файл. До этапа A он вычислялся тут заново, произведением
@@ -2935,14 +3193,22 @@ export class TutorialScenarioRunnerService {
         `сценарий ${asset.subjectKey}: слайд-шоу собрано (${bytes.length} байт)`,
       );
     } catch (err) {
+      // Задача у сервиса УДАЛАСЬ — сбой у нас, на скачивании или в
+      // Blob. В счёт попыток содержимого не идёт.
       await this.failAssembly(
         asset,
         `не удалось скачать/перезалить готовое видео: ${
           err instanceof Error ? err.message : String(err)
         }`,
+        'infra',
       );
       return;
     }
+
+    // Постер — ДО уборки кадров: первый кадр берётся из них же, а
+    // после `cleanupFrames` брать его неоткуда. Сбой — без последствий
+    // для ролика: плеер покажет первый кадр самого видео.
+    await this.savePoster(asset);
 
     // Уборка кадров — ЗА пределами try выше, и это правка повторного
     // сквозного аудита A+B+C. Внутри него она создавала состояние,
@@ -3042,8 +3308,13 @@ export class TutorialScenarioRunnerService {
       subjectKey: string;
       scenarioId?: string | null;
       clientSiteDraftId?: string | null;
+      locale?: string;
+      contentHash?: string | null;
     },
     reason: string,
+    /** Инфраструктурный провал в счёт попыток содержимого не идёт —
+     *  см. `INFRA_ERROR_PREFIX`. */
+    kind: AssemblyFailureKind,
   ): Promise<void> {
     this.logger.warn(
       `сценарий ${asset.subjectKey}: сборка видео провалилась — ${reason}`,
@@ -3051,8 +3322,16 @@ export class TutorialScenarioRunnerService {
     this.failedThisTick++;
     await this.prisma.tutorialVideoAsset.update({
       where: { id: asset.id },
-      data: { assemblyStatus: 'failed', assemblyError: reason },
+      data:
+        kind === 'infra'
+          ? {
+              assemblyStatus: 'failed',
+              assemblyError: `${INFRA_ERROR_PREFIX}${reason}`,
+              contentHash: null,
+            }
+          : { assemblyStatus: 'failed', assemblyError: reason },
     });
+    if (kind === 'content') await this.alertOnGiveUp(asset);
     // Уборка кадров и откат черновика — НЕЗАВИСИМЫЕ шаги, и ни один не
     // вправе отменить другой (сквозной аудит 29.09.2026).
     //
@@ -3161,6 +3440,9 @@ export class TutorialScenarioRunnerService {
   private async abandonAssembly(
     assetId: string,
     reason: string,
+    /** См. `INFRA_ERROR_PREFIX`: денежный потолок, зависшая подготовка,
+     *  сеть и Blob — `infra`; кадры, негодные для плана, — `content`. */
+    kind: AssemblyFailureKind,
   ): Promise<void> {
     // Сначала ЗАБИРАЕМ строку, и только потом трогаем её кадры
     // (сквозной аудит 29.09.2026).
@@ -3179,7 +3461,14 @@ export class TutorialScenarioRunnerService {
     const claimed = (await this.prisma.tutorialVideoAsset
       .updateMany({
         where: { id: assetId, assemblyStatus: 'preparing' },
-        data: { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
+        data:
+          kind === 'infra'
+            ? {
+                assemblyStatus: 'failed',
+                assemblyError: `${INFRA_ERROR_PREFIX}${reason}`.slice(0, 500),
+                contentHash: null,
+              }
+            : { assemblyStatus: 'failed', assemblyError: reason.slice(0, 500) },
       })
       .catch(() => ({ count: 0 }))) as { count: number };
     if (claimed.count === 0) {
@@ -3193,6 +3482,160 @@ export class TutorialScenarioRunnerService {
     } catch (e) {
       this.logger.warn(
         `кадры актива ${assetId} не убрались: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  /** Отправка отменена по дедлайну посреди подготовки: строка —
+   *  `failed` с инфраструктурной причиной, кадры — прочь, задачи нет. */
+  private async abortedAssembly(
+    assetId: string,
+    scenario: { subjectKey: string; locale: string },
+    stage: string,
+  ): Promise<void> {
+    this.logger.warn(
+      `сценарий ${scenario.subjectKey} (${scenario.locale}): отправка сборки отменена по времени до ${stage} — задача не отправлена`,
+    );
+    await this.abandonAssembly(
+      assetId,
+      `отправка не уложилась в ${Math.round(ASSEMBLY_SUBMIT_TIMEOUT_MS / 1000)}с и отменена до ${stage}`,
+      'infra',
+    );
+  }
+
+  /**
+   * Сколько раз проваливалась сборка ЭТОГО содержимого пары — в том же
+   * смысле «того же», что у предпроверки отпечатка (`sameSlideshowContent`).
+   *
+   * Инфраструктурные провалы не считаются дважды защищённо: у них стёрт
+   * `contentHash` (в выборку по нему они не попадают), и их причина
+   * начинается с `INFRA_ERROR_PREFIX` (отсеиваются здесь же — на случай
+   * строки, где отпечаток уцелел).
+   */
+  private async failedSameContentCount(
+    subjectKey: string,
+    locale: string,
+    contentHash: string,
+  ): Promise<number> {
+    const rest = fingerprintRest(contentHash);
+    if (!rest) return 0;
+    const { sensitivity } = resolveChangeSensitivity(
+      process.env,
+      TUTORIAL_FRAME_SENSITIVITY_ENV,
+      TUTORIAL_FRAME_SENSITIVITY,
+    );
+    const failedRows = (await this.prisma.tutorialVideoAsset
+      .findMany({
+        where: {
+          subjectKey,
+          locale,
+          assemblyStatus: 'failed',
+          contentHash: { contains: `|${rest}|` },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: FAILED_CANDIDATES_TAKE,
+        select: { contentHash: true, assemblyError: true },
+      })
+      .catch(() => [])) as {
+      contentHash: string | null;
+      assemblyError?: string | null;
+    }[];
+    return failedRows.filter(
+      (r) =>
+        !r.assemblyError?.startsWith(INFRA_ERROR_PREFIX) &&
+        sameSlideshowContent(r.contentHash, contentHash, sensitivity),
+    ).length;
+  }
+
+  /**
+   * Тревога «попытки остановлены» — ровно один раз, в момент записи
+   * провала, ставшего `MAX_ASSEMBLY_ATTEMPTS`-м (аудит кронов
+   * 06.10.2026). Прежде она шла из `submitVideoAssembly` на каждом
+   * прогоне пары после остановки — до пяти одинаковых в сутки.
+   *
+   * Только штатная обучалка: у роликов по сайту заказчика потолок
+   * попыток свой (`approve` в админке), а не этот.
+   */
+  private async alertOnGiveUp(asset: {
+    subjectKey: string;
+    clientSiteDraftId?: string | null;
+    locale?: string;
+    contentHash?: string | null;
+  }): Promise<void> {
+    if (asset.clientSiteDraftId || !asset.locale || !asset.contentHash) return;
+    try {
+      const failed = await this.failedSameContentCount(
+        asset.subjectKey,
+        asset.locale,
+        asset.contentHash,
+      );
+      if (failed !== MAX_ASSEMBLY_ATTEMPTS) return;
+      await this.notify.alert(
+        `tutorial-assembly:giveup:${asset.subjectKey}:${asset.locale}`,
+        `Сборка ролика обучалки ${asset.subjectKey}/${asset.locale} провалилась ${failed} раз(а) на одном и том же содержимом — попытки остановлены, пока не изменятся кадры или реплики. Посмотрите последнюю ошибку во вкладке «Видео-контент».`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `сценарий ${asset.subjectKey}: счёт попыток сборки не удался: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Постер собранного ролика: кадр с НАИМЕНЬШИМ номером шага из
+   * транзитов актива — копией в постоянный `tutorial-video-posters/`.
+   *
+   * Только штатная обучалка (`scenarioId`). У роликов по сайту
+   * заказчика кадры — снимки его кабинета под ключом черновика со своим
+   * сроком хранения (`draft-retention.ts`), и постоянная публичная копия
+   * вывела бы кадр из-под этого срока; посетителям лендинга эти ролики не
+   * выдаются, постер им не нужен.
+   */
+  private async savePoster(asset: {
+    id: string;
+    subjectKey: string;
+    scenarioId: string | null;
+  }): Promise<void> {
+    if (!asset.scenarioId) return;
+    try {
+      const prefix = scenarioFramePrefix(asset.id);
+      let first: { pathname: string; step: number } | null = null;
+      let cursor: string | undefined;
+      do {
+        const page = await this.blob.listByPrefix(prefix, { cursor });
+        for (const b of page.blobs) {
+          // Только `<номер шага>.png` прямо под префиксом — не подписи.
+          const m = /^(\d+)\.png$/.exec(b.pathname.slice(prefix.length));
+          if (!m) continue;
+          const step = Number(m[1]);
+          if (!first || step < first.step)
+            first = { pathname: b.pathname, step };
+        }
+        cursor = page.cursor ?? undefined;
+      } while (cursor);
+      if (!first) {
+        this.logger.warn(
+          `сценарий ${asset.subjectKey}: кадров собранного ролика ${asset.id} нет — постера не будет`,
+        );
+        return;
+      }
+      const posterUrl = await this.blob.copyBlob(
+        first.pathname,
+        tutorialPosterPathname(asset.id),
+        'image/png',
+      );
+      if (!posterUrl) return;
+      await this.prisma.tutorialVideoAsset.update({
+        where: { id: asset.id },
+        data: { posterUrl },
+      });
+    } catch (e) {
+      this.logger.warn(
+        `сценарий ${asset.subjectKey}: постер ролика ${asset.id} не сохранён: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
       );
     }
   }
@@ -3313,4 +3756,36 @@ export function greetingContext(
     }
   }
   return out;
+}
+
+/**
+ * Версия фронтенда, на которой сняты кадры (заход 1 метаданных,
+ * 06.10.2026): фронтенд кладёт её в `<meta name="app-build">`. Нет
+ * тега, страница не умеет `evaluate` или чтение зависло — `null`:
+ * метаданные не должны стоить прогона.
+ */
+const CAPTURE_BUILD_READ_TIMEOUT_MS = 5_000;
+const CAPTURE_BUILD_MAX_LENGTH = 100;
+
+async function readCaptureBuild(page: unknown): Promise<string | null> {
+  const evaluate = (page as { evaluate?: unknown } | null)?.evaluate;
+  if (typeof evaluate !== 'function') return null;
+  try {
+    const raw: unknown = await withTimeout(
+      (evaluate as (fn: () => string | null) => Promise<unknown>).call(
+        page,
+        () => {
+          const meta = document.querySelector('meta[name=app-build]');
+          return meta?.getAttribute('content') ?? null;
+        },
+      ),
+      CAPTURE_BUILD_READ_TIMEOUT_MS,
+      'версия фронтенда не прочиталась',
+    );
+    if (typeof raw !== 'string') return null;
+    const build = raw.trim();
+    return build && build.length <= CAPTURE_BUILD_MAX_LENGTH ? build : null;
+  } catch {
+    return null;
+  }
 }

@@ -416,6 +416,12 @@ export interface MemoSummary {
   lastRunAt: string | null;
   reviewReason: unknown;
   updatedAt: string;
+  /**
+   * Опубликовано, но сверх лимита тарифа (после понижения): в бою не
+   * исполняется — исполняются первые N опубликованных по номеру; мемо не
+   * удаляется (аудит Э6-бис (е) (4)).
+   */
+  overPlan: boolean;
 }
 
 export interface MemoListView {
