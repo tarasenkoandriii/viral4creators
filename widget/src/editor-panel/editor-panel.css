@@ -171,3 +171,22 @@ button.pri {
 .undo {
   margin-top: 12px;
 }
+.memo input {
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+}
+.steps li.on {
+  background: #eff6ff;
+}
+.steps button {
+  margin-left: 2px;
+}
+.steps .lnk {
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}

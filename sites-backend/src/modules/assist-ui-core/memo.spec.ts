@@ -331,8 +331,10 @@ describe('ворота кода (§5-бис.17 п.7; приёмка п.5, 7)', (
     expect(
       memoGates(c, { rules, host: HOST }).problems.map((p) => p.code),
     ).toContain('no_goal');
+    // Э6-тер (к): «счётчик ±N»/«поле = слот» — в закрытом списке
+    // (memo-goal.spec.ts); вне списка — по-прежнему отказ.
     const bad = parseMemoContent({
-      goal: { expect: [{ kind: 'counter', n: 1 }] },
+      goal: { expect: [{ kind: 'price', n: 1 }] },
     });
     expect(bad.issues).toEqual([
       { path: 'goal.expect[0]', code: 'closed_list' },

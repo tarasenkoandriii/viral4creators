@@ -416,3 +416,66 @@ describe('область tutorial-video-posters (06.10.2026)', () => {
     expect(plan.skippedUnknown).toBe(1);
   });
 });
+
+describe('области исходников и версий темпа обучалок (06.10.2026)', () => {
+  const old = new Date('2026-01-01T00:00:00Z');
+  const now = new Date('2026-10-06T00:00:00Z');
+
+  it('владелец — id ролика из пути; живой ролик свои исходники не теряет', () => {
+    expect(
+      ownerIdOf(
+        'tutorial-video-sources/tva-1/voice/0-ab-1200.mp3',
+        'tutorial-video-sources',
+      ),
+    ).toBe('tva-1');
+    const plan = orphanSweepPlan(
+      [
+        {
+          pathname: 'tutorial-video-sources/tva-1/frames/0.png',
+          uploadedAt: old,
+        },
+        {
+          pathname: 'tutorial-video-sources/tva-gone/voice/0-ab-x.mp3',
+          uploadedAt: old,
+        },
+      ],
+      ['tva-1'],
+      now,
+      60 * 60 * 1000,
+      'tutorial-video-sources',
+    );
+    expect(plan.delete).toEqual([
+      'tutorial-video-sources/tva-gone/voice/0-ab-x.mp3',
+    ]);
+    expect(plan.byKind.voice).toBe(1);
+  });
+
+  it('версии — своя папка под tutorial-videos/, основной файл ролика не задевается', () => {
+    expect(SWEEP_PREFIX['tutorial-video-versions']).toBe(
+      'tutorial-videos/versions/',
+    );
+    expect(
+      ownerIdOf(
+        'tutorial-videos/versions/tva-2/v1.mp4',
+        'tutorial-video-versions',
+      ),
+    ).toBe('tva-2');
+    expect(
+      ownerIdOf('tutorial-videos/1/tva-2.mp4', 'tutorial-video-versions'),
+    ).toBeNull();
+    const plan = orphanSweepPlan(
+      [
+        {
+          pathname: 'tutorial-videos/versions/tva-gone/v1.mp4',
+          uploadedAt: old,
+        },
+      ],
+      [],
+      now,
+      60 * 60 * 1000,
+      'tutorial-video-versions',
+    );
+    expect(plan.delete).toEqual(['tutorial-videos/versions/tva-gone/v1.mp4']);
+    expect(plan.byKind.video).toBe(1);
+  });
+});

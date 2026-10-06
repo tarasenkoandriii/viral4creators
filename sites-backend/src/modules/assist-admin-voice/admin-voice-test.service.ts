@@ -50,6 +50,11 @@ import {
   type ApiCatalogOp,
 } from './admin-voice-rules';
 import { sha256Hex } from './admin-voice-settings.service';
+import {
+  AdminMemoCheckService,
+  memoCheckMark,
+  type AdminMemoCheckSessionView,
+} from './admin-memo-check.service';
 import { AdminUiPlanService, type AdminVcCtx } from './admin-ui-plan.service';
 import type { AdminVoiceReport } from './api-types';
 
@@ -85,13 +90,18 @@ export class AdminVoiceTestService {
     private readonly plans: AdminUiPlanService,
     private readonly proposals: ProposalsService,
     private readonly log: AdminActionLogService,
+    private readonly memoCheck: AdminMemoCheckService,
   ) {}
 
   private db(accountId: string) {
     return this.sitesDb.forAccount(accountId);
   }
 
-  /** Живой тест ЭТОЙ сессии (не сдан, не истёк) — или null. */
+  /**
+   * Живой тест ЭТОЙ сессии (не сдан, не истёк) — или null. Ссылка прогона
+   * мемо (аудит 06.10) — не тестовая сессия голосового управления: план,
+   * разбор и отчёт мастера ею не открываются (только `memo-page/report`).
+   */
   async live(
     s: ResolvedAdminSession,
     testId: unknown,
@@ -106,19 +116,23 @@ export class AdminVoiceTestService {
         reportedAt: null,
         sessionExpiresAt: { gt: this.now() },
       },
-      select: { id: true, testHost: true, host: true },
+      select: { id: true, testHost: true, host: true, report: true },
     });
-    return t ? { testId: t.id, testHost: t.testHost, host: t.host } : null;
+    return t && !memoCheckMark(t.report)
+      ? { testId: t.id, testHost: t.testHost, host: t.host }
+      : null;
   }
 
   async exchange(
     s: ResolvedAdminSession,
-    body: { token?: unknown } | null,
+    body: { token?: unknown; lang?: unknown } | null,
   ): Promise<{
     testId: string;
     testHost: boolean;
     host: string;
     expiresAt: string;
+    /** Ссылка прогона мемо «Админки»: карточка мемо вместо шагов мастера. */
+    memo?: AdminMemoCheckSessionView;
   }> {
     const token = body?.token;
     if (typeof token !== 'string' || !TOKEN_RE.test(token))
@@ -146,6 +160,18 @@ export class AdminVoiceTestService {
       where: { tokenHash: sha256Hex(token) },
       select: { id: true, testHost: true, host: true },
     });
+    // Прогон мемо: голосовое управление не нужно (шаги не исполняются).
+    const memo = await this.memoCheck.session(s, t.id, body?.lang);
+    if (memo) {
+      this.logger.log(`admin memo-check session site=${s.siteId} test=${t.id}`);
+      return {
+        testId: t.id,
+        testHost: t.testHost,
+        host: t.host,
+        expiresAt: expiresAt.toISOString(),
+        memo,
+      };
+    }
     const a = await this.plans.access(s, true, now);
     if (!a.mode) return failPlan('off');
     this.logger.log(`admin voice-test session site=${s.siteId} test=${t.id}`);

@@ -45,6 +45,8 @@ const cases: Array<[string, unknown]> = [
   ['#/postprod', { name: 'postprod' }],
   ['#/postprod/', { name: 'postprod' }],
   ['#/postprod/sess1', { name: 'postprod-video', sessionId: 'sess1' }],
+  // Темп обучалок (06.10.2026): обучалка — свой маршрут, не sessionId.
+  ['#/postprod/tutorial/tva1', { name: 'postprod-tutorial', assetId: 'tva1' }],
   ['#/plan', { name: 'plan' }],
   ['#/channels', { name: 'channels' }],
   ['#/credits', { name: 'credits' }],

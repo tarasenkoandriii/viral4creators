@@ -69,6 +69,7 @@ import type {
   VoiceMapVersionView,
 } from './api-types';
 import { voiceMapError } from './voice-map-errors';
+import { exportMemos, importMemos } from './memo-io';
 
 type Db = ReturnType<SitesDb['forAccount']>;
 
@@ -382,19 +383,43 @@ export class VoiceMapService {
           : 'Изменение карты не прошло проверку',
         { errors: issuesToErrors(res.issues) },
       );
-    const next = b.expectedRevision + 1;
+    return this.commitDraft(
+      db,
+      actor,
+      siteId,
+      b.expectedRevision,
+      res.content,
+      res.changes,
+      source,
+    );
+  }
+
+  /**
+   * Записать проверенный черновик новой ревизией (условный UPDATE — 409
+   * при гонке) и операции — в журнал.
+   */
+  private async commitDraft(
+    db: Db,
+    actor: MapActor,
+    siteId: string,
+    expectedRevision: number,
+    content: VoiceMapContent,
+    changes: readonly unknown[],
+    source: MapChangeSource,
+  ): Promise<VoiceMapPatchView> {
+    const next = expectedRevision + 1;
     const upd = await db.assistSiteVoiceMap.updateMany({
-      where: { siteId, draftRevision: b.expectedRevision },
+      where: { siteId, draftRevision: expectedRevision },
       data: {
-        draft: res.content as unknown as Prisma.InputJsonValue,
+        draft: content as unknown as Prisma.InputJsonValue,
         draftRevision: next,
         updatedBy: actor.memberId,
       },
     });
     if (upd.count !== 1) throw this.conflict();
-    if (res.changes.length)
+    if (changes.length)
       await db.assistSiteVoiceMapChange.createMany({
-        data: res.changes.map((op) => ({
+        data: changes.map((op) => ({
           accountId: actor.accountId,
           siteId,
           revision: next,
@@ -403,7 +428,7 @@ export class VoiceMapService {
           op: op as Prisma.InputJsonValue,
         })),
       });
-    return { revision: next, applied: res.changes.length };
+    return { revision: next, applied: changes.length };
   }
 
   private conflict() {
@@ -1072,8 +1097,10 @@ export class VoiceMapService {
     const db = this.db(m.accountId);
     const { site } = await loadAssistSite(db, m.accountId, siteId);
     const row = await this.loadMap(db, m.accountId, siteId);
+    // Э6-тер (к): файл карты несёт и мемо сайта (переносимое содержимое).
     const payload = exportPayload(
       versionContent(parseVoiceMapContent(row.draft)),
+      await exportMemos(db, siteId),
     );
     const slug =
       (site.name || 'site')
@@ -1090,7 +1117,10 @@ export class VoiceMapService {
   /**
    * Импорт — в черновик пакетом операций со всеми проверками; отклонённые
    * цели — в отчёт. `kind: admin` — отказ целиком. Подпись — только пометка
-   * «наш файл без правок», не запрет.
+   * «наш файл без правок», не запрет. Э6-тер (к): мемо файла — в ЧЕРНОВИКИ
+   * мемо с новыми номерами (лимит тарифа в транзакции), опасные — отказ в
+   * отчёте `memos.rejected` (§5-бис.17 п.15 п.7). Тело — до 1 МБ на этом
+   * маршруте (`import-body.ts`).
    */
   async importFile(
     m: AccountMembership,
@@ -1098,7 +1128,7 @@ export class VoiceMapService {
     body: unknown,
   ): Promise<VoiceMapImportView> {
     const db = this.db(m.accountId);
-    await loadAssistSite(db, m.accountId, siteId);
+    const { row: assist } = await loadAssistSite(db, m.accountId, siteId);
     const b = (body ?? {}) as { expectedRevision?: unknown; file?: unknown };
     const file = (b.file ?? null) as Record<string, unknown> | null;
     const parsed = importOps(file, () => `t-${randomBytes(5).toString('hex')}`);
@@ -1120,6 +1150,7 @@ export class VoiceMapService {
     const hosts = this.hostNames(await this.siteHosts(db, siteId, this.now()));
     let content = parseVoiceMapContent(row.draft);
     const accepted: unknown[] = [];
+    const changes: unknown[] = [];
     const rejected: VoiceMapImportView['rejected'] = [];
     parsed.ops.forEach((op, index) => {
       const r = applyMapOps(content, [op], {
@@ -1137,18 +1168,37 @@ export class VoiceMapService {
       } else {
         content = r.content;
         accepted.push(op);
+        changes.push(...r.changes);
       }
     });
     let revision = row.draftRevision;
+    // Хвост аудита Э6-тер (4): операции уже проверены по одной — пишем
+    // итог одной ревизией (без потолка `opsPerPatch` правки из TMA: файл с
+    // 500 целями — 500+ операций).
     if (accepted.length) {
-      const res = await this.patch(
+      const res = await this.commitDraft(
+        db,
         { accountId: m.accountId, memberId: m.memberId },
         siteId,
-        { expectedRevision: row.draftRevision, ops: accepted },
+        row.draftRevision,
+        content,
+        changes,
         'import',
       );
       revision = res.revision;
     }
+    const memos = await importMemos(db, {
+      accountId: m.accountId,
+      memberId: m.memberId,
+      siteId,
+      rulesRaw: assist.voiceControlSiteRules,
+      hosts,
+      mapKeys: new Set(
+        content.targets.filter((t) => t.status === 'active').map((t) => t.key),
+      ),
+      memos: (file as Record<string, unknown>).memos,
+      now: this.now(),
+    });
     return {
       revision,
       accepted: accepted.filter(
@@ -1156,6 +1206,7 @@ export class VoiceMapService {
       ).length,
       rejected,
       signed,
+      memos,
     };
   }
 

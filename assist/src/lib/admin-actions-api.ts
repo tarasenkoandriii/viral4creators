@@ -8,6 +8,16 @@
  */
 import type { ApiClient } from '../kit';
 import { seg } from './handoff-api';
+import {
+  parseCheckReport,
+  parseCheckToken,
+  parseMemoStats,
+  parseReviewReason,
+  type MemoCheckToken,
+  type MemoCheckView,
+  type MemoReviewReason,
+  type MemoStats,
+} from './admin-memo-check';
 
 export type ProposalStatus =
   | 'pending'
@@ -68,6 +78,9 @@ export interface MemoListItem {
   status: string;
   publishedVersion: number | null;
   draftRevision: number;
+  /** Аудит 06.10: «требует проверки» — причина; статистика 30 дней. */
+  reviewReason: MemoReviewReason | null;
+  stats: MemoStats;
 }
 
 export interface MemoVersion {
@@ -76,11 +89,15 @@ export interface MemoVersion {
   problems: Array<{ path: string; code: string }>;
   warnings: Array<{ path: string; code: string }>;
   kinds: string[];
+  /** Сухой прогон этой версии в админке (null — не было). */
+  check: MemoCheckView | null;
 }
 
 export interface MemoView extends MemoListItem {
   draft: Record<string, unknown>;
   versions: MemoVersion[];
+  /** Запуски опубликованной версии за 7 дней (окно порогов). */
+  stats7: MemoStats;
 }
 
 type Obj = Record<string, unknown>;
@@ -148,6 +165,8 @@ function parseMemoItem(v: unknown): MemoListItem {
     status: str(o.status),
     publishedVersion: numOrNull(o.publishedVersion),
     draftRevision: numOrNull(o.draftRevision) ?? 0,
+    reviewReason: parseReviewReason(o.reviewReason),
+    stats: parseMemoStats(o.stats),
   };
 }
 
@@ -159,6 +178,7 @@ export function parseMemo(v: unknown): MemoView {
   return {
     ...parseMemoItem(o),
     draft: obj(o.draft),
+    stats7: parseMemoStats(o.stats7),
     versions: arr(o.versions).map((x) => {
       const r = obj(x);
       const g = obj(r.gateReport);
@@ -168,6 +188,7 @@ export function parseMemo(v: unknown): MemoView {
         problems: issues(g.problems),
         warnings: issues(g.warnings),
         kinds: arr(g.kinds).map(str),
+        check: parseCheckReport(r.checkReport),
       };
     }),
   };
@@ -221,7 +242,13 @@ export interface AdminActionsApi {
   buildVersion(
     siteId: string,
     n: number
-  ): Promise<{ version: number; status: string }>;
+  ): Promise<{ version: number; status: string; checkRequired: boolean }>;
+  /** «Прогнать»: ссылка мастера admin-vc для последней версии на проверке. */
+  checkToken(
+    siteId: string,
+    n: number,
+    body: { path?: string }
+  ): Promise<MemoCheckToken>;
   publish(siteId: string, n: number, v: number): Promise<MemoView>;
   setEnabled(siteId: string, n: number, on: boolean): Promise<MemoView>;
   removeMemo(siteId: string, n: number): Promise<void>;
@@ -350,8 +377,20 @@ export function createAdminActionsApi(client: ApiClient): AdminActionsApi {
           `${base(s)}/admin-mode/memos/${n0(n)}/versions`
         )
       );
-      return { version: numOrNull(o.version) ?? 0, status: str(o.status) };
+      return {
+        version: numOrNull(o.version) ?? 0,
+        status: str(o.status),
+        checkRequired: o.checkRequired === true,
+      };
     },
+    checkToken: async (s, n, body) =>
+      parseCheckToken(
+        await client.request(
+          'POST',
+          `${base(s)}/admin-mode/memos/${n0(n)}/check-token`,
+          body
+        )
+      ),
     publish: async (s, n, v) =>
       parseMemo(
         await client.request(

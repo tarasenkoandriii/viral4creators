@@ -250,6 +250,37 @@ export const voiceControlEn: VoiceControlDictionary = {
       phrase_conflict: 'The phrase is taken by another memo',
       undeclared_compensation: 'Undo not declared',
     },
+    // Э6-тер (к): over the plan, counter/field goal conditions, platform templates.
+    overPlan: 'over the plan',
+    overPlanHint:
+      'Published, but over the plan limit — not run for visitors until you upgrade the plan or remove extra memos.',
+    goalCounter: 'Counter “{t}” changes by {d}',
+    goalField: 'Field “{t}” = value of “{slot}”',
+    goalSlot: 'The page shows the value of “{slot}”',
+    template: {
+      open: 'From the {platform} template',
+      intro:
+        'Ready-made memos for a {platform} shop — steps follow our plugin’s markup, button captions come from your site. They are created as drafts; publish after checking each one on the site.',
+      exists: 'already exists',
+      create: 'Create drafts',
+      created: 'Drafts created: {list}.',
+      rejected: 'Not created: {list}.',
+      unresolved:
+        'No button caption on the site for: {list} — bind the step in the editor or wait for the crawl.',
+      publishChecked: 'Publish checked ones',
+      publishedBatch: 'Published {ok} of {n}.',
+      notPublished: 'Not published: {list}.',
+      reasons: {
+        limit: 'plan limit',
+        name_taken: 'name already taken',
+        no_name: 'no name',
+        MEMO_CHECK_REQUIRED: 'check it on the site first',
+        MEMO_GATES: 'did not pass the gates',
+        MEMO_NOT_FOUND: 'not found',
+        MEMO_PHRASE_CONFLICT: 'phrase is taken',
+        other: 'refused',
+      },
+    },
   },
   save: 'Save',
   saved: 'Saved.',

@@ -12,6 +12,10 @@
  *
  * Бизнес-правила тарифа, ролей, журнала, монитора и мастера — приёмка
  * sites-backend (`acceptance/e6b-admin`).
+ *
+ * Аудит 06.10: прогон мемо «Админки» — `memo-page|memo-report` с НАСТОЯЩИМ
+ * итогом страницы и вердиктом (`admin-memo-check.ts` sites-backend); права
+ * и каталог операций — приёмка `acceptance/e8/admin-memo-check.spec.ts`.
  */
 import crypto from 'node:crypto';
 import type http from 'node:http';
@@ -19,6 +23,8 @@ import * as rulesNs from '../../../sites-backend/src/modules/assist-admin-voice/
 import * as snapNs from '../../../sites-backend/src/modules/assist-ui-core/snapshot';
 import * as directNs from '../../../sites-backend/src/modules/assist-ui-core/direct-plan';
 import * as coreRulesNs from '../../../sites-backend/src/modules/assist-ui-core/rules';
+import * as memoCheckNs from '../../../sites-backend/src/modules/assist-admin-actions/admin-memo-check';
+import type { AdminMemoContent } from '../../../sites-backend/src/modules/assist-admin-actions/admin-memo';
 import type {
   UiPlanStep,
   UiSnapshot,
@@ -29,6 +35,12 @@ const { apiPreference, checkAdminPlan, confirmFields } = cjs(rulesNs);
 const { parseSnapshot } = cjs(snapNs);
 const { directPlan, looksLikeCommand } = cjs(directNs);
 const { defaultVoiceControlRules } = cjs(coreRulesNs);
+const {
+  adminMemoCheckPage,
+  adminMemoCheckVerdict,
+  adminMemoHasPageSteps,
+  adminMemoStepLines,
+} = cjs(memoCheckNs);
 
 /** Шаг «ответа модели»: цель — видимым текстом (как её назвала бы модель). */
 export interface AdminModelStep {
@@ -69,6 +81,12 @@ const V = {
       attempts: number;
       submits: number;
       report: unknown;
+      /** Прогон мемо: содержимое версии, проверенные страницы, итог. */
+      memo?: {
+        content: AdminMemoContent;
+        pages: ReturnType<typeof adminMemoCheckPage>[];
+        result: string | null;
+      };
     }
   >(),
 };
@@ -97,6 +115,15 @@ export function adminVcSet(b: Record<string, unknown>): unknown {
       attempts: 0,
       submits: 0,
       report: null,
+      ...(b.memo && typeof b.memo === 'object'
+        ? {
+            memo: {
+              content: b.memo as AdminMemoContent,
+              pages: [],
+              result: null,
+            },
+          }
+        : {}),
     });
     return { testId: id };
   }
@@ -120,6 +147,9 @@ export function adminVcLog() {
       attempts: t.attempts,
       submits: t.submits,
       report: t.report,
+      memo: t.memo
+        ? { pages: t.memo.pages.map((x) => x.path), result: t.memo.result }
+        : null,
     })),
   };
 }
@@ -290,12 +320,50 @@ export async function adminVcRoute(
     if (!hit)
       return json(res, 404, { code: 'ADMIN_VC_NOT_FOUND', message: 'nf' });
     hit[1].sub = sub;
+    const m = hit[1].memo;
     return json(res, 200, {
       testId: hit[0],
       testHost: hit[1].testHost,
       host,
       expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      ...(m
+        ? {
+            memo: {
+              number: 7,
+              name: m.content.names.uk ?? '',
+              version: 1,
+              pageSteps: adminMemoHasPageSteps(m.content),
+              steps: adminMemoStepLines(m.content, 'uk'),
+            },
+          }
+        : {}),
     });
+  }
+  const mcm =
+    /^\/assist-admin\/v1\/voice-test\/([0-9a-f-]{36})\/(memo-page|memo-report)$/.exec(
+      p
+    );
+  if (req.method === 'POST' && mcm) {
+    const t = V.tests.get(mcm[1]);
+    const m = t?.memo;
+    if (!t || !m || t.sub !== sub || m.result)
+      return json(res, 404, { code: 'ADMIN_VC_NOT_FOUND', message: 'nf' });
+    const b = await body(req);
+    if (mcm[2] === 'memo-page') {
+      const snap = parseSnapshot(b.snapshot);
+      if (!snap)
+        return json(res, 400, { code: 'ADMIN_VC_BAD_REQUEST', message: 'bad' });
+      V.snapshots.push(snap);
+      const page = adminMemoCheckPage(m.content, snap, {
+        rules: defaultVoiceControlRules(),
+        hosts: [host],
+      });
+      m.pages = [...m.pages.filter((x) => x.path !== page.path), page];
+      return json(res, 200, { ...page, pages: m.pages.length });
+    }
+    const v = adminMemoCheckVerdict(m.content, m.pages, [], 0);
+    m.result = v.result;
+    return json(res, 200, { testId: mcm[1], result: v.result, report: v });
   }
   const vtm =
     /^\/assist-admin\/v1\/voice-test\/([0-9a-f-]{36})\/(analyze|attempt|report)$/.exec(

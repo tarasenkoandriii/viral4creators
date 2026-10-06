@@ -10,7 +10,7 @@
  *  - снимок страницы админки — как его прислал бы загрузчик `admin-act.js`.
  */
 import * as request from 'supertest';
-import { ADMIN_SESSION_HEADER } from '../../brand';
+import { ADMIN_SESSION_HEADER, WIDGET_VOICE_TEST_PARAM } from '../../brand';
 import { signEmployeeJwt } from '../../modules/assist-admin-mode/identity-jwt';
 import { AdminSonioxStt } from '../../modules/assist-admin-voice/admin-stt';
 import { AdminUiPlanService } from '../../modules/assist-admin-voice/admin-ui-plan.service';
@@ -338,6 +338,48 @@ export function api(st: AdminVoiceStack, sess: string) {
         .get('/assist-admin/v1/state')
         .set(ADMIN_SESSION_HEADER, sess),
   };
+}
+
+/**
+ * Сухой прогон мемо АМ-N (аудит 06.10, §5-бис.17 п.7) — как в браузере
+ * владельца: «Прогнать» в TMA → ссылка мастера → обмен сессией сотрудника
+ * `wa.` → итог каждой страницы образца → отчёт (вердикт считает сервер).
+ */
+export async function dryRunMemo(
+  st: E8Stack,
+  site: { siteId: string; ownerTg: bigint },
+  n: number,
+  sess: string,
+  snapshots: Array<Record<string, unknown>> = [],
+): Promise<{ result: string; report: Record<string, unknown> }> {
+  const tok = data(
+    await request(st.srv())
+      .post(`/assist/sites/${site.siteId}/admin-mode/memos/${n}/check-token`)
+      .set(st.as(site.ownerTg))
+      .send({})
+      .expect(200),
+  ) as { url: string };
+  const token = new URL(tok.url).searchParams.get(WIDGET_VOICE_TEST_PARAM);
+  const ex = data(
+    await request(st.srv())
+      .post('/assist-admin/v1/voice-test/session')
+      .set(ADMIN_SESSION_HEADER, sess)
+      .send({ token })
+      .expect(200),
+  ) as { testId: string; memo?: unknown };
+  if (!ex.memo) throw new Error('ссылка — не прогон мемо');
+  for (const snapshot of snapshots)
+    await request(st.srv())
+      .post(`/assist-admin/v1/voice-test/${ex.testId}/memo-page`)
+      .set(ADMIN_SESSION_HEADER, sess)
+      .send({ snapshot })
+      .expect(200);
+  return data(
+    await request(st.srv())
+      .post(`/assist-admin/v1/voice-test/${ex.testId}/memo-report`)
+      .set(ADMIN_SESSION_HEADER, sess)
+      .expect(200),
+  );
 }
 
 export { data };

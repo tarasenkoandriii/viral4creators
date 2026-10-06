@@ -584,6 +584,37 @@ export function gridSeconds(seconds: number): number {
 }
 
 /**
+ * Примитивы сетки кадров для планировщика темпа (`tutorial-tempo.ts`,
+ * 06.10.2026). Живут ЗДЕСЬ, а не там: перевод секунд в кадры знает
+ * только модуль плана (шов `OUTPUT_FPS` в `scripts/check-docs.mjs`), и
+ * второй экземпляр той же арифметики в планировщике темпа разошёлся бы
+ * с `frameSpansSeconds` ровно на том кадре, где решается, слышна ли
+ * последняя буква реплики.
+ *
+ * `gridFrames` — то же округление, что у `-t N` входа `-loop 1`
+ * (`Math.round`); `gridFramesCeil` — наименьшее целое число кадров,
+ * которое ПОКРЫВАЕТ отрезок: им меряется речь, и округлять её вниз
+ * значило бы отрезать хвост реплики.
+ */
+export function gridFrames(seconds: number): number {
+  return Math.round(seconds * OUTPUT_FPS);
+}
+
+export function gridFramesCeil(seconds: number): number {
+  return Math.ceil(seconds * OUTPUT_FPS);
+}
+
+export function gridFramesToSeconds(frames: number): number {
+  return frames / OUTPUT_FPS;
+}
+
+/** Частота кадров для монтажного manifest (поле `fps`) — то же число,
+ *  что у плана, отдаётся функцией, чтобы константа не расползалась. */
+export function slideshowFps(): number {
+  return OUTPUT_FPS;
+}
+
+/**
  * Зум внутри кадра: 1.00 → `ZOOM_TO` за всё время показа, к центру.
  *
  * `perspective`, а не `zoompan`, хотя §6 ТЗ называет второй, — и это

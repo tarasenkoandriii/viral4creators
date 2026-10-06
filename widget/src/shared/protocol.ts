@@ -24,6 +24,7 @@ import {
 } from './brand';
 import { POSITIONS, UI_LANGS, cleanOrigin, isObj, oneOf, text } from './config';
 import { ENG_KEY, GOAL_KEY, ORDER_ID } from './engagement';
+import type { UiGoalCheck } from './goal-check';
 import {
   PLAN_ID,
   STEP_RESULTS,
@@ -153,6 +154,12 @@ export type ParentMessage =
         result: 'done' | 'failed' | 'unknown' | 'gone';
       }>;
     }
+  /**
+   * Э6-тер (к): итог проверки цели мемо «счётчик ±N»/«поле = слот» чанком
+   * undo.js — только «да/нет» по номеру шага цели. Подделать может скрипт
+   * страницы — последствие: итог цели своего же посетителя (как `ui-step`).
+   */
+  | { type: 'ui-goal'; planId: string; i: number; ok: boolean }
   /** Э6-бис: человек взял управление (Esc, свой клик/клавиша, «Стоп» на странице). */
   | {
       type: 'ui-stopped';
@@ -212,8 +219,12 @@ export type FrameMessage =
    * записан — нажимай» (`ui-ack`), стоп, пауза детектора речи.
    */
   | UiCommand
-  /** Э6-бис (д): вернуть поля этих шагов из памяти страницы (чанк undo.js). */
-  | { type: 'ui-undo'; planId: string; idx: number[] }
+  /**
+   * Э6-бис (д): вернуть поля этих шагов из памяти страницы (чанк undo.js).
+   * Э6-тер (к): с полем `goal` — проверить цель мемо (тот же чанк; загрузчик
+   * и act.js не меняются), ответ — `ui-goal`.
+   */
+  | { type: 'ui-undo'; planId: string; idx: number[]; goal?: UiGoalCheck }
   /**
    * Э6-бис (г): мастер проверки Т-2 (только тестовая сессия владельца) —
    * окружение (CSP, Trusted Types, чанки), разметка страницы и два списка
@@ -596,6 +607,16 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
       }
       return { type: 'ui-undone', planId: m.planId, results };
     }
+    case 'ui-goal':
+      return typeof m.planId === 'string' &&
+        PLAN_ID.test(m.planId) &&
+        typeof m.i === 'number' &&
+        Number.isInteger(m.i) &&
+        m.i >= 0 &&
+        m.i <= 20 &&
+        typeof m.ok === 'boolean'
+        ? { type: 'ui-goal', planId: m.planId, i: m.i, ok: m.ok }
+        : null;
     case 'ui-stopped':
       return typeof m.planId === 'string' &&
         PLAN_ID.test(m.planId) &&

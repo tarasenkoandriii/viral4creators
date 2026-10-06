@@ -13,7 +13,11 @@
  *  - п.5: строгий CSP + Trusted Types с `frame-src we.` — 0 нарушений; без
  *    `frame-src` — нарушение `frame-src`, панели нет (сообщение в пикере);
  *  - п.6: в запросах панели нет значения поля (e-mail в поле страницы);
- *  - п.11: «Сказать сейчас» — подсветка без нажатий (0 событий сайта).
+ *  - п.11: «Сказать сейчас» — подсветка без нажатий (0 событий сайта);
+ *  - Э6-тер (д): запись мемо кликами — шаг «в кошик» исполняется по
+ *    слову сервера (1 событие сайта), поле — слот без значения, «Оплатити» —
+ *    стоп без нажатия; «Зберегти чернетку», «Прогнати» — подсветка; переход
+ *    по ссылке при записи — запись продолжается на новой странице.
  */
 import { expect, test, type Frame, type Page } from '@playwright/test';
 import {
@@ -340,4 +344,94 @@ test('«Я вмію» под микрофоном (Р-72): имена мемо, 
   await openChat(page);
   await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
   await expect(chat(page).locator('.skl')).toHaveCount(0);
+});
+
+test('Э6-тер (д): запись мемо кликами — шаги, слот без значения, стоп на «Оплатити», черновик и «Прогнати»', async ({
+  page,
+}) => {
+  const { frame } = await open(page);
+  await expect(frame.locator('.tabs')).toBeVisible({ timeout: 15_000 });
+  await frame.locator('.tabs button', { hasText: 'Мемо' }).click();
+  await frame.locator('button.pri', { hasText: 'Записати' }).click();
+  await expect(frame.locator('.memo .warn')).toContainText('Запис');
+  // «В кошик» — сервер разрешил «сразу»: нажатие исполнено по-настоящему.
+  await page.click('#ed-cart');
+  await expect(frame.locator('.steps li')).toHaveCount(1);
+  await expect(page.locator('#ed-clicks')).toHaveText('1');
+  // Поле — шаг fill со слотом; значение поля страницы не уходит.
+  await page.click('#ed-email');
+  await expect(frame.locator('.steps li').nth(1)).toContainText('{email}');
+  // «Оплатити» — стоп записи, подсветка последним шагом, 0 нажатий.
+  await page.click('#ed-pay');
+  await expect(frame.locator('p.note').first()).toContainText('payment');
+  await expect(frame.locator('.steps li')).toHaveCount(3);
+  // Запись стоит: клик — снова карточка цели, не шаг.
+  await page.click('#ed-cart');
+  await expect(frame.locator('.pick')).toContainText('В кошик');
+  await frame.locator('.tabs button', { hasText: 'Мемо' }).click();
+  await expect(frame.locator('.steps li')).toHaveCount(3);
+  await expect(page.locator('#ed-clicks')).toHaveText('1');
+  // Удалить подсветку, назвать, сохранить, прогнать.
+  await frame
+    .locator('.steps li')
+    .nth(2)
+    .locator('button', { hasText: '✕' })
+    .click();
+  await frame.locator('input[name="memo-name"]').fill('Покласти в кошик');
+  await frame.locator('input[name="memo-goal"]').fill('Товар у кошику');
+  await frame.locator('input[name="memo-goal"]').blur();
+  await frame.locator('button.pri', { hasText: 'Зберегти чернетку' }).click();
+  await expect(frame.locator('p.note').first()).toContainText('М-1');
+  await frame.locator('button', { hasText: 'Прогнати' }).click();
+  await expect(frame.locator('.memo .note')).toContainText('Усі кроки');
+  const log = (await editorLog()).log.filter((l) =>
+    l.path.startsWith('/editor/v1/memo/')
+  );
+  const stop = log.find((l) => l.path === '/editor/v1/memo/record/stop')!;
+  expect((stop.body as { steps: unknown[] }).steps).toHaveLength(2);
+  expect((stop.body as { name: string }).name).toBe('Покласти в кошик');
+  expect(JSON.stringify(log)).not.toContain('owner.secret');
+  const steps = log.filter((l) => l.path === '/editor/v1/memo/record/step');
+  expect((steps[1].body as { fieldName: string }).fieldName).toBe('email');
+});
+
+test('Э6-тер (д): переход по ссылке во время записи — исполняется, запись продолжается на новой странице', async ({
+  page,
+}) => {
+  const { frame } = await open(page);
+  await expect(frame.locator('.tabs')).toBeVisible({ timeout: 15_000 });
+  await frame.locator('.tabs button', { hasText: 'Мемо' }).click();
+  await frame.locator('button.pri', { hasText: 'Записати' }).click();
+  const before = page.url();
+  await page.click('#ed-delivery');
+  await page.waitForURL((u) => u.href !== before);
+  await expect
+    .poll(() =>
+      page.frames().some((f) => f.url().startsWith(`${PANEL}/we/v1/frame`))
+    )
+    .toBe(true);
+  const f = page
+    .frames()
+    .find((x) => x.url().startsWith(`${PANEL}/we/v1/frame`))!;
+  await expect(f.locator('.steps li')).toHaveCount(1, { timeout: 15_000 });
+  await expect(f.locator('.memo .warn')).toContainText('Запис');
+  await page.click('#ed-cart');
+  await expect(f.locator('.steps li')).toHaveCount(2);
+});
+
+test('Э6-тер (д): злой скрипт во время записи — поддельные pick без метки клика, 0 нажатий на странице', async ({
+  page,
+}) => {
+  const { frame } = await open(page, { editorEvil: true });
+  await expect(frame.locator('.tabs')).toBeVisible({ timeout: 15_000 });
+  await frame.locator('.tabs button', { hasText: 'Мемо' }).click();
+  await frame.locator('button.pri', { hasText: 'Записати' }).click();
+  await page.waitForTimeout(1500);
+  await expect(page.locator('#ed-clicks')).toHaveText('0');
+  // Черновик мемо — только кликом человека в панели.
+  expect(
+    (await editorLog()).log.filter(
+      (l) => l.path === '/editor/v1/memo/record/stop'
+    )
+  ).toHaveLength(0);
 });

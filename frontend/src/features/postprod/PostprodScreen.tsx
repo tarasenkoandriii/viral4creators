@@ -15,10 +15,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Clapperboard, Mic2, Trash2 } from 'lucide-react';
+import { Clapperboard, Gauge, Mic2, Trash2 } from 'lucide-react';
 import {
   Alert,
   Button,
+  Badge,
   Card,
   ConfirmDialog,
   EmptyState,
@@ -33,6 +34,11 @@ import { useI18n } from '../../lib/i18n-context';
 import { navigate, routes } from '../../lib/router';
 import { ScreenHeader, LoadError } from '../projects/shared';
 import { errorMessage } from '../../services/projects-api';
+import {
+  listTutorials,
+  type UserTutorialItem,
+} from '../../services/tutorial-videos-api';
+import { formatDuration } from '../../lib/tutorial-tempo';
 import {
   deletePostprodVideo,
   listPostprodVideos,
@@ -161,6 +167,65 @@ function VideoRow({
         </button>
       </div>
     </Card>
+  );
+}
+
+/**
+ * Обучалки по сайту (темп, 06.10.2026) — отдельный список над роликами:
+ * у обучалки другой объект (`assetId`), другой экран и своя проверка
+ * владения. Сбой загрузки списка не мешает основному экрану — блок
+ * просто не показывается.
+ */
+function TutorialsSection({
+  dict,
+}: {
+  dict: ReturnType<typeof useI18n>['dict'];
+}) {
+  const { data } = useAsync<UserTutorialItem[]>(
+    () => listTutorials().catch(() => []),
+    []
+  );
+  if (!data || data.length === 0) return null;
+  const p = dict.postprodScreen;
+  return (
+    <div className="mb-4 space-y-2.5">
+      <h2 className="text-sm font-semibold text-[var(--muted)]">
+        {p.tutorialsTitle}
+      </h2>
+      {data.map((item) => (
+        <Card
+          key={item.assetId}
+          className="cursor-pointer p-3 transition-colors hover:border-accent/50"
+          onClick={() => navigate(routes.postprodTutorial(item.assetId))}
+        >
+          <div className="flex items-center gap-3">
+            <Gauge size={18} className="shrink-0 text-[var(--muted)]" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{item.title}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
+                <span className="tabular">
+                  {formatDuration(item.durationMs)}
+                </span>
+                {item.voiced && (
+                  <Badge tone="accent">{p.tutorialVoicedBadge}</Badge>
+                )}
+                {item.activeFactor !== 1 && (
+                  <Badge tone="neutral">
+                    {p.tutorialTempoBadge.replace(
+                      '{{factor}}',
+                      String(item.activeFactor)
+                    )}
+                  </Badge>
+                )}
+                {item.inFlight && (
+                  <Badge tone="warning">{p.tutorialBuildingBadge}</Badge>
+                )}
+              </div>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
   );
 }
 
@@ -302,6 +367,8 @@ export function PostprodScreen() {
         </div>
       )}
       {!loading && error ? <LoadError error={error} onRetry={reload} /> : null}
+
+      <TutorialsSection dict={dict} />
 
       {deleteError && (
         <Alert

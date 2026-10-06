@@ -36,6 +36,7 @@ import type { PlanState } from './types';
 import { GenerationWizard } from './features/generation/GenerationWizard';
 import { PostprodScreen } from './features/postprod/PostprodScreen';
 import { PostprodVideoScreen } from './features/postprod/PostprodVideoScreen';
+import { TutorialTempoScreen } from './features/postprod/TutorialTempoScreen';
 import { LegalScreen } from './features/legal/LegalScreen';
 import { ProjectsListScreen } from './features/projects/ProjectsListScreen';
 import { ProjectCreateScreen } from './features/projects/ProjectCreateScreen';
@@ -113,13 +114,16 @@ function App() {
     route.name !== 'generate' &&
     route.name !== 'postprod' &&
     route.name !== 'postprod-video' &&
+    route.name !== 'postprod-tutorial' &&
     route.name !== 'plan' &&
     route.name !== 'channels' &&
     route.name !== 'credits' &&
     route.name !== 'invite' &&
     route.name !== 'not-found';
   const inPostprod =
-    route.name === 'postprod' || route.name === 'postprod-video';
+    route.name === 'postprod' ||
+    route.name === 'postprod-video' ||
+    route.name === 'postprod-tutorial';
 
   /**
    * Режим (ТЗ §23) грузится один раз на всё приложение: замков много, и
@@ -452,6 +456,12 @@ function App() {
               <PostprodVideoScreen
                 key={route.sessionId}
                 sessionId={route.sessionId}
+              />
+            )}
+            {route.name === 'postprod-tutorial' && (
+              <TutorialTempoScreen
+                key={route.assetId}
+                assetId={route.assetId}
               />
             )}
             {route.name === 'legal' && <LegalScreen slug={route.slug} />}

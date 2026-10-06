@@ -16,6 +16,7 @@ import {
   api,
   data,
   describeE6bAdmin,
+  dryRunMemo,
   employeeSession,
   forceOn,
   orderPage,
@@ -97,6 +98,15 @@ describeE6bAdmin('Э6-бис (б) — мемо «Админки» с шагам�
     );
     expect(v).toMatchObject({ status: 'checking' });
     expect(v.gateReport.kinds).toEqual(['ui', 'write']);
+    // Аудит 06.10: публикация — только после сухого прогона в админке.
+    const check = await dryRunMemo(
+      st,
+      M.S,
+      1,
+      await employeeSession(st, M, 'owner-memo-check'),
+      [orderPage(M.S.adminHost)],
+    );
+    expect(check.result).toBe('pass');
     await request(st.srv())
       .post(`${memos()}/1/versions/1/publish`)
       .set(st.as(M.S.ownerTg))
@@ -204,6 +214,12 @@ describeE6bAdmin('Э6-бис (б) — мемо «Админки» с шагам�
       where: { siteId: M.S.siteId, actor: 'jwt:emp-memo-miss' },
     });
     expect(run.status).toBe('failed');
+    // Аудит 06.10: монитор видит, на каком шаге и почему (`pin_mismatch` —
+    // цель на странице не сошлась с сохранённой).
+    expect(run.step).toBe(0);
+    expect(run.progress).toEqual([
+      { i: 0, operation: 'ui', outcome: 'pin_mismatch' },
+    ]);
     expect(shop.orders.get('1043')!.status).toBe('paid');
   });
   it('аудит: под подписью ссылки мемо на странице — кнопка; пункт меню с эффектом — шаг не исполняется', async () => {
@@ -253,10 +269,6 @@ describeE6bAdmin('Э6-бис (б) — мемо «Админки» с шагам�
       .post(`${memos()}/2/versions`)
       .set(st.as(M.S.ownerTg))
       .expect(200);
-    await request(st.srv())
-      .post(`${memos()}/2/versions/1/publish`)
-      .set(st.as(M.S.ownerTg))
-      .expect(200);
     const menu = orderPage(M.S.adminHost) as {
       elements: Array<Record<string, unknown>>;
     };
@@ -267,6 +279,36 @@ describeE6bAdmin('Э6-бис (б) — мемо «Админки» с шагам�
       text: 'В архів',
       inView: true,
     });
+    // Аудит 06.10: сухой прогон ловит это ДО публикации (пункт меню без
+    // адреса — действие, `irrev`) — версия `held`, публикации нет.
+    const owner = await employeeSession(st, M, 'owner-memo-check2');
+    expect((await dryRunMemo(st, M.S, 2, owner, [menu])).result).toBe('fail');
+    await request(st.srv())
+      .post(`${memos()}/2/versions/1/publish`)
+      .set(st.as(M.S.ownerTg))
+      .expect(409);
+    // В образце пункт меню был переходом (с адресом) — прогон прошёл, а в
+    // бою страница другая: проверки кода в плане — последний рубеж.
+    await request(st.srv())
+      .post(`${memos()}/2/versions`)
+      .set(st.as(M.S.ownerTg))
+      .expect(200);
+    const asLink = orderPage(M.S.adminHost) as {
+      elements: Array<Record<string, unknown>>;
+    };
+    asLink.elements.push({
+      ref: 'e16',
+      role: 'menuitem',
+      tag: 'a',
+      text: 'В архів',
+      href: `https://${M.S.adminHost}/admin/archive`,
+      inView: true,
+    });
+    expect((await dryRunMemo(st, M.S, 2, owner, [asLink])).result).toBe('pass');
+    await request(st.srv())
+      .post(`${memos()}/2/versions/2/publish`)
+      .set(st.as(M.S.ownerTg))
+      .expect(200);
     const b = await employeeSession(st, M, 'emp-memo-menu');
     const m = data(
       await api(st, b)

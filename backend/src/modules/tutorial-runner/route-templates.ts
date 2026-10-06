@@ -237,6 +237,12 @@ const ROUTE_BUILDERS: Record<string, RouteBuilder> = {
     ctx.sessionId
       ? { ok: true, path: `/postprod/${ctx.sessionId}` }
       : missingFixtureData('sessionId'),
+  // Темп обучалки (06.10.2026): объект — ролик обучалки по сайту
+  // клиента, а у фикстурного пользователя таких нет.
+  'postprod-tutorial': () =>
+    unsupported(
+      'ролики обучалки по сайту клиента не входят в фикстурные данные',
+    ),
   manifests: () => ({ ok: true, path: '/brand-manifests' }),
   'manifest-new': () => ({ ok: true, path: '/brand-manifests/new' }),
   manifest: (ctx) =>

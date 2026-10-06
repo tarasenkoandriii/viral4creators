@@ -132,6 +132,7 @@ const uk = {
   // Э6-бис (е): мемо.
   vcMemoDone: 'Готово: {g}.',
   vcMemoNotReached: 'Не дійшов до мети «{g}» — перевірте сторінку.',
+  vcMemoUnknown: 'Кроки виконано — перевірте, чи вийшло: «{g}».',
   vcRepeat: 'Ви щойно це робили. Повторити ще раз?',
   vcSkills: 'Я вмію: {list}.',
   vcStep: {
@@ -290,6 +291,7 @@ const ru: Dict = {
   vcUndoSelf: 'Сейчас помощник только подсказывает — верните сами.',
   vcMemoDone: 'Готово: {g}.',
   vcMemoNotReached: 'Не дошёл до цели «{g}» — проверьте страницу.',
+  vcMemoUnknown: 'Шаги выполнены — проверьте, получилось ли: «{g}».',
   vcRepeat: 'Вы только что это делали. Повторить ещё раз?',
   vcSkills: 'Я умею: {list}.',
   vcStep: {
@@ -448,6 +450,7 @@ const en: Dict = {
     'The assistant is only giving hints right now — please do it yourself.',
   vcMemoDone: 'Done: {g}.',
   vcMemoNotReached: 'Did not reach the goal “{g}” — please check the page.',
+  vcMemoUnknown: 'Steps done — please check whether it worked: “{g}”.',
   vcRepeat: 'You just did this. Do it again?',
   vcSkills: 'I can: {list}.',
   vcStep: {

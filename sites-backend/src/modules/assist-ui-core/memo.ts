@@ -14,6 +14,15 @@
 import { detectInjection } from '../assist-knowledge-core/injection';
 import { STANDARD_UNDO_PAIRS } from './decisions';
 import { allowedAfterPnr, undoClass } from './chain';
+import {
+  goalCountInSnapshot,
+  goalExtras,
+  goalTargetsIn,
+  MEMO_GOAL_LIMITS,
+  parseGoalTarget,
+  type MemoGoalExpect,
+  type MemoGoalTarget,
+} from './memo-goal';
 import { normText, sameWord, tokens } from './normalize';
 import {
   judgeStep,
@@ -230,13 +239,17 @@ export interface MemoSlot {
 /**
  * Условие цели — закрытый список (§5-бис.17 п.3), то, что загрузчик
  * проверяет без модели: адрес страницы по маске, видимый текст на
- * странице, видимое значение слота. «Счётчик ±N» и «значение поля = слот»
- * — с редактором (Э6-тер), до того ворота их не принимают.
+ * странице, видимое значение слота, счётчик изменился на ±N (исходное — из
+ * снимка команды), значение поля равно слоту (Э6-тер (к); проверка на
+ * странице — `memo-goal.ts`, чанк `undo.js`). Счётчик и поле — не больше
+ * одного каждого.
  */
 export type MemoGoalCond =
   | { kind: 'url'; path: string }
   | { kind: 'text'; text: string }
-  | { kind: 'slot'; slot: string };
+  | { kind: 'slot'; slot: string }
+  | { kind: 'counter'; target: MemoGoalTarget; delta: number }
+  | { kind: 'field'; target: MemoGoalTarget; slot: string };
 
 export interface MemoGoal {
   text: Partial<Record<MemoLang, string>>;
@@ -746,7 +759,31 @@ export function parseMemoContent(raw: unknown): {
         if (t) c.goal.expect.push({ kind: 'text', text: t });
       } else if (g.kind === 'slot' && typeof g.slot === 'string')
         c.goal.expect.push({ kind: 'slot', slot: g.slot });
-      else issues.push({ path, code: 'closed_list' });
+      else if (g.kind === 'counter' || g.kind === 'field') {
+        // Счётчик ±N / поле = слот: цель — разметка или подпись (без ПД).
+        const target = parseGoalTarget(g.target);
+        if (
+          !target ||
+          (target.text &&
+            memoTextProblem(target.text, MEMO_GOAL_LIMITS.labelChars))
+        )
+          return issues.push({ path: `${path}.target`, code: 'format' });
+        if (c.goal.expect.some((x) => x.kind === g.kind))
+          return issues.push({ path, code: 'duplicate' });
+        if (g.kind === 'counter') {
+          const d = g.delta;
+          if (
+            typeof d !== 'number' ||
+            !Number.isInteger(d) ||
+            d === 0 ||
+            Math.abs(d) > MEMO_GOAL_LIMITS.maxDelta
+          )
+            return issues.push({ path: `${path}.delta`, code: 'format' });
+          c.goal.expect.push({ kind: 'counter', target, delta: d });
+        } else if (typeof g.slot === 'string')
+          c.goal.expect.push({ kind: 'field', target, slot: g.slot });
+        else issues.push({ path: `${path}.slot`, code: 'type' });
+      } else issues.push({ path, code: 'closed_list' });
     });
   } else if (raw.goal !== undefined && raw.goal !== null)
     issues.push({ path: 'goal', code: 'type' });
@@ -974,10 +1011,16 @@ export function memoGates(
   // ── цель ──
   if (!c.goal.expect.length) P('no_goal', 'goal.expect');
   c.goal.expect.forEach((g, i) => {
-    if (g.kind !== 'slot') return;
+    if (g.kind !== 'slot' && g.kind !== 'field') return;
     const slot = c.slots.find((s) => s.name === g.slot);
-    // Значение слота в условии цели попало бы в шаги плана — без ПД.
-    if (!slot || slot.pii) P('goal_slot', `goal.expect[${i}]`);
+    // Значение слота в условии цели попало бы в шаги плана — без ПД; поле
+    // с подписью ПД («Телефон», «E-mail») — тоже нет.
+    if (
+      !slot ||
+      slot.pii ||
+      (g.kind === 'field' && PD_FIELD_LABEL.test(g.target.text))
+    )
+      P('goal_slot', `goal.expect[${i}]`);
   });
   if (!MEMO_LANGS.some((l) => c.goal.text[l])) P('no_goal', 'goal.text');
   // ── фразы ──
@@ -1527,13 +1570,25 @@ export function compileMemo(
       )
       .filter(Boolean)
       .slice(0, MEMO_LIMITS.goalSteps);
-    const first: UiExpect = {};
+    const first: MemoGoalExpect = {};
     if (path) first.path = path.path;
     if (appears[0]) first.appear = appears[0];
+    const second: MemoGoalExpect | null = appears[1]
+      ? { appear: appears[1] }
+      : null;
+    // Счётчик ±N и поле = слот — в ПОСЛЕДНЕМ шаге ожидания (после него
+    // шагов нет): исходное значение счётчика — из этого снимка. Проверить
+    // нечем — цель плана `unknown` (без «готово»), шаги — как обычно.
+    const x = goalExtras(c.goal.expect, values, snapshot);
+    Object.assign(second ?? first, {
+      ...(x.count ? { count: x.count } : {}),
+      ...(x.field ? { field: x.field } : {}),
+    });
+    if (x.unchecked) goalFrom = null;
     raw.push({ kind: 'wait', expect: first });
     pins.push(null);
-    if (appears[1]) {
-      raw.push({ kind: 'wait', expect: { appear: appears[1] } });
+    if (second) {
+      raw.push({ kind: 'wait', expect: second });
       pins.push(null);
     }
   }
@@ -1790,10 +1845,15 @@ export function memoCheckPage(
     const texts = [snapshot.title, ...snapshot.elements.map((e) => e.text)].map(
       (t) => normText(t),
     );
+    // Счётчик — элемент найден и число читается; поле — поле на странице.
     const ok = c.goal.expect.every((g) =>
       g.kind === 'text'
         ? texts.some((t) => t.includes(normText(g.text)))
-        : true,
+        : g.kind === 'counter'
+          ? goalCountInSnapshot(snapshot, g.target) !== null
+          : g.kind === 'field'
+            ? goalTargetsIn(snapshot, g.target, true).length > 0
+            : true,
     );
     goal = ok ? 'ok' : 'missing';
   }

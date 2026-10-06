@@ -4,6 +4,7 @@
  * (сверка — `assist/scripts/voice-map-api.test.ts`) и
  * `widget/src/editor-panel/api.ts`.
  */
+import type { MemoImportReport } from './memo-io';
 import type {
   MapGateReport,
   MapOpIssue,
@@ -112,6 +113,12 @@ export interface VoiceMapImportView {
   accepted: number;
   rejected: Array<{ index: number; key: string | null; code: string }>;
   signed: boolean;
+  /**
+   * (Э6-тер (к)) Мемо файла: созданные черновики (новые номера) и отказы с
+   * причиной — опасный шаг (`never_step`, `two_pnr`, `const_in_pii`…),
+   * формат, имя занято, лимит тарифа (`limit`).
+   */
+  memos: MemoImportReport;
 }
 
 export interface VoiceMapExportView {

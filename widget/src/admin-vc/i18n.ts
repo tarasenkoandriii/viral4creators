@@ -75,6 +75,13 @@ export interface VcTexts extends Pick<Dict, VcKeys> {
   vtReport: string;
   vtResult: Record<'pass' | 'partial' | 'fail', string>;
   vtAttempts: string;
+  /** Прогон мемо «Админки» (аудит 06.10). */
+  mcTitle: string;
+  mcHint: string;
+  mcPage: string;
+  mcNone: string;
+  mcFinish: string;
+  mcResult: Record<'pass' | 'partial' | 'fail', string>;
 }
 
 const uk: VcTexts = {
@@ -174,6 +181,17 @@ const uk: VcTexts = {
     fail: 'Не пройдено — увімкнути не можна.',
   },
   vtAttempts: 'Спроб по заборонених цілях: {n}.',
+  mcTitle: 'Прогін мемо АМ-{n} «{name}»',
+  mcHint:
+    'Відкрийте сторінки кроків і перевірте кожну. Нічого не натискається, кроки API не виконуються.',
+  mcPage: '{path}: кроків {n}, проблем {bad}.',
+  mcNone: 'кроків мемо не знайдено.',
+  mcFinish: 'Завершити прогін',
+  mcResult: {
+    pass: 'Прогін пройдено — опублікуйте мемо в кабінеті.',
+    partial: 'Частково (див. кабінет) — опублікувати можна.',
+    fail: 'Не пройдено — виправте мемо в кабінеті.',
+  },
 };
 
 const ru: VcTexts = {
@@ -275,6 +293,17 @@ const ru: VcTexts = {
     fail: 'Не пройдено — включить нельзя.',
   },
   vtAttempts: 'Попыток по запрещённым целям: {n}.',
+  mcTitle: 'Прогон мемо АМ-{n} «{name}»',
+  mcHint:
+    'Откройте страницы шагов и проверьте каждую. Ничего не нажимается, шаги API не выполняются.',
+  mcPage: '{path}: шагов {n}, проблем {bad}.',
+  mcNone: 'шагов мемо не найдено.',
+  mcFinish: 'Завершить прогон',
+  mcResult: {
+    pass: 'Прогон пройден — опубликуйте мемо в кабинете.',
+    partial: 'Частично (см. кабинет) — опубликовать можно.',
+    fail: 'Не пройден — исправьте мемо в кабинете.',
+  },
 };
 
 const en: VcTexts = {
@@ -376,6 +405,17 @@ const en: VcTexts = {
     fail: 'Not passed — it cannot be enabled.',
   },
   vtAttempts: 'Attempts on forbidden targets: {n}.',
+  mcTitle: 'Memo run AM-{n} «{name}»',
+  mcHint:
+    'Open the pages of the steps and check each one. Nothing is clicked, API steps are not executed.',
+  mcPage: '{path}: {n} steps, {bad} problems.',
+  mcNone: 'no memo steps found.',
+  mcFinish: 'Finish the run',
+  mcResult: {
+    pass: 'Run passed — publish the memo in the dashboard.',
+    partial: 'Partially (see the dashboard) — it can be published.',
+    fail: 'Not passed — fix the memo in the dashboard.',
+  },
 };
 
 export const VC_TEXTS: Record<'uk' | 'ru' | 'en', VcTexts> = { uk, ru, en };

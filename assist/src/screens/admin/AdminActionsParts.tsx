@@ -26,6 +26,7 @@ import {
   type Notice,
 } from '../knowledge/parts';
 import { ProposalCard } from './ProposalCard';
+import { MemoCheckPanel, MemoListMeta } from './AdminMemoCheck';
 
 /**
  * Э8 «Админка: действия» — части экранов TMA (ТЗ §3.8 п.3–4, п.6;
@@ -486,10 +487,19 @@ export function MemosTab({ siteId }: { siteId: string }) {
             onClick={() => setOpen(open === m.number ? null : m.number)}
           >
             <b>АМ-{m.number}</b> {m.name}
-            <Badge tone={m.status === 'published' ? 'success' : 'neutral'}>
+            <Badge
+              tone={
+                m.status === 'published'
+                  ? 'success'
+                  : m.status === 'needs_review'
+                    ? 'warning'
+                    : 'neutral'
+              }
+            >
               {t.memo.statuses[m.status] ?? m.status}
             </Badge>
           </button>
+          <MemoListMeta m={m} />
           {open === m.number && (
             <MemoEditor siteId={siteId} n={m.number} onChange={st.reload} />
           )}
@@ -630,16 +640,19 @@ function MemoEditor({
         >
           {t.memo.build}
         </Button>
-        {last && last.status === 'checking' && (
-          <Button
-            onClick={() =>
-              void run(adminActions.publish(siteId, n, last.number))
-            }
-          >
-            {t.memo.publish} {last.number}
-          </Button>
-        )}
-        {m.status === 'published' && (
+        {last &&
+          last.status === 'checking' &&
+          last.check &&
+          last.check.result !== 'fail' && (
+            <Button
+              onClick={() =>
+                void run(adminActions.publish(siteId, n, last.number))
+              }
+            >
+              {t.memo.publish} {last.number}
+            </Button>
+          )}
+        {(m.status === 'published' || m.status === 'needs_review') && (
           <Button
             variant="outline"
             onClick={() => void run(adminActions.setEnabled(siteId, n, false))}
@@ -662,6 +675,14 @@ function MemoEditor({
           {t.memo.remove}
         </ConfirmButton>
       </div>
+      <MemoCheckPanel
+        siteId={siteId}
+        m={m}
+        onRefresh={() => {
+          st.reload();
+          onChange();
+        }}
+      />
       {m.versions.slice(0, 5).map((v) => (
         <div key={v.number}>
           {t.memo.version} {v.number}:{' '}

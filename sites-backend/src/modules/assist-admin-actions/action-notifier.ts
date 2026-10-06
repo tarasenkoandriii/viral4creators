@@ -68,6 +68,38 @@ export class AdminActionsNotifier {
     );
   }
 
+  /** Мемо АМ-N «требует проверки» (§5-бис.17 п.8): коды и номер, без ПД. */
+  async memoReview(p: {
+    accountId: string;
+    siteId: string;
+    number: number;
+    code: string;
+    step: number | null;
+  }): Promise<void> {
+    const why =
+      p.code === 'goal_low'
+        ? 'часто не доходит до цели'
+        : p.code === 'pin_mismatch'
+          ? `шаг ${p.step ?? '?'} не находится на странице админки`
+          : `сбои на шаге ${p.step ?? '?'} у нескольких сотрудников`;
+    this.sent.push({
+      accountId: p.accountId,
+      text: `memo:${p.number}:${p.code}`,
+    });
+    if (this.sent.length > 100) this.sent.shift();
+    await sendToMembers({
+      chatIds: await this.owners(p.accountId),
+      text:
+        `Мемо АМ-${p.number} требует проверки: ${why}. Пока сотрудникам оно не выполняется. ` +
+        'Откройте «Помощник сотрудников → Мемо», исправьте и прогоните мемо в админке.',
+      button: {
+        text: 'Мемо «Админки»',
+        hashPath: `/sites/${p.siteId}/admin-mode/memos`,
+      },
+      fetchImpl: this.fetchImpl,
+    }).catch(() => 0);
+  }
+
   async authFailed(p: {
     accountId: string;
     siteId: string;

@@ -37,6 +37,7 @@
  *    `goalStatus = reached`; «що ти вмієш» — до 5 имён (без номеров).
  */
 import type { VoiceControlPublic } from '../shared/config';
+import { goalCheckOf, type UiGoalCheck } from '../shared/goal-check';
 import type { FrameMessage, ParentMessage } from '../shared/protocol';
 import {
   looksLikeCommand,
@@ -87,6 +88,8 @@ export const MARK_SYMBOL: Record<UiMark, string> = {
 export const OFFER_TIMEOUT_MS = 60_000;
 /** Ответ загрузчика о возврате полей — не дольше (чанк undo.js не загрузился). */
 const UNDO_TIMEOUT_MS = 5_000;
+/** (Э6-тер (к)) Проверка цели: чанк ждёт счётчик до 4 с + загрузка чанка. */
+const GOAL_TIMEOUT_MS = 6_000;
 
 export interface UiPlanUi {
   phase: UiPlanPhase;
@@ -143,6 +146,11 @@ export interface PlanView {
   goalStatus: string | null;
   /** (д) Что осталось на сайте после плана. */
   chainStatus: string | null;
+  /**
+   * (Э6-тер (к)) Проверки цели мемо «счётчик ±N»/«поле = слот» по номеру
+   * шага: после `done` такого шага — проверка чанком undo.js, затем отчёт.
+   */
+  goals: Array<UiGoalCheck | null>;
 }
 
 const MARKS: readonly string[] = [
@@ -226,6 +234,9 @@ export function parsePlanView(v: unknown): PlanView | null {
     repeat: o.repeat === true,
     goalStatus: word(o.goalStatus),
     chainStatus: word(o.chainStatus),
+    goals: steps.map((_s, i) =>
+      goalCheckOf(Array.isArray(o.steps) ? o.steps[i] : null, i)
+    ),
   };
 }
 
@@ -308,6 +319,13 @@ export class UiPlanController {
   /** (д) «Вернуть / Оставить»: план и таймер «оставлено» (60 с). */
   private offerPlan: string | null = null;
   private offerTimer: ReturnType<typeof setTimeout> | null = null;
+  /** (Э6-тер (к)) Ждём итог проверки цели мемо от загрузчика. */
+  private goalWait: {
+    planId: string;
+    i: number;
+    timer: ReturnType<typeof setTimeout>;
+    resolve: (ok: boolean) => void;
+  } | null = null;
   /** (д) Ждём итог возврата полей от загрузчика. */
   private undoWait: {
     planId: string;
@@ -696,12 +714,27 @@ export class UiPlanController {
       ParentMessage,
       {
         type:
-          'ui-snapshot' | 'ui-step' | 'ui-stopped' | 'ui-need' | 'ui-undone';
+          | 'ui-snapshot'
+          | 'ui-step'
+          | 'ui-stopped'
+          | 'ui-need'
+          | 'ui-undone'
+          | 'ui-goal';
       }
     >
   ) {
     if (m.type === 'ui-undone') {
       void this.undoDone(m.planId, m.results);
+      return;
+    }
+    if (m.type === 'ui-goal') {
+      const w = this.goalWait;
+      // Только ожидаемому шагу своего плана; чужие — мимо.
+      if (w && w.planId === m.planId && w.i === m.i) {
+        clearTimeout(w.timer);
+        this.goalWait = null;
+        w.resolve(m.ok);
+      }
       return;
     }
     if (m.type === 'ui-snapshot') {
@@ -729,9 +762,37 @@ export class UiPlanController {
       this.queue = this.queue.then(() => this.continueAfter(m.index));
       return;
     }
-    this.queue = this.queue.then(() =>
-      this.report(m.index, m.result, m.reason, m.url, m.ms)
-    );
+    // Э6-тер (к): шаг цели мемо со счётчиком/полем — «готово» только после
+    // проверки страницы чанком undo.js (нет ответа — «не дошёл»).
+    const g = m.result === 'done' ? v.goals[m.index] : null;
+    this.queue = this.queue.then(async () => {
+      const ok = g ? await this.goalCheck(m.planId, g) : true;
+      return this.report(
+        m.index,
+        ok ? m.result : 'failed',
+        ok ? m.reason : 'expect',
+        m.url,
+        m.ms
+      );
+    });
+  }
+
+  /** Проверка цели мемо на странице (ленивый чанк undo.js): да/нет. */
+  private goalCheck(planId: string, g: UiGoalCheck): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (this.goalWait) {
+        clearTimeout(this.goalWait.timer);
+        this.goalWait.resolve(false);
+      }
+      const timer = setTimeout(() => {
+        if (this.goalWait && this.goalWait.timer === timer) {
+          this.goalWait = null;
+          resolve(false);
+        }
+      }, GOAL_TIMEOUT_MS);
+      this.goalWait = { planId, i: g.i, timer, resolve };
+      this.host.toParent({ type: 'ui-undo', planId, idx: [], goal: g });
+    });
   }
 
   private async post(
@@ -830,7 +891,10 @@ export class UiPlanController {
         'assistant',
         r.goalStatus === 'reached' && goal
           ? fmt(this.host.t().vcMemoDone, { g: goal })
-          : this.host.t().vcDone
+          : goal && r.goalStatus === 'unknown'
+            ? // Проверить цель было нечем — без слова «готово».
+              fmt(this.host.t().vcMemoUnknown, { g: goal })
+            : this.host.t().vcDone
       );
       this.finish('done');
     }

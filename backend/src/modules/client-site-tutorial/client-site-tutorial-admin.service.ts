@@ -32,16 +32,39 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import {
+  CANVAS,
+  narrationFrameSeconds,
   planSlideshow,
+  SlideshowFrame,
+  SlideshowMotion,
   uniformFrames,
 } from '../tutorial-runner/tutorial-video-assembly';
+import {
+  buildTutorialCaptionsAss,
+  captionReadingSeconds,
+  hasCaptions,
+} from '../tutorial-runner/tutorial-captions';
+import {
+  buildTutorialManifest,
+  ManifestFrame,
+  ManifestSpeech,
+  TutorialTimelineManifest,
+  versionCaptionsPathname,
+} from '../tutorial-runner/tutorial-manifest';
+import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
+import {
+  clientFrameNarrations,
+  narrationLocale,
+} from './client-site-narration';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { DraftStatus } from './draft-rounds';
 import { draftFramePrefix, orderedFramePathnames } from './draft-frames';
@@ -74,6 +97,15 @@ export const MAX_ASSEMBLY_ATTEMPTS = 3;
  * одобрение откажет вовремя и с именем кадра.
  */
 export const FRAME_DOWNLOAD_TIMEOUT_MS = 15_000;
+
+/**
+ * Движение озвученной обучалки клиента — переходы без зума (решение
+ * владельца 06.10.2026: «с подписями и переходами, как у сценарного
+ * пути»). Зум — самая дорогая часть сборки и уводит к краю снимок
+ * чужого кабинета; немой путь (галочка озвучки снята) остаётся прежним,
+ * `motion: 'none'`, символ в символ.
+ */
+export const CLIENT_VOICED_MOTION: SlideshowMotion = 'fade';
 
 function withTimeout<T>(
   work: Promise<T>,
@@ -133,6 +165,10 @@ interface DraftRow {
   credentialsEnc: string | null;
   /** Э-С Ш2: поля входа лежат в хранилище sites-backend. */
   storeHasCredentials?: boolean;
+  /** Галочка озвучки (06.10.2026); `undefined` — строка до колонки. */
+  voiceEnabled?: boolean;
+  /** Язык озвучки и подписей; NULL — русский. */
+  locale?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -166,6 +202,9 @@ export class ClientSiteTutorialAdminService {
     private readonly blob: BlobService,
     private readonly ffmpeg: FfmpegApiService,
     private readonly aiUsage: AiUsageService,
+    // Покадровая озвучка и монтажный manifest (06.10.2026). Без модуля
+    // темпа (стенды, старые тесты) — прежняя немая сборка.
+    @Optional() private readonly versions?: TutorialVideoVersionsService,
   ) {}
 
   async list(params: {
@@ -338,10 +377,13 @@ export class ClientSiteTutorialAdminService {
    * Голый hex — формат, который `sameSlideshowContent` понимает как
    * старый, если строка когда-нибудь попадёт в общее сличение.
    */
-  private async prepareFrames(
-    draftId: string,
-  ): Promise<{ frameUrls: string[]; contentHash: string }> {
+  private async prepareFrames(draftId: string): Promise<{
+    frameUrls: string[];
+    pathnames: string[];
+    contentHash: string;
+  }> {
     const frameUrls: string[] = [];
+    const pathnames: string[] = [];
     const whole = createHash('sha256');
     for (const pathname of await this.framePathnames(draftId)) {
       let bytes: Buffer;
@@ -365,8 +407,9 @@ export class ClientSiteTutorialAdminService {
       whole.update(createHash('sha256').update(bytes).digest('hex'));
       whole.update(',');
       frameUrls.push(await this.blob.getPublicUrl(pathname));
+      pathnames.push(pathname);
     }
-    return { frameUrls, contentHash: whole.digest('hex') };
+    return { frameUrls, pathnames, contentHash: whole.digest('hex') };
   }
 
   /**
@@ -445,10 +488,36 @@ export class ClientSiteTutorialAdminService {
   private async submitAssembly(
     row: DraftRow,
     frames: number,
-    prepared: { frameUrls: string[]; contentHash: string },
+    prepared: { frameUrls: string[]; pathnames: string[]; contentHash: string },
     approvedBy: string,
   ): Promise<void> {
     const { frameUrls, contentHash } = prepared;
+    // Озвучка по кадрам (решение владельца 06.10.2026) — отдельной
+    // веткой, когда галочка стоит, тексты есть и модуль темпа подключён.
+    // Иначе — прежняя немая сборка ниже, символ в символ.
+    const locale = narrationLocale(row.locale);
+    const texts =
+      row.voiceEnabled === true
+        ? clientFrameNarrations({
+            steps: (row.steps as ScenarioStep[] | null) ?? [],
+            stepsPerRound: row.stepsPerRound,
+            frameCount: frameUrls.length,
+            locale,
+            title: row.title,
+            baseUrl: row.baseUrl,
+          })
+        : [];
+    if (this.versions && texts.some(Boolean)) {
+      await this.submitVoicedAssembly(
+        row,
+        frames,
+        prepared,
+        texts,
+        locale,
+        approvedBy,
+      );
+      return;
+    }
     // `uniformFrames` — все кадры по `SECONDS_PER_FRAME`, то же
     // поведение, что до этапа A ТЗ `TZ-Tutorial-Video-Voiced.md`.
     // Без движения — явно, а не умолчанием: §8 того же ТЗ этот путь
@@ -456,7 +525,8 @@ export class ClientSiteTutorialAdminService {
     // относится (этап G). У обучалки по сайту заказчика своя логика
     // одобрения, и менять её картинку оператор ночной обучалки не
     // должен.
-    const plan = planSlideshow(uniformFrames(frameUrls), { motion: 'none' });
+    const slides = uniformFrames(frameUrls);
+    const plan = planSlideshow(slides, { motion: 'none' });
     if (!plan) {
       throw new BadRequestException(
         `${frames} кадров не годятся для сборки: их либо нет, либо больше потолка слайд-шоу, либо у кадра неположительная длительность`,
@@ -552,11 +622,7 @@ export class ClientSiteTutorialAdminService {
     // приём задачи, а не за её результат. `record` наружу не бросает
     // (внутри свой `catch`), поэтому окно до записи `assemblyJobId`
     // она не удлиняет.
-    await this.aiUsage.record({
-      operation: 'tutorial-video-assembly',
-      model: 'ffmpeg-api',
-      userId: owner.userId,
-    });
+    await this.recordAssemblySpend(owner.userId);
 
     await this.prisma.tutorialVideoAsset.update({
       where: { id: asset.id },
@@ -567,9 +633,254 @@ export class ClientSiteTutorialAdminService {
       },
     });
 
+    // Монтажный manifest немого ролика (06.10.2026): темп в
+    // постпродакшене меняет паузы и у немых обучалок. ПОСЛЕ записи
+    // `jobId` и отдельной записью: задача уже оплачена, и ничто здесь не
+    // должно встать между `submit` и `pending`. Не записался — темп для
+    // этого ролика недоступен с объяснением, ролик цел.
+    await this.prisma.tutorialVideoAsset
+      .update({
+        where: { id: asset.id },
+        data: {
+          tempoManifest: this.muteManifest(
+            row,
+            asset.id,
+            owner.userId,
+            slides,
+            prepared,
+            locale,
+          ) as unknown as Prisma.InputJsonValue,
+        },
+      })
+      .catch((err: unknown) =>
+        this.logger.warn(
+          `черновик ${row.id}: монтажный manifest не записан (${err instanceof Error ? err.message : String(err)}) — темп для ролика будет недоступен`,
+        ),
+      );
+
     this.logger.log(
       `черновик ${row.id} одобрен (${approvedBy}), слайд-шоу отправлено на сборку (задача ${job.jobId}, ${frames} кадров)`,
     );
+  }
+
+  /** Manifest немой сборки — кадры черновика, исходные 2 с, без речи. */
+  private muteManifest(
+    row: DraftRow,
+    assetId: string,
+    ownerUserId: string,
+    slides: readonly SlideshowFrame[],
+    prepared: { pathnames: string[]; contentHash: string },
+    locale: string,
+  ): TutorialTimelineManifest {
+    return buildTutorialManifest({
+      sourceAssetId: assetId,
+      owner: { kind: 'client-site', draftId: row.id, userId: ownerUserId },
+      assetContentHash: prepared.contentHash,
+      locale,
+      theme: null,
+      motion: 'none',
+      captions: false,
+      narration: 'none',
+      storage: 'draft-frames',
+      voiceSkipped: row.voiceEnabled === true ? 'no-text' : null,
+      frames: slides.map((f, i) => ({
+        frameId: `step-${f.stepIndex}`,
+        stepIndex: f.stepIndex,
+        image: { url: f.url, pathname: prepared.pathnames[i] ?? null },
+        baseSeconds: f.seconds,
+        speech: null,
+        caption: null,
+        readingSeconds: null,
+        pointer: null,
+      })),
+    });
+  }
+
+  /**
+   * Озвученная сборка обучалки клиента (решение владельца 06.10.2026):
+   * реплика на кадр (Resemble, язык черновика, тексты без ПД), подписи
+   * тем же текстом и переходы — как у сценарного пути, — и монтажный
+   * manifest для темпа в постпродакшене.
+   *
+   * Порядок денег тот же, что у немой сборки: владелец расхода — ДО
+   * строки и синтеза, строка `preparing` — ДО синтеза (пути дорожек
+   * ключуются её id), `submit` → расход → `pending` с `jobId`. Синтез
+   * не удался совсем (лимит, провайдер, сбой) — ролик всё равно
+   * собирается: с подписями и временем чтения, но немой.
+   */
+  private async submitVoicedAssembly(
+    row: DraftRow,
+    frames: number,
+    prepared: { frameUrls: string[]; pathnames: string[]; contentHash: string },
+    texts: readonly (string | null)[],
+    locale: string,
+    approvedBy: string,
+  ): Promise<void> {
+    const versions = this.versions!;
+    const owner = (await this.prisma.project.findUnique({
+      where: { id: row.projectId },
+      select: { userId: true },
+    })) as { userId: string } | null;
+    if (!owner) {
+      throw new ServiceUnavailableException(
+        `проект ${row.projectId} черновика ${row.id} не найден — расход за сборку записать не на кого`,
+      );
+    }
+    const asset = (await this.prisma.tutorialVideoAsset.create({
+      data: {
+        subjectKey: 'client-site',
+        locale,
+        title: row.title ?? row.baseUrl,
+        clientSiteDraftId: row.id,
+        frameCount: frames,
+        assemblyStatus: 'preparing',
+        contentHash: prepared.contentHash,
+        width: CANVAS.width,
+        height: CANVAS.height,
+      },
+    })) as { id: string };
+
+    try {
+      const stepIndexes = prepared.frameUrls.map((_, i) => i);
+      const synth = await versions.synthesizeClientVoices({
+        assetId: asset.id,
+        draftId: row.id,
+        ownerUserId: owner.userId,
+        projectId: row.projectId,
+        locale,
+        texts,
+        stepIndexes,
+      });
+      const manifestFrames: ManifestFrame[] = prepared.frameUrls.map(
+        (url, i) => {
+          const speech: ManifestSpeech | null = synth.speech[i] ?? null;
+          const caption = texts[i] ?? null;
+          const reading = caption ? captionReadingSeconds(caption) : null;
+          const base = narrationFrameSeconds(speech ? speech.seconds : null);
+          return {
+            frameId: `step-${i}`,
+            stepIndex: i,
+            image: { url, pathname: prepared.pathnames[i] ?? null },
+            // Кадр с измеренной речью — речь + хвост; без речи —
+            // столько, сколько читается подпись (то же правило, что у
+            // сценарного пути).
+            baseSeconds:
+              speech?.seconds != null || reading === null
+                ? base
+                : Math.max(base, reading),
+            speech,
+            caption,
+            readingSeconds: reading,
+            pointer: null,
+          };
+        },
+      );
+
+      let captionsUrl: string | null = null;
+      const captionFrames = manifestFrames.map((f) => ({
+        seconds: f.baseSeconds,
+        narration: f.caption,
+      }));
+      if (hasCaptions(captionFrames)) {
+        try {
+          const { url } = await this.blob.uploadBuffer(
+            versionCaptionsPathname(asset.id, 'source'),
+            Buffer.from(
+              buildTutorialCaptionsAss(captionFrames, CLIENT_VOICED_MOTION),
+              'utf8',
+            ),
+            'text/x-ssa; charset=utf-8',
+          );
+          captionsUrl = url;
+        } catch (err) {
+          this.logger.warn(
+            `черновик ${row.id}: подписи не залились (${err instanceof Error ? err.message : String(err)}) — ролик соберётся без них`,
+          );
+        }
+      }
+
+      const slides: SlideshowFrame[] = manifestFrames.map((f) => ({
+        stepIndex: f.stepIndex,
+        url: f.image.url,
+        seconds: f.baseSeconds,
+        ...(f.speech ? { audioUrl: f.speech.url } : {}),
+      }));
+      const plan = planSlideshow(slides, {
+        captionsUrl,
+        motion: CLIENT_VOICED_MOTION,
+      });
+      if (!plan) {
+        throw new BadRequestException(
+          `${frames} кадров не годятся для сборки: их либо нет, либо больше потолка слайд-шоу`,
+        );
+      }
+      const manifest = buildTutorialManifest({
+        sourceAssetId: asset.id,
+        owner: { kind: 'client-site', draftId: row.id, userId: owner.userId },
+        assetContentHash: prepared.contentHash,
+        locale,
+        theme: null,
+        motion: CLIENT_VOICED_MOTION,
+        captions: !!captionsUrl,
+        narration: manifestFrames.some((f) => f.speech) ? 'per-frame' : 'none',
+        storage: 'draft-frames',
+        voiceSkipped: synth.skipped,
+        frames: manifestFrames,
+      });
+
+      const job = await this.ffmpeg.submit({
+        inputs: plan.inputs,
+        outputs: plan.outputs,
+        commands: plan.commands,
+      });
+      await this.recordAssemblySpend(owner.userId);
+      await this.prisma.tutorialVideoAsset.update({
+        where: { id: asset.id },
+        data: {
+          assemblyStatus: 'pending',
+          assemblyJobId: job.jobId,
+          assemblyStartedAt: new Date(),
+          durationMs: plan.durationMs,
+          tempoManifest: manifest as unknown as Prisma.InputJsonValue,
+        },
+      });
+      this.logger.log(
+        `черновик ${row.id} одобрен (${approvedBy}), озвученное слайд-шоу отправлено на сборку (задача ${job.jobId}, ${frames} кадров, реплик ${manifestFrames.filter((f) => f.speech).length}${synth.skipped ? `, озвучки нет: ${synth.skipped}` : ''})`,
+      );
+    } catch (err) {
+      // Сборка не ушла — строка `failed` с инфраструктурной причиной (в
+      // счёт попыток одного содержимого не идёт: отпечаток снят),
+      // дорожки этой строки — прочь. Одобрение откатит вызывающий.
+      await this.prisma.tutorialVideoAsset
+        .updateMany({
+          where: { id: asset.id, assemblyStatus: 'preparing' },
+          data: {
+            assemblyStatus: 'failed',
+            assemblyError:
+              `infra: ${err instanceof Error ? err.message : String(err)}`.slice(
+                0,
+                500,
+              ),
+            contentHash: null,
+          },
+        })
+        .catch(() => undefined);
+      await versions.wipeSources(asset.id).catch(() => undefined);
+      throw err;
+    }
+  }
+
+  /**
+   * Расход за сборку — одна запись на оба пути (немой и озвученный).
+   * Владелец — хозяин проекта, а не оператор, нажавший «Одобрить»: платит
+   * продукт по заказу этого клиента. `record` наружу не бросает.
+   */
+  private recordAssemblySpend(userId: string): Promise<void> {
+    return this.aiUsage.record({
+      operation: 'tutorial-video-assembly',
+      model: 'ffmpeg-api',
+      userId,
+    });
   }
 
   private async require(id: string): Promise<DraftRow> {

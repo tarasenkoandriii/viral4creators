@@ -48,6 +48,7 @@ import {
   suggestMemoKey,
   type MemoContent,
   type MemoGateReport,
+  type MemoChangeSource,
   type MemoLang,
   type MemoOrigin,
   type MemoStatus,
@@ -429,6 +430,11 @@ export class MemoService {
     m: AccountMembership,
     siteId: string,
     body: MemoCreateRequest | null | undefined,
+    // Э6-тер (д): запись кликами в редакторе — `recording` / `editor`.
+    from: { origin: MemoOrigin; source: MemoChangeSource } = {
+      origin: 'manual',
+      source: 'tma',
+    },
   ): Promise<MemoDetailView> {
     await this.site(m, siteId);
     const lang: MemoLang =
@@ -447,10 +453,36 @@ export class MemoService {
       throw invalid([{ path: 'key', code: 'type' }]);
     const row = await this.insertMemo(m, siteId, {
       content,
-      origin: 'manual',
+      origin: from.origin,
       key: body?.key ?? null,
-      source: 'tma',
-      op: { op: 'create', origin: 'manual' },
+      source: from.source,
+      op: { op: 'create', origin: from.origin },
+    });
+    return this.get(m, siteId, row.number);
+  }
+
+  /**
+   * Э6-тер (к): черновик из шагов одобренной обучалки — разбор, отбор входа
+   * и значений, элементы Ш4 — `memo-from-tutorial.service.ts`. Имя занято —
+   * уникальный хвост (как у плана); лимит тарифа — в транзакции
+   * `insertMemo`; ворота — в карточке (`get`). `op` — ссылка на обучалку.
+   */
+  async createFromTutorial(
+    m: AccountMembership,
+    siteId: string,
+    content: MemoContent,
+    op: Record<string, unknown>,
+  ): Promise<MemoDetailView> {
+    await this.site(m, siteId);
+    const lang = MEMO_LANGS.find((l) => content.names[l]) ?? 'uk';
+    if (await this.nameTaken(this.db(m), siteId, null, content))
+      content.names[lang] =
+        `${content.names[lang]?.slice(0, 50)} ${randomBytes(2).toString('hex')}`;
+    const row = await this.insertMemo(m, siteId, {
+      content,
+      origin: 'tutorial',
+      source: 'tutorial',
+      op: { ...op, op: 'create', origin: 'tutorial' },
     });
     return this.get(m, siteId, row.number);
   }
@@ -769,6 +801,8 @@ export class MemoService {
     siteId: string,
     n: string,
     body: MemoDraftPatch | null | undefined,
+    // Э6-тер (д): правка из сессии редактора — источник `editor` в истории.
+    source: MemoChangeSource = 'tma',
   ): Promise<MemoDetailView> {
     const row = await this.memo(m, siteId, n);
     const db = this.db(m);
@@ -929,7 +963,7 @@ export class MemoService {
         'Мемо изменили в другой вкладке — обновите',
       );
     // История: что сделано (без значений — их в мемо нет).
-    await this.change(db, m, row, row.draftRevision + 1, 'tma', {
+    await this.change(db, m, row, row.draftRevision + 1, source, {
       ops: (body.ops as MemoDraftOp[]).map((o) =>
         o.op === 'set' ? { op: 'set', field: o.field } : o,
       ),

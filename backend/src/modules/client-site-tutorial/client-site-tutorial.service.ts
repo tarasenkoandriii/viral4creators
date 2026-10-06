@@ -117,6 +117,7 @@ import {
   SiteMode,
 } from './site-access.service';
 import type { AccountConsentLocale } from './account-consent';
+import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 
 /** Ключ шифрования cookie jar и кред черновика. Своя переменная, а НЕ
  * `CHANNEL_TOKEN_KEY`: схема БД фиксирует правило «разные секреты разной
@@ -273,6 +274,9 @@ export class ClientSiteTutorialService {
     // Э-С Ш2: где лежат данные входа. Без провайдера (тесты оркестрации) —
     // свой экземпляр: без env хранилища он пишет в колонки, как до Ш2.
     @Optional() secretsStore?: DraftSecretsStore,
+    // Темп/озвучка обучалок (06.10.2026): исходники роликов черновика
+    // (дорожки озвучки) уходят вместе с черновиком. Без модуля — как раньше.
+    @Optional() private readonly versions?: TutorialVideoVersionsService,
   ) {
     this.secrets =
       secretsStore ??
@@ -771,7 +775,15 @@ export class ClientSiteTutorialService {
   async finish(
     userId: string,
     projectId: string,
-    input: { expectedVersion: number; title: string },
+    input: {
+      expectedVersion: number;
+      title: string;
+      /** Галочка «озвучить» (06.10.2026); не передана — выбор черновика
+       *  не меняется (по умолчанию ВКЛ). */
+      voice?: boolean;
+      /** Язык интерфейса, в котором человек записывал черновик. */
+      locale?: string;
+    },
   ): Promise<DraftView> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
     // Версия — ДО любой работы с хранилищем (аудит 01.10.2026). Без
@@ -862,6 +874,8 @@ export class ClientSiteTutorialService {
         framesPurgedAt: null,
         rejectionReason: null,
         version: { increment: 1 },
+        ...(input.voice !== undefined ? { voiceEnabled: input.voice } : {}),
+        ...(input.locale ? { locale: input.locale } : {}),
       },
     });
     if (claim.count === 0) {
@@ -1319,6 +1333,11 @@ export class ClientSiteTutorialService {
     // к хранилищу, потерянные навсегда кадры авторизованного кабинета
     // — заметно дороже.
     await this.wipeFrames(draft.id);
+    // Исходники роликов черновика для темпа (дорожки озвучки, подписи) —
+    // тоже до строки: путь к ним ключуется id ролика, а ролики находятся
+    // только по `clientSiteDraftId` (06.10.2026). Сбой — в лог: остаток
+    // подберёт метла сирот, когда не станет строки ролика.
+    await this.wipeVideoSources(draft.id);
     // Ш2: данные входа в хранилище — стереть (личная запись B — целиком, у
     // учётки реестра A — секреты). Сбой — в лог: истекут по сроку там.
     if (draftSecretsLocation(draft) !== 'columns') {
@@ -1330,6 +1349,21 @@ export class ClientSiteTutorialService {
   }
 
   // ── внутреннее ──────────────────────────────────────────────────────
+
+  private async wipeVideoSources(draftId: string): Promise<void> {
+    if (!this.versions) return;
+    try {
+      const assets = (await this.prisma.tutorialVideoAsset.findMany({
+        where: { clientSiteDraftId: draftId },
+        select: { id: true },
+      })) as Array<{ id: string }>;
+      for (const a of assets) await this.versions.wipeSources(a.id);
+    } catch (err) {
+      this.logger.warn(
+        `черновик ${draftId}: исходники роликов не стёрлись (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+  }
 
   /** Общая часть `/step` и `/login`: выполнить раунд в браузере и
    * записать результат под оптимистичной блокировкой. */

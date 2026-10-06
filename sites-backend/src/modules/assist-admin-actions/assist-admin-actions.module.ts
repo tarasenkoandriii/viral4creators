@@ -12,13 +12,24 @@ import { SiteAiModule } from '../site-ai/site-ai.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { AdminActionsController } from './actions.controller';
 import { AdminActionsNotifier } from './action-notifier';
+import { AdminMemoMonitorService } from './admin-memo-monitor.service';
 import { AdminMemoService } from './admin-memo.service';
 import { ProposalsService } from './proposals.service';
 
 @Module({
   imports: [SiteCoreModule, SiteAiModule, AssistAdminModeModule],
   controllers: [AdminActionsController],
-  providers: [ProposalsService, AdminMemoService, AdminActionsNotifier],
-  exports: [ProposalsService, AdminMemoService, AdminActionsNotifier],
+  providers: [
+    ProposalsService,
+    AdminMemoService,
+    AdminMemoMonitorService,
+    AdminActionsNotifier,
+  ],
+  exports: [
+    ProposalsService,
+    AdminMemoService,
+    AdminMemoMonitorService,
+    AdminActionsNotifier,
+  ],
 })
 export class AssistAdminActionsModule {}

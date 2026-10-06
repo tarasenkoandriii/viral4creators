@@ -128,7 +128,14 @@ export async function undoSiteRound(
  */
 export async function finishSiteTutorial(
   projectId: string,
-  input: { expectedVersion: number; title: string }
+  input: {
+    expectedVersion: number;
+    title: string;
+    /** Озвучить по кадрам (06.10.2026); по умолчанию сервер — ВКЛ. */
+    voice?: boolean;
+    /** Язык реплик и подписей — язык интерфейса. */
+    locale?: string;
+  }
 ): Promise<ClientSiteDraftView> {
   return unwrap(
     await api.post<ClientSiteDraftView>(`${base(projectId)}/finish`, input),

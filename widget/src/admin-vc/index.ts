@@ -23,6 +23,11 @@
  *    тестовую сессию, регистратор на странице (`vt-arm`), окружение и
  *    разметка (check.js), разбор сервера (команды, запреты), сухой прогон,
  *    прогон с нажатием, отчёт — вердикт считает сервер.
+ *  - Прогон мемо «Админки» АМ-N (аудит 06.10, ТЗ §5-бис.17 п.7): та же
+ *    ссылка `?v4c_voicetest=`, обмен отдаёт карточку мемо; владелец
+ *    открывает страницы шагов и жмёт «Перевірити сторінку» (снимок → итог
+ *    страницы кодом, хранится на сервере), затем «Завершити прогін»
+ *    (вердикт — сервер). Шаги не исполняются, шаги API — тем более.
  *
  * Ванильный TS без HTML-приёмников (CSP iframe: Trusted Types 'none').
  */
@@ -94,6 +99,17 @@ const LIMITS = { maxRecordMs: 12_000, minSpeechMs: 250, endSilenceMs: 1_200 };
 const MEMO_REF = /(?:^|[\s(«"])(?:АМ|AM|АM|AМ)[-‐–\s]?\d{1,4}\b/iu;
 const ROW_NUM = /(?:^|[^0-9])([0-9]{3,12})(?![0-9])/g;
 
+/** Прогон мемо «Админки» (аудит 06.10): карточка, проверенные страницы, итог. */
+interface Mc {
+  testId: string;
+  number: number;
+  name: string;
+  pageSteps: boolean;
+  steps: Array<{ kind: string; text: string }>;
+  checked: Array<{ path: string; n: number; bad: number }>;
+  result: 'pass' | 'partial' | 'fail' | null;
+}
+
 interface Vt {
   testId: string;
   testHost: boolean;
@@ -151,6 +167,7 @@ export function start(h: VcHost): VcApi {
   let memoRun: string | null = null;
   let pageUrl: string | null = null;
   let vt: Vt | null = null;
+  let mc: Mc | null = null;
   const waits = new Map<string, (d: unknown) => void>();
 
   const key = (n: string) => `v4c-avc:${h.pk()}:${n}`;
@@ -516,6 +533,7 @@ export function start(h: VcHost): VcApi {
   // ── мастер проверки ────────────────────────────────────────────────────
 
   const saveVt = () => store('vt', vt ? JSON.stringify(vt) : null);
+  const saveMc = () => store('mc', mc ? JSON.stringify(mc) : null);
 
   function ask(type: string, extra: Record<string, unknown> = {}) {
     const rid =
@@ -538,11 +556,45 @@ export function start(h: VcHost): VcApi {
       vt = null;
     }
     if (vt && vt.result) vt = null;
+    try {
+      mc = JSON.parse(store('mc') || 'null') as Mc | null;
+    } catch {
+      mc = null;
+    }
     if (h.vt) {
       try {
         const r = (await call('POST', `${VT_PATH}/session`, {
           token: h.vt,
-        })) as { testId: string; testHost: boolean; host: string };
+          lang: h.lang(),
+        })) as {
+          testId: string;
+          testHost: boolean;
+          host: string;
+          memo?: Omit<Mc, 'testId' | 'checked' | 'result'>;
+        };
+        h.vt = null;
+        if (r.memo) {
+          // Прогон мемо: своя карточка, без шагов мастера.
+          const m = r.memo;
+          mc = {
+            testId: r.testId,
+            number: Number(m.number) || 0,
+            name: String(m.name || '').slice(0, 60),
+            pageSteps: m.pageSteps === true,
+            steps: (Array.isArray(m.steps) ? m.steps : [])
+              .slice(0, 12)
+              .map((x) => ({
+                kind: String(x.kind),
+                text: String(x.text || '').slice(0, 80),
+              })),
+            checked: [],
+            result: null,
+          };
+          vt = null;
+          saveMc();
+          saveVt();
+          return mcRender();
+        }
         vt = {
           testId: r.testId,
           testHost: r.testHost === true,
@@ -564,6 +616,7 @@ export function start(h: VcHost): VcApi {
       }
       h.vt = null;
     }
+    mcRender();
     if (!vt) return;
     h.post({ type: 'vt-arm', work: !vt.testHost });
     try {
@@ -683,6 +736,76 @@ export function start(h: VcHost): VcApi {
     store('vtsnap', null);
     store('vt', null);
     vtRender();
+  }
+
+  /** «Перевірити сторінку»: снимок → итог страницы считает и хранит сервер. */
+  async function mcPage() {
+    if (!mc) return;
+    rows = [];
+    const snap = await ctl.snap();
+    try {
+      const r = (await call('POST', `${VT_PATH}/${mc.testId}/memo-page`, {
+        snapshot: snap,
+      })) as { path?: unknown; steps?: Array<{ ok?: unknown }> };
+      const st = Array.isArray(r.steps) ? r.steps : [];
+      const path = String(r.path || '/').slice(0, 120);
+      mc.checked = [
+        ...mc.checked.filter((c) => c.path !== path),
+        { path, n: st.length, bad: st.filter((x) => x.ok !== true).length },
+      ].slice(-12);
+    } catch {
+      h.feed('assistant', t().vtExpired);
+    }
+    saveMc();
+    mcRender();
+  }
+
+  /** «Завершити прогін»: вердикт — сервер (страницы из базы, API без вызова). */
+  async function mcFinish() {
+    if (!mc) return;
+    try {
+      const r = (await call('POST', `${VT_PATH}/${mc.testId}/memo-report`)) as {
+        result?: unknown;
+      };
+      mc.result =
+        r.result === 'pass' || r.result === 'partial' ? r.result : 'fail';
+    } catch {
+      h.feed('assistant', t().vtExpired);
+      return;
+    }
+    saveMc();
+    mcRender();
+    mc = null;
+    saveMc();
+  }
+
+  function mcRender() {
+    if (!mc) return;
+    vtBox.replaceChildren();
+    const T = t();
+    const m = mc;
+    vtBox.append(
+      div('wa-card-t', fmt(T.mcTitle, { n: m.number, name: m.name })),
+      div('wa-vc-t', T.mcHint)
+    );
+    const ul = document.createElement('ul');
+    ul.className = 'wa-card-f';
+    m.steps.forEach((x, i) => {
+      const li = document.createElement('li');
+      li.textContent = `${i + 1}. ${x.kind === 'api' ? 'API · ' : ''}${x.text}`;
+      ul.append(li);
+    });
+    vtBox.append(ul);
+    for (const c of m.checked)
+      vtBox.append(
+        div('wa-vc-t', c.n ? fmt(T.mcPage, c) : `${c.path}: ${T.mcNone}`)
+      );
+    if (m.result) return vtBox.append(div('wa-vc-t', T.mcResult[m.result]));
+    const row = div('wa-card-a');
+    if (m.pageSteps)
+      row.append(button(T.vtCheck, 'wa-edit', () => void mcPage()));
+    row.append(button(T.mcFinish, 'wa-yes', () => void mcFinish()));
+    vtBox.append(row);
   }
 
   function vtRender() {
@@ -853,6 +976,7 @@ export function start(h: VcHost): VcApi {
       if (ctl.active()) ctl.stop('close');
       listen(false);
       vt = null;
+      mc = null;
       vtRender();
       ui = uiPlanOff();
       render();

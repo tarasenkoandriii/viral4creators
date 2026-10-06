@@ -36,6 +36,7 @@ import type {
   TutorialVideoDataStatus,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import { TutorialTempoPanel } from './TutorialTempoPanel';
 
 const PLATFORM_LABEL: Record<PublicationPlatform, string> = { YOUTUBE: 'YouTube', TIKTOK: 'TikTok' };
 const PRIVACY_LABEL: Record<PublicationPrivacy, string> = {
@@ -389,6 +390,8 @@ function VideoContentTab() {
   );
   const [error, setError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  // Темп (06.10.2026): панель версий с другим темпом под строкой ролика.
+  const [tempoId, setTempoId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   // Этап 101 (ТЗ §4.7, Фаза 3) — публикация в YouTube/TikTok прямо с
   // этой вкладки, тот же приём формы, что «Одобрить/Отклонить» на
@@ -589,6 +592,11 @@ function VideoContentTab() {
                             {previewId === row.id ? 'Скрыть' : 'Просмотр'}
                           </button>
                         )}
+                        {row.assemblyStatus === 'complete' && row.blobUrl && (
+                          <button type="button" onClick={() => setTempoId(tempoId === row.id ? null : row.id)}>
+                            {tempoId === row.id ? 'Скрыть темп' : 'Темп'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={!row.blobUrl || busyId === row.id}
@@ -621,6 +629,13 @@ function VideoContentTab() {
                             {/* eslint-disable-next-line jsx-a11y/media-has-caption -- служебный предпросмотр слайдшоу для оператора, не публичный контент */}
                             <video controls src={row.blobUrl} style={{ maxWidth: 480, width: '100%' }} />
                           </div>
+                        </td>
+                      </tr>
+                    )}
+                    {tempoId === row.id && (
+                      <tr>
+                        <td colSpan={7} style={{ background: 'var(--bg-alt, rgba(255,255,255,0.03))' }}>
+                          <TutorialTempoPanel assetId={row.id} onChanged={load} />
                         </td>
                       </tr>
                     )}

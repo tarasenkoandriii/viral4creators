@@ -7,8 +7,10 @@
  *   GET  /assist/sites/:id/action-log/verify                  проверка цепочки хешей
  *   GET|POST /assist/sites/:id/admin-mode/memos               мемо АМ-N
  *   GET  /assist/sites/:id/admin-mode/memos/:n
+ *   GET  /assist/sites/:id/admin-mode/memos/:n/stats          запуски и успех цели 30/7 дней
  *   PATCH /assist/sites/:id/admin-mode/memos/:n/draft         { expectedRevision, draft } → 409
  *   POST /assist/sites/:id/admin-mode/memos/:n/versions       собрать (ворота + каталог)
+ *   (прогон версии — POST …/memos/:n/check-token, модуль assist-admin-voice)
  *   POST /assist/sites/:id/admin-mode/memos/:n/versions/:v/publish | /rollback
  *   POST /assist/sites/:id/admin-mode/memos/:n/disable | /enable
  *   DELETE /assist/sites/:id/admin-mode/memos/:n                мягко (номер не освобождается)
@@ -151,6 +153,15 @@ export class AdminActionsController {
     @Param('n', ParseIntPipe) n: number,
   ) {
     return this.memos.get(m, id, n);
+  }
+
+  @Get(':id/admin-mode/memos/:n/stats')
+  memoStats(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Param('n', ParseIntPipe) n: number,
+  ) {
+    return this.memos.stats(m, id, n);
   }
 
   @Patch(':id/admin-mode/memos/:n/draft')

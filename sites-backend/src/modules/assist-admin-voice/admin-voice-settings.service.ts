@@ -63,7 +63,8 @@ const RESULTS: readonly WizardResult[] = ['pass', 'partial', 'fail'];
 const DAY = 24 * 60 * 60_000;
 
 /** Путь страницы админки для ссылки мастера (как `startPath` обхода, аудит Э7). */
-const START_PATH_RE = /^\/(?![/\\])[A-Za-z0-9\-._~%!$&'()*+,;=:@/]{0,300}$/;
+export const START_PATH_RE =
+  /^\/(?![/\\])[A-Za-z0-9\-._~%!$&'()*+,;=:@/]{0,300}$/;
 
 export function sha256Hex(s: string): string {
   return createHash('sha256').update(s).digest('hex');
@@ -607,11 +608,15 @@ export class AdminVoiceSettingsService {
     const list = await this.db(m.accountId).assistAdminVoiceTest.findMany({
       where: { siteId },
       orderBy: { createdAt: 'desc' },
-      take: 20,
-      select: TEST_SELECT,
+      take: 40,
+      select: { ...TEST_SELECT, report: true },
     });
     const items: AdminVoiceTestSummary[] = [];
-    for (const t of list)
+    // Ссылки прогона мемо (аудит 06.10) — не отчёты мастера голосового
+    // управления: их видно в карточке мемо, здесь — нет.
+    for (const t of list
+      .filter((x) => (x.report as { kind?: unknown } | null)?.kind !== 'memo')
+      .slice(0, 20))
       items.push(await this.summary(m.accountId, siteId, t));
     return { items };
   }

@@ -99,6 +99,21 @@ export const SWEEP_SCOPES = [
   // (сбой Blob, удаление строки в обход подметальщика). Владелец — строка
   // `TutorialVideoAsset`: пока она жива, постер не трогается.
   'tutorial-video-posters',
+  // Исходники для темпа обучалок (06.10.2026):
+  // `tutorial-video-sources/<assetId>/frames|voice|captions/…` — кадры и
+  // дорожки, из которых пересобирается версия с другим темпом. НЕ
+  // транзит: живут, пока жива строка ролика, и удаляются вместе с ней
+  // (`deleteAssetExtras` подметальщика роликов, удаление черновика).
+  // Здесь — страховка на случай, когда строки не стало, а файлы остались.
+  // Владелец — строка `TutorialVideoAsset` (выборка — общая с кадрами:
+  // «жив ролик или черновик», id черновика здесь не встречается).
+  'tutorial-video-sources',
+  // Файлы версий с другим темпом: `tutorial-videos/versions/<assetId>/
+  // <versionId>.mp4`. Под `tutorial-videos/` — их принимает публикация;
+  // своя папка с владельцем в пути — чтобы метла могла их подобрать.
+  // Основной файл ролика (`tutorial-videos/<subjectKey>/<id>.mp4`) метла
+  // по-прежнему не трогает: владелец там — имя файла, а не папка.
+  'tutorial-video-versions',
 ] as const;
 
 export type SweepScope = (typeof SWEEP_SCOPES)[number];
@@ -113,6 +128,8 @@ export const SWEEP_PREFIX: Record<SweepScope, string> = {
   users: 'users/',
   'tutorial-video-frames': 'tutorial-video-frames/',
   'tutorial-video-posters': 'tutorial-video-posters/',
+  'tutorial-video-sources': 'tutorial-video-sources/',
+  'tutorial-video-versions': 'tutorial-videos/versions/',
 };
 
 export interface BlobRef {
@@ -224,6 +241,12 @@ export function sweepFileKind(
     case 'tutorial-video-posters':
       // Постер — файл прямо под префиксом, без папки владельца.
       return pathname.endsWith('.png') ? 'previews' : 'other';
+    case 'tutorial-video-sources':
+      if (rest.startsWith('frames/')) return 'previews';
+      if (rest.startsWith('voice/')) return 'voice';
+      return 'other';
+    case 'tutorial-video-versions':
+      return rest.endsWith('.mp4') ? 'video' : 'other';
   }
 }
 

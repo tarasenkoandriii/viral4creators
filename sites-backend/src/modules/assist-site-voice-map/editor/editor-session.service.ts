@@ -450,8 +450,11 @@ export class EditorSessionService {
     }
   }
 
-  /** Потолок «Сказать сейчас» на сайт в сутки (§5-кватер.6, §5-кватер.11 п.9). */
-  private async spendTry(
+  /**
+   * Потолок «Сказать сейчас» на сайт в сутки (§5-кватер.6, §5-кватер.11 п.9);
+   * «Прогнать» мемо в редакторе (Э6-тер (д)) — из того же потолка.
+   */
+  async spendTry(
     db: ReturnType<SitesDb['forAccount']>,
     siteId: string,
   ): Promise<number> {

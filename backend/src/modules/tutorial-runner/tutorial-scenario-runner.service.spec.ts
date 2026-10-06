@@ -1622,6 +1622,46 @@ describe('TutorialScenarioRunnerService', () => {
           return built;
         }
 
+        it('монтажный manifest (темп, 06.10.2026): кадры, дорожки, длительности — те же, что в плане', async () => {
+          const built = narratedRun();
+          await built.service.run();
+          const pending = built.prisma.tutorialVideoAsset.updateMany.mock.calls
+            .map((c: any[]) => c[0])
+            .find((a: any) => a.data?.assemblyStatus === 'pending');
+          expect(pending).toBeDefined();
+          const m = pending.data.tempoManifest;
+          expect(m).toMatchObject({
+            manifestVersion: 1,
+            sourceAssetId: 'tva-new',
+            owner: { kind: 'scenario', scenarioId: 'ts-n', subjectKey: '1' },
+            narration: 'per-frame',
+            storage: 'transit',
+            locale: 'ru',
+            fps: 30,
+          });
+          expect(m.frames.map((f: any) => f.frameId)).toEqual([
+            'step-0',
+            'step-1',
+          ]);
+          // Транзитный путь кадра — тот, что потом копируется в исходники.
+          expect(m.frames[0].image.pathname).toBe(
+            'tutorial-video-frames/tva-new/0.png',
+          );
+          // Длительность кадра в manifest — ровно та, что ушла в команду.
+          const cmd = built.ffmpeg.submit.mock.calls[0][0].commands[0];
+          for (const f of m.frames) {
+            expect(cmd).toContain(
+              `-t ${f.baseSeconds} -i {{frame${f.stepIndex}}}`,
+            );
+            expect(f.speech).toMatchObject({
+              seconds: 9,
+              provenance: { provider: 'elevenlabs', locale: 'ru' },
+            });
+          }
+          expect(m.frames[1].speech.text).toBe('Нажимаем «Далее».');
+          expect(typeof m.sourceHash).toBe('string');
+        });
+
         it('реплик меньше порога — запасной путь виден в журнале, а не только в логах', async () => {
           // Админка в этот момент показывает «N реплик, вычитаны», а в
           // ролик не попадает ни одна: звучит текст карточки шага,
@@ -4810,5 +4850,108 @@ describe('TutorialScenarioRunnerService — аудит кронов 06.10.2026',
         'tutorial-video-posters/old.png',
       );
     });
+  });
+});
+
+describe('темп в постпродакшене: раннер и сервис версий (06.10.2026)', () => {
+  function withVersions() {
+    const built = build([]);
+    const versions = {
+      pollVersions: jest
+        .fn()
+        .mockResolvedValue({ polled: 0, completed: 0, failed: 0 }),
+      captureScenarioSources: jest.fn().mockResolvedValue(undefined),
+      deleteAssetExtras: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new TutorialScenarioRunnerService(
+      built.prisma as any,
+      built.notify as any,
+      built.blob as any,
+      built.ffmpeg as any,
+      built.settings as any,
+      built.tts as any,
+      built.aiUsage as any,
+      undefined,
+      versions as any,
+    );
+    return { ...built, service, versions };
+  }
+
+  it('опрос версий — тем же тиком крона сборок', async () => {
+    const { service, versions } = withVersions();
+    await service.pollAssemblies();
+    expect(versions.pollVersions).toHaveBeenCalledTimes(1);
+  });
+
+  it('подметальщик сносит версии и исходники ДО строки; сбой — строка остаётся', async () => {
+    const { service, prisma, versions, blob } = withVersions();
+    const video = (id: string) => ({
+      id,
+      subjectKey: '1',
+      locale: 'ru',
+      assemblyStatus: 'complete',
+      reviewed: false,
+      clientSiteDraftId: null,
+      blobUrl: `https://blob.example.com/tutorial-videos/1/${id}.mp4`,
+    });
+    stubAssets(prisma, [video('today'), video('old1'), video('old2')]);
+    versions.deleteAssetExtras.mockImplementation(async (id: string) => {
+      if (id === 'old2') throw new Error('Blob икнул');
+    });
+
+    await service.pollAssemblies();
+
+    expect(versions.deleteAssetExtras).toHaveBeenCalledWith('old1');
+    expect(versions.deleteAssetExtras.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.tutorialVideoAsset.delete.mock.invocationCallOrder[0],
+    );
+    expect(
+      prisma.tutorialVideoAsset.delete.mock.calls.map(
+        (c: any[]) => c[0].where.id,
+      ),
+    ).toEqual(['old1']);
+    expect(blob.deleteBlob).not.toHaveBeenCalledWith(
+      'tutorial-videos/1/old2.mp4',
+    );
+  });
+
+  it('при complete исходники переносятся ДО уборки транзитных кадров', async () => {
+    const { service, prisma, ffmpeg, versions, blob } = withVersions();
+    ffmpeg.configured.mockReturnValue(true);
+    ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'tutorial.mp4': 'https://ffmpeg.example/out.mp4' },
+    });
+    const pending = {
+      id: 'tva-p',
+      subjectKey: '1',
+      locale: 'ru',
+      scenarioId: 'ts-1',
+      clientSiteDraftId: null,
+      assemblyJobId: 'job-1',
+      assemblyStartedAt: new Date(),
+      width: 720,
+      height: 1560,
+    };
+    prisma.tutorialVideoAsset.findMany.mockImplementation(async (args: any) =>
+      args?.where?.assemblyStatus === 'pending' ? [pending] : [],
+    );
+    const fetchSpy = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array(4096).buffer,
+    } as any);
+    blob.listByPrefix.mockResolvedValue({
+      blobs: [{ pathname: 'tutorial-video-frames/tva-p/0.png' }],
+      cursor: null,
+    });
+
+    await service.pollAssemblies();
+    fetchSpy.mockRestore();
+
+    expect(versions.captureScenarioSources).toHaveBeenCalledWith('tva-p');
+    const wipe = blob.deleteMany.mock.invocationCallOrder[0];
+    expect(
+      versions.captureScenarioSources.mock.invocationCallOrder[0],
+    ).toBeLessThan(wipe);
   });
 });

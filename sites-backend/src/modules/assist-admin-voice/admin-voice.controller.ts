@@ -5,6 +5,8 @@
  *   POST      /assist/sites/:id/admin-mode/voice-control/test-token
  *   GET       /assist/sites/:id/admin-mode/voice-control/tests
  *   GET       /assist/sites/:id/admin-mode/voice-control/tests/:tid
+ *   POST      /assist/sites/:id/admin-mode/memos/:n/check-token   ссылка
+ *             мастера для сухого прогона мемо АМ-N (аудит 06.10, §5-бис.17 п.7)
  * Права — ТОЛЬКО `assistAdmin: owner` (§5-бис.2 «только владелец»; §5-бис.10
  * п.6: менеджер получает 403; К-9).
  */
@@ -15,6 +17,7 @@ import {
   Header,
   HttpCode,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   UseGuards,
@@ -30,6 +33,7 @@ import {
 } from '../site-core/account/site-account.guard';
 import { AllowApps } from '../telegram-auth/allow-apps.decorator';
 import { AdminVoiceSettingsService } from './admin-voice-settings.service';
+import { AdminMemoCheckService } from './admin-memo-check.service';
 import type { AdminVoiceSettingsPatch } from './api-types';
 
 @Controller('assist/sites')
@@ -37,7 +41,23 @@ import type { AdminVoiceSettingsPatch } from './api-types';
 @UseGuards(SiteAccountGuard)
 @RequireProductRoles(REQUIRE_ASSIST_ADMIN_OWNER)
 export class AdminVoiceController {
-  constructor(private readonly settings: AdminVoiceSettingsService) {}
+  constructor(
+    private readonly settings: AdminVoiceSettingsService,
+    private readonly memoCheck: AdminMemoCheckService,
+  ) {}
+
+  /** «Прогнать» мемо АМ-N: одноразовая ссылка мастера — мимо кэшей. */
+  @Post(':id/admin-mode/memos/:n/check-token')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  memoCheckToken(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Param('n', ParseIntPipe) n: number,
+    @Body() body: { hostId?: unknown; path?: unknown },
+  ) {
+    return this.memoCheck.token(m, id, n, body);
+  }
 
   @Get(':id/admin-mode/voice-control')
   get(@Membership() m: AccountMembership, @Param('id') id: string) {

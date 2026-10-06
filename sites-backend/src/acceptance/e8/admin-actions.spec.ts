@@ -28,12 +28,16 @@ import { AssistAdminRetentionController } from '../../modules/assist-admin-chat/
 import type { E7Site } from '../e7/e7-stack';
 import { E8Stack, ShopApi, actionsSpec, describeE8 } from './e8-stack';
 import { awaitMinuteHeadroom } from '../window-headroom';
+import { serializeDbTests } from '../../prisma/serial-lock.testing';
 
 jest.setTimeout(120_000);
 
 const MARKER = 'MARKER-SECRET-e8-5c0de7a1f3';
 
 describeE8('Э8 «Админка: действия» — приёмка по HTTP', () => {
+  // Крон сроков хранения «Админки» делает и глобальный проход монитора мемо
+  // (аудит 06.10) — с другими файлами того же ключа не параллельно.
+  serializeDbTests('admin-memo-monitor');
   const st = new E8Stack();
   const shop = new ShopApi();
   let S: E7Site;

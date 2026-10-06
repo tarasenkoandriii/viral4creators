@@ -788,7 +788,14 @@ export class AdminUiPlanService {
         planSummary(views, lang),
         { now },
       );
-    if (memo && !executable) await this.memoEnd(ctx, row, 'failed');
+    if (memo && !executable)
+      await this.memoEnd(
+        ctx,
+        row,
+        'failed',
+        undefined,
+        memo.missingAt !== null ? memo.from + views.length : null,
+      );
     this.logger.log(
       `admin ui-plan site=${s.siteId} plan=${row.id} steps=${views.length} confirm=${needsConfirm} origin=${origin}`,
     );
@@ -928,7 +935,7 @@ export class AdminUiPlanService {
       status,
     });
     let memo: AdminPlanView['memo'] = null;
-    if (row.memoRunId) memo = await this.memoEnd(ctx, row, status);
+    if (row.memoRunId) memo = await this.memoEnd(ctx, row, status, steps);
     if (!ctx.test) await this.monitorEnd(ctx).catch(() => undefined);
     return { ok, chainStatus, memo };
   }
@@ -938,6 +945,9 @@ export class AdminUiPlanService {
     ctx: AdminVcCtx,
     row: PlanRow,
     status: string,
+    steps?: ReadonlyArray<{ state?: string }>,
+    /** Отрезок не собрался: цель шага на странице не сошлась (`pinMismatch`). */
+    pinAt?: number | null,
   ): Promise<AdminPlanView['memo']> {
     if (!row.memoRunId || row.memoFrom === null) return null;
     const seg = await this.memos.uiSegment(
@@ -946,12 +956,32 @@ export class AdminUiPlanService {
     );
     const to = seg?.to ?? row.memoTo ?? row.memoFrom;
     const complete = status === 'done' && row.memoTo === to;
+    // Монитор «требует проверки» (§5-бис.17 п.8): на каком шаге мемо сбой.
+    // План исполнен, но отрезок короче — следующий шаг на странице не
+    // сошёлся с сохранённым (цели нет/не та) — `pin_mismatch`; шаг упал при
+    // исполнении — сбой этого шага.
+    const bad = (steps ?? []).findIndex(
+      (x) => x.state === 'failed' || x.state === 'manual',
+    );
+    const fail =
+      complete || status === 'stopped'
+        ? null
+        : pinAt !== undefined && pinAt !== null
+          ? { at: pinAt, pin: true }
+          : status === 'done'
+            ? { at: row.memoTo ?? row.memoFrom, pin: true }
+            : {
+                at: row.memoFrom + (bad >= 0 ? bad : row.currentStep),
+                pin: false,
+              };
     const r = await this.memos.afterUi(
       this.actorOf(ctx.session, row.conversationId, langOf(row.lang)),
       row.memoRunId,
       row.memoFrom,
       to,
       complete ? 'done' : status === 'stopped' ? 'stopped' : 'failed',
+      undefined,
+      fail,
     );
     if (r.text && row.conversationId)
       await this.chat

@@ -239,6 +239,58 @@ export function parseSummary(v: unknown): VoiceMapSummary {
   };
 }
 
+/** Итог импорта файла карты: цели и (Э6-тер (к)) мемо — черновики/отказы. */
+export interface VoiceMapImported {
+  accepted: number;
+  rejected: number;
+  signed: boolean;
+  memos: {
+    created: Array<{ number: number; key: string; name: string | null }>;
+    rejected: Array<{ index: number; key: string | null; code: string }>;
+  };
+}
+
+const MEMO_KEY = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const REASON = /^[A-Za-z_]{1,40}$/;
+
+export function parseVoiceMapImported(v: unknown): VoiceMapImported {
+  const o = obj(v);
+  const m = obj(o.memos);
+  return {
+    accepted: num(o.accepted),
+    rejected: arr(o.rejected).length,
+    signed: o.signed === true,
+    memos: {
+      created: arr(m.created)
+        .map(obj)
+        .filter(
+          (c) =>
+            typeof c.number === 'number' &&
+            Number.isInteger(c.number) &&
+            c.number >= 1 &&
+            MEMO_KEY.test(text(c.key))
+        )
+        .map((c) => ({
+          number: c.number as number,
+          key: text(c.key),
+          name: typeof c.name === 'string' ? c.name.slice(0, 60) : null,
+        }))
+        .slice(0, 100),
+      rejected: arr(m.rejected)
+        .map(obj)
+        .map((r) => ({
+          index: num(r.index),
+          key: MEMO_KEY.test(text(r.key)) ? text(r.key) : null,
+          code:
+            typeof r.code === 'string' && REASON.test(r.code)
+              ? r.code
+              : 'other',
+        }))
+        .slice(0, 100),
+    },
+  };
+}
+
 export interface VoiceMapApi {
   summary(siteId: string): Promise<VoiceMapSummary>;
   editorLink(
@@ -262,7 +314,7 @@ export interface VoiceMapApi {
     siteId: string,
     expectedRevision: number,
     file: unknown
-  ): Promise<{ accepted: number; rejected: number; signed: boolean }>;
+  ): Promise<VoiceMapImported>;
 }
 
 const SEG = /^[A-Za-z0-9_-]{1,64}$/;
@@ -330,11 +382,7 @@ export function createVoiceMapApi(client: ApiClient): VoiceMapApi {
           file,
         })
       );
-      return {
-        accepted: num(o.accepted),
-        rejected: arr(o.rejected).length,
-        signed: o.signed === true,
-      };
+      return parseVoiceMapImported(o);
     },
   };
 }

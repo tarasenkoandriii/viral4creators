@@ -24,6 +24,7 @@ import { Alert, Badge, Button, CopyField, inputClass } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
 import {
   MEMO_LANGS,
+  goalExpectForSave,
   memoReadOnly,
   type MemoDetail,
   type MemoLang,
@@ -36,6 +37,8 @@ import { pct, voiceControlErrorCode } from '../../lib/voice-control-api';
 import { canManageWidget } from '../../lib/widget-view';
 import { NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
+import { MemoFromTemplate } from './MemoFromTemplate';
+import { MemoFromTutorial } from './MemoFromTutorial';
 
 const MARK: Record<string, string> = {
   local: '↺',
@@ -148,6 +151,20 @@ export function MemoSection({ siteId }: { siteId: string }) {
           {t.create}
         </Button>
       </div>
+      <MemoFromTutorial
+        siteId={siteId}
+        full={l.used >= l.limit}
+        onCreated={(n) => {
+          list.reload();
+          setOpen(n);
+        }}
+        onOpen={setOpen}
+      />
+      <MemoFromTemplate
+        siteId={siteId}
+        full={l.used >= l.limit}
+        onChanged={() => list.reload()}
+      />
       {l.candidates > 0 && (
         <Button
           variant="outline"
@@ -208,8 +225,18 @@ export function MemoSection({ siteId }: { siteId: string }) {
               <span className="font-medium">
                 М-{m.number} · {m.name ?? m.key}
               </span>
-              <Badge tone={statusTone(m.status)}>{t.status[m.status]}</Badge>
+              <span className="flex gap-1">
+                {m.overPlan && (
+                  <Badge tone="warning">
+                    <span title={t.overPlanHint}>{t.overPlan}</span>
+                  </Badge>
+                )}
+                <Badge tone={statusTone(m.status)}>{t.status[m.status]}</Badge>
+              </span>
             </div>
+            {m.overPlan && (
+              <div className="text-amber-700">{t.overPlanHint}</div>
+            )}
             <div className="text-silver-500">
               {t.views[m.view]} ·{' '}
               {fmt(t.success, {
@@ -324,13 +351,11 @@ function MemoCard({
     const names: Partial<Record<MemoLang, string>> = {};
     for (const l of MEMO_LANGS)
       if (e.names[l]?.trim()) names[l] = e.names[l]!.trim();
-    const expect = [
-      ...(e.goalUrl.trim() ? [{ kind: 'url', path: e.goalUrl.trim() }] : []),
-      ...(e.goalAppear.trim()
-        ? [{ kind: 'text', text: e.goalAppear.trim() }]
-        : []),
-      ...draft.goal.expect.filter((g) => g.kind === 'slot'),
-    ];
+    const expect = goalExpectForSave(
+      draft.goal.expect,
+      e.goalUrl,
+      e.goalAppear
+    );
     return patch([
       { op: 'set', field: 'names', value: names },
       { op: 'set', field: 'triggers', value: triggers },
@@ -434,6 +459,31 @@ function MemoCard({
           onChange={(x) => set({ goalAppear: x.target.value })}
         />
       </Field>
+      {draft.goal.expect.some(
+        (g) => g.kind === 'counter' || g.kind === 'field' || g.kind === 'slot'
+      ) && (
+        <ul className="text-xs list-disc pl-5">
+          {draft.goal.expect.map((g, i) =>
+            g.kind === 'counter' ? (
+              <li key={i}>
+                {fmt(t.goalCounter, {
+                  t: g.target?.text || g.target?.assistId || '',
+                  d: `${(g.delta ?? 0) > 0 ? '+' : ''}${g.delta ?? 0}`,
+                })}
+              </li>
+            ) : g.kind === 'field' ? (
+              <li key={i}>
+                {fmt(t.goalField, {
+                  t: g.target?.text || g.target?.assistId || '',
+                  slot: g.slot ?? '',
+                })}
+              </li>
+            ) : g.kind === 'slot' ? (
+              <li key={i}>{fmt(t.goalSlot, { slot: g.slot ?? '' })}</li>
+            ) : null
+          )}
+        </ul>
+      )}
       <div className="font-medium text-sm">{t.steps}</div>
       <ol className="space-y-1 text-xs">
         {draft.steps.map((s, i) => (

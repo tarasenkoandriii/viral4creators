@@ -17,9 +17,13 @@
  * (иначе `unknown`, чужой ввод не перетирается); радио — отметкой прежней
  * кнопки группы (по себе радио кликом не снимается).
  * Серверные действия («В кошик») здесь не возвращаются никогда.
+ *
+ * Э6-тер (к): та же команда `ui-undo` с полем `goal` — проверка цели мемо
+ * «счётчик ±N»/«поле = слот» (`goal.ts`), ответ `ui-goal`.
  */
 import type { Prior } from '../act/exec';
 import type { ActHost } from '../act/index';
+import { goal } from './goal';
 
 const PLAN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -63,6 +67,9 @@ function uncheck(el: HTMLInputElement) {
 
 export function undo(raw: unknown, mem: Prior[], host: ActHost): void {
   const r = raw as Record<string, unknown> | null;
+  // Э6-тер (к): та же команда с полем `goal` — проверка цели мемо (счётчик,
+  // поле); act.js и загрузчик не меняются (goal.ts).
+  if (r && r.goal) return goal(r, host);
   if (
     !r ||
     typeof r.planId !== 'string' ||

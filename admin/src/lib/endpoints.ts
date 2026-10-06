@@ -67,6 +67,8 @@ import type {
   AssistantAdminResult,
   TutorialVideoListResult,
   TutorialVideoDataStatus,
+  TutorialTempoEstimate,
+  TutorialVersionRow,
   TutorialVideoAssetRow,
   TutorialScenarioListResult,
   TutorialScenarioRow,
@@ -964,6 +966,37 @@ export function publishTutorialVideo(
   },
 ) {
   return apiPost<PublicationRequest>(`/admin/tutorial-video-assets/${id}/publish`, opts);
+}
+
+// ── Темп обучалок (06.10.2026): версия публичного демо становится
+// действующей ТОЛЬКО по «Одобрить версию» — повторное одобрение
+// оператором (решение владельца). Расчёт бесплатный, сборка — платная. ──
+
+export function getTutorialTempo(id: string, factor: number) {
+  return apiGet<TutorialTempoEstimate>(`/admin/tutorial-video-assets/${id}/tempo`, {
+    factor: String(factor),
+  });
+}
+
+export function getTutorialVersions(id: string) {
+  return apiGet<TutorialVersionRow[]>(`/admin/tutorial-video-assets/${id}/versions`);
+}
+
+export function requestTutorialVersion(id: string, factor: number) {
+  return apiPost<{ version: TutorialVersionRow; reused: boolean }>(
+    `/admin/tutorial-video-assets/${id}/versions`,
+    { factor },
+  );
+}
+
+export function approveTutorialVersion(id: string, versionId: string) {
+  return apiPost<TutorialVersionRow>(
+    `/admin/tutorial-video-assets/${id}/versions/${versionId}/approve`,
+  );
+}
+
+export function revertTutorialTempo(id: string) {
+  return apiPost<TutorialVersionRow>(`/admin/tutorial-video-assets/${id}/revert`);
 }
 
 // ── Маркетплейс исполнителей — Этап 0 (backend/src/modules/creator-profile, ТЗ §20 №19) ──

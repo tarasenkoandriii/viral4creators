@@ -13,6 +13,7 @@
  *    ТОЛЬКО клик человека здесь (`isTrusted` в нашем origin), публикация —
  *    только запрос, подтверждение — в Telegram (В-50);
  *  - вкладки: Цель (карточка), Страница (цели и образцы устойчивости),
+ *    Мемо (запись кликами, перепривязка, «Прогнать» — `memo.ts`, Э6-тер (д)),
  *    Проверка («Сказать сейчас» — показ без нажатий), Публикация;
  *  - отмена — стек обратных операций сессии (с `expectedRevision`).
  */
@@ -28,6 +29,7 @@ import {
   type ToPicker,
 } from '../shared/editor-protocol';
 import { T, fmt, type PanelLang } from './i18n';
+import { createMemo } from './memo';
 
 type Risk = 'now' | 'confirm' | 'never';
 
@@ -121,7 +123,7 @@ const S = {
   map: null as MapView | null,
   picked: null as Picked | null,
   edit: null as Target | null,
-  tab: 'target' as 'target' | 'page' | 'try' | 'publish',
+  tab: 'target' as 'target' | 'page' | 'memo' | 'try' | 'publish',
   note: '',
   fatal: '',
   undo: [] as Array<{ label: string; ops: unknown[] }>,
@@ -220,6 +222,26 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   throw err;
 }
 
+const memo = createMemo({
+  h,
+  human,
+  api,
+  toPicker,
+  snapshot: async () => {
+    const r = await ask({ type: 'snapshot-req', id: ++S.reqId });
+    return r.type === 'snapshot' ? r.snapshot : null;
+  },
+  L,
+  lang: () => S.lang,
+  path: () => S.path,
+  note: (n) => {
+    S.note = n;
+  },
+  fail,
+  render,
+  store: STORE,
+});
+
 function colorOf(t: Target): PageTarget['color'] {
   const eff = effective(t);
   if (t.denylisted || eff === 'never') return 'violet';
@@ -248,6 +270,13 @@ async function loadMap(): Promise<void> {
           color: colorOf(t),
         })),
     });
+    // «Открыть в редакторе» мемо `memo-<N>-<шаг с 1>` (сигнал needs_review).
+    const fm = /^memo-(\d{1,6})(?:-(\d{1,2}))?$/.exec(S.focusKey ?? '');
+    if (fm) {
+      S.focusKey = null;
+      S.tab = 'memo';
+      void memo.open(+fm[1], fm[2] ? +fm[2] - 1 : null);
+    }
     // «Открыть в редакторе» из TMA: подсветить место цели и открыть карточку.
     const f = S.focusKey
       ? S.map.targets.find((t) => t.key === S.focusKey)
@@ -281,6 +310,7 @@ function fail(e: unknown): void {
     S.fatal = L().expired;
     try {
       sessionStorage.removeItem(STORE);
+      sessionStorage.removeItem(`${STORE}:m`);
     } catch {
       /* — */
     }
@@ -907,6 +937,7 @@ function render(): void {
   for (const [id, label] of [
     ['target', L().tabTarget],
     ['page', L().tabPage],
+    ['memo', L().tabMemo],
     ['try', L().tabTry],
     ['publish', L().tabPublish],
   ] as const)
@@ -931,9 +962,11 @@ function render(): void {
       ? cardView()
       : S.tab === 'page'
         ? pageView()
-        : S.tab === 'try'
-          ? tryView()
-          : publishView()
+        : S.tab === 'memo'
+          ? memo.view()
+          : S.tab === 'try'
+            ? tryView()
+            : publishView()
   );
   root.append(
     h(
@@ -948,6 +981,7 @@ function render(): void {
           );
           try {
             sessionStorage.removeItem(STORE);
+            sessionStorage.removeItem(`${STORE}:m`);
           } catch {
             /* — */
           }
@@ -1008,6 +1042,12 @@ window.addEventListener('message', (e) => {
       if (S.tab === 'page') render();
       return;
     case 'pick': {
+      // Запись мемо / перепривязка шага: клик — шаг (решает сервер).
+      if (memo.active()) {
+        S.tab = 'memo';
+        void memo.onPick(m);
+        return;
+      }
       // «Не то → выбрать»: фраза команды становится синонимом выбранной цели.
       if (S.wrongFor) {
         const t = targetFor(m.descriptor);
@@ -1059,6 +1099,7 @@ async function boot(): Promise<void> {
       );
       S.session = s.session;
       S.focusKey = typeof s.focusKey === 'string' ? s.focusKey : null;
+      memo.reset();
       S.parentOrigin = guess;
       try {
         sessionStorage.setItem(
@@ -1077,6 +1118,8 @@ async function boot(): Promise<void> {
         throw Object.assign(new Error(''), { status: 403 });
       S.session = saved.s;
       S.parentOrigin = guess;
+      // Запись мемо продолжается на новой странице (MPA).
+      if (memo.has()) S.tab = 'memo';
     }
   } catch {
     S.fatal = L().linkBad;

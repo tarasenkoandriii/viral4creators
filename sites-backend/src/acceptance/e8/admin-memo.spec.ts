@@ -13,12 +13,15 @@ import * as request from 'supertest';
 import { ADMIN_SESSION_HEADER } from '../../brand';
 import { signEmployeeJwt } from '../../modules/assist-admin-mode/identity-jwt';
 import type { E7Site } from '../e7/e7-stack';
-import { E8Stack, ShopApi, actionsSpec, describeE8 } from './e8-stack';
+import { AdminVoiceStack, dryRunMemo } from '../e6b-admin/admin-voice-stack';
+import { ShopApi, actionsSpec, describeE8 } from './e8-stack';
 
 jest.setTimeout(120_000);
 
 describeE8('Э8 п.7 — мемо «Админки» АМ-N', () => {
-  const st = new E8Stack();
+  // Аудит 06.10: стенд с голосовым модулем «Админки» — в нём сухой прогон
+  // мемо (публикация без прогона — 409 MEMO_CHECK_REQUIRED).
+  const st = new AdminVoiceStack();
   const shop = new ShopApi();
   let S: E7Site;
   let identitySecret = '';
@@ -170,6 +173,11 @@ describeE8('Э8 п.7 — мемо «Админки» АМ-N', () => {
     );
     expect(v).toMatchObject({ version: 1, status: 'checking' });
     expect(v.gateReport.kinds).toEqual(['read', 'write', 'write']);
+    // Шаги `api` в прогоне не исполняются — только каталог и права.
+    const before = st.net.requests.length;
+    const check = await dryRunMemo(st, S, memoN, await session('owner-check'));
+    expect(check.result).toBe('pass');
+    expect(st.net.requests.length).toBe(before);
     await request(st.srv())
       .post(`${memos()}/${memoN}/versions/1/publish`)
       .set(st.as(S.ownerTg))
@@ -287,10 +295,15 @@ describeE8('Э8 п.7 — мемо «Админки» АМ-N', () => {
       .post(`${memos()}/3/versions`)
       .set(st.as(S.ownerTg))
       .expect(200);
+    // Прогон видит занятую фразу — `partial` (предупреждение), публикация —
+    // 409 уникального индекса фраз.
+    const check = await dryRunMemo(st, S, 3, await session('owner-check3'));
+    expect(check.result).toBe('partial');
     const conflict = await request(st.srv())
       .post(`${memos()}/3/versions/1/publish`)
       .set(st.as(S.ownerTg));
     expect(conflict.status).toBe(409);
+    expect(conflict.body.error.code).toBe('MEMO_CONFLICT');
     const biz = await st.site({ plan: 'business' });
     await request(st.srv())
       .post(`/assist/sites/${biz.siteId}/admin-mode/memos`)

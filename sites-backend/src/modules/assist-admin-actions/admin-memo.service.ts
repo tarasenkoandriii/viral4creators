@@ -5,11 +5,15 @@
  * Кабинет (только `assistAdmin: owner`, гвард контроллера): номер из
  * счётчика сайта (не переиспользуется), ключ (неизменен после первой
  * публикации), черновик с ревизией (409 при расхождении), версия = ворота
- * кода + проверка по живому каталогу коннекторов (кликов нет — браузерный
- * прогон не нужен), публикация — отдельным подтверждением владельца, индекс
- * фраз — уникальный ключ БД (гонка двух публикаций с одной фразой — одна
- * получает 409). Журнал изменений — записи `memo` в append-only
- * assist_admin_action_log (§5-бис.17 п.10).
+ * кода + проверка по живому каталогу коннекторов, затем СУХОЙ ПРОГОН в
+ * браузере владельца (аудит 06.10, §5-бис.17 п.7: ссылка мастера `admin-vc`,
+ * `admin-memo-check.ts`; шаги `api` в прогоне не исполняются), публикация —
+ * отдельным подтверждением владельца и только с годным отчётом прогона
+ * ЭТОЙ версии (409 `MEMO_CHECK_REQUIRED`), индекс фраз — уникальный ключ БД
+ * (гонка двух публикаций с одной фразой — одна получает 409). Журнал
+ * изменений — записи `memo` в append-only assist_admin_action_log
+ * (§5-бис.17 п.10). «Требует проверки» и статистика запусков —
+ * `admin-memo-review.ts` (монитор — `admin-memo-monitor.service.ts`).
  *
  * Исполнение (сотрудник): «АМ-5 …» или фраза → опубликованная версия
  * (закреплена в запуске) → права роли на КАЖДУЮ операцию до первого шага
@@ -73,6 +77,18 @@ import {
 } from './admin-memo';
 import type { AdminMemoUiStep } from '../assist-admin-voice/admin-voice-rules';
 import {
+  adminMemoApiChecks,
+  adminMemoCheckUsable,
+  adminMemoSameSteps,
+  type AdminMemoApiCheck,
+  type AdminMemoCheckReport,
+} from './admin-memo-check';
+import {
+  adminMemoStats,
+  type AdminMemoReviewReason,
+  type AdminMemoStats,
+} from './admin-memo-review';
+import {
   type ActorCtx,
   ProposalsService,
   type ProposalView,
@@ -86,19 +102,31 @@ export interface AdminMemoListItem {
   publishedVersion: number | null;
   draftRevision: number;
   updatedAt: string;
+  /** «Требует проверки» (§5-бис.17 п.8): причина от монитора; иначе null. */
+  reviewReason: AdminMemoReviewReason | null;
+  /** Запуски опубликованных версий за 30 дней (§5-бис.17 п.13, п.14). */
+  stats: AdminMemoStats;
 }
 
 export interface AdminMemoView extends AdminMemoListItem {
   draft: AdminMemoContent;
+  /** Те же метрики за 7 дней (окно порогов `needs_review`). */
+  stats7: AdminMemoStats;
   versions: Array<{
     number: number;
     status: string;
     gateReport: AdminMemoGateReport | null;
+    /** Отчёт сухого прогона этой версии (null — прогона не было). */
+    checkReport: AdminMemoCheckReport | null;
     createdAt: string;
     publishedAt: string | null;
     rollbackOf: number | null;
   }>;
 }
+
+/** Окна статистики мемо «Админки», дней. */
+export const ADMIN_MEMO_STATS_DAYS = { list: 30, review: 7 } as const;
+const DAY_MS = 86_400_000;
 
 const MEMO_TEXT = {
   started: {
@@ -188,8 +216,27 @@ function contentHash(c: unknown): string {
   return createHash('sha256').update(canonicalJson(c)).digest('hex');
 }
 
+const RUN_FACT = {
+  memoId: true,
+  memoVersion: true,
+  actor: true,
+  status: true,
+  step: true,
+  goalStatus: true,
+  progress: true,
+  createdAt: true,
+} as const;
+
 @Injectable()
 export class AdminMemoService {
+  /**
+   * Запуск закончился сбоем — монитор «требует проверки» смотрит это мемо
+   * сразу (как монитор голосового управления «Админки» — на концах планов,
+   * без крона; крон — страховочный проход). Ставит монитор.
+   */
+  onRunFailed:
+    ((accountId: string, memoId: string) => Promise<unknown>) | null = null;
+
   constructor(
     private readonly db: SitesDb,
     private readonly prisma: PrismaService,
@@ -291,7 +338,10 @@ export class AdminMemoService {
     });
   }
 
-  private item(r: MemoRow): AdminMemoListItem {
+  private item(
+    r: MemoRow,
+    runs: ReadonlyArray<Parameters<typeof adminMemoStats>[0][number]>,
+  ): AdminMemoListItem {
     const d = parseAdminMemo(r.draft).content;
     return {
       number: r.number,
@@ -301,7 +351,31 @@ export class AdminMemoService {
       publishedVersion: r.publishedVersion,
       draftRevision: r.draftRevision,
       updatedAt: r.updatedAt.toISOString(),
+      reviewReason:
+        r.status === 'needs_review' && r.reviewReason
+          ? (r.reviewReason as unknown as AdminMemoReviewReason)
+          : null,
+      stats: adminMemoStats(runs, ADMIN_MEMO_STATS_DAYS.list),
     };
+  }
+
+  /** Запуски мемо сайта за окно (без значений слотов — их не читаем). */
+  private async runFacts(
+    accountId: string,
+    siteId: string,
+    since: Date,
+    memoId?: string,
+  ) {
+    return this.db.forAccount(accountId).assistAdminMemoRun.findMany({
+      where: {
+        siteId,
+        createdAt: { gte: since },
+        ...(memoId ? { memoId } : {}),
+      },
+      select: RUN_FACT,
+      orderBy: { createdAt: 'asc' },
+      take: 20_000,
+    });
   }
 
   async list(m: AccountMembership, siteId: string) {
@@ -312,10 +386,50 @@ export class AdminMemoService {
         where: { siteId, status: { not: 'removed' } },
         orderBy: { number: 'asc' },
       });
+    const runs = rows.length
+      ? await this.runFacts(
+          m.accountId,
+          siteId,
+          new Date(Date.now() - ADMIN_MEMO_STATS_DAYS.list * DAY_MS),
+        )
+      : [];
     return {
       limit: await this.limit(m.accountId),
       used: rows.length,
-      memos: rows.map((r) => this.item(r)),
+      memos: rows.map((r) =>
+        this.item(
+          r,
+          runs.filter((x) => x.memoId === r.id),
+        ),
+      ),
+    };
+  }
+
+  /** Статистика мемо (§5-бис.17 п.13): 30 дней и 7 дней опубликованной версии. */
+  async stats(m: AccountMembership, siteId: string, n: number) {
+    await this.mode.requireSite(m.accountId, siteId);
+    const r = await this.memoRow(m.accountId, siteId, n);
+    const now = Date.now();
+    const runs = await this.runFacts(
+      m.accountId,
+      siteId,
+      new Date(now - ADMIN_MEMO_STATS_DAYS.list * DAY_MS),
+      r.id,
+    );
+    const since7 = now - ADMIN_MEMO_STATS_DAYS.review * DAY_MS;
+    return {
+      number: r.number,
+      status: r.status,
+      reviewReason: this.item(r, []).reviewReason,
+      stats: adminMemoStats(runs, ADMIN_MEMO_STATS_DAYS.list),
+      stats7: adminMemoStats(
+        runs.filter(
+          (x) =>
+            x.createdAt.getTime() >= since7 &&
+            x.memoVersion === r.publishedVersion,
+        ),
+        ADMIN_MEMO_STATS_DAYS.review,
+      ),
     };
   }
 
@@ -333,13 +447,34 @@ export class AdminMemoService {
         orderBy: { number: 'desc' },
         take: MEMO_LIMITS.versionsKept,
       });
+    const now = Date.now();
+    const runs = await this.runFacts(
+      m.accountId,
+      siteId,
+      new Date(now - ADMIN_MEMO_STATS_DAYS.list * DAY_MS),
+      r.id,
+    );
+    const since7 = now - ADMIN_MEMO_STATS_DAYS.review * DAY_MS;
     return {
-      ...this.item(r),
+      ...this.item(r, runs),
+      stats7: adminMemoStats(
+        runs.filter(
+          (x) =>
+            x.createdAt.getTime() >= since7 &&
+            x.memoVersion === r.publishedVersion,
+        ),
+        ADMIN_MEMO_STATS_DAYS.review,
+      ),
       draft: parseAdminMemo(r.draft).content,
       versions: versions.map((v) => ({
         number: v.number,
         status: v.status,
         gateReport: (v.gateReport as unknown as AdminMemoGateReport) ?? null,
+        checkReport:
+          v.checkReport &&
+          (v.checkReport as { kind?: unknown }).kind === 'memo-check'
+            ? (v.checkReport as unknown as AdminMemoCheckReport)
+            : null,
         createdAt: v.createdAt.toISOString(),
         publishedAt: v.publishedAt?.toISOString() ?? null,
         rollbackOf: v.rollbackOf,
@@ -514,6 +649,35 @@ export class AdminMemoService {
     });
     const number = (last?.number ?? 0) + 1;
     const status = gate.result === 'pass' ? 'checking' : 'held';
+    const hash = contentHash(content);
+    // Сухой прогон (§5-бис.17 п.7, аудит 06.10): новая версия — без отчёта,
+    // публикация ждёт прогона в браузере владельца. Правка только имён/фраз/
+    // цели у РАБОТАЮЩЕГО мемо — отчёт опубликованной версии переносится;
+    // «требует проверки» и выключенное выходят только новым прогоном.
+    let checkReport: AdminMemoCheckReport | null = null;
+    if (
+      status === 'checking' &&
+      r.status === 'published' &&
+      r.publishedVersion !== null
+    ) {
+      const pub = await db.assistAdminMemoVersion.findFirst({
+        where: { memoId: r.id, number: r.publishedVersion },
+        select: { content: true, contentHash: true, checkReport: true },
+      });
+      const prev: unknown = pub?.checkReport;
+      if (
+        pub &&
+        adminMemoCheckUsable(prev, pub.contentHash) &&
+        prev.result === 'pass' &&
+        adminMemoSameSteps(parseAdminMemo(pub.content).content, content)
+      )
+        checkReport = {
+          ...prev,
+          contentHash: hash,
+          version: number,
+          inherited: r.publishedVersion,
+        };
+    }
     await db.assistAdminMemoVersion.create({
       data: {
         accountId: m.accountId,
@@ -522,9 +686,11 @@ export class AdminMemoService {
         number,
         status,
         content: content as unknown as Prisma.InputJsonValue,
-        contentHash: contentHash(content),
+        contentHash: hash,
         gateReport: gate as unknown as Prisma.InputJsonValue,
-        checkReport: { result: gate.result } as Prisma.InputJsonValue,
+        checkReport: checkReport
+          ? (checkReport as unknown as Prisma.InputJsonValue)
+          : Prisma.DbNull,
         rollbackOf: opts.rollbackOf ?? null,
         requestedBy: `tg:${m.telegramId.toString()}`,
       },
@@ -544,7 +710,12 @@ export class AdminMemoService {
       version: number,
       result: gate.result,
     });
-    return { version: number, status, gateReport: gate };
+    return {
+      version: number,
+      status,
+      gateReport: gate,
+      checkRequired: status === 'checking' && !checkReport,
+    };
   }
 
   /** Публикация — подтверждение владельца в TMA; фразы — уникальный индекс. */
@@ -561,6 +732,15 @@ export class AdminMemoService {
         409,
         'MEMO_INVALID',
         'Публикуется только версия, прошедшая проверку',
+      );
+    }
+    // Сухой прогон ЭТОЙ версии (тот же хеш содержимого) — pass/partial;
+    // нет — отказ с кодом (§5-бис.17 п.7: «публикация только после прогона»).
+    if (!adminMemoCheckUsable(ver.checkReport, ver.contentHash)) {
+      throw adminError(
+        409,
+        'MEMO_CHECK_REQUIRED',
+        'Опубликовать можно после прогона мемо в админке (кнопка «Прогнать»)',
       );
     }
     const content = parseAdminMemo(ver.content).content;
@@ -625,9 +805,17 @@ export class AdminMemoService {
     if (on && r.publishedVersion === null) {
       throw adminError(409, 'MEMO_INVALID', 'Сначала опубликуйте версию');
     }
+    // «Требует проверки» не снимается выключением/включением (аудит 06.10):
+    // причина остаётся, выход — новая версия с прогоном и публикацией.
     await db.assistAdminMemo.updateMany({
       where: { id: r.id },
-      data: { status: on ? 'published' : 'disabled' },
+      data: {
+        status: on
+          ? r.reviewReason !== null
+            ? 'needs_review'
+            : 'published'
+          : 'disabled',
+      },
     });
     await this.memoLog(m, siteId, r, on ? 'enable' : 'disable');
     return this.get(m, siteId, n);
@@ -648,6 +836,181 @@ export class AdminMemoService {
     });
     await this.memoLog(m, siteId, r, 'remove');
     return { removed: true };
+  }
+
+  // ── сухой прогон (§5-бис.17 п.7; аудит 06.10) ──────────────────────────
+
+  /**
+   * Версия для прогона: последняя на проверке (`checking`), прошедшая
+   * ворота. Нет — 409 `MEMO_GATES` (сначала «Собрать версию»).
+   */
+  async checkTarget(m: AccountMembership, siteId: string, n: number) {
+    await this.mode.requireSite(m.accountId, siteId);
+    const r = await this.memoRow(m.accountId, siteId, n);
+    const ver = await this.db
+      .forAccount(m.accountId)
+      .assistAdminMemoVersion.findFirst({
+        where: { memoId: r.id, status: 'checking' },
+        orderBy: { number: 'desc' },
+        select: { id: true, number: true, contentHash: true },
+      });
+    if (!ver) {
+      throw adminError(
+        409,
+        'MEMO_GATES',
+        'Сначала соберите версию, прошедшую ворота',
+      );
+    }
+    return { memoId: r.id, memoNumber: r.number, ...ver };
+  }
+
+  /** Версия прогона (только на проверке и с тем же хешем) — или null. */
+  async checkVersion(
+    accountId: string,
+    siteId: string,
+    versionId: string,
+    hash: string,
+  ): Promise<{
+    memoId: string;
+    memoNumber: number;
+    version: number;
+    content: AdminMemoContent;
+  } | null> {
+    const db = this.db.forAccount(accountId);
+    const v = await db.assistAdminMemoVersion.findFirst({
+      where: { id: versionId, siteId, contentHash: hash, status: 'checking' },
+      select: { memoId: true, number: true, content: true },
+    });
+    if (!v) return null;
+    const memo = await db.assistAdminMemo.findFirst({
+      where: { id: v.memoId, siteId, status: { not: 'removed' } },
+      select: { number: true },
+    });
+    if (!memo) return null;
+    return {
+      memoId: v.memoId,
+      memoNumber: memo.number,
+      version: v.number,
+      content: parseAdminMemo(v.content).content,
+    };
+  }
+
+  /** Шаги `api` прогона — по живому каталогу и роли проверяющего, БЕЗ вызова. */
+  async apiChecks(
+    accountId: string,
+    siteId: string,
+    content: AdminMemoContent,
+    role: string | null,
+  ): Promise<AdminMemoApiCheck[]> {
+    if (!content.steps.some((s) => s.action === 'api')) return [];
+    return adminMemoApiChecks(
+      content,
+      await this.catalog(accountId, siteId),
+      role,
+    );
+  }
+
+  /** Фразы мемо, уже занятые ДРУГИМ опубликованным мемо сайта. */
+  async phraseConflicts(
+    accountId: string,
+    siteId: string,
+    memoId: string,
+    content: AdminMemoContent,
+  ): Promise<Array<{ lang: string; phrase: string }>> {
+    const phrases = adminMemoPhrases(content);
+    if (!phrases.length) return [];
+    const taken = await this.db
+      .forAccount(accountId)
+      .assistAdminPhrase.findMany({
+        where: {
+          siteId,
+          norm: { in: phrases.map((p) => p.norm) },
+          owner: { not: `memo:${memoId}` },
+        },
+        select: { lang: true, norm: true },
+      });
+    return phrases
+      .filter((p) => taken.some((t) => t.lang === p.lang && t.norm === p.norm))
+      .map((p) => ({ lang: p.lang, phrase: p.norm }));
+  }
+
+  /**
+   * Итог прогона → `checkReport` версии (условно: версия всё ещё на
+   * проверке и с тем же хешем). `fail` — версия `held` (и мемо, если оно
+   * ещё не опубликовано). Журнал — запись `memo` от проверяющего.
+   */
+  async recordCheck(
+    p: {
+      accountId: string;
+      siteId: string;
+      versionId: string;
+      actor: string;
+      actorRole: string | null;
+    },
+    report: AdminMemoCheckReport,
+  ): Promise<boolean> {
+    const db = this.db.forAccount(p.accountId);
+    const held = report.result === 'fail';
+    const w = await db.assistAdminMemoVersion.updateMany({
+      where: {
+        id: p.versionId,
+        siteId: p.siteId,
+        status: 'checking',
+        contentHash: report.contentHash,
+      },
+      data: {
+        checkReport: report as unknown as Prisma.InputJsonValue,
+        ...(held ? { status: 'held' } : {}),
+      },
+    });
+    if (w.count !== 1) return false;
+    const v = await db.assistAdminMemoVersion.findFirstOrThrow({
+      where: { id: p.versionId },
+      select: { memoId: true },
+    });
+    const memo = await db.assistAdminMemo.findFirstOrThrow({
+      where: { id: v.memoId },
+      select: { id: true, number: true, publishedVersion: true },
+    });
+    if (held && memo.publishedVersion === null)
+      await db.assistAdminMemo.updateMany({
+        where: { id: memo.id, status: { in: ['draft', 'checking'] } },
+        data: { status: 'held' },
+      });
+    await this.log.append({
+      accountId: p.accountId,
+      siteId: p.siteId,
+      actor: p.actor,
+      actorRole: p.actorRole,
+      channel: 'embed',
+      conversationId: null,
+      connectorId: null,
+      operationRowId: null,
+      operation: `memo:АМ-${memo.number}`,
+      kind: 'memo',
+      outcome: `check:${report.result}`,
+      httpStatus: null,
+      durationMs: null,
+      requestMasked: {
+        memo: memo.id,
+        version: report.version,
+        test: report.testId,
+        pages: report.pages.length,
+        failed: report.steps.filter((x) => !x.ok).map((x) => x.i),
+      } as Prisma.InputJsonValue,
+      responseBytes: null,
+      error: null,
+    });
+    return true;
+  }
+
+  private async runFailed(accountId: string, memoId: string): Promise<void> {
+    if (!this.onRunFailed) return;
+    try {
+      await this.onRunFailed(accountId, memoId);
+    } catch {
+      /* монитор — не повод сломать ход сотрудника */
+    }
   }
 
   // ── исполнение ─────────────────────────────────────────────────────────
@@ -949,6 +1312,7 @@ export class AdminMemoService {
         .map((p) => p.operation)
         .join(', ');
       lines.push(MEMO_TEXT.stopped[lang](run.memoNumber, i + 1, done));
+      await this.runFailed(ctx.accountId, run.memoId);
       return { text: lines.join('\n'), proposal: null };
     };
     for (let i = from; i < total; i++) {
@@ -963,6 +1327,8 @@ export class AdminMemoService {
         // страницы (TMA, чат без голосового управления) — честный стоп.
         if (!page) {
           lines.push(MEMO_TEXT.uiNeedsPage[lang](run.memoNumber));
+          // Не сбой мемо — канал без страницы (монитор такие не считает).
+          progress.push({ i, operation: 'ui', outcome: 'needs_page' });
           return stop(i, 'not_reached');
         }
         let to = i;
@@ -1104,6 +1470,8 @@ export class AdminMemoService {
           slots: Prisma.DbNull,
         },
       });
+      if (status !== 'rejected')
+        await this.runFailed(ctx.accountId, run.memoId);
       return {
         next: null,
         text: MEMO_TEXT.stopped[ctx.lang as MemoLang](
@@ -1204,6 +1572,11 @@ export class AdminMemoService {
     to: number,
     status: 'done' | 'failed' | 'stopped',
     now = new Date(),
+    /**
+     * Где именно отрезок не прошёл (монитор: сбой на шаге, `pin_mismatch` —
+     * цель на странице не сошлась с сохранённой). Нет — весь отрезок.
+     */
+    fail?: { at: number; pin: boolean } | null,
   ): Promise<{
     text: string | null;
     proposal: ProposalView | null;
@@ -1227,22 +1600,34 @@ export class AdminMemoService {
           outcome: string;
         }>)
       : [];
-    for (let i = from; i < to; i++)
+    const at =
+      status === 'failed' && fail && fail.at >= from && fail.at < to
+        ? fail.at
+        : null;
+    for (let i = from; i < (at ?? to); i++)
       progress.push({
         i,
         operation: 'ui',
-        outcome: status === 'done' ? 'done' : status,
+        outcome: status === 'done' || at !== null ? 'done' : status,
+      });
+    if (at !== null)
+      progress.push({
+        i: at,
+        operation: 'ui',
+        outcome: fail!.pin ? 'pin_mismatch' : 'failed',
       });
     if (status !== 'done' || run.expiresAt.getTime() <= now.getTime()) {
       await db.assistAdminMemoRun.updateMany({
         where: { id: runId, status: 'ui' },
         data: {
           status: status === 'stopped' ? 'stopped' : 'failed',
+          ...(at !== null ? { step: at } : {}),
           goalStatus: 'not_reached',
           slots: Prisma.DbNull,
           progress: progress as unknown as Prisma.InputJsonValue,
         },
       });
+      if (status === 'failed') await this.runFailed(ctx.accountId, run.memoId);
       const done = progress
         .filter((p) => p.outcome === 'ok' || p.outcome === 'done')
         .map((p) => p.operation)

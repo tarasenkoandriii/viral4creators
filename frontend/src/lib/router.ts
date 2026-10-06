@@ -30,6 +30,7 @@ export type Route =
   | { name: 'generate' }
   | { name: 'postprod' }
   | { name: 'postprod-video'; sessionId: string }
+  | { name: 'postprod-tutorial'; assetId: string }
   | { name: 'manifests' }
   | { name: 'manifest-new' }
   | { name: 'manifest'; manifestId: string }
@@ -128,6 +129,12 @@ export function parseRoute(hash: string): Route {
   // двухсегментный приём, что у /brand-manifests/:id ниже.
   if (parts[0] === 'postprod') {
     if (parts.length === 1) return { name: 'postprod' };
+    // Обучалка (темп, 06.10.2026) — свой тип объекта, а не подмена
+    // sessionId: `/postprod/tutorial/:assetId`. Литерал второго сегмента
+    // проверяется ДО ветки сессии, иначе `tutorial` читался бы как id.
+    if (parts[1] === 'tutorial' && parts[2]) {
+      return { name: 'postprod-tutorial', assetId: parts[2] };
+    }
     if (parts[1]) return { name: 'postprod-video', sessionId: parts[1] };
   }
   if (parts[0] === 'plan') return { name: 'plan' };
@@ -196,6 +203,7 @@ export const routes = {
   generate: () => '/generate',
   postprod: () => '/postprod',
   postprodVideo: (sessionId: string) => `/postprod/${sessionId}`,
+  postprodTutorial: (assetId: string) => `/postprod/tutorial/${assetId}`,
   manifests: () => '/brand-manifests',
   manifestNew: () => '/brand-manifests/new',
   manifest: (id: string) => `/brand-manifests/${id}`,

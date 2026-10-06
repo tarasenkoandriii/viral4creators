@@ -21,6 +21,7 @@ import { AdminVoiceInputService } from './admin-voice-input.service';
 import { AdminVoiceNotifier } from './admin-voice-notifier';
 import { AdminVoiceSettingsService } from './admin-voice-settings.service';
 import { AdminVoiceTestService } from './admin-voice-test.service';
+import { AdminMemoCheckService } from './admin-memo-check.service';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AdminVoiceTestService } from './admin-voice-test.service';
   ],
   controllers: [AdminVoiceController, AdminVoiceEmbedController],
   providers: [
+    AdminMemoCheckService,
     AdminSonioxStt,
     AdminUiPlanService,
     AdminVoiceInputService,

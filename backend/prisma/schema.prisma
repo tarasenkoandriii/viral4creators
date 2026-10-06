@@ -3650,6 +3650,23 @@ model TutorialVideoAsset {
   /// Версия интерфейса фронтенда на съёмке (`<meta name="app-build">`).
   captureBuild String?
 
+  /// Монтажный manifest ролика (темп обучалок в постпродакшене,
+  /// doc/TUTORIAL-POSTPROD-TEMPO-SPEC.md, 06.10.2026): упорядоченные кадры
+  /// с устойчивым `stepIndex`, исходной длительностью, ссылкой на
+  /// покадровую дорожку и её измеренной длиной, подписью и временем
+  /// чтения. Из него — и только из него — пересчитывается темп
+  /// (`tutorial-tempo.ts`). NULL — ролик собран до manifest и темп для
+  /// него недоступен (явно non-editable, пересобрать из черновика).
+  /// Формат и версия — `tutorial-manifest.ts` (`manifestVersion`).
+  tempoManifest Json?
+  /// Какая версия сейчас отдаётся вместо исходного файла
+  /// (`TutorialVideoVersion.id`); NULL — исходный ролик. `blobUrl` и
+  /// длительность строки при активации переписываются на файл версии —
+  /// потребители (синхронизация сайта помощника, консультант, лендинг)
+  /// читают строку как раньше и неактивных версий не видят вовсе.
+  activeVersionId String?
+  versions        TutorialVideoVersion[]
+
   @@index([subjectKey, locale, createdAt])
   /// Горячий путь чтения консультанта (§4.8 ТЗ, будущий этап) — «какие
   /// subjectKey уже есть одобренными для этой локали».
@@ -3662,6 +3679,69 @@ model TutorialVideoAsset {
   /// собственный аргумент через абзац (найдено аудитом ТЗ §14 п.9).
   @@index([clientSiteDraftId])
   @@map("tutorial_video_assets")
+}
+
+/// Версия ролика обучалки с другим темпом (doc/TUTORIAL-POSTPROD-TEMPO-SPEC.md,
+/// 06.10.2026). Отдельная таблица, а НЕ новая строка `TutorialVideoAsset`:
+/// синхронизация роликов сайта помощника берёт самый свежий `complete`
+/// ролик черновика, ночной подметальщик считает роли по строкам ролика,
+/// консультант отдаёт `{reviewed, blobUrl}` — новая строка ролика
+/// подменила бы опубликованное без одобрения. Версия видна только
+/// постпродакшену, пока её не активировали (`TutorialVideoAsset.activeVersionId`).
+///
+/// `kind = 'source'` — исходный файл ролика, сохранённый при первой
+/// версии темпа: «вернуть обычный» = активировать его. `kind = 'tempo'` —
+/// пересборка с другим темпом из того же manifest.
+model TutorialVideoVersion {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assetId String
+  asset   TutorialVideoAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  /// 'source' | 'tempo'
+  kind String
+  /// Множитель паузы (пресеты 1.5 / 1 / 0.4, ползунок 0..2 с шагом 0.05);
+  /// NULL у 'source'.
+  tempoFactor Float?
+  /// Режим движения, с которым собрана версия (`SLIDESHOW_MOTIONS`).
+  motion String
+  manifestVersion Int
+  /// sha256(sourceHash + manifestVersion + темп + переходы) — двойной клик
+  /// и повтор крона не создают вторую платную сборку.
+  idempotencyKey String
+
+  /// 'preparing' | 'pending' | 'complete' | 'failed' — тот же смысл, что у
+  /// `TutorialVideoAsset.assemblyStatus`, но своё поле: версия не
+  /// участвует в опросе и уборке роликов.
+  status    String    @default("preparing")
+  error     String?
+  jobId     String?
+  startedAt DateTime?
+  /// Сколько раз отправляли сборку этого ключа (повтор после `failed`).
+  attempts  Int       @default(0)
+
+  blobUrl String?
+  /// Длительность собранной версии, мс — из `plan.durationMs` её плана.
+  videoMs Int?
+  /// Итог технической проверки файла (кадры, звук, размер) — JSON.
+  probe   Json?
+
+  /// Публичное (сценарное) демо: версия становится активной только
+  /// после повторного одобрения оператором. Обучалка клиента — после
+  /// технической проверки, без оператора (решение владельца 06.10.2026).
+  requiresApproval Boolean @default(false)
+  approvedBy       String?
+  approvedAt       DateTime?
+  /// Кто заказал: id пользователя (обучалка клиента) или оператора.
+  requestedBy String
+  activatedAt DateTime?
+
+  @@unique([assetId, idempotencyKey])
+  /// Опрос незавершённых сборок версий — на каждом тике крона.
+  @@index([status])
+  @@map("tutorial_video_versions")
 }
 
 /// Часть А ТЗ (§3, этап 100) — метаданные крон-обхода интерфейса
@@ -3910,6 +3990,15 @@ model ClientSiteTutorialDraft {
   /// `secretsUsedAt`/`cookiesEnc` признаком входа НЕ служат: они пишутся
   /// каждым раундом, и на публичных страницах тоже.
   loginUsedAt DateTime?
+
+  /// Озвучка обучалки по кадрам (решение владельца 06.10.2026): галочка
+  /// при отправке на проверку («Готово»), по умолчанию ВКЛ для новых
+  /// сборок. Синтез — провайдер Resemble, расход — на владельца проекта.
+  voiceEnabled Boolean @default(true)
+  /// Язык озвучки и подписей — язык интерфейса, в котором человек
+  /// записывал черновик (`ru`/`uk`/`en`/`de`/`es`). NULL у черновиков до
+  /// колонки — озвучка тогда по-русски, как всё прежнее.
+  locale String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt

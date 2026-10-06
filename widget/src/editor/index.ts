@@ -457,8 +457,26 @@ export function start(
     tip.style.display = 'block';
   };
 
-  const pick = (t: Element) => {
+  // Запись мемо (Э6-тер (д)): последний элемент, выбранный НАСТОЯЩИМ
+  // кликом человека, — единственное, что панель может попросить нажать.
+  // Метка — случайная: поддельный `pick` скрипта страницы её не знает, и
+  // `perform` по нему ничего не нажмёт.
+  let armed: Element | null = null;
+  let pid = '';
+  let passing = false;
+
+  const pick = (t: Element, real = false) => {
     const { d, how } = describe(t);
+    armed = real ? t : null;
+    pid = real ? Math.random().toString(36).slice(2, 12) : '';
+    const tag = t.tagName;
+    const field = /^(INPUT|SELECT|TEXTAREA)$/.test(tag);
+    const options: string[] = [];
+    if (tag === 'SELECT') {
+      const o = (t as HTMLSelectElement).options;
+      for (let i = 0; i < o.length && i < 20; i++)
+        options.push(clean(o[i].text));
+    }
     send({
       type: 'pick',
       descriptor: d,
@@ -466,12 +484,16 @@ export function start(
       how,
       stability: stabilityOf(d),
       never: looksNever(d),
+      // Имя поля и подписи вариантов — НЕ значение (его не читаем вовсе).
+      fieldName: field ? tok(t.getAttribute('name')) : null,
+      options,
+      pid: pid || null,
     });
   };
 
   // ── перехват событий в режиме «Выбор» (фаза захвата на window) ──
   const guard = (e: Event) => {
-    if (!selecting() || own(e.target)) return;
+    if (passing || !selecting() || own(e.target)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     if (e.type === 'click' || (e.type === 'touchend' && current)) {
@@ -483,7 +505,7 @@ export function start(
           level = 0;
         }
         show(chain[level] || t);
-        pick(chain[level] || t);
+        pick(chain[level] || t, e.isTrusted);
       }
     }
   };
@@ -540,7 +562,8 @@ export function start(
       } else if (k === 'arrowdown' && current && selecting()) {
         level = Math.max(0, level - 1);
         show(chain[level]);
-      } else if (k === 'enter' && current && selecting()) pick(current);
+      } else if (k === 'enter' && current && selecting())
+        pick(current, e.isTrusted);
       else used = false;
       if (used) {
         e.preventDefault();
@@ -665,6 +688,21 @@ export function start(
     switch (m.type) {
       case 'exit':
         return exit();
+      case 'perform': {
+        // Только элемент последнего настоящего клика, ещё на странице.
+        const t = armed;
+        const ok = !!pid && m.pid === pid;
+        armed = null;
+        pid = '';
+        if (!t || !ok || !t.isConnected) return;
+        passing = true;
+        try {
+          (t as HTMLElement).click();
+        } finally {
+          passing = false;
+        }
+        return;
+      }
       case 'mode':
         return setMode(m.mode, false);
       case 'coverage':

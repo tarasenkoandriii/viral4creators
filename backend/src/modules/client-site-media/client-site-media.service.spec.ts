@@ -515,3 +515,50 @@ describe('Э-С Ш5: сайт лендинга генератора — служ
     expect(sites.calls.map((c) => c[0])).toEqual(['syncSiteVideos']);
   });
 });
+
+describe('версии с другим темпом (06.10.2026)', () => {
+  it('набор сайта читает только строку ролика: несобранная/неактивная версия его не меняет, активная — меняет', async () => {
+    const asset: Row = {
+      id: 'a1',
+      clientSiteDraftId: 'd1',
+      assemblyStatus: 'complete',
+      blobUrl:
+        'https://s.public.blob.vercel-storage.com/tutorial-videos/client-site/a1.mp4',
+      title: 'shop.example.com',
+      locale: 'uk',
+      durationMs: 12_000,
+      activeVersionId: null,
+      createdAt: 1,
+    };
+    const { svc, state } = setup({
+      drafts: [publicDraft({ clientSiteId: 'S' })],
+      assets: [asset],
+    });
+    // Версия существует только в своей таблице — подделка базы о ней
+    // не знает вовсе, и набор обязан выйти прежним.
+    const before = await svc.collectVideos('S');
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({
+      externalId: 'a1',
+      url: asset.blobUrl,
+      durationMs: 12_000,
+      locale: 'uk',
+    });
+    // Активация переписывает файл и длительность у строки ролика —
+    // тот же externalId, новая ссылка: помощник заменяет ролик, а не
+    // получает второй.
+    Object.assign(state.assets[0], {
+      blobUrl:
+        'https://s.public.blob.vercel-storage.com/tutorial-videos/versions/a1/v1.mp4',
+      durationMs: 8_500,
+      activeVersionId: 'v1',
+    });
+    const after = await svc.collectVideos('S');
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({
+      externalId: 'a1',
+      url: 'https://s.public.blob.vercel-storage.com/tutorial-videos/versions/a1/v1.mp4',
+      durationMs: 8_500,
+    });
+  });
+});

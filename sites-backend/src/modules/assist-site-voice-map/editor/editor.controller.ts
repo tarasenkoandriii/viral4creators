@@ -9,9 +9,11 @@
  *   POST /editor/v1/exit             выход — сессия гаснет
  * Допуск — заголовок EDITOR_SESSION_HEADER (сессия только в памяти и
  * sessionStorage `we.`: страница заказчика её не видит). Основная роль
- * (запись в черновик), НЕ assist_public (§5-кватер.13). Отложено: ИИ-предложения
- * синонимов (`suggest-synonyms`), проверка устойчивости воркером
- * (`stability`), запись мемо кликами (`memo/record/*`) — doc/TODO.md I-Р.
+ * (запись в черновик), НЕ assist_public (§5-кватер.13). Мемо в редакторе
+ * (запись кликами `memo/record/*`, «Прогнать» `memo/:key/try`, Э6-тер (д)) —
+ * `editor-memo.controller.ts`. Отложено: ИИ-предложения синонимов
+ * (`suggest-synonyms`), проверка устойчивости воркером (`stability`) —
+ * doc/TODO.md I-Р.
  */
 import {
   Body,

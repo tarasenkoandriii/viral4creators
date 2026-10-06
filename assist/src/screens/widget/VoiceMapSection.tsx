@@ -196,13 +196,42 @@ export function VoiceMapSection({ siteId }: { siteId: string }) {
                 s.draftRevision,
                 json
               );
-              setNotice({
-                tone: r.rejected ? 'warning' : 'success',
-                text: fmt(t.imported, {
+              // Э6-тер (к): мемо файла — черновики с новыми номерами; отказы
+              // (опасный шаг, имя занято, лимит тарифа) — с причиной.
+              const mr = r.memos.rejected;
+              const why = (code: string) =>
+                (t.importReasons as Record<string, string>)[code] ??
+                (appDict.voiceControl.memo.gates as Record<string, string>)[
+                  code
+                ] ??
+                t.importReasons.other;
+              const parts = [
+                fmt(t.imported, {
                   a: r.accepted,
                   r: r.rejected,
                   s: r.signed ? t.importSigned : '',
                 }),
+              ];
+              if (r.memos.created.length || mr.length)
+                parts.push(
+                  fmt(t.importMemos, {
+                    c: r.memos.created.length,
+                    r: mr.length,
+                  })
+                );
+              if (mr.length)
+                parts.push(
+                  fmt(t.importMemoRejected, {
+                    list: mr
+                      .map(
+                        (x) => `${x.key ?? `#${x.index + 1}`} — ${why(x.code)}`
+                      )
+                      .join(', '),
+                  })
+                );
+              setNotice({
+                tone: r.rejected || mr.length ? 'warning' : 'success',
+                text: parts.join(' '),
               });
             });
           }}

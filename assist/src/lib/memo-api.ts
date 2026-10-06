@@ -87,6 +87,9 @@ export interface MemoDraftView {
       path?: string;
       text?: string;
       slot?: string;
+      /** (Э6-тер (к)) «Счётчик ±N» / «поле = слот»: цель условия. */
+      target?: { assistId: string | null; text: string };
+      delta?: number;
     }>;
   };
   slots: Array<{ name: string; kind: string; pii: boolean; options: string[] }>;
@@ -110,6 +113,11 @@ export interface MemoSummary {
   reached30: number;
   lastRunAt: string | null;
   reviewCode: string | null;
+  /**
+   * Опубликовано, но сверх лимита тарифа (после понижения): посетителям не
+   * исполняется — бейдж «сверх тарифа».
+   */
+  overPlan: boolean;
 }
 
 export interface MemoVersionView {
@@ -217,6 +225,23 @@ const problems = (v: unknown) =>
     .map((p) => ({ code: oneOf(MEMO_GATE_CODES, p.code), path: text(p.path) }))
     .filter((p): p is { code: MemoGateCode; path: string } => !!p.code);
 
+/**
+ * Условия цели при сохранении карточки: адрес и текст — из полей формы;
+ * остальные (слот, Э6-тер (к) «счётчик ±N», «поле = слот») здесь не
+ * правятся и сохраняются как были (иначе «Сохранить» стёрло бы их).
+ */
+export function goalExpectForSave(
+  prev: MemoDraftView['goal']['expect'],
+  url: string,
+  appear: string
+): MemoDraftView['goal']['expect'] {
+  return [
+    ...(url.trim() ? [{ kind: 'url', path: url.trim() }] : []),
+    ...(appear.trim() ? [{ kind: 'text', text: appear.trim() }] : []),
+    ...prev.filter((g) => g.kind !== 'url' && g.kind !== 'text'),
+  ];
+}
+
 export function parseMemoSummary(v: unknown): MemoSummary | null {
   const o = obj(v);
   const status = oneOf(MEMO_STATUSES, o.status);
@@ -237,6 +262,7 @@ export function parseMemoSummary(v: unknown): MemoSummary | null {
     reached30: num(o.reached30),
     lastRunAt: iso(o.lastRunAt),
     reviewCode: typeof rr.code === 'string' ? rr.code.slice(0, 30) : null,
+    overPlan: o.overPlan === true,
   };
 }
 
@@ -256,6 +282,20 @@ function parseDraft(v: unknown): MemoDraftView {
           ...(typeof g.path === 'string' ? { path: g.path } : {}),
           ...(typeof g.text === 'string' ? { text: g.text } : {}),
           ...(typeof g.slot === 'string' ? { slot: g.slot } : {}),
+          ...(g.target && typeof g.target === 'object'
+            ? {
+                target: {
+                  assistId:
+                    typeof obj(g.target).assistId === 'string'
+                      ? (obj(g.target).assistId as string).slice(0, 64)
+                      : null,
+                  text: text(obj(g.target).text).slice(0, 60),
+                },
+              }
+            : {}),
+          ...(typeof g.delta === 'number' && Number.isInteger(g.delta)
+            ? { delta: g.delta }
+            : {}),
         }))
         .slice(0, 3),
     },

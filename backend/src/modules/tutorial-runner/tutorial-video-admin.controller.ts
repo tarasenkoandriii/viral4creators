@@ -28,6 +28,8 @@ import { PublicationService } from '../publication/publication.service';
 import { PublishTutorialVideoDto } from '../publication/dto/publication.dto';
 import { SetTutorialVideoReviewedDto } from './dto/set-tutorial-video-reviewed.dto';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
+import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
+import { TutorialTempoRequestDto } from '../postprod/dto/tutorial-tempo.dto';
 
 function parseBool(v?: string): boolean | undefined {
   if (v === 'true') return true;
@@ -42,6 +44,7 @@ export class TutorialVideoAdminController {
     private readonly adminPanel: AdminPanelService,
     private readonly videoAdmin: TutorialVideoAdminService,
     private readonly publication: PublicationService,
+    private readonly versions: TutorialVideoVersionsService,
   ) {}
 
   @Get()
@@ -104,5 +107,72 @@ export class TutorialVideoAdminController {
     await this.adminPanel.assertOperator(req.userId);
     if (!id) throw new BadRequestException('id обязателен');
     return this.publication.publishTutorialVideo(id, req.userId, dto);
+  }
+
+  // ── Темп в постпродакшене (06.10.2026) ─────────────────────────────
+  //
+  // Тот же API, что у пользователя (`postprod/tutorials`), под защитой
+  // админки. Для публичного (сценарного) демо версия становится
+  // активной ТОЛЬКО по «Одобрить версию» — это и есть повторное
+  // одобрение оператором (решение владельца).
+
+  @Get(':id/tempo')
+  async tempo(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('factor') factor?: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.estimate(
+      { kind: 'operator', userId: req.userId },
+      id,
+      factor === undefined ? 1 : Number(factor),
+    );
+  }
+
+  @Get(':id/versions')
+  async listVersions(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.listVersions(
+      { kind: 'operator', userId: req.userId },
+      id,
+    );
+  }
+
+  @Post(':id/versions')
+  async requestVersion(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: TutorialTempoRequestDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.requestVersion(
+      { kind: 'operator', userId: req.userId },
+      id,
+      dto.factor,
+    );
+  }
+
+  @Post(':id/versions/:versionId/approve')
+  async approveVersion(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('versionId') versionId: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.activate(
+      { kind: 'operator', userId: req.userId },
+      id,
+      versionId,
+    );
+  }
+
+  @Post(':id/revert')
+  async revert(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.revert({ kind: 'operator', userId: req.userId }, id);
   }
 }

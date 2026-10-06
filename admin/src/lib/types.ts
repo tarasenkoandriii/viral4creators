@@ -1424,6 +1424,56 @@ export interface TutorialVideoAssetRow {
   assemblyStartedAt: string | null;
 }
 
+// ── Темп обучалок в постпродакшене (06.10.2026,
+// doc/TUTORIAL-POSTPROD-TEMPO-SPEC.md) — тот же API, что у пользователя,
+// под защитой админки: GET/POST /admin/tutorial-video-assets/:id/… ──
+
+export type TutorialTempoWarning =
+  | { code: 'pauses-at-minimum'; frames: number }
+  | { code: 'source-frame-too-short'; frameIndexes: number[] }
+  | { code: 'speech-unmeasured'; frameIndexes: number[] }
+  | { code: 'zoom-dropped' };
+
+export type TutorialTempoUnavailableReason =
+  | 'no-manifest'
+  | 'whole-track'
+  | 'sources-pending'
+  | 'not-complete'
+  | 'frames-purged';
+
+export interface TutorialVersionRow {
+  id: string;
+  kind: 'source' | 'tempo';
+  factor: number;
+  preset: 'calm' | 'normal' | 'fast' | null;
+  status: 'preparing' | 'pending' | 'complete' | 'failed';
+  durationMs: number | null;
+  url: string | null;
+  active: boolean;
+  requiresApproval: boolean;
+  approved: boolean;
+  createdAt: string;
+  /** Причина провала — оператору видна, пользователю нет. */
+  error?: string | null;
+}
+
+export interface TutorialTempoEstimate {
+  assetId: string;
+  title: string;
+  url: string | null;
+  currentDurationMs: number | null;
+  editable: boolean;
+  reason: TutorialTempoUnavailableReason | null;
+  factor: number;
+  durationMs: number | null;
+  sourceDurationMs: number | null;
+  minimumDurationMs: number | null;
+  warnings: TutorialTempoWarning[];
+  voiced: boolean;
+  activeFactor: number;
+  inFlight: TutorialVersionRow | null;
+}
+
 export interface TutorialVideoListResult {
   rows: TutorialVideoAssetRow[];
   total: number;

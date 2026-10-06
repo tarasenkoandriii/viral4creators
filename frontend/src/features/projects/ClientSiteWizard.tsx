@@ -157,6 +157,8 @@ export function ClientSiteWizard({
   const [url, setUrl] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
   const [title, setTitle] = useState('');
+  // Озвучка по кадрам (решение владельца 06.10.2026): по умолчанию ВКЛ.
+  const [voice, setVoice] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -527,6 +529,8 @@ export function ClientSiteWizard({
       finishSiteTutorial(projectId, {
         expectedVersion: draft.version,
         title: title.trim(),
+        voice,
+        locale,
       })
     );
     if (updated) {
@@ -908,6 +912,8 @@ export function ClientSiteWizard({
           frames={frames}
           title={title}
           setTitle={setTitle}
+          voice={voice}
+          setVoice={setVoice}
           busy={busy}
           editable={editable}
           onZoom={setZoomed}
@@ -1445,6 +1451,8 @@ function ReviewStage(props: {
   frames: string[];
   title: string;
   setTitle: (v: string) => void;
+  voice: boolean;
+  setVoice: (v: boolean) => void;
   busy: boolean;
   editable: boolean;
   canContinue: boolean;
@@ -1534,6 +1542,14 @@ function ReviewStage(props: {
             >
               {t.videoOpen}
             </Button>
+            {/* Темп и версии ролика — в «Постпроде» (06.10.2026). */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(routes.postprod())}
+            >
+              {t.openPostprod}
+            </Button>
           </Card>
         )}
       {draft.status === 'APPROVED' && ready?.status === 'failed' && (
@@ -1561,6 +1577,21 @@ function ReviewStage(props: {
               disabled={busy}
             />
           </Field>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={props.voice}
+              disabled={busy}
+              onChange={(e) => props.setVoice(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">{t.voiceLabel}</span>
+              <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                {t.voiceHint}
+              </span>
+            </span>
+          </label>
           <Button
             data-assist="confirm"
             block

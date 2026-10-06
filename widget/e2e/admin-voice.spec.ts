@@ -376,3 +376,46 @@ test('мастер на РАБОЧЕМ хосте: «Зберегти» толь
     submitsBlocked: 2,
   });
 });
+
+test('аудит 06.10: прогон мемо «Админки» — карточка мемо, «Перевірити сторінку» (итог кодом), «Завершити прогін»; ничего не нажато, планов нет', async ({
+  page,
+}) => {
+  const token = `tok_${Date.now().toString(36)}_memo_abcdef`;
+  await vcSet({
+    testToken: token,
+    testHost: false,
+    memo: {
+      schema: 1,
+      names: { uk: 'Клієнти і відвантаження' },
+      triggers: {},
+      goal: { text: { uk: 'Відкрито клієнтів' } },
+      slots: [],
+      steps: [
+        {
+          action: 'ui',
+          kind: 'navigate',
+          target: { assistId: null, text: 'Клієнти', role: 'link' },
+          value: null,
+        },
+        { action: 'api', op: 'r2', opKey: 'shop.updateOrderStatus', args: {} },
+      ],
+    },
+  });
+  await page.goto(`${adminPage(newPk(), 'emp-owner')}&v4c_voicetest=${token}`);
+  await expect.poll(() => page.url()).not.toContain('v4c_voicetest');
+  const f = await frameOf(page, false);
+  const box = f.locator('.wa-vt');
+  await expect(box).toContainText('Прогін мемо АМ-7 «Клієнти і відвантаження»');
+  await expect(box).toContainText('API · shop.updateOrderStatus');
+  await box.locator('.wa-edit', { hasText: 'Перевірити сторінку' }).click();
+  await expect(box).toContainText('кроків 1, проблем 0');
+  await box.locator('.wa-yes', { hasText: 'Завершити прогін' }).click();
+  await expect(box).toContainText('Прогін пройдено');
+  const log = await vcLog();
+  expect(log.plans).toHaveLength(0);
+  expect(
+    (log.tests[0] as unknown as { memo: { result: string } }).memo.result
+  ).toBe('pass');
+  await expect(page.locator('#ak-saves')).toHaveText('0');
+  await expect(page.locator('#ak-deletes')).toHaveText('0');
+});

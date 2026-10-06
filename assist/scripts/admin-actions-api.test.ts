@@ -11,6 +11,8 @@ import {
   parseProposal,
 } from '../src/lib/admin-actions-api';
 import { ADMIN_ACTIONS_TEXTS } from '../src/i18n/admin-actions';
+import { ADMIN_MEMO_CHECK_TEXTS } from '../src/i18n/admin-memo-check';
+import { parseCheckToken } from '../src/lib/admin-memo-check';
 
 const p = parseProposal({
   id: 'p1',
@@ -55,6 +57,87 @@ const m = parseMemo({
 });
 assert.equal(m.number, 3);
 assert.deepEqual(m.versions[0].problems, [{ path: 'steps', code: 'empty' }]);
+assert.equal(m.versions[0].check, null);
+assert.equal(m.reviewReason, null);
+assert.equal(m.stats.runs, 0);
+assert.equal(m.stats.goalRate, null);
+
+// Аудит 06.10: «требует проверки», статистика и итог прогона — строго.
+const r = parseMemo({
+  number: 4,
+  status: 'needs_review',
+  reviewReason: { code: 'failures', step: 2, employees: 3, version: 1 },
+  stats: {
+    days: 30,
+    runs: 12,
+    reached: 6,
+    goalRate: 7,
+    failures: [{ step: 2, n: 4, employees: 3, pin: 'yes' }],
+    slots: { order: '1042' },
+  },
+  stats7: { days: 7, runs: 5, goalRate: 0.4 },
+  versions: [
+    {
+      number: 2,
+      status: 'checking',
+      checkReport: {
+        kind: 'memo-check',
+        result: 'partial',
+        steps: [
+          { i: 0, ok: true },
+          { i: 2, ok: false, problem: 'forbidden' },
+        ],
+        phraseConflicts: [{ lang: 'uk', phrase: 'x' }],
+        pages: ['/admin/orders'],
+        inherited: 1,
+      },
+    },
+    { number: 1, status: 'held', checkReport: { result: 'pass' } },
+  ],
+});
+assert.deepEqual(r.reviewReason, {
+  code: 'failures',
+  step: 2,
+  version: 1,
+  employees: 3,
+  runs: null,
+  reached: null,
+  at: '',
+});
+assert.equal(r.stats.goalRate, null, 'доля вне 0..1 — нет');
+assert.deepEqual(r.stats.failures, [
+  { step: 2, n: 4, employees: 3, pin: false },
+]);
+assert.equal(JSON.stringify(r).includes('1042'), false, 'значений слотов нет');
+assert.equal(r.stats7.goalRate, 0.4);
+assert.deepEqual(r.versions[0].check, {
+  result: 'partial',
+  problems: [{ step: 3, code: 'forbidden' }],
+  goal: '',
+  phraseConflicts: 1,
+  pages: ['/admin/orders'],
+  at: '',
+  inherited: 1,
+});
+assert.equal(r.versions[1].check, null, 'чужой формат отчёта — нет');
+assert.equal(parseMemo({ reviewReason: { code: 'hack' } }).reviewReason, null);
+assert.equal(parseCheckToken({ url: 'javascript:alert(1)' }).url, '');
+assert.equal(
+  parseCheckToken({ url: 'https://admin.shop.test/?v4c_voicetest=t' }).url,
+  'https://admin.shop.test/?v4c_voicetest=t'
+);
+// Тексты прогона — одинаковые ключи на трёх языках.
+const keysOf = (o: object): string[] =>
+  Object.entries(o)
+    .flatMap(([k, v]) =>
+      v && typeof v === 'object' ? keysOf(v).map((x) => `${k}.${x}`) : [k]
+    )
+    .sort();
+const ukKeys = keysOf(ADMIN_MEMO_CHECK_TEXTS.uk);
+for (const l of ['ru', 'en'] as const)
+  assert.deepEqual(keysOf(ADMIN_MEMO_CHECK_TEXTS[l]), ukKeys, l);
+for (const l of ['uk', 'ru', 'en'] as const)
+  assert.ok(ADMIN_ACTIONS_TEXTS[l].memo.statuses.needs_review, l);
 
 const calls: Array<[string, string, unknown]> = [];
 const api = createAdminActionsApi({
@@ -77,7 +160,9 @@ await api.signingSecret('s1', 'c1');
 await api.memos('s1');
 await api.saveDraft('s1', 2, 0, { names: { uk: 'x' } });
 await api.publish('s1', 2, 1);
+await api.checkToken('s1', 2, { path: '/admin' });
 await assert.rejects(api.memo('s1', 0));
+await assert.rejects(api.checkToken('s1', -1, {}));
 assert.deepEqual(
   calls.map(([m, path]) => `${m} ${path}`),
   [
@@ -90,8 +175,10 @@ assert.deepEqual(
     'GET /assist/sites/s1/admin-mode/memos',
     'PATCH /assist/sites/s1/admin-mode/memos/2/draft',
     'POST /assist/sites/s1/admin-mode/memos/2/versions/1/publish',
+    'POST /assist/sites/s1/admin-mode/memos/2/check-token',
   ]
 );
+assert.deepEqual(calls[calls.length - 1]?.[2], { path: '/admin' });
 assert.deepEqual(calls[0][2], { paramsHash: 'a'.repeat(64), phrase: 'X 1' });
 
 for (const [lang, d] of Object.entries(ADMIN_ACTIONS_TEXTS)) {

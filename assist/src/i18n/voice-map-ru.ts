@@ -49,6 +49,17 @@ export const voiceMapRu = {
   import: 'Импорт JSON',
   imported: 'Импорт: принято {a}, отклонено {r}{s}',
   importSigned: ' (наш файл без правок)',
+  // Э6-тер (к): мемо в файле карты.
+  importMemos: 'Мемо: создано черновиков {c}, отклонено {r}.',
+  importMemoRejected: 'Мемо не импортированы: {list}.',
+  importReasons: {
+    limit: 'лимит тарифа',
+    name_taken: 'имя уже занято',
+    no_name: 'нет имени',
+    format: 'не мемо',
+    too_many: 'больше 100 в файле',
+    other: 'не прошло проверку',
+  },
   templates: 'Похожие страницы — кандидаты в шаблоны: {list}',
   publishedOk: 'Версия v{n} опубликована — помощник подхватит её за 5 минут.',
   errors: {

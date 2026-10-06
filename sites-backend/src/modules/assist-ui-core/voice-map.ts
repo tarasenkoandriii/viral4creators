@@ -1790,10 +1790,20 @@ export interface VoiceMapExport {
   templates: Array<{ ref: string; name: string; pathPattern: string }>;
   targets: Array<Record<string, unknown>>;
   terms: string[];
+  /**
+   * (Э6-тер (к), §5-бис.17 п.6) Мемо сайта — переносимое содержимое
+   * (`memo-io.ts` `memoExportItem`): без номеров, id, отпечатков `pin`,
+   * привязок Ш4, предложенных фраз и статистики. Нет поля — файл без мемо
+   * (отпечаток содержимого карты `contentFingerprint` мемо не включает).
+   */
+  memos?: Array<Record<string, unknown>>;
 }
 
 /** Файл экспорта — без внутренних id, образцов страниц и журнала. */
-export function exportPayload(c: VoiceMapContent): VoiceMapExport {
+export function exportPayload(
+  c: VoiceMapContent,
+  memos?: ReadonlyArray<Record<string, unknown>>,
+): VoiceMapExport {
   const tpls = c.templates.filter((t) => t.status === 'active');
   const refOf = new Map(tpls.map((t, i) => [t.id, `t${i + 1}`]));
   return {
@@ -1829,6 +1839,7 @@ export function exportPayload(c: VoiceMapContent): VoiceMapExport {
         undo: t.undo,
       })),
     terms: c.terms,
+    ...(memos ? { memos: [...memos] } : {}),
   };
 }
 
@@ -1929,11 +1940,213 @@ export function contentFingerprint(c: VoiceMapContent): string {
  * `template` и проходят все проверки; публикует человек. Shopify, Хорошоп,
  * Tilda — после стендов Т-1 (В-54: шаблоны 4 → 1).
  */
+/**
+ * Мемо шаблона платформы (§5-бис.17 п.6, Э6-тер (к)): содержимое мемо в
+ * форме черновика; цель шага — по разметке нашего плагина (`bind` — ключ
+ * факта сайта: `data-assist-id` или `search-submit`). Видимая подпись цели
+ * (отпечаток `pin.text`), путь ссылки и маска страницы товара берутся с
+ * ЭТОГО сайта при создании (`platformMemoDrafts`, memo-io.ts) — без
+ * подписи ворота мемо держат шаг (нажатие только по отпечатку с текстом).
+ */
+export interface PlatformMemoTemplate {
+  key: string;
+  content: Record<string, unknown>;
+}
+
+const T_ADD = {
+  mapKey: 'add-to-cart',
+  bind: 'add-to-cart',
+  // Кнопка «В кошик» на странице товара — отправка формы `form.cart`
+  // (страница перезагрузится; обратимая разметка — класс `comp`).
+  pin: {
+    role: 'button',
+    assistId: 'add-to-cart',
+    text: '',
+    tag: 'button',
+    submit: true,
+    inForm: true,
+  },
+};
+const T_CART = {
+  mapKey: 'nav-cart',
+  bind: 'nav-cart',
+  pin: {
+    role: 'link',
+    assistId: 'nav-cart',
+    text: '',
+    tag: 'a',
+    href: '/cart/',
+  },
+};
+/** Счётчик корзины — в подписи ссылки «Кошик» (`nav-cart`) шапки. */
+const CART_COUNT_PLUS_ONE = {
+  kind: 'counter',
+  target: { assistId: 'nav-cart', text: '' },
+  delta: 1,
+};
+
 export const PLATFORM_TEMPLATES: Readonly<
-  Record<string, { version: string; targets: Array<Record<string, unknown>> }>
+  Record<
+    string,
+    {
+      version: string;
+      targets: Array<Record<string, unknown>>;
+      memos?: readonly PlatformMemoTemplate[];
+    }
+  >
 > = {
   woocommerce: {
     version: 'woocommerce@1',
+    // Фразы мемо не совпадают с именами/синонимами целей шаблона (одна
+    // нормализованная фраза — одна сущность, иначе ворота держат).
+    memos: [
+      {
+        key: 'add-and-open-cart',
+        content: {
+          names: {
+            uk: 'Покласти в кошик і відкрити кошик',
+            ru: 'Положить в корзину и открыть корзину',
+            en: 'Add to cart and open the cart',
+          },
+          triggers: {
+            uk: [
+              'додай у кошик і відкрий кошик',
+              'поклади в кошик і покажи кошик',
+            ],
+            ru: [
+              'добавь в корзину и открой корзину',
+              'положи в корзину и покажи корзину',
+            ],
+            en: ['add to cart and open the cart', 'add it and show the cart'],
+          },
+          goal: {
+            text: {
+              uk: 'Товар у кошику, кошик відкрито',
+              ru: 'Товар в корзине, корзина открыта',
+              en: 'The item is in the cart, the cart is open',
+            },
+            expect: [{ kind: 'url', path: '/cart*' }, CART_COUNT_PLUS_ONE],
+          },
+          steps: [
+            { page: '/product/*', action: 'click', target: T_ADD },
+            { page: '/product/*', action: 'click', target: T_CART },
+          ],
+        },
+      },
+      {
+        key: 'put-in-cart',
+        content: {
+          names: {
+            uk: 'Покласти в кошик',
+            ru: 'Положить в корзину',
+            en: 'Put it in the cart',
+          },
+          triggers: {
+            uk: ['поклади в кошик', 'кинь у кошик'],
+            ru: ['положи в корзину', 'закинь в корзину'],
+            en: ['put in cart', 'add it to the cart'],
+          },
+          goal: {
+            text: {
+              uk: 'Товар у кошику',
+              ru: 'Товар в корзине',
+              en: 'The item is in the cart',
+            },
+            expect: [CART_COUNT_PLUS_ONE],
+          },
+          steps: [{ page: '/product/*', action: 'click', target: T_ADD }],
+        },
+      },
+      {
+        key: 'open-cart',
+        content: {
+          names: {
+            uk: 'Відкрити кошик',
+            ru: 'Открыть корзину',
+            en: 'Open the cart',
+          },
+          triggers: {
+            uk: ['покажи кошик', 'перейди в кошик'],
+            ru: ['покажи корзину', 'перейди в корзину'],
+            en: ['show the cart', 'go to the cart'],
+          },
+          goal: {
+            text: {
+              uk: 'Кошик відкрито',
+              ru: 'Корзина открыта',
+              en: 'The cart is open',
+            },
+            expect: [{ kind: 'url', path: '/cart*' }],
+          },
+          steps: [{ page: '/*', action: 'click', target: T_CART }],
+        },
+      },
+      {
+        key: 'find-product',
+        content: {
+          names: {
+            uk: 'Знайти товар',
+            ru: 'Найти товар',
+            en: 'Find a product',
+          },
+          triggers: {
+            uk: ['знайди товар', 'пошукай товар'],
+            ru: ['найди товар', 'поищи товар'],
+            en: ['find a product', 'search for a product'],
+          },
+          goal: {
+            text: {
+              uk: 'Показано результати пошуку',
+              ru: 'Показаны результаты поиска',
+              en: 'Search results are shown',
+            },
+            expect: [
+              { kind: 'slot', slot: 'query' },
+              {
+                kind: 'field',
+                target: { assistId: 'search', text: '' },
+                slot: 'query',
+              },
+            ],
+          },
+          slots: [{ name: 'query', kind: 'text' }],
+          steps: [
+            {
+              page: '/*',
+              action: 'fill',
+              value: { slot: 'query' },
+              target: {
+                mapKey: 'search',
+                bind: 'search',
+                pin: {
+                  role: 'searchbox',
+                  assistId: 'search',
+                  text: '',
+                  tag: 'input',
+                  inputType: 'search',
+                  inForm: true,
+                },
+              },
+            },
+            {
+              page: '/*',
+              action: 'click',
+              target: {
+                bind: 'search-submit',
+                pin: {
+                  role: 'button',
+                  assistId: null,
+                  text: '',
+                  tag: 'button',
+                  submit: true,
+                  inForm: true,
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
     targets: [
       {
         key: 'add-to-cart',

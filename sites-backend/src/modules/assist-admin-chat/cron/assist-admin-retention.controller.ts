@@ -10,12 +10,18 @@
  * компенсации (8 дней; хеш, итог и журнал — остаются), предложения старше
  * 90 дней удаляются (вместе с диалогом — каскадом, без диалога — здесь),
  * значения слотов незавершённых запусков мемо — по истечении запуска.
+ *
+ * Аудит 06.10: страховочный проход монитора мемо «Админки» (§5-бис.17 п.8,
+ * `AdminMemoMonitorService`) — отдельного крона нет (Vercel Hobby); основной
+ * путь — на концах запусков со сбоем. Сбой монитора не роняет сроки
+ * хранения (и наоборот).
  */
-import { Controller, Get, Headers } from '@nestjs/common';
+import { Controller, Get, Headers, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { withCronLock } from '../../../common/cron-job-lock';
 import { assertCronSecret } from '../../../common/cron-secret';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { AdminMemoMonitorService } from '../../assist-admin-actions/admin-memo-monitor.service';
 import { PublicRoute } from '../../telegram-auth/allow-apps.decorator';
 
 export const ADMIN_RETENTION_JOB = 'assist-admin-retention';
@@ -32,6 +38,8 @@ export interface AdminRetentionResult {
   proposalsPurged: number;
   proposalsDeleted: number;
   memoRuns: number;
+  /** Мемо, переведённые монитором в «требует проверки» (null — сбой прохода). */
+  memoReviews: number | null;
 }
 
 /** Э8: параметры предложений живут окно компенсации + 1 день. */
@@ -40,7 +48,12 @@ export const ADMIN_PROPOSAL_PARAMS_DAYS = 8;
 @Controller('cron')
 @PublicRoute('крон Vercel: доступ по CRON_SECRET, не по initData')
 export class AssistAdminRetentionController {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(AssistAdminRetentionController.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly memoMonitor: AdminMemoMonitorService,
+  ) {}
 
   /** Тело крона — отдельно, для теста без HTTP. */
   async runOnce(now = new Date()): Promise<Omit<AdminRetentionResult, 'ran'>> {
@@ -102,6 +115,12 @@ export class AssistAdminRetentionController {
         },
       },
     });
+    let memoReviews: number | null = null;
+    try {
+      memoReviews = (await this.memoMonitor.run(now)).reviews;
+    } catch (e) {
+      this.logger.error(`монитор мемо «Админки»: ${(e as Error).name}`);
+    }
     return {
       sessions: sessions.count,
       conversations: conversations.count,
@@ -109,6 +128,7 @@ export class AssistAdminRetentionController {
       proposalsPurged: purged.count,
       proposalsDeleted: deleted.count,
       memoRuns: runsExpired.count + runsDeleted.count,
+      memoReviews,
     };
   }
 
@@ -132,6 +152,7 @@ export class AssistAdminRetentionController {
         proposalsPurged: 0,
         proposalsDeleted: 0,
         memoRuns: 0,
+        memoReviews: 0,
       };
     }
     return { ran: true, ...lock.result };

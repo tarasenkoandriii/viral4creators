@@ -19,7 +19,12 @@ import { AssistSiteVoiceModule } from '../assist-site-voice/assist-site-voice.mo
 import { SiteAiModule } from '../site-ai/site-ai.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { MemoController } from './cabinet/memo.controller';
+import { GeneratorMemoStepsClient } from './cabinet/generator-memo-steps.client';
+import { MemoFromTutorialController } from './cabinet/memo-from-tutorial.controller';
+import { MemoFromTutorialService } from './cabinet/memo-from-tutorial.service';
 import { MemoService } from './cabinet/memo.service';
+import { MemoTemplatesController } from './cabinet/memo-templates.controller';
+import { MemoTemplatesService } from './cabinet/memo-templates.service';
 import { VoiceControlSettingsController } from './cabinet/voice-control-settings.controller';
 import { VoiceControlSettingsService } from './cabinet/voice-control-settings.service';
 import { SiteUiPlanService } from './public/ui-plan.service';
@@ -32,12 +37,22 @@ import { VoiceTestService } from './public/voice-test.service';
     AssistSiteChatModule,
     AssistSiteVoiceModule,
   ],
-  controllers: [VoiceControlSettingsController, MemoController],
+  controllers: [
+    VoiceControlSettingsController,
+    MemoController,
+    // Э6-тер (к): мемо из шагов одобренной обучалки.
+    MemoFromTutorialController,
+    // Э6-тер (к): мемо из шаблона платформы, публикация пакетом.
+    MemoTemplatesController,
+  ],
   providers: [
     SiteUiPlanService,
     VoiceTestService,
     VoiceControlSettingsService,
     MemoService,
+    MemoFromTutorialService,
+    GeneratorMemoStepsClient,
+    MemoTemplatesService,
   ],
   exports: [SiteUiPlanService, VoiceTestService],
 })

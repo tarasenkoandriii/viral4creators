@@ -4,6 +4,7 @@ import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { PublicationModule } from '../publication/publication.module';
 import { StorageModule } from '../storage/storage.module';
 import { ClientSiteMediaModule } from '../client-site-media/client-site-media.module';
+import { TutorialTempoModule } from '../postprod/tutorial-tempo.module';
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
 import { TutorialVideoAdminController } from './tutorial-video-admin.controller';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
@@ -55,6 +56,10 @@ import { FixtureSeedAdminController } from './fixture-seed-admin.controller';
     PublicationModule,
     // Э6 помощника: собранный ролик привязанного черновика → ролики сайта.
     ClientSiteMediaModule,
+    // Темп обучалок в постпродакшене (06.10.2026): опрос версий в кроне
+    // сборок, перенос исходников, уборка; отсюда же монтируется
+    // пользовательский контроллер `postprod/tutorials`.
+    TutorialTempoModule,
   ],
   controllers: [TutorialVideoAdminController, FixtureSeedAdminController],
   providers: [TutorialScenarioRunnerService, TutorialVideoAdminService],

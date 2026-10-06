@@ -9,6 +9,9 @@
  *   POST /assist-admin/v1/ui-plan/:id/confirm|step|stop|resume|undo|undo-report
  *   POST /assist-admin/v1/voice-test/session       обмен ссылки мастера
  *   POST /assist-admin/v1/voice-test/:tid/analyze|attempt|report
+ *   POST /assist-admin/v1/voice-test/:tid/memo-page|memo-report  прогон мемо
+ *        «Админки» (аудит 06.10, §5-бис.17 п.7): итог страницы и вердикт —
+ *        кодом, шаги `api` не исполняются
  * Доступ — ТОЛЬКО сессия сотрудника `X-Assist-Admin-Session` (employee-JWT
  * заказчика, iframe на отдельном origin «Админки»; CORS — только этот
  * origin). Тестовая сессия мастера — заголовок `X-Assist-Admin-Voice-Test`
@@ -33,6 +36,7 @@ import { adminVoiceError, planHttpError } from './admin-voice-errors';
 import { AdminVoiceInputService } from './admin-voice-input.service';
 import { ADMIN_VC_LIMITS } from './admin-voice-rules';
 import { AdminVoiceTestService } from './admin-voice-test.service';
+import { AdminMemoCheckService } from './admin-memo-check.service';
 import {
   AdminUiPlanService,
   type AdminPlanRequest,
@@ -55,6 +59,7 @@ export class AdminVoiceEmbedController {
     private readonly plans: AdminUiPlanService,
     private readonly input: AdminVoiceInputService,
     private readonly tests: AdminVoiceTestService,
+    private readonly memoCheck: AdminMemoCheckService,
   ) {}
 
   private async ctx(
@@ -293,6 +298,25 @@ export class AdminVoiceEmbedController {
   ) {
     const ctx = await this.ctx(token, tid);
     return this.run(() => this.tests.attempt(ctx, tid, body ?? null));
+  }
+
+  @Post('voice-test/:tid/memo-page')
+  @HttpCode(200)
+  async memoPage(
+    @Param('tid') tid: string,
+    @Body() body: Record<string, unknown>,
+    @Headers(HEADER) token?: string,
+  ) {
+    const session = await this.sessions.resolve(token);
+    await this.limit('admin-memo-check-min', session.siteId, 60, MINUTE);
+    return this.run(() => this.memoCheck.page(session, tid, body ?? null));
+  }
+
+  @Post('voice-test/:tid/memo-report')
+  @HttpCode(200)
+  async memoReport(@Param('tid') tid: string, @Headers(HEADER) token?: string) {
+    const session = await this.sessions.resolve(token);
+    return this.run(() => this.memoCheck.report(session, tid));
   }
 
   @Post('voice-test/:tid/report')

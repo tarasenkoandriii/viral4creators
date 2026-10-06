@@ -9,6 +9,14 @@
  */
 import { ApiError, type ApiClient } from '../kit';
 import { createMemoApi, type MemoApi } from './memo-api';
+import {
+  createMemoTutorialApi,
+  type MemoTutorialApi,
+} from './memo-tutorial-api';
+import {
+  createMemoTemplatesApi,
+  type MemoTemplatesApi,
+} from './memo-templates-api';
 import { createVoiceMapApi, type VoiceMapApi } from './voice-map-api';
 import { arr, obj, text } from './widget-api';
 
@@ -407,6 +415,10 @@ export interface VoiceControlApi {
   test(siteId: string, testId: string): Promise<VoiceTestDetail | null>;
   /** (е) Мемо «Сайта» — раздел «Голос → Мемо». */
   memo: MemoApi;
+  /** Э6-тер (к): мемо из шагов одобренной обучалки (блок «Из обучалки»). */
+  memoTutorial: MemoTutorialApi;
+  /** Э6-тер (к): мемо из шаблона платформы, публикация пакетом. */
+  memoTemplates: MemoTemplatesApi;
   /** Э6-тер: голосовая карта — визуальный редактор (ссылка, версии, публикация). */
   voiceMap: VoiceMapApi;
 }
@@ -443,6 +455,8 @@ export function createVoiceControlApi(client: ApiClient): VoiceControlApi {
         await client.request('GET', `${p(id)}/tests/${seg(tid)}`)
       ),
     memo: createMemoApi(client),
+    memoTutorial: createMemoTutorialApi(client),
+    memoTemplates: createMemoTemplatesApi(client),
     voiceMap: createVoiceMapApi(client),
   };
 }

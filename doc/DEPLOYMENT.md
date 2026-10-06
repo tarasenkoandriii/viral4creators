@@ -1431,6 +1431,17 @@ recToken выводится из него), `CRON_SECRET`.
 Без секрета у sites-backend генератор пишет в лог
 `sites-backend ответил 503 INTERNAL_NOT_CONFIGURED`, обучалка — в режиме B (не блокирует).
 
+**Обратное направление (заход 2, 06.10.2026) — мемо из обучалки.**
+sites-backend забирает шаги одобренной обучалки режима A у backend:
+`GET /api/internal/client-site-tutorial/memo-steps/:siteId/:draftId`
+(backend, только чтение; подпись `SITES-HMAC-V1` тем же
+`SITES_TUTORIAL_HMAC_SECRET`, вызывающий `sites-memo` — подпись прямого
+направления к нему не подходит; без секрета — 503). Владельцу: в Vercel
+проекта `assist-api` (sites-backend) задать `GENERATOR_INTERNAL_URL` —
+origin backend генератора (https). Значения полей, шаги входа и query
+адресов в ответ не попадают; кнопка «Из обучалки» — в TMA помощника,
+«Голос → Мемо».
+
 ### 6.14. Э5 «Голос»: что сделать владельцу
 
 Миграция `20261005120000_assist_voice`: `assist_sites.voiceConfig`

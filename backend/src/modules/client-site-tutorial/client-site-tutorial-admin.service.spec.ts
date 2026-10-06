@@ -588,3 +588,184 @@ describe('отклонение', () => {
     );
   });
 });
+
+describe('озвучка обучалки по кадрам (решение владельца 06.10.2026)', () => {
+  function voiced(rowOver: Record<string, unknown> = {}, synth?: jest.Mock) {
+    const base = setup({
+      row: makeRow({ voiceEnabled: true, locale: 'uk', ...rowOver }),
+    });
+    (base.blob as any).uploadBuffer = jest.fn(async (p: string) => ({
+      url: `https://blob/${p}`,
+    }));
+    (base.tutorialVideoAsset as any).updateMany = jest
+      .fn()
+      .mockResolvedValue({ count: 1 });
+    const versions = {
+      synthesizeClientVoices:
+        synth ??
+        jest.fn(async ({ texts, assetId }: any) => ({
+          speech: texts.map((t: string | null, i: number) =>
+            t
+              ? {
+                  url: `https://blob/tutorial-video-sources/${assetId}/voice/${i}.mp3`,
+                  pathname: `tutorial-video-sources/${assetId}/voice/${i}.mp3`,
+                  seconds: 2.5,
+                  text: t,
+                  provenance: {
+                    provider: 'resemble',
+                    voiceId: 'v',
+                    locale: 'uk',
+                    textSha: `s${i}`,
+                  },
+                }
+              : null,
+          ),
+          skipped: null,
+        })),
+      wipeSources: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new ClientSiteTutorialAdminService(
+      base.prisma,
+      base.blob,
+      base.ffmpeg,
+      { record: base.aiUsageRecord } as any,
+      versions as any,
+    );
+    return { ...base, service, versions };
+  }
+
+  it('реплика на кадр на языке черновика, подписи и переходы, manifest с дорожками', async () => {
+    const { service, versions, submit, tutorialVideoAsset } = voiced();
+    await service.approve('draft1', 'operator1');
+
+    const call = versions.synthesizeClientVoices.mock.calls[0][0];
+    expect(call).toMatchObject({
+      assetId: 'asset1',
+      draftId: 'draft1',
+      ownerUserId: 'owner-1',
+      projectId: 'proj1',
+      locale: 'uk',
+      stepIndexes: [0, 1],
+    });
+    expect(call.texts).toEqual([
+      'Как оформить заявку. Відкрийте сайт shop.example.com. Натисніть «next».',
+      'Готово.',
+    ]);
+
+    const job = submit.mock.calls[0][0];
+    expect(Object.keys(job.inputs)).toEqual(
+      expect.arrayContaining([
+        'frame0',
+        'frame1',
+        'voice0',
+        'voice1',
+        'captions',
+      ]),
+    );
+    expect(job.commands[0]).toContain('xfade=transition=fade');
+    expect(job.commands[0]).toContain('subtitles={{captions}}');
+
+    const pending = tutorialVideoAsset.update.mock.calls[0][0].data;
+    expect(pending).toMatchObject({
+      assemblyStatus: 'pending',
+      assemblyJobId: 'job-1',
+      durationMs: expect.any(Number),
+    });
+    expect(pending.tempoManifest).toMatchObject({
+      sourceAssetId: 'asset1',
+      owner: { kind: 'client-site', draftId: 'draft1', userId: 'owner-1' },
+      narration: 'per-frame',
+      storage: 'draft-frames',
+      motion: 'fade',
+      captions: true,
+      locale: 'uk',
+    });
+    expect(pending.tempoManifest.frames[0].image.pathname).toBe(
+      'tutorial-video-frames/draft1/0.png',
+    );
+    // Строка ролика — с языком черновика, а не жёстко 'ru'.
+    expect(tutorialVideoAsset.create.mock.calls[0][0].data.locale).toBe('uk');
+  });
+
+  it('ПД из названия не уходит в синтез', async () => {
+    const { service, versions } = voiced({
+      title: 'Заявка для boss@corp.example, тел. +7 (999) 123-45-67',
+    });
+    await service.approve('draft1', 'operator1');
+    const texts: string[] =
+      versions.synthesizeClientVoices.mock.calls[0][0].texts;
+    expect(texts.join(' ')).not.toMatch(/boss@corp|999|123-45/);
+  });
+
+  it('галочка снята — прежняя немая сборка символ в символ, manifest отдельной записью', async () => {
+    const { service, versions, submit, tutorialVideoAsset } = voiced({
+      voiceEnabled: false,
+    });
+    await service.approve('draft1', 'operator1');
+    expect(versions.synthesizeClientVoices).not.toHaveBeenCalled();
+    expect(Object.keys(submit.mock.calls[0][0].inputs)).toEqual([
+      'frame0',
+      'frame1',
+    ]);
+    expect(submit.mock.calls[0][0].commands[0]).not.toContain('xfade');
+    expect(tutorialVideoAsset.update.mock.calls[0][0].data).toEqual({
+      assemblyStatus: 'pending',
+      assemblyJobId: 'job-1',
+      assemblyStartedAt: expect.any(Date),
+    });
+    expect(
+      tutorialVideoAsset.update.mock.calls[1][0].data.tempoManifest,
+    ).toMatchObject({
+      narration: 'none',
+      motion: 'none',
+      storage: 'draft-frames',
+      sourceAssetId: 'asset1',
+    });
+  });
+
+  it('синтез не удался (лимит) — ролик собирается с подписями, немой, причина в manifest', async () => {
+    const synth = jest.fn(async ({ texts }: any) => ({
+      speech: texts.map(() => null),
+      skipped: 'daily-limit',
+    }));
+    const { service, submit, tutorialVideoAsset } = voiced({}, synth);
+    await service.approve('draft1', 'operator1');
+    const job = submit.mock.calls[0][0];
+    expect(Object.keys(job.inputs).some((k) => k.startsWith('voice'))).toBe(
+      false,
+    );
+    expect(job.inputs.captions).toBeDefined();
+    expect(
+      tutorialVideoAsset.update.mock.calls[0][0].data.tempoManifest,
+    ).toMatchObject({
+      narration: 'none',
+      voiceSkipped: 'daily-limit',
+      captions: true,
+    });
+  });
+
+  it('отправка не удалась — строка failed (infra, без отпечатка), дорожки стёрты, одобрение откатано', async () => {
+    const {
+      service,
+      versions,
+      submit,
+      tutorialVideoAsset,
+      clientSiteTutorialDraft,
+    } = voiced();
+    submit.mockRejectedValue(new Error('ffmpeg-api 503'));
+    await expect(service.approve('draft1', 'operator1')).rejects.toThrow('503');
+    expect((tutorialVideoAsset as any).updateMany).toHaveBeenCalledWith({
+      where: { id: 'asset1', assemblyStatus: 'preparing' },
+      data: {
+        assemblyStatus: 'failed',
+        assemblyError: 'infra: ffmpeg-api 503',
+        contentHash: null,
+      },
+    });
+    expect(versions.wipeSources).toHaveBeenCalledWith('asset1');
+    expect(clientSiteTutorialDraft.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'draft1', status: 'APPROVED' },
+      data: { status: 'PENDING_REVIEW' },
+    });
+  });
+});

@@ -134,6 +134,17 @@ export class FinishRequestDto {
   @MinLength(3)
   @MaxLength(200)
   title!: string;
+
+  /** Озвучить обучалку по кадрам (решение владельца 06.10.2026). Не
+   * передано — прежний выбор черновика (по умолчанию ВКЛ). */
+  @IsOptional()
+  @IsBoolean()
+  voice?: boolean;
+
+  /** Язык интерфейса — язык реплик и подписей ролика. */
+  @IsOptional()
+  @IsIn(['ru', 'uk', 'en', 'de', 'es'])
+  locale?: 'ru' | 'uk' | 'en' | 'de' | 'es';
 }
 
 export class RejectDraftDto {

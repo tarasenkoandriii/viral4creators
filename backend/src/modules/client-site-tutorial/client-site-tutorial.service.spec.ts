@@ -3367,3 +3367,71 @@ describe('аудит Э6, Д1: липкий признак входа loginUsedA
     });
   });
 });
+
+describe('озвучка и темп (06.10.2026)', () => {
+  const FRAMES = {
+    steps: [
+      { kind: 'goto', route: 'https://shop.example.com' },
+      { kind: 'click', selector: '#next' },
+    ],
+    stepsPerRound: [1, 1],
+    roundScreenshots: [
+      'data:image/jpeg;base64,/9j/AAA=',
+      'data:image/jpeg;base64,/9j/BBB=',
+    ],
+  };
+
+  it('«Готово» запоминает галочку озвучки и язык интерфейса', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow(FRAMES),
+    });
+    await service.finish('user1', 'proj1', {
+      expectedVersion: 3,
+      title: 'Заголовок',
+      voice: false,
+      locale: 'uk',
+    });
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data).toMatchObject({ voiceEnabled: false, locale: 'uk' });
+  });
+
+  it('без галочки и языка — прежний выбор черновика не трогается', async () => {
+    const { service, clientSiteTutorialDraft } = setup({
+      draft: makeDraftRow(FRAMES),
+    });
+    await service.finish('user1', 'proj1', {
+      expectedVersion: 3,
+      title: 'Т-т',
+    });
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data).not.toHaveProperty('voiceEnabled');
+    expect(data).not.toHaveProperty('locale');
+  });
+
+  it('удаление черновика уносит исходники его роликов (дорожки озвучки) ДО строки', async () => {
+    const built = setup({ draft: makeDraftRow() });
+    const versions = { wipeSources: jest.fn().mockResolvedValue(undefined) };
+    (built.prisma as any).tutorialVideoAsset.findMany = jest
+      .fn()
+      .mockResolvedValue([{ id: 'tva-1' }, { id: 'tva-2' }]);
+    const service = new ClientSiteTutorialService(
+      built.prisma,
+      built.plans,
+      built.usage,
+      built.blob,
+      built.relay,
+      built.explorer,
+      built.access,
+      undefined,
+      versions as any,
+    );
+    await service.remove('user1', 'proj1');
+    expect(versions.wipeSources.mock.calls.map((c: string[]) => c[0])).toEqual([
+      'tva-1',
+      'tva-2',
+    ]);
+    expect(versions.wipeSources.mock.invocationCallOrder[1]).toBeLessThan(
+      built.clientSiteTutorialDraft.deleteMany.mock.invocationCallOrder[0],
+    );
+  });
+});

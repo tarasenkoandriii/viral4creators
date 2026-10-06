@@ -44,6 +44,14 @@ export const SITES_HMAC_HEADERS = {
 /** Вызывающий обучалки генератора — единственный на Ш1. */
 export const SITES_CALLER_TUTORIAL = 'generator-tutorial';
 
+/**
+ * Э6-тер (к): обратное направление «sites-backend → генератор» — ТОЛЬКО
+ * чтение шагов одобренной обучалки для черновика мемо (тот же секрет
+ * `SITES_TUTORIAL_HMAC_SECRET`; вызывающий другой — подпись одного
+ * направления к другому не подходит).
+ */
+export const SITES_CALLER_MEMO = 'sites-memo';
+
 const REQUEST_ID_RE = /^[A-Za-z0-9-]{16,64}$/;
 const CALLER_RE = /^[a-z0-9-]{3,40}$/;
 const PATH_RE = /^\/[A-Za-z0-9/_.-]{0,255}$/;

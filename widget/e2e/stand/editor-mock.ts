@@ -212,6 +212,87 @@ export async function editorRoute(
         left: 99,
       });
     }
+    // Э6-тер (д): мемо в редакторе — форма протокола (правила — acceptance/e6t).
+    case '/editor/v1/memo/record/start':
+      return ok(res, {
+        page: b.path,
+        maxSteps: 6,
+        limit: { used: 0, max: 20 },
+        memo: null,
+      });
+    case '/editor/v1/memo/record/step': {
+      const d = (b.descriptor || {}) as Record<string, unknown>;
+      const text = String(d.text || '');
+      const pin = { text, assistId: d.assistId ?? null, role: d.role ?? null };
+      const st = (action: string, value: unknown = null) => ({
+        page: b.path,
+        action,
+        target: { uiElementId: null, key: null, pin },
+        value,
+        expect: d.hrefPath ? { path: d.hrefPath } : null,
+        say: null,
+        risk: null,
+      });
+      if (/оплат/i.test(text))
+        return ok(res, {
+          kind: 'stop',
+          reason: 'payment',
+          step: st('highlight'),
+        });
+      if (d.tag === 'input')
+        return ok(res, {
+          kind: 'step',
+          step: st('fill', { slot: String(b.fieldName || 'text') }),
+          slot: {
+            name: String(b.fieldName || 'text'),
+            kind: 'text',
+            pii: false,
+            options: [],
+          },
+          risk: 'confirm',
+          exec: false,
+        });
+      const exec = d.assistId === 'add-to-cart' || d.tag === 'a';
+      return ok(res, {
+        kind: 'step',
+        step: st('click'),
+        slot: null,
+        risk: exec ? 'auto' : 'confirm',
+        exec,
+      });
+    }
+    case '/editor/v1/memo/record/stop':
+      return ok(res, {
+        number: 1,
+        key: 'm1',
+        status: 'draft',
+        draftRevision: 0,
+        gates: { ok: true, problems: [] },
+      });
+    case '/editor/v1/memo/m1/try': {
+      const snap = b.snapshot as {
+        elements?: Array<{ ref: string; text: string }>;
+      };
+      const e = (snap?.elements || []).find((x) => x.text === 'В кошик');
+      return ok(res, {
+        steps: [
+          {
+            i: 0,
+            action: 'click',
+            text: 'В кошик',
+            ok: !!e,
+            problem: e ? null : 'missing',
+            ref: e ? e.ref : null,
+          },
+        ],
+        stopAt: e ? null : 0,
+        problem: e ? null : 'missing',
+        next: null,
+        goal: 'ok',
+        done: !!e,
+        left: 98,
+      });
+    }
     case '/editor/v1/publish-request':
       return ok(res, { number: 1, status: 'checking' });
     case '/editor/v1/publish':

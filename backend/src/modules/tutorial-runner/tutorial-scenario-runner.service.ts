@@ -98,7 +98,8 @@
 import { defaultDraftSecretsStore } from '../client-site-tutorial/draft-secrets-store';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
-import { ProjectType } from '@prisma/client';
+import { Prisma, ProjectType } from '@prisma/client';
+import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -175,6 +176,11 @@ import {
   voiceoverSlotPrefix,
 } from './tutorial-voice';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
+import {
+  buildTutorialManifest,
+  ManifestFrame,
+  textSha,
+} from './tutorial-manifest';
 import {
   APPROVAL_STAMPS_SETTING_KEY,
   pairsInApprovalGrace,
@@ -618,7 +624,14 @@ type NarrationPlan =
        *  что ушёл в синтез, — иначе подпись разойдётся с речью. */
       tracks: Map<
         number,
-        { url: string; seconds: number | null; text: string }
+        {
+          url: string;
+          seconds: number | null;
+          text: string;
+          /** Происхождение дорожки — в монтажный manifest (темп). */
+          provider?: string;
+          voiceId?: string | null;
+        }
       >;
     };
 
@@ -644,6 +657,10 @@ export class TutorialScenarioRunnerService {
     // Э6 помощника: ролик черновика, привязанного к сайту помощника, собран
     // — обновить набор роликов сайта (необязателен: стенды без него).
     @Optional() private readonly siteMedia?: ClientSiteMediaService,
+    // Темп обучалок в постпродакшене (06.10.2026): опрос версий в этом
+    // же кроне, перенос исходников при `complete`, уборка версий вместе
+    // с роликом. Необязателен — стенды и тесты без модуля темпа.
+    @Optional() private readonly versions?: TutorialVideoVersionsService,
   ) {}
 
   /**
@@ -786,7 +803,13 @@ export class TutorialScenarioRunnerService {
       if (perStep.size > 0 && narratedShare >= MIN_NARRATED_SHARE) {
         const tracks = new Map<
           number,
-          { url: string; seconds: number | null; text: string }
+          {
+            url: string;
+            seconds: number | null;
+            text: string;
+            provider?: string;
+            voiceId?: string | null;
+          }
         >();
         // `keep` строится по ВСЕМ репликам сценария, а не по снятым
         // сегодня кадрам. Кадр снимается best-effort и пропадает
@@ -829,6 +852,8 @@ export class TutorialScenarioRunnerService {
               url: track.url,
               seconds: track.speechSeconds,
               text,
+              provider: provider.providerKey,
+              voiceId: voice.voiceId,
             });
           } catch (e) {
             this.logger.warn(
@@ -2481,6 +2506,11 @@ export class TutorialScenarioRunnerService {
       // `SlideshowFrame.stepIndex`).
       //
       const slides: SlideshowFrame[] = [];
+      // Монтажный manifest (темп в постпродакшене, 06.10.2026) — те же
+      // кадры, длительности, дорожки и подписи, что уходят в план. Пока
+      // ролик не собран, кадры в нём транзитные; при `complete` сервис
+      // версий переносит их в постоянный префикс исходников.
+      const manifestFrames: ManifestFrame[] = [];
       for (const frame of planFrames) {
         if (signal?.aborted) {
           await this.abortedAssembly(asset.id, scenario, 'заливки кадров');
@@ -2502,6 +2532,39 @@ export class TutorialScenarioRunnerService {
           seconds: frame.seconds,
           ...(frame.audioUrl ? { audioUrl: frame.audioUrl } : {}),
           ...(frame.pointer ? { pointer: frame.pointer } : {}),
+        });
+        const track =
+          narration.mode === 'perFrame'
+            ? (narration.tracks.get(frame.stepIndex) ?? null)
+            : null;
+        manifestFrames.push({
+          frameId: `step-${frame.stepIndex}`,
+          stepIndex: frame.stepIndex,
+          image: {
+            url,
+            pathname: `${scenarioFramePrefix(asset.id)}${frame.stepIndex}.png`,
+          },
+          baseSeconds: frame.seconds,
+          speech: track
+            ? {
+                url: track.url,
+                pathname: pathnameFromBlobUrl(track.url, ''),
+                seconds: track.seconds,
+                text: track.text,
+                provenance: {
+                  provider: track.provider ?? '',
+                  voiceId: track.voiceId ?? null,
+                  locale: scenario.locale,
+                  textSha: textSha(track.text),
+                },
+              }
+            : null,
+          caption: captionsOn ? frame.narration : null,
+          readingSeconds:
+            captionsOn && frame.narration
+              ? captionReadingSeconds(frame.narration)
+              : null,
+          pointer: frame.pointer ?? null,
         });
       }
 
@@ -2547,6 +2610,29 @@ export class TutorialScenarioRunnerService {
         voiceoverUrl: narration.mode === 'whole' ? narration.url : null,
         captionsUrl,
         motion,
+      });
+      const manifest = buildTutorialManifest({
+        sourceAssetId: asset.id,
+        owner: {
+          kind: 'scenario',
+          scenarioId: scenario.id,
+          subjectKey: scenario.subjectKey,
+        },
+        assetContentHash: contentHash,
+        locale: scenario.locale,
+        theme: SCENARIO_THEME,
+        motion,
+        // Подписи — только если они действительно легли в ролик: не
+        // залились — исходник без них, и версия темпа их не добавит.
+        captions: !!captionsUrl,
+        narration:
+          narration.mode === 'perFrame'
+            ? 'per-frame'
+            : narration.mode === 'whole'
+              ? 'whole'
+              : 'none',
+        storage: 'transit',
+        frames: manifestFrames,
       });
       if (!plan) {
         this.logger.warn(
@@ -2641,6 +2727,7 @@ export class TutorialScenarioRunnerService {
           // не знал). Без отпечатка строка не совпадает ни с чем, и
           // следующий прогон собирает заново.
           ...(captionsAss && !captionsUrl ? { contentHash: null } : {}),
+          tempoManifest: manifest as unknown as Prisma.InputJsonValue,
         },
       })) as { count: number };
 
@@ -2734,6 +2821,10 @@ export class TutorialScenarioRunnerService {
       // тик что-нибудь или нет.
       const abandoned = await this.abandonStalePreparing();
       const polled = await this.pollPendingVideoAssets();
+      // Версии с другим темпом (постпродакшен, 06.10.2026) — тем же тиком
+      // и под тем же замком: та же задача ffmpeg-api, тот же срок.
+      // Никогда не бросает (см. `pollVersions`).
+      if (this.versions) await this.versions.pollVersions();
       // Подметальщик — ПОСЛЕ опроса, а не до: строка, которая вот
       // сейчас доехала до `complete`, обязана попасть в расчёт
       // «кого оставляем» этим же тиком, иначе на один тик в паре
@@ -2963,6 +3054,10 @@ export class TutorialScenarioRunnerService {
       // строку на месте — следующий тик попробует снова.
       const pathname = pathnameFromBlobUrl(row.blobUrl, 'tutorial-videos/');
       try {
+        // Версии темпа и исходники для них — ДО строки: после её удаления
+        // каскад снесёт строки версий, и пути их файлов взять будет
+        // неоткуда (страховка — метла сирот по префиксам).
+        if (this.versions) await this.versions.deleteAssetExtras(row.id);
         if (pathname) await this.blob.deleteBlob(pathname);
         // Постер — по пути из id, а не из `posterUrl`: копия могла
         // залиться, а запись ссылки — нет. Только у собранного (постер
@@ -3209,6 +3304,14 @@ export class TutorialScenarioRunnerService {
     // после `cleanupFrames` брать его неоткуда. Сбой — без последствий
     // для ролика: плеер покажет первый кадр самого видео.
     await this.savePoster(asset);
+
+    // Исходники для темпа (06.10.2026) — тоже ДО уборки кадров: manifest
+    // ссылается на транзит, и после `cleanupFrames` переносить нечего.
+    // Только сценарный путь: у обучалки клиента кадры — черновика.
+    // Никогда не бросает: без исходников темп недоступен, ролик цел.
+    if (asset.scenarioId && this.versions) {
+      await this.versions.captureScenarioSources(asset.id);
+    }
 
     // Уборка кадров — ЗА пределами try выше, и это правка повторного
     // сквозного аудита A+B+C. Внутри него она создавала состояние,

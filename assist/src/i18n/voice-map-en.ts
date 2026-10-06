@@ -47,6 +47,17 @@ export const voiceMapEn: VoiceMapDictionary = {
   import: 'Import JSON',
   imported: 'Import: accepted {a}, rejected {r}{s}',
   importSigned: ' (our unmodified file)',
+  // Э6-тер (к): memos in the map file.
+  importMemos: 'Memos: {c} drafts created, {r} rejected.',
+  importMemoRejected: 'Memos not imported: {list}.',
+  importReasons: {
+    limit: 'plan limit',
+    name_taken: 'name already taken',
+    no_name: 'no name',
+    format: 'not a memo',
+    too_many: 'more than 100 in the file',
+    other: 'failed the check',
+  },
   templates: 'Similar pages — template candidates: {list}',
   publishedOk:
     'Version v{n} published — the assistant picks it up within 5 minutes.',

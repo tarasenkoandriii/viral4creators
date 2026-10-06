@@ -331,3 +331,10 @@ describe('generate-ready', () => {
     );
   });
 });
+
+describe('темп обучалки (06.10.2026)', () => {
+  it('postprod-tutorial — экран есть, но фикстурных роликов клиента нет', () => {
+    const r = resolveScenarioRoute('postprod-tutorial', {});
+    expect(r.ok).toBe(false);
+  });
+});

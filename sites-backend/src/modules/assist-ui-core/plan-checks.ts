@@ -45,6 +45,7 @@ import {
   saysFind,
   valueSaid,
 } from './normalize';
+import { withGoalExtras } from './memo-goal';
 import { pathMatches } from './rules';
 import { ASSIST_ID_RE, SNAP_REF_RE, cleanText } from './snapshot';
 import {
@@ -641,7 +642,10 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
         kind,
         target: null,
         value: null,
-        expect: cleanExpect(s.expect),
+        // (мемо) Шаг цели: «счётчик ±N»/«поле = слот» — только у мемо.
+        expect: p.pins
+          ? withGoalExtras(cleanExpect(s.expect), s.expect)
+          : cleanExpect(s.expect),
         risk: 'auto',
         reason: null,
         nav: false,

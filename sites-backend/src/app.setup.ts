@@ -22,6 +22,10 @@ import { SitesConfig } from './config/configuration';
 import { VOICE_DEFAULTS } from './modules/assist-site-voice/voice-config';
 import { VOICE_CONTROL_DEFAULTS } from './modules/assist-site-voice-control/voice-control-config';
 import { ADMIN_STT } from './modules/assist-admin-voice/admin-stt';
+import {
+  VOICE_MAP_IMPORT_PATH,
+  voiceMapImportJson,
+} from './modules/assist-site-voice-map/import-body';
 
 /**
  * Э2: картинка бренда приходит JSON-ом `{ kind, mime, dataBase64 }` —
@@ -331,6 +335,8 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       },
     );
   }
+  // Э6-тер (хвост аудита (4)): импорт голосовой карты — до 1 МБ, только здесь.
+  app.use(VOICE_MAP_IMPORT_PATH, voiceMapImportJson());
   app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());

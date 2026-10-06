@@ -513,6 +513,7 @@ export class ChatController {
       case 'ui-stopped':
       case 'ui-need':
       case 'ui-undone':
+      case 'ui-goal':
         // Э6-бис: снимок/итоги шагов — только своему плану (rid, planId).
         return this.plans.onParent(m);
       case 'vt-result':

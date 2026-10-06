@@ -95,6 +95,14 @@ export type ToPanel =
       stability: Stability;
       /** Похоже на «никогда» по видимому тексту/разметке (подсказка, решает сервер). */
       never: boolean;
+      /**
+       * (Э6-тер (д)) Поле для слота мемо: атрибут `name` и подписи вариантов
+       * списка — НЕ значение поля (его в протоколе нет вовсе).
+       */
+      fieldName?: string | null;
+      options?: string[];
+      /** Метка настоящего клика (случайная): только по ней — `perform`. */
+      pid?: string | null;
     }
   | { type: 'snapshot'; id: number; snapshot: Snapshot }
   | {
@@ -125,6 +133,12 @@ export type ToPicker =
       items: Array<{ key: string; descriptor: Descriptor }>;
     }
   | { type: 'size'; open: boolean }
+  /**
+   * (Э6-тер (д)) Запись мемо: сервер счёл шаг «сразу» (переход, раскрытие,
+   * «в корзину») — пикер исполняет нажатие по-настоящему, но ТОЛЬКО на
+   * элементе, выбранном настоящим кликом человека (`isTrusted`) последним.
+   */
+  | { type: 'perform'; pid: string }
   | { type: 'exit' };
 
 export function editorEnvelope<T extends { type: string }>(
@@ -188,6 +202,10 @@ export function parseToPicker(raw: unknown): ToPicker | null {
   switch (raw.type) {
     case 'exit':
       return { type: 'exit' };
+    case 'perform':
+      return typeof raw.pid === 'string' && raw.pid.length <= 16
+        ? { type: 'perform', pid: raw.pid }
+        : null;
     case 'coverage':
       return { type: 'coverage', on: raw.on === true };
     case 'size':
@@ -274,6 +292,14 @@ export function parseToPanel(raw: unknown): ToPanel | null {
         how: str(raw.how, 20) ?? 'text',
         stability: st === 'strong' || st === 'medium' ? st : 'fragile',
         never: raw.never === true,
+        fieldName: str(raw.fieldName, 64),
+        pid: str(raw.pid, 16),
+        options: Array.isArray(raw.options)
+          ? raw.options
+              .slice(0, 40)
+              .map((o) => str(o, 81))
+              .filter((o): o is string => !!o)
+          : [],
       };
     }
     case 'snapshot':

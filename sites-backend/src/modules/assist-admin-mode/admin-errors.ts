@@ -46,6 +46,9 @@ export type AdminErrorCode =
   | 'COMPENSATION_UNAVAILABLE'
   | 'MEMO_NOT_FOUND'
   | 'MEMO_INVALID'
+  // Аудит 06.10: сухой прогон мемо «Админки» (§5-бис.17 п.7)
+  | 'MEMO_GATES'
+  | 'MEMO_CHECK_REQUIRED'
   | 'MEMO_CONFLICT'
   | 'MEMO_LIMIT'
   | 'MEMO_REVISION';

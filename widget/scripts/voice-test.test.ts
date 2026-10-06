@@ -362,6 +362,7 @@ async function wizard() {
         repeat: false,
         goalStatus: null,
         chainStatus: null,
+        goals: [null],
       }),
       command: async (text) => {
         plansRun.push(text);

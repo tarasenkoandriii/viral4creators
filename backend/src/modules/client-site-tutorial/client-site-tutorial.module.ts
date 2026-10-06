@@ -4,6 +4,7 @@ import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { StorageModule } from '../storage/storage.module';
 import { SitesInternalModule } from '../sites-internal/sites-internal.module';
 import { ClientSiteMediaModule } from '../client-site-media/client-site-media.module';
+import { TutorialTempoModule } from '../postprod/tutorial-tempo.module';
 import { ChromiumPageExplorer } from './chromium-page-explorer';
 import { ClientSiteTutorialAdminController } from './client-site-tutorial-admin.controller';
 import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.service';
@@ -15,6 +16,8 @@ import { PAGE_EXPLORER } from './page-explorer';
 import { ClientSiteAccessService } from './site-access.service';
 import { ClientSiteTestAccountsController } from './client-site-test-accounts.controller';
 import { ClientSiteTestAccountsService } from './client-site-test-accounts.service';
+import { MemoStepsController } from './memo-steps.controller';
+import { SitesMemoHmacGuard } from '../sites-internal/sites-memo-hmac.guard';
 import {
   DraftSecretsStore,
   defaultDraftSecretsStore,
@@ -53,12 +56,17 @@ import { SitesInternalClient } from '../sites-internal/sites-internal.client';
     SitesInternalModule,
     // Э6 помощника: привязка к сайту помощника, ролики и карта интерфейса.
     ClientSiteMediaModule,
+    // Покадровая озвучка и монтажный manifest обучалки клиента при
+    // одобрении, уборка исходников при удалении черновика (06.10.2026).
+    TutorialTempoModule,
   ],
   controllers: [
     ClientSiteTutorialController,
     ClientSiteTutorialAdminController,
     // Э-С Ш2: экран «Тестовые учётные записи» мастера.
     ClientSiteTestAccountsController,
+    // Э6-тер (к): шаги одобренной обучалки → черновик мемо (sites-backend, HMAC).
+    MemoStepsController,
   ],
   providers: [
     ClientSiteTutorialService,
@@ -75,6 +83,7 @@ import { SitesInternalClient } from '../sites-internal/sites-internal.client';
       inject: [PrismaService, SitesInternalClient],
     },
     ClientSiteTestAccountsService,
+    SitesMemoHmacGuard,
   ],
   exports: [
     ClientSiteTutorialService,

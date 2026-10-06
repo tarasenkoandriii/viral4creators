@@ -46,6 +46,17 @@ export const voiceMapUk: VoiceMapDictionary = {
   import: 'Імпорт JSON',
   imported: 'Імпорт: прийнято {a}, відхилено {r}{s}',
   importSigned: ' (наш файл без змін)',
+  // Э6-тер (к): мемо у файлі карти.
+  importMemos: 'Мемо: створено чернеток {c}, відхилено {r}.',
+  importMemoRejected: 'Мемо не імпортовано: {list}.',
+  importReasons: {
+    limit: 'ліміт тарифу',
+    name_taken: 'назва вже зайнята',
+    no_name: 'немає назви',
+    format: 'не мемо',
+    too_many: 'більше 100 у файлі',
+    other: 'не пройшло перевірку',
+  },
   templates: 'Схожі сторінки — кандидати в шаблони: {list}',
   publishedOk: 'Версію v{n} опубліковано — помічник підхопить її за 5 хвилин.',
   errors: {
