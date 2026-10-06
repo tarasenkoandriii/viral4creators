@@ -18,6 +18,7 @@ import {
   describeDb,
   insertBrowserJob,
   ownerPrisma,
+  serializeQueueTests,
 } from '../browser-jobs/testing/jobs-db.testing';
 import type { SiteCredentialsService } from '../site-credentials/site-credentials.service';
 import {
@@ -28,6 +29,7 @@ import {
 jest.setTimeout(120_000);
 
 describeDb('сверка обходов «Админки» с очередью воркера (аудит Ш3)', () => {
+  serializeQueueTests();
   let prisma: PrismaService;
   let jobs: BrowserJobsService;
   let crawl: AdminCrawlService;

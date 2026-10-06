@@ -25,6 +25,7 @@
 import { randomBytes } from 'crypto';
 import * as request from 'supertest';
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
+import { serializeQueueTests } from '../../modules/browser-jobs/testing/jobs-db.testing';
 import { WORKER_ROUTES } from '../../modules/browser-jobs/protocol';
 import { openSealed, sealAad } from '../../modules/browser-jobs/worker-seal';
 import { SiteCredentialsService } from '../../modules/site-credentials/site-credentials.service';
@@ -38,6 +39,7 @@ const JPEG = Buffer.concat([
 ]).toString('base64');
 
 describeDb('Приёмка Э-С Ш3 — браузерный воркер', () => {
+  serializeQueueTests();
   const st = new Sh3Stack();
   let s: Sh3Site;
 

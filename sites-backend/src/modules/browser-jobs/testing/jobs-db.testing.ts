@@ -48,3 +48,37 @@ export async function insertBrowserJob(
 export async function browserJobRow(prisma: PrismaService, id: string) {
   return prisma.siteBrowserJob.findUniqueOrThrow({ where: { id } });
 }
+
+/**
+ * Файлы, которые берут/подметают задания очереди ГЛОБАЛЬНО (`claim` без
+ * кабинета, `reap`/`reconcile` без области), не могут идти параллельно
+ * друг с другом: в CI jest гоняет файлы в нескольких воркерах на одной
+ * базе, и `claim` одного файла забирал задания другого (локально на
+ * 2 ядрах jest шёл одним воркером — не видно; CI 229b803). Сессионная
+ * advisory-блокировка на своём соединении сериализует ровно эти файлы,
+ * остальные идут параллельно как раньше.
+ */
+export function serializeQueueTests(): void {
+  let client: import('pg').Client | null = null;
+  beforeAll(async () => {
+    const { Client } = await import('pg');
+    const u = new URL(RAW!);
+    u.searchParams.delete('schema');
+    client = new Client({ connectionString: u.toString() });
+    await client.connect();
+    await client.query(
+      "SELECT pg_advisory_lock(hashtext('v4c:test:browser-jobs-queue'))",
+    );
+  }, 600_000);
+  afterAll(async () => {
+    if (!client) return;
+    try {
+      await client.query(
+        "SELECT pg_advisory_unlock(hashtext('v4c:test:browser-jobs-queue'))",
+      );
+    } finally {
+      await client.end();
+      client = null;
+    }
+  });
+}

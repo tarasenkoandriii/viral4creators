@@ -26,7 +26,11 @@ import {
 } from './browser-jobs.service';
 import { BrowserJobHandlers, type HandlerJob } from './job-handlers';
 import { FakeArtifactStorage } from './testing/fake-artifact-storage.testing';
-import { describeDb, ownerPrisma } from './testing/jobs-db.testing';
+import {
+  describeDb,
+  ownerPrisma,
+  serializeQueueTests,
+} from './testing/jobs-db.testing';
 
 jest.setTimeout(120_000);
 
@@ -59,6 +63,7 @@ class FlakyStorage extends FakeArtifactStorage {
 }
 
 describeDb('очередь браузерного воркера на Postgres (аудит Ш3)', () => {
+  serializeQueueTests();
   let prisma: PrismaService;
   let svc: BrowserJobsService;
   let storage: FlakyStorage;
