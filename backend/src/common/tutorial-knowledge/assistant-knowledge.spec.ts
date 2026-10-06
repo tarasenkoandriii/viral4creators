@@ -15,8 +15,8 @@ import {
   navLabelsFor,
   PROACTIVE_TIPS,
   stepsFor,
-} from '../../../../scripts/build-assistant-knowledge';
-import { PLANS, PLAN_IDS } from '../../../common/plans';
+} from '../../../scripts/build-assistant-knowledge';
+import { PLANS, PLAN_IDS } from '../plans';
 import {
   ASSISTANT_KNOWLEDGE,
   ASSISTANT_STEPS,
@@ -30,7 +30,7 @@ import {
 function wizardDict(locale: string): Record<string, string> {
   const file = path.join(
     __dirname,
-    '../../../../../frontend/src/dictionaries',
+    '../../../../frontend/src/dictionaries',
     `${locale}.json`,
   );
   return JSON.parse(fs.readFileSync(file, 'utf8')).greetingVideoWizard;

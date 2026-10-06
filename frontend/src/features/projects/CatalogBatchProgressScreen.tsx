@@ -240,6 +240,7 @@ export function CatalogBatchProgressScreen({
                 type="button"
                 className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-accent disabled:opacity-50"
                 disabled={retryingAll || retryingId !== null}
+                data-assist="never"
                 onClick={retryAll}
               >
                 {retryingAll ? (
@@ -303,6 +304,7 @@ export function CatalogBatchProgressScreen({
                       <button
                         type="button"
                         className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold text-accent disabled:opacity-50"
+                        data-assist="never"
                         disabled={isRetryingThis || retryingAll}
                         onClick={(e) => {
                           e.stopPropagation();

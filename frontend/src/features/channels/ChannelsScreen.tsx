@@ -297,6 +297,7 @@ export function ChannelsScreen() {
                         variant="ghost"
                         icon={<Unplug size={14} />}
                         loading={busy === c.id}
+                        data-assist="never"
                         onClick={() => void disconnect(c)}
                       >
                         {dict.channelsScreen.disconnect}

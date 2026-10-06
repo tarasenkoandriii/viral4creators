@@ -437,6 +437,10 @@ export const e3Uk: E3Dictionary = {
     wpKey: 'Ключ сайту',
     wpOrigin: 'Адреса віджета',
     jsApi: 'Цілі та покупець із коду сайту',
+    knowledgeApi: 'API знань (документи з вашого коду)',
+    knowledgeApiHint:
+      'Ваш сервер або CI публікує документи в знання помічника: PUT …/documents/<ключ> з підписом ключем knsec_. Документи проходять ті самі версії й карантин, що й файли.',
+    knowledgeEndpoint: 'Адреса API знань',
   },
   learning: {
     title: 'Навчання',

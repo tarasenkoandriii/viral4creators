@@ -413,10 +413,19 @@ function PrivateCrawl({ siteId }: { siteId: string }) {
           </Button>
         )}
       </div>
+      {v.worker === 'ready' &&
+        v.testAccounts.some((a) => a.id === accId && !a.adminCrawl) && (
+          <div className="text-xs text-silver-500">
+            {t.settings.crawlNeedsProduct}
+          </div>
+        )}
       {v.jobs.map((j) => (
         <div key={j.id} className="text-xs text-silver-500">
           {formatDate(j.createdAt, locale)} ·{' '}
-          {j.status === 'waiting_worker' ? t.settings.crawlWaiting : j.status}
+          {j.status === 'waiting_worker'
+            ? t.settings.crawlWaiting
+            : (t.settings.crawlStatus[j.status] ?? j.status)}
+          {j.note && j.status !== 'waiting_worker' ? ` · ${j.note}` : ''}
         </div>
       ))}
     </Card>

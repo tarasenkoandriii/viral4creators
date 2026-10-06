@@ -445,7 +445,11 @@ export function PersonaScreen() {
           <Card className="p-4 sm:p-5">
             <CardHeader title={t.unverifiedTitle} hint={t.unverifiedLead} />
             <div className="flex flex-wrap gap-2">
-              <Button loading={busy} onClick={() => void verifyAgain()}>
+              <Button
+                data-assist="confirm"
+                loading={busy}
+                onClick={() => void verifyAgain()}
+              >
                 {t.verifyAgain}
               </Button>
               <Button

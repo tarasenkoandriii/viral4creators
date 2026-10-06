@@ -14,7 +14,7 @@ import {
 import {
   ASSISTANT_KNOWLEDGE_BUILT_AT,
   ASSISTANT_KNOWLEDGE_COMMIT,
-} from './knowledge/generated';
+} from '../../common/tutorial-knowledge/generated';
 
 export interface AssistantAdminSettingsView extends AssistantSettingsView {
   knowledgeBuiltAt: string;

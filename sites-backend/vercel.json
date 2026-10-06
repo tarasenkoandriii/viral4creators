@@ -61,6 +61,10 @@
     {
       "path": "/cron/assist-admin-retention",
       "schedule": "45 2 * * *"
+    },
+    {
+      "path": "/cron/browser-jobs-retention",
+      "schedule": "55 3 * * *"
     }
   ]
 }

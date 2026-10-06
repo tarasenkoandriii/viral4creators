@@ -18,6 +18,10 @@
  * Барьер лендинга (`assistant.service.ts`, `clientSiteDraftId: null`) не
  * трогается: ролики обучалки по сайту заказчика по-прежнему никогда не
  * попадают консультанту лендинга, а `reviewed` у них остаётся `false`.
+ * Э-С Ш5: лендинг стал сайтом тенанта (`ASSIST_LANDING_SITE_ID`) — его
+ * набор роликов ведёт
+ * `LandingVideosService` (тот же барьер); сюда к нему не привязать черновик
+ * по чужому сайту, и набор черновиков туда не уходит никогда.
  */
 import {
   BadRequestException,
@@ -37,6 +41,7 @@ import {
   type SitesUiElementInput,
   type SitesVideoInput,
 } from '../sites-internal/sites-internal.client';
+import { landingAssistSiteId } from './landing-assist-config';
 import { draftRequiresLogin, draftStepHosts } from './requires-login';
 
 /** Тот же потолок, что у sites-backend (`SYNC_VIDEOS_MAX`, тело ≤ 8 КБ). */
@@ -73,6 +78,8 @@ export class ClientSiteMediaService {
   private readonly logger = new Logger(ClientSiteMediaService.name);
   /** Часы отметки набора (`asOf`, мс) — подменяются тестами. */
   now: () => number = () => Date.now();
+  /** Э-С Ш5: id сайта лендинга (`ASSIST_LANDING_SITE_ID`) — тесты подменяют. */
+  env: NodeJS.ProcessEnv = process.env;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -126,6 +133,13 @@ export class ClientSiteMediaService {
     }
     if (!SITE_ID.test(siteId)) {
       throw new BadRequestException('неверный id сайта помощника');
+    }
+    // Э-С Ш5: сайт лендинга генератора — служебный тенант, его роликами
+    // распоряжается только штатная обучалка (барьер лендинга).
+    if (siteId === landingAssistSiteId(this.env)) {
+      throw new ForbiddenException(
+        'Это сайт помощника лендинга генератора — к нему ролики обучалок по сайтам не привязываются',
+      );
     }
     const telegramId = await this.telegramIdOf(userId);
     if (!telegramId) {
@@ -182,6 +196,9 @@ export class ClientSiteMediaService {
    * бросает: сбой — в лог, следующий повод пришлёт набор заново.
    */
   async syncSite(siteId: string): Promise<boolean> {
+    // Э-С Ш5: набор сайта лендинга — только `LandingVideosService`; полный
+    // набор черновиков сюда заменил бы ролики лендинга (и наоборот).
+    if (siteId === landingAssistSiteId(this.env)) return false;
     try {
       // Аудит Э6 (гонка): отметка набора — ДО чтения базы. Два повода
       // подряд (отвязка и сборка) шлют полные наборы параллельно; пришедший
@@ -210,6 +227,7 @@ export class ClientSiteMediaService {
 
   /** Одобренные и собранные ролики привязанных к сайту черновиков. */
   async collectVideos(siteId: string): Promise<SitesVideoInput[]> {
+    if (siteId === landingAssistSiteId(this.env)) return [];
     const drafts = (await this.prisma.clientSiteTutorialDraft.findMany({
       where: { clientSiteId: siteId, status: 'APPROVED' },
     })) as unknown as Array<

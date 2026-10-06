@@ -40,3 +40,4 @@ jest-results.json
 !sites-backend/.env.example
 !assist/.env.example
 !sites-landing/.env.example
+!browser-worker/.env.example

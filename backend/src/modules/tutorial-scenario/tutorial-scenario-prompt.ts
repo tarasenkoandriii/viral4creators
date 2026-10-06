@@ -8,14 +8,14 @@
  *
  * Вход — `AssistantStepItem` из уже существующей, всегда доступной в
  * рантайме бэкенда базы знаний консультанта
- * (`modules/assistant/knowledge/generated.ts`, см. §4.4/§4.10 ТЗ) — та
+ * (`common/tutorial-knowledge/generated.ts`, см. §4.4/§4.10 ТЗ) — та
  * же структура (title/text/details), что уже показывается посетителям
  * лендинга и питает консультанта; не читается из
  * `landing/src/dictionaries` напрямую (в проде бэкенд не видит эти
  * файлы, §2.2/§4.9 ТЗ).
  */
 
-import { AssistantStepItem } from '../assistant/knowledge/generated';
+import { AssistantStepItem } from '../../common/tutorial-knowledge/generated';
 import {
   DroppedPaidOperation,
   isTriggerPaidOperationStep,

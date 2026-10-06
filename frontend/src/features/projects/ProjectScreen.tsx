@@ -413,6 +413,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
             variant="ghost"
             size="sm"
             icon={<Trash2 size={14} />}
+            data-assist="never"
             onClick={onDeleteProject}
             aria-label={dict.projectScreen.deleteProjectAriaLabel}
           />

@@ -202,6 +202,7 @@ export function YoutubeSearch({
                 <tbody>
                   {rows.map((r) => (
                     <tr
+                      data-assist="confirm"
                       key={r.videoId}
                       // Spec §9: клик по строке — выбор. The button at the end
                       // is the explicit affordance (and the only thing a
@@ -254,6 +255,7 @@ export function YoutubeSearch({
                       </td>
                       <td className="py-2 pr-1 text-right">
                         <Button
+                          data-assist="confirm"
                           size="sm"
                           variant={picked === r.videoId ? 'solid' : 'outline'}
                           onClick={(e) => {

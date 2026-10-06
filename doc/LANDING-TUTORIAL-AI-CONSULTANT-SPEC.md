@@ -462,7 +462,7 @@ event: error      data: {"code":"rate_limited"|"budget_exhausted"|"disabled"|"up
 ### 5.2. База знаний — собирается при сборке бэкенда
 
 Скрипт `backend/scripts/build-assistant-knowledge.ts` (запуск в
-`prebuild`, результат — `backend/src/modules/assistant/knowledge/<locale>.md`,
+`prebuild`, результат — `backend/src/common/tutorial-knowledge/<locale>.md` (до Э-С Ш5 — `modules/assistant/knowledge/`),
 коммитятся, чтобы diff был виден в PR) собирает из уже существующих
 источников, по одному файлу на локаль:
 
@@ -520,7 +520,7 @@ event: error      data: {"code":"rate_limited"|"budget_exhausted"|"disabled"|"up
    `myVoices.*`). Список ключей — явный allow-list в скрипте, не «всё
    подряд»: словарь мини-аппа большой и содержит тексты ошибок, которые
    консультанту не нужны.
-6. **Ручной слой** — `backend/src/modules/assistant/knowledge/manual.<locale>.md`
+6. **Ручной слой** — `backend/src/common/tutorial-knowledge/manual.<locale>.md`
    (пишется руками, переводится как словари): как выбрать хороший
    референс, что делать, если рендер не удался, чем отличаются Veo и
    Grok на практике, контакт поддержки, ссылка на оферту/условия

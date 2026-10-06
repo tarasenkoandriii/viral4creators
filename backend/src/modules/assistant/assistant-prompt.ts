@@ -3,12 +3,12 @@
  * §5.1) — чистые функции, без обращения к сети/базе, чтобы промпт можно
  * было проверить юнит-тестом без мока Gemini.
  */
-// Тип импортируется из СГЕНЕРИРОВАННОГО модуля (knowledge/generated.ts,
+// Тип импортируется из СГЕНЕРИРОВАННОГО модуля (common/tutorial-knowledge/generated.ts,
 // внутри src/), а не из `scripts/build-assistant-knowledge.ts` напрямую —
 // тот файл лежит вне rootDir `nest build` (src/), и рантайм-импорт
 // оттуда сломал бы сборку; сборочный скрипт использует свою копию
 // интерфейса только на этапе `prebuild`, до компиляции.
-import { AssistantStepItem } from './knowledge/generated';
+import { AssistantStepItem } from '../../common/tutorial-knowledge/generated';
 import { languageNameForLocale, SupportedLocale } from '../../common/locale';
 import { ACTIONS_DELIMITER } from './actions';
 

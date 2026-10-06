@@ -422,6 +422,7 @@ export function VideoStep({
 
         {!video && (
           <Button
+            data-assist="never"
             data-qa="greeting-render"
             loading={starting}
             disabled={!!renderBlock}
@@ -490,6 +491,7 @@ export function VideoStep({
             <Button
               loading={starting}
               disabled={!!renderBlock}
+              data-assist="never"
               onClick={() => void start()}
             >
               {w.retryButton}
@@ -514,6 +516,7 @@ export function VideoStep({
                     <Button
                       size="sm"
                       loading={revoicing}
+                      data-assist="never"
                       onClick={() => void revoice()}
                     >
                       {s2.revoiceButton}

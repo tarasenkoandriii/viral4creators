@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Header } from '../../../components/Header';
 import { HowItWorks } from '../../../components/HowItWorks';
 import { AssistantWidget } from '../../../components/AssistantWidget';
+import { PlatformAssist } from '../../../components/PlatformAssist';
+import { assistWidgetFromBuildEnv, platformLang } from '../../../lib/assist-widget';
 import { Footer } from '../../../components/Footer';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../../lib/i18n';
@@ -49,6 +51,8 @@ export function generateMetadata({ params }: { params: { locale: string } }): Me
 export default function HowItWorksPage({ params }: { params: { locale: string } }) {
   const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
   const dict = getDictionary(locale);
+  // Э-С Ш5: старый консультант или виджет платформы — переключатель сборки.
+  const assist = assistWidgetFromBuildEnv();
 
   return (
     <>
@@ -63,10 +67,22 @@ export default function HowItWorksPage({ params }: { params: { locale: string } 
           <div className="how-it-works-main">
             <HowItWorks steps={dict.steps} variant="full" hrefBase="" />
           </div>
+          {/* Э-С Ш5: с виджетом платформы колонка пустая — `:empty` в
+              globals.css сворачивает сетку, чат — плавающий виджет. */}
           <aside className="how-it-works-assistant" aria-label={dict.assistant.widgetTitle}>
-            <AssistantWidget locale={locale} dict={dict.assistant} page="how-it-works" variant="embedded" />
+            {assist.mode === 'legacy' && (
+              <AssistantWidget locale={locale} dict={dict.assistant} page="how-it-works" variant="embedded" />
+            )}
           </aside>
         </div>
+        {assist.mode === 'platform' && (
+          <PlatformAssist
+            src={assist.src}
+            siteKey={assist.siteKey}
+            lang={platformLang(locale)}
+            askPrefill={dict.assistant.askAboutPrefill}
+          />
+        )}
       </main>
       {/* Находка С-3 аудита: с этапа 79 у этой страницы не было футера
           вовсе — ни копирайта, ни ссылок на оферту и условия

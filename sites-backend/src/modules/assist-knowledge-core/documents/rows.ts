@@ -59,6 +59,8 @@ export interface DocumentRow {
   skipReason: string | null;
   hot: boolean;
   updatedAt: Date;
+  /** Хеш документа, по которому построены фрагменты (Ш5: идемпотентность API). */
+  indexedHash?: string | null;
 }
 
 export interface ChunkRow {

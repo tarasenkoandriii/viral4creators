@@ -75,6 +75,9 @@ const SECRET_KEYS = [
   'GOOGLE_OAUTH_CLIENT_SECRET',
   // Э4 ИИ-помощника: общий секрет внутреннего API sites-backend.
   'SITES_INTERNAL_SECRET',
+  // Э-С Ш6: секрет подписи employee-JWT и ключ коннектора фактов.
+  'WIZARD_GUIDE_ASSIST_JWT_SECRET',
+  'WIZARD_GUIDE_ASSIST_CONNECTOR_KEY',
   // Э-С Ш1: HMAC-секрет запросов режима A/B обучалки к sites-backend.
   'SITES_TUTORIAL_HMAC_SECRET',
 ];
@@ -173,6 +176,19 @@ const OTHER_KEYS = [
   'DAILY_SPEND_LIMIT_USD_PREMIUM',
   'DAILY_SPEND_LIMIT_USD_ANONYMOUS',
   'AI_PRICE_GEMINI_2_5_FLASH_INPUT',
+  // Э-С Ш6: флаг гида виден режимом (legacy|pilot|assist), а не сырым
+  // значением; id сайта, ключ виджета, origin и пилот — не показываются.
+  'WIZARD_GUIDE_ENGINE',
+  'WIZARD_GUIDE_ASSIST_SITE_ID',
+  'WIZARD_GUIDE_ASSIST_PK',
+  'WIZARD_GUIDE_ASSIST_ORIGIN',
+  'WIZARD_GUIDE_ASSIST_PILOT',
+  // Э-С Ш5: сайт тенанта лендинга, Telegram-id владельца, хосты и ключ API
+  // знаний — значения наружу не идут.
+  'ASSIST_LANDING_SITE_ID',
+  'ASSIST_LANDING_OWNER_TELEGRAM_ID',
+  'ASSIST_LANDING_HOSTS',
+  'ASSIST_KNOWLEDGE_API_KEY',
 ];
 
 const ALL_KEYS = [...SECRET_KEYS, ...PUBLIC_VALUE_KEYS, ...OTHER_KEYS];
@@ -672,5 +688,38 @@ describe('getEnvSettings — обучалка: хранилище данных �
 
   it('неизвестное значение — жёлтый', () => {
     expect(row({ SITE_TUTORIAL_CREDENTIALS_STORE: 'vault' }).ok).toBe(false);
+  });
+});
+
+describe('getEnvSettings — гид «Админка» (Э-С Ш6)', () => {
+  const FULL = {
+    WIZARD_GUIDE_ENGINE: 'assist',
+    WIZARD_GUIDE_ASSIST_SITE_ID: 'site_v4c',
+    WIZARD_GUIDE_ASSIST_PK: 'pk_test_v4c',
+    WIZARD_GUIDE_ASSIST_ORIGIN: 'https://wa.example.app',
+    WIZARD_GUIDE_ASSIST_JWT_SECRET: 'j'.repeat(40),
+  };
+
+  it('по умолчанию — старый гид, зелено', () => {
+    const row = find(getEnvSettings({}), 'WIZARD_GUIDE_ENGINE');
+    expect(row.ok).toBe(true);
+    expect(row.value).toBe('legacy');
+  });
+
+  it('assist без секрета — жёлтый, с причиной, работает старый гид', () => {
+    const row = find(
+      getEnvSettings({ ...FULL, WIZARD_GUIDE_ASSIST_JWT_SECRET: '' }),
+      'WIZARD_GUIDE_ENGINE',
+    );
+    expect(row.severity).toBe('warning');
+    expect(row.message).toContain('WIZARD_GUIDE_ASSIST_JWT_SECRET');
+    expect(row.message).toContain('старый гид');
+  });
+
+  it('assist полностью — зелено; без ключа коннектора — сказано, что API выключен', () => {
+    const row = find(getEnvSettings(FULL), 'WIZARD_GUIDE_ENGINE');
+    expect(row.ok).toBe(true);
+    expect(row.message).toContain('WIZARD_GUIDE_ASSIST_CONNECTOR_KEY');
+    expect(JSON.stringify(row)).not.toContain('j'.repeat(40));
   });
 });

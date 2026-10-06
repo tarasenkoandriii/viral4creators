@@ -97,7 +97,7 @@ function secretOf(v: unknown): string | null {
 
 function productOf(v: unknown): TestAccountProduct {
   if (!(TEST_ACCOUNT_PRODUCTS as readonly unknown[]).includes(v)) {
-    throw bad('product: tutorial | qa');
+    throw bad('product: tutorial | qa | assist-admin');
   }
   return v as TestAccountProduct;
 }

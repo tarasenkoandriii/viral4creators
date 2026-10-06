@@ -2224,6 +2224,355 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
    (и), карта «Админки» (после Э6-бис (б)), шаблоны Shopify/Хорошоп/Tilda,
    отчёт для разработчика одноразовой ссылкой, массовые операции.
 
+### 6.23. Э-С Ш5 «Консультант лендинга → виджет платформы»: как включить, порядок, откат
+
+Консультант лендинга viral4creators может работать как виджет платформы:
+тенант «viral4creators» в sites-backend (кабинет владельца), знания из кода
+генератора — документами через системный API знаний, ролики штатной
+обучалки — роликами сайта тенанта (план — «Ш5 — сделан»; API — `doc/API.md`
+«Э-С Ш5»; решения — аудит слияния §Ш5 «Решения Ш5»). **Без env ничего не
+меняется:** умолчание `NEXT_PUBLIC_ASSIST_WIDGET=legacy` — старый
+консультант (`landing/src/components/AssistantWidget.tsx`, бэкенд
+`/assistant/*`), как до Ш5. **Миграций нет** (ни backend, ни sites-backend:
+новый вид источника знаний `api` и вид секрета интеграции `knowledge_api` —
+строковые значения существующих колонок). База знаний переехала в
+`backend/src/common/tutorial-knowledge/` (её читают обучалка, старый
+консультант и синхронизация); пути зависимостей сборки backend на Vercel не
+изменились (`scripts/check-vercel-ignore.mjs`).
+
+Маршруты: sites-backend `GET /assist/v1/sites/:id/knowledge/site/documents`,
+`PUT|DELETE …/documents/:key` (подпись `X-Assist-Signature` ключом
+`knsec_…`, тело ≤ 128 КБ, документ ≤ 96 КБ, 60 запросов/мин на сайт,
+≤ 200 изменений знаний в сутки на сайт; повтор той же подписи PUT/DELETE —
+409, повторять — с новой подписью);
+кабинет — `POST /assist/sites/:id/integrations/knowledge-api/secret`,
+`DELETE /assist/sites/:id/integrations/knowledge-api` (только владелец).
+
+**Переменные:**
+
+| Где | Переменная | Что это |
+|---|---|---|
+| landing (сборка) | `NEXT_PUBLIC_ASSIST_WIDGET` | `legacy` (умолчание) \| `platform` — какой консультант на главной и «Как это работает» |
+| landing (сборка) | `NEXT_PUBLIC_ASSIST_WIDGET_SRC` | адрес загрузчика из кода вставки (TMA помощника → сайт → «Установка»), ровно `https://w.<домен>/v1/loader.js` (другой путь, порт, параметры — старый консультант; `http://localhost` — только с `pk_test_`) |
+| landing (сборка) | `NEXT_PUBLIC_ASSIST_WIDGET_SITE_KEY` | публичный ключ сайта `pk_live_…` оттуда же (только `pk_live_`/`pk_test_`). `platform` без адреса или ключа (или с кривыми) — остаётся старый |
+| backend | `ASSIST_LANDING_SITE_ID` | id сайта тенанта. Задан — к нему нельзя привязать черновик обучалки по чужому сайту, набор роликов туда шлёт только штатная обучалка |
+| backend | `ASSIST_LANDING_OWNER_TELEGRAM_ID` | Telegram-id владельца (или менеджера помощника) кабинета тенанта — от его имени sites-backend принимает ролики |
+| backend | `ASSIST_LANDING_HOSTS` | подтверждённые хосты тенанта, где показываются ролики (через запятую); умолчание — хост `LANDING_PUBLIC_URL` |
+| CI (секреты репозитория) | `SITES_BACKEND_URL`, `ASSIST_LANDING_SITE_ID`, `ASSIST_KNOWLEDGE_API_KEY`, `LANDING_PUBLIC_URL` | джоба `assist-knowledge-sync` (пуш в ветку по умолчанию при изменении базы): без них — только проверка утечек, отправка «пропущено». `ASSIST_KNOWLEDGE_API_KEY` — ключ `knsec_…`, рантайму бэкенда НЕ нужен |
+| CI (переменная репозитория, `vars`) | `PLANS_BILLING_ENABLED` | то же значение, что у backend прода (§23): база тенанта собирается с ним (тарифы с ценами или «оплата выключена»). Не задана — как `false` |
+| sites-backend | `ASSIST_VIDEO_HOSTS` | хост Blob генератора (уже нужен Э6, §6.15) — иначе ролики лендинга не принимаются |
+
+**Порядок (сначала тенант и знания, потом лендинг):**
+
+1. **Кабинет и сайт тенанта.** В TMA помощника (бот помощника) — кабинет
+   владельца, сайт «viral4creators», хост лендинга (домен из
+   `LANDING_PUBLIC_URL`) подтвердить DNS TXT (проще всего: без кода и
+   пересборки лендинга; файл и мета-тег тоже работают). Хост мини-аппа
+   генератора — в тот же сайт с использованием «Админка» (это Ш6,
+   §6.24).
+2. **Тариф.** Видео в ответах — Business+ (`ASSIST_PLANS.video`); ручной
+   тариф `pro` на 365 дней во вкладке «Помощник» админки платформы
+   (`POST /internal/admin/assist/accounts/:id/plan`, способ `manual`; экран
+   `admin/` → «Помощник»). Расходы
+   идут в `site_ai_usage` тенанта; потолок дня сайта — как у всех
+   (`ASSIST_WIDGET_*`, §6.10). Отдельного внутреннего тарифа без мягкого
+   стопа нет — хвост, общий с Ш6.
+3. **Ключ API знаний.** TMA помощника → сайт → «Интеграции» → «API знаний»
+   → «Выпустить секрет» (показывается один раз) → секрет репозитория
+   `ASSIST_KNOWLEDGE_API_KEY`, плюс `ASSIST_LANDING_SITE_ID`,
+   `SITES_BACKEND_URL`, `LANDING_PUBLIC_URL`.
+4. **Знания.** Вручную один раз: `cd backend && SITES_BACKEND_URL=…
+   ASSIST_LANDING_SITE_ID=… ASSIST_KNOWLEDGE_API_KEY=… LANDING_PUBLIC_URL=…
+   npm run assist:knowledge-sync -- --apply` (без `--apply` — сухой прогон:
+   документы, размеры, проверка утечек). Документы `gen-kb-<локаль>` (5
+   языков) — в TMA «Знания» → источник «API знаний»; повтор — `unchanged`.
+   Дальше — джоба CI на каждом изменении базы. Обход лендинга (источник
+   «обход» сайта тенанта) включить как обычно — он даёт страницы с
+   адресами для действий `link`.
+5. **Ролики.** backend env `ASSIST_LANDING_SITE_ID`,
+   `ASSIST_LANDING_OWNER_TELEGRAM_ID` (и при нестандартном домене —
+   `ASSIST_LANDING_HOSTS`), redeploy; в админке «Видео-контент» снять и
+   снова поставить одобрение любому ролику (повод отправки полного набора:
+   до 15 роликов — ru, затем uk, en, de, es по номеру шага). В TMA
+   помощника → «Видео» ВКЛЮЧИТЬ показ нужных роликов (новые приходят
+   выключенными — правило Э6).
+6. **Вид и вовлечение.** TMA → «Вид» (бренд виджета — заглушки В-1),
+   «Вовлечение»: триггеры старых подсказок — `exit_intent` («Если не нашли
+   ответ — спросите…»), `url_match` `/*/how-it-works` + 15 с (подсказка
+   по шагам), `scroll_depth` (тарифы); тексты — `PROACTIVE_TIPS` в
+   `backend/scripts/build-assistant-knowledge.ts`. Опубликовать, взять код
+   вставки («Установка»).
+7. **Паритет (A/B 1–2 недели).** 30–50 реальных вопросов из журнала
+   старого консультанта (`admin/` → «ИИ-консультант», `/assistant`; вопросы уже
+   маскированы, Ш0.7) — в «Проверенные ответы»/eval тенанта (TMA →
+   «Обучение»), прогнать eval; сравнить с ответами старого.
+8. **Лендинг.** Env проекта landing: `NEXT_PUBLIC_ASSIST_WIDGET=platform`,
+   `NEXT_PUBLIC_ASSIST_WIDGET_SRC`, `NEXT_PUBLIC_ASSIST_WIDGET_SITE_KEY` →
+   redeploy (значения вклеиваются при сборке). **CSP:** у лендинга своего
+   CSP нет (ни `next.config.js`, ни middleware, ни `vercel.json`) —
+   дописывать нечего; появится — добавить origin виджета в `script-src`,
+   `frame-src`, `img-src`, `connect-src` (`landing/src/lib/assist-widget.ts`
+   `widgetCspSources`, сверку держит `landing/scripts/assist-widget.test.ts`).
+   Бюджет JS: загрузчик вставляется после `load` + idle (или по первому
+   взаимодействию), чат — только по клику; на первую отрисовку лендинга он
+   не влияет (Lighthouse до/после — у владельца).
+9. **Старый консультант** после переключения можно выключить в админке
+   (`/settings` → консультант), удаление кода — после 30 дней ретенции
+   журнала (хвост, `doc/TODO.md` I-М «Ш5-хвосты»).
+
+**Проверка.** Главная и «Как это работает» (ru/uk/en): кнопка виджета
+платформы, вопрос «сколько стоит 25-секундный ролик» → ответ по базе;
+«Спросить об этом шаге» на «Как это работает» — вопрос уходит в виджет;
+«покажи видео про шаг 2» → ролик (если включён). TMA «Знания» → «API
+знаний»: 5 документов; «Интеграции» → «API знаний»: «Последний вызов».
+
+**Откат.** `NEXT_PUBLIC_ASSIST_WIDGET=legacy` (или удалить) → redeploy
+лендинга — старый консультант на месте (его бэкенд и настройки не
+трогались). Знания тенанта: отозвать ключ в «Интеграции» (джоба CI станет
+«пропущено» по 401 — красной; убрать секрет из репозитория). Ролики:
+убрать `ASSIST_LANDING_SITE_ID` из env backend (набор в тенанте остаётся до
+ручного выключения в TMA «Видео»).
+
+### 6.24. Э-С Ш6 «Гид мастера TMA → „Админка“»: как включить, порядок, откат
+
+Гид мастера мини-аппа генератора может работать как помощник платформы в
+режиме «Админка»: TMA генератора — «админка» тенанта viral4creators,
+пользователь TMA — «сотрудник», окно помощника — iframe на origin `wa.`,
+действия — исполнитель «Админки» (Э6-бис (б)) с правилами «никогда» для
+оплаты, удаления и рендера (план — «Ш6 — сделан»; API — `doc/API.md`
+«Э-С Ш6»; решения — ТЗ §12.1 Р-Ш6-1…10). **Без env ничего не меняется:**
+умолчание `WIZARD_GUIDE_ENGINE=legacy` — старый гид, как до Ш6. Миграций
+нет (ни backend, ни sites-backend). Включать — после пилотов «Админки» у
+внешних клиентов (рекомендация аудита слияния §Ш6, вопрос О-Ш6-2).
+
+**Важно (аудит Ш6):** при `pilot`/`assist` «сотрудник» тенанта
+viral4creators — ЛЮБОЙ пользователь мини-аппа (публичный Telegram), а не
+команда. Всё, что владелец кабинета откроет роли `creator` — «Знания
+(сотрудники)», коннекторы (кроме API фактов этого раздела), действия
+`write`/`danger`, памятки, — увидит и сможет вызвать каждый пользователь
+TMA. Роли `creator` — только API фактов (п.3) и знания из п.3; внутренние
+документы и служебные API — другой роли или другому сайту.
+
+**Порядок (сначала платформа, потом коннектор, потом люди):**
+
+1. **Сайт в кабинете помощника (TMA помощника, владелец кабинета
+   viral4creators):** сайт viral4creators (если его ещё нет — тот же, что
+   Ш5 заводит для консультанта лендинга), тариф Pro (голос и исполнитель
+   «Админки»; Business — только чтение). Хост TMA генератора (адрес из
+   `TMA_PUBLIC_URL`, например `app.viral4creators.app`) — добавить и
+   подтвердить (DNS TXT или `/.well-known/v4c-verify.txt` в
+   `frontend/public/.well-known/`), отметить хостом «Админки». «Помощник
+   сотрудников» → «Режим»: включить, способ «скрипт» (`script` или
+   `both`), роль сотрудников из JWT `creator` → роль помощника с правом
+   читать факты (п.3). «Секрет подписи JWT» — выпустить, скопировать
+   (показ один раз).
+2. **env sites-backend:** `ASSIST_ADMIN_TMA_SITE_IDS=<id сайта viral4creators>`
+   — окно сотрудника откроется и в Telegram Web (там мини-апп сам в
+   iframe, а `frame-ancestors` проверяется по всем предкам; добавляется
+   `https://web.telegram.org`, только вместе с verified-хостами). В
+   мобильных клиентах Telegram работает и без неё.
+3. **env backend (проект `viral-backend`), API фактов — можно заранее, до
+   включения людям:** `WIZARD_GUIDE_ASSIST_JWT_SECRET` (секрет из п.1, ≥ 32
+   знаков) и `WIZARD_GUIDE_ASSIST_CONNECTOR_KEY` (новый случайный ≥ 32
+   знаков, `openssl rand -base64 36`; НЕ равен секрету JWT — иначе API
+   выключен). `API_PUBLIC_URL` должен быть задан (из него `servers[0]`).
+   Затем «Помощник сотрудников» → «API» → импорт по URL
+   `<API_PUBLIC_URL>/guide-assist/v1/openapi.json`; хост API — verified-хост
+   сайта или отметка SaaS; авторизация — Bearer = ключ коннектора. Три
+   операции придут классом `read` (`listProjects`, `getProjectFacts`,
+   `getAccountSummary`) — включить и назначить роли п.1. «Знания
+   (сотрудники)» — добавить `<API_PUBLIC_URL>/guide-assist/v1/knowledge.md`
+   (файлом: скачать и загрузить; или ссылкой, если хост API подтверждён);
+   «сотрудникам тоже публичный сайт» (`includePublicInAdmin`) — включить,
+   чтобы работал корпус лендинга из «Сайта» (Ш5).
+4. **Голос «Админки» (по желанию, Э6-бис (б), §6.20-бис):** «Голос» →
+   риски, тестовый хост (preview-домен TMA), мастер проверки; без этого
+   окно помощника отвечает текстом и действует по командам текстом.
+5. **Включить людям (env backend):** `WIZARD_GUIDE_ASSIST_SITE_ID=<id сайта>`
+   (`aud` JWT), `WIZARD_GUIDE_ASSIST_PK=pk_live_…` (публичный ключ виджета
+   сайта), `WIZARD_GUIDE_ASSIST_ORIGIN=https://assist-wa.viral4creators.app`
+   (origin «Админки», §6.19; https без пути), затем
+   `WIZARD_GUIDE_ENGINE=pilot` и `WIZARD_GUIDE_ASSIST_PILOT=<Telegram id
+   через запятую>` (или id пользователей генератора). Необязательные:
+   `WIZARD_GUIDE_ASSIST_JWT_TTL_SEC` (60…900, умолчание 600),
+   `WIZARD_GUIDE_ASSIST_ROLE` (умолчание `creator`). Передеплой backend.
+   Проверка: админка генератора → «Настройки» → строка
+   `WIZARD_GUIDE_ENGINE` зелёная («„Админка“ включена (pilot)»); если
+   жёлтая — в ней причина, и работает старый гид.
+6. **Всем:** `WIZARD_GUIDE_ENGINE=assist` (после 4 недель пилота, О-Ш6-2).
+   Переменные фронтенда не нужны: мини-апп спрашивает
+   `GET /guide-assist/config` и сам вставляет загрузчик `wa.`.
+
+**Проверка после включения (участник пилота, Telegram на телефоне и
+Telegram Web):** в мастере нет строки советника и галочки «советы ИИ»;
+справа внизу — кнопка помощника; «що в мене з проєктом?» — ответ по
+фактам (без названия проекта и имён); «перейди на сценарій» — помощник
+нажимает шаг степпера сам; «купи тариф», «видали проект», «запусти
+рендер» — помощник ведёт к кнопке и просит нажать самому (кнопки
+`data-assist="never"`). Не участник пилота — старый гид как раньше.
+Журнал «Админки» — вызовы `getProjectFacts` с `X-V4C-Actor` вида
+`g1.…` (псевдоним, не Telegram id).
+
+**Откат (без передеплоя фронтенда, мгновенно для новых загрузок):**
+`WIZARD_GUIDE_ENGINE=legacy` (или удалить) и передеплой backend — мини-апп
+получает `engine: legacy`, загрузчик больше не вставляется, выдача JWT —
+404 `GUIDE_ASSIST_DISABLED`, у открытых вкладок окно помощника гаснет при
+ближайшем обновлении JWT (`logout`, ≤ 10 мин). API фактов выключается
+удалением `WIZARD_GUIDE_ASSIST_CONNECTOR_KEY` (404). Ротация секрета JWT в
+кабинете → сразу новый `WIZARD_GUIDE_ASSIST_JWT_SECRET` в backend: до этого
+платформа отвергает JWT, окно «Админки» не открывается, а старый гид при
+`assist` спрятан — поэтому на время ротации выставить `legacy`. После
+ротации все `sub` другие: диалоги «Админки» начнутся заново.
+
+**Не сделано в этом шаге** (`doc/TODO.md` I-М «Ш6-хвосты»): пилот и
+решение о включении; удаление старого гида и таблиц `WizardHint*`;
+корпус опыта → очередь обучения «Админки»; своя подпись кнопки виджета;
+озвучка ответов «Админки»; микрофон в Telegram Web; настройка Telegram Web
+в кабинете вместо env; внутренний тариф тенанта (с Ш5).
+
+### 6.25. Э-С Ш3 «Браузерный воркер»: что сделать владельцу при деплое
+
+Изолированный браузерный воркер (`browser-worker/`, Docker) — общий для
+помощника, обучалки и QA: режим «Снимок» голосовой карты (Э6-тер (е)),
+сверка карты `assist-voice-map-check` / Т-3 («только разрешение
+дескрипторов, без кликов»), обход «Админки» за логином (Э7, учётка реестра
+Ш2), кадры обучалки по API. Воркер **сам забирает задания** из
+sites-backend по HMAC (`/internal/worker/v1/*`) — входящих портов у него
+нет. Chromium — с песочницей, не root, весь трафик браузера — через
+фильтрующий прокси внутри процесса (тот же код, что Ш0). План — «Ш3 —
+сделан»; API — `doc/API.md` «Э-С Ш3»; хвосты — `doc/TODO.md` I-М «Ш3-хвосты».
+
+**Без env ничего не меняется:** `BROWSER_WORKER_ENABLED` по умолчанию
+выключен — «Админка» показывает «Чекає браузерного воркера», как в Э7;
+«Снимок» и сверка карты отвечают 409 `BROWSER_WORKER_DISABLED`. Живой вход
+(`live-login-relay`, `LIVE_LOGIN_RELAY_*`) этот шаг **не трогает** — его
+перенос в воркер только по отдельному решению владельца (TODO).
+
+Миграция sites-backend `20261006090000_browser_worker_jobs` (таблицы
+`site_browser_jobs`, `site_browser_artifacts`, триггер «секретов в
+параметрах нет», роли `assist_public` — ничего) применяется сборкой Vercel
+(`prisma migrate deploy`). Новый крон `/cron/browser-jobs-retention`
+(03:55 UTC, `sites-backend/vercel.json`) — сроки заданий и артефактов в
+приватном Blob (`BLOB_READ_WRITE_TOKEN` — тот же, что у документов знаний).
+
+**Где запускать — два варианта (QA-ТЗ §11.2 п.7 «кто поднимает VPS» —
+внешний блокер, решение за владельцем):**
+
+| | Вариант 1 — **отдельный VPS (рекомендуется)** | Вариант 2 — тот же сервер Hetzner (временно) |
+|---|---|---|
+| Кто создаёт | тот, у кого есть панель Hetzner (или другой провайдер: €5–10/мес, 2 vCPU, 4 ГБ, Debian 12) | — (сервер есть) |
+| Чужой JS рядом с секретами | нет: на машине только воркер (без DSN, без ключей платежей) | рядом Dokploy и реле: эксплойт Chromium + обход песочницы = доступ к хосту |
+| Песочница Chromium | Debian 12 — user namespaces включены, работает сразу | Ubuntu 24.04 режет непривилегированные user namespaces (AppArmor); менять ядро на сервере без панели **нельзя** (не вернуть при ошибке) → если песочница не стартует, вариант 2 невозможен: воркер в production без песочницы не запускается |
+| Свой IP для allowlist клиентов | да (QA §5.5) | общий с реле и Dokploy |
+
+**Требования площадки (для обоих вариантов):** парольный вход SSH и порт 22
+**не трогать** (компенсирующие меры — длинный пароль, ключи, `fail2ban`);
+порты 2377 (Swarm), 8088, 3000 наружу **не открывать** — в
+`browser-worker/docker-compose.yml` нет ни `ports:`, ни `expose:`; правило
+`iptables -I DOCKER-USER -i eth0 -p tcp --dport 3000 -j DROP` (если оно
+есть) — сохраняется, скрипт ниже его не трогает.
+
+**Пошагово (вариант 1; отличия варианта 2 — в конце):**
+
+1. **Docker** на VPS: Docker Engine + плагин compose из официального
+   репозитория Docker (`docs.docker.com/engine/install/debian/`).
+   Проверка песочницы ядра: `sysctl kernel.unprivileged_userns_clone`
+   (Debian: `= 1`). Ubuntu 24.04 на ОТДЕЛЬНОЙ машине с консолью провайдера:
+   `echo 'kernel.apparmor_restrict_unprivileged_userns=0' | sudo tee
+   /etc/sysctl.d/60-userns.conf && sudo sysctl --system` (на сервере без
+   панели — не делать).
+2. **Код:** на VPS нужна только папка `browser-worker/` (клон репозитория
+   или `rsync -a browser-worker/ vps:~/browser-worker/`). Дальше все
+   команды — **из этой папки** (путь к seccomp-профилю в compose
+   относительный).
+3. **Секреты:**
+   - `SITES_WORKER_HMAC_SECRET` — `openssl rand -hex 32` (СВОЙ, не секрет
+     обучалки `SITES_TUTORIAL_HMAC_SECRET`, Flow-QA и админки и не любой
+     другой секрет sites-backend — `CRON_SECRET`, ключи
+     `SITE_CREDENTIALS_KEYS`, `ASSIST_SECRETS_KEY`, секреты вебхуков; иначе
+     sites-backend закроет канал 503);
+   - пара ключей конверта учёток: `cp .env.example .env`, `docker compose
+     build`, затем `docker compose run --rm --no-deps browser-worker node
+     dist/seal-keygen.js` — закрытый ключ → `.env` воркера
+     (`BROWSER_WORKER_SEAL_PRIVATE_KEY`), открытый → Vercel sites-backend
+     (`SITES_WORKER_SEAL_PUBLIC_KEY`). Закрытый ключ больше нигде не
+     хранить.
+4. **`.env` воркера:** `SITES_BACKEND_URL=https://<домен sites-backend>`,
+   `SITES_WORKER_HMAC_SECRET`, `BROWSER_WORKER_SEAL_PRIVATE_KEY`,
+   `BROWSER_WORKER_EGRESS_DENY` — публичные адреса САМОГО сервера через
+   запятую: `ip -4 -o addr show dev eth0 scope global` и
+   `ip -6 -o addr show dev eth0 scope global` (IPv6 — подсетью `/64`). Без
+   него воркер в production не стартует. Остальное — по умолчанию
+   (`BROWSER_WORKER_CONCURRENCY=2` под `mem_limit: 2g`).
+5. **Запуск:** `docker compose up -d`; `docker compose ps` — `healthy`;
+   `docker compose logs --tail=20` — строки «воркер запущен» и «браузер
+   запущен» с `"sandbox":true`. Строка «Chromium не запустился (песочница…)»
+   и рестарты — ядро/seccomp не пускают песочницу (шаг 1).
+6. **Правила хоста (egress контейнера):** `sudo sh
+   deploy/worker-egress-docker-user.sh` — план (ничего не меняет), затем
+   `sudo sh deploy/worker-egress-docker-user.sh --apply`. Скрипт трогает
+   только подсеть `172.31.251.0/24` и мост `br-bworker` (своя сеть
+   compose): закрывает служебные/частные диапазоны, метаданные облака,
+   адрес самого хоста (SSH и панели — через `INPUT` моста), наружу —
+   только 80/443 и DNS. Откат — `--remove`, состояние — `--status`. Чтобы
+   правила пережили перезагрузку — unit systemd:
+   ```ini
+   # /etc/systemd/system/bworker-egress.service
+   [Unit]
+   Description=browser-worker egress rules
+   After=docker.service
+   Requires=docker.service
+   [Service]
+   Type=oneshot
+   ExecStart=/bin/sh /root/browser-worker/deploy/worker-egress-docker-user.sh --apply
+   RemainAfterExit=yes
+   [Install]
+   WantedBy=multi-user.target
+   ```
+   `sudo systemctl enable --now bworker-egress`.
+7. **Проверка изоляции:**
+   `docker compose exec browser-worker node -e "fetch('http://169.254.169.254/',{signal:AbortSignal.timeout(3000)}).then(()=>console.log('ОТКРЫТО — ошибка'),()=>console.log('закрыто — ок'))"`
+   — «закрыто — ок»; то же для `http://<IP хоста>:22` и любого `10.x`.
+   Снаружи (с другой машины): `nmap -Pn <IP VPS>` — открыт только 22.
+8. **sites-backend (Vercel → Environment Variables, Production):**
+   `SITES_WORKER_HMAC_SECRET` (то же значение), `SITES_WORKER_SEAL_PUBLIC_KEY`,
+   затем `BROWSER_WORKER_ENABLED=true`; redeploy. В течение
+   `BROWSER_WORKER_POLL_MS` воркер начинает получать задания.
+9. **Проверка в продукте:**
+   - TMA помощника → карточка сайта → «Тестові облікові записи» → у учётки
+     админки отметить «Помічник: обхід «Адмінки»»; «Помічник
+     співробітників» → «Обхід за логіном» → выбрать хост и учётку →
+     «Поставити в чергу» → через 1–3 мин статус «Готово · страниц: N»;
+   - «Снимок» и сверка карты — пока только API
+     (`POST /assist/sites/:id/voice-map/site/snapshots`,
+     `…/versions/:n/worker-check`; экраны TMA — хвост).
+10. **Свежесть Chromium:** раз в неделю на VPS (cron):
+    `cd ~/browser-worker && git pull && docker compose build --pull && docker compose up -d`.
+    Новый Chromium приходит с обновлением `playwright-core` в
+    `browser-worker/package.json` (версия браузера = версия пакета) — его
+    обновлять в репозитории не реже раза в месяц (TODO).
+
+**Вариант 2 (тот же сервер Hetzner):** те же шаги 2–9 по SSH, но:
+воркер поднимается обычным `docker compose` из своей папки, **не** через
+Dokploy и **не** в `dokploy-network`/сети реле (своя `bworker-egress`);
+подсеть `172.31.251.0/24` не должна пересекаться с существующими
+(`docker network ls`, `ip route`; при пересечении — сменить в compose и
+`WORKER_SUBNET=… sh deploy/worker-egress-docker-user.sh`); цепочка
+`BWORKER-EGRESS` своя и правила реле (`RELAY-EGRESS`) не трогает; шаг 1
+(ядро) — не выполнять; если песочница не стартует — остановить
+(`docker compose down`) и переходить к варианту 1.
+
+**Откат (мгновенно):** `BROWSER_WORKER_ENABLED=false` на Vercel и redeploy —
+claim пуст, идущие задания гасятся на ближайшем heartbeat (≤ 15 с),
+продукты возвращаются к поведению до Ш3. Затем на VPS `docker compose down`
+и `sudo sh deploy/worker-egress-docker-user.sh --remove`. Задания и
+артефакты дочищает крон `browser-jobs-retention`.
+
+**Ротация:** секрет HMAC — новый в обоих местах (сначала Vercel, потом
+`.env` воркера и `docker compose up -d`; окно — секунды, задания не
+теряются: аренда переживает минуту). Ключи конверта — новой парой
+(`seal-keygen`) так же; старый закрытый ключ удалить.
+
 ## 7. Лендинг клиентских сайтов (sites-landing)
 
 Л0–Л1 ТЗ `docs-tz/TZ-AI-Pomoshchnik-Landing.md` (вариант Б, §2): отдельный

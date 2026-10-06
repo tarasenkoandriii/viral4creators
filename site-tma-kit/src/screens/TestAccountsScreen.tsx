@@ -248,7 +248,9 @@ export function TestAccountsScreen({ siteId }: { siteId: string }) {
                         ? t.productTutorial
                         : p === 'qa'
                           ? t.productQa
-                          : p
+                          : p === 'assist-admin'
+                            ? t.productAssistAdmin
+                            : p
                     )
                     .join(', ')}
                 </div>
@@ -334,7 +336,7 @@ function AccountForm(props: {
   const { form, setForm } = props;
   const set = (patch: Partial<TestAccountForm>) =>
     setForm({ ...form, ...patch });
-  const products: TestAccountProduct[] = ['tutorial', 'qa'];
+  const products: TestAccountProduct[] = ['tutorial', 'qa', 'assist-admin'];
   const label = (text: string, input: JSX.Element) => (
     <label className="block space-y-1 text-sm">
       <span className="text-silver-500">{text}</span>
@@ -429,7 +431,11 @@ function AccountForm(props: {
                 checked={form.products.includes(p)}
                 onChange={() => set({ products: toggleItem(form.products, p) })}
               />
-              {p === 'tutorial' ? t.productTutorial : t.productQa}
+              {p === 'tutorial'
+                ? t.productTutorial
+                : p === 'qa'
+                  ? t.productQa
+                  : t.productAssistAdmin}
             </label>
           ))}
         </div>

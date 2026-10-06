@@ -80,6 +80,7 @@ export function PersonaBaseStep({
         </Button>
         {canRegenerate && (
           <Button
+            data-assist="confirm"
             variant="outline"
             loading={busy}
             disabled={state === 'pending'}

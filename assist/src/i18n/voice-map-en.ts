@@ -63,5 +63,8 @@ export const voiceMapEn: VoiceMapDictionary = {
     VOICE_MAP_IMPORT_KIND:
       'This is an admin-area map file — not allowed in the site map.',
     VOICE_MAP_IMPORT_FORMAT: 'This is not a voice map file.',
+    VOICE_MAP_SNAPSHOT_NOT_FOUND:
+      'Snapshot not found or expired (kept for 24 h).',
+    VOICE_MAP_CHECK_NOT_FOUND: 'This version has not been checked yet.',
   },
 };

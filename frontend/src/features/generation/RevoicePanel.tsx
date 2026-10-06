@@ -301,6 +301,7 @@ export function RevoicePanel({
         loading={busy}
         disabled={busy || !script.trim()}
         icon={<Mic2 size={14} />}
+        data-assist="never"
         onClick={() => void onSubmit()}
       >
         {dict.revoicePanel.submitCta}
@@ -445,6 +446,7 @@ export function RevoicePanel({
 
       <div className="mt-3 space-y-2">
         <Button
+          data-assist="confirm"
           block
           variant="outline"
           loading={prelistening}

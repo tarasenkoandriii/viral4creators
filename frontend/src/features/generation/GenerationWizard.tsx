@@ -724,6 +724,7 @@ export function GenerationWizard() {
                 hint={dict.generationWizard.promptReadyHint}
               />
               <Button
+                data-assist="confirm"
                 block
                 size="lg"
                 icon={<Sparkles size={16} />}
@@ -881,7 +882,7 @@ export function GenerationWizard() {
                     Смена режима пересобирает промпт и возвращает на
                     его одобрение (см. changeVoiceMode в useWorkflow). */}
                 {brandManifest && (
-                  <div className="mb-4">
+                  <div data-assist="confirm" className="mb-4">
                     <span className="label">
                       {dict.generationWizard.voiceModeLabel}
                     </span>
@@ -1098,6 +1099,7 @@ export function GenerationWizard() {
                   block
                   size="lg"
                   icon={<Video size={16} />}
+                  data-assist="never"
                   data-qa="video-generate"
                   onClick={() =>
                     startGenerateVideo(

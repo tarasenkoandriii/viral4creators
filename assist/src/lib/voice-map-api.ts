@@ -19,6 +19,9 @@ export const VOICE_MAP_ERROR_CODES = [
   'VOICE_MAP_PHRASE_TAKEN',
   'VOICE_MAP_IMPORT_KIND',
   'VOICE_MAP_IMPORT_FORMAT',
+  // Э-С Ш3: «Снимок» и сверка карты браузерным воркером (экраны — хвост).
+  'VOICE_MAP_SNAPSHOT_NOT_FOUND',
+  'VOICE_MAP_CHECK_NOT_FOUND',
 ] as const;
 export type VoiceMapErrorCode = (typeof VOICE_MAP_ERROR_CODES)[number];
 

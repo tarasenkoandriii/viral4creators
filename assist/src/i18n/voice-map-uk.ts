@@ -60,5 +60,8 @@ export const voiceMapUk: VoiceMapDictionary = {
     VOICE_MAP_IMPORT_KIND:
       'Це файл карти «Адмінки» — у карту «Сайту» не можна.',
     VOICE_MAP_IMPORT_FORMAT: 'Це не файл голосової карти.',
+    VOICE_MAP_SNAPSHOT_NOT_FOUND:
+      'Знімок не знайдено або він застарів (живе 24 год).',
+    VOICE_MAP_CHECK_NOT_FOUND: 'Звірки цієї версії ще не було.',
   },
 };

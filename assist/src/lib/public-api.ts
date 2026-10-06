@@ -47,3 +47,14 @@ export function goalWebhookUrl(endpoint: string, base: string): string {
     return '';
   return base + endpoint;
 }
+
+/** Э-С Ш5: база путей API знаний, которую отдаёт сервер (`knowledgeApiEndpoint`). */
+export const KNOWLEDGE_API_PATH =
+  /^\/assist\/v1\/sites\/[A-Za-z0-9_%-]{1,100}\/knowledge\/site\/documents$/;
+
+/** Полный адрес API знаний (без ключа документа); путь не того вида — ''. */
+export function knowledgeApiUrl(endpoint: string, base: string): string {
+  if (!KNOWLEDGE_API_PATH.test(endpoint) || !/^https?:\/\//.test(base))
+    return '';
+  return base + endpoint;
+}

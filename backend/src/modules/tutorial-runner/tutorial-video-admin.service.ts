@@ -16,15 +16,18 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SUPPORTED_LOCALES, SupportedLocale } from '../../common/locale';
+import { LandingVideosService } from '../client-site-media/landing-videos.service';
 import {
   ASSISTANT_KNOWLEDGE_BUILT_AT,
   ASSISTANT_KNOWLEDGE_COMMIT,
   ASSISTANT_STEPS,
-} from '../assistant/knowledge/generated';
+} from '../../common/tutorial-knowledge/generated';
 
 export interface TutorialVideoListFilter {
   subjectKey?: string;
@@ -56,7 +59,15 @@ const RELEVANT_JOB_KEYS = [
 
 @Injectable()
 export class TutorialVideoAdminService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TutorialVideoAdminService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    // Э-С Ш5: одобрение меняет и набор роликов сайта тенанта лендинга
+    // (виджет платформы). Необязательный — тесты и окружение без
+    // sites-backend работают как раньше.
+    @Optional() private readonly landingVideos?: LandingVideosService,
+  ) {}
 
   async list(filter: TutorialVideoListFilter) {
     const where = {
@@ -135,10 +146,23 @@ export class TutorialVideoAdminService {
     if (reviewed && !row.blobUrl) {
       throw new BadRequestException('Ролик ещё не собран — одобрять нечего');
     }
-    return this.prisma.tutorialVideoAsset.update({
+    const updated = await this.prisma.tutorialVideoAsset.update({
       where: { id },
       data: { reviewed },
     });
+    // Набор роликов лендинга в тенанте — тем же барьером (clientSiteDraftId
+    // уже отсеян выше). Не ждём сети и не роняем одобрение: сбой — в лог,
+    // следующее одобрение пришлёт набор целиком.
+    if (this.landingVideos) {
+      void this.landingVideos
+        .sync()
+        .catch((e: unknown) =>
+          this.logger.warn(
+            `ролики лендинга после одобрения не отправлены: ${e instanceof Error ? e.name : 'error'}`,
+          ),
+        );
+    }
+    return updated;
   }
 
   /** «Состояние данных» (§4.9) — агрегированная сводка, без фильтров. */

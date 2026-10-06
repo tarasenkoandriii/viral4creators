@@ -31,12 +31,24 @@ import type { AccountMembership } from '../site-core/account/roles';
 import { analyticsError, forbidden, notFoundSite } from './analytics-errors';
 import type { IntegrationsView, SecretIssuedView } from './api-types';
 
-export type IntegrationKind = 'goal_webhook' | 'identity';
+/**
+ * Э-С Ш5: `knowledge_api` — ключ системного API знаний
+ * (`PUT /assist/v1/sites/:id/knowledge/site/documents/:key`, модуль
+ * assist-site-knowledge-api): документы из кода владельца — в базу знаний
+ * сайта. Тот же выпуск/отзыв владельцем, тот же шифр и показ один раз.
+ */
+export type IntegrationKind = 'goal_webhook' | 'identity' | 'knowledge_api';
+export const INTEGRATION_KINDS: readonly IntegrationKind[] = [
+  'goal_webhook',
+  'identity',
+  'knowledge_api',
+];
 
 const SECRET_KEY_LABEL = 'assist-site-integration-secret-v1';
 const PREFIX: Record<IntegrationKind, string> = {
   goal_webhook: 'whsec_',
   identity: 'idsec_',
+  knowledge_api: 'knsec_',
 };
 
 export function integrationsKey(
@@ -97,6 +109,11 @@ export function goalWebhookEndpoint(siteId: string): string {
   return `/assist/v1/sites/${encodeURIComponent(siteId)}/goal-events`;
 }
 
+/** Э-С Ш5: база путей системного API знаний сайта (без origin, как вебхук). */
+export function knowledgeApiEndpoint(siteId: string): string {
+  return `/assist/v1/sites/${encodeURIComponent(siteId)}/knowledge/site/documents`;
+}
+
 @Injectable()
 export class IntegrationsService {
   private readonly logger = new Logger(IntegrationsService.name);
@@ -131,6 +148,7 @@ export class IntegrationsService {
     });
     const hook = rows.find((r) => r.kind === 'goal_webhook');
     const id = rows.find((r) => r.kind === 'identity');
+    const kn = rows.find((r) => r.kind === 'knowledge_api');
     return {
       goalWebhook: {
         active: !!hook,
@@ -144,6 +162,12 @@ export class IntegrationsService {
         active: !!id,
         createdAt: id ? (id.rotatedAt ?? id.createdAt).toISOString() : null,
       },
+      knowledgeApi: {
+        active: !!kn,
+        createdAt: kn ? (kn.rotatedAt ?? kn.createdAt).toISOString() : null,
+        lastUsedAt: kn?.lastUsedAt?.toISOString() ?? null,
+        endpoint: knowledgeApiEndpoint(siteId),
+      },
     };
   }
 
@@ -155,7 +179,7 @@ export class IntegrationsService {
     if (m.role !== 'owner') {
       throw forbidden('Секреты интеграций выпускает только владелец кабинета');
     }
-    if (kind !== 'goal_webhook' && kind !== 'identity') {
+    if (!INTEGRATION_KINDS.includes(kind)) {
       throw analyticsError(
         HttpStatus.NOT_FOUND,
         'INTEGRATION_NOT_FOUND',
@@ -244,6 +268,19 @@ export class IntegrationsService {
   /** Расшифрованный секрет вебхука (только goal-webhook.service). */
   webhookSecret(siteId: string): Promise<string | null> {
     return this.secretOf(siteId, 'goal_webhook');
+  }
+
+  /** Э-С Ш5: расшифрованный ключ API знаний (только assist-site-knowledge-api). */
+  knowledgeApiSecret(siteId: string): Promise<string | null> {
+    return this.secretOf(siteId, 'knowledge_api');
+  }
+
+  /** Отметка «API знаний пользовались» — для экрана интеграций. */
+  async touchKnowledgeApi(siteId: string): Promise<void> {
+    await this.prisma.assistSiteIntegration.updateMany({
+      where: { siteId, kind: 'knowledge_api', status: 'active' },
+      data: { lastUsedAt: this.now() },
+    });
   }
 
   /** Отметка «вебхук пользовались» — для экрана интеграций. */

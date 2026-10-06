@@ -324,6 +324,7 @@ export function SketchSheet({
 
             <div className="flex flex-wrap gap-2">
               <Button
+                data-assist="confirm"
                 size="sm"
                 loading={busy}
                 disabled={applying || !canGenerate(mode, text)}

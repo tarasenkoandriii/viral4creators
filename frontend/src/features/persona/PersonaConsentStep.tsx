@@ -86,6 +86,7 @@ export function PersonaConsentStep({
             <input
               type="checkbox"
               checked={checked}
+              data-assist="never"
               onChange={(e) => setChecked(e.target.checked)}
               className="mt-1 h-4 w-4 shrink-0 accent-sky-400"
             />
@@ -94,6 +95,7 @@ export function PersonaConsentStep({
           <div>
             <Button
               disabled={!checked || !consent.version}
+              data-assist="never"
               onClick={() => onAccepted(consent)}
             >
               {t.consentContinue}

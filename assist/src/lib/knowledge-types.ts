@@ -22,6 +22,8 @@ export const SOURCE_KINDS = [
   'file',
   'faq',
   'manual',
+  // Э-С Ш5: документы по системному API знаний (ключ knsec_, см. «Интеграции»).
+  'api',
 ] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 

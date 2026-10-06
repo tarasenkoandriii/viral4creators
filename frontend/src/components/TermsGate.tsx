@@ -109,6 +109,7 @@ export function TermsGate({ onAccepted }: { onAccepted: () => void }) {
       <label className="flex cursor-pointer gap-3 rounded-xl border border-silver-200/70 p-3 text-xs leading-relaxed dark:border-silver-800">
         <input
           type="checkbox"
+          data-assist="never"
           data-qa="terms-accept-checkbox"
           checked={checked}
           onChange={(e) => setChecked(e.target.checked)}
@@ -136,6 +137,7 @@ export function TermsGate({ onAccepted }: { onAccepted: () => void }) {
       <Button
         block
         className="mt-4"
+        data-assist="never"
         data-qa="terms-accept-submit"
         disabled={!checked}
         loading={saving}

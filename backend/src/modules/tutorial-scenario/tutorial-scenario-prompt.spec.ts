@@ -1,5 +1,5 @@
 import { TUTORIAL_DEMO_PRODUCT } from '../../common/tutorial-demo-product';
-import { AssistantStepItem } from '../assistant/knowledge/generated';
+import { AssistantStepItem } from '../../common/tutorial-knowledge/generated';
 import {
   buildScenarioPrompt,
   parseScenarioResponse,

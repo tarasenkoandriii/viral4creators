@@ -1,0 +1,67 @@
+# Браузерный воркер Э-С Ш3 — свой compose (НЕ docker-compose.yml корня и не
+# реле живого входа). Пошагово — doc/DEPLOYMENT.md §6.25.
+#
+# Входящих портов НЕТ: воркер сам забирает задания из sites-backend
+# (pull-модель) — `ports:` и `expose:` здесь не нужны и не должны появляться.
+# Исходящий трафик контейнера режут правила хоста в DOCKER-USER
+# (deploy/worker-egress-docker-user.sh по подсети этой сети), трафик
+# браузера — ещё и фильтрующий прокси внутри процесса.
+
+services:
+  browser-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: v4c-browser-worker:local
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    # Только чтение: всё, что пишет Chromium и воркер, — во временных tmpfs.
+    read_only: true
+    tmpfs:
+      - /tmp:size=768m,mode=1777
+    shm_size: '512mb'
+    # Потолки: 2 параллельных задания (BROWSER_WORKER_CONCURRENCY) ×
+    # 300–500 МБ Chromium + запас. Переполнение убивает этот контейнер, а не
+    # соседей. Поднимать вместе с памятью сервера.
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 1.5
+    pids_limit: 512
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      # Профиль Playwright: умолчания Docker + clone/unshare/setns для
+      # user namespaces песочницы Chromium (без него песочница не стартует,
+      # а без песочницы воркер в production не запускается вовсе).
+      - seccomp=./docker/seccomp-chromium.json
+    healthcheck:
+      test: ['CMD', 'node', 'dist/healthcheck.js']
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    restart: unless-stopped
+    # SIGTERM → воркер перестаёт брать задания, идущим даёт
+    # BROWSER_WORKER_SHUTDOWN_GRACE_MS (25 с), потом сдаёт `shutdown`.
+    stop_grace_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+    networks:
+      - bworker-egress
+
+networks:
+  # Своя сеть с фиксированной подсетью и именем моста — по ним правила
+  # DOCKER-USER (deploy/worker-egress-docker-user.sh) находят ТОЛЬКО этот
+  # контейнер. Не `dokploy-network`, не сеть реле.
+  bworker-egress:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-bworker
+    ipam:
+      config:
+        - subnet: 172.31.251.0/24

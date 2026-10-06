@@ -6,7 +6,15 @@
  */
 import { BadRequestException } from '@nestjs/common';
 
-export const TEST_ACCOUNT_PRODUCTS = ['tutorial', 'qa'] as const;
+/**
+ * Кому разрешена учётка. Э-С Ш3 (О-Э7-1): `assist-admin` — обход «Админки»
+ * помощника за логином браузерным воркером (аренда `assist-admin-login`).
+ */
+export const TEST_ACCOUNT_PRODUCTS = [
+  'tutorial',
+  'qa',
+  'assist-admin',
+] as const;
 export type TestAccountProduct = (typeof TEST_ACCOUNT_PRODUCTS)[number];
 
 export const LOGIN_METHODS = ['password', 'session', 'sso'] as const;
@@ -152,7 +160,7 @@ export function parseTestAccountInput(
         (p) => !(TEST_ACCOUNT_PRODUCTS as readonly unknown[]).includes(p),
       )
     ) {
-      throw badInput('«products»: tutorial | qa');
+      throw badInput('«products»: tutorial | qa | assist-admin');
     }
     out.products = [...new Set(o.products as TestAccountProduct[])];
   }

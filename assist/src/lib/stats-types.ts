@@ -222,10 +222,21 @@ export interface IntegrationsView {
     endpoint: string;
   };
   identity: { active: boolean; createdAt: string | null };
+  /** Э-С Ш5: ключ системного API знаний (документы из кода владельца). */
+  knowledgeApi: {
+    active: boolean;
+    createdAt: string | null;
+    lastUsedAt: string | null;
+    endpoint: string;
+  };
 }
 
+/** Вид секрета в адресе маршрута (`…/integrations/<вид>/secret`). */
+export type IntegrationRouteKind =
+  'goal-webhook' | 'identity' | 'knowledge-api';
+
 export interface SecretIssuedView {
-  kind: 'goal_webhook' | 'identity';
+  kind: 'goal_webhook' | 'identity' | 'knowledge_api';
   secret: string;
   createdAt: string;
 }

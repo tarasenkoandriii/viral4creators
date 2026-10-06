@@ -38,6 +38,7 @@ import { SiteWizardService } from './wizard/site-wizard.service';
     AssistCrawlScheduler,
     SiteWizardService,
   ],
-  exports: [SiteKnowledgeService, AssistCrawlScheduler],
+  // Э-С Ш5: SiteSourcesService — системному API знаний (assist-site-knowledge-api).
+  exports: [SiteKnowledgeService, AssistCrawlScheduler, SiteSourcesService],
 })
 export class AssistSiteKnowledgeModule {}

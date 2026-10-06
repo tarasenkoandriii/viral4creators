@@ -146,10 +146,22 @@ export function ConfirmDialog({
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
             {cancelLabel ?? dict.common.cancel}
           </Button>
-          {secondaryAction}
+          {/* Э-С Ш6: помощник платформы («Админка») не подтверждает за
+              человека: удаление (`danger`) — «никогда», остальное — только
+              с «Да» (`confirm`). Первая линия; вторая — стоп-слова
+              исполнителя «Админки». */}
+          {secondaryAction && (
+            <span
+              className="contents"
+              data-assist={danger ? 'never' : 'confirm'}
+            >
+              {secondaryAction}
+            </span>
+          )}
           <Button
             variant={danger ? 'danger' : 'solid'}
             size="sm"
+            data-assist={danger ? 'never' : 'confirm'}
             onClick={onConfirm}
             loading={busy}
             disabled={loadingBody}

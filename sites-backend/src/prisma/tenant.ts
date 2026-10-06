@@ -184,6 +184,12 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteInsight: 'accountId',
   AssistSiteExperiment: 'accountId',
   AssistSiteDailyPage: 'accountId',
+  // Э-С Ш3: задания браузерного воркера и их артефакты — строки кабинета
+  // (составной FK (siteId, accountId)). Воркер забирает задания ВСЕХ
+  // кабинетов — только системным клиентом с причиной (browser-jobs.service:
+  // claim, аренда, ретенция); продукты ставят и читают — с тенантом.
+  SiteBrowserJob: 'accountId',
+  SiteBrowserArtifact: 'accountId',
 };
 
 /**

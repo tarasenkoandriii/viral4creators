@@ -142,6 +142,7 @@ export function PersonaSharesPanel({
                     size="sm"
                     loading={busy === s.id}
                     disabled={done || busy !== null}
+                    data-assist="never"
                     onClick={() => void remove([s])}
                   >
                     {done ? t.unpublished : t.unpublish}
@@ -158,7 +159,11 @@ export function PersonaSharesPanel({
       </ul>
       <div className="mt-3 flex flex-wrap gap-2">
         {left.length > 1 && (
-          <Button loading={busy !== null} onClick={() => void remove(left)}>
+          <Button
+            loading={busy !== null}
+            data-assist="never"
+            onClick={() => void remove(left)}
+          >
             {t.unpublishAll}
           </Button>
         )}

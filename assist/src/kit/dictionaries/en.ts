@@ -335,6 +335,7 @@ export const en: Dictionary = {
     products: 'Allowed for',
     productTutorial: 'Tutorial',
     productQa: 'QA checks',
+    productAssistAdmin: 'Assistant: admin panel crawl',
     lifetime: 'Keep for',
     lifetimeKeep: "Don't change",
     days: '{n} days',

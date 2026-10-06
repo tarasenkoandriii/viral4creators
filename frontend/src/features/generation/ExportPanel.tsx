@@ -243,6 +243,7 @@ export function ExportPanel({
           {selectableA.length > 0 && (
             <>
               <Button
+                data-assist="never"
                 block
                 className="mt-3"
                 variant="solid"
@@ -286,6 +287,7 @@ export function ExportPanel({
                     icon={<Repeat size={14} />}
                     loading={rerenderBusy === row.format}
                     disabled={rerenderLocked}
+                    data-assist="never"
                     onClick={() => void onRerender(row.format, row.key)}
                   >
                     {dict.exportPanel.rerenderCta}

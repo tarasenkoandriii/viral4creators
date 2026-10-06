@@ -64,6 +64,7 @@ import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useI18n } from './lib/i18n-context';
 import { APP_BUILD } from './lib/build-info';
+import { GuideAssistMount } from './components/GuideAssistMount';
 
 /**
  * Г-1.1 (аудит round4, этап 64): «Сделать такой же» с публичной страницы
@@ -604,6 +605,9 @@ function App() {
               это и решает, чинить или закрывать. */}
             <div className="mt-2 opacity-50">{APP_BUILD}</div>
           </footer>
+          {/* Э-С Ш6: гид «Админка» помощника платформы — только при
+              флаге WIZARD_GUIDE_ENGINE на бэкенде; иначе ничего. */}
+          <GuideAssistMount locale={locale} />
           {reporting && (
             <ReportProblem
               dict={dict}

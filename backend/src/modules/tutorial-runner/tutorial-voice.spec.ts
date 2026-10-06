@@ -11,7 +11,7 @@ import {
   tutorialMotionSettingValue,
   TUTORIAL_VOICE_SETTING_KEY,
 } from './tutorial-voice';
-import { ASSISTANT_STEPS } from '../assistant/knowledge/generated';
+import { ASSISTANT_STEPS } from '../../common/tutorial-knowledge/generated';
 
 describe('parseTutorialVoiceSetting', () => {
   it('ключ настройки лежит в пространстве postprod, как соседние решения о сборке', () => {

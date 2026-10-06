@@ -263,7 +263,12 @@ export function ShareVideoPanel({
             >
               {dict.shareVideoPanel.cancel}
             </Button>
-            <Button type="submit" size="sm" loading={submitting}>
+            <Button
+              data-assist="confirm"
+              type="submit"
+              size="sm"
+              loading={submitting}
+            >
               {dict.shareVideoPanel.submitToModeration}
             </Button>
           </div>
@@ -335,6 +340,7 @@ export function ShareVideoPanel({
                     variant="ghost"
                     icon={<Trash2 size={12} />}
                     loading={busy === p.id}
+                    data-assist="never"
                     onClick={() => void withdraw(p)}
                   >
                     {dict.shareVideoPanel.withdraw}

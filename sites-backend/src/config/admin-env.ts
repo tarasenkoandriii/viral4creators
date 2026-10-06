@@ -50,3 +50,45 @@ export function validateAdminEnv(
   }
   return out;
 }
+
+// ── Э-С Ш6: «Админка», которая сама открывается внутри Telegram ─────────
+//
+// TMA генератора viral4creators — «админка» своего тенанта (Ш6). В
+// мобильных клиентах Telegram мини-апп — страница верхнего уровня, но в
+// Telegram Web (web.telegram.org/k, /a) он сам живёт в iframe, а
+// `frame-ancestors` проверяется по ВСЕМ предкам: без origin Telegram Web
+// окно помощника там не откроется. Добавляется только сайтам из списка
+// `ASSIST_ADMIN_TMA_SITE_IDS` и только вместе с их verified-хостами
+// админки — чужая страница внутри Telegram Web (её origin тоже предок)
+// встроить чат сотрудника по-прежнему не может.
+
+/** Origin-ы веб-клиентов Telegram (все версии — на одном домене). */
+export const TELEGRAM_WEB_ORIGINS: readonly string[] = [
+  'https://web.telegram.org',
+];
+
+/** Сайты, чья «админка» — Telegram Mini App (id через запятую). */
+export function adminTmaSiteIds(
+  env: NodeJS.ProcessEnv = process.env,
+): ReadonlySet<string> {
+  return new Set(
+    (env.ASSIST_ADMIN_TMA_SITE_IDS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => /^[A-Za-z0-9_-]{1,64}$/.test(s)),
+  );
+}
+
+/**
+ * Предки окна сотрудника сверх verified-хостов админки: Telegram Web —
+ * только сайту из списка и только если свои хосты уже есть (пустой список
+ * хостов остаётся `'none'`).
+ */
+export function extraAdminAncestors(
+  siteId: string,
+  hostAncestors: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (hostAncestors.length === 0) return [];
+  return adminTmaSiteIds(env).has(siteId) ? [...TELEGRAM_WEB_ORIGINS] : [];
+}

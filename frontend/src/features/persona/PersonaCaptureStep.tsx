@@ -411,7 +411,7 @@ export function PersonaCaptureStep({
           </Button>
         )}
         {step === 'review' && (
-          <Button loading={busy} onClick={submit}>
+          <Button data-assist="never" loading={busy} onClick={submit}>
             {t.submit}
           </Button>
         )}

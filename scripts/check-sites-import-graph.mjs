@@ -129,6 +129,23 @@
  *     _assist_visual_editor). Модуль `assist-site-voice-map` — режим «Сайт»
  *     (правило 1 по префиксу `assist-site-`).
  *
+ * 19. (Э-С Ш3) браузерный воркер: `browser-jobs-neutral` — очередь заданий
+ *     воркера (`browser-jobs`) берёт из модулей только `site-core` и
+ *     `telegram-auth` (продукты регистрируют обработчики сами);
+ *     `browser-jobs-zone` — ставить задания могут только канал воркера
+ *     `internal-worker`, канал генератора `internal-sites`, обход «Админки»
+ *     `assist-admin-crawl`, голосовая карта `assist-site-voice-map` и
+ *     `qa-*`; публичный код и прочие модули — нет; `internal-worker-scope` /
+ *     `internal-worker-leaf` — канал воркера (`/internal/worker/v1/*`) берёт
+ *     только `browser-jobs`, `site-credentials`, `site-core`,
+ *     `telegram-auth`, и его не импортирует никто; `worker-seal-private` —
+ *     запечатывание секретов под ключ воркера
+ *     (`browser-jobs/worker-seal`) — только `browser-jobs` и
+ *     `internal-worker`; `browser-jobs-names` — имён таблиц/моделей очереди
+ *     нет в коде других модулей (только через сервис). `internal-worker` —
+ *     четвёртый допущенный потребитель `site-credentials` (аренда
+ *     `assist-admin-login`).
+ *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
  * относительные и от `baseUrl` (`src/…`). Тесты (*.spec.ts) проверяются
@@ -166,7 +183,24 @@ const CREDENTIALS = 'site-credentials';
 // Э7: `assist-admin-crawl` — обход админки за логином (opt-in): читает
 // реестр тестовых учёток (без секретов), аренду для воркера Ш3 — позже.
 // Остальные модули «Админки» и весь «Сайт» к реестру дороги не имеют.
-const CREDENTIALS_CONSUMERS = [/^internal-sites$/, /^qa-/, /^assist-admin-crawl$/];
+// Э-С Ш3: `internal-worker` — канал браузерного воркера: аренда учётки
+// под обход «Админки» (`assist-admin-login`), конвертом под ключ воркера.
+const CREDENTIALS_CONSUMERS = [
+  /^internal-sites$/,
+  /^qa-/,
+  /^assist-admin-crawl$/,
+  /^internal-worker$/,
+];
+/** Э-С Ш3: очередь браузерного воркера и его канал (правило 19). */
+const BROWSER_JOBS = 'browser-jobs';
+const INTERNAL_WORKER = 'internal-worker';
+const BROWSER_JOBS_CONSUMERS = [
+  /^internal-worker$/,
+  /^internal-sites$/,
+  /^assist-admin-crawl$/,
+  /^assist-site-voice-map$/,
+  /^qa-/,
+];
 const MODE_MODULES = [
   /^assist-site-/,
   /^assist-admin-/,
@@ -213,10 +247,41 @@ export const RULES = [
   },
   {
     id: 'internal-sites-scope',
-    why: 'Э-С Ш1/Ш2: internal-sites (внутренний API генератора) берёт из модулей только ядра site-core, site-credentials и telegram-auth',
+    why: 'Э-С Ш1/Ш2/Ш3: internal-sites (внутренний API генератора) берёт из модулей только ядра site-core, site-credentials, telegram-auth и очередь browser-jobs',
     from: (m) => m === INTERNAL_SITES,
     to: (m) =>
-      m !== 'site-core' && m !== 'telegram-auth' && m !== CREDENTIALS,
+      m !== 'site-core' &&
+      m !== 'telegram-auth' &&
+      m !== CREDENTIALS &&
+      m !== BROWSER_JOBS,
+  },
+  {
+    id: 'browser-jobs-neutral',
+    why: 'Э-С Ш3: очередь браузерного воркера (browser-jobs) берёт из модулей только site-core и telegram-auth — продукты регистрируют обработчики сами',
+    from: (m) => m === BROWSER_JOBS,
+    to: (m) => m !== 'site-core' && m !== 'telegram-auth',
+  },
+  {
+    id: 'browser-jobs-zone',
+    why: 'Э-С Ш3: задания воркеру ставят только internal-worker, internal-sites, assist-admin-crawl, assist-site-voice-map и qa-* — остальной помощник и публичный код нет',
+    from: (m) => m !== BROWSER_JOBS && !matches(m, BROWSER_JOBS_CONSUMERS),
+    to: (m) => m === BROWSER_JOBS,
+  },
+  {
+    id: 'internal-worker-scope',
+    why: 'Э-С Ш3: канал воркера (internal-worker) берёт из модулей только browser-jobs, site-credentials, site-core и telegram-auth',
+    from: (m) => m === INTERNAL_WORKER,
+    to: (m) =>
+      m !== BROWSER_JOBS &&
+      m !== CREDENTIALS &&
+      m !== 'site-core' &&
+      m !== 'telegram-auth',
+  },
+  {
+    id: 'internal-worker-leaf',
+    why: 'Э-С Ш3: internal-worker — лист графа, его не импортирует ни один модуль (канал воркера с арендой учёток не прорастает в продукты)',
+    from: (m) => m !== INTERNAL_WORKER,
+    to: (m) => m === INTERNAL_WORKER,
   },
   {
     id: 'site-credentials-scope',
@@ -226,7 +291,7 @@ export const RULES = [
   },
   {
     id: 'credentials-zone',
-    why: 'Э-С Ш2: site-credentials импортируют только internal-sites, qa-* и (Э7) assist-admin-crawl — остальной помощник и публичный код к секретам дороги не имеют',
+    why: 'Э-С Ш2: site-credentials импортируют только internal-sites, qa-*, (Э7) assist-admin-crawl и (Ш3) internal-worker — остальной помощник и публичный код к секретам дороги не имеют',
     from: (m) => m !== CREDENTIALS && !matches(m, CREDENTIALS_CONSUMERS),
     to: (m) => m === CREDENTIALS,
   },
@@ -300,6 +365,14 @@ const MAIN_DB_TARGETS = [
   /^modules\/site-core\/ui-map\/ui-map-maintenance\.service$/,
 ];
 export const PATH_RULES = [
+  {
+    id: 'worker-seal-private',
+    why: 'Э-С Ш3: запечатывание секретов под ключ воркера (browser-jobs/worker-seal) — только browser-jobs и internal-worker',
+    from: (moduleName) =>
+      moduleName !== BROWSER_JOBS && moduleName !== INTERNAL_WORKER,
+    to: (target) =>
+      /^modules\/browser-jobs\/worker-seal$/.test(target.replace(SOURCE_RE, '')),
+  },
   {
     id: 'credentials-crypto-private',
     why: 'Э-С Ш2: ключи и расшифровка (site-credentials/credential-crypto) — только внутри модуля site-credentials',
@@ -397,7 +470,16 @@ const VOICE_MAP_TABLE_NAMES =
   /\bassist_site_voice_maps\b|\bassist_site_voice_map_(?:versions|changes|editor_sessions)\b|\bAssistSiteVoiceMap(?:Version|Change|EditorSession)?\b|\bassistSiteVoiceMap(?:Version|Change|EditorSession)?\b/;
 const CREDENTIAL_NAMES =
   /\b(site_test_accounts|site_credentials|site_credential_leases|site_credential_audit|user_site_sessions|user_site_secrets)\b|\b(siteTestAccount|siteCredential|siteCredentialLease|siteCredentialAudit|userSiteSession|userSiteSecret)\b/;
+/** Э-С Ш3: таблицы и модели очереди браузерного воркера. */
+const BROWSER_JOB_NAMES =
+  /\b(site_browser_jobs|site_browser_artifacts)\b|\b(siteBrowserJob|siteBrowserArtifact|SiteBrowserJob|SiteBrowserArtifact)\b/;
 export const LITERAL_RULES = [
+  {
+    id: 'browser-jobs-names',
+    why: 'Э-С Ш3: имена таблиц/моделей очереди воркера — только в browser-jobs (продукты и каналы ходят через BrowserJobsService)',
+    in: (m) => m !== BROWSER_JOBS,
+    re: BROWSER_JOB_NAMES,
+  },
   {
     id: 'site-names↛admin',
     why: 'Э1 слой 2: в модуле «Сайта» нет имён таблиц/моделей «Админки»',
@@ -599,6 +681,37 @@ function selfTest() {
 
   // Каждая фикстура-нарушитель — ровно одно нарушение своего правила.
   const bad = [
+    // Э-С Ш3: очередь браузерного воркера и его канал.
+    [
+      'modules/browser-jobs/sh3a.ts',
+      `import { AdminCrawlService } from '../assist-admin-crawl/admin-crawl.service';`,
+      'browser-jobs-neutral',
+    ],
+    [
+      'modules/assist-site-chat/sh3b.ts',
+      `import { BrowserJobsService } from '../browser-jobs/browser-jobs.service';`,
+      'browser-jobs-zone',
+    ],
+    [
+      'modules/internal-worker/sh3c.ts',
+      `import { AssistBilling } from '../assist-billing/billing.service';`,
+      'internal-worker-scope',
+    ],
+    [
+      'modules/site-core/sh3d.ts',
+      `import { InternalWorkerService } from '../internal-worker/internal-worker.service';`,
+      'internal-worker-leaf',
+    ],
+    [
+      'modules/assist-admin-crawl/sh3e.ts',
+      `import { sealForWorker } from '../browser-jobs/worker-seal';`,
+      'worker-seal-private',
+    ],
+    [
+      'modules/assist-site-voice-map/sh3f.ts',
+      `const rows = await db.siteBrowserJob.findMany({});`,
+      'browser-jobs-names',
+    ],
     // Э6-тер: публичный код голосовой карты — только представление.
     [
       'modules/assist-site-voice-control/public/vm1.ts',
@@ -1008,6 +1121,19 @@ function selfTest() {
   // Разрешённое: своё внутри модуля, общий код, site-crawl из «Админки»,
   // пакеты, импорт в комментарии, «Админка» → «Админка».
   const good = [
+    // Э-С Ш3: продукты ставят задания через сервис; канал воркера арендует учётки.
+    [
+      'modules/assist-admin-crawl/oksh3a.ts',
+      `import { BrowserJobsService } from '../browser-jobs/browser-jobs.service';\nimport { SiteCredentialsService } from '../site-credentials/site-credentials.service';`,
+    ],
+    [
+      'modules/internal-worker/oksh3b.ts',
+      `import { BrowserJobsService } from '../browser-jobs/browser-jobs.service';\nimport { sealForWorker } from '../browser-jobs/worker-seal';\nimport { SiteCredentialsService } from '../site-credentials/site-credentials.service';`,
+    ],
+    [
+      'modules/browser-jobs/oksh3c.ts',
+      `import { evaluateHostAccess } from '../site-core/ownership/host-access';\nconst n = await db.siteBrowserJob.count();`,
+    ],
     // Э6-бис (б): голосовое управление «Админкой» берёт ядро и «Админку».
     [
       'modules/assist-admin-voice/okv.ts',

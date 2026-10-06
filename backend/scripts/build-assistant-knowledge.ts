@@ -60,13 +60,16 @@ const FRONTEND_DICT_DIR = path.join(
   'src',
   'dictionaries',
 );
+// Э-С Ш5: база переехала из `modules/assistant/knowledge` в `common/` —
+// её читают не только консультант лендинга (он остаётся за флагом до
+// удаления), но и обучалка (`tutorial-scenario/*`, `tutorial-runner/*`) и
+// синхронизация знаний тенанта (`scripts/sync-assistant-knowledge.ts`).
 const OUT_DIR = path.join(
   __dirname,
   '..',
   'src',
-  'modules',
-  'assistant',
-  'knowledge',
+  'common',
+  'tutorial-knowledge',
 );
 
 export const LOCALES = ['ru', 'uk', 'en', 'de', 'es'] as const;
@@ -682,7 +685,7 @@ async function writeGeneratedTs(
   const header = `/**
  * ГЕНЕРИРУЕТСЯ автоматически — backend/scripts/build-assistant-knowledge.ts.
  * Не редактировать руками: правки уйдут при следующей сборке. Правки
- * содержания — в knowledge/manual.<locale>.md (ручной слой) или в самих
+ * содержания — в common/tutorial-knowledge/manual.<locale>.md (ручной слой) или в самих
  * источниках (landing/frontend dictionaries, common/plans.ts и соседние).
  */
 

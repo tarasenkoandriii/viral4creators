@@ -139,6 +139,7 @@ export const appEn: AppDictionary = {
         file: 'Document',
         faq: 'Verified answers',
         manual: 'Manual edits',
+        api: 'Knowledge API',
       },
       status: {
         pending_upload: 'Waiting for upload',

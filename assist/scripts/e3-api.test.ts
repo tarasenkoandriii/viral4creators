@@ -56,7 +56,11 @@ import {
 } from '../src/lib/stats-api';
 import * as ST from '../src/lib/stats-types';
 import { createWidgetApi, parseWidgetConfig } from '../src/lib/widget-api';
-import { goalWebhookUrl, publicApiBase } from '../src/lib/public-api';
+import {
+  goalWebhookUrl,
+  knowledgeApiUrl,
+  publicApiBase,
+} from '../src/lib/public-api';
 import { parseAiSettings } from '../src/lib/ai-api';
 // Серверные модули — чистые: сверяем ими напрямую.
 import * as SE from '../../sites-backend/src/modules/assist-site-setup/engagement-config';
@@ -664,6 +668,57 @@ assert.deepEqual(
       '',
       bad
     );
+  // Э-С Ш5: путь API знаний сервера — тот же, что принимает парсер.
+  const knPath =
+    /return `(\/assist\/v1\/sites\/)\$\{encodeURIComponent\(siteId\)\}(\/knowledge\/site\/documents)`/.exec(
+      src('assist-analytics/integrations.service.ts')
+    );
+  assert.ok(
+    knPath,
+    'knowledgeApiEndpoint сервера сменил форму — сверьте парсер'
+  );
+  const kp = `${knPath![1]}site_ab12${knPath![2]}`;
+  const kv = parseIntegrations({
+    knowledgeApi: {
+      active: true,
+      createdAt: '2026-10-05T00:00:00.000Z',
+      lastUsedAt: null,
+      endpoint: kp,
+    },
+  }).knowledgeApi;
+  assert.deepEqual(kv, {
+    active: true,
+    createdAt: '2026-10-05T00:00:00.000Z',
+    lastUsedAt: null,
+    endpoint: kp,
+  });
+  assert.equal(
+    knowledgeApiUrl(kp, 'https://api.example'),
+    `https://api.example${kp}`
+  );
+  for (const bad of [
+    'https://evil.example/assist/v1/sites/x/knowledge/site/documents',
+    '/assist/v1/sites/x/knowledge/site/documents/key',
+    '//evil.example/assist/v1/sites/x/knowledge/site/documents',
+  ]) {
+    assert.equal(
+      parseIntegrations({ knowledgeApi: { endpoint: bad } }).knowledgeApi
+        .endpoint,
+      '',
+      bad
+    );
+    assert.equal(knowledgeApiUrl(bad, 'https://api.example'), '', bad);
+  }
+  assert.equal(
+    parseSecret({ kind: 'knowledge_api', secret: 'knsec_0123456789abcdef' })!
+      .kind,
+    'knowledge_api'
+  );
+  assert.equal(
+    parseIntegrations({}).knowledgeApi.active,
+    false,
+    'нет блока — ключа нет'
+  );
   assert.equal(
     publicApiBase(
       'https://assist-api.viral4creators.app',

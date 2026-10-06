@@ -214,6 +214,9 @@ model Site {
   // Э-С Ш2: тестовые учётные записи сайта (общие с QA).
   testAccounts SiteTestAccount[]
 
+  // Э-С Ш3: задания браузерного воркера (общий с QA, изолированный VPS).
+  browserJobs SiteBrowserJob[]
+
   // Э6-бис (г): отчёты мастера проверки, контрольные команды, переобход
   // устаревших страниц карты (решение владельца 03.10.2026 п.4).
   voiceTests           AssistSiteVoiceTest[]
@@ -303,6 +306,8 @@ model SiteHost {
   /// Э-С Ш4: история карт и слитые элементы страниц хоста — туда же.
   uiMapVersions SiteUiMapVersion[]
   uiElements    SiteUiElement[]
+  /// Задания браузерного воркера Ш3 на этом хосте (аудит Ш3: FK кабинета).
+  browserJobs   SiteBrowserJob[]
 
   /// Дубль хоста в кабинете — ошибка при добавлении (QA §2.2), а не второй
   /// Site; разные кабинеты один хост иметь могут.
@@ -4462,4 +4467,92 @@ model AssistSiteDailyPage {
   @@id([siteId, day, path])
   @@index([accountId])
   @@map("assist_site_daily_pages")
+}
+
+// ══ Э-С Ш3: очередь браузерного воркера (pull-модель, lease + heartbeat) ══
+//
+// Воркер на изолированном VPS (без DSN, без входящих портов) сам забирает
+// задания внутренним API `/internal/worker/v1/*` (HMAC, свой секрет
+// `SITES_WORKER_HMAC_SECRET`), продлевает аренду heartbeat-ом и сдаёт
+// результат. Параметры — без секретов (триггер ниже отвергает ключи вида
+// password/secret/cookies): учётку Ш2 воркер получает отдельным запросом
+// `credentials`, запечатанной под свой ключ. Роли assist_public — ничего.
+
+/// Задание браузерного воркера: вид (ui-snapshot | admin-crawl |
+/// descriptor-resolve | frames-capture), источник (кто поставил) и аренда.
+model SiteBrowserJob {
+  id        String @id @default(cuid())
+  accountId String
+  siteId    String
+  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+
+  hostId         String
+  /// Хост того же кабинета (аудит Ш3: составной FK, как у site_pages).
+  host           SiteHost @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  kind           String
+  /// voice-map-snapshot | voice-map-check | assist-admin-crawl | tutorial-frames
+  origin         String
+  /// Связанная сущность продукта (задание обхода «Админки», версия карты…).
+  refId          String?
+  params         Json
+  /// admin-crawl: учётка реестра Ш2 (секреты — только запросом воркера).
+  testAccountId  String?
+  idempotencyKey String? @unique
+  /// queued | running | done | failed | cancelled
+  status         String  @default("queued")
+  priority       Int     @default(0)
+  attempts       Int     @default(0)
+  maxAttempts    Int     @default(2)
+  availableAt    DateTime @default(now())
+  leaseOwner     String?
+  /// SHA-256 токена аренды (сам токен знает только воркер).
+  leaseTokenHash String?
+  leaseUntil     DateTime?
+  heartbeatAt    DateTime?
+  /// Номер попытки, на которой секреты учётки уже выданы (один раз на попытку).
+  credentialsAttempt Int?
+  cancelRequestedAt  DateTime?
+  result         Json?
+  resultBytes    Int?
+  errorCode      String?
+  /// Кто поставил: `tg:<id>` | `generator:<id>` | `system` (без ПД).
+  requestedBy    String?
+  createdAt      DateTime @default(now())
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  expiresAt      DateTime
+  updatedAt      DateTime @updatedAt
+
+  artifacts SiteBrowserArtifact[]
+
+  @@unique([id, accountId])
+  @@index([status, availableAt])
+  @@index([accountId])
+  @@index([siteId, origin, createdAt])
+  @@index([expiresAt])
+  @@map("site_browser_jobs")
+}
+
+/// Артефакт задания (скриншот/кадр) — приватный Blob со сроком жизни;
+/// наружу — только подписанной ссылкой с коротким TTL.
+model SiteBrowserArtifact {
+  id          String         @id @default(cuid())
+  accountId   String
+  jobId       String
+  /// Аудит Ш3: артефакт — того же кабинета, что задание (составной FK).
+  job         SiteBrowserJob @relation(fields: [jobId, accountId], references: [id, accountId], onDelete: Cascade)
+  idx         Int
+  pathname    String
+  contentType String
+  bytes       Int
+  sha256      String
+  width       Int?
+  height      Int?
+  createdAt   DateTime       @default(now())
+  expiresAt   DateTime
+
+  @@unique([jobId, idx])
+  @@index([accountId])
+  @@index([expiresAt])
+  @@map("site_browser_artifacts")
 }

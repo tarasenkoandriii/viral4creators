@@ -215,6 +215,7 @@ export function ApiKeysScreen() {
               className="flex-1"
             />
             <Button
+              data-assist="never"
               onClick={() => void issue()}
               disabled={busy !== null || left === 0}
             >
@@ -270,6 +271,7 @@ export function ApiKeysScreen() {
                   <Button
                     size="sm"
                     variant="ghost"
+                    data-assist="never"
                     onClick={() => void revoke(key)}
                     disabled={busy !== null}
                   >

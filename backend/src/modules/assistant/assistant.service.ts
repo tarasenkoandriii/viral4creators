@@ -27,7 +27,10 @@ import { containsForbiddenPromise } from './post-filter';
 import { maskForJournal } from './journal-mask';
 import { estimateCost } from '../../common/ai-pricing';
 import { hashVisitorIp } from './ip-hash';
-import { ASSISTANT_KNOWLEDGE, ASSISTANT_STEPS } from './knowledge/generated';
+import {
+  ASSISTANT_KNOWLEDGE,
+  ASSISTANT_STEPS,
+} from '../../common/tutorial-knowledge/generated';
 import {
   ChatStreamEvent,
   chatUsageFromMeta,

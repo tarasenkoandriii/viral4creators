@@ -49,6 +49,7 @@ jobs:
       admin: ${{ steps.f.outputs.admin }}
       landing: ${{ steps.f.outputs.landing }}
       live_login_relay: ${{ steps.f.outputs.live_login_relay }}
+      browser_worker: ${{ steps.f.outputs.browser_worker }}
       next_apps: ${{ steps.f.outputs.next_apps }}
     steps:
       - uses: actions/checkout@v4
@@ -671,6 +672,95 @@ jobs:
       - name: сборка (tsc, она же проверка типов src)
         run: npm run build
         working-directory: live-login-relay
+
+  # Э-С Ш3: браузерный воркер (изолированный VPS, Docker; не Vercel и не
+  # реле живого входа). Копии чистых модулей (фильтр исходящего трафика,
+  # подпись, протокол очереди, конверт учёток, стоп-лист кликов) сверяются
+  # с источниками; e2e — на настоящем Chromium Playwright той же версии,
+  # что playwright-core пакета (только headless-оболочка).
+  browser-worker:
+    name: browser-worker — копии, типы, линт, unit, e2e Chromium
+    needs: changes
+    if: needs.changes.outputs.browser_worker == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: browser-worker/package-lock.json
+      - name: копии общих модулей совпадают с источниками
+        run: node scripts/sync-worker-shared.mjs --check
+      - run: npm ci
+        working-directory: browser-worker
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+        working-directory: browser-worker
+      - name: линт
+        run: npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
+        working-directory: browser-worker
+      - name: сборка (tsc, она же проверка типов src)
+        run: npm run build
+        working-directory: browser-worker
+      - name: unit (очередь, подпись, аренда, фильтр трафика, стоп-лист, секреты)
+        run: npx jest -c jest.config.js --ci
+        working-directory: browser-worker
+      - name: Chromium Playwright (headless-оболочка той же версии)
+        run: npx playwright-core install --with-deps --only-shell chromium
+        working-directory: browser-worker
+      - name: e2e на настоящем Chromium (стенды, egress, обход за логином, стоп-лист)
+        run: npx jest -c jest.e2e.config.js --ci --runInBand
+        working-directory: browser-worker
+
+  # Э-С Ш5: база знаний консультанта из кода генератора → знания тенанта
+  # «viral4creators» в sites-backend (системный API знаний,
+  # doc/DEPLOYMENT.md §6.23). Только пуш в ветку по умолчанию и только когда
+  # менялись источники базы (правило backend: backend/ и словари лендинга и
+  # мини-аппа). Сначала проверка утечек секретов и ПДн — она красит джобу
+  # всегда; отправка — только с секретами репозитория (без них «пропущено»,
+  # джоба зелёная, пока владелец не включил). Тот же текст сервер отвечает
+  # `unchanged` — без новой версии знаний и без эмбеддингов.
+  assist-knowledge-sync:
+    name: знания консультанта → тенант платформы
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' && github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    # Аудит Ш5: токен джобе не нужен (кроме чтения кода) — без прав по
+    # умолчанию репозитория; секреты — только в env одного шага.
+    permissions:
+      contents: read
+    concurrency:
+      group: assist-knowledge-sync
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # Скрипту не нужны ни Prisma, ни база: чистая функция от файлов репо.
+      - run: npm ci --ignore-scripts
+        working-directory: backend
+      # Без секретов — сухой прогон (проверка утечек), с ними — отправка.
+      - name: синхронизация знаний (проверка утечек → отправка)
+        run: npm run -s assist:knowledge-sync -- --apply
+        working-directory: backend
+        env:
+          # Аудит Ш5: база собирается с тем же флагом оплаты, что прод
+          # (иначе тенант отвечал бы «оплата выключена» при включённой).
+          PLANS_BILLING_ENABLED: ${{ vars.PLANS_BILLING_ENABLED }}
+          SITES_BACKEND_URL: ${{ secrets.SITES_BACKEND_URL }}
+          ASSIST_LANDING_SITE_ID: ${{ secrets.ASSIST_LANDING_SITE_ID }}
+          ASSIST_KNOWLEDGE_API_KEY: ${{ secrets.ASSIST_KNOWLEDGE_API_KEY }}
+          # Необязательно: документ локали ссылается на <лендинг>/<локаль>.
+          LANDING_PUBLIC_URL: ${{ secrets.LANDING_PUBLIC_URL }}
 
   repo:
     name: репозиторий — юридические тексты

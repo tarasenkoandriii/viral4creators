@@ -473,3 +473,45 @@ describe('карта интерфейса из раунда', () => {
     );
   });
 });
+
+describe('Э-С Ш5: сайт лендинга генератора — служебный тенант', () => {
+  const LANDING = 'site_landing';
+
+  it('к сайту лендинга черновик по чужому сайту не привязать — 403, sites-backend не спрошен', async () => {
+    const { state, sites, svc } = setup();
+    svc.env = { ASSIST_LANDING_SITE_ID: LANDING };
+    await expect(svc.setLink('u1', 'p1', LANDING)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(state.drafts[0].clientSiteId).toBeNull();
+    expect(sites.calls).toEqual([]);
+  });
+
+  it('набор черновиков на сайт лендинга не уходит никогда (даже если черновик там оказался)', async () => {
+    const { state, sites, svc } = setup({
+      drafts: [publicDraft({ clientSiteId: LANDING })],
+      assets: [
+        {
+          id: 'a1',
+          clientSiteDraftId: 'd1',
+          assemblyStatus: 'complete',
+          blobUrl: 'https://blob.example/a1.mp4',
+          title: 'Ролик',
+          locale: 'ru',
+          durationMs: 1000,
+          createdAt: 1,
+        },
+      ],
+    });
+    svc.env = { ASSIST_LANDING_SITE_ID: LANDING };
+    expect(state.drafts[0].clientSiteId).toBe(LANDING);
+    await expect(svc.syncSite(LANDING)).resolves.toBe(false);
+    await expect(svc.syncForDraft('d1')).resolves.toBeUndefined();
+    await expect(svc.collectVideos(LANDING)).resolves.toEqual([]);
+    expect(sites.calls).toEqual([]);
+    // Обычный сайт — как раньше.
+    svc.env = {};
+    await expect(svc.syncSite(LANDING)).resolves.toBe(true);
+    expect(sites.calls.map((c) => c[0])).toEqual(['syncSiteVideos']);
+  });
+});

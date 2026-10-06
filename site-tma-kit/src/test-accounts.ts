@@ -10,7 +10,11 @@
 
 import type { ApiClient } from './api-client';
 
-export type TestAccountProduct = 'tutorial' | 'qa';
+/**
+ * Кому разрешена учётка. `assist-admin` (Э-С Ш3) — обход «Админки»
+ * помощника за логином браузерным воркером.
+ */
+export type TestAccountProduct = 'tutorial' | 'qa' | 'assist-admin';
 
 export interface TestAccountSecrets {
   password: boolean;
@@ -178,7 +182,8 @@ export function testAccountForm(a: TestAccount): TestAccountForm {
     password: '',
     hostIds: [...a.hostIds],
     products: a.products.filter(
-      (p): p is TestAccountProduct => p === 'tutorial' || p === 'qa'
+      (p): p is TestAccountProduct =>
+        p === 'tutorial' || p === 'qa' || p === 'assist-admin'
     ),
     lifetimeDays: null,
     confirmedTestAccount: a.confirmedTestAccount,

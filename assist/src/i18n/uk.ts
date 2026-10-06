@@ -138,6 +138,7 @@ export const appUk: AppDictionary = {
         file: 'Документ',
         faq: 'Перевірені відповіді',
         manual: 'Ручні правки',
+        api: 'API знань',
       },
       status: {
         pending_upload: 'Чекає завантаження',

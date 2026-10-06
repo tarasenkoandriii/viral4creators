@@ -82,6 +82,7 @@ export function AbTestPanel({
         variant="outline"
         icon={<SplitSquareHorizontal size={14} />}
         loading={busy}
+        data-assist="never"
         onClick={() => void onCreate()}
       >
         {dict.abTest.panelCta}

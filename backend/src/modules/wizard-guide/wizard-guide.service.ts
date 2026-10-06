@@ -25,6 +25,11 @@ import { scenarioOfProjectType } from '../../common/test-user-scenarios';
 import { AI_GUIDE_ENABLED_KEY } from './guide-settings';
 import { SessionStatus } from '../../common/types/session.types';
 import { PROJECT_NOT_FOUND } from '../../common/user-facing-errors';
+import {
+  readGuideAssistConfig,
+  resolveGuideEngine,
+  type GuideEngine,
+} from '../guide-assist/guide-assist-config';
 
 /**
  * Статусы сессии товарки, при которых мастер ещё на первом шаге.
@@ -65,6 +70,14 @@ export interface WizardGuideState {
    * не отдельная фича, и без первого у второго нет реплик.
    */
   voice: boolean;
+  /**
+   * Какой гид у этого человека (Э-С Ш6, флаг `WIZARD_GUIDE_ENGINE`):
+   * `legacy` — этот советник; `assist` — помощник платформы в режиме
+   * «Админка» (`modules/guide-assist`). При `assist` поле `available`
+   * ложно: старый советник прячется целиком — и у нового мини-аппа, и у
+   * закешированного старого, который про `engine` не знает.
+   */
+  engine: GuideEngine;
 }
 
 /** Голос без советника включить нельзя — объяснение для 409. */
@@ -87,13 +100,15 @@ export class WizardGuideService {
 
   async stateOf(userId: string, projectId: string): Promise<WizardGuideState> {
     const project = await this.ownProject(userId, projectId);
+    const engine = await this.engineOf(userId);
     return {
       enabled: project.aiGuideEnabled,
       canEnable: canEnableAiGuide(
         await this.progressOf(projectId, project.type),
       ),
-      available: await this.available(),
+      available: engine === 'legacy' && (await this.available()),
       voice: project.aiGuideEnabled && project.aiGuideVoice === true,
+      engine,
     };
   }
 
@@ -160,6 +175,22 @@ export class WizardGuideService {
       );
     }
     return this.stateOf(userId, projectId);
+  }
+
+  /**
+   * Гид человека по флагу Ш6 — та же функция, что у `GuideAssistService`
+   * (`resolveGuideEngine`): оба ответа обязаны совпадать.
+   */
+  private engineOf(userId: string): Promise<GuideEngine> {
+    return resolveGuideEngine(
+      readGuideAssistConfig(process.env).config,
+      userId,
+      (id) =>
+        this.prisma.user.findUnique({
+          where: { id },
+          select: { id: true, telegramId: true },
+        }),
+    );
   }
 
   /**

@@ -54,6 +54,14 @@ import {
   ACCOUNT_CONSENT_POLICIES,
   DEFAULT_ACCOUNT_CONSENT_POLICY,
 } from '../client-site-tutorial/account-consent';
+import {
+  readGuideAssistConfig,
+  readGuideFactsConfig,
+} from '../guide-assist/guide-assist-config';
+import {
+  landingAssistConfig,
+  landingAssistSiteId,
+} from '../client-site-media/landing-assist-config';
 
 export interface EnvLike {
   [key: string]: string | undefined;
@@ -1137,6 +1145,31 @@ export function getEnvSettings(
   }
 
   {
+    // Э-С Ш5: сайт тенанта лендинга в sites-backend — ролики штатной
+    // обучалки (барьер лендинга) и защита сайта от роликов по чужим сайтам.
+    const siteId = landingAssistSiteId(env);
+    const raw = env.ASSIST_LANDING_SITE_ID?.trim();
+    const cfg = landingAssistConfig(env);
+    const ok = !raw || (Boolean(siteId) && Boolean(cfg));
+    results.push({
+      key: 'ASSIST_LANDING_SITE_ID',
+      group: 'Консультант лендинга (Э-С Ш5)',
+      required: false,
+      set: Boolean(raw),
+      ok,
+      severity: ok ? 'ok' : 'warning',
+      message: !raw
+        ? 'Не задан — ролики штатной обучалки видит только старый консультант лендинга. Для виджета платформы (тенант «viral4creators») — id сайта из TMA помощника (doc/DEPLOYMENT.md §6.23).'
+        : !siteId
+          ? 'Не похоже на id сайта — ролики лендинга в тенант не отправляются.'
+          : !cfg
+            ? 'Сайт задан, но нет ASSIST_LANDING_OWNER_TELEGRAM_ID или хоста (ASSIST_LANDING_HOSTS / https LANDING_PUBLIC_URL) — ролики в тенант не отправляются; привязать к этому сайту черновик по чужому сайту уже нельзя.'
+            : `Ролики штатной обучалки (одобренные, не по сайтам заказчиков) уходят на сайт тенанта при одобрении; хосты: ${cfg.hosts.join(', ')}. Нужен канал SITES_BACKEND_URL + SITES_TUTORIAL_HMAC_SECRET и хост Blob в ASSIST_VIDEO_HOSTS у sites-backend.`,
+      // id сайта и Telegram-id владельца не показываем (как WIZARD_GUIDE_ASSIST_*).
+    });
+  }
+
+  {
     const raw = env.LIVE_LOGIN_RELAY_URL;
     const ok = raw === undefined || /^https?:\/\//.test(raw.trim());
     results.push({
@@ -1713,6 +1746,29 @@ export function getEnvSettings(
             ? 'Адрес sites-backend задан, а секрет (≥ 16 символов) — нет: вкладка «Помощник» не откроется.'
             : 'Не задан — как и адрес sites-backend; вкладка «Помощник» выключена.',
       // Значение не показываем — секрет.
+    });
+  }
+
+  {
+    // Э-С Ш6: гид мастера в режиме «Админка» помощника платформы. Флаг и
+    // полнота конфигурации — одной строкой: «наполовину» не включается
+    // (откат на старый гид), и оператору нужно видеть почему.
+    const r = readGuideAssistConfig(env);
+    const facts = readGuideFactsConfig(env);
+    const on = r.requested !== 'legacy';
+    results.push({
+      key: 'WIZARD_GUIDE_ENGINE',
+      group: 'Гид мастера → «Админка» (Э-С Ш6)',
+      required: false,
+      set: Boolean(env.WIZARD_GUIDE_ENGINE?.trim()),
+      ok: r.problems.length === 0,
+      severity: r.problems.length ? 'warning' : 'ok',
+      message: r.problems.length
+        ? `Запрошено «${r.requested}», работает старый гид: ${r.problems.join('; ')}.`
+        : on
+          ? `«Админка» включена (${r.requested}); API фактов для коннектора — ${facts ? 'включён' : 'выключен (нет WIZARD_GUIDE_ASSIST_CONNECTOR_KEY)'}.`
+          : `Старый гид (legacy). API фактов — ${facts ? 'включён (можно импортировать OpenAPI заранее)' : 'выключен'}.`,
+      value: r.requested,
     });
   }
 

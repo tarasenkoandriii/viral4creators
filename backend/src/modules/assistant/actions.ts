@@ -40,7 +40,7 @@ const VALID_LEGAL_SLUGS = ['offer', 'terms-of-use'];
  * константу нужно поправить вручную — иначе `faqIndex` на новый/
  * последний вопрос будет отбрасываться валидацией ниже как «вне
  * диапазона» (см. `parseActions`). Не вынесено в общий генератор
- * (`knowledge/generated.ts`) в этом заходе — тот собирается отдельным
+ * (`common/tutorial-knowledge/generated.ts`) в этом заходе — тот собирается отдельным
  * скриптом сборки знаний, а не рантаймом бэкенда.
  */
 export const FAQ_ITEMS_COUNT = 10;

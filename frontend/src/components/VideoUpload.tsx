@@ -286,6 +286,7 @@ export function VideoUpload({
           )}
 
           <Button
+            data-assist="confirm"
             block
             size="lg"
             onClick={handleUpload}
@@ -327,6 +328,7 @@ export function VideoUpload({
           </Field>
 
           <Button
+            data-assist="confirm"
             block
             size="lg"
             type="submit"

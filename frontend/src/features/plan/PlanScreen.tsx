@@ -392,6 +392,7 @@ export function PlanScreen() {
                     variant="outline"
                     loading={busy === 'LITE'}
                     disabled={busy !== null}
+                    data-assist="never"
                     onClick={() => cancelSubscription('LITE')}
                   >
                     {dict.planScreen.cancelSubscription}
@@ -406,6 +407,7 @@ export function PlanScreen() {
                   block
                   loading={busy === id}
                   disabled={busy !== null}
+                  data-assist="never"
                   onClick={() => void switchTo(id)}
                 >
                   {dict.planScreen.switchTo.replace('{{plan}}', plan.title)}
@@ -416,6 +418,7 @@ export function PlanScreen() {
                   variant="outline"
                   loading={busy === 'LITE'}
                   disabled={busy !== null || !state.subscription}
+                  data-assist="never"
                   onClick={() => cancelSubscription('LITE')}
                 >
                   {dict.planScreen.cancelSubscription}
@@ -430,6 +433,7 @@ export function PlanScreen() {
                       checkoutBusy.method === 'STARS'
                     }
                     disabled={checkoutBusy !== null}
+                    data-assist="never"
                     onClick={() => void buy(id, 'STARS')}
                   >
                     {dict.planScreen.buyViaStars}
@@ -443,6 +447,7 @@ export function PlanScreen() {
                       checkoutBusy.method === 'WAYFORPAY'
                     }
                     disabled={checkoutBusy !== null}
+                    data-assist="never"
                     onClick={() => void buy(id, 'WAYFORPAY')}
                   >
                     {dict.planScreen.buyViaWayForPay}
@@ -506,6 +511,7 @@ export function PlanScreen() {
               block
               variant={consent.consented ? 'outline' : undefined}
               loading={consentBusy}
+              data-assist="never"
               disabled={consentBusy}
               onClick={() => {
                 if (

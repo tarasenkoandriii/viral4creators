@@ -161,6 +161,7 @@ export function CreditsScreen() {
                   icon={<Sparkles size={13} />}
                   loading={busy?.packId === pack.id && busy.method === 'STARS'}
                   disabled={busy !== null}
+                  data-assist="never"
                   onClick={() => void buy(pack, 'STARS')}
                 >
                   {dict.creditsScreen.starsButton} · {pack.stars}
@@ -174,6 +175,7 @@ export function CreditsScreen() {
                     busy?.packId === pack.id && busy.method === 'WAYFORPAY'
                   }
                   disabled={busy !== null}
+                  data-assist="never"
                   onClick={() => void buy(pack, 'WAYFORPAY')}
                 >
                   {dict.creditsScreen.wayforpayButton} · {wayforpayLabel(pack)}

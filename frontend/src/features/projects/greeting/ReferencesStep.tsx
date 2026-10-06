@@ -182,6 +182,7 @@ export function ReferencesStep({
                   именно у них grok-путь уходил в text-to-video вслепую
                   и показывал результат только после дорогого рендера. */}
                 <Button
+                  data-assist="confirm"
                   size="sm"
                   variant="outline"
                   icon={<Sparkles size={14} />}
@@ -198,6 +199,7 @@ export function ReferencesStep({
                   открытии шага, — иначе платный вызов уходил бы у
                   каждого, кто просто пролистал шаг. */}
                 <Button
+                  data-assist="confirm"
                   size="sm"
                   variant="outline"
                   icon={<Wand2 size={14} />}
@@ -245,6 +247,7 @@ export function ReferencesStep({
                   {settings.map((setting) => (
                     <li key={setting}>
                       <Button
+                        data-assist="confirm"
                         size="sm"
                         variant="outline"
                         disabled={saving || settingsBusy}
@@ -342,6 +345,7 @@ export function ReferencesStep({
                       </button>
                       <button
                         type="button"
+                        data-assist="never"
                         aria-label={w.deleteReferenceAria}
                         disabled={saving}
                         onClick={() => {
@@ -436,6 +440,7 @@ function FaceConsentNote({
       {state === 'unchecked' && <p>{pg.faceUnchecked}</p>}
       <label className="flex cursor-pointer gap-2">
         <input
+          data-assist="never"
           type="checkbox"
           checked={state === 'consented'}
           disabled={disabled || state === 'consented'}

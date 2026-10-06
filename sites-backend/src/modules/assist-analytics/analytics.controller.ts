@@ -12,6 +12,7 @@
  *   GET   /assist/sites/:id/integrations                   (manager)
  *   POST  /assist/sites/:id/integrations/goal-webhook/secret   (владелец)
  *   POST  /assist/sites/:id/integrations/identity/secret       (владелец)
+ *   POST  /assist/sites/:id/integrations/knowledge-api/secret  (владелец; Э-С Ш5)
  *   DELETE /assist/sites/:id/integrations/:kind            (владелец)
  *   POST  /assist/sites/:id/exports  ExportRequest         (manager; withText — владелец)
  *   GET   /assist/sites/:id/exports ; GET …/exports/:xid   (manager)
@@ -51,19 +52,28 @@ import { AnalyticsSettingsService } from './analytics-settings.service';
 import type { ExportRequest } from './api-types';
 import { ExportsService } from './exports.service';
 import { GoalsService } from './goals.service';
-import { IntegrationsService } from './integrations.service';
+import {
+  INTEGRATION_KINDS,
+  IntegrationsService,
+  type IntegrationKind,
+} from './integrations.service';
 import { StatsService, type StatsQuery } from './stats.service';
 
-function integrationKind(kind: string): 'goal_webhook' | 'identity' {
-  const k = kind === 'goal-webhook' ? 'goal_webhook' : kind;
-  if (k !== 'goal_webhook' && k !== 'identity') {
+function integrationKind(kind: string): IntegrationKind {
+  const k =
+    kind === 'goal-webhook'
+      ? 'goal_webhook'
+      : kind === 'knowledge-api'
+        ? 'knowledge_api'
+        : kind;
+  if (!(INTEGRATION_KINDS as readonly string[]).includes(k)) {
     throw analyticsError(
       HttpStatus.NOT_FOUND,
       'INTEGRATION_NOT_FOUND',
       'Нет такой интеграции',
     );
   }
-  return k;
+  return k as IntegrationKind;
 }
 
 @Controller('assist')

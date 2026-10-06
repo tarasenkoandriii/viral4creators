@@ -88,7 +88,11 @@ export function PersonaVerifyResult({
         <p className="mt-3 text-xs text-silver-400">{t.photoTips}</p>
         <div className="mt-4 flex flex-wrap gap-2">
           {verifyRetryable(result.reasons) && (
-            <Button loading={busy} onClick={onVerifyAgain}>
+            <Button
+              data-assist="confirm"
+              loading={busy}
+              onClick={onVerifyAgain}
+            >
               {t.verifyAgain}
             </Button>
           )}

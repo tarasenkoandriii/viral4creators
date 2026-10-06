@@ -97,6 +97,7 @@ export function SoundCheckPanel({
       ) : (
         <>
           <Button
+            data-assist="confirm"
             icon={<Volume2 size={14} />}
             onClick={() => void run()}
             disabled={processing}

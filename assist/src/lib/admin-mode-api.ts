@@ -146,8 +146,21 @@ export interface PrivateCrawlView {
   testAccountId: string | null;
   startPath: string;
   hosts: Array<{ id: string; host: string }>;
-  testAccounts: Array<{ id: string; label: string; hostIds: string[] }>;
-  jobs: Array<{ id: string; status: string; createdAt: string }>;
+  testAccounts: Array<{
+    id: string;
+    label: string;
+    hostIds: string[];
+    /** Э-С Ш3: учётке разрешён продукт «Помощник: обход Админки». */
+    adminCrawl: boolean;
+  }>;
+  jobs: Array<{
+    id: string;
+    status: string;
+    createdAt: string;
+    note: string | null;
+  }>;
+  /** Э-С Ш3: `ready` — браузерный воркер подключён, `waiting_sh3` — нет. */
+  worker: 'waiting_sh3' | 'ready';
 }
 
 export interface AdminChatMessage {
@@ -414,7 +427,12 @@ function parseCrawl(v: unknown): PrivateCrawlView {
     })),
     testAccounts: arr(o.testAccounts).map((a) => {
       const x = obj(a);
-      return { id: str(x.id), label: str(x.label), hostIds: strs(x.hostIds) };
+      return {
+        id: str(x.id),
+        label: str(x.label),
+        hostIds: strs(x.hostIds),
+        adminCrawl: x.adminCrawl === true,
+      };
     }),
     jobs: arr(o.jobs).map((j) => {
       const x = obj(j);
@@ -422,8 +440,10 @@ function parseCrawl(v: unknown): PrivateCrawlView {
         id: str(x.id),
         status: str(x.status),
         createdAt: str(x.createdAt),
+        note: strOrNull(x.note),
       };
     }),
+    worker: o.worker === 'ready' ? 'ready' : 'waiting_sh3',
   };
 }
 

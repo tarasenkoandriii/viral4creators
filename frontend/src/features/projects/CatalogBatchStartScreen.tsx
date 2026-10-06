@@ -232,6 +232,7 @@ export function CatalogBatchStartScreen({
             icon={<Layers size={14} />}
             loading={busy}
             disabled={checked.size === 0}
+            data-assist="never"
             onClick={() => void onSubmit()}
           >
             {dict.catalogBatch.startSubmitButton.replace(

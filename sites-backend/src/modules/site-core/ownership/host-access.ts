@@ -22,8 +22,17 @@
 
 import { WIDGET_GRACE_MS } from '../site-core.constants';
 
+/**
+ * Э-С Ш3: `assist-admin-login` — аренда тестовой учётки Ш2 браузерному
+ * воркеру под обход «Админки» за логином (`${product}-login`, как
+ * `tutorial-login`/`qa-login`); L1 без льготы.
+ */
 export type AssistPurpose =
-  'assist-sandbox' | 'assist-widget' | 'assist-crawl' | 'assist-admin';
+  | 'assist-sandbox'
+  | 'assist-widget'
+  | 'assist-crawl'
+  | 'assist-admin'
+  | 'assist-admin-login';
 /** QA определяет свои назначения сам; для ядра любое `qa-*` — L1 без льготы. */
 export type QaPurpose = `qa-${string}`;
 /**
@@ -56,6 +65,7 @@ function isKnownPurpose(p: string): p is HostPurpose {
     p === 'assist-widget' ||
     p === 'assist-crawl' ||
     p === 'assist-admin' ||
+    p === 'assist-admin-login' ||
     /^qa-[a-z0-9-]+$/.test(p) ||
     /^tutorial(-[a-z0-9-]+)?$/.test(p)
   );

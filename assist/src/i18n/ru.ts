@@ -140,6 +140,7 @@ export const appRu = {
         file: 'Документ',
         faq: 'Проверенные ответы',
         manual: 'Ручные правки',
+        api: 'API знаний',
       },
       status: {
         pending_upload: 'Ждёт загрузки',

@@ -136,6 +136,7 @@ export function RelevancePanel({
 
       {!report && !running && state !== null && (
         <Button
+          data-assist="confirm"
           block
           variant="outline"
           data-qa="relevance-check"
@@ -161,6 +162,7 @@ export function RelevancePanel({
               />
             </div>
             <button
+              data-assist="confirm"
               type="button"
               data-qa="relevance-recheck"
               aria-label={dict.relevancePanel.recheck}

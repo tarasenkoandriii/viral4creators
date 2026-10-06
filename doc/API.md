@@ -1062,3 +1062,146 @@ code }] } } }`:
 `maskPagePath` — те же, что у адреса страницы; изменённый сегмент — в
 percent-кодировке); пикер шлёт его уже маской и ищет цель по маске пути
 (аудит Э6-тер (3)).
+
+## Э-С Ш5: системный API знаний сайта (консультант лендинга → тенант)
+
+План «Э-С: слияние», Ш5; аудит слияния §Ш5; развёртывание —
+`doc/DEPLOYMENT.md` §6.23. Владелец сайта (или его CI) публикует документы
+в знания режима «Сайт» своего сайта: источник `api` (один на сайт,
+управляемый — в TMA только просмотр), обычная версия знаний, карантин
+инъекций — как у файла владельца; тот же текст — `unchanged` без версии и
+без эмбеддингов. Первый потребитель — база знаний из кода генератора
+(`backend/scripts/sync-assistant-knowledge.ts`, документы `gen-kb-<локаль>`).
+
+sites-backend, системные маршруты (ответ — общий конверт `{ success, data }`;
+тело запроса — СЫРОЕ, любой `Content-Type`, ≤ 128 КБ; `@PublicRoute`,
+подлинность — подпись):
+
+`X-Assist-Signature: t=<unix сек>,v1=<hex HMAC-SHA256(knsec_…, "<t>.<МЕТОД>.<siteId>.<key>.<сырое тело>")>`
+(у GET списка `key` пустой, у GET и DELETE тело пустое; окно ±5 мин).
+Нет ключа у сайта, чужой/отозванный ключ, подпись другого метода, ключа или
+сайта, старая подпись, несуществующий сайт — ОДИН ответ 401
+`SIGNATURE_INVALID`. 60 запросов в минуту на сайт — 429 `RATE_LIMITED`.
+Аудит Ш5: подписанный PUT/DELETE принимается ОДИН раз — повтор той же
+подписи (в окне) — 409 `KNOWLEDGE_API_REPLAY`, ничего не меняя (повторная
+отправка — с новой подписью); изменений знаний (created/updated/deleted)
+не больше 200 в сутки UTC на сайт — 429 `KNOWLEDGE_API_CHANGES_LIMIT`
+(`unchanged` и `absent` не считаются). Фильтр секретов проверяет и
+нормализованный текст (NFKC, без невидимых символов, с раскрытыми `%XX`
+и `&#…;`).
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `GET /assist/v1/sites/:id/knowledge/site/documents` | → `{ siteId, documents[{ key, title, lang, hash, updatedAt }] }` — живые документы источника `api` |
+| `PUT /assist/v1/sites/:id/knowledge/site/documents/:key` | `{ title (≤ 200), lang? (2 буквы), format?: "markdown" \| "text", content (≤ 96 КБ), url? }` → `{ key, status: created \| updated \| unchanged, version (null у unchanged), hash, truncated }`. `key` — `^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$` (400 `KNOWLEDGE_API_KEY_INVALID`, после подписи); лишние поля, кривой формат — 400 `KNOWLEDGE_API_BODY_INVALID`; `url` — https на ПОДТВЕРЖДЁННОМ хосте «Сайта» этого сайта (хост «Админки» — нет), иначе 400 `KNOWLEDGE_API_URL_INVALID` (даёт фрагментам адрес — ссылка-источник и действие `link` виджета); больше 96 КБ — 413 `DOCUMENT_TOO_LARGE`; нет текста — 400 `DOCUMENT_NO_TEXT`; строка, похожая на секрет (закрытый ключ, `sk-…`, `AIza…`, токен бота, JWT, `whsec_/idsec_/knsec_`, строка подключения с паролем…), — 422 `KNOWLEDGE_API_SECRET_LIKE` с именем правила, без самого совпадения, ничего не записано; больше 50 документов — 409 `KNOWLEDGE_SOURCE_LIMIT`; бюджет обучения — как у файлов |
+| `DELETE /assist/v1/sites/:id/knowledge/site/documents/:key` | → `{ key, status: deleted \| absent, version }` — новая версия без документа; повтор с новой подписью — `absent` (та же подпись — 409 `KNOWLEDGE_API_REPLAY`) |
+
+sites-backend, кабинет (initData помощника): `GET
+/assist/sites/:id/integrations` — + `knowledgeApi{ active, createdAt,
+lastUsedAt, endpoint }` (`endpoint` — путь без origin);
+`POST /assist/sites/:id/integrations/knowledge-api/secret` → `{ kind:
+knowledge_api, secret: knsec_…, createdAt }` (только владелец, показ один
+раз, выпуск заново — старый недействителен); `DELETE
+/assist/sites/:id/integrations/knowledge-api`. TMA: «Интеграции» → «API
+знаний»; источник `api` в «Знания» — «API знаний».
+
+backend генератора (без новых маршрутов): одобрение ролика в админке
+(`PATCH /admin/tutorial-video-assets/:id/review`) отправляет полный набор роликов
+штатной обучалки на сайт тенанта (`ASSIST_LANDING_SITE_ID`) внутренним API
+Э6 `POST /internal/sites/tutorial/site-videos` — барьер лендинга
+(`reviewed`, собран, `clientSiteDraftId: null`); `PUT
+/api/projects/:id/site-tutorial/assist-link` с id сайта лендинга — 403.
+
+## Э-С Ш6: гид мастера TMA → «Админка» (backend генератора)
+
+За флагом `WIZARD_GUIDE_ENGINE` (умолчание `legacy` — ничего из этого не
+влияет на мини-апп); развёртывание — `doc/DEPLOYMENT.md` §6.24.
+
+Мини-апп (конверт `{ success, data }`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /guide-assist/config` | `{ engine: legacy }` или `{ engine: assist, pk, origin }` — какой гид у вошедшего; аноним — `legacy` (без 401); `Cache-Control: no-store` |
+| `POST /guide-assist/identity` | Telegram-личность → `{ jwt, exp }` — employee-JWT HS256 (`sub` = `g1.<userId>.<HMAC>`, `aud` = id сайта, `role`, `iat`, `exp` ≤ 15 мин, без имени); гид не «Админка» — 404 `GUIDE_ASSIST_DISABLED`; 30/мин на человека; `no-store` |
+| `GET /projects/:projectId/wizard-guide` | + поле `engine: legacy \| assist`; при `assist` — `available: false` (старый советник прячется) |
+
+Коннектор «Админки» платформы (сырой JSON без конверта, `no-store`;
+`Authorization: Bearer <WIZARD_GUIDE_ASSIST_CONNECTOR_KEY>` и
+`X-V4C-Actor: <sub JWT>`; неверный ключ, голый/чужой/поддельный `sub`,
+несуществующий пользователь — 401 без подробностей; API выключен — 404;
+60/мин на человека из `X-V4C-Actor` и 1200/мин с адреса платформы — аудит
+Ш6: одно окно 120/мин по адресу делили все сотрудники; подписи
+`X-V4C-Signature` у чтения нет — платформа подписывает только изменяющие
+вызовы):
+
+| Маршрут | Что |
+|---|---|
+| `GET /guide-assist/v1/openapi.json` | OpenAPI 3.0.3 трёх операций (без ключа; 404 без ключей API или `API_PUBLIC_URL`) |
+| `GET /guide-assist/v1/knowledge.md` | знания гида для «Админки» (Markdown, `ETag`, 304 по `If-None-Match`; публично — данных пользователей нет) |
+| `GET /guide-assist/v1/projects` | `listProjects` → `{ projects[{ id, order, type, scenario, scenarioTitle, updated }] }` — до 20 последних, без названий |
+| `GET /guide-assist/v1/projects/:projectId/facts` | `getProjectFacts` → `{ projectId, scenario, scenarioTitle, scenarioGoal, steps[{ id, goal, uiTarget }], facts[] }` — факты словами (`uiTarget` — `data-assist-id` кнопки шага в TMA); чужой/удалённый — 404 |
+| `GET /guide-assist/v1/account` | `getAccountSummary` → `{ plan: LITE\|STANDARD\|PREMIUM, projects }` |
+
+sites-backend: `GET /wa/v1/frame?pk=` — для сайтов из
+`ASSIST_ADMIN_TMA_SITE_IDS` в `frame-ancestors` к verified-хостам «Админки»
+добавляется `https://web.telegram.org` (только если свои хосты есть).
+
+
+## Э-С Ш3: браузерный воркер (очередь заданий, канал воркера, связки продуктов)
+
+План «Э-С: слияние», Ш3 (аудит слияния §3.2 вариант C); развёртывание —
+`doc/DEPLOYMENT.md` §6.25. За выключателем `BROWSER_WORKER_ENABLED`
+(умолчание — выкл.: маршруты продуктов ниже отвечают 409
+`BROWSER_WORKER_DISABLED`, «Админка» — `waiting_worker` как в Э7, `claim`
+отдаёт `{ enabled: false, jobs: [] }`). Протокол (виды, параметры, лимиты,
+коды ошибок, строгий разбор) — `sites-backend/src/modules/browser-jobs/protocol.ts`
+(копия у воркера — `browser-worker/src/shared/browser-job-protocol.ts`).
+
+Виды заданий: `ui-snapshot` («Снимок», Ш4), `descriptor-resolve`
+(`assist-voice-map-check`, Т-3 — только разрешение дескрипторов, без
+кликов), `admin-crawl` (обход «Админки» за логином, одна попытка),
+`frames-capture` (кадры обучалки). Параметры — без секретов (триггер БД
+отвергает ключи `password|secret|secrets|cookies|token|username|credentials`);
+адреса — только хосты замка задания (`allowedHosts` — ровно хост задания).
+
+sites-backend, канал воркера (HMAC как у Ш1, но СВОЙ секрет
+`SITES_WORKER_HMAC_SECRET` и вызывающий `browser-worker`; метка ±5 мин,
+одноразовый id; секрета нет или он совпал с секретом обучалки / Flow-QA /
+админки — 503 `INTERNAL_NOT_CONFIGURED`; тело ≤ 8 КБ, `complete` ≤ 384 КБ,
+`artifact` ≤ 2,2 МБ — 400 `WORKER_BAD_BODY`; лишнее поле — 400), все `POST`,
+конверт `{ success, data }`:
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `/internal/worker/v1/jobs/claim` | `{ workerId, kinds[], max ≤ 4 }` → `{ enabled, jobs[{ id, kind, attempt, leaseToken, leaseUntil, wallMs, params, needsCredentials }] }` — аренда 60 с; не больше одного задания кабинета за вызов и 2 идущих на кабинет; хост перепроверяется перед выдачей (отозван — задание `failed: host_not_verified`); `admin-crawl` — только при заданном `SITES_WORKER_SEAL_PUBLIC_KEY` |
+| `/internal/worker/v1/jobs/heartbeat` | `{ jobId, leaseToken }` → `{ ok, cancel, leaseUntil }` — продление аренды; `cancel: true` — отмена владельцем или выключатель (kill-switch); чужой/устаревший токен — 409 `WORKER_LEASE_LOST` |
+| `/internal/worker/v1/jobs/complete` | `{ jobId, leaseToken, result }` → `{ ok }` — результат разбирается строго по виду и параметрам (адрес вне замка, лимиты, лишние поля, ссылка на незагруженный артефакт — 400 `WORKER_BAD_RESULT`); двойная сдача — 409 |
+| `/internal/worker/v1/jobs/fail` | `{ jobId, leaseToken, code }` (`code` — из закрытого списка протокола) → `{ ok, retry }` — повтор решает сервер: только `nav_timeout \| browser_crashed \| job_timeout \| shutdown \| internal` и пока есть попытки (пауза 30 с × 2ⁿ, ≤ 10 мин) |
+| `/internal/worker/v1/jobs/credentials` | `{ jobId, leaseToken }` → `{ sealed, attempt }` — только `admin-crawl`, один раз на попытку (повтор — 409 `WORKER_CREDENTIALS_USED`): аренда Ш2 `assist-admin-login` от имени `browser-worker` (продукт `assist-admin`, хост учётки, подтверждение, активность — иначе 403 `WORKER_CREDENTIALS_DENIED`), погашение и ответ КОНВЕРТОМ X25519+AES-GCM под ключ воркера, AAD `bjob:<id>:<attempt>`; без ключа — 503 `WORKER_CREDENTIALS_DISABLED` |
+| `/internal/worker/v1/jobs/artifact` | `{ jobId, leaseToken, idx 0…11, contentType: image/jpeg\|image/png, width, height, data(base64) }` → `{ ok, idx, bytes }` — ≤ 1,5 МБ, сигнатура JPEG/PNG; в приватный Blob `browser/<кабинет>/<задание>/<idx>-<случайно>.jpg` со сроком жизни задания |
+
+sites-backend, кабинет TMA (initData помощника, `productRoles.assist =
+manager`; чужой сайт — 404):
+
+| Маршрут | Что |
+|---|---|
+| `POST /assist/sites/:id/voice-map/site/snapshots` | `{ url, viewport?: mobile\|desktop }` → `{ snapshotId, status }` — только публичная страница verified-хоста «Сайта» (не admin-хост) — иначе 422; лимиты: 3 идущих и 60 в сутки на сайт (429 `BROWSER_JOB_BUSY`/`BROWSER_JOB_DAILY_LIMIT`) |
+| `GET /assist/sites/:id/voice-map/site/snapshots/:sid` | `{ id, status, errorCode, url, title, viewport{width,height}, elements[{ ref, role, tag, text, assistId, href, toggle, submit, inForm, disabled, inView, box{x,y,w,h} }], screenshot{ url, linkExpiresAt, width, height } \| null, createdAt, expiresAt }` — подписи с маской ПД, ссылка на скриншот ≤ 15 мин, снимок живёт 24 ч; элементы снимка уходят в общую карту Ш4 источником `qa` |
+| `POST /assist/sites/:id/voice-map/site/versions/:n/worker-check` | → `{ checkId, status }` — сверка дескрипторов версии на образцах страниц (шаблоны — до 3, страницы целей; ≤ 10 страниц, ≤ 60 целей, CSS-кандидаты целей) |
+| `GET /assist/sites/:id/voice-map/site/versions/:n/worker-check` | последняя сверка версии: поля задания + `report{ version, pages[{ path, ok, error }], targets[{ key, samples[{ path, found }], stability, lost }], lost, fragile }` — «нашлась» по CSS-кандидатам, без них — тем же `findInSnapshot`, что в бою; нет сверки — 404 `VOICE_MAP_CHECK_NOT_FOUND` |
+| `GET /assist/sites/:id/admin-mode/private-crawl` | + `worker: waiting_sh3 \| ready`, у учёток — `adminCrawl` (продукт `assist-admin`), у заданий — `note` |
+| `PUT …/private-crawl`, `POST …/private-crawl/run` | при включённом воркере учётке нужен продукт `assist-admin` (409); `run` → `{ jobId, status: queued, worker: ready }`, задание обхода `queued → running → done \| failed \| cancelled` (`note`: «страниц: N» или причина без внутренних кодов); выключение обхода отменяет ожидающие задания |
+
+sites-backend, канал генератора (HMAC обучалки `SITES_TUTORIAL_HMAC_SECRET`):
+
+| Маршрут | Тело → ответ |
+|---|---|
+| `POST /internal/sites/tutorial/frames/request` | `{ telegramId, url, frames? 1…10, viewport? }` → `{ jobId, status }` — только режим A на ТОЧНОМ подтверждённом хосте (иначе 409 `TUTORIAL_FRAMES_MODE_A`) |
+| `POST /internal/sites/tutorial/frames/status` | `{ telegramId, jobId }` → `{ jobId, status, errorCode, frames[{ idx, scrollY, url, linkExpiresAt, width, height }], expiresAt }` — ссылки ≤ 15 мин, кадры живут 3 суток; чужое задание — 404 `TUTORIAL_FRAMES_NOT_FOUND` |
+
+Реестр учёток Ш2: продукт `assist-admin` (`products: tutorial | qa |
+assist-admin`); канал генератора `assist-admin` не ставит (400) и, правя
+учётку своим списком, не снимает.
+
+Крон: `GET /cron/browser-jobs-retention` (`CRON_SECRET`) → `{
+artifactsPurged, jobsPurged, blobErrors }`.

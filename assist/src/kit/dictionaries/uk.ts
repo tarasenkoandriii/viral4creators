@@ -334,6 +334,7 @@ export const uk: Dictionary = {
     products: 'Кому дозволено',
     productTutorial: 'Навчалка',
     productQa: 'QA-перевірки',
+    productAssistAdmin: 'Помічник: обхід «Адмінки»',
     lifetime: 'Строк зберігання',
     lifetimeKeep: 'Не змінювати',
     days: '{n} дн.',

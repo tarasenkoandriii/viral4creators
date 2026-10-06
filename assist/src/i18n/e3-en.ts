@@ -437,6 +437,10 @@ export const e3En: E3Dictionary = {
     wpKey: 'Site key',
     wpOrigin: 'Widget address',
     jsApi: 'Goals and customer from site code',
+    knowledgeApi: 'Knowledge API (documents from your code)',
+    knowledgeApiHint:
+      'Your server or CI publishes documents into the assistant knowledge: PUT …/documents/<key> signed with the knsec_ key. Documents go through the same versions and quarantine as files.',
+    knowledgeEndpoint: 'Knowledge API address',
   },
   learning: {
     title: 'Learning',

@@ -54,6 +54,13 @@ export const WIDGET_BEACON_PATHS = [
 ];
 export const SMALL_BODY_LIMIT = '4kb';
 /**
+ * Э-С Ш5: системный API знаний сайта подписан HMAC по СЫРОМУ телу
+ * (assist-site-knowledge-api) — тело строкой любого Content-Type, свой
+ * потолок (документ ≤ 96 КБ в JSON); JSON разбирает сервис после подписи.
+ */
+export const KNOWLEDGE_API_PATH = '/assist/v1/sites/:id/knowledge';
+export const KNOWLEDGE_API_BODY_LIMIT = '128kb';
+/**
  * Э-С Ш1 (П-С3): внутренний API обучалки генератора подписан HMAC по СЫРОМУ
  * телу (internal-sites/tutorial-hmac.guard.ts) — по той же причине, что
  * вебхук целей: тело приходит строкой (≤ 8 КБ), JSON разбирает гвард ПОСЛЕ
@@ -67,6 +74,14 @@ export const INTERNAL_CREDENTIALS_BODY_LIMIT = '320kb';
 /** Э-С Ш4: карта интерфейса от Flow-QA — снимок с кандидатами (свой потолок). */
 export const INTERNAL_QA_UI_MAP_PATH = '/internal/sites/qa/ui-map';
 export const INTERNAL_QA_UI_MAP_BODY_LIMIT = '64kb';
+/**
+ * Э-С Ш3: канал браузерного воркера подписан HMAC по СЫРОМУ телу
+ * (internal-worker/worker-hmac.guard.ts) — тело строкой; общий потолок —
+ * под артефакт (кадр ≤ 1,5 МБ в base64), потолок каждого маршрута (8 КБ /
+ * 384 КБ / 2,2 МБ) держит гвард.
+ */
+export const INTERNAL_WORKER_PATH = '/internal/worker';
+export const INTERNAL_WORKER_BODY_LIMIT = '2300kb';
 
 /**
  * Э5: запись вопроса голосом приходит сырыми байтами (`Content-Type:
@@ -134,6 +149,20 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       rawText(req, res, next);
     },
   );
+  const knowledgeApiText = text({
+    type: () => true,
+    limit: KNOWLEDGE_API_BODY_LIMIT,
+  });
+  app.use(
+    KNOWLEDGE_API_PATH,
+    function knowledgeApiRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      knowledgeApiText(req, res, next);
+    },
+  );
   const beaconText = text({ type: 'text/plain', limit: SMALL_BODY_LIMIT });
   for (const path of WIDGET_BEACON_PATHS) {
     app.use(
@@ -175,6 +204,20 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       next: NextFunction,
     ) {
       qaUiMapText(req, res, next);
+    },
+  );
+  const workerText = text({
+    type: () => true,
+    limit: INTERNAL_WORKER_BODY_LIMIT,
+  });
+  app.use(
+    INTERNAL_WORKER_PATH,
+    function internalWorkerRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      workerText(req, res, next);
     },
   );
   const internalText = text({

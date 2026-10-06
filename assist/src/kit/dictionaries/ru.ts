@@ -337,6 +337,7 @@ export const ru = {
     products: 'Кому разрешена',
     productTutorial: 'Обучалка',
     productQa: 'QA-проверки',
+    productAssistAdmin: 'Помощник: обход «Админки»',
     lifetime: 'Срок хранения',
     lifetimeKeep: 'Не менять',
     days: '{n} дн.',

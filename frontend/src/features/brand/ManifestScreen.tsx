@@ -306,6 +306,7 @@ function EditScreen({ manifestId }: { manifestId: string }) {
             variant="ghost"
             size="sm"
             icon={<Trash2 size={14} />}
+            data-assist="never"
             onClick={onDelete}
             loading={deleting}
             aria-label={dict.manifestScreen.deleteAriaLabel}
@@ -1085,6 +1086,7 @@ function AssetRow({
         <button
           type="button"
           aria-label={copy.deleteAria}
+          data-assist="never"
           onClick={() => void onDelete()}
           disabled={busy !== null}
           className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg p-1.5 text-silver-400 hover:bg-rose-500/10 hover:text-rose-500 disabled:opacity-50"

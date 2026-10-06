@@ -49,7 +49,7 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import {
   ASSISTANT_STEPS,
   AssistantStepItem,
-} from '../assistant/knowledge/generated';
+} from '../../common/tutorial-knowledge/generated';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
 import {
   greetingTopicKeys,

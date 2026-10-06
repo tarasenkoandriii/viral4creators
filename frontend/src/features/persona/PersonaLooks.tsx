@@ -460,6 +460,7 @@ function NewLookForm({
         )}
         <div>
           <Button
+            data-assist="confirm"
             loading={busy}
             disabled={!ready}
             onClick={() => void create()}

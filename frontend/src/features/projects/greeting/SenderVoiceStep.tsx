@@ -492,6 +492,7 @@ export function SenderVoiceStep({
                     {v.name}
                   </Button>
                   <Button
+                    data-assist="confirm"
                     size="sm"
                     variant="ghost"
                     icon={<Volume2 size={14} />}

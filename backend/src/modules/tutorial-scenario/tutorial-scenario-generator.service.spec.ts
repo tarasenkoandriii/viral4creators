@@ -27,7 +27,7 @@ jest.mock('@google/genai', () => ({
 // Десять шагов реальной обучалки не нужны для этого теста — фиксируем
 // свою короткую базу знаний, чтобы тест не зависел от содержимого
 // generated.ts и не переписывался при каждой правке текстов обучалки.
-jest.mock('../assistant/knowledge/generated', () => ({
+jest.mock('../../common/tutorial-knowledge/generated', () => ({
   ASSISTANT_STEPS: {
     ru: [
       { title: 'Шаг 1', text: 'Первый шаг', details: [] },

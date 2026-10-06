@@ -350,6 +350,7 @@ export function VoicePicker({
                 disabled={disabled || previewing}
               />
               <Button
+                data-assist="confirm"
                 variant="outline"
                 size="sm"
                 className="ml-auto shrink-0"
@@ -365,6 +366,7 @@ export function VoicePicker({
                   оригинала нет. */}
               {sessionId && (
                 <Button
+                  data-assist="confirm"
                   variant="outline"
                   size="sm"
                   className="shrink-0"
@@ -879,6 +881,7 @@ export function MyVoicesSection({
                   aria-label={t.deleteButton}
                   loading={deletingId === v.id}
                   disabled={disabled || deletingId !== null}
+                  data-assist="never"
                   onClick={() => void remove(v)}
                 />
               </div>
@@ -984,6 +987,7 @@ export function MyVoicesSection({
                 <input
                   type="checkbox"
                   checked={consent}
+                  data-assist="never"
                   onChange={(e) => setConsent(e.target.checked)}
                   disabled={submitting}
                   className="mt-0.5 h-4 w-4 shrink-0 accent-sky-400"
@@ -995,6 +999,7 @@ export function MyVoicesSection({
                   size="sm"
                   icon={<Volume2 size={14} />}
                   loading={submitting}
+                  data-assist="never"
                   disabled={!label.trim() || !consent || !!sampleProblem}
                   onClick={() => void submit()}
                 >

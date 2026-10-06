@@ -20,6 +20,7 @@ import {
   TelegramLoginWidgetPayload,
 } from '../lib/telegram-login';
 import { claimStoredReferral } from '../services/invite-api';
+import { notifyIdentityChanged } from '../lib/guide-assist';
 import { useI18n } from '../lib/i18n-context';
 
 const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME;
@@ -75,6 +76,7 @@ export function TelegramLoginButton() {
       setError(null);
       try {
         await telegramLoginCallback(payload);
+        notifyIdentityChanged();
         await refetchMe();
         // Вторая (и для браузера единственная работающая) попытка
         // привязать приглашение — сразу после входа, этап 134. До
@@ -121,6 +123,7 @@ export function TelegramLoginButton() {
     setError(null);
     try {
       await devLoginTelegram(DEV_USER_ID);
+      notifyIdentityChanged();
       await refetchMe();
     } catch {
       setError(dict.telegramLoginButton.devLoginFailed);
@@ -133,6 +136,7 @@ export function TelegramLoginButton() {
     setSubmitting(true);
     try {
       await logoutTelegram();
+      notifyIdentityChanged();
       await refetchMe();
     } finally {
       setSubmitting(false);

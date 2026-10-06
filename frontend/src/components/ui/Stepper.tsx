@@ -11,6 +11,7 @@ export function Stepper({
   selectable,
   done: doneFlags,
   qa,
+  assistIds,
 }: {
   steps: string[];
   current: number;
@@ -46,6 +47,14 @@ export function Stepper({
    * check-docs сверяет их с каталогом бэкенда.
    */
   qa?: readonly string[];
+  /**
+   * `data-assist-id` позиций (Э-С Ш6): по нему исполнитель помощника
+   * платформы в режиме «Админка» находит кнопку шага («перейди на
+   * сценарий»), а модель знает её из фактов проекта (`uiTarget`). Без
+   * списка берётся хук `data-qa` — у товарки и поздравления это и есть
+   * стабильные латинские ключи шагов.
+   */
+  assistIds?: readonly string[];
 }) {
   return (
     // mb-3, а не прежние mb-5: тач-цель шага выросла с 24 до 44px
@@ -64,6 +73,7 @@ export function Stepper({
             <button
               type="button"
               data-qa={qa?.[i]}
+              data-assist-id={assistIds?.[i] || qa?.[i] || undefined}
               disabled={!clickable}
               onClick={() => onSelect?.(i)}
               // Пройденный шаг — кнопка возврата, и промахнуться по кружку

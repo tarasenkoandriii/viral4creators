@@ -158,8 +158,11 @@ function SourceRow({
   const t = appDict.knowledge.sources;
   const urls = s.kind === 'url' ? sourceUrls(s) : [];
   // Обход и копию публичного сайта не удаляют: обход — суть режима,
-  // копию выключает переключатель в сводке «Админки».
-  const removable = s.kind !== 'crawl' && s.kind !== 'public_copy';
+  // копию выключает переключатель в сводке «Админки». Источник API знаний
+  // (Э-С Ш5) управляется ключом интеграции — отзыв ключа и DELETE по API.
+  const managedByApi = s.kind === 'api';
+  const removable =
+    s.kind !== 'crawl' && s.kind !== 'public_copy' && !managedByApi;
   return (
     <Card className="space-y-2 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -190,17 +193,18 @@ function SourceRow({
         >
           {open ? t.hideDocs : t.showDocs}
         </Button>
-        {(s.status === 'active' || s.status === 'disabled') && (
-          <Button
-            variant="outline"
-            loading={busy === s.id}
-            onClick={() =>
-              onStatus(s.status === 'active' ? 'disabled' : 'active')
-            }
-          >
-            {s.status === 'active' ? t.disable : t.enable}
-          </Button>
-        )}
+        {!managedByApi &&
+          (s.status === 'active' || s.status === 'disabled') && (
+            <Button
+              variant="outline"
+              loading={busy === s.id}
+              onClick={() =>
+                onStatus(s.status === 'active' ? 'disabled' : 'active')
+              }
+            >
+              {s.status === 'active' ? t.disable : t.enable}
+            </Button>
+          )}
         {removable && (
           <ConfirmButton
             variant="danger"

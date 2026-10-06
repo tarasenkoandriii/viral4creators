@@ -278,6 +278,7 @@ export function ReferenceSlotsPanel({
                 {c.kind === 'scene' && c.origin !== 'brand' && (
                   <button
                     type="button"
+                    data-assist="never"
                     aria-label={dict.referenceSlotsPanel.deleteSceneAria}
                     disabled={saving}
                     onClick={() => {

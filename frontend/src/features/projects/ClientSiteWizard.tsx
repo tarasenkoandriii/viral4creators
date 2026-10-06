@@ -677,6 +677,11 @@ export function ClientSiteWizard({
           current={stepsView.current}
           selectable={stepsView.selectable}
           done={stepsView.done}
+          // Э-С Ш6: кнопки шагов для исполнителя «Админки»
+          // (`client-site-step-*`, те же ключи в фактах проекта).
+          assistIds={stepsView.targets.map((t) =>
+            t ? `client-site-step-${t}` : ''
+          )}
           onSelect={(i) => {
             const target = stepsView.targets[i];
             if (target) goToStep(target);
@@ -814,6 +819,7 @@ export function ClientSiteWizard({
               />
             )}
             <Button
+              data-assist="confirm"
               block
               size="lg"
               icon={<Search size={16} />}
@@ -1061,6 +1067,7 @@ function AccountConsentCard(props: {
         {t.consentVersion.replace('{version}', access.consent.textVersion)}
       </p>
       <Button
+        data-assist="never"
         block
         disabled={busy || !props.ticked}
         loading={busy}
@@ -1247,6 +1254,7 @@ function PageStage(props: {
                 ))}
               </div>
               <Button
+                data-assist="confirm"
                 block
                 disabled={busy || !submitSelector}
                 loading={busy}
@@ -1330,6 +1338,7 @@ function PageStage(props: {
             />
           ) : (
             <Button
+              data-assist="confirm"
               block
               variant="outline"
               icon={<Globe size={16} />}
@@ -1356,6 +1365,7 @@ function PageStage(props: {
           <div className="flex flex-wrap gap-2">
             {candidates.map((el) => (
               <Button
+                data-assist="confirm"
                 key={el.selector}
                 size="sm"
                 variant={el.danger ? 'danger' : 'outline'}
@@ -1370,6 +1380,7 @@ function PageStage(props: {
             ))}
           </div>
           <Button
+            data-assist="confirm"
             block
             variant="ghost"
             size="sm"
@@ -1389,6 +1400,7 @@ function PageStage(props: {
               size="sm"
               variant="danger"
               disabled={busy}
+              data-assist="never"
               onClick={() => {
                 const el = confirming;
                 setConfirming(null);
@@ -1550,6 +1562,7 @@ function ReviewStage(props: {
             />
           </Field>
           <Button
+            data-assist="confirm"
             block
             size="lg"
             icon={<Send size={16} />}
@@ -1590,6 +1603,7 @@ function ReviewStage(props: {
             // снять заново, и это стоит раунда. Поэтому отдельная
             // кнопка, а не молчаливый запрос при открытии экрана.
             <Button
+              data-assist="confirm"
               variant="ghost"
               size="sm"
               icon={<ArrowLeft size={14} />}
@@ -1606,6 +1620,7 @@ function ReviewStage(props: {
           size="sm"
           icon={<Trash2 size={14} />}
           disabled={busy}
+          data-assist="never"
           onClick={props.onDiscard}
         >
           {t.discardButton}

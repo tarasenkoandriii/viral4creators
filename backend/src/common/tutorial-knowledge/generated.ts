@@ -1,7 +1,7 @@
 /**
  * ГЕНЕРИРУЕТСЯ автоматически — backend/scripts/build-assistant-knowledge.ts.
  * Не редактировать руками: правки уйдут при следующей сборке. Правки
- * содержания — в knowledge/manual.<locale>.md (ручной слой) или в самих
+ * содержания — в common/tutorial-knowledge/manual.<locale>.md (ручной слой) или в самих
  * источниках (landing/frontend dictionaries, common/plans.ts и соседние).
  */
 

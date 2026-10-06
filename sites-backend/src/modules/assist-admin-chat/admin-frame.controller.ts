@@ -8,6 +8,7 @@ import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { WIDGET_PK_TEST_PREFIX } from '../../brand';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
+import { extraAdminAncestors } from '../../config/admin-env';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
@@ -43,6 +44,8 @@ export class AdminFrameController {
     const out = hosts
       .filter((h) => evaluateHostAccess(h, 'assist-admin', now).ok)
       .map((h) => `https://${h.host}`);
+    // Э-С Ш6: «админка» — Telegram Mini App → и Telegram Web предком.
+    out.push(...extraAdminAncestors(found.siteId, out));
     if (pk.startsWith(WIDGET_PK_TEST_PREFIX)) {
       out.push('http://localhost:*', 'http://127.0.0.1:*');
     }

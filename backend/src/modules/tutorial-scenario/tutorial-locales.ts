@@ -20,7 +20,7 @@ import {
   ASSISTANT_STEPS,
   GREETING_TUTORIAL_TOPICS,
   AssistantStepItem,
-} from '../assistant/knowledge/generated';
+} from '../../common/tutorial-knowledge/generated';
 import {
   DEFAULT_LOCALE,
   isSupportedLocale,

@@ -12,6 +12,9 @@ function build(
   over: { frames?: number[]; sessions?: number; globalOn?: boolean } = {},
 ) {
   const prisma = {
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'u1', telegramId: '777' }),
+    },
     project: {
       findFirst: jest.fn().mockResolvedValue(project),
       update: jest.fn().mockResolvedValue({}),
@@ -222,5 +225,69 @@ describe('WizardGuideService — «голосом» (Greeting 2.0 §4А.5, В-10
       where: { id: 'p1' },
       data: { aiGuideEnabled: false, aiGuideVoice: false },
     });
+  });
+});
+
+describe('WizardGuideService — флаг гида Ш6 (WIZARD_GUIDE_ENGINE)', () => {
+  const KEYS = [
+    'WIZARD_GUIDE_ENGINE',
+    'WIZARD_GUIDE_ASSIST_SITE_ID',
+    'WIZARD_GUIDE_ASSIST_PK',
+    'WIZARD_GUIDE_ASSIST_ORIGIN',
+    'WIZARD_GUIDE_ASSIST_JWT_SECRET',
+    'WIZARD_GUIDE_ASSIST_PILOT',
+  ];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of KEYS) saved[k] = process.env[k];
+    Object.assign(process.env, {
+      WIZARD_GUIDE_ASSIST_SITE_ID: 'site_v4c',
+      WIZARD_GUIDE_ASSIST_PK: 'pk_live_v4c',
+      WIZARD_GUIDE_ASSIST_ORIGIN: 'https://assist-wa.viral4creators.app',
+      WIZARD_GUIDE_ASSIST_JWT_SECRET: 'j'.repeat(40),
+    });
+  });
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('по умолчанию — старый гид, available как раньше', async () => {
+    delete process.env.WIZARD_GUIDE_ENGINE;
+    const { svc } = build(undefined, { globalOn: true });
+    const state = await svc.stateOf('u1', 'p1');
+    expect(state.engine).toBe('legacy');
+    expect(state.available).toBe(true);
+  });
+
+  it('assist — старый гид прячется целиком (available=false) даже при глобальном рубильнике', async () => {
+    process.env.WIZARD_GUIDE_ENGINE = 'assist';
+    const { svc } = build(undefined, { globalOn: true });
+    const state = await svc.stateOf('u1', 'p1');
+    expect(state.engine).toBe('assist');
+    expect(state.available).toBe(false);
+  });
+
+  it('pilot — только участнику пилота; остальным старый гид', async () => {
+    process.env.WIZARD_GUIDE_ENGINE = 'pilot';
+    process.env.WIZARD_GUIDE_ASSIST_PILOT = '777';
+    const a = build(undefined, { globalOn: true });
+    expect((await a.svc.stateOf('u1', 'p1')).engine).toBe('assist');
+    process.env.WIZARD_GUIDE_ASSIST_PILOT = '778';
+    const b = build(undefined, { globalOn: true });
+    const state = await b.svc.stateOf('u1', 'p1');
+    expect(state.engine).toBe('legacy');
+    expect(state.available).toBe(true);
+  });
+
+  it('assist с неполной конфигурацией — откат на старый гид (прод не ломается)', async () => {
+    process.env.WIZARD_GUIDE_ENGINE = 'assist';
+    delete process.env.WIZARD_GUIDE_ASSIST_JWT_SECRET;
+    const { svc } = build(undefined, { globalOn: true });
+    const state = await svc.stateOf('u1', 'p1');
+    expect(state.engine).toBe('legacy');
+    expect(state.available).toBe(true);
   });
 });

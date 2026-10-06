@@ -239,3 +239,60 @@ describe('одобрять можно только СОБРАННЫЙ ролик
     return expect(service.setReviewed('tva-4', false)).resolves.not.toThrow();
   });
 });
+
+describe('Э-С Ш5: одобрение → набор роликов сайта тенанта лендинга', () => {
+  it('после одобрения и снятия — полный набор уходит (без ожидания сети); ролик по сайту заказчика — нет', async () => {
+    const prisma = {
+      tutorialVideoAsset: {
+        findUnique: jest.fn(),
+        update: jest.fn().mockResolvedValue({ id: 'tva-9' }),
+      },
+    };
+    const landing = { sync: jest.fn().mockResolvedValue(true) };
+    const service = new TutorialVideoAdminService(
+      prisma as any,
+      landing as any,
+    );
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-9',
+      clientSiteDraftId: null,
+      blobUrl: 'https://blob.example/tva-9.mp4',
+    });
+    await expect(service.setReviewed('tva-9', true)).resolves.toEqual({
+      id: 'tva-9',
+    });
+    await service.setReviewed('tva-9', false);
+    expect(landing.sync).toHaveBeenCalledTimes(2);
+
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'tva-10',
+      clientSiteDraftId: 'draft-1',
+      blobUrl: 'https://blob.example/tva-10.mp4',
+    });
+    await expect(service.setReviewed('tva-10', true)).rejects.toThrow(
+      /сайту заказчика/,
+    );
+    expect(landing.sync).toHaveBeenCalledTimes(2);
+  });
+
+  it('сбой синхронизации не ломает одобрение', async () => {
+    const prisma = {
+      tutorialVideoAsset: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'tva-11',
+          clientSiteDraftId: null,
+          blobUrl: 'https://blob.example/tva-11.mp4',
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'tva-11' }),
+      },
+    };
+    const landing = { sync: jest.fn().mockRejectedValue(new Error('down')) };
+    const service = new TutorialVideoAdminService(
+      prisma as any,
+      landing as any,
+    );
+    await expect(service.setReviewed('tva-11', true)).resolves.toEqual({
+      id: 'tva-11',
+    });
+  });
+});

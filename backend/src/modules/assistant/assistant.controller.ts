@@ -41,7 +41,7 @@ import {
   ASSISTANT_KNOWLEDGE_COMMIT,
   ASSISTANT_PROACTIVE_TIPS,
   ASSISTANT_SUGGESTED_QUESTIONS,
-} from './knowledge/generated';
+} from '../../common/tutorial-knowledge/generated';
 import { AssistantAction, AssistantChatRequest } from './assistant.types';
 
 /** ТЗ §4.3 — лимит символов у поля ввода посетителя (проверяется и DTO). */

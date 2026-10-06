@@ -17,7 +17,10 @@ export type SourceKind =
   | 'url'
   | 'file'
   | 'faq'
-  | 'manual';
+  | 'manual'
+  // Э-С Ш5: документы владельца через системный API знаний (ключ
+  // интеграции сайта) — один на сайт, управляется только этим API.
+  | 'api';
 
 export type DocumentKind = 'page' | 'file' | 'faq' | 'manual';
 

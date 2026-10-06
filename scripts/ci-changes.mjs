@@ -93,6 +93,21 @@ export const FILTERS = {
     // Тест защит скрипта правил хоста (live-login-relay/test/egress-script.spec.ts).
     'doc/relay-egress-docker-user.sh',
   ],
+  // Браузерный воркер (Э-С Ш3): свои исходники и источники копий
+  // (scripts/sync-worker-shared.mjs) — фильтр трафика и подпись из backend,
+  // протокол очереди, конверт учёток и стоп-лист кликов из sites-backend.
+  browser_worker: [
+    'browser-worker/',
+    'backend/src/common/external-url-guard.ts',
+    'backend/src/common/egress-filter-proxy.ts',
+    'backend/src/common/sites-internal-signature.ts',
+    'backend/src/modules/client-site-tutorial/danger-words.ts',
+    'sites-backend/src/modules/assist-ui-core/normalize.ts',
+    'sites-backend/src/modules/assist-ui-core/action-words.ts',
+    'sites-backend/src/modules/browser-jobs/protocol.ts',
+    'sites-backend/src/modules/browser-jobs/worker-seal.ts',
+    'scripts/sync-worker-shared.mjs',
+  ],
 };
 /** Изменение любого из этих путей запускает всё. */
 /** `.nvmrc` — версия Node для всех джоб: её смена перепроверяет всё. */
@@ -175,7 +190,11 @@ function selfTest() {
   eq('точный файл, не префикс', on(['scripts/sync-sites-shared.mjs.bak']), []);
   eq('реле — только своя джоба', on(['live-login-relay/src/session.ts']), ['live_login_relay']);
   eq('скрипт правил хоста реле', on(['doc/relay-egress-docker-user.sh']), ['live_login_relay']);
-  eq('фильтр исходящего трафика — бэк, его копии и реле', on(['backend/src/common/egress-filter-proxy.ts']), ['backend', 'sites_backend', 'frontend', 'live_login_relay']);
+  eq('фильтр исходящего трафика — бэк, его копии, реле и воркер', on(['backend/src/common/egress-filter-proxy.ts']), ['backend', 'sites_backend', 'frontend', 'live_login_relay', 'browser_worker']);
+  eq('воркер Ш3 — только своя джоба', on(['browser-worker/src/runner.ts']), ['browser_worker']);
+  eq('протокол очереди воркера — бэк сайтов, assist и воркер', on(['sites-backend/src/modules/browser-jobs/protocol.ts']), ['sites_backend', 'assist', 'browser_worker']);
+  eq('стоп-лист обучалки — бэк, его копии и воркер', on(['backend/src/modules/client-site-tutorial/danger-words.ts']), ['backend', 'frontend', 'browser_worker']);
+  eq('скрипт копий воркера', on(['scripts/sync-worker-shared.mjs']), ['browser_worker']);
 
   // Каждая джоба ci.yml, кроме changes и repo, запускается по своему правилу.
   const full = readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
@@ -216,7 +235,7 @@ function selfTest() {
     console.error(`ci-changes --self-test: ${failed} ошибок`);
     process.exit(1);
   }
-  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 20 случаев`);
+  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — 24 случая`);
 }
 
 if (process.argv.includes('--self-test')) {

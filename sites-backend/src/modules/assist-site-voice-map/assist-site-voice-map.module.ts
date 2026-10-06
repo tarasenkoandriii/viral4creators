@@ -8,17 +8,25 @@
  * модулем после Э6-бис (б) (К-9).
  */
 import { Module } from '@nestjs/common';
+import { BrowserJobsModule } from '../browser-jobs/browser-jobs.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { EditorFrameController } from './editor/editor-frame.controller';
 import { EditorController } from './editor/editor.controller';
 import { EditorSessionService } from './editor/editor-session.service';
 import { VoiceMapController } from './voice-map.controller';
+import { VoiceMapWorkerController } from './voice-map-worker.controller';
+import { VoiceMapWorkerService } from './voice-map-worker.service';
 import { VoiceMapService } from './voice-map.service';
 
 @Module({
-  imports: [SiteCoreModule],
-  controllers: [VoiceMapController, EditorController, EditorFrameController],
-  providers: [VoiceMapService, EditorSessionService],
+  imports: [SiteCoreModule, BrowserJobsModule],
+  controllers: [
+    VoiceMapController,
+    VoiceMapWorkerController,
+    EditorController,
+    EditorFrameController,
+  ],
+  providers: [VoiceMapService, VoiceMapWorkerService, EditorSessionService],
   exports: [VoiceMapService],
 })
 export class AssistSiteVoiceMapModule {}

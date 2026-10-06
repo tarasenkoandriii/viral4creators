@@ -39,6 +39,9 @@ import { AssistAdminChatModule } from './modules/assist-admin-chat/assist-admin-
 import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admin-crawl.module';
 import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-admin-actions.module';
 import { AssistAdminVoiceModule } from './modules/assist-admin-voice/assist-admin-voice.module';
+import { AssistSiteKnowledgeApiModule } from './modules/assist-site-knowledge-api/assist-site-knowledge-api.module';
+import { BrowserJobsModule } from './modules/browser-jobs/browser-jobs.module';
+import { InternalWorkerModule } from './modules/internal-worker/internal-worker.module';
 
 @Module({
   imports: [
@@ -89,6 +92,9 @@ import { AssistAdminVoiceModule } from './modules/assist-admin-voice/assist-admi
     // секретов — экран кабинета и крон сроков; канал генератора — в
     // InternalSitesModule.
     SiteCredentialsModule,
+    // Э-С Ш5: системный API знаний сайта — документы из кода владельца
+    // (консультант лендинга viral4creators → тенант) по ключу интеграции.
+    AssistSiteKnowledgeApiModule,
     // Э7 «Админка: чтение»: кабинет режима и коннекторы OpenAPI (read через
     // SSRF-guard, журнал вызовов), помощник сотрудника (7a TMA, 7b
     // встраивание по employee-JWT, iframe на отдельном origin `wa.`), обход
@@ -102,6 +108,10 @@ import { AssistAdminVoiceModule } from './modules/assist-admin-voice/assist-admi
     // (кабинет), планы кликов сотрудника (iframe `wa.`), мемо АМ-N с шагами
     // на странице.
     AssistAdminVoiceModule,
+    // Э-С Ш3: очередь браузерного воркера (продукты ставят задания) и канал
+    // самого воркера (`/internal/worker/v1/*`, HMAC, лист графа).
+    BrowserJobsModule,
+    InternalWorkerModule,
   ],
 })
 export class AppModule {}

@@ -545,7 +545,7 @@ export function activeItemImage(i: ProductItemWithSketch): ActiveImage | null;
 - `policyTitle`, `policyPeople`, `policyObjects`, `policyBlocked`, `policyLocked`;
 - `batchStart`, `batchProgress`, `batchDeferred`, `feedAutoSketch`.
 
-После правки словарей нужно пересобрать `backend/src/modules/assistant/knowledge/generated.ts` (`npm run prebuild` в backend), иначе падает проверка совпадения.
+После правки словарей нужно пересобрать `backend/src/common/tutorial-knowledge/generated.ts` (до Э-С Ш5 — `modules/assistant/knowledge/`) (`npm run prebuild` в backend), иначе падает проверка совпадения.
 
 В словари лендинга (`landing/src/dictionaries`), в раздел ассистента, добавляется короткий абзац о функции. Отдельный визуальный блок на лендинге — вне этого ТЗ.
 

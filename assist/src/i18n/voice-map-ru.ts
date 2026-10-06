@@ -62,6 +62,8 @@ export const voiceMapRu = {
     VOICE_MAP_PHRASE_TAKEN: 'Фраза карты уже занята мемо — переименуйте.',
     VOICE_MAP_IMPORT_KIND: 'Это файл карты «Админки» — в карту «Сайта» нельзя.',
     VOICE_MAP_IMPORT_FORMAT: 'Это не файл голосовой карты.',
+    VOICE_MAP_SNAPSHOT_NOT_FOUND: 'Снимок не найден или устарел (живёт 24 ч).',
+    VOICE_MAP_CHECK_NOT_FOUND: 'Сверки этой версии ещё не было.',
   },
 };
 

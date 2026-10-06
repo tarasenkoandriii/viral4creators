@@ -5,6 +5,8 @@ import { Faq } from '../../components/Faq';
 import { HowItWorks } from '../../components/HowItWorks';
 import { IllustrationIcon } from '../../components/IllustrationIcon';
 import { AssistantWidget } from '../../components/AssistantWidget';
+import { PlatformAssist } from '../../components/PlatformAssist';
+import { assistWidgetFromBuildEnv, platformLang } from '../../lib/assist-widget';
 import { Footer } from '../../components/Footer';
 import { getDictionary } from '../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../lib/i18n';
@@ -23,6 +25,8 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
   // там же) — здесь просто безопасно сужаем тип для getDictionary().
   const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
   const dict = getDictionary(locale);
+  // Э-С Ш5: старый консультант или виджет платформы — переключатель сборки.
+  const assist = assistWidgetFromBuildEnv();
 
   return (
     <>
@@ -244,7 +248,16 @@ export default function LandingPage({ params }: { params: { locale: string } }) 
 
       {/* Плавающая кнопка + панель ИИ-консультанта (§4.1, §6 ТЗ) — вне
           <main>, фиксированное позиционирование через CSS. */}
-      <AssistantWidget locale={locale} dict={dict.assistant} page="home" variant="floating" />
+      {assist.mode === 'platform' ? (
+        <PlatformAssist
+          src={assist.src}
+          siteKey={assist.siteKey}
+          lang={platformLang(locale)}
+          askPrefill={dict.assistant.askAboutPrefill}
+        />
+      ) : (
+        <AssistantWidget locale={locale} dict={dict.assistant} page="home" variant="floating" />
+      )}
     </>
   );
 }

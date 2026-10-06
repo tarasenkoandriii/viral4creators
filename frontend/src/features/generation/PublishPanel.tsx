@@ -290,6 +290,7 @@ export function PublishPanel({
                   icon={<Trash2 size={12} />}
                   loading={busy === state.request.id}
                   disabled={busy !== null && busy !== state.request.id}
+                  data-assist="never"
                   onClick={() => void withdraw(state.request!)}
                 >
                   {dict.publishPanel.withdraw}
@@ -398,6 +399,7 @@ export function PublishPanel({
               {dict.publishPanel.cancel}
             </Button>
             <Button
+              data-assist="confirm"
               type="submit"
               size="sm"
               icon={<ShieldCheck size={14} />}
@@ -503,6 +505,7 @@ export function PublishPanel({
                       icon={<Trash2 size={12} />}
                       loading={busy === r.id}
                       disabled={busy !== null && busy !== r.id}
+                      data-assist="never"
                       onClick={() => void withdraw(r)}
                     >
                       {dict.publishPanel.withdraw}

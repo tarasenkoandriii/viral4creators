@@ -199,6 +199,7 @@ export function AuditPanel({
         <>
           <div className="flex flex-wrap gap-2">
             <Button
+              data-assist="confirm"
               icon={<ScanSearch size={14} />}
               onClick={() => void run()}
               disabled={applying || processing}
@@ -253,6 +254,7 @@ export function AuditPanel({
                   {dict.auditPanel.cancel}
                 </Button>
                 <Button
+                  data-assist="confirm"
                   type="submit"
                   size="sm"
                   icon={<Wand2 size={14} />}
@@ -299,6 +301,7 @@ export function AuditPanel({
               )}
 
               <Button
+                data-assist="confirm"
                 block
                 icon={<Sparkles size={14} />}
                 loading={applying}

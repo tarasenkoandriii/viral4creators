@@ -11,13 +11,21 @@ import {
   SiteCredentialsService,
   credError,
 } from '../site-credentials/site-credentials.service';
-import type {
-  TestAccountInput,
-  TestAccountProduct,
+import {
+  badInput,
+  type TestAccountInput,
+  type TestAccountProduct,
 } from '../site-credentials/test-account-input';
 
 export const generatorActor = (telegramId: bigint) =>
   `generator:${telegramId.toString()}`;
+
+/**
+ * Продукты, которыми распоряжается канал генератора (Э-С Ш3): `assist-admin`
+ * (обход «Админки» воркером) включает только кабинет помощника — генератор
+ * его не ставит и, правя учётку своим списком, не снимает.
+ */
+const GENERATOR_PRODUCTS: readonly string[] = ['tutorial', 'qa'];
 
 @Injectable()
 export class InternalCredentialsService {
@@ -56,18 +64,26 @@ export class InternalCredentialsService {
     },
   ) {
     const actor = generatorActor(telegramId);
+    if (req.input.products?.some((p) => !GENERATOR_PRODUCTS.includes(p))) {
+      throw badInput('«products»: tutorial | qa');
+    }
     if (req.testAccountId) {
       const { m, row } = await this.creds.managedAccount(
         telegramId,
         req.testAccountId,
       );
-      return this.creds.update(
-        m.accountId,
-        row.siteId,
-        row.id,
-        req.input,
-        actor,
-      );
+      const input: TestAccountInput = req.input.products
+        ? {
+            ...req.input,
+            products: [
+              ...req.input.products,
+              ...(row.products.filter(
+                (p) => !GENERATOR_PRODUCTS.includes(p),
+              ) as TestAccountProduct[]),
+            ],
+          }
+        : req.input;
+      return this.creds.update(m.accountId, row.siteId, row.id, input, actor);
     }
     const { m, siteId } = await this.creds.managedHost(telegramId, hostId);
     const input: TestAccountInput = {

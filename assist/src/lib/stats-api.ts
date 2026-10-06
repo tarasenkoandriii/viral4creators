@@ -27,6 +27,7 @@ import {
   type GoalPickerTokenView,
   type GoalRecentEventView,
   type GoalView,
+  type IntegrationRouteKind,
   type IntegrationsView,
   type MetricView,
   type ReportSubscriptionView,
@@ -48,7 +49,7 @@ import {
   strs,
   text,
 } from './widget-api';
-import { GOAL_WEBHOOK_PATH } from './public-api';
+import { GOAL_WEBHOOK_PATH, KNOWLEDGE_API_PATH } from './public-api';
 
 const n0 = (v: unknown): number => num(v) ?? 0;
 const share = (v: unknown): number | null => {
@@ -331,6 +332,7 @@ export function parseIntegrations(v: unknown): IntegrationsView {
   const o = obj(v);
   const w = obj(o.goalWebhook);
   const i = obj(o.identity);
+  const k = obj(o.knowledgeApi);
   return {
     goalWebhook: {
       active: w.active === true,
@@ -344,6 +346,15 @@ export function parseIntegrations(v: unknown): IntegrationsView {
           : '',
     },
     identity: { active: i.active === true, createdAt: iso(i.createdAt) },
+    knowledgeApi: {
+      active: k.active === true,
+      createdAt: iso(k.createdAt),
+      lastUsedAt: iso(k.lastUsedAt),
+      endpoint:
+        typeof k.endpoint === 'string' && KNOWLEDGE_API_PATH.test(k.endpoint)
+          ? k.endpoint
+          : '',
+    },
   };
 }
 
@@ -353,7 +364,12 @@ export function parseSecret(v: unknown): SecretIssuedView | null {
   const secret = text(o.secret);
   if (!/^[\x21-\x7E]{16,200}$/.test(secret)) return null;
   return {
-    kind: o.kind === 'identity' ? 'identity' : 'goal_webhook',
+    kind:
+      o.kind === 'identity'
+        ? 'identity'
+        : o.kind === 'knowledge_api'
+          ? 'knowledge_api'
+          : 'goal_webhook',
     secret,
     createdAt: text(o.createdAt),
   };
@@ -455,12 +471,9 @@ export interface StatsApi {
   integrations(siteId: string): Promise<IntegrationsView>;
   issueSecret(
     siteId: string,
-    kind: 'goal-webhook' | 'identity'
+    kind: IntegrationRouteKind
   ): Promise<SecretIssuedView | null>;
-  revokeIntegration(
-    siteId: string,
-    kind: 'goal-webhook' | 'identity'
-  ): Promise<void>;
+  revokeIntegration(siteId: string, kind: IntegrationRouteKind): Promise<void>;
   createExport(siteId: string, body: ExportRequest): Promise<ExportView | null>;
   exports(siteId: string): Promise<ExportView[]>;
   exportOne(siteId: string, xid: string): Promise<ExportView | null>;

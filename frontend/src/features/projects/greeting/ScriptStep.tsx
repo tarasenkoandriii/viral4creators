@@ -219,6 +219,7 @@ export function ScriptStep({
             </Button>
             {!videoDone && (
               <Button
+                data-assist="confirm"
                 variant="outline"
                 size="sm"
                 icon={<RefreshCw size={14} />}
@@ -240,6 +241,7 @@ export function ScriptStep({
         <div className="space-y-3">
           <p className="text-xs text-silver-400">{w.scriptEmpty}</p>
           <Button
+            data-assist="confirm"
             data-qa="greeting-script-generate"
             loading={loading}
             onClick={() => void generate()}

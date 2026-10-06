@@ -173,11 +173,21 @@ export interface IntegrationsView {
     endpoint: string;
   };
   identity: { active: boolean; createdAt: string | null };
+  /**
+   * Э-С Ш5: ключ системного API знаний (документы из кода владельца);
+   * `endpoint` — путь без origin, `…/:key` дописывает клиент.
+   */
+  knowledgeApi: {
+    active: boolean;
+    createdAt: string | null;
+    lastUsedAt: string | null;
+    endpoint: string;
+  };
 }
 
-/** POST …/integrations/goal-webhook/secret | …/identity/secret — показ ОДИН раз. */
+/** POST …/integrations/goal-webhook|identity|knowledge-api/secret — показ ОДИН раз. */
 export interface SecretIssuedView {
-  kind: 'goal_webhook' | 'identity';
+  kind: 'goal_webhook' | 'identity' | 'knowledge_api';
   secret: string;
   createdAt: string;
 }

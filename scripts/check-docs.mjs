@@ -1148,8 +1148,10 @@ function checkGuideSeams() {
       "источник прогона: разбор из библиотеки либо приём",
     ],
     [
-      "backend/src/modules/wizard-guide/wizard-hint.service.ts",
-      "факты советника: «откуда сцена» он обязан знать верно",
+      // Э-С Ш6: чтение фактов вынесено из wizard-hint.service.ts — одно
+      // на советника и на факты «Админки» (guide-assist).
+      "backend/src/modules/wizard-guide/hint-facts-reader.ts",
+      "факты советника и «Админки»: «откуда сцена» обязаны знать верно",
     ],
   ]);
   const SCENE_SOURCE_GATE =

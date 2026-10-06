@@ -79,7 +79,11 @@ const RULES: Rule[] = [
 ];
 
 export function detectInjection(text: string): InjectionVerdict {
-  const t = (text ?? '').normalize('NFKC');
+  // Аудит Ш5: невидимые символы формата (\p{Cf} — нулевой ширины, мягкий
+  // перенос, BOM) разрывали слова для регулярок, а модель их не замечает:
+  // «Ignore\u200b all previous instructions» проходило мимо карантина.
+  // Только для проверки — хранимый текст не меняется.
+  const t = (text ?? '').normalize('NFKC').replace(/\p{Cf}/gu, '');
   for (const rule of RULES) {
     if (rule.re.test(t)) return { quarantine: true, reason: rule.id };
   }

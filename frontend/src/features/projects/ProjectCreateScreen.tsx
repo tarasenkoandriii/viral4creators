@@ -412,6 +412,7 @@ export function ProjectCreateScreen() {
                 {error && <Alert tone="error">{error}</Alert>}
                 {siteTutorialAllowed ? (
                   <Button
+                    data-assist="confirm"
                     block
                     size="lg"
                     type="button"

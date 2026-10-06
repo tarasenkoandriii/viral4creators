@@ -38,6 +38,7 @@ import type {
   SourceView,
   VersionView,
 } from '../api-types';
+import { documentHash } from '../indexer';
 import type { KnowledgeMode } from '../tables';
 import type {
   DocumentInput,
@@ -76,6 +77,17 @@ import {
 
 /** Источников одного режима на сайт. */
 export const MAX_SOURCES_PER_SITE = KNOWLEDGE_DEFAULTS.maxSourcesPerSite;
+/** Э-С Ш5: документов источника `api` на сайт; ref документа — `api:<ключ>`. */
+export const KNOWLEDGE_API_MAX_DOCUMENTS = 50;
+export const API_REF_PREFIX = 'api:';
+/**
+ * Аудит Ш5: крючок системного API — зовётся, только когда документ
+ * действительно меняется (не `unchanged`/`absent`), ДО публикации версии;
+ * бросил — ничего не записано (суточный лимит изменений сайта).
+ */
+export interface ApiChangeHooks {
+  beforeChange?: () => Promise<void>;
+}
 /** Документов на страницу списка (контракт: Page<DocumentView> по 50). */
 export const DOCUMENTS_PAGE = 50;
 /** Lease разбора файла кроном и попыток до failed. */
@@ -730,6 +742,174 @@ export class ModeKnowledgeCore {
     await this.rows(m).faq.deleteMany({ where: { id: fid, siteId } });
     await this.syncFaqCount(m, siteId, src.id);
     return { ok: true };
+  }
+
+  // ── Документы по системному API (Э-С Ш5) ─────────────────────────────
+
+  /**
+   * Источник `api` — один на сайт и режим; создаётся при первом документе
+   * по API (как `faq`: управляемый, в TMA только переименовать). Лимит
+   * источников сайта его не считает — это не выбор владельца в TMA, а
+   * канал интеграции (его выключают отзывом ключа).
+   */
+  private async apiSource(actor: FaqActor, siteId: string): Promise<SourceRow> {
+    const rows = this.rows(actor);
+    const found = await rows.source.findFirst({
+      where: { siteId, kind: 'api' },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (found) return found;
+    return rows.source.create({
+      data: {
+        accountId: actor.accountId,
+        siteId,
+        kind: 'api',
+        title: 'API',
+        status: 'active',
+        createdByTelegramId: actor.telegramId,
+      },
+    });
+  }
+
+  /** Живые документы источника `api` (ключ = ref без префикса `api:`). */
+  async apiDocuments(ctx: KnowledgeCtx): Promise<
+    Array<{
+      key: string;
+      title: string | null;
+      lang: string | null;
+      hash: string | null;
+      updatedAt: string;
+    }>
+  > {
+    const actor: FaqActor = { accountId: ctx.accountId, telegramId: null };
+    const src = await this.rows(actor).source.findFirst({
+      where: { siteId: ctx.siteId, kind: 'api' },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!src) return [];
+    const docs = await this.rows(actor).document.findMany({
+      where: { sourceId: src.id, siteId: ctx.siteId, status: 'active' },
+      orderBy: { ref: 'asc' },
+      take: KNOWLEDGE_API_MAX_DOCUMENTS + 1,
+    });
+    return docs
+      .filter((d) => d.ref.startsWith(API_REF_PREFIX))
+      .map((d) => ({
+        key: d.ref.slice(API_REF_PREFIX.length),
+        title: d.title,
+        lang: d.lang,
+        hash: d.indexedHash ?? null,
+        updatedAt: d.updatedAt.toISOString(),
+      }));
+  }
+
+  /**
+   * Документ по ключу: тот же текст (хеш документа — заголовок, язык,
+   * блоки) → `unchanged` без новой версии и без эмбеддингов; иначе —
+   * новая версия сразу (действие владельца, §4-тер.2: без ворот аномалий,
+   * карантин инъекций — как у файла).
+   */
+  async apiUpsert(
+    ctx: KnowledgeCtx,
+    key: string,
+    doc: {
+      title: string;
+      lang: string | null;
+      blocks: DocumentInput['blocks'];
+      url?: string | null;
+    },
+    hooks: ApiChangeHooks = {},
+  ): Promise<{
+    status: 'created' | 'updated' | 'unchanged';
+    version: number | null;
+    hash: string;
+  }> {
+    const actor: FaqActor = { accountId: ctx.accountId, telegramId: null };
+    await this.adapter.ensureSettings(ctx);
+    const src = await this.apiSource(actor, ctx.siteId);
+    const ref = `${API_REF_PREFIX}${key}`;
+    const input: DocumentInput = {
+      ref,
+      kind: 'file',
+      url: doc.url ?? null,
+      title: doc.title,
+      lang: doc.lang,
+      blocks: doc.blocks,
+    };
+    const hash = documentHash(input);
+    const rows = this.rows(actor);
+    const existing = await rows.document.findFirst({
+      where: { sourceId: src.id, ref },
+    });
+    if (
+      existing &&
+      existing.status === 'active' &&
+      existing.indexedHash === hash
+    ) {
+      return { status: 'unchanged', version: null, hash };
+    }
+    if (!existing || existing.status !== 'active') {
+      const live = await rows.document.count({
+        where: { sourceId: src.id, status: 'active' },
+      });
+      if (live >= KNOWLEDGE_API_MAX_DOCUMENTS) {
+        throw e1Error(
+          409,
+          'KNOWLEDGE_SOURCE_LIMIT',
+          `По API уже ${KNOWLEDGE_API_MAX_DOCUMENTS} документов — удалите ненужные`,
+        );
+      }
+    }
+    await hooks.beforeChange?.();
+    const v = await this.adapter.api.indexDocuments(ctx, src.id, [input], {
+      trigger: 'document',
+      byTelegramId: null,
+    });
+    await this.syncApiCount(actor, ctx.siteId, src.id);
+    return {
+      status: existing && existing.status === 'active' ? 'updated' : 'created',
+      version: v.number,
+      hash,
+    };
+  }
+
+  /** Удалить документ по ключу (новая версия без него, сразу). */
+  async apiRemove(
+    ctx: KnowledgeCtx,
+    key: string,
+    hooks: ApiChangeHooks = {},
+  ): Promise<{ status: 'deleted' | 'absent'; version: number | null }> {
+    const actor: FaqActor = { accountId: ctx.accountId, telegramId: null };
+    const rows = this.rows(actor);
+    const src = await rows.source.findFirst({
+      where: { siteId: ctx.siteId, kind: 'api' },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!src) return { status: 'absent', version: null };
+    const ref = `${API_REF_PREFIX}${key}`;
+    const doc = await rows.document.findFirst({
+      where: { sourceId: src.id, ref, status: 'active' },
+    });
+    if (!doc) return { status: 'absent', version: null };
+    await hooks.beforeChange?.();
+    const v = await this.adapter.api.removeDocuments(ctx, src.id, [ref], null);
+    await this.syncApiCount(actor, ctx.siteId, src.id);
+    return { status: 'deleted', version: v.number };
+  }
+
+  private async syncApiCount(
+    actor: FaqActor,
+    siteId: string,
+    sourceId: string,
+  ) {
+    const rows = this.rows(actor);
+    const n = await rows.document.count({
+      where: { siteId, sourceId, status: 'active' },
+    });
+    await rows.source.update({
+      where: { id: sourceId },
+      data: { documentsCount: n, lastSyncAt: new Date() },
+    });
   }
 
   // ── Версии ────────────────────────────────────────────────────────────

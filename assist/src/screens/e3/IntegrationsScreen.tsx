@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { PUBLIC_API_BASE } from '../../lib/config';
-import { goalWebhookUrl } from '../../lib/public-api';
+import { goalWebhookUrl, knowledgeApiUrl } from '../../lib/public-api';
 import { fmt, formatDate, useAsync, useKit } from '../../kit';
 import { Alert, Card, CopyField, ScreenTitle, Spinner } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
 import { canManageSecrets, canSeeStats } from '../../lib/e3-view';
 import { navigate } from '../../lib/router';
-import type { IntegrationsView, SecretIssuedView } from '../../lib/stats-types';
+import type {
+  IntegrationRouteKind,
+  IntegrationsView,
+  SecretIssuedView,
+} from '../../lib/stats-types';
 import { useE3ErrorText } from '../../lib/use-error-text';
 import {
   ConfirmButton,
@@ -61,21 +65,27 @@ export function IntegrationsScreen({ siteId }: { siteId: string }) {
     }
   }
 
-  const issue = (kind: 'goal-webhook' | 'identity') =>
+  const issue = (kind: IntegrationRouteKind) =>
     act(`issue-${kind}`, async () => {
       const s = await stats.issueSecret(siteId, kind);
       if (!s) throw new Error('secret');
       setSecret(s);
     });
-  const revoke = (kind: 'goal-webhook' | 'identity') =>
+  const revoke = (kind: IntegrationRouteKind) =>
     act(`revoke-${kind}`, async () => {
       await stats.revokeIntegration(siteId, kind);
       setSecret(null);
       setNotice({ tone: 'success', text: t.revoked });
     });
 
+  // Вид секрета в ответе сервера ↔ вид в адресе маршрута.
+  const issuedKind: Record<IntegrationRouteKind, SecretIssuedView['kind']> = {
+    'goal-webhook': 'goal_webhook',
+    identity: 'identity',
+    'knowledge-api': 'knowledge_api',
+  };
   const block = (
-    kind: 'goal-webhook' | 'identity',
+    kind: IntegrationRouteKind,
     title: string,
     active: boolean,
     createdAt: string | null,
@@ -89,13 +99,12 @@ export function IntegrationsScreen({ siteId }: { siteId: string }) {
           : t.inactive}
       </div>
       {extra}
-      {secret &&
-        secret.kind === (kind === 'identity' ? 'identity' : 'goal_webhook') && (
-          <div className="space-y-1">
-            <Alert tone="warning">{t.secretOnce}</Alert>
-            <CopyField label={title} value={secret.secret} {...copy} />
-          </div>
-        )}
+      {secret && secret.kind === issuedKind[kind] && (
+        <div className="space-y-1">
+          <Alert tone="warning">{t.secretOnce}</Alert>
+          <CopyField label={title} value={secret.secret} {...copy} />
+        </div>
+      )}
       {owner ? (
         <div className="flex flex-wrap gap-2">
           <ConfirmButton
@@ -151,6 +160,29 @@ export function IntegrationsScreen({ siteId }: { siteId: string }) {
         </>
       )}
       {block('identity', t.identity, v.identity.active, v.identity.createdAt)}
+      {block(
+        'knowledge-api',
+        t.knowledgeApi,
+        v.knowledgeApi.active,
+        v.knowledgeApi.createdAt,
+        <>
+          <div className="text-xs text-silver-500">{t.knowledgeApiHint}</div>
+          {knowledgeApiUrl(v.knowledgeApi.endpoint, PUBLIC_API_BASE) && (
+            <CopyField
+              label={t.knowledgeEndpoint}
+              value={knowledgeApiUrl(v.knowledgeApi.endpoint, PUBLIC_API_BASE)}
+              {...copy}
+            />
+          )}
+          {v.knowledgeApi.lastUsedAt && (
+            <div className="text-xs text-silver-500">
+              {fmt(t.lastUsed, {
+                date: formatDate(v.knowledgeApi.lastUsedAt, locale),
+              })}
+            </div>
+          )}
+        </>
+      )}
 
       <Card className="space-y-3">
         <div className="font-semibold">{t.install}</div>

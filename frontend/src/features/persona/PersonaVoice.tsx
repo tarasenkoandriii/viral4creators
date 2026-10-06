@@ -405,6 +405,7 @@ export function PersonaVoice({
                 <Button
                   icon={<Volume2 size={14} />}
                   loading={submitting}
+                  data-assist="never"
                   disabled={!!sampleProblem}
                   onClick={() => void submit()}
                 >

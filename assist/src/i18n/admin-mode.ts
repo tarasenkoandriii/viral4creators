@@ -56,6 +56,9 @@ export interface AdminModeTexts {
     crawlDisable: string;
     crawlRun: string;
     crawlWaiting: string;
+    /** Э-С Ш3: статусы задания обхода и подсказка про продукт учётки. */
+    crawlStatus: Record<string, string>;
+    crawlNeedsProduct: string;
   };
   connectors: {
     add: string;
@@ -180,6 +183,15 @@ const uk: AdminModeTexts = {
     crawlDisable: 'Вимкнути обхід',
     crawlRun: 'Поставити в чергу',
     crawlWaiting: 'Чекає браузерного воркера',
+    crawlStatus: {
+      queued: 'У черзі воркера',
+      running: 'Обхід іде',
+      done: 'Готово',
+      failed: 'Не вдалося',
+      cancelled: 'Скасовано',
+    },
+    crawlNeedsProduct:
+      'Дозвольте обліковому запису продукт «Помічник: обхід Адмінки» у реєстрі тестових облікових записів.',
   },
   connectors: {
     add: 'Додати API (OpenAPI 3.x)',
@@ -315,6 +327,15 @@ const ru: AdminModeTexts = {
     crawlDisable: 'Выключить обход',
     crawlRun: 'Поставить в очередь',
     crawlWaiting: 'Ждёт браузерного воркера',
+    crawlStatus: {
+      queued: 'В очереди воркера',
+      running: 'Обход идёт',
+      done: 'Готово',
+      failed: 'Не удалось',
+      cancelled: 'Отменено',
+    },
+    crawlNeedsProduct:
+      'Разрешите учётной записи продукт «Помощник: обход Админки» в реестре тестовых учётных записей.',
   },
   connectors: {
     ...uk.connectors,
@@ -449,6 +470,15 @@ const en: AdminModeTexts = {
     crawlDisable: 'Disable crawl',
     crawlRun: 'Queue a crawl',
     crawlWaiting: 'Waiting for the browser worker',
+    crawlStatus: {
+      queued: 'Queued for the worker',
+      running: 'Crawling',
+      done: 'Done',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+    },
+    crawlNeedsProduct:
+      'Allow the "Assistant: admin panel crawl" product for this account in the test accounts registry.',
   },
   connectors: {
     add: 'Add an API (OpenAPI 3.x)',

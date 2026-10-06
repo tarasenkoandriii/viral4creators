@@ -5,7 +5,7 @@
 
 COMPOSE = docker compose -f docker-compose.dev.yml
 
-.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing ci-integrations
+.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing ci-integrations ci-relay ci-worker
 
 up:
 	@test -f .env.docker || cp .env.docker.example .env.docker
@@ -95,6 +95,7 @@ ci:
 	$(MAKE) ci-widget
 	$(MAKE) ci-integrations
 	$(MAKE) ci-relay
+	$(MAKE) ci-worker
 	$(MAKE) ci-docs
 
 # Лендинг клиентских сайтов (Л0–Л5; джоба `sites-landing` в CI): типы,
@@ -146,6 +147,16 @@ ci-relay:
 	cd live-login-relay && npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
 	cd live-login-relay && npx jest --ci
 	cd live-login-relay && npx tsc -p tsconfig.json --noEmit --incremental false
+
+# Браузерный воркер (Э-С Ш3; джоба `browser-worker` в CI): копии общих
+# модулей, линт, типы, unit. e2e на настоящем Chromium — отдельно (нужен
+# браузер Playwright той же версии, что playwright-core):
+#   cd browser-worker && PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers npm run test:e2e
+ci-worker:
+	node scripts/sync-worker-shared.mjs --check
+	cd browser-worker && npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0
+	cd browser-worker && npx tsc -p tsconfig.json --noEmit --incremental false
+	cd browser-worker && npx jest -c jest.config.js --ci
 
 # Только документы — быстрая проверка перед коммитом правок в doc/.
 ci-docs:
