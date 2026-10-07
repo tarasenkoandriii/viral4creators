@@ -149,7 +149,7 @@ export async function runEval(
     silent = r.register === null && r.micro === 0 ? silent + 1 : 0;
     if (silent >= CLASSIFIER_SILENT_LIMIT)
       return stop(
-        'классификатор не отвечает: 5 пустых ответов подряд без расхода — проверьте GEMINI_API_KEY и сеть',
+        'классификатор не отвечает: 5 пустых ответов подряд без расхода — причина в предупреждениях выше (неверный GEMINI_API_KEY; 402 — закончился баланс проекта Gemini в AI Studio; нет сети)',
       );
     classRows.push({
       id: t.id,

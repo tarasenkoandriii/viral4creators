@@ -51,7 +51,11 @@ import {
   CLASSIFIER_SILENT_LIMIT,
   type Providers,
 } from '../../scripts/greeting-eval/runner';
-import { summarize } from '../../scripts/greeting-eval/report';
+import {
+  gatePassed,
+  summarize,
+  summaryMarkdown,
+} from '../../scripts/greeting-eval/report';
 import {
   RATE,
   decodeWav,
@@ -458,6 +462,46 @@ describe('прогон на двойниках', () => {
     const gate = s.gates.find((g) => g.name.includes('язык'))!;
     expect(gate.ok).toBe(false);
     expect(s.gates.find((g) => g.name.includes('латиницей'))!.ok).toBe(true);
+  });
+
+  it('остановленный прогон: ворота «не проверено», а не ✓ (и не проходят в коде выхода)', async () => {
+    const plan = buildPlan({ ...tiny, limit: 10, parts: ['classifier'] });
+    const providers = fakeProviders({
+      classify: async () => ({ register: null, micro: 0 }),
+    });
+    const r = await runEval(plan, providers, new Budget(10_000_000));
+    const s = summarize(r);
+    expect(s.gates[0]).toMatchObject({ unchecked: true, ok: false });
+    expect(gatePassed(s.gates[0])).toBe(false);
+    const md = summaryMarkdown(s, r, {
+      estimateMicro: 0,
+      capMicro: 0,
+      startedAt: 'x',
+    });
+    expect(md).toMatch(/- — §8\.1 .*не проверено/);
+    expect(md).not.toMatch(/✓ §8\.1/);
+    expect(r.stopped).toMatch(/402/);
+  });
+
+  it('классификатор не ответил ни на одно траурное (без остановки) — «не проверено»', async () => {
+    const plan = buildPlan({ ...tiny, parts: ['classifier'], limit: 50 });
+    const mourning = new Set(
+      plan.classify.filter((t) => t.label === 'MOURNING').map((t) => t.text),
+    );
+    const r = await runEval(
+      plan,
+      fakeProviders({
+        classify: async (text) => ({
+          register: mourning.has(text) ? null : 'CELEBRATORY',
+          micro: 5,
+        }),
+      }),
+      new Budget(10_000_000),
+    );
+    expect(r.stopped).toBeFalsy();
+    const s = summarize(r);
+    expect(s.gates[0]).toMatchObject({ unchecked: true, ok: false });
+    expect(s.gates[0].detail).toMatch(/ни на одно траурное/);
   });
 
   it('сводка классификатора: траурный как праздничный роняет ворота §8.1; цепочка со словами страхует', async () => {

@@ -46,7 +46,22 @@ export interface SttGroupSummary {
 export interface Gate {
   name: string;
   ok: boolean;
+  /**
+   * Проверить было не на чем: прогон остановлен или ответов нет. Такие
+   * ворота не «пройдены» — в отчёте «—», код выхода не 0.
+   */
+  unchecked?: boolean;
   detail: string;
+}
+
+/** Ворота, которые не на чем проверить. */
+function uncheckedGate(name: string, why: string): Gate {
+  return { name, ok: false, unchecked: true, detail: `не проверено: ${why}` };
+}
+
+/** Ворота пройдены по-настоящему (а не «не на чем проверить»). */
+export function gatePassed(g: Gate): boolean {
+  return g.ok && !g.unchecked;
 }
 
 export interface EvalSummary {
@@ -135,29 +150,50 @@ export function summarize(result: RunResult): EvalSummary {
   const classifier = summarizeClassifier(result.classRows);
   const stt = summarizeStt(result.sttRows);
   const gates: Gate[] = [];
+  const stopped = result.stopped ? 'прогон остановлен раньше' : null;
   if (classifier) {
-    gates.push({
-      name: '§8.1 траурный не определён праздничным',
-      ok: classifier.mourningAsCelebratory.length === 0,
-      detail: classifier.mourningAsCelebratory.join(', ') || 'нет',
-    });
+    const name = '§8.1 траурный не определён праздничным';
+    const answeredMourning = result.classRows.filter(
+      (r) => r.label === 'MOURNING' && r.predicted !== null,
+    ).length;
+    if (stopped) gates.push(uncheckedGate(name, stopped));
+    else if (answeredMourning === 0)
+      gates.push(
+        uncheckedGate(name, 'классификатор не ответил ни на одно траурное'),
+      );
+    else
+      gates.push({
+        name,
+        ok: classifier.mourningAsCelebratory.length === 0,
+        detail: classifier.mourningAsCelebratory.join(', ') || 'нет',
+      });
   }
   const totals = stt.filter((g) => g.lang === 'все');
   if (totals.length) {
-    const latin = totals.reduce((a, g) => a + g.latinAnswers, 0);
-    gates.push({
-      name: '§8.3 ни одного ответа латиницей',
-      ok: latin === 0,
-      detail: `${latin} ответов латиницей`,
-    });
-    const mismatch = totals.flatMap((g) =>
-      g.languageMismatch.map((m) => `${g.engine}/${g.snr}: ${m}`),
-    );
-    gates.push({
-      name: '§8.3 язык ответа = язык фразы (без суржика)',
-      ok: mismatch.length === 0,
-      detail: mismatch.slice(0, 20).join('; ') || 'расхождений нет',
-    });
+    const latinName = '§8.3 ни одного ответа латиницей';
+    const langName = '§8.3 язык ответа = язык фразы (без суржика)';
+    const answered = result.sttRows.some((r) => !!r.hypothesis);
+    const why =
+      stopped ??
+      (answered ? null : 'распознавание не вернуло ни одного ответа');
+    if (why) {
+      gates.push(uncheckedGate(latinName, why), uncheckedGate(langName, why));
+    } else {
+      const latin = totals.reduce((a, g) => a + g.latinAnswers, 0);
+      gates.push({
+        name: latinName,
+        ok: latin === 0,
+        detail: `${latin} ответов латиницей`,
+      });
+      const mismatch = totals.flatMap((g) =>
+        g.languageMismatch.map((m) => `${g.engine}/${g.snr}: ${m}`),
+      );
+      gates.push({
+        name: langName,
+        ok: mismatch.length === 0,
+        detail: mismatch.slice(0, 20).join('; ') || 'расхождений нет',
+      });
+    }
   }
   return { classifier, stt, gates };
 }
@@ -177,7 +213,10 @@ export function summaryMarkdown(
     '',
     '## Ворота приёмки',
     '',
-    ...s.gates.map((g) => `- ${g.ok ? '✓' : '✗'} ${g.name} — ${g.detail}`),
+    ...s.gates.map(
+      (g) =>
+        `- ${g.unchecked ? '—' : g.ok ? '✓' : '✗'} ${g.name} — ${g.detail}`,
+    ),
   ];
   if (s.classifier) {
     const c = s.classifier;

@@ -47,7 +47,7 @@ import {
   type Part,
 } from './plan';
 import { Budget, runEval } from './runner';
-import { summarize, summaryMarkdown } from './report';
+import { gatePassed, summarize, summaryMarkdown } from './report';
 
 const USD = 1_000_000;
 
@@ -281,7 +281,7 @@ async function main(argv: string[]): Promise<number> {
   writeFileSync(join(outDir, 'summary.md'), md);
   console.log(`\n${md}\n\nОтчёт: ${outDir}`);
   if (result.stopped) return 3;
-  return summary.gates.every((g) => g.ok) ? 0 : 1;
+  return summary.gates.every(gatePassed) ? 0 : 1;
 }
 
 if (require.main === module) {
