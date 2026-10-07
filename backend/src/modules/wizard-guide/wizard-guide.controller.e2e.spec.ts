@@ -38,6 +38,7 @@ const doubles = {
       canEnable: true,
       available: true,
       voice: false,
+      engine: 'legacy',
     }),
     setEnabled: jest.fn().mockResolvedValue({ enabled: true }),
     setVoice: jest.fn().mockResolvedValue({ enabled: true, voice: true }),
@@ -204,12 +205,16 @@ describe('маршруты советника (e2e, один контролле�
     const res = await request(app.getHttpServer())
       .get('/api/projects/p1/wizard-guide')
       .expect(200);
+    // `engine` (Э-С Ш6) — по нему мини-апп решает, нужен ли запрос
+    // `GET /guide-assist/config` (при `legacy` — нет).
     expect(Object.keys(res.body.data).sort()).toEqual([
       'available',
       'canEnable',
       'enabled',
+      'engine',
       'voice',
     ]);
+    expect(res.body.data.engine).toBe('legacy');
   });
 
   // ── Голос советника (ТЗ Greeting 2.0 §4А.4–4А.5, K1) ────────────

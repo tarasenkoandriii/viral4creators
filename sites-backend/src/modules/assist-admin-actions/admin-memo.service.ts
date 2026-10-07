@@ -197,7 +197,61 @@ const MEMO_TEXT = {
     ru: (i: number, total: number) => `Шаг ${i} из ${total} — на странице.`,
     en: (i: number, total: number) => `Step ${i} of ${total} is on the page.`,
   },
+  // D3 (§5-бис.17 п.5 п.8): мемо перестало быть рабочим посреди запуска.
+  halted: {
+    uk: (n: number, i: number, why: string, done: string) =>
+      `АМ-${n} зупинено перед кроком ${i}: ${why}.${done ? ` Уже зроблено: ${done}.` : ' Нічого не змінено.'}`,
+    ru: (n: number, i: number, why: string, done: string) =>
+      `АМ-${n} остановлено перед шагом ${i}: ${why}.${done ? ` Уже сделано: ${done}.` : ' Ничего не изменено.'}`,
+    en: (n: number, i: number, why: string, done: string) =>
+      `AM-${n} stopped before step ${i}: ${why}.${done ? ` Already done: ${done}.` : ' Nothing was changed.'}`,
+  },
+  haltWhy: {
+    needs_review: {
+      uk: 'мемо позначено «потребує перевірки» — власник має перевірити й опублікувати нову версію',
+      ru: 'мемо помечено «требует проверки» — владелец должен проверить и опубликовать новую версию',
+      en: 'the memo was marked "needs review" — the owner has to check it and publish a new version',
+    },
+    disabled: {
+      uk: 'власник вимкнув мемо',
+      ru: 'владелец выключил мемо',
+      en: 'the owner disabled the memo',
+    },
+    removed: {
+      uk: 'мемо видалено',
+      ru: 'мемо удалено',
+      en: 'the memo was removed',
+    },
+    unavailable: {
+      uk: 'мемо зараз не опубліковане',
+      ru: 'мемо сейчас не опубликовано',
+      en: 'the memo is not published right now',
+    },
+  },
 } as const;
+
+/**
+ * Почему запуск мемо больше не исполняет шаги (D3): мемо ушло в «требует
+ * проверки», выключено, удалено или иначе перестало быть опубликованным.
+ */
+export type MemoHaltReason = keyof typeof MEMO_TEXT.haltWhy;
+
+/** Исполнять шаги можно только у опубликованного и включённого мемо. */
+export function memoHaltReason(
+  memo: { status: string } | null,
+): MemoHaltReason | null {
+  if (!memo) return 'removed';
+  switch (memo.status) {
+    case 'published':
+      return null;
+    case 'needs_review':
+    case 'disabled':
+    case 'removed':
+      return memo.status;
+    default:
+      return 'unavailable';
+  }
+}
 
 /** Отрезок шагов на странице, который ждёт исполнения (Э6-бис (б)). */
 export interface MemoUiSegment {
@@ -249,6 +303,107 @@ export class AdminMemoService {
   ) {
     this.proposals.onSettled = (ctx, row, status) =>
       this.afterStep(ctx, row.memoRunId!, row.memoStep!, status);
+    // D3: «Да» на шаге мемо — тоже шаг; мемо, ушедшее в «требует проверки»
+    // или выключенное, не исполняет и уже предложенный шаг.
+    this.proposals.beforeMemoStep = (ctx, row) =>
+      this.haltRun(ctx, row.memoRunId!, row.memoStep ?? 0);
+  }
+
+  /** Статус мемо прямо сейчас (D3) — перед каждым шагом запуска. */
+  private async memoHalt(
+    accountId: string,
+    memoId: string,
+  ): Promise<MemoHaltReason | null> {
+    return memoHaltReason(
+      await this.db.forAccount(accountId).assistAdminMemo.findFirst({
+        where: { id: memoId },
+        select: { status: true },
+      }),
+    );
+  }
+
+  /**
+   * D3: запуск остановлен, потому что мемо перестало быть рабочим, —
+   * статус `stopped` (не сбой мемо: монитор его не считает), прогресс с
+   * отметкой, текст с причиной и перечнем сделанного.
+   */
+  private async markHalted(
+    accountId: string,
+    run: { id: string; memoNumber: number },
+    i: number,
+    why: MemoHaltReason,
+    progress: Array<{ i: number; operation: string; outcome: string }>,
+    lang: MemoLang,
+    where: Prisma.AssistAdminMemoRunWhereInput = {},
+  ): Promise<string> {
+    progress.push({ i, operation: 'memo', outcome: `halted:${why}` });
+    await this.db.forAccount(accountId).assistAdminMemoRun.updateMany({
+      where: { id: run.id, ...where },
+      data: {
+        status: 'stopped',
+        step: i,
+        goalStatus: 'not_reached',
+        slots: Prisma.DbNull,
+        progress: progress as unknown as Prisma.InputJsonValue,
+      },
+    });
+    const done = progress
+      .filter((p) => p.outcome === 'ok' || p.outcome === 'done')
+      .map((p) => p.operation)
+      .join(', ');
+    return MEMO_TEXT.halted[lang](
+      run.memoNumber,
+      i + 1,
+      MEMO_TEXT.haltWhy[why][lang],
+      done,
+    );
+  }
+
+  /**
+   * D3: запуск этого сотрудника, а мемо уже не рабочее, — остановить с
+   * причиной (текст) или `null`, если мемо в порядке / запуска нет.
+   * Зовут «Да» на шаге мемо и план голосового управления перед отрезком
+   * шагов на странице.
+   */
+  async haltRun(
+    ctx: ActorCtx,
+    runId: string,
+    /** Шаг, перед которым остановка; нет — текущий шаг запуска. */
+    step?: number,
+  ): Promise<{ number: number; text: string } | null> {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(runId)) return null;
+    const run = await this.db
+      .forAccount(ctx.accountId)
+      .assistAdminMemoRun.findFirst({
+        where: { id: runId, siteId: ctx.siteId, actor: ctx.actor },
+      });
+    if (!run) return null;
+    const why = await this.memoHalt(ctx.accountId, run.memoId);
+    if (!why) return null;
+    const at = step ?? run.step;
+    const progress = Array.isArray(run.progress)
+      ? (run.progress as Array<{
+          i: number;
+          operation: string;
+          outcome: string;
+        }>)
+      : [];
+    const lang = (
+      ['uk', 'ru', 'en'].includes(ctx.lang) ? ctx.lang : 'uk'
+    ) as MemoLang;
+    // Запуск ещё идёт — остановить (условие на статус: гонка с итогом шага);
+    // уже закончился — только причина.
+    const text = ['waiting', 'ui', 'running'].includes(run.status)
+      ? await this.markHalted(ctx.accountId, run, at, why, progress, lang, {
+          status: run.status,
+        })
+      : MEMO_TEXT.halted[lang](
+          run.memoNumber,
+          at + 1,
+          MEMO_TEXT.haltWhy[why][lang],
+          '',
+        );
+    return { number: run.memoNumber, text };
   }
 
   // ── каталог операций сайта ─────────────────────────────────────────────
@@ -1316,6 +1471,16 @@ export class AdminMemoService {
       return { text: lines.join('\n'), proposal: null };
     };
     for (let i = from; i < total; i++) {
+      // D3 (§5-бис.17 п.5 п.8): статус мемо — перед КАЖДЫМ шагом. Ушло в
+      // «требует проверки», выключено или удалено посреди запуска —
+      // следующий шаг не исполняется, запуск остановлен с причиной.
+      const why = await this.memoHalt(ctx.accountId, run.memoId);
+      if (why) {
+        lines.push(
+          await this.markHalted(ctx.accountId, run, i, why, progress, lang),
+        );
+        return { text: lines.filter(Boolean).join('\n'), proposal: null };
+      }
       const s = content.steps[i];
       if (s.action === 'say') {
         lines.push(s.say[lang] ?? s.say.uk ?? s.say.ru ?? s.say.en ?? '');
@@ -1538,6 +1703,8 @@ export class AdminMemoService {
     });
     if (!run || run.status !== 'ui' || run.expiresAt.getTime() <= now.getTime())
       return null;
+    // D3: отрезок шагов на странице не отдаётся мемо, которое уже не рабочее.
+    if (await this.memoHalt(ctx.accountId, run.memoId)) return null;
     const ver = await db.assistAdminMemoVersion.findFirst({
       where: { memoId: run.memoId, number: run.memoVersion },
     });

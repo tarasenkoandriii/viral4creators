@@ -180,4 +180,81 @@ describe('тестовые учётные записи мастера (Ш2)', ()
       svc.update('u', 'p1', 'ta1', { lifetimeDays: 365 }),
     ).rejects.toMatchObject({ status: 400 });
   });
+  describe('Ш2-хвост (3): учётки для входа на шаге мастера', () => {
+    const full = (over: Record<string, unknown>) => ({
+      id: 'x',
+      label: 'Покупатель',
+      role: 'customer',
+      plan: 'Pro',
+      username: 'buyer@example.com',
+      status: 'active',
+      products: ['tutorial'],
+      coversHost: true,
+      confirmedTestAccount: false,
+      secrets: { password: true, loginFields: false, session: false },
+      ...over,
+    });
+
+    it('только активные, для обучалки, на хосте черновика и с паролем; наружу — id, метка, роль', async () => {
+      const { svc, sites } = make({});
+      sites.listTestAccounts.mockResolvedValue({
+        siteId: 's1',
+        hosts: [],
+        accounts: [
+          full({ id: 'ok', label: 'Покупатель Pro', role: 'customer' }),
+          full({ id: 'frozen', status: 'frozen' }),
+          full({ id: 'qa', products: ['qa'] }),
+          full({ id: 'other-host', coversHost: false }),
+          full({
+            id: 'no-pass',
+            secrets: { password: false, loginFields: true, session: true },
+          }),
+        ],
+      });
+      const r = await svc.loginOptions('user1', 'p1');
+      expect(r).toEqual({
+        available: true,
+        accounts: [{ id: 'ok', label: 'Покупатель Pro', role: 'customer' }],
+      });
+      // Ни логина, ни флагов секретов, ни продуктов.
+      expect(JSON.stringify(r)).not.toContain('buyer@example.com');
+      expect(JSON.stringify(r)).not.toContain('password');
+    });
+
+    it('режим B, хранилище выключено, нет черновика или кабинет отказал — входа учёткой реестра нет', async () => {
+      const b = make({
+        draft: {
+          id: 'd1',
+          baseUrl: 'https://shop.example.com',
+          siteMode: 'B',
+          siteHostId: null,
+          siteTestAccountId: null,
+          userSiteSessionId: null,
+        },
+      });
+      await expect(b.svc.loginOptions('user1', 'p1')).resolves.toEqual({
+        available: false,
+        accounts: [],
+      });
+      expect(b.sites.listTestAccounts).not.toHaveBeenCalled();
+      const off = make({ store: false });
+      await expect(off.svc.loginOptions('user1', 'p1')).resolves.toEqual({
+        available: false,
+        accounts: [],
+      });
+      const none = make({ draft: null });
+      await expect(none.svc.loginOptions('user1', 'p1')).resolves.toEqual({
+        available: false,
+        accounts: [],
+      });
+      const refused = make({});
+      refused.sites.listTestAccounts.mockRejectedValue(
+        new SitesRejectedError(403, 'HOST_NOT_MANAGED', 'не ваш'),
+      );
+      await expect(refused.svc.loginOptions('user1', 'p1')).resolves.toEqual({
+        available: false,
+        accounts: [],
+      });
+    });
+  });
 });

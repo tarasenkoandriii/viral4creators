@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     sandbox: cfg.sandbox,
     rotateJobs: cfg.rotateJobs,
     rotateMs: cfg.rotateMs,
+    drainMaxMs: cfg.drainMaxMs,
     logger,
   });
   const testDns = cfg.testDns;
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
         ? (h: string) => Promise.resolve(testDns.get(h.toLowerCase()) ?? [])
         : undefined,
       ignoreHttpsErrors: cfg.testIgnoreTls,
+      traffic: cfg.traffic,
     },
   });
   const health = () =>
@@ -58,6 +60,8 @@ async function main(): Promise<void> {
       t: Date.now(),
       running: runner.active,
       browser: pool.isUp,
+      draining: pool.draining,
+      rotations: pool.rotations,
       lastClaimAt: runner.lastClaimAt,
       lastError: runner.lastError,
       completed: runner.completed,
@@ -75,8 +79,7 @@ async function main(): Promise<void> {
   // ронять контейнер на старте (видно в `docker compose ps` и журнале), а не
   // каждое задание кодом `browser_crashed`.
   try {
-    await pool.acquire();
-    pool.release();
+    pool.release(await pool.acquire());
   } catch (e) {
     logger.error(
       'Chromium не запустился (песочница: seccomp-профиль и user namespaces — DEPLOYMENT §6.25)',

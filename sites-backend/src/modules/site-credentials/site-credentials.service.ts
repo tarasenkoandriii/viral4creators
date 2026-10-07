@@ -77,10 +77,37 @@ const CLIENT_REF_RE = /^[a-z]{1,16}:[A-Za-z0-9_-]{1,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 export type LeaseDenyReason =
-  'frozen' | 'expired' | 'product' | 'host' | 'host_not_verified';
+  | 'frozen'
+  | 'expired'
+  | 'product'
+  | 'not_confirmed'
+  | 'host'
+  | 'host_not_verified';
 
 export type RedeemDenyReason =
-  'not_found' | 'used' | 'expired' | 'actor' | 'account' | 'revoked';
+  | 'not_found'
+  | 'used'
+  | 'expired'
+  | 'actor'
+  | 'account'
+  | 'revoked'
+  | 'not_confirmed';
+
+/**
+ * Продукты, которым нужна отметка владельца «это тестовый аккаунт, не
+ * реальный клиент» (`confirmedTestAccountAt`): QA гоняет сценарии и сканы
+ * (Ш2-хвост (6), ТЗ QA §3.6) — с реальным клиентом это недопустимо.
+ * Обучалка ведёт человек сам, по своей учётке, — ей отметка не нужна.
+ */
+export const CONFIRMED_ONLY_PRODUCTS: readonly string[] = ['qa'];
+
+const notConfirmed = () =>
+  credError(
+    ConflictException,
+    'TEST_ACCOUNT_NOT_CONFIRMED',
+    'QA работает только с учётками, которые владелец отметил как тестовые («это тестовый аккаунт, не реальный клиент»)',
+    { reason: 'not_confirmed' },
+  );
 
 export interface TestAccountView {
   id: string;
@@ -405,6 +432,52 @@ export class SiteCredentialsService {
     return { deleted: true };
   }
 
+  /**
+   * Ш2-хвост (7): удалить учётку, которую завёл ЭТОТ черновик генератора
+   * (`clientRef` черновика и тот же автор `createdBy`), — при удалении
+   * черновика. Чужая (заведена в кабинете, другим человеком или другим
+   * черновиком) не трогается: 409 `TEST_ACCOUNT_NOT_OWN` и строка журнала
+   * отказа. Удаление — как «Забыть» (crypto-shred каскадом) с журналом.
+   */
+  async forgetOwn(
+    accountId: string,
+    id: string,
+    clientRef: string,
+    actor: string,
+    now = new Date(),
+  ): Promise<{ deleted: true }> {
+    const row = await this.requireAccount(accountId, id, null);
+    const base = {
+      actor,
+      action: 'delete' as const,
+      scope: 'A' as const,
+      accountId,
+      subjectId: row.id,
+      runRef: clientRef,
+    };
+    if (row.clientRef !== clientRef || row.createdBy !== actor) {
+      await this.audit.appendQuietly(
+        { ...base, result: 'denied:not_own' },
+        now,
+      );
+      throw credError(
+        ConflictException,
+        'TEST_ACCOUNT_NOT_OWN',
+        'Эту учётную запись завёл не этот черновик — её удаляет владелец в кабинете',
+      );
+    }
+    // Условие — в самом удалении: учётку могли «отвязать» между чтением и
+    // удалением (правка clientRef из кабинета невозможна, но дёшево).
+    const { count } = await this.db
+      .forAccount(accountId)
+      .siteTestAccount.deleteMany({
+        where: { id: row.id, clientRef, createdBy: actor },
+      });
+    if (count !== 1) throw notFoundAccount();
+    await this.audit.append({ ...base, result: 'ok' }, now);
+    return { deleted: true };
+  }
+
   /** Стереть только секреты («одноразово» обучалки): учётка остаётся. */
   async forgetSecrets(
     accountId: string,
@@ -656,6 +729,19 @@ export class SiteCredentialsService {
     ) {
       throw await deny('product', 'Учётная запись не разрешена этому продукту');
     }
+    // Ш2-хвост (6): QA — только с учёткой, отмеченной владельцем как
+    // тестовая. 409, а не 403: условие снимается действием владельца в
+    // кабинете (галочка), а не правами вызывающего.
+    if (
+      CONFIRMED_ONLY_PRODUCTS.includes(req.product) &&
+      !row.confirmedTestAccountAt
+    ) {
+      await this.audit.appendQuietly(
+        { ...base, action: 'lease', result: 'denied:not_confirmed' },
+        now,
+      );
+      throw notConfirmed();
+    }
     if (!row.hostIds.includes(req.hostId)) {
       throw await deny('host', 'Учётная запись не действует на этом хосте');
     }
@@ -777,6 +863,19 @@ export class SiteCredentialsService {
       } catch {
         stillAllowed = false;
       }
+    }
+    // Отметку «тестовый» могли снять за 2 минуты аренды — QA без неё не
+    // получает секретов и при погашении.
+    if (
+      stillAllowed &&
+      CONFIRMED_ONLY_PRODUCTS.includes(lease.product) &&
+      !row.confirmedTestAccountAt
+    ) {
+      await this.audit.appendQuietly(
+        { ...base, result: 'denied:not_confirmed' },
+        now,
+      );
+      throw notConfirmed();
     }
     if (!stillAllowed) {
       await this.audit.appendQuietly(

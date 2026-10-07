@@ -12,25 +12,24 @@
  *
  * Лимит частоты — как у входа в веб-кабинет (LoginRateLimiter, окно в
  * памяти инстанса): по telegramId, перебор токена (24 случайных байта)
- * бессмыслен, лимит бережёт базу от залпа запросов.
+ * бессмыслен, лимит бережёт базу от залпа запросов. Числа и форма 429 —
+ * `invite-rate-limit.ts` (общие с принятием).
  */
 
-import {
-  Controller,
-  Get,
-  HttpException,
-  HttpStatus,
-  Param,
-  Req,
-} from '@nestjs/common';
+import { Controller, Get, Param, Req } from '@nestjs/common';
 import { AllowApps } from '../../telegram-auth/allow-apps.decorator';
 import type { IdentifiedRequest } from '../../telegram-auth/identity';
 import { LoginRateLimiter } from '../../telegram-auth/web/web-login';
 import { AccountService } from './account.service';
+import {
+  INVITE_PREVIEW_LIMIT,
+  INVITE_RATE_WINDOW_MS,
+  inviteRateLimited,
+} from './invite-rate-limit';
 
 /** Превью на человека: 30 в минуту — с запасом для повторов экрана. */
-export const INVITE_PREVIEW_LIMIT = 30;
-export const INVITE_PREVIEW_WINDOW_MS = 60_000;
+export { INVITE_PREVIEW_LIMIT };
+export const INVITE_PREVIEW_WINDOW_MS = INVITE_RATE_WINDOW_MS;
 
 @Controller('sites/account/invites')
 @AllowApps('any')
@@ -46,17 +45,7 @@ export class InvitePreviewController {
   @Get(':token/preview')
   preview(@Req() req: IdentifiedRequest, @Param('token') token: string) {
     const waitMs = this.limiter.hit(req.identity.telegramId.toString());
-    if (waitMs !== null) {
-      throw new HttpException(
-        {
-          error: 'RATE_LIMIT_EXCEEDED',
-          code: 'RATE_LIMIT_EXCEEDED',
-          message: 'Слишком много запросов — подождите минуту',
-          retryAfterMs: waitMs,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
+    if (waitMs !== null) throw inviteRateLimited(waitMs);
     return this.accounts.previewInvite(req.identity, token);
   }
 }

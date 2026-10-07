@@ -48,6 +48,7 @@ import {
 import { AssistPaymentProviders } from './providers';
 import {
   autoAllowanceUnits,
+  isInternalAccount,
   readState,
   readUsage,
 } from './public/entitlements';
@@ -131,7 +132,7 @@ export class AssistBilling {
   async overview(m: AccountMembership): Promise<BillingOverview> {
     const now = this.now();
     const db = this.raw('кабинет: тариф и счётчик единиц');
-    const state = await readState(db, m.accountId, now);
+    const state = await readState(db, m.accountId, now, this.env);
     const usage = await readUsage(db, m.accountId, state.periodKey);
     const sub = await this.sitesDb
       .forAccount(m.accountId)
@@ -270,6 +271,21 @@ export class AssistBilling {
     m: AccountMembership,
     req: CheckoutRequest,
   ): Promise<CheckoutResult> {
+    // Ш5 (4) / Ш6 (8): внутренний тенант не платит — ни подписку, ни
+    // докупку (лимита единиц у него нет, деньги держат суточные потолки).
+    if (
+      await isInternalAccount(
+        this.raw('кабинет: внутренний тенант'),
+        m.accountId,
+        this.env,
+      )
+    ) {
+      throw billingError(
+        'INTERNAL_PLAN',
+        'Внутренний тариф платформы — оплата не нужна',
+        HttpStatus.CONFLICT,
+      );
+    }
     const legal = await this.legalStatus(m.accountId);
     if (!legal.terms.accepted || !legal.dpa.accepted) {
       throw billingError(
@@ -296,6 +312,7 @@ export class AssistBilling {
         this.raw('кабинет: докупка — текущий тариф'),
         m.accountId,
         now,
+        this.env,
       );
       const p =
         state.planId && state.planId !== 'trial'
@@ -409,7 +426,15 @@ export class AssistBilling {
         this.raw('кабинет: автодокупка — текущий тариф'),
         m.accountId,
         this.now(),
+        this.env,
       );
+      if (state.internal) {
+        throw billingError(
+          'INTERNAL_PLAN',
+          'Внутренний тариф платформы — автодокупка не нужна',
+          HttpStatus.CONFLICT,
+        );
+      }
       const sub = await db.assistSubscription.findFirst({
         select: { recTokenEnc: true, method: true },
       });

@@ -14,6 +14,8 @@ import type {
   ClientSiteRoundResult,
   ConsentLocale,
   LiveLoginStart,
+  LoginFieldPick,
+  RegistryLoginOptions,
   SiteAccessView,
 } from '../types/client-site-tutorial';
 
@@ -92,6 +94,40 @@ export async function loginSite(
   return unwrap(
     await api.post<ClientSiteRoundResult>(`${base(projectId)}/login`, input),
     'login'
+  );
+}
+
+/** Ш2-хвост (3): учётки реестра сайта для входа на шаге мастера. */
+export async function getRegistryLoginOptions(
+  projectId: string
+): Promise<RegistryLoginOptions> {
+  return unwrap(
+    await api.get<RegistryLoginOptions>(
+      `${base(projectId)}/test-accounts/for-login`
+    ),
+    'login options'
+  );
+}
+
+/**
+ * Ш2-хвост (3): вход учёткой реестра. Секретов в теле нет — только id
+ * учётки; поля формы сервер находит сам, а если не нашёл (422
+ * `LOGIN_FIELDS_NOT_FOUND`) — тот же вызов с указанными полями (`pick`).
+ */
+export async function loginWithRegistryAccount(
+  projectId: string,
+  input: {
+    expectedVersion: number;
+    testAccountId: string;
+    pick?: LoginFieldPick;
+  }
+): Promise<ClientSiteRoundResult> {
+  return unwrap(
+    await api.post<ClientSiteRoundResult>(
+      `${base(projectId)}/login-registry`,
+      input
+    ),
+    'login-registry'
   );
 }
 
@@ -186,6 +222,17 @@ export function apiErrorCode(err: unknown): string | null {
     err.response?.data as { error?: { code?: unknown } } | undefined
   )?.error?.code;
   return typeof code === 'string' ? code : null;
+}
+
+/** Подробность отказа (`error.details.reason` конверта) или `null`. */
+export function apiErrorReason(err: unknown): string | null {
+  if (!axios.isAxiosError(err)) return null;
+  const reason = (
+    err.response?.data as
+      | { error?: { details?: { reason?: unknown } } }
+      | undefined
+  )?.error?.details?.reason;
+  return typeof reason === 'string' ? reason : null;
 }
 
 /** Э-С Ш1: режим A/B. До первого `/explore` — по ссылке, потом — по черновику. */

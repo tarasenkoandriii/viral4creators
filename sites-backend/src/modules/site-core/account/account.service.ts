@@ -132,15 +132,41 @@ export function accountTail(id: string): string {
 export interface InvitePreview {
   account: { tail: string; type: 'owner' | 'agency' };
   /**
-   * Имя пригласившего в Telegram — из его последнего входа в веб-кабинет
-   * (в базе имён участников нет). `null` — неизвестно.
+   * Имя пригласившего в Telegram: сохранённое при создании приглашения
+   * (личность запроса), у старых приглашений — из его последнего входа в
+   * веб-кабинет. `null` — неизвестно.
    */
-  inviter: { username: string | null; firstName: string | null } | null;
+  inviter: InviterName | null;
   role: 'manager' | 'operator';
   productRoles: ProductRoles;
   expiresAt: Date;
   /** Человек уже в этом кабинете — принятие ничего не изменит. */
   alreadyMember: boolean;
+}
+
+/** Имя человека в Telegram — как в превью приглашения. */
+export interface InviterName {
+  username: string | null;
+  firstName: string | null;
+}
+
+/** Потолок длины имени в превью (Telegram: username ≤ 32, имя ≤ 64). */
+const INVITER_NAME_MAX = 64;
+
+function nameField(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim().slice(0, INVITER_NAME_MAX);
+  return t || null;
+}
+
+/** Имя из личности/строки базы; ни username, ни имени — `null`. */
+export function inviterNameOf(
+  src: { username?: unknown; firstName?: unknown } | null | undefined,
+): InviterName | null {
+  if (!src) return null;
+  const username = nameField(src.username);
+  const firstName = nameField(src.firstName);
+  return username || firstName ? { username, firstName } : null;
 }
 
 /** `inv_<токен>` или голый токен → токен; битый — `null`. */
@@ -295,12 +321,14 @@ export class AccountService {
   /**
    * Приглашение (только владелец — гвард маршрута). Роль `owner` выдать
    * нельзя: владелец у кабинета один. В ответе — сам токен (показывается
-   * один раз), в базе — его хеш.
+   * один раз), в базе — его хеш. `inviter` — имя из проверенной личности
+   * запроса (initData или веб-сессия): его покажет превью приглашения.
    */
   async createInvite(
     membership: AccountMembership,
     input: { role: unknown; productRoles?: unknown },
     now = new Date(),
+    inviter: { username?: unknown; firstName?: unknown } | null = null,
   ): Promise<{ token: string; startParam: string; expiresAt: Date }> {
     const role = parseAccountRole(input.role);
     if (role !== 'manager' && role !== 'operator') {
@@ -320,6 +348,7 @@ export class AccountService {
     }
     const token = newVerifyToken();
     const expiresAt = new Date(now.getTime() + INVITE_TTL_MS);
+    const name = inviterNameOf(inviter);
     await this.db.forAccount(membership.accountId).siteAccountInvite.create({
       data: {
         accountId: membership.accountId,
@@ -327,6 +356,8 @@ export class AccountService {
         role,
         productRoles,
         createdByTelegramId: membership.telegramId,
+        createdByUsername: name?.username ?? null,
+        createdByFirstName: name?.firstName ?? null,
         expiresAt,
       },
     });
@@ -374,7 +405,11 @@ export class AccountService {
         tail: accountTail(account.id),
         type: account.type === 'agency' ? 'agency' : 'owner',
       },
-      inviter: await this.inviterName(invite.createdByTelegramId),
+      inviter:
+        inviterNameOf({
+          username: invite.createdByUsername,
+          firstName: invite.createdByFirstName,
+        }) ?? (await this.inviterName(invite.createdByTelegramId)),
       role,
       productRoles: parseProductRoles(invite.productRoles),
       expiresAt: invite.expiresAt,
@@ -383,9 +418,10 @@ export class AccountService {
   }
 
   /**
-   * Имя пригласившего: имён участников в базе нет, есть только у сессий
-   * веб-кабинета (данные виджета входа Telegram). Не нашли или сбой —
-   * `null`: превью без имени лучше, чем без превью.
+   * Запасной путь для приглашений без сохранённого имени (созданных до
+   * миграции 20261007090000_invite_inviter_name): имя из последней сессии
+   * веб-кабинета пригласившего (данные виджета входа Telegram). Не нашли
+   * или сбой — `null`: превью без имени лучше, чем без превью.
    */
   private async inviterName(
     telegramId: bigint,
@@ -401,11 +437,7 @@ export class AccountService {
           orderBy: { createdAt: 'desc' },
           select: { username: true, firstName: true },
         });
-      if (!row) return null;
-      return {
-        username: row.username ? row.username.slice(0, 64) : null,
-        firstName: row.firstName ? row.firstName.slice(0, 64) : null,
-      };
+      return inviterNameOf(row);
     } catch (e) {
       this.logger.warn(
         `превью приглашения: имя пригласившего не прочитано (${String(e)})`,

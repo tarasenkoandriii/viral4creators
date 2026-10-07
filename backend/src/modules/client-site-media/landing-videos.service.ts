@@ -17,7 +17,10 @@
  * Набор — ПОЛНЫЙ (замена, как у Э6): потолок платформы 15 роликов и 8 КБ
  * тела, поэтому порядок — по языкам лендинга (ru, uk, en, de, es), внутри
  * языка — по номеру шага; последний одобренный на (тема, язык). Поводы:
- * одобрение/снятие одобрения в админке (`TutorialVideoAdminService`).
+ * одобрение/снятие одобрения в админке (`TutorialVideoAdminService`) и
+ * (Ш5 (12)) удаление одобренного ролика подметальщиком раннера
+ * (`sweepOldAssets` → `requestSync`): иначе в тенанте до следующего
+ * одобрения висела бы ссылка на стёртый mp4.
  * Никогда не бросает: сбой — в лог, следующий повод пришлёт набор заново.
  */
 import { Injectable, Logger } from '@nestjs/common';
@@ -138,6 +141,54 @@ export class LandingVideosService {
       out.push(next);
     }
     return out;
+  }
+
+  /** Склейка поводов `requestSync` (мс): серия удалений — одна пересылка. */
+  debounceMs = 1_000;
+  private pending: Promise<boolean> | null = null;
+  /** Пересылка уже идёт (окно дебаунса прошло) — новый повод нужен следом. */
+  private syncing = false;
+  private rerun = false;
+
+  /**
+   * Ш5 (12): пересылка набора после удаления одобренного ролика — с
+   * дебаунсом: поводы в окне `debounceMs` и во время идущей пересылки
+   * склеиваются (одна отправка сейчас + не больше одной следом, если
+   * повод пришёл посреди неё — набор читается заново и уже без
+   * удалённого). Промис — итог последней пересылки; не бросает никогда
+   * (подметальщик не должен падать из-за sites-backend).
+   */
+  requestSync(): Promise<boolean> {
+    if (this.pending) {
+      // В окне дебаунса набор ещё не читался — повод уже учтён.
+      if (this.syncing) this.rerun = true;
+      return this.pending;
+    }
+    const run = async (): Promise<boolean> => {
+      if (this.debounceMs > 0) {
+        await new Promise((r) => setTimeout(r, this.debounceMs));
+      }
+      this.syncing = true;
+      let ok = await this.sync();
+      while (this.rerun) {
+        this.rerun = false;
+        ok = await this.sync();
+      }
+      return ok;
+    };
+    const p = run()
+      .catch(() => false)
+      .finally(() => {
+        this.syncing = false;
+        if (this.pending === p) this.pending = null;
+        // Повод между последней проверкой и этой строкой — не потерять.
+        if (this.rerun) {
+          this.rerun = false;
+          void this.requestSync();
+        }
+      });
+    this.pending = p;
+    return p;
   }
 
   /** Полный набор → sites-backend. false — не настроено или сбой. */

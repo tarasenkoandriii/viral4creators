@@ -23,6 +23,7 @@ import {
   sitesSignatureHeaders,
 } from '../../shared/sites-internal-signature';
 import { OwnershipChecker } from '../site-core/ownership/ownership-checker';
+import { CredentialAuditService } from '../site-credentials/credential-audit.service';
 import { SiteCredentialsService } from '../site-credentials/site-credentials.service';
 import {
   CabinetFixture,
@@ -330,5 +331,87 @@ describeDb('internal-sites: хранилище учётных данных по 
     await call('user-sessions/read', { ownerRef: me, sessionId: id }).expect(
       404,
     );
+  });
+  it('Ш2-хвост (7): forget — своя учётка черновика удаляется целиком, чужая — 409 и цела', async () => {
+    const tg = f.telegramId.toString();
+    const own = await call('test-accounts/upsert', {
+      telegramId: tg,
+      hostId: f.verifiedHostId,
+      clientRef: 'project:pf1',
+      account: { label: 'Обучалка: shop' },
+    }).expect(200);
+    const ownId = own.body.data.id as string;
+    await call('test-accounts/put-secret', {
+      telegramId: tg,
+      testAccountId: ownId,
+      purpose: 'login-fields',
+      secret: '[{"selector":"#pw","value":"Forget-me-0123456789"}]',
+    }).expect(200);
+    // Учётка, заведённая руками (без ключа черновика), — с паролем.
+    const manual = await call('test-accounts/upsert', {
+      telegramId: tg,
+      hostId: f.verifiedHostId,
+      account: { label: 'Покупатель', password: 'Manual-pass-0123456789' },
+    }).expect(200);
+    const manualId = manual.body.data.id as string;
+
+    await call('forget', { telegramId: tg, testAccountId: ownId }).expect(400);
+    await call('forget', {
+      telegramId: tg,
+      testAccountId: ownId,
+      clientRef: 'bad ref',
+    }).expect(400);
+    const foreign = await call('forget', {
+      telegramId: tg,
+      testAccountId: manualId,
+      clientRef: 'project:pf1',
+    }).expect(409);
+    expect(foreign.body.error.code).toBe('TEST_ACCOUNT_NOT_OWN');
+    const otherDraft = await call('forget', {
+      telegramId: tg,
+      testAccountId: ownId,
+      clientRef: 'project:pf2',
+    }).expect(409);
+    expect(otherDraft.body.error.code).toBe('TEST_ACCOUNT_NOT_OWN');
+    const stranger = await seedCabinet(prisma);
+    cabinets.push(stranger);
+    await call('forget', {
+      telegramId: stranger.telegramId.toString(),
+      testAccountId: ownId,
+      clientRef: 'project:pf1',
+    }).expect(404);
+
+    const done = await call('forget', {
+      telegramId: tg,
+      testAccountId: ownId,
+      clientRef: 'project:pf1',
+    }).expect(200);
+    expect(done.body.data).toEqual({ deleted: true });
+    expect(JSON.stringify(done.body)).not.toContain('Forget-me');
+    // Через сервис (правило графа: имён таблиц хранилища здесь нет).
+    const left = await app
+      .get(SiteCredentialsService)
+      .list(f.accountId, f.siteId);
+    expect(left.map((a) => a.id)).toEqual([manualId]);
+    // Ручная учётка и её пароль на месте.
+    expect(left[0].secrets.password).toBe(true);
+    const audit = app.get(CredentialAuditService);
+    const journal = [
+      ...(await audit.recent({ accountId: f.accountId, subjectId: manualId })),
+      ...(await audit.recent({ accountId: f.accountId, subjectId: ownId })),
+    ].filter((r) => r.action === 'delete');
+    expect(journal.map((r) => [r.subjectId, r.result]).sort()).toEqual(
+      [
+        [manualId, 'denied:not_own'],
+        [ownId, 'denied:not_own'],
+        [ownId, 'ok'],
+      ].sort(),
+    );
+    // Повтор — учётки уже нет: 404 (генератор считает это «уже стёрто»).
+    await call('forget', {
+      telegramId: tg,
+      testAccountId: ownId,
+      clientRef: 'project:pf1',
+    }).expect(404);
   });
 });

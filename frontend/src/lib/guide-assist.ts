@@ -11,12 +11,16 @@
  * не подходит — бэкенд TMA на другом origin, а загрузчик берёт endpoint
  * только со своего).
  *
- * Без DOM и сети — под `scripts/guide-assist.test.ts`.
+ * Без DOM и сети — под `scripts/guide-assist.test.ts` и
+ * `scripts/guide-engine-hint.test.ts` (подсказка гида, жизненный цикл окна).
  */
 
 export type GuideAssistConfig =
   | { engine: 'legacy' }
   | { engine: 'assist'; pk: string; origin: string };
+
+/** Какой гид у человека (флаг бэкенда `WIZARD_GUIDE_ENGINE`). */
+export type GuideEngine = GuideAssistConfig['engine'];
 
 const LEGACY: GuideAssistConfig = { engine: 'legacy' };
 const PK_RE = /^pk_(live|test)_[A-Za-z0-9_]{1,70}$/;
@@ -160,4 +164,206 @@ export function callAssist(
     fn = stub;
   }
   fn(...args);
+}
+
+// ── Подсказка «какой гид» (аудит Ш6: лишний `GET /guide-assist/config`) ──
+//
+// При `WIZARD_GUIDE_ENGINE=legacy` (умолчание) запрос `config` на каждом
+// старте мини-аппа — лишний: ответ всегда `legacy`. Гид человека сервер и
+// так сообщает в ответе гида проекта (`GET /projects/:id/wizard-guide`,
+// поле `engine`) — мастер спрашивает его на каждом экране. Поэтому:
+//  - последний известный гид запоминается на устройстве (localStorage);
+//  - на старте `config` спрашивается, только если НЕ известно, что гид —
+//    `legacy` (первый запуск, после смены личности, или известно `assist`);
+//  - ответ гида проекта обновляет подсказку и шлёт событие окна: пришло
+//    `assist` — `GuideAssistMount` спрашивает `config` (нужны pk и origin)
+//    и вставляет загрузчик; пришло `legacy` при работающем окне — `logout`.
+
+/** Ключ localStorage: последний известный гид на этом устройстве. */
+export const GUIDE_ENGINE_STORAGE_KEY = 'v4c.guide-engine';
+/** Событие окна: сервер сообщил гид человека (`detail` — `GuideEngine`). */
+export const GUIDE_ENGINE_EVENT = 'v4c:guide-engine';
+
+/** `legacy` | `assist` из ответа сервера; иное (старый сервер, мусор) — null. */
+export function guideEngineOf(raw: unknown): GuideEngine | null {
+  return raw === 'legacy' || raw === 'assist' ? raw : null;
+}
+
+/** Нужен ли `GET /guide-assist/config` на старте: не нужен, если гид — legacy. */
+export function needsConfigOnStart(hint: GuideEngine | null): boolean {
+  return hint !== 'legacy';
+}
+
+/**
+ * Весть о гиде → действие монтировщика: `start` — спросить `config` и
+ * вставить загрузчик; `stop` — погасить окно (`logout`); `none` — ничего.
+ */
+export function engineNewsAction(
+  engine: GuideEngine,
+  running: boolean
+): 'start' | 'stop' | 'none' {
+  if (engine === 'assist') return running ? 'none' : 'start';
+  return running ? 'stop' : 'none';
+}
+
+/** Хранилище подсказки — `localStorage` или двойник в тесте. */
+export interface GuideEngineStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/** Подсказка с устройства; нет хранилища или оно бросает — null. */
+export function readGuideEngineHint(
+  store: GuideEngineStore | null
+): GuideEngine | null {
+  try {
+    return guideEngineOf(store?.getItem(GUIDE_ENGINE_STORAGE_KEY) ?? null);
+  } catch {
+    return null;
+  }
+}
+
+/** Запомнить гид (`null` — забыть). Сбой хранилища не мешает работе. */
+export function writeGuideEngineHint(
+  store: GuideEngineStore | null,
+  engine: GuideEngine | null
+): void {
+  try {
+    if (engine) store?.setItem(GUIDE_ENGINE_STORAGE_KEY, engine);
+    else store?.removeItem(GUIDE_ENGINE_STORAGE_KEY);
+  } catch {
+    /* приватный режим / запрет хранилища: просто без подсказки */
+  }
+}
+
+/**
+ * Ответ гида проекта (`WizardGuideState`) → подсказка и событие окна.
+ * Поля `engine` нет (старый сервер) — ничего не меняем.
+ */
+export function announceGuideEngine(
+  state: unknown,
+  w: { dispatchEvent(e: Event): boolean },
+  store: GuideEngineStore | null
+): GuideEngine | null {
+  const engine = guideEngineOf(
+    state && typeof state === 'object'
+      ? (state as Record<string, unknown>).engine
+      : undefined
+  );
+  if (!engine) return null;
+  writeGuideEngineHint(store, engine);
+  w.dispatchEvent(new CustomEvent(GUIDE_ENGINE_EVENT, { detail: engine }));
+  return engine;
+}
+
+// ── Жизненный цикл окна «Админки» (логика `GuideAssistMount` без React) ──
+
+/** Ответ `POST /guide-assist/identity`: JWT или причина отказа. */
+export type GuideAssistIdentity =
+  | { jwt: string; exp: number }
+  | { failure: 'off' | 'retry' };
+
+export interface GuideAssistDeps {
+  getConfig(): Promise<GuideAssistConfig>;
+  getIdentity(): Promise<GuideAssistIdentity>;
+  /** Подсказка с устройства (`readGuideEngineHint`). */
+  hint(): GuideEngine | null;
+  forgetHint(): void;
+  /** Тег загрузчика уже в документе. */
+  hasLoader(): boolean;
+  insertLoader(cfg: Extract<GuideAssistConfig, { engine: 'assist' }>): void;
+  /** `V4CAssist(...)` — `callAssist(window, ...)`. */
+  call(...args: unknown[]): void;
+  setTimer(fn: () => void, ms: number): number;
+  clearTimer(id: number): void;
+  now(): number;
+}
+
+/**
+ * Окно «Админки»: старт (с подсказкой — без лишнего `config`), обновление
+ * JWT, смена личности, весть о гиде из ответа гида проекта. Прогон (`run`)
+ * отсекает запоздалые ответы прежнего: после `logout` старый JWT не
+ * долетит до окна.
+ */
+export function createGuideAssistController(d: GuideAssistDeps) {
+  let alive = true;
+  let run = 0;
+  let timer: number | undefined;
+  /** Окно запущено в текущем прогоне. */
+  let running = false;
+  /** Прогон, чей `start` ждёт ответа: второй параллельный не нужен. */
+  let starting: number | null = null;
+
+  const clear = () => {
+    if (timer !== undefined) d.clearTimer(timer);
+    timer = undefined;
+  };
+
+  const identify = async (my: number): Promise<void> => {
+    const id = await d.getIdentity();
+    if (!alive || my !== run) return;
+    if ('failure' in id) {
+      if (id.failure === 'off') {
+        d.call('logout');
+        return;
+      }
+      timer = d.setTimer(() => void identify(my), GUIDE_JWT_RETRY_MS);
+      return;
+    }
+    d.call('identify-admin', id.jwt);
+    timer = d.setTimer(
+      () => void identify(my),
+      refreshDelayMs(id.exp, d.now())
+    );
+  };
+
+  const start = async (my: number, force: boolean): Promise<void> => {
+    if (!force && !needsConfigOnStart(d.hint())) return;
+    if (starting === my) return;
+    starting = my;
+    try {
+      const cfg = await d.getConfig();
+      if (!alive || my !== run || cfg.engine !== 'assist') return;
+      running = true;
+      if (!d.hasLoader()) d.insertLoader(cfg);
+    } finally {
+      if (starting === my) starting = null;
+    }
+    await identify(my);
+  };
+
+  /** Погасить окно текущего прогона и начать новый. */
+  const stop = () => {
+    run += 1;
+    running = false;
+    clear();
+    // Загрузчика нет — гасить нечего (и заводить очередь `V4CAssist` зря).
+    if (d.hasLoader()) d.call('logout');
+  };
+
+  return {
+    /** Старт мини-аппа: `config` — только если гид не известен как legacy. */
+    start: (): Promise<void> => start(run, false),
+    /** Личность сменилась: погасить, забыть подсказку, спросить заново. */
+    identityChanged: (): Promise<void> => {
+      stop();
+      d.forgetHint();
+      return start(run, false);
+    },
+    /** Весть о гиде (ответ гида проекта). */
+    engineNews: (raw: unknown): Promise<void> => {
+      const engine = guideEngineOf(raw);
+      if (!engine) return Promise.resolve();
+      // Старт в полёте сам отсечёт второй (`starting`).
+      const action = engineNewsAction(engine, running);
+      if (action === 'start') return start(run, true);
+      if (action === 'stop') stop();
+      return Promise.resolve();
+    },
+    dispose: (): void => {
+      alive = false;
+      clear();
+    },
+  };
 }

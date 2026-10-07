@@ -25,6 +25,10 @@ import {
   TEST_QA_TOKEN,
   signInitData,
 } from '../telegram-auth/test-init-data';
+import {
+  INVITE_ACCEPT_IP_LIMIT,
+  INVITE_ACCEPT_LIMIT,
+} from './account/invite-rate-limit';
 import { REQUIRE_ASSIST_ADMIN_OWNER } from './account/roles';
 import {
   RequireProductRoles,
@@ -325,6 +329,75 @@ describe('site-core по HTTP', () => {
         .send({ role: 'operator' });
       expect(inv.status).toBe(403);
       expect((await request(srv()).get('/sites').set(as(2))).status).toBe(200);
+    });
+
+    it('приглашение хранит имя пригласившего из initData (для превью)', async () => {
+      await request(srv()).get('/sites/account').set(as(1));
+      const inv = await request(srv())
+        .post('/sites/account/invites')
+        .set(as(1))
+        .send({ role: 'manager' });
+      expect(inv.status).toBe(201);
+      // signInitData: username «tester», first_name «Андрій».
+      expect(store.rows('SiteAccountInvite')).toEqual([
+        expect.objectContaining({
+          createdByTelegramId: 1n,
+          createdByUsername: 'tester',
+          createdByFirstName: 'Андрій',
+        }),
+      ]);
+      const pre = await request(srv())
+        .get(`/sites/account/invites/${inv.body.data.token}/preview`)
+        .set(as(3));
+      expect(pre.status).toBe(200);
+      expect(pre.body.data.inviter).toEqual({
+        username: 'tester',
+        firstName: 'Андрій',
+      });
+    });
+
+    it(`принятие приглашения: больше ${INVITE_ACCEPT_LIMIT}/мин на человека — 429, другой человек не задет`, async () => {
+      const bogus = `inv_${'B'.repeat(32)}`;
+      for (let i = 0; i < INVITE_ACCEPT_LIMIT; i++) {
+        const r = await request(srv())
+          .post('/sites/account/invites/accept')
+          .set({ ...as(5), 'X-Forwarded-For': `198.51.100.${i}` })
+          .send({ token: bogus });
+        expect(r.status).toBe(403);
+      }
+      const over = await request(srv())
+        .post('/sites/account/invites/accept')
+        .set({ ...as(5), 'X-Forwarded-For': '198.51.100.250' })
+        .send({ token: bogus });
+      expect(over.status).toBe(429);
+      expect(over.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+      const other = await request(srv())
+        .post('/sites/account/invites/accept')
+        .set({ ...as(6), 'X-Forwarded-For': '198.51.100.251' })
+        .send({ token: bogus });
+      expect(other.status).toBe(403);
+    });
+
+    it(`принятие приглашения: больше ${INVITE_ACCEPT_IP_LIMIT}/мин с одного адреса — 429 и новому человеку`, async () => {
+      const bogus = `inv_${'C'.repeat(32)}`;
+      const ip = { 'X-Forwarded-For': '203.0.113.9, 10.0.0.1' };
+      for (let i = 0; i < INVITE_ACCEPT_IP_LIMIT; i++) {
+        const r = await request(srv())
+          .post('/sites/account/invites/accept')
+          .set({ ...as(10_000 + i), ...ip })
+          .send({ token: bogus });
+        expect(r.status).toBe(403);
+      }
+      const over = await request(srv())
+        .post('/sites/account/invites/accept')
+        .set({ ...as(20_000), ...ip })
+        .send({ token: bogus });
+      expect(over.status).toBe(429);
+      const elsewhere = await request(srv())
+        .post('/sites/account/invites/accept')
+        .set({ ...as(20_000), 'X-Forwarded-For': '203.0.113.10' })
+        .send({ token: bogus });
+      expect(elsewhere.status).toBe(403);
     });
 
     it('без кабинета кабинетный маршрут — 403 ACCOUNT_REQUIRED', async () => {

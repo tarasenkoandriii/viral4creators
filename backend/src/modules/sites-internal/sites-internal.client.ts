@@ -334,11 +334,39 @@ export class SitesInternalClient {
     );
   }
 
+  /**
+   * Ш2-хвост (7): удалить учётку, заведённую ЭТИМ черновиком (`clientRef`
+   * черновика, тот же автор) — при удалении черновика. Чужую sites-backend
+   * не трогает: `SitesRejectedError(409, 'TEST_ACCOUNT_NOT_OWN')`.
+   */
+  forgetTestAccount(
+    telegramId: string,
+    testAccountId: string,
+    clientRef: string,
+  ): Promise<{ deleted: boolean }> {
+    return this.post(
+      `${CRED}/forget`,
+      { telegramId, testAccountId, clientRef },
+      CREDENTIALS_TIMEOUT_MS,
+    );
+  }
+
   /** Аренда + погашение: секреты учётки на ОДИН раунд (режим A). */
   async leaseSecrets(
     telegramId: string,
     req: { testAccountId: string; hostId: string; runRef?: string },
   ): Promise<SitesCredentialSecrets> {
+    return (await this.leaseAccount(telegramId, req)).secrets;
+  }
+
+  /**
+   * То же с логином учётки (метаданные реестра) — вход учёткой реестра
+   * (Ш2-хвост (3)): логин и пароль на ОДИН раунд.
+   */
+  async leaseAccount(
+    telegramId: string,
+    req: { testAccountId: string; hostId: string; runRef?: string },
+  ): Promise<{ username: string | null; secrets: SitesCredentialSecrets }> {
     const lease = await this.post<{ leaseId: string }>(
       `${CRED}/lease`,
       {
@@ -350,12 +378,18 @@ export class SitesInternalClient {
       },
       CREDENTIALS_TIMEOUT_MS,
     );
-    const got = await this.post<{ secrets: SitesCredentialSecrets }>(
+    const got = await this.post<{
+      secrets: SitesCredentialSecrets;
+      username?: string | null;
+    }>(
       `${CRED}/lease/redeem`,
       { telegramId, leaseId: lease.leaseId },
       CREDENTIALS_TIMEOUT_MS,
     );
-    return got.secrets ?? {};
+    return {
+      username: typeof got.username === 'string' ? got.username : null,
+      secrets: got.secrets ?? {},
+    };
   }
 
   upsertUserSession(

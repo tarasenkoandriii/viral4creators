@@ -172,8 +172,8 @@ export function start(host: ActHost): ActApi {
   };
 
   class AdminRunner extends Runner {
-    liveRefusal(step: UiStep, el: Element): string | null {
-      let r = super.liveRefusal(step, el);
+    _refusal(step: UiStep, el: Element): string | null {
+      let r = super._refusal(step, el);
       if (!r && step.kind !== 'fill' && step.kind !== 'select') {
         const w = wordsOf(el);
         if (w && adminNever(el, w.words)) r = 'danger';
@@ -185,7 +185,7 @@ export function start(host: ActHost): ActApi {
   }
 
   // Рабочий хост мастера: отправка формы во время плана — заглушить.
-  const muted = () => armed && work && !!runner && !runner.stopped;
+  const muted = () => armed && work && !!runner && !runner._halt;
   const onSubmit = (e: Event) => {
     if (!muted()) return;
     e.preventDefault();
@@ -202,6 +202,12 @@ export function start(host: ActHost): ActApi {
       else orig.call(this);
     };
   };
+
+  // Страница уходит в bfcache: раннер стоп без отчёта (иначе при «Назад»
+  // оживёт посреди чужого плана); флаг «план идёт» — для следующей страницы.
+  N.on(window, 'pagehide', (e) => {
+    if ((e as PageTransitionEvent).persisted && runner) runner._stop(null, 1);
+  });
 
   const snap = (rows: string[]) => {
     const s = takeSnapshot(deny, allow);
@@ -275,16 +281,21 @@ export function start(host: ActHost): ActApi {
           });
           return;
         case 'ui-run': {
-          if (runner && !runner.stopped) runner.stop(null);
+          // Как в act.js: повтор `ui-run` того же плана, пока раннер жив
+          // (двойное «Да»), — не второй исполнитель поверх первого.
+          if (runner && !runner._halt) {
+            if (runner._plan == m.planId) return;
+            runner._stop(null);
+          }
           const r = new AdminRunner(
             {
               N,
-              refs,
-              deny,
-              allow,
-              min: host.min,
-              mark: host.mark,
-              report: (index, result, reason, ms) =>
+              _refs: refs,
+              _deny: deny,
+              _allow: allow,
+              _min: host.min,
+              _mark: host.mark,
+              _report: (index, result, reason, ms) =>
                 host.post({
                   type: 'ui-step',
                   planId: m.planId,
@@ -294,9 +305,9 @@ export function start(host: ActHost): ActApi {
                   url: location.href.split('#')[0],
                   ms,
                 }),
-              stopped: (by) =>
+              _stopped: (by) =>
                 host.post({ type: 'ui-stopped', planId: m.planId, by }),
-              need: (index) =>
+              _need: (index) =>
                 host.post({ type: 'ui-need', planId: m.planId, index }),
             },
             m.planId,
@@ -305,17 +316,17 @@ export function start(host: ActHost): ActApi {
             m.lang
           );
           runner = r;
-          void r.run(m.steps[m.from] && m.steps[m.from].state === 'dispatched');
+          void r._run(m.steps[m.from]?.state == 'dispatched');
           return;
         }
         case 'ui-ack':
-          if (runner && runner.planId === m.planId) runner.ack(m.index);
+          if (runner && runner._plan === m.planId) runner._ack(m.index);
           return;
         case 'ui-stop':
-          if (runner && runner.planId === m.planId) runner.stop(null);
+          if (runner && runner._plan === m.planId) runner._stop(null);
           return;
         case 'ui-pause':
-          if (runner) runner.pause(m.on);
+          if (runner) runner._pause(m.on);
           return;
       }
     },

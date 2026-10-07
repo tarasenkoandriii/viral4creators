@@ -27,6 +27,8 @@ import {
   topupPackMicroUsd,
 } from '../plans';
 import {
+  internalSiteIds,
+  internalSubscriptionState,
   subscriptionState,
   unitsLimit,
   type SubscriptionRow,
@@ -108,12 +110,43 @@ export async function readSubscription(
   return { row, trialStart: r.trialStart };
 }
 
+/**
+ * Внутренний ли кабинет (Ш5 (4) / Ш6 (8)): владеет ли он сайтом из
+ * `ASSIST_INTERNAL_SITE_IDS`. Пустой список — запроса нет вовсе (у всех
+ * кабинетов, кроме прода платформы, путь не меняется). Связь сайта с
+ * кабинетом — из базы (`site_sites`), не из env: чужой кабинет не станет
+ * внутренним, вписав id — сайт создаёт платформа, принадлежит одному
+ * кабинету. Сбой чтения — НЕ внутренний (обычный тариф, а не бесплатный).
+ */
+export async function isInternalAccount(
+  db: RawDb,
+  accountId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  const ids = internalSiteIds(env);
+  if (ids.length === 0) return false;
+  try {
+    const rows = await db.$queryRawUnsafe<Array<{ one: number }>>(
+      `SELECT 1 AS "one" FROM ${SITES} WHERE "accountId" = $1 AND "id" = ANY($2::text[]) LIMIT 1`,
+      accountId,
+      ids,
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function readState(
   db: RawDb,
   accountId: string,
   now: Date,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<SubscriptionState> {
   const { row, trialStart } = await readSubscription(db, accountId);
+  if (await isInternalAccount(db, accountId, env)) {
+    return internalSubscriptionState(row?.anchorAt ?? trialStart, now);
+  }
   return subscriptionState(row, trialStart, now);
 }
 
@@ -199,6 +232,20 @@ export async function claimUnits(
     p.accountId,
     state.periodKey,
   );
+  if (state.internal) {
+    // Внутренний тенант: единицы считаются (аналитика, расход), мягкого
+    // стопа нет. Деньги держат суточные потолки сайта и платформы.
+    await db.$executeRawUnsafe(
+      `UPDATE ${USAGE}
+          SET "units" = "units" + $3, "dialogs" = "dialogs" + $4, "updatedAt" = now()
+        WHERE "accountId" = $1 AND "periodKey" = $2`,
+      p.accountId,
+      state.periodKey,
+      units,
+      dialogs,
+    );
+    return true;
+  }
   const n = await db.$executeRawUnsafe(
     `UPDATE ${USAGE}
         SET "units" = "units" + $3, "dialogs" = "dialogs" + $4, "updatedAt" = now()

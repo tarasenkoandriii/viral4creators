@@ -27,6 +27,13 @@ export interface PageElement {
   visibleText?: string;
   name?: string;
   /**
+   * Атрибут `autocomplete` поля (нижним регистром): `username`, `email`,
+   * `current-password`, `new-password`, … — по нему генератор сам находит
+   * поля формы входа для учётки из реестра (Ш2-хвост (3),
+   * `login-form-detect.ts`). Только у `input`/`textarea`.
+   */
+  autocomplete?: string;
+  /**
    * Предупреждение стоп-листа §8.3 для ЭТОЙ кнопки («Оплатить»,
    * «Удалить»), проставленное по её видимому тексту (этап 112,
    * `danger-words.ts`). Стоит на элементе, а не только на раунде,

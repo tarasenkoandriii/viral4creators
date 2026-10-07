@@ -112,6 +112,7 @@
 import { defaultDraftSecretsStore } from '../client-site-tutorial/draft-secrets-store';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
+import { LandingVideosService } from '../client-site-media/landing-videos.service';
 import { Prisma, ProjectType } from '@prisma/client';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { GenerationStatus } from '../../common/types/generation.types';
@@ -804,6 +805,10 @@ export class TutorialScenarioRunnerService {
     // же тике и под этим же замком. Необязательна — стенды и тесты без
     // модуля качества работают как раньше.
     @Optional() private readonly quality?: TutorialDemoQualityService,
+    // Ш5 (12): подметальщик удалил одобренный ролик — набор роликов сайта
+    // тенанта лендинга переслать (иначе мёртвая ссылка до одобрения).
+    // Необязателен — стенды и тесты без sites-backend.
+    @Optional() private readonly landingVideos?: LandingVideosService,
   ) {}
 
   /**
@@ -3812,6 +3817,7 @@ export class TutorialScenarioRunnerService {
     );
 
     let deleted = 0;
+    let approvedGone = 0;
     for (const row of doomed) {
       if (keepIds.has(row.id)) continue;
       // Второй, точечный вопрос о заявке — прямо перед удалением.
@@ -3846,6 +3852,13 @@ export class TutorialScenarioRunnerService {
         }
         await this.prisma.tutorialVideoAsset.delete({ where: { id: row.id } });
         deleted++;
+        if (
+          row.reviewed &&
+          row.blobUrl &&
+          !isSiteTutorialDemoFamilyKey(row.subjectKey)
+        ) {
+          approvedGone++;
+        }
       } catch (e) {
         this.logger.warn(
           `устаревший ролик ${row.id} (${row.subjectKey}/${row.locale}) не убрался: ${
@@ -3858,6 +3871,12 @@ export class TutorialScenarioRunnerService {
       this.logger.log(
         `подметальщик роликов: удалено ${deleted} устаревших (просмотрено ${rows.length})`,
       );
+    }
+    // Ш5 (12): ушёл одобренный ролик (он мог быть в наборе тенанта
+    // лендинга) — переслать набор: один раз за тик, с дебаунсом,
+    // best-effort (`requestSync` не бросает; сбой — следующий повод).
+    if (approvedGone > 0 && this.landingVideos) {
+      await this.landingVideos.requestSync().catch(() => false);
     }
     return deleted;
   }

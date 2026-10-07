@@ -13,6 +13,17 @@
  *    (`offhost_redirect`), попапы закрываются, диалоги отклоняются,
  *    скачивания запрещены, сервис-воркеры заблокированы;
  *  - потолок подресурсов на страницу — дальше запросы обрываются;
+ *  - потолок байтов (Ш3-хвост (9), `traffic-meter.ts`): весь трафик
+ *    задания идёт через счётчик перед прокси — сверх `jobBytes` все
+ *    соединения рвутся и задание обрывается (`traffic_limit`); тело ОДНОГО
+ *    ответа сверх `responseBytes` (по событиям CDP — и сетевые, и
+ *    распакованные байты, то есть и «gzip-бомба») — рвутся соединения
+ *    этого хоста, ответ не дочитывается; если это был сам документ
+ *    перехода — `traffic_limit`. Потолок ответа — по событиям браузера
+ *    (тело внутри TLS-тоннеля прослойке не видно): на быстром канале
+ *    документ успевает прийти дальше потолка, пока рендерер его разбирает;
+ *    жёсткая граница байтов по сети — потолок задания. Счётчики —
+ *    `traffic()`, в журнал задания;
  *  - отмена (heartbeat «отменить», стена времени, остановка воркера)
  *    закрывает контекст — висящие операции Playwright обрываются.
  */
@@ -29,6 +40,14 @@ import {
   type EgressUpstream,
 } from '../shared/egress-filter-proxy';
 import { JobError } from '../errors';
+import {
+  DEFAULT_TRAFFIC_LIMITS,
+  authorityOfUrl,
+  startTrafficMeter,
+  type TrafficLimits,
+  type TrafficMeter,
+  type TrafficStats,
+} from './traffic-meter';
 
 export interface EgressOptions {
   denyCidrs: string[];
@@ -38,16 +57,37 @@ export interface EgressOptions {
   lookup?: (host: string) => Promise<string[]>;
   /** Только тесты: самоподписанный TLS стенда. */
   ignoreHttpsErrors?: boolean;
+  /** Потолки байтов (по умолчанию `DEFAULT_TRAFFIC_LIMITS`). */
+  traffic?: TrafficLimits;
+}
+
+/** Ответ в работе — для потолка тела (события CDP `Network.*`). */
+interface InFlight {
+  url: string;
+  doc: boolean;
+  decoded: number;
+  encoded: number;
+}
+
+interface CdpLike {
+  on(event: string, fn: (e: never) => void): unknown;
+  send(method: string, params?: Record<string, unknown>): Promise<unknown>;
 }
 
 export class JobBrowser {
   offhost = false;
+  /** Документы главного фрейма (адреса без #), оборванные потолком ответа. */
+  private readonly docCut = new Set<string>();
+  /** Идущий `goto` узнаёт об обрыве своего документа сразу, а не по таймауту. */
+  private onDocCut: (() => void) | null = null;
   private requests = 0;
 
   private constructor(
     readonly context: BrowserContext,
     readonly proxy: EgressFilterProxy,
     readonly allowedHosts: readonly string[],
+    readonly meter: TrafficMeter,
+    private readonly limits: TrafficLimits,
   ) {}
 
   static async open(
@@ -55,7 +95,9 @@ export class JobBrowser {
     allowedHosts: readonly string[],
     viewport: BrowserViewport,
     egress: EgressOptions,
+    onTrafficLimit?: () => void,
   ): Promise<JobBrowser> {
+    const limits = egress.traffic ?? DEFAULT_TRAFFIC_LIMITS;
     const proxy = await startEgressFilterProxy({
       denyCidrs: egress.denyCidrs,
       allowedPorts: egress.allowedPorts,
@@ -63,10 +105,21 @@ export class JobBrowser {
       lookup: egress.lookup,
       maxConnections: 128,
     });
+    let meter: TrafficMeter;
+    try {
+      meter = await startTrafficMeter({
+        targetPort: proxy.port,
+        jobBytes: limits.jobBytes,
+        onJobLimit: onTrafficLimit,
+      });
+    } catch (e) {
+      await proxy.close();
+      throw e;
+    }
     let context: BrowserContext;
     try {
       context = await browser.newContext({
-        proxy: { server: proxy.url, bypass: '<-loopback>' },
+        proxy: { server: meter.url, bypass: '<-loopback>' },
         viewport: VIEWPORT_SIZE[viewport],
         deviceScaleFactor: 1,
         isMobile: false,
@@ -80,10 +133,11 @@ export class JobBrowser {
         permissions: [],
       });
     } catch (e) {
+      await meter.close();
       await proxy.close();
       throw e;
     }
-    const jb = new JobBrowser(context, proxy, allowedHosts);
+    const jb = new JobBrowser(context, proxy, allowedHosts, meter, limits);
     await jb.install();
     return jb;
   }
@@ -139,8 +193,103 @@ export class JobBrowser {
     return s['blocked-address'] + s['blocked-port'];
   }
 
+  traffic(): TrafficStats {
+    return this.meter.stats();
+  }
+
+  /** Потолок тела ответа: оборвать соединения хоста этого ответа. */
+  private cut(f: InFlight): void {
+    let u: URL;
+    try {
+      u = new URL(f.url);
+    } catch {
+      return;
+    }
+    this.meter.cutAuthority(authorityOfUrl(u));
+    if (f.doc) {
+      u.hash = '';
+      this.docCut.add(u.toString());
+      this.onDocCut?.();
+    }
+  }
+
+  /**
+   * Размеры ответов страницы по CDP (своя сессия, отдельно от Playwright):
+   * `Content-Length` сверх потолка — обрыв сразу, иначе — по мере прихода
+   * данных (`dataReceived`: распакованные и сетевые байты).
+   */
+  async watchResponses(cdp: CdpLike): Promise<void> {
+    const cap = this.limits.responseBytes;
+    const live = new Map<string, InFlight>();
+    // Главный фрейм — чтобы огромный документ iframe не ронял переход.
+    let mainFrame: string | null = null;
+    const over = (f: InFlight) => Math.max(f.decoded, f.encoded) > cap;
+    cdp.on(
+      'Network.responseReceived',
+      (e: {
+        requestId: string;
+        type?: string;
+        frameId?: string;
+        response: { url: string; headers?: Record<string, string> };
+      }) => {
+        const f: InFlight = {
+          url: e.response.url,
+          doc:
+            e.type === 'Document' &&
+            (mainFrame === null || e.frameId === mainFrame),
+          decoded: 0,
+          encoded: 0,
+        };
+        live.set(e.requestId, f);
+        const h = e.response.headers ?? {};
+        const lenRaw = Object.entries(h).find(
+          ([k]) => k.toLowerCase() === 'content-length',
+        )?.[1];
+        const len = Number(lenRaw);
+        if (Number.isFinite(len) && len > cap) {
+          live.delete(e.requestId);
+          this.cut(f);
+        }
+      },
+    );
+    cdp.on(
+      'Network.dataReceived',
+      (e: {
+        requestId: string;
+        dataLength?: number;
+        encodedDataLength?: number;
+      }) => {
+        const f = live.get(e.requestId);
+        if (!f) return;
+        f.decoded += e.dataLength ?? 0;
+        f.encoded += e.encodedDataLength ?? 0;
+        if (over(f)) {
+          live.delete(e.requestId);
+          this.cut(f);
+        }
+      },
+    );
+    const done = (e: { requestId: string }) => void live.delete(e.requestId);
+    cdp.on('Network.loadingFinished', done);
+    cdp.on('Network.loadingFailed', done);
+    const tree = (await cdp.send('Page.getFrameTree').catch(() => null)) as {
+      frameTree?: { frame?: { id?: string } };
+    } | null;
+    mainFrame = tree?.frameTree?.frame?.id ?? null;
+    // Тела в буфер DevTools не копить: им пользуется только Playwright.
+    await cdp
+      .send('Network.enable', {
+        maxTotalBufferSize: 0,
+        maxResourceBufferSize: 0,
+      })
+      .catch(() => cdp.send('Network.enable'));
+  }
+
   async newPage(): Promise<Page> {
-    return this.context.newPage();
+    const page = await this.context.newPage();
+    const cdp = await this.context.newCDPSession(page);
+    await this.watchResponses(cdp as unknown as CdpLike);
+    return page;
   }
 
   /**
@@ -152,20 +301,32 @@ export class JobBrowser {
   async goto(page: Page, url: string, timeoutMs = 25_000): Promise<void> {
     const before = this.blocked();
     this.offhost = false;
+    this.docCut.clear();
+    const cut = new Promise<never>((_r, reject) => {
+      this.onDocCut = () => reject(new JobError('traffic_limit'));
+    });
+    cut.catch(() => undefined);
     try {
-      const resp = await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: timeoutMs,
-      });
+      const resp = await Promise.race([
+        page.goto(url, {
+          waitUntil: 'domcontentloaded',
+          timeout: timeoutMs,
+        }),
+        cut,
+      ]);
       if (!resp && this.blocked() > before)
         throw new JobError('egress_blocked');
     } catch (e) {
       if (e instanceof JobError) throw e;
+      if (this.meter.exceeded || this.docCut.size)
+        throw new JobError('traffic_limit');
       if (this.offhost) throw new JobError('offhost_redirect');
       if (this.blocked() > before) throw new JobError('egress_blocked');
       const msg = e instanceof Error ? e.message : '';
       if (/Timeout/i.test(msg)) throw new JobError('nav_timeout');
       throw new JobError('nav_failed');
+    } finally {
+      this.onDocCut = null;
     }
     await page
       .waitForLoadState('networkidle', { timeout: 5_000 })
@@ -184,10 +345,17 @@ export class JobBrowser {
     if (this.offhost || !this.allowedHosts.includes(lockHostOf(final))) {
       throw new JobError('offhost_redirect');
     }
+    // Документ самой страницы недочитан (потолок ответа) — снимок был бы
+    // по обрывку; потолок задания — тем более.
+    final.hash = '';
+    if (this.meter.exceeded || this.docCut.has(final.toString())) {
+      throw new JobError('traffic_limit');
+    }
   }
 
   async close(): Promise<void> {
     await this.context.close().catch(() => undefined);
+    await this.meter.close().catch(() => undefined);
     await this.proxy.close().catch(() => undefined);
   }
 }

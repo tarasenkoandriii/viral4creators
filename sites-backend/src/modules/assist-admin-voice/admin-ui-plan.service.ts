@@ -502,6 +502,21 @@ export class AdminUiPlanService {
       missingAt: number | null;
     } | null = null;
     if (memoRunId) {
+      // D3 (§5-бис.17 п.5 п.8): мемо ушло в «требует проверки» или
+      // выключено, пока шёл запуск, — отрезок на странице не исполняется,
+      // запуск остановлен, сотрудник видит причину.
+      const halted = await this.memos.haltRun(actor, memoRunId);
+      if (halted)
+        return {
+          ...emptyView('memo'),
+          memo: {
+            number: halted.number,
+            name: '',
+            text: halted.text,
+            proposalId: null,
+            nextUi: false,
+          },
+        };
       const seg = await this.memos.uiSegment(actor, memoRunId, now);
       if (!seg) return failPlan('not_found');
       const c = compileAdminMemoUi(seg.steps, seg.slots, snapshot);

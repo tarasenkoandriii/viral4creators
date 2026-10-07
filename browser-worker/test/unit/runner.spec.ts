@@ -125,6 +125,14 @@ function make(
       ({
         close: async () => undefined,
         blocked: () => 0,
+        traffic: () => ({
+          bytesIn: 0,
+          bytesOut: 0,
+          connections: 0,
+          refused: 0,
+          cutResponses: 0,
+          cutJob: false,
+        }),
       }) as unknown as JobBrowser,
     ...extra,
   });
@@ -312,5 +320,73 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
     for (let i = 0; i < 50 && runner.active < 1; i++) await tick();
     await runner.shutdown();
     expect(api.failed).toEqual([['long', 'shutdown']]);
+  });
+
+  it('Ш3-хвост (9): потолок трафика задания → fail(traffic_limit), счётчики в журнале', async () => {
+    const api = new FakeApi();
+    api.queue = [job('fat')];
+    const lines: string[] = [];
+    const { runner } = make(
+      api,
+      (ctx) =>
+        new Promise((_r, reject) =>
+          ctx.signal.addEventListener('abort', () =>
+            reject(
+              new Error('Target page, context or browser has been closed'),
+            ),
+          ),
+        ),
+      1,
+      {
+        logger: createLogger('info', (l) => lines.push(l)),
+        openJobBrowser: async (_b, _j, onTrafficLimit) => {
+          setTimeout(onTrafficLimit, 30);
+          return {
+            close: async () => undefined,
+            blocked: () => 0,
+            traffic: () => ({
+              bytesIn: 9_000_000,
+              bytesOut: 1_000,
+              connections: 3,
+              refused: 0,
+              cutResponses: 0,
+              cutJob: true,
+            }),
+          } as unknown as JobBrowser;
+        },
+      },
+    );
+    runner.start();
+    for (let i = 0; i < 100 && api.failed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.failed).toEqual([['fat', 'traffic_limit']]);
+    const rec = lines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((r) => r.msg === 'потолок трафика');
+    expect(rec).toMatchObject({ jobId: 'fat', bytes: 9_000_000, cut: 'job' });
+  });
+
+  it('дренаж: пул держит claim — свободные места не заполняются', async () => {
+    const api = new FakeApi();
+    api.queue = [job('a'), job('b'), job('c')];
+    let hold = true;
+    const spy = jest.spyOn(api, 'claim');
+    const { runner } = make(api, async () => okResult, 2, {
+      pool: {
+        acquire: async () => ({}) as Browser,
+        release: () => undefined,
+        holdClaims: () => hold,
+      },
+    });
+    runner.start();
+    try {
+      await tick(80);
+      expect(spy).not.toHaveBeenCalled();
+      hold = false;
+      for (let i = 0; i < 100 && api.completed.length < 3; i++) await tick();
+    } finally {
+      await runner.shutdown();
+    }
+    expect(api.completed.sort()).toEqual(['a', 'b', 'c']);
   });
 });

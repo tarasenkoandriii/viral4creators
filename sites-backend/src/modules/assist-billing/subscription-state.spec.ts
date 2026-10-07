@@ -1,6 +1,11 @@
+import { siteDailyCapFromPlan } from './plans';
 import {
   GRACE_MS,
+  INTERNAL_PLAN_ID,
+  INTERNAL_UNITS_LIMIT,
   applyPaidPeriod,
+  internalSiteIds,
+  internalSubscriptionState,
   subscriptionState,
   unitsLimit,
   type SubscriptionRow,
@@ -111,5 +116,52 @@ describe('тариф кабинета и период учёта', () => {
         now,
       ).anchorAt,
     ).toEqual(now);
+  });
+});
+
+describe('внутренний тенант (Ш5 (4) / Ш6 (8))', () => {
+  it('ASSIST_INTERNAL_SITE_IDS: запятые/пробелы, дубли, мусор отбрасывается; пусто — []', () => {
+    expect(internalSiteIds({})).toEqual([]);
+    expect(internalSiteIds({ ASSIST_INTERNAL_SITE_IDS: '  ' })).toEqual([]);
+    expect(
+      internalSiteIds({
+        ASSIST_INTERNAL_SITE_IDS: "cmabc123, site_2 cmabc123,,\n x'; DROP",
+      }),
+    ).toEqual(['cmabc123', 'site_2', 'DROP']);
+    expect(
+      internalSiteIds({ ASSIST_INTERNAL_SITE_IDS: 'a'.repeat(65) }),
+    ).toEqual([]);
+  });
+
+  it('бессрочный тариф pro, периоды по 30 дней от якоря, без продления, оплаты и автодокупки', () => {
+    const s = internalSubscriptionState(T0, at(65));
+    expect(s).toMatchObject({
+      planId: INTERNAL_PLAN_ID,
+      status: 'active',
+      method: 'internal',
+      internal: true,
+      renews: false,
+      autoTopUp: false,
+      periodKey: at(60).toISOString(),
+    });
+    expect(s.periodEnd).toEqual(at(90));
+    // Без якоря — фиксированная эпоха, период детерминирован.
+    const e = internalSubscriptionState(null, at(1));
+    expect(e.periodKey).toBe(
+      internalSubscriptionState(null, at(1.5)).periodKey,
+    );
+    // Время до якоря (часы) — нулевой период, не отрицательный.
+    expect(internalSubscriptionState(at(5), at(1)).periodKey).toBe(
+      at(5).toISOString(),
+    );
+  });
+
+  it('лимит единиц не достигается, а денежный потолок сайта — как у тарифа (не 0 и не бесконечность)', () => {
+    const s = internalSubscriptionState(T0, at(1));
+    expect(unitsLimit(s, 0)).toBe(INTERNAL_UNITS_LIMIT);
+    expect(unitsLimit({ ...s, internal: undefined }, 0)).toBe(3000);
+    const cap = siteDailyCapFromPlan(s.planId);
+    expect(cap).toBeGreaterThan(0);
+    expect(Number.isFinite(cap)).toBe(true);
   });
 });

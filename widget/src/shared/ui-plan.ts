@@ -50,6 +50,9 @@ export interface SnapElement {
   toggle: boolean;
   gesture: UiGesture | null;
   inView: boolean;
+  /** Э6-тер (и): `data-assist-undo` (закрытый список) и `-at` (путь) — если есть. */
+  undo?: string;
+  undoAt?: string | null;
 }
 
 export interface Snapshot {
@@ -229,7 +232,9 @@ export function parseSteps(v: unknown): UiStep[] | null {
 // ── Маскирование подписей снимка (порт maskSensitiveEcho, §5-бис.3 п.2) ───
 
 const EMAIL = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-const PHONE = /(?:\+?\d[\s().-]?){7,}\d/g;
+/** Порт PHONE_PATTERN чата: дата (группа 1) остаётся, телефон — от 8 цифр. */
+const PHONE =
+  /(\d{4}([-./])(?:0?[1-9]|1[0-2])\2(?:0?[1-9]|[12]\d|3[01])(?!\d)|(?:0?[1-9]|[12]\d|3[01])([-.])(?:0?[1-9]|1[0-2])\3\d{4}(?!\d))|\(\d{2,5}\)\s?\d(?:[\s.-]?\d){4,}|\+?\d(?:(?:[\s.-]|\)\s?|\s?\()?\d){7,}/g;
 const TOKEN = /\b(sk-[A-Za-z0-9]{10,}|AIza[A-Za-z0-9_-]{10,})\b/g;
 const LONG_DIGITS = /\(?\d(?:[\s()-]{0,2}\d){8,}/g;
 
@@ -238,7 +243,9 @@ export function maskLabel(s: string): string {
   return s
     .replace(EMAIL, '[e-mail]')
     .replace(TOKEN, '[ключ]')
-    .replace(PHONE, '[тел.]')
+    .replace(PHONE, (m, d) =>
+      d || m.replace(/\D/g, '').length < 8 ? m : '[тел.]'
+    )
     .replace(LONG_DIGITS, '[№]');
 }
 

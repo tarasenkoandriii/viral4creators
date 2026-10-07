@@ -234,4 +234,80 @@ describe('LandingVideosService — барьер лендинга', () => {
     await expect(svc.sync()).resolves.toBe(false);
     expect(sent).toHaveLength(2);
   });
+
+  describe('Ш5 (12): requestSync — пересылка после подметания (дебаунс, best-effort)', () => {
+    it('серия поводов в окне — одна пересылка; набор читается заново (без удалённого)', async () => {
+      const assets = [asset({ id: 'a1' }), asset({ id: 'a2', locale: 'uk' })];
+      const { svc, sent } = setup(assets);
+      svc.debounceMs = 20;
+      const p1 = svc.requestSync();
+      // Подметальщик стёр a2 уже после первого повода — в набор он не идёт.
+      assets.splice(1, 1);
+      const p2 = svc.requestSync();
+      const p3 = svc.requestSync();
+      await expect(Promise.all([p1, p2, p3])).resolves.toEqual([
+        true,
+        true,
+        true,
+      ]);
+      // p2/p3 пришли в окне дебаунса — склеены в ту же пересылку.
+      expect(sent).toHaveLength(1);
+      expect(
+        (sent[sent.length - 1][1] as Row[]).map((v) => v.externalId),
+      ).toEqual(['a1']);
+    });
+
+    it('повод посреди идущей пересылки — ещё ровно одна следом, не больше', async () => {
+      const { svc, sent, sites } = setup([asset({ id: 'a1' })]);
+      svc.debounceMs = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const orig = sites.syncSiteVideos.bind(sites);
+      let first = true;
+      sites.syncSiteVideos = async (...a: unknown[]) => {
+        if (first) {
+          first = false;
+          await gate;
+        }
+        return orig(...a);
+      };
+      const p1 = svc.requestSync();
+      await new Promise((r) => setTimeout(r, 5));
+      const p2 = svc.requestSync();
+      const p3 = svc.requestSync();
+      release();
+      await Promise.all([p1, p2, p3]);
+      expect(sent).toHaveLength(2);
+      // Окно закрылось — новый повод снова шлёт.
+      await svc.requestSync();
+      expect(sent).toHaveLength(3);
+    });
+
+    it('сбой sites-backend или базы — false, без исключения; не настроено — без сети', async () => {
+      const { svc, sites, sent } = setup([asset({ id: 'a1' })]);
+      svc.debounceMs = 0;
+      sites.fail = true;
+      await expect(svc.requestSync()).resolves.toBe(false);
+      sites.fail = false;
+      const broken = setup([]);
+      broken.svc.debounceMs = 0;
+      (
+        broken.svc as unknown as {
+          prisma: { tutorialVideoAsset: { findMany: () => never } };
+        }
+      ).prisma.tutorialVideoAsset.findMany = () => {
+        throw new Error('db');
+      };
+      await expect(broken.svc.requestSync()).resolves.toBe(false);
+      expect(broken.sent).toHaveLength(0);
+      // Сбой ДО сети (проверка настройки клиента) — тоже false, не throw.
+      sites.configured = () => {
+        throw new Error('cfg');
+      };
+      await expect(svc.requestSync()).resolves.toBe(false);
+      svc.env = {};
+      await expect(svc.requestSync()).resolves.toBe(false);
+      expect(sent).toHaveLength(1);
+    });
+  });
 });

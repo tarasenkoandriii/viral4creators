@@ -13,6 +13,26 @@ describe('config воркера', () => {
     expect(c.kinds).not.toContain('admin-crawl');
     expect(c.kinds).toContain('ui-snapshot');
     expect(c.egressPorts).toEqual([80, 443]);
+    // Ш3-хвосты (9), (16): потолки байтов и дренажа.
+    expect(c.traffic).toEqual({
+      responseBytes: 20 * 1024 * 1024,
+      jobBytes: 150 * 1024 * 1024,
+    });
+    expect(c.drainMaxMs).toBe(360_000);
+  });
+
+  it('потолки трафика и дренажа — из env', () => {
+    const c = loadConfig({
+      ...base,
+      BROWSER_WORKER_MAX_RESPONSE_MB: '5',
+      BROWSER_WORKER_MAX_JOB_TRAFFIC_MB: '40',
+      BROWSER_WORKER_DRAIN_MAX_MS: '120000',
+    });
+    expect(c.traffic).toEqual({
+      responseBytes: 5 * 1024 * 1024,
+      jobBytes: 40 * 1024 * 1024,
+    });
+    expect(c.drainMaxMs).toBe(120_000);
   });
 
   it('с ключом конверта — берётся, открытый ключ выводится из закрытого', () => {
@@ -33,6 +53,15 @@ describe('config воркера', () => {
     [{ BROWSER_WORKER_TEST_DNS: 'a=1.2.3.4' }, /NODE_ENV=test/],
     [{ BROWSER_WORKER_TEST_IGNORE_TLS: '1' }, /NODE_ENV=test/],
     [{ BROWSER_WORKER_SEAL_PRIVATE_KEY: 'nope' }, /SEAL_PRIVATE_KEY/],
+    [{ BROWSER_WORKER_MAX_RESPONSE_MB: '0' }, /MAX_RESPONSE_MB/],
+    [
+      {
+        BROWSER_WORKER_MAX_RESPONSE_MB: '50',
+        BROWSER_WORKER_MAX_JOB_TRAFFIC_MB: '20',
+      },
+      /MAX_JOB_TRAFFIC_MB/,
+    ],
+    [{ BROWSER_WORKER_DRAIN_MAX_MS: '5' }, /DRAIN_MAX_MS/],
   ])('отказ стартовать: %p', (patch, re) => {
     expect(() => loadConfig({ ...base, ...patch })).toThrow(re);
   });

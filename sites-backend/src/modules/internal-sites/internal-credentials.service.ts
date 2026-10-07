@@ -114,6 +114,21 @@ export class InternalCredentialsService {
     );
   }
 
+  /**
+   * Ш2-хвост (7): удаление черновика генератора — его учётка реестра
+   * (заведённая этим черновиком: `clientRef` и автор) удаляется целиком.
+   * Чужая — 409 `TEST_ACCOUNT_NOT_OWN` (решает `forgetOwn`).
+   */
+  async forget(telegramId: bigint, testAccountId: string, clientRef: string) {
+    const { m } = await this.creds.managedAccount(telegramId, testAccountId);
+    return this.creds.forgetOwn(
+      m.accountId,
+      testAccountId,
+      clientRef,
+      generatorActor(telegramId),
+    );
+  }
+
   async putSecret(
     telegramId: bigint,
     testAccountId: string,

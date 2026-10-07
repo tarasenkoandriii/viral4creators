@@ -769,4 +769,180 @@ describeDb('site-credentials на реальной базе', () => {
     expect(revived.status).toBe('active');
     expect(revived.secrets.password).toBe(false);
   });
+  describe('Ш2-хвост (6): QA — только учётка, отмеченная владельцем как тестовая', () => {
+    const qaReq = (id: string) => ({
+      testAccountId: id,
+      product: 'qa' as const,
+      hostId: f.verifiedHostId,
+      actor: 'qa-flow:1',
+      runRef: 'qarun:r1',
+    });
+
+    it('без отметки — 409 TEST_ACCOUNT_NOT_CONFIRMED, аренды нет, отказ в журнале', async () => {
+      const a = await account({
+        products: ['qa'],
+        confirmedTestAccount: false,
+      });
+      await expect(status(s.svc.lease(f.accountId, qaReq(a.id)))).resolves.toBe(
+        'TEST_ACCOUNT_NOT_CONFIRMED:not_confirmed',
+      );
+      let caught: unknown = null;
+      await s.svc.lease(f.accountId, qaReq(a.id)).catch((e) => (caught = e));
+      expect((caught as { getStatus(): number }).getStatus()).toBe(409);
+      await expect(
+        prisma.siteCredentialLease.count({ where: { testAccountId: a.id } }),
+      ).resolves.toBe(0);
+      const audit = await prisma.siteCredentialAudit.findMany({
+        where: { subjectId: a.id, action: 'lease' },
+      });
+      expect(audit.map((r) => r.result)).toEqual([
+        'denied:not_confirmed',
+        'denied:not_confirmed',
+      ]);
+      expect(
+        JSON.stringify(audit, (_k, v: unknown) =>
+          typeof v === 'bigint' ? String(v) : v,
+        ),
+      ).not.toContain('S3cret');
+    });
+
+    it('с отметкой — аренда и погашение; обучалке отметка не нужна', async () => {
+      const a = await account({ products: ['qa'] });
+      const lease = await s.svc.lease(f.accountId, qaReq(a.id));
+      const got = await s.svc.redeem(f.accountId, lease.leaseId, 'qa-flow:1');
+      expect(got.secrets).toEqual({ password: 'S3cret-pass-0123456789' });
+      const t = await account({ confirmedTestAccount: false });
+      await expect(
+        status(
+          s.svc.lease(f.accountId, {
+            ...qaReq(t.id),
+            product: 'tutorial',
+            actor: 'generator:1',
+          }),
+        ),
+      ).resolves.toBe('ok');
+    });
+
+    it('отметку сняли между арендой и погашением — секрет не выдаётся (409)', async () => {
+      const a = await account({ products: ['qa'] });
+      const lease = await s.svc.lease(f.accountId, qaReq(a.id));
+      await s.svc.update(
+        f.accountId,
+        f.siteId,
+        a.id,
+        { confirmedTestAccount: false },
+        actor(),
+      );
+      await expect(
+        status(s.svc.redeem(f.accountId, lease.leaseId, 'qa-flow:1')),
+      ).resolves.toBe('TEST_ACCOUNT_NOT_CONFIRMED:not_confirmed');
+      const last = await prisma.siteCredentialAudit.findFirst({
+        where: { subjectId: a.id, action: 'redeem' },
+        orderBy: { seq: 'desc' },
+      });
+      expect(last?.result).toBe('denied:not_confirmed');
+    });
+  });
+
+  describe('Ш2-хвост (7): forgetOwn — удаление учётки, заведённой этим черновиком', () => {
+    const gen = () => `generator:${f.telegramId}`;
+    async function draftAccount(clientRef: string, by = gen()) {
+      const a = await s.svc.upsertByClientRef(
+        f.accountId,
+        f.siteId,
+        clientRef,
+        {
+          label: 'Обучалка',
+          hostIds: [f.verifiedHostId],
+          products: ['tutorial'],
+        },
+        by,
+      );
+      await s.svc.putSecret(
+        f.accountId,
+        a.id,
+        'login-fields',
+        '[{"selector":"#pw","value":"Draft-secret-0123456789"}]',
+        by,
+      );
+      return a;
+    }
+
+    it('своя: строка, секреты и аренды удалены (crypto-shred), журнал — delete ok', async () => {
+      const a = await draftAccount('project:own1');
+      await s.svc.lease(f.accountId, {
+        testAccountId: a.id,
+        product: 'tutorial',
+        hostId: f.verifiedHostId,
+        actor: gen(),
+      });
+      const r = await s.svc.forgetOwn(f.accountId, a.id, 'project:own1', gen());
+      expect(r).toEqual({ deleted: true });
+      await expect(
+        prisma.siteTestAccount.count({ where: { id: a.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.siteCredential.count({ where: { testAccountId: a.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.siteCredentialLease.count({ where: { testAccountId: a.id } }),
+      ).resolves.toBe(0);
+      const audit = await prisma.siteCredentialAudit.findFirst({
+        where: { subjectId: a.id, action: 'delete' },
+        orderBy: { seq: 'desc' },
+      });
+      expect(audit).toMatchObject({
+        actor: gen(),
+        result: 'ok',
+        runRef: 'project:own1',
+      });
+      expect(
+        JSON.stringify(audit, (_k, v: unknown) =>
+          typeof v === 'bigint' ? String(v) : v,
+        ),
+      ).not.toContain('Draft-secret');
+    });
+
+    it('чужая не забывается: заведена в кабинете, другим черновиком или другим человеком — 409, учётка цела', async () => {
+      const manual = await account();
+      const otherDraft = await draftAccount('project:own2');
+      const otherUser = await draftAccount('project:own3', 'generator:999');
+      const tries: Array<[string, string]> = [
+        [manual.id, 'project:own2'],
+        [otherDraft.id, 'project:zzz'],
+        [otherUser.id, 'project:own3'],
+      ];
+      for (const [id, ref] of tries) {
+        await expect(
+          status(s.svc.forgetOwn(f.accountId, id, ref, gen())),
+        ).resolves.toBe('TEST_ACCOUNT_NOT_OWN');
+      }
+      for (const id of [manual.id, otherDraft.id, otherUser.id]) {
+        await expect(
+          prisma.siteCredential.count({ where: { testAccountId: id } }),
+        ).resolves.toBe(1);
+      }
+      const denied = await prisma.siteCredentialAudit.count({
+        where: {
+          subjectId: { in: [manual.id, otherDraft.id, otherUser.id] },
+          action: 'delete',
+          result: 'denied:not_own',
+        },
+      });
+      expect(denied).toBe(3);
+      // Чужой кабинет — даже не находит.
+      const stranger = await seedCabinet(prisma);
+      cleanup.push(stranger);
+      await expect(
+        status(
+          s.svc.forgetOwn(
+            stranger.accountId,
+            otherDraft.id,
+            'project:own2',
+            gen(),
+          ),
+        ),
+      ).resolves.toBe('TEST_ACCOUNT_NOT_FOUND');
+    });
+  });
 });

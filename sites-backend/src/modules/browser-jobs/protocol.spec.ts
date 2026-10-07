@@ -138,6 +138,9 @@ describe('протокол очереди браузерного воркера'
     expect(RETRYABLE_ERRORS.has('nav_timeout')).toBe(true);
     expect(RETRYABLE_ERRORS.has('login_failed')).toBe(false);
     expect(RETRYABLE_ERRORS.has('egress_blocked')).toBe(false);
+    // Потолок трафика (Ш3-хвост (9)) — причина есть, повтора нет.
+    expect(isWorkerErrorCode('traffic_limit')).toBe(true);
+    expect(RETRYABLE_ERRORS.has('traffic_limit')).toBe(false);
     expect([1, 2, 3].map(retryDelayMs)).toEqual([30_000, 60_000, 120_000]);
     expect(retryDelayMs(20)).toBe(10 * 60_000);
   });

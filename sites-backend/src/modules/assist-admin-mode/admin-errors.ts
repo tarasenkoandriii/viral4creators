@@ -51,7 +51,9 @@ export type AdminErrorCode =
   | 'MEMO_CHECK_REQUIRED'
   | 'MEMO_CONFLICT'
   | 'MEMO_LIMIT'
-  | 'MEMO_REVISION';
+  | 'MEMO_REVISION'
+  // D3: мемо ушло в «требует проверки»/выключено посреди запуска
+  | 'MEMO_HALTED';
 
 export function adminError(
   status: number,

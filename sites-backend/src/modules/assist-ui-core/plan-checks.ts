@@ -67,6 +67,7 @@ import {
   type UiStopReason,
   type UiTarget,
   type UiUndo,
+  type UiUndoDecl,
   type VoiceControlRules,
 } from './types';
 
@@ -135,7 +136,7 @@ export interface MapHint {
   names: readonly string[];
   floor: UiRisk;
   /** (Э6-тер (и)) «Как отменить» цели карты — объявленная пара владельца. */
-  undo?: { assistId: string; at: string | null } | null;
+  undo?: UiUndoDecl | null;
 }
 
 export interface CheckedPlan {
@@ -167,6 +168,8 @@ export interface TargetFacts {
   disabled: boolean;
   heading: string | null;
   options: string[];
+  /** (Э6-тер (и)) Пара разметки владельца из снимка (`data-assist-undo`). */
+  undo?: UiUndoDecl | null;
 }
 
 const RANK: Record<UiRisk, number> = {
@@ -267,6 +270,7 @@ function factsOfElement(e: UiSnapElement): TargetFacts {
     disabled: e.disabled,
     heading: e.heading,
     options: e.options,
+    undo: e.undo ?? null,
   };
 }
 
@@ -562,7 +566,9 @@ function afterFacts(a: AfterTarget): TargetFacts {
 
 /**
  * (Э6-тер (и)) Компенсация клика по цели снимка: пара — объявленная
- * (`hint.undo`) или встроенная стандартной разметки; страница отмены —
+ * («Как отменить» карты `hint.undo`, затем разметка владельца на элементе
+ * `data-assist-undo`/`-at` из снимка — `src: markup`) или встроенная
+ * стандартной разметки; страница отмены —
  * объявленная или адрес ссылки стандартной разметки ЭТОГО снимка на
  * подтверждённом хосте (`nav-cart`); страница вне разрешённых зон или под
  * запретом — компенсации нет («уберите сами»).
@@ -576,13 +582,14 @@ function compOfStep(
   rules: VoiceControlRules,
 ): UiComp | null {
   if (kind !== 'click' || facts.submit) return null;
+  const markup = !hint?.undo && facts.undo ? facts.undo : null;
   const c = compFor({
     facts: {
       assistId: facts.assistId,
       heading: facts.heading,
       text: facts.text,
     },
-    declared: hint?.undo ?? null,
+    declared: hint?.undo ?? markup,
     navPath: (navId) => {
       const links = snapshot.elements.filter(
         (e) => e.assistId === navId && !!e.href && onSiteHost(e.href, hosts),
@@ -591,7 +598,7 @@ function compOfStep(
     },
   });
   if (c && c.at !== null && !zoneAllowed(c.at, rules)) return null;
-  return c;
+  return c && markup ? { ...c, src: 'markup' } : c;
 }
 
 function targetOf(
@@ -806,7 +813,7 @@ export function checkPlan(p: PlanCheckInput): CheckedPlan {
     // Класс обратимости — КОДОМ (поле `undo` ответа модели не читается).
     const undo: UiUndo = after
       ? provisionalUndo(kind, after)
-      : undoClass(kind, facts, j.nav, comp?.src === 'map');
+      : undoClass(kind, facts, j.nav, !!comp && comp.src !== 'standard');
     // Необратимый шаг — всегда не ниже «с подтверждением» (§5-бис.15 п.3 п.4).
     let risk = raise(j.risk, modelRisk);
     if (undo === 'irrev') risk = raise(risk, 'confirm');
@@ -982,7 +989,7 @@ export function resolveAfterSteps(p: {
     // Класс обратимости по настоящей цели — только ухудшение (§5-бис.15 п.3).
     const undo = worseUndo(
       s.undo ?? 'irrev',
-      undoClass(s.kind, facts, j.nav, comp?.src === 'map'),
+      undoClass(s.kind, facts, j.nav, !!comp && comp.src !== 'standard'),
     );
     let risk = raise(j.risk, s.risk);
     if (undo === 'irrev') risk = raise(risk, 'confirm');

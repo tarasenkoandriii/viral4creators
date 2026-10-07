@@ -11,8 +11,10 @@ import {
   DraftSecretsRow,
   DraftSecretsStore,
   DraftSecretsUnavailableError,
+  RegistryAccountRejectedError,
   credentialsStoreMode,
 } from './draft-secrets-store';
+import { REGISTRY_REF_PREFIX, registryRef } from './registry-login';
 
 const KEY = Buffer.alloc(32, 9).toString('base64');
 const COOKIE: CdpCookie = {
@@ -159,6 +161,8 @@ describe('режим B: личная запись', () => {
     const read = await store.read(A_USER, d);
     expect(read).toEqual({
       fields: [],
+      rawFields: [],
+      passwordOnly: [],
       cookies: [],
       loginEvidence: false,
       lost: true,
@@ -386,5 +390,201 @@ describe('аудит Э6, Д1: признак входа (липкий loginUsed
       draft({ credentialsEnc: encryptCredentials(FIELDS, KEY) }),
     );
     expect(moved.loginUsedAt).toEqual(expect.any(Date));
+  });
+});
+
+describe('Ш2-хвост (3): ссылки на учётку реестра в полях входа', () => {
+  const HOST = 'h1';
+  const PASSWORD = 'Registry-pass-0123456789';
+
+  async function linked() {
+    const { fake, store, logger } = make();
+    const manual = fake.addManual('4242', HOST, {
+      username: 'buyer@example.com',
+      password: PASSWORD,
+    });
+    const d0 = draft({ siteMode: 'A', siteHostId: HOST });
+    const patch = await store.write(A_USER, d0, {
+      fields: [
+        { selector: '#email', value: registryRef(manual.id, 'username') },
+        { selector: '#pw', value: registryRef(manual.id, 'password') },
+        { selector: '#otp-hint', value: 'обычное поле' },
+      ],
+    });
+    const d = draft({ ...d0, ...patch });
+    return { fake, store, logger, manual, d };
+  }
+
+  it('чтение разрешает ссылки арендой учётки: значения для ввода, хранимый вид — ссылки, пароль — только в поле пароля', async () => {
+    const { fake, store, d, manual } = await linked();
+    // В запись черновика пароль не скопирован — там только ссылки.
+    const own = fake.records.get(d.siteTestAccountId as string)!;
+    expect(own.secrets['login-fields']).not.toContain(PASSWORD);
+    expect(own.secrets['login-fields']).not.toContain('buyer@example.com');
+    const read = await store.read(A_USER, d);
+    expect(read.fields).toEqual([
+      { selector: '#email', value: 'buyer@example.com' },
+      { selector: '#pw', value: PASSWORD },
+      { selector: '#otp-hint', value: 'обычное поле' },
+    ]);
+    expect(read.passwordOnly).toEqual(['#pw']);
+    expect(read.rawFields.map((f) => f.value)).toEqual([
+      registryRef(manual.id, 'username'),
+      registryRef(manual.id, 'password'),
+      'обычное поле',
+    ]);
+    expect(read.loginEvidence).toBe(true);
+    // Одна аренда на учётку, а не на каждое поле.
+    expect(
+      fake.calls.filter((c) => c === `leaseAccount:${manual.id}`),
+    ).toHaveLength(1);
+  });
+
+  it('учётку заморозили или удалили в кабинете — её поля выпадают, в лог без значений', async () => {
+    const { fake, store, d, manual, logger } = await linked();
+    fake.records.get(manual.id)!.frozen = true;
+    const read = await store.read(A_USER, d);
+    expect(read.fields).toEqual([
+      { selector: '#otp-hint', value: 'обычное поле' },
+    ]);
+    expect(read.passwordOnly).toEqual([]);
+    const logged = JSON.stringify(logger.warn.mock.calls);
+    expect(logged).toContain('CREDENTIAL_LEASE_DENIED');
+    expect(logged).not.toContain(PASSWORD);
+    fake.records.delete(manual.id);
+    expect((await store.read(A_USER, d)).passwordOnly).toEqual([]);
+  });
+
+  it('хранилище недоступно при разрешении ссылки — 503, а не вход «наполовину»', async () => {
+    const { fake, store, d } = await linked();
+    const client = fake.client() as any;
+    const real = client.leaseSecrets;
+    (store as any).sites = {
+      ...client,
+      leaseSecrets: real,
+      leaseAccount: () => {
+        throw new (jest.requireActual(
+          '../sites-internal/sites-internal.client',
+        ).SitesUnavailableError)('нет связи');
+      },
+    };
+    await expect(store.read(A_USER, d)).rejects.toBeInstanceOf(
+      DraftSecretsUnavailableError,
+    );
+  });
+
+  it('кривая ссылка или ссылка без телеграм-id — поле выпадает, аренды нет', async () => {
+    const { fake, store } = make();
+    const d0 = draft({ siteMode: 'A', siteHostId: HOST });
+    const patch = await store.write(A_USER, d0, {
+      fields: [{ selector: '#pw', value: `${REGISTRY_REF_PREFIX}../x:pw` }],
+    });
+    const read = await store.read(A_USER, draft({ ...d0, ...patch }));
+    expect(read.fields).toEqual([]);
+    expect(fake.calls.some((c) => c.startsWith('leaseAccount'))).toBe(false);
+  });
+
+  it('leaseRegistry: логин и пароль; отказ кабинета — RegistryAccountRejectedError с кодом', async () => {
+    const { fake, store } = make();
+    const manual = fake.addManual('4242', HOST, {
+      username: 'u@example.com',
+      password: PASSWORD,
+    });
+    const d = draft({ siteMode: 'A', siteHostId: HOST });
+    await expect(store.leaseRegistry(A_USER, d, manual.id)).resolves.toEqual({
+      username: 'u@example.com',
+      password: PASSWORD,
+    });
+    const other = fake.addManual('4242', 'h-other', { password: 'x' });
+    const err = await store
+      .leaseRegistry(A_USER, d, other.id)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RegistryAccountRejectedError);
+    expect((err as RegistryAccountRejectedError).code).toBe(
+      'CREDENTIAL_LEASE_DENIED',
+    );
+    await expect(
+      store.leaseRegistry({ userId: 'u1', telegramId: null }, d, manual.id),
+    ).rejects.toBeInstanceOf(RegistryAccountRejectedError);
+  });
+});
+
+describe('Ш2-хвост (7): удаление черновика — его учётка реестра удаляется целиком, чужая не трогается', () => {
+  const HOST = 'h1';
+
+  it('своя учётка (ключ проекта черновика) — удалена через credentials/forget', async () => {
+    const { fake, store } = make();
+    const d0 = draft({ siteMode: 'A', siteHostId: HOST });
+    const patch = await store.write(A_USER, d0, { fields: FIELDS });
+    const d = draft({ ...d0, ...patch });
+    const id = d.siteTestAccountId as string;
+    expect(fake.records.get(id)!.clientRef).toBe('project:p1');
+    const out = await store.forget(A_USER, d, { deleteAccount: true });
+    expect(out).toMatchObject({ siteTestAccountId: null });
+    expect(fake.records.has(id)).toBe(false);
+    expect(fake.calls).toContain(`forgetTestAccount:${id}`);
+    expect(fake.calls).not.toContain('forgetTestAccountSecrets');
+  });
+
+  it('чужая учётка (заведена в кабинете) — не удаляется и секреты не стираются', async () => {
+    const { fake, store, logger } = make();
+    const manual = fake.addManual('4242', HOST, {
+      password: 'Manual-0123456789',
+    });
+    const d = draft({
+      siteMode: 'A',
+      siteHostId: HOST,
+      siteTestAccountId: manual.id,
+    });
+    await store.forget(A_USER, d, { deleteAccount: true });
+    expect(fake.records.get(manual.id)!.secrets).toEqual({
+      password: 'Manual-0123456789',
+    });
+    expect(fake.calls).not.toContain('forgetTestAccountSecrets');
+    expect(JSON.stringify(logger.warn.mock.calls)).toContain('не удаляется');
+  });
+
+  it('учётка другого черновика (другой проект) — не удаляется', async () => {
+    const { fake, store } = make();
+    const other = draft({
+      projectId: 'p-other',
+      siteMode: 'A',
+      siteHostId: HOST,
+    });
+    const patch = await store.write(A_USER, other, { fields: FIELDS });
+    const id = patch.siteTestAccountId as string;
+    await store.forget(
+      A_USER,
+      draft({ siteMode: 'A', siteHostId: HOST, siteTestAccountId: id }),
+      { deleteAccount: true },
+    );
+    expect(fake.records.get(id)!.secrets['login-fields']).toBeDefined();
+  });
+
+  it('старый sites-backend без маршрута — как раньше: стереть секреты; уже удалена — без ошибки', async () => {
+    const { fake, store } = make();
+    fake.noForgetRoute = true;
+    const d0 = draft({ siteMode: 'A', siteHostId: HOST });
+    const patch = await store.write(A_USER, d0, { fields: FIELDS });
+    const d = draft({ ...d0, ...patch });
+    await store.forget(A_USER, d, { deleteAccount: true });
+    expect(fake.records.get(d.siteTestAccountId as string)!.secrets).toEqual(
+      {},
+    );
+    fake.noForgetRoute = false;
+    fake.records.delete(d.siteTestAccountId as string);
+    await expect(
+      store.forget(A_USER, d, { deleteAccount: true }),
+    ).resolves.toMatchObject({ siteTestAccountId: null });
+  });
+
+  it('срок хранения и «одноразово» (без deleteAccount) — учётка остаётся, стираются секреты', async () => {
+    const { fake, store } = make();
+    const d0 = draft({ siteMode: 'A', siteHostId: HOST });
+    const patch = await store.write(A_USER, d0, { fields: FIELDS });
+    const d = draft({ ...d0, ...patch });
+    await store.forget(A_USER, d);
+    const rec = fake.records.get(d.siteTestAccountId as string)!;
+    expect(rec.secrets).toEqual({});
   });
 });

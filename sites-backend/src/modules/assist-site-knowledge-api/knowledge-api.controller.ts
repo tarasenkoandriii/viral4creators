@@ -8,6 +8,9 @@
  * initData. Тело на этом пути приходит СЫРОЙ строкой (app.setup.ts,
  * `KNOWLEDGE_API_PATH`, ≤ 128 КБ): подпись — по байтам, JSON разбирает
  * сервис ПОСЛЕ проверки подписи.
+ * До подписи — общий лимит по IP `/assist/v1/sites/*` (Ш5 (11),
+ * common/assist-v1-ip-limit.ts): каждый запрос здесь читает и расшифровывает
+ * секрет сайта.
  */
 import {
   Body,
@@ -18,8 +21,10 @@ import {
   HttpCode,
   Param,
   Put,
+  UseInterceptors,
 } from '@nestjs/common';
 import { GOAL_WEBHOOK_SIGNATURE_HEADER } from '../../brand';
+import { AssistV1IpLimit } from '../../common/assist-v1-ip-limit';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import {
   KnowledgeApiService,
@@ -39,6 +44,7 @@ function rawOf(body: unknown): string {
 @PublicRoute(
   'системный API знаний сайта: подлинность — HMAC-подпись ключом интеграции сайта',
 )
+@UseInterceptors(AssistV1IpLimit)
 export class KnowledgeApiController {
   constructor(readonly svc: KnowledgeApiService) {}
 

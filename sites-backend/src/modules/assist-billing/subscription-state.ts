@@ -55,6 +55,13 @@ export interface SubscriptionState {
   cancelAtPeriodEnd: boolean;
   autoTopUp: boolean;
   autoTopUpCapMicroUsd: number;
+  /**
+   * Внутренний тенант платформы (`ASSIST_INTERNAL_SITE_IDS`, Ш5 (4) / Ш6
+   * (8)): единицы считаются, но мягкого стопа и оплаты нет. Денежные
+   * потолки (суточный сайта, платформы, бюджеты обучения/аналитики) — по
+   * тарифу `INTERNAL_PLAN_ID`, как у всех. Нет поля — обычный кабинет.
+   */
+  internal?: boolean;
 }
 
 const RENEWING_METHODS = new Set(['stars', 'wayforpay']);
@@ -145,12 +152,80 @@ export function subscriptionState(
   };
 }
 
+// ── Внутренний тенант (Ш5 (4) / Ш6 (8)) ─────────────────────────────
+
+/**
+ * env со списком id сайтов внутренних тенантов платформы (через запятую или
+ * пробел; сам viral4creators — `ASSIST_LANDING_SITE_ID` backend). Тариф —
+ * по КАБИНЕТУ (Р-58): внутренним считается кабинет, которому принадлежит
+ * хотя бы один сайт из списка (`entitlements.isInternalAccount`), — так и
+ * виджет лендинга, и «Админка» генератора (Ш6) в одном кабинете.
+ */
+export const INTERNAL_SITE_IDS_ENV = 'ASSIST_INTERNAL_SITE_IDS';
+/** Возможности и денежные потолки внутреннего тенанта — как у этого тарифа. */
+export const INTERNAL_PLAN_ID: AssistPlanId = 'pro';
+/**
+ * «Без мягкого стопа»: лимит единиц, который не достигается (не Infinity —
+ * уходит в JSON кабинета и в параметр SQL). Защита от разорения — денежные
+ * потолки, не единицы.
+ */
+export const INTERNAL_UNITS_LIMIT = 1_000_000_000;
+/** Якорь периодов, если у кабинета нет ни подписки, ни сайтов. */
+const INTERNAL_EPOCH = Date.UTC(2026, 0, 1);
+const SITE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function internalSiteIds(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const raw = env[INTERNAL_SITE_IDS_ENV]?.trim();
+  if (!raw) return [];
+  return [
+    ...new Set(
+      raw
+        .split(/[\s,]+/)
+        .map((v) => v.trim())
+        .filter((v) => SITE_ID_RE.test(v)),
+    ),
+  ];
+}
+
+/**
+ * Состояние внутреннего тенанта: тариф `INTERNAL_PLAN_ID` бессрочно,
+ * периоды учёта по 30 дней от якоря (подписка → первый сайт → 01.01.2026),
+ * не продлевается и не истекает, автодокупки нет (платить нечем и незачем).
+ */
+export function internalSubscriptionState(
+  anchor: Date | null,
+  now: Date,
+): SubscriptionState {
+  const periodMs = ASSIST_PLANS[INTERNAL_PLAN_ID].periodDays * DAY;
+  const a = anchor ? anchor.getTime() : INTERNAL_EPOCH;
+  const idx = Math.max(0, Math.floor((now.getTime() - a) / periodMs));
+  const start = new Date(a + idx * periodMs);
+  const end = new Date(start.getTime() + periodMs);
+  return {
+    planId: INTERNAL_PLAN_ID,
+    status: 'active',
+    method: 'internal',
+    periodStart: start,
+    periodEnd: end,
+    periodKey: start.toISOString(),
+    paidThrough: end,
+    renews: false,
+    cancelAtPeriodEnd: false,
+    autoTopUp: false,
+    autoTopUpCapMicroUsd: 0,
+    internal: true,
+  };
+}
+
 /** Лимит единиц периода: тариф + докупка (+ авто-пакет, если разрешён). */
 export function unitsLimit(
-  state: Pick<SubscriptionState, 'planId'>,
+  state: Pick<SubscriptionState, 'planId' | 'internal'>,
   extraUnits: number,
 ): number {
   if (!state.planId) return 0;
+  if (state.internal) return INTERNAL_UNITS_LIMIT;
   return ASSIST_PLANS[state.planId].dialogsPerMonth + Math.max(0, extraUnits);
 }
 

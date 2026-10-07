@@ -198,6 +198,7 @@ export class FakeInput extends FakeNode {
 }
 
 export class FakeTextArea extends FakeNode {
+  name = '';
   value = '';
   constructor() {
     super('textarea');
@@ -206,6 +207,7 @@ export class FakeTextArea extends FakeNode {
 
 export class FakeSelect extends FakeNode {
   type = 'select-one';
+  name = '';
   options: Array<{ text: string; value: string }> = [];
   selectedIndex = 0;
   labels: FakeNode[] = [];
@@ -233,6 +235,9 @@ export class FakeDocument extends FakeNode {
   constructor() {
     super('#document');
   }
+  getElementById(id: string): FakeNode | null {
+    return this.querySelector('#' + id);
+  }
   querySelectorAll(sel: string): FakeNode[] {
     return [
       ...(matches(this.documentElement, sel) ? [this.documentElement] : []),
@@ -255,6 +260,8 @@ export function installFakeDom(): FakeDocument {
   g.HTMLTextAreaElement = FakeTextArea;
   g.HTMLSelectElement = FakeSelect;
   g.MouseEvent = class extends Event {};
+  g.PointerEvent = class extends Event {};
+  g.InputEvent = class extends Event {};
   g.innerHeight = 800;
   g.innerWidth = 1200;
   g.location = new URL('https://shop.example.com/p/1');

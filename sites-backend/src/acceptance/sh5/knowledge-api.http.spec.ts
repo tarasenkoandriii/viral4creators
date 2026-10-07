@@ -657,4 +657,93 @@ describeDb('Приёмка Э-С Ш5: системный API знаний сай
     expect(hidden.status).toBe(422);
     expect(await versionOf(t.siteId)).toBe(0);
   });
+
+  it('Ш5 (10): лимит 50 документов источника api атомарен — гонка параллельных PUT разных ключей не превышает; источник один', async () => {
+    const t = await tenant();
+    // Чистый сайт: параллельные первые PUT — ровно один источник `api`.
+    const first = await Promise.all(
+      [0, 1, 2, 3].map((i) =>
+        call('PUT', t, `race-a-${i}`, doc(`# Док ${i}\n\nТекст номер ${i}.`)),
+      ),
+    );
+    expect(first.map((r) => r.status)).toEqual([200, 200, 200, 200]);
+    const sources = () =>
+      prisma.assistSiteSource.findMany({
+        where: { siteId: t.siteId, kind: 'api' },
+        select: { id: true, documentsCount: true },
+      });
+    expect(await sources()).toHaveLength(1);
+    // До 48 — по одному.
+    for (let i = 4; i < 48; i++) {
+      await call(
+        'PUT',
+        t,
+        `race-a-${i}`,
+        doc(`# Док ${i}\n\nТекст номер ${i}.`),
+      ).expect(200);
+    }
+    // Гонка: 6 новых ключей разом при 48 живых — создаются ровно 2.
+    const race = await Promise.all(
+      [0, 1, 2, 3, 4, 5].map((i) =>
+        call('PUT', t, `race-b-${i}`, doc(`# Новый ${i}\n\nЕщё текст ${i}.`)),
+      ),
+    );
+    expect(race.map((r) => r.status).sort()).toEqual([
+      200, 200, 409, 409, 409, 409,
+    ]);
+    const limited = race.filter((r) => r.status === 409);
+    for (const r of limited) {
+      expect(JSON.stringify(r.body)).toContain('KNOWLEDGE_SOURCE_LIMIT');
+    }
+    const list = await call('GET', t, '').expect(200);
+    expect((list.body.data ?? list.body).documents).toHaveLength(50);
+    const src = await sources();
+    expect(src).toHaveLength(1);
+    expect(src[0].documentsCount).toBe(50);
+    // Замена существующего ключа при 50 — можно (не новый документ).
+    await call(
+      'PUT',
+      t,
+      'race-a-0',
+      doc('# Док 0\n\nОбновлённый текст.'),
+    ).expect(200);
+    // Аренда отпущена: строк аренды сайта не осталось.
+    const leases = await prisma.$queryRawUnsafe<unknown[]>(
+      `SELECT 1 FROM "sites"."assist_rate_buckets" WHERE "scope" = 'knowledge-api-put-lease' AND "key" = $1`,
+      t.siteId,
+    );
+    expect(leases).toHaveLength(0);
+  });
+
+  it('Ш5 (10): аренда занята дольше ожидания — 409 KNOWLEDGE_API_BUSY, ничего не записано; истёкшая — берётся', async () => {
+    const t = await tenant();
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "sites"."assist_rate_buckets" ("scope", "key", "bucket", "count", "expiresAt")
+       VALUES ('knowledge-api-put-lease', $1, 'lease', 1, $2)`,
+      t.siteId,
+      new Date(Date.now() + 60_000),
+    );
+    const wait = svc.putLeaseWaitMs;
+    svc.putLeaseWaitMs = 300;
+    try {
+      const busy = await call('PUT', t, 'gen-kb-ru', doc('# База\n\nТекст.'));
+      expect(busy.status).toBe(409);
+      expect(JSON.stringify(busy.body)).toContain('KNOWLEDGE_API_BUSY');
+      expect(await versionOf(t.siteId)).toBe(0);
+      // Срок аренды вышел (упавший запрос) — следующий PUT её забирает.
+      await prisma.$executeRawUnsafe(
+        `UPDATE "sites"."assist_rate_buckets" SET "expiresAt" = $2
+          WHERE "scope" = 'knowledge-api-put-lease' AND "key" = $1`,
+        t.siteId,
+        new Date(Date.now() - 1_000),
+      );
+      // Новая подпись (та же — 409 повтора: отказ занятости её уже потратил).
+      await call('PUT', t, 'gen-kb-ru', doc('# База\n\nТекст.'), {
+        at: Date.now() / 1000 + 1,
+      }).expect(200);
+      expect(await versionOf(t.siteId)).toBeGreaterThan(0);
+    } finally {
+      svc.putLeaseWaitMs = wait;
+    }
+  });
 });

@@ -16,7 +16,12 @@
  *     результате, учётка запрошена один раз, ячейки таблиц не в тексте;
  *  5. сверка дескрипторов (Т-3): число совпадений CSS, без кликов;
  *  6. кадры: 3 кадра сверху вниз, JPEG;
- *  7. остановка посреди задания — `shutdown`.
+ *  7. остановка посреди задания — `shutdown`;
+ *  8. потолок байтов (Ш3-хвост (9)): тяжёлый подресурс оборван, задание
+ *     живо; огромный документ и суммарный трафик — `traffic_limit`;
+ *  9. ПД «Админки» вне таблиц (Ш3-хвост (17)): карточки заказа/покупателя
+ *     (Хорошоп-подобная и WooCommerce-разметка) — только структура, вторая
+ *     карточка того же вида не открыта.
  *
  * Браузер: BROWSER_WORKER_CHROMIUM_PATH, иначе /opt/pw-browsers/chromium,
  * иначе браузер Playwright (PLAYWRIGHT_BROWSERS_PATH). Нет браузера —
@@ -55,6 +60,91 @@ if (!HAVE_BROWSER && process.env.CI === 'true') {
 }
 
 const PASSWORD = ['Pw', 'Sh3', 'marker', '9f2c'].join('-');
+const MB = 1024 * 1024;
+
+/** Тело `n` байт кусками (без Content-Length, если `chunked`). */
+function sendBytes(
+  res: import('http').ServerResponse,
+  n: number,
+  type: string,
+  chunked = false,
+  head = '',
+): void {
+  res.writeHead(200, {
+    'content-type': type,
+    ...(chunked ? {} : { 'content-length': String(head.length + n) }),
+  });
+  if (head) res.write(head);
+  let left = n;
+  const push = () => {
+    while (left > 0 && !res.destroyed) {
+      const k = Math.min(left, 64 * 1024);
+      left -= k;
+      if (!res.write(Buffer.alloc(k, 0x20))) {
+        res.once('drain', push);
+        return;
+      }
+    }
+    if (!res.destroyed) res.end();
+  };
+  push();
+}
+
+// ── «Админка» с ПД вне таблиц (Ш3-хвост (17)) ─────────────────────────────
+const HS_DASHBOARD = `<!doctype html><html><head><title>Головна | Хорошоп</title></head><body>
+<aside class="sidebar"><nav><a href="/adminka/orders/">Замовлення</a><a href="/adminka/catalog/">Каталог</a></nav></aside>
+<header><div class="user-menu" role="navigation"><a href="/adminka/profile/">Привіт, Тарас Шевчук</a></div></header>
+<main><h1>Панель керування</h1>
+<section class="widget"><h2>Нові замовлення</h2><ul>
+<li><a href="/adminka/orders/1024/">Замовлення №1024 — Іван Петренко</a></li>
+<li><a href="/adminka/orders/1025/">Замовлення №1025 — Олена Коваль</a></li></ul></section>
+<section class="widget"><h3>Останній коментар від Марія Коваленко</h3></section>
+<p><a href="/wp-admin/post.php?post=1024&action=edit">Woo-замовлення</a></p>
+</main></body></html>`;
+
+const HS_ORDER = `<!doctype html><html><head><title>Замовлення №1024 — Іван Петренко | Хорошоп</title></head><body>
+<aside class="sidebar"><nav><a href="/adminka/orders/">Замовлення</a><a href="/adminka/catalog/">Каталог</a></nav></aside>
+<header><nav class="breadcrumbs"><a href="/adminka/">Головна</a><a href="/adminka/orders/">Замовлення</a><a href="/adminka/orders/1024/">№1024 Іван Петренко</a></nav>
+<div class="user-menu"><button type="button">Менеджер: Тарас Шевчук</button></div></header>
+<main><h1>Замовлення №1024 — Іван Петренко</h1>
+<section class="order-status"><h2>Статус замовлення</h2><label>Статус <select><option>Новий</option></select></label><button type="button">Зберегти</button></section>
+<section class="customer"><h2>Покупець</h2><h3>Іван Петренко</h3>
+<dl><dt>Телефон</dt><dd>+380 67 765 43 21</dd><dt>E-mail</dt><dd>ivan.petrenko@example.com</dd><dt>Коментар</dt><dd>Передзвоніть після 18:00</dd></dl>
+<a href="/adminka/clients/77/">Картка покупця</a></section>
+<section class="delivery"><h2>Доставка</h2><h3>Нова Пошта: Київ, відділення №12</h3>
+<label>Отримувач <input value="Петренко Іван Олександрович"></label><label>ТТН <input placeholder="Номер ТТН"></label></section>
+<section><h2>Товари</h2><table><thead><tr><th>Назва</th><th>Кількість</th><th>Ціна</th></tr></thead>
+<tbody><tr><td><a href="/adminka/catalog/55/">Срібна монета</a></td><td>1</td><td>1200</td></tr></tbody></table></section>
+<p><a href="/adminka/orders/1023/">Попереднє замовлення</a></p>
+</main></body></html>`;
+
+const HS_CLIENT = `<!doctype html><html><head><title>Іван Петренко — покупець | Хорошоп</title></head><body>
+<aside class="sidebar"><nav><a href="/adminka/orders/">Замовлення</a></nav></aside>
+<main><h1>Іван Петренко</h1><h2>Контакти</h2><label>Телефон <input type="tel" value="+380677654321"></label>
+<h2>Замовлення покупця</h2><table><thead><tr><th>№</th><th>Сума</th></tr></thead><tbody><tr><td>1024</td><td>1200</td></tr></tbody></table>
+<button type="button">Написати Іван Петренко</button></main></body></html>`;
+
+/** WooCommerce: редактирование заказа (сокращённая настоящая разметка). */
+const WOO_ORDER = `<!doctype html><html><head><title>Edit order ‹ Срібна крамниця — WordPress</title></head><body class="wp-admin">
+<div id="wpadminbar" role="navigation" aria-label="Toolbar"><ul><li><a href="/wp-admin/profile.php">Howdy, Олена Мельник</a></li></ul></div>
+<div id="adminmenumain" role="navigation" aria-label="Main menu"><ul id="adminmenu"><li><a href="/wp-admin/edit.php?post_type=shop_order">Orders</a></li></ul></div>
+<div class="wrap"><h1 class="wp-heading-inline">Edit order</h1>
+<form name="post" method="post" id="post"><div id="order_data" class="panel woocommerce-order-data">
+<h2 class="woocommerce-order-data__heading">Order #1024 details</h2>
+<p class="woocommerce-order-data__meta order_number">Payment via Cash on delivery. Customer IP: 93.184.216.1</p>
+<div class="order_data_column"><h3>General</h3>
+<p class="form-field"><label for="order_date">Date created:</label><input type="text" id="order_date" name="order_date" value="2026-10-05"></p>
+<p class="form-field"><label for="order_status">Status:</label><select id="order_status" name="order_status"><option>Processing</option></select></p>
+<p class="form-field"><label for="customer_user">Customer:</label><select id="customer_user" name="customer_user"><option value="5" selected>Олена Мельник (#5 – olena.melnyk@example.com)</option></select></p></div>
+<div class="order_data_column"><h3>Billing <a href="#" class="edit_address">Edit</a></h3>
+<div class="address"><p><strong>Address:</strong>Олена Мельник<br>вул. Хрещатик, 22<br>Київ 01001</p></div></div>
+<div class="order_data_column"><h3>Shipping <a href="#" class="edit_address">Edit</a></h3><div class="address"><p>Олена Мельник<br>Нова Пошта №12</p></div></div></div>
+<div id="woocommerce-order-items"><h2>Items</h2><table class="woocommerce_order_items"><thead><tr><th>Item</th><th>Cost</th><th>Qty</th><th>Total</th></tr></thead>
+<tbody><tr><td>Срібна монета «Архангел Михаїл»</td><td>1 200 грн</td><td>1</td><td>1 200 грн</td></tr></tbody></table>
+<button type="button" class="button refund-items">Refund</button></div>
+<div id="woocommerce-order-notes"><h2>Order notes</h2><ul class="order_notes"><li class="note"><div class="note_content"><p>Олена Мельник підтвердила по телефону.</p></div></li></ul>
+<label for="add_order_note">Add note</label><textarea id="add_order_note"></textarea><button type="button" class="button add_note">Add</button></div>
+<button class="button save_order" type="submit">Update</button></form></div></body></html>`;
 
 const SHOP_HOME = `<!doctype html><html><head><title>Магазин Ш3</title></head><body>
 <header><nav><a href="/catalog">Каталог</a><a href="/delivery">Доставка</a></nav></header>
@@ -235,6 +325,7 @@ d('browser-worker e2e (настоящий Chromium)', () => {
         upstream: { protocol: 'http:', host: '127.0.0.1', port: internet.port },
         lookup: (h) => Promise.resolve(dns.get(h.toLowerCase()) ?? []),
         ignoreHttpsErrors: true,
+        traffic: { responseBytes: 2 * MB, jobBytes: 8 * MB },
       },
     });
     runner.start();
@@ -449,6 +540,169 @@ d('browser-worker e2e (настоящий Chromium)', () => {
     expect(sessionCookies.join(';')).not.toContain('leak');
     // Ни пароля, ни cookie учётки в памяти воркера после задания.
     expect(liveSecretCount()).toBe(0);
+  });
+
+  it('Ш3-хвост (17): карточки заказа и покупателя — структура без имён; вторая карточка того же вида не открыта', async () => {
+    const authedHere =
+      (html: string) =>
+      (
+        q: import('http').IncomingMessage,
+        res: import('http').ServerResponse,
+      ) => {
+        if (!String(q.headers.cookie ?? '').includes('sid=ok')) {
+          res.writeHead(302, { location: '/login' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.end(html);
+      };
+    stand
+      .on(ADMIN, '/adminka/', authedHere(HS_DASHBOARD))
+      .on(ADMIN, '/adminka/orders/1024/', authedHere(HS_ORDER))
+      .on(ADMIN, '/adminka/orders/1025/', authedHere(HS_ORDER))
+      .on(ADMIN, '/adminka/orders/1023/', authedHere(HS_ORDER))
+      .on(ADMIN, '/adminka/clients/77/', authedHere(HS_CLIENT))
+      .on(ADMIN, '/wp-admin/post.php', authedHere(WOO_ORDER));
+    sites.credentials = {
+      username: 'manager',
+      password: '',
+      sessionCookies: JSON.stringify([
+        { name: 'sid', value: 'ok', domain: ADMIN, path: '/', secure: true },
+      ]),
+    };
+    const j = await sites.waitDone(
+      sites.add('admin-crawl', {
+        startUrl: `https://${ADMIN}/adminka/`,
+        allowedHosts: [ADMIN],
+        viewport: 'desktop',
+        maxPages: 12,
+        maxDepth: 2,
+        loginMethod: 'session',
+      }),
+    );
+    expect(j.error).toBeNull();
+    const r = j.result as {
+      pages: Array<{ url: string; title: string; text: string }>;
+      skippedLinks: number;
+    };
+    const byPath = new Map(r.pages.map((p) => [new URL(p.url).pathname, p]));
+    // Одна карточка заказа: 1024 открыта, 1025 и 1023 — нет.
+    expect(stand.hit('/adminka/orders/1024/')).toBe(true);
+    expect(stand.hit('/adminka/orders/1025/')).toBe(false);
+    expect(stand.hit('/adminka/orders/1023/')).toBe(false);
+    // Карточка покупателя — другой вид, открыта; товар из таблицы — нет.
+    expect(stand.hit('/adminka/clients/77/')).toBe(true);
+    expect(stand.hit('/adminka/catalog/55/')).toBe(false);
+    expect(r.skippedLinks).toBeGreaterThanOrEqual(2);
+    // Ни одного имени, телефона, e-mail, номера заказа — ни в тексте, ни в заголовках.
+    const all = r.pages.map((p) => `${p.title}\n${p.text}`).join('\n');
+    expect(all).not.toMatch(
+      /Іван|Петренко|Олена|Мельник|Коваль|Марія|Тарас|Шевчук|Київ|ivan\.petrenko|olena|765 43|1024|1200/,
+    );
+    // Структура карточки — на месте.
+    const order = byPath.get('/adminka/orders/1024/')!;
+    expect(order.title).toBe("Замовлення №[№] — [ім'я] | Хорошоп");
+    for (const line of [
+      "# Замовлення №[№] — [ім'я]",
+      '# Статус замовлення',
+      '# Покупець',
+      '# Доставка',
+      '# Товари',
+      'колонка: Кількість',
+      'поле: Отримувач',
+      'поле: Номер ТТН',
+      'кнопка: Зберегти',
+      "кнопка: Менеджер: [ім'я]",
+    ])
+      expect(order.text).toContain(line);
+    const client = byPath.get('/adminka/clients/77/')!;
+    for (const line of ["# [ім'я]", '# Контакти', 'колонка: Сума'])
+      expect(client.text).toContain(line);
+    // WooCommerce: карточка по post.php, приветствие в панели — маска.
+    const woo = byPath.get('/wp-admin/post.php')!;
+    for (const line of [
+      '# Edit order',
+      '# Order #[№] details',
+      '# Billing Edit',
+      '# Order notes',
+      'поле: Customer:',
+      'кнопка: Refund',
+      "меню: Howdy, [ім'я]",
+    ])
+      expect(woo.text).toContain(line);
+    // Обычная страница: структура цела, «Имя Фамилия» и приветствие — маска.
+    const dash = byPath.get('/adminka/')!;
+    for (const line of [
+      '# Панель керування',
+      '# Нові замовлення',
+      "# Останній коментар від [ім'я]",
+      "меню: Привіт, [ім'я]",
+    ])
+      expect(dash.text).toContain(line);
+    expect(liveSecretCount()).toBe(0);
+  });
+
+  it('Ш3-хвост (9): тяжёлый подресурс оборван потолком ответа — задание живо', async () => {
+    stand
+      .page(
+        SHOP,
+        '/heavy-img',
+        '<!doctype html><title>Важка</title><h1>Важка</h1><button>Купити</button><img src="/big.bin">',
+      )
+      .on(SHOP, '/big.bin', (_q, res) => sendBytes(res, 5 * MB, 'image/png'));
+    const before = lines.length;
+    const j = await sites.waitDone(
+      sites.add('ui-snapshot', snap(`https://${SHOP}/heavy-img`)),
+    );
+    expect(j.error).toBeNull();
+    expect(stand.hit('/big.bin')).toBe(true);
+    const rec = lines
+      .slice(before)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((x) => x.msg === 'потолок трафика');
+    expect(rec).toMatchObject({ cut: 'response' });
+    expect(rec!.count).toBeGreaterThanOrEqual(1);
+    // Оборван на потолке ответа, а не дочитан до 5 МБ.
+    expect(rec!.bytes as number).toBeLessThan(4 * MB);
+  });
+
+  it('Ш3-хвост (9): огромный документ без длины — traffic_limit', async () => {
+    stand.on(SHOP, '/huge-doc', (_q, res) =>
+      sendBytes(
+        res,
+        6 * MB,
+        'text/html; charset=utf-8',
+        true,
+        '<!doctype html><title>Огромна</title><h1>Огромна</h1><pre>',
+      ),
+    );
+    const j = await sites.waitDone(
+      sites.add('ui-snapshot', snap(`https://${SHOP}/huge-doc`)),
+    );
+    expect(j.status).toBe('failed');
+    expect(j.error).toBe('traffic_limit');
+  });
+
+  it('Ш3-хвост (9): суммарный трафик задания больше потолка — traffic_limit', async () => {
+    // 8 ответов по 1,5 МБ — каждый под потолком ответа (2 МБ), вместе
+    // 12 МБ — выше потолка задания (8 МБ). Страница дочитывает тела сама.
+    stand
+      .page(
+        SHOP,
+        '/many',
+        `<!doctype html><title>Багато</title><h1>Багато</h1><script>
+for (let i = 0; i < 8; i++) fetch('/part.bin?n=' + i).then((r) => r.arrayBuffer()).catch(() => {});
+</script>`,
+      )
+      .on(SHOP, '/part.bin', (_q, res) =>
+        sendBytes(res, 1.5 * MB, 'application/octet-stream'),
+      );
+    const j = await sites.waitDone(
+      sites.add('ui-snapshot', snap(`https://${SHOP}/many`)),
+    );
+    expect(j.status).toBe('failed');
+    expect(j.error).toBe('traffic_limit');
   });
 
   it('Т-3: сверка дескрипторов — только счёт совпадений, без кликов', async () => {

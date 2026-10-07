@@ -23,6 +23,7 @@
 
 import { CdpCookie } from '../../common/cookie-jar';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
+import type { LoginFieldPick, LoginFieldsFound } from './login-form-detect';
 import { PageExploration } from './page-exploration.types';
 
 /** Действие внутри раунда — подмножество `ScenarioStep`, которое реально
@@ -43,6 +44,22 @@ export interface ExploreRoundRequest {
   /** Origin черновика — реализация обязана перепроверить домен ПОСЛЕ
    * каждого перехода (§8.1/§8.2: редирект мог увести куда угодно). */
   allowedOrigin: string;
+  /**
+   * Ш2-хвост (3): вход учёткой из реестра сайта. Поля формы реализация
+   * находит САМА на открытой странице (`findLoginFields`), пароль вводит
+   * ТОЛЬКО в настоящее поле пароля (иначе — отказ «не нашли поля входа»),
+   * затем нажимает кнопку. `actions` при этом пусты.
+   */
+  autoLogin?: AutoLoginRequest;
+}
+
+export interface AutoLoginRequest {
+  /** Логин учётки (метаданные реестра); `null` — у учётки его нет. */
+  username: string | null;
+  /** Пароль из аренды — только в память раунда. */
+  password: string;
+  /** Поля, указанные человеком (запасной путь), — проверяются, не угадываются. */
+  pick?: LoginFieldPick;
 }
 
 export interface ExploreRoundResult {
@@ -57,6 +74,8 @@ export interface ExploreRoundResult {
    * проверки (тесты оркестрации), читается как «нет».
    */
   sensitiveFill?: boolean;
+  /** Ш2-хвост (3): какие поля нашлись и заполнены при `autoLogin`. */
+  autoLogin?: LoginFieldsFound;
 }
 
 /**
@@ -81,6 +100,12 @@ export interface ReplayRequest {
    * подставляются только здесь, в момент реального проигрывания.
    */
   secrets: Record<string, string>;
+  /**
+   * Ш2-хвост (3): селекторы, чьё значение — пароль учётки реестра. Перед
+   * вводом реализация проверяет, что это настоящее поле пароля (страница
+   * могла поменяться за недели): иначе — отказ, а не пароль в кадре.
+   */
+  passwordOnly?: string[];
   allowedOrigin: string;
 }
 

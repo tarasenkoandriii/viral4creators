@@ -591,3 +591,39 @@ describe('варианты выпадающего списка (§5.4, допо�
     expect(found.length).toBeLessThanOrEqual(100);
   });
 });
+
+describe('Ш2-хвост (3): autocomplete поля — подсказка поиска полей входа', () => {
+  it('у input — нижним регистром, без пробелов; у кнопки — нет', () => {
+    installDocument(
+      el({
+        tag: 'form',
+        children: [
+          el({
+            tag: 'input',
+            attrs: {
+              id: 'pw',
+              type: 'password',
+              autocomplete: ' Current-Password ',
+            },
+          }),
+          el({ tag: 'input', attrs: { id: 'q' } }),
+          el({
+            tag: 'button',
+            attrs: { id: 'go', autocomplete: 'off' },
+            text: 'Войти',
+          }),
+        ],
+      }),
+    );
+    const els = collectPageExploration(ORIGIN).elements;
+    expect(els.find((e) => e.selector === '#pw')?.autocomplete).toBe(
+      'current-password',
+    );
+    expect(els.find((e) => e.selector === '#q')).not.toHaveProperty(
+      'autocomplete',
+    );
+    expect(els.find((e) => e.selector === '#go')).not.toHaveProperty(
+      'autocomplete',
+    );
+  });
+});

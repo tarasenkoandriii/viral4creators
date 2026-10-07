@@ -17,7 +17,8 @@
  *  /vc/mpa/*      чистый MPA из 5 страниц (кошик на сервере стенда);
  *  /vc/shop/*     (Э6-тер (и)) магазин в духе WooCommerce: товар, кошик на
  *                 сервере стенда, «В кошик»/«Видалити» AJAX, мини-кошик
- *                 (`&mini=1`), кнопки «Видалити» без разметки (`&rx=0`);
+ *                 (`&mini=1`), кнопки «Видалити» без разметки (`&rx=0`),
+ *                 разметка плагина `data-assist-undo`/`-at` (`&wc=1`);
  *                 pk и разметка — и из cookie (страница отмены без query).
  * Разметка `data-assist-id` — `?m=1` (размеченные) или без неё (неразмеченные).
  * Что нажималось — `window.__stand` (клики с isTrusted) и сервер стенда
@@ -383,6 +384,13 @@ interface ShopOpts extends PageOpts {
   mini: boolean;
   /** Кнопки «Видалити» без разметки `remove-from-cart`. */
   rawRemove: boolean;
+  /**
+   * Разметка плагина WooCommerce (`wc=1`): у «В кошик» — объявленная пара
+   * `data-assist-undo="remove-from-cart"` и страница кошика
+   * `data-assist-undo-at`; «Кошик» шапки — без `nav-cart` (страница отмены
+   * известна только из разметки кнопки).
+   */
+  wc: boolean;
 }
 
 function shopRows(o: ShopOpts, tag: 'li' | 'tr'): string {
@@ -399,7 +407,10 @@ function shopRows(o: ShopOpts, tag: 'li' | 'tr'): string {
 
 function shopPage(o: ShopOpts, page: 'product' | 'cart'): string {
   const n = shopCart(o.pk).length;
-  const cartId = o.mini ? '' : A(o, 'nav-cart');
+  const cartId = o.mini || o.wc ? '' : A(o, 'nav-cart');
+  const undo = o.wc
+    ? ' data-assist-undo="remove-from-cart" data-assist-undo-at="/vc/shop/cart"'
+    : '';
   const nav = `<header><nav><a id="s-home" href="/vc/shop/product">Магазин</a> <a id="s-cart" href="/vc/shop/cart"${cartId}>Кошик (<span id="s-n">${n}</span>)</a></nav></header>`;
   if (page === 'cart')
     return shell(
@@ -414,7 +425,7 @@ function shopPage(o: ShopOpts, page: 'product' | 'cart'): string {
     `${nav}<main><h1>Футболка синя</h1><p>Бавовна, 450 грн.</p>
     <form id="s-form" class="cart"><label for="s-size">Розмір</label>
     <select id="s-size" name="size"${A(o, 'size')}><option value="">Оберіть</option><option value="S">S</option><option value="M">M</option><option value="L">L</option></select>
-    <button id="s-add" type="button"${A(o, 'add-to-cart')}>В кошик</button></form>
+    <button id="s-add" type="button"${A(o, 'add-to-cart')}${undo}>В кошик</button></form>
     <p><a id="s-request" href="/vc/shop/request">Залишити заявку</a></p>
     ${o.mini ? `<aside id="s-mini"><h3>Мій кошик</h3><ul id="s-mini-list"${o.marked && !o.rawRemove ? ' data-rid="remove-from-cart"' : ''}>${shopRows(o, 'li')}</ul></aside>` : ''}</main>`,
     ['/vc/shop.js']
@@ -555,6 +566,7 @@ export async function vcStandRoute(
       marked: o.marked || (!pk && ck.get('m') === '1'),
       mini: url.searchParams.get('mini') === '1',
       rawRemove: (pk ? url.searchParams : ck).get('rx') === '0',
+      wc: url.searchParams.get('wc') === '1',
     };
     const cart = shopCart(so.pk);
     const json = (b: unknown) =>

@@ -9,6 +9,8 @@
  * оракул) → лимит частоты сайта → повтор (PUT/DELETE — один раз, 409
  * `KNOWLEDGE_API_REPLAY`; аудит Ш5) → тело → суточный лимит изменений
  * (только то, что публикует версию; 429 `KNOWLEDGE_API_CHANGES_LIMIT`).
+ * PUT сайта — по одному (аренда, Ш5 (10)): лимит 50 документов источника
+ * `api` и создание источника атомарны для параллельных PUT разных ключей.
  * Документы пишет общий код режима
  * «Сайт» (`ModeKnowledgeCore.apiUpsert/apiRemove`): источник `api`,
  * обычная версия знаний, карантин инъекций — как у файла владельца; тот же
@@ -43,6 +45,7 @@ export type KnowledgeApiCode =
   | 'RATE_LIMITED'
   | 'KNOWLEDGE_API_REPLAY'
   | 'KNOWLEDGE_API_CHANGES_LIMIT'
+  | 'KNOWLEDGE_API_BUSY'
   | 'KNOWLEDGE_API_KEY_INVALID'
   | 'KNOWLEDGE_API_BODY_INVALID'
   | 'KNOWLEDGE_API_SECRET_LIKE'
@@ -259,11 +262,16 @@ export class KnowledgeApiService {
       }
       throw e;
     }
-    const out = await this.sources.core.apiUpsert(
-      ctx,
-      r.key,
-      { title: doc.title, lang, blocks, url: doc.url },
-      { beforeChange: () => this.chargeChange(ctx.siteId) },
+    // Ш5 (10): запись документов сайта — по одной (аренда сайта): проверка
+    // «≤ 50 документов источника api» и создание источника внутри
+    // apiUpsert иначе гонялись бы у параллельных PUT разных ключей.
+    const out = await this.withPutLease(ctx.siteId, () =>
+      this.sources.core.apiUpsert(
+        ctx,
+        r.key,
+        { title: doc.title, lang, blocks, url: doc.url },
+        { beforeChange: () => this.chargeChange(ctx.siteId) },
+      ),
     );
     this.logger.log(
       `API знаний: ${r.key} — ${out.status}${out.version ? ` (версия ${out.version})` : ''}, site ${ctx.siteId}`,
@@ -324,6 +332,71 @@ export class KnowledgeApiService {
       new Date((t + KNOWLEDGE_API_DEFAULTS.signatureWindowSec + 60) * 1000),
     );
     return rows.length > 0;
+  }
+
+  /**
+   * Ш5 (10): аренда записи документов сайта — условная вставка строки
+   * `assist_rate_buckets` (`knowledge-api-put-lease`): взять можно, только
+   * если строки нет или срок прежней аренды истёк (упавший запрос держит
+   * сайт не дольше `putLeaseMs`). Пока аренда у одного PUT, другие ждут
+   * (опрос) до `putLeaseWaitMs`, потом — 409 `KNOWLEDGE_API_BUSY`
+   * (повторить с новой подписью). Отпускает ровно свою аренду: номер
+   * (`count` растёт при каждом захвате) и срок — как жетон.
+   */
+  putLeaseMs = 120_000;
+  putLeaseWaitMs = 20_000;
+  putLeasePollMs = 100;
+
+  private async acquirePutLease(
+    siteId: string,
+  ): Promise<{ count: number; expiresAt: Date } | null> {
+    const now = this.now();
+    const expiresAt = new Date(now.getTime() + this.putLeaseMs);
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ count: number }>>(
+      `INSERT INTO "sites"."assist_rate_buckets" ("scope", "key", "bucket", "count", "expiresAt")
+       VALUES ('knowledge-api-put-lease', $1, 'lease', 1, $2)
+       ON CONFLICT ("scope", "key", "bucket") DO UPDATE
+         SET "count" = "sites"."assist_rate_buckets"."count" + 1, "expiresAt" = $2
+         WHERE "sites"."assist_rate_buckets"."expiresAt" <= $3
+       RETURNING "count"`,
+      siteId,
+      expiresAt,
+      now,
+    );
+    return rows.length ? { count: rows[0].count, expiresAt } : null;
+  }
+
+  private async withPutLease<T>(
+    siteId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    const deadline = Date.now() + this.putLeaseWaitMs;
+    let lease = await this.acquirePutLease(siteId);
+    while (!lease) {
+      if (Date.now() >= deadline) {
+        throw knowledgeApiError(
+          HttpStatus.CONFLICT,
+          'KNOWLEDGE_API_BUSY',
+          'Документы этого сайта сейчас записывает другой запрос — повторите (с новой подписью)',
+        );
+      }
+      await new Promise((res) => setTimeout(res, this.putLeasePollMs));
+      lease = await this.acquirePutLease(siteId);
+    }
+    try {
+      return await fn();
+    } finally {
+      await this.prisma
+        .$executeRawUnsafe(
+          `DELETE FROM "sites"."assist_rate_buckets"
+            WHERE "scope" = 'knowledge-api-put-lease' AND "key" = $1 AND "bucket" = 'lease'
+              AND "count" = $2 AND "expiresAt" = $3`,
+          siteId,
+          lease.count,
+          lease.expiresAt,
+        )
+        .catch(() => undefined);
+    }
   }
 
   /** Суточный лимит изменений сайта — слот берётся ДО публикации версии. */

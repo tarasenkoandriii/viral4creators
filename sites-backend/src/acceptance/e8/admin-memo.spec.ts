@@ -14,6 +14,7 @@ import { ADMIN_SESSION_HEADER } from '../../brand';
 import { signEmployeeJwt } from '../../modules/assist-admin-mode/identity-jwt';
 import type { E7Site } from '../e7/e7-stack';
 import { AdminVoiceStack, dryRunMemo } from '../e6b-admin/admin-voice-stack';
+import { AdminMemoService } from '../../modules/assist-admin-actions/admin-memo.service';
 import { ShopApi, actionsSpec, describeE8 } from './e8-stack';
 
 jest.setTimeout(120_000);
@@ -310,6 +311,126 @@ describeE8('Э8 п.7 — мемо «Админки» АМ-N', () => {
       .set(st.as(biz.ownerTg))
       .send({ draft: { names: { uk: 'Х' } } })
       .expect(402);
+  });
+
+  // D3 (ТЗ §5-бис.17 п.5 п.8): мемо, ушедшее в «требует проверки» или
+  // выключенное посреди запуска, не исполняет следующий шаг.
+  it('D3: мемо выключено, пока шаг ждёт «Да», — шаг не исполняется, запуск остановлен с причиной', async () => {
+    const a = await session('emp-D1');
+    const before = mutations().length;
+    const r = await ask(a, 'виконай АМ-1 2001');
+    const p1 = r.answer.proposal;
+    expect(p1).toMatchObject({ status: 'pending', memo: { step: 1 } });
+    await request(st.srv())
+      .post(`${memos()}/1/disable`)
+      .set(st.as(S.ownerTg))
+      .expect(200);
+    try {
+      const c = await confirm(a, p1).expect(409);
+      expect(c.body.error.code).toBe('MEMO_HALTED');
+      expect(c.body.error.message).toMatch(/вимкнув мемо/);
+      expect(c.body.error.message).toMatch(/кроком 2/);
+      expect(mutations().length).toBe(before);
+      expect(shop.orders.get('2001')!.status).toBe('paid');
+      const run = await st.prisma.assistAdminMemoRun.findFirstOrThrow({
+        where: { siteId: S.siteId, actor: 'jwt:emp-D1' },
+      });
+      expect(run).toMatchObject({
+        status: 'stopped',
+        goalStatus: 'not_reached',
+        slots: null,
+      });
+      expect(run.progress).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ outcome: 'halted:disabled' }),
+        ]),
+      );
+      const prop = await st.prisma.assistAdminActionProposal.findUniqueOrThrow({
+        where: { id: p1.id },
+      });
+      expect(prop.status).toBe('rejected');
+      // Повторное «Да» тоже не исполняет.
+      await confirm(a, p1).expect(409);
+      expect(mutations().length).toBe(before);
+    } finally {
+      await request(st.srv())
+        .post(`${memos()}/1/enable`)
+        .set(st.as(S.ownerTg))
+        .expect(200);
+    }
+  });
+
+  it('D3: мемо ушло в «требует проверки» между шагами — advance не исполняет следующий шаг', async () => {
+    const a = await session('emp-D2');
+    const r = await ask(a, 'виконай АМ-1 3001');
+    const p1 = r.answer.proposal;
+    expect(p1).toMatchObject({ status: 'pending', memo: { step: 1 } });
+    const memo = await st.prisma.assistAdminMemo.findFirstOrThrow({
+      where: { siteId: S.siteId, number: 1 },
+    });
+    // Монитор пометил мемо (как после серии сбоев у других сотрудников),
+    // пока шаг 2 этого запуска исполнялся.
+    await st.prisma.assistAdminMemo.update({
+      where: { id: memo.id },
+      data: { status: 'needs_review' },
+    });
+    try {
+      const run = await st.prisma.assistAdminMemoRun.findFirstOrThrow({
+        where: { siteId: S.siteId, actor: 'jwt:emp-D2' },
+      });
+      const before = mutations().length;
+      const svc = st.app.get(AdminMemoService);
+      const next = await svc.afterStep(
+        {
+          accountId: run.accountId,
+          siteId: S.siteId,
+          actor: 'jwt:emp-D2',
+          actorRole: 'manager',
+          actorExternal: 'emp-D2',
+          channel: 'embed',
+          conversationId: run.conversationId,
+          assistRole: 'orders',
+          lang: 'uk',
+        },
+        run.id,
+        1,
+        'done',
+      );
+      expect(next.next).toBeNull();
+      expect(next.text).toMatch(/зупинено перед кроком 3/);
+      expect(next.text).toMatch(/потребує перевірки/);
+      expect(mutations().length).toBe(before);
+      expect(
+        await st.prisma.assistAdminActionProposal.count({
+          where: { memoRunId: run.id, memoStep: 2 },
+        }),
+      ).toBe(0);
+      const after = await st.prisma.assistAdminMemoRun.findUniqueOrThrow({
+        where: { id: run.id },
+      });
+      expect(after).toMatchObject({ status: 'stopped', step: 2 });
+      // План голосового управления с этим запуском — тоже причина, не шаги.
+      const halted = await svc.haltRun(
+        {
+          accountId: run.accountId,
+          siteId: S.siteId,
+          actor: 'jwt:emp-D2',
+          actorRole: 'manager',
+          actorExternal: 'emp-D2',
+          channel: 'embed',
+          conversationId: run.conversationId,
+          assistRole: 'orders',
+          lang: 'ru',
+        },
+        run.id,
+      );
+      expect(halted?.text).toMatch(/требует проверки/);
+    } finally {
+      await st.prisma.assistAdminMemo.update({
+        where: { id: memo.id },
+        data: { status: 'published' },
+      });
+    }
   });
 
   it('SELECT под assist_public из assist_admin_memo* — отказ (§4.3-бис слой 3)', async () => {

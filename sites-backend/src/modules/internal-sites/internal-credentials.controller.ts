@@ -13,6 +13,9 @@
  *   POST /internal/sites/credentials/test-accounts/forget-secrets { telegramId, testAccountId }
  *   POST /internal/sites/credentials/lease                       { telegramId, testAccountId, hostId, product, runRef? }
  *   POST /internal/sites/credentials/lease/redeem                { telegramId, leaseId } → секреты (один раз)
+ *   POST /internal/sites/credentials/forget                      { telegramId, testAccountId, clientRef }
+ *        удалить учётку, заведённую ЭТИМ черновиком (clientRef + автор);
+ *        чужая — 409 TEST_ACCOUNT_NOT_OWN (Ш2-хвост (7))
  *
  * Режим B — личные записи пользователя генератора (`ownerRef = gen:<userId>`):
  *   POST /internal/sites/credentials/user-sessions/{upsert,list,update,put-secret,read,delete}
@@ -204,6 +207,19 @@ export class InternalCredentialsController {
     return this.svc.forgetSecrets(
       parseTelegramId(o.telegramId),
       parseId(o.testAccountId, 'testAccountId'),
+    );
+  }
+
+  @Post('forget')
+  @HttpCode(200)
+  forget(@InternalBody() b: unknown) {
+    const o = fields(b, ['telegramId', 'testAccountId', 'clientRef']);
+    const clientRef = parseClientRef(o.clientRef);
+    if (!clientRef) throw bad('clientRef — «project:<id>»');
+    return this.svc.forget(
+      parseTelegramId(o.telegramId),
+      parseId(o.testAccountId, 'testAccountId'),
+      clientRef,
     );
   }
 

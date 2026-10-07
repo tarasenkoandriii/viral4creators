@@ -6,6 +6,7 @@
  */
 
 import { api } from './api';
+import { noteWizardGuideState } from './guide-assist-api';
 import type { WizardGuideState, WizardHintResult } from '../types';
 import { interpretHintAudio, type HintAudioAnswer } from '../lib/hint-audio';
 import type { SpeakBody } from '../lib/voice-proactive';
@@ -24,22 +25,29 @@ function unwrap<T>(res: { data?: T }, what: string): T {
 
 const base = (projectId: string) => `/projects/${projectId}/wizard-guide`;
 
+/**
+ * Состояние гида проекта; его `engine` (Э-С Ш6) заодно уходит
+ * `GuideAssistMount` — при `legacy` мини-апп не спрашивает
+ * `GET /guide-assist/config` на каждом старте (аудит Ш6).
+ */
+function guideState(res: { data?: WizardGuideState }): WizardGuideState {
+  const state = unwrap(res, 'wizard-guide');
+  noteWizardGuideState(state);
+  return state;
+}
+
 export async function getWizardGuide(
   projectId: string
 ): Promise<WizardGuideState> {
-  return unwrap(
-    await api.get<WizardGuideState>(base(projectId)),
-    'wizard-guide'
-  );
+  return guideState(await api.get<WizardGuideState>(base(projectId)));
 }
 
 export async function setWizardGuide(
   projectId: string,
   enabled: boolean
 ): Promise<WizardGuideState> {
-  return unwrap(
-    await api.patch<WizardGuideState>(base(projectId), { enabled }),
-    'wizard-guide'
+  return guideState(
+    await api.patch<WizardGuideState>(base(projectId), { enabled })
   );
 }
 
@@ -51,9 +59,8 @@ export async function setWizardGuideVoice(
   projectId: string,
   voice: boolean
 ): Promise<WizardGuideState> {
-  return unwrap(
-    await api.patch<WizardGuideState>(base(projectId), { voice }),
-    'wizard-guide'
+  return guideState(
+    await api.patch<WizardGuideState>(base(projectId), { voice })
   );
 }
 

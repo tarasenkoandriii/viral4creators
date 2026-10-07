@@ -18,6 +18,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -109,6 +110,51 @@ export class LoginRequestDto {
   /** «Одноразово» (Ш0.5 аудита 02.10.2026): стереть данные входа после
    * первой успешной сборки ролика. Не передан — прежний выбор черновика
    * не меняется; по умолчанию данные живут 30 дней с последнего раунда. */
+  @IsOptional()
+  @IsBoolean()
+  forgetAfterBuild?: boolean;
+}
+
+/** Ш2-хвост (3): поля формы входа, указанные человеком (запасной путь). */
+export class LoginFieldPickDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(MAX_SELECTOR_LENGTH)
+  usernameSelector?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(MAX_SELECTOR_LENGTH)
+  passwordSelector?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(MAX_SELECTOR_LENGTH)
+  submitSelector?: string;
+}
+
+/**
+ * Ш2-хвост (3): вход учёткой из реестра сайта (режим A). Секретов в теле
+ * нет — только id учётки; логин и пароль сервер берёт арендой.
+ */
+export class RegistryLoginRequestDto {
+  @IsInt()
+  @Min(0)
+  expectedVersion!: number;
+
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{1,64}$/)
+  testAccountId!: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LoginFieldPickDto)
+  pick?: LoginFieldPickDto;
+
+  /** «Одноразово» — как у `/login`. */
   @IsOptional()
   @IsBoolean()
   forgetAfterBuild?: boolean;

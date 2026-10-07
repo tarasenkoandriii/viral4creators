@@ -43,6 +43,7 @@ import {
   sensitiveFieldSource,
 } from './chromium-page-explorer';
 import { FRAME_SOURCE_MARKS } from './foreign-frame-settle';
+import { LoginFieldsNotFoundError } from './registry-login';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -1011,5 +1012,133 @@ describe('аудит Э6, Д1: ввод в поле пароля/кода — п
     expect(src).toContain(JSON.stringify('input[name="a\'b"]'));
     expect(src).toContain("type === 'password'");
     expect(src).toContain('one-time-code');
+  });
+});
+
+describe('Ш2-хвост (3): вход учёткой реестра — поля находит разведчик', () => {
+  const PW = 'Registry-secret-0123456789';
+  const LOGIN_PAGE = {
+    currentUrl: `${ORIGIN}/login`,
+    elements: [
+      { selector: '#home', tag: 'a', visibleText: 'Главная' },
+      {
+        selector: '#email',
+        tag: 'input',
+        type: 'email',
+        autocomplete: 'username',
+      },
+      { selector: '#pw', tag: 'input', type: 'password' },
+      { selector: '#go', tag: 'button', type: 'submit', visibleText: 'Войти' },
+    ],
+    looksLikeLogin: true,
+  };
+  /** evaluate: настоящее ли поле пароля → `isPassword`; остальное — страница. */
+  function withLoginPage(isPassword: unknown, page: unknown = LOGIN_PAGE) {
+    return setup({
+      evaluate: jest.fn(async (src: string) => {
+        if (src.includes("prop === 'password'")) {
+          if (isPassword instanceof Error) throw isPassword;
+          return isPassword;
+        }
+        if (src.includes('one-time-code')) return true;
+        return page;
+      }),
+    });
+  }
+  const LOGIN_REQ = {
+    ...REQUEST,
+    url: `${ORIGIN}/login`,
+    autoLogin: { username: 'buyer@example.com', password: PW },
+  };
+
+  it('логин → пароль → кнопка, по селекторам разведки; итог — какие поля', async () => {
+    const { explorer, page, browser } = withLoginPage(true);
+    const out = await explorer.runRound(LOGIN_REQ);
+    expect(page.locator.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      '#email',
+      '#pw',
+      '#go',
+    ]);
+    expect(page.locatorObject.fill.mock.calls).toEqual([
+      ['buyer@example.com'],
+      [PW],
+    ]);
+    expect(page.locatorObject.click).toHaveBeenCalledTimes(1);
+    expect(out.autoLogin).toEqual({
+      usernameSelector: '#email',
+      passwordSelector: '#pw',
+      submitSelector: '#go',
+    });
+    expect(out.sensitiveFill).toBe(true);
+    expect(JSON.stringify(out)).not.toContain(PW);
+    expect(browser.close).toHaveBeenCalled();
+  });
+
+  it('«поле пароля» на деле не поле пароля (или проверка упала) — отказ ДО ввода', async () => {
+    for (const verdict of [false, new Error('detached')]) {
+      const { explorer, page, browser } = withLoginPage(verdict);
+      const err = await explorer.runRound(LOGIN_REQ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LoginFieldsNotFoundError);
+      expect((err as LoginFieldsNotFoundError).missing).toEqual(['password']);
+      expect(page.locatorObject.fill).not.toHaveBeenCalled();
+      expect(page.locatorObject.click).not.toHaveBeenCalled();
+      expect(browser.close).toHaveBeenCalled();
+    }
+  });
+
+  it('на странице нет формы входа — 422 с перечнем, ничего не введено', async () => {
+    const { explorer, page } = withLoginPage(true, COLLECTED);
+    const err = await explorer.runRound(LOGIN_REQ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LoginFieldsNotFoundError);
+    expect((err as LoginFieldsNotFoundError).getResponse()).toMatchObject({
+      error: 'LOGIN_FIELDS_NOT_FOUND',
+      reason: 'password',
+    });
+    expect(
+      JSON.stringify((err as LoginFieldsNotFoundError).getResponse()),
+    ).not.toContain(PW);
+    expect(page.locatorObject.fill).not.toHaveBeenCalled();
+  });
+
+  it('поля, указанные человеком, уходят в поиск и проверяются', async () => {
+    const { explorer, page } = withLoginPage(true);
+    await explorer.runRound({
+      ...LOGIN_REQ,
+      autoLogin: {
+        ...LOGIN_REQ.autoLogin,
+        pick: {
+          usernameSelector: '#email',
+          passwordSelector: '#pw',
+          submitSelector: '#home',
+        },
+      },
+    });
+    expect(page.locator.mock.calls.at(-1)[0]).toBe('#home');
+  });
+
+  it('переигровка: пароль реестра — только в поле пароля; страница сменилась — отказ без ввода', async () => {
+    const steps = [
+      { kind: 'goto' as const, route: `${ORIGIN}/login` },
+      { kind: 'fill' as const, selector: '#pw', value: '' },
+      { kind: 'click' as const, selector: '#go' },
+    ];
+    const bad = withLoginPage(false);
+    await expect(
+      bad.explorer.replay({
+        steps,
+        secrets: { '#pw': PW },
+        passwordOnly: ['#pw'],
+        allowedOrigin: ORIGIN,
+      }),
+    ).rejects.toBeInstanceOf(LoginFieldsNotFoundError);
+    expect(bad.page.locatorObject.fill).not.toHaveBeenCalled();
+    const ok = withLoginPage(true);
+    await ok.explorer.replay({
+      steps,
+      secrets: { '#pw': PW },
+      passwordOnly: ['#pw'],
+      allowedOrigin: ORIGIN,
+    });
+    expect(ok.page.locatorObject.fill).toHaveBeenCalledWith(PW);
   });
 });

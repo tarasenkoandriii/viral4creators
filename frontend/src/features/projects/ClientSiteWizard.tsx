@@ -65,7 +65,10 @@ import {
   verifySite,
   finishSiteTutorial,
   getSiteTutorial,
+  apiErrorReason,
+  getRegistryLoginOptions,
   loginSite,
+  loginWithRegistryAccount,
   refreshSiteTutorial,
   resumeSiteTutorial,
   startLiveLogin,
@@ -79,8 +82,10 @@ import type {
   ClientSiteDraftView,
   ClientSiteRoundResult,
   LiveLoginStart,
+  LoginFieldPick,
   PageElement,
   PageExploration,
+  RegistryLoginOptions,
   SiteAccessView,
 } from '../../types/client-site-tutorial';
 import {
@@ -124,6 +129,17 @@ import {
   fillableFields,
   liveLoginVisible,
 } from './client-site-elements';
+import {
+  LOGIN_FIELDS_NOT_FOUND,
+  type LoginFieldKind,
+  buildPick,
+  missingFields,
+  passwordFields,
+  registryAccountLabel,
+  registryLoginErrorKey,
+  registryLoginVisible,
+  usernameFields,
+} from './registry-login';
 
 /** Состояния экрана. Тип переехал в `lib/client-site-steps.ts` — там же
  * живут правила шагов, и держать два определения одного и того же было
@@ -176,6 +192,11 @@ export function ClientSiteWizard({
   const [consentTicked, setConsentTicked] = useState(false);
   /** Открыт диалог «Это мой сайт» (согласие на привязку кабинета сайтов). */
   const [verifyAsk, setVerifyAsk] = useState(false);
+  /**
+   * Ш2-хвост (3): учётки реестра сайта для входа на шаге входа (только
+   * режим A). Метки и роли — логин и пароль сервер берёт сам.
+   */
+  const [registry, setRegistry] = useState<RegistryLoginOptions | null>(null);
 
   /**
    * Шаг из адреса на момент открытия экрана.
@@ -317,6 +338,29 @@ export function ClientSiteWizard({
       window.clearInterval(timer);
     };
   }, [awaitingVideo, projectId]);
+
+  // Ш2-хвост (3): список учёток реестра — один раз на черновик в режиме A,
+  // молча: блок входа учёткой — удобство, его недоступность не мешает
+  // войти вручную.
+  const registryDraftId =
+    draft?.siteMode === 'A' && draft.status === 'DRAFTING' ? draft.id : null;
+  useEffect(() => {
+    if (!registryDraftId) {
+      setRegistry(null);
+      return;
+    }
+    let cancelled = false;
+    void getRegistryLoginOptions(projectId)
+      .then((r) => {
+        if (!cancelled) setRegistry(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRegistry(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, registryDraftId]);
 
   async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
     setBusy(true);
@@ -491,6 +535,44 @@ export function ClientSiteWizard({
       })
     );
     if (result) applyRound(result);
+  };
+
+  /**
+   * Ш2-хвост (3): вход учёткой реестра. Возвращает, каких полей не нашёл
+   * сервер (тогда человек укажет их сам), иначе `null`.
+   */
+  const submitRegistryLogin = async (
+    testAccountId: string,
+    pick?: LoginFieldPick
+  ): Promise<LoginFieldKind[] | null> => {
+    if (!draft) return null;
+    const failure: { code: string | null; reason: string | null } = {
+      code: null,
+      reason: null,
+    };
+    const result = await run(async () => {
+      try {
+        return await loginWithRegistryAccount(projectId, {
+          expectedVersion: draft.version,
+          testAccountId,
+          ...(pick ? { pick } : {}),
+        });
+      } catch (err) {
+        failure.code = apiErrorCode(err);
+        failure.reason = apiErrorReason(err);
+        throw err;
+      }
+    });
+    if (result) {
+      applyRound(result);
+      return null;
+    }
+    // Отказы входа учёткой — по коду на языке интерфейса.
+    const key = registryLoginErrorKey(failure.code);
+    if (key) setError(t[key]);
+    return failure.code === LOGIN_FIELDS_NOT_FOUND
+      ? missingFields(failure.reason)
+      : null;
   };
 
   const undo = async () => {
@@ -897,6 +979,8 @@ export function ClientSiteWizard({
           live={live}
           onStep={submitStep}
           onLogin={submitLogin}
+          registry={editable ? registry : null}
+          onRegistryLogin={submitRegistryLogin}
           onUndo={undo}
           onLive={liveLogin}
           onFinishLive={finishLive}
@@ -1141,6 +1225,12 @@ function PageStage(props: {
   live: LiveLoginStart | null;
   onStep: (clickSelector?: string) => void;
   onLogin: (submitSelector: string) => void;
+  /** Ш2-хвост (3): учётки реестра для входа; `null` — блока нет. */
+  registry: RegistryLoginOptions | null;
+  onRegistryLogin: (
+    testAccountId: string,
+    pick?: LoginFieldPick
+  ) => Promise<LoginFieldKind[] | null>;
   onUndo: () => void;
   onLive: () => void;
   onFinishLive: () => void;
@@ -1276,6 +1366,17 @@ function PageStage(props: {
             // серой без объяснений.
             <Alert tone="warning">{t.loginNoButton}</Alert>
           )}
+          {props.registry &&
+            registryLoginVisible(props.registry, exploration) && (
+              <RegistryLoginBlock
+                t={t}
+                exploration={exploration}
+                options={props.registry}
+                busy={busy}
+                submitChoice={loginSubmit}
+                onLogin={props.onRegistryLogin}
+              />
+            )}
         </Card>
       ) : (
         fields.length > 0 && (
@@ -1657,6 +1758,132 @@ function ReviewStage(props: {
           {t.discardButton}
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Ш2-хвост (3): вход учёткой из реестра сайта (заведённой в кабинете).
+ * Человек выбирает учётку по метке и роли; логин и пароль сервер берёт
+ * арендой и поля формы находит сам. Не нашёл — человек указывает поле
+ * логина и пароля (только поля пароля — для пароля) и кнопку входа
+ * (выбранную выше, среди кнопок формы входа).
+ */
+function RegistryLoginBlock(props: {
+  t: Dict;
+  exploration: PageExploration;
+  options: RegistryLoginOptions;
+  busy: boolean;
+  /** Кнопка, выбранная человеком в блоке входа выше; `null` — не выбирал. */
+  submitChoice: string | null;
+  onLogin: (
+    testAccountId: string,
+    pick?: LoginFieldPick
+  ) => Promise<LoginFieldKind[] | null>;
+}) {
+  const { t, exploration, options, busy } = props;
+  const [account, setAccount] = useState(options.accounts[0]?.id ?? '');
+  const [missing, setMissing] = useState<LoginFieldKind[] | null>(null);
+  const [userSel, setUserSel] = useState('');
+  const [pwSel, setPwSel] = useState('');
+  // Новая страница — новые поля: выбор прежней не переживает раунд.
+  useEffect(() => {
+    setMissing(null);
+    setUserSel('');
+    setPwSel('');
+  }, [exploration]);
+  useEffect(() => {
+    if (!options.accounts.some((a) => a.id === account)) {
+      setAccount(options.accounts[0]?.id ?? '');
+    }
+  }, [options, account]);
+
+  const users = usernameFields(exploration);
+  const passwords = passwordFields(exploration);
+  const pick = missing
+    ? buildPick(exploration, {
+        username: userSel,
+        password:
+          pwSel || (passwords.length === 1 ? passwords[0].selector : ''),
+        submit: props.submitChoice,
+      })
+    : null;
+  const needSubmit =
+    missing !== null && missing.includes('submit') && !props.submitChoice;
+  const disabled =
+    busy || !account || (missing !== null && (!pick || needSubmit));
+
+  const go = async () => {
+    const next = await props.onLogin(account, pick ?? undefined);
+    if (next) setMissing(next);
+  };
+
+  return (
+    <div className="space-y-3 border-t border-[var(--border)] pt-4">
+      <strong className="block text-sm">{t.registryLoginTitle}</strong>
+      <p className="text-xs text-[var(--muted)]">{t.registryLoginHint}</p>
+      <Field label={t.registryLoginAccount} htmlFor="registry-account">
+        <Select
+          id="registry-account"
+          value={account}
+          onChange={(e) => setAccount(e.target.value)}
+          disabled={busy}
+        >
+          {options.accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {registryAccountLabel(a)}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      {missing && (
+        <>
+          <Alert tone="warning">{t.registryPickNote}</Alert>
+          <Field label={t.registryPickUsername} htmlFor="registry-user">
+            <Select
+              id="registry-user"
+              value={userSel}
+              onChange={(e) => setUserSel(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">{t.registryPickNone}</option>
+              {users.map((el, i) => (
+                <option key={el.selector} value={el.selector}>
+                  {fieldLabel(el, `${t.fieldFallback} ${i + 1}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t.registryPickPassword} htmlFor="registry-password">
+            <Select
+              id="registry-password"
+              value={
+                pwSel || (passwords.length === 1 ? passwords[0].selector : '')
+              }
+              onChange={(e) => setPwSel(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">{t.selectPlaceholder}</option>
+              {passwords.map((el, i) => (
+                <option key={el.selector} value={el.selector}>
+                  {fieldLabel(el, `${t.fieldFallback} ${i + 1}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </>
+      )}
+      <Button
+        data-assist="confirm"
+        block
+        variant="outline"
+        icon={<KeyRound size={16} />}
+        disabled={disabled}
+        loading={busy}
+        onClick={() => void go()}
+      >
+        {missing ? t.registryLoginPickedButton : t.registryLoginButton}
+      </Button>
     </div>
   );
 }

@@ -49,6 +49,7 @@ import {
   parseCredentials,
   serializeCredentials,
 } from './draft-credentials';
+import { looksLikeRegistryRef, parseRegistryRef } from './registry-login';
 
 export const CREDENTIALS_STORE_ENV = 'SITE_TUTORIAL_CREDENTIALS_STORE';
 
@@ -82,7 +83,20 @@ export interface DraftSecretsUser {
 }
 
 export interface DraftSecrets {
+  /**
+   * Поля входа ДЛЯ ВВОДА: ссылки на учётку реестра (Ш2-хвост (3),
+   * `registry-login.ts`) уже разрешены арендой; выпавшие (учётку
+   * заморозили/удалили) — убраны.
+   */
   fields: DraftCredentialField[];
+  /**
+   * Поля входа КАК ХРАНЯТСЯ (со ссылками, без паролей реестра) — для
+   * слияния и записи обратно: разрешённый пароль учётки реестра в запись
+   * черновика не копируется.
+   */
+  rawFields: DraftCredentialField[];
+  /** Селекторы, куда идёт пароль учётки реестра — только в поле пароля. */
+  passwordOnly: string[];
   cookies: CdpCookie[];
   /**
    * Прочитанное выдаёт ВХОД (аудит Э6, Д1 — липкий `loginUsedAt`
@@ -198,13 +212,18 @@ export class DraftSecretsStore {
     const where = draftSecretsLocation(d);
     if (where === 'columns') {
       const cols = this.readColumns(d);
-      return { ...cols, loginEvidence: cols.fields.length > 0, lost: false };
+      return {
+        ...cols,
+        ...(await this.resolveRegistry(user, d, cols.fields)),
+        loginEvidence: cols.fields.length > 0,
+        lost: false,
+      };
     }
     let secrets: SitesCredentialSecrets;
     try {
       if (where === 'site') {
         if (!user.telegramId || !d.siteHostId) {
-          return { fields: [], cookies: [], loginEvidence: false, lost: true };
+          return { ...NOTHING, lost: true };
         }
         secrets = await this.sites.leaseSecrets(user.telegramId, {
           testAccountId: d.siteTestAccountId as string,
@@ -223,16 +242,102 @@ export class DraftSecretsStore {
         this.logger.warn(
           `черновик ${d.id}: данные входа в хранилище больше не выдаются (${(err as SitesRejectedError).code}) — вход заново`,
         );
-        return { fields: [], cookies: [], loginEvidence: false, lost: true };
+        return { ...NOTHING, lost: true };
       }
       if (isOffline(err)) throw new DraftSecretsUnavailableError();
       throw err;
     }
+    const parsed = this.parse(secrets);
     return {
-      ...this.parse(secrets),
+      ...parsed,
+      ...(await this.resolveRegistry(user, d, parsed.fields)),
       loginEvidence: !!secrets.password || !!secrets['login-fields'],
       lost: false,
     };
+  }
+
+  /**
+   * Ш2-хвост (3): вход учёткой реестра — логин и пароль арендой на ОДИН
+   * раунд (продукт `tutorial`, хост черновика). Только режим A с
+   * подтверждённым хостом; отказ кабинета — `RegistryAccountRejectedError`
+   * с его кодом, недоступность — `DraftSecretsUnavailableError`.
+   */
+  async leaseRegistry(
+    user: DraftSecretsUser,
+    d: DraftSecretsRow,
+    testAccountId: string,
+  ): Promise<{ username: string | null; password: string | null }> {
+    if (!user.telegramId || !d.siteHostId) {
+      throw new RegistryAccountRejectedError('HOST_NOT_MANAGED');
+    }
+    try {
+      const got = await this.sites.leaseAccount(user.telegramId, {
+        testAccountId,
+        hostId: d.siteHostId,
+        runRef: runRefOf(d.id),
+      });
+      return {
+        username: got.username,
+        password: got.secrets.password ?? null,
+      };
+    } catch (err) {
+      if (isGone(err)) {
+        throw new RegistryAccountRejectedError(
+          (err as SitesRejectedError).code,
+        );
+      }
+      if (isOffline(err)) throw new DraftSecretsUnavailableError();
+      throw err;
+    }
+  }
+
+  /**
+   * Ссылки на учётку реестра в полях входа (`registry-login.ts`) — в
+   * значения, арендой на этот раунд. Одна аренда на учётку. Учётка больше
+   * не выдаётся — её поля выпадают (переигровка честно попросит войти
+   * заново); кривая ссылка — тоже. Значения в лог не пишутся.
+   */
+  private async resolveRegistry(
+    user: DraftSecretsUser,
+    d: DraftSecretsRow,
+    raw: DraftCredentialField[],
+  ): Promise<Pick<DraftSecrets, 'fields' | 'rawFields' | 'passwordOnly'>> {
+    if (!raw.some((f) => looksLikeRegistryRef(f.value))) {
+      return { fields: raw, rawFields: raw, passwordOnly: [] };
+    }
+    const accounts = new Map<
+      string,
+      { username: string | null; password: string | null } | null
+    >();
+    const fields: DraftCredentialField[] = [];
+    const passwordOnly: string[] = [];
+    for (const f of raw) {
+      if (!looksLikeRegistryRef(f.value)) {
+        fields.push(f);
+        continue;
+      }
+      const ref = parseRegistryRef(f.value);
+      if (!ref) continue;
+      if (!accounts.has(ref.testAccountId)) {
+        let acc: { username: string | null; password: string | null } | null =
+          null;
+        try {
+          acc = await this.leaseRegistry(user, d, ref.testAccountId);
+        } catch (err) {
+          if (!(err instanceof RegistryAccountRejectedError)) throw err;
+          this.logger.warn(
+            `черновик ${d.id}: учётка реестра для входа больше не выдаётся (${err.code}) — вход заново`,
+          );
+        }
+        accounts.set(ref.testAccountId, acc);
+      }
+      const acc = accounts.get(ref.testAccountId);
+      const value = ref.part === 'password' ? acc?.password : acc?.username;
+      if (!value) continue;
+      fields.push({ selector: f.selector, value });
+      if (ref.part === 'password') passwordOnly.push(f.selector);
+    }
+    return { fields, rawFields: raw, passwordOnly };
   }
 
   /**
@@ -341,18 +446,24 @@ export class DraftSecretsStore {
   }
 
   /**
-   * Стереть данные входа черновика («одноразово» после сборки, удаление
-   * черновика): личная запись B удаляется целиком, у учётки A стираются
-   * секреты (саму учётку — строку реестра — удаляет владелец в кабинете).
-   * Недоступность — в лог: истечёт по сроку хранилища.
+   * Стереть данные входа черновика («одноразово» после сборки, срок
+   * хранения, удаление черновика): личная запись B удаляется целиком, у
+   * учётки A стираются секреты. При УДАЛЕНИИ черновика (`deleteAccount`,
+   * Ш2-хвост (7)) его учётка реестра удаляется целиком (`credentials/
+   * forget`: только заведённая этим черновиком — `clientRef` проекта и
+   * тот же автор); чужая не трогается вовсе. Недоступность — в лог:
+   * истечёт по сроку хранилища.
    */
   async forget(
     user: DraftSecretsUser,
     d: DraftSecretsRow,
+    opts: { deleteAccount?: boolean } = {},
   ): Promise<DraftSecretsPatch> {
     const where = draftSecretsLocation(d);
     try {
-      if (where === 'site' && user.telegramId) {
+      if (where === 'site' && user.telegramId && opts.deleteAccount) {
+        await this.forgetOwnAccount(user.telegramId, d);
+      } else if (where === 'site' && user.telegramId) {
         await this.sites.forgetTestAccountSecrets(
           user.telegramId,
           d.siteTestAccountId as string,
@@ -377,6 +488,42 @@ export class DraftSecretsStore {
       userSiteSessionId: null,
       storeHasCredentials: false,
     };
+  }
+
+  /**
+   * Учётка реестра черновика при его удалении: своя — удалить целиком;
+   * чужая (`TEST_ACCOUNT_NOT_OWN`) — не трогать; уже нет — готово. Старый
+   * sites-backend без `credentials/forget` (404 без кода учётки) — как до
+   * Ш2-хвоста (7): стереть секреты.
+   */
+  private async forgetOwnAccount(
+    telegramId: string,
+    d: DraftSecretsRow,
+  ): Promise<void> {
+    try {
+      await this.sites.forgetTestAccount(
+        telegramId,
+        d.siteTestAccountId as string,
+        clientRefOf(d.projectId),
+      );
+    } catch (err) {
+      if (!(err instanceof SitesRejectedError)) throw err;
+      if (err.code === 'TEST_ACCOUNT_NOT_OWN') {
+        this.logger.warn(
+          `черновик ${d.id}: учётка реестра заведена не им — не удаляется`,
+        );
+        return;
+      }
+      if (err.code === 'TEST_ACCOUNT_NOT_FOUND') return;
+      if (err.status === 404) {
+        await this.sites.forgetTestAccountSecrets(
+          telegramId,
+          d.siteTestAccountId as string,
+        );
+        return;
+      }
+      throw err;
+    }
   }
 
   /** Перенос одного черновика из колонок (скрипт `move-client-site-credentials`). */
@@ -555,6 +702,25 @@ export class DraftSecretsStore {
     this.logger.warn(
       `обучалка: данные входа пишутся в колонки черновика (${why}) — для хранилища sites-backend задайте SITE_TUTORIAL_CREDENTIALS_STORE=sites и SITE_CREDENTIALS_KEYS (doc/DEPLOYMENT.md)`,
     );
+  }
+}
+
+const NOTHING: Omit<DraftSecrets, 'lost'> = {
+  fields: [],
+  rawFields: [],
+  passwordOnly: [],
+  cookies: [],
+  loginEvidence: false,
+};
+
+/**
+ * Кабинет не выдал учётку реестра для входа (заморожена, истекла, удалена,
+ * не разрешена обучалке, хост не подтверждён или не его) — код кабинета.
+ */
+export class RegistryAccountRejectedError extends Error {
+  constructor(readonly code: string) {
+    super(`учётка реестра не выдана (${code})`);
+    this.name = 'RegistryAccountRejectedError';
   }
 }
 

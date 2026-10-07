@@ -75,8 +75,12 @@ import {
   DraftSecretsStore,
   DraftSecretsUnavailableError,
   DraftSecretsUser,
+  RegistryAccountRejectedError,
   draftSecretsLocation,
 } from './draft-secrets-store';
+import type { LoginFieldPick } from './login-form-detect';
+import type { AutoLoginRequest, ExploreRoundResult } from './page-explorer';
+import { looksLikeRegistryRef, registryRef } from './registry-login';
 import { SitesInternalClient } from '../sites-internal/sites-internal.client';
 import {
   FrameDecodeError,
@@ -547,6 +551,12 @@ export class ClientSiteTutorialService {
     if (input.fields.length === 0) {
       throw new BadRequestException('форма входа без полей — нечего заполнять');
     }
+    // Ш2-хвост (3): ссылка на учётку реестра — служебное значение полей
+    // входа; из ввода человека она не принимается (иначе подделанная
+    // ссылка разрешилась бы при переигровке чужой учёткой).
+    if (input.fields.some((f) => looksLikeRegistryRef(f.value))) {
+      throw new BadRequestException('недопустимое значение поля формы входа');
+    }
     // Ш1/П-Т2: до шифрования кред и до занятия версии.
     await this.gateDrive(userId, draft, ipHash);
 
@@ -586,8 +596,10 @@ export class ClientSiteTutorialService {
       // §14 п.8 объявляет поддержанным: раньше второй `/login` стирал
       // то, что сохранил первый, и черновик становился неотменяемым
       // (переигровка падала на поле без секрета) и непересобираемым.
+      // Слияние — с ХРАНИМЫМ видом (ссылки на учётку реестра остаются
+      // ссылками): разрешённый пароль учётки в запись черновика не копируется.
       const merged = new Map<string, string>();
-      for (const field of stored.fields) {
+      for (const field of stored.rawFields) {
         merged.set(field.selector, field.value);
       }
       for (const field of sensitive) merged.set(field.selector, field.value);
@@ -610,6 +622,125 @@ export class ClientSiteTutorialService {
       steps,
       // Успешный `/login` — вход всегда (аудит Э6, Д1).
       { fields, secretsOneShot: input.forgetAfterBuild, stored, login: true },
+    );
+  }
+
+  /**
+   * Ш2-хвост (3): вход учёткой из реестра сайта (заведённой руками в
+   * кабинете — без селекторов полей). Только режим A (подтверждённый хост
+   * черновика) и включённое хранилище. Логин и пароль — арендой на этот
+   * раунд; поля формы находит разведчик на открытой странице сам
+   * (`findLoginFields`), пароль вводит только в поле пароля; не нашёл —
+   * 422 `LOGIN_FIELDS_NOT_FOUND`, и человек указывает поля (`pick`).
+   * В сценарий поля уходят без значений, в поля входа черновика — ССЫЛКИ на
+   * учётку (`registry-login.ts`), не пароль.
+   */
+  async loginRegistry(
+    userId: string,
+    projectId: string,
+    input: {
+      expectedVersion: number;
+      testAccountId: string;
+      pick?: LoginFieldPick;
+      forgetAfterBuild?: boolean;
+    },
+    ipHash: string | null = null,
+  ): Promise<RoundResult> {
+    const { draft } = await this.loadEditableDraft(userId, projectId);
+    if (
+      draft.siteMode !== 'A' ||
+      !draft.siteHostId ||
+      !this.secrets.enabled()
+    ) {
+      throw new ConflictException({
+        error: REGISTRY_LOGIN_UNAVAILABLE,
+        code: REGISTRY_LOGIN_UNAVAILABLE,
+        message:
+          'вход учёткой из реестра — только для подтверждённого сайта с подключённым хранилищем учётных записей',
+      });
+    }
+    await this.gateDrive(userId, draft, ipHash);
+    // Сохранённое черновика (сессия, прежние поля входа) — до аренды.
+    const stored = await this.readSecrets(userId, draft);
+    const user = await this.secrets.userOf(userId);
+    let account: { username: string | null; password: string | null };
+    try {
+      account = await this.secrets.leaseRegistry(
+        user,
+        draft,
+        input.testAccountId,
+      );
+    } catch (err) {
+      if (err instanceof RegistryAccountRejectedError) {
+        throw new ConflictException({
+          error: REGISTRY_ACCOUNT_UNAVAILABLE,
+          code: REGISTRY_ACCOUNT_UNAVAILABLE,
+          message:
+            'эта учётная запись сейчас недоступна обучалке: заморожена, истекла, удалена, не разрешена обучалке или не действует на этом сайте',
+          reason: err.code,
+        });
+      }
+      throw this.secretsError(err);
+    }
+    if (!account.password) {
+      throw new ConflictException({
+        error: REGISTRY_ACCOUNT_NO_PASSWORD,
+        code: REGISTRY_ACCOUNT_NO_PASSWORD,
+        message:
+          'у этой учётной записи нет пароля — задайте его в кабинете или войдите вручную',
+      });
+    }
+    const id = input.testAccountId;
+    return this.runAndPersist(
+      userId,
+      draft,
+      input.expectedVersion,
+      [],
+      (round) => {
+        const found = round.autoLogin;
+        if (!found) {
+          throw new ServiceUnavailableException(
+            'разведчик не сообщил, какие поля входа заполнил',
+          );
+        }
+        const merged = new Map<string, string>();
+        for (const f of stored.rawFields) merged.set(f.selector, f.value);
+        if (found.usernameSelector) {
+          merged.set(found.usernameSelector, registryRef(id, 'username'));
+        }
+        merged.set(found.passwordSelector, registryRef(id, 'password'));
+        return {
+          // Значения — только при переигровке, из аренды; в сценарии, который
+          // видит оператор, их нет.
+          steps: [
+            ...(found.usernameSelector
+              ? [
+                  {
+                    kind: 'fill' as const,
+                    selector: found.usernameSelector,
+                    value: '',
+                  },
+                ]
+              : []),
+            { kind: 'fill', selector: found.passwordSelector, value: '' },
+            { kind: 'click', selector: found.submitSelector },
+          ],
+          fields: [...merged].map(([selector, value]) => ({
+            selector,
+            value,
+          })),
+        };
+      },
+      {
+        secretsOneShot: input.forgetAfterBuild,
+        stored,
+        login: true,
+        autoLogin: {
+          username: account.username,
+          password: account.password,
+          ...(input.pick ? { pick: input.pick } : {}),
+        },
+      },
     );
   }
 
@@ -681,6 +812,7 @@ export class ClientSiteTutorialService {
       replayed = await this.explorer.replay({
         steps: undone.next.steps,
         secrets: secretsMap(stored.fields),
+        passwordOnly: stored.passwordOnly,
         allowedOrigin: draft.baseUrl,
       });
     } catch (err) {
@@ -1338,10 +1470,13 @@ export class ClientSiteTutorialService {
     // только по `clientSiteDraftId` (06.10.2026). Сбой — в лог: остаток
     // подберёт метла сирот, когда не станет строки ролика.
     await this.wipeVideoSources(draft.id);
-    // Ш2: данные входа в хранилище — стереть (личная запись B — целиком, у
-    // учётки реестра A — секреты). Сбой — в лог: истекут по сроку там.
+    // Ш2: данные входа в хранилище — стереть (личная запись B — целиком;
+    // учётка реестра A, заведённая этим черновиком, — целиком, Ш2-хвост (7);
+    // чужую учётку реестра — не трогать). Сбой — в лог: истекут по сроку.
     if (draftSecretsLocation(draft) !== 'columns') {
-      await this.secrets.forget(await this.secrets.userOf(userId), draft);
+      await this.secrets.forget(await this.secrets.userOf(userId), draft, {
+        deleteAccount: true,
+      });
     }
     await this.prisma.clientSiteTutorialDraft.deleteMany({
       where: { projectId },
@@ -1372,7 +1507,14 @@ export class ClientSiteTutorialService {
     draft: DraftRow,
     expectedVersion: number,
     actions: RoundAction[],
-    steps: ScenarioStep[],
+    /** Шаги раунда — или из его итога (вход учёткой реестра: какие поля
+     *  нашёл разведчик, известно только после раунда). */
+    plan:
+      | ScenarioStep[]
+      | ((round: ExploreRoundResult) => {
+          steps: ScenarioStep[];
+          fields?: DraftCredentialField[];
+        }),
     extra: {
       /** Полный набор полей входа для записи (`/login`). */
       fields?: DraftCredentialField[];
@@ -1381,6 +1523,8 @@ export class ClientSiteTutorialService {
       stored?: DraftSecrets;
       /** Раунд — вход сам по себе (`/login`, ввод в поле пароля/кода). */
       login?: boolean;
+      /** Ш2-хвост (3): вход учёткой реестра — поля находит разведчик. */
+      autoLogin?: AutoLoginRequest;
     } = {},
   ): Promise<RoundResult> {
     const state = this.toRoundsState(draft);
@@ -1407,12 +1551,19 @@ export class ClientSiteTutorialService {
         cookies: stored.cookies,
         actions,
         allowedOrigin: draft.baseUrl,
+        ...(extra.autoLogin ? { autoLogin: extra.autoLogin } : {}),
       });
     } catch (err) {
       await this.usage.releaseRound(userId);
       throw err;
     }
     await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
+
+    const planned =
+      typeof plan === 'function'
+        ? plan(round)
+        : { steps: plan, fields: extra.fields };
+    const steps = planned.steps;
 
     let next: DraftRoundsState;
     try {
@@ -1429,7 +1580,7 @@ export class ClientSiteTutorialService {
 
     const secretsPatch = await this.writeSecrets(userId, draft, {
       cookies: this.siteCookies(round.cookies, draft.baseUrl),
-      fields: extra.fields,
+      fields: planned.fields,
     });
     const loginMark = this.loginMark(
       draft,
@@ -2133,6 +2284,13 @@ export function pickLoginProofSelector(exploration: PageExploration): string {
     pool[0];
   return byTag?.selector ?? 'body';
 }
+
+/** Ш2-хвост (3): вход учёткой реестра недоступен (не режим A / нет хранилища). */
+export const REGISTRY_LOGIN_UNAVAILABLE = 'REGISTRY_LOGIN_UNAVAILABLE';
+/** Кабинет не выдал учётку (заморожена, истекла, хост, продукт…). */
+export const REGISTRY_ACCOUNT_UNAVAILABLE = 'REGISTRY_ACCOUNT_UNAVAILABLE';
+/** У учётки нет пароля — входить нечем. */
+export const REGISTRY_ACCOUNT_NO_PASSWORD = 'REGISTRY_ACCOUNT_NO_PASSWORD';
 
 /** Реэкспорт для тестов/контроллера — чтобы не тянуть `draft-rounds`
  * напрямую туда, где нужна только ошибка отмены. */

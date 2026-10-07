@@ -26,6 +26,9 @@ export interface PageElement {
   label?: string;
   visibleText?: string;
   name?: string;
+  /** Атрибут `autocomplete` поля (нижним регистром) — сервер по нему сам
+   * находит поля входа для учётки из реестра (Ш2-хвост (3)). */
+  autocomplete?: string;
   /** Предупреждение стоп-листа §8.3 — приходит РАНЬШЕ, чем пользователь
    * нажмёт кнопку, поэтому «вы уверены?» успевает спроситься до того,
    * как шаг выполнится на настоящем сайте. */
@@ -156,4 +159,27 @@ export interface LiveLoginStart {
   /** Зашифрованная квитанция — её, а не `sessionId`, визард возвращает
    * в `/live-login/complete`. */
   ticket: string;
+}
+
+/**
+ * Ш2-хвост (3): учётка реестра сайта, которой можно войти на шаге входа
+ * мастера, — только метка и роль: логин и пароль сервер берёт сам.
+ */
+export interface RegistryLoginAccount {
+  id: string;
+  label: string;
+  role: string | null;
+}
+
+export interface RegistryLoginOptions {
+  /** `false` — не режим A или хранилище не подключено: блока нет. */
+  available: boolean;
+  accounts: RegistryLoginAccount[];
+}
+
+/** Поля формы входа, указанные человеком (если сервер не нашёл их сам). */
+export interface LoginFieldPick {
+  usernameSelector?: string;
+  passwordSelector?: string;
+  submitSelector?: string;
 }

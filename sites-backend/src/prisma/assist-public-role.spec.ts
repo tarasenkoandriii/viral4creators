@@ -306,6 +306,9 @@ if (!RAW_URL) {
         `UPDATE ${S}."assist_account_usage" SET "units" = "units" + 1, "dialogs" = "dialogs" + 1, "updatedAt" = now() WHERE "accountId" = 'a' AND "periodKey" = 'p' AND "units" + 1 <= 50 + "extraUnits" + CASE WHEN false AND "autoSpentMicroUsd" + 1 <= 0 THEN 100 ELSE 0 END`,
         `UPDATE ${S}."assist_account_usage" SET "exhaustedAt" = COALESCE("exhaustedAt", now()), "updatedAt" = now() WHERE "accountId" = 'a' AND "periodKey" = 'p'`,
         `SELECT "key", "value" FROM ${S}."assist_platform_settings" WHERE "key" = 'widget'`,
+        // Ш5 (4) / Ш6 (8): внутренний тенант — признак кабинета и захват без стопа.
+        `SELECT 1 AS "one" FROM ${S}."site_sites" WHERE "accountId" = 'a' AND "id" = ANY(ARRAY['s']::text[]) LIMIT 1`,
+        `UPDATE ${S}."assist_account_usage" SET "units" = "units" + 1, "dialogs" = "dialogs" + 1, "updatedAt" = now() WHERE "accountId" = 'a' AND "periodKey" = 'p'`,
       ]) {
         await expect(asPublic(sql)).resolves.toBeUndefined();
       }

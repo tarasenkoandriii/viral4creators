@@ -5,6 +5,7 @@
  * основная роль (секрет). Режим «Сайт» (правило графа site↛admin).
  */
 import { Module } from '@nestjs/common';
+import { AssistV1IpLimit } from '../../common/assist-v1-ip-limit';
 import { AssistKnowledgeCoreModule } from '../assist-knowledge-core/assist-knowledge-core.module';
 import { AssistSiteLearningModule } from '../assist-site-learning/assist-site-learning.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
@@ -58,6 +59,7 @@ import { AiIntake } from './public/ai-intake.service';
     GoalsService,
     IntegrationsService,
     GoalWebhookService,
+    AssistV1IpLimit,
     StatsService,
     ExportsService,
     ExportStorage,

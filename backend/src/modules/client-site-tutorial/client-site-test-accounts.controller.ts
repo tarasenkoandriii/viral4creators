@@ -3,6 +3,8 @@
  * маршрутов рядом с `/site-tutorial`:
  *
  *   GET    /projects/:projectId/site-tutorial/test-accounts       список (без секретов)
+ *   GET    /projects/:projectId/site-tutorial/test-accounts/for-login
+ *          учётки для входа на шаге мастера: только id, метка, роль (Ш2-хвост (3))
  *   POST   /projects/:projectId/site-tutorial/test-accounts       завести (режим A)
  *   PATCH  /projects/:projectId/site-tutorial/test-accounts/:id   изменить
  *   DELETE /projects/:projectId/site-tutorial/test-accounts/:id   «Забыть»
@@ -41,6 +43,14 @@ export class ClientSiteTestAccountsController {
   @Get()
   list(@Req() req: IdentifiedRequest, @Param('projectId') projectId: string) {
     return this.svc.view(req.telegramUserId, projectId);
+  }
+
+  @Get('for-login')
+  forLogin(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+  ) {
+    return this.svc.loginOptions(req.telegramUserId, projectId);
   }
 
   @Post()

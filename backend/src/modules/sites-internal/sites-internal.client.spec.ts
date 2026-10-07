@@ -250,4 +250,69 @@ describe('SitesInternalClient: хранилище учётных данных (�
       SitesNotConfiguredError,
     );
   });
+  it('Ш2-хвост (3): аренда с логином — логин из погашения, без него — null', async () => {
+    const { c } = client((url) =>
+      url.endsWith('/lease')
+        ? json(200, { success: true, data: { leaseId: 'L2' } })
+        : json(200, {
+            success: true,
+            data: {
+              testAccountId: 'ta1',
+              label: 'Покупатель',
+              username: 'buyer@example.com',
+              secrets: { password: 'pw-value' },
+            },
+          }),
+    );
+    await expect(
+      c.leaseAccount('4242', { testAccountId: 'ta1', hostId: 'h1' }),
+    ).resolves.toEqual({
+      username: 'buyer@example.com',
+      secrets: { password: 'pw-value' },
+    });
+    const { c: old } = client((url) =>
+      url.endsWith('/lease')
+        ? json(200, { success: true, data: { leaseId: 'L3' } })
+        : json(200, { success: true, data: { secrets: {} } }),
+    );
+    await expect(
+      old.leaseAccount('4242', { testAccountId: 'ta1', hostId: 'h1' }),
+    ).resolves.toEqual({ username: null, secrets: {} });
+  });
+
+  it('Ш2-хвост (7): forget — подписанный запрос с ключом черновика; чужая — 409 с кодом', async () => {
+    const { c, calls } = client(() =>
+      json(200, { success: true, data: { deleted: true } }),
+    );
+    await expect(
+      c.forgetTestAccount('4242', 'ta9', 'project:p1'),
+    ).resolves.toEqual({ deleted: true });
+    expect(new URL(calls[0].url).pathname).toBe(
+      '/internal/sites/credentials/forget',
+    );
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      telegramId: '4242',
+      testAccountId: 'ta9',
+      clientRef: 'project:p1',
+    });
+    expect(
+      verifySitesRequest(SECRET, {
+        method: 'POST',
+        path: '/internal/sites/credentials/forget',
+        body: calls[0].init.body as string,
+        headers: calls[0].init.headers as Record<string, string>,
+        nowSeconds: Math.floor(NOW.getTime() / 1000),
+        expectedCaller: SITES_CALLER_TUTORIAL,
+      }).ok,
+    ).toBe(true);
+    const { c: foreign } = client(() =>
+      json(409, {
+        success: false,
+        error: { code: 'TEST_ACCOUNT_NOT_OWN', message: 'не ваша' },
+      }),
+    );
+    await expect(
+      foreign.forgetTestAccount('4242', 'ta9', 'project:p1'),
+    ).rejects.toMatchObject({ code: 'TEST_ACCOUNT_NOT_OWN', status: 409 });
+  });
 });

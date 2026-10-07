@@ -49,6 +49,7 @@ import {
   NotFoundException,
   Logger,
   ServiceUnavailableException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   ClientSiteTutorialService,
@@ -77,6 +78,7 @@ import {
 } from '../sites-internal/sites-internal.client';
 import { ACCOUNT_CONSENT_TEXT_VERSION } from './account-consent';
 import { DraftSecretsStore } from './draft-secrets-store';
+import { LoginFieldsNotFoundError, registryRef } from './registry-login';
 import { FakeSitesCredentials } from '../../../test/fake-sites-credentials';
 
 /**
@@ -3065,6 +3067,300 @@ describe('Э-С Ш2: данные входа в хранилище sites-backend
     const view = (await service.getState('user1', 'proj1'))!;
     expect(view.hasCredentials).toBe(true);
     expect(fake.calls).toEqual([]);
+  });
+});
+
+describe('Ш2-хвосты (3), (7): вход учёткой реестра и удаление черновика', () => {
+  const PW = 'Registry-secret-0123456789';
+  const USERNAME = 'buyer@example.com';
+  const FOUND = {
+    usernameSelector: '#email',
+    passwordSelector: '#pw',
+    submitSelector: '#go',
+  };
+  const DRAFT_A = {
+    siteMode: 'A',
+    siteHostId: 'host1',
+    siteModeCheckedAt: new Date(),
+  };
+
+  function withRegistry(
+    opts: Parameters<typeof setup>[0] = {},
+    fake = new FakeSitesCredentials(),
+  ) {
+    const runRound = jest.fn().mockImplementation((req: any) =>
+      Promise.resolve({
+        exploration: EXPLORATION,
+        cookies: [],
+        sensitiveFill: true,
+        ...(req.autoLogin ? { autoLogin: FOUND } : {}),
+      }),
+    );
+    const base = setup({
+      sitesMode: 'A',
+      draft: makeDraftRow(DRAFT_A),
+      ...opts,
+      explorer: { runRound, ...opts.explorer },
+    });
+    const logger = { log: jest.fn(), warn: jest.fn() };
+    const store = new DraftSecretsStore(
+      base.accessPrisma,
+      fake.client(),
+      () => KEY,
+      logger,
+    );
+    store.env = { SITE_TUTORIAL_CREDENTIALS_STORE: 'sites' };
+    const service = new ClientSiteTutorialService(
+      base.prisma,
+      base.plans,
+      base.usage,
+      base.blob,
+      base.relay,
+      base.explorer,
+      base.access,
+      store,
+    );
+    const manual = fake.addManual('4242', 'host1', {
+      username: USERNAME,
+      password: PW,
+    });
+    return { ...base, fake, store, service, manual, logger };
+  }
+
+  it('аренда учётки → разведчик ищет поля сам; в сценарии значения пустые, в записи черновика — ссылки; пароля нет нигде, кроме раунда', async () => {
+    const { service, fake, manual, explorer, clientSiteTutorialDraft, usage } =
+      withRegistry();
+    const r = await service.loginRegistry('user1', 'proj1', {
+      expectedVersion: 3,
+      testAccountId: manual.id,
+    });
+    const req = (explorer.runRound as jest.Mock).mock.calls[0][0];
+    expect(req.actions).toEqual([]);
+    expect(req.autoLogin).toEqual({ username: USERNAME, password: PW });
+    expect(fake.calls).toContain(`leaseAccount:${manual.id}`);
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.steps.slice(-3)).toEqual([
+      { kind: 'fill', selector: '#email', value: '' },
+      { kind: 'fill', selector: '#pw', value: '' },
+      { kind: 'click', selector: '#go' },
+    ]);
+    expect(data.loginUsedAt).toEqual(expect.any(Date));
+    // Учётка из кабинета черновику чужая: данные входа — в его СВОЕЙ записи.
+    expect(data.siteTestAccountId).toMatch(/^site-/);
+    expect(data.siteTestAccountId).not.toBe(manual.id);
+    const own = fake.records.get(data.siteTestAccountId)!;
+    expect(JSON.parse(own.secrets['login-fields']!)).toEqual([
+      { selector: '#email', value: registryRef(manual.id, 'username') },
+      { selector: '#pw', value: registryRef(manual.id, 'password') },
+    ]);
+    // Секрет не утёк: ни в строку черновика, ни в ответ, ни в запись черновика.
+    for (const blob of [JSON.stringify(data), JSON.stringify(r)]) {
+      expect(blob).not.toContain(PW);
+    }
+    expect(JSON.stringify(own.secrets)).not.toContain(PW);
+    expect(JSON.stringify(own.secrets)).not.toContain(USERNAME);
+    expect(fake.records.get(manual.id)!.secrets).toEqual({ password: PW });
+    expect(usage.releaseRound).not.toHaveBeenCalled();
+  });
+
+  it('/undo после входа учёткой реестра — значения арендой, пароль помечен «только в поле пароля»', async () => {
+    const { service, manual, explorer, clientSiteTutorialDraft, fake } =
+      withRegistry();
+    await service.loginRegistry('user1', 'proj1', {
+      expectedVersion: 3,
+      testAccountId: manual.id,
+    });
+    const own =
+      clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data
+        .siteTestAccountId;
+    clientSiteTutorialDraft.findUnique.mockResolvedValue(
+      makeDraftRow({ ...THREE_ROUNDS, ...DRAFT_A, siteTestAccountId: own }),
+    );
+    await service.undo('user1', 'proj1', 3);
+    const replay = (explorer.replay as jest.Mock).mock.calls.at(-1)[0];
+    expect(replay.secrets).toEqual({ '#email': USERNAME, '#pw': PW });
+    expect(replay.passwordOnly).toEqual(['#pw']);
+    // Владелец сменил пароль в кабинете — переигровка входит новым.
+    fake.records.get(manual.id)!.secrets.password = 'Changed-0123456789';
+    await service.undo('user1', 'proj1', 3);
+    expect(
+      (explorer.replay as jest.Mock).mock.calls.at(-1)[0].secrets['#pw'],
+    ).toBe('Changed-0123456789');
+  });
+
+  it('поля не нашлись — 422 LOGIN_FIELDS_NOT_FOUND, слот возвращён; повтор с указанными полями уходит разведчику', async () => {
+    const runRound = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new LoginFieldsNotFoundError(['username', 'submit']),
+      )
+      .mockResolvedValue({
+        exploration: EXPLORATION,
+        cookies: [],
+        autoLogin: FOUND,
+      });
+    const { service, manual, usage, explorer } = withRegistry({
+      explorer: { runRound },
+    });
+    const err = await service
+      .loginRegistry('user1', 'proj1', {
+        expectedVersion: 3,
+        testAccountId: manual.id,
+      })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnprocessableEntityException);
+    expect((err as any).getResponse()).toMatchObject({
+      error: 'LOGIN_FIELDS_NOT_FOUND',
+      reason: 'username,submit',
+    });
+    expect(JSON.stringify((err as any).getResponse())).not.toContain(PW);
+    expect(usage.releaseRound).toHaveBeenCalledTimes(1);
+    const pick = { passwordSelector: '#pw', submitSelector: '#go' };
+    await service.loginRegistry('user1', 'proj1', {
+      expectedVersion: 4,
+      testAccountId: manual.id,
+      pick,
+    });
+    expect(
+      (explorer.runRound as jest.Mock).mock.calls.at(-1)[0].autoLogin.pick,
+    ).toEqual(pick);
+  });
+
+  it('учётку заморозили или она не на этом хосте — 409 REGISTRY_ACCOUNT_UNAVAILABLE до версии, слота и браузера', async () => {
+    const { service, manual, fake, usage, explorer, clientSiteTutorialDraft } =
+      withRegistry();
+    fake.records.get(manual.id)!.frozen = true;
+    const other = fake.addManual('4242', 'host-2', { password: 'x' });
+    for (const id of [manual.id, other.id, 'nope']) {
+      const err = await service
+        .loginRegistry('user1', 'proj1', {
+          expectedVersion: 3,
+          testAccountId: id,
+        })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect((err as any).getResponse().error).toBe(
+        'REGISTRY_ACCOUNT_UNAVAILABLE',
+      );
+    }
+    expect(usage.reserveRound).not.toHaveBeenCalled();
+    expect(explorer.runRound).not.toHaveBeenCalled();
+    expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('у учётки нет пароля — 409 REGISTRY_ACCOUNT_NO_PASSWORD', async () => {
+    const { service, fake, explorer } = withRegistry();
+    const bare = fake.addManual('4242', 'host1', { username: 'x@y.z' });
+    const err = await service
+      .loginRegistry('user1', 'proj1', {
+        expectedVersion: 3,
+        testAccountId: bare.id,
+      })
+      .catch((e: unknown) => e);
+    expect((err as any).getResponse().error).toBe(
+      'REGISTRY_ACCOUNT_NO_PASSWORD',
+    );
+    expect(explorer.runRound).not.toHaveBeenCalled();
+  });
+
+  it('режим B или хранилище выключено — 409 REGISTRY_LOGIN_UNAVAILABLE, аренды нет', async () => {
+    const b = withRegistry({
+      sitesMode: 'B',
+      draft: makeDraftRow({ siteMode: 'B' }),
+    });
+    const errB = await b.service
+      .loginRegistry('user1', 'proj1', {
+        expectedVersion: 3,
+        testAccountId: b.manual.id,
+      })
+      .catch((e: unknown) => e);
+    expect((errB as any).getResponse().error).toBe(
+      'REGISTRY_LOGIN_UNAVAILABLE',
+    );
+    const off = withRegistry();
+    off.store.env = {};
+    const errOff = await off.service
+      .loginRegistry('user1', 'proj1', {
+        expectedVersion: 3,
+        testAccountId: off.manual.id,
+      })
+      .catch((e: unknown) => e);
+    expect((errOff as any).getResponse().error).toBe(
+      'REGISTRY_LOGIN_UNAVAILABLE',
+    );
+    expect(b.fake.calls.some((c) => c.startsWith('leaseAccount'))).toBe(false);
+    expect(off.fake.calls.some((c) => c.startsWith('leaseAccount'))).toBe(
+      false,
+    );
+  });
+
+  it('/login не принимает ссылку на учётку реестра в значении поля (подделка) — 400', async () => {
+    const { service, manual, explorer } = withRegistry();
+    await expect(
+      service.login('user1', 'proj1', {
+        expectedVersion: 3,
+        submitSelector: '#go',
+        fields: [
+          {
+            selector: '#pw',
+            value: registryRef(manual.id, 'password'),
+            sensitive: true,
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(explorer.runRound).not.toHaveBeenCalled();
+  });
+
+  it('второй экран формы (/login) после входа учёткой реестра — пароль реестра в запись черновика не копируется', async () => {
+    const { service, manual, fake, clientSiteTutorialDraft } = withRegistry();
+    await service.loginRegistry('user1', 'proj1', {
+      expectedVersion: 3,
+      testAccountId: manual.id,
+    });
+    const own =
+      clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data
+        .siteTestAccountId;
+    clientSiteTutorialDraft.findUnique.mockResolvedValue(
+      makeDraftRow({ ...DRAFT_A, version: 4, siteTestAccountId: own }),
+    );
+    await service.login('user1', 'proj1', {
+      expectedVersion: 4,
+      submitSelector: '#confirm',
+      fields: [{ selector: '#otp', value: '123456', sensitive: true }],
+    });
+    const stored = fake.records.get(own)!.secrets['login-fields']!;
+    expect(stored).not.toContain(PW);
+    expect(JSON.parse(stored)).toEqual([
+      { selector: '#email', value: registryRef(manual.id, 'username') },
+      { selector: '#pw', value: registryRef(manual.id, 'password') },
+      { selector: '#otp', value: '123456' },
+    ]);
+  });
+
+  it('удаление черновика: его учётка реестра удалена целиком, учётка из кабинета с паролем цела', async () => {
+    const { service, manual, fake, clientSiteTutorialDraft } = withRegistry();
+    await service.loginRegistry('user1', 'proj1', {
+      expectedVersion: 3,
+      testAccountId: manual.id,
+    });
+    const own =
+      clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data
+        .siteTestAccountId;
+    clientSiteTutorialDraft.findUnique.mockResolvedValue(
+      makeDraftRow({ ...DRAFT_A, siteTestAccountId: own }),
+    );
+    await service.remove('user1', 'proj1');
+    expect(fake.records.has(own)).toBe(false);
+    expect(fake.calls).toContain(`forgetTestAccount:${own}`);
+    expect(fake.records.get(manual.id)!.secrets).toEqual({ password: PW });
+    // Черновик, привязанный прямо к учётке из кабинета (аномалия), — она не
+    // удаляется и не стирается.
+    clientSiteTutorialDraft.findUnique.mockResolvedValue(
+      makeDraftRow({ ...DRAFT_A, siteTestAccountId: manual.id }),
+    );
+    await service.remove('user1', 'proj1');
+    expect(fake.records.get(manual.id)!.secrets).toEqual({ password: PW });
   });
 });
 

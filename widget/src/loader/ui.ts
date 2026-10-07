@@ -90,14 +90,14 @@ export class WidgetUi {
   readonly button: HTMLButtonElement;
   readonly panel: HTMLElement;
   frame: HTMLIFrameElement | null = null;
-  private skel: HTMLElement | null = null;
-  private opts: UiOptions;
-  private view: ViewConfig;
-  private shift = 0;
+  private _skel: HTMLElement | null = null;
+  private _opts: UiOptions;
+  private _view: ViewConfig;
+  private _shift = 0;
 
   constructor(opts: UiOptions) {
-    this.opts = opts;
-    this.view = opts.view;
+    this._opts = opts;
+    this._view = opts.view;
     this.host = N.el('div');
     this.host.setAttribute('data-v4c', '');
     // Стили страницы не ломают хост (аудит 06.10): `body>div{z-index:1;
@@ -148,12 +148,12 @@ export class WidgetUi {
       this.root.appendChild(this.button);
       (document.body || document.documentElement).appendChild(this.host);
     }
-    this.apply(this.view);
+    this.apply(this._view);
   }
 
   /** Вид → CSS-переменные (CSSOM) и классы. Значения уже проверены (HEX/enum/диапазон). */
   apply(view: ViewConfig) {
-    this.view = view;
+    this._view = view;
     const s = this.host.style;
     const b = view.brand;
     const l = view.layout;
@@ -164,7 +164,7 @@ export class WidgetUi {
     s.setProperty('--z', String(l.zIndex));
     s.setProperty('--x', off.x + 'px');
     s.setProperty('--y', off.y + 'px');
-    s.setProperty('--s', this.shift + 'px');
+    s.setProperty('--s', this._shift + 'px');
     s.setProperty('--bs', b.preset === 'compact' ? '48px' : '56px');
     s.setProperty('--br', b.preset === 'strict' ? '12px' : '50%');
     s.setProperty(
@@ -183,28 +183,28 @@ export class WidgetUi {
     setClass(r, 'M', mobile);
     setClass(r, 'F', l.mobile === 'fullscreen');
     setClass(r, 'S', l.mobile === 'sheet');
-    this.button.hidden = l.launcher === 'none' || !!this.opts.inline;
-    this.renderIcon();
+    this.button.hidden = l.launcher === 'none' || !!this._opts.inline;
+    this._renderIcon();
   }
 
   isMobile(): boolean {
     return window.matchMedia('(max-width: 640px)').matches;
   }
 
-  private renderIcon() {
+  private _renderIcon() {
     const btn = this.button;
     while (btn.firstChild) btn.removeChild(btn.firstChild);
     const open = this.isOpen();
     btn.setAttribute(
       'aria-label',
-      open ? this.opts.labels.close : this.opts.labels.open
+      open ? this._opts.labels.close : this._opts.labels.open
     );
-    const b = this.view.brand;
+    const b = this._view.brand;
     if (open) btn.appendChild(svgIcon(ICON_PATHS.close));
     else if (b.launcherIcon === 'logo' && b.logoAssetId) {
       const img = N.el('img');
       img.alt = '';
-      img.src = this.opts.assetUrl(b.logoAssetId);
+      img.src = this._opts.assetUrl(b.logoAssetId);
       btn.appendChild(img);
     } else {
       const icon = b.launcherIcon === 'logo' ? 'chat' : b.launcherIcon;
@@ -219,24 +219,24 @@ export class WidgetUi {
   /** Показать окно; `withSkeleton` — каркас до готовности iframe. */
   show(open: boolean) {
     setClass(this.root, 'o', open);
-    if (!this.opts.inline) this.panel.hidden = !open;
+    if (!this._opts.inline) this.panel.hidden = !open;
     this.button.setAttribute('aria-expanded', String(open));
-    if (open && !this.frame && !this.skel) {
-      this.skel = skeleton();
-      this.panel.appendChild(this.skel);
+    if (open && !this.frame && !this._skel) {
+      this._skel = skeleton();
+      this.panel.appendChild(this._skel);
     }
-    this.renderIcon();
+    this._renderIcon();
   }
 
   /** iframe чата: ленивый, `referrerpolicy=origin` (iframe узнаёт origin родителя), микрофон — заранее для Э5. */
   ensureFrame(src: string): HTMLIFrameElement {
     if (this.frame) return this.frame;
-    if (!this.skel && !this.opts.inline) {
-      this.skel = skeleton();
-      this.panel.appendChild(this.skel);
+    if (!this._skel && !this._opts.inline) {
+      this._skel = skeleton();
+      this.panel.appendChild(this._skel);
     }
     const f = N.el('iframe');
-    f.title = this.opts.labels.frame;
+    f.title = this._opts.labels.frame;
     f.setAttribute('referrerpolicy', 'origin');
     f.setAttribute('allow', 'microphone');
     f.src = src;
@@ -246,9 +246,9 @@ export class WidgetUi {
   }
 
   ready() {
-    if (this.skel) {
-      this.skel.remove();
-      this.skel = null;
+    if (this._skel) {
+      this._skel.remove();
+      this._skel = null;
     }
   }
 
@@ -276,17 +276,17 @@ export class WidgetUi {
    * угол, если пришлось его сменить.
    */
   avoidOverlap(): string | null {
-    const view = this.view;
+    const view = this._view;
     const l = view.layout;
     if (
       !l.avoidOverlap ||
       l.launcher === 'none' ||
-      this.opts.inline ||
+      this._opts.inline ||
       this.isOpen()
     )
       return null;
     const at = (pos: string, shift: number): DOMRect | null => {
-      this.shift = shift;
+      this._shift = shift;
       this.apply({
         ...view,
         layout: { ...l, position: pos as typeof l.position },

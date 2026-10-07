@@ -6,8 +6,14 @@
  * ключей, прогон на подменённой сети.
  */
 import { ASSISTANT_KNOWLEDGE } from './generated';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import {
+  OPEN_APP_KEY_PREFIX,
+  OPEN_APP_PATH,
+  SYNC_KEY_PREFIX,
   SYNC_SIGNATURE_HEADER,
+  buildOpenAppDocuments,
   buildSyncDocuments,
   findKnowledgeLeaks,
   landingPageBase,
@@ -60,11 +66,62 @@ describe('knowledge-sync: документы', () => {
     expect(base).toBe('https://viral4creators.example');
     expect(
       buildSyncDocuments({ ru: '# База\n\nx\n' }, base).map((d) => d.url),
-    ).toEqual(['https://viral4creators.example/ru']);
+    ).toEqual([
+      'https://viral4creators.example/ru',
+      // Ш5 (6): «Открыть приложение» — страница-переход лендинга.
+      'https://viral4creators.example/ru/open',
+    ]);
     expect(landingPageBase('http://viral4creators.example')).toBeNull();
     expect(landingPageBase('nonsense')).toBeNull();
     expect(landingPageBase(undefined)).toBeNull();
     expect(buildSyncDocuments({ ru: '# База\n\nx\n' })[0].url).toBeNull();
+  });
+
+  it('Ш5 (6): «Открыть приложение» — документ на локаль со ссылкой на /<локаль>/open; без адреса лендинга — нет', () => {
+    const base = 'https://viral4creators.example';
+    const docs = buildSyncDocuments(ASSISTANT_KNOWLEDGE, base);
+    const open = docs.filter((d) => d.key.startsWith(OPEN_APP_KEY_PREFIX));
+    expect(open.map((d) => d.key)).toEqual([
+      'gen-open-de',
+      'gen-open-en',
+      'gen-open-es',
+      'gen-open-ru',
+      'gen-open-uk',
+    ]);
+    for (const d of open) {
+      // Свой префикс синхронизации: удалённую локаль план снимет сам.
+      expect(d.key.startsWith(SYNC_KEY_PREFIX)).toBe(true);
+      expect(d.url).toBe(`${base}/${d.lang}/${OPEN_APP_PATH}`);
+      // Ни t.me, ни адресов в тексте: кнопку даёт url фрагмента (К-8).
+      expect(d.content).not.toMatch(/t\.me|https?:\/\//);
+      expect(d.content.startsWith('# ')).toBe(true);
+      expect(findKnowledgeLeaks(d.content)).toEqual([]);
+      expect(d.title).toMatch(new RegExp(`\\(${d.lang}\\)$`));
+    }
+    // Документы базы — как раньше, первыми.
+    expect(docs.slice(0, 5).map((d) => d.key)).toEqual(
+      buildSyncDocuments(ASSISTANT_KNOWLEDGE).map((d) => d.key),
+    );
+    expect(buildSyncDocuments(ASSISTANT_KNOWLEDGE)).toHaveLength(5);
+    expect(buildOpenAppDocuments(['ru'], null)).toEqual([]);
+    // Локаль без текста «Открыть» — без документа (не пустышка).
+    expect(buildOpenAppDocuments(['xx', 'ru'], base).map((d) => d.key)).toEqual(
+      ['gen-open-ru'],
+    );
+  });
+
+  it('Ш5 (6): страница-переход лендинга существует, сегмент тот же, noindex', () => {
+    const dir = join(
+      __dirname,
+      '../../../../landing/src/app/[locale]',
+      OPEN_APP_PATH,
+    );
+    expect(existsSync(join(dir, 'page.tsx'))).toBe(true);
+    const copy = readFileSync(join(dir, 'open-copy.ts'), 'utf8');
+    expect(copy).toContain(`OPEN_APP_SEGMENT = '${OPEN_APP_PATH}'`);
+    expect(readFileSync(join(dir, 'page.tsx'), 'utf8')).toMatch(
+      /robots:\s*\{\s*index:\s*false/,
+    );
   });
 
   it('штамп снимается только в шапке', () => {

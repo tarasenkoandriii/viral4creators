@@ -36,7 +36,7 @@ export function start(host: ActHost): ActApi {
   // Страница уходит в bfcache: раннер стоп без отчёта (иначе при «Назад»
   // оживёт посреди чужого плана); флаг «план идёт» — для следующей страницы.
   host.N.on(window, 'pagehide', (e) => {
-    if ((e as PageTransitionEvent).persisted && runner) runner.stop(null, 1);
+    if ((e as PageTransitionEvent).persisted && runner) runner._stop(null, 1);
   });
   return {
     on(raw) {
@@ -64,19 +64,19 @@ export function start(host: ActHost): ActApi {
         case 'ui-run': {
           // Аудит 06.10: повтор `ui-run` того же плана, пока раннер жив
           // (двойное «Да»), — не второй исполнитель поверх первого.
-          if (runner && !runner.stopped) {
-            if (runner.planId == m.planId) return;
-            runner.stop(null);
+          if (runner && !runner._halt) {
+            if (runner._plan == m.planId) return;
+            runner._stop(null);
           }
           const r = new Runner(
             {
               N: host.N,
-              refs,
-              deny,
-              allow,
-              min: host.min,
-              mark: host.mark,
-              report: (index, result, reason, ms) =>
+              _refs: refs,
+              _deny: deny,
+              _allow: allow,
+              _min: host.min,
+              _mark: host.mark,
+              _report: (index, result, reason, ms) =>
                 host.post({
                   type: 'ui-step',
                   planId: m.planId,
@@ -86,9 +86,9 @@ export function start(host: ActHost): ActApi {
                   url: location.href.split('#')[0],
                   ms,
                 }),
-              stopped: (by) =>
+              _stopped: (by) =>
                 host.post({ type: 'ui-stopped', planId: m.planId, by }),
-              need: (index) =>
+              _need: (index) =>
                 host.post({ type: 'ui-need', planId: m.planId, index }),
             },
             m.planId,
@@ -98,17 +98,17 @@ export function start(host: ActHost): ActApi {
           );
           runner = r;
           // Продолжение на новой странице: первый шаг — `dispatched`.
-          void r.run(m.steps[m.from] && m.steps[m.from].state === 'dispatched');
+          void r._run(m.steps[m.from]?.state == 'dispatched');
           return;
         }
         case 'ui-ack':
-          if (runner && runner.planId === m.planId) runner.ack(m.index);
+          if (runner && runner._plan === m.planId) runner._ack(m.index);
           return;
         case 'ui-stop':
-          if (runner && runner.planId === m.planId) runner.stop(null);
+          if (runner && runner._plan === m.planId) runner._stop(null);
           return;
         case 'ui-pause':
-          if (runner) runner.pause(m.on);
+          if (runner) runner._pause(m.on);
           return;
       }
     },

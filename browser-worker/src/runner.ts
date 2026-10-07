@@ -4,6 +4,10 @@
  *
  *  - конкурентность — не больше `concurrency` заданий одновременно;
  *    пустая очередь — опрос реже (до `idlePollMaxMs`);
+ *  - дренаж перед ротацией Chromium (Ш3-хвост (16)): пул говорит
+ *    `holdClaims()` — новые задания не берутся, пока идущие не кончатся
+ *    (потолок — `drainMaxMs` пула); иначе при непрерывной нагрузке
+ *    ротация не наступала бы никогда;
  *  - на задание: новый контекст и свой прокси (`browser/context.ts`),
  *    heartbeat каждые 15 с (продление аренды; ответ «отменить» — отмена;
  *    409 «аренда потеряна» — тихий обрыв без `fail`; ни одного удачного
@@ -37,7 +41,8 @@ import { openSealed, sealAad } from './shared/worker-seal';
 
 export interface RunnerOptions {
   api: WorkerApi;
-  pool: Pick<BrowserPool, 'acquire' | 'release'>;
+  pool: Pick<BrowserPool, 'acquire' | 'release'> &
+    Partial<Pick<BrowserPool, 'holdClaims'>>;
   logger: Logger;
   kinds: BrowserJobKind[];
   concurrency: number;
@@ -53,7 +58,11 @@ export interface RunnerOptions {
   now?: () => number;
   executors?: Partial<Record<BrowserJobKind, JobExecutor>>;
   /** Тесты: открыть контекст без настоящего браузера. */
-  openJobBrowser?: (b: Browser, job: ClaimedJob) => Promise<JobBrowser>;
+  openJobBrowser?: (
+    b: Browser,
+    job: ClaimedJob,
+    onTrafficLimit: () => void,
+  ) => Promise<JobBrowser>;
 }
 
 interface Running {
@@ -95,7 +104,9 @@ export class Runner {
   private async loop(): Promise<void> {
     let idle = this.o.pollMs;
     while (!this.stopping) {
-      const free = this.o.concurrency - this.running.size;
+      // Дренаж: пора ротировать браузер — свободные места не заполняются.
+      const hold = this.o.pool.holdClaims?.() === true;
+      const free = hold ? 0 : this.o.concurrency - this.running.size;
       if (free > 0) {
         try {
           const res = await this.o.api.claim(
@@ -229,18 +240,21 @@ export class Runner {
     }, hbMs);
     const wall = setTimeout(() => this.cancel(r, 'job_timeout'), job.wallMs);
     let jb: JobBrowser | null = null;
-    let acquired = false;
+    let browser: Browser | null = null;
+    // Потолок трафика задания (Ш3-хвост (9)): прокси уже оборвал все
+    // соединения — задание обрывается с причиной `traffic_limit`.
+    const onTrafficLimit = () => this.cancel(r, 'traffic_limit');
     try {
       const exec = this.o.executors?.[job.kind] ?? EXECUTORS[job.kind];
-      const browser = await this.o.pool.acquire();
-      acquired = true;
+      browser = await this.o.pool.acquire();
       jb = this.o.openJobBrowser
-        ? await this.o.openJobBrowser(browser, job)
+        ? await this.o.openJobBrowser(browser, job, onTrafficLimit)
         : await JobBrowser.open(
             browser,
             (job.params as { allowedHosts: string[] }).allowedHosts,
             (job.params as { viewport: 'mobile' | 'desktop' }).viewport,
             this.o.egress,
+            onTrafficLimit,
           );
       const opened = jb;
       r.abort.signal.addEventListener('abort', () => void opened.close());
@@ -262,6 +276,7 @@ export class Runner {
         jobId: job.id,
         kind: job.kind,
         ms: Date.now() - started,
+        bytes: opened.traffic().bytesIn,
       });
     } catch (e) {
       if (r.reason === 'lease_lost') {
@@ -272,7 +287,7 @@ export class Runner {
         r.reason ??
         (e instanceof JobError
           ? e.code
-          : jb === null && acquired === false
+          : jb === null && browser === null
             ? 'browser_crashed'
             : /Target (page, context or browser )?closed|Browser closed|browser has disconnected/i.test(
                   e instanceof Error ? e.message : '',
@@ -299,8 +314,18 @@ export class Runner {
     } finally {
       clearInterval(hb);
       clearTimeout(wall);
-      if (jb) await jb.close();
-      if (acquired) this.o.pool.release();
+      if (jb) {
+        const t = jb.traffic();
+        if (t.cutResponses || t.cutJob)
+          log.warn('потолок трафика', {
+            jobId: job.id,
+            bytes: t.bytesIn,
+            cut: t.cutJob ? 'job' : 'response',
+            count: t.cutResponses,
+          });
+        await jb.close();
+      }
+      if (browser) this.o.pool.release(browser);
     }
   }
 

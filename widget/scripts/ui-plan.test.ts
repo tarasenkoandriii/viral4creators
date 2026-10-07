@@ -10,6 +10,7 @@ import * as wordsNs from '../../sites-backend/src/modules/assist-ui-core/action-
 import * as directNs from '../../sites-backend/src/modules/assist-ui-core/direct-plan';
 import * as snapNs from '../../sites-backend/src/modules/assist-ui-core/snapshot';
 import * as decisionsNs from '../../sites-backend/src/modules/assist-ui-core/decisions';
+import { UNDO_AT, UNDO_KIND } from '../src/act/snapshot';
 import { DICTS } from '../src/chat/i18n';
 import {
   MARK_SYMBOL,
@@ -40,6 +41,57 @@ import {
 
 const cjs = <T>(ns: T): T => (ns as T & { default?: T }).default ?? ns;
 const server = { ...cjs(wordsNs), ...cjs(directNs), ...cjs(snapNs) };
+
+// ── Э6-тер (и): пара разметки `data-assist-undo`/`-at` — загрузчик ≡ сервер ──
+{
+  const kinds = server.MARKUP_UNDO_KINDS as readonly string[];
+  assert.ok(kinds.length >= 3);
+  for (const k of kinds)
+    assert.ok(UNDO_KIND.test(k), `загрузчик принимает вид «${k}»`);
+  for (const k of [
+    'remove-from-cart2',
+    'remove-from-',
+    'remove-gift',
+    'del-x',
+    'checkout',
+    'xremove-from-cart',
+  ])
+    assert.ok(
+      !UNDO_KIND.test(k) && server.cleanUndoMarkup(k, null) === null,
+      `вид «${k}» — ни там, ни там`
+    );
+  // Страница: что пропускает загрузчик, то и сервер (кроме оплаты и ПД —
+  // их сервер режет сверх); чужое — ни там, ни там.
+  for (const at of ['/', '/cart/', '/compare/%D0%BF', '/a_b-c.d~e/'])
+    assert.ok(
+      UNDO_AT.test(at) &&
+        server.cleanUndoMarkup('remove-from-cart', at)?.at === at,
+      `страница «${at}» — да`
+    );
+  for (const at of [
+    '//evil.example/cart',
+    '/\\evil.example/cart',
+    'https://evil.example/cart',
+    'cart/',
+    '/cart?x=1',
+    '/cart#a',
+    '/cart*',
+    '/u/ivan@example.com',
+    '/кошик/',
+    '/c art',
+    `/${'a'.repeat(200)}`,
+  ])
+    assert.ok(
+      !UNDO_AT.test(at) &&
+        server.cleanUndoMarkup('remove-from-cart', at) === null,
+      `страница «${at}» — нет`
+    );
+  assert.ok(
+    UNDO_AT.test('/checkout/') &&
+      server.cleanUndoMarkup('remove-from-cart', '/checkout/') === null,
+    'оплату режет сервер'
+  );
+}
 
 // ── стоп-лист: всё, что сервер считает «никогда», загрузчик тоже ─────────
 {
@@ -186,6 +238,10 @@ for (const [p, want] of [
     'Синя футболка — 450 грн',
     'Розмір M',
     'Дзвоніть (67) 123-45-67',
+    'Доставка 2026-10-03 або 03.10.2026',
+    'Телефон (067) 123-45-67',
+    'Код 12.34.5678',
+    'Запис 0671234567',
   ];
   for (const l of labels)
     assert.equal(maskLabel(l), server.maskLabel(l), `maskLabel «${l}»`);

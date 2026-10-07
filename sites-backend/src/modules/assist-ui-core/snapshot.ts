@@ -12,6 +12,8 @@
  * журнал идёт только описание цели шага).
  */
 import { maskSensitiveEcho } from '../../shared/assist-chat-core/post-filter';
+import { paymentPath } from './action-words';
+import { STANDARD_UNDO_PAIRS } from './decisions';
 import {
   UI_GESTURES,
   UI_ROLES,
@@ -19,6 +21,7 @@ import {
   type UiRole,
   type UiSnapElement,
   type UiSnapshot,
+  type UiUndoDecl,
 } from './types';
 
 export const SNAPSHOT_LIMITS = {
@@ -150,6 +153,41 @@ export function cleanHref(raw: unknown): string | null {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
 
+/**
+ * (Э6-тер (и)) Закрытый список видов компенсации разметки владельца
+ * (`data-assist-undo`): обратные цели встроенных пар стандартной разметки
+ * (`remove-from-cart|wishlist|compare`). Загрузчик сверяет тот же список
+ * (`widget/src/act/snapshot.ts` `UNDO_KIND`, сверка — ui-plan.test.ts).
+ */
+export const MARKUP_UNDO_KINDS: readonly string[] = [
+  ...new Set(Object.values(STANDARD_UNDO_PAIRS)),
+];
+/**
+ * Путь страницы отмены (`data-assist-undo-at`): `/`, не `//host`, латиница,
+ * цифры и `_-.~%/` (как загрузчик, `UNDO_AT`), ≤ 200 — без `*`, `\`, `@`,
+ * query и фрагмента.
+ */
+const UNDO_AT_RE = /^\/(?!\/)[\w\-.~%/]{0,199}$/;
+
+/**
+ * Объявленная пара разметки из снимка — строго: вид из закрытого списка;
+ * страница — путь своего хоста, не оплата и без ПД (маска пути её не
+ * меняет). Плохая страница — пары нет вовсе (не «эта страница»).
+ */
+export function cleanUndoMarkup(kind: unknown, at: unknown): UiUndoDecl | null {
+  if (typeof kind !== 'string' || !MARKUP_UNDO_KINDS.includes(kind))
+    return null;
+  if (at === null || at === undefined) return { assistId: kind, at: null };
+  if (
+    typeof at !== 'string' ||
+    !UNDO_AT_RE.test(at) ||
+    paymentPath(at) ||
+    maskPagePath(at) !== at
+  )
+    return null;
+  return { assistId: kind, at };
+}
+
 /** Один элемент; мусор и чувствительное — null. */
 export function cleanElement(raw: unknown): UiSnapElement | null {
   if (!isObj(raw)) return null;
@@ -186,6 +224,7 @@ export function cleanElement(raw: unknown): UiSnapElement | null {
         .map((o) => cleanText(o, SNAPSHOT_LIMITS.text))
         .filter((o): o is string => !!o)
     : [];
+  const undo = cleanUndoMarkup(raw.undo, raw.undoAt);
   const gesture =
     typeof raw.gesture === 'string' &&
     (UI_GESTURES as readonly string[]).includes(raw.gesture)
@@ -212,6 +251,7 @@ export function cleanElement(raw: unknown): UiSnapElement | null {
     toggle: raw.toggle === true,
     gesture,
     inView: raw.inView === true,
+    ...(undo ? { undo } : {}),
   };
 }
 

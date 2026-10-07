@@ -10,6 +10,9 @@ export interface HealthState {
   t: number;
   running: number;
   browser: boolean;
+  /** Дренаж перед ротацией Chromium: новые задания не берутся. */
+  draining?: boolean;
+  rotations?: number;
   lastClaimAt: number;
   lastError: string | null;
   completed: number;

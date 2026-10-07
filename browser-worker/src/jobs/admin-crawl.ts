@@ -15,6 +15,11 @@
  *     отказ (считается в `refusedClicks`).
  *  4. Результат — только «знания об интерфейсе» страниц (заголовки,
  *     подписи меню, кнопок и полей, шапки таблиц), без содержимого ячеек.
+ *     ПД вне таблиц (Ш3-хвост (17), `admin-crawl-entity.ts`): на карточке
+ *     сущности (заказ, покупатель, пользователь — по маршруту или номеру в
+ *     заголовке) остаётся только структура, имена — маска; на прочих
+ *     страницах — «Имя Фамилия» и имя после приветствия. Карточка каждого
+ *     вида открывается ОДНА (структура у них общая).
  */
 import type { Page } from 'playwright-core';
 import { collectInterface } from '../page/collect';
@@ -30,6 +35,7 @@ import {
   type AdminCrawlResult,
 } from '../shared/browser-job-protocol';
 import { JobError } from '../errors';
+import { entityRouteKey, sanitizeAdminPage } from './admin-crawl-entity';
 import type { JobContext, JobCredentials } from './types';
 
 /** Тот же селектор, что у `collectInterface` (page/collect.ts). */
@@ -186,6 +192,10 @@ export async function runAdminCrawl(
   // Стартовая — та, где оказались после входа (сайт мог увести в /dashboard).
   queue.push({ url: page.url(), depth: 0 });
   seen.add(key(page.url()));
+  // Виды карточек сущностей, уже поставленные в обход (одна на вид).
+  const entityKinds = new Set<string>();
+  const startKind = entityRouteKey(page.url());
+  if (startKind) entityKinds.add(startKind);
   let first = true;
   while (queue.length && pages.length < p.maxPages) {
     if (ctx.signal.aborted) break;
@@ -277,10 +287,11 @@ export async function runAdminCrawl(
       WORKER_LIMITS.pageTextChars,
     );
     const cur = new URL(page.url());
+    const safe = sanitizeAdminPage(cur.toString(), info.title, info.text);
     pages.push({
       url: `${cur.origin}${cur.pathname}`,
-      title: info.title.slice(0, WORKER_LIMITS.titleChars),
-      text: info.text.slice(0, WORKER_LIMITS.pageTextChars),
+      title: safe.title.slice(0, WORKER_LIMITS.titleChars),
+      text: safe.text.slice(0, WORKER_LIMITS.pageTextChars),
     });
     if (depth >= p.maxDepth) continue;
     for (const l of info.links) {
@@ -290,6 +301,16 @@ export async function runAdminCrawl(
       if (linkRefusal(l.href, l.text, p.allowedHosts)) {
         skippedLinks += 1;
         continue;
+      }
+      // Вторая карточка того же вида (другой заказ/покупатель) — не нужна:
+      // структура та же, а ПД — чужие.
+      const kind = entityRouteKey(l.href);
+      if (kind) {
+        if (entityKinds.has(kind)) {
+          skippedLinks += 1;
+          continue;
+        }
+        entityKinds.add(kind);
       }
       queue.push({ url: l.href, depth: depth + 1 });
     }

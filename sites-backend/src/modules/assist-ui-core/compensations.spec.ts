@@ -24,6 +24,7 @@ import {
 import { STANDARD_UNDO_PAGES, STANDARD_UNDO_PAIRS } from './decisions';
 import { checkPlan, resolveAfterSteps, type MapHint } from './plan-checks';
 import { defaultVoiceControlRules } from './rules';
+import { MARKUP_UNDO_KINDS, cleanUndoMarkup, parseSnapshot } from './snapshot';
 import type { UiSnapElement, UiSnapshot } from './types';
 import { undoTargetsCheck, wizardVerdict } from './wizard';
 
@@ -416,6 +417,216 @@ describe('Э6-тер (и): компенсация в плане — кодом (
       assistId: 'remove-from-cart',
       at: '/cart/',
       row: 'Футболка синя',
+    });
+  });
+});
+
+describe('Э6-тер (и): разметка владельца `data-assist-undo`/`-at` из снимка (§5-бис.15 п.6 п.1)', () => {
+  it('закрытый список видов — ровно обратные стандартной разметки (явной таблицей)', () => {
+    expect([...MARKUP_UNDO_KINDS].sort()).toEqual([
+      'remove-from-cart',
+      'remove-from-compare',
+      'remove-from-wishlist',
+    ]);
+  });
+
+  it('строгая проверка: вид не из списка или плохая страница — пары нет вовсе', () => {
+    expect(cleanUndoMarkup('remove-from-cart', '/cart/')).toEqual({
+      assistId: 'remove-from-cart',
+      at: '/cart/',
+    });
+    expect(cleanUndoMarkup('remove-from-wishlist', undefined)).toEqual({
+      assistId: 'remove-from-wishlist',
+      at: null,
+    });
+    expect(cleanUndoMarkup('remove-from-compare', null)).toMatchObject({
+      at: null,
+    });
+    expect(
+      cleanUndoMarkup('remove-from-cart', '/compare/%D0%BF'),
+    ).toMatchObject({ at: '/compare/%D0%BF' });
+    for (const kind of [
+      'remove-gift',
+      'del-x',
+      'checkout',
+      'remove-from-cart2',
+      'REMOVE-FROM-CART',
+      '',
+      7,
+      null,
+      ['remove-from-cart'],
+    ])
+      expect(cleanUndoMarkup(kind, '/cart/')).toBeNull();
+    for (const at of [
+      '//evil.example/cart',
+      '/\\evil.example/cart',
+      'https://evil.example/cart',
+      'cart/',
+      '/cart?x=1',
+      '/cart#a',
+      '/cart*',
+      '/checkout/',
+      '/oplata/',
+      '/u/ivan%40example.com/cart',
+      '/orders/123456789012/cart',
+      '/кошик/',
+      '/c art',
+      '',
+      `/${'a'.repeat(200)}`,
+      5,
+      { at: '/cart/' },
+    ])
+      expect(cleanUndoMarkup('remove-from-cart', at)).toBeNull();
+  });
+
+  it('parseSnapshot несёт пару элемента (`undo`/`undoAt` загрузчика); без атрибутов — поля нет', () => {
+    const base = {
+      role: 'button',
+      tag: 'button',
+      text: 'В кошик',
+      assistId: 'add-to-cart',
+    };
+    const s = parseSnapshot({
+      url: `https://${HOST}/p/1`,
+      title: 'x',
+      elements: [
+        { ...base, ref: 'e1', undo: 'remove-from-cart', undoAt: '/cart/' },
+        { ...base, ref: 'e2', undo: 'remove-from-cart', undoAt: null },
+        { ...base, ref: 'e3', undo: 'pay-now', undoAt: '/cart/' },
+        { ...base, ref: 'e4', undo: 'remove-from-cart', undoAt: '//evil/x' },
+        { ...base, ref: 'e5' },
+      ],
+    })!;
+    expect(s.elements.map((e) => e.undo ?? null)).toEqual([
+      { assistId: 'remove-from-cart', at: '/cart/' },
+      { assistId: 'remove-from-cart', at: null },
+      null,
+      null,
+      null,
+    ]);
+    expect('undo' in s.elements[4]).toBe(false);
+  });
+
+  const add = el({
+    text: 'В кошик',
+    assistId: 'add-to-cart',
+    heading: 'Футболка синя',
+  });
+  const wcAdd = el({
+    ...add,
+    undo: { assistId: 'remove-from-cart', at: '/cart/' },
+  });
+
+  it('плагин WooCommerce: `add-to-cart` + `-at` корзины без ссылки `nav-cart` — компенсация с переходом, без голосовой карты', () => {
+    const bare = plan('додай в кошик', snap([add]), [
+      { kind: 'click', target: add.ref },
+    ]);
+    expect(bare.steps[0].comp).toMatchObject({ at: null, src: 'standard' });
+    const p = plan('додай в кошик', snap([wcAdd]), [
+      { kind: 'click', target: wcAdd.ref },
+    ]);
+    expect(p.steps[0]).toMatchObject({
+      undo: 'comp',
+      comp: {
+        assistId: 'remove-from-cart',
+        at: '/cart/',
+        row: 'Футболка синя',
+        src: 'markup',
+      },
+    });
+    // Без флага «Сайта» («Админка») — нет.
+    const admin = plan(
+      'додай в кошик',
+      snap([wcAdd]),
+      [{ kind: 'click', target: wcAdd.ref }],
+      { compensations: false },
+    );
+    expect(admin.steps[0].comp).toBeUndefined();
+  });
+
+  it('своя кнопка темы без стандартной разметки + `data-assist-undo` — ⇄ comp, не ТН; без пары — ТН', () => {
+    const own = el({
+      text: 'Додати подарунок',
+      assistId: 'gift',
+      heading: 'Футболка синя',
+    });
+    const before = plan('додай подарунок', snap([own]), [
+      { kind: 'click', target: own.ref },
+    ]);
+    expect(before.steps[0].undo).toBe('irrev');
+    expect(before.pnr).toBe(0);
+    const marked = el({
+      ...own,
+      undo: { assistId: 'remove-from-cart', at: null },
+    });
+    const after = plan('додай подарунок', snap([marked]), [
+      { kind: 'click', target: marked.ref },
+    ]);
+    expect(after.steps[0]).toMatchObject({
+      undo: 'comp',
+      comp: { assistId: 'remove-from-cart', at: null, src: 'markup' },
+    });
+    expect(after.pnr).toBeNull();
+    expect(after.steps[0].risk).toBe(before.steps[0].risk);
+  });
+
+  it('«Как отменить» карты важнее разметки; страница разметки вне зоны — компенсации нет', () => {
+    const hints = new Map<string, MapHint>([
+      [
+        wcAdd.ref,
+        {
+          key: 'add',
+          names: ['додай в кошик'],
+          floor: 'auto',
+          undo: { assistId: 'remove-from-wishlist', at: null },
+        },
+      ],
+    ]);
+    const p = plan(
+      'додай в кошик',
+      snap([wcAdd]),
+      [{ kind: 'click', target: wcAdd.ref }],
+      { hints },
+    );
+    expect(p.steps[0].comp).toMatchObject({
+      assistId: 'remove-from-wishlist',
+      src: 'map',
+    });
+    const rules = { ...defaultVoiceControlRules(), denyPaths: ['/cart*'] };
+    const denied = plan(
+      'додай в кошик',
+      snap([wcAdd]),
+      [{ kind: 'click', target: wcAdd.ref }],
+      { rules },
+    );
+    expect(denied.steps[0].comp).toBeUndefined();
+  });
+
+  it('после перехода: разметка нового снимка тоже даёт компенсацию', () => {
+    const link = el({
+      text: 'Каталог',
+      role: 'link',
+      tag: 'a',
+      href: `https://${HOST}/catalog`,
+    });
+    const p = plan('відкрий каталог і додай в кошик', snap([link]), [
+      { kind: 'click', target: link.ref },
+      { kind: 'click', target: { assistId: 'add-to-cart', text: 'В кошик' } },
+    ]);
+    const r = resolveAfterSteps({
+      steps: p.steps,
+      from: 1,
+      snapshot: snap([wcAdd], '/catalog'),
+      transcript: 'відкрий каталог і додай в кошик',
+      rules: defaultVoiceControlRules(),
+      hosts: [HOST],
+      state: 'on',
+      compensations: true,
+    });
+    expect(r.steps[1].comp).toMatchObject({
+      assistId: 'remove-from-cart',
+      at: '/cart/',
+      src: 'markup',
     });
   });
 });

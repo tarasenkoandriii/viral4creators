@@ -216,6 +216,17 @@ export class ProposalsService {
   private readonly logger = new Logger(ProposalsService.name);
   /** Мемо АМ-N подписывается на итог шага (без циклической зависимости). */
   onSettled: SettledHook | null = null;
+  /**
+   * D3 (§5-бис.17 п.5 п.8): перед «Да» на шаге мемо — мемо всё ещё рабочее?
+   * Нет (ушло в «требует проверки», выключено, удалено) — запуск остановлен
+   * хуком, возвращается текст причины. Ставит мемо (`AdminMemoService`).
+   */
+  beforeMemoStep:
+    | ((
+        ctx: ActorCtx,
+        row: ProposalRow,
+      ) => Promise<{ number: number; text: string } | null>)
+    | null = null;
   /** Таймаут изменяющего запроса (§5.5: 10 с); тесты — меньше. */
   execTimeoutMs = 10_000;
   /**
@@ -946,6 +957,18 @@ export class ProposalsService {
         text: '',
         next: null,
       };
+    }
+    // D3: шаг мемо исполняется только у рабочего мемо — предложение,
+    // сделанное до «требует проверки»/выключения, гасится с причиной.
+    if (row.memoRunId && this.beforeMemoStep) {
+      const halted = await this.beforeMemoStep(ctx, row);
+      if (halted) {
+        await db.assistAdminActionProposal.updateMany({
+          where: { id: row.id, status: { in: ['pending', 'unknown'] } },
+          data: { status: 'rejected', outcome: 'memo_halted' },
+        });
+        throw adminError(409, 'MEMO_HALTED', halted.text);
+      }
     }
     // pending | unknown — проверки заново (§5.4 п.6).
     if (

@@ -1,0 +1,137 @@
+#!/usr/bin/env node
+/**
+ * Бюджет JS первой загрузки лендинга `landing/` (Ш5 (14)) — по образцу
+ * `sites-landing/scripts/built/first-load-js.mjs` (`budget:js`). Запуск —
+ * после `next build`: `npm run budget:js` (CI, джоба landing; `make ci`).
+ *
+ * Зачем. Виджет ИИ-помощника платформы (`NEXT_PUBLIC_ASSIST_WIDGET`)
+ * обещает не трогать первую отрисовку: загрузчик — после `load` + idle,
+ * чат — по клику. Обещание без числа в CI не держится: любой «удобный»
+ * импорт в общий layout или на главную тихо утяжеляет каждую страницу.
+ * Здесь — потолки маршрутов с запасом ≈ 10 % к замеру на 07.10.2026,
+ * превышение — громкий отказ (код 1) с разбором по чанкам.
+ *
+ * Считаем сами, а не берём число из вывода `next build` (как sites-landing):
+ * gzip ровно того, что браузер грузит при первом заходе на маршрут, —
+ * `rootMainFiles` (рантайм Next + React) ∪ чанки корневого layout ∪ чанки
+ * layout'ов-предков ∪ чанк страницы (`app-build-manifest.json`).
+ * `polyfills` (nomodule) современные браузеры не грузят — не в счёт.
+ * Ленивые чанки (`next/dynamic`, загрузчик виджета) — тоже: не первая
+ * загрузка. Новый маршрут без своей строки в `ROUTE_BUDGET_KB` получает
+ * общий потолок `DEFAULT_BUDGET_KB`.
+ *
+ * Переопределение (разовая проверка, не способ «пройти CI»):
+ * `FIRST_LOAD_BUDGET_KB` — общий потолок, `FIRST_LOAD_BUDGET_SCALE` —
+ * множитель всех потолков (проверка запаса: при `0.9` сборка на
+ * 07.10.2026 не проходит — запас не больше ≈ 10 %).
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const NEXT = process.env.FIRST_LOAD_NEXT_DIR
+  ? path.resolve(process.env.FIRST_LOAD_NEXT_DIR)
+  : path.join(ROOT, '.next');
+
+const SCALE = Number(process.env.FIRST_LOAD_BUDGET_SCALE ?? 1);
+/**
+ * Общий потолок маршрута без своей строки (КБ gzip): самый тяжёлый из
+ * таких на замере — `/qa/demo-shop` 96.6 КБ.
+ */
+const DEFAULT_BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 106);
+/**
+ * Потолки маршрутов, КБ gzip уровня 9: замер этого скрипта 07.10.2026
+ * (в скобках) + ≈ 10 %. Таблица `next build` показывает на 1–2 КБ больше
+ * (другой уровень сжатия) — главная 107, «Как это работает» 109,
+ * «Обучалка по сайту» 96.
+ */
+export const ROUTE_BUDGET_KB = {
+  // Главная: виджет помощника (ленивый), демо, EntryActions (105.3).
+  '/[locale]/page': 116,
+  // «Как это работает»: встроенная панель помощника в сетке (107.3).
+  '/[locale]/how-it-works/page': 118,
+  '/[locale]/greetings/page': 113, // (102.4)
+  '/[locale]/site-tutorial/page': 104, // (94.0)
+  '/[locale]/blog/page': 107, // (97.2)
+  '/[locale]/blog/[slug]/page': 107, // (97.2)
+  // Служебная страница-переход «Открыть приложение», Ш5 (6) (95.2).
+  '/[locale]/open/page': 105,
+};
+/** Маршруты, которые обязаны быть в сборке (иначе бюджет молча не меряет). */
+const REQUIRED = ['/[locale]/page', '/[locale]/how-it-works/page', '/[locale]/site-tutorial/page'];
+
+function readJson(file) {
+  const full = path.join(NEXT, file);
+  if (!fs.existsSync(full)) {
+    console.error(`FAIL нет ${full} — сначала \`next build\` (npm run build)`);
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(full, 'utf8'));
+}
+
+const app = readJson('app-build-manifest.json').pages;
+const build = readJson('build-manifest.json');
+
+const cache = new Map();
+const gz = (rel) => {
+  if (!cache.has(rel)) {
+    cache.set(rel, zlib.gzipSync(fs.readFileSync(path.join(NEXT, rel)), { level: 9 }).length);
+  }
+  return cache.get(rel);
+};
+const kb = (bytes) => (bytes / 1024).toFixed(1);
+
+function filesFor(pageKey) {
+  const parts = pageKey.replace(/\/page$/, '').split('/').filter(Boolean);
+  const layouts = ['/layout'];
+  for (let i = 1; i <= parts.length; i++) layouts.push(`/${parts.slice(0, i).join('/')}/layout`);
+  const set = new Set(build.rootMainFiles);
+  for (const key of [...layouts, pageKey]) for (const f of app[key] ?? []) if (f.endsWith('.js')) set.add(f);
+  return [...set];
+}
+
+const baselineFiles = new Set([
+  ...build.rootMainFiles,
+  ...(app['/layout'] ?? []).filter((f) => f.endsWith('.js')),
+]);
+const baseline = [...baselineFiles].reduce((s, f) => s + gz(f), 0);
+
+const rows = [];
+const failures = [];
+const pages = Object.keys(app).filter((k) => k.endsWith('/page')).sort();
+for (const key of pages) {
+  const files = filesFor(key);
+  const total = files.reduce((s, f) => s + gz(f), 0);
+  const budget = (ROUTE_BUDGET_KB[key] ?? DEFAULT_BUDGET_KB) * SCALE;
+  const over = total > budget * 1024;
+  rows.push(`${over ? 'FAIL' : 'ok  '} ${kb(total).padStart(6)} КБ / ${budget.toFixed(0).padStart(3)} КБ  ${key}`);
+  if (over) {
+    const own = files
+      .filter((f) => !baselineFiles.has(f))
+      .map((f) => ({ f, size: gz(f) }))
+      .sort((a, b) => b.size - a.size)
+      .slice(0, 6)
+      .map(({ f, size }) => `       ${kb(size).padStart(6)} КБ  ${f}`);
+    failures.push(
+      `${key}: ${kb(total)} КБ gzip > ${budget.toFixed(0)} КБ (+${kb(total - budget * 1024)} КБ); крупнейшие свои чанки:\n${own.join('\n')}`,
+    );
+  }
+}
+console.log(rows.join('\n'));
+console.log(`общая часть (рантайм Next + React + корневой layout): ${kb(baseline)} КБ gzip`);
+
+const missing = REQUIRED.filter((k) => !app[k]);
+if (missing.length) {
+  console.error(`FAIL маршрута с бюджетом нет в сборке: ${missing.join(', ')}`);
+  process.exit(1);
+}
+if (failures.length) {
+  console.error(`\nFAIL бюджет JS первой загрузки лендинга превышен:\n${failures.join('\n')}`);
+  console.error(
+    '\nЧто делать: тяжёлое — за next/dynamic (как LazyPlatformAssist) или на сервер; поднимать потолок в landing/scripts/first-load-js.mjs — только осознанно, с причиной в комментарии.',
+  );
+  process.exit(1);
+}
+console.log(`ok   JS первой загрузки лендинга: ${pages.length} маршрутов в бюджете`);

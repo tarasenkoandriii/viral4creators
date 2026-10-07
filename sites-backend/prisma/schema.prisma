@@ -100,6 +100,11 @@ model SiteAccountInvite {
   role                String
   productRoles        Json
   createdByTelegramId BigInt
+  /// Имя пригласившего в Telegram на момент приглашения (из личности
+  /// запроса) — для превью «кто пригласил». `null` — у старых приглашений
+  /// и у людей без username/имени.
+  createdByUsername   String?
+  createdByFirstName  String?
   expiresAt           DateTime
   usedAt              DateTime?
   usedByTelegramId    BigInt?
@@ -199,11 +204,11 @@ model Site {
   ttsCache AssistSiteTtsCache[]
 
   // Э6: ролики обучалки генератора и карты интерфейса (§4.11, §4.12).
-  siteVideos AssistSiteVideo[]
-  uiMaps     SiteUiMap[]
+  siteVideos       AssistSiteVideo[]
+  uiMaps           SiteUiMap[]
   // Э-С Ш4: история карт и слитые элементы (общие с голосом, редактором, QA).
-  uiMapVersions SiteUiMapVersion[]
-  uiElements    SiteUiElement[]
+  uiMapVersions    SiteUiMapVersion[]
+  uiElements       SiteUiElement[]
   /// Отметка (`asOf`, мс часов генератора) последнего ПРИНЯТОГО полного
   /// набора роликов от генератора (internal-sites/site-media.service.ts):
   /// набор старше — гонка двух синхронизаций в обратном порядке — не
@@ -297,12 +302,12 @@ model SiteHost {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  challenges SiteOwnershipChallenge[]
+  challenges    SiteOwnershipChallenge[]
   /// Э1: публичные страницы хоста. Удалили хост — страницы уходят вместе с
   /// ним: без подтверждённого хоста их и обходить было нельзя.
-  pages      SitePage[]
+  pages         SitePage[]
   /// Э6: карты интерфейса страниц хоста (удалили хост — карта ни к чему).
-  uiMaps     SiteUiMap[]
+  uiMaps        SiteUiMap[]
   /// Э-С Ш4: история карт и слитые элементы страниц хоста — туда же.
   uiMapVersions SiteUiMapVersion[]
   uiElements    SiteUiElement[]
@@ -963,11 +968,11 @@ model AssistSite {
   /// Цель составного ключа 1:1 с сайтом (Prisma требует уникальности).
   /// Э6-бис (е): счётчик номеров мемо сайта (`М-N`, §5-бис.17 п.2) — номер
   /// выдаётся из него и НЕ переиспользуется после удаления мемо.
-  memoCounter                 Int       @default(0)
+  memoCounter              Int     @default(0)
   /// Э6-бис (д): версия текста рисков (§5-бис.8), которую владелец видел
   /// последней (Р-67, В-69): уже включённым новая редакция не требуется —
   /// TMA показывает баннер, пока не отмечено «прочитано».
-  voiceControlRisksVersion    String?
+  voiceControlRisksVersion String?
 
   @@unique([siteId, accountId])
   @@index([accountId])
@@ -1509,11 +1514,11 @@ model AssistAdminSettings {
   // ── Э8 «Админка»: действия (ТЗ §5.2–5.7, §5-бис.17 п.10) ──
   /// Количественный потолок сайта: исполнений write/danger за UTC-сутки
   /// (сверх лимитов операций и сотрудника).
-  actionsDailyCap               Int       @default(100)
+  actionsDailyCap Int     @default(100)
   /// Уведомлять владельцев в Telegram о каждом исполнении `danger`.
-  notifyDanger                  Boolean   @default(true)
+  notifyDanger    Boolean @default(true)
   /// Счётчик номеров мемо «Админки» АМ-N (не переиспользуется).
-  memoCounter                   Int       @default(0)
+  memoCounter     Int     @default(0)
 
   // ── Э6-бис (б): голосовое управление «Админкой» (ТЗ §5-бис.2, §5-бис.9,
   // §5-бис.11, §5-бис.13–14; аудит 1.2 — флаги только здесь, не в
@@ -1757,36 +1762,36 @@ model AssistAdminConnector {
   siteId    String
   site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
 
-  name             String
+  name                String
   /// https-origin + базовый путь из `servers[0]` (или указанный владельцем).
-  baseUrl          String
+  baseUrl             String
   /// Хосты, куда разрешено ходить (§5.5): каждый — verified-хост сайта
   /// (`hostId`) или SaaS-аккаунт заказчика с отметкой владельца.
-  allowedHosts     String[] @default([])
-  hostId           String?
-  saasAcknowledged Boolean  @default(false)
-  specUrl          String?
-  specHash         String
-  specTitle        String?
-  specVersion      String?
+  allowedHosts        String[]  @default([])
+  hostId              String?
+  saasAcknowledged    Boolean   @default(false)
+  specUrl             String?
+  specHash            String
+  specTitle           String?
+  specVersion         String?
   /// none | bearer | basic | header (§5.5; query-ключи запрещены — URL
   /// попадает в журналы прокси).
-  authKind         String   @default("none")
-  authHeaderName   String?
-  secretEnc        String?
-  secretKeyVersion String?
-  secretLast4      String?
-  secretSetAt      DateTime?
+  authKind            String    @default("none")
+  authHeaderName      String?
+  secretEnc           String?
+  secretKeyVersion    String?
+  secretLast4         String?
+  secretSetAt         DateTime?
   /// active | paused | auth_failed (401/403 — все операции на паузу, §5.7)
-  status           String   @default("active")
-  lastCallAt       DateTime?
+  status              String    @default("active")
+  lastCallAt          DateTime?
   createdByTelegramId BigInt?
   /// Э8: секрет подписи изменяющих запросов `X-V4C-Signature` (§5.5) —
   /// шифротекст ASSIST_SECRETS_KEY (AAD — коннектор, назначение); открытый
   /// текст показывается владельцу ОДИН раз при выпуске.
-  signSecretEnc    String?
-  signKeyVersion   String?
-  signSetAt        DateTime?
+  signSecretEnc       String?
+  signKeyVersion      String?
+  signSetAt           DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1832,7 +1837,7 @@ model AssistAdminOperation {
   // ── Э8: действия (§5.4–5.5, §5-бис.15 п.14) ──
   /// `x-assist-idempotent: true` (или отметка владельца): повтор после
   /// `unknown` с тем же Idempotency-Key дубля не создаёт.
-  idempotent      Boolean  @default(false)
+  idempotent      Boolean @default(false)
   /// Компенсирующая операция (`x-assist-compensation` или владелец):
   /// { operationId, params: { имя: "$.request.<путь>" | "$.preview.<путь>" } }.
   /// Проверена при сохранении: операция есть, класс не ниже, всё отображено.
@@ -1880,7 +1885,7 @@ model AssistAdminActionLog {
   operationRowId String?
   /// `<имя коннектора>.<operationId>` — читаемо и после удаления коннектора.
   operation      String
-  kind           String   @default("read")
+  kind           String  @default("read")
   /// ok | http_error | timeout | blocked | denied | invalid_params | bad_response | auth_failed | limit
   outcome        String
   httpStatus     Int?
@@ -1890,7 +1895,7 @@ model AssistAdminActionLog {
   responseBytes  Int?
   /// Код ошибки (без тела ответа API и без текста провайдера).
   error          String?
-  idempotencyKey String   @unique
+  idempotencyKey String  @unique
   prevHash       String?
   hash           String
 
@@ -2005,18 +2010,18 @@ model AssistAdminLearningItem {
   messageId      String?
 
   /// thumbs_down | employee_fix | refused | tool_param_error | tool_failure
-  kind           String
-  employeeRef    String?
-  questionMasked String
-  answerMasked   String?
-  proposedAnswer String?
+  kind                 String
+  employeeRef          String?
+  questionMasked       String
+  answerMasked         String?
+  proposedAnswer       String?
   /// Нормализованный вопрос — кластер «одинаковых» вопросов сотрудников.
-  clusterKey     String
+  clusterKey           String
   /// new | accepted | rejected
-  status         String    @default("new")
-  faqId          String?
+  status               String    @default("new")
+  faqId                String?
   resolvedByTelegramId BigInt?
-  resolvedAt     DateTime?
+  resolvedAt           DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2117,12 +2122,12 @@ model AssistAdminActionProposal {
   /// Снимок `preview` («было», ≤ 8 КБ) — для карточки и `$.preview.*`.
   preview        Json?
   /// none | native | preview | native+preview
-  dryRun         String   @default("none")
+  dryRun         String    @default("none")
   /// ok | failed | skipped
   dryRunStatus   String?
   dryRunNote     String?
   /// «Ассистент предложил это сам, без вашей просьбы» (§5.7) — флаг на ревью.
-  unrequested    Boolean  @default(false)
+  unrequested    Boolean   @default(false)
   /// danger: слово подтверждения с числом строк («СКАСУВАТИ 3»).
   confirmPhrase  String?
   /// Сумма из `amountParam` (денежный потолок).
@@ -2133,8 +2138,8 @@ model AssistAdminActionProposal {
   memoRunId      String?
   memoStep       Int?
   /// pending | executing | done | failed | unknown | rejected | expired
-  status         String   @default("pending")
-  attempts       Int      @default(0)
+  status         String    @default("pending")
+  attempts       Int       @default(0)
   /// ok | http_error | timeout | blocked | auth_failed | bad_response …
   outcome        String?
   httpStatus     Int?
@@ -2487,8 +2492,8 @@ model AssistSiteConversation {
   uiPlans       AssistSiteUiPlan[]
   // Э3-бис: разметка диалога моделью — живёт и удаляется с диалогом (§5-тер.15).
   label         AssistSiteConversationLabel?
-  faqFrom       AssistSiteFaq[]          @relation("FaqFromConversation")
-  evalCasesFrom AssistSiteEvalCase[]     @relation("EvalCaseFromConversation")
+  faqFrom       AssistSiteFaq[]              @relation("FaqFromConversation")
+  evalCasesFrom AssistSiteEvalCase[]         @relation("EvalCaseFromConversation")
 
   @@unique([id, accountId])
   @@index([siteId, visitorId, lastMessageAt])
@@ -3748,27 +3753,27 @@ model AssistSitePhrase {
 /// кабинет и сессия редактора (основная роль); публичный код читает ТОЛЬКО
 /// представление `assist_site_voice_map_published` (миграция).
 model AssistSiteVoiceMap {
-  siteId           String    @id
+  siteId           String   @id
   accountId        String
-  site             Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  site             Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
   /// Опубликованная версия (0 — карты нет: снимок + модель, В-53).
-  publishedVersion Int       @default(0)
+  publishedVersion Int      @default(0)
   /// Последний выданный номер версии.
-  versionSeq       Int       @default(0)
-  draftRevision    Int       @default(0)
+  versionSeq       Int      @default(0)
+  draftRevision    Int      @default(0)
   draft            Json
   /// Применённый шаблон платформы (`woocommerce@1`), если был.
   platformTemplate String?
   /// «Сказать сейчас»: проверки за сутки (день UTC и счётчик).
   tryDay           String?
-  tryCount         Int       @default(0)
+  tryCount         Int      @default(0)
   /// Запросы публикации из сессии редактора за сутки (день UTC и счётчик;
   /// аудит Э6-тер (2): каждый — версия и сообщение в бот).
   publishReqDay    String?
-  publishReqCount  Int       @default(0)
+  publishReqCount  Int      @default(0)
   updatedBy        String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   @@unique([siteId, accountId])
   @@index([accountId])
@@ -3826,29 +3831,29 @@ model AssistSiteVoiceMapChange {
 /// 30 мин скользящих, ≤ 4 ч; привязка к сайту, хосту, origin родителя,
 /// участнику и его праву. Токены — только SHA-256.
 model AssistSiteVoiceMapEditorSession {
-  id                String    @id @default(cuid())
-  accountId         String
-  siteId            String
-  site              Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
-  memberId          String
-  hostId            String
-  host              String
-  parentOrigin      String
-  pagePath          String    @default("/")
+  id                   String    @id @default(cuid())
+  accountId            String
+  siteId               String
+  site                 Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  memberId             String
+  hostId               String
+  host                 String
+  parentOrigin         String
+  pagePath             String    @default("/")
   /// Цель, открытая по ссылке из TMA (`focus`, находка Т-3/Т-4).
-  focusKey          String?
-  linkTokenHash     String    @unique
-  sessionTokenHash  String?   @unique
-  linkExpiresAt     DateTime
-  exchangedAt       DateTime?
-  expiresAt         DateTime?
-  absoluteExpiresAt DateTime?
-  lastSeenAt        DateTime?
-  revokedAt         DateTime?
-  revokeReason      String?
+  focusKey             String?
+  linkTokenHash        String    @unique
+  sessionTokenHash     String?   @unique
+  linkExpiresAt        DateTime
+  exchangedAt          DateTime?
+  expiresAt            DateTime?
+  absoluteExpiresAt    DateTime?
+  lastSeenAt           DateTime?
+  revokedAt            DateTime?
+  revokeReason         String?
   /// Последний запрос публикации из этой сессии (не чаще 1 в минуту).
   lastPublishRequestAt DateTime?
-  createdAt         DateTime  @default(now())
+  createdAt            DateTime  @default(now())
 
   @@index([siteId])
   @@index([accountId])
@@ -4486,42 +4491,42 @@ model SiteBrowserJob {
   siteId    String
   site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
 
-  hostId         String
+  hostId             String
   /// Хост того же кабинета (аудит Ш3: составной FK, как у site_pages).
-  host           SiteHost @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
-  kind           String
+  host               SiteHost  @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  kind               String
   /// voice-map-snapshot | voice-map-check | assist-admin-crawl | tutorial-frames
-  origin         String
+  origin             String
   /// Связанная сущность продукта (задание обхода «Админки», версия карты…).
-  refId          String?
-  params         Json
+  refId              String?
+  params             Json
   /// admin-crawl: учётка реестра Ш2 (секреты — только запросом воркера).
-  testAccountId  String?
-  idempotencyKey String? @unique
+  testAccountId      String?
+  idempotencyKey     String?   @unique
   /// queued | running | done | failed | cancelled
-  status         String  @default("queued")
-  priority       Int     @default(0)
-  attempts       Int     @default(0)
-  maxAttempts    Int     @default(2)
-  availableAt    DateTime @default(now())
-  leaseOwner     String?
+  status             String    @default("queued")
+  priority           Int       @default(0)
+  attempts           Int       @default(0)
+  maxAttempts        Int       @default(2)
+  availableAt        DateTime  @default(now())
+  leaseOwner         String?
   /// SHA-256 токена аренды (сам токен знает только воркер).
-  leaseTokenHash String?
-  leaseUntil     DateTime?
-  heartbeatAt    DateTime?
+  leaseTokenHash     String?
+  leaseUntil         DateTime?
+  heartbeatAt        DateTime?
   /// Номер попытки, на которой секреты учётки уже выданы (один раз на попытку).
   credentialsAttempt Int?
   cancelRequestedAt  DateTime?
-  result         Json?
-  resultBytes    Int?
-  errorCode      String?
+  result             Json?
+  resultBytes        Int?
+  errorCode          String?
   /// Кто поставил: `tg:<id>` | `generator:<id>` | `system` (без ПД).
-  requestedBy    String?
-  createdAt      DateTime @default(now())
-  startedAt      DateTime?
-  finishedAt     DateTime?
-  expiresAt      DateTime
-  updatedAt      DateTime @updatedAt
+  requestedBy        String?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  expiresAt          DateTime
+  updatedAt          DateTime  @updatedAt
 
   artifacts SiteBrowserArtifact[]
 

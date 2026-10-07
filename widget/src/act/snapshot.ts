@@ -19,6 +19,7 @@
  * Только чтение DOM: ни одного HTML-приёмника, ни одного события.
  */
 import {
+  ASSIST_ID,
   UI_ROLES,
   maskLabel,
   type SnapElement,
@@ -37,8 +38,18 @@ const UGC =
   '[data-ugc],[data-assist-ugc],[itemprop="review"],.review,.reviews,.comment,.comments,#reviews,#comments,.woocommerce-Reviews,.product-reviews';
 /** Свои корни: загрузчик, подсветка, панель исполнения. */
 const OWN = '[data-v4c],[data-v4c-highlight],[data-v4c-act]';
+/**
+ * Э6-тер (и): `data-assist-undo` — только обратная стандартная разметка
+ * (`STANDARD_UNDO_PAIRS` сервера, сверка — scripts/ui-plan.test.ts);
+ * `data-assist-undo-at` — путь своего origin: `/`, не `//host`, только
+ * буквы/цифры латиницы и `_-.~%/` (без `*`, `\`, query и фрагмента), ≤ 200;
+ * сервер проверяет ещё раз (`compAtOk`).
+ */
+export const UNDO_KIND = /^remove-from-(cart|wishlist|compare)$/;
+export const UNDO_AT = /^\/(?!\/)[\w\-.~%/]{0,199}$/;
+/** name, given-/family-/additional-name, nickname, email, tel(-national), адрес… */
 const PD_AUTOCOMPLETE =
-  /^(name|given-name|family-name|additional-name|nickname|email|tel|tel-national|street-address|address-line\d|address-level\d|postal-code|country|country-name|bday|organization)$/;
+  /^(((given|family|additional)-|nick)?name|email|tel(-national)?|street-address|address-(line|level)\d|postal-code|country(-name)?|bday|organization)$/;
 const SENSITIVE_AUTOCOMPLETE =
   /(^|\s)(cc-[a-z-]+|one-time-code|current-password|new-password)(\s|$)/;
 const PD_NAME =
@@ -55,7 +66,8 @@ const clean = (s: string | null | undefined, max = TEXT_MAX): string => {
   return t.length > max ? t.slice(0, max - 1).trimEnd() + '…' : t;
 };
 
-const norm = (s: string) =>
+/** Сверка подписей: NFKC, нижний регистр, пробелы (и исполнитель — exec.ts). */
+export const norm = (s: string) =>
   s.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** closest() сквозь границы открытых shadow-корней. */
@@ -129,12 +141,13 @@ function roleOf(el: Element): UiRole | null {
   if (tag === 'TEXTAREA') return 'textbox';
   if (tag === 'INPUT') {
     const t = (el as HTMLInputElement).type;
-    if (t === 'checkbox') return 'checkbox';
-    if (t === 'radio') return 'radio';
-    if (t === 'search') return 'searchbox';
-    if (t === 'button' || t === 'submit' || t === 'reset' || t === 'image')
-      return 'button';
-    return 'textbox';
+    return t === 'checkbox' || t === 'radio'
+      ? t
+      : t === 'search'
+        ? 'searchbox'
+        : /^(button|submit|reset|image)$/.test(t)
+          ? 'button'
+          : 'textbox';
   }
   // `data-assist-id`/`onclick` на div — кнопка по смыслу.
   return el.hasAttribute('data-assist-id') || el.hasAttribute('onclick')
@@ -149,7 +162,7 @@ export function visibleText(el: Element): string {
     const f = el as HTMLInputElement;
     if (tag === 'INPUT' && /^(submit|button|reset)$/.test(f.type))
       return clean(f.value);
-    const lab = f.labels && f.labels[0];
+    const lab = f.labels?.[0];
     return clean(
       (lab && (lab as HTMLElement).innerText) || f.placeholder || ''
     );
@@ -178,7 +191,7 @@ export function hiddenLabel(el: Element, text: string): string | null {
     name = by
       .split(/\s+/)
       .map((id) => {
-        const n = root.getElementById ? root.getElementById(id) : null;
+        const n = root.getElementById(id);
         return n ? n.textContent || '' : '';
       })
       .join(' ');
@@ -192,8 +205,7 @@ function gestureOf(el: Element, text: string): UiGesture | null {
   const a = el.closest('a');
   if (a) {
     const tg = (a.getAttribute('target') || '').toLowerCase();
-    if (tg && tg !== '_self' && tg !== '_parent' && tg !== '_top')
-      return 'new_tab';
+    if (tg && !/^_(self|parent|top)$/.test(tg)) return 'new_tab';
     if (a.hasAttribute('download')) return 'download';
   }
   const lab = el.closest('label');
@@ -215,7 +227,7 @@ function gestureOf(el: Element, text: string): UiGesture | null {
 export function sensitiveField(el: Element): boolean {
   if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return false;
   const t = (el as HTMLInputElement).type;
-  if (t === 'password' || t === 'file' || t === 'hidden') return true;
+  if (/^(password|file|hidden)$/.test(t)) return true;
   return SENSITIVE_AUTOCOMPLETE.test(
     (el.getAttribute('autocomplete') || '').toLowerCase()
   );
@@ -225,7 +237,7 @@ function heading(el: Element): string | null {
   let cur: Element | null = el.parentElement;
   for (let k = 0; cur && k < 5; k++, cur = cur.parentElement) {
     const h = cur.querySelector('h1,h2,h3,h4,legend');
-    if (h && h !== el && !h.contains(el)) {
+    if (h && !h.contains(el)) {
       const t = clean((h as HTMLElement).innerText || h.textContent || '');
       if (t) return t;
     }
@@ -238,7 +250,7 @@ export function cleanHref(el: Element): string | null {
   const a = el.closest('a[href]') as HTMLAnchorElement | null;
   if (!a) return null;
   try {
-    const u = new URL(a.href, location.href);
+    const u = new URL(a.href); // `href` — уже абсолютный (разобран браузером)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
     return u.origin + u.pathname;
   } catch {
@@ -303,7 +315,7 @@ export function factsOf(el: Element): Facts | null {
     for (let i = 0; i < opts.length && options.length < 12; i++)
       options.push(clean(opts[i].text));
     const so = (el as HTMLSelectElement).selectedOptions;
-    selected = so && so[0] ? clean(so[0].text) : null;
+    selected = so?.[0] ? clean(so[0].text) : null;
   }
   const checkable = inputType === 'checkbox' || inputType === 'radio';
   return {
@@ -312,10 +324,7 @@ export function factsOf(el: Element): Facts | null {
     tag: t,
     text,
     hiddenLabel: hidden,
-    assistId:
-      assistId && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(assistId)
-        ? assistId
-        : null,
+    assistId: assistId && ASSIST_ID.test(assistId) ? assistId : null,
     inputType,
     href: cleanHref(el),
     disabled: !!f.disabled || el.getAttribute('aria-disabled') === 'true',
@@ -370,19 +379,26 @@ export function takeSnapshot(
   const refs = new Map<string, Element>();
   const elements: SnapElement[] = picked.map(({ f }, k) => {
     const ref = `e${k + 1}`;
-    refs.set(ref, f.el);
-    const { el: _el, ...rest } = f;
-    return { ref, ...rest };
+    const { el, ...rest } = f;
+    refs.set(ref, el);
+    // Э6-тер (и): объявленная пара разметки владельца — вид из закрытого
+    // списка и (если есть) путь страницы отмены своего origin; иначе — нет.
+    const u = el.getAttribute('data-assist-undo');
+    const at = el.getAttribute('data-assist-undo-at');
+    return {
+      ref,
+      ...rest,
+      ...(u && UNDO_KIND.test(u) && UNDO_AT.test(at ?? '/')
+        ? { undo: u, undoAt: at }
+        : {}),
+    };
   });
-  let url = location.href;
-  try {
-    const u = new URL(url);
-    url = u.origin + u.pathname;
-  } catch {
-    /* как есть */
-  }
   return {
-    snapshot: { url, title: clean(document.title, 200), elements },
+    snapshot: {
+      url: location.origin + location.pathname,
+      title: clean(document.title, 200),
+      elements,
+    },
     refs,
   };
 }

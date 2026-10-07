@@ -295,4 +295,33 @@ describe('Ш6 — маршруты гида «Админка» (e2e)', () => {
       .set('if-none-match', res.headers.etag)
       .expect(304);
   });
+
+  it('knowledge.md — 404, пока не задан ключ коннектора (при любом флаге); с ключом — и при legacy', async () => {
+    for (const e of [
+      {},
+      { WIZARD_GUIDE_ENGINE: 'legacy' },
+      { ...ON, WIZARD_GUIDE_ASSIST_CONNECTOR_KEY: '' },
+      { ...ON, WIZARD_GUIDE_ASSIST_CONNECTOR_KEY: '   ' },
+    ]) {
+      env = e;
+      const res = await request(app.getHttpServer())
+        .get('/api/guide-assist/v1/knowledge.md')
+        .expect(404);
+      expect(res.text).not.toMatch(/Мастер Viral4Creators/);
+      // ETag прежнего ответа не превращает 404 в 304.
+      await request(app.getHttpServer())
+        .get('/api/guide-assist/v1/knowledge.md')
+        .set('if-none-match', '"x"')
+        .expect(404);
+    }
+    env = {
+      WIZARD_GUIDE_ENGINE: 'legacy',
+      WIZARD_GUIDE_ASSIST_JWT_SECRET: SECRET,
+      WIZARD_GUIDE_ASSIST_CONNECTOR_KEY: KEY,
+    };
+    const ok = await request(app.getHttpServer())
+      .get('/api/guide-assist/v1/knowledge.md')
+      .expect(200);
+    expect(ok.text).toMatch(/^# Мастер Viral4Creators/);
+  });
 });

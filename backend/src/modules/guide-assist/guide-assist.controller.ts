@@ -7,13 +7,15 @@
  *
  * Коннектор платформы (сырой JSON, без конверта — его читает модель):
  *   GET /guide-assist/v1/openapi.json        спецификация для импорта
- *   GET /guide-assist/v1/knowledge.md        знания гида для «Админки»
+ *   GET /guide-assist/v1/knowledge.md        знания гида для «Админки» (только при ключе коннектора)
  *   GET /guide-assist/v1/projects            Bearer + X-V4C-Actor
  *   GET /guide-assist/v1/projects/:id/facts  Bearer + X-V4C-Actor
  *   GET /guide-assist/v1/account             Bearer + X-V4C-Actor
  *
- * `config` открыт и анониму (ответ — `legacy`): мини-апп спрашивает его на
- * старте, и 401 на каждом анонимном заходе был бы шумом.
+ * `config` открыт и анониму (ответ — `legacy`): 401 на анонимном заходе
+ * был бы шумом. Мини-апп спрашивает его, только пока не знает, что гид
+ * человека — `legacy`: `engine` приходит и в `GET /projects/:id/wizard-guide`
+ * (`WizardGuideState.engine`), и при `legacy` запрос `config` не нужен.
  */
 import {
   Controller,
@@ -125,9 +127,15 @@ export class GuideFactsController {
     sendJson(res, buildGuideOpenApi(server));
   }
 
-  /** Знания гида: описание мастера, данных пользователей нет. */
+  /**
+   * Знания гида: описание мастера, данных пользователей нет. Пока не задан
+   * ключ коннектора (`WIZARD_GUIDE_ASSIST_CONNECTOR_KEY`) — 404, как у
+   * `openapi.json`: без коннектора «Админке» читать нечего, а публичный
+   * файл при выключенной интеграции — лишняя поверхность (аудит Ш6).
+   */
   @Get('knowledge.md')
   knowledge(@Req() req: Request, @Res() res: Response): void {
+    if (!this.guide.factsConfig()) throw new NotFoundException();
     const stamp = `"${guideKnowledgeStamp()}"`;
     res.setHeader('ETag', stamp);
     res.setHeader('Cache-Control', 'public, max-age=300');

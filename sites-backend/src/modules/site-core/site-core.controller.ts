@@ -40,7 +40,9 @@ import {
 } from '@nestjs/common';
 import { AllowApps } from '../telegram-auth/allow-apps.decorator';
 import type { IdentifiedRequest } from '../telegram-auth/identity';
+import { clientIp } from '../telegram-auth/web/web-request';
 import { AccountService } from './account/account.service';
+import { InviteAcceptLimiter } from './account/invite-rate-limit';
 import type { AccountMembership } from './account/roles';
 import {
   Membership,
@@ -63,6 +65,9 @@ import { SitesService } from './sites/sites.service';
 @Controller('sites/account')
 @AllowApps('any')
 export class SiteAccountController {
+  /** Окна принятия приглашения — одни на инстанс (см. invite-rate-limit.ts). */
+  private readonly acceptLimiter = new InviteAcceptLimiter();
+
   constructor(private readonly accounts: AccountService) {}
 
   @Get()
@@ -80,16 +85,21 @@ export class SiteAccountController {
   createInvite(
     @Membership() m: AccountMembership,
     @Body() dto: CreateInviteDto,
+    @Req() req: IdentifiedRequest,
   ) {
-    return this.accounts.createInvite(m, dto);
+    // Имя пригласившего — из проверенной личности (initData/веб-сессия):
+    // превью покажет его и тем, кто ни разу не входил в веб-кабинет.
+    return this.accounts.createInvite(m, dto, new Date(), req.identity);
   }
 
+  /** Лимит: 30/мин на человека и шире на адрес (invite-rate-limit.ts). */
   @Post('invites/accept')
   @HttpCode(200)
   async acceptInvite(
     @Req() req: IdentifiedRequest,
     @Body() dto: AcceptInviteDto,
   ) {
+    this.acceptLimiter.check(req.identity.telegramId, clientIp(req));
     const m = await this.accounts.acceptInvite(req.identity, dto.token);
     return this.accounts.accountInfo(m, false);
   }

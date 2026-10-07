@@ -142,6 +142,46 @@ export class ClientSiteTestAccountsService {
     }
   }
 
+  /**
+   * Ш2-хвост (3): учётки реестра, которыми мастер может войти на шаге
+   * входа, — только метка и роль (логина, флагов секретов и тем более
+   * значений здесь нет). Режим A и включённое хранилище; учётка активна,
+   * разрешена обучалке, действует на хосте черновика и с паролем.
+   */
+  async loginOptions(
+    userId: string,
+    projectId: string,
+  ): Promise<{
+    available: boolean;
+    accounts: Array<{ id: string; label: string; role: string | null }>;
+  }> {
+    const draft = await this.draftOf(userId, projectId);
+    if (!draft || !this.storeOn()) return { available: false, accounts: [] };
+    const a = await this.modeA(userId, draft);
+    if (!a) return { available: false, accounts: [] };
+    try {
+      const list = await this.sites.listTestAccounts(a.telegramId, a.hostId);
+      return {
+        available: true,
+        accounts: list.accounts
+          .filter(
+            (x) =>
+              x.status === 'active' &&
+              x.products.includes('tutorial') &&
+              x.coversHost === true &&
+              x.secrets?.password === true,
+          )
+          .map((x) => ({ id: x.id, label: x.label, role: x.role })),
+      };
+    } catch (err) {
+      // Кабинет не даёт (роль, хост не его) — входа учёткой реестра нет.
+      if (err instanceof SitesRejectedError) {
+        return { available: false, accounts: [] };
+      }
+      throw this.mapError(err);
+    }
+  }
+
   /** Режим A: завести учётку в реестре сайта черновика. */
   async create(
     userId: string,

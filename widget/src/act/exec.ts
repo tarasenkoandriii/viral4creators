@@ -37,12 +37,11 @@ import {
   type UiTarget,
 } from '../shared/ui-plan';
 import {
-  closestDeep,
   deepQuery,
   excluded,
   factsOf,
   INTERACTIVE,
-  sensitiveField,
+  norm,
   visible,
   visibleText,
 } from './snapshot';
@@ -65,8 +64,9 @@ export type StopBy = 'esc' | 'click' | 'key' | 'button';
 
 /**
  * (д) Прежнее значение поля: план, шаг, элемент, значение, флажок, ранее
- * отмеченная радиокнопка группы; после действия — значение и флажок,
- * которые поставил помощник (возврат — только если поле их ещё держит).
+ * отмеченная радиокнопка группы, `name#id` поля (`fieldKey`); после
+ * действия — значение и флажок, которые поставил помощник (возврат — только
+ * если поле их ещё держит).
  */
 export type Prior = [
   string,
@@ -75,30 +75,38 @@ export type Prior = [
   string,
   boolean | null,
   Element | null,
+  string,
   string?,
   (boolean | null)?,
 ];
+/**
+ * Мемо-хвост (е) (2): `name#id` поля в момент действия — `undo.js` пишет
+ * прежнее значение, только если узел всё ещё то же поле (перерисовка без
+ * ключей могла отдать его другому полю; иначе `unknown` без записи).
+ */
+export const fieldKey = (el: Element) =>
+  (el as HTMLInputElement).name + '#' + el.id;
 /** (д) Память прежних значений — только последний план этой страницы. */
 export const mem: Prior[] = [];
 
 export interface RunHost {
   N: ActNatives;
-  report(
+  _report(
     index: number,
     result: UiStepResult,
     reason: string | null,
     ms: number
   ): void;
-  stopped(by: StopBy): void;
+  _stopped(by: StopBy): void;
   /** Шаг «после перехода» (SPA): цель найдёт и проверит сервер по новому снимку. */
-  need(index: number): void;
+  _need(index: number): void;
   /** Свернуть окно чата на телефоне (иначе показывать некуда). */
-  min(): void;
+  _min(): void;
   /** План идёт: загрузчик откроет iframe на следующей странице. */
-  mark(on: boolean): void;
-  refs: Map<string, Element>;
-  deny: string[];
-  allow: string[];
+  _mark(on: boolean): void;
+  _refs: Map<string, Element>;
+  _deny: string[];
+  _allow: string[];
 }
 
 const SETTLE_QUIET_MS = 300;
@@ -108,26 +116,17 @@ const BETWEEN_MS = 300;
 const ACK_TIMEOUT_MS = 8000;
 const COLOR = '#2563eb';
 
+/** Подписи панели: [«Стоп», «выполняет», «нажмите сами»]. */
 const LABELS = {
-  uk: {
-    stop: 'Зупинити помічника',
-    doing: 'Помічник виконує',
-    self: 'Натисніть самі',
-  },
-  ru: {
-    stop: 'Остановить помощника',
-    doing: 'Помощник выполняет',
-    self: 'Нажмите сами',
-  },
-  en: {
-    stop: 'Stop the assistant',
-    doing: 'Assistant is working',
-    self: 'Please press it yourself',
-  },
+  uk: ['Зупинити помічника', 'Помічник виконує', 'Натисніть самі'],
+  ru: ['Остановить помощника', 'Помощник выполняет', 'Нажмите сами'],
+  en: [
+    'Stop the assistant',
+    'Assistant is working',
+    'Please press it yourself',
+  ],
 } as const;
 
-const norm = (s: string) =>
-  s.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 const sleep = (N: ActNatives, ms: number) =>
   new Promise<void>((r) => N.later(r, ms));
 
@@ -211,15 +210,15 @@ function setNativeValue(
  * нет (как у браузера). Лишние поля словаря конструктор просто игнорирует.
  */
 function fire(el: Element, type: string, init: Record<string, unknown> = {}) {
+  // PointerEvent/InputEvent есть во всех браузерах цели es2020 (Safari 13.1+).
   const p = type[0] == 'p';
-  const E =
-    p && typeof PointerEvent == 'function'
-      ? PointerEvent
-      : type[0] == 'm'
-        ? MouseEvent
-        : type == 'input' && typeof InputEvent == 'function'
-          ? InputEvent
-          : Event;
+  const E = p
+    ? PointerEvent
+    : type[0] == 'm'
+      ? MouseEvent
+      : type == 'input'
+        ? InputEvent
+        : Event;
   el.dispatchEvent(
     new E(type, {
       bubbles: true,
@@ -235,70 +234,71 @@ function fire(el: Element, type: string, init: Record<string, unknown> = {}) {
   );
 }
 
+/**
+ * Имена с `_` — только внутри чанка: сборка act.js/admin-act.js сжимает их
+ * (esbuild `mangleProps`, `vite.mangle.ts`); в сообщения и объекты других
+ * чанков такие поля не попадают (сверка — scripts/mangle.test.ts).
+ */
 export class Runner {
-  private stoppedFlag = false;
-  private paused = false;
-  private resumeWaiters: Array<() => void> = [];
-  private ackWait: { index: number; resolve: (ok: boolean) => void } | null =
-    null;
-  private overlay: HTMLElement | null = null;
-  private live: HTMLElement | null = null;
-  private ring: HTMLElement | null = null;
-  private cleanups: Array<() => void> = [];
+  /** Остановлен (читают act/index.ts и admin-act — тот же чанк). */
+  _halt = false;
+  private _paused = false;
+  private _waiters: Array<() => void> = [];
+  private _ackWait: { _i: number; _ok: (ok: boolean) => void } | null = null;
+  private _overlay: HTMLElement | null = null;
+  private _live: HTMLElement | null = null;
+  private _ring: HTMLElement | null = null;
+  private _cleanups: Array<() => void> = [];
   private readonly L: (typeof LABELS)[keyof typeof LABELS];
 
   constructor(
-    private readonly host: RunHost,
-    readonly planId: string,
-    private readonly steps: UiStep[],
-    private readonly from: number,
+    private readonly _host: RunHost,
+    readonly _plan: string,
+    private readonly _steps: UiStep[],
+    private readonly _from: number,
     lang: 'uk' | 'ru' | 'en'
   ) {
     this.L = LABELS[lang] || LABELS.uk;
   }
 
-  get stopped(): boolean {
-    return this.stoppedFlag;
-  }
-
   // ── управление ──────────────────────────────────────────────────────────
 
   /** `keep` — флаг «план идёт» не снимать (уход страницы в bfcache). */
-  stop(by: StopBy | null, keep?: 1) {
-    if (this.stoppedFlag) return;
-    this.stoppedFlag = true;
-    if (this.ackWait) this.ackWait.resolve(false);
-    this.wake();
-    this.teardown(keep);
-    if (by) this.host.stopped(by);
+  _stop(by: StopBy | null, keep?: 1) {
+    if (this._halt) return;
+    this._halt = true;
+    this._ackWait?._ok(false);
+    this._wake();
+    this._teardown(keep);
+    if (by) this._host._stopped(by);
   }
 
-  pause(on: boolean) {
-    this.paused = on;
-    if (!on) this.wake();
+  _pause(on: boolean) {
+    this._paused = on;
+    if (!on) this._wake();
   }
 
-  ack(index: number) {
-    if (this.ackWait && this.ackWait.index === index) {
-      this.ackWait.resolve(true);
-      this.ackWait = null;
+  _ack(index: number) {
+    if (this._ackWait && this._ackWait._i === index) {
+      this._ackWait._ok(true);
+      this._ackWait = null;
     }
   }
 
-  private wake() {
-    for (const w of this.resumeWaiters.splice(0)) w();
+  private _wake() {
+    for (const w of this._waiters.splice(0)) w();
   }
 
-  private async gate(): Promise<boolean> {
-    while (this.paused && !this.stoppedFlag)
-      await new Promise<void>((r) => this.resumeWaiters.push(r));
-    return !this.stoppedFlag;
+  private async _gate(): Promise<boolean> {
+    while (this._paused && !this._halt)
+      await new Promise<void>((r) => this._waiters.push(r));
+    return !this._halt;
   }
 
   // ── панель «Стоп» и человек берёт управление ───────────────────────────
 
-  private mount() {
-    const N = this.host.N;
+  private _mount() {
+    const N = this._host.N;
     const host = N.el('div');
     host.setAttribute('data-v4c-act', '');
     const root = host.attachShadow({ mode: 'closed' });
@@ -310,64 +310,61 @@ export class Runner {
     const live = N.el('span');
     live.setAttribute('role', 'status');
     live.setAttribute('aria-live', 'polite');
-    live.textContent = this.L.doing;
+    live.textContent = this.L[1];
     css(live, `overflow:hidden;text-overflow:ellipsis;white-space:nowrap`);
     const btn = N.el('button');
     btn.type = 'button';
-    btn.textContent = '■ ' + this.L.stop;
+    btn.textContent = '■ ' + this.L[0];
     btn.setAttribute('data-act-stop', '');
     css(
       btn,
       `background:#dc2626;color:#fff;border:0;border-radius:999px;padding:8px 14px;font:inherit;cursor:pointer;min-height:40px`
     );
-    N.on(btn, 'click', () => this.stop('button'));
+    N.on(btn, 'click', () => this._stop('button'));
     bar.appendChild(live);
     bar.appendChild(btn);
     root.appendChild(bar);
     put(host);
-    this.overlay = host;
-    this.live = live;
+    this._overlay = host;
+    this._live = live;
 
     // Человек взял управление: собственный клик/клавиша (isTrusted).
     const onPointer = (e: Event) => {
-      if (!e.isTrusted || this.stoppedFlag) return;
-      const path =
-        (
-          e as Event & { composedPath?: () => EventTarget[] }
-        ).composedPath?.() || [];
-      if (path.indexOf(host) >= 0) return; // своя панель — у кнопки свой обработчик
-      this.stop('click');
+      if (!e.isTrusted || this._halt) return;
+      // Своя панель — у кнопки свой обработчик.
+      if (e.composedPath().indexOf(host) >= 0) return;
+      this._stop('click');
     };
     const onKey = (e: Event) => {
-      if (!e.isTrusted || this.stoppedFlag) return;
+      if (!e.isTrusted || this._halt) return;
       const k = (e as KeyboardEvent).key;
       if (k === 'Shift' || k === 'Control' || k === 'Alt' || k === 'Meta')
         return;
-      this.stop(k === 'Escape' ? 'esc' : 'key');
+      this._stop(k === 'Escape' ? 'esc' : 'key');
     };
     N.on(window, 'pointerdown', onPointer, true);
     N.on(window, 'keydown', onKey, true);
-    this.cleanups.push(() => {
+    this._cleanups.push(() => {
       N.off(window, 'pointerdown', onPointer, true);
       N.off(window, 'keydown', onKey, true);
     });
   }
 
-  private teardown(keep?: 1) {
-    for (const c of this.cleanups.splice(0)) c();
-    this.unring();
-    if (this.overlay) this.overlay.remove();
-    this.overlay = null;
-    if (!keep) this.host.mark(false);
+  private _teardown(keep?: 1) {
+    for (const c of this._cleanups.splice(0)) c();
+    this._unring();
+    this._overlay?.remove();
+    this._overlay = null;
+    if (!keep) this._host._mark(false);
   }
 
-  private say(text: string) {
-    if (this.live) this.live.textContent = text;
+  private _say(text: string) {
+    if (this._live) this._live.textContent = text;
   }
 
-  private ringAround(el: Element, caption: string) {
-    this.unring();
-    const N = this.host.N;
+  private _ringAt(el: Element, caption: string) {
+    this._unring();
+    const N = this._host.N;
     const ring = N.el('div');
     ring.setAttribute('data-v4c-highlight', '');
     ring.setAttribute('aria-hidden', 'true');
@@ -384,41 +381,38 @@ export class Runner {
     );
     if (caption) ring.appendChild(tip);
     put(ring);
-    this.ring = ring;
+    this._ring = ring;
   }
 
-  private unring() {
-    if (this.ring) this.ring.remove();
-    this.ring = null;
+  private _unring() {
+    this._ring?.remove();
+    this._ring = null;
   }
 
   // ── поиск цели ──────────────────────────────────────────────────────────
 
-  private candidates(): Element[] {
+  private _cands(): Element[] {
     return deepQuery(document, INTERACTIVE).filter(
-      (e) => !excluded(e, this.host.deny, this.host.allow) && visible(e)
+      (e) => !excluded(e, this._host._deny, this._host._allow) && visible(e)
     );
   }
 
   /** Ровно одна цель (видимая в области просмотра — при равенстве) или null. */
-  find(step: UiStep): Element | null {
+  _find(step: UiStep): Element | null {
     const t = step.target;
     if (!t) return null;
     const pick = (list: Element[]): Element | null => {
-      if (list.length === 1) return list[0];
-      if (list.length > 1) {
-        const inView = list.filter((e) => {
+      if (list.length > 1)
+        list = list.filter((e) => {
           const r = e.getBoundingClientRect();
           return r.bottom > 0 && r.top < innerHeight;
         });
-        return inView.length === 1 ? inView[0] : null;
-      }
-      return null;
+      return list.length == 1 ? list[0] : null;
     };
-    const byRef = this.host.refs.get(t.ref);
-    if (byRef && byRef.isConnected && visible(byRef) && sameTarget(byRef, t))
+    const byRef = this._host._refs.get(t.ref);
+    if (byRef?.isConnected && visible(byRef) && sameTarget(byRef, t))
       return byRef;
-    const all = this.candidates();
+    const all = this._cands();
     if (t.assistId) {
       const hit = pick(
         all.filter((e) => e.getAttribute('data-assist-id') === t.assistId)
@@ -443,7 +437,7 @@ export class Runner {
       }
       return pick(
         list.filter(
-          (e) => visible(e) && !excluded(e, this.host.deny, this.host.allow)
+          (e) => visible(e) && !excluded(e, this._host._deny, this._host._allow)
         )
       );
     }
@@ -454,10 +448,10 @@ export class Runner {
    * Запреты по НАСТОЯЩЕЙ цели (§5-бис.6 п.5): элемент мог поменяться между
    * снимком и действием. Возвращает причину отказа или null.
    */
-  liveRefusal(step: UiStep, el: Element): string | null {
-    if (closestDeep(el, '[data-assist="never"]')) return 'denied';
-    if (excluded(el, this.host.deny, this.host.allow)) return 'denied';
-    if (sensitiveField(el)) return 'sensitive_field';
+  _refusal(step: UiStep, el: Element): string | null {
+    // `never`-зона, denylist/зоны, наши корни, отзывы и поле пароля/карты/
+    // файла (`sensitiveField`) — всё внутри `excluded`.
+    if (excluded(el, this._host._deny, this._host._allow)) return 'denied';
     const f = factsOf(el);
     if (!f) return 'no_target';
     if (step.kind === 'highlight' || step.kind === 'scroll') return null;
@@ -485,7 +479,7 @@ export class Runner {
     if (f.href && paymentPath(new URL(f.href).pathname)) return 'payment';
     // Сервер проверял ссылку, а живая цель — уже не ссылка или ссылка
     // поменялась; без проверенной ссылки — только свой origin.
-    const th = step.target && step.target.href;
+    const th = step.target?.href;
     if (
       th ? th !== f.href : f.href && new URL(f.href).origin !== location.origin
     )
@@ -496,13 +490,13 @@ export class Runner {
 
   // ── действия ────────────────────────────────────────────────────────────
 
-  private nativeClick(el: Element) {
-    const c = this.host.N.click;
+  private _click(el: Element) {
+    const c = this._host.N.click;
     if (c && el instanceof HTMLElement) c.call(el);
     else (el as HTMLElement).click();
   }
 
-  private pointerSequence(el: Element) {
+  private _pointer(el: Element) {
     for (const t of [
       'pointerover',
       'pointerenter',
@@ -515,34 +509,42 @@ export class Runner {
     for (const t of ['pointerup', 'mouseup']) fire(el, t);
   }
 
-  private act(step: UiStep, el: Element): boolean {
+  private _act(step: UiStep, el: Element): boolean {
     const x = el as HTMLInputElement;
     let p: Prior | null = null;
     if (step.kind == 'fill' || step.kind == 'select' || step.kind == 'check') {
-      if (mem[0] && mem[0][0] != this.planId) mem.length = 0;
+      if (mem[0] && mem[0][0] != this._plan) mem.length = 0;
       mem.push(
-        (p = [this.planId, step.i, el, x.value, x.checked ?? null, radioOn(x)])
+        (p = [
+          this._plan,
+          step.i,
+          el,
+          x.value,
+          x.checked ?? null,
+          radioOn(x),
+          fieldKey(el),
+        ])
       );
     }
-    const ok = this.go(step, el);
+    const ok = this._go(step, el);
     if (p) {
-      p[6] = x.value;
-      p[7] = x.checked ?? null;
+      p[7] = x.value;
+      p[8] = x.checked ?? null;
     }
     return ok;
   }
 
-  private go(step: UiStep, el: Element): boolean {
+  private _go(step: UiStep, el: Element): boolean {
     switch (step.kind) {
       case 'click':
-        this.pointerSequence(el);
-        this.nativeClick(el);
+        this._pointer(el);
+        this._click(el);
         return true;
       case 'check': {
         const f = factsOf(el);
         if (f && f.checked === true) return true; // уже отмечено
-        this.pointerSequence(el);
-        this.nativeClick(el);
+        this._pointer(el);
+        this._click(el);
         return true;
       }
       case 'fill': {
@@ -571,14 +573,12 @@ export class Runner {
   }
 
   /** 300 мс тишины DOM, не дольше 5 с. */
-  private settle(): Promise<void> {
-    const N = this.host.N;
+  private _settle(): Promise<void> {
+    const N = this._host.N;
     return new Promise((resolve) => {
       let quiet = 0;
-      let done = false;
+      // Зовётся один раз: после него `tick` больше не планируется.
       const finish = () => {
-        if (done) return;
-        done = true;
         mo.disconnect();
         resolve();
       };
@@ -594,7 +594,7 @@ export class Runner {
       const start = Date.now();
       quiet = start;
       const tick = () => {
-        if (this.stoppedFlag) return finish();
+        if (this._halt) return finish();
         const now = Date.now();
         if (now - quiet >= SETTLE_QUIET_MS || now - start >= SETTLE_MAX_MS)
           return finish();
@@ -604,7 +604,13 @@ export class Runner {
     });
   }
 
-  private expectOk(step: UiStep, el: Element | null, before: string): boolean {
+  /** `path` — только сверка адреса (`dispatched`-шаг после перехода, без повтора клика). */
+  private _expectOk(
+    step: UiStep,
+    el: Element | null,
+    before: string,
+    path?: 1
+  ): boolean {
     const e = step.expect;
     if (!e) return true;
     if (e.path) {
@@ -614,13 +620,12 @@ export class Runner {
       const w = (star ? e.path.slice(0, -1) : e.path).replace(/\/+$/, '');
       if (star ? p.indexOf(w) != 0 : p != (w || '/')) return false;
     }
+    if (path) return true;
     if (e.appear) {
       const want = norm(e.appear);
       const hit =
-        this.candidates().some(
-          (x) => norm(visibleText(x)).indexOf(want) >= 0
-        ) ||
-        norm(document.body ? document.body.innerText : '').indexOf(want) >= 0;
+        this._cands().some((x) => norm(visibleText(x)).indexOf(want) >= 0) ||
+        norm(document.body?.innerText || '').indexOf(want) >= 0;
       if (!hit) return false;
     }
     if (
@@ -633,91 +638,71 @@ export class Runner {
     return true;
   }
 
-  private waitAck(index: number): Promise<boolean> {
+  private _waitAck(index: number): Promise<boolean> {
     return new Promise((resolve) => {
-      this.ackWait = { index, resolve };
-      this.host.N.later(() => {
-        if (this.ackWait && this.ackWait.index === index) {
-          this.ackWait = null;
+      this._ackWait = { _i: index, _ok: resolve };
+      this._host.N.later(() => {
+        if (this._ackWait && this._ackWait._i === index) {
+          this._ackWait = null;
           resolve(false);
         }
       }, ACK_TIMEOUT_MS);
     });
   }
 
-  /** Шаг меняет страницу/данные — исполняется не более одного раза. */
-  private effect(step: UiStep): boolean {
-    return step.nav || /^(click|fill|select|check|navigate)$/.test(step.kind);
-  }
-
-  /** Сверка адреса для `dispatched`-шага после перехода — без повтора клика. */
-  private resumeDispatched(step: UiStep): UiStepResult {
-    return this.expectOk(
-      {
-        ...step,
-        expect:
-          step.expect && step.expect.path ? { path: step.expect.path } : null,
-      },
-      null,
-      ''
-    )
-      ? 'done'
-      : 'failed';
-  }
-
-  async run(resumed: boolean): Promise<void> {
-    const host = this.host;
-    host.mark(true);
-    this.mount();
-    host.min();
-    for (let i = this.from; i < this.steps.length; i++) {
-      if (!(await this.gate())) return;
-      const step = this.steps[i];
+  async _run(resumed: boolean): Promise<void> {
+    const host = this._host;
+    host._mark(true);
+    this._mount();
+    host._min();
+    for (let i = this._from; i < this._steps.length; i++) {
+      if (!(await this._gate())) return;
+      const step = this._steps[i];
       const t0 = Date.now();
       const rep = (r: UiStepResult, why: string | null = null) =>
-        host.report(i, r, why, Date.now() - t0);
+        host._report(i, r, why, Date.now() - t0);
       if (step.state === 'dispatched' && !step.nav) {
         // Аудит Э6-бис: действие могло сработать до перезагрузки — не
         // повторяем; iframe скажет «проверьте сами».
         rep('skipped', 'interrupted');
-        return this.finish();
+        return this._finish();
       }
       if (step.state === 'dispatched') {
         // §4-бис.5: шаг уже нажат на прошлой странице — НИКОГДА не повторять.
-        const r = this.resumeDispatched(step);
+        const r = this._expectOk(step, null, '', 1) ? 'done' : 'failed';
         rep(r, r === 'failed' ? 'expect' : null);
-        if (r === 'failed') return this.finish();
+        if (r === 'failed') return this._finish();
         continue;
       }
       if (step.state !== 'pending') continue;
       if (step.kind === 'say') {
-        if (step.say) this.say(step.say);
+        if (step.say) this._say(step.say);
         rep('done');
         continue;
       }
       if (step.kind === 'wait') {
-        await this.settle();
-        const ok = this.expectOk(step, null, '');
+        await this._settle();
+        const ok = this._expectOk(step, null, '');
         rep(ok ? 'done' : 'failed', ok ? null : 'expect');
-        if (!ok) return this.finish();
+        if (!ok) return this._finish();
         continue;
       }
-      if (step.target && step.target.ref === 'after') {
+      if (step.target?.ref == 'after') {
         // SPA сменила страницу без перезагрузки: цель — по новому снимку на
         // сервере (те же проверки), затем iframe пришлёт новый `ui-run`.
-        host.need(i);
-        return this.finish();
+        host._need(i);
+        return this._finish();
       }
-      const el = step.target ? this.find(step) : null;
+      const el = step.target ? this._find(step) : null;
       if (!el) {
         rep(
           step.risk === 'manual' || step.risk === 'never' ? 'manual' : 'failed',
           'no_target'
         );
-        this.say(this.L.self);
-        return this.finish(true);
+        this._say(this.L[2]);
+        return this._finish(true);
       }
-      const caption = (step.target && step.target.text) || visibleText(el);
+      const caption = step.target?.text || visibleText(el);
       // `instant` — поверх `scroll-behavior: smooth` сайта: рамка (fixed)
       // считается от прямоугольника ПОСЛЕ прокрутки, а не до неё. Старый
       // браузер без `instant` бросает TypeError — тогда как умеет.
@@ -730,67 +715,68 @@ export class Runner {
       } catch {
         el.scrollIntoView();
       }
-      this.ringAround(el, caption);
-      this.say(`${this.L.doing}: ${caption}`);
+      this._ringAt(el, caption);
+      this._say(`${this.L[1]}: ${caption}`);
       await sleep(
         host.N,
-        resumed && i === this.from
+        resumed && i === this._from
           ? HIGHLIGHT_BEFORE_MS * 2
           : HIGHLIGHT_BEFORE_MS
       );
-      if (!(await this.gate())) return;
+      if (!(await this._gate())) return;
       // Не исполняется: «никогда»/«нажмите сами» — подсветка и сообщение.
       if (step.risk === 'manual' || step.risk === 'never') {
-        this.say(`${this.L.self}: ${caption}`);
+        this._say(`${this.L[2]}: ${caption}`);
         rep('manual', step.reason);
-        return this.finish(true);
+        return this._finish(true);
       }
-      const refusal = this.liveRefusal(step, el);
+      const refusal = this._refusal(step, el);
       if (refusal) {
-        this.say(`${this.L.self}: ${caption}`);
+        this._say(`${this.L[2]}: ${caption}`);
         rep('failed', refusal);
-        return this.finish(true);
+        return this._finish(true);
       }
       if (step.kind === 'highlight' || step.kind === 'scroll') {
         rep('done');
         await sleep(host.N, BETWEEN_MS);
         continue;
       }
-      if (this.effect(step)) {
+      // Шаг меняет страницу/данные — исполняется не более одного раза.
+      if (step.nav || /^(click|fill|select|check|navigate)$/.test(step.kind)) {
         // Отметка «начат» на сервере (один раз) — ДО действия: перезагрузка
         // между действием и `done` не приведёт к повтору.
         rep('dispatched');
-        if (!(await this.waitAck(i))) {
-          if (!this.stoppedFlag) rep('failed', 'ack');
-          return this.finish(true);
+        if (!(await this._waitAck(i))) {
+          if (!this._halt) rep('failed', 'ack');
+          return this._finish(true);
         }
-        if (!(await this.gate())) return;
+        if (!(await this._gate())) return;
         // Пока ждали записи `dispatched`, цель могли подменить — ещё раз.
-        const late = this.liveRefusal(step, el);
+        const late = this._refusal(step, el);
         if (late) {
           rep('failed', late);
-          return this.finish(true);
+          return this._finish(true);
         }
       }
       const before = norm(visibleText(el));
-      this.unring();
-      if (!this.act(step, el)) {
+      this._unring();
+      if (!this._act(step, el)) {
         rep('failed', 'action');
-        this.ringAround(el, caption);
-        return this.finish(true);
+        this._ringAt(el, caption);
+        return this._finish(true);
       }
-      await this.settle();
-      if (this.stoppedFlag) return;
-      if (!this.expectOk(step, el, before)) {
+      await this._settle();
+      if (this._halt) return;
+      if (!this._expectOk(step, el, before)) {
         rep('failed', 'expect');
-        if (el.isConnected) this.ringAround(el, caption);
-        this.say(`${this.L.self}: ${caption}`);
-        return this.finish(true);
+        if (el.isConnected) this._ringAt(el, caption);
+        this._say(`${this.L[2]}: ${caption}`);
+        return this._finish(true);
       }
       rep('done');
       await sleep(host.N, BETWEEN_MS);
     }
-    this.finish();
+    this._finish();
   }
 
   /**
@@ -799,15 +785,15 @@ export class Runner {
    * трогает ничего: его teardown был, а `mark(false)` после `mark(true)`
    * нового раннера сбросил бы флаг «план идёт».
    */
-  private finish(keepRing = false) {
-    if (this.stoppedFlag) return;
-    const ring = this.ring;
-    this.ring = null;
-    this.stoppedFlag = true;
-    this.teardown();
+  private _finish(keepRing = false) {
+    if (this._halt) return;
+    const ring = this._ring;
+    this._ring = null;
+    this._halt = true;
+    this._teardown();
     if (keepRing && ring) {
       put(ring);
-      this.host.N.later(() => ring.remove(), 6000);
+      this._host.N.later(() => ring.remove(), 6000);
     }
   }
 }

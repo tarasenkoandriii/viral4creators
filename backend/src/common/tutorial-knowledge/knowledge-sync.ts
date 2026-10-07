@@ -70,9 +70,126 @@ export function landingPageBase(raw: string | undefined): string | null {
   }
 }
 
+// ── «Открыть приложение» (Ш5 (6), Р-Ш5-13) ────────────────────────────
+
+/**
+ * Страница лендинга `/<локаль>/open` (`landing/src/app/[locale]/open`):
+ * «Открыть в Telegram» и браузер. Прямой `t.me` виджет платформы выдать не
+ * может — фильтр ссылок пускает только хосты сайта, — поэтому действие
+ * «открыть приложение» (`open-app` старого консультанта) — ссылка на эту
+ * страницу. Ссылку виджет берёт из атрибута `url` фрагмента знаний, отсюда
+ * отдельный короткий документ на локаль с `url` этой страницы: на вопросы
+ * «как открыть / где бот / как начать» поиск находит его, и кнопка ведёт
+ * на страницу-переход, а не на главную.
+ */
+export const OPEN_APP_PATH = 'open';
+export const OPEN_APP_KEY_PREFIX = `${SYNC_KEY_PREFIX}open-`;
+
+const OPEN_APP_DOCS: Readonly<
+  Record<string, { title: string; content: string }>
+> = {
+  ru: {
+    title: 'Как открыть приложение viral4creators',
+    content: [
+      '# Как открыть приложение viral4creators',
+      '',
+      'viral4creators работает в двух местах с одинаковыми возможностями: как мини-апп внутри Telegram и как обычный сайт в браузере. Скачивать и устанавливать ничего не нужно.',
+      '',
+      'Открыть приложение — на странице «Открыть viral4creators»: кнопка «Открыть в Telegram» запускает мини-апп в Telegram, кнопка «Открыть в браузере» — тот же продукт в браузере, сразу с формой нового ролика.',
+      '',
+      'Как начать, где бот, как запустить мини-апп, как попасть в приложение — всё это та же страница.',
+    ].join('\n'),
+  },
+  uk: {
+    title: 'Як відкрити застосунок viral4creators',
+    content: [
+      '# Як відкрити застосунок viral4creators',
+      '',
+      'viral4creators працює у двох місцях з однаковими можливостями: як міні-застосунок у Telegram і як звичайний сайт у браузері. Завантажувати й встановлювати нічого не потрібно.',
+      '',
+      'Відкрити застосунок — на сторінці «Відкрити viral4creators»: кнопка «Відкрити в Telegram» запускає міні-застосунок у Telegram, кнопка «Відкрити в браузері» — той самий продукт у браузері, одразу з формою нового ролика.',
+      '',
+      'Як почати, де бот, як запустити міні-застосунок, як потрапити в застосунок — усе це та сама сторінка.',
+    ].join('\n'),
+  },
+  en: {
+    title: 'How to open the viral4creators app',
+    content: [
+      '# How to open the viral4creators app',
+      '',
+      'viral4creators runs in two places with the same features: as a Mini App inside Telegram and as a regular website in your browser. There is nothing to download or install.',
+      '',
+      'Open the app on the "Open viral4creators" page: the "Open in Telegram" button launches the Mini App in Telegram, and "Open in browser" opens the same product in your browser, right at the new video form.',
+      '',
+      'How to start, where the bot is, how to launch the Mini App, how to get into the app — it is all the same page.',
+    ].join('\n'),
+  },
+  de: {
+    title: 'So öffnen Sie die App viral4creators',
+    content: [
+      '# So öffnen Sie die App viral4creators',
+      '',
+      'viral4creators läuft an zwei Orten mit denselben Funktionen: als Mini App in Telegram und als normale Website im Browser. Sie müssen nichts herunterladen oder installieren.',
+      '',
+      'Die App öffnen Sie auf der Seite „viral4creators öffnen“: Die Schaltfläche „In Telegram öffnen“ startet die Mini App in Telegram, „Im Browser öffnen“ dasselbe Produkt im Browser, direkt mit dem Formular für ein neues Video.',
+      '',
+      'Wie man anfängt, wo der Bot ist, wie man die Mini App startet, wie man in die App kommt — das ist alles dieselbe Seite.',
+    ].join('\n'),
+  },
+  es: {
+    title: 'Cómo abrir la app viral4creators',
+    content: [
+      '# Cómo abrir la app viral4creators',
+      '',
+      'viral4creators funciona en dos lugares con las mismas funciones: como Mini App dentro de Telegram y como sitio web normal en el navegador. No hay que descargar ni instalar nada.',
+      '',
+      'Abre la app en la página «Abrir viral4creators»: el botón «Abrir en Telegram» inicia la Mini App en Telegram y «Abrir en el navegador» abre el mismo producto en el navegador, directamente en el formulario de un nuevo vídeo.',
+      '',
+      'Cómo empezar, dónde está el bot, cómo iniciar la Mini App, cómo entrar en la app: todo es la misma página.',
+    ].join('\n'),
+  },
+};
+
+/**
+ * Документы «Открыть приложение» локалей базы. Только с адресом лендинга:
+ * без `url` документ не дал бы кнопки — ради неё он и есть.
+ */
+export function buildOpenAppDocuments(
+  locales: readonly string[],
+  pageBase: string | null,
+): SyncDocument[] {
+  if (!pageBase) return [];
+  return [...locales]
+    .sort()
+    .filter((l) => OPEN_APP_DOCS[l])
+    .map((locale) => ({
+      key: `${OPEN_APP_KEY_PREFIX}${locale}`,
+      title: `${OPEN_APP_DOCS[locale].title} (${locale})`.slice(0, 200),
+      lang: locale,
+      format: 'markdown' as const,
+      content: OPEN_APP_DOCS[locale].content.trim() + '\n',
+      url: `${pageBase}/${locale}/${OPEN_APP_PATH}`,
+    }));
+}
+
+/**
+ * Документы синхронизации: база локали (`gen-kb-<локаль>`, ссылка — главная
+ * локали) и, при адресе лендинга, «Открыть приложение»
+ * (`gen-open-<локаль>`, ссылка — `/<локаль>/open`).
+ */
 export function buildSyncDocuments(
   knowledge: Record<string, string>,
   pageBase: string | null = null,
+): SyncDocument[] {
+  return [
+    ...buildKnowledgeDocuments(knowledge, pageBase),
+    ...buildOpenAppDocuments(Object.keys(knowledge), pageBase),
+  ];
+}
+
+function buildKnowledgeDocuments(
+  knowledge: Record<string, string>,
+  pageBase: string | null,
 ): SyncDocument[] {
   return Object.keys(knowledge)
     .sort()

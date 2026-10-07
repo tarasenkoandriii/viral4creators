@@ -14,7 +14,8 @@
  *
  * Э-С Ш1: `/access` (режим A/B), `/consent` (подтверждение прав на
  * аккаунт в режиме B, П-Т2), `/verify-site` (завести хост в кабинете
- * сайтов sites-backend).
+ * сайтов sites-backend). Ш2-хвост (3): `/login-registry` — вход учёткой
+ * из реестра сайта.
  */
 
 import {
@@ -50,6 +51,7 @@ import {
   ExploreRequestDto,
   FinishRequestDto,
   LoginRequestDto,
+  RegistryLoginRequestDto,
   StepRequestDto,
   UndoRequestDto,
 } from './dto/client-site-tutorial.dto';
@@ -121,6 +123,25 @@ export class ClientSiteTutorialController {
     @Body() dto: LoginRequestDto,
   ): Promise<RoundResult> {
     return this.service.login(
+      req.telegramUserId,
+      projectId,
+      dto,
+      ipHashOf(req),
+    );
+  }
+
+  /**
+   * Ш2-хвост (3): вход учёткой из реестра сайта (режим A) — логин и пароль
+   * сервер берёт арендой, поля формы находит сам; не нашёл — 422
+   * `LOGIN_FIELDS_NOT_FOUND`, тогда тот же вызов с `pick`.
+   */
+  @Post('login-registry')
+  loginRegistry(
+    @Req() req: IdentifiedRequest,
+    @Param('projectId') projectId: string,
+    @Body() dto: RegistryLoginRequestDto,
+  ): Promise<RoundResult> {
+    return this.service.loginRegistry(
       req.telegramUserId,
       projectId,
       dto,

@@ -12,7 +12,9 @@
  * роль (секрет из assist_site_integrations). Повтор того же ключа — без
  * дубля; refunded/cancelled по учтённому orderId — обновить статус
  * (вычет в свёртке); page-событие того же заказа ≤ 30 мин — слить с
- * приоритетом verified (§5-тер.16 п.5). Лимит — 120/мин на сайт.
+ * приоритетом verified (§5-тер.16 п.5). Лимит — 120/мин на сайт; до
+ * подписи — общий лимит по IP `/assist/v1/sites/*` (Ш5 (11),
+ * common/assist-v1-ip-limit.ts: каждый запрос читает секрет сайта).
  */
 import {
   Body,
@@ -21,8 +23,10 @@ import {
   HttpCode,
   Param,
   Post,
+  UseInterceptors,
 } from '@nestjs/common';
 import { GOAL_WEBHOOK_SIGNATURE_HEADER } from '../../brand';
+import { AssistV1IpLimit } from '../../common/assist-v1-ip-limit';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import type { GoalWebhookResult } from './api-types';
 import { GoalWebhookService } from './goal-webhook.service';
@@ -31,6 +35,7 @@ import { GoalWebhookService } from './goal-webhook.service';
 @PublicRoute(
   'вебхук целей бэкенда заказчика: подлинность — HMAC-подпись секретом сайта',
 )
+@UseInterceptors(AssistV1IpLimit)
 export class GoalWebhookController {
   constructor(readonly svc: GoalWebhookService) {}
 

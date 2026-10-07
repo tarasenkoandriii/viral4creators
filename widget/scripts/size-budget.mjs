@@ -48,7 +48,8 @@ export const BUDGETS = [
   // «Вернуть»/«отмени последнее» и отметки `dispatched` на сервере). Внутри —
   // поиск строки, те же запреты живой цели, что у act.js (стоп-лист uk/ru/en
   // ≈ 0,6 КБ, denylist/зоны, оплата, origin, жест), подсветка и проверка
-  // результата: ≈ 3,0 КБ. В act.js (9 КБ, запас 9 байт) и undo.js (2 КБ,
+  // результата: ≈ 3,0 КБ. В act.js (9 КБ, тогда запас 9 байт; после
+  // аудита C — сжатие имён `_x`, vite.mangle.ts — ≈ 0,25 КБ) и undo.js (2 КБ,
   // ≈ 0,2 КБ запаса) это не помещается, а их бюджеты не повышаем — поэтому
   // отдельный чанк со своим бюджетом 4 КБ (запас под порт правил строки).
   { name: 'comp', files: ['dist/v1/comp.js'], maxGzip: 4 * KB },
@@ -184,6 +185,31 @@ for (const b of BUDGETS) {
       );
     }
   }
+}
+// Аудит C (vite.mangle.ts): имена `_x` загрузчика, act.js и admin-act.js
+// сжаты сборкой — в собранном чанке нет ни одного `._x` из исходников
+// (иначе сжатие не сработало или имя ушло мимо — scripts/mangle.test.ts).
+for (const [file, srcs] of [
+  ['dist/v1/loader.js', ['src/loader/index.ts', 'src/loader/ui.ts']],
+  ['dist/v1/act.js', ['src/act/exec.ts', 'src/act/index.ts']],
+  ['dist/v1/admin-act.js', ['src/act/exec.ts', 'src/admin-act/index.ts']],
+]) {
+  const names = new Set();
+  for (const f of srcs)
+    for (const m of fs
+      .readFileSync(path.join(ROOT, f), 'utf8')
+      .matchAll(/\.(_[A-Za-z][\w$]+)/g))
+      names.add(m[1]);
+  const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  const left = [...names].filter((n) =>
+    new RegExp(`\\.${n.replace('$', '\\$')}(?![\\w$])`).test(code)
+  );
+  if (!names.size || left.length) {
+    ok = false;
+    console.error(
+      `${file}: имена не сжаты (${left.join(', ') || 'нет имён `_x`'}) — mangleProps`
+    );
+  } else console.log(`ok   ${file}: ${names.size} имён \`_x\` сжато`);
 }
 // Э6-бис (§5-бис.10 п.13): в боевом чанке голоса нет тестового хука WebAudio.
 {

@@ -68,6 +68,12 @@ import {
 import { LAUNCH_TIMEOUT_MS } from '../../common/headless-chromium';
 import { VIDEO_FRAME_CONTENT_TYPE } from './draft-frames';
 import {
+  type LoginFieldsFound,
+  findLoginFields,
+  passwordFieldSource,
+} from './login-form-detect';
+import { LoginFieldsNotFoundError } from './registry-login';
+import {
   DSF_REPAINT_CAP_MS,
   FOREIGN_SETTLE_CEILING_MS,
   DSF_REPAINT_QUIET_SOURCE,
@@ -448,6 +454,16 @@ export class ChromiumPageExplorer implements PageExplorer {
             `для поля ${step.selector} не сохранены учётные данные — переиграть вход нечем`,
           );
         }
+        // Ш2-хвост (3): пароль учётки реестра — только в настоящее поле
+        // пароля; страница могла поменяться с записи, и в текстовом поле
+        // он был бы виден на кадре.
+        if (
+          step.value === '' &&
+          request.passwordOnly?.includes(step.selector) &&
+          !(await this.isPasswordField(page, step.selector))
+        ) {
+          throw new LoginFieldsNotFoundError(['password']);
+        }
         if (await this.fill(page, step.selector, value)) sensitiveFill = true;
         progress.done += 1;
         continue;
@@ -502,6 +518,11 @@ export class ChromiumPageExplorer implements PageExplorer {
     const urlBeforeActions = page.url();
 
     let sensitiveFill = false;
+    let autoLogin: LoginFieldsFound | undefined;
+    if (request.autoLogin) {
+      autoLogin = await this.loginWithAccount(page, request);
+      sensitiveFill = true;
+    }
     for (const action of request.actions) {
       if (action.kind === 'fill') {
         if (await this.fill(page, action.selector, action.value)) {
@@ -519,9 +540,12 @@ export class ChromiumPageExplorer implements PageExplorer {
     // определяется по адресу: SPA, перерисовавшая экран без смены
     // адреса, обычно убирает и сам элемент — тогда прокрутка в странице
     // просто не найдёт его.
-    const target = request.actions[request.actions.length - 1]?.selector;
+    const target =
+      request.actions[request.actions.length - 1]?.selector ??
+      autoLogin?.submitSelector;
     const exploration = await this.snapshot(page, request.allowedOrigin, {
-      clickedSelector: lastClickedSelector(request.actions),
+      clickedSelector:
+        lastClickedSelector(request.actions) ?? autoLogin?.submitSelector,
       centerSelector:
         target && page.url() === urlBeforeActions ? target : undefined,
       redirectWarning,
@@ -532,7 +556,53 @@ export class ChromiumPageExplorer implements PageExplorer {
       exploration,
       cookies: await this.harvestCookies(page),
       sensitiveFill,
+      ...(autoLogin ? { autoLogin } : {}),
     };
+  }
+
+  /**
+   * Ш2-хвост (3): вход учёткой реестра. Поля — разведкой ЭТОЙ страницы
+   * (`findLoginFields`); пароль — только в настоящее поле пароля (проверка
+   * в браузере перед вводом); затем кнопка. Не нашли — 422 «не нашли поля
+   * входа» ДО любого ввода. Значения в лог и в ошибки не попадают — только
+   * селекторы.
+   */
+  private async loginWithAccount(
+    page: ExplorerPage,
+    request: ExploreRoundRequest,
+  ): Promise<LoginFieldsFound> {
+    const login = request.autoLogin!;
+    const collected = await this.collect(page, request.allowedOrigin);
+    // Стоп-лист (§8.3) — и здесь: кнопка «Оплатить» кнопкой входа не станет.
+    const found = findLoginFields(collected.elements.map(withDanger), {
+      needUsername: !!login.username,
+      pick: login.pick,
+    });
+    if (!found.ok) throw new LoginFieldsNotFoundError(found.missing);
+    if (!(await this.isPasswordField(page, found.passwordSelector))) {
+      throw new LoginFieldsNotFoundError(['password']);
+    }
+    if (found.usernameSelector && login.username) {
+      await this.fill(page, found.usernameSelector, login.username);
+    }
+    await this.fill(page, found.passwordSelector, login.password);
+    await this.click(page, found.submitSelector, request.allowedOrigin);
+    return {
+      usernameSelector: found.usernameSelector,
+      passwordSelector: found.passwordSelector,
+      submitSelector: found.submitSelector,
+    };
+  }
+
+  /** Поле — настоящее поле пароля? Сбой проверки — «нет» (пароль не вводим). */
+  private async isPasswordField(
+    page: ExplorerPage,
+    selector: string,
+  ): Promise<boolean> {
+    return Promise.resolve()
+      .then(() => page.evaluate(passwordFieldSource(selector)))
+      .then((r) => r === true)
+      .catch(() => false);
   }
 
   /** Переход + замок ДО первого действия: если `goto` увёл редиректом

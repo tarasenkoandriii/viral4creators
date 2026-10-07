@@ -123,4 +123,6 @@ export type BillingErrorCode =
   | 'TOPUP_UNAVAILABLE'
   | 'AUTO_TOPUP_UNAVAILABLE'
   | 'BILLING_INVALID'
-  | 'PAYMENT_NOT_FOUND';
+  | 'PAYMENT_NOT_FOUND'
+  /** Внутренний тенант платформы (`ASSIST_INTERNAL_SITE_IDS`) — платить нечего. */
+  | 'INTERNAL_PLAN';

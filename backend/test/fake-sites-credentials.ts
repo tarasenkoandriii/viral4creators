@@ -6,6 +6,12 @@
  * владельцу, удалённая запись — 404). Режимы отказа — `offline` (сеть,
  * 5xx), `unconfigured` (CREDENTIALS_NOT_CONFIGURED), `refuseSite`
  * (кабинет не даёт завести учётку).
+ *
+ * Ш2-хвост (3): учётки, заведённые руками в кабинете (`addManual`: логин и
+ * пароль, без ключа черновика), аренда с логином (`leaseAccount`), заморозка
+ * (`frozen`). Ш2-хвост (7): `forgetTestAccount` — удаляет только учётку,
+ * заведённую этим черновиком (тот же `clientRef` и автор), иначе 409
+ * `TEST_ACCOUNT_NOT_OWN`, как sites-backend.
  */
 import {
   SitesRejectedError,
@@ -24,6 +30,10 @@ export interface FakeRecord {
   origin?: string;
   hostIds: string[];
   secrets: Partial<Record<SitesCredentialPurpose, string>>;
+  /** Учётка реестра: кто завёл (`generator:<tg>` или `tma:<tg>`). */
+  createdBy?: string;
+  username?: string | null;
+  frozen?: boolean;
 }
 
 export class FakeSitesCredentials {
@@ -33,7 +43,29 @@ export class FakeSitesCredentials {
   offline = false;
   unconfigured = false;
   refuseSite = false;
+  /** Без маршрута `credentials/forget` (старый sites-backend) — 404. */
+  noForgetRoute = false;
   private seq = 0;
+
+  /** Учётка, заведённая руками в кабинете (логин + пароль, без ключа черновика). */
+  addManual(
+    telegramId: string,
+    hostId: string,
+    opts: { username?: string | null; password?: string } = {},
+  ): FakeRecord {
+    const rec: FakeRecord = {
+      kind: 'site',
+      id: `manual-${++this.seq}`,
+      owner: telegramId,
+      clientRef: null,
+      hostIds: [hostId],
+      secrets: opts.password === undefined ? {} : { password: opts.password },
+      createdBy: `tma:${telegramId}`,
+      username: opts.username ?? null,
+    };
+    this.records.set(rec.id, rec);
+    return rec;
+  }
 
   private guard(name: string) {
     this.calls.push(name);
@@ -88,9 +120,28 @@ export class FakeSitesCredentials {
       ...(origin !== undefined ? { origin } : {}),
       hostIds,
       secrets: {},
+      ...(kind === 'site' ? { createdBy: `generator:${owner}` } : {}),
     };
     this.records.set(rec.id, rec);
     return rec;
+  }
+
+  private lease(
+    telegramId: string,
+    req: { testAccountId: string; hostId: string },
+  ): FakeRecord {
+    const r = this.find('site', req.testAccountId, telegramId);
+    if (r.frozen) {
+      throw new SitesRejectedError(
+        403,
+        'CREDENTIAL_LEASE_DENIED',
+        'заморожена',
+      );
+    }
+    if (!r.hostIds.includes(req.hostId)) {
+      throw new SitesRejectedError(403, 'CREDENTIAL_LEASE_DENIED', 'хост');
+    }
+    return r;
   }
 
   client(): SitesInternalClient {
@@ -152,11 +203,41 @@ export class FakeSitesCredentials {
         req: { testAccountId: string; hostId: string; runRef?: string },
       ): Promise<SitesCredentialSecrets> {
         self.guard(`leaseSecrets:${req.runRef ?? ''}`);
-        const r = self.find('site', req.testAccountId, telegramId);
-        if (!r.hostIds.includes(req.hostId)) {
-          throw new SitesRejectedError(403, 'CREDENTIAL_LEASE_DENIED', 'хост');
+        return { ...self.lease(telegramId, req).secrets };
+      },
+      async leaseAccount(
+        telegramId: string,
+        req: { testAccountId: string; hostId: string; runRef?: string },
+      ) {
+        self.guard(`leaseAccount:${req.testAccountId}`);
+        const r = self.lease(telegramId, req);
+        return { username: r.username ?? null, secrets: { ...r.secrets } };
+      },
+      async forgetTestAccount(
+        telegramId: string,
+        id: string,
+        clientRef: string,
+      ) {
+        self.guard(`forgetTestAccount:${id}`);
+        if (self.noForgetRoute) {
+          throw new SitesRejectedError(404, 'NOT_FOUND', 'нет маршрута');
         }
-        return { ...r.secrets };
+        const r = self.records.get(id);
+        if (!r || r.kind !== 'site' || r.owner !== telegramId) {
+          throw new SitesRejectedError(
+            404,
+            'TEST_ACCOUNT_NOT_FOUND',
+            'нет учётки',
+          );
+        }
+        if (
+          r.clientRef !== clientRef ||
+          r.createdBy !== `generator:${telegramId}`
+        ) {
+          throw new SitesRejectedError(409, 'TEST_ACCOUNT_NOT_OWN', 'чужая');
+        }
+        self.records.delete(id);
+        return { deleted: true };
       },
       async readUserSession(
         ownerRef: string,

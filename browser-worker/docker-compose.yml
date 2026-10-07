@@ -32,9 +32,12 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-      # Профиль Playwright: умолчания Docker + clone/unshare/setns для
-      # user namespaces песочницы Chromium (без него песочница не стартует,
-      # а без песочницы воркер в production не запускается вовсе).
+      # Текущее умолчание moby (github.com/moby/profiles seccomp v0.2.4) +
+      # песочница Chromium: clone/unshare/setns только с user/pid/net
+      # namespaces и chroot; ptrace и редкие семейства socket — закрыты.
+      # Сборка — docker/seccomp-build.cjs, источник и обновление —
+      # docker/README.md. Без него песочница не стартует, а без песочницы
+      # воркер в production не запускается вовсе.
       - seccomp=./docker/seccomp-chromium.json
     healthcheck:
       test: ['CMD', 'node', 'dist/healthcheck.js']

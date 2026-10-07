@@ -1300,3 +1300,61 @@ internal`; затем хуки `reconcile` продуктов (обход «Ад
   `INTERNAL_NOT_CONFIGURED` (в логе только имена переменных).
 - `sites-backend/prisma.config.ts`: `SITES_DIRECT_URL` без
   `?schema=sites` — сборка падает с понятным текстом.
+
+### Заход 6 (07.10.2026) — изменения контрактов
+
+sites-backend:
+
+- Ш5 (4) внутренний тариф: кабинет, которому принадлежит сайт из env
+  `ASSIST_INTERNAL_SITE_IDS`, получает бессрочный `pro` без стопа единиц
+  (`method: internal`, `internal: true`); суточные $-потолки сайта и
+  платформы действуют. Checkout и включение автодокупки — 409
+  `INTERNAL_PLAN`.
+- Ш5 (11) `/assist/v1/sites/*` (API знаний и вебхук целей): лимит по IP
+  ДО проверки подписи — 300 запросов в минуту с адреса (IPv6 по /64) и
+  30 в минуту не прошедших подпись; сверх — 429 `RATE_LIMITED` с
+  `Retry-After` (секрет сайта не читается).
+- Ш5 (10) `PUT …/knowledge/site/documents/:key`: PUT одного сайта
+  исполняются по очереди; ожидание > 20 с — 409 `KNOWLEDGE_API_BUSY`
+  (повторить с новой подписью). Предел 50 документов теперь точный.
+- Ш3 (9) протокол воркера: новый код отказа `traffic_limit` (не
+  повторяется) — превышен потолок трафика задания или ответа документа
+  главного фрейма. Причина обхода «Админки» — человеческим текстом.
+- Ш2 (6) аренда учётки для продукта `qa` без отметки «тестовая учётка»
+  (`confirmedTestAccountAt`) — 409 `TEST_ACCOUNT_NOT_CONFIRMED` (`reason:
+  not_confirmed`), то же при погашении аренды.
+- Ш2 (7) `POST /internal/sites/credentials/forget` (HMAC обучалки) `{
+  telegramId, testAccountId, clientRef }` → 200 `{ deleted: true }`;
+  удаляет (crypto-shred) только учётку, заведённую генератором для этого
+  черновика (`clientRef === project:<id>`, автор `generator:<tg>`);
+  чужая — 409 `TEST_ACCOUNT_NOT_OWN`, нет — 404 `TEST_ACCOUNT_NOT_FOUND`,
+  без `clientRef` — 400.
+- D3 мемо «Админки»: «Да» на шаг мемо, ушедшего в «требует проверки»,
+  выключенного или удалённого посреди запуска, — 409 `MEMO_HALTED`
+  (предложение `rejected/memo_halted`); запуск `stopped`, прогресс
+  `halted:<причина>`.
+- Приглашения: `POST …/invites/accept` — 30/мин на человека и 120/мин на
+  IP, сверх — 429 `RATE_LIMIT_EXCEEDED` (приглашение не тратится); имя
+  пригласившего в превью — из приглашения (`createdByUsername`/
+  `createdByFirstName`), у старых — прежним путём из веб-сессии.
+
+backend генератора:
+
+- `GET /api/projects/:id/site-tutorial/test-accounts/for-login` → `{
+  available, accounts[{ id, label, role }] }` — активные учётки реестра с
+  продуктом `tutorial`, паролем и хостом черновика (без логина и флагов
+  секретов).
+- `POST /api/projects/:id/site-tutorial/login-registry` `{ expectedVersion,
+  testAccountId, pick?: { usernameSelector?, passwordSelector?,
+  submitSelector? }, forgetAfterBuild? }` — вход учёткой реестра (режим A):
+  409 `REGISTRY_LOGIN_UNAVAILABLE` / `REGISTRY_ACCOUNT_UNAVAILABLE`
+  (`reason` — код кабинета) / `REGISTRY_ACCOUNT_NO_PASSWORD`; поля формы
+  не найдены — 422 `LOGIN_FIELDS_NOT_FOUND` (`reason`:
+  `username,password,submit`), повтор с `pick`. Пароль вводится только в
+  настоящее поле пароля; в черновике хранится ссылка на учётку.
+  `POST …/site-tutorial/login` со значением вида ссылки реестра — 400.
+- `GET /api/projects/:id/wizard-guide` отдаёт `engine`; `GET
+  /guide-assist/knowledge.md` — 404, пока не задан ключ коннектора.
+
+Лендинг: страница `/<локаль>/open` (`noindex`) — «открыть приложение»
+для действий виджета; документы знаний `gen-open-<локаль>`.

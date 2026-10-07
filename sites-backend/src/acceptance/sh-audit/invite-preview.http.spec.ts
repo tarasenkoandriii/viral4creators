@@ -4,12 +4,15 @@
  * HTTP (настоящее приложение: глобальный TelegramIdentityGuard, конверт,
  * фильтр; настоящая база):
  *  - `GET /sites/account/invites/:token/preview` — что будет, если
- *    принять: хвост id и тип кабинета, имя пригласившего (если известно),
+ *    принять: хвост id и тип кабинета, имя пригласившего (сохранённое при
+ *    создании приглашения из личности запроса; у старых приглашений — из
+ *    его веб-сессии; TODO I-М «Сквозной аудит 06.10.2026»),
  *    роль и права, срок, «уже участник». Ничего не пишет, токен не тратит,
  *    новичку кабинет не создаёт; полного id кабинета, токена кабинета и
  *    токена приглашения в ответе нет;
  *  - недействительное (битое, чужое, использованное, просроченное) — тот
- *    же 403 `INVITE_INVALID`, что у принятия; лимит частоты — 429;
+ *    же 403 `INVITE_INVALID`, что у принятия; лимит частоты превью и
+ *    принятия — 429;
  *  - принятие по-прежнему работает (по кнопке экрана);
  *  - без `X-Site-Account` сервер открывает СВОЙ кабинет (`owner`), а не
  *    последний, куда добавили; своего нет — самый ранний по членству.
@@ -37,6 +40,7 @@ import {
   defaultMembership,
 } from '../../modules/site-core/account/account.service';
 import { INVITE_PREVIEW_LIMIT } from '../../modules/site-core/account/invite-preview.controller';
+import { INVITE_ACCEPT_LIMIT } from '../../modules/site-core/account/invite-rate-limit';
 import {
   OWNER_PRODUCT_ROLES,
   type AccountMembership,
@@ -242,9 +246,11 @@ describeDb(
 
       const res = await preview(newbie, inv.startParam);
       expect(res.status).toBe(200);
+      // Имя — из личности, с которой создано приглашение (signInitData:
+      // «tester»/«Андрій»), а не из веб-сессии.
       expect(res.body.data).toEqual({
         account: { tail: accountTail(a.accountId), type: 'owner' },
-        inviter: { username: 'owner_a', firstName: 'Ольга' },
+        inviter: { username: 'tester', firstName: 'Андрій' },
         role: 'manager',
         productRoles: { qa: 'none', assist: 'manager', assistAdmin: 'none' },
         expiresAt: expect.any(String),
@@ -256,8 +262,27 @@ describeDb(
       expect(raw).not.toContain(inv.token);
       expect(raw).not.toContain(String(a.tg));
 
+      const stored = await prisma.siteAccountInvite.findFirst({
+        where: { accountId: a.accountId },
+      });
+      expect(stored).toMatchObject({
+        createdByUsername: 'tester',
+        createdByFirstName: 'Андрій',
+      });
+
+      // Приглашение до миграции (имени в строке нет) — запасной путь:
+      // имя из последней веб-сессии пригласившего.
+      await prisma.siteAccountInvite.updateMany({
+        where: { accountId: a.accountId },
+        data: { createdByUsername: null, createdByFirstName: null },
+      });
       // Голый токен — тот же ответ (ссылку могли переслать как угодно).
-      expect((await preview(newbie, inv.token)).status).toBe(200);
+      const bare = await preview(newbie, inv.token);
+      expect(bare.status).toBe(200);
+      expect(bare.body.data.inviter).toEqual({
+        username: 'owner_a',
+        firstName: 'Ольга',
+      });
       // Превью не создаёт новичку кабинет и не тратит приглашение.
       expect(await membershipsOf(newbie)).toHaveLength(0);
       const row = await prisma.siteAccountInvite.findFirst({
@@ -284,17 +309,23 @@ describeDb(
       expect(again.body.error.code).toBe('INVITE_INVALID');
     });
 
-    it('пригласивший без веб-входа — inviter: null; свой кабинет — alreadyMember', async () => {
+    it('пригласивший без веб-входа — имя всё равно из приглашения; старое без имени — null; свой кабинет — alreadyMember', async () => {
       const a = await owner();
       const inv = await invite(a.tg, 'operator');
       const v = person();
       const res = await preview(v, inv.token);
       expect(res.status).toBe(200);
       expect(res.body.data).toMatchObject({
-        inviter: null,
+        inviter: { username: 'tester', firstName: 'Андрій' },
         role: 'operator',
         alreadyMember: false,
       });
+      // Старое приглашение без имени и без веб-входа пригласившего — null.
+      await prisma.siteAccountInvite.updateMany({
+        where: { accountId: a.accountId },
+        data: { createdByUsername: null, createdByFirstName: null },
+      });
+      expect((await preview(v, inv.token)).body.data.inviter).toBeNull();
       const self = await preview(a.tg, inv.token);
       expect(self.body.data.alreadyMember).toBe(true);
     });
@@ -384,6 +415,31 @@ describeDb(
       expect(over.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
       // Лимит — на человека: другой не задет.
       expect((await preview(person(), inv.token)).status).toBe(200);
+    });
+
+    it(`лимит частоты принятия: больше ${INVITE_ACCEPT_LIMIT} в минуту — 429, приглашение не тратится`, async () => {
+      const a = await owner();
+      const inv = await invite(a.tg);
+      const v = person();
+      for (let i = 0; i < INVITE_ACCEPT_LIMIT; i++) {
+        const r = await request(srv())
+          .post('/sites/account/invites/accept')
+          .set({ ...as(v), 'X-Forwarded-For': `192.0.2.${i}` })
+          .send({ token: `inv_${'Z'.repeat(32)}` });
+        expect(r.status).toBe(403);
+      }
+      const over = await request(srv())
+        .post('/sites/account/invites/accept')
+        .set({ ...as(v), 'X-Forwarded-For': '192.0.2.200' })
+        .send({ token: inv.token });
+      expect(over.status).toBe(429);
+      expect(over.body.error.code).toBe('RATE_LIMIT_EXCEEDED');
+      // Отказ лимита не тратит приглашение и не создаёт членства.
+      expect(await membershipsOf(v)).toHaveLength(0);
+      const row = await prisma.siteAccountInvite.findFirst({
+        where: { accountId: a.accountId },
+      });
+      expect(row?.usedAt).toBeNull();
     });
   },
 );

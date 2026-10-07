@@ -4,6 +4,7 @@
  * графа site↛admin): берёт источники «Сайта» и секреты интеграций.
  */
 import { Module } from '@nestjs/common';
+import { AssistV1IpLimit } from '../../common/assist-v1-ip-limit';
 import { AssistAnalyticsModule } from '../assist-analytics/assist-analytics.module';
 import { AssistSiteKnowledgeModule } from '../assist-site-knowledge/assist-site-knowledge.module';
 import { KnowledgeApiController } from './knowledge-api.controller';
@@ -12,6 +13,6 @@ import { KnowledgeApiService } from './knowledge-api.service';
 @Module({
   imports: [AssistSiteKnowledgeModule, AssistAnalyticsModule],
   controllers: [KnowledgeApiController],
-  providers: [KnowledgeApiService],
+  providers: [KnowledgeApiService, AssistV1IpLimit],
 })
 export class AssistSiteKnowledgeApiModule {}

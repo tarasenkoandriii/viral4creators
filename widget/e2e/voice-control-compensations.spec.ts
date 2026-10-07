@@ -8,7 +8,11 @@
  *  - п.3: обратная цель на другой странице (`nav-cart` → кошик) — переход и
  *    прибрана нужная строка (чужая осталась); две строки с одинаковым
  *    описанием — «приберіть самі», 0 кликов;
- *  - п.4: «Видалити» без разметки — компенсации нет (стоп-лист), 0 кликов.
+ *  - п.4: «Видалити» без разметки — компенсации нет (стоп-лист), 0 кликов;
+ *  - разметка плагина WooCommerce (`data-assist-undo="remove-from-cart"` и
+ *    `data-assist-undo-at` у «В кошик», «Кошик» шапки без `nav-cart`) —
+ *    компенсация с переходом в кошик без голосовой карты (снимок act.js
+ *    несёт пару, сервер — `src: markup`).
  * План проверяет настоящий код (`assist-ui-core`, `compensations: true`),
  * исполняют настоящие act.js/undo.js/comp.js; «модель» — фикстура стенда.
  */
@@ -50,7 +54,12 @@ async function openIfClosed(page: Page) {
   await openChat(page);
 }
 
-async function command(page: Page, pk: string, query: string) {
+async function command(
+  page: Page,
+  pk: string,
+  query: string,
+  before?: (p: Page) => Promise<unknown>
+) {
   await site(pk, {
     voice: VOICE,
     voiceControl: { mode: 'on' },
@@ -59,6 +68,7 @@ async function command(page: Page, pk: string, query: string) {
   await page.goto(
     `${A}/vc/shop/product?pk=${encodeURIComponent(pk)}&m=1${query}`
   );
+  if (before) await before(page);
   await openIfClosed(page);
   await composer(page).fill(CMD);
   await composer(page).press('Enter');
@@ -170,4 +180,56 @@ test('п.3: две строки с одинаковым описанием — �
   expect((await reports()).slice(-1)).toEqual([
     ['report', { results: [{ i: 1, result: 'gone' }] }],
   ]);
+});
+
+test('разметка плагина WooCommerce (`data-assist-undo`/`-at`): компенсация без голосовой карты — переход в кошик, прибрана своя строка', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await command(page, pk, '&wc=1&seed=Шапка зимова:L');
+  // Страница отмены — только из разметки кнопки: ссылки `nav-cart` нет.
+  await expect(page.locator('[data-assist-id="nav-cart"]')).toHaveCount(0);
+  await expect(page.locator('#s-add')).toHaveAttribute(
+    'data-assist-undo',
+    'remove-from-cart'
+  );
+  await chat(page).locator('.poffer button.pyes').click();
+  await expect(page).toHaveURL(/\/vc\/shop\/cart$/, { timeout: 15_000 });
+  await expect(chat(page).locator('body')).toContainText(
+    'Прибрав «Футболка синя»',
+    { timeout: 20_000 }
+  );
+  await expect(chat(page).locator('body')).toContainText(
+    'Поля на попередній сторінці повернути не можу'
+  );
+  expect(await shop(pk)).toEqual([{ t: 'Шапка зимова', v: 'L' }]);
+  await expect(page.locator('#s-table tr')).toHaveCount(1);
+  expect(await reports()).toEqual([
+    ['undo', { by: 'offer' }],
+    ['report', { next: true }],
+    ['report', { dispatch: 1 }],
+    ['report', { results: [{ i: 1, result: 'done' }] }],
+    ['report', { results: [{ i: 0, result: 'gone' }] }],
+  ]);
+});
+
+test('битая страница отмены в разметке (`//evil…`) — пары разметки нет: перехода нет, на этой странице обратной цели нет — «не зміг», 0 кліків', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await command(page, pk, '&wc=1&seed=Шапка зимова:L', (p) =>
+    p.evaluate(() =>
+      document
+        .getElementById('s-add')!
+        .setAttribute('data-assist-undo-at', '//evil.example/cart')
+    )
+  );
+  await chat(page).locator('.poffer button.pyes').click();
+  await expect(chat(page).locator('body')).toContainText(
+    'Не зміг прибрати «Футболка синя»',
+    { timeout: 15_000 }
+  );
+  expect(page.url()).toMatch(/\/vc\/shop\/product/);
+  expect(await removes(page)).toBe(0);
+  expect((await shop(pk)).length).toBe(2);
 });

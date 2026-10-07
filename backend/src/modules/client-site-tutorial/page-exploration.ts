@@ -281,6 +281,12 @@ export function collectPageExploration(allowedOrigin: string): CollectedPage {
     if (type) item.type = type;
     const name = clean(el.getAttribute('name'));
     if (name) item.name = name;
+    if (tag === 'input' || tag === 'textarea') {
+      // Ш2-хвост (3): подсказка для поиска полей входа (username,
+      // current-password) — без неё остаются только тип и подпись.
+      const ac = clean(el.getAttribute('autocomplete'))?.toLowerCase();
+      if (ac) item.autocomplete = ac;
+    }
     const label = labelFor(el);
     if (label) item.label = label;
     if (visibleText) item.visibleText = visibleText;

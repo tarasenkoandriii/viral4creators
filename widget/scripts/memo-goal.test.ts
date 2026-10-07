@@ -259,6 +259,7 @@ async function main() {
           'Львів',
           false,
           null,
+          '#', // name#id поля (fieldKey) в момент действия
           'Київ',
           false,
         ],

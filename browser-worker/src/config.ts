@@ -21,6 +21,7 @@ import {
 } from './shared/browser-job-protocol';
 import { derivePublicFromPrivate, isUsableSealKey } from './shared/worker-seal';
 import { parseCidr, type EgressUpstream } from './shared/egress-filter-proxy';
+import { DEFAULT_DRAIN_MAX_MS } from './browser/pool';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -48,6 +49,10 @@ export interface WorkerConfig {
   upstream: EgressUpstream | null;
   rotateJobs: number;
   rotateMs: number;
+  /** Потолок дренажа перед ротацией Chromium, мс (Ш3-хвост (16)). */
+  drainMaxMs: number;
+  /** Потолки байтов (Ш3-хвост (9)): тело ответа и весь трафик задания. */
+  traffic: { responseBytes: number; jobBytes: number };
   healthFile: string;
   shutdownGraceMs: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -219,6 +224,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       'BROWSER_WORKER_TEST_IGNORE_TLS — только NODE_ENV=test',
     );
   }
+  const MB = 1024 * 1024;
+  const responseMb = int(env, 'BROWSER_WORKER_MAX_RESPONSE_MB', 20, 1, 512);
+  const jobMb = int(env, 'BROWSER_WORKER_MAX_JOB_TRAFFIC_MB', 150, 1, 4096);
+  if (jobMb < responseMb) {
+    throw new ConfigError(
+      'BROWSER_WORKER_MAX_JOB_TRAFFIC_MB меньше BROWSER_WORKER_MAX_RESPONSE_MB',
+    );
+  }
   const level = (env.LOG_LEVEL ?? 'info').trim() as WorkerConfig['logLevel'];
   return {
     production,
@@ -251,6 +264,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     rotateJobs: int(env, 'BROWSER_WORKER_ROTATE_JOBS', 50, 1, 10_000),
     rotateMs:
       int(env, 'BROWSER_WORKER_ROTATE_MINUTES', 30, 1, 24 * 60) * 60_000,
+    drainMaxMs: int(
+      env,
+      'BROWSER_WORKER_DRAIN_MAX_MS',
+      DEFAULT_DRAIN_MAX_MS,
+      10_000,
+      3_600_000,
+    ),
+    traffic: { responseBytes: responseMb * MB, jobBytes: jobMb * MB },
     healthFile:
       env.BROWSER_WORKER_HEALTH_FILE?.trim() || '/tmp/browser-worker.health',
     shutdownGraceMs: int(

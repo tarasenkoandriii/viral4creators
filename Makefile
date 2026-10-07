@@ -84,6 +84,7 @@ ci:
 	cd frontend && npx vite build
 	cd admin && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
 	cd landing && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
+	cd landing && npm run -s budget:js
 	$(MAKE) ci-sites-landing
 	$(MAKE) ci-sites
 	node scripts/sync-site-tma-kit.mjs --check

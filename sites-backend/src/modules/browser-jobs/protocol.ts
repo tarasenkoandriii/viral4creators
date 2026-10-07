@@ -109,6 +109,9 @@ export const WORKER_ERROR_CODES = [
   'credentials_unavailable',
   'host_not_verified',
   'too_large',
+  // Потолок трафика воркера (Ш3-хвост (9)): тело ответа или весь трафик
+  // задания больше потолка — не повторяется (сайт тот же).
+  'traffic_limit',
   'browser_crashed',
   'job_timeout',
   'cancelled',

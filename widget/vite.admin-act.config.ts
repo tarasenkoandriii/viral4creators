@@ -1,5 +1,5 @@
-import { transform } from 'esbuild';
 import { defineConfig } from 'vite';
+import { minifyChunk } from './vite.mangle';
 
 // Э6-бис (б): голосовое управление «Админкой» — ленивый ES-модуль
 // `dist/v1/admin-act.js` на странице админки заказчика (снимок с фильтром
@@ -10,24 +10,7 @@ import { defineConfig } from 'vite';
 // es2020 — для `import.meta.url` (рядом лежащие check.js и undo.js).
 export default defineConfig({
   publicDir: false,
-  plugins: [
-    {
-      name: 'v4c-minify-es-chunk',
-      enforce: 'post',
-      async generateBundle(_opts, bundle) {
-        for (const f of Object.values(bundle)) {
-          if (f.type !== 'chunk') continue;
-          f.code = (
-            await transform(f.code, {
-              minify: true,
-              format: 'esm',
-              target: 'es2020',
-            })
-          ).code;
-        }
-      },
-    },
-  ],
+  plugins: [minifyChunk({ format: 'esm', target: 'es2020' })],
   build: {
     outDir: 'dist/v1',
     emptyOutDir: false,

@@ -222,6 +222,48 @@ describeE6bAdmin('Э6-бис (б) — мемо «Админки» с шагам�
     ]);
     expect(shop.orders.get('1043')!.status).toBe('paid');
   });
+  it('D3: мемо выключено, пока отрезок на странице ждёт плана, — шагов нет, причина', async () => {
+    const a = await employeeSession(st, M, 'emp-memo-d3');
+    const p = api(st, a);
+    const r = data(
+      await p
+        .plan({ text: 'виконай АМ-1 1043', snapshot: orderPage(M.S.adminHost) })
+        .expect(200),
+    );
+    expect(r).toMatchObject({ kind: 'plan', memo: { number: 1 } });
+    const run = await st.prisma.assistAdminMemoRun.findFirstOrThrow({
+      where: { siteId: M.S.siteId, actor: 'jwt:emp-memo-d3' },
+    });
+    expect(run.status).toBe('ui');
+    await request(st.srv())
+      .post(`${memos()}/1/disable`)
+      .set(st.as(M.S.ownerTg))
+      .expect(200);
+    try {
+      const again = data(
+        await p
+          .plan({ memoRunId: run.id, snapshot: orderPage(M.S.adminHost) })
+          .expect(200),
+      );
+      expect(again.kind).toBe('memo');
+      expect(again.steps ?? []).toHaveLength(0);
+      expect(again.memo.text).toMatch(/вимкнув мемо/);
+      const after = await st.prisma.assistAdminMemoRun.findUniqueOrThrow({
+        where: { id: run.id },
+      });
+      expect(after).toMatchObject({
+        status: 'stopped',
+        goalStatus: 'not_reached',
+      });
+      expect(shop.orders.get('1043')!.status).toBe('paid');
+    } finally {
+      await request(st.srv())
+        .post(`${memos()}/1/enable`)
+        .set(st.as(M.S.ownerTg))
+        .expect(200);
+    }
+  });
+
   it('аудит: под подписью ссылки мемо на странице — кнопка; пункт меню с эффектом — шаг не исполняется', async () => {
     const a = await employeeSession(st, M, 'emp-memo-role');
     const page = orderPage(M.S.adminHost) as {

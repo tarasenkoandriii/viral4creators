@@ -6070,3 +6070,91 @@ describe('TutorialScenarioRunnerService — демо обучающего лен
     });
   });
 });
+
+describe('Ш5 (12): подметальщик удалил одобренный ролик → набор роликов лендинга', () => {
+  function withLanding(requestSync: jest.Mock) {
+    const built = build([]);
+    const landing = { requestSync };
+    const service = new TutorialScenarioRunnerService(
+      built.prisma as any,
+      built.notify as any,
+      built.blob as any,
+      built.ffmpeg as any,
+      built.settings as any,
+      built.tts as any,
+      built.aiUsage as any,
+      undefined,
+      undefined,
+      undefined,
+      landing as any,
+    );
+    return { ...built, service, landing };
+  }
+  const video = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    subjectKey: '1',
+    locale: 'ru',
+    assemblyStatus: 'complete',
+    reviewed: false,
+    clientSiteDraftId: null,
+    blobUrl: `https://blob.example.com/tutorial-videos/1/${id}.mp4`,
+    ...over,
+  });
+
+  it('ушёл прежний одобренный — одна пересылка за тик (после удаления)', async () => {
+    const { service, prisma, landing } = withLanding(
+      jest.fn().mockResolvedValue(true),
+    );
+    stubAssets(prisma, [
+      video('new', { reviewed: true }),
+      video('old1', { reviewed: true }),
+      video('old2', { reviewed: true }),
+    ]);
+    const result = await service.pollAssemblies();
+    expect(result.swept).toBe(2);
+    expect(landing.requestSync).toHaveBeenCalledTimes(1);
+    expect(landing.requestSync.mock.invocationCallOrder[0]).toBeGreaterThan(
+      Math.max(...prisma.tutorialVideoAsset.delete.mock.invocationCallOrder),
+    );
+  });
+
+  it('ушли только неодобренные — набор не трогаем', async () => {
+    const { service, prisma, landing } = withLanding(
+      jest.fn().mockResolvedValue(true),
+    );
+    stubAssets(prisma, [
+      video('today', { reviewed: true }),
+      video('yesterday'),
+      video('earlier'),
+    ]);
+    const result = await service.pollAssemblies();
+    expect(result.swept).toBe(2);
+    expect(landing.requestSync).not.toHaveBeenCalled();
+  });
+
+  it('одобренный не удалился (сбой Blob) — пересылать нечего', async () => {
+    const { service, prisma, blob, landing } = withLanding(
+      jest.fn().mockResolvedValue(true),
+    );
+    stubAssets(prisma, [
+      video('new', { reviewed: true }),
+      video('old', { reviewed: true }),
+    ]);
+    blob.deleteBlob.mockRejectedValue(new Error('Blob икнул'));
+    await service.pollAssemblies();
+    expect(prisma.tutorialVideoAsset.delete).not.toHaveBeenCalled();
+    expect(landing.requestSync).not.toHaveBeenCalled();
+  });
+
+  it('сбой пересылки не роняет подметальщика и тик', async () => {
+    const { service, prisma } = withLanding(
+      jest.fn().mockRejectedValue(new Error('sites-backend лежит')),
+    );
+    stubAssets(prisma, [
+      video('new', { reviewed: true }),
+      video('old', { reviewed: true }),
+    ]);
+    const result = await service.pollAssemblies();
+    expect(result.swept).toBe(1);
+  });
+});

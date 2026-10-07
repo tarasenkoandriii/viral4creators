@@ -2293,7 +2293,10 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
 `PUT|DELETE …/documents/:key` (подпись `X-Assist-Signature` ключом
 `knsec_…`, тело ≤ 128 КБ, документ ≤ 96 КБ, 60 запросов/мин на сайт,
 ≤ 200 изменений знаний в сутки на сайт; повтор той же подписи PUT/DELETE —
-409, повторять — с новой подписью);
+409, повторять — с новой подписью; заход 6: по IP ≤ 300 запросов/мин и
+≤ 30 неподписанных/мин на API знаний и вебхук целей вместе — 429
+`RATE_LIMITED`; PUT одного сайта — по очереди, ожидание > 20 с — 409
+`KNOWLEDGE_API_BUSY`, повторять с новой подписью);
 кабинет — `POST /assist/sites/:id/integrations/knowledge-api/secret`,
 `DELETE /assist/sites/:id/integrations/knowledge-api` (только владелец).
 
@@ -2310,6 +2313,7 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
 | CI (секреты репозитория) | `SITES_BACKEND_URL`, `ASSIST_LANDING_SITE_ID`, `ASSIST_KNOWLEDGE_API_KEY`, `LANDING_PUBLIC_URL` | джоба `assist-knowledge-sync` (пуш в ветку по умолчанию при изменении базы): без них — только проверка утечек, отправка «пропущено». `ASSIST_KNOWLEDGE_API_KEY` — ключ `knsec_…`, рантайму бэкенда НЕ нужен |
 | CI (переменная репозитория, `vars`) | `PLANS_BILLING_ENABLED` | то же значение, что у backend прода (§23): база тенанта собирается с ним (тарифы с ценами или «оплата выключена»). Не задана — как `false` |
 | sites-backend | `ASSIST_VIDEO_HOSTS` | хост Blob генератора (уже нужен Э6, §6.15) — иначе ролики лендинга не принимаются |
+| sites-backend | `ASSIST_INTERNAL_SITE_IDS` | id сайтов через запятую (= `ASSIST_LANDING_SITE_ID`): кабинет-владелец такого сайта — внутренний тариф (бессрочный `pro` без стопа единиц, оплата — 409 `INTERNAL_PLAN`); деньги держат суточные $-потолки сайта (по `pro` ≈ $12/сутки или ручная колонка) и платформы. Владелец кабинета берётся из базы, env кабинет не назначает |
 
 **Порядок (сначала тенант и знания, потом лендинг):**
 
@@ -2319,13 +2323,13 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
    пересборки лендинга; файл и мета-тег тоже работают). Хост мини-аппа
    генератора — в тот же сайт с использованием «Админка» (это Ш6,
    §6.24).
-2. **Тариф.** Видео в ответах — Business+ (`ASSIST_PLANS.video`); ручной
-   тариф `pro` на 365 дней во вкладке «Помощник» админки платформы
-   (`POST /internal/admin/assist/accounts/:id/plan`, способ `manual`; экран
-   `admin/` → «Помощник»). Расходы
-   идут в `site_ai_usage` тенанта; потолок дня сайта — как у всех
-   (`ASSIST_WIDGET_*`, §6.10). Отдельного внутреннего тарифа без мягкого
-   стопа нет — хвост, общий с Ш6.
+2. **Тариф.** sites-backend env `ASSIST_INTERNAL_SITE_IDS=<id сайта
+   тенанта>` → redeploy: кабинет тенанта получает внутренний тариф (`pro`
+   без срока и без стопа единиц; видео в ответах есть). Ручной `pro` в
+   админке («Помощник», `POST /internal/admin/assist/accounts/:id/plan`)
+   больше не нужен. Расходы идут в `site_ai_usage` тенанта; деньги держат
+   суточный потолок сайта и платформы (`ASSIST_WIDGET_*`, §6.10) — их не
+   отключает внутренний тариф.
 3. **Ключ API знаний.** TMA помощника → сайт → «Интеграции» → «API знаний»
    → «Выпустить секрет» (показывается один раз) → секрет репозитория
    `ASSIST_KNOWLEDGE_API_KEY`, плюс `ASSIST_LANDING_SITE_ID`,
@@ -2333,8 +2337,11 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
 4. **Знания.** Вручную один раз: `cd backend && SITES_BACKEND_URL=…
    ASSIST_LANDING_SITE_ID=… ASSIST_KNOWLEDGE_API_KEY=… LANDING_PUBLIC_URL=…
    npm run assist:knowledge-sync -- --apply` (без `--apply` — сухой прогон:
-   документы, размеры, проверка утечек). Документы `gen-kb-<локаль>` (5
-   языков) — в TMA «Знания» → источник «API знаний»; повтор — `unchanged`.
+   документы, размеры, проверка утечек). Документы `gen-kb-<локаль>` и
+   `gen-open-<локаль>` (5 языков, всего 10; `gen-open-*` — только при
+   `LANDING_PUBLIC_URL`, ссылка на страницу лендинга `/<локаль>/open`
+   «открыть приложение») — в TMA «Знания» → источник «API знаний»;
+   повтор — `unchanged`.
    Дальше — джоба CI на каждом изменении базы. Обход лендинга (источник
    «обход» сайта тенанта) включить как обычно — он даёт страницы с
    адресами для действий `link`.
@@ -2364,7 +2371,10 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
    `widgetCspSources`, сверку держит `landing/scripts/assist-widget.test.ts`).
    Бюджет JS: загрузчик вставляется после `load` + idle (или по первому
    взаимодействию), чат — только по клику; на первую отрисовку лендинга он
-   не влияет (Lighthouse до/после — у владельца).
+   не влияет (Lighthouse до/после — у владельца). First Load JS лендинга
+   держит CI: `npm run budget:js` (`landing/scripts/first-load-js.mjs`,
+   gzip 9; потолки — главная 116 КБ, «Как это работает» 118, обучалка 104,
+   остальные 106) — превышение роняет джобу `next-apps`.
 9. **Старый консультант** после переключения можно выключить в админке
    (`/settings` → консультант), удаление кода — после 30 дней ретенции
    журнала (хвост, `doc/TODO.md` I-М «Ш5-хвосты»).
@@ -2373,7 +2383,9 @@ WHERE "assistRole"='admin'` — ровно хосты из `adminHostIds`.
 платформы, вопрос «сколько стоит 25-секундный ролик» → ответ по базе;
 «Спросить об этом шаге» на «Как это работает» — вопрос уходит в виджет;
 «покажи видео про шаг 2» → ролик (если включён). TMA «Знания» → «API
-знаний»: 5 документов; «Интеграции» → «API знаний»: «Последний вызов».
+знаний»: 10 документов (`gen-kb-*` и `gen-open-*`); «Интеграции» → «API
+знаний»: «Последний вызов»; `/<локаль>/open` лендинга открывается (кнопки
+«Открыть в Telegram» / «Открыть в браузере»).
 
 **Откат.** `NEXT_PUBLIC_ASSIST_WIDGET=legacy` (или удалить) → redeploy
 лендинга — старый консультант на месте (его бэкенд и настройки не
@@ -2563,11 +2575,22 @@ sites-backend по HMAC (`/internal/worker/v1/*`) — входящих порт�
    запятую: `ip -4 -o addr show dev eth0 scope global` и
    `ip -6 -o addr show dev eth0 scope global` (IPv6 — подсетью `/64`). Без
    него воркер в production не стартует. Остальное — по умолчанию
-   (`BROWSER_WORKER_CONCURRENCY=2` под `mem_limit: 2g`).
+   (`BROWSER_WORKER_CONCURRENCY=2` под `mem_limit: 2g`;
+   `BROWSER_WORKER_MAX_JOB_TRAFFIC_MB=150` — жёсткий потолок трафика
+   задания, `BROWSER_WORKER_MAX_RESPONSE_MB=20` — мягкий потолок одного
+   ответа, отказ `traffic_limit`; `BROWSER_WORKER_DRAIN_MAX_MS=360000` —
+   сколько ждать опустения браузера перед ротацией, потом он закрывается
+   после своего последнего задания).
 5. **Запуск:** `docker compose up -d`; `docker compose ps` — `healthy`;
    `docker compose logs --tail=20` — строки «воркер запущен» и «браузер
    запущен» с `"sandbox":true`. Строка «Chromium не запустился (песочница…)»
-   и рестарты — ядро/seccomp не пускают песочницу (шаг 1).
+   и рестарты — ядро/seccomp не пускают песочницу (шаг 1). Профиль
+   `docker/seccomp-chromium.json` (07.10.2026) собран из умолчания moby
+   `moby/profiles` seccomp v0.2.4 скриптом `docker/seccomp-build.cjs` —
+   источник, отличия и обновление — `browser-worker/docker/README.md`.
+   Не стартует — `journalctl -k | grep -i seccomp`; на Ubuntu 23.10+ —
+   `kernel.apparmor_restrict_unprivileged_userns`; не хватает флага
+   `clone`/`unshare` — поправить `FORBIDDEN_NS` в сборщике и пересобрать.
 6. **Правила хоста (egress контейнера):** `sudo sh
    deploy/worker-egress-docker-user.sh` — план (ничего не меняет), затем
    `sudo sh deploy/worker-egress-docker-user.sh --apply`. Скрипт трогает
@@ -2619,7 +2642,15 @@ sites-backend по HMAC (`/internal/worker/v1/*`) — входящих порт�
      «Поставити в чергу» → через 1–3 мин статус «Готово · страниц: N»;
    - «Снимок» и сверка карты — пока только API
      (`POST /assist/sites/:id/voice-map/site/snapshots`,
-     `…/versions/:n/worker-check`; экраны TMA — хвост).
+     `…/versions/:n/worker-check`; экраны TMA — хвост);
+   - DNS (заход 6): Chromium запущен с `--dns-prefetch-disable` и
+     `--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1` —
+     страница с `<link rel=dns-prefetch href=//<уникальное имя>>` и
+     `tcpdump -i br-bworker port 53` во время задания: запроса этого имени
+     быть не должно;
+   - в журнале у заданий — `bytes`, при обрыве — «потолок трафика»; под
+     нагрузкой — «ротация браузера», в файле здоровья растёт `rotations`,
+     `forced` нет.
 10. **Свежесть Chromium:** раз в неделю на VPS (cron):
     `cd ~/browser-worker && git pull && docker compose build --pull && docker compose up -d`.
     Новый Chromium приходит с обновлением `playwright-core` в

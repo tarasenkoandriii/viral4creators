@@ -645,6 +645,14 @@ jobs:
         run: npx next build
         working-directory: ${{ matrix.app }}
 
+      # Ш5 (14): бюджет JS первой загрузки `landing/` (по образцу
+      # `sites-landing` `budget:js`): потолки маршрутов с запасом ≈ 10 %,
+      # превышение — отказ с разбором по чанкам. `--if-present` — у
+      # `admin/` бюджета нет (шаг общий для матрицы).
+      - name: бюджет JS первой загрузки
+        run: npm run budget:js --if-present
+        working-directory: ${{ matrix.app }}
+
   # Реле живого входа (Dokploy, не Vercel). До Э-С Ш0 его тесты не
   # запускал никто, кроме человека: в CI реле не было вовсе. С Ш0.2 в нём
   # фильтр исходящего трафика браузера — копия backend/src/common
@@ -746,16 +754,42 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+      # Повторный запуск СТАРОГО прогона (Re-run в Actions) отправил бы
+      # тенанту базу знаний того коммита и откатил бы свежую. Отправляем,
+      # только если коммит прогона — текущий HEAD ветки по умолчанию.
+      # HEAD — `git ls-remote` по origin: checkout оставил в git-конфиге
+      # стандартный GITHUB_TOKEN (contents: read), других токенов не нужно.
+      # Ветку не удалось прочитать — сбой джобы, а не отправка вслепую.
+      - name: прогон по текущему HEAD ветки по умолчанию?
+        id: head
+        env:
+          RUN_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          head=$(git ls-remote --exit-code origin "refs/heads/$DEFAULT_BRANCH" | cut -f1) || head=""
+          if [ -z "$head" ]; then
+            echo "::error::не удалось прочитать HEAD ветки $DEFAULT_BRANCH — знания не отправлены"
+            exit 1
+          fi
+          if [ "$head" = "$RUN_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Пропуск синхронизации знаний: прогон для $RUN_SHA, а HEAD $DEFAULT_BRANCH — $head (повторный запуск старого прогона не отправляет старую базу знаний; свежую отправит прогон HEAD)."
+          fi
       - uses: actions/setup-node@v4
+        if: steps.head.outputs.current == 'true'
         with:
           node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: backend/package-lock.json
       # Скрипту не нужны ни Prisma, ни база: чистая функция от файлов репо.
       - run: npm ci --ignore-scripts
+        if: steps.head.outputs.current == 'true'
         working-directory: backend
       # Без секретов — сухой прогон (проверка утечек), с ними — отправка.
       - name: синхронизация знаний (проверка утечек → отправка)
+        if: steps.head.outputs.current == 'true'
         run: npm run -s assist:knowledge-sync -- --apply
         working-directory: backend
         env:

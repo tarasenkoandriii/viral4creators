@@ -1,15 +1,17 @@
 import { useEffect } from 'react';
 import {
   GUIDE_ASSIST_SCRIPT_ID,
+  GUIDE_ENGINE_EVENT,
   GUIDE_IDENTITY_EVENT,
-  GUIDE_JWT_RETRY_MS,
   callAssist,
+  createGuideAssistController,
   loaderAttributes,
-  refreshDelayMs,
 } from '../lib/guide-assist';
 import {
+  forgetGuideEngineHint,
   getGuideAssistConfig,
   getGuideAssistIdentity,
+  guideEngineHint,
 } from '../services/guide-assist-api';
 
 /**
@@ -26,66 +28,51 @@ import {
  * остался на экране (аудит Ш6). При `legacy` не делает ничего — работает
  * старый гид.
  *
+ * `GET /guide-assist/config` — не на каждом старте (аудит Ш6): если на
+ * устройстве известно, что гид человека `legacy`, запроса нет. Гид
+ * приходит и в ответе гида проекта (`engine`, событие
+ * `GUIDE_ENGINE_EVENT`): `assist` — спросить `config` и запустить окно,
+ * `legacy` при работающем окне — `logout`. Логика —
+ * `createGuideAssistController` (lib/guide-assist.ts, под unit-скриптом).
+ *
  * Монтируется один раз на приложение: TMA — SPA, загрузчик живёт всю
  * сессию, а исполнитель «Админки» сам переживает смену экрана.
  */
 export function GuideAssistMount({ locale }: { locale: string }) {
   useEffect(() => {
-    let alive = true;
-    let run = 0;
-    let timer: number | undefined;
     const w = window as unknown as Record<string, unknown>;
-
-    const identify = async (my: number): Promise<void> => {
-      const id = await getGuideAssistIdentity();
-      if (!alive || my !== run) return;
-      if ('failure' in id) {
-        if (id.failure === 'off') {
-          callAssist(w, 'logout');
-          return;
-        }
-        timer = window.setTimeout(() => void identify(my), GUIDE_JWT_RETRY_MS);
-        return;
-      }
-      callAssist(w, 'identify-admin', id.jwt);
-      timer = window.setTimeout(
-        () => void identify(my),
-        refreshDelayMs(id.exp, Date.now())
-      );
-    };
-
-    const start = async (my: number): Promise<void> => {
-      const cfg = await getGuideAssistConfig();
-      if (!alive || my !== run || cfg.engine !== 'assist') return;
-      if (!document.getElementById(GUIDE_ASSIST_SCRIPT_ID)) {
+    const guide = createGuideAssistController({
+      getConfig: getGuideAssistConfig,
+      getIdentity: getGuideAssistIdentity,
+      hint: guideEngineHint,
+      forgetHint: forgetGuideEngineHint,
+      hasLoader: () => !!document.getElementById(GUIDE_ASSIST_SCRIPT_ID),
+      insertLoader: (cfg) => {
         const { src, attrs } = loaderAttributes(cfg, locale);
         const s = document.createElement('script');
         s.async = true;
         s.src = src;
         for (const [k, v] of Object.entries(attrs)) s.setAttribute(k, v);
         document.body.appendChild(s);
-      }
-      await identify(my);
-    };
+      },
+      call: (...args) => callAssist(w, ...args),
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (id) => window.clearTimeout(id),
+      now: () => Date.now(),
+    });
 
-    const onIdentityChanged = () => {
-      run += 1;
-      if (timer !== undefined) window.clearTimeout(timer);
-      timer = undefined;
-      // Загрузчика нет — гасить нечего (и заводить очередь `V4CAssist` зря).
-      if (document.getElementById(GUIDE_ASSIST_SCRIPT_ID)) {
-        callAssist(w, 'logout');
-      }
-      void start(run);
-    };
+    const onIdentityChanged = () => void guide.identityChanged();
+    const onEngine = (e: Event) =>
+      void guide.engineNews((e as CustomEvent<unknown>).detail);
 
     window.addEventListener(GUIDE_IDENTITY_EVENT, onIdentityChanged);
-    void start(run);
+    window.addEventListener(GUIDE_ENGINE_EVENT, onEngine);
+    void guide.start();
 
     return () => {
-      alive = false;
+      guide.dispose();
       window.removeEventListener(GUIDE_IDENTITY_EVENT, onIdentityChanged);
-      if (timer !== undefined) window.clearTimeout(timer);
+      window.removeEventListener(GUIDE_ENGINE_EVENT, onEngine);
     };
     // Язык окна выбирается при первой вставке загрузчика; переключение
     // языка мини-аппа не повод перезапускать помощника.
