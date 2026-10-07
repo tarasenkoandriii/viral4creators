@@ -152,8 +152,19 @@ export async function liveProviders(): Promise<Providers> {
   return {
     async classify(text) {
       if (!classifier) throw new Error('GEMINI_API_KEY не задан');
-      const register = await classifier.classify(text, 'greeting-eval');
-      return { register, micro: geminiMicro(tap.take()) };
+      const d = await classifier.classifyDetailed(text, 'greeting-eval');
+      const why =
+        d.register === null
+          ? [
+              d.why,
+              d.finishReason ? `finishReason=${d.finishReason}` : '',
+              d.thoughtsTokens ? `thoughts=${d.thoughtsTokens}` : '',
+              d.error ? d.error.slice(0, 80) : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
+          : undefined;
+      return { register: d.register, micro: geminiMicro(tap.take()), why };
     },
     async synthesize(text, lang, voiceId) {
       const r = await tts.synthesize({ text, language: lang, voiceId });

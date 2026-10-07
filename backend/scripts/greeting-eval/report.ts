@@ -198,6 +198,24 @@ export function summarize(result: RunResult): EvalSummary {
   return { classifier, stt, gates };
 }
 
+/** Пустые ответы классификатора, сгруппированные по причине. */
+function emptyReasons(rows: RunResult['classRows']): string[] {
+  const counts = new Map<string, number>();
+  for (const r of rows) {
+    if (r.predicted !== null) continue;
+    const key = r.why ?? 'причина не записана';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  if (!counts.size) return [];
+  return [
+    '',
+    'Пустые ответы по причинам:',
+    ...[...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `- ${n} × ${k}`),
+  ];
+}
+
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export function summaryMarkdown(
@@ -225,6 +243,7 @@ export function summaryMarkdown(
       '## Классификатор регистра «Особого повода» (§8.1)',
       '',
       `Описаний ${c.total}, верно ${c.correct} (${pct(c.accuracy)}). Без ответа: ${c.none.length}. Мягче эталона: ${c.softer.length}.`,
+      ...emptyReasons(result.classRows),
       '',
       ...Object.entries(c.byLanguage).map(
         ([lang, v]) =>

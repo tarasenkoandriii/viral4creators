@@ -14,6 +14,7 @@ jest.mock('../../common/gemini-client', () => ({
   createGeminiClient: () => ({ models: { generateContent } }),
 }));
 
+import { Logger } from '@nestjs/common';
 import { createHash, createHmac } from 'crypto';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import {
@@ -21,6 +22,7 @@ import {
   GreetingRegisterClassifier,
   parseRegisterAnswer,
   registerAnswerKey,
+  REGISTER_MAX_OUTPUT_TOKENS,
 } from './greeting-register-classifier.service';
 
 describe('parseRegisterAnswer', () => {
@@ -279,5 +281,56 @@ describe('память ответов классификатора', () => {
     expect(await svc.classify('юбилей части', 'u1')).toBe('SOLEMN');
     expect(generateContent).toHaveBeenCalledTimes(2);
     expect(Date.now() - store.get(k)!.createdAt.getTime()).toBeLessThan(day);
+  });
+
+  it('пустой ответ модели (MAX_TOKENS на размышлениях): причина в результате и в логе, без описания повода', async () => {
+    const { svc } = build();
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    generateContent.mockResolvedValue({
+      text: '',
+      candidates: [{ finishReason: 'MAX_TOKENS' }],
+      usageMetadata: { thoughtsTokenCount: 195 },
+    });
+    const d = await svc.classifyDetailed('похороны дедушки Ивана', 'u1');
+    expect(d).toMatchObject({
+      register: null,
+      why: 'empty-answer',
+      finishReason: 'MAX_TOKENS',
+      thoughtsTokens: 195,
+    });
+    const line = String(warn.mock.calls.at(-1)?.[0]);
+    expect(line).toMatch(/MAX_TOKENS/);
+    expect(line).not.toMatch(/дедушки|Ивана/);
+    warn.mockRestore();
+  });
+
+  it('потолок ответа — с запасом на размышления модели (не 200)', async () => {
+    const { svc } = build();
+    generateContent.mockResolvedValue({ text: 'MOURNING' });
+    await svc.classify('поминки', 'u1');
+    const cfg = generateContent.mock.calls[0][0].config;
+    expect(cfg.maxOutputTokens).toBe(REGISTER_MAX_OUTPUT_TOKENS);
+    expect(REGISTER_MAX_OUTPUT_TOKENS).toBeGreaterThanOrEqual(1024);
+  });
+
+  it('ответ из памяти и сбой сети различимы по why', async () => {
+    const { svc } = build();
+    generateContent.mockResolvedValueOnce({ text: 'SOLEMN' });
+    await svc.classify('юбилей части', 'u1');
+    expect(await svc.classifyDetailed('юбилей части', 'u1')).toMatchObject({
+      register: 'SOLEMN',
+      why: 'memory',
+    });
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+    generateContent.mockRejectedValueOnce(new Error('402 credits depleted'));
+    expect(await svc.classifyDetailed('выпускной', 'u1')).toMatchObject({
+      register: null,
+      why: 'error',
+    });
+    warn.mockRestore();
   });
 });

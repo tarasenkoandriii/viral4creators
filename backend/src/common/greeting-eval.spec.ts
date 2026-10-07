@@ -57,6 +57,10 @@ import {
   summaryMarkdown,
 } from '../../scripts/greeting-eval/report';
 import {
+  consoleHooks,
+  progressLine,
+} from '../../scripts/greeting-eval/progress';
+import {
   RATE,
   decodeWav,
   encodeWav,
@@ -557,5 +561,83 @@ describe('флаги и ключи', () => {
     expect(sttCostMicro({ phrase, engine: 'gemini' })).toBeGreaterThan(
       sttCostMicro({ phrase, engine: 'soniox' }),
     );
+  });
+});
+
+describe('диагностика живого прогона', () => {
+  it('строка прогресса: стадия, сделано/всего, время, остаток, расход, пустые, последний вызов', () => {
+    const line = progressLine(
+      {
+        stage: 'классификатор',
+        done: 50,
+        total: 250,
+        spentMicro: 45_000,
+        empty: 3,
+        lastMs: 1_400,
+      },
+      60_000,
+    );
+    expect(line).toMatch(/\[классификатор\] 50\/250/);
+    expect(line).toMatch(/прошло 1:00/);
+    expect(line).toMatch(/осталось ~4:00/);
+    expect(line).toMatch(/пустых ответов 3/);
+    expect(line).toMatch(/последний вызов 1\.4 с/);
+  });
+
+  it('консоль: старт стадии, первый и последний шаг всегда, долгий вызов — предупреждение', async () => {
+    const lines: string[] = [];
+    let t = 0;
+    const hooks = consoleHooks(
+      (l) => lines.push(l),
+      60_000,
+      () => t,
+    );
+    const providers = fakeProviders({
+      classify: async () => {
+        t += 1_000;
+        return { register: 'CELEBRATORY', micro: 5 };
+      },
+    });
+    const plan = buildPlan({
+      ...DEFAULT_OPTIONS,
+      limit: 3,
+      parts: ['classifier'],
+    });
+    await runEval(plan, providers, new Budget(10_000_000), undefined, hooks);
+    expect(lines[0]).toMatch(/Начинаю: классификатор/);
+    expect(lines.some((l) => l.includes(`1/${plan.classify.length}`))).toBe(
+      true,
+    );
+    expect(lines.at(-1)).toContain(
+      `${plan.classify.length}/${plan.classify.length}`,
+    );
+    hooks.waiting!('классификатор', 'm01.ru', 65_000);
+    expect(lines.at(-1)).toMatch(/ждём ответ на m01\.ru уже 65 с.*Ctrl\+C/);
+  });
+
+  it('отчёт группирует пустые ответы классификатора по причине', async () => {
+    const plan = buildPlan({
+      ...DEFAULT_OPTIONS,
+      limit: 3,
+      parts: ['classifier'],
+    });
+    const r = await runEval(
+      plan,
+      fakeProviders({
+        classify: async () => ({
+          register: null,
+          micro: 5,
+          why: 'empty-answer finishReason=MAX_TOKENS',
+        }),
+      }),
+      new Budget(10_000_000),
+    );
+    const md = summaryMarkdown(summarize(r), r, {
+      estimateMicro: 0,
+      capMicro: 0,
+      startedAt: 'x',
+    });
+    expect(md).toMatch(/Пустые ответы по причинам/);
+    expect(md).toMatch(/\d+ × empty-answer finishReason=MAX_TOKENS/);
   });
 });

@@ -48,9 +48,12 @@ export interface RecognizeRequest {
 export const CLASSIFIER_SILENT_LIMIT = 5;
 
 export interface Providers {
-  classify(
-    text: string,
-  ): Promise<{ register: GreetingRegister | null; micro: number }>;
+  classify(text: string): Promise<{
+    register: GreetingRegister | null;
+    micro: number;
+    /** Почему ответа нет: причина и `finishReason` модели. */
+    why?: string;
+  }>;
   synthesize(
     text: string,
     lang: SpeechLanguage,
@@ -90,6 +93,8 @@ export interface ClassRow {
   keyword: string | null;
   /** Итог цепочки без ответа человека: ключевые слова + классификатор. */
   pipeline: GreetingRegister;
+  /** Пустой ответ — почему (`empty-answer finishReason=MAX_TOKENS` и т.п.). */
+  why?: string;
 }
 
 export interface SttRow {
@@ -121,11 +126,54 @@ export interface RunResult {
   spentMicro: number;
 }
 
+/** Ход прогона — для строки прогресса (печатается всегда, не только с --verbose). */
+export interface ProgressEvent {
+  stage: 'классификатор' | 'синтез' | 'распознавание';
+  done: number;
+  total: number;
+  spentMicro: number;
+  /** Сколько ответов этой стадии пришли пустыми. */
+  empty: number;
+  /** Длительность последнего вызова, мс. */
+  lastMs: number;
+}
+
+export interface RunHooks {
+  progress?: (e: ProgressEvent) => void;
+  /** Вызов идёт дольше обычного: каждые `waitEveryMs` — сколько ждём. */
+  waiting?: (stage: ProgressEvent['stage'], label: string, ms: number) => void;
+  waitEveryMs?: number;
+}
+
+/** Ждёт вызов провайдера, сообщая о долгом ожидании; возвращает и время. */
+async function timed<T>(
+  hooks: RunHooks,
+  stage: ProgressEvent['stage'],
+  label: string,
+  call: () => Promise<T>,
+): Promise<{ value: T; ms: number }> {
+  const started = Date.now();
+  const every = hooks.waitEveryMs ?? 20_000;
+  const timer = hooks.waiting
+    ? setInterval(
+        () => hooks.waiting!(stage, label, Date.now() - started),
+        every,
+      )
+    : null;
+  try {
+    const value = await call();
+    return { value, ms: Date.now() - started };
+  } finally {
+    if (timer) clearInterval(timer);
+  }
+}
+
 export async function runEval(
   plan: EvalPlan,
   providers: Providers,
   budget: Budget,
   log: (line: string) => void = () => undefined,
+  hooks: RunHooks = {},
 ): Promise<RunResult> {
   const classRows: ClassRow[] = [];
   const sttRows: SttRow[] = [];
@@ -140,12 +188,27 @@ export async function runEval(
   // ответов подряд без расхода — модель не отвечает вовсе (неверный ключ,
   // нет сети): отчёт из одних «—» бесполезен, останавливаемся сразу.
   let silent = 0;
+  let classEmpty = 0;
   for (const t of plan.classify) {
     const est = classifyCostMicro(t.text);
     if (!budget.allows(est))
       return stop(`потолок: классификатор на ${t.id}.${t.lang}`);
-    const r = await providers.classify(t.text);
+    const { value: r, ms } = await timed(
+      hooks,
+      'классификатор',
+      `${t.id}.${t.lang}`,
+      () => providers.classify(t.text),
+    );
     budget.add(r.micro);
+    if (r.register === null) classEmpty++;
+    hooks.progress?.({
+      stage: 'классификатор',
+      done: classRows.length + 1,
+      total: plan.classify.length,
+      spentMicro: budget.spent,
+      empty: classEmpty,
+      lastMs: ms,
+    });
     silent = r.register === null && r.micro === 0 ? silent + 1 : 0;
     if (silent >= CLASSIFIER_SILENT_LIMIT)
       return stop(
@@ -159,6 +222,7 @@ export async function runEval(
       keyword: mourningKeyword(t.text),
       pipeline: resolveOtherRegister({ text: t.text, classifier: r.register })
         .register,
+      ...(r.register === null && r.why ? { why: r.why } : {}),
     });
     log(`класс ${t.id}.${t.lang}: ${t.label} → ${r.register ?? '—'}`);
   }
@@ -169,11 +233,22 @@ export async function runEval(
   for (const s of plan.synth) {
     const est = synthCostMicro(s.phrase.text);
     if (!budget.allows(est)) return stop(`потолок: синтез ${s.phrase.id}`);
-    const r = await providers.synthesize(s.phrase.text, s.phrase.lang, s.voice);
+    const { value: r, ms } = await timed(hooks, 'синтез', s.phrase.id, () =>
+      providers.synthesize(s.phrase.text, s.phrase.lang, s.voice),
+    );
     budget.add(r.micro);
     synthesized.set(voiceKey(s.phrase.id, s.voice), r.pcm);
+    hooks.progress?.({
+      stage: 'синтез',
+      done: synthesized.size,
+      total: plan.synth.length,
+      spentMicro: budget.spent,
+      empty: 0,
+      lastMs: ms,
+    });
   }
 
+  let sttEmpty = 0;
   for (const t of plan.stt) {
     const pcm = synthesized.get(voiceKey(t.phrase.id, t.voice));
     if (!pcm) continue;
@@ -193,11 +268,13 @@ export async function runEval(
     const est = sttCostMicro(t);
     if (!budget.allows(est))
       return stop(`потолок: распознавание ${t.phrase.id}`);
-    const first = await providers.recognize(t.engine, wav, {
-      hints,
-      names,
-      strict: false,
-    });
+    const sttLabel = `${t.engine} ${t.phrase.id}`;
+    const { value: first, ms: firstMs } = await timed(
+      hooks,
+      'распознавание',
+      sttLabel,
+      () => providers.recognize(t.engine, wav, { hints, names, strict: false }),
+    );
     budget.add(first.micro);
     let text = stripNonSpeech(first.text);
     let language = first.language ?? null;
@@ -205,11 +282,13 @@ export async function runEval(
     let reason = first.reason;
     if (text && needsScriptRetry(text, hints, language)) {
       if (!budget.allows(est)) return stop(`потолок: повтор ${t.phrase.id}`);
-      const again = await providers.recognize(t.engine, wav, {
-        hints,
-        names,
-        strict: true,
-      });
+      const { value: again } = await timed(
+        hooks,
+        'распознавание',
+        `${sttLabel} (повтор)`,
+        () =>
+          providers.recognize(t.engine, wav, { hints, names, strict: true }),
+      );
       budget.add(again.micro);
       retried = true;
       const second = stripNonSpeech(again.text);
@@ -236,6 +315,15 @@ export async function runEval(
       language: language ?? guessed,
       languageSource: language ? 'provider' : guessed ? 'letters' : null,
       ...(reason && !text ? { reason } : {}),
+    });
+    if (!text) sttEmpty++;
+    hooks.progress?.({
+      stage: 'распознавание',
+      done: sttRows.length,
+      total: plan.stt.length,
+      spentMicro: budget.spent,
+      empty: sttEmpty,
+      lastMs: firstMs,
     });
     log(
       `${t.engine} ${t.phrase.id} ${t.snr === null ? 'чисто' : `${t.noise}${t.snr}`}: ${text ?? `— (${reason ?? 'пусто'})`}`,

@@ -47,6 +47,7 @@ import {
   type Part,
 } from './plan';
 import { Budget, runEval } from './runner';
+import { consoleHooks } from './progress';
 import { gatePassed, summarize, summaryMarkdown } from './report';
 
 const USD = 1_000_000;
@@ -255,6 +256,9 @@ async function main(argv: string[]): Promise<number> {
       join(tmpdir(), `greeting-eval-${startedAt.replace(/[:.]/g, '-')}`),
   );
   mkdirSync(outDir, { recursive: true });
+  console.error(
+    'Живой прогон: каждый вызов — сетевой запрос к провайдеру, ход печатается ниже.',
+  );
   const { liveProviders } = await import('./providers');
   const budget = new Budget(capMicro);
   const result = await runEval(
@@ -262,6 +266,7 @@ async function main(argv: string[]): Promise<number> {
     await liveProviders(),
     budget,
     args.verbose ? (l) => console.log(l) : undefined,
+    consoleHooks(),
   );
   const summary = summarize(result);
   const md = summaryMarkdown(summary, result, {

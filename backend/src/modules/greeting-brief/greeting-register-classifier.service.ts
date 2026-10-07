@@ -55,6 +55,28 @@ export function buildRegisterPrompt(text: string): string {
 }
 
 /**
+ * Потолок ответа классификатора. Не 200: у моделей с размышлениями
+ * они входят в тот же потолок (см. `classifyDetailed`).
+ */
+export const REGISTER_MAX_OUTPUT_TOKENS = 1024;
+
+/** Ответ классификатора с причиной — для замера и лога. */
+export interface RegisterClassification {
+  register: GreetingRegister | null;
+  why:
+    | 'model'
+    | 'memory'
+    | 'empty-text'
+    | 'empty-answer'
+    | 'unparsable'
+    | 'error';
+  finishReason?: string | null;
+  thoughtsTokens?: number;
+  raw?: string;
+  error?: string;
+}
+
+/**
  * Разбор ответа: РОВНО одно название регистра во всём ответе — оно и
  * есть ответ; иначе `null`.
  *
@@ -152,32 +174,71 @@ export class GreetingRegisterClassifier {
     text: string | null | undefined,
     userId: string,
   ): Promise<GreetingRegister | null> {
+    return (await this.classifyDetailed(text, userId)).register;
+  }
+
+  /**
+   * То же, что `classify`, плюс разбор пустого ответа: почему модель не
+   * дала регистр (`finishReason`, сколько токенов ушло на размышления,
+   * начало сырого ответа). Нужен замеру (`npm run eval:greeting`) и логу:
+   * пустой ответ без исключения раньше не оставлял следов.
+   */
+  async classifyDetailed(
+    text: string | null | undefined,
+    userId: string,
+  ): Promise<RegisterClassification> {
     const t = (text ?? '').trim();
-    if (!t) return null;
+    if (!t) return { register: null, why: 'empty-text' };
     const textHash = registerAnswerKey(t);
     const known = textHash ? await this.recall(userId, textHash) : null;
-    if (known) return known;
+    if (known) return { register: known, why: 'memory' };
     try {
       const response = await this.genai.models.generateContent({
         model: GEMINI_MODEL,
         contents: [{ text: buildRegisterPrompt(t) }],
-        // Ответ — одно слово, но у моделей с размышлениями они тоже
-        // тратят этот бюджет; с потолком 20 ответ мог прийти пустым.
-        config: { temperature: 0, maxOutputTokens: 200 },
+        // Ответ — одно слово, но модели с размышлениями (gemini-3.x) тратят
+        // на них этот же потолок: при 200 замер 07.10.2026 дал 94 пустых
+        // ответа из 250 (MAX_TOKENS до первого слова ответа). Платится
+        // фактический расход, а не потолок.
+        config: { temperature: 0, maxOutputTokens: REGISTER_MAX_OUTPUT_TOKENS },
       });
       await this.aiUsage.recordGemini(response, {
         operation: 'greeting-register',
         model: GEMINI_MODEL,
         userId,
       });
-      const answer = parseRegisterAnswer(response.text);
+      const raw = response.text ?? '';
+      const answer = parseRegisterAnswer(raw);
+      const finishReason = response.candidates?.[0]?.finishReason ?? null;
+      const thoughts =
+        (response.usageMetadata as { thoughtsTokenCount?: number } | undefined)
+          ?.thoughtsTokenCount ?? 0;
       if (answer && textHash) await this.remember(userId, textHash, answer);
-      return answer;
+      if (!answer) {
+        const why = !raw.trim() ? 'empty-answer' : 'unparsable';
+        // Только служебное: ни описания повода, ни пользователя в лог.
+        this.logger.warn(
+          `классификатор регистра без ответа: ${why}, finishReason=${String(finishReason)}, thoughts=${thoughts}, raw=${JSON.stringify(raw.slice(0, 40))}`,
+        );
+        return {
+          register: null,
+          why,
+          finishReason: finishReason ? String(finishReason) : null,
+          thoughtsTokens: thoughts,
+          raw: raw.slice(0, 80),
+        };
+      }
+      return {
+        register: answer,
+        why: 'model',
+        finishReason: finishReason ? String(finishReason) : null,
+        thoughtsTokens: thoughts,
+      };
     } catch (e) {
       this.logger.warn(
         `классификатор регистра не ответил, продолжаю без него: ${String(e)}`,
       );
-      return null;
+      return { register: null, why: 'error', error: String(e).slice(0, 200) };
     }
   }
 
