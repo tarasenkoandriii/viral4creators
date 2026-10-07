@@ -180,6 +180,7 @@
       "title": "What it looks like",
       "lead": "Four screens, the whole loop. Below are interface schematics, not the interface itself — a real frame shows your site, and there is nowhere to get one here.",
       "leadReal": "Four screens — the whole cycle. These are real frames from the wizard; the site in them is our own, because we may not show someone else’s.",
+      "leadDemo": "Four screens, the whole loop. Below are schematics of the steps; the real interface is in the example videos under them — recorded on our own test site, because we never show other people’s sites.",
       "shotAlt": "Screenshot of the wizard",
       "items": [
         {

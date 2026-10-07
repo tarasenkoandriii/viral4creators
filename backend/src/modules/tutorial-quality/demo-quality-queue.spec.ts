@@ -84,6 +84,8 @@ describe('настройки из env', () => {
     const c = readDemoQualityConfig({});
     expect(c).toEqual({
       enabled: false,
+      frameSignals: false,
+      blockPublication: false,
       model: GEMINI_MODEL,
       dailyLimitMicroUsd: DEFAULT_DAILY_USD * 1_000_000,
       dailyVideoMs: DEFAULT_DAILY_VIDEO_MINUTES * 60_000,
@@ -98,9 +100,13 @@ describe('настройки из env', () => {
       TUTORIAL_DEMO_QUALITY_DAILY_USD: '0.25',
       TUTORIAL_DEMO_QUALITY_DAILY_VIDEO_MINUTES: '5',
       TUTORIAL_DEMO_QUALITY_BACKFILL_CAP: '1000',
+      TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS: 'on',
+      TUTORIAL_DEMO_QUALITY_BLOCK: 'yes',
     });
     expect(c).toEqual({
       enabled: true,
+      frameSignals: true,
+      blockPublication: true,
       model: 'gemini-2.5-pro',
       dailyLimitMicroUsd: 250_000,
       dailyVideoMs: 300_000,
@@ -122,6 +128,19 @@ describe('настройки из env', () => {
     expect(
       readDemoQualityConfig({ TUTORIAL_DEMO_QUALITY_ENABLED: 'ON' }).enabled,
     ).toBe(true);
+    // Флаги захода 7 — независимы от включения проверки и друг от друга.
+    const sig = readDemoQualityConfig({
+      TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS: '1',
+    });
+    expect([sig.frameSignals, sig.blockPublication, sig.enabled]).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(
+      readDemoQualityConfig({ TUTORIAL_DEMO_QUALITY_BLOCK: 'нет' })
+        .blockPublication,
+    ).toBe(false);
   });
 });
 

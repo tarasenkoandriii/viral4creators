@@ -17,14 +17,21 @@ import { AccountContextNote } from '../ui/AccountContextNote';
 export function AddSiteScreen({
   onCreated,
   onCancel,
+  initialHost,
 }: {
   onCreated: (siteId: string) => void;
   onCancel: () => void;
+  /**
+   * Ш1-хвост: хост из ссылки «подтвердить этот хост» (уже проверен
+   * `verifyHostFromStartParam`) — первой строкой и именем по умолчанию;
+   * сайт создаётся только кнопкой, хост — неподтверждённым.
+   */
+  initialHost?: string;
 }) {
   const { api, dict } = useKit();
   const t = dict.addSite;
-  const [name, setName] = useState('');
-  const [rows, setRows] = useState<string[]>(['']);
+  const [name, setName] = useState(initialHost ?? '');
+  const [rows, setRows] = useState<string[]>([initialHost ?? '']);
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

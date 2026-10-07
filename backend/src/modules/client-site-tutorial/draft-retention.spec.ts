@@ -12,8 +12,10 @@ import {
   DECIDED_FRAMES_RETENTION_DAYS,
   FRAMES_PURGE_BATCH,
   PENDING_REVIEW_WARN_DAYS,
+  SECRETS_PAGE,
   SECRETS_RETENTION_DAYS,
 } from './draft-retention';
+import { LOGIN_IDENTITY_WINDOW_DAYS } from './client-site-tutorial-usage.service';
 
 const NOW = new Date('2026-10-02T03:50:00Z');
 const daysAgo = (d: number) => new Date(NOW.getTime() - d * 86_400_000);
@@ -67,6 +69,10 @@ function matches(r: any, where: any): boolean {
     if (typeof cond === 'object') {
       if ('not' in cond) return cond.not === null ? v !== null : v !== cond.not;
       if ('gte' in cond && !(v !== null && v >= cond.gte)) return false;
+      if ('gt' in cond) return v !== null && v > cond.gt;
+      if ('startsWith' in cond) {
+        return String(v ?? '').startsWith(cond.startsWith);
+      }
       if ('lt' in cond) return v !== null && v < cond.lt;
       if ('in' in cond) return cond.in.includes(v);
     }
@@ -77,12 +83,20 @@ function matches(r: any, where: any): boolean {
 function fakePrisma(
   rows: Row[],
   assets: Array<{ clientSiteDraftId: string; assemblyStatus: string }>,
+  usage: Array<{ day: string; updatedAt: Date }> = [],
 ) {
   return {
     clientSiteTutorialDraft: {
-      findMany: jest.fn(async ({ where, take }: any) =>
-        rows.filter((r) => matches(r, where)).slice(0, take ?? Infinity),
-      ),
+      // Порядок — только если его попросили (`orderBy`): иначе — порядок
+      // вставки, как «без ORDER BY» у базы (П-Т20 ловится именно этим).
+      findMany: jest.fn(async ({ where, take, orderBy }: any) => {
+        const hit = rows.filter((r) => matches(r, where));
+        if (orderBy?.id === 'asc') hit.sort((a, b) => (a.id < b.id ? -1 : 1));
+        if (orderBy?.updatedAt === 'asc') {
+          hit.sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime());
+        }
+        return hit.slice(0, take ?? Infinity);
+      }),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const hit = rows.filter((r) => matches(r, where));
         for (const r of hit) Object.assign(r, data);
@@ -93,6 +107,15 @@ function fakePrisma(
       findMany: jest.fn(async ({ where }: any) =>
         assets.filter((a) => matches(a, where)),
       ),
+    },
+    clientSiteTutorialUsage: {
+      deleteMany: jest.fn(async ({ where }: any) => {
+        const before = usage.length;
+        for (let i = usage.length - 1; i >= 0; i--) {
+          if (matches(usage[i], where)) usage.splice(i, 1);
+        }
+        return { count: before - usage.length };
+      }),
     },
   };
 }
@@ -125,8 +148,9 @@ function retention(
   blob = fakeBlob([]),
   secrets?: any,
   notify?: { alert: jest.Mock },
+  usage: Array<{ day: string; updatedAt: Date }> = [],
 ) {
-  const prisma = fakePrisma(rows, assets);
+  const prisma = fakePrisma(rows, assets, usage);
   return {
     r: new ClientSiteDraftRetention(
       prisma as any,
@@ -450,5 +474,115 @@ describe('Э-С Ш2: данные входа в хранилище sites-backend
         expect.stringContaining('Сайт Ромашка'),
       );
     });
+  });
+});
+
+describe('П-Т20: выборки по секретам — по порядку и до конца', () => {
+  const pad = (i: number) => String(i).padStart(4, '0');
+
+  it(`«одноразово»: > ${SECRETS_PAGE} ещё не собранных впереди — собранный за ними всё равно стёрт`, async () => {
+    const waiting = Array.from({ length: SECRETS_PAGE + 100 }, (_, i) =>
+      row({ id: `a${pad(i)}`, secretsOneShot: true, status: 'APPROVED' }),
+    );
+    const built = row({
+      id: 'z-built',
+      secretsOneShot: true,
+      status: 'APPROVED',
+    });
+    // Собранный — В КОНЦЕ и по вставке, и по `id`: прежняя выборка «первые
+    // 500 без порядка» его не видела никогда.
+    const { r } = retention(
+      [...waiting, built],
+      [
+        { clientSiteDraftId: 'z-built', assemblyStatus: 'complete' },
+        { clientSiteDraftId: 'a0003', assemblyStatus: 'failed' },
+      ],
+    );
+    const res = await r.run(NOW);
+    expect(res.secretsOneShot).toBe(1);
+    expect(built.credentialsEnc).toBeNull();
+    expect(waiting.every((w) => w.credentialsEnc === 'enc-creds')).toBe(true);
+  });
+
+  it('«одноразово»: порядок вставки ≠ порядок id — страницы всё равно идут по id', async () => {
+    // База без ORDER BY отдаёт строки в любом порядке: здесь — обратном.
+    // Без `orderBy` вторая страница («id > последнего») повторила бы
+    // первую, и собранный с наименьшим id не нашёлся бы никогда.
+    const waiting = Array.from({ length: SECRETS_PAGE + 100 }, (_, i) =>
+      row({
+        id: `b${pad(SECRETS_PAGE + 100 - i)}`,
+        secretsOneShot: true,
+        status: 'APPROVED',
+      }),
+    );
+    const built = row({
+      id: 'b0000',
+      secretsOneShot: true,
+      status: 'APPROVED',
+    });
+    const { r } = retention(
+      [...waiting, built],
+      [{ clientSiteDraftId: 'b0000', assemblyStatus: 'complete' }],
+    );
+    const res = await r.run(NOW);
+    expect(res.secretsOneShot).toBe(1);
+    expect(built.credentialsEnc).toBeNull();
+  });
+
+  it(`«одноразово»: > ${SECRETS_PAGE} собранных — стёрты все за один прогон`, async () => {
+    const rows = Array.from({ length: SECRETS_PAGE * 2 + 7 }, (_, i) =>
+      row({ id: `b${pad(i)}`, secretsOneShot: true, status: 'APPROVED' }),
+    );
+    const { r } = retention(
+      rows,
+      rows.map((x) => ({
+        clientSiteDraftId: x.id,
+        assemblyStatus: 'complete',
+      })),
+    );
+    const res = await r.run(NOW);
+    expect(res.secretsOneShot).toBe(rows.length);
+    expect(rows.every((x) => x.credentialsEnc === null)).toBe(true);
+  });
+
+  it(`срок хранения: > ${SECRETS_PAGE} записей хранилища — стёрты все, а не первые ${SECRETS_PAGE}`, async () => {
+    const rows = Array.from({ length: SECRETS_PAGE + 50 }, (_, i) =>
+      row({
+        id: `c${pad(i)}`,
+        credentialsEnc: null,
+        cookiesEnc: null,
+        userSiteSessionId: `s${pad(i)}`,
+        secretsUsedAt: daysAgo(SECRETS_RETENTION_DAYS + 1),
+        roundVideoFrames: null,
+        framesPurgedAt: daysAgo(1),
+      }),
+    );
+    const secrets = fakeSecrets();
+    const { r } = retention(rows, [], fakeBlob([]), secrets);
+    await r.run(NOW);
+    expect(new Set(secrets.forgotten).size).toBe(rows.length);
+    expect(rows.every((x) => x.userSiteSessionId === null)).toBe(true);
+  });
+});
+
+describe('П-Т6: отметки «логин на хосте» убираются по окну', () => {
+  it('старше окна — удалены, свежие и обычные строки суток — на месте', async () => {
+    const old = {
+      day: 'li:aaa:bbb',
+      updatedAt: daysAgo(LOGIN_IDENTITY_WINDOW_DAYS + 1),
+    };
+    const fresh = {
+      day: 'li:aaa:ccc',
+      updatedAt: daysAgo(LOGIN_IDENTITY_WINDOW_DAYS - 1),
+    };
+    const dayRow = {
+      day: '2026-08-01',
+      updatedAt: daysAgo(LOGIN_IDENTITY_WINDOW_DAYS + 30),
+    };
+    const usage = [old, fresh, dayRow];
+    const { r } = retention([], [], fakeBlob([]), undefined, undefined, usage);
+    const res = await r.run(NOW);
+    expect(res.loginMarksExpired).toBe(1);
+    expect(usage).toEqual([fresh, dayRow]);
   });
 });

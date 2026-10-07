@@ -42,18 +42,62 @@ export function videoAllowedByPlan(planId: string | null): boolean {
   return isAssistPlanId(planId) && assistPlanAllows(planId, 'video');
 }
 
-/** Барьер 1: ролики ЭТОГО сайта, которые можно предложить посетителю. */
+/** Первичный язык метки (`uk`, `en-US` → `en`) или null. */
+function primaryLang(v: string | null | undefined): string | null {
+  const m = typeof v === 'string' ? /^([a-z]{2})(?:[-_]|$)/i.exec(v) : null;
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Ш5(5): порядок языков роликов для посетителя — язык ОТВЕТА (язык
+ * вопроса, `answerLangOf`), затем язык интерфейса виджета (`uiLang`), без
+ * повторов и мусора.
+ */
+export function videoLangPrefs(
+  answerLang: string | null | undefined,
+  uiLang?: string | null,
+): string[] {
+  const out: string[] = [];
+  for (const l of [answerLang, uiLang]) {
+    const p = primaryLang(l);
+    if (p && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * Барьер 1: ролики ЭТОГО сайта, которые можно предложить посетителю.
+ *
+ * Ш5(5): многоязычный тенант (генератор снимает до 5 языков на шаг) — в
+ * промпт (≤ `promptVideos`) СНАЧАЛА ролики на языках `prefer` (по порядку),
+ * затем остальные; внутри группы — стабильно (название, id). Читаются все
+ * доступные ролики сайта: строк не больше потолка синхронизации
+ * (`syncVideosMax` — набор генератора заменяется целиком), поля короткие, —
+ * один запрос, порядок — в памяти; без `prefer` — прежний порядок.
+ */
 export async function promptVideos(
   db: VideoDb,
   siteId: string,
+  prefer: readonly string[] = [],
 ): Promise<PromptVideo[]> {
   const rows = await db.assistSiteVideo.findMany({
     where: { siteId, enabled: true, requiresLogin: false },
     orderBy: [{ title: 'asc' }, { id: 'asc' }],
-    take: MEDIA_DEFAULTS.promptVideos,
+    take: MEDIA_DEFAULTS.syncVideosMax,
     select: { id: true, title: true, locale: true, durationMs: true },
   });
-  return rows.map((r, i) => ({
+  const langs = prefer
+    .map((l) => primaryLang(l))
+    .filter((l): l is string => !!l);
+  const rank = (locale: string) => {
+    const i = langs.indexOf(primaryLang(locale) ?? '');
+    return i < 0 ? langs.length : i;
+  };
+  // Array.prototype.sort стабильна (ES2019): внутри языка — порядок базы.
+  const ordered = langs.length
+    ? [...rows].sort((a, b) => rank(a.locale) - rank(b.locale))
+    : rows;
+  return ordered.slice(0, MEDIA_DEFAULTS.promptVideos).map((r, i) => ({
     ref: `V${i + 1}`,
     id: r.id,
     title: r.title,

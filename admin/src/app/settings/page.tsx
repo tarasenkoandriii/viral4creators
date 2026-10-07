@@ -66,6 +66,7 @@ import type {
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
 import UserBadge from '../../components/UserBadge';
+import SiteTutorialSettingsCard from '../../components/SiteTutorialSettingsCard';
 
 const PROVIDER_LABEL: Record<VoiceoverProviderKey, string> = {
   elevenlabs: 'ElevenLabs',
@@ -2029,6 +2030,7 @@ export default function SettingsPage() {
       <AudioSeparationCard />
       <TutorialVoiceCard />
       <TutorialLocalesCard />
+      <SiteTutorialSettingsCard />
       <AnalysisProviderCard />
       <VideoProviderCard />
       <GrokTransportCard />

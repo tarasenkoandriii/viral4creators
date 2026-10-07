@@ -69,9 +69,52 @@
  * Чего это НЕ делает: не мешает снять настоящий рендер один раз для
  * записи. Такой заход — отдельный режим, а не побочный эффект ночного
  * регресса; сегодня его нет, и §8 ТЗ это фиксирует.
+ *
+ * ## Платная кнопка не нажимается и БЕЗ маркера (заход 7, 07.10.2026)
+ *
+ * С захода 7 платные (`costly`) сценарии идут в ночную регрессию без
+ * одобрения оператора (решение по TODO «8/ru»). Гарантия «денег прогон
+ * не тратит» поэтому не может держаться на том, что маркер стоит на
+ * месте: валидатор шагов (`rejectUnknownSelectors`) требует его при
+ * генерации и ручной правке, но строки, записанные до валидатора, и
+ * правка базы мимо API исполнялись бы буквально. Клик по кнопке, которую
+ * каталог хуков помечает платной (`clickCost` — операция мастера или
+ * `forbidden`), пропускается ВСЕГДА, с маркером или без, и тоже
+ * попадает в `skippedPaidClicks`.
  */
 
+import { knownQaHook, QA_HOOKS } from '../tutorial-scenario/qa-hooks';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
+
+/**
+ * Любое упоминание `data-qa` в селекторе — не только канон
+ * `[data-qa="ключ"]`: `button[data-qa=video-generate]`,
+ * `[data-qa^='video-generate']`, составные селекторы через запятую.
+ */
+const LOOSE_QA_KEY = /data-qa\s*[~|^$*]?=\s*["']?([a-z0-9-]+)/gi;
+
+/**
+ * Клик по платной кнопке каталога хуков (`clickCost`) — независимо от
+ * маркера перед ним и от формы селектора (заход 7, аудит): платным
+ * считается клик, в селекторе которого назван ЛЮБОЙ платный ключ
+ * каталога. Канон проверяет ещё и валидатор шагов перед прогоном; разбор
+ * здесь — последняя страховка у самого клика.
+ */
+export function isPaidHookClick(step: ScenarioStep): boolean {
+  if (step.kind !== 'click') return false;
+  const canon = knownQaHook(step.selector);
+  if (canon !== null && QA_HOOKS[canon].clickCost !== undefined) return true;
+  for (const m of step.selector.matchAll(LOOSE_QA_KEY)) {
+    const key = m[1].toLowerCase();
+    if (
+      Object.prototype.hasOwnProperty.call(QA_HOOKS, key) &&
+      QA_HOOKS[key].clickCost !== undefined
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Минимальный интерфейс страницы, который нужен интерпретатору —
@@ -274,8 +317,9 @@ export async function runScenario(
     // и не ошибка шага, а сознательный пропуск, и он не должен
     // выглядеть как пройденное действие ни в кадрах, ни в счётчиках.
     if (
-      step.kind === 'click' &&
-      steps[i - 1]?.kind === 'triggerPaidOperation'
+      (step.kind === 'click' &&
+        steps[i - 1]?.kind === 'triggerPaidOperation') ||
+      isPaidHookClick(step)
     ) {
       skippedPaidClicks.push(i);
       results.push({ index: i, step, ok: true, skippedAsPaid: true });

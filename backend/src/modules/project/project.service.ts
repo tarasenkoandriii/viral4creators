@@ -59,6 +59,7 @@ import {
 import { isRecordNotFoundError } from '../../common/prisma-errors';
 import { activeRowPhotoUrl, SketchableRow } from '../../common/active-image';
 import { PlanService } from '../plan/plan.service';
+import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
 import { resolveGreetingConfig } from './greeting-config';
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import {
@@ -179,6 +180,14 @@ export class ProjectService {
      */
     @Optional()
     private readonly registerClassifier?: GreetingRegisterClassifier,
+    /**
+     * W7 (Э6-хвост): удаление проекта обучалки по сайту — пересылка набора
+     * роликов сайта помощника (ролик удалённого проекта из набора уходит:
+     * `collectVideos` берёт только проекты без `deletedAt`). Необязательный —
+     * тесты и сборки без модуля помощника его не дают.
+     */
+    @Optional()
+    private readonly clientSiteMedia?: ClientSiteMediaService,
   ) {
     this.lineItemLimit = loadConfiguration().project.lineItemLimit;
   }
@@ -486,10 +495,15 @@ export class ProjectService {
    */
   async deleteProject(userId: string, projectId: string): Promise<void> {
     await this.findOwnProject(userId, projectId);
+    // W7: сайт помощника черновика — до метки, набор — после (как при
+    // удалении черновика): после метки проект выпадает из набора.
+    const assistSite = await this.clientSiteMedia?.siteOfProject(projectId);
     await this.prisma.project.update({
       where: { id: projectId },
       data: { deletedAt: new Date() },
     });
+    // `syncSite` не бросает; сбой сети доберёт ночная сверка.
+    if (assistSite) await this.clientSiteMedia?.syncSite(assistSite);
   }
 
   /**

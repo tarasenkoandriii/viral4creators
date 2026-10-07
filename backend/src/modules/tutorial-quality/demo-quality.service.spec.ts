@@ -160,9 +160,20 @@ class FakeGemini extends DemoQualityGemini {
 let checks: FakeModel;
 let assets: FakeModel;
 let versions: FakeModel;
+let overrides: FakeModel;
+let ffmpeg: {
+  configured: jest.Mock;
+  submit: jest.Mock;
+  status: jest.Mock;
+};
+let aiRecord: jest.Mock;
 let gemini: FakeGemini;
 let blob: { downloadBuffer: jest.Mock };
-let aiUsage: { recordGemini: jest.Mock; spentTodayForOperation: jest.Mock };
+let aiUsage: {
+  recordGemini: jest.Mock;
+  spentTodayForOperation: jest.Mock;
+  record: jest.Mock;
+};
 let svc: TutorialDemoQualityService;
 
 function asset(over: Record<string, unknown> = {}) {
@@ -195,16 +206,26 @@ function setup() {
   delete process.env.TUTORIAL_DEMO_QUALITY_DAILY_VIDEO_MINUTES;
   delete process.env.TUTORIAL_DEMO_QUALITY_BACKFILL_CAP;
   delete process.env.TUTORIAL_DEMO_QUALITY_MODEL;
+  delete process.env.TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS;
+  delete process.env.TUTORIAL_DEMO_QUALITY_BLOCK;
   const clock = () => new Date(now);
   checks = new FakeModel('chk', CHECK_DEFAULTS, clock);
   assets = new FakeModel('asset', {}, clock);
   versions = new FakeModel('ver', {}, clock);
+  overrides = new FakeModel('ovr', {}, clock);
   assets.rows.push(asset());
   gemini = new FakeGemini();
   blob = { downloadBuffer: jest.fn(async () => BYTES) };
+  aiRecord = jest.fn(async () => undefined);
   aiUsage = {
     recordGemini: jest.fn(async () => undefined),
     spentTodayForOperation: jest.fn(async () => 0),
+    record: aiRecord,
+  };
+  ffmpeg = {
+    configured: jest.fn(() => true),
+    submit: jest.fn(async () => ({ jobId: 'job-s1', status: 'queued' })),
+    status: jest.fn(),
   };
   probeMock.mockReset();
   probeMock.mockReturnValue(GOOD_PROBE);
@@ -212,12 +233,14 @@ function setup() {
     tutorialDemoQualityCheck: checks,
     tutorialVideoAsset: assets,
     tutorialVideoVersion: versions,
+    tutorialDemoQualityOverride: overrides,
   };
   svc = new TutorialDemoQualityService(
     prisma as never,
     blob as never,
     gemini,
     aiUsage as never,
+    ffmpeg as never,
   );
   svc.clock = () => now;
   svc.sleep = async (ms: number) => {
@@ -278,7 +301,8 @@ describe('постановка в очередь', () => {
       locale: 'ru',
       captureBuild: 'build-1',
       durationMs: 10_000,
-      captureMode: null,
+      // Заход 7: режим съёмки — из полей ролика (штатная обучалка — TMA).
+      captureMode: 'tma',
     });
   });
 
@@ -1074,6 +1098,499 @@ describe('чтение для админки', () => {
   });
 });
 
+// ── заход 7 (07.10.2026) ─────────────────────────────────────────────
+
+/** Завершённая проверка файла ролика — для переопределения и блока. */
+function completeCheck(over: Record<string, unknown> = {}) {
+  const row = {
+    ...CHECK_DEFAULTS,
+    id: 'c1',
+    createdAt: new Date(T0 - 1000),
+    assetId: 'a1',
+    videoUrl: URL1,
+    trigger: 'assembly',
+    rubricVersion: DEMO_QUALITY_RUBRIC_VERSION,
+    modelId: GEMINI_MODEL,
+    locale: 'ru',
+    status: 'complete',
+    verdict: 'fail',
+    report: {
+      summary: 's',
+      issues: [],
+      scores: null,
+      missingEvidence: [],
+    },
+    durationMs: 10_000,
+    ...over,
+  };
+  checks.rows.push(row);
+  return row;
+}
+
+describe('режим съёмки и контрольные кадры (заход 7)', () => {
+  it('витрина демо обучающего лендинга — polygon', async () => {
+    assets.rows = [asset({ subjectKey: 'site-tutorial-demo-1' })];
+    await svc.enqueueAssembled('a1', BYTES);
+    expect(only().captureMode).toBe('polygon');
+  });
+
+  it('контрольные кадры исходника — снимки шагов с его таймкодами', async () => {
+    await svc.enqueueAssembled('a1', BYTES);
+    expect(only().controlFrames).toEqual([
+      {
+        stepIndex: 1,
+        startMs: 0,
+        endMs: 5000,
+        imageUrl: 'u1',
+        caption: 'Нажмите «Загрузить»',
+      },
+      {
+        stepIndex: 2,
+        startMs: 5000,
+        endMs: 10_000,
+        imageUrl: 'u2',
+        caption: 'Готово',
+      },
+    ]);
+    const view = (await svc.latestForAssets(['a1'])).checks.a1;
+    expect(view.controlFrames).toHaveLength(2);
+  });
+
+  it('версия темпа — кадры и таймкоды шагов по её плану, не по исходнику', async () => {
+    versions.rows.push({
+      id: 'v1',
+      assetId: 'a1',
+      kind: 'tempo',
+      tempoFactor: 0,
+      status: 'complete',
+      blobUrl: 'https://s/tutorial-videos/versions/a1/v1.mp4',
+      videoMs: 4_000,
+    });
+    await svc.enqueueByOperator('a1', 'op', 'v1');
+    const frames = only().controlFrames as Array<{ endMs: number }>;
+    // Множитель 0 — паузы сняты до пола (время чтения 2 с) у каждого шага.
+    expect(frames.map((f) => f.endMs)).toEqual([2000, 4000]);
+    probeMock.mockReturnValue({
+      durationSeconds: 4,
+      tracks: GOOD_PROBE.tracks.map((t) => ({
+        ...t,
+        durationSeconds: 4,
+        samples: t.kind === 'video' ? 120 : t.samples,
+      })),
+    });
+    await svc.processQueue();
+    expect(gemini.generate.mock.calls[0][0].prompt).toContain(
+      'step 2 [2.0s–4.0s]',
+    );
+  });
+
+  it('ролик собран с темпом пары, а версии нет (adopt сорвался) — таймкоды по его темпу', async () => {
+    assets.rows[0] = asset({
+      tempoManifest: {
+        ...MANIFEST,
+        appliedTempo: { factor: 0, fromVersionId: 'v-old' },
+      },
+    });
+    await svc.enqueueAssembled('a1', BYTES);
+    const frames = only().controlFrames as Array<{ endMs: number }>;
+    expect(frames.map((f) => f.endMs)).toEqual([2000, 4000]);
+  });
+
+  it('активная версия неизвестного темпа — без кадров (не наугад)', async () => {
+    assets.rows[0] = asset({ activeVersionId: 'v9' });
+    await svc.enqueueByOperator('a1', 'op');
+    expect(only().controlFrames).not.toEqual(expect.any(Array));
+  });
+
+  it('транзитные исходники — без кадров: ссылки умрут после уборки', async () => {
+    assets.rows[0] = asset({
+      tempoManifest: { ...MANIFEST, storage: 'transit' },
+    });
+    await svc.enqueueAssembled('a1', BYTES);
+    expect(only().controlFrames).not.toEqual(expect.any(Array));
+  });
+});
+
+describe('переопределение вердикта оператором (заход 7)', () => {
+  it('с причиной: итоговый вердикт, автор, время, журнал', async () => {
+    completeCheck();
+    const res = await svc.overrideVerdict('c1', 'op1', {
+      verdict: 'ok',
+      reason: '  шаг виден, модель ошиблась  ',
+    });
+    expect(res.check).toMatchObject({
+      verdict: 'fail',
+      effectiveVerdict: 'ok',
+      override: {
+        verdict: 'ok',
+        reason: 'шаг виден, модель ошиблась',
+        by: 'op1',
+        at: new Date(T0).toISOString(),
+      },
+    });
+    expect(overrides.rows).toHaveLength(1);
+    expect(overrides.rows[0]).toMatchObject({
+      checkId: 'c1',
+      assetId: 'a1',
+      fromVerdict: 'fail',
+      toVerdict: 'ok',
+      reason: 'шаг виден, модель ошиблась',
+      by: 'op1',
+    });
+    expect(res.overrides).toEqual([
+      expect.objectContaining({ fromVerdict: 'fail', toVerdict: 'ok' }),
+    ]);
+    // Снять — вернуть вердикт модели; это тоже строка журнала.
+    now += 60_000;
+    const back = await svc.overrideVerdict('c1', 'op2', {
+      verdict: null,
+      reason: 'вернуть вердикт модели',
+    });
+    expect(back.check).toMatchObject({
+      effectiveVerdict: 'fail',
+      override: null,
+    });
+    expect(overrides.rows).toHaveLength(2);
+    expect(overrides.rows[1]).toMatchObject({
+      fromVerdict: 'ok',
+      toVerdict: null,
+      by: 'op2',
+    });
+    expect((await svc.listOverrides('c1')).map((o) => o.by)).toEqual([
+      'op2',
+      'op1',
+    ]);
+  });
+
+  it('без причины, чужой вердикт, незавершённая проверка, нечего снимать — 400; нет — 404', async () => {
+    completeCheck();
+    completeCheck({ id: 'q', status: 'pending', verdict: null });
+    await expect(
+      svc.overrideVerdict('c1', 'op', { verdict: 'ok', reason: ' a ' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      svc.overrideVerdict('c1', 'op', { verdict: 'pass', reason: 'причина' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      svc.overrideVerdict('q', 'op', { verdict: 'ok', reason: 'причина' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      svc.overrideVerdict('c1', 'op', { verdict: null, reason: 'причина' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      svc.overrideVerdict('nope', 'op', { verdict: 'ok', reason: 'причина' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(overrides.rows).toHaveLength(0);
+    expect(checks.get('c1')!.overrideVerdict).toBeNull();
+  });
+});
+
+describe('блокировка публикации (заход 7)', () => {
+  it('флаг выключен (умолчание) — fail не блокирует', async () => {
+    completeCheck();
+    expect(await svc.publishBlockReason('a1')).toBeNull();
+    await expect(svc.assertPublishable('a1')).resolves.toBeUndefined();
+  });
+
+  it('флаг включён: fail этого файла — блок; переопределение снимает', async () => {
+    process.env.TUTORIAL_DEMO_QUALITY_BLOCK = '1';
+    completeCheck();
+    expect(await svc.publishBlockReason('a1')).toContain('fail');
+    await expect(svc.assertPublishable('a1')).rejects.toThrow(
+      'Публикация заблокирована',
+    );
+    await svc.overrideVerdict('c1', 'op', {
+      verdict: 'warn',
+      reason: 'дефект косметический',
+    });
+    expect(await svc.publishBlockReason('a1')).toBeNull();
+  });
+
+  it('флаг включён: решает ПОСЛЕДНЯЯ завершённая проверка именно этого файла', async () => {
+    process.env.TUTORIAL_DEMO_QUALITY_BLOCK = '1';
+    // fail у прежнего файла ролика — не про текущий.
+    completeCheck({ videoUrl: 'https://s/tutorial-videos/2/dark/old.mp4' });
+    expect(await svc.publishBlockReason('a1')).toBeNull();
+    // Свежая ok поверх старой fail того же файла — не блок.
+    completeCheck({ id: 'c0', createdAt: new Date(T0 - 5000) });
+    completeCheck({ id: 'c2', createdAt: new Date(T0 - 100), verdict: 'ok' });
+    expect(await svc.publishBlockReason('a1')).toBeNull();
+    // Проверка в работе или упавшая — не вердикт ролику.
+    checks.rows = [];
+    completeCheck({ status: 'error', verdict: null });
+    expect(await svc.publishBlockReason('a1')).toBeNull();
+  });
+
+  it('версия темпа — по файлу версии', async () => {
+    process.env.TUTORIAL_DEMO_QUALITY_BLOCK = '1';
+    versions.rows.push({
+      id: 'v1',
+      assetId: 'a1',
+      status: 'complete',
+      blobUrl: 'https://s/tutorial-videos/versions/a1/v1.mp4',
+    });
+    completeCheck({ videoUrl: 'https://s/tutorial-videos/versions/a1/v1.mp4' });
+    expect(await svc.publishBlockReason('a1', 'v1')).not.toBeNull();
+    expect(await svc.publishBlockReason('a1')).toBeNull();
+  });
+});
+
+describe('«вернуть обычный» и блок публикации (заход 7, аудит)', () => {
+  beforeEach(() => {
+    process.env.TUTORIAL_DEMO_QUALITY_BLOCK = '1';
+    versions.rows.push({
+      id: 'src',
+      assetId: 'a1',
+      kind: 'source',
+      status: 'complete',
+      blobUrl: 'https://s/tutorial-videos/2/dark/orig.mp4',
+    });
+    completeCheck({ videoUrl: 'https://s/tutorial-videos/2/dark/orig.mp4' });
+  });
+
+  it('одобренный ролик, исходный файл с fail — возврат заблокирован', async () => {
+    assets.rows[0] = asset({ reviewed: true });
+    await expect(svc.assertRevertPublishable('a1')).rejects.toThrow(
+      'Публикация заблокирована',
+    );
+  });
+
+  it('неодобренный ролик или флаг выключен — не блок', async () => {
+    await expect(svc.assertRevertPublishable('a1')).resolves.toBeUndefined();
+    assets.rows[0] = asset({ reviewed: true });
+    delete process.env.TUTORIAL_DEMO_QUALITY_BLOCK;
+    await expect(svc.assertRevertPublishable('a1')).resolves.toBeUndefined();
+  });
+
+  it('исходного файла нет (собран сразу с темпом) — не блок: возврат — новая сборка', async () => {
+    assets.rows[0] = asset({ reviewed: true });
+    versions.rows = [];
+    await expect(svc.assertRevertPublishable('a1')).resolves.toBeUndefined();
+  });
+});
+
+describe('файлы Gemini при удалении ролика (заход 7)', () => {
+  it('удаляются сразу, имя стирается; ролик не занят', async () => {
+    completeCheck({ providerFileName: 'files/left', providerFileUri: 'u' });
+    gemini.files.set('files/left', {
+      name: 'files/left',
+      state: 'ACTIVE',
+      uri: 'u',
+      mimeType: 'video/mp4',
+      error: null,
+    });
+    expect(await svc.releaseAssetFiles('a1')).toEqual({ busy: false });
+    expect(gemini.deleteFile).toHaveBeenCalledWith('files/left');
+    expect(checks.get('c1')).toMatchObject({
+      providerFileName: null,
+      providerFileUri: null,
+    });
+  });
+
+  it('живая аренда — ролик занят, файл не трогаем; истёкшая — не занят', async () => {
+    completeCheck({
+      status: 'running',
+      verdict: null,
+      leaseUntil: new Date(T0 + 60_000),
+      providerFileName: 'files/live',
+    });
+    expect(await svc.releaseAssetFiles('a1')).toEqual({ busy: true });
+    expect(gemini.deleteFile).not.toHaveBeenCalled();
+    checks.rows[0].leaseUntil = new Date(T0 - 1);
+    expect(await svc.releaseAssetFiles('a1')).toEqual({ busy: false });
+    expect(gemini.deleteFile).toHaveBeenCalledWith('files/live');
+  });
+
+  it('сбой Gemini или базы — не бросает', async () => {
+    completeCheck({ providerFileName: 'files/x' });
+    gemini.deleteFile.mockRejectedValueOnce(new Error('503'));
+    await expect(svc.releaseAssetFiles('a1')).resolves.toEqual({ busy: false });
+    checks.findMany.mockRejectedValueOnce(new Error('db down'));
+    await expect(svc.releaseAssetFiles('a1')).resolves.toEqual({ busy: false });
+  });
+});
+
+describe('чёрные и замершие кадры декодером (заход 7)', () => {
+  const SIGNALS_URL = 'https://ffmpeg.example/signals.txt';
+  let fetchSpy: jest.SpyInstance;
+  let signalsText = '';
+  beforeEach(() => {
+    process.env.TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS = '1';
+    signalsText = '';
+    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => signalsText,
+        }) as Response,
+    );
+  });
+  afterEach(() => fetchSpy.mockRestore());
+
+  async function checked() {
+    await svc.enqueueAssembled('a1', BYTES);
+    await svc.processQueue();
+    expect(only()).toMatchObject({ status: 'complete', verdict: 'ok' });
+  }
+
+  it('флаг выключен — не заказываются, денег нет', async () => {
+    delete process.env.TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS;
+    await checked();
+    await svc.processQueue();
+    expect(only().signalsStatus).toBeNull();
+    expect(ffmpeg.submit).not.toHaveBeenCalled();
+  });
+
+  it('заказ при завершении, отправка следующим шагом (расход в бюджет проверки), опрос, warn с таймкодом', async () => {
+    await checked();
+    // Тот же тик уже отправил задачу: очередь пуста, остаток времени есть.
+    expect(only()).toMatchObject({
+      signalsStatus: 'running',
+      signalsJobId: 'job-s1',
+    });
+    expect(ffmpeg.submit).toHaveBeenCalledTimes(1);
+    expect(ffmpeg.submit.mock.calls[0][0].inputs).toEqual({ video: URL1 });
+    expect(aiRecord).toHaveBeenCalledWith({
+      operation: 'tutorial-demo-quality',
+      model: 'ffmpeg-api',
+      userId: null,
+    });
+    ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'signals.txt': SIGNALS_URL },
+    });
+    signalsText = [
+      'lavfi.black_start=9.2',
+      'lavfi.black_end=10',
+      // Замер внутри шага (неподвижный слайд) — не дефект.
+      'lavfi.freezedetect.freeze_start=0.5',
+      'lavfi.freezedetect.freeze_end=4.8',
+    ].join('\n');
+    now += 30_000;
+    const res = await svc.processQueue();
+    expect(res.signals).toBe(1);
+    const r = only();
+    expect(r.signalsStatus).toBe('complete');
+    expect(r.verdict).toBe('warn');
+    const issues = (
+      r.report as { issues: Array<{ startMs: number; source: string }> }
+    ).issues;
+    expect(issues.filter((i) => i.source === 'server')).toEqual([
+      expect.objectContaining({ startMs: 9200, endMs: 10_000 }),
+    ]);
+    const view = (await svc.latestForAssets(['a1'])).checks.a1;
+    expect(view.signals).toMatchObject({
+      status: 'complete',
+      suspicious: [expect.objectContaining({ kind: 'black' })],
+      freeze: [{ startMs: 500, endMs: 4800 }],
+    });
+    expect(JSON.stringify(view)).not.toContain('job-s1');
+  });
+
+  it('ничего подозрительного — вердикт не меняется', async () => {
+    await checked();
+    ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'signals.txt': SIGNALS_URL },
+    });
+    signalsText =
+      'lavfi.freezedetect.freeze_start=0.5\nlavfi.freezedetect.freeze_end=4.5';
+    await svc.processQueue();
+    expect(only()).toMatchObject({ signalsStatus: 'complete', verdict: 'ok' });
+  });
+
+  it('задача упала — error сигналов, вердикт ролика не тронут', async () => {
+    await checked();
+    ffmpeg.status.mockResolvedValue({ status: 'failed', error: 'кодек' });
+    await svc.processQueue();
+    expect(only()).toMatchObject({ signalsStatus: 'error', verdict: 'ok' });
+    expect((await svc.latestForAssets(['a1'])).checks.a1.signals).toMatchObject(
+      { status: 'error', error: 'кодек' },
+    );
+  });
+
+  it('задача висит дольше 10 мин — error', async () => {
+    await checked();
+    ffmpeg.status.mockResolvedValue({ status: 'pending' });
+    await svc.processQueue();
+    expect(only().signalsStatus).toBe('running');
+    now += 11 * 60_000;
+    await svc.processQueue();
+    expect(only().signalsStatus).toBe('error');
+  });
+
+  it('бюджет проверки выбран — задача не отправляется', async () => {
+    await svc.enqueueAssembled('a1', BYTES);
+    await svc.processQueue();
+    expect(only().signalsStatus).toBe('running');
+    // Вторая проверка — уже за выбранным бюджетом.
+    checks.rows = [];
+    ffmpeg.submit.mockClear();
+    completeCheck({ verdict: 'ok', signalsStatus: 'pending' });
+    aiUsage.spentTodayForOperation.mockResolvedValue(10_000_000);
+    await svc.processQueue();
+    expect(ffmpeg.submit).not.toHaveBeenCalled();
+    expect(only().signalsStatus).toBe('pending');
+  });
+
+  it('тот же файл уже разобран декодером — копия без новой задачи; разбирается — ждём', async () => {
+    completeCheck({
+      id: 'old',
+      createdAt: new Date(T0 - 5000),
+      verdict: 'ok',
+      contentSha: 'sha-1',
+      signalsStatus: 'running',
+      signalsJobId: 'job-x',
+      signalsStartedAt: new Date(T0),
+    });
+    completeCheck({
+      id: 'copy',
+      verdict: 'ok',
+      contentSha: 'sha-1',
+      signalsStatus: 'pending',
+    });
+    ffmpeg.status.mockResolvedValue({ status: 'pending' });
+    await svc.processQueue();
+    // Старшая ещё разбирается — копия ждёт, второй задачи нет.
+    expect(ffmpeg.submit).not.toHaveBeenCalled();
+    expect(checks.get('copy')!.signalsStatus).toBe('pending');
+    checks.get('old')!.signalsStatus = 'complete';
+    checks.get('old')!.signals = {
+      black: [{ startMs: 9000, endMs: 10_000 }],
+      freeze: [],
+      suspicious: [],
+    };
+    await svc.processQueue();
+    expect(ffmpeg.submit).not.toHaveBeenCalled();
+    expect(checks.get('copy')).toMatchObject({
+      signalsStatus: 'complete',
+      verdict: 'warn',
+    });
+  });
+
+  it('журнал расходов упал после отправки — строка не в error, id задачи сохранён, расход дописывается следующим тиком', async () => {
+    aiRecord.mockRejectedValueOnce(new Error('ai_usage недоступна'));
+    await checked();
+    expect(only()).toMatchObject({
+      signalsStatus: 'running',
+      signalsJobId: 'job-s1',
+      signals: { usagePending: true },
+    });
+    ffmpeg.status.mockResolvedValue({ status: 'pending' });
+    await svc.processQueue();
+    expect(aiRecord).toHaveBeenCalledTimes(2);
+    expect(only().signals).not.toEqual({ usagePending: true });
+    expect(only().signalsStatus).toBe('running');
+  });
+
+  it('ffmpeg не настроен — не заказываются', async () => {
+    ffmpeg.configured.mockReturnValue(false);
+    await checked();
+    expect(only().signalsStatus).toBeNull();
+  });
+});
+
 // ── база в памяти ────────────────────────────────────────────────────
 
 type Row = Record<string, unknown>;
@@ -1124,6 +1641,9 @@ function matchField(value: unknown, cond: unknown): boolean {
           break;
         case 'gte':
           if (value == null || cmp(value, arg) < 0) return false;
+          break;
+        case 'gt':
+          if (value == null || cmp(value, arg) <= 0) return false;
           break;
         default:
           throw new Error(`fake prisma: оператор ${op} не поддержан`);
@@ -1287,4 +1807,13 @@ const CHECK_DEFAULTS: Row = {
   captureBuild: null,
   captureMode: null,
   checkedAt: null,
+  overrideVerdict: null,
+  overrideReason: null,
+  overrideBy: null,
+  overrideAt: null,
+  controlFrames: null,
+  signalsStatus: null,
+  signalsJobId: null,
+  signalsStartedAt: null,
+  signals: null,
 };

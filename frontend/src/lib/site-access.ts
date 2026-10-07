@@ -13,9 +13,13 @@
  * `consent.required` (дефект 3 аудита: раньше экран решал по `mode`).
  */
 import type {
+  AssistLinkCandidate,
+  AssistLinkState,
   ConsentLocale,
+  PageElement,
   SiteAccessReason,
   SiteAccessView,
+  StepClick,
 } from '../types/client-site-tutorial';
 
 /** Языки текста подтверждения — uk/ru/en; остальные видят английский. */
@@ -158,8 +162,81 @@ export type SiteAccessErrorKey =
   | 'verifyErrOptedOut'
   | 'verifyErrInvalid'
   | 'verifyErrGeneric'
+  | 'verifyErrRateLimited'
   | 'consentErrRequired'
-  | 'consentErrStale';
+  | 'consentErrStale'
+  | 'recordErrOptedOut'
+  | 'recordErrUnavailable'
+  | 'loginErrAttempts'
+  | 'loginErrIdentities'
+  | 'dangerErrConfirm';
+
+/** П-Т11: домен в реестре отказов — запись по нему запрещена (403). */
+export const SITE_OPTED_OUT = 'SITE_TUTORIAL_SITE_OPTED_OUT';
+/** П-Т9: выключатель или глобальный суточный потолок (503). */
+export const TUTORIAL_TEMPORARILY_UNAVAILABLE =
+  'SITE_TUTORIAL_TEMPORARILY_UNAVAILABLE';
+/** П-Т8: неудачные входы в час исчерпаны (429, `retryAfterMs`). */
+export const LOGIN_ATTEMPTS_EXCEEDED = 'SITE_TUTORIAL_LOGIN_ATTEMPTS_EXCEEDED';
+/** П-Т6: разные логины на сайт за 30 дней исчерпаны (429). */
+export const LOGIN_IDENTITIES_EXCEEDED =
+  'SITE_TUTORIAL_LOGIN_IDENTITIES_EXCEEDED';
+/** Ш1-хвост: «Это мой сайт» слишком часто (429, `retryAfterMs`). */
+export const VERIFY_SITE_RATE_LIMITED = 'SITE_TUTORIAL_VERIFY_RATE_LIMITED';
+/** П-Т13: «опасный» клик в режиме B без подтверждения (409). */
+export const DANGER_CONFIRM_REQUIRED = 'SITE_TUTORIAL_DANGER_CONFIRM_REQUIRED';
+
+const EXACT_CODES: ReadonlyMap<string, SiteAccessErrorKey> = new Map([
+  [ACCOUNT_CONSENT_REQUIRED, 'consentErrRequired'],
+  [ACCOUNT_CONSENT_STALE, 'consentErrStale'],
+  [SITE_OPTED_OUT, 'recordErrOptedOut'],
+  [TUTORIAL_TEMPORARILY_UNAVAILABLE, 'recordErrUnavailable'],
+  [LOGIN_ATTEMPTS_EXCEEDED, 'loginErrAttempts'],
+  [LOGIN_IDENTITIES_EXCEEDED, 'loginErrIdentities'],
+  [VERIFY_SITE_RATE_LIMITED, 'verifyErrRateLimited'],
+  [DANGER_CONFIRM_REQUIRED, 'dangerErrConfirm'],
+]);
+
+/**
+ * П-Т11: запись по этому сайту запрещена его владельцем (реестр отказов) —
+ * «Открыть» не ведёт никуда, экран говорит об этом сразу.
+ */
+export function recordingBlocked(access: SiteAccessView | null): boolean {
+  return !!access && access.mode === 'B' && access.reason === 'opted_out';
+}
+
+/**
+ * Текст отказа с `{minutes}` — минуты ожидания вверх, не меньше одной
+ * (`retryAfterMs` из конверта); нет срока — «несколько».
+ */
+export function withMinutes(
+  text: string,
+  retryAfterMs: number | null,
+  fallback = '…'
+): string {
+  const minutes =
+    retryAfterMs && retryAfterMs > 0
+      ? String(Math.max(1, Math.ceil(retryAfterMs / 60_000)))
+      : fallback;
+  return text.split('{minutes}').join(minutes);
+}
+
+/**
+ * Тело клика `/step` (П-Т13): селектор, видимый текст кнопки (сервер по
+ * нему решает, «опасный» ли клик; ≤ 300 символов — длиннее стоп-лист не
+ * читает) и `confirmDanger` — только после «Да, выполнить» в диалоге.
+ */
+export function stepClick(el: PageElement, confirmed: boolean): StepClick {
+  // `clickText` шлём ВСЕГДА (пусть пустой): его наличие — признак нового
+  // клиента для сервера (аудит захода 7, п.5а). Старый бандл поля не шлёт,
+  // и сервер по этому различает «уже подтвердил сам» и не упирается в 409.
+  const text = (el.visibleText ?? el.label ?? '').trim().slice(0, 300);
+  return {
+    clickSelector: el.selector,
+    clickText: text,
+    ...(confirmed ? { confirmDanger: true as const } : {}),
+  };
+}
 
 /** Префикс кодов отказа «Подтвердить сайт» (`/verify-site`). */
 const SITES_CODE_PREFIX = 'SITE_TUTORIAL_SITES_';
@@ -173,8 +250,8 @@ export function siteAccessErrorKey(
   code: string | null
 ): SiteAccessErrorKey | null {
   if (!code) return null;
-  if (code === ACCOUNT_CONSENT_REQUIRED) return 'consentErrRequired';
-  if (code === ACCOUNT_CONSENT_STALE) return 'consentErrStale';
+  const exact = EXACT_CODES.get(code);
+  if (exact) return exact;
   if (!code.startsWith(SITES_CODE_PREFIX)) return null;
   switch (code.slice(SITES_CODE_PREFIX.length)) {
     case 'NO_TELEGRAM':
@@ -191,4 +268,72 @@ export function siteAccessErrorKey(
     default:
       return 'verifyErrGeneric';
   }
+}
+
+/**
+ * Ответ `assist-link` (Э6-хвост, L6445; backend — пакет C) → состояние
+ * плашки. Терпит и прежний ответ (`{ clientSiteId, siteName }`): привязка
+ * видна, выбора нет. Мусор — «не привязано, привязать нельзя», а не
+ * падение экрана.
+ */
+export function normalizeAssistLink(raw: unknown): AssistLinkState {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const str = (v: unknown): string | null =>
+    typeof v === 'string' && v.length > 0 ? v : null;
+  const siteId = str(o.siteId) ?? str(o.clientSiteId);
+  const candidates: AssistLinkCandidate[] = Array.isArray(o.candidates)
+    ? o.candidates.flatMap((c: unknown) => {
+        const r = (c && typeof c === 'object' ? c : {}) as Record<
+          string,
+          unknown
+        >;
+        const id = str(r.siteId);
+        return id ? [{ siteId: id, name: str(r.name) ?? id }] : [];
+      })
+    : [];
+  const linked = typeof o.linked === 'boolean' ? o.linked : siteId !== null;
+  return {
+    linked,
+    siteId: linked ? siteId : null,
+    siteName: linked ? str(o.siteName) : null,
+    canLink: !linked && o.canLink === true && candidates.length > 0,
+    candidates,
+  };
+}
+
+/**
+ * Что показать на экране просмотра: `linked` — плашка «привязано к
+ * помощнику», `pick` — выбор кабинета-сайта и «Привязать», `hidden` —
+ * ничего (не знаем, или привязать некуда).
+ */
+export function assistLinkCardMode(
+  state: AssistLinkState | null
+): 'linked' | 'pick' | 'hidden' {
+  if (!state) return 'hidden';
+  if (state.linked) return 'linked';
+  return state.canLink ? 'pick' : 'hidden';
+}
+
+/**
+ * Переходная совместимость (аудит захода 7, п.5б; УБРАТЬ ПОСЛЕ 2026-11-06):
+ * новый фронтенд может попасть на ещё НЕ обновлённый backend (Vercel
+ * собирает фронт и API одновременно, сборка API может отстать на миграции).
+ * Старый `StepDto` с `forbidNonWhitelisted` отвечает 400 на поля
+ * `clickText`/`confirmDanger` («property clickText should not exist»).
+ * Эта чистая проверка узнаёт такой ответ по телу конверта — вызывающий
+ * повторит `/step` один раз без этих полей.
+ */
+export function stepFieldRejected(data: unknown, fields: string[]): boolean {
+  const text = (() => {
+    try {
+      return JSON.stringify(data ?? '');
+    } catch {
+      return '';
+    }
+  })();
+  if (!/should not exist/i.test(text)) return false;
+  return fields.some((f) => text.includes(f));
 }

@@ -16,6 +16,8 @@ import { AdminPersonaLookQuotaSettingsService } from './admin-persona-look-quota
 import { AdminAudioSeparationSettingsService } from './admin-audio-separation-settings.service';
 import { AdminTutorialVoiceSettingsService } from './admin-tutorial-voice-settings.service';
 import { AdminTutorialLocalesSettingsService } from './admin-tutorial-locales-settings.service';
+import { AdminSiteTutorialSettingsService } from './admin-site-tutorial-settings.service';
+import { AdminSiteTutorialSettingsController } from './admin-site-tutorial-settings.controller';
 import { AudioSeparationModule } from '../audio-separation/audio-separation.module';
 import { AdminMusicCatalogService } from './admin-music-catalog.service';
 import { ProviderBalancesService } from './provider-balances.service';
@@ -72,7 +74,12 @@ import { AdminAssistClient } from './admin-assist.client';
   ],
   // Э4 ИИ-помощника: вкладка «Помощник» — прокси к внутреннему API
   // sites-backend (без DSN схемы sites в генераторе).
-  controllers: [AdminPanelController, AdminAssistController],
+  // П-Т9 (заход 7): выключатель и суточные потолки обучалки по сайту.
+  controllers: [
+    AdminPanelController,
+    AdminAssistController,
+    AdminSiteTutorialSettingsController,
+  ],
   providers: [
     AdminAssistClient,
     AdminTesterInvitesService,
@@ -99,6 +106,7 @@ import { AdminAssistClient } from './admin-assist.client';
     AdminAudioSeparationSettingsService,
     AdminTutorialVoiceSettingsService,
     AdminTutorialLocalesSettingsService,
+    AdminSiteTutorialSettingsService,
     AdminMusicCatalogService,
     AdminAnalysisSettingsService,
     AdminVideoProviderSettingsService,

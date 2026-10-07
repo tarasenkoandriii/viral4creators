@@ -16,6 +16,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  OnModuleInit,
 } from '@nestjs/common';
 import { workerSealPublicKey } from '../../config/browser-worker-env';
 import {
@@ -28,7 +29,7 @@ import { SiteCredentialsService } from '../site-credentials/site-credentials.ser
 export const WORKER_ACTOR = 'browser-worker';
 
 @Injectable()
-export class InternalWorkerService {
+export class InternalWorkerService implements OnModuleInit {
   private readonly logger = new Logger(InternalWorkerService.name);
   env: NodeJS.ProcessEnv = process.env;
 
@@ -36,6 +37,20 @@ export class InternalWorkerService {
     private readonly jobs: BrowserJobsService,
     private readonly creds: SiteCredentialsService,
   ) {}
+
+  /**
+   * Ш3-хвост (7): хранилище Ш2 запечатывает секреты учёток «только для
+   * воркера» (продукт — ровно `assist-admin`) под его открытый ключ уже при
+   * записи. Само хранилище `worker-seal` не импортирует (правило графа
+   * `worker-seal-private`) — запечатывание подключает канал воркера.
+   * Ключ читается на каждой записи: нет ключа — запись под KEK, как раньше.
+   */
+  onModuleInit(): void {
+    this.creds.useWorkerSealer({
+      publicKey: () => workerSealPublicKey(this.env),
+      seal: (pub, plaintext, aad) => sealForWorker(pub, plaintext, aad),
+    });
+  }
 
   async credentials(
     jobId: string,
@@ -52,13 +67,15 @@ export class InternalWorkerService {
     const ctx = await this.jobs.markCredentialsIssued(jobId, token);
     let secrets: Awaited<ReturnType<SiteCredentialsService['redeem']>>;
     try {
+      // Продукт аренды — по заданию: обход «Админки» (`assist-admin-login`)
+      // или раунд обучалки со входом учёткой реестра (`tutorial-login`).
       const lease = await this.creds.lease(ctx.accountId, {
         testAccountId: ctx.testAccountId,
-        product: 'assist-admin',
+        product: ctx.product,
         hostId: ctx.hostId,
         actor: WORKER_ACTOR,
         runRef: `bjob:${jobId}`,
-        channel: 'assist-admin',
+        channel: ctx.product,
       });
       secrets = await this.creds.redeem(
         ctx.accountId,
@@ -81,6 +98,12 @@ export class InternalWorkerService {
         password: secrets.secrets.password ?? null,
         loginFields: secrets.secrets['login-fields'] ?? null,
         sessionCookies: secrets.secrets['session-cookies'] ?? null,
+        // Ш3-хвост (7): запечатанное при записи — как есть, открывает воркер.
+        stored: (secrets.sealed ?? []).map((x) => ({
+          purpose: x.purpose,
+          sealed: x.sealed,
+          aad: x.aad,
+        })),
       }),
       'utf8',
     );

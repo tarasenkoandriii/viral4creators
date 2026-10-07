@@ -143,5 +143,83 @@ describe('протокол очереди браузерного воркера'
     expect(RETRYABLE_ERRORS.has('traffic_limit')).toBe(false);
     expect([1, 2, 3].map(retryDelayMs)).toEqual([30_000, 60_000, 120_000]);
     expect(retryDelayMs(20)).toBe(10 * 60_000);
+    // Раунд обучалки (Ш3-хвост (3)): отказ стоп-листа и «нет цели» — без
+    // повтора (повтор нажал бы кнопку второй раз).
+    expect(isWorkerErrorCode('click_refused')).toBe(true);
+    expect(RETRYABLE_ERRORS.has('click_refused')).toBe(false);
+    expect(RETRYABLE_ERRORS.has('target_missing')).toBe(false);
+  });
+
+  it('tutorial-explore: ≤ 1 клик CSS, ввод — только конвертами; сессия — конвертом; ≤ 4 хоста замка', () => {
+    const p = {
+      url: 'https://shop.example.com/cart',
+      allowedHosts: ['shop.example.com', 'www.example.com'],
+      allowedOrigin: 'https://www.example.com',
+      viewport: 'mobile',
+      clicks: ['a[aria-label="Кошик"]'],
+      fills: [],
+      replay: null,
+      login: null,
+      session: null,
+      replyKey: 'k'.repeat(43),
+      nonce: 'n'.repeat(22),
+      videoFrame: false,
+    };
+    expect(parseJobParams('tutorial-explore', p)).toEqual(p);
+    expect(() =>
+      parseJobParams('tutorial-explore', { ...p, actions: [] }),
+    ).toThrow(ProtocolError);
+    expect(() =>
+      parseJobParams('tutorial-explore', { ...p, clicks: ['text=Купити'] }),
+    ).toThrow(/clicks/);
+    expect(() =>
+      parseJobParams('tutorial-explore', { ...p, session: 'sid=1' }),
+    ).toThrow(/session/);
+    expect(() =>
+      parseJobParams('tutorial-explore', { ...p, replyKey: 'short' }),
+    ).toThrow(/replyKey/);
+    expect(() =>
+      parseJobParams('tutorial-explore', {
+        ...p,
+        allowedHosts: [
+          ...p.allowedHosts,
+          'm.example.com',
+          'a.example.com',
+          'b.example.com',
+        ],
+      }),
+    ).toThrow(/allowedHosts/);
+    const r = parseJobResult(
+      'tutorial-explore',
+      parseJobParams('tutorial-explore', p),
+      {
+        currentUrl: 'https://www.example.com/cart?id=5#x',
+        elements: [],
+        looksLikeLogin: true,
+        screenshot: 0,
+        videoFrame: null,
+        reply: null,
+        sensitiveFill: false,
+        autoLogin: null,
+      },
+    ) as { currentUrl: string };
+    // Аудит захода 7: query (ПД) — только в конверте ответа.
+    expect(r.currentUrl).toBe('https://www.example.com/cart');
+  });
+
+  it('frames-capture: `image` — jpeg | png2x, старые параметры без него — как раньше', () => {
+    const f = {
+      url: 'https://shop.example.com/',
+      allowedHosts: ['shop.example.com'],
+      viewport: 'mobile',
+      frames: 2,
+    };
+    expect(parseJobParams('frames-capture', f)).toEqual(f);
+    expect(
+      parseJobParams('frames-capture', { ...f, image: 'png2x' }),
+    ).toMatchObject({ image: 'png2x' });
+    expect(() =>
+      parseJobParams('frames-capture', { ...f, image: 'webp' }),
+    ).toThrow(/image/);
   });
 });

@@ -19,6 +19,8 @@ import { InternalSitesController } from './internal-sites.controller';
 import { InternalSitesService } from './internal-sites.service';
 import { InternalRequestLedger } from './request-ledger';
 import { TutorialHmacGuard } from './tutorial-hmac.guard';
+import { TutorialExploreController } from './tutorial-explore.controller';
+import { TutorialExploreService } from './tutorial-explore.service';
 
 @Module({
   imports: [SiteCoreModule, SiteCredentialsModule, BrowserJobsModule],
@@ -26,11 +28,14 @@ import { TutorialHmacGuard } from './tutorial-hmac.guard';
     InternalSitesController,
     InternalCredentialsController,
     InternalFramesController,
+    // Ш3-хвост (3): раунд исследователя обучалки на воркере.
+    TutorialExploreController,
   ],
   providers: [
     InternalSitesService,
     InternalCredentialsService,
     InternalFramesService,
+    TutorialExploreService,
     InternalRequestLedger,
     TutorialHmacGuard,
   ],

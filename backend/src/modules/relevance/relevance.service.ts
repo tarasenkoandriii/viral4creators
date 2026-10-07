@@ -15,6 +15,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import { createGeminiClient } from '../../common/gemini-client';
@@ -29,6 +30,8 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { languageNameForLocale, normalizeLocale } from '../../common/locale';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { PrismaService } from '../../prisma/prisma.service';
+import { fixtureRelevanceState } from './fixture-relevance';
 
 const MODEL = GEMINI_MODEL;
 
@@ -41,6 +44,9 @@ export class RelevanceService {
     private readonly sessions: SessionService,
     private readonly plans: PlanService,
     private readonly aiUsage: AiUsageService,
+    // Страховка ночной регрессии (заход 7): пользователь фикстуры не ходит
+    // в Gemini. Необязателен — тесты без базы работают как раньше.
+    @Optional() private readonly prisma?: PrismaService,
   ) {
     this.genai = createGeminiClient();
   }
@@ -53,6 +59,18 @@ export class RelevanceService {
   /** Needs a finished analysis and a product; everything else is optional and reported in `inputs`. */
   async run(sessionId: string): Promise<RelevanceState> {
     const session = await this.load(sessionId);
+    // Тестовый аккаунт фикстуры обучалки (`FIXTURE_TELEGRAM_ID` +
+    // `isTestUser`): готовый отчёт фикстуры вместо платного вызова —
+    // `RelevancePanel` зовёт `run` сам при открытии, а сценарный прогон
+    // открывает его каждую ночь (аудит захода 7).
+    if (await this.isFixtureUser(session.userId ?? null)) {
+      const state = fixtureRelevanceState();
+      await this.sessions.updateSession(sessionId, { relevance: state });
+      this.logger.log(
+        `Relevance for fixture session ${sessionId}: fixture report, no Gemini call`,
+      );
+      return state;
+    }
     // §23: проверка релевантности — от Standard и выше.
     await this.plans.assertCanSpendUser(session.userId ?? null, {
       projectId: session.projectId ?? null,
@@ -121,6 +139,22 @@ export class RelevanceService {
     };
     await this.sessions.updateSession(sessionId, { relevance: state });
     return state;
+  }
+
+  /** Пользователь фикстуры обучалки: тот, на кого указывает
+   *  `FIXTURE_TELEGRAM_ID`, и только если он тестовый. Сбой чтения — нет. */
+  private async isFixtureUser(userId: string | null): Promise<boolean> {
+    const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
+    if (!userId || !telegramId || !this.prisma) return false;
+    try {
+      const user = (await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { telegramId: true, isTestUser: true },
+      })) as { telegramId: string | null; isTestUser: boolean } | null;
+      return !!user?.isTestUser && user.telegramId === telegramId;
+    } catch {
+      return false;
+    }
   }
 
   private async load(sessionId: string): Promise<Session> {

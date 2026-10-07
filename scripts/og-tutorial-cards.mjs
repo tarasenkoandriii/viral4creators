@@ -85,9 +85,21 @@ const FONTS = [
   fontFace('InterOg', 700, 'cyrillic'),
 ].join('');
 
-const SHOT = read('landing/public/illustrations/tutorial-hero.svg').toString(
-  'base64',
-);
+/**
+ * Кадр карточки — тот же растровый AVIF, что в первом экране страницы
+ * (`landing/public/illustrations/tutorial-hero-v2.avif`, 07.10.2026): прежний
+ * SVG-исходник удалён вместе с SVG-hero, и карточка больше не показывает
+ * картинку, которой на странице нет. Chromium декодирует AVIF сам (с
+ * v85), конвертер для этого не нужен. Сигнатура проверяется: под тем же
+ * именем случайно положенный PNG дал бы битую картинку на карточке.
+ */
+const SHOT_FILE = 'landing/public/illustrations/tutorial-hero-v2.avif';
+const SHOT_BYTES = read(SHOT_FILE);
+if (SHOT_BYTES.subarray(4, 12).toString('latin1') !== 'ftypavif') {
+  console.error(`${SHOT_FILE}: не AVIF`);
+  process.exit(1);
+}
+const SHOT = SHOT_BYTES.toString('base64');
 
 function escapeHtml(s) {
   return s.replace(
@@ -149,7 +161,7 @@ h1{margin-top:26px;font-weight:700;letter-spacing:-.022em;line-height:1.1;
   <h1>${escapeHtml(title)}</h1>
   <div class="badge">${escapeHtml(badge)}</div>
 </div>
-<div class="shot"><img src="data:image/svg+xml;base64,${SHOT}" alt=""></div>
+<div class="shot"><img src="data:image/avif;base64,${SHOT}" alt=""></div>
 <script>
 /* Автоподгонка кегля. Заголовки в пяти языках разной длины, немецкий
    длиннее всех. Вместо того чтобы подбирать размер на глаз под самый

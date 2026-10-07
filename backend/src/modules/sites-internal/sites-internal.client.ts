@@ -136,6 +136,13 @@ export interface SitesSiteLink {
   hosts: string[];
 }
 
+/** W7: сайт, к которому можно привязать черновик (`site-candidates`). */
+export interface SitesSiteCandidate {
+  siteId: string;
+  name: string;
+  hosts: string[];
+}
+
 /** Э6: ролик для полного набора сайта (`site-videos`). */
 export interface SitesVideoInput {
   externalId: string;
@@ -158,11 +165,46 @@ export interface SitesVideoSyncResult {
   stale?: boolean;
 }
 
-/** Э6: элемент карты интерфейса (sites-backend пересчитает id и почистит). */
+/** Ш4: роль ARIA элемента карты (закрытый список sites-backend `UI_ROLES`). */
+export type SitesUiRole =
+  | 'button'
+  | 'link'
+  | 'textbox'
+  | 'searchbox'
+  | 'combobox'
+  | 'checkbox'
+  | 'radio'
+  | 'switch'
+  | 'tab'
+  | 'menuitem'
+  | 'option'
+  | 'listbox'
+  | 'spinbutton'
+  | 'slider';
+
+/** Ш4: кандидат селектора (`cleanCandidate` sites-backend). */
+export type SitesUiCandidate =
+  | { kind: 'text'; name: string }
+  | { kind: 'role-name'; role: SitesUiRole; name: string; selector?: string }
+  | {
+      kind: 'assist-id' | 'id' | 'test-id' | 'attr' | 'css';
+      selector: string;
+    };
+
+/** Вид вёрстки снимка карты (`desktop | mobile | any`). */
+export type SitesUiViewport = 'desktop' | 'mobile' | 'any';
+
+/**
+ * Э6: элемент карты интерфейса (sites-backend пересчитает id и почистит).
+ * Ш4(5): роль и кандидаты — по желанию (`site-core/ui-map/ui-map-model.ts`
+ * `cleanUiSnapshot`: незнакомую роль и кривой кандидат он отбрасывает).
+ */
 export interface SitesUiElementInput {
   selector: string;
   tag: string;
   label: string;
+  role?: SitesUiRole;
+  candidates?: SitesUiCandidate[];
 }
 
 export class SitesNotConfiguredError extends Error {
@@ -483,6 +525,22 @@ export class SitesInternalClient {
   }
 
   /**
+   * W7: сайты помощника, к которым человек может привязать черновик с
+   * хостом `host` (владелец/менеджер помощника, хост подтверждён у сайта).
+   * Чужие не раскрываются — пустой список.
+   */
+  siteCandidates(
+    telegramId: string,
+    host: string,
+  ): Promise<{ sites: SitesSiteCandidate[] }> {
+    return this.post<{ sites: SitesSiteCandidate[] }>(
+      '/internal/sites/tutorial/site-candidates',
+      { telegramId, host },
+      STATUS_TIMEOUT_MS,
+    );
+  }
+
+  /**
    * Полный набор одобренных роликов сайта (замена на стороне sites-backend).
    * `asOf` — отметка набора (мс, взята ДО чтения базы): набор старше уже
    * принятого sites-backend отвергает (`stale: true`), не меняя ничего.
@@ -499,16 +557,21 @@ export class SitesInternalClient {
     );
   }
 
-  /** Карта интерфейса страницы из раунда обучалки (источник `tutorial`). */
+  /**
+   * Карта интерфейса страницы из раунда обучалки (источник `tutorial`).
+   * Ш4(5): `viewport` — вид вёрстки окна исследователя; без него
+   * sites-backend берёт умолчание обучалки (`mobile`).
+   */
   pushUiMap(
     telegramId: string,
     siteId: string,
     url: string,
     elements: SitesUiElementInput[],
+    viewport?: SitesUiViewport,
   ): Promise<{ siteId: string; path: string; elements: number }> {
     return this.post(
       '/internal/sites/tutorial/ui-map',
-      { telegramId, siteId, url, elements },
+      { telegramId, siteId, url, elements, ...(viewport ? { viewport } : {}) },
       STATUS_TIMEOUT_MS,
     );
   }

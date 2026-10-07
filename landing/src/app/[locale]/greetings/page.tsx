@@ -4,6 +4,7 @@ import { Fragment, type ReactNode } from 'react';
 import { Faq } from '../../../components/Faq';
 import { GreetingSampleGallery } from '../../../components/GreetingSampleGallery';
 import { TutorialDemoGallery } from '../../../components/TutorialDemoGallery';
+import { HeroPicture } from '../../../components/HeroPicture';
 import { IllustrationIcon } from '../../../components/IllustrationIcon';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../../lib/i18n';
@@ -152,7 +153,6 @@ export default function GreetingsLandingPage({
   const ctaHref = browserEntryLink('greetings', TMA_URL);
   /** Сняты ли для локали настоящие кадры — см. `lib/greeting-frames.ts`. */
   const realFrames = greetingFramesAreReal(locale);
-  const hero = { src: '/illustrations/greetings-hero-v2.avif', width: 1536, height: 1024 };
 
   /**
    * Каждая секция — по своему идентификатору из `lib/greeting-sections.ts`.
@@ -189,15 +189,7 @@ export default function GreetingsLandingPage({
             <p className="hero-note">{g.hero.note}</p>
           </div>
           <div className="hero-shot frame-shot">
-            <Image
-              src={hero.src}
-              alt=""
-              width={hero.width}
-              height={hero.height}
-              sizes="(min-width: 900px) 46vw, 100vw"
-              loading="eager"
-              unoptimized
-            />
+            <HeroPicture name="greetings-hero-v2" />
           </div>
         </div>
       </section>

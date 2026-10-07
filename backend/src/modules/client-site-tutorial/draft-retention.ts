@@ -41,6 +41,10 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { BlobService } from '../storage/blob.service';
 import { draftFramePrefix } from './draft-frames';
 import type { DraftSecretsRow, DraftSecretsStore } from './draft-secrets-store';
+import {
+  LOGIN_IDENTITY_DAY_PREFIX,
+  LOGIN_IDENTITY_WINDOW_DAYS,
+} from './client-site-tutorial-usage.service';
 
 export const SECRETS_RETENTION_DAYS = 30;
 export const DECIDED_FRAMES_RETENTION_DAYS = 14;
@@ -50,6 +54,11 @@ export const ABANDONED_FRAMES_RETENTION_DAYS = 30;
 export const PENDING_REVIEW_WARN_DAYS = 7;
 /** Черновиков за один прогон — потолок времени функции, остаток завтра. */
 export const FRAMES_PURGE_BATCH = 50;
+/** Страница выборок по секретам (П-Т20): строки идут по `id`, страница за
+ *  страницей, до конца — а не «первые 500 без порядка». */
+export const SECRETS_PAGE = 500;
+/** Потолок страниц за прогон (время функции): 40 × 500 = 20 000 строк. */
+export const SECRETS_MAX_PAGES = 40;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -60,6 +69,8 @@ export interface ClientSiteRetentionResult {
   framesFailed: number;
   /** Черновиков на одобрении, о скором стирании которых предупредили. */
   pendingReviewWarned: number;
+  /** П-Т6: строк «логин на хосте» старше окна убрано. */
+  loginMarksExpired?: number;
   skipped?: boolean;
 }
 
@@ -110,29 +121,50 @@ export class ClientSiteDraftRetention {
   /**
    * Ш2: у черновиков из `where`, чьи данные входа в хранилище, — стереть
    * там (личную запись B целиком, секреты учётки A). Колонки и ссылки
-   * обнуляет вызывающий (`WIPE_SECRETS`).
+   * обнуляет вызывающий (`WIPE_SECRETS`). Постранично по `id` (П-Т20):
+   * прежняя выборка «первые 500 без порядка» при большем числе строк
+   * оставляла записи хранилища за пределами пачки, а колонки вызывающий
+   * обнулял у всех — ссылки на них терялись.
    */
   private async forgetInStore(where: object): Promise<void> {
     if (!this.secrets) return;
-    const rows = (await this.prisma.clientSiteTutorialDraft.findMany({
-      where: {
-        AND: [
-          where,
-          {
-            OR: [
-              { siteTestAccountId: { not: null } },
-              { userSiteSessionId: { not: null } },
-            ],
-          },
-        ],
-      },
-      select: { ...STORE_SELECT, project: { select: { userId: true } } },
-      take: 500,
-    })) as Array<
+    let after: string | null = null;
+    for (let page = 0; page < SECRETS_MAX_PAGES; page++) {
+      const rows = (await this.prisma.clientSiteTutorialDraft.findMany({
+        where: {
+          AND: [
+            where,
+            {
+              OR: [
+                { siteTestAccountId: { not: null } },
+                { userSiteSessionId: { not: null } },
+              ],
+            },
+            ...(after ? [{ id: { gt: after } }] : []),
+          ],
+        },
+        select: { ...STORE_SELECT, project: { select: { userId: true } } },
+        orderBy: { id: 'asc' },
+        take: SECRETS_PAGE,
+      })) as Array<
+        Omit<DraftSecretsRow, 'credentialsEnc' | 'cookiesEnc'> & {
+          project?: { userId: string } | null;
+        }
+      >;
+      await this.forgetRows(rows);
+      if (rows.length < SECRETS_PAGE) return;
+      after = rows[rows.length - 1].id;
+    }
+  }
+
+  private async forgetRows(
+    rows: Array<
       Omit<DraftSecretsRow, 'credentialsEnc' | 'cookiesEnc'> & {
         project?: { userId: string } | null;
       }
-    >;
+    >,
+  ): Promise<void> {
+    if (!this.secrets) return;
     for (const r of rows) {
       const userId = r.project?.userId;
       if (!userId) continue;
@@ -160,9 +192,11 @@ export class ClientSiteDraftRetention {
     const pendingReviewWarned = await this.warnPendingReview(now);
     const secretsExpired = await this.expireSecrets(now);
     const secretsOneShot = await this.forgetOneShotAfterBuild();
+    const loginMarksExpired = await this.expireLoginMarks(now);
     const result = {
       secretsExpired,
       secretsOneShot,
+      loginMarksExpired,
       framesPurged: frames.purged,
       framesFailed: frames.failed,
       pendingReviewWarned,
@@ -190,17 +224,46 @@ export class ClientSiteDraftRetention {
     return count;
   }
 
-  /** «Одноразово»: ролик собран — данные входа больше не нужны. */
+  /**
+   * «Одноразово»: ролик собран — данные входа больше не нужны.
+   *
+   * П-Т20: раньше — одна выборка `take: 500` без порядка и без условия
+   * «ролик собран». Пятьсот «одноразовых» черновиков, ещё ждущих сборки,
+   * занимали пачку каждый день, и собранные за ними не чистились НИКОГДА
+   * (основную работу делает сборщик, но страховка не видела часть строк).
+   * Теперь — все строки по порядку `id`, страница за страницей до конца
+   * (`SECRETS_MAX_PAGES` — потолок времени), и у каждой страницы стираются
+   * ровно собранные.
+   */
   async forgetOneShotAfterBuild(): Promise<number> {
-    const drafts = (await this.prisma.clientSiteTutorialDraft.findMany({
-      where: { secretsOneShot: true, ...HAS_SECRETS },
-      select: { id: true },
-      take: 500,
-    })) as Array<{ id: string }>;
-    if (drafts.length === 0) return 0;
+    let total = 0;
+    let after: string | null = null;
+    for (let page = 0; page < SECRETS_MAX_PAGES; page++) {
+      const drafts = (await this.prisma.clientSiteTutorialDraft.findMany({
+        where: {
+          AND: [
+            { secretsOneShot: true },
+            HAS_SECRETS,
+            ...(after ? [{ id: { gt: after } }] : []),
+          ],
+        },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+        take: SECRETS_PAGE,
+      })) as Array<{ id: string }>;
+      if (drafts.length === 0) break;
+      total += await this.forgetBuiltOneShot(drafts.map((d) => d.id));
+      if (drafts.length < SECRETS_PAGE) break;
+      after = drafts[drafts.length - 1].id;
+    }
+    return total;
+  }
+
+  /** Из `pageIds` — те, чей ролик собран (`complete`): стереть данные входа. */
+  private async forgetBuiltOneShot(pageIds: string[]): Promise<number> {
     const built = (await this.prisma.tutorialVideoAsset.findMany({
       where: {
-        clientSiteDraftId: { in: drafts.map((d) => d.id) },
+        clientSiteDraftId: { in: pageIds },
         assemblyStatus: 'complete',
       },
       select: { clientSiteDraftId: true },
@@ -219,6 +282,33 @@ export class ClientSiteDraftRetention {
       data: WIPE_SECRETS,
     });
     return count;
+  }
+
+  /**
+   * П-Т6: строки «логин на хосте» (`client_site_tutorial_usage`, `day`
+   * с префиксом `li:`) старше окна счёта — больше ничего не ограничивают.
+   * Сбой — в лог, уборка остального не страдает.
+   */
+  async expireLoginMarks(now: Date): Promise<number> {
+    const cutoff = new Date(
+      now.getTime() - LOGIN_IDENTITY_WINDOW_DAYS * DAY_MS,
+    );
+    try {
+      const { count } = await this.prisma.clientSiteTutorialUsage.deleteMany({
+        where: {
+          day: { startsWith: LOGIN_IDENTITY_DAY_PREFIX },
+          updatedAt: { lt: cutoff },
+        },
+      });
+      return count;
+    } catch (err) {
+      this.logger.warn(
+        `client-site-retention: отметки логинов не убраны (${
+          err instanceof Error ? err.name : 'error'
+        }) — повтор завтра`,
+      );
+      return 0;
+    }
   }
 
   /**

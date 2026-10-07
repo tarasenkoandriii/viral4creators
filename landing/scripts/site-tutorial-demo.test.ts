@@ -11,14 +11,17 @@
  *  3. без роликов секция честно говорит «скоро» и ведёт к схемам, с
  *     роликами — показывает плеер и подпись «сайт — наш полигон»;
  *  4. словари пяти локалей совпадают по форме целиком;
- *  5. страница рисует галерею только под флагом, схемы остаются.
+ *  5. страница рисует галерею только под флагом, схемы остаются;
+ *  6. оговорка над схемами следует за флагом: без галереи — «схемы, а
+ *     не интерфейс», с галереей — «настоящий интерфейс в роликах ниже»,
+ *     настоящие кадры важнее обоих.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { siteTutorialDemoEnabled } from '../src/lib/site-tutorial-demo';
+import { howLeadKey, siteTutorialDemoEnabled } from '../src/lib/site-tutorial-demo';
 import { SITE_TUTORIAL_DEMO_KEYS, loadTutorialDemos, type TutorialDemoFeed } from '../src/lib/tutorial-demo-api';
 import { getDictionary } from '../src/lib/get-dictionary';
 import { locales } from '../src/lib/i18n';
@@ -150,6 +153,30 @@ function shape(value: unknown, prefix = ''): string[] {
   assert.equal((page.match(/<TutorialDemoGallery/g) ?? []).length, 1, 'галерея одна и под флагом');
   assert.ok(!/scenario="ads"/.test(page), 'рекламные шаги на обучающем лендинге не подставляются');
   assert.match(page, /frameImage\(locale, index \+ 1\)/, 'схемы «Как это выглядит» остаются');
+  // Оговорка выбирается одной функцией от тех же двух признаков, что
+  // рисуют картинки и галерею, — а не отдельным условием рядом.
+  assert.match(page, /\{t\.how\[howLeadKey\(realFrames, demoGallery\)\]\}/, 'оговорка следует за флагом');
+  assert.ok(!/t\.how\.lead\b/.test(page), 'прямого t.how.lead в обход выбора нет');
+}
+
+// ── 6. Оговорка над схемами ──
+{
+  assert.equal(howLeadKey(false, false), 'lead', 'без галереи — «схемы, а не интерфейс»');
+  assert.equal(howLeadKey(false, true), 'leadDemo', 'с галереей — про настоящий интерфейс в роликах');
+  assert.equal(howLeadKey(true, false), 'leadReal', 'настоящие кадры');
+  assert.equal(howLeadKey(true, true), 'leadReal', 'настоящие кадры важнее галереи');
+  for (const locale of locales) {
+    const how = getDictionary(locale).siteTutorialLanding.how;
+    assert.ok(how.leadDemo.trim().length > 40, `${locale}: how.leadDemo пустой`);
+    assert.notEqual(how.leadDemo, how.lead, `${locale}: leadDemo = lead`);
+    assert.notEqual(how.leadDemo, how.leadReal, `${locale}: leadDemo = leadReal`);
+  }
+  // Смысл, а не только форма: русская оговорка с галереей не говорит
+  // «взять неоткуда» и говорит про ролики с нашего сайта.
+  const ru = getDictionary('ru').siteTutorialLanding.how;
+  assert.ok(!ru.leadDemo.includes('неоткуда'), 'leadDemo не повторяет «взять неоткуда»');
+  assert.match(ru.leadDemo, /настоящий интерфейс/);
+  assert.match(ru.leadDemo, /тестовом сайте/);
 }
 
 main().then(() => console.log('site-tutorial-demo: ok'), (error) => {

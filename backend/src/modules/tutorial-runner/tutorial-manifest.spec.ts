@@ -73,6 +73,29 @@ describe('manifest', () => {
     expect(back!.fps).toBe(30);
   });
 
+  it('темп пары (заход 7): appliedTempo переживает разбор, мусор — отбрасывается, исходник и ключ не меняются', () => {
+    const applied = {
+      ...m,
+      appliedTempo: { factor: 0.4, fromVersionId: 'v1' },
+    };
+    const back = parseTutorialManifest(JSON.parse(JSON.stringify(applied)));
+    expect(back!.appliedTempo).toEqual({ factor: 0.4, fromVersionId: 'v1' });
+    expect(back!.sourceHash).toBe(m.sourceHash);
+    expect(tempoIdempotencyKey(back!, 0.4, 'fade')).toBe(
+      tempoIdempotencyKey(m, 0.4, 'fade'),
+    );
+    for (const junk of [
+      { factor: 'x', fromVersionId: 'v1' },
+      { factor: 0.4 },
+      'fast',
+      null,
+    ]) {
+      const parsed = parseTutorialManifest({ ...m, appliedTempo: junk });
+      expect(parsed).not.toBeNull();
+      expect(parsed!.appliedTempo).toBeUndefined();
+    }
+  });
+
   it('чужой формат — null (non-editable), а не исключение', () => {
     expect(parseTutorialManifest(null)).toBeNull();
     expect(parseTutorialManifest({ ...m, manifestVersion: 2 })).toBeNull();

@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENTRIES as SITES_SHARED_ENTRIES } from './sync-sites-shared.mjs';
+import { ENTRIES as WORKER_SHARED_ENTRIES } from './sync-worker-shared.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -59,6 +60,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  */
 /** Источники копий sync-sites-shared: файл — точно, папка — префиксом. */
 export const SITES_SHARED_SOURCES = SITES_SHARED_ENTRIES.map((e) => (e.fromDir ? `${e.fromDir}/` : e.from));
+/**
+ * Источники копий воркера (scripts/sync-worker-shared.mjs): правка любого —
+ * джоба browser_worker (копия у воркера и `--check`). Аудит захода 7:
+ * список руками отстал от `ENTRIES` (разведка обучалки и стабилизация
+ * кадра) — теперь берётся из самого скрипта.
+ */
+export const WORKER_SHARED_SOURCES = WORKER_SHARED_ENTRIES.map((e) => e.from);
 
 export const FILTERS = {
   backend: [
@@ -150,6 +158,7 @@ export const FILTERS = {
     'sites-backend/src/modules/browser-jobs/protocol.ts',
     'sites-backend/src/modules/browser-jobs/worker-seal.ts',
     'scripts/sync-worker-shared.mjs',
+    ...WORKER_SHARED_SOURCES,
   ],
 };
 /** Изменение любого из этих путей запускает всё. */
@@ -261,6 +270,7 @@ function selfTest() {
   // Список источников sync-sites-shared и правило sites_backend — одно и то же.
   for (const src of SITES_SHARED_SOURCES) eq(`источник копии ${src} — sites_backend`, decide([src.endsWith('/') ? `${src}x.ts` : src]).sites_backend, true);
   eq('скрипт копий воркера', on(['scripts/sync-worker-shared.mjs']), ['browser_worker']);
+  for (const src of WORKER_SHARED_SOURCES) eq(`источник копии воркера ${src} — browser_worker`, decide([src]).browser_worker, true);
 
   // Каждая джоба ci.yml, кроме changes и repo, запускается по своему правилу.
   const full = readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');

@@ -21,6 +21,7 @@ import {
   WORKER_LIMITS,
   lockHostOf,
   type BrowserViewport,
+  type FrameImage,
   type FramesCaptureResult,
 } from '../browser-jobs/protocol';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -54,7 +55,12 @@ export class InternalFramesService {
 
   async request(
     telegramId: bigint,
-    req: { url: string; frames: number; viewport: BrowserViewport },
+    req: {
+      url: string;
+      frames: number;
+      viewport: BrowserViewport;
+      image?: FrameImage;
+    },
   ): Promise<{ jobId: string; status: string }> {
     this.jobs.assertEnabled();
     if (!(BROWSER_VIEWPORTS as readonly string[]).includes(req.viewport)) {
@@ -93,6 +99,7 @@ export class InternalFramesService {
           allowedHosts: [lockHostName(host)],
           viewport: req.viewport,
           frames: Math.min(Math.max(1, req.frames), WORKER_LIMITS.frames),
+          ...(req.image ? { image: req.image } : {}),
         },
       });
       return { jobId: job.id, status: job.status };

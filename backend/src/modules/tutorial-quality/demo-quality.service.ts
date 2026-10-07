@@ -35,15 +35,18 @@
 
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import { estimateCost } from '../../common/ai-pricing';
 import { languageNameForLocale } from '../../common/locale';
@@ -52,8 +55,25 @@ import {
   parseTutorialManifest,
   TutorialTimelineManifest,
 } from '../tutorial-runner/tutorial-manifest';
-import { frameSpansSeconds } from '../tutorial-runner/tutorial-video-assembly';
 import { DemoQualityGemini } from './demo-quality-gemini';
+import {
+  blocksPublication,
+  ControlFrame,
+  controlFramesFor,
+  deriveCaptureMode,
+  effectiveVerdict,
+  FrameSignals,
+  frameSignalsJob,
+  isQualityVerdict,
+  OVERRIDE_REASON_MAX,
+  OVERRIDE_REASON_MIN,
+  parseFrameSignalsOutput,
+  signalIssues,
+  SIGNALS_OUTPUT,
+  stepSpansMs,
+  suspiciousSignals,
+  verdictWithSignals,
+} from './demo-quality-frames';
 import {
   buildDemoQualityPrompt,
   computeDemoQualityVerdict,
@@ -107,6 +127,13 @@ const CLAIM_SCAN = 5;
 const APPROVED_SCAN = 500;
 /** Последних проверок на страницу админки. */
 const LATEST_SCAN = 500;
+/** Сигналов декодера за тик: отправка и опрос — дешёвые HTTP. */
+const SIGNALS_PER_TICK = 2;
+/** Задача декодера дольше этого — `error` сигналов (не вердикт ролику). */
+const SIGNALS_DEADLINE_MS = 10 * 60_000;
+const SIGNALS_DOWNLOAD_TIMEOUT_MS = 20_000;
+/** Записей журнала переопределений в ответе. */
+const OVERRIDE_LOG_LIMIT = 20;
 
 /** Строка проверки — то, что сервис читает из базы. */
 export interface CheckRow {
@@ -143,6 +170,36 @@ export interface CheckRow {
   captureBuild: string | null;
   captureMode: string | null;
   checkedAt: Date | null;
+  overrideVerdict?: string | null;
+  overrideReason?: string | null;
+  overrideBy?: string | null;
+  overrideAt?: Date | null;
+  controlFrames?: unknown;
+  signalsStatus?: string | null;
+  signalsJobId?: string | null;
+  signalsStartedAt?: Date | null;
+  signals?: unknown;
+}
+
+/** Сигналы декодера в отчёте админки (без id задачи провайдера). */
+export interface DemoQualitySignalsView {
+  status: string;
+  black: FrameSignals['black'];
+  freeze: FrameSignals['freeze'];
+  suspicious: FrameSignals['suspicious'];
+  error: string | null;
+}
+
+/** Строка журнала переопределений. */
+export interface DemoQualityOverrideView {
+  id: string;
+  /** NULL — проверку удалили вместе с роликом; запись журнала осталась. */
+  checkId: string | null;
+  fromVerdict: QualityVerdict | null;
+  toVerdict: QualityVerdict | null;
+  reason: string;
+  by: string;
+  at: string;
 }
 
 /** Что отдаётся админке: без имён файлов провайдера и аренды. */
@@ -171,6 +228,19 @@ export interface DemoQualityCheckView {
   captureMode: string | null;
   createdAt: string;
   checkedAt: string | null;
+  /** Итоговый вердикт: переопределение оператора сильнее модели. */
+  effectiveVerdict: QualityVerdict | null;
+  /** Переопределение оператором; `null` — не менялся. */
+  override: {
+    verdict: QualityVerdict;
+    reason: string | null;
+    by: string | null;
+    at: string | null;
+  } | null;
+  /** Контрольные кадры шагов с таймкодами этого файла. */
+  controlFrames: ControlFrame[] | null;
+  /** Чёрные/замершие кадры декодером; `null` — не заказывались. */
+  signals: DemoQualitySignalsView | null;
 }
 
 export interface EnqueueResult {
@@ -192,6 +262,8 @@ export interface DemoQualityTickResult {
   retried: number;
   /** Окончательная ошибка проверки (не вердикт видео). */
   errors: number;
+  /** Шагов сигналов декодера за тик (отправка/опрос), если были. */
+  signals?: number;
 }
 
 interface AssetMeta {
@@ -216,6 +288,26 @@ interface TargetMeta {
   manifest: TutorialTimelineManifest | null;
   /** Длительность по плану: версии (`videoMs`) или ролика. */
   plannedMs: number | null;
+  /** Множитель паузы проверяемого файла: `null` — исходная сетка,
+   *  `undefined` — неизвестен (таймкоды шагов не угадываются). */
+  factor: number | null | undefined;
+}
+
+/**
+ * Множитель паузы файла версии: `source` — исходная сетка (`null`),
+ * версия темпа — её `tempoFactor`; иначе неизвестен (`undefined`).
+ */
+/** Темп, с которым собран сам файл ролика (`manifest.appliedTempo`). */
+function appliedFactor(raw: unknown): number | null {
+  return parseTutorialManifest(raw)?.appliedTempo?.factor ?? null;
+}
+
+function versionFactor(
+  v: { kind?: string | null; tempoFactor?: number | null } | null,
+): number | null | undefined {
+  if (!v) return undefined;
+  if (v.kind === 'source') return null;
+  return typeof v.tempoFactor === 'number' ? v.tempoFactor : undefined;
 }
 
 type Outcome =
@@ -265,6 +357,9 @@ export class TutorialDemoQualityService {
     private readonly blob: BlobService,
     private readonly gemini: DemoQualityGemini,
     private readonly aiUsage: AiUsageService,
+    // Чёрные/замершие кадры (заход 7): декодер — тот же хостед ffmpeg,
+    // что собирает ролики. Необязателен: стенды и тесты без него.
+    @Optional() private readonly ffmpeg?: FfmpegApiService,
   ) {}
 
   isEnabled(): boolean {
@@ -404,15 +499,25 @@ export class TutorialDemoQualityService {
     let versionId: string | null;
     let videoUrl: string;
     let durationMs: number | null;
+    let factor: number | null | undefined = null;
     if (input.versionId) {
       const version = (await this.prisma.tutorialVideoVersion.findFirst({
         where: { id: input.versionId, assetId: asset.id },
-        select: { id: true, status: true, blobUrl: true, videoMs: true },
+        select: {
+          id: true,
+          status: true,
+          blobUrl: true,
+          videoMs: true,
+          kind: true,
+          tempoFactor: true,
+        },
       })) as {
         id: string;
         status: string;
         blobUrl: string | null;
         videoMs: number | null;
+        kind?: string | null;
+        tempoFactor?: number | null;
       } | null;
       if (!version || version.status !== 'complete' || !version.blobUrl) {
         throw new BadRequestException('Версия не собрана — проверять нечего');
@@ -420,10 +525,15 @@ export class TutorialDemoQualityService {
       versionId = version.id;
       videoUrl = version.blobUrl;
       durationMs = version.videoMs;
+      factor = versionFactor(version);
     } else {
       versionId = asset.activeVersionId;
       videoUrl = asset.blobUrl;
       durationMs = asset.durationMs;
+      if (versionId) factor = await this.factorOf(asset.id, versionId);
+      // Версии нет, а ролик собран сразу с темпом пары (adopt сорвался) —
+      // таймкоды по его темпу (заход 7, аудит).
+      else factor = appliedFactor(asset.tempoManifest);
     }
 
     const dedupeKey = input.contentSha
@@ -497,11 +607,40 @@ export class TutorialDemoQualityService {
         theme: asset.theme,
         locale: asset.locale,
         captureBuild: asset.captureBuild,
-        // Режим съёмки (browser/TMA) у ролика не записан — не угадываем.
-        captureMode: null,
+        // Режим съёмки — из полей ролика (заход 7): черновик клиента,
+        // витрина демо обучающего лендинга или TMA. Не из MP4.
+        captureMode: deriveCaptureMode(asset),
+        // Контрольные кадры шагов с таймкодами ЭТОГО файла (у версии
+        // темпа — свои); неизвестный темп — без кадров, не наугад.
+        controlFrames:
+          factor === undefined
+            ? Prisma.DbNull
+            : (json(
+                controlFramesFor(
+                  parseTutorialManifest(asset.tempoManifest),
+                  factor,
+                ),
+              ) ?? Prisma.DbNull),
       },
     })) as CheckRow;
     return { check: toView(row), created: true, reason: null };
+  }
+
+  /** Множитель паузы версии ролика (см. `versionFactor`). */
+  private async factorOf(
+    assetId: string,
+    versionId: string,
+  ): Promise<number | null | undefined> {
+    const v = (await this.prisma.tutorialVideoVersion
+      .findFirst({
+        where: { id: versionId, assetId },
+        select: { kind: true, tempoFactor: true },
+      })
+      .catch(() => null)) as {
+      kind?: string | null;
+      tempoFactor?: number | null;
+    } | null;
+    return versionFactor(v);
   }
 
   // ── чтение для админки ───────────────────────────────────────────
@@ -524,6 +663,243 @@ export class TutorialDemoQualityService {
       }
     }
     return { enabled: this.isEnabled(), checks };
+  }
+
+  /** Журнал переопределений вердикта проверки — свежие первыми. */
+  async listOverrides(checkId: string): Promise<DemoQualityOverrideView[]> {
+    const rows = (await this.prisma.tutorialDemoQualityOverride.findMany({
+      where: { checkId },
+      orderBy: { createdAt: 'desc' },
+      take: OVERRIDE_LOG_LIMIT,
+    })) as Array<{
+      id: string;
+      checkId: string | null;
+      fromVerdict: string | null;
+      toVerdict: string | null;
+      reason: string;
+      by: string;
+      createdAt: Date;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      checkId: r.checkId,
+      fromVerdict: isQualityVerdict(r.fromVerdict) ? r.fromVerdict : null,
+      toVerdict: isQualityVerdict(r.toVerdict) ? r.toVerdict : null,
+      reason: r.reason,
+      by: r.by,
+      at: new Date(r.createdAt).toISOString(),
+    }));
+  }
+
+  /**
+   * Переопределение вердикта оператором (спецификация, «Оператор и
+   * публикация»: override требует причины и сохраняется в журнале).
+   * `verdict: null` — снять своё переопределение (вернуть вердикт
+   * модели); причина обязательна и тогда. Только у завершённой проверки:
+   * у сбоя и очереди вердикта нет, переопределять нечего.
+   */
+  async overrideVerdict(
+    checkId: string,
+    operatorId: string,
+    input: { verdict: unknown; reason: unknown },
+  ): Promise<{
+    check: DemoQualityCheckView;
+    overrides: DemoQualityOverrideView[];
+  }> {
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+    if (
+      reason.length < OVERRIDE_REASON_MIN ||
+      reason.length > OVERRIDE_REASON_MAX
+    ) {
+      throw new BadRequestException(
+        `Причина переопределения обязательна: ${OVERRIDE_REASON_MIN}–${OVERRIDE_REASON_MAX} символов`,
+      );
+    }
+    const to = input.verdict ?? null;
+    if (to !== null && !isQualityVerdict(to)) {
+      throw new BadRequestException('Вердикт — ok, warn, fail или null');
+    }
+    const row = (await this.prisma.tutorialDemoQualityCheck.findUnique({
+      where: { id: checkId },
+    })) as CheckRow | null;
+    if (!row) throw new NotFoundException('Проверка не найдена');
+    if (row.status !== 'complete') {
+      throw new BadRequestException(
+        'Переопределить можно только завершённую проверку — у этой ещё нет вердикта',
+      );
+    }
+    if (to === null && !row.overrideVerdict) {
+      throw new BadRequestException('Переопределения нет — снимать нечего');
+    }
+    const from = effectiveVerdict(row);
+    const at = new Date(this.clock());
+    const updated = (await this.prisma.tutorialDemoQualityCheck.update({
+      where: { id: checkId },
+      data:
+        to === null
+          ? {
+              overrideVerdict: null,
+              overrideReason: null,
+              overrideBy: null,
+              overrideAt: null,
+            }
+          : {
+              overrideVerdict: to,
+              overrideReason: reason,
+              overrideBy: operatorId,
+              overrideAt: at,
+            },
+    })) as CheckRow;
+    await this.prisma.tutorialDemoQualityOverride.create({
+      data: {
+        checkId,
+        assetId: row.assetId,
+        fromVerdict: from,
+        toVerdict: to,
+        reason,
+        by: operatorId,
+      },
+    });
+    this.logger.log(
+      `проверка ${checkId} (ролик ${row.assetId}): оператор ${operatorId} ${
+        to === null
+          ? 'снял переопределение'
+          : `переопределил ${from ?? '—'} → ${to}`
+      }`,
+    );
+    return {
+      check: toView(updated),
+      overrides: await this.listOverrides(checkId),
+    };
+  }
+
+  /**
+   * Почему публикация файла заблокирована проверкой, или `null`.
+   * Только при флаге `TUTORIAL_DEMO_QUALITY_BLOCK` (умолчание — выкл.):
+   * последняя завершённая проверка ЭТОГО файла с итоговым `fail` (без
+   * переопределения оператором на ok/warn). Файл не проверен — не блок.
+   */
+  async publishBlockReason(
+    assetId: string,
+    versionId?: string | null,
+  ): Promise<string | null> {
+    if (!readDemoQualityConfig().blockPublication) return null;
+    let videoUrl: string | null = null;
+    if (versionId) {
+      const v = (await this.prisma.tutorialVideoVersion.findFirst({
+        where: { id: versionId, assetId },
+        select: { blobUrl: true },
+      })) as { blobUrl: string | null } | null;
+      videoUrl = v?.blobUrl ?? null;
+    } else {
+      const a = (await this.prisma.tutorialVideoAsset.findUnique({
+        where: { id: assetId },
+        select: { blobUrl: true },
+      })) as { blobUrl: string | null } | null;
+      videoUrl = a?.blobUrl ?? null;
+    }
+    if (!videoUrl) return null;
+    const last = (await this.prisma.tutorialDemoQualityCheck.findFirst({
+      where: { assetId, videoUrl, status: 'complete' },
+      orderBy: { createdAt: 'desc' },
+    })) as CheckRow | null;
+    if (!blocksPublication(last)) return null;
+    return (
+      'ИИ-проверка качества этого файла: fail. Публикация заблокирована ' +
+      '(TUTORIAL_DEMO_QUALITY_BLOCK) — исправьте ролик или переопределите ' +
+      'вердикт с причиной в отчёте проверки'
+    );
+  }
+
+  /**
+   * «Вернуть обычный» у ОДОБРЕННОГО ролика публикует исходный файл —
+   * тот же барьер, что у одобрения версии (заход 7, аудит). Исходного
+   * файла нет (возврат — это сборка ×1, публикация — после её
+   * одобрения) или ролик не одобрен — блока нет.
+   */
+  async assertRevertPublishable(assetId: string): Promise<void> {
+    if (!readDemoQualityConfig().blockPublication) return;
+    const asset = (await this.prisma.tutorialVideoAsset.findUnique({
+      where: { id: assetId },
+      select: { reviewed: true },
+    })) as { reviewed: boolean } | null;
+    if (!asset?.reviewed) return;
+    const source = (await this.prisma.tutorialVideoVersion.findFirst({
+      where: { assetId, kind: 'source' },
+      select: { id: true },
+    })) as { id: string } | null;
+    if (source) await this.assertPublishable(assetId, source.id);
+  }
+
+  /** То же, но отказом 409 — для одобрения, отметки «в демо» и версии. */
+  async assertPublishable(
+    assetId: string,
+    versionId?: string | null,
+  ): Promise<void> {
+    const reason = await this.publishBlockReason(assetId, versionId);
+    if (reason) throw new ConflictException(reason);
+  }
+
+  /**
+   * Перед удалением ролика ретенцией (заход 7): файлы Gemini его проверок
+   * удаляются сразу, а не через 48 ч у Google. Проверка под живой арендой
+   * — `busy`: ролик в этот тик не удаляется (спецификация: «не допускать
+   * удаления актива retention-процессом во время живого lease»), её файл
+   * уберёт сама проверка. Никогда не бросает: сбой уборки не роняет
+   * ретенцию (худшее — файл у Google доживёт свои 48 ч).
+   */
+  async releaseAssetFiles(assetId: string): Promise<{ busy: boolean }> {
+    try {
+      const now = new Date(this.clock());
+      const rows = (await this.prisma.tutorialDemoQualityCheck.findMany({
+        where: {
+          assetId,
+          OR: [{ providerFileName: { not: null } }, { status: 'running' }],
+        },
+        select: {
+          id: true,
+          status: true,
+          leaseUntil: true,
+          providerFileName: true,
+        },
+      })) as Array<{
+        id: string;
+        status: string;
+        leaseUntil: Date | null;
+        providerFileName: string | null;
+      }>;
+      if (
+        rows.some(
+          (r) =>
+            r.status === 'running' &&
+            r.leaseUntil !== null &&
+            new Date(r.leaseUntil).getTime() > now.getTime(),
+        )
+      ) {
+        return { busy: true };
+      }
+      for (const r of rows) {
+        if (!r.providerFileName) continue;
+        await this.gemini
+          .deleteFile(r.providerFileName)
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `файл Gemini ${r.providerFileName} не удалился: ${errMessage(err)}`,
+            ),
+          );
+        await this.prisma.tutorialDemoQualityCheck
+          .updateMany({
+            where: { id: r.id, providerFileName: r.providerFileName },
+            data: { providerFileName: null, providerFileUri: null },
+          })
+          .catch(() => undefined);
+      }
+    } catch (err) {
+      this.logger.warn(
+        `уборка файлов Gemini ролика ${assetId}: ${errMessage(err)}`,
+      );
+    }
+    return { busy: false };
   }
 
   // ── тик очереди ──────────────────────────────────────────────────
@@ -564,6 +940,12 @@ export class TutorialDemoQualityService {
       }
     } catch (err) {
       this.logger.warn(`очередь проверки качества: ${errMessage(err)}`);
+    }
+    // Чёрные/замершие кадры (заход 7) — после основной очереди и тем же
+    // ограниченным куском времени; свой бюджет, своя ошибка.
+    if (readDemoQualityConfig().frameSignals && this.clock() < deadline) {
+      const n = await this.advanceSignals(deadline);
+      if (n > 0) result.signals = n;
     }
     return result;
   }
@@ -702,6 +1084,7 @@ export class TutorialDemoQualityService {
           dedupeKey,
           reusedFromId: done.id,
           verdict: done.verdict,
+          ...this.signalsCopy(done),
           report: done.report === null ? Prisma.DbNull : json(done.report),
           preflight:
             done.preflight === null ? Prisma.DbNull : json(done.preflight),
@@ -922,6 +1305,7 @@ export class TutorialDemoQualityService {
     const kind = await this.finish(row, owner, {
       status: 'complete',
       verdict,
+      ...this.signalsOrder(),
       report: json(report),
       costMicroUsd: cost.costMicroUsd,
       unpriced: cost.unpriced,
@@ -930,6 +1314,247 @@ export class TutorialDemoQualityService {
       checkedAt: new Date(this.clock()),
     });
     return { kind };
+  }
+
+  // ── чёрные и замершие кадры (заход 7) ────────────────────────────
+
+  /** Заказ сигналов декодера при завершении проверки — при флаге. */
+  private signalsOrder(): Prisma.TutorialDemoQualityCheckUpdateManyMutationInput {
+    return readDemoQualityConfig().frameSignals && this.ffmpeg?.configured()
+      ? {
+          signalsStatus: 'pending',
+          signalsJobId: null,
+          signalsStartedAt: null,
+          signals: Prisma.DbNull,
+        }
+      : {};
+  }
+
+  /** Копия проверки того же содержимого: готовые сигналы — тоже копией. */
+  private signalsCopy(
+    done: CheckRow,
+  ): Prisma.TutorialDemoQualityCheckUpdateManyMutationInput {
+    if (done.signalsStatus === 'complete' && done.signals != null) {
+      return {
+        signalsStatus: 'complete',
+        signals: json(done.signals),
+        controlFrames:
+          done.controlFrames == null ? Prisma.DbNull : json(done.controlFrames),
+      };
+    }
+    return this.signalsOrder();
+  }
+
+  /**
+   * Сигналы декодера: отправка задачи (`pending` → `running`, платно,
+   * под суточным бюджетом проверки) и опрос (`running` → итог). Под
+   * замком тика; сбой — `error` сигналов, вердикт не трогается.
+   *
+   * @returns сколько записей продвинуто.
+   */
+  private async advanceSignals(deadline: number): Promise<number> {
+    if (!this.ffmpeg?.configured()) return 0;
+    let n = 0;
+    try {
+      const rows = (await this.prisma.tutorialDemoQualityCheck.findMany({
+        where: {
+          status: 'complete',
+          signalsStatus: { in: ['pending', 'running'] },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: SIGNALS_PER_TICK,
+      })) as CheckRow[];
+      for (const row of rows) {
+        if (this.clock() >= deadline) break;
+        try {
+          if (row.signalsStatus === 'pending') {
+            if (!(await this.submitSignals(row))) break;
+          } else {
+            await this.pollSignals(row);
+          }
+          n++;
+        } catch (err) {
+          await this.failSignals(row, errMessage(err));
+          n++;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`сигналы декодера: ${errMessage(err)}`);
+    }
+    return n;
+  }
+
+  /** `false` — бюджет выбран, остальным в этот тик тоже не отправлять. */
+  private async submitSignals(row: CheckRow): Promise<boolean> {
+    // Тот же файл (sha) уже разбирался декодером или разбирается — не
+    // платим второй раз (заход 7, аудит: копия проверки заказывала
+    // повторно): готовое берём, незаконченное — ждём следующего тика.
+    if (row.contentSha) {
+      const sib = (await this.prisma.tutorialDemoQualityCheck.findFirst({
+        where: {
+          contentSha: row.contentSha,
+          id: { not: row.id },
+          signalsStatus: { in: ['complete', 'running', 'pending'] },
+        },
+        orderBy: { createdAt: 'asc' },
+      })) as CheckRow | null;
+      if (sib?.signalsStatus === 'complete' && sib.signals != null) {
+        const s = sib.signals as Partial<FrameSignals>;
+        await this.applySignals(
+          row,
+          {
+            black: Array.isArray(s.black) ? s.black : [],
+            freeze: Array.isArray(s.freeze) ? s.freeze : [],
+          },
+          'pending',
+        );
+        return true;
+      }
+      if (
+        sib &&
+        new Date(sib.createdAt).getTime() < new Date(row.createdAt).getTime()
+      ) {
+        return true;
+      }
+    }
+    const gate = await this.budgetGate(0);
+    if (!gate.allowed) return false;
+    const job = frameSignalsJob(row.videoUrl);
+    const claimed = await this.prisma.tutorialDemoQualityCheck.updateMany({
+      where: { id: row.id, signalsStatus: 'pending' },
+      data: {
+        signalsStatus: 'running',
+        signalsStartedAt: new Date(this.clock()),
+      },
+    });
+    if (claimed.count !== 1) return true;
+    const ref = await (this.ffmpeg as FfmpegApiService).submit(job);
+    // Сначала — id задачи и пометка «расход не записан»: задача уже
+    // оплачена, и терять её из-за сбоя журнала расходов нельзя (заход 7,
+    // аудит). Расход пишется следом; не записался — повтор в следующем
+    // тике (`pollSignals`), до выдачи итога.
+    await this.prisma.tutorialDemoQualityCheck.updateMany({
+      where: { id: row.id, signalsStatus: 'running' },
+      data: { signalsJobId: ref.jobId, signals: json({ usagePending: true }) },
+    });
+    await this.recordSignalsUsage(row.id);
+    return true;
+  }
+
+  /** Расход задачи декодера — в тот же суточный бюджет проверки (операция
+   *  та же). `false` — журнал недоступен, пометка остаётся. */
+  private async recordSignalsUsage(id: string): Promise<boolean> {
+    try {
+      await this.aiUsage.record({
+        operation: DEMO_QUALITY_OPERATION,
+        model: 'ffmpeg-api',
+        userId: null,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `сигналы декодера ${id}: расход не записан (${errMessage(err)}) — повтор в следующем тике`,
+      );
+      return false;
+    }
+    await this.prisma.tutorialDemoQualityCheck
+      .updateMany({
+        where: { id, signalsStatus: 'running' },
+        data: { signals: Prisma.DbNull },
+      })
+      .catch(() => undefined);
+    return true;
+  }
+
+  private async pollSignals(row: CheckRow): Promise<void> {
+    const started = row.signalsStartedAt
+      ? new Date(row.signalsStartedAt).getTime()
+      : 0;
+    if (!row.signalsJobId) {
+      // Упали между захватом и записью id задачи: ждать нечего.
+      if (this.clock() - started > SIGNALS_DEADLINE_MS) {
+        await this.failSignals(row, 'задача декодера не была отправлена');
+      }
+      return;
+    }
+    // Задача оплачена, а расход ещё не в журнале — сперва он.
+    if ((row.signals as { usagePending?: boolean } | null)?.usagePending) {
+      if (!(await this.recordSignalsUsage(row.id))) return;
+    }
+    if (this.clock() - started > SIGNALS_DEADLINE_MS) {
+      await this.failSignals(row, 'декодер не ответил за 10 мин');
+      return;
+    }
+    const st = await (this.ffmpeg as FfmpegApiService).status(row.signalsJobId);
+    if (st.status === 'pending') return;
+    if (st.status === 'failed') {
+      await this.failSignals(row, st.error ?? 'ffmpeg-api: ошибка без текста');
+      return;
+    }
+    const url =
+      st.outputs?.[SIGNALS_OUTPUT] ??
+      (st.outputs ? Object.values(st.outputs).find(Boolean) : undefined);
+    if (!url) {
+      await this.failSignals(row, 'декодер завершился без файла сигналов');
+      return;
+    }
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(SIGNALS_DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!res.ok) throw new Error(`файл сигналов: HTTP ${res.status}`);
+    const text = await res.text();
+    const durationMs = row.durationMs ?? 0;
+    await this.applySignals(
+      row,
+      parseFrameSignalsOutput(text, durationMs),
+      'running',
+    );
+  }
+
+  /** Итог декодера в проверку: сигналы, замечания и вердикт (до warn). */
+  private async applySignals(
+    row: CheckRow,
+    found: { black: FrameSignals['black']; freeze: FrameSignals['freeze'] },
+    from: 'pending' | 'running',
+  ): Promise<void> {
+    const target = await this.loadTarget(row);
+    const spans =
+      target && target.factor !== undefined
+        ? stepSpansMs(target.manifest, target.factor)
+        : null;
+    const suspicious = suspiciousSignals(found, spans);
+    const signals: FrameSignals = { ...found, suspicious };
+    const report = row.report as DemoQualityReport | null;
+    const nextReport =
+      report && suspicious.length > 0
+        ? { ...report, issues: [...report.issues, ...signalIssues(suspicious)] }
+        : null;
+    const verdict = verdictWithSignals(
+      isQualityVerdict(row.verdict) ? row.verdict : null,
+      suspicious.length,
+    );
+    await this.prisma.tutorialDemoQualityCheck.updateMany({
+      where: { id: row.id, signalsStatus: from },
+      data: {
+        signalsStatus: 'complete',
+        signals: json(signals),
+        ...(nextReport ? { report: json(nextReport) } : {}),
+        ...(verdict !== row.verdict ? { verdict } : {}),
+      },
+    });
+  }
+
+  private async failSignals(row: CheckRow, reason: string): Promise<void> {
+    const message = scrubQualityText(reason, 300);
+    this.logger.warn(`сигналы декодера проверки ${row.id}: ${message}`);
+    await this.prisma.tutorialDemoQualityCheck
+      .updateMany({
+        where: { id: row.id, signalsStatus: { in: ['pending', 'running'] } },
+        data: {
+          signalsStatus: 'error',
+          signals: json({ error: message }),
+        },
+      })
+      .catch(() => undefined);
   }
 
   // ── контекст и бюджет ────────────────────────────────────────────
@@ -941,18 +1566,25 @@ export class TutorialDemoQualityService {
     })) as AssetMeta | null;
     if (!asset) return null;
     let plannedMs = asset.durationMs;
+    let factor: number | null | undefined = appliedFactor(asset.tempoManifest);
     if (row.versionId) {
       const v = (await this.prisma.tutorialVideoVersion.findFirst({
         where: { id: row.versionId, assetId: row.assetId },
-        select: { videoMs: true },
-      })) as { videoMs: number | null } | null;
+        select: { videoMs: true, kind: true, tempoFactor: true },
+      })) as {
+        videoMs: number | null;
+        kind?: string | null;
+        tempoFactor?: number | null;
+      } | null;
       if (!v) return null;
       plannedMs = v.videoMs;
+      factor = versionFactor(v);
     }
     return {
       asset,
       manifest: parseTutorialManifest(asset.tempoManifest),
       plannedMs,
+      factor,
     };
   }
 
@@ -963,15 +1595,11 @@ export class TutorialDemoQualityService {
     durationMs: number,
   ): Promise<DemoQualityContext> {
     const { asset, manifest } = target;
-    // Таймкоды шагов — только у исходного файла: у версии темпа они
-    // другие, а угадывать их по общей длине нельзя.
+    // Таймкоды шагов — по сетке ПРОВЕРЯЕМОГО файла: у версии темпа они
+    // свои (тот же `planTempo` от того же manifest, заход 7); темп
+    // неизвестен — не угадываем по общей длине.
     const spans =
-      manifest && !row.versionId
-        ? frameSpansSeconds(
-            manifest.frames.map((f) => ({ seconds: f.baseSeconds })),
-            manifest.motion,
-          )
-        : null;
+      target.factor === undefined ? null : stepSpansMs(manifest, target.factor);
     return {
       subjectKey: asset.subjectKey,
       title: asset.title,
@@ -984,8 +1612,8 @@ export class TutorialDemoQualityService {
       steps: (manifest?.frames ?? []).map((f, i) => ({
         index: f.stepIndex,
         caption: f.caption ?? f.speech?.text ?? null,
-        startSec: spans ? Math.round(spans[i].start * 10) / 10 : null,
-        endSec: spans ? Math.round(spans[i].end * 10) / 10 : null,
+        startSec: spans ? Math.round(spans[i].startMs / 100) / 10 : null,
+        endSec: spans ? Math.round(spans[i].endMs / 100) / 10 : null,
       })),
       captureBuild: asset.captureBuild,
       freshness: await this.freshness(asset.captureBuild),
@@ -1192,5 +1820,30 @@ export function toView(r: CheckRow): DemoQualityCheckView {
     captureMode: r.captureMode,
     createdAt: new Date(r.createdAt).toISOString(),
     checkedAt: iso(r.checkedAt),
+    effectiveVerdict: r.status === 'complete' ? effectiveVerdict(r) : null,
+    override: isQualityVerdict(r.overrideVerdict)
+      ? {
+          verdict: r.overrideVerdict,
+          reason: r.overrideReason ?? null,
+          by: r.overrideBy ?? null,
+          at: iso(r.overrideAt),
+        }
+      : null,
+    controlFrames: Array.isArray(r.controlFrames)
+      ? (r.controlFrames as ControlFrame[])
+      : null,
+    signals: signalsView(r),
+  };
+}
+
+function signalsView(r: CheckRow): DemoQualitySignalsView | null {
+  if (!r.signalsStatus) return null;
+  const s = (r.signals ?? {}) as Partial<FrameSignals> & { error?: string };
+  return {
+    status: r.signalsStatus,
+    black: Array.isArray(s.black) ? s.black : [],
+    freeze: Array.isArray(s.freeze) ? s.freeze : [],
+    suspicious: Array.isArray(s.suspicious) ? s.suspicious : [],
+    error: typeof s.error === 'string' ? s.error : null,
   };
 }

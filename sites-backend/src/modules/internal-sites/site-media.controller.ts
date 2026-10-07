@@ -5,6 +5,9 @@
  * `generator-tutorial`), тело ≤ 8 КБ строкой, JSON — после подписи.
  *
  *   POST /internal/sites/tutorial/site-link    { telegramId, siteId } → можно ли привязать черновик
+ *   POST /internal/sites/tutorial/site-candidates { telegramId, host } → { sites: [{ siteId, name, hosts }] }
+ *        (W7: сайты помощника, где человек владелец/менеджер помощника и
+ *        `host` — подтверждённый; чужие не раскрываются — пустой список)
  *   POST /internal/sites/tutorial/site-videos  { siteId, asOf, videos[] } → полный набор роликов сайта
  *        (`asOf` — мс часов генератора, взятые ДО чтения его базы; набор
  *        старше последнего принятого → 200 `{ stale: true }`, без изменений)
@@ -129,6 +132,22 @@ export class InternalSiteMediaController {
   link(@InternalBody() b: unknown) {
     const o = obj(b, ['telegramId', 'siteId']);
     return this.svc.link(parseTelegramId(o.telegramId), id(o.siteId, 'siteId'));
+  }
+
+  @Post('site-candidates')
+  @HttpCode(200)
+  candidates(@InternalBody() b: unknown) {
+    const o = obj(b, ['telegramId', 'host']);
+    if (
+      typeof o.host !== 'string' ||
+      !HOST.test(o.host) ||
+      !o.host.includes('.')
+    )
+      throw bad('host — имя хоста');
+    return this.svc.candidates(
+      parseTelegramId(o.telegramId),
+      o.host.toLowerCase(),
+    );
   }
 
   @Post('site-videos')

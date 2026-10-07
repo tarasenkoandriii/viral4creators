@@ -13,6 +13,9 @@ export const START_PREFIXES = {
   pl: 'pl_', // выбранный тариф
   sb: 'sb_', // перенос песочницы лендинга
   st: 'st_', // экран «Статистика» сайта
+  // Ш1-хвост: «подтвердить ЭТОТ хост» из обучалки генератора —
+  // `vh-<base64url(хост)>` (контракт с backend `SITES_VERIFY_URL`).
+  vh: 'vh-',
 } as const;
 
 export type StartKind = keyof typeof START_PREFIXES;
@@ -31,6 +34,81 @@ export function parseStartParam(raw: string | null | undefined): StartParam {
     }
   }
   return null;
+}
+
+/**
+ * Хост из `vh-<base64url(хост)>` — строго: base64url без `=` в КАНОНИЧЕСКОЙ
+ * записи (повторное кодирование совпадает), ASCII, и это уже нормальная
+ * форма хоста (нижний регистр, punycode, без схемы/порта/пути/точки в
+ * конце, не IP, не одна метка) — то же, что `parseHostInput` отдал бы для
+ * него самого. Иначе `null`: экран ничего не предзаполняет. Подтверждение
+ * хоста всё равно — только кнопкой человека и проверкой сервера.
+ */
+export function verifyHostFromStartParam(
+  raw: string | null | undefined
+): string | null {
+  const p = parseStartParam(raw);
+  if (p?.kind !== 'vh') return null;
+  const host = decodeBase64Url(p.value);
+  if (host === null || encodeBase64Url(host) !== p.value) return null;
+  return isCanonicalHost(host) ? host : null;
+}
+
+/** `vh-<base64url(хост)>` — для тестов и сверки с генератором. */
+export function verifyHostStartParam(host: string): string | null {
+  if (!isCanonicalHost(host)) return null;
+  const raw = `${START_PREFIXES.vh}${encodeBase64Url(host)}`;
+  return parseStartParam(raw)?.kind === 'vh' ? raw : null;
+}
+
+const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Хост в нормальной форме (см. `verifyHostFromStartParam`). */
+export function isCanonicalHost(host: string): boolean {
+  if (host.length < 3 || host.length > 253) return false;
+  const labels = host.split('.');
+  if (labels.length < 2 || !labels.every((l) => HOST_LABEL.test(l))) {
+    return false;
+  }
+  // Последняя метка — не число: IPv4 и IP-подобные записи — не хост.
+  return !/^[0-9]+$/.test(labels[labels.length - 1]);
+}
+
+const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+function encodeBase64Url(ascii: string): string {
+  let out = '';
+  for (let i = 0; i < ascii.length; i += 3) {
+    const a = ascii.charCodeAt(i);
+    const b = i + 1 < ascii.length ? ascii.charCodeAt(i + 1) : -1;
+    const c = i + 2 < ascii.length ? ascii.charCodeAt(i + 2) : -1;
+    out += B64[a >> 2];
+    out += B64[((a & 3) << 4) | (b < 0 ? 0 : b >> 4)];
+    if (b >= 0) out += B64[((b & 15) << 2) | (c < 0 ? 0 : c >> 6)];
+    if (c >= 0) out += B64[c & 63];
+  }
+  return out;
+}
+
+/** base64url → ASCII (печатные 0x21–0x7e) или `null`. */
+function decodeBase64Url(v: string): string | null {
+  if (v.length % 4 === 1) return null;
+  let bits = 0;
+  let acc = 0;
+  let out = '';
+  for (const ch of v) {
+    const n = B64.indexOf(ch);
+    if (n < 0) return null;
+    acc = ((acc << 6) | n) & 0xffffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      const code = (acc >> bits) & 0xff;
+      if (code < 0x21 || code > 0x7e) return null;
+      out += String.fromCharCode(code);
+    }
+  }
+  return out;
 }
 
 /** Параметр веб-ссылки приглашения: `https://<кабинет>/?invite=inv_…`. */

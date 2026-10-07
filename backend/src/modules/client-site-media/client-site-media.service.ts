@@ -23,6 +23,7 @@
  * `LandingVideosService` (тот же барьер); сюда к нему не привязать черновик
  * по чужому сайту, и набор черновиков туда не уходит никогда.
  */
+import { maskSensitiveEcho } from '../../common/assist-chat-core';
 import {
   BadRequestException,
   ForbiddenException,
@@ -38,14 +39,27 @@ import {
   SitesRejectedError,
   SitesUnavailableError,
   sitesTelegramId,
+  type SitesUiCandidate,
   type SitesUiElementInput,
+  type SitesUiRole,
+  type SitesUiViewport,
   type SitesVideoInput,
 } from '../sites-internal/sites-internal.client';
+import { CAPTURE_VIEWPORT } from '../tutorial-runner/tutorial-video-assembly';
+import {
+  reconcileAssistVideoSets,
+  rememberSyncFailure,
+  rememberVideoSet,
+  type AssistVideosReconcileResult,
+} from './assist-videos-reconcile';
 import { landingAssistSiteId } from './landing-assist-config';
 import { draftRequiresLogin, draftStepHosts } from './requires-login';
 
-/** Тот же потолок, что у sites-backend (`SYNC_VIDEOS_MAX`, тело ≤ 8 КБ). */
-export const SYNC_VIDEOS_MAX = 15;
+/**
+ * Тот же потолок, что у sites-backend (`SYNC_VIDEOS_MAX` = 60, Ш5(5): 10
+ * шагов × 5 языков генератора, с запасом).
+ */
+export const SYNC_VIDEOS_MAX = 60;
 /**
  * Бюджет ВСЕГО тела карты (байты UTF-8, как `SYNC_BODY_BUDGET`):
  * sites-backend принимает ≤ 8 КБ (INTERNAL_SITES_BODY_LIMIT). Кириллические
@@ -55,12 +69,18 @@ export const SYNC_VIDEOS_MAX = 15;
  */
 export const UI_MAP_BODY_BUDGET = 7_500;
 /**
- * Бюджет тела набора роликов (байты UTF-8): sites-backend принимает ≤ 8 КБ
- * (INTERNAL_SITES_BODY_LIMIT), а 15 роликов с длинными кириллическими
- * названиями и адресами Blob — ≈ 9 КБ. Не влезло — 413 на КАЖДОЙ
- * синхронизации, и отвязка/удаление черновика до сайта не доходят никогда.
+ * Бюджет тела набора роликов (байты UTF-8): sites-backend принимает на
+ * `site-videos` ≤ 64 КБ (`INTERNAL_SITE_VIDEOS_BODY_LIMIT_BYTES`, свой
+ * парсер; остальные внутренние маршруты — 8 КБ). 60 роликов с длинными
+ * кириллическими названиями и адресами Blob — ≈ 40 КБ; запас — под
+ * подпись и рост полей. Не влезло бы — 413 на КАЖДОЙ синхронизации, и
+ * отвязка/удаление черновика до сайта не доходили бы никогда.
+ *
+ * Совместимость: старый sites-backend (8 КБ, потолок 15) ответит 413/400 на
+ * большой набор — `syncSite` вернёт `false` и НЕ запишет отпечаток, ночная
+ * сверка повторит после его выкладки. Малые наборы проходят и у старого.
  */
-export const SYNC_BODY_BUDGET = 7_500;
+export const SYNC_BODY_BUDGET = 60_000;
 const SITE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export interface AssistLinkView {
@@ -108,11 +128,6 @@ export class ClientSiteMediaService {
       select: { telegramId: true },
     });
     return sitesTelegramId(user?.telegramId);
-  }
-
-  async getLink(userId: string, projectId: string): Promise<AssistLinkView> {
-    const draft = await this.ownDraft(userId, projectId);
-    return { clientSiteId: draft.clientSiteId, siteName: null };
   }
 
   /** Привязать (siteId) или отвязать (null) черновик от сайта помощника. */
@@ -215,14 +230,37 @@ export class ClientSiteMediaService {
         this.logger.log(
           `набор роликов сайта помощника ${siteId} устарел (принят более новый)`,
         );
+      } else {
+        // W7: отпечаток принятого набора — ночная сверка шлёт только то,
+        // что не дошло (`assist-videos-reconcile.ts`).
+        await rememberVideoSet(this.prisma, siteId, videos, asOf);
       }
       return true;
     } catch (e) {
       this.logger.warn(
         `ролики сайта помощника ${siteId} не отправлены: ${e instanceof Error ? e.name : 'error'}`,
       );
+      // Аудит [P3]: время попытки — в конец очереди ночной сверки; «сайт не
+      // найден / не ваш» считается подряд (`assist-videos-reconcile.ts`).
+      const permanent =
+        e instanceof SitesRejectedError && [403, 404, 409].includes(e.status);
+      await rememberSyncFailure(this.prisma, siteId, this.now(), permanent);
       return false;
     }
+  }
+
+  /**
+   * W7: ночная сверка наборов роликов всех сайтов помощника (крон
+   * `client-site-retention`). Сбой — в лог и в итог, крон не роняет.
+   */
+  async reconcileSites(): Promise<AssistVideosReconcileResult> {
+    return reconcileAssistVideoSets({
+      prisma: this.prisma,
+      media: this,
+      configured: this.sites.configured(),
+      landingSiteId: landingAssistSiteId(this.env),
+      now: this.now,
+    });
   }
 
   /** Одобренные и собранные ролики привязанных к сайту черновиков. */
@@ -333,8 +371,14 @@ export class ClientSiteMediaService {
         return;
       const telegramId = await this.telegramIdOf(userId);
       if (!telegramId) return;
+      const viewport = explorerViewport();
       const elements = fitUiMapBody(
-        { telegramId, siteId: draft.clientSiteId, url: exploration.currentUrl },
+        {
+          telegramId,
+          siteId: draft.clientSiteId,
+          url: exploration.currentUrl,
+          viewport,
+        },
         mapElements(exploration.elements),
       );
       if (!elements.length) return;
@@ -343,6 +387,7 @@ export class ClientSiteMediaService {
         draft.clientSiteId,
         exploration.currentUrl,
         elements,
+        viewport,
       );
     } catch (e) {
       this.logger.warn(
@@ -353,9 +398,73 @@ export class ClientSiteMediaService {
 }
 
 /**
+ * Ш4(5): вид вёрстки снимка — по окну исследователя обучалки
+ * (`CAPTURE_VIEWPORT`, общий для всех съёмщиков; сейчас 390×844 —
+ * `mobile`). Порог — тот же, что у sites-backend для посетителя
+ * (`visitorViewport`: уже 768 — телефон).
+ */
+export function explorerViewport(
+  width: number = CAPTURE_VIEWPORT.width,
+): SitesUiViewport {
+  return width < 768 ? 'mobile' : 'desktop';
+}
+
+/**
+ * Ш4(5): роль ARIA элемента раунда — по тегу и `input[type]`. Без роли
+ * sites-backend не заводит кандидат «роль+имя», и элемент из обучалки
+ * узнаётся в снимке обхода/QA только по селектору.
+ */
+export function elementRole(tag: string, type?: unknown): SitesUiRole | null {
+  switch (tag) {
+    case 'a':
+      return 'link';
+    case 'button':
+      return 'button';
+    case 'select':
+      return 'combobox';
+    case 'textarea':
+      return 'textbox';
+    case 'input':
+      break;
+    default:
+      return null;
+  }
+  const t = typeof type === 'string' ? type.toLowerCase() : 'text';
+  switch (t) {
+    case 'checkbox':
+      return 'checkbox';
+    case 'radio':
+      return 'radio';
+    case 'search':
+      return 'searchbox';
+    case 'number':
+      return 'spinbutton';
+    case 'range':
+      return 'slider';
+    case 'submit':
+    case 'button':
+    case 'reset':
+    case 'image':
+      return 'button';
+    case 'hidden':
+    case 'file':
+    case 'color':
+      return null;
+    default:
+      return 'textbox';
+  }
+}
+
+/**
  * `PageElement[]` обучалки → элементы карты: подпись — label или видимый
  * текст; ≤ 60 и в бюджете тела (≤ 8 КБ у sites-backend). Чистит и
  * пересчитывает id сам sites-backend.
+ *
+ * Ш4(5): плюс роль (по тегу/типу) и кандидаты, которые у генератора
+ * есть: видимый текст кнопки/ссылки, когда подпись взята из
+ * `aria-label`/`placeholder` и с ним не совпадает. Другие атрибуты
+ * (`name`) исследователь на единственность не проверял — в кандидаты не
+ * идут: у радиокнопок `name` общий, подсветка попала бы не туда.
  */
 export function mapElements(raw: unknown): SitesUiElementInput[] {
   if (!Array.isArray(raw)) return [];
@@ -372,17 +481,33 @@ export function mapElements(raw: unknown): SitesUiElementInput[] {
     if (
       typeof o.selector !== 'string' ||
       o.selector.length > 200 ||
+      // Аудит захода 7: ПД в селекторе (`[name="ivan@…"]`) в общую карту
+      // сайта не идёт — маска сломала бы селектор, значит элемент вон.
+      hasPd(o.selector) ||
       typeof o.tag !== 'string' ||
       !label ||
       (o.tag === 'input' && o.type === 'password')
     ) {
       continue;
     }
-    const item = {
+    const item: SitesUiElementInput = {
       selector: o.selector,
       tag: o.tag,
       label: label.slice(0, 80),
     };
+    const role = elementRole(o.tag, o.type);
+    if (role) item.role = role;
+    const text =
+      typeof o.visibleText === 'string'
+        ? o.visibleText.trim().slice(0, 80)
+        : '';
+    const candidates: SitesUiCandidate[] = [];
+    if (text && text !== item.label)
+      candidates.push({ kind: 'text', name: text });
+    // Ш4(5)-хвост: все уникальные кандидаты исследователя (не только
+    // выбранный селектор) — элемент узнаётся в снимках обхода/QA по любому.
+    candidates.push(...explorerCandidates(o.candidates, role ?? undefined));
+    if (candidates.length) item.candidates = candidates;
     size += Buffer.byteLength(JSON.stringify(item), 'utf8') + 1;
     if (size > UI_MAP_BODY_BUDGET) break;
     out.push(item);
@@ -391,13 +516,62 @@ export function mapElements(raw: unknown): SitesUiElementInput[] {
 }
 
 /**
- * Тело `ui-map` целиком (`{ telegramId, siteId, url, elements }`) — в
+ * ПД в строке: то, что маска эха (e-mail, телефон, ключ) заменила бы, или
+ * длинный номер (≥ 9 цифр — карта, счёт, документ).
+ */
+export function hasPd(s: string): boolean {
+  return maskSensitiveEcho(s) !== s || /\d(?:[\s-]?\d){8,}/.test(s);
+}
+
+/**
+ * Ш4(5)-хвост: кандидаты исследователя (`PageElement.candidates`) — в
+ * форму карты sites-backend (`cleanCandidate`): `id`/`test-id`/`attr` — как
+ * есть, `aria` — «роль + имя» с селектором (без роли — css). Селектор ≤ 200,
+ * не больше 4 (sites-backend берёт до 10 и хранит 5 лучших).
+ */
+export function explorerCandidates(
+  raw: unknown,
+  role: SitesUiRole | undefined,
+): SitesUiCandidate[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SitesUiCandidate[] = [];
+  for (const c of raw.slice(0, 4)) {
+    if (!c || typeof c !== 'object') continue;
+    const o = c as Record<string, unknown>;
+    const selector = o.selector;
+    if (typeof selector !== 'string' || !selector || selector.length > 200)
+      continue;
+    // Аудит захода 7: кандидат с ПД (селектор или подпись aria) —
+    // отбрасывается, а не маскируется (маска сломала бы селектор).
+    if (hasPd(selector) || (typeof o.name === 'string' && hasPd(o.name)))
+      continue;
+    if (o.kind === 'id' || o.kind === 'test-id' || o.kind === 'attr') {
+      out.push({ kind: o.kind, selector });
+    } else if (o.kind === 'aria') {
+      const name = typeof o.name === 'string' ? o.name.trim().slice(0, 80) : '';
+      out.push(
+        role && name
+          ? { kind: 'role-name', role, name, selector }
+          : { kind: 'css', selector },
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * Тело `ui-map` целиком (`{ telegramId, siteId, url, viewport, elements }`) — в
  * бюджет `UI_MAP_BODY_BUDGET`: лишние элементы с конца отсекаются (порядок
  * — порядок страницы, первые важнее). Адрес, который один не влезает, —
  * пустой список: отправлять нечего.
  */
 export function fitUiMapBody(
-  head: { telegramId: string; siteId: string; url: string },
+  head: {
+    telegramId: string;
+    siteId: string;
+    url: string;
+    viewport?: SitesUiViewport;
+  },
   elements: SitesUiElementInput[],
 ): SitesUiElementInput[] {
   const out = [...elements];

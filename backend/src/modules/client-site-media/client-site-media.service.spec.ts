@@ -16,10 +16,14 @@ import {
 import {
   ClientSiteMediaService,
   SYNC_BODY_BUDGET,
+  SYNC_VIDEOS_MAX,
   UI_MAP_BODY_BUDGET,
+  explorerViewport,
   fitUiMapBody,
+  explorerCandidates,
   mapElements,
 } from './client-site-media.service';
+import { videoSetHash } from './assist-videos-reconcile';
 
 type Row = Record<string, unknown>;
 
@@ -28,7 +32,9 @@ function fakePrisma(state: {
   drafts: Row[];
   assets: Row[];
   users: Row[];
+  settings?: Map<string, string>;
 }) {
+  const settings = (state.settings ??= new Map());
   const match = (row: Row, where: Row): boolean =>
     Object.entries(where).every(([k, v]) => {
       if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -63,6 +69,16 @@ function fakePrisma(state: {
         const d = state.drafts.find((x) => x.id === where.id)!;
         Object.assign(d, data);
         return d;
+      },
+    },
+    platformSetting: {
+      findUnique: async ({ where }: { where: Row }) =>
+        settings.has(where.key as string)
+          ? { value: settings.get(where.key as string) }
+          : null,
+      upsert: async ({ where, create }: { where: Row; create: Row }) => {
+        settings.set(where.key as string, create.value as string);
+        return create;
       },
     },
     tutorialVideoAsset: {
@@ -264,8 +280,8 @@ describe('набор роликов сайта', () => {
     });
   });
 
-  it('набор держит бюджет тела ≤ 8 КБ sites-backend: длинные названия — старые ролики уходят, новые остаются', async () => {
-    const n = 15;
+  it('набор держит бюджет тела ≤ 64 КБ sites-backend: длинные адреса — старые ролики уходят, новые остаются', async () => {
+    const n = 60;
     const longTitle = 'Як оформити замовлення з доставкою '
       .repeat(4)
       .slice(0, 120);
@@ -278,7 +294,7 @@ describe('набор роликов сайта', () => {
           id: `asset-${i}`,
           clientSiteDraftId: `d${i}`,
           createdAt: i,
-          blobUrl: `https://abcdefgh12345678.public.blob.vercel-storage.com/tutorial-videos/client-site/cm1abcdefghijklmnopqrst${i}-AbCdEfGhIjKlMnOpQrStUvWxYz0123.mp4`,
+          blobUrl: `https://abcdefgh12345678.public.blob.vercel-storage.com/tutorial-videos/client-site/${'x'.repeat(700)}${i}.mp4`,
         }),
       ),
     });
@@ -289,11 +305,61 @@ describe('набор роликов сайта', () => {
         'utf8',
       ),
     ).toBeLessThanOrEqual(SYNC_BODY_BUDGET);
-    expect(SYNC_BODY_BUDGET).toBeLessThan(8 * 1024);
-    expect(out.length).toBeGreaterThan(0);
+    // Запас под 64 КБ sites-backend (INTERNAL_SITE_VIDEOS_BODY_LIMIT_BYTES).
+    expect(SYNC_BODY_BUDGET).toBeLessThan(64 * 1024);
+    expect(out.length).toBeGreaterThan(15);
     expect(out.length).toBeLessThan(n);
     // Отсечены самые старые: первым остаётся самый новый.
     expect(out[0].externalId).toBe(`asset-${n - 1}`);
+  });
+
+  it('Ш5(5): до 60 роликов в наборе (потолок sites-backend), сверх — самые старые не уходят', async () => {
+    const n = 70;
+    const { svc } = setup({
+      drafts: Array.from({ length: n }, (_, i) =>
+        publicDraft({ id: `d${i}`, clientSiteId: 'S', title: `Ролик ${i}` }),
+      ),
+      assets: Array.from({ length: n }, (_, i) =>
+        asset({
+          id: `asset-${i}`,
+          clientSiteDraftId: `d${i}`,
+          createdAt: i,
+          blobUrl: `https://s.public.blob.vercel-storage.com/v${i}.mp4`,
+        }),
+      ),
+    });
+    const out = await svc.collectVideos('S');
+    expect(SYNC_VIDEOS_MAX).toBe(60);
+    expect(out).toHaveLength(SYNC_VIDEOS_MAX);
+    expect(out[0].externalId).toBe(`asset-${n - 1}`);
+  });
+
+  it('старый sites-backend отверг большой набор (413/400) — false, отпечатка нет: ночная сверка повторит', async () => {
+    for (const status of [413, 400]) {
+      const { state, sites, svc } = setup();
+      svc.now = () => 1_790_000_000_000;
+      sites.syncError = new SitesRejectedError(status, 'X', 'too big');
+      await expect(svc.syncSite('S')).resolves.toBe(false);
+      // Только время попытки (в конец очереди сверки), не «сайт пропал».
+      expect(state.settings!.get('assist-videos-hash:S')).toBe(
+        '0|1790000000000|0',
+      );
+    }
+  });
+
+  it('аудит [P3]: «сайт не найден / не ваш» (403/404/409) считается подряд, сбой сети — нет', async () => {
+    const { state, sites, svc } = setup();
+    let t = 1_790_000_000_000;
+    svc.now = () => t;
+    sites.syncError = new SitesRejectedError(403, 'SITE_LINK_FORBIDDEN', 'x');
+    await svc.syncSite('S');
+    t += 1;
+    sites.syncError = new SitesRejectedError(404, 'NOT_FOUND', 'x');
+    await svc.syncSite('S');
+    t += 1;
+    sites.syncError = new SitesUnavailableError('down');
+    await svc.syncSite('S');
+    expect(state.settings!.get('assist-videos-hash:S')).toBe(`0|${t}|2`);
   });
 
   it('аудит Э6 (гонка): отметка набора asOf берётся ДО чтения базы и уходит в тело', async () => {
@@ -334,6 +400,33 @@ describe('набор роликов сайта', () => {
     await expect(svc.syncSite('S')).resolves.toBe(true);
   });
 
+  it('W7: принятый набор — отпечаток для ночной сверки; устаревший и неотправленный — нет', async () => {
+    const ok = setup();
+    ok.svc.now = () => 1_790_000_000_000;
+    await ok.svc.syncSite('S');
+    const key = 'assist-videos-hash:S';
+    expect(ok.state.settings!.get(key)).toBe(
+      `${videoSetHash([])}|1790000000000`,
+    );
+
+    const stale = setup();
+    stale.sites.syncSiteVideos = async () => ({
+      siteId: 'S',
+      accepted: 0,
+      removed: 0,
+      rejected: [],
+      stale: true,
+    });
+    await stale.svc.syncSite('S');
+    expect(stale.state.settings!.has(key)).toBe(false);
+
+    const down = setup();
+    down.sites.syncError = new SitesUnavailableError('down');
+    await down.svc.syncSite('S');
+    // Неотправленный — без отпечатка, только время попытки (аудит [P3]).
+    expect(down.state.settings!.get(key)).toMatch(/^0\|\d+\|0$/);
+  });
+
   it('сбой отправки не бросает (визард и сборка не падают)', async () => {
     const { sites, svc } = setup();
     sites.syncError = new SitesUnavailableError('down');
@@ -363,12 +456,135 @@ describe('карта интерфейса из раунда', () => {
           'S',
           'https://shop.example.com/cart',
           [
-            { selector: '#buy', tag: 'button', label: 'Купить' },
-            { selector: '#q', tag: 'input', label: 'Поиск' },
+            {
+              selector: '#buy',
+              tag: 'button',
+              label: 'Купить',
+              role: 'button',
+            },
+            { selector: '#q', tag: 'input', label: 'Поиск', role: 'textbox' },
           ],
+          // Ш4(5): вид вёрстки — окно исследователя 390×844.
+          'mobile',
         ],
       ],
     ]);
+  });
+
+  it('Ш4(5): роль по тегу и типу, видимый текст — кандидат, когда подпись из aria-label', () => {
+    expect(
+      mapElements([
+        {
+          selector: 'a[aria-label="Корзина"]',
+          tag: 'a',
+          label: 'Корзина',
+          visibleText: 'Корзина (3)',
+        },
+        {
+          selector: '#agree',
+          tag: 'input',
+          type: 'checkbox',
+          label: 'Согласен',
+        },
+        { selector: '#s', tag: 'input', type: 'search', label: 'Поиск' },
+        { selector: '#go', tag: 'input', type: 'submit', label: 'Отправить' },
+        { selector: '#city', tag: 'select', label: 'Город' },
+        { selector: '#same', tag: 'button', label: 'Да', visibleText: 'Да' },
+        { selector: '#f', tag: 'input', type: 'file', label: 'Файл' },
+      ]),
+    ).toEqual([
+      {
+        selector: 'a[aria-label="Корзина"]',
+        tag: 'a',
+        label: 'Корзина',
+        role: 'link',
+        candidates: [{ kind: 'text', name: 'Корзина (3)' }],
+      },
+      { selector: '#agree', tag: 'input', label: 'Согласен', role: 'checkbox' },
+      { selector: '#s', tag: 'input', label: 'Поиск', role: 'searchbox' },
+      { selector: '#go', tag: 'input', label: 'Отправить', role: 'button' },
+      { selector: '#city', tag: 'select', label: 'Город', role: 'combobox' },
+      { selector: '#same', tag: 'button', label: 'Да', role: 'button' },
+      { selector: '#f', tag: 'input', label: 'Файл' },
+    ]);
+  });
+
+  it('Ш4(5)-хвост: кандидаты исследователя — в карту; aria — «роль + имя» с селектором; мусор — вон', () => {
+    const [item] = mapElements([
+      {
+        selector: '#email',
+        tag: 'input',
+        type: 'email',
+        label: 'Ел. пошта',
+        candidates: [
+          { kind: 'id', selector: '#email' },
+          { kind: 'test-id', selector: 'input[data-testid="login-email"]' },
+          { kind: 'attr', selector: 'input[name="email"]' },
+          {
+            kind: 'aria',
+            selector: 'input[aria-label="Ел. пошта"]',
+            name: 'Ел. пошта',
+          },
+          { kind: 'css', selector: 'div > input' },
+        ],
+      },
+    ]);
+    expect(item.candidates).toEqual([
+      { kind: 'id', selector: '#email' },
+      { kind: 'test-id', selector: 'input[data-testid="login-email"]' },
+      { kind: 'attr', selector: 'input[name="email"]' },
+      {
+        kind: 'role-name',
+        role: 'textbox',
+        name: 'Ел. пошта',
+        selector: 'input[aria-label="Ел. пошта"]',
+      },
+    ]);
+    expect(
+      explorerCandidates(
+        [
+          { kind: 'aria', selector: 'div[aria-label="x"]', name: 'x' },
+          { kind: 'id', selector: '#'.padEnd(201, 'a') },
+          { kind: 'evil', selector: '#x' },
+          null,
+        ],
+        undefined,
+      ),
+    ).toEqual([{ kind: 'css', selector: 'div[aria-label="x"]' }]);
+  });
+
+  it('аудит захода 7: ПД в селекторе кандидата, подписи aria или селекторе элемента — в карту не идёт', () => {
+    expect(
+      explorerCandidates(
+        [
+          { kind: 'attr', selector: 'input[name="ivan@example.com"]' },
+          {
+            kind: 'aria',
+            selector: 'a[aria-label="Позвонить +380 50 123 45 67"]',
+            name: 'Позвонить +380 50 123 45 67',
+          },
+          { kind: 'id', selector: '#card-4111111111111111' },
+          { kind: 'test-id', selector: 'button[data-testid="pay"]' },
+        ],
+        'button',
+      ),
+    ).toEqual([{ kind: 'test-id', selector: 'button[data-testid="pay"]' }]);
+    expect(
+      mapElements([
+        {
+          selector: 'input[name="ivan@example.com"]',
+          tag: 'input',
+          label: 'Пошта',
+        },
+        { selector: '#ok', tag: 'button', label: 'Далі' },
+      ]).map((e) => e.selector),
+    ).toEqual(['#ok']);
+  });
+
+  it('Ш4(5): вид вёрстки — по ширине окна исследователя', () => {
+    expect(explorerViewport()).toBe('mobile');
+    expect(explorerViewport(390)).toBe('mobile');
+    expect(explorerViewport(1280)).toBe('desktop');
   });
 
   it('черновик в хранилище Ш2 (куки в личной записи, secretsUsedAt) без входа — карта уходит', async () => {
@@ -445,15 +661,22 @@ describe('карта интерфейса из раунда', () => {
       drafts: [publicDraft({ clientSiteId: 'S' })],
     });
     await svc.afterRound('u1', 'p1', { currentUrl: url, elements });
-    const [telegramId, siteId, sentUrl, sent] = sites.calls[0][1] as [
+    const [telegramId, siteId, sentUrl, sent, viewport] = sites.calls[0][1] as [
       string,
       string,
       string,
       unknown[],
+      string,
     ];
     expect(
       Buffer.byteLength(
-        JSON.stringify({ telegramId, siteId, url: sentUrl, elements: sent }),
+        JSON.stringify({
+          telegramId,
+          siteId,
+          url: sentUrl,
+          elements: sent,
+          viewport,
+        }),
         'utf8',
       ),
     ).toBeLessThanOrEqual(UI_MAP_BODY_BUDGET);

@@ -214,6 +214,24 @@ describeDb('Приёмка Э-С Ш3 — браузерный воркер', () 
 
   // ── 2. выключатель ─────────────────────────────────────────────────
 
+  it('аудит захода 7: незнакомый серверу вид (воркер новее) отфильтровывается, а не 400', async () => {
+    await drain();
+    const res = await claim(1, ['future-kind', 'ui-snapshot']);
+    expect(res).toMatchObject({ enabled: true, jobs: [] });
+    expect(await claim(1, ['future-kind'])).toEqual({
+      enabled: true,
+      jobs: [],
+    });
+    // Форма — строгая: не строка или мусор в имени — 400.
+    await st
+      .worker(WORKER_ROUTES.claim, {
+        workerId: 'bw-sh3',
+        kinds: ['Bad Kind!'],
+        max: 1,
+      })
+      .expect(400);
+  });
+
   it('выключатель: задания не ставятся, claim пуст, «Админка» ждёт как в Э7', async () => {
     st.env.BROWSER_WORKER_ENABLED = 'false';
     const r = await request(st.srv())
@@ -643,10 +661,22 @@ describeDb('Приёмка Э-С Ш3 — браузерный воркер', () 
       body(cr).sealed,
       sealAad(j.id, j.attempt),
     ).toString('utf8');
-    expect(JSON.parse(plain)).toMatchObject({
-      username: 'manager',
-      password: PASSWORD,
-    });
+    // Ш3-хвост (7): учётка только для «Админки» — пароль запечатан под
+    // ключ воркера ПРИ ЗАПИСИ; канал отдаёт конверт как есть, внутри
+    // конверта задания.
+    const outer = JSON.parse(plain) as {
+      password: string | null;
+      stored: Array<{ purpose: string; sealed: string; aad: string }>;
+    };
+    expect(outer).toMatchObject({ username: 'manager', password: null });
+    expect(outer.stored.map((x) => x.purpose)).toEqual(['password']);
+    expect(
+      openSealed(
+        st.keys.privateKey,
+        outer.stored[0].sealed,
+        outer.stored[0].aad,
+      ).toString('utf8'),
+    ).toBe(PASSWORD);
     // Один раз на попытку.
     expect(
       errCode(await st.worker(WORKER_ROUTES.credentials, lease).expect(409)),

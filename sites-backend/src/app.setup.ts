@@ -78,6 +78,9 @@ export const INTERNAL_CREDENTIALS_BODY_LIMIT = '320kb';
 /** Э-С Ш4: карта интерфейса от Flow-QA — снимок с кандидатами (свой потолок). */
 export const INTERNAL_QA_UI_MAP_PATH = '/internal/sites/qa/ui-map';
 export const INTERNAL_QA_UI_MAP_BODY_LIMIT = '64kb';
+/** Ш5(5): полный набор роликов сайта (до 60, ≈ 40 КБ) — свой потолок. */
+export const INTERNAL_SITE_VIDEOS_PATH = '/internal/sites/tutorial/site-videos';
+export const INTERNAL_SITE_VIDEOS_BODY_LIMIT = '64kb';
 /**
  * Э-С Ш3: канал браузерного воркера подписан HMAC по СЫРОМУ телу
  * (internal-worker/worker-hmac.guard.ts) — тело строкой; общий потолок —
@@ -222,6 +225,20 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       next: NextFunction,
     ) {
       workerText(req, res, next);
+    },
+  );
+  const siteVideosText = text({
+    type: () => true,
+    limit: INTERNAL_SITE_VIDEOS_BODY_LIMIT,
+  });
+  app.use(
+    INTERNAL_SITE_VIDEOS_PATH,
+    function internalSiteVideosRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      siteVideosText(req, res, next);
     },
   );
   const internalText = text({

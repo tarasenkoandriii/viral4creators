@@ -1358,3 +1358,81 @@ backend генератора:
 
 Лендинг: страница `/<локаль>/open` (`noindex`) — «открыть приложение»
 для действий виджета; документы знаний `gen-open-<локаль>`.
+
+### Заход 7 (07.10.2026) — обучалка: изменения контрактов
+
+backend генератора, обучалка по сайту:
+
+- `POST /api/projects/:id/site-tutorial/step` — тело `+ clickText?` (≤ 300,
+  текст кнопки из прошлого раунда; новый фронт шлёт всегда) `+ confirmDanger?:
+  boolean`. Режим B, «опасный» клик без подтверждения — 409
+  `SITE_TUTORIAL_DANGER_CONFIRM_REQUIRED` (`reason` — категории); запрос без
+  поля `clickText` (старый бандл) не блокируется.
+- Общие отказы `/explore`, `/step`, `/login`, `/login-registry`, `/refresh`,
+  `/undo`, живого входа: 503 `SITE_TUTORIAL_TEMPORARILY_UNAVAILABLE`
+  (`reason: paused | global_limit`, П-Т9); 403 `SITE_TUTORIAL_SITE_OPTED_OUT`
+  (домен в реестре отказов, П-Т11); 429 `SITE_TUTORIAL_LOGIN_IDENTITIES_EXCEEDED`
+  (> 10 разных логинов на регистрируемый домен за 30 дней, П-Т6); 429
+  `SITE_TUTORIAL_LOGIN_ATTEMPTS_EXCEEDED` (`retryAfterMs`; 2 неудачных входа
+  за час, П-Т8); при раундах на воркере (режим B) — 409
+  `SITE_TUTORIAL_CLICK_REFUSED` (стоп-лист воркера), 503
+  `SITE_TUTORIAL_WORKER_UNAVAILABLE`.
+- `POST /api/projects/:id/site-tutorial/verify-site` — проверка тарифа
+  `siteTutorial`, 10 в час на человека, сверх — 429
+  `SITE_TUTORIAL_VERIFY_RATE_LIMITED` (`retryAfterMs`). Ссылка `verifyUrl`
+  на t.me получает `startapp=vh-<base64url(хост)>`.
+- `GET /api/projects/:id/site-tutorial/assist-link` → `{ linked, siteId,
+  siteName, canLink, candidates[{ siteId, name }] }` (раньше `{ clientSiteId,
+  siteName }`); `POST …/assist-link { siteId | null }` → тот же объект
+  (`null` — отвязать); 409 `ASSIST_LINK_UNAVAILABLE`, 404 чужой проект, 503
+  sites-backend не ответил. `PUT` (deep-link) — без изменений. Кандидаты —
+  сайты, где человек владелец/менеджер помощника, у сайта есть помощник и
+  хост черновика подтверждён; сайт лендинга исключён.
+- Немая сборка ролика обучалки клиента пишет язык черновика (раньше `ru`).
+
+backend, админка:
+
+- `GET /api/admin/settings/site-tutorial` → пауза, потолки раундов/живых
+  сессий (действующее, заданное, умолчание и источник admin/env/код),
+  расход за сутки UTC, `updatedAt`/`updatedBy`, `cacheSeconds: 15`;
+  `PATCH` `{ paused?, roundsPerDay?: 1…1 000 000 | null, liveSessionsPerDay?:
+  … | null }` (`null` — умолчание).
+- `PATCH /api/admin/tutorial-demo-quality/checks/:id/override` `{ verdict:
+  ok | warn | fail | null, reason (3–500) }`, `GET …/checks/:id/overrides` —
+  журнал. Проверка: `+ override*` (итог `overrideVerdict ?? verdict`),
+  `controlFrames[]`, `signals*`, `captureMode: client-site | polygon | tma`.
+  При `TUTORIAL_DEMO_QUALITY_BLOCK` итоговый `fail` файла — 409 на
+  одобрение ролика, отметку «в демо», одобрение версии темпа и `revert`.
+- Ночной ролик сценарного пути: `manifest.appliedTempo { factor,
+  fromVersionId }`; «вернуть обычный» у такого ролика — платная сборка ×1.
+
+sites-backend:
+
+- `POST /internal/sites/tutorial/site-candidates` (HMAC обучалки) `{
+  telegramId, host }` → `{ sites[{ siteId, name, hosts }] }` (≤ 20; чужие —
+  пустой список).
+- `POST /internal/sites/tutorial/site-videos` — до 60 роликов (было 15),
+  тело ≤ 64 КБ; в промпт виджета ≤ 8 — сначала язык ответа, затем
+  интерфейса.
+- `POST /internal/sites/tutorial/frames/request` `+ image?: jpeg | png2x`.
+- `POST /internal/sites/credentials/tutorial-explore/{seal-key, request,
+  status, cancel}` (HMAC обучалки, тело ≤ 320 КБ): раунд исследователя на
+  воркере (`request` `{ subject, url, allowedOrigin, clicks, fills?,
+  replay?, session, replyKey, nonce, videoFrame, registry? }` → `{ jobId,
+  status, mode }`); 409 `TUTORIAL_EXPLORE_HOST`, 404
+  `TUTORIAL_EXPLORE_NOT_FOUND`, 409 `BROWSER_WORKER_DISABLED`, 429
+  `BROWSER_JOB_BUSY`/`BROWSER_JOB_DAILY_LIMIT`. Значения ввода, сессия и
+  ответ — только конвертами под ключ воркера / одноразовый ключ раунда.
+- Протокол воркера: вид `tutorial-explore`, источники `tutorial-explore`
+  (режим A, учётка реестра) и `tutorial-explore-open` (режим B, без
+  кабинета: `siteId`/`hostId` NULL, лимиты на человека и регистрируемый
+  домен); коды отказа `click_refused`, `target_missing` (без повтора);
+  `claim` отбрасывает незнакомые виды вместо 400; конверт `credentials`
+  `+ stored[{ purpose, sealed, aad }]` (пароли учёток только для «Админки»
+  запечатаны под воркер при записи); правка продуктов такой учётки без
+  нового пароля — 409 `TEST_ACCOUNT_WORKER_SEALED`.
+- Мемо «Из обучалки»: одновременный повтор — 409 `MEMO_TUTORIAL_EXISTS`
+  (advisory-замок).
+
+TMA помощника: маршрут `#/verify-host/<host>` и startapp `vh-<base64url>`
+(экран подтверждения хоста, без автоматических действий).

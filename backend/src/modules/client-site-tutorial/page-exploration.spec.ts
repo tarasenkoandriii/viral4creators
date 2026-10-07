@@ -627,3 +627,90 @@ describe('Ш2-хвост (3): autocomplete поля — подсказка по�
     );
   });
 });
+
+describe('Ш4(5)-хвост: все уникальные кандидаты для карты интерфейса', () => {
+  it('id → test-id → [name] → aria-label, каждый — единственный на странице', () => {
+    installDocument(
+      el({
+        tag: 'form',
+        children: [
+          el({
+            tag: 'input',
+            attrs: {
+              id: 'email',
+              'data-testid': 'login-email',
+              name: 'email',
+              'aria-label': 'Ел. пошта',
+            },
+          }),
+        ],
+      }),
+    );
+    const [item] = collectPageExploration(ORIGIN).elements;
+    expect(item.selector).toBe('#email');
+    expect(item.candidates).toEqual([
+      { kind: 'id', selector: '#email' },
+      { kind: 'test-id', selector: 'input[data-testid="login-email"]' },
+      { kind: 'attr', selector: 'input[name="email"]' },
+      {
+        kind: 'aria',
+        selector: 'input[aria-label="Ел. пошта"]',
+        name: 'Ел. пошта',
+      },
+    ]);
+  });
+
+  it('[name], повторённый на странице, кандидатом не становится', () => {
+    installDocument(
+      el({
+        tag: 'body',
+        children: [
+          el({
+            tag: 'form',
+            children: [
+              el({
+                tag: 'input',
+                attrs: { name: 'email', 'data-test': 'signin' },
+              }),
+            ],
+          }),
+          el({
+            tag: 'form',
+            children: [el({ tag: 'input', attrs: { name: 'email' } })],
+          }),
+        ],
+      }),
+    );
+    const [first, second] = collectPageExploration(ORIGIN).elements;
+    expect(first.candidates).toEqual([
+      { kind: 'test-id', selector: 'input[data-test="signin"]' },
+    ]);
+    expect(second.candidates).toBeUndefined();
+  });
+
+  it('id с нестандартными символами — кандидатом в форме атрибута', () => {
+    installDocument(
+      el({
+        tag: 'form',
+        children: [el({ tag: 'input', attrs: { id: '2fa:code' } })],
+      }),
+    );
+    expect(collectPageExploration(ORIGIN).elements[0].candidates).toEqual([
+      { kind: 'id', selector: 'input[id="2fa:code"]' },
+    ]);
+  });
+
+  it('длинный селектор (больше 200) в кандидаты не идёт', () => {
+    installDocument(
+      el({
+        tag: 'form',
+        children: [
+          el({ tag: 'input', attrs: { name: 'n'.repeat(250), id: 'ok' } }),
+        ],
+      }),
+    );
+    expect(collectPageExploration(ORIGIN).elements[0].candidates).toEqual([
+      { kind: 'id', selector: '#ok' },
+    ]);
+  });
+});

@@ -83,6 +83,9 @@ function dim(v: unknown): number | null {
   return v;
 }
 
+/** Имя вида задания в claim (знакомое серверу или нет). */
+const KIND_NAME_RE = /^[a-z][a-z0-9-]{0,39}$/;
+
 @Controller('internal/worker/v1/jobs')
 @PublicRoute(
   'канал браузерного воркера Ш3: HMAC с меткой времени и id (SITES_WORKER_HMAC_SECRET)',
@@ -101,14 +104,20 @@ export class InternalWorkerController {
     if (typeof o.workerId !== 'string' || !WORKER_ID_RE.test(o.workerId)) {
       throw bad('workerId');
     }
+    // Аудит захода 7 (P3): новый воркер со старым sites-backend — виды,
+    // которых сервер не знает, отфильтровываются (а не 400 на весь claim:
+    // иначе обновлённый раньше сервера воркер не брал бы вообще ничего).
+    // Форма — строгая: строки-имена, не больше 16.
     if (
       !Array.isArray(o.kinds) ||
       o.kinds.length === 0 ||
-      o.kinds.length > 8 ||
-      !o.kinds.every(isBrowserJobKind)
+      o.kinds.length > 16 ||
+      !o.kinds.every((k) => typeof k === 'string' && KIND_NAME_RE.test(k))
     ) {
       throw bad('kinds');
     }
+    const known = (o.kinds as string[]).filter(isBrowserJobKind);
+    if (!known.length) return { enabled: this.jobs.enabled(), jobs: [] };
     if (
       typeof o.max !== 'number' ||
       !Number.isInteger(o.max) ||
@@ -119,7 +128,7 @@ export class InternalWorkerController {
     }
     const jobs = await this.jobs.claim(
       o.workerId,
-      o.kinds as BrowserJobKind[],
+      known as BrowserJobKind[],
       o.max,
     );
     return { enabled: this.jobs.enabled(), jobs };

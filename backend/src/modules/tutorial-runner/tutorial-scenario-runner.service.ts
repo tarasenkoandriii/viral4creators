@@ -95,8 +95,11 @@
  * видео-захват, где платный шаг случится по-настоящему один раз для
  * записи. Поэтому `scenario-runner.ts` не исполняет ни сам маркер
  * `triggerPaidOperation`, ни `click`, идущий сразу за ним, и
- * возвращает их номера в `skippedPaidClicks`. Оценка `costly`/
- * `approved` здесь — входной фильтр (см. ниже), не разрешение тратить.
+ * возвращает их номера в `skippedPaidClicks`. С захода 7 (07.10.2026)
+ * пропускается и любой клик по платной кнопке каталога хуков, даже без
+ * маркера. `costly`/`approved` поэтому больше не входной фильтр прогона:
+ * платные сценарии идут в регрессию без одобрения (одобрение — про
+ * будущую запись с настоящим рендером, не про ночную проверку экранов).
  *
  * До сквозного аудита 29.09.2026 этот абзац утверждал ровно то же
  * самое, а `scenario-runner.ts` в своём доккомментарии прямо писал,
@@ -194,8 +197,10 @@ import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import {
   buildTutorialManifest,
   ManifestFrame,
+  tempoInputsOfFrames,
   textSha,
 } from './tutorial-manifest';
+import { planTempo } from './tutorial-tempo';
 import {
   APPROVAL_STAMPS_SETTING_KEY,
   pairsInApprovalGrace,
@@ -214,6 +219,7 @@ import {
   narrationOf,
   ScenarioStep,
 } from '../tutorial-scenario/scenario-steps.types';
+import { validateScenarioSteps } from '../tutorial-scenario/tutorial-scenario-prompt';
 import {
   SPA_LOCALE_STORAGE_KEY,
   SPA_SESSION_STORAGE_KEY,
@@ -1497,7 +1503,14 @@ export class TutorialScenarioRunnerService {
         // `planThemedRuns` — ПО ТЕМЕ: колонка `lastRunAt` у строки одна,
         // и свежий светлый прогон отсекал бы в SQL ни разу не снятую
         // тёмную тему (см. `SCENARIO_SCAN_LIMIT`).
-        AND: [{ OR: [{ costly: false }, { approved: true }] }],
+        //
+        // Платные (`costly`) — в регрессию БЕЗ одобрения (заход 7,
+        // решение по TODO «8/ru»). Фильтр `costly: false OR approved:
+        // true` денег не берёг: платный клик исполнитель пропускает
+        // ВСЕГДА (`scenario-runner.ts`: клик за `triggerPaidOperation` и
+        // любой клик по платной кнопке каталога — `skippedPaidClicks`), а
+        // генератор снимал одобрение при каждой перезаписи шагов — и
+        // экран восьмого шага выпадал из ночной проверки навсегда.
       },
       // Сперва те, что дольше всех не исполнялись (`nulls: 'first'` —
       // ни разу не исполнявшиеся впереди всех). По `createdAt asc`
@@ -1795,9 +1808,9 @@ export class TutorialScenarioRunnerService {
       where: {
         locale: { in: locales },
         // Точный список слотов, а не префикс: снимаем только то, что
-        // справка умеет выдать.
+        // справка умеет выдать. Платные — без одобрения, как у TMA выше:
+        // платный клик исполнитель не нажимает никогда.
         subjectKey: { in: [...SITE_TUTORIAL_DEMO_KEYS] },
-        AND: [{ OR: [{ costly: false }, { approved: true }] }],
       },
       orderBy: [
         { lastRunAt: { sort: 'asc', nulls: 'first' } },
@@ -2220,6 +2233,21 @@ export class TutorialScenarioRunnerService {
       // пишет причину в `lastRunError` и возвращает исход нужной формы.
       // Отдельная ветка выхода до него дублировала бы эту запись — и
       // однажды разошлась бы с ней.
+      //
+      // Шаги из базы — ещё раз через валидатор генератора и ручной правки
+      // (заход 7, аудит): строку могли записать до валидатора или поправить
+      // мимо API, а платные сценарии с захода 7 идут в регрессию без
+      // одобрения. Не прошли — прогон `failed` с причиной, браузер не
+      // поднимается.
+      const checked = validateScenarioSteps(
+        scenario.steps,
+        scenario.subjectKey,
+      );
+      if (!checked.ok) {
+        throw new Error(
+          `шаги не проходят правила сценариев: ${checked.reason ?? 'не разобрались'}`,
+        );
+      }
       if (mixesWizardRoutes) {
         throw new Error(
           seededFields.length > 1
@@ -3309,6 +3337,71 @@ export class TutorialScenarioRunnerService {
         });
       }
 
+      // Темп пары (заход 7, 07.10.2026): оператор выбрал для пары
+      // (сценарий, локаль, тема оформления) другой темп — новый ролик
+      // собирается СРАЗУ с ним, одной сборкой, а не «обычный, а потом
+      // версия» двумя платными. Длительности кадров — `planTempo` от тех
+      // же кадров manifest (речь не режется, паузы масштабируются), а
+      // `baseSeconds` в manifest остаются исходными: всё дальнейшее
+      // считается от исходника. Отпечаток (`contentHash`) — по исходной
+      // сетке: смена темпа — версия, а не повод пересобирать. Ролик по-
+      // прежнему ждёт одобрения оператором. Одна дорожка на весь ролик
+      // (вариант А) к кадрам не привязана — там темп не применяется.
+      const inherited =
+        this.versions && narration.mode !== 'whole'
+          ? await this.versions.inheritedTempoFor({
+              subjectKey: scenario.subjectKey,
+              locale: scenario.locale,
+              theme,
+            })
+          : null;
+      let tempo = inherited
+        ? planTempo(tempoInputsOfFrames(manifestFrames), {
+            factor: inherited.factor,
+            motion,
+          })
+        : null;
+      if (inherited && !tempo) {
+        this.logger.warn(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}, ${theme}): темп пары ×${inherited.factor} к этим кадрам не применить — ролик соберётся обычным`,
+        );
+      }
+      // Ролик в темпе — только с постоянными исходниками, и они
+      // сохраняются ДО оплаты сборки (заход 7, аудит): без них у ролика не
+      // было бы ни «вернуть обычный», ни другого темпа. Не скопировались —
+      // собираем обычным, одной сборкой; исходники тогда переносит
+      // `complete`, как у любого ролика.
+      let sourcedFrames: ManifestFrame[] | null = null;
+      if (tempo && this.versions) {
+        sourcedFrames = await this.versions.copyFramesToSources(
+          asset.id,
+          manifestFrames,
+        );
+        if (!sourcedFrames) {
+          this.logger.warn(
+            `сценарий ${scenario.subjectKey} (${scenario.locale}, ${theme}): исходники не сохранились — темп пары ×${inherited?.factor} не применяется, ролик соберётся обычным`,
+          );
+          tempo = null;
+        }
+      }
+      if (tempo) {
+        const applied = tempo;
+        slides.forEach((slide, i) => {
+          slide.seconds = applied.seconds[i];
+        });
+      }
+      // Подписи — по той же сетке, что уйдёт в команду.
+      const captionsAssToUpload =
+        tempo && captionsOn
+          ? buildTutorialCaptionsAss(
+              planFrames.map((f, i) => ({
+                seconds: (tempo as NonNullable<typeof tempo>).seconds[i],
+                narration: f.narration,
+              })),
+              motion,
+            )
+          : captionsAss;
+
       // `.ass` — под тем же префиксом актива, что и кадры: файл
       // транзитный (внешний сервис скачивает его один раз), и уборка
       // кадров уносит его вместе с ними. Шов «все транзитные заливки
@@ -3325,10 +3418,10 @@ export class TutorialScenarioRunnerService {
         return;
       }
       try {
-        if (captionsAss) {
+        if (captionsAssToUpload) {
           const { url } = await this.blob.uploadBuffer(
             captionsPathname(scenarioFramePrefix(asset.id)),
-            Buffer.from(captionsAss, 'utf8'),
+            Buffer.from(captionsAssToUpload, 'utf8'),
             // `text/x-ssa` — тип, под которым отдают `.ass`. Сам
             // libass определяет формат пробой СОДЕРЖИМОГО, а не по
             // типу и не по расширению; тип важен по дороге —
@@ -3372,9 +3465,24 @@ export class TutorialScenarioRunnerService {
             : narration.mode === 'whole'
               ? 'whole'
               : 'none',
-        storage: 'transit',
-        frames: manifestFrames,
+        // Ролик в темпе — сразу с постоянными исходниками (см. выше);
+        // обычный — транзит, исходники переносит `complete`.
+        storage: tempo && sourcedFrames ? 'sources' : 'transit',
+        ...(tempo && inherited
+          ? {
+              appliedTempo: {
+                factor: inherited.factor,
+                fromVersionId: inherited.versionId,
+              },
+            }
+          : {}),
+        frames: tempo && sourcedFrames ? sourcedFrames : manifestFrames,
       });
+      if (tempo && inherited && plan) {
+        this.logger.log(
+          `сценарий ${scenario.subjectKey} (${scenario.locale}, ${theme}): собирается с темпом пары ×${inherited.factor} (версия ${inherited.versionId})`,
+        );
+      }
       if (!plan) {
         this.logger.warn(
           `сценарий ${scenario.subjectKey}: ${frames.length} кадров не годятся для сборки (больше потолка слайд-шоу или у кадра неположительная длительность) — пропуск`,
@@ -3832,6 +3940,18 @@ export class TutorialScenarioRunnerService {
         where: { tutorialVideoAssetId: row.id },
       });
       if (claimed > 0) continue;
+      // Проверка качества (заход 7): файлы Gemini ролика — сразу, а не
+      // через 48 ч у Google; ролик под живой арендой проверки в этот тик
+      // не удаляется (подберёт следующий). Никогда не бросает.
+      if (this.quality) {
+        const { busy } = await this.quality.releaseAssetFiles(row.id);
+        if (busy) {
+          this.logger.log(
+            `устаревший ролик ${row.id}: идёт проверка качества — удаление на следующем тике`,
+          );
+          continue;
+        }
+      }
       // Файл — ПЕРЕД строкой. Обратный порядок терял бы путь к mp4
       // навсегда при любом сбое между двумя операциями: путь
       // известен только из строки. Сбой на удалении файла оставляет
@@ -4138,6 +4258,10 @@ export class TutorialScenarioRunnerService {
     // Никогда не бросает: без исходников темп недоступен, ролик цел.
     if (asset.scenarioId && this.versions) {
       await this.versions.captureScenarioSources(asset.id);
+      // Ролик собран сразу с темпом пары (заход 7) — его файл и есть
+      // версия этого темпа; ДО постановки в очередь качества, чтобы та
+      // проверяла файл с таймкодами его сетки. Никогда не бросает.
+      await this.versions.adoptInheritedTempo(asset.id);
     }
 
     // Уборка кадров — ЗА пределами try выше, и это правка повторного

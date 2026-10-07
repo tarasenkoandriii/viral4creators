@@ -63,7 +63,17 @@ export const INTERNAL_CREDENTIALS_BODY_LIMIT_BYTES = 320 * 1024;
 export const INTERNAL_QA_UI_MAP_PATH = '/internal/sites/qa/ui-map';
 export const INTERNAL_QA_UI_MAP_BODY_LIMIT_BYTES = 64 * 1024;
 
+/**
+ * Ш5(5): полный набор роликов сайта от генератора — до 60 (10 шагов × 5
+ * языков с запасом, `SYNC_VIDEOS_MAX`; ролик до ~650 байт ≈ 40 КБ) — свой
+ * потолок.
+ */
+export const INTERNAL_SITE_VIDEOS_PATH = '/internal/sites/tutorial/site-videos';
+export const INTERNAL_SITE_VIDEOS_BODY_LIMIT_BYTES = 64 * 1024;
+
 export function internalBodyLimit(path: string): number {
+  if (path === INTERNAL_SITE_VIDEOS_PATH)
+    return INTERNAL_SITE_VIDEOS_BODY_LIMIT_BYTES;
   if (
     path === INTERNAL_QA_UI_MAP_PATH ||
     path.startsWith(`${INTERNAL_QA_UI_MAP_PATH}/`)

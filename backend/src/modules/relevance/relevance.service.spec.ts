@@ -21,6 +21,7 @@ afterAll(() => {
   else process.env.GEMINI_API_KEY = keyBefore;
 });
 import { RelevanceService } from './relevance.service';
+import { fixtureRelevanceState } from './fixture-relevance';
 import { AnalysisStatus } from '../../common/types/analysis.types';
 
 /** Учёт расходов (ТЗ §26) — в тестах он ничего не должен делать. */
@@ -156,5 +157,75 @@ describe('RelevanceService', () => {
     expect(state.report).toBe(report);
     expect(state.useInPrompt).toBe(false);
     expect(sessions.updateSession).toHaveBeenCalled();
+  });
+});
+
+// Заход 7 (аудит): ночная регрессия открывает `RelevancePanel`, а та при
+// открытии сама зовёт `run` — для фикстуры это платный Gemini каждую ночь.
+describe('RelevanceService — пользователь фикстуры обучалки', () => {
+  const envBefore = process.env.FIXTURE_TELEGRAM_ID;
+  afterEach(() => {
+    if (envBefore === undefined) delete process.env.FIXTURE_TELEGRAM_ID;
+    else process.env.FIXTURE_TELEGRAM_ID = envBefore;
+  });
+
+  function withUser(user: Record<string, unknown> | null) {
+    const sessions = {
+      getSession: jest.fn().mockResolvedValue({ ...base, userId: 'u1' }),
+      updateSession: jest.fn().mockResolvedValue(undefined),
+    };
+    const prisma = { user: { findUnique: jest.fn().mockResolvedValue(user) } };
+    const svc = new RelevanceService(
+      sessions as any,
+      plansMock() as any,
+      usageMock() as any,
+      prisma as any,
+    );
+    return { svc, sessions, prisma };
+  }
+
+  beforeEach(() => {
+    generateContent.mockReset();
+    generateContent.mockResolvedValue({
+      text: JSON.stringify({ score: 50, verdict: 'adapt', summary: 'x' }),
+    });
+  });
+
+  it('тестовый аккаунт FIXTURE_TELEGRAM_ID — готовый отчёт фикстуры, Gemini не зовётся', async () => {
+    process.env.FIXTURE_TELEGRAM_ID = 'fx-1';
+    const { svc, sessions } = withUser({
+      telegramId: 'fx-1',
+      isTestUser: true,
+    });
+    const state = await svc.run('s1');
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(state).toEqual(fixtureRelevanceState());
+    expect(sessions.updateSession).toHaveBeenCalledWith('s1', {
+      relevance: fixtureRelevanceState(),
+    });
+  });
+
+  it('живой человек под FIXTURE_TELEGRAM_ID, другой тестер, нет env — обычный платный вызов', async () => {
+    for (const [env, user] of [
+      ['fx-1', { telegramId: 'fx-1', isTestUser: false }],
+      ['fx-1', { telegramId: 'tester-2', isTestUser: true }],
+      [undefined, { telegramId: 'fx-1', isTestUser: true }],
+      ['fx-1', null],
+    ] as Array<[string | undefined, Record<string, unknown> | null]>) {
+      if (env === undefined) delete process.env.FIXTURE_TELEGRAM_ID;
+      else process.env.FIXTURE_TELEGRAM_ID = env;
+      generateContent.mockClear();
+      const { svc } = withUser(user);
+      await svc.run('s1');
+      expect(generateContent).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('отчёт фикстуры детерминирован и в формате RelevanceState', () => {
+    const a = fixtureRelevanceState();
+    expect(a).toEqual(fixtureRelevanceState());
+    expect(a.useInPrompt).toBe(true);
+    expect(a.report).toMatchObject({ verdict: 'use', score: 82 });
+    expect(typeof a.report!.promptAdvice).toBe('string');
   });
 });

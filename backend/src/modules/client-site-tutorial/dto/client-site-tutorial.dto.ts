@@ -74,6 +74,24 @@ export class StepRequestDto {
   @IsString()
   @MaxLength(MAX_SELECTOR_LENGTH)
   clickSelector?: string;
+
+  /**
+   * П-Т13: видимый текст выбранной кнопки — тот, что сервер отдал в
+   * `elements[]` прошлого раунда; по нему (и по селектору) сервер решает,
+   * «опасный» ли клик. Длиннее 300 символов стоп-лист всё равно не читает.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  clickText?: string;
+
+  /**
+   * П-Т13: человек подтвердил «опасный» клик в диалоге мастера. Без него
+   * в режиме B такой клик — 409 `SITE_TUTORIAL_DANGER_CONFIRM_REQUIRED`.
+   */
+  @IsOptional()
+  @IsBoolean()
+  confirmDanger?: boolean;
 }
 
 export class LoginFieldDto {

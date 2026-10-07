@@ -30,6 +30,7 @@ import type {
   TutorialVersionRow,
 } from '../../lib/types';
 import { ApiRequestError } from '../../lib/admin-api';
+import { hasSourceFile } from '../../lib/tutorial-tempo';
 
 const PRESETS: Array<{ key: string; label: string; factor: number }> = [
   { key: 'calm', label: 'Спокойнее (×1.5 паузы)', factor: 1.5 },
@@ -122,6 +123,9 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
   }, [assetId, factor]);
 
   const building = versions.some((v) => v.status === 'preparing' || v.status === 'pending');
+  // Исходный файл есть, если версий не было вовсе или среди них есть
+  // `source`; иначе ролик собран сразу с темпом пары (заход 7).
+  const sourceFile = hasSourceFile(versions);
   useEffect(() => {
     if (!building) return;
     const timer = setInterval(loadVersions, 5000);
@@ -210,8 +214,27 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
               {building ? 'Собирается…' : 'Собрать версию'}
             </button>
             {estimate.activeFactor !== 1 && (
-              <button type="button" disabled={busy || building} onClick={() => void run(() => revertTutorialTempo(assetId))}>
-                Вернуть обычный
+              <button
+                type="button"
+                disabled={busy || building}
+                onClick={() => {
+                  // Ролик собран сразу с темпом пары (заход 7): исходного
+                  // «обычного» файла у него нет — «обычный» собирается
+                  // отдельной платной задачей и у демо ждёт одобрения.
+                  if (
+                    !sourceFile &&
+                    !window.confirm(
+                      'Обычного файла у этого ролика нет — он собран сразу с темпом пары. Собрать обычный темп ' +
+                        'отдельной платной задачей ffmpeg-api? У публичного демо новая версия станет действующей ' +
+                        'только после «Одобрить версию».',
+                    )
+                  ) {
+                    return;
+                  }
+                  void run(() => revertTutorialTempo(assetId));
+                }}
+              >
+                {sourceFile ? 'Вернуть обычный' : 'Собрать обычный (платно)'}
               </button>
             )}
           </div>

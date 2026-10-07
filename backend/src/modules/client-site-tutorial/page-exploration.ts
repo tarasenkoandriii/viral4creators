@@ -40,7 +40,7 @@
  * в `draft.steps` и будет проигран заново, возможно через недели.
  */
 
-import { PageElement } from './page-exploration.types';
+import { PageElement, PageElementCandidate } from './page-exploration.types';
 
 /** Ровно то, что возвращает функция, исполняемая внутри страницы. */
 export interface CollectedPage {
@@ -60,6 +60,10 @@ export interface CollectedPage {
 export function collectPageExploration(allowedOrigin: string): CollectedPage {
   const MAX_ELEMENTS = 200;
   const MAX_TEXT = 200;
+  // Ш4(5)-хвост: кандидатов на элемент и длина селектора — как у общей
+  // карты sites-backend (`UI_MAP_LIMITS.selector`).
+  const MAX_CANDIDATES = 4;
+  const MAX_SELECTOR = 200;
   const TAGS = ['input', 'select', 'textarea', 'button', 'a'];
 
   const doc: Document = globalThis.document;
@@ -148,6 +152,49 @@ export function collectPageExploration(allowedOrigin: string): CollectedPage {
       if (unique(candidate)) return candidate;
     }
     return cssPath(el);
+  }
+
+  /**
+   * Ш4(5)-хвост: все кандидаты, а не только первый (`selectorFor`), — по
+   * тому же приоритету §5.4 и с той же проверкой единственности: в карте
+   * интерфейса элемент узнаётся по любому из них, и смена одного атрибута
+   * вёрсткой не теряет элемент целиком. css-путь — нет: он хрупкий.
+   */
+  function candidatesFor(el: Element, tag: string): PageElementCandidate[] {
+    const out: PageElementCandidate[] = [];
+    const seen: Record<string, boolean> = {};
+    function push(
+      kind: PageElementCandidate['kind'],
+      selector: string,
+      name?: string,
+    ): boolean {
+      if (out.length >= MAX_CANDIDATES) return false;
+      if (selector.length > MAX_SELECTOR || seen[selector]) return false;
+      if (!unique(selector)) return false;
+      seen[selector] = true;
+      out.push(name ? { kind, selector, name } : { kind, selector });
+      return true;
+    }
+    const id = el.getAttribute('id');
+    if (id) {
+      const short = /^[A-Za-z][\w-]*$/.test(id) ? `#${id}` : null;
+      if (!short || !push('id', short)) {
+        push('id', `${tag}[id="${quote(id)}"]`);
+      }
+    }
+    const testIds = ['data-testid', 'data-test'];
+    for (let i = 0; i < testIds.length; i++) {
+      const v = el.getAttribute(testIds[i]);
+      if (v) push('test-id', `${tag}[${testIds[i]}="${quote(v)}"]`);
+    }
+    const name = el.getAttribute('name');
+    if (name) push('attr', `${tag}[name="${quote(name)}"]`);
+    const aria = el.getAttribute('aria-label');
+    const ariaName = clean(aria);
+    if (aria && ariaName) {
+      push('aria', `${tag}[aria-label="${quote(aria)}"]`, ariaName);
+    }
+    return out;
   }
 
   /**
@@ -290,6 +337,8 @@ export function collectPageExploration(allowedOrigin: string): CollectedPage {
     const label = labelFor(el);
     if (label) item.label = label;
     if (visibleText) item.visibleText = visibleText;
+    const candidates = candidatesFor(el, tag);
+    if (candidates.length > 0) item.candidates = candidates;
     elements.push(item);
   }
 

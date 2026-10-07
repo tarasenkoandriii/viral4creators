@@ -1,5 +1,6 @@
 import { billingRu } from './billing-ru';
 import { mediaRu } from './media-ru';
+import { verifyHostRu } from './verify-host-ru';
 import { voiceControlRu } from './voice-control-ru';
 import { setupRu } from './setup-ru';
 import { e3Ru } from './e3-ru';
@@ -430,6 +431,8 @@ export const appRu = {
   billing: billingRu,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
   media: mediaRu,
+  /** Ш1-хвост: «подтвердить этот адрес» из обучалки. */
+  verifyHost: verifyHostRu,
   /** Э6-бис: голосовое управление «Сайтом». */
   voiceControl: voiceControlRu,
 };

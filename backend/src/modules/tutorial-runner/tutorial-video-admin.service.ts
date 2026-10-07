@@ -24,6 +24,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SUPPORTED_LOCALES, SupportedLocale } from '../../common/locale';
 import { LandingVideosService } from '../client-site-media/landing-videos.service';
 import { PlatformSettingsService } from '../../common/platform-settings.service';
+import { TutorialDemoQualityService } from '../tutorial-quality/demo-quality.service';
 import {
   APPROVAL_STAMPS_SETTING_KEY,
   recordApprovalStamp,
@@ -83,6 +84,10 @@ export class TutorialVideoAdminService {
     // посетителю отдают его ссылку. Необязательный — без него
     // поведение прежнее (прежний одобренный уходит на ближайшем тике).
     @Optional() private readonly settings?: PlatformSettingsService,
+    // Блокировка публикации по ИИ-проверке качества (заход 7) — только
+    // при флаге `TUTORIAL_DEMO_QUALITY_BLOCK` (умолчание выкл.).
+    // Необязательна: стенды и тесты без модуля качества — как раньше.
+    @Optional() private readonly quality?: TutorialDemoQualityService,
   ) {}
 
   async list(filter: TutorialVideoListFilter) {
@@ -198,6 +203,9 @@ export class TutorialVideoAdminService {
           'Сначала одобрите ролик — в демо попадает только вычитанное',
         );
       }
+      // Заход 7: итоговый `fail` проверки качества этого файла без
+      // переопределения оператором — не в демо (только при флаге).
+      if (this.quality) await this.quality.assertPublishable(row.id);
     }
     const raw = await this.settings.get(SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY);
     const ids = parseSiteTutorialDemoAssetIds(raw);
@@ -264,6 +272,10 @@ export class TutorialVideoAdminService {
     if (reviewed && !row.blobUrl) {
       throw new BadRequestException('Ролик ещё не собран — одобрять нечего');
     }
+    // Заход 7: итоговый `fail` проверки качества этого файла без
+    // переопределения оператором — одобрить нельзя (только при флаге
+    // `TUTORIAL_DEMO_QUALITY_BLOCK`). Снять одобрение можно всегда.
+    if (reviewed && this.quality) await this.quality.assertPublishable(id);
     const updated = await this.prisma.tutorialVideoAsset.update({
       where: { id },
       data: { reviewed },

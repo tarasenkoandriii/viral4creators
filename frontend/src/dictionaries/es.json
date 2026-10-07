@@ -1090,13 +1090,7 @@
     "previewQuota": "Vistas previas hoy: quedan {{left}} de {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Análisis",
-      "Producto",
-      "Prompt",
-      "Generación"
-    ],
+    "steps": ["Video", "Análisis", "Producto", "Prompt", "Generación"],
     "stepSource": "Escena",
     "errorTitle": "Error",
     "prefilledAlert": "Los datos del producto se tomaron del proyecto — es una copia del momento de inicio; los cambios aquí no modifican el producto en sí.",
@@ -1481,7 +1475,7 @@
     "modeReasonExpired": "La verificación de propiedad ha caducado — si quiere, puede repetirla.",
     "modeReasonRevoked": "La verificación de propiedad fue revocada.",
     "modeReasonRole": "En el panel de sitios usted es operador — puede verificar el propietario o un gestor.",
-    "modeReasonOptedOut": "Este dominio está en la lista de exclusión del panel de sitios — aquí no se puede verificar. No afecta a la grabación.",
+    "modeReasonOptedOut": "El propietario del dominio lo ha cerrado a la grabación de tutoriales — este sitio no se puede grabar.",
     "modeReasonUnsupported": "Solo se puede verificar la propiedad de un sitio https en el puerto estándar.",
     "modeBTextRequired": "Antes de explorar e iniciar sesión en {host}, confirme abajo que la cuenta es suya.",
     "modeBVerifyHint": "Si el sitio es suyo, puede verificarlo en el panel de sitios — le servirá si conecta el asistente. Es opcional.",
@@ -1575,7 +1569,21 @@
     "discardConfirm": "¿Eliminar el borrador del tutorial? Los pasos grabados, los fotogramas y los datos de acceso guardados se perderán definitivamente. Es la única forma de empezar con otro enlace.",
     "voiceLabel": "Locutar cada fotograma",
     "voiceHint": "Una frase en cada fotograma en el idioma de la interfaz, con subtítulos del mismo texto. La síntesis de voz es de pago, dentro de su límite diario. Los valores de los campos (usuarios, teléfonos, direcciones) nunca se pronuncian.",
-    "openPostprod": "Ritmo y versiones — en Posproducción"
+    "openPostprod": "Ritmo y versiones — en Posproducción",
+    "verifyErrRateLimited": "Demasiadas veces: podrás volver a añadir un sitio al panel de sitios dentro de {minutes} min.",
+    "recordErrOptedOut": "El propietario de este sitio no permite grabar tutoriales en él: elige otro sitio.",
+    "recordErrUnavailable": "La grabación de tutoriales del sitio no está disponible temporalmente: inténtalo más tarde.",
+    "loginErrAttempts": "Demasiados inicios de sesión fallidos en este sitio: inténtalo dentro de {minutes} min o inicia sesión en directo.",
+    "loginErrIdentities": "En este sitio ya se han usado 10 usuarios distintos en 30 días: inicia sesión con uno de ellos o en directo.",
+    "dangerErrConfirm": "Parece una acción irreversible en el sitio: confirma el clic.",
+    "assistLinkedTitle": "Vinculado al asistente",
+    "assistLinkedText": "Sitio del asistente: {site}. Tras la aprobación, el vídeo aparecerá en su colección.",
+    "assistLinkTitle": "Vincular al asistente",
+    "assistLinkHint": "Tras la aprobación, el vídeo de este tutorial aparecerá en el asistente de IA del sitio elegido.",
+    "assistLinkSite": "Sitio del asistente",
+    "assistLinkButton": "Vincular",
+    "assistLinkDone": "El borrador está vinculado al asistente.",
+    "assistLinkErrUnavailable": "Ahora no puedes vincularlo a este asistente: necesitas permisos de propietario o gestor del sitio."
   },
   "sketch": {
     "button": "Boceto IA",

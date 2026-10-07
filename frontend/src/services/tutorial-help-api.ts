@@ -18,6 +18,17 @@ export interface TutorialHelpView {
   /** `null` — ролика пока нет или он не вычитан; текст всё равно есть. */
   videoUrl: string | null;
   durationMs: number | null;
+  /**
+   * Размер холста ролика и его первый кадр — API отдаёт их давно
+   * (`backend/src/modules/tutorial-help/tutorial-help.service.ts`), а
+   * мини-апп их не читал: плеер справки появлялся чёрным прямоугольником
+   * 16:9 и прыгал, когда браузер узнавал настоящий размер, а
+   * вертикальный ролик раздувал лист за край экрана. Поля необязательны:
+   * старый бэкенд их не присылает, и это не ошибка.
+   */
+  width?: number | null;
+  height?: number | null;
+  posterUrl?: string | null;
 }
 
 export async function getTutorialHelp(

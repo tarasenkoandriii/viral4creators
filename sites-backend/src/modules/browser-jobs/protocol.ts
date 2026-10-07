@@ -36,6 +36,9 @@ export const BROWSER_JOB_KINDS = [
   'admin-crawl',
   'descriptor-resolve',
   'frames-capture',
+  // Ш3-хвост (3): раунд исследователя обучалки (переход, ≤ 1 клик или вход
+  // учёткой реестра, кадр и элементы) — вместо Chromium в функции.
+  'tutorial-explore',
 ] as const;
 export type BrowserJobKind = (typeof BROWSER_JOB_KINDS)[number];
 
@@ -83,6 +86,27 @@ export const WORKER_LIMITS = {
   textChars: 80,
   titleChars: 200,
   selectorChars: 200,
+  // ── tutorial-explore (Ш3-хвост (3)) ──
+  /** Хостов в замке раунда обучалки: перехода, черновика и шагов переигровки. */
+  exploreHosts: 4,
+  /** Кликов за раунд (§5.2 ТЗ обучалки: не больше одного). */
+  exploreClicks: 1,
+  /** Селектор раунда обучалки (CSS из `collectPageExploration`). */
+  exploreSelectorChars: 400,
+  /** Элементов разведки (как `MAX_ELEMENTS` у `collectPageExploration`). */
+  exploreElements: 200,
+  exploreTextChars: 200,
+  exploreOptions: 100,
+  /** Ш4(5)-хвост: кандидатов селектора на элемент и их длина. */
+  exploreCandidates: 4,
+  exploreCandidateChars: 200,
+  /** Конверт сессии (cookie jar) в параметрах и в результате, символов. */
+  sessionSealedChars: 200_000,
+  /** Полей ввода за раунд и символов конверта одного значения. */
+  exploreFills: 10,
+  fillSealedChars: 8_000,
+  /** Шагов переигровки (`MAX_SCENARIO_STEPS` генератора). */
+  replaySteps: 30,
 } as const;
 
 /** Потолок времени исполнения задания (стена), мс. */
@@ -91,6 +115,10 @@ export const JOB_WALL_MS: Readonly<Record<BrowserJobKind, number>> = {
   'descriptor-resolve': 150_000,
   'admin-crawl': 300_000,
   'frames-capture': 120_000,
+  // Раунд в функции — 45 с, переигровка — 120 с (`REPLAY_TIMEOUT_MS`); у
+  // воркера — потолок под переигровку. Обычный раунд генератор ждёт меньше
+  // и по своему сроку отменяет идущее задание (heartbeat «отменить»).
+  'tutorial-explore': 130_000,
 };
 
 /**
@@ -112,6 +140,12 @@ export const WORKER_ERROR_CODES = [
   // Потолок трафика воркера (Ш3-хвост (9)): тело ответа или весь трафик
   // задания больше потолка — не повторяется (сайт тот же).
   'traffic_limit',
+  // Раунд обучалки (Ш3-хвост (3)): клик по цели стоп-листа (оплата,
+  // удаление…) воркер не делает — раунд остаётся в функции генератора, где
+  // человек подтверждает «опасную» кнопку (П-Т13). Отказ — ДО клика.
+  'click_refused',
+  // Цели клика/поля нет или она не кликается (ничего не нажато).
+  'target_missing',
   'browser_crashed',
   'job_timeout',
   'cancelled',
@@ -170,13 +204,73 @@ export interface FramesCaptureParams {
   allowedHosts: string[];
   viewport: BrowserViewport;
   frames: number;
+  image?: FrameImage;
+}
+
+/**
+ * Кадры: `jpeg` — JPEG видимой области (как раньше), `png2x` — съёмочный
+ * кадр обучалки: PNG плотности 2 (`CAPTURE_DEVICE_SCALE_FACTOR`), формат
+ * `VIDEO_FRAME_CONTENT_TYPE` генератора. Поле необязательное: без него —
+ * `jpeg` (параметры старых заданий разбираются как прежде).
+ */
+export const FRAME_IMAGES = ['jpeg', 'png2x'] as const;
+export type FrameImage = (typeof FRAME_IMAGES)[number];
+
+/** Поля входа, указанные человеком (`LoginFieldPick` обучалки). */
+export interface ExploreLoginPick {
+  usernameSelector: string | null;
+  passwordSelector: string | null;
+  submitSelector: string | null;
+}
+
+/** Ввод в поле: значение — конвертом под ключ воркера (`exploreFillAad`). */
+export interface ExploreFill {
+  selector: string;
+  value: string;
+}
+
+/** Шаг переигровки (`/undo`): значения ввода — тоже конвертами. */
+export type ExploreReplayStep =
+  | { kind: 'goto'; url: string }
+  | { kind: 'fill'; selector: string; value: string; passwordOnly: boolean }
+  | { kind: 'click'; selector: string };
+
+/**
+ * Раунд исследователя обучалки (Ш3-хвост (3)): переход по `url`, затем
+ * ввод в поля (`fills`) и ≤ 1 клик (`clicks`) либо вход учёткой РЕЕСТРА
+ * (`login`: поля воркер находит сам, секреты — только запросом
+ * `credentials`), затем кадр, элементы и новая сессия. Переигровка
+ * (`replay`, `/undo`) — шаги сценария с нуля, без сессии.
+ *
+ * Секреты — НЕ открытым текстом: сессия черновика (`session`) и значения
+ * ввода (`fills[].value`, `replay[].value`) — конверты под ключ воркера, AAD
+ * привязан к одноразовому `nonce`, ключу ответа `replyKey` и хостам замка
+ * (`exploreSessionAad`, `exploreFillAad`); ответ (`reply`: новая сессия и
+ * полный адрес с query) — конвертом под одноразовый ключ генератора
+ * (`exploreReplyAad`). sites-backend и база видят только шифротекст.
+ */
+export interface TutorialExploreParams {
+  url: string;
+  allowedHosts: string[];
+  /** Origin черновика — ссылки других origin в элементы не попадают. */
+  allowedOrigin: string;
+  viewport: BrowserViewport;
+  clicks: string[];
+  fills: ExploreFill[];
+  replay: ExploreReplayStep[] | null;
+  login: { needUsername: boolean; pick: ExploreLoginPick | null } | null;
+  session: string | null;
+  replyKey: string;
+  nonce: string;
+  videoFrame: boolean;
 }
 
 export type BrowserJobParams =
   | UiSnapshotParams
   | DescriptorResolveParams
   | AdminCrawlParams
-  | FramesCaptureParams;
+  | FramesCaptureParams
+  | TutorialExploreParams;
 
 // ── результаты ────────────────────────────────────────────────────────────
 
@@ -262,11 +356,66 @@ export interface FramesCaptureResult {
   frames: Array<{ artifact: number; scrollY: number }>;
 }
 
+/** Элемент разведки — поля `PageElement` обучалки (без `danger`: его считает генератор). */
+export interface ExploreElement {
+  selector: string;
+  tag: 'input' | 'select' | 'textarea' | 'button' | 'a';
+  type?: string;
+  label?: string;
+  visibleText?: string;
+  name?: string;
+  autocomplete?: string;
+  options?: Array<{ value: string; label: string }>;
+  /** Ш4(5)-хвост: уникальные кандидаты селектора для карты интерфейса. */
+  candidates?: ExploreCandidate[];
+}
+
+export const EXPLORE_CANDIDATE_KINDS = [
+  'id',
+  'test-id',
+  'attr',
+  'aria',
+] as const;
+export interface ExploreCandidate {
+  kind: (typeof EXPLORE_CANDIDATE_KINDS)[number];
+  selector: string;
+  name?: string;
+}
+
+export interface TutorialExploreResult {
+  /**
+   * Адрес после раунда — origin и путь (аудит захода 7: в query бывают ПД).
+   * Полный адрес с query — только в конверте `reply`.
+   */
+  currentUrl: string;
+  elements: ExploreElement[];
+  looksLikeLogin: boolean;
+  /** Артефакт предпросмотра (JPEG) — всегда 0. */
+  screenshot: number;
+  /** Артефакт съёмочного кадра (PNG ×2) или null (не снялся / не просили). */
+  videoFrame: number | null;
+  /**
+   * Ответ под `replyKey` (`exploreReplyAad`): JSON `{ url, cookies }` —
+   * полный адрес после раунда и новая сессия (`null`, если не снялась или
+   * не влезла); `null` — запечатать не удалось.
+   */
+  reply: string | null;
+  /** Раунд вводил в поле пароля или кода (вход). */
+  sensitiveFill: boolean;
+  /** Какие поля входа найдены и заполнены (только при `login`). */
+  autoLogin: {
+    usernameSelector: string | null;
+    passwordSelector: string;
+    submitSelector: string;
+  } | null;
+}
+
 export type BrowserJobResult =
   | UiSnapshotResult
   | DescriptorResolveResult
   | AdminCrawlResult
-  | FramesCaptureResult;
+  | FramesCaptureResult
+  | TutorialExploreResult;
 
 // ── разбор ────────────────────────────────────────────────────────────────
 
@@ -371,6 +520,74 @@ const SELECTOR_RE = /^[A-Za-z0-9\s#.:()[\]="'_*^$|~+>,\\-]{1,200}$/;
 
 export function isSafeSelector(v: unknown): v is string {
   return typeof v === 'string' && SELECTOR_RE.test(v);
+}
+
+/**
+ * Селектор раунда обучалки: CSS из `collectPageExploration` (бывают
+ * кириллица и кавычки в `[aria-label="…"]`), без управляющих символов и без
+ * префиксов движков Playwright (`xpath=`, `text=`, `//`…) — воркер ищет его
+ * только CSS-движком (`css=`).
+ */
+// eslint-disable-next-line no-control-regex
+const CTRL = /[\u0000-\u001f\u007f]/;
+const ENGINE_PREFIX = /^\s*(?:[a-z_-]+=|\/\/|\.\.)/i;
+
+export function isExploreSelector(v: unknown): v is string {
+  return (
+    typeof v === 'string' &&
+    v.trim().length > 0 &&
+    v.length <= WORKER_LIMITS.exploreSelectorChars &&
+    !CTRL.test(v) &&
+    !ENGINE_PREFIX.test(v)
+  );
+}
+
+const B64U_KEY = /^[A-Za-z0-9_-]{43}$/;
+const NONCE_RE = /^[A-Za-z0-9_-]{22,64}$/;
+const SEALED_RE =
+  /^v1\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$/;
+
+/** Конверт `worker-seal` (`v1.<epk>.<iv>.<ct>`) в пределах лимита. */
+export function isSealedEnvelope(v: unknown, max: number): v is string {
+  return typeof v === 'string' && v.length <= max && SEALED_RE.test(v);
+}
+
+/**
+ * Что привязывает конверты раунда (аудит захода 7): одноразовый `nonce`,
+ * ключ ответа `replyKey` и хосты замка (по алфавиту). Конверт сессии или
+ * значения, переставленный в задание с другим ключом ответа или замком
+ * (чтобы вывести секрет на свой ключ или на чужой хост), не откроется.
+ * `replyKey` — открытый ключ: его отпечаток ничего не добавил бы к нему.
+ */
+export interface ExploreAadParts {
+  nonce: string;
+  replyKey: string;
+  allowedHosts: readonly string[];
+}
+
+function aadTail(p: ExploreAadParts): string {
+  return `${p.nonce}:${p.replyKey}:${[...new Set(p.allowedHosts)].sort().join(',')}`;
+}
+
+/** AAD конверта сессии раунда обучалки (генератор → воркер). */
+export function exploreSessionAad(p: ExploreAadParts): string {
+  return `texp-in:${aadTail(p)}`;
+}
+
+/** AAD значения ввода (поле `index` раунда или шага переигровки). */
+export function exploreFillAad(p: ExploreAadParts, index: number): string {
+  return `texp-fill:${aadTail(p)}:${index}`;
+}
+
+/** AAD ответа (воркер → генератор, под `replyKey`). */
+export function exploreReplyAad(p: ExploreAadParts): string {
+  return `texp-out:${aadTail(p)}`;
+}
+
+function pickSelector(v: unknown, field: string): string | null {
+  if (v === null) return null;
+  if (!isExploreSelector(v)) throw new ProtocolError(field);
+  return v;
 }
 
 /** Строгий разбор параметров задания (обе стороны). */
@@ -486,17 +703,210 @@ export function parseJobParams(
       };
     }
     case 'frames-capture': {
-      exactKeys(raw, ['url', 'allowedHosts', 'viewport', 'frames'], 'params');
+      exactKeys(
+        raw,
+        'image' in raw
+          ? ['url', 'allowedHosts', 'viewport', 'frames', 'image']
+          : ['url', 'allowedHosts', 'viewport', 'frames'],
+        'params',
+      );
       const allowedHosts = hostsOf(raw.allowedHosts);
-      return {
+      const out: FramesCaptureParams = {
         url: lockedUrl(raw.url, allowedHosts),
         allowedHosts,
         viewport: viewportOf(raw.viewport),
         frames: intIn(raw.frames, 1, WORKER_LIMITS.frames, 'params.frames'),
       };
+      if ('image' in raw) {
+        if (!(FRAME_IMAGES as readonly unknown[]).includes(raw.image)) {
+          throw new ProtocolError('params.image');
+        }
+        out.image = raw.image as FrameImage;
+      }
+      return out;
     }
+    case 'tutorial-explore':
+      return exploreParams(raw);
     default:
       throw new ProtocolError('kind');
+  }
+}
+
+function exploreParams(raw: Record<string, unknown>): TutorialExploreParams {
+  exactKeys(
+    raw,
+    [
+      'url',
+      'allowedHosts',
+      'allowedOrigin',
+      'viewport',
+      'clicks',
+      'fills',
+      'replay',
+      'login',
+      'session',
+      'replyKey',
+      'nonce',
+      'videoFrame',
+    ],
+    'params',
+  );
+  const allowedHosts = hostsOf(raw.allowedHosts);
+  if (allowedHosts.length > WORKER_LIMITS.exploreHosts) {
+    throw new ProtocolError('allowedHosts');
+  }
+  // Origin черновика — тоже из замка (ссылки «своего» origin в разведке).
+  let origin: URL;
+  try {
+    origin = new URL(lockedUrl(raw.allowedOrigin, allowedHosts));
+  } catch {
+    throw new ProtocolError('params.allowedOrigin');
+  }
+  if (
+    typeof raw.allowedOrigin !== 'string' ||
+    raw.allowedOrigin !== origin.origin
+  ) {
+    throw new ProtocolError('params.allowedOrigin');
+  }
+  if (
+    !Array.isArray(raw.clicks) ||
+    raw.clicks.length > WORKER_LIMITS.exploreClicks ||
+    !raw.clicks.every(isExploreSelector)
+  ) {
+    throw new ProtocolError('params.clicks');
+  }
+  let login: TutorialExploreParams['login'] = null;
+  if (raw.login !== null) {
+    if (!isObj(raw.login)) throw new ProtocolError('params.login');
+    exactKeys(raw.login, ['needUsername', 'pick'], 'params.login');
+    let pick: ExploreLoginPick | null = null;
+    if (raw.login.pick !== null) {
+      if (!isObj(raw.login.pick)) throw new ProtocolError('params.login.pick');
+      exactKeys(
+        raw.login.pick,
+        ['usernameSelector', 'passwordSelector', 'submitSelector'],
+        'params.login.pick',
+      );
+      pick = {
+        usernameSelector: pickSelector(
+          raw.login.pick.usernameSelector,
+          'params.login.pick.usernameSelector',
+        ),
+        passwordSelector: pickSelector(
+          raw.login.pick.passwordSelector,
+          'params.login.pick.passwordSelector',
+        ),
+        submitSelector: pickSelector(
+          raw.login.pick.submitSelector,
+          'params.login.pick.submitSelector',
+        ),
+      };
+    }
+    login = {
+      needUsername: bool(raw.login.needUsername, 'params.login.needUsername'),
+      pick,
+    };
+  }
+  if (
+    !Array.isArray(raw.fills) ||
+    raw.fills.length > WORKER_LIMITS.exploreFills
+  ) {
+    throw new ProtocolError('params.fills');
+  }
+  const fills: ExploreFill[] = raw.fills.map((f, i) => {
+    const ff = `params.fills.${i}`;
+    if (!isObj(f)) throw new ProtocolError(ff);
+    exactKeys(f, ['selector', 'value'], ff);
+    if (!isExploreSelector(f.selector))
+      throw new ProtocolError(`${ff}.selector`);
+    if (!isSealedEnvelope(f.value, WORKER_LIMITS.fillSealedChars)) {
+      throw new ProtocolError(`${ff}.value`);
+    }
+    return { selector: f.selector, value: f.value };
+  });
+  // Вход учёткой — сам по себе раунд: кликов и ввода при нём нет (§5.2).
+  if (login && (raw.clicks.length || fills.length)) {
+    throw new ProtocolError('params.clicks');
+  }
+  if (
+    raw.session !== null &&
+    !isSealedEnvelope(raw.session, WORKER_LIMITS.sessionSealedChars)
+  ) {
+    throw new ProtocolError('params.session');
+  }
+  if (typeof raw.replyKey !== 'string' || !B64U_KEY.test(raw.replyKey)) {
+    throw new ProtocolError('params.replyKey');
+  }
+  if (typeof raw.nonce !== 'string' || !NONCE_RE.test(raw.nonce)) {
+    throw new ProtocolError('params.nonce');
+  }
+  const url = lockedUrl(raw.url, allowedHosts);
+  let replay: ExploreReplayStep[] | null = null;
+  if (raw.replay !== null) {
+    if (
+      !Array.isArray(raw.replay) ||
+      raw.replay.length === 0 ||
+      raw.replay.length > WORKER_LIMITS.replaySteps
+    ) {
+      throw new ProtocolError('params.replay');
+    }
+    // Переигровка — с нуля: без сессии, кликов, ввода и входа раунда.
+    if (raw.session !== null || raw.clicks.length || fills.length || login) {
+      throw new ProtocolError('params.replay');
+    }
+    replay = raw.replay.map((st, i) => replayStep(st, i, allowedHosts));
+    const first = replay[0];
+    if (first.kind !== 'goto' || first.url !== url) {
+      throw new ProtocolError('params.replay.0');
+    }
+  }
+  return {
+    url,
+    allowedHosts,
+    allowedOrigin: origin.origin,
+    viewport: viewportOf(raw.viewport),
+    clicks: [...(raw.clicks as string[])],
+    fills,
+    replay,
+    login,
+    session: raw.session as string | null,
+    replyKey: raw.replyKey,
+    nonce: raw.nonce,
+    videoFrame: bool(raw.videoFrame, 'params.videoFrame'),
+  };
+}
+
+function replayStep(
+  st: unknown,
+  i: number,
+  allowedHosts: readonly string[],
+): ExploreReplayStep {
+  const f = `params.replay.${i}`;
+  if (!isObj(st)) throw new ProtocolError(f);
+  switch (st.kind) {
+    case 'goto':
+      exactKeys(st, ['kind', 'url'], f);
+      return { kind: 'goto', url: lockedUrl(st.url, allowedHosts) };
+    case 'click':
+      exactKeys(st, ['kind', 'selector'], f);
+      if (!isExploreSelector(st.selector))
+        throw new ProtocolError(`${f}.selector`);
+      return { kind: 'click', selector: st.selector };
+    case 'fill':
+      exactKeys(st, ['kind', 'selector', 'value', 'passwordOnly'], f);
+      if (!isExploreSelector(st.selector))
+        throw new ProtocolError(`${f}.selector`);
+      if (!isSealedEnvelope(st.value, WORKER_LIMITS.fillSealedChars)) {
+        throw new ProtocolError(`${f}.value`);
+      }
+      return {
+        kind: 'fill',
+        selector: st.selector,
+        value: st.value,
+        passwordOnly: bool(st.passwordOnly, `${f}.passwordOnly`),
+      };
+    default:
+      throw new ProtocolError(`${f}.kind`);
   }
 }
 
@@ -816,6 +1226,8 @@ export function parseJobResult(
         skippedLinks: intIn(raw.skippedLinks, 0, 1e6, 'result.skippedLinks'),
       };
     }
+    case 'tutorial-explore':
+      return exploreResult(params as TutorialExploreParams, raw);
     case 'frames-capture': {
       exactKeys(raw, ['finalUrl', 'frames'], 'result');
       const p = params as FramesCaptureParams;
@@ -840,6 +1252,193 @@ export function parseJobResult(
   }
 }
 
+const EXPLORE_TAGS = ['input', 'select', 'textarea', 'button', 'a'] as const;
+const EXPLORE_ELEMENT_KEYS = [
+  'selector',
+  'tag',
+  'type',
+  'label',
+  'visibleText',
+  'name',
+  'autocomplete',
+  'options',
+  'candidates',
+];
+
+function optText(
+  o: Record<string, unknown>,
+  k: string,
+  max: number,
+  f: string,
+): string | undefined {
+  if (!(k in o) || o[k] === undefined) return undefined;
+  return text(o[k], max, `${f}.${k}`);
+}
+
+function exploreElement(raw: unknown, i: number): ExploreElement {
+  const f = `result.elements.${i}`;
+  if (!isObj(raw)) throw new ProtocolError(f);
+  for (const k of Object.keys(raw)) {
+    if (!EXPLORE_ELEMENT_KEYS.includes(k)) throw new ProtocolError(`${f}.${k}`);
+  }
+  if (!isExploreSelector(raw.selector))
+    throw new ProtocolError(`${f}.selector`);
+  if (!(EXPLORE_TAGS as readonly unknown[]).includes(raw.tag)) {
+    throw new ProtocolError(`${f}.tag`);
+  }
+  const L = WORKER_LIMITS.exploreTextChars;
+  const out: ExploreElement = {
+    selector: raw.selector,
+    tag: raw.tag as ExploreElement['tag'],
+  };
+  const type = optText(raw, 'type', 40, f);
+  if (type !== undefined) out.type = type;
+  const label = optText(raw, 'label', L, f);
+  if (label !== undefined) out.label = label;
+  const visibleText = optText(raw, 'visibleText', L, f);
+  if (visibleText !== undefined) out.visibleText = visibleText;
+  const name = optText(raw, 'name', L, f);
+  if (name !== undefined) out.name = name;
+  const ac = optText(raw, 'autocomplete', 80, f);
+  if (ac !== undefined) out.autocomplete = ac;
+  if ('options' in raw && raw.options !== undefined) {
+    if (
+      !Array.isArray(raw.options) ||
+      raw.options.length > WORKER_LIMITS.exploreOptions
+    ) {
+      throw new ProtocolError(`${f}.options`);
+    }
+    out.options = raw.options.map((o, k) => {
+      const of = `${f}.options.${k}`;
+      if (!isObj(o)) throw new ProtocolError(of);
+      exactKeys(o, ['value', 'label'], of);
+      // Значение опции — то, что примет `fill` следующего раунда: без
+      // замены символов (только длина), надпись — как текст.
+      if (typeof o.value !== 'string' || o.value.length > L) {
+        throw new ProtocolError(`${of}.value`);
+      }
+      return { value: o.value, label: text(o.label, L, `${of}.label`) };
+    });
+  }
+  if ('candidates' in raw && raw.candidates !== undefined) {
+    if (
+      !Array.isArray(raw.candidates) ||
+      raw.candidates.length > WORKER_LIMITS.exploreCandidates
+    ) {
+      throw new ProtocolError(`${f}.candidates`);
+    }
+    out.candidates = raw.candidates.map((c, k) => {
+      const cf = `${f}.candidates.${k}`;
+      if (!isObj(c)) throw new ProtocolError(cf);
+      const aria = c.kind === 'aria';
+      exactKeys(
+        c,
+        aria ? ['kind', 'selector', 'name'] : ['kind', 'selector'],
+        cf,
+      );
+      if (!(EXPLORE_CANDIDATE_KINDS as readonly unknown[]).includes(c.kind)) {
+        throw new ProtocolError(`${cf}.kind`);
+      }
+      if (
+        !isExploreSelector(c.selector) ||
+        c.selector.length > WORKER_LIMITS.exploreCandidateChars
+      ) {
+        throw new ProtocolError(`${cf}.selector`);
+      }
+      return aria
+        ? {
+            kind: 'aria' as const,
+            selector: c.selector,
+            name: text(c.name, L, `${cf}.name`),
+          }
+        : { kind: c.kind as ExploreCandidate['kind'], selector: c.selector };
+    });
+  }
+  return out;
+}
+
+function exploreResult(
+  p: TutorialExploreParams,
+  raw: Record<string, unknown>,
+): TutorialExploreResult {
+  exactKeys(
+    raw,
+    [
+      'currentUrl',
+      'elements',
+      'looksLikeLogin',
+      'screenshot',
+      'videoFrame',
+      'reply',
+      'sensitiveFill',
+      'autoLogin',
+    ],
+    'result',
+  );
+  if (
+    !Array.isArray(raw.elements) ||
+    raw.elements.length > WORKER_LIMITS.exploreElements
+  ) {
+    throw new ProtocolError('result.elements');
+  }
+  if (raw.screenshot !== 0) throw new ProtocolError('result.screenshot');
+  if (raw.videoFrame !== null && raw.videoFrame !== 1) {
+    throw new ProtocolError('result.videoFrame');
+  }
+  if (raw.videoFrame !== null && !p.videoFrame) {
+    throw new ProtocolError('result.videoFrame');
+  }
+  if (
+    raw.reply !== null &&
+    !isSealedEnvelope(raw.reply, WORKER_LIMITS.sessionSealedChars)
+  ) {
+    throw new ProtocolError('result.reply');
+  }
+  let autoLogin: TutorialExploreResult['autoLogin'] = null;
+  if (raw.autoLogin !== null) {
+    // Поля входа — только у раунда входа учёткой реестра.
+    if (!p.login || !isObj(raw.autoLogin)) {
+      throw new ProtocolError('result.autoLogin');
+    }
+    exactKeys(
+      raw.autoLogin,
+      ['usernameSelector', 'passwordSelector', 'submitSelector'],
+      'result.autoLogin',
+    );
+    const pw = raw.autoLogin.passwordSelector;
+    const sub = raw.autoLogin.submitSelector;
+    if (!isExploreSelector(pw) || !isExploreSelector(sub)) {
+      throw new ProtocolError('result.autoLogin');
+    }
+    autoLogin = {
+      usernameSelector: pickSelector(
+        raw.autoLogin.usernameSelector,
+        'result.autoLogin.usernameSelector',
+      ),
+      passwordSelector: pw,
+      submitSelector: sub,
+    };
+  }
+  if (p.login && autoLogin === null)
+    throw new ProtocolError('result.autoLogin');
+  // Адрес — хост замка, только origin и путь (query с ПД — в `reply`).
+  const currentUrl = resultUrl(
+    raw.currentUrl,
+    p.allowedHosts,
+    'result.currentUrl',
+  );
+  return {
+    currentUrl,
+    elements: raw.elements.map(exploreElement),
+    looksLikeLogin: bool(raw.looksLikeLogin, 'result.looksLikeLogin'),
+    screenshot: 0,
+    videoFrame: raw.videoFrame as number | null,
+    reply: raw.reply as string | null,
+    sensitiveFill: bool(raw.sensitiveFill, 'result.sensitiveFill'),
+    autoLogin,
+  };
+}
+
 /** Задание, как его отдаёт claim (секретов нет — см. `credentials`). */
 export interface ClaimedJob {
   id: string;
@@ -849,7 +1448,10 @@ export interface ClaimedJob {
   leaseUntil: string;
   wallMs: number;
   params: BrowserJobParams;
-  /** Учётка нужна (admin-crawl): секреты — запросом `credentials`. */
+  /**
+   * Учётка нужна (admin-crawl; tutorial-explore со входом учёткой реестра):
+   * секреты — запросом `credentials`.
+   */
   needsCredentials: boolean;
 }
 

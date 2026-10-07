@@ -15,6 +15,8 @@
  *
  *  - `link` — проверка перед привязкой черновика (генератор пишет
  *    `clientSiteId` только после неё);
+ *  - `candidates` — сайты, к которым можно привязать черновик с данным
+ *    хостом (визард обучалки, W7): те же роли, хост — подтверждённый;
  *  - `syncVideos` — ПОЛНЫЙ набор одобренных оператором роликов сайта
  *    (замена): у каждого — свой хозяин, членство проверяется ПО КАЖДОМУ
  *    (черновик бывшего менеджера, которого убрали из кабинета, выпадает);
@@ -48,8 +50,13 @@ import {
   ingestUiSnapshot,
 } from '../site-core/ui-map/ui-map-store';
 
-/** Тот же потолок, что MEDIA_DEFAULTS.syncVideosMax (тело ≤ 8 КБ). */
-export const SYNC_VIDEOS_MAX = 15;
+/**
+ * Тот же потолок, что MEDIA_DEFAULTS.syncVideosMax (assist-site-media —
+ * не импортируется отсюда по графу, равенство сверяет приёмка
+ * `acceptance/e6/video-lang.spec.ts`). Ш5(5): 10 шагов × 5 языков
+ * генератора = 50, с запасом — 60.
+ */
+export const SYNC_VIDEOS_MAX = 60;
 const TITLE_MAX = 120;
 
 export interface SyncVideoInput {
@@ -78,6 +85,20 @@ export interface SyncVideosResult {
   rejected: Array<{ externalId: string; reason: 'owner' | 'url' }>;
   /** Набор старше уже принятого (`asOf`) — ничего не изменено. */
   stale?: true;
+}
+
+/**
+ * Привязка из визарда обучалки (W7): сайты, к которым человек может
+ * привязать черновик с этим хостом, — не больше стольких (кабинетов у
+ * человека единицы, сайтов в кабинете — десятки).
+ */
+export const SITE_CANDIDATES_MAX = 20;
+
+export interface SiteCandidate {
+  siteId: string;
+  name: string;
+  /** Подтверждённые хосты сайта (нормализованные, без `www.`). */
+  hosts: string[];
 }
 
 const linkDenied = () =>
@@ -140,6 +161,55 @@ export class InternalSiteMediaService {
       siteName: site.name,
       hosts: hosts.map((h) => h.host),
     };
+  }
+
+  /**
+   * W7 (привязка существующего черновика из визарда): сайты помощника, к
+   * которым человек вправе привязать черновик с хостом `host`, — кабинеты,
+   * где он владелец или менеджер помощника (те же, что у `link`), у сайта
+   * есть помощник и `host` среди его подтверждённых (не отозванных)
+   * хостов. Чужих сайтов ответ не раскрывает: пустой список одинаков для
+   * «нет кабинета», «нет такого хоста» и «хост в чужом кабинете».
+   */
+  async candidates(
+    telegramId: bigint,
+    host: string,
+  ): Promise<{ sites: SiteCandidate[] }> {
+    const accounts = [...(await this.managedAccounts(telegramId))];
+    const want = uiMapHost(host);
+    if (!accounts.length || !want) return { sites: [] };
+    const rows = await this.system(
+      'подтверждённые хосты сайтов человека',
+    ).siteHost.findMany({
+      where: {
+        accountId: { in: accounts },
+        status: 'verified',
+        revokedAt: null,
+        site: { assistSite: { isNot: null } },
+      },
+      select: { siteId: true, host: true, site: { select: { name: true } } },
+      orderBy: { siteId: 'asc' },
+      take: 500,
+    });
+    const bySite = new Map<string, SiteCandidate>();
+    for (const r of rows) {
+      const h = uiMapHost(r.host);
+      const c = bySite.get(r.siteId) ?? {
+        siteId: r.siteId,
+        name: r.site.name,
+        hosts: [],
+      };
+      if (!c.hosts.includes(h)) c.hosts.push(h);
+      bySite.set(r.siteId, c);
+    }
+    const sites = [...bySite.values()]
+      .filter((c) => c.hosts.includes(want))
+      .sort(
+        (a, b) =>
+          a.name.localeCompare(b.name) || a.siteId.localeCompare(b.siteId),
+      )
+      .slice(0, SITE_CANDIDATES_MAX);
+    return { sites };
   }
 
   async syncVideos(

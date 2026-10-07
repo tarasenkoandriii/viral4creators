@@ -46,6 +46,8 @@ import type {
   SetVoiceAssistantInput,
   PersonaLookQuotaSettingsView,
   SetPersonaLookQuotaInput,
+  SetSiteTutorialSettingsInput,
+  SiteTutorialSettingsView,
   MusicCatalogView,
   AiGuideSettingsView,
   SetAiGuideSettingsInput,
@@ -74,6 +76,9 @@ import type {
   DemoQualityLatest,
   DemoQualityEnqueueResult,
   DemoQualityApprovedResult,
+  DemoQualityOverrideEntry,
+  DemoQualityOverrideResult,
+  DemoQualityVerdict,
   TutorialScenarioListResult,
   SiteTutorialDemoSeedResult,
   TutorialScenarioRow,
@@ -338,6 +343,15 @@ export function getPersonaLookQuotaSettings() {
 
 export function setPersonaLookQuotaSettings(input: SetPersonaLookQuotaInput) {
   return apiPatch<PersonaLookQuotaSettingsView>('/admin/settings/persona-look-quota', input);
+}
+
+// П-Т9 (заход 7): выключатель и суточные потолки обучалки по сайту.
+export function getSiteTutorialSettings() {
+  return apiGet<SiteTutorialSettingsView>('/admin/settings/site-tutorial');
+}
+
+export function setSiteTutorialSettings(input: SetSiteTutorialSettingsInput) {
+  return apiPatch<SiteTutorialSettingsView>('/admin/settings/site-tutorial', input);
 }
 
 export function setVoiceoverProviderDefault(provider: VoiceoverProviderKey) {
@@ -1049,6 +1063,19 @@ export function requestDemoQualityCheck(assetId: string, versionId?: string) {
 
 export function requestDemoQualityApproved() {
   return apiPost<DemoQualityApprovedResult>('/admin/tutorial-demo-quality/approved/check');
+}
+
+// Заход 7: переопределение вердикта оператором — причина обязательна,
+// `verdict: null` снимает переопределение; журнал — кто/когда/почему.
+export function overrideDemoQualityVerdict(checkId: string, verdict: DemoQualityVerdict | null, reason: string) {
+  return apiPatch<DemoQualityOverrideResult>(`/admin/tutorial-demo-quality/checks/${checkId}/override`, {
+    verdict,
+    reason,
+  });
+}
+
+export function getDemoQualityOverrides(checkId: string) {
+  return apiGet<DemoQualityOverrideEntry[]>(`/admin/tutorial-demo-quality/checks/${checkId}/overrides`);
 }
 
 // ── Маркетплейс исполнителей — Этап 0 (backend/src/modules/creator-profile, ТЗ §20 №19) ──

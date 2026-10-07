@@ -15,7 +15,12 @@ import {
   type ExecutionContext,
 } from '@nestjs/common';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
-import { JOB_ID_RE, type BrowserViewport } from '../browser-jobs/protocol';
+import {
+  FRAME_IMAGES,
+  JOB_ID_RE,
+  type BrowserViewport,
+  type FrameImage,
+} from '../browser-jobs/protocol';
 import { InternalFramesService } from './internal-frames.service';
 import { parseTelegramId } from './internal-sites.service';
 import { InternalRequest, TutorialHmacGuard } from './tutorial-hmac.guard';
@@ -55,7 +60,7 @@ export class InternalFramesController {
   @Post('request')
   @HttpCode(200)
   request(@InternalBody() b: unknown) {
-    const o = obj(b, ['telegramId', 'url', 'frames', 'viewport']);
+    const o = obj(b, ['telegramId', 'url', 'frames', 'viewport', 'image']);
     if (typeof o.url !== 'string' || o.url.length > 2000) throw bad('url');
     const frames = o.frames === undefined ? 3 : o.frames;
     if (
@@ -66,10 +71,18 @@ export class InternalFramesController {
     ) {
       throw bad('frames: 1…10');
     }
+    // Ш3-хвост (3): `png2x` — съёмочный кадр обучалки (PNG плотности 2).
+    if (
+      o.image !== undefined &&
+      !(FRAME_IMAGES as readonly unknown[]).includes(o.image)
+    ) {
+      throw bad('image: jpeg | png2x');
+    }
     return this.svc.request(parseTelegramId(o.telegramId), {
       url: o.url,
       frames,
       viewport: (o.viewport ?? 'mobile') as BrowserViewport,
+      ...(o.image !== undefined ? { image: o.image as FrameImage } : {}),
     });
   }
 

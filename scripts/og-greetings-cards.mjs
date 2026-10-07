@@ -1,14 +1,15 @@
 /**
  * Генератор OG-карточек страницы поздравлений (этап H ТЗ
  * `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md` §5.1: «перевыпустить
- * тем же способом, вне приложения, SVG → JPG»).
+ * тем же способом, вне приложения, SVG → JPG»; с 07.10.2026 кадр — AVIF
+ * первого экрана, SVG удалён).
  *
  * Пять картинок 1200×630 — по одной на локаль — в
  * `landing/public/og/greetings-<locale>.jpg`. Имена прежние: адрес
  * карточки задаёт `ogImageUrl()` в `landing/src/lib/social-meta.ts`.
  *
  * Это копия `scripts/og-tutorial-cards.mjs` с тремя отличиями: словарь
- * (`greetingsLanding.hero`), кадр (`greet-hero.svg`) и имена файлов.
+ * (`greetingsLanding.hero`), кадр (`greetings-hero-v2.avif`) и имена файлов.
  * Все «почему» — отказ от `next/og`, ноль npm-зависимостей, JPEG, а не
  * PNG, автоподгонка кегля в самой странице — описаны там и здесь не
  * повторяются. Общий модуль не заводился сознательно: генератор
@@ -72,9 +73,21 @@ const FONTS = [
   fontFace('InterOg', 700, 'cyrillic'),
 ].join('');
 
-const SHOT = read('landing/public/illustrations/greet-hero.svg').toString(
-  'base64',
-);
+/**
+ * Кадр карточки — тот же растровый AVIF, что в первом экране страницы
+ * (`landing/public/illustrations/greetings-hero-v2.avif`, 07.10.2026): прежний
+ * SVG-исходник удалён вместе с SVG-hero, и карточка больше не показывает
+ * картинку, которой на странице нет. Chromium декодирует AVIF сам (с
+ * v85), конвертер для этого не нужен. Сигнатура проверяется: под тем же
+ * именем случайно положенный PNG дал бы битую картинку на карточке.
+ */
+const SHOT_FILE = 'landing/public/illustrations/greetings-hero-v2.avif';
+const SHOT_BYTES = read(SHOT_FILE);
+if (SHOT_BYTES.subarray(4, 12).toString('latin1') !== 'ftypavif') {
+  console.error(`${SHOT_FILE}: не AVIF`);
+  process.exit(1);
+}
+const SHOT = SHOT_BYTES.toString('base64');
 
 function escapeHtml(s) {
   return s.replace(
@@ -136,7 +149,7 @@ h1{margin-top:26px;font-weight:700;letter-spacing:-.022em;line-height:1.1;
   <h1>${escapeHtml(title)}</h1>
   ${badge ? `<div class="badge">${escapeHtml(badge)}</div>` : ''}
 </div>
-<div class="shot"><img src="data:image/svg+xml;base64,${SHOT}" alt=""></div>
+<div class="shot"><img src="data:image/avif;base64,${SHOT}" alt=""></div>
 <script>
 /* Автоподгонка кегля. Заголовки в пяти языках разной длины, немецкий
    длиннее всех. Вместо того чтобы подбирать размер на глаз под самый

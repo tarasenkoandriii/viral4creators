@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { locales } from '../src/lib/i18n';
+import { HERO_IMAGES } from '../src/components/HeroPicture';
 import {
   GREETING_FRAME_COUNT,
   GREETING_REAL_FRAME_LOCALES,
@@ -89,10 +90,8 @@ for (const bad of [0, GREETING_FRAME_COUNT + 1, 1.5, Number.NaN]) {
 /**
  * Файлы схем: на месте, в бюджете, и без того, что Уровень 1 запрещает.
  * Бюджеты — §5.3 ТЗ (≤120 КБ кадр; схема «Вы в кадре» — кадр, этап J).
- * `greet-hero.svg` на странице больше не показывается (hero — AVIF, см.
- * ниже), но остаётся исходником OG-карточек (`scripts/og-greetings-cards.mjs`)
- * и сверяется `scripts/check-docs.mjs` — поэтому правила схем держим и
- * для него, с прежним бюджетом 90 КБ.
+ * `greet-hero.svg` удалён 07.10.2026: hero — AVIF (см. ниже), и OG-карточки
+ * (`scripts/og-greetings-cards.mjs`) рисуются с того же AVIF.
  *
  * «Без текста» проверяется по элементам, а не по символам: цифры в
  * SVG — это координаты. `<text>` сделал бы картинку зависимой от
@@ -101,7 +100,6 @@ for (const bad of [0, GREETING_FRAME_COUNT + 1, 1.5, Number.NaN]) {
  * пространства имён — это домен на картинке или внешняя загрузка.
  */
 const schemes = [
-  { file: 'greet-hero.svg', max: 90 * 1024 },
   ...Array.from({ length: GREETING_FRAME_COUNT }, (_, i) => ({
     file: `greet-frame-${i + 1}.svg`,
     max: 120 * 1024,
@@ -162,6 +160,77 @@ for (const { file, max } of schemes) {
       `${file}: не 1536×1024`,
     );
   }
+
+  /**
+   * Запасные форматы и ширины (`components/HeroPicture.tsx`, производные
+   * от AVIF — `scripts/hero-fallbacks.mjs`): у каждого hero есть AVIF 768,
+   * WebP и JPEG в 1536 и 768. Нет файла — `<picture>` отдаст 404 ровно тем
+   * браузерам, ради которых запасной формат и заведён. Формат — по
+   * сигнатуре, ширина — по заголовку файла (srcset обещает `768w`/`1536w`).
+   * Бюджеты — фактический вес плюс запас; запасной JPEG качают только
+   * браузеры без AVIF и WebP, поэтому он может быть тяжелее.
+   */
+  const fallbackBudget: Record<string, Record<string, number>> = {
+    'ads-hero-v2': { avif768: 80, webp: 210, webp768: 82, jpg: 245, jpg768: 85 },
+    'greetings-hero-v2': { avif768: 42, webp: 120, webp768: 50, jpg: 170, jpg768: 62 },
+    'tutorial-hero-v2': { avif768: 34, webp: 108, webp768: 46, jpg: 158, jpg768: 58 },
+  };
+  for (const name of HERO_IMAGES) {
+    const budget = fallbackBudget[name];
+    assert.ok(budget, `${name}: нет бюджета запасных форматов`);
+    const variants = [
+      { file: `${name}-768.avif`, key: 'avif768', width: 768, kind: 'avif' },
+      { file: `${name}.webp`, key: 'webp', width: 1536, kind: 'webp' },
+      { file: `${name}-768.webp`, key: 'webp768', width: 768, kind: 'webp' },
+      { file: `${name}.jpg`, key: 'jpg', width: 1536, kind: 'jpg' },
+      { file: `${name}-768.jpg`, key: 'jpg768', width: 768, kind: 'jpg' },
+    ] as const;
+    for (const v of variants) {
+      const bytes = readFileSync(path.join(PUBLIC, 'illustrations', v.file));
+      assert.ok(
+        bytes.length <= budget[v.key] * 1024,
+        `${v.file}: ${Math.round(bytes.length / 1024)} КБ при бюджете ${budget[v.key]} КБ`,
+      );
+      assert.deepEqual(imageSize(bytes, v.kind), [v.width, (v.width * 2) / 3], `${v.file}: размер`);
+    }
+  }
+}
+
+/** Ширина×высота по заголовку файла — без зависимостей. */
+function imageSize(bytes: Buffer, kind: 'avif' | 'webp' | 'jpg'): [number, number] {
+  if (kind === 'avif') {
+    assert.equal(bytes.subarray(4, 12).toString('latin1'), 'ftypavif', 'не AVIF');
+    const ispe = bytes.indexOf('ispe', 0, 'latin1');
+    return [bytes.readUInt32BE(ispe + 8), bytes.readUInt32BE(ispe + 12)];
+  }
+  if (kind === 'webp') {
+    assert.equal(bytes.subarray(0, 4).toString('latin1'), 'RIFF', 'не WebP');
+    assert.equal(bytes.subarray(8, 12).toString('latin1'), 'WEBP', 'не WebP');
+    const chunk = bytes.subarray(12, 16).toString('latin1');
+    if (chunk === 'VP8 ') {
+      return [bytes.readUInt16LE(26) & 0x3fff, bytes.readUInt16LE(28) & 0x3fff];
+    }
+    if (chunk === 'VP8X') {
+      return [bytes.readUIntLE(24, 3) + 1, bytes.readUIntLE(27, 3) + 1];
+    }
+    if (chunk === 'VP8L') {
+      const bits = bytes.readUInt32LE(21);
+      return [(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1];
+    }
+    throw new Error(`WebP: неизвестный блок ${chunk}`);
+  }
+  assert.equal(bytes.readUInt16BE(0), 0xffd8, 'не JPEG');
+  let offset = 2;
+  while (offset < bytes.length) {
+    const marker = bytes.readUInt16BE(offset);
+    const length = bytes.readUInt16BE(offset + 2);
+    // SOF0..SOF15, кроме DHT (C4), JPG (C8) и DAC (CC).
+    if (marker >= 0xffc0 && marker <= 0xffcf && ![0xffc4, 0xffc8, 0xffcc].includes(marker)) {
+      return [bytes.readUInt16BE(offset + 7), bytes.readUInt16BE(offset + 5)];
+    }
+    offset += 2 + length;
+  }
+  throw new Error('JPEG: нет SOF');
 }
 
 /**

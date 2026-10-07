@@ -21,8 +21,11 @@ import {
   SITE_TUTORIAL_DEMO_ASSETS_SETTING_KEY,
   SITE_TUTORIAL_DEMO_KEYS,
   SITE_TUTORIAL_DEMO_MAX_MARKED,
+  SITE_TUTORIAL_DEMO_TITLES,
   siteTutorialDemoTopicFor,
 } from './site-tutorial-demo';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { SUPPORTED_LOCALES } from '../../common/locale';
 import * as locales from '../tutorial-scenario/tutorial-locales';
 
@@ -152,16 +155,59 @@ describe('семейство демо обучающего лендинга — 
     }
   });
 
-  it('тексты слотов есть на всех пяти языках, и в них нет обещания сценария', () => {
+  it('тексты слотов есть на всех пяти языках, названия слотов разные', () => {
     for (const locale of SUPPORTED_LOCALES) {
+      const titles = new Set<string>();
       for (const key of SITE_TUTORIAL_DEMO_KEYS) {
         const topic = siteTutorialDemoTopicFor(key, locale);
         expect(topic?.title.trim()).toBeTruthy();
         expect(topic?.text.length).toBeGreaterThan(40);
+        titles.add(topic!.title);
       }
+      expect(titles.size).toBe(SITE_TUTORIAL_DEMO_KEYS.length);
     }
     expect(siteTutorialDemoTopicFor('client-site', 'ru')).toBeNull();
     expect(siteTutorialDemoTopicFor('2', 'ru')).toBeNull();
+  });
+
+  it('название слота = название сценария в сиде раннера (С3/С2/С4, 07.10.2026), на каждом языке', () => {
+    const seed = JSON.parse(
+      readFileSync(
+        join(__dirname, '../tutorial-runner/seeds/site-tutorial-demo.json'),
+        'utf8',
+      ),
+    ) as { scenarios: { subjectKey: string; locale: string; title: string }[] };
+    let checked = 0;
+    for (const scenario of seed.scenarios) {
+      expect(
+        siteTutorialDemoTopicFor(scenario.subjectKey, scenario.locale)?.title,
+      ).toBe(scenario.title);
+      checked += 1;
+    }
+    expect(checked).toBe(
+      SITE_TUTORIAL_DEMO_KEYS.length * SUPPORTED_LOCALES.length,
+    );
+    // Порядок слотов — решение владельца: -1 доставка, -2 заказ, -3 запись.
+    expect(SITE_TUTORIAL_DEMO_TITLES.ru).toEqual([
+      'Как найти условия доставки',
+      'Как оформить заказ в магазине',
+      'Как записаться на консультацию',
+    ]);
+    // Нейтральных «Пример обучалки N» больше нет.
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const title of SITE_TUTORIAL_DEMO_TITLES[locale]) {
+        expect(title).not.toMatch(/\d/);
+      }
+    }
+  });
+
+  it('неизвестный язык — русские тексты, а не пустота', () => {
+    expect(siteTutorialDemoTopicFor('site-tutorial-demo-2', 'fr')).toEqual(
+      siteTutorialDemoTopicFor('site-tutorial-demo-2', 'ru'),
+    );
+    expect(
+      siteTutorialDemoTopicFor('site-tutorial-demo-2', 'toString')?.title,
+    ).toBe('Как оформить заказ в магазине');
   });
 
   it('client-site — в списке закрытых ключей', () => {

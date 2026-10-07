@@ -3,6 +3,7 @@ import { ProjectController } from './project.controller';
 import { ProjectService } from './project.service';
 import { StorageModule } from '../storage/storage.module';
 import { GreetingBriefModule } from '../greeting-brief/greeting-brief.module';
+import { ClientSiteMediaModule } from '../client-site-media/client-site-media.module';
 
 /**
  * ProjectModule — Project / ProductItem catalog
@@ -19,7 +20,9 @@ import { GreetingBriefModule } from '../greeting-brief/greeting-brief.module';
   // (doc/STORAGE-AUDIT.md, этап 26).
   // GreetingBriefModule — за классификатором регистра «Особого повода»
   // (этап B ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md §3.4).
-  imports: [StorageModule, GreetingBriefModule],
+  // ClientSiteMediaModule — W7: удаление проекта обучалки пересылает набор
+  // роликов сайта помощника (лист графа: берёт только SitesInternalModule).
+  imports: [StorageModule, GreetingBriefModule, ClientSiteMediaModule],
   controllers: [ProjectController],
   providers: [ProjectService],
   exports: [ProjectService],

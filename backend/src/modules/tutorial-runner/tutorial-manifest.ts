@@ -159,6 +159,13 @@ export interface TutorialTimelineManifest {
   storage: 'sources' | 'draft-frames' | 'transit';
   /** Озвучку заказывали, но её не было — причина для интерфейса. */
   voiceSkipped?: string | null;
+  /**
+   * Файл ролика собран СРАЗУ с темпом пары (заход 7, 07.10.2026): кадры
+   * держатся по `planTempo(…, factor)`, а `baseSeconds` кадров — по-прежнему
+   * исходная сетка (всё считается от исходника). `fromVersionId` — версия,
+   * от которой темп унаследован. Нет поля — файл в исходной сетке.
+   */
+  appliedTempo?: { factor: number; fromVersionId: string } | null;
   frames: ManifestFrame[];
 }
 
@@ -269,6 +276,16 @@ export function parseTutorialManifest(
   if (frames.some((f, i) => i > 0 && f.stepIndex <= frames[i - 1].stepIndex)) {
     return null;
   }
+  const applied = raw.appliedTempo;
+  const appliedTempo =
+    isObj(applied) &&
+    finiteOrNull(applied.factor) !== null &&
+    typeof applied.fromVersionId === 'string'
+      ? {
+          factor: applied.factor as number,
+          fromVersionId: applied.fromVersionId,
+        }
+      : null;
   return {
     manifestVersion: TUTORIAL_MANIFEST_VERSION,
     sourceAssetId: raw.sourceAssetId,
@@ -283,6 +300,7 @@ export function parseTutorialManifest(
     storage: raw.storage as TutorialTimelineManifest['storage'],
     voiceSkipped:
       typeof raw.voiceSkipped === 'string' ? raw.voiceSkipped : null,
+    ...(appliedTempo ? { appliedTempo } : {}),
     frames,
   };
 }
@@ -340,7 +358,14 @@ export function buildTutorialManifest(
 
 /** Вход планировщика темпа — из manifest, всегда из ИСХОДНЫХ длительностей. */
 export function tempoInputs(m: TutorialTimelineManifest): TempoFrameInput[] {
-  return m.frames.map((f) => ({
+  return tempoInputsOfFrames(m.frames);
+}
+
+/** То же по кадрам manifest — раннеру, пока сам manifest ещё строится. */
+export function tempoInputsOfFrames(
+  frames: readonly ManifestFrame[],
+): TempoFrameInput[] {
+  return frames.map((f) => ({
     baseSeconds: f.baseSeconds,
     speech: f.speech ? { seconds: f.speech.seconds } : null,
     readingSeconds: f.caption ? f.readingSeconds : null,

@@ -31,7 +31,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHARED = 'browser-worker/src/shared';
 
 /** Источник → имя копии в SHARED. Только чистые модули (Node + друг друга). */
-const ENTRIES = [
+export const ENTRIES = [
   { from: 'backend/src/common/external-url-guard.ts', to: 'external-url-guard.ts' },
   { from: 'backend/src/common/egress-filter-proxy.ts', to: 'egress-filter-proxy.ts' },
   { from: 'backend/src/common/sites-internal-signature.ts', to: 'sites-internal-signature.ts' },
@@ -44,6 +44,14 @@ const ENTRIES = [
   },
   { from: 'sites-backend/src/modules/browser-jobs/protocol.ts', to: 'browser-job-protocol.ts' },
   { from: 'sites-backend/src/modules/browser-jobs/worker-seal.ts', to: 'worker-seal.ts' },
+  // Ш3-хвост (3): раунд исследователя обучалки на воркере — та же разведка
+  // страницы, тот же поиск полей входа и та же стабилизация кадра, что в
+  // функции генератора (`chromium-page-explorer.ts`): два разных сборщика
+  // элементов однажды разошлись бы молча.
+  { from: 'backend/src/modules/client-site-tutorial/page-exploration.types.ts', to: 'page-exploration.types.ts' },
+  { from: 'backend/src/modules/client-site-tutorial/page-exploration.ts', to: 'page-exploration.ts' },
+  { from: 'backend/src/modules/client-site-tutorial/login-form-detect.ts', to: 'login-form-detect.ts' },
+  { from: 'backend/src/modules/client-site-tutorial/foreign-frame-settle.ts', to: 'foreign-frame-settle.ts' },
 ];
 
 const CHECK = process.argv.includes('--check');
@@ -125,4 +133,8 @@ function main() {
   console.log(`sync-worker-shared: записано ${expected.size} файлов, удалено лишних ${stale.length}`);
 }
 
-main();
+// Импорт из scripts/ci-changes.mjs (фильтр джобы воркера по источникам
+// копий) — без записи копий.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

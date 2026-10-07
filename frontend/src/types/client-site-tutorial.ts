@@ -177,6 +177,38 @@ export interface RegistryLoginOptions {
   accounts: RegistryLoginAccount[];
 }
 
+/**
+ * Клик раунда `/step` (П-Т13): селектор, видимый текст кнопки (по нему
+ * сервер решает, «опасный» ли клик) и подтверждение из диалога мастера.
+ */
+export interface StepClick {
+  clickSelector: string;
+  /** Видимый текст кнопки (пустой, если его нет): наличие поля отличает
+   *  новый клиент от старого бандла (аудит захода 7, п.5а). */
+  clickText: string;
+  /** Человек нажал «Да, выполнить» в диалоге «опасной» кнопки. */
+  confirmDanger?: true;
+}
+
+/** Кабинет-сайт помощника, к которому можно привязать черновик. */
+export interface AssistLinkCandidate {
+  siteId: string;
+  name: string;
+}
+
+/**
+ * Привязка черновика обучалки к сайту ИИ-помощника (Э6-хвост, L6445):
+ * `GET/POST /projects/:id/site-tutorial/assist-link` (backend — пакет C).
+ */
+export interface AssistLinkState {
+  linked: boolean;
+  siteId: string | null;
+  siteName: string | null;
+  /** Можно ли привязать сейчас (есть права и кандидаты). */
+  canLink: boolean;
+  candidates: AssistLinkCandidate[];
+}
+
 /** Поля формы входа, указанные человеком (если сервер не нашёл их сам). */
 export interface LoginFieldPick {
   usernameSelector?: string;

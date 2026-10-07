@@ -4487,15 +4487,18 @@ model AssistSiteDailyPage {
 /// descriptor-resolve | frames-capture), источник (кто поставил) и аренда.
 model SiteBrowserJob {
   id        String @id @default(cuid())
+  /// Кабинет; у заданий без кабинета (Ш3-хвост (3), режим B обучалки) —
+  /// `gen-<subject>` генератора, `siteId`/`hostId` тогда NULL (триггер).
   accountId String
-  siteId    String
-  site      Site   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  siteId    String?
+  site      Site?   @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
 
-  hostId             String
+  hostId             String?
   /// Хост того же кабинета (аудит Ш3: составной FK, как у site_pages).
-  host               SiteHost  @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  host               SiteHost? @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
   kind               String
   /// voice-map-snapshot | voice-map-check | assist-admin-crawl | tutorial-frames
+  /// | tutorial-explore | tutorial-explore-open
   origin             String
   /// Связанная сущность продукта (задание обхода «Админки», версия карты…).
   refId              String?
@@ -4534,6 +4537,7 @@ model SiteBrowserJob {
   @@index([status, availableAt])
   @@index([accountId])
   @@index([siteId, origin, createdAt])
+  @@index([refId, origin, createdAt])
   @@index([expiresAt])
   @@map("site_browser_jobs")
 }

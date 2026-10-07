@@ -79,6 +79,11 @@ import { voiceControlError } from './voice-control-errors';
 const DAY = 24 * 60 * 60_000;
 
 type Db = ReturnType<SitesDb['forAccount']>;
+/** Клиент транзакции `insertMemo` (крюк `inTx`) — как у `db.$transaction`. */
+export type MemoTx = Omit<
+  Db,
+  '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
+>;
 
 interface MemoRow {
   id: string;
@@ -220,7 +225,7 @@ export class MemoService {
   }
 
   private async change(
-    db: Db,
+    db: Pick<MemoTx, 'assistSiteMemoChange'>,
     m: AccountMembership,
     memo: { id: string; siteId: string },
     revision: number,
@@ -347,6 +352,12 @@ export class MemoService {
       key?: string | null;
       source: string;
       op: unknown;
+      /**
+       * Проверка ВНУТРИ транзакции создания, до счётчика (аудит L6680:
+       * «Из обучалки» — advisory-блокировка по (сайт, черновик) и повторная
+       * проверка; бросает — откат без следов).
+       */
+      inTx?: (tx: MemoTx) => Promise<void>;
     },
   ): Promise<MemoRow> {
     const db = this.db(m);
@@ -390,6 +401,7 @@ export class MemoService {
       key = `${key.slice(0, 36)}-${n}`;
     }
     const row = await db.$transaction(async (tx) => {
+      if (p.inTx) await p.inTx(tx);
       // Номер — из счётчика сайта атомарно; удалённый номер не вернётся.
       // UPDATE счётчика блокирует строку сайта до конца транзакции: лимит
       // считаем ПОСЛЕ него — два параллельных создания не дают 21 из 20
@@ -403,7 +415,7 @@ export class MemoService {
         where: { siteId, status: { not: 'removed' } },
       });
       if (used >= limit) throw overLimit();
-      return tx.assistSiteMemo.create({
+      const created = await tx.assistSiteMemo.create({
         data: {
           accountId: m.accountId,
           siteId,
@@ -418,8 +430,11 @@ export class MemoService {
           updatedBy: m.memberId,
         },
       });
+      // История создания — в той же транзакции: проверка `inTx` второго
+      // параллельного запроса видит мемо и его ссылку на источник вместе.
+      await this.change(tx, m, created, 0, p.source, p.op);
+      return created;
     });
-    await this.change(db, m, row, 0, p.source, p.op);
     this.logger.log(
       `memo create site=${siteId} memo=${row.number} origin=${p.origin} member=${m.memberId}`,
     );
@@ -472,6 +487,7 @@ export class MemoService {
     siteId: string,
     content: MemoContent,
     op: Record<string, unknown>,
+    inTx?: (tx: MemoTx) => Promise<void>,
   ): Promise<MemoDetailView> {
     await this.site(m, siteId);
     const lang = MEMO_LANGS.find((l) => content.names[l]) ?? 'uk';
@@ -483,6 +499,7 @@ export class MemoService {
       origin: 'tutorial',
       source: 'tutorial',
       op: { ...op, op: 'create', origin: 'tutorial' },
+      inTx,
     });
     return this.get(m, siteId, row.number);
   }

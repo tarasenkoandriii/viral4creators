@@ -41,6 +41,7 @@ import {
   countExpectedRuns,
   loadVercelSchedules,
   parseCronExpression,
+  scheduleEffectiveSince,
 } from './cron-schedule';
 import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 
@@ -73,6 +74,10 @@ export interface CronRunLogRow {
 
 /** Сколько последних неуспешных прогонов на джоб отдаёт сводка. */
 export const SUMMARY_RECENT_FAILURES = 5;
+
+/** Прогонов по расписанию, которые сводка читает у джоба с «пропусками»,
+ *  чтобы отличить пропуск от смены расписания (сутки двухминутного — 720). */
+export const SCHEDULE_CHANGE_SCAN = 2_000;
 
 /**
  * Запас на «тик ещё не записан»: Vercel стартует функцию не ровно в
@@ -113,8 +118,12 @@ export interface CronJobSummary {
    * тики до своего первого деплоя. */
   firstScheduledRunAt: Date | null;
   /** Начало окна ожидания именно этого джоба:
-   * max(expectedSince, минута firstScheduledRunAt). */
+   * max(expectedSince, минута firstScheduledRunAt, scheduleChangedAt). */
   expectedSinceJob: Date;
+  /** Журнал показал смену расписания (прогоны, которые в нынешнее
+   * расписание не укладываются): ожидание по нынешнему — с этой минуты.
+   * null — смены не видно. */
+  scheduleChangedAt: Date | null;
   total: number;
   byStatus: Record<CronRunStatusValue, number>;
   /**
@@ -251,7 +260,7 @@ const JOB_REGISTRY: CronJobInfo[] = [
   {
     jobKey: 'tutorial-scenario-run',
     description:
-      'Исполнение уже сгенерированных (и, если платных, одобренных) сценариев headless-браузером против фикстурного пользователя — регрессионный прогон экранов мастера.',
+      'Исполнение уже сгенерированных сценариев headless-браузером против фикстурного пользователя — регрессионный прогон экранов мастера (платный клик не нажимается никогда, платные сценарии — без одобрения).',
   },
   {
     jobKey: 'tutorial-assembly-poll',
@@ -292,7 +301,8 @@ const JOB_REGISTRY: CronJobInfo[] = [
     jobKey: 'client-site-retention',
     description:
       'Обучалка по сайту заказчика: стирание тестовых учётных данных и кук через 30 дней после последнего раунда ' +
-      '(или сразу после сборки ролика при «одноразово») и кадров в хранилище у решённых и брошенных черновиков. Раз в сутки.',
+      '(или сразу после сборки ролика при «одноразово») и кадров в хранилище у решённых и брошенных черновиков; ' +
+      'затем сверка наборов роликов сайтов ИИ-помощника (переотправка не дошедших). Раз в сутки.',
   },
   {
     jobKey: 'sweep-orphans',
@@ -561,6 +571,7 @@ export class AdminCronService {
             : Math.max(0, expected - scheduledRunsInWindow),
         firstScheduledRunAt,
         expectedSinceJob,
+        scheduleChangedAt: null,
         total: byStatus.RUNNING + byStatus.SUCCESS + byStatus.FAILED,
         byStatus,
         skipped: Number(outcomeRow?.skipped ?? 0),
@@ -573,6 +584,19 @@ export class AdminCronService {
         recentFailures: [],
       };
     });
+
+    // Смена расписания (заход 7): «пропуски» у джоба могут быть тиками
+    // СТАРОГО расписания — сводка знает только нынешний vercel.json.
+    // Читаем прогоны только у джобов с пропусками И прогонами в окне: у
+    // остальных ожидание сошлось, а у молчащего смену доказать нечем.
+    await Promise.all(
+      jobs
+        .filter(
+          (j) =>
+            j.schedule && (j.missed ?? 0) > 0 && j.scheduledRunsInWindow > 0,
+        )
+        .map((j) => this.refineForScheduleChange(j, expectedUntil)),
+    );
 
     await Promise.all(
       jobs
@@ -605,6 +629,59 @@ export class AdminCronService {
       schedulesLoaded: schedules != null,
       jobs,
     };
+  }
+
+  /**
+   * Ожидание джоба — с момента, когда он живёт по НЫНЕШНЕМУ расписанию
+   * (`scheduleEffectiveSince`): прогоны по старому расписанию не
+   * засчитываются, а его тики — не ожидаются. Сбой чтения — сводка как
+   * была (лишний «пропуск» безопаснее спрятанного).
+   */
+  private async refineForScheduleChange(
+    job: CronJobSummary,
+    expectedUntil: Date,
+  ): Promise<void> {
+    try {
+      const cron = parseCronExpression(job.schedule as string);
+      const where = {
+        jobKey: job.jobKey,
+        triggeredBy: VERCEL_CRON_TRIGGERED_BY,
+        startedAt: { gte: job.expectedSinceJob, lt: expectedUntil },
+      };
+      // Свежие — первыми (аудит захода 7): при потолке выборки отрезаться
+      // должны старые строки, а не те, по которым видна смена.
+      const rows = (await this.prisma.cronRunLog.findMany({
+        where,
+        orderBy: { startedAt: 'desc' },
+        take: SCHEDULE_CHANGE_SCAN,
+        select: { startedAt: true },
+      })) as Array<{ startedAt: Date | string }>;
+      const runs = rows
+        .map((r) => new Date(r.startedAt))
+        .filter((d) => Number.isFinite(d.getTime()))
+        .reverse();
+      const since = scheduleEffectiveSince(cron, runs);
+      if (!since || since.getTime() <= job.expectedSinceJob.getTime()) return;
+      const expected =
+        expectedUntil.getTime() > since.getTime()
+          ? countExpectedRuns(cron, since, expectedUntil)
+          : 0;
+      // Счёт — запросом, а не по выборке: она ограничена потолком.
+      const inWindow = await this.prisma.cronRunLog.count({
+        where: { ...where, startedAt: { gte: since, lt: expectedUntil } },
+      });
+      job.scheduleChangedAt = since;
+      job.expectedSinceJob = since;
+      job.expected = expected;
+      job.scheduledRunsInWindow = inWindow;
+      job.missed = Math.max(0, job.expected - job.scheduledRunsInWindow);
+    } catch (error) {
+      this.logger.warn(
+        `сводка кронов: смена расписания ${job.jobKey} не проверена: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async run(

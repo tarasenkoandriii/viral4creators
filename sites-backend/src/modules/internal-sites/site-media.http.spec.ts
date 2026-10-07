@@ -29,8 +29,14 @@ import {
 } from '../telegram-auth/test-init-data';
 import { InternalRequestLedger } from './request-ledger';
 import { InternalSiteMediaModule } from './site-media.module';
-import { InternalSiteMediaService } from './site-media.service';
-import { TutorialHmacGuard } from './tutorial-hmac.guard';
+import {
+  InternalSiteMediaService,
+  SYNC_VIDEOS_MAX,
+} from './site-media.service';
+import {
+  INTERNAL_SITE_VIDEOS_BODY_LIMIT_BYTES,
+  TutorialHmacGuard,
+} from './tutorial-hmac.guard';
 
 @Module({})
 class FakeDbModule {
@@ -48,6 +54,7 @@ const SECRET = 's'.repeat(48);
 const LINK = '/internal/sites/tutorial/site-link';
 const VIDEOS = '/internal/sites/tutorial/site-videos';
 const MAP = '/internal/sites/tutorial/ui-map';
+const CANDIDATES = '/internal/sites/tutorial/site-candidates';
 
 const video = (over: Record<string, unknown> = {}) => ({
   externalId: 'asset1',
@@ -87,6 +94,10 @@ describe('internal-sites Э6 по HTTP (ролики, привязка, карт
     const seen = new Set<string>();
     const fake = {
       link: (...a: unknown[]) => (calls.push(['link', a]), { siteId: a[1] }),
+      candidates: (...a: unknown[]) => (
+        calls.push(['candidates', a]),
+        { sites: [] }
+      ),
       syncVideos: (...a: unknown[]) => (
         calls.push(['syncVideos', a]),
         { siteId: a[0], accepted: 1, removed: 0, rejected: [] }
@@ -144,7 +155,7 @@ describe('internal-sites Э6 по HTTP (ролики, привязка, карт
   }
 
   it('без подписи — 401, сервис не зовётся (все три маршрута)', async () => {
-    for (const p of [LINK, VIDEOS, MAP]) {
+    for (const p of [LINK, VIDEOS, MAP, CANDIDATES]) {
       const r = await post(p, '{}', false).expect(401);
       expect(r.body.error.code).toBe('INTERNAL_SIGNATURE_MISSING');
     }
@@ -159,6 +170,24 @@ describe('internal-sites Э6 по HTTP (ролики, привязка, карт
     await post(LINK, bad).expect(400);
     const extra = JSON.stringify({ telegramId: '1', siteId: 's', role: 'x' });
     await post(LINK, extra).expect(400);
+  });
+
+  it('кандидаты привязки (W7): telegramId → bigint, хост — нижним регистром; мусор и лишние поля — 400', async () => {
+    const b = JSON.stringify({ telegramId: '4242', host: 'Shop.Example.com' });
+    await post(CANDIDATES, b).expect(200);
+    expect(calls).toEqual([['candidates', [BigInt(4242), 'shop.example.com']]]);
+    for (const body of [
+      { telegramId: '4242', host: 'evil host' },
+      { telegramId: '4242', host: 'localhost' },
+      { telegramId: '4242', host: 5 },
+      { telegramId: '4242' },
+      { telegramId: '4242', host: 'shop.example.com', siteId: 's' },
+    ]) {
+      await post(CANDIDATES, JSON.stringify(body)).expect(400);
+    }
+    const dev = { telegramId: 'dev-1', host: 'shop.example.com' };
+    await post(CANDIDATES, JSON.stringify(dev)).expect(403);
+    expect(calls).toHaveLength(1);
   });
 
   it('ролики: строгий разбор каждого (поля, типы, хосты шагов, дубли id)', async () => {
@@ -196,17 +225,47 @@ describe('internal-sites Э6 по HTTP (ролики, привязка, карт
       const b = JSON.stringify({ siteId: 's', asOf, videos: [video()] });
       await post(VIDEOS, b).expect(400);
     }
-    // 16 правильных роликов (тело < 8 КБ) — отказ именно по потолку.
+    // Ш5(5): SYNC_VIDEOS_MAX + 1 правильных роликов (тело в потолке
+    // маршрута) — отказ именно по потолку числа; сам потолок (10 шагов × 5
+    // языков с длинными кириллическими названиями) проходит.
     const many = JSON.stringify({
       siteId: 's',
       asOf: 1,
-      videos: Array.from({ length: 16 }, (_, i) =>
+      videos: Array.from({ length: SYNC_VIDEOS_MAX + 1 }, (_, i) =>
         video({ externalId: `a${i}`, title: 'T', stepHosts: [] }),
       ),
     });
-    expect(Buffer.byteLength(many)).toBeLessThan(8 * 1024);
+    expect(Buffer.byteLength(many)).toBeLessThan(
+      INTERNAL_SITE_VIDEOS_BODY_LIMIT_BYTES,
+    );
     await post(VIDEOS, many).expect(400);
     expect(calls).toHaveLength(1);
+    const full = JSON.stringify({
+      siteId: 's',
+      asOf: 2,
+      videos: Array.from({ length: SYNC_VIDEOS_MAX }, (_, i) =>
+        video({
+          externalId: `asset_${randomUUID()}`,
+          draftId: `draft_${randomUUID()}`,
+          title: `Крок ${i} `.padEnd(120, 'ж'),
+          url: `https://a.public.blob.vercel-storage.com/tutorial-videos/${randomUUID()}-${i}.mp4`,
+        }),
+      ),
+    });
+    expect(Buffer.byteLength(full)).toBeGreaterThan(8 * 1024);
+    await post(VIDEOS, full).expect(200);
+    expect(calls).toHaveLength(2);
+    // Потолок тела маршрута — свой, но не безграничный.
+    const huge = JSON.stringify({
+      siteId: 's',
+      asOf: 3,
+      videos: [],
+      pad: 'x'.repeat(70 * 1024),
+    });
+    await post(VIDEOS, huge).expect((r) =>
+      expect([400, 413]).toContain(r.status),
+    );
+    expect(calls).toHaveLength(2);
   });
 
   it('тело больше 8 КБ — отказ до сервиса', async () => {

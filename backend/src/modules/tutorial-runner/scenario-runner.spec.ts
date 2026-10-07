@@ -1,6 +1,7 @@
 import {
   FRAME_SETTLE_NETWORK_MS,
   FRAME_SETTLE_SPINNER_MS,
+  isPaidHookClick,
   measurePointer,
   opensOtherStepScreen,
   runScenario,
@@ -9,6 +10,7 @@ import {
 } from './scenario-runner';
 import { CAPTURE_VIEWPORT } from './tutorial-video-assembly';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
+import { QA_HOOKS, qaSelector } from '../tutorial-scenario/qa-hooks';
 
 function buildPage(overrides: Partial<ScenarioPage> = {}): ScenarioPage {
   const locator = { click: jest.fn(), fill: jest.fn() };
@@ -595,6 +597,99 @@ describe('runScenario — платный клик', () => {
 
     expect(clicked).toEqual(['[data-qa="open-postprod"]']);
     expect(result.skippedPaidClicks).toEqual([1]);
+  });
+
+  // Заход 7: платные сценарии идут в регрессию без одобрения — гарантия
+  // «не тратит» не может держаться на маркере.
+  it('платная кнопка каталога без маркера — тоже не нажимается', async () => {
+    const { page, clicked } = pageSpy();
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate-ready-to-render' },
+        { kind: 'click', selector: '[data-qa="video-generate"]' },
+        { kind: 'click', selector: '[data-qa="open-postprod"]' },
+      ] as never,
+      route,
+      1000,
+      true,
+    );
+    expect(result.ok).toBe(true);
+    expect(clicked).toEqual(['[data-qa="open-postprod"]']);
+    expect(result.skippedPaidClicks).toEqual([1]);
+    expect(result.steps[1]).toMatchObject({ ok: true, skippedAsPaid: true });
+  });
+
+  it('маркер, ожидание, потом платный клик — клик всё равно пропущен', async () => {
+    const { page, clicked } = pageSpy();
+    const result = await runScenario(
+      page,
+      [
+        {
+          kind: 'triggerPaidOperation',
+          operation: 'generation',
+          model: 'veo-3.1-generate-preview',
+          expectedUnits: { seconds: 8 },
+          note: 'рендер',
+        },
+        { kind: 'waitFor', selector: '[data-qa="video-generate"]' },
+        { kind: 'click', selector: '[data-qa="video-generate"]' },
+      ] as never,
+      route,
+      1000,
+      false,
+    );
+    expect(clicked).toEqual([]);
+    expect(result.skippedPaidClicks).toEqual([2]);
+  });
+
+  it('КАЖДАЯ платная кнопка каталога (операция или forbidden) не нажимается', async () => {
+    const paid = Object.entries(QA_HOOKS).filter(([, h]) => h.clickCost);
+    expect(paid.length).toBeGreaterThan(1);
+    for (const [key] of paid) {
+      const { page, clicked } = pageSpy();
+      const result = await runScenario(
+        page,
+        [{ kind: 'click', selector: qaSelector(key) }] as never,
+        route,
+        1000,
+        false,
+      );
+      expect({ key, clicked }).toEqual({ key, clicked: [] });
+      expect(result.skippedPaidClicks).toEqual([0]);
+    }
+    // Селектор не в каноне — платный ключ всё равно узнаётся (заход 7).
+    for (const selector of [
+      'button[data-qa=video-generate]',
+      "[data-qa^='video-generate']",
+      '#x, [data-qa = "video-generate"]',
+      'div [DATA-QA="VIDEO-GENERATE"]',
+    ]) {
+      expect({
+        selector,
+        paid: isPaidHookClick({ kind: 'click', selector }),
+      }).toEqual({ selector, paid: true });
+    }
+    expect(
+      isPaidHookClick({
+        kind: 'click',
+        selector: 'button[data-qa=open-postprod]',
+      }),
+    ).toBe(false);
+    expect(
+      isPaidHookClick({ kind: 'click', selector: '#video-generate' }),
+    ).toBe(false);
+    // Бесплатная кнопка каталога — нажимается.
+    expect(
+      isPaidHookClick({ kind: 'click', selector: '[data-qa="open-postprod"]' }),
+    ).toBe(false);
+    // Не клик по платной кнопке (ожидание, проверка) — не пропуск.
+    expect(
+      isPaidHookClick({
+        kind: 'waitFor',
+        selector: '[data-qa="video-generate"]',
+      } as ScenarioStep),
+    ).toBe(false);
   });
 });
 

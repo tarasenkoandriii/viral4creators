@@ -1,5 +1,6 @@
 import { billingEn } from './billing-en';
 import { mediaEn } from './media-en';
+import { verifyHostEn } from './verify-host-en';
 import { voiceControlEn } from './voice-control-en';
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
@@ -437,6 +438,8 @@ export const appEn: AppDictionary = {
   billing: billingEn,
   // Э6: экран «Видео» (ролики обучалки, карта «показать на экране»).
   media: mediaEn,
+  /** Ш1-хвост: «подтвердить этот адрес» из обучалки. */
+  verifyHost: verifyHostEn,
   /** Э6-бис: голосовое управление «Сайтом». */
   voiceControl: voiceControlEn,
 };

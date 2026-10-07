@@ -383,6 +383,8 @@ export class AdminAttentionService {
         assetId: true,
         status: true,
         verdict: true,
+        // Заход 7: оператор переопределил вердикт — карточка по итоговому.
+        overrideVerdict: true,
         checkedAt: true,
         updatedAt: true,
         report: true,
@@ -392,6 +394,7 @@ export class AdminAttentionService {
       assetId: string;
       status: string;
       verdict: string | null;
+      overrideVerdict?: string | null;
       checkedAt: Date | null;
       updatedAt: Date;
       report: unknown;
@@ -409,7 +412,7 @@ export class AdminAttentionService {
       latest.push({
         assetId: r.assetId,
         status: r.status,
-        verdict: r.verdict,
+        verdict: r.overrideVerdict ?? r.verdict,
         checkedAt: r.checkedAt,
         updatedAt: r.updatedAt,
         subjectKey: r.asset.subjectKey,

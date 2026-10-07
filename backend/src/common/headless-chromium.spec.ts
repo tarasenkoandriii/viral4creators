@@ -25,7 +25,15 @@ jest.mock('@sparticuz/chromium-min', () => ({
   },
 }));
 jest.mock('puppeteer-core', () => ({ launch: jest.fn() }));
+// П-Г3: скачивание с проверкой SHA-256 — фейковое (своя логика — в
+// chromium-pack-verify.spec.ts); разбор env — настоящий.
+jest.mock('./chromium-pack-verify', () => ({
+  ...jest.requireActual('./chromium-pack-verify'),
+  downloadVerifiedPack: jest.fn(),
+}));
 
+import { Logger } from '@nestjs/common';
+import { downloadVerifiedPack } from './chromium-pack-verify';
 import { fetchWithRetry } from './fetch-with-retry';
 import { stat, rm } from 'node:fs/promises';
 import chromiumMin from '@sparticuz/chromium-min';
@@ -113,6 +121,7 @@ beforeEach(() => {
   delete process.env.CHROMIUM_PACK_URL;
   delete process.env.AWS_EXECUTION_ENV;
   delete process.env.AWS_LAMBDA_JS_RUNTIME;
+  delete process.env.CHROMIUM_PACK_SHA256;
   __resetHeadlessBrowserLaunchPlanForTests();
   jest.clearAllMocks();
   statMock.mockRejectedValue(new Error('ENOENT'));
@@ -250,6 +259,86 @@ describe('resolveHeadlessBrowserLaunchPlan', () => {
     assertUnavailable(plan);
     expect(plan.diagnostic).toContain('headless-браузер недоступен');
     expect(plan.diagnostic).toContain('boom');
+  });
+});
+
+describe('П-Г3: проверка SHA-256 архива Chromium', () => {
+  const verifyMock = downloadVerifiedPack as jest.Mock;
+  const SHA = 'ab'.repeat(32);
+  let warn: jest.SpyInstance;
+  beforeEach(() => {
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    fetchWithRetryMock.mockResolvedValue(tarPrecheckResponse(true));
+    mockStatByPath({
+      [EXTRACTED_PATH]: READY_SIZE,
+      [`${LIB_DIR}/libnss3.so`]: 1024,
+    });
+    executablePathMock.mockResolvedValue(EXTRACTED_PATH);
+  });
+  afterEach(() => warn.mockRestore());
+
+  it('хеш не совпал — отказ с понятной причиной, браузер не распаковывается и не запускается', async () => {
+    process.env.CHROMIUM_PACK_SHA256 = SHA;
+    verifyMock.mockResolvedValue({
+      ok: false,
+      diagnostic: 'архив Chromium не прошёл проверку SHA-256 (…)',
+    });
+    const plan = await resolveHeadlessBrowserLaunchPlan();
+    assertUnavailable(plan);
+    expect(plan.diagnostic).toContain('SHA-256');
+    expect(verifyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedSha256: SHA, destDir: PACK_DIR }),
+    );
+    expect(executablePathMock).not.toHaveBeenCalled();
+    const launched = await launchHeadlessBrowser();
+    assertLaunchError(launched);
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
+  it('хеш совпал — библиотеке отдаётся проверенная папка, а не URL', async () => {
+    process.env.CHROMIUM_PACK_SHA256 = SHA.toUpperCase();
+    verifyMock.mockResolvedValue({ ok: true, sha256: SHA, files: 4 });
+    const plan = await resolveHeadlessBrowserLaunchPlan();
+    assertReady(plan);
+    expect(verifyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedSha256: SHA }),
+    );
+    expect(executablePathMock).toHaveBeenCalledWith(PACK_DIR);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('хеш задан неверно — отказ, а не молчаливый пропуск проверки', async () => {
+    process.env.CHROMIUM_PACK_SHA256 = 'не-хеш';
+    const plan = await resolveHeadlessBrowserLaunchPlan();
+    assertUnavailable(plan);
+    expect(plan.diagnostic).toContain('CHROMIUM_PACK_SHA256 задан неверно');
+    expect(verifyMock).not.toHaveBeenCalled();
+    expect(executablePathMock).not.toHaveBeenCalled();
+  });
+
+  it('хеш не задан — как раньше (URL), предупреждение в лог один раз за инстанс', async () => {
+    // Первый план проваливается после проверки архива (распаковка упала)…
+    executablePathMock.mockRejectedValueOnce(new Error('распаковка'));
+    const first = await resolveHeadlessBrowserLaunchPlan();
+    expect(first.kind).toBe('unavailable');
+    expect(executablePathMock).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/github\.com\/Sparticuz\//),
+    );
+    // …и после паузы неудачи строится заново — предупреждение не повторяется.
+    const t0 = Date.now();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(t0 + 11 * 60 * 1000);
+    try {
+      const second = await resolveHeadlessBrowserLaunchPlan();
+      assertReady(second);
+    } finally {
+      now.mockRestore();
+    }
+    expect(executablePathMock).toHaveBeenCalledTimes(2);
+    expect(verifyMock).not.toHaveBeenCalled();
+    const shaWarnings = warn.mock.calls.filter((c) =>
+      String(c[0]).includes('CHROMIUM_PACK_SHA256 не задан'),
+    );
+    expect(shaWarnings).toHaveLength(1);
   });
 });
 

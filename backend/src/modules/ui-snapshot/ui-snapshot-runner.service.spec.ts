@@ -106,7 +106,12 @@ function buildFakePage() {
 function build() {
   const notify = { alert: jest.fn().mockResolvedValue(true) };
   const prisma = {
-    user: { findUnique: jest.fn().mockResolvedValue({ id: 'usr_fixture' }) },
+    // Тестовый аккаунт: с захода 7 обход идёт ТОЛЬКО по нему.
+    user: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ id: 'usr_fixture', isTestUser: true }),
+    },
     project: {
       findFirst: jest.fn().mockResolvedValue({ id: 'proj-1' }),
       findMany: jest.fn().mockResolvedValue([]),
@@ -194,6 +199,40 @@ describe('UiSnapshotRunnerService — пропуски (фикстура не н
     prisma.user.findUnique.mockResolvedValue(null);
     const result = await service.run();
     expect(result.skipped).toContain('не заведён');
+  });
+
+  // Заход 7 (TODO «Заход 1»): FIXTURE_TELEGRAM_ID указал на живого
+  // человека — обход не снимает его кабинет и не пишет ему сессии.
+  it('аккаунт не тестовый (isTestUser) — пропуск: ни браузера, ни сессии, ни снимков', async () => {
+    const { service, prisma, blob } = build();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'usr_real',
+      isTestUser: false,
+    });
+    launchHeadlessBrowserMock.mockClear();
+    const result = await service.run({ routeKeys: ['generate'] });
+    expect(result.skipped).toContain('isTestUser');
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+    expect(prisma.session.findFirst).not.toHaveBeenCalled();
+    expect(prisma.uiSnapshot.create).not.toHaveBeenCalled();
+    expect(blob.uploadBuffer).not.toHaveBeenCalled();
+  });
+
+  it('кадры обучалки/поздравления (findFixtureUser): только тестовый аккаунт', async () => {
+    const { service, prisma } = build();
+    expect(await service.findFixtureUser()).toEqual({ id: 'usr_fixture' });
+    expect(prisma.user.findUnique.mock.calls[0][0].select).toMatchObject({
+      isTestUser: true,
+    });
+    prisma.user.findUnique.mockResolvedValue({ id: 'usr_real' });
+    expect(await service.findFixtureUser()).toBeNull();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'usr_real',
+      isTestUser: false,
+    });
+    expect(await service.findFixtureUser()).toBeNull();
+    prisma.user.findUnique.mockResolvedValue(null);
+    expect(await service.findFixtureUser()).toBeNull();
   });
 });
 

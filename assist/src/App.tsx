@@ -104,6 +104,7 @@ import { SandboxScreen } from './screens/SandboxScreen';
 import { SandboxTransferScreen } from './screens/SandboxTransferScreen';
 import { SectionPlaceholder } from './screens/SectionPlaceholder';
 import { WelcomeScreen } from './screens/WelcomeScreen';
+import { VerifyHostScreen } from './screens/VerifyHostScreen';
 import { LandingDraftScreen, PlanScreen } from './screens/widget/LaunchScreens';
 import { BillingScreen, UsageChip } from './screens/BillingScreen';
 import { PersonaScreen } from './screens/widget/PersonaScreen';
@@ -584,6 +585,7 @@ function navActive(key: string, route: Route): boolean {
       'test-accounts',
       'admin-mode',
       'admin-chat',
+      'verify-host',
     ].includes(route.name);
   }
   if (key === 'members') {
@@ -939,6 +941,8 @@ function Screen({
       );
     case 'host-access':
       return <AuthorizationsScreen key={route.hostId} hostId={route.hostId} />;
+    case 'verify-host':
+      return <VerifyHostScreen key={route.host} host={route.host} />;
     case 'members':
       return <MembersScreen onInvite={() => navigate({ name: 'invite' })} />;
     case 'invite':

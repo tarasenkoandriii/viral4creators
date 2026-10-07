@@ -13,6 +13,7 @@ import {
   autoTextColor,
   contrastRatio,
   parseStartParam,
+  verifyHostFromStartParam,
   type AccountMember,
 } from '../kit';
 import { PUBLIC_KEY, safeWidgetOrigin } from './widget-api';
@@ -222,7 +223,8 @@ export type LaunchTarget =
   | { name: 'plan'; plan: string }
   | { name: 'sandbox-transfer'; sandboxId: string }
   | { name: 'widget-draft'; draftId: string }
-  | { name: 'stats'; siteId: string; tab: 'overview' };
+  | { name: 'stats'; siteId: string; tab: 'overview' }
+  | { name: 'verify-host'; host: string };
 
 export interface LaunchAction {
   /** start_param целиком → `POST /assist/acquisition` (одна запись на кабинет). */
@@ -274,6 +276,15 @@ export function launchAction(
           ? { name: 'stats', siteId: p.value, tab: 'overview' }
           : null,
       };
+    // Ш1-хвост: «подтвердить ЭТОТ хост» из обучалки генератора. Не
+    // атрибуция; хост — строго (`verifyHostFromStartParam`), иначе главная.
+    case 'vh': {
+      const host = verifyHostFromStartParam(raw);
+      return {
+        acquisition: null,
+        target: host ? { name: 'verify-host', host } : null,
+      };
+    }
     default:
       return { acquisition: null, target: null };
   }

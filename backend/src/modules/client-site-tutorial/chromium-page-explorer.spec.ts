@@ -44,6 +44,8 @@ import {
 } from './chromium-page-explorer';
 import { FRAME_SOURCE_MARKS } from './foreign-frame-settle';
 import { LoginFieldsNotFoundError } from './registry-login';
+import { SitesRejectedError } from '../sites-internal/sites-internal.client';
+import { WorkerFallbackError } from './worker-page-explorer';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -1140,5 +1142,167 @@ describe('Ш2-хвост (3): вход учёткой реестра — пол�
       allowedOrigin: ORIGIN,
     });
     expect(ok.page.locatorObject.fill).toHaveBeenCalledWith(PW);
+  });
+});
+
+describe('Ш3-хвост (3): раунд на воркере и кадр воркера (за выключателями)', () => {
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]);
+
+  class RoutedExplorer extends TestExplorer {
+    fake = { runRound: jest.fn(), replay: jest.fn() };
+    protected workerExplorer() {
+      return this.fake;
+    }
+  }
+
+  function routed(env: Record<string, string>) {
+    const ctx = setup();
+    const ex = new RoutedExplorer();
+    ex.env = env;
+    const client = {
+      framesRequest: jest
+        .fn()
+        .mockResolvedValue({ jobId: 'f1', status: 'queued' }),
+      framesStatus: jest.fn().mockResolvedValue({
+        jobId: 'f1',
+        status: 'done',
+        errorCode: null,
+        expiresAt: '',
+        frames: [
+          {
+            idx: 0,
+            scrollY: 0,
+            url: 'https://blob.test/0',
+            linkExpiresAt: '',
+            width: 780,
+            height: 1688,
+          },
+        ],
+      }),
+      fetchArtifact: jest
+        .fn()
+        .mockResolvedValue({ buffer: PNG, contentType: 'image/png' }),
+    };
+    ex.workerClient = client as never;
+    return { ...ctx, ex, client };
+  }
+
+  const WITH_REQUESTER = { ...REQUEST, requester: { telegramId: '777' } };
+
+  it('выключатель выключен — воркер не зовётся, раунд в функции', async () => {
+    const { ex, client } = routed({});
+    await ex.runRound(WITH_REQUESTER);
+    expect(ex.fake.runRound).not.toHaveBeenCalled();
+    expect(client.framesRequest).not.toHaveBeenCalled();
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('TUTORIAL_EXPLORER_VIA_WORKER: итог воркера — без Chromium в функции', async () => {
+    const { ex } = routed({ TUTORIAL_EXPLORER_VIA_WORKER: 'true' });
+    const result = { exploration: { currentUrl: 'x' }, cookies: [] };
+    ex.fake.runRound.mockResolvedValue(result);
+    await expect(ex.runRound(REQUEST)).resolves.toBe(result);
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+  });
+
+  it('откат воркера (ничего не исполнено) — раунд в функции; ошибка начатого раунда — человеку', async () => {
+    const a = routed({ TUTORIAL_EXPLORER_VIA_WORKER: 'on' });
+    a.ex.fake.runRound.mockRejectedValue(new WorkerFallbackError('выключен'));
+    const r = await a.ex.runRound(REQUEST);
+    expect(r.exploration.screenshotDataUrl).toBe('data:image/jpeg;base64,Ykhk');
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(1);
+    launchHeadlessBrowserMock.mockClear();
+    const b = routed({ TUTORIAL_EXPLORER_VIA_WORKER: '1' });
+    b.ex.fake.runRound.mockRejectedValue(new BadRequestException('увёл'));
+    await expect(b.ex.runRound(REQUEST)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+  });
+
+  it('аудит захода 7: переигровка при выключателе — на воркер; откат («воркер выключен») — в функции', async () => {
+    const REPLAY = {
+      steps: [{ kind: 'goto' as const, route: `${ORIGIN}/cabinet` }],
+      secrets: {},
+      allowedOrigin: ORIGIN,
+    };
+    const a = routed({ TUTORIAL_EXPLORER_VIA_WORKER: 'true' });
+    const result = { exploration: { currentUrl: 'x' }, cookies: [] };
+    a.ex.fake.replay.mockResolvedValue(result);
+    await expect(a.ex.replay(REPLAY)).resolves.toBe(result);
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+    const b = routed({ TUTORIAL_EXPLORER_VIA_WORKER: 'true' });
+    b.ex.fake.replay.mockRejectedValue(new WorkerFallbackError('выключен'));
+    await b.ex.replay(REPLAY);
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(1);
+    launchHeadlessBrowserMock.mockClear();
+    const c = routed({ TUTORIAL_EXPLORER_VIA_WORKER: 'true' });
+    c.ex.fake.replay.mockRejectedValue(new ServiceUnavailableException('нет'));
+    await expect(c.ex.replay(REPLAY)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+    const off = routed({});
+    await off.ex.replay(REPLAY);
+    expect(off.ex.fake.replay).not.toHaveBeenCalled();
+  });
+
+  it('TUTORIAL_FRAMES_VIA_WORKER: съёмочный кадр «открыть страницу» режима A — от воркера, свой PNG не снимается', async () => {
+    const { ex, client, page } = routed({ TUTORIAL_FRAMES_VIA_WORKER: 'true' });
+    const r = await ex.runRound(WITH_REQUESTER);
+    expect(client.framesRequest).toHaveBeenCalledWith('777', REQUEST.url, {
+      frames: 1,
+      image: 'png2x',
+    });
+    expect(r.exploration.videoFrameDataUrl).toBe(
+      `data:image/png;base64,${PNG.toString('base64')}`,
+    );
+    expect(page.screenshot).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'png' }),
+    );
+  });
+
+  it('кадр воркера: отказ при заказе (409) или сбой съёмки — снимает функция', async () => {
+    const a = routed({ TUTORIAL_FRAMES_VIA_WORKER: 'true' });
+    a.client.framesRequest.mockRejectedValue(
+      new SitesRejectedError(409, 'TUTORIAL_FRAMES_MODE_A', 'B'),
+    );
+    const ra = await a.ex.runRound(WITH_REQUESTER);
+    expect(ra.exploration.videoFrameDataUrl).toBe('data:image/png;base64,Ykhk');
+    expect(a.client.framesStatus).not.toHaveBeenCalled();
+    const b = routed({ TUTORIAL_FRAMES_VIA_WORKER: 'true' });
+    b.client.framesStatus.mockResolvedValue({
+      jobId: 'f1',
+      status: 'failed',
+      errorCode: 'nav_timeout',
+      expiresAt: '',
+      frames: [],
+    });
+    const rb = await b.ex.runRound(WITH_REQUESTER);
+    expect(rb.exploration.videoFrameDataUrl).toBe('data:image/png;base64,Ykhk');
+  });
+
+  it('кадр воркера не заказывается: нет telegramId, есть куки или действия', async () => {
+    const { ex, client } = routed({ TUTORIAL_FRAMES_VIA_WORKER: 'true' });
+    await ex.runRound(REQUEST);
+    await ex.runRound({
+      ...WITH_REQUESTER,
+      cookies: [
+        {
+          name: 'sid',
+          value: '1',
+          domain: 'shop.example.com',
+          path: '/',
+          secure: true,
+          httpOnly: true,
+          expires: -1,
+        },
+      ],
+    });
+    await ex.runRound({
+      ...WITH_REQUESTER,
+      actions: [{ kind: 'click', selector: '#next' }],
+    });
+    expect(client.framesRequest).not.toHaveBeenCalled();
   });
 });

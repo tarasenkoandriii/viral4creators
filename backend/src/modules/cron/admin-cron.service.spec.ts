@@ -454,6 +454,8 @@ describe('AdminCronService — сводка за период', () => {
     first?: unknown[];
     failures?: unknown[];
     outcomes?: unknown[];
+    /** Прогоны по расписанию для проверки смены расписания (заход 7). */
+    runs?: Array<{ jobKey: string; startedAt: Date }>;
   }) {
     const groupBy = jest.fn(
       (args: {
@@ -474,7 +476,41 @@ describe('AdminCronService — сводка за период', () => {
     const prisma = {
       cronRunLog: {
         groupBy,
-        findMany: jest.fn().mockResolvedValue(opts.failures ?? []),
+        findMany: jest.fn(
+          (args: {
+            where: { jobKey?: string; status?: string };
+            orderBy?: { startedAt?: string };
+            take?: number;
+          }) => {
+            if (args.where.status === 'FAILED') {
+              return Promise.resolve(opts.failures ?? []);
+            }
+            const rows = (opts.runs ?? [])
+              .filter((r) => r.jobKey === args.where.jobKey)
+              .sort((a, b) =>
+                args.orderBy?.startedAt === 'desc'
+                  ? b.startedAt.getTime() - a.startedAt.getTime()
+                  : a.startedAt.getTime() - b.startedAt.getTime(),
+              );
+            return Promise.resolve(
+              args.take === undefined ? rows : rows.slice(0, args.take),
+            );
+          },
+        ),
+        // Прогоны в окне после смены — счётом базы (заход 7, аудит).
+        count: jest.fn(
+          (args: {
+            where: { jobKey: string; startedAt: { gte: Date; lt: Date } };
+          }) =>
+            Promise.resolve(
+              (opts.runs ?? []).filter(
+                (r) =>
+                  r.jobKey === args.where.jobKey &&
+                  r.startedAt >= args.where.startedAt.gte &&
+                  r.startedAt < args.where.startedAt.lt,
+              ).length,
+            ),
+        ),
       },
       // Два сырых запроса: медианы и исходы (пропуски, последний успех
       // и провал — аудит кронов 06.10.2026). Различаются по тексту.
@@ -729,6 +765,174 @@ describe('AdminCronService — сводка за период', () => {
       firstScheduledRunAt: null,
       expectedSinceJob: new Date('2026-09-30T00:00:00Z'),
       missed: 1,
+    });
+  });
+
+  // Заход 7 (TODO «Сводка кронов»): смена расписания не «пропуски».
+  // `tutorial-scenario-run` — нынешнее `5 9-23 * * *`; 30.09 до деплоя
+  // тики шли по старому `0 9,10 * * *`.
+  describe('смена расписания', () => {
+    const day = {
+      since: new Date('2026-09-30T00:00:00Z'),
+      until: new Date('2026-10-01T00:00:00Z'),
+    };
+    const at = (hhmm: string) => new Date(`2026-09-30T${hhmm}:04Z`);
+
+    it('прогоны по старому расписанию — ожидание по новому с первого «своего» тика', async () => {
+      const runs = ['09:00', '10:00', '16:05', '17:05', '18:05'].map((t) => ({
+        jobKey: 'tutorial-scenario-run',
+        startedAt: at(t),
+      }));
+      const { service, prisma } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 5 } }],
+        runs,
+      });
+      const s = await service.getSummary(day, new Date('2026-09-30T18:30:00Z'));
+      const job = s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run')!;
+      // Без поправки: 9:05…18:05 — 10 ожидаемых против 5 → 5 «пропусков».
+      expect(job).toMatchObject({
+        scheduleChangedAt: new Date('2026-09-30T16:05:00Z'),
+        expectedSinceJob: new Date('2026-09-30T16:05:00Z'),
+        expected: 3,
+        scheduledRunsInWindow: 3,
+        missed: 0,
+      });
+      expect(prisma.cronRunLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            jobKey: 'tutorial-scenario-run',
+            triggeredBy: 'vercel-cron',
+          }),
+          orderBy: { startedAt: 'desc' },
+        }),
+      );
+    });
+
+    it('после смены настоящий пропуск всё равно виден', async () => {
+      const runs = ['09:00', '10:00', '16:05', '18:05'].map((t) => ({
+        jobKey: 'tutorial-scenario-run',
+        startedAt: at(t),
+      }));
+      const { service } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 4 } }],
+        runs,
+      });
+      const s = await service.getSummary(day, new Date('2026-09-30T18:30:00Z'));
+      expect(
+        s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+      ).toMatchObject({ expected: 3, scheduledRunsInWindow: 2, missed: 1 });
+    });
+
+    it('все прогоны укладываются в расписание — пропуски как были, смены нет', async () => {
+      const runs = ['09:05', '11:05'].map((t) => ({
+        jobKey: 'tutorial-scenario-run',
+        startedAt: at(t),
+      }));
+      const { service } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 2 } }],
+        runs,
+      });
+      const s = await service.getSummary(day, new Date('2026-09-30T12:30:00Z'));
+      expect(
+        s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+      ).toMatchObject({
+        scheduleChangedAt: null,
+        expected: 4,
+        missed: 2,
+      });
+    });
+
+    it('одиночный «чужой» прогон (старт опоздал больше допуска) — не смена, пропуски не обнуляются', async () => {
+      const runs = ['09:05', '10:20', '12:05'].map((t) => ({
+        jobKey: 'tutorial-scenario-run',
+        startedAt: at(t),
+      }));
+      const { service } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 3 } }],
+        runs,
+      });
+      const s = await service.getSummary(day, new Date('2026-09-30T14:30:00Z'));
+      // 9:05…14:05 — 6 ожидаемых, прогонов 3: три пропуска видны.
+      expect(
+        s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+      ).toMatchObject({ scheduleChangedAt: null, expected: 6, missed: 3 });
+    });
+
+    it('после смены прогоны в окне — счётом базы, а не обрезанной выборкой', async () => {
+      const runs = ['09:00', '10:00', '16:05', '17:05', '18:05'].map((t) => ({
+        jobKey: 'tutorial-scenario-run',
+        startedAt: at(t),
+      }));
+      const { service, prisma } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 5 } }],
+        runs,
+      });
+      await service.getSummary(day, new Date('2026-09-30T18:30:00Z'));
+      expect(prisma.cronRunLog.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          jobKey: 'tutorial-scenario-run',
+          startedAt: {
+            gte: new Date('2026-09-30T16:05:00Z'),
+            lt: expect.any(Date),
+          },
+        }),
+      });
+    });
+
+    it('старт с опозданием на пару минут — свой тик, не смена', async () => {
+      const runs = [
+        { jobKey: 'tutorial-scenario-run', startedAt: at('09:07') },
+        { jobKey: 'tutorial-scenario-run', startedAt: at('10:05') },
+      ];
+      const { service } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 2 } }],
+        runs,
+      });
+      const s = await service.getSummary(day, new Date('2026-09-30T11:30:00Z'));
+      expect(
+        s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+      ).toMatchObject({ scheduleChangedAt: null, expected: 3, missed: 1 });
+    });
+
+    it('после «чужих» прогонов своих ещё нет — с минуты после последнего чужого', async () => {
+      const runs = ['09:00', '10:00'].map((t) => ({
+        jobKey: 'tutorial-scenario-run',
+        startedAt: at(t),
+      }));
+      const { service } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 2 } }],
+        runs,
+      });
+      const s = await service.getSummary(day, new Date('2026-09-30T12:30:00Z'));
+      expect(
+        s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+      ).toMatchObject({
+        scheduleChangedAt: new Date('2026-09-30T10:01:00Z'),
+        // 10:05, 11:05 и 12:05 (запас 3 мин до 12:27) — все пропущены:
+        // молчание после смены видно.
+        expected: 3,
+        scheduledRunsInWindow: 0,
+        missed: 3,
+      });
+    });
+
+    it('сбой чтения прогонов — сводка как без поправки', async () => {
+      const { service, prisma } = buildSummary({
+        groups: [],
+        window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 1 } }],
+      });
+      prisma.cronRunLog.findMany.mockRejectedValueOnce(new Error('db'));
+      const s = await service.getSummary(day, new Date('2026-09-30T12:30:00Z'));
+      expect(
+        s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+      ).toMatchObject({ scheduleChangedAt: null, expected: 4, missed: 3 });
     });
   });
 

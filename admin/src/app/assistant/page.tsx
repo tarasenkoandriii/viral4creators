@@ -23,11 +23,13 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   getAssistantAdmin,
   getDemoQualityChecks,
+  getDemoQualityOverrides,
   getTutorialVideoAssets,
   getTutorialVideoDataStatus,
   publishTutorialVideo,
   requestDemoQualityApproved,
   requestDemoQualityCheck,
+  overrideDemoQualityVerdict,
   setTutorialVideoReviewed,
   setTutorialVideoSiteTutorialDemo,
 } from '../../lib/endpoints';
@@ -35,6 +37,8 @@ import type {
   AssistantAdminResult,
   AssistantExchangeRow,
   DemoQualityCheck,
+  DemoQualityOverrideEntry,
+  DemoQualityVerdict,
   PublicationPlatform,
   PublicationPrivacy,
   TutorialVideoAssetRow,
@@ -43,16 +47,21 @@ import type {
 import { ApiRequestError } from '../../lib/admin-api';
 import { TutorialTempoPanel } from './TutorialTempoPanel';
 import {
+  captureModeLabel,
   categoryLabel,
   checkResultLabel,
+  effectiveVerdictOf,
   enqueueMessage,
   formatCost,
   formatTimecode,
   freshnessLabel,
+  overrideReasonProblem,
   qualityBadge,
   SEVERITY_LABEL,
   SEVERITY_TONE,
+  signalsSummary,
   sortIssues,
+  VERDICT_LABEL,
 } from '../../lib/demo-quality';
 
 const PLATFORM_LABEL: Record<PublicationPlatform, string> = { YOUTUBE: 'YouTube', TIKTOK: 'TikTok' };
@@ -894,6 +903,7 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                             check={quality[row.id]}
                             canSeek={!!row.blobUrl}
                             onSeek={(ms) => seekTo(row.id, ms)}
+                            onChanged={(c) => setQuality((prev) => ({ ...prev, [row.id]: c }))}
                           />
                         </td>
                       </tr>
@@ -1011,12 +1021,15 @@ function QualityReportPanel({
   check,
   canSeek,
   onSeek,
+  onChanged,
 }: {
   check: DemoQualityCheck;
   canSeek: boolean;
   onSeek: (ms: number) => void;
+  onChanged: (check: DemoQualityCheck) => void;
 }) {
   const report = check.report;
+  const signals = signalsSummary(check);
   return (
     <div style={{ padding: '8px 4px', display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 760 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1028,6 +1041,7 @@ function QualityReportPanel({
           {check.checkedAt ? ` · ${new Date(check.checkedAt).toLocaleString('ru-RU')}` : ''}
           {check.status === 'complete' ? ` · ${formatCost(check)}` : ''}
           {check.reusedFromId ? ' · результат прежней проверки того же файла' : ''}
+          {` · ${captureModeLabel(check.captureMode)}`}
         </span>
       </div>
       {check.status === 'error' && (
@@ -1112,9 +1126,182 @@ function QualityReportPanel({
           )}
         </>
       )}
+      {signals && (
+        <div className={check.signals?.status === 'error' ? 'critical' : 'muted'} style={{ fontSize: 12 }}>
+          {signals}
+        </div>
+      )}
+      {check.controlFrames && check.controlFrames.length > 0 && (
+        <ControlFramesStrip frames={check.controlFrames} canSeek={canSeek} onSeek={onSeek} />
+      )}
+      {check.status === 'complete' && <QualityOverrideForm check={check} onChanged={onChanged} />}
       <p className="muted" style={{ margin: 0, fontSize: 12 }}>
-        Режим наблюдения: проверка не ставит и не снимает одобрение — решение за оператором.
+        Проверка не ставит и не снимает одобрение — решение за оператором. При включённой блокировке публикации
+        (TUTORIAL_DEMO_QUALITY_BLOCK) итоговый fail не даёт одобрить ролик, отметить его «в демо» и одобрить версию
+        темпа — до исправления или переопределения с причиной.
       </p>
+    </div>
+  );
+}
+
+/** Контрольные кадры шагов (заход 7): снимок шага и его таймкод в этом
+ *  файле — сверить, что видно в ролике, с тем, что снималось. */
+function ControlFramesStrip({
+  frames,
+  canSeek,
+  onSeek,
+}: {
+  frames: NonNullable<DemoQualityCheck['controlFrames']>;
+  canSeek: boolean;
+  onSeek: (ms: number) => void;
+}) {
+  return (
+    <div>
+      <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+        Контрольные кадры шагов (клик по таймкоду — перемотка ролика):
+      </div>
+      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
+        {frames.map((f) => (
+          <figure key={`${f.stepIndex}-${f.startMs}`} style={{ margin: 0, width: 96, flex: '0 0 auto' }}>
+            <a href={f.imageUrl} target="_blank" rel="noreferrer">
+              {/* eslint-disable-next-line @next/next/no-img-element -- снимок из Blob, без оптимизатора */}
+              <img
+                src={f.imageUrl}
+                alt={f.caption ?? `шаг ${f.stepIndex}`}
+                loading="lazy"
+                style={{ width: 96, height: 'auto', display: 'block', borderRadius: 4 }}
+              />
+            </a>
+            <figcaption style={{ fontSize: 11 }}>
+              {canSeek ? (
+                <button type="button" onClick={() => onSeek(f.startMs)} style={{ fontFamily: 'monospace' }}>
+                  {formatTimecode(f.startMs)}
+                </button>
+              ) : (
+                <span style={{ fontFamily: 'monospace' }}>{formatTimecode(f.startMs)}</span>
+              )}{' '}
+              <span className="muted">шаг {f.stepIndex}</span>
+              {f.caption && <div className="muted">{f.caption}</div>}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Переопределение вердикта оператором (заход 7): причина обязательна,
+ *  каждое действие — строка журнала (кто, когда, с чего на что, почему). */
+function QualityOverrideForm({
+  check,
+  onChanged,
+}: {
+  check: DemoQualityCheck;
+  onChanged: (check: DemoQualityCheck) => void;
+}) {
+  const [verdict, setVerdict] = useState<DemoQualityVerdict>(
+    effectiveVerdictOf(check) === 'fail' ? 'ok' : 'fail',
+  );
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [log, setLog] = useState<DemoQualityOverrideEntry[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getDemoQualityOverrides(check.id)
+      .then((rows) => {
+        if (alive) setLog(rows);
+      })
+      .catch(() => {
+        if (alive) setLog(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [check.id]);
+
+  const submit = async (next: DemoQualityVerdict | null) => {
+    const problem = overrideReasonProblem(reason);
+    if (problem) {
+      setErr(problem);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await overrideDemoQualityVerdict(check.id, next, reason.trim());
+      setLog(res.overrides);
+      setReason('');
+      onChanged(res.check);
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px solid var(--border, #333)', paddingTop: 8 }}>
+      <strong style={{ fontSize: 13 }}>Решение оператора</strong>
+      {check.override ? (
+        <div style={{ fontSize: 12 }}>
+          Вердикт переопределён: модель — {check.verdict ?? '—'}, итог — <b>{check.override.verdict}</b>
+          {check.override.by ? ` · ${check.override.by}` : ''}
+          {check.override.at ? ` · ${new Date(check.override.at).toLocaleString('ru-RU')}` : ''}
+          {check.override.reason ? ` · «${check.override.reason}»` : ''}
+        </div>
+      ) : (
+        <div className="muted" style={{ fontSize: 12 }}>
+          Вердикт модели не переопределялся.
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <select value={verdict} onChange={(e) => setVerdict(e.target.value as DemoQualityVerdict)} disabled={busy}>
+          {(['ok', 'warn', 'fail'] as const).map((v) => (
+            <option key={v} value={v}>
+              {VERDICT_LABEL[v]}
+            </option>
+          ))}
+        </select>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="Причина (обязательно): что видно в ролике и почему вердикт другой"
+          rows={2}
+          maxLength={500}
+          style={{ flex: '1 1 260px', minWidth: 200 }}
+          disabled={busy}
+        />
+        <button type="button" disabled={busy} onClick={() => void submit(verdict)}>
+          Переопределить
+        </button>
+        {check.override && (
+          <button type="button" disabled={busy} onClick={() => void submit(null)}>
+            Вернуть вердикт модели
+          </button>
+        )}
+      </div>
+      {err && (
+        <p className="critical" style={{ margin: 0 }}>
+          {err}
+        </p>
+      )}
+      {log && log.length > 0 && (
+        <details>
+          <summary className="muted" style={{ fontSize: 12 }}>
+            Журнал переопределений ({log.length})
+          </summary>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+            {log.map((o) => (
+              <li key={o.id}>
+                {new Date(o.at).toLocaleString('ru-RU')} · {o.by}: {o.fromVerdict ?? '—'} → {o.toVerdict ?? 'вердикт модели'} — «
+                {o.reason}»
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

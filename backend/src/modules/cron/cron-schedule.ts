@@ -130,6 +130,67 @@ export function countExpectedRuns(
   return count;
 }
 
+/** Допуск опоздания старта прогона после тика (Vercel стартует функцию
+ *  не ровно в минуту расписания) — тот же порядок, что запас сводки. */
+export const RUN_START_SLACK_MS = 3 * MINUTE_MS;
+
+/** Прогон, стартовавший в `startedAt`, — тик этого расписания (с допуском
+ *  опоздания старта `RUN_START_SLACK_MS`). */
+export function runFitsSchedule(cron: ParsedCron, startedAt: Date): boolean {
+  const tick = Math.floor(startedAt.getTime() / MINUTE_MS) * MINUTE_MS;
+  return (
+    countExpectedRuns(
+      cron,
+      new Date(tick - RUN_START_SLACK_MS),
+      new Date(tick + MINUTE_MS),
+    ) > 0
+  );
+}
+
+/** Подряд идущих «чужих» прогонов, с которых признаётся смена расписания:
+ *  одиночный — это опоздание старта, а не новое расписание. */
+export const SCHEDULE_CHANGE_MIN_STREAK = 2;
+
+/**
+ * Смена расписания по журналу (заход 7, 07.10.2026; TODO «Сводка
+ * кронов»): с какой минуты джоб живёт по ТЕКУЩЕМУ расписанию.
+ *
+ * Сводка знает только нынешний `vercel.json`, и при смене расписания
+ * ожидала новые тики и в часы, когда действовало старое, — рисовала ложные
+ * «пропуски» (`tutorial-scenario-run` 30.09: 7 штук до 16:00 — тики шли по
+ * старому `0 9,10`). Доказательство смены — НЕ МЕНЬШЕ
+ * `SCHEDULE_CHANGE_MIN_STREAK` прогонов подряд, не укладывающихся в
+ * текущее расписание (аудит захода 7: один опоздавший старт обнулял бы
+ * пропуски за всё окно). Отсчёт — с первого прогона ПОСЛЕ последней такой
+ * серии (момент деплоя журнал не знает; так же сводка уже считает новый
+ * крон — с первого его прогона). Своих после неё ещё нет — со следующей
+ * минуты после серии: замолчавший после смены крон виден пропусками.
+ *
+ * `runs` — старты прогонов по расписанию, по возрастанию. `null` — смены
+ * журнал не показывает. Предел: если старое расписание — подмножество
+ * нового, его тики укладываются в новое, и смена отсюда не видна.
+ */
+export function scheduleEffectiveSince(
+  cron: ParsedCron,
+  runs: readonly Date[],
+): Date | null {
+  let streakEnd = -1;
+  let streak = 0;
+  for (let i = 0; i < runs.length; i++) {
+    if (runFitsSchedule(cron, runs[i])) {
+      streak = 0;
+      continue;
+    }
+    streak++;
+    if (streak >= SCHEDULE_CHANGE_MIN_STREAK) streakEnd = i;
+  }
+  if (streakEnd < 0) return null;
+  const next = runs[streakEnd + 1];
+  return next
+    ? floorToMinute(next)
+    : new Date(floorToMinute(runs[streakEnd]).getTime() + MINUTE_MS);
+}
+
 /** Округление вверх до целой минуты UTC (тики cron — на целых минутах). */
 export function ceilToMinute(d: Date): Date {
   return new Date(Math.ceil(d.getTime() / MINUTE_MS) * MINUTE_MS);

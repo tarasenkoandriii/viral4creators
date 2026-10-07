@@ -3820,9 +3820,38 @@ model TutorialDemoQualityCheck {
   theme        String?
   locale       String
   captureBuild String?
-  /// 'browser' | 'tma'; NULL — режим съёмки не записан (не выдаётся за TMA).
+  /// Режим съёмки — выводится при постановке в очередь из полей ролика
+  /// (заход 7, 07.10.2026): 'client-site' (черновик обучалки по сайту
+  /// заказчика), 'polygon' (семейство `site-tutorial-demo-*`, витрина
+  /// лендинга), 'tma' (штатная обучалка в TMA). NULL — у строк до захода 7.
   captureMode  String?
   checkedAt    DateTime?
+
+  /// Переопределение вердикта оператором (заход 7): итоговый вердикт =
+  /// `overrideVerdict ?? verdict`. Причина обязательна; история всех
+  /// переопределений — `TutorialDemoQualityOverride`. NULL — оператор
+  /// вердикт не менял (или снял своё переопределение).
+  overrideVerdict String?
+  overrideReason  String?
+  overrideBy      String?
+  overrideAt      DateTime?
+  overrides       TutorialDemoQualityOverride[]
+
+  /// Контрольные кадры (заход 7): снимки шагов из монтажного manifest с
+  /// таймкодами этого файла — `[{stepIndex, startMs, endMs, imageUrl,
+  /// caption}]`; NULL — manifest нет или исходники не перенесены.
+  controlFrames Json?
+
+  /// Чёрные/замершие кадры декодером ffmpeg-api (`blackdetect` /
+  /// `freezedetect`, заход 7) — отдельный платный вызов за флагом
+  /// `TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS` (умолчание выкл.).
+  /// 'pending' | 'running' | 'complete' | 'error'; NULL — не заказывался.
+  /// Найденное поднимает вердикт до `warn`, не до `fail`.
+  signalsStatus    String?
+  signalsJobId     String?
+  signalsStartedAt DateTime?
+  /// Итог: интервалы чёрного и замершего кадра, подозрительные места.
+  signals          Json?
 
   @@index([assetId, createdAt])
   /// Выборка очереди тиком: `pending` с наступившим сроком и
@@ -3830,6 +3859,34 @@ model TutorialDemoQualityCheck {
   @@index([status, nextAttemptAt])
   @@index([dedupeKey])
   @@map("tutorial_demo_quality_checks")
+}
+
+/// Журнал переопределений вердикта проверки качества демо оператором
+/// (заход 7, 07.10.2026; doc/TUTORIAL-DEMO-QUALITY-SPEC.md «Оператор и
+/// публикация»: «Операторское override требует причины и сохраняется в
+/// журнале»). Строка на каждое действие — поставить или снять. Журнал
+/// переживает проверку: удалили ролик (каскад проверок) — `checkId`
+/// становится NULL, `assetId` и запись «кто, когда, почему» остаются.
+model TutorialDemoQualityOverride {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  checkId String?
+  check   TutorialDemoQualityCheck? @relation(fields: [checkId], references: [id], onDelete: SetNull)
+  /// Мягкая ссылка на ролик — для выборки журнала по ролику.
+  assetId String
+
+  /// Вердикт до действия (итоговый, с прежним переопределением).
+  fromVerdict String?
+  /// 'ok' | 'warn' | 'fail'; NULL — переопределение снято.
+  toVerdict   String?
+  reason      String
+  /// id оператора (пользователя админки).
+  by          String
+
+  @@index([checkId, createdAt])
+  @@index([assetId, createdAt])
+  @@map("tutorial_demo_quality_overrides")
 }
 
 /// Часть А ТЗ (§3, этап 100) — метаданные крон-обхода интерфейса

@@ -137,3 +137,15 @@ export async function dropCabinet(
 ): Promise<void> {
   await prisma.siteAccount.deleteMany({ where: { id: f.accountId } });
 }
+
+/** Строки секретов учётки (назначение, версия ключа, шифротекст) — для спеков. */
+export async function credentialRows(
+  prisma: PrismaService,
+  testAccountId: string,
+): Promise<Array<{ purpose: string; keyVersion: string; ciphertext: string }>> {
+  return prisma.siteCredential.findMany({
+    where: { testAccountId },
+    orderBy: { purpose: 'asc' },
+    select: { purpose: true, keyVersion: true, ciphertext: true },
+  });
+}

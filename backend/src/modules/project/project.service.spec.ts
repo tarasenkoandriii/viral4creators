@@ -978,6 +978,42 @@ describe('ProjectService', () => {
       expect(blob.listByPrefix).not.toHaveBeenCalled();
     });
 
+    it('W7: удаление проекта обучалки — набор роликов сайта помощника пересылается ПОСЛЕ метки', async () => {
+      prisma.project.findFirst.mockResolvedValue(projectRow());
+      const order: string[] = [];
+      prisma.project.update.mockImplementation(async () => {
+        order.push('update');
+        return {};
+      });
+      const media = {
+        siteOfProject: jest.fn(async () => {
+          order.push('siteOf');
+          return 'site_1';
+        }),
+        syncSite: jest.fn(async () => {
+          order.push('sync');
+          return true;
+        }),
+      };
+      const withMedia = new ProjectService(
+        prisma as any,
+        blob as any,
+        plans as any,
+        undefined,
+        media as any,
+      );
+      await withMedia.deleteProject(USER, 'p1');
+      expect(media.siteOfProject).toHaveBeenCalledWith('p1');
+      expect(media.syncSite).toHaveBeenCalledWith('site_1');
+      expect(order).toEqual(['siteOf', 'update', 'sync']);
+
+      // Не привязан к помощнику — пересылать нечего.
+      media.siteOfProject.mockResolvedValueOnce(null as never);
+      media.syncSite.mockClear();
+      await withMedia.deleteProject(USER, 'p1');
+      expect(media.syncSite).not.toHaveBeenCalled();
+    });
+
     it('deleteProject 404s на чужой/уже мягко удалённый проект и ничего не пишет', async () => {
       prisma.project.findFirst.mockResolvedValue(null);
       await expect(service.deleteProject(USER, 'p1')).rejects.toBeInstanceOf(

@@ -629,6 +629,20 @@ export class UiSnapshotRunnerService {
       );
       return this.skip('фикстурный пользователь не заведён');
     }
+    // Только ТЕСТОВЫЙ аккаунт (заход 7, как у прогона сценариев —
+    // аудит кронов 06.10.2026). Обход заводит служебную сессию мастера и
+    // снимает экраны кабинета: `FIXTURE_TELEGRAM_ID`, указавший на живого
+    // человека, тащил бы его данные в снимки (немаскированный прогон их
+    // не прячет) и писал бы ему сессии. Аккаунт в фикстуру переводит
+    // только оператор — кнопкой «Завести фикстуру».
+    if (!(user as { isTestUser?: boolean }).isTestUser) {
+      // Без тревоги: обход идёт каждые 15 минут, а пропуск и так виден
+      // в журнале крона («Холостые»), как у ненастроенной фикстуры выше.
+      this.logger.warn(
+        `аккаунт telegramId=${telegramId} из FIXTURE_TELEGRAM_ID не помечен тестовым (isTestUser) — пропуск; фикстуру заводит оператор кнопкой «Завести фикстуру»`,
+      );
+      return this.skip('аккаунт фикстуры не помечен тестовым (isTestUser)');
+    }
 
     // Тема — после проверок окружения: пропуск по ненастроенной фикстуре
     // не должен трогать базу (а выбор темы её читает).
@@ -1266,17 +1280,26 @@ export class UiSnapshotRunnerService {
 
   /**
    * Фикстурный пользователь по `FIXTURE_TELEGRAM_ID`. `null` — не
-   * настроен или не заведён; отличать эти два случая вызывающему не
-   * нужно, оба означают «снимать нечем».
+   * настроен, не заведён или НЕ тестовый (`isTestUser`, заход 7):
+   * отличать эти случаи вызывающему не нужно, все означают «снимать
+   * нечем» — кадры кабинета живого человека в ролики не идут.
    */
   async findFixtureUser(): Promise<{ id: string } | null> {
     const telegramId = process.env.FIXTURE_TELEGRAM_ID?.trim();
     if (!telegramId) return null;
     const user = (await this.prisma.user.findUnique({
       where: { telegramId },
-      select: { id: true },
-    })) as { id: string } | null;
-    return user;
+      select: { id: true, isTestUser: true },
+    })) as { id: string; isTestUser?: boolean } | null;
+    if (!user?.isTestUser) {
+      if (user) {
+        this.logger.warn(
+          `аккаунт telegramId=${telegramId} из FIXTURE_TELEGRAM_ID не помечен тестовым (isTestUser) — кадры не снимаются`,
+        );
+      }
+      return null;
+    }
+    return { id: user.id };
   }
 
   private skip(reason: string): UiSnapshotRunResult {

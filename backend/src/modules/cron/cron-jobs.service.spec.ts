@@ -1832,12 +1832,56 @@ describe('CronJobsService — client-site-retention (Ш0.5/Ш0.6 аудита 02
       framesPurged: 0,
       framesFailed: 0,
       pendingReviewWarned: 0,
+      // W7 (агент B, draft-retention.ts): срок липкой отметки входа.
+      loginMarksExpired: 0,
     });
     expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ jobKey: 'client-site-retention' }),
       }),
     );
+  });
+
+  it('W7: после уборки — сверка роликов сайтов помощника, плоские счётчики в итоге; сбой сверки уборку не отменяет', async () => {
+    const { service, prisma } = build();
+    const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+    p.clientSiteTutorialDraft = {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    };
+    p.tutorialVideoAsset = {
+      ...(p.tutorialVideoAsset ?? {}),
+      findMany: jest.fn().mockResolvedValue([]),
+    };
+    const reconcileSites = jest.fn().mockResolvedValue({
+      sites: 3,
+      unchanged: 1,
+      sent: 1,
+      failed: 1,
+      forgotten: 0,
+      deferred: 0,
+    });
+    (service as unknown as Record<string, unknown>).clientSiteMedia = {
+      reconcileSites,
+    };
+    await expect(service.runClientSiteRetention()).resolves.toMatchObject({
+      secretsExpired: 0,
+      videoSetsChecked: 3,
+      videoSetsSent: 1,
+      videoSetsFailed: 1,
+      videoSetsDeferred: 0,
+    });
+    expect(reconcileSites).toHaveBeenCalledTimes(1);
+
+    reconcileSites.mockRejectedValueOnce(new Error('база легла'));
+    await expect(service.runClientSiteRetention()).resolves.toMatchObject({
+      secretsExpired: 0,
+      videoSetsFailed: -1,
+    });
+
+    reconcileSites.mockResolvedValueOnce({ skipped: 'not-configured' });
+    const off = await service.runClientSiteRetention();
+    expect('videoSetsChecked' in off).toBe(false);
   });
 
   it('замок занят — пропуск, база не трогается', async () => {

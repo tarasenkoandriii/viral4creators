@@ -499,48 +499,112 @@ for (const check of CHECKS) {
 const ENV_SKIP = new Set(["NODE_ENV", "CI", "VERCEL", "VERCEL_ENV", "TZ"]);
 const ENV_PREFIX_OK = ["AI_PRICE_", "DAILY_SPEND_LIMIT_USD_"];
 
-function envVarsInCode() {
-  const files = [
-    ...walk(path.join(ROOT, "backend/src")),
-    ...walk(path.join(ROOT, "admin/src")),
-    ...walk(path.join(ROOT, "landing/src")),
-    ...walk(path.join(ROOT, "frontend/src")),
-    // Л0–Л1 лендинга клиентских сайтов: SITE_URL и секреты формы пилота.
-    ...walk(path.join(ROOT, "sites-landing/src")),
-  ].filter((f) => /\.(ts|tsx)$/.test(f) && !f.endsWith(".spec.ts"));
+// Пакеты, чей код сканируется. `ownDocs` — свой `.env.example` пакета,
+// который считается документацией ТОЛЬКО для переменных этого пакета
+// (у отдельно деплоящихся sites-backend и browser-worker свой набор
+// окружения, и описан он рядом с ними). `live-login-relay/` не
+// сканируется сознательно (запрет владельца трогать реле).
+const ENV_PACKAGES = [
+  { dir: "backend/src" },
+  { dir: "admin/src" },
+  { dir: "landing/src" },
+  { dir: "frontend/src" },
+  // Л0–Л1 лендинга клиентских сайтов: SITE_URL и секреты формы пилота.
+  { dir: "sites-landing/src" },
+  // Слепые зоны до 07.10.2026 (аудит захода 7): отдельный бэкенд сайтов
+  // и браузерный воркер.
+  { dir: "sites-backend/src", ownDocs: "sites-backend/.env.example" },
+  { dir: "browser-worker/src", ownDocs: "browser-worker/.env.example" },
+];
+
+/**
+ * Имена переменных, которые читает один исходник. Шаблоны:
+ *  - `process.env.X`, `import.meta.env.X`, `process.env['X']`;
+ *  - `env.X` — в модулях, получающих окружение параметром
+ *    (env-settings.ts, spend-limits.ts, csrf.ts, blob-url.ts);
+ *  - `env[CONST]` / `process.env[CONST]`, где в том же файле
+ *    `CONST = 'X'` (ключ вынесен в константу — прежде слепая зона);
+ *  - `ЧТО_ТО_ENV = 'X'` — объявление имени переменной константой, даже
+ *    если читает её другой файл.
+ * Имя — только ВЕРХНИЙ_РЕГИСТР от 4 символов: `env[key]` с
+ * вычисляемым ключом и строчные имена не угадываются и не считаются.
+ */
+function envVarsInText(text) {
   const found = new Set();
-  for (const f of files) {
-    const text = fs.readFileSync(f, "utf8");
-    for (const m of text.matchAll(
-      /(?:process\.env|import\.meta\.env)\.([A-Z][A-Z0-9_]+)/g,
-    )) {
+  for (const m of text.matchAll(
+    /(?:process\.env|import\.meta\.env)\.([A-Z][A-Z0-9_]+)/g,
+  )) {
+    found.add(m[1]);
+  }
+  for (const m of text.matchAll(
+    /process\.env\[\s*['"`]([A-Z][A-Z0-9_]{3,})['"`]\s*\]/g,
+  )) {
+    found.add(m[1]);
+  }
+  if (/\benv: NodeJS\.ProcessEnv|\(env\)|env = process\.env/.test(text)) {
+    for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]{3,})\b/g))
       found.add(m[1]);
-    }
-    // `env.X` в модулях, которые получают process.env параметром
-    // (env-settings.ts, spend-limits.ts, csrf.ts, blob-url.ts).
-    if (/\benv: NodeJS\.ProcessEnv|\(env\)|env = process\.env/.test(text)) {
-      for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]{3,})\b/g))
-        found.add(m[1]);
+  }
+  for (const m of text.matchAll(/\benv\[\s*([A-Z][A-Z0-9_]*)\s*\]/g)) {
+    const decl = text.match(
+      new RegExp(
+        `\\b${m[1]}\\s*(?::[^=\\n]+)?=\\s*['"\`]([A-Z][A-Z0-9_]{3,})['"\`]`,
+      ),
+    );
+    if (decl) found.add(decl[1]);
+  }
+  for (const m of text.matchAll(
+    /\b[A-Z][A-Z0-9_]*_ENV\s*(?::[^=\n]+)?=\s*['"`]([A-Z][A-Z0-9_]{3,})['"`]/g,
+  )) {
+    found.add(m[1]);
+  }
+  return found;
+}
+
+/** Map имя → список пакетов, где оно читается. */
+function envVarsByPackage() {
+  const byName = new Map();
+  for (const pkg of ENV_PACKAGES) {
+    const files = walk(path.join(ROOT, pkg.dir)).filter(
+      (f) => /\.(ts|tsx)$/.test(f) && !/\.(spec|test)\.tsx?$/.test(f),
+    );
+    for (const f of files) {
+      for (const name of envVarsInText(fs.readFileSync(f, "utf8"))) {
+        if (ENV_SKIP.has(name)) continue;
+        if (!byName.has(name)) byName.set(name, new Set());
+        byName.get(name).add(pkg);
+      }
     }
   }
-  return [...found].filter((v) => !ENV_SKIP.has(v)).sort();
+  return byName;
 }
 
 const envDocs = read("doc/DEPLOYMENT.md") + "\n" + read(".env.docker.example");
-const undocumented = envVarsInCode().filter(
-  (v) =>
-    !ENV_PREFIX_OK.some((p) => v.startsWith(p)) &&
-    !new RegExp(`(^|[^A-Z0-9_])${v}([^A-Z0-9_]|$)`).test(envDocs),
-);
+const mentions = (doc, v) =>
+  new RegExp(`(^|[^A-Z0-9_])${v}([^A-Z0-9_]|$)`).test(doc);
+const envByPackage = envVarsByPackage();
+const undocumented = [...envByPackage.keys()].sort().filter((v) => {
+  if (ENV_PREFIX_OK.some((p) => v.startsWith(p))) return false;
+  if (mentions(envDocs, v)) return false;
+  // Свой `.env.example` пакета закрывает переменную, только если ВСЕ
+  // пакеты, где она читается, описывают её у себя.
+  return ![...envByPackage.get(v)].every(
+    (pkg) =>
+      pkg.ownDocs &&
+      fs.existsSync(path.join(ROOT, pkg.ownDocs)) &&
+      mentions(read(pkg.ownDocs), v),
+  );
+});
 if (undocumented.length > 0) {
   failed++;
   console.log(
     `FAIL переменные окружения: код читает, документы молчат — ${undocumented.join(", ")}. ` +
-      `Опишите в doc/DEPLOYMENT.md (прод) или .env.docker.example (стенд).`,
+      `Опишите в doc/DEPLOYMENT.md (прод) или .env.docker.example (стенд)` +
+      ` (для sites-backend и browser-worker годится и их .env.example).`,
   );
 } else {
   console.log(
-    `ok   переменные окружения: все ${envVarsInCode().length} описаны в DEPLOYMENT.md или .env.docker.example`,
+    `ok   переменные окружения: все ${envByPackage.size} описаны в DEPLOYMENT.md, .env.docker.example или .env.example своего пакета`,
   );
 }
 
@@ -2114,12 +2178,57 @@ function checkGuideSeams() {
     }
   }
 
+  // 16-тер. Исходник кадра OG-карточек — AVIF первого экрана, не SVG
+  //     (07.10.2026). Прежние `greet-hero.svg`/`tutorial-hero.svg` удалены:
+  //     генератор, оставшийся на них, упал бы при перезапуске, а карточка
+  //     показывала бы картинку, которой на странице нет. Шов читает путь
+  //     `SHOT_FILE` из обоих генераторов и сверяет: файл есть, это AVIF
+  //     (сигнатура `ftypavif`), он же стоит hero страницы, и ссылок на
+  //     `.svg` в генераторах не осталось.
+  for (const [script, hero] of [
+    ["scripts/og-tutorial-cards.mjs", "tutorial-hero-v2"],
+    ["scripts/og-greetings-cards.mjs", "greetings-hero-v2"],
+  ]) {
+    const code = stripComments(read(script));
+    const shotFile = code.match(/const SHOT_FILE = '([^']+)';/)?.[1];
+    if (!shotFile) {
+      problems.push(`${script}: не нашёл SHOT_FILE — шов 16-тер ослеп`);
+      continue;
+    }
+    if (shotFile !== `landing/public/illustrations/${hero}.avif`) {
+      problems.push(
+        `${script}: кадр карточки ${shotFile}, а hero страницы — ${hero}.avif`,
+      );
+    }
+    const full = path.join(ROOT, shotFile);
+    if (!fs.existsSync(full)) {
+      problems.push(
+        `${script}: исходника кадра ${shotFile} нет — генератор упадёт`,
+      );
+    } else if (
+      fs.readFileSync(full).subarray(4, 12).toString("latin1") !== "ftypavif"
+    ) {
+      problems.push(`${script}: ${shotFile} — не AVIF`);
+    }
+    if (/\.svg\b|image\/svg/.test(code)) {
+      problems.push(`${script}: генератор всё ещё читает SVG`);
+    }
+  }
+  for (const gone of ["greet-hero.svg", "tutorial-hero.svg"]) {
+    if (fs.existsSync(path.join(ROOT, "landing/public/illustrations", gone))) {
+      problems.push(
+        `landing/public/illustrations/${gone} вернулся — hero и OG-карточки ` +
+          "рисуются с AVIF, SVG-hero удалён 07.10.2026",
+      );
+    }
+  }
+
   // 17-бис. Кадры страницы поздравлений: список локалей в
   //     `landing/src/lib/greeting-frames.ts` ↔ файлы `greet-shot-*` на
   //     диске ↔ бюджеты. Те же две тихие ошибки, что в шве 17 (объявили
-  //     локаль без файлов — 404 и ложная оговорка; положили файлы без
-  //     локали — мёртвый груз), плюс бюджет схем волны 1 (§5.3 ТЗ Greeting
-  //     2.0: hero ≤90 КБ, кадр ≤120 КБ). Текстовую сторону и правила
+  //     локаль без файлов — 404 и ложная оговорка; плюс бюджет схем волны 1
+  //     (§5.3 ТЗ Greeting 2.0: кадр ≤120 КБ; SVG-hero удалён 07.10.2026 —
+  //     hero и OG-карточки рисуются с AVIF, см. шов 16-тер). Текстовую сторону и правила
   //     рисования держит `landing/scripts/greeting-frames.test.ts`.
   const greetFramesSrc = read("landing/src/lib/greeting-frames.ts");
   const greetListMatch = greetFramesSrc.match(
@@ -2177,7 +2286,6 @@ function checkGuideSeams() {
     }
   }
   for (const [file, max] of [
-    ["greet-hero.svg", 90 * 1024],
     ["greet-frame-1.svg", 120 * 1024],
     ["greet-frame-2.svg", 120 * 1024],
     ["greet-frame-3.svg", 120 * 1024],

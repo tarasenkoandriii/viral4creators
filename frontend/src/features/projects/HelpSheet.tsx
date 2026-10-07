@@ -34,6 +34,7 @@ import {
   getTutorialHelp,
   type TutorialHelpView,
 } from '../../services/tutorial-help-api';
+import { tutorialHelpVideoFrame } from '../../lib/tutorial-help-video';
 
 /** Провайдер вместе с самим листом: один лист на весь мастер. */
 export function HelpProvider({ children }: { children: ReactNode }) {
@@ -119,6 +120,8 @@ function HelpSheet({
 
   if (!topic) return null;
 
+  const frame = tutorialHelpVideoFrame(view ?? {});
+
   return (
     <div
       role="presentation"
@@ -130,7 +133,7 @@ function HelpSheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby="help-sheet-title"
-        className="w-full max-w-md p-5"
+        className="max-h-[90vh] w-full max-w-md overflow-y-auto p-5"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-start gap-3">
@@ -157,12 +160,19 @@ function HelpSheet({
             </p>
             {view.videoUrl ? (
               playing ? (
+                // Постер и пропорция — из ответа API до загрузки ролика:
+                // без них плеер появлялся чёрным 16:9 и прыгал, а
+                // вертикальный ролик вытягивал лист за край экрана.
+                // Вписывается целиком (`object-fit: contain`), не режется.
                 <video
                   data-qa="tutorial-help-video"
                   ref={videoRef}
-                  className="mt-4 w-full rounded-xl"
+                  className="mx-auto mt-4 block rounded-xl bg-black"
+                  style={frame.style}
+                  poster={frame.poster}
                   src={view.videoUrl}
                   controls
+                  playsInline
                   autoPlay
                 />
               ) : (

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
 
 function build() {
@@ -461,5 +461,79 @@ describe('TutorialVideoAdminService.setSiteTutorialDemo — отметка «в 
     const { service } = withSettings(JSON.stringify([GOOD.id]));
     const res = await service.list({ page: 1, pageSize: 10 });
     expect(res.siteTutorialDemoAssetIds).toEqual([GOOD.id]);
+  });
+});
+
+// Заход 7: блокировка публикации по ИИ-проверке качества. Само правило
+// (флаг, итоговый fail, переопределение) — `demo-quality.service.spec.ts`;
+// здесь — что барьер стоит на одобрении и отметке «в демо», а снятие
+// одобрения/отметки им не перекрыто.
+describe('заход 7: блокировка публикации проверкой качества', () => {
+  function withQuality(blocked: boolean, raw = '[]') {
+    const store = new Map<string, string>([
+      ['tutorial.siteTutorialDemoAssets', raw],
+    ]);
+    const settings = {
+      get: jest.fn(async (k: string) => store.get(k) ?? null),
+      set: jest.fn(async (k: string, v: string) => {
+        store.set(k, v);
+      }),
+    };
+    const prisma = {
+      tutorialVideoAsset: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'tva-q',
+          subjectKey: 'site-tutorial-demo-1',
+          clientSiteDraftId: null,
+          reviewed: true,
+          blobUrl: 'https://blob.example/q.mp4',
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'tva-q' }),
+      },
+    };
+    const quality = {
+      assertPublishable: jest.fn(async () => {
+        if (blocked) throw new ConflictException('ИИ-проверка: fail');
+      }),
+    };
+    const service = new TutorialVideoAdminService(
+      prisma as any,
+      undefined,
+      settings as any,
+      quality as any,
+    );
+    return { service, prisma, settings, quality };
+  }
+
+  it('fail без переопределения — одобрить нельзя, снять одобрение можно', async () => {
+    const { service, prisma, quality } = withQuality(true);
+    await expect(service.setReviewed('tva-q', true)).rejects.toThrow(
+      ConflictException,
+    );
+    expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
+    expect(quality.assertPublishable).toHaveBeenCalledWith('tva-q');
+    await service.setReviewed('tva-q', false);
+    expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith({
+      where: { id: 'tva-q' },
+      data: { reviewed: false },
+    });
+  });
+
+  it('fail без переопределения — в демо не отметить, снять отметку можно', async () => {
+    const { service, settings } = withQuality(true, '["tva-q"]');
+    await expect(
+      service.setSiteTutorialDemo('tva-q', true, 'op'),
+    ).rejects.toThrow(ConflictException);
+    const res = await service.setSiteTutorialDemo('tva-q', false, 'op');
+    expect(res.siteTutorialDemoAssetIds).toEqual([]);
+    expect(settings.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('блока нет (флаг выключен или переопределено) — как прежде', async () => {
+    const { service, prisma } = withQuality(false);
+    await service.setReviewed('tva-q', true);
+    expect(prisma.tutorialVideoAsset.update).toHaveBeenCalled();
+    const res = await service.setSiteTutorialDemo('tva-q', true, 'op');
+    expect(res.siteTutorialDemoAssetIds).toEqual(['tva-q']);
   });
 });

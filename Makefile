@@ -82,7 +82,7 @@ ci:
 	cd frontend && npm run -s lint
 	cd frontend && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
 	cd frontend && npx vite build
-	cd admin && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
+	cd admin && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npm run -s test && npx next build
 	cd landing && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
 	cd landing && npm run -s budget:js
 	$(MAKE) ci-sites-landing

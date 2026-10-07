@@ -279,6 +279,7 @@ function setup(opts: { world?: Partial<World>; asset?: any } = {}) {
   };
   const tts: any = { resolveByKey: jest.fn(() => provider) };
   const siteMedia: any = { syncForDraft: jest.fn(async () => undefined) };
+  const landing: any = { requestSync: jest.fn(async () => true) };
   const service = new TutorialVideoVersionsService(
     prisma,
     blob,
@@ -287,6 +288,7 @@ function setup(opts: { world?: Partial<World>; asset?: any } = {}) {
     plan,
     tts,
     siteMedia,
+    landing,
   );
   return {
     service,
@@ -299,6 +301,7 @@ function setup(opts: { world?: Partial<World>; asset?: any } = {}) {
     tts,
     provider,
     siteMedia,
+    landing,
   };
 }
 
@@ -820,5 +823,292 @@ describe('активация пользователем', () => {
     await expect(s.service.activate(USER, 'a1', 'nope')).rejects.toThrow(
       NotFoundException,
     );
+  });
+});
+
+// ── заход 7 (07.10.2026) ─────────────────────────────────────────────
+
+describe('Ш5 (12): активация файла одобренного ролика штатной обучалки', () => {
+  async function scenarioBuilt(asset: Record<string, unknown>) {
+    const s = setup({
+      asset: {
+        clientSiteDraftId: null,
+        scenarioId: 'ts-1',
+        subjectKey: '1',
+        ...asset,
+      },
+    });
+    await s.service.requestVersion(OPERATOR, 'a1', 0.4);
+    s.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'tutorial.mp4': 'https://ffmpeg.example/out.mp4' },
+    });
+    jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array(4096).buffer,
+    } as any);
+    await s.service.pollVersions();
+    return s;
+  }
+  afterEach(() => jest.restoreAllMocks());
+
+  it('одобренный ролик: одобрение версии и возврат к обычному — пересылка набора лендинга', async () => {
+    const s = await scenarioBuilt({ reviewed: true });
+    // Собранная, но ещё не одобренная версия ролик не меняет — повода нет.
+    expect(s.landing.requestSync).not.toHaveBeenCalled();
+    const v = s.world.versions.find((x) => x.kind === 'tempo');
+    await s.service.activate(OPERATOR, 'a1', v.id);
+    expect(s.landing.requestSync).toHaveBeenCalledTimes(1);
+    await s.service.revert(OPERATOR, 'a1');
+    expect(s.landing.requestSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('неодобренный ролик, демо обучающего лендинга, обучалка клиента — без пересылки', async () => {
+    for (const asset of [
+      { reviewed: false },
+      { reviewed: true, subjectKey: 'site-tutorial-demo-1' },
+    ]) {
+      const s = await scenarioBuilt(asset);
+      const v = s.world.versions.find((x) => x.kind === 'tempo');
+      await s.service.activate(OPERATOR, 'a1', v.id);
+      expect(s.landing.requestSync).not.toHaveBeenCalled();
+      jest.restoreAllMocks();
+    }
+    // Клиент: своя синхронизация сайта помощника, набор лендинга — нет.
+    const c = setup({ asset: { reviewed: true } });
+    await c.service.requestVersion(USER, 'a1', 0.4);
+    c.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'tutorial.mp4': 'https://ffmpeg.example/out.mp4' },
+    });
+    jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array(4096).buffer,
+    } as any);
+    await c.service.pollVersions();
+    expect(c.siteMedia.syncForDraft).toHaveBeenCalledWith('draft1');
+    expect(c.landing.requestSync).not.toHaveBeenCalled();
+  });
+
+  it('сбой пересылки не роняет активацию', async () => {
+    const s = await scenarioBuilt({ reviewed: true });
+    s.landing.requestSync.mockRejectedValue(new Error('sites-backend лежит'));
+    const v = s.world.versions.find((x) => x.kind === 'tempo');
+    await expect(
+      s.service.activate(OPERATOR, 'a1', v.id),
+    ).resolves.toMatchObject({ active: true });
+  });
+});
+
+describe('темп пары переживает пересборку', () => {
+  function inheritSetup(row: any, reject = false) {
+    const s = setup();
+    s.prisma.tutorialVideoVersion.findFirst = jest.fn(async () => {
+      if (reject) throw new Error('db down');
+      return row;
+    });
+    return s;
+  }
+
+  it('последняя активированная версия пары — её множитель; запрос — по паре с темой', async () => {
+    const s = inheritSetup({ id: 'v7', kind: 'tempo', tempoFactor: 0.4 });
+    expect(
+      await s.service.inheritedTempoFor({
+        subjectKey: '3',
+        locale: 'uk',
+        theme: 'dark',
+      }),
+    ).toEqual({ factor: 0.4, versionId: 'v7' });
+    const args = s.prisma.tutorialVideoVersion.findFirst.mock.calls[0][0];
+    expect(args.where).toMatchObject({
+      status: 'complete',
+      activatedAt: { not: null },
+      // Ручной выбор оператора — первым; наследование его не перебивает.
+      requestedBy: { not: 'system:tempo-inherit' },
+      asset: {
+        subjectKey: '3',
+        locale: 'uk',
+        clientSiteDraftId: null,
+        AND: [{ theme: 'dark' }],
+      },
+    });
+    expect(args.orderBy[0]).toEqual({ activatedAt: 'desc' });
+  });
+
+  it('последним активирован исходник, ×1, нет версий, сбой базы — обычный темп', async () => {
+    for (const row of [
+      { id: 's', kind: 'source', tempoFactor: null },
+      // Исходный файл — обычный темп, даже если в строке мусорный множитель.
+      { id: 's2', kind: 'source', tempoFactor: 0.4 },
+      { id: 'n', kind: 'tempo', tempoFactor: 1 },
+      { id: 'x', kind: 'tempo', tempoFactor: 5 },
+      null,
+    ]) {
+      const s = inheritSetup(row);
+      expect(
+        await s.service.inheritedTempoFor({
+          subjectKey: '3',
+          locale: 'ru',
+          theme: 'light',
+        }),
+      ).toBeNull();
+    }
+    const failing = inheritSetup(null, true);
+    await expect(
+      failing.service.inheritedTempoFor({
+        subjectKey: '3',
+        locale: 'ru',
+        theme: 'light',
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('ручного выбора нет — берётся унаследованная версия (цепочка темпа переживает подметание)', async () => {
+    const s = setup();
+    const calls: any[] = [];
+    s.prisma.tutorialVideoVersion.findFirst = jest.fn(async (args: any) => {
+      calls.push(args.where.requestedBy);
+      return args.where.requestedBy === 'system:tempo-inherit'
+        ? { id: 'vi', kind: 'tempo', tempoFactor: 1.5, activatedAt: null }
+        : null;
+    });
+    expect(
+      await s.service.inheritedTempoFor({
+        subjectKey: '3',
+        locale: 'ru',
+        theme: 'light',
+      }),
+    ).toEqual({ factor: 1.5, versionId: 'vi' });
+    expect(calls).toEqual([
+      { not: 'system:tempo-inherit' },
+      'system:tempo-inherit',
+    ]);
+  });
+
+  function inheritedAsset(over: Partial<TutorialTimelineManifest> = {}) {
+    return setup({
+      asset: {
+        clientSiteDraftId: null,
+        scenarioId: 'ts-1',
+        subjectKey: '3',
+        durationMs: 9_000,
+        tempoManifest: manifest({
+          owner: { kind: 'scenario', scenarioId: 'ts-1', subjectKey: '3' },
+          storage: 'sources',
+          appliedTempo: { factor: 0.4, fromVersionId: 'v-old' },
+          ...over,
+        }),
+      },
+    });
+  }
+
+  it('ролик собран с темпом пары: его файл — активная версия этого темпа, без новой сборки', async () => {
+    const s = inheritedAsset();
+    await s.service.adoptInheritedTempo('a1');
+    expect(s.world.versions).toHaveLength(1);
+    const v = s.world.versions[0];
+    expect(v).toMatchObject({
+      kind: 'tempo',
+      tempoFactor: 0.4,
+      status: 'complete',
+      blobUrl: s.world.assets[0].blobUrl,
+      videoMs: 9_000,
+      requestedBy: 'system:tempo-inherit',
+    });
+    expect(v.activatedAt).toBeInstanceOf(Date);
+    expect(s.world.assets[0].activeVersionId).toBe(v.id);
+    expect(s.ffmpeg.submit).not.toHaveBeenCalled();
+    // Постпродакшен видит выбранный темп.
+    expect((await s.service.estimate(OPERATOR, 'a1', 0.4)).activeFactor).toBe(
+      0.4,
+    );
+    // Повтор — без второй строки.
+    await s.service.adoptInheritedTempo('a1');
+    expect(s.world.versions).toHaveLength(1);
+    // Тот же темп ещё раз — та же версия, не платная сборка.
+    const again = await s.service.requestVersion(OPERATOR, 'a1', 0.4);
+    expect(again.reused).toBe(true);
+    expect(s.ffmpeg.submit).not.toHaveBeenCalled();
+  });
+
+  it('без постоянных исходников версия не заводится (иначе ни «обычного», ни другого темпа)', async () => {
+    const s = inheritedAsset({ storage: 'transit' });
+    await s.service.adoptInheritedTempo('a1');
+    expect(s.world.versions).toHaveLength(0);
+    expect(s.world.assets[0].activeVersionId).toBeNull();
+  });
+
+  it('время активации — как у версии-источника, а не «сейчас»: ручную смену после неё не перебивает', async () => {
+    const s = inheritedAsset();
+    const chosenAt = new Date('2026-10-01T08:00:00Z');
+    s.world.versions.push({
+      id: 'v-old',
+      assetId: 'other',
+      kind: 'tempo',
+      tempoFactor: 0.4,
+      status: 'complete',
+      idempotencyKey: 'k-old',
+      activatedAt: chosenAt,
+      requestedBy: 'op1',
+    });
+    await s.service.adoptInheritedTempo('a1');
+    const v = s.world.versions.find((x) => x.assetId === 'a1');
+    expect(v.activatedAt).toEqual(chosenAt);
+    expect(v.requestedBy).toBe('system:tempo-inherit');
+  });
+
+  it('без appliedTempo — ничего не заводится', async () => {
+    const s = inheritedAsset({ appliedTempo: null });
+    await s.service.adoptInheritedTempo('a1');
+    expect(s.world.versions).toHaveLength(0);
+    expect(s.world.assets[0].activeVersionId).toBeNull();
+  });
+
+  it('«вернуть обычный» у такого ролика — сборка ×1 (обычного файла нет), ждёт одобрения', async () => {
+    const s = inheritedAsset();
+    await s.service.adoptInheritedTempo('a1');
+    const before = { ...s.world.assets[0] };
+    const view = await s.service.revert(OPERATOR, 'a1');
+    expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+    expect(view).toMatchObject({
+      kind: 'tempo',
+      factor: 1,
+      requiresApproval: true,
+    });
+    // Ролик не тронут до одобрения новой версии.
+    expect(s.world.assets[0]).toEqual(before);
+    // «Обычный» через выбор темпа ×1 — та же версия, не вторая задача.
+    const res = await s.service.requestVersion(OPERATOR, 'a1', 1);
+    expect(res.reused).toBe(true);
+    expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('исходники до платной сборки (заход 7, аудит)', () => {
+  it('копия кадров и дорожек — новые пути под префиксом ролика', async () => {
+    const s = setup();
+    const frames = manifest({ storage: 'transit' }).frames;
+    const out = await s.service.copyFramesToSources('a9', frames);
+    expect(out).toHaveLength(frames.length);
+    expect(out![0].image.pathname).toBe(
+      'tutorial-video-sources/a9/frames/0.png',
+    );
+    expect(out![0].speech!.pathname).toMatch(
+      /^tutorial-video-sources\/a9\/voice\/0-/,
+    );
+  });
+
+  it('хоть одна копия не удалась или кадра нет в транзите — null, не бросает', async () => {
+    const s = setup();
+    const frames = manifest({ storage: 'transit' }).frames;
+    s.blob.copyBlob.mockResolvedValueOnce(null);
+    expect(await s.service.copyFramesToSources('a9', frames)).toBeNull();
+    s.blob.copyBlob.mockRejectedValueOnce(new Error('Blob икнул'));
+    expect(await s.service.copyFramesToSources('a9', frames)).toBeNull();
+    expect(
+      await s.service.copyFramesToSources('a9', [
+        { ...frames[0], image: { url: 'u', pathname: null } },
+      ]),
+    ).toBeNull();
   });
 });

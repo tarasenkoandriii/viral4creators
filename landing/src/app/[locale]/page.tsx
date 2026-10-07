@@ -1,4 +1,4 @@
-import Image from 'next/image';
+import { HeroPicture } from '../../components/HeroPicture';
 import { TutorialDemoGallery } from '../../components/TutorialDemoGallery';
 import { Header } from '../../components/Header';
 import { Faq } from '../../components/Faq';
@@ -64,8 +64,7 @@ export default async function LandingPage({ params }: { params: { locale: string
                 чтобы на десктопе, где кадр в первом экране, он не ждал
                 ленивой загрузки (там его поднимает сам браузер). */}
             <div className="hero-shot frame-shot">
-              <Image src="/illustrations/ads-hero-v2.avif" alt="" width={1536} height={1024}
-                sizes="(min-width: 900px) 46vw, 100vw" loading="eager" unoptimized />
+              <HeroPicture name="ads-hero-v2" />
             </div>
           </div>
         </section>

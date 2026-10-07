@@ -6,7 +6,7 @@
 // проверка не ставит и не снимает. «Не проверен ИИ» — ролик без записи
 // проверки, а не «прошёл».
 
-import type { DemoQualityCheck, DemoQualityEnqueueResult, DemoQualityIssue } from './types';
+import type { DemoQualityCheck, DemoQualityEnqueueResult, DemoQualityIssue, DemoQualityVerdict } from './types';
 
 export type BadgeTone = 'ok' | 'warning' | 'critical' | 'muted';
 
@@ -23,11 +23,16 @@ export function qualityBadge(check: DemoQualityCheck | null | undefined): { labe
       return { label: 'проверяется', tone: 'muted' };
     case 'error':
       return { label: 'сбой проверки', tone: 'critical' };
-    case 'complete':
-      if (check.verdict === 'ok') return { label: 'ok', tone: 'ok' };
-      if (check.verdict === 'warn') return { label: 'warn', tone: 'warning' };
-      if (check.verdict === 'fail') return { label: 'fail', tone: 'critical' };
+    case 'complete': {
+      // Заход 7: оператор переопределил вердикт — бейдж по итоговому, с
+      // пометкой, чтобы «ok» оператора не читался как «ok» модели.
+      const verdict = effectiveVerdictOf(check);
+      const mark = check.override ? ' (оператор)' : '';
+      if (verdict === 'ok') return { label: `ok${mark}`, tone: 'ok' };
+      if (verdict === 'warn') return { label: `warn${mark}`, tone: 'warning' };
+      if (verdict === 'fail') return { label: `fail${mark}`, tone: 'critical' };
       return { label: 'без вердикта', tone: 'muted' };
+    }
     default:
       return { label: String(check.status), tone: 'muted' };
   }
@@ -111,4 +116,48 @@ const FRESHNESS_LABEL: Record<string, string> = {
 
 export function freshnessLabel(freshness: string): string {
   return FRESHNESS_LABEL[freshness] ?? freshness;
+}
+
+// ── заход 7 (07.10.2026) ──
+
+/** Итоговый вердикт: переопределение оператора сильнее модели. Старый
+ *  бэкенд без поля — вердикт модели. */
+export function effectiveVerdictOf(check: DemoQualityCheck): DemoQualityVerdict | null {
+  if (check.effectiveVerdict !== undefined) return check.effectiveVerdict;
+  return check.override?.verdict ?? check.verdict;
+}
+
+const CAPTURE_MODE_LABEL: Record<string, string> = {
+  tma: 'TMA',
+  polygon: 'витрина лендинга',
+  'client-site': 'сайт заказчика',
+};
+
+export function captureModeLabel(mode: string | null): string {
+  if (!mode) return 'режим съёмки не записан';
+  return CAPTURE_MODE_LABEL[mode] ?? mode;
+}
+
+export const VERDICT_LABEL: Record<DemoQualityVerdict, string> = {
+  ok: 'ok — годится',
+  warn: 'warn — с замечаниями',
+  fail: 'fail — непригоден',
+};
+
+/** Проверка причины переопределения — та же граница, что у бэкенда. */
+export function overrideReasonProblem(reason: string): string | null {
+  const t = reason.trim();
+  if (t.length < 3) return 'Причина обязательна — не короче 3 символов.';
+  if (t.length > 500) return 'Причина — не длиннее 500 символов.';
+  return null;
+}
+
+/** Строка о чёрных/замерших кадрах декодером; `null` — не заказывались. */
+export function signalsSummary(check: DemoQualityCheck): string | null {
+  const s = check.signals;
+  if (!s) return null;
+  if (s.status === 'pending' || s.status === 'running') return 'Декодер (чёрные/замершие кадры): в работе.';
+  if (s.status === 'error') return `Декодер (чёрные/замершие кадры): сбой — ${s.error ?? 'без текста'}.`;
+  if (s.suspicious.length === 0) return 'Декодер: чёрных кадров и замерших переходов между шагами не найдено.';
+  return `Декодер: подозрительных мест ${s.suspicious.length} — см. замечания «Декодер» с таймкодами.`;
 }

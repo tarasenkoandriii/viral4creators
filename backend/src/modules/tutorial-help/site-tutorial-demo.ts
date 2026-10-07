@@ -9,7 +9,8 @@
  * Ключи `site-tutorial-demo-1..N` — СЛОТЫ галереи на `/site-tutorial`, а
  * не имена сценариев: какой сценарий ляжет в какой слот, решает
  * владелец, и решение не должно требовать правки ключей на двух
- * сторонах (бэкенд и `landing/src/lib/tutorial-demo-api.ts`).
+ * сторонах (бэкенд и `landing/src/lib/tutorial-demo-api.ts`). Выбор
+ * владельца 07.10.2026 — в `SITE_TUTORIAL_DEMO_TITLES` ниже.
  *
  * ## Свой барьер, а не ослабленный чужой
  *
@@ -139,37 +140,53 @@ export interface SiteTutorialDemoTopic {
 }
 
 /**
- * Тексты слотов — НЕЙТРАЛЬНЫЕ до решения владельца: сценарии ещё не
- * согласованы, и называть слот «Как оформить заказ» значило бы
- * пообещать ролик, которого может не быть. Когда владелец выберет
- * сценарии, заголовки станут их названиями (черновик, раздел «Тексты»).
- * Обещание в тексте одно и проверяемое: ролик снят на нашем
- * полигоне, данные вымышленные, сайтов заказчиков здесь нет.
+ * Названия слотов — названия сценариев, выбранных владельцем 07.10.2026
+ * (`doc/TUTORIAL-LANDING-DEMO-SCENARIO-DRAFT.md`, §6 и §7.3 п. 6):
+ * `-1` — С3 «Условия доставки», `-2` — С2 «Оформить заказ», `-3` — С4
+ * «Запись на консультацию». Формулировки — те же, что `title` сценариев
+ * в сиде раннера (`tutorial-runner/seeds/site-tutorial-demo.json`): что
+ * снято, то и названо; совпадение держит тест. Обещание в тексте одно и
+ * проверяемое: ролик снят на нашем полигоне, данные вымышленные, сайтов
+ * заказчиков здесь нет. Пока ролика нет, лендинг показывает «скоро», а
+ * не название без видео, — название слота наружу видно только с роликом
+ * или в справке TMA, где оно честно описывает тему.
  */
-const TOPIC_TEXTS: Record<
-  string,
-  { title: (n: number) => string; text: string }
+export const SITE_TUTORIAL_DEMO_TITLES: Readonly<
+  Record<string, readonly [string, string, string]>
 > = {
-  ru: {
-    title: (n) => `Пример обучалки ${n}`,
-    text: 'Пример ролика, собранного на нашем тестовом сайте-полигоне. Данные в нём вымышленные; ролики по сайтам заказчиков здесь не публикуются.',
-  },
-  uk: {
-    title: (n) => `Приклад навчального відео ${n}`,
-    text: 'Приклад відео, зібраного на нашому тестовому сайті-полігоні. Дані в ньому вигадані; відео за сайтами замовників тут не публікуються.',
-  },
-  en: {
-    title: (n) => `Tutorial example ${n}`,
-    text: 'An example video made on our own test site. All data in it is made up; videos of customer sites are never published here.',
-  },
-  de: {
-    title: (n) => `Beispiel-Erklärvideo ${n}`,
-    text: 'Ein Beispielvideo, erstellt auf unserer eigenen Testseite. Alle Daten darin sind erfunden; Videos von Kundenseiten werden hier nicht veröffentlicht.',
-  },
-  es: {
-    title: (n) => `Ejemplo de tutorial ${n}`,
-    text: 'Un vídeo de ejemplo creado en nuestro propio sitio de pruebas. Todos los datos son ficticios; aquí nunca se publican vídeos de sitios de clientes.',
-  },
+  ru: [
+    'Как найти условия доставки',
+    'Как оформить заказ в магазине',
+    'Как записаться на консультацию',
+  ],
+  uk: [
+    'Як знайти умови доставки',
+    'Як оформити замовлення в магазині',
+    'Як записатися на консультацію',
+  ],
+  en: [
+    'How to find the delivery terms',
+    'How to place an order in a shop',
+    'How to book a consultation',
+  ],
+  de: [
+    'So finden Sie die Lieferbedingungen',
+    'So geben Sie im Shop eine Bestellung auf',
+    'So buchen Sie eine Beratung',
+  ],
+  es: [
+    'Cómo encontrar las condiciones de envío',
+    'Cómo hacer un pedido en la tienda',
+    'Cómo reservar una consulta',
+  ],
+};
+
+const TOPIC_TEXTS: Record<string, string> = {
+  ru: 'Пример ролика, собранного на нашем тестовом сайте-полигоне. Данные в нём вымышленные; ролики по сайтам заказчиков здесь не публикуются.',
+  uk: 'Приклад відео, зібраного на нашому тестовому сайті-полігоні. Дані в ньому вигадані; відео за сайтами замовників тут не публікуються.',
+  en: 'An example video made on our own test site. All data in it is made up; videos of customer sites are never published here.',
+  de: 'Ein Beispielvideo, erstellt auf unserer eigenen Testseite. Alle Daten darin sind erfunden; Videos von Kundenseiten werden hier nicht veröffentlicht.',
+  es: 'Un vídeo de ejemplo creado en nuestro propio sitio de pruebas. Todos los datos son ficticios; aquí nunca se publican vídeos de sitios de clientes.',
 };
 
 /** Тема слота на языке запроса; `null` — ключ не из семейства. */
@@ -178,7 +195,15 @@ export function siteTutorialDemoTopicFor(
   locale: string,
 ): SiteTutorialDemoTopic | null {
   if (!isSiteTutorialDemoKey(subjectKey)) return null;
-  const texts = TOPIC_TEXTS[locale] ?? TOPIC_TEXTS.ru;
-  const n = SITE_TUTORIAL_DEMO_KEYS.indexOf(subjectKey) + 1;
-  return { title: texts.title(n), text: texts.text };
+  const lang = Object.prototype.hasOwnProperty.call(
+    SITE_TUTORIAL_DEMO_TITLES,
+    locale,
+  )
+    ? locale
+    : 'ru';
+  const index = SITE_TUTORIAL_DEMO_KEYS.indexOf(subjectKey);
+  return {
+    title: SITE_TUTORIAL_DEMO_TITLES[lang][index],
+    text: TOPIC_TEXTS[lang],
+  };
 }

@@ -51,6 +51,8 @@ export interface RunnerOptions {
   shutdownGraceMs: number;
   egress: EgressOptions;
   sealPrivateKey: string | null;
+  /** Прежний закрытый ключ (ротация, Ш3-хвост (7)) — только для открытия. */
+  sealPreviousPrivateKey?: string | null;
   heartbeatMs?: number;
   /** Срок аренды без удачного heartbeat (тесты); по умолчанию `WORKER_LIMITS.leaseMs`. */
   leaseMs?: number;
@@ -142,6 +144,24 @@ export class Runner {
     r.abort.abort();
   }
 
+  /**
+   * Открыть конверт под ключ воркера: текущим ключом, затем прежним (ротация).
+   * Чужой ключ, AAD или порча — `credentials_unavailable` (без подробностей).
+   */
+  private openWithKeys(sealed: string, aad: string): Buffer {
+    const keys = [this.o.sealPrivateKey, this.o.sealPreviousPrivateKey].filter(
+      (k): k is string => !!k,
+    );
+    for (const k of keys) {
+      try {
+        return openSealed(k, sealed, aad);
+      } catch {
+        // следующий ключ
+      }
+    }
+    throw new JobError('credentials_unavailable');
+  }
+
   private credentialsFor(job: ClaimedJob): () => Promise<JobCredentials> {
     return async () => {
       if (!job.needsCredentials || !this.o.sealPrivateKey) {
@@ -153,20 +173,17 @@ export class Runner {
       } catch {
         throw new JobError('credentials_unavailable');
       }
-      let plain: Buffer;
-      try {
-        plain = openSealed(
-          this.o.sealPrivateKey,
-          sealed.sealed,
-          sealAad(job.id, job.attempt),
-        );
-      } catch {
-        throw new JobError('credentials_unavailable');
-      }
+      // Текущим ключом, затем прежним: при ротации sites-backend мог ещё не
+      // переключить открытый ключ (порядок §6.25: сначала воркер).
+      const plain = this.openWithKeys(
+        sealed.sealed,
+        sealAad(job.id, job.attempt),
+      );
       let parsed: {
         username?: unknown;
         password?: unknown;
         sessionCookies?: unknown;
+        stored?: unknown;
       };
       try {
         parsed = JSON.parse(plain.toString('utf8')) as typeof parsed;
@@ -175,6 +192,34 @@ export class Runner {
       } finally {
         plain.fill(0);
       }
+      // Ш3-хвост (7): секреты, запечатанные под ключ воркера ПРИ ЗАПИСИ
+      // (учётки только для «Админки»), — внутренние конверты со своим AAD
+      // (кабинет, сайт, учётка, назначение). sites-backend их не открывал.
+      if (Array.isArray(parsed.stored)) {
+        for (const item of parsed.stored as unknown[]) {
+          const it = item as {
+            purpose?: unknown;
+            sealed?: unknown;
+            aad?: unknown;
+          };
+          if (typeof it.sealed !== 'string' || typeof it.aad !== 'string')
+            throw new JobError('credentials_unavailable');
+          const field =
+            it.purpose === 'password'
+              ? 'password'
+              : it.purpose === 'session-cookies'
+                ? 'sessionCookies'
+                : null;
+          if (!field) continue;
+          const inner = this.openWithKeys(it.sealed, it.aad);
+          try {
+            parsed[field] = inner.toString('utf8');
+          } finally {
+            inner.fill(0);
+          }
+        }
+      }
+      parsed.stored = undefined;
       const password =
         typeof parsed.password === 'string' && parsed.password
           ? new SecretBox(parsed.password)
@@ -265,6 +310,7 @@ export class Runner {
         log,
         uploadArtifact: (a) => this.o.api.artifact(job.id, job.leaseToken, a),
         credentials: this.credentialsFor(job),
+        unseal: (sealed, aad) => this.openWithKeys(sealed, aad),
       };
       const result = await exec(ctx);
       if (r.abort.signal.aborted) throw new JobError('cancelled');

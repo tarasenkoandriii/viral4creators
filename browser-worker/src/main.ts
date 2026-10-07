@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     idlePollMaxMs: cfg.idlePollMaxMs,
     shutdownGraceMs: cfg.shutdownGraceMs,
     sealPrivateKey: cfg.sealPrivateKey,
+    sealPreviousPrivateKey: cfg.sealPreviousPrivateKey,
     egress: {
       denyCidrs: cfg.egressDeny,
       allowedPorts: cfg.egressPorts,

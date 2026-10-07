@@ -55,14 +55,17 @@ import {
 } from '../../config/browser-worker-env';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
+import { registrableDomain } from '../site-core/hosts/host-normalize';
 import { BrowserArtifactStorage, artifactPathname } from './artifact-storage';
 import {
   ARTIFACT_LINK_TTL_MS,
   BrowserJobOrigin,
+  OPEN_LIMITS,
   ORIGIN_RULES,
   RUNNING_PER_ACCOUNT,
   isBrowserJobOrigin,
   lockHostName,
+  openAccountId,
   retryDelayMs,
 } from './browser-job-rules';
 import { BrowserJobHandlers, type HandlerJob } from './job-handlers';
@@ -220,12 +223,16 @@ export class BrowserJobsService {
   ): Promise<BrowserJobView> {
     this.assertEnabled();
     const rule = ORIGIN_RULES[input.origin];
+    const purpose = rule.purpose;
+    if (purpose === null) {
+      throw new Error('browser-jobs: задание без хоста — только enqueueOpen');
+    }
     const now = this.now();
     const db = this.sitesDb.forAccount(accountId);
     const host = await db.siteHost.findFirst({
       where: { id: input.hostId, siteId: input.siteId },
     });
-    if (!host || !evaluateHostAccess(host, rule.purpose, now).ok) {
+    if (!host || !evaluateHostAccess(host, purpose, now).ok) {
       throw jobError(
         HttpStatus.CONFLICT,
         'BROWSER_JOB_HOST',
@@ -314,6 +321,85 @@ export class BrowserJobsService {
     }
   }
 
+  /**
+   * Ш3-хвост (3), режим B: задание БЕЗ хоста кабинета (решение владельца
+   * «B ничего не блокирует»). Только источники с `purpose: null`; замок —
+   * точные хосты из параметров (их выбирает канал генератора — хосты
+   * черновика); лимиты — на человека (`subject`) и на хост (`refId` —
+   * регистрируемый домен первого хоста замка) под `pg_advisory_xact_lock`. Прочие защиты воркера
+   * (прокси, замок главного фрейма, стоп-лист, потолки трафика) — те же.
+   */
+  async enqueueOpen(input: {
+    subject: string;
+    origin: BrowserJobOrigin;
+    params: BrowserJobParams;
+    requestedBy: string;
+  }): Promise<BrowserJobView> {
+    this.assertEnabled();
+    const rule = ORIGIN_RULES[input.origin];
+    if (rule.purpose !== null) {
+      throw new Error('browser-jobs: enqueueOpen — только задания без хоста');
+    }
+    const accountId = openAccountId(input.subject);
+    const params = parseJobParams(rule.kind, input.params);
+    // Лимит «на хост» — по РЕГИСТРИРУЕМОМУ домену (аудит захода 7): иначе
+    // поддомены одного сайта (a.shop.com, b.shop.com…) обходили бы потолок.
+    const first = (params as { allowedHosts: string[] }).allowedHosts[0];
+    const bare = first.replace(/:\d+$/, '');
+    const host = registrableDomain(bare) ?? bare;
+    const now = this.now();
+    const dayAgo = new Date(now.getTime() - 24 * 3600_000);
+    const db = this.sys('задание без кабинета (режим B обучалки)');
+    const row = await db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`browser-jobs:open:${accountId}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`browser-jobs:open-host:${host}`}))`;
+      const mine = { accountId, origin: input.origin };
+      const onHost = { refId: host, origin: input.origin };
+      const active = { status: { in: ['queued', 'running'] } };
+      const day = { createdAt: { gt: dayAgo } };
+      const [a, d, ha, hd] = await Promise.all([
+        tx.siteBrowserJob.count({ where: { ...mine, ...active } }),
+        tx.siteBrowserJob.count({ where: { ...mine, ...day } }),
+        tx.siteBrowserJob.count({ where: { ...onHost, ...active } }),
+        tx.siteBrowserJob.count({ where: { ...onHost, ...day } }),
+      ]);
+      if (
+        a >= OPEN_LIMITS.activePerSubject ||
+        ha >= OPEN_LIMITS.activePerHost
+      ) {
+        throw jobError(
+          HttpStatus.TOO_MANY_REQUESTS,
+          'BROWSER_JOB_BUSY',
+          'Предыдущие задания этого вида ещё выполняются — попробуйте позже',
+        );
+      }
+      if (d >= OPEN_LIMITS.dailyPerSubject || hd >= OPEN_LIMITS.dailyPerHost) {
+        throw jobError(
+          HttpStatus.TOO_MANY_REQUESTS,
+          'BROWSER_JOB_DAILY_LIMIT',
+          'Суточный лимит заданий этого вида исчерпан',
+        );
+      }
+      return tx.siteBrowserJob.create({
+        data: {
+          accountId,
+          siteId: null,
+          hostId: null,
+          kind: rule.kind,
+          origin: input.origin,
+          refId: host,
+          params: params as unknown as Prisma.InputJsonValue,
+          priority: rule.priority,
+          maxAttempts: rule.maxAttempts,
+          requestedBy: input.requestedBy,
+          availableAt: now,
+          expiresAt: new Date(now.getTime() + rule.ttlMs),
+        },
+      });
+    });
+    return this.toView(row);
+  }
+
   async view(
     accountId: string,
     jobId: string,
@@ -353,6 +439,27 @@ export class BrowserJobsService {
       where: { id: jobId, status: 'running' },
       data: { cancelRequestedAt: now },
     });
+  }
+
+  /**
+   * Отменить, ТОЛЬКО если задание ещё ждёт (Ш3-хвост (3)): идущее не
+   * трогается — генератор, не дождавшись воркера, выполняет раунд в функции
+   * лишь тогда, когда воркер его гарантированно не получит.
+   */
+  async cancelIfQueued(accountId: string, jobId: string): Promise<boolean> {
+    const db = this.sitesDb.forAccount(accountId);
+    const row = await db.siteBrowserJob.findFirst({ where: { id: jobId } });
+    if (!row) return false;
+    const { count } = await db.siteBrowserJob.updateMany({
+      where: { id: jobId, status: 'queued' },
+      data: {
+        status: 'cancelled',
+        errorCode: 'cancelled',
+        finishedAt: this.now(),
+      },
+    });
+    if (count === 1) await this.notifyFailed(row, 'cancelled');
+    return count === 1;
   }
 
   /** Подписанные ссылки на артефакты задания (≤ 15 мин). */
@@ -408,8 +515,10 @@ export class BrowserJobsService {
     return {
       id: row.id,
       accountId: row.accountId,
-      siteId: row.siteId,
-      hostId: row.hostId,
+      // Задания без кабинета (`tutorial-explore-open`) обработчиков продукта
+      // не имеют — пустые строки сюда не доходят до продуктов.
+      siteId: row.siteId ?? '',
+      hostId: row.hostId ?? '',
       kind: row.kind as BrowserJobKind,
       origin: row.origin as BrowserJobOrigin,
       refId: row.refId,
@@ -632,10 +741,12 @@ export class BrowserJobsService {
     const db = this.sys('выдача заданий воркеру (все кабинеты)');
     // Без открытого ключа конверта учётку воркер не получит — обход за
     // логином не выдаётся вовсе (иначе он упал бы на входе).
+    // Раунд обучалки — тоже: сессия черновика едет конвертом под этот ключ.
     const allowedKinds = kinds.filter(
       (k) =>
         isBrowserJobKind(k) &&
-        (k !== 'admin-crawl' || this.credentialsEnabled()),
+        ((k !== 'admin-crawl' && k !== 'tutorial-explore') ||
+          this.credentialsEnabled()),
     );
     if (!allowedKinds.length || max < 1) return [];
     // Справедливость (аудит Ш3): кабинеты, у которых уже
@@ -677,12 +788,20 @@ export class BrowserJobsService {
       if (!isBrowserJobOrigin(row.origin) || !isBrowserJobKind(row.kind))
         continue;
       // Хост перепроверяется перед КАЖДОЙ выдачей: подтверждение могли
-      // отозвать, пока задание ждало.
-      const host = await db.siteHost.findFirst({
-        where: { id: row.hostId, accountId: row.accountId },
-      });
+      // отозвать, пока задание ждало. Задание без хоста кабинета (режим B
+      // обучалки) проверять нечем — его замок задан параметрами.
       const purpose = ORIGIN_RULES[row.origin].purpose;
-      if (!host || !evaluateHostAccess(host, purpose, now).ok) {
+      const host =
+        purpose === null || !row.hostId
+          ? null
+          : await db.siteHost.findFirst({
+              where: { id: row.hostId, accountId: row.accountId },
+            });
+      const hostOk =
+        purpose === null
+          ? row.hostId === null
+          : !!host && evaluateHostAccess(host, purpose, now).ok;
+      if (!hostOk) {
         await this.finalFail(
           row,
           'host_not_verified',
@@ -745,7 +864,7 @@ export class BrowserJobsService {
         leaseUntil: leaseUntil.toISOString(),
         wallMs: JOB_WALL_MS[row.kind],
         params,
-        needsCredentials: row.kind === 'admin-crawl',
+        needsCredentials: needsCredentials(row),
       });
       const h = this.handlers.get(row.origin);
       if (h?.onStarted) {
@@ -959,9 +1078,13 @@ export class BrowserJobsService {
     hostId: string;
     testAccountId: string;
     attempt: number;
+    /** Продукт аренды Ш2: обход «Админки» или раунд обучалки. */
+    product: 'assist-admin' | 'tutorial';
   }> {
     const row = await this.leased(jobId, token);
-    if (row.kind !== 'admin-crawl' || !row.testAccountId) throw leaseLost();
+    if (!needsCredentials(row) || !row.testAccountId || !row.hostId) {
+      throw leaseLost();
+    }
     const { count } = await this.sys(
       'выдача учётки на попытку',
     ).siteBrowserJob.updateMany({
@@ -988,6 +1111,7 @@ export class BrowserJobsService {
       hostId: row.hostId,
       testAccountId: row.testAccountId,
       attempt: row.attempts,
+      product: row.kind === 'tutorial-explore' ? 'tutorial' : 'assist-admin',
     };
   }
 
@@ -1236,14 +1360,30 @@ export class BrowserJobsService {
   }
 }
 
+/**
+ * Нужна ли заданию учётка Ш2 (секреты — запросом воркера `credentials`):
+ * обход «Админки» и раунд обучалки со входом учёткой реестра.
+ */
+export function needsCredentials(row: {
+  kind: string;
+  testAccountId: string | null;
+}): boolean {
+  return (
+    row.kind === 'admin-crawl' ||
+    (row.kind === 'tutorial-explore' && !!row.testAccountId)
+  );
+}
+
 /** Номера артефактов, на которые ссылается результат. */
 export function artifactRefs(result: unknown): number[] {
   const out: number[] = [];
   const r = result as {
     screenshot?: number | null;
+    videoFrame?: number | null;
     frames?: Array<{ artifact: number }>;
   };
   if (typeof r.screenshot === 'number') out.push(r.screenshot);
+  if (typeof r.videoFrame === 'number') out.push(r.videoFrame);
   if (Array.isArray(r.frames)) for (const f of r.frames) out.push(f.artifact);
   return out;
 }

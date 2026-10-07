@@ -1090,13 +1090,7 @@
     "previewQuota": "Vorschauen heute: noch {{left}} von {{limit}}"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analyse",
-      "Produkt",
-      "Prompt",
-      "Generierung"
-    ],
+    "steps": ["Video", "Analyse", "Produkt", "Prompt", "Generierung"],
     "stepSource": "Szene",
     "errorTitle": "Fehler",
     "prefilledAlert": "Die Produktdaten wurden aus dem Projekt übernommen — das ist eine Kopie zum Startzeitpunkt; Änderungen hier ändern nicht das Produkt selbst.",
@@ -1481,7 +1475,7 @@
     "modeReasonExpired": "Die Bestätigung der Inhaberschaft ist abgelaufen — bei Bedarf können Sie sie erneut durchführen.",
     "modeReasonRevoked": "Die Bestätigung der Inhaberschaft wurde widerrufen.",
     "modeReasonRole": "Im Website-Bereich sind Sie Operator — bestätigen kann der Inhaber oder ein Manager.",
-    "modeReasonOptedOut": "Diese Domain steht auf der Widerspruchsliste des Website-Bereichs — sie kann hier nicht bestätigt werden. Die Aufnahme ist davon nicht betroffen.",
+    "modeReasonOptedOut": "Der Domaininhaber hat sie für Tutorial-Aufnahmen gesperrt — diese Website kann nicht aufgenommen werden.",
     "modeReasonUnsupported": "Die Inhaberschaft lässt sich nur für https-Websites auf dem Standardport bestätigen.",
     "modeBTextRequired": "Bestätigen Sie vor dem Erkunden und Anmelden auf {host} unten, dass das Konto Ihnen gehört.",
     "modeBVerifyHint": "Wenn die Website Ihnen gehört, können Sie sie im Website-Bereich bestätigen — praktisch, wenn Sie den Assistenten damit verbinden. Das ist freiwillig.",
@@ -1575,7 +1569,21 @@
     "discardConfirm": "Tutorial-Entwurf löschen? Aufgezeichnete Schritte, Bilder und gespeicherte Anmeldedaten gehen unwiderruflich verloren. Nur so lässt sich mit einem anderen Link neu beginnen.",
     "voiceLabel": "Jedes Bild vertonen",
     "voiceHint": "Ein Satz zu jedem Bild in der Sprache der Oberfläche, mit Untertiteln desselben Textes. Die Sprachsynthese ist kostenpflichtig, im Rahmen Ihres Tageslimits. Feldwerte (Logins, Telefonnummern, Adressen) werden nie gesprochen.",
-    "openPostprod": "Tempo und Versionen — in der Postproduktion"
+    "openPostprod": "Tempo und Versionen — in der Postproduktion",
+    "verifyErrRateLimited": "Zu oft — Sie können in {minutes} Min. wieder eine Website zum Website-Bereich hinzufügen.",
+    "recordErrOptedOut": "Der Inhaber dieser Website erlaubt keine Tutorial-Aufnahmen darauf — wählen Sie eine andere Website.",
+    "recordErrUnavailable": "Die Aufnahme von Website-Tutorials ist vorübergehend nicht verfügbar — bitte versuchen Sie es später erneut.",
+    "loginErrAttempts": "Zu viele fehlgeschlagene Anmeldungen auf dieser Website — versuchen Sie es in {minutes} Min. erneut oder melden Sie sich live an.",
+    "loginErrIdentities": "Auf dieser Website wurden in 30 Tagen bereits 10 verschiedene Logins verwendet — melden Sie sich mit einem davon oder live an.",
+    "dangerErrConfirm": "Das sieht nach einer unumkehrbaren Aktion auf der Website aus — bestätigen Sie den Klick.",
+    "assistLinkedTitle": "Mit dem Assistenten verknüpft",
+    "assistLinkedText": "Website des Assistenten: {site}. Nach der Freigabe erscheint das Video in seiner Sammlung.",
+    "assistLinkTitle": "Mit dem Assistenten verknüpfen",
+    "assistLinkHint": "Nach der Freigabe erscheint dieses Tutorial-Video beim KI-Assistenten der gewählten Website.",
+    "assistLinkSite": "Website des Assistenten",
+    "assistLinkButton": "Verknüpfen",
+    "assistLinkDone": "Der Entwurf ist mit dem Assistenten verknüpft.",
+    "assistLinkErrUnavailable": "Eine Verknüpfung mit diesem Assistenten ist gerade nicht möglich — dafür sind Inhaber- oder Managerrechte für die Website nötig."
   },
   "sketch": {
     "button": "KI-Skizze",

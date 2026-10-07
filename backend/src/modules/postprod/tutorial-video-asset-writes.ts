@@ -42,6 +42,23 @@ export async function activateOnAsset(
   return res.count > 0;
 }
 
+/**
+ * Ролик собран сразу с унаследованным темпом пары (заход 7): его файл уже
+ * и есть версия — только указатель, файл и длительность не меняются.
+ * Compare-and-set: активная версия, выбранная раньше, не затирается.
+ */
+export async function markActiveVersionIfUnset(
+  prisma: PrismaService,
+  assetId: string,
+  versionId: string,
+): Promise<boolean> {
+  const res = (await prisma.tutorialVideoAsset.updateMany({
+    where: { id: assetId, activeVersionId: null },
+    data: { activeVersionId: versionId },
+  })) as { count: number };
+  return res.count > 0;
+}
+
 /** Записать (или снять) монтажный manifest ролика. */
 export async function writeAssetManifest(
   prisma: PrismaService,

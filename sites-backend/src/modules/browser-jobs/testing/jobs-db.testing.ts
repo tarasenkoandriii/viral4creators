@@ -82,3 +82,21 @@ export function serializeQueueTests(): void {
     }
   });
 }
+
+/** Ожидающие и идущие задания базы теста — в `cancelled` (чистая очередь). */
+export async function cancelActiveJobs(prisma: PrismaService): Promise<void> {
+  await prisma.siteBrowserJob.updateMany({
+    where: { status: { in: ['queued', 'running'] } },
+    data: { status: 'cancelled' },
+  });
+}
+
+/** Уборка заданий без кабинета (`gen-<subject>`) после спека. */
+export async function deleteJobsOf(
+  prisma: PrismaService,
+  accountIds: string[],
+): Promise<void> {
+  await prisma.siteBrowserJob.deleteMany({
+    where: { accountId: { in: accountIds } },
+  });
+}

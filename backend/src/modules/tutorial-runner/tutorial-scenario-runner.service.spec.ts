@@ -27,9 +27,35 @@ jest.mock('../../common/headless-chromium', () => ({
   },
 }));
 
+// Валидатор шагов перед прогоном (заход 7, аудит): прежние тесты этого
+// набора пишут шаги произвольными селекторами (`#next`, `data-testid`) —
+// они проверяют прогон и сборку, а не каталог хуков. Поэтому по умолчанию
+// валидатор пропускает шаги как есть, а свои тесты включают настоящий
+// (`mockValidator.real = true`). Сам валидатор проверен в своих наборах.
+const mockValidator = { real: false };
+jest.mock('../tutorial-scenario/tutorial-scenario-prompt', () => {
+  const actual = jest.requireActual(
+    '../tutorial-scenario/tutorial-scenario-prompt',
+  );
+  return {
+    ...actual,
+    validateScenarioSteps: (steps: unknown, subjectKey?: string) =>
+      mockValidator.real
+        ? actual.validateScenarioSteps(steps, subjectKey)
+        : {
+            ok: true,
+            steps,
+            droppedNarrations: [],
+            droppedPaidOperations: [],
+          },
+  };
+});
+
 import { GenerationStatus } from '../../common/types/generation.types';
 import { TutorialScenarioRunnerService } from './tutorial-scenario-runner.service';
 import * as assembly from './tutorial-video-assembly';
+import { planTempo } from './tutorial-tempo';
+import { tempoInputs } from './tutorial-manifest';
 import * as themes from './tutorial-theme-rotation';
 
 const ENV_KEYS = [
@@ -4391,16 +4417,16 @@ describe('TutorialScenarioRunnerService — аудит кронов 06.10.2026',
   });
 
   describe('прошедший сценарий не повторяется 20 ч (находка 9) — по теме', () => {
-    it('SQL отсекает только платность; «свежий ok» решается по теме в памяти', async () => {
+    it('SQL не отсекает ни свежесть, ни платность; «свежий ok» решается по теме в памяти', async () => {
       const built = build([]);
       await built.service.run();
       const args = built.prisma.tutorialScenario.findMany.mock.calls[0][0];
       // Свежесть строки в SQL больше не фильтруется: колонка
       // `lastRunAt` одна на обе темы, и свежий светлый прогон отсекал
-      // бы ни разу не снятую тёмную тему.
-      expect(args.where.AND).toEqual([
-        { OR: [{ costly: false }, { approved: true }] },
-      ]);
+      // бы ни разу не снятую тёмную тему. Платность — тоже (заход 7:
+      // платный клик не нажимается никогда, одобрение денег не берегло).
+      expect(args.where.AND).toBeUndefined();
+      expect(args.where.lastRunAt).toBeUndefined();
       expect(args.take).toBe(500);
     });
 
@@ -5435,6 +5461,7 @@ describe('темп в постпродакшене: раннер и сервис
         .fn()
         .mockResolvedValue({ polled: 0, completed: 0, failed: 0 }),
       captureScenarioSources: jest.fn().mockResolvedValue(undefined),
+      adoptInheritedTempo: jest.fn().mockResolvedValue(undefined),
       deleteAssetExtras: jest.fn().mockResolvedValue(undefined),
     };
     const service = new TutorialScenarioRunnerService(
@@ -6156,5 +6183,372 @@ describe('Ш5 (12): подметальщик удалил одобренный �
     ]);
     const result = await service.pollAssemblies();
     expect(result.swept).toBe(1);
+  });
+});
+
+// ── заход 7 (07.10.2026) ─────────────────────────────────────────────
+
+describe('заход 7: темп пары на новом ролике сценарного пути', () => {
+  const NARRATED = {
+    id: 'ts-n',
+    subjectKey: '3',
+    locale: 'ru',
+    steps: [
+      { kind: 'goto', route: 'generate', narration: 'Открываем мастер.' },
+      { kind: 'click', selector: '#next', narration: 'Нажимаем «Далее».' },
+    ],
+  };
+
+  function tempoRun(
+    inherited: { factor: number; versionId: string } | null,
+    settings: Record<string, string | null> = {
+      'postprod.tutorialVoice': 'on',
+    },
+  ) {
+    const page = buildFakePage({ screenshot: true });
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const built = build([NARRATED]);
+    built.ffmpeg.configured.mockReturnValue(true);
+    built.ffmpeg.submit.mockResolvedValue({ jobId: 'job-1', status: 'queued' });
+    built.settings.get.mockImplementation(
+      async (key: string) => settings[key] ?? null,
+    );
+    const versions = {
+      inheritedTempoFor: jest.fn().mockResolvedValue(inherited),
+      copyFramesToSources: jest.fn(async (id: string, frames: any[]) =>
+        frames.map((f) => ({
+          ...f,
+          image: {
+            url: `https://blob.example.com/tutorial-video-sources/${id}/frames/${f.stepIndex}.png`,
+            pathname: `tutorial-video-sources/${id}/frames/${f.stepIndex}.png`,
+          },
+        })),
+      ),
+      pollVersions: jest
+        .fn()
+        .mockResolvedValue({ polled: 0, completed: 0, failed: 0 }),
+      captureScenarioSources: jest.fn().mockResolvedValue(undefined),
+      adoptInheritedTempo: jest.fn().mockResolvedValue(undefined),
+      deleteAssetExtras: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new TutorialScenarioRunnerService(
+      built.prisma as any,
+      built.notify as any,
+      built.blob as any,
+      built.ffmpeg as any,
+      built.settings as any,
+      built.tts as any,
+      built.aiUsage as any,
+      undefined,
+      versions as any,
+    );
+    return { ...built, service, versions };
+  }
+
+  function pendingWrite(built: ReturnType<typeof tempoRun>) {
+    return built.prisma.tutorialVideoAsset.updateMany.mock.calls
+      .map((c: any[]) => c[0])
+      .find((a: any) => a.data?.assemblyStatus === 'pending');
+  }
+
+  it('темп пары выбран — одна сборка сразу с ним; manifest хранит исходную сетку и appliedTempo', async () => {
+    const plain = tempoRun(null);
+    await plain.service.run();
+    const plainCmd = plain.ffmpeg.submit.mock.calls[0][0].commands[0];
+    const plainDuration = pendingWrite(plain).data.durationMs;
+
+    const built = tempoRun({ factor: 0.4, versionId: 'v-old' });
+    await built.service.run();
+    expect(built.versions.inheritedTempoFor).toHaveBeenCalledWith({
+      subjectKey: '3',
+      locale: 'ru',
+      theme: 'light',
+    });
+    // Одна платная задача, не две.
+    expect(built.ffmpeg.submit).toHaveBeenCalledTimes(1);
+    const cmd = built.ffmpeg.submit.mock.calls[0][0].commands[0];
+    const pending = pendingWrite(built);
+    const m = pending.data.tempoManifest;
+    expect(m.appliedTempo).toEqual({ factor: 0.4, fromVersionId: 'v-old' });
+    // Исходники сохранены ДО оплаты сборки — manifest сразу постоянный.
+    expect(built.versions.copyFramesToSources).toHaveBeenCalledTimes(1);
+    expect(
+      built.versions.copyFramesToSources.mock.invocationCallOrder[0],
+    ).toBeLessThan(built.ffmpeg.submit.mock.invocationCallOrder[0]);
+    expect(m.storage).toBe('sources');
+    expect(m.frames[0].image.pathname).toMatch(/^tutorial-video-sources\//);
+    // Кадры в команде — по плану темпа от тех же кадров manifest…
+    const plan = planTempo(tempoInputs(m), { factor: 0.4, motion: m.motion })!;
+    m.frames.forEach((f: any, i: number) => {
+      expect(cmd).toContain(`-t ${plan.seconds[i]} -i {{frame${f.stepIndex}}}`);
+    });
+    // …а manifest — исходная сетка (та же, что у обычной сборки).
+    m.frames.forEach((f: any) => {
+      expect(plainCmd).toContain(
+        `-t ${f.baseSeconds} -i {{frame${f.stepIndex}}}`,
+      );
+    });
+    expect(cmd).not.toEqual(plainCmd);
+    expect(pending.data.durationMs).toBe(plan.durationMs);
+    expect(pending.data.durationMs).toBeLessThan(plainDuration);
+    // Отпечаток — по исходной сетке: смена темпа не повод пересобирать.
+    expect(
+      built.prisma.tutorialVideoAsset.create.mock.calls[0][0].data.contentHash,
+    ).toBe(
+      plain.prisma.tutorialVideoAsset.create.mock.calls[0][0].data.contentHash,
+    );
+  });
+
+  it('подписи — по сетке темпа, а не исходной', async () => {
+    const settings = {
+      'postprod.tutorialVoice': 'on',
+    };
+    const plain = tempoRun(null, settings);
+    await plain.service.run();
+    const built = tempoRun({ factor: 0, versionId: 'v-old' }, settings);
+    await built.service.run();
+    const ass = (b: ReturnType<typeof tempoRun>) =>
+      b.blob.uploadBuffer.mock.calls
+        .filter(([p]: [string]) => p.endsWith('.ass'))
+        .map(([, buf]: [string, Buffer]) => buf.toString('utf8'))[0];
+    expect(ass(plain)).toBeDefined();
+    expect(ass(built)).toBeDefined();
+    expect(ass(built)).not.toEqual(ass(plain));
+  });
+
+  it('исходники не сохранились — ролик собирается обычным, одной сборкой', async () => {
+    const plain = tempoRun(null);
+    await plain.service.run();
+    const built = tempoRun({ factor: 0.4, versionId: 'v-old' });
+    built.versions.copyFramesToSources.mockResolvedValue(null as any);
+    await built.service.run();
+    expect(built.ffmpeg.submit).toHaveBeenCalledTimes(1);
+    expect(built.ffmpeg.submit.mock.calls[0][0].commands[0]).toBe(
+      plain.ffmpeg.submit.mock.calls[0][0].commands[0],
+    );
+    const m = pendingWrite(built).data.tempoManifest;
+    expect(m.appliedTempo).toBeUndefined();
+    expect(m.storage).toBe('transit');
+  });
+
+  it('темпа у пары нет — сборка как прежде, appliedTempo нет', async () => {
+    const built = tempoRun(null);
+    await built.service.run();
+    expect(pendingWrite(built).data.tempoManifest.appliedTempo).toBeUndefined();
+  });
+
+  it('при complete — исходники, затем запись унаследованного темпа, затем очередь качества', async () => {
+    const built = build([]);
+    const versions = {
+      pollVersions: jest
+        .fn()
+        .mockResolvedValue({ polled: 0, completed: 0, failed: 0 }),
+      captureScenarioSources: jest.fn().mockResolvedValue(undefined),
+      adoptInheritedTempo: jest.fn().mockResolvedValue(undefined),
+      deleteAssetExtras: jest.fn().mockResolvedValue(undefined),
+    };
+    const quality = {
+      enqueueAssembled: jest.fn().mockResolvedValue(true),
+      processQueue: jest.fn().mockResolvedValue({
+        processed: 0,
+        completed: 0,
+        deferred: 0,
+        retried: 0,
+        errors: 0,
+      }),
+      releaseAssetFiles: jest.fn().mockResolvedValue({ busy: false }),
+    };
+    const service = new TutorialScenarioRunnerService(
+      built.prisma as any,
+      built.notify as any,
+      built.blob as any,
+      built.ffmpeg as any,
+      built.settings as any,
+      built.tts as any,
+      built.aiUsage as any,
+      undefined,
+      versions as any,
+      quality as any,
+    );
+    built.ffmpeg.configured.mockReturnValue(true);
+    built.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'tutorial.mp4': 'https://ffmpeg.example/out.mp4' },
+    });
+    const pending = {
+      id: 'tva-t',
+      subjectKey: '1',
+      locale: 'ru',
+      scenarioId: 'ts-1',
+      clientSiteDraftId: null,
+      assemblyJobId: 'job-1',
+      assemblyStartedAt: new Date(),
+      width: 720,
+      height: 1560,
+    };
+    built.prisma.tutorialVideoAsset.findMany.mockImplementation(
+      async (args: any) =>
+        args?.where?.assemblyStatus === 'pending' ? [pending] : [],
+    );
+    const fetchSpy = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => new Uint8Array(4096).buffer,
+    } as any);
+    await service.pollAssemblies();
+    fetchSpy.mockRestore();
+    expect(versions.adoptInheritedTempo).toHaveBeenCalledWith('tva-t');
+    const order = (m: jest.Mock) => m.mock.invocationCallOrder[0];
+    expect(order(versions.captureScenarioSources)).toBeLessThan(
+      order(versions.adoptInheritedTempo),
+    );
+    expect(order(versions.adoptInheritedTempo)).toBeLessThan(
+      order(quality.enqueueAssembled),
+    );
+  });
+});
+
+describe('заход 7: платный сценарий (8/ru) — в регрессии без одобрения', () => {
+  const COSTLY = {
+    id: 'ts-8',
+    subjectKey: '8',
+    locale: 'ru',
+    costly: true,
+    approved: false,
+    steps: [
+      { kind: 'goto', route: 'generate' },
+      {
+        kind: 'triggerPaidOperation',
+        operation: 'generation',
+        model: 'grok-imagine-video',
+        expectedUnits: { seconds: 8 },
+        note: 'рендер',
+      },
+      { kind: 'click', selector: '[data-qa="video-generate"]' },
+    ],
+  };
+
+  it('выборка не фильтрует costly/approved; платный клик пропущен, денег нет', async () => {
+    const page = buildFakePage({ screenshot: true });
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const built = build([COSTLY]);
+    const result = await built.service.run();
+    const where = JSON.stringify(
+      built.prisma.tutorialScenario.findMany.mock.calls.map(
+        (c: any[]) => c[0]?.where,
+      ),
+    );
+    expect(where).not.toContain('costly');
+    expect(where).not.toContain('approved');
+    expect(result.passed).toBe(1);
+    expect(result.paidClicksSkipped).toBe(1);
+    expect(page.locator).not.toHaveBeenCalledWith('[data-qa="video-generate"]');
+  });
+});
+
+describe('заход 7: подметальщик и файлы Gemini', () => {
+  function withQuality(busy: boolean) {
+    const built = build([]);
+    const quality = {
+      enqueueAssembled: jest.fn(),
+      processQueue: jest.fn().mockResolvedValue({ skipped: 'выключено' }),
+      releaseAssetFiles: jest.fn().mockResolvedValue({ busy }),
+    };
+    const service = new TutorialScenarioRunnerService(
+      built.prisma as any,
+      built.notify as any,
+      built.blob as any,
+      built.ffmpeg as any,
+      built.settings as any,
+      built.tts as any,
+      built.aiUsage as any,
+      undefined,
+      undefined,
+      quality as any,
+    );
+    const video = (id: string) => ({
+      id,
+      subjectKey: '1',
+      locale: 'ru',
+      assemblyStatus: 'complete',
+      reviewed: false,
+      clientSiteDraftId: null,
+      blobUrl: `https://blob.example.com/tutorial-videos/1/${id}.mp4`,
+    });
+    stubAssets(built.prisma, [video('today'), video('old')]);
+    return { ...built, service, quality };
+  }
+
+  it('файлы Gemini убираются ДО удаления строки', async () => {
+    const { service, prisma, quality } = withQuality(false);
+    const res = await service.pollAssemblies();
+    expect(res.swept).toBe(1);
+    expect(quality.releaseAssetFiles).toHaveBeenCalledWith('old');
+    expect(quality.releaseAssetFiles.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.tutorialVideoAsset.delete.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('идёт проверка (живая аренда) — ролик не удаляется в этот тик', async () => {
+    const { service, prisma, blob } = withQuality(true);
+    const res = await service.pollAssemblies();
+    expect(res.swept).toBe(0);
+    expect(prisma.tutorialVideoAsset.delete).not.toHaveBeenCalled();
+    expect(blob.deleteBlob).not.toHaveBeenCalled();
+  });
+});
+
+describe('заход 7: шаги из базы перепроверяются валидатором перед прогоном', () => {
+  beforeEach(() => {
+    mockValidator.real = true;
+  });
+  afterEach(() => {
+    mockValidator.real = false;
+  });
+
+  it('селектор не из каталога — прогон failed с причиной, браузерная страница не открывается', async () => {
+    const page = buildFakePage({ screenshot: true });
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const built = build([
+      {
+        ...SCENARIO_OK,
+        steps: [
+          { kind: 'goto', route: 'generate' },
+          // Платная кнопка мимо канона — то, что валидатор и ловит.
+          { kind: 'click', selector: 'button[data-qa=video-generate]' },
+        ],
+      },
+    ]);
+    const result = await built.service.run();
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0].error).toContain('шаги не проходят правила');
+    expect(browser.newPage).not.toHaveBeenCalled();
+    expect(page.locator).not.toHaveBeenCalled();
+  });
+
+  it('годные шаги — прогон как прежде', async () => {
+    const page = buildFakePage({ screenshot: true });
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const built = build([SCENARIO_OK]);
+    const result = await built.service.run();
+    expect(result.passed).toBe(1);
   });
 });

@@ -30,6 +30,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -60,9 +62,23 @@ import {
   replaceLastScreenshot,
   undoLastRound,
 } from './draft-rounds';
-import { PAGE_EXPLORER, PageExplorer, RoundAction } from './page-explorer';
+import {
+  EXPLORER_VIA_WORKER_ENV,
+  ExploreRequester,
+  FRAMES_VIA_WORKER_ENV,
+  PAGE_EXPLORER,
+  PageExplorer,
+  RoundAction,
+  flagOn,
+} from './page-explorer';
 import { PageExploration } from './page-exploration.types';
-import { ClientSiteTutorialUsageService } from './client-site-tutorial-usage.service';
+import {
+  ClientSiteTutorialUsageService,
+  LOGIN_FAILURES_PER_WINDOW,
+  LOGIN_IDENTITIES_PER_HOST,
+  LOGIN_IDENTITY_WINDOW_DAYS,
+} from './client-site-tutorial-usage.service';
+import { dangerKindsFor } from './danger-words';
 import {
   CredentialsTooLargeError,
   DraftCredentialField,
@@ -121,6 +137,7 @@ import {
   SiteMode,
 } from './site-access.service';
 import type { AccountConsentLocale } from './account-consent';
+import { consentDomainOf } from './account-consent';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 
 /** Ключ шифрования cookie jar и кред черновика. Своя переменная, а НЕ
@@ -319,6 +336,8 @@ export class ClientSiteTutorialService {
 
     await this.assertSafeUrl(url);
     const origin = new URL(url).origin;
+    // П-Т9: выключатель и глобальный потолок — до журнала и до слота.
+    await this.assertAvailable('round');
 
     // Ш1/П-Т2: режим по статусу хоста и П-Т2 (ворота или журнал) — до
     // слота лимита и до браузера.
@@ -333,6 +352,7 @@ export class ClientSiteTutorialService {
         cookies: [],
         actions: [],
         allowedOrigin: origin,
+        ...(await this.requesterOf(userId)),
       });
     } catch (err) {
       await this.usage.releaseRound(userId);
@@ -479,6 +499,10 @@ export class ClientSiteTutorialService {
       expectedVersion: number;
       fills: Array<{ selector: string; value: string }>;
       clickSelector?: string;
+      /** Видимый текст выбранной кнопки (из `elements[]` прошлого раунда). */
+      clickText?: string;
+      /** П-Т13: человек подтвердил «опасный» клик в диалоге мастера. */
+      confirmDanger?: boolean;
     },
     ipHash: string | null = null,
   ): Promise<RoundResult> {
@@ -511,7 +535,8 @@ export class ClientSiteTutorialService {
     // обходились подтверждение прав в B: черновик, начатый в A (хост потом
     // истёк/отозван), до Ш1 или до новой версии текста, водился бы по сайту
     // дальше без галочки. До занятия версии, слота и браузера.
-    await this.gateDrive(userId, draft, ipHash);
+    const access = await this.gateDrive(userId, draft, ipHash);
+    this.assertDangerConfirmed(access, input);
 
     return this.runAndPersist(
       userId,
@@ -519,9 +544,17 @@ export class ClientSiteTutorialService {
       input.expectedVersion,
       actions,
       steps,
-      // Ввод в поле, похожее на пароль/код, — вход (аудит Э6, Д1); тип
-      // поля на странице проверяет ещё и разведчик (`sensitiveFill`).
-      { login: input.fills.some((f) => isSensitiveSelector(f.selector)) },
+      // Два разных признака:
+      //  • `credentialRound` (абьюз-лимиты П-Т6/П-Т8) — по ФАКТУ входа
+      //    (`round.sensitiveFill`) внутри `runAndPersist`; здесь лишь
+      //    «раунд с полями может быть входом» → предпроверка П-Т8;
+      //  • `login` (липкий `loginUsedAt`, приватность ролика Э6) —
+      //    КОНСЕРВАТИВНО по имени селектора: лишняя пометка только прячет
+      //    ролик от посетителей, это безопасная сторона.
+      {
+        credentialRound: input.fills.length > 0,
+        login: input.fills.some((f) => isSensitiveSelector(f.selector)),
+      },
     );
   }
 
@@ -557,7 +590,10 @@ export class ClientSiteTutorialService {
     if (input.fields.some((f) => looksLikeRegistryRef(f.value))) {
       throw new BadRequestException('недопустимое значение поля формы входа');
     }
-    // Ш1/П-Т2: до шифрования кред и до занятия версии.
+    // Ш1/П-Т2: до шифрования кред и до занятия версии. Предпроверку П-Т8
+    // и учёт П-Т6/П-Т8 ведёт `runAndPersist` (`credentialRound`): до
+    // раунда — отказ при активной блокировке, после — по факту входа
+    // (поле пароля на странице), а не по имени селектора.
     await this.gateDrive(userId, draft, ipHash);
 
     const actions: RoundAction[] = [
@@ -620,8 +656,15 @@ export class ClientSiteTutorialService {
       input.expectedVersion,
       actions,
       steps,
-      // Успешный `/login` — вход всегда (аудит Э6, Д1).
-      { fields, secretsOneShot: input.forgetAfterBuild, stored, login: true },
+      // Успешный `/login` — вход всегда (аудит Э6, Д1); `credentialRound`
+      // включает П-Т8 (предпроверка + счёт) и П-Т6 (по факту).
+      {
+        fields,
+        secretsOneShot: input.forgetAfterBuild,
+        stored,
+        login: true,
+        credentialRound: true,
+      },
     );
   }
 
@@ -739,6 +782,17 @@ export class ClientSiteTutorialService {
           username: account.username,
           password: account.password,
           ...(input.pick ? { pick: input.pick } : {}),
+          // Ш3-хвост (3): учётка реестра — раунд входа может уйти на
+          // браузерный воркер (пароль он возьмёт своей арендой Ш2, через
+          // очередь пароль не идёт); без telegramId — вход в функции.
+          ...(user.telegramId
+            ? {
+                registry: {
+                  telegramId: user.telegramId,
+                  testAccountId: id,
+                },
+              }
+            : {}),
         },
       },
     );
@@ -801,6 +855,9 @@ export class ClientSiteTutorialService {
     // не должно сжигать версию и слот).
     const stored = await this.readSecrets(userId, draft);
 
+    // П-Т9 — до занятия версии.
+    await this.assertAvailable('round');
+
     // Переигровка прогоняет ВСЕ оставшиеся шаги, включая клики, — то
     // есть повтор отмены нажимает их на сайте заказчика второй раз.
     // Занимаем версию до браузера, как и обычный раунд.
@@ -814,6 +871,8 @@ export class ClientSiteTutorialService {
         secrets: secretsMap(stored.fields),
         passwordOnly: stored.passwordOnly,
         allowedOrigin: draft.baseUrl,
+        // Заход 7: режим сайта для воркера (A — переигровка в функции).
+        ...(await this.requesterOf(userId)),
       });
     } catch (err) {
       await this.usage.releaseRound(userId);
@@ -1064,6 +1123,8 @@ export class ClientSiteTutorialService {
     // дорогой ресурс: каждая держит чужой браузер минутами и занимает
     // место под общим потолком реле. Реле про пользователей не знает и
     // знать не должно, поэтому счёт — только здесь.
+    // П-Т9: выключатель и глобальный потолок живых сессий.
+    await this.assertAvailable('live');
     if (!(await this.usage.reserveLiveSession(userId))) {
       throw new ForbiddenException(
         `дневной лимит живых входов исчерпан (${this.usage.liveSessionsLimit} в сутки) — продолжите завтра`,
@@ -1179,6 +1240,7 @@ export class ClientSiteTutorialService {
 
     // Обычный раунд поверх только что добытой сессии — никаких
     // действий, только открыть авторизованную страницу и посмотреть.
+    await this.assertAvailable('round');
     await this.reserveRound(userId);
     let round;
     try {
@@ -1187,12 +1249,15 @@ export class ClientSiteTutorialService {
         cookies: sessionCookies,
         actions: [],
         allowedOrigin: draft.baseUrl,
+        ...(await this.requesterOf(userId)),
       });
     } catch (err) {
       await this.usage.releaseRound(userId);
       throw err;
     }
     await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
+    // П-Т8: живой вход удался — счёт неудачных входов на хост сброшен.
+    await this.usage.clearLoginFailures(userId, hostOf(draft.baseUrl));
 
     // Маркерный шаг вместо буквальной последовательности: интерактивно
     // пройденную капчу или 2FA воспроизвести нельзя в принципе (§7.4.5),
@@ -1340,8 +1405,23 @@ export class ClientSiteTutorialService {
     url?: string,
   ): Promise<SiteAccessView> {
     await this.assertOwnProject(userId, projectId);
+    // Ш1-хвост (L5780): тариф — как у остальных платных действий обучалки,
+    // частота — `VERIFY_SITE_PER_HOUR` на человека.
+    await this.plans.assertUser(userId, 'siteTutorial');
     const draft = await this.findDraft(projectId);
     const target = await this.accessUrl(draft, url);
+    const waitMs = await this.usage.hitVerifySite(userId);
+    if (waitMs > 0) {
+      throw new HttpException(
+        {
+          error: VERIFY_SITE_RATE_LIMITED,
+          code: VERIFY_SITE_RATE_LIMITED,
+          message: `слишком часто: добавлять сайт в кабинет сайтов можно ещё раз через ${minutesOf(waitMs)} мин`,
+          retryAfterMs: waitMs,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
     const access = await this.access.registerHost(userId, target);
     if (draft) await this.access.persistMode(draft.id, access);
     return access;
@@ -1380,6 +1460,7 @@ export class ClientSiteTutorialService {
     // Д1): флаг — до браузера, чтобы карта из этого снимка не ушла.
     if (loginEvidence) await this.markLoginUsed(draft);
 
+    await this.assertAvailable('round');
     await this.reserveRound(userId);
     let round;
     try {
@@ -1388,6 +1469,7 @@ export class ClientSiteTutorialService {
         cookies,
         actions: [],
         allowedOrigin: draft.baseUrl,
+        ...(await this.requesterOf(userId)),
       });
     } catch (err) {
       await this.usage.releaseRound(userId);
@@ -1523,6 +1605,13 @@ export class ClientSiteTutorialService {
       stored?: DraftSecrets;
       /** Раунд — вход сам по себе (`/login`, ввод в поле пароля/кода). */
       login?: boolean;
+      /**
+       * Раунд МОЖЕТ вводить учётные данные пользователя (`/login`, `/step`
+       * с полями): предпроверка П-Т8 до браузера и учёт П-Т6/П-Т8 по
+       * факту после. Вход учёткой реестра (`autoLogin`) и переигровка
+       * `/undo` сюда НЕ входят — это не перебор чужих логинов.
+       */
+      credentialRound?: boolean;
       /** Ш2-хвост (3): вход учёткой реестра — поля находит разведчик. */
       autoLogin?: AutoLoginRequest;
     } = {},
@@ -1538,6 +1627,12 @@ export class ClientSiteTutorialService {
     // версию, ни слот лимита.
     const stored = extra.stored ?? (await this.readSecrets(userId, draft));
 
+    // П-Т9 и П-Т8 — до занятия версии (отказ не сжигает ни версию, ни слот).
+    await this.assertAvailable('round');
+    if (extra.credentialRound === true) {
+      await this.assertLoginAttemptAllowed(userId, draft);
+    }
+
     // Версия занимается ДО браузера — см. `claimRound`. Повтор того же
     // запроса (оборвалась связь, клиент сдался по таймауту) иначе
     // нажимал бы кнопку на сайте заказчика ВТОРОЙ раз.
@@ -1552,12 +1647,35 @@ export class ClientSiteTutorialService {
         actions,
         allowedOrigin: draft.baseUrl,
         ...(extra.autoLogin ? { autoLogin: extra.autoLogin } : {}),
+        ...(await this.requesterOf(userId)),
       });
     } catch (err) {
       await this.usage.releaseRound(userId);
       throw err;
     }
     await this.assertStillInside(draft.baseUrl, round.exploration.currentUrl);
+
+    // П-Т6/П-Т8 по ФАКТУ: раунд был входом, только если разведчик
+    // заполнил настоящее поле пароля/кода (`sensitiveFill`), а не по имени
+    // селектора. `/step` с обычными полями сюда не попадает.
+    if (extra.credentialRound === true && round.sensitiveFill === true) {
+      const submitted = actions.filter(
+        (a): a is Extract<RoundAction, { kind: 'fill' }> => a.kind === 'fill',
+      );
+      // П-Т8: неудача — поле пароля осталось на той же странице (точный
+      // критерий: тот же селектор и тот же URL без query/fragment).
+      await this.countLoginOutcome(userId, draft, url, round, submitted);
+      // П-Т6: учёт/лимит РАЗНЫХ логинов на хост — ПОСЛЕ раунда (identity
+      // определяется по полю, которое разведчик счёл username) и после
+      // слота (аудит захода 7, п.3). Отказ сверх порога — 429; слот не
+      // возвращаем: раунд уже отработал в браузере.
+      await this.reserveLoginIdentity(
+        userId,
+        draft,
+        submitted,
+        round.exploration.elements,
+      );
+    }
 
     const planned =
       typeof plan === 'function'
@@ -1642,9 +1760,164 @@ export class ClientSiteTutorialService {
     userId: string,
     draft: DraftRow,
     ipHash: string | null,
-  ): Promise<void> {
+  ): Promise<SiteAccessView> {
     const access = await this.access.resolveForDraft(userId, draft);
     await this.access.gate(userId, draft.baseUrl, access, ipHash);
+    return access;
+  }
+
+  /**
+   * П-Т9: выключатель из админки (`PlatformSetting`
+   * `site_tutorial_paused`) и глобальный суточный потолок раундов/живых
+   * сессий. Человеку — честное «временно недоступно» (503), а не отказ по
+   * его сайту; `reason` — для экрана.
+   */
+  private async assertAvailable(kind: 'round' | 'live'): Promise<void> {
+    const verdict = await this.usage.availability(kind);
+    if (verdict === 'ok') return;
+    throw new ServiceUnavailableException({
+      error: TUTORIAL_TEMPORARILY_UNAVAILABLE,
+      code: TUTORIAL_TEMPORARILY_UNAVAILABLE,
+      message:
+        verdict === 'paused'
+          ? 'запись обучалок по сайту временно недоступна — попробуйте позже'
+          : 'запись обучалок по сайту сегодня временно недоступна — попробуйте завтра',
+      reason: verdict,
+    });
+  }
+
+  /**
+   * П-Т13 (режим B): клик по кнопке, похожей на необратимое действие
+   * (`danger-words.ts`), — только с подтверждением этого клика
+   * (`confirmDanger`). Не запрет: мастер показывает диалог «Нажать?» ДО
+   * запроса и шлёт флаг сам, тупика для человека нет. Текст кнопки
+   * сервер видел раундом раньше в `elements[]`; здесь он приходит
+   * `clickText` (и проверяется сам селектор — в нём часто говорящее имя).
+   * В режиме A — только предупреждение, как раньше.
+   */
+  private assertDangerConfirmed(
+    access: SiteAccessView,
+    input: {
+      clickSelector?: string;
+      clickText?: string;
+      confirmDanger?: boolean;
+    },
+  ): void {
+    if (access.mode !== 'B' || !input.clickSelector || input.confirmDanger) {
+      return;
+    }
+    // Совместимость (аудит захода 7, п.5а): старый закэшированный бандл
+    // TMA подтверждает клик своим диалогом, но поля `clickText` не шлёт
+    // вовсе и `confirmDanger` отправить не может — 409 стал бы для него
+    // тупиком. Признак нового клиента — наличие поля `clickText` (он
+    // всегда его шлёт при клике, пусть и пустым). Нет поля — старый
+    // клиент: не блокируем, только предупреждаем в лог.
+    if (input.clickText === undefined) {
+      this.logger.warn(
+        'П-Т13: /step без clickText — старый клиент TMA; «опасный» клик пропущен без серверного подтверждения',
+      );
+      return;
+    }
+    const kinds = [
+      ...new Set([
+        ...dangerKindsFor(input.clickText),
+        ...dangerKindsFor(input.clickSelector),
+      ]),
+    ];
+    if (kinds.length === 0) return;
+    const label = (input.clickText ?? '').trim().slice(0, 80);
+    throw new ConflictException({
+      error: DANGER_CONFIRM_REQUIRED,
+      code: DANGER_CONFIRM_REQUIRED,
+      message: `${label ? `кнопка «${label}»` : 'эта кнопка'} похожа на необратимое действие (${kinds.join(', ')}) — подтвердите нажатие`,
+      reason: kinds.join(','),
+    });
+  }
+
+  /**
+   * П-Т8: не больше `LOGIN_FAILURES_PER_WINDOW` неудачных входов в час на
+   * пользователя и хост. Отказ 429 с `retryAfterMs`; обход — живой вход
+   * (сайт сам проверяет пароль, мы его не видим).
+   */
+  private async assertLoginAttemptAllowed(
+    userId: string,
+    draft: DraftRow,
+  ): Promise<void> {
+    const waitMs = await this.usage.loginRetryAfterMs(
+      userId,
+      hostOf(draft.baseUrl),
+    );
+    if (waitMs <= 0) return;
+    throw new HttpException(
+      {
+        error: LOGIN_ATTEMPTS_EXCEEDED,
+        code: LOGIN_ATTEMPTS_EXCEEDED,
+        message: `${LOGIN_FAILURES_PER_WINDOW} неудачных входа за час — попробуйте через ${minutesOf(waitMs)} мин или войдите вживую`,
+        retryAfterMs: waitMs,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  /**
+   * П-Т8: итог входа — неудача в счёт, удача сбрасывает. Неудача (точный
+   * критерий, аудит захода 7, п.2): после раунда на той же странице (тот
+   * же URL без query/fragment) видно ТО ЖЕ поле пароля (тот же селектор),
+   * которое заполнял раунд. Иначе (ушли со страницы, поле исчезло, другой
+   * экран) — вход удался, счёт сброшен. Двухшаговый вход, смена пароля,
+   * форма в шапке ложной блокировки не дают.
+   */
+  private async countLoginOutcome(
+    userId: string,
+    draft: DraftRow,
+    preUrl: string,
+    round: ExploreRoundResult,
+    submitted: Array<{ selector: string; value: string }>,
+  ): Promise<void> {
+    const host = hostOf(draft.baseUrl);
+    const submittedSelectors = new Set(submitted.map((f) => f.selector));
+    const samePasswordField = round.exploration.elements.some(
+      (e) => e.type === 'password' && submittedSelectors.has(e.selector),
+    );
+    const failed =
+      samePasswordField &&
+      sameUrlIgnoringQuery(preUrl, round.exploration.currentUrl);
+    if (failed) await this.usage.recordLoginFailure(userId, host);
+    else await this.usage.clearLoginFailures(userId, host);
+  }
+
+  /**
+   * П-Т6: новый логин на хосте сверх `LOGIN_IDENTITIES_PER_HOST` за
+   * `LOGIN_IDENTITY_WINDOW_DAYS` — отказ 429 (известные логины проходят
+   * всегда). Логин определяется по полю, которое разведчик счёл username
+   * (тип поля на странице, а не имя селектора — аудит захода 7, п.1б).
+   */
+  private async reserveLoginIdentity(
+    userId: string,
+    draft: DraftRow,
+    submitted: Array<{ selector: string; value: string }>,
+    elements: PageExploration['elements'],
+  ): Promise<void> {
+    const login = loginIdentityOf(submitted, elements);
+    if (!login) return;
+    const ok = await this.usage.reserveLoginIdentity(
+      userId,
+      hostOf(draft.baseUrl),
+      login,
+    );
+    if (ok) return;
+    // П-Т12: строка журнала без логина, хоста и id — только факт отказа.
+    this.logger.warn(
+      `П-Т6: отказ во входе — новый логин сверх ${LOGIN_IDENTITIES_PER_HOST} на хост за ${LOGIN_IDENTITY_WINDOW_DAYS} дн. (черновик ${draft.id})`,
+    );
+    throw new HttpException(
+      {
+        error: LOGIN_IDENTITIES_EXCEEDED,
+        code: LOGIN_IDENTITIES_EXCEEDED,
+        message: `на этом сайте за ${LOGIN_IDENTITY_WINDOW_DAYS} дней уже использовано ${LOGIN_IDENTITIES_PER_HOST} разных логинов — войдите одним из прежних или вживую`,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
   }
 
   /** Адрес для решения о режиме: `baseUrl` черновика, иначе ссылка из тела. */
@@ -2066,6 +2339,30 @@ export class ClientSiteTutorialService {
     }
   }
 
+  /**
+   * Ш3-хвост (3): кто ведёт черновик — браузерному воркеру (лимиты «на
+   * человека», кадры режима A по telegramId). Только при включённом
+   * выключателе воркера (иначе лишний запрос к базе на каждый раунд не
+   * нужен); нет telegramId или сбой чтения — без него (раунд всё равно
+   * идёт: воркер считает лимиты по сайту, кадр снимает функция).
+   */
+  private async requesterOf(
+    userId: string,
+  ): Promise<{ requester?: ExploreRequester }> {
+    if (
+      !flagOn(process.env, EXPLORER_VIA_WORKER_ENV) &&
+      !flagOn(process.env, FRAMES_VIA_WORKER_ENV)
+    ) {
+      return {};
+    }
+    try {
+      const { telegramId } = await this.secrets.userOf(userId);
+      return telegramId ? { requester: { telegramId } } : {};
+    } catch {
+      return {};
+    }
+  }
+
   /** Telegram-id нужен только хранилищу (режим A) — колонкам не нужен. */
   private async secretsUser(
     userId: string,
@@ -2287,6 +2584,94 @@ export function pickLoginProofSelector(exploration: PageExploration): string {
 
 /** Ш2-хвост (3): вход учёткой реестра недоступен (не режим A / нет хранилища). */
 export const REGISTRY_LOGIN_UNAVAILABLE = 'REGISTRY_LOGIN_UNAVAILABLE';
+/** П-Т9: выключатель или глобальный потолок (503, `reason`). */
+export const TUTORIAL_TEMPORARILY_UNAVAILABLE =
+  'SITE_TUTORIAL_TEMPORARILY_UNAVAILABLE';
+/** П-Т13: «опасный» клик в режиме B без `confirmDanger` (409). */
+export const DANGER_CONFIRM_REQUIRED = 'SITE_TUTORIAL_DANGER_CONFIRM_REQUIRED';
+/** П-Т8: неудачные входы в час исчерпаны (429, `retryAfterMs`). */
+export const LOGIN_ATTEMPTS_EXCEEDED = 'SITE_TUTORIAL_LOGIN_ATTEMPTS_EXCEEDED';
+/** П-Т6: разные логины на хост за 30 дней исчерпаны (429). */
+export const LOGIN_IDENTITIES_EXCEEDED =
+  'SITE_TUTORIAL_LOGIN_IDENTITIES_EXCEEDED';
+/** Ш1-хвост: «Это мой сайт» слишком часто (429, `retryAfterMs`). */
+export const VERIFY_SITE_RATE_LIMITED = 'SITE_TUTORIAL_VERIFY_RATE_LIMITED';
+
+/**
+ * Ключ хоста для лимитов входа — РЕГИСТРИРУЕМЫЙ домен (аудит захода 7,
+ * п.1в): `www.`, `m.` и корень не должны считаться разными хостами и
+ * обходить П-Т6/П-Т8. Тот же разбор (`tldts`), что у режима и журнала.
+ */
+function hostOf(baseUrl: string): string {
+  return consentDomainOf(baseUrl);
+}
+
+/** Минуты ожидания для текста — вверх, не меньше одной. */
+function minutesOf(ms: number): number {
+  return Math.max(1, Math.ceil(ms / 60_000));
+}
+
+/** Тот же URL с точностью до query/fragment (origin + path). */
+export function sameUrlIgnoringQuery(a: string, b: string): boolean {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    return ua.origin === ub.origin && ua.pathname === ub.pathname;
+  } catch {
+    return a === b;
+  }
+}
+
+/** Поле `input`, НЕ являющееся паролем/кодом по типу (а не имени). */
+function isUsernameInput(e: PageExploration['elements'][number]): boolean {
+  if (e.tag !== 'input') return false;
+  const type = (e.type ?? 'text').toLowerCase();
+  return ![
+    'password',
+    'checkbox',
+    'radio',
+    'submit',
+    'button',
+    'file',
+  ].includes(type);
+}
+
+/**
+ * П-Т6: логин раунда входа — значение поля, которое РАЗВЕДЧИК на
+ * странице определил как username (тип поля, а не имя селектора — аудит
+ * захода 7, п.1б: добавив «pass» в селектор, обход `isSensitiveSelector`
+ * больше не проходит). Порядок: (1) заполненное поле, видимое на странице
+ * как не-пароль; (2) если форма исчезла после удачного входа —
+ * заполненное поле, не похожее по имени на пароль (последний резерв);
+ * `null` — вводился только пароль (второй экран входа), это не новая
+ * учётка.
+ */
+export function loginIdentityOf(
+  submitted: Array<{ selector: string; value: string }>,
+  elements: PageExploration['elements'],
+): string | null {
+  const bySelector = new Map(elements.map((e) => [e.selector, e]));
+  const passwordSelectors = new Set(
+    elements.filter((e) => e.type === 'password').map((e) => e.selector),
+  );
+  // (1) username по факту со страницы.
+  for (const f of submitted) {
+    const el = bySelector.get(f.selector);
+    if (f.value.trim() && el && isUsernameInput(el)) return f.value.trim();
+  }
+  // (2) форма исчезла (успех): берём заполненное поле, которое не поле
+  // пароля со страницы и не похоже на пароль по имени.
+  for (const f of submitted) {
+    if (
+      f.value.trim() &&
+      !passwordSelectors.has(f.selector) &&
+      !isSensitiveSelector(f.selector)
+    ) {
+      return f.value.trim();
+    }
+  }
+  return null;
+}
 /** Кабинет не выдал учётку (заморожена, истекла, хост, продукт…). */
 export const REGISTRY_ACCOUNT_UNAVAILABLE = 'REGISTRY_ACCOUNT_UNAVAILABLE';
 /** У учётки нет пароля — входить нечем. */

@@ -2,6 +2,7 @@ import type { BrowserJobKind } from '../shared/browser-job-protocol';
 import { runAdminCrawl } from './admin-crawl';
 import { runDescriptorResolve } from './descriptor-resolve';
 import { runFramesCapture } from './frames-capture';
+import { runTutorialExplore } from './tutorial-explore';
 import type { JobExecutor } from './types';
 import { runUiSnapshot } from './ui-snapshot';
 
@@ -10,4 +11,5 @@ export const EXECUTORS: Readonly<Record<BrowserJobKind, JobExecutor>> = {
   'descriptor-resolve': runDescriptorResolve,
   'admin-crawl': runAdminCrawl,
   'frames-capture': runFramesCapture,
+  'tutorial-explore': runTutorialExplore,
 };

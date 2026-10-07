@@ -2040,6 +2040,13 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
   background: var(--surface-sunken);
 }
 
+/* `<picture>` hero (`components/HeroPicture.tsx`) по умолчанию строчный:
+   без `display: block` под картинкой оставался бы зазор базовой линии, и
+   оправа выходила бы на несколько пикселей выше кадра. */
+.frame-shot picture {
+  display: block;
+}
+
 /* Номер шага переехал из подписи НА кадр: секция — нумерованный список,
    и номер должен держаться за изображение, а не плавать в тексте.
    Селектор с `.frame-shot`, а не голый `.step-number`: тот же класс

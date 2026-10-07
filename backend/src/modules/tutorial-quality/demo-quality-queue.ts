@@ -111,6 +111,23 @@ export interface DemoQualityConfig {
   dailyVideoMs: number;
   /** Потолок «Проверить все одобренные» за одно нажатие. */
   backfillCap: number;
+  /**
+   * Чёрные/замершие кадры декодером ffmpeg-api (заход 7) — отдельный
+   * платный вызов на проверку, по умолчанию ВЫКЛЮЧЕН
+   * (`TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS`).
+   */
+  frameSignals: boolean;
+  /**
+   * Блокировка публикации (заход 7): итоговый `fail` без переопределения
+   * оператором не даёт одобрить ролик, отметить его «в демо» и одобрить
+   * версию темпа. По умолчанию ВЫКЛЮЧЕНА (`TUTORIAL_DEMO_QUALITY_BLOCK`):
+   * спецификация — до калибровки рубрики gate не включать.
+   */
+  blockPublication: boolean;
+}
+
+function flagOn(raw: string | undefined): boolean {
+  return ['1', 'true', 'on', 'yes'].includes((raw ?? '').trim().toLowerCase());
 }
 
 export const DEFAULT_DAILY_USD = 1;
@@ -127,9 +144,10 @@ function positiveNumber(raw: string | undefined, fallback: number): number {
 export function readDemoQualityConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): DemoQualityConfig {
-  const flag = (env.TUTORIAL_DEMO_QUALITY_ENABLED ?? '').trim().toLowerCase();
   return {
-    enabled: ['1', 'true', 'on', 'yes'].includes(flag),
+    enabled: flagOn(env.TUTORIAL_DEMO_QUALITY_ENABLED),
+    frameSignals: flagOn(env.TUTORIAL_DEMO_QUALITY_FRAME_SIGNALS),
+    blockPublication: flagOn(env.TUTORIAL_DEMO_QUALITY_BLOCK),
     model: env.TUTORIAL_DEMO_QUALITY_MODEL?.trim() || GEMINI_MODEL,
     dailyLimitMicroUsd: Math.round(
       positiveNumber(env.TUTORIAL_DEMO_QUALITY_DAILY_USD, DEFAULT_DAILY_USD) *

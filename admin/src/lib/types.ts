@@ -233,6 +233,37 @@ export interface SetVoiceAssistantInput {
 
 // ── Квота образов «Я в кадре» (этап F ТЗ Greeting 2.0 §4.2, В-7, 30.09.2026) ──
 // Зеркалит backend/src/modules/admin-panel/admin-persona-look-quota-settings.service.ts.
+// «Обучалка по сайту: выключатель и суточные потолки» (П-Т9, заход 7;
+// backend admin-site-tutorial-settings.service.ts).
+export interface SiteTutorialCapView {
+  value: number;
+  /** Задано в админке; null — не задано (действует env/код). */
+  stored: number | null;
+  defaultValue: number;
+  source: 'admin' | 'env' | 'default';
+  /** Расход за текущие UTC-сутки по всем пользователям; null — не прочитан. */
+  usedToday: number | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+export interface SiteTutorialSettingsView {
+  paused: boolean;
+  pausedUpdatedAt: string | null;
+  pausedUpdatedBy: string | null;
+  rounds: SiteTutorialCapView;
+  liveSessions: SiteTutorialCapView;
+  day: string;
+  cacheSeconds: number;
+}
+
+/** Не присланное не трогается; null у потолка — вернуть умолчание. */
+export interface SetSiteTutorialSettingsInput {
+  paused?: boolean;
+  roundsPerDay?: number | null;
+  liveSessionsPerDay?: number | null;
+}
+
 export type PersonaLookQuotaPlan = 'LITE' | 'STANDARD' | 'PREMIUM';
 export type PersonaLookQuotaPeriod = 'day' | 'month';
 
@@ -1503,9 +1534,62 @@ export interface DemoQualityCheck {
   theme: string | null;
   locale: string;
   captureBuild: string | null;
+  /** 'tma' | 'polygon' | 'client-site' (заход 7); null — у старых записей. */
   captureMode: string | null;
   createdAt: string;
   checkedAt: string | null;
+  // ── заход 7 (07.10.2026) — поля могут отсутствовать у старого бэкенда ──
+  /** Итоговый вердикт: переопределение оператора сильнее модели. */
+  effectiveVerdict?: DemoQualityVerdict | null;
+  override?: DemoQualityOverrideInfo | null;
+  /** Контрольные кадры шагов с таймкодами этого файла. */
+  controlFrames?: DemoQualityControlFrame[] | null;
+  /** Чёрные/замершие кадры декодером; null — не заказывались. */
+  signals?: DemoQualitySignals | null;
+}
+
+export interface DemoQualityOverrideInfo {
+  verdict: DemoQualityVerdict;
+  reason: string | null;
+  by: string | null;
+  at: string | null;
+}
+
+export interface DemoQualityControlFrame {
+  stepIndex: number;
+  startMs: number;
+  endMs: number;
+  imageUrl: string;
+  caption: string | null;
+}
+
+export interface DemoQualitySignalInterval {
+  startMs: number;
+  endMs: number;
+}
+
+export interface DemoQualitySignals {
+  status: 'pending' | 'running' | 'complete' | 'error' | string;
+  black: DemoQualitySignalInterval[];
+  freeze: DemoQualitySignalInterval[];
+  suspicious: Array<DemoQualitySignalInterval & { kind: 'black' | 'freeze'; explanation: string }>;
+  error: string | null;
+}
+
+/** Строка журнала переопределений вердикта. */
+export interface DemoQualityOverrideEntry {
+  id: string;
+  checkId: string;
+  fromVerdict: DemoQualityVerdict | null;
+  toVerdict: DemoQualityVerdict | null;
+  reason: string;
+  by: string;
+  at: string;
+}
+
+export interface DemoQualityOverrideResult {
+  check: DemoQualityCheck;
+  overrides: DemoQualityOverrideEntry[];
 }
 
 export interface DemoQualityLatest {

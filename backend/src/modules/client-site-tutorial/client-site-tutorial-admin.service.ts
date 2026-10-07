@@ -540,7 +540,10 @@ export class ClientSiteTutorialAdminService {
         // служебный и одинаковый для всего вида, а настоящая привязка
         // идёт через `clientSiteDraftId` (§6.2).
         subjectKey: 'client-site',
-        locale: 'ru',
+        // Язык черновика, как у озвученной ветки: немой ролик без
+        // подписей, но поле читает набор роликов сайта помощника —
+        // жёсткий `ru` выдавал украинский/английский ролик за русский.
+        locale,
         title: row.title ?? row.baseUrl,
         clientSiteDraftId: row.id,
         frameCount: frames,

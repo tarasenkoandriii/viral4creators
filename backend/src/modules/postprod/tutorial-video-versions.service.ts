@@ -25,6 +25,20 @@
  * (`checkTutorialVideo`), без оператора; публичное (сценарное) демо —
  * только после повторного одобрения оператором (решение владельца).
  *
+ * ## Темп переживает пересборку (заход 7, 07.10.2026)
+ *
+ * Новый ночной ролик сценарного пути собирается СРАЗУ с темпом, который
+ * оператор выбрал для пары (тема/сценарий, локаль, тема оформления), —
+ * одной сборкой, а не «обычный + версия» двумя платными
+ * (`inheritedTempoFor` → раннер → `appliedTempo` в manifest →
+ * `adoptInheritedTempo` при `complete`). Ролик по-прежнему ждёт
+ * одобрения оператором (`reviewed`); «вернуть обычный» у такого ролика —
+ * отдельная сборка ×1, исходного «обычного» файла у него нет.
+ *
+ * Активация файла одобренного ролика штатной обучалки пересылает набор
+ * роликов тенанта лендинга (`LandingVideosService.requestSync`, Ш5 (12)):
+ * иначе у тенанта осталась бы ссылка на прежний файл.
+ *
  * ## Деньги
  *
  * Расчёт и предпросмотр бесплатны (в браузере, по тому же manifest).
@@ -51,6 +65,12 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
+import { LandingVideosService } from '../client-site-media/landing-videos.service';
+import { isSiteTutorialDemoFamilyKey } from '../tutorial-help/site-tutorial-demo';
+import {
+  assetThemeWhere,
+  ScenarioTheme,
+} from '../tutorial-runner/tutorial-theme-rotation';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
 import { releaseJobLock, tryAcquireJobLock } from '../../common/cron-job-lock';
 import { Prisma } from '@prisma/client';
@@ -71,6 +91,7 @@ import {
 } from '../tutorial-runner/tutorial-tempo';
 import {
   ActivationPlan,
+  ManifestFrame,
   ManifestSpeech,
   manifestCaptionFrames,
   manifestEditability,
@@ -95,6 +116,7 @@ import {
 import { checkTutorialVideo, probeMp4 } from '../tutorial-runner/mp4-probe';
 import {
   activateOnAsset,
+  markActiveVersionIfUnset,
   writeAssetManifest,
 } from './tutorial-video-asset-writes';
 
@@ -110,6 +132,8 @@ const LOCK_WAIT_STEPS = 12;
 const LOCK_WAIT_MS = 250;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 const MIN_VIDEO_BYTES = 1024;
+/** Кто «заказал» версию, унаследованную новым роликом от темпа пары. */
+export const INHERITED_TEMPO_REQUESTER = 'system:tempo-inherit';
 /** Провайдер озвучки обучалки клиента — по умолчанию проекта (решение
  *  владельца 06.10.2026: Resemble, не ElevenLabs). */
 export const CLIENT_TUTORIAL_TTS_PROVIDER = 'resemble' as const;
@@ -193,6 +217,9 @@ export interface VersionRequestResult {
 interface AssetRow {
   id: string;
   subjectKey: string;
+  /** Одобрен ли ролик (публичная выдача) — повод пересылки набора лендинга. */
+  reviewed?: boolean;
+  theme?: string | null;
   locale: string;
   title: string;
   clientSiteDraftId: string | null;
@@ -233,6 +260,8 @@ interface VersionRow {
 const ASSET_SELECT = {
   id: true,
   subjectKey: true,
+  reviewed: true,
+  theme: true,
   locale: true,
   title: true,
   clientSiteDraftId: true,
@@ -271,6 +300,10 @@ export class TutorialVideoVersionsService {
     private readonly plan: PlanService,
     private readonly tts: TtsProviderResolverService,
     @Optional() private readonly siteMedia?: ClientSiteMediaService,
+    // Ш5 (12), заход 7: активация файла одобренного ролика штатной
+    // обучалки — набор роликов тенанта лендинга переслать. Необязателен —
+    // стенды и тесты без sites-backend.
+    @Optional() private readonly landingVideos?: LandingVideosService,
   ) {}
 
   // ── чтение ─────────────────────────────────────────────────────────
@@ -524,11 +557,22 @@ export class TutorialVideoVersionsService {
       throw new BadRequestException('темп вне диапазона 0…2');
     }
     const ctx = await this.requireAsset(actor, assetId);
+    if (factor === 1) return this.revertOrBuild(actor, ctx);
+    return this.buildVersion(actor, ctx, factor);
+  }
+
+  /**
+   * Платная сборка версии темпа `factor` — с ключом идемпотентности,
+   * замком и лимитом. Темп ×1 сюда попадает только у ролика, собранного
+   * сразу с унаследованным темпом (у него нет исходного «обычного» файла).
+   */
+  private async buildVersion(
+    actor: TempoActor,
+    ctx: Awaited<ReturnType<TutorialVideoVersionsService['requireAsset']>>,
+    factor: number,
+  ): Promise<VersionRequestResult> {
     const { asset } = ctx;
-    if (factor === 1) {
-      const version = await this.revert(actor, assetId);
-      return { version, reused: true };
-    }
+    const assetId = asset.id;
     const m = parseTutorialManifest(asset.tempoManifest);
     const ed = this.editability(asset, m, ctx.framesPurgedAt);
     if (!ed.editable || !m) {
@@ -1024,6 +1068,19 @@ export class TutorialVideoVersionsService {
     if (asset.clientSiteDraftId && this.siteMedia) {
       await this.siteMedia.syncForDraft(asset.clientSiteDraftId);
     }
+    // Ш5 (12): файл ОДОБРЕННОГО ролика штатной обучалки сменился — набор
+    // тенанта лендинга иначе держал бы ссылку на прежний файл. Не демо
+    // обучающего лендинга и не черновик клиента (у них свой путь выше и
+    // в набор лендинга они не входят). Не ждём: `requestSync` с дебаунсом
+    // и не бросает, а активацию по сети не задерживаем.
+    if (
+      this.landingVideos &&
+      asset.reviewed === true &&
+      !asset.clientSiteDraftId &&
+      !isSiteTutorialDemoFamilyKey(asset.subjectKey)
+    ) {
+      void this.landingVideos.requestSync().catch(() => false);
+    }
   }
 
   /**
@@ -1056,20 +1113,37 @@ export class TutorialVideoVersionsService {
     return this.view(row, fresh, actor.kind === 'operator');
   }
 
-  /** Возврат к обычному темпу — исходный файл, без сборки. */
+  /**
+   * Возврат к обычному темпу — исходный файл, без сборки. У ролика,
+   * собранного сразу с унаследованным темпом, исходного «обычного» файла
+   * нет — тогда это сборка версии ×1 (как любая версия: оплачивается, у
+   * публичного демо ждёт одобрения оператора).
+   */
   async revert(
     actor: TempoActor,
     assetId: string,
   ): Promise<TutorialVersionView> {
-    const { asset } = await this.requireAsset(actor, assetId);
+    const ctx = await this.requireAsset(actor, assetId);
+    return (await this.revertOrBuild(actor, ctx)).version;
+  }
+
+  private async revertOrBuild(
+    actor: TempoActor,
+    ctx: Awaited<ReturnType<TutorialVideoVersionsService['requireAsset']>>,
+  ): Promise<VersionRequestResult> {
+    const { asset } = ctx;
+    const assetId = asset.id;
     const source = (await this.prisma.tutorialVideoVersion.findUnique({
       where: {
         assetId_idempotencyKey: { assetId, idempotencyKey: SOURCE_VERSION_KEY },
       },
     })) as VersionRow | null;
+    if (!source && asset.activeVersionId !== null) {
+      return this.buildVersion(actor, ctx, 1);
+    }
     if (!source) {
       // Версий темпа не было — ролик и так обычный.
-      return {
+      const version: TutorialVersionView = {
         id: 'source',
         kind: 'source',
         factor: 1,
@@ -1082,15 +1156,185 @@ export class TutorialVideoVersionsService {
         approved: false,
         createdAt: asset.createdAt.toISOString(),
       };
+      return { version, reused: true };
     }
     if (asset.activeVersionId !== null) {
       await this.activateVersion(asset, source, null);
     }
-    return this.view(
-      source,
-      await this.reloadAsset(assetId),
-      actor.kind === 'operator',
+    return {
+      version: this.view(
+        source,
+        await this.reloadAsset(assetId),
+        actor.kind === 'operator',
+      ),
+      reused: true,
+    };
+  }
+
+  // ── темп пары переживает пересборку (заход 7) ───────────────────────
+
+  /**
+   * Темп, выбранный для пары (сценарий/тема, локаль, тема оформления):
+   * множитель ПОСЛЕДНЕЙ активированной версии штатной обучалки этой пары.
+   * `null` — обычный темп (версий не было, последним активировали
+   * исходный файл или ×1). Никогда не бросает: без ответа новый ролик
+   * соберётся обычным, как до захода 7.
+   */
+  async inheritedTempoFor(pair: {
+    subjectKey: string;
+    locale: string;
+    theme: ScenarioTheme;
+  }): Promise<{ factor: number; versionId: string } | null> {
+    try {
+      const v = await this.lastPairChoice(pair);
+      if (!v || v.kind !== 'tempo') return null;
+      const factor = normalizeTempoFactor(v.tempoFactor);
+      if (factor === null || factor === 1) return null;
+      return { factor, versionId: v.id };
+    } catch (err) {
+      this.logger.warn(
+        `темп пары ${pair.subjectKey}/${pair.locale}/${pair.theme} не прочитан (${message(err)}) — ролик соберётся обычным`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Последний выбор темпа в паре — по времени активации. Версии,
+   * заведённые наследованием (`INHERITED_TEMPO_REQUESTER`), — только если
+   * ручных нет вовсе (заход 7, аудит): иначе наследование, доехавшее до
+   * `complete` позже ручной смены темпа, перебивало бы её.
+   */
+  private async lastPairChoice(pair: {
+    subjectKey: string;
+    locale: string;
+    theme: ScenarioTheme;
+  }): Promise<{
+    id: string;
+    kind: string;
+    tempoFactor: number | null;
+    activatedAt: Date | null;
+  } | null> {
+    const base = {
+      status: 'complete',
+      activatedAt: { not: null },
+      asset: {
+        subjectKey: pair.subjectKey,
+        locale: pair.locale,
+        clientSiteDraftId: null,
+        AND: [assetThemeWhere(pair.theme)],
+      },
+    };
+    const query = (requestedBy: string | { not: string }) =>
+      this.prisma.tutorialVideoVersion.findFirst({
+        where: { ...base, requestedBy },
+        orderBy: [{ activatedAt: 'desc' }, { createdAt: 'desc' }],
+        select: { id: true, kind: true, tempoFactor: true, activatedAt: true },
+      }) as Promise<{
+        id: string;
+        kind: string;
+        tempoFactor: number | null;
+        activatedAt: Date | null;
+      } | null>;
+    return (
+      (await query({ not: INHERITED_TEMPO_REQUESTER })) ??
+      (await query(INHERITED_TEMPO_REQUESTER))
     );
+  }
+
+  /**
+   * Сценарный ролик, собранный сразу с унаследованным темпом
+   * (`manifest.appliedTempo`), при `complete`: его файл — уже версия
+   * этого темпа. Заводим строку версии (complete, файл ролика) и делаем
+   * её активной — постпродакшен показывает выбранный темп, «вернуть
+   * обычный» знает, что обычного файла нет. Никогда не бросает.
+   */
+  async adoptInheritedTempo(assetId: string): Promise<void> {
+    try {
+      const asset = (await this.prisma.tutorialVideoAsset.findUnique({
+        where: { id: assetId },
+        select: ASSET_SELECT,
+      })) as AssetRow | null;
+      const m = parseTutorialManifest(asset?.tempoManifest);
+      if (
+        !asset ||
+        !m?.appliedTempo ||
+        asset.assemblyStatus !== 'complete' ||
+        !asset.blobUrl ||
+        asset.activeVersionId !== null
+      ) {
+        return;
+      }
+      // Без постоянных исходников версия темпа — ловушка: ни «вернуть
+      // обычный», ни другой темп собрать не из чего (заход 7, аудит).
+      // Раннер такие ролики собирает обычными; сюда это доходит только при
+      // ручной правке строки.
+      if (m.storage !== 'sources') {
+        this.logger.warn(
+          `ролик ${assetId}: темп пары записан, но исходников нет — версия не заводится`,
+        );
+        return;
+      }
+      const factor = normalizeTempoFactor(m.appliedTempo.factor);
+      if (factor === null || factor === 1) return;
+      const key = tempoIdempotencyKey(m, factor, m.motion);
+      // Время активации — то же, что у версии, от которой темп унаследован
+      // (заход 7, аудит): наследование отражает ТО решение оператора и не
+      // должно выглядеть более поздним, чем его ручная смена после него.
+      const from = (await this.prisma.tutorialVideoVersion.findUnique({
+        where: { id: m.appliedTempo.fromVersionId },
+        select: { activatedAt: true },
+      })) as { activatedAt: Date | null } | null;
+      const latest = await this.lastPairChoice({
+        subjectKey: asset.subjectKey,
+        locale: asset.locale,
+        theme: asset.theme === 'dark' ? 'dark' : 'light',
+      });
+      if (latest && latest.id !== m.appliedTempo.fromVersionId) {
+        // Файл уже собран в этом темпе — версия отражает правду файла, но
+        // выбор пары оператор с тех пор сменил: следующий ролик возьмёт
+        // его, а не этот.
+        this.logger.warn(
+          `ролик ${assetId}: темп пары сменился, пока собирался ролик (×${factor} → версия ${latest.id})`,
+        );
+      }
+      let version: VersionRow | null = null;
+      try {
+        version = (await this.prisma.tutorialVideoVersion.create({
+          data: {
+            assetId,
+            kind: 'tempo',
+            tempoFactor: factor,
+            motion: m.motion,
+            manifestVersion: TUTORIAL_MANIFEST_VERSION,
+            idempotencyKey: key,
+            status: 'complete',
+            attempts: 1,
+            blobUrl: asset.blobUrl,
+            videoMs: asset.durationMs,
+            // Одобрение — у самого ролика (`reviewed`): новый ролик и так
+            // ждёт оператора целиком.
+            requiresApproval: false,
+            requestedBy: INHERITED_TEMPO_REQUESTER,
+            activatedAt: from?.activatedAt ?? new Date(),
+          },
+        })) as VersionRow;
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        version = (await this.prisma.tutorialVideoVersion.findUnique({
+          where: { assetId_idempotencyKey: { assetId, idempotencyKey: key } },
+        })) as VersionRow | null;
+      }
+      if (!version) return;
+      await markActiveVersionIfUnset(this.prisma, assetId, version.id);
+      this.logger.log(
+        `ролик ${assetId}: собран с темпом пары ×${factor} (версия ${version.id})`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        `ролик ${assetId}: унаследованный темп не записан (${message(err)}) — постпродакшен покажет его как обычный`,
+      );
+    }
   }
 
   // ── исходники ──────────────────────────────────────────────────────
@@ -1111,15 +1355,44 @@ export class TutorialVideoVersionsService {
       })) as AssetRow | null;
       const m = parseTutorialManifest(asset?.tempoManifest);
       if (!asset || !m || m.storage !== 'transit') return;
-      const frames = [];
-      for (const f of m.frames) {
-        if (!f.image.pathname) return;
+      const frames = await this.copyFramesToSources(assetId, m.frames);
+      if (!frames) return;
+      await writeAssetManifest(this.prisma, assetId, {
+        ...m,
+        storage: 'sources',
+        frames,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `ролик ${assetId}: исходники для темпа не сохранены (${message(err)}) — темп для него будет недоступен`,
+      );
+    }
+  }
+
+  /**
+   * Кадры и дорожки — из транзита и кеша озвучки в постоянный префикс
+   * исходников ролика. `null` — хоть одна копия не удалась (или у кадра
+   * нет пути): исходников нет. Никогда не бросает.
+   *
+   * Раннер зовёт это ДО отправки сборки, когда собирается сразу с
+   * унаследованным темпом (заход 7, аудит): ролик в темпе без исходников
+   * навсегда остался бы без «вернуть обычный», поэтому без исходников он
+   * собирается обычным — одной сборкой, не двумя.
+   */
+  async copyFramesToSources(
+    assetId: string,
+    source: readonly ManifestFrame[],
+  ): Promise<ManifestFrame[] | null> {
+    try {
+      const frames: ManifestFrame[] = [];
+      for (const f of source) {
+        if (!f.image.pathname) return null;
         const to = sourceFramePathname(assetId, f.stepIndex);
         const url = await this.blob.copyBlob(f.image.pathname, to, 'image/png');
-        if (!url) return;
+        if (!url) return null;
         let speech: ManifestSpeech | null = f.speech;
         if (f.speech) {
-          if (!f.speech.pathname) return;
+          if (!f.speech.pathname) return null;
           const vto = sourceVoicePathname(
             assetId,
             f.stepIndex,
@@ -1131,20 +1404,17 @@ export class TutorialVideoVersionsService {
             vto,
             'audio/mpeg',
           );
-          if (!vurl) return;
+          if (!vurl) return null;
           speech = { ...f.speech, url: vurl, pathname: vto };
         }
         frames.push({ ...f, image: { url, pathname: to }, speech });
       }
-      await writeAssetManifest(this.prisma, assetId, {
-        ...m,
-        storage: 'sources',
-        frames,
-      });
+      return frames;
     } catch (err) {
       this.logger.warn(
-        `ролик ${assetId}: исходники для темпа не сохранены (${message(err)}) — темп для него будет недоступен`,
+        `ролик ${assetId}: исходники не скопированы (${message(err)})`,
       );
+      return null;
     }
   }
 

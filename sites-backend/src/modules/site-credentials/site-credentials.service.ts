@@ -44,6 +44,7 @@ import { registrableDomain } from '../site-core/hosts/host-normalize';
 import { HostAccessService } from '../site-core/ownership/host-access.service';
 import { CredentialAuditService } from './credential-audit.service';
 import {
+  CREDENTIAL_MAX_BYTES,
   CREDENTIAL_PURPOSES,
   CredentialAad,
   CredentialCryptoError,
@@ -60,6 +61,14 @@ import {
   TestAccountProduct,
   badInput,
 } from './test-account-input';
+import {
+  StoredWorkerSecret,
+  WorkerAtRestSealer,
+  atRestAad,
+  isWorkerSealed,
+  workerKeyVersion,
+  workerOnlyProducts,
+} from './worker-at-rest';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Аренда — на один прогон: короткий срок, одно погашение. */
@@ -152,6 +161,12 @@ export interface RedeemResult {
   username: string | null;
   /** Открытый текст по назначению — только в ответе на погашение аренды. */
   secrets: Partial<Record<CredentialPurpose, string>>;
+  /**
+   * Ш3-хвост (7): секреты, запечатанные под ключ воркера при записи, — как
+   * есть (sites-backend их не открывает); получатель — только воркер. Нет
+   * таких — поля нет (ответ канала генератора не меняется).
+   */
+  sealed?: StoredWorkerSecret[];
 }
 
 export function credError(
@@ -246,6 +261,22 @@ export class SiteCredentialsService {
     private readonly audit: CredentialAuditService,
   ) {}
 
+  /** Ш3-хвост (7): запечатывание при записи (подключает канал воркера). */
+  private workerSealer: WorkerAtRestSealer | null = null;
+
+  useWorkerSealer(s: WorkerAtRestSealer | null): void {
+    this.workerSealer = s;
+  }
+
+  /**
+   * Открытый ключ воркера, если секреты учётки с такими продуктами
+   * запечатываются при записи под него (иначе — KEK, как раньше).
+   */
+  private atRestKey(products: readonly string[]): string | null {
+    if (!this.workerSealer || !workerOnlyProducts(products)) return null;
+    return this.workerSealer.publicKey();
+  }
+
   // ── ключи ──────────────────────────────────────────────────────────
 
   /** Настроено ли хранилище — для генератора (фолбэк на старые колонки). */
@@ -299,7 +330,11 @@ export class SiteCredentialsService {
   ): Promise<TestAccountView> {
     await this.requireSite(accountId, siteId);
     await this.assertSiteHosts(accountId, siteId, input.hostIds ?? []);
-    const keyring = input.password ? this.keyring() : null;
+    // KEK нужен, только если пароль пойдёт под него (не под ключ воркера).
+    const keyring =
+      input.password && !this.atRestKey(input.products ?? [])
+        ? this.keyring()
+        : null;
     const db = this.db.forAccount(accountId);
     const days = input.lifetimeDays ?? DEFAULT_LIFETIME_DAYS;
     const row = await db.siteTestAccount.create({
@@ -331,7 +366,7 @@ export class SiteCredentialsService {
       },
       now,
     );
-    if (input.password && keyring) {
+    if (input.password) {
       await this.writeSecret(row, 'password', input.password, actor, keyring);
     }
     return this.reload(accountId, row.id, now);
@@ -349,11 +384,32 @@ export class SiteCredentialsService {
     if (input.hostIds) {
       await this.assertSiteHosts(accountId, row.siteId, input.hostIds);
     }
-    const keyring = input.password ? this.keyring() : null;
+    const productsAfter = input.products ?? row.products;
     const db = this.db.forAccount(accountId);
+    // Ш3-хвост (7): секреты под ключом воркера читает только воркер. Учётку
+    // открывают другим продуктам — без нового пароля в той же правке нельзя
+    // (иначе генератор/QA получили бы учётку без читаемого пароля).
+    const workerRows = workerOnlyProducts(productsAfter)
+      ? []
+      : await db.siteCredential.findMany({
+          where: {
+            testAccountId: row.id,
+            keyVersion: { startsWith: 'worker:' },
+          },
+          select: { id: true, purpose: true },
+        });
+    if (workerRows.length && !input.password) {
+      throw credError(
+        ConflictException,
+        'TEST_ACCOUNT_WORKER_SEALED',
+        'Пароль этой учётной записи зашифрован только для браузерного воркера («Админка») — чтобы открыть её другим продуктам, введите пароль заново',
+      );
+    }
+    const keyring =
+      input.password && !this.atRestKey(productsAfter) ? this.keyring() : null;
     // Истёкшая учётка оживает только явным новым сроком.
     const revive = input.lifetimeDays !== undefined;
-    await db.siteTestAccount.update({
+    const updated = await db.siteTestAccount.update({
       where: { id: row.id },
       data: {
         ...(input.label !== undefined ? { label: input.label } : {}),
@@ -397,8 +453,35 @@ export class SiteCredentialsService {
       },
       now,
     );
-    if (input.password && keyring) {
-      await this.writeSecret(row, 'password', input.password, actor, keyring);
+    if (input.password) {
+      // Строка — ПОСЛЕ правки: решение «под ключ воркера или KEK» — по новым
+      // продуктам.
+      await this.writeSecret(
+        updated,
+        'password',
+        input.password,
+        actor,
+        keyring,
+      );
+    }
+    // Прочие секреты под ключом воркера (куки, поля) другим продуктам не
+    // прочесть — стираются (crypto-shred) с записью в журнал.
+    const stale = workerRows.filter((r) => r.purpose !== 'password');
+    if (stale.length) {
+      await db.siteCredential.deleteMany({
+        where: { id: { in: stale.map((r) => r.id) } },
+      });
+      await this.audit.append(
+        {
+          actor,
+          action: 'forget-secrets',
+          scope: 'A',
+          accountId,
+          subjectId: row.id,
+          result: 'ok:worker-sealed',
+        },
+        now,
+      );
     }
     return this.reload(accountId, row.id, now);
   }
@@ -535,7 +618,7 @@ export class SiteCredentialsService {
         purpose,
         plaintext,
         actor,
-        this.keyring(),
+        this.atRestKey(row.products) ? null : this.keyring(),
         now,
       );
     }
@@ -889,15 +972,24 @@ export class SiteCredentialsService {
         { reason: 'revoked' satisfies RedeemDenyReason },
       );
     }
-    const keyring = this.keyring();
     const secrets: Partial<Record<CredentialPurpose, string>> = {};
+    const sealed: StoredWorkerSecret[] = [];
+    let keyring: CredentialKeyring | null = null;
     for (const c of row.credentials) {
       if (c.expiresAt && c.expiresAt.getTime() <= now.getTime()) continue;
-      secrets[c.purpose as CredentialPurpose] = this.open(
-        c,
-        this.aadA(row, c.purpose as CredentialPurpose),
-        keyring,
-      );
+      const purpose = c.purpose as CredentialPurpose;
+      // Ш3-хвост (7): запечатано под ключ воркера — не открывается здесь.
+      if (isWorkerSealed(c)) {
+        sealed.push({
+          purpose,
+          sealed: c.ciphertext,
+          aad: atRestAad(row, purpose),
+          keyVersion: c.keyVersion,
+        });
+        continue;
+      }
+      keyring ??= this.keyring();
+      secrets[purpose] = this.open(c, this.aadA(row, purpose), keyring);
     }
     // Журнал — ДО выдачи: секрет без строки журнала не уходит.
     await this.audit.append({ ...base, result: 'ok' }, now);
@@ -910,6 +1002,7 @@ export class SiteCredentialsService {
       label: row.label,
       username: row.username,
       secrets,
+      ...(sealed.length ? { sealed } : {}),
     };
   }
 
@@ -1330,7 +1423,10 @@ export class SiteCredentialsService {
         seen.add(r.id);
         scanned++;
         byVersion[r.keyVersion] = (byVersion[r.keyVersion] ?? 0) + 1;
-        if (!opts.apply) continue;
+        // Ш3-хвост (7): под ключом воркера — KEK не применяется; счёт по
+        // `worker:<kid>` — для ротации ключа воркера (сколько строк под
+        // каким ключом осталось).
+        if (!opts.apply || isWorkerSealed(r)) continue;
         try {
           const next = resealCredential(
             r,
@@ -1470,10 +1566,17 @@ export class SiteCredentialsService {
     purpose: CredentialPurpose,
     plaintext: string,
     actor: string,
-    keyring: CredentialKeyring,
+    keyring: CredentialKeyring | null,
     now = new Date(),
   ): Promise<void> {
-    const sealed = this.seal(plaintext, this.aadA(row, purpose), keyring);
+    const pub = this.atRestKey(row.products);
+    const sealed = pub
+      ? this.sealForWorkerAtRest(pub, row, purpose, plaintext)
+      : this.seal(
+          plaintext,
+          this.aadA(row, purpose),
+          keyring ?? this.keyring(),
+        );
     const expiresAt =
       purpose === 'session-cookies'
         ? new Date(now.getTime() + COOKIES_TTL_DAYS * DAY_MS)
@@ -1507,6 +1610,32 @@ export class SiteCredentialsService {
       },
       now,
     );
+  }
+
+  /**
+   * Ш3-хвост (7): конверт под ключ воркера при записи. Потолок — тот же, что
+   * у KEK (`seal` ниже). Открытый текст — только в Buffer на время вызова.
+   */
+  private sealForWorkerAtRest(
+    pub: string,
+    row: SiteTestAccount,
+    purpose: CredentialPurpose,
+    plaintext: string,
+  ): { ciphertext: string; keyVersion: string } {
+    const buf = Buffer.from(plaintext, 'utf8');
+    try {
+      if (buf.length > CREDENTIAL_MAX_BYTES[purpose]) {
+        throw badInput(
+          `секрет «${purpose}» больше ${CREDENTIAL_MAX_BYTES[purpose]} байт`,
+        );
+      }
+      return {
+        ciphertext: this.workerSealer!.seal(pub, buf, atRestAad(row, purpose)),
+        keyVersion: workerKeyVersion(pub),
+      };
+    } finally {
+      buf.fill(0);
+    }
   }
 
   private async requireSite(accountId: string, siteId: string): Promise<void> {

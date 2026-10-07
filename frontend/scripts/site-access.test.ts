@@ -321,7 +321,12 @@ it('мастер: повторное «Открыть» без галочки г
   const runStart = src.indexOf('async function run<T>');
   const runBody = src.slice(runStart, src.indexOf('\n  }\n', runStart));
   assert.ok(runBody.includes('siteAccessErrorKey(code)'));
-  assert.ok(runBody.includes('localized ? t[localized] : errorMessage(err)'));
+  // Заход 7: перевод по коду — с `{minutes}` из `retryAfterMs` конверта.
+  assert.ok(
+    /localized\s*\?\s*withMinutes\(t\[localized\], apiErrorRetryAfterMs\(err\)\)\s*:\s*errorMessage\(err\)/.test(
+      runBody
+    )
+  );
   // Карточка режима — только через siteModeCardVisible (кадр 2 лендинга).
   const cards = src.match(/<SiteModeCard\b/g) ?? [];
   assert.equal(cards.length, 2);

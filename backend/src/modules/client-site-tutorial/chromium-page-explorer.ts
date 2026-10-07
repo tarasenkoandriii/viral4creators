@@ -55,12 +55,27 @@ import { dangerWarningFor } from './danger-words';
 import { CollectedPage, collectPageExploration } from './page-exploration';
 import { PageElement, PageExploration } from './page-exploration.types';
 import {
+  EXPLORER_VIA_WORKER_ENV,
   ExploreRoundRequest,
   ExploreRoundResult,
+  FRAMES_VIA_WORKER_ENV,
   PageExplorer,
   ReplayRequest,
   RoundAction,
+  flagOn,
 } from './page-explorer';
+import {
+  SitesInternalClient,
+  SitesRejectedError,
+  sitesTelegramId,
+} from '../sites-internal/sites-internal.client';
+import { SitesTutorialWorkerClient } from '../sites-internal/sites-tutorial-frames.client';
+import {
+  DEFAULT_WORKER_EXPLORER_OPTIONS,
+  type HostModeSource,
+  WorkerFallbackError,
+  WorkerPageExplorer,
+} from './worker-page-explorer';
 import {
   CAPTURE_DEVICE_SCALE_FACTOR,
   CAPTURE_VIEWPORT,
@@ -281,16 +296,127 @@ export interface ExplorerBrowser {
   close(): Promise<unknown>;
 }
 
+/**
+ * Съёмочный кадр раунда, заказанный браузерному воркеру (Ш3-хвост (3),
+ * `TUTORIAL_FRAMES_VIA_WORKER`): только режим A на точном подтверждённом
+ * хосте (это решает sites-backend) и только раунд «открыть страницу» — без
+ * кук и действий, ровно то, что видит чистый контекст воркера.
+ */
+interface WorkerFrameOrder {
+  telegramId: string;
+  jobId: string;
+}
+
+/** Сколько ждать кадр воркера, прежде чем снять его самим. */
+export const WORKER_FRAME_WAIT_MS = 15_000;
+const WORKER_FRAME_POLL_MS = 500;
+
 @Injectable()
 export class ChromiumPageExplorer implements PageExplorer {
   private readonly logger = new Logger(ChromiumPageExplorer.name);
+  /** Тесты подменяют env и клиента воркера. */
+  env: NodeJS.ProcessEnv = process.env;
+  workerClient: SitesTutorialWorkerClient = new SitesTutorialWorkerClient();
+  /** Режим сайта для воркера (`host-status`); тесты подменяют. */
+  modes: HostModeSource = new SitesInternalClient();
+  private worker: PageExplorer | null = null;
+
+  /** Раунд на воркере (`TUTORIAL_EXPLORER_VIA_WORKER`) — тот же интерфейс. */
+  protected workerExplorer(): PageExplorer {
+    // Режим сайта (A/B) — кабинет сайтов: от него зависит, можно ли
+    // откатиться в функцию (аудит захода 7, К-2 «на открытие»).
+    return (this.worker ??= new WorkerPageExplorer(
+      this.workerClient,
+      DEFAULT_WORKER_EXPLORER_OPTIONS,
+      this.modes,
+    ));
+  }
 
   async runRound(request: ExploreRoundRequest): Promise<ExploreRoundResult> {
+    // Ш3-хвост (3): раунд без ввода руками — на изолированный воркер; отказ
+    // ДО исполнения (выключен, лимит, ввод, ожидание) — как раньше, здесь.
+    if (flagOn(this.env, EXPLORER_VIA_WORKER_ENV)) {
+      try {
+        return await this.workerExplorer().runRound(request);
+      } catch (err) {
+        if (!(err instanceof WorkerFallbackError)) throw err;
+        this.logger.debug(`раунд в функции: ${err.reason}`);
+      }
+    }
+    const frame = await this.orderWorkerFrame(request);
     return this.inFreshBrowser(
-      (browser, deadline) => this.runInBrowser(browser, request, deadline),
+      (browser, deadline) =>
+        this.runInBrowser(browser, request, deadline, frame),
       ROUND_TIMEOUT_MS,
       'раунд',
     );
+  }
+
+  /**
+   * Заказать съёмочный кадр воркеру, пока функция открывает страницу сама
+   * (`TUTORIAL_FRAMES_VIA_WORKER`). Отказ (409 `BROWSER_WORKER_DISABLED`,
+   * `TUTORIAL_FRAMES_MODE_A`, лимит, сеть) — `null`: кадр снимет функция.
+   */
+  private async orderWorkerFrame(
+    request: ExploreRoundRequest,
+  ): Promise<WorkerFrameOrder | null> {
+    const telegramId = sitesTelegramId(request.requester?.telegramId ?? null);
+    if (
+      !flagOn(this.env, FRAMES_VIA_WORKER_ENV) ||
+      !telegramId ||
+      request.cookies.length > 0 ||
+      request.actions.length > 0 ||
+      request.autoLogin
+    ) {
+      return null;
+    }
+    try {
+      const { jobId } = await this.workerClient.framesRequest(
+        telegramId,
+        request.url,
+        { frames: 1, image: 'png2x' },
+      );
+      return { telegramId, jobId };
+    } catch (err) {
+      this.logger.debug(
+        `кадр воркером не заказан: ${err instanceof SitesRejectedError ? err.code : (err as Error).name}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Дождаться кадра воркера (не дольше `WORKER_FRAME_WAIT_MS` и остатка
+   * раунда за вычетом своего снимка). Не дождались, отказ, не PNG — `null`:
+   * страница ещё открыта, и функция снимет кадр сама.
+   */
+  private async workerVideoFrame(
+    order: WorkerFrameOrder,
+    leftMs: () => number,
+  ): Promise<string | null> {
+    const reserve = DSF_REPAINT_CAP_MS + 2_000;
+    const until = this.now() + WORKER_FRAME_WAIT_MS;
+    while (this.now() < until && leftMs() > reserve) {
+      try {
+        const st = await this.workerClient.framesStatus(
+          order.telegramId,
+          order.jobId,
+        );
+        if (st.status === 'failed' || st.status === 'cancelled') return null;
+        const first = st.frames.find((f) => f.idx === 0);
+        if (st.status === 'done') {
+          if (!first) return null;
+          const img = await this.workerClient.fetchArtifact(first.url);
+          if (img.contentType !== VIDEO_FRAME_CONTENT_TYPE) return null;
+          return `data:${VIDEO_FRAME_CONTENT_TYPE};base64,${img.buffer.toString('base64')}`;
+        }
+      } catch (err) {
+        this.logger.debug(`кадр воркера: ${(err as Error).name}`);
+        return null;
+      }
+      await this.sleep(WORKER_FRAME_POLL_MS);
+    }
+    return null;
   }
 
   /**
@@ -303,6 +429,16 @@ export class ChromiumPageExplorer implements PageExplorer {
    * тридцати подряд.
    */
   async replay(request: ReplayRequest): Promise<ExploreRoundResult> {
+    // Аудит захода 7: переигровка на неподтверждённом сайте — тоже на
+    // воркере (значения — конвертами); откат — только «воркер выключен».
+    if (flagOn(this.env, EXPLORER_VIA_WORKER_ENV)) {
+      try {
+        return await this.workerExplorer().replay(request);
+      } catch (err) {
+        if (!(err instanceof WorkerFallbackError)) throw err;
+        this.logger.debug(`переигровка в функции: ${err.reason}`);
+      }
+    }
     const progress = { done: 0, total: request.steps.length };
     try {
       return await this.inFreshBrowser(
@@ -498,6 +634,7 @@ export class ChromiumPageExplorer implements PageExplorer {
     browser: ExplorerBrowser,
     request: ExploreRoundRequest,
     deadline: number,
+    workerFrame: WorkerFrameOrder | null = null,
   ): Promise<ExploreRoundResult> {
     const page = await browser.newPage();
     await page.setViewport(VIEWPORT);
@@ -550,6 +687,7 @@ export class ChromiumPageExplorer implements PageExplorer {
         target && page.url() === urlBeforeActions ? target : undefined,
       redirectWarning,
       deadline,
+      workerFrame,
     });
 
     return {
@@ -750,6 +888,8 @@ export class ChromiumPageExplorer implements PageExplorer {
       /** Дедлайн раунда (`inFreshBrowser`); без него — без ограничения
        * остатком, только собственные потолки ожиданий. */
       deadline?: number;
+      /** Съёмочный кадр заказан воркеру (Ш3-хвост (3)). */
+      workerFrame?: WorkerFrameOrder | null;
     } = {},
   ): Promise<PageExploration> {
     const leftMs = () =>
@@ -807,7 +947,12 @@ export class ChromiumPageExplorer implements PageExplorer {
         quality: SCREENSHOT_QUALITY,
         encoding: 'base64',
       });
-      videoFrameDataUrl = await this.captureVideoFrame(page, leftMs);
+      // Кадр воркера (режим A) — вместо своего DSF=2; не дождались или
+      // отказ — снимаем сами, страница ещё открыта.
+      videoFrameDataUrl =
+        (opts.workerFrame
+          ? await this.workerVideoFrame(opts.workerFrame, leftMs)
+          : null) ?? (await this.captureVideoFrame(page, leftMs));
     } finally {
       await page.evaluate(FRAME_RELEASE_SOURCE).catch(() => undefined);
     }

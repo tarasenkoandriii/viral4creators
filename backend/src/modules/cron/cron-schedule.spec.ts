@@ -12,6 +12,8 @@ import {
   loadVercelSchedules,
   parseCronExpression,
   schedulesByJobKey,
+  runFitsSchedule,
+  scheduleEffectiveSince,
 } from './cron-schedule';
 
 const DAY = new Date('2026-09-29T00:00:00Z');
@@ -178,5 +180,64 @@ describe('vercel.json → расписания по jobKey', () => {
     expect(floorToMinute(new Date('2026-09-29T10:01:00Z')).toISOString()).toBe(
       '2026-09-29T10:01:00.000Z',
     );
+  });
+});
+
+describe('смена расписания по журналу (заход 7)', () => {
+  const cron = parseCronExpression('5 9-23 * * *');
+  const t = (hhmmss: string) => new Date(`2026-09-30T${hhmmss}Z`);
+
+  it('прогон — свой тик с допуском опоздания старта', () => {
+    expect(runFitsSchedule(cron, t('09:05:02'))).toBe(true);
+    expect(runFitsSchedule(cron, t('09:08:59'))).toBe(true);
+    expect(runFitsSchedule(cron, t('09:09:00'))).toBe(false);
+    expect(runFitsSchedule(cron, t('09:00:03'))).toBe(false);
+    expect(runFitsSchedule(cron, t('08:05:00'))).toBe(false);
+  });
+
+  it('с первого своего прогона после последнего чужого; чужих нет — null', () => {
+    expect(
+      scheduleEffectiveSince(cron, [
+        t('09:00:04'),
+        t('10:00:03'),
+        t('16:05:04'),
+        t('17:05:01'),
+      ]),
+    ).toEqual(t('16:05:00'));
+    expect(
+      scheduleEffectiveSince(cron, [t('09:05:04'), t('10:05:03')]),
+    ).toBeNull();
+    expect(scheduleEffectiveSince(cron, [])).toBeNull();
+    // Серия чужих — последней: со следующей минуты после неё.
+    expect(
+      scheduleEffectiveSince(cron, [
+        t('09:05:04'),
+        t('09:30:30'),
+        t('10:00:30'),
+      ]),
+    ).toEqual(t('10:01:00'));
+    // Одиночный чужой (опоздавший старт) — не смена.
+    expect(
+      scheduleEffectiveSince(cron, [t('09:05:04'), t('10:00:30')]),
+    ).toBeNull();
+    expect(
+      scheduleEffectiveSince(cron, [
+        t('09:00:04'),
+        t('09:05:04'),
+        t('10:00:04'),
+        t('11:05:04'),
+      ]),
+    ).toBeNull();
+    // Важна ПОСЛЕДНЯЯ серия, а не первая.
+    expect(
+      scheduleEffectiveSince(cron, [
+        t('08:00:04'),
+        t('08:30:04'),
+        t('09:05:04'),
+        t('10:00:04'),
+        t('10:30:04'),
+        t('11:05:04'),
+      ]),
+    ).toEqual(t('11:05:00'));
   });
 });

@@ -1090,13 +1090,7 @@
     "previewQuota": "Previews today: {{left}} of {{limit}} left"
   },
   "generationWizard": {
-    "steps": [
-      "Video",
-      "Analysis",
-      "Product",
-      "Prompt",
-      "Generation"
-    ],
+    "steps": ["Video", "Analysis", "Product", "Prompt", "Generation"],
     "stepSource": "Scene",
     "errorTitle": "Error",
     "prefilledAlert": "The product details are pulled from the project — this is a snapshot from launch time; edits here don't change the product itself.",
@@ -1481,7 +1475,7 @@
     "modeReasonExpired": "Ownership verification has expired — you can verify again if you like.",
     "modeReasonRevoked": "Ownership verification was revoked.",
     "modeReasonRole": "You are an operator in the sites dashboard — the owner or a manager can verify the site.",
-    "modeReasonOptedOut": "This domain is on the sites dashboard opt-out list — it can’t be verified here. This doesn’t affect recording.",
+    "modeReasonOptedOut": "The domain owner has closed it to tutorial recording — this site can’t be recorded.",
     "modeReasonUnsupported": "Ownership can only be verified for an https site on the standard port.",
     "modeBTextRequired": "Before exploring and signing in to {host}, confirm below that the account is yours.",
     "modeBVerifyHint": "If the site is yours, you can verify it in the sites dashboard — handy if you connect the assistant to it. This is optional.",
@@ -1575,7 +1569,21 @@
     "discardConfirm": "Delete the tutorial draft? Recorded steps, frames and saved sign-in data will be gone for good. This is the only way to start from a different link.",
     "voiceLabel": "Voice each frame",
     "voiceHint": "A line on every frame in the interface language, with captions of the same text. Speech synthesis is paid, within your daily limit. Field values (logins, phones, addresses) are never spoken.",
-    "openPostprod": "Pace and versions are in Post-production"
+    "openPostprod": "Pace and versions are in Post-production",
+    "verifyErrRateLimited": "Too often — you can add a site to the sites dashboard again in {minutes} min.",
+    "recordErrOptedOut": "The owner of this site doesn’t allow tutorial recording on it — choose another site.",
+    "recordErrUnavailable": "Site tutorial recording is temporarily unavailable — please try again later.",
+    "loginErrAttempts": "Too many failed sign-ins on this site — try again in {minutes} min or sign in live.",
+    "loginErrIdentities": "10 different logins have already been used on this site in 30 days — sign in with one of them or sign in live.",
+    "dangerErrConfirm": "This looks like an irreversible action on the site — confirm the click.",
+    "assistLinkedTitle": "Linked to the assistant",
+    "assistLinkedText": "Assistant site: {site}. Once approved, the video will appear in its set.",
+    "assistLinkTitle": "Link to the assistant",
+    "assistLinkHint": "Once approved, this tutorial video will appear in the AI assistant of the selected site.",
+    "assistLinkSite": "Assistant site",
+    "assistLinkButton": "Link",
+    "assistLinkDone": "The draft is linked to the assistant.",
+    "assistLinkErrUnavailable": "You can’t link to this assistant right now — you need owner or manager rights on the site."
   },
   "sketch": {
     "button": "AI sketch",

@@ -38,6 +38,7 @@ import { SessionStatus } from '../../common/types/session.types';
 import { DEFAULT_VOICE_MODE } from '../../common/voice-mode';
 import { TUTORIAL_DEMO_PRODUCT as DEMO } from '../../common/tutorial-demo-product';
 import { greetingBriefSnapshotFrom } from '../project-session/snapshot';
+import { fixtureRelevanceState } from '../relevance/fixture-relevance';
 
 export const FIXTURE_IDS = {
   manifest: 'fixture-tutorial-manifest',
@@ -505,6 +506,10 @@ export async function seedFixtureUser(
       locale: 'ru',
       productInformation,
       videoAnalysis,
+      // Готовый отчёт релевантности (заход 7): без него `RelevancePanel`
+      // при открытии сам запускал платный вызов Gemini — каждую ночь, на
+      // каждом пересеве. Детерминированный, чтобы кадры не дрожали.
+      relevance: fixtureRelevanceState() as unknown as Prisma.InputJsonObject,
       ...(extra.prompt ? { generationPrompt: approvedPrompt(id) } : {}),
     };
     // Этап 122: готовый ролик живёт во второй колонке — так же, как его

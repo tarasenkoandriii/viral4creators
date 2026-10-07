@@ -48,6 +48,8 @@ const quality = {
   latestForAssets: jest.fn(),
   enqueueByOperator: jest.fn(),
   enqueueApproved: jest.fn(),
+  overrideVerdict: jest.fn(),
+  listOverrides: jest.fn(),
 };
 
 describe('admin/tutorial-demo-quality (e2e)', () => {
@@ -79,6 +81,11 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
       reason: null,
       check: { id: 'c1' },
     });
+    quality.overrideVerdict.mockResolvedValue({
+      check: { id: 'c1' },
+      overrides: [],
+    });
+    quality.listOverrides.mockResolvedValue([]);
     quality.enqueueApproved.mockResolvedValue({
       queued: 2,
       skipped: 0,
@@ -108,11 +115,27 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
           '/api/admin/tutorial-demo-quality/approved/check',
         ),
     ],
+    [
+      'PATCH checks/:id/override',
+      () =>
+        request(server())
+          .patch('/api/admin/tutorial-demo-quality/checks/c1/override')
+          .send({ verdict: 'ok', reason: 'ложная тревога' }),
+    ],
+    [
+      'GET checks/:id/overrides',
+      () =>
+        request(server()).get(
+          '/api/admin/tutorial-demo-quality/checks/c1/overrides',
+        ),
+    ],
   ];
   const untouched = () => {
     expect(quality.latestForAssets).not.toHaveBeenCalled();
     expect(quality.enqueueByOperator).not.toHaveBeenCalled();
     expect(quality.enqueueApproved).not.toHaveBeenCalled();
+    expect(quality.overrideVerdict).not.toHaveBeenCalled();
+    expect(quality.listOverrides).not.toHaveBeenCalled();
   };
 
   describe.each(routes)('%s', (_name, call) => {
@@ -200,5 +223,53 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
       remaining: 0,
       cap: 20,
     });
+  });
+
+  it('оператор: переопределение — проверка, автор, вердикт и причина', async () => {
+    await asOp(
+      request(server())
+        .patch('/api/admin/tutorial-demo-quality/checks/c1/override')
+        .send({ verdict: 'warn', reason: 'шаг виден, модель ошиблась' }),
+    ).expect(200);
+    expect(quality.overrideVerdict).toHaveBeenCalledWith('c1', 'usr_op', {
+      verdict: 'warn',
+      reason: 'шаг виден, модель ошиблась',
+    });
+    // Снять переопределение — `verdict: null`, причина всё равно нужна.
+    await asOp(
+      request(server())
+        .patch('/api/admin/tutorial-demo-quality/checks/c1/override')
+        .send({ verdict: null, reason: 'вернуть вердикт модели' }),
+    ).expect(200);
+    expect(quality.overrideVerdict).toHaveBeenLastCalledWith('c1', 'usr_op', {
+      verdict: null,
+      reason: 'вернуть вердикт модели',
+    });
+  });
+
+  it('оператор: переопределение без причины или с чужим вердиктом — 400', async () => {
+    for (const body of [
+      { verdict: 'ok' },
+      { verdict: 'ok', reason: 'x' },
+      { verdict: 'pass', reason: 'допустимая причина' },
+      { verdict: 'ok', reason: 'причина', extra: 1 },
+    ]) {
+      await asOp(
+        request(server())
+          .patch('/api/admin/tutorial-demo-quality/checks/c1/override')
+          .send(body),
+      ).expect(400);
+    }
+    expect(quality.overrideVerdict).not.toHaveBeenCalled();
+  });
+
+  it('оператор: журнал переопределений, no-store', async () => {
+    const res = await asOp(
+      request(server()).get(
+        '/api/admin/tutorial-demo-quality/checks/c1/overrides',
+      ),
+    ).expect(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(quality.listOverrides).toHaveBeenCalledWith('c1');
   });
 });

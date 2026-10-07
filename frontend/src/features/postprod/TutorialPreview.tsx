@@ -8,9 +8,11 @@
  * естественном темпе. `playbackRate` не трогается вовсе: изменение
  * скорости видео ускорило бы речь, а требование ровно обратное.
  *
- * Если звук не грузится (CORS хранилища, старый браузер без WebAudio) —
- * картинка и подписи идут по часам `performance.now()`, и человек видит
- * честную пометку «без звука», а не тишину без объяснений.
+ * Если WebAudio не может прочитать звук (нет CORS у хранилища, старый
+ * браузер без WebAudio) — запасной путь: реплики играют `<audio>`-
+ * элементы, которым CORS не нужен, по тем же часам `performance.now()`,
+ * что двигают картинку и подписи (`lib/tutorial-preview-audio.ts`).
+ * Честная пометка «без звука» — только если не сработал и он.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -23,6 +25,12 @@ import {
   speechSchedule,
   type TempoPreview,
 } from '../../lib/tutorial-tempo';
+import {
+  dueClips,
+  previewAudioPath,
+  primeClip,
+  type PrimedClip,
+} from '../../lib/tutorial-preview-audio';
 
 type AudioCtor = typeof AudioContext;
 
@@ -46,9 +54,17 @@ export function TutorialPreview({
   const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const rafRef = useRef<number | null>(null);
   const buffersRef = useRef(new Map<string, AudioBuffer>());
+  /** Запасной путь: `<audio>` на каждую реплику текущего проигрывания. */
+  const elementsRef = useRef<HTMLAudioElement[]>([]);
+  /** WebAudio уже не смог прочитать звук (CORS) — дальше сразу элементы,
+   *  не теряя жест нажатия на повторный `fetch`. */
+  const webAudioBlockedRef = useRef(false);
+  /** Номер проигрывания: `stop()` во время загрузки отменяет старт. */
+  const runRef = useRef(0);
   const duration = preview.durationMs / 1000;
 
   const stop = useCallback(() => {
+    runRef.current += 1;
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
     for (const s of sourcesRef.current) {
@@ -59,6 +75,11 @@ export function TutorialPreview({
       }
     }
     sourcesRef.current = [];
+    for (const el of elementsRef.current) {
+      el.pause();
+      el.removeAttribute('src');
+    }
+    elementsRef.current = [];
     const ctx = ctxRef.current;
     ctxRef.current = null;
     if (ctx) void ctx.close().catch(() => undefined);
@@ -74,16 +95,37 @@ export function TutorialPreview({
 
   const play = async () => {
     stop();
+    const run = runRef.current;
     const schedule = speechSchedule(preview);
     const Ctor: AudioCtor | undefined =
       window.AudioContext ??
       (window as unknown as { webkitAudioContext?: AudioCtor })
         .webkitAudioContext;
-    let fallback = false;
-    let clock: () => number;
-    if (Ctor) {
-      const ctx = new Ctor();
+    const elementAudio = typeof Audio !== 'undefined';
+    const failed = () => {
+      if (runRef.current === run) setAudioFallback(true);
+    };
+    // Запасные элементы — СИНХРОННО, в жесте нажатия и до первого
+    // `await`: WebKit пустит их `play()` из расписания, только если
+    // в жесте их уже разблокировали (`primeClip`). Понадобятся ли они,
+    // станет ясно после `fetch`; не понадобятся — гасятся ниже.
+    const primed: PrimedClip<HTMLAudioElement>[] =
+      elementAudio && schedule.length > 0
+        ? schedule.map((s) => {
+            const el = new Audio();
+            el.preload = 'auto';
+            el.addEventListener('error', failed);
+            el.src = s.url;
+            return primeClip(el);
+          })
+        : [];
+    elementsRef.current = primed.map((p) => p.el);
+    let webAudioFailed = webAudioBlockedRef.current;
+    let ctx: AudioContext | null = null;
+    if (Ctor && !webAudioFailed && schedule.length > 0) {
+      ctx = new Ctor();
       ctxRef.current = ctx;
+      const decoder = ctx;
       await Promise.all(
         schedule.map(async (s) => {
           if (buffersRef.current.has(s.url)) return;
@@ -91,26 +133,63 @@ export function TutorialPreview({
             const res = await fetch(s.url);
             if (!res.ok) throw new Error(String(res.status));
             const data = await res.arrayBuffer();
-            buffersRef.current.set(s.url, await ctx.decodeAudioData(data));
+            buffersRef.current.set(s.url, await decoder.decodeAudioData(data));
           } catch {
-            fallback = true;
+            webAudioFailed = true;
           }
         })
       );
-      if (ctxRef.current !== ctx) return; // остановили, пока грузили
-      const t0 = ctx.currentTime + 0.1;
+      if (runRef.current !== run) return; // остановили, пока грузили
+      if (webAudioFailed) webAudioBlockedRef.current = true;
+    }
+    const path = previewAudioPath({
+      webAudio: Boolean(Ctor),
+      elementAudio,
+      clips: schedule.length,
+      webAudioFailed,
+    });
+
+    let clock: () => number;
+    let onTick: (now: number) => void = () => undefined;
+    let fallback = false;
+    if (path === 'webaudio' && ctx) {
+      const audio = ctx;
+      const t0 = audio.currentTime + 0.1;
       for (const s of schedule) {
         const buffer = buffersRef.current.get(s.url);
         if (!buffer) continue;
-        const src = ctx.createBufferSource();
+        const src = audio.createBufferSource();
         src.buffer = buffer;
-        src.connect(ctx.destination);
+        src.connect(audio.destination);
         src.start(t0 + s.at);
         sourcesRef.current.push(src);
       }
-      clock = () => ctx.currentTime - t0;
+      clock = () => audio.currentTime - t0;
+      // WebAudio справился — разблокированные элементы не нужны.
+      for (const p of primed) {
+        p.el.pause();
+        p.el.removeAttribute('src');
+      }
+      elementsRef.current = [];
     } else {
-      fallback = schedule.length > 0;
+      // Контекст WebAudio дальше не нужен: часы — `performance.now()`.
+      if (ctx) {
+        ctxRef.current = null;
+        void ctx.close().catch(() => undefined);
+      }
+      if (path === 'element') {
+        const fired = new Set<number>();
+        onTick = (now) => {
+          const { start, skipped } = dueClips(schedule, fired, now);
+          for (const i of skipped) fired.add(i);
+          for (const i of start) {
+            fired.add(i);
+            void primed[i].start().catch(failed);
+          }
+        };
+      } else {
+        fallback = schedule.length > 0;
+      }
       const started = performance.now();
       clock = () => (performance.now() - started) / 1000;
     }
@@ -123,6 +202,7 @@ export function TutorialPreview({
         stop();
         return;
       }
+      onTick(now);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);

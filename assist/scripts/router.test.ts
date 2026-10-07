@@ -3,6 +3,13 @@ import { launchHashRoute } from '../src/kit/telegram';
 import { parseRoute, routeHref, type Route } from '../src/lib/router';
 import { launchAction } from '../src/lib/widget-view';
 
+/** base64url (UTF-8) без `=` — как генератор (Node `Buffer…toString('base64url')`). */
+const b64u = (s: string) =>
+  btoa(String.fromCharCode(...new TextEncoder().encode(s)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
 assert.deepEqual(parseRoute(''), { name: 'home' });
 assert.deepEqual(parseRoute('#/'), { name: 'home' });
 assert.deepEqual(parseRoute('#/sites'), { name: 'sites' });
@@ -226,6 +233,34 @@ assert.deepEqual(screenOf('st_ck1'), {
   siteId: 'ck1',
   tab: 'overview',
 });
+
+// ═══ Ш1-хвост: `vh-<base64url(хост)>` → экран «подтвердить этот хост» ═══
+// Не атрибуция; хост строго проверен, мусор — на главную.
+{
+  const sp = `vh-${b64u('shop.example.com')}`;
+  assert.deepEqual(launchAction(sp), {
+    acquisition: null,
+    target: { name: 'verify-host', host: 'shop.example.com' },
+  });
+  assert.deepEqual(screenOf(sp), {
+    name: 'verify-host',
+    host: 'shop.example.com',
+  });
+  const bad = `vh-${b64u('127.0.0.1')}`;
+  assert.deepEqual(launchAction(bad), { acquisition: null, target: null });
+  assert.deepEqual(launchAction('vh-%%%'), { acquisition: null, target: null });
+}
+assert.deepEqual(parseRoute('#/verify-host/www.shop.example.com'), {
+  name: 'verify-host',
+  host: 'www.shop.example.com',
+});
+for (const h of ['Shop.example.com', 'localhost', '1.2.3.4', 'a..b', '']) {
+  assert.equal(parseRoute(`#/verify-host/${h}`).name, 'not-found', h);
+}
+assert.equal(
+  routeHref({ name: 'verify-host', host: 'shop.example.com' }),
+  '#/verify-host/shop.example.com'
+);
 
 // ═══ Э3 (T): новые маршруты — разбор и обратная сборка ═══════════════════
 const E3_ROUTES: Route[] = [

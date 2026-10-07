@@ -38,6 +38,7 @@ import {
   ExternalLink,
   Globe,
   KeyRound,
+  Link2,
   RefreshCw,
   Search,
   Send,
@@ -56,9 +57,13 @@ import {
   Spinner,
 } from '../../components/ui';
 import {
+  ASSIST_LINK_UNAVAILABLE,
   acceptAccountConsent,
   apiErrorCode,
+  apiErrorRetryAfterMs,
   completeLiveLogin,
+  getAssistLinkState,
+  linkAssistSite,
   deleteSiteTutorial,
   exploreSite,
   getSiteAccess,
@@ -79,6 +84,7 @@ import { errorCode, errorMessage } from '../../services/projects-api';
 import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import type {
+  AssistLinkState,
   ClientSiteDraftView,
   ClientSiteRoundResult,
   LiveLoginStart,
@@ -87,19 +93,26 @@ import type {
   PageExploration,
   RegistryLoginOptions,
   SiteAccessView,
+  StepClick,
 } from '../../types/client-site-tutorial';
 import {
   ACCOUNT_CONSENT_REQUIRED,
   ACCOUNT_CONSENT_STALE,
+  DANGER_CONFIRM_REQUIRED,
+  SITE_OPTED_OUT,
+  assistLinkCardMode,
   canOfferVerify,
   consentLocaleOf,
   consentText,
   modeReasonKey,
   needsAccountConsent,
+  recordingBlocked,
   safeVerifyUrl,
   showsVerifyHint,
   siteAccessErrorKey,
   siteModeCardVisible,
+  stepClick,
+  withMinutes,
 } from '../../lib/site-access';
 import { LiveLoginSession } from './LiveLoginSession';
 import { ClientSiteTestAccounts } from './ClientSiteTestAccounts';
@@ -197,6 +210,21 @@ export function ClientSiteWizard({
    * режим A). Метки и роли — логин и пароль сервер берёт сам.
    */
   const [registry, setRegistry] = useState<RegistryLoginOptions | null>(null);
+  /**
+   * «Вы уверены?» у «опасной» кнопки (П-Т13). Здесь, а не на экране
+   * страницы: открыть его может и отказ сервера 409 (кнопку, которую
+   * экран счёл обычной, сервер узнал по селектору).
+   */
+  const [confirming, setConfirming] = useState<PageElement | null>(null);
+  /** Свои диалоги вместо `window.confirm` (WebView Telegram его глушит). */
+  const [discardAsk, setDiscardAsk] = useState(false);
+  const [guideOffAsk, setGuideOffAsk] = useState(false);
+  /**
+   * Привязка черновика к сайту ИИ-помощника (Э6-хвост, L6445): плашка и
+   * выбор кабинета-сайта. `null` — не знаем (маршрута нет на стенде).
+   */
+  const [assistLink, setAssistLink] = useState<AssistLinkState | null>(null);
+  const [assistPick, setAssistPick] = useState('');
 
   /**
    * Шаг из адреса на момент открытия экрана.
@@ -224,6 +252,8 @@ export function ClientSiteWizard({
     setDraft(result.draft);
     setExploration(result.exploration);
     setValues({});
+    // Карточка «вы уверены?» относится к прежнему кадру (аудит этапа 116).
+    setConfirming(null);
     setStage('page');
   }, []);
 
@@ -245,8 +275,16 @@ export function ClientSiteWizard({
     // Выключение необратимо до конца сценария, поэтому спрашиваем.
     // Без этой фразы правило превращается в ловушку: человек снимет
     // галочку «посмотреть, как без неё» и потеряет советы до конца
-    // работы (§3.2).
-    if (!next && !window.confirm(dict.wizardGuide.disableConfirm)) return;
+    // работы (§3.2). Свой диалог, не `window.confirm` (Ш1-хвост).
+    if (!next) {
+      setGuideOffAsk(true);
+      return;
+    }
+    await applyGuide(true);
+  };
+
+  const applyGuide = async (next: boolean): Promise<void> => {
+    setGuideOffAsk(false);
     const updated = await run(() => setWizardGuide(projectId, next));
     if (updated) setGuide(updated);
   };
@@ -372,8 +410,15 @@ export function ClientSiteWizard({
       // Отказы режима и «Подтвердить сайт» — по коду на языке интерфейса
       // (дефект 7 аудита): текст сервера русский во всех локалях.
       const code = apiErrorCode(err);
-      const localized = siteAccessErrorKey(code);
-      setError(localized ? t[localized] : errorMessage(err));
+      const localized =
+        siteAccessErrorKey(code) ??
+        (code === ASSIST_LINK_UNAVAILABLE ? 'assistLinkErrUnavailable' : null);
+      // `{minutes}` — у отказов с ожиданием (П-Т8, частота «Это мой сайт»).
+      setError(
+        localized
+          ? withMinutes(t[localized], apiErrorRetryAfterMs(err))
+          : errorMessage(err)
+      );
       // Ворота П-Т2: сервер сказал «нужно подтверждение прав» или «текст
       // подтверждения сменился» — перечитываем режим, и экран сам покажет
       // галочку с актуальным текстом.
@@ -381,6 +426,8 @@ export function ClientSiteWizard({
         setConsentTicked(false);
         void refreshAccess();
       }
+      // П-Т11: домен закрыли, пока экран был открыт, — плашка скажет почему.
+      if (code === SITE_OPTED_OUT) void refreshAccess();
       // Частота отказов по шагам (§8) — один из источников кандидатов
       // опыта (§6.3). В телеметрию едет КОД, а не текст: текста
       // пользователя в этой таблице не бывает по построению.
@@ -440,6 +487,11 @@ export function ClientSiteWizard({
       setAccess(current);
       setConsentTicked(false);
     }
+    // П-Т11: владелец закрыл домен для записи — не тратим ни запроса.
+    if (recordingBlocked(current)) {
+      setError(t.recordErrOptedOut);
+      return;
+    }
     if (needsAccountConsent(current)) {
       // Повторное «Открыть» без галочки не должно молча ничего не делать
       // (дефект 13 аудита): говорим, куда смотреть.
@@ -492,23 +544,52 @@ export function ClientSiteWizard({
     if (updated) setAccess(updated);
   };
 
-  const submitStep = async (clickSelector?: string) => {
+  /**
+   * Раунд `/step`. `click` — из `stepClick`: селектор, текст кнопки и
+   * `confirmDanger` после диалога (П-Т13). Сервер в режиме B узнал
+   * «опасную» кнопку, которую экран счёл обычной, — 409: открываем тот же
+   * диалог «Нажать?», тупика нет.
+   */
+  const submitStep = async (click?: StepClick) => {
     if (!draft) return;
     const fills = Object.entries(values)
       .filter(([, v]) => v.length > 0)
       .map(([selector, value]) => ({ selector, value }));
-    if (fills.length === 0 && !clickSelector) {
+    if (fills.length === 0 && !click) {
       setError(t.nothingToDo);
       return;
     }
-    const result = await run(() =>
-      stepSite(projectId, {
-        expectedVersion: draft.version,
-        fills,
-        clickSelector,
-      })
-    );
-    if (result) applyRound(result);
+    const failure: { code: string | null } = { code: null };
+    const result = await run(async () => {
+      try {
+        return await stepSite(projectId, {
+          expectedVersion: draft.version,
+          fills,
+          ...click,
+        });
+      } catch (err) {
+        failure.code = apiErrorCode(err);
+        throw err;
+      }
+    });
+    if (result) {
+      applyRound(result);
+      return;
+    }
+    if (
+      failure.code === DANGER_CONFIRM_REQUIRED &&
+      click &&
+      !click.confirmDanger
+    ) {
+      const el = exploration?.elements.find(
+        (e) => e.selector === click.clickSelector
+      );
+      setError(null);
+      setConfirming({
+        ...(el ?? { selector: click.clickSelector, tag: 'button' }),
+        danger: el?.danger ?? t.dangerErrConfirm,
+      });
+    }
   };
 
   const submitLogin = async (submitSelector: string) => {
@@ -636,16 +717,53 @@ export function ClientSiteWizard({
     }
   };
 
-  const discard = async () => {
-    // Единственный путь назад к вводу ссылки — и он не навигация:
-    // черновик хранит шифрованные учётные данные и кадры в хранилище
-    // (§4.4). Спрашиваем ровно потому, что отменить это нечем.
-    if (!window.confirm(t.discardConfirm)) return;
+  /**
+   * Единственный путь назад к вводу ссылки — и он не навигация: черновик
+   * хранит шифрованные учётные данные и кадры в хранилище (§4.4).
+   * Спрашиваем ровно потому, что отменить это нечем — своим диалогом, не
+   * `window.confirm` (в WebView Telegram он молча отвечает «нет»).
+   */
+  const discard = () => setDiscardAsk(true);
+
+  const confirmDiscard = async () => {
+    setDiscardAsk(false);
     const done = await run(async () => {
       await deleteSiteTutorial(projectId);
       return true;
     });
     if (done) navigate(routes.project(projectId), true);
+  };
+
+  // Э6-хвост (L6445): плашка «привязано к помощнику» — молча: маршрута может
+  // не быть (стенд без помощника), и это не повод для красного алерта.
+  const assistDraftId = draft?.id ?? null;
+  useEffect(() => {
+    if (!assistDraftId) {
+      setAssistLink(null);
+      return;
+    }
+    let cancelled = false;
+    void getAssistLinkState(projectId)
+      .then((state) => {
+        if (cancelled) return;
+        setAssistLink(state);
+        setAssistPick(state.candidates[0]?.siteId ?? '');
+      })
+      .catch(() => {
+        if (!cancelled) setAssistLink(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, assistDraftId]);
+
+  /** Привязать существующий черновик к выбранному сайту помощника. */
+  const linkAssist = async () => {
+    if (!assistPick) return;
+    const updated = await run(() => linkAssistSite(projectId, assistPick));
+    if (!updated) return;
+    setAssistLink(updated);
+    if (updated.linked) setNotice(t.assistLinkDone);
   };
 
   const canUndo = useMemo(
@@ -909,7 +1027,9 @@ export function ClientSiteWizard({
               block
               size="lg"
               icon={<Search size={16} />}
-              disabled={busy || url.trim().length === 0}
+              disabled={
+                busy || url.trim().length === 0 || recordingBlocked(access)
+              }
               loading={busy}
               onClick={() => void explore()}
               /* Якорь для съёмки кадров лендинга (этап I,
@@ -977,6 +1097,8 @@ export function ClientSiteWizard({
             editable,
           })}
           live={live}
+          confirming={confirming}
+          setConfirming={setConfirming}
           onStep={submitStep}
           onLogin={submitLogin}
           registry={editable ? registry : null}
@@ -988,6 +1110,20 @@ export function ClientSiteWizard({
           onReview={() => setStage('review')}
         />
       )}
+
+      {stage === 'review' &&
+        draft &&
+        assistLink &&
+        assistLinkCardMode(assistLink) !== 'hidden' && (
+          <AssistLinkCard
+            t={t}
+            state={assistLink}
+            pick={assistPick}
+            setPick={setAssistPick}
+            busy={busy}
+            onLink={() => void linkAssist()}
+          />
+        )}
 
       {stage === 'review' && draft && (
         <ReviewStage
@@ -1024,6 +1160,31 @@ export function ClientSiteWizard({
 
       {/* «Это мой сайт»: свой диалог вместо `window.confirm` (WebView
           Telegram его часто блокирует). Не красный — это не удаление. */}
+      {/* Удаление черновика: красный диалог (отменить нечем). */}
+      <ConfirmDialog
+        open={discardAsk}
+        title={t.discardButton}
+        busy={busy}
+        confirmLabel={t.discardButton}
+        onConfirm={() => void confirmDiscard()}
+        onCancel={() => setDiscardAsk(false)}
+      >
+        {t.discardConfirm}
+      </ConfirmDialog>
+
+      {/* Выключение советов ИИ необратимо до конца сценария (§3.2). */}
+      <ConfirmDialog
+        open={guideOffAsk}
+        title={dict.wizardGuide.disableButton}
+        danger={false}
+        busy={busy}
+        confirmLabel={dict.wizardGuide.disableButton}
+        onConfirm={() => void applyGuide(false)}
+        onCancel={() => setGuideOffAsk(false)}
+      >
+        {dict.wizardGuide.disableConfirm}
+      </ConfirmDialog>
+
       <ConfirmDialog
         open={verifyAsk}
         title={t.verifySiteButton}
@@ -1170,6 +1331,69 @@ function AccountConsentCard(props: {
 }
 
 /**
+ * Э6-хвост (L6445): к какому сайту ИИ-помощника привязан черновик —
+ * ролик уйдёт в набор его роликов после одобрения. Не привязан и сервер
+ * говорит, что можно, — выбор кабинета-сайта и «Привязать».
+ */
+function AssistLinkCard(props: {
+  t: Dict;
+  state: AssistLinkState;
+  pick: string;
+  setPick: (v: string) => void;
+  busy: boolean;
+  onLink: () => void;
+}) {
+  const { t, state, busy } = props;
+  if (state.linked) {
+    return (
+      <Alert tone="success" className="mb-3">
+        <strong className="flex items-center gap-1.5">
+          <Link2 size={14} /> {t.assistLinkedTitle}
+        </strong>
+        {state.siteName
+          ? t.assistLinkedText.replace('{site}', state.siteName)
+          : null}
+      </Alert>
+    );
+  }
+  return (
+    <Card className="p-4 mb-3 space-y-3">
+      <div>
+        <strong className="flex items-center gap-1.5">
+          <Link2 size={14} /> {t.assistLinkTitle}
+        </strong>
+        <p className="mt-1 text-sm text-[var(--muted)]">{t.assistLinkHint}</p>
+      </div>
+      <Field label={t.assistLinkSite} htmlFor="assist-link-site">
+        <Select
+          id="assist-link-site"
+          value={props.pick}
+          onChange={(e) => props.setPick(e.target.value)}
+          disabled={busy}
+        >
+          {state.candidates.map((c) => (
+            <option key={c.siteId} value={c.siteId}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Button
+        data-assist="confirm"
+        size="sm"
+        variant="outline"
+        icon={<Link2 size={14} />}
+        disabled={busy || !props.pick}
+        loading={busy}
+        onClick={props.onLink}
+      >
+        {t.assistLinkButton}
+      </Button>
+    </Card>
+  );
+}
+
+/**
  * Поле формы страницы заказчика. `<select>` рисуется настоящим
  * выпадающим списком: `fill` сопоставляет строку со ЗНАЧЕНИЕМ опции, а
  * не с видимой надписью, — человек, вводящий «Москва» в текстовое поле,
@@ -1223,7 +1447,10 @@ function PageStage(props: {
   canUndo: boolean;
   liveAvailable: boolean;
   live: LiveLoginStart | null;
-  onStep: (clickSelector?: string) => void;
+  /** «Вы уверены?» у «опасной» кнопки (П-Т13) — состояние у мастера. */
+  confirming: PageElement | null;
+  setConfirming: (el: PageElement | null) => void;
+  onStep: (click?: StepClick) => void;
   onLogin: (submitSelector: string) => void;
   /** Ш2-хвост (3): учётки реестра для входа; `null` — блока нет. */
   registry: RegistryLoginOptions | null;
@@ -1246,15 +1473,15 @@ function PageStage(props: {
     canUndo,
     liveAvailable,
     live,
+    confirming,
+    setConfirming,
   } = props;
   const fields = fillableFields(exploration);
   const candidates = clickCandidates(exploration);
-  const [confirming, setConfirming] = useState<PageElement | null>(null);
-  // Карточка «вы уверены?» не должна пережить смену страницы: селектор
-  // в ней относится к УЖЕ показанному кадру, а после раунда DOM другой
-  // (аудит этапа 116).
+  // Выбор кнопки входа не должен пережить смену страницы: селектор
+  // относится к УЖЕ показанному кадру (аудит этапа 116). Карточку «вы
+  // уверены?» сбрасывает мастер (`applyRound`).
   useEffect(() => {
-    setConfirming(null);
     setLoginSubmit(null);
   }, [exploration]);
 
@@ -1479,7 +1706,9 @@ function PageStage(props: {
                 icon={el.danger ? <AlertTriangle size={14} /> : undefined}
                 disabled={busy}
                 onClick={() =>
-                  el.danger ? setConfirming(el) : props.onStep(el.selector)
+                  el.danger
+                    ? setConfirming(el)
+                    : props.onStep(stepClick(el, false))
                 }
               >
                 {el.visibleText}
@@ -1511,7 +1740,8 @@ function PageStage(props: {
               onClick={() => {
                 const el = confirming;
                 setConfirming(null);
-                props.onStep(el.selector);
+                // П-Т13: подтверждение именно этого клика — серверу.
+                props.onStep(stepClick(el, true));
               }}
             >
               {t.dangerConfirm}

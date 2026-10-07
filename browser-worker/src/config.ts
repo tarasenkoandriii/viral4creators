@@ -36,6 +36,12 @@ export interface WorkerConfig {
   secret: string;
   /** Закрытый ключ конверта учёток; нет — обход «Админки» не берётся. */
   sealPrivateKey: string | null;
+  /**
+   * Ш3-хвост (7): прежний закрытый ключ — на время ротации. Секреты учёток,
+   * запечатанные ПРИ ЗАПИСИ под старый открытый ключ, открываются им, пока
+   * владельцы не перевведут пароли (новые записи — уже под новый ключ).
+   */
+  sealPreviousPrivateKey: string | null;
   sealPublicKey: string | null;
   workerId: string;
   concurrency: number;
@@ -144,6 +150,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     sealPrivateKey = sealRaw;
     sealPublicKey = derivePublicFromPrivate(sealRaw);
   }
+  const prevRaw = env.BROWSER_WORKER_SEAL_PRIVATE_KEY_PREVIOUS?.trim();
+  let sealPreviousPrivateKey: string | null = null;
+  if (prevRaw) {
+    if (!sealPrivateKey) {
+      throw new ConfigError(
+        'BROWSER_WORKER_SEAL_PRIVATE_KEY_PREVIOUS без BROWSER_WORKER_SEAL_PRIVATE_KEY',
+      );
+    }
+    if (!isUsableSealKey(prevRaw) || prevRaw === sealPrivateKey) {
+      throw new ConfigError(
+        'BROWSER_WORKER_SEAL_PRIVATE_KEY_PREVIOUS: base64url 32 байта, не равен текущему',
+      );
+    }
+    sealPreviousPrivateKey = prevRaw;
+  }
   const workerId = env.BROWSER_WORKER_ID?.trim() || defaultWorkerId();
   if (!WORKER_ID_RE.test(workerId)) {
     throw new ConfigError('BROWSER_WORKER_ID: [a-z0-9-], 3–63 символа');
@@ -160,8 +181,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
       );
     kinds = want as BrowserJobKind[];
   }
-  // Без ключа конверта учётку не открыть — обход за логином не берём.
-  if (!sealPrivateKey) kinds = kinds.filter((k) => k !== 'admin-crawl');
+  // Без ключа конверта учётку не открыть — обход за логином не берём; раунд
+  // обучалки — тоже: сессия черновика приходит конвертом под этот ключ.
+  if (!sealPrivateKey)
+    kinds = kinds.filter(
+      (k) => k !== 'admin-crawl' && k !== 'tutorial-explore',
+    );
   const sandbox =
     (env.BROWSER_WORKER_SANDBOX ?? 'on').trim().toLowerCase() !== 'off';
   if (production && !sandbox) {
@@ -238,6 +263,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     sitesUrl: sitesUrl.origin,
     secret: secret,
     sealPrivateKey,
+    sealPreviousPrivateKey,
     sealPublicKey,
     workerId,
     concurrency: int(

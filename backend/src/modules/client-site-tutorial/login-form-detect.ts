@@ -32,9 +32,13 @@ export interface LoginFieldsFound {
 
 export type LoginFieldKind = 'username' | 'password' | 'submit';
 
-export type LoginFieldsResult =
-  | ({ ok: true } & LoginFieldsFound)
-  | { ok: false; missing: LoginFieldKind[] };
+/** Отдельным именем: копия у воркера (sync-worker-shared) форматируется
+ *  другой версией prettier, а пересечение внутри объединения они пишут
+ *  по-разному. */
+type LoginFieldsOk = { ok: true } & LoginFieldsFound;
+type LoginFieldsMissing = { ok: false; missing: LoginFieldKind[] };
+
+export type LoginFieldsResult = LoginFieldsOk | LoginFieldsMissing;
 
 const USER_WORDS =
   /(user|login|e-?mail|mail|phone|account|логин|почт|пошт|телефон|аккаунт|акаунт|користувач|пользовател|benutzer|usuario|correo)/i;

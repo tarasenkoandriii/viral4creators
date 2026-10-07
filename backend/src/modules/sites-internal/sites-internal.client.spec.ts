@@ -315,4 +315,62 @@ describe('SitesInternalClient: хранилище учётных данных (�
       foreign.forgetTestAccount('4242', 'ta9', 'project:p1'),
     ).rejects.toMatchObject({ code: 'TEST_ACCOUNT_NOT_OWN', status: 409 });
   });
+
+  it('W7: кандидаты привязки — подписанный POST site-candidates { telegramId, host }', async () => {
+    const sites = [
+      { siteId: 's1', name: 'Магазин', hosts: ['shop.example.com'] },
+    ];
+    const { c, calls } = client(() =>
+      json(200, { success: true, data: { sites } }),
+    );
+    await expect(c.siteCandidates('4242', 'shop.example.com')).resolves.toEqual(
+      {
+        sites,
+      },
+    );
+    const path = '/internal/sites/tutorial/site-candidates';
+    expect(new URL(calls[0].url).pathname).toBe(path);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({
+      telegramId: '4242',
+      host: 'shop.example.com',
+    });
+    expect(
+      verifySitesRequest(SECRET, {
+        method: 'POST',
+        path,
+        body: calls[0].init.body as string,
+        headers: calls[0].init.headers as Record<string, string>,
+        nowSeconds: Math.floor(NOW.getTime() / 1000),
+        expectedCaller: SITES_CALLER_TUTORIAL,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('Ш4(5): карта — вид вёрстки в теле, когда задан; без него поля нет (умолчание sites-backend)', async () => {
+    const { c, calls } = client(() =>
+      json(200, {
+        success: true,
+        data: { siteId: 's1', path: '/', elements: 1 },
+      }),
+    );
+    const el = {
+      selector: '#buy',
+      tag: 'button',
+      label: 'Купить',
+      role: 'button' as const,
+      candidates: [{ kind: 'text' as const, name: 'Купить сейчас' }],
+    };
+    await c.pushUiMap(
+      '4242',
+      's1',
+      'https://shop.example.com/',
+      [el],
+      'mobile',
+    );
+    await c.pushUiMap('4242', 's1', 'https://shop.example.com/', [el]);
+    const first = JSON.parse(calls[0].init.body as string);
+    expect(first.viewport).toBe('mobile');
+    expect(first.elements).toEqual([el]);
+    expect('viewport' in JSON.parse(calls[1].init.body as string)).toBe(false);
+  });
 });

@@ -447,6 +447,21 @@ describe('GET /api/admin/attention (e2e)', () => {
       ]);
     });
 
+    it('оператор переопределил вердикт (заход 7) — карточка по итоговому', async () => {
+      process.env.TUTORIAL_DEMO_QUALITY_ENABLED = '1';
+      prisma.tutorialDemoQualityCheck.findMany.mockResolvedValue([
+        check({ overrideVerdict: 'ok' }),
+        check({ assetId: 'a2', verdict: 'ok', overrideVerdict: 'fail' }),
+      ]);
+      const res = await asOperator().expect(200);
+      expect(res.body.data.items.map((i: { id: string }) => i.id)).toEqual([
+        'demo-quality-fail:a2',
+      ]);
+      expect(
+        prisma.tutorialDemoQualityCheck.findMany.mock.calls[0][0].select,
+      ).toMatchObject({ overrideVerdict: true });
+    });
+
     it('отказ источника качества — «не удалось проверить», не зелёный ноль', async () => {
       process.env.TUTORIAL_DEMO_QUALITY_ENABLED = '1';
       prisma.tutorialDemoQualityCheck.findMany.mockRejectedValue(

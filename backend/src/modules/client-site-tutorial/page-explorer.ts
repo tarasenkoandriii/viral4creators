@@ -51,6 +51,18 @@ export interface ExploreRoundRequest {
    * затем нажимает кнопку. `actions` при этом пусты.
    */
   autoLogin?: AutoLoginRequest;
+  /**
+   * Ш3-хвост (3): кто ведёт черновик. Нужен браузерному воркеру — лимиты
+   * «на человека» и кадры режима A (`/internal/sites/tutorial/frames/*`
+   * проверяет кабинет по telegramId). Нет — воркер считает лимиты по сайту
+   * черновика, кадры режима A снимает функция, как раньше.
+   */
+  requester?: ExploreRequester;
+}
+
+export interface ExploreRequester {
+  /** Telegram-id пользователя генератора (числом в строке). */
+  telegramId: string;
 }
 
 export interface AutoLoginRequest {
@@ -60,6 +72,13 @@ export interface AutoLoginRequest {
   password: string;
   /** Поля, указанные человеком (запасной путь), — проверяются, не угадываются. */
   pick?: LoginFieldPick;
+  /**
+   * Ш3-хвост (3): учётка реестра, из которой взят пароль. Есть — раунд входа
+   * может уйти на браузерный воркер: пароль туда НЕ передаётся (воркер берёт
+   * его своей арендой Ш2 `tutorial-login`), `password` здесь — для раунда в
+   * функции. Нет — вход идёт в функции, как раньше.
+   */
+  registry?: { telegramId: string; testAccountId: string };
 }
 
 export interface ExploreRoundResult {
@@ -107,6 +126,8 @@ export interface ReplayRequest {
    */
   passwordOnly?: string[];
   allowedOrigin: string;
+  /** Ш3-хвост (3): кто ведёт черновик (режим сайта для воркера). */
+  requester?: ExploreRequester;
 }
 
 /**
@@ -120,3 +141,21 @@ export interface PageExplorer {
   runRound(request: ExploreRoundRequest): Promise<ExploreRoundResult>;
   replay(request: ReplayRequest): Promise<ExploreRoundResult>;
 }
+
+/**
+ * Ш3-хвост (3), выключатели генератора (умолчание — выкл.: Chromium в
+ * функции, как до воркера):
+ *  - `TUTORIAL_EXPLORER_VIA_WORKER` — раунды исследователя без ввода руками
+ *    (переход, клик, вход учёткой реестра) — на браузерном воркере;
+ *  - `TUTORIAL_FRAMES_VIA_WORKER` — съёмочный кадр раунда «открыть
+ *    страницу» в режиме A — заданием кадров воркера.
+ * Любой отказ ДО исполнения (409 `BROWSER_WORKER_DISABLED`, режим, лимит,
+ * сеть) — откат на функцию.
+ */
+export function flagOn(env: NodeJS.ProcessEnv, name: string): boolean {
+  const v = (env[name] ?? '').trim().toLowerCase();
+  return v === 'true' || v === '1' || v === 'on';
+}
+
+export const EXPLORER_VIA_WORKER_ENV = 'TUTORIAL_EXPLORER_VIA_WORKER';
+export const FRAMES_VIA_WORKER_ENV = 'TUTORIAL_FRAMES_VIA_WORKER';

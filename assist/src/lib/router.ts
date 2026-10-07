@@ -20,6 +20,7 @@ import {
   type StatsTab,
 } from './e3-view';
 import { isAdminModeTab, type AdminModeTab } from './admin-mode-api';
+import { isCanonicalHost } from '../kit/start-param';
 
 export type Section = 'knowledge' | 'widget' | 'dialogs';
 
@@ -72,6 +73,8 @@ export type Route =
   // Э7: «Админка» — кабинет режима (владелец) и чат сотрудника (7a).
   | { name: 'admin-mode'; siteId: string; tab: AdminModeTab }
   | { name: 'admin-chat'; siteId: string }
+  // Ш1-хвост: «подтвердить этот хост» (startapp `vh-…` из обучалки).
+  | { name: 'verify-host'; host: string }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
@@ -105,6 +108,9 @@ export function parseRoute(hash: string): Route {
     return { name: 'widget-draft', draftId: p[1] };
   }
   if (p.length === 1 && p[0] === 'stats') return { name: 'stats-sites' };
+  if (p.length === 2 && p[0] === 'verify-host' && isCanonicalHost(p[1])) {
+    return { name: 'verify-host', host: p[1] };
+  }
   if (p.length === 1 && p[0] === 'billing') {
     return { name: 'billing', plan: null };
   }
@@ -333,6 +339,8 @@ export function routeHref(r: Route): string {
       }`;
     case 'billing':
       return r.plan ? `#/billing/${r.plan}` : '#/billing';
+    case 'verify-host':
+      return `#/verify-host/${r.host}`;
     case 'not-found':
       return `#/${r.path}`;
   }

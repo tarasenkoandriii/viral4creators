@@ -1092,6 +1092,7 @@ Prettier в `landing/` не настроен вовсе: `--check` падает 
 ### Этапы D и E ✅ сделаны 26.09.2026
 
 Четыре схемы перерисованы заново, добавлен кадр продукта в первый экран.
+(07.10.2026: hero и OG-карточки — `tutorial-hero-v2.avif` с WebP/JPEG; `tutorial-hero.svg` и `greet-hero.svg` удалены.)
 Файлы: пять SVG в `public/illustrations/` (четыре кадра + `tutorial-hero.svg`),
 `globals.css`, `page.tsx`. Вес: кадры 3,8–4,9 КБ, hero 6,9 КБ — при
 потолке 12 КБ. Все проверки зелёные, прокрутки нет на 390/768/1280.

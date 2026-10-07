@@ -11,6 +11,13 @@ export const BROWSER_JOB_ORIGINS = [
   'voice-map-check',
   'assist-admin-crawl',
   'tutorial-frames',
+  // Ш3-хвост (3): раунд исследователя обучалки. `tutorial-explore` — вход
+  // учёткой реестра (режим A: хост кабинета подтверждён, секреты — арендой
+  // воркера); `tutorial-explore-open` — всё остальное, в т.ч. режим B
+  // (решение владельца «B ничего не блокирует»): без хоста кабинета, замок
+  // — ТОЧНЫЕ хосты черновика, лимиты — на человека и на хост.
+  'tutorial-explore',
+  'tutorial-explore-open',
 ] as const;
 export type BrowserJobOrigin = (typeof BROWSER_JOB_ORIGINS)[number];
 
@@ -19,8 +26,12 @@ const DAY = 24 * HOUR;
 
 export interface OriginRule {
   kind: BrowserJobKind;
-  /** Назначение проверки хоста (L1 без льготы) — при постановке и при выдаче. */
-  purpose: HostPurpose;
+  /**
+   * Назначение проверки хоста (L1 без льготы) — при постановке и при выдаче.
+   * `null` — задание без хоста кабинета (`tutorial-explore-open`, режим B):
+   * ставится только `enqueueOpen`, хост не перепроверяется.
+   */
+  purpose: HostPurpose | null;
   /**
    * Попыток всего. Обход за логином — ОДНА: вход не повторяется
    * автоматически (QA-ТЗ §3.6 «1–2 попытки входа, без перебора»; §4.3
@@ -76,7 +87,58 @@ export const ORIGIN_RULES: Readonly<Record<BrowserJobOrigin, OriginRule>> = {
     dailyPerSite: 100,
     priority: 5,
   },
+  // Раунд обучалки — человек ждёт ответа: высший приоритет, одна попытка
+  // (повтор нажал бы кнопку на сайте второй раз), срок — сутки (кадр и
+  // элементы генератор забирает сразу; остаток — для разбора отказов).
+  'tutorial-explore': {
+    kind: 'tutorial-explore',
+    purpose: 'tutorial',
+    maxAttempts: 1,
+    ttlMs: DAY,
+    activePerSite: 3,
+    dailyPerSite: 300,
+    priority: 20,
+  },
+  'tutorial-explore-open': {
+    kind: 'tutorial-explore',
+    purpose: null,
+    maxAttempts: 1,
+    ttlMs: DAY,
+    // Для open «сайт» — человек (см. OPEN_LIMITS): ключ лимитов другой.
+    activePerSite: 2,
+    dailyPerSite: 300,
+    priority: 20,
+  },
 };
+
+/**
+ * Лимиты заданий без хоста кабинета (`tutorial-explore-open`): на человека
+ * (`subject` генератора) и на хост сайта — воркер не превращается в
+ * бесплатный «браузер по запросу» против чужого сайта. Сверх суточного
+ * лимита раундов генератора (его `usage`), а не вместо него.
+ */
+export const OPEN_LIMITS = {
+  activePerSubject: 2,
+  dailyPerSubject: 300,
+  activePerHost: 6,
+  dailyPerHost: 1500,
+} as const;
+
+/**
+ * Ключ «кабинета» заданий без кабинета: `gen-<subject>` (у кабинетов —
+ * cuid без дефиса). По нему считаются справедливость выдачи
+ * (`RUNNING_PER_ACCOUNT`), лимиты человека и путь артефактов в Blob.
+ * `subject` — непрозрачный ключ человека от генератора (`tg-<id>` или хеш).
+ */
+export const OPEN_ACCOUNT_PREFIX = 'gen-';
+export const OPEN_SUBJECT_RE = /^[A-Za-z0-9_-]{1,56}$/;
+
+export function openAccountId(subject: string): string {
+  if (!OPEN_SUBJECT_RE.test(subject)) {
+    throw new Error('browser-jobs: недопустимый subject задания без кабинета');
+  }
+  return `${OPEN_ACCOUNT_PREFIX}${subject}`;
+}
 
 export function isBrowserJobOrigin(v: unknown): v is BrowserJobOrigin {
   return (

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 import { SessionService } from '../../common/session.service';
 import { ProjectService } from '../project/project.service';
@@ -89,6 +89,7 @@ import {
   ClientSiteRetentionResult,
 } from '../client-site-tutorial/draft-retention';
 import { defaultDraftSecretsStore } from '../client-site-tutorial/draft-secrets-store';
+import { ClientSiteMediaService } from '../client-site-media/client-site-media.service';
 import {
   VoiceUploadService,
   VoiceUploadSweepResult,
@@ -213,6 +214,15 @@ export interface CleanupSessionsResult {
   skipped?: boolean;
 }
 
+/** W7: счётчики сверки роликов сайтов помощника в итоге `client-site-retention`. */
+export interface AssistVideoSetsCounters {
+  videoSetsChecked: number;
+  videoSetsSent: number;
+  /** -1 — сверка упала целиком (причина — в логе). */
+  videoSetsFailed: number;
+  videoSetsDeferred: number;
+}
+
 @Injectable()
 export class CronJobsService {
   private readonly logger = new Logger(CronJobsService.name);
@@ -247,6 +257,12 @@ export class CronJobsService {
     private readonly apiVideo: ApiVideoJobWorker,
     private readonly voiceUploads: VoiceUploadService,
     private readonly personas: PersonaService,
+    /**
+     * W7 (Э6-хвост): ночная сверка наборов роликов сайтов помощника — шаг
+     * крона `client-site-retention`. Необязательный: тесты его не дают.
+     */
+    @Optional()
+    private readonly clientSiteMedia?: ClientSiteMediaService,
   ) {}
 
   /**
@@ -827,7 +843,9 @@ export class CronJobsService {
    * оператора или у брошенного черновика (`ClientSiteDraftRetention`).
    * Раз в сутки: сроки — дни.
    */
-  async runClientSiteRetention(): Promise<ClientSiteRetentionResult> {
+  async runClientSiteRetention(): Promise<
+    ClientSiteRetentionResult & Partial<AssistVideoSetsCounters>
+  > {
     const acquired = await tryAcquireJobLock(
       this.prisma,
       'client-site-retention',
@@ -846,7 +864,7 @@ export class CronJobsService {
       };
     }
     try {
-      return await new ClientSiteDraftRetention(
+      const retention = await new ClientSiteDraftRetention(
         this.prisma,
         this.blobService,
         undefined,
@@ -856,8 +874,35 @@ export class CronJobsService {
         // (аудит кронов 06.10.2026).
         this.notify,
       ).run();
+      return { ...retention, ...(await this.reconcileAssistVideoSets()) };
     } finally {
       await releaseJobLock(this.prisma, 'client-site-retention', acquired);
+    }
+  }
+
+  /**
+   * W7 (Э6-хвост): сверка наборов роликов сайтов помощника — после уборки
+   * хранения, под тем же замком (раз в сутки). Плоские счётчики — их
+   * показывает сводка прогона. Сбой сверки уборку не отменяет.
+   */
+  private async reconcileAssistVideoSets(): Promise<
+    Partial<AssistVideoSetsCounters>
+  > {
+    if (!this.clientSiteMedia) return {};
+    try {
+      const r = await this.clientSiteMedia.reconcileSites();
+      if (r.skipped) return {};
+      return {
+        videoSetsChecked: r.sites,
+        videoSetsSent: r.sent,
+        videoSetsFailed: r.failed,
+        videoSetsDeferred: r.deferred,
+      };
+    } catch (e) {
+      this.logger.warn(
+        `Сверка роликов сайтов помощника не удалась: ${e instanceof Error ? e.message : String(e)}`,
+      );
+      return { videoSetsFailed: -1 };
     }
   }
 

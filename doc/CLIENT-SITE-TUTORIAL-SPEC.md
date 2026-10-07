@@ -78,7 +78,7 @@
 | Live-вход через `live-login-relay` (§7.4) — клиент реле, квитанция, маркерный шаг, лимит | `live-login-relay.client.ts`, `live-login-ticket.ts` | 114 |
 | Фронтенд визарда в ТМА (§11) и третий тип проекта в мастере (§4.1/§4.2/§4.3) | `frontend/src/features/projects/ClientSiteWizard.tsx`, `client-site-elements.ts` | 115 |
 | Стабилизация кадра на чужом сайте, предупреждение о редиректе, потолок попыток сборки, чек-лист модерации (§16) | `foreign-frame-settle.ts`, `chromium-page-explorer.ts`, `client-site-tutorial-admin.service.ts`, `admin/src/app/site-tutorial-drafts/` | перенос QA TMA, 01.10.2026 |
-| **`ClientSiteRouteResolver` (§5.3)** — нужен только будущей пересборке ролика | — | **не сделано** |
+| **`ClientSiteRouteResolver` (§5.3)** — нужен только будущей пересборке ролика | — | **снят 07.10.2026 (заход 7):** пересборка идёт по сохранённым кадрам; раздел §5.3 — исторический |
 | Два кадра за раунд: лёгкий превью в строку, съёмочный 780px сразу в Blob (§6.3, вариант А) | `chromium-page-explorer.ts` (`videoFrameDataUrl`), `client-site-tutorial.service.ts` (`storeVideoFrame`), колонка `roundVideoFrames` | 29.09.2026 |
 | Готовый ролик виден ВЛАДЕЛЬЦУ проекта, а не только оператору (§8.3 + находка Б-4 аудита лендинга) | `client-site-tutorial.service.ts` (`attachVideo`), `ClientSiteWizard.tsx` | аудит лендинга |
 | Замок по регистрируемому домену вместо строгого origin + повторная §8.2 при смене хоста (§8.1, находка Т-4) | `draft-rounds.ts` (`assertSameSite`) | аудит лендинга |
@@ -571,7 +571,7 @@ PATCH  /admin/site-tutorial-drafts/:id/reject
        POST .../resume (см. выше).
 ```
 
-### 5.3 `ClientSiteRouteResolver`
+### 5.3 `ClientSiteRouteResolver` (снят 07.10.2026 — не строится, см. таблицу §0)
 
 Аналог `route-templates.ts`, но без словаря маршрутов — принимает
 буквальный URL/относительный путь и проверяет его происхождение против

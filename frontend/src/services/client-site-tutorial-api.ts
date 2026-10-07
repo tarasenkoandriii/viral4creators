@@ -9,7 +9,9 @@
 
 import { api } from './api';
 import axios from 'axios';
+import { normalizeAssistLink, stepFieldRejected } from '../lib/site-access';
 import type {
+  AssistLinkState,
   ClientSiteDraftView,
   ClientSiteRoundResult,
   ConsentLocale,
@@ -17,6 +19,7 @@ import type {
   LoginFieldPick,
   RegistryLoginOptions,
   SiteAccessView,
+  StepClick,
 } from '../types/client-site-tutorial';
 
 function unwrap<T>(res: { data?: T }, what: string): T {
@@ -74,13 +77,39 @@ export async function stepSite(
   input: {
     expectedVersion: number;
     fills: Array<{ selector: string; value: string }>;
-    clickSelector?: string;
-  }
+  } & Partial<StepClick>
 ): Promise<ClientSiteRoundResult> {
-  return unwrap(
-    await api.post<ClientSiteRoundResult>(`${base(projectId)}/step`, input),
-    'step'
-  );
+  try {
+    return unwrap(
+      await api.post<ClientSiteRoundResult>(`${base(projectId)}/step`, input),
+      'step'
+    );
+  } catch (err) {
+    // ПЕРЕХОДНЫЙ код, УБРАТЬ ПОСЛЕ 2026-11-06 (аудит захода 7, п.5б): если
+    // backend ещё старый и отклонил новые поля `clickText`/`confirmDanger`
+    // (400, whitelist), повторяем один раз без них — пользователь всё
+    // подтвердил своим диалогом, терять шаг из-за рассинхрона сборок нельзя.
+    const hasNewFields =
+      input.clickText !== undefined || input.confirmDanger !== undefined;
+    if (
+      hasNewFields &&
+      axios.isAxiosError(err) &&
+      err.response?.status === 400 &&
+      stepFieldRejected(err.response?.data, ['clickText', 'confirmDanger'])
+    ) {
+      const { clickText, confirmDanger, ...legacy } = input;
+      void clickText;
+      void confirmDanger;
+      return unwrap(
+        await api.post<ClientSiteRoundResult>(
+          `${base(projectId)}/step`,
+          legacy
+        ),
+        'step'
+      );
+    }
+    throw err;
+  }
 }
 
 export async function loginSite(
@@ -224,6 +253,20 @@ export function apiErrorCode(err: unknown): string | null {
   return typeof code === 'string' ? code : null;
 }
 
+/**
+ * Сколько ждать до повтора (`error.details.retryAfterMs` конверта) — у
+ * отказов П-Т8 и частоты «Это мой сайт»; `null` — нет.
+ */
+export function apiErrorRetryAfterMs(err: unknown): number | null {
+  if (!axios.isAxiosError(err)) return null;
+  const ms = (
+    err.response?.data as
+      | { error?: { details?: { retryAfterMs?: unknown } } }
+      | undefined
+  )?.error?.details?.retryAfterMs;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+
 /** Подробность отказа (`error.details.reason` конверта) или `null`. */
 export function apiErrorReason(err: unknown): string | null {
   if (!axios.isAxiosError(err)) return null;
@@ -275,4 +318,30 @@ export async function verifySite(
     }),
     'verify site'
   );
+}
+
+/** Отказ привязки к помощнику (409): привязать сейчас нельзя. */
+export const ASSIST_LINK_UNAVAILABLE = 'ASSIST_LINK_UNAVAILABLE';
+
+/** Э6-хвост: к какому сайту помощника привязан черновик и куда можно. */
+export async function getAssistLinkState(
+  projectId: string
+): Promise<AssistLinkState> {
+  const res = await api.get<unknown>(`${base(projectId)}/assist-link`);
+  return normalizeAssistLink(res.data);
+}
+
+/**
+ * Привязать существующий черновик к сайту помощника. Сервер проверяет
+ * права (владелец/менеджер помощника); нельзя — 409
+ * `ASSIST_LINK_UNAVAILABLE`, нет черновика/сайта — 404.
+ */
+export async function linkAssistSite(
+  projectId: string,
+  siteId: string
+): Promise<AssistLinkState> {
+  const res = await api.post<unknown>(`${base(projectId)}/assist-link`, {
+    siteId,
+  });
+  return normalizeAssistLink(unwrap(res, 'assist-link'));
 }

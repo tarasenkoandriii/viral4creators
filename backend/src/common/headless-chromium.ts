@@ -42,6 +42,8 @@
  * — `'shell'`.
  */
 
+import { Logger } from '@nestjs/common';
+
 // Флаги для системного Chromium в Docker-образе (если он когда-либо
 // понадобится локально — на Vercel этой ветки не будет).
 const DOCKER_CHROMIUM_ARGS = [
@@ -111,6 +113,9 @@ export type HeadlessBrowserLaunchPlan =
 // кандидат заново платил бы за загрузку).
 let launchPlanPromise: Promise<HeadlessBrowserLaunchPlan> | null = null;
 let launchPlanFailedAt = 0;
+/** П-Г3: «хеш не задан» — в лог один раз за инстанс. */
+let warnedNoPackSha = false;
+const packLogger = new Logger('HeadlessChromium');
 
 export function resolveHeadlessBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
   // Найдено при написании тестов на этот порт (в оригинале Solar Shop —
@@ -275,7 +280,7 @@ async function buildBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
   // Если архив уже распакован на этом инстансе — берём папку, а не URL:
   // иначе каждая повторная попытка качала бы 65 МБ заново.
   const packDir = '/tmp/chromium-pack';
-  const haveLocalPack = (await fileSizeOrZero(`${packDir}/chromium.br`)) > 0;
+  let haveLocalPack = (await fileSizeOrZero(`${packDir}/chromium.br`)) > 0;
 
   if (!haveLocalPack) {
     const precheck = await packUrlLooksLikeTar(packUrl);
@@ -284,6 +289,33 @@ async function buildBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
         kind: 'unavailable',
         diagnostic: `архив Chromium недоступен (${packUrl}): ${precheck.reason}`,
       };
+    }
+    // П-Г3: проверка SHA-256 скачанного архива (`chromium-pack-verify.ts`).
+    // Задан хеш — качаем сами, сверяем и распаковываем в packDir; дальше
+    // библиотеке отдаётся папка. Несовпадение — отказ без запуска.
+    const verify = await import('./chromium-pack-verify');
+    const expected = verify.expectedPackSha256(process.env);
+    if (expected.kind === 'invalid') {
+      return {
+        kind: 'unavailable',
+        diagnostic: `${verify.PACK_SHA256_ENV} задан неверно (нужны 64 hex-символа SHA-256 архива) — браузер не запускается`,
+      };
+    }
+    if (expected.kind === 'sha256') {
+      const v = await verify.downloadVerifiedPack({
+        url: packUrl,
+        expectedSha256: expected.value,
+        destDir: packDir,
+        timeoutMs: CHROMIUM_DOWNLOAD_TIMEOUT_MS,
+      });
+      if (!v.ok) return { kind: 'unavailable', diagnostic: v.diagnostic };
+      haveLocalPack = true;
+    } else if (!warnedNoPackSha) {
+      // Один раз за инстанс: прод без хеша работает как раньше.
+      warnedNoPackSha = true;
+      packLogger.warn(
+        `${verify.PACK_SHA256_ENV} не задан — архив Chromium (${packUrl}) запускается без проверки SHA-256`,
+      );
     }
   }
 
@@ -438,4 +470,5 @@ export function withTimeout<T>(
 export function __resetHeadlessBrowserLaunchPlanForTests(): void {
   launchPlanPromise = null;
   launchPlanFailedAt = 0;
+  warnedNoPackSha = false;
 }

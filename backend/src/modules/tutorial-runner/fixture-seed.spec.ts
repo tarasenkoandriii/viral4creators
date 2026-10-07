@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- двойники Prisma */
+import { fixtureRelevanceState } from '../relevance/fixture-relevance';
 import { seedFixtureUser } from './fixture-seed';
 import { DEFAULT_VOICE_MODE, usesOwnVoice } from '../../common/voice-mode';
 import { TUTORIAL_DEMO_PRODUCT } from '../../common/tutorial-demo-product';
@@ -152,6 +153,22 @@ describe('seedFixtureUser: сессии под каждое состояние �
     expect(s.status).toBe('product_info_added');
     expect(s.data.generationPrompt).toBeUndefined();
     expect(s.liveData).toEqual({});
+  });
+
+  // Заход 7 (аудит): `RelevancePanel` при открытии сам запускает платный
+  // разбор релевантности, если отчёта нет, — а пересев шёл каждую ночь.
+  it('у каждой сессии мастера — готовый детерминированный отчёт релевантности, и в create, и в update', async () => {
+    const { prisma, session } = build();
+    await seedFixtureUser(prisma as any, '42');
+    const calls = session.mock.calls.filter(
+      (c: any[]) => c[0].create.data?.productInformation,
+    );
+    expect(calls).toHaveLength(3);
+    for (const [args] of calls) {
+      expect(args.create.data.relevance).toEqual(fixtureRelevanceState());
+      expect(args.update.data.relevance).toEqual(fixtureRelevanceState());
+      expect(args.create.data.relevance.report).not.toBeNull();
+    }
   });
 
   it('у сессии ПЕРЕД рендером промпт одобрен, а ролика нет', async () => {

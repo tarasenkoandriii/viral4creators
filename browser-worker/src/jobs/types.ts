@@ -29,6 +29,11 @@ export interface JobContext {
   }): Promise<void>;
   /** Учётка задания (admin-crawl) — один раз на попытку, конвертом. */
   credentials(): Promise<JobCredentials>;
+  /**
+   * Открыть конверт из параметров задания (сессия раунда обучалки) ключом
+   * воркера; не открылся — `JobError('credentials_unavailable')`.
+   */
+  unseal(sealed: string, aad: string): Buffer;
 }
 
 export type JobExecutor = (ctx: JobContext) => Promise<BrowserJobResult>;

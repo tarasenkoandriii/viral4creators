@@ -104,6 +104,7 @@ import { MEDIA_DEFAULTS } from '../assist-site-media/media-config';
 import {
   promptVideos,
   videoAllowedByPlan,
+  videoLangPrefs,
 } from '../assist-site-media/public/site-videos';
 import {
   pageUiElements,
@@ -644,7 +645,12 @@ export class SiteChatService {
         return this.finishAnswer(ctx, {
           text: cached.text,
           sources: cached.sources,
-          actions: await this.liveMediaActions(site, cached.actions, now),
+          actions: await this.liveMediaActions(
+            site,
+            cached.actions,
+            now,
+            videoLangPrefs(lang, input.uiLang),
+          ),
           path: 'cache',
           cacheKey,
           flags: [],
@@ -830,6 +836,7 @@ export class SiteChatService {
       p.input.page.url,
       p.hosts,
       p.videoAllowed,
+      videoLangPrefs(p.lang, p.input.uiLang),
     );
     const prompt = buildSitePrompt({
       siteName: p.siteName,
@@ -1581,10 +1588,14 @@ export class SiteChatService {
     pageUrl: string | null,
     hosts: string[],
     videoAllowed: boolean,
+    /** Ш5(5): языки посетителя — его ролики первыми (`videoLangPrefs`). */
+    langs: string[] = [],
   ): Promise<MediaAllowed> {
     try {
       const [videos, elements] = await Promise.all([
-        videoAllowed ? promptVideos(this.db, siteId) : Promise.resolve([]),
+        videoAllowed
+          ? promptVideos(this.db, siteId, langs)
+          : Promise.resolve([]),
         pageUiElements(this.db, siteId, pageUrl, hosts),
       ]);
       const key = visitorPageKey(pageUrl, hosts);
@@ -1612,6 +1623,7 @@ export class SiteChatService {
     site: AskInput['site'],
     actions: SiteAction[],
     now: Date,
+    langs: string[] = [],
   ): Promise<SiteAction[]> {
     if (!actions.some((a) => a.kind === 'video')) return actions;
     let live = new Set<string>();
@@ -1619,7 +1631,7 @@ export class SiteChatService {
       const plan = await readState(this.db, site.accountId, now);
       if (videoAllowedByPlan(plan.planId)) {
         live = new Set(
-          (await promptVideos(this.db, site.siteId)).map((v) => v.id),
+          (await promptVideos(this.db, site.siteId, langs)).map((v) => v.id),
         );
       }
     } catch {

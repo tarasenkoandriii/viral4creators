@@ -33,7 +33,7 @@ import {
   GeneratorUnavailableError,
 } from './generator-memo-steps.client';
 import { memoFromTutorial } from './memo-from-tutorial';
-import { MemoService } from './memo.service';
+import { MemoService, type MemoTx } from './memo.service';
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ELEMENTS_MAX = 5_000;
@@ -51,6 +51,47 @@ function tutorialError(
   extra: Record<string, unknown> = {},
 ): HttpException {
   return new HttpException({ error: code, code, message, ...extra }, status);
+}
+
+const exists = (number: number) =>
+  tutorialError(
+    HttpStatus.CONFLICT,
+    'MEMO_TUTORIAL_EXISTS',
+    `Мемо из этой обучалки уже есть: М-${number}`,
+    { number },
+  );
+
+/**
+ * Мемо из обучалки `draftId` (не удалённое) — по истории `create` с ссылкой
+ * на черновик. Тем же клиентом, что и транзакция создания (см. `create`).
+ */
+async function memoFromDraft(
+  db: Pick<MemoTx, 'assistSiteMemoChange' | 'assistSiteMemo'>,
+  siteId: string,
+  draftId: string,
+): Promise<{ number: number } | null> {
+  const changes = await db.assistSiteMemoChange.findMany({
+    where: {
+      siteId,
+      source: 'tutorial',
+      AND: [
+        { op: { path: ['op'], equals: 'create' } },
+        { op: { path: ['draftId'], equals: draftId } },
+      ],
+    },
+    select: { memoId: true },
+    take: 100,
+  });
+  if (!changes.length) return null;
+  return db.assistSiteMemo.findFirst({
+    where: {
+      siteId,
+      id: { in: changes.map((c) => c.memoId) },
+      status: { not: 'removed' },
+    },
+    select: { number: true },
+    orderBy: { number: 'asc' },
+  });
 }
 
 const notFound = () =>
@@ -187,14 +228,8 @@ export class MemoFromTutorialService {
       orderBy: { syncedAt: 'desc' },
     });
     if (!video) throw notFound();
-    const existing = (await this.memosByDraft(m, siteId)).get(draftId);
-    if (existing)
-      throw tutorialError(
-        HttpStatus.CONFLICT,
-        'MEMO_TUTORIAL_EXISTS',
-        `Мемо из этой обучалки уже есть: М-${existing.number}`,
-        { number: existing.number },
-      );
+    const existing = await memoFromDraft(db, siteId, draftId);
+    if (existing) throw exists(existing.number);
     let src;
     try {
       src = await this.generator.memoSteps(siteId, draftId);
@@ -257,12 +292,27 @@ export class MemoFromTutorialService {
     const lang: MemoLang =
       video.locale === 'ru' || video.locale === 'en' ? video.locale : 'uk';
     const conv = memoFromTutorial(src, elements, lang);
-    const memo = await this.memos.createFromTutorial(m, siteId, conv.content, {
-      draftId,
-      requiresLogin: src.requiresLogin,
-      dropped: src.dropped,
-      unresolved: conv.unresolved.length,
-    });
+    // Аудит L6680: двойное «Из обучалки» — два запроса прошли проверку выше
+    // до записи любого из них. Внутри транзакции создания — advisory-
+    // блокировка по (сайт, черновик) и повторная проверка: второй ждёт
+    // фиксации первого (мемо и его история — одной транзакцией) и получает
+    // тот же 409 `MEMO_TUTORIAL_EXISTS` с номером; счётчик и лимит не тронуты.
+    const memo = await this.memos.createFromTutorial(
+      m,
+      siteId,
+      conv.content,
+      {
+        draftId,
+        requiresLogin: src.requiresLogin,
+        dropped: src.dropped,
+        unresolved: conv.unresolved.length,
+      },
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`memo-tutorial:${siteId}`}), hashtext(${draftId}))`;
+        const dup = await memoFromDraft(tx, siteId, draftId);
+        if (dup) throw exists(dup.number);
+      },
+    );
     this.logger.log(
       `memo from tutorial site=${siteId} memo=${memo.number} steps=${conv.content.steps.length} unresolved=${conv.unresolved.length} login=${src.requiresLogin}`,
     );

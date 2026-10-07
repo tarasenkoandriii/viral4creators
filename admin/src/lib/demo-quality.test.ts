@@ -1,15 +1,18 @@
-// Помощники проверки качества демо. В admin/ нет тест-раннера — запуск
-// (из admin/):
-//   npx --prefix ../sites-landing tsx src/lib/demo-quality.test.ts
+// Помощники проверки качества демо. Запуск (из admin/): npm test —
+// или один файл: npx tsx src/lib/demo-quality.test.ts
 import assert from 'node:assert/strict';
 import {
+  captureModeLabel,
   categoryLabel,
   checkResultLabel,
+  effectiveVerdictOf,
   enqueueMessage,
   formatCost,
   formatTimecode,
   freshnessLabel,
+  overrideReasonProblem,
   qualityBadge,
+  signalsSummary,
   sortIssues,
 } from './demo-quality';
 import type { DemoQualityCheck, DemoQualityIssue } from './types';
@@ -92,5 +95,42 @@ assert.match(enqueueMessage({ check: check(), created: true, reason: null }), /�
 assert.match(enqueueMessage({ check: check(), created: false, reason: 'already-checked' }), /не оплачивается/);
 assert.match(enqueueMessage({ check: check(), created: false, reason: 'already-queued' }), /уже в очереди/);
 assert.match(enqueueMessage({ check: check(), created: false, reason: 'retry' }), /заново/);
+
+// Заход 7: переопределение оператором — бейдж по итоговому вердикту с пометкой.
+const overridden = check({
+  verdict: 'fail',
+  effectiveVerdict: 'ok',
+  override: { verdict: 'ok', reason: 'ложная тревога', by: 'op', at: null },
+});
+assert.deepEqual(qualityBadge(overridden), { label: 'ok (оператор)', tone: 'ok' });
+assert.equal(effectiveVerdictOf(overridden), 'ok');
+// Старый бэкенд без effectiveVerdict — вердикт модели.
+assert.equal(effectiveVerdictOf(check({ verdict: 'warn' })), 'warn');
+assert.equal(captureModeLabel('polygon'), 'витрина лендинга');
+assert.equal(captureModeLabel(null), 'режим съёмки не записан');
+assert.ok(overrideReasonProblem('  a '));
+assert.equal(overrideReasonProblem('шаг виден'), null);
+assert.ok(overrideReasonProblem('x'.repeat(501)));
+assert.equal(signalsSummary(check()), null);
+assert.match(
+  signalsSummary(
+    check({ signals: { status: 'complete', black: [], freeze: [], suspicious: [], error: null } }),
+  ) ?? '',
+  /не найдено/,
+);
+assert.match(
+  signalsSummary(
+    check({
+      signals: {
+        status: 'complete',
+        black: [{ startMs: 0, endMs: 900 }],
+        freeze: [],
+        suspicious: [{ kind: 'black', startMs: 0, endMs: 900, explanation: 'чёрный кадр' }],
+        error: null,
+      },
+    }),
+  ) ?? '',
+  /подозрительных мест 1/,
+);
 
 console.log('demo-quality.test.ts: ok');

@@ -51,6 +51,27 @@ export interface PageElement {
    * аудитом этапа 116, закрыто этапом 117). Только для `tag: 'select'`.
    */
   options?: Array<{ value: string; label: string }>;
+  /**
+   * Ш4(5)-хвост: ВСЕ уникальные кандидаты по приоритету (не только
+   * выбранный `selector`) — генератор шлёт их в карту интерфейса сайта
+   * (`ui-map`), и элемент узнаётся в снимках обхода/QA по любому из них.
+   * Нет ни одного — поля нет.
+   */
+  candidates?: PageElementCandidate[];
+}
+
+/**
+ * Ш4(5)-хвост: кандидат селектора элемента для общей карты интерфейса
+ * сайта помощника. Вид — по приоритету §5.4: `id` → `test-id`
+ * (`data-testid`/`data-test`) → `attr` (`[name]`) → `aria`
+ * (`[aria-label]`, `name` — сама подпись). Каждый — ЕДИНСТВЕННЫЙ на
+ * странице в момент снимка; css-путь сюда не входит (он хрупкий и уже
+ * есть в `selector`, если других нет).
+ */
+export interface PageElementCandidate {
+  kind: 'id' | 'test-id' | 'attr' | 'aria';
+  selector: string;
+  name?: string;
 }
 
 export interface PageExploration {

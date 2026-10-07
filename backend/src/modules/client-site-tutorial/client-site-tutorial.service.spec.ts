@@ -46,6 +46,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   NotFoundException,
   Logger,
   ServiceUnavailableException,
@@ -53,7 +54,13 @@ import {
 } from '@nestjs/common';
 import {
   ClientSiteTutorialService,
+  DANGER_CONFIRM_REQUIRED,
+  LOGIN_ATTEMPTS_EXCEEDED,
+  LOGIN_IDENTITIES_EXCEEDED,
+  TUTORIAL_TEMPORARILY_UNAVAILABLE,
+  VERIFY_SITE_RATE_LIMITED,
   alignRoundWarnings,
+  loginIdentityOf,
   pickLoginProofSelector,
 } from './client-site-tutorial.service';
 import { RelaySessionGoneError } from './live-login-relay.client';
@@ -66,6 +73,9 @@ import type { BlobService } from '../storage/blob.service';
 import type { LiveLoginRelayClient } from './live-login-relay.client';
 import {
   ClientSiteAccessService,
+  SITE_OPTED_OUT,
+  START_PARAM_MAX,
+  verifyHostStartParam,
   JOURNAL_CONSENT_LOCALE,
   SITE_MODE_CACHE_MS,
   STICKY_A_MS,
@@ -78,6 +88,7 @@ import {
 } from '../sites-internal/sites-internal.client';
 import { ACCOUNT_CONSENT_TEXT_VERSION } from './account-consent';
 import { DraftSecretsStore } from './draft-secrets-store';
+import type { PageExploration } from './page-exploration.types';
 import { LoginFieldsNotFoundError, registryRef } from './registry-login';
 import { FakeSitesCredentials } from '../../../test/fake-sites-credentials';
 
@@ -148,6 +159,18 @@ function setup(
     consentPolicy?: string;
     /** `SITES_VERIFY_URL`; по умолчанию задан, `null` — не задан. */
     verifyUrl?: string | null;
+    /** П-Т9: решение выключателя/глобального потолка. */
+    availability?: 'ok' | 'paused' | 'global_limit';
+    /** П-Т6: новый логин укладывается в порог. */
+    loginIdentityOk?: boolean;
+    /** П-Т8: сколько ждать до следующего входа. */
+    loginRetryAfterMs?: number;
+    /** Ш1-хвост: частота «Это мой сайт». */
+    verifyWaitMs?: number;
+    /** Ответ кабинета сайтов о хосте (поверх `sitesMode`). */
+    hostStatus?: Record<string, unknown>;
+    /** Доп. env сервиса режима (фикстура, адреса стенда). */
+    accessEnv?: Record<string, string>;
   } = {},
 ) {
   const draftRow = opts.draft === undefined ? makeDraftRow() : opts.draft;
@@ -193,6 +216,15 @@ function setup(
     releaseLiveSession: jest.fn().mockResolvedValue(undefined),
     roundsLimit: 60,
     liveSessionsLimit: 10,
+    // П-Т9/П-Т6/П-Т8/Ш1-хвост: по умолчанию всё пропускают.
+    availability: jest.fn().mockResolvedValue(opts.availability ?? 'ok'),
+    reserveLoginIdentity: jest
+      .fn()
+      .mockResolvedValue(opts.loginIdentityOk ?? true),
+    loginRetryAfterMs: jest.fn().mockResolvedValue(opts.loginRetryAfterMs ?? 0),
+    recordLoginFailure: jest.fn().mockResolvedValue(undefined),
+    clearLoginFailures: jest.fn().mockResolvedValue(undefined),
+    hitVerifySite: jest.fn().mockResolvedValue(opts.verifyWaitMs ?? 0),
   } as unknown as ClientSiteTutorialUsageService;
 
   const explorer: PageExplorer = {
@@ -312,6 +344,7 @@ function setup(
             expiresAt: null,
             optedOut: false,
             reason: sitesMode === 'A' ? null : 'not_verified',
+            ...opts.hostStatus,
           }),
     ),
     registerHost: jest.fn().mockResolvedValue({}),
@@ -327,6 +360,7 @@ function setup(
     ...(opts.consentPolicy === undefined
       ? {}
       : { SITE_TUTORIAL_ACCOUNT_CONSENT: opts.consentPolicy }),
+    ...opts.accessEnv,
   };
 
   const service = new ClientSiteTutorialService(
@@ -3136,7 +3170,13 @@ describe('Ш2-хвосты (3), (7): вход учёткой реестра и �
     });
     const req = (explorer.runRound as jest.Mock).mock.calls[0][0];
     expect(req.actions).toEqual([]);
-    expect(req.autoLogin).toEqual({ username: USERNAME, password: PW });
+    // Ш3-хвост (3): учётка названа — раунд входа может уйти на воркер
+    // (пароль воркер берёт своей арендой; здесь он — для функции).
+    expect(req.autoLogin).toEqual({
+      username: USERNAME,
+      password: PW,
+      registry: { telegramId: '4242', testAccountId: manual.id },
+    });
     expect(fake.calls).toContain(`leaseAccount:${manual.id}`);
     const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
     expect(data.steps.slice(-3)).toEqual([
@@ -3729,5 +3769,721 @@ describe('озвучка и темп (06.10.2026)', () => {
     expect(versions.wipeSources.mock.invocationCallOrder[1]).toBeLessThan(
       built.clientSiteTutorialDraft.deleteMany.mock.invocationCallOrder[0],
     );
+  });
+});
+
+describe('захода 7, пакет B: доступ и лимиты обучалки', () => {
+  const codeOf = (e: unknown) =>
+    ((e as HttpException).getResponse() as { code?: string }).code;
+  const statusOf = (e: unknown) => (e as HttpException).getStatus();
+  const caught = async (p: Promise<unknown>) => {
+    try {
+      await p;
+    } catch (e) {
+      return e;
+    }
+    throw new Error('ожидался отказ');
+  };
+  const LOGIN = {
+    expectedVersion: 3,
+    submitSelector: '#submit',
+    fields: [
+      { selector: '#email', value: 'Buyer@Example.com ', sensitive: true },
+      { selector: '#pass', value: 'секрет', sensitive: true },
+    ],
+  };
+
+  describe('L5784: фикстура съёмки на нашем хосте — режим A', () => {
+    const LANDING = 'https://landing.v4c.test';
+    const env = { FIXTURE_TELEGRAM_ID: '777', LANDING_PUBLIC_URL: LANDING };
+
+    it('фикстура на хосте LANDING_PUBLIC_URL (полигон) — A без похода в кабинет сайтов', async () => {
+      const { service, sites } = setup({
+        draft: null,
+        sitesMode: 'B',
+        telegramId: '777',
+        accessEnv: env,
+      });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        `${LANDING}/qa/demo-shop`,
+      );
+      expect(view).toMatchObject({
+        mode: 'A',
+        reason: null,
+        canRegister: false,
+      });
+      expect(sites.hostStatus).not.toHaveBeenCalled();
+    });
+
+    it('фикстура на сайте продукта viral4creators.app — тоже A', async () => {
+      const { service } = setup({
+        draft: null,
+        sitesMode: 'B',
+        telegramId: '777',
+        accessEnv: env,
+      });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        'https://viral4creators.app',
+      );
+      expect(view.mode).toBe('A');
+    });
+
+    it('НЕ фикстура на нашем хосте — как у всех (B по кабинету)', async () => {
+      const { service, sites } = setup({
+        draft: null,
+        sitesMode: 'B',
+        telegramId: '4242',
+        accessEnv: env,
+      });
+      const view = await service.siteAccess('user1', 'proj1', LANDING);
+      expect(view.mode).toBe('B');
+      expect(sites.hostStatus).toHaveBeenCalled();
+    });
+
+    it('фикстура на ЧУЖОМ хосте — B (служебного A нет)', async () => {
+      const { service } = setup({
+        draft: null,
+        sitesMode: 'B',
+        telegramId: '777',
+        accessEnv: env,
+      });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        'https://shop.example.com',
+      );
+      expect(view.mode).toBe('B');
+    });
+
+    it('FIXTURE_TELEGRAM_ID не задан — фикстуры нет', async () => {
+      const { service } = setup({
+        draft: null,
+        sitesMode: 'B',
+        telegramId: '777',
+        accessEnv: { LANDING_PUBLIC_URL: LANDING },
+      });
+      const view = await service.siteAccess('user1', 'proj1', LANDING);
+      expect(view.mode).toBe('B');
+    });
+  });
+
+  describe('П-Т11: отказ домена запрещает и режим B', () => {
+    const optedOut = { optedOut: true, reason: 'opted_out' };
+
+    it('/explore по домену из реестра отказов — 403 с кодом, ни слота, ни браузера, ни журнала', async () => {
+      const { service, usage, explorer, consentRows } = setup({
+        draft: null,
+        sitesMode: 'B',
+        hostStatus: optedOut,
+      });
+      const e = await caught(
+        service.explore('user1', 'proj1', 'https://shop.example.com/'),
+      );
+      expect(statusOf(e)).toBe(403);
+      expect(codeOf(e)).toBe(SITE_OPTED_OUT);
+      expect(usage.reserveRound).not.toHaveBeenCalled();
+      expect(explorer.runRound).not.toHaveBeenCalled();
+      expect(consentRows).toHaveLength(0);
+    });
+
+    it('/step черновика в работе — тоже 403 до занятия версии', async () => {
+      const { service, explorer, clientSiteTutorialDraft } = setup({
+        sitesMode: 'B',
+        hostStatus: optedOut,
+      });
+      const e = await caught(
+        service.step('user1', 'proj1', {
+          expectedVersion: 3,
+          fills: [],
+          clickSelector: '#next',
+        }),
+      );
+      expect(codeOf(e)).toBe(SITE_OPTED_OUT);
+      expect(explorer.runRound).not.toHaveBeenCalled();
+      expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('живой вход — тоже 403', async () => {
+      const { service, relay } = setup({
+        sitesMode: 'B',
+        hostStatus: optedOut,
+      });
+      const e = await caught(service.startLiveLogin('user1', 'proj1'));
+      expect(codeOf(e)).toBe(SITE_OPTED_OUT);
+      expect(relay.createSession).not.toHaveBeenCalled();
+    });
+
+    it('/access по такому домену отвечает (плашка), а не бросает', async () => {
+      const { service } = setup({
+        draft: null,
+        sitesMode: 'B',
+        hostStatus: optedOut,
+      });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        'https://shop.example.com',
+      );
+      expect(view).toMatchObject({ mode: 'B', reason: 'opted_out' });
+    });
+  });
+
+  describe('item 18: глубокая ссылка «подтвердить ЭТОТ хост»', () => {
+    it('ссылка на TMA — startapp=vh-<base64url(хост)>', async () => {
+      const { service } = setup({ draft: null, sitesMode: 'B' });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        'https://Shop.Example.com/path',
+      );
+      const param = `vh-${Buffer.from('shop.example.com').toString('base64url')}`;
+      expect(view.verifyUrl).toBe(`https://t.me/assist_bot?startapp=${param}`);
+      expect(
+        new URL(view.verifyUrl as string).searchParams.get('startapp'),
+      ).toBe(param);
+    });
+
+    it('веб-кабинет — ссылка как есть', async () => {
+      const { service } = setup({
+        draft: null,
+        sitesMode: 'B',
+        verifyUrl: 'https://sites.example.org/verify',
+      });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        'https://shop.example.com',
+      );
+      expect(view.verifyUrl).toBe('https://sites.example.org/verify');
+    });
+
+    it('параметр: только [A-Za-z0-9_-], ≤ 64; длинный хост — без параметра', () => {
+      const p = verifyHostStartParam('xn--80ak6aa92e.example.com');
+      expect(p).toMatch(/^vh-[A-Za-z0-9_-]+$/);
+      expect((p as string).length).toBeLessThanOrEqual(START_PARAM_MAX);
+      // 45 байт → 60 символов base64url + «vh-» = 63; 46 → 62 + 3 = 65.
+      expect(verifyHostStartParam('a'.repeat(45))).toHaveLength(63);
+      expect(verifyHostStartParam('a'.repeat(46))).toBeNull();
+      expect(
+        Buffer.from(
+          (verifyHostStartParam('shop.example.com') as string).slice(3),
+          'base64url',
+        ).toString(),
+      ).toBe('shop.example.com');
+    });
+
+    it('длинный хост — ссылка на TMA без параметра хоста', async () => {
+      const host = `${'a'.repeat(40)}.example.com`;
+      const { service } = setup({ draft: null, sitesMode: 'B' });
+      const view = await service.siteAccess(
+        'user1',
+        'proj1',
+        `https://${host}`,
+      );
+      expect(view.verifyUrl).toBe('https://t.me/assist_bot?startapp');
+    });
+  });
+
+  describe('П-Т13: «опасный» клик в режиме B — только с подтверждением', () => {
+    const DANGER = {
+      expectedVersion: 3,
+      fills: [],
+      clickSelector: '#btn-7',
+      clickText: 'Оплатить заказ',
+    };
+
+    it('B без confirmDanger — 409 с кодом и текстом кнопки, ДО версии, слота и браузера', async () => {
+      const { service, usage, explorer, clientSiteTutorialDraft } = setup({
+        sitesMode: 'B',
+      });
+      const e = await caught(service.step('user1', 'proj1', DANGER));
+      expect(statusOf(e)).toBe(409);
+      expect(codeOf(e)).toBe(DANGER_CONFIRM_REQUIRED);
+      expect((e as HttpException).message).toContain('Оплатить заказ');
+      expect(usage.reserveRound).not.toHaveBeenCalled();
+      expect(explorer.runRound).not.toHaveBeenCalled();
+      expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('B с confirmDanger — клик выполняется', async () => {
+      const { service, explorer } = setup({ sitesMode: 'B' });
+      await service.step('user1', 'proj1', { ...DANGER, confirmDanger: true });
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+    });
+
+    it('говорящий селектор, текст пустой (новый клиент) — тоже опасный', async () => {
+      const { service } = setup({ sitesMode: 'B' });
+      const e = await caught(
+        service.step('user1', 'proj1', {
+          expectedVersion: 3,
+          fills: [],
+          clickSelector: 'button[name="checkout"]',
+          // Новый клиент всегда шлёт clickText (пусть пустой) — признак,
+          // что он умеет confirmDanger; старый не шлёт поля вовсе.
+          clickText: '',
+        }),
+      );
+      expect(codeOf(e)).toBe(DANGER_CONFIRM_REQUIRED);
+    });
+
+    it('совместимость (п.5а): старый клиент без clickText — не блокируем, предупреждаем', async () => {
+      const { service, explorer } = setup({ sitesMode: 'B' });
+      await service.step('user1', 'proj1', {
+        expectedVersion: 3,
+        fills: [],
+        clickSelector: '#pay',
+        // clickText отсутствует → старый бандл TMA, он уже подтвердил сам.
+      });
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+    });
+
+    it('режим A — только предупреждение, как раньше (без подтверждения)', async () => {
+      const { service, explorer } = setup({ sitesMode: 'A' });
+      await service.step('user1', 'proj1', DANGER);
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+    });
+
+    it('обычная кнопка в B — без подтверждения', async () => {
+      const { service, explorer } = setup({ sitesMode: 'B' });
+      await service.step('user1', 'proj1', {
+        ...DANGER,
+        clickText: 'Каталог',
+      });
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('П-Т9: выключатель и глобальный потолок', () => {
+    it('пауза: /explore — 503 «временно недоступно», без журнала и слота', async () => {
+      const { service, usage, explorer, consentRows } = setup({
+        draft: null,
+        sitesMode: 'B',
+        availability: 'paused',
+      });
+      const e = await caught(
+        service.explore('user1', 'proj1', 'https://shop.example.com/'),
+      );
+      expect(statusOf(e)).toBe(503);
+      expect(codeOf(e)).toBe(TUTORIAL_TEMPORARILY_UNAVAILABLE);
+      expect(
+        ((e as HttpException).getResponse() as { reason?: string }).reason,
+      ).toBe('paused');
+      expect(consentRows).toHaveLength(0);
+      expect(usage.reserveRound).not.toHaveBeenCalled();
+      expect(explorer.runRound).not.toHaveBeenCalled();
+    });
+
+    it('потолок: /step — 503 ДО занятия версии', async () => {
+      const { service, clientSiteTutorialDraft, usage } = setup({
+        availability: 'global_limit',
+      });
+      const e = await caught(
+        service.step('user1', 'proj1', {
+          expectedVersion: 3,
+          fills: [],
+          clickSelector: '#next',
+        }),
+      );
+      expect(codeOf(e)).toBe(TUTORIAL_TEMPORARILY_UNAVAILABLE);
+      expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+      expect(usage.availability).toHaveBeenCalledWith('round');
+    });
+
+    it('/undo, /refresh — тоже', async () => {
+      const draft = makeDraftRow({
+        steps: [
+          { kind: 'goto', route: 'https://shop.example.com' },
+          { kind: 'click', selector: '#a' },
+        ],
+        stepsPerRound: [1, 1],
+        roundScreenshots: ['к1', 'к2'],
+      });
+      const { service, explorer } = setup({ draft, availability: 'paused' });
+      expect(codeOf(await caught(service.undo('user1', 'proj1', 3)))).toBe(
+        TUTORIAL_TEMPORARILY_UNAVAILABLE,
+      );
+      expect(codeOf(await caught(service.refresh('user1', 'proj1')))).toBe(
+        TUTORIAL_TEMPORARILY_UNAVAILABLE,
+      );
+      expect(explorer.replay).not.toHaveBeenCalled();
+      expect(explorer.runRound).not.toHaveBeenCalled();
+    });
+
+    it('живой вход — по потолку живых сессий, до резерва слота', async () => {
+      const { service, usage, relay } = setup({ availability: 'global_limit' });
+      const e = await caught(service.startLiveLogin('user1', 'proj1'));
+      expect(codeOf(e)).toBe(TUTORIAL_TEMPORARILY_UNAVAILABLE);
+      expect(usage.availability).toHaveBeenCalledWith('live');
+      expect(usage.reserveLiveSession).not.toHaveBeenCalled();
+      expect(relay.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  // Разведчик вернул форму входа: заполнил поле пароля (`sensitiveFill`),
+  // на странице видны поля `#email` (username по типу) и `#pass` (пароль).
+  // `url` — куда пришли после раунда; элементы — что осталось на странице.
+  const loginExplorer = (
+    over: {
+      url?: string;
+      elements?: unknown[];
+      sensitiveFill?: boolean;
+    } = {},
+  ) => ({
+    runRound: jest.fn().mockResolvedValue({
+      exploration: {
+        currentUrl: over.url ?? 'https://shop.example.com/login',
+        screenshotDataUrl: 'data:image/jpeg;base64,кадр',
+        looksLikeLogin: true,
+        elements: over.elements ?? [
+          { selector: '#email', tag: 'input', type: 'email' },
+          { selector: '#pass', tag: 'input', type: 'password' },
+        ],
+      },
+      cookies: [],
+      sensitiveFill: over.sensitiveFill ?? true,
+    }),
+  });
+  // Черновик, чей `lastUrl` — страница входа (для сравнения URL П-Т8).
+  const atLogin = (url = 'https://shop.example.com/login') =>
+    makeDraftRow({ lastUrl: url, baseUrl: 'https://shop.example.com' });
+
+  describe('П-Т8: неудачные входы', () => {
+    it('исчерпано — 429 с retryAfterMs и «через N мин», до браузера, без счёта логинов', async () => {
+      const { service, usage, explorer, clientSiteTutorialDraft } = setup({
+        loginRetryAfterMs: 29 * 60_000 + 1,
+      });
+      const e = await caught(service.login('user1', 'proj1', LOGIN));
+      expect(statusOf(e)).toBe(429);
+      expect(codeOf(e)).toBe(LOGIN_ATTEMPTS_EXCEEDED);
+      const body = (e as HttpException).getResponse() as {
+        retryAfterMs?: number;
+        message?: string;
+      };
+      expect(body.retryAfterMs).toBe(29 * 60_000 + 1);
+      expect(body.message).toContain('30 мин');
+      expect(usage.loginRetryAfterMs).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+      );
+      expect(usage.reserveLoginIdentity).not.toHaveBeenCalled();
+      expect(explorer.runRound).not.toHaveBeenCalled();
+      expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('после раунда то же поле пароля на том же URL (без query) — неудача в счёт', async () => {
+      const s = setup({
+        draft: atLogin(),
+        explorer: loginExplorer({ url: 'https://shop.example.com/login?e=1' }),
+      });
+      await s.service.login('user1', 'proj1', LOGIN);
+      expect(s.usage.recordLoginFailure).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+      );
+      expect(s.usage.clearLoginFailures).not.toHaveBeenCalled();
+    });
+
+    it('ушли со страницы входа (другой путь) — удача, счёт сброшен', async () => {
+      const s = setup({
+        draft: atLogin(),
+        explorer: loginExplorer({ url: 'https://shop.example.com/account' }),
+      });
+      await s.service.login('user1', 'proj1', LOGIN);
+      expect(s.usage.clearLoginFailures).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+      );
+      expect(s.usage.recordLoginFailure).not.toHaveBeenCalled();
+    });
+
+    it('поле пароля исчезло (тот же URL) — удача: двухшаговый вход, смена пароля не ловятся', async () => {
+      const s = setup({
+        draft: atLogin(),
+        explorer: loginExplorer({
+          url: 'https://shop.example.com/login',
+          elements: [{ selector: '#email', tag: 'input', type: 'email' }],
+        }),
+      });
+      await s.service.login('user1', 'proj1', LOGIN);
+      expect(s.usage.recordLoginFailure).not.toHaveBeenCalled();
+      expect(s.usage.clearLoginFailures).toHaveBeenCalled();
+    });
+
+    it('раунд без поля пароля (sensitiveFill=false) — в счёт П-Т8 не идёт вовсе', async () => {
+      const s = setup({
+        draft: atLogin(),
+        explorer: loginExplorer({ sensitiveFill: false }),
+      });
+      await s.service.login('user1', 'proj1', LOGIN);
+      expect(s.usage.recordLoginFailure).not.toHaveBeenCalled();
+      expect(s.usage.clearLoginFailures).not.toHaveBeenCalled();
+    });
+
+    it('/step по обычной кнопке — не вход, счёт не трогается и не проверяется', async () => {
+      const { service, usage } = setup();
+      await service.step('user1', 'proj1', {
+        expectedVersion: 3,
+        fills: [],
+        clickSelector: '#next',
+      });
+      expect(usage.loginRetryAfterMs).not.toHaveBeenCalled();
+      expect(usage.recordLoginFailure).not.toHaveBeenCalled();
+      expect(usage.clearLoginFailures).not.toHaveBeenCalled();
+    });
+
+    it('/step с полями — предпроверка П-Т8 до браузера (вход по факту, не по имени селектора)', async () => {
+      const { service, usage, explorer } = setup({ loginRetryAfterMs: 60_000 });
+      const e = await caught(
+        service.step('user1', 'proj1', {
+          expectedVersion: 3,
+          // Селектор без «pass»/«otp» — прежняя эвристика его не ловила.
+          fills: [{ selector: '#f1', value: 'x' }],
+        }),
+      );
+      expect(codeOf(e)).toBe(LOGIN_ATTEMPTS_EXCEEDED);
+      expect(explorer.runRound).not.toHaveBeenCalled();
+      expect(usage.reserveRound).not.toHaveBeenCalled();
+    });
+
+    it('/step «логин+пароль»+клик по форме входа — считается входом по факту (обход закрыт)', async () => {
+      // Селекторы НЕ похожи на пароль — прежний `isSensitiveSelector` их
+      // пропускал; теперь вход определяет `sensitiveFill` разведчика.
+      const s = setup({
+        draft: atLogin(),
+        explorer: loginExplorer({
+          elements: [
+            { selector: '#f1', tag: 'input', type: 'email' },
+            { selector: '#f2', tag: 'input', type: 'password' },
+          ],
+        }),
+      });
+      await s.service.step('user1', 'proj1', {
+        expectedVersion: 3,
+        fills: [
+          { selector: '#f1', value: 'victim@site.io' },
+          { selector: '#f2', value: 'guess' },
+        ],
+        clickSelector: '#go',
+      });
+      expect(s.usage.recordLoginFailure).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+      );
+      expect(s.usage.reserveLoginIdentity).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+        'victim@site.io',
+      );
+    });
+  });
+
+  describe('П-Т6: разные логины на хост', () => {
+    const els: PageExploration['elements'] = [
+      { selector: '#email', tag: 'input', type: 'email' },
+      { selector: '#pass', tag: 'input', type: 'password' },
+    ];
+    it('логин — поле username ПО ТИПУ страницы, не по имени селектора', () => {
+      expect(
+        loginIdentityOf(
+          [
+            { selector: '#email', value: 'Buyer@Example.com ' },
+            { selector: '#pass', value: 'секрет' },
+          ],
+          els,
+        ),
+      ).toBe('Buyer@Example.com');
+    });
+
+    it('обход (б) закрыт: «pass» в имени поля логина — всё равно берётся username по типу', () => {
+      expect(
+        loginIdentityOf(
+          [
+            { selector: '#user-pass', value: 'Bob' },
+            { selector: '#pass', value: 'pw' },
+          ],
+          [
+            { selector: '#user-pass', tag: 'input', type: 'text' },
+            { selector: '#pass', tag: 'input', type: 'password' },
+          ] as PageExploration['elements'],
+        ),
+      ).toBe('Bob');
+    });
+
+    it('форма исчезла после успеха — резерв по заполненному не-паролю', () => {
+      expect(
+        loginIdentityOf(
+          [
+            { selector: '#email', value: 'Bob' },
+            { selector: '#pass', value: 'pw' },
+          ],
+          [],
+        ),
+      ).toBe('Bob');
+    });
+
+    it('только пароль (второй экран входа) — не новая учётка', () => {
+      expect(
+        loginIdentityOf([{ selector: '#pass', value: 'pw' }], [
+          { selector: '#pass', tag: 'input', type: 'password' },
+        ] as PageExploration['elements']),
+      ).toBeNull();
+    });
+
+    it('новый логин сверх порога — 429 ПОСЛЕ раунда; слот не возвращаем', async () => {
+      const { service, usage, explorer } = setup({
+        draft: atLogin(),
+        loginIdentityOk: false,
+        explorer: loginExplorer(),
+      });
+      const e = await caught(service.login('user1', 'proj1', LOGIN));
+      expect(statusOf(e)).toBe(429);
+      expect(codeOf(e)).toBe(LOGIN_IDENTITIES_EXCEEDED);
+      expect(usage.reserveLoginIdentity).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+        'Buyer@Example.com',
+      );
+      // Раунд уже отработал в браузере — слот не возвращаем.
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+      expect(usage.releaseRound).not.toHaveBeenCalled();
+    });
+
+    it('известный логин (ok=true) — проходит; раунд записан', async () => {
+      const { service, usage, clientSiteTutorialDraft } = setup({
+        draft: atLogin(),
+        explorer: loginExplorer(),
+      });
+      await service.login('user1', 'proj1', LOGIN);
+      expect(usage.reserveLoginIdentity).toHaveBeenCalled();
+      expect(
+        clientSiteTutorialDraft.updateMany.mock.calls.some(
+          (c: unknown[]) =>
+            !!(c[0] as { data?: { steps?: unknown } }).data?.steps,
+        ),
+      ).toBe(true);
+    });
+
+    it('вход учёткой реестра (режим A) — П-Т6/П-Т8 не ведутся', async () => {
+      // registry-login идёт своим путём; проверяем, что обычный раунд без
+      // sensitiveFill не трогает счётчики (autoLogin отдельно).
+      const s = setup({
+        draft: atLogin(),
+        explorer: loginExplorer({ sensitiveFill: false }),
+      });
+      await s.service.login('user1', 'proj1', LOGIN);
+      expect(s.usage.reserveLoginIdentity).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Ш1-хвост: «Это мой сайт» — тариф и частота', () => {
+    it('тариф не позволяет — 403 до счёта частоты и до кабинета сайтов', async () => {
+      const { service, usage, sites } = setup({
+        draft: null,
+        planAllows: false,
+      });
+      await expect(
+        service.registerSite('user1', 'proj1', 'https://shop.example.com'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(usage.hitVerifySite).not.toHaveBeenCalled();
+      expect(sites.registerHost).not.toHaveBeenCalled();
+    });
+
+    it('слишком часто — 429 с retryAfterMs, кабинет сайтов не трогаем', async () => {
+      const { service, sites } = setup({
+        draft: null,
+        sitesMode: 'B',
+        verifyWaitMs: 120_000,
+      });
+      const e = await caught(
+        service.registerSite('user1', 'proj1', 'https://shop.example.com'),
+      );
+      expect(statusOf(e)).toBe(429);
+      expect(codeOf(e)).toBe(VERIFY_SITE_RATE_LIMITED);
+      expect(
+        ((e as HttpException).getResponse() as { retryAfterMs?: number })
+          .retryAfterMs,
+      ).toBe(120_000);
+      expect(sites.registerHost).not.toHaveBeenCalled();
+    });
+
+    it('в пределах — заводит хост', async () => {
+      const { service, sites, usage } = setup({ draft: null, sitesMode: 'B' });
+      await service.registerSite('user1', 'proj1', 'https://shop.example.com');
+      expect(usage.hitVerifySite).toHaveBeenCalledWith('user1');
+      expect(sites.registerHost).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('Ш3-хвост (3): кто ведёт черновик — исследователю (для воркера)', () => {
+  const FLAGS = ['TUTORIAL_EXPLORER_VIA_WORKER', 'TUTORIAL_FRAMES_VIA_WORKER'];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of FLAGS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+  afterEach(() => {
+    for (const k of FLAGS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+  const reqOf = (explorer: PageExplorer) =>
+    (explorer.runRound as jest.Mock).mock.calls.at(-1)[0];
+  /** Пользователь генератора — в той же базе, что и черновики. */
+  const withUser = <T extends { prisma: PrismaService }>(
+    ctx: T,
+    telegramId: string | null = '4242',
+  ) => {
+    const findUnique = jest.fn().mockResolvedValue({ telegramId });
+    (ctx.prisma as unknown as { user: unknown }).user = { findUnique };
+    return { ...ctx, findUnique };
+  };
+
+  it('выключатели воркера выключены — requester не передаётся и не читается', async () => {
+    const { service, explorer, findUnique } = withUser(setup({ draft: null }));
+    await service.explore('user1', 'proj1', 'https://shop.example.com');
+    expect(reqOf(explorer).requester).toBeUndefined();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('раунд на воркере включён — /explore, /step, /refresh несут telegramId', async () => {
+    process.env.TUTORIAL_EXPLORER_VIA_WORKER = 'true';
+    const a = withUser(setup({ draft: null }));
+    await a.service.explore('user1', 'proj1', 'https://shop.example.com');
+    expect(reqOf(a.explorer).requester).toEqual({ telegramId: '4242' });
+    const b = withUser(setup());
+    await b.service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [],
+      clickSelector: '#submit',
+    });
+    expect(reqOf(b.explorer).requester).toEqual({ telegramId: '4242' });
+    const c = withUser(setup());
+    await c.service.refresh('user1', 'proj1');
+    expect(reqOf(c.explorer).requester).toEqual({ telegramId: '4242' });
+  });
+
+  it('/undo при включённом воркере тоже несёт telegramId (режим A — переигровка в функции)', async () => {
+    process.env.TUTORIAL_EXPLORER_VIA_WORKER = 'true';
+    const { service, explorer } = withUser(
+      setup({ draft: makeDraftRow(THREE_ROUNDS) }),
+    );
+    await service.undo('user1', 'proj1', 3);
+    const replay = (explorer.replay as jest.Mock).mock.calls.at(-1)[0];
+    expect(replay.requester).toEqual({ telegramId: '4242' });
+  });
+
+  it('кадры воркером включены, но у пользователя нет telegramId — без requester', async () => {
+    process.env.TUTORIAL_FRAMES_VIA_WORKER = 'on';
+    const { service, explorer } = withUser(setup({ draft: null }), null);
+    await service.explore('user1', 'proj1', 'https://shop.example.com');
+    expect(reqOf(explorer).requester).toBeUndefined();
   });
 });

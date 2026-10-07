@@ -280,6 +280,22 @@ describe('одобрение запускает сборку — и только
     expect(data.scenarioId).toBeUndefined();
   });
 
+  it('немой ролик пишет язык черновика, а не жёсткий ru (Э6-локаль)', async () => {
+    const { service, tutorialVideoAsset } = setup({
+      row: makeRow({ locale: 'uk-UA' }),
+    });
+    await service.approve('draft1', 'operator1');
+    expect(tutorialVideoAsset.create.mock.calls[0][0].data.locale).toBe('uk');
+  });
+
+  it('немой ролик без языка у черновика — ru, как раньше', async () => {
+    const { service, tutorialVideoAsset } = setup({
+      row: makeRow({ locale: null }),
+    });
+    await service.approve('draft1', 'operator1');
+    expect(tutorialVideoAsset.create.mock.calls[0][0].data.locale).toBe('ru');
+  });
+
   it('длительность берётся из плана, а не пересчитывается писателем', async () => {
     // Подменяем плану длительность на число, которого из двух кадров
     // по 2 с не получить. Ожидание вида `кадры × SECONDS_PER_FRAME`

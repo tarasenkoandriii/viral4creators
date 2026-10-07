@@ -31,7 +31,12 @@
  * удачная проверка A моложе `STICKY_A_MS` и хост тот же.
  */
 import { isIP } from 'net';
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   SitesHostReason,
@@ -149,6 +154,14 @@ export interface SiteAccessView {
 export const ACCOUNT_CONSENT_REQUIRED =
   'SITE_TUTORIAL_ACCOUNT_CONSENT_REQUIRED';
 export const ACCOUNT_CONSENT_STALE = 'SITE_TUTORIAL_CONSENT_VERSION_STALE';
+/**
+ * П-Т11: домен в реестре отказов кабинета сайтов (`site_opt_out_domains`,
+ * закрывает его подтверждённый владелец или жалоба) — обучалку по нему не
+ * водим ни в каком режиме. sites-backend при отказе домена режим A не
+ * даёт (`internal-sites.service.ts`), так что это всегда B с причиной
+ * `opted_out`.
+ */
+export const SITE_OPTED_OUT = 'SITE_TUTORIAL_SITE_OPTED_OUT';
 
 /** `locale` служебной записи подтверждения (съёмка кадров лендинга). */
 export const SERVICE_CONSENT_LOCALE = 'service';
@@ -183,6 +196,84 @@ function verifyUrlFrom(env: NodeJS.ProcessEnv): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Префикс `startapp` «подтвердить ЭТОТ хост» в TMA помощника (Ш1-хвост,
+ * item 18). КОНТРАКТ с разбором в TMA помощника (пакет E): `vh-` +
+ * base64url(хост в нижнем регистре, без `=`), только `[A-Za-z0-9_-]`,
+ * весь параметр ≤ 64 символов; длиннее — ссылка без параметра.
+ */
+export const VERIFY_HOST_START_PREFIX = 'vh-';
+export const START_PARAM_MAX = 64;
+
+/** `vh-<base64url(host)>` или `null`, если параметр не помещается. */
+export function verifyHostStartParam(host: string): string | null {
+  const encoded = Buffer.from(host.toLowerCase(), 'utf8').toString('base64url');
+  const param = `${VERIFY_HOST_START_PREFIX}${encoded}`;
+  return param.length <= START_PARAM_MAX && /^[A-Za-z0-9_-]+$/.test(param)
+    ? param
+    : null;
+}
+
+/** Ссылка на мини-приложение Telegram (`t.me/<бот>[/<app>]`). */
+function isTelegramAppLink(u: URL): boolean {
+  const h = u.hostname.toLowerCase();
+  return h === 't.me' || h === 'telegram.me' || h === 'www.t.me';
+}
+
+/**
+ * `SITES_VERIFY_URL` с глубокой ссылкой на хост: у ссылки на TMA
+ * (`t.me/…` или уже с `startapp`) — `startapp=vh-…`, веб-кабинет — как
+ * есть (параметр `startapp` он не разбирает).
+ */
+export function verifyUrlForHost(
+  env: NodeJS.ProcessEnv,
+  host: string,
+): string | null {
+  const base = verifyUrlFrom(env);
+  if (!base) return null;
+  const u = new URL(base);
+  if (!isTelegramAppLink(u) && !u.searchParams.has('startapp')) return base;
+  const param = verifyHostStartParam(host);
+  if (!param) return base;
+  u.searchParams.set('startapp', param);
+  return u.toString();
+}
+
+/** Сайт продукта — съёмка кадров лендинга по умолчанию снимает его. */
+export const PRODUCT_SITE_HOST = 'viral4creators.app';
+
+/**
+ * Хосты, на которых фикстура съёмки кадров лендинга видит режим A
+ * (L5784 TODO): наш продукт и публичные адреса стенда
+ * (`LANDING_PUBLIC_URL` — там же полигон `/qa/demo-shop`, `TMA_PUBLIC_URL`;
+ * только https). Точное совпадение хоста, не домена: чужой поддомен
+ * общего хостинга (`*.vercel.app`) «нашим» не становится.
+ */
+export function serviceOwnHosts(env: NodeJS.ProcessEnv): Set<string> {
+  const out = new Set<string>([PRODUCT_SITE_HOST]);
+  for (const raw of [env.LANDING_PUBLIC_URL, env.TMA_PUBLIC_URL]) {
+    try {
+      const u = new URL(String(raw ?? '').trim());
+      if (u.protocol === 'https:') out.add(u.hostname.toLowerCase());
+    } catch {
+      // Не задан или кривой — не наш хост.
+    }
+  }
+  return out;
+}
+
+/**
+ * Фикстурный пользователь съёмки (`FIXTURE_TELEGRAM_ID`, тот же признак,
+ * что у `UiSnapshotRunnerService.findFixtureUser`). Пусто — фикстуры нет.
+ */
+export function isCaptureFixture(
+  rawTelegramId: string | null | undefined,
+  env: NodeJS.ProcessEnv,
+): boolean {
+  const fixture = env.FIXTURE_TELEGRAM_ID?.trim();
+  return !!fixture && !!rawTelegramId && rawTelegramId.trim() === fixture;
 }
 
 @Injectable()
@@ -222,7 +313,27 @@ export class ClientSiteAccessService {
   ): Promise<SiteAccessView> {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    const telegramId = await this.telegramIdOf(userId);
+    const tg = await this.telegramOf(userId);
+    const telegramId = tg.sites;
+    // L5784: фикстура съёмки кадров лендинга на НАШЕМ хосте — служебное
+    // подтверждение, режим A без похода в кабинет сайтов. Иначе на кадре 3
+    // (экран `review`) стояла бы карточка «Сайт не подтверждён» с «Это мой
+    // сайт». Только https:443 — как и у настоящего A.
+    if (
+      isCaptureFixture(tg.raw, this.env) &&
+      parsed.protocol === 'https:' &&
+      !parsed.port &&
+      serviceOwnHosts(this.env).has(host)
+    ) {
+      return this.view(userId, url, {
+        mode: 'A',
+        reason: null,
+        hostStatus: null,
+        hostId: null,
+        canRegister: false,
+        cached: false,
+      });
+    }
     let status: SitesHostStatus | null = null;
     let reason: SiteAccessReason = null;
     let sticky = false;
@@ -328,6 +439,7 @@ export class ClientSiteAccessService {
     view: SiteAccessView,
     ipHash: string | null,
   ): Promise<void> {
+    this.assertNotOptedOut(view);
     const policy = view.consent.policy;
     if (policy === 'required') {
       this.requireConsent(view);
@@ -335,6 +447,22 @@ export class ClientSiteAccessService {
     }
     if (policy === 'journal' && view.mode === 'B' && !view.consent.accepted) {
       await this.recordJournal(userId, url, ipHash);
+    }
+  }
+
+  /**
+   * П-Т11: домен в реестре отказов — ни обхода, ни входа, ни живого входа.
+   * Решение из кэша черновика причины не знает (B из кэша — `not_verified`
+   * или `not_registered`), поэтому отказ домена доходит до черновика в
+   * работе не позже `SITE_MODE_CACHE_MS`; новый `/explore` — сразу.
+   */
+  assertNotOptedOut(view: SiteAccessView): void {
+    if (view.mode === 'B' && view.reason === 'opted_out') {
+      throw new ForbiddenException({
+        error: SITE_OPTED_OUT,
+        code: SITE_OPTED_OUT,
+        message: `владелец сайта ${view.registrableDomain} запретил запись обучалок по нему — выберите другой сайт`,
+      });
     }
   }
 
@@ -465,7 +593,7 @@ export class ClientSiteAccessService {
    * Подтверждение владения (DNS/файл/мета) — уже там, по `verifyUrl`.
    */
   async registerHost(userId: string, url: string): Promise<SiteAccessView> {
-    const telegramId = await this.telegramIdOf(userId);
+    const telegramId = (await this.telegramOf(userId)).sites;
     if (!telegramId) {
       throw new ConflictException({
         error: 'SITE_TUTORIAL_SITES_NO_TELEGRAM',
@@ -571,7 +699,8 @@ export class ClientSiteAccessService {
       reason: d.reason,
       hostStatus: d.hostStatus,
       hostId: d.hostId,
-      verifyUrl: verifyUrlFrom(this.env),
+      // Ш1-хвост (item 18): глубокая ссылка «подтвердить ЭТОТ хост».
+      verifyUrl: verifyUrlForHost(this.env, new URL(url).hostname),
       canRegister: d.canRegister,
       cached: d.cached,
       consent: {
@@ -626,11 +755,15 @@ export class ClientSiteAccessService {
     return !humanOnly || row.locale !== JOURNAL_CONSENT_LOCALE;
   }
 
-  private async telegramIdOf(userId: string): Promise<string | null> {
+  /** Telegram-id: сырой (признак фикстуры) и годный для sites-backend. */
+  private async telegramOf(
+    userId: string,
+  ): Promise<{ raw: string | null; sites: string | null }> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { telegramId: true },
     });
-    return sitesTelegramId(user?.telegramId);
+    const raw = user?.telegramId ?? null;
+    return { raw, sites: sitesTelegramId(raw) };
   }
 }

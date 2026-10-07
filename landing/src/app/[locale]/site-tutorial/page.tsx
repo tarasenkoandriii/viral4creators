@@ -18,7 +18,8 @@ import {
   hasRealFrames,
 } from '../../../lib/tutorial-frames';
 import { TutorialDemoGallery } from '../../../components/TutorialDemoGallery';
-import { siteTutorialDemoFromEnv } from '../../../lib/site-tutorial-demo';
+import { HeroPicture } from '../../../components/HeroPicture';
+import { howLeadKey, siteTutorialDemoFromEnv } from '../../../lib/site-tutorial-demo';
 
 /**
  * Посадочная страница третьего типа проекта — обучающего видео по сайту
@@ -165,22 +166,11 @@ export default function SiteTutorialLandingPage({
             </div>
             {/* Та же оправа `.frame-shot`, что у кадров ниже: одна
                 визуальная система, а не второй способ показывать
-                картинку. Кадр — растровый AVIF (~55 КБ; бюджет держит
-                `scripts/greeting-frames.test.ts`). Без `priority`: на
-                телефоне (360px) он ниже первого экрана, и предзагрузка с
-                высоким приоритетом отнимала канал у CSS/JS;
-                `loading="eager"` — чтобы на десктопе, где кадр в первом
-                экране, он не ждал ленивой загрузки. */}
+                картинку. Кадр — растровый AVIF (~55 КБ) с запасными WebP/JPEG
+                и двумя ширинами (`HeroPicture`; бюджет держит
+                `scripts/greeting-frames.test.ts`). */}
             <div className="hero-shot frame-shot">
-              <Image
-                src="/illustrations/tutorial-hero-v2.avif"
-                alt=""
-                width={1536}
-                height={1024}
-                sizes="(min-width: 900px) 46vw, 100vw"
-                loading="eager"
-                unoptimized
-              />
+              <HeroPicture name="tutorial-hero-v2" />
             </div>
           </div>
         </section>
@@ -214,8 +204,12 @@ export default function SiteTutorialLandingPage({
                 их физически негде, и это главное, ради чего заведён тот
                 модуль: страница, которая продаёт достоверность, не
                 может сначала поменять картинки, а текст потом. */}
+            {/* С включённой галереей роликов (флаг выше) настоящий
+                интерфейс показан ниже, в роликах с полигона, — оговорка
+                говорит про них, а не «взять неоткуда»
+                (`howLeadKey`, `lib/site-tutorial-demo.ts`). */}
             <p className="section-lead">
-              {realFrames ? t.how.leadReal : t.how.lead}
+              {t.how[howLeadKey(realFrames, demoGallery)]}
             </p>
             <ol className="frames-grid">
               {t.how.items.map((item, index) => {

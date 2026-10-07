@@ -12,6 +12,7 @@ import {
   Body,
   Controller,
   Get,
+  Optional,
   Param,
   Patch,
   Post,
@@ -31,6 +32,7 @@ import { SetTutorialVideoSiteTutorialDemoDto } from './dto/set-tutorial-video-si
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { TutorialTempoRequestDto } from '../postprod/dto/tutorial-tempo.dto';
+import { TutorialDemoQualityService } from '../tutorial-quality/demo-quality.service';
 
 function parseBool(v?: string): boolean | undefined {
   if (v === 'true') return true;
@@ -46,6 +48,8 @@ export class TutorialVideoAdminController {
     private readonly videoAdmin: TutorialVideoAdminService,
     private readonly publication: PublicationService,
     private readonly versions: TutorialVideoVersionsService,
+    // Заход 7: блокировка публикации по ИИ-проверке (флаг, умолчание выкл.).
+    @Optional() private readonly quality?: TutorialDemoQualityService,
   ) {}
 
   @Get()
@@ -180,6 +184,9 @@ export class TutorialVideoAdminController {
     @Param('versionId') versionId: string,
   ) {
     await this.adminPanel.assertOperator(req.userId);
+    // Одобрение версии темпа публикует её файл — тот же барьер, что у
+    // одобрения ролика (заход 7, только при `TUTORIAL_DEMO_QUALITY_BLOCK`).
+    if (this.quality) await this.quality.assertPublishable(id, versionId);
     return this.versions.activate(
       { kind: 'operator', userId: req.userId },
       id,
@@ -190,6 +197,9 @@ export class TutorialVideoAdminController {
   @Post(':id/revert')
   async revert(@Req() req: AdminAuthenticatedRequest, @Param('id') id: string) {
     await this.adminPanel.assertOperator(req.userId);
+    // Возврат одобренного ролика к исходному файлу публикует его — тот же
+    // барьер, что у одобрения версии (заход 7, аудит; флаг выкл. по умолч.).
+    if (this.quality) await this.quality.assertRevertPublishable(id);
     return this.versions.revert({ kind: 'operator', userId: req.userId }, id);
   }
 }

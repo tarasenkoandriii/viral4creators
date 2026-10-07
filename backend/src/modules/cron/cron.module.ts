@@ -26,6 +26,7 @@ import { PortfolioModule } from '../portfolio/portfolio.module';
 import { ApiKeyModule } from '../api-key/api-key.module';
 import { VoiceUploadModule } from '../voice-upload/voice-upload.module';
 import { PersonaModule } from '../persona/persona.module';
+import { ClientSiteMediaModule } from '../client-site-media/client-site-media.module';
 
 /**
  * CronModule
@@ -105,6 +106,8 @@ import { PersonaModule } from '../persona/persona.module';
     VoiceUploadModule,
     // Этап E Greeting 2.0: срок хранения селфи и ролика живости (В-3).
     PersonaModule,
+    // W7: ночная сверка роликов сайтов помощника (шаг client-site-retention).
+    ClientSiteMediaModule,
   ],
   controllers: [CronController, AdminCronController],
   providers: [CronJobsService, AdminCronService],
