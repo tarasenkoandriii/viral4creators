@@ -5,6 +5,8 @@
 import {
   ACTIONS_DELIMITER,
   ACTIONS_DELIMITER_MAX_PREFIX,
+  ACTIONS_DELIMITER_MIN_DANGLING,
+  danglingDelimiterPrefix,
   DelimiterStreamBuffer,
   splitActionsBlock,
 } from './delimiter-buffer';
@@ -96,5 +98,48 @@ describe('DelimiterStreamBuffer', () => {
 
   it('пустой разделитель — ошибка вызывающего, а не тихая потеря ответа', () => {
     expect(() => new DelimiterStreamBuffer('')).toThrow();
+  });
+});
+
+describe('обрыв посреди разделителя (MAX_TOKENS)', () => {
+  it('хвост «<<<acti» посетителю не уходит — только текст до него', () => {
+    expect(streamed(['Ответ готов.', ' <<<acti']).join('')).toBe(
+      'Ответ готов. ',
+    );
+  });
+
+  it('обрывок, разрезанный на куски, — тоже', () => {
+    expect(streamed(['Да', '<<', '<ac', 'tions>']).join('')).toBe('Да');
+  });
+
+  it('«<<<» — уже обрывок; «<» и «<<» в конце обычного текста остаются', () => {
+    expect(streamed(['a <<<']).join('')).toBe('a ');
+    expect(streamed(['a <']).join('')).toBe('a <');
+    expect(streamed(['a <<']).join('')).toBe('a <<');
+  });
+
+  it('«<<<» внутри текста, а не в конце, — обычный текст', () => {
+    expect(streamed(['x <<< y']).join('')).toBe('x <<< y');
+  });
+
+  it('после flush буфер больше ничего не отдаёт', () => {
+    const buf = new DelimiterStreamBuffer();
+    buf.push('ok <<<act');
+    expect(buf.flush()).toBe('ok ');
+    expect(buf.flush()).toBe('');
+  });
+
+  it('danglingDelimiterPrefix: самое длинное собственное начало, не короче порога', () => {
+    expect(ACTIONS_DELIMITER_MIN_DANGLING).toBe(3);
+    expect(danglingDelimiterPrefix('текст<<<actions>>')).toBe(
+      ACTIONS_DELIMITER.length - 1,
+    );
+    expect(danglingDelimiterPrefix('текст<<<a')).toBe(4);
+    expect(danglingDelimiterPrefix('текст<<')).toBe(0);
+    expect(danglingDelimiterPrefix('текст<<', ACTIONS_DELIMITER, 1)).toBe(2);
+    expect(danglingDelimiterPrefix('текст')).toBe(0);
+    expect(danglingDelimiterPrefix('')).toBe(0);
+    // Короткий свой разделитель: собственное начало короче порога — не трогаем.
+    expect(danglingDelimiterPrefix('ab|', '||')).toBe(0);
   });
 });

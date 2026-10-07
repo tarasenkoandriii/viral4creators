@@ -22,6 +22,8 @@ import {
   describeWithoutDb,
   type LSite,
 } from '../../modules/assist-site-learning/testing/learning-stack.testing';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import type { PageSpec } from '../e1/k2-fixtures';
 
 const PAGES: PageSpec[] = [
@@ -55,6 +57,10 @@ if (!RAW_URL) {
 
     afterAll(async () => {
       await st.close();
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
     });
 
     beforeEach(() => {
@@ -299,6 +305,72 @@ if (!RAW_URL) {
       await expect(
         st.quality.simulate(s.operator, s.siteId),
       ).rejects.toMatchObject({ status: 403 });
+    });
+
+    it('оплаченный сбой модели (truncated/empty со spent) в eval и симуляции — расход assist-eval фактом и в бюджете обучения; timeout — без расхода; сбой — как раньше', async () => {
+      const s = await shop();
+      const spent = (outputTokens: number) => ({
+        model: 'gemini-3.6-flash',
+        inputTokens: 1_700,
+        cachedInputTokens: 0,
+        outputTokens,
+      });
+      const fact = (outputTokens: number) =>
+        estimateCost('gemini-3.6-flash', spent(outputTokens)).costMicroUsd;
+      const evalRows = (outputTokens: number) =>
+        st.prisma.siteAiUsage.count({
+          where: {
+            siteId: s.siteId,
+            operation: 'assist-eval',
+            inputTokens: 1_700,
+            outputTokens,
+          },
+        });
+      const budget = async () =>
+        (await st.budget.status(s.accountId, s.siteId)).spentMicroUsd;
+
+      // eval: первый же вопрос — оплаченный сбой; прогон падает, как раньше.
+      let b0 = await budget();
+      jest
+        .spyOn(st.answers, 'answer')
+        .mockRejectedValueOnce(new TextModelError('truncated', spent(1331)));
+      await expect(
+        st.quality.runEval(s.manager, s.siteId, 'manual'),
+      ).rejects.toMatchObject({ kind: 'truncated' });
+      expect(await evalRows(1331)).toBe(1);
+      expect(fact(1331)).toBeGreaterThan(0);
+      expect((await budget()) - b0).toBe(fact(1331));
+
+      // симуляция: так же.
+      b0 = await budget();
+      jest
+        .spyOn(st.answers, 'answer')
+        .mockRejectedValueOnce(new TextModelError('empty', spent(1332)));
+      await expect(
+        st.quality.simulate(s.manager, s.siteId),
+      ).rejects.toMatchObject({ kind: 'empty' });
+      expect(await evalRows(1332)).toBe(1);
+      expect((await budget()) - b0).toBe(fact(1332));
+
+      // timeout — провайдер денег не взял: ни строки, ни расхода.
+      // (Эмбеддинг вопроса поиска — свой учёт `assist-query-embed`.)
+      const evalAll = () =>
+        st.prisma.siteAiUsage.count({
+          where: { siteId: s.siteId, operation: 'assist-eval' },
+        });
+      const n = await evalAll();
+      b0 = await budget();
+      jest
+        .spyOn(st.answers, 'answer')
+        .mockRejectedValue(new TextModelError('timeout'));
+      await expect(
+        st.quality.runEval(s.manager, s.siteId, 'manual'),
+      ).rejects.toMatchObject({ kind: 'timeout' });
+      await expect(
+        st.quality.simulate(s.manager, s.siteId),
+      ).rejects.toMatchObject({ kind: 'timeout' });
+      expect(await evalAll()).toBe(n);
+      expect(await budget()).toBe(b0);
     });
   });
 }

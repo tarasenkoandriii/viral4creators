@@ -39,7 +39,14 @@ import {
 } from '../assist-admin-mode/connectors.service';
 import type { ExecResult } from '../assist-admin-mode/connector-exec';
 import { validateArgs } from '../assist-admin-mode/connector-exec';
-import { GeminiText, TextModelError } from '../site-ai/text-model';
+import {
+  GeminiText,
+  TextModelError,
+  spentOf,
+  type GenerateRequest,
+  type GenerateResult,
+  type TextModelSpent,
+} from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
   type ActionOperation,
@@ -93,6 +100,14 @@ export interface TurnInput {
 }
 
 const ANSWER_MAX_HITS = 6;
+
+/** Расход хода: модель, токены и деньги всех вызовов модели. */
+interface TurnAcc {
+  model: string | null;
+  inTokens: number;
+  outTokens: number;
+  cost: number;
+}
 
 @Injectable()
 export class AdminAnswerService {
@@ -168,17 +183,45 @@ export class AdminAnswerService {
     }
   }
 
+  /**
+   * Вызов модели с учётом хода: расход — в `acc` (деньги хода → потолок
+   * «Админки») и в site_ai_usage. У empty/truncated провайдер ответил —
+   * расход тот же, что у ответа; ошибка пробрасывается как была.
+   */
+  private async generate(
+    ctx: CallerCtx,
+    acc: TurnAcc,
+    req: GenerateRequest,
+  ): Promise<GenerateResult> {
+    let gen: GenerateResult;
+    try {
+      gen = await this.text.generate(req);
+    } catch (e) {
+      const spent = spentOf(e);
+      if (spent) await this.count(ctx, acc, spent);
+      throw e;
+    }
+    await this.count(ctx, acc, gen);
+    return gen;
+  }
+
+  private async count(
+    ctx: CallerCtx,
+    acc: TurnAcc,
+    gen: TextModelSpent,
+  ): Promise<void> {
+    acc.model = gen.model;
+    acc.inTokens += gen.inputTokens;
+    acc.outTokens += gen.outputTokens;
+    acc.cost += await this.record(ctx, gen);
+  }
+
   /** План: модель → проверка по каталогу и схеме; один повтор при ошибке параметров. */
   private async plan(
     input: TurnInput,
     tools: ToolOperation[],
     actions: ActionOperation[],
-    acc: {
-      model: string | null;
-      inTokens: number;
-      outTokens: number;
-      cost: number;
-    },
+    acc: TurnAcc,
   ): Promise<{
     calls: Array<{ op: ToolOperation; args: Record<string, unknown> }>;
     proposal: { op: ActionOperation; args: Record<string, unknown> } | null;
@@ -195,17 +238,13 @@ export class AdminAnswerService {
         history: input.history,
         paramError,
       });
-      const gen = await this.text.generate({
+      const gen = await this.generate(input.ctx, acc, {
         system: prompt.system,
         user: prompt.user,
         maxOutputTokens: 400,
         json: true,
         temperature: 0,
       });
-      acc.model = gen.model;
-      acc.inTokens += gen.inputTokens;
-      acc.outTokens += gen.outputTokens;
-      acc.cost += await this.record(input.ctx, gen);
       const planned: PlannedCall[] = parsePlan(gen.text) ?? [];
       const calls: Array<{ op: ToolOperation; args: Record<string, unknown> }> =
         [];
@@ -388,17 +427,13 @@ export class AdminAnswerService {
         instructions: input.instructions,
         history: input.history,
       });
-      const gen = await this.text.generate({
+      const gen = await this.generate(input.ctx, acc, {
         system: prompt.system,
         user: prompt.user,
         maxOutputTokens: 900,
         json: true,
         temperature: 0.1,
       });
-      acc.model = gen.model;
-      acc.inTokens += gen.inputTokens;
-      acc.outTokens += gen.outputTokens;
-      acc.cost += await this.record(input.ctx, gen);
       const parsed = parseModelJson(gen.text);
       const allowed = new Set(prompt.sources.keys());
       const answer = sanitizeAnswerText(parsed?.answer ?? gen.text, allowed);

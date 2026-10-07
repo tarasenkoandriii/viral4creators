@@ -5,7 +5,11 @@
  * фрагментов — отказ без вызова модели.
  */
 import type { SearchHit } from '../types';
-import { GeminiText, GenerateRequest } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  GenerateRequest,
+  TextModelError,
+} from '../../site-ai/text-model';
 import { AnswerEngine, parseModelJson } from './answer-engine';
 import {
   REFUSAL_TEXT,
@@ -252,6 +256,25 @@ describe('AnswerEngine.answer', () => {
   });
 });
 
+describe('AnswerEngine: оплаченный сбой модели', () => {
+  it('TextModelError с расходом уходит вызывающему как есть (spent не теряется)', async () => {
+    const spent = {
+      model: 'gemini-test',
+      inputTokens: 1000,
+      cachedInputTokens: 0,
+      outputTokens: 1824,
+    };
+    const engine = new AnswerEngine(
+      new FakeText(() => {
+        throw new TextModelError('truncated', spent);
+      }),
+    );
+    await expect(
+      engine.answer({ question: 'Доставка?', hits: HITS, lang: 'ru' }),
+    ).rejects.toMatchObject({ kind: 'truncated', spent });
+  });
+});
+
 describe('suggested questions', () => {
   it('isSafeQuestion отсекает ссылки, разметку, инъекции', () => {
     expect(isSafeQuestion('Сколько стоит доставка?')).toBe(true);
@@ -281,6 +304,42 @@ describe('suggested questions', () => {
     expect(r.questions[0]).toBe('Расскажите про «По Киеву»?');
     expect(r.questions.every(isSafeQuestion)).toBe(true);
     expect(r.usage).not.toBeNull();
+  });
+
+  it('сбой модели: empty/truncated — запасные вопросы и расход в usage; timeout/unavailable — usage null', async () => {
+    const spent = {
+      model: 'gemini-test',
+      inputTokens: 900,
+      cachedInputTokens: 0,
+      outputTokens: 1324,
+    };
+    const seeds = [
+      { title: 'Доставка', headingPath: null, text: 'Доставка 150 грн' },
+    ];
+    for (const kind of ['empty', 'truncated'] as const) {
+      const r = await generateSuggestedQuestions(
+        new FakeText(() => {
+          throw new TextModelError(kind, spent);
+        }),
+        seeds,
+        'ru',
+        3,
+      );
+      expect(r.questions).toEqual(fallbackQuestions(seeds, 'ru', 3));
+      expect(r.usage).toEqual(spent);
+    }
+    for (const kind of ['timeout', 'unavailable'] as const) {
+      const r = await generateSuggestedQuestions(
+        new FakeText(() => {
+          throw new TextModelError(kind);
+        }),
+        seeds,
+        'ru',
+        3,
+      );
+      expect(r.questions).toEqual(fallbackQuestions(seeds, 'ru', 3));
+      expect(r.usage).toBeNull();
+    }
   });
 
   it('fallbackQuestions без заголовков — общие вопросы', () => {

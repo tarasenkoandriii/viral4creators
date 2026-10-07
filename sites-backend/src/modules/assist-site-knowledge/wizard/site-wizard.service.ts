@@ -46,7 +46,11 @@ import {
 } from '../../assist-site-setup/persona';
 import { LearningBudget } from '../../site-ai/learning-budget';
 import { geminiOutputCeiling } from '../../site-ai/gemini-output';
-import { GeminiText } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type { AccountMembership } from '../../site-core/account/roles';
 import { notFoundSite } from '../../site-core/site-core.constants';
@@ -321,8 +325,7 @@ export class SiteWizardService {
       return current;
     }
     let actual = 0;
-    try {
-      const { summary, usage } = await generateSiteSummary(this.text, seeds);
+    const record = async (usage: TextModelSpent) => {
       const r = await this.usage.record(t, {
         accountId: ctx.accountId,
         siteId: ctx.siteId,
@@ -335,6 +338,10 @@ export class SiteWizardService {
         },
       });
       actual = r.costMicroUsd;
+    };
+    try {
+      const { summary, usage } = await generateSiteSummary(this.text, seeds);
+      await record(usage);
       if (!summary) {
         this.logger.warn(
           `Сводка сайта ${ctx.siteId} отклонена проверкой (императив/URL/формат)`,
@@ -353,6 +360,9 @@ export class SiteWizardService {
       this.logger.warn(
         `Сводка сайта ${ctx.siteId} не построена: ${(e as Error).name}`,
       );
+      // empty/truncated оплачены: расход — как у ответа, в бюджет обучения.
+      const spent = spentOf(e);
+      if (spent) await record(spent).catch(() => undefined);
       return current;
     } finally {
       await this.budget.adjust(ctx.accountId, ctx.siteId, actual - est);
@@ -465,6 +475,20 @@ export class SiteWizardService {
     );
     const est = estimateCost(GEMINI_MODEL, DRAFT_EST_UNITS).costMicroUsd;
     let spent = 0;
+    const record = async (r: TextModelSpent): Promise<number> => {
+      const u = await this.usage.record(this.db(m), {
+        accountId: m.accountId,
+        siteId,
+        operation: 'assist-learn',
+        model: r.model,
+        units: {
+          inputTokens: r.inputTokens,
+          cachedInputTokens: r.cachedInputTokens,
+          outputTokens: r.outputTokens,
+        },
+      });
+      return u.costMicroUsd;
+    };
     for (const item of items) {
       // Ответ владельца не перезаписывается; запреты и правила передачи
       // на сайте не ищутся (это решение владельца, а не факт страницы).
@@ -481,20 +505,7 @@ export class SiteWizardService {
           })
         ).filter((h) => !h.ugc);
         const res = await this.answers.answer({ question, hits, lang });
-        if (res.model) {
-          const u = await this.usage.record(this.db(m), {
-            accountId: m.accountId,
-            siteId,
-            operation: 'assist-learn',
-            model: res.model,
-            units: {
-              inputTokens: res.inputTokens,
-              cachedInputTokens: res.cachedInputTokens,
-              outputTokens: res.outputTokens,
-            },
-          });
-          spent += u.costMicroUsd;
-        }
+        if (res.model) spent += await record(res);
         const ok = !res.refused && res.sources.length > 0;
         item.draft = ok ? stripMarkers(res.text) || null : null;
         item.draftSources = ok
@@ -505,6 +516,9 @@ export class SiteWizardService {
         this.logger.warn(
           `Черновик мастера (${item.topic}) не получен: ${(e as Error).name}`,
         );
+        // empty/truncated оплачены: расход — как у черновика.
+        const paid = spentOf(e);
+        if (paid) spent += await record(paid).catch(() => 0);
       }
     }
     await this.save(m, siteId, {

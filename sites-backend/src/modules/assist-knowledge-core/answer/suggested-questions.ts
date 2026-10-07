@@ -3,9 +3,14 @@
  * §6.2 — 3 вопроса песочницы) — K3. Строятся из ВРАЖДЕБНОГО текста чужого
  * сайта, поэтому: строгий JSON, код проверяет каждую строку (длина, без
  * URL/HTML/разметки, вопросительная форма), показ — как данные. Сбой
- * модели — запасные вопросы из заголовков страниц (без денег).
+ * модели — запасные вопросы из заголовков страниц; оплаченный сбой
+ * (empty/truncated) отдаёт расход в `usage` — вызывающий его записывает.
  */
-import { GeminiText, GenerateResult } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AnswerLang, escapeData } from './prompt';
 
 export interface QuestionSeed {
@@ -80,7 +85,14 @@ export async function generateSuggestedQuestions(
   seeds: QuestionSeed[],
   lang: AnswerLang,
   count: number,
-): Promise<{ questions: string[]; usage: GenerateResult | null }> {
+): Promise<{
+  questions: string[];
+  /**
+   * Расход вызова модели: ответ — его токены; сбой empty/truncated — тоже
+   * (провайдер ответил, деньги списаны); без вызова/timeout/unavailable — null.
+   */
+  usage: TextModelSpent | null;
+}> {
   const sample = seeds
     .slice(0, 12)
     .map(
@@ -123,7 +135,10 @@ export async function generateSuggestedQuestions(
             .filter((q, i, a) => a.indexOf(q) === i)
             .slice(0, count);
     return { questions, usage: r };
-  } catch {
-    return { questions: fallbackQuestions(seeds, lang, count), usage: null };
+  } catch (e) {
+    return {
+      questions: fallbackQuestions(seeds, lang, count),
+      usage: spentOf(e),
+    };
   }
 }

@@ -11,6 +11,8 @@ import { ADMIN_SESSION_HEADER } from '../../brand';
 import { AdminActionLogService } from '../../modules/assist-admin-mode/action-log.service';
 import { issueAdminVoiceTicket } from '../../modules/assist-admin-voice/admin-stt';
 import { voiceTicketKey } from '../../config/voice-env';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import { ShopApi } from '../e8/e8-stack';
 import {
   AdminVoiceStack,
@@ -358,6 +360,51 @@ describeE6bAdmin('Э6-бис (б) — голосовое управление «
             (l.requestMasked as { fields?: number }).fields === 1,
         ),
       ).toBe(true);
+    });
+
+    it('оплаченный сбой модели плана (truncated/empty со spent) — 502 как раньше, строка расхода assist-admin-ui-plan фактом (её видит суточный потолок); timeout — без расхода', async () => {
+      const prev = st.text.uiModel;
+      const spent = (outputTokens: number) => ({
+        model: 'gemini-3.6-flash',
+        inputTokens: 1_250,
+        cachedInputTokens: 0,
+        outputTokens,
+      });
+      const rows = () =>
+        st.prisma.siteAiUsage.findMany({
+          where: {
+            siteId: R.S.siteId,
+            operation: 'assist-admin-ui-plan',
+            inputTokens: 1_250,
+          },
+          orderBy: { outputTokens: 'asc' },
+        });
+      const before = (await rows()).length;
+      const plan = async (err: Error) => {
+        st.text.uiModel = () => {
+          throw err;
+        };
+        const r = await api(st, a)
+          .plan({
+            text: 'заповни коментар терміново і збережи',
+            snapshot: orderPage(R.S.adminHost),
+          })
+          .expect(502);
+        expect(r.body.error?.code ?? r.body.code).toBe('ADMIN_VC_UPSTREAM');
+      };
+      try {
+        await plan(new TextModelError('truncated', spent(1371)));
+        await plan(new TextModelError('empty', spent(1372)));
+        await plan(new TextModelError('timeout'));
+      } finally {
+        st.text.uiModel = prev;
+      }
+      const got = (await rows()).slice(before);
+      expect(got.map((r) => [r.outputTokens, r.costMicroUsd])).toEqual([
+        [1371, estimateCost('gemini-3.6-flash', spent(1371)).costMicroUsd],
+        [1372, estimateCost('gemini-3.6-flash', spent(1372)).costMicroUsd],
+      ]);
+      expect(got.every((r) => r.costMicroUsd > 0)).toBe(true);
     });
 
     it('значение не из сказанного — вычеркнуто кодом; второе «Сохранить» — отдельной командой', async () => {

@@ -53,7 +53,11 @@ import {
 import { adminSpentToday } from '../assist-admin-mode/admin-budget';
 import { siteDailyCapFromPlan } from '../assist-billing/plans';
 import { geminiOutputCeiling } from '../site-ai/gemini-output';
-import { GeminiText } from '../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import { estimateCost } from '../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
@@ -1308,17 +1312,8 @@ export class AdminMemoService {
     }).costMicroUsd;
     const spent = await adminSpentToday(db, ctx.siteId, now);
     if (spent + est > siteDailyCapFromPlan(st.planId)) return null;
-    let out: string;
-    try {
-      const gen = await this.text.generate({
-        system: prompt.system,
-        user: prompt.user,
-        json: true,
-        temperature: 0,
-        maxOutputTokens: MEMO_LIMITS.choiceMaxOutputTokens,
-        timeoutMs: MEMO_LIMITS.choiceTimeoutMs,
-      });
-      out = gen.text;
+    // Строка site_ai_usage — её считает суточный потолок «Админки».
+    const record = async (gen: TextModelSpent) => {
       try {
         await this.usage.record(
           this.db.system(
@@ -1339,7 +1334,23 @@ export class AdminMemoService {
       } catch {
         /* учёт — не повод отказать в ходе */
       }
-    } catch {
+    };
+    let out: string;
+    try {
+      const gen = await this.text.generate({
+        system: prompt.system,
+        user: prompt.user,
+        json: true,
+        temperature: 0,
+        maxOutputTokens: MEMO_LIMITS.choiceMaxOutputTokens,
+        timeoutMs: MEMO_LIMITS.choiceTimeoutMs,
+      });
+      out = gen.text;
+      await record(gen);
+    } catch (e) {
+      // empty/truncated: провайдер ответил — расход тот же, ход обычный.
+      const spent = spentOf(e);
+      if (spent) await record(spent);
       return null;
     }
     const choice = parseMemoChoice(out, cands);

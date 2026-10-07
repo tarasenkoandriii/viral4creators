@@ -81,6 +81,23 @@ describe('runChatStream', () => {
     ]);
   });
 
+  it('ответ, оборванный посреди разделителя, — без служебного обрывка и без actions', async () => {
+    let raw: string | null | undefined;
+    const { events, outcome } = await drain({
+      openStream: async () =>
+        fromChunks([{ text: 'Готово. ' }, { text: '<<<acti' }]),
+      resolveActions: async (r) => {
+        raw = r;
+        return [];
+      },
+    });
+    expect(tokens(events)).toBe('Готово. ');
+    expect(raw).toBeNull();
+    expect(events.at(-1)?.type).toBe('done');
+    // Полный текст (для журнала) — как пришёл от модели.
+    expect(outcome.fullText).toBe('Готово. <<<acti');
+  });
+
   it('resolveActions получает сырой JSON после разделителя (null без него)', async () => {
     const resolveActions = jest.fn().mockResolvedValue([]);
     await drain({

@@ -23,6 +23,8 @@ import {
   LITE_ENV,
   labelJson,
 } from '../../modules/assist-analytics/testing/ai-stack.testing';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 
 jest.setTimeout(90_000);
 
@@ -212,6 +214,57 @@ describeDb('Приёмка Э3-бис (а): ИИ-разметка диалого
     st.text.queue.push('timeout');
     await tick(s);
     expect(await label(c.id)).toMatchObject({ status: 'failed', attempts: 3 });
+  });
+
+  it('оплаченный сбой (truncated/empty со spent) — расход assist-label фактом по ставке lite, резерв закрыт им; timeout — без расхода; статус — как у сбоя', async () => {
+    const lite = LITE_ENV.ASSIST_LITE_MODEL as string;
+    const spentOf = async (siteId: string) =>
+      Number(
+        (await st.owner.assistAnalyticsSpend.findFirst({ where: { siteId } }))
+          ?.spentMicroUsd ?? 0,
+      );
+    for (const kind of ['truncated', 'empty'] as const) {
+      const s = await bizSite();
+      const c = await st.conversation(s);
+      st.text.queue.push(() => {
+        throw new TextModelError(kind, {
+          model: lite,
+          inputTokens: 3000,
+          cachedInputTokens: 0,
+          outputTokens: 1100,
+        });
+      });
+      await tick(s);
+      // Для разметки — обычный сбой модели: повтор позже.
+      expect(await label(c.id)).toMatchObject({ status: 'retry', attempts: 1 });
+      const usage = await st.owner.siteAiUsage.findMany({
+        where: { siteId: s.siteId, operation: 'assist-label' },
+      });
+      expect(usage).toHaveLength(1);
+      expect(usage[0]).toMatchObject({
+        model: lite,
+        inputTokens: 3000,
+        outputTokens: 1100,
+      });
+      const fact = estimateCost(lite, {
+        inputTokens: 3000,
+        outputTokens: 1100,
+      }).costMicroUsd;
+      expect(fact).toBeGreaterThan(0);
+      expect(usage[0].costMicroUsd).toBe(fact);
+      expect(await spentOf(s.siteId)).toBe(fact);
+      expect(Number((await label(c.id))!.costMicroUsd)).toBe(fact);
+    }
+    // timeout/unavailable — провайдер денег не взял: как раньше, ноль.
+    const s = await bizSite();
+    const c = await st.conversation(s);
+    st.text.queue.push('timeout');
+    await tick(s);
+    expect(await label(c.id)).toMatchObject({ status: 'retry', attempts: 1 });
+    expect(
+      await st.owner.siteAiUsage.count({ where: { siteId: s.siteId } }),
+    ).toBe(0);
+    expect(await spentOf(s.siteId)).toBe(0);
   });
 
   it('тариф Start и пробный — не размечаются; выключено владельцем — тоже', async () => {

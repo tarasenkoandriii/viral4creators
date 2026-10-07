@@ -56,7 +56,7 @@ import { SiteKnowledgeService } from '../assist-site-knowledge/site-knowledge.se
 import { GeminiEmbedder, toVectorLiteral } from '../site-ai/embedder';
 import type { SiteAiOperation } from '../site-ai/operations';
 import { geminiOutputCeiling } from '../site-ai/gemini-output';
-import { GeminiText, TextModelError } from '../site-ai/text-model';
+import { GeminiText, TextModelError, spentOf } from '../site-ai/text-model';
 import { AiUsageRecorder, UsageDb } from '../site-ai/usage-recorder';
 import type { AccountMembership } from '../site-core/account/roles';
 import {
@@ -1403,6 +1403,22 @@ export class SandboxService {
     } catch (e) {
       if (e instanceof TextModelError) {
         await refundQuestion();
+        // empty/truncated оплачены: расход — как у ответа (суточный потолок
+        // песочниц и costMicroUsd песочницы), ответ посетителю тот же.
+        const spent = spentOf(e);
+        if (spent) {
+          actual += await this.record(
+            row,
+            db,
+            'assist-sandbox-chat',
+            spent.model,
+            {
+              inputTokens: spent.inputTokens,
+              cachedInputTokens: spent.cachedInputTokens,
+              outputTokens: spent.outputTokens,
+            },
+          ).catch(() => 0);
+        }
         throw e1Error(
           503,
           'ANSWER_UNAVAILABLE',

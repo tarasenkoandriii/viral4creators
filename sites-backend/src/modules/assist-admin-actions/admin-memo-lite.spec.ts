@@ -16,6 +16,8 @@ import { setPlan } from '../assist-billing/testing/billing-fixtures.testing';
 import { AdminModeService } from '../assist-admin-mode/admin-mode.service';
 import type { AdminActionLogService } from '../assist-admin-mode/action-log.service';
 import type { ConnectorsService } from '../assist-admin-mode/connectors.service';
+import { estimateCost } from '../../shared/ai-pricing';
+import { GEMINI_MODEL } from '../../shared/gemini-model';
 import { GeminiText } from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import type { AccountMembership } from '../site-core/account/roles';
@@ -38,6 +40,9 @@ describeDb('Мемо «Админки»: гонка лимита и lite-выб�
   let memos: AdminMemoService;
   const accounts: string[] = [];
   let reply = '{"memo": null, "slots": {}}';
+  /** finishReason ответа (MAX_TOKENS — обрезан/пуст); бросить — сбой сети. */
+  let finish: string | null = null;
+  let throws = false;
   const calls: Array<{ system: string; user: string }> = [];
 
   beforeAll(async () => {
@@ -53,9 +58,11 @@ describeDb('Мемо «Админки»: гонка лимита и lite-выб�
             system: req.config.systemInstruction,
             user: req.contents[0].parts[0].text,
           });
+          if (throws) throw new Error('провайдер недоступен (фейк)');
           return {
             text: reply,
             usageMetadata: { promptTokenCount: 400, candidatesTokenCount: 20 },
+            ...(finish ? { candidates: [{ finishReason: finish }] } : {}),
           };
         },
       },
@@ -78,6 +85,8 @@ describeDb('Мемо «Админки»: гонка лимита и lite-выб�
   beforeEach(() => {
     calls.length = 0;
     reply = '{"memo": null, "slots": {}}';
+    finish = null;
+    throws = false;
   });
 
   async function proSite() {
@@ -283,5 +292,46 @@ describeDb('Мемо «Админки»: гонка лимита и lite-выб�
       await memos.match(actor(s), 'оформи повернення по замовленню 1042'),
     ).toBeNull();
     expect(calls).toHaveLength(0);
+  });
+
+  it('lite-выбор: оплаченный сбой модели (MAX_TOKENS: обрезан/пуст) — обычный ход, строка assist-admin-memo фактом (её видит суточный потолок); сбой сети — без расхода', async () => {
+    const s = await proSite();
+    await refundMemo(s);
+    const rows = () =>
+      prisma.siteAiUsage.findMany({
+        where: { siteId: s.siteId, operation: 'assist-admin-memo' },
+      });
+    const fact = estimateCost(GEMINI_MODEL, {
+      inputTokens: 400,
+      outputTokens: 20,
+    }).costMicroUsd;
+    expect(fact).toBeGreaterThan(0);
+    finish = 'MAX_TOKENS';
+    reply = '{"memo": "refund", "slo';
+    expect(
+      await memos.match(actor(s), 'оформи повернення по замовленню 1042'),
+    ).toBeNull();
+    reply = '';
+    expect(
+      await memos.match(actor(s), 'оформи повернення по замовленню 1043'),
+    ).toBeNull();
+    expect(calls).toHaveLength(2);
+    const paid = await rows();
+    expect(paid).toHaveLength(2);
+    for (const r of paid) {
+      expect(r).toMatchObject({
+        model: GEMINI_MODEL,
+        inputTokens: 400,
+        outputTokens: 20,
+        costMicroUsd: fact,
+      });
+    }
+    finish = null;
+    throws = true;
+    expect(
+      await memos.match(actor(s), 'оформи повернення по замовленню 1044'),
+    ).toBeNull();
+    expect(calls).toHaveLength(3);
+    expect(await rows()).toHaveLength(2);
   });
 });

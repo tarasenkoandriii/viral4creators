@@ -39,9 +39,12 @@ import {
   type UiPlanCtx,
 } from '../../modules/assist-site-voice-control/public/ui-plan.service';
 import { GeminiText } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
+import { GEMINI_MODEL } from '../../shared/gemini-model';
 import { uiMapKey } from '../../modules/site-core/ui-map/ui-map';
 import { ingestUiSnapshot } from '../../modules/site-core/ui-map/ui-map-store';
 import { SitesDb } from '../../prisma/sites-db.service';
+import { awaitUtcDayHeadroom } from '../window-headroom';
 
 jest.setTimeout(180_000);
 
@@ -53,6 +56,9 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
   /** Ответ «модели плана» на следующий вызов; вызовы — в modelCalls. */
   let modelReply: string = '{"command": true, "steps": []}';
   const modelCalls: string[] = [];
+  /** finishReason ответа модели (MAX_TOKENS — обрезан/пуст); бросить — сбой сети. */
+  let modelFinish: string | null = null;
+  let modelThrows = false;
   let dayAllowed = true;
 
   beforeAll(async () => {
@@ -82,12 +88,16 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
           contents: Array<{ parts: Array<{ text: string }> }>;
         }) => {
           modelCalls.push(req.contents[0].parts[0].text);
+          if (modelThrows) throw new Error('провайдер недоступен (фейк)');
           return {
             text: modelReply,
             usageMetadata: {
               promptTokenCount: 3000,
               candidatesTokenCount: 120,
             },
+            ...(modelFinish
+              ? { candidates: [{ finishReason: modelFinish }] }
+              : {}),
           };
         },
       },
@@ -107,6 +117,8 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
   beforeEach(() => {
     modelCalls.length = 0;
     modelReply = '{"command": true, "steps": []}';
+    modelFinish = null;
+    modelThrows = false;
     dayAllowed = true;
     plans.now = () => new Date();
   });
@@ -430,6 +442,55 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
     const hidden = await create(ctxOf(s), typed(s, 'оформи замовлення'));
     expect(hidden.steps[0]).toMatchObject({ risk: 'never' });
     expect(hidden.steps[0].target!.text).toBe('Детальніше');
+  });
+
+  it('оплаченный сбой модели плана (MAX_TOKENS: обрезан/пуст) — upstream как раньше, расход assist-ui-plan фактом, резерв дня закрыт им; сбой сети — без расхода', async () => {
+    // Строка бюджета — день UTC резерва: полночь посередине — чужой день.
+    await awaitUtcDayHeadroom(15_000);
+    const s = await vcSite();
+    const day = () => st.budgetRow('site', s.siteId, utcDay(new Date()));
+    const usage = () =>
+      st.owner.siteAiUsage.findMany({
+        where: { siteId: s.siteId, operation: 'assist-ui-plan' },
+      });
+    const fact = estimateCost(GEMINI_MODEL, {
+      inputTokens: 3000,
+      outputTokens: 120,
+    }).costMicroUsd;
+    expect(fact).toBeGreaterThan(0);
+
+    // Обрезан (текст есть) и пуст (текста нет) — оба оплачены.
+    modelFinish = 'MAX_TOKENS';
+    modelReply = '{"command": true, "steps": [{"kind": "cli';
+    expect(
+      await failure(create(ctxOf(s), typed(s, 'відкрий доставку і пошук'))),
+    ).toBe('upstream');
+    modelReply = '';
+    expect(
+      await failure(create(ctxOf(s), typed(s, 'введи пошту і оплати'))),
+    ).toBe('upstream');
+    expect(modelCalls).toHaveLength(2);
+    const rows = await usage();
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r).toMatchObject({
+        model: GEMINI_MODEL,
+        inputTokens: 3000,
+        outputTokens: 120,
+        costMicroUsd: fact,
+      });
+    }
+    expect(await day()).toMatchObject({ spent: 2 * fact, reserved: 0 });
+    expect(await planRows(s.siteId)).toHaveLength(0);
+
+    // Сбой сети (unavailable) — провайдер денег не взял: как раньше.
+    modelFinish = null;
+    modelThrows = true;
+    expect(await failure(create(ctxOf(s), typed(s, 'оформи замовлення')))).toBe(
+      'upstream',
+    );
+    expect(await usage()).toHaveLength(2);
+    expect(await day()).toMatchObject({ spent: 2 * fact, reserved: 0 });
   });
 
   it('снимок не со своего хоста — отказ; страница вне зоны владельца — план без шагов и без денег', async () => {

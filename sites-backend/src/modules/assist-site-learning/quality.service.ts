@@ -30,6 +30,7 @@ import { estimateCost } from '../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
 import {
   AnswerEngine,
+  type AnswerRequest,
   type AnswerResult,
 } from '../assist-knowledge-core/answer/answer-engine';
 import { questionLang } from '../assist-knowledge-core/answer/prompt';
@@ -44,7 +45,11 @@ import {
 import { SiteKnowledgeService } from '../assist-site-knowledge/site-knowledge.service';
 import { SiteWizardService } from '../assist-site-knowledge/wizard/site-wizard.service';
 import { budgetPeriod, LearningBudget } from '../site-ai/learning-budget';
-import { GeminiText } from '../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
   REQUIRE_ASSIST_MANAGER,
@@ -329,27 +334,15 @@ export class LearningQualityService {
           includeUgc: false,
         })
       ).filter((h) => !h.ugc);
-      const r = await this.answers.answer({
-        question,
-        hits,
-        lang: lang ?? questionLang(question, null),
-      });
-      if (r.model) {
-        model = r.model;
-        const u = await this.usage.record(t, {
-          accountId,
-          siteId,
-          operation: 'assist-eval',
-          model: r.model,
-          units: {
-            inputTokens: r.inputTokens,
-            cachedInputTokens: r.cachedInputTokens,
-            outputTokens: r.outputTokens,
-          },
-        });
-        spent += u.costMicroUsd;
-      }
-      return r;
+      return this.evalAnswer(
+        accountId,
+        siteId,
+        { question, hits, lang: lang ?? questionLang(question, null) },
+        (m, cost) => {
+          model = m;
+          spent += cost;
+        },
+      );
     };
     const fail = (f: EvalFailureView) => {
       failed++;
@@ -401,6 +394,43 @@ export class LearningQualityService {
       select: { id: true },
     });
     return { status: 'done', runId: run.id, passed, failed, stale };
+  }
+
+  /**
+   * Ответ движка для проверки/симуляции с учётом `assist-eval`: у ответа —
+   * его токены; сбой empty/truncated оплачен (провайдер ответил) — тот же
+   * учёт, а ошибка пробрасывается как была (сбой записи её не подменяет).
+   */
+  private async evalAnswer(
+    accountId: string,
+    siteId: string,
+    req: AnswerRequest,
+    spend: (model: string, costMicroUsd: number) => void,
+  ): Promise<AnswerResult> {
+    const record = async (r: TextModelSpent) => {
+      const u = await this.usage.record(this.db(accountId), {
+        accountId,
+        siteId,
+        operation: 'assist-eval',
+        model: r.model,
+        units: {
+          inputTokens: r.inputTokens,
+          cachedInputTokens: r.cachedInputTokens,
+          outputTokens: r.outputTokens,
+        },
+      });
+      spend(r.model, u.costMicroUsd);
+    };
+    let r: AnswerResult;
+    try {
+      r = await this.answers.answer(req);
+    } catch (e) {
+      const paid = spentOf(e);
+      if (paid) await record(paid).catch(() => undefined);
+      throw e;
+    }
+    if (r.model) await record(r);
+    return r;
   }
 
   /**
@@ -459,7 +489,6 @@ export class LearningQualityService {
   ): Promise<SimulationView> {
     requireManager(m);
     await this.requireSite(m.accountId, siteId);
-    const t = this.db(m.accountId);
     const personas = SIM_PERSONAS.slice(
       0,
       LEARNING_DEFAULTS.simulationPersonas,
@@ -489,25 +518,14 @@ export class LearningQualityService {
               includeUgc: false,
             })
           ).filter((h) => !h.ugc);
-          const r = await this.answers.answer({
-            question,
-            hits,
-            lang: questionLang(question, null),
-          });
-          if (r.model) {
-            const u = await this.usage.record(t, {
-              accountId: m.accountId,
-              siteId,
-              operation: 'assist-eval',
-              model: r.model,
-              units: {
-                inputTokens: r.inputTokens,
-                cachedInputTokens: r.cachedInputTokens,
-                outputTokens: r.outputTokens,
-              },
-            });
-            spent += u.costMicroUsd;
-          }
+          const r = await this.evalAnswer(
+            m.accountId,
+            siteId,
+            { question, hits, lang: questionLang(question, null) },
+            (_model, cost) => {
+              spent += cost;
+            },
+          );
           const answer = stripSourceMarkers(r.text);
           view.turns.push({
             question,

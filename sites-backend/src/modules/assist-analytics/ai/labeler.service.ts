@@ -31,7 +31,12 @@ import { ASSIST_PLANS } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
 import { LearningSignals } from '../../assist-site-learning/public/learning-signals';
 import { geminiOutputCeiling } from '../../site-ai/gemini-output';
-import { GeminiText, TextModelError } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  TextModelError,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { effectiveAnalyticsConfig } from '../analytics-config';
 import { normalizePath } from '../public/page-view';
@@ -453,15 +458,7 @@ export class ConversationLabeler {
       }
       attempts++;
       let actual = 0;
-      try {
-        const out = await this.text.generate({
-          system: prompt.system,
-          user: prompt.user,
-          json: true,
-          temperature: 0,
-          maxOutputTokens: LABEL_LIMITS.maxOutputTokens,
-          model,
-        });
+      const record = async (out: TextModelSpent) => {
         const rec = await this.usage.record(this.prisma, {
           accountId: c.accountId,
           siteId: c.siteId,
@@ -475,11 +472,35 @@ export class ConversationLabeler {
         });
         actual = rec.costMicroUsd;
         cost += actual;
+      };
+      try {
+        const out = await this.text.generate({
+          system: prompt.system,
+          user: prompt.user,
+          json: true,
+          temperature: 0,
+          maxOutputTokens: LABEL_LIMITS.maxOutputTokens,
+          model,
+        });
+        await record(out);
         const parsed = parseLabel(out.text, input);
         if (parsed.ok) label = parsed.label;
       } catch (e) {
         if (e instanceof TextModelError) {
-          await this.budget.settle(rsv.reservation, 0);
+          // empty/truncated оплачены: расход — как у ответа, резерв —
+          // фактом. Сбой этой записи — резерв остаётся расходом (как ниже),
+          // а исход попытки тот же.
+          const spent = spentOf(e);
+          const recorded = spent
+            ? await record(spent).then(
+                () => true,
+                () => false,
+              )
+            : true;
+          if (recorded) {
+            await this.budget.settle(rsv.reservation, actual);
+            ctx.spentMicroUsd += actual;
+          }
           const status = attempts >= LABEL_MAX_ATTEMPTS ? 'failed' : 'retry';
           await this.write(c, { status, weight, model, attempts, cost });
           return status;

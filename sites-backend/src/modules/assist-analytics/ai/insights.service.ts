@@ -22,7 +22,12 @@ import { ASSIST_PLANS } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
 import { maskForJournal } from '../../assist-site-chat/answer-checks';
 import { geminiOutputCeiling } from '../../site-ai/gemini-output';
-import { GeminiText, TextModelError } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  TextModelError,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { effectiveAnalyticsConfig } from '../analytics-config';
 import {
@@ -360,15 +365,7 @@ export class WeeklyInsights {
     }
     let cost = 0;
     let settled = false;
-    try {
-      const out = await this.text.generate({
-        system: prompt.system,
-        user: prompt.user,
-        json: true,
-        temperature: 0.2,
-        maxOutputTokens: INSIGHT_MAX_OUTPUT,
-        model,
-      });
+    const record = async (out: TextModelSpent) => {
       const rec = await this.usage.record(this.prisma, {
         accountId,
         siteId,
@@ -381,6 +378,17 @@ export class WeeklyInsights {
         },
       });
       cost = rec.costMicroUsd;
+    };
+    try {
+      const out = await this.text.generate({
+        system: prompt.system,
+        user: prompt.user,
+        json: true,
+        temperature: 0.2,
+        maxOutputTokens: INSIGHT_MAX_OUTPUT,
+        model,
+      });
+      await record(out);
       settled = true;
       await this.budget.settle(rsv.reservation, cost);
       const parsed = parseInsights(out.text, findings);
@@ -402,7 +410,19 @@ export class WeeklyInsights {
       return { texts, rejected, skipped: null, cost };
     } catch (e) {
       if (e instanceof TextModelError) {
-        if (!settled) await this.budget.settle(rsv.reservation, 0);
+        // empty/truncated оплачены: расход — как у ответа, резерв — фактом.
+        // Сбой этой записи — резерв остаётся расходом (как ниже), а исход
+        // тот же: выводы без модели.
+        const spent = spentOf(e);
+        const recorded = spent
+          ? await record(spent).then(
+              () => true,
+              () => false,
+            )
+          : true;
+        if (!settled && recorded) {
+          await this.budget.settle(rsv.reservation, cost);
+        }
         return { texts, rejected, skipped: 'model', cost };
       }
       // Иной сбой после вызова: резерв остаётся расходом (аудит Э3-бис).

@@ -29,7 +29,12 @@ import {
   type MemoLang,
 } from '../../assist-ui-core/memo';
 import { LearningBudget } from '../../site-ai/learning-budget';
-import { GeminiText, TextModelError } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  TextModelError,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type { AccountMembership } from '../../site-core/account/roles';
 import type { MemoDetailView } from '../api-types';
@@ -108,16 +113,7 @@ export class MemoPhraseSuggestService {
       );
     let actual = 0;
     let replyText: string;
-    try {
-      const prompt = buildPhrasePrompt(draft, langs);
-      const r = await this.text.generate({
-        system: prompt.system,
-        user: prompt.user,
-        json: true,
-        maxOutputTokens: MEMO_PHRASE_SUGGEST.maxOutputTokens,
-        temperature: MEMO_PHRASE_SUGGEST.temperature,
-        timeoutMs: MEMO_PHRASE_SUGGEST.timeoutMs,
-      });
+    const record = async (r: TextModelSpent) => {
       const rec = await this.usage.record(
         this.sitesDb.system('учёт расходов ИИ: фразы мемо (assist-learn)'),
         {
@@ -133,8 +129,25 @@ export class MemoPhraseSuggestService {
         },
       );
       actual = rec.costMicroUsd;
+    };
+    try {
+      const prompt = buildPhrasePrompt(draft, langs);
+      const r = await this.text.generate({
+        system: prompt.system,
+        user: prompt.user,
+        json: true,
+        maxOutputTokens: MEMO_PHRASE_SUGGEST.maxOutputTokens,
+        temperature: MEMO_PHRASE_SUGGEST.temperature,
+        timeoutMs: MEMO_PHRASE_SUGGEST.timeoutMs,
+      });
+      await record(r);
       replyText = r.text;
     } catch (e) {
+      // empty/truncated: провайдер ответил — расход в учёт и в бюджет
+      // обучения, ответ владельцу тот же (503). Сбой записи — не повод
+      // подменять ошибку модели.
+      const spent = spentOf(e);
+      if (spent) await record(spent).catch(() => undefined);
       if (e instanceof TextModelError)
         throw voiceControlError(
           HttpStatus.SERVICE_UNAVAILABLE,

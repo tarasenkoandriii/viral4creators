@@ -11,6 +11,8 @@ import {
 } from '../../modules/assist-analytics/ai/insights.service';
 import { addDays, dayRangeUtc } from '../../modules/assist-analytics/site-time';
 import { AiStack } from '../../modules/assist-analytics/testing/ai-stack.testing';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 
 jest.setTimeout(120_000);
 
@@ -194,6 +196,56 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
     const view = await st.cabinet.insights(m, s.siteId, week);
     expect(view.items.every((i) => i.code !== RUN_CODE)).toBe(true);
     expect(view.items[0].text).toBeNull();
+  });
+
+  it('оплаченный сбой (truncated со spent) — расход assist-insight фактом, резерв закрыт им; timeout — без расхода; находки сухие в обоих', async () => {
+    const run = async (fail: 'truncated' | 'timeout') => {
+      const s = await site('business');
+      await seedN3(s);
+      let model = '';
+      if (fail === 'timeout') st.text.queue.push('timeout');
+      else
+        st.text.queue.push((req) => {
+          model = req.model ?? '';
+          throw new TextModelError('truncated', {
+            model,
+            inputTokens: 2500,
+            cachedInputTokens: 0,
+            outputTokens: 1300,
+          });
+        });
+      await st.weekly.runSite(s.accountId, s.siteId, week, now);
+      const rows = await st.owner.assistSiteInsight.findMany({
+        where: { siteId: s.siteId, weekStart: week, code: { not: RUN_CODE } },
+      });
+      // Для владельца — как при любом сбое модели: находки без текста.
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((x) => x.text === null)).toBe(true);
+      expect(rows.every((x) => x.textSkipped === 'model')).toBe(true);
+      const usage = await st.owner.siteAiUsage.findMany({
+        where: { siteId: s.siteId, operation: 'assist-insight' },
+      });
+      const status = await st.budget.status(s.accountId, s.siteId, now);
+      return { model, usage, spent: status.spentMicroUsd };
+    };
+    const paid = await run('truncated');
+    expect(paid.model).toBeTruthy();
+    const fact = estimateCost(paid.model, {
+      inputTokens: 2500,
+      outputTokens: 1300,
+    }).costMicroUsd;
+    expect(fact).toBeGreaterThan(0);
+    expect(paid.usage).toHaveLength(1);
+    expect(paid.usage[0]).toMatchObject({
+      model: paid.model,
+      inputTokens: 2500,
+      outputTokens: 1300,
+      costMicroUsd: fact,
+    });
+    expect(paid.spent).toBe(fact);
+    const free = await run('timeout');
+    expect(free.usage).toHaveLength(0);
+    expect(free.spent).toBe(0);
   });
 
   it('аудит: e-mail/номер заказа в пути — во вход модели путь :id (страницы склеены); внешняя ссылка в выводе — сухая строка', async () => {

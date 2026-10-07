@@ -24,7 +24,11 @@ import { SiteWizardService } from '../../modules/assist-site-knowledge/wizard/si
 import type { WizardView } from '../../modules/assist-site-knowledge/wizard/wizard-types';
 import type { AccountMembership } from '../../modules/site-core/account/roles';
 import { OWNER_PRODUCT_ROLES } from '../../modules/site-core/account/roles';
-import type { GenerateResult } from '../../modules/site-ai/text-model';
+import {
+  TextModelError,
+  type GenerateResult,
+} from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import {
   RAW_URL,
   Harness,
@@ -39,8 +43,11 @@ import {
 /** Черновик — по первому фрагменту, со ссылкой [S1] (как AnswerEngine). */
 class DraftAnswer {
   calls: AnswerRequest[] = [];
+  /** Сбой модели (как у AnswerEngine — ошибка GeminiText как есть). */
+  fail: Error | null = null;
   async answer(req: AnswerRequest): Promise<AnswerResult> {
     this.calls.push(req);
+    if (this.fail) throw this.fail;
     const h = req.hits[0];
     if (!h) {
       return {
@@ -69,8 +76,10 @@ class DraftAnswer {
 class SummaryText {
   reply: unknown = null;
   calls = 0;
+  fail: Error | null = null;
   async generate(): Promise<GenerateResult> {
     this.calls++;
+    if (this.fail) throw this.fail;
     return {
       text:
         typeof this.reply === 'string'
@@ -453,5 +462,94 @@ if (!RAW_URL) {
         fact,
       );
     }, 60_000);
+
+    it('оплаченный сбой модели (truncated/empty со spent): сводка и черновики — расход assist-learn фактом (сводка — в бюджете обучения, черновики — в расходе мастера); timeout — без расхода', async () => {
+      const s = await shopSite();
+      const m = member(s);
+      const spent = (outputTokens: number) => ({
+        model: 'gemini-3.6-flash',
+        inputTokens: 1_900,
+        cachedInputTokens: 0,
+        outputTokens,
+      });
+      const fact = (outputTokens: number) =>
+        estimateCost('gemini-3.6-flash', spent(outputTokens)).costMicroUsd;
+      const rowsOf = (outputTokens: number) =>
+        h.prisma.siteAiUsage.findMany({
+          where: {
+            siteId: s.siteId,
+            operation: 'assist-learn',
+            inputTokens: 1_900,
+            outputTokens,
+          },
+        });
+      const learnFact = async () =>
+        (
+          await h.prisma.siteAiUsage.findMany({
+            where: {
+              siteId: s.siteId,
+              operation: { in: ['assist-learn', 'assist-embed'] },
+            },
+            select: { costMicroUsd: true },
+          })
+        ).reduce((x, r) => x + Number(r.costMicroUsd), 0);
+
+      // Сводка: truncated — сводки нет (как при сбое), расход записан и
+      // списан с бюджета обучения фактом.
+      text.fail = new TextModelError('truncated', spent(1351));
+      const v = await wizard.start(m, s.siteId, 'shop');
+      expect(v.siteSummary).toBeNull();
+      const sum = await rowsOf(1351);
+      expect(sum).toHaveLength(1);
+      expect(fact(1351)).toBeGreaterThan(0);
+      expect(sum[0].costMicroUsd).toBe(fact(1351));
+      const budget = async () =>
+        (await h.budget.status(s.accountId, s.siteId)).spentMicroUsd;
+      const b1 = await budget();
+      expect(b1).toBe(await learnFact());
+
+      // Черновики: empty — черновиков нет, каждый оплаченный сбой — строка
+      // расхода и сумма в spentMicroUsd мастера.
+      answer.fail = new TextModelError('empty', spent(1352));
+      const before = await h.prisma.assistSiteWizard.findFirstOrThrow({
+        where: { siteId: s.siteId },
+      });
+      const drafted = await wizard.runDrafts(m, s.siteId);
+      expect(drafted.items.every((i) => i.draft === null)).toBe(true);
+      expect(answer.calls.length).toBeGreaterThan(0);
+      const drafts = await rowsOf(1352);
+      expect(drafts).toHaveLength(answer.calls.length);
+      const after = await h.prisma.assistSiteWizard.findFirstOrThrow({
+        where: { siteId: s.siteId },
+      });
+      expect(Number(after.spentMicroUsd) - Number(before.spentMicroUsd)).toBe(
+        drafts.reduce((x, r) => x + r.costMicroUsd, 0),
+      );
+
+      // timeout — провайдер денег не взял: ни строк, ни расхода мастера.
+      text.fail = new TextModelError('timeout');
+      answer.fail = new TextModelError('timeout');
+      const n = await h.prisma.siteAiUsage.count({
+        where: { siteId: s.siteId, operation: 'assist-learn' },
+      });
+      await h.prisma.assistSite.updateMany({
+        where: { siteId: s.siteId },
+        data: { siteSummaryVersion: null },
+      });
+      expect((await wizard.start(m, s.siteId, 'shop')).siteSummary).toBeNull();
+      await wizard.runDrafts(m, s.siteId);
+      expect(
+        await h.prisma.siteAiUsage.count({
+          where: { siteId: s.siteId, operation: 'assist-learn' },
+        }),
+      ).toBe(n);
+      const last = await h.prisma.assistSiteWizard.findFirstOrThrow({
+        where: { siteId: s.siteId },
+      });
+      expect(Number(last.spentMicroUsd)).toBe(Number(after.spentMicroUsd));
+      // Черновики бюджет обучения не трогают (платит платформа), сводка с
+      // timeout — резерв вернулся целиком.
+      expect(await budget()).toBe(b1);
+    }, 120_000);
   });
 }

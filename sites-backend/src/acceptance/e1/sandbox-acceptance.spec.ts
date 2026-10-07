@@ -34,6 +34,8 @@ import {
   uniq,
 } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import { GeminiEmbedder } from '../../modules/site-ai/embedder';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import { AiUsageRecorder } from '../../modules/site-ai/usage-recorder';
 import type { AccountMembership } from '../../modules/site-core/account/roles';
 import { OWNER_PRODUCT_ROLES } from '../../modules/site-core/account/roles';
@@ -553,6 +555,95 @@ describeDb('Приёмка Э1: песочница (C1–C6, D1)', () => {
       expect(await codeOf(svc.getCabinet(other, t.siteId))).toBe(
         'SITE_NOT_FOUND',
       );
+    });
+  });
+
+  describe('оплаченный сбой модели (empty/truncated со spent)', () => {
+    it('вопросы-кнопки и ответ: расход assist-sandbox-chat фактом, суточный потолок и costMicroUsd песочницы его видят; timeout — без расхода; посетителю — как раньше', async () => {
+      const spentModel = 'gemini-3.6-flash';
+      // Токены — малые (счётчик денег дня общий с другими наборами), строки
+      // сбоя узнаются по ним (у подделки ответа inputTokens = 1200); база
+      // могла остаться с прошлого прогона — сверяем приросты.
+      const [outEmpty, outCut] = [1311, 1312];
+      const paid = (kind: 'truncated' | 'empty', outputTokens: number) =>
+        new TextModelError(kind, {
+          model: spentModel,
+          inputTokens: 1500,
+          cachedInputTokens: 0,
+          outputTokens,
+        });
+      const fact = (outputTokens: number) =>
+        estimateCost(spentModel, { inputTokens: 1500, outputTokens })
+          .costMicroUsd;
+      const money = () =>
+        readCounter(
+          publicDb,
+          'sandbox-money',
+          PUBLIC_MONEY_KEY,
+          utcDay(new Date()),
+        );
+      const usageOf = (outputTokens: number) =>
+        prisma.siteAiUsage.count({
+          where: {
+            accountId: null,
+            operation: 'assist-sandbox-chat',
+            inputTokens: 1500,
+            outputTokens,
+          },
+        });
+      const u0 = {
+        empty: await usageOf(outEmpty),
+        cut: await usageOf(outCut),
+      };
+      const d = newDomain();
+      shopSite(net, `www.${d}`);
+      // Индексация: вопросы-кнопки — запасные, расход empty — записан.
+      text.fail = paid('empty', outEmpty);
+      const c = await svc.createPublic({
+        url: `https://www.${d}/`,
+        ip: `${randomV6Prefix()}::1`,
+      });
+      const v = await pollPublic(c.id, c.sandboxKey);
+      expect(v.status).toBe('ready');
+      expect(v.suggestedQuestions).toHaveLength(3);
+      expect((await usageOf(outEmpty)) - u0.empty).toBe(1);
+      const row0 = await prisma.assistSandbox.findUniqueOrThrow({
+        where: { id: c.id },
+      });
+      expect(row0.costMicroUsd).toBeGreaterThanOrEqual(fact(outEmpty));
+
+      // Ответ: truncated — 503 ANSWER_UNAVAILABLE, вопрос возвращён, расход записан.
+      const money0 = await money();
+      text.fail = paid('truncated', outCut);
+      expect(
+        await codeOf(svc.chatPublic(c.id, c.sandboxKey, 'Доставка?')),
+      ).toBe('ANSWER_UNAVAILABLE');
+      const row1 = await prisma.assistSandbox.findUniqueOrThrow({
+        where: { id: c.id },
+      });
+      expect(row1.questions).toBe(row0.questions);
+      expect((await usageOf(outCut)) - u0.cut).toBe(1);
+      expect(fact(outCut)).toBeGreaterThan(0);
+      // Эмбеддинг вопроса + факт сбоя: в потолке дня и в цене песочницы.
+      // (Счётчик дня общий для всех песочниц — параллельные наборы его
+      // только увеличивают, поэтому «не меньше».)
+      const delta = row1.costMicroUsd - row0.costMicroUsd;
+      expect(delta).toBeGreaterThanOrEqual(fact(outCut));
+      expect((await money()) - money0).toBeGreaterThanOrEqual(delta);
+
+      // timeout — провайдер денег не взял: только эмбеддинг, как раньше.
+      const rows1 = (await usageOf(outEmpty)) + (await usageOf(outCut));
+      text.fail = new TextModelError('timeout');
+      expect(
+        await codeOf(svc.chatPublic(c.id, c.sandboxKey, 'Самовывоз?')),
+      ).toBe('ANSWER_UNAVAILABLE');
+      const row2 = await prisma.assistSandbox.findUniqueOrThrow({
+        where: { id: c.id },
+      });
+      expect(row2.questions).toBe(row0.questions);
+      const delta2 = row2.costMicroUsd - row1.costMicroUsd;
+      expect(delta2).toBeLessThan(fact(outCut));
+      expect((await usageOf(outEmpty)) + (await usageOf(outCut))).toBe(rows1);
     });
   });
 

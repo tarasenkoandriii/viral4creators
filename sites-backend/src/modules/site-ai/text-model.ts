@@ -80,6 +80,17 @@ export class TextModelError extends Error {
   }
 }
 
+/**
+ * Расход сбоя модели, за который заплачено: `spent` ошибки `empty`/`truncated`.
+ * Иначе (timeout/unavailable, чужая ошибка) — null: денег провайдер не взял.
+ * Вызывающий записывает его тем же путём, что и успешный ответ (та же
+ * операция, ставка — по `spent.model`), и закрывает резерв этим фактом;
+ * ошибка для пользователя остаётся ошибкой.
+ */
+export function spentOf(e: unknown): TextModelSpent | null {
+  return e instanceof TextModelError && e.spent ? e.spent : null;
+}
+
 export const DEFAULT_TEXT_TIMEOUT_MS = 25_000;
 
 /** Часть SDK, которой пользуемся (подменяется в тестах). */

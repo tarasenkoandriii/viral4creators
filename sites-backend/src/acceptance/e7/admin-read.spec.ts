@@ -21,6 +21,8 @@ import {
   WIDGET_ORIGIN_DEFAULT,
   WIDGET_PK_LIVE_PREFIX,
 } from '../../brand';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import { describeE7, E7Stack, shopSpec, type E7Site } from './e7-stack';
 
 jest.setTimeout(120_000);
@@ -443,6 +445,93 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
     expect(body(r).answer.answerPath).toBe('knowledge');
     expect(body(r).answer.text).toMatch(/Повернення/);
     expect(hits().length).toBe(before);
+  });
+
+  it('оплаченный сбой модели (truncated/empty со spent) в плане и в ответе — ответ «модель недоступна» как раньше, деньги хода и строка assist-admin-chat фактом; timeout — без расхода', async () => {
+    const spent = (outputTokens: number) => ({
+      model: 'gemini-3.6-flash',
+      inputTokens: 950,
+      cachedInputTokens: 0,
+      outputTokens,
+    });
+    const fact = (outputTokens: number) =>
+      estimateCost('gemini-3.6-flash', spent(outputTokens)).costMicroUsd;
+    const lastAnswer = () =>
+      st.prisma.assistAdminMessage.findFirstOrThrow({
+        where: { siteId: S.siteId, role: 'assistant' },
+        orderBy: { createdAt: 'desc' },
+      });
+    const rows = () =>
+      st.prisma.siteAiUsage.findMany({
+        where: {
+          siteId: S.siteId,
+          operation: 'assist-admin-chat',
+          inputTokens: 950,
+        },
+        orderBy: { outputTokens: 'asc' },
+      });
+    const ask = async (sess: string, text: string, err: Error) => {
+      st.text.fail = err;
+      try {
+        const r = await request(st.srv())
+          .post('/assist-admin/v1/chat')
+          .set(ADMIN_SESSION_HEADER, sess)
+          .send({ text })
+          .expect(200);
+        expect(body(r).answer.answerPath).toBe('error');
+        return lastAnswer();
+      } finally {
+        st.text.fail = null;
+      }
+    };
+    const before = (await rows()).length;
+    // План (роль с картой): сбой — первый же вызов модели, планировщик.
+    const manager = await session({ sub: 'emp-paid-plan' });
+    const plan = await ask(
+      manager,
+      'Статус замовлення 1042',
+      new TextModelError('truncated', spent(1381)),
+    );
+    expect(st.text.calls.at(-1)!.system).toMatch(/планувальник/);
+    expect(plan.flags).toContain('model_unavailable');
+    expect(plan.costMicroUsd).toBe(fact(1381));
+    expect(plan.outTokens).toBe(1381);
+    // Ответ (роль без карты — только знания): сбой — вызов ответа.
+    const t = Math.floor(Date.now() / 1000);
+    const courier = body(
+      await request(st.srv())
+        .post('/assist-admin/v1/session')
+        .send({
+          pk: S.pk,
+          jwt: jwt({
+            sub: 'emp-paid-ans',
+            role: 'courier',
+            iat: t,
+            exp: t + 600,
+          }),
+        })
+        .expect(200),
+    ).session;
+    const ans = await ask(
+      courier,
+      'Як оформити повернення?',
+      new TextModelError('empty', spent(1382)),
+    );
+    expect(st.text.calls.at(-1)!.system).not.toMatch(/планувальник/);
+    expect(ans.costMicroUsd).toBe(fact(1382));
+    const got = (await rows()).slice(before);
+    expect(got.map((r) => [r.outputTokens, r.costMicroUsd])).toEqual([
+      [1381, fact(1381)],
+      [1382, fact(1382)],
+    ]);
+    // timeout — провайдер денег не взял: ход без денег, строки нет.
+    const free = await ask(
+      courier,
+      'Як оформити повернення?',
+      new TextModelError('timeout'),
+    );
+    expect(free.costMicroUsd).toBe(0);
+    expect((await rows()).length - before).toBe(2);
   });
 
   it('§4-бис.10 п.8: смена сотрудника A → B — ни одного сообщения A у B', async () => {

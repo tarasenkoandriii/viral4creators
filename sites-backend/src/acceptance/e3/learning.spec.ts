@@ -29,6 +29,8 @@ import {
   describeWithoutDb,
   type LSite,
 } from '../../modules/assist-site-learning/testing/learning-stack.testing';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 
 const PICKUP = 'Чи є самовивіз у Дніпрі?';
 
@@ -378,6 +380,68 @@ if (!RAW_URL) {
       await expect(
         st.queue.draft(s.operator, s.siteId, pay.id),
       ).rejects.toMatchObject({ status: 403 });
+    });
+
+    it('№4 черновик: оплаченный сбой модели (truncated/empty со spent) — расход assist-learn фактом и в бюджете обучения; timeout — без расхода; ответ тот же', async () => {
+      const s = await st.site();
+      await st.pages(s, [
+        {
+          path: '/oplata',
+          title: 'Оплата частинами',
+          paragraphs: [
+            'Оплата частинами доступна від 1000 грн через банк-партнер.',
+          ],
+        },
+      ]);
+      await st.ask(s, 'Чи можна оплата частинами?');
+      await st.rollupRun([s]);
+      const pay = (await st.clusters(s)).find((c) =>
+        c.label.includes('частинами'),
+      )!;
+      const spent = {
+        model: 'gemini-3.6-flash',
+        inputTokens: 1_600,
+        cachedInputTokens: 0,
+        outputTokens: 1_341,
+      };
+      const learnRows = () =>
+        st.prisma.siteAiUsage.findMany({
+          where: { siteId: s.siteId, operation: 'assist-learn' },
+        });
+      const budget = async () =>
+        (await st.budget.status(s.accountId, s.siteId)).spentMicroUsd;
+      const spy = jest.spyOn(st.answers, 'answer');
+      try {
+        let b0 = await budget();
+        spy.mockRejectedValueOnce(new TextModelError('truncated', spent));
+        expect(await st.queue.draft(s.manager, s.siteId, pay.id)).toEqual({
+          text: '',
+          lang: expect.any(String),
+          sources: [],
+          status: 'no_sources',
+        });
+        const rows = await learnRows();
+        expect(rows).toHaveLength(1);
+        const fact = estimateCost(spent.model, spent).costMicroUsd;
+        expect(fact).toBeGreaterThan(0);
+        expect(rows[0]).toMatchObject({
+          model: spent.model,
+          inputTokens: 1_600,
+          outputTokens: 1_341,
+          costMicroUsd: fact,
+        });
+        expect((await budget()) - b0).toBe(fact);
+
+        b0 = await budget();
+        spy.mockRejectedValueOnce(new TextModelError('timeout'));
+        expect(await st.queue.draft(s.manager, s.siteId, pay.id)).toMatchObject(
+          { status: 'no_sources', text: '' },
+        );
+        expect(await learnRows()).toHaveLength(1);
+        expect(await budget()).toBe(b0);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('кандидат оператора: свой ответ; оператор видит только свои; бот — дубль/чужой; авто → по кнопке; отклонить', async () => {

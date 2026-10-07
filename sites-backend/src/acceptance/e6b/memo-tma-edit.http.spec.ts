@@ -30,7 +30,11 @@ import { MemoTmaEditController } from '../../modules/assist-site-voice-control/c
 import { MemoController } from '../../modules/assist-site-voice-control/cabinet/memo.controller';
 import { MemoService } from '../../modules/assist-site-voice-control/cabinet/memo.service';
 import { SiteAiModule } from '../../modules/site-ai/site-ai.module';
-import type { GenerateRequest } from '../../modules/site-ai/text-model';
+import {
+  TextModelError,
+  type GenerateRequest,
+} from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import {
   PRODUCT_ROLES_KEY,
   SiteAccountGuard,
@@ -66,6 +70,8 @@ describeE7('Мемо в TMA: правка с телефона (Ш4) и ИИ-фр
   let other: E7Site;
   const phraseCalls: GenerateRequest[] = [];
   let reply = '{}';
+  /** Сбой модели фраз (вместо ответа). */
+  let fail: Error | null = null;
 
   const base = (s: E7Site) => `/assist/sites/${s.siteId}/memos`;
 
@@ -113,6 +119,7 @@ describeE7('Мемо в TMA: правка с телефона (Ш4) и ИИ-фр
     jest.spyOn(st.text, 'generate').mockImplementation(async (req) => {
       if (!PHRASES.test(req.system)) return gen(req);
       phraseCalls.push(req);
+      if (fail) throw fail;
       return {
         text: reply,
         model: 'gemini-3.6-flash',
@@ -168,6 +175,7 @@ describeE7('Мемо в TMA: правка с телефона (Ш4) и ИИ-фр
   beforeEach(() => {
     phraseCalls.length = 0;
     reply = '{}';
+    fail = null;
   });
 
   it('маршруты подключены в модуле голосового управления «Сайта»; права — assist: manager, SiteAccountGuard', () => {
@@ -552,6 +560,60 @@ describeE7('Мемо в TMA: правка с телефона (Ш4) и ИИ-фр
         data: { spentMicroUsd: BigInt(0) },
       });
     }
+  });
+
+  it('ИИ-фразы: оплаченный сбой модели (truncated со spent) — 503 как раньше, расход assist-learn фактом и в бюджете обучения; timeout — без расхода', async () => {
+    const spent = {
+      model: 'gemini-3.6-flash',
+      inputTokens: 900,
+      cachedInputTokens: 0,
+      outputTokens: 1361,
+    };
+    const fact = estimateCost(spent.model, spent).costMicroUsd;
+    expect(fact).toBeGreaterThan(0);
+    const spend = async () =>
+      Number(
+        (
+          await st.prisma.assistLearningSpend.aggregate({
+            where: { siteId: S.siteId },
+            _sum: { spentMicroUsd: true },
+          })
+        )._sum.spentMicroUsd ?? 0,
+      );
+    const rows = () =>
+      st.prisma.siteAiUsage.findMany({
+        where: {
+          siteId: S.siteId,
+          operation: 'assist-learn',
+          inputTokens: 900,
+          outputTokens: 1361,
+        },
+      });
+    const suggest = async (name: string) => {
+      const memo = await newMemo(S, name);
+      return request(st.srv())
+        .post(`${base(S)}/${memo.number}/suggest-phrases`)
+        .set(st.as(S.ownerTg))
+        .send({ expectedRevision: memo.draftRevision })
+        .expect(503);
+    };
+
+    let before = await spend();
+    fail = new TextModelError('truncated', spent);
+    const r = await suggest('Обрізана відповідь');
+    expect(err(r).code).toBe('MEMO_SUGGEST_UNAVAILABLE');
+    expect(phraseCalls).toHaveLength(1);
+    const paid = await rows();
+    expect(paid).toHaveLength(1);
+    expect(paid[0].costMicroUsd).toBe(fact);
+    expect((await spend()) - before).toBe(fact);
+
+    before = await spend();
+    fail = new TextModelError('timeout');
+    const t = await suggest('Модель мовчить');
+    expect(err(t).code).toBe('MEMO_SUGGEST_UNAVAILABLE');
+    expect(await rows()).toHaveLength(1);
+    expect(await spend()).toBe(before);
   });
 
   it('suggested не видит роль assist_public: черновик закрыт (нет GRANT), в версии на проверке предложений нет', async () => {

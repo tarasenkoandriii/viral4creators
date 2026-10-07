@@ -6430,13 +6430,19 @@ C11 метка ИИ в метаданных MP4; C12 снятие отметки
   по фактическому потолку (с запасом) — при почти исчерпанном суточном
   потолке виджет раньше покажет «недоступен». Оценка классификатора в
   замере — по потолку 1024 (было 200: оценка $0.24, факт $0.49).
-- [ ] sites-backend: при `empty`/`truncated` расход не записывается
-      (резерв закрывается нулём, как и раньше с `empty`); ошибка несёт
-      `spent` — подключить в ui-plan, insights, labeler, sandbox,
-      memo-phrase-suggest, wizard, site-sources, admin-memo, quality,
-      public-search, handoff-ai.
-- [ ] `runChatStream` (shared, правится в backend): обрыв посреди
-      разделителя `<<<actions>>>` отдаёт посетителю до 12 символов хвоста.
+- [x] sites-backend: оплаченный сбой (`empty`/`truncated` со `spent`)
+      записывается в учёт тем же путём, что успех (`spentOf(e)` в
+      `site-ai/text-model.ts`): ui-plan, admin-ui-plan, memo-phrase-suggest,
+      admin-answer, admin-memo, handoff-ai, insights, labeler, sandbox,
+      suggested-questions (→ site-sources), мастер (сводка, черновики),
+      quality, learning-queue, перевод в public-search. Ответ пользователю
+      прежний. Следствие: потолок прогона черновиков мастера
+      (`runCapMicroUsd`) и суточные потолки видят эти деньги и могут
+      сработать раньше — так и задумано (Р-З8-13).
+- [x] `runChatStream`: обрыв посреди разделителя `<<<actions>>>` — хвост,
+      который сам начало разделителя не короче `<<<`, посетителю не уходит
+      (`DelimiterStreamBuffer.flush`, `danglingDelimiterPrefix`); `<` и `<<`
+      в конце обычного текста остаются.
 - [ ] после деплоя: в логах backend/sites нет «оборван»/`MAX_TOKENS`
       чаще единиц в сутки; если есть — поднять видимый размер точки.
 

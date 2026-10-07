@@ -6,7 +6,12 @@
  */
 import { Logger } from '@nestjs/common';
 import { GEMINI_THINKING_HEADROOM } from './gemini-output';
-import { GeminiText, TextModelClient, TextModelError } from './text-model';
+import {
+  GeminiText,
+  TextModelClient,
+  TextModelError,
+  spentOf,
+} from './text-model';
 
 function fakeClient(
   impl: (params: Record<string, unknown>) => Promise<unknown>,
@@ -205,5 +210,24 @@ describe('GeminiText', () => {
         .useClient(client)
         .generate({ system: 's', user: 'u', maxOutputTokens: 10 }),
     ).resolves.toMatchObject({ text: 'готово' });
+  });
+});
+
+describe('spentOf', () => {
+  const spent = {
+    model: 'gemini-2.5-flash-lite',
+    inputTokens: 900,
+    cachedInputTokens: 100,
+    outputTokens: 1024,
+  };
+
+  it('empty/truncated со spent — расход; timeout/unavailable и чужая ошибка — null', () => {
+    expect(spentOf(new TextModelError('truncated', spent))).toEqual(spent);
+    expect(spentOf(new TextModelError('empty', spent))).toEqual(spent);
+    expect(spentOf(new TextModelError('empty'))).toBeNull();
+    expect(spentOf(new TextModelError('timeout'))).toBeNull();
+    expect(spentOf(new TextModelError('unavailable'))).toBeNull();
+    expect(spentOf(Object.assign(new Error('x'), { spent }))).toBeNull();
+    expect(spentOf(null)).toBeNull();
   });
 });

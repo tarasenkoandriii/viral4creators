@@ -32,7 +32,11 @@ import { KnowledgeStore } from '../assist-knowledge-core/store';
 import type { SearchHit } from '../assist-knowledge-core/types';
 import { SITE_TABLES } from '../assist-site-knowledge/site-tables';
 import { GeminiEmbedder, toVectorLiteral } from '../site-ai/embedder';
-import { GeminiText } from '../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import type { WidgetSiteContext } from './chat-types';
 import { insertOnlyUsageDb, recordSiteChatUsage } from './usage';
@@ -237,6 +241,18 @@ export class PublicSiteSearch {
     question: string,
     target: string,
   ): Promise<{ text: string | null; costMicroUsd: number }> {
+    const record = (r: TextModelSpent) =>
+      recordSiteChatUsage(this.usage, insertOnlyUsageDb(this.db), {
+        accountId: site.accountId,
+        siteId: site.siteId,
+        operation: 'assist-classify',
+        model: r.model,
+        units: {
+          inputTokens: r.inputTokens,
+          cachedInputTokens: r.cachedInputTokens,
+          outputTokens: r.outputTokens,
+        },
+      });
     try {
       const r = await this.text.generate({
         system: translationPrompt(target),
@@ -245,21 +261,7 @@ export class PublicSiteSearch {
         temperature: 0,
         timeoutMs: 10_000,
       });
-      const cost = await recordSiteChatUsage(
-        this.usage,
-        insertOnlyUsageDb(this.db),
-        {
-          accountId: site.accountId,
-          siteId: site.siteId,
-          operation: 'assist-classify',
-          model: r.model,
-          units: {
-            inputTokens: r.inputTokens,
-            cachedInputTokens: r.cachedInputTokens,
-            outputTokens: r.outputTokens,
-          },
-        },
-      );
+      const cost = await record(r);
       const text = r.text
         .replace(/<\/?q>/g, '')
         .trim()
@@ -269,7 +271,10 @@ export class PublicSiteSearch {
       this.logger.warn(
         `перевод вопроса не удался (site ${site.siteId}): ${(e as Error | null)?.name ?? 'Error'}`,
       );
-      return { text: null, costMicroUsd: 0 };
+      // empty/truncated оплачены: расход — как у перевода (и в резерв дня).
+      const paid = spentOf(e);
+      const cost = paid ? await record(paid).catch(() => 0) : 0;
+      return { text: null, costMicroUsd: cost };
     }
   }
 

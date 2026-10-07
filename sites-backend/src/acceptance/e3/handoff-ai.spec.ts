@@ -8,6 +8,8 @@
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import type { SearchHit } from '../../modules/assist-knowledge-core/types';
 import { HandoffStack } from '../../modules/assist-site-handoff/testing/handoff-stack.testing';
+import { TextModelError } from '../../modules/site-ai/text-model';
+import { estimateCost } from '../../shared/ai-pricing';
 import { awaitUtcDayHeadroom } from '../window-headroom';
 
 jest.setTimeout(60_000);
@@ -35,6 +37,9 @@ describeDb('Э3 H — сводка, черновик, перевод (handoff-ai
   });
   afterAll(async () => {
     await st.close();
+  });
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
   beforeEach(() => {
     st.htext.fail = false;
@@ -165,6 +170,82 @@ describeDb('Э3 H — сводка, черновик, перевод (handoff-ai
       where: { siteId: s.siteId, operation: 'assist-translate' },
     });
     expect(ops).toHaveLength(1);
+  });
+
+  it('оплаченный сбой (truncated/empty со spent): сводка, черновик, перевод — расход фактом своей операцией, в передачу и в резерв дня; timeout — без расхода; запасной путь тот же', async () => {
+    await awaitUtcDayHeadroom(10_000);
+    const paid = (kind: 'truncated' | 'empty', outputTokens: number) =>
+      new TextModelError(kind, {
+        model: 'gemini-3.6-flash',
+        inputTokens: 700,
+        cachedInputTokens: 0,
+        outputTokens,
+      });
+    const fact = (outputTokens: number) =>
+      estimateCost('gemini-3.6-flash', { inputTokens: 700, outputTokens })
+        .costMicroUsd;
+    const rowsOf = (siteId: string, operation: string, outputTokens: number) =>
+      st.owner.siteAiUsage.findMany({
+        where: { siteId, operation, inputTokens: 700, outputTokens },
+      });
+    // №14 сводка: первый вызов lite-модели передачи — сводка.
+    jest
+      .spyOn(st.htext, 'generate')
+      .mockRejectedValueOnce(paid('truncated', 1301));
+    const { s, id } = await handoffOf();
+    const row = await st.handoffRow(id);
+    expect(row.summary).toMatchObject({ source: 'fallback' });
+    const sum = await rowsOf(s.siteId, 'assist-handoff', 1301);
+    expect(sum).toHaveLength(1);
+    expect(sum[0].costMicroUsd).toBe(fact(1301));
+    expect(fact(1301)).toBeGreaterThan(0);
+    expect(row.costMicroUsd).toBeGreaterThanOrEqual(fact(1301));
+    const day = new Date().toISOString().slice(0, 10);
+    const b = await st.budgetRow('site', s.siteId, day);
+    expect(b?.reserved ?? 0).toBe(0);
+    expect(b!.spent).toBeGreaterThanOrEqual(fact(1301));
+
+    // №11 черновик: сбой ответа модели знаний — пусто, расход записан.
+    const before = (await st.handoffRow(id)).costMicroUsd;
+    st.answerText.fail = paid('empty', 1302);
+    expect(await st.ai.draft(id)).toBeNull();
+    expect(await rowsOf(s.siteId, 'assist-handoff', 1302)).toHaveLength(1);
+    expect((await st.handoffRow(id)).costMicroUsd - before).toBe(fact(1302));
+
+    // №12 перевод: оригинал, расход assist-translate.
+    const p = {
+      accountId: s.accountId,
+      siteId: s.siteId,
+      text: 'Завтра',
+      from: 'uk',
+      to: 'en',
+    };
+    jest
+      .spyOn(st.htext, 'generate')
+      .mockRejectedValueOnce(paid('truncated', 1303));
+    expect(await st.ai.translate(p)).toEqual({
+      text: 'Завтра',
+      translated: false,
+    });
+    expect(await rowsOf(s.siteId, 'assist-translate', 1303)).toHaveLength(1);
+
+    // timeout — провайдер денег не взял: строк расхода нет, как раньше.
+    const n = await st.owner.siteAiUsage.count({
+      where: { siteId: s.siteId },
+    });
+    jest
+      .spyOn(st.htext, 'generate')
+      .mockRejectedValueOnce(new TextModelError('timeout'));
+    expect(await st.ai.translate(p)).toEqual({
+      text: 'Завтра',
+      translated: false,
+    });
+    st.answerText.fail = new TextModelError('unavailable');
+    expect(await st.ai.draft(id)).toBeNull();
+    expect(
+      await st.owner.siteAiUsage.count({ where: { siteId: s.siteId } }),
+    ).toBe(n);
+    expect((await st.budgetRow('site', s.siteId, day))?.reserved ?? 0).toBe(0);
   });
 
   it('инъекция из текста посетителя: тег-ограждение промпта сводки и перевода не закрывается текстом', async () => {

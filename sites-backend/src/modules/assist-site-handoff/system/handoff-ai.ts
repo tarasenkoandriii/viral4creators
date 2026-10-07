@@ -28,7 +28,11 @@ import { maskForJournal } from '../../assist-site-chat/answer-checks';
 import { SiteBudget } from '../../assist-site-chat/budget';
 import { SiteKnowledgeService } from '../../assist-site-knowledge/site-knowledge.service';
 import type { SiteAiOperation } from '../../site-ai/operations';
-import { GeminiText } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type { HandoffDraft, HandoffSummary } from '../api-types';
 import { effectiveHandoffConfig } from '../public/handoff-config';
@@ -157,15 +161,9 @@ export class HandoffAi {
     // Без фрагментов модель не зовётся вовсе: черновик «из головы» оператору не нужен.
     if (!hits.length) return null;
     const answers = this.answers;
-    const res = await this.withBudget(h, async () => {
+    const res = await this.withBudget(h, 'assist-handoff', async () => {
       const r = await answers.answer({ question: last.text, hits, lang });
-      const cost = r.model
-        ? await this.record(h, 'assist-handoff', r.model, {
-            inputTokens: r.inputTokens,
-            cachedInputTokens: r.cachedInputTokens,
-            outputTokens: r.outputTokens,
-          })
-        : 0;
+      const cost = r.model ? await this.record(h, 'assist-handoff', r) : 0;
       return { value: r, cost };
     });
     if (!res || res.refused || !res.sources.length) return null;
@@ -259,33 +257,36 @@ export class HandoffAi {
   private async record(
     h: { accountId: string; siteId: string },
     operation: SiteAiOperation,
-    model: string,
-    units: {
-      inputTokens: number;
-      cachedInputTokens: number;
-      outputTokens: number;
-    },
+    r: TextModelSpent,
   ): Promise<number> {
     const u = await this.usage.record(this.prisma, {
       accountId: h.accountId,
       siteId: h.siteId,
       operation,
-      model,
-      units,
+      model: r.model,
+      units: {
+        inputTokens: r.inputTokens,
+        cachedInputTokens: r.cachedInputTokens,
+        outputTokens: r.outputTokens,
+      },
     });
     return u.costMicroUsd;
   }
 
   /**
    * Резерв дня сайта+платформы → вызов → факт. Нет денег или сбой — null
-   * (вызывающий берёт запасной путь). Стоимость — в передачу.
+   * (вызывающий берёт запасной путь). Стоимость — в передачу. Сбой
+   * empty/truncated оплачен — его расход пишется операцией `operation`,
+   * как ответ, и закрывает резерв.
    */
   private async withBudget<T>(
     h: {
       id: string | null;
+      accountId: string;
       siteId: string;
       site: { dailyCapMicroUsd: number | null } | null;
     },
+    operation: SiteAiOperation,
     fn: () => Promise<{ value: T; cost: number }>,
   ): Promise<T | null> {
     // Э4: суточный потолок сайта — от тарифа кабинета (§7.3).
@@ -320,6 +321,8 @@ export class HandoffAi {
       this.logger.warn(
         `передача: сбой модели (site ${h.siteId}): ${(e as Error | null)?.name ?? 'Error'}`,
       );
+      const spent = spentOf(e);
+      if (spent) cost = await this.record(h, operation, spent).catch(() => 0);
       return null;
     } finally {
       await this.budget
@@ -347,13 +350,9 @@ export class HandoffAi {
     operation: SiteAiOperation,
     req: { system: string; user: string; maxOutputTokens: number },
   ): Promise<string | null> {
-    return this.withBudget(h, async () => {
+    return this.withBudget(h, operation, async () => {
       const r = await this.text.generate({ ...req, temperature: 0.2 });
-      const cost = await this.record(h, operation, r.model, {
-        inputTokens: r.inputTokens,
-        cachedInputTokens: r.cachedInputTokens,
-        outputTokens: r.outputTokens,
-      });
+      const cost = await this.record(h, operation, r);
       return { value: r.text, cost };
     });
   }

@@ -19,6 +19,25 @@ export const ACTIONS_DELIMITER = '<<<actions>>>';
 /** Не длиннее разделителя — столько символов максимум держит буфер (плюс один). */
 export const ACTIONS_DELIMITER_MAX_PREFIX = ACTIONS_DELIMITER.length;
 
+/** С какой длины начало разделителя в конце ответа считается его обрывком. */
+export const ACTIONS_DELIMITER_MIN_DANGLING = 3;
+
+/**
+ * Длина самого длинного собственного начала `delimiter`, которым кончается
+ * `tail` (0 — нет или короче `minLength`).
+ */
+export function danglingDelimiterPrefix(
+  tail: string,
+  delimiter: string = ACTIONS_DELIMITER,
+  minLength: number = ACTIONS_DELIMITER_MIN_DANGLING,
+): number {
+  const max = Math.min(tail.length, delimiter.length - 1);
+  for (let k = max; k >= Math.max(1, minLength); k--) {
+    if (tail.endsWith(delimiter.slice(0, k))) return k;
+  }
+  return 0;
+}
+
 export interface SplitResult {
   /** Текст ДО разделителя — то, что видит посетитель. */
   text: string;
@@ -85,10 +104,24 @@ export class DelimiterStreamBuffer {
   /**
    * Конец стрима: хвост, придержанный на случай начала разделителя.
    * Если разделитель был — отдавать нечего, всё после него не для глаз.
+   *
+   * Хвост, который сам — начало разделителя не короче
+   * `ACTIONS_DELIMITER_MIN_DANGLING` (`<<<`, `<<<acti`…), не отдаётся:
+   * так кончается ответ, оборванный потолком (`MAX_TOKENS`) посреди
+   * разделителя, и посетитель увидел бы служебный обрывок. Обычный текст
+   * так не кончается; одиночные `<` и `<<` отдаются как есть.
    */
   flush(): string {
     if (this.found) return '';
-    return this.emitUpTo(this.text.length);
+    const end =
+      this.text.length -
+      danglingDelimiterPrefix(
+        this.text.slice(this.emittedLength),
+        this.delimiter,
+      );
+    const out = this.emitUpTo(end);
+    this.emittedLength = this.text.length;
+    return out;
   }
 
   private emitUpTo(end: number): string {

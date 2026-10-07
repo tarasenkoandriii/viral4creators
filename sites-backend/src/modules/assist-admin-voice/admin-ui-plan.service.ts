@@ -82,7 +82,7 @@ import {
   type VoiceControlRules,
 } from '../assist-ui-core/types';
 import { neverViolation } from '../assist-ui-core/wizard';
-import { GeminiText } from '../site-ai/text-model';
+import { GeminiText, spentOf } from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import { estimateCost } from '../../shared/ai-pricing';
 import { failPlan } from './admin-voice-errors';
@@ -655,7 +655,11 @@ export class AdminUiPlanService {
           outputTokens: r.outputTokens,
           cachedInputTokens: r.cachedInputTokens,
         });
-      } catch {
+      } catch (e) {
+        // empty/truncated: провайдер ответил — строка расхода та же, что у
+        // ответа (её считает суточный потолок «Админки», adminSpentToday).
+        const spent = spentOf(e);
+        if (spent) await this.recordUsage(s, spent);
         return failPlan('upstream');
       }
       const apiOp = modelApiOf(out);

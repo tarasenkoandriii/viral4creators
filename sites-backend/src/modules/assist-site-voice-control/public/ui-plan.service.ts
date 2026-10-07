@@ -157,7 +157,11 @@ import {
   type VoiceControlRules,
 } from '../../assist-ui-core/types';
 import { geminiOutputCeiling } from '../../site-ai/gemini-output';
-import { GeminiText } from '../../site-ai/text-model';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type {
   UiCompView,
@@ -959,15 +963,7 @@ export class SiteUiPlanService {
       return fail('budget');
     }
     let actual = 0;
-    try {
-      const r = await this.model.generate({
-        system: p.system,
-        user: p.user,
-        json: true,
-        temperature: 0,
-        maxOutputTokens: p.maxOutputTokens,
-        timeoutMs: p.timeoutMs,
-      });
+    const record = async (r: TextModelSpent) => {
       const u = await this.usage.record(insertOnlyUsageDb(this.db), {
         accountId: site.accountId,
         siteId: site.siteId,
@@ -980,12 +976,26 @@ export class SiteUiPlanService {
         },
       });
       actual = u.costMicroUsd;
+    };
+    try {
+      const r = await this.model.generate({
+        system: p.system,
+        user: p.user,
+        json: true,
+        temperature: 0,
+        maxOutputTokens: p.maxOutputTokens,
+        timeoutMs: p.timeoutMs,
+      });
+      await record(r);
       return r.text;
     } catch (e) {
       if (e instanceof UiPlanError) throw e;
       this.logger.warn(
         `ui-plan model failed site=${site.siteId}: ${(e as Error | null)?.name ?? 'Error'}`,
       );
+      // empty/truncated: провайдер ответил — расход тот же, что у ответа.
+      const spent = spentOf(e);
+      if (spent) await record(spent).catch(() => undefined);
       return fail('upstream');
     } finally {
       await this.budget.settle(this.db, reserved.reservation, actual);

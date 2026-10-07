@@ -37,6 +37,7 @@ import { AnswerEngine } from '../assist-knowledge-core/answer/answer-engine';
 import { questionLang } from '../assist-knowledge-core/answer/prompt';
 import { SiteKnowledgeService } from '../assist-site-knowledge/site-knowledge.service';
 import { LearningBudget } from '../site-ai/learning-budget';
+import { spentOf, type TextModelSpent } from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
   parseAccountRole,
@@ -725,6 +726,20 @@ export class LearningQueueService {
       return { text: '', lang, sources: [], status: 'budget' };
     }
     let spent = 0;
+    const record = async (r: TextModelSpent) => {
+      const u = await this.usage.record(this.db(m), {
+        accountId: m.accountId,
+        siteId,
+        operation: 'assist-learn',
+        model: r.model,
+        units: {
+          inputTokens: r.inputTokens,
+          cachedInputTokens: r.cachedInputTokens,
+          outputTokens: r.outputTokens,
+        },
+      });
+      spent = u.costMicroUsd;
+    };
     try {
       // UGC — не источник черновика (§4-тер.7).
       const hits = (
@@ -735,20 +750,7 @@ export class LearningQueueService {
         })
       ).filter((h) => !h.ugc);
       const r = await this.answers.answer({ question, hits, lang });
-      if (r.model) {
-        const u = await this.usage.record(this.db(m), {
-          accountId: m.accountId,
-          siteId,
-          operation: 'assist-learn',
-          model: r.model,
-          units: {
-            inputTokens: r.inputTokens,
-            cachedInputTokens: r.cachedInputTokens,
-            outputTokens: r.outputTokens,
-          },
-        });
-        spent = u.costMicroUsd;
-      }
+      if (r.model) await record(r);
       // Без источников — пусто: модель не выдумывает ответ владельцу (§4-тер.3).
       if (r.refused || !r.sources.length) {
         return { text: '', lang, sources: [], status: 'no_sources' };
@@ -763,6 +765,9 @@ export class LearningQueueService {
       this.logger.warn(
         `черновик проверенного ответа не получен (site ${siteId}): ${(e as Error | null)?.name ?? 'Error'}`,
       );
+      // empty/truncated оплачены: расход — как у черновика, в бюджет обучения.
+      const paid = spentOf(e);
+      if (paid) await record(paid).catch(() => undefined);
       return { text: '', lang, sources: [], status: 'no_sources' };
     } finally {
       await this.budget
