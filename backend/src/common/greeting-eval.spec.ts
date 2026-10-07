@@ -48,6 +48,7 @@ import {
 import {
   Budget,
   runEval,
+  CLASSIFIER_SILENT_LIMIT,
   type Providers,
 } from '../../scripts/greeting-eval/runner';
 import { summarize } from '../../scripts/greeting-eval/report';
@@ -379,6 +380,26 @@ describe('прогон на двойниках', () => {
     expect(r.spentMicro).toBeLessThanOrEqual(cap);
     expect(providers.calls.classify).toBeLessThanOrEqual(3);
     expect(providers.calls.recognize).toBe(0);
+  });
+
+  it('модель молчит (неверный ключ) — стоп после 5 пустых ответов без расхода', async () => {
+    const plan = buildPlan({ ...tiny, limit: 10, parts: ['classifier'] });
+    let n = 0;
+    const providers = fakeProviders({
+      classify: async () => (n++, { register: null, micro: 0 }),
+    });
+    const r = await runEval(plan, providers, new Budget(10_000_000));
+    expect(r.stopped).toMatch(/GEMINI_API_KEY/);
+    expect(n).toBe(CLASSIFIER_SILENT_LIMIT);
+  });
+
+  it('редкий пустой ответ с расходом — не стоп', async () => {
+    const plan = buildPlan({ ...tiny, limit: 10, parts: ['classifier'] });
+    const providers = fakeProviders({
+      classify: async () => ({ register: null, micro: 5 }),
+    });
+    const r = await runEval(plan, providers, new Budget(10_000_000));
+    expect(r.stopped).toBeFalsy();
   });
 
   it('ответ латиницей — ровно один строгий повтор, как в продукте', async () => {

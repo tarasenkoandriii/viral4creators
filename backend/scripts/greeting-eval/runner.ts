@@ -44,6 +44,9 @@ export interface RecognizeRequest {
   strict: boolean;
 }
 
+/** Сколько пустых ответов классификатора подряд считать «модель не отвечает». */
+export const CLASSIFIER_SILENT_LIMIT = 5;
+
 export interface Providers {
   classify(
     text: string,
@@ -133,12 +136,21 @@ export async function runEval(
     spentMicro: budget.spent,
   });
 
+  // Классификатор продукта глотает сбои модели (ответ null). Пять пустых
+  // ответов подряд без расхода — модель не отвечает вовсе (неверный ключ,
+  // нет сети): отчёт из одних «—» бесполезен, останавливаемся сразу.
+  let silent = 0;
   for (const t of plan.classify) {
     const est = classifyCostMicro(t.text);
     if (!budget.allows(est))
       return stop(`потолок: классификатор на ${t.id}.${t.lang}`);
     const r = await providers.classify(t.text);
     budget.add(r.micro);
+    silent = r.register === null && r.micro === 0 ? silent + 1 : 0;
+    if (silent >= CLASSIFIER_SILENT_LIMIT)
+      return stop(
+        'классификатор не отвечает: 5 пустых ответов подряд без расхода — проверьте GEMINI_API_KEY и сеть',
+      );
     classRows.push({
       id: t.id,
       lang: t.lang,
