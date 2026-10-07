@@ -19,6 +19,11 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
+import {
   AI_GUIDE_BUDGET_KEY,
   DEFAULT_DAILY_BUDGET_MICRO_USD,
   DEFAULT_SIBLING_AUTO,
@@ -160,7 +165,7 @@ export class SiblingsService {
         contents: [{ text: 'Сравни сигнал со списком.' }],
         config: {
           systemInstruction: buildSiblingPrompt(candidate.rawText, subjects),
-          maxOutputTokens: 300,
+          maxOutputTokens: geminiOutputCeiling(300),
           abortSignal: AbortSignal.timeout(SIBLING_TIMEOUT_MS),
         },
       });
@@ -169,9 +174,17 @@ export class SiblingsService {
         model: GEMINI_MODEL,
         userId: null,
       });
+      const out = readGeminiOutput(response);
+      if (out.truncated) {
+        // Как сбой: кандидат остаётся в очереди без процента.
+        this.logger.warn(
+          `сравнение кандидата ${candidateId} оборвано — ${describeGeminiOutput(out)}`,
+        );
+        return null;
+      }
       verdict = siblingVerdict(
         parseSiblingAnswer(
-          response?.text ?? '',
+          out.text,
           subjects.map((s) => s.id),
         ),
         auto,

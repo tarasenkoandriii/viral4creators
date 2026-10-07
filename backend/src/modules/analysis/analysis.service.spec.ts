@@ -33,6 +33,7 @@ import {
 } from '@nestjs/common';
 import { AnalysisService } from './analysis.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 import {
   AnalysisStatus,
   VideoAnalysis,
@@ -97,6 +98,7 @@ function build(
     originalVideo?: unknown;
     userId?: string | null;
     cached?: VideoAnalysis | null;
+    videoAnalysis?: VideoAnalysis;
   } = {},
 ) {
   // Сессия живая: performAnalysis перечитывает её после каждой записи,
@@ -111,6 +113,7 @@ function build(
     // Gemini-вызовом. Тесты кеша считают ВИДЕО-вызовы Gemini — фиксируем
     // локаль `en`, чтобы перевод не примешивался к счётчику.
     locale: 'en',
+    ...(over.videoAnalysis ? { videoAnalysis: over.videoAnalysis } : {}),
   };
   const sessionService = {
     getSession: jest.fn(async () => (state ? { ...state } : null)),
@@ -671,5 +674,64 @@ describe('AnalysisService — замок разбора (этап 47, В-2.3)', 
     );
     await svc.analyzeVideo('s1');
     expect(recorded).toBe(true);
+  });
+});
+
+describe('AnalysisService — проба реплик оригинала и обрыв ответа', () => {
+  type WithSample = { videoAnalysis: VideoAnalysis };
+  const sampleOf = (state: unknown) =>
+    (state as WithSample).videoAnalysis.originalDialogueSample;
+
+  it('потолок уходит провайдеру с запасом на размышления (300 + 1024), проба кешируется', async () => {
+    const { svc, read } = build({ videoAnalysis: storedAnalysis() });
+    generateContent.mockResolvedValue({ text: '{"sample":"Привет, это мы"}' });
+
+    await expect(svc.extractOriginalDialogueSample('s1')).resolves.toBe(
+      'Привет, это мы',
+    );
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(
+      300 + GEMINI_THINKING_HEADROOM,
+    );
+    expect(sampleOf(read())).toBe('Привет, это мы');
+  });
+
+  it('обрыв по MAX_TOKENS — null, НЕ кешируется: следующий клик зовёт модель снова', async () => {
+    // Размышления съели потолок раньше первого слова: текста нет. Без
+    // проверки обрыва это прочиталось бы как «реплик в оригинале нет» и
+    // легло бы в сессию `null` — проба закрылась бы навсегда.
+    const { svc, sessionService, aiUsage, read } = build({
+      videoAnalysis: storedAnalysis(),
+    });
+    generateContent.mockResolvedValue({
+      text: '',
+      candidates: [{ finishReason: 'MAX_TOKENS' }],
+      usageMetadata: { thoughtsTokenCount: 900 },
+    });
+
+    await expect(svc.extractOriginalDialogueSample('s1')).resolves.toBeNull();
+    expect(sessionService.updateSession).not.toHaveBeenCalled();
+    expect(sampleOf(read())).toBeUndefined();
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
+
+    await svc.extractOriginalDialogueSample('s1');
+    expect(generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  it('честно пустой ответ (STOP) — null кешируется, модель второй раз не зовётся', async () => {
+    const { svc, sessionService, read } = build({
+      videoAnalysis: storedAnalysis(),
+    });
+    generateContent.mockResolvedValue({
+      text: '{"sample":""}',
+      candidates: [{ finishReason: 'STOP' }],
+    });
+
+    await expect(svc.extractOriginalDialogueSample('s1')).resolves.toBeNull();
+    expect(sessionService.updateSession).toHaveBeenCalledTimes(1);
+    expect(sampleOf(read())).toBeNull();
+
+    await expect(svc.extractOriginalDialogueSample('s1')).resolves.toBeNull();
+    expect(generateContent).toHaveBeenCalledTimes(1);
   });
 });

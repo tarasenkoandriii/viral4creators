@@ -23,7 +23,9 @@
  *  7. После стрима: источники (только S# из промпта), действия (link — URL
  *     только из фрагментов/настроек и хост сайта), пост-фильтр (числа,
  *     стоп-фразы, запрещённые обещания) → флаги; запись в кэш по правилам
- *     §4-тер.7; учёт в site_ai_usage (assist-chat, assist-classify); списание
+ *     §4-тер.7 (ответ, оборванный потолком выхода — `finishReason=MAX_TOKENS`,
+ *     — в кэш не идёт: посетитель уже получил часть, другим её не раздаём;
+ *     в trace — `truncated`, в лог — без текста); учёт в site_ai_usage (assist-chat, assist-classify); списание
  *     факта и снятие резерва — тем же экземпляром (finally), иначе — TTL.
  *
  * Уточнения реализации (W3):
@@ -126,7 +128,7 @@ import {
   answerEstimateMicroUsd,
   type BudgetReservation,
 } from './budget';
-import { SiteChatModel } from './chat-model';
+import { SiteChatModel, newStreamFinish, streamTruncated } from './chat-model';
 import type {
   AnswerPath,
   AnswerTrace,
@@ -864,6 +866,7 @@ export class SiteChatService {
       siteHosts,
       sourceNumbers: new Set(prompt.sourceMap.keys()),
     });
+    const finish = newStreamFinish();
     const stream = runChatStream<SiteAction, WidgetStreamErrorCode>({
       openStream: (signal) =>
         this.model.openStream(
@@ -873,6 +876,7 @@ export class SiteChatService {
             maxOutputTokens: WIDGET_DEFAULTS.maxOutputTokens,
           },
           signal,
+          finish,
         ),
       timeouts: {
         firstTokenMs: Math.min(30_000, WIDGET_DEFAULTS.answerTimeoutMs),
@@ -974,6 +978,19 @@ export class SiteChatService {
     }
 
     const { text, sources } = resolveCitations(guard.text, prompt.sourceMap);
+    // Ответ упёрся в потолок выхода: текст посетитель уже получил (протокол
+    // не меняем — ниже обычные sources/actions/done; блок действий, если
+    // оборван, validateSiteActions отбрасывает как негодный JSON). Но в кэш
+    // такой ответ не кладём и помечаем в trace; в лог — без текста.
+    const truncated = streamTruncated(finish);
+    if (truncated) {
+      ctx.trace.truncated = true;
+      this.logger.warn(
+        `ask: ответ обрезан потолком выхода (site ${site.siteId}, msg ${ctx.answerId}, ` +
+          `model ${this.model.model}, finishReason=${finish.reason}, thoughts=${finish.thoughts}, ` +
+          `out=${units.outputTokens}, chars=${guard.text.length})`,
+      );
+    }
     const cited = sources
       .map((s) => prompt.sourceMap.get(s.n))
       .filter((h): h is SearchHit => !!h);
@@ -995,7 +1012,7 @@ export class SiteChatService {
     // эскалация (№13) добавляет кнопку человека.
     actions = await this.withHumanActions(ctx, actions);
     let storedCacheKey: string | null = null;
-    if (p.cacheKey) {
+    if (p.cacheKey && !truncated) {
       const put = await this.cache.put({
         siteId: site.siteId,
         key: p.cacheKey,

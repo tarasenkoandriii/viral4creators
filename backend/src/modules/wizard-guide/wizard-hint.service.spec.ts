@@ -6,6 +6,7 @@ import {
   PERSONAL_LIMIT_NOTICE,
   WizardHintService,
 } from './wizard-hint.service';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 
 const DRAFT = {
   stepsPerRound: [1, 2],
@@ -17,7 +18,11 @@ const DRAFT = {
 
 /** Ровно те поля запроса к модели, которые читают проверки ниже. */
 interface GenerateCall {
-  config: { systemInstruction: string; abortSignal?: AbortSignal };
+  config: {
+    systemInstruction: string;
+    abortSignal?: AbortSignal;
+    maxOutputTokens?: number;
+  };
 }
 
 function build(
@@ -30,6 +35,8 @@ function build(
     countToday?: number;
     settings?: Record<string, string>;
     throws?: boolean;
+    /** Ответ упёрся в потолок: `finishReason=MAX_TOKENS`. */
+    truncated?: boolean;
     /** Общие правила расхода: блокировка и суточный потолок (§5.8). */
     canSpend?: boolean;
     /** Срез корпуса опыта (§6) — на этапе 9 он появился в промпте. */
@@ -103,8 +110,11 @@ function build(
       usageMetadata: {
         promptTokenCount: 1000,
         candidatesTokenCount: 100,
-        thoughtsTokenCount: 30,
+        thoughtsTokenCount: over.truncated ? 900 : 30,
       },
+      ...(over.truncated
+        ? { candidates: [{ finishReason: 'MAX_TOKENS' }] }
+        : {}),
     };
   });
   (svc as any).genai = { models: { generateContent } };
@@ -240,6 +250,41 @@ describe('WizardHintService (§5)', () => {
     const { svc, prisma } = build({ text: '   ' });
     expect((await svc.hint('u1', 'p1', 'record')).hint).toBeNull();
     expect(prisma.wizardHintCache.upsert).not.toHaveBeenCalled();
+  });
+
+  it('потолок уходит провайдеру с запасом на размышления (400 + 1024)', async () => {
+    const { svc, generateContent } = build();
+    await svc.hint('u1', 'p1', 'record');
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(
+      400 + GEMINI_THINKING_HEADROOM,
+    );
+  });
+
+  it('подсказка оборвана по MAX_TOKENS — молчание: ни кеша, ни журнала, ни перевода', async () => {
+    // Текст сам по себе годный: без проверки обрыва он ушёл бы человеку
+    // и сутки раздавался бы из общего кеша всем на этом шаге.
+    const { svc, prisma, aiUsage, translation } = build({
+      text: 'Начните со страницы, куда реально',
+      truncated: true,
+      experience: {
+        lines: [],
+        stamp: 'e1',
+        needTranslation: [
+          { id: 'x1', from: { locale: 'ru', symptom: 'с', advice: 'a' } },
+        ],
+      },
+    });
+    expect(await svc.hint('u1', 'p1', 'record', 'de')).toEqual({
+      hint: null,
+      actions: [],
+      source: null,
+    });
+    expect(prisma.wizardHintCache.upsert).not.toHaveBeenCalled();
+    expect(prisma.wizardHint.create).not.toHaveBeenCalled();
+    expect(translation.translate).not.toHaveBeenCalled();
+    // Вызов оплачен — расход пишется.
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
   });
 
   it('отказ модели не роняет мастер', async () => {

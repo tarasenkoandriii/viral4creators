@@ -45,6 +45,7 @@ import {
   type PersonaConfig,
 } from '../../assist-site-setup/persona';
 import { LearningBudget } from '../../site-ai/learning-budget';
+import { geminiOutputCeiling } from '../../site-ai/gemini-output';
 import { GeminiText } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type { AccountMembership } from '../../site-core/account/roles';
@@ -69,8 +70,14 @@ export const WIZARD_ANSWER_MAX = 5000;
 export const HOT_PAGES_MAX = 10;
 /** Оценка одного черновика: промпт с 6 фрагментами + ответ. */
 const DRAFT_EST_UNITS = { inputTokens: 3_000, outputTokens: 400 };
-/** Оценка сводки: ≈ 12 тыс. символов данных + JSON. */
-const SUMMARY_EST_UNITS = { inputTokens: 5_000, outputTokens: 700 };
+/**
+ * Оценка сводки: ≈ 12 тыс. символов данных + JSON; выход — потолок вызова
+ * (generateSiteSummary: 700 видимых + запас на размышления).
+ */
+const SUMMARY_EST_UNITS = {
+  inputTokens: 5_000,
+  outputTokens: geminiOutputCeiling(700),
+};
 /** Фрагментов в сводку (по одному на документ, по порядку страниц). */
 const SUMMARY_SEEDS = 24;
 

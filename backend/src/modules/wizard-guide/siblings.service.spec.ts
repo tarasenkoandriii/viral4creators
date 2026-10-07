@@ -10,6 +10,7 @@ import {
   SIBLING_AUTO_KEY,
   SIBLING_SUGGEST_KEY,
 } from './guide-settings';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 
 interface UpdateCall {
   where: { id: string };
@@ -29,6 +30,7 @@ function build(
     noKey?: boolean;
     spentToday?: number;
     globalOn?: boolean;
+    response?: unknown;
   } = {},
 ) {
   const prisma = {
@@ -75,12 +77,17 @@ function build(
     aiUsage as never,
     guide as never,
   );
-  const generateContent = jest.fn(async () => {
-    if (over.throws) throw new Error('провайдер лёг');
-    return {
-      text: over.text ?? '{"matchedId":"e1","score":0.9,"why":"то же самое"}',
-    };
-  });
+  const generateContent = jest.fn(
+    async (_req: { config: { maxOutputTokens: number } }) => {
+      if (over.throws) throw new Error('провайдер лёг');
+      return (
+        over.response ?? {
+          text:
+            over.text ?? '{"matchedId":"e1","score":0.9,"why":"то же самое"}',
+        }
+      );
+    },
+  );
   if (!over.noKey)
     (svc as unknown as { genai: unknown }).genai = {
       models: { generateContent },
@@ -161,6 +168,31 @@ describe('SiblingsService (§6.4)', () => {
     const { svc, prisma } = build({ throws: true });
     expect(await svc.classify('c1')).toBeNull();
     expect(prisma.wizardExperienceCandidate.update).not.toHaveBeenCalled();
+  });
+
+  it('потолок уходит провайдеру с запасом на размышления (300 + 1024)', async () => {
+    const { svc, generateContent } = build();
+    await svc.classify('c1');
+    expect(generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(
+      300 + GEMINI_THINKING_HEADROOM,
+    );
+  });
+
+  it('сравнение оборвано по MAX_TOKENS — null, вердикт не записывается', async () => {
+    // Ответ сам по себе разбирается в AUTO: без проверки обрыва кандидат
+    // был бы сведён и счётчик встреч поднят.
+    const { svc, prisma, aiUsage } = build({
+      response: {
+        text: '{"matchedId":"e1","score":0.9,"why":"то же самое"}',
+        candidates: [{ finishReason: 'MAX_TOKENS' }],
+        usageMetadata: { thoughtsTokenCount: 900 },
+      },
+    });
+    expect(await svc.classify('c1')).toBeNull();
+    expect(prisma.wizardExperienceCandidate.update).not.toHaveBeenCalled();
+    expect(prisma.wizardExperience.update).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
   });
 
   it('расход записывается своей операцией', async () => {

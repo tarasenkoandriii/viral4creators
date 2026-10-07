@@ -52,6 +52,7 @@ import {
 } from '../assist-ui-core/memo';
 import { adminSpentToday } from '../assist-admin-mode/admin-budget';
 import { siteDailyCapFromPlan } from '../assist-billing/plans';
+import { geminiOutputCeiling } from '../site-ai/gemini-output';
 import { GeminiText } from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import { estimateCost } from '../../shared/ai-pricing';
@@ -1302,7 +1303,8 @@ export class AdminMemoService {
         MEMO_LIMITS.choiceReserveInputTokens,
         Math.ceil((prompt.system.length + prompt.user.length) / 2),
       ),
-      outputTokens: MEMO_LIMITS.choiceMaxOutputTokens,
+      // Сверху — потолок, который уходит провайдеру (с запасом на мысли).
+      outputTokens: geminiOutputCeiling(MEMO_LIMITS.choiceMaxOutputTokens),
     }).costMicroUsd;
     const spent = await adminSpentToday(db, ctx.siteId, now);
     if (spent + est > siteDailyCapFromPlan(st.planId)) return null;

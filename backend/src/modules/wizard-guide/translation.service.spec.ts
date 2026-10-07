@@ -5,6 +5,7 @@
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { TranslationService } from './translation.service';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 
 const SOURCE = {
   symptom: 'Код не приходит',
@@ -18,7 +19,12 @@ interface UpsertCall {
   update: Record<string, unknown>;
 }
 
-function build(over: { text?: string; noKey?: boolean } = {}) {
+const GOOD =
+  '{"symptom":"Code kommt nicht","cause":"","advice":"drücken Sie {{clientSiteWizard.liveRestartButton}}"}';
+
+function build(
+  over: { text?: string; noKey?: boolean; response?: unknown } = {},
+) {
   const prisma = {
     wizardExperienceText: {
       upsert: jest.fn(async (_args: UpsertCall) => ({})),
@@ -26,11 +32,10 @@ function build(over: { text?: string; noKey?: boolean } = {}) {
   };
   const aiUsage = { recordGemini: jest.fn().mockResolvedValue(undefined) };
   const svc = new TranslationService(prisma as never, aiUsage as never);
-  const generateContent = jest.fn(async () => ({
-    text:
-      over.text ??
-      '{"symptom":"Code kommt nicht","cause":"","advice":"drücken Sie {{clientSiteWizard.liveRestartButton}}"}',
-  }));
+  const generateContent = jest.fn(
+    async (_req: { config: { maxOutputTokens: number } }) =>
+      over.response ?? { text: over.text ?? GOOD },
+  );
   if (!over.noKey)
     (svc as unknown as { genai: unknown }).genai = {
       models: { generateContent },
@@ -79,6 +84,29 @@ describe('TranslationService (§6.7)', () => {
       operation: 'wizard-translate',
       userId: null,
     });
+  });
+
+  it('потолок уходит провайдеру с запасом на размышления (600 + 1024)', async () => {
+    const { svc, generateContent } = build();
+    await svc.translate('e1', 'de', SOURCE);
+    expect(generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(
+      600 + GEMINI_THINKING_HEADROOM,
+    );
+  });
+
+  it('перевод оборван по MAX_TOKENS — false, ничего не сохраняется, расход учтён', async () => {
+    // Текст сам по себе разбирается и ключ словаря на месте: без проверки
+    // обрыва он лёг бы в базу как готовый перевод.
+    const { svc, prisma, aiUsage } = build({
+      response: {
+        text: GOOD,
+        candidates: [{ finishReason: 'MAX_TOKENS' }],
+        usageMetadata: { thoughtsTokenCount: 900 },
+      },
+    });
+    expect(await svc.translate('e1', 'de', SOURCE)).toBe(false);
+    expect(prisma.wizardExperienceText.upsert).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
   });
 
   it('без ключа модели молчит, а не падает', async () => {

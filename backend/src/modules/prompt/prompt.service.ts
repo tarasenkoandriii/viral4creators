@@ -14,6 +14,11 @@ import {
 import { GoogleGenAI } from '@google/genai';
 import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { v4 as uuidv4 } from 'uuid';
 import { SessionService } from '../../common/session.service';
 import {
@@ -167,7 +172,8 @@ export class PromptService {
       contents: [{ text: prompt }],
       config: {
         temperature: options.temperature ?? 0.7,
-        maxOutputTokens: options.maxOutputTokens ?? 4000,
+        // Размер видимого ответа + запас на размышления (common/gemini-output).
+        maxOutputTokens: geminiOutputCeiling(options.maxOutputTokens ?? 4000),
         ...(options.json ? { responseMimeType: 'application/json' } : {}),
       },
     });
@@ -176,7 +182,17 @@ export class PromptService {
       model: GEMINI_MODEL,
       sessionId: options.sessionId,
     });
-    return response.text?.trim() ?? '';
+    const out = readGeminiOutput(response);
+    // Оборванный ответ — сбой, а не пустой результат: у извлечения
+    // текстов «пусто» значит «текста на экране нет» и стёрло бы прежние
+    // карточки; терпимый разбор промпта собрал бы из обрезка полпромпта.
+    // Каждый вызывающий уже умеет сбой (откат, null или ошибка сборки).
+    if (out.truncated) {
+      throw new Error(
+        `ответ модели оборван (${options.operation}): ${describeGeminiOutput(out)}`,
+      );
+    }
+    return out.text.trim();
   }
 
   /**

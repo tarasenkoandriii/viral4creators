@@ -10,6 +10,11 @@ import {
 import { ModerationStatus } from '../../common/types/prompt.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
+import {
+  grokReferencePromptText,
+  ReferencePlan,
+} from '../../common/reference-plan';
 
 const KEY = 'GEMINI_API_KEY';
 
@@ -982,5 +987,175 @@ describe('PromptService.generatePrompt — шаблон сцены вместо 
     const { svc, post } = buildReady(onTemplate({ sceneTemplate: null }));
     await expect(svc.generatePrompt('s1')).rejects.toThrow(ANALYSIS_NOT_READY);
     expect(post).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `callTextModel` — единая точка вызова модели в классе: потолок уходит
+ * провайдеру с запасом на размышления, оборванный ответ (`MAX_TOKENS`) —
+ * сбой, а не результат. Проверяется поведение каждого вызывающего:
+ * сборка промпта падает, извлечение текстов даёт `null` (прежние
+ * карточки живут), переписывание меток откатывается на приближение.
+ */
+describe('PromptService — потолок и обрыв ответа модели (common/gemini-output)', () => {
+  const original = process.env[KEY];
+  beforeAll(() => {
+    process.env[KEY] = 'test-key';
+  });
+  afterAll(() => {
+    if (original === undefined) delete process.env[KEY];
+    else process.env[KEY] = original;
+  });
+
+  /** Ровно те поля запроса, которые читают проверки ниже. */
+  interface GenerateCall {
+    config: { maxOutputTokens: number };
+  }
+  const cut = (text: string) => ({
+    text,
+    candidates: [{ finishReason: 'MAX_TOKENS' }],
+    usageMetadata: { thoughtsTokenCount: 900 },
+  });
+  const MOMENTS = [{ text: 'Скидка 20%', role: 'callout' }];
+
+  function buildCut(session: Record<string, unknown>) {
+    const sessions = {
+      getSession: jest.fn().mockResolvedValue(session),
+      updateSession: jest.fn().mockResolvedValue(undefined),
+      claimWork: jest.fn().mockResolvedValue(true),
+      releaseWork: jest.fn().mockResolvedValue(undefined),
+    };
+    const aiUsage = { recordGemini: jest.fn().mockResolvedValue(undefined) };
+    const svc = new PromptService(
+      sessions as any,
+      aiUsage as any,
+      { assertCanSpendSession: jest.fn() } as any,
+    );
+    const post = jest.fn(
+      async (_req: GenerateCall): Promise<unknown> => ({
+        text: '{"moments":[]}',
+      }),
+    );
+    (svc as any).genai = { models: { generateContent: post } };
+    return { svc, sessions, post, aiUsage };
+  }
+  const ready = () => ({
+    sessionId: 's1',
+    videoAnalysis: { status: 'complete', sceneBreakdown: 'Сцена 1: товар' },
+    productInformation: {
+      productName: 'Кроссовки',
+      productDescription: 'лёгкие, для бега',
+    },
+  });
+
+  it('generatePrompt: оба вызова уходят с запасом — 4000 + 1024 и 500 + 1024', async () => {
+    const { svc, post } = buildCut(ready());
+    post.mockResolvedValueOnce({
+      text: '{"prompt":"8 seconds; product close-up.","voiceoverScript":"Раз."}',
+    });
+    await svc.generatePrompt('s1');
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(post.mock.calls[0][0].config.maxOutputTokens).toBe(
+      4000 + GEMINI_THINKING_HEADROOM,
+    );
+    expect(post.mock.calls[1][0].config.maxOutputTokens).toBe(
+      500 + GEMINI_THINKING_HEADROOM,
+    );
+  });
+
+  it('generatePrompt: ответ оборван — ошибка, полпромпта в сессию не пишется', async () => {
+    // Терпимый разбор собрал бы из обрезка промпт и записал его: без
+    // проверки обрыва здесь был бы успех с половиной сцены.
+    const { svc, sessions, post, aiUsage } = buildCut(ready());
+    post.mockResolvedValueOnce(
+      cut('{"prompt":"8 seconds; UGC smartphone realism. Dialogue: «Беги'),
+    );
+    await expect(svc.generatePrompt('s1')).rejects.toThrow();
+    // Извлечение текстов по обрезку не зовётся — второго платного вызова нет.
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(sessions.updateSession).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+  });
+
+  it('updatePrompt: извлечение текстов оборвано — null, прежние моменты не стираются', async () => {
+    // Размышления съели потолок раньше ответа: текста нет. Без проверки
+    // обрыва пустой ответ прочитался бы как «текста на экране нет» (`[]`)
+    // и стёр бы уже отрендеренные карточки.
+    const { svc, sessions, post } = buildCut({
+      sessionId: 's1',
+      generationPrompt: { ...BASE, onScreenTextMoments: MOMENTS },
+    });
+    post.mockResolvedValueOnce(cut(''));
+    const r = await svc.updatePrompt('s1', 'новый промпт');
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(r.onScreenTextMoments).toEqual(MOMENTS);
+    expect(
+      (sessions.updateSession.mock.calls[0][1] as any).generationPrompt
+        .onScreenTextMoments,
+    ).toEqual(MOMENTS);
+  });
+
+  it('updatePrompt: честно пустой ответ (STOP) — моменты сбрасываются в []', async () => {
+    // Контрольная пара к предыдущему: «текста нет» и «ответ оборван» —
+    // разные исходы, и различает их именно признак обрыва.
+    const { svc, post } = buildCut({
+      sessionId: 's1',
+      generationPrompt: { ...BASE, onScreenTextMoments: MOMENTS },
+    });
+    post.mockResolvedValueOnce({
+      text: '{"moments":[]}',
+      candidates: [{ finishReason: 'STOP' }],
+    });
+    const r = await svc.updatePrompt('s1', 'новый промпт');
+    expect(r.onScreenTextMoments).toEqual([]);
+  });
+
+  describe('rewriteForGrokReferences', () => {
+    const plan = {
+      images: [
+        {
+          index: 1,
+          kind: 'product',
+          candidateId: 'product',
+          characterId: null,
+          label: 'Кружка',
+          pathname: null,
+          url: null,
+          mimeType: 'image/png',
+        },
+      ],
+      characters: [],
+      omitted: [],
+      scenes: [],
+      productReferenceIndex: 1,
+      legacyFirstFrame: false,
+      candidates: [],
+      slots: [],
+    } as unknown as ReferencePlan;
+    const SCENE = 'Woman holds the mug on a sunny balcony.';
+
+    it('потолок уходит с запасом (2000 + 1024), целый ответ возвращается', async () => {
+      const { svc, post } = buildCut(ready());
+      post.mockResolvedValueOnce({
+        text: 'Woman holds the mug from <IMAGE_1> on a sunny balcony.',
+        candidates: [{ finishReason: 'STOP' }],
+      });
+      await expect(
+        svc.rewriteForGrokReferences(SCENE, plan, 's1'),
+      ).resolves.toBe('Woman holds the mug from <IMAGE_1> on a sunny balcony.');
+      expect(post.mock.calls[0][0].config.maxOutputTokens).toBe(
+        2000 + GEMINI_THINKING_HEADROOM,
+      );
+    });
+
+    it('ответ оборван — откат на приближение, обрезок не возвращается', async () => {
+      const { svc, post } = buildCut(ready());
+      post.mockResolvedValueOnce(cut('Woman holds the mug from <IMAGE_1> on'));
+      const r = await svc.rewriteForGrokReferences(SCENE, plan, 's1');
+      expect(r).toBe(`${SCENE}\n${grokReferencePromptText(plan)}`);
+      expect(r).not.toContain('<IMAGE_1> on');
+      expect(post).toHaveBeenCalledTimes(1);
+    });
   });
 });

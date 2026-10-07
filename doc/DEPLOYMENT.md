@@ -888,8 +888,14 @@ Telegram-логин, который их и породил.
   `TERMS_VERSION` — переакцепта нет (прецедент II.10).
 - **Замеры** (`backend/scripts/greeting-eval`): `npm run eval:greeting` —
   сухой режим; `-- --apply [--max-usd=2]` — живой прогон Gemini и Soniox
-  (≈ $1.6 по прайсу, потолок по умолчанию $2), нужны `GEMINI_API_KEY`,
-  `SONIOX_API_KEY` и ffmpeg.
+  (оценка сверху ≈ $2.4 целиком — выше потолка по умолчанию $2, поэтому
+  частями: `--part=classifier` ≈ $1.0, факт 07.10.2026 $0.49;
+  `--part=stt` ≈ $1.35), нужны `GEMINI_API_KEY`, `SONIOX_API_KEY` и ffmpeg.
+- **Потолки ответа Gemini**: в коде задаётся размер видимого ответа,
+  провайдеру уходит +1024 токена на размышления (`common/gemini-output.ts`,
+  sites-backend `site-ai/gemini-output.ts`); оборванный по `MAX_TOKENS`
+  ответ считается сбоем вызова и пишется в лог предупреждением
+  («оборван», `finishReason=MAX_TOKENS`) без текста ответа.
 
 ## 2. Frontend-проект
 

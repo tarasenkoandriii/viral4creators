@@ -1,9 +1,11 @@
 /**
  * GeminiText (K3): запрос к SDK собран как надо (system, JSON, лимит
- * выхода, сигнал отмены), токены — по правилам assist-chat-core, ошибки
- * провайдера наружу не утекают, таймаут — свой код.
+ * выхода с запасом на размышления, сигнал отмены), токены — по правилам
+ * assist-chat-core, ошибки провайдера наружу не утекают, таймаут — свой
+ * код, ответ, упёршийся в потолок (MAX_TOKENS), в дело не идёт.
  */
 import { Logger } from '@nestjs/common';
+import { GEMINI_THINKING_HEADROOM } from './gemini-output';
 import { GeminiText, TextModelClient, TextModelError } from './text-model';
 
 function fakeClient(
@@ -49,7 +51,8 @@ describe('GeminiText', () => {
     const cfg = calls[0].config as Record<string, unknown>;
     expect(cfg).toMatchObject({
       systemInstruction: 'SYS',
-      maxOutputTokens: 800,
+      // Видимый ответ 800 + запас на размышления (тратят тот же потолок).
+      maxOutputTokens: 800 + GEMINI_THINKING_HEADROOM,
       responseMimeType: 'application/json',
       temperature: 0.2,
     });
@@ -95,5 +98,112 @@ describe('GeminiText', () => {
         .useClient(client)
         .generate({ system: 's', user: 'u', maxOutputTokens: 10 }),
     ).rejects.toMatchObject({ kind: 'empty' });
+  });
+
+  it('потолок провайдеру = видимый ответ + запас на размышления, у любой модели (и lite)', async () => {
+    const { client, calls } = fakeClient(async () => ({ text: 'ok' }));
+    const m = new GeminiText().useClient(client);
+    await m.generate({ system: 's', user: 'u', maxOutputTokens: 200 });
+    await m.generate({
+      system: 's',
+      user: 'u',
+      maxOutputTokens: 400,
+      model: 'gemini-2.5-flash-lite',
+    });
+    const ceil = calls.map(
+      (c) => (c.config as { maxOutputTokens: number }).maxOutputTokens,
+    );
+    expect(ceil).toEqual([
+      200 + GEMINI_THINKING_HEADROOM,
+      400 + GEMINI_THINKING_HEADROOM,
+    ]);
+    expect(calls[1].model).toBe('gemini-2.5-flash-lite');
+  });
+
+  it('MAX_TOKENS без текста (всё ушло на размышления) — kind=empty, расход в spent, в лог — без промпта', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    try {
+      const { client } = fakeClient(async () => ({
+        text: undefined,
+        candidates: [{ finishReason: 'MAX_TOKENS' }],
+        usageMetadata: {
+          promptTokenCount: 50,
+          candidatesTokenCount: 0,
+          thoughtsTokenCount: 1224,
+        },
+      }));
+      const err = await new GeminiText()
+        .useClient(client)
+        .generate({
+          system: 'СЕКРЕТ-СИСТЕМЫ',
+          user: 'ВОПРОС-ПОСЕТИТЕЛЯ',
+          maxOutputTokens: 200,
+        })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TextModelError);
+      expect(err).toMatchObject({
+        kind: 'empty',
+        spent: { inputTokens: 50, outputTokens: 1224 },
+      });
+      const line = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(line).toMatch(/empty/);
+      expect(line).toMatch(/finishReason=MAX_TOKENS/);
+      expect(line).toMatch(/thoughts=1224/);
+      expect(line).not.toMatch(/СЕКРЕТ|ВОПРОС/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('обрезанный ответ (MAX_TOKENS с текстом) — kind=truncated, текст не уходит в дело; лог — модель, finishReason, мысли, длина', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    try {
+      const cutText = '{"answer":"Доставка коштує 8';
+      const { client } = fakeClient(async () => ({
+        text: cutText,
+        candidates: [{ finishReason: 'MAX_TOKENS' }],
+        usageMetadata: {
+          promptTokenCount: 70,
+          candidatesTokenCount: 30,
+          thoughtsTokenCount: 994,
+        },
+      }));
+      const err = await new GeminiText()
+        .useClient(client)
+        .generate({
+          system: 's',
+          user: 'u',
+          maxOutputTokens: 30,
+          json: true,
+          model: 'gemini-3.6-flash',
+        })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(TextModelError);
+      expect(err).toMatchObject({
+        kind: 'truncated',
+        spent: { model: 'gemini-3.6-flash', outputTokens: 1024 },
+      });
+      expect(String((err as Error).message)).not.toMatch(/Доставка/);
+      const line = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(line).toMatch(/gemini-3\.6-flash: truncated/);
+      expect(line).toMatch(/finishReason=MAX_TOKENS/);
+      expect(line).toMatch(/thoughts=994/);
+      expect(line).toContain(`chars=${cutText.length}`);
+      expect(line).not.toMatch(/Доставка/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('finishReason=STOP — обычный ответ', async () => {
+    const { client } = fakeClient(async () => ({
+      text: 'готово',
+      candidates: [{ finishReason: 'STOP' }],
+    }));
+    await expect(
+      new GeminiText()
+        .useClient(client)
+        .generate({ system: 's', user: 'u', maxOutputTokens: 10 }),
+    ).resolves.toMatchObject({ text: 'готово' });
   });
 });

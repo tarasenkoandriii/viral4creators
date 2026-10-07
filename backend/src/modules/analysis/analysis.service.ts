@@ -32,6 +32,11 @@ import {
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { languageNameForLocale, normalizeLocale } from '../../common/locale';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import { ANALYSIS_NOT_STARTED } from './analysis-errors';
@@ -704,7 +709,7 @@ export class AnalysisService {
         ],
         config: {
           temperature: 0.1,
-          maxOutputTokens: 300,
+          maxOutputTokens: geminiOutputCeiling(300),
           responseMimeType: 'application/json',
         },
       });
@@ -713,7 +718,13 @@ export class AnalysisService {
         model: GEMINI_MODEL,
         sessionId,
       });
-      const raw = response?.text?.trim();
+      const out = readGeminiOutput(response);
+      // Обрыв — сбой, а не «реплик нет»: в кеш сессии не пишем, иначе
+      // проба оригинала закрылась бы для этой сессии навсегда.
+      if (out.truncated) {
+        throw new Error(`ответ оборван (${describeGeminiOutput(out)})`);
+      }
+      const raw = out.text.trim();
       if (raw) {
         const parsed = JSON.parse(raw) as { sample?: unknown };
         if (typeof parsed.sample === 'string' && parsed.sample.trim()) {

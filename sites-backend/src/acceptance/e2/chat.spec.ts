@@ -2,10 +2,12 @@
  * Конвейер ответа виджета (W3) на НАСТОЯЩЕМ Postgres под ролью assist_public:
  * источники и действия, рубильники и шаблоны без модели, идемпотентность
  * `clientRequestId` (§4-бис.10 п.3), продолжение стрима из базы,
- * обрыв модели → `partial`, история только из своей базы, квота диалогов.
+ * обрыв модели → `partial`, обрыв потолком выхода (MAX_TOKENS) — не в кэш,
+ * история только из своей базы, квота диалогов.
  * ИИ — фейки (testing/chat-stack.testing.ts).
  */
 import { randomUUID } from 'crypto';
+import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import {
   seedUsage,
   usageOf,
@@ -31,6 +33,7 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
   beforeEach(() => {
     st.model.mode = 'honest';
     st.model.delayMs = 0;
+    st.model.truncate = null;
     st.model.calls.length = 0;
     st.chat.env = st.env;
   });
@@ -394,6 +397,40 @@ describeDb('Э2 W3 — конвейер ответа виджета (chat)', () 
     expect(denied.error).toMatchObject({ code: 'site_quota' });
     expect(denied.actions).toEqual([expect.objectContaining({ kind: 'lead' })]);
     expect((await usageOf(st.owner, s.accountId))!.units).toBe(50);
+  });
+
+  it('обрыв потолком выхода (MAX_TOKENS) внутри блока действий: текст и done посетителю, оборванный JSON действий не уходит, ответ не в кэше, trace.truncated; без обрыва — в кэш', async () => {
+    const s = await st.stand('shop');
+    const q = 'Скільки коштує доставка Новою поштою?';
+    st.model.truncate = 'actions';
+    const cut = await st.ask(s, q);
+    expect(cut.done).toBe(true);
+    expect(cut.error).toBeFalsy();
+    expect(cut.text).toContain('80 грн');
+    expect(cut.text).not.toContain('<<<');
+    // Кнопка-ссылка была в оборванном JSON — не дошла; форма заявки не нужна:
+    // источник [S#] есть.
+    expect(cut.actions.some((a) => a.kind === 'link')).toBe(false);
+    expect(st.model.calls[0].maxOutputTokens).toBe(
+      WIDGET_DEFAULTS.maxOutputTokens,
+    );
+    const m1 = await st.owner.assistSiteMessage.findUniqueOrThrow({
+      where: { id: cut.meta!.messageId },
+    });
+    expect(m1.streamState).toBe('complete');
+    expect(m1.cacheKey).toBeNull();
+    expect(m1.trace).toMatchObject({ truncated: true });
+
+    // Тот же вопрос без обрыва — снова модель (кэша нет) и теперь в кэш.
+    st.model.truncate = null;
+    const full = await st.ask(s, q);
+    expect(st.model.calls).toHaveLength(2);
+    expect(full.actions.some((a) => a.kind === 'link')).toBe(true);
+    const m2 = await st.owner.assistSiteMessage.findUniqueOrThrow({
+      where: { id: full.meta!.messageId },
+    });
+    expect(m2.cacheKey).toBeTruthy();
+    expect(m2.trace).not.toHaveProperty('truncated');
   });
 
   it('стоп-фразы персоны → флаг; ответ с флагом в кэш не идёт', async () => {

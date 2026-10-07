@@ -6,8 +6,10 @@
  * проверки (источники, действия, пост-фильтр), то же правило «вопрос с
  * признаками инъекции — отказ без модели». Без записи в журнал, кэша,
  * квоты и денег сайта: платит вызывающий (бюджет обучения у PersonaGate).
+ * Ответ, оборванный потолком выхода (`finishReason=MAX_TOKENS`), — в лог
+ * без текста; судит его вызывающий, как обычный ответ.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { runChatStream } from '../../shared/assist-chat-core';
@@ -21,7 +23,7 @@ import {
   validateSiteActions,
   type SiteAnswerFlag,
 } from './answer-checks';
-import { SiteChatModel } from './chat-model';
+import { SiteChatModel, newStreamFinish, streamTruncated } from './chat-model';
 import type {
   SiteAction,
   SiteAnswerSource,
@@ -52,6 +54,8 @@ export interface OneShotAnswer {
 
 @Injectable()
 export class SiteAnswerer {
+  private readonly logger = new Logger(SiteAnswerer.name);
+
   constructor(
     private readonly db: AssistPublicDb,
     private readonly search: PublicSiteSearch,
@@ -107,6 +111,7 @@ export class SiteAnswerer {
       sourceNumbers: new Set(prompt.sourceMap.keys()),
     });
     let actions: SiteAction[] = [];
+    const finish = newStreamFinish();
     const stream = runChatStream<SiteAction, WidgetStreamErrorCode>({
       openStream: (signal) =>
         this.model.openStream(
@@ -116,6 +121,7 @@ export class SiteAnswerer {
             maxOutputTokens: WIDGET_DEFAULTS.maxOutputTokens,
           },
           signal,
+          finish,
         ),
       timeouts: {
         firstTokenMs: 30_000,
@@ -145,6 +151,13 @@ export class SiteAnswerer {
       },
     );
     const total = cost + found.costMicroUsd;
+    if (streamTruncated(finish)) {
+      this.logger.warn(
+        `ответ обрезан потолком выхода (site ${p.site.siteId}, ${p.operation}, ` +
+          `model ${this.model.model}, finishReason=${finish.reason}, thoughts=${finish.thoughts}, ` +
+          `chars=${guard.text.length})`,
+      );
+    }
     if (!r.value.ok) {
       return {
         ...refusal('no_knowledge', total),

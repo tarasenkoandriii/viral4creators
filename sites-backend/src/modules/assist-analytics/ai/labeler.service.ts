@@ -30,6 +30,7 @@ import type { CronScope } from '../../../common/cron-scope';
 import { ASSIST_PLANS } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
 import { LearningSignals } from '../../assist-site-learning/public/learning-signals';
+import { geminiOutputCeiling } from '../../site-ai/gemini-output';
 import { GeminiText, TextModelError } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { effectiveAnalyticsConfig } from '../analytics-config';
@@ -429,7 +430,8 @@ export class ConversationLabeler {
       model,
       {
         inputTokens: Math.ceil((prompt.system.length + prompt.user.length) / 2),
-        outputTokens: LABEL_LIMITS.maxOutputTokens,
+        // Сверху — потолок, который уходит провайдеру (с запасом на мысли).
+        outputTokens: geminiOutputCeiling(LABEL_LIMITS.maxOutputTokens),
       },
       this.env,
     ).costMicroUsd;

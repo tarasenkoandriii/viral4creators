@@ -21,6 +21,7 @@ import type { CronScope } from '../../../common/cron-scope';
 import { ASSIST_PLANS } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
 import { maskForJournal } from '../../assist-site-chat/answer-checks';
+import { geminiOutputCeiling } from '../../site-ai/gemini-output';
 import { GeminiText, TextModelError } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { effectiveAnalyticsConfig } from '../analytics-config';
@@ -346,7 +347,8 @@ export class WeeklyInsights {
       model,
       {
         inputTokens: Math.ceil((prompt.system.length + prompt.user.length) / 2),
-        outputTokens: INSIGHT_MAX_OUTPUT,
+        // Сверху — потолок, который уходит провайдеру (с запасом на мысли).
+        outputTokens: geminiOutputCeiling(INSIGHT_MAX_OUTPUT),
       },
       this.env,
     ).costMicroUsd;

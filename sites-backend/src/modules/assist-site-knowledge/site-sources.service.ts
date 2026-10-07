@@ -29,6 +29,7 @@ import {
 import { estimateCost } from '../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
 import { LearningBudget } from '../site-ai/learning-budget';
+import { geminiOutputCeiling } from '../site-ai/gemini-output';
 import { GeminiText } from '../site-ai/text-model';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import {
@@ -49,8 +50,14 @@ import { SiteKnowledgeService } from './site-knowledge.service';
 
 /** Вопросов «на которые помощник теперь отвечает» (§3.4). */
 export const SUGGESTED_QUESTIONS = 5;
-/** Оценка резерва бюджета обучения на генерацию вопросов (≈3k вх. + 300 вых.). */
-const SUGGEST_EST_UNITS = { inputTokens: 3000, outputTokens: 300 };
+/**
+ * Оценка резерва бюджета обучения на генерацию вопросов: ≈3k вх. + потолок
+ * вызова (generateSuggestedQuestions: 300 видимых + запас на размышления).
+ */
+const SUGGEST_EST_UNITS = {
+  inputTokens: 3000,
+  outputTokens: geminiOutputCeiling(300),
+};
 
 @Injectable()
 export class SiteSourcesService {

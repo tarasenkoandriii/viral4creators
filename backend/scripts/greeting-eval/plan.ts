@@ -10,6 +10,7 @@
  */
 import { estimateCost, formatMicroUsd } from '../../src/common/ai-pricing';
 import { GEMINI_MODEL } from '../../src/common/gemini-model';
+import { REGISTER_MAX_OUTPUT_TOKENS } from '../../src/modules/greeting-brief/greeting-register-classifier.service';
 import { buildGreetingVoicePrompt } from '../../src/common/greeting-voice';
 import type { GreetingRegister } from '../../src/common/types/greeting.types';
 import {
@@ -142,8 +143,12 @@ export const CHARS_PER_SECOND = 13;
 export const GEMINI_AUDIO_TOKENS_PER_SECOND = 32;
 /** Длина запроса классификатора без описания — с запасом (проверяет тест). */
 export const CLASSIFIER_PROMPT_OVERHEAD_CHARS = 700;
-/** Потолок выхода классификатора (`maxOutputTokens` в продукте). */
-export const CLASSIFIER_OUTPUT_TOKENS = 200;
+/**
+ * Выход классификатора — его потолок в продукте, вместе с размышлениями
+ * (оценка сверху). При прежних 200 оценка была $0.24 на 250 описаний, а
+ * замер 07.10.2026 потратил ≈ $0.49: размышления платятся как выход.
+ */
+export const CLASSIFIER_OUTPUT_TOKENS = REGISTER_MAX_OUTPUT_TOKENS;
 /** Выход распознавания с размышлениями — с запасом. */
 export const GEMINI_STT_OUTPUT_TOKENS = 400;
 /** Запас на повтор после ответа латиницей (§4А.3): доля вызовов. */

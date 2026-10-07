@@ -2,6 +2,7 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { AudioTrackService, trackBackground } from './audio-track.service';
 import { GenerationStatus } from '../../common/types/generation.types';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 
 interface GenerateRequest {
   model: string;
@@ -24,6 +25,8 @@ function build(
   over: {
     durations?: (number | null)[];
     translations?: (string | null)[];
+    /** `finishReason` ответа перевода по номеру вызова (нет — STOP не шлётся). */
+    finishReasons?: (string | undefined)[];
     session?: Record<string, unknown> | null;
     synthesisFails?: boolean;
     /** Посимвольная разметка синтеза (этап 141 после аудита). */
@@ -120,9 +123,16 @@ function build(
   // типизируется пустым кортежем, и чтение аргумента — ошибка `tsc`,
   // которую песочница увидит только на прогоне CI.
   const generateContent = jest.fn(async (_request: GenerateRequest) => {
-    const text =
-      translations[Math.min(translateCall++, translations.length - 1)];
-    return { text: text ?? '' };
+    const i = translateCall++;
+    const text = translations[Math.min(i, translations.length - 1)];
+    const finishReason = over.finishReasons?.[i];
+    return finishReason
+      ? {
+          text: text ?? '',
+          candidates: [{ finishReason }],
+          usageMetadata: { thoughtsTokenCount: 900 },
+        }
+      : { text: text ?? '' };
   });
   (svc as unknown as { genai: unknown }).genai = {
     models: { generateContent },
@@ -223,6 +233,43 @@ describe('AudioTrackService', () => {
     expect(row.speech).toBe('Very long line');
     // Решение принято как «перевод уже сокращали»: дальше только темп.
     expect(row.tempoRate).toBeGreaterThan(1);
+  });
+
+  it('потолок перевода уходит провайдеру с запасом на размышления (600 + 1024)', async () => {
+    const { svc, generateContent } = build();
+    await svc.build('s1', 'de');
+    expect(generateContent.mock.calls[0][0].config?.maxOutputTokens).toBe(
+      600 + GEMINI_THINKING_HEADROOM,
+    );
+  });
+
+  it('перевод оборван по MAX_TOKENS — FAILED, оборванный текст не озвучивается', async () => {
+    // Строка одна и разбирается: без проверки обрыва её бы озвучили и
+    // карточка стала бы READY с обрезанной фразой.
+    const { svc, prisma, provider, aiUsage } = build({
+      translations: ['Steel mug keeps'],
+      finishReasons: ['MAX_TOKENS'],
+    });
+    const r = await svc.build('s1', 'de');
+    expect(r.status).toBe('FAILED');
+    expect(saved(prisma).note).toMatch(/перевод/);
+    expect(saved(prisma).speech).toBeUndefined();
+    expect(provider.synthesize).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
+  });
+
+  it('сокращённый перевод оборван — остаётся первый, второй не озвучивается', async () => {
+    const { svc, prisma, provider, generateContent } = build({
+      durations: [8, 8],
+      translations: ['Very long line', 'Short'],
+      finishReasons: [undefined, 'MAX_TOKENS'],
+    });
+    await svc.build('s1', 'de');
+    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(provider.synthesize).toHaveBeenCalledTimes(1);
+    const row = saved(prisma);
+    expect(row.attempts).toBe(1);
+    expect(row.speech).toBe('Very long line');
   });
 
   it('отметку «залито» не перебивает даже прямой вызов сборки', async () => {

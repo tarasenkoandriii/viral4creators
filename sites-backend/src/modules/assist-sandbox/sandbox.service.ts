@@ -55,6 +55,7 @@ import type { SearchHit } from '../assist-knowledge-core/types';
 import { SiteKnowledgeService } from '../assist-site-knowledge/site-knowledge.service';
 import { GeminiEmbedder, toVectorLiteral } from '../site-ai/embedder';
 import type { SiteAiOperation } from '../site-ai/operations';
+import { geminiOutputCeiling } from '../site-ai/gemini-output';
 import { GeminiText, TextModelError } from '../site-ai/text-model';
 import { AiUsageRecorder, UsageDb } from '../site-ai/usage-recorder';
 import type { AccountMembership } from '../site-core/account/roles';
@@ -112,8 +113,14 @@ export const SANDBOX_POLL_BUDGET_MS = SANDBOX_LIMITS.pollBudgetMs;
 const PAGES_PER_POLL = SANDBOX_LIMITS.pagesPerPoll;
 /** Вопросов-кнопок песочницы (лендинг-ТЗ §6.2). */
 export const SANDBOX_SUGGESTED = 3;
-/** Резерв денег на один ответ чата / минимальный на индексацию (µ$). */
-const CHAT_EST_UNITS = { inputTokens: 5000, outputTokens: 800 };
+/**
+ * Резерв денег на один ответ чата / минимальный на индексацию (µ$). Выход —
+ * потолок вызова (AnswerEngine: 800 видимых + запас на размышления).
+ */
+const CHAT_EST_UNITS = {
+  inputTokens: 5000,
+  outputTokens: geminiOutputCeiling(800),
+};
 const MIN_RESERVE_MICRO = 100;
 /** Вес UGC в слиянии выдач (§6.5: мнение посетителя, не факт). */
 const UGC_PENALTY = SANDBOX_LIMITS.ugcPenalty;
@@ -1125,8 +1132,11 @@ export class SandboxService {
     const est =
       estimateCost(KNOWLEDGE_DEFAULTS.embedModel, { inputTokens: tokens })
         .costMicroUsd +
-      estimateCost(GEMINI_MODEL, { inputTokens: 3000, outputTokens: 300 })
-        .costMicroUsd;
+      estimateCost(GEMINI_MODEL, {
+        inputTokens: 3000,
+        // Вопросы-кнопки: 300 видимых + запас на размышления.
+        outputTokens: geminiOutputCeiling(300),
+      }).costMicroUsd;
     if (!(await this.reserve(row, db, est))) {
       await db.assistSandbox.update({
         where: { id: row.id },

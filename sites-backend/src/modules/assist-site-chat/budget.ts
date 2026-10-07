@@ -16,8 +16,9 @@
  *     только `spent += факт`. Вызывается тем экземпляром, что генерирует.
  *  4. sweep (крон assist-budget-sweep): DELETE просроченных RETURNING →
  *     `reserved -= Σest` по строкам — каждый резерв вычитается ровно раз.
- * Оценка est — по длине промпта и maxOutputTokens (сверху): перерасход ≤
- * «факт − оценка» одного ответа.
+ * Оценка est — по длине промпта и потолку выхода, который реально уходит
+ * провайдеру (`geminiOutputCeiling`: видимый ответ + запас на размышления),
+ * — сверху: перерасход ≤ «факт − оценка» одного ответа.
  *
  * Э5 (голос, §4.10): резерв голоса (`voice` в reserve) держит ещё и строку
  * `scope='voice'` сайта — отдельный суточный потолок голоса В ДОПОЛНЕНИЕ к
@@ -42,6 +43,7 @@ import {
 import { widgetPlatformDailyCapMicroUsd } from '../../config/widget-env';
 import type { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { estimateCost } from '../../shared/ai-pricing';
+import { geminiOutputCeiling } from '../site-ai/gemini-output';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
 import { KNOWLEDGE_DEFAULTS } from '../../config/assist-defaults';
 import {
@@ -91,8 +93,11 @@ class Denied extends Error {
 /**
  * Оценка ответа СВЕРХУ (§4.5): вход — каркас, персона, сводка, 6 фрагментов
  * по максимуму, история и вопрос (символы → токены с запасом: 2 символа на
- * токен, кириллица режется мельче латиницы), выход — maxOutputTokens;
- * плюс эмбеддинги вопроса (поиск + перевод) и короткий вызов перевода.
+ * токен, кириллица режется мельче латиницы), выход — потолок, отправляемый
+ * провайдеру (`geminiOutputCeiling(maxOutputTokens)`: размышления модели
+ * тратят тот же потолок и платятся по ставке выхода); плюс эмбеддинги
+ * вопроса (поиск + перевод) и короткий вызов перевода (видимый перевод ≈
+ * длине вопроса + тот же запас на размышления).
  */
 export function answerEstimateMicroUsd(p: {
   systemChars: number;
@@ -105,7 +110,7 @@ export function answerEstimateMicroUsd(p: {
     p.systemChars + sources + pageAndContext + p.historyChars + p.questionChars;
   const answer = estimateCost(GEMINI_MODEL, {
     inputTokens: Math.ceil(inChars / 2),
-    outputTokens: WIDGET_DEFAULTS.maxOutputTokens,
+    outputTokens: geminiOutputCeiling(WIDGET_DEFAULTS.maxOutputTokens),
   }).costMicroUsd;
   const qTokens = Math.ceil(p.questionChars / 2) + 16;
   const embed = estimateCost(KNOWLEDGE_DEFAULTS.embedModel, {
@@ -113,7 +118,7 @@ export function answerEstimateMicroUsd(p: {
   }).costMicroUsd;
   const translate = estimateCost(GEMINI_MODEL, {
     inputTokens: qTokens + 200,
-    outputTokens: qTokens + 64,
+    outputTokens: geminiOutputCeiling(qTokens + 64),
   }).costMicroUsd;
   // Нет ставки (unpriced) — не ноль: резерв обязан что-то держать.
   return Math.max(1_000, Math.ceil(answer + embed + translate));

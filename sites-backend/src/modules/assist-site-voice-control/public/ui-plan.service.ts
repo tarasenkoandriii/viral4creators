@@ -156,6 +156,7 @@ import {
   type UiUndoState,
   type VoiceControlRules,
 } from '../../assist-ui-core/types';
+import { geminiOutputCeiling } from '../../site-ai/gemini-output';
 import { GeminiText } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type {
@@ -640,7 +641,10 @@ export class SiteUiPlanService {
           VOICE_CONTROL_DEFAULTS.reserveInputTokens,
           Math.ceil((prompt.system.length + prompt.user.length) / 2),
         ),
-        outputTokens: VOICE_CONTROL_DEFAULTS.maxOutputTokens,
+        // Сверху — потолок, который уходит провайдеру (с запасом на мысли).
+        outputTokens: geminiOutputCeiling(
+          VOICE_CONTROL_DEFAULTS.maxOutputTokens,
+        ),
       }).costMicroUsd;
       const out = await this.paidModelCall(ctx, state, {
         system: prompt.system,
@@ -1014,7 +1018,7 @@ export class SiteUiPlanService {
         MEMO_LIMITS.choiceReserveInputTokens,
         Math.ceil((prompt.system.length + prompt.user.length) / 2),
       ),
-      outputTokens: MEMO_LIMITS.choiceMaxOutputTokens,
+      outputTokens: geminiOutputCeiling(MEMO_LIMITS.choiceMaxOutputTokens),
     }).costMicroUsd;
     let out: string;
     try {

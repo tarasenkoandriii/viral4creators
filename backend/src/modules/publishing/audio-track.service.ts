@@ -44,6 +44,11 @@ import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { TtsProviderResolverService } from '../tts/tts-provider-resolver.service';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { SupportedLocale, normalizeLocale } from '../../common/locale';
 import { VIDEO_DURATION_SECONDS } from '../../common/veo-duration';
 import { firstCueSeconds, speakableText } from '../../common/voiceover-script';
@@ -391,7 +396,7 @@ export class AudioTrackService {
         model: GEMINI_MODEL,
         contents: [{ text: buildTrackTranslationPrompt(input) }],
         config: {
-          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          maxOutputTokens: geminiOutputCeiling(MAX_OUTPUT_TOKENS),
           abortSignal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS),
         },
       });
@@ -402,10 +407,15 @@ export class AudioTrackService {
       });
       // Сколько строк ждём — столько же битов у оригинала (этап 141):
       // без них перевод не к чему привязать ни по звуку, ни в субтитре.
-      return parseTrackTranslation(
-        response?.text ?? '',
-        speechLines(input.speech).length,
-      );
+      const out = readGeminiOutput(response);
+      if (out.truncated) {
+        // Реплики пришли не все — перевод не к чему привязать.
+        this.logger.warn(
+          `перевод реплики оборван — ${describeGeminiOutput(out)}`,
+        );
+        return null;
+      }
+      return parseTrackTranslation(out.text, speechLines(input.speech).length);
     } catch (e) {
       this.logger.warn(
         `перевод реплики не удался: ${e instanceof Error ? e.message : String(e)}`,

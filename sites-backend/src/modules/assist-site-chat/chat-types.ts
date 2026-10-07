@@ -176,6 +176,11 @@ export interface AnswerTrace {
   cache: boolean;
   /** Второй поиск по переводу вопроса (§4-тер.10). */
   translated: boolean;
+  /**
+   * Ответ модели оборван потолком выхода (`finishReason=MAX_TOKENS`):
+   * посетитель получил часть, в кэш ответ не попал. Нет поля — не обрывался.
+   */
+  truncated?: boolean;
 }
 
 export interface AskOutcome {

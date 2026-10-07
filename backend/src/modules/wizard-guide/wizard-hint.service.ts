@@ -33,6 +33,11 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { estimateCost } from '../../common/ai-pricing';
 import {
   maskSensitiveEcho,
@@ -240,7 +245,7 @@ export class WizardHintService {
         contents: [{ text: 'Дай подсказку по текущему шагу.' }],
         config: {
           systemInstruction: instruction,
-          maxOutputTokens: 400,
+          maxOutputTokens: geminiOutputCeiling(400),
           // Только таймаут — отмены снаружи здесь нет и не было.
           //
           // Параметр `signal` в сигнатуре был, и его никто никогда не
@@ -267,7 +272,16 @@ export class WizardHintService {
       });
       const usage = usageOf(response);
 
-      const split = splitHintActions(response?.text ?? '');
+      const out = readGeminiOutput(response);
+      if (out.truncated) {
+        // Совет посреди фразы и оборванный блок действий в общий кеш не
+        // идут: молчание здесь — штатный исход (§5.9).
+        this.logger.warn(
+          `подсказка оборвана (${stepId}) — ${describeGeminiOutput(out)}`,
+        );
+        return NOTHING;
+      }
+      const split = splitHintActions(out.text);
       const text = cleanHint(split.text);
       if (!text) return NOTHING;
 

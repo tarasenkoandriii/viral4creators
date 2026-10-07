@@ -22,7 +22,10 @@ import {
   type AssistPublicDb,
 } from '../../../prisma/assist-public-db.service';
 import { SitesDb } from '../../../prisma/sites-db.service';
-import type { ModelStreamChunk } from '../../../shared/assist-chat-core';
+import {
+  ACTIONS_DELIMITER,
+  type ModelStreamChunk,
+} from '../../../shared/assist-chat-core';
 import { detectInjection } from '../../assist-knowledge-core/injection';
 import type { PersonaConfig } from '../../assist-site-setup/persona';
 import {
@@ -40,7 +43,12 @@ import {
 } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { DialogQuota, SiteBudget } from '../budget';
-import { SiteChatModel, type ChatModelRequest } from '../chat-model';
+import {
+  SiteChatModel,
+  watchFinish,
+  type ChatModelRequest,
+  type StreamFinish,
+} from '../chat-model';
 import type {
   AskInput,
   SiteAction,
@@ -197,6 +205,11 @@ export class FakeChatModel extends SiteChatModel {
   delayMs = 0;
   chunkSize = 7;
   usage = { promptTokenCount: 1200, candidatesTokenCount: 40 };
+  /**
+   * Обрыв потолком выхода (`finishReason=MAX_TOKENS` в последнем куске):
+   * `text` — на середине текста, `actions` — внутри JSON блока действий.
+   */
+  truncate: 'text' | 'actions' | null = null;
   /** Сколько вызовов прямо сейчас «генерируют» (гонки бюджета). */
   active = 0;
   maxActive = 0;
@@ -292,10 +305,18 @@ export class FakeChatModel extends SiteChatModel {
   override async openStream(
     req: ChatModelRequest,
     signal: AbortSignal,
+    finish?: StreamFinish,
   ): Promise<AsyncIterable<ModelStreamChunk>> {
     this.calls.push(req);
     if (this.mode === 'fail') throw new Error('модель недоступна (фейк)');
-    const text = this.compose(req);
+    let text = this.compose(req);
+    const d = text.indexOf(ACTIONS_DELIMITER);
+    if (this.truncate === 'actions' && d >= 0) {
+      text = text.slice(0, d + ACTIONS_DELIMITER.length + 12);
+    } else if (this.truncate) {
+      text = text.slice(0, Math.ceil((d >= 0 ? d : text.length) / 2));
+    }
+    const finishReason = this.truncate ? 'MAX_TOKENS' : 'STOP';
     const size = this.chunkSize;
     const delay = this.delayMs;
     const usage = this.usage;
@@ -307,7 +328,7 @@ export class FakeChatModel extends SiteChatModel {
     const leave = () => {
       this.active--;
     };
-    return {
+    const chunks = {
       async *[Symbol.asyncIterator]() {
         enter();
         try {
@@ -318,7 +339,9 @@ export class FakeChatModel extends SiteChatModel {
             const last = i + size >= text.length;
             yield {
               text: text.slice(i, i + size),
-              ...(last ? { usageMetadata: usage } : {}),
+              ...(last
+                ? { usageMetadata: usage, candidates: [{ finishReason }] }
+                : {}),
             };
           }
         } finally {
@@ -326,6 +349,7 @@ export class FakeChatModel extends SiteChatModel {
         }
       },
     };
+    return finish ? watchFinish(chunks, finish) : chunks;
   }
 }
 

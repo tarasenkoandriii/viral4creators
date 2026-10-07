@@ -12,6 +12,8 @@ jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
 import { BadRequestException } from '@nestjs/common';
 import { GreetingPromptService } from './greeting-prompt.service';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
+import { fallbackMessage } from '../../common/greeting-occasions';
 
 const BRIEF = {
   sourceGreetingBriefId: 'gb1',
@@ -50,17 +52,18 @@ function build(sessionOver: Record<string, unknown> = {}, prisma?: unknown) {
   const promptService = {
     moderateText: jest.fn(() => ({ status: 'APPROVED', flags: [] })),
   };
+  const aiUsage = { recordGemini: jest.fn() };
   const OLD_KEY = process.env.GEMINI_API_KEY;
   process.env.GEMINI_API_KEY = 'test-key';
   const service = new GreetingPromptService(
     sessions as never,
-    { recordGemini: jest.fn() } as never,
+    aiUsage as never,
     plans as never,
     promptService as never,
     prisma as never,
   );
   process.env.GEMINI_API_KEY = OLD_KEY;
-  return { service, sessions, promptService };
+  return { service, sessions, promptService, aiUsage };
 }
 
 const face = {
@@ -232,5 +235,73 @@ describe('GreetingPromptService — CONTRACT6', () => {
     const err = await service.generateGreetingPrompt('s1').catch((e) => e);
     expect(err.getResponse().code).toBe('GREETING_NOT_GREETING_SESSION');
     expect(err.message).not.toMatch(/GREETING_VIDEO|session/);
+  });
+});
+
+/**
+ * Черновик текста поздравления (§5.2) и обрыв ответа модели: потолок
+ * уходит с запасом на размышления, оборванный текст не озвучивается
+ * никогда — следующая попытка, затем запасной текст регистра.
+ */
+describe('GreetingPromptService — черновик текста и обрыв ответа', () => {
+  /** Ровно те поля запроса, которые читают проверки ниже. */
+  interface GenerateCall {
+    config: { maxOutputTokens: number };
+  }
+  const CUT = 'Марина, с днём рождения! Пусть этот год принесёт';
+  const WHOLE = 'Марина, с днём рождения! Пусть год будет тёплым.';
+  const cut = {
+    text: CUT,
+    candidates: [{ finishReason: 'MAX_TOKENS' }],
+    usageMetadata: { thoughtsTokenCount: 900 },
+  };
+  const whole = { text: WHOLE, candidates: [{ finishReason: 'STOP' }] };
+
+  function draft(...responses: unknown[]) {
+    const ctx = build({
+      greetingBriefSnapshot: {
+        ...BRIEF,
+        personalMessage: null,
+        scriptLanguage: 'ru',
+      },
+    });
+    const generateContent = jest.fn(async (_req: GenerateCall) => whole);
+    for (const r of responses)
+      generateContent.mockResolvedValueOnce(r as never);
+    (ctx.service as unknown as { genai: unknown }).genai = {
+      models: { generateContent },
+    };
+    return { ...ctx, generateContent };
+  }
+
+  it('потолок уходит провайдеру с запасом на размышления (500 + 1024)', async () => {
+    const { service, generateContent } = draft(whole);
+    const prompt = await service.generateGreetingPrompt('s1');
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(
+      500 + GEMINI_THINKING_HEADROOM,
+    );
+    expect(prompt.finalVoiceoverScript).toBe(WHOLE);
+  });
+
+  it('первый ответ оборван по MAX_TOKENS — вторая попытка, в сценарий идёт целый текст', async () => {
+    const { service, generateContent, aiUsage } = draft(cut, whole);
+    const prompt = await service.generateGreetingPrompt('s1');
+    expect(generateContent).toHaveBeenCalledTimes(2);
+    // Обе попытки оплачены — обе в расходе.
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(2);
+    expect(prompt.finalVoiceoverScript).toBe(WHOLE);
+    expect(prompt.finalText).not.toContain(CUT);
+  });
+
+  it('оба ответа оборваны — запасной текст регистра, обрезанный не возвращается; третьего вызова нет', async () => {
+    const { service, generateContent } = draft(cut, cut, whole);
+    const prompt = await service.generateGreetingPrompt('s1');
+    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(prompt.finalVoiceoverScript).toBe(
+      fallbackMessage('BIRTHDAY', 'Марина', '', null, 'ru'),
+    );
+    expect(prompt.finalVoiceoverScript).not.toBe(CUT);
+    expect(prompt.finalText).not.toContain(CUT);
   });
 });

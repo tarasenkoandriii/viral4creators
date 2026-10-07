@@ -25,6 +25,7 @@ import {
   greetingScriptStale,
 } from '../greeting-prompt/script-inputs';
 import { ModerationStatus } from '../../common/types/prompt.types';
+import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 
 /**
  * `generateFrame` (фича №6) — проверяется не «картинка нарисовалась», а
@@ -385,6 +386,43 @@ describe('§3.9 — выбранная обстановка ролика (sceneS
     await expect(at(service).setSceneSetting('s1', CALM)).resolves.toEqual({
       sceneSetting: CALM,
     });
+  });
+
+  it('варианты: потолок уходит провайдеру с запасом на размышления (300 + 1024)', async () => {
+    const { service } = setup({
+      brief: birthday({ sceneSettingOptions: undefined }),
+    });
+    const generateContent = jest.fn().mockResolvedValue({ text: SNOW });
+    (service as any).geminiClient = { models: { generateContent } };
+    await at(service).suggestSettings('s1', 'u1');
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(
+      300 + GEMINI_THINKING_HEADROOM,
+    );
+  });
+
+  it('варианты оборваны по MAX_TOKENS — пустой список, в снимок ничего не пишется, расход учтён', async () => {
+    const { service, session, sessions, aiUsage } = setup({
+      brief: birthday({ sceneSettingOptions: undefined }),
+    });
+    // Два целых варианта и обрезанный третий: без проверки обрыва все три
+    // ушли бы человеку и в белый список.
+    (service as any).geminiClient = {
+      models: {
+        generateContent: jest.fn().mockResolvedValue({
+          text: `${SNOW}\n${CALM}\nbright room full of ball`,
+          candidates: [{ finishReason: 'MAX_TOKENS' }],
+          usageMetadata: { thoughtsTokenCount: 900 },
+        }),
+      },
+    };
+    await expect(at(service).suggestSettings('s1', 'u1')).resolves.toEqual([]);
+    expect(sessions.updateSession).not.toHaveBeenCalled();
+    expect(
+      (session.greetingBriefSnapshot as any).sceneSettingOptions,
+    ).toBeUndefined();
+    // Вызов оплачен — расход пишется и при обрыве.
+    expect(aiUsage.recordGemini).toHaveBeenCalledTimes(1);
   });
 
   it('запомненных вариантов не больше 12, истёкшие выпадают', () => {

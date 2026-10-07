@@ -30,6 +30,11 @@ import { GoogleGenAI } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { SessionService } from '../../common/session.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
@@ -444,14 +449,23 @@ export class GreetingPromptService {
       const response = await this.genai.models.generateContent({
         model: GEMINI_MODEL,
         contents: [{ text: prompt }],
-        config: { temperature: 0.8, maxOutputTokens: 500 },
+        config: { temperature: 0.8, maxOutputTokens: geminiOutputCeiling(500) },
       });
       await this.aiUsage.recordGemini(response, {
         operation: 'greeting-prompt',
         model: GEMINI_MODEL,
         sessionId,
       });
-      const text = response.text?.trim();
+      const out = readGeminiOutput(response);
+      if (out.truncated) {
+        // Текст, оборванный посреди фразы, озвучивать нельзя — это ещё
+        // одна попытка, затем запасной текст регистра.
+        this.logger.warn(
+          `сессия ${sessionId}: текст поздравления оборван (попытка ${attempt + 1}) — ${describeGeminiOutput(out)}`,
+        );
+        continue;
+      }
+      const text = out.text.trim();
       if (!text) {
         // Best-effort деградация: лучше отдать нейтральный текст, чем
         // упасть. С этапа C человек может поправить его на шаге сценария

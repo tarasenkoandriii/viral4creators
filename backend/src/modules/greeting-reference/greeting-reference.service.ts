@@ -57,6 +57,11 @@ import {
 } from './greeting-scene-settings';
 import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { GoogleGenAI } from '@google/genai';
 import {
   celebrityLikenessMessage,
@@ -615,7 +620,7 @@ export class GreetingReferenceService {
       const response = await this.genai.models.generateContent({
         model: GEMINI_MODEL,
         contents: [{ text: prompt }],
-        config: { temperature: 1, maxOutputTokens: 300 },
+        config: { temperature: 1, maxOutputTokens: geminiOutputCeiling(300) },
       });
       await this.aiUsage.recordGemini(response, {
         operation: 'greeting-setting',
@@ -623,7 +628,15 @@ export class GreetingReferenceService {
         sessionId,
         ...(userId ? { userId } : {}),
       });
-      offered = parseSettings(response.text)
+      const out = readGeminiOutput(response);
+      // Оборванный список: последний вариант мог прийти половиной фразы.
+      if (out.truncated) {
+        this.logger.warn(
+          `сессия ${sessionId}: варианты сеттинга оборваны — ${describeGeminiOutput(out)}`,
+        );
+        return [];
+      }
+      offered = parseSettings(out.text)
         .map((v) => normalizeSceneSetting(v))
         .filter((v): v is string => !!v && !sceneSettingProblem(brief, v));
     } catch (e) {

@@ -27,6 +27,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { createGeminiClient, geminiApiKey } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import {
+  describeGeminiOutput,
+  geminiOutputCeiling,
+  readGeminiOutput,
+} from '../../common/gemini-output';
 import { SupportedLocale } from '../../common/locale';
 import {
   buildTranslationPrompt,
@@ -75,7 +80,7 @@ export class TranslationService {
         contents: [{ text: 'Переведи запись.' }],
         config: {
           systemInstruction: buildTranslationPrompt(target, source),
-          maxOutputTokens: 600,
+          maxOutputTokens: geminiOutputCeiling(600),
           abortSignal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS),
         },
       });
@@ -89,7 +94,15 @@ export class TranslationService {
         model: GEMINI_MODEL,
         userId: null,
       });
-      const parsed = parseTranslation(response?.text ?? '', source);
+      const out = readGeminiOutput(response);
+      if (out.truncated) {
+        // Обрезанный перевод не сохраняется: запись подождёт следующего.
+        this.logger.warn(
+          `перевод записи ${experienceId} на ${target} оборван — ${describeGeminiOutput(out)}`,
+        );
+        return false;
+      }
+      const parsed = parseTranslation(out.text, source);
       if (!parsed.text) {
         // Перевод, потерявший ключ словаря, НЕ сохраняется: подсказка
         // отдастся на авторитетной локали, а запись подождёт. Молча

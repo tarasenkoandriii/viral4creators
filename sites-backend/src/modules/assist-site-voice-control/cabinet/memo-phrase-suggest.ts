@@ -27,6 +27,7 @@ import {
   type MemoContent,
   type MemoLang,
 } from '../../assist-ui-core/memo';
+import { geminiOutputCeiling } from '../../site-ai/gemini-output';
 
 export const MEMO_PHRASE_SUGGEST = {
   perLangMin: 3,
@@ -36,8 +37,11 @@ export const MEMO_PHRASE_SUGGEST = {
   maxOutputTokens: 700,
   timeoutMs: 20_000,
   temperature: 0.7,
-  /** Оценка для резерва бюджета обучения (`assist-learn`). */
-  estUnits: { inputTokens: 1_500, outputTokens: 700 },
+  /**
+   * Оценка для резерва бюджета обучения (`assist-learn`); выход — потолок,
+   * который уходит провайдеру: maxOutputTokens (700) + запас на размышления.
+   */
+  estUnits: { inputTokens: 1_500, outputTokens: geminiOutputCeiling(700) },
   /** Не чаще раза в минуту на мемо и 30 раз в сутки (UTC) на сайт. */
   memoCooldownMs: 60_000,
   sitePerDay: 30,
