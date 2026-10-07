@@ -38,22 +38,23 @@ const URL =
   process.env.GREETING_SNAPSHOT_PG_URL ??
   (IN_CI ? process.env.DATABASE_URL : undefined);
 
-/** На базе — набор; без неё — пропуск с причиной, в CI — провал. */
+/**
+ * На базе — набор; без неё — те же тесты пропущены (`describe.skip`: число
+ * тестов в отчёте jest одинаково в песочнице и в CI — его сверяет
+ * check-docs), в CI без строки базы — провал.
+ */
 function maybe(name: string, body: () => void): void {
-  if (!URL) {
+  if (!URL && IN_CI) {
     describe(name, () => {
-      (IN_CI ? it : it.skip)(
-        'ПРОПУЩЕНО: нет GREETING_SNAPSHOT_PG_URL (песочница без базы) — проверка идёт в CI, джоба backend',
-        () => {
-          throw new Error(
-            `CI=true, но ни GREETING_SNAPSHOT_PG_URL, ни DATABASE_URL не заданы — «${name}» не выполнился`,
-          );
-        },
-      );
+      it('строка базы задана', () => {
+        throw new Error(
+          `CI=true, но ни GREETING_SNAPSHOT_PG_URL, ни DATABASE_URL не заданы — «${name}» не выполнился`,
+        );
+      });
     });
     return;
   }
-  describe(name, body);
+  (URL ? describe : describe.skip)(name, body);
 }
 
 const BRIEF = {
