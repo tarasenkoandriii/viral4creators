@@ -11,6 +11,7 @@ import type { PlatformSettingsService } from '../../common/platform-settings.ser
 import type { SessionService } from '../../common/session.service';
 import type { BlobService } from '../storage/blob.service';
 import type { AudioService } from '../audio/audio.service';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const CATALOG = JSON.stringify([
   { id: 'common', title: 'Общая', url: 'https://blob.test/common.mp3' },
@@ -28,21 +29,36 @@ function build(
     snapshot?: Record<string, unknown>;
     tracks?: unknown[];
     audioEnabled?: boolean;
+    /** «Параллельная» правка снимка между чтением и записью (C2). */
+    beforeWrite?: (
+      attempt: number,
+      set: (patch: Record<string, unknown>) => void,
+    ) => void;
   } = {},
 ) {
   const get = jest
     .fn()
     .mockResolvedValue(over.raw === undefined ? CATALOG : over.raw);
-  const updateSession = jest.fn().mockResolvedValue(undefined);
+  let current: Record<string, unknown> = {
+    occasion: 'BIRTHDAY',
+    recipientName: 'Аня',
+    ...over.snapshot,
+  };
+  const set = (patch: Record<string, unknown>) => {
+    current = { ...current, ...patch };
+  };
+  const updateSession = jest
+    .fn()
+    .mockImplementation((_id: string, patch: Record<string, any>) => {
+      current = patch.greetingBriefSnapshot;
+      return Promise.resolve(undefined);
+    });
   const sessions = {
-    getSession: jest.fn().mockResolvedValue({
-      sessionId: 's1',
-      greetingBriefSnapshot: {
-        occasion: 'BIRTHDAY',
-        recipientName: 'Аня',
-        ...over.snapshot,
-      },
-    }),
+    getSession: jest
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve({ sessionId: 's1', greetingBriefSnapshot: current }),
+      ),
     updateSession,
   };
   const createUploadUrl = jest
@@ -62,8 +78,19 @@ function build(
     sessions as unknown as SessionService,
     { createUploadUrl, uploadBuffer } as unknown as BlobService,
     audio as unknown as AudioService,
+    fakeSnapshotDb(sessions, {
+      beforeWrite: (n) => over.beforeWrite?.(n, set),
+    }) as any,
   );
-  return { svc, updateSession, get, createUploadUrl, uploadBuffer, candidates };
+  return {
+    svc,
+    updateSession,
+    get,
+    createUploadUrl,
+    uploadBuffer,
+    candidates,
+    snapshotNow: () => current,
+  };
 }
 
 describe('GreetingMusicService (фича №4)', () => {
@@ -151,6 +178,7 @@ describe('GreetingMusicService (фича №4)', () => {
       } as unknown as SessionService,
       {} as unknown as BlobService,
       {} as unknown as AudioService,
+      {} as any,
     );
     void svc;
     await expect(broken.get('s1')).rejects.toBeInstanceOf(NotFoundException);
@@ -475,5 +503,53 @@ describe('GreetingMusicService — библиотека со свободной 
     await expect(
       svc.selectFromLibrary('s1', 'тёплое', 'freesound', '7'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('GreetingMusicService — C2: запись снимка без потери правок', () => {
+  it('выбор темы пишет только musicTheme — наклейка, выбранная параллельно, остаётся', async () => {
+    const sticker = {
+      id: 'st_1',
+      url: 'u',
+      pathname: 'p',
+      placement: 'center',
+    };
+    const { svc, snapshotNow } = build({
+      beforeWrite: (n, set) => n === 1 && set({ sticker }),
+    });
+    await svc.select('s1', 'party');
+    expect(snapshotNow()).toEqual(
+      expect.objectContaining({
+        sticker,
+        musicTheme: expect.objectContaining({ id: 'party' }),
+      }),
+    );
+  });
+
+  it('повод стал траурным между чтением и записью — тема ищется заново и не находится', async () => {
+    const { svc, snapshotNow } = build({
+      beforeWrite: (n, set) => n === 1 && set({ occasion: 'CONDOLENCE' }),
+    });
+    await expect(svc.select('s1', 'party')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(snapshotNow().musicTheme).toBeUndefined();
+  });
+
+  it('ссылка на свой трек пишет только musicTheme — число сцен, выбранное параллельно, остаётся', async () => {
+    const { svc, snapshotNow } = build({
+      beforeWrite: (n, set) => n === 1 && set({ sceneCount: 4 }),
+    });
+    await svc.selectLink('s1', {
+      url: 'https://example.com/track.mp3',
+      title: 'Своя',
+      rightsConfirmed: true,
+    } as any);
+    expect(snapshotNow()).toEqual(
+      expect.objectContaining({
+        sceneCount: 4,
+        musicTheme: expect.objectContaining({ source: 'link' }),
+      }),
+    );
   });
 });

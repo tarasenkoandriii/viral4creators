@@ -5,10 +5,23 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GreetingScenesService } from './greeting-scenes.service';
 import { MAX_GREETING_SCENES } from '../../common/greeting-scenes';
 import type { SessionService } from '../../common/session.service';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
-function build(snapshot: Record<string, unknown> | null = {}) {
+function build(
+  snapshot: Record<string, unknown> | null = {},
+  opts: {
+    beforeWrite?: (
+      attempt: number,
+      set: (patch: Record<string, unknown>) => void,
+    ) => void;
+  } = {},
+) {
   let current: Record<string, unknown> | null =
     snapshot === null ? null : { occasion: 'BIRTHDAY', ...snapshot };
+  // «Параллельная» правка снимка из другого запроса — мимо сервиса.
+  const set = (patch: Record<string, unknown>) => {
+    current = { ...current, ...patch };
+  };
   const updateSession = jest
     .fn()
     .mockImplementation((_id: string, patch: Record<string, any>) => {
@@ -23,7 +36,12 @@ function build(snapshot: Record<string, unknown> | null = {}) {
       ),
     updateSession,
   };
-  const svc = new GreetingScenesService(sessions as unknown as SessionService);
+  const svc = new GreetingScenesService(
+    sessions as unknown as SessionService,
+    fakeSnapshotDb(sessions, {
+      beforeWrite: (n) => opts.beforeWrite?.(n, set),
+    }) as any,
+  );
   return { svc, updateSession, snapshotNow: () => current };
 }
 
@@ -88,5 +106,55 @@ describe('GreetingScenesService (фича №7)', () => {
     await expect(svc.setCount('s1', 4)).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+});
+
+describe('GreetingScenesService — C2: запись снимка без потери правок', () => {
+  it('пишется только sceneCount — наклейка и карточки, сохранённые параллельно, остаются', async () => {
+    const sticker = {
+      id: 'st_1',
+      url: 'u',
+      pathname: 'p',
+      placement: 'center',
+    };
+    const { svc, snapshotNow } = build(
+      {},
+      {
+        beforeWrite: (n, set) =>
+          n === 1 &&
+          set({ sticker, cards: { title: 'Марине', closing: null } }),
+      },
+    );
+    await svc.setCount('s1', 3);
+    expect(snapshotNow()).toEqual(
+      expect.objectContaining({
+        sceneCount: 3,
+        sticker,
+        cards: { title: 'Марине', closing: null },
+      }),
+    );
+  });
+
+  it('повод сменили на траурный между чтением и записью — проверка по свежему снимку, 400', async () => {
+    const { svc, snapshotNow } = build(
+      {},
+      {
+        beforeWrite: (n, set) =>
+          n === 1 && set({ occasion: 'CONDOLENCE', tone: 'RESPECTFUL' }),
+      },
+    );
+    await expect(svc.setCount('s1', 4)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(snapshotNow()?.sceneCount).toBeUndefined();
+  });
+
+  it('смена только наклейки (не повода) условия не ломает — запись с первого раза', async () => {
+    const { svc, snapshotNow } = build(
+      {},
+      { beforeWrite: (n, set) => n === 1 && set({ sticker: null }) },
+    );
+    await svc.setCount('s1', 2);
+    expect(snapshotNow()?.sceneCount).toBe(2);
   });
 });

@@ -179,6 +179,11 @@ jobs:
       - name: тесты и покрытие опасных файлов
         run: npx jest --ci --coverage --coverageReporters=text-summary --json --outputFile=jest-results.json --reporters=default --reporters=github-actions
         working-directory: backend
+        env:
+          # Гонка записи снимка поздравления на настоящем Postgres (C2
+          # захода 8, greeting-snapshot-write.pg.spec.ts): база с миграциями
+          # уже накатана шагом выше; без строки набор в CI проваливается.
+          GREETING_SNAPSHOT_PG_URL: ${{ env.DATABASE_URL }}
 
       # Числа в документах разъезжались с реальностью на этапах 25, 28 и
       # 30 — каждый раз их правили руками. Теперь это проверка, и стоит

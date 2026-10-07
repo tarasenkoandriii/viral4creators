@@ -89,3 +89,14 @@ export class GreetingFrameRequestDto {
   @MaxLength(160)
   setting?: string;
 }
+
+/**
+ * Выбор обстановки ролика без рисования кадра (§3.9). `null` или пустая
+ * строка — вернуть сцену повода.
+ */
+export class GreetingSceneSettingRequestDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  setting?: string | null;
+}

@@ -257,7 +257,15 @@ export class UserVoicesService {
           status: 'TRAINING',
           sampleUrl,
           consentAt: new Date(),
-          ...(persona ? { personaId: persona.id } : {}),
+          // Голос персоны: какую редакцию фразы согласия человек
+          // произнёс (проверено выше — только действующую). Без версии
+          // запись образца не говорит, на что именно дано согласие.
+          ...(persona
+            ? {
+                personaId: persona.id,
+                consentPhraseVersion: PERSONA_VOICE_CONSENT_VERSION,
+              }
+            : {}),
         },
       });
     });

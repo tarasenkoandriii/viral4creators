@@ -1,6 +1,11 @@
 import { apiGet, apiGetBlob, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type { AttentionView } from './attention';
 import type {
+  GreetingFixtureVideoAction,
+  GreetingFixtureVideoResult,
+  GreetingFixtureVideoState,
+  GreetingFramesCaptureResult,
+  PersonaAgeState,
   AudioTracksResult,
   AudioTrackView,
   AdminReferralsOverview,
@@ -619,6 +624,19 @@ export function getUserAvatar(id: string) {
   return apiGetBlob(`/admin/users/${encodeURIComponent(id)}/avatar`);
 }
 
+/** Отметка «младше 18» режима «Я в кадре» (В-4): когда и почему, журнал снятий. */
+export function getPersonaAge(userId: string) {
+  return apiGet<PersonaAgeState>(`/admin/users/${encodeURIComponent(userId)}/persona-age`);
+}
+
+/** Снять отметку после апелляции через поддержку; причина 3–500 символов. */
+export function clearPersonaAge(userId: string, reason: string) {
+  return apiPost<PersonaAgeState>(
+    `/admin/users/${encodeURIComponent(userId)}/persona-age/clear`,
+    { reason },
+  );
+}
+
 export function patchUser(
   id: string,
   patch: {
@@ -767,6 +785,34 @@ export function getUiSnapshots(
   params: { route?: string; since?: string; limit?: number; before?: string; changed?: 'true' } = {},
 ) {
   return apiGet<UiSnapshotList>('/admin/ui-snapshot/snapshots', params);
+}
+
+// ── Кадры лендинга поздравлений (doc/GREETING-FRAMES-CAPTURE.md) ─────────
+
+/** Состояние ролика фикстуры — только чтение базы, ничего не платит. */
+export function getGreetingFixtureVideoState() {
+  return apiGet<GreetingFixtureVideoState>(
+    '/admin/ui-snapshot/greeting-frames/fixture-video/state',
+  );
+}
+
+/** Один шаг ролика фикстуры. ПЛАТНО, если ролика нет/он упал или
+ * `rerender: true` у готового; опрос идущего — бесплатно. `expect` —
+ * шаг, который видели в состоянии: сервер, решив иначе и платно, ответит
+ * 409 GREETING_FIXTURE_ACTION_CHANGED и ничего не запустит. */
+export function stepGreetingFixtureVideo(rerender: boolean, expect: GreetingFixtureVideoAction) {
+  return apiPost<GreetingFixtureVideoResult>('/admin/ui-snapshot/greeting-frames/fixture-video', {
+    ...(rerender ? { rerender: true } : {}),
+    expect,
+  });
+}
+
+/** Четыре кадра одной локали (тёмная тема) — одна локаль за вызов. */
+export function captureGreetingFrames(locale: string) {
+  return apiPost<GreetingFramesCaptureResult>('/admin/ui-snapshot/greeting-frames', {
+    locales: [locale],
+    theme: 'dark',
+  });
 }
 
 // ── Пилот говорящего AI-аватара (backend/src/modules/actors, этап 72,

@@ -60,6 +60,7 @@ import { cropExpression } from './reframe';
 import { ASPECT_RATIO_PATTERN, ratioValue } from './aspect-ratio';
 import { NATIVE } from './reframe';
 import { DEFAULT_MUSIC_VOLUME } from './greeting-music';
+import { metadataArgs } from './ai-marking';
 
 export class PostProdError extends Error {}
 
@@ -199,6 +200,19 @@ export interface PostProdOptions {
   subtitlesInputKey?: string | null;
   /** Строка `force_style` темы субтитров (`common/subtitles.ts`). Значима только вместе с `subtitlesInputKey`. */
   subtitleForceStyle?: string | null;
+  /**
+   * Теги контейнера (`-metadata`), сейчас — машиночитаемая маркировка ИИ
+   * (`common/ai-marking.ts`, заход 8 C11). Едут в задаче, которая нужна и
+   * без них; сами по себе работой не считаются — см. `metadataOnly`.
+   */
+  metadata?: Readonly<Record<string, string>> | null;
+  /**
+   * Разрешить задачу, у которой кроме метаданных работы нет: ролик
+   * пересобирается потоком (`-c copy`) ради одной метки. Это платный
+   * проход, поэтому только явно — у поздравлений с персоной
+   * (`aiMarkingRequired`). Без флага такая задача — «делать нечего».
+   */
+  metadataOnly?: boolean;
   inputKey?: string;
   outputName?: string;
 }
@@ -546,13 +560,15 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
     );
   }
 
+  const metadata = metadataArgs(opts.metadata);
   if (
     !crop &&
     !voiceKey &&
     !subtitlesKey &&
     !musicKey &&
     !cardsKey &&
-    !stickerKey
+    !stickerKey &&
+    !(opts.metadataOnly && metadata.length > 0)
   ) {
     // Отправлять такую задачу значит заплатить за перекодирование ради
     // того же файла.
@@ -670,6 +686,7 @@ export function planPostProduction(opts: PostProdOptions): PostProdPlan {
   // `filter_complex`, который строит `[a]`, — не оптимизация, а
   // противоречие: ffmpeg такую команду не выполнит.
   parts.push(voiceKey || musicKey ? '-c:a aac -b:a 192k' : '-c:a copy');
+  parts.push(...metadata);
   parts.push(`-movflags +faststart {{${outputName}}}`);
 
   return {

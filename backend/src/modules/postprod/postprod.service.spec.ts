@@ -1370,6 +1370,172 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
     });
   });
 
+  /**
+   * Заход 8, C11 (В-6): машиночитаемая метка ИИ в MP4 поздравлений —
+   * `common/ai-marking.ts`. Видимой строки нет (решает юрист).
+   */
+  describe('маркировка ИИ в метаданных (В-6)', () => {
+    const NATIVE_VIDEO = {
+      ...VIDEO,
+      aspectRatio: '9:16',
+      reframePending: false,
+    };
+    const commandOf = (api: { submit: jest.Mock }) =>
+      (api.submit.mock.calls[0][0] as { commands: string[] }).commands[0];
+
+    it('ролик с персоной и без другой работы — отдельный проход -c copy ради метки', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'veo' },
+          greetingBriefSnapshot: { usesPersona: true },
+        }),
+      });
+      const r = await svc.start('s1', NATIVE_VIDEO);
+      expect(api.submit).toHaveBeenCalledTimes(1);
+      expect(r.postStatus).toBe('pending');
+      const command = commandOf(api);
+      expect(command).toContain(
+        '-metadata "comment=ai_generated=1;digital_source_type=trainedAlgorithmicMedia;ai_persona=1"',
+      );
+      expect(command).toContain('-c:v copy');
+      expect(command).toContain('-c:a copy');
+      expect(command).not.toContain('filter_complex');
+    });
+
+    it('поздравление без персоны и без другой работы — задачи нет: метку одну не оплачиваем', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'veo' },
+          greetingBriefSnapshot: { usesPersona: false },
+        }),
+      });
+      const r = await svc.start('s1', NATIVE_VIDEO);
+      expect(api.submit).not.toHaveBeenCalled();
+      expect(r.postStatus).toBe('skipped');
+    });
+
+    it('поздравление без персоны едет с меткой в задаче, которая и так нужна', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'veo' },
+          greetingBriefSnapshot: { cards: { title: 'Марине', closing: null } },
+        }),
+      });
+      await svc.start('s1', NATIVE_VIDEO);
+      const command = commandOf(api);
+      expect(command).toContain('ai_generated=1');
+      expect(command).not.toContain('ai_persona');
+      // Метка — перед выходом: после имени файла ffmpeg её не применит.
+      expect(command.indexOf('-metadata')).toBeLessThan(
+        command.indexOf('{{final.mp4}}'),
+      );
+    });
+
+    it('товарный ролик едет с базовой меткой в задаче, которая и так нужна (кроп)', async () => {
+      const { svc, api } = build();
+      await svc.start('s1', VIDEO);
+      const command = commandOf(api);
+      expect(command).toContain(
+        '-metadata "comment=ai_generated=1;digital_source_type=trainedAlgorithmicMedia"',
+      );
+      expect(command).not.toContain('ai_persona');
+    });
+
+    it('товарный ролик без другой работы — отдельной пересборки ради метки нет', async () => {
+      const { svc, api } = build();
+      const r = await svc.start('s1', NATIVE_VIDEO);
+      expect(api.submit).not.toHaveBeenCalled();
+      expect(r.postStatus).toBe('skipped');
+    });
+
+    it('синтез сорвался и другой работы не осталось — метка одна задачу не заводит', async () => {
+      // Аудит захода 8: раньше метка превращала «делать нечего» в платный
+      // проход `-c copy` (postStatus pending). Товарный и поздравление
+      // без персоны — одинаково.
+      for (const greetingBriefSnapshot of [undefined, { usesPersona: false }]) {
+        const { svc, api, tts } = build({
+          session: session({
+            brandManifestSnapshot: { voiceMode: 'voiceover' },
+            greetingBriefSnapshot,
+          }),
+        });
+        tts.synthesize.mockResolvedValue({
+          ok: false,
+          skipped: false,
+          reason: 'ElevenLabs 401',
+        });
+        const r = await svc.start('s1', NATIVE_VIDEO);
+        expect(api.submit).not.toHaveBeenCalled();
+        expect(r.postStatus).toBe('skipped');
+      }
+    });
+
+    it('у ролика с персоной метка заводит проход и после сорванного синтеза', async () => {
+      const { svc, api, tts } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'voiceover' },
+          greetingBriefSnapshot: { usesPersona: true },
+        }),
+      });
+      tts.synthesize.mockResolvedValue({
+        ok: false,
+        skipped: false,
+        reason: 'ElevenLabs 401',
+      });
+      await svc.start('s1', NATIVE_VIDEO);
+      expect(commandOf(api)).toContain('ai_persona=1');
+    });
+
+    it('переозвучка товарного ролика тоже несёт метку', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'voiceover', ttsVoiceId: 'b-1' },
+        }),
+      });
+      await svc.reVoice('s1', {
+        ...VIDEO,
+        postStatus: 'complete',
+        renderedUrl: 'https://blob.test/raw.mp4',
+        reframePending: false,
+      });
+      expect(commandOf(api)).toContain('ai_generated=1');
+    });
+
+    it('в метке нет данных человека — только константы', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'veo' },
+          greetingBriefSnapshot: {
+            usesPersona: true,
+            recipientName: 'Марина',
+            senderName: 'Андрей',
+            customOccasionText: 'юбилей',
+          },
+        }),
+      });
+      await svc.start('s1', NATIVE_VIDEO);
+      const metadata = commandOf(api).match(/-metadata "[^"]*"/g) ?? [];
+      expect(metadata).toHaveLength(2);
+      expect(metadata.join(' ')).not.toMatch(/Марина|Андрей|юбилей|s1/);
+    });
+
+    it('переозвучка из сырого файла ставит метку заново', async () => {
+      const { svc, api } = build({
+        session: session({
+          brandManifestSnapshot: { voiceMode: 'voiceover', ttsVoiceId: 'b-1' },
+          greetingBriefSnapshot: { usesPersona: true },
+        }),
+      });
+      await svc.reVoice('s1', {
+        ...VIDEO,
+        postStatus: 'complete',
+        renderedUrl: 'https://blob.test/raw.mp4',
+        reframePending: false,
+      });
+      expect(commandOf(api)).toContain('ai_persona=1');
+    });
+  });
+
   describe('бюджет и блокировка (этап 38, А-2.15)', () => {
     it('заблокированному постобработка не делается, но ролик остаётся', () => {
       // Отказ здесь — пометка, а не исключение: ролик уже снят и отдан,

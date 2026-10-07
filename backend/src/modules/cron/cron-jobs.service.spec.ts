@@ -75,6 +75,7 @@ import {
   VERCEL_CRON_TRIGGERED_BY,
   CRON_LOG_RETENTION_DAYS,
 } from './cron-jobs.service';
+import { GREETING_REGISTER_ANSWER_RETENTION_DAYS } from '../greeting-brief/greeting-register-retention';
 
 const HOUR = 60 * 60 * 1000;
 /** Старше суточного порога — иначе метла пропустит файл как свежий. */
@@ -131,6 +132,10 @@ function build() {
       create: jest.fn().mockResolvedValue({ id: 'run-log-1' }),
       update: jest.fn().mockResolvedValue(undefined),
       // Ретенция журнала (аудит 27.09.2026) — в суточной уборке.
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
+    // Память классификатора регистра (заход 8 C14) — 180 дней.
+    greetingRegisterAnswer: {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     // Срок хранения снимков интерфейса — по умолчанию убирать нечего.
@@ -537,6 +542,29 @@ describe('CronJobsService — уборка сессий партиями', () =>
     const days = (Date.now() - arg.where.startedAt.lt.getTime()) / 86_400_000;
     expect(Math.round(days)).toBe(CRON_LOG_RETENTION_DAYS);
     expect(result.deletedCronLogs).toBe(42);
+  });
+
+  it('память классификатора регистра: записи старше 180 дней удаляются тем же прогоном', async () => {
+    const { service, prisma } = build();
+    prisma.greetingRegisterAnswer.deleteMany.mockResolvedValue({ count: 3 });
+
+    await service.runCleanupSessions();
+
+    const [[arg]] = prisma.greetingRegisterAnswer.deleteMany.mock.calls as [
+      [{ where: { createdAt: { lt: Date } } }],
+    ];
+    const days = (Date.now() - arg.where.createdAt.lt.getTime()) / 86_400_000;
+    expect(Math.round(days)).toBe(GREETING_REGISTER_ANSWER_RETENTION_DAYS);
+    expect(GREETING_REGISTER_ANSWER_RETENTION_DAYS).toBe(180);
+  });
+
+  it('сбой чистки памяти классификатора не роняет уборку сессий', async () => {
+    const { service, prisma } = build();
+    prisma.greetingRegisterAnswer.deleteMany.mockRejectedValue(
+      new Error('база лежит'),
+    );
+    const result = await service.runCleanupSessions();
+    expect(result.deletedCount).toBeGreaterThanOrEqual(0);
   });
 
   it('сбой чистки журнала не роняет уборку сессий', async () => {

@@ -20,6 +20,7 @@ import { GreetingStickerService } from '../greeting-sticker/greeting-sticker.ser
 import { GreetingScenesService } from '../greeting-scenes/greeting-scenes.service';
 import { GreetingCardsService } from '../greeting-cards/greeting-cards.service';
 import { PERSONA_VOICE_NEEDS_PRESENTER_MESSAGE } from '../../common/greeting-persona';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const OLD_FLAG = process.env.PERSONA_ENABLED;
 beforeEach(() => {
@@ -89,22 +90,24 @@ describe('правка карточек во время рендера — 409 �
     ],
     [
       'музыка: тема',
-      (s) =>
+      (s, p) =>
         new GreetingMusicService(
           { get: jest.fn() } as any,
           s,
           {} as any,
           {} as any,
+          p,
         ).select('s1', null),
     ],
     [
       'музыка: ссылка',
-      (s) =>
+      (s, p) =>
         new GreetingMusicService(
           { get: jest.fn() } as any,
           s,
           {} as any,
           {} as any,
+          p,
         ).selectLink('s1', {
           url: 'https://x/a.mp3',
           title: 't',
@@ -113,30 +116,44 @@ describe('правка карточек во время рендера — 409 �
     ],
     [
       'наклейка: снять',
-      (s) => new GreetingStickerService(s, {} as any).clear('s1'),
+      (s, p) => new GreetingStickerService(s, {} as any, p).clear('s1'),
     ],
     [
       'наклейка: сдвинуть',
-      (s) =>
-        new GreetingStickerService(s, {} as any).move('s1', 'top-left' as any),
+      (s, p) =>
+        new GreetingStickerService(s, {} as any, p).move(
+          's1',
+          'top-left' as any,
+        ),
     ],
-    ['сцены', (s) => new GreetingScenesService(s).setCount('s1', 2)],
-    ['карточки', (s) => new GreetingCardsService(s).update('s1', {} as any)],
+    ['сцены', (s, p) => new GreetingScenesService(s, p).setCount('s1', 2)],
+    [
+      'карточки',
+      (s, p) => new GreetingCardsService(s, p).update('s1', {} as any),
+    ],
   ];
 
   it.each(cases)('%s', async (_name, call) => {
     const sessions = sessionsWith(RENDERING);
-    const prisma = { userVoice: { findFirst: jest.fn() } };
+    const snapshotDb = fakeSnapshotDb(sessions);
+    const prisma = {
+      userVoice: { findFirst: jest.fn() },
+      $queryRaw: snapshotDb.$queryRaw,
+    };
     const { status, body } = await bodyOf(call(sessions, prisma));
     expect(status).toBe(409);
     expect(body.code).toBe('GREETING_CHANGE_DURING_RENDER');
     expect(sessions.updateSession).not.toHaveBeenCalled();
     expect(prisma.userVoice.findFirst).not.toHaveBeenCalled();
+    expect(snapshotDb.writes).toHaveLength(0);
   });
 
   it('готовый ролик правку не держит', async () => {
     const sessions = sessionsWith({ generatedVideo: { status: 'complete' } });
-    await new GreetingScenesService(sessions as any).setCount('s1', 1);
+    await new GreetingScenesService(
+      sessions as any,
+      fakeSnapshotDb(sessions) as any,
+    ).setCount('s1', 1);
     expect(sessions.updateSession).toHaveBeenCalled();
   });
 });
@@ -181,6 +198,7 @@ describe('голос персоны на Hedra без образа (CONTRACT6 п
       const sessions = sessionsWith({}, brief);
       const prisma = {
         userVoice: { findFirst: jest.fn().mockResolvedValue(PERSONA_ROW) },
+        $queryRaw: fakeSnapshotDb(sessions).$queryRaw,
       };
       const view = await new GreetingVoiceService(
         prisma as any,
@@ -200,6 +218,7 @@ describe('голос персоны на Hedra без образа (CONTRACT6 п
           .fn()
           .mockResolvedValue({ ...PERSONA_ROW, personaId: null }),
       },
+      $queryRaw: fakeSnapshotDb(sessions).$queryRaw,
     };
     await new GreetingVoiceService(
       prisma as any,

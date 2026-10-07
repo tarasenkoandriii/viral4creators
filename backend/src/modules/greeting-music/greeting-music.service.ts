@@ -53,6 +53,11 @@ import {
 } from './dto/greeting-music.dto';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  GREETING_POLICY_KEYS,
+  updateGreetingSnapshot,
+} from '../../common/greeting-snapshot-write';
 
 /**
  * Под какую длину искать трек. Ролик пятнадцать секунд, но искать
@@ -80,6 +85,7 @@ export class GreetingMusicService {
     private readonly sessions: SessionService,
     private readonly blob: BlobService,
     private readonly audio: AudioService,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
@@ -149,33 +155,48 @@ export class GreetingMusicService {
     themeId: string | null,
   ): Promise<GreetingMusicView> {
     const session = await this.loadForEdit(sessionId);
-    const snapshot = session.greetingBriefSnapshot!;
     let selected: GreetingMusicView['selected'] = null;
-    if (themeId) {
-      // Каталог уже отфильтрован по поводу И регистру (`themes`), так что
-      // тема, не подходящая траурному ролику, здесь просто не найдётся.
-      const catalog = await this.themes(snapshot);
-      const theme = findThemeForOccasion(
-        catalog,
-        snapshot.occasion,
-        themeId,
-        registerOfBrief(snapshot),
-      );
-      if (!theme) throw new NotFoundException('Такой музыкальной темы нет');
-      // `occasions` — копия на момент выбора: по ней проверка перед
-      // рендером (`evaluateGreetingPolicy`) решает, не каталога читая.
-      selected = {
-        id: theme.id,
-        title: theme.title,
-        url: theme.url,
-        occasions: theme.occasions,
-      };
-    }
-    const next = { ...snapshot, musicTheme: selected };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: next,
-    });
-    return this.view(snapshot, selected);
+    // Только ключ `musicTheme` (C2). Тема ищется в каталоге, отфильтрованном
+    // по поводу и регистру, — запись применяется, только если их не
+    // поменяли между чтением и записью; иначе поиск повторяется по
+    // свежему снимку.
+    const written = await updateGreetingSnapshot(
+      this.prisma,
+      sessionId,
+      session.greetingBriefSnapshot!,
+      async (cur) => {
+        selected = themeId ? await this.pickTheme(cur, themeId) : null;
+        return {
+          set: { musicTheme: selected },
+          ...(themeId ? { expect: GREETING_POLICY_KEYS } : {}),
+        };
+      },
+    );
+    return this.view(written, selected);
+  }
+
+  private async pickTheme(
+    snapshot: GreetingBriefSnapshot,
+    themeId: string,
+  ): Promise<NonNullable<GreetingMusicView['selected']>> {
+    // Каталог уже отфильтрован по поводу И регистру (`themes`), так что
+    // тема, не подходящая траурному ролику, здесь просто не найдётся.
+    const catalog = await this.themes(snapshot);
+    const theme = findThemeForOccasion(
+      catalog,
+      snapshot.occasion,
+      themeId,
+      registerOfBrief(snapshot),
+    );
+    if (!theme) throw new NotFoundException('Такой музыкальной темы нет');
+    // `occasions` — копия на момент выбора: по ней проверка перед
+    // рендером (`evaluateGreetingPolicy`) решает, не каталога читая.
+    return {
+      id: theme.id,
+      title: theme.title,
+      url: theme.url,
+      occasions: theme.occasions,
+    };
   }
 
   /**
@@ -248,9 +269,7 @@ export class GreetingMusicService {
       pathname: dto.pathname,
       rightsConfirmedAt: new Date().toISOString(),
     };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
-    });
+    await this.writeMusic(sessionId, snapshot, selected);
     return this.view(snapshot, selected);
   }
 
@@ -290,9 +309,7 @@ export class GreetingMusicService {
       source: 'link' as const,
       rightsConfirmedAt: new Date().toISOString(),
     };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
-    });
+    await this.writeMusic(sessionId, snapshot, selected);
     return this.view(snapshot, selected);
   }
 
@@ -377,10 +394,23 @@ export class GreetingMusicService {
         ? { sourceUrl: track.license.licenseUrl }
         : {}),
     };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, musicTheme: selected },
-    });
+    await this.writeMusic(sessionId, snapshot, selected);
     return { ...(await this.get(sessionId)), selected };
+  }
+
+  /**
+   * Свой трек, ссылка, трек библиотеки — выбор не зависит от других полей
+   * снимка: пишется только ключ `musicTheme` (C2), соседние правки
+   * снимка не затираются.
+   */
+  private async writeMusic(
+    sessionId: string,
+    snapshot: GreetingBriefSnapshot,
+    selected: GreetingMusicSelection,
+  ): Promise<void> {
+    await updateGreetingSnapshot(this.prisma, sessionId, snapshot, () => ({
+      set: { musicTheme: selected },
+    }));
   }
 
   private async fetchTrack(url: string): Promise<Buffer> {

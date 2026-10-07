@@ -340,6 +340,25 @@ export interface GreetingBriefSnapshot {
   sceneCount?: number;
 
   /**
+   * Выбранная обстановка ролика (фича №36, §3.9 ТЗ Greeting 2.0) — одна
+   * строка по-английски, из вариантов `POST …/greeting-references/settings`.
+   * Идёт и в промпт кадра, и в видео-промпт (`buildSceneDescription`)
+   * вместо общей сцены повода. Нет поля или `null` — сцена повода, как
+   * раньше. Пишется точечно (`greeting-snapshot-write`), проверяется
+   * политикой регистра (`evaluateGreetingPolicy`, поле `sceneSetting`).
+   */
+  sceneSetting?: string | null;
+
+  /**
+   * Белый список обстановок (аудит захода 8): варианты, которые выдал
+   * сервер (`POST …/greeting-references/settings`), уже прошедшие
+   * политику регистра. Выбрать (`PUT …/setting`, `generate`) можно только
+   * отсюда — свободный текст закрыт. Последние
+   * `MAX_SCENE_SETTING_OPTIONS`, каждый живёт `SCENE_SETTING_OPTION_TTL_MS`.
+   */
+  sceneSettingOptions?: GreetingSceneSettingOption[];
+
+  /**
    * Ведущий-образ персоны (этап G, §4.8) — копия, не ссылка. Нет поля или
    * `null` — ИИ-ведущий, как до этапа G.
    */
@@ -628,4 +647,11 @@ export interface GreetingBriefView {
   presenter: GreetingPresenterChoice;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Выданный сервером вариант обстановки (§3.9, белый список). */
+export interface GreetingSceneSettingOption {
+  text: string;
+  /** ISO-время выдачи — по нему вариант истекает. */
+  issuedAt: string;
 }

@@ -219,9 +219,11 @@ model User {
   productFeedImportRuns ProductFeedImportRun[]
 
   // Клонирование голоса — self-service, этап 73, TODO п.32.
-  userVoices UserVoice[]
+  userVoices              UserVoice[]
   /// «Я в кадре» (Greeting 2.0, фаза 1Б, этап E): одна персона на аккаунт.
-  persona    Persona?
+  persona                 Persona?
+  /// Ответы классификатора регистра «Особого повода» (заход 8, C14).
+  greetingRegisterAnswers GreetingRegisterAnswer[]
 
   // Принятие оферты и условий использования (ТЗ §20, этап 24): когда и
   // какую версию документов пользователь принял. Анонимный путь хранит
@@ -3119,6 +3121,31 @@ enum UserVoiceStatus {
   FAILED
 }
 
+/// Ответ классификатора регистра «Особого повода» на описание повода
+/// (ТЗ Greeting 2.0 §3.4 п.3; doc/TODO.md, «классификатор зовётся при
+/// каждом сохранении брифа» — заход 8, C14). Хранится только то, на что
+/// модель ОТВЕТИЛА: сбой и мусорный ответ не пишутся и при следующем
+/// сохранении спрашиваются снова — один сбой Gemini не выключает третий
+/// сигнал навсегда. Описание не хранится: `textHash` — HMAC от модели и
+/// полного текста запроса ключом из `CRON_SECRET` (`registerAnswerKey`),
+/// так что перебором его не восстановить, а смена модели или формулировки
+/// запроса сама делает старые ответы непригодными. Срок — 180 дней
+/// (`greeting-register-retention.ts`, крон `cleanup-sessions`).
+/// Свой у каждого пользователя: чужой ответ на тот же текст не
+/// переиспользуется, удаление аккаунта уносит строки каскадом.
+model GreetingRegisterAnswer {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  textHash  String
+  register  GreetingRegister
+  createdAt DateTime         @default(now())
+
+  @@unique([userId, textHash])
+  @@index([createdAt])
+  @@map("greeting_register_answers")
+}
+
 model UserVoice {
   id     String @id @default(cuid())
   userId String
@@ -3155,6 +3182,12 @@ model UserVoice {
   /// персону, в лимит обычных клонов (`MAX_USER_VOICES`) не входит.
   personaId String?
   persona   Persona? @relation(fields: [personaId], references: [id], onDelete: SetNull)
+
+  /// Редакция фразы согласия, которую человек произнёс в начале записи
+  /// голоса персоны (`PERSONA_VOICE_CONSENT_VERSION`, LEGAL-GATE §2.1
+  /// п.4) — по ней видно, какой именно текст он подтвердил. У обычных
+  /// клонов и у голосов персоны до 07.10.2026 — null.
+  consentPhraseVersion String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

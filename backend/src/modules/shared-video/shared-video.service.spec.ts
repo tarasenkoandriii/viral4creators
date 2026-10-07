@@ -20,6 +20,7 @@ import {
   toView,
 } from './shared-video.service';
 import type { Session } from '../../common/types/session.types';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const plansMock = () => ({
   assertCanSpendUser: jest.fn(),
@@ -371,6 +372,10 @@ function build(
     // Этап G: галочка витрины ролика с персоной пишется в снимок сессии.
     updateSession: jest.fn().mockResolvedValue({}),
   };
+  // C2 (заход 8): галочка пишется точечно — фейк исполняет запись снимка
+  // поверх мока сессий.
+  const snapshotDb = fakeSnapshotDb(sessions as never);
+  Object.assign(prisma, { $queryRaw: snapshotDb.$queryRaw });
   const blob = {
     copyBlob: jest
       .fn()
@@ -398,6 +403,7 @@ function build(
     sessions,
     blob,
     library,
+    snapshotDb,
     plans,
     poster,
   };
@@ -949,6 +955,11 @@ describe('витрина и ролик с персоной (этап G, §4.9)',
       no.sessions.updateSession.mock.calls[0][1].greetingBriefSnapshot
         .personaShowcaseConsentAt,
     ).toBeNull();
+    // C2: пишется только ключ галочки, остальной снимок не трогается.
+    expect(no.snapshotDb.applied).toHaveLength(1);
+    expect(Object.keys(no.snapshotDb.applied[0].set)).toEqual([
+      'personaShowcaseConsentAt',
+    ]);
   });
 
   it('ролик без персоны — сессия не переписывается', async () => {

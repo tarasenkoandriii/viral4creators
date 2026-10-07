@@ -135,9 +135,23 @@ describe('голос персоны: загрузка и клон', () => {
       personaId: 'p1',
       userId: USER,
       status: 'TRAINING',
+      // LEGAL-GATE §2.1 п.4: какую редакцию фразы человек произнёс.
+      consentPhraseVersion: PERSONA_VOICE_CONSENT_VERSION,
     });
     expect(resemble.cloneVoice).toHaveBeenCalled();
     expect(view.personaId).toBe('p1');
+  });
+
+  it('у обычного клона фразы согласия нет — и версия не пишется', async () => {
+    const { svc, prisma } = build();
+    await svc.confirmClone(USER, {
+      ...CLONE,
+      forPersona: false,
+      consentPhraseVersion: PERSONA_VOICE_CONSENT_VERSION,
+    } as never);
+    const data = prisma.userVoice.create.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty('consentPhraseVersion');
+    expect(data).not.toHaveProperty('personaId');
   });
 
   it('обычный клон не видит голос персоны в своём лимите', async () => {

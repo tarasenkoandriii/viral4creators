@@ -525,6 +525,76 @@
         }
       ]
     },
+    "compare": {
+      "title": "Was das von anderen Wegen unterscheidet",
+      "lead": "Wir vergleichen nicht mit bestimmten Anbietern, sondern damit, wie drei verbreitete Wege meist funktionieren. In der letzten Zeile steht, was es bei uns noch nicht gibt.",
+      "caption": "Videogruß im Vergleich mit drei Kategorien von Alternativen",
+      "columns": {
+        "us": "Dieser Dienst",
+        "template": "Video-Karte nach Vorlage",
+        "person": "Bestellt bei einem Menschen oder Promi",
+        "generic": "Allgemeiner KI-Videogenerator"
+      },
+      "rows": [
+        {
+          "feature": "Wer schreibt den Text",
+          "us": "Der Dienst — passend zu Anlass, Empfänger und Ton; Ihr eigener Text wird unverändert übernommen",
+          "template": "Fertige Handlung; Name, Foto und Unterschrift werden ausgetauscht",
+          "person": "Die Person spricht nach Ihrer Anfrage mit eigenen Worten",
+          "generic": "Sie selbst: Drehbuch, Ton und Prompts liegen bei Ihnen"
+        },
+        {
+          "feature": "Wartezeit",
+          "us": "Meist ein paar Minuten",
+          "template": "Meist Minuten",
+          "person": "Meist Tage; schneller meist gegen Aufpreis",
+          "generic": "Minuten für die Generierung, plus Zeit zum Zusammenstellen"
+        },
+        {
+          "feature": "Sprache",
+          "us": "Russisch, Ukrainisch, Englisch, Deutsch, Spanisch — der Dienst schreibt und vertont in der gewählten Sprache",
+          "template": "Die Sprachen legt der Anbieter fest — Ukrainisch und Russisch fehlen oft",
+          "person": "Die Sprache der Person",
+          "generic": "Meist viele Sprachen"
+        },
+        {
+          "feature": "Heikle Anlässe",
+          "us": "Beileid, Entschuldigung, Genesungswünsche: Der Dienst gratuliert nicht und scherzt nicht, sein Text wird auf festlichen Ton geprüft",
+          "template": "Meist festliche Handlungen",
+          "person": "Nach Ermessen der Person",
+          "generic": "Den Ton bestimmen Sie selbst"
+        },
+        {
+          "feature": "Stimme des Absenders",
+          "us": "Die eigene Stimme im Standard-Modus; fertige Stimmen in jedem Modus",
+          "template": "Meist nicht",
+          "person": "Nein — zu hören ist die Stimme der Person",
+          "generic": "Oft vorhanden, meist in kostenpflichtigen Tarifen"
+        },
+        {
+          "feature": "Format",
+          "us": "15 Sekunden Hochformat-Video, bis zu 4 Szenen",
+          "template": "Länge und Handlung gibt die Vorlage vor",
+          "person": "Nach Ermessen der Person",
+          "generic": "Beliebige Länge — den Schnitt machen Sie"
+        },
+        {
+          "feature": "Preis",
+          "us": "Die Modi sind derzeit kostenlos; die Zahl der Generierungen pro Tag ist begrenzt",
+          "template": "Oft ein kostenloser Test, danach Einmalzahlung oder Abo",
+          "person": "Den Preis legt die Person fest — bekannte Namen sind teuer",
+          "generic": "Abo; im kostenlosen Tarif mit Grenzen und Wasserzeichen"
+        },
+        {
+          "feature": "Zustellung am gewünschten Tag",
+          "us": "Noch nicht — den Link verschicken Sie selbst",
+          "template": "Manchmal",
+          "person": "Nein — das Video kommt, wenn es fertig ist",
+          "generic": "Meist nicht"
+        }
+      ],
+      "note": "Die rechten Spalten beschreiben einen typischen Dienst der Kategorie, kein bestimmtes Unternehmen; einzelne Anbieter können abweichen."
+    },
     "price": {
       "title": "Was es kostet",
       "text": "Die Tarife sind derzeit kostenlos und lassen sich direkt in der App umschalten. Der Tarif bestimmt die Auflösung des Videos — 480p, 720p oder 1080p (mit angehängten Fotos meist höchstens 720p) — und das Tageslimit für Generierungen: Ist es aufgebraucht, geht es am nächsten Tag weiter."

@@ -48,7 +48,11 @@ import { BlobService } from '../storage/blob.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
-import { estimateCost } from '../../common/ai-pricing';
+import {
+  estimateCost,
+  geminiUsageUnits,
+  type GeminiUsageMetadataLike,
+} from '../../common/ai-pricing';
 import { languageNameForLocale } from '../../common/locale';
 import { probeMp4 } from '../tutorial-runner/mp4-probe';
 import {
@@ -1281,22 +1285,11 @@ export class TutorialDemoQualityService {
       userId: null,
     });
     const meta = (
-      res.response as {
-        usageMetadata?: {
-          promptTokenCount?: number;
-          cachedContentTokenCount?: number;
-          candidatesTokenCount?: number;
-          thoughtsTokenCount?: number;
-        };
-      } | null
+      res.response as { usageMetadata?: GeminiUsageMetadataLike } | null
     )?.usageMetadata;
-    const units = {
-      inputTokens: meta?.promptTokenCount ?? 0,
-      cachedInputTokens: meta?.cachedContentTokenCount ?? 0,
-      outputTokens:
-        (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
-      calls: 1,
-    };
+    // Вход — ролик: видео и звук его дорожки по своим ставкам, как в
+    // журнале расходов (`geminiUsageUnits`, C1 захода 8).
+    const units = { ...geminiUsageUnits(meta), calls: 1 };
     const cost = estimateCost(row.modelId, units);
     const report = res.refusal
       ? refusedReport(ctx, res.refusal)

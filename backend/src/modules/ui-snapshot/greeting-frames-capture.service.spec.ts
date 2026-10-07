@@ -25,6 +25,7 @@ jest.mock('./ui-snapshot-runner.service', () => ({
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import {
+  PAID_FIXTURE_VIDEO_ACTIONS,
   FIXTURE_VIDEO_HINT,
   fixtureVideoAction,
   fixtureVideoStage,
@@ -54,7 +55,13 @@ function build() {
       }),
     ),
   };
-  const prisma = { session: { findFirst: jest.fn() } };
+  const prisma = {
+    session: {
+      findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    aiUsage: { findMany: jest.fn().mockResolvedValue([]) },
+  };
   const prompt = { generateGreetingPrompt: jest.fn().mockResolvedValue({}) };
   const video = {
     startVideo: jest.fn().mockResolvedValue({ status: 'processing' }),
@@ -467,5 +474,295 @@ describe('GreetingFramesCaptureService.fixtureVideo — перерендер г�
 
     expect(edits.forkForRerender).not.toHaveBeenCalled();
     expect(video.startVideo).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Состояние ролика фикстуры для страницы админки (заход 8): только
+ * чтение базы. Ошибка здесь стоит денег — страница по `next.paid`
+ * решает, спрашивать ли «платно, ~$X», а нажатие без вопроса на
+ * платном шаге и есть второй рендер, от которого берегут.
+ */
+describe('GreetingFramesCaptureService.fixtureVideoState', () => {
+  const T0 = new Date('2026-10-01T10:00:00Z');
+  function withSessions(
+    rows: Array<{ id: string; data: Record<string, unknown> }>,
+  ) {
+    const h = build();
+    h.prisma.session.findMany.mockResolvedValue(
+      rows.map((r) => ({ ...r, createdAt: T0, liveData: null })),
+    );
+    return h;
+  }
+  const noProviderCalls = (h: ReturnType<typeof build>) => {
+    expect(h.video.startVideo).not.toHaveBeenCalled();
+    expect(h.video.pollVideo).not.toHaveBeenCalled();
+    expect(h.prompt.generateGreetingPrompt).not.toHaveBeenCalled();
+    expect(h.postprod.poll).not.toHaveBeenCalled();
+    expect(h.edits.forkForRerender).not.toHaveBeenCalled();
+  };
+
+  it('платные шаги — ровно сценарий+рендер, рендер и новая версия', () => {
+    expect([...PAID_FIXTURE_VIDEO_ACTIONS].sort()).toEqual(
+      ['new-version-render', 'render', 'script-and-render'].sort(),
+    );
+  });
+
+  it('фикстурный вход не настроен — пропуск, в базу не ходит', async () => {
+    const h = build();
+    h.runner.findFixtureUser.mockResolvedValue(null);
+    expect(await h.service.fixtureVideoState()).toEqual({
+      skipped: 'фикстурный вход не настроен',
+    });
+    expect(h.prisma.session.findMany).not.toHaveBeenCalled();
+  });
+
+  it('сессии нет — пропуск с подсказкой про пересев', async () => {
+    const h = build();
+    const r = await h.service.fixtureVideoState();
+    expect(r.skipped).toMatch(/seed-fixture-user/);
+    noProviderCalls(h);
+  });
+
+  it('ролика нет — missing; следующий POST платный (сценарий+рендер); читает ровно проект фикстуры', async () => {
+    const h = withSessions([{ id: 's1', data: {} }]);
+    const r = await h.service.fixtureVideoState();
+    expect(r).toMatchObject({
+      sessionId: 's1',
+      sessionCreatedAt: T0.toISOString(),
+      versions: 1,
+      hasPrompt: false,
+      stage: 'missing',
+      next: { action: 'script-and-render', paid: true },
+      rerender: null,
+      lastRun: null,
+    });
+    expect(r.video).toBeUndefined();
+    expect(h.prisma.session.findMany.mock.calls[0][0].where).toEqual({
+      userId: 'usr_fixture',
+      projectId: FIXTURE_IDS.greetingDoneProject,
+      deletedAt: null,
+    });
+    noProviderCalls(h);
+  });
+
+  it('рендер идёт — rendering, следующий POST — бесплатный опрос', async () => {
+    const h = withSessions([
+      {
+        id: 's1',
+        data: {
+          generationPrompt: 'p',
+          generatedVideo: { status: 'processing', initiatedAt: T0 },
+        },
+      },
+    ]);
+    const r = await h.service.fixtureVideoState();
+    expect(r.stage).toBe('rendering');
+    expect(r.next).toEqual({ action: 'poll', paid: false });
+    expect(r.rerender).toBeNull();
+    noProviderCalls(h);
+  });
+
+  it('готов — complete, POST ничего не делает, «переснять» платно новой версией; поля ролика наружу', async () => {
+    const h = withSessions([
+      {
+        id: 's2',
+        data: {
+          generationPrompt: 'p',
+          generatedVideo: {
+            status: 'complete',
+            postStatus: 'complete',
+            downloadUrl: 'https://blob/v.mp4',
+            initiatedAt: '2026-10-01T10:00:00.000Z',
+            completedAt: new Date('2026-10-01T10:03:00Z'),
+            resolution: '720p',
+          },
+        },
+      },
+      { id: 's1', data: {} },
+    ]);
+    const r = await h.service.fixtureVideoState();
+    expect(r.stage).toBe('complete');
+    expect(r.versions).toBe(2);
+    expect(r.next).toEqual({ action: 'none', paid: false });
+    expect(r.rerender).toEqual({ action: 'new-version-render', paid: true });
+    expect(r.video).toEqual({
+      status: 'complete',
+      postStatus: 'complete',
+      postError: null,
+      error: null,
+      downloadUrl: 'https://blob/v.mp4',
+      initiatedAt: '2026-10-01T10:00:00.000Z',
+      completedAt: '2026-10-01T10:03:00.000Z',
+      resolution: '720p',
+    });
+    noProviderCalls(h);
+  });
+
+  it('постобработка идёт — post-processing, опрос бесплатный, «переснять» недоступно', async () => {
+    const h = withSessions([
+      {
+        id: 's1',
+        data: {
+          generationPrompt: 'p',
+          generatedVideo: { status: 'complete', postStatus: 'pending' },
+        },
+      },
+    ]);
+    const r = await h.service.fixtureVideoState();
+    expect(r.stage).toBe('post-processing');
+    expect(r.next).toEqual({ action: 'poll-post', paid: false });
+    expect(r.rerender).toBeNull();
+  });
+
+  it('упал — failed, следующий POST — платный повтор рендера, причина наружу', async () => {
+    const h = withSessions([
+      {
+        id: 's1',
+        data: {
+          generationPrompt: 'p',
+          generatedVideo: {
+            status: 'failed',
+            error: { code: 'X', message: 'провайдер отказал' },
+          },
+        },
+      },
+    ]);
+    const r = await h.service.fixtureVideoState();
+    expect(r.stage).toBe('failed');
+    expect(r.next).toEqual({ action: 'render', paid: true });
+    expect(r.video?.error).toBe('провайдер отказал');
+  });
+
+  it('прошлый прогон: сумма всех операций той версии, где был рендер; без ставки — помечено', async () => {
+    const h = withSessions([
+      { id: 's2', data: {} },
+      { id: 's1', data: {} },
+    ]);
+    const at = new Date('2026-10-02T00:00:00Z');
+    h.prisma.aiUsage.findMany.mockResolvedValue([
+      // Новые сверху (orderBy createdAt desc): у s2 рендера не было.
+      {
+        sessionId: 's2',
+        operation: 'prompt',
+        costMicroUsd: 5,
+        unpriced: false,
+        createdAt: at,
+      },
+      {
+        sessionId: 's1',
+        operation: 'voiceover',
+        costMicroUsd: 300,
+        unpriced: true,
+        createdAt: at,
+      },
+      {
+        sessionId: 's1',
+        operation: 'generation',
+        costMicroUsd: 2_100_000,
+        unpriced: false,
+        createdAt: at,
+      },
+      {
+        sessionId: 's1',
+        operation: 'prompt',
+        costMicroUsd: 40_000,
+        unpriced: false,
+        createdAt: at,
+      },
+    ]);
+    const r = await h.service.fixtureVideoState();
+    expect(r.lastRun).toEqual({
+      sessionId: 's1',
+      costMicroUsd: 2_140_300,
+      unpriced: true,
+      at: at.toISOString(),
+    });
+    expect(h.prisma.aiUsage.findMany.mock.calls[0][0].where).toEqual({
+      sessionId: { in: ['s2', 's1'] },
+    });
+  });
+
+  it('прошлого рендера в журнале нет — lastRun: null (оценка без числа)', async () => {
+    const h = withSessions([{ id: 's1', data: {} }]);
+    h.prisma.aiUsage.findMany.mockResolvedValue([
+      {
+        sessionId: 's1',
+        operation: 'prompt',
+        costMicroUsd: 5,
+        unpriced: false,
+        createdAt: T0,
+      },
+    ]);
+    expect((await h.service.fixtureVideoState()).lastRun).toBeNull();
+  });
+});
+
+/**
+ * TOCTOU (аудит захода 8): страница прочла «опросить» (бесплатно), а к
+ * моменту POST рендер упал — без `expect` тот же вызов запустил бы
+ * платный повтор без вопроса.
+ */
+describe('GreetingFramesCaptureService.fixtureVideo — ожидаемый шаг (expect)', () => {
+  const failed = {
+    id: 'sess-done',
+    data: { generationPrompt: {} },
+    liveData: { generatedVideo: { status: 'failed' } },
+  };
+
+  it('ждали опрос, а шаг стал платным — 409, ничего не запущено', async () => {
+    const { service, prisma, prompt, video, edits } = build();
+    prisma.session.findFirst.mockResolvedValue(failed);
+
+    await expect(
+      service.fixtureVideo({ expect: 'poll' }),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'GREETING_FIXTURE_ACTION_CHANGED' },
+    });
+    expect(video.startVideo).not.toHaveBeenCalled();
+    expect(video.pollVideo).not.toHaveBeenCalled();
+    expect(prompt.generateGreetingPrompt).not.toHaveBeenCalled();
+    expect(edits.forkForRerender).not.toHaveBeenCalled();
+  });
+
+  it('ждали «render», а нужен «сценарий+рендер» (дороже) — тоже 409', async () => {
+    const { service, prisma, video } = build();
+    prisma.session.findFirst.mockResolvedValue({
+      id: 'sess-done',
+      data: {},
+      liveData: {},
+    });
+    await expect(
+      service.fixtureVideo({ expect: 'render' }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(video.startVideo).not.toHaveBeenCalled();
+  });
+
+  it('ожидаемый платный шаг совпал (подтверждён) — выполняется', async () => {
+    const { service, prisma, video } = build();
+    prisma.session.findFirst.mockResolvedValue(failed);
+    const r = await service.fixtureVideo({ expect: 'render' });
+    expect(r.stage).toBe('started');
+    expect(video.startVideo).toHaveBeenCalledTimes(1);
+  });
+
+  it('ждали опрос, а ролик уже готов — бесплатное расхождение не мешает', async () => {
+    const { service, prisma, video } = build();
+    prisma.session.findFirst.mockResolvedValue({
+      id: 'sess-done',
+      data: { generationPrompt: {} },
+      liveData: { generatedVideo: { status: 'complete' } },
+    });
+    const r = await service.fixtureVideo({ expect: 'poll' });
+    expect(r.stage).toBe('complete');
+    expect(video.startVideo).not.toHaveBeenCalled();
+  });
+
+  it('без expect — как раньше: упавший рендер перезапускается (ручной вызов по документу)', async () => {
+    const { service, prisma, video } = build();
+    prisma.session.findFirst.mockResolvedValue(failed);
+    await service.fixtureVideo();
+    expect(video.startVideo).toHaveBeenCalledTimes(1);
   });
 });

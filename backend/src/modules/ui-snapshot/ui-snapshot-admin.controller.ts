@@ -44,6 +44,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Post,
   Query,
   Req,
@@ -70,7 +71,10 @@ import {
 } from './tutorial-frames-capture.service';
 import {
   GreetingFramesCaptureService,
+  FIXTURE_VIDEO_ACTIONS,
+  type FixtureVideoAction,
   type FixtureVideoResult,
+  type FixtureVideoState,
 } from './greeting-frames-capture.service';
 import {
   UiSnapshotQueryService,
@@ -361,6 +365,23 @@ export class UiSnapshotAdminController {
   }
 
   /**
+   * GET /api/admin/ui-snapshot/greeting-frames/fixture-video/state —
+   * состояние ролика фикстуры ТОЛЬКО ЧТЕНИЕМ базы (заход 8, страница
+   * админки «Кадры лендинга поздравлений»): есть ли ролик, его статус и
+   * даты, что сделает следующий `POST` и заплатит ли, сколько стоил
+   * прошлый прогон. Провайдера не опрашивает — двигает состояние только
+   * `POST` ниже, поэтому этот GET и не нарушает его оговорку.
+   */
+  @Get('greeting-frames/fixture-video/state')
+  @Header('Cache-Control', 'no-store')
+  async greetingFixtureVideoState(
+    @Req() req: AdminAuthenticatedRequest,
+  ): Promise<FixtureVideoState> {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.greetingFrames.fixtureVideoState();
+  }
+
+  /**
    * POST /api/admin/ui-snapshot/greeting-frames/fixture-video — довести
    * ролик фикстуры под кадр 4 до готового, по шагу за вызов.
    *
@@ -376,13 +397,29 @@ export class UiSnapshotAdminController {
   @Post('greeting-frames/fixture-video')
   async greetingFixtureVideo(
     @Req() req: AdminAuthenticatedRequest,
-    @Body() body: { rerender?: unknown } = {},
+    @Body() body: { rerender?: unknown; expect?: unknown } = {},
   ): Promise<FixtureVideoResult> {
     await this.adminPanel.assertOperator(req.userId);
+    // `expect` — шаг, который вызывающий видел в `…/state` (заход 8):
+    // платный шаг вместо ожидаемого — 409, а не списание без вопроса.
+    // Без поля — как раньше.
+    let expect: FixtureVideoAction | undefined;
+    if (body?.expect !== undefined) {
+      if (
+        typeof body.expect !== 'string' ||
+        !(FIXTURE_VIDEO_ACTIONS as readonly string[]).includes(body.expect)
+      ) {
+        throw new BadRequestException(
+          `expect — одно из: ${FIXTURE_VIDEO_ACTIONS.join(', ')}`,
+        );
+      }
+      expect = body.expect as FixtureVideoAction;
+    }
     // Строго `true`: повторный рендер платный, и «"yes"» или `1` по
     // ошибке не должны его запускать.
     return this.greetingFrames.fixtureVideo({
       rerender: body?.rerender === true,
+      ...(expect ? { expect } : {}),
     });
   }
 }

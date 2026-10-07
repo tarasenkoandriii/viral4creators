@@ -583,6 +583,10 @@ describe('ActorsService.getAvatarVideoStatus', () => {
           outputs: expect.any(Array),
           commands: expect.any(Array),
         });
+        // Заход 8 C11: аватар снят ИИ — метка в той же задаче прожига.
+        expect(ffmpeg.submit.mock.calls[0][0].commands[0]).toContain(
+          '-metadata "comment=ai_generated=1;',
+        );
         expect(aiUsage.record).toHaveBeenCalledWith(
           expect.objectContaining({
             operation: 'reframe',

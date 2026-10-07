@@ -5,8 +5,17 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GreetingCardsService } from './greeting-cards.service';
 import { MAX_CARD_TEXT_LENGTH } from '../../common/greeting-cards';
 import type { SessionService } from '../../common/session.service';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
-function build(snapshot: Record<string, unknown> | null = {}) {
+function build(
+  snapshot: Record<string, unknown> | null = {},
+  opts: {
+    beforeWrite?: (
+      attempt: number,
+      set: (patch: Record<string, unknown>) => void,
+    ) => void;
+  } = {},
+) {
   let current: Record<string, unknown> | null =
     snapshot === null
       ? null
@@ -16,6 +25,10 @@ function build(snapshot: Record<string, unknown> | null = {}) {
           senderName: 'Андрей',
           ...snapshot,
         };
+  // «Параллельная» правка снимка из другого запроса — мимо сервиса.
+  const set = (patch: Record<string, unknown>) => {
+    current = { ...current, ...patch };
+  };
   const updateSession = jest
     .fn()
     .mockImplementation((_id: string, patch: Record<string, any>) => {
@@ -30,8 +43,13 @@ function build(snapshot: Record<string, unknown> | null = {}) {
       ),
     updateSession,
   };
-  const svc = new GreetingCardsService(sessions as unknown as SessionService);
-  return { svc, updateSession };
+  const svc = new GreetingCardsService(
+    sessions as unknown as SessionService,
+    fakeSnapshotDb(sessions, {
+      beforeWrite: (n) => opts.beforeWrite?.(n, set),
+    }) as any,
+  );
+  return { svc, updateSession, snapshotNow: () => current };
 }
 
 describe('GreetingCardsService (фичи №38/№39)', () => {
@@ -135,5 +153,42 @@ describe('GreetingCardsService — стиль из бренд-бука (этап
     expect(
       updateSession.mock.calls[0][1].greetingBriefSnapshot.cards.style,
     ).toBeUndefined();
+  });
+});
+
+describe('GreetingCardsService — C2: запись снимка без потери правок', () => {
+  it('пишется только cards — число сцен и музыка, выбранные параллельно, остаются', async () => {
+    const musicTheme = { id: 'm1', title: 'Вальс', url: 'https://m' };
+    const { svc, snapshotNow } = build(
+      {},
+      {
+        beforeWrite: (n, set) => n === 1 && set({ sceneCount: 3, musicTheme }),
+      },
+    );
+    await svc.update('s1', { title: 'Марине', closing: null });
+    expect(snapshotNow()).toEqual(
+      expect.objectContaining({
+        sceneCount: 3,
+        musicTheme,
+        cards: { title: 'Марине', closing: null },
+      }),
+    );
+  });
+
+  it('стиль берётся из снимка в момент записи — не возвращается прочитанный раньше', async () => {
+    const { svc, snapshotNow } = build(
+      { cards: { style: { font: 'serif', color: 'gold' } } },
+      {
+        beforeWrite: (n, set) =>
+          n === 1 && set({ cards: { style: { font: 'mono', color: 'pink' } } }),
+      },
+    );
+    const view = await svc.update('s1', { title: 'Марине', closing: null });
+    expect(snapshotNow()?.cards).toEqual({
+      title: 'Марине',
+      closing: null,
+      style: { font: 'mono', color: 'pink' },
+    });
+    expect(view.cards.style).toEqual({ font: 'mono', color: 'pink' });
   });
 });

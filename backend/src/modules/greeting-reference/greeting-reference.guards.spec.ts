@@ -17,6 +17,7 @@ import {
 import { GreetingReferenceController } from './greeting-reference.controller';
 import { RATE_LIMIT_KEY, RateLimitRule } from '../../common/rate-limit';
 import { GREETING_CHANGE_DURING_RENDER_MESSAGE } from '../../common/greeting-render-lock';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const OLD_FLAG = process.env.PERSONA_ENABLED;
 afterEach(() => {
@@ -84,6 +85,7 @@ function setup(
     frames as any,
     aiUsage as any,
     plans as any,
+    fakeSnapshotDb(sessions as any) as any,
   );
   (service as any).geminiClient = { models: { generateContent } };
   return { service, sessions, blob, frames, plans, generateContent };

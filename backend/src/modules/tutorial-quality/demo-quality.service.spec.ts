@@ -24,6 +24,7 @@ import {
 } from './demo-quality-queue';
 import { DEMO_QUALITY_RUBRIC_VERSION } from './demo-quality-rubric';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import { estimateCost, priceEnvKey } from '../../common/ai-pricing';
 import { TutorialDemoQualityService } from './demo-quality.service';
 
 jest.mock('../tutorial-runner/mp4-probe', () => ({ probeMp4: jest.fn() }));
@@ -545,6 +546,42 @@ describe('тик очереди', () => {
     // Ролик не тронут: ни одной записи в таблицу роликов.
     expect(assets.update).not.toHaveBeenCalled();
     expect(assets.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('цена проверки — по модальностям входа: звук ролика по своей ставке (C1 захода 8)', async () => {
+    const key = priceEnvKey(GEMINI_MODEL, 'audio_input');
+    const savedEnv = process.env[key];
+    // Ставка звука из env ($10 за 1M) — чтобы разница была видна при
+    // любой модели по умолчанию.
+    process.env[key] = '10';
+    try {
+      gemini.answer = async () => ({
+        text: JSON.stringify(GOOD_ANSWER),
+        response: {
+          usageMetadata: {
+            promptTokenCount: 10_000,
+            candidatesTokenCount: 0,
+            promptTokensDetails: [
+              { modality: 'VIDEO', tokenCount: 6_000 },
+              { modality: 'AUDIO', tokenCount: 4_000 },
+            ],
+          },
+        },
+        refusal: null,
+      });
+      await svc.processQueue();
+      const r = only();
+      const plain = estimateCost(GEMINI_MODEL, { inputTokens: 6_000 });
+      // 4000 звуковых токенов × $10/M = 40 000 микродолларов сверху.
+      expect(r.costMicroUsd).toBe(plain.costMicroUsd + 40_000);
+      expect(r.tokenUsage).toMatchObject({
+        inputTokens: 10_000,
+        inputByModality: { AUDIO: 4_000, VIDEO: 6_000 },
+      });
+    } finally {
+      if (savedEnv === undefined) delete process.env[key];
+      else process.env[key] = savedEnv;
+    }
   });
 
   it('файл ещё обрабатывается — фаза «ожидание» сохраняется, следующий тик доводит без повторной загрузки', async () => {

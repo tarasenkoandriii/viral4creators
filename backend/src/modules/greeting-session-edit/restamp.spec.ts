@@ -14,6 +14,7 @@ import {
   greetingScriptStale,
 } from '../greeting-prompt/script-inputs';
 import { ModerationStatus } from '../../common/types/prompt.types';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const BRIEF = {
   sourceGreetingBriefId: 'gb1',
@@ -70,21 +71,35 @@ function sessionWithScript(over: Record<string, unknown> = {}): any {
   return base;
 }
 
-function store(initial: any) {
+function store(
+  initial: any,
+  beforeWrite?: (attempt: number, set: (brief: any) => void) => void,
+) {
   let row = initial;
+  const sessions = {
+    claimWork: jest.fn().mockResolvedValue(true),
+    releaseWork: jest.fn().mockResolvedValue(undefined),
+    getSession: jest.fn(async () => row),
+    updateSession: jest.fn(async (_id: string, patch: any) => {
+      row = { ...row, ...patch };
+      return row;
+    }),
+  };
+  // «Параллельная» правка снимка мимо замка (наклейка, музыка, сцены).
+  const set = (brief: any) => {
+    row = {
+      ...row,
+      greetingBriefSnapshot: { ...row.greetingBriefSnapshot, ...brief },
+    };
+  };
   return {
     get row() {
       return row;
     },
-    sessions: {
-      claimWork: jest.fn().mockResolvedValue(true),
-      releaseWork: jest.fn().mockResolvedValue(undefined),
-      getSession: jest.fn(async () => row),
-      updateSession: jest.fn(async (_id: string, patch: any) => {
-        row = { ...row, ...patch };
-        return row;
-      }),
-    },
+    sessions,
+    db: fakeSnapshotDb(sessions, {
+      beforeWrite: (n) => beforeWrite?.(n, set),
+    }),
   };
 }
 
@@ -92,12 +107,17 @@ describe('writeWithGreetingRestamp — смена голоса после сце
   it('пресет xAI после сценария — сцена перестроена, рендер не видит «устарел»', async () => {
     const st = store(sessionWithScript());
     const before = st.row.generationPrompt;
-    await writeWithGreetingRestamp(st.sessions as any, 's1', (fresh) => ({
-      greetingBriefSnapshot: {
-        ...fresh.greetingBriefSnapshot!,
-        presetVoiceId: 'eve',
-      },
-    }));
+    await writeWithGreetingRestamp(
+      st.sessions as any,
+      's1',
+      (fresh) => ({
+        greetingBriefSnapshot: {
+          ...fresh.greetingBriefSnapshot!,
+          presetVoiceId: 'eve',
+        },
+      }),
+      st.db,
+    );
     const after = st.row.generationPrompt;
     expect(greetingScriptStale(after, st.row)).toBe(false);
     expect(after.finalText).toContain('<AUDIO_0>');
@@ -129,12 +149,17 @@ describe('writeWithGreetingRestamp — смена голоса после сце
 
   it('клон отправителя — отпечаток обновлён', async () => {
     const st = store(sessionWithScript());
-    await writeWithGreetingRestamp(st.sessions as any, 's1', (fresh) => ({
-      greetingBriefSnapshot: {
-        ...fresh.greetingBriefSnapshot!,
-        senderVoice: { userVoiceId: 'uv', resembleVoiceId: 'rv', label: 'я' },
-      },
-    }));
+    await writeWithGreetingRestamp(
+      st.sessions as any,
+      's1',
+      (fresh) => ({
+        greetingBriefSnapshot: {
+          ...fresh.greetingBriefSnapshot!,
+          senderVoice: { userVoiceId: 'uv', resembleVoiceId: 'rv', label: 'я' },
+        },
+      }),
+      st.db,
+    );
     expect(greetingScriptStale(st.row.generationPrompt, st.row)).toBe(false);
   });
 
@@ -143,12 +168,17 @@ describe('writeWithGreetingRestamp — смена голоса после сце
     s.greetingReferenceImages = [{ ...PHOTO, id: 'другое', label: 'торт' }];
     const st = store(s);
     const before = st.row.generationPrompt;
-    await writeWithGreetingRestamp(st.sessions as any, 's1', (fresh) => ({
-      greetingBriefSnapshot: {
-        ...fresh.greetingBriefSnapshot!,
-        presetVoiceId: 'eve',
-      },
-    }));
+    await writeWithGreetingRestamp(
+      st.sessions as any,
+      's1',
+      (fresh) => ({
+        greetingBriefSnapshot: {
+          ...fresh.greetingBriefSnapshot!,
+          presetVoiceId: 'eve',
+        },
+      }),
+      st.db,
+    );
     expect(st.row.generationPrompt).toBe(before);
     expect(greetingScriptStale(st.row.generationPrompt, st.row)).toBe(true);
   });
@@ -215,5 +245,64 @@ describe('writeWithGreetingRestamp — смена голоса после сце
     expect(err.getResponse().code).toBe('GREETING_CHANGE_DURING_RENDER');
     expect(st.sessions.updateSession).not.toHaveBeenCalled();
     expect(st.sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+  });
+
+  describe('C2: снимок пишется точечно и не затирает правки мимо замка', () => {
+    const preset = (fresh: any) => ({
+      greetingBriefSnapshot: {
+        ...fresh.greetingBriefSnapshot!,
+        presetVoiceId: 'eve',
+      },
+    });
+
+    it('пишутся только изменённые ключи снимка, сценарий — той же записью', async () => {
+      const st = store(sessionWithScript());
+      await writeWithGreetingRestamp(st.sessions as any, 's1', preset, st.db);
+      expect(st.db.applied).toHaveLength(1);
+      expect(st.db.applied[0].set).toEqual({ presetVoiceId: 'eve' });
+      expect(st.db.applied[0].remove).toEqual([]);
+      expect(Object.keys(st.db.applied[0].data)).toEqual(['generationPrompt']);
+    });
+
+    it('наклейку выбрали между чтением и записью — она остаётся, голос и перештамповка ложатся поверх', async () => {
+      const sticker = { id: 'st_1', url: 'u', pathname: 'p' };
+      const st = store(sessionWithScript(), (n, set) => {
+        if (n === 1) set({ sticker });
+      });
+      await writeWithGreetingRestamp(st.sessions as any, 's1', preset, st.db);
+      expect(st.db.writes).toHaveLength(2);
+      expect(st.row.greetingBriefSnapshot).toEqual(
+        expect.objectContaining({ sticker, presetVoiceId: 'eve' }),
+      );
+      expect(greetingScriptStale(st.row.generationPrompt, st.row)).toBe(false);
+      expect(st.sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+    });
+
+    it('снимок меняют под руками три раза подряд — 409 GREETING_EDIT_IN_PROGRESS, замок снят', async () => {
+      let i = 0;
+      const st = store(sessionWithScript(), (_n, set) => {
+        set({ sceneCount: ++i });
+      });
+      const err = await writeWithGreetingRestamp(
+        st.sessions as any,
+        's1',
+        preset,
+        st.db,
+      ).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse().code).toBe('GREETING_EDIT_IN_PROGRESS');
+      expect(st.db.writes).toHaveLength(3);
+      expect(st.db.applied).toHaveLength(0);
+      expect(st.row.greetingBriefSnapshot.presetVoiceId).toBeNull();
+      expect(st.sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+    });
+
+    it('правка снимка без db — ошибка программиста, а не тихая запись целиком', async () => {
+      const st = store(sessionWithScript());
+      await expect(
+        writeWithGreetingRestamp(st.sessions as any, 's1', preset),
+      ).rejects.toThrow('требует db');
+      expect(st.sessions.updateSession).not.toHaveBeenCalled();
+    });
   });
 });

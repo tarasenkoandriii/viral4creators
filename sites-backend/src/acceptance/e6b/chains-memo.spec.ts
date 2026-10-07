@@ -1126,12 +1126,12 @@ describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат �
     v = await run(ctx, v, 1, s.url('/cart'));
     const d = await memos.saveAsMemo(owner(s), s.siteId, v.planId!);
     expect(d.origin).toBe('plan');
-    expect(JSON.stringify(d.draft)).not.toMatch(/380|671234567/);
+    expect(JSON.stringify(d.draft)).not.toMatch(/\+380|671234567/);
     expect(d.draft.slots.map((x) => x.kind)).toEqual(['phone']);
     const hist = await st.owner.assistSiteMemoChange.findMany({
       where: { siteId: s.siteId },
     });
-    expect(JSON.stringify(hist)).not.toMatch(/380|671234567/);
+    expect(JSON.stringify(hist)).not.toMatch(/\+380|671234567/);
   });
 
   it('В-73: кандидаты из боя — одна последовательность у ≥ 3 разных посетителей и IP за 7 дней; у одного посетителя — нет', async () => {

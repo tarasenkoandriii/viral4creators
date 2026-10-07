@@ -392,9 +392,16 @@ export interface PolicyInput {
     occasions?: readonly GreetingOccasion[] | null;
   } | null;
   sceneCount?: number | null;
+  /** Выбранная обстановка ролика (фича №36, §3.9) — `sceneSetting` снимка. */
+  sceneSetting?: string | null;
 }
 
-export type PolicyField = 'tone' | 'sticker' | 'music' | 'sceneCount';
+export type PolicyField =
+  | 'tone'
+  | 'sticker'
+  | 'music'
+  | 'sceneCount'
+  | 'sceneSetting';
 
 export interface PolicyViolation {
   field: PolicyField;
@@ -484,7 +491,158 @@ export function evaluateGreetingPolicy(input: PolicyInput): PolicyVerdict {
       message: `Для ${who} — не больше ${policy.maxScenes} ${policy.maxScenes === 1 ? 'сцены' : 'сцен'}.`,
     });
   }
+  // §3.9 (фича №36): обстановку предлагает модель, но путь от клиента
+  // открыт, а промпт вариантов просит «без шаров» лишь словами. Вне
+  // праздника праздничная обстановка — отказ, как наклейка.
+  const festiveWord = policy.festive
+    ? null
+    : festiveSettingMarker(input.sceneSetting);
+  if (festiveWord) {
+    violations.push({
+      field: 'sceneSetting',
+      code: 'setting-not-allowed',
+      message: `Обстановка с праздничной атрибутикой («${festiveWord}») не подходит для ${who}. Выберите спокойную или оставьте обстановку повода.`,
+    });
+  }
   return { ok: violations.length === 0, register, violations };
+}
+
+/**
+ * Праздничная атрибутика в описании обстановки (§3.9) — ВТОРАЯ линия.
+ * Первая — белый список: принимаются только варианты, которые выдал сам
+ * сервер (`POST …/settings`, отфильтрованные этой же проверкой). Словарь
+ * ловит то, что пришло мимо списка: подписи фото, старые снимки.
+ *
+ * Перед сверкой текст нормализуется (`policyText`): NFKC (полноширинные
+ * буквы), без невидимых символов (zero-width, мягкий перенос) и с
+ * кириллическими двойниками латиницы, заменёнными на латиницу, — иначе
+ * «bаlloons» с кириллической «а» проходил бы. Сверяются ОБА вида:
+ * исходный (для русских и украинских слов) и сложенный (для латиницы).
+ *
+ * Отрицание перед предметом в той же части фразы («no balloons»,
+ * «non-festive», «без шаров», «непраздничная») — не праздник; «celebration
+ * of life» — обычные слова памяти, не праздник.
+ */
+const FESTIVE_SETTING_MARKERS: readonly RegExp[] = [
+  /balloons?/giu,
+  /confetti/giu,
+  /\b(?:cakes?|cupcakes?)\b/giu,
+  /\bfrosted\b/giu,
+  /\bpart(?:y|ies)\b/giu,
+  /\bfestive\b|\bfestivit\w*/giu,
+  /\bcelebrat\w*|\bcelebra\w*/giu,
+  /\bbirthday\b/giu,
+  /\b(?:party |birthday |holiday )?decorations?\b|\bdecor\b/giu,
+  /\bgarlands?\b|\bbunting\b|\btinsel\b|\bglitter\b/giu,
+  /christmas|\bxmas\b|new year|\bornaments?\b/giu,
+  /fireworks?|sparklers?|streamers?|\bpoppers?\b/giu,
+  /\bgifts?\b|gift box\w*|wrapped presents/giu,
+  /champagne|\bdisco\b|\bgala\b|\bjubilant\b/giu,
+  /pi[ñn]atas?/giu,
+  // ru / uk
+  /воздушн\S* шар|шарик|повітрян\S* кульк|(?<!\p{L})кульк[аи]/giu,
+  /конфет(?:ти|і)/giu,
+  /(?<!\p{L})торт/giu,
+  /праздн|святков|(?<!\p{L})свято(?!\p{L})/giu,
+  /день рождени|день народженн|новогод|новорічн/giu,
+  /гирлянд|гірлянд|серпантин|хлопушк|колпак/giu,
+  /вечеринк|вечірк|тусовк/giu,
+  /фейерверк|феєрверк|салют/giu,
+  /подар/giu,
+  // de / es
+  /luftballon|konfetti|torte|geschenk|feuerwerk|geburtstag|festlich|weihnacht|\bsekt\b|girlande/giu,
+  /\bglobos?\b|confeti|\btarta\b|\bregalos?\b|fuegos artificiales|\bfiesta\b|cumplea[ñn]os|festiv[ao]|navidad|guirnalda/giu,
+];
+
+/** Кириллические двойники латинских букв. */
+const HOMOGLYPHS: Readonly<Record<string, string>> = {
+  а: 'a',
+  в: 'b',
+  е: 'e',
+  ё: 'e',
+  к: 'k',
+  м: 'm',
+  н: 'h',
+  о: 'o',
+  р: 'p',
+  с: 'c',
+  т: 't',
+  у: 'y',
+  х: 'x',
+  і: 'i',
+  ї: 'i',
+  ј: 'j',
+  ѕ: 's',
+  ԁ: 'd',
+  ԛ: 'q',
+  ԝ: 'w',
+};
+
+/** NFKC, без невидимых символов, нижний регистр — общий вид для сверки. */
+export function policyText(text: string | null | undefined): string {
+  return (text ?? '')
+    .normalize('NFKC')
+    .replace(/[\p{Cf}\u200B-\u200D\u2060\uFEFF\u00AD]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function foldHomoglyphs(text: string): string {
+  // Складываем только слова, где кириллица смешана с латиницей: чисто
+  // русское слово остаётся русским (его ловят русские маркеры).
+  return text.replace(/[\p{L}]+/gu, (word) =>
+    /[a-z]/.test(word) && /[Ѐ-ӿԀ-ԯ]/.test(word)
+      ? [...word].map((ch) => HOMOGLYPHS[ch] ?? ch).join('')
+      : word,
+  );
+}
+
+/** «Слова памяти», где праздничный корень праздником не является. */
+const NOT_FESTIVE_PHRASES =
+  /celebrat\w* (?:of |his |her |their |a )*(?:life|lives|memory)|(?:life|memory) celebration/giu;
+
+/** Отрицание в той же части фразы перед предметом. */
+const NEGATION =
+  /(?<!\p{L})(?:no|not|non|never|without|free of|zero|без|не|ні|нет|ohne|kein\w*|nicht|sin|ni|sans)(?!\p{L})/iu;
+/** Отрицание, приклеенное к слову: «non-festive», «непраздничный». */
+const ATTACHED_NEGATION = /(?:non-?|un|не|ні|anti-?)$/iu;
+
+function negated(text: string, at: number): boolean {
+  if (ATTACHED_NEGATION.test(text.slice(Math.max(0, at - 5), at))) {
+    return true;
+  }
+  const clauseStart =
+    Math.max(
+      text.lastIndexOf(',', at),
+      text.lastIndexOf(';', at),
+      text.lastIndexOf('.', at),
+      text.lastIndexOf(':', at),
+      text.lastIndexOf('!', at),
+      text.lastIndexOf('?', at),
+      text.lastIndexOf(' but ', at),
+      text.lastIndexOf(' но ', at),
+      text.lastIndexOf(' але ', at),
+    ) + 1;
+  return NEGATION.test(text.slice(clauseStart, at));
+}
+
+/** Совпавший праздничный предмет — для честного объяснения на экране. */
+export function festiveSettingMarker(
+  text: string | null | undefined,
+): string | null {
+  const base = policyText(text).replace(NOT_FESTIVE_PHRASES, ' ');
+  if (!base) return null;
+  for (const form of [base, foldHomoglyphs(base)]) {
+    for (const re of FESTIVE_SETTING_MARKERS) {
+      re.lastIndex = 0;
+      for (let m = re.exec(form); m; m = re.exec(form)) {
+        if (!negated(form, m.index)) return m[0];
+        if (m[0].length === 0) re.lastIndex++;
+      }
+    }
+  }
+  return null;
 }
 
 /** Текст отказа одной строкой — для `BadRequestException`. */

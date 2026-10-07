@@ -227,6 +227,37 @@ export async function suggestGreetingSceneSettings(
   );
 }
 
+/**
+ * Выбранная обстановка ролика (§3.9 ТЗ Greeting 2.0): та же строка идёт в
+ * промпт кадра и в видео-промпт. `null` — сцена повода.
+ */
+export async function getGreetingSceneSetting(
+  sessionId: string
+): Promise<string | null> {
+  const res = unwrap(
+    await api.get<{ sceneSetting: string | null }>(
+      `/sessions/${sessionId}/greeting-references/setting`
+    ),
+    'greeting-scene-setting'
+  );
+  return res.sceneSetting ?? null;
+}
+
+/** Выбрать обстановку без кадра (бесплатно) или вернуть сцену повода (`null`). */
+export async function setGreetingSceneSetting(
+  sessionId: string,
+  setting: string | null
+): Promise<string | null> {
+  const res = unwrap(
+    await api.putJson<{ sceneSetting: string | null }>(
+      `/sessions/${sessionId}/greeting-references/setting`,
+      { setting }
+    ),
+    'greeting-scene-setting'
+  );
+  return res.sceneSetting ?? null;
+}
+
 /** PNG/JPEG ≤10 MB → presigned PUT → confirm with label/description. */
 export async function uploadGreetingReference(
   sessionId: string,

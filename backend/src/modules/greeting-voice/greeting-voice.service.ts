@@ -397,26 +397,31 @@ export class GreetingVoiceService {
     change: (current: GreetingBriefSnapshot) => GreetingBriefSnapshot,
   ): Promise<GreetingVoiceView> {
     let snapshot!: GreetingBriefSnapshot;
-    await writeWithGreetingRestamp(this.sessions, sessionId, (session) => {
-      const draft = change(session.greetingBriefSnapshot!);
-      // Этап G (§4.7): признак персоны пересчитывается при каждой смене
-      // голоса — выбрали клон персоны — ролик с персоной; сняли — признак
-      // остаётся, только если персона есть в кадре или в бренд-буке.
-      // После готового ролика признак не снимается (CONTRACT5 п.5б).
-      snapshot = {
-        ...draft,
-        usesPersona: nextUsesPersona(
-          draft.usesPersona,
-          snapshotUsesPersona({
-            presenter: draft.presenter ?? null,
-            manifestKind: session.brandManifestSnapshot?.kind ?? null,
-            senderVoice: draft.senderVoice ?? null,
-          }),
-          session.generatedVideo,
-        ),
-      };
-      return { greetingBriefSnapshot: snapshot };
-    });
+    await writeWithGreetingRestamp(
+      this.sessions,
+      sessionId,
+      (session) => {
+        const draft = change(session.greetingBriefSnapshot!);
+        // Этап G (§4.7): признак персоны пересчитывается при каждой смене
+        // голоса — выбрали клон персоны — ролик с персоной; сняли — признак
+        // остаётся, только если персона есть в кадре или в бренд-буке.
+        // После готового ролика признак не снимается (CONTRACT5 п.5б).
+        snapshot = {
+          ...draft,
+          usesPersona: nextUsesPersona(
+            draft.usesPersona,
+            snapshotUsesPersona({
+              presenter: draft.presenter ?? null,
+              manifestKind: session.brandManifestSnapshot?.kind ?? null,
+              senderVoice: draft.senderVoice ?? null,
+            }),
+            session.generatedVideo,
+          ),
+        };
+        return { greetingBriefSnapshot: snapshot };
+      },
+      this.prisma,
+    );
     return toView(snapshot);
   }
 

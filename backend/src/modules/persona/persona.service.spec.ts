@@ -1,4 +1,8 @@
-import { PersonaService, PERSONA_RETENTION_BATCH } from './persona.service';
+import {
+  PersonaService,
+  PERSONA_AGE_CLEARS_KEPT,
+  PERSONA_RETENTION_BATCH,
+} from './persona.service';
 import { PERSONA_CONSENT_VERSION } from './persona-consent';
 import {
   BASE_LOOK_GENERATOR_MISSING,
@@ -49,6 +53,12 @@ function build(opts: {
 }) {
   let row: Row | null = opts.row === undefined ? persona() : opts.row;
   const prisma = {
+    // Карточка оператора (В-4): есть ли такой пользователь.
+    user: {
+      findUnique: jest.fn(
+        async (_args?: unknown) => ({ id: 'u1' }) as Row | null,
+      ),
+    },
     persona: {
       findUnique: jest.fn(async () => row),
       findUniqueOrThrow: jest.fn(async () => row),
@@ -1070,5 +1080,264 @@ describe('Аудит проверки: голос, гонка verify/delete, к�
     await h.service.verify('u1');
     expect(h.row!.sourcesPurgedAt).toBeInstanceOf(Date);
     expect(h.row!.livenessCheckedAt).toBeNull();
+  });
+});
+
+describe('Оператор снимает отметку «младше 18» (В-4, заход 8)', () => {
+  const dto = {
+    consent: true as const,
+    consentTextVersion: PERSONA_CONSENT_VERSION,
+  };
+  const REASON = 'Апелляция #42: возраст подтверждён в поддержке';
+
+  async function tombstoned() {
+    const h = build({
+      modelText: JSON.stringify({ ...GOOD, ageMin: 15, ageMax: 19 }),
+    });
+    await h.service.verify('u1');
+    expect(h.row!.revokedAt).toBeInstanceOf(Date);
+    return h;
+  }
+
+  it('состояние: отметка, когда и почему; без оценки возраста (§4.4)', async () => {
+    const h = await tombstoned();
+    const s = await h.service.ageMarkState('u1');
+    const checkedAt = (h.row!.verifyResult as { checkedAt: string }).checkedAt;
+    expect(s.persona).toMatchObject({
+      id: 'p1',
+      under18: true,
+      markedAt: checkedAt,
+      refusals: ['under-18'],
+      verified: false,
+      deletePending: false,
+      filesPending: false,
+    });
+    expect(s.personaEnabled).toBe(true);
+    expect(s.clears).toEqual([]);
+    expect(JSON.stringify(s)).not.toMatch(/ageMin|ageMax|ageEstimatedAt/);
+  });
+
+  it('состояние: персоны нет — persona: null; пользователя нет — 404 USER_NOT_FOUND', async () => {
+    const h = build({ row: null });
+    expect(await h.service.ageMarkState('u1')).toEqual({
+      userId: 'u1',
+      personaEnabled: true,
+      persona: null,
+      clears: [],
+    });
+    h.prisma.user.findUnique.mockResolvedValueOnce(null);
+    await expect(h.service.ageMarkState('nope')).rejects.toMatchObject({
+      status: 404,
+      response: { code: 'USER_NOT_FOUND' },
+    });
+  });
+
+  it('снятие: строка — обычная незавершённая попытка, журнал (кто, когда, почему, что снято), без проверки', async () => {
+    const h = await tombstoned();
+    const markedAt = (h.row!.verifyResult as { checkedAt: string }).checkedAt;
+    const s = await h.service.clearAgeMark('u1', 'op1', `  ${REASON}  `);
+    expect(h.row!.revokedAt).toBeNull();
+    expect(h.row!.livenessCheckedAt).toBeNull();
+    expect(h.row!.ageMin).toBeNull();
+    expect(h.row!.ageMax).toBeNull();
+    expect(h.row!.ageEstimatedAt).toBeNull();
+    expect(h.row!.sourcesPurgedAt).toBeNull();
+    expect(s.persona).toMatchObject({ under18: false, verified: false });
+    expect(s.clears).toEqual([
+      {
+        at: expect.any(String),
+        by: 'op1',
+        reason: REASON,
+        markedAt,
+        refusals: ['under-18'],
+      },
+    ]);
+    // Персоны для режима нет: ни образов, ни лица.
+    const me = await h.service.me('u1');
+    expect(me.persona?.verified).toBe(false);
+    expect(me.persona?.refusals).toBeNull();
+  });
+
+  it('после снятия — новая попытка: POST /personas не 403, журнал переживает и попытку, и проверку', async () => {
+    const h = await tombstoned();
+    await h.service.clearAgeMark('u1', 'op1', REASON);
+    h.row!.selfiePathname = 'users/u1/personas/p1/selfie-2.jpg';
+    h.row!.livenessPathname = 'users/u1/personas/p1/liveness-2.webm';
+    const created = await h.service.create('u1', dto);
+    expect(created.personaId).toBe('p1');
+    expect(
+      (h.row!.verifyResult as { ageClears: unknown[] }).ageClears,
+    ).toHaveLength(1);
+    h.generateContent.mockResolvedValue({ text: JSON.stringify(GOOD) });
+    const r = await h.service.verify('u1');
+    expect(r.status).toBe('ok');
+    const stored = h.row!.verifyResult as {
+      status: string;
+      ageClears: Array<{ by: string }>;
+    };
+    expect(stored.status).toBe('ok');
+    expect(stored.ageClears.map((c) => c.by)).toEqual(['op1']);
+  });
+
+  it('снятие не выдаёт «взрослость»: оценка младше 18 при новой проверке ставит отметку снова', async () => {
+    const h = await tombstoned();
+    await h.service.clearAgeMark('u1', 'op1', REASON);
+    await h.service.create('u1', dto);
+    h.row!.selfiePathname = 'users/u1/personas/p1/selfie-2.jpg';
+    h.row!.livenessPathname = 'users/u1/personas/p1/liveness-2.webm';
+    const r = await h.service.verify('u1');
+    expect(r.reasons).toEqual(['under-18']);
+    const s = await h.service.ageMarkState('u1');
+    expect(s.persona?.under18).toBe(true);
+    expect(s.clears).toHaveLength(1);
+  });
+
+  it('снятие не обходит рубильник: при PERSONA_ENABLED=false создание и проверка — 404 PERSONA_DISABLED', async () => {
+    const h = await tombstoned();
+    process.env.PERSONA_ENABLED = 'false';
+    const s = await h.service.clearAgeMark('u1', 'op1', REASON);
+    expect(s.personaEnabled).toBe(false);
+    for (const call of [
+      () => h.service.create('u1', dto),
+      () => h.service.verify('u1'),
+    ]) {
+      await expect(call()).rejects.toMatchObject({
+        response: { code: 'PERSONA_DISABLED' },
+      });
+    }
+    expect(h.row!.livenessCheckedAt).toBeNull();
+  });
+
+  it('отметки нет — 409 PERSONA_NOT_UNDER_18; персоны нет — 404; ничего не записано', async () => {
+    const plain = build({
+      row: persona({
+        verifyResult: { status: 'refused', refusals: ['poor-quality'] },
+      }),
+    });
+    await expect(
+      plain.service.clearAgeMark('u1', 'op1', REASON),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'PERSONA_NOT_UNDER_18' },
+    });
+    expect(plain.prisma.persona.updateMany).not.toHaveBeenCalled();
+    expect(plain.blob.deleteMany).not.toHaveBeenCalled();
+    const none = build({ row: null });
+    await expect(
+      none.service.clearAgeMark('u1', 'op1', REASON),
+    ).rejects.toMatchObject({
+      status: 404,
+      response: { code: 'PERSONA_NOT_FOUND' },
+    });
+  });
+
+  it('причина короче 3 после обрезки или длиннее 500 — 400, ничего не тронуто', async () => {
+    const h = await tombstoned();
+    h.prisma.persona.findUnique.mockClear();
+    for (const reason of ['  ab ', 'x'.repeat(501)]) {
+      await expect(
+        h.service.clearAgeMark('u1', 'op1', reason),
+      ).rejects.toMatchObject({
+        status: 400,
+        response: { code: 'PERSONA_AGE_CLEAR_REASON' },
+      });
+    }
+    expect(h.prisma.persona.findUnique).not.toHaveBeenCalled();
+    expect(h.row!.revokedAt).toBeInstanceOf(Date);
+  });
+
+  it('файлы под отметкой не удалились — 503 PERSONA_FILES_PENDING, отметка остаётся', async () => {
+    const h = build({
+      row: persona({
+        revokedAt: new Date(),
+        verifyResult: { status: 'refused', refusals: ['under-18'] },
+      }),
+    });
+    expect((await h.service.ageMarkState('u1')).persona?.filesPending).toBe(
+      true,
+    );
+    h.blob.deleteMany.mockResolvedValueOnce(1);
+    await expect(
+      h.service.clearAgeMark('u1', 'op1', REASON),
+    ).rejects.toMatchObject({
+      status: 503,
+      response: { code: 'PERSONA_FILES_PENDING' },
+    });
+    expect(h.prisma.persona.updateMany).not.toHaveBeenCalled();
+    expect(h.row!.revokedAt).toBeInstanceOf(Date);
+    // Удалились — снятие проходит, пути обнулены.
+    await h.service.clearAgeMark('u1', 'op1', REASON);
+    expect(h.row!.selfiePathname).toBeNull();
+    expect(h.row!.livenessPathname).toBeNull();
+    expect(h.row!.revokedAt).toBeNull();
+  });
+
+  it('гонка: строка изменилась между чтением и записью — 409 PERSONA_AGE_CHANGED; запись условна по updatedAt', async () => {
+    const h = await tombstoned();
+    const updatedAt = h.row!.updatedAt;
+    h.prisma.persona.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      h.service.clearAgeMark('u1', 'op1', REASON),
+    ).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'PERSONA_AGE_CHANGED' },
+    });
+    const call = h.prisma.persona.updateMany.mock.calls.at(
+      -1,
+    )![0] as unknown as {
+      where: Row;
+    };
+    expect(call.where).toEqual({ id: 'p1', updatedAt });
+  });
+
+  it('строка до CONTRACT5 (отметка без отзыва) — тоже снимается', async () => {
+    const h = build({
+      row: persona({
+        selfiePathname: null,
+        livenessPathname: null,
+        verifyResult: { status: 'refused', reasons: ['under-18'] },
+      }),
+    });
+    await h.service.clearAgeMark('u1', 'op1', REASON);
+    await expect(h.service.create('u1', dto)).resolves.toMatchObject({
+      personaId: 'p1',
+    });
+  });
+
+  it(`журнал держит последние ${PERSONA_AGE_CLEARS_KEPT} снятий, новые сверху; причина не уходит в лог`, async () => {
+    const old = Array.from({ length: PERSONA_AGE_CLEARS_KEPT }, (_, i) => ({
+      at: `2026-01-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`,
+      by: `op${i}`,
+      reason: `r${i}`,
+      markedAt: null,
+      refusals: ['under-18'],
+    }));
+    const h = build({
+      row: persona({
+        selfiePathname: null,
+        livenessPathname: null,
+        revokedAt: new Date(),
+        verifyResult: {
+          status: 'refused',
+          refusals: ['under-18'],
+          ageClears: old,
+        },
+      }),
+    });
+    const warn = jest
+      .spyOn(
+        (h.service as unknown as { logger: { warn: (m: string) => void } })
+          .logger,
+        'warn',
+      )
+      .mockImplementation(() => undefined);
+    const s = await h.service.clearAgeMark('u1', 'opNew', REASON);
+    expect(s.clears).toHaveLength(PERSONA_AGE_CLEARS_KEPT);
+    expect(s.clears[0].by).toBe('opNew');
+    expect(s.clears.at(-1)!.by).toBe('op1');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('operator opNew cleared under-18'),
+    );
+    expect(warn.mock.calls.flat().join(' ')).not.toContain('Апелляция');
   });
 });

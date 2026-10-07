@@ -36,7 +36,7 @@
  * `GREETING_REAL_FRAME_LOCALES` — это решение человека, а не сервера.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sessionData } from '../../common/session.service';
 import {
@@ -192,6 +192,75 @@ export function fixtureVideoStage(
   return started ? 'started' : 'rendering';
 }
 
+/** Все шаги `fixtureVideo` — для разбора `expect` в контроллере. */
+export const FIXTURE_VIDEO_ACTIONS: readonly FixtureVideoAction[] = [
+  'none',
+  'poll',
+  'poll-post',
+  'script-and-render',
+  'render',
+  'new-version-render',
+];
+
+/** Шаги `fixtureVideo`, которые платят (сценарий и/или рендер Grok). */
+export const PAID_FIXTURE_VIDEO_ACTIONS: readonly FixtureVideoAction[] = [
+  'script-and-render',
+  'render',
+  'new-version-render',
+];
+
+/**
+ * `GET …/greeting-frames/fixture-video/state` — состояние ролика фикстуры
+ * ТОЛЬКО ЧТЕНИЕМ базы (заход 8, страница админки «Кадры лендинга
+ * поздравлений»). Провайдера не опрашивает и ничего не двигает: ради
+ * этого `POST` остался единственным, кто двигает состояние, а странице
+ * нужно знать до нажатия, заплатит ли нажатие.
+ */
+export interface FixtureVideoState {
+  /** Заполнено — смотреть нечего: фикстура не настроена или не заведена. */
+  skipped?: string;
+  sessionId?: string;
+  /** Когда заведена текущая (последняя) версия сессии проекта. */
+  sessionCreatedAt?: string;
+  /** Версий сессии у проекта: каждая «переснять» заводит новую. */
+  versions?: number;
+  hasPrompt?: boolean;
+  /** `missing` — ролика ещё нет; остальное — как у `POST` (без `started`). */
+  stage?: 'missing' | NonNullable<FixtureVideoResult['stage']>;
+  video?: {
+    status: string;
+    postStatus: string | null;
+    postError: string | null;
+    error: string | null;
+    downloadUrl: string | null;
+    initiatedAt: string | null;
+    completedAt: string | null;
+    resolution: string | null;
+  };
+  /** Что сделает `POST` без `rerender` и заплатит ли. */
+  next?: { action: FixtureVideoAction; paid: boolean };
+  /** Что сделает `POST {rerender: true}`; `null` — переснимать нечего/рано. */
+  rerender?: { action: FixtureVideoAction; paid: boolean } | null;
+  /**
+   * Сколько стоил последний прогон с рендером — по журналу расходов
+   * (`ai_usage`, все операции той версии сессии: сценарий, рендер,
+   * постобработка). `null` — записей нет (рендера не было или месяц уже
+   * свёрнут): оценку тогда называть без числа.
+   */
+  lastRun?: {
+    sessionId: string;
+    costMicroUsd: number;
+    /** Часть вызовов без ставки в прайсе — сумма занижена. */
+    unpriced: boolean;
+    at: string;
+  } | null;
+}
+
+function isoOrNull(v: unknown): string | null {
+  if (v instanceof Date) return v.toISOString();
+  return typeof v === 'string' && v ? v : null;
+}
+
 @Injectable()
 export class GreetingFramesCaptureService {
   private readonly logger = new Logger(GreetingFramesCaptureService.name);
@@ -269,6 +338,108 @@ export class GreetingFramesCaptureService {
   }
 
   /**
+   * Состояние ролика фикстуры без единого внешнего вызова (см.
+   * `FixtureVideoState`). Та же цель, что у `fixtureVideo`: последняя
+   * сессия проекта `FIXTURE_IDS.greetingDoneProject` фикстурного
+   * пользователя.
+   */
+  async fixtureVideoState(): Promise<FixtureVideoState> {
+    const user = await this.runner.findFixtureUser();
+    if (!user) return { skipped: 'фикстурный вход не настроен' };
+    const rows = (await this.prisma.session.findMany({
+      where: {
+        userId: user.id,
+        projectId: FIXTURE_IDS.greetingDoneProject,
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, createdAt: true, data: true, liveData: true },
+    })) as Array<{
+      id: string;
+      createdAt: Date;
+      data: unknown;
+      liveData: unknown;
+    }>;
+    const row = rows[0];
+    if (!row) {
+      return {
+        skipped:
+          'у проекта под кадр «готовый ролик» нет сессии — заведите фикстуру (seed-fixture-user)',
+      };
+    }
+    const data = sessionData(row);
+    const current = data.generatedVideo as GeneratedVideo | undefined;
+    const base = {
+      hasPrompt: !!data.generationPrompt,
+      videoStatus: current?.status ?? null,
+      postStatus: current?.postStatus ?? null,
+    };
+    const next = fixtureVideoAction(base);
+    const again = fixtureVideoAction({ ...base, rerender: true });
+    const paid = (a: FixtureVideoAction) =>
+      PAID_FIXTURE_VIDEO_ACTIONS.includes(a);
+    return {
+      sessionId: row.id,
+      sessionCreatedAt: row.createdAt.toISOString(),
+      versions: rows.length,
+      hasPrompt: base.hasPrompt,
+      stage: current ? fixtureVideoStage(current, false) : 'missing',
+      ...(current
+        ? {
+            video: {
+              status: String(current.status),
+              postStatus: current.postStatus ?? null,
+              postError: current.postError ?? null,
+              error: current.error?.message ?? null,
+              downloadUrl: current.downloadUrl ?? null,
+              initiatedAt: isoOrNull(current.initiatedAt),
+              completedAt: isoOrNull(current.completedAt),
+              resolution: current.resolution ?? null,
+            },
+          }
+        : {}),
+      next: { action: next, paid: paid(next) },
+      // `rerender` меняет что-то только у готового ролика без идущей
+      // постобработки — иначе тот же шаг, что и без него.
+      rerender: again !== next ? { action: again, paid: paid(again) } : null,
+      lastRun: await this.lastRunCost(rows.map((r) => r.id)),
+    };
+  }
+
+  /** Расход последней версии сессии, в которой был рендер (`generation`). */
+  private async lastRunCost(
+    sessionIds: string[],
+  ): Promise<FixtureVideoState['lastRun']> {
+    if (sessionIds.length === 0) return null;
+    const usage = (await this.prisma.aiUsage.findMany({
+      where: { sessionId: { in: sessionIds } },
+      select: {
+        sessionId: true,
+        operation: true,
+        costMicroUsd: true,
+        unpriced: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    })) as Array<{
+      sessionId: string | null;
+      operation: string;
+      costMicroUsd: number;
+      unpriced: boolean;
+      createdAt: Date;
+    }>;
+    const render = usage.find((u) => u.operation === 'generation');
+    if (!render?.sessionId) return null;
+    const same = usage.filter((u) => u.sessionId === render.sessionId);
+    return {
+      sessionId: render.sessionId,
+      costMicroUsd: same.reduce((sum, u) => sum + u.costMicroUsd, 0),
+      unpriced: same.some((u) => u.unpriced),
+      at: render.createdAt.toISOString(),
+    };
+  }
+
+  /**
    * Довести ролик фикстуры до готового — по шагу за вызов (платно).
    *
    * Цель — строго проект `FIXTURE_IDS.greetingDoneProject` фикстурного
@@ -285,7 +456,18 @@ export class GreetingFramesCaptureService {
    * повода, лимиты фикстуры) — обходного пути мимо них здесь нет.
    */
   async fixtureVideo(
-    options: { rerender?: boolean } = {},
+    options: {
+      rerender?: boolean;
+      /**
+       * Какой шаг ждёт вызывающий (по `fixtureVideoState`). Между его
+       * чтением и этим вызовом рендер мог упасть — и «опросить» стало бы
+       * платным повтором без вопроса (TOCTOU, аудит захода 8). Задан, а
+       * фактический шаг платный и другой — 409
+       * `GREETING_FIXTURE_ACTION_CHANGED`, ничего не делается. Не задан —
+       * как раньше (ручной вызов по документу).
+       */
+      expect?: FixtureVideoAction;
+    } = {},
   ): Promise<FixtureVideoResult> {
     const user = await this.runner.findFixtureUser();
     if (!user) return { skipped: 'фикстурный вход не настроен' };
@@ -318,6 +500,16 @@ export class GreetingFramesCaptureService {
       postStatus: current?.postStatus ?? null,
       rerender: options.rerender === true,
     });
+    if (
+      options.expect !== undefined &&
+      action !== options.expect &&
+      PAID_FIXTURE_VIDEO_ACTIONS.includes(action)
+    ) {
+      throw new ConflictException({
+        code: 'GREETING_FIXTURE_ACTION_CHANGED',
+        message: `Состояние ролика изменилось: сервер выполнил бы платный шаг «${action}» вместо ожидаемого «${options.expect}». Ничего не запущено — обновите состояние и подтвердите платный шаг.`,
+      });
+    }
     this.logger.log(`ролик фикстуры (${row.id}): ${action}`);
 
     let video: GeneratedVideo | undefined = current;

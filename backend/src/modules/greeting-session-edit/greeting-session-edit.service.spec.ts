@@ -33,6 +33,8 @@ import { GenerationStatus } from '../../common/types/generation.types';
 import { ModerationStatus } from '../../common/types/prompt.types';
 import type { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import { GREETING_PROMPT_LOCK_TTL_MS } from '../greeting-prompt/script-inputs';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
+import type { SceneAsset } from '../../common/types/reference.types';
 
 const snap = (over: Partial<GreetingBriefSnapshot> = {}) =>
   ({
@@ -245,7 +247,16 @@ describe('registerWarningFor — мягкое предупреждение §3.7
 
 // ── сервис ─────────────────────────────────────────────────────────────
 
-function build(sessionOver: Record<string, unknown> = {}) {
+function build(
+  sessionOver: Record<string, unknown> = {},
+  opts: {
+    /** «Параллельная» правка снимка мимо замка — наклейка, сцены (C2). */
+    beforeWrite?: (
+      attempt: number,
+      set: (brief: Partial<GreetingBriefSnapshot>) => void,
+    ) => void;
+  } = {},
+) {
   const store = new Map<string, Record<string, unknown>>();
   store.set('s1', {
     sessionId: 's1',
@@ -319,13 +330,28 @@ function build(sessionOver: Record<string, unknown> = {}) {
         `https://blob/${to}`,
     ),
   };
+  const setBrief = (brief: Partial<GreetingBriefSnapshot>) => {
+    const cur = store.get('s1')!;
+    store.set('s1', {
+      ...cur,
+      greetingBriefSnapshot: {
+        ...(cur.greetingBriefSnapshot as GreetingBriefSnapshot),
+        ...brief,
+      },
+    });
+  };
+  const snapshotDb = fakeSnapshotDb(sessions as never, {
+    peek: (id) => store.get(id) as never,
+    beforeWrite: (n) => opts.beforeWrite?.(n, setBrief),
+  });
   const service = new GreetingSessionEditService(
     sessions as never,
     briefs,
     promptService as never,
     blob as never,
+    snapshotDb as never,
   );
-  return { service, store, sessions, prisma, blob };
+  return { service, store, sessions, prisma, blob, snapshotDb };
 }
 
 describe('PATCH /sessions/:id/greeting-brief', () => {
@@ -837,7 +863,10 @@ describe('CONTRACT6 — правка и старт ролика', () => {
     expect(err.getResponse().code).toBe('GREETING_EDIT_AFTER_RENDER_STARTED');
     const s = store.get('s1')!;
     expect(s.greetingBriefSnapshot).toEqual(before.greetingBriefSnapshot);
-    expect(s.generationPrompt).toEqual(before.generationPrompt);
+    // Откат идёт через JSON, как и любая запись в `sessions.data`.
+    expect(s.generationPrompt).toEqual(
+      JSON.parse(JSON.stringify(before.generationPrompt)),
+    );
     expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
   });
 
@@ -889,5 +918,163 @@ describe('CONTRACT6 — перерендер новой версией и сро
     const ttl = sessions.claimWork.mock.calls[0][2];
     expect(ttl).toBe(GREETING_PROMPT_LOCK_TTL_MS);
     expect(ttl).toBeGreaterThanOrEqual(300_000);
+  });
+});
+
+describe('C2 — правка брифа и параллельные правки снимка', () => {
+  it('пишутся только изменённые ключи: число сцен, выбранное в соседней вкладке, остаётся', async () => {
+    const { service, store, snapshotDb } = build(
+      {},
+      { beforeWrite: (n, set) => n === 1 && set({ sceneCount: 3 }) },
+    );
+    const r = await service.updateBrief('s1', {
+      recipientName: 'Аня',
+      tone: 'WARM',
+    });
+    const s = store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot;
+    expect(s.sceneCount).toBe(3);
+    expect(s.recipientName).toBe('Аня');
+    expect(s.tone).toBe('WARM');
+    expect(r.brief.sceneCount).toBe(3);
+    // Первая попытка промахнулась (снимок тронули), вторая — по свежему.
+    expect(snapshotDb.writes).toHaveLength(2);
+    expect(snapshotDb.applied[0].set).not.toHaveProperty('sceneCount');
+    expect(snapshotDb.applied[0].set).not.toHaveProperty('senderName');
+  });
+
+  it('наклейку выбрали, пока шла правка к соболезнованию, — сброс решается по свежему снимку', async () => {
+    const { service, store } = build(
+      {},
+      { beforeWrite: (n, set) => n === 1 && set({ sticker: sticker() }) },
+    );
+    const r = await service.updateBrief('s1', {
+      occasion: 'CONDOLENCE',
+      tone: 'RESPECTFUL',
+    });
+    expect(
+      (store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot).sticker,
+    ).toBeNull();
+    expect(r.resetFields).toContain('sticker');
+  });
+
+  it('снимок меняют под руками три раза подряд — 409 GREETING_EDIT_IN_PROGRESS, бриф проекта не тронут, замок снят', async () => {
+    let i = 0;
+    const { service, store, prisma, sessions, snapshotDb } = build(
+      {},
+      { beforeWrite: (_n, set) => set({ sceneCount: ++i }) },
+    );
+    const err = await service
+      .updateBrief('s1', { recipientName: 'Аня', tone: 'WARM' })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().code).toBe('GREETING_EDIT_IN_PROGRESS');
+    expect(snapshotDb.applied).toHaveLength(0);
+    expect(
+      (store.get('s1')!.greetingBriefSnapshot as GreetingBriefSnapshot)
+        .recipientName,
+    ).toBe('Марина');
+    expect(prisma.greetingBrief.update).not.toHaveBeenCalled();
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'prompt');
+  });
+
+  it('откат после старта ролика возвращает только свои ключи — наклейка и число сцен, выбранные после записи, остаются', async () => {
+    const { service, store, sessions } = build({
+      greetingBriefSnapshot: snap({ sceneCount: 2 }),
+    });
+    const before = store.get('s1')!;
+    const passthrough = async (id: string) => store.get(id);
+    sessions.getSession
+      .mockImplementationOnce(passthrough)
+      .mockImplementationOnce(passthrough)
+      .mockImplementationOnce(async (id: string) => {
+        // Между записью правки и проверкой: наклейка из соседней вкладки
+        // и старт ролика.
+        const cur = store.get(id)!;
+        store.set(id, {
+          ...cur,
+          greetingBriefSnapshot: {
+            ...(cur.greetingBriefSnapshot as GreetingBriefSnapshot),
+            sticker: sticker(),
+            sceneCount: 3,
+          },
+        });
+        return { ...store.get(id), generatedVideo: { status: 'processing' } };
+      });
+    const err = await service
+      .updateBrief('s1', { recipientName: 'Аня', tone: 'WARM' })
+      .catch((e) => e);
+    expect(err.getResponse().code).toBe('GREETING_EDIT_AFTER_RENDER_STARTED');
+    const s = store.get('s1')!;
+    expect(s.greetingBriefSnapshot).toEqual({
+      ...(before.greetingBriefSnapshot as GreetingBriefSnapshot),
+      sticker: sticker(),
+      // Ключ был и до правки, но правка его не меняла — откат не трогает.
+      sceneCount: 3,
+    });
+    // Откат идёт через JSON, как и любая запись в `sessions.data`.
+    expect(s.generationPrompt).toEqual(
+      JSON.parse(JSON.stringify(before.generationPrompt)),
+    );
+  });
+});
+
+describe('аудит захода 8 — подписи фото при смене повода', () => {
+  const photo = (over: Record<string, unknown> = {}) => ({
+    id: 'gr_1',
+    label: 'Праздник с шариками',
+    description: 'торт и гирлянды',
+    photoUrl: 'https://blob/sessions/s1/greeting-refs/gr_1/p.jpg',
+    photoPathname: 'sessions/s1/greeting-refs/gr_1/p.jpg',
+    hasFace: false,
+    ...over,
+  });
+
+  it('к соболезнованию: праздничные подписи сброшены, это названо, сценарий стёрт', async () => {
+    const calm = photo({ id: 'gr_2', label: 'папа', description: 'у окна' });
+    const { service, store } = build({
+      greetingReferenceImages: [photo(), calm],
+    });
+    const r = await service.updateBrief('s1', {
+      occasion: 'CONDOLENCE',
+      tone: 'RESPECTFUL',
+    });
+    expect(r.resetFields).toContain('referenceCaptions');
+    expect(r.promptCleared).toBe(true);
+    const images = store.get('s1')!.greetingReferenceImages as SceneAsset[];
+    expect(images[0]).toEqual(
+      expect.objectContaining({ label: 'Фото', description: null }),
+    );
+    expect(images[1]).toEqual(calm);
+  });
+
+  it('праздник остаётся праздником — подписи не трогаются', async () => {
+    const { service, store } = build({ greetingReferenceImages: [photo()] });
+    const r = await service.updateBrief('s1', { tone: 'WARM' });
+    expect(r.resetFields).not.toContain('referenceCaptions');
+    expect(
+      (store.get('s1')!.greetingReferenceImages as SceneAsset[])[0],
+    ).toEqual(photo());
+  });
+
+  it('новая версия получает уже сброшенные подписи', async () => {
+    const { service, store } = build({
+      greetingReferenceImages: [photo()],
+      generatedVideo: { status: 'complete' },
+    });
+    const r = await service.updateBrief('s1', {
+      occasion: 'CONDOLENCE',
+      tone: 'RESPECTFUL',
+    });
+    expect(r.newVersion).toBe(true);
+    expect(r.resetFields).toContain('referenceCaptions');
+    const images = store.get(r.sessionId)!
+      .greetingReferenceImages as SceneAsset[];
+    expect(images[0]).toEqual(
+      expect.objectContaining({ label: 'Фото', description: null }),
+    );
+    // Готовый ролик со своими подписями — как был.
+    expect(
+      (store.get('s1')!.greetingReferenceImages as SceneAsset[])[0],
+    ).toEqual(photo());
   });
 });

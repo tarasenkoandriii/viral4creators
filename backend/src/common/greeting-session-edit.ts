@@ -20,13 +20,17 @@ import { normalizeSceneCount } from './greeting-scenes';
 import { scriptLanguageOf } from './greeting-language';
 
 /**
- * Что может пропасть при правке: три поля — при смене регистра,
+ * Что может пропасть при правке: четыре поля — при смене регистра,
  * `referenceImages` — фото, не скопировавшееся в новую версию сессии.
  */
 export type ResettableField =
   | 'sticker'
   | 'musicTheme'
   | 'sceneCount'
+  /** Обстановка ролика (§3.9), праздничная для нового регистра. */
+  | 'sceneSetting'
+  /** Подписи фото с праздничной атрибутикой вне праздника (аудит захода 8). */
+  | 'referenceCaptions'
   | 'referenceImages';
 
 /**
@@ -89,6 +93,7 @@ export function reconcileSelections(snapshot: GreetingBriefSnapshot): {
         }
       : null,
     sceneCount: normalizeSceneCount(snapshot.sceneCount ?? 1),
+    sceneSetting: snapshot.sceneSetting ?? null,
   });
   const fields = new Set(verdict.violations.map((v) => v.field));
   const next: GreetingBriefSnapshot = { ...snapshot };
@@ -104,6 +109,10 @@ export function reconcileSelections(snapshot: GreetingBriefSnapshot): {
   if (fields.has('sceneCount')) {
     next.sceneCount = REGISTER_POLICY[verdict.register].maxScenes;
     resetFields.push('sceneCount');
+  }
+  if (fields.has('sceneSetting')) {
+    next.sceneSetting = null;
+    resetFields.push('sceneSetting');
   }
   return { snapshot: next, resetFields };
 }

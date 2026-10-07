@@ -103,6 +103,9 @@ export const ENTRIES = [
   { from: 'backend/src/common/soniox.ts', to: 'soniox.ts' },
   { from: 'backend/src/common/soniox-stt-core.ts', to: 'soniox-stt-core.ts' },
   { from: 'backend/src/common/soniox-stt-core.spec.ts', to: 'soniox-stt-core.spec.ts' },
+  // Уборка своего у Soniox по списку провайдера, по метке продукта (C4 захода 8).
+  { from: 'backend/src/common/soniox-sweep.ts', to: 'soniox-sweep.ts' },
+  { from: 'backend/src/common/soniox-sweep.spec.ts', to: 'soniox-sweep.spec.ts' },
   // Э6-бис (голосовое управление, ТЗ помощника §5-бис.5, аудит 1.2):
   // стоп-лист необратимых действий обучалки — категории `dangerKindsFor`
   // для класса риска клика (`assist-ui-core/action-words.ts`); поведение

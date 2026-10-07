@@ -21,16 +21,22 @@ import { findModerationFlags } from '../../common/text-moderation';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import {
+  GreetingBriefSnapshot,
   GreetingCards,
   GreetingCardsView,
 } from '../../common/types/greeting.types';
 import { MAX_CARD_TEXT_LENGTH } from '../../common/greeting-cards';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { PrismaService } from '../../prisma/prisma.service';
+import { updateGreetingSnapshot } from '../../common/greeting-snapshot-write';
 
 @Injectable()
 export class GreetingCardsService {
-  constructor(private readonly sessions: SessionService) {}
+  constructor(
+    private readonly sessions: SessionService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async get(sessionId: string): Promise<GreetingCardsView> {
     const snapshot = (await this.load(sessionId)).greetingBriefSnapshot!;
@@ -54,14 +60,17 @@ export class GreetingCardsService {
     cards: GreetingCards,
   ): Promise<GreetingCardsView> {
     const session = await this.loadForEdit(sessionId);
-    const snapshot = session.greetingBriefSnapshot!;
-    const next: GreetingCards = {
+    const text = {
       title: clean(cards.title),
       closing: clean(cards.closing),
-      // Этап G (Г-6): стиль карточек пришёл из бренд-бука при старте
-      // сессии и правкой текста не сбрасывается — клиент его не присылает.
-      ...(snapshot.cards?.style ? { style: snapshot.cards.style } : {}),
     };
+    // Этап G (Г-6): стиль карточек пришёл из бренд-бука при старте
+    // сессии и правкой текста не сбрасывается — клиент его не присылает.
+    const withStyle = (snapshot: GreetingBriefSnapshot): GreetingCards => ({
+      ...text,
+      ...(snapshot.cards?.style ? { style: snapshot.cards.style } : {}),
+    });
+    let next = withStyle(session.greetingBriefSnapshot!);
     // Этап B (Г-2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md):
     // карточки вшиваются в сам файл, а модерацию проходил только текст
     // сценария. Тот же фильтр, что у сценария (`common/text-moderation.ts`),
@@ -75,9 +84,17 @@ export class GreetingCardsService {
         `Текст карточки не прошёл автоматическую проверку (${flags.join(', ')}). Измените его.`,
       );
     }
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, cards: next },
-    });
+    // Только ключ `cards` (C2); стиль — из снимка в момент записи, CAS по
+    // `cards`, чтобы не вернуть стиль, который успели поменять.
+    await updateGreetingSnapshot(
+      this.prisma,
+      sessionId,
+      session.greetingBriefSnapshot!,
+      (cur) => {
+        next = withStyle(cur);
+        return { set: { cards: next }, expect: ['cards'] };
+      },
+    );
     return { ...(await this.get(sessionId)), cards: next };
   }
 

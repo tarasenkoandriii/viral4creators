@@ -21,6 +21,18 @@
  * файла и транскрипции стоят в `finally` — при успехе, ошибке и таймауте.
  * Порядок — СНАЧАЛА ФАЙЛ (звук уходит при любом исходе), затем
  * транскрипция; на `409` (ещё обрабатывается) — короткое ожидание и повтор.
+ *
+ * Своего срока хранения у Soniox НЕТ (документация async-API, сверено
+ * 2026-10-07: «Files are not deleted automatically»; лимит — 2000
+ * транскрипций на аккаунт). То, что не удалилось сразу (409 после
+ * ожидания, сеть, 5xx, функция умерла до `finally`), убирает
+ * `sweepStaleSoniox` в суточном кроне `assist-retention`: он берёт у
+ * Soniox список файлов и транскрипций и удаляет СВОИ (метка `v4c-sites`
+ * в `client_reference_id` и имени файла) старше часа — ключ может быть
+ * общим с другими продуктами (C4 захода 8, ТЗ поздравлений 2.0 стр. 1622). Очередь id в базе здесь не годится:
+ * публичный путь работает под ролью `assist_public`, у которой на
+ * `assist_platform_settings` только SELECT, а список у провайдера ловит
+ * и то, что очередь не увидела бы вовсе.
  * Звук у НАС — только `Buffer` в памяти запроса: в базу, Blob и логи он не
  * попадает (шов — спек «запись не хранится у нас»).
  */
@@ -32,6 +44,13 @@ import {
   sonioxTranscriptionBody,
   type SonioxToken,
 } from '../../../shared/soniox-stt-core';
+import {
+  SONIOX_TAG_SITES,
+  sonioxFileName,
+  sonioxReferenceId,
+  sweepOwnStaleSoniox,
+  type SonioxSweepResult,
+} from '../../../shared/soniox-sweep';
 import { VOICE_DEFAULTS } from '../voice-config';
 
 export interface SiteSttRequest {
@@ -129,8 +148,10 @@ export class SiteSonioxStt {
       form.append(
         'file',
         new Blob([new Uint8Array(req.audio)], { type: req.mimeType }),
-        'voice',
+        // Метка сайтов: уборка по списку удаляет только своё.
+        sonioxFileName(SONIOX_TAG_SITES),
       );
+      form.append('client_reference_id', sonioxReferenceId(SONIOX_TAG_SITES));
       const uploaded = await this.call<{ id: string }>(
         key,
         '/files',
@@ -148,12 +169,13 @@ export class SiteSonioxStt {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(
-            sonioxTranscriptionBody(fileId, {
+          body: JSON.stringify({
+            ...sonioxTranscriptionBody(fileId, {
               languageHints: req.languageHints,
               terms: req.terms ?? [],
             }),
-          ),
+            client_reference_id: sonioxReferenceId(SONIOX_TAG_SITES),
+          }),
         },
       );
       transcriptionId = created.id;
@@ -215,7 +237,7 @@ export class SiteSonioxStt {
       if (status !== 409) return;
       if (Date.now() >= graceUntil) {
         this.logger.warn(
-          'Soniox: транскрипция ещё обрабатывается и не удалена — звук удалён, текст задачи останется до срока хранения провайдера',
+          'Soniox: транскрипция ещё обрабатывается и не удалена — звук удалён, текст задачи уберёт крон assist-retention (sweepStaleSoniox)',
         );
         return;
       }
@@ -263,6 +285,25 @@ export class SiteSonioxStt {
   private sleep(ms: number): Promise<void> {
     return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
   }
+}
+
+// ── Уборка оставшегося у Soniox (C4 захода 8) ────────────────────────────
+
+/**
+ * Своё у Soniox старше часа — по списку провайдера и метке сайтов
+ * (`shared/soniox-sweep.ts`); чужое при общем ключе не трогается. Зовёт
+ * крон `assist-retention`. Не бросает; в лог — только числа.
+ */
+export function sweepStaleSoniox(
+  deps: { env?: NodeJS.ProcessEnv; fetch?: typeof fetch; now?: Date } = {},
+): Promise<SonioxSweepResult> {
+  return sweepOwnStaleSoniox({
+    tag: SONIOX_TAG_SITES,
+    key: sonioxApiKey(deps.env ?? process.env),
+    fetch: deps.fetch,
+    now: deps.now,
+    logger: new Logger('SonioxSweep'),
+  });
 }
 
 /** Имя класса ошибки без текста (§6.6). */

@@ -7,12 +7,15 @@
  * Э2 (W3): + ретенция виджета — ChatRetention (assist-site-chat/system):
  * диалоги/лиды по срокам сайта, указатели, токены предпросмотра, кэш,
  * окна лимитов, строки денег, история версий, события и черновики лендинга.
+ * C4 захода 8: + уборка у Soniox файлов и транскрипций старше часа
+ * (`sweepStaleSoniox`) — своего срока хранения у провайдера нет.
  */
 import { Controller, Get, Headers } from '@nestjs/common';
 import { withCronLock } from '../../common/cron-job-lock';
 import { assertCronSecret } from '../../common/cron-secret';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ChatRetention } from '../assist-site-chat/system/chat-retention.service';
+import { sweepStaleSoniox } from '../assist-site-voice/public/soniox-stt.client';
 import { SiteCrawlService } from '../site-crawl/crawl.service';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { SandboxService } from './sandbox.service';
@@ -45,6 +48,7 @@ export class AssistRetentionController {
           new Date(Date.now() - CRAWL_QUEUE_RETENTION_MS),
         ),
         ...(await this.chat.run()),
+        ...(await sweepStaleSoniox()),
       }),
     );
     return r.ran

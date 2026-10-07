@@ -4,6 +4,8 @@
  *   POST   /sessions/:id/greeting-references/confirm     { pathname, label, description? }
  *   POST   /sessions/:id/greeting-references/settings    три варианта сеттинга (фича №36)
  *   POST   /sessions/:id/greeting-references/generate    нарисовать кадр по брифу (фича №6)
+ *   GET    /sessions/:id/greeting-references/setting     выбранная обстановка ролика (§3.9)
+ *   PUT    /sessions/:id/greeting-references/setting     { setting: string | null } — выбрать / сбросить
  *   PATCH  /sessions/:id/greeting-references/:imageId    label / description / faceConsent (Г-8)
  *   DELETE /sessions/:id/greeting-references/:imageId
  *
@@ -19,6 +21,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -34,6 +37,7 @@ import {
   GreetingReferenceConfirmRequestDto,
   GreetingReferenceUpdateRequestDto,
   GreetingReferenceUploadUrlRequestDto,
+  GreetingSceneSettingRequestDto,
 } from './dto/greeting-reference.dto';
 import { GreetingReferenceImageView } from '../../common/types/greeting.types';
 
@@ -116,6 +120,26 @@ export class GreetingReferenceController {
     @Param('sessionId') sessionId: string,
   ): Promise<string[]> {
     return this.service.suggestSettings(sessionId, req.telegramUserId ?? null);
+  }
+
+  /** Выбранная обстановка ролика (§3.9 ТЗ Greeting 2.0). */
+  @Get('setting')
+  getSetting(
+    @Param('sessionId') sessionId: string,
+  ): Promise<{ sceneSetting: string | null }> {
+    return this.service.getSceneSetting(sessionId);
+  }
+
+  /**
+   * Выбрать обстановку без кадра или вернуть сцену повода (`null`).
+   * Бесплатно — без окна частоты, как правка подписи фото.
+   */
+  @Put('setting')
+  setSetting(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: GreetingSceneSettingRequestDto,
+  ): Promise<{ sceneSetting: string | null }> {
+    return this.service.setSceneSetting(sessionId, dto.setting ?? null);
   }
 
   @Post('upload-url')

@@ -381,8 +381,22 @@ export default function CostsPage() {
                     {p.inputPerMTokUsd !== null && (
                       <div>${p.inputPerMTokUsd} / 1M вход</div>
                     )}
+                    {p.audioInputPerMTokUsd != null && (
+                      <div>${p.audioInputPerMTokUsd} / 1M вход: звук</div>
+                    )}
+                    {p.imageInputPerMTokUsd != null && (
+                      <div>${p.imageInputPerMTokUsd} / 1M вход: картинки</div>
+                    )}
+                    {p.videoInputPerMTokUsd != null && (
+                      <div>${p.videoInputPerMTokUsd} / 1M вход: видео</div>
+                    )}
                     {p.cachedInputPerMTokUsd !== null && (
                       <div>${p.cachedInputPerMTokUsd} / 1M вход из кеша</div>
+                    )}
+                    {p.cachedAudioInputPerMTokUsd != null && (
+                      <div>
+                        ${p.cachedAudioInputPerMTokUsd} / 1M звук из кеша
+                      </div>
                     )}
                     {p.outputPerMTokUsd !== null && (
                       <div>${p.outputPerMTokUsd} / 1M выход</div>

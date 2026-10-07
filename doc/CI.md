@@ -1,8 +1,8 @@
 # CI — что проверяется автоматически и почему именно это
 
 `.github/workflows/ci.yml`, появился на этапе 33. До него все проверки
-прогонялись руками на каждом этапе: тогда 442 теста (сейчас 9228), 17
-написанных вручную (сейчас 128)
+прогонялись руками на каждом этапе: тогда 442 теста (сейчас 9896), 17
+написанных вручную (сейчас 130)
 миграций и `sync-legal --check`, специально сделанный «для CI»,
 существовали — но запускал их только человек и только когда вспоминал.
 
@@ -43,7 +43,7 @@ PRISMA_SCHEMA_ENGINE_BINARY=/tmp/se PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
 
 | Джоба | Что делает |
 | --- | --- |
-| `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах |
+| `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах. Jest этой джобы получает `GREETING_SNAPSHOT_PG_URL` = `DATABASE_URL` джобы (заход 8, 07.10.2026): набор `greeting-snapshot-write.pg.spec.ts` — гонка точечной записи снимка поздравления — идёт на настоящем Postgres с накатанными миграциями (строки заводит и удаляет сам, ≈15 с); при `CI=true` без строки базы набор падает, а не пропускается молча; локально без строки — пропускается с причиной в названии |
 | `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 89 unit-скриптов `npx tsx frontend/scripts/*.test.ts`, `vite build` |
 | `sites-landing` | `tsc`, `next lint --max-warnings 0`, unit-скрипты `npx tsx sites-landing/scripts/*.test.ts`, «сборка без `SITE_URL` падает», `next build`, проверка собранного HTML (`check:built`: canonical/hreflang/OG, реестр утверждений, секреты формы не в бандле), бюджет JS первой загрузки ≤ 110 КБ gzip, axe (WCAG 2.2 A/AA, обе темы, 360 px), Lighthouse CI (медиана 5 прогонов, бюджеты ТЗ лендинга §9) |
 | `next-apps` | матрица `admin` / `landing`: `tsc`, `next lint --max-warnings 0` (этап 53), `next build`, затем `npm run budget:js --if-present` — бюджет First Load JS (у `landing`: `scripts/first-load-js.mjs`, gzip 9, потолки по маршрутам; заход 6, 07.10.2026) |

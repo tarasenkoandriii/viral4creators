@@ -100,6 +100,7 @@ import { verifyVoiceTicket } from '../assist-site-voice/public/voice-ticket';
 import { voiceTicketKey } from '../../config/voice-env';
 import { parsePersona, type PersonaConfig } from '../assist-site-setup/persona';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
+import { geminiUsageUnits } from '../../shared/ai-pricing';
 import { MEDIA_DEFAULTS } from '../assist-site-media/media-config';
 import {
   promptVideos,
@@ -930,12 +931,9 @@ export class SiteChatService {
     emitTail();
     const result = outcome.value;
     const usage = result.usageMeta;
-    const units = {
-      inputTokens: usage?.promptTokenCount ?? 0,
-      cachedInputTokens: usage?.cachedContentTokenCount ?? 0,
-      outputTokens:
-        (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
-    };
+    // Разбор по модальностям — один на backend и sites-backend
+    // (shared/ai-pricing, C1 захода 8): без деталей — прежние единицы.
+    const units = geminiUsageUnits(usage);
     const cost =
       units.inputTokens || units.outputTokens
         ? await recordSiteChatUsage(this.usage, insertOnlyUsageDb(this.db), {

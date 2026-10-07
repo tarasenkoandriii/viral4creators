@@ -21,6 +21,7 @@ function build() {
   const greetingFrames = {
     capture: jest.fn().mockResolvedValue({ locales: [] }),
     fixtureVideo: jest.fn().mockResolvedValue({ stage: 'complete' }),
+    fixtureVideoState: jest.fn().mockResolvedValue({ stage: 'missing' }),
   };
   const prisma = {
     uiSnapshot: {
@@ -356,6 +357,25 @@ describe('UiSnapshotAdminController — кадры поздравлений', ()
     ]);
   });
 
+  it('fixture-video: expect — только известный шаг; без поля — как раньше', async () => {
+    const { controller, greetingFrames, req } = build();
+
+    await controller.greetingFixtureVideo(req, { expect: 'poll' });
+    await controller.greetingFixtureVideo(req, {
+      rerender: true,
+      expect: 'new-version-render',
+    });
+    for (const bad of ['rerender-all', 1, null]) {
+      await expect(
+        controller.greetingFixtureVideo(req, { expect: bad }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    expect(greetingFrames.fixtureVideo.mock.calls).toEqual([
+      [{ rerender: false, expect: 'poll' }],
+      [{ rerender: true, expect: 'new-version-render' }],
+    ]);
+  });
+
   it('обе кнопки — только оператору: платный рендер не запускается без проверки', async () => {
     const { controller, greetingFrames, adminPanel, req } = build();
     adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
@@ -368,6 +388,25 @@ describe('UiSnapshotAdminController — кадры поздравлений', ()
     );
     expect(greetingFrames.fixtureVideo).not.toHaveBeenCalled();
     expect(greetingFrames.capture).not.toHaveBeenCalled();
+  });
+});
+
+describe('UiSnapshotAdminController — состояние ролика фикстуры (заход 8)', () => {
+  it('GET state — только оператору и только чтение: платный POST не зовётся', async () => {
+    const { controller, greetingFrames, adminPanel, req } = build();
+
+    expect(await controller.greetingFixtureVideoState(req)).toEqual({
+      stage: 'missing',
+    });
+    expect(adminPanel.assertOperator).toHaveBeenCalledWith('usr_admin');
+    expect(greetingFrames.fixtureVideo).not.toHaveBeenCalled();
+
+    adminPanel.assertOperator.mockRejectedValue(new Error('не оператор'));
+    greetingFrames.fixtureVideoState.mockClear();
+    await expect(controller.greetingFixtureVideoState(req)).rejects.toThrow(
+      'не оператор',
+    );
+    expect(greetingFrames.fixtureVideoState).not.toHaveBeenCalled();
   });
 });
 

@@ -36,13 +36,20 @@ export function getDictionary(locale: Locale): Dictionary {
  * компонентам эти тексты не нужны и после шлюза: секцию и дополнения
  * к «Данным» рисует серверная страница, поэтому вырезаются всегда, а не
  * по константе. Держит `scripts/greeting-sections.test.ts`.
+ *
+ * Тем же приёмом вырезается `compare` — таблица сравнения с категориями
+ * альтернатив (за `COMPARE_SECTION_ENABLED`, `lib/greeting-sections.ts`):
+ * её утверждения о рынке подтверждает владелец, и до включения их не
+ * должно быть в HTML. Рисует её тоже только серверная страница. Держит
+ * `scripts/greeting-compare.test.ts`.
  */
 export type ClientDictionary = Omit<Dictionary, 'greetingsLanding'> & {
-  greetingsLanding: Omit<Dictionary['greetingsLanding'], 'persona'>;
+  greetingsLanding: Omit<Dictionary['greetingsLanding'], 'persona' | 'compare'>;
 };
 
 export function clientDictionary(dict: Dictionary): ClientDictionary {
-  const { persona, ...greetingsLanding } = dict.greetingsLanding;
+  const { persona, compare, ...greetingsLanding } = dict.greetingsLanding;
   void persona;
+  void compare;
   return { ...dict, greetingsLanding };
 }

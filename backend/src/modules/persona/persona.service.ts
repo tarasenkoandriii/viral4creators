@@ -129,6 +129,88 @@ export function isUnder18Tombstone(p: {
   );
 }
 
+// ── Апелляция «младше 18» (В-4): оператор снимает отметку ───────────────
+
+/** Причина снятия отметки — обязательна, в журнал строки (3–500 символов). */
+export const PERSONA_AGE_CLEAR_REASON_MIN = 3;
+export const PERSONA_AGE_CLEAR_REASON_MAX = 500;
+/** Записей журнала снятий в строке персоны — последние N. */
+export const PERSONA_AGE_CLEARS_KEPT = 20;
+
+/** Запись журнала: оператор снял отметку «младше 18». */
+export interface PersonaAgeClear {
+  at: string;
+  /** `userId` оператора — тот же идентификатор, что `actorId` в логах админки. */
+  by: string;
+  reason: string;
+  /** Когда стояла снятая отметка (итог проверки, затем отзыв). */
+  markedAt: string | null;
+  /** Все причины отказа той проверки — `under-18` и, бывает, свет/поворот. */
+  refusals: string[];
+}
+
+/**
+ * `GET /admin/users/:id/persona-age`. Оценки возраста здесь НЕТ
+ * сознательно (§4.4: она только для допуска и показа самому человеку);
+ * апелляция решается вне сервиса, через поддержку, а не по цифре модели.
+ */
+export interface PersonaAgeStateView {
+  userId: string;
+  /** Рубильник `PERSONA_ENABLED`: снятие отметки его не обходит. */
+  personaEnabled: boolean;
+  persona: {
+    id: string;
+    /** Отметка «младше 18» стоит: `POST /personas` отвечает 403. */
+    under18: boolean;
+    /** Когда поставлена: время проверки, иначе время отзыва. */
+    markedAt: string | null;
+    /** Причины последнего отказа проверки (null — отказа нет). */
+    refusals: string[] | null;
+    verified: boolean;
+    /** Отозвана не по возрасту — удаление персоны ещё дочищается. */
+    deletePending: boolean;
+    /** У отметки остались файлы селфи/ролика — хранилище их ещё не приняло. */
+    filesPending: boolean;
+    consentGivenAt: string;
+  } | null;
+  /** Журнал снятий, новые сверху. */
+  clears: PersonaAgeClear[];
+}
+
+/**
+ * Журнал снятий из JSON строки — не доверяя форме. Живёт в
+ * `verifyResult.ageClears` и переносится в каждый новый итог проверки
+ * (`withAgeClears`): новая попытка не должна стирать, кто и почему
+ * открыл её человеку.
+ */
+export function ageClearsOf(verifyResult: unknown): PersonaAgeClear[] {
+  if (!verifyResult || typeof verifyResult !== 'object') return [];
+  const list = (verifyResult as { ageClears?: unknown }).ageClears;
+  if (!Array.isArray(list)) return [];
+  return list.filter(
+    (c): c is PersonaAgeClear =>
+      !!c &&
+      typeof c === 'object' &&
+      typeof (c as PersonaAgeClear).at === 'string' &&
+      typeof (c as PersonaAgeClear).by === 'string' &&
+      typeof (c as PersonaAgeClear).reason === 'string',
+  );
+}
+
+/** Новый итог проверки + журнал снятий прежнего (если он был). */
+export function withAgeClears<T extends object>(
+  next: T,
+  previous: unknown,
+): T & { ageClears?: PersonaAgeClear[] } {
+  const clears = ageClearsOf(previous);
+  return clears.length ? { ...next, ageClears: clears } : next;
+}
+
+/** Есть ли у строки отметка «младше 18» (в том числе без отзыва — строки до CONTRACT5). */
+export function hasUnder18Mark(p: { verifyResult: unknown }): boolean {
+  return refusalsOf(p.verifyResult)?.includes('under-18') ?? false;
+}
+
 @Injectable()
 export class PersonaService {
   private readonly logger = new Logger(PersonaService.name);
@@ -242,7 +324,7 @@ export class PersonaService {
     const existing = await this.prisma.persona.findUnique({
       where: { userId },
     });
-    if (existing && refusalsOf(existing.verifyResult)?.includes('under-18')) {
+    if (existing && hasUnder18Mark(existing)) {
       throw new ForbiddenException({
         code: 'PERSONA_UNDER_18',
         message: PERSONA_UNDER_18_MESSAGE,
@@ -280,8 +362,11 @@ export class PersonaService {
         where: { id: existing.id },
         data: {
           ...consentData,
-          // Прежний отказ (свет, поворот) к новой попытке не относится.
-          verifyResult: Prisma.DbNull,
+          // Прежний отказ (свет, поворот) к новой попытке не относится;
+          // журнал снятий отметки оператором (В-4) — остаётся.
+          verifyResult: ageClearsOf(existing.verifyResult).length
+            ? (withAgeClears({}, existing.verifyResult) as object)
+            : Prisma.DbNull,
           ageMin: null,
           ageMax: null,
           ageEstimatedAt: null,
@@ -379,7 +464,11 @@ export class PersonaService {
     );
     const reasons = personaRefusals(result);
     const now = new Date();
-    const stored = storedResult(result, reasons, now);
+    // Журнал снятий отметки оператором переживает новую проверку (В-4).
+    const stored = withAgeClears(
+      storedResult(result, reasons, now),
+      persona.verifyResult,
+    );
     // Приватность (§4.4): оценка возраста — только в этих колонках, только
     // для допуска к режиму и показа человеку; не в журнал, не в аналитику.
     const age =
@@ -987,6 +1076,142 @@ export class PersonaService {
     }
   }
 
+  // ── Оператор: отметка «младше 18» (В-4, апелляция через поддержку) ────
+
+  /** `GET /admin/users/:id/persona-age` — отметка, когда и почему, журнал снятий. */
+  async ageMarkState(userId: string): Promise<PersonaAgeStateView> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'Пользователь не найден',
+      });
+    }
+    const persona = await this.prisma.persona.findUnique({
+      where: { userId },
+    });
+    const enabled = personaEnabled();
+    if (!persona) {
+      return { userId, personaEnabled: enabled, persona: null, clears: [] };
+    }
+    const under18 = hasUnder18Mark(persona);
+    return {
+      userId,
+      personaEnabled: enabled,
+      persona: {
+        id: persona.id,
+        under18,
+        markedAt: under18 ? markedAtOf(persona) : null,
+        refusals: refusalsOf(persona.verifyResult),
+        verified: persona.livenessCheckedAt !== null,
+        deletePending: persona.revokedAt !== null && !under18,
+        filesPending:
+          under18 && !!(persona.selfiePathname || persona.livenessPathname),
+        consentGivenAt: persona.consentGivenAt.toISOString(),
+      },
+      clears: [...ageClearsOf(persona.verifyResult)].reverse(),
+    };
+  }
+
+  /**
+   * `POST /admin/users/:id/persona-age/clear` — оператор снимает отметку
+   * «младше 18» после апелляции через поддержку (В-4).
+   *
+   * Снятие НЕ делает персону проверенной и НЕ обходит рубильник: строка
+   * становится обычной незавершённой попыткой (без файлов, без оценки
+   * возраста), и человек проходит согласие и автопроверку заново — уже
+   * под `PERSONA_ENABLED` (`create`/`verify` его проверяют). Оценка
+   * возраста модели при новой проверке действует как обычно: оператор
+   * открывает человеку повторную попытку, а не выдаёт «взрослость» в
+   * обход проверки (Т-6; `personaSelfLikenessEligible` всё равно требует
+   * `ageMin ≥ 18`).
+   *
+   * Файлы под отметкой должны быть удалены ДО снятия: иначе строка
+   * перестала бы быть надгробием, и крон хранения её больше не дочищал
+   * бы. Не удалились — 503, отметка остаётся.
+   *
+   * Журнал — `verifyResult.ageClears` (кто, когда, почему, что было
+   * снято) плюс строка в лог `operator … cleared …` без текста причины:
+   * в причине бывают личные данные из переписки поддержки.
+   */
+  async clearAgeMark(
+    userId: string,
+    actorId: string,
+    reasonRaw: string,
+  ): Promise<PersonaAgeStateView> {
+    const reason = typeof reasonRaw === 'string' ? reasonRaw.trim() : '';
+    if (
+      reason.length < PERSONA_AGE_CLEAR_REASON_MIN ||
+      reason.length > PERSONA_AGE_CLEAR_REASON_MAX
+    ) {
+      throw new BadRequestException({
+        code: 'PERSONA_AGE_CLEAR_REASON',
+        message: `Причина — от ${PERSONA_AGE_CLEAR_REASON_MIN} до ${PERSONA_AGE_CLEAR_REASON_MAX} символов`,
+      });
+    }
+    const persona = await this.prisma.persona.findUnique({
+      where: { userId },
+    });
+    if (!persona) {
+      throw new NotFoundException({
+        code: 'PERSONA_NOT_FOUND',
+        message: 'Персона не создана',
+      });
+    }
+    if (!hasUnder18Mark(persona)) {
+      throw new ConflictException({
+        code: 'PERSONA_NOT_UNDER_18',
+        message: 'Отметки «младше 18» у пользователя нет',
+      });
+    }
+    if (!(await this.deleteSourceFiles(persona))) {
+      throw new ServiceUnavailableException({
+        code: 'PERSONA_FILES_PENDING',
+        message:
+          'Файлы прежней проверки ещё не удалены хранилищем — отметка не снята, повторите позже',
+      });
+    }
+    const now = new Date();
+    const entry: PersonaAgeClear = {
+      at: now.toISOString(),
+      by: actorId,
+      reason,
+      markedAt: markedAtOf(persona),
+      refusals: refusalsOf(persona.verifyResult) ?? [],
+    };
+    const clears = [...ageClearsOf(persona.verifyResult), entry].slice(
+      -PERSONA_AGE_CLEARS_KEPT,
+    );
+    // Условно по `updatedAt`: два оператора одновременно (или удаление
+    // персоны между чтением и записью) — снимает один, второй получает 409.
+    const done = await this.prisma.persona.updateMany({
+      where: { id: persona.id, updatedAt: persona.updatedAt },
+      data: {
+        revokedAt: null,
+        verifyResult: { ageClears: clears } as object,
+        ageMin: null,
+        ageMax: null,
+        ageEstimatedAt: null,
+        selfiePathname: null,
+        livenessPathname: null,
+        sourcesPurgedAt: null,
+      },
+    });
+    if (done.count === 0) {
+      throw new ConflictException({
+        code: 'PERSONA_AGE_CHANGED',
+        message: 'Персона изменилась, пока шло снятие, — обновите карточку',
+      });
+    }
+    this.logger.warn(
+      `operator ${actorId} cleared under-18 mark of persona ${persona.id} (user ${userId})`,
+    );
+    return this.ageMarkState(userId);
+  }
+
   // ── Крон хранения (В-3) ───────────────────────────────────────────────
 
   /**
@@ -1222,6 +1447,15 @@ function under18Answer(p: Persona): VerifyPersonaResult {
       ? { ageMin: p.ageMin, ageMax: p.ageMax }
       : {}),
   };
+}
+
+/** Когда поставлена отметка: время проверки из итога, иначе время отзыва. */
+function markedAtOf(p: Persona): string | null {
+  const v = p.verifyResult as { checkedAt?: unknown } | null;
+  if (v && typeof v === 'object' && typeof v.checkedAt === 'string') {
+    return v.checkedAt;
+  }
+  return p.revokedAt?.toISOString() ?? null;
 }
 
 function personaToView(p: Persona): PersonaView {

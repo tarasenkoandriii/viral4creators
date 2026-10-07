@@ -32,6 +32,7 @@ import { BlobService } from '../storage/blob.service';
 import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import {
+  GreetingBriefSnapshot,
   GreetingStickerSelection,
   GreetingStickerView,
 } from '../../common/types/greeting.types';
@@ -51,6 +52,11 @@ import {
 } from '../../common/greeting-policy';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
 import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  GREETING_POLICY_KEYS,
+  updateGreetingSnapshot,
+} from '../../common/greeting-snapshot-write';
 
 const PIXABAY_API = 'https://pixabay.com/api/';
 const TIMEOUT_MS = 10_000;
@@ -72,6 +78,7 @@ export class GreetingStickerService {
   constructor(
     private readonly sessions: SessionService,
     private readonly blob: BlobService,
+    private readonly prisma: PrismaService,
   ) {}
 
   private get apiKey(): string {
@@ -121,18 +128,7 @@ export class GreetingStickerService {
     // проверка ДО поиска и скачивания — отказ не должен стоить запроса к
     // Pixabay. Свободный поиск настроением не ограничить, поэтому у
     // серьёзных регистров наклеек нет совсем, а не «только уместные».
-    if (!REGISTER_POLICY[registerOfBrief(snapshot)].stickers) {
-      throw new BadRequestException(
-        policyMessage(
-          evaluateGreetingPolicy({
-            occasion: snapshot.occasion,
-            occasionRegister: snapshot.occasionRegister ?? null,
-            tone: snapshot.tone,
-            sticker: true,
-          }),
-        ),
-      );
-    }
+    assertStickersAllowed(snapshot);
     if (!this.apiKey) {
       throw new BadRequestException(
         'Поиск наклеек не настроен на этом стенде (PIXABAY_API_KEY)',
@@ -160,8 +156,13 @@ export class GreetingStickerService {
       source: 'pixabay',
       placement: normalizeStickerPlacement(placement),
     };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, sticker: selected },
+    // Только ключ `sticker` (C2): соседняя правка снимка не затирается.
+    // Решение «наклейки разрешены» зависит от повода и тона — запись
+    // применяется, только если их не поменяли, пока шло скачивание, иначе
+    // проверка повторяется по свежему снимку.
+    await updateGreetingSnapshot(this.prisma, sessionId, snapshot, (cur) => {
+      assertStickersAllowed(cur);
+      return { set: { sticker: selected }, expect: GREETING_POLICY_KEYS };
     });
     return { ...(await this.view(sessionId, '')), selected };
   }
@@ -172,27 +173,37 @@ export class GreetingStickerService {
     placement: string,
   ): Promise<GreetingStickerView> {
     const session = await this.loadForEdit(sessionId);
-    const snapshot = session.greetingBriefSnapshot!;
-    if (!snapshot.sticker) {
-      throw new NotFoundException('Наклейка не выбрана');
-    }
-    const selected: GreetingStickerSelection = {
-      ...snapshot.sticker,
-      placement: normalizeStickerPlacement(placement),
-    };
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, sticker: selected },
-    });
+    let selected!: GreetingStickerSelection;
+    // Новое положение собирается из ТЕКУЩЕЙ наклейки: CAS по `sticker` —
+    // если её только что сменили или сняли, решаем заново по свежему
+    // снимку, а не возвращаем прежнюю картинку.
+    await updateGreetingSnapshot(
+      this.prisma,
+      sessionId,
+      session.greetingBriefSnapshot!,
+      (cur) => {
+        if (!cur.sticker) {
+          throw new NotFoundException('Наклейка не выбрана');
+        }
+        selected = {
+          ...cur.sticker,
+          placement: normalizeStickerPlacement(placement),
+        };
+        return { set: { sticker: selected }, expect: ['sticker'] };
+      },
+    );
     return { ...(await this.view(sessionId, '')), selected };
   }
 
   /** Снять наклейку. Файл остаётся до уборки сессии — он уже оплачен трафиком. */
   async clear(sessionId: string): Promise<GreetingStickerView> {
     const session = await this.loadForEdit(sessionId);
-    const snapshot = session.greetingBriefSnapshot!;
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, sticker: null },
-    });
+    await updateGreetingSnapshot(
+      this.prisma,
+      sessionId,
+      session.greetingBriefSnapshot!,
+      () => ({ set: { sticker: null } }),
+    );
     return { ...(await this.view(sessionId, '')), selected: null };
   }
 
@@ -270,4 +281,19 @@ export class GreetingStickerService {
     }
     return session;
   }
+}
+
+/** Этап B: у серьёзных регистров наклеек нет — отказ с текстом политики. */
+function assertStickersAllowed(snapshot: GreetingBriefSnapshot): void {
+  if (REGISTER_POLICY[registerOfBrief(snapshot)].stickers) return;
+  throw new BadRequestException(
+    policyMessage(
+      evaluateGreetingPolicy({
+        occasion: snapshot.occasion,
+        occasionRegister: snapshot.occasionRegister ?? null,
+        tone: snapshot.tone,
+        sticker: true,
+      }),
+    ),
+  );
 }

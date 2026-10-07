@@ -6,11 +6,16 @@ jest.mock('../../config/configuration', () => ({
 }));
 
 import axios from 'axios';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { GreetingStickerService } from './greeting-sticker.service';
 import { loadConfiguration } from '../../config/configuration';
 import type { SessionService } from '../../common/session.service';
 import type { BlobService } from '../storage/blob.service';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 const mockedConfig = loadConfiguration as unknown as jest.Mock;
@@ -23,11 +28,23 @@ const HIT = {
   tags: 'конфетти',
 };
 
-function build(snapshot: Record<string, unknown> | null = {}) {
+function build(
+  snapshot: Record<string, unknown> | null = {},
+  opts: {
+    beforeWrite?: (
+      attempt: number,
+      set: (patch: Record<string, unknown>) => void,
+    ) => void;
+  } = {},
+) {
   let current: Record<string, unknown> | null =
     snapshot === null
       ? null
       : { occasion: 'BIRTHDAY', recipientName: 'Марина', ...snapshot };
+  // «Параллельная» правка снимка из другого запроса — мимо сервиса.
+  const set = (patch: Record<string, unknown>) => {
+    current = { ...current, ...patch };
+  };
   const updateSession = jest
     .fn()
     .mockImplementation((_id: string, patch: Record<string, any>) => {
@@ -48,8 +65,11 @@ function build(snapshot: Record<string, unknown> | null = {}) {
   const svc = new GreetingStickerService(
     sessions as unknown as SessionService,
     { uploadBuffer } as unknown as BlobService,
+    fakeSnapshotDb(sessions, {
+      beforeWrite: (n) => opts.beforeWrite?.(n, set),
+    }) as any,
   );
-  return { svc, updateSession, uploadBuffer };
+  return { svc, updateSession, uploadBuffer, snapshotNow: () => current };
 }
 
 function searchOk(hits: unknown[] = [HIT]) {
@@ -202,5 +222,82 @@ describe('GreetingStickerService (фича №8)', () => {
   it('не поздравительная сессия — 404', async () => {
     const { svc } = build(null);
     await expect(svc.view('s1', '')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  describe('C2: запись снимка не теряет соседние правки', () => {
+    const STICKER = {
+      id: 'st_1',
+      url: 'https://blob.test/a.png',
+      pathname: 'sessions/s1/stickers/st_1.png',
+      sourceUrl: 'https://pixabay.com/x',
+      source: 'pixabay',
+      placement: 'bottom-right',
+    };
+
+    it('пишется только ключ sticker — число сцен, выбранное параллельно, остаётся', async () => {
+      searchOk();
+      const { svc, snapshotNow } = build(
+        {},
+        {
+          // Пока наклейка скачивалась, соседний запрос выбрал три сцены.
+          beforeWrite: (n, set) => n === 1 && set({ sceneCount: 3 }),
+        },
+      );
+      await svc.select('s1', 'конфетти', '101', null);
+      expect(snapshotNow()).toEqual(
+        expect.objectContaining({
+          sceneCount: 3,
+          sticker: expect.objectContaining({ source: 'pixabay' }),
+        }),
+      );
+    });
+
+    it('повод стал траурным, пока шло скачивание, — запись не ложится, отказ по свежему снимку', async () => {
+      searchOk();
+      const { svc, snapshotNow } = build(
+        {},
+        { beforeWrite: (n, set) => n === 1 && set({ occasion: 'CONDOLENCE' }) },
+      );
+      await expect(
+        svc.select('s1', 'конфетти', '101', null),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(snapshotNow()?.sticker).toBeUndefined();
+    });
+
+    it('сдвиг наклейки, которую только что сменили, двигает НОВУЮ, а не возвращает старую', async () => {
+      const replaced = {
+        ...STICKER,
+        id: 'st_2',
+        url: 'https://blob.test/b.png',
+      };
+      const { svc, snapshotNow } = build(
+        { sticker: STICKER },
+        { beforeWrite: (n, set) => n === 1 && set({ sticker: replaced }) },
+      );
+      const view = await svc.move('s1', 'center');
+      expect(view.selected).toEqual({ ...replaced, placement: 'center' });
+      expect(snapshotNow()?.sticker).toEqual({
+        ...replaced,
+        placement: 'center',
+      });
+    });
+
+    it('снимок меняют под руками три раза подряд — 409 GREETING_EDIT_IN_PROGRESS', async () => {
+      let i = 0;
+      const { svc, updateSession } = build(
+        { sticker: STICKER },
+        {
+          beforeWrite: (_n, set) =>
+            set({ sticker: { ...STICKER, id: `st_x${++i}` } }),
+        },
+      );
+      const err = await svc.move('s1', 'center').catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toEqual(
+        expect.objectContaining({ code: 'GREETING_EDIT_IN_PROGRESS' }),
+      );
+      expect(i).toBe(3);
+      expect(updateSession).not.toHaveBeenCalled();
+    });
   });
 });

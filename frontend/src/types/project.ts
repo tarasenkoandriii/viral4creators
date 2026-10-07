@@ -238,6 +238,10 @@ export type GreetingResetField =
   | 'sticker'
   | 'musicTheme'
   | 'sceneCount'
+  /** Праздничная обстановка ролика вне праздника (§3.9). */
+  | 'sceneSetting'
+  /** Подписи фото с праздничной атрибутикой вне праздника. */
+  | 'referenceCaptions'
   /** Фото, не скопировавшееся в новую версию сессии. */
   | 'referenceImages';
 

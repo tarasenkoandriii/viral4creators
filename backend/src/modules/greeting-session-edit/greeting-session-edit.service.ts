@@ -89,6 +89,13 @@ import {
   GREETING_ERROR_CODES,
   greetingError,
 } from '../../common/greeting-errors';
+import { PrismaService } from '../../prisma/prisma.service';
+import { reconcileReferenceCaptions } from '../../common/greeting-scene-text';
+import {
+  applyGreetingSnapshotChange,
+  diffGreetingSnapshot,
+  updateGreetingSnapshot,
+} from '../../common/greeting-snapshot-write';
 
 // Общий срок замка 'prompt' поздравления: правка не должна считать
 // протухшим замок ещё идущего старта ролика (CONTRACT6 п.5 аудита).
@@ -131,6 +138,7 @@ export class GreetingSessionEditService {
     private readonly briefs: GreetingBriefService,
     private readonly promptService: PromptService,
     private readonly blob: BlobService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ── PATCH /sessions/:id/greeting-brief ──────────────────────────────
@@ -168,65 +176,85 @@ export class GreetingSessionEditService {
 
       const before = session.greetingBriefSnapshot!;
       const next = await this.briefs.resolveNext(userId, baseOf(before), dto);
-      const merged: GreetingBriefSnapshot = {
-        ...before,
-        occasion: next.occasion,
-        customOccasionText: next.customOccasionText,
-        occasionRegister: next.occasionRegister,
-        registerSource: next.registerSource,
-        userOccasionRegister: next.userOccasionRegister,
-        scriptLanguage: next.scriptLanguage,
-        recipientName: next.recipientName,
-        senderName: next.senderName,
-        tone: next.tone,
-        personalMessage: next.personalMessage,
-        requestedPresenterProvider: next.presenterProvider,
-        resolvedPresenterProvider: next.presenterProvider,
-        requestedResolution: next.resolution,
-        resolvedResolution: next.resolution,
-        occasionDate: next.occasionDate
-          ? next.occasionDate.toISOString()
-          : null,
-      };
       // Этап G (§4.8): новый ведущий — новая копия образа в снимок; не
       // передан — прежняя копия остаётся как есть (образ мог быть удалён
       // после старта, и это не должно ломать правку имени получателя).
-      if (dto.presenter !== undefined) {
-        merged.presenter =
-          next.presenterLookId && next.presenterVariant
+      const presenter =
+        dto.presenter === undefined
+          ? undefined
+          : next.presenterLookId && next.presenterVariant
             ? await this.briefs.presenterSnapshot(
                 userId,
                 next.presenterLookId,
                 next.presenterVariant,
               )
             : null;
-      }
-      // CONTRACT5 п.5б: правка после готового ролика уходит в НОВУЮ
-      // сессию-версию без ролика — там признак следует за выбором. Правка
-      // на месте бывает и после упавшего рендера (в том числе повторного
-      // поверх готового ролика с персоной) — там признак не снимается.
-      const computedPersona = snapshotUsesPersona({
-        presenter: merged.presenter ?? null,
-        manifestKind: session.brandManifestSnapshot?.kind ?? null,
-        senderVoice: merged.senderVoice ?? null,
-      });
-      merged.usesPersona =
-        mode === 'new-version'
-          ? computedPersona
-          : nextUsesPersona(
-              before.usesPersona,
-              computedPersona,
-              session.generatedVideo,
-            );
-      const { snapshot, resetFields } = reconcileSelections(merged);
-      const meaningChanged =
-        !!session.generationPrompt &&
-        scriptInputsChanged(before, snapshot, session.locale);
+      // Правка накладывается на снимок, а не собирает его заново: так её
+      // можно повторить по свежему снимку, если между чтением и записью
+      // его тронула наклейка, музыка или сцены (C2), — а платный
+      // `resolveNext` (классификатор регистра) не зовётся второй раз.
+      const compose = (current: GreetingBriefSnapshot) => {
+        const merged: GreetingBriefSnapshot = {
+          ...current,
+          occasion: next.occasion,
+          customOccasionText: next.customOccasionText,
+          occasionRegister: next.occasionRegister,
+          registerSource: next.registerSource,
+          userOccasionRegister: next.userOccasionRegister,
+          scriptLanguage: next.scriptLanguage,
+          recipientName: next.recipientName,
+          senderName: next.senderName,
+          tone: next.tone,
+          personalMessage: next.personalMessage,
+          requestedPresenterProvider: next.presenterProvider,
+          resolvedPresenterProvider: next.presenterProvider,
+          requestedResolution: next.resolution,
+          resolvedResolution: next.resolution,
+          occasionDate: next.occasionDate
+            ? next.occasionDate.toISOString()
+            : null,
+        };
+        if (presenter !== undefined) merged.presenter = presenter;
+        // CONTRACT5 п.5б: правка после готового ролика уходит в НОВУЮ
+        // сессию-версию без ролика — там признак следует за выбором.
+        // Правка на месте бывает и после упавшего рендера (в том числе
+        // повторного поверх готового ролика с персоной) — там признак не
+        // снимается.
+        const computedPersona = snapshotUsesPersona({
+          presenter: merged.presenter ?? null,
+          manifestKind: session.brandManifestSnapshot?.kind ?? null,
+          senderVoice: merged.senderVoice ?? null,
+        });
+        merged.usesPersona =
+          mode === 'new-version'
+            ? computedPersona
+            : nextUsesPersona(
+                current.usesPersona,
+                computedPersona,
+                session.generatedVideo,
+              );
+        return reconcileSelections(merged);
+      };
 
       if (mode === 'new-version') {
-        const created = await this.forkVersion(session, snapshot, {
-          keepPrompt: !meaningChanged,
-        });
+        const { snapshot, resetFields } = compose(before);
+        // Аудит захода 8: подписи фото — текст видео-промпта; праздничные
+        // вне праздника сбрасываются вместе с остальным выбором.
+        const captions = reconcileReferenceCaptions(
+          snapshot,
+          session.greetingReferenceImages,
+        );
+        if (captions.changed) resetFields.push('referenceCaptions');
+        const meaningChanged =
+          !!session.generationPrompt &&
+          scriptInputsChanged(before, snapshot, session.locale);
+        const created = await this.forkVersion(
+          captions.changed
+            ? { ...session, greetingReferenceImages: captions.images }
+            : session,
+          snapshot,
+          { keepPrompt: !meaningChanged && !captions.changed },
+        );
         // Бриф проекта — последним: версия уже есть, и следующая сессия
         // проекта начнётся с исправленного.
         await this.briefs.writeResolved(userId, session.projectId, next);
@@ -239,17 +267,77 @@ export class GreetingSessionEditService {
         };
       }
 
-      await this.sessions.updateSession(sessionId, {
-        greetingBriefSnapshot: snapshot,
-        ...(meaningChanged ? { generationPrompt: undefined } : {}),
-      });
+      // C2: пишутся только ключи, которые правка изменила, — с CAS по
+      // снимку целиком (сброс несовместимого выбора решается по всему
+      // снимку). Наклейка, выбранная в соседней вкладке, не пропадает:
+      // запись промахнётся и правка ляжет поверх свежего снимка.
+      let applied!: {
+        snapshot: GreetingBriefSnapshot;
+        base: GreetingBriefSnapshot;
+      };
+      let resetFields: ResettableField[] = [];
+      let meaningChanged = false;
+      let captionsChanged = false;
+      await updateGreetingSnapshot(
+        this.prisma,
+        sessionId,
+        before,
+        (current) => {
+          const result = compose(current);
+          const captions = reconcileReferenceCaptions(
+            result.snapshot,
+            session.greetingReferenceImages,
+          );
+          captionsChanged = captions.changed;
+          resetFields = captions.changed
+            ? [...result.resetFields, 'referenceCaptions']
+            : result.resetFields;
+          meaningChanged =
+            !!session.generationPrompt &&
+            (captions.changed ||
+              scriptInputsChanged(current, result.snapshot, session.locale));
+          applied = { snapshot: result.snapshot, base: current };
+          return {
+            set: diffGreetingSnapshot(current, result.snapshot),
+            expect: 'all',
+            data: {
+              ...(meaningChanged ? { generationPrompt: undefined } : {}),
+              ...(captions.changed
+                ? { greetingReferenceImages: captions.images }
+                : {}),
+            },
+          };
+        },
+      );
+      const { snapshot } = applied;
       // CONTRACT6 п.3: ролик, запущенный в то же мгновение (замок истёк),
       // считается по прежнему брифу — вернуть его и отказать. Бриф
-      // проекта ещё не тронут.
-      await assertNoRenderAfterWrite(this.sessions, sessionId, {
-        greetingBriefSnapshot: before,
-        generationPrompt: session.generationPrompt,
-      });
+      // проекта ещё не тронут. Возвращаются только ключи, которые правка
+      // меняла, — точечно, как и писались.
+      const changed = diffGreetingSnapshot(applied.base, snapshot);
+      const restoreSet = Object.fromEntries(
+        Object.keys(changed).map((k) => [
+          k,
+          (applied.base as unknown as Record<string, unknown>)[k],
+        ]),
+      ) as Partial<GreetingBriefSnapshot>;
+      await assertNoRenderAfterWrite(
+        {
+          getSession: (id) => this.sessions.getSession(id),
+          updateSession: (id, restore) =>
+            applyGreetingSnapshotChange(this.prisma, id, null, {
+              set: restoreSet,
+              data: restore,
+            }),
+        },
+        sessionId,
+        {
+          generationPrompt: session.generationPrompt,
+          ...(captionsChanged
+            ? { greetingReferenceImages: session.greetingReferenceImages }
+            : {}),
+        },
+      );
       await this.briefs.writeResolved(userId, session.projectId, next);
       return {
         sessionId,

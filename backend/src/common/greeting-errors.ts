@@ -48,6 +48,8 @@ export const GREETING_ERROR_CODES = {
   GREETING_EDIT_IN_PROGRESS: 'GREETING_EDIT_IN_PROGRESS',
   /** Правка брифа пришлась на старт ролика — ролик уже в работе. */
   GREETING_EDIT_AFTER_RENDER_STARTED: 'GREETING_EDIT_AFTER_RENDER_STARTED',
+  /** Обстановку не выдавал сервер (или вариант истёк) — §3.9, белый список. */
+  GREETING_SCENE_SETTING_NOT_OFFERED: 'GREETING_SCENE_SETTING_NOT_OFFERED',
   /** Повод «Другое» без текста повода. */
   GREETING_OCCASION_TEXT_REQUIRED: 'GREETING_OCCASION_TEXT_REQUIRED',
   /** Бриф проекта не найден (или проект удалён). */

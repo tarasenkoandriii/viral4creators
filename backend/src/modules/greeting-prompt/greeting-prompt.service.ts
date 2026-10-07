@@ -49,6 +49,7 @@ import {
   fallbackMessage,
 } from '../../common/greeting-occasions';
 import {
+  isFestiveRegister,
   presenterExpression,
   presenterMood,
   registerOfBrief,
@@ -66,7 +67,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { isPersonaVoice } from '../user-voices/persona-voice';
 import type { Session } from '../../common/types/session.types';
-import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
+import { MAX_GREETING_REFERENCE_IMAGES } from '../../common/greeting-reference-limits';
 import {
   VoiceMode,
   normalizeVoiceMode,
@@ -571,8 +572,11 @@ export function buildSceneDescription(
         ? `A camera-facing presenter speaks directly to the viewer with the voice from <AUDIO_0>, ${expression}, ${mood} mood.`
         : `A camera-facing presenter speaks directly to the viewer, ${expression}, ${mood} mood.`,
     // Декорации приходят от повода, а не от тона: у соболезнования
-    // нет праздничного варианта ни при каком тоне.
-    `${sceneMoodFor(brief.occasion, register)}; no on-screen text.`,
+    // нет праздничного варианта ни при каком тоне. Выбранная человеком
+    // обстановка (§3.9, фича №36) ЗАМЕЩАЕТ общую сцену повода — как и в
+    // кадре (`buildGreetingFramePrompt`): две сцены в одном промпте модель
+    // сводит в кашу. Запрет праздничной атрибутики вне праздника остаётся.
+    `${greetingSceneLine(brief.occasion, register, brief.sceneSetting)}; no on-screen text.`,
     silent
       ? 'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.'
       : '',
@@ -586,12 +590,35 @@ export function buildSceneDescription(
       ? `Possible settings from the brand: ${plan.textScenes.map(promptSafeNote).filter(Boolean).join('; ')}.`
       : '',
     styleNotes ? `Visual style of the brand: ${styleNotes}.` : '',
+    // Аудит захода 8: обстановка и подписи фото — текст, пришедший не от
+    // нас целиком (вариант модели, подпись человека). Тот же запрет, что
+    // в промпте кадра, — но люди с референсов (ведущий, свои фото) в
+    // кадре остаются: запрет только на ДОБАВЛЕННЫХ узнаваемых людей.
+    promptSafeNote(brief.sceneSetting) || referenceLines.length
+      ? 'Do not add any recognisable real person or celebrity beyond the people shown in the reference images.'
+      : '',
     presetVoiceId
       ? `Spoken line, to be said aloud by the presenter (never rendered as on-screen text): "${speech.replace(/"/g, "'")}"`
       : `Spoken line (for reference, not to be rendered as on-screen text): "${speech.replace(/"/g, "'")}"`,
   ]
     .filter(Boolean)
     .join(' ');
+}
+
+/**
+ * Строка обстановки видео-промпта (§3.9). Нет выбранной обстановки —
+ * сцена повода байт в байт как раньше.
+ */
+export function greetingSceneLine(
+  occasion: GreetingBriefSnapshot['occasion'],
+  register: GreetingRegister,
+  sceneSetting: string | null | undefined,
+): string {
+  const setting = promptSafeNote(sceneSetting);
+  if (!setting) return sceneMoodFor(occasion, register);
+  return isFestiveRegister(register)
+    ? `Setting: ${setting}`
+    : `Setting: ${setting}; no balloons, no confetti, no cake, no gifts, no party decorations`;
 }
 
 /** Длина заметки стиля в промпте: это подсказка, а не второй сценарий. */

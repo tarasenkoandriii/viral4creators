@@ -35,6 +35,8 @@ import { chars, operationLabel, usd } from '../../lib/money';
 import { useAdminAuth } from '../../lib/admin-auth-context';
 import { userBriefs } from '../../lib/user-briefs';
 import { UserAvatar } from '../../components/UserBadge';
+// В-4 (заход 8): отметка «младше 18» режима «Я в кадре» и её снятие.
+import PersonaAgeBlock from '../../components/PersonaAgeBlock';
 
 const PLAN_LABEL: Record<PlanId, string> = {
   LITE: 'Lite',
@@ -788,6 +790,7 @@ function UsersPageInner() {
               </ul>
             </div>
           )}
+          <PersonaAgeBlock userId={detail.id} who={displayName(detail)} />
           {detail.recentSessions.length === 0 ? (
             <p className="muted">Сессий нет.</p>
           ) : (

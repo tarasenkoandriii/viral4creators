@@ -79,6 +79,10 @@ import {
 } from '../wizard-guide/wizard-telemetry';
 import { pruneWizardHintAudio } from '../wizard-guide/hint-audio-prune';
 import {
+  GREETING_REGISTER_ANSWER_RETENTION_DAYS,
+  pruneGreetingRegisterAnswers,
+} from '../greeting-brief/greeting-register-retention';
+import {
   pruneAssistantExchanges,
   pruneAssistantEvents,
 } from '../assistant/assistant-prune';
@@ -994,6 +998,24 @@ export class CronJobsService {
     } catch (error) {
       this.logger.warn(
         `журнал кронов не подчищен: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    // Память ответов классификатора регистра поздравлений (заход 8 C14,
+    // аудит захода 8): 180 дней — `greeting-register-retention.ts`. Тем
+    // же суточным прогоном, best-effort, как соседи.
+    try {
+      const count = await pruneGreetingRegisterAnswers(this.prisma);
+      if (count > 0) {
+        this.logger.log(
+          `память классификатора регистра: удалено ${count} записей старше ${GREETING_REGISTER_ANSWER_RETENTION_DAYS} дней`,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(
+        `память классификатора регистра не подчищена: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

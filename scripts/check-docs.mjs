@@ -4522,6 +4522,20 @@ function checkProcessorsSeam() {
     { name: "ElevenLabs", marker: /\bprocess\.env\.VOICE_API_KEY\b/ },
     { name: "Resemble AI", marker: /\bRESEMBLE_API_KEY\b/ },
     { name: "Replicate", marker: /\bREPLICATE_API_TOKEN\b/ },
+    // Говорящий аватар (тариф PREMIUM поздравлений, пилот аватара актёров):
+    // получает портрет и речь пользователя — 07.10.2026, без смены версии.
+    { name: "Hedra", marker: /\bHEDRA_API_KEY\b/ },
+    // Хостед-ffmpeg (verygoodffmpeg.com): получает готовые ролики с лицом
+    // и голосом пользователя, его фото и озвучку — 07.10.2026.
+    { name: "VeryGoodFFmpeg", marker: /\bFFMPEG_API_KEY\b/ },
+    // Google Lens через SerpApi: получает ссылку на фото товара
+    // пользователя (поиск аналогов) — 07.10.2026.
+    { name: "SerpApi", marker: /\bSERPAPI_API_KEY\b/ },
+    // Не здесь, потому что ПД и материалов пользователя не получают:
+    // Pixabay/Freesound/Jamendo/Mubert (короткий поисковый запрос музыки
+    // или наклейки), YouTube Data API (запросы по нише, уже в 2.3), Google
+    // Ads (название публичного лота), OpenAI/LaoZhang (ключ есть, вызовов
+    // в коде нет) — заход 8, разбор в отчёте агента D.
   ];
   const code = [];
   const walk = (dir) => {
@@ -4570,7 +4584,7 @@ function checkProcessorsSeam() {
     for (const x of problems) console.log(`  - ${x}`);
   } else {
     console.log(
-      `ok   субподрядчики: провайдеров речи и звука в коде ${used}, все названы ` +
+      `ok   субподрядчики: обработчиков материалов пользователя в коде ${used}, все названы ` +
         "в пункте 7.8 Условий и 2.3 оферты",
     );
   }

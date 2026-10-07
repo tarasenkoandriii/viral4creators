@@ -27,6 +27,11 @@ import {
   sonioxTranscriptionBody,
   type SonioxToken,
 } from '../../shared/soniox-stt-core';
+import {
+  SONIOX_TAG_SITES,
+  sonioxFileName,
+  sonioxReferenceId,
+} from '../../shared/soniox-sweep';
 
 export const ADMIN_STT = {
   /** Запись: ≥ 1 КБ, ≤ 1 МБ (30 с Opus — ≈ 120 КБ). */
@@ -196,7 +201,13 @@ export class AdminSonioxStt {
       form.append(
         'file',
         new Blob([new Uint8Array(req.audio)], { type: req.mimeType }),
-        'voice',
+        // Метка сайтов (C4 захода 8): уборка по списку в assist-retention
+        // удаляет только своё.
+        sonioxFileName(SONIOX_TAG_SITES, 'admin'),
+      );
+      form.append(
+        'client_reference_id',
+        sonioxReferenceId(SONIOX_TAG_SITES, 'admin'),
       );
       const uploaded = await this.call<{ id: string }>(
         key,
@@ -215,12 +226,13 @@ export class AdminSonioxStt {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(
-            sonioxTranscriptionBody(fileId, {
+          body: JSON.stringify({
+            client_reference_id: sonioxReferenceId(SONIOX_TAG_SITES, 'admin'),
+            ...sonioxTranscriptionBody(fileId, {
               languageHints: req.languageHints,
               terms: req.terms ?? [],
             }),
-          ),
+          }),
         },
       );
       transcriptionId = created.id;
@@ -281,7 +293,7 @@ export class AdminSonioxStt {
       if (status !== 409) return;
       if (Date.now() >= graceUntil) {
         this.logger.warn(
-          'Soniox: транскрипция «Админки» ещё обрабатывается — звук удалён, текст останется до срока хранения провайдера',
+          'Soniox: транскрипция «Админки» ещё обрабатывается — звук удалён, текст уберёт крон assist-retention (своего срока хранения у Soniox нет)',
         );
         return;
       }

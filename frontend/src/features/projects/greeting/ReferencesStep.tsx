@@ -33,6 +33,8 @@ import { useI18n } from '../../../lib/i18n-context';
 import {
   listGreetingReferences,
   suggestGreetingSceneSettings,
+  getGreetingSceneSetting,
+  setGreetingSceneSetting,
   MAX_GREETING_REFERENCE_IMAGES,
   generateGreetingReferenceFrame,
   deleteGreetingReference,
@@ -93,6 +95,9 @@ export function ReferencesStep({
      подсказку, а не ошибку: кадр рисуется и без сеттинга. */
   const [settings, setSettings] = useState<string[] | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  /* §3.9: выбранная обстановка ролика (`sceneSetting` снимка) — та же
+     строка уходит и в кадр, и в видео-промпт. `null` — сцена повода. */
+  const [sceneSetting, setSceneSetting] = useState<string | null>(null);
 
   const load = useCallback(() => {
     listGreetingReferences(sessionId)
@@ -104,6 +109,42 @@ export function ReferencesStep({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    // Необязательная строка: сбой чтения не мешает шагу — кадр и ролик
+    // тогда просто идут по сцене повода, как до §3.9.
+    getGreetingSceneSetting(sessionId)
+      .then(setSceneSetting)
+      .catch(() => setSceneSetting(null));
+  }, [sessionId]);
+
+  /* После кадра — перечитать обстановку с сервера, а не показать
+     выбранную оптимистично: сервер её не запишет, если повод успел
+     смениться и вариант больше не годится (аудит захода 8). */
+  const refreshSetting =
+    () =>
+    async (
+      next: GreetingReferenceImageView[]
+    ): Promise<GreetingReferenceImageView[]> => {
+      setSceneSetting(
+        await getGreetingSceneSetting(sessionId).catch(() => sceneSetting)
+      );
+      return next;
+    };
+
+  /** Выбрать обстановку без кадра или вернуть сцену повода (`null`). */
+  const chooseSetting = async (setting: string | null) => {
+    setSettingsBusy(true);
+    setError(null);
+    try {
+      setSceneSetting(await setGreetingSceneSetting(sessionId, setting));
+      onChanged?.();
+    } catch (e) {
+      setError(greetingErrorMessage(e, dict));
+    } finally {
+      setSettingsBusy(false);
+    }
+  };
 
   const apply = async (fn: () => Promise<GreetingReferenceImageView[]>) => {
     setSaving(true);
@@ -235,6 +276,23 @@ export function ReferencesStep({
         </div>
       ) : (
         <>
+          {sceneSetting && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-silver-400">{w.sceneSettingCurrent}</span>
+              <span className="font-medium">{sceneSetting}</span>
+              {!disabled && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={saving || settingsBusy}
+                  onClick={() => void chooseSetting(null)}
+                >
+                  {w.sceneSettingReset}
+                </Button>
+              )}
+            </div>
+          )}
+
           {settings !== null && canDraw && (
             <div className="mt-3 rounded-xl border border-silver-200/70 p-3 dark:border-silver-800">
               <p className="text-xs text-silver-400">{w.settingsHint}</p>
@@ -245,19 +303,36 @@ export function ReferencesStep({
               ) : (
                 <ul className="mt-2 flex flex-wrap gap-2">
                   {settings.map((setting) => (
-                    <li key={setting}>
+                    <li key={setting} className="flex items-center gap-1">
                       <Button
                         data-assist="confirm"
                         size="sm"
                         variant="outline"
                         disabled={saving || settingsBusy}
+                        active={setting === sceneSetting}
                         onClick={() =>
                           void apply(() =>
                             generateGreetingReferenceFrame(sessionId, setting)
+                              // Сервер запоминает обстановку для ролика той же
+                              // записью, что и кадр (§3.9).
+                              .then(refreshSetting())
                           )
                         }
                       >
                         {setting}
+                      </Button>
+                      {/* §3.9: обстановка для ролика бесплатно, без
+                        платного рисования кадра. */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        title={w.sceneSettingUseOnlyTitle}
+                        disabled={
+                          saving || settingsBusy || setting === sceneSetting
+                        }
+                        onClick={() => void chooseSetting(setting)}
+                      >
+                        {w.sceneSettingUseOnly}
                       </Button>
                     </li>
                   ))}

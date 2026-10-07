@@ -525,6 +525,76 @@
         }
       ]
     },
+    "compare": {
+      "title": "En qué se diferencia de otras formas de felicitar en vídeo",
+      "lead": "No comparamos con empresas concretas, sino con cómo suelen funcionar tres formas habituales. En la última fila está lo que aún no tenemos.",
+      "caption": "Felicitación en vídeo comparada con tres categorías de alternativas",
+      "columns": {
+        "us": "Este servicio",
+        "template": "Tarjeta de vídeo con plantilla",
+        "person": "Encargo a una persona o a un famoso",
+        "generic": "Generador de vídeo con IA de uso general"
+      },
+      "rows": [
+        {
+          "feature": "Quién escribe el texto",
+          "us": "El servicio, según la ocasión, el destinatario y el tono; tu propio texto se usa tal cual",
+          "template": "Una historia ya hecha; cambias el nombre, la foto y la firma",
+          "person": "La persona habla con sus propias palabras según tu petición",
+          "generic": "Tú: guion, tono e instrucciones corren de tu cuenta"
+        },
+        {
+          "feature": "Cuánto hay que esperar",
+          "us": "Normalmente unos minutos",
+          "template": "Normalmente minutos",
+          "person": "Normalmente días; más rápido suele costar más",
+          "generic": "Minutos de generación, más el tiempo de montarlo"
+        },
+        {
+          "feature": "Idioma",
+          "us": "Ruso, ucraniano, inglés, alemán y español: el servicio escribe y pone la voz en el que elijas",
+          "template": "Los idiomas los fija el servicio; el ucraniano y el ruso a menudo faltan",
+          "person": "El idioma de la persona",
+          "generic": "Normalmente muchos idiomas"
+        },
+        {
+          "feature": "Ocasiones delicadas",
+          "us": "Condolencias, disculpas, apoyo: el servicio no felicita ni bromea, y su texto se revisa por si suena festivo",
+          "template": "Historias sobre todo festivas",
+          "person": "A criterio de la persona",
+          "generic": "El tono lo pones tú"
+        },
+        {
+          "feature": "Voz del remitente",
+          "us": "Tu propia voz en el modo Standard; voces ya preparadas en cualquier modo",
+          "template": "Normalmente no",
+          "person": "No: se oye la voz de la persona",
+          "generic": "A menudo sí, normalmente en planes de pago"
+        },
+        {
+          "feature": "Formato",
+          "us": "15 segundos de vídeo vertical, hasta 4 escenas",
+          "template": "La duración y la historia las fija la plantilla",
+          "person": "A criterio de la persona",
+          "generic": "Cualquier duración; el montaje corre de tu cuenta"
+        },
+        {
+          "feature": "Precio",
+          "us": "Los modos son gratuitos por ahora; el número de generaciones al día es limitado",
+          "template": "A menudo una prueba gratuita y luego pago único o suscripción",
+          "person": "El precio lo pone la persona; los nombres conocidos son caros",
+          "generic": "Suscripción; el plan gratuito tiene límites y marca de agua"
+        },
+        {
+          "feature": "Entrega en el día elegido",
+          "us": "Aún no: el enlace lo envías tú",
+          "template": "A veces",
+          "person": "No: el vídeo llega cuando está listo",
+          "generic": "Normalmente no"
+        }
+      ],
+      "note": "Las columnas de la derecha describen un servicio típico de la categoría, no una empresa concreta; algunos servicios pueden ser distintos."
+    },
     "price": {
       "title": "Cuánto cuesta",
       "text": "Los planes son gratuitos por ahora y se cambian dentro de la aplicación. El plan define la resolución del video —480p, 720p o 1080p (con fotos adjuntas, normalmente no más de 720p)— y el límite diario de generaciones: cuando se agota, puedes seguir al día siguiente."

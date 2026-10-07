@@ -37,6 +37,7 @@ import {
   recordSiteChatUsage,
   type SiteChatOperation,
 } from './usage';
+import { geminiUsageUnits } from '../../shared/ai-pricing';
 
 export interface OneShotAnswer {
   text: string;
@@ -140,12 +141,7 @@ export class SiteAnswerer {
         siteId: p.site.siteId,
         operation: p.operation,
         model: meta ? this.model.model : '',
-        units: {
-          inputTokens: meta?.promptTokenCount ?? 0,
-          cachedInputTokens: meta?.cachedContentTokenCount ?? 0,
-          outputTokens:
-            (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
-        },
+        units: geminiUsageUnits(meta),
       },
     );
     const total = cost + found.costMicroUsd;

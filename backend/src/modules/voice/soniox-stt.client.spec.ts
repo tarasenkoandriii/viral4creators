@@ -1,5 +1,17 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 import {
+  SONIOX_PENDING_DELETE_KEY,
+  SONIOX_PENDING_DELETE_MAX_ATTEMPTS,
+  SONIOX_PENDING_DELETE_MAX_AGE_MS,
   SonioxSttClient,
+  addSonioxPendingDelete,
+  applySonioxDeleteOutcomes,
+  drainSonioxPendingDeletes,
+  enqueueSonioxPendingDelete,
+  parseSonioxPendingDeletes,
+  sonioxPendingOrder,
+  sonioxPendingPath,
+  type SonioxPendingDelete,
   billedSeconds,
   dominantSonioxLanguage,
   sonioxTranscriptText,
@@ -379,5 +391,485 @@ describe('SonioxSttClient.transcribe', () => {
     expect((init.headers as Record<string, string>).Authorization).toBe(
       'Bearer sk',
     );
+  });
+});
+
+// ── C4 захода 8 (ТЗ поздравлений 2.0 стр. 1622): неудалённое у Soniox ──
+
+/** `PlatformSetting` в памяти: CAS `updateMany` по старому значению, P2002 на дубль. */
+function settingStore(initial?: SonioxPendingDelete[] | string) {
+  let row: { key: string; value: string } | null =
+    initial === undefined
+      ? null
+      : {
+          key: SONIOX_PENDING_DELETE_KEY,
+          value:
+            typeof initial === 'string' ? initial : JSON.stringify(initial),
+        };
+  const platformSetting = {
+    findUnique: jest.fn(async ({ where }: any) =>
+      row && where.key === row.key ? { ...row } : null,
+    ),
+    create: jest.fn(async ({ data }: any) => {
+      if (row) throw Object.assign(new Error('unique'), { code: 'P2002' });
+      row = { key: data.key, value: data.value };
+      return row;
+    }),
+    updateMany: jest.fn(async ({ where, data }: any) => {
+      if (row && row.key === where.key && row.value === where.value) {
+        row = { ...row, value: data.value };
+        return { count: 1 };
+      }
+      return { count: 0 };
+    }),
+  };
+  return {
+    prisma: { platformSetting } as any,
+    platformSetting,
+    list: (): SonioxPendingDelete[] | null =>
+      row ? (JSON.parse(row.value) as SonioxPendingDelete[]) : null,
+    replace: (list: SonioxPendingDelete[]) => {
+      row = { key: SONIOX_PENDING_DELETE_KEY, value: JSON.stringify(list) };
+    },
+  };
+}
+
+const quietLogger = () => ({ warn: jest.fn() });
+const NOW = new Date('2026-10-07T12:00:00Z');
+const entry = (
+  over: Partial<SonioxPendingDelete> & { id: string },
+): SonioxPendingDelete => ({
+  kind: 'transcription',
+  since: NOW.toISOString(),
+  attempts: 0,
+  ...over,
+});
+
+describe('очередь неудалённого у Soniox — чистые правила', () => {
+  it('разбор: мусор, кривые записи и дубли отбрасываются, id проверяется по форме', () => {
+    expect(parseSonioxPendingDeletes(null)).toEqual([]);
+    expect(parseSonioxPendingDeletes('не json')).toEqual([]);
+    expect(parseSonioxPendingDeletes('{"a":1}')).toEqual([]);
+    const since = NOW.toISOString();
+    expect(
+      parseSonioxPendingDeletes(
+        JSON.stringify([
+          { kind: 'transcription', id: 't1', since, attempts: 2 },
+          { kind: 'transcription', id: 't1', since, attempts: 5 },
+          { kind: 'file', id: 'f1', since, attempts: -3, lastStatus: 500 },
+          { kind: 'transcription', id: '../../files', since, attempts: 0 },
+          { kind: 'model', id: 'x', since, attempts: 0 },
+          { kind: 'file', id: 'f2', since: 'вчера', attempts: 0 },
+          null,
+        ]),
+      ),
+    ).toEqual([
+      { kind: 'transcription', id: 't1', since, attempts: 2 },
+      { kind: 'file', id: 'f1', since, attempts: 0, lastStatus: 500 },
+    ]);
+  });
+
+  it('путь удаления — по виду записи', () => {
+    expect(sonioxPendingPath(entry({ id: 't1' }))).toBe('/transcriptions/t1');
+    expect(sonioxPendingPath(entry({ id: 'f1', kind: 'file' }))).toBe(
+      '/files/f1',
+    );
+  });
+
+  it('добавление: без дублей, сверх потолка вытесняются самые старые', () => {
+    const a = entry({ id: 'a' });
+    const same = addSonioxPendingDelete([a], entry({ id: 'a', attempts: 9 }));
+    expect(same.list).toEqual([a]);
+    expect(same.evicted).toEqual([]);
+    // Тот же id, но другой вид — другая запись.
+    expect(
+      addSonioxPendingDelete([a], entry({ id: 'a', kind: 'file' })).list,
+    ).toHaveLength(2);
+    const r = addSonioxPendingDelete(
+      [a, entry({ id: 'b' })],
+      entry({ id: 'c' }),
+      2,
+    );
+    expect(r.list.map((e) => e.id)).toEqual(['b', 'c']);
+    expect(r.evicted.map((e) => e.id)).toEqual(['a']);
+  });
+
+  it('исходы: удалено/404 — снять, 409 — +1 попытка, попытки или срок вышли — снять, без исхода — не трогать', () => {
+    const old = new Date(
+      NOW.getTime() - SONIOX_PENDING_DELETE_MAX_AGE_MS,
+    ).toISOString();
+    const list = [
+      entry({ id: 'ok' }),
+      entry({ id: 'gone', kind: 'file' }),
+      entry({ id: 'busy', attempts: 3 }),
+      entry({ id: 'tired', attempts: SONIOX_PENDING_DELETE_MAX_ATTEMPTS - 1 }),
+      entry({ id: 'old', since: old }),
+      entry({ id: 'later' }),
+    ];
+    const outcomes = new Map([
+      ['transcription:ok', 204],
+      ['file:gone', 404],
+      ['transcription:busy', 409],
+      ['transcription:tired', 409],
+      ['transcription:old', 0],
+    ]);
+    const r = applySonioxDeleteOutcomes(list, outcomes, NOW);
+    expect(r.deleted.map((e) => e.id)).toEqual(['ok', 'gone']);
+    expect(r.dropped.map((e) => e.id)).toEqual(['tired', 'old']);
+    expect(r.list).toEqual([
+      {
+        ...list[2],
+        attempts: 4,
+        lastStatus: 409,
+        lastAttemptAt: NOW.toISOString(),
+      },
+      list[5],
+    ]);
+  });
+});
+
+describe('очередь неудалённого у Soniox — запись', () => {
+  it('нет строки — создаётся; повтор того же id не дублирует', async () => {
+    const st = settingStore();
+    const log = quietLogger();
+    await expect(
+      enqueueSonioxPendingDelete(
+        st.prisma,
+        'transcription',
+        't1',
+        409,
+        log,
+        NOW,
+      ),
+    ).resolves.toBe(true);
+    await enqueueSonioxPendingDelete(
+      st.prisma,
+      'transcription',
+      't1',
+      409,
+      log,
+      NOW,
+    );
+    expect(st.list()).toEqual([
+      {
+        kind: 'transcription',
+        id: 't1',
+        since: NOW.toISOString(),
+        attempts: 0,
+        lastStatus: 409,
+      },
+    ]);
+  });
+
+  it('гонка: значение поменялось между чтением и записью — перечитать и не потерять чужую запись', async () => {
+    const st = settingStore([entry({ id: 'a' })]);
+    const realUpdate = st.platformSetting.updateMany.getMockImplementation()!;
+    let raced = false;
+    st.platformSetting.updateMany.mockImplementation(async (args: any) => {
+      if (!raced) {
+        raced = true;
+        st.replace([entry({ id: 'a' }), entry({ id: 'b' })]);
+      }
+      return realUpdate(args);
+    });
+    await enqueueSonioxPendingDelete(
+      st.prisma,
+      'file',
+      'f1',
+      0,
+      quietLogger(),
+      NOW,
+    );
+    expect(st.list()!.map((e) => e.id)).toEqual(['a', 'b', 'f1']);
+    expect(st.platformSetting.updateMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('гонка при создании строки (P2002) — перечитать и дописать', async () => {
+    const st = settingStore();
+    const realCreate = st.platformSetting.create.getMockImplementation()!;
+    st.platformSetting.create.mockImplementationOnce(async () => {
+      st.replace([entry({ id: 'other' })]);
+      return realCreate({
+        data: { key: SONIOX_PENDING_DELETE_KEY, value: '[]' },
+      });
+    });
+    await enqueueSonioxPendingDelete(
+      st.prisma,
+      'transcription',
+      't1',
+      409,
+      quietLogger(),
+      NOW,
+    );
+    expect(st.list()!.map((e) => e.id)).toEqual(['other', 't1']);
+  });
+
+  it('база недоступна или её нет — не бросает, id остаётся в логе', async () => {
+    const log = quietLogger();
+    const broken = {
+      platformSetting: {
+        findUnique: jest.fn().mockRejectedValue(new Error('db down')),
+      },
+    } as any;
+    await expect(
+      enqueueSonioxPendingDelete(broken, 'transcription', 't9', 409, log, NOW),
+    ).resolves.toBe(false);
+    expect(log.warn.mock.calls[0][0]).toContain('t9');
+    await expect(
+      enqueueSonioxPendingDelete(undefined, 'file', 'f9', 0, log, NOW),
+    ).resolves.toBe(false);
+    expect(log.warn.mock.calls[1][0]).toContain('f9');
+  });
+});
+
+describe('SonioxSttClient — неудалённое уходит в очередь', () => {
+  const saved = { ...process.env };
+  beforeEach(() => {
+    process.env.SONIOX_API_KEY = 'sk';
+    process.env.NODE_ENV = 'test';
+  });
+  afterAll(() => {
+    process.env = saved;
+  });
+
+  function client(prisma?: any): SonioxSttClient {
+    const c = new SonioxSttClient(prisma);
+    c.attemptDeadlineMs = 30;
+    c.cleanupGraceMs = 30;
+    return c;
+  }
+  const req = { audio: AUDIO, mimeType: 'audio/webm', languageHints: [] };
+
+  it('транскрипция всё ещё 409 после ожидания — id в очереди, текст пользователю отдан', async () => {
+    const st = settingStore();
+    mockFetch(
+      HAPPY.map((r) =>
+        r.method === 'DELETE' && r.path === '/transcriptions/t1'
+          ? { ...r, status: 409 }
+          : r,
+      ),
+    );
+    const r = await client(st.prisma).transcribe(req);
+    expect(r.text).toBe('Марина, серйозніше');
+    expect(st.list()).toEqual([
+      expect.objectContaining({
+        kind: 'transcription',
+        id: 't1',
+        attempts: 0,
+        lastStatus: 409,
+      }),
+    ]);
+  });
+
+  it('сбой удаления файла и транскрипции (500) — обе записи в очереди, без ожидания 409', async () => {
+    const st = settingStore();
+    const { calls } = mockFetch(
+      HAPPY.map((r) => (r.method === 'DELETE' ? { ...r, status: 500 } : r)),
+    );
+    await client(st.prisma).transcribe(req);
+    expect(st.list()!.map((e) => `${e.kind}:${e.id}`)).toEqual([
+      'file:f1',
+      'transcription:t1',
+    ]);
+    // 500 — не «ещё обрабатывается»: одна попытка, а не цикл ожидания.
+    expect(
+      calls.filter(
+        (c) => c.method === 'DELETE' && c.path === '/transcriptions/t1',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('удалено (или 404) — очередь не трогается вовсе', async () => {
+    const st = settingStore();
+    mockFetch(
+      HAPPY.map((r) =>
+        r.method === 'DELETE' && r.path === '/files/f1'
+          ? { ...r, status: 404 }
+          : r,
+      ),
+    );
+    await client(st.prisma).transcribe(req);
+    expect(st.platformSetting.findUnique).not.toHaveBeenCalled();
+    expect(st.list()).toBeNull();
+  });
+
+  it('без базы (как раньше) — не бросает, результат не портится', async () => {
+    mockFetch(
+      HAPPY.map((r) => (r.method === 'DELETE' ? { ...r, status: 409 } : r)),
+    );
+    const r = await client().transcribe(req);
+    expect(r.text).toBe('Марина, серйозніше');
+  });
+});
+
+describe('drainSonioxPendingDeletes — повтор метлой', () => {
+  const saved = { ...process.env };
+  beforeEach(() => {
+    process.env.SONIOX_API_KEY = 'sk';
+  });
+  afterAll(() => {
+    process.env = saved;
+  });
+
+  it('удалено/404 — снято, 409 — ещё попытка, вышли попытки/срок — снято с предупреждением', async () => {
+    const old = new Date(
+      NOW.getTime() - SONIOX_PENDING_DELETE_MAX_AGE_MS - 1,
+    ).toISOString();
+    const st = settingStore([
+      entry({ id: 't1' }),
+      entry({ id: 'f2', kind: 'file' }),
+      entry({ id: 't3', attempts: 1 }),
+      entry({ id: 't4', attempts: SONIOX_PENDING_DELETE_MAX_ATTEMPTS - 1 }),
+      entry({ id: 't5', since: old }),
+    ]);
+    const { calls } = mockFetch([
+      { method: 'DELETE', path: '/transcriptions/t1', status: 204 },
+      { method: 'DELETE', path: '/files/f2', status: 404 },
+      { method: 'DELETE', path: '/transcriptions/t3', status: 409 },
+      { method: 'DELETE', path: '/transcriptions/t4', status: 409 },
+      { method: 'DELETE', path: '/transcriptions/t5', status: 500 },
+    ]);
+    const log = quietLogger();
+    const r = await drainSonioxPendingDeletes(st.prisma, log, NOW);
+    expect(r).toEqual({ deleted: 2, dropped: 2, left: 1 });
+    // Ни разу не пробованные — по времени постановки: t5 (самая старая) первой.
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'DELETE /transcriptions/t5',
+      'DELETE /transcriptions/t1',
+      'DELETE /files/f2',
+      'DELETE /transcriptions/t3',
+      'DELETE /transcriptions/t4',
+    ]);
+    expect(st.list()).toEqual([
+      expect.objectContaining({ id: 't3', attempts: 2, lastStatus: 409 }),
+    ]);
+    const warned = log.warn.mock.calls.map((c) => c[0] as string).join('\n');
+    expect(warned).toContain('t4');
+    expect(warned).toContain('t5');
+    expect(warned).toContain('вручную');
+  });
+
+  it('запись, добавленная распознаванием во время прогона, не теряется', async () => {
+    const st = settingStore([entry({ id: 't1' })]);
+    const { fn } = mockFetch([
+      { method: 'DELETE', path: '/transcriptions/t1', status: 204 },
+    ]);
+    const base = fn.getMockImplementation()!;
+    fn.mockImplementation(async (url: string, init: RequestInit = {}) => {
+      st.replace([entry({ id: 't1' }), entry({ id: 'new' })]);
+      return base(url, init);
+    });
+    await drainSonioxPendingDeletes(st.prisma, quietLogger(), NOW);
+    expect(st.list()!.map((e) => e.id)).toEqual(['new']);
+  });
+
+  it('неудаляемые не держат голову очереди: сначала непробованные, затем давнее всего пробованные', async () => {
+    const t = (min: number) =>
+      new Date(NOW.getTime() - min * 60_000).toISOString();
+    expect(
+      sonioxPendingOrder([
+        entry({ id: 'stuck', since: t(600), lastAttemptAt: t(1) }),
+        entry({ id: 'older-try', since: t(10), lastAttemptAt: t(30) }),
+        entry({ id: 'new', since: t(5) }),
+        entry({ id: 'newer', since: t(2) }),
+      ]).map((e) => e.id),
+    ).toEqual(['new', 'newer', 'older-try', 'stuck']);
+    // Прогон на 1 место берёт не «застрявшую» голову, а новую запись.
+    const st = settingStore([
+      entry({ id: 'stuck', since: t(600), attempts: 5, lastAttemptAt: t(1) }),
+      entry({ id: 'fresh', since: t(5) }),
+    ]);
+    const { calls } = mockFetch([
+      { method: 'DELETE', path: '/transcriptions/fresh', status: 204 },
+    ]);
+    await drainSonioxPendingDeletes(st.prisma, quietLogger(), NOW, {
+      perRun: 1,
+    });
+    expect(calls.map((c) => c.path)).toEqual(['/transcriptions/fresh']);
+    // Время попытки переживает разбор строки настройки.
+    expect(
+      parseSonioxPendingDeletes(
+        JSON.stringify([
+          {
+            kind: 'file',
+            id: 'f',
+            since: t(1),
+            attempts: 1,
+            lastAttemptAt: t(0),
+          },
+          {
+            kind: 'file',
+            id: 'g',
+            since: t(1),
+            attempts: 1,
+            lastAttemptAt: 'х',
+          },
+        ]),
+      ).map((e) => e.lastAttemptAt),
+    ).toEqual([t(0), undefined]);
+  });
+
+  it('загрузка и задача помечены меткой генератора — уборка по списку отличит своё', async () => {
+    process.env.NODE_ENV = 'test';
+    const { calls } = mockFetch(HAPPY);
+    await new SonioxSttClient().transcribe({
+      audio: AUDIO,
+      mimeType: 'audio/webm',
+      languageHints: [],
+    });
+    const upload = calls.find((c) => c.path === '/files')!.body as FormData;
+    expect(upload.get('client_reference_id')).toBe('v4c-gen:stt');
+    expect((upload.get('file') as File).name).toBe('v4c-gen-stt');
+    const created = calls.find(
+      (c) => c.method === 'POST' && c.path === '/transcriptions',
+    )!;
+    expect(JSON.parse(String(created.body))).toMatchObject({
+      file_id: 'f1',
+      client_reference_id: 'v4c-gen:stt',
+    });
+  });
+
+  it('за прогон — не больше заданного числа удалений, остальное ждёт', async () => {
+    const st = settingStore([
+      entry({ id: 'a' }),
+      entry({ id: 'b' }),
+      entry({ id: 'c' }),
+    ]);
+    const { calls } = mockFetch([
+      { method: 'DELETE', path: '/transcriptions/a', status: 204 },
+      { method: 'DELETE', path: '/transcriptions/b', status: 204 },
+      { method: 'DELETE', path: '/transcriptions/c', status: 204 },
+    ]);
+    const r = await drainSonioxPendingDeletes(st.prisma, quietLogger(), NOW, {
+      perRun: 2,
+    });
+    expect(calls).toHaveLength(2);
+    expect(r).toEqual({ deleted: 2, dropped: 0, left: 1 });
+    expect(st.list()!.map((e) => e.id)).toEqual(['c']);
+  });
+
+  it('пустая очередь — ни одного запроса; нет ключа — очередь цела', async () => {
+    const { fn } = mockFetch([]);
+    await expect(
+      drainSonioxPendingDeletes(settingStore().prisma, quietLogger(), NOW),
+    ).resolves.toEqual({ deleted: 0, dropped: 0, left: 0 });
+    delete process.env.SONIOX_API_KEY;
+    const st = settingStore([entry({ id: 't1' })]);
+    await expect(
+      drainSonioxPendingDeletes(st.prisma, quietLogger(), NOW),
+    ).resolves.toEqual({ deleted: 0, dropped: 0, left: 1, skipped: true });
+    expect(fn).not.toHaveBeenCalled();
+    expect(st.list()).toHaveLength(1);
+  });
+
+  it('сбой базы — не бросает', async () => {
+    const broken = {
+      platformSetting: {
+        findUnique: jest.fn().mockRejectedValue(new Error('db down')),
+      },
+    } as any;
+    await expect(
+      drainSonioxPendingDeletes(broken, quietLogger(), NOW),
+    ).resolves.toEqual({ deleted: 0, dropped: 0, left: 0 });
   });
 });

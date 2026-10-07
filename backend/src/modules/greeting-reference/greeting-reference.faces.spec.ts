@@ -14,6 +14,7 @@ import {
   GreetingReferenceService,
   REFERENCE_UPLOAD_MISSING_MESSAGE,
 } from './greeting-reference.service';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const OLD_FLAG = process.env.PERSONA_ENABLED;
 beforeEach(() => {
@@ -65,6 +66,7 @@ function setup(
     {} as any,
     aiUsage as any,
     plans as any,
+    fakeSnapshotDb(sessions as any) as any,
   );
   if (opts.noClient) {
     // Геттер `genai` создаёт клиент лениво и бросает без ключа — так же

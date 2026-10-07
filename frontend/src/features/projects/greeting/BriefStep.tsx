@@ -108,6 +108,8 @@ function resetFieldLabel(
     resetFieldMusic: string;
     resetFieldScenes: string;
     resetFieldPhotos: string;
+    resetFieldSetting: string;
+    resetFieldCaptions: string;
   },
   field: GreetingResetField
 ): string {
@@ -120,6 +122,10 @@ function resetFieldLabel(
       return w.resetFieldMusic;
     case 'sceneCount':
       return w.resetFieldScenes;
+    case 'sceneSetting':
+      return w.resetFieldSetting;
+    case 'referenceCaptions':
+      return w.resetFieldCaptions;
   }
 }
 

@@ -55,6 +55,7 @@ import {
   SubtitleTheme,
 } from '../../common/subtitles';
 import { planPostProduction } from '../../common/postprod';
+import { aiVideoMetadata } from '../../common/ai-marking';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { HedraClientService } from './hedra-client.service';
 import { GoogleGenAI } from '@google/genai';
@@ -717,6 +718,8 @@ export class ActorsService {
           subtitlesInputKey: 'subs',
           subtitleForceStyle:
             SUBTITLE_THEME_FORCE_STYLE[freshVideo.subtitleTheme],
+          // Заход 8 C11: аватар снят ИИ — метка едет в этой же задаче.
+          metadata: aiVideoMetadata(null),
         });
 
         try {

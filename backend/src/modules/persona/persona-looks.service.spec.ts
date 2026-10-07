@@ -662,3 +662,106 @@ describe('PersonaLooksService: переименование, удаление, �
     expect(r.template).toContain('{name}');
   });
 });
+
+/**
+ * Приёмка §8.2 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md:
+ * «Тридцать образов одной персоны создаются без ошибки лимита; при
+ * исчерпании квоты — 429 с понятным текстом».
+ *
+ * Лимита на ЧИСЛО хранимых образов нет — есть квота НОВЫХ в сутки и месяц
+ * по тарифу (В-7: LITE 3/20, STANDARD 10/100, PREMIUM 30/300). Счётчик
+ * квоты здесь живой: каждый готовый образ — строка расхода
+ * `persona-look`, и следующий `create` её видит, как в базе.
+ */
+describe('§8.2: тридцать образов подряд', () => {
+  const saved = process.env.PERSONA_ENABLED;
+  beforeEach(() => {
+    process.env.PERSONA_ENABLED = 'true';
+  });
+  afterAll(() => {
+    process.env.PERSONA_ENABLED = saved;
+  });
+
+  /** Счётчик расхода: сегодня и с начала месяца, растёт с каждым образом. */
+  function liveUsage(ctx: ReturnType<typeof build>) {
+    const used = { today: 0, month: 0 };
+    ctx.aiUsage.recordGemini.mockImplementation(
+      async (_raw: unknown, o: { operation: string }) => {
+        if (o.operation === 'persona-look') {
+          used.today += 1;
+          used.month += 1;
+        }
+      },
+    );
+    ctx.aiUsage.countToday.mockImplementation(async () => used.today);
+    ctx.aiUsage.countSince.mockImplementation(async () => used.month);
+    return used;
+  }
+
+  const PRESETS = [
+    'business',
+    'sport',
+    'evening',
+    'winter',
+    'festive',
+  ] as const;
+  const liveLooks = (looks: Record<string, any>) =>
+    Object.values(looks).filter((l) => !l.isBase && !l.deletedAt);
+
+  it('PREMIUM: 30 образов за день — все готовы; 31-й — 429 с текстом и кодом, без модели и без брони', async () => {
+    const ctx = build({ plan: 'PREMIUM', looks: [BASE_LOOK] });
+    liveUsage(ctx);
+    const ids = new Set<string>();
+    for (let i = 0; i < 30; i++) {
+      const look = await ctx.service.create('u1', {
+        preset: PRESETS[i % PRESETS.length],
+        ...(i % 3 === 0 ? { description: `образ номер ${i + 1}` } : {}),
+      });
+      expect({ i, status: look.status }).toEqual({ i, status: 'ready' });
+      ids.add(look.id);
+    }
+    expect(ids.size).toBe(30);
+    expect(ctx.generator.generate).toHaveBeenCalledTimes(30);
+    expect(liveLooks(ctx.looks)).toHaveLength(30);
+    expect(liveLooks(ctx.looks).every((l) => l.status === 'ready')).toBe(true);
+
+    const err = await ctx.service
+      .create('u1', { preset: 'business' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect((err as HttpException).getStatus()).toBe(429);
+    const body = (err as HttpException).getResponse() as {
+      code: string;
+      message: string;
+      quota: { dayLeft: number; monthLeft: number };
+    };
+    expect(body.code).toBe('PERSONA_LOOK_QUOTA');
+    // Понятный текст: что кончилось, сколько было и когда обновится.
+    expect(body.message).toBe(
+      'Лимит новых образов на сегодня исчерпан (30). Обновится в 00:00 UTC (03:00 по Киеву).',
+    );
+    expect(body.quota).toEqual({ dayLeft: 0, monthLeft: 270 });
+    // Модель не звали, бронь 31-го убрана — тридцать образов на месте.
+    expect(ctx.generator.generate).toHaveBeenCalledTimes(30);
+    expect(liveLooks(ctx.looks)).toHaveLength(30);
+  });
+
+  it('STANDARD: 30 образов за три дня по 10 — лимит суточный, а не на число образов', async () => {
+    const ctx = build({ plan: 'STANDARD', looks: [BASE_LOOK] });
+    const used = liveUsage(ctx);
+    for (let day = 0; day < 3; day++) {
+      for (let i = 0; i < 10; i++) {
+        await expect(
+          ctx.service.create('u1', { preset: PRESETS[i % PRESETS.length] }),
+        ).resolves.toMatchObject({ status: 'ready' });
+      }
+      const over = await ctx.service
+        .create('u1', { preset: 'sport' })
+        .catch((e: unknown) => e);
+      expect((over as HttpException).getStatus()).toBe(429);
+      used.today = 0; // наступили следующие сутки
+    }
+    expect(liveLooks(ctx.looks)).toHaveLength(30);
+    expect(ctx.generator.generate).toHaveBeenCalledTimes(30);
+  });
+});

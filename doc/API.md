@@ -321,7 +321,9 @@
 | `GET /api/admin/users/:id` | оператор | карточка пользователя + 10 последних сессий + баланс кредитов и подписка (§41, этап 62); расход по операциям с числом символов синтеза и подписи операций (`operationLabels` — своей копии словаря у админки нет; этап F ТЗ docs-tz/TZ-Tutorial-Video-Voiced.md) |
 | `PATCH /api/admin/users/:id` | оператор | режим, флаг оператора, блокировка (`isBlocked`, `blockedReason`); снять оператора или заблокировать САМОГО СЕБЯ нельзя (403) |
 | `POST /api/admin/users/:id/cancel-subscription` | оператор | отменить подписку пользователя (`cancelAtPeriodEnd: true`, без возврата денег) — тот же эффект, что кнопка «Отменить подписку» в TMA (§41, этап 62) |
-| `GET /api/admin/costs?top=` | оператор | расходы на ИИ (§26): итоги, разбивка по провайдерам/операциям/моделям (у каждой строки — деньги, вызовы и символы синтеза речи, из сырых строк и свёртки), топ по тратам, действующий прайс |
+| `GET /api/admin/users/:id/persona-age` | оператор | отметка «младше 18» режима «Я в кадре» (В-4 ТЗ Greeting 2.0, заход 8): `{ userId, personaEnabled, persona: { id, under18, markedAt, refusals, verified, deletePending, filesPending, consentGivenAt } \| null, clears[] }` — журнал снятий новыми сверху (`at`, `by`, `reason`, `markedAt`, `refusals`). Оценки возраста в ответе нет намеренно; `Cache-Control: no-store`; 404 — пользователь не найден |
+| `POST /api/admin/users/:id/persona-age/clear` | оператор | снять отметку после апелляции через поддержку: `{ reason }` (3–500 символов, обязательна) → новое состояние. Снятие — право на ПОВТОРНУЮ попытку, а не «взрослость»: строка становится незавершённой попыткой без файлов и оценки, человек заново даёт согласие и проходит автопроверку (под `PERSONA_ENABLED`; новая оценка `ageMin < 18` снова закроет режим). Журнал — `verifyResult.ageClears` (последние 20), в лог — без текста причины. 400 — причина (`PERSONA_AGE_CLEAR_REASON`); 404 — `PERSONA_NOT_FOUND`; 409 — `PERSONA_NOT_UNDER_18` (отметки нет), `PERSONA_AGE_CHANGED` (персону меняли параллельно); 503 — `PERSONA_FILES_PENDING` (файлы прежней проверки ещё не удалены хранилищем, отметка не снята) |
+| `GET /api/admin/costs?top=` | оператор | расходы на ИИ (§26): итоги, разбивка по провайдерам/операциям/моделям (у каждой строки — деньги, вызовы и символы синтеза речи, из сырых строк и свёртки), топ по тратам, действующий прайс; с захода 8 у моделей Gemini в прайсе — ставки входа по модальности (`audioInputPerMTokUsd`, `imageInputPerMTokUsd`, `videoInputPerMTokUsd`, `cachedAudioInputPerMTokUsd`; `null` — как текст/кеш), вкладка «Затраты» их показывает |
 | `GET /api/admin/telemetry` | оператор | агрегаты по сессиям |
 | `GET /api/admin/settings` | оператор | проверка переменных окружения |
 | `GET /api/admin/settings/audio-separation` | оператор | сохранять ли фон ролика при дубляже: состояние, настроен ли Replicate и что произойдёт при следующем дубляже (docs-tz/TZ-Voice-Replace-Keep-Background.md, этап E) |
@@ -369,7 +371,7 @@
 | `PATCH /api/projects/:projectId/greeting-brief` | идентичность | правка брифа проекта (до сессии). 400: `OTHER` без текста — `GREETING_OCCASION_TEXT_REQUIRED`; `OTHER` без ответа о настроении; тон, запрещённый регистром повода; чужой бренд-бук — `GREETING_BRAND_NOT_FOUND`; скетч-ведущий на Hedra; 403: Hedra не на PREMIUM, разрешение выше тарифа; выбор себя ведущим (`presenter`) при выключенном режиме — 404 `PERSONA_DISABLED` |
 | `POST /api/projects/:projectId/greeting-brief/sessions` | идентичность | начать сессию из брифа (тот же ответ, что `POST /api/sessions`); снимок брифа копирует образ-ведущего — при выключенном режиме 400 `PERSONA_DISABLED` |
 | `GET /api/projects/:projectId/greeting-brief/sessions` | идентичность | сессии (версии) этого поздравления |
-| `PATCH /api/sessions/:sessionId/greeting-brief` | UUID сессии | правка брифа из сессии → `{ sessionId, newVersion, brief, resetFields, promptCleared }`; после готового ролика — новая сессия-версия, готовый ролик остаётся. 400: смена бренд-бука здесь (он меняется `PATCH …/brand-manifest`), правила брифа как выше; 409: ролик считается — `GREETING_CHANGE_DURING_RENDER`, замок занят — `GREETING_EDIT_IN_PROGRESS`, ролик запустили в то же мгновение — `GREETING_EDIT_AFTER_RENDER_STARTED` |
+| `PATCH /api/sessions/:sessionId/greeting-brief` | UUID сессии | правка брифа из сессии → `{ sessionId, newVersion, brief, resetFields, promptCleared }`; после готового ролика — новая сессия-версия, готовый ролик остаётся. 400: смена бренд-бука здесь (он меняется `PATCH …/brand-manifest`), правила брифа как выше; 409: ролик считается — `GREETING_CHANGE_DURING_RENDER`, замок занят — `GREETING_EDIT_IN_PROGRESS`, ролик запустили в то же мгновение — `GREETING_EDIT_AFTER_RENDER_STARTED`. В `resetFields` с захода 8 (07.10.2026) бывают ещё `sceneSetting` (праздничная обстановка вне праздника) и `referenceCaptions` (подписи фото с праздничной атрибутикой вне праздника: описание — в `null`, подпись — «Фото») |
 | `PATCH /api/sessions/:sessionId/greeting-script` | UUID сессии | `{ speech }` → сцена и озвучка пересобираются вместе → `{ sessionId, newVersion, prompt, registerMismatch, registerWarning }`; 400 — пустой, длиннее предела, образ знаменитости; 409 — как у правки брифа |
 | `PATCH /api/sessions/:sessionId/brand-manifest` | UUID сессии | снимок бренд-бука сессии (общий маршрут, см. выше); у поздравления — 409 во время рендера, голос персоны при выключенном режиме — `PERSONA_DISABLED` |
 
@@ -378,7 +380,7 @@
 | Метод и путь | Доступ | Назначение и ключевые отказы |
 | --- | --- | --- |
 | `POST /api/sessions/:sessionId/greeting-prompt` | UUID сессии | собрать или пересобрать сценарий (модерация текста, отпечаток входов для проверки устаревания). 400 — не поздравление (`GREETING_NOT_GREETING_SESSION`), образ знаменитости, голос персоны на Hedra без образа (`GREETING_PERSONA_VOICE_NEEDS_PRESENTER`); 409 — ролик считается (`GREETING_CHANGE_DURING_RENDER`), ролик уже готов (`GREETING_VIDEO_ALREADY_READY`), сборка уже идёт (`GREETING_EDIT_IN_PROGRESS`) |
-| `POST /api/sessions/:sessionId/greeting-video` | UUID сессии | запустить рендер (Grok или Hedra по брифу); все проверки — до списания кредита. 400: не поздравление, сценария нет (`GREETING_SCRIPT_MISSING`), сценарий помечен проверкой — FLAGGED или BYPASSED (`GREETING_SCRIPT_FLAGGED`), правило регистра, лицо на фото без согласия, режим персоны выключен (`PERSONA_DISABLED`), голос персоны на Hedra без образа, голос бренд-бука удалён (`GREETING_BRAND_VOICE_UNAVAILABLE`), нет ключа провайдера (`GREETING_PROVIDER_UNAVAILABLE`); 409: сценарий устарел (`GREETING_SCRIPT_STALE`), старт уже идёт (`GREETING_RENDER_IN_PROGRESS`), идёт правка (`GREETING_EDIT_IN_PROGRESS`), ролик уже готов (`GREETING_VIDEO_ALREADY_READY`; повтор — только после FAILED). Разрешение Grok понижается до потолка тарифа без отказа |
+| `POST /api/sessions/:sessionId/greeting-video` | UUID сессии | запустить рендер (Grok или Hedra по брифу); все проверки — до списания кредита. 400: не поздравление, сценария нет (`GREETING_SCRIPT_MISSING`), сценарий помечен проверкой — FLAGGED или BYPASSED (`GREETING_SCRIPT_FLAGGED`), правило регистра, лицо на фото без согласия, режим персоны выключен (`PERSONA_DISABLED`), голос персоны на Hedra без образа, голос бренд-бука удалён (`GREETING_BRAND_VOICE_UNAVAILABLE`), обстановка или подпись фото не проходит проверку (чужой образ, модерация, праздничная атрибутика вне праздника — заход 8), нет ключа провайдера (`GREETING_PROVIDER_UNAVAILABLE`); 409: сценарий устарел (`GREETING_SCRIPT_STALE`), старт уже идёт (`GREETING_RENDER_IN_PROGRESS`), идёт правка (`GREETING_EDIT_IN_PROGRESS`), ролик уже готов (`GREETING_VIDEO_ALREADY_READY`; повтор — только после FAILED). Разрешение Grok понижается до потолка тарифа без отказа |
 | `GET /api/sessions/:sessionId/greeting-video` | UUID сессии | опрос идущего рендера |
 
 ### Оформление ролика
@@ -386,11 +388,13 @@
 | Метод и путь | Доступ | Назначение и ключевые отказы |
 | --- | --- | --- |
 | `GET /api/sessions/:sessionId/greeting-references` | UUID сессии | фото-референсы сессии |
-| `POST /api/sessions/:sessionId/greeting-references/generate` | UUID сессии | нарисовать кадр по брифу (платно; `{ setting? }`); 429 — 10/мин и 60/ч на человека; 400 — не поздравление, 7 фото (`GREETING_REFERENCE_LIMIT`), образ знаменитости; 502 — сбой модели, 422 — модель отказалась |
-| `POST /api/sessions/:sessionId/greeting-references/settings` | UUID сессии | три варианта сеттинга под повод (платный текстовый вызов, поэтому POST); 429 — 20/мин и 200/ч |
+| `POST /api/sessions/:sessionId/greeting-references/generate` | UUID сессии | нарисовать кадр по брифу (платно; `{ setting? }`). С захода 8: `setting` — только из выданных вариантов (иначе 400 `GREETING_SCENE_SETTING_NOT_OFFERED`) и сохраняется в снимок как `sceneSetting` той же записью, что и кадр; без `setting` кадр рисуется по уже выбранной обстановке; подпись (`description`) кадра — его обстановка. 429 — 10/мин и 60/ч на человека; 400 — не поздравление, 7 фото (`GREETING_REFERENCE_LIMIT`), образ знаменитости, модерация, праздничная обстановка вне праздника; 502 — сбой модели, 422 — модель отказалась |
+| `POST /api/sessions/:sessionId/greeting-references/settings` | UUID сессии | три варианта сеттинга под повод (платный текстовый вызов, поэтому POST); 429 — 20/мин и 200/ч. С захода 8 варианты, не прошедшие политику регистра, отбрасываются, а выданные запоминаются в снимке (`sceneSettingOptions`: 12 последних, каждый живёт 24 ч) — это белый список для `PUT …/setting` и `generate` |
+| `GET /api/sessions/:sessionId/greeting-references/setting` | UUID сессии | выбранная обстановка ролика (§3.9) → `{ sceneSetting: string \| null }`; `null` — сцена повода. Заход 8 |
+| `PUT /api/sessions/:sessionId/greeting-references/setting` | UUID сессии | `{ setting: string \| null }` — выбрать обстановку без рисования кадра (бесплатно, без окна частоты) или вернуть сцену повода (`null`) → `{ sceneSetting }`. Только из выданных сервером вариантов (`sceneSettingOptions`, 24 ч) или уже выбранной; строка нормализуется (NFKC, без невидимых символов, пробелы схлопываются, ≤160). Пишется под замком правки с перештамповкой собранного сценария — правки текста человеком сохраняются, «сценарий устарел» не возникает. 400 — не поздравление, `GREETING_SCENE_SETTING_NOT_OFFERED`, образ знаменитости, модерация, праздничная атрибутика вне праздника (словарь политики — вторая линия: NFKC, гомоглифы, отрицания «no balloons», «непраздничный»); 409 — `GREETING_CHANGE_DURING_RENDER`, `GREETING_EDIT_IN_PROGRESS`. Заход 8 |
 | `POST /api/sessions/:sessionId/greeting-references/upload-url` | UUID сессии | presigned PUT для своего фото; 400 — не поздравление, 7 фото |
-| `POST /api/sessions/:sessionId/greeting-references/confirm` | UUID сессии | подтвердить загрузку; при включённом режиме персоны — платная проверка лица и серверная копия файла; 429 — 20/мин и 200/ч; 400 — `GREETING_REFERENCE_PATH_INVALID`, `GREETING_REFERENCE_ALREADY_ADDED`, `GREETING_REFERENCE_UPLOAD_MISSING`, `GREETING_REFERENCE_LIMIT` |
-| `PATCH /api/sessions/:sessionId/greeting-references/:imageId` | UUID сессии | подпись (`label`), описание, `faceConsent: true` (согласие изображённого); 404 — `GREETING_REFERENCE_NOT_FOUND` |
+| `POST /api/sessions/:sessionId/greeting-references/confirm` | UUID сессии | подтвердить загрузку; при включённом режиме персоны — платная проверка лица и серверная копия файла; 429 — 20/мин и 200/ч; 400 — `GREETING_REFERENCE_PATH_INVALID`, `GREETING_REFERENCE_ALREADY_ADDED`, `GREETING_REFERENCE_UPLOAD_MISSING`, `GREETING_REFERENCE_LIMIT`; с захода 8 — подпись и описание фото проверяются как обстановка (чужой образ, модерация, праздничная атрибутика вне праздника) |
+| `PATCH /api/sessions/:sessionId/greeting-references/:imageId` | UUID сессии | подпись (`label`), описание, `faceConsent: true` (согласие изображённого); 404 — `GREETING_REFERENCE_NOT_FOUND`; 400 — подпись или описание не прошли те же проверки, что обстановка (заход 8: подписи уходят в видео-промпт) |
 | `DELETE /api/sessions/:sessionId/greeting-references/:imageId` | UUID сессии | удалить фото; 404 — `GREETING_REFERENCE_NOT_FOUND` |
 | `GET /api/sessions/:sessionId/greeting-voice` | UUID сессии | выбранный голос отправителя |
 | `GET /api/sessions/:sessionId/greeting-voice/presets` | UUID сессии | пресетные голоса Grok (реестр провайдера) |
@@ -443,8 +447,9 @@
 | `GET /api/admin/wizard-guide/stats` · `…/hints` · `…/steps` | оператор | сводка кеша подсказок, лента подсказок с фильтрами, частоты по шагам |
 | `GET /api/admin/wizard-guide/experience`; `PUT …/experience/:id/texts/:locale`; `POST …/experience/:id/texts/:locale/reviewed`; `POST …/experience/:id/publish`; `PATCH …/experience/:id` | оператор | записи опыта советника: тексты по локалям, отметка проверки, публикация |
 | `GET/POST /api/admin/wizard-guide/candidates`; `POST …/candidates/:id/classify` · `promote` · `merge` · `unmerge` · `attach` · `reject`; `GET/PATCH /api/admin/wizard-guide/siblings` | оператор | кандидаты из жалоб, сведение дублей и его пороги |
-| `GET /api/cron/voice-uploads-sweep` | `CRON_SECRET` | уборка необработанных голосовых записей старше часа и сводок перед согласием (каждые 15 минут) |
-| `POST /api/admin/ui-snapshot/greeting-frames` · `…/greeting-frames/fixture-video` | оператор | съёмка кадров лендинга поздравлений (этап I); фикстурный ролик — платно |
+| `GET /api/cron/voice-uploads-sweep` | `CRON_SECRET` | уборка необработанных голосовых записей старше часа и сводок перед согласием (каждые 15 минут). С захода 8 тем же тиком: повтор удаления у Soniox из очереди `soniox-pending-delete` (ответ `soniox: { deleted, dropped, left, skipped? }`) и уборка по списку Soniox только СВОИХ объектов (метка `v4c-gen`) старше часа (ответ `sonioxStale: { sonioxFilesDeleted, sonioxTranscriptionsDeleted, sonioxBusy, sonioxFailed, sonioxForeignSkipped, sonioxSkipped? }`) |
+| `POST /api/admin/ui-snapshot/greeting-frames` · `…/greeting-frames/fixture-video` | оператор | съёмка кадров лендинга поздравлений (этап I); фикстурный ролик — платно. `fixture-video` с захода 8 принимает `{ rerender?, expect? }`: `expect` — шаг, который вызывающий видел в `…/state`; если фактический шаг платный и другой — 409 `GREETING_FIXTURE_ACTION_CHANGED`, ничего не запущено; `expect` не из списка — 400 |
+| `GET /api/admin/ui-snapshot/greeting-frames/fixture-video/state` | оператор | состояние ролика фикстуры ТОЛЬКО чтением базы, провайдера не опрашивает (`no-store`): `stage` (`missing` \| `rendering` \| `post-processing` \| `complete` \| `failed`), `video`, `versions`, `hasPrompt`, `next` и `rerender` — что сделает `POST` и заплатит ли (`{ action, paid }`), `lastRun` — цена прошлого прогона по журналу расходов. Страница админки `/greeting-frames`. Заход 8 |
 | `GET /api/admin/ui-snapshot/snapshots?route=&since=&limit=&before=&changed=` | оператор | лента снимков крона `ui-snapshot-run`, новые сверху: маршрут, локаль/тема, время, `changed`, `diffScore`, публичный адрес PNG, начало dHash; у изменившегося — `previous` (снимок, с которым сравнивали); `limit` до 100, курсор `nextBefore`; `changed=true` — только изменившиеся |
 | `GET /api/admin/ui-snapshot/summary?since=` | оператор | по маршрутам за период (по умолчанию сутки, не длиннее 30 дней): снимков, изменилось, не снялось, последние 5 времён перемен; `plainRetentionDays` — срок хранения обычных снимков (за период длиннее него «снимков» и «не снялось» неполны); изменчивые сверху (вкладка «Система → Снимки интерфейса») |
 
@@ -463,13 +468,14 @@
 | `GREETING_APPROVE_NOT_SUPPORTED` | 400 | `POST /api/sessions/:id/prompt/approve` | у поздравления нет ручного одобрения |
 | `GREETING_RENDER_IN_PROGRESS` | 409 | `POST …/greeting-video` | второй старт при идущем |
 | `GREETING_VIDEO_ALREADY_READY` | 409 | `POST …/greeting-video`, `POST …/greeting-prompt` | ролик готов — другой делается новой версией через правку брифа |
-| `GREETING_EDIT_IN_PROGRESS` | 409 | `POST …/greeting-video`, правки брифа и сценария, `POST …/greeting-prompt` | держится замок правки или сборки сценария |
+| `GREETING_EDIT_IN_PROGRESS` | 409 | `POST …/greeting-video`, правки брифа и сценария, `POST …/greeting-prompt`; с захода 8 — голос, музыка, наклейка, сцены, карточки, обстановка (`PUT …/setting`), галочка витрины | держится замок правки или сборки сценария; либо точечная запись снимка (`common/greeting-snapshot-write.ts`, CAS по зависимым ключам) трижды подряд промахнулась — снимок параллельно меняли в другом окне |
 | `GREETING_EDIT_AFTER_RENDER_STARTED` | 409 | правки брифа и сценария, `POST …/greeting-prompt` | ролик запустили в то же мгновение — правка не сохранена |
 | `GREETING_OCCASION_TEXT_REQUIRED` | 400 | правка брифа | повод «Другое» без текста |
 | `GREETING_BRIEF_NOT_FOUND` | 404 | бриф проекта | бриф не найден или проект удалён |
 | `GREETING_BRAND_NOT_FOUND` | 400 | бриф проекта | выбранный бренд-бук не найден |
 | `GREETING_PROVIDER_UNAVAILABLE` | 400 | `POST …/greeting-video` | нет ключа Grok или Hedra на стенде |
-| `GREETING_CHANGE_DURING_RENDER` | 409 | голос, музыка, наклейка, сцены, карточки, фото, снимок бренд-бука, правки брифа и сценария, `greeting-prompt` | ролик сейчас собирается |
+| `GREETING_CHANGE_DURING_RENDER` | 409 | голос, музыка, наклейка, сцены, карточки, фото, обстановка, снимок бренд-бука, правки брифа и сценария, `greeting-prompt` | ролик сейчас собирается |
+| `GREETING_SCENE_SETTING_NOT_OFFERED` | 400 | `PUT …/greeting-references/setting`, `POST …/greeting-references/generate` | обстановку не выдавал сервер для этой сессии или вариант старше 24 ч — подобрать варианты заново (заход 8) |
 | `GREETING_REFERENCE_LIMIT` | 400 | `greeting-references` (upload-url, confirm, generate) | уже 7 фото |
 | `GREETING_REFERENCE_PATH_INVALID` | 400 | `greeting-references/confirm` | файл загружен не для этой сессии |
 | `GREETING_REFERENCE_ALREADY_ADDED` | 400 | `greeting-references/confirm` | фото уже добавлено |
@@ -1436,3 +1442,55 @@ sites-backend:
 
 TMA помощника: маршрут `#/verify-host/<host>` и startapp `vh-<base64url>`
 (экран подтверждения хоста, без автоматических действий).
+
+### Заход 8 (07.10.2026) — поздравления: изменения контрактов
+
+backend генератора, поздравления (подробно — в таблицах раздела
+«Поздравления, «Я в кадре», голосовой помощник» выше):
+
+- Новые маршруты: `GET/PUT /api/sessions/:sessionId/greeting-references/setting`
+  (обстановка ролика §3.9, `{ sceneSetting }` / `{ setting: string | null }`).
+  Выбор — только из вариантов, выданных `POST …/settings` этой сессии
+  (`sceneSettingOptions` в снимке: 12 последних, 24 ч), иначе 400
+  `GREETING_SCENE_SETTING_NOT_OFFERED`; словарь праздничной атрибутики —
+  вторая линия. `PUT` перештамповывает собранный сценарий, правки текста
+  человеком сохраняются.
+- `POST …/greeting-references/generate`: явный `setting` проходит тот же
+  белый список и сохраняется в снимок; без `setting` — уже выбранная
+  обстановка. Подпись кадра (`description`) — его обстановка.
+- Подписи и описания фото (`PATCH …/:imageId`, `confirm`) и у денег
+  (`POST …/greeting-video`) проверяются как обстановка. Смена повода в
+  правке брифа сбрасывает праздничные подписи: `resetFields` получает
+  `referenceCaptions`; праздничную обстановку вне праздника —
+  `sceneSetting`. Старый бандл TMA этих двух значений не знает и
+  показывает пустой пункт в списке сброшенного (косметика до обновления).
+- Видео-промпт поздравления: строка «Do not add any recognisable real
+  person or celebrity beyond the people shown in the reference images».
+- 409 `GREETING_EDIT_IN_PROGRESS` теперь и у голоса, музыки, наклейки,
+  сцен, карточек, обстановки и галочки витрины: снимок пишется точечно
+  (`jsonb_set`) с CAS по зависимым ключам, три промаха подряд — 409.
+- Ролики ИИ получают машиночитаемую метку в метаданных MP4 (`comment`,
+  `description`: `ai_generated=1`, IPTC `trainedAlgorithmicMedia`,
+  `ai_persona=1` у роликов с персоной). Товарный ролик — только если
+  задача ffmpeg идёт и так; поздравление с персоной — всегда, отдельным
+  проходом (`metadataOnly`).
+
+backend, админка:
+
+- `GET /api/admin/users/:id/persona-age`, `POST …/persona-age/clear`
+  (снятие отметки «младше 18», журнал `verifyResult.ageClears`).
+- `GET /api/admin/ui-snapshot/greeting-frames/fixture-video/state`;
+  `POST …/fixture-video` `+ expect?` → 409 `GREETING_FIXTURE_ACTION_CHANGED`
+  (платный шаг сменился между чтением состояния и вызовом).
+- `GET /api/admin/costs`: в прайсе Gemini — ставки по модальностям входа
+  (`PRICING_VERSION` 2026-10-07).
+- Кроны: `voice-uploads-sweep` — `+ soniox`, `+ sonioxStale`;
+  `cleanup-sessions` — удаляет записи памяти классификатора регистра
+  старше 180 дней.
+
+sites-backend:
+
+- `GET /cron/assist-retention` — `+ sonioxFilesDeleted`,
+  `sonioxTranscriptionsDeleted`, `sonioxBusy`, `sonioxFailed`,
+  `sonioxForeignSkipped`, `sonioxSkipped?`: уборка у Soniox только своих
+  объектов (метка `v4c-sites`) старше часа.

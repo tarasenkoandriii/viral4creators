@@ -17,11 +17,14 @@
  * повод» — тёплый нейтральный, не праздничный.
  */
 
+import { createHmac } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { GoogleGenAI } from '@google/genai';
 import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
+import { PrismaService } from '../../prisma/prisma.service';
+import { greetingRegisterAnswerCutoff } from './greeting-register-retention';
 import { isGreetingRegister } from '../../common/greeting-policy';
 import { GreetingRegister } from '../../common/types/greeting.types';
 
@@ -76,12 +79,72 @@ export function parseRegisterAnswer(
   return unique.length === 1 ? unique[0] : null;
 }
 
+/**
+ * Домен ключа: из общего серверного секрета выводится свой ключ, и
+ * HMAC памяти классификатора не совпадёт ни с одним другим HMAC на том
+ * же секрете (тот же приём, что у отметок входа обучалки П-Т6).
+ */
+const ANSWER_KEY_DOMAIN = 'greeting-register-answer-v1';
+
+/**
+ * Ключ запомненного ответа: HMAC-SHA256 модели и ПОЛНОГО текста запроса
+ * ключом, выведенным из `CRON_SECRET` (на проде обязателен — без него не
+ * работает ни один крон).
+ *
+ * HMAC, а не голый sha256 (аудит захода 8): описания поводов короткие, и
+ * голый хеш восстанавливался бы перебором словаря — у того, кто увидел
+ * таблицу, но не секрет, такой возможности нет. Нет секрета — нет и
+ * ключа (`null`): память не используется, классификатор зовётся как
+ * раньше. Фиксированной dev-соли нет намеренно: хеш с публичной солью —
+ * тот же голый sha256.
+ *
+ * От запроса, а не от описания: модель видит именно его (описание в нём
+ * уже обрезано до 300 символов и очищено от кавычек и переводов строк),
+ * и правка формулировки или смена модели сами делают прежние ответы
+ * непригодными — без ручной «версии кеша», которую забыли бы поднять.
+ * Смена `CRON_SECRET` делает то же самое — это кеш, не потеря данных.
+ */
+export function registerAnswerKey(
+  text: string,
+  opts: { secret?: string | null; model?: string } = {},
+): string | null {
+  const secret = (
+    opts.secret === undefined ? process.env.CRON_SECRET : opts.secret
+  )?.trim();
+  if (!secret) return null;
+  const key = createHmac('sha256', secret).update(ANSWER_KEY_DOMAIN).digest();
+  return createHmac('sha256', key)
+    .update(`${opts.model ?? GEMINI_MODEL}\n${buildRegisterPrompt(text)}`)
+    .digest('hex');
+}
+
+/**
+ * ## Память ответов (заход 8, C14)
+ *
+ * Раньше классификатор звался при каждом сохранении брифа, если его
+ * прошлый ответ не поднял регистр: из сигналов машины хранился только
+ * победивший, и «ответил, но не поднял» нельзя было отличить от «не
+ * ответил вовсе». Теперь каждый РАЗОБРАННЫЙ ответ запоминается по ключу
+ * `registerAnswerKey` у этого пользователя (`greeting_register_answers`),
+ * и то же описание второй раз модели не отправляется — ни правкой брифа
+ * проекта, ни правкой из сессии, ни созданием проекта. Сбой и мусорный
+ * ответ не запоминаются: следующее сохранение спросит снова, так что один
+ * сбой Gemini третий сигнал не выключает.
+ *
+ * Память — подсказка, а не условие: не прочиталась или не записалась,
+ * или на стенде нет `CRON_SECRET` для ключа — классификатор работает как
+ * раньше (зовёт модель), бриф не падает. Записи живут 180 дней
+ * (`greeting-register-retention.ts`, уборка — крон `cleanup-sessions`).
+ */
 @Injectable()
 export class GreetingRegisterClassifier {
   private readonly logger = new Logger(GreetingRegisterClassifier.name);
   private readonly genai: GoogleGenAI;
 
-  constructor(private readonly aiUsage: AiUsageService) {
+  constructor(
+    private readonly aiUsage: AiUsageService,
+    private readonly prisma: PrismaService,
+  ) {
     this.genai = createGeminiClient();
   }
 
@@ -91,6 +154,9 @@ export class GreetingRegisterClassifier {
   ): Promise<GreetingRegister | null> {
     const t = (text ?? '').trim();
     if (!t) return null;
+    const textHash = registerAnswerKey(t);
+    const known = textHash ? await this.recall(userId, textHash) : null;
+    if (known) return known;
     try {
       const response = await this.genai.models.generateContent({
         model: GEMINI_MODEL,
@@ -104,12 +170,52 @@ export class GreetingRegisterClassifier {
         model: GEMINI_MODEL,
         userId,
       });
-      return parseRegisterAnswer(response.text);
+      const answer = parseRegisterAnswer(response.text);
+      if (answer && textHash) await this.remember(userId, textHash, answer);
+      return answer;
     } catch (e) {
       this.logger.warn(
         `классификатор регистра не ответил, продолжаю без него: ${String(e)}`,
       );
       return null;
+    }
+  }
+
+  private async recall(
+    userId: string,
+    textHash: string,
+  ): Promise<GreetingRegister | null> {
+    try {
+      const row = await this.prisma.greetingRegisterAnswer.findUnique({
+        where: { userId_textHash: { userId, textHash } },
+        select: { register: true, createdAt: true },
+      });
+      // Старше срока хранения — не ответ, даже если крон ещё не убрал.
+      if (!row || row.createdAt < greetingRegisterAnswerCutoff()) return null;
+      return isGreetingRegister(row.register) ? row.register : null;
+    } catch (e) {
+      this.logger.warn(
+        `память ответов классификатора не прочиталась, спрашиваю модель: ${String(e)}`,
+      );
+      return null;
+    }
+  }
+
+  private async remember(
+    userId: string,
+    textHash: string,
+    register: GreetingRegister,
+  ): Promise<void> {
+    try {
+      await this.prisma.greetingRegisterAnswer.upsert({
+        where: { userId_textHash: { userId, textHash } },
+        create: { userId, textHash, register },
+        // Переспросили просроченную запись — срок отсчитывается заново.
+        update: { register, createdAt: new Date() },
+      });
+    } catch (e) {
+      // Ответ уже получен и оплачен — он идёт в дело и без памяти.
+      this.logger.warn(`ответ классификатора не запомнился: ${String(e)}`);
     }
   }
 }

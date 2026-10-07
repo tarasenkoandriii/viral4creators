@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Logger } from '@nestjs/common';
 import { FakeSoniox, fakeRecording } from '../testing/fake-soniox.testing';
-import { SiteSonioxStt } from './soniox-stt.client';
+import { SiteSonioxStt, sweepStaleSoniox } from './soniox-stt.client';
 
 function client(fake: FakeSoniox): SiteSonioxStt {
   const c = new SiteSonioxStt();
@@ -135,5 +135,102 @@ describe('SiteSonioxStt', () => {
     expect(cleanup).toMatch(/\/files\/\$\{fileId\}/);
     expect(cleanup).toMatch(/\/transcriptions\/\$\{transcriptionId\}/);
     expect(src).toMatch(/method: 'DELETE'/);
+  });
+});
+
+// ── C4 захода 8: метка сайтов и уборка своего в кроне assist-retention ──
+// Подробные правила уборки — shared/soniox-sweep.spec.ts (копия источника).
+describe('sweepStaleSoniox и метка сайтов', () => {
+  const NOW = new Date('2026-10-07T12:00:00Z');
+  const old = new Date(NOW.getTime() - 2 * 3_600_000).toISOString();
+
+  it('нет ключа — к провайдеру не ходит', async () => {
+    const fetchFn = jest.fn();
+    await expect(
+      sweepStaleSoniox({
+        env: {},
+        fetch: fetchFn as unknown as typeof fetch,
+        now: NOW,
+      }),
+    ).resolves.toMatchObject({ sonioxSkipped: true });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('удаляет только объекты с меткой сайтов; генератор и чужие — пропущены', async () => {
+    const calls: string[] = [];
+    const fetchFn = jest.fn(async (url: string, init: RequestInit = {}) => {
+      const method = (init.method ?? 'GET').toUpperCase();
+      calls.push(`${method} ${url.replace('https://api.soniox.com/v1', '')}`);
+      if (method === 'GET') {
+        const kind = url.includes('/transcriptions?')
+          ? 'transcriptions'
+          : 'files';
+        const items =
+          kind === 'transcriptions'
+            ? [
+                {
+                  id: 'site',
+                  created_at: old,
+                  client_reference_id: 'v4c-sites:stt',
+                },
+                {
+                  id: 'adm',
+                  created_at: old,
+                  client_reference_id: 'v4c-sites:admin',
+                },
+                {
+                  id: 'gen',
+                  created_at: old,
+                  client_reference_id: 'v4c-gen:stt',
+                },
+              ]
+            : [{ id: 'fs', created_at: old, filename: 'v4c-sites-stt' }];
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ [kind]: items, next_page_cursor: null }),
+        } as Response;
+      }
+      return { ok: true, status: 204 } as Response;
+    });
+    const r = await sweepStaleSoniox({
+      env: { SONIOX_API_KEY: 'sx' },
+      fetch: fetchFn as unknown as typeof fetch,
+      now: NOW,
+    });
+    expect(calls.filter((c) => c.startsWith('DELETE'))).toEqual([
+      'DELETE /files/fs',
+      'DELETE /transcriptions/site',
+      'DELETE /transcriptions/adm',
+    ]);
+    expect(r).toMatchObject({
+      sonioxFilesDeleted: 1,
+      sonioxTranscriptionsDeleted: 2,
+      sonioxForeignSkipped: 1,
+    });
+  });
+
+  it('загрузка и задача посетителя помечены меткой сайтов', async () => {
+    const fake = new FakeSoniox();
+    const bodies: Array<{ path: string; body: unknown }> = [];
+    const base = fake.fetch;
+    const c = client(fake);
+    c.fetch = (async (url: string, init: RequestInit = {}) => {
+      bodies.push({ path: String(url), body: init.body });
+      return base(url, init);
+    }) as typeof fetch;
+    await c.transcribe({
+      audio: fakeRecording(),
+      mimeType: 'audio/webm',
+      languageHints: [],
+    });
+    const upload = bodies.find((b) => b.path.endsWith('/files'))!
+      .body as FormData;
+    expect(upload.get('client_reference_id')).toBe('v4c-sites:stt');
+    expect((upload.get('file') as File).name).toBe('v4c-sites-stt');
+    const created = bodies.find((b) => b.path.endsWith('/transcriptions'))!;
+    expect(JSON.parse(String(created.body))).toMatchObject({
+      client_reference_id: 'v4c-sites:stt',
+    });
   });
 });

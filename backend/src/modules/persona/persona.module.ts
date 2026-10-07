@@ -11,6 +11,10 @@ import { PlatformSettingsService } from '../../common/platform-settings.service'
 import { PersonaLooksController } from './persona-looks.controller';
 import { PersonaLooksService } from './persona-looks.service';
 import { PERSONA_LOOK_GENERATOR } from './persona-look-generator';
+// Оператор снимает отметку «младше 18» (В-4, заход 8).
+import { AdminPanelModule } from '../admin-panel/admin-panel.module';
+import { AdminAuthModule } from '../admin-auth/admin-auth.module';
+import { PersonaAdminController } from './persona-admin.controller';
 
 /**
  * Режим «Я в кадре» (ТЗ Greeting 2.0 §4). Лист графа: ничего из
@@ -19,12 +23,27 @@ import { PERSONA_LOOK_GENERATOR } from './persona-look-generator';
  * удаляется через `ModuleRef`. Так F и G могут импортировать этот
  * модуль (за `PersonaService.requireVerifiedPersona`) без цикла.
  * Крону хранения (`CronModule`) нужен `PersonaService` — отсюда export.
+ *
+ * `AdminPanelModule`/`AdminAuthModule` — за `assertOperator` и
+ * `AdminSessionGuard` контроллера отметки «младше 18»
+ * (`persona-admin.controller.ts`). Цикла нет: админка этот модуль не
+ * импортирует (тот же приём, что у `ActorsModule`).
  */
 @Module({
   // ImageSketchModule — за `SketchGeneratorService` (вызов модели картинок
   // образа); он не импортирует этот модуль, цикла нет.
-  imports: [StorageModule, AiUsageModule, ImageSketchModule],
-  controllers: [PersonaController, PersonaLooksController],
+  imports: [
+    StorageModule,
+    AiUsageModule,
+    ImageSketchModule,
+    AdminPanelModule,
+    AdminAuthModule,
+  ],
+  controllers: [
+    PersonaController,
+    PersonaLooksController,
+    PersonaAdminController,
+  ],
   providers: [
     PersonaService,
     PersonaLooksService,

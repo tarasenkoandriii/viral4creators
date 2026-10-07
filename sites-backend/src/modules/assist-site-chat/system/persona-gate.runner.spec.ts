@@ -108,6 +108,11 @@ describeDb('PersonaGate — проверка персоны перед публ�
       where: { siteId: s.siteId, operation: 'assist-eval' },
     });
     expect(usage.length).toBeGreaterThan(0);
+    // Единицы ответа — из usageMetadata через shared geminiUsageUnits
+    // (C1 захода 8): вход и выход модели, а не нули.
+    expect(usage.some((u) => u.inputTokens > 0 && u.outputTokens > 0)).toBe(
+      true,
+    );
     const spend = await learning.status(s.accountId, s.siteId);
     expect(spend.spentMicroUsd).toBeGreaterThan(0);
   });

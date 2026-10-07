@@ -22,7 +22,8 @@
  *   блокировка лица (заблокированное фото выпадает из меток — Г-8);
  * - сцены бренд-бука по порядку: id, подпись и уходит ли фото картинкой;
  * - ведущий-образ: id образа и вариант (фото/скетч);
- * - голос: пресет xAI, клон отправителя, режим озвучки бренда.
+ * - голос: пресет xAI, клон отправителя, режим озвучки бренда;
+ * - выбранная обстановка ролика (`sceneSetting`, §3.9).
  *
  * Клон отправителя в текст сцены не попадает, но входит по контракту
  * волны: смена голоса после сборки — это другой ролик, и человек должен
@@ -67,7 +68,11 @@ export const GREETING_PROMPT_LOCK_TTL_MS = 5 * 60 * 1000;
 export interface GreetingScriptInputsSource {
   greetingBriefSnapshot?: Pick<
     GreetingBriefSnapshot,
-    'presenter' | 'presetVoiceId' | 'senderVoice' | 'sonioxVoice'
+    | 'presenter'
+    | 'presetVoiceId'
+    | 'senderVoice'
+    | 'sonioxVoice'
+    | 'sceneSetting'
   > | null;
   greetingReferenceImages?: SceneAsset[] | null;
   brandManifestSnapshot?: Pick<
@@ -104,6 +109,12 @@ export function greetingScriptInputs(s: GreetingScriptInputsSource): string {
     // `null` — голос Soniox по умолчанию (ключ есть, значение пусто).
     ...(brief?.sonioxVoice
       ? { soniox: brief.sonioxVoice.voiceId ?? null }
+      : {}),
+    // §3.9: выбранная обстановка — строка сцены. Ключ только когда она
+    // выбрана, тем же доводом, что у Soniox: отпечатки уже собранных
+    // сессий не меняются.
+    ...(brief?.sceneSetting?.trim()
+      ? { sceneSetting: brief.sceneSetting.trim() }
       : {}),
   });
 }

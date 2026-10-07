@@ -73,6 +73,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/marketing', label: 'Рассылки' },
       { href: '/funnel', label: 'Воронка' },
       { href: '/referrals', label: 'Приглашения' },
+      // Кадры «Как это работает» страницы поздравлений (заход 8).
+      { href: '/greeting-frames', label: 'Кадры лендинга поздравлений' },
     ],
   },
   {

@@ -17,11 +17,17 @@
  * (пункт 3.4, редакция 2026-09-29) обещают, что запись голосового ввода
  * удаляется у ИИ-провайдера сразу после расшифровки. Поэтому `DELETE`
  * транскрипции и файла стоят в `finally` — при успехе, ошибке и
- * таймауте. Уборка best-effort: её отказ пишется в лог, но результат
- * пользователя не теряется. Незавершённую задачу Soniox удалить может
- * не дать — тогда сработает его собственный срок хранения; так же
- * записано у Devil's Advocate. Шов `check-docs.mjs` «голос не остаётся у
- * провайдера» требует обе строки `DELETE` в этом файле.
+ * таймауте. Уборка best-effort: её отказ не портит результат
+ * пользователя. Незавершённую задачу Soniox удалить не даёт (`409`), а
+ * собственного срока хранения у него НЕТ (документация async-API,
+ * сверено 2026-10-07: «Files are not deleted automatically»; лимит —
+ * 2000 транскрипций на аккаунт, включая готовые). Поэтому то, что не
+ * удалилось и после ожидания, не теряется: идентификатор уходит в
+ * очередь `soniox-pending-delete` (`PlatformSetting`), и метла
+ * `voice-uploads-sweep` повторяет удаление каждые 15 минут
+ * (`drainSonioxPendingDeletes`, C4 захода 8, ТЗ поздравлений 2.0 стр.
+ * 1622). Шов `check-docs.mjs` «голос не остаётся у провайдера» требует
+ * обе строки `DELETE` в этом файле.
  *
  * ## Что берём у Soniox такого, чего нет у Gemini
  *
@@ -32,8 +38,14 @@
  *   получает механизм провайдера, а не просьбу в тексте.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SONIOX_API_BASE, sonioxApiKey } from '../../common/soniox';
+import {
+  SONIOX_TAG_GENERATOR,
+  sonioxFileName,
+  sonioxReferenceId,
+} from '../../common/soniox-sweep';
 import {
   billedSeconds,
   sonioxTranscriptText,
@@ -99,12 +111,403 @@ interface SonioxTranscriptionStatus {
   audio_duration_ms?: number;
 }
 
+// ── Очередь неудалённого у Soniox (C4 захода 8) ─────────────────────────
+
+/** Ключ `PlatformSetting`: JSON-массив `SonioxPendingDelete`. */
+export const SONIOX_PENDING_DELETE_KEY = 'soniox-pending-delete';
+/**
+ * Потолок очереди. Запись ~120 байт → ~60 КБ строки: столько не
+ * удалённого бывает, только если Soniox лежит часами, и тогда важнее не
+ * раздуть строку настроек, чем помнить самый старый id (он уйдёт в лог).
+ */
+export const SONIOX_PENDING_DELETE_MAX_ENTRIES = 500;
+/**
+ * Попыток метлы на одну запись. Метла ходит раз в 15 минут: 96 попыток
+ * — сутки. Обработка короткой реплики идёт секунды; если сутки подряд
+ * Soniox отвечает не «удалено» и не «нет такого», дальше повторять
+ * бессмысленно — запись уходит в лог для ручной уборки.
+ */
+export const SONIOX_PENDING_DELETE_MAX_ATTEMPTS = 96;
+/**
+ * Срок, после которого запись снимается с очереди без удаления, даже
+ * если попыток было меньше (метла стояла). Своего срока хранения у
+ * Soniox нет (см. шапку) — это НАШ предел, после которого id в логе
+ * — сигнал оператору удалить вручную.
+ */
+export const SONIOX_PENDING_DELETE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Удалений за один прогон метлы: каждое — до `REQUEST_TIMEOUT_MS`. */
+export const SONIOX_PENDING_DELETE_PER_RUN = 25;
+/** Общий срок прогона очереди — метла живёт в одной функции Vercel. */
+const PENDING_DRAIN_DEADLINE_MS = 30_000;
+/** Повторов записи очереди при гонке (CAS по старому значению). */
+const PENDING_CAS_TRIES = 3;
+
+export type SonioxPendingKind = 'transcription' | 'file';
+
+export interface SonioxPendingDelete {
+  kind: SonioxPendingKind;
+  id: string;
+  /** Когда впервые не удалось удалить, ISO. */
+  since: string;
+  /** Сколько раз метла уже пробовала. */
+  attempts: number;
+  /** Последний код ответа (0 — сеть). */
+  lastStatus?: number;
+  /** Когда метла пробовала в последний раз, ISO (нет — ещё не пробовала). */
+  lastAttemptAt?: string;
+}
+
+export interface SonioxPendingDrainResult {
+  /** Удалено (или Soniox ответил 404 — удалять нечего). */
+  deleted: number;
+  /** Снято с очереди без удаления: попытки или срок вышли. */
+  dropped: number;
+  /** Осталось в очереди после прогона. */
+  left: number;
+  /** Ключа Soniox нет — очередь не трогали. */
+  skipped?: boolean;
+}
+
+type PendingPrisma = Pick<PrismaService, 'platformSetting'>;
+
+const pendingKey = (e: { kind: string; id: string }) => `${e.kind}:${e.id}`;
+const ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** Путь удаления у Soniox по записи очереди. */
+export function sonioxPendingPath(e: SonioxPendingDelete): string {
+  return e.kind === 'file' ? `/files/${e.id}` : `/transcriptions/${e.id}`;
+}
+
+/**
+ * Разбор значения настройки. Мусор (не JSON, не массив, кривые записи)
+ * не роняет ни уборку, ни метлу — кривые записи отбрасываются; id
+ * проверяется по форме, потому что он уходит в путь запроса.
+ */
+export function parseSonioxPendingDeletes(
+  raw: string | null | undefined,
+): SonioxPendingDelete[] {
+  if (!raw) return [];
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(data)) return [];
+  const out: SonioxPendingDelete[] = [];
+  const seen = new Set<string>();
+  for (const d of data as unknown[]) {
+    if (!d || typeof d !== 'object') continue;
+    const e = d as Record<string, unknown>;
+    if (e.kind !== 'transcription' && e.kind !== 'file') continue;
+    if (typeof e.id !== 'string' || !ID_RE.test(e.id)) continue;
+    if (typeof e.since !== 'string' || Number.isNaN(Date.parse(e.since)))
+      continue;
+    const attempts =
+      typeof e.attempts === 'number' && Number.isFinite(e.attempts)
+        ? Math.max(0, Math.floor(e.attempts))
+        : 0;
+    const k = pendingKey({ kind: e.kind, id: e.id });
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({
+      kind: e.kind,
+      id: e.id,
+      since: e.since,
+      attempts,
+      ...(typeof e.lastStatus === 'number' ? { lastStatus: e.lastStatus } : {}),
+      ...(typeof e.lastAttemptAt === 'string' &&
+      !Number.isNaN(Date.parse(e.lastAttemptAt))
+        ? { lastAttemptAt: e.lastAttemptAt }
+        : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Порядок прогона: сначала ни разу не пробованные (по `since`), затем —
+ * давнее всего пробованные. Иначе записи, которые не удаляются (Soniox
+ * упорно отвечает 409/5xx), навсегда занимали бы голову очереди и
+ * `SONIOX_PENDING_DELETE_PER_RUN` мест каждого прогона (аудит захода 8 —
+ * тот же приём, что в ночной сверке роликов).
+ */
+export function sonioxPendingOrder(
+  list: readonly SonioxPendingDelete[],
+): SonioxPendingDelete[] {
+  const at = (e: SonioxPendingDelete) =>
+    e.lastAttemptAt ? Date.parse(e.lastAttemptAt) : -Infinity;
+  return [...list].sort(
+    (a, b) => at(a) - at(b) || Date.parse(a.since) - Date.parse(b.since),
+  );
+}
+
+/**
+ * Добавить в очередь: повтор того же id не дублируется; сверх потолка
+ * вытесняются САМЫЕ СТАРЫЕ (возвращаются — их id уходит в лог).
+ */
+export function addSonioxPendingDelete(
+  list: SonioxPendingDelete[],
+  entry: SonioxPendingDelete,
+  max = SONIOX_PENDING_DELETE_MAX_ENTRIES,
+): { list: SonioxPendingDelete[]; evicted: SonioxPendingDelete[] } {
+  if (list.some((e) => pendingKey(e) === pendingKey(entry))) {
+    return { list, evicted: [] };
+  }
+  const next = [...list, entry];
+  const over = Math.max(next.length - max, 0);
+  return { list: next.slice(over), evicted: next.slice(0, over) };
+}
+
+/** Удалено или удалять нечего — запись больше не нужна. */
+export function sonioxDeleteDone(status: number): boolean {
+  return (status >= 200 && status < 300) || status === 404;
+}
+
+/**
+ * Применить исходы прогона к ТЕКУЩЕЙ очереди (а не к снимку, с которого
+ * прогон начался: за время удалений распознавание могло добавить новые
+ * записи — их нельзя потерять). Записи без исхода не трогаются.
+ */
+export function applySonioxDeleteOutcomes(
+  list: SonioxPendingDelete[],
+  outcomes: ReadonlyMap<string, number>,
+  now: Date,
+  limits: { maxAttempts: number; maxAgeMs: number } = {
+    maxAttempts: SONIOX_PENDING_DELETE_MAX_ATTEMPTS,
+    maxAgeMs: SONIOX_PENDING_DELETE_MAX_AGE_MS,
+  },
+): {
+  list: SonioxPendingDelete[];
+  deleted: SonioxPendingDelete[];
+  dropped: SonioxPendingDelete[];
+} {
+  const next: SonioxPendingDelete[] = [];
+  const deleted: SonioxPendingDelete[] = [];
+  const dropped: SonioxPendingDelete[] = [];
+  for (const e of list) {
+    const status = outcomes.get(pendingKey(e));
+    if (status === undefined) {
+      next.push(e);
+      continue;
+    }
+    if (sonioxDeleteDone(status)) {
+      deleted.push(e);
+      continue;
+    }
+    const tried = {
+      ...e,
+      attempts: e.attempts + 1,
+      lastStatus: status,
+      lastAttemptAt: now.toISOString(),
+    };
+    const age = now.getTime() - Date.parse(e.since);
+    if (tried.attempts >= limits.maxAttempts || age >= limits.maxAgeMs) {
+      dropped.push(tried);
+      continue;
+    }
+    next.push(tried);
+  }
+  return { list: next, deleted, dropped };
+}
+
+/**
+ * Изменить очередь атомарно: чтение → правка → запись только если
+ * значение не поменялось с чтения (CAS по `value`), до трёх попыток.
+ * `fn` возвращает `null` — менять нечего. Возвращает, удалось ли.
+ */
+async function mutateSonioxPending(
+  prisma: PendingPrisma,
+  fn: (list: SonioxPendingDelete[]) => SonioxPendingDelete[] | null,
+): Promise<boolean> {
+  for (let i = 0; i < PENDING_CAS_TRIES; i++) {
+    const row = await prisma.platformSetting.findUnique({
+      where: { key: SONIOX_PENDING_DELETE_KEY },
+    });
+    const next = fn(parseSonioxPendingDeletes(row?.value));
+    if (next === null) return true;
+    const value = JSON.stringify(next);
+    if (!row) {
+      try {
+        await prisma.platformSetting.create({
+          data: { key: SONIOX_PENDING_DELETE_KEY, value },
+        });
+        return true;
+      } catch (e) {
+        // Параллельная запись успела создать строку — перечитать.
+        if ((e as { code?: string })?.code === 'P2002') continue;
+        throw e;
+      }
+    }
+    const r = await prisma.platformSetting.updateMany({
+      where: { key: SONIOX_PENDING_DELETE_KEY, value: row.value },
+      data: { value },
+    });
+    if (r.count === 1) return true;
+  }
+  return false;
+}
+
+/**
+ * Поставить в очередь то, что не удалилось у Soniox. Не бросает: зовётся
+ * из `finally` распознавания. Не вышло записать — id остаётся хотя бы в
+ * логе (предупреждение с id), как было до очереди.
+ */
+export async function enqueueSonioxPendingDelete(
+  prisma: PendingPrisma | null | undefined,
+  kind: SonioxPendingKind,
+  id: string,
+  status: number,
+  logger: Pick<Logger, 'warn'>,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const what = `${kind === 'file' ? 'файл' : 'транскрипция'} ${id}`;
+  if (!prisma || !ID_RE.test(id)) {
+    logger.warn(
+      `Soniox: ${what} не удалён(а) (${status}) и в очередь не поставлен(а) — удалить вручную`,
+    );
+    return false;
+  }
+  let evicted: SonioxPendingDelete[] = [];
+  try {
+    const ok = await mutateSonioxPending(prisma, (list) => {
+      const r = addSonioxPendingDelete(list, {
+        kind,
+        id,
+        since: now.toISOString(),
+        attempts: 0,
+        lastStatus: status,
+      });
+      evicted = r.evicted;
+      return r.list === list ? null : r.list;
+    });
+    if (!ok) throw new Error('очередь меняли параллельно трижды подряд');
+    for (const e of evicted) {
+      logger.warn(
+        `Soniox: очередь удаления переполнена — снят(а) ${e.kind} ${e.id} (с ${e.since}), удалить вручную`,
+      );
+    }
+    logger.warn(
+      `Soniox: ${what} не удалён(а) (${status}) — поставлен(а) в очередь, повторит метла voice-uploads-sweep`,
+    );
+    return true;
+  } catch (e) {
+    logger.warn(
+      `Soniox: ${what} не удалён(а) (${status}), очередь недоступна (${e instanceof Error ? e.message : String(e)}) — удалить вручную`,
+    );
+    return false;
+  }
+}
+
+/** DELETE у Soniox; отдаёт код ответа (0 — сеть). Ошибки не бросает. */
+export async function sonioxDelete(
+  key: string,
+  path: string,
+  logger: Pick<Logger, 'warn'>,
+): Promise<number> {
+  try {
+    const res = await fetch(`${SONIOX_API_BASE}${path}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!res.ok && res.status !== 404 && res.status !== 409) {
+      logger.warn(`Soniox: уборка ${path} вернула ${res.status}`);
+    }
+    return res.status;
+  } catch (e) {
+    logger.warn(
+      `Soniox: уборка ${path} не удалась: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return 0;
+  }
+}
+
+/**
+ * Повтор удаления по очереди — зовёт метла `voice-uploads-sweep`
+ * (`VoiceUploadService.sweepExpired`). Не бросает: очередь — довесок к
+ * уборке записей, и её сбой не должен ронять основную метлу.
+ *
+ * Берёт самые старые записи (не больше `SONIOX_PENDING_DELETE_PER_RUN` и
+ * не дольше общего срока), удалено/404 — снимает, остальное — +1 попытка;
+ * вышли попытки или срок — снимает с предупреждением и id в логе.
+ */
+export async function drainSonioxPendingDeletes(
+  prisma: PendingPrisma,
+  logger: Pick<Logger, 'warn'>,
+  now: Date = new Date(),
+  opts: { perRun?: number; deadlineMs?: number } = {},
+): Promise<SonioxPendingDrainResult> {
+  try {
+    const row = await prisma.platformSetting.findUnique({
+      where: { key: SONIOX_PENDING_DELETE_KEY },
+    });
+    const snapshot = parseSonioxPendingDeletes(row?.value);
+    if (snapshot.length === 0) return { deleted: 0, dropped: 0, left: 0 };
+    const key = sonioxApiKey();
+    if (!key) {
+      logger.warn(
+        `Soniox: в очереди удаления ${snapshot.length}, но SONIOX_API_KEY не задан — повтор отложен`,
+      );
+      return { deleted: 0, dropped: 0, left: snapshot.length, skipped: true };
+    }
+    const until = Date.now() + (opts.deadlineMs ?? PENDING_DRAIN_DEADLINE_MS);
+    const outcomes = new Map<string, number>();
+    for (const e of sonioxPendingOrder(snapshot).slice(
+      0,
+      opts.perRun ?? SONIOX_PENDING_DELETE_PER_RUN,
+    )) {
+      if (Date.now() >= until) break;
+      outcomes.set(
+        pendingKey(e),
+        await sonioxDelete(key, sonioxPendingPath(e), logger),
+      );
+    }
+    let applied: ReturnType<typeof applySonioxDeleteOutcomes> = {
+      list: snapshot,
+      deleted: [],
+      dropped: [],
+    };
+    const ok = await mutateSonioxPending(prisma, (list) => {
+      applied = applySonioxDeleteOutcomes(list, outcomes, now);
+      return applied.list;
+    });
+    if (!ok) {
+      logger.warn(
+        'Soniox: очередь удаления меняли параллельно — исходы прогона не записаны, повтор на следующем тике',
+      );
+      return { deleted: 0, dropped: 0, left: snapshot.length };
+    }
+    for (const e of applied.dropped) {
+      logger.warn(
+        `Soniox: ${e.kind} ${e.id} не удалось удалить с ${e.since} (${e.attempts} попыток, последний ответ ${e.lastStatus ?? '—'}) — снят(а) с очереди, удалить вручную`,
+      );
+    }
+    return {
+      deleted: applied.deleted.length,
+      dropped: applied.dropped.length,
+      left: applied.list.length,
+    };
+  } catch (e) {
+    logger.warn(
+      `Soniox: прогон очереди удаления не удался: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return { deleted: 0, dropped: 0, left: 0 };
+  }
+}
+
 @Injectable()
 export class SonioxSttClient {
   private readonly logger = new Logger(SonioxSttClient.name);
   /** Сроки — полями, чтобы тесты проверяли ветки срока без реального ожидания. */
   attemptDeadlineMs = ATTEMPT_DEADLINE_MS;
   cleanupGraceMs = CLEANUP_GRACE_MS;
+
+  /**
+   * База — для очереди неудалённого (C4). Необязательна: без неё (тесты,
+   * сборка без Prisma) неудалённое, как прежде, только пишется в лог.
+   */
+  constructor(@Optional() private readonly prisma?: PrismaService) {}
 
   configured(): boolean {
     return !!sonioxApiKey();
@@ -139,7 +542,13 @@ export class SonioxSttClient {
       form.append(
         'file',
         new Blob([new Uint8Array(req.audio)], { type: req.mimeType }),
-        'voice',
+        // Метка генератора: уборка по списку (`sweepOwnStaleSoniox`)
+        // удаляет только своё — ключ может быть общим с другими продуктами.
+        sonioxFileName(SONIOX_TAG_GENERATOR),
+      );
+      form.append(
+        'client_reference_id',
+        sonioxReferenceId(SONIOX_TAG_GENERATOR),
       );
       const uploaded = await this.call<{ id: string }>(
         key,
@@ -159,7 +568,10 @@ export class SonioxSttClient {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sonioxTranscriptionBody(fileId, req)),
+          body: JSON.stringify({
+            ...sonioxTranscriptionBody(fileId, req),
+            client_reference_id: sonioxReferenceId(SONIOX_TAG_GENERATOR),
+          }),
         },
       );
       transcriptionId = created.id;
@@ -242,9 +654,10 @@ export class SonioxSttClient {
    * Поэтому порядок — СНАЧАЛА ФАЙЛ: аудиозапись, о которой и говорит
    * обещание Условий, уходит от провайдера при любом исходе, включая
    * истёкший срок попытки. Затем транскрипция; на `409` — короткое
-   * ожидание конца обработки и ещё одна попытка. Не вышло и после неё —
-   * у провайдера остаётся текст задачи (не звук) до его собственного
-   * срока хранения, и это пишется в лог с идентификатором.
+   * ожидание конца обработки и ещё одна попытка. Не вышло и после неё
+   * (или файл/транскрипцию не удалось удалить по другой причине — сеть,
+   * 5xx) — id уходит в очередь `soniox-pending-delete`, и удаление
+   * повторит метла `voice-uploads-sweep` (C4 захода 8).
    */
   private async cleanup(
     key: string,
@@ -252,7 +665,16 @@ export class SonioxSttClient {
     fileId: string | null,
   ): Promise<void> {
     if (fileId) {
-      await this.remove(key, `/files/${fileId}`);
+      const fileStatus = await this.remove(key, `/files/${fileId}`);
+      if (!sonioxDeleteDone(fileStatus)) {
+        await enqueueSonioxPendingDelete(
+          this.prisma,
+          'file',
+          fileId,
+          fileStatus,
+          this.logger,
+        );
+      }
     }
     if (!transcriptionId) return;
     const graceUntil = Date.now() + this.cleanupGraceMs;
@@ -262,10 +684,17 @@ export class SonioxSttClient {
         key,
         `/transcriptions/${transcriptionId}`,
       );
-      if (status !== 409) return;
-      if (Date.now() >= graceUntil) {
-        this.logger.warn(
-          `Soniox: транскрипция ${transcriptionId} ещё обрабатывается и не удалена — звук удалён, текст задачи останется до срока хранения провайдера`,
+      if (sonioxDeleteDone(status)) return;
+      // Не 409 (сеть, 5xx, 401) — ждать конца обработки бессмысленно,
+      // а 409 после ожидания — задача всё ещё обрабатывается: в обоих
+      // случаях id не теряется, его повторит метла.
+      if (status !== 409 || Date.now() >= graceUntil) {
+        await enqueueSonioxPendingDelete(
+          this.prisma,
+          'transcription',
+          transcriptionId,
+          status,
+          this.logger,
         );
         return;
       }
@@ -275,22 +704,7 @@ export class SonioxSttClient {
 
   /** DELETE; отдаёт код ответа (0 — сеть). Ошибки не бросает. */
   private async remove(key: string, path: string): Promise<number> {
-    try {
-      const res = await fetch(`${SONIOX_API_BASE}${path}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      if (!res.ok && res.status !== 404 && res.status !== 409) {
-        this.logger.warn(`Soniox: уборка ${path} вернула ${res.status}`);
-      }
-      return res.status;
-    } catch (e) {
-      this.logger.warn(
-        `Soniox: уборка ${path} не удалась: ${e instanceof Error ? e.message : String(e)}`,
-      );
-      return 0;
-    }
+    return sonioxDelete(key, path, this.logger);
   }
 
   private async call<T>(

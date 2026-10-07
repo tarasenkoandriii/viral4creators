@@ -15,7 +15,8 @@
  * ## Честно о цифрах
  *
  * Ставки Gemini сверены с `ai.google.dev/gemini-api/docs/pricing`
- * 2026-09-06. Ставки Veo и GPT-5 на официальных страницах на эту дату
+ * 2026-09-06; ставки звука на входе (`audioInputPerMTok`) и кеша 2.5 —
+ * 2026-10-07. Ставки Veo и GPT-5 на официальных страницах на эту дату
  * не нашлись (Veo вынесен из общего прайса, GPT-5 вытеснен более новыми
  * моделями) — взяты опубликованные при запуске. **Перед тем как верить
  * колонке с деньгами, проверьте прайс и при расхождении поправьте
@@ -31,7 +32,7 @@
  */
 
 /** Версия прайса. Пишется в каждую строку расхода. Менять при правке ставок. */
-export const PRICING_VERSION = '2026-09-06';
+export const PRICING_VERSION = '2026-10-07';
 
 export type AiProvider =
   | 'GEMINI'
@@ -389,6 +390,28 @@ export interface ModelRate {
    * завышается; так было до этапа 32.
    */
   cachedInputPerMTok?: number;
+  /**
+   * Цена за миллион ЗВУКОВЫХ токенов из кеша. Не задана — звук в кеше
+   * по `cachedInputPerMTok`.
+   */
+  cachedAudioInputPerMTok?: number;
+  /**
+   * Цена за миллион ЗВУКОВЫХ входных токенов (не из кеша), в
+   * микродолларах. У части моделей Gemini звук на входе дороже текста
+   * (2.5 Flash: $1.00 против $0.30), и голосовой ввод, посчитанный по
+   * текстовой ставке, занижал бы и отчёт, и потолок голоса В-14 (ТЗ
+   * поздравлений 2.0, стр. 1940). Не задана — звук по `inputPerMTok`:
+   * у модели одна цена на все модальности.
+   *
+   * Работает, только если вызывающий передал разбивку входа по
+   * модальностям (`UsageUnits.inputByModality`, у Gemini —
+   * `usageMetadata.promptTokensDetails`, см. `geminiUsageUnits`).
+   */
+  audioInputPerMTok?: number;
+  /** То же для изображений на входе. Не задана — по `inputPerMTok`. */
+  imageInputPerMTok?: number;
+  /** То же для видео на входе. Не задана — по `inputPerMTok`. */
+  videoInputPerMTok?: number;
   /** Цена за миллион выходных токенов, в микродолларах. */
   outputPerMTok?: number;
   /** Цена за секунду сгенерированного видео, в микродолларах. */
@@ -415,10 +438,20 @@ const USD = 1_000_000;
  * страницу с ценами, и заставлять его умножать на миллион — верный способ
  * получить ошибку в тысячу раз.
  */
-export function priceEnvKey(
-  model: string,
-  kind: 'input' | 'cached' | 'output' | 'second' | 'call' | 'chars',
-): string {
+export type PriceKind =
+  | 'input'
+  | 'cached'
+  | 'output'
+  | 'second'
+  | 'call'
+  | 'chars'
+  // `AI_PRICE_<МОДЕЛЬ>_AUDIO_INPUT` и т.д. — ставки входа по модальности.
+  | 'audio_input'
+  | 'image_input'
+  | 'video_input'
+  | 'cached_audio';
+
+export function priceEnvKey(model: string, kind: PriceKind): string {
   return `AI_PRICE_${model.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_${kind.toUpperCase()}`;
 }
 
@@ -427,17 +460,29 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
   'gemini-2.5-flash': {
     provider: 'GEMINI',
     inputPerMTok: 0.3 * USD,
-    // Кеш-чтение у Gemini дешевле обычного входа вчетверо.
-    cachedInputPerMTok: 0.075 * USD,
+    // Звук на входе — $1.00 за 1M против $0.30 у текста/картинок/видео
+    // (ai.google.dev/gemini-api/docs/pricing, 2026-10-07). ПРОВЕРИТЬ по
+    // счёту, 2026-10-07.
+    audioInputPerMTok: 1.0 * USD,
+    // Кеш-чтение: $0.03 текст/картинки/видео и $0.10 звук за 1M
+    // (ai.google.dev, 2026-10-07; до этого здесь стояла устаревшая
+    // «четверть входной» $0.075). ПРОВЕРИТЬ по счёту, 2026-10-07.
+    cachedInputPerMTok: 0.03 * USD,
+    cachedAudioInputPerMTok: 0.1 * USD,
     outputPerMTok: 2.5 * USD,
-    note: 'ai.google.dev, сверено 2026-09-06; ставка кеша — четверть входной',
+    note: 'ai.google.dev, сверено 2026-09-06; звук на входе $1.00 и кеш $0.03 / звук $0.10 — 2026-10-07, ПРОВЕРИТЬ по счёту',
   },
   'gemini-2.5-pro': {
     provider: 'GEMINI',
+    // Звук на входе — по той же ставке: у 2.5 Pro на
+    // ai.google.dev (2026-10-07) деления по модальностям нет.
     inputPerMTok: 1.25 * USD,
-    cachedInputPerMTok: 0.3125 * USD,
+    // Кеш-чтение $0.125 за 1M для запросов до 200k (ai.google.dev,
+    // 2026-10-07; было $0.3125 — «четверть входной»). ПРОВЕРИТЬ по
+    // счёту, 2026-10-07.
+    cachedInputPerMTok: 0.125 * USD,
     outputPerMTok: 10 * USD,
-    note: 'ai.google.dev, сверено 2026-09-06 (ставка для запросов до 200k токенов); ставка кеша — четверть входной',
+    note: 'ai.google.dev, сверено 2026-09-06 (ставка для запросов до 200k токенов); кеш $0.125 — 2026-10-07, ПРОВЕРИТЬ по счёту',
   },
   // Найдено при аудите (Gemini API вернул 404 на новый ключ — `gemini-2.5-flash`
   // недоступна новым пользователям, Google сам указал заменить на эту модель).
@@ -448,6 +493,12 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
   'gemini-3.6-flash': {
     provider: 'GEMINI',
     inputPerMTok: 0.75 * USD,
+    // Звук/картинки/видео на входе — та же ставка, что текст: на
+    // ai.google.dev/gemini-api/docs/pricing (2026-10-07) у 3.6 Flash одна
+    // строка «Input price» без деления по модальностям, в отличие от
+    // 2.5 Flash/Flash-Lite. Поэтому `audioInputPerMTok` здесь НЕ задана
+    // сознательно. ПРОВЕРИТЬ по счёту, 2026-10-07: если звук в счёте
+    // окажется дороже — `AI_PRICE_GEMINI_3_6_FLASH_AUDIO_INPUT`.
     // Кеш-чтение — 1/10 от входной ставки (cloud.google.com), не 1/4, как у
     // 2.5-flash/2.5-pro выше — разные модели, разная скидка на кеш.
     cachedInputPerMTok: 0.075 * USD,
@@ -473,9 +524,16 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
   'gemini-2.5-flash-lite': {
     provider: 'GEMINI',
     inputPerMTok: 0.1 * USD,
-    cachedInputPerMTok: 0.025 * USD,
+    // Звук на входе — $0.30 за 1M против $0.10 у текста
+    // (ai.google.dev/gemini-api/docs/pricing, 2026-10-07). ПРОВЕРИТЬ по
+    // счёту, 2026-10-07.
+    audioInputPerMTok: 0.3 * USD,
+    // Кеш-чтение: $0.01 текст и $0.03 звук за 1M (ai.google.dev,
+    // 2026-10-07; было $0.025). ПРОВЕРИТЬ по счёту, 2026-10-07.
+    cachedInputPerMTok: 0.01 * USD,
+    cachedAudioInputPerMTok: 0.03 * USD,
     outputPerMTok: 0.4 * USD,
-    note: 'ставка при запуске модели, 2026-10-03 — ПРОВЕРИТЬ ai.google.dev/gemini-api/docs/pricing; кеш — четверть входной',
+    note: 'ставка при запуске модели, 2026-10-03; вход $0.10, звук $0.30, кеш $0.01 / звук $0.03 подтверждены ai.google.dev 2026-10-07 — ПРОВЕРИТЬ по счёту',
   },
   'gemini-embedding-001': {
     provider: 'GEMINI',
@@ -723,7 +781,7 @@ export function rateFor(
   if (!base) return null;
 
   const override = (
-    kind: 'input' | 'cached' | 'output' | 'second' | 'call' | 'chars',
+    kind: PriceKind,
     current: number | undefined,
   ): number | undefined => {
     const raw = env[priceEnvKey(model, kind)];
@@ -738,7 +796,14 @@ export function rateFor(
   return {
     ...base,
     inputPerMTok: override('input', base.inputPerMTok),
+    audioInputPerMTok: override('audio_input', base.audioInputPerMTok),
+    imageInputPerMTok: override('image_input', base.imageInputPerMTok),
+    videoInputPerMTok: override('video_input', base.videoInputPerMTok),
     cachedInputPerMTok: override('cached', base.cachedInputPerMTok),
+    cachedAudioInputPerMTok: override(
+      'cached_audio',
+      base.cachedAudioInputPerMTok,
+    ),
     outputPerMTok: override('output', base.outputPerMTok),
     perSecond: override('second', base.perSecond),
     perCall: override('call', base.perCall),
@@ -760,6 +825,112 @@ export interface UsageUnits {
   calls?: number;
   /** Символы, ушедшие в синтез речи. */
   characters?: number;
+  /**
+   * Сколько из `inputTokens` пришлось на звук/картинки/видео — по всему
+   * входу, ВКЛЮЧАЯ кеш (у Gemini — `usageMetadata.promptTokensDetails`).
+   * Всё, что сюда не попало, считается текстом. Нет поля — весь вход по
+   * `inputPerMTok`, как было до 2026-10-07.
+   */
+  inputByModality?: ModalityTokens;
+  /**
+   * Сколько из `cachedInputTokens` пришлось на каждую модальность (у
+   * Gemini — `cacheTokensDetails`). Нет поля — считается, что кеш
+   * состоит из самых дешёвых токенов (сначала текст), то есть дорогой
+   * звук остаётся по своей ставке: при неизвестности лучше чуть
+   * переоценить расход, чем занизить потолок.
+   */
+  cachedByModality?: ModalityTokens;
+}
+
+/** Модальности входа, у которых может быть своя ставка. */
+export type PricedModality = 'AUDIO' | 'IMAGE' | 'VIDEO';
+
+export type ModalityTokens = Partial<Record<PricedModality, number>>;
+
+/** Порядок, в котором урезается разбивка, если она больше входа: дорогое — первым. */
+const MODALITIES_COSTLY_FIRST: readonly PricedModality[] = [
+  'AUDIO',
+  'VIDEO',
+  'IMAGE',
+];
+
+function modalityRate(
+  rate: ModelRate,
+  m: PricedModality,
+  fallback: number,
+): number {
+  const own =
+    m === 'AUDIO'
+      ? rate.audioInputPerMTok
+      : m === 'VIDEO'
+        ? rate.videoInputPerMTok
+        : rate.imageInputPerMTok;
+  return own ?? fallback;
+}
+
+function nonNegative(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/**
+ * Свежие (не из кеша) входные токены по модальностям: сколько звука,
+ * видео и картинок оплачивается по своей ставке, остальное — текст.
+ *
+ * Разбивка от провайдера может не сходиться с итогом (округления,
+ * будущие модальности) — тогда ничего не придумываем: модальность не
+ * может съесть больше свежего входа, чем есть, а урезается сначала то,
+ * что дешевле.
+ */
+function freshByModality(
+  units: UsageUnits,
+  fresh: number,
+  cached: number,
+): { fresh: Record<PricedModality, number>; cachedAudio: number } {
+  const out: Record<PricedModality, number> = { AUDIO: 0, VIDEO: 0, IMAGE: 0 };
+  const total = units.inputByModality;
+  if (!total) {
+    // Разбивки входа нет — свежий вход весь текстом; звук в кеше, если
+    // провайдер его назвал, всё равно идёт по ставке кеша звука.
+    const cachedAudio = Math.min(
+      nonNegative(units.cachedByModality?.AUDIO),
+      cached,
+    );
+    return { fresh: out, cachedAudio };
+  }
+
+  const cachedOf: Record<PricedModality, number> = {
+    AUDIO: 0,
+    VIDEO: 0,
+    IMAGE: 0,
+  };
+  if (units.cachedByModality) {
+    for (const m of MODALITIES_COSTLY_FIRST) {
+      cachedOf[m] = nonNegative(units.cachedByModality[m]);
+    }
+  } else if (cached > 0) {
+    // Кеш без разбивки: сначала он «съедает» текст, остаток — самые
+    // дешёвые из оставшихся модальностей (картинки → видео → звук).
+    const special = MODALITIES_COSTLY_FIRST.reduce(
+      (s, m) => s + nonNegative(total[m]),
+      0,
+    );
+    // Весь вход = свежий + кеш (вызывается только при заданном входе).
+    const textual = Math.max(fresh + cached - special, 0);
+    let rest = Math.max(cached - textual, 0);
+    for (const m of [...MODALITIES_COSTLY_FIRST].reverse()) {
+      const take = Math.min(rest, nonNegative(total[m]));
+      cachedOf[m] = take;
+      rest -= take;
+    }
+  }
+
+  let room = fresh;
+  for (const m of MODALITIES_COSTLY_FIRST) {
+    const own = Math.max(nonNegative(total[m]) - cachedOf[m], 0);
+    out[m] = Math.min(own, room);
+    room -= out[m];
+  }
+  return { fresh: out, cachedAudio: Math.min(cachedOf.AUDIO, cached) };
 }
 
 export interface CostEstimate {
@@ -798,9 +969,23 @@ export function estimateCost(
       units.inputTokens,
     );
     const fresh = units.inputTokens - cached;
-    micro += (fresh / 1_000_000) * rate.inputPerMTok;
+    // Звук/видео/картинки — по своей ставке, если она у модели есть
+    // (C1 захода 8, ТЗ поздравлений 2.0 стр. 1940); без разбивки всё
+    // по текстовой, как раньше.
+    const split = freshByModality(units, fresh, cached);
+    let textual = fresh;
+    for (const m of MODALITIES_COSTLY_FIRST) {
+      textual -= split.fresh[m];
+      micro +=
+        (split.fresh[m] / 1_000_000) * modalityRate(rate, m, rate.inputPerMTok);
+    }
+    micro += (textual / 1_000_000) * rate.inputPerMTok;
+    // Кеш: звук в нём — по ставке кеша звука, если она у модели есть.
+    const cachedRate = rate.cachedInputPerMTok ?? rate.inputPerMTok;
     micro +=
-      (cached / 1_000_000) * (rate.cachedInputPerMTok ?? rate.inputPerMTok);
+      (split.cachedAudio / 1_000_000) *
+      (rate.cachedAudioInputPerMTok ?? cachedRate);
+    micro += ((cached - split.cachedAudio) / 1_000_000) * cachedRate;
   }
   if (rate.outputPerMTok !== undefined && units.outputTokens) {
     micro += (units.outputTokens / 1_000_000) * rate.outputPerMTok;
@@ -835,7 +1020,11 @@ export function pricingTable(env: NodeJS.ProcessEnv = process.env): Array<{
   model: string;
   provider: AiProvider;
   inputPerMTokUsd: number | null;
+  audioInputPerMTokUsd: number | null;
+  imageInputPerMTokUsd: number | null;
+  videoInputPerMTokUsd: number | null;
   cachedInputPerMTokUsd: number | null;
+  cachedAudioInputPerMTokUsd: number | null;
   outputPerMTokUsd: number | null;
   perSecondUsd: number | null;
   perCallUsd: number | null;
@@ -848,7 +1037,11 @@ export function pricingTable(env: NodeJS.ProcessEnv = process.env): Array<{
     const rate = rateFor(model, env)!;
     const overridden =
       rate.inputPerMTok !== base.inputPerMTok ||
+      rate.audioInputPerMTok !== base.audioInputPerMTok ||
+      rate.imageInputPerMTok !== base.imageInputPerMTok ||
+      rate.videoInputPerMTok !== base.videoInputPerMTok ||
       rate.cachedInputPerMTok !== base.cachedInputPerMTok ||
+      rate.cachedAudioInputPerMTok !== base.cachedAudioInputPerMTok ||
       rate.outputPerMTok !== base.outputPerMTok ||
       rate.perSecond !== base.perSecond ||
       rate.perCall !== base.perCall ||
@@ -858,7 +1051,11 @@ export function pricingTable(env: NodeJS.ProcessEnv = process.env): Array<{
       model,
       provider: rate.provider,
       inputPerMTokUsd: usd(rate.inputPerMTok),
+      audioInputPerMTokUsd: usd(rate.audioInputPerMTok),
+      imageInputPerMTokUsd: usd(rate.imageInputPerMTok),
+      videoInputPerMTokUsd: usd(rate.videoInputPerMTok),
       cachedInputPerMTokUsd: usd(rate.cachedInputPerMTok),
+      cachedAudioInputPerMTokUsd: usd(rate.cachedAudioInputPerMTok),
       outputPerMTokUsd: usd(rate.outputPerMTok),
       perSecondUsd: usd(rate.perSecond),
       perCallUsd: usd(rate.perCall),
@@ -867,4 +1064,78 @@ export function pricingTable(env: NodeJS.ProcessEnv = process.env): Array<{
       note: rate.note,
     };
   });
+}
+
+/** `usageMetadata` ответа Gemini в той части, что идёт в счёт. */
+export interface GeminiUsageMetadataLike {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  thoughtsTokenCount?: number;
+  /** Повторно использованный вход — тарифицируется дешевле (§26.1). */
+  cachedContentTokenCount?: number;
+  /** Вход по модальностям: `[{ modality: 'AUDIO', tokenCount: 1234 }, …]`. */
+  promptTokensDetails?: unknown;
+  /** Кеш по модальностям — та же форма. */
+  cacheTokensDetails?: unknown;
+}
+
+/**
+ * Разбивка `[{ modality, tokenCount }]` → токены звука/картинок/видео.
+ * Текст, документы и неизвестные модальности сюда не попадают — они
+ * идут по текстовой ставке. Мусор (не массив, отрицательные, не числа)
+ * пропускается: `undefined` значит «разбивки нет».
+ */
+export function parseModalityDetails(
+  details: unknown,
+): ModalityTokens | undefined {
+  if (!Array.isArray(details)) return undefined;
+  const out: ModalityTokens = {};
+  let any = false;
+  for (const d of details as unknown[]) {
+    if (!d || typeof d !== 'object') continue;
+    const { modality, tokenCount } = d as {
+      modality?: unknown;
+      tokenCount?: unknown;
+    };
+    const n = nonNegative(tokenCount);
+    if (typeof modality !== 'string') continue;
+    const key = modality.toUpperCase();
+    if (key !== 'AUDIO' && key !== 'IMAGE' && key !== 'VIDEO') continue;
+    out[key] = (out[key] ?? 0) + n;
+    any = true;
+  }
+  return any ? out : undefined;
+}
+
+/** Единицы расхода Gemini: счётчики всегда числа, разбивка — если пришла. */
+export interface GeminiUsageUnits {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  inputByModality?: ModalityTokens;
+  cachedByModality?: ModalityTokens;
+}
+
+/**
+ * Единицы расхода из `usageMetadata` ответа Gemini — одна чистая функция
+ * на backend и sites-backend, чтобы звук на входе нигде не считался по
+ * текстовой ставке.
+ *
+ * Без `promptTokensDetails` результат тот же, что был до 2026-10-07:
+ * вход, кеш и выход (выход с размышлениями — они тарифицируются как
+ * выход).
+ */
+export function geminiUsageUnits(
+  meta: GeminiUsageMetadataLike | null | undefined,
+): GeminiUsageUnits {
+  const inputByModality = parseModalityDetails(meta?.promptTokensDetails);
+  const cachedByModality = parseModalityDetails(meta?.cacheTokensDetails);
+  return {
+    inputTokens: meta?.promptTokenCount ?? 0,
+    cachedInputTokens: meta?.cachedContentTokenCount ?? 0,
+    outputTokens:
+      (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
+    ...(inputByModality ? { inputByModality } : {}),
+    ...(cachedByModality ? { cachedByModality } : {}),
+  };
 }

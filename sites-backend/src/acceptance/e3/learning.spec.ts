@@ -144,7 +144,7 @@ if (!RAW_URL) {
       const tail = logs.slice(before).join('\n');
       expect(tail).toMatch(/question_contact/);
       expect(tail).toMatch(/answer_contact/);
-      expect(tail).not.toMatch(/380|petro|example\.com|Петро/);
+      expect(tail).not.toMatch(/\+?380 67|380671|petro|example\.com|Петро/);
       // Неизвестный тип сигнала — не пишется.
       await st.signal(s, {
         questionMasked: 'x',

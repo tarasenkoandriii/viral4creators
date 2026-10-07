@@ -821,6 +821,98 @@ describe('проверка правил перед рендером (этап B)
     await svc.startVideo('s1');
     expect(startGeneration).toHaveBeenCalled();
   });
+
+  /**
+   * Приёмка §8.1 ТЗ (стр. «Отказ политики в `startVideo` не списывает
+   * кредит»): отказ стоит ДО права на рендер — значит, ни брони кредита,
+   * ни суточного потолка, ни возврата (возвращать нечего). Каждое из пяти
+   * правил политики — отдельной строкой: стоит проверке одного из них
+   * переехать ниже `assertCanRender`, и кредит за отказ спишется.
+   */
+  const HAS_CREDIT = true;
+  it.each([
+    [
+      'тон: «Особый повод» в трауре + шутливый',
+      {
+        occasion: 'OTHER',
+        customOccasionText: 'прощание с дедушкой',
+        occasionRegister: 'MOURNING',
+        tone: 'FUNNY',
+      },
+      /Тон «/,
+    ],
+    [
+      'тон: каталожное соболезнование + шутливый',
+      { occasion: 'CONDOLENCE', tone: 'FUNNY' },
+      /Тон «/,
+    ],
+    [
+      'наклейка на соболезновании',
+      {
+        occasion: 'CONDOLENCE',
+        tone: 'RESPECTFUL',
+        sticker: {
+          id: 'st',
+          url: 'u',
+          pathname: 'p',
+          sourceUrl: 's',
+          source: 'pixabay',
+          placement: 'top',
+        },
+      },
+      /Наклейки недоступны/,
+    ],
+    [
+      'общая тема каталога на выздоровлении',
+      {
+        occasion: 'GET_WELL',
+        tone: 'SUPPORTIVE',
+        musicTheme: { id: 't', title: 'T', url: 'u', occasions: null },
+      },
+      /музыкальная тема не подходит/,
+    ],
+    [
+      'четыре сцены у траурного повода',
+      { occasion: 'CONDOLENCE', tone: 'RESPECTFUL', sceneCount: 4 },
+      /не больше 2 сцен/,
+    ],
+  ])(
+    'отказ политики (%s) — кредит не бронируется и не возвращается',
+    async (_name, over, message) => {
+      const { svc, credits, plans, startGeneration } = build({
+        greetingBriefSnapshot: { ...BRIEF, ...over },
+      });
+      // Кредит у человека ЕСТЬ: будь проверка после права на рендер, он
+      // бы списался — тест увидел бы бронь, а не её отсутствие.
+      credits.reserveForGeneration.mockResolvedValue(HAS_CREDIT);
+      const err = await svc.startVideo('s1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).message).toMatch(message);
+      expect(credits.reserveForGeneration).not.toHaveBeenCalled();
+      expect(credits.grantWelcomeIfFirst).not.toHaveBeenCalled();
+      expect(credits.refundIfReserved).not.toHaveBeenCalled();
+      expect(plans.assertCanSpendUser).not.toHaveBeenCalled();
+      expect(startGeneration).not.toHaveBeenCalled();
+    },
+  );
+
+  it('контроль: тот же стенд без нарушения политики кредит бронирует', async () => {
+    // Без этой строки тест выше прошёл бы и тогда, когда двойник кредита
+    // не подключён к пути рендера вовсе.
+    const { svc, credits, startGeneration } = build({
+      greetingBriefSnapshot: {
+        ...BRIEF,
+        occasion: 'CONDOLENCE',
+        tone: 'RESPECTFUL',
+        sceneCount: 2,
+      },
+    });
+    credits.reserveForGeneration.mockResolvedValue(HAS_CREDIT);
+    await svc.startVideo('s1');
+    expect(credits.reserveForGeneration).toHaveBeenCalledTimes(1);
+    expect(startGeneration).toHaveBeenCalled();
+    expect(credits.refundIfReserved).not.toHaveBeenCalled();
+  });
 });
 
 describe('этап G — ведущий-образ и лица в референсах (§4.8, Г-7, Г-8)', () => {

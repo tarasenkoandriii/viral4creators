@@ -8,6 +8,7 @@ jest.mock('@prisma/client', () => ({
 }));
 
 import { AiUsageService } from './ai-usage.service';
+import { VoiceBudgetService } from '../voice-budget/voice-budget.service';
 
 function build(over: { rawResult?: unknown } = {}) {
   const prisma = {
@@ -896,5 +897,113 @@ describe('AiUsageService.forUsers — форма строк (повторный 
     for (const row of Object.values(out)) {
       expect(Object.keys(row).sort()).toEqual(['calls', 'costMicroUsd']);
     }
+  });
+});
+
+// C1 захода 8 (ТЗ поздравлений 2.0 стр. 1940): звук на входе Gemini —
+// по своей ставке, и потолок голоса В-14 видит эту сумму.
+describe('AiUsageService.recordGemini — вход по модальностям', () => {
+  const audioResponse = {
+    usageMetadata: {
+      promptTokenCount: 10_000,
+      candidatesTokenCount: 100,
+      thoughtsTokenCount: 0,
+      promptTokensDetails: [
+        { modality: 'TEXT', tokenCount: 2_000 },
+        { modality: 'AUDIO', tokenCount: 8_000 },
+      ],
+    },
+  };
+
+  it('звук 2.5 Flash считается по звуковой ставке', async () => {
+    const { svc, prisma } = build();
+    await svc.recordGemini(audioResponse, {
+      operation: 'voice-assistant-stt',
+      model: 'gemini-2.5-flash',
+      userId: 'u1',
+    });
+    const data = prisma.aiUsage.create.mock.calls[0][0].data;
+    // 8000 × $1.00/M + 2000 × $0.30/M + 100 × $2.50/M = 8000 + 600 + 250.
+    expect(data.costMicroUsd).toBe(8_850);
+    // В строку пишется то, что пришло от провайдера, — весь вход.
+    expect(data.inputTokens).toBe(10_000);
+    expect(data.outputTokens).toBe(100);
+  });
+
+  it('без promptTokensDetails — как раньше, весь вход по текстовой', async () => {
+    const { svc, prisma } = build();
+    await svc.recordGemini(
+      {
+        usageMetadata: {
+          promptTokenCount: 10_000,
+          cachedContentTokenCount: 1_000,
+          candidatesTokenCount: 100,
+          thoughtsTokenCount: 40,
+        },
+      },
+      { operation: 'voice-assistant-stt', model: 'gemini-2.5-flash' },
+    );
+    const data = prisma.aiUsage.create.mock.calls[0][0].data;
+    // 9000 × $0.30 + 1000 × $0.03 + 140 × $2.50 (за 1M) = 2700 + 30 + 350.
+    expect(data.costMicroUsd).toBe(3_080);
+    expect(data.cachedInputTokens).toBe(1_000);
+    expect(data.outputTokens).toBe(140);
+  });
+
+  it('пустой ответ не роняет запись', async () => {
+    const { svc, prisma } = build();
+    await svc.recordGemini(undefined, {
+      operation: 'prompt',
+      model: 'gemini-2.5-flash',
+    });
+    const data = prisma.aiUsage.create.mock.calls[0][0].data;
+    expect(data.inputTokens).toBe(0);
+    expect(data.costMicroUsd).toBe(0);
+  });
+
+  it('потолок голоса В-14 видит звуковую сумму, а не текстовую', async () => {
+    // Журнал в памяти: `create` пишет строку, `aggregate` складывает её
+    // так же, как `VoiceBudgetService.stateOf` просит у базы.
+    const rows: Array<Record<string, any>> = [];
+    const { svc, prisma } = build();
+    prisma.aiUsage.create.mockImplementation(async ({ data }: any) => {
+      rows.push({ ...data, createdAt: new Date() });
+      return data;
+    });
+    prisma.aiUsage.aggregate.mockImplementation(async ({ where }: any) => {
+      const ops: string[] = where.operation?.in ?? [];
+      const sum = rows
+        .filter(
+          (r) =>
+            (where.userId === undefined || r.userId === where.userId) &&
+            (ops.length === 0 || ops.includes(r.operation)) &&
+            r.createdAt >= where.createdAt.gte,
+        )
+        .reduce((s, r) => s + r.costMicroUsd, 0);
+      return { _sum: { costMicroUsd: rows.length ? sum : null } };
+    });
+    const plans = {
+      accessOf: jest.fn().mockResolvedValue({ spendPlan: 'LITE' }),
+    };
+    // Потолок $0.01 (10 000 микродолларов).
+    const settings = { get: jest.fn().mockResolvedValue('0.01') };
+    const budget = new VoiceBudgetService(
+      prisma as any,
+      plans as any,
+      settings as any,
+    );
+
+    // Одна реплика: 8850 микродолларов по звуковой ставке (по текстовой
+    // было бы 3250) — после второй потолок обязан быть выбран.
+    for (let i = 0; i < 2; i++) {
+      await svc.recordGemini(audioResponse, {
+        operation: 'voice-assistant-stt',
+        model: 'gemini-2.5-flash',
+        userId: 'u1',
+      });
+    }
+    const state = await budget.stateOf('u1');
+    expect(state.spentUsd).toBeCloseTo(0.0177, 6);
+    expect(state.exhausted).toBe(true);
   });
 });

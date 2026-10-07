@@ -52,6 +52,23 @@
 export const PERSONA_SECTION_ENABLED: boolean = false;
 
 /**
+ * Секция «Сравнение» — таблица «мы против КАТЕГОРИЙ альтернатив»
+ * (§5.5 и В-8 ТЗ; обзор — `docs-tz/OBZOR-Konkurentov-Greetings.md`).
+ * Выключена по умолчанию: утверждения о категориях («заказ у человека —
+ * обычно дни ожидания» и т. п.) опираются на обзор рынка, а его факты
+ * подтверждает владелец продукта. Тот же приём, что у «Вы в кадре»:
+ * пока `false`, секции нет в `greetingSectionOrder()`, а тексты
+ * `greetingsLanding.compare` не уходят в клиентский словарь (вырезаются
+ * всегда — клиенту они не нужны). Держит
+ * `scripts/greeting-compare.test.ts`; включающий меняет и его assert.
+ *
+ * Перед включением — перепроверить §3 обзора (цены и сроки чужих
+ * сервисов меняются) и строку «цена» о нас: «режимы сейчас бесплатны»
+ * верно только при выключенном `PLANS_BILLING_ENABLED`.
+ */
+export const COMPARE_SECTION_ENABLED: boolean = false;
+
+/**
  * Все секции в порядке §5.2. Hero первым, финальный призыв последним;
  * футер — не секция `<main>`, он вне списка.
  */
@@ -64,6 +81,7 @@ export const GREETING_SECTIONS = [
   'features',
   'audience',
   'privacy',
+  'compare',
   'price',
   'faq',
   'finalCta',
@@ -71,11 +89,20 @@ export const GREETING_SECTIONS = [
 
 export type GreetingSectionId = (typeof GREETING_SECTIONS)[number];
 
-/** Секции, которые страница рисует сейчас. Параметр — для теста. */
+/**
+ * Секции, которые страница рисует сейчас. Параметры — для теста.
+ * «Сравнение» стоит перед ценой: таблица отвечает на «почему не открытка
+ * и не заказ у знаменитости», и сразу за ней — сколько это стоит.
+ */
 export function greetingSectionOrder(
   personaEnabled: boolean = PERSONA_SECTION_ENABLED,
+  compareEnabled: boolean = COMPARE_SECTION_ENABLED,
 ): GreetingSectionId[] {
-  return GREETING_SECTIONS.filter((id) => id !== 'persona' || personaEnabled);
+  return GREETING_SECTIONS.filter(
+    (id) =>
+      (id !== 'persona' || personaEnabled) &&
+      (id !== 'compare' || compareEnabled),
+  );
 }
 
 /** Карточка «заголовок + текст» — форма пунктов «Данных» в словаре. */

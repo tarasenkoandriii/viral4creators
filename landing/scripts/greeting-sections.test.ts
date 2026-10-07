@@ -42,7 +42,8 @@ const pageSrc = fs.readFileSync(
 );
 
 // Порядок §5.2: hero, витрина, как это работает, поводы, [вы в кадре],
-// возможности, для кого, данные, цена, FAQ, финальный CTA.
+// возможности, для кого, данные, [сравнение], цена, FAQ, финальный CTA.
+// «Сравнение» — своя константа и свой тест (`greeting-compare.test.ts`).
 assert.deepEqual(
   [...GREETING_SECTIONS],
   [
@@ -54,6 +55,7 @@ assert.deepEqual(
     'features',
     'audience',
     'privacy',
+    'compare',
     'price',
     'faq',
     'finalCta',
@@ -63,7 +65,7 @@ assert.deepEqual(
 assert.ok(greetingSectionOrder(true).includes('persona'));
 assert.ok(!greetingSectionOrder(false).includes('persona'));
 assert.deepEqual(
-  greetingSectionOrder(false),
+  greetingSectionOrder(false, true),
   GREETING_SECTIONS.filter((id) => id !== 'persona'),
   'выключенная секция должна просто выпадать, не меняя порядок остальных',
 );
@@ -239,10 +241,14 @@ for (const locale of locales) {
   assert.deepEqual(
     {
       ...client,
-      greetingsLanding: { ...client.greetingsLanding, persona: g.persona },
+      greetingsLanding: {
+        ...client.greetingsLanding,
+        persona: g.persona,
+        compare: g.compare,
+      },
     },
     dict,
-    `${locale}: clientDictionary изменил что-то кроме раздела persona`,
+    `${locale}: clientDictionary изменил что-то кроме разделов persona и compare`,
   );
 
   // «Данные»: выключено — ровно свои пункты; включено — плюс лицо и голос.

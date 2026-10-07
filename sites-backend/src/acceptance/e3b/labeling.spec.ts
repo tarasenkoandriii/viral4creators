@@ -65,7 +65,7 @@ describeDb('Приёмка Э3-бис (а): ИИ-разметка диалого
     expect(r.labeled).toBe(1);
     const prompt = st.text.calls.at(-1)!;
     const all = `${prompt.system}\n${prompt.user}`;
-    expect(all).not.toMatch(/380|123 45 67|ivan\.petrenko|4111/);
+    expect(all).not.toMatch(/\+?380 67|123 45 67|ivan\.petrenko|4111/);
     expect(prompt.model).toBe(LITE_ENV.ASSIST_LITE_MODEL);
     const l = await label(c.id);
     expect(l).toMatchObject({

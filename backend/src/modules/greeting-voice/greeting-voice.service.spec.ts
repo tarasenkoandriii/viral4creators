@@ -21,6 +21,7 @@ import {
   greetingScriptStale,
 } from '../greeting-prompt/script-inputs';
 import { composeEditedPrompt } from '../greeting-session-edit/greeting-session-edit.service';
+import { fakeSnapshotDb } from '../../../test/fake-greeting-snapshot-db';
 
 const READY = {
   id: 'uv1',
@@ -59,7 +60,8 @@ function build(
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn().mockResolvedValue(undefined),
   };
-  const prisma = { userVoice: { findFirst } };
+  const snapshotDb = fakeSnapshotDb(sessions);
+  const prisma = { userVoice: { findFirst }, $queryRaw: snapshotDb.$queryRaw };
   const listPresetVoices = jest
     .fn()
     .mockResolvedValue([

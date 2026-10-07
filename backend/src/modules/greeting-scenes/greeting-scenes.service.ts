@@ -33,10 +33,18 @@ import {
 } from '../../common/greeting-policy';
 import { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { PrismaService } from '../../prisma/prisma.service';
+import {
+  GREETING_POLICY_KEYS,
+  updateGreetingSnapshot,
+} from '../../common/greeting-snapshot-write';
 
 @Injectable()
 export class GreetingScenesService {
-  constructor(private readonly sessions: SessionService) {}
+  constructor(
+    private readonly sessions: SessionService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async get(sessionId: string): Promise<GreetingScenesView> {
     const snapshot = (await this.load(sessionId)).greetingBriefSnapshot!;
@@ -48,31 +56,19 @@ export class GreetingScenesService {
     sceneCount: number,
   ): Promise<GreetingScenesView> {
     const session = await this.loadForEdit(sessionId);
-    const snapshot = session.greetingBriefSnapshot!;
     const next = normalizeSceneCount(sceneCount);
-    // Этап B: потолок сцен — по регистру повода (траурному ролику нарезка
-    // из четырёх склеек не подходит). Отказ, а не тихое урезание: иначе
-    // человек увидел бы «сохранено» и получил другое число сцен.
-    const verdict = evaluateGreetingPolicy({
-      occasion: snapshot.occasion,
-      occasionRegister: snapshot.occasionRegister ?? null,
-      tone: snapshot.tone,
-      sceneCount: next,
-    });
-    if (verdict.violations.some((v) => v.field === 'sceneCount')) {
-      throw new BadRequestException(
-        policyMessage({
-          ...verdict,
-          violations: verdict.violations.filter(
-            (v) => v.field === 'sceneCount',
-          ),
-        }),
-      );
-    }
-    await this.sessions.updateSession(sessionId, {
-      greetingBriefSnapshot: { ...snapshot, sceneCount: next },
-    });
-    return this.toView(snapshot, next);
+    // Только ключ `sceneCount` (C2), и только если повод и тон, по
+    // которым решала политика, не поменяли между чтением и записью.
+    const written = await updateGreetingSnapshot(
+      this.prisma,
+      sessionId,
+      session.greetingBriefSnapshot!,
+      (cur) => {
+        assertSceneCountAllowed(cur, next);
+        return { set: { sceneCount: next }, expect: GREETING_POLICY_KEYS };
+      },
+    );
+    return this.toView(written, next);
   }
 
   private toView(
@@ -108,5 +104,30 @@ export class GreetingScenesService {
       throw new NotFoundException('это не поздравительная сессия');
     }
     return session;
+  }
+}
+
+/**
+ * Этап B: потолок сцен — по регистру повода (траурному ролику нарезка
+ * из четырёх склеек не подходит). Отказ, а не тихое урезание: иначе
+ * человек увидел бы «сохранено» и получил другое число сцен.
+ */
+function assertSceneCountAllowed(
+  snapshot: GreetingBriefSnapshot,
+  sceneCount: number,
+): void {
+  const verdict = evaluateGreetingPolicy({
+    occasion: snapshot.occasion,
+    occasionRegister: snapshot.occasionRegister ?? null,
+    tone: snapshot.tone,
+    sceneCount,
+  });
+  if (verdict.violations.some((v) => v.field === 'sceneCount')) {
+    throw new BadRequestException(
+      policyMessage({
+        ...verdict,
+        violations: verdict.violations.filter((v) => v.field === 'sceneCount'),
+      }),
+    );
   }
 }

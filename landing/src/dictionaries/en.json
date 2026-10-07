@@ -525,6 +525,76 @@
         }
       ]
     },
+    "compare": {
+      "title": "How this differs from other ways to send a video greeting",
+      "lead": "We compare with how three common approaches usually work, not with specific companies. The last row is something we don't have yet.",
+      "caption": "Video greeting compared with three categories of alternatives",
+      "columns": {
+        "us": "This service",
+        "template": "Template video card",
+        "person": "Ordered from a person or celebrity",
+        "generic": "General-purpose AI video generator"
+      },
+      "rows": [
+        {
+          "feature": "Who writes the text",
+          "us": "The service — for the occasion, recipient and tone; your own text is used as is",
+          "template": "A ready-made storyline; you change the name, photo and caption",
+          "person": "The performer speaks in their own words based on your request",
+          "generic": "You do: script, tone and prompts are up to you"
+        },
+        {
+          "feature": "How long it takes",
+          "us": "Usually a few minutes",
+          "template": "Usually minutes",
+          "person": "Usually days; faster delivery usually costs extra",
+          "generic": "Minutes to generate, plus time to put it together"
+        },
+        {
+          "feature": "Language",
+          "us": "Russian, Ukrainian, English, German, Spanish — the service writes and voices it in the one you choose",
+          "template": "The service sets the languages — Ukrainian and Russian are often missing",
+          "person": "The performer's language",
+          "generic": "Usually many languages"
+        },
+        {
+          "feature": "Sensitive occasions",
+          "us": "Condolences, apologies, support: the service doesn't congratulate or joke, and its text is checked for a festive tone",
+          "template": "Storylines are mostly festive",
+          "person": "Up to the performer",
+          "generic": "You set the tone yourself"
+        },
+        {
+          "feature": "Sender's voice",
+          "us": "Your own voice in the Standard mode; ready-made voices in any mode",
+          "template": "Usually not",
+          "person": "No — you hear the performer's voice",
+          "generic": "Often available, usually on paid plans"
+        },
+        {
+          "feature": "Format",
+          "us": "15 seconds of vertical video, up to 4 scenes",
+          "template": "Length and storyline are set by the template",
+          "person": "Up to the performer",
+          "generic": "Any length — the editing is on you"
+        },
+        {
+          "feature": "Price",
+          "us": "Modes are free for now; the number of generations per day is limited",
+          "template": "Often a free trial, then a one-off payment or a subscription",
+          "person": "The performer sets the price — well-known names are expensive",
+          "generic": "Subscription; the free plan has limits and a watermark"
+        },
+        {
+          "feature": "Delivery on a chosen day",
+          "us": "Not yet — you send the link yourself",
+          "template": "Sometimes",
+          "person": "No — the video arrives when it's ready",
+          "generic": "Usually not"
+        }
+      ],
+      "note": "The right-hand columns describe a typical service in the category, not a specific company; individual services may differ."
+    },
     "price": {
       "title": "What it costs",
       "text": "The plans are free right now and switch inside the app. The plan decides the video resolution — 480p, 720p or 1080p (with attached photos usually no higher than 720p) — and the daily generation limit: once it is used up, you can continue the next day."

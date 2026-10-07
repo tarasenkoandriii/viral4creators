@@ -52,6 +52,13 @@ import {
   greetingScriptStale,
 } from '../greeting-prompt/script-inputs';
 import { composeEditedPrompt } from './greeting-session-edit.service';
+import {
+  GreetingSnapshotDb,
+  MAX_SNAPSHOT_WRITE_ATTEMPTS,
+  applyGreetingSnapshotChange,
+  diffGreetingSnapshot,
+  greetingSnapshotBusy,
+} from '../../common/greeting-snapshot-write';
 
 /**
  * Сценарий под новые входы или `null` — перештамповка не нужна или не
@@ -106,6 +113,10 @@ export function restampedGreetingPrompt(
  * правки брифа, сборки сценария и старта ролика. Смена строится по
  * сессии, перечитанной под замком (`buildPatch`), и вместе с ней, одной
  * записью, уходит перештампованный сценарий, если он положен.
+ *
+ * Снимок брифа (если правка его меняет) пишется точечно через
+ * `greeting-snapshot-write` с CAS по всему снимку и до
+ * `MAX_SNAPSHOT_WRITE_ATTEMPTS` пересчётов (C2).
  */
 export async function writeWithGreetingRestamp(
   sessions: Pick<
@@ -114,6 +125,8 @@ export async function writeWithGreetingRestamp(
   >,
   sessionId: string,
   buildPatch: (fresh: Session) => Partial<Session> | Promise<Partial<Session>>,
+  /** Обязателен, если правка пишет `greetingBriefSnapshot` (C2). */
+  db?: GreetingSnapshotDb,
 ): Promise<Session> {
   const claimed = await sessions.claimWork(
     sessionId,
@@ -129,17 +142,48 @@ export async function writeWithGreetingRestamp(
     );
   }
   try {
-    const fresh = await sessions.getSession(sessionId);
-    if (!fresh) throw new NotFoundException(SESSION_NOT_FOUND);
-    if (editModeOf(fresh.generatedVideo) === 'busy') throw editDuringRender();
-    const patch = await buildPatch(fresh);
-    const restamped = restampedGreetingPrompt(fresh, {
-      ...fresh,
-      ...patch,
-    } as Session);
-    const full = restamped ? { ...patch, generationPrompt: restamped } : patch;
-    const updated = await sessions.updateSession(sessionId, full);
-    return (updated ?? { ...fresh, ...full }) as Session;
+    for (let attempt = 1; ; attempt++) {
+      const fresh = await sessions.getSession(sessionId);
+      if (!fresh) throw new NotFoundException(SESSION_NOT_FOUND);
+      if (editModeOf(fresh.generatedVideo) === 'busy') {
+        throw editDuringRender();
+      }
+      const patch = await buildPatch(fresh);
+      const restamped = restampedGreetingPrompt(fresh, {
+        ...fresh,
+        ...patch,
+      } as Session);
+      const full = restamped
+        ? { ...patch, generationPrompt: restamped }
+        : patch;
+      if (!('greetingBriefSnapshot' in full)) {
+        const updated = await sessions.updateSession(sessionId, full);
+        return (updated ?? { ...fresh, ...full }) as Session;
+      }
+      // C2: замок 'prompt' разводит голос с правкой брифа и сборкой, но
+      // наклейка, музыка, сцены и карточки пишут снимок без него. Поэтому
+      // снимок пишется только изменёнными ключами, а CAS — по снимку
+      // целиком: смена голоса и перештамповка решены по всему снимку, и
+      // если его успели тронуть — решаем заново по свежему.
+      if (!db || !fresh.greetingBriefSnapshot) {
+        throw new Error('запись снимка поздравления требует db и снимок');
+      }
+      const { greetingBriefSnapshot: nextSnapshot, ...rest } = full;
+      const written = await applyGreetingSnapshotChange(
+        db,
+        sessionId,
+        fresh.greetingBriefSnapshot,
+        {
+          set: diffGreetingSnapshot(fresh.greetingBriefSnapshot, nextSnapshot!),
+          expect: 'all',
+          data: rest,
+        },
+      );
+      if (written) {
+        return { ...fresh, ...rest, greetingBriefSnapshot: written } as Session;
+      }
+      if (attempt >= MAX_SNAPSHOT_WRITE_ATTEMPTS) throw greetingSnapshotBusy();
+    }
   } finally {
     await sessions.releaseWork(sessionId, 'prompt');
   }

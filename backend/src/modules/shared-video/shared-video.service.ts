@@ -58,6 +58,7 @@ import {
   RejectSharedVideoRequestDto,
 } from './dto/shared-video.dto';
 import { SESSION_NOT_FOUND } from '../../common/user-facing-errors';
+import { updateGreetingSnapshot } from '../../common/greeting-snapshot-write';
 
 /**
  * Отказ «страницы нет» — один текст на все места: для постороннего
@@ -434,15 +435,15 @@ export class SharedVideoService {
     // опубликованной страницы в витрине.
     const greeting = session.greetingBriefSnapshot;
     if (greeting?.usesPersona) {
-      await this.sessions.updateSession(sessionId, {
-        greetingBriefSnapshot: {
-          ...greeting,
+      // C2 (заход 8): только ключ галочки — точечно, не весь снимок.
+      await updateGreetingSnapshot(this.prisma, sessionId, greeting, () => ({
+        set: {
           personaShowcaseConsentAt:
             dto.allowShowcaseWithPersona === true
               ? new Date().toISOString()
               : null,
         },
-      });
+      }));
     }
     return toView(await this.keepOwnCopy(row));
   }

@@ -38,6 +38,8 @@ import {
   AiOperation,
   AiProvider,
   estimateCost,
+  GeminiUsageMetadataLike,
+  geminiUsageUnits,
   MODEL_RATES,
   UsageUnits,
 } from '../../common/ai-pricing';
@@ -76,13 +78,7 @@ export interface RecordUsageInput extends UsageUnits {
 
 /** Ответ Gemini SDK в той части, которая нас интересует. */
 interface GeminiUsageMetadata {
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    thoughtsTokenCount?: number;
-    /** Повторно использованный вход — тарифицируется дешевле (§26.1). */
-    cachedContentTokenCount?: number;
-  };
+  usageMetadata?: GeminiUsageMetadataLike;
 }
 
 /** Ответ OpenAI chat.completions в той же части. */
@@ -222,6 +218,10 @@ export class AiUsageService {
         seconds: input.seconds ?? 0,
         calls: input.calls ?? 1,
         characters: input.characters ?? 0,
+        // Разбивка входа по модальностям (C1 захода 8): без неё звук
+        // считался бы по текстовой ставке. Нет её — расчёт прежний.
+        inputByModality: input.inputByModality,
+        cachedByModality: input.cachedByModality,
       };
       // Фактическая цена провайдера важнее расчётной: см.
       // доккомментарий поля. Версия прайса и признак «нет ставки»
@@ -285,24 +285,30 @@ export class AiUsageService {
     }
   }
 
-  /** Расход по ответу Gemini — токены лежат в `usageMetadata`. */
+  /**
+   * Расход по ответу Gemini — токены лежат в `usageMetadata`.
+   *
+   * Вход разбирается по модальностям (`promptTokensDetails`): звук,
+   * видео и картинки идут по своей ставке, если она у модели есть
+   * (`common/ai-pricing.ts`, C1 захода 8) — иначе голосовой ввод
+   * считался бы по текстовой ставке и потолок голоса В-14 видел бы
+   * заниженную сумму. Кеш — как прежде. Размышления тарифицируются как
+   * выход и в счёт попадают — не учитывать их значит занижать расход на
+   * самых дорогих вызовах.
+   */
   async recordGemini(
     response: unknown,
     ctx: Omit<
       RecordUsageInput,
-      'inputTokens' | 'cachedInputTokens' | 'outputTokens'
+      | 'inputTokens'
+      | 'cachedInputTokens'
+      | 'outputTokens'
+      | 'inputByModality'
+      | 'cachedByModality'
     >,
   ): Promise<void> {
     const meta = (response as GeminiUsageMetadata)?.usageMetadata;
-    await this.record({
-      ...ctx,
-      inputTokens: meta?.promptTokenCount ?? 0,
-      cachedInputTokens: meta?.cachedContentTokenCount ?? 0,
-      // Размышления тарифицируются как выход и в счёт попадают — не
-      // учитывать их значит занижать расход на самых дорогих вызовах.
-      outputTokens:
-        (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
-    });
+    await this.record({ ...ctx, ...geminiUsageUnits(meta) });
   }
 
   /** Расход по ответу OpenAI chat.completions. */

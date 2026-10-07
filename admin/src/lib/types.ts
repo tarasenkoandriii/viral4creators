@@ -913,7 +913,14 @@ export interface PricingRow {
   model: string;
   provider: string;
   inputPerMTokUsd: number | null;
+  /** Свои ставки входа по модальности (C1 захода 8); null — как текст.
+   *  Необязательны: старый бэкенд их не отдаёт. */
+  audioInputPerMTokUsd?: number | null;
+  imageInputPerMTokUsd?: number | null;
+  videoInputPerMTokUsd?: number | null;
   cachedInputPerMTokUsd: number | null;
+  /** Звук из кеша; null — по ставке кеша. */
+  cachedAudioInputPerMTokUsd?: number | null;
   outputPerMTokUsd: number | null;
   perSecondUsd: number | null;
   perCallUsd: number | null;
@@ -2230,4 +2237,101 @@ export interface TesterProgress {
   openTickets: number;
   closedTickets: number;
   lastActivityAt: string | null;
+}
+
+// ── Кадры лендинга поздравлений (заход 8, doc/GREETING-FRAMES-CAPTURE.md) ──
+
+/** Что сделает `POST …/greeting-frames/fixture-video` (бэкенд `fixtureVideoAction`). */
+export type GreetingFixtureVideoAction =
+  | 'none'
+  | 'poll'
+  | 'poll-post'
+  | 'script-and-render'
+  | 'render'
+  | 'new-version-render';
+
+export type GreetingFixtureVideoStage =
+  | 'missing'
+  | 'started'
+  | 'rendering'
+  | 'post-processing'
+  | 'complete'
+  | 'failed';
+
+/** `GET /admin/ui-snapshot/greeting-frames/fixture-video/state` — только чтение базы. */
+export interface GreetingFixtureVideoState {
+  skipped?: string;
+  sessionId?: string;
+  sessionCreatedAt?: string;
+  versions?: number;
+  hasPrompt?: boolean;
+  stage?: GreetingFixtureVideoStage;
+  video?: {
+    status: string;
+    postStatus: string | null;
+    postError: string | null;
+    error: string | null;
+    downloadUrl: string | null;
+    initiatedAt: string | null;
+    completedAt: string | null;
+    resolution: string | null;
+  };
+  next?: { action: GreetingFixtureVideoAction; paid: boolean };
+  rerender?: { action: GreetingFixtureVideoAction; paid: boolean } | null;
+  /** Сколько стоил прошлый прогон с рендером (журнал расходов); null — неизвестно. */
+  lastRun?: {
+    sessionId: string;
+    costMicroUsd: number;
+    unpriced: boolean;
+    at: string;
+  } | null;
+}
+
+/** Ответ `POST …/fixture-video` — один шаг. */
+export interface GreetingFixtureVideoResult {
+  skipped?: string;
+  sessionId?: string;
+  stage?: Exclude<GreetingFixtureVideoStage, 'missing'>;
+  postError?: string;
+  video?: { status: string; downloadUrl?: string; postStatus?: string };
+}
+
+/** Ответ `POST /admin/ui-snapshot/greeting-frames` (форма `CaptureResult`). */
+export interface GreetingFramesCaptureResult {
+  skipped?: string;
+  locales: Array<{
+    locale: string;
+    /** Адреса PNG по номеру кадра (1–4); неполный набор — смотри `problems`. */
+    cards: Record<string, string>;
+    problems: string[];
+  }>;
+}
+
+// ── Отметка «младше 18» режима «Я в кадре» (В-4, заход 8) ──
+
+export interface PersonaAgeClear {
+  at: string;
+  /** userId оператора. */
+  by: string;
+  reason: string;
+  markedAt: string | null;
+  refusals: string[];
+}
+
+/** `GET /admin/users/:id/persona-age`. Оценки возраста нет намеренно (§4.4 ТЗ). */
+export interface PersonaAgeState {
+  userId: string;
+  personaEnabled: boolean;
+  persona: {
+    id: string;
+    under18: boolean;
+    markedAt: string | null;
+    refusals: string[] | null;
+    verified: boolean;
+    deletePending: boolean;
+    filesPending: boolean;
+    consentGivenAt: string;
+  } | null;
+  /** Журнал снятий, новые сверху. */
+  clears: PersonaAgeClear[];
 }

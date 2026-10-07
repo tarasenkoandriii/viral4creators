@@ -25,7 +25,13 @@ import {
   buildScriptPrompt,
   promptSafeNote,
 } from './greeting-prompt.service';
-import { GREETING_OCCASIONS } from '../../common/types/greeting.types';
+import {
+  GREETING_OCCASIONS,
+  GREETING_REGISTERS,
+  GreetingRegister,
+  GreetingTone,
+} from '../../common/types/greeting.types';
+import { BeatStyle, withStoryboard } from '../../common/greeting-scenes';
 import { GREETING_OCCASION_SPECS } from '../../common/greeting-occasions';
 import type { GreetingBriefSnapshot } from '../../common/types/greeting.types';
 
@@ -497,5 +503,261 @@ describe('ведущий-образ и бренд-бук в сцене (этап
       MAX_STYLE_NOTE_PROMPT_LENGTH,
     );
     expect(promptSafeNote(null)).toBe('');
+  });
+});
+
+// ── §8.1 приёмка: снимки полного видео-промпта по пяти регистрам ─────────
+
+/**
+ * Приёмка §8.1 ТЗ docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md:
+ * «Snapshot-тесты видео- и кадр-промптов по пяти регистрам: в траурном и
+ * деликатном нет «smil», «farewell gesture», «festive», «confetti»».
+ *
+ * Снимок — явный текст, а не файл `__snapshots__`: в репозитории снимков
+ * jest нет, а CI гоняет `jest --ci`, где недостающий снимок — падение без
+ * подсказки, что в нём должно быть. Здесь расхождение показывает строку.
+ *
+ * «Полный» промпт — тот, что уходит в Grok: описание сцены
+ * (`buildSceneDescription`) плюс раскадровка по регистру (`withStoryboard`,
+ * как в `GreetingVideoService.startGrokVideo`). Набор ракурсов по регистру
+ * записан здесь руками (§3.3, строка «Раскадровка»), а не взят из
+ * `REGISTER_POLICY`.
+ *
+ * Слова запрета читаются в УТВЕРДИТЕЛЬНОЙ части промпта: «no smile», «no
+ * confetti», «NOT a celebration» — сам запрет, его и просит §3.3 (декор
+ * `CALM_SCENE`), поэтому отрицания вырезаются перед поиском
+ * (`affirmative`). Буквальное «нет подстроки smil» противоречило бы
+ * этому же ТЗ.
+ */
+const BEATS_OF: Record<GreetingRegister, BeatStyle> = {
+  CELEBRATORY: 'festive',
+  WARM_NEUTRAL: 'neutral',
+  SOLEMN: 'solemn',
+  SENSITIVE: 'calm',
+  MOURNING: 'calm',
+};
+
+function fullVideoPrompt(
+  b: GreetingBriefSnapshot,
+  register: GreetingRegister,
+  voiceMode: 'voiceover' | 'veo' = 'voiceover',
+): string {
+  const occasionText =
+    b.occasion === 'OTHER' && b.customOccasionText
+      ? b.customOccasionText
+      : GREETING_OCCASION_SPECS[b.occasion].label;
+  return withStoryboard(
+    buildSceneDescription(b, occasionText, 'Текст реплики.', [], voiceMode),
+    b.sceneCount ?? 1,
+    15,
+    BEATS_OF[register],
+  );
+}
+
+/** Утвердительная часть промпта: без отрицаний и без самой реплики. */
+function affirmative(prompt: string): string {
+  return prompt
+    .replace(/"[^"]*"/g, ' ')
+    .replace(/\bNOT a celebration\b[^.]*\.[^.]*\./gi, ' ')
+    .replace(/\b(no|not|never|without)\b[^;:.,()\n—]*/gi, ' ');
+}
+
+const sentences = (...parts: string[]) => parts.join(' ');
+
+/** Один представитель на регистр — повод каталога, допустимый тон, потолок сцен. */
+const GOLDEN_BRIEF: Record<
+  GreetingRegister,
+  Pick<GreetingBriefSnapshot, 'occasion' | 'tone' | 'sceneCount'>
+> = {
+  CELEBRATORY: { occasion: 'BIRTHDAY', tone: 'WARM', sceneCount: 4 },
+  WARM_NEUTRAL: { occasion: 'FAREWELL_COLLEAGUE', tone: 'WARM', sceneCount: 4 },
+  SOLEMN: { occasion: 'DEFENDERS_DAY', tone: 'RESPECTFUL', sceneCount: 3 },
+  SENSITIVE: { occasion: 'APOLOGY', tone: 'RESPECTFUL', sceneCount: 2 },
+  MOURNING: { occasion: 'CONDOLENCE', tone: 'RESPECTFUL', sceneCount: 2 },
+};
+
+const GOLDEN_VIDEO: Record<GreetingRegister, string[]> = {
+  CELEBRATORY: [
+    sentences(
+      'A short vertical video message for день рождения addressed to Марина.',
+      'A camera-facing presenter looks straight at the viewer with a warm and sincere mood (warm, genuine smile; relaxed and friendly), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.',
+      'bright, cheerful setting with soft festive decor; warm light; celebratory but tasteful; no on-screen text.',
+      'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.',
+      'Spoken line (for reference, not to be rendered as on-screen text): "Текст реплики."',
+    ),
+    'Structure the video as 4 consecutive shots with hard cuts between them, in this order:',
+    '- Shot 1 (~4s): a wide establishing shot of the setting, the presenter entering it.',
+    '- Shot 2 (~4s): a medium shot — the presenter turns to the viewer.',
+    '- Shot 3 (~4s): a close shot — the heart of the message.',
+    '- Shot 4 (~3s): a closing shot — a gesture of farewell, the setting again.',
+    'Keep the same presenter, wardrobe, setting and lighting across all shots — it is one message, not a montage of different people.',
+  ],
+  WARM_NEUTRAL: [
+    sentences(
+      'A short vertical video message for прощание с коллегой addressed to Марина.',
+      'A camera-facing presenter looks straight at the viewer with a warm and sincere mood (warm, genuine smile; relaxed and friendly), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.',
+      'friendly office-like setting; warm but composed mood; no on-screen text.',
+      'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.',
+      'Spoken line (for reference, not to be rendered as on-screen text): "Текст реплики."',
+    ),
+    'Structure the video as 4 consecutive shots with hard cuts between them, in this order:',
+    '- Shot 1 (~4s): a wide establishing shot of the setting, the presenter entering it.',
+    '- Shot 2 (~4s): a medium shot — the presenter turns to the viewer.',
+    '- Shot 3 (~4s): a close shot — the heart of the message.',
+    '- Shot 4 (~3s): a closing shot — a gesture of farewell, the setting again.',
+    'Keep the same presenter, wardrobe, setting and lighting across all shots — it is one message, not a montage of different people.',
+  ],
+  SOLEMN: [
+    sentences(
+      'A short vertical video message for День защитников и защитниц addressed to Марина.',
+      'A camera-facing presenter looks straight at the viewer with a quiet and respectful mood (serious, respectful, quiet expression; no smile), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.',
+      'restrained, dignified setting; calm, respectful mood; no on-screen text.',
+      'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.',
+      'Spoken line (for reference, not to be rendered as on-screen text): "Текст реплики."',
+    ),
+    'Structure the video as 3 consecutive shots with hard cuts between them, in this order:',
+    '- Shot 1 (~5s): a steady establishing shot — the presenter in a calm, dignified setting.',
+    '- Shot 2 (~5s): a medium shot — the heart of the message, spoken with restraint.',
+    '- Shot 3 (~5s): a closing shot — a respectful pause, the setting again.',
+    'Keep the same presenter, wardrobe, setting and lighting across all shots — it is one message, not a montage of different people.',
+  ],
+  SENSITIVE: [
+    sentences(
+      'A short vertical video message for извинение addressed to Марина.',
+      'A camera-facing presenter looks straight at the viewer with a quiet and respectful mood (sincere, serious, regretful expression; no smile), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.',
+      'quiet, restrained setting; soft muted colours; no decorations, no confetti, no balloons; no on-screen text.',
+      'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.',
+      'Spoken line (for reference, not to be rendered as on-screen text): "Текст реплики."',
+    ),
+    'Structure the video as 2 consecutive shots with hard cuts between them, in this order:',
+    '- Shot 1 (~8s): open on the presenter, quiet and attentive, in a calm setting.',
+    '- Shot 2 (~7s): a closer, still shot — the presenter finishes the thought gently; no smile, no gestures of celebration.',
+    'Keep the same presenter, wardrobe, setting and lighting across all shots — it is one message, not a montage of different people.',
+  ],
+  MOURNING: [
+    sentences(
+      'A short vertical video message for соболезнование addressed to Марина.',
+      'A camera-facing presenter looks straight at the viewer with a quiet and compassionate mood (serious, quiet, compassionate expression; no smile), gesturing and reacting naturally — but does NOT say the line out loud: no lip-synced dialogue, no audible speech from anyone in the scene.',
+      'quiet, restrained setting; soft muted colours; no decorations, no confetti, no balloons; no on-screen text.',
+      'Audio: ambience and music only — the greeting itself is carried by a separate voice track added afterwards.',
+      'Spoken line (for reference, not to be rendered as on-screen text): "Текст реплики."',
+    ),
+    'Structure the video as 2 consecutive shots with hard cuts between them, in this order:',
+    '- Shot 1 (~8s): open on the presenter, quiet and attentive, in a calm setting.',
+    '- Shot 2 (~7s): a closer, still shot — the presenter finishes the thought gently; no smile, no gestures of celebration.',
+    'Keep the same presenter, wardrobe, setting and lighting across all shots — it is one message, not a montage of different people.',
+  ],
+};
+
+describe('§8.1: снимки полного видео-промпта по пяти регистрам', () => {
+  it.each(GREETING_REGISTERS)('%s — промпт целиком', (register) => {
+    const got = fullVideoPrompt(brief(GOLDEN_BRIEF[register]), register);
+    expect(got.split('\n')).toEqual(GOLDEN_VIDEO[register]);
+  });
+
+  /**
+   * Снимок — по одному поводу на регистр; запрет — по ВСЕМ: каждый повод
+   * деликатного и траурного регистров (каталог и «Особый повод»), каждый
+   * допустимый тон, 1–2 сцены, оба режима озвучки и пресетный голос.
+   */
+  const SERIOUS: Array<{
+    name: string;
+    register: GreetingRegister;
+    b: Partial<GreetingBriefSnapshot>;
+    tones: GreetingTone[];
+  }> = [
+    {
+      name: 'APOLOGY',
+      register: 'SENSITIVE',
+      b: { occasion: 'APOLOGY' },
+      tones: ['RESPECTFUL', 'WARM'],
+    },
+    {
+      name: 'GET_WELL',
+      register: 'SENSITIVE',
+      b: { occasion: 'GET_WELL' },
+      tones: ['SUPPORTIVE', 'WARM'],
+    },
+    {
+      name: 'CONDOLENCE',
+      register: 'MOURNING',
+      b: { occasion: 'CONDOLENCE' },
+      tones: ['RESPECTFUL', 'SUPPORTIVE'],
+    },
+    {
+      name: 'OTHER/SENSITIVE',
+      register: 'SENSITIVE',
+      b: {
+        occasion: 'OTHER',
+        customOccasionText: 'трудный период у друга',
+        occasionRegister: 'SENSITIVE',
+      },
+      tones: ['WARM', 'SUPPORTIVE', 'RESPECTFUL'],
+    },
+    {
+      name: 'OTHER/MOURNING',
+      register: 'MOURNING',
+      b: {
+        occasion: 'OTHER',
+        customOccasionText: 'прощание с дедушкой',
+        occasionRegister: 'MOURNING',
+      },
+      tones: ['RESPECTFUL', 'SUPPORTIVE'],
+    },
+  ];
+
+  it.each(SERIOUS.map((s) => [s.name, s] as const))(
+    '%s: ни улыбки, ни праздника, ни жеста прощания — при любом тоне, сценах и озвучке',
+    (_name, s) => {
+      const found: string[] = [];
+      for (const tone of s.tones)
+        for (const sceneCount of [1, 2])
+          for (const voiceMode of ['voiceover', 'veo'] as const)
+            for (const presetVoiceId of [undefined, 'eve']) {
+              const p = affirmative(
+                fullVideoPrompt(
+                  brief({ ...s.b, tone, sceneCount, presetVoiceId }),
+                  s.register,
+                  voiceMode,
+                ),
+              );
+              const where = `${tone}/${sceneCount}/${voiceMode}/${presetVoiceId ?? '—'}`;
+              for (const re of [
+                /festive/i,
+                /confetti/i,
+                /farewell/i,
+                /celebrat/i,
+                /party/i,
+                /balloon/i,
+                /cheerful/i,
+              ]) {
+                if (re.test(p)) found.push(`${where}: ${re}`);
+              }
+              // Улыбка: в трауре — никогда. В деликатном регистре §3.3
+              // разрешает «мягкое» лицо при тёплом тоне (кроме извинения) —
+              // «at most a gentle, reassuring smile» и только она.
+              const gentle =
+                s.register === 'SENSITIVE' &&
+                tone === 'WARM' &&
+                s.b.occasion !== 'APOLOGY';
+              const rest = gentle
+                ? p.replace('at most a gentle, reassuring smile', ' ')
+                : p;
+              const smile = /[^;,()]*smil[^;,()]*/i.exec(rest);
+              if (smile) found.push(`${where}: «${smile[0].trim()}»`);
+            }
+      expect(found).toEqual([]);
+    },
+  );
+
+  it('самопроверка вырезания отрицаний: утвердительное «festive» и «a smile» находятся', () => {
+    expect(affirmative('a gesture, a smile; no confetti')).toMatch(/smile/);
+    expect(affirmative('soft festive decor; no smile')).toMatch(/festive/);
+    expect(affirmative('no smile, no confetti')).not.toMatch(/smile|confetti/);
+    expect(
+      affirmative(
+        'This is NOT a celebration: no balloons,\nno party decorations of any kind.',
+      ),
+    ).not.toMatch(/celebration|party/);
   });
 });

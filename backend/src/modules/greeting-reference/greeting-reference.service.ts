@@ -37,7 +37,11 @@ import { SessionService } from '../../common/session.service';
 import { Session } from '../../common/types/session.types';
 import { SceneAsset } from '../../common/types/reference.types';
 import { activeSessionSceneImage } from '../../common/active-image';
-import { GreetingReferenceImageView } from '../../common/types/greeting.types';
+import {
+  GreetingBriefSnapshot,
+  GreetingReferenceImageView,
+  GreetingSceneSettingOption,
+} from '../../common/types/greeting.types';
 import {
   GreetingReferenceConfirmRequestDto,
   GreetingReferenceUpdateRequestDto,
@@ -75,6 +79,14 @@ import {
   greetingError,
 } from '../../common/greeting-errors';
 import { assertGreetingNotRendering } from '../../common/greeting-render-lock';
+import { PrismaService } from '../../prisma/prisma.service';
+import { MAX_GREETING_REFERENCE_IMAGES } from '../../common/greeting-reference-limits';
+import { sceneTextProblem } from '../../common/greeting-scene-text';
+import { writeWithGreetingRestamp } from '../greeting-session-edit/restamp';
+import {
+  GREETING_POLICY_KEYS,
+  updateGreetingSnapshot,
+} from '../../common/greeting-snapshot-write';
 
 /** Согласие подтверждают только для фото, на котором лицо найдено. */
 export const FACE_CONSENT_NOT_NEEDED =
@@ -108,7 +120,7 @@ function toView(image: SceneAsset): GreetingReferenceImageView {
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 /** docs.x.ai reference-to-video: до 7 `reference_images` за один запрос. */
-export const MAX_GREETING_REFERENCE_IMAGES = 7;
+export { MAX_GREETING_REFERENCE_IMAGES };
 
 /**
  * Тексты отказов с кодами (CONTRACT6 п.9): раньше шли по-английски, с
@@ -220,6 +232,8 @@ export class GreetingReferenceService {
      * исчерпавший суточный потолок человек тратил бы здесь без края.
      */
     private readonly plans: PlanService,
+    /** Точечная запись `sceneSetting` в снимок (C2, §3.9). */
+    private readonly prisma: PrismaService,
   ) {}
 
   async list(sessionId: string): Promise<GreetingReferenceImageView[]> {
@@ -275,6 +289,12 @@ export class GreetingReferenceService {
       );
     }
     if (images.length >= MAX_GREETING_REFERENCE_IMAGES) throw limitReached();
+    // Аудит захода 8: подпись уходит в видео-промпт — те же проверки, что
+    // у обстановки, и до скачивания и платной проверки лица.
+    assertCaptionsAllowed(session.greetingBriefSnapshot, [
+      dto.label,
+      dto.description,
+    ]);
     let data: Buffer;
     try {
       data = await this.blob.downloadBuffer(dto.pathname);
@@ -344,6 +364,59 @@ export class GreetingReferenceService {
     return next.map(toView);
   }
 
+  /** Выбранная обстановка ролика (§3.9). */
+  async getSceneSetting(
+    sessionId: string,
+  ): Promise<{ sceneSetting: string | null }> {
+    const session = await this.load(sessionId);
+    const brief = session.greetingBriefSnapshot;
+    if (!brief) throw notGreeting();
+    return { sceneSetting: normalizeSceneSetting(brief.sceneSetting) };
+  }
+
+  /**
+   * Выбрать обстановку без рисования кадра или вернуть сцену повода
+   * (`null`) — §3.9. Бесплатно: это строка в снимке.
+   *
+   * Только из выданных сервером вариантов (`sceneSettingOptions`, белый
+   * список, аудит захода 8) — свободный текст закрыт: словарь политики
+   * лишь вторая линия. Пишется под замком 'prompt' с перештамповкой
+   * собранного сценария (`writeWithGreetingRestamp`): обстановка — строка
+   * сцены, и без перештамповки рендер ответил бы «сценарий устарел», а
+   * пересборка потеряла бы правки текста человеком. Снимок — только
+   * изменённые ключи, CAS по снимку целиком (C2).
+   */
+  async setSceneSetting(
+    sessionId: string,
+    raw: string | null | undefined,
+  ): Promise<{ sceneSetting: string | null }> {
+    const session = await this.load(sessionId);
+    if (!session.greetingBriefSnapshot) throw notGreeting();
+    assertGreetingNotRendering(session);
+    const value = normalizeSceneSetting(raw);
+    const written = await writeWithGreetingRestamp(
+      this.sessions,
+      sessionId,
+      (fresh) => {
+        const cur = fresh.greetingBriefSnapshot;
+        if (!cur) throw notGreeting();
+        if (value) assertSceneSettingChoosable(cur, value, this.now());
+        return { greetingBriefSnapshot: { ...cur, sceneSetting: value } };
+      },
+      this.prisma,
+    );
+    return {
+      sceneSetting: normalizeSceneSetting(
+        written.greetingBriefSnapshot?.sceneSetting,
+      ),
+    };
+  }
+
+  /** Часы — отдельным методом, чтобы тест мог сдвинуть срок вариантов. */
+  now(): number {
+    return Date.now();
+  }
+
   /**
    * Нарисовать референс-кадр по брифу сессии — фича №6 компаньон-ТЗ.
    *
@@ -390,16 +463,19 @@ export class GreetingReferenceService {
     // Сеттинг приходит из нашей же модели (фича №36), но обрезается и
     // проверяется здесь наравне с пользовательским текстом: путь от
     // фронтенда открыт, и доверять содержимому поля только потому, что
-    // мы его когда-то предложили, — это доверять клиенту.
-    const chosenSetting = (setting ?? '').trim().slice(0, MAX_SETTING_LENGTH);
-    if (chosenSetting) {
-      const settingLikeness = findCelebrityLikeness(chosenSetting);
-      if (settingLikeness) {
-        throw new BadRequestException(
-          celebrityLikenessMessage(settingLikeness),
-        );
-      }
+    // мы его когда-то предложили, — это доверять клиенту. Не передан —
+    // уже выбранная обстановка из снимка (§3.9): кадр и видео рисуют
+    // одно и то же место.
+    const explicitSetting = normalizeSceneSetting(setting);
+    // Явная обстановка — только из выданных вариантов (белый список);
+    // уже выбранная прошла его при выборе, но политику проходит заново:
+    // повод с тех пор могли сменить.
+    if (explicitSetting) {
+      assertSceneSettingChoosable(brief, explicitSetting, this.now());
     }
+    const chosenSetting =
+      explicitSetting ?? normalizeSceneSetting(brief.sceneSetting);
+    if (chosenSetting) assertSceneSettingAllowed(brief, chosenSetting);
 
     const prompt = buildGreetingFramePrompt({
       occasion: brief.occasion,
@@ -457,7 +533,10 @@ export class GreetingReferenceService {
     const image: SceneAsset = {
       id: imageId,
       label: GENERATED_FRAME_LABEL,
-      description: null,
+      // §3.9: подпись кадра — его обстановка. Подпись идёт в видео-промпт
+      // рядом с меткой `<IMAGE_n>`, и «Сгенерированный кадр» модели
+      // видео ничего не говорил.
+      description: chosenSetting,
       photoUrl: url,
       photoPathname: pathname,
       createdAt: new Date().toISOString(),
@@ -466,9 +545,39 @@ export class GreetingReferenceService {
       hasFace: false,
     };
     const next = [...images, image];
-    await this.sessions.updateSession(sessionId, {
-      greetingReferenceImages: next,
-    });
+    try {
+      if (!explicitSetting) {
+        await this.sessions.updateSession(sessionId, {
+          greetingReferenceImages: next,
+        });
+      } else {
+        // §3.9: выбранная обстановка — в снимок, той же записью, что и
+        // кадр. Только ключ `sceneSetting` (C2) и только если повод и тон,
+        // по которым её проверили, не сменились, пока рисовался кадр;
+        // сменились и она больше не годится — кадр сохраняется,
+        // обстановка нет.
+        await updateGreetingSnapshot(this.prisma, sessionId, brief, (cur) => ({
+          set: !sceneSettingProblem(cur, explicitSetting)
+            ? { sceneSetting: explicitSetting }
+            : {},
+          expect: GREETING_POLICY_KEYS,
+          data: { greetingReferenceImages: next },
+        }));
+      }
+    } catch (e) {
+      // Аудит захода 8: запись не легла (409 после повторов, сессию
+      // удалили) — загруженный файл иначе остался бы сиротой в Blob, на
+      // который не ссылается ни одна сессия и который не уберёт ни одна
+      // уборка. Best-effort: сбой удаления не заслоняет причину отказа.
+      await this.blob
+        .deleteBlob(pathname)
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `сессия ${sessionId}: кадр ${pathname} не удалён после сбоя записи: ${String(err)}`,
+          ),
+        );
+      throw e;
+    }
     return next.map(toView);
   }
 
@@ -495,6 +604,7 @@ export class GreetingReferenceService {
     // CONTRACT6 п.1: вне `try` ниже — отказ по бюджету обязан дойти до
     // человека, а не превратиться в «вариантов нет» пустым списком.
     await this.plans.assertCanSpendSession(sessionId);
+    let offered: string[] = [];
     const prompt = buildSettingsPrompt(
       brief.occasion,
       brief.customOccasionText,
@@ -513,7 +623,9 @@ export class GreetingReferenceService {
         sessionId,
         ...(userId ? { userId } : {}),
       });
-      return parseSettings(response.text);
+      offered = parseSettings(response.text)
+        .map((v) => normalizeSceneSetting(v))
+        .filter((v): v is string => !!v && !sceneSettingProblem(brief, v));
     } catch (e) {
       this.logger.warn(
         `сессия ${sessionId}: варианты сеттинга не получены — ${
@@ -522,6 +634,22 @@ export class GreetingReferenceService {
       );
       return [];
     }
+    if (!offered.length) return [];
+    // Белый список (аудит захода 8): выбрать потом можно только выданное.
+    // Точечно, только ключ вариантов — без CAS: варианты ничего не решают,
+    // политика проверяется ещё раз при выборе.
+    const issuedAt = new Date(this.now()).toISOString();
+    await updateGreetingSnapshot(this.prisma, sessionId, brief, (cur) => ({
+      set: {
+        sceneSettingOptions: rememberSceneSettingOptions(
+          cur.sceneSettingOptions,
+          offered,
+          issuedAt,
+          this.now(),
+        ),
+      },
+    }));
+    return offered;
   }
 
   async update(
@@ -534,6 +662,11 @@ export class GreetingReferenceService {
     const images = session.greetingReferenceImages ?? [];
     const target = images.find((s) => s.id === imageId);
     if (!target) throw referenceNotFound();
+    // Аудит захода 8: подпись — текст видео-промпта (`<IMAGE_n> — …`).
+    assertCaptionsAllowed(session.greetingBriefSnapshot, [
+      dto.label,
+      dto.description,
+    ]);
     // Этап G (Г-8): «у меня есть согласие этого человека». Только `true` —
     // отозвать согласие значит удалить фото или сделать скетч, а не
     // тихо снять отметку с уже отправленного в модель кадра. Для фото без
@@ -631,5 +764,107 @@ export class GreetingReferenceService {
     const session = await this.sessions.getSession(sessionId);
     if (!session) throw new NotFoundException(SESSION_NOT_FOUND);
     return session;
+  }
+}
+
+/** Сколько выданных вариантов обстановки помнит сессия. */
+export const MAX_SCENE_SETTING_OPTIONS = 12;
+/** Сколько живёт выданный вариант — сутки, как кеш поиска наклеек. */
+export const SCENE_SETTING_OPTION_TTL_MS = 24 * 60 * 60 * 1000;
+
+export const SCENE_SETTING_NOT_OFFERED_MESSAGE =
+  'Эту обстановку не предлагали для этого поздравления или вариант устарел. Подберите варианты ещё раз.';
+
+/** Свежие варианты — в начало, без повторов, без истёкших, с потолком. */
+export function rememberSceneSettingOptions(
+  previous: GreetingSceneSettingOption[] | null | undefined,
+  offered: string[],
+  issuedAt: string,
+  now: number,
+): GreetingSceneSettingOption[] {
+  const fresh = offered.map((text) => ({ text, issuedAt }));
+  const kept = (previous ?? []).filter(
+    (o) =>
+      !offered.includes(o.text) &&
+      now - Date.parse(o.issuedAt) < SCENE_SETTING_OPTION_TTL_MS,
+  );
+  return [...fresh, ...kept].slice(0, MAX_SCENE_SETTING_OPTIONS);
+}
+
+/** Выдана ли обстановка сервером и не истекла ли (или уже выбрана). */
+export function sceneSettingOffered(
+  brief: GreetingBriefSnapshot,
+  setting: string,
+  now: number,
+): boolean {
+  if (normalizeSceneSetting(brief.sceneSetting) === setting) return true;
+  return (brief.sceneSettingOptions ?? []).some(
+    (o) =>
+      normalizeSceneSetting(o.text) === setting &&
+      now - Date.parse(o.issuedAt) < SCENE_SETTING_OPTION_TTL_MS,
+  );
+}
+
+/** Белый список, затем те же проверки, что у любой обстановки. */
+export function assertSceneSettingChoosable(
+  brief: GreetingBriefSnapshot,
+  setting: string,
+  now: number,
+): void {
+  if (!sceneSettingOffered(brief, setting, now)) {
+    throw new BadRequestException(
+      greetingError(
+        GREETING_ERROR_CODES.GREETING_SCENE_SETTING_NOT_OFFERED,
+        SCENE_SETTING_NOT_OFFERED_MESSAGE,
+      ),
+    );
+  }
+  assertSceneSettingAllowed(brief, setting);
+}
+
+/**
+ * Обстановка: NFKC, без невидимых символов, одной строкой, с потолком
+ * длины — или `null`. Тот же вид у выданных вариантов и у выбора, поэтому
+ * сверка с белым списком — точное совпадение.
+ */
+export function normalizeSceneSetting(
+  raw: string | null | undefined,
+): string | null {
+  const v = (raw ?? '')
+    .normalize('NFKC')
+    .replace(/[\p{Cf}\u200B-\u200D\u2060\uFEFF\u00AD]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_SETTING_LENGTH);
+  return v.trim() || null;
+}
+
+export function sceneSettingProblem(
+  brief: GreetingBriefSnapshot,
+  setting: string,
+): string | null {
+  return sceneTextProblem(brief, setting, 'обстановки');
+}
+
+/** Проверки обстановки до записи и до платного кадра (§3.9). */
+export function assertSceneSettingAllowed(
+  brief: GreetingBriefSnapshot,
+  setting: string,
+): void {
+  const problem = sceneSettingProblem(brief, setting);
+  if (problem) throw new BadRequestException(problem);
+}
+
+/** Подписи фото — те же проверки, что у обстановки (аудит захода 8). */
+function assertCaptionsAllowed(
+  brief: GreetingBriefSnapshot | null | undefined,
+  captions: Array<string | null | undefined>,
+): void {
+  if (!brief) return;
+  for (const caption of captions) {
+    const text = (caption ?? '').trim();
+    if (!text) continue;
+    const problem = sceneTextProblem(brief, text, 'подписи фото');
+    if (problem) throw new BadRequestException(problem);
   }
 }

@@ -167,7 +167,11 @@ const AVATAR_CHARS_PER_SECOND = 15;
 function estimateSpeechSeconds(speech: string): number {
   return Math.max(1, Math.round(speech.length / AVATAR_CHARS_PER_SECOND));
 }
-import { MAX_GREETING_REFERENCE_IMAGES } from '../greeting-reference/greeting-reference.service';
+import { MAX_GREETING_REFERENCE_IMAGES } from '../../common/greeting-reference-limits';
+import {
+  referenceCaptionsProblem,
+  sceneTextProblem,
+} from '../../common/greeting-scene-text';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PersonaRenderDb, personaRenderProblem } from './persona-render-check';
 import {
@@ -429,10 +433,21 @@ export class GreetingVideoService {
           }
         : null,
       sceneCount: normalizeSceneCount(brief.sceneCount ?? 1),
+      // §3.9: обстановка ролика — тоже правило, и тоже у денег.
+      sceneSetting: brief.sceneSetting ?? null,
     });
     if (!verdict.ok) {
       throw new BadRequestException(policyMessage(verdict));
     }
+    // Аудит захода 8: обстановка и подписи фото — текст видео-промпта.
+    // Модерация, чужой образ и политика регистра — и у денег: подписи
+    // могли записать до того, как их начали проверять.
+    const sceneText =
+      (brief.sceneSetting
+        ? sceneTextProblem(brief, brief.sceneSetting, 'обстановки')
+        : null) ??
+      referenceCaptionsProblem(brief, session.greetingReferenceImages);
+    if (sceneText) throw new BadRequestException(sceneText);
     // Этап G (§4.8, Г-8): ведущий-образ при выключенном режиме, скетч на
     // Hedra и фото чужого лица без согласия — тоже у денег, до списания
     // кредита. Сценарий проверяет то же самое, но фото могли загрузить

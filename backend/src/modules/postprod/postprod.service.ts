@@ -52,6 +52,11 @@ import {
 } from '../../common/types/generation.types';
 import { planPostProduction, PostProdError } from '../../common/postprod';
 import {
+  AiMetadata,
+  aiMarkingRequired,
+  aiVideoMetadata,
+} from '../../common/ai-marking';
+import {
   GreetingCards,
   buildCardsAss,
   hasCards,
@@ -191,6 +196,17 @@ interface Work {
    * синтеза: не молча использовать чужой идентификатор голоса.
    */
   ttsProvider: string | null;
+  /**
+   * Маркировка ИИ в метаданных MP4 (заход 8 C11, `common/ai-marking.ts`):
+   * у каждого ролика, снятого ИИ; у поздравления с персоной — ещё и
+   * `ai_persona=1`.
+   */
+  aiMetadata: AiMetadata;
+  /**
+   * Метка нужна настолько, что ради неё одной ffmpeg запускается и при
+   * отсутствии другой работы — ролик с персоной «Я в кадре».
+   */
+  aiMarkingRequired: boolean;
 }
 
 /** Сколько ждём задачу ffmpeg, прежде чем закрыть её сбоем (этап 52). */
@@ -333,10 +349,12 @@ export class PostProductionService {
       !wantsSubtitles &&
       !work.musicUrl &&
       !work.cards &&
-      !work.sticker
+      !work.sticker &&
+      !work.aiMarkingRequired
     ) {
       // Кадр родной, озвучка не заказана, субтитры выключены — делать
-      // нечего, и это норма.
+      // нечего, и это норма. Ролик с персоной сюда не попадает: метку ИИ
+      // ему ставит отдельный проход `-c copy` (заход 8 C11).
       return this.save(sessionId, video, {
         postStatus: 'skipped',
         reframePending: false,
@@ -457,6 +475,12 @@ export class PostProductionService {
         subtitleForceStyle: subsUrl
           ? SUBTITLE_THEME_FORCE_STYLE[work.subtitleTheme]
           : null,
+        metadata: work.aiMetadata,
+        // Отдельный проход ради одной метки — только у ролика с персоной;
+        // остальным метка едет лишь в задаче, нужной и без неё (иначе
+        // сорвавшийся синтез превращал бы «делать нечего» в платный
+        // `-c copy`).
+        metadataOnly: work.aiMarkingRequired,
       });
     } catch (e) {
       // Сюда попадает и «делать нечего» — например, кадр родной, голос не
@@ -735,6 +759,9 @@ export class PostProductionService {
           subtitleForceStyle: subsUrl
             ? SUBTITLE_THEME_FORCE_STYLE[work.subtitleTheme]
             : null,
+          // Переозвучка собирает ролик из СЫРОГО файла — метку прежней
+          // сборки он не несёт, ставим заново.
+          metadata: work.aiMetadata,
         });
       } catch (e) {
         const message = e instanceof PostProdError ? e.message : String(e);
@@ -1286,6 +1313,8 @@ export class PostProductionService {
       crop,
       voiceMode,
       sourceHasNoAudio: video.silentSource === true,
+      aiMetadata: aiVideoMetadata(session?.greetingBriefSnapshot),
+      aiMarkingRequired: aiMarkingRequired(session?.greetingBriefSnapshot),
       musicUrl: session?.greetingBriefSnapshot?.musicTheme?.url ?? null,
       // `hasCards` здесь — РАННИЙ выход, а не проверка корректности:
       // пустой текст всё равно не дойдёт до задачи (`buildCardsAss`

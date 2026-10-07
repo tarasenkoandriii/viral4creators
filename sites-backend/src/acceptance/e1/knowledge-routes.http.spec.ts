@@ -1268,6 +1268,8 @@ describeDb(
           sandboxesDeleted: expect.any(Number),
           countersDeleted: expect.any(Number),
           crawlQueueDeleted: expect.any(Number),
+          // C4 захода 8: уборка у Soniox в том же кроне; без ключа — пропуск.
+          sonioxSkipped: true,
         });
       });
     });

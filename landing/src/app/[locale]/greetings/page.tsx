@@ -25,6 +25,7 @@ import {
   greetingSectionOrder,
   type GreetingSectionId,
 } from '../../../lib/greeting-sections';
+import { CompareSection } from './CompareSection';
 import { OccasionGroups } from './OccasionGroups';
 import { PersonaSection } from './PersonaSection';
 
@@ -62,8 +63,13 @@ import { PersonaSection } from './PersonaSection';
  *    `greetingsLanding.persona`) и включается одной константой в
  *    `lib/greeting-sections.ts`; до того её нет в разметке (тест
  *    `scripts/greeting-sections.test.ts`);
- *  - таблицы сравнения с рынком — обзора конкурентов для поздравлений в
- *    репозитории нет, таблица без него была бы выдуманной (§5.5, В-8).
+ *  - таблицы сравнения с рынком — пока. Обзор конкурентов сделан
+ *    (`docs-tz/OBZOR-Konkurentov-Greetings.md`, В-8), секция построена
+ *    (`CompareSection.tsx`, тексты `greetingsLanding.compare`) и
+ *    сравнивает с КАТЕГОРИЯМИ, без названий и чужих цен; но факты о
+ *    рынке подтверждает владелец, поэтому она за выключенной константой
+ *    `COMPARE_SECTION_ENABLED` в `lib/greeting-sections.ts` (тест
+ *    `scripts/greeting-compare.test.ts`).
  *
  * ## Этап H (ТЗ `docs-tz/TZ-Greeting-2.0-Adaptive-Persona-Landing.md` §5)
  *
@@ -360,6 +366,12 @@ export default function GreetingsLandingPage({
         </div>
       </section>
     ),
+
+    /* «Сравнение» (§5.5, В-8): строка есть всегда, но вызывается, только
+       если `compare` есть в `greetingSectionOrder()`, то есть при
+       включённой `COMPARE_SECTION_ENABLED`. Тексты раздела страница
+       больше нигде не читает (тест сравнения). */
+    compare: () => <CompareSection texts={g.compare} />,
 
     /* Цена — по итогам сверки с кодом (§2 «Проверить на проде»), см.
        шапку файла: «сейчас», разрешение по режиму (`MAX_RESOLUTION` в

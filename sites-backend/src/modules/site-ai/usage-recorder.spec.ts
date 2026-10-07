@@ -1,3 +1,4 @@
+import { geminiUsageUnits } from '../../shared/ai-pricing';
 import { AiUsageRecorder, type UsageDb } from './usage-recorder';
 
 function fakeDb() {
@@ -39,6 +40,27 @@ describe('AiUsageRecorder → site_ai_usage', () => {
       unpriced: false,
     });
     expect(typeof rows[0].pricingVersion).toBe('string');
+  });
+
+  it('ответ Gemini со звуком на входе — звук по своей ставке (C1 захода 8)', async () => {
+    const { db, rows } = fakeDb();
+    const r = await new AiUsageRecorder().record(db, {
+      accountId: 'acc',
+      siteId: 'site',
+      operation: 'assist-chat',
+      model: 'gemini-2.5-flash-lite',
+      units: geminiUsageUnits({
+        promptTokenCount: 2_000_000,
+        candidatesTokenCount: 0,
+        promptTokensDetails: [
+          { modality: 'TEXT', tokenCount: 1_000_000 },
+          { modality: 'AUDIO', tokenCount: 1_000_000 },
+        ],
+      }),
+    });
+    // 1M звука × $0.30 + 1M текста × $0.10; в строку — весь вход.
+    expect(r).toEqual({ costMicroUsd: 400_000, unpriced: false });
+    expect(rows[0]).toMatchObject({ inputTokens: 2_000_000 });
   });
 
   it('неизвестная модель — unpriced, объём записан, деньги 0', async () => {

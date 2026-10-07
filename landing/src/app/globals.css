@@ -886,12 +886,6 @@ section h2 {
   transform: translateY(-1px);
 }
 
-.occasion-note {
-  margin: 18px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .sample-grid {
   display: grid;
   /* min() — та же защита от горизонтальной прокрутки на 320px, что и у
@@ -2873,6 +2867,37 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
     grid-template-columns: minmax(0, 1fr) minmax(0, 46%);
     gap: 48px;
     align-items: center;
+  }
+}
+
+/* «Сравнение» (`CompareSection.tsx`, за `COMPARE_SECTION_ENABLED`):
+   четыре колонки значений вместо двух у общей `.compare-table`. Колонка
+   признаков ужимается с 42% до 20%, шапка переносится (длинные названия
+   категорий в `nowrap` вылезли бы за край), а висячий отступ под знак
+   «да/нет» снят — знаков у этой таблицы нет. Карточная раскладка ниже
+   900px — общая, без правок. */
+.greeting-page .compare-table-wide {
+  font-size: 14px;
+}
+
+.greeting-page .compare-table-wide thead th {
+  white-space: normal;
+}
+
+.greeting-page .compare-table-wide tbody th {
+  width: 20%;
+}
+
+@media (min-width: 900px) {
+  .greeting-page .compare-table-wide tbody td {
+    padding-left: 16px;
+    text-indent: 0;
+  }
+}
+
+@media (max-width: 899px) {
+  .greeting-page .compare-table-wide tbody th {
+    width: auto;
   }
 }
 
