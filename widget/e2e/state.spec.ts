@@ -122,8 +122,16 @@ test('§4-бис.10 п.2 SPA: 5 переходов — iframe не переза�
   await page.goto(stand('example.localhost', { pk, spa: true }));
   await openChat(page);
   for (let i = 0; i < 5; i++) await page.locator('#spa-next').click();
+  // history.back() — асинхронный обход: следующий pushState до его конца
+  // (под нагрузкой CI) обход потом откатывает на /spa/5 — ждём popstate.
   await page.locator('#spa-back').click();
+  await expect
+    .poll(() => page.evaluate(() => location.pathname))
+    .toBe('/spa/5');
   await page.locator('#spa-next').click();
+  await expect
+    .poll(() => page.evaluate(() => location.pathname))
+    .toBe('/spa/7');
   await ask(page, 'Где я?');
   await waitAnswer(page);
   const l = await log();
