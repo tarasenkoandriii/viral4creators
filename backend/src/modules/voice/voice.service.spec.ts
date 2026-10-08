@@ -110,7 +110,7 @@ describe('VoiceTranscriptionService', () => {
     delete process.env.GOOGLE_GEMINI_API_KEY;
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
-      settingsMock() as never,
+      settingsMock('gemini') as never,
       sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
     expect(r).toEqual({ text: null, reason: 'GEMINI_API_KEY not set' });
@@ -121,7 +121,7 @@ describe('VoiceTranscriptionService', () => {
     mockGenerate.mockResolvedValue({ text: ' Кроссовки для бега, лёгкие. ' });
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
-      settingsMock() as never,
+      settingsMock('gemini') as never,
       sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm;codecs=opus');
     const arg = mockGenerate.mock.calls[0][0];
@@ -136,7 +136,7 @@ describe('VoiceTranscriptionService', () => {
     mockGenerate.mockResolvedValue({ text: '' });
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
-      settingsMock() as never,
+      settingsMock('gemini') as never,
       sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
     expect(r).toEqual({ text: null, reason: 'no speech recognised' });
@@ -145,7 +145,7 @@ describe('VoiceTranscriptionService', () => {
   it('empty buffer short-circuits without a paid call', async () => {
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
-      settingsMock() as never,
+      settingsMock('gemini') as never,
       sonioxMock() as never,
     ).transcribe(Buffer.alloc(0), 'audio/webm', { userId: 'u1' });
     expect(r.reason).toBe('empty audio');
@@ -156,7 +156,7 @@ describe('VoiceTranscriptionService', () => {
     mockGenerate.mockRejectedValue(new Error('503 overloaded'));
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
-      settingsMock() as never,
+      settingsMock('gemini') as never,
       sonioxMock() as never,
     ).transcribe(AUDIO, 'audio/webm', { userId: 'u1' });
     expect(r).toEqual({ text: null, reason: '503 overloaded' });
@@ -178,9 +178,34 @@ describe('VoiceTranscriptionService.recognize — провайдер из адм
     sessionId: 's1',
   };
 
-  it('ничего не выбрано — Gemini, Soniox не трогается', async () => {
+  it('выбран Gemini — Gemini, Soniox не трогается', async () => {
     mockGenerate.mockResolvedValue({ text: 'так' });
     const soniox = sonioxMock();
+    const r = await new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock('gemini') as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r).toEqual({ text: 'так' });
+    expect(soniox.transcribe).not.toHaveBeenCalled();
+    expect(mockGenerate.mock.calls[0][0].contents[1].text).toBe('инструкция');
+  });
+
+  it('ничего не выбрано — умолчание Soniox (Р-З8-14), Gemini не зовётся', async () => {
+    const soniox = sonioxMock();
+    const r = await new VoiceTranscriptionService(
+      usageMock() as never,
+      settingsMock(null) as never,
+      soniox as never,
+    ).recognize(AUDIO, 'audio/webm', opts);
+    expect(r.text).toBe('Сонікс');
+    expect(soniox.transcribe).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('ничего не выбрано и ключа Soniox нет — расшифровывает Gemini', async () => {
+    mockGenerate.mockResolvedValue({ text: 'так' });
+    const soniox = sonioxMock({ configured: jest.fn().mockReturnValue(false) });
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
       settingsMock(null) as never,
@@ -188,7 +213,6 @@ describe('VoiceTranscriptionService.recognize — провайдер из адм
     ).recognize(AUDIO, 'audio/webm', opts);
     expect(r).toEqual({ text: 'так' });
     expect(soniox.transcribe).not.toHaveBeenCalled();
-    expect(mockGenerate.mock.calls[0][0].contents[1].text).toBe('инструкция');
   });
 
   it('выбран Soniox — ему уходят подсказки, имена и строгость; расход по секундам', async () => {
@@ -256,15 +280,14 @@ describe('VoiceTranscriptionService.recognize — провайдер из адм
     expect(soniox.transcribe.mock.calls[0][0].languageHints).toEqual([]);
   });
 
-  it('настройка не прочиталась — Gemini, а не исключение: ввод «никогда не бросает»', async () => {
-    mockGenerate.mockResolvedValue({ text: 'так' });
+  it('настройка не прочиталась — умолчание, а не исключение: ввод «никогда не бросает»', async () => {
     const settings = { get: jest.fn().mockRejectedValue(new Error('db down')) };
     const r = await new VoiceTranscriptionService(
       usageMock() as never,
       settings as never,
       sonioxMock() as never,
     ).recognize(AUDIO, 'audio/webm', opts);
-    expect(r).toEqual({ text: 'так' });
+    expect(r.text).toBe('Сонікс');
   });
 
   it('Soniox сломался — расшифровывает Gemini; оплаченная попытка Soniox всё равно в расходе', async () => {
@@ -310,15 +333,15 @@ describe('VoiceTranscriptionService.recognize — провайдер из адм
     expect(usage.record).toHaveBeenCalledTimes(1);
   });
 
-  it('неизвестное значение настройки — Gemini', async () => {
-    mockGenerate.mockResolvedValue({ text: 'так' });
+  it('неизвестное значение настройки — умолчание Soniox', async () => {
     const soniox = sonioxMock();
     await new VoiceTranscriptionService(
       usageMock() as never,
       settingsMock('whisper') as never,
       soniox as never,
     ).recognize(AUDIO, 'audio/webm', opts);
-    expect(soniox.transcribe).not.toHaveBeenCalled();
+    expect(soniox.transcribe).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).not.toHaveBeenCalled();
   });
   // Финальный аудит ветки K: потолок длины и вход перед запасным путём.
   const svc = (soniox: ReturnType<typeof sonioxMock>) =>

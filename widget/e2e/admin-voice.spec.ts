@@ -142,8 +142,22 @@ test('строгий CSP + TT: команда набором заполняет 
   // Номер, названный сотрудником, — его строка в снимке; чужая — нет.
   await say(f, 'введи 1042 в Коментар');
   const again = f.locator('.wa-vc-p .wa-card .wa-yes');
-  if (await again.isVisible().catch(() => false)) await again.click();
-  await expect(page.locator('#ak-comment')).toHaveValue('1042');
+  // Карточка «Так» бывает не всегда и может появиться позже: разовый
+  // `isVisible()` без ожидания на холодном старте её пропускал, и поле
+  // оставалось пустым. Ждём, пока поле не заполнится, нажимая «Так»,
+  // если карточка показалась.
+  await expect
+    .poll(
+      async () => {
+        if ((await page.locator('#ak-comment').inputValue()) === '1042')
+          return true;
+        if (await again.isVisible().catch(() => false))
+          await again.click().catch(() => null);
+        return false;
+      },
+      { timeout: 15_000 }
+    )
+    .toBe(true);
   log = await vcLog();
   const second = log.snapshots
     .at(-1)!

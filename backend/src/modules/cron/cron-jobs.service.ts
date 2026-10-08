@@ -87,6 +87,7 @@ import {
   pruneAssistantEvents,
 } from '../assistant/assistant-prune';
 import { successLogFields } from './cron-run-summary';
+import { loadVercelSchedules } from './cron-schedule';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import {
   ClientSiteDraftRetention,
@@ -293,8 +294,23 @@ export class CronJobsService {
     debugMode: boolean,
     task: () => Promise<T>,
   ): Promise<T> {
+    // Расписание, по которому стартовал прогон Vercel Cron (TODO «сводка
+    // кронов: смену расписания на надмножество старого журнал не
+    // видит»): сводка сравнивает его с нынешним по тексту. Конфиг вшит в
+    // сборку — это ровно то расписание, которое Vercel зарегистрировал
+    // для этого деплоя. Ручному запуску расписание не пишется.
+    const schedule =
+      triggeredBy === VERCEL_CRON_TRIGGERED_BY
+        ? (loadVercelSchedules()?.[jobKey] ?? null)
+        : null;
     const row = await this.prisma.cronRunLog.create({
-      data: { jobKey, triggeredBy, debugMode, status: 'RUNNING' },
+      data: {
+        jobKey,
+        triggeredBy,
+        debugMode,
+        status: 'RUNNING',
+        ...(schedule ? { schedule } : {}),
+      },
     });
     const startedAt = Date.now();
     try {

@@ -96,6 +96,9 @@ export class WidgetUi {
   private _shift = 0;
 
   constructor(opts: UiOptions) {
+    // Замыкания слушателей — только на колбэки, не на `opts` (в нём
+    // контейнер inline: после замены <body> держал бы старый документ).
+    const { onToggle, onEsc } = opts;
     this._opts = opts;
     this._view = opts.view;
     this.host = N.el('div');
@@ -129,12 +132,12 @@ export class WidgetUi {
     this.button.type = 'button';
     this.button.className = 'l';
     this.button.setAttribute('aria-expanded', 'false');
-    N.on(this.button, 'click', () => opts.onToggle());
+    N.on(this.button, 'click', onToggle);
     this.panel = N.el('div');
     this.panel.className = opts.inline ? 'I' : 'p';
     this.panel.hidden = !opts.inline;
     N.on(sr, 'keydown', (e) => {
-      if ((e as KeyboardEvent).key === 'Escape') opts.onEsc();
+      if ((e as KeyboardEvent).key === 'Escape') onEsc();
     });
     if (opts.inline) {
       // Высота — по контейнеру заказчика (мин. 360 px, §3-бис.3).
@@ -143,6 +146,9 @@ export class WidgetUi {
       this.root.style.setProperty('height', '100%');
       this.root.appendChild(this.panel);
       opts.inline.appendChild(this.host);
+      // Дальше нужен лишь признак inline: ссылка на контейнер держала бы
+      // после замены <body> (Turbo) весь старый документ в памяти.
+      this._opts = { ...opts, inline: this.host };
     } else {
       this.root.appendChild(this.panel);
       this.root.appendChild(this.button);

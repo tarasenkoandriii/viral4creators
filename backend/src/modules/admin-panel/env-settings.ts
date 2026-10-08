@@ -46,7 +46,7 @@ import {
   dailyLimitForPlan,
 } from '../../common/spend-limits';
 import { PLAN_IDS } from '../../common/plans';
-import { MODEL_RATES, priceEnvKey } from '../../common/ai-pricing';
+import { MODEL_RATES, PRICE_KINDS, priceEnvKey } from '../../common/ai-pricing';
 import { isDevAuthAllowed } from '../admin-auth/dev-login';
 import { describeBuild } from '../../common/build-info';
 import { isUsableSitesSecret } from '../../common/sites-internal-signature';
@@ -1293,28 +1293,34 @@ export function getEnvSettings(
     // имени — самая дорогая ошибка в этой группе: переменная выглядит
     // заданной, а расход считается по старой ставке, и заметить это
     // можно только по отчёту, который для того и заведён.
-    const valid = new Set<string>();
+    //
+    // Допустимые имена — те, что прайс и правда читает (`priceEnvKey`):
+    // с ними и ставки по модальностям (`…_AUDIO_INPUT` и др.; прежний
+    // список из шести видов называл их опечаткой, хотя они действуют). У
+    // каждой заданной — чья это ставка: имя одной модели может выглядеть
+    // как ставка другой (`…_FLASH_IMAGE_INPUT` — вход модели картинок, а
+    // картинки на входе 2.5 Flash — `…_FLASH__IMAGE_INPUT`).
+    const owners = new Map<string, string>();
     for (const model of Object.keys(MODEL_RATES)) {
-      for (const kind of [
-        'input',
-        'cached',
-        'output',
-        'second',
-        'call',
-        'chars',
-      ] as const) {
-        valid.add(priceEnvKey(model, kind));
+      for (const kind of PRICE_KINDS) {
+        owners.set(priceEnvKey(model, kind), `${model}, ${kind}`);
       }
     }
     const given = Object.keys(env).filter(
       (k) => k.startsWith('AI_PRICE_') && (env[k] ?? '').trim() !== '',
     );
-    const unknown = given.filter((k) => !valid.has(k));
+    const unknown = given.filter((k) => !owners.has(k));
     const bad = given.filter((k) => {
       const n = Number(env[k]);
       return !Number.isFinite(n) || n < 0;
     });
     const ok = unknown.length === 0 && bad.length === 0;
+    const overridden = given
+      .map((k) => {
+        const o = owners.get(k);
+        return o ? `${k} (${o})` : k;
+      })
+      .join(', ');
     results.push({
       key: 'AI_PRICE_* (переопределения прайса)',
       group: 'Режимы и деньги',
@@ -1323,11 +1329,11 @@ export function getEnvSettings(
       ok,
       severity: ok ? 'ok' : 'warning',
       message: unknown.length
-        ? `Не соответствуют ни одной ставке и ни на что не влияют: ${unknown.join(', ')}. Имя строится как AI_PRICE_<МОДЕЛЬ>_<INPUT|CACHED|OUTPUT|SECOND|CALL|CHARS>, где в модели всё, кроме букв и цифр, заменено подчёркиванием.`
+        ? `Не соответствуют ни одной ставке и ни на что не влияют: ${unknown.join(', ')}. Имя строится как AI_PRICE_<МОДЕЛЬ>_<${PRICE_KINDS.map((k) => k.toUpperCase()).join('|')}>, где в модели всё, кроме букв и цифр, заменено подчёркиванием; если такое имя уже занято ставкой другой модели, ставка по модальности читается из имени с двойным подчёркиванием перед видом (AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT).`
         : bad.length
           ? `Не похожи на неотрицательное число: ${bad.join(', ')}. Мусор ставку НЕ обнуляет — останется значение из кода, то есть отчёт о деньгах будет считать по старой цене.`
           : given.length
-            ? `Переопределены ставки: ${given.join(', ')}. Значение — в долларах, как на странице прайса провайдера.`
+            ? `Переопределены ставки: ${overridden}. Значение — в долларах, как на странице прайса провайдера.`
             : 'Переопределений нет — считается по прайсу из common/ai-pricing.ts. Ставки Veo и GPT-5 там помечены как требующие проверки: перед тем как верить колонке с деньгами, сверьте их с провайдером.',
       // Имена переменных показываем, значения — нет: смысл строки в том,
       // ЧТО переопределено, а сами ставки видны на вкладке «Расходы»

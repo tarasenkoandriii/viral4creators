@@ -340,6 +340,166 @@ test('SPA с заменой <body> (Turbo/htmx): кнопка и чат возв
   await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
 });
 
+test('inline + замена <body> (Turbo) до показа контейнера: чат грузится в новом контейнере', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  // Контейнер ниже первого экрана (отступ — в stand.css, до разбора
+  // разметки): iframe ждёт IntersectionObserver.
+  await page.goto(
+    stand('example.localhost', {
+      pk,
+      container: 'below',
+      attrs: { 'data-container': '#help-chat' },
+    })
+  );
+  await expect(page.locator('#help-chat [data-v4c]')).toHaveCount(1);
+  await page.waitForTimeout(500);
+  await expect(frameEl(page)).toHaveCount(0);
+  // Turbo Drive: новый <body> с тем же контейнером — уже на экране.
+  await page.evaluate(() => {
+    const nb = document.createElement('body');
+    const h = document.createElement('h1');
+    h.textContent = 'Нова сторінка';
+    const c = document.createElement('div');
+    c.id = 'help-chat';
+    nb.append(h, c);
+    document.body.replaceWith(nb);
+    history.pushState({}, '', '/page/next');
+  });
+  await expect(page.locator('h1')).toHaveText('Нова сторінка');
+  await expect(page.locator('#help-chat [data-v4c]')).toHaveCount(1);
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+  await expect(page.locator('[data-v4c]')).toHaveCount(1);
+});
+
+test('inline на скрытом пути (data-hide-on): после SPA-перехода на разрешённый путь чат грузится', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.goto(
+    stand('example.localhost', {
+      pk,
+      container: true,
+      attrs: { 'data-container': '#help-chat', 'data-hide-on': '/page' },
+    })
+  );
+  await expect(page.locator('#help-chat [data-v4c]')).toHaveCount(1);
+  await page.waitForTimeout(500);
+  await expect(frameEl(page)).toHaveCount(0);
+  await page.evaluate(() => history.pushState({}, '', '/other'));
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+});
+
+test('inline + замена <body>: старый документ не удерживается виджетом (снимок кучи)', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  await page.goto(
+    stand('example.localhost', {
+      pk,
+      container: true,
+      attrs: { 'data-container': '#help-chat' },
+    })
+  );
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+  await page.evaluate(() => {
+    document.getElementById('help-chat')!.setAttribute('data-oldmark', '1');
+    // Положительный контроль: отдельный узел, который страница держит
+    // сама, — в снимке он есть (имена узлов DOM несут атрибуты, проверка
+    // не проходит впустую).
+    const k = document.createElement('i');
+    k.setAttribute('data-keepmark', '1');
+    (window as unknown as { __keep: Node }).__keep = k;
+    const nb = document.createElement('body');
+    const c = document.createElement('div');
+    c.id = 'help-chat';
+    nb.append(c);
+    document.body.replaceWith(nb);
+  });
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+  // Снимок кучи сам собирает мусор: выпавший контейнер в нём — только если
+  // его кто-то держит (тег загрузчика в замыкании boot(), `opts` WidgetUi).
+  // Сразу после замены Blink может недолго держать старое дерево и без
+  // виджета (проба: контроль без загрузчика иногда «удержан» в первом
+  // снимке) — до 3 снимков с кадрами между ними; утечка виджета постоянна
+  // (база до правки: удержан во всех снимках).
+  const cdp = await page.context().newCDPSession(page);
+  const heap = async (marks: string[]) => {
+    const chunks: string[] = [];
+    const on = (e: { chunk: string }) => chunks.push(e.chunk);
+    cdp.on('HeapProfiler.addHeapSnapshotChunk', on);
+    await cdp.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+    cdp.off('HeapProfiler.addHeapSnapshotChunk', on);
+    const snap = JSON.parse(chunks.join('')) as {
+      snapshot: { meta: { node_fields: string[]; node_types: [string[]] } };
+      nodes: number[];
+      strings: string[];
+    };
+    const f = snap.snapshot.meta.node_fields;
+    const native = snap.snapshot.meta.node_types[0].indexOf('native');
+    const found: string[] = [];
+    for (let i = 0; i < snap.nodes.length; i += f.length) {
+      const name = snap.strings[snap.nodes[i + f.indexOf('name')]];
+      if (
+        snap.nodes[i + f.indexOf('type')] === native &&
+        marks.some((m) => name.includes(m))
+      )
+        found.push(name);
+    }
+    return found;
+  };
+  let found: string[] = [];
+  for (let n = 0; n < 3; n++) {
+    await page.evaluate(
+      () =>
+        new Promise((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(r))
+        )
+    );
+    found = await heap(['data-oldmark', 'data-keepmark']);
+    if (!found.some((x) => x.includes('data-oldmark'))) break;
+  }
+  expect(found.filter((x) => x.includes('data-keepmark'))).toHaveLength(1);
+  expect(found.filter((x) => x.includes('data-oldmark'))).toEqual([]);
+});
+
+test("inline + V4CAssist('hide') до показа: iframe не грузится, после show() — грузится", async ({
+  page,
+}) => {
+  const pk = newPk();
+  await site(pk);
+  // Очередь вызовов до загрузчика (как в сниппете установки) с `hide`.
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      V4CAssist: ((...a: unknown[]) => void) & { q?: unknown[] };
+    };
+    w.V4CAssist = function () {
+      // eslint-disable-next-line prefer-rest-params
+      (w.V4CAssist.q = w.V4CAssist.q || []).push(arguments);
+    };
+    w.V4CAssist('hide');
+  });
+  await page.goto(
+    stand('example.localhost', {
+      pk,
+      container: true,
+      attrs: { 'data-container': '#help-chat' },
+    })
+  );
+  await expect(page.locator('#help-chat [data-v4c]')).toHaveCount(1);
+  await expect(page.locator('#help-chat [data-v4c]')).toBeHidden();
+  await page.waitForTimeout(500);
+  await expect(frameEl(page)).toHaveCount(0);
+  await page.evaluate(() =>
+    (window as unknown as { V4CAssist: (c: string) => void }).V4CAssist('show')
+  );
+  await expect(chat(page).locator('.cmp textarea')).toBeEnabled();
+});
+
 test('доступность: Esc в чате закрывает и возвращает фокус на кнопку; Tab не выходит из чата', async ({
   page,
 }) => {

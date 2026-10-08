@@ -20,7 +20,7 @@ import {
 
 export interface SpeechRecognitionProviderSettingsView {
   active: SpeechRecognitionProviderKey;
-  /** `admin` — выбрано здесь; `default` — не менялось, работает Gemini. */
+  /** `admin` — выбрано здесь; `default` — не менялось, работает умолчание (Soniox). */
   source: 'admin' | 'default';
   options: Array<{ key: SpeechRecognitionProviderKey; configured: boolean }>;
 }

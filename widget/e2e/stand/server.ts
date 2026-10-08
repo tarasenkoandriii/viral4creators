@@ -1674,8 +1674,11 @@ export interface StandSpec {
   queue?: boolean;
   /** Своя кнопка #own → V4CAssist('open'). */
   ownButton?: boolean;
-  /** Контейнер inline #help-chat ('auto' — без заданной высоты). */
-  container?: boolean | 'auto';
+  /**
+   * Контейнер inline #help-chat ('auto' — без заданной высоты, 'below' —
+   * ниже первого экрана: отступ в stand.css, до разбора разметки).
+   */
+  container?: boolean | 'auto' | 'below';
   /** Чужая фиксированная помеха в правом нижнем углу. */
   obstacle?: boolean;
   /** Длинная страница (прокрутка). */
@@ -1763,7 +1766,7 @@ function standHtml(spec: StandSpec, host: string): string {
     );
   if (spec.container)
     parts.push(
-      `<div id="help-chat"${spec.container === 'auto' ? ' class="auto"' : ''}></div>`
+      `<div id="help-chat"${typeof spec.container === 'string' ? ` class="${esc(spec.container)}"` : ''}></div>`
     );
   if (spec.obstacle)
     parts.push(`<div id="cookie-banner">Мы используем cookie</div>`);
@@ -1871,7 +1874,7 @@ const SNIPPETS: Record<string, string> = {
 };
 
 const STAND_CSS = `body{font-family:Georgia,serif;margin:0;padding:16px}nav a{margin-right:8px}
-#help-chat{width:420px;height:520px;border:1px solid #ccc}#help-chat.auto{height:auto}
+#help-chat{width:420px;height:520px;border:1px solid #ccc}#help-chat.auto{height:auto}#help-chat.below{margin-top:3000px}
 #cookie-banner{position:fixed;right:0;bottom:0;width:100%;height:90px;background:#333;color:#fff;z-index:2147483647}
 .long{height:3000px}#hero{display:block;max-width:100%}.long-top{height:1400px}`;
 

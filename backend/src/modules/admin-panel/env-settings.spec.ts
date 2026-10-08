@@ -468,6 +468,36 @@ describe('getEnvSettings — режимы и деньги (§23, §26)', () => {
     expect(row.set).toBe(true);
   });
 
+  it('ставки по модальностям — не опечатка; у каждой названо, чья она', () => {
+    const row = find(
+      getEnvSettings({
+        AI_PRICE_GEMINI_2_5_FLASH_AUDIO_INPUT: '1',
+        AI_PRICE_GEMINI_2_5_FLASH_LITE_CACHED_AUDIO: '0.03',
+        AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT: '0.3',
+        AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT: '0.3',
+      }),
+      'AI_PRICE_*',
+    );
+    expect(row.ok).toBe(true);
+    expect(row.message).toContain(
+      'AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT (gemini-2.5-flash, image_input)',
+    );
+    // Имя без двойного подчёркивания — вход модели картинок.
+    expect(row.message).toContain(
+      'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT (gemini-2.5-flash-image, input)',
+    );
+  });
+
+  it('у опечатки подсказка называет и виды ставок по модальностям', () => {
+    const row = find(
+      getEnvSettings({ AI_PRICE_GEMINI_2_5_FLASH_AUDIO: '1' }),
+      'AI_PRICE_*',
+    );
+    expect(row.ok).toBe(false);
+    expect(row.message).toContain('AUDIO_INPUT|IMAGE_INPUT');
+    expect(row.message).toContain('AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT');
+  });
+
   it('нечисловая ставка не обнуляет прайс, но помечена', () => {
     const row = find(
       getEnvSettings({ AI_PRICE_GEMINI_2_5_FLASH_INPUT: 'дёшево' }),

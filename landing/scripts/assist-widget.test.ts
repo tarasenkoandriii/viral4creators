@@ -92,15 +92,15 @@ for (const page of ['src/app/[locale]/page.tsx', 'src/app/[locale]/how-it-works/
   const src = read(page);
   assert.match(src, /assistWidgetFromBuildEnv\(\)/, `${page}: читает переключатель`);
   assert.match(src, /assist\.mode === '(?:platform|legacy)'/, `${page}: ветвится по нему`);
-  assert.match(src, /<(?:Floating)?AssistantWidget/, `${page}: старый консультант остался (за флагом)`);
+  assert.match(src, /<(?:Floating|Embedded)?AssistantWidget/, `${page}: старый консультант остался (за флагом)`);
   assert.match(src, /<(?:Lazy)?PlatformAssist/, `${page}: виджет платформы`);
   assert.doesNotMatch(src, /<script/i, `${page}: загрузчик не вставляется тегом в разметку`);
 }
 // Аудит лендинга: на главной оба виджета плавающие, и неиспользуемый в
 // этом режиме не должен попадать в First Load JS — оба через next/dynamic.
-// На how-it-works — нет: встроенная панель стоит в сетке и нужна в HTML,
-// а ленивый загрузчик платформы там дороже (рантайм next/dynamic), чем
-// сам загрузчик (замер сборкой — см. комментарий в AssistLazy.tsx).
+// На how-it-works next/dynamic нет: ленивый загрузчик платформы там дороже
+// (рантайм next/dynamic), чем сам загрузчик, а встроенную панель выбирает
+// константа сборки (EmbeddedAssistant.tsx; замеры — в его шапке).
 {
   const home = read('src/app/[locale]/page.tsx');
   for (const name of ['AssistantWidget', 'PlatformAssist']) {
@@ -116,6 +116,64 @@ for (const page of ['src/app/[locale]/page.tsx', 'src/app/[locale]/how-it-works/
   assert.match(lazy, /^'use client';/, 'AssistLazy: клиентский модуль');
   assert.match(lazy, /dynamic\(\s*\(\) => import\('\.\/AssistantWidget'\)/, 'AssistLazy: AssistantWidget через next/dynamic');
   assert.match(lazy, /dynamic\(\s*\(\) => import\('\.\/PlatformAssist'\)/, 'AssistLazy: PlatformAssist через next/dynamic');
+}
+// how-it-works: код чата не в First Load JS сборки `platform`, а в
+// `legacy` панель синхронная (без лишнего запроса чанка). Число держит
+// второй прогон CI (`next build` в `platform` + `budget:js -- --platform`),
+// форма — здесь: без сборки и раньше, на `npm test`.
+{
+  const hiw = read('src/app/[locale]/how-it-works/page.tsx');
+  assert.doesNotMatch(
+    hiw,
+    /from '[./]+\/components\/AssistantWidget'/,
+    'how-it-works: AssistantWidget импортирован статически — чат в First Load JS и в режиме platform',
+  );
+  assert.match(hiw, /from '[./]+\/components\/EmbeddedAssistant'/, 'how-it-works: панель через EmbeddedAssistant');
+
+  const emb = read('src/components/EmbeddedAssistant.tsx');
+  assert.match(emb, /^'use client';/, 'EmbeddedAssistant: клиентский модуль');
+  // Сворачиваемая `next build` форма: имя переменной целиком, строгое
+  // сравнение со строкой; синхронная ветка — `require` (импорт был бы в
+  // бандле всегда), ленивая — `import()`.
+  assert.match(
+    emb,
+    /process\.env\.NEXT_PUBLIC_ASSIST_WIDGET === 'platform'\s*\?\s*lazyEmbedded\(\)\s*:\s*\(require\('\.\/AssistantWidget'\)/,
+    'EmbeddedAssistant: выбор ветки не сворачивается сборкой',
+  );
+  assert.match(emb, /lazy\(\(\) => import\('\.\/AssistantWidget'\)/, 'EmbeddedAssistant: в platform — React.lazy');
+  assert.doesNotMatch(emb, /^import (?!type )[^;]*'\.\/AssistantWidget'/m, 'EmbeddedAssistant: значимый импорт AssistantWidget');
+  assert.doesNotMatch(emb, /'next\/dynamic'/, 'EmbeddedAssistant: рантайм next/dynamic лёг бы в чанк страницы и в legacy');
+  // Ветка `platform` действительно выбирается этим значением переключателя.
+  assert.equal(
+    resolveAssistWidget({
+      NEXT_PUBLIC_ASSIST_WIDGET: 'platform',
+      NEXT_PUBLIC_ASSIST_WIDGET_SRC: SRC,
+      NEXT_PUBLIC_ASSIST_WIDGET_SITE_KEY: PK,
+    }).mode,
+    'platform',
+  );
+
+  // Поведение модуля: без переменной и с `legacy` — сам AssistantWidget,
+  // с `platform` — ленивая обёртка.
+  const embFile = path.join(ROOT, 'src/components/EmbeddedAssistant.tsx');
+  const loadEmbedded = (mode: string | undefined) => {
+    const saved = process.env.NEXT_PUBLIC_ASSIST_WIDGET;
+    try {
+      if (mode === undefined) delete process.env.NEXT_PUBLIC_ASSIST_WIDGET;
+      else process.env.NEXT_PUBLIC_ASSIST_WIDGET = mode;
+      delete require.cache[require.resolve(embFile)];
+      return (require(embFile) as typeof import('../src/components/EmbeddedAssistant')).EmbeddedAssistantWidget;
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_ASSIST_WIDGET;
+      else process.env.NEXT_PUBLIC_ASSIST_WIDGET = saved;
+    }
+  };
+  const { AssistantWidget } = require('../src/components/AssistantWidget') as typeof import('../src/components/AssistantWidget');
+  assert.equal(loadEmbedded(undefined), AssistantWidget, 'без переменной — синхронная панель');
+  assert.equal(loadEmbedded('legacy'), AssistantWidget, 'legacy — синхронная панель');
+  const lazyPanel = loadEmbedded('platform');
+  assert.notEqual(lazyPanel, AssistantWidget, 'platform — не синхронный импорт');
+  assert.equal(lazyPanel.name, 'LazyEmbeddedAssistantWidget', 'platform — ленивая обёртка');
 }
 const comp = read('src/components/PlatformAssist.tsx');
 assert.match(comp, /requestIdleCallback/, 'загрузчик — после load + idle');

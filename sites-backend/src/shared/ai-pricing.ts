@@ -451,8 +451,52 @@ export type PriceKind =
   | 'video_input'
   | 'cached_audio';
 
+/** Все виды ставок, у которых есть переменная окружения. */
+export const PRICE_KINDS: readonly PriceKind[] = [
+  'input',
+  'cached',
+  'output',
+  'second',
+  'call',
+  'chars',
+  'audio_input',
+  'image_input',
+  'video_input',
+  'cached_audio',
+];
+
+/**
+ * Имена переменных-исключения: `"модель/вид" → имя`.
+ *
+ * Обычно имя — `AI_PRICE_<МОДЕЛЬ>_<ВИД>`. Но склейка неоднозначна: ставка
+ * картинок на входе у `gemini-2.5-flash` и обычная входная у
+ * `gemini-2.5-flash-image` давали одно имя
+ * `AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT`, и одна переменная молча меняла
+ * обе ставки — оператор правит вход модели картинок, а картинки на входе
+ * 2.5 Flash начинают считаться по чужой цене (и наоборот: вход модели
+ * картинок, которого в прайсе нет, становится платным). Имя остаётся за
+ * ставкой из прежнего набора (`input`/`cached`/…: оно существовало до
+ * ставок по модальностям, и его смысл не меняется), а ставка по
+ * модальности читается из имени с ДВОЙНЫМ подчёркиванием перед видом —
+ * из модели двойное подчёркивание не получается (пробег не-букв
+ * сжимается в одно), так что это имя ни с чьим не совпадёт.
+ *
+ * Список явный, а не вычисляется по составу `MODEL_RATES`: имя переменной
+ * — договор с тем, кто её задаёт, и не должно меняться оттого, что в
+ * прайс добавили или убрали другую модель. Новое совпадение ловит тест
+ * «у каждой ставки своя переменная» — тогда исключение дописывается сюда.
+ */
+export const PRICE_ENV_KEY_EXCEPTIONS: Readonly<Record<string, string>> = {
+  'gemini-2.5-flash/image_input': 'AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT',
+};
+
+/** Имя переменной, из которой читается ставка `kind` модели `model`
+ *  (`AI_PRICE_<МОДЕЛЬ>_<ВИД>`, кроме `PRICE_ENV_KEY_EXCEPTIONS`). */
 export function priceEnvKey(model: string, kind: PriceKind): string {
-  return `AI_PRICE_${model.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_${kind.toUpperCase()}`;
+  return (
+    PRICE_ENV_KEY_EXCEPTIONS[`${model}/${kind}`] ??
+    `AI_PRICE_${model.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_${kind.toUpperCase()}`
+  );
 }
 
 /** Ставки по умолчанию. Значения — в микродолларах (см. `USD`). */

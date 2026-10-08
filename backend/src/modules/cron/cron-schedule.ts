@@ -147,6 +147,66 @@ export function runFitsSchedule(cron: ParsedCron, startedAt: Date): boolean {
   );
 }
 
+/**
+ * Нормальная форма cron-выражения — для сравнения «то же расписание или
+ * другое» по ТЕКСТУ, а не по тому, укладываются ли прогоны в расписание.
+ *
+ * Пробелы схлопываются, а разобранное выражение собирается заново в
+ * каноническом виде: значения поля — отсортированным списком без
+ * повторов, полный диапазон минут/часов/месяцев — `*`, день недели 7 —
+ * 0. Так одно и то же расписание, записанное иначе (`0,30` и `30,0`,
+ * `*∕1` и `*`, `* * * * 7` и `* * * * 0`, лишние пробелы), сменой не
+ * считается. Поля дня месяца и дня недели — по смыслу `dayMatches`, а
+ * не по букве: если `*` хоть одно из них (AND), полное поле (`1-31`,
+ * `*∕1`, `0-6`) ничего не отсекает и пишется `*`; если ограничены оба
+ * (OR) и одно из них полное — подходит любой день, и `*` пишутся оба;
+ * оба ограничены и не полные — оба остаются списками (OR). Выражение,
+ * которое не разбирается, сравнивается по тексту со схлопнутыми
+ * пробелами.
+ */
+export function normalizeCronExpression(expr: string): string {
+  const text = expr.trim().split(/\s+/).join(' ');
+  let cron: ParsedCron;
+  try {
+    cron = parseCronExpression(text);
+  } catch {
+    return text;
+  }
+  const list = (values: Iterable<number>, full: number): string => {
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted.length === full ? '*' : sorted.join(',');
+  };
+  // Дни — по смыслу `dayMatches`, а не по букве. Ограничены оба поля
+  // (OR) и одно из них полное — подходит любой день: оба `*`. Иначе (AND)
+  // полное поле ничего не отсекает — `*`, второе остаётся как есть.
+  const domFull = cron.domAny || cron.daysOfMonth.size === 31;
+  const dowFull = cron.dowAny || cron.daysOfWeek.size === 7;
+  const orDays = !cron.domAny && !cron.dowAny;
+  const everyDay = orDays ? domFull || dowFull : domFull && dowFull;
+  return [
+    list(cron.minutes, 60),
+    list(cron.hours, 24),
+    everyDay || domFull ? '*' : list(cron.daysOfMonth, 31),
+    list(cron.months, 12),
+    everyDay || dowFull ? '*' : list(cron.daysOfWeek, 7),
+  ].join(' ');
+}
+
+/** Другое ли расписание — по нормальной форме выражения. */
+export function cronScheduleChanged(
+  previous: string,
+  current: string,
+): boolean {
+  return normalizeCronExpression(previous) !== normalizeCronExpression(current);
+}
+
+/** Прогон из журнала: старт и расписание, по которому он шёл
+ *  (`CronRunLog.schedule`; у строк до появления колонки — null). */
+export interface LoggedScheduledRun {
+  startedAt: Date;
+  schedule: string | null;
+}
+
 /** Подряд идущих «чужих» прогонов, с которых признаётся смена расписания:
  *  одиночный — это опоздание старта, а не новое расписание. */
 export const SCHEDULE_CHANGE_MIN_STREAK = 2;
@@ -166,29 +226,90 @@ export const SCHEDULE_CHANGE_MIN_STREAK = 2;
  * крон — с первого его прогона). Своих после неё ещё нет — со следующей
  * минуты после серии: замолчавший после смены крон виден пропусками.
  *
- * `runs` — старты прогонов по расписанию, по возрастанию. `null` — смены
- * журнал не показывает. Предел: если старое расписание — подмножество
- * нового, его тики укладываются в новое, и смена отсюда не видна.
+ * `runs` — прогоны по расписанию, по возрастанию старта. `null` — смены
+ * журнал не показывает.
+ *
+ * Прогон, у которого в журнале записано расписание (`schedule`, TODO
+ * «сводка кронов: смену расписания на надмножество старого журнал не
+ * видит»), судится по ТЕКСТУ: другое выражение (`cronScheduleChanged`
+ * против `current`) — чужой прогон, даже если его тик укладывается в
+ * нынешнее расписание. Без этого смена на надмножество (было `0 3 * * *`,
+ * стало `0 *∕6 * * *`) не была видна: старые тики — тоже тики нового
+ * расписания, и сводка ждала по новому за всё окно. Одного такого
+ * прогона достаточно — текст не опаздывает, как старт. Свой текст —
+ * свой прогон, даже опоздавший больше допуска.
+ *
+ * Догадка по тикам (серия не укладывающихся прогонов) осталась только
+ * для строк без записанного расписания — журнала до появления колонки;
+ * для них предел прежний: смена на надмножество не видна.
  */
 export function scheduleEffectiveSince(
   cron: ParsedCron,
-  runs: readonly Date[],
+  runs: readonly (Date | LoggedScheduledRun)[],
+  current?: string | null,
 ): Date | null {
-  let streakEnd = -1;
+  const end = lastForeignRunIndex(cron, runs, current);
+  if (end < 0) return null;
+  const startOf = (r: Date | LoggedScheduledRun): Date =>
+    r instanceof Date ? r : r.startedAt;
+  const next = runs[end + 1];
+  return effectiveSinceAfter(startOf(runs[end]), next ? startOf(next) : null);
+}
+
+/**
+ * Старт последнего «чужого» прогона (см. `scheduleEffectiveSince`) или
+ * null. Сводка зовёт это по строкам без записанного выражения — догадка
+ * по тикам; записанные выражения она сверяет запросом к базе, без
+ * потолка выборки.
+ */
+export function lastForeignRun(
+  cron: ParsedCron,
+  runs: readonly (Date | LoggedScheduledRun)[],
+  current?: string | null,
+): Date | null {
+  const end = lastForeignRunIndex(cron, runs, current);
+  if (end < 0) return null;
+  const run = runs[end];
+  return run instanceof Date ? run : run.startedAt;
+}
+
+/** Начало нынешнего расписания после последнего чужого прогона: минута
+ *  следующего прогона, а если его нет — минута после чужого. */
+export function effectiveSinceAfter(
+  lastForeign: Date,
+  nextRun: Date | null,
+): Date {
+  return nextRun
+    ? floorToMinute(nextRun)
+    : new Date(floorToMinute(lastForeign).getTime() + MINUTE_MS);
+}
+
+function lastForeignRunIndex(
+  cron: ParsedCron,
+  runs: readonly (Date | LoggedScheduledRun)[],
+  current?: string | null,
+): number {
+  const currentKey = current ? normalizeCronExpression(current) : null;
+  const startOf = (r: Date | LoggedScheduledRun): Date =>
+    r instanceof Date ? r : r.startedAt;
+  let foreignEnd = -1;
   let streak = 0;
   for (let i = 0; i < runs.length; i++) {
-    if (runFitsSchedule(cron, runs[i])) {
+    const run = runs[i];
+    const logged = run instanceof Date ? null : run.schedule;
+    if (logged != null && currentKey != null) {
+      streak = 0;
+      if (normalizeCronExpression(logged) !== currentKey) foreignEnd = i;
+      continue;
+    }
+    if (runFitsSchedule(cron, startOf(run))) {
       streak = 0;
       continue;
     }
     streak++;
-    if (streak >= SCHEDULE_CHANGE_MIN_STREAK) streakEnd = i;
+    if (streak >= SCHEDULE_CHANGE_MIN_STREAK) foreignEnd = i;
   }
-  if (streakEnd < 0) return null;
-  const next = runs[streakEnd + 1];
-  return next
-    ? floorToMinute(next)
-    : new Date(floorToMinute(runs[streakEnd]).getTime() + MINUTE_MS);
+  return foreignEnd;
 }
 
 /** Округление вверх до целой минуты UTC (тики cron — на целых минутах). */

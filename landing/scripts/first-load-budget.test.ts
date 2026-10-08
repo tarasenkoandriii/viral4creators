@@ -72,6 +72,16 @@ try {
   assert.equal(tight.status, 1);
   assert.match(tight.stderr, /FAIL бюджет JS первой загрузки лендинга превышен/);
   assert.match(tight.stderr, /static\/chunks\/app\/\[locale\]\/page\.js/);
+  // `--platform` (сборка NEXT_PUBLIC_ASSIST_WIDGET=platform): у how-it-works
+  // свой потолок 106 вместо 118, остальные — как были.
+  const plat = spawnSync(process.execPath, [script, '--platform'], {
+    env: { ...process.env, FIRST_LOAD_NEXT_DIR: ok },
+    encoding: 'utf8',
+  });
+  assert.equal(plat.status, 0, plat.stdout + plat.stderr);
+  assert.match(plat.stdout, /ok\s+9\d\.\d КБ \/ 106 КБ\s+\/\[locale\]\/how-it-works\/page/);
+  assert.match(plat.stdout, /\/ 116 КБ\s+\/\[locale\]\/page/);
+  assert.match(plat.stdout, /\(сборка platform\)/);
 } finally {
   rmSync(ok, { recursive: true, force: true });
 }
@@ -132,4 +142,4 @@ try {
   rmSync(empty, { recursive: true, force: true });
 }
 
-console.log('first-load-budget: первая загрузка без polyfills и ленивых чанков, отказ по маршруту/layout/новому маршруту, обязательные маршруты');
+console.log('first-load-budget: первая загрузка без polyfills и ленивых чанков, отказ по маршруту/layout/новому маршруту, обязательные маршруты, потолки --platform');

@@ -658,6 +658,27 @@ jobs:
         run: npm run budget:js --if-present
         working-directory: ${{ matrix.app }}
 
+      # Сборки выше — без NEXT_PUBLIC_ASSIST_WIDGET (legacy, как прод).
+      # Чат в First Load JS how-it-works сборки `platform` (см.
+      # landing/src/components/EmbeddedAssistant.tsx) бюджет legacy не
+      # видит — второй прогон в режиме `platform` с тестовыми адресом и
+      # ключом и её потолком (`--platform`, PLATFORM_ROUTE_BUDGET_KB).
+      # Эти два шага — ПОСЛЕДНИЕ в джобе: сборка перезаписывает `.next`,
+      # и всё, что проверяет сборку legacy, должно идти до них.
+      - name: сборка platform (landing)
+        if: matrix.app == 'landing'
+        run: npx next build
+        working-directory: landing
+        env:
+          NEXT_PUBLIC_ASSIST_WIDGET: platform
+          NEXT_PUBLIC_ASSIST_WIDGET_SRC: https://w.example.com/v1/loader.js
+          NEXT_PUBLIC_ASSIST_WIDGET_SITE_KEY: pk_live_abcdefghijklmnopqrstuvwx
+
+      - name: бюджет JS первой загрузки, сборка platform (landing)
+        if: matrix.app == 'landing'
+        run: npm run budget:js -- --platform
+        working-directory: landing
+
   # Реле живого входа (Dokploy, не Vercel). До Э-С Ш0 его тесты не
   # запускал никто, кроме человека: в CI реле не было вовсе. С Ш0.2 в нём
   # фильтр исходящего трафика браузера — копия backend/src/common

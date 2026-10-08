@@ -664,8 +664,8 @@ function VoiceoverProviderCard() {
 }
 
 const SPEECH_RECOGNITION_LABEL: Record<SpeechRecognitionProviderKey, string> = {
-  gemini: 'Gemini (по умолчанию, без отдельного ключа)',
-  soniox: 'Soniox (сильный русский и украинский)',
+  gemini: 'Gemini (без отдельного ключа)',
+  soniox: 'Soniox (по умолчанию: точнее на русском и украинском)',
 };
 
 /**
@@ -746,7 +746,7 @@ function SpeechRecognitionCard() {
             {saving && <span className="muted">Сохраняю…</span>}
           </div>
           <p className="muted" style={{ fontSize: 13 }}>
-            {state.source === 'admin' ? 'Задано вручную на этом экране.' : 'Ещё не менялось здесь — работает Gemini.'}{' '}
+            {state.source === 'admin' ? 'Задано вручную на этом экране.' : 'Ещё не менялось здесь — работает умолчание (Soniox).'}{' '}
             {activeOption && !activeOption.configured && state.active === 'soniox' &&
               'Внимание: ключа Soniox на стенде нет — пока его не заведут, расшифровывает Gemini.'}
           </p>

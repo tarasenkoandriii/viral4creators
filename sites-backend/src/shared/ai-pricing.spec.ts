@@ -12,6 +12,8 @@ import {
   priceEnvKey,
   pricingTable,
   parseModalityDetails,
+  PRICE_ENV_KEY_EXCEPTIONS,
+  PRICE_KINDS,
   rateFor,
 } from './ai-pricing';
 
@@ -525,5 +527,604 @@ describe('ai-pricing — вход по модальностям (звук, ка�
       if (saved === undefined) delete process.env[key];
       else process.env[key] = saved;
     }
+  });
+});
+
+// TODO «запас покрытия веток `common/ai-pricing.ts` над порогом 95 % мал»:
+// крайние случаи модальностей, кеша, unpriced и переопределений — чтобы
+// правка прайса, задевшая одну из веток, падала здесь, а не в отчёте.
+describe('ai-pricing — крайние случаи (модальности, кеш, unpriced, env)', () => {
+  // Своих ставок картинок/видео в прайсе нет — задаём их env, чтобы три
+  // модальности различались ценой.
+  const ENV_IMG_VIDEO = {
+    [priceEnvKey('gemini-2.5-flash', 'image_input')]: '0.5',
+    [priceEnvKey('gemini-2.5-flash', 'video_input')]: '0.8',
+  };
+
+  it('разбивка больше свежего входа урезается с дешёвого: звук → видео → картинки', () => {
+    // Вход 1M: звук 600k целиком, видео 300k целиком, картинкам — остаток
+    // 100k, тексту — ничего: 0.6×$1.00 + 0.3×$0.80 + 0.1×$0.50 = $0.89.
+    expect(
+      estimateCost(
+        'gemini-2.5-flash',
+        {
+          inputTokens: 1_000_000,
+          inputByModality: { AUDIO: 600_000, VIDEO: 300_000, IMAGE: 300_000 },
+        },
+        ENV_IMG_VIDEO,
+      ).costMicroUsd,
+    ).toBe(890_000);
+  });
+
+  it('кеш без разбивки: текст → картинки → видео и только остаток — звук', () => {
+    // Вход 1M (текст 200k, звук 400k, видео 200k, картинки 200k), кеш
+    // 700k: текст 200k, картинки 200k, видео 200k, звук 100k. Свежий —
+    // звук 300k ($0.30); кеш звука 100k × $0.10 = $0.01; прочий кеш
+    // 600k × $0.03 = $0.018. Итого $0.328.
+    expect(
+      estimateCost(
+        'gemini-2.5-flash',
+        {
+          inputTokens: 1_000_000,
+          cachedInputTokens: 700_000,
+          inputByModality: { AUDIO: 400_000, VIDEO: 200_000, IMAGE: 200_000 },
+        },
+        ENV_IMG_VIDEO,
+      ).costMicroUsd,
+    ).toBe(328_000);
+  });
+
+  it('разбивка кеша без разбивки входа: звук в кеше не больше самого кеша', () => {
+    // Flash-Lite: кеш 500k, провайдер назвал звуком 900k — по ставке кеша
+    // звука идут 500k ($0.015), свежие 500k — текстом ($0.05).
+    expect(
+      estimateCost(
+        'gemini-2.5-flash-lite',
+        {
+          inputTokens: 1_000_000,
+          cachedInputTokens: 500_000,
+          cachedByModality: { AUDIO: 900_000 },
+        },
+        {},
+      ).costMicroUsd,
+    ).toBe(65_000);
+  });
+
+  it('мусор в разбивке и отрицательный кеш — как будто их нет', () => {
+    const plain = estimateCost(
+      'gemini-2.5-flash',
+      { inputTokens: 1_000_000 },
+      {},
+    ).costMicroUsd;
+    expect(plain).toBe(300_000);
+    expect(
+      estimateCost(
+        'gemini-2.5-flash',
+        {
+          inputTokens: 1_000_000,
+          cachedInputTokens: -100,
+          inputByModality: { AUDIO: NaN, VIDEO: -5, IMAGE: Infinity },
+          cachedByModality: { AUDIO: -1 },
+        },
+        ENV_IMG_VIDEO,
+      ).costMicroUsd,
+    ).toBe(plain);
+  });
+
+  it('нет входных токенов — кеш и разбивка без них ничего не стоят, выход считается', () => {
+    expect(
+      estimateCost(
+        'gemini-2.5-flash',
+        {
+          inputTokens: 0,
+          cachedInputTokens: 500,
+          inputByModality: { AUDIO: 500 },
+          cachedByModality: { AUDIO: 500 },
+          outputTokens: 1_000_000,
+        },
+        {},
+      ).costMicroUsd,
+    ).toBe(2_500_000);
+  });
+
+  it('модель без входной ставки (генерация картинок) — вход не считается вовсе', () => {
+    expect(
+      estimateCost(
+        'gemini-2.5-flash-image',
+        {
+          inputTokens: 1_000_000,
+          cachedInputTokens: 1_000,
+          inputByModality: { IMAGE: 1_000 },
+          outputTokens: 1_000_000,
+        },
+        {},
+      ).costMicroUsd,
+    ).toBe(30_000_000);
+  });
+
+  it('unpriced: ставки нет — нули при любых единицах, переменная окружения её не создаёт', () => {
+    const env = { [priceEnvKey('gemini-9-ultra', 'input')]: '1' };
+    expect(rateFor('gemini-9-ultra', env)).toBeNull();
+    expect(
+      estimateCost(
+        'gemini-9-ultra',
+        {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          seconds: 8,
+          characters: 1_000,
+          calls: 3,
+        },
+        env,
+      ),
+    ).toEqual({
+      costMicroUsd: 0,
+      unpriced: true,
+      pricingVersion: expect.any(String),
+    });
+  });
+
+  it('поштучные: calls — множитель, явный ноль — ноль, нулевая ставка — не unpriced', () => {
+    expect(estimateCost('serpapi', { calls: 3 }, {}).costMicroUsd).toBe(90_000);
+    expect(estimateCost('serpapi', { calls: 0 }, {}).costMicroUsd).toBe(0);
+    expect(estimateCost('youtube-data-api', { calls: 5 }, {})).toMatchObject({
+      costMicroUsd: 0,
+      unpriced: false,
+    });
+  });
+
+  it('секунды: дробная ставка округляется только в итоге, ноль секунд — ноль', () => {
+    // Soniox async: $0.10 за час = 27.(7) микродоллара в секунду.
+    expect(
+      estimateCost('soniox-stt-async', { seconds: 3600 }, {}).costMicroUsd,
+    ).toBe(100_000);
+    expect(
+      estimateCost('soniox-stt-async', { seconds: 1 }, {}).costMicroUsd,
+    ).toBe(28);
+    expect(
+      estimateCost('veo-3.1-generate-preview', { seconds: 0 }, {}).costMicroUsd,
+    ).toBe(0);
+  });
+
+  it('переменная: пробелы — ставка из кода, пробелы вокруг числа — допустимы, отрицательное — мусор', () => {
+    const key = priceEnvKey('gemini-2.5-flash', 'input');
+    const input = (raw: string) =>
+      rateFor('gemini-2.5-flash', { [key]: raw })!.inputPerMTok;
+    expect(input('   ')).toBe(300_000);
+    expect(input(' 1.5 ')).toBe(1_500_000);
+    expect(input('-1')).toBe(300_000);
+    expect(input('1e-6')).toBe(1);
+    // Меньше микродоллара за миллион — округляется до нуля, а не в мусор.
+    expect(input('0.0000004')).toBe(0);
+  });
+
+  it.each([
+    ['input', 'inputPerMTokUsd'],
+    ['cached', 'cachedInputPerMTokUsd'],
+    ['output', 'outputPerMTokUsd'],
+    ['second', 'perSecondUsd'],
+    ['call', 'perCallUsd'],
+    ['chars', 'perMCharsUsd'],
+    ['audio_input', 'audioInputPerMTokUsd'],
+    ['image_input', 'imageInputPerMTokUsd'],
+    ['video_input', 'videoInputPerMTokUsd'],
+    ['cached_audio', 'cachedAudioInputPerMTokUsd'],
+  ] as const)(
+    'таблица прайса: переопределение «%s» видно в %s и помечает строку',
+    (kind, column) => {
+      const env = { [priceEnvKey('gemini-2.5-flash', kind)]: '0.123' };
+      const row = pricingTable(env).find(
+        (r) => r.model === 'gemini-2.5-flash',
+      )!;
+      expect(row[column]).toBe(0.123);
+      expect(row.overridden).toBe(true);
+      // Остальные строки не задеты.
+      expect(
+        pricingTable(env)
+          .filter((r) => r.overridden)
+          .map((r) => r.model),
+      ).toEqual(['gemini-2.5-flash']);
+    },
+  );
+
+  // Найдено этими тестами: `AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT` было
+  // именем сразу двух ставок — картинок на входе 2.5 Flash и входа модели
+  // картинок, и одна переменная меняла обе.
+  it('у каждой ставки своя переменная: имена не совпадают ни у одной пары', () => {
+    const seen = new Map<string, string>();
+    for (const model of Object.keys(MODEL_RATES)) {
+      for (const kind of PRICE_KINDS) {
+        const key = priceEnvKey(model, kind);
+        expect([key, seen.get(key)]).toEqual([key, undefined]);
+        seen.set(key, `${model}/${kind}`);
+      }
+    }
+    expect(seen.size).toBe(
+      Object.keys(MODEL_RATES).length * PRICE_KINDS.length,
+    );
+  });
+
+  it('совпавшее имя — за прежней ставкой, ставка по модальности — с двойным подчёркиванием', () => {
+    expect(priceEnvKey('gemini-2.5-flash-image', 'input')).toBe(
+      'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT',
+    );
+    expect(priceEnvKey('gemini-2.5-flash', 'image_input')).toBe(
+      'AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT',
+    );
+    // Без совпадения — обычное имя.
+    expect(priceEnvKey('gemini-2.5-flash', 'audio_input')).toBe(
+      'AI_PRICE_GEMINI_2_5_FLASH_AUDIO_INPUT',
+    );
+    expect(priceEnvKey('gemini-2.5-flash-lite', 'image_input')).toBe(
+      'AI_PRICE_GEMINI_2_5_FLASH_LITE_IMAGE_INPUT',
+    );
+
+    const plain = { AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT: '2' };
+    expect(rateFor('gemini-2.5-flash-image', plain)!.inputPerMTok).toBe(
+      2_000_000,
+    );
+    expect(
+      rateFor('gemini-2.5-flash', plain)!.imageInputPerMTok,
+    ).toBeUndefined();
+    const double = { AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT: '2' };
+    expect(rateFor('gemini-2.5-flash', double)!.imageInputPerMTok).toBe(
+      2_000_000,
+    );
+    expect(
+      rateFor('gemini-2.5-flash-image', double)!.inputPerMTok,
+    ).toBeUndefined();
+  });
+
+  it('исключения в именах — о существующих ставках и в форме с двойным подчёркиванием', () => {
+    for (const [ref, key] of Object.entries(PRICE_ENV_KEY_EXCEPTIONS)) {
+      const [model, kind] = ref.split('/');
+      expect(MODEL_RATES[model]).toBeDefined();
+      expect(PRICE_KINDS).toContain(kind);
+      expect(key).toMatch(/^AI_PRICE_[A-Z0-9_]+__[A-Z_]+$/);
+    }
+  });
+
+  // Полный список имён — снимок: переименование модели, вида или правила
+  // имени (в том числе исключений) краснеет здесь, а не в отчёте о деньгах.
+  // Добавили модель — допишите её строку.
+  it('имена переменных прайса — полный список (снимок)', () => {
+    const actual = Object.fromEntries(
+      Object.keys(MODEL_RATES).map((model) => [
+        model,
+        PRICE_KINDS.map((kind) => priceEnvKey(model, kind)),
+      ]),
+    );
+    expect(actual).toEqual({
+      'gemini-2.5-flash': [
+        'AI_PRICE_GEMINI_2_5_FLASH_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_CACHED',
+        'AI_PRICE_GEMINI_2_5_FLASH_OUTPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_SECOND',
+        'AI_PRICE_GEMINI_2_5_FLASH_CALL',
+        'AI_PRICE_GEMINI_2_5_FLASH_CHARS',
+        'AI_PRICE_GEMINI_2_5_FLASH_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH__IMAGE_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_CACHED_AUDIO',
+      ],
+      'gemini-2.5-pro': [
+        'AI_PRICE_GEMINI_2_5_PRO_INPUT',
+        'AI_PRICE_GEMINI_2_5_PRO_CACHED',
+        'AI_PRICE_GEMINI_2_5_PRO_OUTPUT',
+        'AI_PRICE_GEMINI_2_5_PRO_SECOND',
+        'AI_PRICE_GEMINI_2_5_PRO_CALL',
+        'AI_PRICE_GEMINI_2_5_PRO_CHARS',
+        'AI_PRICE_GEMINI_2_5_PRO_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_2_5_PRO_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_2_5_PRO_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_2_5_PRO_CACHED_AUDIO',
+      ],
+      'gemini-3.6-flash': [
+        'AI_PRICE_GEMINI_3_6_FLASH_INPUT',
+        'AI_PRICE_GEMINI_3_6_FLASH_CACHED',
+        'AI_PRICE_GEMINI_3_6_FLASH_OUTPUT',
+        'AI_PRICE_GEMINI_3_6_FLASH_SECOND',
+        'AI_PRICE_GEMINI_3_6_FLASH_CALL',
+        'AI_PRICE_GEMINI_3_6_FLASH_CHARS',
+        'AI_PRICE_GEMINI_3_6_FLASH_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_3_6_FLASH_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_3_6_FLASH_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_3_6_FLASH_CACHED_AUDIO',
+      ],
+      'gemini-2.5-flash-lite': [
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_CACHED',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_OUTPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_SECOND',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_CALL',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_CHARS',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_LITE_CACHED_AUDIO',
+      ],
+      'gemini-embedding-001': [
+        'AI_PRICE_GEMINI_EMBEDDING_001_INPUT',
+        'AI_PRICE_GEMINI_EMBEDDING_001_CACHED',
+        'AI_PRICE_GEMINI_EMBEDDING_001_OUTPUT',
+        'AI_PRICE_GEMINI_EMBEDDING_001_SECOND',
+        'AI_PRICE_GEMINI_EMBEDDING_001_CALL',
+        'AI_PRICE_GEMINI_EMBEDDING_001_CHARS',
+        'AI_PRICE_GEMINI_EMBEDDING_001_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_EMBEDDING_001_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_EMBEDDING_001_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_EMBEDDING_001_CACHED_AUDIO',
+      ],
+      'gemini-3.1-flash-image': [
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_CACHED',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_OUTPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_SECOND',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_CALL',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_CHARS',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_IMAGE_CACHED_AUDIO',
+      ],
+      'gemini-2.5-flash-image': [
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_CACHED',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_OUTPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_SECOND',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_CALL',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_CHARS',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_2_5_FLASH_IMAGE_CACHED_AUDIO',
+      ],
+      'veo-3.1-generate-preview': [
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_INPUT',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_CACHED',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_OUTPUT',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_SECOND',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_CALL',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_CHARS',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_AUDIO_INPUT',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_IMAGE_INPUT',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_VIDEO_INPUT',
+        'AI_PRICE_VEO_3_1_GENERATE_PREVIEW_CACHED_AUDIO',
+      ],
+      'veo-3.1-lite-generate-preview': [
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_INPUT',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_CACHED',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_OUTPUT',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_SECOND',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_CALL',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_CHARS',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_AUDIO_INPUT',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_IMAGE_INPUT',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_VIDEO_INPUT',
+        'AI_PRICE_VEO_3_1_LITE_GENERATE_PREVIEW_CACHED_AUDIO',
+      ],
+      'veo-3.0-generate-preview': [
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_INPUT',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_CACHED',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_OUTPUT',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_SECOND',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_CALL',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_CHARS',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_AUDIO_INPUT',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_IMAGE_INPUT',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_VIDEO_INPUT',
+        'AI_PRICE_VEO_3_0_GENERATE_PREVIEW_CACHED_AUDIO',
+      ],
+      'grok-imagine-video-1.5:480p': [
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_CACHED',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_OUTPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_SECOND',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_CALL',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_CHARS',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_AUDIO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_VIDEO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_480P_CACHED_AUDIO',
+      ],
+      'grok-imagine-video-1.5:720p': [
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_CACHED',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_OUTPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_SECOND',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_CALL',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_CHARS',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_AUDIO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_VIDEO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_720P_CACHED_AUDIO',
+      ],
+      'grok-imagine-video-1.5:1080p': [
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_CACHED',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_OUTPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_SECOND',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_CALL',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_CHARS',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_AUDIO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_VIDEO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_1_5_1080P_CACHED_AUDIO',
+      ],
+      'grok-imagine-video:480p': [
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_CACHED',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_OUTPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_SECOND',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_CALL',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_CHARS',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_AUDIO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_VIDEO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_480P_CACHED_AUDIO',
+      ],
+      'grok-imagine-video:720p': [
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_CACHED',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_OUTPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_SECOND',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_CALL',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_CHARS',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_AUDIO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_VIDEO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_VIDEO_720P_CACHED_AUDIO',
+      ],
+      'grok-imagine-image': [
+        'AI_PRICE_GROK_IMAGINE_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_CACHED',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_OUTPUT',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_SECOND',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_CALL',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_CHARS',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_AUDIO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_IMAGE_INPUT',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_VIDEO_INPUT',
+        'AI_PRICE_GROK_IMAGINE_IMAGE_CACHED_AUDIO',
+      ],
+      'gpt-5': [
+        'AI_PRICE_GPT_5_INPUT',
+        'AI_PRICE_GPT_5_CACHED',
+        'AI_PRICE_GPT_5_OUTPUT',
+        'AI_PRICE_GPT_5_SECOND',
+        'AI_PRICE_GPT_5_CALL',
+        'AI_PRICE_GPT_5_CHARS',
+        'AI_PRICE_GPT_5_AUDIO_INPUT',
+        'AI_PRICE_GPT_5_IMAGE_INPUT',
+        'AI_PRICE_GPT_5_VIDEO_INPUT',
+        'AI_PRICE_GPT_5_CACHED_AUDIO',
+      ],
+      serpapi: [
+        'AI_PRICE_SERPAPI_INPUT',
+        'AI_PRICE_SERPAPI_CACHED',
+        'AI_PRICE_SERPAPI_OUTPUT',
+        'AI_PRICE_SERPAPI_SECOND',
+        'AI_PRICE_SERPAPI_CALL',
+        'AI_PRICE_SERPAPI_CHARS',
+        'AI_PRICE_SERPAPI_AUDIO_INPUT',
+        'AI_PRICE_SERPAPI_IMAGE_INPUT',
+        'AI_PRICE_SERPAPI_VIDEO_INPUT',
+        'AI_PRICE_SERPAPI_CACHED_AUDIO',
+      ],
+      'ffmpeg-api': [
+        'AI_PRICE_FFMPEG_API_INPUT',
+        'AI_PRICE_FFMPEG_API_CACHED',
+        'AI_PRICE_FFMPEG_API_OUTPUT',
+        'AI_PRICE_FFMPEG_API_SECOND',
+        'AI_PRICE_FFMPEG_API_CALL',
+        'AI_PRICE_FFMPEG_API_CHARS',
+        'AI_PRICE_FFMPEG_API_AUDIO_INPUT',
+        'AI_PRICE_FFMPEG_API_IMAGE_INPUT',
+        'AI_PRICE_FFMPEG_API_VIDEO_INPUT',
+        'AI_PRICE_FFMPEG_API_CACHED_AUDIO',
+      ],
+      htdemucs: [
+        'AI_PRICE_HTDEMUCS_INPUT',
+        'AI_PRICE_HTDEMUCS_CACHED',
+        'AI_PRICE_HTDEMUCS_OUTPUT',
+        'AI_PRICE_HTDEMUCS_SECOND',
+        'AI_PRICE_HTDEMUCS_CALL',
+        'AI_PRICE_HTDEMUCS_CHARS',
+        'AI_PRICE_HTDEMUCS_AUDIO_INPUT',
+        'AI_PRICE_HTDEMUCS_IMAGE_INPUT',
+        'AI_PRICE_HTDEMUCS_VIDEO_INPUT',
+        'AI_PRICE_HTDEMUCS_CACHED_AUDIO',
+      ],
+      'elevenlabs-tts': [
+        'AI_PRICE_ELEVENLABS_TTS_INPUT',
+        'AI_PRICE_ELEVENLABS_TTS_CACHED',
+        'AI_PRICE_ELEVENLABS_TTS_OUTPUT',
+        'AI_PRICE_ELEVENLABS_TTS_SECOND',
+        'AI_PRICE_ELEVENLABS_TTS_CALL',
+        'AI_PRICE_ELEVENLABS_TTS_CHARS',
+        'AI_PRICE_ELEVENLABS_TTS_AUDIO_INPUT',
+        'AI_PRICE_ELEVENLABS_TTS_IMAGE_INPUT',
+        'AI_PRICE_ELEVENLABS_TTS_VIDEO_INPUT',
+        'AI_PRICE_ELEVENLABS_TTS_CACHED_AUDIO',
+      ],
+      'resemble-tts': [
+        'AI_PRICE_RESEMBLE_TTS_INPUT',
+        'AI_PRICE_RESEMBLE_TTS_CACHED',
+        'AI_PRICE_RESEMBLE_TTS_OUTPUT',
+        'AI_PRICE_RESEMBLE_TTS_SECOND',
+        'AI_PRICE_RESEMBLE_TTS_CALL',
+        'AI_PRICE_RESEMBLE_TTS_CHARS',
+        'AI_PRICE_RESEMBLE_TTS_AUDIO_INPUT',
+        'AI_PRICE_RESEMBLE_TTS_IMAGE_INPUT',
+        'AI_PRICE_RESEMBLE_TTS_VIDEO_INPUT',
+        'AI_PRICE_RESEMBLE_TTS_CACHED_AUDIO',
+      ],
+      'soniox-stt-async': [
+        'AI_PRICE_SONIOX_STT_ASYNC_INPUT',
+        'AI_PRICE_SONIOX_STT_ASYNC_CACHED',
+        'AI_PRICE_SONIOX_STT_ASYNC_OUTPUT',
+        'AI_PRICE_SONIOX_STT_ASYNC_SECOND',
+        'AI_PRICE_SONIOX_STT_ASYNC_CALL',
+        'AI_PRICE_SONIOX_STT_ASYNC_CHARS',
+        'AI_PRICE_SONIOX_STT_ASYNC_AUDIO_INPUT',
+        'AI_PRICE_SONIOX_STT_ASYNC_IMAGE_INPUT',
+        'AI_PRICE_SONIOX_STT_ASYNC_VIDEO_INPUT',
+        'AI_PRICE_SONIOX_STT_ASYNC_CACHED_AUDIO',
+      ],
+      'soniox-tts': [
+        'AI_PRICE_SONIOX_TTS_INPUT',
+        'AI_PRICE_SONIOX_TTS_CACHED',
+        'AI_PRICE_SONIOX_TTS_OUTPUT',
+        'AI_PRICE_SONIOX_TTS_SECOND',
+        'AI_PRICE_SONIOX_TTS_CALL',
+        'AI_PRICE_SONIOX_TTS_CHARS',
+        'AI_PRICE_SONIOX_TTS_AUDIO_INPUT',
+        'AI_PRICE_SONIOX_TTS_IMAGE_INPUT',
+        'AI_PRICE_SONIOX_TTS_VIDEO_INPUT',
+        'AI_PRICE_SONIOX_TTS_CACHED_AUDIO',
+      ],
+      'hedra-character-3': [
+        'AI_PRICE_HEDRA_CHARACTER_3_INPUT',
+        'AI_PRICE_HEDRA_CHARACTER_3_CACHED',
+        'AI_PRICE_HEDRA_CHARACTER_3_OUTPUT',
+        'AI_PRICE_HEDRA_CHARACTER_3_SECOND',
+        'AI_PRICE_HEDRA_CHARACTER_3_CALL',
+        'AI_PRICE_HEDRA_CHARACTER_3_CHARS',
+        'AI_PRICE_HEDRA_CHARACTER_3_AUDIO_INPUT',
+        'AI_PRICE_HEDRA_CHARACTER_3_IMAGE_INPUT',
+        'AI_PRICE_HEDRA_CHARACTER_3_VIDEO_INPUT',
+        'AI_PRICE_HEDRA_CHARACTER_3_CACHED_AUDIO',
+      ],
+      'resemble-voice-clone': [
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_INPUT',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_CACHED',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_OUTPUT',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_SECOND',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_CALL',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_CHARS',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_AUDIO_INPUT',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_IMAGE_INPUT',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_VIDEO_INPUT',
+        'AI_PRICE_RESEMBLE_VOICE_CLONE_CACHED_AUDIO',
+      ],
+      'youtube-data-api': [
+        'AI_PRICE_YOUTUBE_DATA_API_INPUT',
+        'AI_PRICE_YOUTUBE_DATA_API_CACHED',
+        'AI_PRICE_YOUTUBE_DATA_API_OUTPUT',
+        'AI_PRICE_YOUTUBE_DATA_API_SECOND',
+        'AI_PRICE_YOUTUBE_DATA_API_CALL',
+        'AI_PRICE_YOUTUBE_DATA_API_CHARS',
+        'AI_PRICE_YOUTUBE_DATA_API_AUDIO_INPUT',
+        'AI_PRICE_YOUTUBE_DATA_API_IMAGE_INPUT',
+        'AI_PRICE_YOUTUBE_DATA_API_VIDEO_INPUT',
+        'AI_PRICE_YOUTUBE_DATA_API_CACHED_AUDIO',
+      ],
+    });
+  });
+
+  it('показ сумм на границе цента', () => {
+    expect(formatMicroUsd(10_000)).toBe('$0.01');
+    expect(formatMicroUsd(5_000)).toBe('$0.0050');
+    expect(formatMicroUsd(1_000_000)).toBe('$1.00');
   });
 });

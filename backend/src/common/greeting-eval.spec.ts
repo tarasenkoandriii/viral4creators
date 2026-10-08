@@ -50,6 +50,8 @@ import {
   runEval,
   CLASSIFIER_SILENT_LIMIT,
   type Providers,
+  type RunResult,
+  type SttRow,
 } from '../../scripts/greeting-eval/runner';
 import {
   gatePassed,
@@ -461,11 +463,78 @@ describe('прогон на двойниках', () => {
       hints: ['ru', 'uk'],
       names: ['Марина', 'Андрей'],
     });
-    // Сводка: язык soniox не совпал — ворота §8.3 не пройдены.
+    // Сводка: язык soniox (движок продукта) не совпал — приёмочные ворота
+    // §8.3 не пройдены; у gemini ворота свои и справочные.
     const s = summarize(r);
-    const gate = s.gates.find((g) => g.name.includes('язык'))!;
+    const gate = s.gates.find(
+      (g) => g.name.includes('[soniox]') && g.name.includes('язык'),
+    )!;
     expect(gate.ok).toBe(false);
-    expect(s.gates.find((g) => g.name.includes('латиницей'))!.ok).toBe(true);
+    expect(gatePassed(gate)).toBe(false);
+    expect(
+      s.gates.find(
+        (g) => g.name.includes('[soniox]') && g.name.includes('латиницей'),
+      )!.ok,
+    ).toBe(true);
+    const gem = s.gates.filter((g) => g.name.includes('gemini, справочно'));
+    expect(gem).toHaveLength(4);
+    expect(gem.every((g) => g.informational)).toBe(true);
+  });
+
+  it('§8.3 ворота по движкам: провал справочного движка не роняет прогон, пороги WER и имён — по каждому шуму', () => {
+    const row = (
+      engine: 'gemini' | 'soniox',
+      snr: number | null,
+      hypothesis: string,
+      language: string,
+    ): SttRow => ({
+      id: 'ru-001',
+      lang: 'ru',
+      voice: 'v',
+      snr,
+      noise: snr === null ? null : 'cafe',
+      engine,
+      refs: ['Поздравляем, Марина'],
+      names: ['Марина'],
+      tags: ['field'],
+      hypothesis,
+      first: hypothesis,
+      retried: false,
+      language,
+      languageSource: engine === 'soniox' ? 'provider' : 'letters',
+    });
+    const r: RunResult = {
+      classRows: [],
+      stopped: null,
+      spentMicro: 0,
+      sttRows: [null, 20, 10].flatMap((snr) => [
+        // soniox — дословно; gemini — по-украински и без имени.
+        row('soniox', snr, 'Поздравляем, Марина', 'ru'),
+        row('gemini', snr, 'Привітання для когось', 'uk'),
+      ]),
+    };
+    const s = summarize(r);
+    const soniox = s.gates.filter((g) => g.name.includes('[soniox]'));
+    expect(soniox.map((g) => g.name)).toEqual([
+      expect.stringMatching(/латиницей/),
+      expect.stringMatching(/язык ответа/),
+      expect.stringMatching(/WER ≤ 5\.0%/),
+      expect.stringMatching(/имена ≥ 97\.0%/),
+    ]);
+    expect(soniox.every(gatePassed)).toBe(true);
+    const gemini = s.gates.filter((g) => g.name.includes('gemini, справочно'));
+    expect(gemini.find((g) => /WER/.test(g.name))!.ok).toBe(false);
+    expect(gemini.every(gatePassed)).toBe(true);
+    // Приёмочные ворота идут первыми, справочные помечены ℹ.
+    expect(s.gates.findIndex((g) => g.name.includes('[soniox]'))).toBeLessThan(
+      s.gates.findIndex((g) => g.name.includes('gemini')),
+    );
+    const md = summaryMarkdown(s, r, {
+      estimateMicro: 0,
+      capMicro: 0,
+      startedAt: 'x',
+    });
+    expect(md).toMatch(/- ℹ §8\.3 \[gemini, справочно\] WER/);
   });
 
   it('остановленный прогон: ворота «не проверено», а не ✓ (и не проходят в коде выхода)', async () => {

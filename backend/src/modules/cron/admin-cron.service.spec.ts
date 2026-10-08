@@ -33,7 +33,7 @@ jest.mock('../ab-test/ab-test-worker.service', () => ({
 }));
 
 import { BadRequestException } from '@nestjs/common';
-import { AdminCronService } from './admin-cron.service';
+import { AdminCronService, SCHEDULE_CHANGE_SCAN } from './admin-cron.service';
 
 function build() {
   const rows: Record<string, unknown>[] = [];
@@ -454,9 +454,53 @@ describe('AdminCronService — сводка за период', () => {
     first?: unknown[];
     failures?: unknown[];
     outcomes?: unknown[];
-    /** Прогоны по расписанию для проверки смены расписания (заход 7). */
-    runs?: Array<{ jobKey: string; startedAt: Date }>;
+    /** Прогоны по расписанию для проверки смены расписания (заход 7);
+     *  `schedule` — записанное у прогона выражение (null — старая строка). */
+    runs?: Array<{ jobKey: string; startedAt: Date; schedule?: string | null }>;
   }) {
+    // Прогоны в окне — группами по (jobKey, schedule), как их отдаёт
+    // groupBy базы: из `runs` (без `schedule` — строка до колонки), а у
+    // джобов из `window` без `runs` — одной группой без выражения.
+    const windowGroups = () => {
+      const out = new Map<
+        string,
+        {
+          jobKey: string;
+          schedule: string | null;
+          _count: { _all: number };
+          _max: { startedAt: Date | null };
+        }
+      >();
+      for (const r of opts.runs ?? []) {
+        const schedule = r.schedule ?? null;
+        const key = `${r.jobKey}\u0000${schedule}`;
+        const g = out.get(key) ?? {
+          jobKey: r.jobKey,
+          schedule,
+          _count: { _all: 0 },
+          _max: { startedAt: null },
+        };
+        g._count._all += 1;
+        if (!g._max.startedAt || g._max.startedAt < r.startedAt) {
+          g._max.startedAt = r.startedAt;
+        }
+        out.set(key, g);
+      }
+      const withRuns = new Set((opts.runs ?? []).map((r) => r.jobKey));
+      for (const w of (opts.window ?? []) as Array<{
+        jobKey: string;
+        _count: { _all: number };
+      }>) {
+        if (withRuns.has(w.jobKey)) continue;
+        out.set(w.jobKey, {
+          jobKey: w.jobKey,
+          schedule: null,
+          _count: { _all: w._count._all },
+          _max: { startedAt: null },
+        });
+      }
+      return [...out.values()];
+    };
     const groupBy = jest.fn(
       (args: {
         by: string[];
@@ -464,13 +508,13 @@ describe('AdminCronService — сводка за период', () => {
         _min?: unknown;
       }) =>
         Promise.resolve(
-          args.by.length > 1
-            ? opts.groups
-            : args._min
-              ? (opts.first ?? [])
-              : args.where.status === 'RUNNING'
-                ? (opts.stuck ?? [])
-                : (opts.window ?? []),
+          args.by.includes('schedule')
+            ? windowGroups()
+            : args.by.length > 1
+              ? opts.groups
+              : args._min
+                ? (opts.first ?? [])
+                : (opts.stuck ?? []),
         ),
     );
     const prisma = {
@@ -478,7 +522,7 @@ describe('AdminCronService — сводка за период', () => {
         groupBy,
         findMany: jest.fn(
           (args: {
-            where: { jobKey?: string; status?: string };
+            where: { jobKey?: string; status?: string; schedule?: null };
             orderBy?: { startedAt?: string };
             take?: number;
           }) => {
@@ -487,6 +531,10 @@ describe('AdminCronService — сводка за период', () => {
             }
             const rows = (opts.runs ?? [])
               .filter((r) => r.jobKey === args.where.jobKey)
+              .filter(
+                (r) =>
+                  !('schedule' in args.where) || (r.schedule ?? null) === null,
+              )
               .sort((a, b) =>
                 args.orderBy?.startedAt === 'desc'
                   ? b.startedAt.getTime() - a.startedAt.getTime()
@@ -496,6 +544,23 @@ describe('AdminCronService — сводка за период', () => {
               args.take === undefined ? rows : rows.slice(0, args.take),
             );
           },
+        ),
+        // Первый прогон после последнего «чужого».
+        findFirst: jest.fn(
+          (args: {
+            where: { jobKey: string; startedAt: { gt: Date } };
+            orderBy: { startedAt: 'asc' };
+          }) =>
+            Promise.resolve(
+              (opts.runs ?? [])
+                .filter(
+                  (r) =>
+                    r.jobKey === args.where.jobKey &&
+                    r.startedAt > args.where.startedAt.gt,
+                )
+                .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime())
+                .map((r) => ({ startedAt: r.startedAt }))[0] ?? null,
+            ),
         ),
         // Прогоны в окне после смены — счётом базы (заход 7, аудит).
         count: jest.fn(
@@ -669,7 +734,7 @@ describe('AdminCronService — сводка за период', () => {
     // Строки для сравнения берутся из того же окна.
     expect(prisma.cronRunLog.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
-        by: ['jobKey'],
+        by: ['jobKey', 'schedule'],
         where: {
           triggeredBy: 'vercel-cron',
           startedAt: {
@@ -920,6 +985,191 @@ describe('AdminCronService — сводка за период', () => {
         expected: 3,
         scheduledRunsInWindow: 0,
         missed: 3,
+      });
+    });
+
+    // TODO «сводка кронов: смену расписания на надмножество старого
+    // журнал не видит»: у прогона записано выражение, смена — по тексту.
+    describe('по записанному у прогона выражению', () => {
+      const CURRENT = '5 9-23 * * *';
+      const runsOf = (list: Array<[string, string | null]>) =>
+        list.map(([hhmm, schedule]) => ({
+          jobKey: 'tutorial-scenario-run',
+          startedAt: at(hhmm),
+          schedule,
+        }));
+
+      it('новое — надмножество старого: старые тики укладываются, но смена видна', async () => {
+        // Было `5 9,10 * * *`, стало `5 9-23 * * *`: 09:05 и 10:05 —
+        // тики и нового расписания, по тикам смена не видна.
+        const runs = runsOf([
+          ['09:05', '5 9,10 * * *'],
+          ['10:05', '5 9,10 * * *'],
+          ['16:05', CURRENT],
+          ['17:05', CURRENT],
+          ['18:05', CURRENT],
+        ]);
+        const { service, prisma } = buildSummary({
+          groups: [],
+          window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 5 } }],
+          runs,
+        });
+        const s = await service.getSummary(
+          day,
+          new Date('2026-09-30T18:30:00Z'),
+        );
+        // Без правки: 9:05…18:05 — 10 ожидаемых против 5 → 5 «пропусков».
+        expect(
+          s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+        ).toMatchObject({
+          scheduleChangedAt: new Date('2026-09-30T16:05:00Z'),
+          expectedSinceJob: new Date('2026-09-30T16:05:00Z'),
+          expected: 3,
+          scheduledRunsInWindow: 3,
+          missed: 0,
+        });
+        // Одна группировка окна: и счёт прогонов, и записанные выражения.
+        expect(prisma.cronRunLog.groupBy).toHaveBeenCalledWith({
+          by: ['jobKey', 'schedule'],
+          where: {
+            triggeredBy: 'vercel-cron',
+            startedAt: { gte: day.since, lt: expect.any(Date) },
+          },
+          _count: { _all: true },
+          _max: { startedAt: true },
+        });
+        // Строк без выражения нет — догадка по тикам не читает ничего;
+        // начало — первый прогон после последнего по старому выражению.
+        expect(prisma.cronRunLog.findMany).not.toHaveBeenCalled();
+        expect(prisma.cronRunLog.findFirst).toHaveBeenCalledWith({
+          where: {
+            jobKey: 'tutorial-scenario-run',
+            triggeredBy: 'vercel-cron',
+            startedAt: { gt: at('10:05') },
+          },
+          orderBy: { startedAt: 'asc' },
+          select: { startedAt: true },
+        });
+      });
+
+      it('смена раньше потолка выборки (SCHEDULE_CHANGE_SCAN) — видна за всё окно', async () => {
+        // `api-video` (нынешнее `*/2`): двое суток шёл по `*/4` (720
+        // прогонов), потом пять суток по `*/2` — 3600 прогонов, больше
+        // потолка выборки (2000). Смена берётся из группировки окна, а не
+        // из последних 2000 строк.
+        const MIN = 60_000;
+        const from = Date.parse('2026-09-23T00:00:00Z');
+        const changed = Date.parse('2026-09-25T00:00:00Z');
+        const to = Date.parse('2026-09-30T00:00:00Z');
+        const runs: Array<{
+          jobKey: string;
+          startedAt: Date;
+          schedule: string;
+        }> = [];
+        for (let t = from; t < changed; t += 4 * MIN) {
+          runs.push({
+            jobKey: 'api-video',
+            startedAt: new Date(t + 4_000),
+            schedule: '*/4 * * * *',
+          });
+        }
+        for (let t = changed; t < to; t += 2 * MIN) {
+          runs.push({
+            jobKey: 'api-video',
+            startedAt: new Date(t + 4_000),
+            schedule: '*/2 * * * *',
+          });
+        }
+        expect(runs.length - 720).toBeGreaterThan(SCHEDULE_CHANGE_SCAN);
+        const { service, prisma } = buildSummary({ groups: [], runs });
+        const s = await service.getSummary(
+          { since: new Date(from), until: new Date(to) },
+          new Date('2026-09-30T00:10:00Z'),
+        );
+        // Без правки: 7 суток × 720 = 5040 ожидаемых против 4320 → 720
+        // ложных «пропусков».
+        expect(s.jobs.find((j) => j.jobKey === 'api-video')).toMatchObject({
+          scheduleChangedAt: new Date(changed),
+          expected: 3600,
+          scheduledRunsInWindow: 3600,
+          missed: 0,
+        });
+        expect(prisma.cronRunLog.findMany).not.toHaveBeenCalled();
+      });
+
+      it('новое — подмножество старого: смена видна и без «пропусков», пропуск после неё — тоже', async () => {
+        // Было `5 * * * *`, стало `5 9-23 * * *`. Старых прогонов больше,
+        // чем ожидается по новому, — без правки `missed: 0`, и молчание в
+        // 12:05 пряталось за ними.
+        const runs = runsOf([
+          ...['00', '01', '02', '03', '04', '05', '06', '07', '08'].map(
+            (h): [string, string] => [`${h}:05`, '5 * * * *'],
+          ),
+          ['09:05', CURRENT],
+          ['10:05', CURRENT],
+          ['11:05', CURRENT],
+        ]);
+        const { service } = buildSummary({
+          groups: [],
+          window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 12 } }],
+          runs,
+        });
+        const s = await service.getSummary(
+          day,
+          new Date('2026-09-30T12:30:00Z'),
+        );
+        expect(
+          s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+        ).toMatchObject({
+          scheduleChangedAt: new Date('2026-09-30T09:05:00Z'),
+          expected: 4,
+          scheduledRunsInWindow: 3,
+          missed: 1,
+        });
+      });
+
+      it('без изменений: свой текст — свой прогон, опоздавшие старты сменой не считаются', async () => {
+        // 10:20 и 11:20 — вне допуска опоздания: по тикам это была бы
+        // «смена», но выражение у них нынешнее.
+        const runs = runsOf([
+          ['09:05', CURRENT],
+          ['10:20', CURRENT],
+          ['11:20', CURRENT],
+        ]);
+        const { service } = buildSummary({
+          groups: [],
+          window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 3 } }],
+          runs,
+        });
+        const s = await service.getSummary(
+          day,
+          new Date('2026-09-30T14:30:00Z'),
+        );
+        expect(
+          s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+        ).toMatchObject({ scheduleChangedAt: null, expected: 6, missed: 3 });
+      });
+
+      it('та же запись иначе (пробелы, табуляция, ведущий ноль) — не смена, прогоны не читаются', async () => {
+        const runs = runsOf([
+          ['09:05', ' 05  9-23 *  * * '],
+          ['10:05', '5\t9-23 * * *'],
+          ['11:05', CURRENT],
+        ]);
+        const { service, prisma } = buildSummary({
+          groups: [],
+          window: [{ jobKey: 'tutorial-scenario-run', _count: { _all: 3 } }],
+          runs,
+        });
+        const s = await service.getSummary(
+          day,
+          new Date('2026-09-30T11:30:00Z'),
+        );
+        expect(
+          s.jobs.find((j) => j.jobKey === 'tutorial-scenario-run'),
+        ).toMatchObject({ scheduleChangedAt: null, expected: 3, missed: 0 });
+        // Пропусков нет, чужого текста нет — сводка прогоны не читает.
+        expect(prisma.cronRunLog.findMany).not.toHaveBeenCalled();
       });
     });
 

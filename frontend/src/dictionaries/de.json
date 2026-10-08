@@ -1573,7 +1573,7 @@
     "verifyErrRateLimited": "Zu oft — Sie können in {minutes} Min. wieder eine Website zum Website-Bereich hinzufügen.",
     "recordErrOptedOut": "Der Inhaber dieser Website erlaubt keine Tutorial-Aufnahmen darauf — wählen Sie eine andere Website.",
     "recordErrUnavailable": "Die Aufnahme von Website-Tutorials ist vorübergehend nicht verfügbar — bitte versuchen Sie es später erneut.",
-    "loginErrAttempts": "Zu viele fehlgeschlagene Anmeldungen auf dieser Website — versuchen Sie es in {minutes} Min. erneut oder melden Sie sich live an.",
+    "loginErrAttempts": "Zu viele fehlgeschlagene Anmeldungen auf dieser Website — Texteingaben (Anmeldung und alle Felder) sind noch {minutes} Min. gesperrt; Klicks und Navigation funktionieren. Melden Sie sich live an, um die Sperre sofort aufzuheben.",
     "loginErrIdentities": "Auf dieser Website wurden in 30 Tagen bereits 10 verschiedene Logins verwendet — melden Sie sich mit einem davon oder live an.",
     "dangerErrConfirm": "Das sieht nach einer unumkehrbaren Aktion auf der Website aus — bestätigen Sie den Klick.",
     "assistLinkedTitle": "Mit dem Assistenten verknüpft",

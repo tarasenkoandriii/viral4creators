@@ -68,7 +68,10 @@ import { issueLiveTicket } from './live-login-ticket';
 import { PageExplorer } from './page-explorer';
 import type { PrismaService } from '../../prisma/prisma.service';
 import type { PlanService } from '../plan/plan.service';
-import type { ClientSiteTutorialUsageService } from './client-site-tutorial-usage.service';
+import {
+  ClientSiteTutorialUsageService,
+  LOGIN_FAILURE_WINDOW_SEC,
+} from './client-site-tutorial-usage.service';
 import type { BlobService } from '../storage/blob.service';
 import type { LiveLoginRelayClient } from './live-login-relay.client';
 import {
@@ -4278,6 +4281,148 @@ describe('захода 7, пакет B: доступ и лимиты обуча�
         'example.com',
         'victim@site.io',
       );
+    });
+  });
+
+  // Хвост захода 7: при активной блокировке П-Т8 на домене закрыт ЛЮБОЙ
+  // ввод текста, не только в форму входа (признака «прошлая страница —
+  // вход» нет и не будет — см. `runAndPersist`). Счёт неудач — настоящий
+  // `ClientSiteTutorialUsageService` над `rate_limits` в памяти: окно и
+  // ключ домена проверяются по-настоящему, а не моком «ждать N мс».
+  describe('П-Т8: блокировка закрывает любой ввод на домене', () => {
+    const HOUR_MS = LOGIN_FAILURE_WINDOW_SEC * 1000;
+
+    /** `rate_limits` в памяти с той же семантикой окна, что у SQL. */
+    function realFailures() {
+      const rows = new Map<string, { count: number; windowStart: Date }>();
+      const prisma = {
+        $queryRaw: jest.fn(async (_s: string[], key: string) => {
+          const row = rows.get(key);
+          return row ? [{ ...row }] : [];
+        }),
+        $executeRaw: jest.fn(
+          async (s: string[], key: string, now: Date, since: Date) => {
+            const sql = s.join('?');
+            if (sql.includes('DELETE FROM "rate_limits"')) {
+              rows.delete(key);
+            } else if (sql.includes('INSERT INTO "rate_limits"')) {
+              const row = rows.get(key);
+              if (row && row.windowStart > since) row.count += 1;
+              else rows.set(key, { count: 1, windowStart: now });
+            }
+            return 1;
+          },
+        ),
+      };
+      const real = new ClientSiteTutorialUsageService(
+        prisma as unknown as PrismaService,
+      );
+      real.env = { SITE_TUTORIAL_TOKEN_KEY: 'тест-ключ' };
+      return real;
+    }
+
+    /** Сервис, у которого П-Т8 считает настоящий счётчик; две неудачи
+     *  входа на `failedHost` — `agoMs` назад. */
+    async function lockedSetup(
+      opts: {
+        draft?: unknown;
+        explorer?: Partial<PageExplorer>;
+        failedHost?: string;
+        agoMs?: number;
+      } = {},
+    ) {
+      const real = realFailures();
+      const at = new Date(Date.now() - (opts.agoMs ?? 10 * 60_000));
+      for (let i = 0; i < 2; i += 1) {
+        await real.recordLoginFailure(
+          'user1',
+          opts.failedHost ?? 'example.com',
+          at,
+        );
+      }
+      const s = setup({ draft: opts.draft, explorer: opts.explorer });
+      const usage = s.usage as unknown as Record<string, jest.Mock>;
+      usage.loginRetryAfterMs.mockImplementation(
+        (u: string, h: string, now?: Date) => real.loginRetryAfterMs(u, h, now),
+      );
+      return s;
+    }
+
+    // Страница каталога с полем поиска — не вход ни по URL, ни по полям.
+    const atCatalog = makeDraftRow({
+      lastUrl: 'https://shop.example.com/catalog',
+    });
+    const SEARCH = {
+      expectedVersion: 3,
+      fills: [{ selector: '#q', value: 'чайник' }],
+    };
+
+    it('ввод на не-логин странице того же домена (и поддомена) — 429 до браузера', async () => {
+      const { service, usage, explorer, clientSiteTutorialDraft } =
+        await lockedSetup({ draft: atCatalog });
+      const e = await caught(service.step('user1', 'proj1', SEARCH));
+      expect(statusOf(e)).toBe(429);
+      expect(codeOf(e)).toBe(LOGIN_ATTEMPTS_EXCEEDED);
+      const body = (e as HttpException).getResponse() as {
+        retryAfterMs?: number;
+        message?: string;
+      };
+      // Окно — от первой неудачи 10 мин назад: ждать ~50 мин.
+      expect(body.retryAfterMs).toBeGreaterThan(49 * 60_000);
+      expect(body.retryAfterMs).toBeLessThanOrEqual(50 * 60_000);
+      expect(body.message).toContain('ввод текста на нём');
+      expect(body.message).toContain('клики и переходы работают');
+      // Блокировка — на регистрируемый домен (`shop.` — тот же сайт).
+      expect(usage.loginRetryAfterMs).toHaveBeenCalledWith(
+        'user1',
+        'example.com',
+      );
+      expect(explorer.runRound).not.toHaveBeenCalled();
+      expect(usage.reserveRound).not.toHaveBeenCalled();
+      expect(clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('другой домен — ввод разрешён', async () => {
+      const { service, explorer } = await lockedSetup({
+        draft: makeDraftRow({
+          baseUrl: 'https://other.org',
+          lastUrl: 'https://other.org/search',
+        }),
+        explorer: {
+          runRound: jest.fn().mockResolvedValue({
+            exploration: { ...EXPLORATION, currentUrl: 'https://other.org/r' },
+            cookies: [],
+          }),
+        },
+      });
+      await service.step('user1', 'proj1', SEARCH);
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+      expect((explorer.runRound as jest.Mock).mock.calls[0][0].actions).toEqual(
+        [{ kind: 'fill', selector: '#q', value: 'чайник' }],
+      );
+    });
+
+    it('клик без ввода на том же домене — разрешён', async () => {
+      const { service, explorer, clientSiteTutorialDraft } = await lockedSetup({
+        draft: atCatalog,
+      });
+      await service.step('user1', 'proj1', {
+        expectedVersion: 3,
+        fills: [],
+        clickSelector: '#next',
+        clickText: 'Далее',
+      });
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
+      expect(clientSiteTutorialDraft.updateMany).toHaveBeenCalled();
+    });
+
+    it('после истечения часа от первой неудачи — ввод снова разрешён', async () => {
+      const { service, explorer } = await lockedSetup({
+        draft: atCatalog,
+        agoMs: HOUR_MS + 60_000,
+      });
+      await service.step('user1', 'proj1', SEARCH);
+      expect(explorer.runRound).toHaveBeenCalledTimes(1);
     });
   });
 

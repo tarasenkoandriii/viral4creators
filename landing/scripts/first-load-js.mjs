@@ -20,6 +20,13 @@
  * загрузка. Новый маршрут без своей строки в `ROUTE_BUDGET_KB` получает
  * общий потолок `DEFAULT_BUDGET_KB`.
  *
+ * Сборка `NEXT_PUBLIC_ASSIST_WIDGET=platform` — `npm run budget:js --
+ * --platform` (CI, джоба landing — второй прогон): поверх потолков ниже —
+ * `PLATFORM_ROUTE_BUDGET_KB`. Флаг, а не та же переменная окружения: режим
+ * задаёт сборка, а не запуск скрипта, и переменная, оставшаяся в shell,
+ * тихо подменила бы потолки. Флаг на сборке `legacy` — громкий отказ
+ * (how-it-works там тяжелее платформенного потолка).
+ *
  * Переопределение (разовая проверка, не способ «пройти CI»):
  * `FIRST_LOAD_BUDGET_KB` — общий потолок, `FIRST_LOAD_BUDGET_SCALE` —
  * множитель всех потолков (проверка запаса: при `0.9` сборка на
@@ -50,7 +57,10 @@ const DEFAULT_BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 106);
 export const ROUTE_BUDGET_KB = {
   // Главная: виджет помощника (ленивый), демо, EntryActions (105.3).
   '/[locale]/page': 116,
-  // «Как это работает»: встроенная панель помощника в сетке (107.3).
+  // «Как это работает»: встроенная панель помощника в сетке (107.3; с
+  // 08.10.2026 — 107.4, а в сборке `platform` без кода чата — 103.2,
+  // см. components/EmbeddedAssistant.tsx; её потолок —
+  // `PLATFORM_ROUTE_BUDGET_KB`).
   '/[locale]/how-it-works/page': 118,
   '/[locale]/greetings/page': 113, // (102.4)
   '/[locale]/site-tutorial/page': 104, // (94.0)
@@ -59,6 +69,18 @@ export const ROUTE_BUDGET_KB = {
   // Служебная страница-переход «Открыть приложение», Ш5 (6) (95.2).
   '/[locale]/open/page': 105,
 };
+/**
+ * Потолки сборки `platform` (`--platform`) поверх `ROUTE_BUDGET_KB`. Запас
+ * здесь не ≈ 10 %, а меньше разницы режимов: смысл строки — поймать чат
+ * `AssistantWidget`, вернувшийся в First Load JS how-it-works (с ним
+ * 107,3 КБ, как в legacy), а +10 % к замеру его бы пропустили.
+ */
+export const PLATFORM_ROUTE_BUDGET_KB = {
+  // Без кода чата, см. components/EmbeddedAssistant.tsx (103.2).
+  '/[locale]/how-it-works/page': 106,
+};
+const PLATFORM = process.argv.slice(2).includes('--platform');
+const routeBudget = PLATFORM ? { ...ROUTE_BUDGET_KB, ...PLATFORM_ROUTE_BUDGET_KB } : ROUTE_BUDGET_KB;
 /** Маршруты, которые обязаны быть в сборке (иначе бюджет молча не меряет). */
 const REQUIRED = ['/[locale]/page', '/[locale]/how-it-works/page', '/[locale]/site-tutorial/page'];
 
@@ -104,7 +126,7 @@ const pages = Object.keys(app).filter((k) => k.endsWith('/page')).sort();
 for (const key of pages) {
   const files = filesFor(key);
   const total = files.reduce((s, f) => s + gz(f), 0);
-  const budget = (ROUTE_BUDGET_KB[key] ?? DEFAULT_BUDGET_KB) * SCALE;
+  const budget = (routeBudget[key] ?? DEFAULT_BUDGET_KB) * SCALE;
   const over = total > budget * 1024;
   rows.push(`${over ? 'FAIL' : 'ok  '} ${kb(total).padStart(6)} КБ / ${budget.toFixed(0).padStart(3)} КБ  ${key}`);
   if (over) {
@@ -134,4 +156,6 @@ if (failures.length) {
   );
   process.exit(1);
 }
-console.log(`ok   JS первой загрузки лендинга: ${pages.length} маршрутов в бюджете`);
+console.log(
+  `ok   JS первой загрузки лендинга${PLATFORM ? ' (сборка platform)' : ''}: ${pages.length} маршрутов в бюджете`,
+);

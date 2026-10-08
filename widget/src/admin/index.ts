@@ -272,6 +272,22 @@ export function start(script: HTMLScriptElement): void {
   for (const args of queued) api(...args);
   if (!jwt && !endpoint) host.style.display = 'none';
   (document.body || document.documentElement).appendChild(host);
+  // Turbo заменяет <body> целиком (`replaceWith`), htmx — его содержимое:
+  // хост выпал — вставить заново (как `_reattach` загрузчика). iframe при
+  // вставке перезагружается: ждём его `ready` заново (init, JWT). Наблюдение
+  // переставляется на новый <body> после disconnect — старый не держится.
+  const mo = new MutationObserver(() => {
+    if (host.isConnected) return;
+    ready = false;
+    (document.body || document.documentElement).appendChild(host);
+    watch();
+  });
+  const watch = () => {
+    mo.disconnect();
+    mo.observe(document.documentElement, { childList: true });
+    if (document.body) mo.observe(document.body, { childList: true });
+  };
+  watch();
   // План шёл до перехода или открыта ссылка мастера — окно поднимается само.
   let acting = false;
   try {

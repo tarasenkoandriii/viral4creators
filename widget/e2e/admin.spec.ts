@@ -78,6 +78,56 @@ test('«Админка»: iframe — отдельный origin, чат рабо�
   expect(pubApi.status()).toBe(404);
 });
 
+test('«Админка» + замена <body> (Turbo, htmx): кнопка возвращается, iframe заново получает init и JWT', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await page.goto(adminPage(pk, 'emp-A'));
+  const f = await adminFrame(page);
+  await askIn(f, 'Питання до заміни сторінки');
+  await expect(f.locator('.wa-m')).toHaveCount(2);
+  const live = async () => {
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document.querySelector('[data-v4c]')?.parentNode === document.body
+        )
+      )
+      .toBe(true);
+    await expect(page.locator('[data-v4c]')).toHaveCount(1);
+    await expect
+      .poll(
+        () =>
+          page
+            .frames()
+            .find((x) => x.url().includes('/wa/v1/frame') && !x.isDetached()) ??
+          null
+      )
+      .not.toBeNull();
+    return page
+      .frames()
+      .find((x) => x.url().includes('/wa/v1/frame') && !x.isDetached())!;
+  };
+  // Turbo Drive: новый <body> целиком.
+  await page.evaluate(() => {
+    const nb = document.createElement('body');
+    nb.textContent = 'Нова сторінка адмінки';
+    document.body.replaceWith(nb);
+  });
+  // iframe перезагрузился при вставке: история — значит, init и JWT дошли.
+  const g = await live();
+  await expect(g.locator('.wa-m')).toHaveCount(2);
+  // htmx (hx-boost): содержимое того же <body> — уже нового.
+  await page.evaluate(() => {
+    document.body.innerHTML = '<h1>Ще одна сторінка</h1>';
+  });
+  const h = await live();
+  await expect(h.locator('.wa-m')).toHaveCount(2);
+  await askIn(h, 'Питання після заміни');
+  await expect(h.locator('.wa-m')).toHaveCount(4);
+});
+
 test('§4-бис.10 п.8: смена сотрудника A → B — ни одного сообщения A у B, во всех вкладках', async ({
   context,
 }) => {

@@ -41,7 +41,9 @@ import {
   countExpectedRuns,
   loadVercelSchedules,
   parseCronExpression,
-  scheduleEffectiveSince,
+  effectiveSinceAfter,
+  lastForeignRun,
+  normalizeCronExpression,
 } from './cron-schedule';
 import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 
@@ -64,6 +66,9 @@ export interface CronRunLogRow {
   summary: string | null;
   debugLog: unknown;
   errorMessage: string | null;
+  /** Cron-выражение, по которому стартовал прогон Vercel Cron; у ручного
+   *  запуска и у строк до появления колонки — null. */
+  schedule?: string | null;
   /**
    * Исход сверх статуса (аудит кронов 06.10.2026): `SKIPPED` — прогон
    * отработал, но работу пропустил (замок, не настроено, потолок).
@@ -72,11 +77,22 @@ export interface CronRunLogRow {
   outcome?: CronOutcome | null;
 }
 
+/** Группа прогонов Vercel Cron в окне ожидания: джоб × записанное
+ *  выражение (null — строка до появления колонки). */
+interface WindowGroup {
+  jobKey: string;
+  schedule: string | null;
+  _count: { _all: number };
+  _max: { startedAt: Date | string | null };
+}
+
 /** Сколько последних неуспешных прогонов на джоб отдаёт сводка. */
 export const SUMMARY_RECENT_FAILURES = 5;
 
-/** Прогонов по расписанию, которые сводка читает у джоба с «пропусками»,
- *  чтобы отличить пропуск от смены расписания (сутки двухминутного — 720). */
+/** Строк без записанного выражения, которые сводка читает у джоба с
+ *  «пропусками», чтобы по тикам отличить пропуск от смены расписания
+ *  (сутки двухминутного — 720). Записанные выражения сверяются
+ *  группировкой без потолка. */
 export const SCHEDULE_CHANGE_SCAN = 2_000;
 
 /**
@@ -120,9 +136,11 @@ export interface CronJobSummary {
   /** Начало окна ожидания именно этого джоба:
    * max(expectedSince, минута firstScheduledRunAt, scheduleChangedAt). */
   expectedSinceJob: Date;
-  /** Журнал показал смену расписания (прогоны, которые в нынешнее
-   * расписание не укладываются): ожидание по нынешнему — с этой минуты.
-   * null — смены не видно. */
+  /** Журнал показал смену расписания: у прогона записано другое
+   * cron-выражение (по нормальной форме текста — видна и смена на
+   * надмножество старого), а у строк без записанного выражения — серия
+   * прогонов, не укладывающихся в нынешнее. Ожидание по нынешнему — с
+   * этой минуты. null — смены не видно. */
   scheduleChangedAt: Date | null;
   total: number;
   byStatus: Record<CronRunStatusValue, number>;
@@ -415,18 +433,23 @@ export class AdminCronService {
           : Promise.resolve(
               [] as Array<{ jobKey: string; _count: { _all: number } }>,
             ),
+        // Прогоны по расписанию в окне — по джобу И записанному выражению
+        // (TODO «сводка кронов: смену расписания на надмножество старого
+        // журнал не видит»): сумма групп — `scheduledRunsInWindow`, а
+        // группа с другим выражением — смена, даже если пропусков нет
+        // (новое реже старого) или старые тики укладываются в новое; её
+        // `_max` — последний прогон по старому выражению.
         windowOpen
           ? this.prisma.cronRunLog.groupBy({
-              by: ['jobKey'],
+              by: ['jobKey', 'schedule'],
               where: {
                 triggeredBy: VERCEL_CRON_TRIGGERED_BY,
                 startedAt: { gte: expectedSince, lt: expectedUntil },
               },
               _count: { _all: true },
+              _max: { startedAt: true },
             })
-          : Promise.resolve(
-              [] as Array<{ jobKey: string; _count: { _all: number } }>,
-            ),
+          : Promise.resolve([] as WindowGroup[]),
         // Первый прогон по расписанию за весь срок хранения: окно сводки
         // обычно сутки, а крон мог появиться посреди них (новый деплой) —
         // тики до его первого прогона пропусками не являются. Джоб, который
@@ -514,10 +537,9 @@ export class AdminCronService {
         (
           stuckGroups as Array<{ jobKey: string; _count: { _all: number } }>
         ).find((g) => g.jobKey === jobKey)?._count._all ?? 0;
-      const scheduledRunsInWindow =
-        (
-          windowGroups as Array<{ jobKey: string; _count: { _all: number } }>
-        ).find((g) => g.jobKey === jobKey)?._count._all ?? 0;
+      const scheduledRunsInWindow = (windowGroups as WindowGroup[])
+        .filter((g) => g.jobKey === jobKey)
+        .reduce((sum, g) => sum + g._count._all, 0);
 
       const firstRaw =
         (
@@ -587,15 +609,46 @@ export class AdminCronService {
 
     // Смена расписания (заход 7): «пропуски» у джоба могут быть тиками
     // СТАРОГО расписания — сводка знает только нынешний vercel.json.
-    // Читаем прогоны только у джобов с пропусками И прогонами в окне: у
-    // остальных ожидание сошлось, а у молчащего смену доказать нечем.
+    // Уточняем у джобов, у которых в окне записано ДРУГОЕ выражение
+    // (смена видна по тексту при любом числе пропусков), и у джобов с
+    // пропусками и строками без записанного выражения (догадка по тикам).
+    // У остальных ожидание сошлось, а у молчащего смену доказать нечем.
+    const evidence = new Map<
+      string,
+      { lastForeign: Date | null; unloggedRuns: number }
+    >();
+    for (const g of windowGroups as WindowGroup[]) {
+      const current = schedules?.[g.jobKey];
+      if (!current) continue;
+      const e = evidence.get(g.jobKey) ?? {
+        lastForeign: null,
+        unloggedRuns: 0,
+      };
+      if (g.schedule == null) {
+        e.unloggedRuns += g._count._all;
+      } else if (
+        normalizeCronExpression(g.schedule) !==
+          normalizeCronExpression(current) &&
+        g._max.startedAt != null
+      ) {
+        const at = new Date(g._max.startedAt);
+        if (!e.lastForeign || at > e.lastForeign) e.lastForeign = at;
+      }
+      evidence.set(g.jobKey, e);
+    }
     await Promise.all(
-      jobs
-        .filter(
-          (j) =>
-            j.schedule && (j.missed ?? 0) > 0 && j.scheduledRunsInWindow > 0,
-        )
-        .map((j) => this.refineForScheduleChange(j, expectedUntil)),
+      jobs.map((j) => {
+        const e = evidence.get(j.jobKey);
+        if (!j.schedule || !e) return undefined;
+        const byTicks = (j.missed ?? 0) > 0 && e.unloggedRuns > 0;
+        if (!e.lastForeign && !byTicks) return undefined;
+        return this.refineForScheduleChange(
+          j,
+          expectedUntil,
+          e.lastForeign,
+          byTicks,
+        );
+      }),
     );
 
     await Promise.all(
@@ -632,43 +685,69 @@ export class AdminCronService {
   }
 
   /**
-   * Ожидание джоба — с момента, когда он живёт по НЫНЕШНЕМУ расписанию
-   * (`scheduleEffectiveSince`): прогоны по старому расписанию не
-   * засчитываются, а его тики — не ожидаются. Сбой чтения — сводка как
+   * Ожидание джоба — с момента, когда он живёт по НЫНЕШНЕМУ расписанию:
+   * прогоны по старому расписанию не засчитываются, а его тики — не
+   * ожидаются. Последний «чужой» прогон — больший из двух: по записанному
+   * выражению (`lastForeign` из группировки окна — без потолка выборки,
+   * смена видна за всё окно до 30 дней) и по тикам у строк без
+   * записанного выражения (`lastForeignRun`, последние
+   * `SCHEDULE_CHANGE_SCAN` таких строк). Отсчёт — с минуты первого
+   * прогона после него (`effectiveSinceAfter`). Сбой чтения — сводка как
    * была (лишний «пропуск» безопаснее спрятанного).
    */
   private async refineForScheduleChange(
     job: CronJobSummary,
     expectedUntil: Date,
+    lastForeignLogged: Date | null,
+    byTicks: boolean,
   ): Promise<void> {
     try {
       const cron = parseCronExpression(job.schedule as string);
-      const where = {
+      const base = {
         jobKey: job.jobKey,
         triggeredBy: VERCEL_CRON_TRIGGERED_BY,
-        startedAt: { gte: job.expectedSinceJob, lt: expectedUntil },
       };
-      // Свежие — первыми (аудит захода 7): при потолке выборки отрезаться
-      // должны старые строки, а не те, по которым видна смена.
-      const rows = (await this.prisma.cronRunLog.findMany({
-        where,
-        orderBy: { startedAt: 'desc' },
-        take: SCHEDULE_CHANGE_SCAN,
+      let lastForeign = lastForeignLogged;
+      if (byTicks) {
+        // Свежие — первыми (аудит захода 7): при потолке выборки
+        // отрезаться должны старые строки, а не те, по которым видна смена.
+        const rows = (await this.prisma.cronRunLog.findMany({
+          where: {
+            ...base,
+            schedule: null,
+            startedAt: { gte: job.expectedSinceJob, lt: expectedUntil },
+          },
+          orderBy: { startedAt: 'desc' },
+          take: SCHEDULE_CHANGE_SCAN,
+          select: { startedAt: true },
+        })) as Array<{ startedAt: Date | string }>;
+        const runs = rows
+          .map((r) => new Date(r.startedAt))
+          .filter((d) => Number.isFinite(d.getTime()))
+          .reverse();
+        const byTick = lastForeignRun(cron, runs);
+        if (byTick && (!lastForeign || byTick > lastForeign)) {
+          lastForeign = byTick;
+        }
+      }
+      if (!lastForeign) return;
+      const next = (await this.prisma.cronRunLog.findFirst({
+        where: { ...base, startedAt: { gt: lastForeign } },
+        orderBy: { startedAt: 'asc' },
         select: { startedAt: true },
-      })) as Array<{ startedAt: Date | string }>;
-      const runs = rows
-        .map((r) => new Date(r.startedAt))
-        .filter((d) => Number.isFinite(d.getTime()))
-        .reverse();
-      const since = scheduleEffectiveSince(cron, runs);
-      if (!since || since.getTime() <= job.expectedSinceJob.getTime()) return;
+      })) as { startedAt: Date | string } | null;
+      const since = effectiveSinceAfter(
+        lastForeign,
+        next ? new Date(next.startedAt) : null,
+      );
+      if (since.getTime() <= job.expectedSinceJob.getTime()) return;
       const expected =
         expectedUntil.getTime() > since.getTime()
           ? countExpectedRuns(cron, since, expectedUntil)
           : 0;
       // Счёт — запросом, а не по выборке: она ограничена потолком.
       const inWindow = await this.prisma.cronRunLog.count({
-        where: { ...where, startedAt: { gte: since, lt: expectedUntil } },
+        where: { ...base, startedAt: { gte: since, lt: expectedUntil } },
       });
       job.scheduleChangedAt = since;
       job.expectedSinceJob = since;

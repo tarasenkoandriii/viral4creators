@@ -384,18 +384,25 @@ class Loader {
       onEsc: () => this.close(),
     });
     if (inline) {
-      // Inline: без кнопки и окна; iframe — когда контейнер виден (CWV до взаимодействия).
+      // Inline: без кнопки и окна; iframe — когда хост виден (CWV до взаимодействия).
+      // Наблюдается ХОСТ, не контейнер: Turbo/htmx меняют <body> — `_reattach`
+      // переносит тот же хост в новый контейнер, и наблюдение едет с ним
+      // (на выпавшем контейнере оно молчало бы, держа старый <body>). Хост
+      // на скрытом пути или после `V4CAssist('hide')` — display:none, не
+      // пересекается: iframe грузится только после разрешённого пути или
+      // `show()` (раньше при hide грузился сразу, в невидимый хост), а
+      // наблюдатель не снимается впустую.
       const io =
         'IntersectionObserver' in window
           ? new IntersectionObserver((es) => {
-              if (es.some((e) => e.isIntersecting)) {
+              if (es.some((e) => e.isIntersecting) && this.allowed()) {
                 io && io.disconnect();
-                if (this.allowed()) this._openFrame();
+                this._openFrame();
               }
             })
           : null;
       if (io) {
-        io.observe(inline);
+        io.observe(this.ui.host);
         this.cleanups.push(() => io.disconnect());
       } else this._openFrame();
     } else if (restoreOpen) {
@@ -1156,19 +1163,28 @@ class Loader {
   }
 }
 
+/**
+ * Э7: «Админка» — отдельный ленивый чанк с origin тега (`wa.`, §4.12,
+ * У-13); загрузчик здесь только развилка — его бюджет 12 КБ не растёт.
+ */
+function startAdmin(script: HTMLScriptElement) {
+  import(/* @vite-ignore */ widgetOrigin(script) + WIDGET_ADMIN_PATH)
+    .then((m: { start: (s: HTMLScriptElement) => void }) => m.start(script))
+    .catch(() => null);
+}
+
 function boot() {
   const existing = W[WIDGET_GLOBAL];
   if (existing && existing.l) return; // второй тег загрузчика — игнор
   const script = findScript();
-  // Э7: «Админка» — отдельный ленивый чанк с origin тега (`wa.`, §4.12,
-  // У-13); загрузчик здесь только развилка — его бюджет 12 КБ не растёт.
-  if (script && script.getAttribute('data-mode') === WIDGET_ADMIN_MODE) {
-    import(/* @vite-ignore */ widgetOrigin(script) + WIDGET_ADMIN_PATH)
-      .then((m: { start: (s: HTMLScriptElement) => void }) => m.start(script))
-      .catch(() => null);
-    return;
-  }
-  const attrs = readAttrs((n) => (script ? script.getAttribute(n) : null));
+  if (script && script.getAttribute('data-mode') === WIDGET_ADMIN_MODE)
+    return startAdmin(script);
+  // `script` не попадает ни в одно замыкание boot(): их общий контекст
+  // держит `window.V4CAssist`, а тег — в <body>, который Turbo/htmx
+  // заменяют целиком (старый документ остался бы в памяти).
+  const attrs = readAttrs(
+    script ? script.getAttribute.bind(script) : () => null
+  );
   if (!attrs.pk) return;
   const queue = (existing && existing.q) || [];
   const loader = new Loader(script, attrs);

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Header } from '../../../components/Header';
 import { HowItWorks } from '../../../components/HowItWorks';
-import { AssistantWidget } from '../../../components/AssistantWidget';
+import { EmbeddedAssistantWidget } from '../../../components/EmbeddedAssistant';
 import { PlatformAssist } from '../../../components/PlatformAssist';
 import { assistWidgetFromBuildEnv, platformLang } from '../../../lib/assist-widget';
 import { Footer } from '../../../components/Footer';
@@ -68,10 +68,18 @@ export default function HowItWorksPage({ params }: { params: { locale: string } 
             <HowItWorks steps={dict.steps} variant="full" hrefBase="" />
           </div>
           {/* Э-С Ш5: с виджетом платформы колонка пустая — `:empty` в
-              globals.css сворачивает сетку, чат — плавающий виджет. */}
+              globals.css сворачивает сетку, чат — плавающий виджет.
+              Панель — через `EmbeddedAssistant`, не прямым импортом
+              `AssistantWidget`: так в сборке `platform` кода чата нет в
+              First Load JS страницы (замер — в шапке EmbeddedAssistant.tsx). */}
           <aside className="how-it-works-assistant" aria-label={dict.assistant.widgetTitle}>
             {assist.mode === 'legacy' && (
-              <AssistantWidget locale={locale} dict={dict.assistant} page="how-it-works" variant="embedded" />
+              <EmbeddedAssistantWidget
+                locale={locale}
+                dict={dict.assistant}
+                page="how-it-works"
+                variant="embedded"
+              />
             )}
           </aside>
         </div>

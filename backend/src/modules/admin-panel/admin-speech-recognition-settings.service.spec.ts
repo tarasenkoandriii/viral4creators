@@ -18,11 +18,27 @@ describe('AdminSpeechRecognitionSettingsService', () => {
     process.env = { ...saved };
   });
 
-  it('не менялось — Gemini, источник «default»', async () => {
+  it('не менялось — Soniox (Р-З8-14, замер §8.3), источник «default»', async () => {
     const { svc } = build(null);
     expect(await svc.get()).toMatchObject({
-      active: 'gemini',
+      active: 'soniox',
       source: 'default',
+    });
+  });
+
+  it('неизвестное сохранённое значение — тоже умолчание Soniox', async () => {
+    const { svc } = build('whisper');
+    expect(await svc.get()).toMatchObject({
+      active: 'soniox',
+      source: 'default',
+    });
+  });
+
+  it('Gemini, выбранный в админке, главнее умолчания', async () => {
+    const { svc } = build('gemini');
+    expect(await svc.get()).toMatchObject({
+      active: 'gemini',
+      source: 'admin',
     });
   });
 

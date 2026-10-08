@@ -12,6 +12,7 @@
  */
 import { formatMicroUsd } from '../../src/common/ai-pricing';
 import { GREETING_REGISTERS } from '../../src/common/types/greeting.types';
+import { resolveSpeechRecognitionProvider } from '../../src/common/speech-recognition-provider';
 import {
   classifierReport,
   corpusWer,
@@ -51,16 +52,34 @@ export interface Gate {
    * ворота не «пройдены» — в отчёте «—», код выхода не 0.
    */
   unchecked?: boolean;
+  /**
+   * Справочные ворота — движок не тот, что работает в продукте по
+   * умолчанию: показываются, но на код выхода не влияют.
+   */
+  informational?: boolean;
   detail: string;
 }
+
+/**
+ * Пороги §8.3 (Р-З8-15). ТЗ велит брать их по базовой цифре на том же
+ * наборе; базовая цифра — замер 07.10.2026: Soniox WER 2,8–3,2 % на всех
+ * уровнях шума, имена 69/69. Порог — с запасом на разброс синтеза.
+ */
+export const STT_MAX_WER = 0.05;
+export const STT_MIN_NAMES = 0.97;
 
 /** Ворота, которые не на чем проверить. */
 function uncheckedGate(name: string, why: string): Gate {
   return { name, ok: false, unchecked: true, detail: `не проверено: ${why}` };
 }
 
-/** Ворота пройдены по-настоящему (а не «не на чем проверить»). */
+/**
+ * Ворота пройдены по-настоящему (а не «не на чем проверить»). Справочные
+ * не роняют прогон: их провал — довод против того движка, а не против
+ * продукта.
+ */
 export function gatePassed(g: Gate): boolean {
+  if (g.informational) return true;
   return g.ok && !g.unchecked;
 }
 
@@ -168,33 +187,7 @@ export function summarize(result: RunResult): EvalSummary {
         detail: classifier.mourningAsCelebratory.join(', ') || 'нет',
       });
   }
-  const totals = stt.filter((g) => g.lang === 'все');
-  if (totals.length) {
-    const latinName = '§8.3 ни одного ответа латиницей';
-    const langName = '§8.3 язык ответа = язык фразы (без суржика)';
-    const answered = result.sttRows.some((r) => !!r.hypothesis);
-    const why =
-      stopped ??
-      (answered ? null : 'распознавание не вернуло ни одного ответа');
-    if (why) {
-      gates.push(uncheckedGate(latinName, why), uncheckedGate(langName, why));
-    } else {
-      const latin = totals.reduce((a, g) => a + g.latinAnswers, 0);
-      gates.push({
-        name: latinName,
-        ok: latin === 0,
-        detail: `${latin} ответов латиницей`,
-      });
-      const mismatch = totals.flatMap((g) =>
-        g.languageMismatch.map((m) => `${g.engine}/${g.snr}: ${m}`),
-      );
-      gates.push({
-        name: langName,
-        ok: mismatch.length === 0,
-        detail: mismatch.slice(0, 20).join('; ') || 'расхождений нет',
-      });
-    }
-  }
+  gates.push(...sttGates(result, stt, stopped));
   return { classifier, stt, gates };
 }
 
@@ -233,7 +226,7 @@ export function summaryMarkdown(
     '',
     ...s.gates.map(
       (g) =>
-        `- ${g.unchecked ? '—' : g.ok ? '✓' : '✗'} ${g.name} — ${g.detail}`,
+        `- ${g.unchecked ? '—' : g.ok ? '✓' : g.informational ? 'ℹ' : '✗'} ${g.name} — ${g.detail}`,
     ),
   ];
   if (s.classifier) {
@@ -273,4 +266,78 @@ export function summaryMarkdown(
     );
   }
   return out.filter((l) => l !== undefined).join('\n');
+}
+
+/**
+ * Ворота §8.3 — по каждому движку отдельно: смешанные ворота роняли
+ * Soniox за ответы Gemini. Приёмочные — у движка продукта по умолчанию
+ * (`resolveSpeechRecognitionProvider(null)`), у остальных — справочные.
+ */
+function sttGates(
+  result: RunResult,
+  stt: SttGroupSummary[],
+  stopped: string | null,
+): Gate[] {
+  const gates: Gate[] = [];
+  const productEngine = resolveSpeechRecognitionProvider(null);
+  const engines = [...new Set(stt.map((g) => g.engine))].sort((a, b) =>
+    a === productEngine ? -1 : b === productEngine ? 1 : a.localeCompare(b),
+  );
+  for (const engine of engines) {
+    const totals = stt.filter((g) => g.engine === engine && g.lang === 'все');
+    const informational = engine !== productEngine;
+    const tag = informational ? `${engine}, справочно` : engine;
+    const names = {
+      latin: `§8.3 [${tag}] ни одного ответа латиницей`,
+      lang: `§8.3 [${tag}] язык ответа = язык фразы (без суржика)`,
+      wer: `§8.3 [${tag}] WER ≤ ${pct(STT_MAX_WER)} на каждом уровне шума`,
+      names: `§8.3 [${tag}] имена ≥ ${pct(STT_MIN_NAMES)} на каждом уровне шума`,
+    };
+    const extra = informational ? { informational: true } : {};
+    const answered = result.sttRows.some(
+      (r) => r.engine === engine && !!r.hypothesis,
+    );
+    const why =
+      stopped ??
+      (answered ? null : 'распознавание не вернуло ни одного ответа');
+    if (why) {
+      for (const n of Object.values(names))
+        gates.push({ ...uncheckedGate(n, why), ...extra });
+      continue;
+    }
+    const latin = totals.reduce((a, g) => a + g.latinAnswers, 0);
+    gates.push({
+      name: names.latin,
+      ok: latin === 0,
+      detail: `${latin} ответов латиницей`,
+      ...extra,
+    });
+    const mismatch = totals.flatMap((g) =>
+      g.languageMismatch.map((m) => `${g.snr}: ${m}`),
+    );
+    gates.push({
+      name: names.lang,
+      ok: mismatch.length === 0,
+      detail: mismatch.slice(0, 20).join('; ') || 'расхождений нет',
+      ...extra,
+    });
+    const worstWer = Math.max(...totals.map((g) => g.wer));
+    gates.push({
+      name: names.wer,
+      ok: worstWer <= STT_MAX_WER,
+      detail: totals.map((g) => `${g.snr} ${pct(g.wer)}`).join(', '),
+      ...extra,
+    });
+    const share = (g: SttGroupSummary) =>
+      g.namesTotal ? g.namesFound / g.namesTotal : 1;
+    gates.push({
+      name: names.names,
+      ok: totals.every((g) => share(g) >= STT_MIN_NAMES),
+      detail: totals
+        .map((g) => `${g.snr} ${g.namesFound}/${g.namesTotal}`)
+        .join(', '),
+      ...extra,
+    });
+  }
+  return gates;
 }

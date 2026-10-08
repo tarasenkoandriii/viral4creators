@@ -66,11 +66,42 @@ function registryKeys(): string[] {
   return [...src.matchAll(/jobKey: '([^']+)'/g)].map((m) => m[1]).sort();
 }
 
+/**
+ * Маршрут → ключ журнала: `@Get('x')` и первый `runAndLog('y'` в его
+ * обработчике. Ключ журнала — то, по чему прогон берёт своё выражение из
+ * `vercel.json` (`CronRunLog.schedule`): опечатка в нём молча даёт
+ * `schedule = null`, и сводка теряет смену расписания по тексту.
+ */
+function routeLogKeys(): Array<{ route: string; logKey: string | null }> {
+  const src = readFileSync(
+    join(BACKEND_ROOT, 'src', 'modules', 'cron', 'cron.controller.ts'),
+    'utf8',
+  );
+  return src
+    .split(/@Get\(/)
+    .slice(1)
+    .map((chunk) => ({
+      route: /^'([^']+)'\)/.exec(chunk)?.[1] ?? '',
+      logKey: /runAndLog\(\s*'([^']+)'/.exec(chunk)?.[1] ?? null,
+    }));
+}
+
 describe('швы крон-подсистемы: маршрут ↔ расписание ↔ реестр', () => {
   it('у каждого маршрута /api/cron/* есть расписание в vercel.json', () => {
     const routes = controllerRoutes();
     expect(routes.length).toBeGreaterThan(0);
     expect(vercelCronPaths()).toEqual(routes);
+  });
+
+  it('каждый маршрут пишет журнал под своим ключом (runAndLog с тем же именем)', () => {
+    const pairs = routeLogKeys();
+    expect(pairs.map((p) => p.route).sort()).toEqual(controllerRoutes());
+    for (const p of pairs) {
+      expect({ route: p.route, logKey: p.logKey }).toEqual({
+        route: p.route,
+        logKey: p.route,
+      });
+    }
   });
 
   it('каждый маршрут есть в реестре ручного запуска админки', () => {

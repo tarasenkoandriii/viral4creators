@@ -1222,6 +1222,9 @@ describe('CronJobsService.runAndLog — история настоящего Verc
         triggeredBy: VERCEL_CRON_TRIGGERED_BY,
         debugMode: false,
         status: 'RUNNING',
+        // Расписание из vercel.json, по которому стартовал прогон: по нему
+        // сводка видит смену расписания по тексту.
+        schedule: '*/2 * * * *',
       },
     });
     expect(prisma.cronRunLog.update).toHaveBeenCalledWith({
@@ -1235,6 +1238,24 @@ describe('CronJobsService.runAndLog — история настоящего Verc
         debugLog: undefined,
       }),
     });
+  });
+
+  it('расписание пишется только прогону Vercel Cron и только известному джобу', async () => {
+    const { service, prisma } = build();
+    const task = jest.fn().mockResolvedValue({ processed: 0 });
+
+    await service.runAndLog('catalog-batch-run', 'admin-1', false, task);
+    await service.runAndLog(
+      'no-such-job',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      task,
+    );
+
+    for (const call of (prisma.cronRunLog.create as jest.Mock).mock.calls) {
+      expect((call[0] as { data: object }).data).not.toHaveProperty('schedule');
+    }
+    expect(prisma.cronRunLog.create).toHaveBeenCalledTimes(2);
   });
 
   it('debugMode: true — debugLog содержит сырой результат задачи', async () => {

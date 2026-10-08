@@ -195,12 +195,13 @@ export class VoiceTranscriptionService {
     // Настройка из БД — единственное, что здесь может бросить. Голосовой
     // ввод обещан «никогда не бросает» (шапка файла), и отказ чтения
     // настройки не должен превращаться в «микрофон сломан»: читаем как
-    // «ничего не выбрано» — Gemini (сквозной аудит голоса 29.09.2026).
+    // «ничего не выбрано» — умолчание (Soniox с 07.10.2026, Р-З8-14; без
+    // ключа — Gemini ниже) (сквозной аудит голоса 29.09.2026).
     const stored = await this.settings
       .get(SPEECH_RECOGNITION_PROVIDER_SETTING_KEY)
       .catch((e: unknown) => {
         this.logger.warn(
-          `распознавание: настройка провайдера не прочиталась (${e instanceof Error ? e.message : String(e)}) — Gemini`,
+          `распознавание: настройка провайдера не прочиталась (${e instanceof Error ? e.message : String(e)}) — умолчание`,
         );
         return null;
       });

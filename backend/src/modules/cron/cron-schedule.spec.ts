@@ -7,7 +7,11 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
   ceilToMinute,
+  cronScheduleChanged,
+  effectiveSinceAfter,
   floorToMinute,
+  lastForeignRun,
+  normalizeCronExpression,
   countExpectedRuns,
   loadVercelSchedules,
   parseCronExpression,
@@ -239,5 +243,175 @@ describe('смена расписания по журналу (заход 7)', (
         t('11:05:04'),
       ]),
     ).toEqual(t('11:05:00'));
+  });
+});
+
+// TODO «сводка кронов: смену расписания на надмножество старого журнал не
+// видит»: у прогона записано выражение, и смена судится по его тексту.
+describe('смена расписания по тексту выражения', () => {
+  const t = (hhmmss: string) => new Date(`2026-09-30T${hhmmss}Z`);
+  const run = (hhmmss: string, schedule: string | null) => ({
+    startedAt: t(hhmmss),
+    schedule,
+  });
+
+  it('нормальная форма: пробелы, порядок списка, 7 = 0, полный диапазон = *', () => {
+    expect(normalizeCronExpression('  0   3 * *  * ')).toBe('0 3 * * *');
+    expect(normalizeCronExpression('0\t3 * * *')).toBe('0 3 * * *');
+    expect(normalizeCronExpression('30,0 3 * * *')).toBe('0,30 3 * * *');
+    expect(normalizeCronExpression('0 3 * * 7')).toBe('0 3 * * 0');
+    expect(normalizeCronExpression('*/1 0-23 * 1-12 *')).toBe('* * * * *');
+    expect(normalizeCronExpression('0 */6 * * *')).toBe('0 0,6,12,18 * * *');
+    // Полный набор дней месяца/недели — `*`.
+    expect(normalizeCronExpression('0 3 1-31 * 0-6')).toBe('0 3 * * *');
+    // Не разбирается — сравнивается текст со схлопнутыми пробелами.
+    expect(normalizeCronExpression(' 0  3 L * * ')).toBe('0 3 L * *');
+  });
+
+  it('дни нормализуются по смыслу (AND/OR), а не по букве', () => {
+    for (const expr of ['* * 1-31 * *', '* * */1 * *', '* * * * 0-6']) {
+      expect(normalizeCronExpression(expr)).toBe('* * * * *');
+    }
+    // Оба поля ограничены — OR: полное одно из них — любой день.
+    expect(normalizeCronExpression('0 3 1 * 0-6')).toBe('0 3 * * *');
+    expect(normalizeCronExpression('0 3 */1 * 1')).toBe('0 3 * * *');
+    // `1-31` — ограничение по букве, значит OR с днём недели: любой день.
+    expect(normalizeCronExpression('0 3 1-31 * 1-5')).toBe('0 3 * * *');
+    expect(normalizeCronExpression('0 3 1,15 * 0-6')).toBe('0 3 * * *');
+    // Одно поле `*` — AND: полное ничего не отсекает, второе — списком.
+    expect(normalizeCronExpression('0 3 * * 1-5')).toBe('0 3 * * 1,2,3,4,5');
+    expect(normalizeCronExpression('0 3 1,15 * *')).toBe('0 3 1,15 * *');
+    // Оба ограничены и не полные — OR сохраняется (оба списком).
+    expect(normalizeCronExpression('0 3 15,1 * 7')).toBe('0 3 1,15 * 0');
+    // Нормальная форма значит то же самое: ожидание за неделю совпадает.
+    const week = [
+      new Date('2026-09-28T00:00:00Z'),
+      new Date('2026-10-05T00:00:00Z'),
+    ] as const;
+    for (const expr of [
+      '0 3 1 * 0-6',
+      '0 3 1-31 * 1-5',
+      '0 3 1,15 * 0-6',
+      '0 3 * * 1-5',
+      '0 3 15,1 * 7',
+      '* * */1 * *',
+    ]) {
+      expect(countExpectedRuns(normalizeCronExpression(expr), ...week)).toBe(
+        countExpectedRuns(expr, ...week),
+      );
+    }
+  });
+
+  it('смена: надмножество и подмножество — да; та же запись иначе — нет', () => {
+    expect(cronScheduleChanged('0 3 * * *', '0 */6 * * *')).toBe(true);
+    expect(cronScheduleChanged('0 */6 * * *', '0 3 * * *')).toBe(true);
+    expect(cronScheduleChanged('0 3 * * *', '0 3 * * *')).toBe(false);
+    expect(cronScheduleChanged('0 3 * * 7', ' 0  3 * * 0')).toBe(false);
+    expect(cronScheduleChanged('0,30 9 * * *', '30,0 9 * * *')).toBe(false);
+  });
+
+  it('надмножество: старые тики укладываются в новое, но текст другой — смена', () => {
+    const cron = parseCronExpression('0 */6 * * *');
+    const runs = [
+      run('03:00:04', '0 3 * * *'),
+      run('06:00:05', '0 */6 * * *'),
+      run('12:00:03', '0 */6 * * *'),
+    ];
+    // По тикам смены не видно: 03:00 — тоже тик нового расписания.
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        runs.map((r) => r.startedAt),
+      ),
+    ).toBeNull();
+    expect(scheduleEffectiveSince(cron, runs, '0 */6 * * *')).toEqual(
+      t('06:00:00'),
+    );
+  });
+
+  it('подмножество: со следующего прогона после последнего по старому тексту', () => {
+    const cron = parseCronExpression('0 3 * * *');
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        [run('00:00:04', '0 */6 * * *'), run('03:00:02', '0 3 * * *')],
+        '0 3 * * *',
+      ),
+    ).toEqual(t('03:00:00'));
+    // Своих после смены ещё нет — с минуты после последнего чужого
+    // (одного по тексту достаточно: текст не опаздывает, как старт).
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        [run('00:00:04', '0 */6 * * *')],
+        '0 3 * * *',
+      ),
+    ).toEqual(t('00:01:00'));
+  });
+
+  it('без изменений и та же запись иначе — смены нет, даже у опоздавших стартов', () => {
+    const cron = parseCronExpression('0 3 * * 0');
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        [run('03:00:04', '0 3 * * 0'), run('03:00:09', '0 3 * * 0')],
+        '0 3 * * 0',
+      ),
+    ).toBeNull();
+    // Свой текст — свой прогон, хоть оба старта и вне допуска.
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        [run('04:10:00', ' 0  3 * * 7'), run('05:10:00', '0 3 * * 0')],
+        '0 3 * * 0',
+      ),
+    ).toBeNull();
+  });
+
+  it('строки без записанного выражения — прежняя догадка по тикам; важна последняя смена', () => {
+    const cron = parseCronExpression('5 9-23 * * *');
+    // Старые строки (null) — серия чужих тиков, затем записанные свои.
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        [
+          run('09:00:04', null),
+          run('10:00:03', null),
+          run('16:05:04', '5 9-23 * * *'),
+        ],
+        '5 9-23 * * *',
+      ),
+    ).toEqual(t('16:05:00'));
+    // A → B → A: отсчёт от возврата к нынешнему, а не от первой смены.
+    expect(
+      scheduleEffectiveSince(
+        cron,
+        [
+          run('09:05:04', '5 9-23 * * *'),
+          run('10:05:04', '5 10-23 * * *'),
+          run('11:05:04', '5 9-23 * * *'),
+        ],
+        '5 9-23 * * *',
+      ),
+    ).toEqual(t('11:05:00'));
+    // Нынешнее выражение не передано — записанное игнорируется, по тикам.
+    expect(
+      scheduleEffectiveSince(cron, [run('09:05:04', '0 3 * * *')]),
+    ).toBeNull();
+  });
+
+  it('последний чужой прогон и начало нынешнего расписания после него', () => {
+    const cron = parseCronExpression('5 9-23 * * *');
+    expect(
+      lastForeignRun(cron, [t('09:00:04'), t('10:00:03'), t('16:05:04')]),
+    ).toEqual(t('10:00:03'));
+    expect(lastForeignRun(cron, [t('09:05:04'), t('10:05:03')])).toBeNull();
+    expect(
+      lastForeignRun(cron, [run('09:05:04', '0 3 * * *')], '5 9-23 * * *'),
+    ).toEqual(t('09:05:04'));
+    expect(effectiveSinceAfter(t('10:00:03'), t('16:05:04'))).toEqual(
+      t('16:05:00'),
+    );
+    expect(effectiveSinceAfter(t('10:00:03'), null)).toEqual(t('10:01:00'));
   });
 });

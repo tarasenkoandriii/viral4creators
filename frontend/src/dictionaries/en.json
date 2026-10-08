@@ -1573,7 +1573,7 @@
     "verifyErrRateLimited": "Too often — you can add a site to the sites dashboard again in {minutes} min.",
     "recordErrOptedOut": "The owner of this site doesn’t allow tutorial recording on it — choose another site.",
     "recordErrUnavailable": "Site tutorial recording is temporarily unavailable — please try again later.",
-    "loginErrAttempts": "Too many failed sign-ins on this site — try again in {minutes} min or sign in live.",
+    "loginErrAttempts": "Too many failed sign-ins on this site — typing on it (sign-in and any fields) is unavailable for another {minutes} min; clicks and navigation still work. Sign in live to lift the limit right away.",
     "loginErrIdentities": "10 different logins have already been used on this site in 30 days — sign in with one of them or sign in live.",
     "dangerErrConfirm": "This looks like an irreversible action on the site — confirm the click.",
     "assistLinkedTitle": "Linked to the assistant",
