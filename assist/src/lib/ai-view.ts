@@ -146,6 +146,15 @@ export function experimentLines(
       hi: signedPct(r.ciHigh),
     }),
     x.verdicts[r.verdict],
+    // Соль группы публична (заход 9): конверсии «со страницы» можно накрутить.
+    ...(r.goalTrust && r.goalTrust.pageShare
+      ? [
+          fmt(x.pageTrust, {
+            total: r.goalTrust.total,
+            share: pct(r.goalTrust.pageShare),
+          }),
+        ]
+      : []),
   ];
 }
 

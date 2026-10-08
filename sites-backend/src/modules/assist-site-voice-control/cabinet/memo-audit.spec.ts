@@ -718,6 +718,8 @@ describeDb(
       expect(row?.chainStatus).not.toBe('compensated');
       expect(row?.chainStatus).not.toBe('partially_compensated');
       const fresh = await kept();
+      // (заход 9, Р-З9-4) итог принимается только после «Вернуть».
+      await plans.undo(ctx, fresh, { by: 'offer' });
       const ok = await plans.undoReport(ctx, fresh, {
         results: [{ i: 0, result: 'done' }],
       });

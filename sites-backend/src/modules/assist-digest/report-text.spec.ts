@@ -114,3 +114,57 @@ describe('report-text (A)', () => {
     expect(fitTelegram(['a', 'b'])).toBe('a\nb');
   });
 });
+
+describe('report-text — «Админка»: мемо «требует проверки» и якорь журнала (заход 9)', () => {
+  const head = {
+    hash: 'a'.repeat(64),
+    id: 'clog123',
+    at: '2026-10-04T21:15:00.000Z',
+  };
+  const admin = {
+    heldVersions: 0,
+    quarantined: 0,
+    memosNeedReview: [
+      { number: 3, code: 'pin_mismatch', step: 2 },
+      { number: 9, code: 'goal_low', step: null },
+      { number: 12, code: 'failures', step: 1 },
+      { number: 14, code: null, step: null },
+    ],
+    memosNeedReviewTotal: 6,
+    chainHead: head,
+  };
+
+  it('§5-бис.17 п.8: строка «АМ-N требует проверки» с причиной — в сводке и в отчёте недели', () => {
+    for (const t of [
+      dailyDigestText(facts, admin),
+      weeklyReportText(facts, admin),
+    ]) {
+      expect(t).toContain(
+        'Мемо АМ-3 требует проверки: шаг 2 не находится на странице админки',
+      );
+      expect(t).toContain(
+        'Мемо АМ-9 требует проверки: часто не доходит до цели',
+      );
+      expect(t).toContain(
+        'Мемо АМ-12 требует проверки: сбои на шаге 1 у нескольких сотрудников',
+      );
+      expect(t).toContain('Мемо АМ-14 требует проверки: нужна проверка');
+      expect(t).toContain('…и ещё мемо «требует проверки»: 2');
+    }
+    // Без раздела «Админка» (менеджер «Сайта») — ни мемо, ни якоря.
+    expect(weeklyReportText(facts, null)).not.toMatch(
+      /АМ-|chain|Журнал действий/,
+    );
+  });
+
+  it('Р-З9-20: голова цепочки — только в отчёте недели, с хешем и id', () => {
+    const w = weeklyReportText(facts, admin);
+    expect(w).toContain(
+      `Журнал действий — контрольная запись на 04.10.2026: ${head.hash} (id ${head.id})`,
+    );
+    expect(dailyDigestText(facts, admin)).not.toContain(head.hash);
+    expect(
+      weeklyReportText(facts, { ...admin, chainHead: null }),
+    ).not.toContain('Журнал действий');
+  });
+});

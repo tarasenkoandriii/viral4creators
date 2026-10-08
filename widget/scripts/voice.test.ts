@@ -7,10 +7,13 @@
  * нажатием. Запись звука и WebAudio — e2e (Chromium с фейковым микрофоном).
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Vad, pickMime, rms } from '../src/voice/vad';
 import { parseVoice } from '../src/shared/config';
 import { DICTS } from '../src/chat/i18n';
 import {
+  UI_LANG_HEADER,
+  uiLangOfDict,
   VoiceController,
   voiceOff,
   type VoiceHost,
@@ -223,6 +226,25 @@ g.fetch = async (
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 async function main() {
+  // Заход 9 (P2-2): заголовок и язык по словарю — как ждёт сервер.
+  {
+    assert.equal(UI_LANG_HEADER, 'X-Assist-Lang');
+    const srv = readFileSync(
+      new URL(
+        '../../sites-backend/src/modules/assist-site-voice/public/site-voice.service.ts',
+        import.meta.url
+      ),
+      'utf8'
+    );
+    assert.ok(srv.includes(`STT_UI_LANG_HEADER = '${UI_LANG_HEADER}'`));
+    assert.equal(uiLangOfDict(DICTS.ru), 'ru');
+    assert.equal(uiLangOfDict(DICTS.en), 'en');
+    assert.equal(
+      uiLangOfDict({ ...DICTS.uk }),
+      null,
+      'чужой словарь — без заголовка'
+    );
+  }
   // Нет голоса в конфиге — кнопок нет, чанк не грузится.
   {
     const h = harness();
@@ -266,6 +288,8 @@ async function main() {
     await tick();
     assert.equal(fetches[0].path, '/widget/v1/voice');
     assert.equal(fetches[0].headers['Content-Type'], 'audio/webm');
+    // Заход 9 (P2-2): язык интерфейса — для счётчиков «не расслышал» Т-4.
+    assert.equal(fetches[0].headers['X-Assist-Lang'], 'uk');
     assert.ok(fetches[0].body instanceof Blob);
     assert.deepEqual(h.asked, [['Скільки коштує доставка?', 'v1.1.x']]);
     assert.equal(h.ui.phase, 'idle');

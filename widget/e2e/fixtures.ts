@@ -118,6 +118,7 @@ export interface MockLog {
   videoLinks: Array<{ pk: string; videoId: string; ok: boolean }>;
   videoRedirects: number;
   highlightMisses: Array<{ pk: string; elementId: string; pageUrl: string }>;
+  highlightSeen: Array<{ pk: string; elementId: string; pageUrl: string }>;
   // Э6-бис
   vc: import('./stand/ui-plan-mock').VcLog;
 }

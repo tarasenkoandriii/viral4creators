@@ -425,6 +425,10 @@ export const appEn: AppDictionary = {
       'The Assistant cannot answer right now — please try again.',
     KNOWLEDGE_BUSY:
       'The knowledge base is being updated right now — try again in a minute.',
+    HOST_ADMIN_ONLY:
+      'The verified addresses are assigned to Admin mode — add and verify the address of the public site so the Assistant can read it.',
+    URL_ADMIN_HOST:
+      'This address is an Admin mode host — knowledge for site visitors is not taken from it.',
   },
   notFound: 'Page not found',
   toSites: 'To sites',

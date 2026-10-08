@@ -10,15 +10,32 @@
  *
  * Состояние записи — в `sessionStorage` origin `we.` (переживает переход
  * MPA, как сессия); черновик меняет только клик человека здесь (`isTrusted`).
+ *
+ * Заход 9: без открытой записи — список всех мемо сайта (`memo/list`,
+ * клик — открыть); «Чекати це» — следующий клик по сайту не шаг, а
+ * ожидание (`record/wait`: появление элемента у выбранного шага или цель
+ * «лічильник +1»); у шага — «Як скасувати» его цели карты (↶, правка — в
+ * карточке цели).
  */
 import type { ToPanel, ToPicker } from '../shared/editor-protocol';
 import { fmt } from './i18n';
 
+interface Undo {
+  assistId: string;
+  key: string | null;
+}
 interface Step {
   action: string;
   page: string;
-  target: { pin: { text: string } } | null;
+  target: { pin: { text: string }; mapKey?: string | null } | null;
   value: { slot: string } | null;
+  expect?: { appear?: string } | null;
+  /** «Як скасувати» цели карты — только показ (сервер его не читает). */
+  u?: Undo | null;
+}
+interface Counter {
+  target: { assistId: string | null; text: string };
+  delta: number;
 }
 interface Slot {
   name: string;
@@ -38,6 +55,15 @@ interface Rec {
   rebind: boolean;
   from: number;
   res: string;
+  wait?: boolean;
+  /** Цель «лічильник ±N»: `undefined` — не трогали, `null` — снять. */
+  cnt?: Counter | null;
+}
+interface Item {
+  number: number;
+  name: string | null;
+  status: string;
+  page: string | null;
 }
 type Pick = Extract<ToPanel, { type: 'pick' }>;
 
@@ -58,6 +84,8 @@ export interface MemoDeps {
   fail: (e: unknown) => void;
   render: () => void;
   store: string;
+  /** Открыть карточку цели карты (правка «Як скасувати»). */
+  edit: (key: string) => void;
 }
 
 const post = (body: unknown): RequestInit => ({
@@ -68,6 +96,7 @@ const post = (body: unknown): RequestInit => ({
 export function createMemo(d: MemoDeps) {
   const K = `${d.store}:m`;
   let r: Rec | null = null;
+  let list: Item[] | null = null;
   try {
     const raw = sessionStorage.getItem(K);
     r = raw ? (JSON.parse(raw) as Rec) : null;
@@ -111,6 +140,8 @@ export function createMemo(d: MemoDeps) {
           goalText: string | null;
           steps: Step[];
           slots: Slot[];
+          undo: Array<Undo | null>;
+          counter: Counter | null;
         } | null;
       }>(
         '/editor/v1/memo/record/start',
@@ -122,8 +153,9 @@ export function createMemo(d: MemoDeps) {
         r.memo = m.number;
         r.rev = m.draftRevision;
         r.key = m.key;
-        r.steps = m.steps;
+        r.steps = m.steps.map((x, i) => ({ ...x, u: (m.undo || [])[i] }));
         r.warn = m.steps.map(() => false);
+        r.cnt = m.counter;
         r.slots = m.slots;
         r.name = m.name ?? '';
         r.goal = m.goalText ?? '';
@@ -141,8 +173,29 @@ export function createMemo(d: MemoDeps) {
 
   /** Клик владельца на странице → шаг (или перепривязка выбранного шага). */
   async function onPick(m: Pick): Promise<boolean> {
-    if (!r || (!r.on && !r.rebind)) return false;
+    if (!r || (!r.on && !r.rebind && !r.wait)) return false;
     const rb = r.rebind && r.sel !== null ? r.sel : null;
+    if (r.wait) {
+      // «Чекати це»: ожидание, не шаг и не нажатие.
+      r.wait = false;
+      try {
+        const w = await d.api<
+          { kind: 'appear'; text: string } | ({ kind: 'counter' } & Counter)
+        >(
+          '/editor/v1/memo/record/wait',
+          post({ path: d.path(), descriptor: m.descriptor })
+        );
+        if (w.kind === 'counter') r.cnt = { target: w.target, delta: w.delta };
+        else {
+          const s = r.steps[r.sel ?? r.steps.length - 1];
+          if (s) s.expect = { ...(s.expect || {}), appear: w.text };
+        }
+      } catch (e) {
+        d.fail(e);
+      }
+      save();
+      return true;
+    }
     try {
       const v = await d.api<
         | {
@@ -151,6 +204,7 @@ export function createMemo(d: MemoDeps) {
             slot: Slot | null;
             risk: string;
             exec: boolean;
+            undo: Undo | null;
           }
         | { kind: 'stop'; reason: string; step: Step | null }
       >(
@@ -182,6 +236,7 @@ export function createMemo(d: MemoDeps) {
         }
       } else {
         if (v.slot) r.slots.push(v.slot);
+        v.step.u = v.undo;
         if (rb !== null) {
           r.steps[rb] = v.step;
           r.warn[rb] = v.risk !== 'auto';
@@ -221,8 +276,10 @@ export function createMemo(d: MemoDeps) {
           path: d.path(),
           steps: r.steps,
           slots: r.slots,
+          goalCounter: r.cnt,
         })
       );
+      list = null;
       r.memo = v.number;
       r.rev = v.draftRevision;
       r.key = v.key;
@@ -303,6 +360,28 @@ export function createMemo(d: MemoDeps) {
         h('p', { class: 'hint' }, L.mIntro),
         btn(L.mRec, () => void open(null), 'pri')
       );
+      if (!list) {
+        list = [];
+        d.api<{ items: Item[] }>(`/editor/v1/memo/list?lang=${d.lang()}`)
+          .then((v) => {
+            list = v.items;
+            d.render();
+          })
+          .catch(d.fail);
+      }
+      const ul = h('ul', { class: 'list' });
+      for (const m of list || [])
+        ul.append(
+          h(
+            'li',
+            {},
+            btn(
+              `М-${m.number} ${m.name ?? ''} · ${L[`s_${m.status}`] || m.status}${m.page ? ` · ${m.page}` : ''}`,
+              () => void open(m.number)
+            )
+          )
+        );
+      box.append(ul);
       return box;
     }
     const rec = r;
@@ -359,8 +438,9 @@ export function createMemo(d: MemoDeps) {
                 save();
               },
             },
-            `${s.action} «${s.target?.pin.text ?? ''}»${s.value ? ` {${s.value.slot}}` : ''}${rec.warn[i] ? ' ⚠' : ''}`
+            `${s.action} «${s.target?.pin.text ?? ''}»${s.value ? ` {${s.value.slot}}` : ''}${rec.warn[i] ? ' ⚠' : ''}${s.expect?.appear ? ` → «${s.expect.appear}»` : ''}${s.u ? ` ↶${s.u.assistId}` : ''}`
           ),
+          !!s.u?.key && btn('↶', () => d.edit(s.u!.key!)),
           i > 0 && btn('↑', move(i - 1)),
           i < rec.steps.length - 1 && btn('↓', move(i + 1)),
           btn('⌖', () => {
@@ -380,6 +460,19 @@ export function createMemo(d: MemoDeps) {
       );
     });
     box.append(ol);
+    const c = rec.cnt;
+    if (c)
+      box.append(
+        h(
+          'p',
+          { class: 'hint' },
+          `${L.mCnt} «${c.target.text || c.target.assistId}» ${c.delta > 0 ? '+' : ''}${c.delta} `,
+          btn('✕', () => {
+            rec.cnt = null;
+            save();
+          })
+        )
+      );
     if (rec.res) box.append(h('p', { class: 'note' }, rec.res));
     box.append(
       h(
@@ -390,10 +483,17 @@ export function createMemo(d: MemoDeps) {
           if (rec.on) d.toPicker({ type: 'mode', mode: 'select' });
           save();
         }),
+        btn(rec.wait ? '…' : L.mWait, () => {
+          rec.wait = true;
+          d.note(L.mWaitHint);
+          d.toPicker({ type: 'mode', mode: 'select' });
+          save();
+        }),
         btn(L.mSave, () => void store(), 'pri'),
         rec.key && btn(L.mTry, () => void run()),
         btn(L.mNew, () => {
           r = null;
+          list = null;
           d.toPicker({ type: 'highlight', items: [] });
           save();
         })
@@ -406,7 +506,7 @@ export function createMemo(d: MemoDeps) {
     view,
     open,
     onPick,
-    active: () => !!r && (r.on || r.rebind),
+    active: () => !!r && (r.on || r.rebind || !!r.wait),
     has: () => !!r,
     /** Новая ссылка редактора — запись прошлой сессии не продолжается. */
     reset: () => {

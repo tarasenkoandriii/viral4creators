@@ -240,6 +240,8 @@ model Site {
   voiceMapVersions       AssistSiteVoiceMapVersion[]
   voiceMapChanges        AssistSiteVoiceMapChange[]
   voiceMapEditorSessions AssistSiteVoiceMapEditorSession[]
+  /// Заход 9: отчёт для разработчика — ссылка только на чтение (Э6-тер (9)).
+  voiceMapDevReports     AssistSiteVoiceMapDevReport[]
 
   // Э3-бис: аналитика с ИИ — разметка диалогов, lead score, выводы недели,
   // эксперименты, поведенческие факторы (ТЗ §5-тер.3–5, §5-тер.8–10).
@@ -1520,6 +1522,10 @@ model AssistAdminSettings {
   /// Счётчик номеров мемо «Админки» АМ-N (не переиспользуется).
   memoCounter     Int     @default(0)
 
+  /// Заход 9 (аудит Э7 (г), Р-З9-17): сессия по тестовому ключу `pk_test`
+  /// ходит в коннекторы и действия. По умолчанию нет — только знания.
+  testKeyConnectors Boolean @default(false)
+
   // ── Э6-бис (б): голосовое управление «Админкой» (ТЗ §5-бис.2, §5-бис.9,
   // §5-бис.11, §5-бис.13–14; аудит 1.2 — флаги только здесь, не в
   // assist_sites, которую читает роль assist_public) ──
@@ -1792,6 +1798,10 @@ model AssistAdminConnector {
   signSecretEnc       String?
   signKeyVersion      String?
   signSetAt           DateTime?
+  /// Заход 9 (Э7-хвост (5), Р-З9-14): ПД (e-mail, телефоны, ключи) в
+  /// данных read-операций маскируются до модели. По умолчанию нет
+  /// (сотрудник работает с заказами) — для заказчиков с жёстким комплаенсом.
+  maskPd              Boolean   @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3606,7 +3616,9 @@ model AssistSiteUiActionLog {
   pinMismatch Boolean          @default(false)
   /// (д) Строка возврата (`action: undo`) — номер возвращённого шага плана.
   undoOf      Int?
-  /// (Э6-тер) Ключ цели голосовой карты, по которой найден элемент шага.
+  /// (Э6-тер) Ключ цели голосовой карты, по которой найден элемент шага;
+  /// в строке `mapMiss` (заход 9) — ключ НАЗВАННОЙ, но не найденной цели
+  /// (промахи Т-4 по целям — `assist-site-voice-map/map-misses.ts`).
   mapKey      String?
   /// (Э6-тер) Команда назвала цель карты, а в снимке её не нашлось (Т-4).
   mapMiss     Boolean          @default(false)
@@ -3858,6 +3870,31 @@ model AssistSiteVoiceMapEditorSession {
   @@index([siteId])
   @@index([accountId])
   @@map("assist_site_voice_map_editor_sessions")
+}
+
+/// Отчёт для разработчика по голосовой карте (Э6-тер (9), ТЗ §5-кватер.4
+/// «Пакетом — отчёт для разработчика», заход 9): ссылка только на чтение
+/// без входа в Telegram. Содержимое СНЯТО при выдаче (цели, где искать,
+/// строка `data-assist-id`, подсказки платформ) — без ПД и без живого
+/// черновика; токен — только SHA-256; 7 дней; новая ссылка гасит прежние,
+/// «Отозвать» — сразу. Истёкшие строки чистит выдача следующей ссылки.
+model AssistSiteVoiceMapDevReport {
+  id           String    @id @default(cuid())
+  accountId    String
+  siteId       String
+  site         Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  tokenHash    String    @unique
+  content      Json
+  createdBy    String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  views        Int       @default(0)
+  lastViewedAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([siteId])
+  @@index([accountId])
+  @@map("assist_site_voice_map_dev_reports")
 }
 
 /// Э6-бис (г): проверка голосового управления на сайте заказчика — мастер
@@ -4235,6 +4272,13 @@ model AssistSiteConversationLabel {
   leadProb       Float?
   /// Вес выборки: 1 — разметка без выборки; 5 — «случайные 20%»; 0 — skipped.
   weight         Float     @default(1)
+  /// Заход 9 (Р-З9-26): диалог был связан с визитом (связанный режим) —
+  /// калибровка читает флаг, `visitHash` диалога обнуляется через 31 день.
+  linked         Boolean   @default(false)
+  /// Заход 9: имя пакетного задания Gemini Batch API (статус `batch`, пока
+  /// ответ не забран; за выключателем `ASSIST_LABEL_BATCH`). Частичный
+  /// индекс по статусу `batch` — только в миграции 20261009100000.
+  batchJob       String?
   attempts       Int       @default(0)
   /// Исправление владельцем/менеджером («неверно размечено», §5-тер.16).
   humanOverride  Json?
@@ -4434,6 +4478,9 @@ model AssistSitePageView {
   inpMs            Int?
   cls              Float?
   chatOpened       Boolean  @default(false)
+  /// Заход 9 (Р-З9-25): доля выборки — 1 в пределах квоты тарифа, меньше 1
+  /// сверх квоты (детерминированно по pvId); свёртка делит счётчики на неё.
+  sampleRate       Float    @default(1)
   updatedAt        DateTime @default(now())
 
   @@id([siteId, id])

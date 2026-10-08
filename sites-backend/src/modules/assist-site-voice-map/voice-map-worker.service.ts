@@ -15,20 +15,31 @@
  *    (или опубликованной — тогда это Т-3 «потерявшиеся цели») воркер
  *    считает совпадения CSS-кандидатов целей и снимает страницу; сервер
  *    решает «нашлась ли цель» тем же `findInSnapshot`, что в бою, и
- *    считает устойчивость (`descriptorStability` с образцами). Модель плана
- *    (сухой прогон команд) — хвост.
+ *    считает устойчивость (`descriptorStability` с образцами).
+ *  - (заход 9, Э6-тер (8)) Сухой прогон команд «как Т-2» без звука по тем
+ *    же снимкам (`map-dry-run.ts`: прямой путь по карте, где его нет —
+ *    модель плана из бюджета ОБУЧЕНИЯ, ≤ 10 вызовов; запреты Т-2 — 0
+ *    шагов), структурный отпечаток образцов шаблона; АВТОЗАПУСК при сборке
+ *    версии на проверке (`VoiceMapService.onVersionBuilt`, идемпотентно по
+ *    версии) — публикация прогона не ждёт.
  *
  * Без `BROWSER_WORKER_ENABLED` маршруты отвечают 409
  * `BROWSER_WORKER_DISABLED` (как до Ш3 — режима нет).
  */
-import { HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { SitesDb } from '../../prisma/sites-db.service';
+import { estimateCost } from '../../shared/ai-pricing';
+import { GEMINI_MODEL } from '../../shared/gemini-model';
+import { defaultVoiceControlRules, rulesOf } from '../assist-ui-core/rules';
 import { maskLabel, parseSnapshot } from '../assist-ui-core/snapshot';
+import type { UiSnapshot } from '../assist-ui-core/types';
 import {
   descriptorCandidates,
   descriptorStability,
   findInSnapshot,
   parseVoiceMapContent,
   targetsForPage,
+  voiceMapDiff,
   type StabilitySample,
   type VoiceMapContent,
 } from '../assist-ui-core/voice-map';
@@ -53,6 +64,20 @@ import {
   type UiSnapshotResult,
 } from '../browser-jobs/protocol';
 import type { AccountMembership } from '../site-core/account/roles';
+import { LearningBudget } from '../site-ai/learning-budget';
+import {
+  GeminiText,
+  spentOf,
+  type TextModelSpent,
+} from '../site-ai/text-model';
+import { AiUsageRecorder } from '../site-ai/usage-recorder';
+import {
+  dryRunMap,
+  templateFingerprints,
+  type DryRunReport,
+  type PlanModelCall,
+  type TemplateFingerprint,
+} from './map-dry-run';
 import {
   UiMapLimitError,
   ingestUiSnapshot,
@@ -105,6 +130,10 @@ export interface WorkerCheckReport {
   }>;
   lost: number;
   fragile: number;
+  /** (заход 9) Сухой прогон команд «как Т-2» без звука; null — снимков нет. */
+  dryRun?: DryRunReport | null;
+  /** (заход 9) Структурные отпечатки образцов шаблонов. */
+  templates?: TemplateFingerprint[];
 }
 
 const MAX_CHECK_PAGES = WORKER_LIMITS.descriptorPages;
@@ -114,12 +143,21 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
+/** Оценка одного вызова модели плана в сухом прогоне (резерв обучения). */
+const DRY_RUN_EST_UNITS = { inputTokens: 8_000, outputTokens: 800 };
+
 @Injectable()
 export class VoiceMapWorkerService implements OnModuleInit {
+  private readonly logger = new Logger(VoiceMapWorkerService.name);
+
   constructor(
     private readonly maps: VoiceMapService,
     private readonly jobs: BrowserJobsService,
     private readonly handlers: BrowserJobHandlers,
+    private readonly text: GeminiText,
+    private readonly budget: LearningBudget,
+    private readonly usage: AiUsageRecorder,
+    private readonly sitesDb: SitesDb,
   ) {}
 
   onModuleInit(): void {
@@ -129,6 +167,9 @@ export class VoiceMapWorkerService implements OnModuleInit {
     this.handlers.register('voice-map-check', {
       onDone: (j, r) => this.checkDone(j, r as DescriptorResolveResult),
     });
+    // Заход 9: сборка версии на проверке → сверка и сухой прогон сами.
+    this.maps.onVersionBuilt = (accountId, siteId, version) =>
+      this.autoCheck(accountId, siteId, version);
   }
 
   // ── «Снимок» ──────────────────────────────────────────────────────────
@@ -344,7 +385,58 @@ export class VoiceMapWorkerService implements OnModuleInit {
     const num = this.versionNumber(n);
     const db = this.maps.db(m.accountId);
     await loadAssistSite(db, m.accountId, siteId);
-    const content = await this.versionContent(m.accountId, siteId, num);
+    const job = await this.enqueueCheck(
+      m.accountId,
+      siteId,
+      num,
+      `tg:${m.telegramId.toString()}`,
+      null,
+    );
+    return { checkId: job.id, status: job.status };
+  }
+
+  /**
+   * Автозапуск при сборке версии на проверке (заход 9): воркер выключен —
+   * молча ничего (как до Ш3); повторная сборка той же версии — то же
+   * задание (`idempotencyKey`).
+   */
+  async autoCheck(
+    accountId: string,
+    siteId: string,
+    version: number,
+  ): Promise<string | null> {
+    if (!this.jobs.enabled()) return null;
+    // Аудит P3: сверка прежней версии, которая ещё ЖДЁТ воркера, устарела —
+    // отменяется (иначе потолок «активных» сайта не пустит новую:
+    // BROWSER_JOB_BUSY). Идущая не трогается; не поставили — сверку видно
+    // в TMA как «не было» (кнопка «Звірка» поставит её вручную).
+    // Активная сверка на сайт — одна (правило очереди), поэтому смотрим
+    // последнюю: ждёт и не этой версии — отмена.
+    const last = await this.jobs.latest(accountId, {
+      siteId,
+      origin: 'voice-map-check',
+    });
+    if (last && last.status === 'queued' && last.refId !== `v${version}`)
+      await this.jobs.cancelIfQueued(accountId, last.id);
+    const job = await this.enqueueCheck(
+      accountId,
+      siteId,
+      version,
+      `auto:v${version}`,
+      `voice-map-check:${siteId}:v${version}`,
+    );
+    return job.id;
+  }
+
+  private async enqueueCheck(
+    accountId: string,
+    siteId: string,
+    num: number,
+    requestedBy: string,
+    idempotencyKey: string | null,
+  ) {
+    const db = this.maps.db(accountId);
+    const content = await this.versionContent(accountId, siteId, num);
     const hosts = await this.maps.siteHosts(db, siteId, new Date());
     const host = hosts[0];
     if (!host) {
@@ -365,12 +457,13 @@ export class VoiceMapWorkerService implements OnModuleInit {
           .filter((s): s is string => isSafeSelector(s))
           .slice(0, WORKER_LIMITS.selectorsPerTarget),
       }));
-    const job = await this.jobs.enqueue(m.accountId, {
+    return this.jobs.enqueue(accountId, {
       siteId,
       hostId: host.id,
       origin: 'voice-map-check',
       refId: `v${num}`,
-      requestedBy: `tg:${m.telegramId.toString()}`,
+      requestedBy,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       params: {
         pages: VoiceMapWorkerService.checkPaths(content).map(
           (p) => `${origin}${p}`,
@@ -380,7 +473,6 @@ export class VoiceMapWorkerService implements OnModuleInit {
         targets,
       },
     });
-    return { checkId: job.id, status: job.status };
   }
 
   private async checkDone(
@@ -389,7 +481,122 @@ export class VoiceMapWorkerService implements OnModuleInit {
   ): Promise<WorkerCheckReport> {
     const num = Number((j.refId ?? '').replace(/^v/, ''));
     const content = await this.versionContent(j.accountId, j.siteId, num);
-    return VoiceMapWorkerService.report(num, content, r);
+    const report = VoiceMapWorkerService.report(num, content, r);
+    // Заход 9: сухой прогон и отпечатки — по тем же снимкам; сбой прогона
+    // не теряет сверку дескрипторов.
+    try {
+      const pages = VoiceMapWorkerService.snapshotsOf(r);
+      const db = this.maps.db(j.accountId);
+      const now = new Date();
+      const site = await db.assistSite.findFirst({
+        where: { siteId: j.siteId },
+        select: { voiceControlSiteRules: true },
+      });
+      const row = await this.maps.loadMap(db, j.accountId, j.siteId);
+      const prev =
+        row.publishedVersion && row.publishedVersion !== num
+          ? await this.versionContent(
+              j.accountId,
+              j.siteId,
+              row.publishedVersion,
+            ).catch(() => null)
+          : null;
+      const diff = voiceMapDiff(prev, content);
+      report.templates = templateFingerprints(content, pages);
+      report.dryRun = pages.length
+        ? await dryRunMap({
+            content,
+            pages,
+            rules:
+              rulesOf(site?.voiceControlSiteRules ?? null) ??
+              defaultVoiceControlRules(),
+            hosts: this.maps.hostNames(
+              await this.maps.siteHosts(db, j.siteId, now),
+            ),
+            changed: new Set([...diff.added, ...diff.changed]),
+            model: this.planModel(j.accountId, j.siteId),
+          })
+        : null;
+    } catch (e) {
+      this.logger.warn(
+        `voice-map dry-run failed site=${j.siteId} v=${num}: ${(e as Error)?.name ?? 'Error'}`,
+      );
+      report.dryRun = null;
+    }
+    return report;
+  }
+
+  /** Снимки удачных страниц сверки (разбор сервера — как в бою). */
+  static snapshotsOf(
+    r: DescriptorResolveResult,
+  ): Array<{ path: string; snapshot: UiSnapshot }> {
+    const out: Array<{ path: string; snapshot: UiSnapshot }> = [];
+    for (const pg of r.pages) {
+      if (!pg.ok || !pg.snapshot) continue;
+      const snap = parseSnapshot(pg.snapshot);
+      if (!snap) continue;
+      let path = '/';
+      try {
+        path = new URL(pg.url).pathname;
+      } catch {
+        continue;
+      }
+      out.push({ path, snapshot: snap });
+    }
+    return out;
+  }
+
+  /**
+   * Модель плана для сухого прогона: резерв бюджета ОБУЧЕНИЯ до вызова
+   * (нет бюджета — `null`, команда «без модели»), учёт `assist-learn`,
+   * поправка на факт. Ответ модели — только текст для `parseModelPlan`.
+   */
+  private planModel(accountId: string, siteId: string): PlanModelCall {
+    return async (prompt, timeoutMs) => {
+      const est =
+        estimateCost(GEMINI_MODEL, DRY_RUN_EST_UNITS).costMicroUsd || 2_000;
+      if (!(await this.budget.reserve(accountId, siteId, est))) return null;
+      let actual = 0;
+      const record = async (r: TextModelSpent) => {
+        const u = await this.usage.record(
+          this.sitesDb.system(
+            'учёт расходов ИИ: сухой прогон голосовой карты (assist-learn)',
+          ),
+          {
+            accountId,
+            siteId,
+            operation: 'assist-learn',
+            model: r.model,
+            units: {
+              inputTokens: r.inputTokens,
+              cachedInputTokens: r.cachedInputTokens,
+              outputTokens: r.outputTokens,
+            },
+          },
+        );
+        actual = u.costMicroUsd;
+      };
+      try {
+        const r = await this.text.generate({
+          system: prompt.system,
+          user: prompt.user,
+          json: true,
+          temperature: 0,
+          maxOutputTokens: DRY_RUN_EST_UNITS.outputTokens,
+          timeoutMs: Math.max(1_000, timeoutMs),
+        });
+        await record(r).catch(() => undefined);
+        return r.text;
+      } catch (e) {
+        const spent = spentOf(e);
+        if (spent) await record(spent).catch(() => undefined);
+        return null;
+      } finally {
+        await this.budget
+          .adjust(accountId, siteId, actual - est)
+          .catch(() => undefined);
+      }
+    };
   }
 
   /**

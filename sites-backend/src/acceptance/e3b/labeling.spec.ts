@@ -9,7 +9,9 @@
  *  - деньги: резерв ДО вызова (потолок сайта и платформы), расход в
  *    site_ai_usage `assist-label`; исчерпание → выборка с весом;
  *  - сигнал «wrong» очереди обучения по answerQuality ≤ 2; удаление диалога
- *    удаляет разметку.
+ *    удаляет разметку;
+ *  - заход 9: пакетный режим Gemini Batch API за выключателем (подделка
+ *    пакетного клиента): резерв × доля, расход фактом, сбой — возврат.
  */
 import type { ChatSite } from '../../modules/assist-site-chat/testing/chat-stack.testing';
 import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testing';
@@ -17,6 +19,11 @@ import {
   ANALYTICS_PLATFORM_SCOPE,
   analyticsPeriod,
 } from '../../modules/assist-analytics/ai/analytics-budget';
+import type {
+  LabelBatchClient,
+  LabelBatchPoll,
+  LabelBatchRequest,
+} from '../../modules/assist-analytics/ai/label-batch';
 import { sampleSlot } from '../../modules/assist-analytics/ai/labeler.service';
 import {
   AiStack,
@@ -418,5 +425,296 @@ describeDb('Приёмка Э3-бис (а): ИИ-разметка диалого
     expect(st.text.calls.length).toBe(before);
     expect(await label(fresh.id)).toBeNull();
     expect(await label(bot.id)).toBeNull();
+  });
+
+  // ── заход 9 (хвост (5)): Gemini Batch API за выключателем ─────────────
+  class FakeBatch implements LabelBatchClient {
+    readonly jobs = new Map<
+      string,
+      { reqs: LabelBatchRequest[]; poll: LabelBatchPoll }
+    >();
+    fail = false;
+    async submit(model: string, reqs: LabelBatchRequest[]): Promise<string> {
+      if (this.fail) throw new Error('batch down');
+      expect(model).toBe(LITE_ENV.ASSIST_LITE_MODEL);
+      const name = `batches/fake-${this.jobs.size + 1}-${Date.now()}`;
+      this.jobs.set(name, { reqs, poll: { state: 'pending' } });
+      return name;
+    }
+    async poll(name: string): Promise<LabelBatchPoll> {
+      this.polled.push(name);
+      return this.jobs.get(name)?.poll ?? { state: 'pending' };
+    }
+    readonly polled: string[] = [];
+    readonly cancelled: string[] = [];
+    /** Что станет с заданием после отмены (по умолчанию — остаётся «идёт»). */
+    afterCancel: LabelBatchPoll | null = null;
+    async cancel(name: string): Promise<void> {
+      this.cancelled.push(name);
+      const j = this.jobs.get(name);
+      if (j && this.afterCancel) j.poll = this.afterCancel;
+    }
+  }
+
+  async function withBatch<T>(fn: (b: FakeBatch) => Promise<T>): Promise<T> {
+    const b = new FakeBatch();
+    st.labeler.env = { ...LITE_ENV, ASSIST_LABEL_BATCH: '1' };
+    st.labeler.batch = b;
+    try {
+      return await fn(b);
+    } finally {
+      st.labeler.env = { ...LITE_ENV };
+      st.labeler.batch = null;
+    }
+  }
+  const spent = async (s: ChatSite) =>
+    Number(
+      (
+        await st.owner.assistAnalyticsSpend.findFirst({
+          where: { siteId: s.siteId },
+        })
+      )?.spentMicroUsd ?? 0,
+    );
+
+  it('пакетный режим (ASSIST_LABEL_BATCH=1): одно задание за тик, резерв × 0.5; ответ — следующим тиком, расход фактом × 0.5; сбой запроса — retry с возвратом резерва', async () => {
+    await withBatch(async (fake) => {
+      const s = await bizSite();
+      const a = await st.conversation(s, {
+        question: 'Є 44 розмір? Мій телефон +380 67 123 45 67',
+      });
+      const b = await st.conversation(s);
+      const calls = st.text.calls.length;
+      const r1 = await tick(s);
+      expect(r1.batched).toBe(2);
+      expect(st.text.calls.length).toBe(calls);
+      expect(fake.jobs.size).toBe(1);
+      const [[name, job]] = [...fake.jobs.entries()];
+      expect(job.reqs.map((q) => q.key).sort()).toEqual([a.id, b.id].sort());
+      // Вход пакета — тот же замаскированный, что у вызова по одному.
+      expect(job.reqs.map((q) => q.user).join('\n')).not.toMatch(
+        /\+?380 67|123 45 67/,
+      );
+      const la = await label(a.id);
+      expect(la).toMatchObject({
+        status: 'batch',
+        batchJob: name,
+        attempts: 1,
+      });
+      const reserved = la!.costMicroUsd + (await label(b.id))!.costMicroUsd;
+      expect(await spent(s)).toBe(reserved);
+      // Пока задание идёт — ни разметки, ни повторной отправки.
+      expect((await tick(s)).batched).toBe(0);
+      expect(fake.jobs.size).toBe(1);
+      // Готово: a — разметка, b — ошибка запроса в пакете.
+      job.poll = {
+        state: 'succeeded',
+        results: [
+          {
+            key: a.id,
+            text: labelJson(),
+            inputTokens: 2000,
+            cachedInputTokens: 0,
+            outputTokens: 200,
+          },
+          {
+            key: b.id,
+            text: null,
+            inputTokens: 0,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+          },
+        ],
+      };
+      fake.fail = true; // b не уйдёт новым заданием в этом тике
+      const r2 = await tick(s);
+      expect(r2.labeled).toBe(1);
+      expect(r2.retry).toBe(1);
+      const done = await label(a.id);
+      expect(done).toMatchObject({
+        status: 'ok',
+        batchJob: null,
+        intent: 'delivery',
+      });
+      expect(done!.leadScore).toBeGreaterThan(0);
+      expect(await label(b.id)).toMatchObject({ status: 'retry', attempts: 1 });
+      const want = Math.round(
+        estimateCost(LITE_ENV.ASSIST_LITE_MODEL!, {
+          inputTokens: 2000,
+          outputTokens: 200,
+        }).costMicroUsd * 0.5,
+      );
+      const usage = await st.owner.siteAiUsage.findMany({
+        where: { siteId: s.siteId, operation: 'assist-label' },
+      });
+      expect(usage).toHaveLength(1);
+      expect(usage[0].costMicroUsd).toBe(want);
+      expect(usage[0].pricingVersion).toContain('batch');
+      // Резерв b возвращён, a — закрыт фактом.
+      expect(await spent(s)).toBe(want);
+      // Сервис снова принимает — b уходит новым заданием (попытка 2).
+      fake.fail = false;
+      expect((await tick(s)).batched).toBe(1);
+      expect(await label(b.id)).toMatchObject({ status: 'batch', attempts: 2 });
+    });
+  });
+
+  it('пакетный режим: задание не принято, просрочено (отмена + сверка), упало — резерв возвращён только при подтверждённом сбое; выключатель снят — отправленное всё равно забирается', async () => {
+    await withBatch(async (fake) => {
+      // Google не принял задание — денег не взяли, диалог ждёт следующего тика.
+      const s0 = await bizSite();
+      const c0 = await st.conversation(s0);
+      fake.fail = true;
+      expect((await tick(s0)).batched).toBe(0);
+      // Строка писалась до отправки (аудит P3-6) — откат в очередь.
+      expect(await label(c0.id)).toMatchObject({
+        status: 'retry',
+        attempts: 0,
+        batchJob: null,
+      });
+      expect(await spent(s0)).toBe(0);
+      fake.fail = false;
+      expect((await tick(s0)).batched).toBe(1);
+      expect(await spent(s0)).toBeGreaterThan(0);
+    });
+    // Аудит P2-2: Google держит задание до 48 ч — через 27 ч оно ещё «идёт»;
+    // после 49 ч — отмена и сверка: подтверждённый сбой — возврат резерва.
+    await withBatch(async (fake) => {
+      const s = await bizSite();
+      const a = await st.conversation(s);
+      await tick(s);
+      const [[name]] = [...fake.jobs.entries()];
+      const reserved = await spent(s);
+      expect(reserved).toBeGreaterThan(0);
+      fake.fail = true;
+      await st.labeler.tick({
+        now: new Date(Date.now() + 27 * 3600_000),
+        deadline: Date.now() + 30_000,
+        max: 20,
+        scope: st.scope(s),
+      });
+      expect(await label(a.id)).toMatchObject({ status: 'batch' });
+      expect(fake.cancelled).toEqual([]);
+      fake.afterCancel = { state: 'failed' };
+      await st.labeler.tick({
+        now: new Date(Date.now() + 50 * 3600_000),
+        deadline: Date.now() + 30_000,
+        max: 20,
+        scope: st.scope(s),
+      });
+      expect(fake.cancelled).toEqual([name]);
+      expect(await label(a.id)).toMatchObject({
+        status: 'retry',
+        batchJob: null,
+      });
+      expect(await spent(s)).toBe(0);
+    });
+    // Отмена не подтвердилась (задание всё ещё «идёт») — резерв НЕ
+    // возвращается: задание может доработать и быть оплачено.
+    await withBatch(async (fake) => {
+      const s = await bizSite();
+      const a = await st.conversation(s);
+      await tick(s);
+      const reserved = await spent(s);
+      fake.fail = true;
+      await st.labeler.tick({
+        now: new Date(Date.now() + 50 * 3600_000),
+        deadline: Date.now() + 30_000,
+        max: 20,
+        scope: st.scope(s),
+      });
+      expect(await label(a.id)).toMatchObject({
+        status: 'retry',
+        batchJob: null,
+      });
+      expect(await spent(s)).toBe(reserved);
+    });
+    // Выключатель снят, а задание уже отправлено — тик без пакета его забирает.
+    const s2 = await bizSite();
+    const c2 = await st.conversation(s2);
+    const fake2 = await withBatch(async (fake) => {
+      await tick(s2);
+      return fake;
+    });
+    const [[name2, job2]] = [...fake2.jobs.entries()];
+    expect(await label(c2.id)).toMatchObject({
+      status: 'batch',
+      batchJob: name2,
+    });
+    job2.poll = { state: 'failed' };
+    st.labeler.batch = fake2;
+    try {
+      await tick(s2);
+    } finally {
+      st.labeler.batch = null;
+    }
+    expect(await label(c2.id)).toMatchObject({ status: 'retry' });
+    expect(await spent(s2)).toBe(0);
+  });
+
+  it('аудит P3-6: диалог удалён до ответа пакета — резерв закрыт фактом по метаданным; строка с временным именем после срока — retry без опроса и без возврата', async () => {
+    await withBatch(async (fake) => {
+      const s = await bizSite();
+      const a = await st.conversation(s);
+      const b = await st.conversation(s);
+      await tick(s);
+      const [[name, job]] = [...fake.jobs.entries()];
+      expect(job.reqs[0].meta).toMatchObject({ a: s.accountId, s: s.siteId });
+      // forget/ретенция удалили диалог b — его разметка ушла каскадом.
+      await st.owner.assistSiteConversation.delete({ where: { id: b.id } });
+      job.poll = {
+        state: 'succeeded',
+        results: job.reqs.map((q) => ({
+          key: q.key,
+          meta: q.meta,
+          text: labelJson(),
+          inputTokens: 2000,
+          cachedInputTokens: 0,
+          outputTokens: 200,
+        })),
+      };
+      expect((await tick(s)).labeled).toBe(1);
+      expect(await label(a.id)).toMatchObject({ status: 'ok' });
+      const one = Math.round(
+        estimateCost(LITE_ENV.ASSIST_LITE_MODEL!, {
+          inputTokens: 2000,
+          outputTokens: 200,
+        }).costMicroUsd * 0.5,
+      );
+      // Оба резерва закрыты фактом: и живого диалога, и удалённого.
+      expect(await spent(s)).toBe(2 * one);
+      expect(fake.polled.filter((x) => x === name)).toHaveLength(1);
+
+      // Сбой между отправкой и записью имени: строка с временным именем.
+      const c = await st.conversation(s);
+      await st.owner.assistSiteConversationLabel.create({
+        data: {
+          conversationId: c.id,
+          accountId: s.accountId,
+          siteId: s.siteId,
+          status: 'batch',
+          batchJob: 'pending:lost',
+          promptVersion: 'x',
+          attempts: 1,
+          costMicroUsd: 77,
+          labeledAt: new Date(),
+          buyingSignals: [],
+          qualityFlags: [],
+          topics: [],
+          entities: [],
+        },
+      });
+      fake.fail = true;
+      await tick(s);
+      expect(await label(c.id)).toMatchObject({ status: 'batch' });
+      await st.labeler.tick({
+        now: new Date(Date.now() + 50 * 3600_000),
+        deadline: Date.now() + 30_000,
+        max: 20,
+        scope: st.scope(s),
+      });
+      expect(await label(c.id)).toMatchObject({ status: 'retry' });
+      expect(fake.polled).not.toContain('pending:lost');
+      expect(fake.cancelled).not.toContain('pending:lost');
+    });
   });
 });

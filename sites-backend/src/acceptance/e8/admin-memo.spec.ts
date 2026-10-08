@@ -360,6 +360,41 @@ describeE8('Э8 п.7 — мемо «Админки» АМ-N', () => {
     }
   });
 
+  it('аудит пакета C (P3-8): шаг мемо в unknown, мемо выключено — 409 MEMO_HALTED (не 500), карточка expired', async () => {
+    const a = await session('emp-D-unk');
+    const before = mutations().length;
+    const p1 = (await ask(a, 'виконай АМ-1 1043')).answer.proposal;
+    expect(p1).toMatchObject({ status: 'pending', memo: { step: 1 } });
+    // Шаг исполнялся, исход неизвестен (процесс умер посреди «Да»).
+    await st.prisma.assistAdminActionProposal.updateMany({
+      where: { id: p1.id },
+      data: { status: 'executing', attempts: 1, decidedAt: new Date() },
+    });
+    await st.prisma.assistAdminActionProposal.updateMany({
+      where: { id: p1.id },
+      data: { status: 'unknown', outcome: 'stale' },
+    });
+    await request(st.srv())
+      .post(`${memos()}/1/disable`)
+      .set(st.as(S.ownerTg))
+      .expect(200);
+    try {
+      const c = await confirm(a, p1);
+      expect(c.status).toBe(409);
+      expect(c.body.error.code).toBe('MEMO_HALTED');
+      const prop = await st.prisma.assistAdminActionProposal.findUniqueOrThrow({
+        where: { id: p1.id },
+      });
+      expect(prop).toMatchObject({ status: 'expired', outcome: 'memo_halted' });
+      expect(mutations().length).toBe(before);
+    } finally {
+      await request(st.srv())
+        .post(`${memos()}/1/enable`)
+        .set(st.as(S.ownerTg))
+        .expect(200);
+    }
+  });
+
   it('D3: мемо ушло в «требует проверки» между шагами — advance не исполняет следующий шаг', async () => {
     const a = await session('emp-D2');
     const r = await ask(a, 'виконай АМ-1 3001');

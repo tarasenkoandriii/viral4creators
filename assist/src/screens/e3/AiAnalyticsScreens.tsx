@@ -26,8 +26,8 @@ import {
   type LeadBucket,
   type PowerView,
 } from '../../lib/ai-types';
+import { CMP_IDS, cmpSnippet, type CmpId } from '../../lib/cmp-snippets';
 import {
-  CONSENT_SNIPPET,
   coverageShare,
   dryLine,
   experimentLines,
@@ -43,6 +43,7 @@ import {
   type PeriodPreset,
 } from '../../lib/e3-view';
 import { useE3ErrorNotice } from '../../lib/use-error-text';
+import { WIDGET_GLOBAL } from '../../lib/widget-brand';
 import { WIDGET_UI_LANGS, type WidgetUiLang } from '../../lib/widget-types';
 import { LoadError, NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, NumberInput, Select, Toggle } from '../widget/controls';
@@ -405,7 +406,11 @@ export function InsightsTab({ siteId }: { siteId: string }) {
   const { appDict, ai } = useAssist();
   const t = appDict.e3b;
   const [week, setWeek] = useState<string | undefined>(undefined);
-  const state = useAsync(() => ai.insights(siteId, week), [ai, siteId, week]);
+  // Тексты выводов — на языке экрана (заход 9).
+  const state = useAsync(
+    () => ai.insights(siteId, week, locale),
+    [ai, siteId, week, locale]
+  );
   return (
     <Loaded state={state}>
       {(v) => (
@@ -675,6 +680,7 @@ export function ExperimentsTab({ siteId }: { siteId: string }) {
               ))}
             </select>
           </Field>
+          <div className="text-xs text-silver-500">{t.goalHint}</div>
           {kind === 'holdout' ? (
             <Field label={`${t.share}, %`}>
               <NumberInput value={share} min={5} max={20} onChange={setShare} />
@@ -769,6 +775,14 @@ export function BehaviorTab({
               {fmt(t.quota, { used: v.quota.used, limit: v.quota.limit })}
             </div>
           )}
+          {v.quota.limit > 0 && v.quota.sampleRate <= 0 && (
+            <Alert tone="warning">{t.capped}</Alert>
+          )}
+          {v.quota.sampleRate > 0 && v.quota.sampleRate < 1 && (
+            <div className="text-xs text-silver-500">
+              {fmt(t.sampled, { rate: pct(v.quota.sampleRate) })}
+            </div>
+          )}
           {v.pages.length === 0 ? (
             <Card className="text-sm">{t.empty}</Card>
           ) : (
@@ -827,8 +841,11 @@ export function AiSettingsCard({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const owner = isOwner(account.me);
+  // Готовая связка для баннера сайта (заход 9): GCM — без фрагмента.
+  const [cmp, setCmp] = useState<CmpId>('custom');
   const v = draft ?? loaded.data;
   if (!v) return null;
+  const snippet = cmpSnippet(cmp, WIDGET_GLOBAL);
   const set = (p: Partial<AiSettings>) => setDraft({ ...v, ...p });
   const maxWindow = Math.max(1, plan.linkedWindowDays || 1);
   const save = async () => {
@@ -903,10 +920,20 @@ export function AiSettingsCard({
             label={t.behavior}
             disabled={!owner || plan.behaviorViewsPerMonth === 0}
           />
-          <div className="text-xs">{t.snippet}</div>
-          <pre className="text-xs font-mono whitespace-pre-wrap break-all rounded bg-silver-100 dark:bg-silver-900 p-2">
-            {CONSENT_SNIPPET}
-          </pre>
+          <Field label={t.cmp}>
+            <Select
+              value={cmp}
+              options={CMP_IDS}
+              labels={t.cmps}
+              onChange={setCmp}
+            />
+          </Field>
+          <div className="text-xs">{t.cmpHints[cmp]}</div>
+          {snippet && (
+            <pre className="text-xs font-mono whitespace-pre-wrap break-all rounded bg-silver-100 dark:bg-silver-900 p-2">
+              {snippet}
+            </pre>
+          )}
         </>
       )}
       <Button loading={busy} disabled={!draft} onClick={() => void save()}>

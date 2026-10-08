@@ -21,6 +21,7 @@ import type { SitesDb } from '../../../prisma/sites-db.service';
 import type { AccountMembership } from '../../site-core/account/roles';
 import type { HostAccessService } from '../../site-core/ownership/host-access.service';
 import type { HostPurpose } from '../../site-core/ownership/host-access';
+import type { SiteHostRole } from '../../site-core/ownership/host-roles';
 import { notFoundSite } from '../../site-core/site-core.constants';
 import type { SiteCrawlService } from '../../site-crawl/crawl.service';
 import type { PublicPageFetcher } from '../../site-crawl/page-fetcher';
@@ -106,6 +107,12 @@ export interface ModeAdapter {
   publishedVersion(ctx: KnowledgeCtx): Promise<number>;
   /** Назначение проверки хоста для url-источников (`assist-crawl` | `assist-admin`). */
   readonly urlPurpose: HostPurpose;
+  /**
+   * Р-З9-24 (ТЗ §10, К-9): url-источник режима — только с хостов этой роли
+   * (`site_hosts.assistRole`; «Сайт» — `public`: хост «Админки» знаниям
+   * «Сайта» не источник). Не задано — роль хоста не проверяется.
+   */
+  readonly urlHostRole?: SiteHostRole;
   /** «Этот файл увидят все посетители» (§3.4) — только «Сайт». */
   readonly requirePublicConfirm: boolean;
   /** Колонки строки файла, которые есть только у таблицы этого режима. */
@@ -223,10 +230,15 @@ export class ModeKnowledgeCore {
     siteId: string,
     raw: string[],
   ): Promise<string[]> {
-    const hosts = await this.deps.db
-      .forAccount(m.accountId)
-      .siteHost.findMany({ where: { siteId }, select: { host: true } });
+    const hosts = await this.deps.db.forAccount(m.accountId).siteHost.findMany({
+      where: { siteId },
+      select: { host: true, assistRole: true },
+    });
     const allowed = new Set(hosts.map((h) => h.host));
+    const role = this.adapter.urlHostRole;
+    const otherRole = new Set(
+      role ? hosts.filter((h) => h.assistRole !== role).map((h) => h.host) : [],
+    );
     const out: string[] = [];
     for (const r of raw) {
       const u = normalizeHttpsUrl(r);
@@ -242,6 +254,15 @@ export class ModeKnowledgeCore {
           400,
           'URL_INVALID',
           `Адрес не на хосте этого сайта: ${u.hostname} — добавьте хост в сайт`,
+        );
+      }
+      if (otherRole.has(u.hostname)) {
+        throw e1Error(
+          400,
+          'URL_ADMIN_HOST',
+          role === 'public'
+            ? `Хост ${u.hostname} отдан «Админке» — знания «Сайта» с него не берутся`
+            : `Хост ${u.hostname} — не хост «Админки»`,
         );
       }
       // Форма обхода (normalizeCrawlUrl): горячие страницы сверяются с
@@ -1539,6 +1560,16 @@ export class ModeKnowledgeCore {
         skipped.push({ url, reason: 'unverified_host' });
         continue;
       }
+      // Р-З9-24: хост сменил роль после добавления источника (его отдали
+      // «Админке») — страницы не читаем и в знания режима не кладём.
+      const role = this.adapter.urlHostRole;
+      if (role && host.assistRole !== role) {
+        skipped.push({
+          url,
+          reason: role === 'public' ? 'admin_host' : 'site_host',
+        });
+        continue;
+      }
       try {
         await this.deps.hosts.assertHostVerified(
           host.id,
@@ -1568,6 +1599,29 @@ export class ModeKnowledgeCore {
         blocks: r.page.blocks,
       });
     }
+    const foreign = skipped.filter(
+      (x) => x.reason === 'admin_host' || x.reason === 'site_host',
+    );
+    if (docs.length === 0 && foreign.length > 0) {
+      // Р-З9-24: хост отдали другому режиму ПОСЛЕ публикации — его страницы
+      // из знаний режима снимаются и без нового текста. Все адреса такие —
+      // источник пуст (новая версия без него), это не ошибка разбора.
+      if (foreign.length === skipped.length) {
+        await this.adapter.api.indexDocuments(ctx, row.id, [], {
+          trigger: 'document',
+          byTelegramId: row.createdByTelegramId,
+          replaceAll: true,
+        });
+        return {
+          documents: 0,
+          warning: `Пропущено страниц: ${skipped.length}`,
+          data: { config: { urls, skipped } },
+        };
+      }
+      // Остальные страницы не прочитались (сбой сайта) — их фрагменты не
+      // трогаем, а страницы чужого хоста снимаем сразу.
+      await this.removeForeignHostDocs(ctx, row, hosts);
+    }
     if (docs.length === 0) {
       throw e1Error(
         400,
@@ -1586,5 +1640,34 @@ export class ModeKnowledgeCore {
         skipped.length > 0 ? `Пропущено страниц: ${skipped.length}` : null,
       data: { config: { urls, skipped } },
     };
+  }
+
+  /** Живые документы url-источника на хостах чужой роли — вон (новая версия). */
+  private async removeForeignHostDocs(
+    ctx: KnowledgeCtx,
+    row: SourceRow,
+    hosts: Array<{ host: string; assistRole: string }>,
+  ): Promise<void> {
+    const role = this.adapter.urlHostRole;
+    if (!role) return;
+    const foreign = new Set(
+      hosts.filter((h) => h.assistRole !== role).map((h) => h.host),
+    );
+    const live = await this.rows(ctx).document.findMany({
+      where: { siteId: ctx.siteId, sourceId: row.id, status: 'active' },
+    });
+    const refs = live
+      .filter((d) => {
+        const u = d.url ? normalizeHttpsUrl(d.url) : null;
+        return !!u && foreign.has(u.hostname);
+      })
+      .map((d) => d.ref);
+    if (refs.length === 0) return;
+    await this.adapter.api.removeDocuments(
+      ctx,
+      row.id,
+      refs,
+      row.createdByTelegramId,
+    );
   }
 }

@@ -14,6 +14,10 @@
  *                                  (Э-С Ш4: по элементу и виду вёрстки, с
  *                                  квитанцией показа, порогом и окном —
  *                                  assist-site-media/public/ui-map.ts)
+ *   POST /widget/v1/highlight-seen { elementId, pageUrl } — загрузчик нашёл
+ *                                  элемент (Ш4 (4), Р-З9-3): те же квитанция
+ *                                  и вид, голос «найден» с порогом снимка;
+ *                                  мгновенного сброса нет
  *
  * Ссылка (третий барьер против ролика чужого сайта, шапка
  * assist-site-media/public/site-videos.ts): ролик ищется по siteId
@@ -51,10 +55,12 @@ import {
 import {
   markUiMapStale,
   recordUiMiss,
+  recordUiSeen,
 } from '../assist-site-media/public/ui-map';
 import {
   UI_MAP_STALE,
   visitorViewport,
+  type UiVisitorViewport,
 } from '../site-core/ui-map/ui-map-model';
 import {
   signVideoLink,
@@ -260,7 +266,131 @@ export class WidgetMediaController {
       ],
       now,
     );
-    // Хосты «Админки» — не хосты сайта (ТЗ §10, аудит Э6-бис (б) (8)).
+    const v = await this.highlightVisitor(ctx, req, now);
+    const miss = await recordUiMiss(this.db, {
+      accountId: ctx.site.accountId,
+      siteId: ctx.site.siteId,
+      visitorId: ctx.visitor.visitorId,
+      ipHash: v.ipHash,
+      pageUrl: dto.pageUrl,
+      siteHosts: v.siteHosts,
+      elementId: dto.elementId,
+      viewport: v.viewport,
+      now,
+    });
+    const recorded = miss.outcome === 'recorded';
+    if (recorded) {
+      // Э6: справочный счётчик снимков страницы (сводка истории).
+      await markUiMapStale(this.db, {
+        siteId: ctx.site.siteId,
+        pageUrl: dto.pageUrl,
+        siteHosts: v.siteHosts,
+        elementId: dto.elementId,
+      });
+    }
+    if (recorded && !ctx.site.preview) {
+      await this.counts
+        .record({
+          siteId: ctx.site.siteId,
+          events: [{ kind: 'highlight_miss', key: dto.elementId }],
+          now,
+        })
+        .catch(() => undefined);
+    }
+    return { ok: true, recorded };
+  }
+
+  /**
+   * Ш4 (4), Р-З9-3: загрузчик НАШЁЛ элемент подсветки — голос «найден»
+   * (assist-site-media/public/ui-map.ts `recordUiSeen`). `recorded` — голос
+   * принят (элемент был под сомнением у вида посетителя и это первый голос
+   * посетителя и IP); ответ одинаковой формы при любом исходе.
+   */
+  @Post('highlight-seen')
+  @HttpCode(200)
+  async highlightSeen(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Body() dto: WidgetHighlightMissDto,
+    @Req() req: Request,
+  ): Promise<{ ok: true; recorded: boolean }> {
+    const ctx = await this.sessions.authenticate({
+      token,
+      requestOrigin: tokenRequestOrigin(req),
+    });
+    const now = this.now();
+    // Те же пороги, что у промахов, но свои окна: «найдено» бывает чаще.
+    await this.rate.enforce(
+      [
+        {
+          scope: 'widget-uiseen-visitor-min',
+          key: `${ctx.site.siteId}:${ctx.visitor.visitorId}`,
+          limit: MEDIA_DEFAULTS.highlightMissPerVisitorPerMinute,
+          windowMs: MINUTE,
+        },
+        {
+          scope: 'widget-uiseen-ip-site-min',
+          key: `${ctx.site.siteId}:${ctx.visitor.ipHash}`,
+          limit: MEDIA_DEFAULTS.highlightMissPerIpPerMinute,
+          windowMs: MINUTE,
+        },
+      ],
+      now,
+    );
+    const v = await this.highlightVisitor(ctx, req, now);
+    const seen = await recordUiSeen(
+      this.db,
+      {
+        accountId: ctx.site.accountId,
+        siteId: ctx.site.siteId,
+        visitorId: ctx.visitor.visitorId,
+        ipHash: v.ipHash,
+        pageUrl: dto.pageUrl,
+        siteHosts: v.siteHosts,
+        elementId: dto.elementId,
+        viewport: v.viewport,
+        now,
+      },
+      {
+        // Сутки на IP+сайт — только на ГОЛОС (элемент под сомнением): он
+        // может снять «устарел». Обычное «найдено» без сомнений меняет лишь
+        // `lastSeenAt` и суточный лимит не тратит (аудит пакета A, P3-3).
+        beforeVote: () =>
+          this.rate.enforce(
+            [
+              {
+                scope: 'widget-uiseen-ip-site-day',
+                key: `${ctx.site.siteId}:${ctx.visitor.ipHash}`,
+                limit: UI_MAP_STALE.missesPerIpSitePerDay,
+                windowMs: DAY,
+              },
+            ],
+            now,
+          ),
+      },
+    );
+    return {
+      ok: true,
+      recorded: seen.outcome === 'voted' || seen.outcome === 'reset',
+    };
+  }
+
+  /**
+   * Общее для итога подсветки: хосты сайта (без хостов «Админки» — ТЗ §10,
+   * аудит Э6-бис (б) (8)) + origin родителя, вид вёрстки по заголовкам
+   * iframe (тот же браузер, что страница: элемент, скрытый мобильной
+   * вёрсткой, не делает карту устаревшей для компьютера, Ш4) и хеш IP с
+   * солью на окно (неделя: «разные IP за 7 дней» не обходится сменой суток;
+   * суточный ipHash токена — только лимиты).
+   */
+  private async highlightVisitor(
+    ctx: Awaited<ReturnType<WidgetSessionService['authenticate']>>,
+    req: Request,
+    now: Date,
+  ): Promise<{
+    siteHosts: string[];
+    viewport: UiVisitorViewport;
+    ipHash: string;
+  }> {
     const hosts = await this.db.siteHost.findMany({
       where: {
         siteId: ctx.site.siteId,
@@ -275,52 +405,18 @@ export class WidgetMediaController {
     } catch {
       /* origin уже проверен гвардом */
     }
-    // Вид вёрстки — по заголовкам iframe (тот же браузер, что страница):
-    // элемент, скрытый мобильной вёрсткой, не делает карту устаревшей для
-    // компьютера (Ш4).
     const viewport = visitorViewport({
       userAgent: req.headers?.['user-agent'] ?? null,
       chUaMobile:
         (req.headers?.['sec-ch-ua-mobile'] as string | undefined) ?? null,
     });
-    const miss = await recordUiMiss(this.db, {
-      accountId: ctx.site.accountId,
+    const ipHash = await uiVoteIpHash(this.db, {
       siteId: ctx.site.siteId,
-      visitorId: ctx.visitor.visitorId,
-      // Хеш IP с солью на окно (неделя): «разные IP за 7 дней» не
-      // обходится сменой суток (суточный ipHash токена — только лимиты).
-      ipHash: await uiVoteIpHash(this.db, {
-        siteId: ctx.site.siteId,
-        req,
-        fallback: ctx.visitor.ipHash,
-        now,
-        env: this.env,
-      }),
-      pageUrl: dto.pageUrl,
-      siteHosts,
-      elementId: dto.elementId,
-      viewport,
+      req,
+      fallback: ctx.visitor.ipHash,
       now,
+      env: this.env,
     });
-    const recorded = miss.outcome === 'recorded';
-    if (recorded) {
-      // Э6: справочный счётчик снимков страницы (сводка истории).
-      await markUiMapStale(this.db, {
-        siteId: ctx.site.siteId,
-        pageUrl: dto.pageUrl,
-        siteHosts,
-        elementId: dto.elementId,
-      });
-    }
-    if (recorded && !ctx.site.preview) {
-      await this.counts
-        .record({
-          siteId: ctx.site.siteId,
-          events: [{ kind: 'highlight_miss', key: dto.elementId }],
-          now,
-        })
-        .catch(() => undefined);
-    }
-    return { ok: true, recorded };
+    return { siteHosts, viewport, ipHash };
   }
 }

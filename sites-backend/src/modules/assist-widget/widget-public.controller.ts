@@ -52,6 +52,7 @@ import type {
   WidgetStateView,
   WidgetStreamChunk,
 } from './api-types';
+import { visitorViewport } from '../site-core/ui-map/ui-map-model';
 import { cleanPageUrl, WidgetChatService } from './widget-chat.service';
 import { cleanIdentity } from './widget-engagement';
 import { WidgetEngagementService } from './widget-engagement.service';
@@ -245,7 +246,14 @@ export class WidgetPublicController {
       token,
       requestOrigin: tokenRequestOrigin(req),
     });
-    const input = await this.chat.prepare(ctx, dto);
+    // Ш4 (2): вид вёрстки — по заголовкам iframe (как highlight-miss и план).
+    const mobile = req.headers?.['sec-ch-ua-mobile'];
+    const input = await this.chat.prepare(ctx, dto, new Date(), {
+      viewport: visitorViewport({
+        userAgent: req.headers?.['user-agent'] ?? null,
+        chUaMobile: typeof mobile === 'string' ? mobile : null,
+      }),
+    });
     const accept = String(req.headers.accept ?? '');
     if (
       accept.includes('application/json') &&
@@ -359,13 +367,21 @@ export class WidgetPublicController {
     @Headers(TOKEN_HEADER) token: string | undefined,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
+    @Body() body?: unknown,
   ): Promise<WidgetForgetResponse> {
     noStore(res);
     const ctx = await this.sessions.authenticate({
       token,
       requestOrigin: tokenRequestOrigin(req),
     });
-    const out = await this.state.forget(ctx);
+    // Ключ визита (связанный режим, заход 9): удалить и единицу эксперимента
+    // без диалога. Право на удаление не отказывает из-за формы тела — без
+    // ключа или с чужим полем forget идёт как раньше.
+    const v =
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as { v?: unknown }).v
+        : null;
+    const out = await this.state.forget(ctx, v);
     // Стереть и CHIPS-копию указателя (localStorage чистит сам iframe) —
     // cookie СВОЕГО pk (имя зависит от ключа сайта).
     const pk = await this.sessions.sessionPk(ctx);

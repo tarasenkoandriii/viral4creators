@@ -20,6 +20,9 @@
  *    скрытой подписи и разметке. Исключения стоп-листа — только те, что
  *    прислал сервер для ЭТОЙ разметки: «удаление» своей строки (`remove`) и
  *    отписка от бесплатной подписки (`unsubscribe`); оплата — никогда;
+ *  - (заход 9) `show` + `sid` — режим `degraded`: только подсветка 6 с
+ *    найденной обратной цели, ни клика, ни ответа (без `id` — старый чанк
+ *    из кеша такую команду не исполнит);
  *  - подсветка 600 мс, клик синтетическими событиями + нативный `click()`,
  *    проверка: строки с описанием больше нет — `done`; не исчезла за ~4 с —
  *    `unknown` («проверьте корзину», не «вернул»); отказ — подсветка 6 с.
@@ -235,6 +238,36 @@ export function comp(raw: Record<string, unknown>, host: ActHost): void {
     if (c.go.length <= 200 && PATH.test(c.go)) {
       host.mark(true);
       location.assign(c.go);
+    }
+    return;
+  }
+  // Заход 9 (§5-бис.15 п.8, аудит P2-3): `degraded` — только подсветка
+  // обратной цели (тот же поиск), без клика и без ответа iframe. Цель — в
+  // поле `sid`, НЕ `id`: старый comp.js из кеша CDN такую команду отвергнет
+  // (нет `id`) и ничего не нажмёт.
+  if (c.show) {
+    const sid = c.sid;
+    if (
+      typeof sid != 'string' ||
+      !ASSIST_ID.test(sid) ||
+      (c.row !== null && (typeof c.row != 'string' || c.row.length > 80))
+    )
+      return;
+    const one = findReverse(
+      sid,
+      c.row as string | null,
+      strs(c.variant, 2, 40),
+      true,
+      strs(c.deny, 50, 300),
+      strs(c.zones, 50, 300)
+    );
+    if (one.length == 1) {
+      try {
+        one[0].scrollIntoView({ block: 'center' });
+      } catch {
+        /* без прокрутки */
+      }
+      ring(host, one[0], 6000);
     }
     return;
   }

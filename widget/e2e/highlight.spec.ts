@@ -5,10 +5,13 @@
  *    `textContent`, элемент прокручен в окно), клик по странице не
  *    перехватывается; под CSP из инструкции и под Trusted Types — без
  *    нарушений;
+ *  - нашёл — ТИХО шлёт сигнал «найдено» (`highlight-seen`, Ш4 (4)) один
+ *    раз на просьбу; промаха нет;
  *  - после смены вёрстки (и при неоднозначном селекторе) — ТИХО не
  *    подсвечивает и пишет сигнал «карта устарела» (`highlight-miss`);
  *  - чужие сообщения: страница не может ни заставить загрузчик подсветить,
- *    ни заставить iframe послать сигнал о том, о чём он не просил;
+ *    ни заставить iframe послать сигнал («нашёл» или «не нашёл») о том, о
+ *    чём он не просил;
  *  - видео-ответ: ролик играет в окне чата по подписанной ссылке своего
  *    origin (редирект), выключенный ролик — «видео недоступно».
  * Барьеры «ролик сайта A — не на сайте B», «неодобренный — не
@@ -117,8 +120,14 @@ for (const [name, csp] of [
     expect(
       await ring(page).evaluate((e) => getComputedStyle(e).pointerEvents)
     ).toBe('none');
+    // Ш4 (4): «найдено» — один сигнал по элементу, который просили показать.
+    await expect.poll(async () => (await log()).highlightSeen.length).toBe(1);
+    const seen = (await log()).highlightSeen[0];
+    expect(seen).toMatchObject({ elementId: 'u1a2b3c4d' });
+    expect(seen.pageUrl).toContain('example.localhost');
     await page.waitForTimeout(300);
     expect((await log()).highlightMisses).toEqual([]);
+    expect((await log()).highlightSeen).toHaveLength(1);
     expect(await violations(page)).toEqual([]);
     expect(errors).toEqual([]);
     // Нажали на странице — подсветка своё сделала и ушла.
@@ -141,6 +150,7 @@ for (const [name, kit] of [
     expect(miss).toMatchObject({ pk, elementId: 'u1a2b3c4d' });
     expect(miss.pageUrl).toContain('example.localhost');
     await expect(ring(page)).toHaveCount(0);
+    expect((await log()).highlightSeen).toEqual([]);
     // «Тихо»: посетителю — ни ошибки, ни уведомления.
     await expect(chat(page).locator('.note')).toHaveCount(0);
     expect(await violations(page)).toEqual([]);
@@ -170,29 +180,31 @@ test('чужие сообщения: страница не может заста
     },
     [WIDGET_MESSAGE_NS, WIDGET_PROTOCOL_VERSION] as const
   );
-  // …и «highlight-result: не нашёл» прямо в iframe (окно того же origin
-  // достаёт iframe через открытый shadowRoot).
-  await page.evaluate(
-    ([ns, v]) => {
-      const f = document
-        .querySelector('[data-v4c]')!
-        .shadowRoot!.querySelector('iframe')!;
-      f.contentWindow!.postMessage(
-        {
-          ns,
-          v,
-          type: 'highlight-result',
-          elementId: 'u1a2b3c4d',
-          found: false,
-        },
-        '*'
-      );
-    },
-    [WIDGET_MESSAGE_NS, WIDGET_PROTOCOL_VERSION] as const
-  );
+  // …и «highlight-result: не нашёл / нашёл» прямо в iframe (окно того же
+  // origin достаёт iframe через открытый shadowRoot).
+  for (const found of [false, true])
+    await page.evaluate(
+      ([ns, v, found]) => {
+        const f = document
+          .querySelector('[data-v4c]')!
+          .shadowRoot!.querySelector('iframe')!;
+        f.contentWindow!.postMessage(
+          {
+            ns,
+            v,
+            type: 'highlight-result',
+            elementId: 'u1a2b3c4d',
+            found,
+          },
+          '*'
+        );
+      },
+      [WIDGET_MESSAGE_NS, WIDGET_PROTOCOL_VERSION, found] as const
+    );
   await page.waitForTimeout(800);
   await expect(ring(page)).toHaveCount(0);
   expect((await log()).highlightMisses.filter((m) => m.pk === pk)).toEqual([]);
+  expect((await log()).highlightSeen.filter((m) => m.pk === pk)).toEqual([]);
 });
 
 test('видео-ответ: ролик играет в окне чата по подписанной ссылке своего origin, CSP без нарушений', async ({

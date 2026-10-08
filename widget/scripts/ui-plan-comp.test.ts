@@ -251,6 +251,52 @@ async function main() {
     assert.match(c.feed.at(-1)!, /Не зміг прибрати «Футболка синя»/);
   }
 
+  // ── заход 9 (§5-бис.15 п.8): `degraded` — только подсветка обратной кнопки
+  {
+    const m = mk({ page: 'https://shop.example.com/p/1' });
+    m.store.set('last', 'p5');
+    m.st.reply = () => ({
+      fields: [],
+      manual: [{ i: 1, text: 'В кошик' }],
+      comp: null,
+      show: [
+        { ...COMP, i: 1 },
+        // Обратная кнопка на другой странице — здесь не подсветить.
+        { ...COMP, i: 2, at: '/cart/' },
+        // Мусор — мимо.
+        { ...COMP, i: 3, assistId: 'x"]' },
+      ],
+      refused: 'degraded',
+    });
+    await m.pc.command('відміни останнє', 'typed', null);
+    await tick();
+    assert.equal(m.feed.at(-1), DICTS.uk.vcUndoSelf);
+    assert.deepEqual(
+      m.toParent.filter((x) => x.type === 'ui-undo'),
+      [
+        {
+          type: 'ui-undo',
+          planId: 'p5',
+          idx: [],
+          comp: {
+            show: 1,
+            i: 1,
+            sid: 'remove-from-cart',
+            row: 'Футболка синя',
+            variant: ['M'],
+            deny: ['.ads'],
+            zones: [],
+          },
+        },
+      ]
+    );
+    assert.equal(
+      m.calls.filter((c) => c.path.endsWith('/undo-report')).length,
+      0,
+      'в degraded — ни «начат», ни итогов'
+    );
+  }
+
   // Тексты компенсаций — без «откатил/отменил/вернул как было» (п.10).
   const BAN =
     /(откат|відкот|rolled back|roll(ed)? back|отменил|скасував|всё вернул|все повернув|reverted)/iu;

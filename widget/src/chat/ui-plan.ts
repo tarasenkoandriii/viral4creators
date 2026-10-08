@@ -252,6 +252,11 @@ interface UndoView {
   manual: Array<{ i: number; text: string }>;
   /** (Э6-тер (и)) Следующая компенсация (одна за раз). */
   comp: CompView | null;
+  /**
+   * (заход 9, §5-бис.15 п.8) `degraded`: обратные кнопки — только подсветить
+   * («уберите сами — вот она»), без нажатия и без отчёта.
+   */
+  show: CompView[];
   chainStatus: string | null;
   refused: string | null;
 }
@@ -327,6 +332,16 @@ function parseUndoView(v: unknown): UndoView | null {
     fields: list(o.fields),
     manual: list(o.manual),
     comp: parseCompView(o.comp),
+    show: (Array.isArray(o.show) ? o.show : [])
+      .slice(0, 3)
+      .map((x) =>
+        parseCompView(
+          x && typeof x === 'object'
+            ? { ...x, allow: [], dispatched: false }
+            : x
+        )
+      )
+      .filter((x): x is CompView => !!x),
     chainStatus:
       typeof o.chainStatus === 'string' && /^[a-z_]{1,24}$/.test(o.chainStatus)
         ? o.chainStatus
@@ -394,7 +409,8 @@ export class UiPlanController {
     planId: string;
     i: number;
     timer: ReturnType<typeof setTimeout>;
-    resolve: (ok: boolean) => void;
+    /** true — сошлось; false — не сошлось; 'missing' — элемента цели нет. */
+    resolve: (ok: boolean | 'missing') => void;
   } | null = null;
   /** (д) Ждём итог возврата полей/компенсации от загрузчика. */
   private undoWait: {
@@ -814,7 +830,7 @@ export class UiPlanController {
       if (w && w.planId === m.planId && w.i === m.i) {
         clearTimeout(w.timer);
         this.goalWait = null;
-        w.resolve(m.ok);
+        w.resolve(m.ok ? true : m.missing ? 'missing' : false);
       }
       return;
     }
@@ -848,18 +864,22 @@ export class UiPlanController {
     const g = m.result === 'done' ? v.goals[m.index] : null;
     this.queue = this.queue.then(async () => {
       const ok = g ? await this.goalCheck(m.planId, g) : true;
+      // Заход 9: элемента цели нет — `goal_unseen` (сервер: цель `unknown`).
       return this.report(
         m.index,
-        ok ? m.result : 'failed',
-        ok ? m.reason : 'expect',
+        ok === true ? m.result : 'failed',
+        ok === true ? m.reason : ok === 'missing' ? 'goal_unseen' : 'expect',
         m.url,
         m.ms
       );
     });
   }
 
-  /** Проверка цели мемо на странице (ленивый чанк undo.js): да/нет. */
-  private goalCheck(planId: string, g: UiGoalCheck): Promise<boolean> {
+  /** Проверка цели мемо на странице (ленивый чанк undo.js): да/нет/нечем. */
+  private goalCheck(
+    planId: string,
+    g: UiGoalCheck
+  ): Promise<boolean | 'missing'> {
     return new Promise((resolve) => {
       if (this.goalWait) {
         clearTimeout(this.goalWait.timer);
@@ -959,7 +979,13 @@ export class UiPlanController {
       this.host.feed(
         'assistant',
         goalStep
-          ? fmt(this.host.t().vcMemoNotReached, { g: goal || '' })
+          ? // Заход 9: элемента цели нет — проверить нечем, не «не дошёл».
+            fmt(
+              reason === 'goal_unseen'
+                ? this.host.t().vcMemoUnknown
+                : this.host.t().vcMemoNotReached,
+              { g: goal || '' }
+            )
           : why
             ? why + '.'
             : fmt(this.host.t().vcSelf, { t: text })
@@ -1093,6 +1119,25 @@ export class UiPlanController {
     };
     if (u.refused) {
       this.host.feed('assistant', refused[u.refused] || t.vcUndoNothing);
+      // Заход 9 (§5-бис.15 п.8): в `degraded` — подсветить обратные кнопки
+      // этой страницы (только обводка, comp.js не нажимает и не отвечает).
+      const here = pathOfUrl(this.host.pageUrl());
+      const cfg = this.host.cfg();
+      if (u.refused === 'degraded')
+        for (const c of u.show)
+          if (c.at === null || (here !== null && samePath(here, c.at)))
+            this.host.toParent(
+              compMessage(planId, {
+                show: 1,
+                i: c.i,
+                // `sid`, не `id`: старый comp.js (кеш CDN) без `id` не нажмёт.
+                sid: c.assistId,
+                row: c.row,
+                variant: c.variant,
+                deny: cfg ? cfg.denySelectors : [],
+                zones: cfg ? cfg.allowSelectors : [],
+              })
+            );
       return;
     }
     if (u.manual.length)

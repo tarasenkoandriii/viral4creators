@@ -16,6 +16,8 @@
  * иначе отказ «не измерить». Горизонт фиксирован (14–56 дней), итог —
  * только после него; досрочная остановка владельцем — без итога
  * (подглядывание), SRM — «испорчен», тариф/режим согласия сняты — стоп.
+ * В итоге — доля срабатываний цели «со страницы» (заход 9: соль публична,
+ * такие конверсии можно накрутить в одну группу).
  */
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -40,8 +42,10 @@ import {
   SRM_P,
   analyze,
   estimatePower,
+  goalTrustOf,
   srmP,
   type ExperimentKind,
+  type GoalTrust,
   type ExperimentResult,
   type PowerEstimate,
 } from './experiment-math';
@@ -510,13 +514,16 @@ export class ExperimentsService {
         continue;
       }
       if (now.getTime() >= e.endsAt.getTime()) {
-        const result = analyze({
-          nA: u.a,
-          nB: u.b,
-          xA: u.xa,
-          xB: u.xb,
-          minUnitsPerArm: e.minUnitsPerArm,
-        });
+        const result: ExperimentResult = {
+          ...analyze({
+            nA: u.a,
+            nB: u.b,
+            xA: u.xa,
+            xB: u.xb,
+            minUnitsPerArm: e.minUnitsPerArm,
+          }),
+          goalTrust: await this.goalTrust(e),
+        };
         await this.finish(
           e.id,
           {
@@ -546,6 +553,32 @@ export class ExperimentsService {
       scope ? scope.siteIds : null,
     );
     return out;
+  }
+
+  /**
+   * Доверие срабатываний основной цели за срок эксперимента (заход 9):
+   * доля «со страницы» — подсказка, насколько итог можно накрутить.
+   */
+  private async goalTrust(e: {
+    siteId: string;
+    goalKey: string;
+    startedAt: Date;
+    endsAt: Date;
+  }): Promise<GoalTrust> {
+    const [r] = await this.prisma.$queryRawUnsafe<
+      Array<{ total: bigint; page: bigint }>
+    >(
+      `SELECT count(*) AS total, count(*) FILTER (WHERE ev."trust" = 'page') AS page
+         FROM "sites"."assist_site_goal_events" ev
+         JOIN "sites"."assist_site_goals" g ON g."id" = ev."goalId"
+        WHERE ev."siteId" = $1 AND g."key" = $2 AND ev."status" = 'completed'
+          AND ev."occurredAt" >= $3 AND ev."occurredAt" < $4`,
+      e.siteId,
+      e.goalKey,
+      e.startedAt,
+      e.endsAt,
+    );
+    return goalTrustOf(Number(r?.total ?? 0), Number(r?.page ?? 0));
   }
 
   private async finish(

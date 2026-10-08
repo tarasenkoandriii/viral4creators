@@ -105,6 +105,7 @@ export class AiStack extends AnalyticsStack {
       this.text,
       this.recorder,
       this.budget,
+      this.sitesDb,
     );
     this.weekly.env = { ...LITE_ENV };
     this.experiments = new ExperimentsService(this.sitesDb, owner);

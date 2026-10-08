@@ -30,6 +30,7 @@ import type {
   WidgetStreamErrorCode,
 } from '../assist-site-chat/chat-types';
 import { SiteChatService } from '../assist-site-chat/site-chat.service';
+import type { UiVisitorViewport } from '../site-core/ui-map/ui-map-model';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { publishedWidgetConfig } from './site-access';
 import {
@@ -204,6 +205,11 @@ export class WidgetChatService {
     ctx: VisitorContext,
     dto: WidgetChatDto,
     now: Date = new Date(),
+    /**
+     * Ш4 (2), Р-З9-1: вид вёрстки — по заголовкам запроса iframe (тот же
+     * браузер, что страница; `visitorViewport` в контроллере), не из тела.
+     */
+    client: { viewport?: UiVisitorViewport } = {},
   ): Promise<AskInput> {
     const question = dto.question.trim();
     if (!question) throw widgetError('BAD_REQUEST');
@@ -252,6 +258,7 @@ export class WidgetChatService {
       clientRequestId: dto.clientRequestId,
       question,
       page: cleanPage(dto.page),
+      ...(client.viewport ? { viewport: client.viewport } : {}),
       context: cleanContext(dto.context),
       uiLang: dto.uiLang ?? null,
       ...(typeof dto.voiceTicket === 'string' && dto.voiceTicket

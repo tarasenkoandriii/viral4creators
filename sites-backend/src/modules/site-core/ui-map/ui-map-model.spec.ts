@@ -17,6 +17,7 @@ import {
   nextMissCount,
   parseUiViewport,
   rowFitsViewport,
+  seenSnapshotKeys,
   uiConfidence,
   uiSnapshotHash,
   viewportsConfirmedBy,
@@ -389,5 +390,61 @@ describe('вид вёрстки и устаревание', () => {
     expect(b).toEqual({ count: 2, since: t0 });
     const late = new Date(t0.getTime() + UI_MAP_STALE.windowMs + 1);
     expect(nextMissCount(b, late)).toEqual({ count: 1, since: late });
+  });
+});
+
+describe('seenSnapshotKeys — ключи снимка для «найден» (Ш4 (3), Р-З9-2)', () => {
+  it('элементы с тегом карты — все ключи кандидатов, как раньше', () => {
+    const keys = seenSnapshotKeys([
+      { tag: 'button', label: 'Купити', role: 'button', assistId: 'buy' },
+    ]);
+    expect(keys).toEqual(
+      expect.arrayContaining(['a:buy', 'x:button|купити', 'r:button|купити']),
+    );
+  });
+
+  it('`other` с интерактивной ролью — тег карты по роли, только ключи, не зависящие от тега (без текста и CSS-пути)', () => {
+    expect(
+      seenSnapshotKeys([
+        { tag: 'other', role: 'button', label: 'Купити', assistId: 'buy' },
+      ]).sort(),
+    ).toEqual(['a:buy', 'r:button|купити']);
+    expect(
+      seenSnapshotKeys([
+        { tag: 'other', role: 'link', label: 'Доставка', selector: '#dl' },
+      ]).sort(),
+    ).toEqual(['i:dl', 'r:link|доставка']);
+    expect(
+      seenSnapshotKeys([
+        {
+          tag: 'other',
+          role: 'tab',
+          label: 'Оплата',
+          selector: 'main > div:nth-of-type(2)',
+        },
+      ]),
+    ).toEqual(['r:tab|оплата']);
+  });
+
+  it('`other` без роли или с неинтерактивной ролью — ничего; мусор — ничего', () => {
+    expect(
+      seenSnapshotKeys([
+        { tag: 'other', label: 'Купити', assistId: 'buy' },
+        { tag: 'other', role: 'heading', label: 'Купити', assistId: 'buy' },
+        { tag: 'other', role: 'textbox', label: 'Пошук', assistId: 'q' },
+        null,
+        'x',
+      ]),
+    ).toEqual([]);
+    expect(seenSnapshotKeys('nope')).toEqual([]);
+  });
+
+  it('неединственная роль+имя среди `other` — не ключ (три «Купити» у товаров)', () => {
+    const many = [1, 2, 3].map(() => ({
+      tag: 'other',
+      role: 'button',
+      label: 'Купити',
+    }));
+    expect(seenSnapshotKeys(many)).toEqual([]);
   });
 });

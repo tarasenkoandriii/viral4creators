@@ -33,6 +33,10 @@ import { issueVoiceTicket } from '../../modules/assist-site-voice/public/voice-t
 import { FakeSoniox } from '../../modules/assist-site-voice/testing/fake-soniox.testing';
 import type { UiPlanRequest } from '../../modules/assist-site-voice-control/api-types';
 import {
+  liveKeysFrom,
+  openLive,
+} from '../../modules/assist-site-voice-control/public/live-crypto';
+import {
   SiteUiPlanService,
   UiPlanError,
   stepsHash,
@@ -1115,10 +1119,26 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
     expect(v.steps[0].value).toBe('ivan@example.com');
     let [row] = await planRows(s.siteId);
     expect(JSON.stringify(row.steps)).not.toContain('ivan@example.com');
+    // (заход 9, Р-З9-13) В базе — шифротекст: ни команды, ни значения.
     expect(row.liveValues).toEqual({
-      u: 'знайди ivan@example.com',
-      v: ['ivan@example.com'],
+      v: 1,
+      kv: 'v1',
+      ct: expect.stringMatching(/^[\w-]+\.[\w-]+\.[\w-]+$/),
     });
+    expect(JSON.stringify(row.liveValues)).not.toContain('ivan');
+    expect(
+      openLive(liveKeysFrom(st.env), row.liveValues, {
+        planId: v.planId!,
+        siteId: s.siteId,
+      }),
+    ).toEqual({ u: 'знайди ivan@example.com', v: ['ivan@example.com'] });
+    // Шифротекст, переставленный в чужой план, не открывается.
+    expect(
+      openLive(liveKeysFrom(st.env), row.liveValues, {
+        planId: 'other',
+        siteId: s.siteId,
+      }),
+    ).toBeNull();
     // Отпечаток карточки и исполнитель — по сырому значению.
     expect((await plans.active(ctx))!.steps[0].value).toBe('ivan@example.com');
     await plans.step(ctx, v.planId!, { index: 0, result: 'dispatched' });
@@ -1163,6 +1183,71 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
         where: { id: x.planId! },
       }))!.liveValues,
     ).toBeNull();
+  });
+
+  it('(заход 9, P2-1) значения плана не открылись (смена ключа) — план не исполняет маску: `failed`, `live_lost`, значения обнулены; без значений впереди — доисполняется', async () => {
+    const s = await vcSite();
+    const ctx = ctxOf(s);
+    // План без значений (переход по ссылке) — другой посетитель.
+    const other = ctxOf(s);
+    const nav = await create(other, typed(s, 'відкрий доставку'));
+    expect(nav.steps.every((x) => x.value === null)).toBe(true);
+    const v = await create(ctx, typed(s, 'знайди ivan@example.com'));
+    expect(v.steps[0].value).toBe('ivan@example.com');
+    // Ключ сменили без ASSIST_SECRETS_KEYS_OLD (или откатили код/ключ).
+    plans.env = { ...plans.env, ASSIST_SECRETS_KEY: 'другий-ключ' };
+    try {
+      expect(await plans.active(ctx)).toBeNull();
+      expect(
+        await failure(
+          plans.step(ctx, v.planId!, { index: 0, result: 'dispatched' }),
+        ),
+      ).toBe('conflict');
+      const row = await st.owner.assistSiteUiPlan.findUnique({
+        where: { id: v.planId! },
+      });
+      expect(row).toMatchObject({ status: 'failed', liveValues: null });
+      expect(JSON.stringify(row!.steps)).not.toContain('ivan@example.com');
+      const lost = (await logRows(s.siteId)).filter(
+        (l) => l.reason === 'live_lost',
+      );
+      expect(lost).toHaveLength(1);
+      // Ни одного `dispatched` — исполнения не было.
+      expect(
+        (await logRows(s.siteId)).some(
+          (l) => l.planId === v.planId && l.result === 'dispatched',
+        ),
+      ).toBe(false);
+      // Масок впереди нет — план живёт и исполняется.
+      expect((await plans.active(other))?.planId).toBe(nav.planId);
+      const d = await plans.step(other, nav.planId!, {
+        index: 0,
+        result: 'dispatched',
+      });
+      expect(d.status).not.toBe('failed');
+    } finally {
+      plans.env = env;
+    }
+  });
+
+  it('(заход 9, P3-4) без ASSIST_SECRETS_KEY — отказ `off` ДО модели и записи плана; битый ASSIST_SECRETS_KEYS_OLD — не роняет: работает текущий ключ', async () => {
+    const s = await vcSite();
+    const ctx = ctxOf(s);
+    modelReply = JSON.stringify({ command: true, steps: [] });
+    plans.env = { ...env, ASSIST_SECRETS_KEY: '' };
+    try {
+      expect(await failure(create(ctx, typed(s, 'покажи кошик')))).toBe('off');
+      expect(modelCalls).toHaveLength(0);
+      expect(await planRows(s.siteId)).toHaveLength(0);
+      plans.env = { ...env, ASSIST_SECRETS_KEYS_OLD: 'мусор без двокрапки' };
+      const v = await create(ctx, typed(s, 'знайди ivan@example.com'));
+      expect((await plans.active(ctx))!.steps[0].value).toBe(
+        'ivan@example.com',
+      );
+      expect(v.planId).toBeTruthy();
+    } finally {
+      plans.env = env;
+    }
   });
 
   it('аудит: снимок больше SNAPSHOT_LIMITS.bodyChars — too_large до любой работы (0 планов, 0 вызовов модели)', async () => {

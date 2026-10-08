@@ -38,6 +38,13 @@ import {
   type MemoStep,
   type MemoStepKind,
 } from '../../assist-ui-core/memo';
+import { STANDARD_UNDO_PAIRS } from '../../assist-ui-core/decisions';
+import {
+  goalCountIn,
+  goalLabelKey,
+  MEMO_GOAL_LIMITS,
+  type MemoGoalTarget,
+} from '../../assist-ui-core/memo-goal';
 import { normText } from '../../assist-ui-core/normalize';
 import {
   judgeStep,
@@ -57,10 +64,13 @@ import type {
   VoiceControlRules,
 } from '../../assist-ui-core/types';
 import {
+  compensationOf,
   descriptorFacts,
   descriptorStability,
   effectiveRisk,
   parseDescriptor,
+  type MapUndo,
+  type VoiceMapContent,
   type VoiceMapDescriptor,
   type VoiceMapTarget,
 } from '../../assist-ui-core/voice-map';
@@ -95,6 +105,11 @@ export type RecordStepResult =
        * «в корзину»): только класс «сразу» и не отправка (§5-кватер.5 п.2, п.4).
        */
       exec: boolean;
+      /**
+       * (заход 9) «Как отменить» шага — наследуется от цели карты (или
+       * стандартная пара разметки); правится в карточке цели, не в мемо.
+       */
+      undo: StepUndo | null;
     }
   | {
       kind: 'stop';
@@ -395,7 +410,115 @@ export function recordStep(input: RecordStepInput): RecordStepResult {
     slot,
     risk: risk === 'auto' ? 'auto' : 'confirm',
     exec: risk === 'auto' && (action === 'click' || action === 'check'),
+    undo: COMPENSABLE.has(action)
+      ? undoFrom(input.mapTarget, d.assistId)
+      : null,
   };
+}
+
+// ── «Как отменить» шага мемо (заход 9, ТЗ §5-кватер.5, §5-бис.15 п.6) ────
+
+/**
+ * Обратная цель шага: у мемо СВОЕЙ разметки отмены нет — шаг наследует
+ * «Как отменить» цели голосовой карты, по которой найден его элемент
+ * (`mapKey`), иначе стандартную пару разметки (`add-to-cart` →
+ * `remove-from-cart`, В-68). По тексту кнопки — никогда. В бою то же
+ * наследование уже делает план (подсказки карты `mapHintsOf` по ссылке
+ * снимка); здесь — показ в панели и правка через карточку цели.
+ */
+export interface StepUndo {
+  assistId: string;
+  at: string | null;
+  /** `map` — объявлено владельцем в цели карты; `standard` — пара разметки. */
+  src: 'map' | 'standard';
+  /** Цель карты, где правится «Как отменить» (null — цели нет). */
+  key: string | null;
+}
+
+/** Компенсация бывает у нажатий; поля возвращаются своим путём (`local`). */
+const COMPENSABLE: ReadonlySet<MemoStepKind> = new Set(['click', 'check']);
+
+function undoFrom(
+  t: VoiceMapTarget | null,
+  assistId: string | null,
+): StepUndo | null {
+  if (t) {
+    const u: MapUndo | null = compensationOf(t);
+    if (u)
+      return {
+        assistId: u.assistId,
+        at: u.at,
+        src: t.undo ? 'map' : 'standard',
+        key: t.key,
+      };
+  }
+  const pair = assistId ? (STANDARD_UNDO_PAIRS[assistId] ?? null) : null;
+  return pair
+    ? { assistId: pair, at: null, src: 'standard', key: t?.key ?? null }
+    : null;
+}
+
+/** «Как отменить» каждого шага мемо по черновику карты (правка мемо N). */
+export function stepUndos(
+  steps: readonly MemoStep[],
+  map: VoiceMapContent | null,
+): Array<StepUndo | null> {
+  return steps.map((s) => {
+    if (!s.target || !COMPENSABLE.has(s.action)) return null;
+    const key = s.target.mapKey ?? null;
+    const t =
+      key && map
+        ? (map.targets.find((x) => x.key === key && x.status === 'active') ??
+          null)
+        : null;
+    return undoFrom(t, s.target.pin.assistId);
+  });
+}
+
+// ── «Чекати це»: ожидание при записи (заход 9, ТЗ §5-кватер.5 п.2) ────────
+
+export type RecordWaitResult =
+  /** Шаг ждёт появления элемента с этим видимым текстом (`expect.appear`). */
+  | { kind: 'appear'; text: string }
+  /**
+   * Цель мемо — «счётчик ±N» (значок корзины): исходное значение берёт бой
+   * из снимка команды, здесь — только цель условия и Δ (по умолчанию +1).
+   */
+  | { kind: 'counter'; target: MemoGoalTarget; delta: number; now: number }
+  | { kind: 'skip'; code: 'descriptor' | 'unnamed' | 'text' };
+
+/**
+ * Клик владельца после «Чекати це» → ожидание (НЕ шаг и не нажатие):
+ * элемент с ровно одним целым числом в подписи («Кошик (2)», «3») —
+ * счётчик (цель условия — разметка или подпись без чисел), иначе —
+ * появление элемента с этой подписью. Дескриптор — недоверенный: разбор
+ * сервера, маска ПД подписи, проверка текста как у шагов.
+ */
+export function recordWait(raw: unknown, deltaRaw?: unknown): RecordWaitResult {
+  const d = parseDescriptor(raw);
+  if (!d) return { kind: 'skip', code: 'descriptor' };
+  const text = maskLabel(d.text).replace(/\s+/g, ' ').trim();
+  if (!text) return { kind: 'skip', code: 'unnamed' };
+  const n = /\d/.test(text) ? goalCountIn(text) : null;
+  const label = goalLabelKey(text);
+  if (n !== null && (d.assistId || label)) {
+    const delta =
+      typeof deltaRaw === 'number' &&
+      Number.isInteger(deltaRaw) &&
+      deltaRaw !== 0 &&
+      Math.abs(deltaRaw) <= MEMO_GOAL_LIMITS.maxDelta
+        ? deltaRaw
+        : 1;
+    return {
+      kind: 'counter',
+      target: { assistId: d.assistId, text: label },
+      delta,
+      now: n,
+    };
+  }
+  const a = text.slice(0, 80);
+  if (memoTextProblem(a, 80)) return { kind: 'skip', code: 'text' };
+  return { kind: 'appear', text: a };
 }
 
 // ── сохранение записи → черновик мемо ─────────────────────────────────────

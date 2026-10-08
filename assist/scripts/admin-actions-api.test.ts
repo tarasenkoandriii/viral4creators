@@ -9,6 +9,7 @@ import {
   createAdminActionsApi,
   parseMemo,
   parseProposal,
+  retryExpired,
 } from '../src/lib/admin-actions-api';
 import { ADMIN_ACTIONS_TEXTS } from '../src/i18n/admin-actions';
 import { ADMIN_MEMO_CHECK_TEXTS } from '../src/i18n/admin-memo-check';
@@ -180,6 +181,62 @@ assert.deepEqual(
 );
 assert.deepEqual(calls[calls.length - 1]?.[2], { path: '/admin' });
 assert.deepEqual(calls[0][2], { paramsHash: 'a'.repeat(64), phrase: 'X 1' });
+
+// Заход 9 — Р-З9-18 (секрет подписи с выпуском экрана), язык журнала
+// владельца (аудит Э8 (5)), попытки/исход карточки и «повтор закрыт» (Р-З9-21).
+calls.length = 0;
+await api.signingSecret('s1', 'c1', null);
+await api.signingSecret('s1', 'c1', '2026-10-05T10:00:00.000Z');
+await api.list('s1', true, 'en');
+await api.list('s1', false, 'ru');
+await api.list('s1', false, 'xx');
+assert.deepEqual(
+  calls.map(([mth, path, b]) => `${mth} ${path} ${JSON.stringify(b) ?? '-'}`),
+  [
+    'POST /assist/sites/s1/connectors/c1/signing-secret {"expectedSetAt":null}',
+    'POST /assist/sites/s1/connectors/c1/signing-secret {"expectedSetAt":"2026-10-05T10:00:00.000Z"}',
+    'GET /assist/sites/s1/action-log/proposals?chain=review&lang=en -',
+    'GET /assist/sites/s1/action-log/proposals?lang=ru -',
+    'GET /assist/sites/s1/action-log/proposals -',
+  ]
+);
+const ex = parseProposal({
+  status: 'expired',
+  attempts: 1.7,
+  outcome: 'retry_expired',
+});
+assert.equal(ex.attempts, 1);
+assert.equal(ex.outcome, 'retry_expired');
+assert.equal(retryExpired(ex), true);
+assert.equal(retryExpired(parseProposal({ status: 'expired' })), false);
+assert.equal(
+  retryExpired(
+    parseProposal({ status: 'expired', attempts: 1, outcome: 'memo_halted' })
+  ),
+  false,
+  'остановка мемо — не «24 часа»'
+);
+assert.equal(
+  retryExpired(parseProposal({ status: 'unknown', attempts: 2 })),
+  false
+);
+assert.equal(parseProposal({ attempts: -3 }).attempts, 0);
+const allKeys = (o: object): string[] =>
+  Object.entries(o)
+    .flatMap(([k, v]) =>
+      v && typeof v === 'object' ? allKeys(v).map((x) => `${k}.${x}`) : [k]
+    )
+    .sort();
+for (const l of ['ru', 'en'] as const)
+  assert.deepEqual(
+    allKeys(ADMIN_ACTIONS_TEXTS[l]),
+    allKeys(ADMIN_ACTIONS_TEXTS.uk),
+    l
+  );
+for (const l of ['uk', 'ru', 'en'] as const) {
+  assert.ok(/dryRun|API/.test(ADMIN_ACTIONS_TEXTS[l].op.dryRunWarn), l);
+  assert.ok(/24/.test(ADMIN_ACTIONS_TEXTS[l].card.retryExpired), l);
+}
 
 for (const [lang, d] of Object.entries(ADMIN_ACTIONS_TEXTS)) {
   const all = JSON.stringify(d, (_k, v) =>

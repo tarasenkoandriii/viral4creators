@@ -62,8 +62,12 @@ import {
   memoTry,
   recordedDraft,
   recordStep,
+  recordWait,
+  stepUndos,
   type MemoTryView,
   type RecordStepResult,
+  type RecordWaitResult,
+  type StepUndo,
 } from './memo-record';
 
 const PATH_RE = /^\/[A-Za-z0-9\-._~%!$&'()*+,;=:@/]*$/;
@@ -102,8 +106,32 @@ export interface EditorMemoStartView {
     steps: MemoStep[];
     slots: MemoContent['slots'];
     reviewReason: unknown;
+    /** (заход 9) «Как отменить» шагов — наследуется от целей карты. */
+    undo: Array<StepUndo | null>;
+    /** (заход 9) Цель «счётчик ±N», если есть (правка — «Чекати це»). */
+    counter: Extract<
+      MemoContent['goal']['expect'][number],
+      { kind: 'counter' }
+    > | null;
   } | null;
 }
+
+/** GET /editor/v1/memo/list → (заход 9, Р-З9-5) */
+export interface EditorMemoListView {
+  items: Array<{
+    number: number;
+    key: string;
+    name: string | null;
+    status: string;
+    /** Страница первого шага (маска) — где начинать «Прогнать». */
+    page: string | null;
+    steps: number;
+  }>;
+  limit: { used: number; max: number };
+}
+
+/** POST /editor/v1/memo/record/wait → (заход 9, «Чекати це») */
+export type EditorMemoWaitView = Exclude<RecordWaitResult, { kind: 'skip' }>;
 
 /** POST /editor/v1/memo/record/step → */
 export type EditorMemoStepView =
@@ -113,6 +141,7 @@ export type EditorMemoStepView =
       slot: MemoContent['slots'][number] | null;
       risk: 'auto' | 'confirm';
       exec: boolean;
+      undo: StepUndo | null;
     }
   | { kind: 'stop'; reason: string; step: MemoStep | null };
 
@@ -268,8 +297,74 @@ export class EditorMemoService {
         steps: d.draft.steps,
         slots: d.draft.slots,
         reviewReason: d.reviewReason,
+        undo: stepUndos(d.draft.steps, map),
+        counter:
+          (d.draft.goal.expect.find((g) => g.kind === 'counter') as
+            | Extract<
+                MemoContent['goal']['expect'][number],
+                { kind: 'counter' }
+              >
+            | undefined) ?? null,
       },
     };
+  }
+
+  /**
+   * Все мемо сайта для вкладки «Мемо» панели (заход 9, Р-З9-5): номер,
+   * имя, статус, страница первого шага — только чтение под сессией
+   * редактора; удалённые не показываются. Открыть — `record/start { memo }`.
+   */
+  async list(
+    ed: ResolvedEditor,
+    langRaw: unknown,
+  ): Promise<EditorMemoListView> {
+    const lang: MemoLang =
+      langRaw === 'ru' || langRaw === 'en' ? (langRaw as MemoLang) : 'uk';
+    const rows = await this.sitesDb
+      .forAccount(ed.accountId)
+      .assistSiteMemo.findMany({
+        where: { siteId: ed.siteId, status: { not: 'removed' } },
+        orderBy: { number: 'asc' },
+        select: { number: true, key: true, status: true, draft: true },
+        take: 200,
+      });
+    return {
+      items: rows.map((r) => {
+        const c = parseMemoContent(r.draft).content;
+        return {
+          number: r.number,
+          key: r.key,
+          name: memoNameOf(c, lang),
+          status: r.status,
+          page: c.steps[0]?.page ?? null,
+          steps: c.steps.length,
+        };
+      }),
+      limit: await this.limit(ed),
+    };
+  }
+
+  /**
+   * «Чекати це» при записи (заход 9, ТЗ §5-кватер.5 п.2): клик по элементу
+   * — НЕ шаг и не нажатие, а ожидание: появление элемента с подписью
+   * (`expect.appear` выбранного шага) или цель «счётчик ±N» (значок
+   * корзины). Подпись — маска ПД; проверка текста — как у шагов; в
+   * черновик попадает только через «Зберегти чернетку» (`stop` перепроверяет).
+   */
+  async wait(ed: ResolvedEditor, body: unknown): Promise<EditorMemoWaitView> {
+    const b = (body ?? {}) as Record<string, unknown>;
+    this.pathOf(b.path);
+    const r = recordWait(b.descriptor, b.delta);
+    if (r.kind === 'skip')
+      throw memoError(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'EDITOR_MEMO_STEP_SKIPPED',
+        r.code === 'unnamed'
+          ? 'У элемента нет видимой подписи — ждать нечего'
+          : 'Подпись элемента не подходит для ожидания',
+        { reason: r.code },
+      );
+    return r;
   }
 
   /** Строка Ш4 элемента: по ключам кандидатов дескриптора на этой странице. */
@@ -388,6 +483,12 @@ export class EditorMemoService {
         ? b.goalText.replace(/\s+/g, ' ').trim()
         : '';
     const goalAppear = cleanText(b.goalAppear, 80);
+    // (заход 9) «Чекати це» на счётчике: цель «счётчик ±N» (разбор — общий
+    // `parseMemoContent`: цель условия, |Δ| ≤ 9); `null` — снять условие.
+    const counter =
+      b.goalCounter && typeof b.goalCounter === 'object'
+        ? { ...(b.goalCounter as Record<string, unknown>), kind: 'counter' }
+        : null;
     const { rules, map, hosts } = await this.ctx(ed);
     const m = await this.member(ed);
     const existing =
@@ -404,12 +505,15 @@ export class EditorMemoService {
           ...(prev?.goal.text ?? {}),
           ...(goalText ? { [lang]: goalText } : {}),
         },
-        expect: goalAppear
-          ? [
-              ...(prev?.goal.expect ?? []).filter((g) => g.kind !== 'text'),
-              { kind: 'text', text: goalAppear },
-            ]
-          : (prev?.goal.expect ?? []),
+        expect: [
+          ...(prev?.goal.expect ?? []).filter(
+            (g) =>
+              !(goalAppear && g.kind === 'text') &&
+              !(b.goalCounter !== undefined && g.kind === 'counter'),
+          ),
+          ...(goalAppear ? [{ kind: 'text', text: goalAppear }] : []),
+          ...(counter ? [counter] : []),
+        ],
       },
       slots: Array.isArray(b.slots) ? b.slots : [],
       steps: b.steps,

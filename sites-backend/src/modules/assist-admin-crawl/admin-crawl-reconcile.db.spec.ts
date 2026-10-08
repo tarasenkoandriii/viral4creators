@@ -20,6 +20,7 @@ import {
   ownerPrisma,
   serializeQueueTests,
 } from '../browser-jobs/testing/jobs-db.testing';
+import type { AdminKnowledgeService } from '../assist-admin-knowledge/admin-knowledge.service';
 import type { SiteCredentialsService } from '../site-credentials/site-credentials.service';
 import {
   ADMIN_CRAWL_RECONCILE_AFTER_MS,
@@ -47,6 +48,7 @@ describeDb('сверка обходов «Админки» с очередью �
       {} as SiteCredentialsService,
       jobs,
       handlers,
+      {} as AdminKnowledgeService,
     );
     crawl.onModuleInit();
     const tag = randomUUID().slice(0, 8);

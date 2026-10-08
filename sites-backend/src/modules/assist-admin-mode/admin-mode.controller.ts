@@ -44,6 +44,7 @@ import {
   PatchConnectorDto,
   PatchOperationDto,
   PutConnectorSecretDto,
+  IssueSecretDto,
 } from './admin-mode.dto';
 import { AdminModeService } from './admin-mode.service';
 import { AdminStatsService } from './admin-stats.service';
@@ -79,8 +80,12 @@ export class AdminModeController {
   @HttpCode(200)
   // Открытый секрет — один раз и мимо любых кэшей (аудит Э7).
   @Header('Cache-Control', 'no-store')
-  identitySecret(@Membership() m: AccountMembership, @Param('id') id: string) {
-    return this.mode.issueIdentitySecret(m, id);
+  identitySecret(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Body() dto: IssueSecretDto,
+  ) {
+    return this.mode.issueIdentitySecret(m, id, dto?.expectedSetAt);
   }
 
   @Get(':id/admin-mode/stats')
@@ -163,8 +168,9 @@ export class AdminModeController {
     @Membership() m: AccountMembership,
     @Param('id') id: string,
     @Param('cn') cn: string,
+    @Body() dto: IssueSecretDto,
   ) {
-    return this.connectors.issueSigningSecret(m, id, cn);
+    return this.connectors.issueSigningSecret(m, id, cn, dto?.expectedSetAt);
   }
 
   @Delete(':id/connectors/:cn/secret')

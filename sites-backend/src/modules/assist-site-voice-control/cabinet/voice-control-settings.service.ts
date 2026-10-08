@@ -52,6 +52,7 @@ import {
   rulesOf,
 } from '../../assist-ui-core/rules';
 import {
+  markupChangedFrom,
   reportUsable,
   WIZARD_LIMITS,
   type ReportProblem,
@@ -65,6 +66,7 @@ import {
   VOICE_CONTROL_RISKS_VERSION,
   type VoiceControlSettingsPatch,
   type VoiceControlSettingsView,
+  type VoiceDevLinkView,
   type VoiceTestDetail,
   type VoiceTestSummary,
   type VoiceTestTokenRequest,
@@ -81,6 +83,14 @@ import {
 } from '../voice-control-config';
 import { sha256Hex } from '../public/voice-test-store';
 import { voiceControlError } from './voice-control-errors';
+import {
+  DEV_REPORT_KIND,
+  DEV_REPORT_LIMITS,
+  DEV_REPORT_ORIGIN,
+  DEV_REPORT_PATH,
+  devReportOf,
+} from '../share/dev-report';
+import { widgetOrigin } from '../../../config/widget-env';
 
 type SiteRow = Awaited<ReturnType<typeof loadAssistSite>>['row'];
 
@@ -151,7 +161,12 @@ export class VoiceControlSettingsService {
     );
   }
 
-  /** Когда элементы проверенных страниц устарели (Ш4) — позже всего. */
+  /**
+   * Когда разметка проверенных страниц изменилась после отчёта — позже
+   * всего (заход 9, аудит (г) (6)): ВСЕ страницы отчёта (не только
+   * последняя) и не только «устарел» Ш4, но и промахи посетителей по
+   * элементам этих страниц после отчёта (`markupChangedFrom`).
+   */
   private async markupChangedAt(
     m: AccountMembership,
     siteId: string,
@@ -162,21 +177,38 @@ export class VoiceControlSettingsService {
       : [];
     if (!pages.length || !t.reportedAt) return null;
     const host = uiMapHost(t.host.replace(/:\d+$/, ''));
-    const paths = pages.map((p) => p.replace(/\/+$/, '') || '/');
+    const paths = [
+      ...new Set(pages.slice(0, 20).map((p) => p.replace(/\/+$/, '') || '/')),
+    ];
     const after = { gt: t.reportedAt };
-    const el = await this.db(m).siteUiElement.findFirst({
-      where: {
-        siteId,
-        host,
-        path: { in: paths },
-        OR: [{ staleDesktopAt: after }, { staleMobileAt: after }],
-      },
-      select: { staleDesktopAt: true, staleMobileAt: true },
+    const db = this.db(m);
+    const [elements, misses] = await Promise.all([
+      db.siteUiElement.findMany({
+        where: {
+          siteId,
+          host,
+          path: { in: paths },
+          OR: [{ staleDesktopAt: after }, { staleMobileAt: after }],
+        },
+        select: { id: true, staleDesktopAt: true, staleMobileAt: true },
+        take: 500,
+      }),
+      db.siteUiElementMiss.findMany({
+        where: {
+          siteId,
+          kind: 'miss',
+          createdAt: after,
+          element: { host, path: { in: paths } },
+        },
+        select: { elementRowId: true, visitorId: true, createdAt: true },
+        take: 2_000,
+      }),
+    ]);
+    return markupChangedFrom({
+      reportedAt: t.reportedAt,
+      elements,
+      misses,
     });
-    if (!el) return null;
-    const d = el.staleDesktopAt?.getTime() ?? 0;
-    const mo = el.staleMobileAt?.getTime() ?? 0;
-    return new Date(Math.max(d, mo));
   }
 
   private async problemOf(
@@ -570,6 +602,72 @@ export class VoiceControlSettingsService {
     return { items };
   }
 
+  /**
+   * (заход 9, Р-З9-9; ТЗ §5-бис.13 п.7) Одноразовая ссылка «отчёт для
+   * разработчика»: строка `dev_report` (хеш токена, срок 72 ч, срез отчёта
+   * без ПД — `devReportOf`). Обмен мастера по ней невозможен (origin-
+   * заглушка, сессии нет). Новая ссылка гасит прежние неоткрытые ссылки
+   * этого отчёта; истёкшие ссылки сайта — удаляются.
+   */
+  async devLink(
+    m: AccountMembership,
+    siteId: string,
+    tid: string,
+  ): Promise<VoiceDevLinkView> {
+    const db = this.db(m);
+    await loadAssistSite(db, m.accountId, siteId);
+    const t = /^[A-Za-z0-9_-]{1,64}$/.test(tid)
+      ? await db.assistSiteVoiceTest.findFirst({
+          where: { id: tid, siteId, kind: 'wizard', reportedAt: { not: null } },
+          select: { id: true, host: true, report: true, reportedAt: true },
+        })
+      : null;
+    if (!t?.report) {
+      throw voiceControlError(
+        HttpStatus.NOT_FOUND,
+        'VOICE_CONTROL_TEST_NOT_FOUND',
+        'Отчёт не найден',
+      );
+    }
+    const now = this.now();
+    await db.assistSiteVoiceTest.deleteMany({
+      where: {
+        siteId,
+        kind: DEV_REPORT_KIND,
+        OR: [
+          { tokenExpiresAt: { lte: now } },
+          { usedAt: null, report: { path: ['src'], equals: t.id } },
+        ],
+      },
+    });
+    const token = randomBytes(24).toString('base64url');
+    const expiresAt = new Date(now.getTime() + DEV_REPORT_LIMITS.ttlMs);
+    const r = await db.assistSiteVoiceTest.create({
+      data: {
+        accountId: m.accountId,
+        siteId,
+        kind: DEV_REPORT_KIND,
+        host: t.host,
+        origin: DEV_REPORT_ORIGIN,
+        startedBy: m.memberId,
+        tokenHash: sha256Hex(token),
+        tokenExpiresAt: expiresAt,
+        report: devReportOf(t.report as unknown as WizardReport, {
+          src: t.id,
+          reportedAt: t.reportedAt,
+        }) as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    this.logger.log(
+      `voice dev-report link site=${siteId} test=${t.id} row=${r.id} member=${m.memberId}`,
+    );
+    return {
+      url: `${widgetOrigin(this.env)}${DEV_REPORT_PATH}/${token}`,
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
   async test(
     m: AccountMembership,
     siteId: string,
@@ -579,7 +677,9 @@ export class VoiceControlSettingsService {
     const { row } = await loadAssistSite(db, m.accountId, siteId);
     const t = /^[A-Za-z0-9_-]{1,64}$/.test(tid)
       ? await db.assistSiteVoiceTest.findFirst({
-          where: { id: tid, siteId },
+          // (заход 9, P3-2) Только отчёты мастера/автотеста: строки ссылок
+          // `dev_report` и прогоны мемо — не «отчёт мастера».
+          where: { id: tid, siteId, kind: { in: ['wizard', 'autotest'] } },
           select: { ...TEST_SELECT, report: true },
         })
       : null;

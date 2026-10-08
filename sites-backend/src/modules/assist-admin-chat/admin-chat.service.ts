@@ -27,7 +27,19 @@ import { maskSensitiveEcho } from '../../shared/assist-chat-core';
 import { claimUnits, readState } from '../assist-billing/public/entitlements';
 import { ASSIST_PLANS, siteDailyCapFromPlan } from '../assist-billing/plans';
 import { DIALOG_BASE_UNITS, DIALOG_IDLE_MS } from '../assist-billing/units';
-import { adminSpentToday } from '../assist-admin-mode/admin-budget';
+import {
+  type AdminTurnReservation,
+  adminBudgetRowMicroUsd,
+  adminSpentToday,
+  adminTurnEstimateMicroUsd,
+  reserveAdminTurn,
+  settleAdminTurn,
+} from '../assist-admin-mode/admin-budget';
+import {
+  effectivePlatformCapMicroUsd,
+  readWidgetPlatformSettings,
+} from '../../common/platform-settings';
+import { widgetPlatformDailyCapMicroUsd } from '../../config/widget-env';
 import { adminError } from '../assist-admin-mode/admin-errors';
 import { AdminModeService } from '../assist-admin-mode/admin-mode.service';
 import type { CallerCtx } from '../assist-admin-mode/connectors.service';
@@ -41,6 +53,7 @@ import {
 } from '../assist-admin-actions/proposals.service';
 import type { ActionLang } from '../assist-admin-actions/action-core';
 import { AdminAnswerService, type TurnResult } from './admin-answer.service';
+import { adminHistory } from './admin-prompt';
 
 /** Диалог сотрудника продолжается, если последняя активность не старше 8 ч (§4-бис.8). */
 export const ADMIN_CONVERSATION_IDLE_MS = 8 * 60 * 60 * 1000;
@@ -90,6 +103,11 @@ export interface AdminStateView {
    * после перезагрузки с тем же сроком (§4-бис.5), исполненные — с итогом.
    */
   proposals: ProposalView[];
+}
+
+/** `?lang=` маршрута: uk/ru/en или null (тогда — по последнему вопросу). */
+export function langParam(v: unknown): ActionLang | null {
+  return v === 'uk' || v === 'ru' || v === 'en' ? v : null;
 }
 
 /** Сотрудник «Админки» → действующее лицо предложений (язык — по вопросу). */
@@ -150,6 +168,11 @@ function view(r: {
 
 @Injectable()
 export class AdminChatService {
+  /** Тесты подменяют env (потолок платформы). */
+  env: NodeJS.ProcessEnv = process.env;
+  /** Оценка хода сверху (Р-З9-15); тесты — свою. */
+  turnEstimateMicroUsd = adminTurnEstimateMicroUsd();
+
   constructor(
     private readonly db: SitesDb,
     private readonly prisma: PrismaService,
@@ -206,7 +229,11 @@ export class AdminChatService {
     });
   }
 
-  async state(ctx: EmployeeCtx, now = new Date()): Promise<AdminStateView> {
+  async state(
+    ctx: EmployeeCtx,
+    now = new Date(),
+    lang: ActionLang | null = null,
+  ): Promise<AdminStateView> {
     const s = await this.assertUsable(ctx, now);
     const conv = await this.currentConversation(ctx, now);
     const msgs = conv
@@ -216,6 +243,11 @@ export class AdminChatService {
           take: 200,
         })
       : [];
+    // Аудит Э8 (5): язык подсказок карточек — явный `?lang=` или язык
+    // последнего вопроса сотрудника (как у ответа хода), иначе uk.
+    const lastQ = [...msgs].reverse().find((m) => m.role === 'employee');
+    const cardLang: ActionLang =
+      lang ?? (lastQ ? (questionLang(lastQ.text) as ActionLang) : 'uk');
     return {
       conversationId: conv?.id ?? null,
       version: conv?.stateVersion ?? 0,
@@ -231,6 +263,7 @@ export class AdminChatService {
         ctx.siteId,
         ctx.employeeRef,
         now,
+        cardLang,
       ),
     };
   }
@@ -270,8 +303,10 @@ export class AdminChatService {
    * секрет подписи) мог бы жечь модель без денежной границы. Потолок — тот
    * же, что у ответов «Сайта» по умолчанию (§7.3: себестоимость месячного
    * лимита тарифа / 10), но СВОЙ счётчик: сумма `costMicroUsd` ответов
-   * сотрудников сайта за UTC-сутки (без резерва: перерасход ≤ стоимость
-   * параллельных ходов, каждый ≤ 3 вызова модели).
+   * сотрудников сайта за UTC-сутки плюс строка дня `admin/<siteId>`
+   * (резервы ходов в полёте и оценки сорвавшихся ходов). Здесь — быстрая
+   * проверка без резерва (голосовое управление, F); ход чата резервирует
+   * (`reserveAdminTurn`, Р-З9-15).
    */
   async assertDailyBudget(ctx: EmployeeCtx, now: Date): Promise<void> {
     const st = await readState(this.prisma, ctx.accountId, now);
@@ -279,11 +314,12 @@ export class AdminChatService {
     // Э6-бис (б): голосовое управление «Админкой» — распознавание и планы
     // платят тот же суточный потолок (операции assist-admin-stt|ui-plan);
     // аудит Э6-бис (е): и lite-выбор мемо АМ-N (assist-admin-memo).
-    const spent = await adminSpentToday(
-      this.db.forAccount(ctx.accountId),
-      ctx.siteId,
-      now,
-    );
+    const spent =
+      (await adminSpentToday(
+        this.db.forAccount(ctx.accountId),
+        ctx.siteId,
+        now,
+      )) + (await adminBudgetRowMicroUsd(this.prisma, ctx.siteId, now));
     if (spent >= cap) {
       throw adminError(
         429,
@@ -414,124 +450,175 @@ export class AdminChatService {
           };
       }
     }
-    await this.assertDailyBudget(ctx, now);
-    if (
-      conv &&
-      now.getTime() - conv.lastActivityAt.getTime() > DIALOG_IDLE_MS
-    ) {
-      await this.claimDialog(ctx, now);
-    }
-    conv ??= await this.openConversation(ctx, now);
-    const history = (
-      await db.assistAdminMessage.findMany({
-        where: { conversationId: conv.id },
-        orderBy: { createdAt: 'desc' },
-        take: HISTORY_TURNS,
-        select: { role: true, text: true },
-      })
-    )
-      .reverse()
-      .map(
-        (m) =>
-          `${m.role === 'employee' ? 'Співробітник' : 'Помічник'}: ${m.text.slice(0, 500)}`,
+    // Р-З9-15: резерв хода «сайт + платформа» ДО модели (одна транзакция);
+    // снимается после записи ответа (finally ниже), сбой — держится.
+    const reservation = await this.reserveTurn(ctx, now);
+    let actual: number | null = null;
+    let modelStarted = false;
+    try {
+      if (
+        conv &&
+        now.getTime() - conv.lastActivityAt.getTime() > DIALOG_IDLE_MS
+      ) {
+        await this.claimDialog(ctx, now);
+      }
+      conv ??= await this.openConversation(ctx, now);
+      // Р-З9-19: роли с инструментами/действиями — без ответов по данным API.
+      const history = adminHistory(
+        (
+          await db.assistAdminMessage.findMany({
+            where: { conversationId: conv.id },
+            orderBy: { createdAt: 'desc' },
+            take: HISTORY_TURNS,
+            select: { role: true, text: true, answerPath: true },
+          })
+        ).reverse(),
+        ctx.role !== null,
       );
-    const qRow = await db.assistAdminMessage.create({
-      data: {
+      const qRow = await db.assistAdminMessage.create({
+        data: {
+          accountId: ctx.accountId,
+          siteId: ctx.siteId,
+          conversationId: conv.id,
+          role: 'employee',
+          text: q.slice(0, 4000),
+          flags: [],
+          clientRequestId,
+          createdAt: now,
+        },
+      });
+      const site = await db.site.findFirst({
+        where: { id: ctx.siteId },
+        select: { name: true },
+      });
+      const caller: CallerCtx = {
         accountId: ctx.accountId,
         siteId: ctx.siteId,
+        actor: ctx.employeeRef,
+        actorRole: ctx.customerRole,
+        actorExternal: ctx.actorExternal,
+        channel: ctx.channel,
         conversationId: conv.id,
-        role: 'employee',
-        text: q.slice(0, 4000),
-        flags: [],
-        clientRequestId,
-        createdAt: now,
-      },
-    });
-    const site = await db.site.findFirst({
-      where: { id: ctx.siteId },
-      select: { name: true },
-    });
-    const caller: CallerCtx = {
-      accountId: ctx.accountId,
-      siteId: ctx.siteId,
-      actor: ctx.employeeRef,
-      actorRole: ctx.customerRole,
-      actorExternal: ctx.actorExternal,
-      channel: ctx.channel,
-      conversationId: conv.id,
-    };
-    // Э8: мемо АМ-N (по номеру или фразе) — прямой путь без модели (§5-бис.17
-    // п.10, Р-68); права сотрудника — на каждую операцию мемо.
-    const lang = questionLang(q) as ActionLang;
-    const actor = actorOf(ctx, conv.id, lang);
-    const memo = ctx.role !== null ? await this.memos.match(actor, q) : null;
-    let turn: TurnResult;
-    if (memo) {
-      const r =
-        memo.kind === 'memo'
-          ? await this.memos.start(actor, memo, now)
-          : { text: this.memos.unknownText(lang, memo.number), proposal: null };
-      turn = {
-        text: r.text,
-        sources: [],
-        tools: [],
-        answerPath: r.proposal ? 'action' : 'tool',
-        flags: [memo.kind === 'memo' ? 'memo' : 'memo_missing'],
-        model: null,
-        inTokens: 0,
-        outTokens: 0,
-        costMicroUsd: 0,
-        learning: null,
-        proposal: r.proposal,
       };
-    } else {
-      turn = await this.answers.turn({
-        ctx: caller,
-        role: ctx.role,
-        question: q,
-        history,
-        siteName: site?.name ?? null,
-        instructions: s.instructions,
+      // Э8: мемо АМ-N (по номеру или фразе) — прямой путь без модели (§5-бис.17
+      // п.10, Р-68); права сотрудника — на каждую операцию мемо.
+      const lang = questionLang(q) as ActionLang;
+      const actor = actorOf(ctx, conv.id, lang);
+      modelStarted = true;
+      const memo = ctx.role !== null ? await this.memos.match(actor, q) : null;
+      let turn: TurnResult;
+      if (memo) {
+        const r =
+          memo.kind === 'memo'
+            ? await this.memos.start(actor, memo, now)
+            : {
+                text: this.memos.unknownText(lang, memo.number),
+                proposal: null,
+              };
+        turn = {
+          text: r.text,
+          sources: [],
+          tools: [],
+          answerPath: r.proposal ? 'action' : 'tool',
+          flags: [memo.kind === 'memo' ? 'memo' : 'memo_missing'],
+          model: null,
+          inTokens: 0,
+          outTokens: 0,
+          costMicroUsd: 0,
+          learning: null,
+          proposal: r.proposal,
+        };
+      } else {
+        turn = await this.answers.turn({
+          ctx: caller,
+          role: ctx.role,
+          question: q,
+          history,
+          siteName: site?.name ?? null,
+          instructions: s.instructions,
+        });
+      }
+      const aRow = await db.assistAdminMessage.create({
+        data: {
+          accountId: ctx.accountId,
+          siteId: ctx.siteId,
+          conversationId: conv.id,
+          role: 'assistant',
+          text: turn.text,
+          sources: turn.sources as unknown as Prisma.InputJsonValue,
+          tools: turn.tools as unknown as Prisma.InputJsonValue,
+          flags: turn.flags,
+          answerPath: turn.answerPath,
+          model: turn.model,
+          inTokens: turn.inTokens,
+          outTokens: turn.outTokens,
+          costMicroUsd: turn.costMicroUsd,
+          proposalId: turn.proposal?.id ?? null,
+          createdAt: new Date(now.getTime() + 1),
+        },
       });
-    }
-    const aRow = await db.assistAdminMessage.create({
-      data: {
-        accountId: ctx.accountId,
-        siteId: ctx.siteId,
-        conversationId: conv.id,
-        role: 'assistant',
-        text: turn.text,
-        sources: turn.sources as unknown as Prisma.InputJsonValue,
-        tools: turn.tools as unknown as Prisma.InputJsonValue,
-        flags: turn.flags,
-        answerPath: turn.answerPath,
-        model: turn.model,
-        inTokens: turn.inTokens,
-        outTokens: turn.outTokens,
-        costMicroUsd: turn.costMicroUsd,
-        proposalId: turn.proposal?.id ?? null,
-        createdAt: new Date(now.getTime() + 1),
-      },
-    });
-    const updated = await db.assistAdminConversation.update({
-      where: { id: conv.id },
-      data: { lastActivityAt: now, stateVersion: { increment: 1 } },
-      select: { stateVersion: true },
-    });
-    if (turn.learning) {
-      await this.enqueue(ctx, {
-        kind: turn.learning,
-        conversationId: conv.id,
-        messageId: aRow.id,
-        question: q,
-        answer: turn.answerPath === 'tool' ? null : turn.text,
+      const updated = await db.assistAdminConversation.update({
+        where: { id: conv.id },
+        data: { lastActivityAt: now, stateVersion: { increment: 1 } },
+        select: { stateVersion: true },
       });
+      if (turn.learning) {
+        await this.enqueue(ctx, {
+          kind: turn.learning,
+          conversationId: conv.id,
+          messageId: aRow.id,
+          question: q,
+          answer: turn.answerPath === 'tool' ? null : turn.text,
+        });
+      }
+      actual = turn.costMicroUsd;
+      return {
+        question: view(qRow),
+        answer: { ...view(aRow), proposal: turn.proposal },
+        version: updated.stateVersion,
+      };
+    } finally {
+      // Резерв снимается всегда (аудит пакета C): ход записан — факт из
+      // costMicroUsd ответа; отказ до модели (402 тарифа и т. п.) — 0; сбой
+      // ПОСЛЕ начала хода — оценка переносится в spent (деньги, вероятно,
+      // потрачены, а в ответ не записаны).
+      await settleAdminTurn(
+        this.prisma,
+        reservation,
+        actual !== null ? actual : modelStarted ? null : 0,
+      ).catch(() => undefined);
     }
-    return {
-      question: view(qRow),
-      answer: { ...view(aRow), proposal: turn.proposal },
-      version: updated.stateVersion,
-    };
+  }
+
+  /**
+   * Резерв хода (Р-З9-15): потолок сайта — `siteDailyCapFromPlan`, факт дня
+   * читается ВНУТРИ транзакции резерва под блокировкой строки дня
+   * (`reserveAdminTurn`), потолок платформы — тот же, что у «Сайта» (env +
+   * настройка админки платформы). Отказ — 429 `ADMIN_DAILY_BUDGET` до модели.
+   */
+  private async reserveTurn(
+    ctx: EmployeeCtx,
+    now: Date,
+  ): Promise<AdminTurnReservation> {
+    const st = await readState(this.prisma, ctx.accountId, now);
+    const r = await reserveAdminTurn(this.prisma, {
+      siteId: ctx.siteId,
+      siteCapMicroUsd: siteDailyCapFromPlan(st.planId),
+      platformCapMicroUsd: effectivePlatformCapMicroUsd(
+        widgetPlatformDailyCapMicroUsd(this.env),
+        await readWidgetPlatformSettings(this.prisma),
+      ),
+      estMicroUsd: this.turnEstimateMicroUsd,
+      now,
+    });
+    if (!r.ok) {
+      throw adminError(
+        429,
+        'ADMIN_DAILY_BUDGET',
+        'Суточный лимит помощника сотрудников исчерпан — продолжим завтра',
+      );
+    }
+    return r.reservation;
   }
 
   private async enqueue(

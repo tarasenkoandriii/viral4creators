@@ -7,6 +7,10 @@
  *   node scripts/t1/run.mjs audio-small   # мок-фикстуры + звук в Chromium двумя способами
  *   node scripts/t1/run.mjs audio-full    # ВЛАДЕЛЕЦ: SONIOX_API_KEY, синтез full + распознавание
  *                                         #   + весь набор стендов распознанными текстами
+ *   node scripts/t1/run.mjs transcript-live
+ *                                         # ВЛАДЕЛЕЦ: GEMINI_API_KEY — тот же набор стендов
+ *                                         #   с ЖИВОЙ моделью плана вместо фикстуры
+ *                                         #   (T1_FULL=1 — все 480; GEMINI_MODEL — модель)
  *   node scripts/t1/run.mjs pr            # unit + transcript + audio-small (каждый PR)
  *
  * Перед e2e — `npm run build` (globalSetup проверяет dist). Итог —
@@ -18,7 +22,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const level = process.argv[2] || 'pr';
-const LEVELS = ['unit', 'transcript', 'audio-small', 'audio-full', 'pr'];
+const LEVELS = [
+  'unit',
+  'transcript',
+  'transcript-live',
+  'audio-small',
+  'audio-full',
+  'pr',
+];
 if (!LEVELS.includes(level)) {
   console.error(`уровень: ${LEVELS.join(' | ')}`);
   process.exit(2);
@@ -82,6 +93,16 @@ if (level === 'audio-small' || level === 'pr') {
     '--stt=mock',
   ]);
   pw('e2e/voice-control-audio.spec.ts');
+}
+if (level === 'transcript-live') {
+  // Заход 9: качество ЖИВОЙ модели плана на Т-1 (пороги §5-бис.12 — те же).
+  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_GEMINI_API_KEY) {
+    console.error(
+      'transcript-live — у владельца: нужен GEMINI_API_KEY (или GOOGLE_GEMINI_API_KEY); модель — GEMINI_MODEL.'
+    );
+    process.exit(2);
+  }
+  pw('e2e/voice-control-stands.spec.ts', { T1_LIVE_MODEL: '1' });
 }
 if (level === 'audio-full') {
   if (!process.env.SONIOX_API_KEY) {

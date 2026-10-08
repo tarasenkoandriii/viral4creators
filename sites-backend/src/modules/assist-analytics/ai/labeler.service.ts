@@ -19,11 +19,15 @@
  *     сбой модели — `retry` (≤ 3);
  *  6. проверка кодом, lead score кодом (калибровка Pro — вероятность);
  *     answerQuality ≤ 2 / ungrounded_suspect → сигнал `wrong` очереди
- *     обучения (решение — человека, Р-33).
+ *     обучения (решение — человека, Р-33);
+ *  7. заход 9: `ASSIST_LABEL_BATCH=1` — вместо вызовов по одному одно
+ *     пакетное задание Gemini Batch API за тик (label-batch.ts; резерв —
+ *     оценка × доля цены пакета, ответ — следующими тиками, статус `batch`).
  * В лог — id и коды (§6.6), без текста.
  */
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { estimateCost } from '../../../shared/ai-pricing';
 import type { CronScope } from '../../../common/cron-scope';
@@ -41,7 +45,22 @@ import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { effectiveAnalyticsConfig } from '../analytics-config';
 import { normalizePath } from '../public/page-view';
 import { analyticsModel } from './ai-env';
-import { AnalyticsBudget } from './analytics-budget';
+import {
+  AnalyticsBudget,
+  analyticsPeriod,
+  type AnalyticsReservation,
+} from './analytics-budget';
+import {
+  GeminiLabelBatch,
+  LABEL_BATCH_POLLS_PER_TICK,
+  LABEL_BATCH_TEMP_PREFIX,
+  LABEL_BATCH_STALE_MS,
+  labelBatchEnabled,
+  labelBatchPriceFactor,
+  type LabelBatchClient,
+  type LabelBatchPoll,
+  type LabelBatchResult,
+} from './label-batch';
 import {
   LABEL_LIMITS,
   LABEL_PROMPT_VERSION,
@@ -80,6 +99,8 @@ export interface LabelTickResult {
   skipped: number;
   retry: number;
   budgetStopped: number;
+  /** Отправлено пакетным заданием (ASSIST_LABEL_BATCH=1). */
+  batched: number;
 }
 
 interface Candidate {
@@ -95,6 +116,28 @@ interface Candidate {
   attempts: number | null;
   analytics: unknown;
   siteSummary: unknown;
+}
+
+interface LabelFacts {
+  handoff: boolean;
+  lead: boolean;
+  converted: boolean;
+  direct: boolean;
+  answers: bigint;
+  visitor: bigint;
+  down: boolean;
+  repeat: boolean;
+  lastAnswerId: string | null;
+  firstQuestion: string | null;
+}
+
+/** Подготовленный к модели диалог (вход, промпт, оценка, вес выборки). */
+interface Prepared {
+  f: LabelFacts;
+  weight: number;
+  input: LabelInput;
+  prompt: { system: string; user: string };
+  est: number;
 }
 
 interface SiteCtx {
@@ -152,6 +195,8 @@ export class ConversationLabeler {
   private readonly logger = new Logger(ConversationLabeler.name);
   env: NodeJS.ProcessEnv = process.env;
   now: () => Date = () => new Date();
+  /** Пакетный клиент (ASSIST_LABEL_BATCH=1); тесты подставляют подделку. */
+  batch: LabelBatchClient | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -176,6 +221,7 @@ export class ConversationLabeler {
       skipped: 0,
       retry: 0,
       budgetStopped: 0,
+      batched: 0,
     };
     this.budget.env = this.env;
     const m = analyticsModel(this.env);
@@ -209,6 +255,23 @@ export class ConversationLabeler {
       opts.scope ? opts.scope.siteIds : null,
       Math.max(opts.max * 4, 50),
     );
+    // Пакетный режим (заход 9): за выключателем; задания, отправленные до
+    // выключения, всё равно забираются (иначе резерв повис бы).
+    if (labelBatchEnabled(this.env)) {
+      this.batch ??= new GeminiLabelBatch();
+      await this.batchTick(
+        rows,
+        res,
+        { model: m.model, now, deadline: opts.deadline, max: opts.max },
+        opts.scope,
+      );
+      this.logResult(res);
+      return res;
+    }
+    if (await this.hasBatches(opts.scope)) {
+      this.batch ??= new GeminiLabelBatch();
+      await this.collectBatches(this.batch, res, now, opts.scope);
+    }
     const sites = new Map<string, SiteCtx>();
     let done = 0;
     for (const c of rows) {
@@ -236,12 +299,25 @@ export class ConversationLabeler {
         );
       }
     }
-    if (res.labeled || res.failed || res.budgetStopped) {
+    this.logResult(res);
+    return res;
+  }
+
+  private logResult(res: LabelTickResult): void {
+    if (res.labeled || res.failed || res.budgetStopped || res.batched) {
       this.logger.log(
-        `разметка: ok ${res.labeled}, failed ${res.failed}, skipped ${res.skipped}, retry ${res.retry}, бюджет ${res.budgetStopped}`,
+        `разметка: ok ${res.labeled}, failed ${res.failed}, skipped ${res.skipped}, retry ${res.retry}, бюджет ${res.budgetStopped}, в пакете ${res.batched}`,
       );
     }
-    return res;
+  }
+
+  private async hasBatches(scope?: CronScope): Promise<boolean> {
+    const [r] = await this.prisma.$queryRawUnsafe<Array<{ e: boolean }>>(
+      `SELECT EXISTS (SELECT 1 FROM "sites"."assist_site_conversation_labels"
+        WHERE "status" = 'batch' AND ($1::text[] IS NULL OR "siteId" = ANY($1::text[]))) AS e`,
+      scope ? scope.siteIds : null,
+    );
+    return r?.e === true;
   }
 
   private async siteCtx(c: Candidate, now: Date): Promise<SiteCtx> {
@@ -306,21 +382,8 @@ export class ConversationLabeler {
   }
 
   /** Факты диалога из кода (§5-тер.3 «признаки из кода»). */
-  private async facts(c: Candidate) {
-    const [f] = await this.prisma.$queryRawUnsafe<
-      Array<{
-        handoff: boolean;
-        lead: boolean;
-        converted: boolean;
-        direct: boolean;
-        answers: bigint;
-        visitor: bigint;
-        down: boolean;
-        repeat: boolean;
-        lastAnswerId: string | null;
-        firstQuestion: string | null;
-      }>
-    >(
+  private async facts(c: Candidate): Promise<LabelFacts> {
+    const [f] = await this.prisma.$queryRawUnsafe<Array<LabelFacts>>(
       `SELECT
          EXISTS (SELECT 1 FROM "sites"."assist_site_handoffs" h
                   WHERE h."conversationId" = $1 AND h."state" <> 'cancelled') AS handoff,
@@ -357,12 +420,15 @@ export class ConversationLabeler {
     return f;
   }
 
-  private async labelOne(
+  /**
+   * Подготовка диалога к разметке: факты кода, выборка, замаскированный
+   * вход и промпт. `skipped` — уже записан (вне выборки / нет вопроса).
+   */
+  private async prepare(
     c: Candidate,
     ctx: SiteCtx,
     model: string,
-    now: Date,
-  ): Promise<'ok' | 'failed' | 'skipped' | 'retry' | 'budget'> {
+  ): Promise<{ kind: 'skipped' } | ({ kind: 'ready' } & Prepared)> {
     const f = await this.facts(c);
     const priority = f.converted || f.handoff || f.lead || f.down;
     let weight = 1;
@@ -380,7 +446,7 @@ export class ConversationLabeler {
           model: null,
           attempts: c.attempts ?? 0,
         });
-        return 'skipped';
+        return { kind: 'skipped' };
       }
       weight = SAMPLE_MOD;
     }
@@ -412,7 +478,7 @@ export class ConversationLabeler {
         model: null,
         attempts: c.attempts ?? 0,
       });
-      return 'skipped';
+      return { kind: 'skipped' };
     }
     const input: LabelInput = {
       turns,
@@ -440,6 +506,18 @@ export class ConversationLabeler {
       },
       this.env,
     ).costMicroUsd;
+    return { kind: 'ready', f, weight, input, prompt, est };
+  }
+
+  private async labelOne(
+    c: Candidate,
+    ctx: SiteCtx,
+    model: string,
+    now: Date,
+  ): Promise<'ok' | 'failed' | 'skipped' | 'retry' | 'budget'> {
+    const prep = await this.prepare(c, ctx, model);
+    if (prep.kind === 'skipped') return 'skipped';
+    const { input, prompt, est, weight } = prep;
     let attempts = c.attempts ?? 0;
     let cost = 0;
     let label: LabelResult | null = null;
@@ -517,6 +595,19 @@ export class ConversationLabeler {
       await this.write(c, { status: 'failed', weight, model, attempts, cost });
       return 'failed';
     }
+    await this.complete(c, ctx, prep, label, { model, attempts, cost });
+    return 'ok';
+  }
+
+  /** Lead score кодом, запись разметки и сигнал очереди обучения. */
+  private async complete(
+    c: Candidate,
+    ctx: SiteCtx,
+    prep: Prepared,
+    label: LabelResult,
+    p: { model: string; attempts: number; cost: number },
+  ): Promise<void> {
+    const { f, input, weight } = prep;
     // Инъекция (аудит Э3-бис): посетитель, просивший «оценить его горячим»,
     // мог сдвинуть и stage/сигналы — тот же ответ модели. Score тогда — только
     // по признакам кода (лид, клик, страница, длина, повтор); разметка
@@ -543,9 +634,9 @@ export class ConversationLabeler {
     await this.write(c, {
       status: label.injectionSuspect ? 'injection_suspect' : 'ok',
       weight,
-      model,
-      attempts,
-      cost,
+      model: p.model,
+      attempts: p.attempts,
+      cost: p.cost,
       label,
       lead: {
         score: score.score,
@@ -579,7 +670,447 @@ export class ConversationLabeler {
         embedding: null,
       });
     }
-    return 'ok';
+  }
+
+  // ── пакетный режим (заход 9, ASSIST_LABEL_BATCH=1) ──────────────────
+
+  /**
+   * Тик пакетного режима: забрать готовые задания, затем отправить новое
+   * одним заданием (резерв по каждому диалогу — оценка × доля цены).
+   */
+  private async batchTick(
+    rows: Candidate[],
+    res: LabelTickResult,
+    p: { model: string; now: Date; deadline: number; max: number },
+    scope?: CronScope,
+  ): Promise<void> {
+    const client = this.batch as LabelBatchClient;
+    await this.collectBatches(client, res, p.now, scope);
+    // Отправленные этим же тиком строки в выборку не попали (статус batch).
+    const factor = labelBatchPriceFactor(this.env);
+    const sites = new Map<string, SiteCtx>();
+    const queued: Array<{
+      c: Candidate;
+      rsv: AnalyticsReservation;
+      reqKey: string;
+      est: number;
+      weight: number;
+      system: string;
+      user: string;
+    }> = [];
+    for (const c of rows) {
+      if (queued.length >= p.max || Date.now() > p.deadline) break;
+      let ctx = sites.get(c.siteId);
+      if (!ctx) {
+        ctx = await this.siteCtx(c, p.now);
+        sites.set(c.siteId, ctx);
+      }
+      if (!ctx.allowed || ctx.stopped) continue;
+      try {
+        const prep = await this.prepare(c, ctx, p.model);
+        if (prep.kind === 'skipped') {
+          res.skipped++;
+          continue;
+        }
+        const est = Math.max(1, Math.ceil(prep.est * factor));
+        const rsv = await this.budget.reserve(
+          c.accountId,
+          c.siteId,
+          est,
+          ctx.capMicroUsd,
+          p.now,
+        );
+        if (rsv.result !== 'ok' || !rsv.reservation) {
+          res.budgetStopped++;
+          ctx.stopped = true;
+          continue;
+        }
+        ctx.spentMicroUsd += est;
+        queued.push({
+          c,
+          rsv: rsv.reservation,
+          reqKey: c.id,
+          est,
+          weight: prep.weight,
+          system: prep.prompt.system,
+          user: prep.prompt.user,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `разметка ${c.id} не подготовлена (${(e as Error | null)?.name ?? 'Error'})`,
+        );
+      }
+    }
+    if (!queued.length) return;
+    // Аудит P3-6: строки «в пакете» пишутся ДО отправки (временное имя) —
+    // сбой записи после отправки больше не может отправить диалог второй
+    // раз; не принятое задание откатывает строки и возвращает резерв.
+    const temp = `${LABEL_BATCH_TEMP_PREFIX}${randomUUID()}`;
+    const written: typeof queued = [];
+    const undo = async () => {
+      for (const q of written) {
+        await this.write(q.c, {
+          status: 'retry',
+          weight: q.weight,
+          model: null,
+          attempts: q.c.attempts ?? 0,
+        });
+      }
+      for (const q of queued) await this.budget.settle(q.rsv, 0);
+    };
+    let name: string;
+    try {
+      for (const q of queued) {
+        // Резерв — в costMicroUsd, момент резерва — labeledAt.
+        await this.write(q.c, {
+          status: 'batch',
+          weight: q.weight,
+          model: p.model,
+          attempts: (q.c.attempts ?? 0) + 1,
+          cost: q.est,
+          batchJob: temp,
+          at: p.now,
+        });
+        written.push(q);
+      }
+      name = await client.submit(
+        p.model,
+        queued.map((q) => ({
+          key: q.reqKey,
+          system: q.system,
+          user: q.user,
+          maxOutputTokens: LABEL_LIMITS.maxOutputTokens,
+          // Резерв в ответе — снять его, даже если диалог удалят (forget,
+          // ретенция) раньше, чем придёт ответ.
+          meta: {
+            a: q.c.accountId,
+            s: q.c.siteId,
+            e: String(q.est),
+            t: p.now.toISOString(),
+          },
+        })),
+      );
+    } catch (e) {
+      // Задание не принято — денег не взяли: строки назад в очередь,
+      // резерв возвращается.
+      await undo();
+      this.logger.warn(
+        `пакет разметки не отправлен (${(e as Error | null)?.name ?? 'Error'})`,
+      );
+      return;
+    }
+    await this.prisma.assistSiteConversationLabel.updateMany({
+      where: { batchJob: temp, status: 'batch' },
+      data: { batchJob: name },
+    });
+    res.batched += queued.length;
+    this.logger.log(`пакет разметки ${name}: диалогов ${queued.length}`);
+  }
+
+  /** Готовые пакетные задания → разметка; просроченные/сбойные → retry. */
+  private async collectBatches(
+    client: LabelBatchClient,
+    res: LabelTickResult,
+    now: Date,
+    scope?: CronScope,
+  ): Promise<void> {
+    const pending = await this.prisma.$queryRawUnsafe<
+      Array<{ batchJob: string; startedAt: Date }>
+    >(
+      `SELECT "batchJob", min("labeledAt") AS "startedAt"
+         FROM "sites"."assist_site_conversation_labels"
+        WHERE "status" = 'batch' AND "batchJob" IS NOT NULL
+          AND ($1::text[] IS NULL OR "siteId" = ANY($1::text[]))
+        GROUP BY "batchJob" ORDER BY min("labeledAt") LIMIT $2`,
+      scope ? scope.siteIds : null,
+      LABEL_BATCH_POLLS_PER_TICK,
+    );
+    const factor = labelBatchPriceFactor(this.env);
+    for (const job of pending) {
+      const pollSafe = async (): Promise<LabelBatchPoll | null> => {
+        try {
+          return await client.poll(job.batchJob);
+        } catch {
+          return null;
+        }
+      };
+      const temp = job.batchJob.startsWith(LABEL_BATCH_TEMP_PREFIX);
+      const stale =
+        now.getTime() - job.startedAt.getTime() > LABEL_BATCH_STALE_MS;
+      // Временное имя (сбой между отправкой и записью имени): опросить нечего;
+      // после срока — retry без возврата резерва (задание могло уйти).
+      if (temp && !stale) continue;
+      let poll: LabelBatchPoll | null = temp
+        ? { state: 'ended', results: [] }
+        : await pollSafe();
+      if ((!poll || poll.state === 'pending') && stale) {
+        // Просрочено (аудит P2-2): отменить и сверить состояние ещё раз.
+        try {
+          await client.cancel(job.batchJob);
+        } catch {
+          /* сверка ниже решит */
+        }
+        poll = await pollSafe();
+        // Состояние неясно (всё ещё идёт / Google не ответил): резерв не
+        // возвращаем — задание может доработать и быть оплачено.
+        if (!poll || poll.state === 'pending') {
+          poll = { state: 'ended', results: [] };
+        }
+      }
+      if (!poll || poll.state === 'pending') continue;
+      const rows = await this.batchRows(job.batchJob);
+      const done = poll;
+      const results = new Map(
+        done.state === 'failed'
+          ? []
+          : done.results.map((r) => [r.key, r] as const),
+      );
+      // Без ответа резерв возвращается только при подтверждённом сбое или у
+      // готового задания (запрос не попал в ответ — не оплачен).
+      const refund = done.state !== 'ended';
+      const sites = new Map<string, SiteCtx>();
+      let broken = 0;
+      for (const row of rows) {
+        try {
+          const out = await this.collectOne(
+            row,
+            results.get(row.c.id) ?? null,
+            sites,
+            factor,
+            now,
+            refund,
+          );
+          res[out]++;
+        } catch (e) {
+          broken++;
+          this.logger.warn(
+            `пакетная разметка ${row.c.id} не записана (${(e as Error | null)?.name ?? 'Error'})`,
+          );
+        }
+      }
+      // Ответы диалогов, удалённых до ответа (forget, ретенция): строки
+      // разметки ушли каскадом, резерв — по метаданным запроса (аудит P3-6).
+      // Только когда все строки задания закрыты: иначе задание опросят снова
+      // и резерв закрылся бы дважды.
+      if (broken || !results.size) continue;
+      const alive = new Set(
+        (
+          await this.prisma.assistSiteConversationLabel.findMany({
+            where: { conversationId: { in: [...results.keys()] } },
+            select: { conversationId: true },
+          })
+        ).map((x) => x.conversationId),
+      );
+      for (const r of results.values()) {
+        if (alive.has(r.key)) continue;
+        try {
+          await this.settleOrphan(r, factor);
+        } catch (e) {
+          this.logger.warn(
+            `резерв удалённого диалога не закрыт (${(e as Error | null)?.name ?? 'Error'})`,
+          );
+        }
+      }
+    }
+  }
+
+  /** Резерв диалога, удалённого до ответа пакета: расход фактом × доля. */
+  private async settleOrphan(
+    r: LabelBatchResult,
+    factor: number,
+  ): Promise<void> {
+    const m = r.meta ?? {};
+    const est = Number(m.e);
+    const at = new Date(m.t ?? '');
+    if (!m.a || !m.s || !Number.isFinite(est) || Number.isNaN(at.getTime())) {
+      return;
+    }
+    const model = analyticsModel(this.env);
+    const price = model.ok
+      ? estimateCost(
+          model.model,
+          {
+            inputTokens: r.inputTokens,
+            cachedInputTokens: r.cachedInputTokens,
+            outputTokens: r.outputTokens,
+          },
+          this.env,
+        ).costMicroUsd
+      : est / factor;
+    const cost = Math.round(price * factor);
+    if (model.ok && (r.inputTokens || r.outputTokens)) {
+      // Расход платформы виден и без диалога (сайт мог быть удалён — тогда
+      // строки нет, резерв закрывается всё равно).
+      await this.prisma.siteAiUsage
+        .createMany({
+          data: [
+            {
+              accountId: m.a,
+              siteId: m.s,
+              product: 'assist',
+              provider: 'GEMINI',
+              operation: 'assist-label',
+              model: model.model,
+              inputTokens: r.inputTokens,
+              cachedInputTokens: r.cachedInputTokens,
+              outputTokens: r.outputTokens,
+              calls: 1,
+              costMicroUsd: cost,
+              pricingVersion: `batch${factor}`,
+              unpriced: false,
+            },
+          ],
+        })
+        .catch(() => undefined);
+    }
+    await this.budget.settle(
+      {
+        accountId: m.a,
+        siteId: m.s,
+        period: analyticsPeriod(at),
+        day: at.toISOString().slice(0, 10),
+        est,
+      },
+      cost,
+    );
+  }
+
+  private async batchRows(job: string): Promise<
+    Array<{
+      c: Candidate;
+      model: string;
+      reserved: number;
+      reservedAt: Date;
+      weight: number;
+    }>
+  > {
+    const rows = await this.prisma.$queryRawUnsafe<
+      Array<
+        Candidate & {
+          model: string | null;
+          reserved: number;
+          reservedAt: Date;
+          weight: number;
+        }
+      >
+    >(
+      `SELECT c."id", c."accountId", c."siteId", c."pageUrl", c."locale", c."voice",
+              c."openedBy", c."visitHash", c."createdAt", l."attempts", a."analytics",
+              a."siteSummary", l."model", l."costMicroUsd" AS reserved,
+              l."labeledAt" AS "reservedAt", l."weight"
+         FROM "sites"."assist_site_conversation_labels" l
+         JOIN "sites"."assist_site_conversations" c ON c."id" = l."conversationId"
+         JOIN "sites"."assist_sites" a ON a."siteId" = c."siteId"
+        WHERE l."status" = 'batch' AND l."batchJob" = $1`,
+      job,
+    );
+    return rows.map((r) => ({
+      c: r,
+      model: r.model ?? '',
+      reserved: Number(r.reserved),
+      reservedAt: r.reservedAt,
+      weight: Number(r.weight),
+    }));
+  }
+
+  private async collectOne(
+    row: {
+      c: Candidate;
+      model: string;
+      reserved: number;
+      reservedAt: Date;
+      weight: number;
+    },
+    result: LabelBatchResult | null,
+    sites: Map<string, SiteCtx>,
+    factor: number,
+    now: Date,
+    refund: boolean,
+  ): Promise<'labeled' | 'failed' | 'retry'> {
+    const { c } = row;
+    const rsv: AnalyticsReservation = {
+      accountId: c.accountId,
+      siteId: c.siteId,
+      period: analyticsPeriod(row.reservedAt),
+      day: row.reservedAt.toISOString().slice(0, 10),
+      est: row.reserved,
+    };
+    const attempts = c.attempts ?? 1;
+    const giveUp = attempts >= LABEL_MAX_ATTEMPTS ? 'failed' : 'retry';
+    let cost = 0;
+    if (result) {
+      // Расход по факту токенов × доля цены пакета (ПРОВЕРИТЬ у Google).
+      const est = estimateCost(
+        row.model,
+        {
+          inputTokens: result.inputTokens,
+          cachedInputTokens: result.cachedInputTokens,
+          outputTokens: result.outputTokens,
+        },
+        this.env,
+      );
+      cost = Math.round(est.costMicroUsd * factor);
+      if (result.inputTokens || result.outputTokens) {
+        await this.prisma.siteAiUsage.createMany({
+          data: [
+            {
+              accountId: c.accountId,
+              siteId: c.siteId,
+              product: 'assist',
+              provider: 'GEMINI',
+              operation: 'assist-label',
+              model: row.model,
+              inputTokens: result.inputTokens,
+              cachedInputTokens: result.cachedInputTokens,
+              outputTokens: result.outputTokens,
+              calls: 1,
+              costMicroUsd: cost,
+              pricingVersion: `${est.pricingVersion}+batch${factor}`,
+              unpriced: est.unpriced,
+            },
+          ],
+        });
+      }
+    }
+    // Резерв → факт. Нет ответа: подтверждённый сбой — возврат (денег не
+    // взяли); неясно (отменено/истекло) — резерв остаётся расходом.
+    if (result || refund) await this.budget.settle(rsv, cost);
+    if (!result || result.text === null) {
+      await this.write(c, {
+        status: giveUp,
+        weight: row.weight,
+        model: row.model,
+        attempts,
+        cost,
+      });
+      return giveUp === 'failed' ? 'failed' : 'retry';
+    }
+    let ctx = sites.get(c.siteId);
+    if (!ctx) {
+      ctx = await this.siteCtx(c, now);
+      sites.set(c.siteId, ctx);
+    }
+    // Вход — тот же, что ушёл в пакет (проверка ответа сверяет словарь и темы).
+    const prep = await this.prepare(c, { ...ctx, capMicroUsd: 0 }, row.model);
+    if (prep.kind === 'skipped') return 'retry';
+    const parsed = parseLabel(result.text, prep.input);
+    if (!parsed.ok) {
+      // Невалидный ответ: следующий тик отправит диалог ещё раз (≤ 3 попыток).
+      await this.write(c, {
+        status: giveUp,
+        weight: row.weight,
+        model: row.model,
+        attempts,
+        cost,
+      });
+      return giveUp === 'failed' ? 'failed' : 'retry';
+    }
+    await this.complete(c, ctx, { ...prep, weight: row.weight }, parsed.label, {
+      model: row.model,
+      attempts,
+      cost,
+    });
+    return 'labeled';
   }
 
   private async write(
@@ -597,6 +1128,10 @@ export class ConversationLabeler {
         features: unknown;
         prob: number | null;
       };
+      /** Пакетное задание (статус `batch`); иначе снимается. */
+      batchJob?: string;
+      /** Время записи (пакет: момент резерва — период и сутки бюджета). */
+      at?: Date;
     },
   ): Promise<void> {
     const l = p.label;
@@ -628,8 +1163,13 @@ export class ConversationLabeler {
       weight: p.weight,
       attempts: p.attempts,
       costMicroUsd: Math.round(p.cost ?? 0),
-      labeledAt: this.now(),
+      batchJob: p.batchJob ?? null,
+      labeledAt: p.at ?? this.now(),
     };
+    // «Связан с визитом» (Р-З9-26): флаг переживает обнуление visitHash
+    // диалога через 31 день — калибровка читает его. Снять флаг повторная
+    // разметка не может (хеш мог уже обнулиться).
+    const linked = c.visitHash !== null;
     await this.prisma.assistSiteConversationLabel.upsert({
       where: { conversationId: c.id },
       create: {
@@ -637,9 +1177,10 @@ export class ConversationLabeler {
         accountId: c.accountId,
         siteId: c.siteId,
         ...data,
+        linked,
       },
       // Исправление человека (humanOverride) не затирается повторной разметкой.
-      update: data,
+      update: linked ? { ...data, linked } : data,
     });
   }
 }

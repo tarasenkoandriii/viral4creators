@@ -71,6 +71,8 @@ export interface VcTexts extends Pick<Dict, VcKeys> {
   vtDry: string;
   vtDryOk: string;
   vtDryBad: string;
+  /** Итог сухого прогона команды после отметки каждого шага. */
+  vtDryOf: string;
   vtSafeRun: string;
   vtReport: string;
   vtResult: Record<'pass' | 'partial' | 'fail', string>;
@@ -173,6 +175,7 @@ const uk: VcTexts = {
   vtDry: 'Сухий прогін',
   vtDryOk: 'Вірно',
   vtDryBad: 'Не те',
+  vtDryOf: 'Вірно {ok} з {n} кроків',
   vtSafeRun: 'Виконати',
   vtReport: 'Сформувати звіт',
   vtResult: {
@@ -285,6 +288,7 @@ const ru: VcTexts = {
   vtDry: 'Сухой прогон',
   vtDryOk: 'Верно',
   vtDryBad: 'Не то',
+  vtDryOf: 'Верно {ok} из {n} шагов',
   vtSafeRun: 'Выполнить',
   vtReport: 'Сформировать отчёт',
   vtResult: {
@@ -397,6 +401,7 @@ const en: VcTexts = {
   vtDry: 'Dry run',
   vtDryOk: 'Correct',
   vtDryBad: 'Wrong',
+  vtDryOf: '{ok} of {n} steps correct',
   vtSafeRun: 'Run',
   vtReport: 'Build the report',
   vtResult: {

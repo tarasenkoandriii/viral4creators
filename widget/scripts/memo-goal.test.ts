@@ -124,6 +124,31 @@ async function main() {
     ),
     null
   );
+  // Заход 9: «элемента нет» — только вместе с ok=false и только `true`.
+  assert.deepEqual(
+    parseParentMessage(
+      envelope({
+        type: 'ui-goal',
+        planId: 'p1',
+        i: 2,
+        ok: false,
+        missing: true,
+      })
+    ),
+    { type: 'ui-goal', planId: 'p1', i: 2, ok: false, missing: true }
+  );
+  assert.deepEqual(
+    parseParentMessage(
+      envelope({ type: 'ui-goal', planId: 'p1', i: 2, ok: true, missing: true })
+    ),
+    { type: 'ui-goal', planId: 'p1', i: 2, ok: true }
+  );
+  assert.deepEqual(
+    parseParentMessage(
+      envelope({ type: 'ui-goal', planId: 'p1', i: 2, ok: false, missing: 1 })
+    ),
+    { type: 'ui-goal', planId: 'p1', i: 2, ok: false }
+  );
   assert.equal(
     parseParentMessage(
       envelope({ type: 'ui-goal', planId: 'p/1', i: 2, ok: true })
@@ -181,6 +206,41 @@ async function main() {
     assert.deepEqual(posts, [
       { type: 'ui-goal', planId: 'p2', i: 1, ok: true },
     ]);
+  }
+  // Заход 9: элемента цели нет вовсе (ни разметки, ни подписи) — `missing`.
+  {
+    installFakeDom();
+    const { host, posts } = mkHost();
+    goal(
+      { planId: 'p6', goal: { i: 1, count: { id: 'nav-cart', t: '', eq: 1 } } },
+      host
+    );
+    await wait(200);
+    assert.deepEqual(posts, [
+      { type: 'ui-goal', planId: 'p6', i: 1, ok: false, missing: true },
+    ]);
+  }
+  // Заход 9 (P3-6): ждём 0, значка по разметке нет (тема прячет пустой) —
+  // «да»; по подписи без значка — «нечем проверить» (missing), не «да».
+  {
+    installFakeDom();
+    const { host, posts } = mkHost();
+    goal(
+      { planId: 'p7', goal: { i: 1, count: { id: 'nav-cart', t: '', eq: 0 } } },
+      host
+    );
+    goal(
+      { planId: 'p7', goal: { i: 2, count: { id: null, t: 'кошик', eq: 0 } } },
+      host
+    );
+    await wait(200);
+    assert.deepEqual(
+      posts.map((p) => [p.i, p.ok, p.missing ?? false]),
+      [
+        [1, true, false],
+        [2, false, true],
+      ]
+    );
   }
   // ── поле = слот: по подписи и по разметке; список; пароль не читаем ──
   {
@@ -273,6 +333,7 @@ async function main() {
   // ── iframe: «готово» шага цели — только после `ui-goal` ok ──
   await iframeFlow(true);
   await iframeFlow(false);
+  await iframeFlow('missing');
   console.log(
     'memo-goal: порт счётчика/подписи, ui-goal, повторы до обновления, поле/список, пароль не читается, iframe ждёт проверку — ok'
   );
@@ -307,7 +368,7 @@ const RAWSTEP = (
 });
 
 /** Контроллер плана iframe: шаг цели со счётчиком → `ui-undo`+goal → итог. */
-async function iframeFlow(ok: boolean) {
+async function iframeFlow(ok: boolean | 'missing') {
   let ui: UiPlanUi = uiPlanOff();
   const feed: string[] = [];
   const toParent: Array<Record<string, unknown>> = [];
@@ -426,17 +487,22 @@ async function iframeFlow(ok: boolean) {
   pc.onParent({ type: 'ui-goal', planId: 'p1', i: 0, ok: true });
   await wait(5);
   assert.equal(calls.length, 0);
-  pc.onParent({ type: 'ui-goal', planId: 'p1', i: 1, ok });
+  pc.onParent(
+    ok === 'missing'
+      ? { type: 'ui-goal', planId: 'p1', i: 1, ok: false, missing: true }
+      : { type: 'ui-goal', planId: 'p1', i: 1, ok }
+  );
   await wait(10);
   assert.deepEqual(
     calls.map((c) => c.body),
     [
-      ok
+      ok === true
         ? { index: 1, result: 'done', reason: null, url: null, durationMs: 1 }
         : {
             index: 1,
             result: 'failed',
-            reason: 'expect',
+            // Заход 9: элемента цели нет — сервер ставит цели `unknown`.
+            reason: ok === 'missing' ? 'goal_unseen' : 'expect',
             url: null,
             durationMs: 1,
           },
@@ -444,14 +510,16 @@ async function iframeFlow(ok: boolean) {
   );
   assert.ok(
     feed.includes(
-      ok
+      ok === true
         ? 'Готово: Товар у кошику.'
-        : 'Не дійшов до мети «Товар у кошику» — перевірте сторінку.'
+        : ok === 'missing'
+          ? 'Кроки виконано — перевірте, чи вийшло: «Товар у кошику».'
+          : 'Не дійшов до мети «Товар у кошику» — перевірте сторінку.'
     ),
     feed.join(' | ')
   );
   // Не «готово» при отказе проверки.
-  if (!ok) assert.ok(!feed.some((x) => x.startsWith('Готово')));
+  if (ok !== true) assert.ok(!feed.some((x) => x.startsWith('Готово')));
 }
 
 let finished = false;

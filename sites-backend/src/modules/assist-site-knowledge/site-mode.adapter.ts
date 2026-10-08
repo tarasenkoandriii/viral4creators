@@ -27,6 +27,8 @@ export function siteModeAdapter(
     mode: 'site',
     api,
     urlPurpose: 'assist-crawl',
+    // Р-З9-24: хост «Админки» — не источник знаний «Сайта» (ТЗ §10, К-9).
+    urlHostRole: 'public',
     requirePublicConfirm: true,
     fileCreateExtra: (now) => ({ publicConfirmedAt: now }),
     rows(accountId: string): ModeRows {

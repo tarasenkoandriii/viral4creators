@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { formatDate, useAsync, useKit } from '../../kit';
+import { ApiError, formatDate, useAsync, useKit } from '../../kit';
 import {
   Alert,
   Badge,
@@ -15,7 +15,7 @@ import type {
   LinkedOperationView,
 } from '../../lib/admin-mode-api';
 import type { MemoView } from '../../lib/admin-actions-api';
-import { useActionsTexts } from '../../lib/admin-mode-view';
+import { useActionsTexts, useAdminTexts } from '../../lib/admin-mode-view';
 import { useAssist } from '../../lib/assist-context';
 import { useErrorText } from '../../lib/use-error-text';
 import {
@@ -207,6 +207,10 @@ export function OperationActionSettings({
               </option>
             ))}
           </select>
+          {/* Э8-хвост (4): сухой прогон `native` доверяет API заказчика. */}
+          <span className="block text-xs text-amber-700 mt-1">
+            {t.op.dryRunWarn}
+          </span>
         </label>
       )}
       {(nums.length > 0 || o.amountParam) && (
@@ -299,6 +303,7 @@ export function SigningSecret({
   const { adminActions } = useAssist();
   const { dict } = useKit();
   const t = useActionsTexts();
+  const adminT = useAdminTexts();
   const errText = useErrorText();
   const [secret, setSecret] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -323,12 +328,21 @@ export function SigningSecret({
         variant="outline"
         onClick={() =>
           void adminActions
-            .signingSecret(siteId, c.id)
+            // Р-З9-18: выпуск, который видит экран (null — секрета не было).
+            .signingSecret(siteId, c.id, c.signing.set ? c.signing.setAt : null)
             .then((r) => {
               setSecret(r.secret);
               onChange();
             })
-            .catch((e) => setErr(errText(e)))
+            .catch((e) => {
+              if (e instanceof ApiError && e.code === 'ADMIN_SECRET_CHANGED') {
+                setSecret(null);
+                setErr(adminT.settings.secretChanged);
+                onChange();
+                return;
+              }
+              setErr(errText(e));
+            })
         }
       >
         {t.op.signingIssue}
@@ -347,8 +361,8 @@ export function ActionsLog({ siteId }: { siteId: string }) {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [own, setOwn] = useState<string[]>([]);
   const st = useAsync(
-    () => adminActions.list(siteId, review),
-    [siteId, review]
+    () => adminActions.list(siteId, review, locale),
+    [siteId, review, locale]
   );
   return (
     <div className="space-y-2">

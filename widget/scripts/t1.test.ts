@@ -6,6 +6,7 @@
  * синтез набора small даёт файлы ожиданий; WER и «смысл сохранён».
  */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,7 @@ import {
   mockProvider,
 } from './t1/synth';
 import { meaningKept, mockStt, recognizeAll, wer } from './t1/recognize';
+import { liveModelOn, liveModelPlan } from '../e2e/stand/live-model';
 
 /** Прогон детектора речи по сэмплам окнами 50 мс (как чанк voice.js). */
 function vadRun(s: Float32Array, boost?: () => number) {
@@ -179,8 +181,138 @@ async function main() {
     );
   }
 
+  // Заход 9: уровень `transcript-live` — без ключа понятный отказ (код 2,
+  // e2e не запускается); с ключом — тот же промпт/разбор, что у сервера.
+  {
+    const env = { ...process.env };
+    delete env.GEMINI_API_KEY;
+    delete env.GOOGLE_GEMINI_API_KEY;
+    const r = spawnSync(
+      process.execPath,
+      [path.join('scripts', 't1', 'run.mjs'), 'transcript-live'],
+      { env, encoding: 'utf8', cwd: process.cwd() }
+    );
+    assert.equal(r.status, 2, 'без ключа — код 2');
+    assert.match(
+      r.stderr,
+      /transcript-live — у владельца: нужен GEMINI_API_KEY/
+    );
+    assert.doesNotMatch(r.stdout, /e2e /, 'без ключа e2e не запускается');
+    const bad = spawnSync(
+      process.execPath,
+      [path.join('scripts', 't1', 'run.mjs'), 'no-such-level'],
+      { env, encoding: 'utf8', cwd: process.cwd() }
+    );
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /transcript-live/);
+
+    assert.equal(
+      liveModelOn({ T1_LIVE_MODEL: '1' }),
+      false,
+      'без ключа — фикстуры'
+    );
+    assert.equal(
+      liveModelOn({ GEMINI_API_KEY: 'k' }),
+      false,
+      'без флага — фикстуры'
+    );
+    assert.equal(
+      liveModelOn({ T1_LIVE_MODEL: '1', GEMINI_API_KEY: 'k' }),
+      true
+    );
+    const calls: Array<{
+      url: string;
+      headers: Record<string, string>;
+      body: string;
+    }> = [];
+    const answer = (text: string, ok = true) =>
+      (async (
+        url: string,
+        init: { headers: Record<string, string>; body: string }
+      ) => {
+        calls.push({ url, headers: init.headers, body: init.body });
+        return {
+          ok,
+          status: ok ? 200 : 500,
+          json: async () => ({
+            candidates: [{ content: { parts: [{ text }] } }],
+          }),
+        };
+      }) as never;
+    const snapshot = {
+      url: 'https://shop.example.localhost/',
+      title: 'Стенд',
+      elements: [
+        {
+          ref: 'e1',
+          role: 'link',
+          tag: 'a',
+          text: 'Доставка',
+          hiddenLabel: null,
+          assistId: null,
+          inputType: null,
+          href: 'https://shop.example.localhost/delivery',
+          disabled: false,
+          checked: null,
+          selected: null,
+          options: [],
+          heading: null,
+          submit: false,
+          inForm: false,
+          confirmZone: false,
+          pd: false,
+          toggle: false,
+          gesture: null,
+          inView: true,
+        },
+      ],
+    };
+    const env2 = {
+      GEMINI_API_KEY: 'secret-k',
+      GEMINI_MODEL: 'gemini-x',
+    } as NodeJS.ProcessEnv;
+    const steps = await liveModelPlan(
+      { text: 'відкрий доставку', snapshot: snapshot as never, lang: 'uk' },
+      env2,
+      answer('{"command": true, "steps": [{"kind": "click", "target": "e1"}]}')
+    );
+    assert.deepEqual(steps, [{ kind: 'click', target: 'e1' }]);
+    assert.match(calls[0].url, /\/models\/gemini-x:generateContent$/);
+    assert.ok(!calls[0].url.includes('secret-k'), 'ключ — не в адресе');
+    assert.equal(calls[0].headers['x-goog-api-key'], 'secret-k');
+    const sent = JSON.parse(calls[0].body);
+    assert.equal(sent.generationConfig.temperature, 0);
+    assert.equal(sent.generationConfig.responseMimeType, 'application/json');
+    assert.match(sent.contents[0].parts[0].text, /Доставка/);
+    assert.match(sent.contents[0].parts[0].text, /відкрий доставку/);
+    assert.equal(
+      await liveModelPlan(
+        { text: 'привіт', snapshot: snapshot as never, lang: 'uk' },
+        env2,
+        answer('{"command": false, "steps": []}')
+      ),
+      'not_command'
+    );
+    assert.equal(
+      await liveModelPlan(
+        { text: 'x', snapshot: snapshot as never, lang: 'uk' },
+        env2,
+        answer('не JSON')
+      ),
+      null
+    );
+    assert.equal(
+      await liveModelPlan(
+        { text: 'x', snapshot: snapshot as never, lang: 'uk' },
+        env2,
+        answer('{}', false)
+      ),
+      null
+    );
+  }
+
   console.log(
-    't1: WAV, SNR, детерминизм, детектор речи, перебивание, фикстуры, WER — ok'
+    't1: WAV, SNR, детерминизм, детектор речи, перебивание, фикстуры, WER, transcript-live (отказ без ключа, промпт сервера) — ok'
   );
 }
 

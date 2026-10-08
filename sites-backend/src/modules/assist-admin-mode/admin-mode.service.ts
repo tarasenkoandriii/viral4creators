@@ -60,6 +60,8 @@ export interface AdminModeView {
   planAllowsActions: boolean;
   actionsDailyCap: number;
   notifyDanger: boolean;
+  /** Р-З9-17: тестовый ключ ходит в коннекторы (умолчание — нет). */
+  testKeyConnectors: boolean;
   /** Код вставки в админку (7b): null — нет публичного ключа сайта. */
   snippet: { origin: string; tag: string; csp: string } | null;
 }
@@ -81,6 +83,29 @@ export function parseRoleMap(v: unknown): Record<string, string> | null {
     out[k] = val;
   }
   return out;
+}
+
+/**
+ * Условие перевыпуска секрета (Р-З9-18): `undefined` — без условия (старые
+ * сборки TMA); null — секрета ещё нет; ISO — тот самый выпуск.
+ */
+export function expectedIssueWhere<K extends string>(
+  column: K,
+  expected: string | null | undefined,
+): Partial<Record<K, Date | null>> {
+  if (expected === undefined) return {};
+  return { [column]: expected === null ? null : new Date(expected) } as Partial<
+    Record<K, Date | null>
+  >;
+}
+
+/** 409: секрет перевыпустили параллельно — показанный кем-то другим действует. */
+export function secretChanged() {
+  return adminError(
+    409,
+    'ADMIN_SECRET_CHANGED',
+    'Секрет уже перевыпущен в другом окне — обновите экран; действует последний показанный секрет',
+  );
 }
 
 function attr(v: string): string {
@@ -176,6 +201,7 @@ export class AdminModeService {
       planAllowsActions: await this.planAllowsActions(m.accountId, now),
       actionsDailyCap: s.actionsDailyCap,
       notifyDanger: s.notifyDanger,
+      testKeyConnectors: s.testKeyConnectors,
       snippet: pk
         ? {
             origin,
@@ -271,6 +297,9 @@ export class AdminModeService {
       data.actionsDailyCap = dto.actionsDailyCap;
     }
     if (dto.notifyDanger !== undefined) data.notifyDanger = dto.notifyDanger;
+    if (dto.testKeyConnectors !== undefined) {
+      data.testKeyConnectors = dto.testKeyConnectors;
+    }
     if (Object.keys(data).length) {
       await this.db
         .forAccount(m.accountId)
@@ -286,6 +315,7 @@ export class AdminModeService {
   async issueIdentitySecret(
     m: AccountMembership,
     siteId: string,
+    expectedSetAt?: string | null,
   ): Promise<{
     secret: string;
     setAt: string;
@@ -320,15 +350,23 @@ export class AdminModeService {
       keyring,
     );
     const now = new Date();
-    await this.db.forAccount(m.accountId).assistAdminSettings.updateMany({
-      where: { siteId },
-      data: {
-        identitySecretEnc: sealed.ciphertext,
-        identityKeyVersion: sealed.keyVersion,
-        identitySecretSetAt: now,
-        identitySecretSetByTelegramId: m.telegramId,
-      },
-    });
+    // Р-З9-18: условный UPDATE по выпуску, который видела TMA — из двух
+    // одновременных перевыпусков действует ровно один, второй — 409.
+    const w = await this.db
+      .forAccount(m.accountId)
+      .assistAdminSettings.updateMany({
+        where: {
+          siteId,
+          ...expectedIssueWhere('identitySecretSetAt', expectedSetAt),
+        },
+        data: {
+          identitySecretEnc: sealed.ciphertext,
+          identityKeyVersion: sealed.keyVersion,
+          identitySecretSetAt: now,
+          identitySecretSetByTelegramId: m.telegramId,
+        },
+      });
+    if (w.count !== 1) throw secretChanged();
     // Сессии, выданные по прежнему секрету, гаснут сразу.
     await this.db
       .forAccount(m.accountId)

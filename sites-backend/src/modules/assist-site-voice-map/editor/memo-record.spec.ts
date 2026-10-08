@@ -9,12 +9,17 @@
 import { parseMemoContent, type MemoStep } from '../../assist-ui-core/memo';
 import { defaultVoiceControlRules } from '../../assist-ui-core/rules';
 import type { UiSnapElement, UiSnapshot } from '../../assist-ui-core/types';
-import type { VoiceMapTarget } from '../../assist-ui-core/voice-map';
+import {
+  parseVoiceMapContent,
+  type VoiceMapTarget,
+} from '../../assist-ui-core/voice-map';
 import {
   memoTry,
   recordedDraft,
   recordStep,
+  recordWait,
   slotNameOf,
+  stepUndos,
   type RecordStepInput,
 } from './memo-record';
 
@@ -514,5 +519,157 @@ describe('«Прогнать» черновик в редакторе', () => {
       2,
     );
     expect(end).toMatchObject({ done: true, goal: 'ok', stopAt: null });
+  });
+});
+
+// ── заход 9: «Как отменить» шага (№23) и «Чекати це» (№22) ────────────────
+
+describe('«Как отменить» шага мемо — наследуется от цели карты (заход 9)', () => {
+  const map = parseVoiceMapContent({
+    schemaVersion: 1,
+    targets: [
+      {
+        key: 'gift',
+        scope: 'site',
+        descriptor: btn('Подарунок', { assistId: 'gift-wrap' }),
+        names: { uk: 'Подарунок' },
+        undo: { assistId: 'gift-unwrap', at: null },
+      },
+      {
+        key: 'cart',
+        scope: 'site',
+        descriptor: btn('В кошик', { assistId: 'add-to-cart' }),
+        names: { uk: 'В кошик' },
+      },
+      {
+        key: 'old',
+        scope: 'site',
+        descriptor: btn('Старе', { assistId: 'old-btn' }),
+        undo: { assistId: 'old-undo', at: null },
+        status: 'removed',
+      },
+    ],
+  });
+  const target = (k: string) => map.targets.find((t) => t.key === k)!;
+
+  it('запись: шаг по цели карты получает её «Как отменить»; без объявления — стандартная пара; поле — нет', () => {
+    const r = recordStep(
+      input(btn('Подарунок', { assistId: 'gift-wrap' }), {
+        mapTarget: target('gift'),
+      }),
+    );
+    expect(r).toMatchObject({
+      kind: 'step',
+      undo: { assistId: 'gift-unwrap', src: 'map', key: 'gift' },
+    });
+    const std = recordStep(
+      input(btn('В кошик', { assistId: 'add-to-cart' }), {
+        mapTarget: target('cart'),
+      }),
+    );
+    expect(std).toMatchObject({
+      undo: { assistId: 'remove-from-cart', src: 'standard', key: 'cart' },
+    });
+    // Без цели карты — стандартная пара по разметке самого элемента.
+    expect(
+      recordStep(input(btn('В кошик', { assistId: 'add-to-cart' }))),
+    ).toMatchObject({
+      undo: { assistId: 'remove-from-cart', src: 'standard', key: null },
+    });
+    // По тексту кнопки «Як скасувати» не угадывается никогда.
+    expect(recordStep(input(btn('Додати')))).toMatchObject({ undo: null });
+    const field = recordStep(
+      input(
+        { tag: 'input', role: 'textbox', text: "Ім'я", unique: true },
+        { fieldName: 'name', mapTarget: target('gift') },
+      ),
+    );
+    expect(field).toMatchObject({ kind: 'step', undo: null });
+  });
+
+  it('правка мемо: «Как отменить» каждого шага — по mapKey из ЧЕРНОВИКА карты (удалённая цель — не наследуется)', () => {
+    const step = (
+      mapKey: string | null,
+      assistId: string | null,
+      action = 'click',
+    ) =>
+      ({
+        page: '/',
+        action,
+        target: {
+          uiElementId: null,
+          key: null,
+          mapKey,
+          pin: { assistId, text: 'x', role: 'button' },
+        },
+        value: null,
+        expect: null,
+        say: null,
+        risk: null,
+      }) as unknown as MemoStep;
+    expect(
+      stepUndos(
+        [
+          step('gift', 'gift-wrap'),
+          step('cart', 'add-to-cart'),
+          step('old', 'old-btn'),
+          step(null, 'add-to-cart'),
+          step('gift', 'gift-wrap', 'fill'),
+        ],
+        map,
+      ),
+    ).toEqual([
+      { assistId: 'gift-unwrap', at: null, src: 'map', key: 'gift' },
+      { assistId: 'remove-from-cart', at: null, src: 'standard', key: 'cart' },
+      null,
+      { assistId: 'remove-from-cart', at: null, src: 'standard', key: null },
+      null,
+    ]);
+    // Карты нет — только стандартные пары.
+    expect(stepUndos([step('gift', 'gift-wrap')], null)).toEqual([null]);
+  });
+});
+
+describe('«Чекати це» при записи — ожидание, не шаг (заход 9)', () => {
+  it('значок с числом — цель «счётчик +1» (разметка/подпись без чисел); Δ от панели — в пределах ±9', () => {
+    expect(
+      recordWait(btn('Кошик (2)', { assistId: 'nav-cart', role: 'link' })),
+    ).toEqual({
+      kind: 'counter',
+      target: { assistId: 'nav-cart', text: 'кошик' },
+      delta: 1,
+      now: 2,
+    });
+    expect(recordWait(btn('Обране 3'), -1)).toMatchObject({
+      kind: 'counter',
+      target: { assistId: null, text: 'обране' },
+      delta: -1,
+    });
+    // Δ мимо пределов — по умолчанию +1.
+    expect(recordWait(btn('Кошик 1'), 40)).toMatchObject({ delta: 1 });
+    // Цена — не счётчик: ждём появления подписи.
+    expect(recordWait(btn('Разом 1 200,50 грн'))).toMatchObject({
+      kind: 'appear',
+    });
+  });
+
+  it('обычный элемент — «появился элемент» с маской ПД; без подписи/мусор — отказ', () => {
+    expect(recordWait(btn('Товар додано до кошика'))).toEqual({
+      kind: 'appear',
+      text: 'Товар додано до кошика',
+    });
+    // Подпись с ПД: маска до проверки текста — адреса в ожидании нет ни
+    // в каком виде (маска с пометкой не проходит проверку текста — отказ).
+    const pd = recordWait(btn('Лист на ivan@example.com надіслано'));
+    expect(pd).toEqual({ kind: 'skip', code: 'text' });
+    expect(JSON.stringify(pd)).not.toContain('ivan@example.com');
+    expect(recordWait(btn('', { assistId: 'icon-1' }))).toEqual({
+      kind: 'skip',
+      code: 'unnamed',
+    });
+    expect(recordWait({ tag: 'script' })).toEqual({
+      kind: 'skip',
+      code: 'descriptor',
+    });
   });
 });

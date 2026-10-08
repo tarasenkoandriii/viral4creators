@@ -14,6 +14,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { AdminModeService } from '../assist-admin-mode/admin-mode.service';
@@ -30,7 +31,11 @@ import {
 } from '../site-core/account/site-account.guard';
 import { AllowApps } from '../telegram-auth/allow-apps.decorator';
 import { AdminAskDto, AdminFeedbackDto } from './admin-chat.dto';
-import { AdminChatService, type EmployeeCtx } from './admin-chat.service';
+import {
+  AdminChatService,
+  type EmployeeCtx,
+  langParam,
+} from './admin-chat.service';
 
 @Controller('assist/sites')
 @AllowApps('assist')
@@ -62,8 +67,12 @@ export class AdminTmaChatController {
   }
 
   @Get(':id/admin-chat/state')
-  async state(@Membership() m: AccountMembership, @Param('id') id: string) {
-    return this.chat.state(await this.ctx(m, id));
+  async state(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Query('lang') lang?: string,
+  ) {
+    return this.chat.state(await this.ctx(m, id), new Date(), langParam(lang));
   }
 
   @Post(':id/admin-chat')

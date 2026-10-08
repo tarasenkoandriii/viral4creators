@@ -278,7 +278,8 @@ test.afterAll(() => {
     return list.length ? list.filter((r) => r.done).length / list.length : 1;
   };
   const summary = {
-    level: `${FULL ? 'transcript-full' : 'transcript-pr'}${process.env.T1_RECOGNIZED ? '+recognized' : ''}`,
+    // Заход 9: `+live-model` — план строила живая модель (не фикстура).
+    level: `${FULL ? 'transcript-full' : 'transcript-pr'}${process.env.T1_RECOGNIZED ? '+recognized' : ''}${process.env.T1_LIVE_MODEL === '1' ? `+live-model(${process.env.GEMINI_MODEL || 'default'})` : ''}`,
     total: rows.length,
     marked: rate((r) => r.marked),
     unmarked: rate((r) => !r.marked),

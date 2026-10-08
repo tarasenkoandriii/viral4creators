@@ -53,7 +53,11 @@ export type AdminErrorCode =
   | 'MEMO_LIMIT'
   | 'MEMO_REVISION'
   // D3: мемо ушло в «требует проверки»/выключено посреди запуска
-  | 'MEMO_HALTED';
+  | 'MEMO_HALTED'
+  // Заход 9: повтор «Да» после `unknown` старше суток (Р-З9-21) и гонка
+  // двух перевыпусков секрета подписи (Р-З9-18)
+  | 'PROPOSAL_RETRY_EXPIRED'
+  | 'ADMIN_SECRET_CHANGED';
 
 export function adminError(
   status: number,

@@ -13,7 +13,11 @@
  * могли подтвердить — первый обход начнётся без отдельного хука).
  *
  * site-crawl о продукте не знает (правило графа crawl-product-neutral):
- * «когда обходить» и `assist_sites.lastCrawlRunId` — здесь.
+ * «когда обходить» и `assist_sites.lastCrawlRunId` — здесь. Поэтому и
+ * хосты «Админки» (Р-З9-24, ТЗ §10, К-9) отсекает здесь: только хосты
+ * «Сайта» (`assistRole = public`) считаются «есть что обходить», а хост
+ * «Админки» уходит в исключения прогона префиксом `https://хост/` —
+ * страницы с него обход не читает (ни полный, ни горячие, ни точечный).
  *
  * Э6-бис (г), решение владельца 03.10.2026 п.4 — ТОЧЕЧНЫЙ переобход
  * страниц, элементы карты интерфейса которых устарели (Ш4): только эта
@@ -42,6 +46,7 @@ import { uiMapHost } from '../site-core/ui-map/ui-map';
 import { UI_STALE_RECRAWL } from './ui-stale-recrawl-config';
 import { siteCoreError } from '../site-core/site-core.constants';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 import { SiteCrawlService } from '../site-crawl/crawl.service';
 
 export interface CrawlScheduleResult {
@@ -391,7 +396,7 @@ export class AssistCrawlScheduler {
   ): Promise<boolean> {
     const hosts = await this.sitesDb
       .forAccount(accountId)
-      .siteHost.findMany({ where: { siteId } });
+      .siteHost.findMany({ where: { siteId, ...PUBLIC_SITE_HOST } });
     return hosts.some(
       (h) =>
         h.scheme === 'https' &&
@@ -400,23 +405,32 @@ export class AssistCrawlScheduler {
     );
   }
 
-  /** Исключения «Сайта» (§4-тер.12): переобход их не берёт. */
+  /**
+   * Исключения «Сайта» (§4-тер.12): переобход их не берёт. И хосты
+   * «Админки» целиком (Р-З9-24): `https://хост/` — префикс всего хоста.
+   */
   private async exclusions(
     accountId: string,
     siteId: string,
   ): Promise<{ excludePrefixes?: string[]; excludeUrls?: string[] }> {
-    const rows = await this.sitesDb
-      .forAccount(accountId)
-      .assistSiteExclusion.findMany({
+    const db = this.sitesDb.forAccount(accountId);
+    const [rows, adminHosts] = await Promise.all([
+      db.assistSiteExclusion.findMany({
         where: { siteId, kind: { in: ['url', 'urlPrefix'] } },
         select: { kind: true, value: true },
-      });
+      }),
+      db.siteHost.findMany({
+        where: { siteId, NOT: PUBLIC_SITE_HOST },
+        select: { host: true },
+      }),
+    ]);
     const excludeUrls = rows
       .filter((r) => r.kind === 'url')
       .map((r) => r.value);
-    const excludePrefixes = rows
-      .filter((r) => r.kind === 'urlPrefix')
-      .map((r) => r.value);
+    const excludePrefixes = [
+      ...rows.filter((r) => r.kind === 'urlPrefix').map((r) => r.value),
+      ...adminHosts.map((h) => `https://${h.host}/`),
+    ];
     return {
       ...(excludeUrls.length ? { excludeUrls } : {}),
       ...(excludePrefixes.length ? { excludePrefixes } : {}),

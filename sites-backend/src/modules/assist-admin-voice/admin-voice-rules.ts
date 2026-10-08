@@ -431,6 +431,13 @@ export function confirmFields(
 
 // ── предпочтение API-коннектора (§5-бис.1, §5-бис.5, §5-бис.15 п.14) ──────
 
+/** Параметр операции — то, с чем сверяются поля плана (Р-З9-23). */
+export interface ApiCatalogParam {
+  name: string;
+  in: 'path' | 'query' | 'body';
+  description?: string;
+}
+
 /** Операция каталога роли — то, что видит правило «предпочесть API». */
 export interface ApiCatalogOp {
   rowId: string;
@@ -438,6 +445,8 @@ export interface ApiCatalogOp {
   operationId: string;
   summary: string | null;
   kind: 'write' | 'danger';
+  /** Параметры операции (без них сверка по целям плана не работает). */
+  params?: readonly ApiCatalogParam[];
 }
 
 const CHANGE_VERB =
@@ -529,6 +538,186 @@ function destructiveKinds(text: string): Set<string> {
   // «натисни скасувати» — тоже отмена (кликом её нет — значит, в API).
   for (const k of adminExtraKinds(t)) if (API_KINDS.has(k)) out.add(k);
   return out;
+}
+
+// ── предпочтение API по ЦЕЛЯМ плана (Р-З9-23, аудит Э6-бис (б) (9)) ──────
+
+/** Кириллица → латиница (заимствования: «Статус» ↔ `status`). */
+const LAT: Record<string, string> = {
+  а: 'a',
+  б: 'b',
+  в: 'v',
+  г: 'g',
+  ґ: 'g',
+  д: 'd',
+  е: 'e',
+  є: 'e',
+  ж: 'zh',
+  з: 'z',
+  и: 'i',
+  і: 'i',
+  ї: 'i',
+  й: 'i',
+  к: 'k',
+  л: 'l',
+  м: 'm',
+  н: 'n',
+  о: 'o',
+  п: 'p',
+  р: 'r',
+  с: 's',
+  т: 't',
+  у: 'u',
+  ф: 'f',
+  х: 'h',
+  ц: 'ts',
+  ч: 'ch',
+  ш: 'sh',
+  щ: 'sch',
+  ы: 'y',
+  э: 'e',
+  ю: 'u',
+  я: 'ya',
+  ь: '',
+  ъ: '',
+  "'": '',
+};
+
+function latin(w: string): string {
+  return [...w].map((c) => LAT[c] ?? c).join('');
+}
+
+/** `orderStatus`/`order_status` → слова. */
+function nameWords(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[-_.]+/g, ' ');
+}
+
+/** Параметр, с которым сверяется поле: «голова» имени и слова описания. */
+interface ParamProbe {
+  head: string;
+  desc: string[];
+}
+
+/**
+ * Параметры операции, которые может описывать поле формы (аудит пакета F,
+ * P2-3): не из пути и не идентификаторы (`id`, `orderId`, `order_id` — номер
+ * объекта поле формы не меняет). Совпадение — только с ИМЕНЕМ параметра
+ * (последнее слово: `orderStatus` → `status`) и его описанием; краткое
+ * описание операции («Змінити статус замовлення») — нет: его слова — про
+ * сущность, а не про поле.
+ */
+function paramProbesOf(op: ApiCatalogOp): ParamProbe[] {
+  return (op.params ?? [])
+    .filter(
+      (p) =>
+        p.in !== 'path' &&
+        !/^(id|ID)$|[a-z0-9](Id|ID)$|[_.-](id|Id|ID)$/.test(p.name),
+    )
+    .map((p) => ({
+      head: tokens(nameWords(p.name)).pop() ?? '',
+      desc: tokens(p.description ?? '').filter((w) => !/^\d+$/.test(w)),
+    }))
+    .filter((p) => p.head.length >= 2);
+}
+
+/** Слово ≤ 5 букв — только целиком («note» ≠ «notify»); длиннее — по основе. */
+function sameField(a: string, b: string): boolean {
+  return Math.min(a.length, b.length) <= 5 ? a === b : sameWord(a, b);
+}
+
+/**
+ * Подпись поля совпала с параметром (с латиницей заимствований). Слово-
+ * сущность операции (общее с `operationId`: «order» у `updateOrderStatus`,
+ * префикс `order-` у `data-assist-id="order-note"`) совпадением не
+ * считается, кроме самой «головы» имени параметра («Статус» ↔ `status`).
+ */
+function labelMatches(
+  label: string,
+  p: ParamProbe,
+  entity: readonly string[],
+): boolean {
+  const own = tokens(label).filter((w) => !/^\d+$/.test(w));
+  return own.some((x) =>
+    [x, latin(x)].some((v) => {
+      if (sameField(v, p.head)) return true;
+      if (entity.some((e) => sameField(v, e))) return false;
+      return p.desc.some((d) => sameField(v, d));
+    }),
+  );
+}
+
+/**
+ * Р-З9-23: план — поля формы (`local`, до «Сохранить») и сама кнопка
+ * «Сохранить» (единственная точка невозврата), а у роли есть включённая
+ * write-операция, параметры которой покрывают КАЖДОЕ поле (имя/описание
+ * параметра ↔ подпись поля), — изменение идёт не кликами, а карточкой API
+ * (тот же путь, что «предпочтение по глаголу»: команда — в чат Э8, «было →
+ * станет», компенсация, журнал). «вибери статус Відправлено і збережи» →
+ * `updateOrderStatus` (параметр `status`). Операции `danger` и с
+ * разрушительными словами — мимо (их «никогда» держат проверки плана).
+ * Несколько годных операций — та, у которой больше общих слов с командой;
+ * ничья — `api_any` (операцию выберет ход чата, с «Да»).
+ */
+export function apiByPlanTargets(
+  steps: ReadonlyArray<
+    Pick<UiPlanStep, 'kind' | 'target' | 'risk' | 'undo' | 'value'>
+  >,
+  catalog: readonly ApiCatalogOp[],
+  transcript: string,
+): ApiPreference {
+  const exec = steps.filter(EXECUTABLE);
+  const saves = exec.filter(
+    (s) => !FIELD_KINDS.has(s.kind) && s.undo === 'irrev',
+  );
+  const fields = exec.filter((s) => FIELD_KINDS.has(s.kind));
+  if (saves.length !== 1 || !fields.length) return null;
+  if (fields.some((s) => s.undo !== 'local' || !s.target)) return null;
+  const labels = fields.map((s) =>
+    `${s.target?.text ?? ''} ${assistIdWords(s.target?.assistId ?? null)}`.trim(),
+  );
+  const fit = catalog.filter((op) => {
+    if (op.kind !== 'write' || destructiveKinds(opWords(op)).size) return false;
+    const params = paramProbesOf(op);
+    const entity = tokens(nameWords(op.operationId));
+    return (
+      params.length > 0 &&
+      labels.every((l) => params.some((p) => labelMatches(l, p, entity)))
+    );
+  });
+  if (!fit.length) return null;
+  if (fit.length === 1) return { kind: 'api', op: fit[0] };
+  const said = tokens(transcript).filter((w) => !/^\d+$/.test(w));
+  const scored = fit.map((op) => {
+    const words = tokens(opWords(op));
+    return {
+      op,
+      s: said.filter((x) => words.some((y) => sameWord(x, y))).length,
+    };
+  });
+  const best = Math.max(...scored.map((x) => x.s));
+  const top = scored.filter((x) => x.s === best);
+  return top.length === 1
+    ? { kind: 'api', op: top[0].op }
+    : { kind: 'api_any' };
+}
+
+/**
+ * Вопрос в чат Э8 вместо кликов (Р-З9-23): команда сотрудника как есть, а
+ * номер объекта со страницы — в скобках («вибери статус Відправлено і
+ * збережи (№ 1042)»), если сотрудник его не назвал: чат иначе спросит «яке
+ * замовлення?». Номер — только ПОСЛЕДНИЙ сегмент пути, целиком из 3–12
+ * цифр и не дата (`/admin/orders/1042`; не `/reports/2026`, не
+ * `/day/20261008`, не `/orders/1042/edit`). Только цифры — из адреса
+ * страницы в модель чата слова не уходят.
+ */
+export function apiAskText(transcript: string, pagePath: string): string {
+  const last = pagePath.replace(/\/+$/, '').split('/').pop() ?? '';
+  if (!/^\d{3,12}$/.test(last)) return transcript;
+  const date =
+    /^(19|20)\d\d$/.test(last) ||
+    /^(19|20)\d\d(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/.test(last);
+  if (date || rowNumbersOf(transcript).includes(last)) return transcript;
+  return `${transcript} (№ ${last})`;
 }
 
 // ── строки таблиц (§5-бис.3 п.2: в «Админке» строки — не в снимке) ───────
@@ -785,6 +974,86 @@ export function adminDangerButtons(
     if (out.length >= WIZARD_LIMITS.listItems) break;
   }
   return out;
+}
+
+const ADMIN_FRAGMENT_TEXT: Record<
+  WizardLang,
+  { never: string; danger: string; pd: string; ids: string }
+> = {
+  uk: {
+    never:
+      'Позначено «заборонити» в майстрі: помічник не натисне (або додайте селектор у «Заборонені елементи»)',
+    danger:
+      'Кнопки «видалити/скасувати/повернення» — і так «ніколи»; розмітка — для надійності',
+    pd: 'Списки й картки клієнтів з ПД (не таблиці) — поза знімком сторінки',
+    ids: 'Рекомендована розмітка форм: поля й «Зберегти» — з data-assist-id',
+  },
+  ru: {
+    never:
+      'Отмечено «запретить» в мастере: помощник не нажмёт (или добавьте селектор в «Запрещённые элементы»)',
+    danger:
+      'Кнопки «удалить/отменить/возврат» — и так «никогда»; разметка — для надёжности',
+    pd: 'Списки и карточки клиентов с ПД (не таблицы) — вне снимка страницы',
+    ids: 'Рекомендуемая разметка форм: поля и «Сохранить» — с data-assist-id',
+  },
+  en: {
+    never:
+      'Marked “forbid” in the wizard: the assistant will not press it (or add the selector to “Forbidden elements”)',
+    danger:
+      '“Delete/cancel/refund” buttons are “never” anyway; markup adds safety',
+    pd: 'Customer lists and cards with personal data (not tables) — out of the page snapshot',
+    ids: 'Recommended form markup: fields and “Save” with data-assist-id',
+  },
+};
+
+/**
+ * Фрагмент разметки для разработчика админки (аудит Э6-бис (б) (1), ТЗ
+ * §5-бис.13 п.7 «фрагмент разметки»): отмеченные владельцем «заборонити»
+ * элементы (`data-assist="never"`), распознанные опасные кнопки, списки с ПД
+ * (рекомендация DEPLOYMENT: `data-assist="never"` на карточках клиентов на
+ * `div`) и разметка формы. Только селекторы и маскированные подписи.
+ */
+export function adminMarkupFragment(p: {
+  suspicious: ReadonlyArray<{
+    key: string;
+    tag: string;
+    label: string;
+    selector: string;
+  }>;
+  reviewed: Readonly<Record<string, 'deny' | 'safe'>>;
+  dangerButtons: ReadonlyArray<{ text: string; kind: string }>;
+  lang: WizardLang;
+}): string {
+  const t = ADMIN_FRAGMENT_TEXT[p.lang];
+  // Только известные теги (аудит пакета F, P3): иначе — button.
+  const tag = (x: string) =>
+    ['button', 'a', 'input', 'select', 'div', 'span', 'li'].includes(x)
+      ? x
+      : 'button';
+  // В комментарии опасен только `--` (конец `-->`), в тексте — `<` тега.
+  const note = (s: string) => s.replace(/--+/g, '—').replace(/</g, '');
+  const lines: string[] = [];
+  const deny = p.suspicious.filter((s) => p.reviewed[s.key] === 'deny');
+  if (deny.length) {
+    lines.push(`<!-- ${t.never} -->`);
+    for (const s of deny.slice(0, 20))
+      lines.push(
+        `<!-- ${note(s.selector || s.label || tag(s.tag))} --> <${tag(s.tag)} data-assist="never">`,
+      );
+  }
+  if (p.dangerButtons.length) {
+    lines.push(`<!-- ${t.danger} -->`);
+    for (const b of p.dangerButtons.slice(0, 10))
+      lines.push(
+        `<!-- ${note(b.text)} --> <button data-assist="never">${note(b.text)}</button>`,
+      );
+  }
+  lines.push(`<!-- ${t.pd} -->`);
+  lines.push('<div class="customer-cards" data-assist="never">…</div>');
+  lines.push(`<!-- ${t.ids} -->`);
+  lines.push('<select name="status" data-assist-id="order-status">…</select>');
+  lines.push('<button type="submit" data-assist-id="save">…</button>');
+  return lines.join('\n');
 }
 
 // ── мемо «Админки»: шаги-клики только none/nav/local (§5-бис.17 п.10) ────

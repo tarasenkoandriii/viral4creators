@@ -5,7 +5,8 @@
  * полем `goal` (номер шага цели и проверки из шага плана — их собрал
  * сервер: ожидаемое значение счётчика = исходное из снимка команды + N,
  * поле — значение слота), чанк отвечает `ui-goal { planId, i, ok }` —
- * только «да/нет», без значений со страницы.
+ * только «да/нет», без значений со страницы; (заход 9) элемента цели нет
+ * вовсе — `missing: true` (проверить нечем → цель `unknown`).
  *
  * Счётчики корзины обновляются не сразу (AJAX-фрагменты): проверка
  * повторяется каждые 250 мс до 4 с. Цель — по `data-assist-id`, иначе по
@@ -142,13 +143,27 @@ export function goal(raw: Record<string, unknown>, host: ActHost): void {
   const check = () =>
     !bad &&
     // Любая копия значка (шапка, меню телефона) с ожидаемым числом.
-    (!cl || targets(cl, false).some((el) => countIn(label(el)) === ceq)) &&
+    (!cl ||
+      targets(cl, false).some((el) => countIn(label(el)) === ceq) ||
+      // Заход 9 (P3-6): ждём 0, а значка по РАЗМЕТКЕ владельца нет совсем —
+      // темы прячут пустой счётчик корзины; по подписи — неоднозначно
+      // (`missing` → цель `unknown`), по разметке — это и есть 0.
+      (ceq === 0 && !!cl.id && !targets(cl, false).length)) &&
     (!fl || targets(fl, true).some((el) => fieldHas(el, feq)));
+  // Заход 9 (§5-бис.17 п.5 п.7): элемента цели нет вовсе (не виден,
+  // закрытый shadow-корень, только пароль) — `missing`: проверить нечем,
+  // итог цели `unknown`, а не «не сошлось».
+  const unseen = () =>
+    (!!cl && !targets(cl, false).length) || (!!fl && !targets(fl, true).length);
   let n = 0;
   const tick = () => {
     const ok = check();
     if (ok || bad || ++n >= TRIES)
-      return host.post({ type: 'ui-goal', planId, i, ok: !!ok });
+      return host.post(
+        !ok && !bad && unseen()
+          ? { type: 'ui-goal', planId, i, ok: false, missing: true }
+          : { type: 'ui-goal', planId, i, ok: !!ok }
+      );
     host.N.later(tick, EVERY_MS);
   };
   tick();

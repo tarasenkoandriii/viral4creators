@@ -16,6 +16,20 @@
 
 export const ADMIN_FRAME_ROOT_ID = 'app';
 
+/**
+ * Кэш CDN для HTML iframe «Админки» (аудит Э7 (б), Р-З9-16): СВОЯ константа,
+ * не общая с виджетом «Сайта» (`WIDGET_DEFAULTS.frameCacheSeconds` = 300).
+ * После снятия хоста админки или выключения режима старый `frame-ancestors`
+ * живёт в CDN не дольше этого срока (API и сессии гаснут сразу); трафик
+ * `wa.` мал — минута кэша почти ничего не стоит.
+ */
+export const ADMIN_FRAME_CACHE_SECONDS = 60;
+
+/** Cache-Control HTML iframe «Админки». */
+export function adminFrameCacheControl(): string {
+  return `public, max-age=0, s-maxage=${ADMIN_FRAME_CACHE_SECONDS}`;
+}
+
 export function adminFrameHtml(): string {
   return [
     '<!doctype html>',

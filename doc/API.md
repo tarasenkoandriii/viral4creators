@@ -659,6 +659,8 @@ QA-маршрутов (`SITES_QA_HMAC_SECRET`) нет, `kind: autotest` в от�
 | `POST /assist/sites/:id/voice-control/site/test-token` | `{ host?, testHost? }` → `{ testId, url: https://<хост>/?v4c_voicetest=<токен>, expiresAt }` — одноразовая ссылка мастера на 30 мин; хост — только подтверждённый https сайта (иначе 409 `VOICE_CONTROL_HOST_REQUIRED`); в базе — только хеш токена |
 | `GET /assist/sites/:id/voice-control/site/tests` | `{ items: VoiceTestSummary[] }` — `{ id, kind: wizard\|autotest, host, createdAt, reportedAt, result: pass\|partial\|fail\|null, validUntil, release, partialAck, problem }`, новые сначала |
 | `GET /assist/sites/:id/voice-control/site/tests/:tid` | `VoiceTestSummary + report: WizardReport\|null` (пункты по шагам 1–6 с кодами `widget_missing`, `chunks_blocked`, `csp_violations`, `tt_violations`, `mic_policy_denied`, `mic_owner_problem`, `dry_low`, `safe_low`, `safe_none`, `forbidden_leak`, `suspicious_unreviewed`, `unnamed_elements`, `closed_shadow`, `ext_iframes`, `duplicates`; «никогда» и подсказки в «Заборонені елементи»; запреты без звука; фрагмент разметки для разработчика); чужой — 404 `VOICE_CONTROL_TEST_NOT_FOUND` |
+| `POST /assist/sites/:id/voice-control/site/tests/:tid/dev-link` | заход 9 (г)(8), Р-З9-9: → `{ url, expiresAt }` — одноразовая ссылка «отчёт для разработчика» на сданный отчёт мастера: `ASSIST_WIDGET_ORIGIN/w/v1/vc-report/<токен>` (24 байта, в базе — хеш; строка `assist_site_voice_tests` вида `dev_report`, без миграции), 72 ч, без ПД (коды и селекторы); чужой/без отчёта — 404 |
+| `GET /w/v1/vc-report/:token` · `POST /w/v1/vc-report/:token` | публичная страница на origin виджета (rewrite `/w/v1/*`): GET — кнопка «Відкрити звіт» (токен НЕ тратится — превью мессенджеров), POST — отчёт, ОДИН раз (первое открытие гасит); HTML без скриптов, CSP без скриптов и встраивания, `no-store`, `noindex`, `Referrer-Policy: no-referrer`; недействителен/истёк/открыт — один ответ 404 |
 
 sites-backend, виджет (iframe; ссылка мастера `?v4c_voicetest=` снимается
 загрузчиком с адреса и передаётся только в iframe; тестовая сессия — в
@@ -675,6 +677,19 @@ sites-backend, виджет (iframe; ссылка мастера `?v4c_voicetest
 (выпуск ленивых чанков сайта по канарейке: `/v1/r/<release>/act.js|check.js|vt.js|chat.*`).
 Потолок планов сайта в сутки — решение п.2: Business 300 / Pro 1000 или
 `voiceControlPlansPerDay` оператора; посетитель 8/мин и 60/сутки.
+
+Заход 9 (09.10.2026): `POST /widget/v1/voice-test/session` сначала
+проверяет доступ (режим и голос сайта), потом тратит токен — при
+недоступном голосе отказ «выключено» (`off`, 403 `VOICE_CONTROL_OFF`) ДО
+обмена, ссылка остаётся целой (аудит (г)(5)). `POST /widget/v1/voice` (голос Э5) — необязательный
+заголовок `X-Assist-Lang: uk|ru|en` (язык интерфейса виджета) для
+почасовых счётчиков «не расслышал» `vc-stt` (без заголовка — `any`);
+монитор — код тревоги `not_heard_high` (> 30 % на ≥ 20 командах языка за
+24 ч, только оповещение). Монитор обходит сайты keyset-курсором по кругу,
+канарейка считает SQL-агрегатами, потолок вклада — 3 плана на посетителя
+И на хеш IP. Вердикт «разметка не менялась» — по всем страницам отчёта
+мастера, «устарел» или промахи ≥ 2 посетителей после отчёта →
+`markup_changed`. Уведомления владельцу — на языке получателя.
 
 internal admin (`/internal/admin/assist`, ключ админки):
 
@@ -754,6 +769,29 @@ sites-backend, виджет:
 меняется). Монитор: + метрики цепочек и код `undo_low` (только
 оповещение), инциденты `memo_review` (мемо → `needs_review`).
 
+Заход 9 (09.10.2026):
+- `POST /widget/v1/ui-plan/:id/undo` в `degraded` (Р-З9-39): + `show[]{ i,
+  text, row, assistId, at, variant }` — обратная кнопка объявленной пары
+  только для ПОДСВЕТКИ (действия нет); протокол чанка — `ui-undo { comp:
+  { show: 1, i, sid, row, variant, deny, zones } }` (команда без `id`:
+  старый `comp.js` из кэша CDN её не исполнит).
+- `POST /widget/v1/ui-plan/:id/undo-report` без принятого «Вернуть»
+  (отметка `undoAsked` в шагах плана, Р-З9-4) — 409 `PLAN_CONFLICT`; права
+  роли `assist_public` на журнал не расширялись.
+- Цель мемо: протокол `ui-goal { …, missing: true }` — элемента цели на
+  странице нет; `POST …/:id/step` с `result: failed, reason: goal_unseen`
+  на шаге проверки цели → `goalStatus = unknown` (ТЗ §5-бис.17 п.7/п.14);
+  не сошлось — `not_reached`; счётчик «0» без значка по разметке
+  владельца — это 0. Мастер Т-2 (`undoTargetsCheck`) проверяет обратные
+  цели в боевом порядке: «Как отменить» карты → `data-assist-undo` →
+  стандартная пара.
+- Живые значения плана (`liveValues`) хранятся шифром AES-256-GCM
+  (`ASSIST_SECRETS_KEY`); нечитаемые — план `failed` (`live_lost`), маски
+  не исполняются. Шаг с побочным эффектом, прерванный перезагрузкой, не
+  повторяется и к повтору не предлагается (Р-З9-12, at-most-once).
+- Журнал шагов: при `mapMiss` — поле `mapKey` (ключ названной цели карты;
+  для экрана промахов `GET …/voice-map/site/misses`, раздел «Э6-тер»).
+
 ## Э-С Ш4: общие карты интерфейса сайтов
 
 План «Э-С: слияние», Ш4; аудит слияния §3.2; развёртывание —
@@ -770,8 +808,19 @@ css-путь), с кандидатами, устойчивостью (`strong | 
 | Маршрут | Что нового |
 |---|---|
 | `POST /widget/v1/highlight-miss` | `{ elementId, pageUrl }` → `{ ok, recorded }` как раньше, но `recorded: true` только если (1) ЭТОМУ посетителю в его диалоге на этом сайте ассистент выдал `highlight` ЭТОГО элемента не раньше 30 мин назад (квитанция показа), (2) элемент есть в карте страницы для вида посетителя (по `Sec-CH-UA-Mobile`/User-Agent iframe), (3) от посетителя и от хеша IP по элементу и виду промаха ещё не было. Аудит (03.10.2026): квитанция привязана к СТРАНИЦЕ — в действии `highlight` поле `page` (`хост` + `путь` страницы карты), промах засчитывается только на ней (id элемента — хеш селектора, один на всех страницах); хеш IP журнала — с солью на окно 7 дней (а не суточный токена). Снимок загрузчика (план Э6-бис) «устарел» сразу не снимает — голос «найден» с тем же порогом (3 разных посетителя и IP за окно). Элемент «устарел» для вида — 3 промаха за 7 дней; лимиты: 10/мин на посетителя, 30/мин и 20/сутки на IP+сайт (429 `RATE_LIMITED`) |
+| `POST /widget/v1/highlight-seen` | заход 9 (Ш4 (4), Р-З9-3): `{ elementId, pageUrl }` → `{ ok, recorded }` — загрузчик НАШЁЛ подсвеченный элемент (`highlight-result { found: true }`); та же квитанция показа и карта вида, что у `highlight-miss`; `recorded: true` — голос «найден» в общий журнал (`kind = seen`) с порогом снимка (3 разных посетителя и IP за 7 дней), мгновенного сброса «устарел» нет. Лимиты: 10/мин на посетителя и 30/мин на IP+сайт — на каждый вызов; 20/сутки на IP+сайт — только на засчитанный голос; сверх — 429 `RATE_LIMITED`. На admin-хосте — отказ, как у `highlight-miss` |
 | `GET /assist/sites/:id/videos` | `uiMap{ pages, stalePages, staleElements, lastCapturedAt }` — `stalePages` теперь страницы с устаревшими ЭЛЕМЕНТАМИ |
 | `/internal/sites/tutorial/ui-map` | тело + `viewport?` (`desktop \| mobile \| any`, умолчание `mobile` — окно исследователя обучалки 390×844); элементы — форма Э6 или с `candidates[{ kind, selector?, role?, name? }]`, `assistId`, `role`; пустой массив — снимок обучалки страницы снимается; страниц в карте сайта > 1000 — 403 `UI_MAP_PAGES_LIMIT` |
+
+Заход 9 (09.10.2026): `POST /widget/v1/chat` — вид вёрстки посетителя
+(Ш4 (2), Р-З9-1) сервер берёт из заголовков iframe (`Sec-CH-UA-Mobile`,
+иначе User-Agent; `visitorViewport`), как подсветка и план: в промпт идут
+элементы карты своего вида без устаревших для него; тело запроса вид не
+задаёт (лишнее поле — 400). Снимок загрузчика (план Э6-бис) подтверждает
+и элементы с тегом `other` и ARIA-ролью `button|menuitem|tab|link|checkbox|radio|switch`
+(Ш4 (3), Р-З9-2) — только по ключам, не зависящим от тега (`data-assist-id`,
+id, тестовый атрибут, роль + имя), без текста и CSS-пути; перечень тегов
+карты не расширяется.
 
 sites-backend, кабинет (initData помощника, `productRoles.assist = manager`):
 
@@ -857,6 +906,41 @@ sites-backend, кабинет (initData помощника); права — **т
 conversations, log, proposalsPurged, proposalsDeleted, memoRuns }` (поля
 предложений и мемо — с Э8).
 
+Заход 9 (09.10.2026; миграция `20261009300000_assist_admin_z9c`):
+- `POST /assist/sites/:id/admin-mode/identity-secret` (и
+  `…/connectors/:cn/signing-secret`, Э8) — тело `{ expectedSetAt }` (какой
+  выпуск видела TMA; `null` — секрета не было): условный UPDATE, второй
+  одновременный перевыпуск — 409 `ADMIN_SECRET_CHANGED` (Р-З9-18).
+- `PATCH /assist/sites/:id/admin-mode` + `{ testKeyConnectors?: boolean }`
+  (умолч. `false`, Р-З9-17); `POST /assist-admin/v1/session` → + `testKey:
+  boolean` — сессия по `pk_test` без флага получает только знания (метка
+  `t-` в токене сессии; коннекторы и действия не вызываются).
+- `PATCH /assist/sites/:id/connectors/:cn` + `{ maskPd?: boolean }` (умолч.
+  `false`, Р-З9-14) — ПД в данных API маскируются (`maskTurn`) до модели;
+  в `ConnectorView` — `maskPd`.
+- `GET /assist-admin/v1/state`, `GET /assist/sites/:id/admin-chat/state` —
+  `?lang=uk|ru|en` (язык подсказок карточек, Р-З9-42: `?lang=` → язык
+  последнего вопроса сотрудника → uk).
+- `GET /wa/v1/frame` — `Cache-Control: … s-maxage=60` (свой кэш CDN «Админки»,
+  было 300, Р-З9-16).
+- Ход сотрудника резервирует деньги ДО модели строками `admin/<siteId>` и
+  `platform/all`; факт дня — под `FOR UPDATE`; сбой после начала хода —
+  оценка в `spent` (висящих резервов нет). 429 `ADMIN_DAILY_BUDGET` — и при
+  суточном потолке сайта, и при потолке платформы
+  (`ASSIST_WIDGET_PLATFORM_DAILY_CAP_USD`), Р-З9-15.
+- `GET /assist/sites/:id/admin-mode/stats` → + `actions{ proposed,
+  confirmed, rejected, expired, yesShare, done, failed, unknown,
+  unknownShare, unrequested, chainsWithTraces, compensations{ proposed,
+  confirmed, done, failed, unknown, successRate, alert }, byOperation[] }`
+  (агрегаты на лету; `alert` — успешность компенсаций < 80 % на ≥ 10
+  попытках за 24 ч, Р-З9-43).
+- Обход за логином (`private-crawl`) индексируется в знания «Админки»:
+  источник вида `crawl` «Адмінка за логіном (обхід)», один на сайт, ворота
+  версий, язык страницы — по тексту; в «Сайт» не уходит (Р-З9-41).
+- `<history>` в ходе, где модель может предложить действие, — только
+  реплики сотрудника и тексты ответов без результатов инструментов
+  (Р-З9-19).
+
 ## Э8 помощника: «Админка» — действия
 
 ТЗ помощника §5.2–5.7, §4-бис.5, §5-бис.15 п.14, §5-бис.17 п.10; план этапов
@@ -938,6 +1022,25 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 `write`/`danger` (ключ `exec:<id>:<попытка>`), `decision`, `chain`
 (статус цепочки компенсации — новой записью), `memo`.
 
+Заход 9 (09.10.2026):
+- `POST /assist/sites/:id/connectors/:cn/signing-secret` — `{ expectedSetAt }`,
+  гонка — 409 `ADMIN_SECRET_CHANGED` (как у секрета JWT, раздел «Э7»).
+- `GET …/admin-chat/state`, `GET /assist-admin/v1/state`, `GET
+  /assist/sites/:id/action-log/proposals` — `?lang=uk|ru|en`: `ProposalView.note`
+  и подсказки — на языке сотрудника/читателя.
+- `unknown` истекает: `ProposalView` с `unknown` старше 24 ч от исполнения —
+  `status: expired`; «Да» по нему — 410 `PROPOSAL_RETRY_EXPIRED` («проверьте
+  в админке», новая карточка), Р-З9-21.
+- `POST …/proposals/:id/compensate`: исполнявшаяся компенсация с неизвестным исходом — единственная; вторая —
+  409 `COMPENSATION_UNAVAILABLE`, `chainStatus: unknown`.
+- «Да» шага мемо, остановленного посреди запуска (в т.ч. при `unknown`) —
+  предложение `expired` и 409 `MEMO_HALTED` (раньше триггер давал 500).
+- `GET /assist/sites/:id/action-log/export` — последние 50 000 записей,
+  колонка `id`, первая строка `# chain-head: hash=…; id=…; at=…; exported=…`
+  и заголовок `X-Chain-Head` (голова цепочки; та же — в отчёте недели
+  владельцам, Р-З9-20); `GET …/action-log/verify` читает журнал пачками по
+  2000.
+
 
 ## Э6-бис помощника (б): голосовое управление «Админкой»
 
@@ -968,6 +1071,16 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 (`host_unknown`). Роль виджета
 видит только колонку `site_hosts.assistRole` (`public|admin`, зеркало
 `adminHostIds` — триггер БД), настроек «Админки» — нет.
+Заход 9 (09.10.2026, остаток (б), Р-З9-24) — знания «Сайта»:
+`POST /assist/sites/:id/knowledge/site/sources` (url-источник), `PATCH
+…/knowledge/site/sources/:sid` и `PUT …/knowledge/site/hot-pages` с адресом
+на хосте «Админки» — 400 `URL_ADMIN_HOST`; `POST …/knowledge/site/recrawl`,
+когда подтверждены только хосты «Админки», — 409 `HOST_ADMIN_ONLY`
+(обход идёт только по хосту «Сайта», admin-хост — в `excludePrefixes`);
+индексация снимает ранее записанные с admin-хоста страницы как
+`excluded`; отметка хоста «Админкой» после публикации подхватывается
+кроном `assist-embed-run` без нового обхода (url-источник с такого хоста —
+в разбор, пустой источник вместо `DOCUMENT_NO_TEXT`).
 
 Кабинет, только `assistAdmin: owner` (Pro; менеджер/оператор «Сайта» и
 сотрудник — 403):
@@ -1005,6 +1118,23 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 отрезок на странице исполняется только из виджета с голосовым управлением
 (из чата/TMA — честный стоп).
 
+Заход 9 (09.10.2026):
+- `POST /assist-admin/v1/ui-plan` — предпочтение API и по ЦЕЛЯМ плана
+  (Р-З9-23): план «поля + Зберегти», где каждое поле — параметр включённой
+  write-операции коннектора (строгая сверка: голова имени параметра и
+  описание, без summary; слова-сущности и id не считаются; ≤ 5 букв —
+  целиком; номер объекта — только из последнего сегмента пути, 3–12 цифр,
+  не дата — Р-З9-23а), → `kind: 'api'`, `api: { key, ask? }` (команда уходит
+  карточкой Э8 в чат, своё «Так»); в журнале `ui-plan` — `by: 'targets'`.
+  В тестовой сессии мастера не срабатывает.
+- Мастер на рабочем хосте (Р-З9-22): шаги плана мастера несут флаг `vt`;
+  `admin-act.js` от `dispatched` до 1 с после итога шага глушит не-GET
+  `fetch`/`XMLHttpRequest`/`sendBeacon` и `submit`; вне планов мастера —
+  как раньше.
+- Отчёт мастера: `report.fragment` (фрагмент разметки для разработчика),
+  `items[].data` (данные пункта для человеческого текста uk/ru/en в TMA);
+  сухой прогон — отметка «вірно/не те» на каждом шаге.
+
 ## Э3-бис помощника: аналитика с ИИ
 
 ТЗ помощника §5-тер.2–5, 8–10, 14–17; план этапов «Э3-бис — сделано»;
@@ -1026,10 +1156,10 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 | `GET /assist/sites/:id/ai/summary?from&to` | `{ plan{ planId, aiAnalytics, leadCalibration, experiments, linkedWindowDays, behaviorViewsPerMonth }, model{ ok, reason }, budget{ period, capMicroUsd, spentMicroUsd }, coverage{ closed, labeled, failed, skipped, injection, pending, sampled }, buckets{ hot, warm, cold, hotNoLead }, intents[{ key, n }], stages[], outcomes[], failureReasons[], overridden, calibration{ version, method, positives, total, auc, brier, ece, createdAt }\|null }` (веса выборки учтены) |
 | `GET /assist/sites/:id/ai/dialogs?from&to&bucket&intent&stage&failure&cursor` | `{ items[≤50]{ conversationId, createdAt, pagePath, status, intent, stage, outcome, failureReason, leadScore, leadBucket, leadProb (только после калибровки), features[{ f, c }] (вклад признаков), intentNote, failureNote, converted, lead, handoff, weight, overridden }, nextCursor }` — текста диалога нет |
 | `PATCH /assist/sites/:id/conversations/:cid/label` | `{ intent?, stage?, outcome?, failureReason?, leadBucket? }` (значение — из перечня или `null` — снять исправление) → `{ ok, humanOverride }`; исправление человека сильнее модели; 400 `LABEL_INVALID`, 404 `LABEL_NOT_FOUND` |
-| `GET /assist/sites/:id/stats/insights?week=YYYY-MM-DD` | `{ weeks[], weekStart, items[{ id, code: N2…N10, impact, finding{ n, x, share, ciLow, ciHigh, base, page, topic, reason, field, metric, value, trigger }, text{ title, what, action }\|null, textSkipped: plan\|model\|budget\|numbers\|links\|null, status: new\|done\|dismissed, doneAt, followUp{ before, after }, feedback }], plan, model }` |
+| `GET /assist/sites/:id/stats/insights?week=YYYY-MM-DD&lang=` | (заход 9: `lang=uk\|ru\|en` — текст выводов на языке читателя: выводы пишутся на языке владельца + переводы участников одним вызовом, проверка чисел — на каждом языке; не прошедший проверку перевод опускается) `{ weeks[], weekStart, items[{ id, code: N2…N10, impact, finding{ n, x, share, ciLow, ciHigh, base, page, topic, reason, field, metric, value, trigger }, text{ title, what, action }\|null, textSkipped: plan\|model\|budget\|numbers\|links\|null, status: new\|done\|dismissed, doneAt, followUp{ before, after }, feedback }], plan, model }` |
 | `PATCH /assist/sites/:id/insights/:iid` | `{ status?: new\|done\|dismissed, feedback?: 1\|-1\|0 }`; «Сделано» → сравнение до/после через 14 дней; 400 `INSIGHT_INVALID`, 404 `INSIGHT_NOT_FOUND` |
-| `GET /assist/sites/:id/stats/behavior?from&to` | `{ enabled, reason: plan\|settings\|null, quota{ used, limit }, pages[≤200]{ path, views, activeMsMedian, scrollMedian, deepScrollShare, backNav, rage, jsErrors, formStarts, formAbandons, topAbandonField, lcpP75, inpP75, clsP75, chatOpens }, totalViews }` |
-| `GET /assist/sites/:id/experiments` | `ExperimentView[]`: `{ id, kind: holdout\|greeting\|suggestions, goalKey, share, status: running\|done\|invalid\|stopped, horizonDays, startedAt, endsAt, stopReason, mdeRel, minUnitsPerArm, units{ a, b }, srmP, result\|null }`; `result{ nA, nB, xA, xB, rateA, rateB, diff, ciLow, ciHigh, p, liftRel, verdict: significant\|not_significant\|insufficient_sample }` — **только у `done`** |
+| `GET /assist/sites/:id/stats/behavior?from&to` | `{ enabled, reason: plan\|settings\|null, quota{ used, limit }, pages[≤200]{ path, views, activeMsMedian, scrollMedian, deepScrollShare, backNav, rage, jsErrors, formStarts, formAbandons, topAbandonField, lcpP75, inpP75, clsP75, chatOpens }, totalViews }`; заход 9: `quota{ used, limit, sampleRate }` — доля выборки сверх квоты (Р-З9-25) |
+| `GET /assist/sites/:id/experiments` | `ExperimentView[]`: `{ id, kind: holdout\|greeting\|suggestions, goalKey, share, status: running\|done\|invalid\|stopped, horizonDays, startedAt, endsAt, stopReason, mdeRel, minUnitsPerArm, units{ a, b }, srmP, result\|null }`; `result{ nA, nB, xA, xB, rateA, rateB, diff, ciLow, ciHigh, p, liftRel, verdict: significant\|not_significant\|insufficient_sample, goalTrust }` — **только у `done`**; заход 9: `goalTrust` — доля конверсий «со страницы» (`trust: page`) в итоге; при большой доле TMA рекомендует основную цель s2s (`assistRef`) или заявку (Р-З9-31) |
 | `POST /assist/sites/:id/experiments/preview` | `{ kind, goalKey, share? (holdout 0.05–0.2), horizonDays? (14–56, 28), variant? }` → `PowerView{ units28, conversions28, baseRate, unitsPerDay, expectedUnits, mdeRel, minUnitsPerArm, ok, reason: no_traffic\|no_conversions\|underpowered\|null }` |
 | `POST /assist/sites/:id/experiments` | то же тело (`variant`: greeting — `{ uk?, ru?, en?: текст ≤ 300 }`, suggestions — `{ <язык>: ≤ 4 × ≤ 80 }`) → `ExperimentView`; только владелец (403 `EXPERIMENT_OWNER_ONLY`), Business+ (402 `EXPERIMENT_PLAN`), связанный режим (409 `EXPERIMENT_NEEDS_CONSENT`), один на сайт (409 `EXPERIMENT_RUNNING`), активная цель (для holdout — не только встроенная заявка; 400 `EXPERIMENT_GOAL`), MDE ≤ 30% (409 `EXPERIMENT_UNDERPOWERED`) |
 | `POST /assist/sites/:id/experiments/:eid/stop` | владелец → `stopped` (`stopReason: owner`), **без итога**; 404 `EXPERIMENT_NOT_FOUND` |
@@ -1043,9 +1173,10 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 |---|---|
 | `GET /widget/v1/config` | дополнительно `analytics{ consent{ gcm }, behavior: { excluded[] }\|null, experiment{ id, kind, share, salt, variant }\|null }` — только при связанном режиме и тарифе |
 | `POST /widget/v1/exp` | `{ pk, x (id эксперимента), v (ключ визита) }` → 204; группа считается сервером (FNV-1a `salt:visitHash`), повтор без дубля |
-| `POST /widget/v1/pv` | итог просмотра короткими ключами (`pk, pv, v, p, pp, rh, us, um, uc, d, sc, ac, to, ck, rg, er, eg, fs, fb, fa, fi, bk, l, i, c, ch`); лишнее поле — 400 `EVENT_INVALID`; сверх квоты тарифа — не принимается; сверх 120 итогов в минуту с адреса на сайт (счётчик в памяти экземпляра, аудит Э3-бис) — 204 без записи |
+| `POST /widget/v1/pv` | итог просмотра короткими ключами (`pk, pv, v, p, pp, rh, us, um, uc, d, sc, ac, to, ck, rg, er, eg, fs, fb, fa, fi, bk, l, i, c, ch`); лишнее поле — 400 `EVENT_INVALID`; сверх квоты тарифа — не принимается; сверх 120 итогов в минуту с адреса на сайт (счётчик в памяти экземпляра, аудит Э3-бис) — 204 без записи. Заход 9: лимит частоты — в Postgres (`assist_rate_buckets`), память — первая линия (Р-З9-27); сверх квоты — выборка 10 % по секретному HMAC `pvId` (строка с `sampleRate`, свёртка делит на долю; потолок ×2 квоты), перезапись уже принятого просмотра — всегда |
 | `POST /widget/v1/ref` | `{ pk, v }` → `{ ref: "r1.<exp>.<visitHash>.<подпись>" \| null }` (HMAC, 2 суток) — для `V4CAssist('ref', cb)` |
 | `POST /widget/v1/visit` | iframe, `X-Visitor-Token`: `{ conversationId, v }` → 204 — привязка диалога к визиту |
+| `POST /widget/v1/forget` | заход 9 (аудит (4), Р-З9-32): тело + `{ v? }` (ключ визита из iframe) — удаляются и единицы эксперимента этого визита без диалога; без ключа или с чужим полем forget идёт как раньше |
 | `POST /widget/v1/goal` | дополнительно `visit` (ключ визита) — конверсия на другой странице «с участием» диалога визита в окне тарифа |
 | `POST /assist/v1/sites/:id/goal-events` (s2s) | дополнительно `assistRef` из `V4CAssist('ref', cb)` — заказ на сервере связывается с диалогом и экспериментом |
 
@@ -1053,6 +1184,16 @@ API страницы: `V4CAssist('consent', { analytics: true|false })`,
 `V4CAssist('group', cb)` → `cb('h'|'w'|null)` (контрольная группа без
 помощника / с ним / нет эксперимента), `V4CAssist('ref', cb)` →
 `cb(ref|null)` — колбэки, не Promise.
+
+Заход 9 (09.10.2026; миграция `20261009100000_assist_analytics_z9`): крон
+`GET /cron/assist-analytics-run` → `ai.labels` + `batched` (диалогов,
+отправленных пакетным заданием Gemini Batch API; только при
+`ASSIST_LABEL_BATCH=1`, по умолчанию выкл.; статус разметки `batch`,
+задание без ответа > 49 ч — отмена и сверка, резерв возвращается только
+при подтверждённом сбое). `visitHash` диалога обнуляется через 31 день,
+калибровка читает флаг `linked` разметки. Срок суточных агрегатов — по
+тарифу на момент уборки: Pro 25 мес (+ 90 дней после ухода с Pro),
+остальные 13 мес.
 
 ## Э6-тер помощника: визуальный редактор голосовой карты «Сайта»
 
@@ -1075,7 +1216,7 @@ code }] } } }`:
 | `POST /assist/sites/:id/voice-map/site/editor-link` | `{ host?, path?, focus? }` → `{ url: "https://<verified-хост><path>?v4c_edit=<токен>", expiresAt (10 мин), host }`; хоста нет (не verified L1 `assist-crawl`, льгота, admin-хост, не https) — 409 `VOICE_MAP_HOST_REQUIRED`; в базе — SHA-256 токена |
 | `GET /assist/sites/:id/voice-map/site/editor-sessions` | `{ items[{ id, host, pagePath, memberId, createdAt, exchangedAt, expiresAt, lastSeenAt }] }` — живые ссылки и сессии |
 | `DELETE /assist/sites/:id/voice-map/site/editor-sessions[/:sid]` | «завершить все» / одну → `{ revoked }`; следующая операция панели — 401 |
-| `POST /assist/sites/:id/voice-map/site/versions` | собрать версию из черновика → `VoiceMapVersionView{ number, status: checking\|held, requestedVia, rollbackOf, createdAt, publishedAt, ok, problems, warnings, diff{ added, changed, removed }, gateReport, content, diffKeys }` |
+| `POST /assist/sites/:id/voice-map/site/versions` | собрать версию из черновика → `VoiceMapVersionView{ number, status: checking\|held, requestedVia, rollbackOf, createdAt, publishedAt, ok, problems, warnings, diff{ added, changed, removed }, gateReport, content, diffKeys }`; заход 9: версия `checking` сама ставит сверку воркером (`worker-check`, раздел «Э-С Ш3»), устаревшая ждущая сверка прежней версии отменяется |
 | `GET /assist/sites/:id/voice-map/site/versions[/:n]` | `{ items[≤20] }` / одна версия с диффом к опубликованной и отчётом ворот; 404 `VOICE_MAP_VERSION_NOT_FOUND` |
 | `POST /assist/sites/:id/voice-map/site/versions/:n/publish` | только `checking`; ворота пересчитываются (не прошли — `held`, 409 `VOICE_MAP_HELD`); индекс фраз сайта — гонка с мемо 409 `VOICE_MAP_PHRASE_TAKEN`; другой статус — 409 `VOICE_MAP_VERSION_STATE` |
 | `POST /assist/sites/:id/voice-map/site/versions/:n/discard` | `checking\|held` → `discarded` |
@@ -1083,6 +1224,9 @@ code }] } } }`:
 | `POST /assist/sites/:id/voice-map/site/platform-template` | `{ platform: woocommerce, expectedRevision }` → `{ revision, applied }` — цели шаблона в черновик (`origin: template`); неизвестная платформа — 400 |
 | `GET /assist/sites/:id/voice-map/site/export` | `{ name: "voice-map.<site>.site.v<N>.json", file{ schemaVersion, kind: site, templates[{ ref, name, pathPattern }], targets[], terms[], signature (HMAC) } }` — без id, образцов, журнала и ПД |
 | `POST /assist/sites/:id/voice-map/site/import` | `{ expectedRevision, file }` → `{ revision, accepted, rejected[{ index, key, code }], signed }`; `kind: admin` — 422 `VOICE_MAP_IMPORT_KIND`; не файл карты — 422 `VOICE_MAP_IMPORT_FORMAT` |
+| `POST\|GET\|DELETE /assist/sites/:id/voice-map/site/dev-report` | заход 9 (Э6-тер (9), Р-З9-34): `POST` → `{ token, path: "/assist/sites/<id>/voice-map/site/dev-report/<токен>", expiresAt (7 дней), counts{ targets, missing, … } }` — снимок отчёта при выдаче (цели, где искать, строка `data-assist-id`, подсказки платформ; пути и подписи маскированы, без живого черновика), в базе — SHA-256 токена (`assist_site_voice_map_dev_reports`); новая ссылка гасит прежние (одна живая на сайт, замок сайта); `GET` → `{ active{ createdAt, expiresAt, views, lastViewedAt }\|null }`; `DELETE` — отозвать сразу → `{ revoked }`. TMA строит полный адрес от `VITE_ASSIST_PUBLIC_API_ORIGIN` |
+| `GET /assist/sites/:id/voice-map/site/dev-report/:token?lang=uk\|ru\|en[&format=json]` | ПУБЛИЧНЫЙ (без Telegram; допуск — токен): страница только для чтения (`text/html` без скриптов, CSP `default-src 'none'`, `no-store`, `noindex`, `Referrer-Policy: no-referrer`), `format=json` — тот же снимок машинно; многоразовая 7 дней; `HEAD` и превью-боты мессенджеров просмотром не считаются; любой отказ — 404 `VOICE_MAP_DEV_REPORT_NOT_FOUND` (не оракул) |
+| `GET /assist/sites/:id/voice-map/site/misses` | заход 9 (Э6-тер (12)): `{ days: 7, items[{ key, page, self, notFound, wrong, missed, done, last }], pages[{ page, misses, last }] }` — промахи Т-4 по целям карты за 7 дней (`missed` — команда назвала цель карты, а на странице её не нашлось: строки журнала `mapMiss` с `mapKey`); для экрана TMA «Обучение → Голос» с «Відкрити в редакторі» (`focus`) |
 
 Ворота версии (`gateReport.problems[].code`, блокируют): `risk_lowered`,
 `never_named`, `never_attr`, `phrase_conflict`, `memo_phrase`, `text`,
@@ -1101,6 +1245,10 @@ code }] } } }`:
 | `POST /editor/v1/try` | `{ text (≤ 200), snapshot (снимок act.js) }` → `{ heard, via: map\|direct\|model_needed\|none, key, phrase, steps[], notes[], left }` — по ЧЕРНОВИКУ, без плана в базе и без нажатий; 100 в сутки на сайт (429 `EDITOR_TRY_LIMIT`) |
 | `POST /editor/v1/publish-request` | собрать версию (`requestedVia: editor`) + уведомление владельцам/менеджерам в бот; не чаще 1 в минуту на сессию и не больше 10 в сутки (UTC) на сайт — сверх 429 `EDITOR_PUBLISH_LIMIT` `{ scope: session\|site, retryAfterSec }`, версия не собирается и в бот ничего не уходит (аудит Э6-тер (2); сборка в TMA — без этих потолков) |
 | `POST /editor/v1/publish` | всегда 403 `EDITOR_PUBLISH_FORBIDDEN` — публикация только в TMA |
+| `GET /editor/v1/memo/list?lang=` | заход 9 (Р-З9-5): все мемо сайта — номер, имя, статус, первая страница; только чтение под сессией редактора |
+| `POST /editor/v1/memo/record/{start,step,stop}` | запись мемо кликами (заход 2, Э6-тер (д)); заход 9: `start` → + `memo.undo`, `memo.counter`; `step` → + `undo` (шаг наследует «Как отменить» своей цели карты по `mapKey`, иначе стандартная пара; «↶» в панели); `stop` ← + `goalCounter` (цель «лічильник +1») |
+| `POST /editor/v1/memo/record/wait` | заход 9: `{ path, descriptor, delta? }` — «Чекати це»: ожидание шага (`expect.appear` по элементу) или цель «счётчик +N», не шаг |
+| `POST /editor/v1/voice` | заход 9 (Э6-тер (7), Р-З9-35): тело — сама запись `audio/*` ≤ 1 МБ → `{ text, lang, left }`; резерв бюджета обучения до провайдера (Soniox), затем лимит «Сказать сейчас»; коды `EDITOR_VOICE_AUDIO_INVALID`, `EDITOR_VOICE_BUDGET`, `EDITOR_VOICE_NOT_HEARD`, `EDITOR_VOICE_PATH`, `EDITOR_VOICE_UNAVAILABLE`, `EDITOR_VOICE_UPSTREAM` |
 | `POST /editor/v1/exit` | сессия гаснет |
 | любой (кроме `session`) | сессия истекла/отозвана, роль участника или хост больше не годны — 401 `EDITOR_SESSION_EXPIRED` |
 
@@ -1245,7 +1393,7 @@ manager`; чужой сайт — 404):
 | `POST /assist/sites/:id/voice-map/site/snapshots` | `{ url, viewport?: mobile\|desktop }` → `{ snapshotId, status }` — только публичная страница verified-хоста «Сайта» (не admin-хост) — иначе 422; лимиты: 3 идущих и 60 в сутки на сайт (429 `BROWSER_JOB_BUSY`/`BROWSER_JOB_DAILY_LIMIT`) |
 | `GET /assist/sites/:id/voice-map/site/snapshots/:sid` | `{ id, status, errorCode, url, title, viewport{width,height}, elements[{ ref, role, tag, text, assistId, href, toggle, submit, inForm, disabled, inView, box{x,y,w,h} }], screenshot{ url, linkExpiresAt, width, height } \| null, createdAt, expiresAt }` — подписи с маской ПД, ссылка на скриншот ≤ 15 мин, снимок живёт 24 ч; элементы снимка уходят в общую карту Ш4 источником `qa` |
 | `POST /assist/sites/:id/voice-map/site/versions/:n/worker-check` | → `{ checkId, status }` — сверка дескрипторов версии на образцах страниц (шаблоны — до 3, страницы целей; ≤ 10 страниц, ≤ 60 целей, CSS-кандидаты целей) |
-| `GET /assist/sites/:id/voice-map/site/versions/:n/worker-check` | последняя сверка версии: поля задания + `report{ version, pages[{ path, ok, error }], targets[{ key, samples[{ path, found }], stability, lost }], lost, fragile }` — «нашлась» по CSS-кандидатам, без них — тем же `findInSnapshot`, что в бою; нет сверки — 404 `VOICE_MAP_CHECK_NOT_FOUND` |
+| `GET /assist/sites/:id/voice-map/site/versions/:n/worker-check` | последняя сверка версии: поля задания + `report{ version, pages[{ path, ok, error }], targets[{ key, samples[{ path, found }], stability, lost }], lost, fragile }` — «нашлась» по CSS-кандидатам, без них — тем же `findInSnapshot`, что в бою; нет сверки — 404 `VOICE_MAP_CHECK_NOT_FOUND`; заход 9 (Э6-тер (8), Р-З9-36): `report` + `dryRun` (сухой прогон: прямой путь, модель — только где его нет, ≤ 25 с всего и ≤ 3 параллельно, остаток — `model_skipped`) и `templates[]` (структурный отпечаток шаблонов) |
 | `GET /assist/sites/:id/admin-mode/private-crawl` | + `worker: waiting_sh3 \| ready`, у учёток — `adminCrawl` (продукт `assist-admin`), у заданий — `note` |
 | `PUT …/private-crawl`, `POST …/private-crawl/run` | при включённом воркере учётке нужен продукт `assist-admin` (409); `run` → `{ jobId, status: queued, worker: ready }`, задание обхода `queued → running → done \| failed \| cancelled` (`note`: «страниц: N» или причина без внутренних кодов); выключение обхода отменяет ожидающие задания |
 
@@ -1497,3 +1645,38 @@ sites-backend:
   `sonioxTranscriptionsDeleted`, `sonioxBusy`, `sonioxFailed`,
   `sonioxForeignSkipped`, `sonioxSkipped?`: уборка у Soniox только своих
   объектов (метка `v4c-sites`) старше часа.
+
+### Заход 9 (09.10.2026) — ИИ-помощник: изменения контрактов
+
+Подробно — в разделах помощника выше (абзацы «Заход 9» и строки таблиц с
+пометкой «заход 9»); миграции sites-backend
+`20261009100000_assist_analytics_z9`, `20261009200000_assist_voice_map_dev_report`,
+`20261009300000_assist_admin_z9c`. Сводно:
+
+- Ш4: `POST /widget/v1/highlight-seen` (новый); `POST /widget/v1/chat` —
+  вид вёрстки по заголовкам iframe; снимок подтверждает `other` с ARIA-ролью.
+- Знания «Сайта»: адрес на хосте «Админки» — 400 `URL_ADMIN_HOST`,
+  переобход при одних admin-хостах — 409 `HOST_ADMIN_ONLY` (раздел
+  «Э6-бис (б)»).
+- Голос «Сайта»: `POST /widget/v1/voice` — заголовок `X-Assist-Lang`;
+  `…/ui-plan/:id/undo` в `degraded` — `show[]`; `undo-report` без «Вернуть» —
+  409; `goal_unseen` → `goalStatus: unknown`; `voice-test/session` — отказ
+  `off` до обмена токена; `POST …/voice-control/site/tests/:tid/dev-link`,
+  `GET|POST /w/v1/vc-report/:token` (новые); код монитора `not_heard_high`;
+  `mapKey` у `mapMiss` в журнале.
+- «Админка»: `expectedSetAt` → 409 `ADMIN_SECRET_CHANGED`; `testKey` сессии
+  и флаг `testKeyConnectors`; `maskPd` коннектора; `?lang=` у состояний и
+  карточек; 410 `PROPOSAL_RETRY_EXPIRED`; 409 `COMPENSATION_UNAVAILABLE`,
+  `MEMO_HALTED`; `stats.actions`; экспорт — `# chain-head`, `X-Chain-Head`,
+  50 000, `id`; `/wa/v1/frame` — `s-maxage=60`; 429 `ADMIN_DAILY_BUDGET` и
+  при потолке платформы; источник знаний `crawl`; голос — `kind: 'api'`
+  по целям плана, `by: 'targets'`, `report.fragment`, `items[].data`.
+- Аналитика: `?lang=` у выводов, `quota.sampleRate`, `result.goalTrust`,
+  `forget { v? }`, лимит `pv` в Postgres и выборка сверх квоты, крон —
+  `ai.labels.batched`.
+- Редактор: `GET /editor/v1/memo/list`, `POST /editor/v1/memo/record/wait`,
+  `POST /editor/v1/voice` (новые); `record/start|step|stop` — `undo`,
+  `counter`, `goalCounter`; `POST|GET|DELETE …/voice-map/site/dev-report`,
+  публичный `GET …/dev-report/:token`, `GET …/voice-map/site/misses`
+  (новые); `worker-check` — `dryRun`, `templates`; сборка версии ставит
+  сверку сама.

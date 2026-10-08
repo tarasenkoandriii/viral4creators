@@ -12,6 +12,7 @@ import type {
   ChatStreamEvent,
   ChatUsageSummary,
 } from '../../shared/assist-chat-core';
+import type { UiVisitorViewport } from '../site-core/ui-map/ui-map-model';
 
 /**
  * Действия ответа «Сайта» (§4.9): Э2 — ссылка, форма лида, «позвать
@@ -120,6 +121,13 @@ export interface AskInput {
   question: string;
   /** Страница посетителя — недоверенные данные (§4.6 п.5): URL только хоста сайта. */
   page: { url: string | null; title: string | null };
+  /**
+   * Ш4 (2), Р-З9-1: вид вёрстки посетителя — W по заголовкам запроса iframe
+   * (`visitorViewport`: `Sec-CH-UA-Mobile`, User-Agent), не от клиента в
+   * теле. Элементы карты для `highlight` — своего вида и без устаревших для
+   * него; нет — любые, но без устаревших хоть где-то (как раньше).
+   */
+  viewport?: UiVisitorViewport;
   /** `V4CAssist('context')` — недоверенные данные ≤ 500 символов, строки/числа. */
   context: Record<string, string | number> | null;
   /** Язык интерфейса/подсказка; язык ответа — язык вопроса (§3.5). */

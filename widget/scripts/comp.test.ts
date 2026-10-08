@@ -292,6 +292,87 @@ async function main() {
     assert.deepEqual(g.marks, [true]);
   }
   {
+    // Заход 9 (аудит P2-3): команда подсветки — цель в `sid`, без `id`.
+    const { id: _id, allow: _a, ...rest } = C();
+    void _id;
+    void _a;
+    const SHOW = { ...rest, i: 1, show: 1, sid: 'remove-from-cart' };
+    // Старый comp.js из кеша (без ветки `show`) такую команду отвергает:
+    // эмуляция — та же команда без `show` новым чанком: 0 кликов, 0 ответов.
+    {
+      const { doc, ul } = cart();
+      const r = row(doc, ul, 'Футболка синя M');
+      const h = mkHost();
+      const { show: _s, ...old } = SHOW;
+      void _s;
+      comp({ type: 'ui-undo', planId: 'p1', idx: [], comp: old }, h.host);
+      await wait(40);
+      assert.equal(r.b.clicks, 0, 'старый чанк — без клика');
+      assert.deepEqual(h.posts, []);
+      // `show` с `id` и без `sid` — тоже ничего (ни клика, ни обводки).
+      comp(
+        {
+          type: 'ui-undo',
+          planId: 'p1',
+          idx: [],
+          comp: { ...C(), i: 1, show: 1 },
+        },
+        h.host
+      );
+      assert.equal(
+        doc.body.children.filter((n) => n.hasAttribute('data-v4c-highlight'))
+          .length,
+        0
+      );
+      await wait(40);
+      assert.equal(r.b.clicks, 0);
+    }
+    // Заход 9 (§5-бис.15 п.8): `show` в `degraded` — только обводка своей
+    // строки, ни клика, ни ответа iframe; две одинаковые строки — без обводки.
+    const { doc, ul } = cart();
+    const other = row(doc, ul, 'Шапка зимова M');
+    const same = row(doc, ul, 'Футболка синя M');
+    const h = mkHost();
+    comp(
+      {
+        type: 'ui-undo',
+        planId: 'p1',
+        idx: [],
+        comp: SHOW,
+      },
+      h.host
+    );
+    // Обводка ставится сразу (снимается таймером через 6 с).
+    const rings = doc.body.children.filter((n) =>
+      n.hasAttribute('data-v4c-highlight')
+    );
+    assert.equal(rings.length, 1, 'обведена ровно одна обратная кнопка');
+    await wait(40);
+    assert.equal(same.b.clicks + other.b.clicks, 0, 'подсветка — без клика');
+    assert.deepEqual(h.posts, [], 'без ответа iframe (итога нет)');
+    assert.equal(ul.children.length, 2, 'строки на месте');
+    const { doc: d2, ul: u2 } = cart();
+    const a = row(d2, u2, 'Футболка синя M');
+    const b = row(d2, u2, 'Футболка синя M');
+    comp(
+      {
+        type: 'ui-undo',
+        planId: 'p1',
+        idx: [],
+        comp: SHOW,
+      },
+      h.host
+    );
+    await wait(20);
+    assert.equal(
+      d2.body.children.filter((n) => n.hasAttribute('data-v4c-highlight'))
+        .length,
+      0,
+      'неоднозначно — без обводки'
+    );
+    assert.equal(a.b.clicks + b.b.clicks, 0);
+  }
+  {
     // undo.js с полем `comp` поля не трогает (чанк comp.js — отдельно).
     const doc = installFakeDom();
     void doc;

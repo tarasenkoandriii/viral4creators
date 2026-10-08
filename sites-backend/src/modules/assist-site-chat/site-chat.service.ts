@@ -114,6 +114,7 @@ import {
   visitorPageKey,
 } from '../assist-site-media/public/ui-map';
 import { uiMapPageRef } from '../site-core/ui-map/ui-map';
+import type { UiVisitorViewport } from '../site-core/ui-map/ui-map-model';
 import {
   maskForJournal,
   postFilterAnswer,
@@ -840,6 +841,7 @@ export class SiteChatService {
       p.hosts,
       p.videoAllowed,
       videoLangPrefs(p.lang, p.input.uiLang),
+      p.input.viewport,
     );
     const prompt = buildSitePrompt({
       siteName: p.siteName,
@@ -1605,13 +1607,18 @@ export class SiteChatService {
     videoAllowed: boolean,
     /** Ш5(5): языки посетителя — его ролики первыми (`videoLangPrefs`). */
     langs: string[] = [],
+    /**
+     * Ш4 (2), Р-З9-1: вид вёрстки посетителя — элементы своего вида (снятое
+     * на телефоне компьютеру не предлагается) и без устаревших для него.
+     */
+    viewport?: UiVisitorViewport,
   ): Promise<MediaAllowed> {
     try {
       const [videos, elements] = await Promise.all([
         videoAllowed
           ? promptVideos(this.db, siteId, langs)
           : Promise.resolve([]),
-        pageUiElements(this.db, siteId, pageUrl, hosts),
+        pageUiElements(this.db, siteId, pageUrl, hosts, { viewport }),
       ]);
       const key = visitorPageKey(pageUrl, hosts);
       return {

@@ -20,6 +20,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { SitesDb } from '../../prisma/sites-db.service';
+import { maskSensitiveEcho } from '../../shared/assist-chat-core';
 import {
   questionLang,
   type AnswerLang,
@@ -390,10 +391,12 @@ export class AdminAnswerService {
               flags: [`tool_${r.outcome}`],
             });
           }
+          // Р-З9-14: коннектор с `maskPd` — e-mail, телефоны и ключи в
+          // данных API скрыты ДО модели (проверка чисел — по тем же данным).
           data.push({
             n: data.length + 1,
             operation: call.op.key,
-            json: r.data,
+            json: call.op.maskPd ? maskSensitiveEcho(r.data) : r.data,
           });
         }
       }

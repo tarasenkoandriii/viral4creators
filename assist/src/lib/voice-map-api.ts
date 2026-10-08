@@ -22,6 +22,8 @@ export const VOICE_MAP_ERROR_CODES = [
   // Э-С Ш3: «Снимок» и сверка карты браузерным воркером (экраны — хвост).
   'VOICE_MAP_SNAPSHOT_NOT_FOUND',
   'VOICE_MAP_CHECK_NOT_FOUND',
+  // Заход 9: отчёт для разработчика по ссылке.
+  'VOICE_MAP_DEV_REPORT_NOT_FOUND',
 ] as const;
 export type VoiceMapErrorCode = (typeof VOICE_MAP_ERROR_CODES)[number];
 
@@ -291,6 +293,244 @@ export function parseVoiceMapImported(v: unknown): VoiceMapImported {
   };
 }
 
+// ── заход 9: «Снимок» (№108), сверка воркером (№108/№115), отчёт для
+// разработчика (№116), промахи Т-4 по целям (№119) ──
+
+export interface SnapshotElement {
+  ref: string;
+  role: string;
+  tag: string;
+  text: string;
+  assistId: string | null;
+  href: string | null;
+  disabled: boolean;
+  box: { x: number; y: number; w: number; h: number } | null;
+}
+
+export interface SnapshotView {
+  id: string;
+  status: string;
+  errorCode: string | null;
+  url: string | null;
+  viewport: { width: number; height: number } | null;
+  elements: SnapshotElement[];
+  screenshot: {
+    url: string;
+    width: number | null;
+    height: number | null;
+  } | null;
+}
+
+const ASSIST_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
+export function parseSnapshotView(v: unknown): SnapshotView {
+  const o = obj(v);
+  const vp = obj(o.viewport);
+  const shot = obj(o.screenshot);
+  const shotUrl = text(shot.url);
+  return {
+    id: text(o.id),
+    status: text(o.status) || 'queued',
+    errorCode: nstr(o.errorCode),
+    url: nstr(o.url),
+    viewport:
+      num(vp.width) > 0 && num(vp.height) > 0
+        ? { width: num(vp.width), height: num(vp.height) }
+        : null,
+    elements: arr(o.elements)
+      .map(obj)
+      .slice(0, 300)
+      .map((e) => {
+        const b = obj(e.box);
+        return {
+          ref: text(e.ref),
+          role: text(e.role),
+          tag: text(e.tag),
+          text: text(e.text).slice(0, 120),
+          assistId: ASSIST_ID.test(text(e.assistId)) ? text(e.assistId) : null,
+          href: nstr(e.href),
+          disabled: e.disabled === true,
+          box:
+            e.box && num(b.w) > 0 && num(b.h) > 0
+              ? { x: num(b.x), y: num(b.y), w: num(b.w), h: num(b.h) }
+              : null,
+        };
+      }),
+    // Ссылка на скриншот — только https/blob-хранилище (не javascript:).
+    screenshot: /^https:\/\//.test(shotUrl)
+      ? {
+          url: shotUrl,
+          width: typeof shot.width === 'number' ? shot.width : null,
+          height: typeof shot.height === 'number' ? shot.height : null,
+        }
+      : null,
+  };
+}
+
+/** Дескриптор цели карты из элемента «Снимка» (сервер разбирает заново). */
+export function snapshotDescriptor(
+  e: SnapshotElement,
+  host: string | null
+): Record<string, unknown> {
+  let hrefPath: string | null = null;
+  let hrefHost: string | null = null;
+  if (e.href && e.tag === 'a')
+    try {
+      const u = new URL(e.href);
+      hrefPath = u.pathname;
+      hrefHost = u.host;
+    } catch {
+      hrefPath = null;
+    }
+  return {
+    tag: ['a', 'button', 'input', 'select', 'textarea'].includes(e.tag)
+      ? e.tag
+      : 'other',
+    role: e.role || null,
+    text: e.text,
+    assistId: e.assistId,
+    hrefPath,
+    hrefHost,
+    offHost: !!hrefHost && !!host && hrefHost !== host,
+    unique: true,
+  };
+}
+
+export interface WorkerCheckView {
+  status: string;
+  errorCode: string | null;
+  report: {
+    lost: number;
+    fragile: number;
+    pages: number;
+    pagesFailed: number;
+    dryRun: {
+      ok: number;
+      failed: number;
+      skipped: number;
+      forbiddenBlocked: boolean;
+      problems: Array<{
+        key: string;
+        text: string;
+        outcome: string;
+        path: string;
+      }>;
+    } | null;
+    /** Шаблоны, где образцы не похожи друг на друга (маска ловит чужое). */
+    mixed: Array<{ pathPattern: string; paths: string[] }>;
+  } | null;
+}
+
+export function parseWorkerCheck(v: unknown): WorkerCheckView {
+  const o = obj(v);
+  const r = o.report ? obj(o.report) : null;
+  const dr = r && r.dryRun ? obj(r.dryRun) : null;
+  const pages = r ? arr(r.pages).map(obj) : [];
+  return {
+    status: text(o.status) || 'queued',
+    errorCode: nstr(o.errorCode),
+    report: r
+      ? {
+          lost: num(r.lost),
+          fragile: num(r.fragile),
+          pages: pages.length,
+          pagesFailed: pages.filter((p) => p.ok !== true).length,
+          dryRun: dr
+            ? {
+                ok: num(dr.ok),
+                failed: num(dr.failed),
+                skipped: num(dr.skipped),
+                forbiddenBlocked: dr.forbiddenBlocked === true,
+                problems: arr(dr.commands)
+                  .map(obj)
+                  .filter((c) =>
+                    ['wrong', 'missing', 'model_failed'].includes(
+                      text(c.outcome)
+                    )
+                  )
+                  .slice(0, 20)
+                  .map((c) => ({
+                    key: text(c.key),
+                    text: text(c.text).slice(0, 60),
+                    outcome: text(c.outcome),
+                    path: text(c.path),
+                  })),
+              }
+            : null,
+          mixed: arr(r.templates)
+            .map(obj)
+            .filter((t) => t.mixed === true)
+            .map((t) => ({
+              pathPattern: text(t.pathPattern),
+              paths: arr(t.pages)
+                .map(obj)
+                .filter((p) => p.same !== true)
+                .map((p) => text(p.path)),
+            })),
+        }
+      : null,
+  };
+}
+
+export interface DevReportLink {
+  /** Путь от корня публичного API (экран добавляет origin). */
+  path: string;
+  expiresAt: string;
+  targets: number;
+  missing: number;
+}
+
+export interface DevReportStatus {
+  expiresAt: string;
+  views: number;
+  lastViewedAt: string | null;
+}
+
+export interface MapMissItem {
+  key: string;
+  page: string | null;
+  self: number;
+  notFound: number;
+  wrong: number;
+  /** Команда назвала цель, а на странице её не было (промах карты). */
+  missed: number;
+  done: number;
+}
+
+export interface MapMisses {
+  days: number;
+  items: MapMissItem[];
+  pages: Array<{ page: string; misses: number }>;
+}
+
+const KEY = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
+const PATH = /^\/[^\s]{0,299}$/;
+
+export function parseMisses(v: unknown): MapMisses {
+  const o = obj(v);
+  return {
+    days: num(o.days) || 7,
+    items: arr(o.items)
+      .map(obj)
+      .filter((x) => KEY.test(text(x.key)))
+      .slice(0, 50)
+      .map((x) => ({
+        key: text(x.key),
+        page: PATH.test(text(x.page)) ? text(x.page) : null,
+        self: num(x.self),
+        notFound: num(x.notFound),
+        wrong: num(x.wrong),
+        missed: num(x.missed),
+        done: num(x.done),
+      })),
+    pages: arr(o.pages)
+      .map(obj)
+      .filter((x) => PATH.test(text(x.page)))
+      .slice(0, 20)
+      .map((x) => ({ page: text(x.page), misses: num(x.misses) })),
+  };
+}
+
 export interface VoiceMapApi {
   summary(siteId: string): Promise<VoiceMapSummary>;
   editorLink(
@@ -315,6 +555,27 @@ export interface VoiceMapApi {
     expectedRevision: number,
     file: unknown
   ): Promise<VoiceMapImported>;
+  /** Ревизия черновика (для правки из «Снимка»). */
+  draftRevision(siteId: string): Promise<number>;
+  /** Операции черновика — `PATCH …/draft` (409/422 как у кабинета). */
+  patch(
+    siteId: string,
+    expectedRevision: number,
+    ops: unknown[]
+  ): Promise<number>;
+  snapshot(
+    siteId: string,
+    url: string,
+    viewport: 'mobile' | 'desktop'
+  ): Promise<string>;
+  snapshotView(siteId: string, sid: string): Promise<SnapshotView>;
+  workerCheck(siteId: string, n: number): Promise<void>;
+  workerCheckView(siteId: string, n: number): Promise<WorkerCheckView>;
+  devReport(siteId: string): Promise<DevReportLink>;
+  revokeDevReport(siteId: string): Promise<number>;
+  /** Живая ссылка отчёта (без токена — он показывается один раз). */
+  devReportStatus(siteId: string): Promise<DevReportStatus | null>;
+  misses(siteId: string): Promise<MapMisses>;
 }
 
 const SEG = /^[A-Za-z0-9_-]{1,64}$/;
@@ -384,5 +645,63 @@ export function createVoiceMapApi(client: ApiClient): VoiceMapApi {
       );
       return parseVoiceMapImported(o);
     },
+    draftRevision: async (id) =>
+      num(obj(await client.request('GET', `${p(id)}/draft`)).revision),
+    patch: async (id, expectedRevision, ops) =>
+      num(
+        obj(
+          await client.request('PATCH', `${p(id)}/draft`, {
+            expectedRevision,
+            ops,
+          })
+        ).revision
+      ),
+    snapshot: async (id, url, viewport) => {
+      const sid = text(
+        obj(
+          await client.request('POST', `${p(id)}/snapshots`, { url, viewport })
+        ).snapshotId
+      );
+      if (!SEG.test(sid)) throw new Error('bad snapshot');
+      return sid;
+    },
+    snapshotView: async (id, sid) =>
+      parseSnapshotView(
+        await client.request('GET', `${p(id)}/snapshots/${seg(sid)}`)
+      ),
+    workerCheck: async (id, x) => {
+      await client.request('POST', `${p(id)}/versions/${n(x)}/worker-check`);
+    },
+    workerCheckView: async (id, x) =>
+      parseWorkerCheck(
+        await client.request('GET', `${p(id)}/versions/${n(x)}/worker-check`)
+      ),
+    devReport: async (id) => {
+      const o = obj(await client.request('POST', `${p(id)}/dev-report`));
+      const path = text(o.path);
+      // Только путь этого сайта на нашем API — не произвольный адрес.
+      if (!path.startsWith(`${p(id)}/dev-report/`)) throw new Error('bad path');
+      const c = obj(o.counts);
+      return {
+        path,
+        expiresAt: iso(o.expiresAt) ?? '',
+        targets: num(c.targets),
+        missing: num(c.missing),
+      };
+    },
+    devReportStatus: async (id) => {
+      const a = obj(await client.request('GET', `${p(id)}/dev-report`)).active;
+      if (!a) return null;
+      const o = obj(a);
+      return {
+        expiresAt: iso(o.expiresAt) ?? '',
+        views: num(o.views),
+        lastViewedAt: iso(o.lastViewedAt),
+      };
+    },
+    revokeDevReport: async (id) =>
+      num(obj(await client.request('DELETE', `${p(id)}/dev-report`)).revoked),
+    misses: async (id) =>
+      parseMisses(await client.request('GET', `${p(id)}/misses`)),
   };
 }

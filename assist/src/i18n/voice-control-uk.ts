@@ -74,6 +74,8 @@ export const voiceControlUk: VoiceControlDictionary = {
     transition_expired: 'перевірку не пройдено',
     complaint: 'скарга',
     undo_low: 'помічник не може повернути поля — розмітка відміни застаріла',
+    not_heard_high:
+      'помічник часто «не розчув» команди однією мовою — шум або мікрофон',
   },
   changedAt: 'Змінено {date}: {who}{why}.',
   banner:
@@ -90,6 +92,9 @@ export const voiceControlUk: VoiceControlDictionary = {
     host: 'Адреса сайту',
     start: 'Перевірити',
     link: 'Відкрийте посилання на сайті (діє 30 хвилин, одноразове):',
+    devLink: 'Посилання для розробника',
+    devLinkHint:
+      'Одноразове, діє 72 години: розробник побачить пункти, селектори і фрагмент розмітки — без ваших команд і даних відвідувачів.',
     open: 'Відкрити сайт',
     copied: 'Посилання скопійовано',
     last: 'Остання перевірка: {result}, {date}',

@@ -275,6 +275,13 @@ function parseResult(v: unknown): ExperimentResultView | null {
       o.verdict === 'significant' || o.verdict === 'not_significant'
         ? o.verdict
         : 'insufficient_sample',
+    goalTrust: o.goalTrust
+      ? {
+          total: n0(obj(o.goalTrust).total),
+          page: n0(obj(o.goalTrust).page),
+          pageShare: num(obj(o.goalTrust).pageShare),
+        }
+      : null,
   };
 }
 
@@ -314,7 +321,12 @@ export function parseBehavior(v: unknown): BehaviorView {
   return {
     enabled: bool(o.enabled),
     reason: o.reason === 'plan' || o.reason === 'settings' ? o.reason : null,
-    quota: { used: n0(q.used), limit: n0(q.limit) },
+    quota: {
+      used: n0(q.used),
+      limit: n0(q.limit),
+      // До захода 9 сервер поля не слал — всё в квоте.
+      sampleRate: num(q.sampleRate) ?? 1,
+    },
     pages: arr(o.pages).map((x) => {
       const p = obj(x);
       return {
@@ -371,7 +383,12 @@ export interface AiApi {
     conversationId: string,
     patch: Record<string, string | null>
   ): Promise<void>;
-  insights(siteId: string, week?: string): Promise<InsightsView>;
+  /** `lang` — язык экрана: тексты выводов на нём (заход 9, Р-З9-7). */
+  insights(
+    siteId: string,
+    week?: string,
+    lang?: 'uk' | 'ru' | 'en'
+  ): Promise<InsightsView>;
   markInsight(
     siteId: string,
     id: string,
@@ -411,13 +428,15 @@ export function createAiApi(client: ApiClient): AiApi {
         patch
       );
     },
-    insights: async (id, week) =>
-      parseInsights(
+    insights: async (id, week, lang) => {
+      const q = qs({ week, lang });
+      return parseInsights(
         await client.request(
           'GET',
-          `${s(id)}/stats/insights${week ? `?${qs({ week })}` : ''}`
+          `${s(id)}/stats/insights${q ? `?${q}` : ''}`
         )
-      ),
+      );
+    },
     markInsight: async (id, iid, patch) => {
       await client.request('PATCH', `${s(id)}/insights/${seg(iid)}`, patch);
     },

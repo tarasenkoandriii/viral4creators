@@ -39,6 +39,7 @@ import {
 } from '../site-core/account/roles';
 import { HostAccessService } from '../site-core/ownership/host-access.service';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 import { SiteCrawlService } from '../site-crawl/crawl.service';
 import { PublicPageFetcher } from '../site-crawl/page-fetcher';
 import {
@@ -46,6 +47,8 @@ import {
   recrawlIntervalMs,
 } from './crawl-scheduler.service';
 import { siteModeAdapter } from './site-mode.adapter';
+import { SITE_TABLES } from './site-tables';
+import { qualified } from '../assist-knowledge-core/tables';
 import { SiteKnowledgeService } from './site-knowledge.service';
 
 /** Вопросов «на которые помощник теперь отвечает» (§3.4). */
@@ -87,7 +90,41 @@ export class SiteSourcesService {
   }
 
   async processPendingFiles(budgetMs: number): Promise<{ processed: number }> {
+    try {
+      await this.requeueAdminHostSources();
+    } catch (e) {
+      this.logger.error(
+        `url-источники на хостах «Админки»: ${(e as Error | null)?.name ?? 'Error'}`,
+      );
+    }
     return this.core.processPending(budgetMs);
+  }
+
+  /**
+   * Р-З9-24: хост отдали «Админке» ПОСЛЕ публикации — url-источники
+   * «Сайта» с живыми документами на нём заново в разбор (тот снимет их
+   * страницы: `processUrls`, причина `admin_host`). Условие — живой документ
+   * на таком хосте, поэтому после разбора источник сюда не возвращается.
+   * Возвращает число поставленных в разбор источников.
+   */
+  async requeueAdminHostSources(): Promise<number> {
+    const sys = this.db.system(
+      'крон разбора «Сайта»: url-источники на хостах «Админки» всех кабинетов',
+    );
+    return sys.$executeRawUnsafe(
+      `UPDATE ${qualified(SITE_TABLES.sources)} s
+          SET "status" = 'processing', "lockedUntil" = NULL, "attempts" = 0,
+              "updatedAt" = now()
+        WHERE s."kind" = 'url' AND s."status" = 'active'
+          AND EXISTS (
+            SELECT 1 FROM ${qualified(SITE_TABLES.documents)} d
+              JOIN ${qualified('site_hosts')} h
+                ON h."siteId" = d."siteId" AND h."accountId" = d."accountId"
+             WHERE d."sourceId" = s."id" AND d."accountId" = s."accountId"
+               AND d."status" = 'active' AND h."assistRole" <> $1
+               AND substring(d."url" from '^https://([^/:?#]+)') = h."host")`,
+      PUBLIC_SITE_HOST.assistRole,
+    );
   }
 
   private async hasVerifiedHost(
@@ -95,10 +132,29 @@ export class SiteSourcesService {
     siteId: string,
     now: Date,
   ): Promise<boolean> {
+    return (await this.hostState(m, siteId, now)) === 'ok';
+  }
+
+  /**
+   * Есть ли что обходить для «Сайта»: подтверждённый хост «Сайта» (`ok`);
+   * подтверждены только хосты «Админки» (`admin-only`, Р-З9-24: хост
+   * «Админки» знаниям «Сайта» не источник и не повод запускать обход —
+   * ТЗ §10, К-9); ничего (`none`).
+   */
+  private async hostState(
+    m: AccountMembership,
+    siteId: string,
+    now: Date,
+  ): Promise<'ok' | 'admin-only' | 'none'> {
     const hosts = await this.db
       .forAccount(m.accountId)
       .siteHost.findMany({ where: { siteId } });
-    return hosts.some((h) => evaluateHostAccess(h, 'assist-crawl', now).ok);
+    const verified = hosts.filter(
+      (h) => evaluateHostAccess(h, 'assist-crawl', now).ok,
+    );
+    if (verified.some((h) => h.assistRole === PUBLIC_SITE_HOST.assistRole))
+      return 'ok';
+    return verified.length ? 'admin-only' : 'none';
   }
 
   async settingsView(
@@ -249,7 +305,15 @@ export class SiteSourcesService {
   /** POST …/recrawl — нет verified-хоста → 409 HOST_NOT_VERIFIED (K1). */
   async recrawl(m: AccountMembership, siteId: string): Promise<CrawlRunView> {
     await this.requireAssist(m, siteId);
-    if (!(await this.hasVerifiedHost(m, siteId, new Date()))) {
+    const state = await this.hostState(m, siteId, new Date());
+    if (state === 'admin-only') {
+      throw e1Error(
+        409,
+        'HOST_ADMIN_ONLY',
+        'Подтверждённые адреса сайта отданы «Админке» — добавьте и подтвердите адрес публичного сайта',
+      );
+    }
+    if (state !== 'ok') {
       throw e1Error(
         409,
         'HOST_NOT_VERIFIED',

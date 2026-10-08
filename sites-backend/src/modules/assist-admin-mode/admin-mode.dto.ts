@@ -8,6 +8,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsISO8601,
   IsInt,
   IsNumber,
   IsObject,
@@ -70,6 +71,11 @@ export class PatchAdminModeDto {
   @IsOptional()
   @IsBoolean()
   notifyDanger?: boolean;
+
+  /** Р-З9-17: сессия по `pk_test` ходит в коннекторы и действия. */
+  @IsOptional()
+  @IsBoolean()
+  testKeyConnectors?: boolean;
 }
 
 export class CreateConnectorDto {
@@ -115,6 +121,11 @@ export class PatchConnectorDto {
   @IsOptional()
   @IsBoolean()
   saasAcknowledged?: boolean;
+
+  /** Р-З9-14: маскировать ПД в данных read-операций до модели. */
+  @IsOptional()
+  @IsBoolean()
+  maskPd?: boolean;
 }
 
 /** Э8: связь операции — `x-assist-compensation` / `x-assist-preview`. */
@@ -213,6 +224,20 @@ export class PutConnectorSecretDto {
       'Ключ API не должен содержать переводы строк и управляющие символы',
   })
   secret!: string;
+}
+
+/**
+ * Перевыпуск секрета (секрет подписи JWT, секрет подписи коннектора) —
+ * аудит Э7 (д), Р-З9-18: `expectedSetAt` — какой выпуск TMA видела (ISO
+ * `setAt` из экрана; null — секрета не было). Не совпало (второй
+ * одновременный перевыпуск успел первым) — 409 `ADMIN_SECRET_CHANGED`, и
+ * показанный TMA секрет не оказывается «мёртвым». Без поля — как раньше
+ * (старые сборки TMA).
+ */
+export class IssueSecretDto {
+  @IsOptional()
+  @IsISO8601({ strict: true })
+  expectedSetAt?: string | null;
 }
 
 export class ActionLogQueryDto {

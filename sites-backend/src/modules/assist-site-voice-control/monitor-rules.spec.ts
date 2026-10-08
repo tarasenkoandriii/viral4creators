@@ -4,11 +4,14 @@
  * канарейка выпусков.
  */
 import {
+  cappedPlanIds,
   computeMetrics,
+  cursorPage,
   decideCanary,
   decideMemoReview,
   decideSite,
   MONITOR_THRESHOLDS,
+  notHeardLangs,
   platformTrip,
   type MonitorLogRow,
   type MonitorPlanRow,
@@ -424,5 +427,129 @@ describe('(д) метрики цепочек (§5-бис.15 п.12)', () => {
     expect(m.undoAttempts).toBe(10);
     expect(m.undoDone).toBe(10);
     expect(decideSite(m, 'on').codes).not.toContain('undo_low');
+  });
+});
+
+describe('заход 9: аудит (г) (3) — потолок вклада и по хешу IP плана', () => {
+  it('12 провалов от 12 visitor-token с ОДНОГО IP — в метриках не больше perVisitorPlans; с 12 IP — деградация', () => {
+    const plans: MonitorPlanRow[] = [];
+    const logs: MonitorLogRow[] = [];
+    for (let i = 0; i < 12; i++) {
+      plans.push(
+        plan(`ip${i}`, {
+          status: 'failed',
+          states: ['failed'],
+          visitorId: `tok${i}`,
+          createdAt: at(i * 1000),
+        }),
+      );
+      logs.push(
+        {
+          ...log(`ip${i}`, { action: 'plan', result: 'proposed' }),
+          target: { ip: 'h-one' },
+        },
+        log(`ip${i}`, { result: 'failed', reason: 'payment' }),
+      );
+    }
+    const m = computeMetrics(plans, logs);
+    expect(m.plans).toBe(MONITOR_THRESHOLDS.perVisitorPlans);
+    expect(m.stoplistLive).toBe(MONITOR_THRESHOLDS.perVisitorPlans);
+    expect(decideSite(m, 'on').action).not.toBe('degrade');
+    const spread = logs.map((l) =>
+      l.action === 'plan' ? { ...l, target: { ip: `h-${l.planId}` } } : l,
+    );
+    expect(decideSite(computeMetrics(plans, spread), 'on')).toEqual({
+      action: 'degrade',
+      codes: ['stoplist_live'],
+    });
+  });
+
+  it('ранги независимы и детерминированы: самые новые планы посетителя/IP, при равенстве времени — по id; без IP — только потолок посетителя', () => {
+    const rows = [
+      { id: 'a', createdAt: at(1), visitorId: 'v', ipHash: 'x' },
+      { id: 'b', createdAt: at(2), visitorId: 'v', ipHash: 'x' },
+      { id: 'c', createdAt: at(3), visitorId: 'w', ipHash: 'x' },
+      { id: 'd', createdAt: at(4), visitorId: 'w', ipHash: 'x' },
+      { id: 'e', createdAt: at(4), visitorId: 'u', ipHash: null },
+    ];
+    // IP `x`: d, c, b — первые три; a — сверх потолка IP.
+    expect([...cappedPlanIds(rows)].sort()).toEqual(['b', 'c', 'd', 'e']);
+    expect(
+      [...cappedPlanIds(rows.map((r) => ({ ...r, ipHash: null })))].sort(),
+    ).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+});
+
+describe('заход 9: «не расслышал» по языкам (§5-бис.14, таблица порогов)', () => {
+  it('> 30% на ≥ 20 командах одного языка — тревога not_heard_high, без деградации; 19 команд или ровно 30% — нет', () => {
+    const base = metrics({});
+    const with_ = (stt: SiteVoiceMetrics['stt']) =>
+      decideSite({ ...base, stt }, 'on');
+    expect(with_({ ru: { heard: 13, notHeard: 7 } })).toEqual({
+      action: 'alert',
+      codes: ['not_heard_high'],
+    });
+    expect(with_({ ru: { heard: 12, notHeard: 7 } }).action).toBe('none');
+    expect(with_({ ru: { heard: 14, notHeard: 6 } }).action).toBe('none');
+    // Другой язык с малой выборкой не смешивается с первым.
+    expect(
+      notHeardLangs({
+        uk: { heard: 100, notHeard: 10 },
+        en: { heard: 2, notHeard: 9 },
+        ru: { heard: 10, notHeard: 10 },
+      }),
+    ).toEqual(['ru']);
+    expect(with_({ ru: { heard: 0, notHeard: 50 } }).action).not.toBe(
+      'degrade',
+    );
+  });
+});
+
+describe('заход 9: аудит (г) (1) — курсор прохода монитора по siteId', () => {
+  const ids = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      siteId: `s${String(i).padStart(3, '0')}`,
+    }));
+  /** Имитация прохода: те же запросы, что `pageOfSites` (по возрастанию). */
+  const pass = (
+    all: Array<{ siteId: string }>,
+    cur: string | null,
+    n: number,
+  ) =>
+    cursorPage({
+      after: all.filter((s) => cur === null || s.siteId > cur).slice(0, n),
+      wrapped:
+        cur === null ? [] : all.filter((s) => s.siteId <= cur).slice(0, n),
+      limit: n,
+    });
+
+  it('205 сайтов при 200 за проход — все за 2 прохода, по кругу; каждый в каждом круге', () => {
+    const all = ids(205);
+    const seen = new Set<string>();
+    let cur: string | null = null;
+    const r1 = pass(all, cur, 200);
+    r1.page.forEach((s) => seen.add(s.siteId));
+    cur = r1.cursor;
+    expect(cur).toBe('s199');
+    const r2 = pass(all, cur, 200);
+    r2.page.forEach((s) => seen.add(s.siteId));
+    expect(seen.size).toBe(205);
+    // Второй проход: 5 хвостовых + 195 с начала круга; курсор — s194.
+    expect(r2.page.slice(0, 5).map((s) => s.siteId)).toEqual([
+      's200',
+      's201',
+      's202',
+      's203',
+      's204',
+    ]);
+    expect(r2.cursor).toBe('s194');
+  });
+
+  it('сайтов меньше страницы — все за проход, курсор сброшен; дублей нет', () => {
+    const all = ids(3);
+    expect(pass(all, null, 200)).toEqual({ page: all, cursor: null });
+    const r = pass(all, 's001', 200);
+    expect(r.page.map((s) => s.siteId)).toEqual(['s002', 's000', 's001']);
+    expect(r.cursor).toBeNull();
   });
 });

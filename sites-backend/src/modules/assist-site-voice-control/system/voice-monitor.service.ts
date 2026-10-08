@@ -41,9 +41,11 @@ import {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import {
-  recipients,
+  recipientsWithLang,
   sendToMembers,
+  sendToMembersByLang,
   type FetchLike,
+  type NotifyLang,
 } from '../../assist-knowledge-core/notify';
 import {
   MEMO_REVIEW,
@@ -52,16 +54,21 @@ import {
 } from '../../assist-ui-core/memo';
 import { pathMatches } from '../../assist-ui-core/rules';
 import {
-  computeMetrics,
+  cursorPage,
   decideCanary,
   decideMemoReview,
   decideSite,
   MONITOR_THRESHOLDS,
+  notHeardLangs,
   platformTrip,
   type MonitorCode,
   type SiteVoiceMetrics,
 } from '../monitor-rules';
-import { loadWindow, siteMetrics } from './voice-monitor-store';
+import {
+  canaryAggregates,
+  readSttCounters,
+  siteMetrics,
+} from './voice-monitor-store';
 
 export interface VoiceMonitorResult {
   transitions: number;
@@ -77,21 +84,80 @@ export interface VoiceMonitorResult {
 
 const DAY = 24 * 60 * 60_000;
 
-/** Текст уведомлений — без ПД (только коды, проценты, ссылка в TMA). */
-const OWNER_TEXT: Record<string, string> = {
-  transition:
-    'Голосове керування сайтом переведено в режим «Тест»: перевірку (майстер) не пройдено за 14 днів. Пройдіть перевірку — це кілька хвилин.',
-  violation:
-    'Голосове керування сайтом ВИМКНЕНО: помічник спробував дію з категорії «ніколи». Ми розбираємось; увімкнути знову можна після нової перевірки.',
-  degraded:
-    'Голосове керування сайтом працює погано — переведено в режим підказки (лише підсвічує). Пройдіть перевірку ще раз, щоб повернути натискання.',
-  alert:
-    'Голосове керування сайтом працює погано на частині сторінок. Перегляньте промахи і пройдіть перевірку ще раз.',
-  undo_low:
-    'Помічник не може повернути поля після збою — розмітка відміни на сайті, схоже, застаріла. Перевірте сторінки з формами.',
-  memo_review:
-    'Мемо М-{n} потребує перевірки: сайт змінився або мемо часто не доходить до мети. Поки що помічник виконує команди звичайним шляхом. Відкрийте «Голос → Мемо».',
+/**
+ * Текст уведомлений — без ПД (только коды, проценты, ссылка в TMA). Язык —
+ * получателя (`assist_bot_users.languageCode`, иначе uk; Р-З9-7, заход 9 —
+ * аудит (г) (7)).
+ */
+export const OWNER_TEXT: Record<
+  | 'transition'
+  | 'violation'
+  | 'degraded'
+  | 'alert'
+  | 'undo_low'
+  | 'not_heard'
+  | 'memo_review',
+  Record<NotifyLang, string>
+> = {
+  transition: {
+    uk: 'Голосове керування сайтом переведено в режим «Тест»: перевірку (майстер) не пройдено за 14 днів. Пройдіть перевірку — це кілька хвилин.',
+    ru: 'Голосовое управление сайтом переведено в режим «Тест»: проверка (мастер) не пройдена за 14 дней. Пройдите проверку — это несколько минут.',
+    en: 'Site voice control was switched to “Test”: the check (wizard) was not passed within 14 days. Run the check — it takes a few minutes.',
+  },
+  violation: {
+    uk: 'Голосове керування сайтом ВИМКНЕНО: помічник спробував дію з категорії «ніколи». Ми розбираємось; увімкнути знову можна після нової перевірки.',
+    ru: 'Голосовое управление сайтом ВЫКЛЮЧЕНО: помощник попытался выполнить действие из категории «никогда». Мы разбираемся; включить снова можно после новой проверки.',
+    en: 'Site voice control is OFF: the assistant attempted an action from the “never” category. We are investigating; it can be re-enabled after a new check.',
+  },
+  degraded: {
+    uk: 'Голосове керування сайтом працює погано — переведено в режим підказки (лише підсвічує). Пройдіть перевірку ще раз, щоб повернути натискання.',
+    ru: 'Голосовое управление сайтом работает плохо — переведено в режим подсказки (только подсвечивает). Пройдите проверку ещё раз, чтобы вернуть нажатия.',
+    en: 'Site voice control is performing poorly — switched to hint mode (highlight only). Run the check again to restore clicking.',
+  },
+  alert: {
+    uk: 'Голосове керування сайтом працює погано на частині сторінок. Перегляньте промахи і пройдіть перевірку ще раз.',
+    ru: 'Голосовое управление сайтом работает плохо на части страниц. Посмотрите промахи и пройдите проверку ещё раз.',
+    en: 'Site voice control is performing poorly on some pages. Review the misses and run the check again.',
+  },
+  undo_low: {
+    uk: 'Помічник не може повернути поля після збою — розмітка відміни на сайті, схоже, застаріла. Перевірте сторінки з формами.',
+    ru: 'Помощник не может вернуть поля после сбоя — разметка отмены на сайте, похоже, устарела. Проверьте страницы с формами.',
+    en: 'The assistant cannot restore fields after a failure — the undo markup on the site seems outdated. Check the pages with forms.',
+  },
+  not_heard: {
+    uk: 'Помічник часто «не розчув» голосові команди ({langs}): понад 30% за добу. Ймовірно, шум або мікрофон відвідувачів; перевірте мови голосу в налаштуваннях.',
+    ru: 'Помощник часто «не расслышал» голосовые команды ({langs}): больше 30% за сутки. Вероятно, шум или микрофон посетителей; проверьте языки голоса в настройках.',
+    en: 'The assistant often “didn’t catch” voice commands ({langs}): over 30% in 24 hours. Likely noise or visitors’ microphones; check the voice languages in settings.',
+  },
+  memo_review: {
+    uk: 'Мемо М-{n} потребує перевірки: сайт змінився або мемо часто не доходить до мети. Поки що помічник виконує команди звичайним шляхом. Відкрийте «Голос → Мемо».',
+    ru: 'Мемо М-{n} требует проверки: сайт изменился или мемо часто не доходит до цели. Пока помощник выполняет команды обычным путём. Откройте «Голос → Мемо».',
+    en: 'Memo M-{n} needs review: the site changed or the memo often fails to reach its goal. Meanwhile the assistant runs commands the usual way. Open “Voice → Memos”.',
+  },
 };
+
+const OPEN_BUTTON: Record<NotifyLang, string> = {
+  uk: 'Відкрити',
+  ru: 'Открыть',
+  en: 'Open',
+};
+
+/** Тексты уведомления на три языка с подстановкой `{n}`/`{langs}`. */
+export function ownerTexts(
+  key: keyof typeof OWNER_TEXT,
+  vars: Record<string, string> = {},
+): Record<NotifyLang, { text: string; button: string }> {
+  const out = {} as Record<NotifyLang, { text: string; button: string }>;
+  for (const l of ['uk', 'ru', 'en'] as const) {
+    let t = OWNER_TEXT[key][l];
+    for (const [k, v] of Object.entries(vars)) t = t.split(`{${k}}`).join(v);
+    out[l] = { text: t, button: OPEN_BUTTON[l] };
+  }
+  return out;
+}
+
+/** Ключ настройки платформы с курсором шага прохода (аудит (г) (1)). */
+export const MONITOR_CURSOR_KEY = 'voice-monitor-cursor';
 
 @Injectable()
 export class VoiceMonitorService {
@@ -108,6 +174,9 @@ export class VoiceMonitorService {
    */
   platformKey: string = VOICE_CONTROL_SETTINGS_KEY;
   releaseKey: string = WIDGET_RELEASE_KEY;
+  /** Только тесты: свой префикс курсоров и размер страницы прохода. */
+  cursorKey: string = MONITOR_CURSOR_KEY;
+  sitesPerRun: number = MONITOR_THRESHOLDS.sitesPerRun;
 
   constructor(
     private readonly sitesDb: SitesDb,
@@ -174,19 +243,58 @@ export class VoiceMonitorService {
   private async notifyOwners(
     accountId: string,
     siteId: string,
-    text: string,
+    texts: Record<NotifyLang, { text: string; button: string }>,
   ): Promise<number> {
-    return sendToMembers({
-      chatIds: await recipients(
+    return sendToMembersByLang({
+      recipients: await recipientsWithLang(
         this.sitesDb,
         accountId,
         (m) => m.role === 'owner' || m.productRoles.assist === 'manager',
       ),
-      text,
-      button: { text: 'Відкрити', hashPath: `/sites/${siteId}/persona` },
+      texts,
+      hashPath: `/sites/${siteId}/persona`,
       env: this.env,
       fetchImpl: this.fetchImpl,
     });
+  }
+
+  /**
+   * (заход 9, аудит (г) (1)) Сайты шага прохода по keyset-курсору
+   * (`siteId`, по кругу) — при > `sitesPerRun` сайтах остальные не
+   * голодают: следующий проход берёт следующую страницу. Курсор — в
+   * настройках платформы (`voice-monitor-cursor:<шаг>`), без миграции.
+   */
+  private async pageOfSites(
+    step: 'metrics' | 'commands',
+    where: Prisma.AssistSiteWhereInput,
+  ): Promise<Array<{ accountId: string; siteId: string }>> {
+    const key = `${this.cursorKey}:${step}`;
+    const row = await this.prisma.assistPlatformSetting.findUnique({
+      where: { key },
+      select: { value: true },
+    });
+    const v = row?.value as { after?: unknown } | null | undefined;
+    const cursor = typeof v?.after === 'string' ? v.after : null;
+    const q = (w: Prisma.AssistSiteWhereInput) =>
+      this.sys().assistSite.findMany({
+        where: { ...this.scope(), ...where, ...w },
+        select: { accountId: true, siteId: true },
+        orderBy: { siteId: 'asc' },
+        take: this.sitesPerRun,
+      });
+    const after = await q(cursor ? { siteId: { gt: cursor } } : {});
+    const wrapped =
+      cursor && after.length < this.sitesPerRun
+        ? await q({ siteId: { lte: cursor } })
+        : [];
+    const r = cursorPage({ after, wrapped, limit: this.sitesPerRun });
+    if (r.cursor !== cursor)
+      await this.prisma.assistPlatformSetting.upsert({
+        where: { key },
+        create: { key, value: { after: r.cursor }, updatedBy: 'monitor' },
+        update: { value: { after: r.cursor }, updatedBy: 'monitor' },
+      });
+    return r.page;
   }
 
   /** Служебный канал платформы (ASSIST_OPS_CHAT_ID); без него — лог. */
@@ -263,7 +371,7 @@ export class VoiceMonitorService {
       const notified = await this.notifyOwners(
         s.accountId,
         s.siteId,
-        OWNER_TEXT.transition,
+        ownerTexts('transition'),
       );
       await this.incident({
         accountId: s.accountId,
@@ -334,7 +442,11 @@ export class VoiceMonitorService {
       });
       fresh++;
       const notified =
-        (await this.notifyOwners(e.accountId, siteId, OWNER_TEXT.violation)) +
+        (await this.notifyOwners(
+          e.accountId,
+          siteId,
+          ownerTexts('violation'),
+        )) +
         (await this.notifyOps(
           `ІНЦИДЕНТ голосового керування: порушення заборони на сайті ${siteId} (${[...e.reasons].join(',')}). Сайт вимкнено.`,
         ));
@@ -392,10 +504,8 @@ export class VoiceMonitorService {
   private async metrics(
     now: Date,
   ): Promise<{ alerts: number; degraded: number }> {
-    const sites = await this.sys().assistSite.findMany({
-      where: { ...this.scope(), voiceControlSiteState: 'on' },
-      select: { accountId: true, siteId: true },
-      take: MONITOR_THRESHOLDS.sitesPerRun,
+    const sites = await this.pageOfSites('metrics', {
+      voiceControlSiteState: 'on',
     });
     let alerts = 0;
     let degraded = 0;
@@ -403,6 +513,8 @@ export class VoiceMonitorService {
       try {
         const db = this.sitesDb.forAccount(s.accountId);
         const m = await siteMetrics(db, s.siteId, now);
+        // (заход 9) «Не расслышал» по языкам — счётчики маршрута голоса.
+        m.stt = await readSttCounters(this.sys(), s.siteId, now);
         const d = decideSite(m, 'on');
         if (d.action === 'degrade') {
           const r = await db.assistSite.updateMany({
@@ -420,7 +532,7 @@ export class VoiceMonitorService {
             (await this.notifyOwners(
               s.accountId,
               s.siteId,
-              OWNER_TEXT.degraded,
+              ownerTexts('degraded'),
             )) +
             (await this.notifyOps(
               `Голосове керування: сайт ${s.siteId} → режим підказки (${d.codes.join(',')}; планів ${m.plans}, done ${pct(m.done, m.plans)}).`,
@@ -434,23 +546,34 @@ export class VoiceMonitorService {
             notified,
           });
         } else if (d.action === 'alert') {
-          if (await this.recentlyAlerted(s.siteId, d.codes[0], now)) continue;
+          // (заход 9, P3-3) Дедуп — по КАЖДОМУ коду: новая проблема рядом
+          // со старой (уже отправленной сегодня) не теряется.
+          const fresh: MonitorCode[] = [];
+          for (const c of d.codes)
+            if (!(await this.recentlyAlerted(s.siteId, c, now))) fresh.push(c);
+          if (!fresh.length) continue;
           alerts++;
+          const only = fresh.length === 1 ? fresh[0] : null;
           const notified = await this.notifyOwners(
             s.accountId,
             s.siteId,
-            d.codes.length === 1 && d.codes[0] === 'undo_low'
-              ? OWNER_TEXT.undo_low
-              : OWNER_TEXT.alert,
+            only === 'undo_low'
+              ? ownerTexts('undo_low')
+              : only === 'not_heard_high'
+                ? ownerTexts('not_heard', {
+                    langs: notHeardLangs(m.stt).join(', '),
+                  })
+                : ownerTexts('alert'),
           );
-          await this.incident({
-            accountId: s.accountId,
-            siteId: s.siteId,
-            kind: 'alert',
-            code: d.codes[0],
-            metrics: summary(m, d.codes),
-            notified,
-          });
+          for (const [k, code] of fresh.entries())
+            await this.incident({
+              accountId: s.accountId,
+              siteId: s.siteId,
+              kind: 'alert',
+              code,
+              metrics: summary(m, d.codes),
+              notified: k === 0 ? notified : 0,
+            });
         }
       } catch (e) {
         // Один сломанный сайт не останавливает проход.
@@ -653,7 +776,7 @@ export class VoiceMonitorService {
         const notified = await this.notifyOwners(
           memo.accountId,
           memo.siteId,
-          OWNER_TEXT.memo_review.replace('{n}', String(memo.number)),
+          ownerTexts('memo_review', { n: String(memo.number) }),
         );
         await this.incident({
           accountId: memo.accountId,
@@ -708,13 +831,14 @@ export class VoiceMonitorService {
         rel.canarySince ? Date.parse(rel.canarySince) : 0,
       ),
     );
+    // (заход 9, аудит (г) (2)) Агрегаты SQL по выпуску вместо выборки
+    // строк (≤ 20 000 — нарушения и планы выпадали при росте платформы);
+    // правила те же, что `computeMetrics` (сверка — приёмка e6b).
     const sys = this.sys();
-    const [c, st] = await Promise.all([
-      loadWindow(sys, { since, release: rel.canary }),
-      loadWindow(sys, { since, release: rel.stable }),
+    const [cm, sm] = await Promise.all([
+      canaryAggregates(sys, { since, release: rel.canary }),
+      canaryAggregates(sys, { since, release: rel.stable }),
     ]);
-    const cm = computeMetrics(c.plans, c.logs);
-    const sm = computeMetrics(st.plans, st.logs);
     const d = decideCanary({
       canary: { plans: cm.plans, done: cm.done, violations: cm.violations },
       stable: { plans: sm.plans, done: sm.done },
@@ -759,13 +883,8 @@ export class VoiceMonitorService {
   // ── 5. контрольные команды (для Т-3) ────────────────────────────────────
 
   private async commands(now: Date): Promise<number> {
-    const sites = await this.sys().assistSite.findMany({
-      where: {
-        ...this.scope(),
-        voiceControlSiteState: { in: ['on', 'degraded', 'test'] },
-      },
-      select: { accountId: true, siteId: true },
-      take: MONITOR_THRESHOLDS.sitesPerRun,
+    const sites = await this.pageOfSites('commands', {
+      voiceControlSiteState: { in: ['on', 'degraded', 'test'] },
     });
     let n = 0;
     for (const s of sites) {

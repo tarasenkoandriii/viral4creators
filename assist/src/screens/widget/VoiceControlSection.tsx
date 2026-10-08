@@ -94,6 +94,7 @@ function VoiceControlForm({
   const [testHost, setTestHost] = useState(false);
   const [host, setHost] = useState('');
   const [report, setReport] = useState<VoiceTestDetail | null>(null);
+  const [devLink, setDevLink] = useState<string | null>(null);
   // Первое включение из `off` — экран рисков (их текст версионирован).
   const fromOff = view.state === 'off' && state !== 'off';
   const last = view.lastTest;
@@ -167,11 +168,25 @@ function VoiceControlForm({
 
   const showReport = async () => {
     if (!last) return;
+    setDevLink(null);
     if (report) return setReport(null);
     try {
       setReport(await voiceControl.test(siteId, last.id));
     } catch (e) {
       setNotice({ tone: 'danger', text: errText(e) });
+    }
+  };
+
+  /** Заход 9: одноразовая ссылка «звіт для розробника» (72 ч, без ПД). */
+  const makeDevLink = async () => {
+    if (!report) return;
+    setBusy(true);
+    try {
+      setDevLink((await voiceControl.devLink(siteId, report.id)).url);
+    } catch (e) {
+      setNotice({ tone: 'danger', text: errText(e) });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -426,6 +441,25 @@ function VoiceControlForm({
                 copiedLabel={dict.common.copied}
               />
             )}
+            <div className="space-y-1">
+              <Button
+                variant="outline"
+                icon={<ExternalLink size={16} />}
+                disabled={busy}
+                onClick={() => void makeDevLink()}
+              >
+                {t.wizard.devLink}
+              </Button>
+              <div className="text-silver-500">{t.wizard.devLinkHint}</div>
+              {devLink && (
+                <CopyField
+                  label={t.wizard.devLink}
+                  value={devLink}
+                  copyLabel={dict.common.copy}
+                  copiedLabel={dict.common.copied}
+                />
+              )}
+            </div>
           </div>
         )}
       </div>

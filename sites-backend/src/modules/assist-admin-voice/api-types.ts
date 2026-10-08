@@ -121,6 +121,8 @@ export interface AdminVoiceReport {
     selector: string;
   }>;
   reviewed: Record<string, 'deny' | 'safe'>;
+  /** Фрагмент разметки для разработчика админки (`adminMarkupFragment`). */
+  fragment: string;
 }
 
 export interface AdminVoiceTestDetail extends AdminVoiceTestSummary {
@@ -167,8 +169,11 @@ export interface AdminPlanView {
   /** Перечень изменяемых полей карточки (§5-бис.5 «Админка»). */
   fields?: AdminField[];
   chainStatus?: ChainStatus | null;
-  /** Операция API, куда ушла команда (`kind: api`), — для текста. */
-  api?: { key: string | null } | null;
+  /**
+   * Операция API, куда ушла команда (`kind: api`), — для текста; `ask` —
+   * вопрос в чат Э8 (команда + номер объекта со страницы, если не назван).
+   */
+  api?: { key: string | null; ask?: string } | null;
   /** «Через API операции нет» — кликами такое никогда. */
   apiMissing?: boolean;
   /** Мемо АМ-N: номер, имя; итог/следующий отрезок после плана. */

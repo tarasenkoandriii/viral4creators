@@ -47,6 +47,7 @@ import { failPlan } from './admin-voice-errors';
 import {
   adminDangerButtons,
   adminForbiddenProbes,
+  adminMarkupFragment,
   type ApiCatalogOp,
 } from './admin-voice-rules';
 import { sha256Hex } from './admin-voice-settings.service';
@@ -460,6 +461,7 @@ export class AdminVoiceTestService {
     } catch {
       /* разобран выше */
     }
+    const dangerButtons = adminDangerButtons(snapshot);
     const report: AdminVoiceReport = {
       v: 1,
       lang,
@@ -471,7 +473,7 @@ export class AdminVoiceTestService {
       attempts,
       submitsBlocked,
       forbidden,
-      dangerButtons: adminDangerButtons(snapshot),
+      dangerButtons,
       dry,
       safe,
       save,
@@ -482,6 +484,13 @@ export class AdminVoiceTestService {
         selector: x.selector,
       })),
       reviewed,
+      // Фрагмент разметки для разработчика (аудит Э6-бис (б) (1)).
+      fragment: adminMarkupFragment({
+        suspicious,
+        reviewed,
+        dangerButtons,
+        lang,
+      }),
     };
     const validUntil = new Date(now.getTime() + WIZARD_LIMITS.validMs);
     const w = await this.db(s.accountId).assistAdminVoiceTest.updateMany({

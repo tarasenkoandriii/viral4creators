@@ -35,7 +35,12 @@
  *    разных посетителей и разных IP за окно), и только набравшийся порог
  *    сбрасывает промахи вида. Мгновенный сброс — у источников сервера
  *    (обучалка, QA, ручная разметка — ui-map-store.ts). Снимок не
- *    сохраняется и новых элементов не создаёт.
+ *    сохраняется и новых элементов не создаёт. Элемент снимка вне перечня
+ *    тегов карты (`div role=button`, тег `other`) узнаётся по ключам, не
+ *    зависящим от тега (`data-assist-id`, id, test-id, роль+имя; Р-З9-2).
+ *  - `recordUiSeen` — сигнал «найдено» подсветкой загрузчика (Ш4 (4),
+ *    Р-З9-3): барьеры промаха (квитанция показа, элемент в карте вида), затем
+ *    `lastSeenAt` и голос «найден» снимка — тот же журнал, порог и окно.
  *  - `markUiMapStale` — счётчик Э6 на снимках страницы (справочно; решение
  *    об устаревании — по элементу). Оставлен для совместимости.
  */
@@ -56,10 +61,9 @@ import {
 } from '../../site-core/ui-map/ui-map';
 import {
   UI_MAP_STALE,
-  candidateKeys,
-  cleanUiSnapshot,
   isStaleFor,
   rowFitsViewport,
+  seenSnapshotKeys,
   type UiVisitorViewport,
 } from '../../site-core/ui-map/ui-map-model';
 
@@ -248,17 +252,8 @@ export async function recordUiMiss(
     return no('invalid');
   const key = visitorPageKey(p.pageUrl, p.siteHosts);
   if (!key) return no('invalid');
-  const since = new Date(p.now.getTime() - UI_MAP_STALE.receiptMs);
-  const receipt = await db.$queryRaw<Array<{ ok: number }>>(Prisma.sql`
-    SELECT 1 AS "ok"
-      FROM "sites"."assist_site_messages" m
-      JOIN "sites"."assist_site_conversations" c ON c."id" = m."conversationId"
-     WHERE m."siteId" = ${p.siteId} AND c."siteId" = ${p.siteId}
-       AND c."visitorId" = ${p.visitorId} AND m."role" = 'assistant'
-       AND m."createdAt" >= ${since}::timestamp(3)
-       AND m."actions" @> ${JSON.stringify([{ kind: 'highlight', elementId: p.elementId, page: uiMapPageRef(key) }])}::jsonb
-     LIMIT 1`);
-  if (!receipt.length) return no('no-receipt');
+  if (!(await hasShowReceipt(db, { ...p, elementId: p.elementId, key })))
+    return no('no-receipt');
   const rows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
     SELECT "id" FROM "sites"."site_ui_elements"
      WHERE "siteId" = ${p.siteId} AND "host" = ${key.host} AND "path" = ${key.path}
@@ -298,7 +293,9 @@ export async function recordUiMiss(
  * окно) и счётчик голосов вида в окне; набрался порог — промахи, «устарел»
  * и голоса вида сброшены. Элементы снимка — в форме снимка (`{tag,
  * label|name, selector?, assistId?, role?, candidates?}`), узнаются по
- * ключам кандидатов. Возвращает число узнанных строк.
+ * ключам кандидатов; `div role=button` (тег `other`) — по ключам, не
+ * зависящим от тега (Р-З9-2, `seenSnapshotKeys`). Возвращает число
+ * узнанных строк.
  */
 export async function confirmSeenUiElements(
   db: MapDb,
@@ -327,13 +324,7 @@ export async function confirmSeenUiElements(
         }
       : x,
   );
-  const keys = [
-    ...new Set(
-      cleanUiSnapshot(items, 150).flatMap((e) =>
-        candidateKeys(e.candidates, e.tag),
-      ),
-    ),
-  ];
+  const keys = seenSnapshotKeys(items, 150);
   if (!keys.length) return 0;
   const c = MISS_COLUMNS[p.viewport];
   const rows = await db.$queryRaw<Array<{ id: string; doubt: boolean }>>(
@@ -345,31 +336,148 @@ export async function confirmSeenUiElements(
        AND "elementKey" = ANY(${keys}::text[])
     RETURNING "id", (${c.count} > 0 OR ${c.stale} IS NOT NULL) AS "doubt"`,
   );
+  for (const r of rows
+    .filter((x) => x.doubt)
+    .slice(0, SEEN_VOTES_PER_SNAPSHOT)) {
+    await seenVote(db, { ...p, rowId: r.id });
+  }
+  return rows.length;
+}
+
+/**
+ * Голос «найден» по строке элемента для вида посетителя: один на
+ * посетителя и на хеш IP (журнал `kind = seen`, уникальные ключи), счётчик
+ * голосов вида в окне; набрался порог (`UI_MAP_STALE.threshold` разных
+ * посетителей и IP) — промахи, «устарел» и голоса вида сброшены.
+ */
+async function seenVote(
+  db: MapDb,
+  p: {
+    accountId: string;
+    siteId: string;
+    rowId: string;
+    visitorId: string;
+    ipHash: string;
+    viewport: UiVisitorViewport;
+    now: Date;
+  },
+): Promise<'duplicate' | 'voted' | 'reset'> {
+  const c = MISS_COLUMNS[p.viewport];
+  const inserted = await db.$executeRaw(Prisma.sql`
+    INSERT INTO "sites"."site_ui_element_misses"
+           ("id", "accountId", "siteId", "elementRowId", "viewport", "kind", "ipHash", "visitorId", "createdAt")
+    VALUES (${randomUUID()}, ${p.accountId}, ${p.siteId}, ${p.rowId}, ${p.viewport}, 'seen',
+            ${p.ipHash}, ${p.visitorId}, ${p.now}::timestamp(3))
+    ON CONFLICT DO NOTHING`);
+  if (inserted === 0) return 'duplicate';
   const windowStart = new Date(p.now.getTime() - UI_MAP_STALE.windowMs);
   const fresh = Prisma.sql`(${c.seenSince} IS NULL OR ${c.seenSince} < ${windowStart}::timestamp(3))`;
   const next = Prisma.sql`(CASE WHEN ${fresh} THEN 1 ELSE ${c.seen} + 1 END)`;
   const reached = Prisma.sql`${next} >= ${UI_MAP_STALE.threshold}`;
-  for (const r of rows
-    .filter((x) => x.doubt)
-    .slice(0, SEEN_VOTES_PER_SNAPSHOT)) {
-    // Один голос рода «найден» на элемент и вид от посетителя и от IP.
-    const inserted = await db.$executeRaw(Prisma.sql`
-      INSERT INTO "sites"."site_ui_element_misses"
-             ("id", "accountId", "siteId", "elementRowId", "viewport", "kind", "ipHash", "visitorId", "createdAt")
-      VALUES (${randomUUID()}, ${p.accountId}, ${p.siteId}, ${r.id}, ${p.viewport}, 'seen',
-              ${p.ipHash}, ${p.visitorId}, ${p.now}::timestamp(3))
-      ON CONFLICT DO NOTHING`);
-    if (inserted === 0) continue;
-    await db.$executeRaw(Prisma.sql`
-      UPDATE "sites"."site_ui_elements"
-         SET ${c.seen} = CASE WHEN ${reached} THEN 0 ELSE ${next} END,
-             ${c.seenSince} = CASE WHEN ${reached} THEN NULL
-                                   WHEN ${fresh} THEN ${p.now}::timestamp(3)
-                                   ELSE ${c.seenSince} END,
-             ${c.count} = CASE WHEN ${reached} THEN 0 ELSE ${c.count} END,
-             ${c.since} = CASE WHEN ${reached} THEN NULL ELSE ${c.since} END,
-             ${c.stale} = CASE WHEN ${reached} THEN NULL ELSE ${c.stale} END
-       WHERE "id" = ${r.id}`);
-  }
-  return rows.length;
+  const updated = await db.$queryRaw<Array<{ reset: boolean }>>(Prisma.sql`
+    UPDATE "sites"."site_ui_elements"
+       SET ${c.seen} = CASE WHEN ${reached} THEN 0 ELSE ${next} END,
+           ${c.seenSince} = CASE WHEN ${reached} THEN NULL
+                                 WHEN ${fresh} THEN ${p.now}::timestamp(3)
+                                 ELSE ${c.seenSince} END,
+           ${c.count} = CASE WHEN ${reached} THEN 0 ELSE ${c.count} END,
+           ${c.since} = CASE WHEN ${reached} THEN NULL ELSE ${c.since} END,
+           ${c.stale} = CASE WHEN ${reached} THEN NULL ELSE ${c.stale} END
+     WHERE "id" = ${p.rowId}
+    RETURNING (${c.seen} = 0 AND ${c.seenSince} IS NULL) AS "reset"`);
+  return updated[0]?.reset ? 'reset' : 'voted';
+}
+
+export type UiSeenOutcome =
+  /** Голос «найден» принят (элемент был под сомнением у вида посетителя). */
+  | 'voted'
+  /** Голос набрал порог: промахи и «устарел» вида сброшены. */
+  | 'reset'
+  /** Сомнений у вида не было — только `lastSeenAt`. */
+  | 'seen'
+  | 'invalid'
+  | 'no-receipt'
+  | 'unknown-element'
+  /** Этот посетитель или этот IP уже голосовали «найден» за элемент. */
+  | 'duplicate';
+
+/**
+ * Ш4 (4), Р-З9-3: загрузчик НАШЁЛ элемент подсветки (`highlight-result
+ * {found: true}` → iframe → `POST /widget/v1/highlight-seen`). Те же
+ * барьеры, что у промаха (`recordUiMiss`): квитанция показа ЭТОМУ
+ * посетителю ЭТОГО элемента НА ЭТОЙ странице, элемент — в карте страницы
+ * для вида посетителя (свой вид раньше `any` — та же строка, что у
+ * промаха); дальше — `lastSeenAt` и, если у вида есть промахи или
+ * «устарел», голос «найден» с тем же порогом, что у снимка (мгновенного
+ * сброса нет: данные посетителя). Лимиты на посетителя и IP+сайт — в
+ * контроллере.
+ */
+export async function recordUiSeen(
+  db: MapDb,
+  p: {
+    accountId: string;
+    siteId: string;
+    visitorId: string;
+    ipHash: string;
+    pageUrl: string | null | undefined;
+    siteHosts: string[];
+    elementId: unknown;
+    viewport: UiVisitorViewport;
+    now: Date;
+  },
+  opts: {
+    /**
+     * Перед голосом (только когда у вида есть сомнение): суточный лимит
+     * IP+сайт — бросает RATE_LIMITED. «Видели» без сомнения лимит не тратит.
+     */
+    beforeVote?: () => Promise<void>;
+  } = {},
+): Promise<{ outcome: UiSeenOutcome }> {
+  if (typeof p.elementId !== 'string' || !UI_ELEMENT_ID_RE.test(p.elementId))
+    return { outcome: 'invalid' };
+  const key = visitorPageKey(p.pageUrl, p.siteHosts);
+  if (!key) return { outcome: 'invalid' };
+  if (!(await hasShowReceipt(db, { ...p, elementId: p.elementId, key })))
+    return { outcome: 'no-receipt' };
+  const c = MISS_COLUMNS[p.viewport];
+  const rows = await db.$queryRaw<Array<{ id: string; doubt: boolean }>>(
+    Prisma.sql`
+    UPDATE "sites"."site_ui_elements"
+       SET "lastSeenAt" = ${p.now}::timestamp(3)
+     WHERE "id" = (
+       SELECT "id" FROM "sites"."site_ui_elements"
+        WHERE "siteId" = ${p.siteId} AND "host" = ${key.host} AND "path" = ${key.path}
+          AND "elementId" = ${p.elementId} AND "viewport" IN (${p.viewport}, 'any')
+        ORDER BY ("viewport" = ${p.viewport}) DESC
+        LIMIT 1)
+    RETURNING "id", (${c.count} > 0 OR ${c.stale} IS NOT NULL) AS "doubt"`,
+  );
+  if (!rows.length) return { outcome: 'unknown-element' };
+  if (!rows[0].doubt) return { outcome: 'seen' };
+  await opts.beforeVote?.();
+  return { outcome: await seenVote(db, { ...p, rowId: rows[0].id }) };
+}
+
+/** Квитанция показа: ассистент выдал посетителю подсветку элемента на странице. */
+async function hasShowReceipt(
+  db: MapDb,
+  p: {
+    siteId: string;
+    visitorId: string;
+    elementId: string;
+    key: { host: string; path: string };
+    now: Date;
+  },
+): Promise<boolean> {
+  const since = new Date(p.now.getTime() - UI_MAP_STALE.receiptMs);
+  const receipt = await db.$queryRaw<Array<{ ok: number }>>(Prisma.sql`
+    SELECT 1 AS "ok"
+      FROM "sites"."assist_site_messages" m
+      JOIN "sites"."assist_site_conversations" c ON c."id" = m."conversationId"
+     WHERE m."siteId" = ${p.siteId} AND c."siteId" = ${p.siteId}
+       AND c."visitorId" = ${p.visitorId} AND m."role" = 'assistant'
+       AND m."createdAt" >= ${since}::timestamp(3)
+       AND m."actions" @> ${JSON.stringify([{ kind: 'highlight', elementId: p.elementId, page: uiMapPageRef(p.key) }])}::jsonb
+     LIMIT 1`);
+  return receipt.length > 0;
 }

@@ -20,6 +20,7 @@ import {
   HttpCode,
   Param,
   Post,
+  Query,
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -31,7 +32,11 @@ import {
   AdminFeedbackDto,
   AdminSessionDto,
 } from './admin-chat.dto';
-import { AdminChatService, type EmployeeCtx } from './admin-chat.service';
+import {
+  AdminChatService,
+  type EmployeeCtx,
+  langParam,
+} from './admin-chat.service';
 import {
   ADMIN_QUESTIONS_PER_HOUR,
   ADMIN_QUESTIONS_PER_MIN,
@@ -73,8 +78,8 @@ export class AdminEmbedController {
   }
 
   @Get('state')
-  async state(@Headers(HEADER) token?: string) {
-    return this.chat.state(await this.ctx(token));
+  async state(@Headers(HEADER) token?: string, @Query('lang') lang?: string) {
+    return this.chat.state(await this.ctx(token), new Date(), langParam(lang));
   }
 
   @Post('chat')

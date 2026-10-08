@@ -5,6 +5,9 @@
  * без заголовка сессии — 401 (initData TMA сессией не является), с сессией —
  * запись → черновик → «Прогнать»; неизвестная операция — 404. Логика —
  * `memo-record.spec.ts` (сервисы напрямую).
+ * Заход 9: список мемо `GET /editor/v1/memo/list`, запись микрофона
+ * `POST /editor/v1/voice` (сырой `audio/*` ≤ 1 МБ — парсер маршрута до
+ * Nest), отчёт для разработчика: выдача в TMA и чтение по ссылке БЕЗ входа.
  */
 import * as request from 'supertest';
 import { EDITOR_SESSION_HEADER } from '../../brand';
@@ -125,6 +128,93 @@ describeDb(
       const bad = await post('/editor/v1/memo/record/stop', { steps: [] }, ses);
       expect(bad.status).toBe(400);
       expect(errCode(bad)).toBe('EDITOR_MEMO_BAD_REQUEST');
+
+      // Заход 9 (№21): список мемо — под сессией редактора.
+      const list = await request(stack.srv())
+        .get('/editor/v1/memo/list?lang=uk')
+        .set(EDITOR_SESSION_HEADER, ses)
+        .expect(200);
+      expect(dataOf(list).items).toEqual([
+        expect.objectContaining({ number: 1, name: 'У кошик', steps: 1 }),
+      ]);
+      expect(
+        (await request(stack.srv()).get('/editor/v1/memo/list')).status,
+      ).toBe(401);
+      // №114: запись — сырым `audio/*`; больше 1 МБ — 400 в конверте до
+      // маршрута; не звук — 400 сервиса; без сессии — 401.
+      const big = await request(stack.srv())
+        .post('/editor/v1/voice')
+        .set(EDITOR_SESSION_HEADER, ses)
+        .set('Content-Type', 'audio/webm')
+        .send(Buffer.alloc(1024 * 1024 + 10, 1));
+      expect(big.status).toBe(400);
+      expect(errCode(big)).toBe('EDITOR_VOICE_AUDIO_INVALID');
+      const txt = await request(stack.srv())
+        .post('/editor/v1/voice')
+        .set(EDITOR_SESSION_HEADER, ses)
+        .set('Content-Type', 'text/plain')
+        .send('натисни в кошик');
+      expect(txt.status).toBe(400);
+      expect(errCode(txt)).toBe('EDITOR_VOICE_AUDIO_INVALID');
+      expect(
+        (
+          await request(stack.srv())
+            .post('/editor/v1/voice')
+            .set('Content-Type', 'audio/webm')
+            .send(Buffer.alloc(2048, 1))
+        ).status,
+      ).toBe(401);
+    });
+
+    it('заход 9 (№116): отчёт для разработчика — выдача только в TMA, чтение по ссылке без входа (HTML без скриптов), чужой токен — 404', async () => {
+      const s = await stack.site();
+      await setPlan(stack.prisma, s.accountId, 'business');
+      expect(
+        (
+          await request(stack.srv()).post(
+            `/assist/sites/${s.siteId}/voice-map/site/dev-report`,
+          )
+        ).status,
+      ).toBe(401);
+      const made = dataOf(
+        await request(stack.srv())
+          .post(`/assist/sites/${s.siteId}/voice-map/site/dev-report`)
+          .set(stack.as(s.ownerTg))
+          .expect(200),
+      );
+      const page = await request(stack.srv())
+        .get(`${made.path as string}?lang=en`)
+        .expect(200);
+      expect(page.headers['content-type']).toContain('text/html');
+      expect(page.headers['content-security-policy']).toContain(
+        "default-src 'none'",
+      );
+      expect(page.headers['cache-control']).toBe('no-store');
+      expect(page.text).toContain('Voice map — developer report');
+      expect(page.text).not.toMatch(/<script/i);
+      const json = await request(stack.srv())
+        .get(`${made.path as string}?format=json`)
+        .expect(200);
+      expect(dataOf(json).v).toBe(1);
+      const miss = await request(stack.srv()).get(
+        `/assist/sites/${s.siteId}/voice-map/site/dev-report/${'A'.repeat(32)}`,
+      );
+      expect(miss.status).toBe(404);
+      expect(miss.text).not.toMatch(/<script/i);
+      const status = dataOf(
+        await request(stack.srv())
+          .get(`/assist/sites/${s.siteId}/voice-map/site/dev-report`)
+          .set(stack.as(s.ownerTg))
+          .expect(200),
+      );
+      expect(status.active).toMatchObject({ views: 2 });
+      await request(stack.srv())
+        .delete(`/assist/sites/${s.siteId}/voice-map/site/dev-report`)
+        .set(stack.as(s.ownerTg))
+        .expect(200);
+      expect((await request(stack.srv()).get(made.path as string)).status).toBe(
+        404,
+      );
     });
   },
 );

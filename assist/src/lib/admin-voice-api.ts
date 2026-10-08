@@ -123,22 +123,129 @@ export interface AdminVoiceTestTokenView {
   testHost: boolean;
 }
 
+/**
+ * Пункты отчёта мастера «Админки» (WizardItemCode сервера,
+ * `assist-ui-core/wizard.ts`; сверка — scripts/admin-voice-api.test.ts).
+ * Свой список, а не «Сайта»: тексты «Админки» — свои (аудит Э6-бис (б) (1)).
+ */
+export const ADMIN_VC_ITEM_CODES = [
+  'ok',
+  'widget_missing',
+  'chunks_blocked',
+  'csp_violations',
+  'tt_violations',
+  'mic_policy_denied',
+  'mic_owner_problem',
+  'dry_low',
+  'safe_low',
+  'safe_none',
+  'forbidden_leak',
+  'suspicious_unreviewed',
+  'unnamed_elements',
+  'closed_shadow',
+  'ext_iframes',
+  'duplicates',
+  'undo_unresolved',
+] as const;
+export type AdminVcItemCode = (typeof ADMIN_VC_ITEM_CODES)[number];
+
+/** Виды проб «запреты без звука» «Админки» (ADMIN_PROBE_KINDS сервера). */
+export const ADMIN_VC_PROBE_KINDS = [
+  'delete',
+  'cancel',
+  'refund',
+  'charge',
+  'mass',
+  'pay',
+  'password',
+  'external',
+] as const;
+export type AdminVcProbeKind = (typeof ADMIN_VC_PROBE_KINDS)[number];
+
+/** Состояние микрофона владельца в мастере (MicStatus сервера, wizard.ts). */
+export const ADMIN_VC_MIC_STATUSES = [
+  'ok',
+  'denied_policy',
+  'denied_user',
+  'no_device',
+  'ios_gesture',
+  'skipped',
+] as const;
+export type AdminVcMicStatus = (typeof ADMIN_VC_MIC_STATUSES)[number];
+
+export interface AdminVoiceReportItem {
+  step: number;
+  level: 'ok' | 'warn' | 'fail';
+  /** Неизвестный код сервера — `null` (текст «пункт N»), не сырой код. */
+  code: AdminVcItemCode | null;
+  /** Числа для текста пункта (`{n}`, `{ok}`, `{need}`…), строки — коды. */
+  data: Record<string, number | string>;
+}
+
 export interface AdminVoiceReportView {
   page: string;
   host: string;
   testHost: boolean;
   result: WizardResult;
-  items: Array<{ step: number; level: 'ok' | 'warn' | 'fail'; code: string }>;
+  items: AdminVoiceReportItem[];
   attempts: number;
   submitsBlocked: number;
   forbidden: Array<{
-    kind: string;
+    kind: AdminVcProbeKind | null;
     command: string;
     blocked: boolean;
     api: string | null;
   }>;
   dangerButtons: Array<{ text: string; kind: string }>;
   save: { done: boolean; fields: number } | null;
+  /** Сухой прогон: команда, исполнимых шагов, отмечено «вірно». */
+  dry: Array<{ command: string; steps: number; ok: number }>;
+  /** Фрагмент разметки для разработчика админки. */
+  fragment: string;
+}
+
+/** Числа и коды пункта отчёта: только `[a-z]` ключи, без ПД. */
+function itemData(v: unknown): Record<string, number | string> {
+  const out: Record<string, number | string> = {};
+  for (const [k, x] of Object.entries(obj(v)).slice(0, 8)) {
+    if (!/^[a-zA-Z]{1,20}$/.test(k)) continue;
+    if (typeof x === 'number' && Number.isFinite(x))
+      out[k] = Math.max(0, Math.round(x));
+    else if (typeof x === 'string' && /^[a-z_]{1,30}$/.test(x)) out[k] = x;
+  }
+  return out;
+}
+
+/**
+ * Человеческий текст пункта отчёта (аудит Э6-бис (б) (1): раньше — код):
+ * шаблон словаря с числами пункта; `forbidden_leak` «Админки» — две
+ * причины (проба не заблокирована / попытки и отправки на странице).
+ */
+export function adminVoiceItemText(
+  items: Record<AdminVcItemCode, string> & {
+    attemptsLeak: string;
+    unknown: string;
+  },
+  it: AdminVoiceReportItem,
+  /** Словарь кодов-строк пункта (`status` микрофона) — не сырой код. */
+  mic?: Record<AdminVcMicStatus, string>
+): string {
+  const tpl =
+    it.code === 'forbidden_leak' && 'attempts' in it.data
+      ? items.attemptsLeak
+      : it.code
+        ? items[it.code]
+        : items.unknown;
+  const d: Record<string, string | number> = { step: it.step, ...it.data };
+  const st = d.status;
+  if (typeof st === 'string')
+    d.status =
+      mic && (ADMIN_VC_MIC_STATUSES as readonly string[]).includes(st)
+        ? mic[st as AdminVcMicStatus]
+        : '—';
+  return tpl.replace(/\{(\w+)\}/g, (_m, k: string) =>
+    k in d ? String(d[k]) : '?'
+  );
 }
 
 export interface AdminVoiceTestDetail extends AdminVoiceTestSummary {
@@ -201,7 +308,8 @@ function parseReport(v: unknown): AdminVoiceReportView | null {
       .map((x) => ({
         step: count(x.step),
         level: oneOf(LEVELS, x.level, 'warn'),
-        code: /^[a-z_]{1,40}$/.test(text(x.code)) ? text(x.code) : 'ok',
+        code: pick(ADMIN_VC_ITEM_CODES, x.code),
+        data: itemData(x.data),
       }))
       .slice(0, 40),
     attempts: count(o.attempts),
@@ -209,7 +317,7 @@ function parseReport(v: unknown): AdminVoiceReportView | null {
     forbidden: arr(o.forbidden)
       .map(obj)
       .map((x) => ({
-        kind: text(x.kind).slice(0, 30),
+        kind: pick(ADMIN_VC_PROBE_KINDS, x.kind),
         command: text(x.command).slice(0, 200),
         blocked: bool(x.blocked),
         api: str(x.api),
@@ -223,6 +331,15 @@ function parseReport(v: unknown): AdminVoiceReportView | null {
       }))
       .slice(0, 30),
     save: save ? { done: bool(save.done), fields: count(save.fields) } : null,
+    dry: arr(o.dry)
+      .map(obj)
+      .map((x) => ({
+        command: text(x.command).slice(0, 120),
+        steps: count(x.steps),
+        ok: count(x.ok),
+      }))
+      .slice(0, 10),
+    fragment: text(o.fragment).slice(0, 8000),
   };
 }
 

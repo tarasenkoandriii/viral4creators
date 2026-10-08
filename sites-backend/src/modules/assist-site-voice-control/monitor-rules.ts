@@ -44,7 +44,11 @@ export const MONITOR_THRESHOLDS = {
   transitionMs: 14 * DAY,
   /** Канарейка загрузчика (§5-бис.12): падение `done` > 10 п.п. при ≥ 50 планах. */
   canary: { minPlans: 50, dropPp: 0.1, defaultPercent: 10, days: 3 },
-  /** Сайтов за проход монитора. */
+  /**
+   * Сайтов за проход монитора. Сайтов больше — keyset-курсор по `siteId`
+   * (заход 9, аудит (г) (1)): следующий проход продолжает с места, где
+   * кончился этот, по кругу — каждый сайт раз в ⌈N / 200⌉ проходов.
+   */
   sitesPerRun: 200,
   /** Строк журнала шагов на сайт за окно (Pro — ≤ 1000 планов в сутки). */
   logRowsPerSite: 20_000,
@@ -53,6 +57,12 @@ export const MONITOR_THRESHOLDS = {
    * тревога владельцу «разметка отмены устарела» (без деградации).
    */
   undo: { minAttempts: 10, successBelow: 0.8 },
+  /**
+   * (заход 9) «Не расслышал» > 30% по одному языку на ≥ 20 командах за
+   * 24 ч — тревога владельцу (вероятна проблема распознавания/шума), без
+   * деградации (§5-бис.14, таблица порогов).
+   */
+  notHeard: { minCommands: 20, above: 0.3 },
 } as const;
 
 /** Причины журнала шагов, означающие «стоп-лист сработал при исполнении». */
@@ -67,6 +77,12 @@ export interface MonitorPlanRow {
   id: string;
   /** Посетитель плана (потолок вклада одного посетителя); нет — без потолка. */
   visitorId?: string | null;
+  /**
+   * (заход 9, аудит (г) (3)) Хеш IP плана (строка `plan` журнала,
+   * `planIpOf`): потолок вклада и по нему — множество visitor-token с
+   * одного адреса не накрутит метрики. Нет — только потолок посетителя.
+   */
+  ipHash?: string | null;
   status: string;
   confirmedBy: string | null;
   createdAt: Date;
@@ -83,6 +99,8 @@ export interface MonitorLogRow {
   result: string;
   reason: string | null;
   createdAt: Date;
+  /** Цель строки: у строки `plan` — хеш IP плана (`target.ip`). */
+  target?: unknown;
 }
 
 export interface SiteVoiceMetrics {
@@ -116,6 +134,11 @@ export interface SiteVoiceMetrics {
   undoDone?: number;
   /** (д) Сбой на точке невозврата после `dispatched` — «не знаю, отправилось ли». */
   pnrUnknown?: number;
+  /**
+   * (заход 9) Распознавание за 24 ч по языкам: расслышано / «не
+   * расслышал» (счётчики маршрута голоса `vc-stt`).
+   */
+  stt?: Record<string, { heard: number; notHeard: number }>;
 }
 
 interface StepLike {
@@ -130,6 +153,55 @@ function stepsOf(raw: unknown): StepLike[] {
 }
 
 const EXEC = (s: StepLike) => s.risk === 'auto' || s.risk === 'confirm';
+
+/** Хеш IP плана из строки `plan` (как `planIpOf` мемо; ≤ 128 знаков). */
+function ipOfTarget(target: unknown): string | null {
+  const ip =
+    target && typeof target === 'object' && !Array.isArray(target)
+      ? (target as { ip?: unknown }).ip
+      : null;
+  return typeof ip === 'string' && ip.length > 0 && ip.length <= 128
+    ? ip
+    : null;
+}
+
+/**
+ * Потолок вклада (аудит (г) 03.10 + заход 9 аудит (3)): план идёт в метрики,
+ * только если он среди `perVisitorPlans` самых новых планов окна СВОЕГО
+ * посетителя И своего хеша IP. Ранги независимы (не «жадный» пропуск) —
+ * то же правило считает SQL канарейки (`canaryAggregates`), сверка —
+ * приёмка e6b. Порядок — новее раньше, при равенстве — по id.
+ */
+export function cappedPlanIds(
+  plans: ReadonlyArray<
+    Pick<MonitorPlanRow, 'id' | 'createdAt' | 'visitorId' | 'ipHash'>
+  >,
+): Set<string> {
+  const cap = MONITOR_THRESHOLDS.perVisitorPlans;
+  const sorted = [...plans].sort(
+    (a, b) =>
+      b.createdAt.getTime() - a.createdAt.getTime() ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  const byVisitor = new Map<string, number>();
+  const byIp = new Map<string, number>();
+  const ok = new Set<string>();
+  for (const p of sorted) {
+    let pass = true;
+    if (p.visitorId) {
+      const n = (byVisitor.get(p.visitorId) ?? 0) + 1;
+      byVisitor.set(p.visitorId, n);
+      if (n > cap) pass = false;
+    }
+    if (p.ipHash) {
+      const n = (byIp.get(p.ipHash) ?? 0) + 1;
+      byIp.set(p.ipHash, n);
+      if (n > cap) pass = false;
+    }
+    if (pass) ok.add(p.id);
+  }
+  return ok;
+}
 
 function quantile(sorted: number[], q: number): number | null {
   if (!sorted.length) return null;
@@ -161,7 +233,19 @@ export function computeMetrics(
     latencyP95Ms: null,
   };
   const lat: number[] = [];
-  const perVisitor = new Map<string, number>();
+  // Хеш IP плана — из строки `plan` журнала, если в строке плана его нет.
+  const ipFromLog = new Map<string, string>();
+  for (const l of logs)
+    if (l.action === 'plan') {
+      const ip = ipOfTarget(l.target);
+      if (ip) ipFromLog.set(l.planId, ip);
+    }
+  const counted = cappedPlanIds(
+    plans.map((p) => ({
+      ...p,
+      ipHash: p.ipHash ?? ipFromLog.get(p.id) ?? null,
+    })),
+  );
   m.chainsBroken = 0;
   m.chainsWithTraces = 0;
   m.undoAccepted = 0;
@@ -176,11 +260,7 @@ export function computeMetrics(
     // Нарушение запрета — сигнал нашего кода, не голос посетителя: считается
     // всегда (потолок посетителя его не прячет).
     m.violations += rows.filter((r) => r.action === 'violation').length;
-    if (p.visitorId) {
-      const n = perVisitor.get(p.visitorId) ?? 0;
-      if (n >= MONITOR_THRESHOLDS.perVisitorPlans) continue;
-      perVisitor.set(p.visitorId, n + 1);
-    }
+    if (!counted.has(p.id)) continue;
     const steps = stepsOf(p.steps);
     // (д) Цепочки (§5-бис.15 п.12): следы после сбоя, «Вернуть»/«Оставить»,
     // успешность возврата полей, неизвестный итог на точке невозврата.
@@ -283,6 +363,7 @@ export function computeMetrics(
 }
 
 export type MonitorCode =
+  | 'not_heard_high'
   | 'done_low'
   | 'self_high'
   | 'not_found_high'
@@ -327,9 +408,55 @@ export function decideSite(m: SiteVoiceMetrics, state: string): SiteDecision {
     rate(m.undoDone ?? 0, m.undoAttempts ?? 0) < T.undo.successBelow
   )
     alert.push('undo_low');
+  if (notHeardLangs(m.stt).length) alert.push('not_heard_high');
   return alert.length
     ? { action: 'alert', codes: alert }
     : { action: 'none', codes: [] };
+}
+
+/**
+ * (заход 9) Языки, где «не расслышал» > 30% на ≥ 20 командах за 24 ч
+ * (§5-бис.14) — тревога без деградации. По убыванию доли.
+ */
+export function notHeardLangs(stt: SiteVoiceMetrics['stt']): string[] {
+  const T = MONITOR_THRESHOLDS.notHeard;
+  return (
+    Object.entries(stt ?? {})
+      // `any` — «не расслышал» старых бандлов без языка интерфейса: не язык.
+      .filter(([lang]) => lang !== 'any')
+      .map(([lang, c]) => ({
+        lang,
+        n: c.heard + c.notHeard,
+        r: rate(c.notHeard, c.heard + c.notHeard),
+      }))
+      .filter((x) => x.n >= T.minCommands && x.r > T.above)
+      .sort((a, b) => b.r - a.r || (a.lang < b.lang ? -1 : 1))
+      .map((x) => x.lang)
+  );
+}
+
+/**
+ * (заход 9, аудит (г) (1)) Страница сайтов прохода по keyset-курсору:
+ * сначала `siteId > cursor` (по возрастанию), недобор — с начала круга до
+ * курсора включительно. Новый курсор — последний взятый `siteId`; круг
+ * замкнулся (взяты все) — курсор сбрасывается в null.
+ */
+export function cursorPage<T extends { siteId: string }>(p: {
+  after: T[];
+  wrapped: T[];
+  limit: number;
+}): { page: T[]; cursor: string | null } {
+  const page = p.after.slice(0, p.limit);
+  if (page.length < p.limit)
+    for (const s of p.wrapped) {
+      if (page.length >= p.limit) break;
+      if (!page.some((x) => x.siteId === s.siteId)) page.push(s);
+    }
+  const full = page.length >= p.limit;
+  return {
+    page,
+    cursor: full && page.length ? page[page.length - 1].siteId : null,
+  };
 }
 
 /**

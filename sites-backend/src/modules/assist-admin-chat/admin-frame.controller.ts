@@ -7,12 +7,15 @@
 import { Controller, Get, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { WIDGET_PK_TEST_PREFIX } from '../../brand';
-import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
 import { extraAdminAncestors } from '../../config/admin-env';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
-import { adminFrameCsp, adminFrameHtml } from './admin-frame';
+import {
+  adminFrameCacheControl,
+  adminFrameCsp,
+  adminFrameHtml,
+} from './admin-frame';
 import { AdminSessionService } from './admin-session.service';
 
 @Controller('wa/v1')
@@ -67,10 +70,8 @@ export class AdminFrameController {
     res.removeHeader('X-Frame-Options');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Security-Policy', adminFrameCsp(ancestors));
-    res.setHeader(
-      'Cache-Control',
-      `public, max-age=0, s-maxage=${WIDGET_DEFAULTS.frameCacheSeconds}`,
-    );
+    // Р-З9-16: своя минута кэша, не 300 с виджета «Сайта».
+    res.setHeader('Cache-Control', adminFrameCacheControl());
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.end(adminFrameHtml());

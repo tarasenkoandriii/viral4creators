@@ -165,6 +165,7 @@ import {
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type {
   UiCompView,
+  UiCompShow,
   UiPlanConfirmRequest,
   UiPlanRequest,
   UiPlanStepReport,
@@ -207,6 +208,7 @@ import {
   type PlanRow,
 } from './plan-store';
 import { tripVoiceControl } from './voice-test-store';
+import { liveKeysFrom, type LiveKeys } from './live-crypto';
 import { PUBLIC_SITE_HOST } from '../../site-core/ownership/host-roles';
 
 export const UI_PLAN_PRICING_MODEL = GEMINI_MODEL;
@@ -439,6 +441,9 @@ export class SiteUiPlanService {
   ): Promise<UiPlanView> {
     const { site, visitor } = ctx;
     const now = this.now();
+    // (заход 9, P3-4) Без ключа шифра `liveValues` план не записать — отказ
+    // ДО единиц, бюджета и модели (а не 500 после оплаты).
+    if (!this.liveKeys()) return fail('off');
     const text = cleanUtterance(body?.text);
     if (!text) return fail('bad_request');
     // §5-бис.6 п.1: команда — только из речи (билет) или набора в iframe.
@@ -787,6 +792,7 @@ export class SiteUiPlanService {
       goalFrom,
       chainStatus: executable ? null : 'clean',
       extra: memo ? { trusted, memoText } : undefined,
+      live: this.liveKeys(),
     });
     // Журнал: сам план и каждая отказанная цель (метрика «0 нарушений» Т-4
     // считает попытки по запрещённым целям — часть (г)).
@@ -822,7 +828,11 @@ export class SiteUiPlanService {
           .slice(0, 200) || null,
       valueMasked: null,
       durationMs: null,
-      mapKey: direct && 'raw' in direct ? direct.key : null,
+      // Заход 9 (просьба пакета E, «Обучение → Голос»): при промахе карты
+      // (`mapMiss` — цель названа, на странице её нет) пишем и КЛЮЧ этой
+      // цели — экран промахов показывает «на какой цели» и строит ссылку
+      // редактора с `focus`. Ключ — тот же, что у попаданий (без подписей).
+      mapKey: direct && 'raw' in direct ? direct.key : (mapMiss ?? null),
       mapMiss: mapMiss !== null,
     });
     for (const [k, n] of notes.entries()) {
@@ -1175,13 +1185,65 @@ export class SiteUiPlanService {
 
   private async load(ctx: UiPlanCtx, id: string): Promise<PlanRow> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return fail('not_found');
-    const plan = await readPlan(this.db, {
-      id,
-      siteId: ctx.site.siteId,
-      visitorId: ctx.visitor.visitorId,
-    });
+    const read = () =>
+      readPlan(this.db, {
+        id,
+        siteId: ctx.site.siteId,
+        visitorId: ctx.visitor.visitorId,
+        live: this.liveKeys(),
+      });
+    const plan = await read();
     if (!plan) return fail('not_found');
+    // (заход 9, P2-1) Значения не открылись — план остановлен; вызывающий
+    // видит его уже не живым (шаг/подтверждение/продолжение — отказ).
+    if (await this.dropLost(ctx, plan))
+      return (await read()) ?? fail('not_found');
     return plan;
+  }
+
+  /**
+   * (заход 9, аудит P2-1) Живой план, у которого `liveValues` не
+   * расшифровались (смена/откат `ASSIST_SECRETS_KEY`, порча): в шагах —
+   * маски, исполнять их нельзя (вписали бы маску в поле). Если впереди есть
+   * шаг со значением — план в `failed` (тем же условным UPDATE: значения
+   * обнуляются, маски не перешифровываются), в журнал — `live_lost`.
+   * Шаги без значений (клики, переходы) доисполняются как обычно.
+   */
+  private async dropLost(ctx: UiPlanCtx, plan: PlanRow): Promise<boolean> {
+    if (!plan.liveLost || !LIVE.has(plan.status)) return false;
+    const ahead = plan.steps
+      .slice(plan.currentStep)
+      .some((s) => s.value !== null && s.value !== undefined);
+    if (!ahead) return false;
+    const steps = plan.steps.map((x) => ({ ...x }));
+    const ok = await updatePlan(this.db, plan, this.who(ctx), {
+      steps,
+      currentStep: plan.currentStep,
+      status: 'failed',
+      needsConfirm: plan.needsConfirm,
+      confirmedBy: plan.confirmedBy,
+      ...endOf(plan, steps, 'failed'),
+    });
+    if (!ok) return true;
+    await insertActionLog(this.db, {
+      accountId: ctx.site.accountId,
+      siteId: ctx.site.siteId,
+      planId: plan.id,
+      stepIndex: plan.currentStep,
+      action: 'stop',
+      target: null,
+      url: null,
+      risk: 'auto',
+      confirmedBy: plan.confirmedBy,
+      result: 'failed',
+      reason: 'live_lost',
+      valueMasked: null,
+      durationMs: null,
+    });
+    this.logger.warn(
+      `ui-plan live_lost site=${ctx.site.siteId} plan=${plan.id} (liveValues не открылись)`,
+    );
+    return true;
   }
 
   /** Живой план с истёкшим сроком — `expired` (условно) и отказ. */
@@ -1203,7 +1265,31 @@ export class SiteUiPlanService {
   }
 
   private who(ctx: UiPlanCtx) {
-    return { siteId: ctx.site.siteId, visitorId: ctx.visitor.visitorId };
+    return {
+      siteId: ctx.site.siteId,
+      visitorId: ctx.visitor.visitorId,
+      live: this.liveKeys(),
+    };
+  }
+
+  /**
+   * (заход 9) Ключи шифра `liveValues` из env сервиса (Р-З9-13). Битый
+   * `ASSIST_SECRETS_KEYS_OLD` не роняет маршруты: в лог, работаем текущим
+   * ключом (старые планы этих версий станут `live_lost` — безопасный стоп).
+   */
+  private liveKeys(): LiveKeys | null {
+    try {
+      return liveKeysFrom(this.env);
+    } catch {
+      this.logger.error(
+        'liveValues: ASSIST_SECRETS_KEYS_OLD/ASSIST_SECRETS_KEY_VERSION не разобраны — только текущий ключ',
+      );
+      try {
+        return liveKeysFrom({ ...this.env, ASSIST_SECRETS_KEYS_OLD: '' });
+      } catch {
+        return null;
+      }
+    }
   }
 
   async confirm(
@@ -1466,7 +1552,17 @@ export class SiteUiPlanService {
         status = 'stopped';
         break;
     }
-    const end = TERMINAL.has(status) ? endOf(plan, steps, status) : null;
+    // (заход 9, §5-бис.17 п.5 п.7) Загрузчик не нашёл элемент цели на шаге
+    // её проверки (`goal_unseen`) — цель `unknown` («проверьте …»).
+    const goalUnseen =
+      result === 'failed' &&
+      body.reason === 'goal_unseen' &&
+      plan.goalFrom !== null &&
+      idx >= plan.goalFrom &&
+      s.kind === 'wait';
+    const end = TERMINAL.has(status)
+      ? endOf(plan, steps, status, goalUnseen)
+      : null;
     const ok = await updatePlan(this.db, plan, this.who(ctx), {
       steps,
       currentStep,
@@ -1685,6 +1781,7 @@ export class SiteUiPlanService {
     const now = this.now();
     await clearDeadLiveValues(this.db, { ...this.who(ctx), now });
     const plan = await readActivePlan(this.db, { ...this.who(ctx), now });
+    if (plan && (await this.dropLost(ctx, plan))) return null;
     return plan ? view(plan) : null;
   }
 
@@ -1884,8 +1981,41 @@ export class SiteUiPlanService {
       !(await siteDayHit(plansPerSitePerDay(access.plansPerDay, state.planId)))
     )
       return fail('site_limit');
-    if (access.mode !== 'on')
-      return out(plan, 'degraded', [], [...c.fields, ...c.manual, ...c.comp]);
+    if (access.mode !== 'on') {
+      // (заход 9, §5-бис.15 п.8) Обратная кнопка объявленной пары — для
+      // подсветки (без `dispatched` и без нажатия): «уберите сами — вот она».
+      const show: UiCompShow[] = [];
+      for (const i of c.comp) {
+        const v = access.rules
+          ? this.compView(plan, i, false, access.rules)
+          : null;
+        if (v)
+          show.push({
+            i: v.i,
+            text: v.text,
+            row: v.row,
+            assistId: v.assistId,
+            at: v.at,
+            variant: v.variant,
+          });
+      }
+      return {
+        ...out(plan, 'degraded', [], [...c.fields, ...c.manual, ...c.comp]),
+        show,
+      };
+    }
+    // (заход 9, Р-З9-4) Отметка «возврат начат» — в самом плане, до строки
+    // `proposed` журнала: без неё `undo-report` не примет ни итогов, ни
+    // отметки компенсации (у роли на журнал — только INSERT).
+    const ask = c.order.filter((i) => plan.storedSteps[i]?.undoAsked !== true);
+    if (ask.length) {
+      const steps = plan.storedSteps.map((s, i) =>
+        ask.includes(i) ? { ...s, undoAsked: true } : s,
+      );
+      if (!(await updateUndoSteps(this.db, plan, this.who(ctx), steps)))
+        return fail('conflict');
+      plan = { ...plan, steps, storedSteps: steps };
+    }
     await insertActionLog(this.db, {
       accountId: ctx.site.accountId,
       siteId: ctx.site.siteId,
@@ -1933,6 +2063,17 @@ export class SiteUiPlanService {
     if (undoCandidates(plan.steps).refused) return fail('conflict');
     const rules = await this.undoRules(ctx);
     const next = nextUndo(plan.steps);
+    // (заход 9, Р-З9-4) Только после «Вернуть», принятого сервером: шаги
+    // текущего возврата отмечены `undoAsked` (иначе — 409, итоги «без
+    // предшествующего undo» не меняют статус цепочки).
+    const asked = (i: number) => plan.storedSteps[i]?.undoAsked === true;
+    const nextIdx =
+      next.kind === 'fields'
+        ? next.idx
+        : next.kind === 'comp' || next.kind === 'stale'
+          ? [next.i]
+          : [];
+    if (!nextIdx.every(asked)) return fail('conflict');
 
     // ── компенсация: «начат» до действия (§5-бис.15 п.6 п.2, §4-бис.5) ──
     if (body?.dispatch !== undefined) {
@@ -2255,6 +2396,12 @@ export function endOf(
   plan: Pick<PlanRow, 'memoId' | 'goalFrom'>,
   steps: UiPlanStepView[],
   status: UiPlanStatus,
+  /**
+   * (заход 9) Шаг проверки цели провален потому, что загрузчик НЕ НАШЁЛ
+   * элемент цели (счётчик/поле не видны, закрытый shadow-корень): проверить
+   * нечем — `unknown`, а не `not_reached` (§5-бис.17 п.5 п.7, приёмка п.14).
+   */
+  goalUnseen = false,
 ): { chainStatus: ChainStatus; goalStatus: GoalStatus | null } {
   const chainStatus = chainStatusOf(steps, status);
   if (!plan.memoId) return { chainStatus, goalStatus: null };
@@ -2263,6 +2410,7 @@ export function endOf(
       chainStatus,
       goalStatus: plan.goalFrom !== null ? 'reached' : 'unknown',
     };
+  if (goalUnseen) return { chainStatus, goalStatus: 'unknown' };
   const pnr = pointOfNoReturn(steps);
   const pnrUnknown =
     pnr !== null && steps[pnr].fx === true && steps[pnr].state !== 'done';

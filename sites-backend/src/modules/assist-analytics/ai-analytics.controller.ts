@@ -4,7 +4,7 @@
  *   GET   /assist/sites/:id/ai/summary?from=&to=
  *   GET   /assist/sites/:id/ai/dialogs?from=&to=&bucket=&intent=&stage=&failure=&cursor=
  *   PATCH /assist/sites/:id/conversations/:cid/label
- *   GET   /assist/sites/:id/stats/insights?week=
+ *   GET   /assist/sites/:id/stats/insights?week=&lang=   (lang uk|ru|en, иначе — язык Telegram читателя)
  *   PATCH /assist/sites/:id/insights/:iid
  *   GET   /assist/sites/:id/stats/behavior?from=&to=
  *   GET   /assist/sites/:id/experiments
@@ -81,8 +81,9 @@ export class AiAnalyticsController {
     @Membership() m: AccountMembership,
     @Param('id') id: string,
     @Query('week') week?: string,
+    @Query('lang') lang?: string,
   ) {
-    return this.ai.insights(m, id, week);
+    return this.ai.insights(m, id, week, lang);
   }
 
   @Patch('sites/:id/insights/:iid')

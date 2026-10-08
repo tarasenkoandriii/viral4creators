@@ -79,6 +79,8 @@ export const MONITOR_CODES = [
   'transition_expired',
   // Э6-бис (д): возврат полей не удаётся — «разметка отмены устарела».
   'undo_low',
+  // Заход 9: «не расслышал» > 30% по языку на ≥ 20 командах (тревога).
+  'not_heard_high',
 ] as const;
 
 export interface VoiceControlRules {
@@ -420,6 +422,14 @@ export interface VoiceControlApi {
   ): Promise<{ testId: string; url: string; expiresAt: string }>;
   tests(siteId: string): Promise<VoiceTestSummary[]>;
   test(siteId: string, testId: string): Promise<VoiceTestDetail | null>;
+  /**
+   * Заход 9: одноразовая ссылка «звіт для розробника» (только чтение, без
+   * ПД, 72 ч; первое открытие гасит её; новая гасит прежнюю неоткрытую).
+   */
+  devLink(
+    siteId: string,
+    testId: string
+  ): Promise<{ url: string; expiresAt: string }>;
   /** (е) Мемо «Сайта» — раздел «Голос → Мемо». */
   memo: MemoApi;
   /** Э6-тер (к): мемо из шагов одобренной обучалки (блок «Из обучалки»). */
@@ -461,6 +471,17 @@ export function createVoiceControlApi(client: ApiClient): VoiceControlApi {
       parseTestDetail(
         await client.request('GET', `${p(id)}/tests/${seg(tid)}`)
       ),
+    devLink: async (id, tid) => {
+      const o = obj(
+        await client.request('POST', `${p(id)}/tests/${seg(tid)}/dev-link`)
+      );
+      const url = text(o.url);
+      if (
+        !/^https?:\/\/[^/]+\/w\/v1\/vc-report\/[A-Za-z0-9_-]{20,100}$/.test(url)
+      )
+        throw new Error('bad url');
+      return { url, expiresAt: iso(o.expiresAt) ?? '' };
+    },
     memo: createMemoApi(client),
     memoTutorial: createMemoTutorialApi(client),
     memoTemplates: createMemoTemplatesApi(client),

@@ -114,6 +114,7 @@ export const e3bEn: typeof e3bRu = {
       budget: 'Analytics budget used up — showing the finding.',
       numbers: 'Model text failed the number check — showing the finding.',
       links: 'Model text referred to other pages — showing the finding.',
+      lang: 'No translation of this insight into your language — showing the finding.',
     },
     onPage: ' on {page}',
     dry: {
@@ -176,6 +177,10 @@ export const e3bEn: typeof e3bRu = {
       insufficient_sample:
         'Fewer participants than planned — no conclusion (this is not “no effect”).',
     },
+    pageTrust:
+      'Goal events during the experiment: {total}, of them from the page (not confirmed by the server): {share}. A visitor or competitor can inflate such conversions in one group — double-check the result.',
+    goalHint:
+      'For an honest result, make the main goal an order via the s2s webhook (assistRef) or an assistant lead: page events can be faked.',
     empty: 'No experiments yet.',
   },
   behavior: {
@@ -185,6 +190,10 @@ export const e3bEn: typeof e3bRu = {
     needSettings:
       'Turn on linked mode and behavior in the settings below — without visitor consent there is no data.',
     quota: 'Views this month: {used} of {limit}',
+    sampled:
+      'Monthly quota used up — a {rate} sample of views is counted, totals are scaled to all traffic.',
+    capped:
+      'Views are twice the quota — behavior is not collected until the end of the month.',
     cols: {
       path: 'Page',
       views: 'Views',
@@ -217,6 +226,25 @@ export const e3bEn: typeof e3bRu = {
     windowMax: 'up to {n} on your plan',
     behavior: 'Collect page behavior (aggregates)',
     snippet: 'Add to your consent banner:',
+    cmp: 'Your consent banner',
+    cmps: {
+      custom: 'Own banner',
+      gcm: 'Google Consent Mode v2',
+      cookiebot: 'Cookiebot',
+      onetrust: 'OneTrust',
+      cookieyes: 'CookieYes',
+      complianz: 'Complianz (WordPress)',
+    },
+    cmpHints: {
+      custom: 'Call it when the visitor decides in your banner:',
+      gcm: 'No snippet needed: turn on “Also read consent from Google Consent Mode” above — Cookiebot, CookieYes, OneTrust, Usercentrics, Didomi, Complianz and other CMPs with Consent Mode v2 work this way.',
+      cookiebot: 'Add after the Cookiebot script (Statistics category):',
+      onetrust:
+        'Add after OneTrust’s standard “function OptanonWrapper() {}”. C0002 is the default Performance category; replace it if your ID differs:',
+      cookieyes: 'Add after the CookieYes script (Analytics category):',
+      complianz:
+        'Add in Complianz “Scripts” or your theme (Statistics category):',
+    },
     ownerOnly: 'Only the account owner changes linked mode and behavior.',
     save: 'Save',
     saved: 'Saved.',

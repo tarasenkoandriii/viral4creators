@@ -14,7 +14,9 @@
  *  - сайты — с опубликованным видом (widgetVersion > 0); сводка за вчера
  *    (сутки сайта), отчёт недели — прошлые 7 дней против предыдущих 7;
  *  - перед сводкой вчерашний день пересчитывается (rollupDay — идемпотентно);
- *  - пустые сутки/неделя (все числа 0, тревог и пробелов нет) — не шлём;
+ *  - пустые сутки/неделя (все числа 0, тревог и пробелов нет) — не шлём
+ *    (заход 9: кроме владельцев «Админки», если в её разделе есть новости —
+ *    мемо «требует проверки», удержанная версия, карантин, якорь журнала);
  *  - тревоги №29: доля «не знаю» среди ответов, доля 👎 среди оценок и
  *    доля передач среди диалогов за вчера ≥ alertSpikeRatio × средняя за 7
  *    дней до того, при ≥ alertMinDialogs диалогов вчера;
@@ -352,7 +354,17 @@ export class AssistDigestService {
       !facts.newTopics &&
       !facts.heldVersions &&
       !facts.goldenConflicts;
-    if (empty) return { weekly, sent: 0 };
+    // Заход 9: при пустом «Сайте» отчёт всё равно уходит владельцам
+    // «Админки», если там есть что сказать (мемо «требует проверки»,
+    // удержанная версия, а в отчёте недели — новые записи журнала: якорь
+    // цепочки Р-З9-20 не должен пропадать в тихую для «Сайта» неделю).
+    const adminNews = (a: Awaited<ReturnType<AdminDigestSource['facts']>>) =>
+      (a.memosNeedReviewTotal ?? 0) > 0 ||
+      a.heldVersions > 0 ||
+      a.quarantined > 0 ||
+      (weekly &&
+        !!a.chainHead &&
+        new Date(a.chainHead.at).getTime() >= since.getTime());
 
     const kind = weekly ? 'weekly' : 'digest';
     const members = await this.sitesDb
@@ -379,6 +391,7 @@ export class AssistDigestService {
         { role, productRoles: pr },
         REQUIRE_ASSIST_ADMIN_OWNER,
       );
+      if (empty && !seesAdmin) continue;
       if (seesAdmin && !adminFacts) {
         adminFacts = await this.admin.facts({
           accountId: s.accountId,
@@ -386,6 +399,7 @@ export class AssistDigestService {
           since,
         });
       }
+      if (empty && !(adminFacts && adminNews(adminFacts))) continue;
       const text = (weekly ? weeklyReportText : dailyDigestText)(
         facts,
         seesAdmin ? adminFacts : null,

@@ -46,6 +46,11 @@ export type RateScope =
   | 'widget-uimiss-ip-site-min'
   // Э-С Ш4: сигналов «элемент не найден» с IP на сайт в сутки.
   | 'widget-uimiss-ip-site-day'
+  // Ш4 (4), Р-З9-3: сигналы «элемент найден» подсветкой — свои окна (их
+  // больше, чем промахов, и они не должны съедать суточный лимит промахов).
+  | 'widget-uiseen-visitor-min'
+  | 'widget-uiseen-ip-site-min'
+  | 'widget-uiseen-ip-site-day'
   // Э6-бис: планы голосового управления (посетитель, IP+сайт, потолок сайта
   // в сутки) и отчёты шагов.
   | 'widget-uiplan-visitor-min'
@@ -58,9 +63,10 @@ export type RateScope =
   | 'widget-vtest-ip-site-min'
   | 'widget-vtest-visitor-min'
   // Э3-бис: связанный режим — включение в эксперимент, ref для вебхука,
-  // привязка визита к диалогу (IP+сайт). Итог просмотра лимита в Postgres не
-  // имеет — стена там квота тарифа (§5-тер.14) и счётчик в памяти экземпляра
-  // (`PV_PER_IP_PER_MINUTE`, аудит Э3-бис).
+  // привязка визита к диалогу (IP+сайт). Итог просмотра — своё окно
+  // `widget-ana-pv-ip-min` (заход 9, Р-З9-27: `PV_PER_IP_PER_MINUTE`, общее
+  // для экземпляров): его пишет `AiIntake.pvRateOk` после дешёвых проверок,
+  // счётчик в памяти экземпляра — первая линия до записи в базу.
   | 'widget-ana-ip-min';
 
 export interface RateHit {

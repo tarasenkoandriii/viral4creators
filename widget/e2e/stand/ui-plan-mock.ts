@@ -30,6 +30,7 @@ import * as normNs from '../../../sites-backend/src/modules/assist-ui-core/norma
 import * as wizardNs from '../../../sites-backend/src/modules/assist-ui-core/wizard';
 import * as chainNs from '../../../sites-backend/src/modules/assist-ui-core/chain';
 import type { RawStep } from '../../../sites-backend/src/modules/assist-ui-core/plan-checks';
+import { liveModelOn, liveModelPlan } from './live-model';
 import type {
   UiPlanStep,
   UiSnapshot,
@@ -106,6 +107,8 @@ type StepView = UiPlanStep & {
   fx?: boolean;
   /** (Э6-тер (и)) Состояние возврата шага (как `undone` сервера). */
   undone?: 'dispatched' | 'done' | 'failed' | 'unknown' | 'gone' | null;
+  /** Заход 9 (Р-З9-4): возврат шага начат сервером (как `undoAsked`). */
+  undoAsked?: boolean;
 };
 
 interface MockPlan {
@@ -483,7 +486,14 @@ export async function uiPlanRoute(
       });
       return true;
     }
-    const model = fakeModel(text, snap, site);
+    // Заход 9: Т-1 `transcript-live` — живая модель вместо фикстуры стенда.
+    const model = liveModelOn()
+      ? await liveModelPlan({
+          text,
+          snapshot: snap,
+          lang: typeof b.lang === 'string' ? b.lang : 'uk',
+        })
+      : fakeModel(text, snap, site);
     if (
       model === 'not_command' ||
       (!model && !directPlan(text, snap) && !looksLikeCommand(text))
@@ -622,16 +632,31 @@ export async function uiPlanRoute(
           i,
           text: plan.steps[i]?.target?.text ?? '',
         });
+        // Заход 9 (§5-бис.15 п.8): обратные кнопки — только для подсветки.
+        const show = c.comp
+          .map((i) => compViewMock(plan, i, false))
+          .filter((v): v is NonNullable<typeof v> => !!v)
+          .map((v) => ({
+            i: v.i,
+            text: v.text,
+            row: v.row,
+            assistId: v.assistId,
+            at: v.at,
+            variant: v.variant,
+          }));
         ok({
           planId: plan.id,
           fields: [],
           manual: [...c.fields, ...c.manual, ...c.comp].map(t),
           comp: null,
+          show,
           chainStatus: plan.chainStatus ?? null,
           refused: 'degraded',
         });
         return true;
       }
+      // Заход 9 (Р-З9-4): отметка «возврат начат» — как у сервера.
+      for (const i of c.order) plan.steps[i].undoAsked = true;
       ok(undoNextMock(plan));
       return true;
     }
@@ -642,6 +667,17 @@ export async function uiPlanRoute(
         raw: JSON.stringify(b),
       });
       const n = nextUndo(plan.steps);
+      // Заход 9 (Р-З9-4): без принятого «Вернуть» — 409 (как сервер).
+      const nextIdx =
+        n.kind === 'fields'
+          ? n.idx
+          : n.kind === 'comp' || n.kind === 'stale'
+            ? [n.i]
+            : [];
+      if (!nextIdx.every((i) => plan.steps[i].undoAsked === true)) {
+        err(409, 'PLAN_CONFLICT');
+        return true;
+      }
       // Э6-тер (и): отметка «начат» компенсации — один раз, ДО действия.
       if (b.dispatch !== undefined) {
         if (n.kind !== 'comp' || n.i !== b.dispatch) {

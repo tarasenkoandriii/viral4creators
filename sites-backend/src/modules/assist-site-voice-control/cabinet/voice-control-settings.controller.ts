@@ -7,6 +7,9 @@
  *   POST  /assist/sites/:id/voice-control/site/test-token   { host?, testHost? }
  *   GET   /assist/sites/:id/voice-control/site/tests
  *   GET   /assist/sites/:id/voice-control/site/tests/:tid
+ *   POST  /assist/sites/:id/voice-control/site/tests/:tid/dev-link  (заход 9)
+ *         одноразовая ссылка «отчёт для разработчика» → GET/POST
+ *         /w/v1/vc-report/:token (share/dev-report.controller.ts)
  *   (Т-3 `…/autotest` — с общим QA-воркером, отложен.)
  * Права: @AllowApps('assist'), SiteAccountGuard, productRoles.assist =
  * manager (владелец или менеджер кабинета, §5-бис.2; оператор — 403).
@@ -72,6 +75,17 @@ export class VoiceControlSettingsController {
   @Get(':id/voice-control/site/tests')
   tests(@Membership() m: AccountMembership, @Param('id') id: string) {
     return this.settings.tests(m, id);
+  }
+
+  /** (заход 9) Одноразовая ссылка «отчёт для разработчика». */
+  @Post(':id/voice-control/site/tests/:tid/dev-link')
+  @HttpCode(200)
+  devLink(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Param('tid') tid: string,
+  ) {
+    return this.settings.devLink(m, id, tid);
   }
 
   @Get(':id/voice-control/site/tests/:tid')

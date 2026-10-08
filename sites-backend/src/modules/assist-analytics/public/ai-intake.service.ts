@@ -18,7 +18,7 @@
  * без него чанк `ana.js` не грузится вовсе (ноль запросов, ноль записей).
  */
 import { Injectable, Logger } from '@nestjs/common';
-import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { widgetIpSecret } from '../../../config/widget-env';
 import { AssistPublicDb } from '../../../prisma/assist-public-db.service';
@@ -40,6 +40,57 @@ const DAY = 24 * 60 * 60 * 1000;
 export const REF_TTL_MS = 2 * DAY;
 /** Квота поведения сверяется с базой не чаще (§5-тер.10 «приблизительно»). */
 const QUOTA_CACHE_MS = 60_000;
+/**
+ * Сверх квоты тарифа (Р-З9-25, §5-тер.10 «Квота и выборка»): итоги
+ * просмотров принимаются выборкой — эта доля, детерминированно по pvId
+ * (повтор итога того же просмотра решается так же); свёртка делит
+ * счётчики на долю. Цели — всегда 100% (это не поведение).
+ */
+export const BEHAVIOR_OVER_QUOTA_SAMPLE_RATE = 0.1;
+/**
+ * Потолок записанных строк в месяц — во столько раз больше квоты: дальше
+ * поведение не принимается вовсе и чанк bf.js не грузится (защита диска и
+ * записи от аномального трафика; ×2 квоты при выборке 10% — это трафик
+ * в 11 раз выше тарифа).
+ */
+export const BEHAVIOR_HARD_CAP_FACTOR = 2;
+/** Итогов просмотра с адреса на сайт в минуту (Р-З9-27, общий для экземпляров). */
+export const PV_PER_IP_PER_MINUTE = 120;
+const MINUTE = 60_000;
+
+/** Доля приёма по расходу месяца: 1 — в квоте, выборка — сверх, 0 — потолок. */
+export function behaviorSampleRate(used: number, limit: number): number {
+  if (limit <= 0) return 0;
+  if (used < limit) return 1;
+  if (used >= limit * BEHAVIOR_HARD_CAP_FACTOR) return 0;
+  return BEHAVIOR_OVER_QUOTA_SAMPLE_RATE;
+}
+
+/** Секрет выборки: серверный секрет виджета; без него — случайный на процесс. */
+const PROCESS_SAMPLE_SECRET = randomBytes(32).toString('hex');
+function sampleSecret(): string {
+  return widgetIpSecret() ?? PROCESS_SAMPLE_SECRET;
+}
+
+/**
+ * Детерминированная выборка просмотра (Р-З9-25; аудит захода 9 P2-1):
+ * HMAC(секрет платформы, `siteId:pvId`) → [0, 1) < доли. pvId присылает
+ * клиент — по открытому хешу его можно было бы подобрать «в выборку» и
+ * получить вес ×10 на подделке; с секретом решение не предсказать.
+ */
+export function inBehaviorSample(
+  siteId: string,
+  pvId: string,
+  rate: number,
+  secret: string = sampleSecret(),
+): boolean {
+  if (rate >= 1) return true;
+  if (rate <= 0) return false;
+  const h = createHmac('sha256', secret)
+    .update(`bf-sample:${siteId}:${pvId}`)
+    .digest();
+  return h.readUInt32BE(0) / 0x100000000 < rate;
+}
 
 export interface PublicExperiment {
   id: string;
@@ -176,10 +227,16 @@ export class AiIntake {
       : null;
     return {
       consent: { gcm: cfg.linkedGcm },
+      // Сверх квоты — выборка (сервер решает по pvId), чанк грузится до
+      // жёсткого потолка (Р-З9-25).
       behavior:
         cfg.behavior &&
         plan.behaviorViewsPerMonth > 0 &&
-        !(await this.quotaOut(site.accountId, plan.behaviorViewsPerMonth, now)),
+        (await this.behaviorRate(
+          site.accountId,
+          plan.behaviorViewsPerMonth,
+          now,
+        )) > 0,
       experiment: exp
         ? {
             id: exp.id,
@@ -327,13 +384,9 @@ export class AiIntake {
 
   // ── поведение (§5-тер.8–10) ──────────────────────────────────────────
 
-  private async quotaOut(
-    accountId: string,
-    limit: number,
-    now: Date,
-  ): Promise<boolean> {
+  private async quotaUsed(accountId: string, now: Date): Promise<number> {
     const c = this.quota.get(accountId);
-    if (c && now.getTime() - c.at < QUOTA_CACHE_MS) return c.used >= limit;
+    if (c && now.getTime() - c.at < QUOTA_CACHE_MS) return c.used;
     const [r] = await this.db.$queryRawUnsafe<Array<{ n: bigint | null }>>(
       `SELECT sum(ec."count") AS n FROM "sites"."assist_site_event_counts" ec
          JOIN "sites"."assist_sites" a ON a."siteId" = ec."siteId"
@@ -343,13 +396,45 @@ export class AiIntake {
     );
     const used = Number(r?.n ?? 0);
     this.quota.set(accountId, { at: now.getTime(), used });
-    return used >= limit;
+    return used;
+  }
+
+  /**
+   * Доля приёма итогов просмотра (Р-З9-25): 1 — в квоте тарифа; доля
+   * выборки — сверх квоты; 0 — за жёстким потолком (квота × 2 записанных).
+   */
+  async behaviorRate(
+    accountId: string,
+    limit: number,
+    now: Date,
+  ): Promise<number> {
+    if (limit <= 0) return 0;
+    return behaviorSampleRate(await this.quotaUsed(accountId, now), limit);
+  }
+
+  /**
+   * Лимит итогов просмотра с адреса на сайт (Р-З9-27, аудит Э3-бис (3)):
+   * окно в `assist_rate_buckets` — общий для всех экземпляров функции
+   * (раньше — счётчик в памяти экземпляра: потолок × число экземпляров).
+   * Тот же приём, что WidgetRateLimit: условный upsert, нет строки — лимит.
+   */
+  async pvRateOk(siteId: string, ipHash: string, now: Date): Promise<boolean> {
+    const start = Math.floor(now.getTime() / MINUTE) * MINUTE;
+    const rows = await this.db.$queryRaw<Array<{ count: number }>>(Prisma.sql`
+      INSERT INTO "sites"."assist_rate_buckets" ("scope", "key", "bucket", "count", "expiresAt")
+      VALUES ('widget-ana-pv-ip-min', ${`${siteId}:${ipHash}`}, ${new Date(start).toISOString()}, 1, ${new Date(start + MINUTE)})
+      ON CONFLICT ("scope", "key", "bucket") DO UPDATE
+        SET "count" = "sites"."assist_rate_buckets"."count" + 1
+        WHERE "sites"."assist_rate_buckets"."count" < ${PV_PER_IP_PER_MINUTE}
+      RETURNING "count"`);
+    return rows.length === 1;
   }
 
   /**
    * Итог просмотра: только связанный режим + поведение у владельца + тариф
-   * + квота; исключённые пути — молча мимо. Первый итог pvId — вставка и
-   * счётчик квоты; повтор (вкладку скрыли ещё раз) — перезапись метрик.
+   * + квота (сверх неё — выборка с долей в строке, Р-З9-25); исключённые
+   * пути — молча мимо. Первый итог pvId — вставка и счётчик квоты; повтор
+   * (вкладку скрыли ещё раз) — перезапись метрик.
    */
   async pageView(p: {
     site: { siteId: string; accountId: string; analytics: unknown };
@@ -357,7 +442,9 @@ export class AiIntake {
     input: PageViewInput;
     userAgent: string | undefined;
     now: Date;
-  }): Promise<'recorded' | 'updated' | 'ignored'> {
+    /** ipHash адреса — лимит итогов с адреса на сайт (Р-З9-27). */
+    ipHash?: string;
+  }): Promise<'recorded' | 'updated' | 'ignored' | 'limited'> {
     const cfg = effectiveAnalyticsConfig(p.site.analytics);
     if (!cfg.linked || !cfg.behavior) return 'ignored';
     const planId = await this.planOf(p.site.accountId, p.now);
@@ -372,6 +459,20 @@ export class AiIntake {
     const i = p.input;
     const excluded = [...DEFAULT_EXCLUDED_BEHAVIOR_PATHS, ...cfg.excludedPaths];
     if (excluded.some((m) => pathMatchesMask(i.path, m))) return 'ignored';
+    // Квота (Р-З9-25): сверх неё новые просмотры — выборкой (решение — по
+    // секретному HMAC pvId), за потолком — ничего; доля — из кэша квоты.
+    const rate = await this.behaviorRate(
+      p.site.accountId,
+      plan.behaviorViewsPerMonth,
+      p.now,
+    );
+    // Лимит с адреса (запись в базу) — только после дешёвых проверок выше.
+    if (
+      p.ipHash !== undefined &&
+      !(await this.pvRateOk(p.site.siteId, p.ipHash, p.now))
+    ) {
+      return 'limited';
+    }
     const ua = uaFamily(p.userAgent);
     const metrics = [
       i.scrollMax,
@@ -403,10 +504,10 @@ export class AiIntake {
       i.pv,
       ...metrics,
     );
+    // Перезапись уже принятого просмотра — всегда (выборка решает только
+    // вставку: итог просмотра, принятого в квоте, не теряется).
     if (upd > 0) return 'updated';
-    if (
-      await this.quotaOut(p.site.accountId, plan.behaviorViewsPerMonth, p.now)
-    ) {
+    if (rate <= 0 || !inBehaviorSample(p.site.siteId, i.pv, rate)) {
       return 'ignored';
     }
     const n = await this.db.$executeRawUnsafe(
@@ -415,10 +516,10 @@ export class AiIntake {
           "utmCampaign", "device", "os", "browser",
           "scrollMax", "activeMs", "totalMs", "clicks", "rageClicks", "jsErrors", "errorGroups",
           "formStarted", "formSubmitted", "formAbandonField", "formInvalid", "backNav",
-          "lcpMs", "inpMs", "cls", "chatOpened", "updatedAt")
+          "lcpMs", "inpMs", "cls", "chatOpened", "sampleRate", "updatedAt")
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
                $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24,
-               $25, $26, $27, $28, now())
+               $25, $26, $27, $28, $29, now())
        ON CONFLICT DO NOTHING`,
       i.pv,
       p.site.siteId,
@@ -433,6 +534,7 @@ export class AiIntake {
       ua.os,
       ua.browser,
       ...metrics,
+      rate,
     );
     if (n > 0) {
       await this.db.$executeRaw(Prisma.sql`

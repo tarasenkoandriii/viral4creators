@@ -1,7 +1,8 @@
 /**
  * Приёмка Э3-бис по HTTP (настоящие гварды, CORS, конверт; ТЗ §5-тер.14,
  * §5-тер.16 п.13, §5-тер.13 «кто что видит»):
- *  - `POST /widget/v1/pv`: Origin = допущенный хост pk + ключ визита → 204;
+ *  - `POST /widget/v1/pv`: Origin = допущенный хост pk + ключ визита → 204
+ *    (лимит с адреса — общий для экземпляров, заход 9);
  *    неизвестное поле итога → 400; чужой/выключенный хост → 403; без ключа
  *    визита (нет согласия) → 400; sendBeacon text/plain — принимается;
  *  - `POST /widget/v1/exp`, `/ref`: только связанный режим;
@@ -15,6 +16,7 @@ import {
   randomV6Prefix,
 } from '../../modules/assist-sandbox/testing/k3-stack.testing';
 import {
+  W_ORIGIN,
   domain,
   startWidgetStack,
   widgetFixture,
@@ -26,6 +28,16 @@ import {
   PV_PER_IP_PER_MINUTE,
   WidgetAnalyticsService,
 } from '../../modules/assist-widget/widget-analytics.service';
+import {
+  AiIntake,
+  visitHashOf,
+} from '../../modules/assist-analytics/public/ai-intake.service';
+import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
+import { WidgetOriginGuard } from '../../modules/assist-widget/origin-guard';
+import { WidgetRateLimit } from '../../modules/assist-widget/rate-limit';
+import { WidgetSessionService } from '../../modules/assist-widget/widget-session.service';
+import { WidgetStateService } from '../../modules/assist-widget/widget-state.service';
+import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import {
   TEST_ASSIST_TOKEN,
   signInitData,
@@ -141,6 +153,103 @@ describeDb('Приёмка Э3-бис: маршруты по HTTP', () => {
     await send(now, ip());
     await send(new Date(now.getTime() + 60_000));
     expect((await count()) - before).toBe(PV_PER_IP_PER_MINUTE + 2);
+  });
+
+  it('заход 9 (Р-З9-27): лимит итогов просмотра — в Postgres, общий для экземпляров функции', async () => {
+    const a = stack.app.get(WidgetAnalyticsService);
+    // Второй экземпляр (другая функция Vercel): своя память, та же база.
+    const b = new WidgetAnalyticsService(
+      stack.app.get(AssistPublicDb),
+      stack.app.get(WidgetOriginGuard),
+      stack.app.get(WidgetSessionService),
+      stack.app.get(WidgetStateService),
+      stack.app.get(WidgetRateLimit),
+      stack.app.get(AiIntake),
+    );
+    const now = new Date();
+    const addr = ip();
+    const count = () =>
+      stack.prisma.assistSitePageView.count({ where: { siteId: f.siteId } });
+    const before = await count();
+    const send = (svc: WidgetAnalyticsService) =>
+      svc.pageView(
+        {
+          body: pvBody(),
+          origin: f.hosts[0].origin,
+          ip: addr,
+          contentLength: undefined,
+          userAgent: 'test',
+        },
+        now,
+      );
+    const half = PV_PER_IP_PER_MINUTE - 20;
+    for (let i = 0; i < half; i++) await send(a);
+    for (let i = 0; i < half; i++) await send(b);
+    expect((await count()) - before).toBe(PV_PER_IP_PER_MINUTE);
+  });
+
+  it('аудит P3-14: POST /widget/v1/forget с {v} — удаляет единицу эксперимента без диалога; без ключа и с мусором — 200, чужая единица цела', async () => {
+    const now = new Date();
+    const exp = await stack.prisma.assistSiteExperiment.create({
+      data: {
+        accountId: f.accountId,
+        siteId: f.siteId,
+        kind: 'holdout',
+        goalKey: 'order',
+        share: 0.1,
+        salt: 'forget-salt',
+        status: 'stopped',
+        horizonDays: 14,
+        mdeRel: 0.2,
+        minUnitsPerArm: 100,
+        power: {},
+        startedAt: now,
+        endsAt: new Date(now.getTime() + 14 * 86_400_000),
+        startedBy: '1',
+      },
+    });
+    const { ipSalt } = await stack.prisma.assistSite.findUniqueOrThrow({
+      where: { siteId: f.siteId },
+      select: { ipSalt: true },
+    });
+    const mine = visitKey();
+    const other = visitKey();
+    for (const v of [mine, other]) {
+      await stack.prisma.assistSiteExperimentUnit.create({
+        data: {
+          experimentId: exp.id,
+          unitHash: visitHashOf(f.siteId, ipSalt, v),
+          arm: 'a',
+        },
+      });
+    }
+    const session = await request(srv())
+      .post('/widget/v1/session')
+      .set('Origin', W_ORIGIN)
+      .set('X-Forwarded-For', ip())
+      .send({ pk: f.pk, parentOrigin: f.hosts[0].origin })
+      .expect(200);
+    const token = session.body.data.visitorToken as string;
+    const forget = (body?: unknown) => {
+      const r = request(srv())
+        .post('/widget/v1/forget')
+        .set('Origin', W_ORIGIN)
+        .set(WIDGET_VISITOR_TOKEN_HEADER, token);
+      return body === undefined ? r : r.send(body as object);
+    };
+    const units = async () =>
+      (
+        await stack.prisma.assistSiteExperimentUnit.findMany({
+          where: { experimentId: exp.id },
+          select: { unitHash: true },
+        })
+      ).map((u) => u.unitHash);
+    await forget().expect(200);
+    await forget({ v: 123, x: 'junk' }).expect(200);
+    expect(await units()).toHaveLength(2);
+    const r = await forget({ v: mine }).expect(200);
+    expect(r.body.data).toEqual({ conversationsDeleted: 0 });
+    expect(await units()).toEqual([visitHashOf(f.siteId, ipSalt, other)]);
   });
 
   it('pv/exp/ref: чужой сайт и выключенный хост → 403 ORIGIN_DENIED', async () => {

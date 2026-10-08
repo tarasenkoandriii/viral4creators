@@ -155,7 +155,9 @@ test('строгий CSP + TT: команда набором заполняет 
           await again.click().catch(() => null);
         return false;
       },
-      { timeout: 15_000 }
+      // Под нагрузкой полного прогона (первый тест набора, холодные
+      // стенды) путь «сказал → план → карточка → поле» занимал > 15 с.
+      { timeout: 30_000 }
     )
     .toBe(true);
   log = await vcLog();
@@ -388,6 +390,221 @@ test('мастер на РАБОЧЕМ хосте: «Зберегти» толь
     result: 'fail',
     attempts: 1,
     submitsBlocked: 2,
+  });
+});
+
+test('Р-З9-22: мастер на РАБОЧЕМ хосте — автосохранение fetch/XHR/sendBeacon в `change` поля заглушено (GET проходит); вне окна шага запись страницы не трогается', async ({
+  page,
+}) => {
+  const token = `tok_${Date.now().toString(36)}_net_abcdefgh`;
+  await vcSet({
+    mode: null,
+    model: {
+      'введи Терміново в Нотатка': [
+        { kind: 'fill', text: 'Нотатка', value: 'Терміново' },
+      ],
+      'введи Інше в Нотатка': [
+        { kind: 'fill', text: 'Нотатка', value: 'Інше' },
+      ],
+    },
+  });
+  await vcSet({ testToken: token, testHost: false });
+  const sent: string[] = [];
+  page.on('request', (r) => {
+    const u = new URL(r.url());
+    if (u.pathname.startsWith('/admin/net-'))
+      sent.push(`${r.method()} ${u.pathname}`);
+  });
+  await page.goto(`${adminPage(newPk(), 'emp-net')}&v4c_voicetest=${token}`);
+  await expect.poll(() => page.url()).not.toContain('v4c_voicetest');
+  const f = await frameOf(page, false);
+  await expect(f.locator('.wa-vt')).toContainText('Робочий хост');
+  // «Старая админка»: автосохранение поля по `change` — fetch, XHR, beacon.
+  await page.evaluate(() => {
+    const w = window as unknown as { __net: string[] };
+    w.__net = [];
+    document.getElementById('ak-note')!.addEventListener('change', () => {
+      const note = (x: string) => w.__net.push(x);
+      fetch('/admin/net-fetch', { method: 'POST', body: 'a' }).then(
+        () => note('fetch:ok'),
+        () => note('fetch:blocked')
+      );
+      fetch(
+        new Request('/admin/net-request', { method: 'PUT', body: 'a' })
+      ).then(
+        () => note('request:ok'),
+        () => note('request:blocked')
+      );
+      note(`beacon:${navigator.sendBeacon('/admin/net-beacon', 'a')}`);
+      fetch('/admin/net-get').then(
+        () => note('get:ok'),
+        () => note('get:blocked')
+      );
+      try {
+        const x = new XMLHttpRequest();
+        x.open('POST', '/admin/net-xhr');
+        x.send('a');
+        note('xhr:sent');
+      } catch {
+        note('xhr:blocked');
+      }
+    });
+  });
+  await say(f, 'введи Терміново в Нотатка');
+  await allow(f);
+  const card = f.locator('.wa-vc-p .wa-card .wa-yes');
+  if (await card.isVisible().catch(() => false)) await card.click();
+  await expect(page.locator('#ak-note')).toHaveValue('Терміново');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { __net: string[] }).__net.length
+      )
+    )
+    .toBe(5);
+  const net = await page.evaluate(
+    () => (window as unknown as { __net: string[] }).__net
+  );
+  expect(net.sort()).toEqual([
+    'beacon:false',
+    'fetch:blocked',
+    'get:ok',
+    'request:blocked',
+    'xhr:blocked',
+  ]);
+  // Запись по сети не ушла ни одна; чтение (GET) — ушло.
+  expect(sent).toEqual(['GET /admin/net-get']);
+  await expect.poll(async () => (await vcLog()).tests[0].submits).toBe(4);
+  // Через 1 с после шага окно закрыто: запись самой страницы — как обычно.
+  await page.waitForTimeout(1300);
+  await page.evaluate(() =>
+    fetch('/admin/net-after', { method: 'POST', body: 'b' }).catch(() => null)
+  );
+  await expect.poll(() => sent).toContain('POST /admin/net-after');
+  expect((await vcLog()).tests[0].submits).toBe(4);
+
+  // Аудит пакета F (P2-1): после отчёта мастера страница не глушит запись —
+  // обычный план сотрудника на той же странице сохраняет как обычно.
+  await f.locator('.wa-vt .wa-yes', { hasText: 'Сформувати звіт' }).click();
+  await expect.poll(async () => (await vcLog()).tests[0].report).not.toBeNull();
+  await vcSet({ mode: 'on' });
+  sent.length = 0;
+  await say(f, 'введи Інше в Нотатка');
+  const again = f.locator('.wa-vc-p .wa-card .wa-yes');
+  await expect
+    .poll(
+      async () => {
+        if ((await page.locator('#ak-note').inputValue()) === 'Інше')
+          return true;
+        if (await again.isVisible().catch(() => false))
+          await again.click().catch(() => null);
+        return false;
+      },
+      { timeout: 15_000 }
+    )
+    .toBe(true);
+  await expect
+    .poll(() => [...sent].sort())
+    .toEqual([
+      'GET /admin/net-get',
+      'POST /admin/net-beacon',
+      'POST /admin/net-fetch',
+      'POST /admin/net-xhr',
+      'PUT /admin/net-request',
+    ]);
+});
+
+test('аудит Э6-бис (б) (1): сухой прогон мастера — «вірно / не те» на КАЖДОМ шаге; в отчёт — число верных исполнимых шагов', async ({
+  page,
+}) => {
+  const token = `tok_${Date.now().toString(36)}_dry_abcdefgh`;
+  await vcSet({
+    mode: null,
+    model: {
+      'введи Терміново в Нотатка': [
+        { kind: 'fill', text: 'Нотатка', value: 'Терміново' },
+        { kind: 'click', text: 'Зберегти' },
+      ],
+      'натисни Клієнти': [{ kind: 'click', text: 'Клієнти' }],
+    },
+  });
+  await vcSet({ testToken: token, testHost: false });
+  await page.goto(`${adminPage(newPk(), 'emp-dry')}&v4c_voicetest=${token}`);
+  await expect.poll(() => page.url()).not.toContain('v4c_voicetest');
+  const f = await frameOf(page, false);
+  const box = f.locator('.wa-vt');
+  await box.locator('.wa-edit', { hasText: 'Перевірити сторінку' }).click();
+  await expect(box).toContainText('введи Терміново в Нотатка');
+  await box.locator('.wa-edit', { hasText: 'Сухий прогін' }).first().click();
+  // Два шага — две строки со своими «Вірно / Не те».
+  const step1 = box.locator('.wa-card-a', { hasText: '1. Нотатка' });
+  const step2 = box.locator('.wa-card-a', { hasText: '2. Зберегти' });
+  await expect(step1.locator('.wa-yes')).toBeVisible();
+  await expect(step2.locator('.wa-no')).toBeVisible();
+  // Ничего не нажато: сухой прогон.
+  await expect(page.locator('#ak-note')).toHaveValue('');
+  await step1.locator('.wa-yes').click();
+  await expect(box).toContainText('1. Нотатка — ✓');
+  await expect(box).not.toContainText('Вірно 1 з');
+  // «Зберегти» на рабочем хосте — «натисніть самі» (не исполнимый): его
+  // «вірно» в счёт не идёт — сервер считает исполнимые шаги.
+  await step2.locator('.wa-yes').click();
+  // «з N» — из исполнимых шагов (как в отчёте TMA).
+  await expect(box).toContainText('Вірно 1 з 1 кроків');
+  await expect(
+    box.locator('.wa-card-a', { hasText: '1. Нотатка' })
+  ).toHaveCount(0);
+  // Вторая команда: шаг «не те».
+  await box.locator('.wa-edit', { hasText: 'Сухий прогін' }).first().click();
+  await box
+    .locator('.wa-card-a', { hasText: '1. Клієнти' })
+    .locator('.wa-no')
+    .click();
+  await expect(box).toContainText('Вірно 0 з 1 кроків');
+  await box.locator('.wa-yes', { hasText: 'Сформувати звіт' }).click();
+  await expect
+    .poll(async () => (await vcLog()).tests[0].report !== null)
+    .toBe(true);
+  const rep = (await vcLog()).tests[0].report as {
+    dry: Array<{ planId: string; ok: number }>;
+  };
+  expect(rep.dry.map((d) => d.ok)).toEqual([1, 0]);
+});
+
+test('Р-З9-23: «заповни Місто Київ і збережи» — поле и «Зберегти» с операцией API по параметру: на странице ничего, вопрос в чат с номером объекта страницы', async ({
+  page,
+}) => {
+  await vcSet({
+    mode: 'on',
+    model: {
+      'заповни Місто Київ і збережи': [
+        { kind: 'fill', text: 'Місто', value: 'Київ' },
+        { kind: 'click', text: 'Зберегти' },
+      ],
+    },
+  });
+  await page.goto(adminPage(newPk(), 'emp-api'));
+  const f = await frameOf(page);
+  // Страница заказа 1042 (адрес SPA): номер — из адреса, не из команды.
+  await page.evaluate(() => history.pushState({}, '', '/admin/orders/1042'));
+  await say(f, 'заповни Місто Київ і збережи');
+  await allow(f); // согласие на сессию
+  await expect(f.locator('.wa-me').last()).toContainText(
+    'заповни Місто Київ і збережи (№ 1042)'
+  );
+  await page.waitForTimeout(800);
+  await expect(page.locator('#ak-city')).toHaveValue('');
+  await expect(page.locator('#ak-saves')).toHaveText('0');
+  expect((await vcLog()).plans).toHaveLength(0);
+  const r = await fetch(`${WIDGET}/__mock/admin-log`, { method: 'POST' });
+  const dialogs = (
+    (await r.json()) as {
+      dialogs: Record<string, Array<{ role: string; text: string }>>;
+    }
+  ).dialogs;
+  expect(dialogs['emp-api']?.[0]).toMatchObject({
+    role: 'employee',
+    text: 'заповни Місто Київ і збережи (№ 1042)',
   });
 });
 

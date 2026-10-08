@@ -17,11 +17,15 @@ import { useAdminTexts } from '../../lib/admin-mode-view';
  * после действия состояние перечитывается с сервера (§4-бис.5).
  */
 export function AdminChatScreen({ siteId }: { siteId: string }) {
-  const { account } = useKit();
+  const { account, locale } = useKit();
   const { adminMode } = useAssist();
   const t = useAdminTexts();
   const errText = useErrorText();
-  const st = useAsync(() => adminMode.chatState(siteId), [siteId]);
+  // Аудит Э8 (5): подсказки карточек с сервера — на языке TMA.
+  const st = useAsync(
+    () => adminMode.chatState(siteId, locale),
+    [siteId, locale]
+  );
   const [extra, setExtra] = useState<AdminChatMessage[]>([]);
   const [fresh, setFresh] = useState<Proposal[]>([]);
   const [text, setText] = useState('');

@@ -444,7 +444,23 @@ export const e3En: E3Dictionary = {
   },
   learning: {
     title: 'Learning',
-    tabs: { queue: 'Queue', golden: 'Verified answers', quality: 'Quality' },
+    tabs: {
+      queue: 'Queue',
+      golden: 'Verified answers',
+      quality: 'Quality',
+      voice: 'Voice',
+    },
+    voice: {
+      intro:
+        'Voice commands over {d} days where a voice-map target let users down: “press it yourself”, “target not found”, “wrong target”. Open the editor on that target to rebind it or fix the markup.',
+      empty: 'No misses on map targets over {d} days.',
+      line: '“press yourself” ×{s} · “not found” ×{n} · “wrong” ×{w} · map miss ×{m} · done {ok}',
+      open: 'Open in editor',
+      pages: 'A map target was named but was not on the page:',
+      pageLine: '{p} — ×{n}',
+      openPage: 'Open the page in the editor',
+      error: 'Could not open the editor: {e}',
+    },
     kinds: {
       unknown: 'Didn’t know',
       wrong: 'Was wrong',

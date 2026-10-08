@@ -24,6 +24,7 @@ import {
 } from '../../kit/ui';
 import {
   ADMIN_VC_RISKS_VERSION,
+  adminVoiceItemText,
   type AdminVoiceSettingsPatch,
   type AdminVoiceSettingsView,
   type AdminVoiceTestDetail,
@@ -343,26 +344,7 @@ function AdminVoiceForm({
             {t.wizard.report}
           </Button>
         )}
-        {report?.report && (
-          <ul className="text-xs space-y-1">
-            <li>{fmt(t.wizard.attempts, { n: report.report.attempts })}</li>
-            <li>
-              {fmt(t.wizard.submits, { n: report.report.submitsBlocked })}
-            </li>
-            <li>
-              {fmt(t.wizard.forbiddenLeak, {
-                n: report.report.forbidden.filter((f) => !f.blocked).length,
-              })}
-            </li>
-            {report.report.items
-              .filter((x) => x.level !== 'ok')
-              .map((x, i) => (
-                <li key={i}>
-                  {x.level === 'fail' ? '✗' : '!'} {x.code}
-                </li>
-              ))}
-          </ul>
-        )}
+        {report?.report && <AdminVoiceReportBox report={report.report} t={t} />}
       </div>
 
       <p className="text-xs text-silver-500">
@@ -376,5 +358,101 @@ function AdminVoiceForm({
         })}
       </p>
     </Card>
+  );
+}
+
+/**
+ * Отчёт мастера «Админки» человеческими текстами (аудит Э6-бис (б) (1)):
+ * пункты по словарю с числами, запреты без звука (что и куда ушло бы),
+ * кнопки «никогда», сухой прогон (верно N из M), «Сохранить» на тестовом
+ * хосте и фрагмент разметки для разработчика.
+ */
+function AdminVoiceReportBox({
+  report,
+  t,
+}: {
+  report: NonNullable<AdminVoiceTestDetail['report']>;
+  t: (typeof ADMIN_VOICE_TEXTS)['uk'];
+}) {
+  const { dict } = useKit();
+  const w = t.wizard;
+  return (
+    <div className="space-y-2 text-xs">
+      <ul className="space-y-1">
+        <li>{fmt(w.attempts, { n: report.attempts })}</li>
+        <li>{fmt(w.submits, { n: report.submitsBlocked })}</li>
+        <li>
+          {fmt(w.forbiddenLeak, {
+            n: report.forbidden.filter((f) => !f.blocked).length,
+          })}
+        </li>
+        {report.items
+          .filter((x) => x.level !== 'ok')
+          .map((x, i) => (
+            <li
+              key={i}
+              className={
+                x.level === 'fail' ? 'text-rose-600' : 'text-amber-700'
+              }
+            >
+              {x.level === 'fail' ? '✗' : '!'}{' '}
+              {adminVoiceItemText(w.items, x, w.mic)}
+            </li>
+          ))}
+      </ul>
+      {report.forbidden.length > 0 && (
+        <div>
+          <div className="font-medium">{w.forbidden}</div>
+          <ul className="pl-1">
+            {report.forbidden.map((f, i) => (
+              <li
+                key={i}
+                className={f.blocked ? 'text-emerald-700' : 'text-rose-600'}
+              >
+                {f.blocked ? '✓' : '✗'} {f.kind ? w.probes[f.kind] : '—'} «
+                {f.command}» — {f.blocked ? w.blocked : w.leaked}
+                {f.api ? ` · ${fmt(w.viaApi, { key: f.api })}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {report.dangerButtons.length > 0 && (
+        <div>
+          <div className="font-medium">{w.dangerButtons}</div>
+          <ul className="list-disc pl-5">
+            {report.dangerButtons.slice(0, 20).map((b, i) => (
+              <li key={i}>{b.text}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {report.dry.length > 0 && (
+        <div>
+          <div className="font-medium">{w.dry}</div>
+          <ul className="pl-1">
+            {report.dry.map((d, i) => (
+              <li key={i}>{fmt(w.dryLine, d)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {report.save && (
+        <div>
+          {w.save}:{' '}
+          {report.save.done
+            ? fmt(w.saveDone, { n: report.save.fields })
+            : w.saveFailed}
+        </div>
+      )}
+      {report.fragment && (
+        <CopyField
+          label={w.fragment}
+          value={report.fragment}
+          copyLabel={dict.common.copy}
+          copiedLabel={dict.common.copied}
+        />
+      )}
+    </div>
   );
 }

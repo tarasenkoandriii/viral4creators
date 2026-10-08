@@ -29,6 +29,10 @@ import type {
 import { SemanticCache } from '../assist-site-chat/semantic-cache';
 import { HandoffIntake } from '../assist-site-handoff/public/handoff-intake.service';
 import { ForgetJobs } from '../assist-site-learning/public/forget-jobs';
+import {
+  validVisitKey,
+  visitHashOf,
+} from '../assist-analytics/public/ai-intake.service';
 import { LearningSignals } from '../assist-site-learning/public/learning-signals';
 import { maskForJournal } from '../assist-site-chat/answer-checks';
 import type {
@@ -393,7 +397,10 @@ export class WidgetStateService {
    * (дословные варианты проверенных ответов), — задание L, поставленное ДО
    * удаления (после него id диалогов уже не найти). Повтор — 0, не ошибка.
    */
-  async forget(ctx: VisitorContext): Promise<WidgetForgetResponse> {
+  async forget(
+    ctx: VisitorContext,
+    visitKey: unknown = null,
+  ): Promise<WidgetForgetResponse> {
     const where = {
       siteId: ctx.site.siteId,
       visitorId: ctx.visitor.visitorId,
@@ -422,6 +429,18 @@ export class WidgetStateService {
     const hashes = visits
       .map((v) => v.visitHash)
       .filter((h): h is string => typeof h === 'string');
+    // Заход 9 (хвост аудита Э3-бис (4)): единица визита БЕЗ диалога (holdout
+    // a, посетитель не писал) — по ключу визита, который iframe прислал в
+    // запросе (он у iframe есть только при согласии посетителя). Чужую
+    // единицу так не удалить: ключ — случайный секрет этого браузера.
+    if (validVisitKey(visitKey)) {
+      const site = await this.db.assistSite.findUnique({
+        where: { siteId: ctx.site.siteId },
+        select: { ipSalt: true },
+      });
+      const own = visitHashOf(ctx.site.siteId, site?.ipSalt ?? null, visitKey);
+      if (!hashes.includes(own)) hashes.push(own);
+    }
     if (hashes.length) {
       await this.db.$executeRawUnsafe(
         `DELETE FROM "sites"."assist_site_experiment_units" u

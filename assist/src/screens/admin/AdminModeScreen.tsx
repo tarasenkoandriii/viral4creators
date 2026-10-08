@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { formatDate, useAsync, useKit } from '../../kit';
+import { ApiError, formatDate, useAsync, useKit } from '../../kit';
 import {
   Alert,
   Badge,
@@ -13,6 +13,7 @@ import {
 } from '../../kit/ui';
 import { isAdminOwner, useAdminTexts } from '../../lib/admin-mode-view';
 import {
+  type AdminActionStatsView,
   type AdminModeTab,
   type AdminModeView,
   type ConnectorView,
@@ -246,6 +247,21 @@ function Settings({ siteId }: { siteId: string }) {
             </span>
           </span>
         </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={v.testKeyConnectors}
+            onChange={(e) =>
+              setDraft({ ...draft, testKeyConnectors: e.target.checked })
+            }
+          />
+          <span>
+            {t.settings.testKeyConnectors}
+            <span className="block text-xs text-silver-500">
+              {t.settings.testKeyConnectorsHint}
+            </span>
+          </span>
+        </label>
         <Button
           loading={busy}
           onClick={() =>
@@ -257,6 +273,7 @@ function Settings({ siteId }: { siteId: string }) {
               roleMap: parseRoleMapText(roleText),
               tmaEmployeeRole: v.tmaEmployeeRole,
               statsPerEmployee: v.statsPerEmployee,
+              testKeyConnectors: v.testKeyConnectors,
             })
           }
         >
@@ -290,17 +307,39 @@ function Settings({ siteId }: { siteId: string }) {
           }
           onConfirm={() =>
             void adminMode
-              .issueIdentitySecret(siteId)
+              // Р-З9-18: выпуск, который видит экран, — гонка двух окон даёт
+              // 409, а не «мёртвый» показанный секрет.
+              .issueIdentitySecret(
+                siteId,
+                st.data?.identitySecret.set
+                  ? st.data.identitySecret.setAt
+                  : null
+              )
               .then((r) => {
                 setSecret(r.secret);
                 st.reload();
               })
-              .catch((e) => setNotice({ tone: 'danger', text: errText(e) }))
+              .catch((e) => {
+                if (
+                  e instanceof ApiError &&
+                  e.code === 'ADMIN_SECRET_CHANGED'
+                ) {
+                  setSecret(null);
+                  setNotice({
+                    tone: 'warning',
+                    text: t.settings.secretChanged,
+                  });
+                  st.reload();
+                  return;
+                }
+                setNotice({ tone: 'danger', text: errText(e) });
+              })
           }
         >
           {t.settings.secretIssue}
         </ConfirmButton>
         <div className="text-xs text-silver-500 mt-2">{t.settings.snippet}</div>
+        <div className="text-xs text-silver-500">{t.settings.jwtAdvice}</div>
         {st.data.snippet ? (
           <>
             <CopyField
@@ -614,6 +653,25 @@ function ConnectorCard({
           {t.connectors.saveSecret}
         </Button>
       </div>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={c.maskPd}
+          onChange={(e) =>
+            void act(
+              adminMode.patchConnector(siteId, c.id, {
+                maskPd: e.target.checked,
+              })
+            )
+          }
+        />
+        <span>
+          {t.connectors.maskPd}
+          <span className="block text-xs text-silver-500">
+            {t.connectors.maskPdHint}
+          </span>
+        </span>
+      </label>
       <SigningSecret siteId={siteId} c={c} onChange={onChange} />
       <div className="space-y-2">
         {c.operations.map((o) => (
@@ -919,7 +977,60 @@ function Stats({ siteId }: { siteId: string }) {
           ))}
         </Card>
       )}
+      <ActionStats a={s.actions} />
       <div className="text-xs text-silver-500">{t.stats.noRating}</div>
     </div>
+  );
+}
+
+/** Э8-хвост (6): блок «Действия» (§5-бис.15 п.12) — агрегаты с сервера. */
+export function ActionStats({ a }: { a: AdminActionStatsView }) {
+  const t = useAdminTexts().stats.actions;
+  const pct = (v: number | null) =>
+    v === null ? '—' : `${Math.round(v * 100)}%`;
+  return (
+    <Card className="text-sm space-y-1">
+      <div className="font-semibold">{t.title}</div>
+      {a.proposed === 0 ? (
+        <div className="text-silver-500">{t.none}</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              {t.proposed}: {a.proposed}
+            </div>
+            <div>
+              {t.yesShare}: {pct(a.yesShare)}
+            </div>
+            <div>
+              {t.done}: {a.done}
+            </div>
+            <div>
+              {t.failed}: {a.failed}
+            </div>
+            <div>
+              {t.unknown}: {a.unknown} ({pct(a.unknownShare)})
+            </div>
+            <div>
+              {t.unrequested}: {a.unrequested}
+            </div>
+            <div>
+              {t.traces}: {a.chainsWithTraces}
+            </div>
+            <div>
+              {t.compensations}: {a.compensations.proposed} · {t.compSuccess}{' '}
+              {pct(a.compensations.successRate)}
+            </div>
+          </div>
+          {a.compensations.alert && <Alert tone="warning">{t.compAlert}</Alert>}
+          {a.byOperation.map((o) => (
+            <div key={o.operation}>
+              <code>{o.operation}</code>: {o.proposed} / ✓ {o.confirmed} · ✔{' '}
+              {o.done} · ? {o.unknown}
+            </div>
+          ))}
+        </>
+      )}
+    </Card>
   );
 }

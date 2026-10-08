@@ -7,6 +7,9 @@
  * подсветка ✓/✗ и стоп на первом сбое; состояние записи переживает
  * переход страницы (`sessionStorage` origin `we.`). Протокол: `perform`,
  * `fieldName`/`options` в `pick` — строго.
+ * Заход 9: список всех мемо (клик — открыть), «Чекати це» (ожидание, не
+ * шаг: появление у шага / лічильник цели, снять — `goalCounter: null`),
+ * «Як скасувати» шага (↶ — карточка цели), протокол `multi`/`picks`/`search`.
  */
 import assert from 'node:assert/strict';
 import { FakeNode } from './fake-dom';
@@ -87,6 +90,7 @@ const reply = (path: string, v: unknown) =>
 const sent: ToPicker[] = [];
 let note = '';
 let renders = 0;
+const edited: string[] = [];
 
 function panel() {
   return createMemo({
@@ -112,8 +116,10 @@ function panel() {
     fail: (e) => (note = `fail:${(e as Error).message}`),
     render: () => void renders++,
     store: 'v4c_ed:pk',
+    edit: (k) => void edited.push(k),
   });
 }
+const tick = () => new Promise((r) => setTimeout(r, 0));
 
 const pick = (descriptor: Record<string, unknown>, extra = {}) =>
   parseToPanel(
@@ -157,14 +163,44 @@ async function main() {
 
   let m = panel();
   assert.equal(m.active(), false);
-  // Вкладка без записи: «Записати» — только кликом человека.
+  // Вкладка без записи (заход 9, №21): список всех мемо — один запрос.
+  reply('/editor/v1/memo/list?lang=uk', {
+    items: [
+      { number: 3, name: 'Кошик', status: 'published', page: '/p/*' },
+      { number: 5, name: null, status: 'draft', page: null },
+    ],
+  });
   let v = m.view() as unknown as N;
+  m.view();
+  await tick();
+  assert.equal(calls.length, 1, 'список — один запрос');
+  assert.equal(calls[0].path, '/editor/v1/memo/list?lang=uk');
+  calls.length = 0;
+  v = m.view() as unknown as N;
+  const listed = v.all('li').map((x) => x.text());
+  assert.deepEqual(listed, [
+    'М-3 Кошик · опубліковано · /p/*',
+    'М-5  · чернетка',
+  ]);
+  // Клик по мемо — открыть его (как «Открыть в редакторе»).
+  reply('/editor/v1/memo/record/start', { memo: null });
+  v.all('li')[0].all('button')[0].fire('click');
+  await tick();
+  assert.deepEqual(calls[0].body, { path: '/p/1', memo: 3, lang: 'uk' });
+  calls.length = 0;
+  sent.length = 0;
+  m.reset();
+  // «Записати» — только кликом человека.
+  reply('/editor/v1/memo/list?lang=uk', { items: [] });
+  v = m.view() as unknown as N;
+  await tick();
+  calls.length = 0;
   const rec = v.all('button').find((b) => b.text() === T.uk.mRec)!;
   rec.fire('click', false);
   assert.equal(calls.length, 0, 'скрипт страницы не начинает запись');
   reply('/editor/v1/memo/record/start', { memo: null, page: '/p/*' });
   rec.fire('click');
-  await new Promise((r) => setTimeout(r, 0));
+  await tick();
   assert.equal(calls[0].path, '/editor/v1/memo/record/start');
   assert.deepEqual(calls[0].body, { path: '/p/1', memo: null, lang: 'uk' });
   assert.equal(m.active(), true);
@@ -177,6 +213,7 @@ async function main() {
     slot: null,
     risk: 'auto',
     exec: true,
+    undo: { assistId: 'remove-from-cart', key: 'cart' },
   });
   assert.equal(
     await m.onPick(
@@ -309,6 +346,10 @@ async function main() {
   ]);
   assert.ok(note.includes('М-4'), note);
 
+  // 6а (заход 9, №23). «Як скасувати» шага — из цели карты: ↶ → карточка.
+  // (Шаг «В кошик» перепривязан выше — у нового шага пары нет; проверяем
+  // на свежей записи ниже.)
+
   // 7. «Прогнати»: подсветка ✓/✗, стоп на первом сбое — шаг выбран.
   reply('/editor/v1/memo/poklasty-v-koshyk/try', {
     steps: [
@@ -383,6 +424,117 @@ async function main() {
     0,
     'без метки клика — без нажатия'
   );
+  // 10 (заход 9, №22/№23). «Чекати це» и «Як скасувати».
+  reply('/editor/v1/memo/record/step', {
+    kind: 'step',
+    step: {
+      ...step('click', 'В кошик'),
+      target: { pin: { text: 'В кошик' }, mapKey: 'cart' },
+    },
+    slot: null,
+    risk: 'auto',
+    exec: false,
+    undo: { assistId: 'remove-from-cart', key: 'cart' },
+  });
+  await m.onPick(pick({ tag: 'button', text: 'В кошик' }, { pid: 'k9' }));
+  v = m.view() as unknown as N;
+  const li = v.all('li').pop()!;
+  assert.ok(li.text().includes('↶remove-from-cart'), li.text());
+  li.all('button')
+    .find((b) => b.text() === '↶')!
+    .fire('click');
+  assert.deepEqual(edited, ['cart'], '↶ — карточка цели карты');
+  const nSteps = v.all('li').length;
+  // «Чекати це»: следующий клик — ожидание (не шаг, не нажатие).
+  v.all('button')
+    .find((b) => b.text() === T.uk.mWait)!
+    .fire('click');
+  assert.equal(note, T.uk.mWaitHint);
+  assert.deepEqual(sent.pop(), { type: 'mode', mode: 'select' });
+  reply('/editor/v1/memo/record/wait', { kind: 'appear', text: 'Додано' });
+  sent.length = 0;
+  assert.equal(
+    await m.onPick(
+      pick({ tag: 'other', role: 'button', text: 'Додано' }, { pid: 'w1' })
+    ),
+    true
+  );
+  assert.equal(calls[calls.length - 1].path, '/editor/v1/memo/record/wait');
+  assert.equal(sent.length, 0, 'ожидание не нажимает');
+  v = m.view() as unknown as N;
+  assert.equal(v.all('li').length, nSteps, 'ожидание — не шаг');
+  assert.ok(v.all('li').pop()!.text().includes('→ «Додано»'));
+  // Счётчик корзины — цель «лічильник +1»; ✕ — снять (goalCounter: null).
+  v.all('button')
+    .find((b) => b.text() === T.uk.mWait)!
+    .fire('click');
+  reply('/editor/v1/memo/record/wait', {
+    kind: 'counter',
+    target: { assistId: 'nav-cart', text: 'кошик' },
+    delta: 1,
+    now: 0,
+  });
+  await m.onPick(pick({ tag: 'a', role: 'link', text: 'Кошик (0)' }));
+  v = m.view() as unknown as N;
+  assert.ok(v.text().includes(`${T.uk.mCnt} «кошик» +1`), v.text());
+  reply('/editor/v1/memo/record/stop', {
+    number: 9,
+    key: 'm9',
+    draftRevision: 0,
+    gates: { ok: true, problems: [] },
+  });
+  v.all('button')
+    .find((b) => b.text() === T.uk.mSave)!
+    .fire('click');
+  await tick();
+  const st1 = calls[calls.length - 1].body;
+  assert.deepEqual(st1.goalCounter, {
+    target: { assistId: 'nav-cart', text: 'кошик' },
+    delta: 1,
+  });
+  const sentSteps = st1.steps as Array<{ expect?: { appear?: string } }>;
+  assert.equal(sentSteps[sentSteps.length - 1].expect?.appear, 'Додано');
+  v = m.view() as unknown as N;
+  v.all('p')
+    .find((p) => p.text().includes(T.uk.mCnt))!
+    .all('button')[0]
+    .fire('click');
+  reply('/editor/v1/memo/record/stop', {
+    number: 9,
+    key: 'm9',
+    draftRevision: 1,
+    gates: { ok: true, problems: [] },
+  });
+  v = m.view() as unknown as N;
+  v.all('button')
+    .find((b) => b.text() === T.uk.mSave)!
+    .fire('click');
+  await tick();
+  assert.equal(calls[calls.length - 1].body.goalCounter, null, 'снять счётчик');
+
+  // 11 (заход 9). Протокол: Shift+клик (`multi`), рамка (`picks`), `/` (`search`).
+  assert.equal(pick({ tag: 'button', text: 'A' }, { multi: true }).multi, true);
+  assert.equal(
+    pick({ tag: 'button', text: 'A' }, { multi: 'yes' }).multi,
+    false
+  );
+  const picks = parseToPanel(
+    editorEnvelope({
+      type: 'picks',
+      items: [
+        { tag: 'button', text: 'A', value: 'secret' },
+        { tag: 'script' },
+        ...Array.from({ length: 60 }, (_, i) => ({ tag: 'a', text: `L${i}` })),
+      ],
+    })
+  ) as Extract<ToPanel, { type: 'picks' }>;
+  assert.equal(picks.items.length, 39, 'мусор вон, ≤ 40 разобранных');
+  assert.ok(!JSON.stringify(picks).includes('secret'), 'значений нет');
+  assert.deepEqual(parseToPanel(editorEnvelope({ type: 'search', x: 1 })), {
+    type: 'search',
+  });
+  assert.equal(parseToPanel(editorEnvelope({ type: 'picks' })), null);
+
   m.reset();
   assert.ok(renders > 0);
   console.log(

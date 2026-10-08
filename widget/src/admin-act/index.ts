@@ -17,6 +17,11 @@
  *    попытка — сообщение `ui-attempt` (регистратор: попытка > 0 — провал);
  *  - мастер на РАБОЧЕМ хосте (`vt-arm` с `work`): отправка формы во время
  *    плана глушится (`submit` в фазе перехвата) и регистрируется `vt-submit`;
+ *    там же (Р-З9-22, аудит Э6-бис (б) (7)) — не-GET `fetch`,
+ *    `XMLHttpRequest.send` и `sendBeacon` с отметки `dispatched` шага
+ *    до 1 с после его итога (автосохранение в обработчике `change`/клика).
+ *    Всё это — только для планов мастера (`ui-run` с `vt`, до отчёта):
+ *    после мастера обычные планы сотрудника не глушатся;
  *  - окружение и разметка мастера — чанк `check.js`, возврат полей —
  *    `undo.js` (оба рядом, тот же выпуск).
  *
@@ -147,6 +152,8 @@ export function start(host: ActHost): ActApi {
   /** Сессия мастера: регистратор попыток и (рабочий хост) глушение отправок. */
   let armed = false;
   let work = false;
+  /** Идёт план МАСТЕРА (`ui-run` с `vt`): после отчёта — обычные планы. */
+  let vtRun = false;
   let check: Promise<ActApi | null> | null = null;
 
   const attempt = (el: Element | null) =>
@@ -185,7 +192,7 @@ export function start(host: ActHost): ActApi {
   }
 
   // Рабочий хост мастера: отправка формы во время плана — заглушить.
-  const muted = () => armed && work && !!runner && !runner._halt;
+  const muted = () => armed && work && vtRun && !!runner && !runner._halt;
   const onSubmit = (e: Event) => {
     if (!muted()) return;
     e.preventDefault();
@@ -201,6 +208,60 @@ export function start(host: ActHost): ActApi {
       if (muted()) host.post({ type: 'vt-submit', n: 1 } as never);
       else orig.call(this);
     };
+  };
+
+  // Р-З9-22: рабочий хост мастера — запись по сети из обработчика
+  // синтетического события (автосохранение `fetch`/XHR/`sendBeacon` в
+  // `change`) глушится: с `dispatched` шага до 1 с после его итога/стопа.
+  // GET/HEAD — чтение, проходят; клик сотрудника вне окна — его действие.
+  let netUntil = 0;
+  const netMuted = () => {
+    if (!armed || !work || !vtRun) return false;
+    if (netUntil === Infinity && (!runner || runner._halt))
+      netUntil = Date.now() + 1000;
+    return Date.now() < netUntil;
+  };
+  const netBlocked = (method: unknown) => {
+    const m = String(method || 'GET').toUpperCase();
+    if (m === 'GET' || m === 'HEAD' || !netMuted()) return false;
+    host.post({ type: 'vt-submit', n: 1 } as never);
+    return true;
+  };
+  const armNet = () => {
+    const w = window;
+    const f = w.fetch;
+    if (f)
+      w.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
+        const m =
+          (init && init.method) ||
+          (input instanceof Request ? input.method : 'GET');
+        return netBlocked(m)
+          ? Promise.reject(new TypeError('Failed to fetch'))
+          : f.call(w, input, init);
+      };
+    const X = XMLHttpRequest.prototype;
+    const open = X.open;
+    const send = X.send;
+    const verb = new WeakMap<XMLHttpRequest, string>();
+    X.open = function (this: XMLHttpRequest, m: string) {
+      verb.set(this, m);
+      // eslint-disable-next-line prefer-rest-params
+      return open.apply(this, arguments as never);
+    } as typeof X.open;
+    X.send = function (
+      this: XMLHttpRequest,
+      b?: Document | XMLHttpRequestBodyInit | null
+    ) {
+      if (netBlocked(verb.get(this)))
+        throw new DOMException('blocked', 'NetworkError');
+      return send.call(this, b);
+    };
+    const nav = navigator;
+    const beacon = nav.sendBeacon;
+    if (beacon)
+      nav.sendBeacon = function (u: string | URL, d?: BodyInit | null) {
+        return netBlocked('POST') ? false : beacon.call(nav, u, d);
+      };
   };
 
   // Страница уходит в bfcache: раннер стоп без отчёта (иначе при «Назад»
@@ -248,6 +309,7 @@ export function start(host: ActHost): ActApi {
         if (!armed) {
           N.on(document, 'submit', onSubmit, true);
           armSubmit();
+          armNet();
         }
         armed = true;
         work = raw.work === true;
@@ -285,8 +347,10 @@ export function start(host: ActHost): ActApi {
           // (двойное «Да»), — не второй исполнитель поверх первого.
           if (runner && !runner._halt) {
             if (runner._plan == m.planId) return;
+            if (netUntil === Infinity) netUntil = Date.now() + 1000;
             runner._stop(null);
           }
+          vtRun = raw.vt === true;
           const r = new AdminRunner(
             {
               N,
@@ -295,7 +359,15 @@ export function start(host: ActHost): ActApi {
               _allow: allow,
               _min: host.min,
               _mark: host.mark,
-              _report: (index, result, reason, ms) =>
+              _report: (index, result, reason, ms) => {
+                // Окно глушения сети (Р-З9-22): шаг с эффектом начат — до
+                // его итога и ещё 1 с (отложенное автосохранение).
+                netUntil =
+                  result == 'dispatched'
+                    ? Infinity
+                    : netUntil === Infinity
+                      ? Date.now() + 1000
+                      : netUntil;
                 host.post({
                   type: 'ui-step',
                   planId: m.planId,
@@ -304,9 +376,12 @@ export function start(host: ActHost): ActApi {
                   reason,
                   url: location.href.split('#')[0],
                   ms,
-                }),
-              _stopped: (by) =>
-                host.post({ type: 'ui-stopped', planId: m.planId, by }),
+                });
+              },
+              _stopped: (by) => {
+                if (netUntil === Infinity) netUntil = Date.now() + 1000;
+                host.post({ type: 'ui-stopped', planId: m.planId, by });
+              },
               _need: (index) =>
                 host.post({ type: 'ui-need', planId: m.planId, index }),
             },
@@ -323,6 +398,7 @@ export function start(host: ActHost): ActApi {
           if (runner && runner._plan === m.planId) runner._ack(m.index);
           return;
         case 'ui-stop':
+          if (netUntil === Infinity) netUntil = Date.now() + 1000;
           if (runner && runner._plan === m.planId) runner._stop(null);
           return;
         case 'ui-pause':

@@ -15,6 +15,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import {
   AiIntake,
+  PV_PER_IP_PER_MINUTE,
   issueRef,
   validVisitKey,
   visitHashOf,
@@ -35,14 +36,15 @@ const MINUTE = 60_000;
 /** Запросов связанного режима с адреса на сайт в минуту (exp/ref/visit). */
 export const ANA_REQUESTS_PER_IP_PER_MINUTE = 30;
 /**
- * Итогов просмотра с адреса на сайт в минуту — счётчик В ПАМЯТИ экземпляра
- * (аудит Э3-бис): ТЗ §5-тер.14 не ставит лимит в Postgres (запись на каждый
- * просмотр), но без любого лимита один адрес за минуты выбирает месячную
- * квоту поведения чужого сайта (квота жёсткая — настоящие просмотры
- * перестают приниматься) и рисует ему ложные ярость-клики/ошибки в выводах.
- * Сверх — молча 204 (маяку ответ не нужен), в базу ничего.
+ * Итогов просмотра с адреса на сайт в минуту (аудит Э3-бис; заход 9,
+ * Р-З9-27): окно — в Postgres (`assist_rate_buckets`, общее для всех
+ * экземпляров функции; `AiIntake.pvRateOk`), счётчик в памяти экземпляра
+ * остаётся первой линией (тот же потолок, без записи в базу на каждый
+ * лишний маяк). Без лимита один адрес за минуты выбирал месячную квоту
+ * поведения чужого сайта и рисовал ему ложные ярость-клики/ошибки в
+ * выводах. Сверх — молча 204 (маяку ответ не нужен), в базу ничего.
  */
-export const PV_PER_IP_PER_MINUTE = 120;
+export { PV_PER_IP_PER_MINUTE };
 const PV_LIMITER_MAX_KEYS = 20_000;
 
 @Injectable()
@@ -117,7 +119,7 @@ export class WidgetAnalyticsService {
     this.logger.log(`exp site=${site.siteId} result=${r}`);
   }
 
-  /** Лимит итогов просмотра в памяти (см. PV_PER_IP_PER_MINUTE). */
+  /** Первая линия лимита итогов просмотра — в памяти (см. PV_PER_IP_PER_MINUTE). */
   pvAllowed(
     site: { siteId: string; ipSalt: string | null },
     ip: string,
@@ -164,8 +166,12 @@ export class WidgetAnalyticsService {
       input,
       userAgent: p.userAgent,
       now,
+      // Общий лимит всех экземпляров (Р-З9-27) — внутри, после дешёвых проверок.
+      ipHash: this.sessions.ipHash(p.ip, site.ipSalt, now),
     });
-    if (r !== 'updated') this.logger.log(`pv site=${site.siteId} result=${r}`);
+    if (r !== 'updated' && r !== 'limited') {
+      this.logger.log(`pv site=${site.siteId} result=${r}`);
+    }
   }
 
   async ref(

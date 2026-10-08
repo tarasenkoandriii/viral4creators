@@ -32,7 +32,14 @@ export type VoiceMapErrorCode =
   | 'EDITOR_BAD_REQUEST'
   // Э-С Ш3: «Снимок» и сверка карты браузерным воркером.
   | 'VOICE_MAP_SNAPSHOT_NOT_FOUND'
-  | 'VOICE_MAP_CHECK_NOT_FOUND';
+  | 'VOICE_MAP_CHECK_NOT_FOUND'
+  // Заход 9: отчёт для разработчика по ссылке и голос «Сказать сейчас».
+  | 'VOICE_MAP_DEV_REPORT_NOT_FOUND'
+  | 'EDITOR_VOICE_UNAVAILABLE'
+  | 'EDITOR_VOICE_BUDGET'
+  | 'EDITOR_VOICE_AUDIO_INVALID'
+  | 'EDITOR_VOICE_NOT_HEARD'
+  | 'EDITOR_VOICE_UPSTREAM';
 
 export interface VoiceMapVersionSummary {
   number: number;

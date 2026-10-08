@@ -8,6 +8,7 @@
  * прежних значений полей в act.js/undo.js, перехват запросов) — e2e виджета
  * `voice-control-chains.spec.ts`.
  */
+import { defaultVoiceControlRules } from '../../modules/assist-ui-core/rules';
 import { randomUUID } from 'crypto';
 import { HttpException } from '@nestjs/common';
 import { setPlan } from '../../modules/assist-billing/testing/billing-fixtures.testing';
@@ -156,7 +157,10 @@ describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат �
   ): UiPlanCtx => ({ site: s.ctx(), visitor, viewport });
 
   /** Страница товара: размер (в форме), «В кошик», ссылки «Кошик» и «Заявка». */
-  const product = (s: ChatSite, over: { cartText?: string } = {}) => ({
+  const product = (
+    s: ChatSite,
+    over: { cartText?: string; heading?: string } = {},
+  ) => ({
     url: s.url('/product/1'),
     title: 'Футболка',
     elements: [
@@ -175,6 +179,7 @@ describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат �
         tag: 'button',
         text: over.cartText ?? 'В кошик',
         assistId: 'add-to-cart',
+        ...(over.heading ? { heading: over.heading } : {}),
         inView: true,
       },
       {
@@ -492,6 +497,84 @@ describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат �
     expect(await units(s.accountId)).toBe(before);
   });
 
+  it('(заход 9, Р-З9-4) `undo-report` без принятого сервером «Вернуть» — 409, статус цепочки не меняется; после «Вернуть» — принимается только для шагов этого возврата', async () => {
+    const s = await vcSite();
+    const ctx = ctxOf(s);
+    modelReply = JSON.stringify({
+      command: true,
+      steps: [
+        { kind: 'select', target: 'e1', value: 'M' },
+        { kind: 'click', target: 'e2' },
+        { kind: 'click', target: 'e3' },
+      ],
+    });
+    let v = await create(
+      ctx,
+      typed(product(s), 'вибери розмір M, додай в кошик і відкрий кошик'),
+    );
+    if (v.status === 'proposed')
+      v = await plans.confirm(ctx, v.planId!, {
+        by: 'button',
+        stepsHash: v.stepsHash!,
+      });
+    v = await run(ctx, v, 0, s.url('/product/1'));
+    v = await run(ctx, v, 1, s.url('/product/1'));
+    v = await plans.step(ctx, v.planId!, {
+      index: 2,
+      result: 'failed',
+      reason: 'no_target',
+      url: s.url('/product/1'),
+    });
+    expect(v.chainStatus).toBe('kept');
+    // Подделка итога без «Вернуть»: ни итога, ни «что дальше».
+    expect(
+      await failure(
+        plans.undoReport(ctx, v.planId!, {
+          results: [{ i: 0, result: 'done' }],
+        }),
+      ),
+    ).toBe('conflict');
+    const row = async () =>
+      st.owner.assistSiteUiPlan.findUnique({ where: { id: v.planId! } });
+    expect((await row())!.chainStatus).toBe('kept');
+    expect(
+      (await logs(s.siteId)).filter(
+        (l) => l.action === 'undo' && l.undoOf === 0,
+      ),
+    ).toEqual([]);
+    // «Вернуть» в `degraded` — отметки нет, итог по-прежнему не принимается.
+    await st.owner.assistSite.update({
+      where: { siteId: s.siteId },
+      data: { voiceControlSiteState: 'degraded' },
+    });
+    expect((await plans.undo(ctx, v.planId!, { by: 'offer' })).refused).toBe(
+      'degraded',
+    );
+    expect(
+      await failure(
+        plans.undoReport(ctx, v.planId!, {
+          results: [{ i: 0, result: 'done' }],
+        }),
+      ),
+    ).toBe('conflict');
+    await st.owner.assistSite.update({
+      where: { siteId: s.siteId },
+      data: { voiceControlSiteState: 'on' },
+    });
+    const u = await plans.undo(ctx, v.planId!, { by: 'offer' });
+    expect(u.fields).toEqual([{ i: 0, text: 'Розмір' }]);
+    const steps = (await row())!.steps as Array<{ undoAsked?: boolean }>;
+    expect(steps.map((x) => x.undoAsked === true)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    const rep = await plans.undoReport(ctx, v.planId!, {
+      results: [{ i: 0, result: 'done' }],
+    });
+    expect(rep.chainStatus).toBe('partially_compensated');
+  });
+
   it('«Оставить» — kept и строка журнала; «отмени последнее» после отправки формы — after_pnr; через 10 мин — expired; чужой план — not_found', async () => {
     const s = await vcSite();
     const ctx = ctxOf(s);
@@ -612,6 +695,72 @@ describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат �
     const u = await plans.undo(ctx, v.planId!, { by: 'offer' });
     expect(u.refused).toBe('degraded');
     expect(u.fields).toEqual([]);
+  });
+
+  it('(заход 9) п.10, §5-бис.15 п.8: `degraded` — обратная кнопка объявленной пары отдаётся ТОЛЬКО для подсветки: без `dispatched`, без итога, компенсацию начать нельзя', async () => {
+    const s = await vcSite();
+    const ctx = ctxOf(s);
+    modelReply = JSON.stringify({
+      command: true,
+      steps: [
+        { kind: 'select', target: 'e1', value: 'M' },
+        { kind: 'click', target: 'e2' },
+        { kind: 'click', target: 'e4' },
+      ],
+    });
+    const snap = product(s, { heading: 'Футболка синя' });
+    let v = await create(ctx, typed(snap, 'вибери M, додай в кошик і заявку'));
+    expect(v.steps[1]).toMatchObject({ undo: 'comp' });
+    if (v.status === 'proposed')
+      v = await plans.confirm(ctx, v.planId!, {
+        by: 'button',
+        stepsHash: v.stepsHash!,
+      });
+    v = await run(ctx, v, 0, s.url('/product/1'));
+    v = await run(ctx, v, 1, s.url('/product/1'));
+    await plans.stop(ctx, v.planId!, { by: 'button' });
+    await st.owner.assistSite.update({
+      where: { siteId: s.siteId },
+      data: { voiceControlSiteState: 'degraded' },
+    });
+    const u = await plans.undo(ctx, v.planId!, { by: 'offer' });
+    expect(u.refused).toBe('degraded');
+    expect(u.comp ?? null).toBeNull();
+    expect(u.show).toEqual([
+      {
+        i: 1,
+        text: 'В кошик',
+        row: 'Футболка синя',
+        assistId: 'remove-from-cart',
+        at: '/cart',
+        variant: ['M'],
+      },
+    ]);
+    // Ничего не начато: ни отметки, ни «начат» компенсации.
+    const row = await st.owner.assistSiteUiPlan.findUnique({
+      where: { id: v.planId! },
+    });
+    expect(
+      (row!.steps as Array<{ undone?: unknown; undoAsked?: unknown }>).every(
+        (x) => !x.undone && !x.undoAsked,
+      ),
+    ).toBe(true);
+    expect(
+      await failure(plans.undoReport(ctx, v.planId!, { dispatch: 1 })),
+    ).toBe('conflict');
+    // Зона страницы отмены запрещена кабинетом — подсветки нет.
+    await st.owner.assistSite.update({
+      where: { siteId: s.siteId },
+      data: {
+        voiceControlSiteRules: {
+          ...defaultVoiceControlRules(),
+          denyPaths: ['/cart*'],
+        },
+      },
+    });
+    expect((await plans.undo(ctx, v.planId!, { by: 'offer' })).show).toEqual(
+      [],
+    );
   });
 
   // ══ (е) Мемо ════════════════════════════════════════════════════════════
@@ -927,6 +1076,46 @@ describeDb('Приёмка Э6-бис (д)+(е) — цепочки, откат �
     expect(await units(s.accountId)).toBe(before);
     // «Я умею»: имя, без номеров и фраз.
     expect(await plans.skills(ctx, 'uk')).toEqual({ names: ['tmp'] });
+  });
+
+  it('(заход 9) п.7/п.14: загрузчик не нашёл элемент цели (`goal_unseen`) — цель `unknown` («проверьте …»); не сошлось (`expect`) — `not_reached`; причина не на шаге цели — как раньше', async () => {
+    const s = await vcSite();
+    await publishedMemo(s);
+    const go = async (reason: string, at = 3) => {
+      const ctx = ctxOf(s);
+      let v = await create(ctx, typed(product(s), 'у кошик і в кошик медіум'));
+      if (v.status === 'proposed')
+        v = await plans.confirm(ctx, v.planId!, {
+          by: 'button',
+          stepsHash: v.stepsHash!,
+        });
+      expect(v.goalFrom).toBe(3);
+      v = await run(ctx, v, 0, s.url('/product/1'));
+      v = await run(ctx, v, 1, s.url('/product/1'));
+      if (at === 3) v = await run(ctx, v, 2, s.url('/cart'));
+      else
+        await plans.step(ctx, v.planId!, {
+          index: 2,
+          result: 'dispatched',
+          url: s.url('/product/1'),
+        });
+      return plans.step(ctx, v.planId!, {
+        index: at,
+        result: 'failed',
+        reason,
+        url: s.url('/cart'),
+      });
+    };
+    expect(await go('goal_unseen')).toMatchObject({
+      status: 'failed',
+      goalStatus: 'unknown',
+    });
+    expect(await go('expect')).toMatchObject({
+      status: 'failed',
+      goalStatus: 'not_reached',
+    });
+    // `goal_unseen` на шаге ДО цели (подделка причины) — не меняет итог.
+    expect((await go('goal_unseen', 2)).goalStatus).toBe('not_reached');
   });
 
   it('п.4: lite-выбор — в запросе к модели нет снимка и текста страницы; слот size=M; поле `steps` ответа игнорируется', async () => {

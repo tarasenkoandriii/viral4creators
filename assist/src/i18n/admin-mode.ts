@@ -36,6 +36,9 @@ export interface AdminModeTexts {
     tmaEmployeeRole: string;
     statsPerEmployee: string;
     statsPerEmployeeHint: string;
+    /** Р-З9-17: тестовый ключ ходит в коннекторы. */
+    testKeyConnectors: string;
+    testKeyConnectorsHint: string;
     save: string;
     saved: string;
     secretTitle: string;
@@ -43,6 +46,10 @@ export interface AdminModeTexts {
     secretNotSet: string;
     secretIssue: string;
     secretReissueHint: string;
+    /** Р-З9-18: секрет уже перевыпустили в другом окне. */
+    secretChanged: string;
+    /** Аудит Э7 (а), (в): рекомендации заказчику по JWT сотрудника. */
+    jwtAdvice: string;
     secretOnce: string;
     snippet: string;
     snippetCsp: string;
@@ -78,6 +85,9 @@ export interface AdminModeTexts {
     headerName: string;
     secretValue: string;
     saveSecret: string;
+    /** Р-З9-14: маскирование ПД в данных API до модели. */
+    maskPd: string;
+    maskPdHint: string;
     statusAuthFailed: string;
     statusPaused: string;
     enable: string;
@@ -113,6 +123,21 @@ export interface AdminModeTexts {
     byRole: string;
     byEmployee: string;
     noRating: string;
+    /** Э8-хвост (6): блок «Действия». */
+    actions: {
+      title: string;
+      proposed: string;
+      yesShare: string;
+      done: string;
+      failed: string;
+      unknown: string;
+      unrequested: string;
+      traces: string;
+      compensations: string;
+      compSuccess: string;
+      compAlert: string;
+      none: string;
+    };
   };
   chat: {
     title: string;
@@ -159,6 +184,9 @@ const uk: AdminModeTexts = {
     statsPerEmployee: 'Статистика в розрізі співробітника',
     statsPerEmployeeHint:
       'Співробітник бачитиме плашку «власник бачить статистику ваших запитів».',
+    testKeyConnectors: 'Тестовий ключ pk_test має доступ до API',
+    testKeyConnectorsHint:
+      'Типово ні: сесія з pk_test (зокрема на localhost) працює лише за знаннями. Вмикайте, лише якщо тестуєте з тестовим API або на тестових даних.',
     save: 'Зберегти',
     saved: 'Збережено',
     secretTitle: 'Секрет підпису співробітників (JWT HS256)',
@@ -167,6 +195,10 @@ const uk: AdminModeTexts = {
     secretIssue: 'Випустити секрет',
     secretReissueHint:
       'Старий секрет і всі сесії співробітників перестануть діяти.',
+    secretChanged:
+      'Секрет уже перевипустили в іншому вікні — екран оновлено. Діє останній показаний секрет.',
+    jwtAdvice:
+      'Безпека: JWT співробітника діє до кінця exp (до 15 хв) і може бути використаний повторно — краще data-identity-endpoint і exp 2–5 хв. У sub — непрозорий id співробітника, не e-mail: він іде в журнал «Адмінки» (рік) і в заголовку X-V4C-Actor — у ваш API.',
     secretOnce:
       'Скопіюйте зараз — більше його не буде видно. Передайте розробнику бекенду адмінки.',
     snippet: 'Код вставки в адмінку',
@@ -211,6 +243,9 @@ const uk: AdminModeTexts = {
     headerName: 'Ім’я заголовка',
     secretValue: 'Значення ключа',
     saveSecret: 'Зберегти ключ',
+    maskPd: 'Приховувати персональні дані від моделі',
+    maskPdHint:
+      'E-mail, телефони та ключі у відповідях цього API замінюються до того, як їх побачить модель. Помічник тоді не зможе назвати телефон клієнта.',
     statusAuthFailed: 'Ключ відхилено API — операції на паузі',
     statusPaused: 'На паузі',
     enable: 'Увімкнено',
@@ -255,6 +290,21 @@ const uk: AdminModeTexts = {
     byRole: 'За ролями',
     byEmployee: 'За співробітниками',
     noRating: 'Рейтингу співробітників немає (§5-тер.13).',
+    actions: {
+      title: 'Дії (зміни через API)',
+      proposed: 'Запропоновано',
+      yesShare: 'Частка «Так»',
+      done: 'Виконано',
+      failed: 'Відхилено системою',
+      unknown: 'Результат невідомий',
+      unrequested: 'Без прохання співробітника',
+      traces: 'Ланцюжки зі слідами після збою',
+      compensations: 'Скасування (компенсації)',
+      compSuccess: 'успішних',
+      compAlert:
+        'Скасування вдаються рідше ніж у 80% випадків за добу — перевірте x-assist-compensation у специфікації API.',
+      none: 'Дій за період не було.',
+    },
   },
   chat: {
     title: 'Помічник співробітників',
@@ -303,6 +353,9 @@ const ru: AdminModeTexts = {
     statsPerEmployee: 'Статистика в разрезе сотрудника',
     statsPerEmployeeHint:
       'Сотрудник увидит плашку «владелец видит статистику ваших запросов».',
+    testKeyConnectors: 'Тестовый ключ pk_test ходит в API',
+    testKeyConnectorsHint:
+      'По умолчанию нет: сессия по pk_test (в том числе на localhost) работает только по знаниям. Включайте, только если тестируете с тестовым API или на тестовых данных.',
     save: 'Сохранить',
     saved: 'Сохранено',
     secretTitle: 'Секрет подписи сотрудников (JWT HS256)',
@@ -311,6 +364,10 @@ const ru: AdminModeTexts = {
     secretIssue: 'Выпустить секрет',
     secretReissueHint:
       'Старый секрет и все сессии сотрудников перестанут действовать.',
+    secretChanged:
+      'Секрет уже перевыпустили в другом окне — экран обновлён. Действует последний показанный секрет.',
+    jwtAdvice:
+      'Безопасность: JWT сотрудника действует до конца exp (до 15 мин) и может быть использован повторно — лучше data-identity-endpoint и exp 2–5 мин. В sub — непрозрачный id сотрудника, не e-mail: он попадает в журнал «Админки» (год) и в заголовке X-V4C-Actor — в ваш API.',
     secretOnce:
       'Скопируйте сейчас — больше он показан не будет. Передайте разработчику бэкенда админки.',
     snippet: 'Код вставки в админку',
@@ -356,6 +413,9 @@ const ru: AdminModeTexts = {
     headerName: 'Имя заголовка',
     secretValue: 'Значение ключа',
     saveSecret: 'Сохранить ключ',
+    maskPd: 'Скрывать персональные данные от модели',
+    maskPdHint:
+      'E-mail, телефоны и ключи в ответах этого API заменяются до того, как их увидит модель. Помощник тогда не сможет назвать телефон клиента.',
     statusAuthFailed: 'Ключ отклонён API — операции на паузе',
     statusPaused: 'На паузе',
     enable: 'Включено',
@@ -401,6 +461,21 @@ const ru: AdminModeTexts = {
     byRole: 'По ролям',
     byEmployee: 'По сотрудникам',
     noRating: 'Рейтинга сотрудников нет (§5-тер.13).',
+    actions: {
+      title: 'Действия (изменения через API)',
+      proposed: 'Предложено',
+      yesShare: 'Доля «Да»',
+      done: 'Выполнено',
+      failed: 'Отклонено системой',
+      unknown: 'Исход неизвестен',
+      unrequested: 'Без просьбы сотрудника',
+      traces: 'Цепочки со следами после сбоя',
+      compensations: 'Отмены (компенсации)',
+      compSuccess: 'успешных',
+      compAlert:
+        'Отмены удаются реже чем в 80% случаев за сутки — проверьте x-assist-compensation в спецификации API.',
+      none: 'Действий за период не было.',
+    },
   },
   chat: {
     title: 'Помощник сотрудников',
@@ -448,6 +523,9 @@ const en: AdminModeTexts = {
     statsPerEmployee: 'Per-employee statistics',
     statsPerEmployeeHint:
       'Staff will see “the owner can see statistics of your requests”.',
+    testKeyConnectors: 'Test key pk_test can use the API',
+    testKeyConnectorsHint:
+      'Off by default: a pk_test session (including on localhost) uses knowledge only. Turn on only when testing against a test API or test data.',
     save: 'Save',
     saved: 'Saved',
     secretTitle: 'Staff signing secret (JWT HS256)',
@@ -455,6 +533,10 @@ const en: AdminModeTexts = {
     secretNotSet: 'No secret yet',
     secretIssue: 'Issue secret',
     secretReissueHint: 'The old secret and all staff sessions stop working.',
+    secretChanged:
+      'The secret was already reissued in another window — the screen is refreshed. The last shown secret is the valid one.',
+    jwtAdvice:
+      'Security: an employee JWT is valid until exp (up to 15 min) and can be replayed — prefer data-identity-endpoint and exp of 2–5 min. Put an opaque employee id in sub, not an e-mail: it goes to the admin log (kept a year) and, in the X-V4C-Actor header, to your API.',
     secretOnce:
       "Copy it now — it won't be shown again. Give it to your admin backend developer.",
     snippet: 'Admin panel embed code',
@@ -498,6 +580,9 @@ const en: AdminModeTexts = {
     headerName: 'Header name',
     secretValue: 'Key value',
     saveSecret: 'Save key',
+    maskPd: 'Hide personal data from the model',
+    maskPdHint:
+      'E-mails, phone numbers and keys in this API’s responses are replaced before the model sees them. The assistant then can’t tell a customer’s phone number.',
     statusAuthFailed: 'Key rejected by the API — operations paused',
     statusPaused: 'Paused',
     enable: 'Enabled',
@@ -542,6 +627,21 @@ const en: AdminModeTexts = {
     byRole: 'By role',
     byEmployee: 'By employee',
     noRating: 'There is no employee rating (§5-ter.13).',
+    actions: {
+      title: 'Actions (changes via API)',
+      proposed: 'Proposed',
+      yesShare: '"Yes" share',
+      done: 'Done',
+      failed: 'Rejected by the system',
+      unknown: 'Outcome unknown',
+      unrequested: 'Not requested by the employee',
+      traces: 'Chains with traces after a failure',
+      compensations: 'Undo (compensations)',
+      compSuccess: 'successful',
+      compAlert:
+        'Undo succeeds in less than 80% of cases over the last day — check x-assist-compensation in the API spec.',
+      none: 'No actions in this period.',
+    },
   },
   chat: {
     title: 'Staff assistant',

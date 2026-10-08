@@ -32,6 +32,8 @@ import { VoiceControlSettingsController } from './cabinet/voice-control-settings
 import { VoiceControlSettingsService } from './cabinet/voice-control-settings.service';
 import { SiteUiPlanService } from './public/ui-plan.service';
 import { VoiceTestService } from './public/voice-test.service';
+import { VoiceDevReportController } from './share/dev-report.controller';
+import { VoiceDevReportService } from './share/dev-report.service';
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { VoiceTestService } from './public/voice-test.service';
     MemoTemplatesController,
     // Правка мемо с телефона (элементы Ш4) и ИИ-предложения фраз.
     MemoTmaEditController,
+    // Заход 9: «отчёт для разработчика» по одноразовой ссылке.
+    VoiceDevReportController,
   ],
   providers: [
     SiteUiPlanService,
@@ -60,6 +64,7 @@ import { VoiceTestService } from './public/voice-test.service';
     MemoTemplatesService,
     MemoElementsService,
     MemoPhraseSuggestService,
+    VoiceDevReportService,
   ],
   exports: [SiteUiPlanService, VoiceTestService],
 })

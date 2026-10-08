@@ -93,6 +93,13 @@ export interface UiPlanStepView extends UiPlanStep {
   fx?: boolean;
   /** (Э6-тер (и)) Возврат шага после «Вернуть»: `dispatched` компенсации, итог. */
   undone?: UiUndoState | null;
+  /**
+   * (заход 9, Р-З9-4) Возврат шага НАЧАТ («Вернуть»/«отмени последнее»
+   * приняты сервером в режиме `on`): `undo-report` принимает итоги и
+   * отметку компенсации только у таких шагов. Отметка — в самом плане (тот
+   * же условный UPDATE), без прав роли на чтение журнала.
+   */
+  undoAsked?: boolean;
 }
 
 /** Ответ маршрутов плана. */
@@ -153,6 +160,14 @@ export interface UiUndoView {
    * исполняет обратную цель и шлёт итог; null — компенсаций дальше нет.
    */
   comp?: UiCompView | null;
+  /**
+   * (заход 9, §5-бис.15 п.8) `degraded`: обратные цели объявленных пар —
+   * ТОЛЬКО для подсветки («уберите сами — вот кнопка»): загрузчик находит
+   * её тем же поиском, что компенсацию, и обводит, ничего не нажимая;
+   * `dispatched` не пишется, итога нет. Пара и страница — проверены
+   * сервером по текущим правилам.
+   */
+  show?: UiCompShow[];
   chainStatus: ChainStatus | null;
   /** Почему нечего вернуть: после отправки формы, окно истекло, нечего, неизвестно. */
   refused: 'after_pnr' | 'expired' | 'nothing' | 'unknown' | 'degraded' | null;
@@ -185,6 +200,12 @@ export interface UiCompView {
   /** Отметка `dispatched` записана — загрузчик может нажимать. */
   dispatched: boolean;
 }
+
+/** (заход 9) Обратная цель для подсветки в `degraded` — без действия. */
+export type UiCompShow = Pick<
+  UiCompView,
+  'i' | 'text' | 'row' | 'assistId' | 'at' | 'variant'
+>;
 
 /**
  * (д) POST /widget/v1/ui-plan/:id/undo-report — итог возврата полей у
@@ -378,6 +399,16 @@ export interface VoiceTestSummary {
   partialAck: boolean;
   /** Годен ли для `on` сейчас (null — годен; иначе — почему нет). */
   problem: ReportProblem | null;
+}
+
+/**
+ * (заход 9, Р-З9-9) POST …/voice-control/site/tests/:tid/dev-link —
+ * одноразовая ссылка «отчёт для разработчика» (только чтение, без ПД;
+ * первое открытие гасит её; новая ссылка гасит прежние неоткрытые).
+ */
+export interface VoiceDevLinkView {
+  url: string;
+  expiresAt: string;
 }
 
 export interface VoiceTestDetail extends VoiceTestSummary {

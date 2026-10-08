@@ -159,7 +159,14 @@ export type ParentMessage =
    * undo.js — только «да/нет» по номеру шага цели. Подделать может скрипт
    * страницы — последствие: итог цели своего же посетителя (как `ui-step`).
    */
-  | { type: 'ui-goal'; planId: string; i: number; ok: boolean }
+  | {
+      type: 'ui-goal';
+      planId: string;
+      i: number;
+      ok: boolean;
+      /** Заход 9: элемента цели на странице нет — проверить нечем. */
+      missing?: true;
+    }
   /** Э6-бис: человек взял управление (Esc, свой клик/клавиша, «Стоп» на странице). */
   | {
       type: 'ui-stopped';
@@ -615,7 +622,15 @@ export function parseParentMessage(data: unknown): ParentMessage | null {
         m.i >= 0 &&
         m.i <= 20 &&
         typeof m.ok === 'boolean'
-        ? { type: 'ui-goal', planId: m.planId, i: m.i, ok: m.ok }
+        ? m.ok === false && m.missing === true
+          ? {
+              type: 'ui-goal',
+              planId: m.planId,
+              i: m.i,
+              ok: false,
+              missing: true,
+            }
+          : { type: 'ui-goal', planId: m.planId, i: m.i, ok: m.ok }
         : null;
     case 'ui-stopped':
       return typeof m.planId === 'string' &&

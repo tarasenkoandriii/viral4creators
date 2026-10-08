@@ -51,6 +51,9 @@ export const KNOWLEDGE_ERROR_CODES = [
   'CHUNK_NOT_FOUND',
   'KNOWLEDGE_BUSY',
   'ANSWER_UNAVAILABLE',
+  // Р-З9-24 (заход 9): хост «Админки» знаниям «Сайта» не источник.
+  'HOST_ADMIN_ONLY',
+  'URL_ADMIN_HOST',
 ] as const;
 export type KnowledgeErrorCode = (typeof KNOWLEDGE_ERROR_CODES)[number];
 

@@ -71,6 +71,8 @@ export const voiceControlEn: VoiceControlDictionary = {
     transition_expired: 'the check was not passed',
     complaint: 'a complaint',
     undo_low: 'the assistant cannot restore fields — undo markup is outdated',
+    not_heard_high:
+      'the assistant often “didn’t catch” commands in one language — noise or microphone',
   },
   changedAt: 'Changed {date}: {who}{why}.',
   banner:
@@ -87,6 +89,9 @@ export const voiceControlEn: VoiceControlDictionary = {
     host: 'Site address',
     start: 'Check',
     link: 'Open the link on your site (valid 30 minutes, single use):',
+    devLink: 'Link for the developer',
+    devLinkHint:
+      'Single use, valid 72 hours: the developer sees the items, selectors and markup fragment — without your commands or visitor data.',
     open: 'Open the site',
     copied: 'Link copied',
     last: 'Last check: {result}, {date}',

@@ -44,6 +44,8 @@ import {
   type UiPlanCtx,
 } from '../../modules/assist-site-voice-control/public/ui-plan.service';
 import { VoiceTestService } from '../../modules/assist-site-voice-control/public/voice-test.service';
+import { EditorMemoService } from '../../modules/assist-site-voice-map/editor/editor-memo.service';
+import { EditorSessionService } from '../../modules/assist-site-voice-map/editor/editor-session.service';
 import { VoiceMapService } from '../../modules/assist-site-voice-map/voice-map.service';
 import { GeminiText } from '../../modules/site-ai/text-model';
 import type { AccountMembership } from '../../modules/site-core/account/roles';
@@ -619,6 +621,85 @@ describeDb(
         'name_taken',
         'name_taken',
       ]);
+    });
+
+    it('заход 9 (№23): «Как отменить» шага мемо после импорта — наследуется от цели карты B (стандартная пара → объявленная владельцем)', async () => {
+      const a = await vcSite();
+      const ma = owner(a);
+      await shopUi(a);
+      await maps.platformTemplate(ma, a.siteId, {
+        platform: 'woocommerce',
+        expectedRevision: (await maps.draft(ma, a.siteId)).revision,
+      });
+      await templates.apply(ma, a.siteId, {
+        platform: 'woocommerce',
+        keys: ['put-in-cart'],
+      });
+      const exp = await maps.exportFile(ma, a.siteId);
+      const b = await vcSite();
+      const mb = owner(b);
+      const imp = await maps.importFile(mb, b.siteId, {
+        expectedRevision: (await maps.draft(mb, b.siteId)).revision,
+        file: exp.file,
+      });
+      const n = imp.memos.created[0].number;
+      // Панель редактора B (живой участник — сессия сверяет право).
+      const db = new SitesDb(st.owner);
+      const editor = new EditorSessionService(db, maps);
+      const rec = new EditorMemoService(db, st.owner, maps, editor, memos);
+      const real = await st.owner.siteAccountMember.findFirstOrThrow({
+        where: { accountId: b.accountId, role: 'owner' },
+      });
+      const link = await maps.editorLink(
+        { ...mb, memberId: real.id, telegramId: real.telegramId },
+        b.siteId,
+        { path: '/product/1' },
+      );
+      const ed = await editor.resolve(
+        (
+          await editor.exchange({
+            token: new URL(link.url).searchParams.get('v4c_edit')!,
+            parentOrigin: b.origin,
+          })
+        ).session,
+      );
+      const open1 = await rec.start(ed, { path: '/product/1', memo: n });
+      expect(open1.memo!.steps[0].target?.mapKey).toBe('add-to-cart');
+      expect(open1.memo!.undo[0]).toEqual({
+        assistId: 'remove-from-cart',
+        at: null,
+        src: 'standard',
+        key: 'add-to-cart',
+      });
+      // Владелец объявил «Как отменить» в карточке цели — шаг мемо подхватил.
+      const draft = await maps.draft(mb, b.siteId);
+      const t = draft.content.targets.find((x) => x.key === 'add-to-cart')!;
+      await maps.patch(
+        mb,
+        b.siteId,
+        {
+          expectedRevision: draft.revision,
+          ops: [
+            {
+              op: 'upsert-target',
+              target: { ...t, undo: { assistId: 'cart-minus', at: null } },
+            },
+          ],
+        },
+        'tma',
+      );
+      const open2 = await rec.start(ed, { path: '/product/1', memo: n });
+      expect(open2.memo!.undo[0]).toEqual({
+        assistId: 'cart-minus',
+        at: null,
+        src: 'map',
+        key: 'add-to-cart',
+      });
+      // В мемо «Как отменить» не копируется: содержимое черновика без undo.
+      const row = await st.owner.assistSiteMemo.findFirstOrThrow({
+        where: { siteId: b.siteId, number: n },
+      });
+      expect(JSON.stringify(row.draft)).not.toContain('cart-minus');
     });
 
     describe('HTTP: тело импорта карты — до 1 МБ только на этом маршруте', () => {

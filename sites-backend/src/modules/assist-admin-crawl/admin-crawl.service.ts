@@ -25,7 +25,12 @@
  * `site-credentials` (только чтение реестра без секретов).
  */
 import { createHash } from 'crypto';
-import { HttpException, Injectable, OnModuleInit } from '@nestjs/common';
+import {
+  HttpException,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { maskLabel } from '../assist-ui-core/snapshot';
 import { hostOrigin } from '../browser-jobs/browser-job-rules';
@@ -35,6 +40,10 @@ import {
   type HandlerJob,
 } from '../browser-jobs/job-handlers';
 import type { AdminCrawlResult } from '../browser-jobs/protocol';
+import { AdminKnowledgeService } from '../assist-admin-knowledge/admin-knowledge.service';
+import { questionLang } from '../assist-knowledge-core/answer/prompt';
+import type { DocumentInput } from '../assist-knowledge-core/types';
+import type { ExtractedBlock } from '../site-crawl/types';
 import type { AccountMembership } from '../site-core/account/roles';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
 import { notFoundSite } from '../site-core/site-core.constants';
@@ -44,6 +53,41 @@ import { SiteCredentialsService } from '../site-credentials/site-credentials.ser
 export const ADMIN_CRAWL_PRODUCT = 'assist-admin';
 /** Страниц за обход и глубина ссылок от стартовой. */
 export const ADMIN_CRAWL_LIMITS = { maxPages: 20, maxDepth: 2 } as const;
+/**
+ * Источник знаний «Админки» из обхода за логином (Ш3-хвост (6), заход 9):
+ * kind `crawl` — у «Админки» своего публичного обхода нет (копия публичного
+ * — `public_copy`), а `crawl` в ядре знаний и TMA уже «управляется
+ * автоматически» (не удаляется и не правится как источник). Один на сайт.
+ */
+export const ADMIN_PRIVATE_CRAWL_SOURCE_KIND = 'crawl';
+export const ADMIN_PRIVATE_CRAWL_SOURCE_TITLE = 'Адмінка за логіном (обхід)';
+/** Строк текста страницы в блоки индекса (остальное — хвост интерфейса). */
+const PAGE_LINES_MAX = 400;
+
+/**
+ * Страница обхода → документ индекса: заголовок страницы — `h`, каждая
+ * непустая строка интерфейса (подписи, поля, шапки таблиц) — `p` под ним.
+ * Текст уже маскирован при записи в assist_admin_pages (`maskLabel`).
+ */
+export function adminPageDocument(p: {
+  url: string;
+  title: string | null;
+  text: string;
+}): DocumentInput {
+  const title = (p.title ?? '').trim() || p.url;
+  const blocks: ExtractedBlock[] = [
+    { t: 'h', level: 1, text: title, path: [] },
+  ];
+  for (const line of p.text.split('\n').slice(0, PAGE_LINES_MAX)) {
+    const text = line.replace(/\s+/g, ' ').trim();
+    if (text) blocks.push({ t: 'p', text, path: [title] });
+  }
+  // Язык страницы — по тексту (как язык вопроса): без него ворота «сдвиг
+  // языка» удержали бы каждую версию базы с регламентами на uk.
+  const lang = questionLang(`${title}\n${p.text.slice(0, 4000)}`);
+  return { ref: p.url, kind: 'page', url: p.url, title, lang, blocks };
+}
+
 /** Задания обхода, которые ещё не кончились. */
 const ACTIVE = ['waiting_worker', 'queued', 'running'];
 
@@ -104,11 +148,14 @@ const bad = (message: string) =>
 
 @Injectable()
 export class AdminCrawlService implements OnModuleInit {
+  private readonly logger = new Logger(AdminCrawlService.name);
+
   constructor(
     private readonly db: SitesDb,
     private readonly credentials: SiteCredentialsService,
     private readonly jobs: BrowserJobsService,
     private readonly handlers: BrowserJobHandlers,
+    private readonly knowledge: AdminKnowledgeService,
   ) {}
 
   onModuleInit(): void {
@@ -269,10 +316,31 @@ export class AdminCrawlService implements OnModuleInit {
         where: { siteId: j.siteId, url: { notIn: urls } },
       });
     }
+    // Ш3-хвост (6): страницы — в базу знаний «Админки» (свои чанки и
+    // эмбеддинги assist_admin_*, в «Сайт» пути нет). Сбой индексации не
+    // роняет итог обхода: страницы записаны, отметка — в заметке задания.
+    let indexNote = '';
+    if (r.loggedIn && urls.length) {
+      try {
+        const v = await this.indexPages(j.accountId, j.siteId);
+        indexNote =
+          v.status === 'held'
+            ? `; версия базы ${v.number} удержана — проверьте в «Знаниях для сотрудников»`
+            : `; в базе «Админки»: версия ${v.number}`;
+      } catch (e) {
+        indexNote =
+          '; индексация в базу «Админки» не удалась — повторите обход';
+        this.logger.warn(
+          `обход «Админки» ${j.siteId}: индексация не удалась (${(e as Error | null)?.name ?? 'Error'})`,
+        );
+      }
+    }
     await this.mark(
       j,
       r.loggedIn ? 'done' : 'failed',
-      r.loggedIn ? `страниц: ${urls.length}` : FAIL_NOTES.login_failed,
+      r.loggedIn
+        ? `страниц: ${urls.length}${indexNote}`
+        : FAIL_NOTES.login_failed,
     );
     return {
       loggedIn: r.loggedIn,
@@ -280,6 +348,56 @@ export class AdminCrawlService implements OnModuleInit {
       refusedClicks: r.refusedClicks,
       skippedLinks: r.skippedLinks,
     };
+  }
+
+  /**
+   * Все страницы `assist_admin_pages` сайта → источник `crawl` «Админки»
+   * (replaceAll: страницы, ушедшие из обхода, уходят и из базы). Версия —
+   * через ворота знаний (trigger `crawl`): массовая потеря страниц
+   * удерживается до решения владельца, как у копии публичного обхода.
+   */
+  async indexPages(accountId: string, siteId: string) {
+    const db = this.db.forAccount(accountId);
+    const ctx = { accountId, siteId };
+    await this.knowledge.ensureSettings(ctx);
+    const pages = await db.assistAdminPage.findMany({
+      where: { siteId },
+      select: { url: true, title: true, text: true },
+      orderBy: { url: 'asc' },
+    });
+    const found = await db.assistAdminSource.findFirst({
+      where: { siteId, kind: ADMIN_PRIVATE_CRAWL_SOURCE_KIND },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    const sourceId =
+      found?.id ??
+      (
+        await db.assistAdminSource.create({
+          data: {
+            accountId,
+            siteId,
+            kind: ADMIN_PRIVATE_CRAWL_SOURCE_KIND,
+            title: ADMIN_PRIVATE_CRAWL_SOURCE_TITLE,
+            status: 'active',
+          },
+          select: { id: true },
+        })
+      ).id;
+    const v = await this.knowledge.indexDocuments(
+      ctx,
+      sourceId,
+      pages.map(adminPageDocument),
+      { trigger: 'crawl', byTelegramId: null, replaceAll: true },
+    );
+    const documentsCount = await db.assistAdminDocument.count({
+      where: { sourceId, status: 'active' },
+    });
+    await db.assistAdminSource.updateMany({
+      where: { id: sourceId },
+      data: { documentsCount, lastSyncAt: new Date() },
+    });
+    return v;
   }
 
   private async context(m: AccountMembership, siteId: string, now: Date) {

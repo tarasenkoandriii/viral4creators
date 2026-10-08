@@ -26,7 +26,19 @@ import type {
   VoiceEngine,
 } from '../shared/voice-api';
 import { ApiError, CHUNK_BASE, headers, unwrap, type Auth } from './api';
-import type { Dict } from './i18n';
+import { DICTS, type Dict } from './i18n';
+
+/**
+ * Заход 9 (аудит P2-2): язык интерфейса виджета на запись голоса — один
+ * источник языка для счётчиков Т-4 «расслышал / не расслышал» (сервер:
+ * `site-voice.service.ts` `STT_UI_LANG_HEADER`). Язык — по словарю хоста
+ * (контроллер отдаёт `DICTS[lang]`); не узнали — без заголовка.
+ */
+export const UI_LANG_HEADER = 'X-Assist-Lang';
+export function uiLangOfDict(t: Dict): 'uk' | 'ru' | 'en' | null {
+  for (const l of ['uk', 'ru', 'en'] as const) if (DICTS[l] === t) return l;
+  return null;
+}
 
 /**
  * Чанк голоса — тот же origin, путь стабильный (кэш — vercel.json); (г)
@@ -256,10 +268,12 @@ export class VoiceController {
     }
     this.host.setUi({ phase: 'sending', level: 0 });
     try {
+      const lang = uiLangOfDict(this.host.t());
       const r = await this.post(
         '/widget/v1/voice',
         end.blob.type || 'audio/webm',
-        end.blob
+        end.blob,
+        lang ? { [UI_LANG_HEADER]: lang } : {}
       );
       const data = unwrap(r.status, await r.json().catch(() => null)) as {
         text?: unknown;
@@ -335,13 +349,14 @@ export class VoiceController {
   private async post(
     path: string,
     type: string,
-    body: BodyInit
+    body: BodyInit,
+    extra: Record<string, string> = {}
   ): Promise<Response> {
     const once = () =>
       fetch(path, {
         method: 'POST',
         credentials: 'include',
-        headers: headers(this.host.auth(), { 'Content-Type': type }),
+        headers: headers(this.host.auth(), { 'Content-Type': type, ...extra }),
         body,
       });
     let r = await once();

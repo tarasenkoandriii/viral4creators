@@ -1,4 +1,10 @@
-import { sendToMembers, tmaLink } from './notify';
+import {
+  notifyLangOf,
+  recipientsWithLang,
+  sendToMembers,
+  sendToMembersByLang,
+  tmaLink,
+} from './notify';
 
 describe('уведомление в бот помощника', () => {
   it('ссылка TMA на хеш-маршрут', () => {
@@ -48,5 +54,92 @@ describe('уведомление в бот помощника', () => {
     expect(JSON.stringify(bodies[0].reply_markup)).toContain(
       '"web_app":{"url":"https://t.example/#/sites/s/knowledge/site/versions"}',
     );
+  });
+});
+
+describe('язык уведомления (Р-З9-7)', () => {
+  it('notifyLangOf: uk/ru/en по первой части кода, прочее и пусто — uk', () => {
+    expect(notifyLangOf('ru')).toBe('ru');
+    expect(notifyLangOf('ru-RU')).toBe('ru');
+    expect(notifyLangOf('EN_us')).toBe('en');
+    expect(notifyLangOf('uk')).toBe('uk');
+    expect(notifyLangOf('de')).toBe('uk');
+    expect(notifyLangOf(null)).toBe('uk');
+    expect(notifyLangOf('')).toBe('uk');
+  });
+
+  it('recipientsWithLang: фильтр режима как у recipients, язык из assist_bot_users, нет строки — uk', async () => {
+    const findMembers = jest.fn().mockResolvedValue([
+      { telegramId: 1n, role: 'owner', productRoles: null },
+      { telegramId: 2n, role: 'owner', productRoles: null },
+      { telegramId: 3n, role: 'owner', productRoles: null },
+      { telegramId: 4n, role: 'nonsense', productRoles: null },
+    ]);
+    const findUsers = jest.fn().mockResolvedValue([
+      { telegramId: 1n, languageCode: 'ru-RU' },
+      { telegramId: 2n, languageCode: 'en' },
+    ]);
+    const sitesDb = {
+      forAccount: () => ({ siteAccountMember: { findMany: findMembers } }),
+      system: () => ({ assistBotUser: { findMany: findUsers } }),
+    };
+    const out = await recipientsWithLang(sitesDb as never, 'acc', () => true);
+    expect(out).toEqual([
+      { chatId: 1n, lang: 'ru' },
+      { chatId: 2n, lang: 'en' },
+      { chatId: 3n, lang: 'uk' },
+    ]);
+    expect(findUsers.mock.calls[0][0].where.telegramId.in).toEqual([
+      1n,
+      2n,
+      3n,
+    ]);
+  });
+
+  it('recipientsWithLang: никого не отобрали — без запроса языков', async () => {
+    const findUsers = jest.fn();
+    const sitesDb = {
+      forAccount: () => ({
+        siteAccountMember: { findMany: jest.fn().mockResolvedValue([]) },
+      }),
+      system: () => ({ assistBotUser: { findMany: findUsers } }),
+    };
+    expect(await recipientsWithLang(sitesDb as never, 'a', () => true)).toEqual(
+      [],
+    );
+    expect(findUsers).not.toHaveBeenCalled();
+  });
+
+  it('sendToMembersByLang: каждому — текст и кнопка его языка', async () => {
+    const got: Array<{ chat: string; text: string; button: string }> = [];
+    const n = await sendToMembersByLang({
+      recipients: [
+        { chatId: 1n, lang: 'ru' },
+        { chatId: 2n, lang: 'uk' },
+        { chatId: 3n, lang: 'ru' },
+      ],
+      texts: {
+        uk: { text: 'Привіт', button: 'Відкрити' },
+        ru: { text: 'Привет', button: 'Открыть' },
+        en: { text: 'Hi', button: 'Open' },
+      },
+      hashPath: '/x',
+      env: { ASSIST_BOT_TOKEN: 'T', ASSIST_TMA_URL: 'https://t' },
+      fetchImpl: async (_u, init) => {
+        const b = JSON.parse(init.body);
+        got.push({
+          chat: b.chat_id,
+          text: b.text,
+          button: b.reply_markup.inline_keyboard[0][0].text,
+        });
+        return { ok: true, status: 200 };
+      },
+    });
+    expect(n).toBe(3);
+    expect(got).toEqual([
+      { chat: '2', text: 'Привіт', button: 'Відкрити' },
+      { chat: '1', text: 'Привет', button: 'Открыть' },
+      { chat: '3', text: 'Привет', button: 'Открыть' },
+    ]);
   });
 });

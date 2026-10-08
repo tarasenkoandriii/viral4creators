@@ -15,7 +15,12 @@
  *  - вкладки: Цель (карточка), Страница (цели и образцы устойчивости),
  *    Мемо (запись кликами, перепривязка, «Прогнать» — `memo.ts`, Э6-тер (д)),
  *    Проверка («Сказать сейчас» — показ без нажатий), Публикация;
- *  - отмена — стек обратных операций сессии (с `expectedRevision`).
+ *  - отмена — стек обратных операций сессии (с `expectedRevision`);
+ *  - заход 9: массовые операции (`Shift`+клик / рамка в пикере → «Вибрано
+ *    N»: в карту, заборонити, посилити ризик, контрольні, до шаблону),
+ *    поиск цели (`/`), микрофон «Сказать сейчас» (`POST /editor/v1/voice`,
+ *    кнопка 🎤 или `S` удерживать); новый шаблон — сначала шаблон (id
+ *    выдаёт сервер), затем цели на его id.
  */
 import './editor-panel.css';
 import { EDITOR_SESSION_HEADER } from '../shared/brand';
@@ -141,6 +146,12 @@ const S = {
     violet: number;
   } | null,
   samples: new Map<string, number>(),
+  /** Массовый выбор (Shift+клик, рамка) — дескрипторы пикера. */
+  multi: [] as Descriptor[],
+  q: '',
+  /** Последняя команда «Сказать сейчас» (поле переживает перерисовку). */
+  say: '',
+  mic: null as MediaRecorder | null,
   reqId: 0,
   waiting: new Map<number, (m: ToPanel) => void>(),
 };
@@ -186,10 +197,12 @@ function ask(m: ToPicker & { id: number }): Promise<ToPanel> {
   });
 }
 
-async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+async function api<T>(
+  path: string,
+  init: RequestInit = {},
+  type = 'application/json'
+): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': type };
   if (S.session) headers[EDITOR_SESSION_HEADER] = S.session;
   const r = await fetch(path, { ...init, headers, credentials: 'omit' });
   let body: {
@@ -240,7 +253,53 @@ const memo = createMemo({
   fail,
   render,
   store: STORE,
+  edit: (key) => {
+    const t = S.map?.targets.find((x) => x.key === key);
+    if (!t) {
+      S.note = fmt(L().miss, { k: key });
+      return render();
+    }
+    open(t);
+  },
 });
+
+/** Открыть карточку цели карты (список страницы, «↶» шага мемо). */
+function open(t: Target): void {
+  S.picked = {
+    descriptor: t.descriptor,
+    how: 'map',
+    stability: t.stability,
+    never: effective(t) === 'never',
+  };
+  S.edit = t;
+  S.tab = 'target';
+  toPicker({ type: 'focus', key: t.key });
+  render();
+}
+
+/**
+ * Шаблон по маске: существующий или новый ОТДЕЛЬНОЙ операцией — id нового
+ * шаблона выдаёт сервер, цели ссылаются на него (в одном пакете цель на
+ * id клиента не проходит разбор).
+ */
+async function templateId(mask: string): Promise<string | null> {
+  const find = () =>
+    S.map?.templates.find(
+      (x) => x.pathPattern === mask && x.status === 'active'
+    )?.id ?? null;
+  if (find()) return find();
+  const ok = await ops(
+    [
+      {
+        op: 'upsert-template',
+        template: { name: mask, pathPattern: mask, samplePages: [S.path] },
+      },
+    ],
+    null,
+    mask
+  );
+  return ok ? find() : null;
+}
 
 function colorOf(t: Target): PageTarget['color'] {
   const eff = effective(t);
@@ -283,15 +342,7 @@ async function loadMap(): Promise<void> {
       : null;
     if (f) {
       S.focusKey = null;
-      S.picked = {
-        descriptor: f.descriptor,
-        how: 'map',
-        stability: f.stability,
-        never: effective(f) === 'never',
-      };
-      S.edit = f;
-      S.tab = 'target';
-      toPicker({ type: 'focus', key: f.key });
+      open(f);
     }
   } catch (e) {
     fail(e);
@@ -355,45 +406,13 @@ async function ops(
 }
 
 // ── «транслит» ключа из видимого текста ──
-const TR: Record<string, string> = {
-  а: 'a',
-  б: 'b',
-  в: 'v',
-  г: 'h',
-  ґ: 'g',
-  д: 'd',
-  е: 'e',
-  є: 'ye',
-  ё: 'e',
-  ж: 'zh',
-  з: 'z',
-  и: 'y',
-  і: 'i',
-  ї: 'yi',
-  й: 'y',
-  к: 'k',
-  л: 'l',
-  м: 'm',
-  н: 'n',
-  о: 'o',
-  п: 'p',
-  р: 'r',
-  с: 's',
-  т: 't',
-  у: 'u',
-  ф: 'f',
-  х: 'kh',
-  ц: 'ts',
-  ч: 'ch',
-  ш: 'sh',
-  щ: 'shch',
-  ь: '',
-  ъ: '',
-  ы: 'y',
-  э: 'e',
-  ю: 'yu',
-  я: 'ya',
-};
+const TR_SRC = 'абвгґдеєёжзиіїйклмнопрстуфхцчшщьъыэюя';
+const TR_DST =
+  'a b v h g d e ye e zh z y i yi y k l m n o p r s t u f kh ts ch sh shch _ _ y e yu ya'.split(
+    ' '
+  );
+const TR: Record<string, string> = {};
+[...TR_SRC].forEach((c, i) => (TR[c] = TR_DST[i].replace('_', '')));
 function suggestKey(p: Picked): string {
   if (p.descriptor.assistId && KEY_RE.test(p.descriptor.assistId))
     return p.descriptor.assistId;
@@ -425,8 +444,81 @@ function targetFor(d: Descriptor): Target | null {
   );
 }
 
+// ── массовые операции (§5-кватер.12): Shift+клик или рамкой ──
+function bulkView(): HTMLElement {
+  const L0 = L();
+  const box = h('div', { class: 'card' });
+  const list = S.multi;
+  const run =
+    (patch: Record<string, unknown>, tpl = false) =>
+    async () => {
+      const segs = S.path.split('/').filter(Boolean);
+      const mask =
+        S.map?.template?.pathPattern ??
+        (segs.length > 1 ? `/${segs.slice(0, -1).join('/')}/*` : '/*');
+      const tid = tpl ? await templateId(mask) : null;
+      if (tpl && !tid) return;
+      const fwd: unknown[] = [];
+      const back: unknown[] = [];
+      const taken = new Set(S.map?.keys ?? []);
+      for (const d of list) {
+        const t = targetFor(d);
+        let k = t?.key ?? suggestKey({ descriptor: d } as Picked);
+        for (let i = 2; !t && taken.has(k); i++)
+          k = `${k.replace(/-\d+$/, '')}-${i}`;
+        taken.add(k);
+        const denied = patch.denylisted === true;
+        fwd.push({
+          op: 'upsert-target',
+          target: {
+            ...(t ?? {
+              key: k,
+              scope: 'page',
+              pagePath: S.path,
+              descriptor: d,
+              names: d.text ? { [S.lang]: d.text.replace(/…$/, '') } : {},
+            }),
+            ...(tid
+              ? { scope: 'template', templateId: tid, pagePath: null }
+              : {}),
+            ...(denied ? { names: {}, synonyms: {} } : {}),
+            ...patch,
+            ...(t ? { descriptor: undefined } : {}),
+          },
+        });
+        back.push(
+          t
+            ? { op: 'upsert-target', target: t }
+            : { op: 'remove-target', key: k }
+        );
+      }
+      if (await ops(fwd, back, `×${list.length}`)) S.multi = [];
+      render();
+    };
+  const b = (label: string, fn: () => Promise<void>) =>
+    h('button', { type: 'button', click: human(() => void fn()) }, label);
+  box.append(
+    h('p', {}, fmt(L0.bulk, { n: list.length })),
+    h(
+      'div',
+      { class: 'acts' },
+      b(L0.bAdd, run({})),
+      b(L0.bDeny, run({ denylisted: true })),
+      b(L0.bRisk, run({ riskOwner: 'confirm' })),
+      b(L0.bCtl, run({ control: true })),
+      b(L0.bTpl, run({}, true)),
+      b('✕', async () => {
+        S.multi = [];
+        render();
+      })
+    )
+  );
+  return box;
+}
+
 // ── вкладки ──
 function cardView(): HTMLElement {
+  if (S.multi.length) return bulkView();
   const p = S.picked;
   if (!p) return h('p', { class: 'hint' }, L().pickHint);
   const t = S.edit;
@@ -597,7 +689,7 @@ function cardView(): HTMLElement {
       )
     );
   }
-  const save = human(() => {
+  const save = human(async () => {
     const k = key.value.trim();
     const list = (v: string) =>
       v
@@ -606,32 +698,16 @@ function cardView(): HTMLElement {
         .filter(Boolean)
         .map((text) => ({ text, origin: 'owner' }));
     const opsList: unknown[] = [];
-    let templateId: string | null = null;
-    if (scope.value === 'template') {
-      const existing = S.map?.templates.find(
-        (x) => x.pathPattern === mask.value.trim() && x.status === 'active'
-      );
-      templateId = existing?.id ?? null;
-      if (!templateId) {
-        templateId = `t-${Math.random().toString(16).slice(2, 10)}`;
-        opsList.push({
-          op: 'upsert-template',
-          template: {
-            id: templateId,
-            name: mask.value.trim(),
-            pathPattern: mask.value.trim(),
-            samplePages: [S.path],
-          },
-        });
-      }
-    }
+    const tplId =
+      scope.value === 'template' ? await templateId(mask.value.trim()) : null;
+    if (scope.value === 'template' && !tplId) return;
     const denied = deny.checked;
     opsList.push({
       op: 'upsert-target',
       target: {
         key: k,
         scope: scope.value,
-        templateId,
+        templateId: tplId,
         pagePath: scope.value === 'page' ? S.path : null,
         descriptor: t ? undefined : d,
         names: denied
@@ -724,8 +800,35 @@ function pageView(): HTMLElement {
     box.append(h('p', { class: 'hint' }, L().empty));
     return box;
   }
+  // Поиск цели (`/`): имя, ключ, подпись, синонимы.
+  const q = h('input', {
+    name: 'q',
+    placeholder: L().search,
+    value: S.q,
+  }) as HTMLInputElement;
+  q.addEventListener('input', () => {
+    S.q = q.value;
+    render();
+    const n = document.querySelector<HTMLInputElement>('input[name="q"]');
+    n?.focus();
+    n?.setSelectionRange(n.value.length, n.value.length);
+  });
+  box.append(q);
+  const needle = S.q.trim().toLowerCase();
   const ul = h('ul', { class: 'list' });
   for (const t of m.targets) {
+    if (
+      needle &&
+      ![
+        t.key,
+        t.descriptor.text,
+        ...Object.values(t.names),
+        ...Object.values(t.synonyms).flatMap((l) =>
+          (l || []).map((x) => x.text)
+        ),
+      ].some((x) => (x || '').toLowerCase().includes(needle))
+    )
+      continue;
     const found = S.samples.get(t.key);
     ul.append(
       h(
@@ -735,18 +838,7 @@ function pageView(): HTMLElement {
           'button',
           {
             type: 'button',
-            click: () => {
-              S.picked = {
-                descriptor: t.descriptor,
-                how: 'map',
-                stability: t.stability,
-                never: effective(t) === 'never',
-              };
-              S.edit = t;
-              S.tab = 'target';
-              toPicker({ type: 'focus', key: t.key });
-              render();
-            },
+            click: () => open(t),
           },
           `${t.names[S.lang] || t.descriptor.text || t.key} · ${t.key} · ${effective(t)}${found !== undefined ? ` · ${fmt(L().found, { n: found })}` : ''}`
         )
@@ -799,6 +891,7 @@ function tryView(): HTMLElement {
     name: 'say',
     placeholder: L().sayPh,
     maxlength: '200',
+    value: S.say,
   }) as HTMLInputElement;
   const run = human(() => void runTry(input.value.trim()));
   box.append(
@@ -806,6 +899,14 @@ function tryView(): HTMLElement {
       'div',
       { class: 'row' },
       input,
+      h(
+        'button',
+        {
+          type: 'button',
+          click: human(() => void mic()),
+        },
+        S.mic ? '■' : '🎤'
+      ),
       h('button', { type: 'button', class: 'pri', click: run }, L().say)
     )
   );
@@ -853,8 +954,61 @@ function tryView(): HTMLElement {
   return box;
 }
 
+/**
+ * Микрофон «Сказать сейчас» (§5-кватер.6 п.1): запись в памяти вкладки →
+ * `POST /editor/v1/voice` (сессия редактора, потолок «Сказать сейчас») →
+ * текст в поле и та же проверка `/editor/v1/try`. Второе нажатие — стоп.
+ */
+async function mic(): Promise<void> {
+  if (S.mic) return void S.mic.stop();
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    return fail(e);
+  }
+  let rec: MediaRecorder;
+  try {
+    rec = new MediaRecorder(stream);
+  } catch (e) {
+    // Аудит P3: запись не создалась — микрофон не остаётся включённым.
+    stream.getTracks().forEach((t) => t.stop());
+    return fail(e);
+  }
+  const parts: Blob[] = [];
+  rec.ondataavailable = (e) => parts.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    S.mic = null;
+    const blob = new Blob(parts, { type: rec.mimeType || 'audio/webm' });
+    try {
+      const v = await api<{ text: string }>(
+        '/editor/v1/voice',
+        { method: 'POST', body: blob },
+        blob.type.split(';')[0]
+      );
+      await runTry(v.text);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  rec.onerror = () => rec.state !== 'inactive' && rec.stop();
+  S.mic = rec;
+  try {
+    rec.start();
+  } catch (e) {
+    S.mic = null;
+    stream.getTracks().forEach((t) => t.stop());
+    return fail(e);
+  }
+  render();
+  // Не дольше 30 с, как запись посетителя.
+  setTimeout(() => S.mic === rec && rec.stop(), 30_000);
+}
+
 async function runTry(text: string): Promise<void> {
   if (!text) return;
+  S.say = text;
   const id = ++S.reqId;
   const r = await ask({ type: 'snapshot-req', id });
   if (r.type !== 'snapshot') return;
@@ -1041,7 +1195,17 @@ window.addEventListener('message', (e) => {
       S.counts = m;
       if (S.tab === 'page') render();
       return;
+    case 'search':
+      S.tab = 'page';
+      render();
+      document.querySelector<HTMLInputElement>('input[name="q"]')?.focus();
+      return;
+    case 'picks':
+      addMulti(m.items);
+      return;
     case 'pick': {
+      // Shift+клик — к массовому выбору (не запись и не карточка).
+      if (m.multi && !memo.active()) return addMulti([m.descriptor]);
       // Запись мемо / перепривязка шага: клик — шаг (решает сервер).
       if (memo.active()) {
         S.tab = 'memo';
@@ -1066,6 +1230,34 @@ window.addEventListener('message', (e) => {
       return;
     }
   }
+});
+
+function addMulti(items: Descriptor[]): void {
+  // Одинаковые элементы (24 «В кошик» в списке) — одна цель (§5-кватер.12).
+  const id = (d: Descriptor) =>
+    `${d.assistId}|${d.text}|${d.role}|${d.hrefPath}`;
+  for (const d of items)
+    if (S.multi.length < 40 && !S.multi.some((x) => id(x) === id(d)))
+      S.multi.push(d);
+  S.tab = 'target';
+  render();
+}
+
+// `/` — поиск цели; `S` (удерживать) — микрофон «Сказать сейчас».
+window.addEventListener('keydown', (e) => {
+  if ((e.target as HTMLElement).tagName === 'INPUT' || e.repeat) return;
+  if (e.key === '/') {
+    e.preventDefault();
+    S.tab = 'page';
+    render();
+    document.querySelector<HTMLInputElement>('input[name="q"]')?.focus();
+  } else if (e.key === 's' && !S.mic) {
+    S.tab = 'try';
+    void mic();
+  }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 's' && S.mic) S.mic.stop();
 });
 
 async function boot(): Promise<void> {

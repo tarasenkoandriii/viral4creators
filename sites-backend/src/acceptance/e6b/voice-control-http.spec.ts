@@ -418,4 +418,104 @@ describeDb('Э6-бис: голосовое управление по HTTP', () =
     }
     expect(limited).toBe(true);
   });
+
+  it('(заход 9, Р-З9-9) «отчёт для разработчика»: GET — только кнопка (токен цел, превью мессенджеров безопасны); POST — отчёт один раз; повтор/чужой/истёкший — 404; HTML без скриптов, no-store', async () => {
+    const f = await site('on');
+    const raw = randomBytes(24).toString('base64url');
+    const row = await stack.prisma.assistSiteVoiceTest.create({
+      data: {
+        accountId: f.accountId,
+        siteId: f.siteId,
+        kind: 'dev_report',
+        host: domain('e6b'),
+        origin: 'dev-report:none',
+        tokenHash: createHash('sha256').update(raw).digest('hex'),
+        tokenExpiresAt: new Date(Date.now() + 3_600_000),
+        report: {
+          v: 1,
+          src: 'w1',
+          lang: 'ru',
+          host: domain('e6b'),
+          page: '/',
+          reportedAt: null,
+          result: 'partial',
+          items: [
+            {
+              step: 3,
+              level: 'warn',
+              code: 'unnamed_elements',
+              data: { n: 1 },
+            },
+          ],
+          markup: {
+            total: 3,
+            withId: 1,
+            unnamed: [{ tag: 'button', selector: 'form#o > button' }],
+            closedShadow: 0,
+            extIframes: 0,
+            duplicates: [],
+          },
+          never: [],
+          suspicious: [],
+          denySuggestions: [],
+          undo: [],
+          fragment: '<button data-assist-id="add-to-cart">…</button>',
+        },
+      },
+    });
+    const path = `/w/v1/vc-report/${raw}`;
+    const g = await request(srv()).get(path).expect(200);
+    expect(g.headers['content-type']).toMatch(/^text\/html/);
+    expect(g.headers['cache-control']).toBe('no-store');
+    expect(g.headers['content-security-policy']).toContain(
+      "default-src 'none'",
+    );
+    expect(g.headers['content-security-policy']).not.toContain('script-src');
+    expect(g.text).toContain('<form method="post"');
+    expect(g.text).toContain('Открыть отчёт');
+    expect(g.text).not.toContain('form#o');
+    expect(
+      (await stack.prisma.assistSiteVoiceTest.findUnique({
+        where: { id: row.id },
+      }))!.usedAt,
+    ).toBeNull();
+    const p = await request(srv())
+      .post(path)
+      .set('Origin', W_ORIGIN)
+      .expect(200);
+    expect(p.text).toContain('form#o &gt; button');
+    expect(p.text).toContain(
+      '&lt;button data-assist-id=&quot;add-to-cart&quot;&gt;',
+    );
+    expect(p.text).not.toMatch(/<script/i);
+    await request(srv()).post(path).set('Origin', W_ORIGIN).expect(404);
+    await request(srv()).get(path).expect(404);
+    await request(srv())
+      .post(`/w/v1/vc-report/${randomBytes(24).toString('base64url')}`)
+      .set('Origin', W_ORIGIN)
+      .expect(404);
+    await request(srv()).get('/w/v1/vc-report/short').expect(404);
+  });
+
+  it('(заход 9, P2-2) CORS: заголовок языка интерфейса `X-Assist-Lang` на `/widget/v1/voice` разрешён для origin виджета (предзапрос), чужому origin — нет', async () => {
+    const pre = await request(srv())
+      .options('/widget/v1/voice')
+      .set('Origin', W_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST')
+      .set(
+        'Access-Control-Request-Headers',
+        `content-type,x-assist-lang,${WIDGET_VISITOR_TOKEN_HEADER.toLowerCase()}`,
+      );
+    expect(pre.status).toBeLessThan(300);
+    expect(pre.headers['access-control-allow-origin']).toBe(W_ORIGIN);
+    expect(
+      String(pre.headers['access-control-allow-headers']).toLowerCase(),
+    ).toContain('x-assist-lang');
+    const evil = await request(srv())
+      .options('/widget/v1/voice')
+      .set('Origin', 'https://evil.example.org')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'x-assist-lang');
+    expect(evil.headers['access-control-allow-origin']).toBeUndefined();
+  });
 });

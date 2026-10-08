@@ -13,6 +13,9 @@
  * Бизнес-правила тарифа, ролей, журнала, монитора и мастера — приёмка
  * sites-backend (`acceptance/e6b-admin`).
  *
+ * Р-З9-23: предпочтение API по целям плана (`apiByPlanTargets`) — тот же
+ * код; вопрос в чат — `apiAskText` (номер объекта из адреса страницы).
+ *
  * Аудит 06.10: прогон мемо «Админки» — `memo-page|memo-report` с НАСТОЯЩИМ
  * итогом страницы и вердиктом (`admin-memo-check.ts` sites-backend); права
  * и каталог операций — приёмка `acceptance/e8/admin-memo-check.spec.ts`.
@@ -31,7 +34,13 @@ import type {
 } from '../../../sites-backend/src/modules/assist-ui-core/types';
 
 const cjs = <T>(ns: T): T => (ns as T & { default?: T }).default ?? ns;
-const { apiPreference, checkAdminPlan, confirmFields } = cjs(rulesNs);
+const {
+  apiAskText,
+  apiByPlanTargets,
+  apiPreference,
+  checkAdminPlan,
+  confirmFields,
+} = cjs(rulesNs);
 const { parseSnapshot } = cjs(snapNs);
 const { directPlan, looksLikeCommand } = cjs(directNs);
 const { defaultVoiceControlRules } = cjs(coreRulesNs);
@@ -168,6 +177,22 @@ const CATALOG = [
     operationId: 'updateOrderStatus',
     summary: 'Змінити статус замовлення',
     kind: 'write' as const,
+    params: [
+      { name: 'id', in: 'path' as const },
+      { name: 'status', in: 'body' as const },
+    ],
+  },
+  // Р-З9-23: поле «Місто» + «Зберегти» — параметр `city` этой операции.
+  {
+    rowId: 'r3',
+    key: 'shop.updateDeliveryCity',
+    operationId: 'updateDeliveryCity',
+    summary: 'Змінити адресу доставки',
+    kind: 'write' as const,
+    params: [
+      { name: 'id', in: 'path' as const },
+      { name: 'city', in: 'body' as const, description: 'Місто доставки' },
+    ],
   },
 ];
 
@@ -425,7 +450,8 @@ export async function adminVcRoute(
       return json(res, 400, { code: 'ADMIN_VC_BAD_REQUEST', message: 'bad' });
     V.snapshots.push(snap);
     const dry = b.dryRun === true;
-    if (!dry) {
+    // Мастер — без API (как сервер, аудит пакета F P2-2).
+    if (!dry && !testOk) {
       const pref = apiPreference(text, CATALOG);
       if (pref && pref.kind !== 'never')
         return json(res, 200, {
@@ -452,6 +478,17 @@ export async function adminVcRoute(
         state: mode,
         noSubmit: testOk && !test!.testHost,
       });
+      // Р-З9-23: поля + «Зберегти» с операцией по параметрам — не клики.
+      const byTargets =
+        dry || testOk ? null : apiByPlanTargets(c.steps, CATALOG, text);
+      if (byTargets && byTargets.kind !== 'never')
+        return json(res, 200, {
+          ...empty('api'),
+          api: {
+            key: byTargets.kind === 'api' ? byTargets.op.key : null,
+            ask: apiAskText(text, new URL(snap.url).pathname),
+          },
+        });
       steps = c.steps;
       notes = c.notes;
       pnr = c.pnr;

@@ -95,6 +95,8 @@ import {
   adminNeverStep,
   adminRulesOf,
   adminStateOf,
+  apiAskText,
+  apiByPlanTargets,
   apiOperationsBlock,
   apiPreference,
   checkAdminPlan,
@@ -585,7 +587,9 @@ export class AdminUiPlanService {
     // ── предпочтение API (Р-Э6б-5): изменение с операцией — не кликами ──
     let apiMissing = false;
     let catalog: ApiCatalogOp[] = [];
-    if (!memo && !dryRun && ADMIN_VC_DECISIONS.preferApi) {
+    // Мастер (тестовая сессия) — без API: карточка на боевом API посреди
+    // проверки недопустима, мастер проверяет клики (аудит пакета F, P2-2).
+    if (!memo && !dryRun && !test && ADMIN_VC_DECISIONS.preferApi) {
       catalog = (
         await this.proposals.catalog(s.accountId, s.siteId, s.role)
       ).map((o) => ({
@@ -594,6 +598,11 @@ export class AdminUiPlanService {
         operationId: o.operationId,
         summary: o.summary,
         kind: o.kind,
+        params: o.params.map((x) => ({
+          name: x.name,
+          in: x.in,
+          ...(x.description ? { description: x.description } : {}),
+        })),
       }));
       const pref = apiPreference(utterance, catalog);
       if (pref && pref.kind !== 'never') {
@@ -604,7 +613,10 @@ export class AdminUiPlanService {
         );
         return {
           ...emptyView('api'),
-          api: { key: pref.kind === 'api' ? pref.op.key : null },
+          api: {
+            key: pref.kind === 'api' ? pref.op.key : null,
+            ask: apiAskText(utterance, pagePath),
+          },
         };
       }
       apiMissing = pref?.kind === 'never';
@@ -679,7 +691,10 @@ export class AdminUiPlanService {
                 now,
               },
             );
-          return { ...emptyView('api'), api: { key: op.key } };
+          return {
+            ...emptyView('api'),
+            api: { key: op.key, ask: apiAskText(utterance, pagePath) },
+          };
         }
       }
       const parsed = parseModelPlan(out);
@@ -701,6 +716,29 @@ export class AdminUiPlanService {
       noSubmit: !!test && !test.testHost,
       ...(memo ? { trusted: memo.trusted } : {}),
     });
+    // ── предпочтение API по целям плана (Р-З9-23): поля + «Сохранить», а
+    // у роли есть write-операция с такими параметрами — карточка API, не клики.
+    if (
+      !memo &&
+      !dryRun &&
+      !test &&
+      ADMIN_VC_DECISIONS.preferApi &&
+      catalog.length
+    ) {
+      const byTargets = apiByPlanTargets(checked.steps, catalog, utterance);
+      if (byTargets && byTargets.kind !== 'never') {
+        const key = byTargets.kind === 'api' ? byTargets.op.key : null;
+        await this.journalApi(ctx, utterance, key ?? '*', 'targets');
+        if (conversationId)
+          await this.chat.recordTurn(employee, conversationId, utterance, '', {
+            now,
+          });
+        return {
+          ...emptyView('api'),
+          api: { key, ask: apiAskText(utterance, pagePath) },
+        };
+      }
+    }
     let steps = checked.steps;
     const notes: UiPlanNote[] = [...checked.notes];
     if (memo) {
@@ -834,14 +872,24 @@ export class AdminUiPlanService {
     };
   }
 
-  private async journalApi(ctx: AdminVcCtx, utterance: string, key: string) {
+  private async journalApi(
+    ctx: AdminVcCtx,
+    utterance: string,
+    key: string,
+    /** Почему API: глагол команды (по умолчанию) или цели плана (Р-З9-23). */
+    by?: 'targets',
+  ) {
     await this.journal(
       ctx,
       { id: '-', conversationId: null },
       'ui-plan',
       'ui.plan',
       'api',
-      { api: key, command: maskSensitiveEcho(utterance).slice(0, 200) },
+      {
+        api: key,
+        command: maskSensitiveEcho(utterance).slice(0, 200),
+        ...(by ? { by } : {}),
+      },
     );
   }
 

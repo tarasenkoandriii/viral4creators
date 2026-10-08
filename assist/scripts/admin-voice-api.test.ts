@@ -9,7 +9,11 @@ import { ADMIN_VOICE_TEXTS } from '../src/i18n/admin-voice';
 import type { ApiClient } from '../src/kit';
 import {
   ADMIN_VC_ERROR_CODES,
+  ADMIN_VC_ITEM_CODES,
+  ADMIN_VC_MIC_STATUSES,
+  ADMIN_VC_PROBE_KINDS,
   ADMIN_VC_RISKS_VERSION,
+  adminVoiceItemText,
   createAdminVoiceApi,
   parseAdminVoiceSettings,
 } from '../src/lib/admin-voice-api';
@@ -136,6 +140,172 @@ const read = (f: string) => readFileSync(new URL(f, BACK), 'utf8');
   });
   await assert.rejects(api.get('a/b'));
   await assert.rejects(api.test('s1', '../x'));
+}
+
+// 5. (аудит Э6-бис (б) (1)) Коды пунктов отчёта и виды проб — те же, что
+// у сервера; на каждый код — человеческий текст во всех языках.
+{
+  const wiz = readFileSync(
+    new URL('../assist-ui-core/wizard.ts', BACK),
+    'utf8'
+  );
+  const m = /export type WizardItemCode =([\s\S]+?);/.exec(wiz);
+  assert.ok(m, 'нет WizardItemCode на сервере');
+  assert.deepEqual(
+    ['ok', ...[...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1])],
+    [...ADMIN_VC_ITEM_CODES]
+  );
+  const rules = read('admin-voice-rules.ts');
+  const k = /export const ADMIN_PROBE_KINDS = \[([^\]]+)\]/.exec(rules);
+  assert.ok(k, 'нет ADMIN_PROBE_KINDS на сервере');
+  assert.deepEqual(
+    [...k![1].matchAll(/'([a-z]+)'/g)].map((x) => x[1]),
+    [...ADMIN_VC_PROBE_KINDS]
+  );
+  // Состояния микрофона — те же, что MicStatus сервера.
+  const ms = /export type MicStatus =([\s\S]+?);/.exec(wiz);
+  assert.ok(ms, 'нет MicStatus на сервере');
+  assert.deepEqual(
+    [...ms![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]),
+    [...ADMIN_VC_MIC_STATUSES]
+  );
+  for (const lang of ['uk', 'ru', 'en'] as const) {
+    const w = ADMIN_VOICE_TEXTS[lang].wizard;
+    for (const m of ADMIN_VC_MIC_STATUSES) assert.ok(w.mic[m], `${lang} ${m}`);
+    for (const c of ADMIN_VC_ITEM_CODES)
+      assert.ok(w.items[c] && !/^[a-z_]+$/.test(w.items[c]), `${lang} ${c}`);
+    for (const p of ADMIN_VC_PROBE_KINDS) assert.ok(w.probes[p], p);
+  }
+  // Числа пункта подставлены; ни одного «{…}» и ни одного сырого кода.
+  const uk = ADMIN_VOICE_TEXTS.uk.wizard.items;
+  const dry = adminVoiceItemText(uk, {
+    step: 4,
+    level: 'fail',
+    code: 'dry_low',
+    data: { ok: 1, need: 3 },
+  });
+  assert.equal(dry, 'Крок 4: сухий прогін — вірних кроків 1, потрібно 3');
+  const leak = adminVoiceItemText(uk, {
+    step: 6,
+    level: 'fail',
+    code: 'forbidden_leak',
+    data: { attempts: 2, submitOnWork: 0 },
+  });
+  assert.ok(leak.includes('2') && !leak.includes('{'), leak);
+  assert.notEqual(
+    leak,
+    adminVoiceItemText(uk, {
+      step: 6,
+      level: 'fail',
+      code: 'forbidden_leak',
+      data: { n: 1 },
+    }),
+    'попытки на странице — свой текст, не «проба не заблокирована»'
+  );
+  const mic = ADMIN_VOICE_TEXTS.uk.wizard.mic;
+  const micItem = (status: string) =>
+    adminVoiceItemText(
+      uk,
+      { step: 2, level: 'warn', code: 'mic_owner_problem', data: { status } },
+      mic
+    );
+  assert.ok(micItem('evil_code').includes('(—)'), micItem('evil_code'));
+  assert.ok(!micItem('evil_code').includes('evil'));
+  assert.ok(micItem('denied_user').includes('доступ не дано в браузері'));
+  const unknown = adminVoiceItemText(uk, {
+    step: 3,
+    level: 'warn',
+    code: null,
+    data: {},
+  });
+  assert.equal(unknown, uk.unknown.replace('{step}', '3'));
+  // Сервер выдаёт пункты с такими данными — все тексты без «{…}».
+  const sample: Record<string, Record<string, number | string>> = {
+    csp_violations: { n: 2 },
+    tt_violations: { n: 1 },
+    mic_owner_problem: { status: 'denied_user' },
+    safe_low: { done: 1, of: 3 },
+    forbidden_leak: { n: 2 },
+    suspicious_unreviewed: { n: 4 },
+    unnamed_elements: { n: 1 },
+    closed_shadow: { n: 1 },
+    ext_iframes: { n: 1 },
+    duplicates: { n: 1 },
+    undo_unresolved: { n: 1, of: 2 },
+    dry_low: { ok: 0, need: 3 },
+  };
+  for (const lang of ['uk', 'ru', 'en'] as const)
+    for (const c of ADMIN_VC_ITEM_CODES) {
+      const w = ADMIN_VOICE_TEXTS[lang].wizard;
+      const txt = adminVoiceItemText(
+        w.items,
+        { step: 1, level: 'warn', code: c, data: sample[c] ?? {} },
+        w.mic
+      );
+      // Целиком: ни «{…}», ни «?», ни сырого кода (`denied_user`).
+      assert.ok(!/[{}?]|[a-z]+_[a-z]+/.test(txt), `${lang} ${c}: ${txt}`);
+    }
+}
+
+// 6. Разбор отчёта: коды — из списка (неизвестный — null), данные пункта —
+// только числа и коды, проба — известный вид, фрагмент и сухой прогон.
+{
+  const client: ApiClient = {
+    request: async <T>() =>
+      ({
+        id: 't1',
+        result: 'partial',
+        reportedAt: new Date().toISOString(),
+        report: {
+          result: 'partial',
+          items: [
+            {
+              step: 4,
+              level: 'fail',
+              code: 'dry_low',
+              data: { ok: 1, need: 3 },
+            },
+            {
+              step: 2,
+              level: 'warn',
+              code: 'mic_owner_problem',
+              data: { status: 'denied_user', name: 'Іван Петренко' },
+            },
+            { step: 9, level: 'warn', code: 'evil_code<script>' },
+          ],
+          forbidden: [
+            {
+              kind: 'cancel',
+              command: 'скасуй замовлення',
+              blocked: true,
+              api: 'shop.cancelOrder',
+            },
+            { kind: 'x', command: 'y', blocked: false, api: null },
+          ],
+          dry: [{ command: 'відкрий Клієнти', steps: 2, ok: 1, planId: 'p1' }],
+          fragment: '<!-- x --> <button data-assist="never">',
+        },
+      }) as T,
+  } as ApiClient;
+  const d = await createAdminVoiceApi(client).test('s1', 't1');
+  const r = d.report!;
+  assert.deepEqual(r.items[0], {
+    step: 4,
+    level: 'fail',
+    code: 'dry_low',
+    data: { ok: 1, need: 3 },
+  });
+  assert.deepEqual(r.items[1].data, { status: 'denied_user' }, 'ПД мимо');
+  assert.equal(r.items[2].code, null);
+  assert.equal(r.forbidden[0].kind, 'cancel');
+  assert.equal(r.forbidden[1].kind, null);
+  assert.deepEqual(r.dry, [{ command: 'відкрий Клієнти', steps: 2, ok: 1 }]);
+  assert.ok(r.fragment.includes('data-assist="never"'));
+  assert.ok(
+    !adminVoiceItemText(ADMIN_VOICE_TEXTS.ru.wizard.items, r.items[2]).includes(
+      'evil'
+    )
+  );
 }
 
 console.log('admin-voice-api: ok');

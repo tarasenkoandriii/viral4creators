@@ -32,6 +32,8 @@ export interface AdminActionsTexts {
     checkNone: string;
     retry: string;
     retryAck: string;
+    /** Р-З9-21: повтор после `unknown` закрыт по сроку (сутки). */
+    retryExpired: string;
     undo: string;
     memoStep: string;
     amount: string;
@@ -46,6 +48,8 @@ export interface AdminActionsTexts {
     linkHint: string;
     none: string;
     dryRunParam: string;
+    /** Э8-хвост (4): сухой прогон `native` доверяет API заказчика. */
+    dryRunWarn: string;
     amountParam: string;
     maxAmount: string;
     dailyAmountCap: string;
@@ -128,6 +132,8 @@ const uk: AdminActionsTexts = {
     checkNone: 'Перевірити тут неможливо — подивіться в адмінці.',
     retry: 'Повторити з тим самим ключем',
     retryAck: 'Я перевірив: дія не застосувалась',
+    retryExpired:
+      'Повтор більше не приймається (минуло понад 24 години). Перевірте результат в адмінці; якщо дії немає — попросіть ще раз, буде нова картка.',
     undo: 'Запропонувати скасування',
     memoStep: 'Крок мемо',
     amount: 'Сума',
@@ -148,6 +154,8 @@ const uk: AdminActionsTexts = {
       'Параметри: ім’я=$.request.поле або $.preview.поле, по одному в рядку',
     none: '— немає —',
     dryRunParam: 'Сухий прогін: булевий параметр dryRun',
+    dryRunWarn:
+      'Увага: помічник довіряє вашому API. Якщо API ігнорує цей параметр, «сухий прогін» у картці виконає дію насправді. Обирайте параметр, лише якщо API справді нічого не змінює з ним (перевірте на тестовому записі).',
     amountParam: 'Параметр суми',
     maxAmount: 'Максимум за дію',
     dailyAmountCap: 'Сума за добу',
@@ -242,6 +250,8 @@ const ru: AdminActionsTexts = {
     checkNone: 'Проверить здесь нельзя — посмотрите в админке.',
     retry: 'Повторить с тем же ключом',
     retryAck: 'Я проверил: действие не применилось',
+    retryExpired:
+      'Повтор больше не принимается (прошло больше 24 часов). Проверьте результат в админке; если действия нет — попросите заново, будет новая карточка.',
     undo: 'Предложить отмену',
     memoStep: 'Шаг мемо',
     amount: 'Сумма',
@@ -262,6 +272,8 @@ const ru: AdminActionsTexts = {
       'Параметры: имя=$.request.поле или $.preview.поле, по одному в строке',
     none: '— нет —',
     dryRunParam: 'Сухой прогон: булев параметр dryRun',
+    dryRunWarn:
+      'Внимание: помощник доверяет вашему API. Если API игнорирует этот параметр, «сухой прогон» в карточке выполнит действие на самом деле. Выбирайте параметр, только если API действительно ничего не меняет с ним (проверьте на тестовой записи).',
     amountParam: 'Параметр суммы',
     maxAmount: 'Максимум за действие',
     dailyAmountCap: 'Сумма за сутки',
@@ -359,6 +371,8 @@ const en: AdminActionsTexts = {
     checkNone: "Can't check here — look in the admin panel.",
     retry: 'Retry with the same key',
     retryAck: "I checked: the action wasn't applied",
+    retryExpired:
+      'A retry is no longer accepted (more than 24 hours have passed). Check the result in the admin panel; if it was not applied, ask again to get a new card.',
     undo: 'Propose an undo',
     memoStep: 'Memo step',
     amount: 'Amount',
@@ -379,6 +393,8 @@ const en: AdminActionsTexts = {
       'Parameters: name=$.request.field or $.preview.field, one per line',
     none: '— none —',
     dryRunParam: 'Dry run: boolean dryRun parameter',
+    dryRunWarn:
+      'Warning: the assistant trusts your API. If the API ignores this parameter, the card\'s "dry run" will really perform the action. Pick a parameter only if the API truly changes nothing with it (check on a test record).',
     amountParam: 'Amount parameter',
     maxAmount: 'Maximum per action',
     dailyAmountCap: 'Total per day',

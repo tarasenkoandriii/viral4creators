@@ -1576,7 +1576,13 @@ export class ChatController {
   async forget() {
     this.set({ confirmForget: false });
     try {
-      await this.api('POST', '/widget/v1/forget', {});
+      // Ключ визита — чтобы сервер стёр и единицу эксперимента, если
+      // диалога ещё нет (аудит Э3-бис (4), Р-З9-32).
+      await this.api(
+        'POST',
+        '/widget/v1/forget',
+        this.visit ? { v: this.visit } : {}
+      );
     } catch {
       this.set({ notice: { text: this.state.t.errGeneric } });
       return;
@@ -1660,20 +1666,22 @@ export class ChatController {
   }
 
   /**
-   * Итог подсветки от загрузчика. Не нашёл — ТИХО (посетителю ничего не
-   * показываем) шлём сигнал «карта устарела»; ответ «сообщение подделано
-   * страницей» не опасен — только по элементу, который мы сами просили.
+   * Итог подсветки от загрузчика — ТИХО (посетителю ничего не показываем):
+   * не нашёл — сигнал «карта устарела», нашёл — «найдено» (Ш4 (4), голос с
+   * порогом на сервере). Ответ «сообщение подделано страницей» не опасен —
+   * только по элементу, который мы сами просили, и один раз на просьбу.
    */
   private async highlightResult(elementId: string, found: boolean) {
     if (!this.highlightAsked.has(elementId)) return;
     const pageUrl = this.highlightAsked.get(elementId) ?? null;
     this.highlightAsked.delete(elementId);
-    if (found || !pageUrl) return;
+    if (!pageUrl) return;
     try {
-      await this.api('POST', '/widget/v1/highlight-miss', {
-        elementId,
-        pageUrl,
-      });
+      await this.api(
+        'POST',
+        found ? '/widget/v1/highlight-seen' : '/widget/v1/highlight-miss',
+        { elementId, pageUrl }
+      );
     } catch {
       /* сигнал не дошёл — не беда посетителю */
     }

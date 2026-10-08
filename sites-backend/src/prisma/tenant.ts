@@ -173,6 +173,9 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteVoiceMapVersion: 'accountId',
   AssistSiteVoiceMapChange: 'accountId',
   AssistSiteVoiceMapEditorSession: 'accountId',
+  // Заход 9: отчёт для разработчика — ссылку по хешу токена находит
+  // системное чтение (кабинета в запросе нет), дальше — клиент тенанта.
+  AssistSiteVoiceMapDevReport: 'accountId',
   // Э3-бис: аналитика с ИИ — разметка диалогов, расход бюджета аналитики,
   // калибровка score, выводы недели, эксперименты, свёртка поведения —
   // строки кабинета (составные FK (siteId|conversationId, accountId)).

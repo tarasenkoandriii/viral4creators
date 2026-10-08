@@ -17,13 +17,16 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import { ASSIST_PLANS, type AssistPlanId } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
+import { notifyLangOf } from '../../assist-knowledge-core/notify';
 import type { AccountMembership } from '../../site-core/account/roles';
 import { effectiveAnalyticsConfig } from '../analytics-config';
 import { analyticsError, notFoundSite } from '../analytics-errors';
+import { behaviorSampleRate } from '../public/ai-intake.service';
 import { parseStatsQuery } from '../stats.service';
 import { dayRangeUtc, siteTz, validDay } from '../site-time';
 import { analyticsModel } from './ai-env';
 import { AnalyticsBudget } from './analytics-budget';
+import { insightTextFor, type InsightLang } from './findings';
 import { RUN_CODE } from './insights.service';
 import { FAILURE_REASONS, INTENTS, OUTCOMES, STAGES } from './label-schema';
 
@@ -505,10 +508,29 @@ export class AiCabinetService {
     return { ok: true, humanOverride: empty ? null : next };
   }
 
+  /**
+   * Язык читателя выводов (заход 9, Р-З9-7): `lang` запроса (uk|ru|en) или
+   * язык его Telegram (`assist_bot_users.languageCode`), иначе uk.
+   */
+  private async readerLang(
+    m: AccountMembership,
+    lang: unknown,
+  ): Promise<InsightLang> {
+    if (lang === 'uk' || lang === 'ru' || lang === 'en') return lang;
+    const u = await this.sitesDb
+      .system('выводы недели: язык читателя (assist_bot_users)')
+      .assistBotUser.findUnique({
+        where: { telegramId: m.telegramId },
+        select: { languageCode: true },
+      });
+    return notifyLangOf(u?.languageCode);
+  }
+
   async insights(
     m: AccountMembership,
     siteId: string,
     week: unknown,
+    lang?: unknown,
   ): Promise<{
     weeks: string[];
     weekStart: string | null;
@@ -541,6 +563,7 @@ export class AiCabinetService {
       : [];
     const rank: Record<string, number> = { high: 0, medium: 1, low: 2 };
     const model = analyticsModel(this.env);
+    const reader = await this.readerLang(m, lang);
     return {
       weeks,
       weekStart,
@@ -551,8 +574,11 @@ export class AiCabinetService {
           code: r.code,
           impact: r.impact,
           finding: r.finding as Record<string, unknown>,
-          text: (r.text as InsightView['text']) ?? null,
-          textSkipped: r.textSkipped,
+          // Текст модели — на языке читателя; нет такого перевода — сухая
+          // строка на его языке (TMA), причина `lang`.
+          text: insightTextFor(r.text, reader),
+          textSkipped:
+            r.text && !insightTextFor(r.text, reader) ? 'lang' : r.textSkipped,
           status: r.status,
           doneAt: r.doneAt ? r.doneAt.toISOString() : null,
           followUp: r.followUp ?? null,
@@ -625,7 +651,8 @@ export class AiCabinetService {
   ): Promise<{
     enabled: boolean;
     reason: 'plan' | 'settings' | null;
-    quota: { used: number; limit: number };
+    /** sampleRate (заход 9): 1 — в квоте; < 1 — сверх неё выборка; 0 — потолок. */
+    quota: { used: number; limit: number; sampleRate: number };
     pages: BehaviorPageView[];
     totalViews: number;
   }> {
@@ -718,7 +745,14 @@ export class AiCabinetService {
       enabled,
       reason:
         plan.behaviorViewsPerMonth <= 0 ? 'plan' : enabled ? null : 'settings',
-      quota: { used: Number(u?.n ?? 0), limit: plan.behaviorViewsPerMonth },
+      quota: {
+        used: Number(u?.n ?? 0),
+        limit: plan.behaviorViewsPerMonth,
+        sampleRate: behaviorSampleRate(
+          Number(u?.n ?? 0),
+          plan.behaviorViewsPerMonth,
+        ),
+      },
       pages,
       totalViews: pages.reduce((sum, p) => sum + p.views, 0),
     };

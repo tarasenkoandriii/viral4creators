@@ -6,6 +6,8 @@
  * только если владелец включил `statsPerEmployee` (тогда у сотрудника в
  * чате плашка прозрачности). Разметка диалогов ИИ, выводы недели и экспорт
  * «Админки» — хвост (assist_admin_conversation_labels/…_insights).
+ * Заход 9: блок «Действия» — доля «Да», `unknown`, компенсации и метрики
+ * монитора §5-бис.15 п.12 агрегатами предложений на лету.
  */
 import { Injectable } from '@nestjs/common';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -24,6 +26,153 @@ export interface AdminStatsView {
   byRole: Array<{ role: string; conversations: number; questions: number }>;
   /** Только при `statsPerEmployee` (§5-тер.13), иначе null. */
   byEmployee: Array<{ employee: string; questions: number }> | null;
+  /** Э8-хвост (6): действия и метрики монитора §5-бис.15 п.12 (на лету). */
+  actions: AdminActionStats;
+}
+
+/**
+ * Действия «Админки» за период (Э8-хвост (6); ТЗ §5-бис.15 п.12) — агрегаты
+ * предложений на лету, без своих таблиц:
+ *  - доля «Да» среди решённых карточек (Да / (Да + Нет + истекло));
+ *  - исходы исполнения и доля `unknown` среди исполненных;
+ *  - цепочки «со следами после сбоя» (`unknown` / сбой компенсации);
+ *  - компенсации: предложено, принято «Да», успешность; тревога «разметка
+ *    отмены устарела» — успешность < 80% на ≥ 10 попытках за 24 ч (без
+ *    деградации, только сигнал владельцу в статистике).
+ */
+export interface AdminActionStats {
+  proposed: number;
+  confirmed: number;
+  rejected: number;
+  expired: number;
+  /** null — решённых карточек нет. */
+  yesShare: number | null;
+  done: number;
+  failed: number;
+  unknown: number;
+  /** null — исполнений нет. */
+  unknownShare: number | null;
+  unrequested: number;
+  chainsWithTraces: number;
+  compensations: {
+    proposed: number;
+    confirmed: number;
+    done: number;
+    failed: number;
+    unknown: number;
+    /** null — попыток нет. */
+    successRate: number | null;
+    /** Успешность < 80% на ≥ 10 попытках за последние 24 ч. */
+    alert: boolean;
+  };
+  byOperation: Array<{
+    operation: string;
+    proposed: number;
+    confirmed: number;
+    done: number;
+    unknown: number;
+  }>;
+}
+
+/** Порог тревоги компенсаций (ТЗ §5-бис.15 п.12). */
+export const COMPENSATION_ALERT = {
+  minAttempts: 10,
+  minSuccess: 0.8,
+  windowMs: 24 * 60 * 60 * 1000,
+} as const;
+
+export interface ActionStatRow {
+  operation: string;
+  status: string;
+  attempts: number;
+  compensationOf: string | null;
+  chainStatus: string | null;
+  unrequested: boolean;
+  createdAt: Date;
+  executedAt: Date | null;
+}
+
+const EXECUTED = new Set(['executing', 'done', 'failed', 'unknown']);
+
+/** Чистый расчёт (юнит-тест): строки предложений → агрегаты. */
+export function actionStats(
+  rows: ActionStatRow[],
+  now: Date,
+): AdminActionStats {
+  // «Да» было: попытка исполнения (attempts > 0) или статус исполнения.
+  const yes = (r: ActionStatRow) => r.attempts > 0 || EXECUTED.has(r.status);
+  // Исход неизвестен: `unknown`, а также `expired` после «Да» (повтор закрыт
+  // по сроку Р-З9-21 или остановкой мемо) — исход мог примениться.
+  const unk = (r: ActionStatRow) =>
+    r.status === 'unknown' || (r.status === 'expired' && r.attempts > 0);
+  const count = (f: (r: ActionStatRow) => boolean) => rows.filter(f).length;
+  const confirmed = count(yes);
+  const rejected = count((r) => r.status === 'rejected');
+  const expired = count((r) => r.status === 'expired' && !yes(r));
+  const done = count((r) => r.status === 'done');
+  const failed = count((r) => r.status === 'failed');
+  const unknown = count(unk);
+  const executed = done + failed + unknown;
+  const comp = rows.filter((r) => r.compensationOf !== null);
+  const cDone = comp.filter((r) => r.status === 'done').length;
+  const cFailed = comp.filter((r) => r.status === 'failed').length;
+  const cUnknown = comp.filter(unk).length;
+  const cAttempts = cDone + cFailed + cUnknown;
+  const recent = comp.filter(
+    (r) =>
+      now.getTime() - (r.executedAt ?? r.createdAt).getTime() <=
+        COMPENSATION_ALERT.windowMs &&
+      (r.status === 'done' || r.status === 'failed' || unk(r)),
+  );
+  const recentOk = recent.filter((r) => r.status === 'done').length;
+  const ops = new Map<string, AdminActionStats['byOperation'][number]>();
+  for (const r of rows) {
+    const o = ops.get(r.operation) ?? {
+      operation: r.operation,
+      proposed: 0,
+      confirmed: 0,
+      done: 0,
+      unknown: 0,
+    };
+    o.proposed++;
+    if (yes(r)) o.confirmed++;
+    if (r.status === 'done') o.done++;
+    if (unk(r)) o.unknown++;
+    ops.set(r.operation, o);
+  }
+  const decided = confirmed + rejected + expired;
+  return {
+    proposed: rows.length,
+    confirmed,
+    rejected,
+    expired,
+    yesShare: decided ? confirmed / decided : null,
+    done,
+    failed,
+    unknown,
+    unknownShare: executed ? unknown / executed : null,
+    unrequested: count((r) => r.unrequested),
+    chainsWithTraces: count(
+      (r) =>
+        r.compensationOf === null &&
+        (r.chainStatus === 'unknown' ||
+          r.chainStatus === 'compensation_failed'),
+    ),
+    compensations: {
+      proposed: comp.length,
+      confirmed: comp.filter(yes).length,
+      done: cDone,
+      failed: cFailed,
+      unknown: cUnknown,
+      successRate: cAttempts ? cDone / cAttempts : null,
+      alert:
+        recent.length >= COMPENSATION_ALERT.minAttempts &&
+        recentOk / recent.length < COMPENSATION_ALERT.minSuccess,
+    },
+    byOperation: [...ops.values()]
+      .sort((a, b) => b.proposed - a.proposed)
+      .slice(0, 20),
+  };
 }
 
 @Injectable()
@@ -90,6 +239,22 @@ export class AdminStatsService {
       else t.failed += l._count._all;
       tools.set(l.operation, t);
     }
+    // Э8-хвост (6): действия — по предложениям периода (окно тревоги
+    // компенсаций — 24 ч, внутри любого периода экрана).
+    const proposals = await db.assistAdminActionProposal.findMany({
+      where: { siteId, createdAt: { gte: since } },
+      select: {
+        operation: true,
+        status: true,
+        attempts: true,
+        compensationOf: true,
+        chainStatus: true,
+        unrequested: true,
+        createdAt: true,
+        executedAt: true,
+      },
+      take: 50_000,
+    });
     const convRole = new Map(convs.map((c) => [c.id, c.employeeRole ?? '—']));
     const convEmp = new Map(convs.map((c) => [c.id, c.employeeRef]));
     const roles = new Map<
@@ -135,6 +300,7 @@ export class AdminStatsService {
             questions: n,
           }))
         : null,
+      actions: actionStats(proposals, now),
     };
   }
 }

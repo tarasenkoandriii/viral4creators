@@ -242,6 +242,12 @@ function fresh() {
       elementId: string;
       pageUrl: string;
     }>,
+    // Ш4 (4): сигналы «элемент найден» подсветкой.
+    highlightSeen: [] as Array<{
+      pk: string;
+      elementId: string;
+      pageUrl: string;
+    }>,
     // Э6-бис
     vc: freshVcLog(),
     /** Т-1 способ 2: отдавать тестовую сборку voice.js (хук WebAudio). */
@@ -1111,7 +1117,10 @@ async function api(
       { 'Cache-Control': 'no-store' }
     );
   }
-  if (req.method === 'POST' && p === '/widget/v1/highlight-miss') {
+  if (
+    req.method === 'POST' &&
+    (p === '/widget/v1/highlight-miss' || p === '/widget/v1/highlight-seen')
+  ) {
     const b = await readBody(req);
     if (
       typeof b.elementId !== 'string' ||
@@ -1119,7 +1128,10 @@ async function api(
       typeof b.pageUrl !== 'string'
     )
       return fail(res, 400, 'BAD_REQUEST');
-    M.highlightMisses.push({
+    (p === '/widget/v1/highlight-seen'
+      ? M.highlightSeen
+      : M.highlightMisses
+    ).push({
       pk: t.pk,
       elementId: b.elementId,
       pageUrl: b.pageUrl,
@@ -1653,6 +1665,7 @@ async function control(
         videoLinks: M.videoLinks,
         videoRedirects: M.videoRedirects,
         highlightMisses: M.highlightMisses,
+        highlightSeen: M.highlightSeen,
         vc: M.vc,
       });
   }

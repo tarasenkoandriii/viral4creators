@@ -226,6 +226,8 @@ export interface ExperimentResultView {
   p: number | null;
   liftRel: number | null;
   verdict: 'significant' | 'not_significant' | 'insufficient_sample';
+  /** Срабатывания цели за срок: всего и «со страницы» (заход 9). */
+  goalTrust: { total: number; page: number; pageShare: number | null } | null;
 }
 
 export interface ExperimentView {
@@ -274,7 +276,8 @@ export interface BehaviorPage {
 export interface BehaviorView {
   enabled: boolean;
   reason: 'plan' | 'settings' | null;
-  quota: { used: number; limit: number };
+  /** sampleRate: 1 — в квоте; < 1 — выборка сверх неё; 0 — потолок (заход 9). */
+  quota: { used: number; limit: number; sampleRate: number };
   pages: BehaviorPage[];
   totalViews: number;
 }

@@ -18,7 +18,10 @@ import {
   adminNeverStep,
   adminNeverTarget,
   adminMemoUiProblem,
+  adminMarkupFragment,
   adminRulesOf,
+  apiAskText,
+  apiByPlanTargets,
   apiPreference,
   checkAdminPlan,
   compileAdminMemoUi,
@@ -588,5 +591,325 @@ describe('билет голоса и запись «Админки»', () => {
       ),
     ).toBe('audio/webm');
     expect(sniffAdminAudio(Buffer.from('<html>evil</html>xx'))).toBeNull();
+  });
+});
+
+describe('Р-З9-23: предпочтение API по целям плана (аудит Э6-бис (б) (9))', () => {
+  const OPS: ApiCatalogOp[] = [
+    {
+      rowId: 'r1',
+      key: 'shop.updateOrderStatus',
+      operationId: 'updateOrderStatus',
+      summary: 'Змінити статус замовлення',
+      kind: 'write',
+      params: [
+        { name: 'id', in: 'path' },
+        { name: 'status', in: 'body' },
+      ],
+    },
+    {
+      rowId: 'r2',
+      key: 'shop.addComment',
+      operationId: 'addComment',
+      summary: null,
+      kind: 'write',
+      params: [
+        { name: 'id', in: 'path' },
+        { name: 'text', in: 'body', description: 'Коментар до замовлення' },
+      ],
+    },
+    {
+      rowId: 'r3',
+      key: 'shop.cancelOrder',
+      operationId: 'cancelOrder',
+      summary: 'Скасувати замовлення',
+      kind: 'danger',
+      params: [
+        { name: 'id', in: 'path' },
+        { name: 'reason', in: 'body', description: 'Коментар' },
+      ],
+    },
+  ];
+  const step = (
+    kind: string,
+    text: string,
+    undo: string,
+    extra: Record<string, unknown> = {},
+  ) =>
+    ({
+      kind,
+      target: {
+        ref: 'e1',
+        text,
+        assistId: null,
+        role: null,
+        selector: null,
+        href: null,
+      },
+      risk: undo === 'irrev' ? 'confirm' : 'auto',
+      undo,
+      value: kind === 'click' ? null : 'x',
+      ...extra,
+    }) as never;
+  const save = step('click', 'Зберегти', 'irrev');
+
+  it('поле «Статус» + «Зберегти» → `status` (латиница заимствования); «Коментар» — по описанию параметра', () => {
+    expect(
+      apiByPlanTargets(
+        [step('select', 'Статус', 'local'), save],
+        OPS,
+        'вибери статус відправлено і збережи',
+      ),
+    ).toMatchObject({ kind: 'api', op: { key: 'shop.updateOrderStatus' } });
+    expect(
+      apiByPlanTargets(
+        [step('fill', 'Коментар', 'local'), save],
+        OPS,
+        'заповни коментар і збережи',
+      ),
+    ).toMatchObject({ kind: 'api', op: { key: 'shop.addComment' } });
+  });
+
+  it('не по целям: поле не покрыто, нет «Сохранить», поле без «Сохранить» (irrev), не исполнимое, danger-операция, без параметров', () => {
+    const t = 'збережи';
+    // Два поля, операция покрывает одно — клики.
+    expect(
+      apiByPlanTargets(
+        [
+          step('select', 'Статус', 'local'),
+          step('fill', 'Трек-номер', 'local'),
+          save,
+        ],
+        OPS,
+        t,
+      ),
+    ).toBeNull();
+    expect(
+      apiByPlanTargets([step('select', 'Статус', 'local')], OPS, t),
+    ).toBeNull();
+    expect(apiByPlanTargets([save], OPS, t)).toBeNull();
+    expect(
+      apiByPlanTargets([step('select', 'Статус', 'irrev'), save], OPS, t),
+    ).toBeNull();
+    expect(
+      apiByPlanTargets(
+        [
+          step('select', 'Статус', 'local'),
+          step('click', 'Зберегти', 'irrev', { risk: 'manual' }),
+        ],
+        OPS,
+        t,
+      ),
+    ).toBeNull();
+    // «Причина» отмены — только у danger-операции: не в неё.
+    expect(
+      apiByPlanTargets([step('fill', 'Коментар', 'local'), save], [OPS[2]], t),
+    ).toBeNull();
+    expect(
+      apiByPlanTargets(
+        [step('select', 'Статус', 'local'), save],
+        [{ ...OPS[0], params: undefined }],
+        t,
+      ),
+    ).toBeNull();
+  });
+
+  it('две годные операции — по словам команды; ничья — api_any', () => {
+    const twin: ApiCatalogOp = {
+      ...OPS[0],
+      rowId: 'r9',
+      key: 'shop.setPaymentStatus',
+      operationId: 'setPaymentStatus',
+      summary: 'Статус оплати',
+    };
+    expect(
+      apiByPlanTargets(
+        [step('select', 'Статус', 'local'), save],
+        [OPS[0], twin],
+        'вибери статус оплати сплачено і збережи',
+      ),
+    ).toMatchObject({ kind: 'api', op: { key: 'shop.setPaymentStatus' } });
+    expect(
+      apiByPlanTargets(
+        [step('select', 'Статус', 'local'), save],
+        [OPS[0], twin],
+        'вибери статус і збережи',
+      ),
+    ).toEqual({ kind: 'api_any' });
+  });
+
+  it('вопрос в чат: номер объекта со страницы, если не назван; только цифры', () => {
+    expect(apiAskText('вибери статус Відправлено', '/admin/orders/1042')).toBe(
+      'вибери статус Відправлено (№ 1042)',
+    );
+    expect(apiAskText('статус 1042 відправлено', '/admin/orders/1042')).toBe(
+      'статус 1042 відправлено',
+    );
+    expect(apiAskText('збережи', '/admin/settings')).toBe('збережи');
+    // Только последний сегмент целиком из цифр, не дата.
+    expect(apiAskText('збережи', '/admin/orders/1042/')).toBe(
+      'збережи (№ 1042)',
+    );
+    expect(apiAskText('збережи', '/admin/orders/1042/edit')).toBe('збережи');
+    expect(apiAskText('збережи', '/admin/ignore-1042-x/99999a')).toBe(
+      'збережи',
+    );
+    expect(apiAskText('збережи', '/admin/reports/2026')).toBe('збережи');
+    expect(apiAskText('збережи', '/admin/day/20261008')).toBe('збережи');
+    expect(apiAskText('збережи', '/admin/day/2026-10-08')).toBe('збережи');
+    expect(apiAskText('збережи', '/admin/orders/20261399')).toBe(
+      'збережи (№ 20261399)',
+    );
+  });
+
+  it('аудит пакета F (P2-3): ложные совпадения поля с параметром — нет', () => {
+    const op = (
+      operationId: string,
+      params: ApiCatalogOp['params'],
+      summary: string | null = null,
+    ): ApiCatalogOp => ({
+      rowId: operationId,
+      key: `shop.${operationId}`,
+      operationId,
+      summary,
+      kind: 'write',
+      params,
+    });
+    const plan = (label: string, assistId: string | null = null) => [
+      {
+        ...(step('fill', label, 'local') as object),
+        target: {
+          ref: 'e1',
+          text: label,
+          assistId,
+          role: null,
+          selector: null,
+          href: null,
+        },
+      } as never,
+      save,
+    ];
+    // (1) «Коментар до замовлення» — summary операции статуса не в счёт.
+    expect(
+      apiByPlanTargets(
+        plan('Коментар до замовлення'),
+        [
+          op(
+            'updateOrderStatus',
+            [
+              { name: 'id', in: 'path' },
+              { name: 'status', in: 'body' },
+            ],
+            'Змінити статус замовлення',
+          ),
+        ],
+        'заповни коментар і збережи',
+      ),
+    ).toBeNull();
+    // (2) data-assist-id «order-note» → `orderStatus`: «order» — сущность.
+    expect(
+      apiByPlanTargets(
+        plan('', 'order-note'),
+        [op('updateOrder', [{ name: 'orderStatus', in: 'body' }])],
+        'збережи',
+      ),
+    ).toBeNull();
+    // (3) «Note» → `notifyCustomer` по префиксу — нет (≤ 5 букв — целиком).
+    expect(
+      apiByPlanTargets(
+        plan('Note'),
+        [op('updateOrder', [{ name: 'notifyCustomer', in: 'body' }])],
+        'save',
+      ),
+    ).toBeNull();
+    expect(
+      apiByPlanTargets(
+        plan('Notes'),
+        [op('updateOrder', [{ name: 'note', in: 'body' }])],
+        'save',
+      ),
+    ).toBeNull();
+    // (4) «Order ID» → query/body `orderId`, `order_id`, `id` — идентификаторы мимо.
+    for (const name of ['orderId', 'order_id', 'id', 'ORDER_ID'])
+      expect(
+        apiByPlanTargets(
+          plan('Order ID'),
+          [op('updateOrder', [{ name, in: 'query' }])],
+          'save',
+        ),
+      ).toBeNull();
+    // Описание параметра со словом-сущностью: «Замовлення» ↔ описание
+    // «Номер замовлення» у `updateOrder` с параметром `ref` — нет только
+    // когда слово есть в operationId; англ. «Order» — сущность.
+    expect(
+      apiByPlanTargets(
+        plan('Order'),
+        [
+          op('updateOrder', [
+            { name: 'ref', in: 'body', description: 'order reference' },
+          ]),
+        ],
+        'save',
+      ),
+    ).toBeNull();
+    // Положительные остаются: голова имени, описание, латиница.
+    expect(
+      apiByPlanTargets(
+        plan('Order status'),
+        [op('updateOrderStatus', [{ name: 'orderStatus', in: 'body' }])],
+        'save',
+      ),
+    ).toMatchObject({ kind: 'api' });
+    expect(
+      apiByPlanTargets(
+        plan('Note'),
+        [op('updateOrder', [{ name: 'customerNote', in: 'body' }])],
+        'save',
+      ),
+    ).toMatchObject({ kind: 'api' });
+    expect(
+      apiByPlanTargets(
+        plan('Оплачено'),
+        [
+          op('updateOrder', [
+            { name: 'paid', in: 'body', description: 'Оплачено' },
+          ]),
+        ],
+        'save',
+      ),
+    ).toMatchObject({ kind: 'api' });
+  });
+
+  it('фрагмент разметки для разработчика: «заборонити» владельца, опасные кнопки, ПД-списки; без HTML-инъекции в комментариях', () => {
+    const f = adminMarkupFragment({
+      suspicious: [
+        {
+          key: 'k1',
+          tag: 'button',
+          label: 'Архів',
+          selector: 'form#o > button',
+        },
+        { key: 'k2', tag: 'a', label: 'Деталі', selector: 'a.more' },
+        { key: 'k3', tag: 'div onclick', label: '-->x<script>', selector: '' },
+      ],
+      reviewed: { k1: 'deny', k2: 'safe', k3: 'deny' },
+      dangerButtons: [{ text: 'Видалити --> <b>', kind: 'удаление' }],
+      lang: 'uk',
+    });
+    expect(f).toContain(
+      '<!-- form#o > button --> <button data-assist="never">',
+    );
+    expect(f).not.toContain('a.more');
+    expect(f).toContain('<button data-assist="never">');
+    expect(f).toContain('data-assist="never">…</div>');
+    expect(f).not.toMatch(/<script|<b>|-->x/);
+    expect(
+      adminMarkupFragment({
+        suspicious: [],
+        reviewed: {},
+        dangerButtons: [],
+        lang: 'en',
+      }),
+    ).toContain('data-assist-id="save"');
   });
 });

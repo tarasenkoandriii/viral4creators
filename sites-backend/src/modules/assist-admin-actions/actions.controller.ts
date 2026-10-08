@@ -86,6 +86,7 @@ export class AdminActionsController {
     await this.mode.requireSite(m.accountId, id);
     return this.proposals.listForOwner(m.accountId, id, {
       chain: q.chain ?? null,
+      lang: q.lang,
     });
   }
 
@@ -112,14 +113,18 @@ export class AdminActionsController {
     @Res() res: Response,
   ) {
     await this.mode.requireSite(m.accountId, id);
-    const csv = await this.log.exportCsv(m.accountId, id);
-    // Файл как есть (мимо конверта ответа API), без кэша.
+    const { csv, head } = await this.log.exportCsv(m.accountId, id);
+    // Файл как есть (мимо конверта ответа API), без кэша. Р-З9-20: голова
+    // цепочки (последняя строка файла) — и заголовком X-Chain-Head.
     res
       .status(200)
       .set({
         'Content-Type': 'text/csv; charset=utf-8',
         'Cache-Control': 'no-store',
         'Content-Disposition': 'attachment; filename="admin-action-log.csv"',
+        'X-Chain-Head': head
+          ? `hash=${head.hash}; id=${head.id}; at=${head.at}`
+          : 'empty',
       })
       .send(csv);
   }

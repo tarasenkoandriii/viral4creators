@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useKit } from '../../kit';
 import { Alert, Badge, Button, Card, inputClass } from '../../kit/ui';
-import type { Proposal } from '../../lib/admin-actions-api';
+import { type Proposal, retryExpired } from '../../lib/admin-actions-api';
 import { useAssist } from '../../lib/assist-context';
 import { useErrorText } from '../../lib/use-error-text';
 import { useActionsTexts } from '../../lib/admin-mode-view';
@@ -98,6 +98,7 @@ export function ProposalCard({
           ? ` · ${t.card.chain[p.chainStatus] ?? p.chainStatus}`
           : ''}
       </div>
+      {retryExpired(p) && <Alert tone="warning">{t.card.retryExpired}</Alert>}
       {err && <Alert tone="danger">{err}</Alert>}
       {checked && <div className="text-xs">{checked}</div>}
       {p.status === 'pending' && (

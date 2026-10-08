@@ -124,6 +124,10 @@ interface Vt {
     planId: string;
     command: string;
     steps: string[];
+    /** Шаг исполнимый (`auto`/`confirm`) — его «вірно» считает сервер. */
+    ex?: boolean[];
+    /** Отметка владельца по КАЖДОМУ шагу (ТЗ §5-бис.13 п.4): 1/0/нет. */
+    m?: Array<1 | 0 | null>;
     ok: number | null;
   }>;
   submits: number;
@@ -248,9 +252,14 @@ export function start(h: VcHost): VcApi {
     };
     if (o.kind === 'api' && cmdText && !handled) {
       // Изменение с операцией API — не кликами: та же команда в чат, там
-      // карточка Э8 «было → станет» с «Да» (Р-Э6б-5). И после согласия.
+      // карточка Э8 «было → станет» с «Да» (Р-Э6б-5, по целям плана —
+      // Р-З9-23). Вопрос — от сервера (команда + номер объекта страницы).
       handled = true;
-      const q = cmdText;
+      const a = o.api as { ask?: unknown } | null | undefined;
+      const q =
+        a && typeof a.ask === 'string' && a.ask && a.ask.length <= 700
+          ? a.ask
+          : cmdText;
       setTimeout(() => h.ask(q), 0);
     }
     if (o.kind === 'api' || o.kind === 'memo') out.kind = 'not_command';
@@ -307,7 +316,15 @@ export function start(h: VcHost): VcApi {
     api,
     toParent(m: FrameMessage) {
       const raw = m as unknown as Record<string, unknown>;
-      h.post(raw.type === 'ui-snap' ? { ...raw, rows } : raw);
+      // План мастера (до отчёта) — с флагом `vt`: только его исполнение
+      // страница глушит на рабочем хосте (после мастера — обычная работа).
+      h.post(
+        raw.type === 'ui-snap'
+          ? { ...raw, rows }
+          : raw.type === 'ui-run' && vt && !vt.result
+            ? { ...raw, vt: true }
+            : raw
+      );
     },
     conversationId: () => null,
     setConversation: () => undefined,
@@ -690,13 +707,14 @@ export function start(h: VcHost): VcApi {
       steps: UiStep[];
     } | null;
     if (!v || !v.planId || !vt) return;
+    const st = v.steps.filter((s) => s.target);
     vt.dry.push({
       planId: v.planId,
       command,
-      steps: v.steps
-        .filter((s) => s.target)
-        .map((s) => (s.target ? s.target.text : '')),
-      ok: null,
+      steps: st.map((s) => (s.target ? s.target.text : '')),
+      ex: st.map((s) => s.risk === 'auto' || s.risk === 'confirm'),
+      m: st.map(() => null),
+      ok: st.length ? null : 0,
     });
     saveVt();
     vtRender();
@@ -875,25 +893,45 @@ export function start(h: VcHost): VcApi {
       const d = v.dry.find((x) => x.command === c.text);
       const btns: HTMLElement[] = [div('wa-vc-t', c.text)];
       if (!d) btns.push(button(T.vtDry, 'wa-edit', () => void vtDry(c.text)));
-      else if (d.ok === null)
+      else if (d.ok !== null)
         btns.push(
-          div('wa-vc-t', d.steps.join(' → ')),
-          button(T.vtDryOk, 'wa-yes', () => {
-            d.ok = d.steps.length;
-            saveVt();
-            vtRender();
-          }),
-          button(T.vtDryBad, 'wa-no', () => {
-            d.ok = 0;
-            saveVt();
-            vtRender();
-          })
+          div(
+            'wa-vc-t',
+            fmt(T.vtDryOf, {
+              ok: d.ok,
+              // Как в отчёте TMA: из исполнимых шагов.
+              n: d.ex ? d.ex.filter(Boolean).length : d.steps.length,
+            })
+          )
         );
       if (c.safe)
         btns.push(
           button(T.vtSafeRun, 'wa-yes', () => void take(c.text, 'typed', null))
         );
       row(...btns);
+      // Сухой прогон: «вірно / не те» на КАЖДОМ шаге (§5-бис.13 п.4); итог —
+      // число верных исполнимых шагов, когда отмечены все.
+      if (d && d.ok === null) {
+        const m = d.m || d.steps.map(() => null);
+        const mark = (k: number, x: 1 | 0) => () => {
+          m[k] = x;
+          d.m = m;
+          if (m.every((y) => y !== null))
+            d.ok = m.filter((y, i) => y === 1 && (!d.ex || d.ex[i])).length;
+          saveVt();
+          vtRender();
+        };
+        d.steps.forEach((txt, k) =>
+          row(
+            div(
+              'wa-vc-t',
+              `${k + 1}. ${txt}${m[k] === null ? '' : m[k] ? ' — ✓' : ' — ✗'}`
+            ),
+            button(T.vtDryOk, 'wa-yes', mark(k, 1)),
+            button(T.vtDryBad, 'wa-no', mark(k, 0))
+          )
+        );
+      }
     }
     row(button(T.vtReport, 'wa-yes', () => void vtReport()));
   }

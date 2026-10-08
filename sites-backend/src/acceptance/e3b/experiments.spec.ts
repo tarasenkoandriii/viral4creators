@@ -408,6 +408,22 @@ describeDb('Приёмка Э3-бис (в): согласие и эксперим
     const [mid] = await st.experiments.list(owner, s.siteId);
     expect(mid).toMatchObject({ status: 'running', result: null });
     expect(mid.units.a + mid.units.b).toBe(30);
+    // Заход 9: подтверждённое сервером срабатывание (вебхук s2s) за срок.
+    const g = await st.owner.assistSiteGoal.findFirstOrThrow({
+      where: { siteId: s.siteId, key: 'order' },
+    });
+    await st.owner.assistSiteGoalEvent.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        goalId: g.id,
+        occurredAt: new Date(Date.now() + 60_000),
+        source: 's2s',
+        trust: 'verified',
+        attribution: 'unknown',
+        orderId: `trust-${e.id}`,
+      },
+    });
     // Горизонт.
     await st.experiments.tick(
       new Date(Date.now() + 15 * 86_400_000),
@@ -415,6 +431,12 @@ describeDb('Приёмка Э3-бис (в): согласие и эксперим
     );
     const [done] = await st.experiments.list(owner, s.siteId);
     expect(done.status).toBe('done');
+    // Заход 9: доля срабатываний цели «со страницы» за срок (1 из 2).
+    expect(done.result!.goalTrust).toEqual({
+      total: 2,
+      page: 1,
+      pageShare: 0.5,
+    });
     expect(done.result).toMatchObject({
       nA: expect.any(Number),
       nB: expect.any(Number),
@@ -543,6 +565,50 @@ describeDb('Приёмка Э3-бис (в): согласие и эксперим
     });
     expect(left).toHaveLength(1);
     expect(left[0].unitHash).not.toBe(vh);
+  });
+
+  it('заход 9: forget с ключом визита удаляет и единицу без диалога (holdout a, не писал); чужой/битый ключ — ничего', async () => {
+    const s = await site('business');
+    await trafficFor(s, 8000, 1600);
+    const e = await st.experiments.start(
+      await st.member(s, 'owner'),
+      s.siteId,
+      { kind: 'holdout', goalKey: 'order' },
+    );
+    const mine = visitKey();
+    const other = visitKey();
+    for (const v of [mine, other]) {
+      await st.ai.enroll({
+        site: await row(s),
+        experimentId: e.id,
+        v,
+        now: new Date(),
+      });
+    }
+    const units = () =>
+      st.owner.assistSiteExperimentUnit.findMany({
+        where: { experimentId: e.id },
+        select: { unitHash: true },
+      });
+    expect(await units()).toHaveLength(2);
+    const state = new WidgetStateService(
+      st.chat.publicDb,
+      {} as never,
+      {} as never,
+      {} as never,
+      { enqueue: async () => undefined } as never,
+    );
+    // Посетитель открыл чат (сессия есть), но не писал — диалога нет.
+    const ctx = {
+      site: s.ctx(),
+      visitor: { visitorId: `v-${randomUUID()}`, ipHash: 'ip' },
+    } as unknown as VisitorContext;
+    expect((await state.forget(ctx, 'not a key')).conversationsDeleted).toBe(0);
+    expect(await units()).toHaveLength(2);
+    await state.forget(ctx, mine);
+    expect((await units()).map((u) => u.unitHash)).toEqual([
+      visitHashOf(s.siteId, `salt-${s.siteId}`, other),
+    ]);
   });
 
   it('конфиг загрузчика: без связанного режима — нет поля; поведение — только при настройке и тарифе', async () => {

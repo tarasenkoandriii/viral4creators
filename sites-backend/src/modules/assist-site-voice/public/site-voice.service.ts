@@ -63,6 +63,43 @@ import { issueVoiceTicket } from './voice-ticket';
 
 export const STT_PRICING_MODEL = 'soniox-stt-async';
 
+/** Счётчики распознавания для монитора Т-4 (`vc-stt`, час UTC). */
+export const STT_COUNTER_SCOPE = 'vc-stt';
+
+/**
+ * Заголовок языка интерфейса виджета на `POST /widget/v1/voice` (заход 9,
+ * аудит P2-2): один источник языка для «расслышал» и «не расслышал».
+ */
+export const STT_UI_LANG_HEADER = 'X-Assist-Lang';
+
+/** Язык интерфейса из заголовка: только uk/ru/en, иначе null. */
+export function uiLangOf(v: unknown): 'uk' | 'ru' | 'en' | null {
+  return v === 'uk' || v === 'ru' || v === 'en' ? v : null;
+}
+
+/**
+ * Язык счётчика распознавания (аудит P2-2): язык ИНТЕРФЕЙСА виджета из
+ * заголовка — и для «расслышал», и для «не расслышал» (один источник).
+ * Старый бандл без заголовка: «не расслышал» — ключ `any` (язык неизвестен,
+ * из тревоги по языку исключён), «расслышал» — язык распознавателя
+ * (`uk-UA` → `uk`), иначе первый язык сайта, иначе `uk`.
+ */
+export function sttLang(
+  ui: string | null | undefined,
+  detected: string | null | undefined,
+  heard: boolean,
+  hints: readonly string[],
+): string {
+  const u = uiLangOf(ui);
+  if (u) return u;
+  if (!heard) return 'any';
+  const norm = (v: string | null | undefined) => {
+    const b = (v ?? '').toLowerCase().split(/[-_]/)[0];
+    return /^[a-z]{2,3}$/.test(b) && b !== 'any' ? b : null;
+  };
+  return norm(detected) ?? norm(hints[0]) ?? 'uk';
+}
+
 export interface VoiceCtx {
   site: WidgetSiteContext;
   visitor: WidgetVisitor;
@@ -125,6 +162,8 @@ export class SiteVoiceService {
     ctx: VoiceCtx,
     audio: Buffer,
     contentType: unknown,
+    /** (заход 9) Язык интерфейса виджета (`X-Assist-Lang`); нет — старый бандл. */
+    uiLang: string | null = null,
   ): Promise<TranscribeResult> {
     const { site } = ctx;
     const now = this.now();
@@ -161,6 +200,7 @@ export class SiteVoiceService {
       }
       let actual = 0;
       let termsCount = 0;
+      let hints: string[] = [];
       let r: Awaited<ReturnType<SiteSonioxStt['transcribe']>>;
       try {
         // Подсказки распознаванию — только опубликованное ЭТОГО сайта
@@ -169,6 +209,7 @@ export class SiteVoiceService {
           this.siteLanguages(site),
           siteSttTerms(this.db, site.siteId),
         ]);
+        hints = languageHints;
         termsCount = terms.length;
         r = await this.stt.transcribe({
           audio,
@@ -187,6 +228,15 @@ export class SiteVoiceService {
       this.logger.log(
         `voice site=${site.siteId} bytes=${audio.length} s=${r.seconds} ok=${!!r.text} reason=${r.reason ?? '-'} terms=${termsCount}`,
       );
+      // (заход 9) Метрика Т-4 «не расслышал» по языкам (§5-бис.14).
+      const heard = !!r.text;
+      if (heard || r.reason === 'no_speech' || r.reason === 'empty')
+        await this.countStt(
+          site.siteId,
+          sttLang(uiLang, r.language, heard, hints),
+          heard,
+          now,
+        );
       if (!r.text) {
         return {
           ok: false,
@@ -215,6 +265,33 @@ export class SiteVoiceService {
     } finally {
       // Звук вопроса не живёт дольше запроса (Условия п.3.4, §6.3).
       audio.fill(0);
+    }
+  }
+
+  /**
+   * (заход 9) Счётчик распознавания сайта за час UTC (`assist_daily_counters`,
+   * scope `vc-stt`, ключ `<siteId>:<lang>:heard|not_heard`) — монитор Т-4
+   * считает «не расслышал > 30% по языку на ≥ 20 командах». Сбой записи
+   * ответ посетителю не ломает. Ни текста, ни звука — только число.
+   */
+  private async countStt(
+    siteId: string,
+    lang: string,
+    heard: boolean,
+    now: Date,
+  ): Promise<void> {
+    try {
+      await this.db.$executeRawUnsafe(
+        `INSERT INTO "sites"."assist_daily_counters" ("scope", "key", "day", "value", "updatedAt")
+         VALUES ($1, $2, $3, 1, now())
+         ON CONFLICT ("scope", "key", "day") DO UPDATE
+           SET "value" = "sites"."assist_daily_counters"."value" + 1, "updatedAt" = now()`,
+        STT_COUNTER_SCOPE,
+        `${siteId}:${lang}:${heard ? 'heard' : 'not_heard'}`,
+        now.toISOString().slice(0, 13),
+      );
+    } catch (e) {
+      this.logger.warn(`voice stt counter: ${(e as Error).name}`);
     }
   }
 

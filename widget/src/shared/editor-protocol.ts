@@ -103,7 +103,13 @@ export type ToPanel =
       options?: string[];
       /** Метка настоящего клика (случайная): только по ней — `perform`. */
       pid?: string | null;
+      /** (заход 9) `Shift`+клик — добавить к массовому выбору. */
+      multi?: boolean;
     }
+  /** (заход 9) Выбор рамкой (`Shift` + протянуть): элементы внутри рамки. */
+  | { type: 'picks'; items: Descriptor[] }
+  /** (заход 9) `/` на странице — поиск цели в панели. */
+  | { type: 'search' }
   | { type: 'snapshot'; id: number; snapshot: Snapshot }
   | {
       type: 'resolved';
@@ -275,6 +281,18 @@ export function parseToPanel(raw: unknown): ToPanel | null {
       };
     case 'route':
       return { type: 'route', path: str(raw.path, 300) ?? '/' };
+    case 'search':
+      return { type: 'search' };
+    case 'picks':
+      return Array.isArray(raw.items)
+        ? {
+            type: 'picks',
+            items: raw.items
+              .slice(0, 40)
+              .map(parseDescriptor)
+              .filter((d): d is Descriptor => !!d),
+          }
+        : null;
     case 'mode':
       return raw.mode === 'nav' || raw.mode === 'select'
         ? { type: 'mode', mode: raw.mode }
@@ -294,6 +312,7 @@ export function parseToPanel(raw: unknown): ToPanel | null {
         never: raw.never === true,
         fieldName: str(raw.fieldName, 64),
         pid: str(raw.pid, 16),
+        multi: raw.multi === true,
         options: Array.isArray(raw.options)
           ? raw.options
               .slice(0, 40)

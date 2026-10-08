@@ -12,7 +12,12 @@ import {
   extraAdminAncestors,
 } from '../../config/admin-env';
 import { AdminFrameController } from './admin-frame.controller';
-import { adminFrameCsp } from './admin-frame';
+import { WIDGET_DEFAULTS } from '../../config/assist-defaults';
+import {
+  ADMIN_FRAME_CACHE_SECONDS,
+  adminFrameCacheControl,
+  adminFrameCsp,
+} from './admin-frame';
 
 const NOW = new Date('2026-10-05T12:00:00Z');
 const verified = (host: string) => ({
@@ -92,6 +97,30 @@ describe('Ш6 — frame-ancestors «Админки» для TMA в Telegram Web'
     );
     expect(await c.ancestorsFor(`${WIDGET_PK_LIVE_PREFIX}v4c`, NOW)).toEqual(
       [],
+    );
+  });
+});
+
+describe('аудит Э7 (б), Р-З9-16 — кэш CDN iframe «Админки» — своя минута', () => {
+  it('Cache-Control `wa.` — s-maxage=60, не 300 виджета «Сайта»', async () => {
+    const headers: Record<string, string> = {};
+    const res = {
+      status: jest.fn(),
+      removeHeader: jest.fn(),
+      setHeader: (k: string, v: string) => {
+        headers[k.toLowerCase()] = v;
+      },
+      end: jest.fn(),
+    };
+    const c = controller('s1', [verified('admin.shop.example')], ['h']);
+    await c.frame(`${WIDGET_PK_LIVE_PREFIX}shop`, res as any);
+    expect(ADMIN_FRAME_CACHE_SECONDS).toBe(60);
+    expect(headers['cache-control']).toBe('public, max-age=0, s-maxage=60');
+    expect(adminFrameCacheControl()).toBe(headers['cache-control']);
+    // Общая константа виджета «Сайта» не тронута.
+    expect(WIDGET_DEFAULTS.frameCacheSeconds).toBe(300);
+    expect(headers['content-security-policy']).toContain(
+      'frame-ancestors https://admin.shop.example;',
     );
   });
 });

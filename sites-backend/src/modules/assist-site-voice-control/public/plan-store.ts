@@ -16,6 +16,7 @@
  * следующий запрос посетителя (`clearDeadLiveValues`) и крон ретенции
  * помощника (assist-site-chat/system/chat-retention.service.ts).
  */
+import { openLive, sealLive, type LiveKeys } from './live-crypto';
 import { randomUUID } from 'crypto';
 import { maskLabel } from '../../assist-ui-core/snapshot';
 import type { UiPlanStatus } from '../../assist-ui-core/types';
@@ -65,6 +66,12 @@ export interface PlanRow {
   trusted: string[];
   /** (е) Пока план живой: имя мемо и описание цели (язык посетителя). */
   memoText: { name: string; goal: string } | null;
+  /**
+   * (заход 9, аудит P2-1) План живой, а сырые значения не открылись (смена
+   * или откат ключа, порча, обнулены): в `steps` — только МАСКИ. Такой план
+   * не исполняет шаги со значением — его останавливает сервис (`live_lost`).
+   */
+  liveLost: boolean;
 }
 
 /** Живые статусы: пока план в них, сырые значения держатся в `liveValues`. */
@@ -131,16 +138,20 @@ function parseLive(raw: unknown): LiveValues | null {
 
 type DbRow = Omit<
   PlanRow,
-  'storedSteps' | 'utterance' | 'trusted' | 'memoText'
+  'storedSteps' | 'utterance' | 'trusted' | 'memoText' | 'liveLost'
 > & {
   liveValues: unknown;
 };
 
-/** Строка базы → план: живые значения поверх маскированных шагов. */
-function hydrate(row: DbRow): PlanRow {
+/**
+ * Строка базы → план: живые значения поверх маскированных шагов. В базе —
+ * шифротекст (заход 9, `live-crypto.ts`); старый открытый формат — как есть.
+ */
+function hydrate(row: DbRow, siteId: string, keys: LiveKeys | null): PlanRow {
   const { liveValues, ...rest } = row;
-  const live = LIVE_PLAN_STATUSES.includes(row.status)
-    ? parseLive(liveValues)
+  const isLive = LIVE_PLAN_STATUSES.includes(row.status);
+  const live = isLive
+    ? parseLive(openLive(keys, liveValues, { planId: row.id, siteId }))
     : null;
   const steps = live
     ? row.steps.map((s, i) => ({
@@ -155,6 +166,7 @@ function hydrate(row: DbRow): PlanRow {
     utterance: live?.u ?? row.utteranceMasked,
     trusted: live?.t ?? [],
     memoText: live?.m ?? null,
+    liveLost: isLive && !live,
   };
 }
 
@@ -211,6 +223,8 @@ export async function insertPlan(
     chainStatus?: string | null;
     /** (е) Живые доп. данные мемо (признанные значения, имя и цель). */
     extra?: LiveExtra;
+    /** (заход 9) Ключи шифра `liveValues` — открытым не пишется никогда. */
+    live: LiveKeys | null;
   },
 ): Promise<string> {
   const id = randomUUID();
@@ -233,7 +247,10 @@ export async function insertPlan(
     p.confirmBefore,
     p.expiresAt,
     LIVE_PLAN_STATUSES.includes(p.status)
-      ? liveValuesOf(p.utterance, p.steps, p.extra)
+      ? sealLive(p.live, liveValuesOf(p.utterance, p.steps, p.extra), {
+          planId: id,
+          siteId: p.siteId,
+        })
       : null,
     p.voiceTestId ?? null,
     p.dryRun === true,
@@ -253,7 +270,7 @@ const COLS = `"id", "conversationId", "status", "steps", "liveValues", "currentS
 /** План ЭТОГО посетителя этого сайта; чужой id неотличим от несуществующего. */
 export async function readPlan(
   db: PlanDb,
-  p: { id: string; siteId: string; visitorId: string },
+  p: { id: string; siteId: string; visitorId: string; live: LiveKeys | null },
 ): Promise<PlanRow | null> {
   const rows = await db.$queryRawUnsafe<DbRow[]>(
     `SELECT ${COLS} FROM ${PLANS} WHERE "id" = $1 AND "siteId" = $2 AND "visitorId" = $3`,
@@ -261,13 +278,13 @@ export async function readPlan(
     p.siteId,
     p.visitorId,
   );
-  return rows[0] ? hydrate(rows[0]) : null;
+  return rows[0] ? hydrate(rows[0], p.siteId, p.live) : null;
 }
 
 /** Последний живой план посетителя (продолжение после перехода, §4-бис.5). */
 export async function readActivePlan(
   db: PlanDb,
-  p: { siteId: string; visitorId: string; now: Date },
+  p: { siteId: string; visitorId: string; now: Date; live: LiveKeys | null },
 ): Promise<PlanRow | null> {
   const rows = await db.$queryRawUnsafe<DbRow[]>(
     `SELECT ${COLS} FROM ${PLANS}
@@ -278,7 +295,7 @@ export async function readActivePlan(
     p.visitorId,
     p.now,
   );
-  return rows[0] ? hydrate(rows[0]) : null;
+  return rows[0] ? hydrate(rows[0], p.siteId, p.live) : null;
 }
 
 /**
@@ -307,7 +324,7 @@ export async function clearDeadLiveValues(
 export async function updatePlan(
   db: PlanDb,
   prev: PlanRow,
-  p: { siteId: string; visitorId: string },
+  p: { siteId: string; visitorId: string; live: LiveKeys | null },
   next: {
     steps: UiPlanStepView[];
     currentStep: number;
@@ -349,10 +366,14 @@ export async function updatePlan(
     JSON.stringify(prev.storedSteps),
     next.confirmBefore ?? null,
     LIVE_PLAN_STATUSES.includes(next.status)
-      ? liveValuesOf(prev.utterance, next.steps, {
-          trusted: prev.trusted,
-          memoText: prev.memoText,
-        })
+      ? sealLive(
+          p.live,
+          liveValuesOf(prev.utterance, next.steps, {
+            trusted: prev.trusted,
+            memoText: prev.memoText,
+          }),
+          { planId: prev.id, siteId: p.siteId },
+        )
       : null,
     next.chainStatus ?? null,
     next.goalStatus ?? null,

@@ -724,7 +724,15 @@ describeE8('Э8 «Админка: действия» — приёмка по HTT
       .get(`/assist/sites/${S.siteId}/action-log/export`)
       .set(st.as(S.ownerTg))
       .expect(200);
-    expect(csv.text).toMatch(/^at,actor/);
+    // Р-З9-20: шапка-якорь — голова цепочки (та же, что в отчёте недели).
+    const head = await st.prisma.assistAdminActionLog.findFirstOrThrow({
+      where: { siteId: S.siteId },
+      orderBy: [{ at: 'desc' }, { id: 'desc' }],
+    });
+    expect(csv.text.split('\n')[0]).toBe(
+      `# chain-head: hash=${head.hash}; id=${head.id}; at=${head.at.toISOString()}; exported=${csv.text.split('exported=')[1].split('\n')[0]}`,
+    );
+    expect(csv.text.split('\n')[1]).toMatch(/^at,actor/);
     expect(csv.text).toContain('shop.updateOrderStatus');
     const rows = await st.prisma.assistAdminActionLog.findMany({
       where: { siteId: S.siteId },

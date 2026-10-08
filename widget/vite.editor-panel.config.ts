@@ -4,12 +4,15 @@ import { defineConfig } from 'vite';
 // `we.` — `dist/v1/editor-panel.js` + `dist/v1/editor-panel.css`. Пути
 // стабильные — их называет HTML iframe (`GET /we/v1/frame`,
 // sites-backend assist-site-voice-map/editor/editor-frame.ts). Ванильный TS.
+// Заход 9: цель сборки — es2020 (как act.js): панель открывает владелец в
+// своём браузере, а `?.`/`??` без перевода в es2019 — ≈ 0,5 КБ gzip запаса
+// бюджета 16 КБ.
 export default defineConfig({
   publicDir: false,
   build: {
     outDir: 'dist',
     emptyOutDir: false,
-    target: 'es2019',
+    target: 'es2020',
     sourcemap: false,
     cssCodeSplit: false,
     lib: {

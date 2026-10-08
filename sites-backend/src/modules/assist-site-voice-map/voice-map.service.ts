@@ -135,6 +135,15 @@ export class VoiceMapService {
   env: NodeJS.ProcessEnv = process.env;
   /** Подмена отправки в бот — только тестами. */
   fetchImpl: FetchLike | undefined;
+  /**
+   * (Заход 9, Э6-тер (8)) Собрана версия на проверке → сверка воркером и
+   * сухой прогон (`assist-voice-map-check`). Ставит обработчик
+   * `VoiceMapWorkerService` (без циклической зависимости модулей); сбой
+   * постановки — не сбой сборки, публикация прогона не ждёт.
+   */
+  onVersionBuilt:
+    | ((accountId: string, siteId: string, version: number) => Promise<unknown>)
+    | null = null;
 
   constructor(private readonly sitesDb: SitesDb) {}
 
@@ -530,6 +539,13 @@ export class VoiceMapService {
     const prev = await this.publishedContent(db, siteId, row.publishedVersion);
     const view = this.versionView(v, prev);
     if (via === 'editor') await this.notifyRequest(actor, siteId, view);
+    if (v.status === 'checking' && this.onVersionBuilt)
+      await this.onVersionBuilt(actor.accountId, siteId, number).catch(
+        (e: unknown) =>
+          this.logger.warn(
+            `voice-map auto-check site=${siteId} v=${number}: ${(e as Error)?.name ?? 'Error'}`,
+          ),
+      );
     this.logger.log(
       `voice-map version site=${siteId} v=${number} status=${v.status} via=${via}`,
     );

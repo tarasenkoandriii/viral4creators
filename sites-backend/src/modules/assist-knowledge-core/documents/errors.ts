@@ -41,6 +41,13 @@ export type E1Code =
   | 'ANSWER_UNAVAILABLE'
   | 'ORIGIN_FORBIDDEN'
   | 'HOST_NOT_VERIFIED'
+  /**
+   * Р-З9-24: подтверждённые хосты есть, но все отданы «Админке» — обходить
+   * для «Сайта» нечего (не «подтвердите хост», а «добавьте хост сайта»).
+   */
+  | 'HOST_ADMIN_ONLY'
+  /** Р-З9-24: адрес url-источника — на хосте другого режима (хост «Админки»). */
+  | 'URL_ADMIN_HOST'
   | 'ASSIST_NOT_ENABLED'
   | 'KNOWLEDGE_SOURCE_LIMIT'
   | 'SOURCE_NOT_FOUND'

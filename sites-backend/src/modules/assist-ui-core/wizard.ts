@@ -77,6 +77,11 @@ export const WIZARD_LIMITS = {
   listItems: 50,
   /** Тело отчёта мастера (JSON) — граница разбора до работы. */
   bodyChars: 64_000,
+  /**
+   * (заход 9, аудит (г) (6)) «Разметка изменилась»: промахи по элементу
+   * проверенной страницы после отчёта от стольких РАЗНЫХ посетителей.
+   */
+  markupMissVisitors: 2,
 } as const;
 
 /**
@@ -677,6 +682,90 @@ export type ReportProblem =
   | 'older_than_state';
 
 /**
+ * (заход 9, аудит (г) (6)) Проверенные страницы отчёта — ВСЕ, где мастер
+ * действовал: страница отчёта, страницы команд сессии (сухих и с
+ * нажатием) и страницы, куда исполненный переход привёл (`expect.path`
+ * без `*`). Пути без хвостового `/`, без повторов, ≤ 20.
+ */
+export function wizardPages(
+  reportPage: string,
+  plans: ReadonlyArray<{ pageUrl: string; steps: unknown }>,
+): string[] {
+  const out: string[] = [];
+  const add = (p: string | null | undefined) => {
+    if (!p || !p.startsWith('/') || p.startsWith('//')) return;
+    const n = p.replace(/\/+$/, '') || '/';
+    if (n.length <= 300 && !out.includes(n) && out.length < 20) out.push(n);
+  };
+  add(reportPage);
+  for (const r of plans) {
+    try {
+      add(new URL(r.pageUrl).pathname);
+    } catch {
+      /* адрес плана разобран при создании */
+    }
+    for (const s of Array.isArray(r.steps) ? r.steps : []) {
+      const x = s as { state?: unknown; expect?: { path?: unknown } | null };
+      const path = x?.expect?.path;
+      if (
+        x?.state === 'done' &&
+        typeof path === 'string' &&
+        !path.includes('*')
+      )
+        add(path);
+    }
+  }
+  return out;
+}
+
+/**
+ * (заход 9, аудит (г) (6)) Когда разметка проверенных страниц изменилась
+ * ПОСЛЕ отчёта (позже всего), null — не менялась: элемент любой проверенной
+ * страницы помечен Ш4 «устарел» (любой вид) или по нему после отчёта
+ * накопились промахи от ≥ `markupMissVisitors` разных посетителей (раньше
+ * порога «устарел» — 3 за 7 дней: проверенный мастером элемент уже не
+ * находится). Один посетитель отчёт не «сломает».
+ */
+export function markupChangedFrom(p: {
+  reportedAt: Date;
+  elements: ReadonlyArray<{
+    id: string;
+    staleDesktopAt: Date | null;
+    staleMobileAt: Date | null;
+  }>;
+  misses: ReadonlyArray<{
+    elementRowId: string;
+    visitorId: string;
+    createdAt: Date;
+  }>;
+}): Date | null {
+  const after = p.reportedAt.getTime();
+  let at = 0;
+  for (const e of p.elements)
+    for (const d of [e.staleDesktopAt, e.staleMobileAt])
+      if (d && d.getTime() > after) at = Math.max(at, d.getTime());
+  const by = new Map<string, Map<string, number>>();
+  for (const m of p.misses) {
+    if (m.createdAt.getTime() <= after) continue;
+    const v = by.get(m.elementRowId) ?? new Map<string, number>();
+    v.set(
+      m.visitorId,
+      Math.min(v.get(m.visitorId) ?? Infinity, m.createdAt.getTime()),
+    );
+    by.set(m.elementRowId, v);
+  }
+  for (const v of by.values()) {
+    if (v.size < WIZARD_LIMITS.markupMissVisitors) continue;
+    // Порог набран в момент промаха N-го разного посетителя.
+    const t = [...v.values()].sort((a, b) => a - b)[
+      WIZARD_LIMITS.markupMissVisitors - 1
+    ];
+    at = Math.max(at, t);
+  }
+  return at > 0 ? new Date(at) : null;
+}
+
+/**
  * Годен ли отчёт, чтобы перевести сайт в `on` (решение владельца п.1).
  * `null` — годен; иначе — первая причина, почему нет.
  */
@@ -873,8 +962,9 @@ export interface UndoTargetsCheck {
 
 /**
  * Мастер Т-2 проверяет разрешимость обратных целей (§5-бис.15 п.16): для
- * каждой цели снимка с объявленной парой (стандартная разметка или «Как
- * отменить» карты — `declared` по ссылке элемента) — тем же кодом, что
+ * каждой цели снимка с объявленной парой («Как отменить» карты —
+ * `declared` по ссылке элемента, затем разметка `data-assist-undo` самого
+ * элемента, затем стандартная разметка) — тем же кодом, что
  * ставит компенсацию в бою (`compFor`): пара безопасна, есть описание
  * строки, страница отмены разрешена, а без неё — обратная цель есть на
  * этой странице. Цели других страниц не проверяются (проверю на месте).
@@ -898,7 +988,10 @@ export function undoTargetsCheck(p: {
     }
   };
   for (const e of p.snapshot.elements) {
-    const declared = p.declared?.get(e.ref) ?? null;
+    // Порядок — как в бою (`compOfStep`, plan-checks.ts): «Как отменить»
+    // карты → разметка владельца на элементе (`data-assist-undo`/`-at`
+    // снимка) → встроенная пара стандартной разметки.
+    const declared = p.declared?.get(e.ref) ?? e.undo ?? null;
     const std = e.assistId ? (STANDARD_UNDO_PAIRS[e.assistId] ?? null) : null;
     const reverse = declared?.assistId ?? std;
     if (!reverse || e.submit) continue;

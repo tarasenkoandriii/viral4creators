@@ -66,7 +66,9 @@ export type StatsTab = (typeof STATS_TABS)[number];
 export const isStatsTab = (v: unknown): v is StatsTab =>
   typeof v === 'string' && (STATS_TABS as readonly string[]).includes(v);
 
-export const LEARNING_TABS = ['queue', 'golden', 'quality'] as const;
+// Заход 9 (Э6-тер (12)): «Голос» — промахи Т-4 по целям голосовой карты
+// с «Открыть в редакторе» (только manager, как проверенные ответы).
+export const LEARNING_TABS = ['queue', 'golden', 'quality', 'voice'] as const;
 export type LearningTab = (typeof LEARNING_TABS)[number];
 export const isLearningTab = (v: unknown): v is LearningTab =>
   typeof v === 'string' && (LEARNING_TABS as readonly string[]).includes(v);

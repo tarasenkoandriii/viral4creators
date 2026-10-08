@@ -23,6 +23,8 @@ import { VOICE_DEFAULTS } from './modules/assist-site-voice/voice-config';
 import { VOICE_CONTROL_DEFAULTS } from './modules/assist-site-voice-control/voice-control-config';
 import { ADMIN_STT } from './modules/assist-admin-voice/admin-stt';
 import {
+  EDITOR_VOICE_PATH,
+  editorVoiceRaw,
   VOICE_MAP_IMPORT_PATH,
   voiceMapImportJson,
 } from './modules/assist-site-voice-map/import-body';
@@ -354,6 +356,8 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
   }
   // Э6-тер (хвост аудита (4)): импорт голосовой карты — до 1 МБ, только здесь.
   app.use(VOICE_MAP_IMPORT_PATH, voiceMapImportJson());
+  // Заход 9: запись «Сказать сейчас» панели редактора — `audio/*` ≤ 1 МБ.
+  app.use(EDITOR_VOICE_PATH, editorVoiceRaw());
   app.useGlobalPipes(new ValidationPipe(VALIDATION_PIPE_OPTIONS));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());

@@ -100,6 +100,24 @@ for (const d of ['connect-src', 'frame-src', 'img-src', 'media-src']) {
   }
 }
 
+// Заход 9 (№108, аудит P2-2): скриншот «Снимка» — подписанная ссылка
+// приватного Vercel Blob (`https://<storeId>.private.blob.vercel-storage.com/…`,
+// @vercel/blob `constructBlobUrl`); разрешён ровно этот вид хостов — не
+// публичный Blob и не весь `vercel-storage.com`.
+assert.ok(
+  allows(
+    dir('img-src'),
+    'https://abcd1234.private.blob.vercel-storage.com/browser/a/j/0-x.png?vercel-blob-signature=s'
+  ),
+  'img-src пускает скриншоты приватного Blob'
+);
+for (const bad of [
+  'https://abcd1234.public.blob.vercel-storage.com/x.png',
+  'https://vercel-storage.com/x.png',
+  'https://evil.com/x.png',
+])
+  assert.ok(!allows(dir('img-src'), bad), `img-src не пускает ${bad}`);
+
 // Всё внешнее из index.html разрешено своей директивой.
 for (const m of indexHtml.matchAll(/<script[^>]*\ssrc="(https:[^"]+)"/g)) {
   assert.ok(

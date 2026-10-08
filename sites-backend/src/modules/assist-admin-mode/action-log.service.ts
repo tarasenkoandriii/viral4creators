@@ -120,9 +120,40 @@ export function actionLogHash(
     .digest('hex');
 }
 
+/** Экспорт CSV — последние записи журнала сайта (голова — последняя строка). */
+export const CSV_EXPORT_MAX_ROWS = 50_000;
+
+/** Строк журнала за один запрос проверки цепочки (аудит Э8 (5)). */
+export const VERIFY_CHAIN_BATCH = 2_000;
+
+/** Голова цепочки сайта — внешний якорь (Р-З9-20). */
+export interface ChainHeadView {
+  id: string;
+  at: string;
+  hash: string;
+}
+
 @Injectable()
 export class AdminActionLogService {
+  /** Тесты: размер пачки проверки цепочки. */
+  verifyBatch = VERIFY_CHAIN_BATCH;
+
   constructor(private readonly db: SitesDb) {}
+
+  /** Последняя строка цепочки сайта (хеш, id, время) или null. */
+  async chainHead(
+    accountId: string,
+    siteId: string,
+  ): Promise<ChainHeadView | null> {
+    const r = await this.db
+      .forAccount(accountId)
+      .assistAdminActionLog.findFirst({
+        where: { siteId },
+        orderBy: [{ at: 'desc' }, { id: 'desc' }],
+        select: { id: true, at: true, hash: true },
+      });
+    return r ? { id: r.id, at: r.at.toISOString(), hash: r.hash } : null;
+  }
 
   /**
    * `key` — уникальный ключ строки (Э8: `exec:<предложение>:<попытка>` —
@@ -226,15 +257,28 @@ export class AdminActionLogService {
    * Экспорт журнала сайта в CSV (§5.7 «экспорт CSV»): строки уже маскированы
    * при записи (секретов и тел ответа нет по построению); хеш и prevHash —
    * чтобы получатель мог сам проверить цепочку. Ячейки — с защитой от формул.
+   * Р-З9-20: первая строка — шапка-якорь `# chain-head` (хеш, id и время
+   * последней строки ФАЙЛА — это и голова цепочки: в файл идут ПОСЛЕДНИЕ
+   * `CSV_EXPORT_MAX_ROWS` записей по возрастанию), затем заголовок CSV;
+   * колонка `id` — последняя (по ней владелец находит строку из отчёта
+   * недели). Та же голова — в `head` (контроллер кладёт её в X-Chain-Head).
    */
-  async exportCsv(accountId: string, siteId: string): Promise<string> {
-    const rows = await this.db
-      .forAccount(accountId)
-      .assistAdminActionLog.findMany({
+  async exportCsv(
+    accountId: string,
+    siteId: string,
+    now = new Date(),
+  ): Promise<{ csv: string; head: ChainHeadView | null }> {
+    const rows = (
+      await this.db.forAccount(accountId).assistAdminActionLog.findMany({
         where: { siteId },
-        orderBy: [{ at: 'asc' }, { id: 'asc' }],
-        take: 50_000,
-      });
+        orderBy: [{ at: 'desc' }, { id: 'desc' }],
+        take: CSV_EXPORT_MAX_ROWS,
+      })
+    ).reverse();
+    const last = rows.at(-1);
+    const head: ChainHeadView | null = last
+      ? { id: last.id, at: last.at.toISOString(), hash: last.hash }
+      : null;
     const cell = (v: unknown): string => {
       let s =
         v === null || v === undefined
@@ -245,7 +289,7 @@ export class AdminActionLogService {
       if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
       return `"${s.replace(/"/g, '""')}"`;
     };
-    const head = [
+    const columns = [
       'at',
       'actor',
       'actorRole',
@@ -261,8 +305,12 @@ export class AdminActionLogService {
       'key',
       'prevHash',
       'hash',
+      'id',
     ];
-    const lines = [head.join(',')];
+    const anchor = head
+      ? `# chain-head: hash=${head.hash}; id=${head.id}; at=${head.at}; exported=${now.toISOString()}`
+      : `# chain-head: empty; exported=${now.toISOString()}`;
+    const lines = [anchor, columns.join(',')];
     for (const r of rows) {
       lines.push(
         [
@@ -281,47 +329,69 @@ export class AdminActionLogService {
           r.idempotencyKey,
           r.prevHash,
           r.hash,
+          r.id,
         ]
           .map(cell)
           .join(','),
       );
     }
-    return `${lines.join('\n')}\n`;
+    return { csv: `${lines.join('\n')}\n`, head };
   }
 
-  /** Проверка цепочки сайта (для тестов и экспорта): индекс первой битой строки или -1. */
+  /**
+   * Проверка цепочки сайта (для тестов и экспорта): индекс первой битой
+   * строки или -1. Аудит Э8 (5): пачками по `verifyBatch` строк (keyset по
+   * `at, id`), а не весь журнал (≤ 365 дней) одним запросом; связь
+   * `prevHash` проверяется и на стыке пачек.
+   */
   async verifyChain(accountId: string, siteId: string): Promise<number> {
-    const rows = await this.db
-      .forAccount(accountId)
-      .assistAdminActionLog.findMany({
-        where: { siteId },
-        orderBy: [{ at: 'asc' }, { id: 'asc' }],
-      });
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      if (i > 0 && r.prevHash !== rows[i - 1].hash) return i;
-      const e: ActionLogEntry = {
-        accountId: r.accountId,
-        siteId: r.siteId,
-        actor: r.actor,
-        actorRole: r.actorRole,
-        channel: r.channel as 'embed' | 'tma',
-        conversationId: r.conversationId,
-        connectorId: r.connectorId,
-        operationRowId: r.operationRowId,
-        operation: r.operation,
-        kind: r.kind as ActionLogKind,
-        outcome: r.outcome,
-        httpStatus: r.httpStatus,
-        durationMs: r.durationMs,
-        requestMasked: r.requestMasked as Prisma.InputJsonValue,
-        responseBytes: r.responseBytes,
-        error: r.error,
-      };
-      if (actionLogHash(r.prevHash, e, r.at, r.idempotencyKey) !== r.hash) {
-        return i;
+    const db = this.db.forAccount(accountId);
+    const batch = Math.max(1, Math.min(this.verifyBatch, VERIFY_CHAIN_BATCH));
+    let prev: { hash: string; at: Date; id: string } | null = null;
+    let index = 0;
+    for (;;) {
+      const cursor: { at: Date; id: string } | null = prev;
+      const rows: Prisma.AssistAdminActionLogGetPayload<object>[] =
+        await db.assistAdminActionLog.findMany({
+          where: cursor
+            ? {
+                siteId,
+                OR: [
+                  { at: { gt: cursor.at } },
+                  { at: cursor.at, id: { gt: cursor.id } },
+                ],
+              }
+            : { siteId },
+          orderBy: [{ at: 'asc' }, { id: 'asc' }],
+          take: batch,
+        });
+      for (const r of rows) {
+        if (prev && r.prevHash !== prev.hash) return index;
+        const e: ActionLogEntry = {
+          accountId: r.accountId,
+          siteId: r.siteId,
+          actor: r.actor,
+          actorRole: r.actorRole,
+          channel: r.channel as 'embed' | 'tma',
+          conversationId: r.conversationId,
+          connectorId: r.connectorId,
+          operationRowId: r.operationRowId,
+          operation: r.operation,
+          kind: r.kind as ActionLogKind,
+          outcome: r.outcome,
+          httpStatus: r.httpStatus,
+          durationMs: r.durationMs,
+          requestMasked: r.requestMasked as Prisma.InputJsonValue,
+          responseBytes: r.responseBytes,
+          error: r.error,
+        };
+        if (actionLogHash(r.prevHash, e, r.at, r.idempotencyKey) !== r.hash) {
+          return index;
+        }
+        prev = { hash: r.hash, at: r.at, id: r.id };
+        index++;
       }
+      if (rows.length < batch) return -1;
     }
-    return -1;
   }
 }

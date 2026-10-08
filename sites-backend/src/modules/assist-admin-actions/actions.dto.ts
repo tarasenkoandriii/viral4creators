@@ -60,4 +60,9 @@ export class ProposalsQueryDto {
   @IsOptional()
   @IsIn(['review'])
   chain?: 'review';
+
+  /** Язык подсказок карточек (аудит Э8 (5)); по умолчанию uk. */
+  @IsOptional()
+  @IsIn(['uk', 'ru', 'en'])
+  lang?: 'uk' | 'ru' | 'en';
 }

@@ -45,6 +45,8 @@ export interface AdminModeView {
   planAllowsActions: boolean;
   actionsDailyCap: number;
   notifyDanger: boolean;
+  /** Р-З9-17: тестовый ключ ходит в коннекторы (умолчание — нет). */
+  testKeyConnectors: boolean;
   snippet: { origin: string; tag: string; csp: string } | null;
 }
 
@@ -100,6 +102,8 @@ export interface ConnectorView {
   status: string;
   lastCallAt: string | null;
   signing: { set: boolean; setAt: string | null };
+  /** Р-З9-14: ПД в данных API скрыты от модели. */
+  maskPd: boolean;
   operations: OperationView[];
 }
 
@@ -138,6 +142,39 @@ export interface AdminStats {
   tools: Array<{ operation: string; ok: number; failed: number }>;
   byRole: Array<{ role: string; conversations: number; questions: number }>;
   byEmployee: Array<{ employee: string; questions: number }> | null;
+  /** Э8-хвост (6): действия и метрики монитора §5-бис.15 п.12. */
+  actions: AdminActionStatsView;
+}
+
+/** Блок «Действия» статистики (заход 9): доли — 0..1 или null. */
+export interface AdminActionStatsView {
+  proposed: number;
+  confirmed: number;
+  rejected: number;
+  expired: number;
+  yesShare: number | null;
+  done: number;
+  failed: number;
+  unknown: number;
+  unknownShare: number | null;
+  unrequested: number;
+  chainsWithTraces: number;
+  compensations: {
+    proposed: number;
+    confirmed: number;
+    done: number;
+    failed: number;
+    unknown: number;
+    successRate: number | null;
+    alert: boolean;
+  };
+  byOperation: Array<{
+    operation: string;
+    proposed: number;
+    confirmed: number;
+    done: number;
+    unknown: number;
+  }>;
 }
 
 export interface PrivateCrawlView {
@@ -196,6 +233,57 @@ const n0 = (v: unknown): number => numOrNull(v) ?? 0;
 const kind = (v: unknown): OperationKind =>
   v === 'write' || v === 'danger' ? v : 'read';
 
+const share = (v: unknown): number | null => {
+  const n = numOrNull(v);
+  return n !== null && n >= 0 && n <= 1 ? n : null;
+};
+
+/** Разбор блока «Действия» (строго: доля вне 0..1 — null). */
+export function parseActionStats(v: unknown): AdminActionStatsView {
+  const o = obj(v);
+  const c = obj(o.compensations);
+  return {
+    proposed: n0(o.proposed),
+    confirmed: n0(o.confirmed),
+    rejected: n0(o.rejected),
+    expired: n0(o.expired),
+    yesShare: share(o.yesShare),
+    done: n0(o.done),
+    failed: n0(o.failed),
+    unknown: n0(o.unknown),
+    unknownShare: share(o.unknownShare),
+    unrequested: n0(o.unrequested),
+    chainsWithTraces: n0(o.chainsWithTraces),
+    compensations: {
+      proposed: n0(c.proposed),
+      confirmed: n0(c.confirmed),
+      done: n0(c.done),
+      failed: n0(c.failed),
+      unknown: n0(c.unknown),
+      successRate: share(c.successRate),
+      alert: c.alert === true,
+    },
+    byOperation: arr(o.byOperation)
+      .map((x) => {
+        const r = obj(x);
+        return {
+          operation: str(r.operation),
+          proposed: n0(r.proposed),
+          confirmed: n0(r.confirmed),
+          done: n0(r.done),
+          unknown: n0(r.unknown),
+        };
+      })
+      .filter((r) => r.operation)
+      .slice(0, 20),
+  };
+}
+
+/** `?lang=` для текстов карточек с сервера (аудит Э8 (5)). */
+const LANG_Q = /^(uk|ru|en)$/;
+const langQ = (lang?: string) =>
+  lang && LANG_Q.test(lang) ? `?lang=${lang}` : '';
+
 export function parseAdminMode(v: unknown): AdminModeView {
   const o = obj(v);
   const sec = obj(o.identitySecret);
@@ -228,6 +316,7 @@ export function parseAdminMode(v: unknown): AdminModeView {
     planAllowsActions: o.planAllowsActions === true,
     actionsDailyCap: numOrNull(o.actionsDailyCap) ?? 100,
     notifyDanger: o.notifyDanger !== false,
+    testKeyConnectors: o.testKeyConnectors === true,
     snippet:
       typeof sn.tag === 'string'
         ? { origin: str(sn.origin), tag: str(sn.tag), csp: str(sn.csp) }
@@ -304,6 +393,7 @@ export function parseConnector(v: unknown): ConnectorView {
       set: obj(o.signing).set === true,
       setAt: strOrNull(obj(o.signing).setAt),
     },
+    maskPd: o.maskPd === true,
     operations: arr(o.operations).map(parseOperation),
   };
 }
@@ -338,9 +428,18 @@ export interface AdminModeApi {
       statsPerEmployee: boolean;
       actionsDailyCap: number;
       notifyDanger: boolean;
+      testKeyConnectors: boolean;
     }>
   ): Promise<AdminModeView>;
-  issueIdentitySecret(siteId: string): Promise<{ secret: string; aud: string }>;
+  /**
+   * Перевыпуск секрета подписи JWT (Р-З9-18): `expectedSetAt` — выпуск,
+   * который видит экран (null — секрета не было); параллельный перевыпуск
+   * из другого окна — 409 `ADMIN_SECRET_CHANGED`, экран перечитывается.
+   */
+  issueIdentitySecret(
+    siteId: string,
+    expectedSetAt?: string | null
+  ): Promise<{ secret: string; aud: string }>;
   connectors(siteId: string): Promise<ConnectorView[]>;
   createConnector(
     siteId: string,
@@ -353,6 +452,12 @@ export interface AdminModeApi {
     }
   ): Promise<ConnectorView>;
   deleteConnector(siteId: string, cn: string): Promise<void>;
+  /** Р-З9-14: флаги коннектора (маскирование ПД до модели). */
+  patchConnector(
+    siteId: string,
+    cn: string,
+    body: { maskPd: boolean }
+  ): Promise<ConnectorView>;
   patchOperation(
     siteId: string,
     cn: string,
@@ -398,7 +503,7 @@ export interface AdminModeApi {
     }
   ): Promise<PrivateCrawlView>;
   runPrivateCrawl(siteId: string): Promise<{ status: string }>;
-  chatState(siteId: string): Promise<AdminChatState>;
+  chatState(siteId: string, lang?: string): Promise<AdminChatState>;
   chatAsk(
     siteId: string,
     text: string,
@@ -459,9 +564,13 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
       parseAdminMode(await client.request('GET', `${base(s)}/admin-mode`)),
     patch: async (s, b) =>
       parseAdminMode(await client.request('PATCH', `${base(s)}/admin-mode`, b)),
-    issueIdentitySecret: async (s) => {
+    issueIdentitySecret: async (s, expectedSetAt) => {
       const o = obj(
-        await client.request('POST', `${base(s)}/admin-mode/identity-secret`)
+        await client.request(
+          'POST',
+          `${base(s)}/admin-mode/identity-secret`,
+          expectedSetAt === undefined ? undefined : { expectedSetAt }
+        )
       );
       return { secret: str(o.secret), aud: str(o.aud) };
     },
@@ -471,6 +580,10 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
       ),
     createConnector: async (s, b) =>
       parseConnector(await client.request('POST', `${base(s)}/connectors`, b)),
+    patchConnector: async (s, cn, b) =>
+      parseConnector(
+        await client.request('PATCH', `${base(s)}/connectors/${seg(cn)}`, b)
+      ),
     deleteConnector: async (s, cn) => {
       await client.request('DELETE', `${base(s)}/connectors/${seg(cn)}`);
     },
@@ -577,6 +690,7 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
               questions: n0(obj(t).questions),
             }))
           : null,
+        actions: parseActionStats(o.actions),
       };
     },
     privateCrawl: async (s) =>
@@ -593,8 +707,10 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
       );
       return { status: str(o.status) };
     },
-    chatState: async (s) => {
-      const o = obj(await client.request('GET', `${base(s)}/admin-chat/state`));
+    chatState: async (s, lang) => {
+      const o = obj(
+        await client.request('GET', `${base(s)}/admin-chat/state${langQ(lang)}`)
+      );
       return {
         messages: arr(o.messages).map(parseChatMessage),
         tools: obj(o.employee).tools === true,

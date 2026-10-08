@@ -382,4 +382,157 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
     expect(sum.calibration).toMatchObject({ method: 'platt', version: 1 });
     expect(sum.plan.leadCalibration).toBe(true);
   });
+
+  it('заход 9 (Р-З9-7): выводы — на языке владельца + переводы для участников; каждый язык — своя проверка чисел; экран — на языке читателя', async () => {
+    const s = await site('business');
+    await seedN3(s);
+    const lang = (telegramId: bigint, languageCode: string) =>
+      st.owner.assistBotUser.upsert({
+        where: { telegramId },
+        create: { telegramId, languageCode },
+        update: { languageCode },
+      });
+    const owner = await st.member(s, 'owner');
+    const en = await st.member(s, 'manager');
+    const ru = await st.member(s, 'manager');
+    await lang(owner.telegramId, 'uk');
+    await lang(en.telegramId, 'en-GB');
+    await lang(ru.telegramId, 'ru');
+    let system = '';
+    st.text.queue.push((req) => {
+      system = req.system;
+      const f = JSON.parse(/<findings>(.*)<\/findings>/s.exec(req.user)![1]);
+      const n3 = f.findIndex(
+        (x: { code: string; reason: string }) =>
+          x.code === 'N3' && x.reason === 'out_of_stock',
+      );
+      return JSON.stringify({
+        insights: [
+          {
+            findingIds: [n3],
+            title: 'Немає потрібного розміру',
+            what: 'На /product/sneakers 10 із 40 діалогів без конверсії (25%).',
+            action: 'Покажіть наявність розмірів на картці товару.',
+            i18n: {
+              en: {
+                title: 'Size out of stock',
+                what: 'On /product/sneakers 10 of 40 dialogs had no conversion (25%).',
+                action: 'Show size availability on the product card.',
+              },
+              // Число, которого нет в находках, — перевод выброшен.
+              ru: {
+                title: 'Нет размера',
+                what: 'На /product/sneakers 17 из 40 диалогов без конверсии.',
+                action: 'Покажите наличие размеров.',
+              },
+            },
+          },
+        ],
+      });
+    });
+    await st.weekly.tick({
+      now,
+      deadline: Date.now() + 30_000,
+      maxSites: 5,
+      scope: st.scope(s),
+    });
+    expect(system).toContain('Write in Ukrainian');
+    expect(system).toContain('English ("en")');
+    expect(system).toContain('Russian ("ru")');
+    // Три языка в одном ответе — потолок ответа втрое (иначе обрезка).
+    expect(st.text.calls.at(-1)!.maxOutputTokens).toBe(3600);
+    const row = (
+      await st.owner.assistSiteInsight.findMany({
+        where: { siteId: s.siteId, weekStart: week, code: 'N3' },
+      })
+    ).find((x) => (x.finding as { reason: string }).reason === 'out_of_stock')!;
+    expect(row.text).toMatchObject({
+      lang: 'uk',
+      title: 'Немає потрібного розміру',
+      i18n: { en: { title: 'Size out of stock' } },
+    });
+    expect(
+      (row.text as { i18n: Record<string, unknown> }).i18n.ru,
+    ).toBeUndefined();
+    const view = async (m: typeof owner, q?: string) =>
+      (await st.cabinet.insights(m, s.siteId, week, q)).items.find(
+        (x) => x.id === row.id,
+      )!;
+    expect((await view(owner)).text?.title).toBe('Немає потрібного розміру');
+    expect((await view(en)).text?.title).toBe('Size out of stock');
+    const r = await view(ru);
+    expect(r.text).toBeNull();
+    expect(r.textSkipped).toBe('lang');
+    // Явный язык экрана важнее языка Telegram.
+    expect((await view(ru, 'en')).text?.title).toBe('Size out of stock');
+  });
+
+  it('заход 9 (Р-З9-26): visitHash диалогов старше 31 дня обнуляется, флаг «связан» — в разметке; калибровка та же', async () => {
+    const s = await site('pro');
+    const goal = await st.goal(s, {
+      key: 'order',
+      detectors: [{ kind: 'js', config: {} }],
+    });
+    const old = new Date(now.getTime() - 40 * 86_400_000);
+    for (let i = 0; i < 260; i++) {
+      const positive = i < 60;
+      const score = positive ? 50 + (i % 40) : 10 + (i % 50);
+      const cid = await labeled(s, {
+        score,
+        createdAt: old,
+        visitHash: positive || i < 220 ? `vh31-${i}` : null,
+      });
+      if (positive) {
+        await st.owner.assistSiteGoalEvent.create({
+          data: {
+            accountId: s.accountId,
+            siteId: s.siteId,
+            goalId: goal,
+            occurredAt: old,
+            source: 'iframe',
+            trust: 'page',
+            attribution: 'direct',
+            conversationId: cid,
+            clientEventId: `cal31-${cid}`,
+          },
+        });
+      }
+    }
+    // Свежий связанный диалог (10 дней) — хеш остаётся.
+    const fresh = await labeled(s, {
+      createdAt: new Date(now.getTime() - 10 * 86_400_000),
+      visitHash: 'vh31-fresh',
+    });
+    const cfg = { linked: true, linkedWindowDays: 7 };
+    expect(await st.weekly.calibrate(s.accountId, s.siteId, cfg, now)).toBe(
+      true,
+    );
+    await st.behavior.daily(now, st.scope(s));
+    const convs = await st.owner.assistSiteConversation.findMany({
+      where: { siteId: s.siteId },
+      select: { id: true, visitHash: true },
+    });
+    expect(convs.filter((c) => c.visitHash !== null).map((c) => c.id)).toEqual([
+      fresh,
+    ]);
+    expect(
+      await st.owner.assistSiteConversationLabel.count({
+        where: { siteId: s.siteId, linked: true },
+      }),
+    ).toBe(220);
+    expect(await st.weekly.calibrate(s.accountId, s.siteId, cfg, now)).toBe(
+      true,
+    );
+    const cals = await st.owner.assistSiteLeadCalibration.findMany({
+      where: { siteId: s.siteId },
+      orderBy: { version: 'asc' },
+    });
+    expect(cals).toHaveLength(2);
+    expect(cals[1]).toMatchObject({
+      positives: cals[0].positives,
+      total: cals[0].total,
+      params: cals[0].params,
+    });
+    expect(cals[0].total).toBe(221);
+  });
 });

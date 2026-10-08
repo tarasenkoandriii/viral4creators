@@ -9,9 +9,12 @@
  *  - holdout (группа b): кнопки нет, group → 'h', включение маяком /exp;
  *  - Google Consent Mode (если владелец включил): granted в dataLayer;
  *  - К-11: введённые в форму значения (пароль, телефон, карта) не уходят ни
- *    в одном запросе загрузчика и чанков.
+ *    в одном запросе загрузчика и чанков;
+ *  - заход 9: готовые связки CMP (Cookiebot, OneTrust, CookieYes, Complianz)
+ *    на макетах их API — согласие/отказ и решение до загрузки виджета.
  */
 import { expect, test, type Page } from '@playwright/test';
+import { cmpSnippet, type CmpId } from '../../assist/src/lib/cmp-snippets';
 import {
   ask,
   chat,
@@ -335,3 +338,127 @@ test('вариант приветствия (группа b): текст B в ч
   expect(visit.body.v).toBe(key);
   expect(typeof visit.body.conversationId).toBe('string');
 });
+
+// ── Заход 9 (хвост Э3-бис (8)): готовые связки баннеров согласия (CMP) ──
+// Фрагменты — те же, что показывает TMA (assist/src/lib/cmp-snippets.ts);
+// на странице стенда — макет API каждой CMP (события и глобалы, как у неё).
+const CMP_CASES: Array<{
+  id: Exclude<CmpId, 'custom' | 'gcm'>;
+  before?: string;
+  grant: string;
+  deny: string;
+}> = [
+  {
+    id: 'cookiebot',
+    grant:
+      "window.Cookiebot={consent:{statistics:true}};window.dispatchEvent(new Event('CookiebotOnConsentReady'))",
+    deny: "window.Cookiebot={consent:{statistics:false,marketing:true}};window.dispatchEvent(new Event('CookiebotOnConsentReady'))",
+  },
+  {
+    id: 'onetrust',
+    before: 'window.OptanonWrapper=function(){}',
+    grant:
+      "window.OnetrustActiveGroups=',C0001,C0002,';window.OptanonWrapper()",
+    deny: "window.OnetrustActiveGroups=',C0001,C0004,';window.OptanonWrapper()",
+  },
+  {
+    id: 'cookieyes',
+    grant:
+      "document.dispatchEvent(new CustomEvent('cookieyes_consent_update',{detail:{accepted:['necessary','analytics'],rejected:[]}}))",
+    deny: "document.dispatchEvent(new CustomEvent('cookieyes_consent_update',{detail:{accepted:['necessary'],rejected:['analytics']}}))",
+  },
+  {
+    id: 'complianz',
+    grant:
+      "window.cmplz_has_consent=function(c){return c==='statistics'};document.dispatchEvent(new CustomEvent('cmplz_status_change',{detail:{category:'statistics',value:'allow'}}))",
+    deny: "window.cmplz_has_consent=function(){return false};document.dispatchEvent(new CustomEvent('cmplz_status_change',{detail:{category:'statistics',value:'deny'}}))",
+  },
+];
+
+for (const c of CMP_CASES) {
+  test(`CMP ${c.id}: согласие в баннере → ключ визита; отказ → ключ удалён`, async ({
+    page,
+  }) => {
+    await humanBrowser(page);
+    const pk = newPk();
+    await site(pk, { analytics: ANA, goals: GOALS });
+    const loaded = anaLoaded(page);
+    await page.goto(stand('example.localhost', { pk }));
+    await expect(launcher(page)).toBeVisible();
+    await loaded;
+    const code = cmpSnippet(c.id, 'V4CAssist') as string;
+    await page.addScriptTag({ content: `${c.before ?? ''};\n${code}` });
+    expect(await visitKeyOf(page, pk)).toBeNull();
+    await page.evaluate(c.grant);
+    await expect
+      .poll(() => visitKeyOf(page, pk))
+      .toMatch(/^v[A-Za-z0-9_-]{16,}\.\d+$/);
+    await page.evaluate(c.deny);
+    await expect.poll(() => visitKeyOf(page, pk)).toBeNull();
+  });
+}
+
+test('CMP: решение баннера ДО загрузки виджета — в очередь, связанный режим включается', async ({
+  page,
+}) => {
+  await humanBrowser(page);
+  const pk = newPk();
+  await site(pk, { analytics: ANA, goals: GOALS });
+  // Cookiebot с прежним решением шлёт событие сразу — раньше загрузчика.
+  await page.addInitScript(
+    `${cmpSnippet('cookiebot', 'V4CAssist')};\n` +
+      "window.Cookiebot={consent:{statistics:true}};window.dispatchEvent(new Event('CookiebotOnConsentReady'));"
+  );
+  await page.goto(stand('example.localhost', { pk }));
+  await expect(launcher(page)).toBeVisible();
+  await expect
+    .poll(() => visitKeyOf(page, pk))
+    .toMatch(/^v[A-Za-z0-9_-]{16,}\.\d+$/);
+});
+
+// Аудит P2-5: решение, данное РАНЬШЕ (CMP уже ответила до фрагмента или
+// сообщает его при загрузке баннера), — связанный режим без нового клика.
+const CMP_PRIOR: Array<{
+  name: string;
+  id: Exclude<CmpId, 'custom' | 'gcm'>;
+  before: string;
+  after?: string;
+}> = [
+  {
+    name: 'Cookiebot: hasResponse до вставки фрагмента',
+    id: 'cookiebot',
+    before: 'window.Cookiebot={hasResponse:true,consent:{statistics:true}}',
+  },
+  {
+    name: 'CookieYes: getCkyConsent() до вставки фрагмента',
+    id: 'cookieyes',
+    before:
+      'window.getCkyConsent=function(){return {categories:{necessary:true,analytics:true},isUserActionCompleted:true}}',
+  },
+  {
+    name: 'CookieYes: cookieyes_banner_load с прежним решением',
+    id: 'cookieyes',
+    before: '',
+    after:
+      "document.dispatchEvent(new CustomEvent('cookieyes_banner_load',{detail:{activeLaw:'gdpr',categories:{necessary:true,analytics:true},isUserActionCompleted:true}}))",
+  },
+];
+
+for (const c of CMP_PRIOR) {
+  test(`CMP прежнее решение — ${c.name}`, async ({ page }) => {
+    await humanBrowser(page);
+    const pk = newPk();
+    await site(pk, { analytics: ANA, goals: GOALS });
+    const loaded = anaLoaded(page);
+    await page.goto(stand('example.localhost', { pk }));
+    await expect(launcher(page)).toBeVisible();
+    await loaded;
+    await page.addScriptTag({
+      content: `${c.before};\n${cmpSnippet(c.id, 'V4CAssist')}`,
+    });
+    if (c.after) await page.evaluate(c.after);
+    await expect
+      .poll(() => visitKeyOf(page, pk))
+      .toMatch(/^v[A-Za-z0-9_-]{16,}\.\d+$/);
+  });
+}

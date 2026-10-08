@@ -30,6 +30,8 @@ import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
 import type { WidgetVoiceResponse } from '../assist-site-voice/api-types';
 import {
   SiteVoiceService,
+  STT_UI_LANG_HEADER,
+  uiLangOf,
   type VoiceFailure,
 } from '../assist-site-voice/public/site-voice.service';
 import { VOICE_DEFAULTS } from '../assist-site-voice/voice-config';
@@ -118,6 +120,8 @@ export class WidgetVoiceController {
       ctx,
       audio,
       req.headers['content-type'],
+      // Заход 9: язык интерфейса виджета — счётчик «не расслышал» Т-4.
+      uiLangOf(req.headers[STT_UI_LANG_HEADER.toLowerCase()]),
     );
     if (!r.ok) throw widgetError(FAILURE_CODE[r.failure]);
     return { text: r.text, lang: r.lang, voiceTicket: r.ticket };

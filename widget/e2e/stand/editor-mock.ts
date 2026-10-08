@@ -27,6 +27,9 @@ const E = {
   sessions: new Set<string>(),
   revision: 0,
   targets: new Map<string, Target>(),
+  templates: [] as Array<Record<string, unknown>>,
+  /** Заход 9: байты последней записи «Сказать сейчас» (`/editor/v1/voice`). */
+  voiceBytes: 0,
   log: [] as Array<{ path: string; body: unknown }>,
   publishAttempts: 0,
 };
@@ -36,6 +39,8 @@ export function editorReset(): void {
   E.sessions.clear();
   E.revision = 0;
   E.targets.clear();
+  E.templates = [];
+  E.voiceBytes = 0;
   E.log.length = 0;
   E.publishAttempts = 0;
 }
@@ -49,6 +54,8 @@ export function editorLog() {
     log: E.log,
     revision: E.revision,
     targets: [...E.targets.values()],
+    templates: E.templates,
+    voiceBytes: E.voiceBytes,
     publishAttempts: E.publishAttempts,
   };
 }
@@ -101,7 +108,7 @@ function mapView(path: string) {
     publishedVersion: 0,
     path,
     template: null,
-    templates: [],
+    templates: E.templates,
     targets,
     keys: targets.map((t) => t.key),
     gates: { ok: true, problems: [] },
@@ -136,6 +143,18 @@ export async function editorRoute(
     return void res.end(FRAME_HTML);
   }
   if (!p.startsWith('/editor/v1/')) return err(res, 404, 'NOT_FOUND');
+  // Заход 9: запись микрофона — сырое тело `audio/*` (как на сервере).
+  if (p === '/editor/v1/voice') {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    E.log.push({ path: p, body: { type: req.headers['content-type'] } });
+    if (!E.sessions.has(String(req.headers['x-assist-editor'] || '')))
+      return err(res, 401, 'EDITOR_SESSION_EXPIRED');
+    if (!/^audio\//.test(String(req.headers['content-type'] || '')))
+      return err(res, 400, 'EDITOR_VOICE_AUDIO_INVALID');
+    E.voiceBytes = Buffer.concat(chunks).length;
+    return ok(res, { text: 'натисни в кошик', lang: 'uk', left: 97 });
+  }
   const b = req.method === 'POST' ? await body(req) : {};
   E.log.push({ path: p, body: b });
   if (p === '/editor/v1/session') {
@@ -162,8 +181,37 @@ export async function editorRoute(
     case '/editor/v1/ops': {
       if (b.expectedRevision !== E.revision)
         return err(res, 409, 'VOICE_MAP_CONFLICT');
-      for (const op of (b.ops as Array<Record<string, unknown>>) || []) {
-        if (op.op === 'upsert-target') {
+      const list = (b.ops as Array<Record<string, unknown>>) || [];
+      // Как сервер: id нового шаблона выдаёт сервер; цель шаблона — только
+      // на существующий id (иначе 422 весь пакет).
+      for (const op of list) {
+        const t = op.target as Record<string, unknown> | undefined;
+        if (
+          op.op === 'upsert-target' &&
+          t?.scope === 'template' &&
+          !E.templates.some((x) => x.id === t.templateId)
+        )
+          return json(res, 422, {
+            success: false,
+            error: {
+              code: 'VOICE_MAP_INVALID',
+              message: 'bad_target',
+              details: {
+                code: 'VOICE_MAP_INVALID',
+                errors: [{ code: 'bad_target' }],
+              },
+            },
+          });
+      }
+      for (const op of list) {
+        if (op.op === 'upsert-template') {
+          const t = op.template as Record<string, unknown>;
+          E.templates.push({
+            ...t,
+            id: `t-srv${E.templates.length + 1}`,
+            status: 'active',
+          });
+        } else if (op.op === 'upsert-target') {
           const t = op.target as Record<string, unknown>;
           const prev = E.targets.get(String(t.key));
           const d = (t.descriptor ?? prev?.descriptor) as Record<
@@ -213,6 +261,35 @@ export async function editorRoute(
       });
     }
     // Э6-тер (д): мемо в редакторе — форма протокола (правила — acceptance/e6t).
+    case '/editor/v1/memo/list':
+      return ok(res, {
+        items: [
+          {
+            number: 3,
+            key: 'koshyk',
+            name: 'Кошик',
+            status: 'published',
+            page: '/page',
+            steps: 2,
+          },
+        ],
+        limit: { used: 1, max: 20 },
+      });
+    case '/editor/v1/memo/record/wait': {
+      const d = (b.descriptor || {}) as Record<string, unknown>;
+      const text = String(d.text || '');
+      return /\d/.test(text)
+        ? ok(res, {
+            kind: 'counter',
+            target: {
+              assistId: d.assistId ?? null,
+              text: text.replace(/[\d()]/g, '').trim(),
+            },
+            delta: 1,
+            now: 0,
+          })
+        : ok(res, { kind: 'appear', text });
+    }
     case '/editor/v1/memo/record/start':
       return ok(res, {
         page: b.path,
@@ -259,6 +336,16 @@ export async function editorRoute(
         slot: null,
         risk: exec ? 'auto' : 'confirm',
         exec,
+        // Заход 9: «Як скасувати» цели карты (стандартная пара разметки).
+        undo:
+          d.assistId === 'add-to-cart'
+            ? {
+                assistId: 'remove-from-cart',
+                at: null,
+                src: 'standard',
+                key: 'add-to-cart',
+              }
+            : null,
       });
     }
     case '/editor/v1/memo/record/stop':

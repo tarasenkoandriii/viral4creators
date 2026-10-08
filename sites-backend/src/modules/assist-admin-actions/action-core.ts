@@ -48,6 +48,13 @@ export const ACTION_LIMITS = {
   errorTextChars: 300,
   /** «Да» исполняется дольше этого — карточка считает исход неизвестным. */
   executingStaleMs: MINUTE,
+  /**
+   * Аудит Э8 (4), Р-З9-21: повтор «Да» после `unknown` тем же ключом — не
+   * позже суток от исполнения. Позже API заказчика вправе забыть ключ
+   * идемпотентности (обычно 24 ч) — повтор стал бы дублем; карточка
+   * истекает, сотрудник проверяет в админке и просит заново (новый ключ).
+   */
+  unknownRetryMs: DAY,
   /** Запуск мемо АМ-N живёт 30 мин. */
   memoRunTtlMs: 30 * MINUTE,
 } as const;
@@ -309,14 +316,30 @@ export function signRequest(
 }
 
 /** Предложение просрочено (или зависло в исполнении) к моменту `now`. */
+/** Р-З9-21: `unknown` старше суток от исполнения — повтор «Да» закрыт. */
+export function unknownRetryClosed(
+  p: { status: string; executedAt?: Date | null; decidedAt: Date | null },
+  now: Date,
+): boolean {
+  if (p.status !== 'unknown') return false;
+  const at = p.executedAt ?? p.decidedAt;
+  return !!at && now.getTime() - at.getTime() > ACTION_LIMITS.unknownRetryMs;
+}
+
 export function effectiveStatus(
-  p: { status: string; expiresAt: Date; decidedAt: Date | null },
+  p: {
+    status: string;
+    expiresAt: Date;
+    decidedAt: Date | null;
+    executedAt?: Date | null;
+  },
   now: Date,
 ): ProposalStatus {
   const s = p.status as ProposalStatus;
   if (s === 'pending' && p.expiresAt.getTime() <= now.getTime()) {
     return 'expired';
   }
+  if (unknownRetryClosed(p, now)) return 'expired';
   if (
     s === 'executing' &&
     p.decidedAt &&
@@ -385,6 +408,11 @@ export const ACTION_TEXT = {
       `Система отклонила действие «${what}»${err ? `: ${err}` : ''}. Ничего не изменено.`,
     en: (what: string, err: string | null) =>
       `The system rejected «${what}»${err ? `: ${err}` : ''}. Nothing was changed.`,
+  },
+  retryExpired: {
+    uk: 'Повтор цієї дії більше не приймається (минуло понад 24 години). Перевірте результат в адмінці; якщо дії немає — попросіть ще раз, буде нова картка.',
+    ru: 'Повтор этого действия больше не принимается (прошло больше 24 часов). Проверьте результат в админке; если действия нет — попросите заново, будет новая карточка.',
+    en: 'This action can no longer be retried (more than 24 hours have passed). Check the result in the admin panel; if it was not applied, ask again to get a new card.',
   },
   unknown: {
     uk: (what: string) =>

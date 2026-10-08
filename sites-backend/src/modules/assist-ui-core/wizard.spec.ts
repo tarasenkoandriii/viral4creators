@@ -8,12 +8,14 @@ import { defaultVoiceControlRules } from './rules';
 import type { UiSnapElement, UiSnapshot } from './types';
 import {
   forbiddenProbes,
+  markupChangedFrom,
   markupFragment,
   neverList,
   neverViolation,
   parseSuspicious,
   reportUsable,
   suggestCommands,
+  wizardPages,
   wizardVerdict,
   WIZARD_LIMITS,
   type WizardVerdictInput,
@@ -528,5 +530,70 @@ describe('последний рубеж: нарушение запрета (§5-
         hosts: HOSTS,
       }),
     ).toBe('denied');
+  });
+});
+
+describe('заход 9, аудит (г) (6): «разметка не менялась» — все страницы отчёта и промахи', () => {
+  it('страницы: отчёта, команд сессии и исполненных переходов (без `*`), без повторов, ≤ 20', () => {
+    expect(
+      wizardPages('/', [
+        { pageUrl: 'https://shop.example.com/catalog/', steps: [] },
+        {
+          pageUrl: 'https://shop.example.com/',
+          steps: [
+            { state: 'done', expect: { path: '/delivery' } },
+            { state: 'pending', expect: { path: '/never-reached' } },
+            { state: 'done', expect: { path: '/cart*' } },
+            { state: 'done', expect: { path: '//evil.example' } },
+          ],
+        },
+        { pageUrl: 'not a url', steps: null },
+      ]),
+    ).toEqual(['/', '/catalog', '/delivery']);
+    const many = Array.from({ length: 30 }, (_, i) => ({
+      pageUrl: `https://shop.example.com/p/${i}`,
+      steps: [],
+    }));
+    expect(wizardPages('/', many)).toHaveLength(20);
+  });
+
+  it('изменилась: «устарел» после отчёта (любой вид); промахи ≥ 2 разных посетителей после отчёта — момент второго; до отчёта и один посетитель — нет', () => {
+    const t0 = new Date('2026-10-08T10:00:00Z');
+    const at = (m: number) => new Date(t0.getTime() + m * 60_000);
+    const none = { reportedAt: t0, elements: [], misses: [] };
+    expect(markupChangedFrom(none)).toBeNull();
+    expect(
+      markupChangedFrom({
+        ...none,
+        elements: [
+          { id: 'a', staleDesktopAt: at(-5), staleMobileAt: at(7) },
+          { id: 'b', staleDesktopAt: at(3), staleMobileAt: null },
+        ],
+      }),
+    ).toEqual(at(7));
+    const miss = (el: string, v: string, m: number) => ({
+      elementRowId: el,
+      visitorId: v,
+      createdAt: at(m),
+    });
+    // Один посетитель много раз и промахи до отчёта — не изменение.
+    expect(
+      markupChangedFrom({
+        ...none,
+        misses: [
+          miss('a', 'v1', 1),
+          miss('a', 'v1', 2),
+          miss('a', 'v2', -3),
+          miss('b', 'v3', 4),
+        ],
+      }),
+    ).toBeNull();
+    expect(WIZARD_LIMITS.markupMissVisitors).toBe(2);
+    expect(
+      markupChangedFrom({
+        ...none,
+        misses: [miss('a', 'v1', 1), miss('a', 'v1', 2), miss('a', 'v2', 9)],
+      }),
+    ).toEqual(at(9));
   });
 });

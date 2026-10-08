@@ -542,6 +542,58 @@ export function cleanUiSnapshot(raw: unknown, limit = 60): UiSnapshotElement[] {
   return out;
 }
 
+/**
+ * Ш4 (3), Р-З9-2: роль ARIA элемента снимка с тегом вне перечня карты
+ * (`div role=button` → тег снимка `other`) → тег карты, ТОЛЬКО для поиска
+ * ключей при подтверждении снимком. Перечень тегов карты не расширяется
+ * (`UI_ELEMENT_TAGS`), новые элементы так не создаются.
+ */
+export const SEEN_ROLE_TAG: Readonly<Partial<Record<UiRole, UiElementTag>>> = {
+  button: 'button',
+  menuitem: 'button',
+  tab: 'button',
+  link: 'a',
+  checkbox: 'input',
+  radio: 'input',
+  switch: 'input',
+};
+
+/**
+ * Ключи, по которым снимок посетителя (Э6-бис) узнаёт элементы карты:
+ * элементы с тегом карты — все ключи кандидатов (как раньше); элемент
+ * `other` с интерактивной ролью (`SEEN_ROLE_TAG`) — тег карты по роли и
+ * только ключи, не зависящие от тега и от вёрстки: `data-assist-id`, id,
+ * test-id, роль+имя (не текст `x:тег|…` и не CSS-путь — `div role=tab`
+ * «Доставка» не та же кнопка `<button>Доставка</button>`, а голос «найден»
+ * за чужой элемент гасил бы настоящие промахи). Неединственные смысловые
+ * ключи вычёркивает `cleanUiSnapshot` в каждой группе.
+ */
+export function seenSnapshotKeys(raw: unknown, limit = 150): string[] {
+  if (!Array.isArray(raw)) return [];
+  const native: unknown[] = [];
+  const mapped: unknown[] = [];
+  for (const x of raw) {
+    const o =
+      x && typeof x === 'object' && !Array.isArray(x)
+        ? (x as Record<string, unknown>)
+        : null;
+    if (o?.tag !== 'other') {
+      native.push(x);
+      continue;
+    }
+    const tag =
+      typeof o.role === 'string' ? SEEN_ROLE_TAG[o.role as UiRole] : undefined;
+    if (tag) mapped.push({ ...o, tag });
+  }
+  const keys = new Set<string>();
+  for (const e of cleanUiSnapshot(native, limit))
+    for (const k of candidateKeys(e.candidates, e.tag)) keys.add(k);
+  for (const e of cleanUiSnapshot(mapped, limit))
+    for (const k of candidateKeys(e.candidates, e.tag))
+      if (!k.startsWith('x:') && !k.startsWith('c:')) keys.add(k);
+  return [...keys];
+}
+
 /** Отпечаток снимка v2 (другой набор/кандидаты — новая версия карты). */
 export function uiSnapshotHash(elements: UiSnapshotElement[]): string {
   return createHash('sha256')

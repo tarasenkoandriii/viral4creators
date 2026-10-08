@@ -231,6 +231,13 @@ async function main() {
         } as T;
       if (path.endsWith('/tests'))
         return { items: [{ id: 't1' }, { id: '../' }] } as T;
+      if (path.endsWith('/dev-link'))
+        return {
+          url: path.includes('/t-evil/')
+            ? 'https://evil.example/phish'
+            : 'https://w.example/w/v1/vc-report/abcdefghijklmnopqrstuvwxyz012345',
+          expiresAt: '2026-10-11T10:00:00.000Z',
+        } as T;
       return { id: 't1', report: null } as T;
     },
   });
@@ -249,6 +256,26 @@ async function main() {
     '/assist/sites/s1/voice-control/site/tests/t1'
   );
   await assert.rejects(api2.test('s1', '../t'));
+  // Заход 9: ссылка «звіт для розробника» — POST на отчёт, адрес строго.
+  const dev = await api2.devLink('s1', 't1');
+  assert.equal(
+    dev.url,
+    'https://w.example/w/v1/vc-report/abcdefghijklmnopqrstuvwxyz012345'
+  );
+  assert.deepEqual(c2[c2.length - 1], [
+    'POST',
+    '/assist/sites/s1/voice-control/site/tests/t1/dev-link',
+    undefined,
+  ]);
+  await assert.rejects(api2.devLink('s1', 't-evil'));
+  await assert.rejects(api2.devLink('s1', '../t'));
+  for (const d of [appUk, appRu, appEn]) {
+    assert.ok(
+      d.voiceControl.wizard.devLink && d.voiceControl.wizard.devLinkHint
+    );
+    assert.ok(/72/.test(d.voiceControl.wizard.devLinkHint));
+    assert.ok(d.voiceControl.stateReasons.not_heard_high);
+  }
   assert.equal(
     voiceControlErrorCode(
       new ApiError('VOICE_CONTROL_TEST_REQUIRED', 'x', 409)

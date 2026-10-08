@@ -69,6 +69,10 @@ export interface Proposal {
   createdAt: string;
   /** Журнал владельца: кто предложил. */
   actor: string | null;
+  /** Попыток исполнения («Да» было, если > 0). */
+  attempts: number;
+  /** Исход (`retry_expired` — повтор после суток закрыт, Р-З9-21). */
+  outcome: string | null;
 }
 
 export interface MemoListItem {
@@ -153,7 +157,23 @@ export function parseProposal(v: unknown): Proposal {
     memoStep: numOrNull(memo.step),
     createdAt: str(o.createdAt),
     actor: strOrNull(o.actor),
+    attempts: Math.max(0, Math.floor(numOrNull(o.attempts) ?? 0)),
+    outcome: strOrNull(o.outcome),
   };
+}
+
+/**
+ * Р-З9-21: «Да» было (попытки > 0), а карточка истекла — повтор после
+ * `unknown` закрыт по сроку (сутки): проверить в админке и попросить заново.
+ */
+export function retryExpired(
+  p: Pick<Proposal, 'status' | 'attempts'> & { outcome?: string | null }
+) {
+  // Шаг мемо, остановленный после `unknown` (`memo_halted`), — другая
+  // причина: подсказку «24 часа» не показываем.
+  return (
+    p.status === 'expired' && p.attempts > 0 && p.outcome !== 'memo_halted'
+  );
 }
 
 function parseMemoItem(v: unknown): MemoListItem {
@@ -218,13 +238,18 @@ export interface AdminActionsApi {
   }>;
   compensate(siteId: string, pid: string): Promise<Proposal | null>;
   // журнал владельца
-  list(siteId: string, review: boolean): Promise<Proposal[]>;
+  list(siteId: string, review: boolean, lang?: string): Promise<Proposal[]>;
   rollback(
     siteId: string,
     pid: string
   ): Promise<{ proposal: Proposal | null; text: string }>;
   verify(siteId: string): Promise<{ ok: boolean; brokenAt: number | null }>;
-  signingSecret(siteId: string, cn: string): Promise<{ secret: string }>;
+  /** Р-З9-18: `expectedSetAt` — выпуск, который видит экран (null — не было). */
+  signingSecret(
+    siteId: string,
+    cn: string,
+    expectedSetAt?: string | null
+  ): Promise<{ secret: string }>;
   // мемо АМ-N
   memos(siteId: string): Promise<{
     limit: number;
@@ -311,13 +336,18 @@ export function createAdminActionsApi(client: ApiClient): AdminActionsApi {
       );
       return o.proposal ? parseProposal(o.proposal) : null;
     },
-    list: async (s, review) =>
-      arr(
+    list: async (s, review, lang) => {
+      const q = [
+        ...(review ? ['chain=review'] : []),
+        ...(lang && LANG.test(lang) ? [`lang=${lang}`] : []),
+      ];
+      return arr(
         await client.request(
           'GET',
-          `${base(s)}/action-log/proposals${review ? '?chain=review' : ''}`
+          `${base(s)}/action-log/proposals${q.length ? `?${q.join('&')}` : ''}`
         )
-      ).map(parseProposal),
+      ).map(parseProposal);
+    },
     rollback: async (s, pid) => {
       const o = obj(
         await client.request(
@@ -336,12 +366,13 @@ export function createAdminActionsApi(client: ApiClient): AdminActionsApi {
       );
       return { ok: o.ok === true, brokenAt: numOrNull(o.brokenAt) };
     },
-    signingSecret: async (s, cn) => ({
+    signingSecret: async (s, cn, expectedSetAt) => ({
       secret: str(
         obj(
           await client.request(
             'POST',
-            `${base(s)}/connectors/${seg(cn)}/signing-secret`
+            `${base(s)}/connectors/${seg(cn)}/signing-secret`,
+            expectedSetAt === undefined ? undefined : { expectedSetAt }
           )
         ).secret
       ),

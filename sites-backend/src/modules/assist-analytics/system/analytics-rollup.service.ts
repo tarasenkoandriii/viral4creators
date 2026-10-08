@@ -12,7 +12,7 @@
  *  - run (каждые 10 мин): пересчитать «сегодня» и «вчера» сайтов с
  *    активностью + экспорт (ExportsService.process);
  *  - daily (04:40 UTC): все сайты за прошедшие сутки, stale целей, уборка
- *    счётчиков событий старше 13 мес.
+ *    счётчиков событий старше 13 мес (Pro — 25, retention.ts).
  *
  * Уточнения A (формулы — в отчёте):
  *  - диалог дня — создан в сутки сайта, не `suspicious`;
@@ -40,6 +40,12 @@ import type { CronScope } from '../../../common/cron-scope';
 import { ExportsService } from '../exports.service';
 import { mergeNearestPage } from '../goal-webhook.service';
 import { seedDefaultGoals } from '../goals.service';
+import {
+  BASE_AGGREGATES_RETENTION_MS,
+  aggregatesCutoff,
+  cutoffDays,
+  oldAggregateSites,
+} from '../retention';
 import { addDays, dayInTz, dayRangeUtc, siteTz, validDay } from '../site-time';
 
 /** Операции обслуживания диалога (расход «Обзора»). */
@@ -510,25 +516,30 @@ export class AnalyticsRollup {
       PAGE_DETECTOR_JSON[2],
       scope ? scope.siteIds : null,
     );
-    // Хранение (§5-тер.15): счётчики и свёртки — 13 мес, события целей — 13 мес.
-    const cutoffDay = new Date(
-      now.getTime() - ANALYTICS_DEFAULTS.dailyTotalsRetentionMs,
-    )
+    // Хранение (§5-тер.15): счётчики и свёртки — 13 мес (Pro — 25, по
+    // тарифу на момент уборки, заход 9), события целей — 13 мес у всех.
+    const ids = scope ? scope.siteIds : null;
+    const tables = ['assist_site_event_counts', 'assist_site_daily_totals'];
+    const base = new Date(now.getTime() - BASE_AGGREGATES_RETENTION_MS)
       .toISOString()
       .slice(0, 10);
-    const ids = scope ? scope.siteIds : null;
-    await this.prisma.$executeRawUnsafe(
-      `DELETE FROM "sites"."assist_site_event_counts"
-        WHERE "day" < $1 AND ($2::text[] IS NULL OR "siteId" = ANY($2::text[]))`,
-      cutoffDay,
-      ids,
+    const cutoff = await aggregatesCutoff(
+      this.prisma,
+      await oldAggregateSites(this.prisma, tables, base, ids),
+      now,
     );
-    await this.prisma.$executeRawUnsafe(
-      `DELETE FROM "sites"."assist_site_daily_totals"
-        WHERE "day" < $1 AND ($2::text[] IS NULL OR "siteId" = ANY($2::text[]))`,
-      cutoffDay,
-      ids,
-    );
+    const cut = cutoffDays(cutoff);
+    for (const t of tables) {
+      await this.prisma.$executeRawUnsafe(
+        `DELETE FROM "sites"."${t}"
+          WHERE "day" < $1 AND ($2::text[] IS NULL OR "siteId" = ANY($2::text[]))
+            AND ("day" < $3 OR NOT ("siteId" = ANY($4::text[])))`,
+        cut.base,
+        ids,
+        cut.long,
+        cutoff.longSiteIds,
+      );
+    }
     await this.prisma.$executeRawUnsafe(
       `DELETE FROM "sites"."assist_site_goal_events"
         WHERE "occurredAt" < $1 AND ($2::text[] IS NULL OR "siteId" = ANY($2::text[]))`,

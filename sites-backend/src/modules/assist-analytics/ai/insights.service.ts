@@ -11,15 +11,19 @@
  * — находки (числа кода) и ≤ 5 замаскированных примеров вопросов; каждый
  * вывод проходит проверку чисел и путей (`parseInsights`), не прошёл —
  * находка остаётся сухой строкой (`textSkipped = 'numbers' | 'links'`).
+ * Язык — получателей (заход 9, Р-З9-7): основной — владельца, переводы для
+ * остальных участников в том же вызове, каждый — та же проверка чисел.
  * Start/Trial — находки кодом без модели (сухие строки, §5-тер.17).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { SitesDb } from '../../../prisma/sites-db.service';
 import { estimateCost } from '../../../shared/ai-pricing';
 import type { CronScope } from '../../../common/cron-scope';
 import { ASSIST_PLANS } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
+import { recipientsWithLang } from '../../assist-knowledge-core/notify';
 import { maskForJournal } from '../../assist-site-chat/answer-checks';
 import { geminiOutputCeiling } from '../../site-ai/gemini-output';
 import {
@@ -47,6 +51,8 @@ import {
   parseInsights,
   type Finding,
   type FindingInputs,
+  type InsightLang,
+  type StoredInsightText,
 } from './findings';
 import {
   CALIBRATION_MIN_POSITIVES,
@@ -62,6 +68,10 @@ const DAY = 24 * 60 * 60 * 1000;
 export const RUN_CODE = 'RUN';
 export const FOLLOW_UP_DAYS = 14;
 const INSIGHT_MAX_OUTPUT = 1200;
+/** Видимый ответ на N языков (основной + переводы) — тот же запас на каждый. */
+export function insightMaxOutput(langs: number): number {
+  return INSIGHT_MAX_OUTPUT * Math.max(1, langs);
+}
 
 export interface WeeklyTickResult {
   sites: number;
@@ -99,7 +109,28 @@ export class WeeklyInsights {
     private readonly text: GeminiText,
     private readonly usage: AiUsageRecorder,
     private readonly budget: AnalyticsBudget,
+    @Optional() private readonly sitesDb?: SitesDb,
   ) {}
+
+  /**
+   * Языки выводов (Р-З9-7, хвост Э3-бис (9)): основной — язык владельца
+   * (Telegram `language_code`, assist_bot_users), остальные — языки прочих
+   * участников кабинета (они читают отчёт и экран на своём). Нет данных — uk.
+   */
+  async insightLangs(accountId: string): Promise<InsightLang[]> {
+    if (!this.sitesDb) return ['uk'];
+    const owners = await recipientsWithLang(
+      this.sitesDb,
+      accountId,
+      (m) => m.role === 'owner',
+    );
+    const all = await recipientsWithLang(this.sitesDb, accountId, () => true);
+    const out: InsightLang[] = [];
+    for (const r of [...owners, ...all]) {
+      if (!out.includes(r.lang)) out.push(r.lang);
+    }
+    return out.length ? out : ['uk'];
+  }
 
   async tick(opts: {
     now?: Date;
@@ -217,10 +248,7 @@ export class WeeklyInsights {
     await this.examples(accountId, siteId, tz, weekStart, findings);
     out.findings = findings.length;
 
-    const texts = new Map<
-      number,
-      { title: string; what: string; action: string }
-    >();
+    const texts = new Map<number, StoredInsightText>();
     const rejected = new Map<number, string>();
     let skipped: string | null = null;
     let model: string | null = null;
@@ -325,15 +353,12 @@ export class WeeklyInsights {
     model: string,
     now: Date,
   ): Promise<{
-    texts: Map<number, { title: string; what: string; action: string }>;
+    texts: Map<number, StoredInsightText>;
     rejected: Map<number, string>;
     skipped: string | null;
     cost: number;
   }> {
-    const texts = new Map<
-      number,
-      { title: string; what: string; action: string }
-    >();
+    const texts = new Map<number, StoredInsightText>();
     const rejected = new Map<number, string>();
     const niche =
       summary &&
@@ -341,19 +366,25 @@ export class WeeklyInsights {
       typeof (summary as { businessType?: unknown }).businessType === 'string'
         ? (summary as { businessType: string }).businessType.slice(0, 80)
         : null;
-    // Язык кабинета — русский, как отчёт недели (report-text.ts; паритет uk/en — вопрос владельцу).
+    // Язык получателей (Р-З9-7, заход 9): основной — владельца, переводы —
+    // для остальных участников; один вызов, каждый язык — своя проверка чисел.
+    const [lang, ...extraLangs] = await this.insightLangs(accountId);
     const prompt = buildInsightPrompt({
       findings,
       siteName,
       niche,
-      lang: 'ru',
+      lang,
+      extraLangs,
     });
+    // Переводы — в том же ответе: потолок растёт с числом языков (иначе
+    // ответ обрезается и выводы целиком уходят в сухие строки).
+    const maxOutput = insightMaxOutput(1 + extraLangs.length);
     const est = estimateCost(
       model,
       {
         inputTokens: Math.ceil((prompt.system.length + prompt.user.length) / 2),
         // Сверху — потолок, который уходит провайдеру (с запасом на мысли).
-        outputTokens: geminiOutputCeiling(INSIGHT_MAX_OUTPUT),
+        outputTokens: geminiOutputCeiling(maxOutput),
       },
       this.env,
     ).costMicroUsd;
@@ -385,17 +416,22 @@ export class WeeklyInsights {
         user: prompt.user,
         json: true,
         temperature: 0.2,
-        maxOutputTokens: INSIGHT_MAX_OUTPUT,
+        maxOutputTokens: maxOutput,
         model,
       });
       await record(out);
       settled = true;
       await this.budget.settle(rsv.reservation, cost);
-      const parsed = parseInsights(out.text, findings);
+      const parsed = parseInsights(out.text, findings, extraLangs);
       if (parsed.invalid) return { texts, rejected, skipped: 'model', cost };
       for (const a of parsed.accepted) {
+        const stored: StoredInsightText = {
+          ...a.text,
+          lang,
+          ...(a.i18n ? { i18n: a.i18n } : {}),
+        };
         for (const i of a.findingIndexes)
-          if (!texts.has(i)) texts.set(i, a.text);
+          if (!texts.has(i)) texts.set(i, stored);
       }
       for (const r of parsed.rejected) {
         for (const i of r.findingIndexes)
@@ -687,7 +723,9 @@ export class WeeklyInsights {
     const windowDays = effectiveAnalyticsConfig(analytics).linkedWindowDays;
     // Известный исход: конверсия (любой режим) — 1; «не купил» — только
     // связанный режим с закрытым окном (без согласия межстраничные конверсии
-    // не видны — такие диалоги в калибровку не идут, §5-тер.4).
+    // не видны — такие диалоги в калибровку не идут, §5-тер.4). «Связан» —
+    // флаг разметки (Р-З9-26: хеш визита диалога обнуляется через 31 день),
+    // хеш — для связи, появившейся после разметки и до суточной уборки.
     const rows = await this.prisma.$queryRawUnsafe<
       Array<{ score: number; y: boolean; linked: boolean; closed: boolean }>
     >(
@@ -695,7 +733,7 @@ export class WeeklyInsights {
               EXISTS (SELECT 1 FROM "sites"."assist_site_goal_events" e
                        WHERE e."conversationId" = l."conversationId" AND e."status" = 'completed'
                          AND e."attribution" IN ('direct', 'assisted')) AS y,
-              c."visitHash" IS NOT NULL AS linked,
+              (l."linked" OR c."visitHash" IS NOT NULL) AS linked,
               c."lastMessageAt" < $3 AS closed
          FROM "sites"."assist_site_conversation_labels" l
          JOIN "sites"."assist_site_conversations" c ON c."id" = l."conversationId"

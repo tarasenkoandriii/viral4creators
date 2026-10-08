@@ -57,6 +57,7 @@ import {
   suggestCommands,
   undoTargetsCheck,
   WIZARD_LIMITS,
+  wizardPages,
   wizardVerdict,
   type MicPolicy,
   type MicStatus,
@@ -217,6 +218,13 @@ export class VoiceTestService {
     } catch {
       return fail('not_found');
     }
+    // (аудит (г) (5), заход 9) Сначала — только чтение: голос/режим сайта
+    // доступны? Иначе одноразовая ссылка сгорала бы впустую (владелец
+    // выключил голос, тариф ниже Business) — обмен только когда сессия
+    // действительно заработает.
+    const state = await readState(this.db, ctx.site.accountId, now);
+    const access = await this.plans.access(ctx.site, state, true);
+    if (!access.mode || !access.rules) return fail('off');
     const row = await exchangeTestToken(this.db, {
       tokenHash: sha256Hex(token),
       siteId: ctx.site.siteId,
@@ -227,9 +235,6 @@ export class VoiceTestService {
       now,
     });
     if (!row) return fail('not_found');
-    const state = await readState(this.db, ctx.site.accountId, now);
-    const access = await this.plans.access(ctx.site, state, true);
-    if (!access.mode || !access.rules) return fail('off');
     this.logger.log(
       `voice-test session site=${ctx.site.siteId} test=${row.id}`,
     );
@@ -591,7 +596,8 @@ export class VoiceTestService {
       result: verdict.result,
       validUntil,
       release: env.release,
-      pages: [page],
+      // (заход 9, аудит (г) (6)) Все страницы, где мастер действовал.
+      pages: wizardPages(page, rows),
       now,
     });
     if (!ok) return fail('conflict');

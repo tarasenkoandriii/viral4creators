@@ -33,7 +33,11 @@ import type {
   PatchOperationDto,
   PutConnectorSecretDto,
 } from './admin-mode.dto';
-import { AdminModeService } from './admin-mode.service';
+import {
+  AdminModeService,
+  expectedIssueWhere,
+  secretChanged,
+} from './admin-mode.service';
 import {
   AdminSecretsError,
   loadAdminKeyring,
@@ -102,6 +106,8 @@ export interface ConnectorView {
   lastCallAt: string | null;
   /** Э8: секрет подписи `X-V4C-Signature` выпущен (значение — один раз). */
   signing: { set: boolean; setAt: string | null };
+  /** Р-З9-14: ПД в данных read-операций маскируются до модели. */
+  maskPd: boolean;
   operations: OperationView[];
 }
 
@@ -146,6 +152,8 @@ export interface ToolOperation {
   summary: string | null;
   params: OperationParam[];
   dailyLimit: number | null;
+  /** Р-З9-14: коннектор маскирует ПД в данных до модели. */
+  maskPd?: boolean;
 }
 
 /** Контекст вызова: кто и откуда (журнал, `X-V4C-Actor`). */
@@ -293,6 +301,7 @@ export class ConnectorsService {
       },
       status: c.status,
       lastCallAt: c.lastCallAt?.toISOString() ?? null,
+      maskPd: c.maskPd,
       signing: {
         set: !!c.signSecretEnc,
         setAt: c.signSetAt?.toISOString() ?? null,
@@ -465,6 +474,7 @@ export class ConnectorsService {
       }
       data.saasAcknowledged = dto.saasAcknowledged;
     }
+    if (dto.maskPd !== undefined) data.maskPd = dto.maskPd;
     await this.db
       .forAccount(m.accountId)
       .assistAdminConnector.updateMany({ where: { id: c.id }, data });
@@ -640,6 +650,7 @@ export class ConnectorsService {
     m: AccountMembership,
     siteId: string,
     cn: string,
+    expectedSetAt?: string | null,
   ): Promise<{
     secret: string;
     setAt: string;
@@ -660,14 +671,18 @@ export class ConnectorsService {
       this.keyring(),
     );
     const now = new Date();
-    await this.db.forAccount(m.accountId).assistAdminConnector.updateMany({
-      where: { id: c.id },
-      data: {
-        signSecretEnc: sealed.ciphertext,
-        signKeyVersion: sealed.keyVersion,
-        signSetAt: now,
-      },
-    });
+    // Р-З9-18: условный UPDATE — второй одновременный перевыпуск получает 409.
+    const w = await this.db
+      .forAccount(m.accountId)
+      .assistAdminConnector.updateMany({
+        where: { id: c.id, ...expectedIssueWhere('signSetAt', expectedSetAt) },
+        data: {
+          signSecretEnc: sealed.ciphertext,
+          signKeyVersion: sealed.keyVersion,
+          signSetAt: now,
+        },
+      });
+    if (w.count !== 1) throw secretChanged();
     return {
       secret,
       setAt: now.toISOString(),
@@ -881,11 +896,14 @@ export class ConnectorsService {
           connector: { status: 'active' },
           ...(role === '*' ? {} : { roles: { has: role } }),
         },
-        include: { connector: { select: { id: true, name: true } } },
+        include: {
+          connector: { select: { id: true, name: true, maskPd: true } },
+        },
         orderBy: [{ connectorId: 'asc' }, { operationId: 'asc' }],
         take: 40,
       });
     return rows.map((o) => ({
+      maskPd: o.connector.maskPd,
       rowId: o.id,
       connectorId: o.connector.id,
       connectorName: o.connector.name,

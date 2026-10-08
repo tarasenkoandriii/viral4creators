@@ -9,8 +9,8 @@
  *  - конфиг (`hosts`), CSP `frame-ancestors`, сессия, предпросмотр, пинг —
  *    хоста нет; отказ тот же, что у чужого origin (не выдаёт «это админка»);
  *  - живой visitor-token, выданный до отметки, — ORIGIN_DENIED на каждом
- *    маршруте (state, чат, план и его шаги, highlight, голос, мастер Т-2,
- *    связанный режим `visit`);
+ *    маршруте (state, чат, план и его шаги, highlight-miss/-seen, голос,
+ *    мастер Т-2, связанный режим `visit`);
  *  - запросы СО СТРАНИЦЫ admin-хоста (`event`, `goal`, `pv`, `exp`, `ref`) —
  *    тот же отказ, что у чужого сайта;
  *  - снимок/адрес шага на admin-хосте из сессии хоста «Сайта» — не адрес
@@ -149,6 +149,11 @@ describeDb(
       [
         'post',
         '/widget/v1/highlight-miss',
+        { elementId: uiElementId('#buy'), pageUrl: `${adm.origin}/` },
+      ],
+      [
+        'post',
+        '/widget/v1/highlight-seen',
         { elementId: uiElementId('#buy'), pageUrl: `${adm.origin}/` },
       ],
       ['post', '/widget/v1/voice-test/session', { token: 'x'.repeat(40) }],
@@ -432,6 +437,22 @@ describeDb(
         where: { siteId: f.siteId, host: key.host },
       });
       expect(map!.staleSignals).toBe(0);
+      // Ш4 (4): и «найдено» на странице admin-хоста — не голос и не «видели».
+      await stack.prisma.siteUiElement.updateMany({
+        where: { siteId: f.siteId, host: key.host },
+        data: { staleDesktopAt: new Date(), lastSeenAt: new Date(0) },
+      });
+      const seen = await request(srv())
+        .post('/widget/v1/highlight-seen')
+        .set('Origin', W_ORIGIN)
+        .set(WIDGET_VISITOR_TOKEN_HEADER, t)
+        .send({ elementId: el, pageUrl: `${adm.origin}/cart` })
+        .expect(200);
+      expect(seen.body.data).toEqual({ ok: true, recorded: false });
+      const row = await stack.prisma.siteUiElement.findFirstOrThrow({
+        where: { siteId: f.siteId, host: key.host, elementId: el },
+      });
+      expect([row.seenCountDesktop, row.lastSeenAt]).toEqual([0, new Date(0)]);
     });
 
     it('кабинет: проверка установки и ссылка мастера Т-2 — без admin-хоста', async () => {

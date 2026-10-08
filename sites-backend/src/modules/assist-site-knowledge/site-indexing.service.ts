@@ -27,6 +27,7 @@ import type { BuildDeadline } from '../assist-knowledge-core/indexer';
 import { qualified } from '../assist-knowledge-core/tables';
 import { SiteKnowledgeService } from './site-knowledge.service';
 import { SITE_TABLES } from './site-tables';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 
 export interface IndexTickResult {
   sitesTouched: number;
@@ -61,7 +62,10 @@ export class SiteIndexingService {
     private readonly knowledge: SiteKnowledgeService,
   ) {}
 
-  /** Сайты с непроиндексированным последним завершённым прогоном. */
+  /**
+   * Сайты с непроиндексированным последним завершённым прогоном — и сайты,
+   * у которых в знаниях живы страницы обхода с хоста «Админки» (Р-З9-24).
+   */
   async candidates(limit = SITES_PER_TICK): Promise<Candidate[]> {
     // Крон идёт по всем кабинетам; accountId каждой строки берётся из
     // самой строки и дальше идёт в каждый запрос (SitesDb.forAccount).
@@ -77,9 +81,23 @@ export class SiteIndexingService {
           ORDER BY r."siteId", r."finishedAt" DESC NULLS LAST, r."createdAt" DESC
        ) x
        WHERE x."lastIndexedCrawlRunId" IS DISTINCT FROM x."runId"
+          -- Р-З9-24: хост отдали «Админке» ПОСЛЕ индексации — живые
+          -- документы обхода на нём снимаются переиндексацией последнего
+          -- прогона, без нового обхода (его может и не быть: подтверждён
+          -- только хост «Админки»). После неё документы — excluded.
+          OR EXISTS (
+            SELECT 1 FROM ${qualified(SITE_TABLES.documents)} d
+              JOIN ${qualified(SITE_TABLES.sources)} s
+                ON s."id" = d."sourceId" AND s."kind" = 'crawl'
+              JOIN ${qualified('site_hosts')} h
+                ON h."siteId" = d."siteId" AND h."accountId" = d."accountId"
+             WHERE d."siteId" = x."siteId" AND d."accountId" = x."accountId"
+               AND d."status" = 'active' AND h."assistRole" <> $2
+               AND substring(d."url" from '^https://([^/:?#]+)') = h."host")
        ORDER BY x."finishedAt" ASC NULLS FIRST
        LIMIT $1`,
       limit,
+      PUBLIC_SITE_HOST.assistRole,
     );
   }
 
@@ -105,20 +123,43 @@ export class SiteIndexingService {
     const ctx = { accountId: c.accountId, siteId: c.siteId };
     const db = this.sitesDb.forAccount(c.accountId);
     const sourceId = await this.crawlSourceId(c.accountId, c.siteId);
-    const pages = await db.sitePage.findMany({
-      where: { siteId: c.siteId },
-      select: {
-        id: true,
-        url: true,
-        finalUrl: true,
-        status: true,
-        skipReason: true,
-        title: true,
-        lang: true,
-        blocks: true,
-        contentHash: true,
-      },
-    });
+    const [rows, adminHosts] = await Promise.all([
+      db.sitePage.findMany({
+        where: { siteId: c.siteId },
+        select: {
+          id: true,
+          hostId: true,
+          url: true,
+          finalUrl: true,
+          status: true,
+          skipReason: true,
+          title: true,
+          lang: true,
+          blocks: true,
+          contentHash: true,
+        },
+      }),
+      db.siteHost.findMany({
+        where: { siteId: c.siteId, NOT: PUBLIC_SITE_HOST },
+        select: { id: true },
+      }),
+    ]);
+    // Р-З9-24 (ТЗ §10, К-9): страницы хоста «Админки» в знания «Сайта» не
+    // идут — даже записанные раньше (до отметки хоста) или чужим продуктом
+    // обхода. Для индексатора они «исключены»: живые документы снимаются как
+    // `excluded`, а не как пропавшие (ворота «массово пропало» не трогают).
+    const admin = new Set(adminHosts.map((h) => h.id));
+    const pages = rows.map(({ hostId, ...p }) =>
+      admin.has(hostId)
+        ? {
+            ...p,
+            status: 'skipped',
+            skipReason: 'excluded',
+            blocks: null,
+            contentHash: null,
+          }
+        : p,
+    );
     const out = await this.knowledge.engine.indexCrawl(
       ctx,
       {

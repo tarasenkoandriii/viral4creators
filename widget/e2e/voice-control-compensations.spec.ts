@@ -233,3 +233,39 @@ test('битая страница отмены в разметке (`//evil…`)
   expect(await removes(page)).toBe(0);
   expect((await shop(pk)).length).toBe(2);
 });
+
+test('заход 9 (§5-бис.15 п.8): `degraded` — «Повернути» лише підсвічує обернену кнопку своєї строки: 0 кліків, без «начат» і підсумків', async ({
+  page,
+}) => {
+  const pk = newPk();
+  await command(page, pk, '&mini=1&seed=Шапка зимова:L');
+  // Сайт перевели в режим підказки між збоєм і «Повернути».
+  await site(pk, {
+    voice: VOICE,
+    voiceControl: { mode: 'degraded' },
+    vcModel: MODEL,
+  });
+  await chat(page).locator('.poffer button.pyes').click();
+  await expect(chat(page).locator('body')).toContainText(
+    'Зараз помічник лише підказує — поверніть самі.',
+    { timeout: 15_000 }
+  );
+  const ring = page.locator('[data-v4c-highlight]');
+  await expect(ring).toHaveCount(1, { timeout: 5_000 });
+  // Обведена саме кнопка «Видалити» строки «Футболка синя».
+  const [rb, tb] = await Promise.all([
+    ring.boundingBox(),
+    page
+      .locator('li', { hasText: 'Футболка синя' })
+      .locator('[data-assist-id="remove-from-cart"]')
+      .boundingBox(),
+  ]);
+  expect(rb && tb).toBeTruthy();
+  expect(Math.abs(rb!.x + 6 - tb!.x)).toBeLessThan(3);
+  expect(Math.abs(rb!.y + 6 - tb!.y)).toBeLessThan(3);
+  await page.waitForTimeout(800);
+  expect(await removes(page)).toBe(0);
+  expect((await shop(pk)).length).toBe(2);
+  await expect(page.locator('#s-size')).toHaveValue('M');
+  expect(await reports()).toEqual([['undo', { by: 'offer' }]]);
+});

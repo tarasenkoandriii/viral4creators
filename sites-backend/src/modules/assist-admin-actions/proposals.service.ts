@@ -69,6 +69,7 @@ import {
   compensationOpen,
   confirmPhraseFor,
   effectiveStatus,
+  unknownRetryClosed,
   linkedArgs,
   normalizePhrase,
   proposalFields,
@@ -202,6 +203,16 @@ type LimitDb = Pick<
   'assistAdminActionLog' | 'assistAdminActionProposal'
 >;
 
+/**
+ * Предложение, которое исполнялось (или исполняется): `executing|done|
+ * unknown`, а также `expired` после «Да» (`attempts > 0`: `unknown` закрыт
+ * по сроку Р-З9-21 или остановкой мемо) — исход мог примениться.
+ */
+const ATTEMPTED_WHERE: Prisma.AssistAdminActionProposalWhereInput[] = [
+  { status: { in: ['executing', 'done', 'unknown'] } },
+  { status: 'expired', attempts: { gt: 0 } },
+];
+
 function roleAllows(o: { roles: string[] }, role: string | null): boolean {
   if (role === null) return false;
   return role === '*' || o.roles.includes(role);
@@ -294,13 +305,22 @@ export class ProposalsService {
 
   // ── витрина ────────────────────────────────────────────────────────────
 
-  view(r: ProposalRow, now = new Date(), op?: OpRow | null): ProposalView {
+  /**
+   * Карточка для сотрудника. `lang` — язык сотрудника (аудит Э8 (5): был
+   * всегда uk): из контекста хода, `?lang=` маршрута или его последнего
+   * вопроса (state).
+   */
+  view(
+    r: ProposalRow,
+    now = new Date(),
+    op?: OpRow | null,
+    lang: ActionLang = 'uk',
+  ): ProposalView {
     const status = effectiveStatus(r, now);
     const fields = Array.isArray(r.fields)
       ? (r.fields as unknown as ProposalField[])
       : [];
     const comp = op ? linkOfJson(op.compensation) : null;
-    const lang: ActionLang = 'uk';
     const title = r.operation.split('.').slice(1).join('.') || r.operation;
     return {
       id: r.id,
@@ -320,6 +340,9 @@ export class ProposalsService {
         status === 'done' &&
         r.compensationOf === null &&
         r.chainStatus !== 'compensated' &&
+        // Аудит пакета C: отмена уже исполнялась с неизвестным исходом —
+        // вторую не предлагаем (двойной откат), разбор — по журналу.
+        r.chainStatus !== 'unknown' &&
         !!r.params &&
         compensationOpen(r.executedAt, now),
       checkAvailable: !!(op && linkOfJson(op.preview)) && !!r.params,
@@ -343,15 +366,23 @@ export class ProposalsService {
       note:
         status === 'pending' && r.unrequested
           ? ACTION_TEXT.unrequested[lang]
-          : '',
+          : unknownRetryClosed(r, now) ||
+              (r.status === 'expired' && r.outcome === 'retry_expired')
+            ? ACTION_TEXT.retryExpired[lang]
+            : '',
     };
   }
 
-  private async viewWithOp(r: ProposalRow, now = new Date()) {
+  private async viewWithOp(
+    r: ProposalRow,
+    now = new Date(),
+    lang: ActionLang = 'uk',
+  ) {
     return this.view(
       r,
       now,
       await this.opRow(r.accountId, r.siteId, r.operationRowId),
+      lang,
     );
   }
 
@@ -361,6 +392,7 @@ export class ProposalsService {
     siteId: string,
     actor: string,
     now = new Date(),
+    lang: ActionLang = 'uk',
   ): Promise<ProposalView[]> {
     const rows = await this.db
       .forAccount(accountId)
@@ -382,7 +414,7 @@ export class ProposalsService {
           await this.opRow(accountId, siteId, r.operationRowId),
         );
       }
-      out.push(this.view(r, now, ops.get(r.operationRowId)));
+      out.push(this.view(r, now, ops.get(r.operationRowId), lang));
     }
     return out;
   }
@@ -393,7 +425,7 @@ export class ProposalsService {
     id: string,
     now = new Date(),
   ): Promise<ProposalView> {
-    return this.viewWithOp(await this.ownRow(ctx, id), now);
+    return this.viewWithOp(await this.ownRow(ctx, id), now, ctx.lang);
   }
 
   private async ownRow(ctx: ActorCtx, id: string): Promise<ProposalRow> {
@@ -846,6 +878,7 @@ export class ProposalsService {
       row,
       now,
       await this.opRow(ctx.accountId, ctx.siteId, op.rowId),
+      ctx.lang,
     );
     const what = `${actionTitle(op)}${
       fields.length
@@ -933,6 +966,61 @@ export class ProposalsService {
       row = await this.ownRow(ctx, id);
       eff = effectiveStatus(row, now);
     }
+    if (eff === 'expired' && unknownRetryClosed(row, now)) {
+      // Р-З9-21: `unknown` старше суток — повтор тем же ключом закрыт
+      // (API вправе забыть ключ идемпотентности, повтор стал бы дублем).
+      const w = await db.assistAdminActionProposal.updateMany({
+        where: { id: row.id, status: 'unknown' },
+        data: { status: 'expired', outcome: 'retry_expired' },
+      });
+      if (w.count === 1) {
+        await this.journal(
+          ctx,
+          {
+            connectorId: row.connectorId,
+            operationRowId: row.operationRowId,
+            operation: row.operation,
+          },
+          {
+            kind: 'decision',
+            outcome: 'retry_expired',
+            request: { proposal: row.id },
+          },
+        );
+        // Закрытая по сроку КОМПЕНСАЦИЯ: исход отката неизвестен — цепочка
+        // исходного действия `unknown` новой записью (вторую отмену код не
+        // предложит; аудит пакета C).
+        if (row.compensationOf) {
+          const orig = await db.assistAdminActionProposal.findFirst({
+            where: { id: row.compensationOf, siteId: ctx.siteId },
+          });
+          if (orig && orig.chainStatus !== 'compensated') {
+            await db.assistAdminActionProposal.updateMany({
+              where: { id: orig.id },
+              data: { chainStatus: 'unknown' },
+            });
+            await this.journal(
+              ctx,
+              {
+                connectorId: orig.connectorId,
+                operationRowId: orig.operationRowId,
+                operation: orig.operation,
+              },
+              {
+                kind: 'chain',
+                outcome: 'unknown',
+                request: { proposal: orig.id, compensation: row.id },
+              },
+            );
+          }
+        }
+      }
+      throw adminError(
+        410,
+        'PROPOSAL_RETRY_EXPIRED',
+        ACTION_TEXT.retryExpired[lang],
+      );
+    }
     if (eff === 'expired') {
       if (row.status === 'pending') {
         await db.assistAdminActionProposal.updateMany({
@@ -953,7 +1041,7 @@ export class ProposalsService {
     if (eff === 'done' || eff === 'failed' || eff === 'executing') {
       // Повторное «Да» (перезагрузка, двойной клик) — тот же результат по id.
       return {
-        proposal: await this.viewWithOp(row, now),
+        proposal: await this.viewWithOp(row, now, ctx.lang),
         text: '',
         next: null,
       };
@@ -963,9 +1051,16 @@ export class ProposalsService {
     if (row.memoRunId && this.beforeMemoStep) {
       const halted = await this.beforeMemoStep(ctx, row);
       if (halted) {
+        // Ожидавший «Да» шаг — `rejected`; шаг после `unknown` (исполнялся,
+        // исход неизвестен) — `expired`: триггер неизменности запрещает
+        // `unknown → rejected` (было 500 вместо 409 MEMO_HALTED).
         await db.assistAdminActionProposal.updateMany({
-          where: { id: row.id, status: { in: ['pending', 'unknown'] } },
+          where: { id: row.id, status: 'pending' },
           data: { status: 'rejected', outcome: 'memo_halted' },
+        });
+        await db.assistAdminActionProposal.updateMany({
+          where: { id: row.id, status: 'unknown' },
+          data: { status: 'expired', outcome: 'memo_halted' },
         });
         throw adminError(409, 'MEMO_HALTED', halted.text);
       }
@@ -1091,7 +1186,7 @@ export class ProposalsService {
             siteId: ctx.siteId,
             compensationOf: row.compensationOf,
             id: { not: row.id },
-            status: { in: ['executing', 'done', 'unknown'] },
+            OR: ATTEMPTED_WHERE,
           },
         });
         if (other > 0) return { lim: null, count: -1 };
@@ -1126,7 +1221,11 @@ export class ProposalsService {
     }
     if (claim.count === 0) {
       return {
-        proposal: await this.viewWithOp(await this.ownRow(ctx, id), now),
+        proposal: await this.viewWithOp(
+          await this.ownRow(ctx, id),
+          now,
+          ctx.lang,
+        ),
         text: '',
         next: null,
       };
@@ -1266,7 +1365,7 @@ export class ProposalsService {
       now,
     );
     return {
-      proposal: await this.viewWithOp(fresh, now),
+      proposal: await this.viewWithOp(fresh, now, ctx.lang),
       text: settled.text ? `${text}\n\n${settled.text}` : text,
       next: settled.next,
     };
@@ -1330,7 +1429,7 @@ export class ProposalsService {
     });
     if (done.count === 0) {
       return {
-        proposal: await this.viewWithOp(row, now),
+        proposal: await this.viewWithOp(row, now, ctx.lang),
         text: '',
         next: null,
       };
@@ -1350,7 +1449,11 @@ export class ProposalsService {
       ACTION_TEXT.rejected[ctx.lang] +
       (settled.text ? `\n\n${settled.text}` : '');
     await this.chatNote(ctx, fresh, text, now);
-    return { proposal: await this.viewWithOp(fresh, now), text, next: null };
+    return {
+      proposal: await this.viewWithOp(fresh, now, ctx.lang),
+      text,
+      next: null,
+    };
   }
 
   // ── «Проверить» (после unknown) ────────────────────────────────────────
@@ -1455,6 +1558,28 @@ export class ProposalsService {
         'Компенсация не объявлена — отменить можно только вручную по журналу',
       );
     }
+    if (row.chainStatus === 'unknown') {
+      throw unavailable(
+        'Отмена уже исполнялась, исход неизвестен — проверьте в админке и разберите по журналу',
+      );
+    }
+    // Аудит пакета C (P1): компенсация, исполнявшаяся с неизвестным исходом
+    // и закрытая по сроку (`expired` после «Да», Р-З9-21), — тоже «была»:
+    // вторую не создаём (иначе двойной откат).
+    const tried = await db.assistAdminActionProposal.findFirst({
+      where: {
+        siteId: ctx.siteId,
+        compensationOf: row.id,
+        status: 'expired',
+        attempts: { gt: 0 },
+      },
+      select: { id: true },
+    });
+    if (tried) {
+      throw unavailable(
+        'Отмена уже исполнялась, исход неизвестен — проверьте в админке и разберите по журналу',
+      );
+    }
     const existing = await db.assistAdminActionProposal.findFirst({
       where: {
         siteId: ctx.siteId,
@@ -1462,10 +1587,16 @@ export class ProposalsService {
         status: { in: ['pending', 'executing', 'unknown'] },
       },
     });
-    if (existing && effectiveStatus(existing, now) !== 'expired') {
+    // `unknown` компенсации — всегда «в полёте» (и после суток Р-З9-21:
+    // исход неизвестен, вторую компенсацию не предлагаем).
+    if (
+      existing &&
+      (existing.status === 'unknown' ||
+        effectiveStatus(existing, now) !== 'expired')
+    ) {
       return {
         ok: true,
-        proposal: await this.viewWithOp(existing, now),
+        proposal: await this.viewWithOp(existing, now, ctx.lang),
         text: '',
       };
     }
@@ -1520,7 +1651,7 @@ export class ProposalsService {
   async listForOwner(
     accountId: string,
     siteId: string,
-    q: { chain?: 'review' | null; limit?: number },
+    q: { chain?: 'review' | null; limit?: number; lang?: ActionLang },
     now = new Date(),
   ): Promise<Array<ProposalView & { actor: string; channel: string }>> {
     const rows = await this.db
@@ -1550,7 +1681,7 @@ export class ProposalsService {
           await this.opRow(accountId, siteId, r.operationRowId),
         );
       out.push({
-        ...this.view(r, now, ops.get(r.operationRowId)),
+        ...this.view(r, now, ops.get(r.operationRowId), q.lang ?? 'uk'),
         actor: r.actor,
         channel: r.channel,
       });

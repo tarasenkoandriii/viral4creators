@@ -49,7 +49,16 @@ import {
   type UiPlanCtx,
 } from '../../modules/assist-site-voice-control/public/ui-plan.service';
 import { VoiceTestService } from '../../modules/assist-site-voice-control/public/voice-test.service';
+import { VoiceDevReportService } from '../../modules/assist-site-voice-control/share/dev-report.service';
+import { devReportHtml } from '../../modules/assist-site-voice-control/share/dev-report';
 import { VoiceMonitorService } from '../../modules/assist-site-voice-control/system/voice-monitor.service';
+import {
+  canaryAggregates,
+  loadWindow,
+  STT_COUNTER_SCOPE,
+  sttHour,
+} from '../../modules/assist-site-voice-control/system/voice-monitor-store';
+import { computeMetrics } from '../../modules/assist-site-voice-control/monitor-rules';
 import { GeminiText } from '../../modules/site-ai/text-model';
 import type { AccountMembership } from '../../modules/site-core/account/roles';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -127,6 +136,7 @@ describeDb('Приёмка Э6-бис (г) — мастер Т-2, монитор
     mon.onlyAccountIds = accounts;
     mon.platformKey = PKEY;
     mon.releaseKey = RKEY;
+    mon.cursorKey = `voice-monitor-cursor-t-${randomUUID().slice(0, 8)}`;
     mon.fetchImpl = async (url, init) => {
       const b = JSON.parse(init.body) as { chat_id: string; text: string };
       sent.push({ chat: b.chat_id, text: b.text });
@@ -135,7 +145,12 @@ describeDb('Приёмка Э6-бис (г) — мастер Т-2, монитор
   });
   afterAll(async () => {
     await st.owner.assistPlatformSetting.deleteMany({
-      where: { key: { in: [PKEY, RKEY] } },
+      where: {
+        OR: [
+          { key: { in: [PKEY, RKEY] } },
+          { key: { startsWith: mon.cursorKey } },
+        ],
+      },
     });
     await st.close();
   });
@@ -465,6 +480,38 @@ describeDb('Приёмка Э6-бис (г) — мастер Т-2, монитор
     ).toBe('not_found');
   });
 
+  it('(заход 9) аудит (г) (5): голос сайта выключен — обмен ссылки отказан `off`, токен цел; включили — та же ссылка работает', async () => {
+    const s = await vcSite();
+    const link = await cab.testToken(owner(s), s.siteId, {});
+    const token = new URL(link.url).searchParams.get('v4c_voicetest')!;
+    const v = st.visitor();
+    await st.owner.assistSite.update({
+      where: { siteId: s.siteId },
+      data: {
+        voiceConfig: { schema: 1, input: false, output: false, voiceId: null },
+      },
+    });
+    expect(
+      await failure(tests.exchange({ site: s.ctx(), visitor: v }, { token })),
+    ).toBe('off');
+    const row = await st.owner.assistSiteVoiceTest.findUnique({
+      where: { id: link.testId },
+    });
+    expect([row!.usedAt, row!.sessionHash, row!.visitorId]).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    await st.owner.assistSite.update({
+      where: { siteId: s.siteId },
+      data: {
+        voiceConfig: { schema: 1, input: true, output: false, voiceId: null },
+      },
+    });
+    const ok = await tests.exchange({ site: s.ctx(), visitor: v }, { token });
+    expect(ok.testId).toBe(link.testId);
+  });
+
   it('п.15: сухой прогон — только мастеру; план проверен, статус done, исполнить нельзя (0 событий)', async () => {
     const s = await vcSite();
     expect(
@@ -695,6 +742,144 @@ describeDb('Приёмка Э6-бис (г) — мастер Т-2, монитор
         }),
       ),
     ).toEqual([409, 'VOICE_CONTROL_TEST_REQUIRED', 'expired']);
+  });
+
+  it('(заход 9) аудит (г) (6): «разметка не менялась» — по ВСЕМ страницам мастера и по промахам ≥ 2 посетителей после отчёта', async () => {
+    const s = await vcSite();
+    const w = await passWizard(s);
+    const t = await st.owner.assistSiteVoiceTest.findUnique({
+      where: { id: w.sess.testId },
+    });
+    // Страница отчёта и страницы, куда вели исполненные переходы мастера.
+    expect(t!.pages).toEqual(
+      expect.arrayContaining(['/', '/delivery', '/contacts']),
+    );
+    const prob = async () =>
+      (await cab.get(owner(s), s.siteId)).lastTest!.problem;
+    expect(await prob()).toBeNull();
+    const host = await st.owner.siteHost.findFirst({
+      where: { siteId: s.siteId },
+    });
+    const mkEl = (path: string, key: string, stale: Date | null) =>
+      st.owner.siteUiElement.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          hostId: host!.id,
+          host: s.host,
+          path,
+          viewport: 'desktop',
+          elementKey: key,
+          elementId: `el-${key}`,
+          tag: 'a',
+          label: key,
+          selector: null,
+          candidates: [],
+          stability: 'medium',
+          confidence: 50,
+          sources: ['crawl'],
+          sourceRank: 4,
+          position: 0,
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+          staleMobileAt: stale,
+        },
+      });
+    // «Устарел» на НЕпоследней странице отчёта (раньше — не видно).
+    const d = await mkEl(
+      '/delivery',
+      'text:оплата',
+      new Date(Date.now() + 1000),
+    );
+    expect(await prob()).toBe('markup_changed');
+    await st.owner.siteUiElement.delete({ where: { id: d.id } });
+    expect(await prob()).toBeNull();
+    // Промахи по элементу проверенной страницы после отчёта.
+    const e = await mkEl('/contacts', 'text:телефон', null);
+    const miss = (visitorId: string, ip: string) =>
+      st.owner.siteUiElementMiss.create({
+        data: {
+          id: randomUUID(),
+          accountId: s.accountId,
+          siteId: s.siteId,
+          elementRowId: e.id,
+          viewport: 'desktop',
+          kind: 'miss',
+          ipHash: ip,
+          visitorId,
+          createdAt: new Date(Date.now() + 1000),
+        },
+      });
+    await miss('v-1', 'ip-1');
+    expect(await prob()).toBeNull();
+    await miss('v-2', 'ip-2');
+    expect(await prob()).toBe('markup_changed');
+  });
+
+  it('(заход 9, Р-З9-9) ссылка «отчёт для разработчика»: в базе хеш; срез без команд и id; открывается один раз; новая гасит прежнюю; чужой отчёт — 404; обменять как ссылку мастера нельзя', async () => {
+    const s = await vcSite();
+    const other = await vcSite();
+    const w = await passWizard(s);
+    const dev = new VoiceDevReportService(new SitesDb(st.owner));
+    const link = await cab.devLink(owner(s), s.siteId, w.sess.testId);
+    expect(link.url.startsWith(`${st.env.ASSIST_WIDGET_ORIGIN ?? ''}`)).toBe(
+      true,
+    );
+    expect(link.url).toMatch(/\/w\/v1\/vc-report\/[A-Za-z0-9_-]{32}$/);
+    const token = link.url.split('/').pop()!;
+    const exp = Date.parse(link.expiresAt) - Date.now();
+    expect(exp).toBeGreaterThan(71 * 3_600_000);
+    expect(exp).toBeLessThanOrEqual(72 * 3_600_000);
+    const row = await st.owner.assistSiteVoiceTest.findFirst({
+      where: { siteId: s.siteId, kind: 'dev_report' },
+    });
+    expect(JSON.stringify(row)).not.toContain(token);
+    // Без команд владельца, id планов/теста и окружения браузера.
+    const stored = JSON.stringify(row!.report);
+    for (const leak of ['відкрий доставку', 'знайди футболки', 'planId'])
+      expect(stored).not.toContain(leak);
+    expect(row!.report).toMatchObject({ result: 'pass', lang: 'uk' });
+    // Ссылка мастера из неё не получится (обмен — not_found).
+    expect(
+      await failure(
+        tests.exchange({ site: s.ctx(), visitor: st.visitor() }, { token }),
+      ),
+    ).toBe('not_found');
+    // Чужой сайт — 404; кабинетом другого сайта — тоже.
+    expect(
+      await cabCode(cab.devLink(owner(other), other.siteId, w.sess.testId)),
+    ).toEqual([404, 'VOICE_CONTROL_TEST_NOT_FOUND']);
+    // Новая ссылка гасит прежнюю неоткрытую.
+    const second = await cab.devLink(owner(s), s.siteId, w.sess.testId);
+    expect(await dev.consume(token)).toBeNull();
+    const t2 = second.url.split('/').pop()!;
+    expect(await dev.peekLang(t2)).toBe('uk');
+    const r = await dev.consume(t2);
+    expect(r).toMatchObject({ result: 'pass', host: s.host, page: '/' });
+    // Страница — без id теста (он только для замены прежней ссылки).
+    expect(devReportHtml(r!)).not.toContain(w.sess.testId);
+    expect(devReportHtml(r!)).toContain('button.trash');
+    expect(await dev.consume(t2)).toBeNull();
+    expect(await dev.peekLang(t2)).toBeNull();
+    // Истёкшая — 404 (один ответ на все случаи).
+    const third = await cab.devLink(owner(s), s.siteId, w.sess.testId);
+    await st.owner.assistSiteVoiceTest.updateMany({
+      where: { siteId: s.siteId, kind: 'dev_report', usedAt: null },
+      data: { tokenExpiresAt: new Date(Date.now() - 1000) },
+    });
+    expect(await dev.consume(third.url.split('/').pop()!)).toBeNull();
+    // P3-2: строка ссылки — не «отчёт мастера» (404 по id).
+    const devRow = await st.owner.assistSiteVoiceTest.findFirst({
+      where: { siteId: s.siteId, kind: 'dev_report' },
+    });
+    expect(await cabCode(cab.test(owner(s), s.siteId, devRow!.id))).toEqual([
+      404,
+      'VOICE_CONTROL_TEST_NOT_FOUND',
+    ]);
+    // Отчёты мастера в кабинете — без строк ссылок.
+    expect(
+      (await cab.tests(owner(s), s.siteId)).items.map((i) => i.kind),
+    ).toEqual(['wizard']);
   });
 
   // ── решение п.1: переходный период ──────────────────────────────────────
@@ -1172,6 +1357,285 @@ describeDb('Приёмка Э6-бис (г) — мастер Т-2, монитор
     expect(
       sent.some((m) => m.chat === '-1001' && m.text.includes('r2-test')),
     ).toBe(true);
+  });
+
+  // ── заход 9: аудит (г) (1)–(3), (7) и «не расслышал» ───────────────────
+
+  it('(заход 9) аудит (г) (1): сайтов больше страницы прохода — курсор по siteId, по кругу: все сайты за ⌈N/страница⌉ проходов', async () => {
+    const five = [];
+    for (let i = 0; i < 5; i++) five.push(await vcSite('on'));
+    const keep = { only: mon.onlyAccountIds, per: mon.sitesPerRun };
+    mon.onlyAccountIds = five.map((x) => x.accountId);
+    mon.sitesPerRun = 2;
+    try {
+      const page = () =>
+        (
+          mon as unknown as {
+            pageOfSites: (
+              step: string,
+              w: object,
+            ) => Promise<Array<{ siteId: string }>>;
+          }
+        ).pageOfSites('metrics', { voiceControlSiteState: 'on' });
+      const seen = new Set<string>();
+      for (let k = 0; k < 3; k++)
+        for (const x of await page()) seen.add(x.siteId);
+      expect(seen).toEqual(new Set(five.map((x) => x.siteId)));
+      // Курсор живёт в настройках платформы (без миграции).
+      const cur = await st.owner.assistPlatformSetting.findUnique({
+        where: { key: `${mon.cursorKey}:metrics` },
+      });
+      expect(cur?.value).toEqual({ after: expect.any(String) });
+    } finally {
+      mon.onlyAccountIds = keep.only;
+      mon.sitesPerRun = keep.per;
+    }
+  });
+
+  it('(заход 9) аудит (г) (2)–(3): канарейка — агрегаты SQL совпадают с computeMetrics на той же фикстуре (потолок посетителя и хеша IP, done, нарушения)', async () => {
+    const s = await vcSite('on');
+    const release = `agg-${randomUUID().slice(0, 8)}`;
+    const conv = await st.owner.assistSiteConversation.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        visitorId: 'v-agg',
+        ipHash: 'conv-ip',
+        parentOrigin: s.origin,
+        lastMessageAt: new Date(),
+      },
+    });
+    let seq = 0;
+    const mk = async (o: {
+      visitor: string;
+      ip: string | null;
+      states: string[];
+      risks?: string[];
+      status: string;
+      violation?: boolean;
+    }) => {
+      const p = await st.owner.assistSiteUiPlan.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          conversationId: conv.id,
+          visitorId: o.visitor,
+          utteranceMasked: 'відкрий доставку',
+          source: 'typed',
+          pageUrl: s.url('/'),
+          steps: o.states.map((state, i) => ({
+            kind: 'click',
+            risk: o.risks?.[i] ?? 'auto',
+            state,
+            target: { text: 'Доставка', role: 'link', assistId: null },
+          })),
+          status: o.status,
+          needsConfirm: false,
+          confirmedBy: 'auto',
+          confirmBefore: new Date(),
+          expiresAt: new Date(),
+          release,
+          createdAt: new Date(Date.now() - 60_000 + seq++ * 100),
+        },
+      });
+      const row = (action: string, result: string, target: object | null) =>
+        st.owner.assistSiteUiActionLog.create({
+          data: {
+            accountId: s.accountId,
+            siteId: s.siteId,
+            planId: p.id,
+            stepIndex: 0,
+            action,
+            risk: 'auto',
+            result,
+            ...(target ? { target } : {}),
+          },
+        });
+      await row('plan', 'proposed', o.ip ? { ip: o.ip } : { n: 1 });
+      if (o.violation) await row('violation', 'failed', null);
+    };
+    // Один посетитель — 5 планов (в метриках 3); 6 токенов одного IP (3).
+    for (let i = 0; i < 5; i++)
+      await mk({
+        visitor: 'v-one',
+        ip: null,
+        states: ['done'],
+        status: 'done',
+      });
+    for (let i = 0; i < 6; i++)
+      await mk({
+        visitor: `v-tok-${i}`,
+        ip: 'ip-shared',
+        states: ['failed'],
+        status: 'failed',
+        violation: i === 5,
+      });
+    // Разные: done, хвост manual, без исполнимых шагов, нарушение.
+    await mk({ visitor: 'v-a', ip: 'ip-a', states: ['done'], status: 'done' });
+    await mk({
+      visitor: 'v-b',
+      ip: 'ip-b',
+      states: ['done', 'manual'],
+      risks: ['auto', 'manual'],
+      status: 'done',
+    });
+    await mk({
+      visitor: 'v-c',
+      ip: 'ip-c',
+      states: ['manual'],
+      risks: ['manual'],
+      status: 'done',
+    });
+    await mk({
+      visitor: 'v-d',
+      ip: 'ip-d',
+      states: ['done'],
+      status: 'done',
+      violation: true,
+    });
+    const since = new Date(Date.now() - 3_600_000);
+    const w = await loadWindow(st.owner, { since, release });
+    const js = computeMetrics(w.plans, w.logs);
+    const sql = await canaryAggregates(st.owner, { since, release });
+    expect(sql).toEqual({
+      plans: js.plans,
+      done: js.done,
+      violations: js.violations,
+    });
+    // Потолок посетителя (3) и IP (3): 3 + 3 + 3 исполнимых (v-c — нет).
+    expect(sql).toEqual({ plans: 9, done: 5, violations: 2 });
+  });
+
+  it('(заход 9) аудит (г) (7): уведомление монитора — на языке получателя (assist_bot_users), без строки — uk', async () => {
+    const s = await vcSite();
+    await passWizard(s);
+    await cab.save(owner(s), s.siteId, {
+      state: 'on',
+      risksVersion: VOICE_CONTROL_RISKS_VERSION,
+    });
+    await st.owner.assistBotUser.upsert({
+      where: { telegramId: s.ownerTelegramId },
+      create: { telegramId: s.ownerTelegramId, languageCode: 'en' },
+      update: { languageCode: 'en' },
+    });
+    await stream(s, 15, 35);
+    await mon.run();
+    const mine = sent.filter((m) => m.chat === String(s.ownerTelegramId));
+    expect(mine.map((m) => m.text)).toEqual([
+      expect.stringContaining('switched to hint mode'),
+    ]);
+  });
+
+  it('(заход 9) «не расслышал» > 30% по языку на ≥ 20 командах за 24 ч — тревога владельцу (раз в сутки), без деградации', async () => {
+    const s = await vcSite();
+    await passWizard(s);
+    await cab.save(owner(s), s.siteId, {
+      state: 'on',
+      risksVersion: VOICE_CONTROL_RISKS_VERSION,
+    });
+    const hour = sttHour(new Date());
+    await st.owner.assistDailyCounter.createMany({
+      data: [
+        {
+          scope: STT_COUNTER_SCOPE,
+          key: `${s.siteId}:ru:heard`,
+          day: hour,
+          value: 12,
+        },
+        {
+          scope: STT_COUNTER_SCOPE,
+          key: `${s.siteId}:ru:not_heard`,
+          day: hour,
+          value: 8,
+        },
+        {
+          scope: STT_COUNTER_SCOPE,
+          key: `${s.siteId}:uk:heard`,
+          day: hour,
+          value: 90,
+        },
+        {
+          scope: STT_COUNTER_SCOPE,
+          key: `${s.siteId}:uk:not_heard`,
+          day: hour,
+          value: 10,
+        },
+      ],
+    });
+    await mon.run();
+    const inc = await st.owner.assistSiteVoiceIncident.findMany({
+      where: { siteId: s.siteId },
+    });
+    expect(inc.map((i) => [i.kind, i.code])).toEqual([
+      ['alert', 'not_heard_high'],
+    ]);
+    expect(
+      sent.some(
+        (m) =>
+          m.chat === String(s.ownerTelegramId) &&
+          m.text.includes('не розчув') &&
+          m.text.includes('(ru)'),
+      ),
+    ).toBe(true);
+    expect(
+      (await st.owner.assistSite.findUnique({ where: { siteId: s.siteId } }))!
+        .voiceControlSiteState,
+    ).toBe('on');
+    await mon.run();
+    expect(
+      await st.owner.assistSiteVoiceIncident.count({
+        where: { siteId: s.siteId },
+      }),
+    ).toBe(1);
+  });
+
+  it('(заход 9, P3-3) дедуп тревог — по каждому коду: новая проблема рядом с уже отправленной сегодня не теряется', async () => {
+    const s = await vcSite();
+    await passWizard(s);
+    await cab.save(owner(s), s.siteId, {
+      state: 'on',
+      risksVersion: VOICE_CONTROL_RISKS_VERSION,
+    });
+    await stream(s, 10, 10);
+    await mon.run();
+    const codes = async () =>
+      (
+        await st.owner.assistSiteVoiceIncident.findMany({
+          where: { siteId: s.siteId },
+          orderBy: { createdAt: 'asc' },
+        })
+      ).map((i) => [i.kind, i.code]);
+    expect((await codes())[0]).toEqual(['alert', 'done_low']);
+    const before = (await codes()).length;
+    const hour = sttHour(new Date());
+    await st.owner.assistDailyCounter.createMany({
+      data: [
+        {
+          scope: STT_COUNTER_SCOPE,
+          key: `${s.siteId}:uk:heard`,
+          day: hour,
+          value: 10,
+        },
+        {
+          scope: STT_COUNTER_SCOPE,
+          key: `${s.siteId}:uk:not_heard`,
+          day: hour,
+          value: 10,
+        },
+      ],
+    });
+    sent.length = 0;
+    await mon.run();
+    const after = await codes();
+    expect(after.slice(before)).toEqual([['alert', 'not_heard_high']]);
+    expect(
+      sent.some(
+        (m) =>
+          m.chat === String(s.ownerTelegramId) && m.text.includes('не розчув'),
+      ),
+    ).toBe(true);
+    await mon.run();
+    expect(await codes()).toHaveLength(after.length);
   });
 
   // ── решение п.2: потолок планов ─────────────────────────────────────────

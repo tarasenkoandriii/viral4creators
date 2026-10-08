@@ -29,6 +29,16 @@ import {
   fakeRecording,
 } from '../../modules/assist-site-voice/testing/fake-soniox.testing';
 import { SitesDb } from '../../prisma/sites-db.service';
+import {
+  readSttCounters,
+  STT_COUNTER_SCOPE,
+} from '../../modules/assist-site-voice-control/system/voice-monitor-store';
+import {
+  STT_COUNTER_SCOPE as STT_SCOPE_PUBLIC,
+  sttLang,
+  uiLangOf,
+} from '../../modules/assist-site-voice/public/site-voice.service';
+import { notHeardLangs } from '../../modules/assist-site-voice-control/monitor-rules';
 
 jest.setTimeout(180_000);
 
@@ -349,5 +359,62 @@ describeDb('Э6-бис-хвост (3) — подсказки распознав�
         siteId: bare.siteId,
       }),
     ).toEqual([]);
+  });
+
+  it('(заход 9, P2-2) «не расслышал» по языкам: один источник — язык интерфейса виджета (X-Assist-Lang) для обоих счётчиков; старый бандл без заголовка — тишина в `any` (вне тревоги); сбой провайдера не считается', async () => {
+    expect(STT_SCOPE_PUBLIC).toBe(STT_COUNTER_SCOPE);
+    expect(sttLang('ru', 'uk-UA', true, [])).toBe('ru');
+    expect(sttLang('ru', null, false, [])).toBe('ru');
+    expect(sttLang(null, 'uk-UA', true, [])).toBe('uk');
+    expect(sttLang(null, null, true, ['ru', 'uk'])).toBe('ru');
+    expect(sttLang(null, null, true, [])).toBe('uk');
+    expect(sttLang(null, 'uk', false, ['uk'])).toBe('any');
+    expect(sttLang('de', 'uk', false, ['uk'])).toBe('any');
+    expect(uiLangOf('en')).toBe('en');
+    expect(uiLangOf('EN')).toBeNull();
+    const s = await voiceSite();
+    const ctx = { site: s.ctx(), visitor: st.visitor() };
+    // Новый бандл: интерфейс en — и «расслышал», и «тишина» — в en, хотя
+    // распознаватель определил ru.
+    fake.language = 'ru';
+    expect(
+      (await voice.transcribe(ctx, fakeRecording(), 'audio/webm', 'en')).ok,
+    ).toBe(true);
+    fake.stt = 'silence';
+    expect(
+      await voice.transcribe(ctx, fakeRecording(), 'audio/webm', 'en'),
+    ).toEqual({ ok: false, failure: 'not_heard' });
+    // Старый бандл: расслышано — язык распознавателя, тишина — `any`.
+    expect(await voice.transcribe(ctx, fakeRecording(), 'audio/webm')).toEqual({
+      ok: false,
+      failure: 'not_heard',
+    });
+    fake.stt = 'ok';
+    expect(
+      (await voice.transcribe(ctx, fakeRecording(), 'audio/webm')).ok,
+    ).toBe(true);
+    fake.stt = 'create-fails';
+    expect(
+      (await voice.transcribe(ctx, fakeRecording(), 'audio/webm', 'en')).ok,
+    ).toBe(false);
+    fake.language = 'uk';
+    const c = await readSttCounters(st.owner, s.siteId, new Date());
+    expect(c).toEqual({
+      en: { heard: 1, notHeard: 1 },
+      ru: { heard: 1, notHeard: 0 },
+      any: { heard: 0, notHeard: 1 },
+    });
+    // `any` — не язык: в тревогу не идёт даже при 100%.
+    expect(
+      notHeardLangs({ any: { heard: 0, notHeard: 50 }, en: c.en }),
+    ).toEqual([]);
+    // Окно — 24 ч: счётчик суточной давности не считается.
+    await st.owner.assistDailyCounter.updateMany({
+      where: { scope: STT_COUNTER_SCOPE, key: { startsWith: s.siteId } },
+      data: {
+        day: new Date(Date.now() - 25 * 3_600_000).toISOString().slice(0, 13),
+      },
+    });
+    expect(await readSttCounters(st.owner, s.siteId, new Date())).toEqual({});
   });
 });

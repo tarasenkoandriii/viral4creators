@@ -19,7 +19,11 @@
  *    БЕЗ значений полей, HTML и скриншотов (§5-кватер.11 п.7);
  *  - покрытие страницы (🟩🟨🟥🟪, ≤ 600 рамок, только видимая область);
  *  - снимок страницы для «Сказать сейчас» — тот же код, что исполнитель
- *    (`act/snapshot.ts`), но шаги НЕ исполняются: только подсветка.
+ *    (`act/snapshot.ts`), но шаги НЕ исполняются: только подсветка;
+ *  - (заход 9, Э6-тер (9)) массовый выбор: `Shift`+клик добавляет элемент,
+ *    `Shift` + протянуть — рамка (элементы целиком внутри, ≤ 40); `/` —
+ *    поиск цели в панели; панель перетаскивается за заголовок (положение —
+ *    `sessionStorage` вкладки, переживает переход).
  * Не хранит токенов (сессия — в iframe), не ходит в наш API, не решает ничего
  * о карте. Выход — снятие всех обработчиков и корня: DOM страницы как был.
  * Без HTML-приёмников и eval: только createElement/textContent, стили —
@@ -98,7 +102,8 @@ const STYLE = `:host{all:initial}*{box-sizing:border-box}
 .pn{position:fixed;z-index:2147483646;right:12px;bottom:12px;width:min(390px,calc(100vw - 24px));height:min(600px,calc(100vh - 24px));display:flex;flex-direction:column;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.35);font:13px/1.4 system-ui,sans-serif}
 .pn.c{height:44px}
 @media (max-width:640px){.pn{right:0;left:0;bottom:0;width:100vw;height:60vh;border-radius:12px 12px 0 0}.pn.c{height:44px}}
-.bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:#111827;color:#fff;flex:0 0 auto}
+.bar{display:flex;gap:6px;align-items:center;padding:6px 8px;background:#111827;color:#fff;flex:0 0 auto;cursor:move;touch-action:none}
+.band{position:fixed;z-index:2147483646;pointer-events:none;border:2px dashed #2563eb;background:rgba(37,99,235,.06);display:none}
 .bar b{flex:1;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .bar button{all:unset;cursor:pointer;padding:5px 8px;border-radius:6px;background:#374151;color:#fff;font:12px system-ui,sans-serif}
 .bar button.on{background:#2563eb}
@@ -354,6 +359,7 @@ export function start(
     /* без стилей — функции остаются */
   }
   const box = el('div', 'box');
+  const band = el('div', 'band');
   const tip = el('div', 'tip');
   const layer = el('div');
   const hls = el('div');
@@ -373,7 +379,7 @@ export function start(
     token && token !== '-' ? `#t=${encodeURIComponent(token)}` : ''
   }`;
   pn.append(bar, frame);
-  root.append(layer, hls, box, tip, pn);
+  root.append(layer, hls, box, band, tip, pn);
   document.documentElement.appendChild(host);
 
   let mode: EditorMode = 'select';
@@ -465,7 +471,7 @@ export function start(
   let pid = '';
   let passing = false;
 
-  const pick = (t: Element, real = false) => {
+  const pick = (t: Element, real = false, multi = false) => {
     const { d, how } = describe(t);
     armed = real ? t : null;
     pid = real ? Math.random().toString(36).slice(2, 12) : '';
@@ -488,14 +494,59 @@ export function start(
       fieldName: field ? tok(t.getAttribute('name')) : null,
       options,
       pid: pid || null,
+      multi,
     });
+  };
+
+  let drag: { dx: number; dy: number } | null = null;
+  const dragging = () => !!drag;
+
+  // ── массовый выбор рамкой (Shift + протянуть) ──
+  let bandAt: { x: number; y: number } | null = null;
+  let banded = false;
+  const bandRect = (x: number, y: number) => {
+    const a = bandAt!;
+    return {
+      l: Math.min(a.x, x),
+      t: Math.min(a.y, y),
+      r: Math.max(a.x, x),
+      b: Math.max(a.y, y),
+    };
   };
 
   // ── перехват событий в режиме «Выбор» (фаза захвата на window) ──
   const guard = (e: Event) => {
-    if (passing || !selecting() || own(e.target)) return;
+    // Перетаскивание панели: отпускание над сайтом — не выбор.
+    if (passing || dragging() || !selecting() || own(e.target)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
+    const pe = e as PointerEvent;
+    if (e.type === 'pointerdown' && pe.shiftKey) {
+      bandAt = { x: pe.clientX, y: pe.clientY };
+      banded = false;
+      return;
+    }
+    if (e.type === 'pointerup' && bandAt) {
+      const r = bandRect(pe.clientX, pe.clientY);
+      bandAt = null;
+      band.style.display = 'none';
+      if (r.r - r.l < 8 && r.b - r.t < 8) return;
+      banded = true;
+      const items: Descriptor[] = [];
+      for (const x of deepQuery(document, INTERACTIVE)) {
+        if (items.length >= 40) break;
+        if (own(x) || !visible(x)) continue;
+        const q = x.getBoundingClientRect();
+        if (q.left >= r.l && q.right <= r.r && q.top >= r.t && q.bottom <= r.b)
+          items.push(describe(x).d);
+      }
+      send({ type: 'picks', items });
+      return;
+    }
+    if (e.type === 'click' && banded) {
+      banded = false;
+      return;
+    }
     if (e.type === 'click' || (e.type === 'touchend' && current)) {
       const t =
         e.type === 'click' ? interactiveOf(e.target as Element) : current;
@@ -505,7 +556,7 @@ export function start(
           level = 0;
         }
         show(chain[level] || t);
-        pick(chain[level] || t, e.isTrusted);
+        pick(chain[level] || t, e.isTrusted, pe.shiftKey === true);
       }
     }
   };
@@ -516,6 +567,15 @@ export function start(
     (e) => {
       if (!selecting()) return;
       const p = e as PointerEvent;
+      if (bandAt) {
+        const r = bandRect(p.clientX, p.clientY);
+        place(
+          band,
+          new DOMRect(r.l + 2, r.t + 2, r.r - r.l - 4, r.b - r.t - 4)
+        );
+        band.style.display = 'block';
+        return;
+      }
       hover(document.elementFromPoint(p.clientX, p.clientY));
     },
     { capture: true, passive: true }
@@ -550,6 +610,7 @@ export function start(
       const k = e.key.toLowerCase();
       let used = true;
       if (k === 'n') setMode(mode === 'select' ? 'nav' : 'select');
+      else if (k === '/') send({ type: 'search' });
       else if (k === 'c') toggleCoverage();
       else if (k === 'escape') {
         if (current) {
@@ -661,6 +722,53 @@ export function start(
     }
     delete (window as unknown as Record<string, unknown>).__v4cEditor;
   };
+
+  // ── перетаскивание панели за заголовок (§5-кватер.12) ──
+  const POS = `${FLAG}:pos`;
+  const moveTo = (x: number, y: number) => {
+    const w = pn.offsetWidth || 390;
+    const left = Math.max(0, Math.min(innerWidth - 60, x));
+    const top = Math.max(0, Math.min(innerHeight - 44, y));
+    pn.style.left = `${left}px`;
+    pn.style.top = `${top}px`;
+    pn.style.right = 'auto';
+    pn.style.bottom = 'auto';
+    pn.style.width = `${w}px`;
+  };
+  try {
+    const p = JSON.parse(sessionStorage.getItem(POS) || 'null') as
+      [number, number] | null;
+    if (p && innerWidth > 640) moveTo(p[0], p[1]);
+  } catch {
+    /* без хранилища — угол по умолчанию */
+  }
+  on(bar, 'pointerdown', (ev) => {
+    const e = ev as PointerEvent;
+    if (e.target !== bar && e.target !== title) return;
+    const r = pn.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    e.preventDefault();
+  });
+  on(window, 'pointermove', (ev) => {
+    if (!drag) return;
+    const e = ev as PointerEvent;
+    moveTo(e.clientX - drag.dx, e.clientY - drag.dy);
+  });
+  on(window, 'pointerup', () => {
+    if (!drag) return;
+    drag = null;
+    try {
+      sessionStorage.setItem(
+        POS,
+        JSON.stringify([
+          parseInt(pn.style.left, 10),
+          parseInt(pn.style.top, 10),
+        ])
+      );
+    } catch {
+      /* — */
+    }
+  });
 
   on(bSel, 'click', () => setMode(mode === 'select' ? 'nav' : 'select'));
   on(bCov, 'click', toggleCoverage);

@@ -790,6 +790,56 @@ describe('Э6-тер (и): мастер Т-2 проверяет обратные
     ).toEqual(['unsafe']);
   });
 
+  it('(заход 9) разметка `data-assist-undo` элемента — тоже пара: порядок как в бою (карта → разметка → стандартная)', () => {
+    // Своя кнопка темы без стандартной разметки: пару даёт только разметка.
+    const own = el({
+      text: 'Хочу',
+      assistId: 'buy-own',
+      heading: 'Футболка',
+      undo: { assistId: 'remove-from-cart', at: '/cart' },
+    });
+    expect(
+      undoTargetsCheck({ snapshot: snap([own]), hosts: [HOST], rules }),
+    ).toEqual({ pairs: 1, unresolved: [] });
+    // Страница разметки под запретом кабинета — `zone` (как `compOfStep`).
+    expect(
+      undoTargetsCheck({
+        snapshot: snap([own]),
+        hosts: [HOST],
+        rules: { ...rules, denyPaths: ['/cart*'] },
+      }).unresolved.map((u) => u.problem),
+    ).toEqual(['zone']);
+    // Стандартная `add-to-cart` без ссылки `nav-cart` и без обратной на
+    // странице: разметка `-at` даёт страницу отмены — разрешима.
+    const woo = el({
+      text: 'В кошик',
+      assistId: 'add-to-cart',
+      heading: 'Футболка',
+      undo: { assistId: 'remove-from-cart', at: '/kosyk' },
+    });
+    expect(
+      undoTargetsCheck({ snapshot: snap([woo]), hosts: [HOST], rules }),
+    ).toEqual({ pairs: 1, unresolved: [] });
+    // «Как отменить» карты важнее разметки (как `compOfStep`).
+    expect(
+      undoTargetsCheck({
+        snapshot: snap([own]),
+        hosts: [HOST],
+        rules,
+        declared: new Map([[own.ref, { assistId: 'checkout', at: null }]]),
+      }).unresolved,
+    ).toEqual([{ text: 'Хочу', reverse: 'checkout', problem: 'unsafe' }]);
+    // Сверка с боем: та же кнопка в плане — компенсация из разметки.
+    const r = plan('хочу футболку', snap([own]), [
+      { kind: 'click', target: own.ref },
+    ]);
+    expect(r.steps[0]?.comp).toMatchObject({
+      assistId: 'remove-from-cart',
+      at: '/cart',
+      src: 'markup',
+    });
+  });
+
   it('вердикт: неразрешимые обратные цели — предупреждение шага 3 (итог не меняет)', () => {
     const base = {
       env: {

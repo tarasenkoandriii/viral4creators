@@ -118,6 +118,29 @@ export function buildPlanPrompt(p: {
   return { system, user };
 }
 
+/** Строка `<history>` вместо ответа, построенного по данным API (Р-З9-19). */
+export const HISTORY_DATA_OMITTED =
+  '(відповідь за даними системи — у історії не наводиться)';
+
+/**
+ * `<history>` хода (аудит Э8 (2), Р-З9-19): когда роли доступны инструменты
+ * или действия (`withTools`), прошлые ответы, построенные по данным API
+ * (`answerPath` tool/action — данные заказчика, «было → станет»), в историю
+ * не попадают — только реплики сотрудника и ответы по знаниям/отказы кода.
+ * Инъекция в старом ответе API так не дотянется до плана нового хода
+ * (запрет «не предлагать по истории» был только словами в инструкции).
+ */
+export function adminHistory(
+  rows: Array<{ role: string; text: string; answerPath: string | null }>,
+  withTools: boolean,
+): string[] {
+  return rows.map((m) => {
+    if (m.role === 'employee') return `Співробітник: ${m.text.slice(0, 500)}`;
+    const fromData = m.answerPath === 'tool' || m.answerPath === 'action';
+    return `Помічник: ${withTools && fromData ? HISTORY_DATA_OMITTED : m.text.slice(0, 500)}`;
+  });
+}
+
 export interface PlannedCall {
   operation: string;
   args: Record<string, unknown>;

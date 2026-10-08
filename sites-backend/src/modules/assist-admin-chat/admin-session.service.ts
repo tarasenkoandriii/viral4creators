@@ -36,6 +36,13 @@ export interface AdminSessionView {
   employee: { name: string | null; role: string | null };
   /** Плашка прозрачности: владелец видит статистику по сотрудникам (§5-тер.13). */
   statsPerEmployee: boolean;
+  /**
+   * Аудит Э7 (г), Р-З9-17: сессия по тестовому ключу (`pk_test`, к нему
+   * в frame-ancestors добавлен localhost). По умолчанию — только знания,
+   * без коннекторов и действий (боевые API заказчика со стенда разработчика
+   * не вызываются); владелец может включить `testKeyConnectors`.
+   */
+  testKey: boolean;
 }
 
 export interface ResolvedAdminSession {
@@ -49,6 +56,8 @@ export interface ResolvedAdminSession {
   /** Роль помощника по карте ролей; null — только знания (§5.1). */
   role: string | null;
   expiresAt: Date;
+  /** Сессия по `pk_test` (Р-З9-17): без `testKeyConnectors` роль null. */
+  testKey: boolean;
 }
 
 /** Формат ключа — тот же, что выдаёт кабинет виджета (префиксы — brand.ts). */
@@ -69,6 +78,28 @@ export const ADMIN_QUESTIONS_PER_HOUR = 120;
 
 export function sessionTokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * Р-З9-17: метка сессии по тестовому ключу — в самом токене (колонки нет:
+ * схему в этом заходе не трогаем). В базе — только SHA-256 токена, поэтому
+ * клиент не может ни снять, ни поставить метку, не потеряв сессию; боевой
+ * токен с такого начала не выдаётся (перевыпуск), старые случайные токены
+ * (до захода 9, живут ≤ 15 мин) с тем же началом — лишь «только знания».
+ */
+export const TEST_SESSION_PREFIX = 't-';
+
+export function newSessionToken(test: boolean): string {
+  for (;;) {
+    const t = randomBytes(32).toString('base64url');
+    if (test)
+      return `${TEST_SESSION_PREFIX}${t.slice(TEST_SESSION_PREFIX.length)}`;
+    if (!t.startsWith(TEST_SESSION_PREFIX)) return t;
+  }
+}
+
+export function isTestSessionToken(token: string): boolean {
+  return token.startsWith(TEST_SESSION_PREFIX);
 }
 
 @Injectable()
@@ -120,13 +151,21 @@ export class AdminSessionService {
       )
       .assistSite.findFirst({
         where: { OR: [{ publicKey: pk }, { testKey: pk }] },
-        select: { siteId: true, accountId: true },
+        select: { siteId: true, accountId: true, testKey: true },
       });
     if (!site) return null;
     const settings = await this.db
       .forAccount(site.accountId)
       .assistAdminSettings.findFirst({ where: { siteId: site.siteId } });
-    return settings ? { ...site, settings } : null;
+    return settings
+      ? {
+          siteId: site.siteId,
+          accountId: site.accountId,
+          // Тестовый ключ — тот, что совпал со столбцом `testKey` сайта.
+          isTestKey: site.testKey === pk,
+          settings,
+        }
+      : null;
   }
 
   async exchange(
@@ -189,7 +228,7 @@ export class AdminSessionService {
       );
     }
     secret = null;
-    const token = randomBytes(32).toString('base64url');
+    const token = newSessionToken(found.isTestKey);
     const expiresAt = new Date(id.exp * 1000);
     await this.db.forAccount(found.accountId).assistAdminSession.create({
       data: {
@@ -209,6 +248,7 @@ export class AdminSessionService {
       sub: id.sub,
       employee: { name: id.name, role: id.role },
       statsPerEmployee: s.statsPerEmployee,
+      testKey: found.isTestKey,
     };
   }
 
@@ -269,6 +309,10 @@ export class AdminSessionService {
       );
     }
     const map = parseRoleMap(s.roleMap) ?? {};
+    const testKey = isTestSessionToken(token);
+    // Р-З9-17: тестовый ключ — только знания, пока владелец не включил
+    // «тестовый ключ ходит в API» (`testKeyConnectors`).
+    const knowledgeOnly = testKey && !s.testKeyConnectors;
     return {
       sessionId: row.id,
       accountId: row.accountId,
@@ -279,11 +323,15 @@ export class AdminSessionService {
       name: row.name,
       // Только собственный ключ карты (аудит Э8): роль «constructor» из JWT
       // давала Function вместо строки — 500 на каталоге действий.
+      // Р-З9-17: тестовый ключ — только знания (без коннекторов/действий).
       role:
-        row.role && Object.prototype.hasOwnProperty.call(map, row.role)
+        !knowledgeOnly &&
+        row.role &&
+        Object.prototype.hasOwnProperty.call(map, row.role)
           ? map[row.role]
           : null,
       expiresAt: row.expiresAt,
+      testKey,
     };
   }
 }

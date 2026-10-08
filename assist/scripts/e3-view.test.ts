@@ -4,6 +4,7 @@
  * опросы, период и числа, слова атрибуции §5-тер.2 во всех словарях,
  * участники и роли (кит).
  */
+import { parseRoute, routeHref } from '../src/lib/router';
 import assert from 'node:assert/strict';
 import type { AccountMember } from '../src/kit';
 import { en } from '../src/kit/dictionaries/en';
@@ -72,7 +73,23 @@ assert.deepEqual(
   ['queue'],
   'проверенные ответы и качество — не оператору'
 );
-assert.deepEqual(learningTabs(manager), ['queue', 'golden', 'quality']);
+assert.deepEqual(learningTabs(manager), [
+  'queue',
+  'golden',
+  'quality',
+  'voice',
+]);
+// Заход 9 (Э6-тер (12)): «Обучение → Голос» — адрес вкладки и только manager.
+assert.ok(!learningTabs(operator).includes('voice'), 'промахи — не оператору');
+assert.deepEqual(parseRoute('#/sites/s1/learning/site/voice'), {
+  name: 'learning',
+  siteId: 's1',
+  tab: 'voice',
+});
+assert.equal(
+  routeHref({ name: 'learning', siteId: 's1', tab: 'voice' }),
+  '#/sites/s1/learning/site/voice'
+);
 assert.deepEqual(
   dialogViews(operator),
   ['handoff', 'mine'],

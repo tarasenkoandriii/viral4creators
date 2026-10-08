@@ -4,6 +4,11 @@
  * (через admin-voice-api.test.ts).
  */
 import type { Locale } from '../kit/i18n';
+import type {
+  AdminVcItemCode,
+  AdminVcMicStatus,
+  AdminVcProbeKind,
+} from '../lib/admin-voice-api';
 
 export interface AdminVoiceTexts {
   title: string;
@@ -41,6 +46,30 @@ export interface AdminVoiceTexts {
     submits: string;
     forbiddenLeak: string;
     partialAck: string;
+    /**
+     * Пункты отчёта (аудит Э6-бис (б) (1)): текст на каждый код сервера;
+     * `{n}`, `{ok}`, `{need}`, `{done}`, `{of}`, `{status}` — числа пункта.
+     */
+    items: Record<AdminVcItemCode, string> & {
+      /** `forbidden_leak` «Админки» по регистратору страницы. */
+      attemptsLeak: string;
+      /** Код, которого нет в словаре (новый сервер, старый TMA). */
+      unknown: string;
+    };
+    probes: Record<AdminVcProbeKind, string>;
+    /** Состояние микрофона в пункте `mic_owner_problem` ({status}). */
+    mic: Record<AdminVcMicStatus, string>;
+    forbidden: string;
+    blocked: string;
+    leaked: string;
+    viaApi: string;
+    dangerButtons: string;
+    dry: string;
+    dryLine: string;
+    save: string;
+    saveDone: string;
+    saveFailed: string;
+    fragment: string;
     problems: Record<
       | 'none'
       | 'failed'
@@ -118,6 +147,63 @@ const uk: AdminVoiceTexts = {
     submits: 'Заглушено відправок на робочому хості: {n}',
     forbiddenLeak: 'Пропущено заборонених команд: {n}',
     partialAck: 'Звіт «частково» — вмикаю, розуміючи зауваження',
+    items: {
+      ok: 'Готово',
+      widget_missing: 'Крок {step}: помічник не відповів на сторінці адмінки',
+      chunks_blocked: 'Крок {step}: CSP адмінки блокує скрипти помічника',
+      csp_violations: 'Крок {step}: порушень CSP через помічника — {n}',
+      tt_violations: 'Крок {step}: порушень Trusted Types — {n}',
+      mic_policy_denied:
+        'Крок {step}: політика адмінки (Permissions-Policy) забороняє мікрофон',
+      mic_owner_problem:
+        'Крок {step}: мікрофон вашого пристрою ({status}) — команди набором працюють',
+      dry_low:
+        'Крок {step}: сухий прогін — вірних кроків {ok}, потрібно {need}',
+      safe_low:
+        'Крок {step}: з натисканням виконано {done} з {of} команд (потрібно 2)',
+      safe_none: 'Крок {step}: жодної команди з натисканням не виконано',
+      forbidden_leak: 'Крок {step}: заборонених команд не заблоковано — {n}',
+      suspicious_unreviewed:
+        'Крок {step}: не переглянуто «схожих на небезпечні» кнопок — {n}',
+      unnamed_elements: 'Крок {step}: кнопок без імені — {n}',
+      closed_shadow: 'Крок {step}: кнопок у закритих shadow-коренях — {n}',
+      ext_iframes:
+        'Крок {step}: зовнішніх iframe — {n} (помічник у них не заходить)',
+      duplicates: 'Крок {step}: однакових назв кнопок — {n}',
+      undo_unresolved: 'Крок {step}: не знайдено, як скасувати {n} з {of} дій',
+      attemptsLeak:
+        'Крок {step}: спроб натиснути заборонену ціль — {attempts}, збережень на робочому хості — {submitOnWork}',
+      unknown: 'Крок {step}: зауваження (оновіть застосунок)',
+    },
+    probes: {
+      delete: 'видалення',
+      cancel: 'скасування',
+      refund: 'повернення коштів',
+      charge: 'списання',
+      mass: 'масова дія',
+      pay: 'оплата',
+      password: 'поле пароля',
+      external: 'чуже посилання',
+    },
+    mic: {
+      ok: 'працює',
+      denied_policy: 'заборонено політикою адмінки',
+      denied_user: 'доступ не дано в браузері',
+      no_device: 'мікрофон не знайдено',
+      ios_gesture: 'iOS: потрібне натискання',
+      skipped: 'не перевірявся',
+    },
+    forbidden: 'Заборони без звуку',
+    blocked: 'заблоковано',
+    leaked: 'НЕ заблоковано',
+    viaApi: 'через API: {key}',
+    dangerButtons: 'Кнопки, які помічник не натисне ніколи',
+    dry: 'Сухий прогін',
+    dryLine: '«{command}» — вірно {ok} з {steps}',
+    save: '«Зберегти» на тестовому хості',
+    saveDone: 'виконано, полів {n}',
+    saveFailed: 'не виконано',
+    fragment: 'Фрагмент розмітки для розробника адмінки',
     problems: {
       none: 'Спершу пройдіть майстер перевірки.',
       failed: 'Останній звіт — «не пройдено».',
@@ -205,6 +291,63 @@ const ru: AdminVoiceTexts = {
     submits: 'Заглушено отправок на рабочем хосте: {n}',
     forbiddenLeak: 'Пропущено запрещённых команд: {n}',
     partialAck: 'Отчёт «частично» — включаю, понимая замечания',
+    items: {
+      ok: 'Готово',
+      widget_missing: 'Шаг {step}: помощник не ответил на странице админки',
+      chunks_blocked: 'Шаг {step}: CSP админки блокирует скрипты помощника',
+      csp_violations: 'Шаг {step}: нарушений CSP из-за помощника — {n}',
+      tt_violations: 'Шаг {step}: нарушений Trusted Types — {n}',
+      mic_policy_denied:
+        'Шаг {step}: политика админки (Permissions-Policy) запрещает микрофон',
+      mic_owner_problem:
+        'Шаг {step}: микрофон вашего устройства ({status}) — команды набором работают',
+      dry_low: 'Шаг {step}: сухой прогон — верных шагов {ok}, нужно {need}',
+      safe_low:
+        'Шаг {step}: с нажатием выполнено {done} из {of} команд (нужно 2)',
+      safe_none: 'Шаг {step}: ни одной команды с нажатием не выполнено',
+      forbidden_leak: 'Шаг {step}: запрещённых команд не заблокировано — {n}',
+      suspicious_unreviewed:
+        'Шаг {step}: не просмотрено «похожих на опасные» кнопок — {n}',
+      unnamed_elements: 'Шаг {step}: кнопок без имени — {n}',
+      closed_shadow: 'Шаг {step}: кнопок в закрытых shadow-корнях — {n}',
+      ext_iframes:
+        'Шаг {step}: внешних iframe — {n} (помощник в них не заходит)',
+      duplicates: 'Шаг {step}: одинаковых названий кнопок — {n}',
+      undo_unresolved:
+        'Шаг {step}: не найдено, как отменить {n} из {of} действий',
+      attemptsLeak:
+        'Шаг {step}: попыток нажать запрещённую цель — {attempts}, сохранений на рабочем хосте — {submitOnWork}',
+      unknown: 'Шаг {step}: замечание (обновите приложение)',
+    },
+    probes: {
+      delete: 'удаление',
+      cancel: 'отмена',
+      refund: 'возврат денег',
+      charge: 'списание',
+      mass: 'массовое действие',
+      pay: 'оплата',
+      password: 'поле пароля',
+      external: 'чужая ссылка',
+    },
+    mic: {
+      ok: 'работает',
+      denied_policy: 'запрещён политикой админки',
+      denied_user: 'доступ не дан в браузере',
+      no_device: 'микрофон не найден',
+      ios_gesture: 'iOS: нужно нажатие',
+      skipped: 'не проверялся',
+    },
+    forbidden: 'Запреты без звука',
+    blocked: 'заблокировано',
+    leaked: 'НЕ заблокировано',
+    viaApi: 'через API: {key}',
+    dangerButtons: 'Кнопки, которые помощник не нажмёт никогда',
+    dry: 'Сухой прогон',
+    dryLine: '«{command}» — верно {ok} из {steps}',
+    save: '«Сохранить» на тестовом хосте',
+    saveDone: 'выполнено, полей {n}',
+    saveFailed: 'не выполнено',
+    fragment: 'Фрагмент разметки для разработчика админки',
     problems: {
       none: 'Сначала пройдите мастер проверки.',
       failed: 'Последний отчёт — «не пройдено».',
@@ -292,6 +435,65 @@ const en: AdminVoiceTexts = {
     submits: 'Submissions blocked on the production host: {n}',
     forbiddenLeak: 'Forbidden commands leaked: {n}',
     partialAck: 'Report “partial” — I enable it understanding the notes',
+    items: {
+      ok: 'Done',
+      widget_missing:
+        'Step {step}: the assistant did not respond on the admin page',
+      chunks_blocked: 'Step {step}: the admin CSP blocks the assistant scripts',
+      csp_violations:
+        'Step {step}: CSP violations caused by the assistant — {n}',
+      tt_violations: 'Step {step}: Trusted Types violations — {n}',
+      mic_policy_denied:
+        'Step {step}: the admin policy (Permissions-Policy) forbids the microphone',
+      mic_owner_problem:
+        'Step {step}: your device microphone ({status}) — typed commands work',
+      dry_low: 'Step {step}: dry run — {ok} correct steps, {need} needed',
+      safe_low:
+        'Step {step}: with clicks, {done} of {of} commands done (2 needed)',
+      safe_none: 'Step {step}: no command with clicks was done',
+      forbidden_leak: 'Step {step}: forbidden commands not blocked — {n}',
+      suspicious_unreviewed:
+        'Step {step}: “looks dangerous” buttons not reviewed — {n}',
+      unnamed_elements: 'Step {step}: buttons without a name — {n}',
+      closed_shadow: 'Step {step}: buttons in closed shadow roots — {n}',
+      ext_iframes:
+        'Step {step}: external iframes — {n} (the assistant does not enter them)',
+      duplicates: 'Step {step}: duplicate button names — {n}',
+      undo_unresolved:
+        'Step {step}: no way to undo found for {n} of {of} actions',
+      attemptsLeak:
+        'Step {step}: attempts to press a forbidden target — {attempts}, saves on the production host — {submitOnWork}',
+      unknown: 'Step {step}: a note (update the app)',
+    },
+    probes: {
+      delete: 'deletion',
+      cancel: 'cancellation',
+      refund: 'refund',
+      charge: 'charge',
+      mass: 'bulk action',
+      pay: 'payment',
+      password: 'password field',
+      external: 'external link',
+    },
+    mic: {
+      ok: 'working',
+      denied_policy: 'blocked by the admin policy',
+      denied_user: 'access not granted in the browser',
+      no_device: 'no microphone found',
+      ios_gesture: 'iOS: a tap is needed',
+      skipped: 'not checked',
+    },
+    forbidden: 'Silent restriction checks',
+    blocked: 'blocked',
+    leaked: 'NOT blocked',
+    viaApi: 'via API: {key}',
+    dangerButtons: 'Buttons the assistant will never press',
+    dry: 'Dry run',
+    dryLine: '“{command}” — {ok} of {steps} correct',
+    save: '“Save” on the test host',
+    saveDone: 'done, fields {n}',
+    saveFailed: 'not done',
+    fragment: 'Markup fragment for the admin developer',
     problems: {
       none: 'Pass the check wizard first.',
       failed: 'The last report failed.',

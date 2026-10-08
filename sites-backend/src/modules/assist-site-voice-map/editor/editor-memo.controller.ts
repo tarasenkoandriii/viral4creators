@@ -5,6 +5,8 @@
  *   POST /editor/v1/memo/record/step   { path, descriptor, … }    → шаг или остановка записи
  *   POST /editor/v1/memo/record/stop   { steps, slots, name, … }  → черновик мемо (origin recording)
  *   POST /editor/v1/memo/:key/try      { snapshot, from? }        → «Прогнать» черновик на странице
+ *   GET  /editor/v1/memo/list?lang=                               → все мемо сайта (заход 9, Р-З9-5)
+ *   POST /editor/v1/memo/record/wait   { path, descriptor, delta? } → «Чекати це»: ожидание, не шаг (заход 9)
  * Допуск — тот же, что у остальных `/editor/v1/*`: заголовок сессии
  * редактора (`EditorSessionService.resolve` на каждом запросе: сессия жива,
  * участник — владелец/менеджер, хост — verified «Сайта»), основная роль.
@@ -13,12 +15,14 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   HttpCode,
   HttpException,
   HttpStatus,
   Param,
   Post,
+  Query,
 } from '@nestjs/common';
 import { EDITOR_SESSION_HEADER } from '../../../brand';
 import { PublicRoute } from '../../telegram-auth/allow-apps.decorator';
@@ -52,6 +56,8 @@ export class EditorMemoController {
         return this.memos.step(ed, body);
       case 'stop':
         return this.memos.stop(ed, body);
+      case 'wait':
+        return this.memos.wait(ed, body);
       // Мемо с ключом `record` — его «Прогнать» попадает сюда.
       case 'try':
         return this.memos.tryMemo(ed, 'record', body);
@@ -60,11 +66,16 @@ export class EditorMemoController {
           {
             error: 'EDITOR_MEMO_BAD_REQUEST',
             code: 'EDITOR_MEMO_BAD_REQUEST',
-            message: 'Операция записи: start | step | stop',
+            message: 'Операция записи: start | step | wait | stop',
           },
           HttpStatus.NOT_FOUND,
         );
     }
+  }
+
+  @Get('list')
+  async list(@Headers(H) s: string | undefined, @Query('lang') lang: unknown) {
+    return this.memos.list(await this.editor.resolve(s), lang);
   }
 
   @Post(':key/try')

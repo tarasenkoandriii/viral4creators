@@ -7,7 +7,10 @@
  * digest.service по правам получателя). Находки — сухие строки кода
  * (Start; ИИ-выводы — Э3-бис), каждое число — из входа.
  */
-import type { AdminDigestFacts } from '../assist-admin-knowledge/admin-digest';
+import type {
+  AdminDigestFacts,
+  AdminDigestMemo,
+} from '../assist-admin-knowledge/admin-digest';
 
 export const TELEGRAM_TEXT_LIMIT = 4096;
 
@@ -102,13 +105,46 @@ function siteLines(site: SiteDigestFacts, weekly: boolean): string[] {
   return lines;
 }
 
-function adminLines(admin: AdminDigestFacts): string[] {
-  return [
+/** Причина «требует проверки» мемо АМ-N — словами (коды admin-memo-review). */
+function memoWhy(m: AdminDigestMemo): string {
+  switch (m.code) {
+    case 'goal_low':
+      return 'часто не доходит до цели';
+    case 'pin_mismatch':
+      return `шаг ${m.step ?? '?'} не находится на странице админки`;
+    case 'failures':
+      return `сбои на шаге ${m.step ?? '?'} у нескольких сотрудников`;
+    default:
+      return 'нужна проверка';
+  }
+}
+
+function adminLines(admin: AdminDigestFacts, weekly: boolean): string[] {
+  const lines = [
     '',
     'Раздел «Админка» (видите только вы):',
     `Удержанных версий базы «Админки»: ${admin.heldVersions}`,
     `В карантине за период: ${admin.quarantined}`,
   ];
+  // §5-бис.17 п.8: «требует проверки» — строка в дайджесте (мемо сотрудникам
+  // не исполняется, пока владелец не исправит и не прогонит его).
+  const memos = admin.memosNeedReview ?? [];
+  for (const m of memos) {
+    lines.push(`⚠️ Мемо АМ-${m.number} требует проверки: ${memoWhy(m)}`);
+  }
+  const more = (admin.memosNeedReviewTotal ?? memos.length) - memos.length;
+  if (more > 0) lines.push(`…и ещё мемо «требует проверки»: ${more}`);
+  // Р-З9-20: голова цепочки журнала — внешний якорь, раз в неделю.
+  if (weekly && admin.chainHead) {
+    lines.push(
+      `Журнал действий — контрольная запись на ${fmtDay(admin.chainHead.at.slice(0, 10))}: ` +
+        `${admin.chainHead.hash} (id ${admin.chainHead.id}). Сохраните это сообщение и при проверке ` +
+        'выгрузите журнал («Журнал» → CSV, последние 50 000 записей): в строке с этим id (колонка id) ' +
+        'должен быть тот же hash, а «Перевірити ланцюжок» — «цілий». Хеш другой или строки нет, хотя ей ' +
+        'меньше года и записей после неё меньше 50 000, — журнал переписан.',
+    );
+  }
+  return lines;
 }
 
 /** Склейка с гарантией предела Telegram: режем по строкам, не посреди слова. */
@@ -137,7 +173,7 @@ export function dailyDigestText(
     '',
     ...siteLines(site, false),
   ];
-  if (admin) lines.push(...adminLines(admin));
+  if (admin) lines.push(...adminLines(admin, false));
   return fitTelegram(lines);
 }
 
@@ -159,6 +195,6 @@ export function weeklyReportText(
     lines.push('', 'Находки недели:');
     for (const f of findings) lines.push(`• ${f}`);
   }
-  if (admin) lines.push(...adminLines(admin));
+  if (admin) lines.push(...adminLines(admin, true));
   return fitTelegram(lines);
 }

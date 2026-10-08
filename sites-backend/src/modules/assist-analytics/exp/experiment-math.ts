@@ -202,6 +202,34 @@ export interface ExperimentResult {
   liftRel: number | null;
   /** significant | not_significant | insufficient_sample */
   verdict: 'significant' | 'not_significant' | 'insufficient_sample';
+  /**
+   * Заход 9 (хвост аудита Э3-бис (2)): срабатывания основной цели за срок
+   * эксперимента по доверию. Соль группы публична (группу считает
+   * страница) — конверсии «со страницы» (`trust: page`) посетитель или
+   * конкурент может накрутить в одну группу; SRM ловит только дисбаланс
+   * единиц. Доля `page` > 0 — итог стоит перепроверить; честная основная
+   * цель — вебхук s2s (`assistRef`, verified) или заявка помощника.
+   */
+  goalTrust?: GoalTrust;
+}
+
+export interface GoalTrust {
+  /** Завершённых срабатываний цели за срок (все посетители). */
+  total: number;
+  /** Из них со страницы (trust: page). */
+  page: number;
+  /** page / total (4 знака); null — срабатываний не было. */
+  pageShare: number | null;
+}
+
+export function goalTrustOf(total: number, page: number): GoalTrust {
+  const t = Math.max(0, Math.round(total));
+  const pg = Math.min(t, Math.max(0, Math.round(page)));
+  return {
+    total: t,
+    page: pg,
+    pageShare: t > 0 ? Math.round((pg / t) * 1e4) / 1e4 : null,
+  };
 }
 
 const r = (v: number, d = 4) => Math.round(v * 10 ** d) / 10 ** d;

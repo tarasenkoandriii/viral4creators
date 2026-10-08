@@ -16,7 +16,11 @@
  *  - устаревание ПО ЭЛЕМЕНТУ и виду — порог и окно, а не «после первого
  *    промаха»; анти-накрутка: квитанция показа, один промах на посетителя
  *    и на IP, сутки на IP+сайт; сброс при новом подтверждении браузером;
- *  - ретенция (крон), лимиты (страниц на сайт).
+ *  - ретенция (крон), лимиты (страниц на сайт);
+ *  - заход 9 (хвосты Ш4 (2)–(4)): чат берёт элементы карты своего вида
+ *    вёрстки (Р-З9-1); снимок узнаёт `div role=button` по ключам, не
+ *    зависящим от тега (Р-З9-2); «найдено» подсветкой — голос с порогом по
+ *    квитанции показа (Р-З9-3, `highlight-seen`).
  */
 import { randomUUID } from 'crypto';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -27,10 +31,12 @@ import {
 } from '../../modules/assist-site-chat/testing/chat-stack.testing';
 import { EventCounts } from '../../modules/assist-analytics/public/event-counts.service';
 import { SiteVideosService } from '../../modules/assist-site-media/cabinet/site-videos.service';
+import type { ChatModelRequest } from '../../modules/assist-site-chat/chat-model';
 import {
   confirmSeenUiElements,
   pageUiElements,
   recordUiMiss,
+  recordUiSeen,
 } from '../../modules/assist-site-media/public/ui-map';
 import { WidgetMediaController } from '../../modules/assist-widget/widget-media.controller';
 import { WidgetRateLimit } from '../../modules/assist-widget/rate-limit';
@@ -86,10 +92,24 @@ describeDb('Приёмка Э-С Ш4 — общие карты интерфей�
       new EventCounts(st.publicDb),
     );
     widget.env = st.env;
+    const honest = st.model.compose.bind(st.model);
+    st.model.compose = (req) => (script ? script(req) : honest(req));
   });
   afterAll(async () => {
     await st.close();
   });
+  beforeEach(() => {
+    script = null;
+  });
+
+  /** Ответ модели с блоком действий (как в приёмке Э6). */
+  let script: ((req: ChatModelRequest) => string) | null = null;
+  const answer = (items: unknown[]) => () =>
+    `Кнопка «Купити» — у кошику. [S1]<<<actions>>>${JSON.stringify({ items })}`;
+  const lastPrompt = () => {
+    const req = st.model.calls[st.model.calls.length - 1];
+    return req.contents[req.contents.length - 1].content;
+  };
 
   let current: {
     site: ReturnType<ChatSite['ctx']>;
@@ -988,5 +1008,314 @@ describeDb('Приёмка Э-С Ш4 — общие карты интерфей�
       elements: 1,
       version: 1,
     });
+  });
+  // ── Заход 9: хвосты Ш4 (2)–(4) ─────────────────────────────────────────
+
+  it('Ш4 (2), Р-З9-1: чат предлагает элементы карты СВОЕГО вида вёрстки и без устаревших для него (компьютеру — не снятое на телефоне, телефону — не устаревшее на телефоне)', async () => {
+    const s = await st.stand('shop');
+    await ingest(s, '/cart', 'crawl', 'any', [
+      { selector: '#buy', tag: 'button', label: 'Купити' },
+    ]);
+    // Обучалка (окно телефона): меню-гамбургер есть только на телефоне.
+    await internal.uiMap(s.ownerTelegramId, s.siteId, s.url('/cart'), [
+      { selector: '#burger', tag: 'button', label: 'Меню' },
+    ]);
+    const page = { url: s.url('/cart'), title: null };
+    const hl = (r: { actions: Array<{ kind: string }> }) =>
+      r.actions.filter((a) => a.kind === 'highlight');
+    script = answer([{ kind: 'highlight', label: 'Показати', element: 'E1' }]);
+    const desk = await st.ask(s, 'Де кнопка купити на компʼютері?', {
+      page,
+      viewport: 'desktop',
+    });
+    expect(lastPrompt()).toContain('Купити</element>');
+    expect(lastPrompt()).not.toContain('Меню</element>');
+    expect(hl(desk)).toEqual([
+      expect.objectContaining({ selector: '#buy', caption: 'Купити' }),
+    ]);
+    const phone = await st.ask(s, 'Де меню на телефоні?', {
+      page,
+      viewport: 'mobile',
+    });
+    expect(lastPrompt()).toContain('Меню</element>');
+    expect(hl(phone)).toEqual([
+      expect.objectContaining({ selector: '#burger', caption: 'Меню' }),
+    ]);
+    // «Купити» устарела на телефоне — телефону не предлагается, компьютеру — да.
+    const buy = uiElementId('#buy');
+    for (let i = 0; i < UI_MAP_STALE.threshold; i++)
+      await miss(s, buy, 'mobile');
+    await st.ask(s, 'А кнопка оформлення на телефоні?', {
+      page,
+      viewport: 'mobile',
+    });
+    expect(lastPrompt()).not.toContain('Купити</element>');
+    await st.ask(s, 'А кнопка оформлення на компʼютері?', {
+      page,
+      viewport: 'desktop',
+    });
+    expect(lastPrompt()).toContain('Купити</element>');
+    // Вид неизвестен (старый клиент) — как раньше: любые, без устаревших хоть где-то.
+    await st.ask(s, 'Покажіть, де оформити замовлення', { page });
+    expect(lastPrompt()).toContain('Меню</element>');
+    expect(lastPrompt()).not.toContain('Купити</element>');
+  });
+
+  it('Ш4 (3), Р-З9-2: снимок узнаёт `div role=button` (тег `other`) по data-assist-id — голос «найден» с порогом; по тексту и с неинтерактивной ролью — нет', async () => {
+    const s = await st.stand('shop');
+    await ingest(s, '/cart', 'crawl', 'any', [
+      { selector: '#x1', tag: 'button', label: 'Купити', assistId: 'buy' },
+      {
+        selector: 'main > button:nth-of-type(2)',
+        tag: 'button',
+        label: 'Доставка',
+      },
+    ]);
+    const all = await rows(s);
+    const buyRow = all.find((r) => r.label === 'Купити')!;
+    const textRow = all.find((r) => r.label === 'Доставка')!;
+    expect(buyRow.elementKey).toBe('a:buy');
+    expect(textRow.elementKey.startsWith('x:button|')).toBe(true);
+    for (let i = 0; i < UI_MAP_STALE.threshold; i++) {
+      await miss(s, buyRow.elementId, 'desktop');
+      await miss(s, textRow.elementId, 'desktop');
+    }
+    const seenBy = (n: number, seen: unknown[]) =>
+      confirmSeenUiElements(st.publicDb, {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        visitorId: `v-div-${n}`,
+        ipHash: `ip-div-${n}`,
+        pageUrl: s.url('/cart'),
+        siteHosts: [s.host],
+        viewport: 'desktop',
+        seen,
+        now: new Date(),
+      });
+    // Вёрстка сменилась: кнопка стала div с ролью, data-assist-id остался
+    // (форма снимка плана Э6-бис: tag, label, assistId, role).
+    const div = {
+      tag: 'other',
+      role: 'button',
+      label: 'Купити',
+      assistId: 'buy',
+    };
+    // «Доставка» как вкладка — тот же текст, но не та же кнопка: не узнаётся.
+    const tab = { tag: 'other', role: 'tab', label: 'Доставка' };
+    const heading = {
+      tag: 'other',
+      role: 'heading',
+      label: 'Купити',
+      assistId: 'buy',
+    };
+    expect(await seenBy(0, [tab, heading])).toBe(0);
+    expect(await seenBy(1, [div, tab])).toBe(1);
+    expect(await seenBy(2, [div])).toBe(1);
+    let [row] = (await rows(s)).filter((r) => r.id === buyRow.id);
+    expect([row.seenCountDesktop, row.staleDesktopAt]).toEqual([
+      2,
+      expect.any(Date),
+    ]);
+    expect(await seenBy(3, [div])).toBe(1);
+    [row] = (await rows(s)).filter((r) => r.id === buyRow.id);
+    expect([row.staleDesktopAt, row.missCountDesktop]).toEqual([null, 0]);
+    const [still] = (await rows(s)).filter((r) => r.id === textRow.id);
+    expect([still.seenCountDesktop, still.staleDesktopAt]).toEqual([
+      0,
+      expect.any(Date),
+    ]);
+  });
+
+  it('Ш4 (4), Р-З9-3: «найдено» подсветкой — только по квитанции показа своей страницы и элементу карты своего вида; голос раз на посетителя и IP; порог — сброс; без сомнений — только lastSeenAt', async () => {
+    const s = await st.stand('shop');
+    await ingest(s, '/cart', 'crawl', 'any', [
+      { selector: '#buy', tag: 'button', label: 'Купити' },
+      { selector: '#help', tag: 'a', label: 'Допомога' },
+    ]);
+    await ingest(s, '/checkout', 'crawl', 'any', [
+      { selector: '#buy', tag: 'button', label: 'Купити' },
+    ]);
+    await internal.uiMap(s.ownerTelegramId, s.siteId, s.url('/cart'), [
+      { selector: '#burger', tag: 'button', label: 'Меню' },
+    ]);
+    const buy = uiElementId('#buy');
+    const help = uiElementId('#help');
+    const found = async (
+      elementId: string,
+      o: {
+        visitorId?: string;
+        ipHash?: string;
+        path?: string;
+        receiptPath?: string | null;
+        viewport?: UiVisitorViewport;
+        pageUrl?: string;
+      } = {},
+    ) => {
+      const visitorId = o.visitorId ?? `v-${randomUUID()}`;
+      if (o.receiptPath !== null)
+        await receipt(
+          s,
+          visitorId,
+          elementId,
+          new Date(),
+          o.receiptPath ?? '/cart',
+        );
+      return (
+        await recordUiSeen(st.publicDb, {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          visitorId,
+          ipHash: o.ipHash ?? `ip-${randomUUID()}`,
+          pageUrl: o.pageUrl ?? s.url(o.path ?? '/cart'),
+          siteHosts: [s.host],
+          elementId,
+          viewport: o.viewport ?? 'desktop',
+          now: new Date(),
+        })
+      ).outcome;
+    };
+    const journal = () =>
+      st.owner.siteUiElementMiss.count({
+        where: { siteId: s.siteId, kind: 'seen' },
+      });
+    // Мусор и чужая страница; без квитанции; квитанция другой страницы.
+    expect(await found('u00000000', { receiptPath: null })).toBe('no-receipt');
+    expect(await found('x', { receiptPath: null })).toBe('invalid');
+    expect(await found(buy, { pageUrl: 'https://evil.example/cart' })).toBe(
+      'invalid',
+    );
+    expect(await found(buy, { receiptPath: null })).toBe('no-receipt');
+    expect(await found(buy, { path: '/checkout', receiptPath: '/cart' })).toBe(
+      'no-receipt',
+    );
+    // Снятое на телефоне — компьютеру не элемент.
+    expect(await found(uiElementId('#burger'))).toBe('unknown-element');
+    // Сомнений нет — только «видели», голосов нет.
+    expect(await found(buy)).toBe('seen');
+    expect(await journal()).toBe(0);
+    let [row] = (await rows(s)).filter(
+      (r) => r.elementId === buy && r.path === '/cart',
+    );
+    expect(row.lastSeenAt).toEqual(expect.any(Date));
+    // Промахи набрали «устарел» на компьютере.
+    for (let i = 0; i < UI_MAP_STALE.threshold; i++)
+      await miss(s, buy, 'desktop');
+    [row] = (await rows(s)).filter(
+      (r) => r.elementId === buy && r.path === '/cart',
+    );
+    expect(row.staleDesktopAt).not.toBeNull();
+    // Голоса: повтор посетителя и повтор IP — не голос; порог — сброс вида.
+    expect(await found(buy, { visitorId: 'v-f1', ipHash: 'ip-f1' })).toBe(
+      'voted',
+    );
+    expect(await found(buy, { visitorId: 'v-f1', ipHash: 'ip-f9' })).toBe(
+      'duplicate',
+    );
+    expect(await found(buy, { visitorId: 'v-f9', ipHash: 'ip-f1' })).toBe(
+      'duplicate',
+    );
+    for (let i = 2; i < UI_MAP_STALE.threshold; i++)
+      expect(
+        await found(buy, { visitorId: `v-f${i}`, ipHash: `ip-f${i}` }),
+      ).toBe('voted');
+    [row] = (await rows(s)).filter(
+      (r) => r.elementId === buy && r.path === '/cart',
+    );
+    expect(row.staleDesktopAt).not.toBeNull();
+    expect(await found(buy, { visitorId: 'v-fz', ipHash: 'ip-fz' })).toBe(
+      'reset',
+    );
+    [row] = (await rows(s)).filter(
+      (r) => r.elementId === buy && r.path === '/cart',
+    );
+    expect([
+      row.staleDesktopAt,
+      row.missCountDesktop,
+      row.seenCountDesktop,
+    ]).toEqual([null, 0, 0]);
+    // Вид телефона и другие элементы не тронуты.
+    expect(row.missCountMobile).toBe(0);
+    expect(await found(help)).toBe('seen');
+  });
+
+  it('Ш4 (4): маршрут highlight-seen — вид по заголовкам, свои лимиты (сутки на IP+сайт — только на голос и не съедают лимит промахов)', async () => {
+    const s = await st.stand('shop');
+    await ingest(s, '/cart', 'crawl', 'any', [
+      { selector: '#buy', tag: 'button', label: 'Купити' },
+    ]);
+    const buy = uiElementId('#buy');
+    const ip = `ip-${randomUUID()}`;
+    const req = (ua?: string) =>
+      ({
+        headers: {
+          origin: 'https://w.test',
+          ...(ua ? { 'user-agent': ua } : {}),
+        },
+        method: 'POST',
+      }) as never;
+    for (let i = 0; i < UI_MAP_STALE.threshold; i++)
+      await miss(s, buy, 'mobile');
+    current = { site: s.ctx(), visitor: st.visitor({ ipHash: ip }) };
+    await receipt(s, current.visitor.visitorId, buy);
+    await awaitUtcDayHeadroom();
+    // Телефон: элемент устарел на телефоне — голос принят.
+    expect(
+      await widget.highlightSeen(
+        undefined,
+        { elementId: buy, pageUrl: s.url('/cart') },
+        req(IPHONE),
+      ),
+    ).toEqual({ ok: true, recorded: true });
+    let [row] = await rows(s);
+    expect([row.seenCountMobile, row.seenCountDesktop]).toEqual([1, 0]);
+    // Компьютер (тот же посетитель): сомнений у вида нет — голоса нет.
+    expect(
+      await widget.highlightSeen(
+        undefined,
+        { elementId: buy, pageUrl: s.url('/cart') },
+        req(),
+      ),
+    ).toEqual({ ok: true, recorded: false });
+    [row] = await rows(s);
+    expect(row.seenCountDesktop).toBe(0);
+    const limitedCall = async (
+      visitorIp: string,
+      ua: string | undefined,
+    ): Promise<boolean> => {
+      current = { site: s.ctx(), visitor: st.visitor({ ipHash: visitorIp }) };
+      await receipt(s, current.visitor.visitorId, buy);
+      try {
+        await widget.highlightSeen(
+          undefined,
+          { elementId: buy, pageUrl: s.url('/cart') },
+          req(ua),
+        );
+        return false;
+      } catch (e) {
+        return JSON.stringify(
+          (e as { response?: unknown }).response ?? '',
+        ).includes('RATE_LIMITED');
+      }
+    };
+    // P3-3: «найдено» без сомнения (компьютер) суточный лимит не тратит —
+    // больше суточного потолка таких вызовов с одного IP проходят.
+    const calm = `ip-${randomUUID()}`;
+    for (let i = 0; i < UI_MAP_STALE.missesPerIpSitePerDay + 3; i++)
+      expect(await limitedCall(calm, undefined)).toBe(false);
+    // Голоса (телефон, элемент под сомнением) — сутки на IP+сайт.
+    let limited = false;
+    for (let i = 0; i < UI_MAP_STALE.missesPerIpSitePerDay + 1 && !limited; i++)
+      limited = await limitedCall(ip, IPHONE);
+    expect(limited).toBe(true);
+    // Промах с того же IP — свой суточный счёт, не исчерпан «найдено».
+    current = { site: s.ctx(), visitor: st.visitor({ ipHash: ip }) };
+    await receipt(s, current.visitor.visitorId, buy);
+    expect(
+      await widget.highlightMiss(
+        undefined,
+        { elementId: buy, pageUrl: s.url('/cart') },
+        req(),
+      ),
+    ).toEqual({ ok: true, recorded: true });
   });
 });

@@ -57,6 +57,75 @@ export async function recipients(
   return out;
 }
 
+/** Язык уведомления владельцу/сотруднику (Р-З9-7). */
+export type NotifyLang = 'uk' | 'ru' | 'en';
+
+/**
+ * Язык из `language_code` Telegram (`assist_bot_users.languageCode`):
+ * uk/ru/en по первой части кода (`ru-RU` → ru), всё прочее и пусто — uk
+ * (основной рынок; так же решает карточка передачи по умолчанию).
+ */
+export function notifyLangOf(code: string | null | undefined): NotifyLang {
+  const base = (code ?? '').toLowerCase().split(/[-_]/)[0];
+  return base === 'ru' || base === 'en' ? base : 'uk';
+}
+
+/**
+ * Получатели с языком (Р-З9-7): тот же фильтр режима, что `recipients`, и
+ * язык каждого — из `assist_bot_users` (таблица личностей Telegram без
+ * кабинета, поэтому чтение системное, только `languageCode` по уже
+ * отобранным id). Нет строки — uk.
+ */
+export async function recipientsWithLang(
+  sitesDb: SitesDb,
+  accountId: string,
+  allow: (m: { role: AccountRole; productRoles: ProductRoles }) => boolean,
+): Promise<Array<{ chatId: bigint; lang: NotifyLang }>> {
+  const ids = await recipients(sitesDb, accountId, allow);
+  if (!ids.length) return [];
+  const rows = await sitesDb
+    .system('notify: язык получателей (assist_bot_users)')
+    .assistBotUser.findMany({
+      where: { telegramId: { in: ids } },
+      select: { telegramId: true, languageCode: true },
+    });
+  const lang = new Map(
+    rows.map((r) => [r.telegramId.toString(), notifyLangOf(r.languageCode)]),
+  );
+  return ids.map((chatId) => ({
+    chatId,
+    lang: lang.get(chatId.toString()) ?? 'uk',
+  }));
+}
+
+/**
+ * Разослать каждому на его языке (Р-З9-7): группы по языку — по одному
+ * `sendToMembers` на группу. `texts` — текст и кнопка на каждый язык.
+ */
+export async function sendToMembersByLang(p: {
+  recipients: Array<{ chatId: bigint; lang: NotifyLang }>;
+  texts: Record<NotifyLang, { text: string; button: string }>;
+  hashPath: string;
+  env?: BotNotifyEnv;
+  fetchImpl?: FetchLike;
+}): Promise<number> {
+  let sent = 0;
+  for (const lang of ['uk', 'ru', 'en'] as const) {
+    const chatIds = p.recipients
+      .filter((r) => r.lang === lang)
+      .map((r) => r.chatId);
+    if (!chatIds.length) continue;
+    sent += await sendToMembers({
+      chatIds,
+      text: p.texts[lang].text,
+      button: { text: p.texts[lang].button, hashPath: p.hashPath },
+      env: p.env,
+      fetchImpl: p.fetchImpl,
+    });
+  }
+  return sent;
+}
+
 /** Отправить каждому; возвращает число успешных отправок. */
 export async function sendToMembers(p: {
   chatIds: bigint[];

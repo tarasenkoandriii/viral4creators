@@ -29,6 +29,7 @@ import {
   type QueueView,
   type SimulationView,
 } from '../../lib/learning-types';
+import { openExternal } from '../../lib/open-link';
 import { navigate } from '../../lib/router';
 import { useE3ErrorText } from '../../lib/use-error-text';
 import {
@@ -70,6 +71,94 @@ export function LearningScreen({
       {active === 'queue' && <Queue siteId={siteId} />}
       {active === 'golden' && <Golden siteId={siteId} />}
       {active === 'quality' && <Quality siteId={siteId} />}
+      {active === 'voice' && <VoiceMisses siteId={siteId} />}
+    </div>
+  );
+}
+
+/**
+ * «Обучение → Голос» (заход 9, Э6-тер (12); ТЗ §5-кватер.10, §4-тер.5):
+ * промахи Т-4 по целям голосовой карты за 7 дней и «Открыть в
+ * редакторе» — одноразовая ссылка редактора с `focus=<ключ цели>` на
+ * странице последнего промаха (пикер подсвечивает место цели, владелец
+ * перепривязывает кликом; само-лечения нет, Р-38). Т-3 — когда будет
+ * воркер.
+ */
+function VoiceMisses({ siteId }: { siteId: string }) {
+  const { dict } = useKit();
+  const { appDict, voiceControl } = useAssist();
+  const t = appDict.e3.learning.voice;
+  const loaded = useAsync(
+    () => voiceControl.voiceMap.misses(siteId),
+    [voiceControl, siteId]
+  );
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const openEditor = async (path: string | null, focus?: string) => {
+    setNotice(null);
+    try {
+      const l = await voiceControl.voiceMap.editorLink(siteId, {
+        path: path ?? '/',
+        ...(focus ? { focus } : {}),
+      });
+      openExternal(l.url);
+    } catch (e) {
+      setNotice({
+        tone: 'danger',
+        text: fmt(t.error, { e: (e as Error)?.message ?? '' }),
+      });
+    }
+  };
+  const v = loaded.data;
+  if (loaded.loading && !v) return <Spinner label={dict.common.loading} />;
+  if (!v) return <LoadError error={loaded.error} onRetry={loaded.reload} />;
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-silver-500">{fmt(t.intro, { d: v.days })}</p>
+      <NoticeBar notice={notice} />
+      {v.items.length === 0 && v.pages.length === 0 && (
+        <Card className="text-sm">{fmt(t.empty, { d: v.days })}</Card>
+      )}
+      {v.items.map((x) => (
+        <Card key={x.key} className="space-y-1 text-sm">
+          <div className="font-medium">
+            {x.key}
+            {x.page ? ` · ${x.page}` : ''}
+          </div>
+          <div className="text-xs">
+            {fmt(t.line, {
+              s: x.self,
+              n: x.notFound,
+              w: x.wrong,
+              m: x.missed,
+              ok: x.done,
+            })}
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => void openEditor(x.page, x.key)}
+          >
+            {t.open}
+          </Button>
+        </Card>
+      ))}
+      {v.pages.length > 0 && (
+        <Card className="space-y-1 text-sm">
+          <div>{t.pages}</div>
+          {v.pages.map((p) => (
+            <div
+              key={p.page}
+              className="flex items-center justify-between gap-2"
+            >
+              <span className="text-xs">
+                {fmt(t.pageLine, { p: p.page, n: p.misses })}
+              </span>
+              <Button variant="ghost" onClick={() => void openEditor(p.page)}>
+                {t.openPage}
+              </Button>
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }

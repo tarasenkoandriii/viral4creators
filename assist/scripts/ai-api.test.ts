@@ -13,6 +13,7 @@ import { appUk } from '../src/i18n/uk';
 import {
   createAiApi,
   parseAiSettings,
+  parseBehavior,
   parseDialogs,
   parseExperiment,
   parseInsights,
@@ -174,6 +175,8 @@ for (const d of [appRu, appUk, appEn]) {
   await api.fixLabel('s1', 'c1', { intent: 'price' });
   await api.insights('s1');
   await api.insights('s1', '2026-09-28');
+  await api.insights('s1', undefined, 'en');
+  await api.insights('s1', '2026-09-28', 'uk');
   await api.markInsight('s1', 'i1', { status: 'done' });
   await api.behavior('s1', 'a', 'b');
   await api.experiments('s1');
@@ -189,6 +192,8 @@ for (const d of [appRu, appUk, appEn]) {
       'PATCH /assist/sites/s1/conversations/c1/label',
       'GET /assist/sites/s1/stats/insights',
       'GET /assist/sites/s1/stats/insights?week=2026-09-28',
+      'GET /assist/sites/s1/stats/insights?lang=en',
+      'GET /assist/sites/s1/stats/insights?week=2026-09-28&lang=uk',
       'PATCH /assist/sites/s1/insights/i1',
       'GET /assist/sites/s1/stats/behavior?from=a&to=b',
       'GET /assist/sites/s1/experiments',
@@ -269,6 +274,7 @@ for (const d of [appRu, appUk, appEn]) {
     p: 0.02,
     liftRel: -0.4,
     verdict: 'significant',
+    goalTrust: null,
   };
   const base: T.ExperimentView = {
     id: 'e1',
@@ -308,6 +314,47 @@ for (const d of [appRu, appUk, appEn]) {
   assert.ok(done[1].startsWith('Итог: A 10 %'));
   assert.ok(done[1].includes('−4.0 %'), done[1]);
   assert.equal(done[2], t.experiments.verdicts.significant);
+  assert.equal(
+    done.length,
+    3,
+    'без срабатываний «со страницы» — без предупреждения'
+  );
+  // Заход 9: доля срабатываний цели «со страницы» — предупреждение в итоге.
+  const trusted = experimentLines(
+    t,
+    {
+      ...base,
+      status: 'done',
+      result: {
+        ...result,
+        goalTrust: { total: 80, page: 20, pageShare: 0.25 },
+      },
+    },
+    ''
+  );
+  assert.equal(trusted.length, 4);
+  assert.ok(
+    trusted[3].includes('80') && trusted[3].includes('25 %'),
+    trusted[3]
+  );
+  const parsedDone = parseExperiment({
+    ...base,
+    status: 'done',
+    result: { ...result, goalTrust: { total: 5, page: 5, pageShare: 1 } },
+  });
+  assert.deepEqual(parsedDone?.result?.goalTrust, {
+    total: 5,
+    page: 5,
+    pageShare: 1,
+  });
+  assert.equal(
+    parseExperiment({
+      ...base,
+      status: 'done',
+      result: { ...result, goalTrust: undefined },
+    })?.result?.goalTrust,
+    null
+  );
 
   const power: T.PowerView = {
     units28: 3000,
@@ -329,6 +376,28 @@ for (const d of [appRu, appUk, appEn]) {
     ),
     t.experiments.reasons.underpowered
   );
+}
+
+// ═══ 7. Заход 9: квота поведения — выборка сверх неё ═════════════════
+{
+  const b = parseBehavior({
+    enabled: true,
+    reason: null,
+    quota: { used: 150, limit: 100, sampleRate: 0.1 },
+    pages: [],
+    totalViews: 0,
+  });
+  assert.equal(b.quota.sampleRate, 0.1);
+  // Старый сервер без поля — всё в квоте.
+  assert.equal(
+    parseBehavior({ quota: { used: 1, limit: 100 } }).quota.sampleRate,
+    1
+  );
+  for (const d of [appRu, appUk, appEn]) {
+    assert.ok(d.e3b.behavior.sampled.includes('{rate}'));
+    assert.ok(d.e3b.experiments.pageTrust.includes('{share}'));
+    assert.ok(d.e3b.insights.skipped.lang.length > 0);
+  }
 }
 
 console.log('ai-api: ok');
