@@ -21,6 +21,11 @@ import {
   type VoiceMapTarget,
   type VoiceMapTemplate,
 } from '../assist-ui-core/voice-map';
+import {
+  escHtml,
+  reportPageCsp,
+  reportPageHtml,
+} from '../../common/report-page';
 import { maskLabel, maskPagePath } from '../assist-ui-core/snapshot';
 
 /**
@@ -290,18 +295,8 @@ export function devReportLang(raw: unknown): DevReportLang {
   return raw === 'ru' || raw === 'en' ? raw : 'uk';
 }
 
-const esc = (s: string): string =>
-  s.replace(/[&<>"']/g, (c) =>
-    c === '&'
-      ? '&amp;'
-      : c === '<'
-        ? '&lt;'
-        : c === '>'
-          ? '&gt;'
-          : c === '"'
-            ? '&quot;'
-            : '&#39;',
-  );
+/** Экранирование — общее со страницей отчёта мастера (`common/report-page`). */
+const esc = (s: string): string => escHtml(s);
 
 const fill = (t: string, v: Record<string, string | number>) =>
   t.replace(/\{(\w+)\}/g, (_, k: string) => String(v[k] ?? ''));
@@ -314,17 +309,7 @@ const STYLE =
   '@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code{background:#222}td,th{border-color:#333}}';
 
 function page(lang: DevReportLang, title: string, body: string): string {
-  return [
-    '<!doctype html>',
-    `<html lang="${lang}">`,
-    '<head><meta charset="utf-8">',
-    '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    '<meta name="robots" content="noindex, nofollow">',
-    `<title>${esc(title)}</title>`,
-    `<style>${STYLE}</style></head>`,
-    `<body>${body}</body></html>`,
-    '',
-  ].join('\n');
+  return reportPageHtml({ lang, title, style: STYLE, body });
 }
 
 /** Страница «ссылка недействительна» — одна на все отказы (не оракул). */
@@ -417,11 +402,5 @@ export function devReportHtml(
   return page(lang, L.title, out.join('\n'));
 }
 
-/** CSP страницы отчёта: ни скриптов, ни ресурсов, ни встраивания. */
-export const DEV_REPORT_CSP = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "frame-ancestors 'none'",
-].join('; ');
+/** CSP страницы отчёта: ни скриптов, ни ресурсов, ни встраивания, ни форм. */
+export const DEV_REPORT_CSP = reportPageCsp("'none'");

@@ -288,6 +288,8 @@ describeDb('Приёмка Э-С Ш3 — браузерный воркер', () 
       viewport: 'mobile',
       screenshot: true,
       mapElements: true,
+      // Заход 10, Ш3 (5): раскрывашки по стоп-листу воркера.
+      toggles: 5,
     });
     expect(JSON.stringify(j.params)).not.toMatch(/password|secret|cookie/i);
     // Второй воркер то же задание не получит.
@@ -359,6 +361,8 @@ describeDb('Приёмка Э-С Ш3 — браузерный воркер', () 
     expect(view.elements[0].text).not.toContain('ivan@example.com');
     expect(view.elements[0].box).toEqual({ x: 10, y: 20, w: 100, h: 40 });
     expect(view.screenshot.url).toMatch(/^fake-blob:\/\/browser\//);
+    // Воркер раскрывашек не прислал — состояний нет (форма прежняя).
+    expect(view.states).toEqual([]);
     const until = Number(/until=(\d+)/.exec(view.screenshot.url)![1]);
     expect(until - Date.now()).toBeLessThanOrEqual(15 * 60_000 + 1000);
     // Элементы — в общую карту Ш4 источником `qa` (вид — мобильный).
@@ -366,6 +370,73 @@ describeDb('Приёмка Э-С Ш3 — браузерный воркер', () 
       where: { siteId: s.siteId, source: 'qa', path: '/' },
     });
     expect(map?.viewport).toBe('mobile');
+  });
+
+  it('«Снимок» с раскрывашками (Ш3 (5)): состояния — подпись и элементы с маской ПД, свой скриншот по ссылке', async () => {
+    await drain();
+    const base = `/assist/sites/${s.siteId}/voice-map/site/snapshots`;
+    const req = body(
+      await request(st.srv())
+        .post(base)
+        .set(st.as(s.ownerTg))
+        .send({ url: `https://${s.shopHost}/menu`, viewport: 'desktop' })
+        .expect(200),
+    );
+    const [j] = (await claim()).jobs;
+    expect(j.id).toBe(req.snapshotId);
+    const lease = { jobId: j.id, leaseToken: j.leaseToken };
+    for (const idx of [0, 1])
+      await st
+        .worker(WORKER_ROUTES.artifact, {
+          ...lease,
+          idx,
+          contentType: 'image/jpeg',
+          width: 1280,
+          height: 800,
+          data: JPEG,
+        })
+        .expect(200);
+    const base0 = snapshotResult(s.shopHost);
+    const menuItem = {
+      ...base0.snapshot.elements[0],
+      ref: 'e7',
+      role: 'link',
+      tag: 'a',
+      text: 'Менеджер: olena@example.com',
+      assistId: null,
+    };
+    await st
+      .worker(WORKER_ROUTES.complete, {
+        ...lease,
+        result: {
+          ...base0,
+          finalUrl: `https://${s.shopHost}/menu`,
+          snapshot: { ...base0.snapshot, url: `https://${s.shopHost}/menu` },
+          viewport: { width: 1280, height: 800 },
+          states: [
+            {
+              label: 'Меню ivan@example.com',
+              elements: [menuItem],
+              screenshot: 1,
+            },
+          ],
+        },
+      })
+      .expect(200);
+    const view = body(
+      await request(st.srv())
+        .get(`${base}/${j.id}`)
+        .set(st.as(s.ownerTg))
+        .expect(200),
+    );
+    expect(view.states).toHaveLength(1);
+    const [state] = view.states;
+    expect(state.label).not.toContain('ivan@example.com');
+    expect(state.elements).toHaveLength(1);
+    expect(state.elements[0].text).not.toContain('olena@example.com');
+    expect(state.elements[0].role).toBe('link');
+    expect(state.screenshot.url).toMatch(/^fake-blob:\/\/browser\//);
+    expect(state.screenshot.url).not.toBe(view.screenshot.url);
   });
 
   // ── 4. аренда, повтор, справедливость ──────────────────────────────

@@ -172,6 +172,11 @@ function parseFinding(v: unknown): FindingView {
         : null,
     value: num(o.value),
     trigger: str(o.trigger),
+    campaign: str(o.campaign),
+    changedAt:
+      typeof o.changedAt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.changedAt)
+        ? o.changedAt
+        : null,
   };
 }
 
@@ -215,6 +220,8 @@ export function parseInsight(v: unknown): InsightView | null {
                 value: num(obj(fu.after).value) ?? undefined,
               }
             : null,
+          reason:
+            fu.reason === 'insufficient_data' ? 'insufficient_data' : null,
         }
       : null,
     feedback: o.feedback === 1 || o.feedback === -1 ? o.feedback : null,

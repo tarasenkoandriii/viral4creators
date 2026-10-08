@@ -76,7 +76,10 @@ class FakeApi implements WorkerApi {
     }
     return { cancel: this.cancel.has(id) };
   }
+  /** complete отвечает этой ошибкой (сервер не принял результат). */
+  completeError: ApiError | null = null;
   async complete(id: string) {
+    if (this.completeError) throw this.completeError;
     this.completed.push(id);
   }
   async fail(id: string, _t: string, code: string) {
@@ -272,6 +275,23 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
       slow: 'job_timeout',
       egress: 'egress_blocked',
       boom: 'internal',
+    });
+  });
+
+  it('сервер не принял результат (400 WORKER_BAD_RESULT) — too_large, без повтора; 5xx при сдаче — internal', async () => {
+    const api = new FakeApi();
+    api.completeError = new ApiError(400, 'WORKER_BAD_RESULT');
+    api.queue = [job('big')];
+    const { runner } = make(api, async () => okResult);
+    runner.start();
+    for (let i = 0; i < 100 && api.failed.length < 1; i++) await tick();
+    api.completeError = new ApiError(503, 'UNAVAILABLE');
+    api.queue = [job('down')];
+    for (let i = 0; i < 100 && api.failed.length < 2; i++) await tick();
+    await runner.shutdown();
+    expect(Object.fromEntries(api.failed)).toEqual({
+      big: 'too_large',
+      down: 'internal',
     });
   });
 

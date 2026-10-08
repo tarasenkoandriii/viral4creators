@@ -18,6 +18,8 @@ import { SiteCoreModule } from '../site-core/site-core.module';
 import { EditorMemoController } from './editor/editor-memo.controller';
 import { EditorMemoService } from './editor/editor-memo.service';
 import { EditorFrameController } from './editor/editor-frame.controller';
+import { EditorAssistController } from './editor/editor-assist.controller';
+import { EditorAssistService } from './editor/editor-assist.service';
 import { EditorController } from './editor/editor.controller';
 import { EditorSessionService } from './editor/editor-session.service';
 import { EditorVoiceController } from './editor/editor-voice.controller';
@@ -44,6 +46,8 @@ import { VoiceMapService } from './voice-map.service';
     // Заход 9: микрофон «Сказать сейчас» в панели.
     EditorVoiceController,
     EditorFrameController,
+    // Заход 10 (№113): ИИ-синонимы, «Промахи», «Предложения».
+    EditorAssistController,
   ],
   providers: [
     VoiceMapService,
@@ -59,6 +63,8 @@ import { VoiceMapService } from './voice-map.service';
     // Распознавание — тот же клиент Soniox, что у виджета (без состояния).
     SiteSonioxStt,
     EditorVoiceService,
+    // Заход 10 (№113): ИИ-синонимы, «Промахи», «Предложения» в панели.
+    EditorAssistService,
   ],
   exports: [VoiceMapService],
 })

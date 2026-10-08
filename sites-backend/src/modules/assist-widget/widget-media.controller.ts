@@ -43,7 +43,7 @@ import {
 import { IsString, Matches, MaxLength } from 'class-validator';
 import type { Request, Response } from 'express';
 import { WIDGET_VISITOR_TOKEN_HEADER } from '../../brand';
-import { videoLinkKey } from '../../config/media-env';
+import { videoLinkKey, videoLinkKeys } from '../../config/media-env';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { EventCounts } from '../assist-analytics/public/event-counts.service';
 import { readState } from '../assist-billing/public/entitlements';
@@ -187,10 +187,11 @@ export class WidgetMediaController {
     @Param('token') token: string,
     @Res() res: Response,
   ): Promise<void> {
-    const key = videoLinkKey(this.env);
+    // №60: подпись проверяется текущим и прежними ключами связки.
+    const keys = videoLinkKeys(this.env);
     const now = this.now();
-    const check = key
-      ? verifyVideoLink(key, token, Math.floor(now.getTime() / 1000))
+    const check = keys
+      ? verifyVideoLink(keys, token, Math.floor(now.getTime() / 1000))
       : null;
     // Сайт помощника из токена — заново из базы (аккаунт для тарифа).
     const site =

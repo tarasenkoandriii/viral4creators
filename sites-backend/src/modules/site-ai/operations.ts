@@ -55,6 +55,12 @@ export const SITE_AI_OPERATIONS = [
   // (assist_budget_days scope='analytics'); не бюджет обучения и не ответов.
   'assist-label',
   'assist-insight',
+  // Заход 10 (№57): аналитика «Админки» — разметка диалога сотрудника и
+  // выводы недели (признак режима — имя операции, §5-тер.13). Платит
+  // суточный потолок «Админки» сайта (не больше половины) и общий потолок
+  // платформы (ADMIN_DAILY_USAGE_OPERATIONS); не бюджет аналитики «Сайта».
+  'assist-admin-label',
+  'assist-admin-insight',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

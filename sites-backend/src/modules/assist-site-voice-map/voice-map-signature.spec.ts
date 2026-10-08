@@ -69,6 +69,28 @@ describe('подпись экспорта карты (аудит Н-5)', () => {
     expect(s.signatureValid(PAYLOAD, undefined)).toBe(false);
   });
 
+  it('№60: файл, подписанный до ротации ASSIST_SECRETS_KEY, остаётся «нашим»', () => {
+    const before = signer({ ASSIST_SECRETS_KEY: KEK });
+    const oldSig = before.signature(PAYLOAD);
+    const rotated = signer({
+      ASSIST_SECRETS_KEY: 'n'.repeat(44),
+      ASSIST_SECRETS_KEY_VERSION: 'v2',
+      ASSIST_SECRETS_KEYS_OLD: `v1:${KEK}`,
+    });
+    expect(rotated.signatureValid(PAYLOAD, oldSig)).toBe(true);
+    // Новая подпись — текущим ключом (v2): прежний её не признаёт.
+    const newSig = rotated.signature(PAYLOAD);
+    expect(newSig).not.toBe(oldSig);
+    expect(before.signatureValid(PAYLOAD, newSig)).toBe(false);
+    // Прежний ключ убран из env — старый файл уже не «наш».
+    const onlyNew = signer({
+      ASSIST_SECRETS_KEY: 'n'.repeat(44),
+      ASSIST_SECRETS_KEY_VERSION: 'v2',
+    });
+    expect(onlyNew.signatureValid(PAYLOAD, oldSig)).toBe(false);
+    expect(onlyNew.signatureValid(PAYLOAD, newSig)).toBe(true);
+  });
+
   it('без ключей подпись в файле есть, но «нашим» файл не признаётся', () => {
     const s = signer({});
     const sig = s.signature(PAYLOAD);

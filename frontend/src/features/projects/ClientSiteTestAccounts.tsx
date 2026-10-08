@@ -28,6 +28,7 @@ import {
   ROLE_HINTS,
   emptyTestAccountForm,
   formFromAccount,
+  productLabel,
   roleHintKey,
   statusTone,
   testAccountPayload,
@@ -335,17 +336,7 @@ function AccountRow(props: {
         )}
         {a.username && <div>{a.username}</div>}
         {hostNames && <div>{hostNames}</div>}
-        <div>
-          {a.products
-            .map((p) =>
-              p === 'tutorial'
-                ? t.productTutorial
-                : p === 'qa'
-                  ? t.productQa
-                  : p
-            )
-            .join(', ')}
-        </div>
+        <div>{a.products.map((p) => productLabel(p, t)).join(', ')}</div>
         <SecretBadges t={t} s={a.secrets} />
         <div>
           {a.lastUsedAt &&
@@ -531,10 +522,15 @@ function AccountForm(props: {
                 checked={form.products.includes(p)}
                 onChange={() => set({ products: toggle(form.products, p) })}
               />
-              {p === 'tutorial' ? t.productTutorial : t.productQa}
+              {productLabel(p, t)}
             </label>
           ))}
         </div>
+        {form.otherProducts.length > 0 && (
+          <div className="mt-1 text-xs text-silver-400">
+            {form.otherProducts.map((p) => productLabel(p, t)).join(', ')}
+          </div>
+        )}
       </Field>
       <Field label={t.lifetime}>
         <Select

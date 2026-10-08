@@ -8,9 +8,23 @@ import {
   createAdminModeApi,
   parseActionStats,
   parseAdminMode,
+  cleanWidgetLabel,
   parseConnector,
+  parseExport,
+  parseInsight,
+  parseLabels,
+  parseTaskMinutes,
 } from '../src/lib/admin-mode-api';
-import { ADMIN_MODE_TEXTS } from '../src/i18n/admin-mode';
+import { getAppDictionary } from '../src/i18n';
+import { ApiError } from '../src/kit';
+import { adminErrorText } from '../src/lib/admin-mode-view';
+
+// №63 (заход 10): тексты «Админки» — в AppDictionary (`adminMode`).
+const ADMIN_MODE_TEXTS = {
+  uk: getAppDictionary('uk').adminMode,
+  ru: getAppDictionary('ru').adminMode,
+  en: getAppDictionary('en').adminMode,
+};
 
 const m = parseAdminMode({
   enabled: true,
@@ -164,4 +178,119 @@ assert.deepEqual(
 await assert.rejects(api.patchConnector('s1', 'c/1', { maskPd: false }));
 await assert.rejects(api.get('a/b'));
 await assert.rejects(api.patchOperation('s1', 'c1', '../x', {}));
+
+// Заход 10: флаг «админка — TMA» (Р-З10-16), подпись кнопки (Р-З10-15),
+// настройки аналитики (№57) — строго: мусор — умолчание.
+const z = parseAdminMode({
+  adminTmaFrame: 'yes',
+  widgetLabel: 5,
+  analyticsLabeling: false,
+  weeklyReport: 0,
+  analyticsTaskMinutes: { order_status: 3, sales: 9, lookup: 1.5, how_to: 999 },
+});
+assert.equal(z.adminTmaFrame, false);
+assert.equal(z.widgetLabel, null);
+assert.equal(z.analyticsLabeling, false);
+assert.equal(z.weeklyReport, true, 'только false выключает отчёт');
+assert.deepEqual(z.analyticsTaskMinutes, { order_status: 3 });
+assert.deepEqual(parseTaskMinutes(null), {});
+assert.equal(
+  parseAdminMode({ adminTmaFrame: true, widgetLabel: 'Мій помічник' })
+    .widgetLabel,
+  'Мій помічник'
+);
+// Разметка: чужой тип задачи отброшен.
+assert.deepEqual(
+  parseLabels({
+    labeling: { enabled: true, model: 'yes' },
+    taskTypes: [
+      { taskType: 'how_to', count: 2, found: 1, minutes: 5 },
+      { taskType: 'evil', count: 9 },
+    ],
+  }).taskTypes.map((x) => x.taskType),
+  ['how_to']
+);
+assert.equal(parseLabels({ labeling: { model: 'yes' } }).labeling.model, false);
+// Выводы: находка неизвестного вида отброшена; статус — только из перечня.
+const ins = parseInsight({
+  id: 'i1',
+  weekStart: '2026-10-05',
+  status: 'hacked',
+  findings: [
+    { id: 'refusals', kind: 'refusals', n: 10, value: 3, pct: 30 },
+    { id: 'x', kind: 'evil', n: 1, value: 1 },
+  ],
+  items: [{ findingIds: ['refusals'], uk: { title: 'T', action: 'A' } }],
+});
+assert.equal(ins.status, 'new');
+assert.deepEqual(
+  ins.findings.map((f) => f.id),
+  ['refusals']
+);
+assert.equal(ins.items[0].ru.title, '');
+// Выгрузка: ссылка — только https (javascript: и http — null).
+assert.equal(parseExport({ url: 'javascript:alert(1)' }).url, null);
+assert.equal(parseExport({ url: 'http://blob.example/x' }).url, null);
+assert.equal(
+  parseExport({ url: 'https://blob.example/x', status: 'done' }).url,
+  'https://blob.example/x'
+);
+assert.equal(parseExport({ status: '??' }).status, 'failed');
+calls.length = 0;
+await api.labels('s1', 30);
+await api.insights('s1');
+await api.patchInsight('s1', 'i1', { status: 'done' });
+await api.exports('s1');
+await api.requestExport('s1', {
+  kind: 'labels',
+  from: '2026-10-01',
+  to: '2026-10-07',
+});
+await api.patch('s1', { adminTmaFrame: true, widgetLabel: 'X' });
+assert.deepEqual(
+  calls.map(([mth, p, b]) => `${mth} ${p} ${JSON.stringify(b) ?? '-'}`),
+  [
+    'GET /assist/sites/s1/admin-mode/stats/labels?days=30 -',
+    'GET /assist/sites/s1/admin-mode/stats/insights -',
+    'PATCH /assist/sites/s1/admin-mode/stats/insights/i1 {"status":"done"}',
+    'GET /assist/sites/s1/admin-mode/exports -',
+    'POST /assist/sites/s1/admin-mode/exports {"kind":"labels","from":"2026-10-01","to":"2026-10-07"}',
+    'PATCH /assist/sites/s1/admin-mode {"adminTmaFrame":true,"widgetLabel":"X"}',
+  ]
+);
+await assert.rejects(api.patchInsight('s1', '../i', { status: 'done' }));
+// №63: тексты новых блоков — на трёх языках, с одинаковыми плейсхолдерами.
+for (const l of ['uk', 'ru', 'en'] as const) {
+  assert.ok(/\{hours\}/.test(ADMIN_MODE_TEXTS[l].analytics.saved), l);
+  assert.ok(ADMIN_MODE_TEXTS[l].settings.tmaFrame, l);
+  assert.ok(/40/.test(ADMIN_MODE_TEXTS[l].settings.widgetLabelHint), l);
+}
+// Аудит захода 10 (P3 (6)): подпись проверяется до запроса — как на сервере.
+assert.equal(cleanWidgetLabel('  Мій   помічник '), 'Мій помічник');
+assert.equal(cleanWidgetLabel(''), null);
+assert.equal(cleanWidgetLabel(null), null);
+assert.equal(cleanWidgetLabel('<b>x</b>'), false);
+assert.equal(cleanWidgetLabel('a\u0007b'), false);
+assert.equal(cleanWidgetLabel('я'.repeat(40)), 'я'.repeat(40));
+assert.equal(cleanWidgetLabel('я'.repeat(41)), false);
+// Коды отказов захода 10 — переводом «Админки» на трёх языках; чужой код —
+// общим путём.
+for (const l of ['uk', 'ru', 'en'] as const) {
+  const t = ADMIN_MODE_TEXTS[l];
+  for (const code of Object.keys(t.errors)) {
+    const text = adminErrorText(
+      new ApiError(code, 'server text', 409),
+      t,
+      () => 'fallback'
+    );
+    assert.ok(
+      text && text !== 'fallback' && text !== 'server text',
+      `${l} ${code}`
+    );
+  }
+  assert.equal(
+    adminErrorText(new ApiError('OTHER', 'x', 400), t, () => 'fallback'),
+    'fallback'
+  );
+}
 console.log('admin-mode-api: ok');

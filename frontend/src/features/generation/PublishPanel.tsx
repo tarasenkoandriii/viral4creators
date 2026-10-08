@@ -452,7 +452,9 @@ export function PublishPanel({
                       {dict.publishPanel.olderVersionBadge}
                     </p>
                   )}
-                <p className="mt-1 truncate font-medium">{r.title}</p>
+                <p className="mt-1 truncate font-medium" data-assist-ugc="">
+                  {r.title}
+                </p>
                 {r.tags.length > 0 && (
                   <p className="mt-0.5 truncate text-silver-400">
                     {r.tags.map((t) => `#${t}`).join(' ')}

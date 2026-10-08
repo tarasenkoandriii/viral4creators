@@ -18,6 +18,11 @@ export const BROWSER_JOB_ORIGINS = [
   // — ТОЧНЫЕ хосты черновика, лимиты — на человека и на хост.
   'tutorial-explore',
   'tutorial-explore-open',
+  // Ш3 (20), Р-З10-20: рендер SPA-страниц обхода для знаний «Сайта».
+  'knowledge-render',
+  // №29, Р-З10-19: Т-3 по расписанию — сверка опубликованной голосовой
+  // карты и контрольных команд монитора (без кликов), отчёт `autotest`.
+  'voice-autotest',
 ] as const;
 export type BrowserJobOrigin = (typeof BROWSER_JOB_ORIGINS)[number];
 
@@ -109,7 +114,37 @@ export const ORIGIN_RULES: Readonly<Record<BrowserJobOrigin, OriginRule>> = {
     dailyPerSite: 300,
     priority: 20,
   },
+  // Публичные страницы verified-хоста «Сайта» (L1 `assist-crawl`, как
+  // обход). ≤ 50 страниц на сайт в сутки: 12 заданий × `renderPages` (4).
+  // Результат (HTML) нужен обходу только до ближайшего тика — строка живёт
+  // сутки; повтор — один (сбой браузера), фон — низший приоритет.
+  'knowledge-render': {
+    kind: 'knowledge-render',
+    purpose: 'assist-crawl',
+    maxAttempts: 2,
+    ttlMs: DAY,
+    activePerSite: 2,
+    dailyPerSite: 12,
+    priority: 1,
+  },
+  // Т-3 по расписанию: раз в сутки на сайт (монитор Т-4 ставит не чаще;
+  // лимит очереди — вторая линия), отчёт живёт в `assist_site_voice_tests`.
+  'voice-autotest': {
+    kind: 'descriptor-resolve',
+    purpose: 'assist-crawl',
+    maxAttempts: 2,
+    ttlMs: 7 * DAY,
+    activePerSite: 1,
+    dailyPerSite: 1,
+    priority: 1,
+  },
 };
+
+/**
+ * Ш3 (20): страниц рендера на сайт за сутки — `dailyPerSite` × страниц в
+ * задании (≤ 50, Р-З10-20).
+ */
+export const RENDER_PAGES_PER_SITE_DAY = 50;
 
 /**
  * Лимиты заданий без хоста кабинета (`tutorial-explore-open`): на человека

@@ -23,10 +23,28 @@
  *    версии на проверке (`VoiceMapService.onVersionBuilt`, идемпотентно по
  *    версии) — публикация прогона не ждёт.
  *
+ *  - (заход 10, Ш3 (5)) «Снимок» раскрывает до 5 меню/вкладок по
+ *    стоп-листу воркера — каждое раскрытие отдельным состоянием (`states`:
+ *    подпись, новые элементы, скриншот).
+ *  - (заход 10) Модуль — единственный «шлюз» режима «Сайт» к очереди
+ *    воркера (правило графа `browser-jobs-zone`), поэтому здесь же
+ *    подключаются порты: рендер SPA для обхода знаний (Ш3 (20),
+ *    `voice-map-worker.knowledge-render.ts`) и Т-3 по расписанию монитора
+ *    (№29, `voice-map-worker.autotest.ts`). Обход и монитор живут в других
+ *    модулях — их экземпляры берутся через `ModuleRef` (без правки модулей
+ *    и графа).
+ *
  * Без `BROWSER_WORKER_ENABLED` маршруты отвечают 409
  * `BROWSER_WORKER_DISABLED` (как до Ш3 — режима нет).
  */
-import { HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  HttpStatus,
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { estimateCost } from '../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
@@ -83,6 +101,10 @@ import {
   ingestUiSnapshot,
 } from '../site-core/ui-map/ui-map-store';
 import { uiMapKey } from '../site-core/ui-map/ui-map';
+import { VoiceMonitorService } from '../assist-site-voice-control/system/voice-monitor.service';
+import { SiteCrawlService } from '../site-crawl/crawl.service';
+import { attachVoiceAutotest } from './voice-map-worker.autotest';
+import { knowledgeRenderPort } from './voice-map-worker.knowledge-render';
 import { voiceMapError } from './voice-map-errors';
 import { VoiceMapService } from './voice-map.service';
 
@@ -101,6 +123,13 @@ export interface SnapshotElementView {
   box: { x: number; y: number; w: number; h: number } | null;
 }
 
+/** Ш3 (5): состояние «Снимка» после раскрывашки. */
+export interface SnapshotStateView {
+  label: string;
+  elements: SnapshotElementView[];
+  screenshot: SnapshotView['screenshot'];
+}
+
 export interface SnapshotView {
   id: string;
   status: string;
@@ -115,9 +144,14 @@ export interface SnapshotView {
     width: number | null;
     height: number | null;
   } | null;
+  /** Ш3 (5): раскрытые меню/вкладки (пусто — не было или старый снимок). */
+  states: SnapshotStateView[];
   createdAt: Date;
   expiresAt: Date;
 }
+
+/** Ш3 (5): раскрывашек за «Снимок» (`WORKER_LIMITS.snapshotToggles`). */
+export const SNAPSHOT_TOGGLES = WORKER_LIMITS.snapshotToggles;
 
 export interface WorkerCheckReport {
   version: number;
@@ -158,9 +192,34 @@ export class VoiceMapWorkerService implements OnModuleInit {
     private readonly budget: LearningBudget,
     private readonly usage: AiUsageRecorder,
     private readonly sitesDb: SitesDb,
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
+  /** Экземпляр провайдера другого модуля (нет в приложении — null). */
+  private peer<T>(token: new (...args: never[]) => T): T | null {
+    try {
+      return this.moduleRef?.get(token, { strict: false }) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   onModuleInit(): void {
+    // Заход 10: порты обхода (рендер SPA) и монитора (Т-3 по расписанию).
+    const crawl = this.peer(SiteCrawlService);
+    if (crawl) crawl.spaRender = knowledgeRenderPort(this.jobs);
+    const monitor = this.peer(VoiceMonitorService);
+    if (monitor)
+      attachVoiceAutotest({
+        jobs: this.jobs,
+        handlers: this.handlers,
+        maps: this.maps,
+        monitor,
+        versionContent: (a, s, n) => this.versionContent(a, s, n),
+        checkPaths: (c) => VoiceMapWorkerService.checkPaths(c),
+        report: (v, c, r) => VoiceMapWorkerService.report(v, c, r),
+        snapshotsOf: (r) => VoiceMapWorkerService.snapshotsOf(r),
+      });
     this.handlers.register('voice-map-snapshot', {
       onDone: (j, r) => this.snapshotDone(j, r as UiSnapshotResult),
     });
@@ -235,6 +294,8 @@ export class VoiceMapWorkerService implements OnModuleInit {
       viewport,
       screenshot: true,
       mapElements: true,
+      // Ш3 (5): меню и вкладки — раскрытыми состояниями (стоп-лист воркера).
+      toggles: SNAPSHOT_TOGGLES,
     };
     const job = await this.jobs.enqueue(m.accountId, {
       siteId,
@@ -286,20 +347,39 @@ export class VoiceMapWorkerService implements OnModuleInit {
       );
     }
     const r = job.result as UiSnapshotResult | null;
-    let screenshot: SnapshotView['screenshot'] = null;
-    if (r && r.screenshot !== null) {
-      const link = (await this.jobs.artifactLinks(m.accountId, job.id)).find(
-        (a) => a.idx === r.screenshot,
-      );
-      if (link) {
-        screenshot = {
-          url: link.url,
-          linkExpiresAt: link.linkExpiresAt,
-          width: link.width,
-          height: link.height,
-        };
-      }
-    }
+    const links =
+      r && (r.screenshot !== null || r.states?.length)
+        ? await this.jobs.artifactLinks(m.accountId, job.id)
+        : [];
+    const shotOf = (idx: number | null): SnapshotView['screenshot'] => {
+      const link = idx === null ? null : links.find((a) => a.idx === idx);
+      return link
+        ? {
+            url: link.url,
+            linkExpiresAt: link.linkExpiresAt,
+            width: link.width,
+            height: link.height,
+          }
+        : null;
+    };
+    const screenshot = r ? shotOf(r.screenshot) : null;
+    // Второй слой маски ПД: подписи уже маскировал воркер.
+    const elementView = (
+      e: UiSnapshotResult['snapshot']['elements'][number],
+    ): SnapshotElementView => ({
+      ref: e.ref,
+      role: e.role,
+      tag: e.tag,
+      text: maskLabel(e.text),
+      assistId: e.assistId,
+      href: e.href,
+      toggle: e.toggle,
+      submit: e.submit,
+      inForm: e.inForm,
+      disabled: e.disabled,
+      inView: e.inView,
+      box: e.box,
+    });
     return {
       id: job.id,
       status: job.status,
@@ -307,22 +387,13 @@ export class VoiceMapWorkerService implements OnModuleInit {
       url: r?.finalUrl ?? null,
       title: r ? maskLabel(r.snapshot.title) : null,
       viewport: r?.viewport ?? null,
-      // Второй слой маски ПД: подписи уже маскировал воркер.
-      elements: (r?.snapshot.elements ?? []).map((e) => ({
-        ref: e.ref,
-        role: e.role,
-        tag: e.tag,
-        text: maskLabel(e.text),
-        assistId: e.assistId,
-        href: e.href,
-        toggle: e.toggle,
-        submit: e.submit,
-        inForm: e.inForm,
-        disabled: e.disabled,
-        inView: e.inView,
-        box: e.box,
-      })),
+      elements: (r?.snapshot.elements ?? []).map(elementView),
       screenshot,
+      states: (r?.states ?? []).map((st) => ({
+        label: maskLabel(st.label),
+        elements: st.elements.map(elementView),
+        screenshot: shotOf(st.screenshot),
+      })),
       createdAt: job.createdAt,
       expiresAt: job.expiresAt,
     };

@@ -1,0 +1,178 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`эталон HTML отчётов (снимок) отчёт голосовой карты: отчёт (3 языка), «недействительна»; CSP 1`] = `
+{
+  "csp": "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+  "invalid": "<!doctype html>
+<html lang="uk">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Голосова карта — звіт для розробника</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}code{background:#f3f4f6;padding:1px 4px;border-radius:4px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:6px;text-align:left;vertical-align:top}.m{color:#6b7280;font-size:12px}.w{color:#b45309}.n{color:#7c3aed}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code{background:#222}td,th{border-color:#333}}</style></head>
+<body><h1>Голосова карта — звіт для розробника</h1><p>Посилання недійсне, застаріло або відкликане — попросіть нове у власника сайту.</p></body></html>
+",
+  "report": [
+    "<!doctype html>
+<html lang="uk">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Голосова карта — звіт для розробника</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}code{background:#f3f4f6;padding:1px 4px;border-radius:4px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:6px;text-align:left;vertical-align:top}.m{color:#6b7280;font-size:12px}.w{color:#b45309}.n{color:#7c3aed}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code{background:#222}td,th{border-color:#333}}</style></head>
+<body><h1>Голосова карта — звіт для розробника</h1>
+<p>Додайте атрибути у верстку сайту: з ними голосовий помічник знаходить кнопки надійно. Значення полів і дані покупців у звіті відсутні.</p>
+<p class="m">Сайт: h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt; · Сформовано: 2026-10-08 12:34 UTC</p>
+<p>Цілей: 2 · без розмітки: 1 · у забороні: 1 · ненадійних: 1</p>
+<p class="m">Shopify: атрибути — у файлах теми *.liquid (sections/, snippets/).</p>
+<h2>Увесь сайт</h2>
+
+<table><tr><th>Ключ</th><th>Елемент</th><th>Додати атрибут</th></tr>
+<tr>
+<td><code>k&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code><br>n&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td>
+<td>e&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;<br><span class="m">css: c&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</span><br><span class="n">помічник не натисне ніколи</span> · <span class="w">ненадійно</span> · Як скасувати: <code>data-assist-id="u&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;"</code></td>
+<td><code>l&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code><br><span class="m">Вже є: h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</span></td>
+</tr>
+<tr>
+<td><code>k2</code></td>
+<td>e</td>
+<td><span class="m">розмітка вже є</span></td>
+</tr>
+</table>
+<h2>Шаблон: tpl&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt; (/p/*&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;)</h2>
+<p class="m">зразок: /p/1&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</p>
+<table><tr><th>Ключ</th><th>Елемент</th><th>Додати атрибут</th></tr>
+</table>
+<h2>Сторінка: pg</h2>
+
+<table><tr><th>Ключ</th><th>Елемент</th><th>Додати атрибут</th></tr>
+</table></body></html>
+",
+    "<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Голосовая карта — отчёт для разработчика</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}code{background:#f3f4f6;padding:1px 4px;border-radius:4px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:6px;text-align:left;vertical-align:top}.m{color:#6b7280;font-size:12px}.w{color:#b45309}.n{color:#7c3aed}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code{background:#222}td,th{border-color:#333}}</style></head>
+<body><h1>Голосовая карта — отчёт для разработчика</h1>
+<p>Добавьте атрибуты в вёрстку сайта: с ними голосовой помощник находит кнопки надёжно. Значений полей и данных покупателей в отчёте нет.</p>
+<p class="m">Сайт: h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt; · Сформирован: 2026-10-08 12:34 UTC</p>
+<p>Целей: 2 · без разметки: 1 · в запрете: 1 · ненадёжных: 1</p>
+<p class="m">Shopify: атрибуты — в файлах темы *.liquid (sections/, snippets/).</p>
+<h2>Весь сайт</h2>
+
+<table><tr><th>Ключ</th><th>Элемент</th><th>Добавить атрибут</th></tr>
+<tr>
+<td><code>k&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code><br>n&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td>
+<td>e&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;<br><span class="m">css: c&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</span><br><span class="n">помощник не нажмёт никогда</span> · <span class="w">ненадёжно</span> · Как отменить: <code>data-assist-id="u&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;"</code></td>
+<td><code>l&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code><br><span class="m">Уже есть: h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</span></td>
+</tr>
+<tr>
+<td><code>k2</code></td>
+<td>e</td>
+<td><span class="m">разметка уже есть</span></td>
+</tr>
+</table>
+<h2>Шаблон: tpl&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt; (/p/*&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;)</h2>
+<p class="m">образец: /p/1&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</p>
+<table><tr><th>Ключ</th><th>Элемент</th><th>Добавить атрибут</th></tr>
+</table>
+<h2>Страница: pg</h2>
+
+<table><tr><th>Ключ</th><th>Элемент</th><th>Добавить атрибут</th></tr>
+</table></body></html>
+",
+    "<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Voice map — developer report</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}code{background:#f3f4f6;padding:1px 4px;border-radius:4px}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #e5e7eb;padding:6px;text-align:left;vertical-align:top}.m{color:#6b7280;font-size:12px}.w{color:#b45309}.n{color:#7c3aed}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code{background:#222}td,th{border-color:#333}}</style></head>
+<body><h1>Voice map — developer report</h1>
+<p>Add these attributes to the site markup: with them the voice assistant finds buttons reliably. The report contains no field values or customer data.</p>
+<p class="m">Site: h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt; · Generated: 2026-10-08 12:34 UTC</p>
+<p>Targets: 2 · without markup: 1 · denied: 1 · fragile: 1</p>
+<p class="m">Shopify: attributes go to theme *.liquid files (sections/, snippets/).</p>
+<h2>Whole site</h2>
+
+<table><tr><th>Key</th><th>Element</th><th>Add attribute</th></tr>
+<tr>
+<td><code>k&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code><br>n&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td>
+<td>e&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;<br><span class="m">css: c&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</span><br><span class="n">the assistant will never press it</span> · <span class="w">fragile</span> · How to undo: <code>data-assist-id="u&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;"</code></td>
+<td><code>l&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code><br><span class="m">Already has: h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</span></td>
+</tr>
+<tr>
+<td><code>k2</code></td>
+<td>e</td>
+<td><span class="m">markup already present</span></td>
+</tr>
+</table>
+<h2>Template: tpl&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt; (/p/*&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;)</h2>
+<p class="m">sample: /p/1&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</p>
+<table><tr><th>Key</th><th>Element</th><th>Add attribute</th></tr>
+</table>
+<h2>Page: pg</h2>
+
+<table><tr><th>Key</th><th>Element</th><th>Add attribute</th></tr>
+</table></body></html>
+",
+  ],
+}
+`;
+
+exports[`эталон HTML отчётов (снимок) отчёт мастера (vc-report): кнопка, 404, отчёт; CSP 1`] = `
+{
+  "csp": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  "gone": "<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Voice control check report — for the developer</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:860px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top;font-size:13px}code,pre{font:12px/1.4 ui-monospace,monospace;background:#f5f5f5}pre{padding:8px;overflow:auto;white-space:pre-wrap}button{font:inherit;padding:8px 16px}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code,pre{background:#222}td,th{border-color:#444}}</style></head>
+<body><h1>Voice control check report — for the developer</h1><p>The link is invalid, expired or already opened. Ask the site owner for a new one.</p></body></html>
+",
+  "landing": "<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Отчёт проверки голосового управления — для разработчика</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:860px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top;font-size:13px}code,pre{font:12px/1.4 ui-monospace,monospace;background:#f5f5f5}pre{padding:8px;overflow:auto;white-space:pre-wrap}button{font:inherit;padding:8px 16px}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code,pre{background:#222}td,th{border-color:#444}}</style></head>
+<body><h1>Отчёт проверки голосового управления — для разработчика</h1><p>Ссылка одноразовая: отчёт откроется один раз. Сохраните страницу, если нужно.</p><form method="post" action="/w/v1/vc-report/tok_%3Cscript%3E%22&#39;%26%3C%2Fscript%3E"><button type="submit">Открыть отчёт</button></form></body></html>
+",
+  "report": "<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Отчёт проверки голосового управления — для разработчика</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:860px;padding:16px;color:#111;background:#fff}h1{font-size:20px}h2{font-size:16px;margin-top:24px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top;font-size:13px}code,pre{font:12px/1.4 ui-monospace,monospace;background:#f5f5f5}pre{padding:8px;overflow:auto;white-space:pre-wrap}button{font:inherit;padding:8px 16px}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code,pre{background:#222}td,th{border-color:#444}}</style></head>
+<body><h1>Отчёт проверки голосового управления — для разработчика</h1>
+<p>Страница: <code>h&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;/p&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code> · </p>
+<p>Итог: <b>r&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</b></p>
+<h2>Пункты проверки (коды)</h2>
+<table><tr><th>#</th><th>level</th><th>code</th><th>data</th></tr><tr><td>1</td><td>warn</td><td><code>c&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code></td><td>a=1, b=x&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td></tr></table>
+<h2>Кнопки без доступного имени</h2>
+<table><tr><th>tag</th><th>selector</th></tr><tr><td><code>div</code></td><td><code>#a&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code></td></tr></table>
+<h2>Одинаковые подписи</h2>
+<table><tr><th>label</th><th>n</th></tr><tr><td>n&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td><td>2</td></tr></table>
+<h2>Помощник не нажмёт никогда (список 1)</h2>
+<table><tr><th>text</th><th>reason</th></tr><tr><td>t&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td><td><code>r</code></td></tr></table>
+<h2>Похоже на опасное (список 2) и решения владельца</h2>
+<table><tr><th>why</th><th>tag</th><th>label</th><th>selector</th><th>owner</th></tr><tr><td><code>w</code></td><td><code>a</code></td><td>l&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</td><td><code>s</code></td><td>—</td></tr></table>
+<h2>Добавить в «Запрещённые элементы» или data-assist=&quot;never&quot;</h2>
+<pre>d&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;
+e</pre>
+<h2>Обратные цели компенсаций, которые не найдены</h2>
+<table><tr><th>text</th><th>data-assist-id</th><th>problem</th></tr><tr><td>u</td><td><code>rv&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;</code></td><td><code>p</code></td></tr></table>
+<h2>Готовый фрагмент разметки</h2>
+<pre>&lt;b&gt;&lt;script&gt;&quot;&#39;&amp;&lt;/script&gt;&lt;/b&gt;</pre></body></html>
+",
+}
+`;

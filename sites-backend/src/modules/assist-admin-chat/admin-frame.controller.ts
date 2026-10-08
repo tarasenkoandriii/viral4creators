@@ -47,8 +47,16 @@ export class AdminFrameController {
     const out = hosts
       .filter((h) => evaluateHostAccess(h, 'assist-admin', now).ok)
       .map((h) => `https://${h.host}`);
-    // Э-С Ш6: «админка» — Telegram Mini App → и Telegram Web предком.
-    out.push(...extraAdminAncestors(found.siteId, out));
+    // Э-С Ш6: «админка» — Telegram Mini App → и Telegram Web предком
+    // (флаг сайта в кабинете, Р-З10-16; env — OR до удаления).
+    out.push(
+      ...extraAdminAncestors(
+        found.siteId,
+        out,
+        process.env,
+        s.adminTmaFrame === true,
+      ),
+    );
     if (pk.startsWith(WIDGET_PK_TEST_PREFIX)) {
       out.push('http://localhost:*', 'http://127.0.0.1:*');
     }

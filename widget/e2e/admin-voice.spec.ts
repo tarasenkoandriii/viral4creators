@@ -8,7 +8,12 @@
  * заглушена, попытка по запрещённой цели зарегистрирована, отчёт «fail».
  * Права, тариф, журнал, монитор — acceptance/e6b-admin (сервер).
  */
-import { test, expect, type Page, type Frame } from '@playwright/test';
+import {
+  test,
+  expect as baseExpect,
+  type Page,
+  type Frame,
+} from '@playwright/test';
 import { WIDGET, mock, newPk, stand } from './fixtures';
 import { testJwt } from './stand/admin-mock';
 
@@ -102,6 +107,24 @@ const cspLog = (page: Page) =>
       w.__csp.push(`${e.violatedDirective} ${e.blockedURI}`)
     );
   });
+
+/**
+ * Аудит Ж (P3-7): на холодном старте стенда (первый тест прогона) карточка
+ * «Так» и ленивые чанки «Админки» приходят дольше 5 с — ожидания 15 с и
+ * прогрев статики стенда до тестов.
+ */
+const expect = baseExpect.configure({ timeout: 15_000 });
+
+test.beforeAll(async () => {
+  for (const f of [
+    'admin.js',
+    'admin-chat.js',
+    'admin-chat.css',
+    'admin-vc.js',
+    'admin-act.js',
+  ])
+    await fetch(`${WIDGET}/v1/${f}`).catch(() => null);
+});
 
 test.beforeEach(async () => {
   await mock('reset');
@@ -295,6 +318,66 @@ test('аудит: голый «Скасувати», иконка «Видали
   }
   await expect(page.locator('#ak-deletes')).toHaveText('0');
   expect(page.url()).not.toContain('/delete');
+});
+
+test('№91 (заход 10): наведение подменило безопасную кнопку на «Скасувати» — admin-act не шлёт ни pointerdown, ни mousedown, ни клика', async ({
+  page,
+}) => {
+  await vcSet({
+    mode: 'on',
+    model: {
+      'відкрий фільтр': [
+        { kind: 'click', text: 'Відкрити фільтр', risk: 'auto' },
+      ],
+    },
+  });
+  await page.goto(adminPage(newPk(), 'emp-n91'));
+  // Безопасная кнопка админки, которая при наведении становится «Скасувати»,
+  // а действует уже на pointerdown/mousedown (до клика).
+  await page.evaluate(() => {
+    const w = window as unknown as { __pressed: string[] };
+    w.__pressed = [];
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.id = 'ak-n91';
+    b.textContent = 'Відкрити фільтр';
+    b.addEventListener('mouseover', () => {
+      b.textContent = 'Скасувати';
+    });
+    for (const t of [
+      'pointerdown',
+      'mousedown',
+      'pointerup',
+      'mouseup',
+      'click',
+    ])
+      window.addEventListener(
+        t,
+        (e) => {
+          if (e.target === b) w.__pressed.push(t);
+        },
+        true
+      );
+    document.body.appendChild(b);
+  });
+  const f = await frameOf(page);
+  await say(f, 'відкрий фільтр');
+  await allow(f); // согласие на сессию
+  // Клик в «Админке» — с подтверждением: карточка «Так».
+  const card = f.locator('.wa-vc-p .wa-card');
+  await expect(card).toBeVisible();
+  await card.locator('.wa-yes').click();
+  await expect
+    .poll(async () => (await vcLog()).plans.at(-1)?.status, {
+      timeout: 15_000,
+    })
+    .toBe('failed');
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __pressed: string[] }).__pressed
+    )
+  ).toEqual([]);
+  expect((await vcLog()).plans.at(-1)!.steps[0].state).toBe('failed');
 });
 
 test('стоп: Esc посреди плана — остальные поля не трогаются, «Зберегти» не нажат', async ({

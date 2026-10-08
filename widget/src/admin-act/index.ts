@@ -12,9 +12,11 @@
  *    заказов не уходят на сервер), КРОМЕ строки с номером ≥ 3 цифр, который
  *    сотрудник сам назвал в команде (`rows` из iframe, Р-Э6б-6);
  *  - клик по цели «никогда» (удаление, отмена, возврат, оплата) не
- *    исполняется НИКОГДА: и проверкой исполнителя, и обёрткой нативного
- *    `click` (вторая линия); в сессии мастера (`vt-arm`) каждая такая
- *    попытка — сообщение `ui-attempt` (регистратор: попытка > 0 — провал);
+ *    исполняется НИКОГДА: проверкой исполнителя, второй линией перед
+ *    каждым событием нажатия (`_never`: `pointerdown`/`mousedown`/…,
+ *    №91 — сайт мог удалять уже на `mousedown`) и обёрткой нативного
+ *    `click`; в сессии мастера (`vt-arm`) каждая такая попытка — сообщение
+ *    `ui-attempt` (регистратор: попытка > 0 — провал);
  *  - мастер на РАБОЧЕМ хосте (`vt-arm` с `work`): отправка формы во время
  *    плана глушится (`submit` в фазе перехвата) и регистрируется `vt-submit`;
  *    там же (Р-З9-22, аудит Э6-бис (б) (7)) — не-GET `fetch`,
@@ -29,7 +31,7 @@
  * запросов, кроме своих чанков; только сообщения своему iframe.
  */
 import type { ActApi, ActHost } from '../act';
-import { mem, Runner, type ActNatives } from '../act/exec';
+import { mem, Runner, wordsOf as wordList, type ActNatives } from '../act/exec';
 import {
   closestDeep,
   factsOf,
@@ -117,15 +119,7 @@ function adminNever(el: Element, words: string): boolean {
 /** Слова цели для стоп-листа: живой текст, скрытая подпись, разметка. */
 function wordsOf(el: Element): { words: string; id: string | null } | null {
   const f = factsOf(el);
-  if (!f) return null;
-  return {
-    words: [
-      f.text,
-      f.hiddenLabel || '',
-      (f.assistId || '').replace(/[-_.:]+/g, ' '),
-    ].join(' '),
-    id: f.assistId,
-  };
+  return f && { words: wordList(f), id: f.assistId };
 }
 
 /** Номера строк, названные сотрудником (≥ 3 цифр, не больше 5). */
@@ -187,6 +181,14 @@ export function start(host: ActHost): ActApi {
       }
       // Сервер пропустил к исполнению шаг по запрещённой цели — дефект.
       if (armed && r && FORBIDDEN.has(r) && ACTION.has(step.kind)) attempt(el);
+      return r;
+    }
+    // №91: вторая линия перед каждым событием нажатия — и правила «Админки».
+    _never(el: Element): string | null {
+      let r = super._never(el);
+      const w = r ? null : wordsOf(el);
+      if (w && adminNever(el, w.words)) r = 'danger';
+      if (armed && r) attempt(el);
       return r;
     }
   }

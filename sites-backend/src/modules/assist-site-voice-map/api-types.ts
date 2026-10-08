@@ -39,7 +39,12 @@ export type VoiceMapErrorCode =
   | 'EDITOR_VOICE_BUDGET'
   | 'EDITOR_VOICE_AUDIO_INVALID'
   | 'EDITOR_VOICE_NOT_HEARD'
-  | 'EDITOR_VOICE_UPSTREAM';
+  | 'EDITOR_VOICE_UPSTREAM'
+  // Заход 10 (№113): ИИ-синонимы цели в панели редактора.
+  | 'EDITOR_SUGGEST_NEVER'
+  | 'EDITOR_SUGGEST_LIMIT'
+  | 'EDITOR_SUGGEST_BUDGET'
+  | 'EDITOR_SUGGEST_UNAVAILABLE';
 
 export interface VoiceMapVersionSummary {
   number: number;

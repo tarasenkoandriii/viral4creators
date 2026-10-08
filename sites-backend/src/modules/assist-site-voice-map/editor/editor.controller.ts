@@ -11,9 +11,9 @@
  * sessionStorage `we.`: страница заказчика её не видит). Основная роль
  * (запись в черновик), НЕ assist_public (§5-кватер.13). Мемо в редакторе
  * (запись кликами `memo/record/*`, «Прогнать» `memo/:key/try`, Э6-тер (д)) —
- * `editor-memo.controller.ts`. Отложено: ИИ-предложения синонимов
- * (`suggest-synonyms`), проверка устойчивости воркером (`stability`) —
- * doc/TODO.md I-Р.
+ * `editor-memo.controller.ts`. ИИ-синонимы (`suggest-synonyms`), «Промахи»
+ * и «Предложения» (№113, заход 10) — `editor-assist.controller.ts`.
+ * Отложено: проверка устойчивости воркером (`stability`) — doc/TODO.md I-Р.
  */
 import {
   Body,

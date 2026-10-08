@@ -22,6 +22,13 @@ export interface TestAccountForm {
   password: string;
   hostIds: string[];
   products: TestAccountProduct[];
+  /**
+   * Продукты учётки, которыми этот экран не управляет (`assist-admin` —
+   * разрешается в реестре TMA «Сайта»). В запрос не уходят — сервер их
+   * сохраняет сам, — но считаются в «хотя бы один продукт» (аудит захода
+   * 10, P3-3: учётку только с `assist-admin` иначе не сохранить).
+   */
+  otherProducts: string[];
   lifetimeDays: number | null;
   confirmedTestAccount: boolean;
 }
@@ -43,6 +50,7 @@ export function emptyTestAccountForm(
     password: '',
     hostIds: defaultHostId ? [defaultHostId] : [],
     products: ['tutorial'],
+    otherProducts: [],
     lifetimeDays: 90,
     confirmedTestAccount: false,
   };
@@ -60,6 +68,7 @@ export function formFromAccount(a: SiteTestAccount): TestAccountForm {
     products: a.products.filter(
       (p): p is TestAccountProduct => p === 'tutorial' || p === 'qa'
     ),
+    otherProducts: a.products.filter((p) => p !== 'tutorial' && p !== 'qa'),
     lifetimeDays: null,
     confirmedTestAccount: a.confirmedTestAccount,
   };
@@ -77,7 +86,9 @@ export function testAccountPayload(
 ): { payload: TestAccountPayload } | { error: TestAccountFormError } {
   if (!form.label.trim()) return { error: 'labelRequired' };
   if (form.hostIds.length === 0) return { error: 'hostRequired' };
-  if (form.products.length === 0) return { error: 'productRequired' };
+  if (form.products.length === 0 && form.otherProducts.length === 0) {
+    return { error: 'productRequired' };
+  }
   if (opts.isNew && !form.confirmedTestAccount) {
     return { error: 'confirmRequired' };
   }
@@ -93,6 +104,32 @@ export function testAccountPayload(
   if (form.password) payload.password = form.password;
   if (form.lifetimeDays !== null) payload.lifetimeDays = form.lifetimeDays;
   return { payload };
+}
+
+/** Подписи продуктов учётки (словарь `clientSiteTestAccounts`). */
+export interface ProductLabels {
+  productTutorial: string;
+  productQa: string;
+  productAssistAdmin: string;
+}
+
+/**
+ * Подпись продукта в карточке учётки. Ш3 (12): `assist-admin` (обход
+ * «Админки» браузерным воркером — разрешается в реестре TMA «Сайта», не
+ * здесь) раньше показывался сырым кодом. Неизвестный будущий продукт —
+ * как есть: лучше код, чем пропавшая строка.
+ */
+export function productLabel(product: string, t: ProductLabels): string {
+  switch (product) {
+    case 'tutorial':
+      return t.productTutorial;
+    case 'qa':
+      return t.productQa;
+    case 'assist-admin':
+      return t.productAssistAdmin;
+    default:
+      return product;
+  }
 }
 
 export function toggle<T>(list: T[], item: T): T[] {

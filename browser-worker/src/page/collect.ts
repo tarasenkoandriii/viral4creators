@@ -244,7 +244,16 @@ export function collectSnapshot(limits: {
     let cur: Element | null = el.parentElement;
     for (let k = 0; cur && k < 5; k++, cur = cur.parentElement) {
       const h = cur.querySelector('h1,h2,h3,h4,legend');
-      if (h && h !== el && !h.contains(el)) {
+      // Заголовок с пользовательским текстом (`data-assist-ugc` на нём
+      // или внутри — название проекта, товара) контекстом не служит
+      // (аудит захода 10, Ш6 (10)).
+      if (
+        h &&
+        h !== el &&
+        !h.contains(el) &&
+        !closestDeep(h, UGC) &&
+        !h.querySelector(UGC)
+      ) {
         const t = clean((h as HTMLElement).innerText || h.textContent || '');
         if (t) return t;
       }
@@ -507,9 +516,15 @@ export function collectInterface(maxChars: number): InterfaceText {
     seen.add(line);
     lines.push(line);
   };
+  // Пользовательский текст ВНУТРИ заголовка/кнопки/подписи (`<h1>` с
+  // `<span data-assist-ugc>` — название проекта): строка целиком не идёт
+  // в знания — иначе текст пользователя стал бы «фактом интерфейса»
+  // (аудит захода 10, Ш6 (10)).
+  const UGC_INSIDE = '[data-assist-ugc],[data-ugc]';
   const each = (sel: string, fn: (el: Element) => void) =>
     document.querySelectorAll(sel).forEach((el) => {
-      if (el.closest(DATA_ZONE) || !shown(el)) return;
+      if (el.closest(DATA_ZONE) || el.querySelector(UGC_INSIDE) || !shown(el))
+        return;
       fn(el);
     });
   each('h1,h2,h3,h4,legend,[role="heading"]', (el) =>
@@ -550,7 +565,13 @@ export function collectInterface(maxChars: number): InterfaceText {
   const links: Array<{ href: string; text: string }> = [];
   document.querySelectorAll('a[href]').forEach((a) => {
     if (links.length >= 300) return;
-    if (a.closest('td,tbody,[role="row"],[data-assist="never"]') || !shown(a))
+    if (
+      a.closest(
+        'td,tbody,[role="row"],[data-assist="never"],[data-assist-ugc],[data-ugc]',
+      ) ||
+      a.querySelector(UGC_INSIDE) ||
+      !shown(a)
+    )
       return;
     try {
       const u = new URL((a as HTMLAnchorElement).href, location.href);
@@ -589,4 +610,58 @@ export function collectInterface(maxChars: number): InterfaceText {
       });
     });
   return { title: clean(document.title), text, links, toggles };
+}
+
+/**
+ * Раскрывашки страницы (Ш3 (5), «Снимок»): тот же селектор и те же зоны
+ * данных, что у `collectInterface`, без сбора текста. Индекс — номер в
+ * `querySelectorAll(TOGGLE_SELECTOR)` (`page/toggles.ts` берёт элемент им же).
+ */
+export function collectToggles(max: number): InterfaceText['toggles'] {
+  const EMAIL = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const PHONE = /(?:\+?\d[\s().-]?){7,}\d/g;
+  const clean = (s: string | null | undefined): string =>
+    (s || '')
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(EMAIL, '[e-mail]')
+      .replace(PHONE, '[тел.]')
+      .slice(0, 80);
+  const DATA_ZONE =
+    'td,tbody,[role="row"],[role="gridcell"],[role="cell"],[data-assist-ugc],[data-ugc],.comment,.comments,.review,.reviews,[data-assist="never"]';
+  const shown = (el: Element): boolean => {
+    const r = el.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) return false;
+    const cs = getComputedStyle(el);
+    return (
+      cs.visibility !== 'hidden' &&
+      cs.display !== 'none' &&
+      !el.closest('[aria-hidden="true"],[hidden]')
+    );
+  };
+  const out: InterfaceText['toggles'] = [];
+  document
+    .querySelectorAll(
+      '[aria-expanded="false"],summary,[role="tab"][aria-selected="false"]',
+    )
+    .forEach((el, idx) => {
+      if (out.length >= max) return;
+      if (el.closest(DATA_ZONE) || !shown(el)) return;
+      const form = (el as HTMLButtonElement).form || el.closest('form');
+      out.push({
+        idx,
+        text: clean((el as HTMLElement).innerText),
+        hidden:
+          clean(el.getAttribute('aria-label') || el.getAttribute('title')) ||
+          null,
+        submit:
+          !!form &&
+          el.tagName === 'BUTTON' &&
+          ((el as HTMLButtonElement).type || 'submit') === 'submit',
+        inForm: !!form,
+      });
+    });
+  return out;
 }

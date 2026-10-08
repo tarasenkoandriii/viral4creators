@@ -7,12 +7,12 @@
  * `userHash` сверяет СИСТЕМНЫЙ код (IntegrationsService.verifyUserHash) —
  * публичный код его не проверяет и не хранит открытым.
  */
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import {
-  createCipheriv,
-  createDecipheriv,
-  createHmac,
-  randomBytes,
-} from 'crypto';
+  derivedKeys,
+  openWithKeys,
+  type DerivedKeys,
+} from '../../../common/secrets-keyring';
 import type { WidgetIdentity } from '../../assist-site-chat/chat-types';
 
 /** Метка производного ключа (не бренд: в HTML/DNS её никто не видит). */
@@ -24,12 +24,11 @@ const EMAIL = /^[^\s@<>"]{1,64}@[^\s@<>"]{1,190}\.[a-z]{2,24}$/i;
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
+/** №60: ключи всех версий связки ASSIST_SECRETS_KEY; null — ключа нет. */
 export function identityKey(
   env: NodeJS.ProcessEnv = process.env,
-): Buffer | null {
-  const secret = env.ASSIST_SECRETS_KEY?.trim();
-  if (!secret) return null;
-  return createHmac('sha256', secret).update(IDENTITY_KEY_LABEL).digest();
+): DerivedKeys | null {
+  return derivedKeys(env, IDENTITY_KEY_LABEL);
 }
 
 /**
@@ -61,6 +60,14 @@ export function normalizeIdentity(raw: unknown): WidgetIdentity | null {
 export function encryptIdentity(
   identity: WidgetIdentity,
   rowId: string,
+  keys: DerivedKeys,
+): string {
+  return sealIdentity(identity, rowId, keys.currentKey);
+}
+
+function sealIdentity(
+  identity: WidgetIdentity,
+  rowId: string,
   key: Buffer,
 ): string {
   const iv = randomBytes(12);
@@ -80,6 +87,26 @@ export function encryptIdentity(
 
 /** null — чужой ключ, порча или чужая строка (без исключения и без текста в лог). */
 export function decryptIdentity(
+  blob: string,
+  rowId: string,
+  keys: DerivedKeys,
+): WidgetIdentity | null {
+  return openLeadIdentity(blob, rowId, keys)?.value ?? null;
+}
+
+/** Как decrypt, но с версией ключа, которым открылось (ротация, №60). */
+export function openLeadIdentity(
+  blob: string,
+  rowId: string,
+  keys: DerivedKeys,
+): { value: WidgetIdentity; version: string } | null {
+  if (typeof blob !== 'string') return null;
+  return openWithKeys(keys, blob, (body, key) =>
+    openIdentity(body, rowId, key),
+  );
+}
+
+function openIdentity(
   blob: string,
   rowId: string,
   key: Buffer,

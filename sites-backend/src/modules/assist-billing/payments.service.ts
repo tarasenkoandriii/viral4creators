@@ -24,7 +24,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { encryptToken } from '../../shared/token-crypto';
 import { sanitizeWayForPayRawPayload } from '../../shared/wayforpay-sanitize';
 import {
   verifyWayForPayCallback,
@@ -32,7 +31,7 @@ import {
 } from '../../shared/wayforpay-signature';
 import {
   assistBotToken,
-  paymentTokenKey,
+  sealPaymentToken,
   starsSubscriptionMax,
   wayforpayConfig,
 } from './billing-env';
@@ -568,9 +567,9 @@ export class AssistPayments {
       });
       return ack;
     }
-    const key = paymentTokenKey(this.env);
-    const recTokenEnc =
-      body.recToken && key ? encryptToken(body.recToken, key) : null;
+    const recTokenEnc = body.recToken
+      ? sealPaymentToken(body.recToken, this.env)
+      : null;
     const applied = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(
         `SELECT pg_advisory_xact_lock(hashtext($1))`,
@@ -622,9 +621,9 @@ export class AssistPayments {
       });
       return 'failed';
     }
-    const key = paymentTokenKey(this.env);
-    const recTokenEnc =
-      result.recToken && key ? encryptToken(result.recToken, key) : null;
+    const recTokenEnc = result.recToken
+      ? sealPaymentToken(result.recToken, this.env)
+      : null;
     const applied = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(
         `SELECT pg_advisory_xact_lock(hashtext($1))`,

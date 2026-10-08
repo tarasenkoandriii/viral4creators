@@ -14,11 +14,17 @@ import { geminiOutputCeiling } from '../site-ai/gemini-output';
 
 type Db = ReturnType<SitesDb['forAccount']>;
 
-/** Операции `site_ai_usage`, которые платит суточный потолок «Админки». */
+/**
+ * Операции `site_ai_usage`, которые платит суточный потолок «Админки».
+ * Заход 10 (№57): разметка диалогов и выводы недели «Админки» — тот же
+ * потолок (резерв `reserveAdminTurn` с долей потолка, admin-analytics-env).
+ */
 export const ADMIN_DAILY_USAGE_OPERATIONS = [
   'assist-admin-stt',
   'assist-admin-ui-plan',
   'assist-admin-memo',
+  'assist-admin-label',
+  'assist-admin-insight',
 ] as const;
 
 /** Начало UTC-суток. */

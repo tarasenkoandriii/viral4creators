@@ -57,7 +57,14 @@ export type AdminErrorCode =
   // Заход 9: повтор «Да» после `unknown` старше суток (Р-З9-21) и гонка
   // двух перевыпусков секрета подписи (Р-З9-18)
   | 'PROPOSAL_RETRY_EXPIRED'
-  | 'ADMIN_SECRET_CHANGED';
+  | 'ADMIN_SECRET_CHANGED'
+  // Заход 10: подпись кнопки (Р-З10-15), минуты задач и выгрузки (№57)
+  | 'ADMIN_LABEL_INVALID'
+  | 'ADMIN_TASK_MINUTES_INVALID'
+  | 'ADMIN_EXPORT_INVALID'
+  | 'ADMIN_EXPORT_NOT_FOUND'
+  | 'ADMIN_EXPORT_BUSY'
+  | 'ADMIN_INSIGHT_NOT_FOUND';
 
 export function adminError(
   status: number,

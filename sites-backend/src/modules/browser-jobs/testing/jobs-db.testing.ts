@@ -100,3 +100,55 @@ export async function deleteJobsOf(
     where: { accountId: { in: accountIds } },
   });
 }
+
+/** Задания сайта одного источника (спеки продуктов — без имён таблиц очереди). */
+export async function siteJobs(
+  prisma: PrismaService,
+  where: { siteId: string; origin: string },
+) {
+  return prisma.siteBrowserJob.findMany({
+    where,
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/**
+ * «Воркер взял» задание: аренда по своему токену — без глобального `claim`
+ * (файлы продуктов идут параллельно с файлами очереди на одной базе).
+ */
+export async function leaseJobForTest(
+  prisma: PrismaService,
+  jobId: string,
+): Promise<string> {
+  const { randomBytes, createHash } = await import('crypto');
+  const token = randomBytes(32).toString('base64url');
+  await prisma.siteBrowserJob.update({
+    where: { id: jobId },
+    data: {
+      status: 'running',
+      attempts: 1,
+      leaseOwner: 'w-test',
+      leaseTokenHash: createHash('sha256').update(token, 'utf8').digest('hex'),
+      leaseUntil: new Date(Date.now() + 60_000),
+      startedAt: new Date(),
+    },
+  });
+  return token;
+}
+
+/** «Прошло время»: задания сайта созданы на `ms` раньше (суточные лимиты). */
+export async function ageSiteJobs(
+  prisma: PrismaService,
+  siteId: string,
+  ms: number,
+): Promise<void> {
+  const rows = await prisma.siteBrowserJob.findMany({
+    where: { siteId },
+    select: { id: true, createdAt: true },
+  });
+  for (const r of rows)
+    await prisma.siteBrowserJob.update({
+      where: { id: r.id },
+      data: { createdAt: new Date(r.createdAt.getTime() - ms) },
+    });
+}

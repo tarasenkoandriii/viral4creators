@@ -62,9 +62,8 @@ import {
 import { Reflector } from '@nestjs/core';
 import { createHmac } from 'crypto';
 import { Request, Response } from 'express';
-import { isIP } from 'net';
 import { PrismaService } from '../prisma/prisma.service';
-import { Cidr, isIpInCidr, parseCidr } from './egress-filter-proxy';
+import { clientIp } from './client-ip';
 
 export interface RateLimitRule {
   /** Сколько запросов на один ключ за окно. */
@@ -258,77 +257,9 @@ export function rateLimitSubject(
     .slice(0, 32);
 }
 
-/** `::ffff:203.0.113.7` → `203.0.113.7`; остальное — как есть. */
-function normalizeIp(raw: string | undefined): string {
-  const ip = (raw ?? '').trim();
-  return ip.toLowerCase().startsWith('::ffff:') && isIP(ip.slice(7)) === 4
-    ? ip.slice(7)
-    : ip;
-}
-
-/** `TRUSTED_PROXY_CIDRS` — через запятую; кривые записи пропускаются. */
-function trustedProxies(env: NodeJS.ProcessEnv): Cidr[] {
-  const out: Cidr[] = [];
-  for (const spec of (env.TRUSTED_PROXY_CIDRS ?? '').split(',')) {
-    if (!spec.trim()) continue;
-    try {
-      out.push(parseCidr(spec));
-    } catch {
-      // Кривая запись = «этому прокси не доверяем»: безопасная сторона.
-    }
-  }
-  return out;
-}
-
 /**
- * Адрес клиента (Ш0.7 аудита 02.10.2026, риск В-4).
- *
- * До Ш0.7 здесь безусловно брался первый адрес `X-Forwarded-For`. На
- * Vercel это верно — платформа сама переписывает заголовок, — но вне
- * Vercel (Docker за Traefik/Dokploy, локальный запуск) первый адрес
- * пишет КЛИЕНТ: подставив случайный, он получал новое окно на каждый
- * запрос, и лимит консультанта не работал вовсе.
- *
- * Теперь:
- *  - на Vercel (`VERCEL` задан платформой) — первый адрес XFF, как раньше;
- *  - вне Vercel XFF читается, ТОЛЬКО если соединение пришло от прокси
- *    из `TRUSTED_PROXY_CIDRS`; цепочка идёт справа налево, доверенные
- *    звенья пропускаются, берётся первый недоверенный адрес — его
- *    дописал ближайший к нам доверенный прокси, подделать его клиент не
- *    может;
- *  - иначе — адрес сокета.
+ * Адрес клиента (Ш0.7, риск В-4) — в чистом `client-ip.ts` (заход 10,
+ * П-С1): его же копирует `scripts/sync-sites-shared.mjs` в sites-backend.
+ * Реэкспорт — прежние `import { clientIp } from '…/rate-limit'` работают.
  */
-export function clientIp(
-  req: Request,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  const header = Array.isArray(forwarded) ? forwarded.join(',') : forwarded;
-  const chain = (header ?? '')
-    .split(',')
-    .map((s) => normalizeIp(s))
-    .filter(Boolean);
-  const peer = normalizeIp(req.socket?.remoteAddress || req.ip);
-
-  if (env.VERCEL?.trim()) {
-    return chain[0] || peer || 'unknown';
-  }
-  if (!peer) return 'unknown';
-
-  const trusted = trustedProxies(env);
-  const isTrusted = (ip: string) =>
-    isIP(ip) !== 0 && trusted.some((c) => isIpInCidr(ip, c));
-  if (!isTrusted(peer)) return peer;
-
-  // `last` — самый левый адрес, до которого дошли по доверенным звеньям.
-  // Мусор в цепочке — дальше не верим и берём `last`, а НЕ `chain[0]`:
-  // левее мусора всё писал клиент (аудит Ш0 02.10.2026 — прежний откат
-  // на `chain[0]` отдавал подставленный клиентом адрес).
-  let last = peer;
-  for (let i = chain.length - 1; i >= 0; i--) {
-    if (isIP(chain[i]) === 0) break;
-    if (!isTrusted(chain[i])) return chain[i];
-    last = chain[i];
-  }
-  return last;
-}
+export { clientIp };

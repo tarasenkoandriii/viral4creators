@@ -404,7 +404,7 @@
       ]
     },
     {
-      "source": "/v1/(editor-panel.js|editor-panel.css)",
+      "source": "/v1/(editor-panel.js|editor-panel.css|editor-panel-ru.js|editor-panel-en.js|editor-assist.js)",
       "headers": [
         {
           "key": "Cache-Control",

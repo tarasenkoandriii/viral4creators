@@ -15,8 +15,8 @@
  *  - Ключ подписи «билета голоса» — производный от ASSIST_SECRETS_KEY (как
  *    visitor-token, без нового секрета).
  */
-import { createHmac } from 'crypto';
 import { WIDGET_VOICE_TICKET_HMAC_LABEL } from '../brand';
+import { derivedKeys } from '../common/secrets-keyring';
 import { SONIOX_DEFAULT_TTS_VOICE, sonioxApiKey } from '../shared/soniox';
 
 export function voicePlatformEnabled(
@@ -38,13 +38,23 @@ export function defaultTtsVoice(env: NodeJS.ProcessEnv = process.env): string {
   return v && /^[A-Za-z0-9 _.-]{1,64}$/.test(v) ? v : SONIOX_DEFAULT_TTS_VOICE;
 }
 
-/** Ключ подписи билета голоса; null — ключа нет (голос закрыт, как и виджет). */
+/**
+ * Ключ ПОДПИСИ билета голоса (и итогов сухого прогона мемо) — текущий ключ
+ * связки `ASSIST_SECRETS_KEY` (№60); null — ключа нет (голос закрыт).
+ */
 export function voiceTicketKey(
   env: NodeJS.ProcessEnv = process.env,
 ): Buffer | null {
-  const key = env.ASSIST_SECRETS_KEY?.trim();
-  if (!key) return null;
-  return createHmac('sha256', key)
-    .update(WIDGET_VOICE_TICKET_HMAC_LABEL)
-    .digest();
+  return derivedKeys(env, WIDGET_VOICE_TICKET_HMAC_LABEL)?.currentKey ?? null;
+}
+
+/**
+ * Ключи ПРОВЕРКИ билета голоса виджета и «Админки» и итогов мемо: текущий
+ * и прежние (`ASSIST_SECRETS_KEYS_OLD`, №60) — выданное до ротации доживает
+ * свой срок.
+ */
+export function voiceTicketKeys(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly Buffer[] | null {
+  return derivedKeys(env, WIDGET_VOICE_TICKET_HMAC_LABEL)?.all ?? null;
 }

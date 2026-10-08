@@ -15,6 +15,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
 import {
+  configurationWarnings,
   loadConfiguration,
   validateConfiguration,
 } from './config/configuration';
@@ -22,6 +23,9 @@ import {
 async function bootstrap() {
   const config = loadConfiguration();
   validateConfiguration(config);
+  for (const w of configurationWarnings(config)) {
+    console.error(`sites-backend: конфигурация — ${w}`);
+  }
 
   const app = await NestFactory.create(AppModule);
   configureApp(app, config);

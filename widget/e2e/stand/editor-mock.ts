@@ -32,6 +32,8 @@ const E = {
   voiceBytes: 0,
   log: [] as Array<{ path: string; body: unknown }>,
   publishAttempts: 0,
+  /** Заход 10 (№113): «не предлагать» — id предложений. */
+  muted: new Set<string>(),
 };
 
 export function editorReset(): void {
@@ -43,6 +45,7 @@ export function editorReset(): void {
   E.voiceBytes = 0;
   E.log.length = 0;
   E.publishAttempts = 0;
+  E.muted.clear();
 }
 
 export function editorLink(token: string, origin: string): void {
@@ -218,14 +221,17 @@ export async function editorRoute(
             string,
             unknown
           >;
+          // Как сервер: правка без поля — прежнее значение цели (№113:
+          // принять ИИ-синоним — `{ key, synonyms }`).
           E.targets.set(String(t.key), {
+            ...prev,
             ...t,
             key: String(t.key),
             descriptor: d,
             stability: d && d.assistId ? 'strong' : 'medium',
             riskComputed: 'confirm',
-            synonyms: (t.synonyms as object) || {},
-            names: (t.names as object) || {},
+            synonyms: (t.synonyms as object) || prev?.synonyms || {},
+            names: (t.names as object) || prev?.names || {},
             status: 'active',
           });
         } else if (op.op === 'remove-target') E.targets.delete(String(op.key));
@@ -379,6 +385,92 @@ export async function editorRoute(
         done: !!e,
         left: 98,
       });
+    }
+    // Заход 10 (№113): ИИ-синонимы, «Промахи», «Предложения».
+    case '/editor/v1/suggest-synonyms': {
+      if (b.expectedRevision !== E.revision)
+        return err(res, 409, 'VOICE_MAP_CONFLICT');
+      const t = E.targets.get(String(b.key));
+      if (!t) return err(res, 400, 'EDITOR_BAD_REQUEST');
+      const syn = (t.synonyms || {}) as Record<
+        string,
+        Array<{ text: string; origin: string }>
+      >;
+      const add = ['подарунок', 'упаковка'].filter(
+        (x) => !E.muted.has(`ai:${t.key}:uk:${x}`)
+      );
+      syn.uk = [
+        ...(syn.uk || []),
+        ...add.map((text) => ({ text, origin: 'suggested' })),
+      ];
+      t.synonyms = syn;
+      E.revision++;
+      return ok(res, {
+        revision: E.revision,
+        key: t.key,
+        langs: ['uk'],
+        kept: { uk: add.length },
+        dropped: {},
+      });
+    }
+    case '/editor/v1/misses': {
+      const k = [...E.targets.keys()][0];
+      return ok(res, {
+        days: 7,
+        path: url.searchParams.get('path') || '/',
+        items: k
+          ? [
+              {
+                key: k,
+                page: '/',
+                self: 3,
+                notFound: 0,
+                wrong: 1,
+                missed: 0,
+                done: 2,
+                last: new Date().toISOString(),
+              },
+            ]
+          : [],
+        asked: [
+          {
+            id: 'a'.repeat(24),
+            phrase: 'таблиця розмірів',
+            lang: 'ru',
+            count: 4,
+            visitors: 3,
+            key: null,
+            last: new Date().toISOString(),
+          },
+        ],
+      });
+    }
+    case '/editor/v1/suggestions': {
+      const k = [...E.targets.keys()][0];
+      return ok(res, {
+        path: url.searchParams.get('path') || '/',
+        items: [
+          {
+            id: 'a'.repeat(24),
+            kind: 'asked',
+            phrase: 'таблиця розмірів',
+            lang: 'ru',
+            visitors: 3,
+            key: null,
+          },
+          ...(k
+            ? [{ id: 'c'.repeat(24), kind: 'self', key: k, count: 3 }]
+            : []),
+        ].filter((x) => !E.muted.has(x.id)),
+      });
+    }
+    case '/editor/v1/suggestions/mute': {
+      const id =
+        typeof b.id === 'string'
+          ? b.id
+          : `ai:${String(b.key)}:${String(b.lang)}:${String(b.text)}`;
+      E.muted.add(id);
+      return ok(res, { id });
     }
     case '/editor/v1/publish-request':
       return ok(res, { number: 1, status: 'checking' });

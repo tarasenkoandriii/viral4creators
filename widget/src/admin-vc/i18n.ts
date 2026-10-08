@@ -42,7 +42,6 @@ export interface VcTexts extends Pick<Dict, VcKeys> {
   mic: string;
   micStop: string;
   micDenied: string;
-  micBusy: string;
   consent: string;
   consentYes: string;
   no: string;
@@ -144,7 +143,6 @@ const uk: VcTexts = {
   mic: 'Сказати команду',
   micStop: 'Закінчити',
   micDenied: 'Мікрофон недоступний — наберіть команду текстом.',
-  micBusy: 'Слухаю…',
   consent:
     'Помічник може натискати кнопки цієї адмінки за вас до кінця сесії — дозволити? Кожен крок видно, «Стоп» — завжди. Видалення, скасування й повернення кліками — ніколи.',
   consentYes: 'Дозволити',
@@ -257,7 +255,6 @@ const ru: VcTexts = {
   mic: 'Сказать команду',
   micStop: 'Закончить',
   micDenied: 'Микрофон недоступен — наберите команду текстом.',
-  micBusy: 'Слушаю…',
   consent:
     'Помощник может нажимать кнопки этой админки за вас до конца сессии — разрешить? Каждый шаг виден, «Стоп» — всегда. Удаление, отмену и возврат кликами — никогда.',
   consentYes: 'Разрешить',
@@ -369,7 +366,6 @@ const en: VcTexts = {
   mic: 'Say a command',
   micStop: 'Finish',
   micDenied: 'Microphone unavailable — type the command instead.',
-  micBusy: 'Listening…',
   consent:
     'The assistant can press buttons in this admin panel for you until the session ends — allow it? Every step is visible, “Stop” always works. Deleting, cancelling and refunds by clicks — never.',
   consentYes: 'Allow',

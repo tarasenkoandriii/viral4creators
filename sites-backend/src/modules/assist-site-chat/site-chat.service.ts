@@ -99,7 +99,7 @@ import type {
 import { LearningSignals } from '../assist-site-learning/public/learning-signals';
 import { markVoiceDialog } from '../assist-site-voice/public/voice-dialog';
 import { verifyVoiceTicket } from '../assist-site-voice/public/voice-ticket';
-import { voiceTicketKey } from '../../config/voice-env';
+import { voiceTicketKeys } from '../../config/voice-env';
 import { parsePersona, type PersonaConfig } from '../assist-site-setup/persona';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
 import { geminiUsageUnits } from '../../shared/ai-pricing';
@@ -480,7 +480,7 @@ export class SiteChatService {
     // засчитан текстом; не поместилась — вопрос идёт как текстовый).
     if (
       input.voiceTicket &&
-      verifyVoiceTicket(voiceTicketKey(this.env), input.voiceTicket, {
+      verifyVoiceTicket(voiceTicketKeys(this.env), input.voiceTicket, {
         siteId: site.siteId,
         visitorId: input.visitor.visitorId,
         text: question,
@@ -1560,12 +1560,43 @@ export class SiteChatService {
       won.length > 0,
     );
     if (units === 0) return true;
-    const ok = await this.quota.claim(db, {
+    let ok = await this.quota.claim(db, {
       accountId,
       state: plan,
       units,
       dialogs: won.length ? 1 : 0,
     });
+    // Р-З10-3 (а): первый вопрос диалога задан голосом, а на вес 2 места нет
+    // (осталась одна единица) — не мягкий стоп: голос снимается, диалог
+    // засчитывается текстом (вес 1), ответ идёт текстом (приёмка Э5 «чат
+    // продолжает текстом»). Озвучка этого ответа затем откажет `limit` на
+    // доплате (voice-dialog.ts) — до синтеза. Только при первом засчёте:
+    // диалог, уже оплаченный голосом, голос не теряет (иначе доплата снова).
+    if (!ok && won.length && counted[0]?.voice) {
+      const textUnits = unitsDelta(DIALOG_BASE_UNITS.text, n, true);
+      if (textUnits < units) {
+        await db.$executeRawUnsafe(
+          `UPDATE "sites"."assist_site_conversations" SET "voice" = false
+            WHERE "id" = $1`,
+          convId,
+        );
+        ok = await this.quota.claim(db, {
+          accountId,
+          state: plan,
+          units: textUnits,
+          dialogs: 1,
+        });
+        // Не поместился и вес 1 — мягкий стоп как раньше; отметка голоса
+        // возвращается (распознавание в этом диалоге было).
+        if (!ok)
+          await db.$executeRawUnsafe(
+            `UPDATE "sites"."assist_site_conversations" SET "voice" = true
+              WHERE "id" = $1`,
+            convId,
+          );
+        this.logger.warn(`ask: voice_downgraded ok=${ok} units=${textUnits}`);
+      }
+    }
     if (!ok) {
       await db.$executeRawUnsafe(
         `UPDATE "sites"."assist_site_conversations"

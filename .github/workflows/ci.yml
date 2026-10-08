@@ -16,6 +16,21 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      # П-К1 (Р-З10-6): разовый скан ВСЕЙ истории — владелец запускает до
+      # перевода репозитория в приватный (doc/TODO.md, I-Л). Не блокирует:
+      # находки старых коммитов — список ротации, а не повод красить CI.
+      secrets_history:
+        description: 'gitleaks по всей истории (отчёт-артефакт, без блокировки)'
+        type: boolean
+        default: false
+
+# П-К4: токен всех джоб — только чтение кода. Права шире — только у джобы,
+# которой они нужны, явно (`changes` читает прогоны Actions). Без этой
+# строки джобы получали права по умолчанию репозитория (на старых
+# репозиториях — запись во всё).
+permissions:
+  contents: read
 
 concurrency:
   # Новый пуш в ту же ветку отменяет предыдущий прогон: смысла проверять
@@ -419,7 +434,11 @@ jobs:
           node-version-file: '.nvmrc'
           cache: npm
           cache-dependency-path: assist-integrations/package-lock.json
-      - uses: shivammathur/setup-php@v2
+      # П-К4: сторонний action — по SHA коммита, а не по тегу: тег `v2`
+      # автор двигает (и его можно подменить при взломе аккаунта автора), а
+      # action исполняется с токеном джобы. Версия — в комментарии;
+      # обновления предлагает Dependabot (.github/dependabot.yml).
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '7.4'
           tools: none
@@ -865,3 +884,148 @@ jobs:
       # (`--require-jest`), когда она идёт.
       - name: числа в документах (без счётчиков тестов)
         run: node scripts/check-docs.mjs --no-jest
+
+  # П-К1 (SECURITY-PROPOSALS-2026-10-02 :219, Р-З10-6): секреты в коммитах.
+  # У приватного репозитория на бесплатном плане нет push protection
+  # (doc/TODO.md, I-Л) — эта джоба её замена. Идёт на каждом коммите, как
+  # `repo`: секрет может прийти в любой папке.
+  #  - Бинарник gitleaks с официального релиза, sha256 закреплён здесь
+  #    (из `gitleaks_<версия>_checksums.txt` того же релиза) — без
+  #    стороннего action и его лицензии. Обновление: новая версия и её
+  #    sha256 из checksums-файла релиза, обе строки вместе.
+  #  - Блокирует только НОВЫЕ коммиты. push — с коммита последнего
+  #    УСПЕШНОГО прогона CI на ветке (та же база, что у джобы `changes`,
+  #    scripts/ci-changes.mjs): прогон, отменённый следующим пушем
+  #    (concurrency), или красный не «съедает» свои коммиты — они попадут
+  #    в следующий диапазон. Нет такого прогона — `before..sha`, новая
+  #    ветка — от ветки по умолчанию. PR — `база..голова`. Нет диапазона —
+  #    дерево коммита. Старая история не красит CI.
+  #  - Вся история — по кнопке (Run workflow → secrets_history), отчёт
+  #    артефактом, без блокировки: это список на ротацию для владельца.
+  #  - `--redact` и печать только правило/файл/строка/коммит (не `-v`: он
+  #    выводит строку целиком, с кусками соседних значений) — логи и
+  #    артефакты публичного репозитория видит любой.
+  #  - Исключения и что делать при находке — `.gitleaks.toml`.
+  secrets:
+    name: секреты в коммитах (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # actions: read — база диапазона: последний успешный прогон ci.yml.
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: gitleaks (бинарник релиза, sha256 сверяется)
+        run: |
+          set -euo pipefail
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/$tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$tgz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+      - name: новые коммиты без секретов (блокирует)
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          has() { [ -n "$1" ] && git cat-file -e "$1^{commit}" 2>/dev/null; }
+          ok_sha=""
+          if [ "$EVENT" = push ]; then
+            ok_sha=$(node scripts/ci-changes.mjs --last-success-sha) || ok_sha=""
+          fi
+          range=""
+          if [ "$EVENT" = pull_request ] && has "$PR_BASE" && has "$PR_HEAD"; then
+            range="$PR_BASE..$PR_HEAD"
+          elif [ "$EVENT" = push ] && has "$ok_sha"; then
+            range="$ok_sha..$SHA"
+          elif [ "$EVENT" = push ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && has "$BEFORE"; then
+            range="$BEFORE..$SHA"
+          elif [ "$EVENT" = push ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ] && has "origin/$DEFAULT_BRANCH"; then
+            range="origin/$DEFAULT_BRANCH..$SHA"
+          fi
+          rc=0
+          if [ -n "$range" ]; then
+            echo "gitleaks: коммиты $range"
+            gitleaks git -c .gitleaks.toml --log-opts="$range" --redact --no-banner \
+              -f json -r "$RUNNER_TEMP/gitleaks.json" . || rc=$?
+          else
+            echo "gitleaks: диапазона нет ($EVENT) — проверяю дерево коммита"
+            gitleaks dir -c .gitleaks.toml --redact --no-banner \
+              -f json -r "$RUNNER_TEMP/gitleaks.json" . || rc=$?
+          fi
+          if [ -s "$RUNNER_TEMP/gitleaks.json" ]; then
+            jq -r '.[] | "::error file=\(.File),line=\(.StartLine)::gitleaks \(.RuleID) — коммит \(if .Commit != "" then .Commit else "-" end); отпечаток для .gitleaksignore: \(if .Commit != "" then .Commit + ":" else "" end)\(.File):\(.RuleID):\(.StartLine)"' \
+              "$RUNNER_TEMP/gitleaks.json"
+          fi
+          exit "$rc"
+      - name: вся история (по кнопке, без блокировки)
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.secrets_history }}
+        run: |
+          gitleaks git -c .gitleaks.toml --log-opts="--all" --redact --no-banner \
+            --exit-code 0 -f json -r gitleaks-history.json .
+          echo "находок в истории: $(jq length gitleaks-history.json)"
+      - name: отчёт по истории
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.secrets_history }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-history
+          path: gitleaks-history.json
+          retention-days: 14
+
+  # Джоба-сборщик (Р-З10-8; doc/CI-RECOMMENDATIONS-2026-10-01.md, п. 2):
+  # единственная, которую можно делать обязательной проверкой. Джобы,
+  # пропущенные по `changes`, статуса не сообщают — обязательная проверка
+  # на любой из них заблокировала бы ветку навсегда. Эта идёт всегда и
+  # падает на всём, кроме success/skipped (failure, cancelled). `needs` —
+  # ВСЕ джобы файла: новая джоба без строки здесь роняет самотест
+  # `scripts/ci-changes.mjs` (джоба «репозиторий»). Обязательные проверки
+  # в настройках репозитория включает только владелец.
+  ci:
+    name: CI
+    if: always()
+    needs:
+      - changes
+      - backend
+      - sites-backend
+      - assist
+      - widget
+      - assist-integrations
+      - sites-landing
+      - frontend
+      - next-apps
+      - live-login-relay
+      - browser-worker
+      - assist-knowledge-sync
+      - repo
+      - secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: все джобы прошли или пропущены по условию
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key) (\(.value.result))"] | join(", ")')
+          if [ -n "$bad" ]; then
+            echo "::error::не прошли: $bad"
+            exit 1
+          fi

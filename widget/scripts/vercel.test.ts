@@ -137,7 +137,15 @@ assert.equal(header('/v1/admin-vc.js', 'X-Content-Type-Options'), 'nosniff');
 assert.equal(header('/v1/editor.js', 'Access-Control-Allow-Origin'), '*');
 assert.match(header('/v1/editor.js', 'Cache-Control') ?? '', /max-age=300\b/);
 assert.equal(header('/v1/editor.js', 'X-Content-Type-Options'), 'nosniff');
-for (const f of ['/v1/editor-panel.js', '/v1/editor-panel.css']) {
+// Заход 10: ленивые модули панели (словари ru/en, №113) — те же правила:
+// свой origin `we.`, без CORS, 5 мин.
+for (const f of [
+  '/v1/editor-panel.js',
+  '/v1/editor-panel.css',
+  '/v1/editor-panel-ru.js',
+  '/v1/editor-panel-en.js',
+  '/v1/editor-assist.js',
+]) {
   assert.match(header(f, 'Cache-Control') ?? '', /max-age=300\b/, f);
   assert.equal(header(f, 'X-Content-Type-Options'), 'nosniff', f);
   assert.equal(header(f, 'Access-Control-Allow-Origin'), undefined, f);

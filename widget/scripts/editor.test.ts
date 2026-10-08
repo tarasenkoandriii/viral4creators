@@ -20,7 +20,9 @@ import {
   parseToPicker,
   stabilityOf,
 } from '../src/shared/editor-protocol';
-import { T } from '../src/editor-panel/i18n';
+import en from '../src/editor-panel/lang-en';
+import ru from '../src/editor-panel/lang-ru';
+import uk from '../src/editor-panel/lang-uk';
 
 const cjs = <X>(ns: X): X => (ns as X & { default?: X }).default ?? ns;
 const vm = cjs(vmNs);
@@ -157,6 +159,8 @@ assert.equal(maskHrefPath('/u/ivan@example.com'), '/u/:email');
 assert.equal(maskHrefPath('/orders/123456789012'), '/orders/:n');
 
 // 4. Словари панели: одинаковые ключи на трёх языках.
+// Заход 10: ru/en — ленивые чанки панели; ключи трёх словарей равны.
+const T = { uk, ru, en };
 const keys = (l: 'uk' | 'ru' | 'en') => Object.keys(T[l]).sort().join(',');
 assert.equal(keys('ru'), keys('uk'));
 assert.equal(keys('en'), keys('uk'));

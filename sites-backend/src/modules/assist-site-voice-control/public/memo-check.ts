@@ -7,6 +7,7 @@
  * их не подделает и чужой сессии не подсунет (в подписи — id теста).
  */
 import { createHmac, timingSafeEqual } from 'crypto';
+import { hmacKeyList, type HmacKeys } from '../../../common/secrets-keyring';
 import type { MemoCheckPage } from '../../assist-ui-core/memo';
 
 const TOKEN_RE = /^([A-Za-z0-9_-]{10,4000})\.([A-Za-z0-9_-]{43})$/;
@@ -32,18 +33,22 @@ export function signMemoPage(
 
 /** Итог страницы, если подпись наша и тест тот же; иначе null. */
 export function verifyMemoPage(
-  base: Buffer | null,
+  base: HmacKeys | null,
   testId: string,
   token: unknown,
 ): MemoCheckPage | null {
   if (!base || typeof token !== 'string') return null;
   const m = TOKEN_RE.exec(token);
   if (!m) return null;
-  const want = Buffer.from(
-    createHmac('sha256', keyOf(base)).update(m[1]).digest('base64url'),
-  );
   const got = Buffer.from(m[2]);
-  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
+  // №60: текущим и прежними ключами связки (`voiceTicketKeys`).
+  const signed = hmacKeyList(base).some((b) => {
+    const want = Buffer.from(
+      createHmac('sha256', keyOf(b)).update(m[1]).digest('base64url'),
+    );
+    return want.length === got.length && timingSafeEqual(want, got);
+  });
+  if (!signed) return null;
   try {
     const o = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8')) as {
       t?: unknown;

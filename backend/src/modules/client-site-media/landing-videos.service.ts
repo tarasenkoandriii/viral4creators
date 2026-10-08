@@ -14,9 +14,13 @@
  * Ролики демо обучающего лендинга (`site-tutorial-demo-*`, витрина-
  * полигон) в набор не идут — тоже в запросе и повторно в коде.
  *
- * Набор — ПОЛНЫЙ (замена, как у Э6): потолок платформы 15 роликов и 8 КБ
- * тела, поэтому порядок — по языкам лендинга (ru, uk, en, de, es), внутри
- * языка — по номеру шага; последний одобренный на (тема, язык). Поводы:
+ * Набор — ПОЛНЫЙ (замена, как у Э6): потолки — те же, что у роликов сайтов
+ * заказчиков (`SYNC_VIDEOS_MAX` = 60 роликов и `SYNC_BODY_BUDGET` = 60 000 Б
+ * тела; маршрут `site-videos` у sites-backend один и принимает ≤ 64 КБ,
+ * Р-З10-2 — до захода 10 здесь оставались старые 15 / 7 500 Б, и лендинг
+ * отдавал только 15 роликов из 50 — ru и половину uk), поэтому порядок — по
+ * языкам лендинга (ru, uk, en, de, es), внутри языка — по номеру шага;
+ * последний одобренный на (тема, язык). Поводы:
  * одобрение/снятие одобрения в админке (`TutorialVideoAdminService`) и
  * (Ш5 (12)) удаление одобренного ролика подметальщиком раннера
  * (`sweepOldAssets` → `requestSync`): иначе в тенанте до следующего
@@ -30,14 +34,19 @@ import {
   type SitesVideoInput,
 } from '../sites-internal/sites-internal.client';
 import { landingAssistConfig } from './landing-assist-config';
+import { SYNC_BODY_BUDGET, SYNC_VIDEOS_MAX } from './client-site-media.service';
 import {
   isSiteTutorialDemoFamilyKey,
   NOT_SITE_TUTORIAL_DEMO_WHERE,
 } from '../tutorial-help/site-tutorial-demo';
 
-/** Те же потолки, что у роликов сайтов заказчиков (sites-backend Э6). */
-export const LANDING_SYNC_VIDEOS_MAX = 15;
-export const LANDING_SYNC_BODY_BUDGET = 7_500;
+/**
+ * Те же потолки, что у роликов сайтов заказчиков (sites-backend Э6,
+ * `media-config.ts` `syncVideosMax: 60`, тело ≤ 64 КБ) — одна константа на
+ * оба набора, чтобы они больше не расходились (Р-З10-2).
+ */
+export const LANDING_SYNC_VIDEOS_MAX = SYNC_VIDEOS_MAX;
+export const LANDING_SYNC_BODY_BUDGET = SYNC_BODY_BUDGET;
 const LOCALE_ORDER = ['ru', 'uk', 'en', 'de', 'es'];
 
 interface AssetRow {

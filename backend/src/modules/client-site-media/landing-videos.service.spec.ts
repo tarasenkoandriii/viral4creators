@@ -3,8 +3,10 @@
  * лендинга (тот же, что у консультанта): только `reviewed`, собранные и
  * НЕ ролики обучалки по сайту заказчика (`clientSiteDraftId: null`) — в
  * запросе и повторно в коде. Порядок по языкам лендинга, последний ролик
- * на (тема, язык), потолки платформы (15 и 8 КБ), сбой не бросает.
+ * на (тема, язык), потолки платформы (60 роликов и 60 000 Б — общие с
+ * сайтами заказчиков, Р-З10-2), сбой не бросает.
  */
+import { SYNC_BODY_BUDGET, SYNC_VIDEOS_MAX } from './client-site-media.service';
 import { landingAssistConfig } from './landing-assist-config';
 import {
   LANDING_SYNC_BODY_BUDGET,
@@ -160,11 +162,11 @@ describe('LandingVideosService — барьер лендинга', () => {
     });
   });
 
-  it('последний на (тема, язык); порядок ru, uk, en, de, es и по номеру шага; потолок 15', async () => {
+  it('последний на (тема, язык); порядок ru, uk, en, de, es и по номеру шага; 75 кандидатов → потолок 60', async () => {
     const rows: Row[] = [];
     let t = 1;
     for (const locale of ['es', 'de', 'en', 'uk', 'ru']) {
-      for (let s = 10; s >= 1; s--) {
+      for (let s = 15; s >= 1; s--) {
         rows.push(
           asset({
             id: `${locale}-${s}-old`,
@@ -186,26 +188,72 @@ describe('LandingVideosService — барьер лендинга', () => {
     }
     const { svc } = setup(rows);
     const out = await svc.collect('1001', ['viral4creators.example']);
+    expect(out).toHaveLength(60);
     expect(out).toHaveLength(LANDING_SYNC_VIDEOS_MAX);
-    expect(out.slice(0, 11).map((v) => v.externalId)).toEqual([
-      ...Array.from({ length: 10 }, (_, i) => `ru-${i + 1}`),
-      'uk-1',
-    ]);
+    // 15 шагов × ru, uk, en, de — ровно 60; es (последний язык) не влез.
+    expect(out.map((v) => v.externalId)).toEqual(
+      ['ru', 'uk', 'en', 'de'].flatMap((l) =>
+        Array.from({ length: 15 }, (_, i) => `${l}-${i + 1}`),
+      ),
+    );
     expect(out.some((v) => v.externalId.endsWith('-old'))).toBe(false);
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({
+          siteId: 'site_landing',
+          asOf: 1_790_000_000_000,
+          videos: out,
+        }),
+        'utf8',
+      ),
+    ).toBeLessThanOrEqual(60_000);
   });
 
-  it('бюджет тела 8 КБ', async () => {
-    const rows = Array.from({ length: 15 }, (_, i) =>
+  it('Р-З10-2: потолки — общие с роликами сайтов заказчиков (60 / 60 000 Б)', async () => {
+    expect(LANDING_SYNC_VIDEOS_MAX).toBe(SYNC_VIDEOS_MAX);
+    expect(LANDING_SYNC_BODY_BUDGET).toBe(SYNC_BODY_BUDGET);
+    expect(LANDING_SYNC_VIDEOS_MAX).toBe(60);
+    expect(LANDING_SYNC_BODY_BUDGET).toBe(60_000);
+    // 50 роликов полной обучалки (10 шагов × 5 языков) с кириллическими
+    // названиями: тело ≈ 20 КБ — старые 15 / 7 500 Б обрезали бы набор до ru.
+    const rows: Row[] = [];
+    for (const locale of ['ru', 'uk', 'en', 'de', 'es']) {
+      for (let s = 1; s <= 10; s++) {
+        rows.push(
+          asset({
+            id: `${locale}-${s}`,
+            subjectKey: String(s),
+            locale,
+            title: `Шаг ${s}: как загрузить эталонный ролик`,
+            blobUrl: `https://blob.example/tutorial/${locale}/${s}-${'x'.repeat(80)}.mp4`,
+          }),
+        );
+      }
+    }
+    const { svc } = setup(rows);
+    const out = await svc.collect('1001', ['viral4creators.example']);
+    expect(out).toHaveLength(50);
+    expect(new Set(out.map((v) => v.locale))).toEqual(
+      new Set(['ru', 'uk', 'en', 'de', 'es']),
+    );
+    expect(
+      Buffer.byteLength(JSON.stringify({ videos: out }), 'utf8'),
+    ).toBeGreaterThan(7_500);
+  });
+
+  it('бюджет тела 60 000 Б', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) =>
       asset({
         id: `v${i}`,
         subjectKey: String(i + 1),
         title: 'Очень длинное название ролика '.repeat(5),
-        blobUrl: `https://blob.example/${'x'.repeat(400)}-${i}.mp4`,
+        blobUrl: `https://blob.example/${'x'.repeat(1_200)}-${i}.mp4`,
       }),
     );
     const { svc } = setup(rows);
     const out = await svc.collect('1001', ['viral4creators.example']);
-    expect(out.length).toBeLessThan(15);
+    expect(out.length).toBeGreaterThan(15);
+    expect(out.length).toBeLessThan(60);
     expect(
       Buffer.byteLength(
         JSON.stringify({

@@ -2,6 +2,7 @@ import { billingEn } from './billing-en';
 import { mediaEn } from './media-en';
 import { verifyHostEn } from './verify-host-en';
 import { voiceControlEn } from './voice-control-en';
+import { adminModeEn } from './admin-mode-en';
 import type { AppDictionary } from './ru';
 import { setupEn } from './setup-en';
 import { e3En } from './e3-en';
@@ -446,4 +447,6 @@ export const appEn: AppDictionary = {
   verifyHost: verifyHostEn,
   /** Э6-бис: голосовое управление «Сайтом». */
   voiceControl: voiceControlEn,
+  /** Э7/Э8 «Админка» (заход 10, №63: перенесено из i18n/admin-mode.ts). */
+  adminMode: adminModeEn,
 };

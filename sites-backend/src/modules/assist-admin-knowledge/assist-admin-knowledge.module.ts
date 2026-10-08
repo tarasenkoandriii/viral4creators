@@ -5,6 +5,7 @@
  * admin-names↛site). Владельцы файлов — контракт Э1 §«Файлы».
  */
 import { Module } from '@nestjs/common';
+import { AssistAdminAnalyticsModule } from '../assist-admin-analytics/assist-admin-analytics.module';
 import { AssistKnowledgeCoreModule } from '../assist-knowledge-core/assist-knowledge-core.module';
 import { SiteCoreModule } from '../site-core/site-core.module';
 import { SiteCrawlModule } from '../site-crawl/site-crawl.module';
@@ -18,7 +19,14 @@ import { AdminSourcesService } from './admin-sources.service';
 import { AssistAdminEmbedRunController } from './cron/assist-admin-embed-run.controller';
 
 @Module({
-  imports: [SiteCoreModule, SiteCrawlModule, AssistKnowledgeCoreModule],
+  // Заход 10: аналитика «Админки» исполняется из крона этого модуля
+  // (assist-admin-embed-run) — без нового крона.
+  imports: [
+    SiteCoreModule,
+    SiteCrawlModule,
+    AssistKnowledgeCoreModule,
+    AssistAdminAnalyticsModule,
+  ],
   controllers: [
     AdminKnowledgeController,
     AdminLearningController,

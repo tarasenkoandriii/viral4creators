@@ -23,6 +23,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { WIDGET_EDITOR_PARAM } from '../../brand';
+import { derivedKeys } from '../../common/secrets-keyring';
 import { SitesDb } from '../../prisma/sites-db.service';
 import {
   recipients,
@@ -1084,26 +1085,34 @@ export class VoiceMapService {
    * есть (формат), но признаком «наш файл» не считается.
    */
   private signKey(): Buffer | null {
-    const own = this.env.ASSIST_VOICE_MAP_EXPORT_KEY?.trim();
-    if (own) return Buffer.from(own, 'utf8');
-    const kek = this.env.ASSIST_SECRETS_KEY?.trim();
-    if (kek)
-      return createHmac('sha256', kek).update(VOICE_MAP_EXPORT_LABEL).digest();
-    return null;
+    return this.signKeys()[0] ?? null;
   }
 
-  private signature(payload: unknown): string {
-    return createHmac('sha256', this.signKey() ?? UNSIGNED_EXPORT_KEY)
+  /**
+   * Ключи ПРОВЕРКИ подписи файла: свой ключ — он один; производный — всех
+   * версий связки `ASSIST_SECRETS_KEY` (№60, Р-З10-12): файл, выгруженный
+   * до ротации, при импорте остаётся «нашим». Подпись — текущим (первым).
+   */
+  private signKeys(): readonly Buffer[] {
+    const own = this.env.ASSIST_VOICE_MAP_EXPORT_KEY?.trim();
+    if (own) return [Buffer.from(own, 'utf8')];
+    return derivedKeys(this.env, VOICE_MAP_EXPORT_LABEL)?.all ?? [];
+  }
+
+  private signature(payload: unknown, key?: Buffer): string {
+    return createHmac('sha256', key ?? this.signKey() ?? UNSIGNED_EXPORT_KEY)
       .update(canonicalJson(payload))
       .digest('base64url');
   }
 
   /** Подпись файла сошлась (за постоянное время; без ключа — никогда). */
   private signatureValid(payload: unknown, got: unknown): boolean {
-    if (typeof got !== 'string' || !this.signKey()) return false;
+    if (typeof got !== 'string') return false;
     const a = Buffer.from(got, 'utf8');
-    const b = Buffer.from(this.signature(payload), 'utf8');
-    return a.length === b.length && timingSafeEqual(a, b);
+    return this.signKeys().some((key) => {
+      const b = Buffer.from(this.signature(payload, key), 'utf8');
+      return a.length === b.length && timingSafeEqual(a, b);
+    });
   }
 
   async exportFile(

@@ -27,6 +27,10 @@
  * `addEventListener`, `setTimeout`, `createElement` запоминаются ЗДЕСЬ, при
  * старте чанка (до того, как их подменит скрипт страницы). Ссылка мастера
  * `?v4c_voicetest=` снимается с адреса сразу и отдаётся только iframe.
+ *
+ * Заход 10 (Ш6 (4), Р-З10-15): своя подпись кнопки — атрибут `data-label`
+ * тега (≤ 40 символов, без HTML и управляющих символов; иначе — подпись по
+ * умолчанию). Без сетевого запроса до кнопки; загрузчик не меняется.
  */
 import { WIDGET_ADMIN_FRAME_PATH, WIDGET_GLOBAL } from '../shared/brand';
 import {
@@ -88,6 +92,17 @@ const LABEL: Record<string, string> = {
   en: 'Staff assistant',
 };
 
+/** Р-З10-15: подпись кнопки из `data-label` или по умолчанию (язык). */
+export function adminLabel(raw: string | null, lang: string): string {
+  const t = (raw || '').replace(/\s+/g, ' ').trim();
+  return t &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f-\u009f<>]/.test(t) &&
+    Array.from(t).length <= 40
+    ? t
+    : LABEL[lang] || LABEL.uk;
+}
+
 export function start(script: HTMLScriptElement): void {
   const W = window as unknown as Record<string, unknown>;
   // Два тега «Админки» на странице: оба загрузчика успевают взять чанк до
@@ -109,6 +124,7 @@ export function start(script: HTMLScriptElement): void {
     .slice(0, 2)
     .toLowerCase();
   const lang = attrLang === 'ru' || attrLang === 'en' ? attrLang : 'uk';
+  const label = adminLabel(script.getAttribute('data-label'), lang);
   let jwt: string | null = isJwt(script.getAttribute('data-identity'))
     ? script.getAttribute('data-identity')
     : null;
@@ -141,12 +157,12 @@ export function start(script: HTMLScriptElement): void {
   const btn = document.createElement('button');
   btn.className = 'b';
   btn.type = 'button';
-  btn.textContent = LABEL[lang];
+  btn.textContent = label;
   btn.setAttribute('aria-expanded', 'false');
   const panel = document.createElement('div');
   panel.className = 'p';
   panel.setAttribute('role', 'dialog');
-  panel.setAttribute('aria-label', LABEL[lang]);
+  panel.setAttribute('aria-label', label);
   root.appendChild(btn);
   root.appendChild(panel);
   let frame: HTMLIFrameElement | null = null;
@@ -193,7 +209,7 @@ export function start(script: HTMLScriptElement): void {
   function ensureFrame() {
     if (frame) return;
     frame = document.createElement('iframe');
-    frame.title = LABEL[lang];
+    frame.title = label;
     frame.setAttribute('referrerpolicy', 'origin');
     // Э6-бис (б): микрофон голосовых команд сотрудника — только этому iframe.
     frame.setAttribute('allow', 'microphone');

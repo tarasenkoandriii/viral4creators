@@ -108,6 +108,8 @@ export const e3bEn: typeof e3bRu = {
     useless: 'Not useful',
     followUp:
       '14 days after “Done”: was {before}, now {after} — a coincidence in time, not proof.',
+    followUpNoData:
+      '14 days after “Done”: not enough data to compare (detailed page views are kept for 7 days).',
     skipped: {
       plan: 'Model wording — on Business and Pro plans.',
       model: 'The model did not respond — showing the finding.',
@@ -126,6 +128,9 @@ export const e3bEn: typeof e3bRu = {
       N7: 'JavaScript errors{page}: {value} this week per {n} views',
       N8: 'Slow{page}: {metric} p75 = {value}',
       N10: 'Hint “{trigger}” is dismissed {x} of {n} times ({share})',
+      N1: 'Leaving after the answer{page}: after questions about “{topic}”, {x} of {n} leave the site within a minute ({share})',
+      N9: 'Campaign “{campaign}”: {x} of {n} conversations are about the wrong product or off-topic ({share}); {value}% of views leave without scrolling',
+      N11: 'After the page change on {date}{page}: chat is opened in {share} of views, was {base} — coincidence in time, not proof',
     },
   },
   experiments: {

@@ -14,6 +14,9 @@
  * Язык — получателей (заход 9, Р-З9-7): основной — владельца, переводы для
  * остальных участников в том же вызове, каждый — та же проверка чисел.
  * Start/Trial — находки кодом без модели (сухие строки, §5-тер.17).
+ * Заход 10: N1/N9 — по сырым итогам просмотров недели (visitInputs, связка
+ * диалог↔просмотр по признакам), N11 — по версиям базы прошлой недели и
+ * свёртке поведения (pageChanges); без миграций.
  */
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -42,11 +45,14 @@ import {
   siteTz,
 } from '../site-time';
 import { normalizePath } from '../public/page-view';
+import { RAW_PAGE_VIEWS_RETENTION_MS } from '../behavior/behavior-rollup.service';
 import { analyticsModel } from './ai-env';
 import { AnalyticsBudget } from './analytics-budget';
 import {
+  FINDING_THRESHOLDS,
   buildInsightPrompt,
   detectFindings,
+  hasExternalLink,
   metricFor,
   parseInsights,
   type Finding,
@@ -91,6 +97,48 @@ export function lastWeekStart(now: Date, tz: string): string {
 
 /** Путь из URL диалога (SQL-выражение повторено в запросах ниже). */
 const PAGE_SQL = `COALESCE(NULLIF(substring(c."pageUrl" from '^https?://[^/]+(/[^?#]*)'), ''), '/')`;
+
+/** Первый день (пояс сайта), целиком лежащий в сырых просмотрах (7 дней). */
+export function rawFirstDay(now: Date, tz: string): string {
+  return addDays(
+    dayInTz(new Date(now.getTime() - RAW_PAGE_VIEWS_RETENTION_MS), tz),
+    1,
+  );
+}
+
+const maxDay = (a: string, b: string) => (a > b ? a : b);
+
+/** N1/N9: потолок времени запроса по сырым просмотрам (аудит P2-2). */
+export const VISIT_QUERY_TIMEOUT_MS = 25_000;
+/** N1/N9: потолки выборок (сверх — случайная выборка по md5 id). */
+export const VISIT_VIEWS_MAX = 100_000;
+export const VISIT_DIALOGS_MAX = 20_000;
+/** Сколько просмотров назад (по началу) проверять при сопоставлении. */
+const MATCH_CANDIDATES = 5;
+/** Допуск: просмотр шёл в момент вопроса (±5 с). */
+const MATCH_SLACK_MS = 5_000;
+
+/**
+ * Просмотр диалога: среди начавшихся не позже вопроса (список — по началу)
+ * — ближайший из `MATCH_CANDIDATES` назад, который ещё шёл в момент
+ * вопроса (аудит P3-5: не только последний по началу). Экспорт — тестам.
+ */
+export function matchView<T extends { startedAt: Date; endedAt: Date }>(
+  list: readonly T[],
+  at: number,
+): T | null {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (list[mid].startedAt.getTime() <= at) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo - 1; i >= 0 && i >= lo - MATCH_CANDIDATES; i--) {
+    if (list[i].endedAt.getTime() >= at - MATCH_SLACK_MS) return list[i];
+  }
+  return null;
+}
 
 /** Ключ страницы находки: null (итог по сайту) → `*`, иначе нормализованный путь. */
 export function pageKey(page: string | null): string {
@@ -243,6 +291,7 @@ export class WeeklyInsights {
       tz,
       weekStart,
       addDays(weekStart, 6),
+      { visits: true, changes: true },
     );
     const findings = detectFindings(inputs);
     await this.examples(accountId, siteId, tz, weekStart, findings);
@@ -422,7 +471,7 @@ export class WeeklyInsights {
       await record(out);
       settled = true;
       await this.budget.settle(rsv.reservation, cost);
-      const parsed = parseInsights(out.text, findings, extraLangs);
+      const parsed = parseInsights(out.text, findings, extraLangs, lang);
       if (parsed.invalid) return { texts, rejected, skipped: 'model', cost };
       for (const a of parsed.accepted) {
         const stored: StoredInsightText = {
@@ -474,6 +523,11 @@ export class WeeklyInsights {
     tz: string,
     fromDay: string,
     toDay: string,
+    /**
+     * Недельный прогон: ещё N1/N9 (`visits` — сырые просмотры) и N11
+     * (`changes` — версии базы); сверка «до/после» — только нужное находке.
+     */
+    opts: { visits?: boolean; changes?: boolean } = {},
   ): Promise<FindingInputs> {
     const start = dayRangeUtc(fromDay, tz).start;
     const end = dayRangeUtc(toDay, tz).end;
@@ -581,6 +635,7 @@ export class WeeklyInsights {
         jsErrors: number;
         formStarts: number;
         formAbandons: number;
+        chatOpens: number;
         fields: unknown;
         lcp: number | null;
         inp: number | null;
@@ -590,6 +645,7 @@ export class WeeklyInsights {
       `SELECT "path", sum("views")::int AS views, sum("rage")::int AS rage,
               sum("jsErrors")::int AS "jsErrors", sum("formStarts")::int AS "formStarts",
               sum("formAbandons")::int AS "formAbandons",
+              sum("chatOpens")::int AS "chatOpens",
               jsonb_agg("abandonFields") AS fields,
               (sum("lcpP75" * "views") FILTER (WHERE "lcpP75" IS NOT NULL)
                  / NULLIF(sum("views") FILTER (WHERE "lcpP75" IS NOT NULL), 0))::float8 AS lcp,
@@ -642,6 +698,7 @@ export class WeeklyInsights {
       jsErrors: Number(r.jsErrors),
       formStarts: Number(r.formStarts),
       formAbandons: Number(r.formAbandons),
+      chatOpens: Number(r.chatOpens),
       abandonFields: mergeFields(r.fields),
       lcpP75: r.lcp === null ? null : Math.round(Number(r.lcp)),
       inpP75: r.inp === null ? null : Math.round(Number(r.inp)),
@@ -667,7 +724,331 @@ export class WeeklyInsights {
         trigger,
         ...v,
       })),
+      ...(opts.visits
+        ? await this.visitInputs(accountId, siteId, start, end)
+        : {}),
+      ...(opts.changes
+        ? {
+            pageChanges: await this.pageChanges(
+              accountId,
+              siteId,
+              tz,
+              fromDay,
+              toDay,
+            ),
+          }
+        : {}),
     };
+  }
+
+  /**
+   * N1 и N9 (заход 10) — по СЫРЫМ итогам просмотров (7 дней; недельный
+   * прогон идёт в начале следующей недели, неделя ещё целиком в сырых).
+   * Связки «диалог ↔ просмотр» в базе нет (просмотр без ключа визита, по
+   * построению §5-тер.8), поэтому сопоставление — по признакам:
+   *  - просмотр диалога — с открытым чатом, тот же нормализованный путь,
+   *    начался до первого вопроса и шёл в момент вопроса (±5 с); из
+   *    нескольких кандидатов назад — ближайший по началу;
+   *  - «без перехода по сайту» — нет просмотра того же устройства/ОС/
+   *    браузера с `prevPath` = путь (не перезагрузка той же страницы),
+   *    начавшегося от −10 до +60 с от конца;
+   *  - «уход без прокрутки» (N9) — прокрутка < 10% и тот же «без перехода»;
+   *  - время ответа (N1) — завершение ответа помощника (`updatedAt`
+   *    готового сообщения), не вопрос.
+   * Совпадения признаков у двух посетителей в одну минуту на одной странице
+   * возможны — это оценка (умолчания ТЗ «уточнить на пилотах»).
+   * Аудит P2-2: один запрос; «перешёл дальше» — окно по (путь, устройство,
+   * ОС, браузер, время) вместо попарного соединения, только для просмотров с
+   * чатом или кампанией; потолок времени запроса — `VISIT_QUERY_TIMEOUT_MS`
+   * (истёк — N1/N9 этой недели нет, остальное считается). Выборки сверх
+   * потолков — случайные (md5 id), а не начало недели.
+   */
+  private async visitInputs(
+    accountId: string,
+    siteId: string,
+    start: Date,
+    end: Date,
+  ): Promise<Pick<FindingInputs, 'afterAnswer' | 'campaigns'>> {
+    const p = this.prisma;
+    const utcDay = (d: Date) => d.toISOString().slice(0, 10);
+    const from = new Date(start.getTime() - DAY);
+    const to = new Date(end.getTime() + 60 * 60 * 1000);
+    type Row = {
+      row: 'v' | 'c';
+      path: string | null;
+      startedAt: Date | null;
+      endedAt: Date | null;
+      campaign: string | null;
+      moved: boolean | null;
+      views: number | null;
+      bounces: number | null;
+    };
+    let rows: Row[];
+    try {
+      const [, r] = await p.$transaction([
+        p.$executeRawUnsafe(
+          `SET LOCAL statement_timeout = ${VISIT_QUERY_TIMEOUT_MS}`,
+        ),
+        p.$queryRawUnsafe<Row[]>(
+          // Окно просмотров: сутки до недели (диалог начала недели) и час после.
+          `WITH w AS MATERIALIZED (
+             SELECT "id", "path", "prevPath", "device", "os", "browser", "utmCampaign",
+                    "scrollMax", "chatOpened", "startedAt",
+                    "startedAt" + "totalMs" * interval '1 millisecond' AS "endedAt",
+                    (1.0 / GREATEST("sampleRate", 0.001))::float8 AS w
+               FROM "sites"."assist_site_page_views"
+              WHERE "siteId" = $1 AND "day" >= $2 AND "day" <= $3
+                AND "startedAt" >= $4 AND "startedAt" < $5
+           ),
+           ev AS (
+             SELECT "id", "path" AS k, "device", "os", "browser", "endedAt" AS t, 0 AS kind
+               FROM w WHERE "chatOpened" OR "utmCampaign" IS NOT NULL
+             UNION ALL
+             SELECT "id", "prevPath", "device", "os", "browser", "startedAt", 1
+               FROM w WHERE "prevPath" IS NOT NULL AND "prevPath" <> "path"
+           ),
+           moved AS MATERIALIZED (
+             SELECT "id" FROM (
+               SELECT "id", kind, count(*) FILTER (WHERE kind = 1) OVER (
+                        PARTITION BY k, "device", "os", "browser" ORDER BY t
+                        RANGE BETWEEN interval '10 seconds' PRECEDING
+                                  AND interval '60 seconds' FOLLOWING) AS nxt
+                 FROM ev) x
+              WHERE kind = 0 AND nxt > 0
+           )
+           SELECT 'v' AS row, c."path", c."startedAt", c."endedAt", c."utmCampaign" AS campaign,
+                  (c."id" IN (SELECT "id" FROM moved)) AS moved,
+                  NULL::float8 AS views, NULL::float8 AS bounces
+             FROM (SELECT * FROM w WHERE "chatOpened"
+                    ORDER BY md5("id") LIMIT ${VISIT_VIEWS_MAX}) c
+           UNION ALL
+           SELECT * FROM (
+             SELECT 'c', NULL::text, NULL::timestamp, NULL::timestamp, c."utmCampaign", NULL::boolean,
+                    sum(c.w)::float8,
+                    COALESCE(sum(c.w) FILTER (WHERE c."scrollMax" < $6
+                      AND c."id" NOT IN (SELECT "id" FROM moved)), 0)::float8
+               FROM w c
+              WHERE c."utmCampaign" IS NOT NULL AND c."startedAt" >= $7 AND c."startedAt" < $8
+              GROUP BY c."utmCampaign" ORDER BY 7 DESC LIMIT 50) agg`,
+          siteId,
+          utcDay(from),
+          utcDay(to),
+          from,
+          to,
+          FINDING_THRESHOLDS.n9NoScrollPct,
+          start,
+          end,
+        ),
+      ]);
+      rows = r;
+    } catch (e) {
+      this.logger.warn(
+        `N1/N9 ${siteId}: просмотры не посчитаны (${(e as Error | null)?.name ?? 'Error'})`,
+      );
+      return {};
+    }
+    const chatViews = rows
+      .filter((r) => r.row === 'v' && r.path && r.startedAt && r.endedAt)
+      .map((r) => ({
+        path: r.path as string,
+        startedAt: r.startedAt as Date,
+        endedAt: r.endedAt as Date,
+        campaign: r.campaign,
+        moved: !!r.moved,
+      }))
+      .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
+    const campaignViews = rows
+      .filter((r) => r.row === 'c' && r.campaign)
+      .map((r) => ({
+        campaign: r.campaign as string,
+        views: Number(r.views ?? 0),
+        bounces: Number(r.bounces ?? 0),
+      }));
+    const dialogs = await p.$queryRawUnsafe<
+      Array<{
+        page: string;
+        createdAt: Date;
+        answeredAt: Date | null;
+        topics: string[] | null;
+        w: number;
+        mismatch: boolean;
+      }>
+    >(
+      `SELECT ${PAGE_SQL} AS page, c."createdAt", l."topics", l."weight"::float8 AS w,
+              (COALESCE(l."failureReason", '') = 'product_mismatch'
+                OR COALESCE(l."intent", '') = 'offtopic_spam') AS mismatch,
+              (SELECT max(m."updatedAt") FROM "sites"."assist_site_messages" m
+                WHERE m."conversationId" = c."id" AND m."role" = 'assistant'
+                  AND m."streamState" IN ('complete', 'partial')) AS "answeredAt"
+         FROM "sites"."assist_site_conversation_labels" l
+         JOIN "sites"."assist_site_conversations" c ON c."id" = l."conversationId"
+        WHERE l."siteId" = $1 AND l."accountId" = $2
+          AND c."createdAt" >= $3 AND c."createdAt" < $4
+          AND l."status" IN ('ok', 'injection_suspect') AND l."weight" > 0
+        ORDER BY md5(c."id") LIMIT ${VISIT_DIALOGS_MAX}`,
+      siteId,
+      accountId,
+      start,
+      end,
+    );
+    // Просмотры с чатом по пути, по времени начала (для поиска ближайшего).
+    const byPath = new Map<string, typeof chatViews>();
+    for (const v of chatViews) {
+      const list = byPath.get(v.path) ?? [];
+      list.push(v);
+      byPath.set(v.path, list);
+    }
+    const after = new Map<
+      string,
+      { page: string; topic: string; n: number; x: number }
+    >();
+    const camp = new Map<string, { dialogs: number; mismatch: number }>();
+    for (const d of dialogs) {
+      const page = pageKey(d.page);
+      const view = matchView(byPath.get(page) ?? [], d.createdAt.getTime());
+      if (!view) continue;
+      const w = Number(d.w);
+      if (view.campaign && !hasExternalLink(view.campaign)) {
+        const c = camp.get(view.campaign) ?? { dialogs: 0, mismatch: 0 };
+        c.dialogs += w;
+        if (d.mismatch) c.mismatch += w;
+        camp.set(view.campaign, c);
+      }
+      if (!d.answeredAt) continue;
+      const left =
+        !view.moved &&
+        view.endedAt.getTime() <=
+          d.answeredAt.getTime() + FINDING_THRESHOLDS.n1LeaveMs;
+      for (const raw of d.topics ?? []) {
+        const topic = maskForJournal(raw).slice(0, 120);
+        if (!topic) continue;
+        const k = `${page}\u0000${topic}`;
+        const a = after.get(k) ?? { page, topic, n: 0, x: 0 };
+        a.n += w;
+        if (left) a.x += w;
+        after.set(k, a);
+      }
+    }
+    return {
+      afterAnswer: [...after.values()].map((a) => ({
+        ...a,
+        n: Math.round(a.n),
+        x: Math.round(a.x),
+      })),
+      campaigns: campaignViews
+        // Кампания — ввод посетителя (`?utm_campaign=`): ссылка/домен в
+        // названии не доходит ни до модели, ни до отчёта владельцу.
+        .filter((c) => !hasExternalLink(c.campaign))
+        .map((c) => ({
+          campaign: c.campaign,
+          dialogs: Math.round(camp.get(c.campaign)?.dialogs ?? 0),
+          mismatch: Math.round(camp.get(c.campaign)?.mismatch ?? 0),
+          views: Math.round(c.views),
+          bounces: Math.round(c.bounces),
+        })),
+    };
+  }
+
+  /**
+   * N11 (заход 10): страницы, изменённые версиями базы, опубликованными за
+   * неделю ДО анализируемой (каждая версия попадает ровно в одну неделю, а
+   * окно «после» — от следующего дня до конца анализируемой, 7–13 дней).
+   * Изменённая страница версии — документ-страница, переиндексированный во
+   * время её сборки (`indexedAt` между созданием и публикацией; первая
+   * версия сайта — не изменение). Метрика — доля просмотров с открытым чатом
+   * из свёртки поведения: 14 дней до дня публикации против «после».
+   */
+  private async pageChanges(
+    accountId: string,
+    siteId: string,
+    tz: string,
+    fromDay: string,
+    toDay: string,
+  ): Promise<NonNullable<FindingInputs['pageChanges']>> {
+    const p = this.prisma;
+    const versions = await p.$queryRawUnsafe<
+      Array<{ number: number; createdAt: Date; publishedAt: Date }>
+    >(
+      `SELECT "number", "createdAt", "publishedAt" FROM "sites"."assist_site_knowledge_versions"
+        WHERE "siteId" = $1 AND "accountId" = $2 AND "parentNumber" IS NOT NULL
+          AND "publishedAt" IS NOT NULL AND "publishedAt" >= $3 AND "publishedAt" < $4
+        ORDER BY "publishedAt" DESC LIMIT 20`,
+      siteId,
+      accountId,
+      dayRangeUtc(addDays(fromDay, -7), tz).start,
+      dayRangeUtc(fromDay, tz).start,
+    );
+    const out: NonNullable<FindingInputs['pageChanges']> = [];
+    const seen = new Set<string>();
+    for (const v of versions) {
+      const docs = await p.$queryRawUnsafe<Array<{ url: string }>>(
+        `SELECT "url" FROM "sites"."assist_site_documents"
+          WHERE "siteId" = $1 AND "accountId" = $2 AND "kind" = 'page'
+            AND "url" IS NOT NULL AND "status" = 'active'
+            AND "indexedAt" >= $3 AND "indexedAt" <= $4
+          LIMIT 200`,
+        siteId,
+        accountId,
+        v.createdAt,
+        v.publishedAt,
+      );
+      const paths = [
+        ...new Set(
+          docs
+            .map((d) => {
+              try {
+                return normalizePath(new URL(d.url).pathname);
+              } catch {
+                return null;
+              }
+            })
+            .filter((x): x is string => !!x && !seen.has(x)),
+        ),
+      ].slice(0, 50);
+      if (!paths.length) continue;
+      // Страница, изменённая несколькими версиями, — по последней.
+      for (const x of paths) seen.add(x);
+      const day = dayInTz(v.publishedAt, tz);
+      const b0 = addDays(day, -FINDING_THRESHOLDS.n11BeforeDays);
+      const b1 = addDays(day, -1);
+      const a0 = addDays(day, 1);
+      const rows = await p.$queryRawUnsafe<
+        Array<{
+          path: string;
+          bv: number | null;
+          bc: number | null;
+          av: number | null;
+          ac: number | null;
+        }>
+      >(
+        `SELECT "path",
+                sum("views") FILTER (WHERE "day" <= $5)::int AS bv,
+                sum("chatOpens") FILTER (WHERE "day" <= $5)::int AS bc,
+                sum("views") FILTER (WHERE "day" >= $6)::int AS av,
+                sum("chatOpens") FILTER (WHERE "day" >= $6)::int AS ac
+           FROM "sites"."assist_site_daily_pages"
+          WHERE "siteId" = $1 AND "accountId" = $2 AND "path" = ANY($3::text[])
+            AND "day" >= $4 AND "day" <= $7
+          GROUP BY "path"`,
+        siteId,
+        accountId,
+        paths,
+        b0,
+        b1,
+        a0,
+        toDay,
+      );
+      for (const r of rows) {
+        out.push({
+          page: r.path,
+          changedAt: day,
+          version: v.number,
+          before: { views: Number(r.bv ?? 0), chatOpens: Number(r.bc ?? 0) },
+          after: { views: Number(r.av ?? 0), chatOpens: Number(r.ac ?? 0) },
+        });
+      }
+    }
+    return out;
   }
 
   /** ≤ 5 замаскированных вопросов на находку N3 (вход модели, не UI). */
@@ -805,10 +1186,30 @@ export class WeeklyInsights {
       const f = d.finding as unknown as Finding;
       const from = dayInTz(d.doneAt as Date, tz);
       const to = addDays(from, FOLLOW_UP_DAYS - 1);
-      const after = metricFor(
-        f,
-        await this.inputs(accountId, siteId, tz, from, to),
-      );
+      // N1/N9 — по сырым просмотрам (7 дней, аудит P2-3): окно сверки —
+      // только доступная часть (фактические from/to и n пишутся в сверку);
+      // n ниже порога находки — «недостаточно данных», а не доля по горстке.
+      const visits = f.code === 'N1' || f.code === 'N9';
+      const winFrom = visits ? maxDay(from, rawFirstDay(now, tz)) : from;
+      let after: ReturnType<typeof metricFor> = null;
+      let reason: 'insufficient_data' | null = null;
+      if (winFrom <= to) {
+        after = metricFor(
+          f,
+          await this.inputs(accountId, siteId, tz, winFrom, to, { visits }),
+        );
+      }
+      const minN =
+        f.code === 'N1'
+          ? FINDING_THRESHOLDS.n1MinDialogs
+          : f.code === 'N9'
+            ? FINDING_THRESHOLDS.n9MinDialogs
+            : 0;
+      const afterN = after && 'n' in after ? after.n : null;
+      if (visits && (afterN === null || afterN < minN)) {
+        after = null;
+        reason = 'insufficient_data';
+      }
       const before =
         f.code === 'N8' || f.code === 'N2'
           ? { value: f.code === 'N2' ? f.n : f.value }
@@ -818,10 +1219,12 @@ export class WeeklyInsights {
         data: {
           followUp: {
             at: now.toISOString(),
-            from,
+            from: winFrom,
             to,
+            n: afterN,
             before,
             after,
+            reason,
             // Совпадение во времени, не доказательство (§5-тер.5).
             note: 'coincidence_not_proof',
           } as Prisma.InputJsonValue,

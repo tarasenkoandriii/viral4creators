@@ -5,17 +5,27 @@ import { errorMessage, isUnauthorized } from '../../services/projects-api';
 import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 
-/** Back link + title row used by every projects screen. */
+/**
+ * Back link + title row used by every projects screen.
+ *
+ * `titleUgc` (Ш6 (10)): заголовок — текст пользователя (название проекта,
+ * товара, манифеста). Пометка `data-assist-ugc` — на самом `<h1>`, а не
+ * на `<span>` внутри: обход «Админки» воркером берёт заголовок целиком
+ * (`browser-worker/src/page/collect.ts`), снимок исполнителя ищет
+ * заголовок-контекст по `h1…h4`.
+ */
 export function ScreenHeader({
   title,
   back,
   hint,
   action,
+  titleUgc = false,
 }: {
   title: ReactNode;
   back?: string;
   hint?: ReactNode;
   action?: ReactNode;
+  titleUgc?: boolean;
 }) {
   const { dict } = useI18n();
   return (
@@ -30,7 +40,12 @@ export function ScreenHeader({
             <ChevronLeft size={14} /> {dict.projectsShared.backLabel}
           </button>
         )}
-        <h1 className="text-xl font-bold tracking-tight truncate">{title}</h1>
+        <h1
+          className="text-xl font-bold tracking-tight truncate"
+          data-assist-ugc={titleUgc ? '' : undefined}
+        >
+          {title}
+        </h1>
         {hint && <p className="text-xs text-silver-400 mt-0.5">{hint}</p>}
       </div>
       {action && <div className="shrink-0 pt-1">{action}</div>}

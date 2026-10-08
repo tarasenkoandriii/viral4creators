@@ -307,7 +307,10 @@ const until = async (fn: () => Promise<boolean>, ms = 90_000) => {
       const job = await st.prisma.assistAdminCrawlJob.findUniqueOrThrow({
         where: { id: run.jobId },
       });
-      expect([job.status, job.note]).toEqual(['done', 'страниц: 2']);
+      // С захода 9 заметка дописывает итог индексации в знания «Админки»
+      // («; в базе «Админки»: версия K» или причину) — проверяем начало.
+      expect(job.status).toBe('done');
+      expect(job.note).toMatch(/^страниц: 2(;|$)/);
       const pages = await st.prisma.assistAdminPage.findMany({
         where: { siteId: s.siteId },
       });

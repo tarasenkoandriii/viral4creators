@@ -105,7 +105,9 @@ export function ManifestsListScreen() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <Palette size={14} className="shrink-0 text-accent" />
-                    <h3 className="truncate font-semibold">{m.title}</h3>
+                    <h3 className="truncate font-semibold" data-assist-ugc="">
+                      {m.title}
+                    </h3>
                     {m.kind === 'PERSONAL' && (
                       <Badge tone="accent">
                         {dict.personaGreeting.kindPersonalBadge}

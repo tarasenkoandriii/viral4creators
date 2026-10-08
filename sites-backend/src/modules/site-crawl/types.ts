@@ -69,7 +69,9 @@ export type SkipReason =
   | 'opted_out'
   | 'unverified_host'
   | 'not_https'
-  /** Текст рисуется скриптами (SPA): в Э1 не рендерим — ждём воркер QA. */
+  // `spa` — текст рисуется скриптами. С браузерным воркером (Ш3 (20)) такие
+  // страницы прогона `assist` рендерятся, а причина остаётся, если рендер не
+  // удался, не поставлен (воркер выключен, суточный лимит) или для QA.
   | 'spa';
 
 /** Опции IP-pinned запроса (net/pinned-fetch.ts). */
@@ -175,7 +177,68 @@ export interface CrawlRequest {
   excludePrefixes?: string[];
   /** Исключения «ровно этот URL» (без подстраниц). */
   excludeUrls?: string[];
+  /**
+   * Р-З10-10: хосты сайта, которые прогон НЕ трогает вовсе — ни robots, ни
+   * sitemap, ни страниц (ссылки на них — `skipped/excluded`). Хосты
+   * «Админки» (`site_hosts.assistRole = admin`) у прогонов `assist`
+   * добавляются сами (Р-З9-24).
+   */
+  excludeHosts?: string[];
   requestedByTelegramId?: bigint;
+}
+
+// ── Ш3 (20), Р-З10-20: рендер SPA браузерным воркером ───────────────────
+
+/**
+ * Запрос рендера страниц одного хоста. site-crawl очередь воркера не
+ * импортирует (правила графа `crawl-product-neutral`/`browser-jobs-zone`):
+ * порт реализует допущенный к очереди модуль и вешает его на
+ * `SiteCrawlService.spaRender` (как `VoiceMapService.onVersionBuilt`).
+ */
+export interface SpaRenderRequest {
+  accountId: string;
+  siteId: string;
+  hostId: string;
+  /** Имя хоста (обход — только https:443, замок задания = имя). */
+  host: string;
+  runId: string;
+  urls: string[];
+}
+
+export type SpaRenderTicket =
+  | { jobId: string }
+  /** Очередь сайта занята — попробовать на следующем тике. */
+  | { retry: true }
+  /** Не будет сегодня: воркер выключен, суточный лимит, хост, сбой. */
+  | { refused: 'disabled' | 'limit' | 'host' | 'error' };
+
+/** Страница рендера: `i` — номер адреса в запросе (адрес не от воркера). */
+export interface SpaRenderedPage {
+  i: number;
+  ok: boolean;
+  /** «Очищенный» HTML видимой страницы — вход того же `extractPage`. */
+  html: string | null;
+  /** Ссылки своего хоста (меню SPA рисуется скриптом). */
+  links: string[];
+}
+
+export type SpaRenderPoll =
+  /** `claimed` — воркер уже взял задание (идёт), иначе ждёт в очереди. */
+  | { status: 'waiting'; claimed?: boolean }
+  | { status: 'done'; pages: SpaRenderedPage[] }
+  | { status: 'failed' };
+
+export interface SpaRenderPort {
+  request(r: SpaRenderRequest): Promise<SpaRenderTicket>;
+  poll(accountId: string, jobId: string): Promise<SpaRenderPoll>;
+  cancel(accountId: string, jobId: string): Promise<void>;
+  /** Итог разобран — HTML в очереди больше не нужен (аудит P3 (6)). */
+  release(accountId: string, jobId: string): Promise<void>;
+  /**
+   * Воркер жив: heartbeat очереди свежее `staleMs` (аудит P3 (7)) — без
+   * него задание, которое никто не взял, не держит прогон 2 ч.
+   */
+  workerAlive(staleMs: number): Promise<boolean>;
 }
 
 export interface CrawlRunView {

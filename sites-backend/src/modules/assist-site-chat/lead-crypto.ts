@@ -5,13 +5,18 @@
  * `v1.<iv b64url>.<tag b64url>.<шифр b64url>`; связка с id лида (AAD) —
  * шифр одного лида нельзя подложить в другой.
  * Без ключа лид не принимается (а не пишется открытым текстом).
+ *
+ * №60 (Р-З10-12): ключ — из общей связки `common/secrets-keyring.ts`
+ * (текущий + прежние `ASSIST_SECRETS_KEYS_OLD`). Строка ключа `v1` —
+ * прежняя `v1.<iv>.<tag>.<шифр>` любым ключом (версию узнаёт расшифровка —
+ * Р-З10-25); лиды, записанные до №60, читаются как были.
  */
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import {
-  createCipheriv,
-  createDecipheriv,
-  createHmac,
-  randomBytes,
-} from 'crypto';
+  derivedKeys,
+  openWithKeys,
+  type DerivedKeys,
+} from '../../common/secrets-keyring';
 
 /** Метка производного ключа (не бренд: в DNS/HTML её никто не видит). */
 const LEAD_KEY_LABEL = 'assist-site-lead-fields-v1';
@@ -20,17 +25,22 @@ export type LeadFields = Partial<
   Record<'name' | 'phone' | 'email' | 'comment', string>
 >;
 
-export function leadKey(env: NodeJS.ProcessEnv = process.env): Buffer | null {
-  const secret = env.ASSIST_SECRETS_KEY?.trim();
-  if (!secret) return null;
-  return createHmac('sha256', secret).update(LEAD_KEY_LABEL).digest();
+/** Ключи полей лида всех версий; null — нет `ASSIST_SECRETS_KEY`. */
+export function leadKey(
+  env: NodeJS.ProcessEnv = process.env,
+): DerivedKeys | null {
+  return derivedKeys(env, LEAD_KEY_LABEL);
 }
 
 export function encryptLeadFields(
   fields: LeadFields,
   leadId: string,
-  key: Buffer,
+  keys: DerivedKeys,
 ): string {
+  return sealFields(fields, leadId, keys.currentKey);
+}
+
+function sealFields(fields: LeadFields, leadId: string, key: Buffer): string {
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', key, iv);
   c.setAAD(Buffer.from(leadId, 'utf8'));
@@ -48,6 +58,24 @@ export function encryptLeadFields(
 
 /** null — чужой ключ, порча или чужой лид (без исключения и без текста в лог). */
 export function decryptLeadFields(
+  blob: string,
+  leadId: string,
+  keys: DerivedKeys,
+): LeadFields | null {
+  return openLeadFields(blob, leadId, keys)?.value ?? null;
+}
+
+/** Как decrypt, но с версией ключа, которым открылось (ротация, №60). */
+export function openLeadFields(
+  blob: string,
+  leadId: string,
+  keys: DerivedKeys,
+): { value: LeadFields; version: string } | null {
+  if (typeof blob !== 'string') return null;
+  return openWithKeys(keys, blob, (body, key) => openFields(body, leadId, key));
+}
+
+function openFields(
   blob: string,
   leadId: string,
   key: Buffer,

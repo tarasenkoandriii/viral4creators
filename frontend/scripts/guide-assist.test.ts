@@ -10,7 +10,7 @@
  * обработчика элемента без пометки роняет тест.
  */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import ts from 'typescript';
 import {
   analyzeAssistMarks,
@@ -860,6 +860,245 @@ it('CSP мини-аппа (если появится) пропускает за�
     assert.ok(/frame-src[^;"]*assist-wa\./.test(sources));
     assert.ok(/script-src[^;"]*assist-wa\./.test(sources));
   }
+});
+
+// ── Ш6 (10): пользовательский текст TMA — `data-assist-ugc` ─────────
+
+/**
+ * Названия проектов, товаров, манифестов, ключей API, каналов,
+ * публикаций и ленты, заголовки аналогов с маркетплейсов — текст, который
+ * написал человек (или чужая площадка), а не интерфейс. Помеченный
+ * `data-assist-ugc` элемент снимок исполнителя «Админки» не берёт в
+ * кандидаты (`widget/src/act/snapshot.ts` `UGC`), а обход «Админки»
+ * воркером не кладёт в знания ни его текст (`DATA_ZONE`), ни заголовок,
+ * кнопку или ссылку, внутри которых он стоит (`collect.ts`, аудит
+ * захода 10) — инъекция через своё же название проекта не становится
+ * «фактом интерфейса». Пометка — на НЕинтерактивном держателе текста:
+ * на кнопке она исключила бы из снимка сам элемент управления.
+ *
+ * Заголовок экрана (`ScreenHeader`) — проп `titleUgc`: пометка на самом
+ * `<h1>`, а не на `<span>` внутри (аудит: span внутри h1 не скрывал
+ * заголовок от обхода).
+ */
+const UGC: Array<[string, string]> = [
+  ['src/features/projects/ProjectsListScreen.tsx', '{p.title}'],
+  [
+    'src/features/projects/ProjectScreen.tsx',
+    '{itemLabel(item, index, dict.projectFormat.itemFallback)}',
+  ],
+  ['src/features/projects/ItemScreen.tsx', '{project.title}'],
+  ['src/features/projects/ItemScreen.tsx', '{a.title}'],
+  [
+    'src/features/projects/CatalogBatchStartScreen.tsx',
+    '{itemLabel(item, index, dict.projectFormat.itemFallback)}',
+  ],
+  ['src/features/brand/ManifestsListScreen.tsx', '{m.title}'],
+  ['src/features/api-keys/ApiKeysScreen.tsx', '{key.name}'],
+  ['src/features/channels/ChannelsScreen.tsx', '{c.title}'],
+  ['src/features/generation/ShareVideoPanel.tsx', '{p.title}'],
+  ['src/features/generation/PublishPanel.tsx', '{r.title}'],
+  ['src/features/feed/FeedScreen.tsx', '{item.title}'],
+  ['src/features/feed/FeedScreen.tsx', '{item.productName}'],
+];
+
+/** Заголовки экранов с текстом пользователя: `<ScreenHeader title={…} titleUgc>`. */
+const UGC_HEADERS: Array<[string, string]> = [
+  ['src/features/projects/ProjectScreen.tsx', 'project.title'],
+  [
+    'src/features/projects/ItemScreen.tsx',
+    'itemLabel(item, index, dict.projectFormat.itemFallback)',
+  ],
+  ['src/features/brand/ManifestScreen.tsx', 'manifest.title'],
+];
+
+/** Теги, которые исполнитель нажимает/заполняет: на них UGC-пометки нет. */
+const UGC_FORBIDDEN_HOLDERS = new Set([
+  'a',
+  'button',
+  'Button',
+  'input',
+  'Input',
+  'select',
+  'Select',
+  'option',
+  'textarea',
+  'Textarea',
+  'label',
+  'summary',
+  'Card',
+]);
+
+/**
+ * Осознанное исключение (аудит захода 10): внешняя ссылка на аналог с
+ * маркетплейса — сама целиком чужой текст; помечена ссылка, и исполнитель
+ * её не видит — нажимать внешнюю ссылку на чужую площадку ему незачем.
+ */
+const UGC_INTERACTIVE_ALLOWED: Array<[string, string]> = [
+  ['src/features/projects/ItemScreen.tsx', 'a'],
+];
+const ugcInteractiveAllowed = (file: string, tag: string) =>
+  UGC_INTERACTIVE_ALLOWED.some(([f, t]) => f === file && t === tag);
+
+function parseTsx(file: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+}
+
+function jsxTagName(el: ts.JsxElement | ts.JsxSelfClosingElement): string {
+  return (
+    ts.isJsxElement(el) ? el.openingElement.tagName : el.tagName
+  ).getText();
+}
+
+function attrsOf(
+  el: ts.JsxElement | ts.JsxSelfClosingElement
+): ts.JsxAttributes {
+  return ts.isJsxElement(el) ? el.openingElement.attributes : el.attributes;
+}
+
+function attrOf(
+  el: ts.JsxElement | ts.JsxSelfClosingElement,
+  name: string
+): ts.JsxAttribute | undefined {
+  return attrsOf(el).properties.find(
+    (a): a is ts.JsxAttribute =>
+      ts.isJsxAttribute(a) && a.name.getText() === name
+  );
+}
+
+/** Держатели текста `needle` (дети-выражения JSX, не атрибуты). */
+function ugcHolders(file: string, needle: string): ts.JsxElement[] {
+  const sf = parseTsx(file);
+  const out: ts.JsxElement[] = [];
+  const visit = (n: ts.Node) => {
+    if (
+      ts.isJsxExpression(n) &&
+      n.getText() === needle &&
+      ts.isJsxElement(n.parent)
+    )
+      out.push(n.parent);
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+/** Ближайший JSX-предок (включая сам элемент) с пометкой UGC. */
+function ugcMarkedSelfOrAncestor(el: ts.Node): ts.JsxElement | null {
+  for (let n: ts.Node | undefined = el; n; n = n.parent) {
+    if (ts.isJsxElement(n) && attrOf(n, 'data-assist-ugc')) return n;
+  }
+  return null;
+}
+
+it('Ш6 (10): пользовательские тексты TMA — data-assist-ugc на неинтерактивном держателе', () => {
+  for (const [file, needle] of UGC) {
+    const holders = ugcHolders(file, needle);
+    assert.ok(holders.length > 0, `${file}: не найдено ${needle}`);
+    for (const h of holders) {
+      // Своя пометка у держателя; исключение — помеченная целиком
+      // ссылка-предок из UGC_INTERACTIVE_ALLOWED.
+      const marked = attrOf(h, 'data-assist-ugc')
+        ? h
+        : ugcMarkedSelfOrAncestor(h);
+      const tag = marked ? jsxTagName(marked) : jsxTagName(h);
+      assert.ok(
+        marked &&
+          (marked === h || ugcInteractiveAllowed(file, jsxTagName(marked))),
+        `${file}: «${needle}» (<${jsxTagName(h)}>) без data-assist-ugc`
+      );
+      assert.ok(
+        !UGC_FORBIDDEN_HOLDERS.has(tag) || ugcInteractiveAllowed(file, tag),
+        `${file}: data-assist-ugc на интерактивном <${tag}> — исполнитель его не увидит`
+      );
+    }
+  }
+});
+
+it('Ш6 (10): заголовок экрана с текстом пользователя — titleUgc, пометка на самом <h1>', () => {
+  for (const [file, expr] of UGC_HEADERS) {
+    const found: Array<ts.JsxElement | ts.JsxSelfClosingElement> = [];
+    const visit = (n: ts.Node) => {
+      if (
+        (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n)) &&
+        jsxTagName(n) === 'ScreenHeader'
+      ) {
+        const init = attrOf(n, 'title')?.initializer;
+        if (
+          init &&
+          ts.isJsxExpression(init) &&
+          init.expression?.getText() === expr
+        )
+          found.push(n);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(parseTsx(file));
+    assert.ok(found.length > 0, `${file}: нет <ScreenHeader title={${expr}}>`);
+    for (const el of found) {
+      const flag = attrOf(el, 'titleUgc');
+      assert.ok(
+        flag && !flag.initializer,
+        `${file}: <ScreenHeader title={${expr}}> без titleUgc`
+      );
+    }
+  }
+  // Сам заголовок: пометка на <h1>, и только по titleUgc.
+  let h1 = 0;
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxElement(n) && jsxTagName(n) === 'h1') {
+      const a = attrOf(n, 'data-assist-ugc');
+      assert.ok(a, 'ScreenHeader: <h1> без data-assist-ugc');
+      assert.ok(
+        /titleUgc/.test(a?.initializer?.getText() ?? ''),
+        'ScreenHeader: data-assist-ugc на <h1> не от titleUgc'
+      );
+      h1 += 1;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(parseTsx('src/features/projects/shared.tsx'));
+  assert.equal(h1, 1);
+});
+
+it('Ш6 (10): data-assist-ugc нигде в src не стоит на элементе управления', () => {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = `${dir}/${name}`;
+      if (p.endsWith('.tsx')) files.push(p);
+      else if (!/\.[a-z]+$/i.test(name)) walk(p);
+    }
+  };
+  walk('src');
+  let marks = 0;
+  for (const file of files) {
+    const visit = (n: ts.Node) => {
+      if (
+        (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+        n.attributes.properties.some(
+          (a) => ts.isJsxAttribute(a) && a.name.getText() === 'data-assist-ugc'
+        )
+      ) {
+        marks += 1;
+        const tag = n.tagName.getText();
+        assert.ok(
+          !UGC_FORBIDDEN_HOLDERS.has(tag) || ugcInteractiveAllowed(file, tag),
+          `${file}: data-assist-ugc на <${tag}>`
+        );
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(parseTsx(file));
+  }
+  // Шов не пуст: каждая точка списков — минимум одна пометка
+  // (заголовки экранов — одна пометка на <h1> в shared.tsx).
+  assert.ok(marks >= UGC.length, `пометок ${marks} < ${UGC.length}`);
 });
 
 console.log(`guide-assist: ${passed} ok`);

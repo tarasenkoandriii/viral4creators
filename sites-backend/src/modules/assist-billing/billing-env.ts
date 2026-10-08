@@ -9,10 +9,17 @@
  *  - Курсы USD → UAH / Stars — env (цены §7.1 — ориентир в USD, к оплате —
  *    гривна и Stars, §7.1 «по курсу»): владелец меняет без деплоя кода.
  *  - Ключ шифра recToken — производный от `ASSIST_SECRETS_KEY` (как ключ
- *    visitor-token виджета), без нового секрета.
+ *    visitor-token виджета), без нового секрета. №60 (Р-З10-12): ключи
+ *    всех версий общей связки (`common/secrets-keyring.ts`); строка ключа
+ *    — прежний формат token-crypto (версию узнаёт расшифровка, Р-З10-25).
  */
 
-import { createHmac } from 'crypto';
+import {
+  derivedKeys,
+  openWithKeys,
+  type DerivedKeys,
+} from '../../common/secrets-keyring';
+import { decryptToken, encryptToken } from '../../shared/token-crypto';
 import type { PaymentRates } from './plans';
 
 export const DEFAULT_UAH_PER_USD = 41.5;
@@ -95,13 +102,48 @@ export function billingReturnUrl(
   return `${base.replace(/#.*$/, '').replace(/\/+$/, '')}/#/billing`;
 }
 
-/** Ключ AES-256 для recToken (base64 32 байта) или null — нет ASSIST_SECRETS_KEY. */
+/**
+ * ТЕКУЩИЙ ключ AES-256 для recToken (base64 32 байта) или null — нет
+ * ASSIST_SECRETS_KEY. Шифровать/читать — `sealPaymentToken`/`openPaymentToken`
+ * (они знают и прежние версии ключа).
+ */
 export function paymentTokenKey(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const key = env.ASSIST_SECRETS_KEY?.trim();
-  if (!key) return null;
-  return createHmac('sha256', key).update(PAYMENT_TOKEN_LABEL).digest('base64');
+  return paymentTokenKeys(env)?.currentKey.toString('base64') ?? null;
+}
+
+/** Ключи recToken всех версий; null — нет ASSIST_SECRETS_KEY. */
+export function paymentTokenKeys(
+  env: NodeJS.ProcessEnv = process.env,
+): DerivedKeys | null {
+  return derivedKeys(env, PAYMENT_TOKEN_LABEL);
+}
+
+/** recToken → строка для `recTokenEnc` текущим ключом; null — ключа нет. */
+export function sealPaymentToken(
+  plain: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const keys = paymentTokenKeys(env);
+  if (!keys) return null;
+  return encryptToken(plain, keys.currentKey.toString('base64'));
+}
+
+/** `recTokenEnc` → recToken (любая версия ключа связки); null — не открылось. */
+export function openPaymentToken(
+  enc: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): { value: string; version: string } | null {
+  const keys = paymentTokenKeys(env);
+  if (!enc || !keys) return null;
+  return openWithKeys(keys, enc, (body, key) => {
+    try {
+      return decryptToken(body, key.toString('base64'));
+    } catch {
+      return null;
+    }
+  });
 }
 
 /** Документы (§3.1, §6.1, №49): версии — в коде, тексты — по ссылкам юриста. */

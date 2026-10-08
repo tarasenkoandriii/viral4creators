@@ -4,13 +4,28 @@
  * ключ полей лида (`leadKey`, ASSIST_SECRETS_KEY), AES-256-GCM; связка с id
  * передачи (AAD) — шифр одной передачи нельзя подложить в другую. Чистый
  * модуль: шифрует публичный приём, расшифровывает системная рассылка.
+ *
+ * №60 (Р-З10-12): ключи всех версий (`leadKey` — общая связка); строка
+ * — прежнего формата любым ключом (версию узнаёт расшифровка, Р-З10-25).
  */
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import {
+  openWithKeys,
+  type DerivedKeys,
+} from '../../../common/secrets-keyring';
 import type { WidgetIdentity } from '../../assist-site-chat/chat-types';
 
 const AAD_PREFIX = 'assist-handoff-identity:';
 
 export function encryptIdentity(
+  identity: WidgetIdentity,
+  handoffId: string,
+  keys: DerivedKeys,
+): string {
+  return sealIdentity(identity, handoffId, keys.currentKey);
+}
+
+function sealIdentity(
   identity: WidgetIdentity,
   handoffId: string,
   key: Buffer,
@@ -35,6 +50,26 @@ const str = (v: unknown): string | null =>
 
 /** null — чужой ключ, порча, чужая передача (без исключения и без текста в лог). */
 export function decryptIdentity(
+  blob: string,
+  handoffId: string,
+  keys: DerivedKeys,
+): WidgetIdentity | null {
+  return openHandoffIdentity(blob, handoffId, keys)?.value ?? null;
+}
+
+/** Как decrypt, но с версией ключа, которым открылось (ротация, №60). */
+export function openHandoffIdentity(
+  blob: string,
+  handoffId: string,
+  keys: DerivedKeys,
+): { value: WidgetIdentity; version: string } | null {
+  if (typeof blob !== 'string') return null;
+  return openWithKeys(keys, blob, (body, key) =>
+    openIdentity(body, handoffId, key),
+  );
+}
+
+function openIdentity(
   blob: string,
   handoffId: string,
   key: Buffer,

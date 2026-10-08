@@ -844,6 +844,59 @@ describeDb('site-credentials на реальной базе', () => {
     });
   });
 
+  describe('Ш2 (8), Р-З10-1: аренда `assist-admin` — тоже только с отметкой «тестовая»', () => {
+    const adminReq = (id: string) => ({
+      testAccountId: id,
+      product: 'assist-admin' as const,
+      hostId: f.verifiedHostId,
+      actor: 'browser-worker',
+      runRef: 'bjob:r1',
+    });
+
+    it('без отметки — 409 TEST_ACCOUNT_NOT_CONFIRMED, аренды нет, отказ в журнале; с отметкой — аренда', async () => {
+      const a = await account({
+        products: ['assist-admin'],
+        confirmedTestAccount: false,
+      });
+      await expect(
+        status(s.svc.lease(f.accountId, adminReq(a.id))),
+      ).resolves.toBe('TEST_ACCOUNT_NOT_CONFIRMED:not_confirmed');
+      await expect(
+        prisma.siteCredentialLease.count({ where: { testAccountId: a.id } }),
+      ).resolves.toBe(0);
+      const audit = await prisma.siteCredentialAudit.findMany({
+        where: { subjectId: a.id, action: 'lease' },
+      });
+      expect(audit.map((r) => [r.product, r.result])).toEqual([
+        ['assist-admin', 'denied:not_confirmed'],
+      ]);
+      const ok = await account({ products: ['assist-admin'] });
+      await expect(
+        status(s.svc.lease(f.accountId, adminReq(ok.id))),
+      ).resolves.toBe('ok');
+    });
+
+    it('отметку сняли между арендой и погашением — секрет `assist-admin` не выдаётся (409)', async () => {
+      const a = await account({ products: ['assist-admin'] });
+      const lease = await s.svc.lease(f.accountId, adminReq(a.id));
+      await s.svc.update(
+        f.accountId,
+        f.siteId,
+        a.id,
+        { confirmedTestAccount: false },
+        actor(),
+      );
+      await expect(
+        status(s.svc.redeem(f.accountId, lease.leaseId, 'browser-worker')),
+      ).resolves.toBe('TEST_ACCOUNT_NOT_CONFIRMED:not_confirmed');
+      const last = await prisma.siteCredentialAudit.findFirst({
+        where: { subjectId: a.id, action: 'redeem' },
+        orderBy: { seq: 'desc' },
+      });
+      expect(last?.result).toBe('denied:not_confirmed');
+    });
+  });
+
   describe('Ш2-хвост (7): forgetOwn — удаление учётки, заведённой этим черновиком', () => {
     const gen = () => `generator:${f.telegramId}`;
     async function draftAccount(clientRef: string, by = gen()) {

@@ -147,6 +147,7 @@ export interface AiDialogsPage {
 }
 
 export const FINDING_CODES = [
+  'N1',
   'N2',
   'N3',
   'N4',
@@ -154,7 +155,9 @@ export const FINDING_CODES = [
   'N6',
   'N7',
   'N8',
+  'N9',
   'N10',
+  'N11',
 ] as const;
 export type FindingCode = (typeof FINDING_CODES)[number];
 
@@ -172,6 +175,10 @@ export interface FindingView {
   metric: 'lcp' | 'inp' | 'cls' | null;
   value: number | null;
   trigger: string | null;
+  /** N9 (заход 10): кампания UTM. */
+  campaign: string | null;
+  /** N11 (заход 10): день изменения страницы (YYYY-MM-DD). */
+  changedAt: string | null;
 }
 
 export interface InsightView {
@@ -186,6 +193,8 @@ export interface InsightView {
   followUp: {
     before: { share?: number; value?: number | null };
     after: { share?: number; value?: number } | null;
+    /** Заход 10 (аудит P2-3): сверка N1/N9 без достаточных данных. */
+    reason: 'insufficient_data' | null;
   } | null;
   feedback: 1 | -1 | null;
 }

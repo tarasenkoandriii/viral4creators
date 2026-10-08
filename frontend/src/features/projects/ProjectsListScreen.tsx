@@ -71,7 +71,9 @@ export function ProjectsListScreen() {
                     ) : (
                       <Package size={14} className="shrink-0 text-accent" />
                     )}
-                    <h3 className="truncate font-semibold">{p.title}</h3>
+                    <h3 className="truncate font-semibold" data-assist-ugc="">
+                      {p.title}
+                    </h3>
                   </div>
                   <p className="mt-0.5 text-xs text-silver-400">
                     {p.countryCode} · {p.currency}

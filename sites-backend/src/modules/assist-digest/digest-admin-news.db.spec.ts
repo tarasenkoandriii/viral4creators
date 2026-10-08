@@ -87,6 +87,14 @@ describeDb(
           updatedBy: 'tg:1',
         },
       });
+      // Тексты ниже — русские: получатели с русским Telegram (Р-З9-7).
+      for (const tg of [s.ownerTelegramId, adminOwner.telegramId]) {
+        await st.owner.assistBotUser.upsert({
+          where: { telegramId: tg },
+          create: { telegramId: tg, languageCode: 'ru' },
+          update: { languageCode: 'ru' },
+        });
+      }
       sent.length = 0;
       const r = await digest.run(tuesday, { siteIds: [s.siteId] });
       expect(r.sent).toBe(2);

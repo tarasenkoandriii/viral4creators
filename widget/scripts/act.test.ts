@@ -147,6 +147,67 @@ async function main() {
     assert.equal(h.marks.at(-1), false, 'план кончился — флаг снят');
   }
 
+  // ── №91 (заход 10): вторая линия «никогда» перед каждым событием нажатия ──
+  // Наведение подменяет цель («Видалити замовлення»), сайт удаляет уже на
+  // `pointerdown`: ни `pointerdown`, ни `mousedown`, ни клика — отказ `danger`.
+  // То же в «Админке» — и её правила («Скасувати»), и попытка мастера.
+  for (const mode of ['site', 'site-down', 'admin'] as const) {
+    const { btn } = page();
+    const h = mkHost();
+    const api = (mode === 'admin' ? adminStart : start)(h.host);
+    if (mode === 'admin') {
+      // Сессия мастера (регистратор попыток): обёртки формы/XHR — заглушки.
+      const g = globalThis as Record<string, unknown>;
+      g.HTMLFormElement ??= class {
+        submit() {}
+      };
+      g.XMLHttpRequest ??= class {
+        open() {}
+        send() {}
+      };
+      api.on({ type: 'vt-arm', work: false });
+    }
+    api.on({ type: 'ui-snap', rid: 'abcdefgh12', deny: [], allow: [] });
+    const swapAt = mode === 'site-down' ? 'pointerdown' : 'mouseover';
+    const swapTo = mode === 'admin' ? 'Скасувати' : 'Видалити замовлення';
+    btn.dispatchEvent = (e: { type: string }) => {
+      btn.events.push(e.type);
+      if (e.type === swapAt) btn.innerText = swapTo;
+      return true;
+    };
+    api.on({
+      type: 'ui-run',
+      planId: 'n91',
+      steps: [RAW()],
+      from: 0,
+      lang: 'uk',
+    });
+    await wait(80);
+    api.on({ type: 'ui-ack', planId: 'n91', index: 0 });
+    await wait(300);
+    const step = h.posts.filter((p) => p.type === 'ui-step').at(-1);
+    assert.deepEqual(
+      [step?.result, step?.reason],
+      ['failed', 'danger'],
+      `№91 ${mode}: отказ второй линией`
+    );
+    assert.equal(btn.clicks, 0, `№91 ${mode}: клика нет`);
+    const sent = btn.events.filter((x) => !x.endsWith('()'));
+    assert.deepEqual(
+      sent,
+      mode === 'site-down'
+        ? ['pointerover', 'pointerenter', 'mouseover', 'pointerdown']
+        : ['pointerover', 'pointerenter', 'mouseover'],
+      `№91 ${mode}: после подмены — ни одного события нажатия`
+    );
+    if (mode === 'admin')
+      assert.equal(
+        h.posts.filter((p) => p.type === 'ui-attempt').length,
+        1,
+        '№91 admin: попытка по цели «никогда» — регистратор мастера'
+      );
+  }
+
   // ── гонка: новый план останавливает старый, флаг «план идёт» остаётся ──
   {
     const { btn, doc } = page();
@@ -259,9 +320,11 @@ async function main() {
     doc.body.appendChild(a);
     doc.body.appendChild(b);
     mem.length = 0;
-    const act = (
-      r as unknown as { _act: (s: UiStep, el: Element) => boolean }
-    )._act.bind(r);
+    // Заход 10 (№91): `_act` → null (сделано) или причина отказа.
+    const act = (s: UiStep, el: Element) =>
+      (
+        r as unknown as { _act: (s: UiStep, el: Element) => string | null }
+      )._act(s, el) === null;
     assert.equal(
       act(
         STEP({
@@ -458,9 +521,11 @@ async function main() {
       _allow: [],
     };
     const r = new Runner(rh, 'k1', [], 0, 'uk');
-    const act = (
-      r as unknown as { _act: (s: UiStep, el: Element) => boolean }
-    )._act.bind(r);
+    // Заход 10 (№91): `_act` → null (сделано) или причина отказа.
+    const act = (s: UiStep, el: Element) =>
+      (
+        r as unknown as { _act: (s: UiStep, el: Element) => string | null }
+      )._act(s, el) === null;
     const txt = new FakeInput('text');
     txt.name = 'city';
     txt.setAttribute('id', 'c1');

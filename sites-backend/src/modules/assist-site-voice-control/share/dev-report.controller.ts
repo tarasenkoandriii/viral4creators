@@ -11,6 +11,10 @@
  */
 import { Controller, Get, HttpCode, Param, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
+import {
+  sendReportHtml,
+  setReportPageHeaders,
+} from '../../../common/report-page';
 import { PublicRoute } from '../../telegram-auth/allow-apps.decorator';
 import {
   DEV_REPORT_CSP,
@@ -20,15 +24,10 @@ import {
 } from './dev-report';
 import { VoiceDevReportService } from './dev-report.service';
 
+/** Ответ страницы: общие заголовки отчёта (`common/report-page`) + HTML. */
 function send(res: Response, status: number, html: string): void {
-  res.status(status);
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Content-Security-Policy', DEV_REPORT_CSP);
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.send(html);
+  setReportPageHeaders(res, DEV_REPORT_CSP);
+  sendReportHtml(res, status, html);
 }
 
 @Controller('w/v1/vc-report')

@@ -25,6 +25,7 @@ import {
   widgetIpSecret,
   widgetOrigin,
   widgetTokenKey,
+  widgetTokenKeys,
 } from '../../config/widget-env';
 import { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { hashIpWithDailySalt } from '../../shared/assist-chat-core';
@@ -294,9 +295,10 @@ export class WidgetSessionService {
     now?: Date;
   }): Promise<VisitorContext> {
     const now = p.now ?? new Date();
-    const key = widgetTokenKey();
-    if (!key) throw widgetError('SESSION_REQUIRED');
-    const check = inspectVisitorToken(p.token, key, now);
+    // №60: проверка — текущим и прежними ключами связки ASSIST_SECRETS_KEY.
+    const keys = widgetTokenKeys();
+    if (!keys) throw widgetError('SESSION_REQUIRED');
+    const check = inspectVisitorToken(p.token, keys, now);
     if (check.status === 'invalid') throw widgetError('SESSION_REQUIRED');
     if (check.status === 'expired') throw widgetError('SESSION_EXPIRED');
     const t = check.payload;

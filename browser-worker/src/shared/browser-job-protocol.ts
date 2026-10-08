@@ -43,6 +43,10 @@ export const BROWSER_JOB_KINDS = [
   // Ш3-хвост (3): раунд исследователя обучалки (переход, ≤ 1 клик или вход
   // учёткой реестра, кадр и элементы) — вместо Chromium в функции.
   'tutorial-explore',
+  // Ш3 (20), Р-З10-20: рендер SPA-страниц для знаний «Сайта» — публичная
+  // страница в чистом контексте (без cookie, без кликов), «очищенный» HTML
+  // основного текста; разбирает его тот же извлекатель, что обход.
+  'knowledge-render',
 ] as const;
 export type BrowserJobKind = (typeof BROWSER_JOB_KINDS)[number];
 
@@ -111,6 +115,21 @@ export const WORKER_LIMITS = {
   fillSealedChars: 8_000,
   /** Шагов переигровки (`MAX_SCENARIO_STEPS` генератора). */
   replaySteps: 30,
+  // ── «Снимок»: раскрывашки (Ш3 (5), Р-З10-21) ──
+  /** Раскрывашек (меню, вкладки, аккордеоны) за «Снимок». */
+  snapshotToggles: 5,
+  /** Элементов в состоянии раскрывашки — только НОВЫЕ против основного снимка. */
+  stateElements: 40,
+  // ── knowledge-render (Ш3 (20), Р-З10-20) ──
+  /** Страниц за задание (≤ 50 страниц/сайт/сутки — лимит источника). */
+  renderPages: 4,
+  /**
+   * «Очищенный» HTML страницы, символов. Кириллица — до 2 байт в UTF-8:
+   * 4 × 28 000 × 2 + ссылки укладываются в `resultBytes`.
+   */
+  renderHtmlChars: 28_000,
+  /** Ссылок своего хоста со страницы (обход по ним идёт дальше). */
+  renderLinks: 80,
 } as const;
 
 /** Потолок времени исполнения задания (стена), мс. */
@@ -123,6 +142,8 @@ export const JOB_WALL_MS: Readonly<Record<BrowserJobKind, number>> = {
   // воркера — потолок под переигровку. Обычный раунд генератор ждёт меньше
   // и по своему сроку отменяет идущее задание (heartbeat «отменить»).
   'tutorial-explore': 130_000,
+  // До 4 страниц: переход (≤ 25 с) + ожидание данных SPA (≤ 8 с) каждая.
+  'knowledge-render': 150_000,
 };
 
 /**
@@ -183,6 +204,24 @@ export interface UiSnapshotParams {
   screenshot: boolean;
   /** Элементы в форме общей карты Ш4 (`ingestUiSnapshot`). */
   mapElements: boolean;
+  /**
+   * Ш3 (5), Р-З10-21: сколько раскрывашек нажать (0…`snapshotToggles`) —
+   * только по стоп-листу, каждая — отдельное состояние снимка. Поле
+   * необязательное: без него — 0 (параметры старых заданий как прежде).
+   */
+  toggles?: number;
+}
+
+/**
+ * Ш3 (20), Р-З10-20: публичные страницы, которые обход нашёл пустой
+ * оболочкой SPA (`skipReason = spa`), — в браузер воркера: чистый контекст,
+ * без cookie, кликов и форм; результат — «очищенный» HTML (видимое,
+ * без скриптов и атрибутов) и ссылки своего хоста.
+ */
+export interface KnowledgeRenderParams {
+  urls: string[];
+  allowedHosts: string[];
+  viewport: BrowserViewport;
 }
 
 export interface DescriptorResolveParams {
@@ -274,7 +313,8 @@ export type BrowserJobParams =
   | DescriptorResolveParams
   | AdminCrawlParams
   | FramesCaptureParams
-  | TutorialExploreParams;
+  | TutorialExploreParams
+  | KnowledgeRenderParams;
 
 // ── результаты ────────────────────────────────────────────────────────────
 
@@ -325,6 +365,16 @@ export interface WorkerMapElement {
   selector: string | null;
 }
 
+/**
+ * Состояние «Снимка» после раскрывашки (Ш3 (5)): её подпись, элементы,
+ * которых не было в основном снимке, и скриншот видимой области.
+ */
+export interface WorkerSnapshotState {
+  label: string;
+  elements: WorkerSnapElement[];
+  screenshot: number | null;
+}
+
 export interface UiSnapshotResult {
   finalUrl: string;
   snapshot: WorkerSnapshot;
@@ -333,6 +383,8 @@ export interface UiSnapshotResult {
   screenshot: number | null;
   viewport: { width: number; height: number };
   blockedRequests: number;
+  /** Состояния раскрывашек — только если их просили (`params.toggles`). */
+  states?: WorkerSnapshotState[];
 }
 
 export interface DescriptorResolveResult {
@@ -414,12 +466,26 @@ export interface TutorialExploreResult {
   } | null;
 }
 
+/** Страница рендера: номер адреса в `params.urls`, HTML и ссылки — при `ok`. */
+export interface KnowledgeRenderPage {
+  i: number;
+  ok: boolean;
+  error: WorkerErrorCode | null;
+  html: string | null;
+  links: string[];
+}
+
+export interface KnowledgeRenderResult {
+  pages: KnowledgeRenderPage[];
+}
+
 export type BrowserJobResult =
   | UiSnapshotResult
   | DescriptorResolveResult
   | AdminCrawlResult
   | FramesCaptureResult
-  | TutorialExploreResult;
+  | TutorialExploreResult
+  | KnowledgeRenderResult;
 
 // ── разбор ────────────────────────────────────────────────────────────────
 
@@ -602,11 +668,14 @@ export function parseJobParams(
   if (!isObj(raw)) throw new ProtocolError('params');
   switch (kind) {
     case 'ui-snapshot': {
-      exactKeys(
-        raw,
-        ['url', 'allowedHosts', 'viewport', 'screenshot', 'mapElements'],
-        'params',
-      );
+      const keys = [
+        'url',
+        'allowedHosts',
+        'viewport',
+        'screenshot',
+        'mapElements',
+      ];
+      exactKeys(raw, 'toggles' in raw ? [...keys, 'toggles'] : keys, 'params');
       const allowedHosts = hostsOf(raw.allowedHosts);
       if (
         typeof raw.screenshot !== 'boolean' ||
@@ -614,13 +683,40 @@ export function parseJobParams(
       ) {
         throw new ProtocolError('params.flags');
       }
-      return {
+      const out: UiSnapshotParams = {
         url: lockedUrl(raw.url, allowedHosts),
         allowedHosts,
         viewport: viewportOf(raw.viewport),
         screenshot: raw.screenshot,
         mapElements: raw.mapElements,
       };
+      if ('toggles' in raw) {
+        out.toggles = intIn(
+          raw.toggles,
+          0,
+          WORKER_LIMITS.snapshotToggles,
+          'params.toggles',
+        );
+      }
+      return out;
+    }
+    case 'knowledge-render': {
+      exactKeys(raw, ['urls', 'allowedHosts', 'viewport'], 'params');
+      const allowedHosts = hostsOf(raw.allowedHosts);
+      // Замок — ровно один хост: страницы одного хоста сайта.
+      if (allowedHosts.length !== 1) throw new ProtocolError('allowedHosts');
+      if (
+        !Array.isArray(raw.urls) ||
+        raw.urls.length === 0 ||
+        raw.urls.length > WORKER_LIMITS.renderPages
+      ) {
+        throw new ProtocolError('params.urls');
+      }
+      const urls = raw.urls.map((u) => lockedUrl(u, allowedHosts));
+      if (new Set(urls).size !== urls.length) {
+        throw new ProtocolError('params.urls');
+      }
+      return { urls, allowedHosts, viewport: viewportOf(raw.viewport) };
     }
     case 'descriptor-resolve': {
       exactKeys(
@@ -926,9 +1022,50 @@ export function isBrowserJobKind(v: unknown): v is BrowserJobKind {
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g;
 
+/**
+ * Аудит пакета Д, P2-2: одиночный суррогат UTF-16 (обрезка строки по
+ * символам в браузере режет пару) — Postgres не принимает такой JSON
+ * (P2007), и задание навсегда оставалось «сдано, пишется». Заменяется на
+ * U+FFFD — в `text()`/`multiline()` и во всём результате (`wellFormed`).
+ */
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+export function wellFormedText(v: string): string {
+  return v.replace(LONE_SURROGATE, '\uFFFD');
+}
+
+/** Все строки значения (ключи тоже) — без одиночных суррогатов. */
+export function wellFormed<T>(v: T): T {
+  if (typeof v === 'string') return wellFormedText(v) as T;
+  if (Array.isArray(v)) return v.map((x) => wellFormed(x)) as T;
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v))
+      out[wellFormedText(k)] = wellFormed(x);
+    return out as T;
+  }
+  return v;
+}
+
 function text(v: unknown, max: number, field: string): string {
   if (typeof v !== 'string' || v.length > max) throw new ProtocolError(field);
-  return v.replace(CONTROL, ' ');
+  return wellFormedText(v.replace(CONTROL, ' '));
+}
+
+/**
+ * Ш3 (21), Р-З10-9: многострочный текст страницы — перевод строки
+ * сохраняется (строки интерфейса «Админки» и абзацы — разные блоки
+ * индекса), `\r\n`/`\r` → `\n`; прочие управляющие (табуляция тоже),
+ * C1 и невидимые/двунаправленные символы — пробел, как у `text()`.
+ */
+// eslint-disable-next-line no-control-regex
+const CONTROL_ML =
+  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+export function multiline(v: unknown, max: number, field: string): string {
+  if (typeof v !== 'string' || v.length > max) throw new ProtocolError(field);
+  return wellFormedText(v.replace(/\r\n?/g, '\n').replace(CONTROL_ML, ' '));
 }
 
 function textOrNull(v: unknown, max: number, field: string): string | null {
@@ -1111,6 +1248,86 @@ function artifactRef(v: unknown, field: string): number {
   return intIn(v, 0, WORKER_LIMITS.artifactsPerJob - 1, field);
 }
 
+/** Состояния раскрывашек «Снимка»: не больше, чем просили. */
+function statesOf(raw: unknown, max: number): WorkerSnapshotState[] {
+  if (!Array.isArray(raw) || raw.length > max) {
+    throw new ProtocolError('result.states');
+  }
+  return raw.map((s, i) => {
+    const f = `result.states.${i}`;
+    if (!isObj(s)) throw new ProtocolError(f);
+    exactKeys(s, ['label', 'elements', 'screenshot'], f);
+    if (
+      !Array.isArray(s.elements) ||
+      s.elements.length > WORKER_LIMITS.stateElements
+    ) {
+      throw new ProtocolError(`${f}.elements`);
+    }
+    return {
+      label: text(s.label, WORKER_LIMITS.textChars, `${f}.label`),
+      elements: s.elements.map(snapElement),
+      screenshot:
+        s.screenshot === null
+          ? null
+          : artifactRef(s.screenshot, `${f}.screenshot`),
+    };
+  });
+}
+
+/**
+ * Результат рендера (Ш3 (20)): страница — номер адреса из параметров (не
+ * адрес от воркера), каждый номер — не больше раза; HTML — многострочный
+ * текст в пределах лимита, ссылки — только хост замка.
+ */
+function renderResult(
+  p: KnowledgeRenderParams,
+  raw: Record<string, unknown>,
+): KnowledgeRenderResult {
+  exactKeys(raw, ['pages'], 'result');
+  if (!Array.isArray(raw.pages) || raw.pages.length > p.urls.length) {
+    throw new ProtocolError('result.pages');
+  }
+  const seen = new Set<number>();
+  return {
+    pages: raw.pages.map((pg, k) => {
+      const f = `result.pages.${k}`;
+      if (!isObj(pg)) throw new ProtocolError(f);
+      exactKeys(pg, ['i', 'ok', 'error', 'html', 'links'], f);
+      const i = intIn(pg.i, 0, p.urls.length - 1, `${f}.i`);
+      if (seen.has(i)) throw new ProtocolError(`${f}.i`);
+      seen.add(i);
+      const ok = bool(pg.ok, `${f}.ok`);
+      if (ok ? pg.error !== null : !isWorkerErrorCode(pg.error)) {
+        throw new ProtocolError(`${f}.error`);
+      }
+      if (ok ? typeof pg.html !== 'string' : pg.html !== null) {
+        throw new ProtocolError(`${f}.html`);
+      }
+      if (
+        !Array.isArray(pg.links) ||
+        pg.links.length > (ok ? WORKER_LIMITS.renderLinks : 0)
+      ) {
+        throw new ProtocolError(`${f}.links`);
+      }
+      return {
+        i,
+        ok,
+        error: pg.error as WorkerErrorCode | null,
+        html: ok
+          ? multiline(pg.html, WORKER_LIMITS.renderHtmlChars, `${f}.html`)
+          : null,
+        links: pg.links.map((l, j) => {
+          try {
+            return lockedUrl(l, p.allowedHosts);
+          } catch {
+            throw new ProtocolError(`${f}.links.${j}`);
+          }
+        }),
+      };
+    }),
+  };
+}
+
 /**
  * Строгий разбор результата по виду и параметрам задания: адреса — только
  * хосты замка, лимиты — те же, что у воркера. Сервер зовёт это ДО записи
@@ -1121,25 +1338,43 @@ export function parseJobResult(
   params: BrowserJobParams,
   raw: unknown,
 ): BrowserJobResult {
+  // Строки, которые разбор берёт как есть (опции, селекторы), — тоже.
+  return wellFormed(parseJobResultRaw(kind, params, raw));
+}
+
+function parseJobResultRaw(
+  kind: BrowserJobKind,
+  params: BrowserJobParams,
+  raw: unknown,
+): BrowserJobResult {
   if (!isObj(raw)) throw new ProtocolError('result');
   const hosts = (params as { allowedHosts: string[] }).allowedHosts;
   switch (kind) {
     case 'ui-snapshot': {
-      exactKeys(
-        raw,
-        [
-          'finalUrl',
-          'snapshot',
-          'mapElements',
-          'screenshot',
-          'viewport',
-          'blockedRequests',
-        ],
-        'result',
-      );
+      const keys = [
+        'finalUrl',
+        'snapshot',
+        'mapElements',
+        'screenshot',
+        'viewport',
+        'blockedRequests',
+      ];
+      exactKeys(raw, 'states' in raw ? [...keys, 'states'] : keys, 'result');
       if (!isObj(raw.viewport)) throw new ProtocolError('result.viewport');
       exactKeys(raw.viewport, ['width', 'height'], 'result.viewport');
+      const states =
+        'states' in raw
+          ? statesOf(raw.states, (params as UiSnapshotParams).toggles ?? 0)
+          : undefined;
+      const shots = [
+        raw.screenshot,
+        ...(states ?? []).map((s) => s.screenshot),
+      ].filter((x) => x !== null);
+      if (new Set(shots).size !== shots.length) {
+        throw new ProtocolError('result.states.screenshot');
+      }
       return {
+        ...(states ? { states } : {}),
         finalUrl: resultUrl(raw.finalUrl, hosts, 'result.finalUrl'),
         snapshot: snapshotOf(raw.snapshot, hosts),
         mapElements: mapElementsOf(raw.mapElements),
@@ -1223,7 +1458,7 @@ export function parseJobResult(
           return {
             url: resultUrl(pg.url, hosts, `${f}.url`),
             title: text(pg.title, WORKER_LIMITS.titleChars, `${f}.title`),
-            text: text(pg.text, WORKER_LIMITS.pageTextChars, `${f}.text`),
+            text: multiline(pg.text, WORKER_LIMITS.pageTextChars, `${f}.text`),
           };
         }),
         refusedClicks: intIn(raw.refusedClicks, 0, 1e6, 'result.refusedClicks'),
@@ -1232,6 +1467,8 @@ export function parseJobResult(
     }
     case 'tutorial-explore':
       return exploreResult(params as TutorialExploreParams, raw);
+    case 'knowledge-render':
+      return renderResult(params as KnowledgeRenderParams, raw);
     case 'frames-capture': {
       exactKeys(raw, ['finalUrl', 'frames'], 'result');
       const p = params as FramesCaptureParams;

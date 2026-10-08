@@ -58,7 +58,7 @@
  */
 import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
-import { voiceTicketKey } from '../../../config/voice-env';
+import { voiceTicketKeys } from '../../../config/voice-env';
 import {
   readVoiceControlPlatform,
   readWidgetRelease,
@@ -449,12 +449,16 @@ export class SiteUiPlanService {
     // §5-бис.6 п.1: команда — только из речи (билет) или набора в iframe.
     let source: 'voice' | 'typed';
     if (body.source === 'voice') {
-      const ok = verifyVoiceTicket(voiceTicketKey(this.env), body.voiceTicket, {
-        siteId: site.siteId,
-        visitorId: visitor.visitorId,
-        text,
-        now,
-      });
+      const ok = verifyVoiceTicket(
+        voiceTicketKeys(this.env),
+        body.voiceTicket,
+        {
+          siteId: site.siteId,
+          visitorId: visitor.visitorId,
+          text,
+          now,
+        },
+      );
       if (!ok) return fail('bad_request');
       source = 'voice';
     } else if (body.source === 'typed') {
@@ -1324,7 +1328,7 @@ export class SiteUiPlanService {
       const text = cleanUtterance(body.text) ?? '';
       const ok =
         !!text &&
-        verifyVoiceTicket(voiceTicketKey(this.env), body.voiceTicket, {
+        verifyVoiceTicket(voiceTicketKeys(this.env), body.voiceTicket, {
           siteId: ctx.site.siteId,
           visitorId: ctx.visitor.visitorId,
           text,

@@ -252,7 +252,9 @@ export function ApiKeysScreen() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{key.name}</div>
+                  <div className="truncate font-medium" data-assist-ugc="">
+                    {key.name}
+                  </div>
                   {/* Открытая часть — это ВЕСЬ видимый ключ, без точек:
                       «v4c_abcd••••» намекало бы, что остальное где-то
                       есть и его можно показать. */}

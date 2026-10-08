@@ -99,6 +99,9 @@ describeDb(
           password: PASSWORD,
           hostIds: [f.verifiedHostId],
           products: products as never,
+          // Ш2 (8), Р-З10-1: аренда `assist-admin` — только отмеченной
+          // «тестовой» учётке (`CONFIRMED_ONLY_PRODUCTS`).
+          confirmedTestAccount: true,
         },
         actor(),
       );

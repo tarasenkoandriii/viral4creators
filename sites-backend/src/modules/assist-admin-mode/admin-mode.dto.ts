@@ -76,6 +76,35 @@ export class PatchAdminModeDto {
   @IsOptional()
   @IsBoolean()
   testKeyConnectors?: boolean;
+
+  /** Р-З10-16 (Ш6 (7)): «админка» — Telegram Mini App (Telegram Web предком). */
+  @IsOptional()
+  @IsBoolean()
+  adminTmaFrame?: boolean;
+
+  /**
+   * Р-З10-15 (Ш6 (4)): подпись кнопки на странице админки (`data-label`);
+   * null/'' — подпись по умолчанию. Строгая проверка — `cleanWidgetLabel`.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  widgetLabel?: string | null;
+
+  /** №57: разметка диалогов сотрудников ИИ (§5-тер.13). */
+  @IsOptional()
+  @IsBoolean()
+  analyticsLabeling?: boolean;
+
+  /** №57: минуты на тип задачи — «≈ N часов сэкономлено». */
+  @IsOptional()
+  @IsObject()
+  analyticsTaskMinutes?: Record<string, number>;
+
+  /** №57: еженедельный отчёт «Админки» владельцам в Telegram. */
+  @IsOptional()
+  @IsBoolean()
+  weeklyReport?: boolean;
 }
 
 export class CreateConnectorDto {

@@ -41,6 +41,11 @@ export const ENTRIES = [
   // SSRF-защита: проверка файла/меты владения (QA §5.1) и обход (Э1).
   { from: 'backend/src/common/external-url-guard.ts', to: 'external-url-guard.ts' },
   { from: 'backend/src/common/external-url-guard.spec.ts', to: 'external-url-guard.spec.ts' },
+  // Адрес клиента за прокси (П-С1 захода 10, Р-З10-4): на Vercel — первый
+  // XFF, вне Vercel — только от прокси из `TRUSTED_PROXY_CIDRS`, справа
+  // налево. Вынесен из backend `rate-limit.ts` (тот реэкспортирует).
+  { from: 'backend/src/common/client-ip.ts', to: 'client-ip.ts' },
+  { from: 'backend/src/common/client-ip.spec.ts', to: 'client-ip.spec.ts' },
   // Сравнение Origin со списком CORS, включая `*.vercel.app` (main.ts).
   { from: 'backend/src/common/cors-origin-match.ts', to: 'cors-origin-match.ts' },
   // Диагностика сбоя связи с Postgres без утечки пароля (PrismaService).

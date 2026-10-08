@@ -27,6 +27,8 @@ export interface SitesConfig {
   editorWidgetOrigin?: string;
   /** Ошибка: dev-заглушка Gemini включена в production (dev-ai-env.ts). */
   devFakeGeminiProblem?: string | null;
+  /** Предупреждение: прод вне Vercel без TRUSTED_PROXY_CIDRS (П-С1). */
+  clientIpProblem?: string | null;
 }
 
 export function loadConfiguration(
@@ -51,7 +53,35 @@ export function loadConfiguration(
     adminWidgetOrigin: adminWidgetOrigin(env),
     editorWidgetOrigin: editorWidgetOrigin(env),
     devFakeGeminiProblem: devFakeGeminiProblem(env),
+    clientIpProblem: clientIpEnvProblem(env),
   };
+}
+
+/**
+ * П-С1 (заход 10): production вне Vercel без `TRUSTED_PROXY_CIDRS` —
+ * `clientIp` берёт адрес сокета; за обратным прокси это адрес прокси, и
+ * все лимиты по адресу становятся общими для всех посетителей. Подделки
+ * адреса здесь нет (XFF не читается), поэтому это громкое предупреждение
+ * на старте, а не отказ: признак Vercel (`VERCEL`) — системная переменная,
+ * которую в настройках проекта можно скрыть, и отказ уронил бы прод.
+ * Сервис без прокси перед собой — `TRUSTED_PROXY_CIDRS=none` (любая
+ * не-подсеть = «прокси нет»): решение явное, предупреждения нет.
+ */
+export function clientIpEnvProblem(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (env.NODE_ENV !== 'production') return null;
+  if (env.VERCEL?.trim() || env.TRUSTED_PROXY_CIDRS?.trim()) return null;
+  return (
+    'TRUSTED_PROXY_CIDRS не задан, а VERCEL нет: адрес клиента — адрес соединения; ' +
+    'за прокси (Traefik/nginx) задайте его подсети, без прокси — TRUSTED_PROXY_CIDRS=none ' +
+    '(doc/DEPLOYMENT.md, sites-backend)'
+  );
+}
+
+/** Предупреждения конфигурации: старт не падает, но пишет в журнал ошибок. */
+export function configurationWarnings(config: SitesConfig): string[] {
+  return config.clientIpProblem ? [config.clientIpProblem] : [];
 }
 
 function splitList(raw: string | undefined): string[] {

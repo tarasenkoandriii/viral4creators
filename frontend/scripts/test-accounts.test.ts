@@ -6,12 +6,18 @@ import assert from 'node:assert/strict';
 import {
   emptyTestAccountForm,
   formFromAccount,
+  productLabel,
   roleHintKey,
   statusTone,
   testAccountPayload,
   toggle,
 } from '../src/lib/test-accounts';
 import type { SiteTestAccount } from '../src/types/test-accounts';
+import ru from '../src/dictionaries/ru.json';
+import uk from '../src/dictionaries/uk.json';
+import en from '../src/dictionaries/en.json';
+import de from '../src/dictionaries/de.json';
+import es from '../src/dictionaries/es.json';
 
 /** Тело запроса или провал теста (сужение типа для tsc). */
 function payloadOf(r: ReturnType<typeof testAccountPayload>) {
@@ -100,6 +106,56 @@ it('мелочи: переключение, тон статуса, подска�
   assert.equal(statusTone('expired'), 'danger');
   assert.equal(roleHintKey('admin'), 'admin');
   assert.equal(roleHintKey('Супер-юзер'), null);
+});
+
+it('Ш3 (12): продукт assist-admin — подписью во всех пяти словарях, не кодом', () => {
+  for (const [loc, d] of Object.entries({ ru, uk, en, de, es })) {
+    const t = d.clientSiteTestAccounts;
+    const label = productLabel('assist-admin', t);
+    assert.ok(label.trim(), `${loc}: пустая подпись assist-admin`);
+    assert.notEqual(label, 'assist-admin', `${loc}: сырой код продукта`);
+    assert.equal(productLabel('tutorial', t), t.productTutorial);
+    assert.equal(productLabel('qa', t), t.productQa);
+    // Три подписи различимы — иначе в карточке не понять, что разрешено.
+    assert.equal(
+      new Set([t.productTutorial, t.productQa, t.productAssistAdmin]).size,
+      3,
+      `${loc}: подписи продуктов совпадают`
+    );
+  }
+  assert.equal(
+    account.products
+      .map((p) => productLabel(p, ru.clientSiteTestAccounts))
+      .join(', '),
+    'Обучалка, QA-проверки, Помощник: обход Админки'
+  );
+  // Неизвестный будущий продукт — кодом, а не пропавшей строкой.
+  assert.equal(productLabel('voice', ru.clientSiteTestAccounts), 'voice');
+});
+
+it('P3-3: учётка только с assist-admin сохраняется — скрытый продукт считается, в запрос не уходит', () => {
+  const f = formFromAccount({ ...account, products: ['assist-admin'] });
+  assert.deepEqual(f.products, []);
+  assert.deepEqual(f.otherProducts, ['assist-admin']);
+  const p = payloadOf(testAccountPayload(f, { isNew: false }));
+  assert.deepEqual(p.products, []);
+  // Сняли видимые — тоже можно, если остался скрытый.
+  const mixed = formFromAccount(account);
+  assert.deepEqual(mixed.otherProducts, ['assist-admin']);
+  assert.deepEqual(
+    payloadOf(testAccountPayload({ ...mixed, products: [] }, { isNew: false }))
+      .products,
+    []
+  );
+  // Без скрытых — по-прежнему «хотя бы один продукт».
+  assert.deepEqual(
+    testAccountPayload(
+      { ...formFromAccount({ ...account, products: ['qa'] }), products: [] },
+      { isNew: false }
+    ),
+    { error: 'productRequired' }
+  );
+  assert.deepEqual(emptyTestAccountForm(null).otherProducts, []);
 });
 
 console.log(`test-accounts: ${passed} ok`);

@@ -24,7 +24,7 @@ import { widgetIpSecret } from '../../../config/widget-env';
 import { AssistPublicDb } from '../../../prisma/assist-public-db.service';
 import { ASSIST_PLANS, type AssistPlanId } from '../../assist-billing/plans';
 import { readState } from '../../assist-billing/public/entitlements';
-import { refSecret } from '../ai/ai-env';
+import { refSecret, refSecrets } from '../ai/ai-env';
 import { effectiveAnalyticsConfig } from '../analytics-config';
 import { armOf, VISIT_KEY_RE } from '../exp/experiment-math';
 import { pathMatchesMask } from '../goal-types';
@@ -154,16 +154,19 @@ export function verifyRef(
 ): string | null {
   if (typeof ref !== 'string' || ref.length > 120) return null;
   const m = /^r1\.(\d{9,11})\.([0-9a-f]{32})\.([A-Za-z0-9_-]{24})$/.exec(ref);
-  const secret = refSecret(env);
-  if (!m || !secret) return null;
+  // №60: проверка — текущим и прежними ключами связки (ref живёт 2 суток).
+  const secrets = refSecrets(env);
+  if (!m || !secrets.length) return null;
   if (Number(m[1]) * 1000 < now.getTime()) return null;
-  const want = createHmac('sha256', secret)
-    .update(`${siteId}.${m[1]}.${m[2]}`)
-    .digest()
-    .subarray(0, 18);
   const got = Buffer.from(m[3], 'base64url');
-  if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
-  return m[2];
+  const signed = secrets.some((secret) => {
+    const want = createHmac('sha256', secret)
+      .update(`${siteId}.${m[1]}.${m[2]}`)
+      .digest()
+      .subarray(0, 18);
+    return got.length === want.length && timingSafeEqual(got, want);
+  });
+  return signed ? m[2] : null;
 }
 
 export function validVisitKey(v: unknown): v is string {

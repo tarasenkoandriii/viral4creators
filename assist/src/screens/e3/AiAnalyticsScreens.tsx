@@ -497,6 +497,11 @@ function InsightCard({ siteId, i }: { siteId: string; i: InsightView }) {
           {skipped && <div className="text-xs text-silver-500">{skipped}</div>}
         </>
       )}
+      {cur.followUp &&
+        !cur.followUp.after &&
+        cur.followUp.reason === 'insufficient_data' && (
+          <div className="text-xs text-silver-500">{t.followUpNoData}</div>
+        )}
       {cur.followUp?.after && (
         <div className="text-xs text-silver-500">
           {fmt(t.followUp, {

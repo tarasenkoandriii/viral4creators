@@ -31,6 +31,7 @@ describe('GET /cron/assist-admin-embed-run', () => {
       versionsCreated: 1,
       budgetExhausted: false,
     }));
+    const run = jest.fn(async () => ({ throttled: true }));
     const c = new AssistAdminEmbedRunController(
       {} as never,
       {
@@ -39,6 +40,7 @@ describe('GET /cron/assist-admin-embed-run', () => {
         }),
       } as never,
       { tick } as never,
+      { run } as never,
     );
     await expect(c.run('Bearer bad')).rejects.toBeInstanceOf(
       UnauthorizedException,
@@ -50,6 +52,37 @@ describe('GET /cron/assist-admin-embed-run', () => {
       ran: true,
       filesError: 'Error',
       index: { versionsCreated: 1 },
+      analytics: { throttled: true },
+    });
+    // Заход 10 (Р-З10-13): аналитика «Админки» — в этом же кроне, со своим
+    // сроком тика (не меньше 10 с, не больше 25 с).
+    expect(run).toHaveBeenCalledTimes(1);
+    const [, deadline] = run.mock.calls[0] as unknown as [Date, number];
+    expect(deadline - Date.now()).toBeGreaterThan(5_000);
+    expect(deadline - Date.now()).toBeLessThanOrEqual(25_000);
+  });
+
+  it('заход 10: сбой аналитики «Админки» не роняет индексацию', async () => {
+    const tick = jest.fn(async () => ({
+      sitesTouched: 0,
+      versionsCreated: 2,
+      budgetExhausted: false,
+    }));
+    const c = new AssistAdminEmbedRunController(
+      {} as never,
+      { processPendingFiles: jest.fn(async () => ({ processed: 0 })) } as never,
+      { tick } as never,
+      {
+        run: jest.fn(async () => {
+          throw new Error('boom');
+        }),
+      } as never,
+    );
+    const r = await c.run('Bearer sec');
+    expect(r).toMatchObject({
+      ran: true,
+      index: { versionsCreated: 2 },
+      analytics: null,
     });
   });
 });

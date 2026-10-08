@@ -10,7 +10,10 @@
  *   POST  /assist/sites/:id/voice-control/site/tests/:tid/dev-link  (заход 9)
  *         одноразовая ссылка «отчёт для разработчика» → GET/POST
  *         /w/v1/vc-report/:token (share/dev-report.controller.ts)
- *   (Т-3 `…/autotest` — с общим QA-воркером, отложен.)
+ *   Т-3 (№29, заход 10) — по расписанию монитора Т-4 раз в сутки
+ *   (`system/voice-monitor-autotest.ts`), отдельного маршрута нет: отчёты
+ *   вида `autotest` приходят в `…/tests` и `…/tests/:tid` рядом с отчётами
+ *   мастера (годность для `on` даёт только отчёт мастера).
  * Права: @AllowApps('assist'), SiteAccountGuard, productRoles.assist =
  * manager (владелец или менеджер кабинета, §5-бис.2; оператор — 403).
  * «Админка» — свой маршрут `…/admin-mode/voice-control` (Э6-бис (б)).

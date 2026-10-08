@@ -57,10 +57,12 @@ export function validateAdminEnv(
 // мобильных клиентах Telegram мини-апп — страница верхнего уровня, но в
 // Telegram Web (web.telegram.org/k, /a) он сам живёт в iframe, а
 // `frame-ancestors` проверяется по ВСЕМ предкам: без origin Telegram Web
-// окно помощника там не откроется. Добавляется только сайтам из списка
-// `ASSIST_ADMIN_TMA_SITE_IDS` и только вместе с их verified-хостами
-// админки — чужая страница внутри Telegram Web (её origin тоже предок)
-// встроить чат сотрудника по-прежнему не может.
+// окно помощника там не откроется. Добавляется только сайтам с флагом
+// «админка — Telegram Mini App» (`assist_admin_settings.adminTmaFrame`,
+// кабинет «Админки»; заход 10, Р-З10-16) или из списка env
+// `ASSIST_ADMIN_TMA_SITE_IDS` (OR, до удаления env) — и только вместе с их
+// verified-хостами админки: чужая страница внутри Telegram Web (её origin
+// тоже предок) встроить чат сотрудника по-прежнему не может.
 
 /** Origin-ы веб-клиентов Telegram (все версии — на одном домене). */
 export const TELEGRAM_WEB_ORIGINS: readonly string[] = [
@@ -81,14 +83,18 @@ export function adminTmaSiteIds(
 
 /**
  * Предки окна сотрудника сверх verified-хостов админки: Telegram Web —
- * только сайту из списка и только если свои хосты уже есть (пустой список
- * хостов остаётся `'none'`).
+ * только сайту с флагом `adminTmaFrame` или из списка env (Р-З10-16: env —
+ * OR до удаления) и только если свои хосты уже есть (пустой список хостов
+ * остаётся `'none'`).
  */
 export function extraAdminAncestors(
   siteId: string,
   hostAncestors: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
+  siteFlag = false,
 ): string[] {
   if (hostAncestors.length === 0) return [];
-  return adminTmaSiteIds(env).has(siteId) ? [...TELEGRAM_WEB_ORIGINS] : [];
+  return siteFlag === true || adminTmaSiteIds(env).has(siteId)
+    ? [...TELEGRAM_WEB_ORIGINS]
+    : [];
 }

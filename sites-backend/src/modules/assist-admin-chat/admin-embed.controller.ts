@@ -43,6 +43,7 @@ import {
   AdminSessionService,
   sessionTokenHash,
 } from './admin-session.service';
+import { clientIp } from '../telegram-auth/web/web-request';
 
 const HEADER = ADMIN_SESSION_HEADER.toLowerCase();
 
@@ -74,7 +75,11 @@ export class AdminEmbedController {
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
   session(@Body() dto: AdminSessionDto, @Req() req: Request) {
-    return this.sessions.exchange(dto.pk, dto.jwt, req.ip ?? null);
+    // Адрес — по общему правилу (`clientIp`: на Vercel — первый из
+    // X-Forwarded-For, иначе — только от доверенного прокси). `req.ip` без
+    // `trust proxy` — адрес прокси Vercel, и окно лимита `admin-session-ip-min`
+    // было бы общим для всех (аудит пакета Б, заход 10).
+    return this.sessions.exchange(dto.pk, dto.jwt, clientIp(req) || null);
   }
 
   @Get('state')

@@ -18,6 +18,7 @@ import {
 } from '../../lib/voice-api';
 import { NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
+import { SamplePlayer } from './sample-player';
 
 export function VoiceSection({
   siteId,
@@ -48,13 +49,22 @@ function VoiceForm({
   const [cfg, setCfg] = useState<VoiceConfig>(initial.config);
   const [busy, setBusy] = useState<'save' | 'listen' | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const audioUrl = useRef<string | null>(null);
-  useEffect(
-    () => () => {
-      if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
-    },
-    []
-  );
+  // Р-З10-3 (в): один элемент звука на раздел (sample-player.ts) —
+  // создаётся в эффекте (StrictMode пересоздаст), при уходе с экрана звук
+  // гаснет и URL отзывается.
+  const player = useRef<SamplePlayer | null>(null);
+  useEffect(() => {
+    const p = new SamplePlayer({
+      createAudio: () => new Audio(),
+      createUrl: (b) => URL.createObjectURL(b),
+      revokeUrl: (u) => URL.revokeObjectURL(u),
+    });
+    player.current = p;
+    return () => {
+      p.dispose();
+      if (player.current === p) player.current = null;
+    };
+  }, []);
   const fail = (e: unknown) => {
     const code = voiceErrorCode(e);
     setNotice({ tone: 'danger', text: code ? t.errors[code] : errText(e) });
@@ -74,15 +84,23 @@ function VoiceForm({
     }
   };
   const listen = async () => {
-    setBusy('listen');
+    const p = player.current;
+    if (!p) return;
+    const key = `${cfg.voiceId ?? ''}|${lang}`;
     setNotice(null);
+    // Пример уже в памяти (браузер отказал в прошлый раз или повтор) —
+    // play() синхронно в этом нажатии, без нового запроса.
+    if (p.has(key)) {
+      void p.replay().catch(fail);
+      return;
+    }
+    // До первого await: разблокировать звук в жесте пользователя.
+    p.prime();
+    setBusy('listen');
     try {
       const s = await voice.sample(siteId, cfg.voiceId, lang);
-      if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
-      audioUrl.current = URL.createObjectURL(
-        new Blob([s.bytes], { type: s.mime })
-      );
-      await new Audio(audioUrl.current).play();
+      // 'blocked' — пример сохранён, следующее нажатие проиграет его.
+      await p.load(key, new Blob([s.bytes], { type: s.mime }));
     } catch (e) {
       fail(e);
     } finally {

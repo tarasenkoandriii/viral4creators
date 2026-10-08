@@ -173,7 +173,13 @@ export class InternalCredentialsController {
       {
         testAccountId,
         clientRef: parseClientRef(o.clientRef),
-        input: parseTestAccountInput(o.account, { partial: true }),
+        // Пустой список продуктов — «снять обучалку/QA»: допустим, если у
+        // учётки остаются продукты, которых генератор не видит (проверка —
+        // в `upsert` после слияния).
+        input: parseTestAccountInput(o.account, {
+          partial: true,
+          allowEmptyProducts: true,
+        }),
       },
     );
   }

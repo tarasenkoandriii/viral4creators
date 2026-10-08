@@ -24,6 +24,7 @@ import {
   WIDGET_ORIGIN_DEFAULT,
   WIDGET_TOKEN_HMAC_LABEL,
 } from '../brand';
+import { derivedKeys, secretsKeyringProblems } from '../common/secrets-keyring';
 import { MICRO_USD, WIDGET_DEFAULTS } from './assist-defaults';
 
 /** Веб-клиенты Telegram, внутри которых TMA открыта во фрейме. */
@@ -91,11 +92,21 @@ function derived(env: NodeJS.ProcessEnv, label: string): Buffer | null {
   return createHmac('sha256', key).update(label).digest();
 }
 
-/** Ключ подписи visitor-token. */
+/** Ключ подписи visitor-token (текущий ключ связки, №60). */
 export function widgetTokenKey(
   env: NodeJS.ProcessEnv = process.env,
 ): Buffer | null {
-  return derived(env, WIDGET_TOKEN_HMAC_LABEL);
+  return derivedKeys(env, WIDGET_TOKEN_HMAC_LABEL)?.currentKey ?? null;
+}
+
+/**
+ * Ключи ПРОВЕРКИ visitor-token: текущий и прежние (`ASSIST_SECRETS_KEYS_OLD`,
+ * №60) — токены, выданные до ротации, живут свои 24 ч.
+ */
+export function widgetTokenKeys(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly Buffer[] | null {
+  return derivedKeys(env, WIDGET_TOKEN_HMAC_LABEL)?.all ?? null;
 }
 
 /** Секрет суточной соли ipHash виджета (поверх — соль сайта, §6.4). */
@@ -116,5 +127,6 @@ export function widgetEnvProblems(
   if (!env.ASSIST_SECRETS_KEY?.trim()) {
     out.push('ASSIST_SECRETS_KEY не задана — visitor-token не подписать');
   }
+  out.push(...secretsKeyringProblems(env));
   return out;
 }

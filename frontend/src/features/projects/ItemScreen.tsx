@@ -144,10 +144,11 @@ export function ItemScreen({
     <div className="animate-fadeIn">
       <ScreenHeader
         title={itemLabel(item, index, dict.projectFormat.itemFallback)}
+        titleUgc
         back={routes.project(projectId)}
         hint={
           <>
-            {project.title} ·{' '}
+            <span data-assist-ugc="">{project.title}</span> ·{' '}
             <span className="tabular">{project.currency}</span>
             {item.category && (
               <>
@@ -687,10 +688,15 @@ function AnalogsStep({
                 )}
               </div>
               <div className="min-w-0 flex-1 basis-40">
+                {/* Заголовок аналога — текст чужой площадки: пометка на
+                    самой ссылке (Ш6 (10)) — и снимок исполнителя, и обход
+                    воркером её пропускают; внешнюю ссылку на маркетплейс
+                    помощнику нажимать незачем. */}
                 <a
                   href={a.sourceUrl}
                   target="_blank"
                   rel="noreferrer"
+                  data-assist-ugc=""
                   className="inline-flex max-w-full items-center gap-1 text-sm hover:text-accent hover:underline"
                 >
                   <span className="truncate">{a.title}</span>

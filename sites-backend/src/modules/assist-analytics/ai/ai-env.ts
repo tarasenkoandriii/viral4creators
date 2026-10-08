@@ -13,6 +13,7 @@
  *    производный от `ASSIST_SECRETS_KEY`).
  */
 import { createHash } from 'crypto';
+import { parseSecretsKeyring } from '../../../common/secrets-keyring';
 import { estimateCost, rateFor } from '../../../shared/ai-pricing';
 
 export const DEFAULT_PLATFORM_DAILY_USD = 5;
@@ -45,9 +46,23 @@ export function platformDailyCapMicroUsd(
 
 /** Секрет подписи ref (§5-тер.1 «assistRef»): свой или производный. */
 export function refSecret(env: NodeJS.ProcessEnv = process.env): string | null {
+  return refSecrets(env)[0] ?? null;
+}
+
+/**
+ * Секреты ПРОВЕРКИ ref (живёт 2 суток): свой — один; производный — от
+ * всех версий связки ASSIST_SECRETS_KEY (№60), текущий первым.
+ */
+export function refSecrets(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly string[] {
   const own = (env.ASSIST_ANALYTICS_REF_SECRET ?? '').trim();
-  if (own.length >= 16) return own;
-  const base = (env.ASSIST_SECRETS_KEY ?? '').trim();
-  if (!base) return null;
-  return createHash('sha256').update(`assist-ref:${base}`).digest('hex');
+  if (own.length >= 16) return [own];
+  const { keyring } = parseSecretsKeyring(env);
+  if (!keyring) return [];
+  return keyring.versions.map((v) =>
+    createHash('sha256')
+      .update(`assist-ref:${keyring.secret(v) as string}`)
+      .digest('hex'),
+  );
 }

@@ -108,10 +108,18 @@ const ALLOWED = new Set([
 /**
  * `partial` — правка (все поля необязательны); иначе создание: нужны
  * `label`, хотя бы один хост и хотя бы один продукт.
+ * `allowEmptyProducts` (только с `partial`): пустой список продуктов
+ * пропускается — вызывающий сам проверяет «хотя бы один» ПОСЛЕ слияния с
+ * продуктами, которых он не видит (канал обучалки генератора: учётка
+ * только с `assist-admin`, аудит захода 10, P3-3).
  */
 export function parseTestAccountInput(
   body: unknown,
-  opts: { partial: boolean; allowedKeys?: ReadonlySet<string> },
+  opts: {
+    partial: boolean;
+    allowedKeys?: ReadonlySet<string>;
+    allowEmptyProducts?: boolean;
+  },
 ): TestAccountInput {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw badInput('ожидается объект учётной записи');
@@ -190,7 +198,7 @@ export function parseTestAccountInput(
     if (out.hostIds && out.hostIds.length === 0) {
       throw badInput('нужен хотя бы один хост');
     }
-    if (out.products && out.products.length === 0) {
+    if (out.products && out.products.length === 0 && !opts.allowEmptyProducts) {
       throw badInput('нужен хотя бы один продукт');
     }
   }

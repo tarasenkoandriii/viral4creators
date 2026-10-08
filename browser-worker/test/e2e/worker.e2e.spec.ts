@@ -167,6 +167,7 @@ const DASHBOARD = `<!doctype html><html><head><title>Адмінка</title></hea
 <nav><a href="/admin/orders">Замовлення</a><a href="/admin/settings">Налаштування</a>
 <a href="/logout">Вийти</a><a href="/admin/orders/5/delete">Прибрати замовлення 5</a>
 <a href="https://other.example/">Зовнішній</a></nav>
+<button aria-expanded="false" onclick="location.href='/admin/slow'">Фільтри</button>
 <button aria-expanded="false" onclick="document.getElementById('more').hidden=false;this.setAttribute('aria-expanded','true')">Меню</button>
 <div id="more" hidden><a href="/admin/reports">Звіти</a></div>
 <button aria-expanded="false" onclick="fetch('/hit/delete',{method:'POST'})">Видалити</button>
@@ -283,7 +284,18 @@ d('browser-worker e2e (настоящий Chromium)', () => {
         ADMIN,
         '/admin/reports',
         authed('<!doctype html><title>Звіти</title><h1>Звіти</h1>'),
-      );
+      )
+      // Аудит P1-1: раскрывашка уводит сюда, страница отвечает > 1 с.
+      .on(ADMIN, '/admin/slow', (q, res) => {
+        setTimeout(
+          () =>
+            authed('<!doctype html><title>Фільтри</title><h1>Фільтри</h1>')(
+              q,
+              res,
+            ),
+          1_200,
+        );
+      });
 
     const dns = new Map<string, string[]>([
       [SHOP, [PUBLIC_TEST_IP]],
@@ -486,6 +498,9 @@ d('browser-worker e2e (настоящий Chromium)', () => {
     };
     expect(r.loggedIn).toBe(true);
     expect(sessions).toBe(1);
+    // Аудит P1-1: раскрывашка «Фільтри» увела на медленную страницу —
+    // обход вернулся и продолжил (раскрыл «Меню» → «Звіти»), не упал.
+    expect(stand.hit('/admin/slow')).toBe(true);
     const urls = r.pages.map((p) => new URL(p.url).pathname);
     expect(urls).toEqual(
       expect.arrayContaining([
@@ -505,6 +520,12 @@ d('browser-worker e2e (настоящий Chromium)', () => {
     // Только знания об интерфейсе: шапки таблиц есть, ячейки — нет.
     const all = r.pages.map((p) => p.text).join('\n');
     expect(all).toContain('колонка: Клієнт');
+    // Ш3 (21), Р-З10-9: строки интерфейса доходят отдельными строками —
+    // перевод строки протокол больше не заменяет пробелом.
+    const dash = r.pages.find((p) => new URL(p.url).pathname === '/admin')!;
+    expect(dash.text.split('\n')).toEqual(
+      expect.arrayContaining(['# Панель керування', 'колонка: Клієнт']),
+    );
     expect(all).not.toMatch(/Іван Петренко|Олена Коваль|1200 грн/);
     // Учётка — один раз; пароль — ни в журнале, ни в результате.
     expect(sites.calls.filter((c) => c.endsWith('/credentials')).length).toBe(

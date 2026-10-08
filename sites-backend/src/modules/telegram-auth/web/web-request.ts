@@ -36,6 +36,7 @@ import {
   WEB_SESSION_COOKIE,
   parseTelegramApp,
 } from '../../../brand';
+import { clientIp as sharedClientIp } from '../../../shared/client-ip';
 import { parseCookieHeader } from '../../../shared/cookie.util';
 import { isDevAuthAllowed } from '../../../shared/dev-login';
 import type { HeaderBag } from '../authenticate';
@@ -192,17 +193,24 @@ export function sessionCookieOptions(
 }
 
 /**
- * Адрес клиента за прокси Vercel — первый элемент `x-forwarded-for`
- * (как backend `common/rate-limit.ts` `clientIp`). Через rewrite проекта
- * `assist` Vercel передаёт адрес посетителя тем же заголовком.
+ * Адрес клиента — общее правило backend (`shared/client-ip.ts`, копия
+ * `backend/src/common/client-ip.ts`; П-С1 захода 10, Р-З10-4):
+ *  - на Vercel (`VERCEL` задан платформой) — первый элемент
+ *    `x-forwarded-for`, как раньше (через rewrite проекта `assist` Vercel
+ *    передаёт адрес посетителя тем же заголовком);
+ *  - вне Vercel (Docker, локальный запуск) XFF читается, только если
+ *    соединение пришло от прокси из `TRUSTED_PROXY_CIDRS` (справа налево,
+ *    доверенные звенья пропускаются); иначе — адрес сокета. До захода 10
+ *    здесь безусловно брался первый XFF — клиент подставлял любой адрес и
+ *    получал новое окно каждого лимита по адресу.
  */
-export function clientIp(req: {
-  headers: HeaderBag;
-  ip?: string;
-  socket?: { remoteAddress?: string };
-}): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-  const candidate = first?.split(',')[0]?.trim();
-  return candidate || req.ip || req.socket?.remoteAddress || 'unknown';
+export function clientIp(
+  req: {
+    headers: HeaderBag;
+    ip?: string;
+    socket?: { remoteAddress?: string };
+  },
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return sharedClientIp(req, env);
 }

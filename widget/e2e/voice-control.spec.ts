@@ -599,6 +599,61 @@ test('аудит (§5-бис.6 п.5): элемент под ref подменён
   ).toBe(false);
 });
 
+test('№91 (заход 10): наведение подменило цель на «Видалити», сайт удаляет на pointerdown — ни pointerdown, ни mousedown, ни клика', async ({
+  page,
+}) => {
+  await polygon(page, {
+    marked: false,
+    model: {
+      'відкрий таблицю розмірів': [
+        { kind: 'click', find: { text: 'Таблиця розмірів' } },
+      ],
+    },
+  });
+  await command(page, 'відкрий таблицю розмірів');
+  await expect(page.locator('[data-v4c-highlight]')).toBeAttached({
+    timeout: 10_000,
+  });
+  // Сайт: при наведении кнопка становится «Видалити замовлення», а удаляет
+  // она уже на pointerdown/mousedown (до клика) — перехват страницы на
+  // window в фазе capture, повешенный РАНЬШЕ исполнителя.
+  await page.evaluate(() => {
+    const w = window as unknown as { __pressed: string[] };
+    w.__pressed = [];
+    const s = document.querySelector('#sizes summary') as HTMLElement;
+    s.addEventListener('mouseover', () => {
+      s.textContent = 'Видалити замовлення';
+    });
+    for (const t of [
+      'pointerdown',
+      'mousedown',
+      'pointerup',
+      'mouseup',
+      'click',
+    ])
+      window.addEventListener(
+        t,
+        (e) => {
+          if (e.target === s) w.__pressed.push(t);
+        },
+        true
+      );
+  });
+  await expect
+    .poll(async () => (await vcLog()).steps.slice(-1)[0], { timeout: 10_000 })
+    .toMatchObject({ result: 'failed', reason: 'danger' });
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __pressed: string[] }).__pressed
+    )
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => (document.querySelector('#sizes') as HTMLDetailsElement).open
+    )
+  ).toBe(false);
+});
+
 test('аудит: прозрачная кнопка (opacity 0 у неё или у предка) — не в снимке и не нажимается', async ({
   page,
 }) => {

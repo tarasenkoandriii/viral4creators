@@ -13,6 +13,9 @@
  *  - действие синтетическими событиями: pointer/mouse + `focus()` вызовом
  *    + нативный `click()`; поля — нативный сеттер прототипа + `input` и
  *    `change` (иначе React откатит значение, а Vue `v-model` не увидит);
+ *  - №91 (заход 10): вторая линия «никогда» — перед КАЖДЫМ событием нажатия
+ *    (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`) запреты
+ *    «никогда» по живой цели (`_never`); сработали — событие не уходит;
  *  - шаг с побочным эффектом (клик, поле, список, флажок; аудит Э6-бис —
  *    не только навигация): `dispatched` на сервер ДО действия, действие —
  *    только после подтверждения записи (`ui-ack`); после перезагрузки такой
@@ -159,6 +162,29 @@ const SERVER_STRIPS =
 /* eslint-enable no-control-regex */
 /** Подпись к сверке с целью сервера (он вычистил и обрезал до 80 с «…»). */
 const key = (s: string) => norm(s.replace(SERVER_STRIPS, '').replace(/…$/, ''));
+
+/** Слова цели для стоп-листа: живой текст, скрытая подпись, разметка. */
+export const wordsOf = (f: NonNullable<ReturnType<typeof factsOf>>) =>
+  [
+    f.text,
+    f.hiddenLabel || '',
+    (f.assistId || '').replace(/[-_.:]+/g, ' '),
+  ].join(' ');
+
+/**
+ * События нажатия по порядку браузера; с `pointerdown` (индекс 3) каждое —
+ * только после второй линии «никогда» (№91); последнее — нативный `click()`.
+ */
+const PRESS = [
+  'pointerover',
+  'pointerenter',
+  'mouseover',
+  'pointerdown',
+  'mousedown',
+  'pointerup',
+  'mouseup',
+  'click',
+];
 
 /**
  * Живой элемент по ref — ТОТ ЖЕ, что проверил сервер (§5-бис.6 п.5): роль,
@@ -463,12 +489,7 @@ export class Runner {
       !sameTarget(el, step.target)
     )
       return 'changed';
-    const words = [
-      f.text,
-      f.hiddenLabel || '',
-      (f.assistId || '').replace(/[-_.:]+/g, ' '),
-    ].join(' ');
-    if (neverTarget(words, f.assistId)) return 'danger';
+    if (neverTarget(wordsOf(f), f.assistId)) return 'danger';
     // Н-4: выбираемая опция списка — тот же стоп-лист («Скасувати
     // замовлення», «Видалити акаунт» в <select>).
     if (step.kind == 'select') {
@@ -488,28 +509,43 @@ export class Runner {
     return null;
   }
 
+  /**
+   * №91 (заход 10): вторая линия «никогда» по ЖИВОЙ цели прямо перед
+   * событием нажатия. Наведение или само нажатие могло подменить цель
+   * («Підписані» → «Відписатися» по `mouseover`), а сайт может удалять уже
+   * на `pointerdown`/`mousedown` — до нативного `click`. Только запреты
+   * «никогда»: denylist/зоны/наши корни/чувствительные поля (`excluded`) и
+   * стоп-лист слов; «подменили»/«недоступна» здесь не проверяются (спиннер
+   * на `mousedown` нажатие не срывает). Сработало — событие НЕ отправляется
+   * вовсе: перехват на `window` в фазе capture увидел бы его позже
+   * обработчика страницы, повешенного туда раньше. «Админка» дополняет
+   * своими правилами (admin-act).
+   */
+  _never(el: Element): string | null {
+    if (excluded(el, this._host._deny, this._host._allow)) return 'denied';
+    const f = factsOf(el);
+    return f && neverTarget(wordsOf(f), f.assistId) ? 'danger' : null;
+  }
+
   // ── действия ────────────────────────────────────────────────────────────
 
-  private _click(el: Element) {
+  /** Нажатие (pointer/mouse, `focus()`, нативный `click()`); null — нажато. */
+  private _press(el: Element): string | null {
     const c = this._host.N.click;
-    if (c && el instanceof HTMLElement) c.call(el);
-    else (el as HTMLElement).click();
+    for (let i = 0; i < 8; i++) {
+      const no = i > 2 ? this._never(el) : null;
+      if (no) return no;
+      if (i == 5 && el instanceof HTMLElement)
+        el.focus({ preventScroll: true });
+      if (i < 7) fire(el, PRESS[i], i == 1 ? { bubbles: false } : {});
+      else if (c && el instanceof HTMLElement) c.call(el);
+      else (el as HTMLElement).click();
+    }
+    return null;
   }
 
-  private _pointer(el: Element) {
-    for (const t of [
-      'pointerover',
-      'pointerenter',
-      'mouseover',
-      'pointerdown',
-      'mousedown',
-    ])
-      fire(el, t, t.indexOf('enter') > 0 ? { bubbles: false } : {});
-    if (el instanceof HTMLElement) el.focus({ preventScroll: true });
-    for (const t of ['pointerup', 'mouseup']) fire(el, t);
-  }
-
-  private _act(step: UiStep, el: Element): boolean {
+  /** null — сделано; иначе причина отказа (`action` или запрет «никогда»). */
+  private _act(step: UiStep, el: Element): string | null {
     const x = el as HTMLInputElement;
     let p: Prior | null = null;
     if (step.kind == 'fill' || step.kind == 'select' || step.kind == 'check') {
@@ -526,49 +562,45 @@ export class Runner {
         ])
       );
     }
-    const ok = this._go(step, el);
+    const bad = this._go(step, el);
     if (p) {
       p[7] = x.value;
       p[8] = x.checked ?? null;
     }
-    return ok;
+    return bad;
   }
 
-  private _go(step: UiStep, el: Element): boolean {
+  private _go(step: UiStep, el: Element): string | null {
     switch (step.kind) {
       case 'click':
-        this._pointer(el);
-        this._click(el);
-        return true;
+        return this._press(el);
       case 'check': {
         const f = factsOf(el);
-        if (f && f.checked === true) return true; // уже отмечено
-        this._pointer(el);
-        this._click(el);
-        return true;
+        // уже отмечено — нажимать нечего
+        return f && f.checked === true ? null : this._press(el);
       }
       case 'fill': {
         if (!(
           el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
         ))
-          return false;
+          return 'action';
         el.focus({ preventScroll: true });
         setNativeValue(el, step.value || '');
         fire(el, 'input', { data: step.value || '' });
         fire(el, 'change');
-        return true;
+        return null;
       }
       case 'select': {
         const o = optionOf(el, step.value);
-        if (!o || !(el instanceof HTMLSelectElement)) return false;
+        if (!o || !(el instanceof HTMLSelectElement)) return 'action';
         el.focus({ preventScroll: true });
         setNativeValue(el, o.value);
         fire(el, 'input');
         fire(el, 'change');
-        return true;
+        return null;
       }
       default:
-        return true;
+        return null;
     }
   }
 
@@ -760,8 +792,11 @@ export class Runner {
       }
       const before = norm(visibleText(el));
       this._unring();
-      if (!this._act(step, el)) {
-        rep('failed', 'action');
+      // `action` — действие не применилось; `danger`/`denied` — вторая
+      // линия «никогда» (№91) остановила нажатие до события.
+      const bad = this._act(step, el);
+      if (bad) {
+        rep('failed', bad);
         this._ringAt(el, caption);
         return this._finish(true);
       }

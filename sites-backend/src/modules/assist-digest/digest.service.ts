@@ -8,7 +8,10 @@
  * (assist_site_report_subscriptions); раздел «Админка» — только
  * assistAdmin: owner (У-27). По понедельникам (пояс сайта) — отчёт недели
  * вместо сводки (кнопка «Открыть статистику» — startapp `st_<siteId>`).
- * Сообщение — notify.ts (sendToMembers), по одному получателю.
+ * Сообщение — notify.ts (sendToMembers), по одному получателю, целиком на
+ * его языке (заход 10, Р-З10-14: язык — recipientsWithLang; рамка —
+ * report-text, выводы — текст модели на языке читателя `insightTextFor`,
+ * иначе сухая строка `dryFindingLine(f, lang)`).
  *
  * Уточнения A:
  *  - сайты — с опубликованным видом (widgetVersion > 0); сводка за вчера
@@ -37,7 +40,13 @@ import { SitesDb } from '../../prisma/sites-db.service';
 import { AdminDigestSource } from '../assist-admin-knowledge/admin-digest';
 import { effectiveAnalyticsConfig } from '../assist-analytics/analytics-config';
 import { sumConversions } from '../assist-analytics/exports.service';
-import { dryFindingLine, type Finding } from '../assist-analytics/ai/findings';
+import {
+  COINCIDENCE_NOTE,
+  dryFindingLine,
+  hasCoincidenceNote,
+  insightTextFor,
+  type Finding,
+} from '../assist-analytics/ai/findings';
 import { RUN_CODE } from '../assist-analytics/ai/insights.service';
 import {
   addDays,
@@ -48,9 +57,11 @@ import {
 } from '../assist-analytics/site-time';
 import { AnalyticsRollup } from '../assist-analytics/system/analytics-rollup.service';
 import {
+  recipientsWithLang,
   sendToMembers,
   type BotNotifyEnv,
   type FetchLike,
+  type NotifyLang,
 } from '../assist-knowledge-core/notify';
 import { LearningReadApi } from '../assist-site-learning/learning-read.service';
 import {
@@ -61,6 +72,7 @@ import {
 } from '../site-core/account/roles';
 import {
   dailyDigestText,
+  digestTexts,
   weeklyReportText,
   type SiteDigestFacts,
 } from './report-text';
@@ -252,7 +264,9 @@ export class AssistDigestService {
     const since = dayRangeUtc(from, tz).start;
 
     let learn = { newClusters: 0, goldenConflicts: 0 };
-    let findings: string[] = [];
+    // Находки — по языку читателя (заход 10): собираются один раз на язык.
+    let unanswered: Array<{ label: string; n: number }> = [];
+    let insights: Array<{ text: unknown; finding: Finding }> = [];
     if (this.learning) {
       try {
         const f = await this.learning.digestFacts({
@@ -272,14 +286,11 @@ export class AssistDigestService {
             to: dayRangeUtc(yesterday, tz).end,
             limit: 20,
           });
-          findings = topics
+          unanswered = topics
             .filter((t) => t.status === 'open' && t.distinctVisitors >= 3)
             .sort((a, b) => b.distinctVisitors - a.distinctVisitors)
             .slice(0, 2)
-            .map(
-              (t) =>
-                `Без ответа: «${t.label}» — спросили ${t.distinctVisitors} разных посетителей`,
-            );
+            .map((t) => ({ label: t.label, n: t.distinctVisitors }));
         }
       } catch (e) {
         this.logger.warn(
@@ -302,25 +313,35 @@ export class AssistDigestService {
         select: { impact: true, text: true, finding: true },
         take: 20,
       });
-      const lines = rows
+      insights = rows
         .sort((a, b) => (rank[a.impact] ?? 3) - (rank[b.impact] ?? 3))
-        .map((r) => {
-          const t = r.text as { title?: unknown; action?: unknown } | null;
-          return t &&
-            typeof t.title === 'string' &&
-            typeof t.action === 'string'
-            ? `${t.title} — ${t.action}`
-            : dryFindingLine(r.finding as unknown as Finding);
-        })
-        .filter((x) => x);
-      findings = [...lines, ...findings];
+        .map((r) => ({
+          text: r.text,
+          finding: r.finding as unknown as Finding,
+        }));
     }
     const missed = sum(cur, (d) => d.handoffsMissed);
-    if (weekly && missed > 0) {
-      findings.push(
-        `Пропущено передач человеку: ${missed} — проверьте рабочие часы и операторов`,
-      );
-    }
+    const findingsCache = new Map<NotifyLang, string[]>();
+    const findingsFor = (lang: NotifyLang): string[] => {
+      const hit = findingsCache.get(lang);
+      if (hit) return hit;
+      const t = digestTexts(lang);
+      const out = [
+        ...insights.map(({ text, finding }) => {
+          const own = insightTextFor(text, lang);
+          if (!own) return dryFindingLine(finding, lang);
+          const line = `${own.title} — ${own.action}`;
+          // N11 (§5-тер.5): оговорка «совпадение во времени» — и в отчёте.
+          return finding?.code === 'N11' && !hasCoincidenceNote(line)
+            ? `${line} ${COINCIDENCE_NOTE[lang]}`
+            : line;
+        }),
+        ...unanswered.map((u) => t.unanswered(u.label, u.n)),
+        ...(weekly && missed > 0 ? [t.missedHandoffs(missed)] : []),
+      ].filter((x) => x);
+      findingsCache.set(lang, out);
+      return out;
+    };
     const heldVersions = await this.prisma.assistSiteKnowledgeVersion.count({
       where: { siteId: s.siteId, status: 'held' },
     });
@@ -343,7 +364,7 @@ export class AssistDigestService {
       heldVersions,
       goldenConflicts: learn.goldenConflicts,
       alerts: yRow ? digestAlerts(yRow, base) : [],
-      findings: findings.slice(0, 3),
+      findings: [],
     };
     const empty =
       !facts.dialogs &&
@@ -377,6 +398,12 @@ export class AssistDigestService {
       select: { telegramId: true },
     });
     const unsubscribed = new Set(off.map((o) => o.telegramId.toString()));
+    // Язык каждого получателя (Р-З9-7): assist_bot_users, нет строки — uk.
+    const langOf = new Map(
+      (await recipientsWithLang(this.sitesDb, s.accountId, () => true)).map(
+        (r) => [r.chatId.toString(), r.lang],
+      ),
+    );
     let adminFacts: Awaited<ReturnType<AdminDigestSource['facts']>> | null =
       null;
     let sent = 0;
@@ -400,15 +427,17 @@ export class AssistDigestService {
         });
       }
       if (empty && !(adminFacts && adminNews(adminFacts))) continue;
+      const lang = langOf.get(mem.telegramId.toString()) ?? 'uk';
       const text = (weekly ? weeklyReportText : dailyDigestText)(
-        facts,
+        { ...facts, findings: findingsFor(lang).slice(0, 3) },
         seesAdmin ? adminFacts : null,
+        lang,
       );
       const n = await sendToMembers({
         chatIds: [mem.telegramId],
         text,
         button: {
-          text: 'Открыть статистику',
+          text: digestTexts(lang).button,
           hashPath: `/sites/${s.siteId}/stats`,
         },
         env: this.env,

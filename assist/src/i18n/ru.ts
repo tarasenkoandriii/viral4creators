@@ -2,6 +2,7 @@ import { billingRu } from './billing-ru';
 import { mediaRu } from './media-ru';
 import { verifyHostRu } from './verify-host-ru';
 import { voiceControlRu } from './voice-control-ru';
+import { adminModeRu } from './admin-mode-ru';
 import { setupRu } from './setup-ru';
 import { e3Ru } from './e3-ru';
 import { e3bRu } from './e3b-ru';
@@ -439,6 +440,8 @@ export const appRu = {
   verifyHost: verifyHostRu,
   /** Э6-бис: голосовое управление «Сайтом». */
   voiceControl: voiceControlRu,
+  /** Э7/Э8 «Админка» (заход 10, №63: перенесено из i18n/admin-mode.ts). */
+  adminMode: adminModeRu,
 };
 
 export type AppDictionary = typeof appRu;

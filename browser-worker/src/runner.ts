@@ -333,15 +333,21 @@ export class Runner {
         r.reason ??
         (e instanceof JobError
           ? e.code
-          : jb === null && browser === null
-            ? 'browser_crashed'
-            : /Target (page, context or browser )?closed|Browser closed|browser has disconnected/i.test(
-                  e instanceof Error ? e.message : '',
-                )
+          : // Сервер не принял результат (400 WORKER_BAD_RESULT: формат,
+            // потолок байтов) — повтор дал бы тот же результат: без повтора.
+            e instanceof ApiError &&
+              e.status === 400 &&
+              e.code === 'WORKER_BAD_RESULT'
+            ? 'too_large'
+            : jb === null && browser === null
               ? 'browser_crashed'
-              : e instanceof Error && e.name === 'ProtocolError'
-                ? 'too_large'
-                : 'internal');
+              : /Target (page, context or browser )?closed|Browser closed|browser has disconnected/i.test(
+                    e instanceof Error ? e.message : '',
+                  )
+                ? 'browser_crashed'
+                : e instanceof Error && e.name === 'ProtocolError'
+                  ? 'too_large'
+                  : 'internal');
       this.failed += 1;
       try {
         const res = await this.o.api.fail(job.id, job.leaseToken, code);

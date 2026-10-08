@@ -18,6 +18,7 @@
  * обрезания пробелов, что делает чат.
  */
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { hmacKeyList, type HmacKeys } from '../../../common/secrets-keyring';
 
 const TICKET = /^v1\.(\d{1,12})\.([A-Za-z0-9_-]{43})$/;
 
@@ -50,7 +51,7 @@ export function issueVoiceTicket(
 
 /** true — билет наш, этого посетителя этого сайта, на этот текст и не истёк. */
 export function verifyVoiceTicket(
-  key: Buffer | null,
+  key: HmacKeys | null,
   ticket: unknown,
   p: { siteId: string; visitorId: string; text: string; now: Date },
 ): boolean {
@@ -59,7 +60,10 @@ export function verifyVoiceTicket(
   if (!m) return false;
   const exp = Number(m[1]);
   if (exp * 1000 <= p.now.getTime()) return false;
-  const want = Buffer.from(sign(key, { ...p, exp }));
   const got = Buffer.from(m[2]);
-  return want.length === got.length && timingSafeEqual(want, got);
+  // №60: текущим и прежними ключами связки (`voiceTicketKeys`).
+  return hmacKeyList(key).some((k) => {
+    const want = Buffer.from(sign(k, { ...p, exp }));
+    return want.length === got.length && timingSafeEqual(want, got);
+  });
 }

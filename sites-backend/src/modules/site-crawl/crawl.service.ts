@@ -22,6 +22,19 @@
  * Только публичный обход: без cookie и сессии (У-9). Ничего не знает о
  * знаниях помощника: индексацию запускают сами конвейеры (K2), читая
  * завершённые прогоны и site_pages.
+ *
+ * Заход 10:
+ *  - `excludeHosts` (Р-З10-10): хосты, которых прогон не касается вовсе —
+ *    ни robots, ни sitemap, ни страниц; у прогонов `assist` хосты «Админки»
+ *    (`assistRole = admin`) исключаются сами (Р-З9-24);
+ *  - рендер SPA (Ш3 (20), Р-З10-20): страница-оболочка SPA прогона
+ *    `assist` при подключённом порте (`spaRender` — браузерный воркер)
+ *    ждёт рендера (строка очереди `render` → `rendering`), страница сайта
+ *    до итога не трогается; итог разбирает ТОТ ЖЕ `extractPage` и пишет
+ *    тот же `storePage` под арендой прогона (гонки с тиком нет), ссылки
+ *    отрисованного меню идут в обход. Не поставлен (воркер выключен,
+ *    суточный лимит), не удался, не дождались `RENDER_WAIT_MS` — прежний
+ *    `skipped/spa`. `done` прогона — после итогов рендера.
  */
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -31,6 +44,7 @@ import type {
   SiteHost,
 } from '@prisma/client';
 import { CRAWL_DEFAULTS } from '../../config/assist-defaults';
+import { PUBLIC_SITE_HOST } from '../site-core/ownership/host-roles';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { registrableDomain } from '../site-core/hosts/host-normalize';
@@ -40,6 +54,7 @@ import {
   evaluateHostAccess,
   HostPurpose,
 } from '../site-core/ownership/host-access';
+import { extractPage } from './extract/extractor';
 import { PublicPageFetcher } from './page-fetcher';
 import { RobotsService } from './robots';
 import { SitemapService } from './sitemap';
@@ -49,6 +64,9 @@ import type {
   CrawlTickResult,
   ExtractedPage,
   SkipReason,
+  SpaRenderPoll,
+  SpaRenderPort,
+  SpaRenderedPage,
 } from './types';
 import { hostOf, matchesExcluded, normalizeCrawlUrl } from './url';
 
@@ -59,6 +77,27 @@ interface RunOptions {
   urls?: string[];
   excludePrefixes?: string[];
   excludeUrls?: string[];
+  excludeHosts?: string[];
+}
+
+/** Ш3 (20): задание рендера, которого прогон ждёт. */
+interface RenderJobRef {
+  id: string;
+  /** Когда поставлено (ISO) — ждём не дольше `RENDER_WAIT_MS`. */
+  at: string;
+  urls: string[];
+}
+
+/** Ш3 (20): ход рендера SPA прогона (в `stats.render`). */
+export interface CrawlRenderStats {
+  jobs: RenderJobRef[];
+  requested: number;
+  rendered: number;
+  failed: number;
+  /** Почему остальные страницы не поставлены (воркер выключен, лимит). */
+  refused?: string;
+  /** Очередь сайта занята с этого момента (ISO) — ждём не дольше `RENDER_WAIT_MS`. */
+  busySince?: string;
 }
 
 /** Сводка прогона в `site_crawl_runs.stats` (форма — для экрана и K2). */
@@ -76,6 +115,9 @@ export interface CrawlRunStats {
   langs?: Record<string, number>;
   errors?: number;
   lastError?: string;
+  /** Р-З10-10: исключённые хосты сайта (не обходились вовсе). */
+  excludedHosts?: string[];
+  render?: CrawlRenderStats;
 }
 
 const ACTIVE = ['queued', 'running'];
@@ -85,6 +127,24 @@ const MAX_RUN_AGE_MS = 24 * 60 * 60 * 1000;
 /** Запас до конца бюджета тика: последняя страница успевает записаться. */
 const TICK_SAFETY_MS = 2_000;
 const MAX_UNVERIFIED_LISTED = 50;
+/** Ш3 (20): страниц в задании рендера (`WORKER_LIMITS.renderPages`). */
+export const RENDER_PAGES_PER_JOB = 4;
+/** Ш3 (20): дольше задание рендера (или занятая очередь) не ждём. */
+export const RENDER_WAIT_MS = 2 * 60 * 60 * 1000;
+/**
+ * Аудит P3 (7): задание, которое никто не взял, при воркере без heartbeat
+ * дольше этого — не ждём `RENDER_WAIT_MS`.
+ */
+export const RENDER_STALE_MS = 15 * 60 * 1000;
+/**
+ * Аудит P2-1 (по желанию): страницу, отрисованную недавно, не рендерим
+ * снова — суточный лимит воркера тратится на новые страницы.
+ */
+export const RENDER_FRESH_MS = 6 * 60 * 60 * 1000;
+/** Строки очереди: ждут постановки рендера / ждут итога задания. */
+const RENDER = 'render';
+const RENDERING = 'rendering';
+const OPEN_ITEMS = ['pending', RENDER, RENDERING];
 
 const PRIORITY = {
   seed: 1_000_000,
@@ -118,7 +178,9 @@ type ItemOutcome =
       stored?: 'changed' | 'unchanged';
     }
   | { kind: 'failed'; reason: SkipReason }
-  | { kind: 'retry' };
+  | { kind: 'retry' }
+  /** Ш3 (20): оболочка SPA — ждёт рендера, страница пока не трогается. */
+  | { kind: 'render' };
 
 interface RunCtx {
   run: SiteCrawlRun;
@@ -132,6 +194,10 @@ interface RunCtx {
   siteHostNames: Set<string>;
   siteDomains: Set<string>;
   unverified: Set<string>;
+  /** Р-З10-10: строки хостов (https:443), которых прогон не касается. */
+  excludedHostIds: Set<string>;
+  /** Ш3 (20): оболочки SPA этого прогона рендерятся воркером. */
+  render: boolean;
 }
 
 @Injectable()
@@ -147,6 +213,12 @@ export class SiteCrawlService {
    * В проде — null: крон обходит все кабинеты.
    */
   onlyAccountIds: string[] | null = null;
+  /**
+   * Ш3 (20): рендер SPA браузерным воркером. Вешает допущенный к очереди
+   * воркера модуль (`assist-site-voice-map/voice-map-worker.knowledge-render.ts`);
+   * нет — оболочки SPA, как раньше, `skipped/spa`.
+   */
+  spaRender: SpaRenderPort | null = null;
 
   constructor(
     private readonly sitesDb: SitesDb,
@@ -188,6 +260,15 @@ export class SiteCrawlService {
     if (req.excludePrefixes?.length)
       options.excludePrefixes = req.excludePrefixes;
     if (req.excludeUrls?.length) options.excludeUrls = req.excludeUrls;
+    if (req.excludeHosts?.length) {
+      options.excludeHosts = [
+        ...new Set(
+          req.excludeHosts.map((h) =>
+            h.trim().toLowerCase().replace(/\.$/, ''),
+          ),
+        ),
+      ].filter(Boolean);
+    }
 
     return this.system().$transaction(async (tx) => {
       // Два «переобойти» подряд (двойной клик, крон + кнопка) — один прогон.
@@ -394,10 +475,30 @@ export class SiteCrawlService {
       if (evaluateHostAccess(h, purpose, now).ok) verified.set(h.host, h);
     }
     const stats = asStats(run.stats);
+    const opts = asOptions(run.options);
+    // Р-З10-10: исключённые хосты — заданные продуктом и (для `assist`)
+    // хосты «Админки» по роли хоста (Р-З9-24), без участия продукта.
+    // Аудит P3 (2): решение — по СТРОКЕ хоста, которую обход обходит
+    // (https:443), а не по имени: роль у `http://shop` (admin) не исключает
+    // `https://shop` (public) того же имени.
+    const byName = new Set(opts.excludeHosts ?? []);
+    const excludedHostIds = new Set<string>();
+    const excludedHosts = new Set<string>();
+    for (const h of hosts) {
+      if (h.scheme !== 'https' || h.port !== 443) continue;
+      if (
+        byName.has(h.host) ||
+        (run.product === 'assist' &&
+          h.assistRole !== PUBLIC_SITE_HOST.assistRole)
+      ) {
+        excludedHostIds.add(h.id);
+        excludedHosts.add(h.host);
+      }
+    }
     const ctx: RunCtx = {
       run,
       db,
-      opts: asOptions(run.options),
+      opts,
       stats,
       purpose,
       verified,
@@ -408,11 +509,16 @@ export class SiteCrawlService {
           .filter((d): d is string => !!d),
       ),
       unverified: new Set(stats.unverifiedHosts ?? []),
+      excludedHostIds,
+      render: run.product === 'assist' && this.spaRender !== null,
     };
     for (const h of hosts)
-      if (!verified.has(h.host)) this.noteUnverified(ctx, h.host);
+      if (!verified.has(h.host) && !excludedHostIds.has(h.id))
+        this.noteUnverified(ctx, h.host);
+    if (excludedHosts.size)
+      stats.excludedHosts = [...excludedHosts].slice(0, MAX_UNVERIFIED_LISTED);
 
-    if (verified.size === 0) {
+    if (![...verified.values()].some((h) => !excludedHostIds.has(h.id))) {
       // Нечего обходить: подтверждение отозвано/истекло или его не было.
       await this.saveStats(ctx);
       await this.closeRun(run, db, 'failed', 'Нет подтверждённых хостов сайта');
@@ -456,9 +562,272 @@ export class SiteCrawlService {
         await this.applyOutcome(ctx, item, outcome);
       }
     }
+    changed += await this.renderStep(ctx);
     await this.saveStats(ctx);
     const finished = await this.maybeFinish(ctx);
     return { fetched, changed, finished };
+  }
+
+  // ── рендер SPA (Ш3 (20)) ────────────────────────────────────────────
+
+  /**
+   * Под арендой прогона: итоги поставленных заданий → страницы (тот же
+   * `extractPage` + `storePage`), затем — когда обычные страницы прогона
+   * кончились — постановка новых пачками по хосту. Возвращает число
+   * изменённых страниц.
+   */
+  private async renderStep(ctx: RunCtx): Promise<number> {
+    const port = this.spaRender;
+    const st: CrawlRenderStats = ctx.stats.render ?? {
+      jobs: [],
+      requested: 0,
+      rendered: 0,
+      failed: 0,
+    };
+    const now = Date.now();
+    let changed = 0;
+    const left: RenderJobRef[] = [];
+    for (const job of st.jobs) {
+      const res: SpaRenderPoll = port
+        ? await port
+            .poll(ctx.run.accountId, job.id)
+            .catch(() => ({ status: 'waiting' as const }))
+        : { status: 'failed' as const };
+      if (res.status === 'waiting') {
+        const age = now - Date.parse(job.at);
+        // Никто не взял, а воркер давно молчит — не держим прогон 2 ч.
+        const stale =
+          !res.claimed &&
+          age > RENDER_STALE_MS &&
+          !(await port!.workerAlive(RENDER_STALE_MS).catch(() => false));
+        if (age <= RENDER_WAIT_MS && !stale) {
+          left.push(job);
+          continue;
+        }
+        await port?.cancel(ctx.run.accountId, job.id).catch(() => undefined);
+        st.failed += await this.renderFallback(ctx, job.urls);
+        continue;
+      }
+      if (res.status === 'failed') {
+        st.failed += await this.renderFallback(ctx, job.urls);
+        await port?.release(ctx.run.accountId, job.id).catch(() => undefined);
+        continue;
+      }
+      const r = await this.ingestRendered(ctx, job.urls, res.pages);
+      st.rendered += r.rendered;
+      st.failed += r.failed;
+      changed += r.changed;
+      // HTML разобран — в очереди больше не нужен (аудит P3 (6)).
+      await port?.release(ctx.run.accountId, job.id).catch(() => undefined);
+    }
+    st.jobs = left;
+    // Сводка — только у прогонов, где рендер был (или ещё будет).
+    ctx.stats.render = st;
+
+    // Новые — когда обычные страницы прогона кончились (пачки полнее).
+    const pending = await ctx.db.siteCrawlQueueItem.count({
+      where: { runId: ctx.run.id, status: 'pending' },
+    });
+    if (pending > 0) return changed;
+    const waiting = await ctx.db.siteCrawlQueueItem.findMany({
+      where: { runId: ctx.run.id, status: RENDER },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'asc' }],
+      take: 50,
+    });
+    if (!waiting.length) {
+      if (!st.requested && !st.failed && !st.jobs.length)
+        delete ctx.stats.render;
+      return changed;
+    }
+    if (!port || st.refused) {
+      st.failed += await this.renderFallback(
+        ctx,
+        waiting.map((w) => w.url),
+      );
+      return changed;
+    }
+    const requested = new Set<string>();
+    const byHost = new Map<string, SiteCrawlQueueItem[]>();
+    for (const w of waiting) {
+      const list = byHost.get(w.hostId) ?? [];
+      list.push(w);
+      byHost.set(w.hostId, list);
+    }
+    for (const [hostId, rows] of byHost) {
+      const host = [...ctx.verified.values()].find((h) => h.id === hostId);
+      for (let i = 0; i < rows.length; i += RENDER_PAGES_PER_JOB) {
+        const chunk = rows.slice(i, i + RENDER_PAGES_PER_JOB);
+        const urls = chunk.map((c) => c.url);
+        if (!host || ctx.excludedHostIds.has(host.id)) {
+          st.failed += await this.renderFallback(ctx, urls);
+          continue;
+        }
+        const t = await port
+          .request({
+            accountId: ctx.run.accountId,
+            siteId: ctx.run.siteId,
+            hostId,
+            host: host.host,
+            runId: ctx.run.id,
+            urls,
+          })
+          .catch(() => ({ refused: 'error' as const }));
+        if ('jobId' in t) {
+          delete st.busySince;
+          await ctx.db.siteCrawlQueueItem.updateMany({
+            where: { runId: ctx.run.id, url: { in: urls }, status: RENDER },
+            data: { status: RENDERING, lockedUntil: null },
+          });
+          st.jobs.push({ id: t.jobId, at: new Date(now).toISOString(), urls });
+          st.requested += urls.length;
+          for (const u of urls) requested.add(u);
+          continue;
+        }
+        if ('retry' in t) {
+          // Очередь сайта занята — следующий тик; не дольше RENDER_WAIT_MS.
+          st.busySince = st.busySince ?? new Date(now).toISOString();
+          if (now - Date.parse(st.busySince) <= RENDER_WAIT_MS) return changed;
+          st.refused = 'busy';
+        } else {
+          st.refused = t.refused;
+        }
+        // Сегодня больше не поставится — остальные страницы как раньше.
+        st.failed += await this.renderFallback(
+          ctx,
+          waiting.filter((w) => !requested.has(w.url)).map((w) => w.url),
+        );
+        return changed;
+      }
+    }
+    return changed;
+  }
+
+  /**
+   * Рендер не случился. Страница с сохранённым текстом (отрисована раньше) —
+   * как при 5xx: `failed` с ПРЕЖНИМ текстом (сбой рендера знания не
+   * стирает, аудит P2-1); без текста — как раньше, `skipped/spa`.
+   */
+  private async renderFallback(ctx: RunCtx, urls: string[]): Promise<number> {
+    if (!urls.length) return 0;
+    const rows = await ctx.db.siteCrawlQueueItem.findMany({
+      where: {
+        runId: ctx.run.id,
+        url: { in: urls },
+        status: { in: [RENDER, RENDERING] },
+      },
+    });
+    for (const row of rows) {
+      const host = ctx.verified.get(hostOf(row.url));
+      if (!host || host.id !== row.hostId) {
+        await this.applyOutcome(ctx, row, {
+          kind: 'skipped',
+          reason: 'unverified_host',
+        });
+        continue;
+      }
+      const existing = await ctx.db.sitePage.findFirst({
+        where: { hostId: host.id, url: row.url },
+      });
+      if (
+        existing &&
+        existing.text &&
+        (existing.status === 'ok' || existing.status === 'failed')
+      ) {
+        await ctx.db.sitePage.update({
+          where: { id: existing.id },
+          data: {
+            status: 'failed',
+            skipReason: 'spa',
+            failCount: { increment: 1 },
+          },
+        });
+        await this.applyOutcome(ctx, row, { kind: 'failed', reason: 'spa' });
+        continue;
+      }
+      await this.markSkipped(ctx, row, host, existing, 'spa', 200);
+      await this.applyOutcome(ctx, row, { kind: 'skipped', reason: 'spa' });
+    }
+    return rows.length;
+  }
+
+  /** Итог задания рендера → страницы прогона (адреса — из запроса). */
+  private async ingestRendered(
+    ctx: RunCtx,
+    urls: string[],
+    pages: SpaRenderedPage[],
+  ): Promise<{ rendered: number; failed: number; changed: number }> {
+    const out = { rendered: 0, failed: 0, changed: 0 };
+    const got = new Map<string, SpaRenderedPage>();
+    for (const p of pages) {
+      const url = Number.isInteger(p.i) ? urls[p.i] : undefined;
+      if (url && !got.has(url)) got.set(url, p);
+    }
+    const lost: string[] = [];
+    for (const url of urls) {
+      const pg = got.get(url);
+      const item = await ctx.db.siteCrawlQueueItem.findFirst({
+        where: { runId: ctx.run.id, url, status: RENDERING },
+      });
+      if (!item) continue;
+      const host = ctx.verified.get(hostOf(url));
+      if (
+        !pg?.ok ||
+        !pg.html ||
+        !host ||
+        host.id !== item.hostId ||
+        ctx.excludedHostIds.has(host.id) ||
+        matchesExcluded(
+          url,
+          ctx.opts.excludePrefixes ?? [],
+          ctx.opts.excludeUrls ?? [],
+        )
+      ) {
+        lost.push(url);
+        continue;
+      }
+      // Тот же извлекатель, что у обычного обхода: блоки, путь
+      // заголовков, UGC, FAQ, noindex, canonical, язык, хеш.
+      const page = extractPage(pg.html, url);
+      page.url = url;
+      const links = new Set(page.links);
+      for (const l of pg.links) {
+        const n = normalizeCrawlUrl(l);
+        if (n) links.add(n);
+      }
+      page.links = [...links];
+      const existing = await ctx.db.sitePage.findFirst({
+        where: { hostId: host.id, url },
+      });
+      let outcome: ItemOutcome;
+      if (page.noindex) {
+        await this.markSkipped(ctx, item, host, existing, 'noindex', 200);
+        outcome = { kind: 'skipped', reason: 'noindex' };
+      } else if (!page.text) {
+        lost.push(url);
+        continue;
+      } else {
+        outcome = await this.storePage(
+          ctx,
+          item,
+          host,
+          existing,
+          page,
+          // Оболочка SPA та же при новых данных — условный запрос по её
+          // ETag скрыл бы изменения: валидаторы не храним.
+          { httpStatus: 200, etag: null, lastModified: null },
+          { uiMap: false },
+        );
+      }
+      await this.applyOutcome(ctx, item, outcome);
+      out.rendered += 1;
+      if (
+        outcome.kind === 'changed' ||
+        (outcome.kind === 'skipped' && outcome.stored === 'changed')
+      )
+        out.changed += 1;
+    }
+    out.failed += await this.renderFallback(ctx, lost);
+    return out;
   }
 
   private noteUnverified(ctx: RunCtx, host: string): void {
@@ -475,6 +844,8 @@ export class SiteCrawlService {
     const { run } = ctx;
     if (run.mode === 'full') {
       for (const host of ctx.verified.values()) {
+        // Р-З10-10: исключённый хост — ни главной, ни robots, ни sitemap.
+        if (ctx.excludedHostIds.has(host.id)) continue;
         const origin = `https://${host.host}`;
         await this.enqueue(ctx, [
           {
@@ -547,11 +918,13 @@ export class SiteCrawlService {
         }
         continue;
       }
-      const excluded = matchesExcluded(
-        url,
-        ctx.opts.excludePrefixes ?? [],
-        ctx.opts.excludeUrls ?? [],
-      );
+      const excluded =
+        ctx.excludedHostIds.has(host.id) ||
+        matchesExcluded(
+          url,
+          ctx.opts.excludePrefixes ?? [],
+          ctx.opts.excludeUrls ?? [],
+        );
       if (!excluded && room <= 0) {
         ctx.stats.limitDropped = (ctx.stats.limitDropped ?? 0) + 1;
         continue;
@@ -634,6 +1007,7 @@ export class SiteCrawlService {
       return { kind: 'skipped', reason: 'unverified_host' };
     }
     if (
+      ctx.excludedHostIds.has(host.id) ||
       matchesExcluded(
         item.url,
         ctx.opts.excludePrefixes ?? [],
@@ -674,6 +1048,19 @@ export class SiteCrawlService {
 
     const reason = res.reason ?? 'empty';
     const status = res.httpStatus ?? null;
+    // Ш3 (20): оболочка SPA — ждёт рендера; страница (и прежний текст
+    // отрисованной версии) до итога не трогается.
+    if (reason === 'spa' && ctx.render) {
+      // Отрисована недавно — текст свежий, лимит воркера не тратим.
+      if (
+        existing?.status === 'ok' &&
+        existing.text &&
+        existing.fetchedAt &&
+        now.getTime() - existing.fetchedAt.getTime() < RENDER_FRESH_MS
+      )
+        return { kind: 'unchanged' };
+      return { kind: 'render' };
+    }
     if (
       reason === 'http_4xx' &&
       (status === 404 || status === 410) &&
@@ -738,6 +1125,7 @@ export class SiteCrawlService {
       etag: string | null;
       lastModified: string | null;
     },
+    opts: { uiMap: boolean } = { uiMap: true },
   ): Promise<ItemOutcome> {
     const now = new Date();
     let target = existing;
@@ -874,7 +1262,9 @@ export class SiteCrawlService {
         },
       });
     }
-    await this.storeUiMap(ctx, host, page, now);
+    // Рендер SPA (Ш3 (20)) карту интерфейса не пишет: «очищенный» HTML без
+    // кнопок и полей снял бы снимок обхода этой страницы.
+    if (opts.uiMap) await this.storeUiMap(ctx, host, page, now);
     if (page.lang) {
       ctx.stats.langs = ctx.stats.langs ?? {};
       ctx.stats.langs[page.lang] = (ctx.stats.langs[page.lang] ?? 0) + 1;
@@ -1006,6 +1396,13 @@ export class SiteCrawlService {
     o: ItemOutcome,
   ): Promise<void> {
     const db = ctx.db;
+    if (o.kind === 'render') {
+      await db.siteCrawlQueueItem.update({
+        where: { id: item.id },
+        data: { status: RENDER, lastError: 'spa', lockedUntil: null },
+      });
+      return;
+    }
     if (o.kind === 'retry') {
       await db.siteCrawlQueueItem.update({
         where: { id: item.id },
@@ -1114,9 +1511,9 @@ export class SiteCrawlService {
   /** Очередь пуста — итоги и `done` (последним, после всех страниц). */
   private async maybeFinish(ctx: RunCtx): Promise<boolean> {
     const pending = await ctx.db.siteCrawlQueueItem.count({
-      where: { runId: ctx.run.id, status: 'pending' },
+      where: { runId: ctx.run.id, status: { in: OPEN_ITEMS } },
     });
-    if (pending > 0) return false;
+    if (pending > 0 || (ctx.stats.render?.jobs.length ?? 0) > 0) return false;
     await this.closeRun(ctx.run, ctx.db, 'done', null);
     return true;
   }

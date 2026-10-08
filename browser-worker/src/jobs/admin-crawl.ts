@@ -23,11 +23,8 @@
  */
 import type { Page } from 'playwright-core';
 import { collectInterface } from '../page/collect';
-import {
-  clickRefusal,
-  linkRefusal,
-  toggleLinkRefusal,
-} from '../safety/click-guard';
+import { toggleKey, tryToggle } from '../page/toggles';
+import { linkRefusal } from '../safety/click-guard';
 import {
   WORKER_LIMITS,
   lockHostOf,
@@ -38,9 +35,6 @@ import { JobError } from '../errors';
 import { entityRouteKey, sanitizeAdminPage } from './admin-crawl-entity';
 import type { JobContext, JobCredentials } from './types';
 
-/** Тот же селектор, что у `collectInterface` (page/collect.ts). */
-const TOGGLE_SELECTOR =
-  '[aria-expanded="false"],summary,[role="tab"][aria-selected="false"]';
 const TOGGLES_PER_PAGE = 5;
 
 interface CdpLikeCookie {
@@ -217,69 +211,51 @@ export async function runAdminCrawl(
       if (await passwordVisible(page)) break;
     }
     first = false;
-    // Раскрывашки — только по стоп-листу; после клика — без переходов.
-    const tried = new Set<string>();
-    for (let k = 0; k < TOGGLES_PER_PAGE; k++) {
-      const info = await page.evaluate(
-        collectInterface,
-        WORKER_LIMITS.pageTextChars,
-      );
-      const next = info.toggles.find(
-        (t) => !tried.has(`${t.text}|${t.hidden}`),
-      );
-      if (!next) break;
-      tried.add(`${next.text}|${next.hidden}`);
-      if (clickRefusal(next)) {
-        refusedClicks += 1;
-        ctx.log.info('клик отклонён стоп-листом', {
-          jobId: ctx.job.id,
-          reason: clickRefusal(next)!,
-        });
-        continue;
+    // Раскрывашки — только по стоп-листу (`page/toggles.ts`); после клика —
+    // без переходов: увела со страницы — назад и следующая. Сбой шага
+    // (страница ушла позже окна клика, контекст разрушен — аудит P1-1) или
+    // не вернулись — раскрытия этой страницы прекращаются; не на своей
+    // странице — она пропускается (с чужой ничего не собираем).
+    const here = key(page.url());
+    let lost = false;
+    try {
+      const tried = new Set<string>();
+      for (let k = 0; k < TOGGLES_PER_PAGE; k++) {
+        const info = await page.evaluate(
+          collectInterface,
+          WORKER_LIMITS.pageTextChars,
+        );
+        const next = info.toggles.find((t) => !tried.has(toggleKey(t)));
+        if (!next) break;
+        tried.add(toggleKey(next));
+        const out = await tryToggle(ctx.jb, page, next, p.allowedHosts);
+        if (out.kind === 'refused') {
+          refusedClicks += 1;
+          ctx.log.info('клик отклонён стоп-листом', {
+            jobId: ctx.job.id,
+            reason: out.reason,
+          });
+          continue;
+        }
+        if (out.kind === 'lost') {
+          lost = true;
+          break;
+        }
       }
-      // Нажимается ровно тот элемент, который проверен: берётся тем же
-      // querySelectorAll, что в сборе, и проверяется ЕЩЁ РАЗ по живому
-      // тексту прямо перед кликом (страница могла подменить подпись).
-      const handle = await page.evaluateHandle(
-        (a: { sel: string; idx: number }) =>
-          document.querySelectorAll(a.sel)[a.idx] ?? null,
-        { sel: TOGGLE_SELECTOR, idx: next.idx },
-      );
-      const el = handle.asElement();
-      if (!el) continue;
-      const fresh = await el.evaluate((e) => {
-        const form = (e as HTMLButtonElement).form || e.closest('form');
-        const a = e.closest('a[href]') as HTMLAnchorElement | null;
-        return {
-          text: ((e as HTMLElement).innerText || '').trim(),
-          hidden: e.getAttribute('aria-label') || e.getAttribute('title'),
-          href: a ? a.href : null,
-          inForm: !!form,
-          submit:
-            !!form &&
-            e.tagName === 'BUTTON' &&
-            ((e as HTMLButtonElement).type || 'submit') === 'submit',
-        };
-      });
-      if (
-        clickRefusal(fresh) ||
-        toggleLinkRefusal(fresh.href, page.url(), fresh.text, p.allowedHosts)
-      ) {
-        refusedClicks += 1;
-        await el.dispose();
-        continue;
-      }
-      const before = page.url();
-      await el
-        .click({ timeout: 3_000, noWaitAfter: true })
+    } catch {
+      lost = true;
+    }
+    if (lost || key(page.url()) !== here) {
+      await page
+        .waitForLoadState('domcontentloaded', { timeout: 10_000 })
         .catch(() => undefined);
-      await el.dispose();
-      await page.waitForTimeout(250);
-      // Раскрывашка, которая увела со страницы, — не раскрывашка: назад.
-      // Смена одного якоря (`href="#"`) — не уход: страница та же.
-      if (key(page.url()) !== key(before)) {
-        await ctx.jb.goto(page, before).catch(() => undefined);
-        break;
+      const back = await ctx.jb
+        .goto(page, here)
+        .then(() => key(page.url()) === here)
+        .catch(() => false);
+      if (!back || (await passwordVisible(page))) {
+        skippedLinks += 1;
+        continue;
       }
     }
     const info = await page.evaluate(

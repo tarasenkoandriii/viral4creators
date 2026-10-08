@@ -82,6 +82,7 @@ import {
   isBrowserJobKind,
   parseJobParams,
   parseJobResult,
+  wellFormed,
 } from './protocol';
 
 export interface EnqueueInput {
@@ -398,6 +399,25 @@ export class BrowserJobsService {
       });
     });
     return this.toView(row);
+  }
+
+  /**
+   * Результат сданного задания больше не нужен продукту (рендер SPA:
+   * HTML разобран обходом) — стереть, не дожидаясь срока строки.
+   */
+  async dropResult(
+    accountId: string,
+    jobId: string,
+    where: { origin?: BrowserJobOrigin } = {},
+  ): Promise<void> {
+    await this.sitesDb.forAccount(accountId).siteBrowserJob.updateMany({
+      where: {
+        id: jobId,
+        status: { in: ['done', 'failed', 'cancelled'] },
+        ...where,
+      },
+      data: { result: Prisma.DbNull, resultBytes: null },
+    });
   }
 
   async view(
@@ -1039,6 +1059,18 @@ export class BrowserJobsService {
     try {
       if (h?.onDone)
         stored = (await h.onDone(this.handlerJob(row), result)) ?? null;
+      // Аудит P2-2: финальная запись — тоже здесь. Её сбой (например,
+      // строка, которую не примет jsonb) не оставляет задание навсегда
+      // «сдано, пишется» (`{pending:true}`), а закрывает `failed: internal`.
+      await db.siteBrowserJob.updateMany({
+        where: { id: jobId, status: 'done' },
+        data: {
+          result:
+            stored === null || stored === undefined
+              ? Prisma.DbNull
+              : (wellFormed(stored) as Prisma.InputJsonValue),
+        },
+      });
     } catch (e) {
       this.logger.warn(
         `обработчик результата ${row.origin}: ${e instanceof Error ? e.name : 'error'}`,
@@ -1054,15 +1086,6 @@ export class BrowserJobsService {
       await this.notifyFailed(row, 'internal');
       return { ok: true };
     }
-    await db.siteBrowserJob.updateMany({
-      where: { id: jobId, status: 'done' },
-      data: {
-        result:
-          stored === null || stored === undefined
-            ? Prisma.DbNull
-            : (stored as Prisma.InputJsonValue),
-      },
-    });
     return { ok: true };
   }
 
@@ -1381,9 +1404,14 @@ export function artifactRefs(result: unknown): number[] {
     screenshot?: number | null;
     videoFrame?: number | null;
     frames?: Array<{ artifact: number }>;
+    states?: Array<{ screenshot: number | null }>;
   };
   if (typeof r.screenshot === 'number') out.push(r.screenshot);
   if (typeof r.videoFrame === 'number') out.push(r.videoFrame);
   if (Array.isArray(r.frames)) for (const f of r.frames) out.push(f.artifact);
+  // Ш3 (5): скриншоты состояний раскрывашек «Снимка».
+  if (Array.isArray(r.states))
+    for (const st of r.states)
+      if (typeof st.screenshot === 'number') out.push(st.screenshot);
   return out;
 }

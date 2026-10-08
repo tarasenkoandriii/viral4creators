@@ -24,6 +24,10 @@
  * Основная роль (SitesDb.forAccount — кабинет владельца); права —
  * контроллер (владелец или менеджер помощника, как голос).
  */
+import {
+  AUTOTEST_KIND,
+  AUTOTEST_LIST_MAX,
+} from '../system/voice-monitor-autotest';
 import { randomBytes } from 'crypto';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -590,13 +594,26 @@ export class VoiceControlSettingsService {
   ): Promise<{ items: VoiceTestSummary[] }> {
     const db = this.db(m);
     const { row } = await loadAssistSite(db, m.accountId, siteId);
-    const list = await db.assistSiteVoiceTest.findMany({
-      // Сухие прогоны мемо (`memo`) — в карточке мемо, не в отчётах мастера.
-      where: { siteId, kind: { in: ['wizard', 'autotest'] } },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-      select: TEST_SELECT,
-    });
+    // Сухие прогоны мемо (`memo`) — в карточке мемо, не в отчётах мастера.
+    // Автотесты Т-3 (раз в сутки) — отдельной выборкой: не вытесняют
+    // отчёты мастера из 20 последних (аудит пакета Д, P3 (5)).
+    const [wizard, auto] = await Promise.all([
+      db.assistSiteVoiceTest.findMany({
+        where: { siteId, kind: 'wizard' },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: TEST_SELECT,
+      }),
+      db.assistSiteVoiceTest.findMany({
+        where: { siteId, kind: AUTOTEST_KIND },
+        orderBy: { createdAt: 'desc' },
+        take: AUTOTEST_LIST_MAX,
+        select: TEST_SELECT,
+      }),
+    ]);
+    const list = [...wizard, ...auto].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
     const items: VoiceTestSummary[] = [];
     for (const t of list) items.push(await this.summary(m, siteId, row, t));
     return { items };

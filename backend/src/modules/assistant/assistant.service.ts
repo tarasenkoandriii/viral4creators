@@ -28,6 +28,13 @@ import { maskForJournal } from './journal-mask';
 import { estimateCost } from '../../common/ai-pricing';
 import { hashVisitorIp } from './ip-hash';
 import {
+  AssistantReserveResult,
+  commitAssistantReserve,
+  estimateAssistantReserve,
+  releaseAssistantBudget,
+  reserveAssistantBudget,
+} from './assistant-budget';
+import {
   ASSISTANT_KNOWLEDGE,
   ASSISTANT_STEPS,
 } from '../../common/tutorial-knowledge/generated';
@@ -89,6 +96,36 @@ const ERROR_MESSAGES: Record<
   },
 };
 
+/**
+ * Потолок ответа модели (см. комментарий у `maxOutputTokens`); он же —
+ * худший случай выхода в оценке резерва бюджета (П-Г5).
+ */
+export const ASSISTANT_MAX_OUTPUT_TOKENS = 2000;
+
+/**
+ * Текст тревоги оператору при отказе по бюджету (аудит захода 10, P3-1):
+ * «потрачено» (строки `AiUsage`) и «занято» (резервы вопросов в полёте и
+ * оборванных после первого токена) — разные вещи: второе освобождается само
+ * через минуты, и оператору не нужно поднимать потолок из-за пика.
+ */
+export function assistantBudgetAlert(
+  budgetMicroUsd: number,
+  spentMicroUsd: number,
+  inFlightMicroUsd: number,
+): string {
+  const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(2)}`;
+  if (spentMicroUsd >= budgetMicroUsd) {
+    return `ИИ-консультант на лендинге: дневной бюджет исчерпан — потрачено ${usd(
+      spentMicroUsd,
+    )} из ${usd(budgetMicroUsd)}.`;
+  }
+  return `ИИ-консультант на лендинге: новый вопрос не помещается в дневной бюджет ${usd(
+    budgetMicroUsd,
+  )} — потрачено ${usd(spentMicroUsd)}, ещё ${usd(
+    inFlightMicroUsd,
+  )} занято вопросами в полёте и оборванными (резерв).`;
+}
+
 export function assistantErrorMessage(
   code: AssistantErrorCode,
   locale: string,
@@ -147,53 +184,6 @@ export class AssistantService {
       return;
     }
 
-    // Известная гонка (найдено доп. аудитом, MEDIUM, сознательно не
-    // чинится в этом заходе): читаем «сколько уже потрачено» и решаем
-    // ДО платного вызова, а не резервируем слот атомарно, как
-    // `SerpApiUsageService.reserve()`/`release()` для дневного лимита
-    // аналогов (см. её доккомментарий про тот же класс TOCTOU-гонки,
-    // однажды уже случившейся в проде). Несколько параллельных вопросов
-    // от разных посетителей могут все пройти эту проверку одновременно и
-    // все зайти в Gemini, пока строка `AssistantExchange`/`AiUsage`
-    // предыдущего ещё не записана — бюджет может быть превышен на
-    // ширину этой гонки. Не резервируем слот здесь по тем же причинам,
-    // по которым `SerpApiUsageService` резервирует: перенос той же
-    // атомарной схемы (резерв → вызов → списание/возврат) на бюджет в
-    // деньгах, а не в счётчике запросов, требует отдельного story —
-    // здесь только дневной SOFT-лимит расходов (§7.2), не защита от
-    // злоупотребления (та — отдельный RateLimitGuard на IP, 10/мин,
-    // 60/час), и цена ошибки — не критична (небольшой перерасход
-    // бюджета в редкий момент пиковой одновременности, не потеря
-    // данных). Не мой объём аудита — если гонка станет заметна на
-    // практике, чинить по образцу SerpApiUsageService.
-    const spentToday = await this.aiUsage.spentTodayForOperation('assistant');
-    if (spentToday >= settings.dailyBudgetMicroUsd) {
-      yield {
-        type: 'error',
-        code: 'budget_exhausted',
-        message: assistantErrorMessage('budget_exhausted', locale),
-      };
-      // §7.2: уведомление оператору при исчерпании. Дедупликация — 10-
-      // минутное окно `TelegramNotifyService` (см. его доккомментарий);
-      // это не строго «раз в сутки», но не даёт заливать канал так же,
-      // как и остальные тревоги в проекте — тот же приём, что и везде.
-      void this.notify.alert(
-        'assistant-budget-exhausted',
-        `ИИ-консультант на лендинге: дневной бюджет исчерпан ($${(
-          settings.dailyBudgetMicroUsd / 1_000_000
-        ).toFixed(2)}).`,
-      );
-      // §10 — доля budget_exhausted в агрегатах админки: без строки
-      // здесь считать было бы не из чего (в отличие от rate_limited,
-      // который ТЗ просит в той же сводке, но который отсекается гвардом
-      // ДО контроллера — трогать общий RateLimitGuard ради одной этой
-      // метрики не стали, известное упрощение, см. итоговое резюме).
-      void this.prisma.assistantEvent
-        .create({ data: { kind: 'server_error', detail: 'budget_exhausted' } })
-        .catch(() => undefined);
-      return;
-    }
-
     const knowledgeMd = ASSISTANT_KNOWLEDGE[locale] ?? '';
     // Этап 92: обучалка выросла до 10 шагов (десятый — «Постпродакшн»).
     const step =
@@ -215,17 +205,142 @@ export class AssistantService {
     );
     const contents = request.messages.map((m) => toGeminiContent(m));
 
+    // П-Г5 (Р-З10-5): атомарный резерв дневного бюджета ДО платного
+    // вызова — `assistant-budget.ts`. До захода 10 здесь было «прочитал
+    // потрачено → решил»: параллельные вопросы все проходили проверку и
+    // все уходили в Gemini, пока строка `AiUsage` первого не записана.
+    // Теперь резервы сериализованы advisory-lock'ом на сутки, оценка
+    // (худший случай по выходу) учитывает и чужие вопросы «в полёте», а
+    // снимается резерв только после записи `AiUsage` (или при сбое) — в
+    // `finally` ниже, в том числе когда клиент ушёл посреди стрима.
+    const estimateMicroUsd = estimateAssistantReserve(
+      settings.model,
+      systemInstruction.length +
+        request.messages.reduce((n, m) => n + m.content.length, 0),
+      ASSISTANT_MAX_OUTPUT_TOKENS,
+    );
+    let reserve: AssistantReserveResult;
+    try {
+      reserve = await reserveAssistantBudget(this.prisma, {
+        budgetMicroUsd: settings.dailyBudgetMicroUsd,
+        estimateMicroUsd,
+      });
+    } catch (error) {
+      // База недоступна — бюджет не проверить; модель не зовём (деньги),
+      // посетитель получает обычное «попробуйте ещё раз».
+      this.logger.warn(
+        `ассистент: резерв бюджета не удался — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      yield {
+        type: 'error',
+        code: 'upstream',
+        message: assistantErrorMessage('upstream', locale),
+      };
+      return;
+    }
+    if (!reserve.ok) {
+      yield {
+        type: 'error',
+        code: 'budget_exhausted',
+        message: assistantErrorMessage('budget_exhausted', locale),
+      };
+      // §7.2: уведомление оператору при исчерпании. Дедупликация — 10-
+      // минутное окно `TelegramNotifyService` (см. его доккомментарий);
+      // это не строго «раз в сутки», но не даёт заливать канал так же,
+      // как и остальные тревоги в проекте — тот же приём, что и везде.
+      void this.notify.alert(
+        'assistant-budget-exhausted',
+        assistantBudgetAlert(
+          settings.dailyBudgetMicroUsd,
+          reserve.spentMicroUsd,
+          reserve.inFlightMicroUsd,
+        ),
+      );
+      // §10 — доля budget_exhausted в агрегатах админки: без строки
+      // здесь считать было бы не из чего (в отличие от rate_limited,
+      // который ТЗ просит в той же сводке, но который отсекается гвардом
+      // ДО контроллера — трогать общий RateLimitGuard ради одной этой
+      // метрики не стали, известное упрощение, см. итоговое резюме).
+      void this.prisma.assistantEvent
+        .create({ data: { kind: 'server_error', detail: 'budget_exhausted' } })
+        .catch(() => undefined);
+      return;
+    }
+    const reserveKey = reserve.key;
+    // Резерв — по итогу обмена (аудит захода 10, P2-1):
+    //  - `AiUsage` записан с настоящим расходом модели → снять;
+    //  - модель не прислала ни одного токена (сбой, обрыв до ответа) → снять;
+    //  - токены были, а расхода в `AiUsage` нет (клиент бросил стрим до
+    //    `done` — `break` в контроллере, сбой посреди ответа без
+    //    `usageMetadata`) → оценка остаётся расходом до конца суток.
+    let sawToken = false;
+    let usageRecorded = false;
+    let innerDone = false;
+    const inner = this.streamReserved(
+      request,
+      locale,
+      settings.model,
+      systemInstruction,
+      contents,
+      clientIpAddr,
+      startedAt,
+      externalSignal,
+    );
+    try {
+      for (;;) {
+        let step: IteratorResult<AssistantStreamEvent, boolean>;
+        try {
+          step = await inner.next();
+        } catch (error) {
+          innerDone = true;
+          throw error;
+        }
+        if (step.done) {
+          innerDone = true;
+          usageRecorded = step.value;
+          break;
+        }
+        if (step.value.type === 'token') sawToken = true;
+        yield step.value;
+      }
+    } finally {
+      // Потребитель бросил генератор на `yield` — закрываем и внутренний.
+      if (!innerDone) await inner.return(false).catch(() => false);
+      if (!usageRecorded && sawToken) {
+        await commitAssistantReserve(this.prisma, reserveKey);
+      } else {
+        await releaseAssistantBudget(this.prisma, reserveKey);
+      }
+    }
+  }
+
+  /**
+   * Вызов модели и запись обмена — только под резервом бюджета. Итог —
+   * записан ли в `AiUsage` настоящий расход модели (`usageMetadata`).
+   */
+  private async *streamReserved(
+    request: AssistantChatRequest,
+    locale: SupportedLocale,
+    model: string,
+    systemInstruction: string,
+    contents: ReturnType<typeof toGeminiContent>[],
+    clientIpAddr: string,
+    startedAt: number,
+    externalSignal: AbortSignal | undefined,
+  ): AsyncGenerator<AssistantStreamEvent, boolean> {
+    const genai = this.genai;
+    if (!genai) return false;
+
     // Таймауты Gemini (ТЗ §4.4): 30 с до первого токена, 90 с на весь
     // ответ (`DEFAULT_CHAT_TIMEOUTS`). Найдено доп. аудитом (HIGH) —
     // `externalSignal` объединяется с ними в ядре: без него закрытая
     // клиентом вкладка не останавливала стрим Gemini раньше 30/90 секунд.
-    const genai = this.genai;
     const outcome = yield* runChatStream<AssistantAction, AssistantErrorCode>({
       timeouts: DEFAULT_CHAT_TIMEOUTS,
       externalSignal,
       openStream: (abortSignal) =>
         genai.models.generateContentStream({
-          model: settings.model,
+          model,
           contents,
           config: {
             systemInstruction,
@@ -239,7 +354,7 @@ export class AssistantService {
             // запас поверх этого (под `<<<actions>>>`-блок и длинные
             // ответы на составные вопросы), а не жёсткая обрезка
             // нормального ответа.
-            maxOutputTokens: 2000,
+            maxOutputTokens: ASSISTANT_MAX_OUTPUT_TOKENS,
           },
         }),
       resolveActions: (rawActionsJson) =>
@@ -258,7 +373,7 @@ export class AssistantService {
     // Что успело накопиться при сбое — тоже записываем (§4.4 п.7:
     // «клиент показывает то, что успело прийти»), деньги за неполный
     // ответ уже потрачены независимо от того, как оборвался стрим.
-    if (!outcome.ok && !outcome.fullText.trim()) return;
+    if (!outcome.ok && !outcome.fullText.trim()) return false;
     await this.recordExchange(
       request,
       locale,
@@ -266,8 +381,9 @@ export class AssistantService {
       outcome.usageMeta,
       clientIpAddr,
       Date.now() - startedAt,
-      settings.model,
+      model,
     );
+    return outcome.usageMeta != null;
   }
 
   /** §10 — запись обмена для аналитики/ревью; учёт расхода — §7.2/26. */

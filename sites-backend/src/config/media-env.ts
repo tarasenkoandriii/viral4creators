@@ -17,8 +17,8 @@
  * Модуль в `config/` (не в модуле продукта): его берут и публичный код
  * виджета, и лист графа `internal-sites` (правило `internal-sites-scope`).
  */
-import { createHmac } from 'crypto';
 import { WIDGET_VIDEO_LINK_HMAC_LABEL } from '../brand';
+import { derivedKeys } from '../common/secrets-keyring';
 
 export const VIDEO_HOSTS_DEFAULT = ['.public.blob.vercel-storage.com'];
 
@@ -80,15 +80,21 @@ export function videoMediaSources(
   });
 }
 
-/** Ключ подписи ссылки на ролик; null — ключа нет (виджет и так закрыт). */
+/**
+ * Ключ ПОДПИСИ ссылки на ролик — текущий ключ связки `ASSIST_SECRETS_KEY`
+ * (№60); null — ключа нет (виджет и так закрыт).
+ */
 export function videoLinkKey(
   env: NodeJS.ProcessEnv = process.env,
 ): Buffer | null {
-  const key = env.ASSIST_SECRETS_KEY?.trim();
-  if (!key) return null;
-  return createHmac('sha256', key)
-    .update(WIDGET_VIDEO_LINK_HMAC_LABEL)
-    .digest();
+  return derivedKeys(env, WIDGET_VIDEO_LINK_HMAC_LABEL)?.currentKey ?? null;
+}
+
+/** Ключи ПРОВЕРКИ ссылки: текущий и прежние (ссылки, выданные до ротации). */
+export function videoLinkKeys(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly Buffer[] | null {
+  return derivedKeys(env, WIDGET_VIDEO_LINK_HMAC_LABEL)?.all ?? null;
 }
 
 /** Deep-link «Снять новое обучение» для сайта; null — генератор не задан. */

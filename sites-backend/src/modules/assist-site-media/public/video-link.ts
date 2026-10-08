@@ -8,8 +8,12 @@
  * ролик сайта B (третий барьер ещё и сверяет строку ролика по siteId).
  * Посетителя в токене нет намеренно: ссылку открывает `<video>` iframe без
  * заголовков, а срок — минуты.
+ *
+ * №60 (Р-З10-12): подпись — текущим ключом, проверка — текущим и прежними
+ * (`videoLinkKeys`): ссылка, выданная до ротации, доживает свой срок.
  */
 import { createHmac, timingSafeEqual } from 'crypto';
+import { hmacKeyList, type HmacKeys } from '../../../common/secrets-keyring';
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const TOKEN_RE =
@@ -37,7 +41,7 @@ export type VideoLinkCheck =
   | { ok: false; reason: 'malformed' | 'signature' | 'expired' };
 
 export function verifyVideoLink(
-  key: Buffer,
+  key: HmacKeys,
   token: unknown,
   nowUnix: number,
 ): VideoLinkCheck {
@@ -46,11 +50,12 @@ export function verifyVideoLink(
   if (!m) return { ok: false, reason: 'malformed' };
   const [, siteId, videoId, expRaw, given] = m;
   const exp = Number(expRaw);
-  const want = Buffer.from(sig(key, siteId, videoId, exp));
   const got = Buffer.from(given);
-  if (want.length !== got.length || !timingSafeEqual(want, got)) {
-    return { ok: false, reason: 'signature' };
-  }
+  const signed = hmacKeyList(key).some((k) => {
+    const want = Buffer.from(sig(k, siteId, videoId, exp));
+    return want.length === got.length && timingSafeEqual(want, got);
+  });
+  if (!signed) return { ok: false, reason: 'signature' };
   if (exp <= nowUnix) return { ok: false, reason: 'expired' };
   return { ok: true, siteId, videoId, expUnix: exp };
 }

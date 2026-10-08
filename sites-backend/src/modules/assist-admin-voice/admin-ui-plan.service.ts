@@ -31,7 +31,7 @@ import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { readVoiceControlPlatform } from '../../common/voice-control-platform';
-import { voiceTicketKey } from '../../config/voice-env';
+import { voiceTicketKeys } from '../../config/voice-env';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { maskSensitiveEcho } from '../../shared/assist-chat-core';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
@@ -466,7 +466,7 @@ export class AdminUiPlanService {
     let source: 'voice' | 'typed' = 'typed';
     if (text && body.source === 'voice') {
       const ok = verifyAdminVoiceTicket(
-        voiceTicketKey(this.env),
+        voiceTicketKeys(this.env),
         body.voiceTicket,
         { siteId: s.siteId, actor: s.employeeRef, text, now },
       );
@@ -1101,7 +1101,7 @@ export class AdminUiPlanService {
       const text = cleanUtterance(body.text) ?? '';
       const ok =
         !!text &&
-        verifyAdminVoiceTicket(voiceTicketKey(this.env), body.voiceTicket, {
+        verifyAdminVoiceTicket(voiceTicketKeys(this.env), body.voiceTicket, {
           siteId: ctx.session.siteId,
           actor: ctx.session.employeeRef,
           text,

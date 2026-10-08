@@ -20,7 +20,10 @@
  *    N»: в карту, заборонити, посилити ризик, контрольні, до шаблону),
  *    поиск цели (`/`), микрофон «Сказать сейчас» (`POST /editor/v1/voice`,
  *    кнопка 🎤 или `S` удерживать); новый шаблон — сначала шаблон (id
- *    выдаёт сервер), затем цели на его id.
+ *    выдаёт сервер), затем цели на его id;
+ *  - заход 10: вкладки «Промахи»/«Пропозиції» и «✨ Синоніми від ШІ» в
+ *    карточке (№113) — ленивый чанк `/v1/editor-assist.js` (`assist.ts`);
+ *    словари ru/en — ленивые чанки (`i18n.ts`).
  */
 import './editor-panel.css';
 import { EDITOR_SESSION_HEADER } from '../shared/brand';
@@ -33,7 +36,8 @@ import {
   type ToPanel,
   type ToPicker,
 } from '../shared/editor-protocol';
-import { T, fmt, type PanelLang } from './i18n';
+import type { AssistApi, AssistCtx } from './assist';
+import { T, fmt, loadLang, type PanelLang } from './i18n';
 import { createMemo } from './memo';
 
 type Risk = 'now' | 'confirm' | 'never';
@@ -128,14 +132,21 @@ const S = {
   map: null as MapView | null,
   picked: null as Picked | null,
   edit: null as Target | null,
-  tab: 'target' as 'target' | 'page' | 'memo' | 'try' | 'publish',
+  tab: 'target' as
+    'target' | 'page' | 'memo' | 'try' | 'publish' | 'miss' | 'sugg',
   note: '',
   fatal: '',
   undo: [] as Array<{ label: string; ops: unknown[] }>,
   tryRes: null as TryView | null,
   wrongFor: null as string | null,
   /** «Не то → выбрать»: синоним ждёт клика человека здесь. */
-  pendingSyn: null as { key: string | null; phrase: string } | null,
+  pendingSyn: null as {
+    key: string | null;
+    phrase: string;
+    /** Язык фразы (аудит Ж P3-5: «просили» — на языке посетителя). */
+    lang: PanelLang;
+  } | null,
+  wrongLang: 'uk' as PanelLang,
   pendingLoad: false,
   /** Цель, открытая по ссылке из TMA (находка Т-3/Т-4, §5-кватер.10). */
   focusKey: null as string | null,
@@ -156,7 +167,8 @@ const S = {
   waiting: new Map<number, (m: ToPanel) => void>(),
 };
 
-const L = () => T[S.lang];
+/** Словарь языка страницы; пока ru/en не загружен (или сбой) — uk. */
+const L = () => T[S.lang] || T.uk;
 
 // ── DOM без HTML-приёмников ──
 function h(
@@ -263,6 +275,76 @@ const memo = createMemo({
   },
 });
 
+/** Следующий клик по сайту — цель; фраза станет её синонимом («не те → вибрати»). */
+function bind(phrase: string, lang?: string | null): void {
+  S.wrongFor = phrase;
+  S.wrongLang = lang === 'uk' || lang === 'ru' || lang === 'en' ? lang : S.lang;
+  toPicker({ type: 'mode', mode: 'select' });
+  render();
+}
+
+// №113 (заход 10): «Промахи», «Пропозиції», ШІ-синоніми — ленивый чанк.
+const AX_URL = '/v1/editor-assist.js';
+let ax: AssistApi | null = null;
+let axQ: Promise<void> | null = null;
+/**
+ * Аудит Ж (P2-2): сбой загрузки чанка запоминается; `import()` — только по
+ * клику человека (вкладка, кнопка), не из перерисовки; повтор — с другим
+ * адресом (модуль, не загрузившийся по адресу, браузер не грузит повторно).
+ */
+let axErr = false;
+function assist(retry = false): void {
+  if (ax || axQ) return;
+  const ctx: AssistCtx = {
+    h,
+    human,
+    api,
+    ops,
+    reload: loadMap,
+    render,
+    open: (k) => {
+      const t = S.map?.targets.find((x) => x.key === k);
+      if (t) open(t);
+    },
+    bind,
+    note: (n) => {
+      S.note = n;
+    },
+    fail,
+    lang: () => S.lang,
+    path: () => S.path,
+    map: () => S.map,
+  };
+  axErr = false;
+  axQ = import(/* @vite-ignore */ retry ? `${AX_URL}?r=${Date.now()}` : AX_URL)
+    .then((x: { start(c: AssistCtx): AssistApi }) => {
+      ax = x.start(ctx);
+    })
+    .catch(() => {
+      axErr = true;
+    })
+    .finally(() => {
+      axQ = null;
+      render();
+    });
+}
+
+/** Подсказки (№113) ещё нет: «завантажую…» или сбой с «Повторити». */
+function assistWait(): HTMLElement {
+  return axErr
+    ? h(
+        'p',
+        { class: 'warn' },
+        `${L().loadFail} `,
+        h(
+          'button',
+          { type: 'button', click: human(() => assist(true)) },
+          L().retry
+        )
+      )
+    : h('p', { class: 'hint' }, L().loading);
+}
+
 /** Открыть карточку цели карты (список страницы, «↶» шага мемо). */
 function open(t: Target): void {
   S.picked = {
@@ -319,6 +401,13 @@ async function loadMap(): Promise<void> {
     S.map = await api<MapView>(
       `/editor/v1/map?path=${encodeURIComponent(S.path)}`
     );
+    // Карточка — по свежему черновику (после «Зберегти» новая цель уже есть;
+    // заход 10: ИИ-синонимы цели — её актуальные `suggested`).
+    const e = S.edit;
+    if (S.picked)
+      S.edit =
+        (e && S.map.targets.find((x) => x.key === e.key)) ||
+        targetFor(S.picked.descriptor);
     toPicker({
       type: 'targets',
       items: S.map.targets
@@ -539,7 +628,7 @@ function cardView(): HTMLElement {
                 {
                   op: 'add-synonym',
                   key: t.key,
-                  lang: S.lang,
+                  lang: syn.lang,
                   text: syn.phrase,
                 },
               ],
@@ -588,7 +677,7 @@ function cardView(): HTMLElement {
             .filter((s) => s.origin !== 'suggested')
             .map((s) => s.text)
             .join(', ')
-        : l === S.lang && S.pendingSyn && !S.pendingSyn.key
+        : S.pendingSyn && l === S.pendingSyn.lang && !S.pendingSyn.key
           ? S.pendingSyn.phrase
           : '',
     }) as HTMLInputElement;
@@ -715,11 +804,20 @@ function cardView(): HTMLElement {
           : Object.fromEntries(
               langs.map((l) => [l, names[l].value.trim()]).filter(([, v]) => v)
             ),
+        // Предложения ИИ (`suggested`) правка карточки не теряет.
         synonyms: denied
           ? {}
           : Object.fromEntries(
               langs
-                .map((l) => [l, list(syns[l].value)])
+                .map((l) => [
+                  l,
+                  [
+                    ...list(syns[l].value),
+                    ...(t?.synonyms[l] ?? []).filter(
+                      (x) => x.origin === 'suggested'
+                    ),
+                  ],
+                ])
                 .filter(([, v]) => v.length)
             ),
         semanticType: type.value || null,
@@ -743,6 +841,19 @@ function cardView(): HTMLElement {
       h('button', { type: 'button', class: 'pri', click: save }, L().save)
     )
   );
+  // №113: ИИ-синонимы цели (`suggested` — только после «Прийняти»).
+  if (t && !p.never && t.status === 'active')
+    box.append(
+      ax
+        ? ax.card(t)
+        : axErr
+          ? assistWait()
+          : h(
+              'button',
+              { type: 'button', click: human(() => assist()) },
+              L().aiSyn
+            )
+    );
   if (t)
     box.append(
       h(
@@ -941,10 +1052,8 @@ function tryView(): HTMLElement {
         {
           type: 'button',
           click: human(() => {
-            S.wrongFor = r.heard;
             S.note = L().wrongPick;
-            toPicker({ type: 'mode', mode: 'select' });
-            render();
+            bind(r.heard);
           }),
         },
         L().wrong
@@ -1093,6 +1202,8 @@ function render(): void {
     ['page', L().tabPage],
     ['memo', L().tabMemo],
     ['try', L().tabTry],
+    ['miss', L().tabMiss],
+    ['sugg', L().tabSugg],
     ['publish', L().tabPublish],
   ] as const)
     tabs.append(
@@ -1103,6 +1214,8 @@ function render(): void {
           class: S.tab === id ? 'on' : '',
           click: () => {
             S.tab = id;
+            // №113: чанк подсказок — по клику на вкладку (не из перерисовки).
+            if (id === 'miss' || id === 'sugg') assist(axErr);
             render();
           },
         },
@@ -1120,7 +1233,11 @@ function render(): void {
           ? memo.view()
           : S.tab === 'try'
             ? tryView()
-            : publishView()
+            : S.tab === 'publish'
+              ? publishView()
+              : ax
+                ? ax.view(S.tab)
+                : assistWait()
   );
   root.append(
     h(
@@ -1184,8 +1301,15 @@ window.addEventListener('message', (e) => {
     case 'ready':
       S.lang = m.lang === 'ru' || m.lang === 'en' ? m.lang : 'uk';
       S.path = m.path;
-      if (S.session) void loadMap();
-      else S.pendingLoad = true;
+      // Заход 10: словарь ru/en — ленивый чанк; карта — уже с ним.
+      void loadLang(S.lang).then(() => {
+        if (S.session) void loadMap();
+        else {
+          S.pendingLoad = true;
+          // Ошибка ссылки уже показана — на языке страницы.
+          if (S.fatal) render();
+        }
+      });
       return;
     case 'route':
       S.path = m.path;
@@ -1215,7 +1339,11 @@ window.addEventListener('message', (e) => {
       // «Не то → выбрать»: фраза команды становится синонимом выбранной цели.
       if (S.wrongFor) {
         const t = targetFor(m.descriptor);
-        S.pendingSyn = { key: t ? t.key : null, phrase: S.wrongFor };
+        S.pendingSyn = {
+          key: t ? t.key : null,
+          phrase: S.wrongFor,
+          lang: S.wrongLang,
+        };
         S.wrongFor = null;
       }
       S.picked = {

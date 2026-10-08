@@ -19,6 +19,7 @@
  * речи или набора в iframe `wa.`).
  */
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { hmacKeyList, type HmacKeys } from '../../common/secrets-keyring';
 import { Injectable, Logger } from '@nestjs/common';
 import { SONIOX_API_BASE, sonioxApiKey } from '../../shared/soniox';
 import {
@@ -110,7 +111,7 @@ export function issueAdminVoiceTicket(
 
 /** Билет наш, этого сотрудника этого сайта, на этот текст и не истёк. */
 export function verifyAdminVoiceTicket(
-  key: Buffer | null,
+  key: HmacKeys | null,
   ticket: unknown,
   p: { siteId: string; actor: string; text: string; now: Date },
 ): boolean {
@@ -119,9 +120,12 @@ export function verifyAdminVoiceTicket(
   if (!m) return false;
   const exp = Number(m[1]);
   if (exp * 1000 <= p.now.getTime()) return false;
-  const want = Buffer.from(sign(key, { ...p, exp }));
   const got = Buffer.from(m[2]);
-  return want.length === got.length && timingSafeEqual(want, got);
+  // №60: текущим и прежними ключами связки (`voiceTicketKeys`).
+  return hmacKeyList(key).some((k) => {
+    const want = Buffer.from(sign(k, { ...p, exp }));
+    return want.length === got.length && timingSafeEqual(want, got);
+  });
 }
 
 // ── сеть Soniox ───────────────────────────────────────────────────────────

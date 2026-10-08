@@ -98,6 +98,29 @@ describe('runChatStream', () => {
     expect(outcome.fullText).toBe('Готово. <<<acti');
   });
 
+  it('потребитель бросил стрим посреди (return()) — таймеры сняты', async () => {
+    jest.useFakeTimers();
+    try {
+      const gen = runChatStream<{ kind: string }, 'upstream'>({
+        timeouts: { firstTokenMs: 30_000, totalMs: 90_000 },
+        resolveActions: async () => [],
+        upstreamError: () => ({ code: 'upstream', message: 'сбой' }),
+        openStream: async () =>
+          (async function* () {
+            yield { text: 'первый кусок, достаточно длинный для отдачи' };
+            await new Promise(() => undefined); // стрим «висит»
+          })(),
+      });
+      const first = await gen.next();
+      expect(first.done).toBe(false);
+      expect(jest.getTimerCount()).toBeGreaterThan(0);
+      await gen.return({ ok: false, fullText: '', usageMeta: null });
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('resolveActions получает сырой JSON после разделителя (null без него)', async () => {
     const resolveActions = jest.fn().mockResolvedValue([]);
     await drain({

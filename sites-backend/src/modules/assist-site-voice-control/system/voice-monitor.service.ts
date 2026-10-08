@@ -19,8 +19,12 @@
  *  4. канарейка выпуска чанков: падение `done` > 10 п.п. против стабильного
  *     или нарушение на канарейке → откат (`canary: null`);
  *  5. контрольные команды: из отчёта мастера и до 20 частых успешных
- *     команд боя (Т-3 их разрешает — с общим QA-воркером, отложен);
+ *     команд боя (их разрешает Т-3 — п.8);
  *  6. срок журнала монитора — 90 дней;
+ *  8. (№29, Р-З10-19) Т-3 по расписанию: раз в сутки на сайт — сверка
+ *     опубликованной голосовой карты и контрольных команд браузерным
+ *     воркером (без кликов), отчёт `autotest` (`voice-monitor-autotest.ts`);
+ *     воркер выключен — шаг пропускается с причиной (`autotestSkipped`);
  *  7. (е) мемо «требует проверки» (§5-бис.17 п.8): элемент шага устарел
  *     (Ш4, по виду), сбой/`pinMismatch` на шаге у ≥ 3 разных посетителей и
  *     хешей IP за 7 дней, успех цели < 60% на ≥ 10 запусках — мемо в
@@ -29,8 +33,10 @@
  * Служебный канал — `ASSIST_OPS_CHAT_ID` (Telegram, тот же бот помощника);
  * нет — только лог.
  */
+import { createHash, randomBytes } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { browserWorkerEnabled } from '../../../config/browser-worker-env';
 import {
   readVoiceControlPlatform,
   readWidgetRelease,
@@ -69,6 +75,17 @@ import {
   readSttCounters,
   siteMetrics,
 } from './voice-monitor-store';
+import {
+  AUTOTEST_ALERT_PAUSE_MS,
+  AUTOTEST_KIND,
+  AUTOTEST_RETENTION_MS,
+  AUTOTEST_TOKEN_TTL_MS,
+  autotestFailedReport,
+  autotestReport,
+  type AutotestOutcome,
+  type AutotestSkip,
+  type VoiceAutotestPort,
+} from './voice-monitor-autotest';
 
 export interface VoiceMonitorResult {
   transitions: number;
@@ -80,6 +97,10 @@ export interface VoiceMonitorResult {
   commands: number;
   /** (е) Мемо, переведённых в «требует проверки» за проход. */
   memoReviews: number;
+  /** (№29) Поставлено Т-3 по расписанию за проход. */
+  autotests: number;
+  /** (№29) Почему шаг Т-3 пропущен целиком (воркер выключен, порта нет). */
+  autotestSkipped: AutotestSkip | null;
 }
 
 const DAY = 24 * 60 * 60_000;
@@ -96,7 +117,8 @@ export const OWNER_TEXT: Record<
   | 'alert'
   | 'undo_low'
   | 'not_heard'
-  | 'memo_review',
+  | 'memo_review'
+  | 'autotest_fail',
   Record<NotifyLang, string>
 > = {
   transition: {
@@ -128,6 +150,11 @@ export const OWNER_TEXT: Record<
     uk: 'Помічник часто «не розчув» голосові команди ({langs}): понад 30% за добу. Ймовірно, шум або мікрофон відвідувачів; перевірте мови голосу в налаштуваннях.',
     ru: 'Помощник часто «не расслышал» голосовые команды ({langs}): больше 30% за сутки. Вероятно, шум или микрофон посетителей; проверьте языки голоса в настройках.',
     en: 'The assistant often “didn’t catch” voice commands ({langs}): over 30% in 24 hours. Likely noise or visitors’ microphones; check the voice languages in settings.',
+  },
+  autotest_fail: {
+    uk: 'Автоперевірка голосового керування: на сайті не знаходиться більшість цілей карти й контрольних команд — схоже, сайт змінився. Перегляньте звіт і пройдіть перевірку ще раз.',
+    ru: 'Автопроверка голосового управления: на сайте не находится большинство целей карты и контрольных команд — похоже, сайт изменился. Посмотрите отчёт и пройдите проверку ещё раз.',
+    en: 'Voice control auto-check: most map targets and control commands are no longer found on the site — it seems the site changed. Review the report and run the check again.',
   },
   memo_review: {
     uk: 'Мемо М-{n} потребує перевірки: сайт змінився або мемо часто не доходить до мети. Поки що помічник виконує команди звичайним шляхом. Відкрийте «Голос → Мемо».',
@@ -177,6 +204,12 @@ export class VoiceMonitorService {
   /** Только тесты: свой префикс курсоров и размер страницы прохода. */
   cursorKey: string = MONITOR_CURSOR_KEY;
   sitesPerRun: number = MONITOR_THRESHOLDS.sitesPerRun;
+  /**
+   * (№29) Порт к очереди браузерного воркера — вешает `assist-site-voice-map`
+   * (`voice-map-worker.autotest.ts`): правило графа `browser-jobs-zone`
+   * пускает к очереди только его. Нет — шаг Т-3 пропускается (`no_port`).
+   */
+  autotest: VoiceAutotestPort | null = null;
 
   constructor(
     private readonly sitesDb: SitesDb,
@@ -206,6 +239,8 @@ export class VoiceMonitorService {
       rolledBack: false,
       commands: 0,
       memoReviews: 0,
+      autotests: 0,
+      autotestSkipped: null,
     };
     out.transitions = await this.transitions(now);
     const v = await this.violations(now);
@@ -217,6 +252,9 @@ export class VoiceMonitorService {
     out.rolledBack = await this.canary(now);
     out.commands = await this.commands(now);
     out.memoReviews = await this.memoReviews(now);
+    const t3 = await this.autotests(now);
+    out.autotests = t3.scheduled;
+    out.autotestSkipped = t3.skipped;
     await this.sys().assistSiteVoiceIncident.deleteMany({
       where: {
         createdAt: {
@@ -265,7 +303,7 @@ export class VoiceMonitorService {
    * настройках платформы (`voice-monitor-cursor:<шаг>`), без миграции.
    */
   private async pageOfSites(
-    step: 'metrics' | 'commands',
+    step: 'metrics' | 'commands' | 'autotest',
     where: Prisma.AssistSiteWhereInput,
   ): Promise<Array<{ accountId: string; siteId: string }>> {
     const key = `${this.cursorKey}:${step}`;
@@ -989,6 +1027,193 @@ export class VoiceMonitorService {
       n += data.length;
     }
     return n;
+  }
+
+  // ── 8. Т-3 по расписанию (№29) ──────────────────────────────────────────
+
+  /**
+   * Раз в сутки на сайт (строка `autotest` за 24 ч — уже есть: не ставим;
+   * лимит очереди `voice-autotest` 1/сутки — вторая линия), keyset-курсором
+   * по сайтам с голосовым управлением. Строка отчёта создаётся ДО задания
+   * (обработчик итога всегда её найдёт); не поставилось — удаляется.
+   */
+  private async autotests(
+    now: Date,
+  ): Promise<{ scheduled: number; skipped: AutotestSkip | null }> {
+    // Ретенция отчётов автотеста — и при выключенном воркере.
+    await this.sys().assistSiteVoiceTest.deleteMany({
+      where: {
+        ...(this.onlyAccountIds
+          ? { accountId: { in: this.onlyAccountIds } }
+          : {}),
+        kind: AUTOTEST_KIND,
+        createdAt: { lt: new Date(now.getTime() - AUTOTEST_RETENTION_MS) },
+      },
+    });
+    if (!browserWorkerEnabled(this.env))
+      return { scheduled: 0, skipped: 'worker_disabled' };
+    const port = this.autotest;
+    if (!port) return { scheduled: 0, skipped: 'no_port' };
+    const sites = await this.pageOfSites('autotest', {
+      voiceControlSiteState: { in: ['on', 'degraded', 'test'] },
+    });
+    let scheduled = 0;
+    for (const s of sites) {
+      const db = this.sitesDb.forAccount(s.accountId);
+      const fresh = await db.assistSiteVoiceTest.findFirst({
+        where: {
+          siteId: s.siteId,
+          kind: AUTOTEST_KIND,
+          createdAt: { gte: new Date(now.getTime() - DAY) },
+        },
+        select: { id: true },
+      });
+      if (fresh) continue;
+      const cmds = await db.assistSiteVoiceControlCommand.findMany({
+        where: { siteId: s.siteId },
+        select: { pagePath: true },
+      });
+      const paths = [...new Set(cmds.map((c) => c.pagePath))];
+      const row = await db.assistSiteVoiceTest.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          kind: AUTOTEST_KIND,
+          host: '-',
+          origin: '-',
+          startedBy: 'monitor',
+          // Входа по строке автотеста нет: токен — случайный, только хеш.
+          tokenHash: createHash('sha256').update(randomBytes(32)).digest('hex'),
+          tokenExpiresAt: new Date(now.getTime() + AUTOTEST_TOKEN_TTL_MS),
+          pages: { paths } as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+      const t = await port
+        .enqueue({
+          accountId: s.accountId,
+          siteId: s.siteId,
+          testId: row.id,
+          paths,
+        })
+        .catch(() => ({ skipped: 'error' as const }));
+      if ('skipped' in t) {
+        await db.assistSiteVoiceTest.deleteMany({ where: { id: row.id } });
+        if (t.skipped === 'worker_disabled')
+          return { scheduled, skipped: 'worker_disabled' };
+        continue;
+      }
+      await db.assistSiteVoiceTest.updateMany({
+        where: { id: row.id },
+        data: {
+          host: t.host,
+          origin: t.origin,
+          pages: { paths, version: t.version, jobId: t.jobId },
+        },
+      });
+      scheduled += 1;
+    }
+    return { scheduled, skipped: null };
+  }
+
+  /**
+   * Итог Т-3 (зовёт обработчик задания `voice-autotest`): отчёт, отметки
+   * контрольных команд (`lastCheckedAt`/`lastResult`), при провале —
+   * владельцу на его языке. Повторный итог той же строки — без изменений.
+   */
+  async completeAutotest(i: {
+    accountId: string;
+    siteId: string;
+    testId: string;
+    outcome: AutotestOutcome;
+  }): Promise<string | null> {
+    const db = this.sitesDb.forAccount(i.accountId);
+    const now = this.now();
+    const row = await db.assistSiteVoiceTest.findFirst({
+      where: { id: i.testId, siteId: i.siteId, kind: AUTOTEST_KIND },
+      select: { id: true, reportedAt: true },
+    });
+    if (!row || row.reportedAt) return null;
+    const cmds = await db.assistSiteVoiceControlCommand.findMany({
+      where: { siteId: i.siteId },
+      select: { id: true, pagePath: true, expected: true },
+    });
+    const { report, commands } = autotestReport(cmds, i.outcome);
+    const { count } = await db.assistSiteVoiceTest.updateMany({
+      where: { id: row.id, reportedAt: null },
+      data: {
+        report: report as unknown as Prisma.InputJsonValue,
+        result: report.result,
+        reportedAt: now,
+      },
+    });
+    if (count !== 1) return null;
+    for (const st of ['found', 'lost'] as const) {
+      const ids = commands.filter((c) => c.status === st).map((c) => c.id);
+      if (ids.length)
+        await db.assistSiteVoiceControlCommand.updateMany({
+          where: { id: { in: ids } },
+          data: { lastCheckedAt: now, lastResult: st },
+        });
+    }
+    if (report.result === 'fail') {
+      // Стойкий провал — тревога не чаще раза в AUTOTEST_ALERT_PAUSE_MS.
+      const recent = await this.sys().assistSiteVoiceIncident.findFirst({
+        where: {
+          siteId: i.siteId,
+          kind: 'alert',
+          code: 'autotest_fail',
+          notified: { gt: 0 },
+          createdAt: {
+            gte: new Date(now.getTime() - AUTOTEST_ALERT_PAUSE_MS),
+          },
+        },
+        select: { id: true },
+      });
+      const notified = recent
+        ? 0
+        : await this.notifyOwners(
+            i.accountId,
+            i.siteId,
+            ownerTexts('autotest_fail'),
+          ).catch(() => 0);
+      await this.incident({
+        accountId: i.accountId,
+        siteId: i.siteId,
+        kind: 'alert',
+        code: 'autotest_fail',
+        metrics: {
+          checked: report.autotest.checked,
+          lost: report.autotest.lost,
+        },
+        notified,
+      });
+    }
+    return report.result;
+  }
+
+  /** Т-3 не выполнен воркером (сайт не виноват): отчёт без результата. */
+  async failAutotest(i: {
+    accountId: string;
+    siteId: string;
+    testId: string;
+    code: string;
+  }): Promise<void> {
+    await this.sitesDb.forAccount(i.accountId).assistSiteVoiceTest.updateMany({
+      where: {
+        id: i.testId,
+        siteId: i.siteId,
+        kind: AUTOTEST_KIND,
+        reportedAt: null,
+      },
+      data: {
+        report: autotestFailedReport(
+          i.code,
+        ) as unknown as Prisma.InputJsonValue,
+        result: null,
+        reportedAt: this.now(),
+      },
+    });
   }
 }
 

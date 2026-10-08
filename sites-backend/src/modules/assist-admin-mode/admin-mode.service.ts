@@ -26,6 +26,10 @@ import { notFoundSite } from '../site-core/site-core.constants';
 import { adminError } from './admin-errors';
 import { ASSIST_ROLE_RE, PatchAdminModeDto } from './admin-mode.dto';
 import {
+  parseTaskMinutes,
+  readTaskMinutes,
+} from '../assist-admin-analytics/admin-label-schema';
+import {
   AdminSecretsError,
   loadAdminKeyring,
   openAdminSecret,
@@ -62,6 +66,14 @@ export interface AdminModeView {
   notifyDanger: boolean;
   /** Р-З9-17: тестовый ключ ходит в коннекторы (умолчание — нет). */
   testKeyConnectors: boolean;
+  /** Р-З10-16 (Ш6 (7)): «админка» — Telegram Mini App (Telegram Web предком). */
+  adminTmaFrame: boolean;
+  /** Р-З10-15 (Ш6 (4)): подпись кнопки (`data-label`); null — по умолчанию. */
+  widgetLabel: string | null;
+  /** №57: разметка диалогов ИИ, минуты на тип задачи, отчёт недели. */
+  analyticsLabeling: boolean;
+  analyticsTaskMinutes: Record<string, number>;
+  weeklyReport: boolean;
   /** Код вставки в админку (7b): null — нет публичного ключа сайта. */
   snippet: { origin: string; tag: string; csp: string } | null;
 }
@@ -110,6 +122,33 @@ export function secretChanged() {
 
 function attr(v: string): string {
   return v.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+/** Р-З10-15: подпись кнопки — до 40 символов (не байт). */
+export const WIDGET_LABEL_MAX = 40;
+
+/**
+ * Подпись кнопки помощника на странице админки (Ш6 (4), Р-З10-15): пробелы
+ * схлопываются, пусто — null (подпись по умолчанию); управляющие символы,
+ * `<`/`>` (без HTML) и длина > 40 — 400. Та же проверка — в `admin.js`
+ * (атрибут правят руками в теге): вторая линия, не доверие этой.
+ */
+export function cleanWidgetLabel(v: string | null | undefined): string | null {
+  if (v === null || v === undefined) return null;
+  const t = v.replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  if (
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f-\u009f<>]/.test(t) ||
+    Array.from(t).length > WIDGET_LABEL_MAX
+  ) {
+    throw adminError(
+      400,
+      'ADMIN_LABEL_INVALID',
+      `Подпись кнопки — до ${WIDGET_LABEL_MAX} символов, без < и >`,
+    );
+  }
+  return t;
 }
 
 @Injectable()
@@ -202,10 +241,16 @@ export class AdminModeService {
       actionsDailyCap: s.actionsDailyCap,
       notifyDanger: s.notifyDanger,
       testKeyConnectors: s.testKeyConnectors,
+      adminTmaFrame: s.adminTmaFrame,
+      widgetLabel: s.widgetLabel,
+      analyticsLabeling: s.analyticsLabeling,
+      analyticsTaskMinutes: readTaskMinutes(s.analyticsTaskMinutes),
+      weeklyReport: s.weeklyReport,
       snippet: pk
         ? {
             origin,
-            tag: `<script async src="${attr(origin + WIDGET_LOADER_PATH)}" data-site="${attr(pk)}" data-mode="${WIDGET_ADMIN_MODE}" data-identity="<JWT сотрудника от вашего бэкенда>"></script>`,
+            // Р-З10-15: своя подпись кнопки — атрибутом `data-label`.
+            tag: `<script async src="${attr(origin + WIDGET_LOADER_PATH)}" data-site="${attr(pk)}" data-mode="${WIDGET_ADMIN_MODE}"${s.widgetLabel ? ` data-label="${attr(s.widgetLabel)}"` : ''} data-identity="<JWT сотрудника от вашего бэкенда>"></script>`,
             csp: `script-src ${origin}; frame-src ${origin}`,
           }
         : null,
@@ -300,6 +345,25 @@ export class AdminModeService {
     if (dto.testKeyConnectors !== undefined) {
       data.testKeyConnectors = dto.testKeyConnectors;
     }
+    if (dto.adminTmaFrame !== undefined) data.adminTmaFrame = dto.adminTmaFrame;
+    if (dto.widgetLabel !== undefined) {
+      data.widgetLabel = cleanWidgetLabel(dto.widgetLabel);
+    }
+    if (dto.analyticsLabeling !== undefined) {
+      data.analyticsLabeling = dto.analyticsLabeling;
+    }
+    if (dto.analyticsTaskMinutes !== undefined) {
+      const tm = parseTaskMinutes(dto.analyticsTaskMinutes);
+      if (!tm) {
+        throw adminError(
+          400,
+          'ADMIN_TASK_MINUTES_INVALID',
+          'Минуты на тип задачи: известные типы, целые 0…480',
+        );
+      }
+      data.analyticsTaskMinutes = tm;
+    }
+    if (dto.weeklyReport !== undefined) data.weeklyReport = dto.weeklyReport;
     if (Object.keys(data).length) {
       await this.db
         .forAccount(m.accountId)

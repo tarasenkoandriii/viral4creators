@@ -61,21 +61,27 @@ export async function* runChatStream<TAction, TErrorCode extends string>(
   const buffer = new DelimiterStreamBuffer(delimiter);
   let usageMeta: GeminiUsageMeta | null = null;
 
+  // `finally`: потребитель может бросить генератор посреди стрима
+  // (`break` → `return()` — клиент ушёл); без него таймеры первого токена и
+  // общего срока висели бы до срабатывания (аудит пакета Е, заход 10).
   try {
-    const stream = await options.openStream(abort.signal);
-    for await (const chunk of stream) {
-      abort.firstTokenArrived();
-      if (chunk.usageMetadata) usageMeta = chunk.usageMetadata;
-      const t = buffer.push(chunk.text ?? '');
-      if (t) yield { type: 'token', t };
+    try {
+      const stream = await options.openStream(abort.signal);
+      for await (const chunk of stream) {
+        abort.firstTokenArrived();
+        if (chunk.usageMetadata) usageMeta = chunk.usageMetadata;
+        const t = buffer.push(chunk.text ?? '');
+        if (t) yield { type: 'token', t };
+      }
+    } catch (error) {
+      abort.clear();
+      const { code, message } = options.upstreamError(error);
+      yield { type: 'error', code, message };
+      return { ok: false, fullText: buffer.fullText, usageMeta };
     }
-  } catch (error) {
+  } finally {
     abort.clear();
-    const { code, message } = options.upstreamError(error);
-    yield { type: 'error', code, message };
-    return { ok: false, fullText: buffer.fullText, usageMeta };
   }
-  abort.clear();
 
   // Хвост, придержанный буфером (обычная концовка без разделителя).
   const tail = buffer.flush();

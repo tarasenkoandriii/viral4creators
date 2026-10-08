@@ -25,6 +25,11 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'crypto';
+import {
+  derivedKeys,
+  openWithKeys,
+  type DerivedKeys,
+} from '../../common/secrets-keyring';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
 import type { AccountMembership } from '../site-core/account/roles';
@@ -51,19 +56,22 @@ const PREFIX: Record<IntegrationKind, string> = {
   knowledge_api: 'knsec_',
 };
 
+/** №60: ключи всех версий связки ASSIST_SECRETS_KEY; null — ключа нет. */
 export function integrationsKey(
   env: NodeJS.ProcessEnv = process.env,
-): Buffer | null {
-  const secret = env.ASSIST_SECRETS_KEY?.trim();
-  if (!secret) return null;
-  return createHmac('sha256', secret).update(SECRET_KEY_LABEL).digest();
+): DerivedKeys | null {
+  return derivedKeys(env, SECRET_KEY_LABEL);
 }
 
 export function encryptSecret(
   secret: string,
   aad: string,
-  key: Buffer,
+  keys: DerivedKeys,
 ): string {
+  return sealSecret(secret, aad, keys.currentKey);
+}
+
+function sealSecret(secret: string, aad: string, key: Buffer): string {
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', key, iv);
   c.setAAD(Buffer.from(aad, 'utf8'));
@@ -79,8 +87,22 @@ export function encryptSecret(
 export function decryptSecret(
   blob: string,
   aad: string,
-  key: Buffer,
+  keys: DerivedKeys,
 ): string | null {
+  return openIntegrationSecret(blob, aad, keys)?.value ?? null;
+}
+
+/** Как decrypt, но с версией ключа, которым открылось (ротация, №60). */
+export function openIntegrationSecret(
+  blob: string,
+  aad: string,
+  keys: DerivedKeys,
+): { value: string; version: string } | null {
+  if (typeof blob !== 'string') return null;
+  return openWithKeys(keys, blob, (body, key) => openSecret(body, aad, key));
+}
+
+function openSecret(blob: string, aad: string, key: Buffer): string | null {
   const parts = blob.split('.');
   if (parts.length !== 4 || parts[0] !== 'v1') return null;
   try {

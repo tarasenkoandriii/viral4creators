@@ -83,7 +83,14 @@ export class InternalCredentialsService {
             ],
           }
         : req.input;
+      // «Хотя бы один продукт» — с учётом невидимых генератору (P3-3).
+      if (input.products && input.products.length === 0) {
+        throw badInput('нужен хотя бы один продукт');
+      }
       return this.creds.update(m.accountId, row.siteId, row.id, input, actor);
+    }
+    if (req.input.products && req.input.products.length === 0) {
+      throw badInput('нужен хотя бы один продукт');
     }
     const { m, siteId } = await this.creds.managedHost(telegramId, hostId);
     const input: TestAccountInput = {

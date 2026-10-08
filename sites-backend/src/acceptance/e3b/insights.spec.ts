@@ -8,8 +8,17 @@ import { describeDb } from '../../modules/assist-sandbox/testing/k3-stack.testin
 import {
   RUN_CODE,
   lastWeekStart,
+  rawFirstDay,
 } from '../../modules/assist-analytics/ai/insights.service';
-import { addDays, dayRangeUtc } from '../../modules/assist-analytics/site-time';
+import {
+  addDays,
+  dayInTz,
+  dayRangeUtc,
+} from '../../modules/assist-analytics/site-time';
+import {
+  dryFindingLine,
+  type Finding,
+} from '../../modules/assist-analytics/ai/findings';
 import { AiStack } from '../../modules/assist-analytics/testing/ai-stack.testing';
 import { TextModelError } from '../../modules/site-ai/text-model';
 import { estimateCost } from '../../shared/ai-pricing';
@@ -43,6 +52,10 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
       visitHash?: string | null;
       createdAt?: Date;
       question?: string;
+      /** Заход 10: темы разметки, «не по теме», время ответа помощника. */
+      topics?: string[];
+      intent?: string;
+      answeredAt?: Date;
     } = {},
   ): Promise<string> {
     const createdAt = p.createdAt ?? midWeek;
@@ -69,6 +82,22 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
         createdAt,
       },
     });
+    if (p.answeredAt) {
+      await st.owner.assistSiteMessage.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          conversationId: c.id,
+          role: 'assistant',
+          text: 'Так, є.',
+          // Строка ответа создаётся вместе с вопросом, готов — позже
+          // (время ответа N1 — завершение, аудит P3-4).
+          createdAt,
+          updatedAt: p.answeredAt,
+          streamState: 'complete',
+        },
+      });
+    }
     const score = p.score ?? 40;
     await st.owner.assistSiteConversationLabel.create({
       data: {
@@ -77,7 +106,7 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
         siteId: s.siteId,
         status: 'ok',
         promptVersion: 'label-v1',
-        intent: 'availability',
+        intent: p.intent ?? 'availability',
         stage: 'decide',
         outcome: p.failureReason ? 'unresolved' : 'resolved',
         failureReason: p.failureReason ?? null,
@@ -85,7 +114,7 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
         leadBucket: score >= 60 ? 'hot' : score >= 30 ? 'warm' : 'cold',
         buyingSignals: [],
         qualityFlags: [],
-        topics: [],
+        topics: p.topics ?? [],
         entities: [],
       },
     });
@@ -534,5 +563,368 @@ describeDb('Приёмка Э3-бис (а): выводы недели и кал�
       params: cals[0].params,
     });
     expect(cals[0].total).toBe(221);
+  });
+
+  // ── заход 10: N1, N9 (сырые просмотры), N11 (версии базы) ─────────────
+
+  /** Итог просмотра (основной ролью, как пишет `/widget/v1/pv`). */
+  async function view(
+    s: ChatSite,
+    p: {
+      path: string;
+      startedAt: Date;
+      totalMs: number;
+      chatOpened?: boolean;
+      utmCampaign?: string | null;
+      prevPath?: string | null;
+      scrollMax?: number;
+      device?: string;
+    },
+  ): Promise<void> {
+    await st.owner.assistSitePageView.create({
+      data: {
+        id: `pv-${randomUUID()}`,
+        siteId: s.siteId,
+        day: p.startedAt.toISOString().slice(0, 10),
+        startedAt: p.startedAt,
+        path: p.path,
+        prevPath: p.prevPath ?? null,
+        source: p.utmCampaign ? 'ads' : 'direct',
+        utmCampaign: p.utmCampaign ?? null,
+        device: p.device ?? 'mobile',
+        os: 'ios',
+        browser: 'safari',
+        scrollMax: p.scrollMax ?? 50,
+        totalMs: p.totalMs,
+        activeMs: Math.min(p.totalMs, 30_000),
+        chatOpened: p.chatOpened ?? false,
+      },
+    });
+  }
+
+  it('заход 10: N1 и N9 — диалог сопоставлен с просмотром (путь, время, чат); «ушёл ≤ 60 с без перехода», кампания UTM; ссылка в названии кампании отброшена', async () => {
+    const s = await site('start');
+    const SEC = 1000;
+    const base = midWeek.getTime();
+    // 30 диалогов о доставке на /product/sneakers, все из кампании autumn_sale:
+    // 14 закончили просмотр через 20 с после ответа, 2 из них перешли дальше
+    // по сайту (не уход) → ушло 12 из 30 (40%); 9 из 30 — «не тот товар».
+    for (let i = 0; i < 30; i++) {
+      const at = new Date(base + i * 10 * 60 * SEC);
+      // Ответ готов через 50 с после вопроса: уход через 20 с после ответа
+      // — это 70 с от вопроса (по времени вопроса «ушёл» бы не засчитался).
+      const answeredAt = new Date(at.getTime() + 50 * SEC);
+      const fast = i < 14;
+      const viewStart = new Date(at.getTime() - 30 * SEC);
+      const end = fast
+        ? answeredAt.getTime() + 20 * SEC
+        : answeredAt.getTime() + 5 * 60 * SEC;
+      await labeled(s, {
+        page: '/product/sneakers?utm_campaign=autumn_sale',
+        createdAt: at,
+        answeredAt,
+        topics: ['доставка'],
+        failureReason: i % 10 < 3 ? 'product_mismatch' : null,
+      });
+      await view(s, {
+        path: '/product/sneakers',
+        startedAt: viewStart,
+        totalMs: end - viewStart.getTime(),
+        chatOpened: true,
+        utmCampaign: 'autumn_sale',
+      });
+      if (i < 2) {
+        await view(s, {
+          path: '/cart',
+          prevPath: '/product/sneakers',
+          startedAt: new Date(end + 3 * SEC),
+          totalMs: 60 * SEC,
+        });
+      }
+    }
+    // Диалог без просмотра с чатом — не в выборке N1/N9.
+    await labeled(s, {
+      createdAt: new Date(base - 3 * 3600 * SEC),
+      answeredAt: new Date(base - 3 * 3600 * SEC + 10 * SEC),
+      topics: ['доставка'],
+    });
+    // 80 просмотров кампании без прокрутки и без перехода (уход), один — с
+    // переходом дальше (не уход): 30 + 80 = 110 просмотров, 79 уходов (72%).
+    for (let i = 0; i < 80; i++) {
+      const at = new Date(base + 6 * 3600 * SEC + i * 60 * SEC);
+      await view(s, {
+        path: '/landing',
+        startedAt: at,
+        totalMs: 8 * SEC,
+        scrollMax: 0,
+        utmCampaign: 'autumn_sale',
+        device: 'desktop',
+      });
+      if (i === 0) {
+        await view(s, {
+          path: '/catalog',
+          prevPath: '/landing',
+          startedAt: new Date(at.getTime() + 9 * SEC),
+          totalMs: 30 * SEC,
+          device: 'desktop',
+        });
+      }
+    }
+    // Кампания-ссылка (ввод посетителя `?utm_campaign=`) с теми же
+    // признаками — не находка: домен не доходит ни до модели, ни до отчёта.
+    for (let i = 0; i < 25; i++) {
+      const at = new Date(base + 30 * 3600 * SEC + i * 10 * 60 * SEC);
+      await labeled(s, {
+        page: '/promo',
+        createdAt: at,
+        answeredAt: new Date(at.getTime() + 10 * SEC),
+        failureReason: 'product_mismatch',
+      });
+      await view(s, {
+        path: '/promo',
+        startedAt: new Date(at.getTime() - 5 * SEC),
+        totalMs: 30 * SEC,
+        chatOpened: true,
+        scrollMax: 0,
+        utmCampaign: 'go.evil.com',
+      });
+    }
+    for (let i = 0; i < 100; i++) {
+      await view(s, {
+        path: '/promo',
+        startedAt: new Date(base + 60 * 3600 * SEC + i * 60 * SEC),
+        totalMs: 5 * SEC,
+        scrollMax: 0,
+        utmCampaign: 'go.evil.com',
+      });
+    }
+
+    const inp = await st.weekly.inputs(
+      s.accountId,
+      s.siteId,
+      TZ,
+      week,
+      addDays(week, 6),
+      { visits: true },
+    );
+    expect(inp.afterAnswer).toEqual([
+      { page: '/product/sneakers', topic: 'доставка', n: 30, x: 12 },
+    ]);
+    expect(inp.campaigns).toEqual([
+      {
+        campaign: 'autumn_sale',
+        dialogs: 30,
+        mismatch: 9,
+        views: 110,
+        bounces: 79,
+      },
+    ]);
+
+    await st.weekly.runSite(s.accountId, s.siteId, week, now);
+    const rows = await st.owner.assistSiteInsight.findMany({
+      where: { siteId: s.siteId, weekStart: week, code: { in: ['N1', 'N9'] } },
+    });
+    const n1 = rows.find((r) => r.code === 'N1')!;
+    const n9 = rows.find((r) => r.code === 'N9')!;
+    expect(n1.finding).toMatchObject({
+      n: 30,
+      x: 12,
+      share: 0.4,
+      page: '/product/sneakers',
+      topic: 'доставка',
+    });
+    expect(n9.finding).toMatchObject({
+      n: 30,
+      x: 9,
+      share: 0.3,
+      campaign: 'autumn_sale',
+      value: 72,
+    });
+    expect(rows).toHaveLength(2);
+    expect(dryFindingLine(n9.finding as unknown as Finding, 'uk')).toBe(
+      'Кампанія «autumn_sale»: 9 з 30 діалогів — не той товар або не за темою (30%), 72% переглядів — відхід без прокрутки',
+    );
+  });
+
+  it('заход 10: N11 — страница, изменённая версией базы прошлой недели: доля просмотров с чатом до/после; первая версия и неизменённые страницы — нет', async () => {
+    const s = await site('start');
+    const src = await st.owner.assistSiteSource.create({
+      data: { accountId: s.accountId, siteId: s.siteId, kind: 'crawl' },
+    });
+    // Версия опубликована в среду недели ДО анализируемой.
+    const pubDay = addDays(week, -5);
+    const created = new Date(
+      dayRangeUtc(pubDay, TZ).start.getTime() + 9 * 3600_000,
+    );
+    const published = new Date(created.getTime() + 20 * 60_000);
+    await st.owner.assistSiteKnowledgeVersion.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        number: 1001,
+        parentNumber: 1000,
+        trigger: 'crawl',
+        status: 'published',
+        createdAt: created,
+        publishedAt: published,
+      },
+    });
+    // Первая версия сайта (без родителя) той же недели — не «изменение».
+    await st.owner.assistSiteKnowledgeVersion.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        number: 999,
+        trigger: 'crawl',
+        status: 'published',
+        createdAt: new Date(created.getTime() - 3 * 86_400_000),
+        publishedAt: new Date(created.getTime() - 3 * 86_400_000 + 60_000),
+      },
+    });
+    const doc = (ref: string, indexedAt: Date) =>
+      st.owner.assistSiteDocument.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          sourceId: src.id,
+          ref,
+          kind: 'page',
+          url: s.url(ref),
+          status: 'active',
+          indexedAt,
+        },
+      });
+    await doc('/oplata', new Date(created.getTime() + 5 * 60_000));
+    await doc('/dostavka', new Date(created.getTime() + 6 * 60_000));
+    // Переиндексирована первой версией — к версии 1001 отношения не имеет.
+    await doc(
+      '/kontakty',
+      new Date(created.getTime() - 3 * 86_400_000 + 30_000),
+    );
+    const daily = async (
+      path: string,
+      from: string,
+      to: string,
+      views: number,
+      chats: number,
+    ) => {
+      for (let d = from; d <= to; d = addDays(d, 1)) {
+        await st.owner.assistSiteDailyPage.create({
+          data: {
+            accountId: s.accountId,
+            siteId: s.siteId,
+            day: d,
+            path,
+            views,
+            chatOpens: chats,
+          },
+        });
+      }
+    };
+    const weekEnd = addDays(week, 6);
+    // /oplata: до — 14 × 30 просмотров, по 1 чату (≈ 3.3%); после — по 5.
+    await daily('/oplata', addDays(pubDay, -14), addDays(pubDay, -1), 30, 1);
+    await daily('/oplata', addDays(pubDay, 1), weekEnd, 30, 5);
+    // /dostavka изменилась, но доля чата та же — не находка.
+    await daily('/dostavka', addDays(pubDay, -14), addDays(pubDay, -1), 30, 3);
+    await daily('/dostavka', addDays(pubDay, 1), weekEnd, 30, 3);
+    // /kontakty — тот же сдвиг, но страница не менялась этой версией.
+    await daily('/kontakty', addDays(pubDay, -14), addDays(pubDay, -1), 30, 1);
+    await daily('/kontakty', addDays(pubDay, 1), weekEnd, 30, 5);
+
+    const inp = await st.weekly.inputs(
+      s.accountId,
+      s.siteId,
+      TZ,
+      week,
+      weekEnd,
+      {
+        changes: true,
+      },
+    );
+    const after = 11; // четверг–воскресенье прошлой недели + 7 дней
+    expect(
+      inp.pageChanges?.sort((a, b) => a.page.localeCompare(b.page)),
+    ).toEqual([
+      {
+        page: '/dostavka',
+        changedAt: dayInTz(published, TZ),
+        version: 1001,
+        before: { views: 420, chatOpens: 42 },
+        after: { views: 30 * after, chatOpens: 3 * after },
+      },
+      {
+        page: '/oplata',
+        changedAt: dayInTz(published, TZ),
+        version: 1001,
+        before: { views: 420, chatOpens: 14 },
+        after: { views: 30 * after, chatOpens: 5 * after },
+      },
+    ]);
+
+    await st.weekly.runSite(s.accountId, s.siteId, week, now);
+    const rows = await st.owner.assistSiteInsight.findMany({
+      where: { siteId: s.siteId, weekStart: week, code: 'N11' },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].findingKey).toBe('N11:/oplata:v1001');
+    expect(rows[0].finding).toMatchObject({
+      page: '/oplata',
+      changedAt: pubDay,
+      n: 330,
+      x: 55,
+      base: 0.0333,
+    });
+    // Неделя спустя та же версия уже не «прошлой недели» — повтора нет.
+    const next = addDays(week, 7);
+    const later = await st.weekly.inputs(
+      s.accountId,
+      s.siteId,
+      TZ,
+      next,
+      addDays(next, 6),
+      {
+        changes: true,
+      },
+    );
+    expect(later.pageChanges).toEqual([]);
+  });
+
+  it('аудит P2-3: сверка N1/N9 через 14 дней — фактическое окно (сырые просмотры 7 дней) и n; мало данных — after: null с причиной', async () => {
+    const s = await site('start');
+    const row = await st.owner.assistSiteInsight.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        weekStart: week,
+        code: 'N1',
+        findingKey: 'N1:/product/sneakers:доставка',
+        finding: {
+          code: 'N1',
+          n: 30,
+          x: 12,
+          share: 0.4,
+          page: '/product/sneakers',
+          topic: 'доставка',
+        },
+        impact: 'high',
+        status: 'done',
+        doneAt: new Date(now.getTime() - 15 * 86_400_000),
+      },
+    });
+    expect(await st.weekly.followUps(s.accountId, s.siteId, TZ, now)).toBe(1);
+    const got = await st.owner.assistSiteInsight.findUniqueOrThrow({
+      where: { id: row.id },
+    });
+    const doneDay = dayInTz(new Date(now.getTime() - 15 * 86_400_000), TZ);
+    expect(got.followUp).toMatchObject({
+      from: rawFirstDay(now, TZ),
+      to: addDays(doneDay, 13),
+      n: null,
+      after: null,
+      reason: 'insufficient_data',
+      before: { x: 12, n: 30, share: 0.4 },
+    });
+    expect((got.followUp as { from: string }).from > doneDay).toBe(true);
   });
 });

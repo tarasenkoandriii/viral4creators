@@ -17,6 +17,11 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import {
+  isReportView,
+  sendReportHtml,
+  setReportPageHeaders,
+} from '../../common/report-page';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import {
   DEV_REPORT_CSP,
@@ -24,7 +29,7 @@ import {
   devReportInvalidHtml,
   devReportLang,
 } from './dev-report';
-import { DevReportService, PREVIEW_BOT_RE } from './dev-report.service';
+import { DevReportService } from './dev-report.service';
 
 @Controller('assist/sites')
 @PublicRoute(
@@ -43,15 +48,9 @@ export class DevReportController {
     @Req() req?: Request,
   ): Promise<void> {
     // HEAD и боты превью (мессенджер развернул ссылку) — не просмотр.
-    const count =
-      (req?.method ?? 'GET') === 'GET' &&
-      !PREVIEW_BOT_RE.test(String(req?.headers?.['user-agent'] ?? ''));
+    const count = isReportView(req);
     const lang = devReportLang(langRaw);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Security-Policy', DEV_REPORT_CSP);
+    setReportPageHeaders(res, DEV_REPORT_CSP);
     let content;
     try {
       content = await this.reports.read(id, token, { count });
@@ -68,17 +67,13 @@ export class DevReportController {
         });
         return;
       }
-      res.status(404);
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.end(devReportInvalidHtml(lang));
+      sendReportHtml(res, 404, devReportInvalidHtml(lang));
       return;
     }
     if (format === 'json') {
       res.status(200).json({ success: true, data: content });
       return;
     }
-    res.status(200);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.end(devReportHtml(content, lang));
+    sendReportHtml(res, 200, devReportHtml(content, lang));
   }
 }

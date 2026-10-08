@@ -332,6 +332,49 @@ describeDb('internal-sites: хранилище учётных данных по 
       404,
     );
   });
+  it('аудит захода 10 (P3-3): пустые продукты генератора — можно, если у учётки остаётся невидимый ему продукт', async () => {
+    const tg = f.telegramId.toString();
+    const creds = app.get(SiteCredentialsService);
+    const adminOnly = await creds.create(
+      f.accountId,
+      f.siteId,
+      {
+        label: 'Менеджер',
+        hostIds: [f.verifiedHostId],
+        products: ['assist-admin'],
+        confirmedTestAccount: true,
+      },
+      `tma:${tg}`,
+    );
+    const saved = await call('test-accounts/upsert', {
+      telegramId: tg,
+      hostId: f.verifiedHostId,
+      testAccountId: adminOnly.id,
+      account: { label: 'Менеджер 2', products: [] },
+    }).expect(200);
+    expect(saved.body.data.products).toEqual(['assist-admin']);
+    expect(saved.body.data.label).toBe('Менеджер 2');
+
+    const tutorialOnly = await call('test-accounts/upsert', {
+      telegramId: tg,
+      hostId: f.verifiedHostId,
+      account: { label: 'Обучалка' },
+    }).expect(200);
+    const emptied = await call('test-accounts/upsert', {
+      telegramId: tg,
+      hostId: f.verifiedHostId,
+      testAccountId: tutorialOnly.body.data.id,
+      account: { products: [] },
+    }).expect(400);
+    expect(emptied.body.error.code).toBe('TEST_ACCOUNT_INVALID');
+    const createdEmpty = await call('test-accounts/upsert', {
+      telegramId: tg,
+      hostId: f.verifiedHostId,
+      account: { label: 'Пусто', products: [] },
+    }).expect(400);
+    expect(createdEmpty.body.error.code).toBe('TEST_ACCOUNT_INVALID');
+  });
+
   it('Ш2-хвост (7): forget — своя учётка черновика удаляется целиком, чужая — 409 и цела', async () => {
     const tg = f.telegramId.toString();
     const own = await call('test-accounts/upsert', {

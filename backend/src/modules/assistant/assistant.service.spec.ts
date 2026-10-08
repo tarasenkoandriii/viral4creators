@@ -61,12 +61,63 @@ function build(
     }),
   };
   const aiUsage = {
-    spentTodayForOperation: jest
-      .fn()
-      .mockResolvedValue(overrides.spentToday ?? 0),
-    recordGemini: jest.fn().mockResolvedValue(undefined),
+    recordGemini: jest.fn().mockImplementation(async () => {
+      budget.log.push('ai-usage');
+    }),
+  };
+  // П-Г5: резерв бюджета — транзакция с advisory-lock и строки «в полёте»
+  // в `rate_limits`. Дублёр: транзакции идут строго по очереди (как под
+  // `pg_advisory_xact_lock`), строки резерва — в памяти.
+  const budget = {
+    rows: new Map<string, { at: Date; amount: number }>(),
+    reserveFails: false,
+    log: [] as string[],
+  };
+  let chain: Promise<unknown> = Promise.resolve();
+  const sqlOf = (q: TemplateStringsArray) => q.join('?');
+  const tx = {
+    $executeRaw: jest.fn(async (q: TemplateStringsArray, ...v: any[]) => {
+      if (sqlOf(q).includes('INSERT INTO "rate_limits"')) {
+        budget.rows.set(v[0], { at: v[1], amount: v[2] });
+        budget.log.push('reserve');
+      }
+      return 1;
+    }),
+    $queryRaw: jest.fn(async (_q: TemplateStringsArray, ...v: any[]) => {
+      const prefix = String(v[0]).replace(/%$/, '');
+      let sum = 0;
+      for (const [k, r] of budget.rows) {
+        if (k.startsWith(prefix) && r.at > v[1]) sum += r.amount;
+      }
+      return [{ s: sum }];
+    }),
+    aiUsage: {
+      aggregate: jest.fn(async () => ({
+        _sum: { costMicroUsd: overrides.spentToday ?? 0 },
+      })),
+    },
   };
   const prisma = {
+    $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => {
+      if (budget.reserveFails) {
+        return Promise.reject(new Error('db down'));
+      }
+      const run = chain.then(() => fn(tx));
+      chain = run.catch(() => undefined);
+      return run;
+    }),
+    $executeRaw: jest.fn(async (q: TemplateStringsArray, ...v: any[]) => {
+      if (sqlOf(q).includes('DELETE FROM "rate_limits"')) {
+        budget.rows.delete(v[0]);
+        budget.log.push('release');
+      }
+      if (sqlOf(q).includes('UPDATE "rate_limits"')) {
+        const row = budget.rows.get(v[1]);
+        if (row) row.at = v[0];
+        budget.log.push('commit');
+      }
+      return 1;
+    }),
     assistantExchange: { create: jest.fn().mockResolvedValue({}) },
     assistantEvent: { create: jest.fn().mockResolvedValue({}) },
     tutorialVideoAsset: {
@@ -85,7 +136,7 @@ function build(
     prisma as any,
     notify as any,
   );
-  return { svc, settingsService, aiUsage, prisma, notify };
+  return { svc, settingsService, aiUsage, prisma, notify, budget };
 }
 
 const baseRequest: AssistantChatRequest = {
@@ -418,6 +469,186 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
       const events = await drain(svc.streamChat(baseRequest, '1.2.3.4'));
       const actionsEvent = events.find((e) => e.type === 'actions');
       expect(actionsEvent).toBeUndefined();
+    });
+  });
+
+  describe('П-Г5: атомарный резерв дневного бюджета (Р-З10-5)', () => {
+    /** Стрим, который стоит, пока тест не отпустит, — вопросы «в полёте». */
+    function heldStream() {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      generateContentStream.mockImplementation(async () =>
+        (async function* () {
+          await gate;
+          yield {
+            text: 'Ответ.',
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+          };
+        })(),
+      );
+      return () => release();
+    }
+
+    async function oneEstimate(): Promise<number> {
+      generateContentStream.mockResolvedValue(fakeStream([{ text: 'Ок.' }]));
+      const probe = build();
+      let amount = 0;
+      const set = probe.budget.rows.set.bind(probe.budget.rows);
+      probe.budget.rows.set = (k, v) => {
+        amount = v.amount;
+        return set(k, v);
+      };
+      await drain(probe.svc.streamChat(baseRequest, '1.2.3.4'));
+      generateContentStream.mockClear();
+      return amount;
+    }
+
+    it('10 параллельных вопросов при остатке на 2 → ровно 2 вызова модели, остальным budget_exhausted', async () => {
+      const estimate = await oneEstimate();
+      expect(estimate).toBeGreaterThan(1);
+      const releaseModel = heldStream();
+      const { svc, budget } = build({
+        spentToday: 1_000_000,
+        settings: {
+          dailyBudgetMicroUsd: 1_000_000 + Math.floor(estimate * 2.5),
+        },
+      });
+      const runs = Array.from({ length: 10 }, () =>
+        drain(svc.streamChat(baseRequest, '1.2.3.4')),
+      );
+      // Все десять успели зарезервировать или получить отказ, пока
+      // первые два ещё ждут модель.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(budget.rows.size).toBe(2);
+      releaseModel();
+      const all = await Promise.all(runs);
+      expect(generateContentStream).toHaveBeenCalledTimes(2);
+      expect(
+        all.filter((ev) =>
+          ev.some((e) => e.type === 'error' && e.code === 'budget_exhausted'),
+        ),
+      ).toHaveLength(8);
+      expect(budget.rows.size).toBe(0);
+    });
+
+    it('резерв снимается после записи AiUsage; при сбое стрима — тоже', async () => {
+      generateContentStream.mockResolvedValue(
+        fakeStream([
+          {
+            text: 'Ок.',
+            usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 },
+          },
+        ]),
+      );
+      const ok = build();
+      await drain(ok.svc.streamChat(baseRequest, '1.2.3.4'));
+      expect(ok.budget.log).toEqual(['reserve', 'ai-usage', 'release']);
+      expect(ok.budget.rows.size).toBe(0);
+
+      generateContentStream.mockRejectedValue(new Error('gemini down'));
+      const failed = build();
+      const events = await drain(failed.svc.streamChat(baseRequest, '1.2.3.4'));
+      expect(events.some((e) => e.code === 'upstream')).toBe(true);
+      expect(failed.budget.log).toEqual(['reserve', 'release']);
+      expect(failed.budget.rows.size).toBe(0);
+    });
+
+    it('P2-1: клиент бросил стрим после первого токена — резерв становится расходом до конца суток', async () => {
+      generateContentStream.mockResolvedValue(
+        fakeStream([{ text: 'Первый ' }, { text: 'второй.' }]),
+      );
+      // Таймеры 30/90 с ядра (`runChatStream`) при `return()` посреди
+      // стрима не снимаются (ядро чистит их только на штатном выходе) —
+      // поддельные таймеры, чтобы jest не ждал их 90 секунд.
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      try {
+        const { svc, budget } = build();
+        const gen = svc.streamChat(baseRequest, '1.2.3.4');
+        const first = await gen.next();
+        expect(first.value).toMatchObject({ type: 'token' });
+        await gen.return(undefined);
+        expect(budget.log).toEqual(['reserve', 'commit']);
+        expect(budget.rows.size).toBe(1);
+        const [row] = [...budget.rows.values()];
+        const end = new Date();
+        end.setUTCHours(24, 0, 0, 0);
+        expect(row.at.getTime()).toBe(end.getTime());
+      } finally {
+        jest.clearAllTimers();
+        jest.useRealTimers();
+      }
+    });
+
+    it('P2-1: ответ без usageMetadata (расход в AiUsage не записан) — оценка остаётся расходом', async () => {
+      generateContentStream.mockResolvedValue(fakeStream([{ text: 'Ок.' }]));
+      const { svc, budget } = build();
+      await drain(svc.streamChat(baseRequest, '1.2.3.4'));
+      expect(budget.log).toEqual(['reserve', 'ai-usage', 'commit']);
+    });
+
+    it('P2-1: клиент ушёл до первого токена — резерв снимается сразу', async () => {
+      generateContentStream.mockImplementation(
+        async (req: { config: { abortSignal: AbortSignal } }) =>
+          (async function* () {
+            await new Promise((_r, reject) =>
+              req.config.abortSignal.addEventListener('abort', () =>
+                reject(new Error('aborted')),
+              ),
+            );
+          })(),
+      );
+      const { svc, budget } = build();
+      const ac = new AbortController();
+      const run = drain(svc.streamChat(baseRequest, '1.2.3.4', ac.signal));
+      for (let k = 0; k < 50 && budget.rows.size === 0; k++) {
+        await new Promise((r) => setTimeout(r, 1));
+      }
+      expect(budget.rows.size).toBe(1);
+      ac.abort();
+      await run;
+      expect(generateContentStream).toHaveBeenCalledTimes(1);
+      expect(budget.log).toEqual(['reserve', 'release']);
+      expect(budget.rows.size).toBe(0);
+    });
+
+    it('P3-1: тревога различает «потрачено» и «занято резервом»', async () => {
+      const spent = build({
+        spentToday: 3_000_000,
+        settings: { dailyBudgetMicroUsd: 3_000_000 },
+      });
+      await drain(spent.svc.streamChat(baseRequest, '1.2.3.4'));
+      expect(spent.notify.alert.mock.calls[0][1]).toBe(
+        'ИИ-консультант на лендинге: дневной бюджет исчерпан — потрачено $3.00 из $3.00.',
+      );
+
+      const busy = build({
+        spentToday: 1_000_000,
+        settings: { dailyBudgetMicroUsd: 3_000_000 },
+      });
+      busy.budget.rows.set(
+        'assistant-budget:' + new Date().toISOString().slice(0, 10) + ':x',
+        {
+          at: new Date(Date.now() + 60_000),
+          amount: 1_999_999,
+        },
+      );
+      const events = await drain(busy.svc.streamChat(baseRequest, '1.2.3.4'));
+      expect(events[0]).toMatchObject({ code: 'budget_exhausted' });
+      const text = busy.notify.alert.mock.calls[0][1] as string;
+      expect(text).toContain('потрачено $1.00');
+      expect(text).toContain('$2.00 занято вопросами в полёте и оборванными');
+      expect(text).not.toContain('исчерпан');
+    });
+
+    it('база недоступна при резерве → error upstream, модель не зовётся', async () => {
+      const { svc, budget, notify } = build();
+      budget.reserveFails = true;
+      const events = await drain(svc.streamChat(baseRequest, '1.2.3.4'));
+      expect(events).toEqual([
+        { type: 'error', code: 'upstream', message: expect.any(String) },
+      ]);
+      expect(generateContentStream).not.toHaveBeenCalled();
+      expect(notify.alert).not.toHaveBeenCalled();
     });
   });
 });

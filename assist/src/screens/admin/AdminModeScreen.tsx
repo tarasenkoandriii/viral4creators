@@ -11,7 +11,11 @@ import {
   Tabs,
   inputClass,
 } from '../../kit/ui';
-import { isAdminOwner, useAdminTexts } from '../../lib/admin-mode-view';
+import {
+  isAdminOwner,
+  useAdminErrorText,
+  useAdminTexts,
+} from '../../lib/admin-mode-view';
 import {
   type AdminActionStatsView,
   type AdminModeTab,
@@ -19,6 +23,7 @@ import {
   type ConnectorView,
   type OperationView,
   ADMIN_MODE_TABS,
+  cleanWidgetLabel,
 } from '../../lib/admin-mode-api';
 import { useAssist } from '../../lib/assist-context';
 import { navigate } from '../../lib/router';
@@ -38,6 +43,7 @@ import {
   SigningSecret,
 } from './AdminActionsParts';
 import { AdminVoiceSection } from './AdminVoiceSection';
+import { AdminAnalytics } from './AdminAnalyticsParts';
 
 /**
  * «Админка» (Э7, ТЗ §3.8): режим и секрет подписи, коннекторы API, журнал
@@ -107,7 +113,7 @@ function Settings({ siteId }: { siteId: string }) {
   const { adminMode } = useAssist();
   const { dict, locale } = useKit();
   const t = useAdminTexts();
-  const errText = useErrorText();
+  const errText = useAdminErrorText();
   const st = useAsync(() => adminMode.get(siteId), [siteId]);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
@@ -122,6 +128,16 @@ function Settings({ siteId }: { siteId: string }) {
   const roleText = draft.roleText ?? roleMapText(st.data.roleMap);
 
   const save = async (patch: Parameters<typeof adminMode.patch>[1]) => {
+    // Р-З10-15: подпись кнопки проверяется до запроса (та же проверка — на
+    // сервере, `ADMIN_LABEL_INVALID`).
+    if (patch.widgetLabel !== undefined) {
+      const label = cleanWidgetLabel(patch.widgetLabel);
+      if (label === false) {
+        setNotice({ tone: 'danger', text: t.errors.ADMIN_LABEL_INVALID });
+        return;
+      }
+      patch = { ...patch, widgetLabel: label };
+    }
     setBusy(true);
     try {
       await adminMode.patch(siteId, patch);
@@ -250,6 +266,37 @@ function Settings({ siteId }: { siteId: string }) {
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
+            checked={v.adminTmaFrame}
+            onChange={(e) =>
+              setDraft({ ...draft, adminTmaFrame: e.target.checked })
+            }
+          />
+          <span>
+            {t.settings.tmaFrame}
+            <span className="block text-xs text-silver-500">
+              {t.settings.tmaFrameHint}
+            </span>
+          </span>
+        </label>
+        <div>
+          <div className="text-xs text-silver-500 mb-1">
+            {t.settings.widgetLabel}
+          </div>
+          <input
+            className={inputClass}
+            maxLength={40}
+            value={v.widgetLabel ?? ''}
+            onChange={(e) =>
+              setDraft({ ...draft, widgetLabel: e.target.value || null })
+            }
+          />
+          <div className="text-xs text-silver-500">
+            {t.settings.widgetLabelHint}
+          </div>
+        </div>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
             checked={v.testKeyConnectors}
             onChange={(e) =>
               setDraft({ ...draft, testKeyConnectors: e.target.checked })
@@ -274,6 +321,8 @@ function Settings({ siteId }: { siteId: string }) {
               tmaEmployeeRole: v.tmaEmployeeRole,
               statsPerEmployee: v.statsPerEmployee,
               testKeyConnectors: v.testKeyConnectors,
+              adminTmaFrame: v.adminTmaFrame,
+              widgetLabel: v.widgetLabel,
             })
           }
         >
@@ -978,6 +1027,7 @@ function Stats({ siteId }: { siteId: string }) {
         </Card>
       )}
       <ActionStats a={s.actions} />
+      <AdminAnalytics siteId={siteId} days={days} />
       <div className="text-xs text-silver-500">{t.stats.noRating}</div>
     </div>
   );

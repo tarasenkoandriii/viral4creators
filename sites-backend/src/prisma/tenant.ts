@@ -95,6 +95,14 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   // маршрут находит по хешу токена, дальше — кабинет сессии.
   AssistAdminUiPlan: 'accountId',
   AssistAdminVoiceTest: 'accountId',
+  // Заход 10, №57: аналитика «Админки» — разметка, суточная свёртка, выводы
+  // недели, выгрузки (составные FK (conversationId|siteId, accountId)).
+  // Пишет крон assist-admin-embed-run системным клиентом с причиной и
+  // кабинет `assistAdmin: owner` — с тенантом.
+  AssistAdminConversationLabel: 'accountId',
+  AssistAdminDailyStat: 'accountId',
+  AssistAdminInsight: 'accountId',
+  AssistAdminExport: 'accountId',
   // Э2: виджет «Сайта». Публичные маршруты ходят в эти таблицы клиентом
   // AssistPublicDb (без extension, по siteId/visitorId/хешам) — тенант
   // держит кабинетный код (экраны, Э3-лента диалогов) и составной FK.

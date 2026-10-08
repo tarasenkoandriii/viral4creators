@@ -47,9 +47,8 @@ export interface DevReportStatusView {
   } | null;
 }
 
-/** Боты превью ссылок в мессенджерах и поисковики — не «просмотр». */
-export const PREVIEW_BOT_RE =
-  /TelegramBot|Slackbot|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|WhatsApp|Discordbot|SkypeUriPreview|vkShare|Viber|redditbot|Googlebot|bingbot|Applebot|Embedly|Iframely|Pinterest|YandexBot|Google-InspectionTool/i;
+/** Боты превью ссылок — общий фильтр страниц-отчётов (`common/report-page`). */
+export { PREVIEW_BOT_RE } from '../../common/report-page';
 
 export function devReportPath(siteId: string, token: string): string {
   return `/assist/sites/${encodeURIComponent(siteId)}/voice-map/site/dev-report/${token}`;

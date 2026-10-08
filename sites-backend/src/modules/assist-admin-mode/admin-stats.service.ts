@@ -94,6 +94,43 @@ export interface ActionStatRow {
 
 const EXECUTED = new Set(['executing', 'done', 'failed', 'unknown']);
 
+/** Исход неизвестен: `unknown` или `expired` после «Да» (Р-З9-21). */
+function unknownOutcome(r: Pick<ActionStatRow, 'status' | 'attempts'>) {
+  return r.status === 'unknown' || (r.status === 'expired' && r.attempts > 0);
+}
+
+/**
+ * Окно тревоги компенсаций (ТЗ §5-бис.15 п.12; Р-З10-13 — общий расчёт для
+ * экрана и push владельцу): попытки компенсаций с исходом за последние 24 ч
+ * (`executedAt`, иначе `createdAt`), из них успешные; тревога — успешность
+ * < 80% на ≥ 10 попытках.
+ */
+export function compensationWindow(
+  rows: Array<
+    Pick<
+      ActionStatRow,
+      'status' | 'attempts' | 'compensationOf' | 'createdAt' | 'executedAt'
+    >
+  >,
+  now: Date,
+): { attempts: number; ok: number; alert: boolean } {
+  const recent = rows.filter(
+    (r) =>
+      r.compensationOf !== null &&
+      now.getTime() - (r.executedAt ?? r.createdAt).getTime() <=
+        COMPENSATION_ALERT.windowMs &&
+      (r.status === 'done' || r.status === 'failed' || unknownOutcome(r)),
+  );
+  const ok = recent.filter((r) => r.status === 'done').length;
+  return {
+    attempts: recent.length,
+    ok,
+    alert:
+      recent.length >= COMPENSATION_ALERT.minAttempts &&
+      ok / recent.length < COMPENSATION_ALERT.minSuccess,
+  };
+}
+
 /** Чистый расчёт (юнит-тест): строки предложений → агрегаты. */
 export function actionStats(
   rows: ActionStatRow[],
@@ -103,8 +140,7 @@ export function actionStats(
   const yes = (r: ActionStatRow) => r.attempts > 0 || EXECUTED.has(r.status);
   // Исход неизвестен: `unknown`, а также `expired` после «Да» (повтор закрыт
   // по сроку Р-З9-21 или остановкой мемо) — исход мог примениться.
-  const unk = (r: ActionStatRow) =>
-    r.status === 'unknown' || (r.status === 'expired' && r.attempts > 0);
+  const unk = (r: ActionStatRow) => unknownOutcome(r);
   const count = (f: (r: ActionStatRow) => boolean) => rows.filter(f).length;
   const confirmed = count(yes);
   const rejected = count((r) => r.status === 'rejected');
@@ -118,13 +154,7 @@ export function actionStats(
   const cFailed = comp.filter((r) => r.status === 'failed').length;
   const cUnknown = comp.filter(unk).length;
   const cAttempts = cDone + cFailed + cUnknown;
-  const recent = comp.filter(
-    (r) =>
-      now.getTime() - (r.executedAt ?? r.createdAt).getTime() <=
-        COMPENSATION_ALERT.windowMs &&
-      (r.status === 'done' || r.status === 'failed' || unk(r)),
-  );
-  const recentOk = recent.filter((r) => r.status === 'done').length;
+  const window = compensationWindow(comp, now);
   const ops = new Map<string, AdminActionStats['byOperation'][number]>();
   for (const r of rows) {
     const o = ops.get(r.operation) ?? {
@@ -165,9 +195,7 @@ export function actionStats(
       failed: cFailed,
       unknown: cUnknown,
       successRate: cAttempts ? cDone / cAttempts : null,
-      alert:
-        recent.length >= COMPENSATION_ALERT.minAttempts &&
-        recentOk / recent.length < COMPENSATION_ALERT.minSuccess,
+      alert: window.alert,
     },
     byOperation: [...ops.values()]
       .sort((a, b) => b.proposed - a.proposed)

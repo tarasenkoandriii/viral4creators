@@ -170,8 +170,20 @@ export class MapMissesService {
   constructor(private readonly sitesDb: SitesDb) {}
 
   async misses(m: AccountMembership, siteId: string): Promise<MapMissesView> {
-    const db = this.sitesDb.forAccount(m.accountId);
-    await loadAssistSite(db, m.accountId, siteId);
+    await loadAssistSite(
+      this.sitesDb.forAccount(m.accountId),
+      m.accountId,
+      siteId,
+    );
+    return this.statsFor(m.accountId, siteId);
+  }
+
+  /**
+   * Свёртка за 7 дней без проверки права — для вызывающих, кто его уже
+   * проверил (сессия редактора `we.`, режим «Промахи», №113, заход 10).
+   */
+  async statsFor(accountId: string, siteId: string): Promise<MapMissesView> {
+    const db = this.sitesDb.forAccount(accountId);
     const since = new Date(this.now().getTime() - MAP_MISSES_LIMITS.windowMs);
     const keyed = await db.assistSiteUiActionLog.findMany({
       where: {

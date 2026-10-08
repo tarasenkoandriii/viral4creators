@@ -305,7 +305,9 @@ export function ShareVideoPanel({
                     </span>
                   )}
                 </div>
-                <p className="mt-1 truncate font-medium">{p.title}</p>
+                <p className="mt-1 truncate font-medium" data-assist-ugc="">
+                  {p.title}
+                </p>
                 {p.status === 'REJECTED' && p.rejectReason && (
                   <p className="mt-1 text-rose-500">
                     {dict.shareVideoPanel.rejectReasonPrefix} {p.rejectReason}

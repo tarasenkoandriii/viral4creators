@@ -27,7 +27,7 @@ import {
   releaseForSite,
 } from '../../../common/voice-control-platform';
 import { AssistPublicDb } from '../../../prisma/assist-public-db.service';
-import { voiceTicketKey } from '../../../config/voice-env';
+import { voiceTicketKey, voiceTicketKeys } from '../../../config/voice-env';
 import { readState } from '../../assist-billing/public/entitlements';
 import {
   directMemo,
@@ -326,7 +326,8 @@ export class VoiceTestService {
       testId: tid,
     });
     if (!v) return fail('not_found');
-    const key = voiceTicketKey(this.plans.env);
+    // №60: итоги, подписанные до ротации, — тоже наши.
+    const key = voiceTicketKeys(this.plans.env);
     const pages: MemoCheckPage[] = [];
     for (const t of (Array.isArray(body?.tokens) ? body.tokens : []).slice(
       0,

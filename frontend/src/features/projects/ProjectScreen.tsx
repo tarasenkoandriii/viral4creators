@@ -384,6 +384,7 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
     <div className="animate-fadeIn">
       <ScreenHeader
         title={project.title}
+        titleUgc
         back={routes.projects()}
         hint={
           <>
@@ -507,7 +508,10 @@ export function ProjectScreen({ projectId }: { projectId: string }) {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-semibold">
+                  <span
+                    className="truncate text-sm font-semibold"
+                    data-assist-ugc=""
+                  >
                     {itemLabel(item, index, dict.projectFormat.itemFallback)}
                   </span>
                   {item.category && <Badge>{item.category}</Badge>}

@@ -8,9 +8,10 @@ import { minifyChunk } from './vite.mangle';
 // Как act.js: ES-модуль (динамический импорт работает под
 // `require-trusted-types-for 'script'`), сжатие esbuild'ом на выходе,
 // es2020 — для `import.meta.url` (рядом лежащие check.js и undo.js).
+// Заход 10: `charset: 'utf8'` — как act.js (ES-модуль декодируется как UTF-8).
 export default defineConfig({
   publicDir: false,
-  plugins: [minifyChunk({ format: 'esm', target: 'es2020' })],
+  plugins: [minifyChunk({ format: 'esm', target: 'es2020', charset: 'utf8' })],
   build: {
     outDir: 'dist/v1',
     emptyOutDir: false,

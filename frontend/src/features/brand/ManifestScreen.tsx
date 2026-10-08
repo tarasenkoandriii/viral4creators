@@ -291,6 +291,7 @@ function EditScreen({ manifestId }: { manifestId: string }) {
     <div className="animate-fadeIn space-y-4">
       <ScreenHeader
         title={manifest.title}
+        titleUgc
         back={routes.manifests()}
         hint={
           manifest.projectCount === 0

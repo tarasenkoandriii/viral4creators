@@ -7,6 +7,10 @@ import { defineConfig } from 'vite';
 // полей, мастер проверки; бюджет — size-budget.mjs). admin-chat.js берёт его
 // `import()` только когда режим включён или открыта ссылка мастера — чат
 // сотрудника без режима не растёт. Сжатие esbuild'ом на выходе, как у act.js.
+// Заход 10 (разгрузка бюджета): `charset: 'utf8'` — кириллица словаря
+// байтами UTF-8, а не `\uXXXX` (≈ −0,8 КБ gzip); безопасно, потому что чанк —
+// ES-модуль: `import()` всегда декодирует его как UTF-8. Без `mangleProps`
+// (имён `_x` здесь нет; сжатие имён — только loader/act/admin-act, mangle.test).
 export default defineConfig({
   publicDir: false,
   plugins: [
@@ -21,6 +25,7 @@ export default defineConfig({
               minify: true,
               format: 'esm',
               target: 'es2020',
+              charset: 'utf8',
             })
           ).code;
         }

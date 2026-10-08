@@ -14,6 +14,11 @@
  *     (SiteBudget.reserve с voiceCapMicroUsd); отказ — `limit`.
  *  4. Провайдер; учёт в site_ai_usage (`assist-stt` секунды, `assist-tts`
  *     символы); списание факта и снятие резерва — в finally.
+ *  Озвучка (заход 10, Р-З10-3 (б)): доплата за голос диалога проверяется
+ *  ДО синтеза (чтение), синтез одного ответа — single-flight (общий Promise
+ *  в процессе + заявка `tts-claim` между инстансами, без удержания
+ *  соединения) с повторным чтением кэша; финальная отметка голоса —
+ *  markVoiceDialog после, как раньше.
  *
  * Звук вопроса: только `Buffer` в памяти запроса — ни база, ни Blob, ни лог;
  * после ответа провайдера буфер затирается нулями (Условия п.3.4, §6.3
@@ -58,7 +63,7 @@ import {
   type VoiceAccess,
 } from './voice-access';
 import { siteSttTerms } from './stt-terms';
-import { markVoiceDialog } from './voice-dialog';
+import { markVoiceDialog, voiceUpgradeUnits } from './voice-dialog';
 import { issueVoiceTicket } from './voice-ticket';
 
 export const STT_PRICING_MODEL = 'soniox-stt-async';
@@ -118,6 +123,25 @@ export type TranscribeResult =
   | { ok: true; text: string; lang: string | null; ticket: string | null }
   | { ok: false; failure: VoiceFailure };
 
+/**
+ * Заявка на синтез между инстансами (аудит захода 10, P1-1): строка
+ * `assist_daily_counters` (scope `tts-claim`, ключ — сайт и ключ кэша,
+ * value — срок заявки в мс). Соединение пула на время синтеза НЕ держится.
+ * Срок заявки больше таймаута провайдера (20 с); ждущий опрашивает кэш,
+ * а дольше `TTS_CLAIM_WAIT_MS` не ждёт — синтезирует сам.
+ */
+export const TTS_CLAIM_SCOPE = 'tts-claim';
+export const TTS_CLAIM_TTL_MS = 30_000;
+export const TTS_CLAIM_WAIT_MS = 25_000;
+
+type SynthOutcome =
+  | {
+      ok: true;
+      out: { mime: string; audio: Buffer };
+      cached: boolean;
+    }
+  | { ok: false; failure: VoiceFailure };
+
 export type SpeakResult =
   | { ok: true; audio: Buffer; mime: string; cached: boolean }
   | { ok: false; failure: VoiceFailure };
@@ -127,6 +151,10 @@ export class SiteVoiceService {
   private readonly logger = new Logger(SiteVoiceService.name);
   env: NodeJS.ProcessEnv = process.env;
   now: () => Date = () => new Date();
+  /** Пауза опроса кэша ждущим заявку (тесты ускоряют). */
+  claimPollMs = 250;
+  /** Синтезы в полёте В ЭТОМ процессе: сайт␟ключ → общий результат. */
+  private readonly inflight = new Map<string, Promise<SynthOutcome>>();
 
   constructor(
     private readonly db: AssistPublicDb,
@@ -323,56 +351,32 @@ export class SiteVoiceService {
     const key = ttsCacheKey({ voice, lang, model: this.tts.model(), text });
 
     let out = await readTtsCache(this.db, site.siteId, key, now);
-    const cached = !!out;
+    let cached = !!out;
     if (!out) {
-      if (!site.preview && !(await this.unitsLeft(site.accountId, state))) {
+      // Р-З10-3 (б): доплата за голос этого диалога — ДО платного синтеза
+      // (только чтение; последнее слово — у markVoiceDialog ниже). Раньше
+      // синтез оплачивался, а `limit` приходил уже после.
+      if (
+        !site.preview &&
+        !(await this.voiceAffordable(site.accountId, msg.conversationId, state))
+      ) {
         return { ok: false, failure: 'limit' };
       }
-      const reserved = await this.budget.reserve(this.db, {
-        siteId: site.siteId,
-        siteCapMicroUsd: siteDailyCapMicroUsd(
-          await this.siteCap(site.siteId),
-          state,
-        ),
-        estMicroUsd: estimateCost(this.tts.pricingModel(), {
-          characters: text.length,
-        }).costMicroUsd,
-        voiceCapMicroUsd: access.capMicroUsd,
-        now,
-      });
-      if (!reserved.ok) {
-        this.logger.warn(`tts: ${reserved.denied} (site ${site.siteId})`);
-        return { ok: false, failure: 'limit' };
-      }
-      let actual = 0;
-      let res: Awaited<ReturnType<SiteSonioxTts['synthesize']>>;
-      try {
-        res = await this.tts.synthesize({ text, voice, lang });
-        if (res.ok) {
-          actual = await this.record(
-            site,
-            'assist-tts',
-            this.tts.pricingModel(),
-            {
-              characters: res.characters,
-            },
-          );
-        }
-      } finally {
-        await this.budget.settle(this.db, reserved.reservation, actual);
-      }
-      if (!res.ok) return { ok: false, failure: 'upstream' };
-      out = { mime: res.mime, audio: res.audio };
-      await writeTtsCache(this.db, {
-        siteId: site.siteId,
-        key,
-        voice,
-        lang,
-        mime: res.mime,
-        audio: res.audio,
-        characters: res.characters,
-        now,
-      });
+      // Single-flight: параллельные озвучки одного ответа — один синтез
+      // (в процессе — общий Promise, между инстансами — заявка без удержания
+      // соединения; остальные берут звук из кэша).
+      const made = await this.singleFlight(site.siteId, key, () =>
+        this.synthesizeAndCache(site, state, access, {
+          text,
+          voice,
+          lang,
+          key,
+          now,
+        }),
+      );
+      if (!made.ok) return { ok: false, failure: made.failure };
+      out = made.out;
+      cached = made.cached;
     }
     // Диалог с озвучкой — весом 2 (§7.1); доплата не поместилась — голос
     // этого диалога закрыт, чат продолжается текстом.
@@ -387,6 +391,196 @@ export class SiteVoiceService {
       `tts site=${site.siteId} chars=${text.length} cached=${cached}`,
     );
     return { ok: true, audio: out.audio, mime: out.mime, cached };
+  }
+
+  /** Резерв денег дня → синтез → учёт → кэш (под заявкой single-flight). */
+  private async synthesizeAndCache(
+    site: WidgetSiteContext,
+    state: SubscriptionState,
+    access: VoiceAccess,
+    p: { text: string; voice: string; lang: string; key: string; now: Date },
+  ): Promise<SynthOutcome> {
+    const reserved = await this.budget.reserve(this.db, {
+      siteId: site.siteId,
+      siteCapMicroUsd: siteDailyCapMicroUsd(
+        await this.siteCap(site.siteId),
+        state,
+      ),
+      estMicroUsd: estimateCost(this.tts.pricingModel(), {
+        characters: p.text.length,
+      }).costMicroUsd,
+      voiceCapMicroUsd: access.capMicroUsd,
+      now: p.now,
+    });
+    if (!reserved.ok) {
+      this.logger.warn(`tts: ${reserved.denied} (site ${site.siteId})`);
+      return { ok: false, failure: 'limit' };
+    }
+    let actual = 0;
+    let res: Awaited<ReturnType<SiteSonioxTts['synthesize']>>;
+    try {
+      res = await this.tts.synthesize({
+        text: p.text,
+        voice: p.voice,
+        lang: p.lang,
+      });
+      if (res.ok) {
+        actual = await this.record(
+          site,
+          'assist-tts',
+          this.tts.pricingModel(),
+          {
+            characters: res.characters,
+          },
+        );
+      }
+    } finally {
+      await this.budget.settle(this.db, reserved.reservation, actual);
+    }
+    if (!res.ok) return { ok: false, failure: 'upstream' };
+    await writeTtsCache(this.db, {
+      siteId: site.siteId,
+      key: p.key,
+      voice: p.voice,
+      lang: p.lang,
+      mime: res.mime,
+      audio: res.audio,
+      characters: res.characters,
+      now: p.now,
+    });
+    return {
+      ok: true,
+      out: { mime: res.mime, audio: res.audio },
+      cached: false,
+    };
+  }
+
+  /**
+   * Single-flight синтеза (Р-З10-3 (б); аудит P1-1 — без транзакции на
+   * время синтеза):
+   *  1. в процессе — общий Promise на (сайт, ключ кэша): второй запрос ждёт
+   *     первый и получает тот же звук (как из кэша);
+   *  2. между инстансами — заявка `tts-claim` одним условным UPSERT (взял
+   *     тот, у кого строки нет или срок прошлой истёк/снят); не взял —
+   *     опрос кэша с паузой, пока звук не появится или заявка не освободится
+   *     (тогда — новая попытка заявки), не дольше `TTS_CLAIM_WAIT_MS` —
+   *     дальше синтез сам: озвучка важнее экономии одного синтеза.
+   * Сбой записи заявки — синтез без неё (как до захода 10).
+   */
+  private async singleFlight(
+    siteId: string,
+    key: string,
+    synth: () => Promise<SynthOutcome>,
+  ): Promise<SynthOutcome> {
+    const k = `${siteId}\u0000${key}`;
+    const running = this.inflight.get(k);
+    if (running) {
+      const r = await running;
+      return r.ok ? { ...r, cached: true } : r;
+    }
+    const p = this.claimAndSynth(siteId, key, synth).finally(() =>
+      this.inflight.delete(k),
+    );
+    this.inflight.set(k, p);
+    return p;
+  }
+
+  private async claimAndSynth(
+    siteId: string,
+    key: string,
+    synth: () => Promise<SynthOutcome>,
+  ): Promise<SynthOutcome> {
+    const deadline = Date.now() + TTS_CLAIM_WAIT_MS;
+    for (;;) {
+      const hit = await readTtsCache(this.db, siteId, key, this.now());
+      if (hit) return { ok: true, out: hit, cached: true };
+      const won = await this.claim(siteId, key);
+      if (won) {
+        try {
+          return await synth();
+        } finally {
+          await this.releaseClaim(siteId, key);
+        }
+      }
+      if (Date.now() >= deadline) {
+        this.logger.warn(`tts claim: ожидание истекло (site ${siteId})`);
+        return synth();
+      }
+      await new Promise((r) => setTimeout(r, this.claimPollMs));
+    }
+  }
+
+  /** Взять заявку: true — наша (или запись не удалась — работаем без неё). */
+  private async claim(siteId: string, key: string): Promise<boolean> {
+    const now = Date.now();
+    try {
+      const rows = await this.db.$queryRawUnsafe<unknown[]>(
+        `INSERT INTO "sites"."assist_daily_counters" ("scope", "key", "day", "value", "updatedAt")
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT ("scope", "key", "day") DO UPDATE
+           SET "value" = EXCLUDED."value", "updatedAt" = now()
+           WHERE "sites"."assist_daily_counters"."value" < $5
+         RETURNING 1 AS ok`,
+        TTS_CLAIM_SCOPE,
+        `${siteId}:${key}`,
+        new Date(now).toISOString().slice(0, 10),
+        BigInt(now + TTS_CLAIM_TTL_MS),
+        BigInt(now),
+      );
+      return rows.length > 0;
+    } catch (e) {
+      this.logger.warn(`tts claim: ${(e as Error).name} (site ${siteId})`);
+      return true;
+    }
+  }
+
+  /** Снять заявку (звук в кэше или сбой) — ждущие не ждут срока. */
+  private async releaseClaim(siteId: string, key: string): Promise<void> {
+    try {
+      await this.db.$executeRawUnsafe(
+        `UPDATE "sites"."assist_daily_counters" SET "value" = 0, "updatedAt" = now()
+          WHERE "scope" = $1 AND "key" = $2 AND "day" = $3`,
+        TTS_CLAIM_SCOPE,
+        `${siteId}:${key}`,
+        new Date().toISOString().slice(0, 10),
+      );
+    } catch (e) {
+      this.logger.warn(`tts claim release: ${(e as Error).name}`);
+    }
+  }
+
+  /**
+   * Хватает ли единиц на голос этого диалога (только чтение, до синтеза):
+   * голос уже оплачен — да; доплата `voiceUpgradeUnits` в засчитанном
+   * текстовом диалоге; диалог ещё не засчитан — хоть одна единица.
+   */
+  private async voiceAffordable(
+    accountId: string,
+    conversationId: string,
+    state: SubscriptionState,
+  ): Promise<boolean> {
+    if (!state.planId) return false;
+    // Внутренний тенант: захват единиц не отказывает (entitlements.claimUnits).
+    if (state.internal) return true;
+    const [rows, usage] = await Promise.all([
+      this.db.$queryRawUnsafe<
+        Array<{ voice: boolean; answers: number; dialogCounted: boolean }>
+      >(
+        `SELECT "voice", "answers", "dialogCounted"
+           FROM "sites"."assist_site_conversations" WHERE "id" = $1`,
+        conversationId,
+      ),
+      readUsage(this.db, accountId, state.periodKey),
+    ]);
+    const c = rows[0];
+    // Голос этого диалога уже оплачен (засчитан с голосом) — доплаты нет,
+    // озвучка доступна и при нуле оставшихся единиц (аудит P3-8).
+    if (c?.voice && c.dialogCounted) return true;
+    const need =
+      c && !c.voice && c.dialogCounted
+        ? voiceUpgradeUnits(Number(c.answers))
+        : 0;
+    return usage.units + Math.max(1, need) <= effectiveLimit(state, usage);
   }
 
   // ── вспомогательное ─────────────────────────────────────────────────────

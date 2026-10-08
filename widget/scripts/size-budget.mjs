@@ -88,6 +88,25 @@ export const BUDGETS = [
     files: ['dist/v1/editor-panel.js', 'dist/v1/editor-panel.css'],
     maxGzip: 16 * KB,
   },
+  // Заход 10 (разгрузка `editor-panel`, 15,73 → ≈ 13,1 КБ): словари ru/en
+  // панели — ленивые ES-модули по `ready` пикера (в панели — только uk);
+  // №113 «Промахи»/«Пропозиції»/ИИ-синонимы — ленивый `editor-assist.js`
+  // (только по вкладке или кнопке в карточке). Все — iframe `we.`.
+  {
+    name: 'editor-panel-ru',
+    files: ['dist/v1/editor-panel-ru.js'],
+    maxGzip: 4 * KB,
+  },
+  {
+    name: 'editor-panel-en',
+    files: ['dist/v1/editor-panel-en.js'],
+    maxGzip: 4 * KB,
+  },
+  {
+    name: 'editor-assist',
+    files: ['dist/v1/editor-assist.js'],
+    maxGzip: 6 * KB,
+  },
   { name: 'bf', files: ['dist/v1/bf.js'], maxGzip: 4 * KB },
 ];
 
@@ -158,6 +177,10 @@ for (const [label, file] of [
   // Э6-тер: пикер редактора — в origin заказчика; панель — iframe `we.`.
   ['пикер редактора', 'dist/v1/editor.js'],
   ['панель редактора', 'dist/v1/editor-panel.js'],
+  // Заход 10: ленивые модули панели (iframe `we.`, Trusted Types 'none').
+  ['словарь панели ru', 'dist/v1/editor-panel-ru.js'],
+  ['словарь панели en', 'dist/v1/editor-panel-en.js'],
+  ['подсказки панели (№113)', 'dist/v1/editor-assist.js'],
 ]) {
   const code = fs.readFileSync(path.join(ROOT, file), 'utf8');
   for (const re of LOADER_SINKS) {

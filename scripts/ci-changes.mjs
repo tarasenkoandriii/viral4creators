@@ -19,6 +19,8 @@
  *   node scripts/ci-changes.mjs              — в CI
  *   node scripts/ci-changes.mjs --self-test  — проверка правил (make ci-docs,
  *                                              джоба «репозиторий»)
+ *   node scripts/ci-changes.mjs --last-success-sha — коммит последнего
+ *                                              успешного прогона (джоба secrets)
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -164,6 +166,12 @@ export const FILTERS = {
 /** Изменение любого из этих путей запускает всё. */
 /** `.nvmrc` — версия Node для всех джоб: её смена перепроверяет всё. */
 export const GLOBAL = ['.github/workflows/ci.yml', 'scripts/ci-changes.mjs', '.nvmrc'];
+/**
+ * Джобы без правила по папкам: `changes` (сам выбор), `repo` и `secrets`
+ * (на каждом коммите), `ci` — сборщик результата (Р-З10-8).
+ */
+export const AGGREGATOR_JOB = 'ci';
+export const ALWAYS_JOBS = ['changes', 'repo', 'secrets', AGGREGATOR_JOB];
 /** Джобы матрицы next-apps (их имя в матрице = ключ FILTERS). */
 export const NEXT_APPS = ['admin', 'landing'];
 
@@ -212,6 +220,14 @@ async function changedFiles() {
   const files = git('diff', '--name-only', base, 'HEAD').split('\n').filter(Boolean);
   console.error(`ci-changes: с ${base.slice(0, 7)} изменено файлов: ${files.length}`);
   return files;
+}
+
+/** Джобы ci.yml (отступ 2 после `jobs:`) и тело каждой до следующей. */
+function parseJobs(full) {
+  const yml = full.slice(full.indexOf('\njobs:\n'));
+  const jobs = [...yml.matchAll(/^ {2}([a-z][a-z-]*):\s*$/gm)].map((m) => m[1]);
+  const bodyOf = (job) => yml.slice(yml.indexOf(`\n  ${job}:`) + 1).split(/\n {2}[a-z][a-z-]*:\s*\n/)[0];
+  return { yml, jobs, bodyOf };
 }
 
 function selfTest() {
@@ -272,14 +288,23 @@ function selfTest() {
   eq('скрипт копий воркера', on(['scripts/sync-worker-shared.mjs']), ['browser_worker']);
   for (const src of WORKER_SHARED_SOURCES) eq(`источник копии воркера ${src} — browser_worker`, decide([src]).browser_worker, true);
 
-  // Каждая джоба ci.yml, кроме changes и repo, запускается по своему правилу.
+  // Заход 10: служебные файлы корня не запускают джоб по папкам (gitleaks
+  // и сборщик `ci` идут всегда, Dependabot — настройка GitHub).
+  eq('.gitleaks.toml и dependabot.yml — ничего', on(['.gitleaks.toml', '.github/dependabot.yml']), []);
+
+  // Каждая джоба ci.yml, кроме ALWAYS_JOBS, запускается по своему правилу.
   const full = readFileSync(path.join(ROOT, '.github/workflows/ci.yml'), 'utf8');
-  const yml = full.slice(full.indexOf('\njobs:\n'));
-  const jobs = [...yml.matchAll(/^ {2}([a-z][a-z-]*):\s*$/gm)].map((m) => m[1]);
+  const { yml, jobs, bodyOf } = parseJobs(full);
+  for (const job of ALWAYS_JOBS) {
+    if (!jobs.includes(job)) {
+      failed++;
+      console.error(`FAIL в ci.yml нет джобы ${job}`);
+    }
+  }
   const used = new Set();
   for (const job of jobs) {
-    if (job === 'changes' || job === 'repo') continue;
-    const body = yml.slice(yml.indexOf(`\n  ${job}:`) + 1).split(/\n {2}[a-z][a-z-]*:\s*\n/)[0];
+    if (ALWAYS_JOBS.includes(job)) continue;
+    const body = bodyOf(job);
     if (!/^ {4}needs: changes\s*$/m.test(body)) {
       failed++;
       console.error(`FAIL джоба ${job}: нет «needs: changes»`);
@@ -307,15 +332,107 @@ function selfTest() {
       console.error(`FAIL джоба changes не отдаёт output ${k}`);
     }
   }
+  for (const p of workflowProblems(full)) {
+    failed++;
+    console.error(`FAIL ${p}`);
+  }
+  // Мутации: каждая порча настоящего ci.yml обязана найтись — иначе
+  // «нарушений нет» значило бы «проверка сломана».
+  const mutants = [
+    ['сборщик без джобы secrets', (t) => t.replace(/^ {6}- secrets\n/m, ''), 'в needs нет джобы secrets'],
+    ['сборщик с лишней джобой', (t) => t.replace(/^ {6}- repo\n/m, '      - repo\n      - nope\n'), 'лишняя «nope»'],
+    ['сборщик без always()', (t) => t.replace(/^( {2}ci:\n(?: {4}.*\n)*? {4})if: always\(\)/m, '$1if: success()'), 'нет «if: always()»'],
+    ['джоба на каждом коммите с условием', (t) => t.replace(/^( {2}secrets:\n)/m, '$1    if: github.event_name == \'push\'\n'), 'secrets должна идти на каждом коммите'],
+    ['нет верхнего permissions', (t) => t.replace(/^permissions:\n {2}contents: read\n/m, ''), 'нет верхнего «permissions: contents: read»'],
+    ['право на запись', (t) => t.replace(/^( {4}permissions:\n)/m, '$1      pull-requests: write\n'), '«pull-requests: write»'],
+    ['write-all у джобы', (t) => t.replace(/^( {2}repo:\n)/m, '$1    permissions: write-all\n'), '«permissions: write-all» (джоба)'],
+    ['write-all наверху', (t) => t.replace(/^permissions:\n {2}contents: read\n/m, 'permissions: write-all\n'), '«permissions: write-all» (верхний уровень)'],
+    ['secrets без actions: read', (t) => t.replace(/^( {2}secrets:\n(?: {4}.*\n|\s*#.*\n)*? {4}permissions:\n) {6}actions: read\n/m, '$1'), 'джоба secrets: права ровно'],
+    ['сторонний action по тегу', (t) => t.replace(/shivammathur\/setup-php@[0-9a-f]{40} # [\d.]+/, 'shivammathur/setup-php@v2'), 'shivammathur/setup-php@v2'],
+    ['SHA без версии в комментарии', (t) => t.replace(/(shivammathur\/setup-php@[0-9a-f]{40}) # [\d.]+/, '$1'), 'с версией в комментарии'],
+  ];
+  for (const [name, mutate, want] of mutants) {
+    const text = mutate(full);
+    cases++;
+    if (text === full) {
+      failed++;
+      console.error(`FAIL мутация «${name}» не применилась — шаблон отстал от ci.yml`);
+      continue;
+    }
+    const got = workflowProblems(text);
+    if (!got.some((p) => p.includes(want))) {
+      failed++;
+      console.error(`FAIL мутация «${name}» не поймана (ждали «${want}», получили ${JSON.stringify(got)})`);
+    }
+  }
   if (failed) {
     console.error(`ci-changes --self-test: ${failed} ошибок`);
     process.exit(1);
   }
-  console.log(`ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - 2}, самотест — ${cases} случаев`);
+  console.log(
+    `ok   ci-changes: правил ${Object.keys(FILTERS).length}, джоб с условием ${jobs.length - ALWAYS_JOBS.length}, ` +
+      `сборщик ${AGGREGATOR_JOB} ждёт ${jobs.length - 1}, самотест — ${cases} случаев`,
+  );
+}
+
+/**
+ * Заход 10 — инварианты ci.yml сверх правил выбора джоб (П-К4, Р-З10-8):
+ *  - сборщик `ci`: `if: always()` и `needs` — ровно все остальные джобы
+ *    (забытая джоба не попала бы в обязательную проверку молча);
+ *  - джобы «на каждом коммите» (`repo`, `secrets`) — без условий и `needs`;
+ *  - верхний `permissions: contents: read`, нигде нет `write`, `write-all`
+ *    и `read-all`; у `secrets` — ровно `actions: read` + `contents: read`;
+ *  - сторонние actions — только по SHA коммита (40 hex) с версией в
+ *    комментарии; `actions/*` (сам GitHub) — по мажорному тегу.
+ * Чистая функция от текста — мутации проверяет selfTest().
+ */
+export function workflowProblems(full) {
+  const { jobs, bodyOf } = parseJobs(full);
+  const out = [];
+  if (jobs.includes(AGGREGATOR_JOB)) {
+    const body = bodyOf(AGGREGATOR_JOB);
+    if (!/^ {4}if: always\(\)\s*$/m.test(body)) out.push(`джоба ${AGGREGATOR_JOB}: нет «if: always()»`);
+    const block = /^ {4}needs:[ \t]*\n((?: {6}- [a-z][a-z-]*[ \t]*(?:\n|$))+)/m.exec(body);
+    const needs = block ? [...block[1].matchAll(/- ([a-z][a-z-]*)/g)].map((m) => m[1]) : [];
+    const want = jobs.filter((j) => j !== AGGREGATOR_JOB);
+    for (const j of want) if (!needs.includes(j)) out.push(`джоба ${AGGREGATOR_JOB}: в needs нет джобы ${j}`);
+    for (const j of needs) if (!want.includes(j)) out.push(`джоба ${AGGREGATOR_JOB}: в needs лишняя «${j}» (такой джобы нет)`);
+  }
+  for (const job of ALWAYS_JOBS.filter((j) => j !== 'changes' && j !== AGGREGATOR_JOB)) {
+    if (!jobs.includes(job)) continue;
+    if (/^ {4}(?:if|needs):/m.test(bodyOf(job))) out.push(`джоба ${job} должна идти на каждом коммите — без if/needs`);
+  }
+  // Базу диапазона gitleaks (последний успешный прогон) secrets читает из API
+  // Actions — без права чтения прогонов он молча откатился бы на `before`.
+  if (jobs.includes('secrets')) {
+    const perm = /^ {4}permissions:[ \t]*\n((?: {6}[a-z-]+: [a-z]+[ \t]*\n)+)/m.exec(bodyOf('secrets'));
+    const lines = perm ? perm[1].trim().split(/\s*\n\s*/).sort() : [];
+    if (lines.join(',') !== 'actions: read,contents: read') out.push('джоба secrets: права ровно «actions: read» и «contents: read» (база — API прогонов)');
+  }
+  const head = full.slice(0, full.indexOf('\njobs:\n'));
+  if (!/^permissions:\s*\n {2}contents: read\s*$/m.test(head)) out.push('нет верхнего «permissions: contents: read» (П-К4)');
+  for (const m of full.matchAll(/^\s+([a-z-]+): write\s*$/gm)) out.push(`право на запись «${m[1]}: write» — токен джоб только читает (П-К4)`);
+  // Аудит P3-4: сокращённые формы — на уровне файла и джобы.
+  for (const m of full.matchAll(/^(\s*)permissions:\s*(write-all|read-all)\s*$/gm)) {
+    out.push(`«permissions: ${m[2]}» (${m[1] ? 'джоба' : 'верхний уровень'}) — права только перечнем, без записи (П-К4)`);
+  }
+  for (const m of full.matchAll(/^\s+(?:- )?uses: (\S+)(.*)$/gm)) {
+    const [ref, rest] = [m[1], m[2]];
+    if (/^actions\/[a-z-]+@v\d+$/.test(ref)) continue;
+    if (!/^[\w.-]+\/[\w.-]+(?:\/[\w./-]+)?@[0-9a-f]{40}$/.test(ref) || !/^ # v?\d+\.\d+\.\d+\s*$/.test(rest)) {
+      out.push(`«uses: ${ref}${rest}» — сторонний action только по SHA коммита с версией в комментарии (П-К4)`);
+    }
+  }
+  return out;
 }
 
 if (process.argv.includes('--self-test')) {
   selfTest();
+} else if (process.argv.includes('--last-success-sha')) {
+  // Джоба `secrets` (заход 10, аудит P2-1): та же база, что у выбора джоб —
+  // коммиты отменённого/красного прогона попадут в следующий диапазон
+  // gitleaks. Нет прогона или сбой API — пустая строка (джоба берёт before).
+  console.log((await lastSuccessfulSha().catch(() => null)) ?? '');
 } else {
   const out = decide(await changedFiles());
   for (const [k, v] of Object.entries(out)) console.log(`${k}=${Array.isArray(v) ? JSON.stringify(v) : v}`);

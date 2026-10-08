@@ -8,8 +8,13 @@
  * iat/exp — секунды Unix (как JWT). Разбор строгий: лишнее или не того типа
  * поле — «не токен» (подпись своя, но схему держим всё равно — старый код
  * не должен принять токен будущей версии за свой).
+ *
+ * №60 (Р-З10-12): подпись — текущим ключом связки `ASSIST_SECRETS_KEY`,
+ * проверка — текущим и прежними (`widgetTokenKeys`): ротация ключа не
+ * выбивает посетителей с токенами, выданными до неё (срок — 24 ч).
  */
 import { createHmac, timingSafeEqual } from 'crypto';
+import { hmacKeyList, type HmacKeys } from '../../common/secrets-keyring';
 
 export interface VisitorTokenPayload {
   v: 1;
@@ -86,7 +91,7 @@ export type VisitorTokenCheck =
  */
 export function inspectVisitorToken(
   token: string | undefined | null,
-  key: Buffer,
+  key: HmacKeys,
   now: Date,
 ): VisitorTokenCheck {
   if (typeof token !== 'string' || token.length > MAX_TOKEN_CHARS) {
@@ -100,11 +105,12 @@ export function inspectVisitorToken(
   if (!/^[A-Za-z0-9_-]+$/.test(body) || !/^[A-Za-z0-9_-]+$/.test(sig)) {
     return { status: 'invalid' };
   }
-  const expected = Buffer.from(sign(body, key));
   const got = Buffer.from(sig);
-  if (expected.length !== got.length || !timingSafeEqual(expected, got)) {
-    return { status: 'invalid' };
-  }
+  const signed = hmacKeyList(key).some((k) => {
+    const expected = Buffer.from(sign(body, k));
+    return expected.length === got.length && timingSafeEqual(expected, got);
+  });
+  if (!signed) return { status: 'invalid' };
   let payload: VisitorTokenPayload | null;
   try {
     payload = parsePayload(
@@ -125,7 +131,7 @@ export function inspectVisitorToken(
 /** null — подпись, формат или срок не годятся (никаких подробностей наружу). */
 export function verifyVisitorToken(
   token: string,
-  key: Buffer,
+  key: HmacKeys,
   now: Date,
 ): VisitorTokenPayload | null {
   const r = inspectVisitorToken(token, key, now);

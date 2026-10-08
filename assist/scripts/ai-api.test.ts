@@ -135,13 +135,35 @@ for (const d of [appRu, appUk, appEn]) {
         text: { title: 'T', what: 'W', action: 'A' },
       },
       { id: 'i2', code: 'RUN', impact: 'high', finding: {} },
-      { id: 'i3', code: 'N9', impact: 'low', finding: {} },
+      { id: 'i3', code: 'N12', impact: 'low', finding: {} },
+      {
+        id: 'i4',
+        code: 'N1',
+        impact: 'high',
+        status: 'done',
+        finding: { n: 30, x: 12, share: 0.4, page: '/p', topic: 'доставка' },
+        followUp: {
+          before: { x: 12, n: 30, share: 0.4 },
+          after: null,
+          reason: 'insufficient_data',
+          n: null,
+        },
+      },
     ],
   });
   assert.deepEqual(
     ins.items.map((i) => i.id),
-    ['i1']
+    ['i1', 'i4']
   );
+  // Заход 10 (аудит P2-3): «недостаточно данных» у сверки N1/N9.
+  assert.deepEqual(ins.items[1].followUp, {
+    before: { share: 0.4, value: null },
+    after: null,
+    reason: 'insufficient_data',
+  });
+  for (const d of [appRu, appUk, appEn]) {
+    assert.ok(d.e3b.insights.followUpNoData.length > 10);
+  }
 
   assert.equal(parseExperiment({ id: 'e1', kind: 'persona' }), null);
   const st = parseAiSettings({
@@ -223,6 +245,8 @@ for (const d of [appRu, appUk, appEn]) {
     metric: null,
     value: null,
     trigger: null,
+    campaign: null,
+    changedAt: null,
     ...f,
   });
   const samples: Array<[T.FindingCode, Partial<T.FindingView>]> = [
@@ -234,6 +258,9 @@ for (const d of [appRu, appUk, appEn]) {
     ['N7', { page: '/', value: 17 }],
     ['N8', { page: '/', metric: 'lcp', value: 4210.4 }],
     ['N10', { trigger: 'exit' }],
+    ['N1', { page: '/p/1', topic: 'доставка' }],
+    ['N9', { campaign: 'autumn_sale', value: 72 }],
+    ['N11', { page: '/oplata', changedAt: '2026-10-14', base: 0.05 }],
   ];
   for (const d of [appRu, appUk, appEn]) {
     for (const [code, f] of samples) {
@@ -248,6 +275,29 @@ for (const d of [appRu, appUk, appEn]) {
     }),
     'Причина «Дорого» на /p/1: 12 из 40 диалогов без конверсии (30 %)'
   );
+  // Заход 10: N9 — кампания, N11 — день изменения и «было», с оговоркой.
+  assert.equal(
+    dryLine(appUk.e3b, {
+      code: 'N9',
+      finding: finding({ campaign: 'autumn_sale', value: 72 }),
+    }),
+    'Кампанія «autumn_sale»: 12 із 40 діалогів — не той товар або не за темою (30 %), 72% переглядів — відхід без прокрутки'
+  );
+  for (const d of [appRu, appUk, appEn]) {
+    const line = dryLine(d.e3b, {
+      code: 'N11',
+      finding: finding({
+        page: '/oplata',
+        changedAt: '2026-10-14',
+        base: 0.05,
+      }),
+    });
+    assert.ok(line.includes('14.10.2026') && line.includes('/oplata'), line);
+    assert.ok(
+      /совпадение во времени|збіг у часі|coincidence in time/.test(line),
+      line
+    );
+  }
   assert.equal(metricValue('lcp', 4210.4), '4210 ms');
   assert.equal(metricValue('cls', 0.1234), '0.12');
   assert.equal(

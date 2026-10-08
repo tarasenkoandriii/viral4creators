@@ -47,7 +47,102 @@ export interface AdminModeView {
   notifyDanger: boolean;
   /** Р-З9-17: тестовый ключ ходит в коннекторы (умолчание — нет). */
   testKeyConnectors: boolean;
+  /** Р-З10-16 (Ш6 (7)): «админка» — Telegram Mini App. */
+  adminTmaFrame: boolean;
+  /** Р-З10-15 (Ш6 (4)): подпись кнопки (`data-label`); null — по умолчанию. */
+  widgetLabel: string | null;
+  /** №57: разметка ИИ, минуты на тип задачи, отчёт недели. */
+  analyticsLabeling: boolean;
+  analyticsTaskMinutes: Record<string, number>;
+  weeklyReport: boolean;
   snippet: { origin: string; tag: string; csp: string } | null;
+}
+
+/**
+ * Р-З10-15: подпись кнопки — та же проверка, что на сервере
+ * (`cleanWidgetLabel`): пробелы схлопываются, пусто — null (по умолчанию),
+ * управляющие символы, `<`/`>` и > 40 символов — `false` (отказ до запроса).
+ */
+export function cleanWidgetLabel(v: string | null): string | null | false {
+  const t = (v ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f<>]/.test(t) || Array.from(t).length > 40)
+    return false;
+  return t;
+}
+
+/** №57: типы задач разметки «Админки» (порядок — как на сервере). */
+export const ADMIN_TASK_TYPES = [
+  'lookup',
+  'order_status',
+  'how_to',
+  'data_change',
+  'report',
+  'policy',
+  'troubleshooting',
+  'other',
+] as const;
+export type AdminTaskType = (typeof ADMIN_TASK_TYPES)[number];
+
+/** №57: разметка за период агрегатами. */
+export interface AdminLabelsView {
+  days: number;
+  labeling: { enabled: boolean; model: boolean };
+  conversations: number;
+  labeled: number;
+  answerYes: number;
+  answerPartial: number;
+  answerNo: number;
+  toolErrors: number;
+  failed: number;
+  taskTypes: Array<{
+    taskType: AdminTaskType;
+    count: number;
+    found: number;
+    minutes: number;
+  }>;
+  minutesSaved: number;
+}
+
+export type AdminFindingKind =
+  | 'refusals'
+  | 'not_found'
+  | 'tool_errors'
+  | 'actions_failed'
+  | 'learning_queue';
+
+export interface AdminInsightView {
+  id: string;
+  weekStart: string;
+  findings: Array<{
+    id: string;
+    kind: AdminFindingKind;
+    n: number;
+    value: number;
+    pct: number | null;
+    taskType: AdminTaskType | null;
+  }>;
+  items: Array<{
+    findingIds: string[];
+    uk: { title: string; action: string };
+    ru: { title: string; action: string };
+    en: { title: string; action: string };
+  }>;
+  status: 'new' | 'done' | 'dismissed';
+  feedback: number | null;
+}
+
+export type AdminExportKind = 'daily' | 'labels' | 'actions';
+export interface AdminExportView {
+  id: string;
+  kind: AdminExportKind;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'expired';
+  rows: number | null;
+  /** Только https-ссылка Blob (иное — null). */
+  url: string | null;
+  error: string | null;
+  createdAt: string;
 }
 
 export interface OperationParamView {
@@ -284,6 +379,124 @@ const LANG_Q = /^(uk|ru|en)$/;
 const langQ = (lang?: string) =>
   lang && LANG_Q.test(lang) ? `?lang=${lang}` : '';
 
+const isTask = (v: unknown): v is AdminTaskType =>
+  (ADMIN_TASK_TYPES as readonly unknown[]).includes(v);
+
+/** Минуты на тип задачи: только известные типы и целые 0…480. */
+export function parseTaskMinutes(v: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(obj(v))) {
+    if (
+      isTask(k) &&
+      typeof n === 'number' &&
+      Number.isInteger(n) &&
+      n >= 0 &&
+      n <= 480
+    ) {
+      out[k] = n;
+    }
+  }
+  return out;
+}
+
+export function parseLabels(v: unknown): AdminLabelsView {
+  const o = obj(v);
+  const l = obj(o.labeling);
+  return {
+    days: n0(o.days),
+    labeling: { enabled: l.enabled !== false, model: l.model === true },
+    conversations: n0(o.conversations),
+    labeled: n0(o.labeled),
+    answerYes: n0(o.answerYes),
+    answerPartial: n0(o.answerPartial),
+    answerNo: n0(o.answerNo),
+    toolErrors: n0(o.toolErrors),
+    failed: n0(o.failed),
+    taskTypes: arr(o.taskTypes)
+      .map((x) => {
+        const r = obj(x);
+        return {
+          taskType: r.taskType,
+          count: n0(r.count),
+          found: n0(r.found),
+          minutes: n0(r.minutes),
+        };
+      })
+      .filter((r): r is AdminLabelsView['taskTypes'][number] =>
+        isTask(r.taskType)
+      ),
+    minutesSaved: n0(o.minutesSaved),
+  };
+}
+
+const FINDING_KINDS: readonly AdminFindingKind[] = [
+  'refusals',
+  'not_found',
+  'tool_errors',
+  'actions_failed',
+  'learning_queue',
+];
+
+export function parseInsight(v: unknown): AdminInsightView {
+  const o = obj(v);
+  const pair = (x: unknown) => {
+    const p = obj(x);
+    return { title: str(p.title), action: str(p.action) };
+  };
+  return {
+    id: str(o.id),
+    weekStart: str(o.weekStart),
+    findings: arr(o.findings)
+      .map((x) => {
+        const f = obj(x);
+        return {
+          id: str(f.id),
+          kind: f.kind as AdminFindingKind,
+          n: n0(f.n),
+          value: n0(f.value),
+          pct: numOrNull(f.pct),
+          taskType: isTask(f.taskType) ? f.taskType : null,
+        };
+      })
+      .filter((f) => f.id && FINDING_KINDS.includes(f.kind)),
+    items: arr(o.items).map((x) => {
+      const it = obj(x);
+      return {
+        findingIds: strs(it.findingIds),
+        uk: pair(it.uk),
+        ru: pair(it.ru),
+        en: pair(it.en),
+      };
+    }),
+    status: o.status === 'done' || o.status === 'dismissed' ? o.status : 'new',
+    feedback: o.feedback === 1 || o.feedback === -1 ? o.feedback : null,
+  };
+}
+
+const EXPORT_STATUSES = [
+  'queued',
+  'running',
+  'done',
+  'failed',
+  'expired',
+] as const;
+
+export function parseExport(v: unknown): AdminExportView {
+  const o = obj(v);
+  const url = strOrNull(o.url);
+  return {
+    id: str(o.id),
+    kind: o.kind === 'labels' || o.kind === 'actions' ? o.kind : 'daily',
+    status: (EXPORT_STATUSES as readonly unknown[]).includes(o.status)
+      ? (o.status as AdminExportView['status'])
+      : 'failed',
+    rows: numOrNull(o.rows),
+    url: url && /^https:\/\//.test(url) ? url : null,
+    error: strOrNull(o.error),
+    createdAt: str(o.createdAt),
+  };
+}
+
 export function parseAdminMode(v: unknown): AdminModeView {
   const o = obj(v);
   const sec = obj(o.identitySecret);
@@ -317,6 +530,11 @@ export function parseAdminMode(v: unknown): AdminModeView {
     actionsDailyCap: numOrNull(o.actionsDailyCap) ?? 100,
     notifyDanger: o.notifyDanger !== false,
     testKeyConnectors: o.testKeyConnectors === true,
+    adminTmaFrame: o.adminTmaFrame === true,
+    widgetLabel: strOrNull(o.widgetLabel),
+    analyticsLabeling: o.analyticsLabeling !== false,
+    analyticsTaskMinutes: parseTaskMinutes(o.analyticsTaskMinutes),
+    weeklyReport: o.weeklyReport !== false,
     snippet:
       typeof sn.tag === 'string'
         ? { origin: str(sn.origin), tag: str(sn.tag), csp: str(sn.csp) }
@@ -429,6 +647,11 @@ export interface AdminModeApi {
       actionsDailyCap: number;
       notifyDanger: boolean;
       testKeyConnectors: boolean;
+      adminTmaFrame: boolean;
+      widgetLabel: string | null;
+      analyticsLabeling: boolean;
+      analyticsTaskMinutes: Record<string, number>;
+      weeklyReport: boolean;
     }>
   ): Promise<AdminModeView>;
   /**
@@ -492,6 +715,19 @@ export interface AdminModeApi {
   acceptLearning(siteId: string, itemId: string, answer: string): Promise<void>;
   rejectLearning(siteId: string, itemId: string): Promise<void>;
   stats(siteId: string, days: 7 | 30): Promise<AdminStats>;
+  /** №57: разметка диалогов агрегатами, выводы недели, выгрузки CSV. */
+  labels(siteId: string, days: 7 | 30): Promise<AdminLabelsView>;
+  insights(siteId: string): Promise<AdminInsightView[]>;
+  patchInsight(
+    siteId: string,
+    insightId: string,
+    body: { status?: 'new' | 'done' | 'dismissed'; feedback?: -1 | 0 | 1 }
+  ): Promise<AdminInsightView>;
+  exports(siteId: string): Promise<AdminExportView[]>;
+  requestExport(
+    siteId: string,
+    body: { kind: AdminExportKind; from: string; to: string }
+  ): Promise<AdminExportView>;
   privateCrawl(siteId: string): Promise<PrivateCrawlView>;
   putPrivateCrawl(
     siteId: string,
@@ -693,6 +929,33 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
         actions: parseActionStats(o.actions),
       };
     },
+    labels: async (s, days) =>
+      parseLabels(
+        await client.request(
+          'GET',
+          `${base(s)}/admin-mode/stats/labels?days=${days}`
+        )
+      ),
+    insights: async (s) =>
+      arr(
+        await client.request('GET', `${base(s)}/admin-mode/stats/insights`)
+      ).map(parseInsight),
+    patchInsight: async (s, id, body) =>
+      parseInsight(
+        await client.request(
+          'PATCH',
+          `${base(s)}/admin-mode/stats/insights/${seg(id)}`,
+          body
+        )
+      ),
+    exports: async (s) =>
+      arr(await client.request('GET', `${base(s)}/admin-mode/exports`)).map(
+        parseExport
+      ),
+    requestExport: async (s, body) =>
+      parseExport(
+        await client.request('POST', `${base(s)}/admin-mode/exports`, body)
+      ),
     privateCrawl: async (s) =>
       parseCrawl(
         await client.request('GET', `${base(s)}/admin-mode/private-crawl`)

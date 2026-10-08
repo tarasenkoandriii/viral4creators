@@ -215,7 +215,10 @@ export function CatalogBatchStartScreen({
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
+                  <div
+                    className="truncate text-sm font-semibold"
+                    data-assist-ugc=""
+                  >
                     {itemLabel(item, index, dict.projectFormat.itemFallback)}
                   </div>
                   <div className="text-xs text-silver-400 tabular">

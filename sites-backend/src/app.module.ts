@@ -39,6 +39,7 @@ import { AssistAdminChatModule } from './modules/assist-admin-chat/assist-admin-
 import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admin-crawl.module';
 import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-admin-actions.module';
 import { AssistAdminVoiceModule } from './modules/assist-admin-voice/assist-admin-voice.module';
+import { AssistAdminAnalyticsModule } from './modules/assist-admin-analytics/assist-admin-analytics.module';
 import { AssistSiteKnowledgeApiModule } from './modules/assist-site-knowledge-api/assist-site-knowledge-api.module';
 import { BrowserJobsModule } from './modules/browser-jobs/browser-jobs.module';
 import { InternalWorkerModule } from './modules/internal-worker/internal-worker.module';
@@ -108,6 +109,10 @@ import { InternalWorkerModule } from './modules/internal-worker/internal-worker.
     // (кабинет), планы кликов сотрудника (iframe `wa.`), мемо АМ-N с шагами
     // на странице.
     AssistAdminVoiceModule,
+    // Заход 10 (№57): аналитика «Админки» — разметка диалогов сотрудников,
+    // свёртка по ролям, выводы и отчёт недели, выгрузки CSV, push по тревоге
+    // компенсаций; исполняется из крона assist-admin-embed-run.
+    AssistAdminAnalyticsModule,
     // Э-С Ш3: очередь браузерного воркера (продукты ставят задания) и канал
     // самого воркера (`/internal/worker/v1/*`, HMAC, лист графа).
     BrowserJobsModule,

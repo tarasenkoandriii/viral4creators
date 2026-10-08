@@ -1,0 +1,52 @@
+# Dependabot — ВЕРСИОННЫЕ обновления, только два узких потока (Р-З10-7).
+#
+# Оповещения об уязвимостях и security-PR (П-К2) включаются не здесь, а в
+# Settings → Code security (владелец) и идут по ВСЕМ папкам независимо от
+# этого файла. Здесь же — только то, что нужно обновлять и без уязвимости;
+# прочие версионные PR выключены тем, что их экосистем/папок здесь нет
+# (docs-tz/SECURITY-PROPOSALS-2026-10-02.md:220): мажорные обновления —
+# отдельной волной руками (Р-З10-22).
+#
+# cooldown — новая версия предлагается не раньше чем через N дней после
+# выхода: захваченный релиз (как tj-actions, 2025) обычно отзывают за
+# дни, а не за недели.
+
+version: 2
+updates:
+  # П-К2/П-К4: actions в .github/workflows. Сторонние закреплены по SHA
+  # (scripts/ci-changes.mjs --self-test требует SHA и версию в
+  # комментарии) — Dependabot двигает SHA и комментарий вместе. Один
+  # общий PR в месяц.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  # Ш3 (8): свежесть Chromium воркера = версия `playwright-core`
+  # (Chromium в образ ставит `npx playwright-core install` той же версии,
+  # browser-worker/Dockerfile). Условие деплоя — версия не старше месяца
+  # (doc/DEPLOYMENT.md §6.25, шаг 2а): проверка раз в неделю, ≤ 1 PR
+  # (Playwright выходит ~раз в месяц — шума столько же, сколько при
+  # monthly, а отставание не больше 2 недель). Только playwright-core:
+  # `allow` действует и на security-PR этой папки, но в рантайме воркера
+  # другой зависимости нет (dev-инструменты в образ не попадают); их
+  # уязвимости остаются видны в оповещениях и `npm audit` CI.
+  - package-ecosystem: npm
+    directory: /browser-worker
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1
+    allow:
+      - dependency-name: playwright-core
+    commit-message:
+      prefix: browser-worker

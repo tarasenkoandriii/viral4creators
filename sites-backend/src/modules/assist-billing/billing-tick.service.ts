@@ -24,8 +24,7 @@
 
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { decryptToken } from '../../shared/token-crypto';
-import { paymentRates, paymentTokenKey, wayforpayConfig } from './billing-env';
+import { openPaymentToken, paymentRates, wayforpayConfig } from './billing-env';
 import { BillingNotices } from './billing-notices';
 import { chargeId } from './ids';
 import { AssistPayments } from './payments.service';
@@ -128,14 +127,9 @@ export class AssistBillingTick {
     );
   }
 
+  /** №60: любая версия ключа связки `ASSIST_SECRETS_KEY`. */
   private recToken(enc: string | null): string | null {
-    const key = paymentTokenKey(this.env);
-    if (!enc || !key) return null;
-    try {
-      return decryptToken(enc, key);
-    } catch {
-      return null;
-    }
+    return openPaymentToken(enc, this.env)?.value ?? null;
   }
 
   async renewWayForPay(

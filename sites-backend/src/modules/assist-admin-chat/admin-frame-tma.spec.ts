@@ -29,7 +29,12 @@ const verified = (host: string) => ({
   reverifyBlockedAt: null,
 });
 
-function controller(siteId: string, hosts: any[], adminHostIds: string[]) {
+function controller(
+  siteId: string,
+  hosts: any[],
+  adminHostIds: string[],
+  adminTmaFrame?: boolean,
+) {
   const sessions = {
     siteByPk: jest.fn(async () => ({
       siteId,
@@ -38,6 +43,7 @@ function controller(siteId: string, hosts: any[], adminHostIds: string[]) {
         adminModeEnabled: true,
         adminAccess: 'script',
         adminHostIds,
+        adminTmaFrame,
       },
     })),
   };
@@ -96,6 +102,73 @@ describe('Ш6 — frame-ancestors «Админки» для TMA в Telegram Web'
       ['h'],
     );
     expect(await c.ancestorsFor(`${WIDGET_PK_LIVE_PREFIX}v4c`, NOW)).toEqual(
+      [],
+    );
+  });
+});
+
+describe('заход 10, Р-З10-16 (Ш6 (7)) — «админка — TMA» флагом сайта', () => {
+  const prev = process.env.ASSIST_ADMIN_TMA_SITE_IDS;
+  beforeEach(() => {
+    delete process.env.ASSIST_ADMIN_TMA_SITE_IDS;
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.ASSIST_ADMIN_TMA_SITE_IDS;
+    else process.env.ASSIST_ADMIN_TMA_SITE_IDS = prev;
+  });
+
+  it('флаг сайта без env: verified-хост + Telegram Web', async () => {
+    const c = controller(
+      'site_flag',
+      [verified('app.v4c.example.com')],
+      ['h'],
+      true,
+    );
+    const out = await c.ancestorsFor(`${WIDGET_PK_LIVE_PREFIX}flag`, NOW);
+    expect(out).toEqual([
+      'https://app.v4c.example.com',
+      ...TELEGRAM_WEB_ORIGINS,
+    ]);
+    expect(adminFrameCsp(out)).toContain(
+      'frame-ancestors https://app.v4c.example.com https://web.telegram.org;',
+    );
+  });
+
+  it('флаг выключен и env пуст — только свои хосты', async () => {
+    const c = controller(
+      'site_flag',
+      [verified('app.v4c.example.com')],
+      ['h'],
+      false,
+    );
+    expect(await c.ancestorsFor(`${WIDGET_PK_LIVE_PREFIX}flag`, NOW)).toEqual([
+      'https://app.v4c.example.com',
+    ]);
+  });
+
+  it('флаг включён, но хост админки не подтверждён — none (Telegram Web не один)', async () => {
+    const c = controller(
+      'site_flag',
+      [{ ...verified('app.v4c.example.com'), status: 'pending' }],
+      ['h'],
+      true,
+    );
+    const out = await c.ancestorsFor(`${WIDGET_PK_LIVE_PREFIX}flag`, NOW);
+    expect(out).toEqual([]);
+    expect(adminFrameCsp(out)).toContain("frame-ancestors 'none'");
+  });
+
+  it('env — OR до удаления: сайт из списка без флага по-прежнему с Telegram Web', () => {
+    expect(
+      extraAdminAncestors('s1', ['https://a.example'], {
+        ASSIST_ADMIN_TMA_SITE_IDS: 's1',
+      }),
+    ).toEqual([...TELEGRAM_WEB_ORIGINS]);
+    expect(extraAdminAncestors('s2', ['https://a.example'], {}, true)).toEqual([
+      ...TELEGRAM_WEB_ORIGINS,
+    ]);
+    expect(extraAdminAncestors('s2', [], {}, true)).toEqual([]);
+    expect(extraAdminAncestors('s2', ['https://a.example'], {}, false)).toEqual(
       [],
     );
   });

@@ -57,6 +57,9 @@ export function dryLine(
     metric: (f.metric ?? '').toUpperCase(),
     value:
       i.code === 'N8' ? metricValue(f.metric, f.value) : String(f.value ?? 0),
+    campaign: f.campaign ?? '—',
+    base: pct(f.base ?? 0),
+    date: f.changedAt ? f.changedAt.split('-').reverse().join('.') : '—',
   };
   return fmt(t.insights.dry[i.code], vars);
 }

@@ -1552,8 +1552,35 @@ model AssistAdminSettings {
   /// Последняя тревога владельцу «работает плохо» (не чаще раза в сутки).
   voiceControlAdminAlertAt      DateTime?
 
+  // ── Заход 10, пакет Г (миграция _assist_admin_analytics) ──
+  /// Ш6 (7), Р-З10-16: «админка» сайта — Telegram Mini App: окну сотрудника
+  /// в frame-ancestors добавляется Telegram Web — только вместе с verified-
+  /// хостами самой админки. Env ASSIST_ADMIN_TMA_SITE_IDS — OR до удаления.
+  adminTmaFrame        Boolean @default(false)
+  /// Ш6 (4), Р-З10-15: подпись кнопки помощника на странице админки
+  /// (атрибут `data-label` тега, ≤ 40 символов, без HTML); NULL — подпись
+  /// по умолчанию «Помічник співробітника».
+  widgetLabel          String?
+  /// №57 (§5-тер.13): разметка диалогов сотрудников lite-моделью.
+  analyticsLabeling    Boolean @default(true)
+  /// №57: минуты на тип задачи для «≈ N часов сэкономлено» — их задаёт
+  /// владелец: { "order_status": 3, … } (типы — admin-label-schema.ts).
+  analyticsTaskMinutes Json    @default("{}")
+  /// №57 (§5-тер.7): еженедельный отчёт «Админки» владельцам; неделя
+  /// (понедельник UTC) последней обработки (выводы + отчёт) — дедуп сайт ×
+  /// неделя условным UPDATE.
+  weeklyReport         Boolean @default(true)
+  weeklyReportWeek     String?
+  /// Р-З10-13: UTC-сутки последнего push о тревоге компенсаций — дедуп
+  /// сайт × сутки (условный UPDATE).
+  compensationAlertDay String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  dailyStats AssistAdminDailyStat[]
+  insights   AssistAdminInsight[]
+  exports    AssistAdminExport[]
 
   @@unique([siteId, accountId])
   @@index([accountId])
@@ -1939,9 +1966,13 @@ model AssistAdminConversation {
   learningItems AssistAdminLearningItem[]
   proposals     AssistAdminActionProposal[]
   uiPlans       AssistAdminUiPlan[]
+  /// №57: разметка диалога ИИ (одна на диалог; уходит вместе с диалогом).
+  label         AssistAdminConversationLabel?
 
   @@unique([id, accountId])
   @@index([siteId, employeeRef, lastActivityAt])
+  /// Заход 10 (аудит P3 (4)): скан крона разметки/свёртки по всем сайтам.
+  @@index([lastActivityAt])
   @@index([accountId])
   @@map("assist_admin_conversations")
 }
@@ -2169,6 +2200,8 @@ model AssistAdminActionProposal {
   @@unique([memoRunId, memoStep])
   @@index([siteId, actor, createdAt])
   @@index([siteId, status])
+  /// Заход 10 (аудит P3 (4)): скан тревоги компенсаций по всем сайтам.
+  @@index([createdAt])
   @@index([accountId])
   @@map("assist_admin_action_proposals")
 }
@@ -2389,6 +2422,135 @@ model AssistAdminVoiceTest {
   @@index([siteId, createdAt])
   @@index([accountId])
   @@map("assist_admin_voice_tests")
+}
+
+// ── Заход 10, №57: аналитика «Админки» (ТЗ §5-тер.13, Р-48, У-23…У-27) ──
+// Свои таблицы, свой экран, своя разметка; поведенческого трекинга и
+// рейтинга сотрудников нет. Роль assist_public прав не имеет (как на все
+// assist_admin_*); «Сайт» эти таблицы не называет (правило графа).
+
+/// Разметка диалога сотрудника (§5-тер.13): своя схема — тип задачи, нашёл
+/// ли ответ, ошибка инструмента; свой промпт; операция `assist-admin-label`
+/// (суточный потолок «Админки»). Текста диалога здесь нет — только перечни.
+model AssistAdminConversationLabel {
+  conversationId String                  @id
+  accountId      String
+  conversation   AssistAdminConversation @relation(fields: [conversationId, accountId], references: [id, accountId], onDelete: Cascade)
+  siteId         String
+
+  model          String
+  promptVersion  String
+  /// admin-label-schema.ts ADMIN_TASK_TYPES (lookup | order_status | …).
+  taskType       String
+  /// yes | partial | no
+  answerFound    String
+  /// Сбой/ошибка параметров инструмента в диалоге — по коду, не по модели.
+  toolError      Boolean  @default(false)
+  /// 1–5 — полезность ответа по оценке модели; NULL — не оценено.
+  quality        Int?
+  /// ok | failed | injection_suspect
+  status         String
+  /// Роль сотрудника у заказчика на момент диалога (агрегаты по ролям).
+  employeeRole   String?
+  conversationAt DateTime
+  labeledAt      DateTime @default(now())
+  costMicroUsd   Int      @default(0)
+
+  @@unique([conversationId, accountId])
+  @@index([siteId, conversationAt])
+  /// Свёртка дней недавно размеченных диалогов (аудит P3 (3)).
+  @@index([labeledAt])
+  @@index([accountId])
+  @@map("assist_admin_conversation_labels")
+}
+
+/// Суточная свёртка «Админки» (UTC-день × роль сотрудника; `*` — итог):
+/// вход отчёта недели, выводов и экспорта «по дням». Пересчитывается
+/// идемпотентно (сегодня и вчера) в кроне assist-admin-embed-run.
+model AssistAdminDailyStat {
+  accountId     String
+  siteId        String
+  settings      AssistAdminSettings @relation(fields: [siteId, accountId], references: [siteId, accountId], onDelete: Cascade)
+  day           String
+  role          String
+  conversations Int                 @default(0)
+  questions     Int                 @default(0)
+  refused       Int                 @default(0)
+  thumbsDown    Int                 @default(0)
+  labeled       Int                 @default(0)
+  answerYes     Int                 @default(0)
+  answerPartial Int                 @default(0)
+  toolErrors    Int                 @default(0)
+  proposed      Int                 @default(0)
+  confirmed     Int                 @default(0)
+  actionsFailed Int                 @default(0)
+  minutesSaved  Int                 @default(0)
+  /// { taskType: число диалогов }
+  taskTypes     Json                @default("{}")
+  costMicroUsd  Int                 @default(0)
+  updatedAt     DateTime            @updatedAt
+
+  @@id([siteId, day, role])
+  /// Уборка старых дней по всем сайтам.
+  @@index([day])
+  @@index([accountId])
+  @@map("assist_admin_daily_stats")
+}
+
+/// Выводы недели «Админки» (§5-тер.13 У-24 — отдельный вызов, вход только
+/// assist_admin_*): находки считает код, модель лишь формулирует (uk/ru/en);
+/// каждое число текста проверяется против находок, провал — сухие строки.
+model AssistAdminInsight {
+  id           String              @id @default(cuid())
+  accountId    String
+  siteId       String
+  settings     AssistAdminSettings @relation(fields: [siteId, accountId], references: [siteId, accountId], onDelete: Cascade)
+  /// Понедельник недели (UTC), YYYY-MM-DD.
+  weekStart    String
+  findings     Json
+  /// [{ findingIds, uk: {title, action}, ru: …, en: … }]; NULL — без модели.
+  text         Json?
+  model        String?
+  /// new | done | dismissed
+  status       String              @default("new")
+  doneAt       DateTime?
+  feedback     Int?
+  costMicroUsd Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@unique([siteId, weekStart])
+  @@index([accountId])
+  @@map("assist_admin_insights")
+}
+
+/// Выгрузки CSV «Админки» (§5-тер.7: отдельный экспорт под `assistAdmin:
+/// owner`, У-25): без текстов реплик; ≤ 50 000 строк; файл — приватный Blob
+/// на 24 ч, строка — журнал выгрузок (год).
+model AssistAdminExport {
+  id                    String              @id @default(cuid())
+  accountId             String
+  siteId                String
+  settings              AssistAdminSettings @relation(fields: [siteId, accountId], references: [siteId, accountId], onDelete: Cascade)
+  /// daily | labels | actions
+  kind                  String
+  params                Json
+  requestedByTelegramId BigInt
+  /// queued | running | done | failed | expired
+  status                String              @default("queued")
+  attempts              Int                 @default(0)
+  lockedUntil           DateTime?
+  blobKey               String?
+  rows                  Int?
+  error                 String?
+  expiresAt             DateTime?
+  finishedAt            DateTime?
+  createdAt             DateTime            @default(now())
+
+  @@index([status, createdAt])
+  @@index([siteId, createdAt])
+  @@index([accountId])
+  @@map("assist_admin_exports")
 }
 
 // ══ Э2: виджет режима «Сайт» (ТЗ §3-бис, §4-бис, §4.5, §4.12–§4.13, §6.3) ══
@@ -4543,9 +4705,12 @@ model SiteBrowserJob {
   hostId             String?
   /// Хост того же кабинета (аудит Ш3: составной FK, как у site_pages).
   host               SiteHost? @relation(fields: [hostId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// ui-snapshot | admin-crawl | descriptor-resolve | frames-capture |
+  /// tutorial-explore | knowledge-render (Ш3 (20), миграция S2 заход 10)
   kind               String
   /// voice-map-snapshot | voice-map-check | assist-admin-crawl | tutorial-frames
-  /// | tutorial-explore | tutorial-explore-open
+  /// | tutorial-explore | tutorial-explore-open | knowledge-render |
+  /// voice-autotest (№29: Т-3 по расписанию, вид descriptor-resolve)
   origin             String
   /// Связанная сущность продукта (задание обхода «Админки», версия карты…).
   refId              String?

@@ -91,6 +91,16 @@ describeDb('Приёмка Э3 (A): сводка и отчёт недели — 
         status: 'held',
       },
     });
+    // Тексты проверок ниже — русские: получатели с русским Telegram.
+    for (const t of [
+      s.ownerTelegramId,
+      manager.telegramId,
+      managerAdmin.telegramId,
+      operator.telegramId,
+      off.telegramId,
+    ]) {
+      await lang(t, 'ru-RU');
+    }
     return {
       s,
       tg: {
@@ -101,6 +111,15 @@ describeDb('Приёмка Э3 (A): сводка и отчёт недели — 
         off: off.telegramId,
       },
     };
+  }
+
+  /** Язык получателя в боте (`language_code` Telegram, Р-З9-7). */
+  async function lang(tg: bigint, code: string | null): Promise<void> {
+    await st.owner.assistBotUser.upsert({
+      where: { telegramId: tg },
+      create: { telegramId: tg, languageCode: code },
+      update: { languageCode: code },
+    });
   }
 
   const forChat = (tg: bigint) =>
@@ -185,6 +204,137 @@ describeDb('Приёмка Э3 (A): сводка и отчёт недели — 
     const r2 = await digest.run(monday, { siteIds: [empty.siteId] });
     expect(r2.sent).toBe(0);
     expect(sent).toEqual([]);
+  });
+
+  it('заход 10 (Р-З10-14): отчёт недели целиком на языке получателя — рамка, выводы модели (перевод) или сухая строка на его языке, кнопка', async () => {
+    const s = await st.site({ name: 'Teplo Shop' });
+    const en = await st.member(s, 'manager');
+    const ru = await st.member(s, 'manager');
+    // Без строки в assist_bot_users (бот не запускал) — uk (аудит P3-11).
+    const none = await st.member(s, 'manager');
+    await st.owner.assistBotUser.deleteMany({
+      where: { telegramId: none.telegramId },
+    });
+    await lang(s.ownerTelegramId, 'uk');
+    await lang(en.telegramId, 'en-GB');
+    await lang(ru.telegramId, 'ru');
+    const week = addDays(dayOf(monday), -7);
+    const weekStart = dayRangeUtc(week, TZ).start;
+    for (let i = 0; i < 3; i++) {
+      await st.conversation(s, {
+        createdAt: new Date(weekStart.getTime() + (24 * i + 10) * HOUR),
+        lastMessageAt: new Date(
+          weekStart.getTime() + (24 * i + 10) * HOUR + 60_000,
+        ),
+      });
+    }
+    for (let i = 0; i < 7; i++) {
+      await st.rollup.rollupDay(s.siteId, addDays(week, i));
+    }
+    const finding = (f: Record<string, unknown>) => ({
+      n: 40,
+      x: 10,
+      share: 0.25,
+      ciLow: 0.14,
+      ciHigh: 0.4,
+      base: null,
+      page: '/cart',
+      topic: null,
+      reason: 'price_too_high',
+      field: null,
+      metric: null,
+      value: null,
+      trigger: null,
+      campaign: null,
+      changedAt: null,
+      ...f,
+    });
+    // Вывод модели: основной — украинский, перевод — английский (русского нет).
+    await st.owner.assistSiteInsight.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        weekStart: week,
+        code: 'N3',
+        findingKey: 'N3:/cart:price_too_high',
+        finding: finding({ code: 'N3' }),
+        impact: 'high',
+        text: {
+          title: 'Дорого на /cart',
+          what: '10 з 40 діалогів (25%).',
+          action: 'Покажіть розстрочку',
+          lang: 'uk',
+          i18n: {
+            en: {
+              title: 'Too expensive on /cart',
+              what: '10 of 40 (25%).',
+              action: 'Show installments',
+            },
+          },
+        },
+      },
+    });
+    // Находка без текста модели — сухая строка кодом на языке читателя.
+    await st.owner.assistSiteInsight.create({
+      data: {
+        accountId: s.accountId,
+        siteId: s.siteId,
+        weekStart: week,
+        code: 'N11',
+        findingKey: 'N11:/oplata:v7',
+        finding: finding({
+          code: 'N11',
+          page: '/oplata',
+          reason: null,
+          n: 300,
+          x: 45,
+          share: 0.15,
+          base: 0.05,
+          changedAt: '2026-09-30',
+        }),
+        impact: 'medium',
+        textSkipped: 'plan',
+      },
+    });
+    sent.length = 0;
+    const r = await digest.run(monday, { siteIds: [s.siteId] });
+    expect(r.weekly).toBe(true);
+    const uk = forChat(s.ownerTelegramId)[0];
+    const enMsg = forChat(en.telegramId)[0];
+    const ruMsg = forChat(ru.telegramId)[0];
+    const noneMsg = forChat(none.telegramId)[0];
+    expect(noneMsg.text).toContain('Звіт тижня — «Teplo Shop»');
+    expect(noneMsg.text).not.toMatch(/[ыэёъ]|Отчёт|Диалоги/);
+    expect(JSON.stringify(noneMsg.reply_markup)).toContain(
+      'Відкрити статистику',
+    );
+    expect(uk.text).toContain('Звіт тижня — «Teplo Shop»');
+    expect(uk.text).toContain('Діалоги: 3');
+    expect(uk.text).toContain('• Дорого на /cart — Покажіть розстрочку');
+    expect(uk.text).toContain(
+      '• Після зміни сторінки /oplata 30.09.2026: чат відкривають у 15% переглядів, було 5% — збіг у часі, не доказ',
+    );
+    expect(uk.text).toContain('Розділ «Адмінка»');
+    // Ни слова русской рамки в украинском и английском.
+    expect(uk.text).not.toMatch(/[ыэёъ]|Отчёт|Диалоги|Раздел|Находки/);
+    expect(enMsg.text).toContain('Weekly report — «Teplo Shop»');
+    expect(enMsg.text).toContain('Conversations: 3');
+    expect(enMsg.text).toContain(
+      '• Too expensive on /cart — Show installments',
+    );
+    expect(enMsg.text).toContain('coincidence in time, not proof');
+    expect(enMsg.text).not.toMatch(/[А-Яа-яЁёІіЇїЄєҐґ]/);
+    // Русского перевода вывода нет — сухая строка кодом по-русски.
+    expect(ruMsg.text).toContain('Отчёт недели — «Teplo Shop»');
+    expect(ruMsg.text).toContain(
+      '• Причина отказа «дорого» на /cart: 10 из 40 диалогов без конверсии (25%)',
+    );
+    expect(ruMsg.text).not.toContain('Покажіть');
+    const button = (m: { reply_markup: unknown }) =>
+      JSON.stringify(m.reply_markup);
+    expect(button(uk)).toContain('Відкрити статистику');
+    expect(button(enMsg)).toContain('Open statistics');
+    expect(button(ruMsg)).toContain('Открыть статистику');
   });
 
   it('тревога №29: всплеск 👎 вчера относительно 7 дней — строка в сводке', async () => {

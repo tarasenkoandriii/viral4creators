@@ -17,7 +17,15 @@
  * ссылки (GET) показывает только кнопку «Відкрити звіт»: превью ссылок в
  * мессенджерах (GET без формы) одноразовый токен не тратят; отчёт — ответ
  * на POST этой формы (токен гасится тем же условным UPDATE).
+ *
+ * Экранирование, CSP, заголовки и оболочка страницы — общие с отчётом
+ * голосовой карты (`common/report-page.ts`, Р-З10-11).
  */
+import {
+  escHtml,
+  reportPageCsp,
+  reportPageHtml,
+} from '../../../common/report-page';
 import { maskLabel } from '../../assist-ui-core/snapshot';
 import type { WizardReport } from '../api-types';
 
@@ -202,15 +210,8 @@ const T = {
 
 export type DevLang = keyof typeof T;
 
-/** Экранирование для текста и атрибутов HTML. */
-export function esc(v: unknown): string {
-  return String(v ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+/** Экранирование для текста и атрибутов HTML (общее, `common/report-page`). */
+export const esc = escHtml;
 
 const STYLE =
   'body{font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:860px;padding:16px;color:#111;background:#fff}' +
@@ -220,27 +221,16 @@ const STYLE =
   'button{font:inherit;padding:8px 16px}@media (prefers-color-scheme:dark){body{background:#111;color:#eee}code,pre{background:#222}td,th{border-color:#444}}';
 
 /** CSP страницы ссылки: без скриптов; форма — только на себя. */
-export const DEV_REPORT_CSP = [
-  "default-src 'none'",
-  "style-src 'unsafe-inline'",
-  "form-action 'self'",
-  "base-uri 'none'",
-  "frame-ancestors 'none'",
-].join('; ');
+export const DEV_REPORT_CSP = reportPageCsp("'self'");
 
 function page(lang: DevLang, body: string): string {
-  return [
-    '<!doctype html>',
-    `<html lang="${lang}">`,
-    '<head><meta charset="utf-8">',
-    '<meta name="viewport" content="width=device-width, initial-scale=1">',
-    '<meta name="robots" content="noindex, nofollow">',
-    '<meta name="referrer" content="no-referrer">',
-    `<title>${esc(T[lang].title)}</title>`,
-    `<style>${STYLE}</style></head>`,
-    `<body>${body}</body></html>`,
-    '',
-  ].join('\n');
+  return reportPageHtml({
+    lang,
+    title: T[lang].title,
+    style: STYLE,
+    body,
+    referrerMeta: true,
+  });
 }
 
 const langOf = (v: unknown): DevLang => (v === 'ru' || v === 'en' ? v : 'uk');

@@ -455,6 +455,248 @@ describeDb('Приёмка Э5 — голос виджета', () => {
     expect(conv.voice).toBe(false);
   });
 
+  // ── заход 10, Р-З10-3: голос при последних единицах, single-flight ──────
+
+  it('Р-З10-3 (а) первый вопрос голосом при одной оставшейся единице — ответ текстом весом 1, голос снят; озвучка — limit без синтеза', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const heard = await voice.transcribe(
+      ctx(s, visitor),
+      fakeRecording(),
+      'audio/webm',
+    );
+    if (!heard.ok) throw new Error('распознавание');
+    await seedUsage(st.owner, s.accountId, { units: 1_199 });
+    const a = await st.ask(s, heard.text, {
+      visitor,
+      voiceTicket: heard.ticket,
+    });
+    expect(a.error).toBeNull();
+    expect(a.text.length).toBeGreaterThan(0);
+    expect(st.model.calls).toHaveLength(1);
+    expect(await usageOf(st.owner, s.accountId)).toMatchObject({
+      units: 1_200,
+      dialogs: 1_200,
+    });
+    const conv = await st.owner.assistSiteConversation.findUniqueOrThrow({
+      where: { id: a.meta!.conversationId },
+    });
+    expect(conv).toMatchObject({ voice: false, dialogCounted: true });
+    fake.calls.length = 0;
+    expect(await voice.speak(ctx(s, visitor), a.meta!.messageId)).toEqual({
+      ok: false,
+      failure: 'limit',
+    });
+    expect(fake.calls).toHaveLength(0);
+  });
+
+  it('Р-З10-3 (а) нет места и на вес 1 — мягкий стоп как раньше, отметка голоса сохраняется', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const heard = await voice.transcribe(
+      ctx(s, visitor),
+      fakeRecording(),
+      'audio/webm',
+    );
+    if (!heard.ok) throw new Error('распознавание');
+    await seedUsage(st.owner, s.accountId, { units: 1_199 });
+    // Предпроверка видит одну единицу, а к захвату её занял параллельный
+    // диалог (подмена счётчика между чтением и захватом).
+    const claim = st.quota.claim.bind(st.quota);
+    const spy = jest
+      .spyOn(st.quota, 'claim')
+      .mockImplementationOnce(async (db, p) => {
+        await seedUsage(st.owner, s.accountId, { units: 1_200 });
+        return claim(db, p);
+      });
+    try {
+      const a = await st.ask(s, heard.text, {
+        visitor,
+        voiceTicket: heard.ticket,
+      });
+      expect(a.error).toMatchObject({ code: 'site_quota' });
+      expect(st.model.calls).toHaveLength(0);
+      const conv = await st.owner.assistSiteConversation.findUniqueOrThrow({
+        where: { id: a.meta!.conversationId },
+      });
+      expect(conv).toMatchObject({ voice: true, dialogCounted: false });
+      expect(await usageOf(st.owner, s.accountId)).toMatchObject({
+        units: 1_200,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('Р-З10-3 (б) доплата за голос не помещается — limit ДО синтеза: провайдер не зовётся, денег голоса нет', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const a = await st.ask(s, 'Яка гарантія на електрочайник?', { visitor });
+    await seedUsage(st.owner, s.accountId, { units: 1_200 });
+    fake.calls.length = 0;
+    expect(await voice.speak(ctx(s, visitor), a.meta!.messageId)).toEqual({
+      ok: false,
+      failure: 'limit',
+    });
+    expect(fake.count('POST', 'tts:/tts')).toBe(0);
+    expect(await usageRows(s.siteId, 'assist-tts')).toHaveLength(0);
+    expect(await voiceRow(s.siteId)).toBeNull();
+    expect(
+      await st.owner.assistSiteTtsCache.count({ where: { siteId: s.siteId } }),
+    ).toBe(0);
+  });
+
+  it('Р-З10-3 (б) две параллельные озвучки одного ответа — один синтез, одна доплата, второй — из кэша', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const a = await st.ask(s, 'Яка гарантія на електрочайник?', { visitor });
+    const plain = tts.fetch;
+    tts.fetch = async (...args: Parameters<typeof plain>) => {
+      await new Promise((r) => setTimeout(r, 300));
+      return plain(...args);
+    };
+    try {
+      fake.calls.length = 0;
+      const [x, y] = await Promise.all([
+        voice.speak(ctx(s, visitor), a.meta!.messageId),
+        voice.speak(ctx(s, visitor), a.meta!.messageId),
+      ]);
+      expect(x.ok && y.ok).toBe(true);
+      expect([x, y].map((r) => r.ok && r.cached).sort()).toEqual([false, true]);
+      expect(x.ok && y.ok && x.audio.equals(y.audio)).toBe(true);
+    } finally {
+      tts.fetch = plain;
+    }
+    expect(fake.count('POST', 'tts:/tts')).toBe(1);
+    expect(await usageRows(s.siteId, 'assist-tts')).toHaveLength(1);
+    expect(await usageOf(st.owner, s.accountId)).toMatchObject({ units: 2 });
+    expect((await voiceRow(s.siteId))?.reserved).toBe(0);
+  });
+
+  /** Синтез с задержкой (параллельные запросы перекрываются). */
+  async function slowTts<T>(ms: number, fn: () => Promise<T>): Promise<T> {
+    const plain = tts.fetch;
+    tts.fetch = async (...args: Parameters<typeof plain>) => {
+      await new Promise((r) => setTimeout(r, ms));
+      return plain(...args);
+    };
+    try {
+      return await fn();
+    } finally {
+      tts.fetch = plain;
+    }
+  }
+
+  /** Второй «инстанс» сервиса: свой процессный single-flight, та же база. */
+  function otherInstance(): SiteVoiceService {
+    const v = new SiteVoiceService(st.publicDb, st.budget, st.usage, stt, tts);
+    v.env = voice.env;
+    v.claimPollMs = 20;
+    return v;
+  }
+
+  it('аудит P1-1: 12 параллельных озвучек на 12 разных сайтах — все ok (соединение пула на время синтеза не держится)', async () => {
+    const asks: Array<{
+      s: ChatSite;
+      visitor: ReturnType<typeof st.visitor>;
+      id: string;
+    }> = [];
+    for (let i = 0; i < 12; i++) {
+      const s = await voiceSite();
+      const visitor = st.visitor();
+      const a = await st.ask(s, 'Яка гарантія на електрочайник?', { visitor });
+      asks.push({ s, visitor, id: a.meta!.messageId });
+    }
+    fake.calls.length = 0;
+    const res = await slowTts(1_500, () =>
+      Promise.all(asks.map((a) => voice.speak(ctx(a.s, a.visitor), a.id))),
+    );
+    expect(res.map((r) => r.ok)).toEqual(Array(12).fill(true));
+    expect(fake.count('POST', 'tts:/tts')).toBe(12);
+  });
+
+  it('аудит P1-1: 12 параллельных озвучек одного ответа на трёх «инстансах» — один синтез, одна доплата, звук у всех', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const a = await st.ask(s, 'Яка гарантія на електрочайник?', { visitor });
+    const nodes = [voice, otherInstance(), otherInstance()];
+    fake.calls.length = 0;
+    const res = await slowTts(400, () =>
+      Promise.all(
+        Array.from({ length: 12 }, (_, i) =>
+          nodes[i % 3].speak(ctx(s, visitor), a.meta!.messageId),
+        ),
+      ),
+    );
+    expect(res.every((r) => r.ok)).toBe(true);
+    expect(res.filter((r) => r.ok && !r.cached)).toHaveLength(1);
+    expect(fake.count('POST', 'tts:/tts')).toBe(1);
+    expect(await usageRows(s.siteId, 'assist-tts')).toHaveLength(1);
+    expect(await usageOf(st.owner, s.accountId)).toMatchObject({ units: 2 });
+    expect((await voiceRow(s.siteId))?.reserved).toBe(0);
+    // Заявка снята — следующий синтез этого ключа не ждёт её срока.
+    const claim = await st.owner.$queryRawUnsafe<Array<{ value: bigint }>>(
+      `SELECT "value" FROM "sites"."assist_daily_counters" WHERE "scope" = 'tts-claim' AND "key" LIKE $1`,
+      `${s.siteId}:%`,
+    );
+    expect(claim.map((c) => Number(c.value))).toEqual([0]);
+  });
+
+  it('аудит P1-1: синтез у «соседа» не удался — заявка снята, ждущий синтезирует сам', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const a = await st.ask(s, 'Яка гарантія на електрочайник?', { visitor });
+    const other = otherInstance();
+    fake.tts = 'fail';
+    let first = true;
+    const plain = tts.fetch;
+    tts.fetch = async (...args: Parameters<typeof plain>) => {
+      // Первый синтез (у «соседа») падает, следующий — успешен.
+      await new Promise((r) => setTimeout(r, 200));
+      if (!first) fake.tts = 'ok';
+      first = false;
+      return plain(...args);
+    };
+    try {
+      const [x, y] = await Promise.all([
+        other.speak(ctx(s, visitor), a.meta!.messageId),
+        new Promise((r) => setTimeout(r, 50)).then(() =>
+          voice.speak(ctx(s, visitor), a.meta!.messageId),
+        ),
+      ]);
+      expect(x).toEqual({ ok: false, failure: 'upstream' });
+      expect(y).toMatchObject({ ok: true, cached: false });
+    } finally {
+      tts.fetch = plain;
+      fake.tts = 'ok';
+    }
+    expect(fake.count('POST', 'tts:/tts')).toBe(2);
+  });
+
+  it('аудит P3-8: голос диалога уже оплачен (вопрос голосом засчитан) — озвучка доступна и при нуле единиц, без доплаты', async () => {
+    const s = await voiceSite();
+    const visitor = st.visitor();
+    const heard = await voice.transcribe(
+      ctx(s, visitor),
+      fakeRecording(),
+      'audio/webm',
+    );
+    if (!heard.ok) throw new Error('распознавание');
+    const a = await st.ask(s, heard.text, {
+      visitor,
+      voiceTicket: heard.ticket,
+    });
+    expect(await usageOf(st.owner, s.accountId)).toMatchObject({ units: 2 });
+    await seedUsage(st.owner, s.accountId, { units: 1_200 });
+    fake.calls.length = 0;
+    const r = await voice.speak(ctx(s, visitor), a.meta!.messageId);
+    expect(r).toMatchObject({ ok: true, cached: false });
+    expect(fake.count('POST', 'tts:/tts')).toBe(1);
+    expect(await usageOf(st.owner, s.accountId)).toMatchObject({
+      units: 1_200,
+    });
+  });
+
   it('кэш озвучки — только своего сайта: запись чужого сайта с тем же ключом не отдаётся', async () => {
     const a = await voiceSite();
     const b = await voiceSite();

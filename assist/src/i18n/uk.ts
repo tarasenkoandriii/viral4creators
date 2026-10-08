@@ -2,6 +2,7 @@ import { billingUk } from './billing-uk';
 import { mediaUk } from './media-uk';
 import { verifyHostUk } from './verify-host-uk';
 import { voiceControlUk } from './voice-control-uk';
+import { adminModeUk } from './admin-mode-uk';
 import type { AppDictionary } from './ru';
 import { setupUk } from './setup-uk';
 import { e3Uk } from './e3-uk';
@@ -437,4 +438,6 @@ export const appUk: AppDictionary = {
   verifyHost: verifyHostUk,
   /** Э6-бис: голосовое управление «Сайтом». */
   voiceControl: voiceControlUk,
+  /** Э7/Э8 «Админка» (заход 10, №63: перенесено из i18n/admin-mode.ts). */
+  adminMode: adminModeUk,
 };

@@ -18,15 +18,13 @@
  * Нет ключа — записи нет (ошибка, не открытый текст). Чистый модуль: ни
  * базы, ни Nest; в ошибках — только код.
  */
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import {
-  createCipheriv,
-  createDecipheriv,
-  createHmac,
-  randomBytes,
-} from 'crypto';
+  derivedKeys,
+  parseSecretsKeyring,
+} from '../../../common/secrets-keyring';
 
 const LABEL = 'assist-site-plan-live-v1';
-const VERSION_RE = /^v[1-9]\d{0,3}$/;
 const SEP = '\u001f';
 
 export interface LiveKeys {
@@ -41,27 +39,19 @@ export class LiveCryptError extends Error {
   }
 }
 
-const derive = (raw: string) =>
-  createHmac('sha256', raw.trim()).update(LABEL).digest();
-
-/** Связка ключей из env; нет `ASSIST_SECRETS_KEY` — null (записи не будет). */
+/**
+ * Связка ключей из env; нет `ASSIST_SECRETS_KEY` — null (записи не будет).
+ * Разбор — общий (`common/secrets-keyring.ts`, №60): формат env и формула
+ * производного ключа прежние; кривая версия или список прежних — исключение
+ * (ui-plan.service ловит и работает текущим ключом).
+ */
 export function liveKeysFrom(env: NodeJS.ProcessEnv): LiveKeys | null {
-  const raw = env.ASSIST_SECRETS_KEY?.trim();
-  if (!raw) return null;
-  const current = env.ASSIST_SECRETS_KEY_VERSION?.trim() || 'v1';
-  if (!VERSION_RE.test(current)) throw new LiveCryptError('invalid_keys');
-  const keys = new Map<string, Buffer>([[current, derive(raw)]]);
-  for (const part of (env.ASSIST_SECRETS_KEYS_OLD ?? '').split(',')) {
-    const item = part.trim();
-    if (!item) continue;
-    const at = item.indexOf(':');
-    const version = at > 0 ? item.slice(0, at).trim() : '';
-    const value = at > 0 ? item.slice(at + 1).trim() : '';
-    if (!VERSION_RE.test(version) || !value || keys.has(version))
-      throw new LiveCryptError('invalid_keys');
-    keys.set(version, derive(value));
-  }
-  return { current, key: (v) => keys.get(v) ?? null };
+  const { keyring, problem } = parseSecretsKeyring(env);
+  if (problem) throw new LiveCryptError('invalid_keys');
+  if (!keyring) return null;
+  const keys = derivedKeys(env, LABEL);
+  if (!keys) return null;
+  return { current: keys.current, key: (v) => keys.key(v) };
 }
 
 export interface LiveAad {

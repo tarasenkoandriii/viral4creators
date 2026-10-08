@@ -2483,6 +2483,7 @@
     "products": "Erlaubt für",
     "productTutorial": "Tutorial",
     "productQa": "QA-Prüfungen",
+    "productAssistAdmin": "Assistent: Crawl des Admin-Bereichs",
     "lifetime": "Aufbewahren für",
     "lifetimeKeep": "Nicht ändern",
     "days": "{n} Tage",
