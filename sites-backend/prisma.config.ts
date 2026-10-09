@@ -17,6 +17,19 @@ import { defineConfig } from 'prisma/config';
 
 const url = process.env.SITES_DIRECT_URL;
 
+// Заход 12 (09.10.2026): прод `assist-api` не собирался с первого деплоя —
+// в env проекта Vercel не было `SITES_DIRECT_URL`, а Prisma отвечала лишь
+// «datasource.url property is required». Для `migrate` без строки — отказ
+// с именем переменной и ссылкой; `prisma generate` (postinstall) строка не
+// нужна, его не трогаем.
+if (!url && process.argv.includes('migrate')) {
+  throw new Error(
+    'Не задана SITES_DIRECT_URL — прямая строка Postgres (порт 5432) с ?schema=sites; ' +
+      'на Vercel: проект assist-api → Settings → Environment Variables (Production и Preview), ' +
+      'см. doc/DEPLOYMENT.md §6.1-бис и §6.3',
+  );
+}
+
 // Аудит P2-4: строка без `?schema=sites` (или с другой схемой) — отказ ДО
 // любой команды migrate: иначе миграции сайтов молча уехали бы в `public`
 // генератора. Значение строки (пароль) в сообщение не попадает. Не задана —

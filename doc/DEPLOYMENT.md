@@ -1139,46 +1139,36 @@ QA. Генератор (`backend/`) он не трогает и с ним не �
 5. Маршруты — без префикса `/api`: `GET /health`, `/sites/…`,
    `/assist/…`, `/qa/…`, `/widget/v1/…` (ТЗ помощника §4.16, QA-ТЗ §4.8).
 
-### 6.1-бис. Прод-деплой `assist-api` падает с 01.10.2026 (сверка 09.10.2026, заход 11)
+### 6.1-бис. Прод-деплой `assist-api` не собирается (причина найдена 09.10.2026, заход 12)
 
-**Состояние.** Все production-деплои Vercel-проекта `assist-api` (Root
-Directory `sites-backend`) с 01.10.2026 падают примерно за 1 с, до
-начала сборки. Это ошибка конфигурации Vercel, а не кода: до
-`npm run build` дело не доходит. Пока не исправлено:
-- `prisma migrate deploy` не запускается — миграции sites-backend с
-  01.10.2026 (на 09.10.2026 — все 31, включая заходы 9–11) на прод-базу
-  не накатаны;
-- код sites-backend на проде — до 01.10.2026: всё добавленное позже (в
-  том числе по §6.9–§6.25) на проде не работает;
-- проверки на проде заходов 9–11 (`doc/TODO.md`) не имеют смысла до
-  первого зелёного деплоя.
+**Причина (лог сборки 39dc927, 09.10.2026).** У Vercel-проекта `assist-api`
+(Root Directory `sites-backend`) в переменных окружения нет
+`SITES_DIRECT_URL`. Сборка доходит до `npm run build`, `prisma generate`
+проходит, а `prisma migrate deploy` падает: «The datasource.url property
+is required in your Prisma config file when using prisma migrate deploy»
+(с захода 12 `sites-backend/prisma.config.ts` в этом случае сам называет
+переменную). В том же логе ignore-скрипт пишет «нет прошлого успешного
+деплоя» — **успешного прод-деплоя у проекта не было ни разу**: sites-backend
+на проде не работал никогда, схемы `sites` на прод-базе, скорее всего, нет.
 
-**Что проверить (владелец, панель Vercel):**
-1. **Текст ошибки.** Deployments → красный production-деплой → сообщение
-   над логом сборки (Build Logs / «Error»). Ошибка за ~1 с до сборки —
-   проверка настроек проекта, `vercel.json` или git до сборки; текст
-   прямо называет причину. Начать с него, пункты ниже — кандидаты.
-2. **Root Directory** (Settings → Build and Deployment): ровно
-   `sites-backend`; «Include files outside the root directory in the Build
-   Step» — включено (`ignoreCommand` в `sites-backend/vercel.json` —
-   `bash ../scripts/vercel-ignore-build.sh .`, скрипт в корне
-   репозитория).
-3. **Node.js Version** (Settings → Build and Deployment): **24.x** — как
-   `.nvmrc` и `engines.node` (`"24.x"`) в `sites-backend/package.json`
-   (раздел «Версия Node»).
-4. **План — Pro** (§6.1 п.4). В `sites-backend/vercel.json` 17 кронов, из
-   них 8 чаще раза в сутки (`*/2`, `*/5`, `*/10`); на Hobby Vercel
-   отклоняет такой деплой до сборки («Hobby accounts are limited to daily
-   cron jobs»). Проверить, что проект — в команде с планом Pro, а не на
-   Hobby (Settings → General / Billing команды).
-5. **Git** (Settings → Git): требование подписанных коммитов (Require
-   Verified Commits). Включено, а коммиты не подписаны — деплой
-   отклоняется сразу. Либо подписывать коммиты, либо выключить.
-6. **Build Command** — по умолчанию (`npm run build` из `package.json`:
-   `prisma generate && prisma migrate deploy && nest build`), Override
-   выключен; Install Command и Output Directory не переопределены;
-   Framework Preset — как у `backend` (§6.1 п.2). В `vercel.json` ключа
-   `functions` нет намеренно (§6.1 п.4) — не добавлять.
+**Что сделать (владелец, панель Vercel и Supabase):**
+1. **Env проекта `assist-api`** (Settings → Environment Variables,
+   Production и Preview) — по §6.3, минимум:
+   - `SITES_DIRECT_URL` — прямая строка Supabase (порт 5432) **с
+     `?schema=sites`**, нужна на сборке (миграции);
+   - `SITES_DATABASE_URL` — пулерная строка (порт 6543), без неё
+     сервис не стартует в production;
+   - `ASSIST_SECRETS_KEY` (новый ключ: зашифрованных данных ещё нет,
+     `ASSIST_SECRETS_KEY_VERSION`/`ASSIST_SECRETS_KEYS_OLD` не нужны),
+     `CRON_SECRET`, `CORS_ORIGIN`, `ASSIST_BOT_TOKEN`, `GEMINI_API_KEY` и
+     остальное по §6.3 — по мере включения функций.
+2. **Первый деплой накатит все миграции `sites` с нуля** (схема `sites`,
+   роль `assist_public`, pgvector в `extensions` — §6.2). После него —
+   логин-роль виджета по §6.4 и `ASSIST_PUBLIC_DATABASE_URL`, затем
+   Redeploy (без неё публичные маршруты виджета работают с
+   предупреждением).
+3. Кандидаты, проверенные раньше и не подтвердившиеся (план Pro, Node
+   24.x, Root Directory, подписанные коммиты), — оставить как есть.
 
 **После исправления.** Redeploy последнего коммита `main` (Deployments →
 Redeploy; ignore-скрипт сравнивает с последним **успешным** деплоем, так
