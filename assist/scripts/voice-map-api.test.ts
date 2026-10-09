@@ -13,6 +13,7 @@ import type { ApiClient } from '../src/kit';
 import {
   MAP_GATE_CODES,
   MAP_VERSION_STATUSES,
+  SNAPSHOT_STATES_MAX,
   VOICE_MAP_ERROR_CODES,
   createVoiceMapApi,
   parseMisses,
@@ -193,6 +194,59 @@ assert.deepEqual(
     }).screenshot?.url,
     'https://blob.x/a.png'
   );
+  assert.deepEqual(sv.states, [], 'старый снимок без states — пусто');
+
+  // Заход 11 (Ш3 (5)): раскрытия «Снимка» — подпись, свои рамки и свой
+  // скриншот (только https), не больше лимита сервера; мусор отброшен.
+  assert.equal(
+    String(SNAPSHOT_STATES_MAX),
+    /snapshotToggles: (\d+),/.exec(read('browser-jobs/protocol.ts'))?.[1],
+    'лимит раскрытий — как WORKER_LIMITS.snapshotToggles'
+  );
+  const withStates = parseSnapshotView({
+    viewport: { width: 390, height: 844 },
+    states: [
+      {
+        label: 'Каталог',
+        elements: [
+          {
+            ref: 's1',
+            role: 'link',
+            tag: 'a',
+            text: 'Ноутбуки',
+            href: 'https://shop.ua/laptops',
+            box: { x: 5, y: 60, w: 120, h: 30 },
+          },
+        ],
+        screenshot: { url: 'https://blob.x/s0.jpg', width: 390, height: 844 },
+      },
+      {
+        label: 'Ж'.repeat(300),
+        elements: Array.from({ length: 60 }, (_, i) => ({
+          ref: `x${i}`,
+          tag: 'button',
+          box: { x: 0, y: 0, w: 1, h: 1 },
+        })),
+        screenshot: { url: 'javascript:alert(1)' },
+      },
+      ...Array.from({ length: 7 }, () => ({ label: 'зайве' })),
+    ],
+  });
+  assert.equal(withStates.states.length, SNAPSHOT_STATES_MAX);
+  assert.equal(withStates.states[0].label, 'Каталог');
+  assert.deepEqual(withStates.states[0].elements[0].box, {
+    x: 5,
+    y: 60,
+    w: 120,
+    h: 30,
+  });
+  assert.equal(withStates.states[0].screenshot?.url, 'https://blob.x/s0.jpg');
+  assert.equal(withStates.states[1].screenshot, null, 'не https — без кадра');
+  assert.equal(withStates.states[1].label.length, 120);
+  assert.equal(withStates.states[1].elements.length, 40, '≤ 40 на состояние');
+  assert.deepEqual(withStates.states[2].elements, []);
+  assert.deepEqual(parseSnapshotView({ states: 'x' }).states, []);
+
   // Дескриптор из элемента: путь ссылки, чужой хост — offHost; значений нет.
   assert.deepEqual(snapshotDescriptor(sv.elements[1], 'shop.ua'), {
     tag: 'a',

@@ -96,6 +96,12 @@ export const voiceMapEn: VoiceMapDictionary = {
     added: 'Target “{k}” added to the draft.',
     editor: 'Open in editor',
     close: 'Close',
+    // Round 11 (Sh3 (5)): snapshot expansions — menus, tabs, accordions.
+    page: 'Page',
+    states:
+      'Expanded without following links or submitting anything ({n}): frames show the new elements of this state.',
+    stateNone: 'No new elements in this state.',
+    stateLabel: 'Expanded: “{l}”',
   },
   check: {
     run: 'Worker check',

@@ -307,6 +307,23 @@ export interface SnapshotElement {
   box: { x: number; y: number; w: number; h: number } | null;
 }
 
+export interface SnapshotShot {
+  url: string;
+  width: number | null;
+  height: number | null;
+}
+
+/**
+ * Заход 11 (Ш3 (5), Р-З10-21/43): состояние «Снимка» после раскрывашки —
+ * её подпись, элементы, которых не было на странице до раскрытия (рамки —
+ * по скриншоту ЭТОГО состояния), скриншот видимой области.
+ */
+export interface SnapshotState {
+  label: string;
+  elements: SnapshotElement[];
+  screenshot: SnapshotShot | null;
+}
+
 export interface SnapshotView {
   id: string;
   status: string;
@@ -314,20 +331,54 @@ export interface SnapshotView {
   url: string | null;
   viewport: { width: number; height: number } | null;
   elements: SnapshotElement[];
-  screenshot: {
-    url: string;
-    width: number | null;
-    height: number | null;
-  } | null;
+  screenshot: SnapshotShot | null;
+  /** Раскрытые меню/вкладки (≤ 5; пусто — не было или старый снимок). */
+  states: SnapshotState[];
 }
 
+/** Раскрывашек за «Снимок» (WORKER_LIMITS.snapshotToggles на сервере). */
+export const SNAPSHOT_STATES_MAX = 5;
+
 const ASSIST_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+
+/** Ссылка на скриншот — только https/blob-хранилище (не javascript:). */
+function parseShot(v: unknown): SnapshotShot | null {
+  const shot = obj(v);
+  const url = text(shot.url);
+  return /^https:\/\//.test(url)
+    ? {
+        url,
+        width: typeof shot.width === 'number' ? shot.width : null,
+        height: typeof shot.height === 'number' ? shot.height : null,
+      }
+    : null;
+}
+
+function parseSnapElements(v: unknown, max: number): SnapshotElement[] {
+  return arr(v)
+    .map(obj)
+    .slice(0, max)
+    .map((e) => {
+      const b = obj(e.box);
+      return {
+        ref: text(e.ref),
+        role: text(e.role),
+        tag: text(e.tag),
+        text: text(e.text).slice(0, 120),
+        assistId: ASSIST_ID.test(text(e.assistId)) ? text(e.assistId) : null,
+        href: nstr(e.href),
+        disabled: e.disabled === true,
+        box:
+          e.box && num(b.w) > 0 && num(b.h) > 0
+            ? { x: num(b.x), y: num(b.y), w: num(b.w), h: num(b.h) }
+            : null,
+      };
+    });
+}
 
 export function parseSnapshotView(v: unknown): SnapshotView {
   const o = obj(v);
   const vp = obj(o.viewport);
-  const shot = obj(o.screenshot);
-  const shotUrl = text(shot.url);
   return {
     id: text(o.id),
     status: text(o.status) || 'queued',
@@ -337,33 +388,17 @@ export function parseSnapshotView(v: unknown): SnapshotView {
       num(vp.width) > 0 && num(vp.height) > 0
         ? { width: num(vp.width), height: num(vp.height) }
         : null,
-    elements: arr(o.elements)
+    elements: parseSnapElements(o.elements, 300),
+    screenshot: parseShot(o.screenshot),
+    states: arr(o.states)
       .map(obj)
-      .slice(0, 300)
-      .map((e) => {
-        const b = obj(e.box);
-        return {
-          ref: text(e.ref),
-          role: text(e.role),
-          tag: text(e.tag),
-          text: text(e.text).slice(0, 120),
-          assistId: ASSIST_ID.test(text(e.assistId)) ? text(e.assistId) : null,
-          href: nstr(e.href),
-          disabled: e.disabled === true,
-          box:
-            e.box && num(b.w) > 0 && num(b.h) > 0
-              ? { x: num(b.x), y: num(b.y), w: num(b.w), h: num(b.h) }
-              : null,
-        };
-      }),
-    // Ссылка на скриншот — только https/blob-хранилище (не javascript:).
-    screenshot: /^https:\/\//.test(shotUrl)
-      ? {
-          url: shotUrl,
-          width: typeof shot.width === 'number' ? shot.width : null,
-          height: typeof shot.height === 'number' ? shot.height : null,
-        }
-      : null,
+      .slice(0, SNAPSHOT_STATES_MAX)
+      .map((st) => ({
+        label: text(st.label).slice(0, 120),
+        // ≤ 40 новых элементов на состояние (WORKER_LIMITS.stateElements).
+        elements: parseSnapElements(st.elements, 40),
+        screenshot: parseShot(st.screenshot),
+      })),
   };
 }
 

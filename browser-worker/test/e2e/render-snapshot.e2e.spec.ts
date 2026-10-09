@@ -95,6 +95,16 @@ const SLOW_MENU = `<!doctype html><html><head><title>Меню повільне</
 <button aria-expanded="false" onclick="setTimeout(()=>{location.href='/slow-c'},400)">Пізніше</button>
 </main></body></html>`;
 
+/**
+ * Р-З11-Г2: меню на GraphQL — раскрывашка догружает пункты запросом
+ * `query` (доказанное чтение — проходит), рядом — мутация (обрыв).
+ */
+const GQL_MENU = `<!doctype html><html><head><title>Меню GraphQL</title></head><body>
+<main><h1>Каталог</h1>
+<button aria-expanded="false" onclick="var b=this;fetch('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'mutation { trackOpen }'})}).catch(function(){});fetch('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{ menu { title } }'})}).then(function(r){return r.json()}).then(function(d){var m=document.getElementById('menu');m.innerHTML='<a href=&quot;/c/1&quot;>'+d.data.menu[0].title+'</a>';m.hidden=false;b.setAttribute('aria-expanded','true')})">Категорії</button>
+<div id="menu" hidden></div>
+</main></body></html>`;
+
 /** Аудит P2-3: «появление при прокрутке», инлайн-скрытие, одиночный суррогат. */
 const REVEAL = `<!doctype html><html lang="uk"><head><title>Про нас</title>
 <style>.reveal{opacity:0;transition:opacity .1s}.reveal.on{opacity:1}.fade-in{opacity:0}</style></head>
@@ -121,6 +131,7 @@ d('browser-worker e2e: рендер SPA и раскрывашки «Снимка
   const internet = new FakeInternet(stand);
   const sites = new FakeSites(SECRET);
   const cookiesSeen: string[] = [];
+  const gqlSeen: string[] = [];
   let pool: BrowserPool;
   let runner: Runner;
 
@@ -161,6 +172,12 @@ d('browser-worker e2e: рендер SPA и раскрывашки «Снимка
       .page(SPA, '/menu', MENU_PAGE)
       .page(SPA, '/menu-slow', SLOW_MENU)
       .page(SPA, '/reveal', REVEAL)
+      .page(SPA, '/menu-gql', GQL_MENU)
+      .on(SPA, '/graphql', (_q, res, body) => {
+        gqlSeen.push(body);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: { menu: [{ title: 'Монети' }] } }));
+      })
       .page(
         SPA,
         '/elsewhere',
@@ -412,6 +429,28 @@ d('browser-worker e2e: рендер SPA и раскрывашки «Снимка
     // Состояния — только со своей страницы.
     for (const st of r.states ?? [])
       expect(st.elements.map((e) => e.text).join('|')).not.toMatch(/Повільна/);
+  });
+
+  it('Р-З11-Г2: раскрытия «Снимка» — меню на GraphQL `query` догружается, мутация оборвана', async () => {
+    gqlSeen.length = 0;
+    const j = await sites.waitDone(
+      sites.add('ui-snapshot', {
+        url: `https://${SPA}/menu-gql`,
+        allowedHosts: [SPA],
+        viewport: 'desktop',
+        screenshot: false,
+        mapElements: false,
+        toggles: 2,
+      }),
+    );
+    expect(j.error).toBeNull();
+    const r = j.result as SnapResult;
+    const st = (r.states ?? []).find((s) => s.label === 'Категорії');
+    expect(st).toBeDefined();
+    expect(st!.elements.map((e) => e.text)).toContain('Монети');
+    expect(gqlSeen).toHaveLength(1);
+    expect(gqlSeen[0]).toContain('menu');
+    expect(gqlSeen.join('\n')).not.toContain('mutation');
   });
 
   it('аудит P2-3/P2-2: «появление при прокрутке» — в тексте, инлайн opacity:0 — нет; одиночный суррогат — U+FFFD', async () => {

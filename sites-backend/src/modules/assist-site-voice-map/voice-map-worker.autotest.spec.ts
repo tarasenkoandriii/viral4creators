@@ -204,10 +204,19 @@ describeDb('Т-3 по расписанию: монитор → воркер → 
     expect(row.validUntil).toBeNull();
     const rep = row.report as {
       kind: string;
-      autotest: { checked: number; lost: number; error: string | null };
+      autotest: {
+        checked: number;
+        lost: number;
+        error: string | null;
+        commands: Array<{ text: string; status: string }>;
+      };
     };
     expect(rep.kind).toBe('autotest');
     expect(rep.autotest).toMatchObject({ checked: 3, lost: 1, error: null });
+    // Заход 11: фраза каждой команды — в отчёте (TMA «Голос → Автотест»).
+    expect(
+      rep.autotest.commands.map((c) => `${c.text}:${c.status}`).sort(),
+    ).toEqual(['команда 0:found', 'команда 1:found', 'команда 2:lost']);
     const cmds = await st.owner.assistSiteVoiceControlCommand.findMany({
       where: { siteId: s.siteId },
       orderBy: { utteranceMasked: 'asc' },

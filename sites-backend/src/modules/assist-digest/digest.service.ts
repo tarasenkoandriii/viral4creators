@@ -31,12 +31,25 @@
  *  - факты L (очередь) — через LearningReadApi; его сбой не роняет сводку
  *    (нули по обучению, в лог — код).
  * В лог — id сайта и числа отправок, без текста сообщения.
+ *
+ * Заход 11 (Р-З11-В3): отчёт недели «Админки», который ждёт сегодняшней
+ * сводки (AdminWeeklyDigest, admin-weekly-digest.ts), уходит разделом в
+ * конце сообщения получателю с разделом «Админка» — на его языке, с
+ * второй кнопкой «Статистика „Админки“»; id забирается из ожидания до
+ * отправки, не отправилось — возвращается (крон «Админки» дошлёт
+ * отдельно). Пустые для «Сайта» сутки без новостей «Админки» — уходит
+ * только отчёт недели «Админки» (без рамки из нулей), и только если он
+ * забран этим вызовом (аудит з11 P3-1/P3-7).
  */
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ANALYTICS_DEFAULTS } from '../../config/assist-defaults';
 import type { CronScope } from '../../common/cron-scope';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
+import {
+  AdminWeeklyDigest,
+  type AdminWeeklyPending,
+} from '../assist-admin-analytics/admin-weekly-digest';
 import { AdminDigestSource } from '../assist-admin-knowledge/admin-digest';
 import { effectiveAnalyticsConfig } from '../assist-analytics/analytics-config';
 import { sumConversions } from '../assist-analytics/exports.service';
@@ -71,6 +84,7 @@ import {
   satisfiesProductRoles,
 } from '../site-core/account/roles';
 import {
+  appendAdminWeekly,
   dailyDigestText,
   digestTexts,
   weeklyReportText,
@@ -159,6 +173,7 @@ export class AssistDigestService {
     private readonly rollup: AnalyticsRollup,
     private readonly admin: AdminDigestSource,
     @Optional() private readonly learning?: LearningReadApi,
+    @Optional() private readonly adminWeekly?: AdminWeeklyDigest,
   ) {}
 
   /** `scope` — только тесты на общей базе (контракт Э3 §9 п.6). */
@@ -406,6 +421,8 @@ export class AssistDigestService {
     );
     let adminFacts: Awaited<ReturnType<AdminDigestSource['facts']>> | null =
       null;
+    // Р-З11-В3: отчёт недели «Админки», ждущий этой сводки (раз на сайт).
+    let weeklyAdmin: AdminWeeklyPending | null | undefined;
     let sent = 0;
     for (const mem of members) {
       const role = parseAccountRole(mem.role);
@@ -426,23 +443,81 @@ export class AssistDigestService {
           since,
         });
       }
-      if (empty && !(adminFacts && adminNews(adminFacts))) continue;
-      const lang = langOf.get(mem.telegramId.toString()) ?? 'uk';
-      const text = (weekly ? weeklyReportText : dailyDigestText)(
-        { ...facts, findings: findingsFor(lang).slice(0, 3) },
-        seesAdmin ? adminFacts : null,
-        lang,
-      );
+      if (seesAdmin && weeklyAdmin === undefined) {
+        weeklyAdmin = this.adminWeekly
+          ? await this.adminWeekly
+              .pending(s.accountId, s.siteId)
+              .catch(() => null)
+          : null;
+      }
+      const chat = mem.telegramId.toString();
+      const weeklyFor =
+        seesAdmin && weeklyAdmin?.chatIds.includes(chat) ? weeklyAdmin : null;
+      const news = !!adminFacts && adminNews(adminFacts);
+      if (empty && !news && !weeklyFor) continue;
+      const lang = langOf.get(chat) ?? 'uk';
+      const claim = async (w: AdminWeeklyPending): Promise<boolean> =>
+        !!this.adminWeekly &&
+        (await this.adminWeekly
+          .claim(s.accountId, w.id, mem.telegramId)
+          .catch(() => false));
+      let text: string;
+      let button = {
+        text: digestTexts(lang).button,
+        hashPath: `/sites/${s.siteId}/stats`,
+      };
+      let moreButtons: Array<{ text: string; hashPath: string }> = [];
+      let withWeekly = false;
+      if (weeklyFor && empty && !news) {
+        // Аудит з11 P3-7: «Сайту» и «Админке» за сутки сказать нечего —
+        // уходит ТОЛЬКО отчёт недели «Админки», без рамки «Сайта» из нулей.
+        // P3-1: решение — после забора; не достался (досылка забрала
+        // раньше) — пустую сводку не шлём вовсе.
+        withWeekly = await claim(weeklyFor);
+        if (!withWeekly) continue;
+        text = weeklyFor.texts[lang].text;
+        button = {
+          text: weeklyFor.texts[lang].button,
+          hashPath: `/sites/${s.siteId}/admin-mode/stats`,
+        };
+      } else {
+        text = (weekly ? weeklyReportText : dailyDigestText)(
+          { ...facts, findings: findingsFor(lang).slice(0, 3) },
+          seesAdmin ? adminFacts : null,
+          lang,
+        );
+        // Раздел «отчёт недели „Админки“»: влез и забран из ожидания именно
+        // этим вызовом — в сообщение; иначе крон «Админки» дошлёт отдельно.
+        const combined = weeklyFor
+          ? appendAdminWeekly(text, weeklyFor.texts[lang].text)
+          : null;
+        withWeekly = !!combined && !!weeklyFor && (await claim(weeklyFor));
+        if (withWeekly && combined) {
+          text = combined;
+          moreButtons = [
+            {
+              text: digestTexts(lang).admin.weeklyButton,
+              hashPath: `/sites/${s.siteId}/admin-mode/stats`,
+            },
+          ];
+        } else if (empty && !news) {
+          // P3-1: сутки пустые, раздел не достался — сводку из нулей не шлём.
+          continue;
+        }
+      }
       const n = await sendToMembers({
         chatIds: [mem.telegramId],
         text,
-        button: {
-          text: digestTexts(lang).button,
-          hashPath: `/sites/${s.siteId}/stats`,
-        },
+        button,
+        ...(moreButtons.length ? { moreButtons } : {}),
         env: this.env,
         fetchImpl: this.fetchImpl,
       });
+      if (withWeekly && weeklyFor && n === 0) {
+        await this.adminWeekly
+          ?.release(s.accountId, weeklyFor.id, mem.telegramId)
+          .catch(() => undefined);
+      }
       sent += n;
     }
     return { weekly, sent };

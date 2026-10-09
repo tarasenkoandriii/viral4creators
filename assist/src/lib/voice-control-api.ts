@@ -127,8 +127,84 @@ export interface WizardReportView {
   markup: { total: number; withId: number; unnamed: number };
 }
 
+/**
+ * Заход 11: подробности отчёта Т-3 по расписанию (`kind: autotest`,
+ * sites-backend `voice-monitor-autotest.ts` AutotestReport.autotest):
+ * страницы, потерянные цели карты, контрольные команды (фраза — с захода
+ * 11; в старых отчётах пусто), счёт и код ошибки.
+ */
+export interface AutotestView {
+  version: number | null;
+  pages: Array<{ path: string; ok: boolean; error: string | null }>;
+  lostTargets: string[];
+  /** Всего потерянных целей (список — ≤ 60; старые отчёты — длина списка). */
+  lostTargetsTotal: number;
+  fragileTargets: number;
+  commands: Array<{
+    path: string;
+    text: string;
+    status: 'found' | 'lost' | 'unchecked';
+  }>;
+  checked: number;
+  lost: number;
+  /** pages_failed | nothing_checked | код отказа воркера; null — норма. */
+  error: string | null;
+}
+
 export interface VoiceTestDetail extends VoiceTestSummary {
   report: WizardReportView | null;
+  /** Заход 11: только у `kind: autotest` (и при пустом `result`). */
+  autotest: AutotestView | null;
+}
+
+const AUTOTEST_STATUSES = ['found', 'lost', 'unchecked'] as const;
+
+/** Разбор `report.autotest` (строгий: пути, ключи, лимиты как на сервере). */
+export function parseAutotest(v: unknown): AutotestView | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const a = obj(v);
+  const path = (x: unknown) => {
+    const t = text(x);
+    return t.startsWith('/') ? t.slice(0, 300) : '/';
+  };
+  const lostTargets = arr(a.lostTargets)
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => x.slice(0, 64))
+    .filter((x) => x)
+    .slice(0, 60);
+  return {
+    version:
+      typeof a.version === 'number' &&
+      Number.isInteger(a.version) &&
+      a.version > 0
+        ? a.version
+        : null,
+    pages: arr(a.pages)
+      .map(obj)
+      .slice(0, 20)
+      .map((x) => ({
+        path: path(x.path),
+        ok: x.ok === true,
+        error: code(x.error),
+      })),
+    lostTargets,
+    lostTargetsTotal: Math.max(
+      lostTargets.length,
+      Math.round(num(a.lostTargetsTotal))
+    ),
+    fragileTargets: Math.round(num(a.fragileTargets)),
+    commands: arr(a.commands)
+      .map(obj)
+      .slice(0, 40)
+      .map((x) => ({
+        path: path(x.path),
+        text: text(x.text).slice(0, 120),
+        status: oneOf(AUTOTEST_STATUSES, x.status) ?? 'unchecked',
+      })),
+    checked: Math.round(num(a.checked)),
+    lost: Math.round(num(a.lost)),
+    error: code(a.error),
+  };
 }
 
 export interface VoiceMetrics {
@@ -261,6 +337,7 @@ export function parseTestDetail(v: unknown): VoiceTestDetail | null {
   const m = obj(r.markup);
   return {
     ...s,
+    autotest: s.kind === 'autotest' ? parseAutotest(r.autotest) : null,
     report: result
       ? {
           page: text(r.page).slice(0, 300),

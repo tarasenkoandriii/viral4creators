@@ -17,10 +17,17 @@
  *    відкрити ціль; відхилене не повертається 30 днів
  *    (`POST /editor/v1/suggestions/mute`);
  *  - карточка цели: «✨ Запропонувати» (`POST /editor/v1/suggest-synonyms`,
- *    бюджет обучения; публикуются только принятые человеком, Р-33).
+ *    бюджет обучения; публикуются только принятые человеком, Р-33);
+ *  - заход 11 (остаток №113): тепловые значки «Промахов» на странице (`heat`
+ *    → пикер; 🗣 просили · ✋ натисніть самі · ↩ не туди · ? не знайдено),
+ *    «не туди» с командами и «Перепривязати» (клик по правильной цели —
+ *    фраза станет её синонимом, со старой — снимется), карточки «вела не
+ *    туди» и «термін розпізнавання» (`POST /editor/v1/suggestions/term` —
+ *    термин в черновик; публикация — как обычно).
  * Черновик меняет только клик человека здесь (`isTrusted`, `human` панели).
  * Ванильный TS без HTML-приёмников (CSP iframe — Trusted Types 'none').
  */
+import { phraseNorm, type HeatItem } from '../shared/editor-protocol';
 import type { PanelLang } from './i18n';
 
 type Syn = { text: string; origin: string };
@@ -51,8 +58,11 @@ export interface AssistCtx {
   render(): void;
   /** Карточка цели карты + рамка пикера. */
   open(key: string): void;
-  /** Следующий клик по сайту — цель, фраза — её синоним (на языке `lang`). */
-  bind(phrase: string, lang?: string | null): void;
+  /**
+   * Следующий клик по сайту — цель, фраза — её синоним (на языке `lang`);
+   * `from` (заход 11) — цель «не туди»: с неё фраза снимается.
+   */
+  bind(phrase: string, lang?: string | null, from?: string): void;
   note(s: string): void;
   fail(e: unknown): void;
   lang(): PanelLang;
@@ -63,6 +73,8 @@ export interface AssistCtx {
 export interface AssistApi {
   view(tab: 'miss' | 'sugg'): HTMLElement;
   card(t: AssistTarget): HTMLElement;
+  /** (заход 11) Тепловые значки целей страницы (пусто — данных ещё нет). */
+  heat(): HeatItem[];
 }
 
 interface MissItem {
@@ -81,11 +93,22 @@ interface Asked {
   visitors: number;
   key: string | null;
 }
+interface Wrong {
+  id: string;
+  key: string;
+  phrase: string;
+  lang: string | null;
+  count: number;
+  visitors: number;
+}
 interface MissesView {
   days: number;
   path: string;
   items: MissItem[];
   asked: Asked[];
+  /** (заход 11) Старый сервер — полей нет. */
+  heat?: MissItem[];
+  wrong?: Wrong[];
 }
 type Card =
   | {
@@ -96,6 +119,15 @@ type Card =
       visitors: number;
       key: string | null;
     }
+  | {
+      id: string;
+      kind: 'wrong';
+      key: string;
+      phrase: string;
+      lang: string | null;
+      visitors: number;
+    }
+  | { id: string; kind: 'term'; phrase: string; visitors: number }
   | { id: string; kind: 'self'; key: string; count: number };
 
 const TX = {
@@ -128,6 +160,21 @@ const TX = {
     muted: 'Не пропонуватиму 30 днів.',
     err: 'Не завантажилось.',
     retry: 'Повторити',
+    legend:
+      'Значки на сторінці: 🗣 просили · ✋ натисніть самі · ↩ не туди · ? не знайдено',
+    wrongRow: '↩ «{p}» · відвідувачів: {v} ({n})',
+    rebind: 'Перепривязати',
+    rebindHint:
+      'Клікніть правильний елемент — «{p}» стане його синонімом (з «{k}» — знімемо).',
+    sWrong:
+      '«{p}» вела на «{k}», а відвідувачі ({v}) одразу зупиняли — перепривязати?',
+    sTerm:
+      'Розпізнавання не впевнене в «{p}» (відвідувачів: {v}) — додати до словника термінів?',
+    addTerm: 'Додати термін',
+    nameClash:
+      'Увага: «{p}» — це назва цілі «{k}». Після перепривязки публікацію зупинить конфлікт фраз — спершу перейменуйте «{k}».',
+    rename: 'Перейменувати «{k}»',
+    termAdded: '«{p}» — у термінах чернетки; запрацює після публікації.',
   },
   ru: {
     days: 'За {d} дней, цели этой страницы:',
@@ -158,6 +205,21 @@ const TX = {
     muted: 'Не буду предлагать 30 дней.',
     err: 'Не загрузилось.',
     retry: 'Повторить',
+    legend:
+      'Значки на странице: 🗣 просили · ✋ нажмите сами · ↩ не туда · ? не найдено',
+    wrongRow: '↩ «{p}» · посетителей: {v} ({n})',
+    rebind: 'Перепривязать',
+    rebindHint:
+      'Кликните правильный элемент — «{p}» станет его синонимом (с «{k}» — снимем).',
+    sWrong:
+      '«{p}» вела на «{k}», а посетители ({v}) сразу останавливали — перепривязать?',
+    sTerm:
+      'Распознавание не уверено в «{p}» (посетителей: {v}) — добавить в словарь терминов?',
+    addTerm: 'Добавить термин',
+    nameClash:
+      'Внимание: «{p}» — это название цели «{k}». После перепривязки публикацию остановит конфликт фраз — сначала переименуйте «{k}».',
+    rename: 'Переименовать «{k}»',
+    termAdded: '«{p}» — в терминах черновика; заработает после публикации.',
   },
   en: {
     days: 'Last {d} days, targets of this page:',
@@ -187,6 +249,21 @@ const TX = {
     muted: 'Will not suggest for 30 days.',
     err: 'Failed to load.',
     retry: 'Retry',
+    legend:
+      'Page badges: 🗣 asked · ✋ press it yourself · ↩ wrong target · ? not found',
+    wrongRow: '↩ “{p}” · visitors: {v} ({n})',
+    rebind: 'Rebind',
+    rebindHint:
+      'Click the right element — “{p}” becomes its synonym (removed from “{k}”).',
+    sWrong:
+      '“{p}” led to “{k}” and visitors ({v}) stopped it at once — rebind?',
+    sTerm:
+      'Speech recognition is unsure about “{p}” (visitors: {v}) — add it to the terms dictionary?',
+    addTerm: 'Add term',
+    nameClash:
+      'Note: “{p}” is the name of target “{k}”. After rebinding, a phrase conflict will block publishing — rename “{k}” first.',
+    rename: 'Rename “{k}”',
+    termAdded: '“{p}” is in the draft terms; it works after publishing.',
   },
 };
 
@@ -325,11 +402,58 @@ export function start(c: AssistCtx): AssistApi {
     return n ? box : null;
   };
 
+  /**
+   * Аудит P2-3: фраза — ИМЯ старой цели (а не синоним): перепривязка
+   * оставит конфликт фраз, и ворота остановят публикацию — предупреждение
+   * до клика и «Перейменувати» (карточка старой цели).
+   */
+  const clash = (w: { phrase: string; key: string }) => {
+    const a = c.map()?.targets.find((x) => x.key === w.key);
+    const n = phraseNorm(w.phrase);
+    if (
+      !a ||
+      !n ||
+      !Object.values(a.names).some((x) => x && phraseNorm(x) === n)
+    )
+      return null;
+    const T = L();
+    return h(
+      'p',
+      { class: 'warn' },
+      fmt(T.nameClash, { p: w.phrase, k: nameOf(w.key) }),
+      ' ',
+      btn(fmt(T.rename, { k: nameOf(w.key) }), () => c.open(w.key))
+    );
+  };
+  /** Заход 11: «не туди» → клик по правильной цели (фраза — её синоним). */
+  const rebind = (w: { phrase: string; lang: string | null; key: string }) => {
+    // Подсказка — до `bind` (он перерисовывает панель).
+    c.note(fmt(L().rebindHint, { p: w.phrase, k: nameOf(w.key) }));
+    c.bind(w.phrase, w.lang, w.key);
+  };
+  /** Принять термин распознавания: сервер берёт текст по id (не панель). */
+  const addTerm = async (k: { id: string; phrase: string }) => {
+    const m = c.map();
+    if (!m) return;
+    try {
+      await c.api('/editor/v1/suggestions/term', {
+        method: 'POST',
+        body: JSON.stringify({ expectedRevision: m.revision, id: k.id }),
+      });
+      c.note(fmt(L().termAdded, { p: k.phrase }));
+      fresh();
+      await c.reload();
+    } catch (e) {
+      c.fail(e);
+    }
+  };
+
   const missView = () => {
     const box = h('div', {});
     if (!misses || seenM !== at()) return pending(box, 'misses');
     const T = L();
     box.append(h('p', { class: 'cnt' }, fmt(T.days, { d: misses.days })));
+    if (misses.heat?.length) box.append(h('p', { class: 'hint' }, T.legend));
     if (!misses.items.length && !misses.asked.length)
       box.append(h('p', { class: 'hint' }, T.none));
     const ul = h('ul', { class: 'list' });
@@ -340,14 +464,30 @@ export function start(c: AssistCtx): AssistApi {
         m.notFound && `${T.notFound} ×${m.notFound}`,
         m.missed && `${T.missed} ×${m.missed}`,
       ].filter(Boolean);
-      ul.append(
-        h(
-          'li',
-          { class: 'red' },
-          `${nameOf(m.key)} · ${m.key} — ${parts.join(' · ')} `,
-          btn(T.show, () => c.open(m.key))
-        )
+      const li = h(
+        'li',
+        { class: 'red' },
+        `${nameOf(m.key)} · ${m.key} — ${parts.join(' · ')} `,
+        btn(T.show, () => c.open(m.key))
       );
+      // Заход 11: команды «не туди» этой цели — «Перепривязати».
+      const wr = (misses.wrong ?? []).filter((w) => w.key === m.key);
+      if (wr.length) {
+        const sub = h('ul', { class: 'wrong' });
+        for (const w of wr)
+          sub.append(
+            h(
+              'li',
+              {},
+              fmt(T.wrongRow, { p: w.phrase, v: w.visitors, n: w.count }),
+              ' ',
+              btn(T.rebind, () => rebind(w)),
+              clash(w)
+            )
+          );
+        li.append(sub);
+      }
+      ul.append(li);
     }
     box.append(ul);
     if (misses.asked.length) {
@@ -361,8 +501,8 @@ export function start(c: AssistCtx): AssistApi {
             fmt(T.askedRow, { p: a.phrase, v: a.visitors, n: a.count }),
             ' ',
             btn(T.bind, () => {
-              c.bind(a.phrase, a.lang);
               c.note(fmt(T.bindHint, { p: a.phrase }));
+              c.bind(a.phrase, a.lang);
             })
           )
         );
@@ -412,8 +552,17 @@ export function start(c: AssistCtx): AssistApi {
             {},
             k.kind === 'asked'
               ? fmt(T.sAsked, { v: k.visitors, p: k.phrase })
-              : fmt(T.sSelf, { k: nameOf(k.key), n: k.count })
+              : k.kind === 'wrong'
+                ? fmt(T.sWrong, {
+                    p: k.phrase,
+                    k: nameOf(k.key),
+                    v: k.visitors,
+                  })
+                : k.kind === 'term'
+                  ? fmt(T.sTerm, { p: k.phrase, v: k.visitors })
+                  : fmt(T.sSelf, { k: nameOf(k.key), n: k.count })
           ),
+          k.kind === 'wrong' && clash(k),
           h(
             'div',
             { class: 'acts' },
@@ -421,12 +570,16 @@ export function start(c: AssistCtx): AssistApi {
               ? btn(
                   T.bind,
                   () => {
-                    c.bind(k.phrase, k.lang);
                     c.note(fmt(T.bindHint, { p: k.phrase }));
+                    c.bind(k.phrase, k.lang);
                   },
                   'pri'
                 )
-              : btn(T.open, () => c.open(k.key), 'pri'),
+              : k.kind === 'wrong'
+                ? btn(T.rebind, () => rebind(k), 'pri')
+                : k.kind === 'term'
+                  ? btn(T.addTerm, () => void addTerm(k), 'pri')
+                  : btn(T.open, () => c.open(k.key), 'pri'),
             btn(T.reject, () => void mute(k.id)())
           )
         )
@@ -435,6 +588,24 @@ export function start(c: AssistCtx): AssistApi {
   };
 
   return {
+    heat() {
+      if (!misses || seenM !== at() || !misses.heat) return [];
+      return misses.heat.map((m) => {
+        const nf = m.notFound + m.missed;
+        return {
+          key: m.key,
+          label: [
+            `🗣${m.done + m.self + nf}`,
+            m.self && `✋${m.self}`,
+            m.wrong && `↩${m.wrong}`,
+            nf && `?${nf}`,
+          ]
+            .filter(Boolean)
+            .join(' '),
+          bad: m.self + m.wrong + nf > 0,
+        };
+      });
+    },
     view(t) {
       // Другая вкладка — прежние сбои можно попробовать снова.
       if (t !== tab) failed.misses = failed.suggestions = '';

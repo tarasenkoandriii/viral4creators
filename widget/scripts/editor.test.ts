@@ -9,6 +9,7 @@ import * as vmNs from '../../sites-backend/src/modules/assist-ui-core/voice-map'
 import * as umNs from '../../sites-backend/src/modules/site-core/ui-map/ui-map-model';
 import * as envNs from '../../sites-backend/src/config/editor-env';
 import * as snapNs from '../../sites-backend/src/modules/assist-ui-core/snapshot';
+import * as memoNs from '../../sites-backend/src/modules/assist-ui-core/memo';
 import { EDITOR_MESSAGE_NS } from '../src/shared/brand';
 import {
   editorEnvelope,
@@ -18,6 +19,7 @@ import {
   parseDescriptor,
   parseToPanel,
   parseToPicker,
+  phraseNorm,
   stabilityOf,
 } from '../src/shared/editor-protocol';
 import en from '../src/editor-panel/lang-en';
@@ -29,6 +31,7 @@ const vm = cjs(vmNs);
 const um = cjs(umNs);
 const env = cjs(envNs);
 const snap = cjs(snapNs);
+const memoCore = cjs(memoNs);
 
 // 1. Устойчивость: порт = сервер.
 const base = {
@@ -112,6 +115,39 @@ assert.deepEqual(hl, {
   type: 'highlight',
   items: [{ ref: 'e1', label: '1. click' }],
 });
+// Заход 11 (№113): тепловые значки — строгий разбор (ключ, подпись ≤ 40, bad).
+assert.deepEqual(
+  parseToPicker(
+    editorEnvelope({
+      type: 'heat',
+      items: [
+        { key: 'cart', label: '🗣5 ✋3', bad: true, html: '<b>' },
+        { key: 'menu', label: '🗣2', bad: 'yes' },
+        { key: '', label: 'x' },
+        { key: 'long', label: 'x'.repeat(41) },
+        'мусор',
+      ],
+    })
+  ),
+  {
+    type: 'heat',
+    items: [
+      { key: 'cart', label: '🗣5 ✋3', bad: true },
+      { key: 'menu', label: '🗣2', bad: false },
+    ],
+  }
+);
+assert.equal(parseToPicker(editorEnvelope({ type: 'heat', items: 'x' })), null);
+const many = parseToPicker(
+  editorEnvelope({
+    type: 'heat',
+    items: Array.from({ length: 300 }, (_, i) => ({
+      key: `k${i}`,
+      label: 'x',
+    })),
+  })
+);
+assert.equal(many?.type === 'heat' && many.items.length, 200, '≤ 200 значков');
 assert.equal(
   parseToPanel(editorEnvelope({ type: 'pick', descriptor: '<img onerror>' })),
   null,
@@ -141,6 +177,83 @@ assert.equal(
 );
 assert.equal(EDITOR_MESSAGE_NS, 'v4c-editor');
 
+// 3-ter. Заход 11 (№117): карта «Админки» — панель `wa.` просит
+// employee-JWT, пикер отвечает им (или null — сотрудник не вошёл);
+// мусор вместо JWT, лишние поля и чужое пространство имён — мимо.
+{
+  const b64 = (o: object) =>
+    Buffer.from(JSON.stringify(o)).toString('base64url');
+  const jwt = `${b64({ alg: 'HS256' })}.${b64({ sub: 'emp-1', exp: 9 })}.${'s'.repeat(43)}`;
+  assert.deepEqual(parseToPicker(editorEnvelope({ type: 'need-identity' })), {
+    type: 'need-identity',
+  });
+  assert.equal(parseToPicker({ type: 'need-identity' }), null, 'без ns');
+  assert.deepEqual(
+    parseToPanel(editorEnvelope({ type: 'identity', jwt, sub: 'x' })),
+    { type: 'identity', jwt }
+  );
+  assert.deepEqual(
+    parseToPanel(editorEnvelope({ type: 'identity', jwt: null })),
+    { type: 'identity', jwt: null }
+  );
+  for (const bad of ['a.b', '<img>.x.y', 42, undefined, 'x'.repeat(5000)])
+    assert.equal(
+      parseToPanel(editorEnvelope({ type: 'identity', jwt: bad })),
+      null,
+      `identity: ${String(bad).slice(0, 20)}`
+    );
+  assert.equal(
+    parseToPanel({ ns: 'v4c-admin', v: 1, type: 'identity', jwt }),
+    null,
+    'сообщение протокола «Админки» панель редактора не принимает'
+  );
+  // Обратного направления нет: панель не отдаёт JWT пикеру.
+  assert.equal(parseToPicker(editorEnvelope({ type: 'identity', jwt })), null);
+}
+
+// 3-quater. Раунд исправлений захода 11 («Админка»): снимок «Сказать сейчас»
+// с зонами владельца (селекторы ≤ 30, печатные, без `<`), номера строк;
+// флаг строки таблицы у выбора; выход сотрудника — пикер → панель.
+{
+  const r = parseToPicker(
+    editorEnvelope({
+      type: 'snapshot-req',
+      id: 7,
+      rows: ['1042', '12', 'x', '1234567890123'],
+      deny: ['#customer-card', '<img>', 5, '', 'a'.repeat(201)],
+      allow: Array.from({ length: 40 }, (_, i) => `.z${i}`),
+    })
+  );
+  assert.ok(r && r.type === 'snapshot-req');
+  assert.deepEqual(r.rows, ['1042']);
+  assert.deepEqual(r.deny, ['#customer-card']);
+  assert.equal(r.allow?.length, 30, '≤ 30 зон');
+  const plain = parseToPicker(editorEnvelope({ type: 'snapshot-req', id: 1 }));
+  assert.deepEqual(plain, {
+    type: 'snapshot-req',
+    id: 1,
+    rows: [],
+    deny: [],
+    allow: [],
+  });
+  const pr = parseToPanel(
+    editorEnvelope({
+      type: 'pick',
+      descriptor: { tag: 'a', text: '' },
+      row: true,
+    })
+  );
+  assert.ok(pr && pr.type === 'pick' && pr.row === true);
+  const pn = parseToPanel(
+    editorEnvelope({ type: 'pick', descriptor: { tag: 'a' }, row: 'yes' })
+  );
+  assert.ok(pn && pn.type === 'pick' && pn.row === false);
+  assert.deepEqual(parseToPanel(editorEnvelope({ type: 'logout' })), {
+    type: 'logout',
+  });
+  assert.equal(parseToPicker(editorEnvelope({ type: 'logout' })), null);
+}
+
 // 3-бис. Маска ПД в пути ссылки (аудит Э6-тер (3)): порт = сервер.
 for (const p of [
   '/delivery',
@@ -158,6 +271,23 @@ for (const p of [
 assert.equal(maskHrefPath('/u/ivan@example.com'), '/u/:email');
 assert.equal(maskHrefPath('/orders/123456789012'), '/orders/:n');
 
+// 3-тер. Заход 11 (аудит P2-3): норма фразы панели = `phraseNorm` сервера.
+for (const p of [
+  "обов'язково",
+  'обовʼязково',
+  'Обов’язково!',
+  'Доставка,   будь ласка',
+  'ДОСТАВКА — кур’єром',
+  'Ёлка-палка',
+  'відкрий «Нову Пошту»',
+  'please open cart',
+  'iPhone 15 Pro',
+  '',
+]) {
+  assert.equal(phraseNorm(p), memoCore.phraseNorm(p), `норма «${p}»`);
+}
+assert.equal(phraseNorm("обов'язково"), phraseNorm('обовʼязково'));
+
 // 4. Словари панели: одинаковые ключи на трёх языках.
 // Заход 10: ru/en — ленивые чанки панели; ключи трёх словарей равны.
 const T = { uk, ru, en };
@@ -165,4 +295,6 @@ const keys = (l: 'uk' | 'ru' | 'en') => Object.keys(T[l]).sort().join(',');
 assert.equal(keys('ru'), keys('uk'));
 assert.equal(keys('en'), keys('uk'));
 
-console.log('editor: порты = сервер, протокол строгий, словари совпадают');
+console.log(
+  'editor: порты = сервер, протокол строгий (тепловые значки, JWT «Админки»), словари совпадают'
+);

@@ -19,6 +19,7 @@ import {
   WIDGET_PK_LIVE_PREFIX,
   WIDGET_PK_TEST_PREFIX,
 } from './brand';
+import { isJwt } from './jwt';
 
 export const ADMIN_PROTOCOL_VERSION = 1;
 
@@ -77,8 +78,6 @@ const UI_TO_FRAME = [
 ];
 const VT_TOKEN = /^[A-Za-z0-9_-]{20,100}$/;
 
-const JWT =
-  /^[A-Za-z0-9_-]{2,1000}\.[A-Za-z0-9_-]{2,3000}\.[A-Za-z0-9_-]{2,200}$/;
 const ORIGIN = /^https?:\/\/[a-z0-9.-]+(:\d{1,5})?$/;
 
 export function isAdminPk(v: unknown): v is string {
@@ -91,9 +90,7 @@ export function isAdminPk(v: unknown): v is string {
   );
 }
 
-export function isJwt(v: unknown): v is string {
-  return typeof v === 'string' && v.length <= 4096 && JWT.test(v);
-}
+export { isJwt };
 
 export function adminEnvelope<T extends object>(
   m: T

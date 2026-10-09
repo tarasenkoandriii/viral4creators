@@ -12,6 +12,7 @@
  * `assist-site-voice-map` — правило графа `browser-jobs-zone` пускает к
  * очереди только его) и разбор итога в отчёт.
  */
+import { maskLabel } from '../../assist-ui-core/snapshot';
 import type { UiSnapshot } from '../../assist-ui-core/types';
 import {
   findInSnapshot,
@@ -74,11 +75,45 @@ export interface ControlCommandRow {
   id: string;
   pagePath: string;
   expected: unknown;
+  /** Заход 11: фраза команды (уже маскирована при записи) — для TMA. */
+  utteranceMasked?: string | null;
+}
+
+/** Заход 11: длина фразы команды в отчёте (TMA показывает её владельцу). */
+export const AUTOTEST_COMMAND_TEXT_MAX = 120;
+
+/** Управляющие и bidi-символы (как CONTROL в assist-ui-core/snapshot.ts). */
+// eslint-disable-next-line no-control-regex
+const CONTROL =
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/**
+ * Аудит з11 P2-1: фраза команды в отчёте — ВТОРОЙ слой маски, как у
+ * подписей «Снимка» (`maskLabel`: e-mail, телефоны, ключи, длинные цифры —
+ * в т.ч. карта с двойными пробелами), без управляющих символов, затем
+ * обрезка ≤ 120 с «…» — не посреди метки маски `[…]` и суррогатной пары.
+ */
+export function autotestCommandText(raw: string | null | undefined): string {
+  const s = maskLabel((raw ?? '').replace(CONTROL, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (s.length <= AUTOTEST_COMMAND_TEXT_MAX) return s;
+  let cut = s.slice(0, AUTOTEST_COMMAND_TEXT_MAX - 1);
+  const open = cut.lastIndexOf('[');
+  if (open > cut.lastIndexOf(']')) cut = cut.slice(0, open);
+  if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
 }
 
 export interface AutotestCommandResult {
   id: string;
   path: string;
+  /**
+   * Заход 11: фраза контрольной команды (маскированная, ≤ 120) — id строк
+   * команд пересоздаются, поэтому подпись хранится в самом отчёте; в
+   * отчётах до захода 11 поля нет.
+   */
+  text: string;
   /** found — цель первого шага однозначно нашлась; lost — нет; unchecked — страница не открылась. */
   status: 'found' | 'lost' | 'unchecked';
 }
@@ -102,6 +137,8 @@ export interface AutotestReport {
     version: number | null;
     pages: AutotestOutcome['pages'];
     lostTargets: string[];
+    /** Заход 11 (аудит P3-8): всего потерянных целей (список — ≤ 60). */
+    lostTargetsTotal: number;
     fragileTargets: number;
     commands: AutotestCommandResult[];
     checked: number;
@@ -144,13 +181,15 @@ export function autotestReport(
   for (const c of commands) {
     const d = firstDescriptor(c.expected);
     const snap = snaps.get(c.pagePath);
+    const text = autotestCommandText(c.utteranceMasked);
     if (!d || !snap) {
-      results.push({ id: c.id, path: c.pagePath, status: 'unchecked' });
+      results.push({ id: c.id, path: c.pagePath, text, status: 'unchecked' });
       continue;
     }
     results.push({
       id: c.id,
       path: c.pagePath,
+      text,
       status: findInSnapshot(d, snap.elements) ? 'found' : 'lost',
     });
   }
@@ -188,6 +227,7 @@ export function autotestReport(
         version: outcome.map?.version ?? null,
         pages: outcome.pages,
         lostTargets: lostTargets.slice(0, 60),
+        lostTargetsTotal: lostTargets.length,
         fragileTargets: outcome.map?.fragile ?? 0,
         commands: results.slice(0, 40),
         checked,
@@ -219,6 +259,7 @@ export function autotestFailedReport(code: string): AutotestReport {
       version: null,
       pages: [],
       lostTargets: [],
+      lostTargetsTotal: 0,
       fragileTargets: 0,
       commands: [],
       checked: 0,

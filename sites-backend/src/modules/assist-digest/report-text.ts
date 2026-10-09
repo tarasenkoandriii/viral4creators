@@ -83,6 +83,8 @@ interface DigestTexts {
       other: string;
     };
     chain: (day: string, hash: string, id: string) => string;
+    /** Р-З11-В3: вторая кнопка, когда в сообщении — отчёт недели «Админки». */
+    weeklyButton: string;
   };
   /** Кнопка web_app под сообщением. */
   button: string;
@@ -141,6 +143,7 @@ const TEXTS: Record<DigestLang, DigestTexts> = {
         'выгрузите журнал («Журнал» → CSV, последние 50 000 записей): в строке с этим id (колонка id) ' +
         'должен быть тот же hash, а «Проверить цепочку журнала» — «Цепочка цела». Хеш другой или строки нет, хотя ей ' +
         'меньше года и записей после неё меньше 50 000, — журнал переписан.',
+      weeklyButton: 'Статистика «Админки»',
     },
     button: 'Открыть статистику',
     unanswered: (label, n) =>
@@ -196,6 +199,7 @@ const TEXTS: Record<DigestLang, DigestTexts> = {
         'вивантажте журнал («Журнал» → CSV, останні 50 000 записів): у рядку з цим id (колонка id) ' +
         'має бути той самий hash, а «Перевірити ланцюжок журналу» — «Ланцюжок цілий». Хеш інший або рядка немає, хоча йому ' +
         'менше року і записів після нього менше 50 000, — журнал переписано.',
+      weeklyButton: 'Статистика «Адмінки»',
     },
     button: 'Відкрити статистику',
     unanswered: (label, n) =>
@@ -251,6 +255,7 @@ const TEXTS: Record<DigestLang, DigestTexts> = {
         'export the log (“Log” → CSV, last 50,000 records): the row with this id (id column) ' +
         'must have the same hash, and “Verify the log chain” must say “The chain is intact.” A different hash or a missing row, although it is ' +
         'less than a year old and fewer than 50,000 records follow it, means the log was rewritten.',
+      weeklyButton: '“Admin” statistics',
     },
     button: 'Open statistics',
     unanswered: (label, n) =>
@@ -423,4 +428,17 @@ export function weeklyReportText(
   }
   if (admin) lines.push(...adminLines(t, admin, true));
   return fitTelegram(lines);
+}
+
+/**
+ * Р-З11-В3: отчёт недели «Админки» (готовый текст на языке получателя) —
+ * разделом в конце сводки/отчёта недели. Не влезает в предел Telegram —
+ * null: сводка уходит без него, отчёт досылается отдельно (обрезать отчёт
+ * недели нельзя — пропали бы выводы).
+ */
+export function appendAdminWeekly(text: string, weekly: string): string | null {
+  const section = weekly.trim();
+  if (!section) return null;
+  const out = `${text}\n\n${section}`;
+  return out.length <= TELEGRAM_TEXT_LIMIT ? out : null;
 }

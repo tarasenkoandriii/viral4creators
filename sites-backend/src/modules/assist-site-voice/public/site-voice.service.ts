@@ -62,6 +62,7 @@ import {
   voiceAccess,
   type VoiceAccess,
 } from './voice-access';
+import { spansIn } from './stt-low-conf';
 import { siteSttTerms } from './stt-terms';
 import { markVoiceDialog, voiceUpgradeUnits } from './voice-dialog';
 import { issueVoiceTicket } from './voice-ticket';
@@ -287,6 +288,9 @@ export class SiteVoiceService {
               text,
               now,
               ttlMs: VOICE_DEFAULTS.ticketTtlMs,
+              // №113 (заход 11, Р-З11-Б8): места неуверенных слов — в билет;
+              // пишет их план/чат, когда ясно назначение текста.
+              spans: spansIn(text, r.lowConf ?? []),
             })
           : null,
       };

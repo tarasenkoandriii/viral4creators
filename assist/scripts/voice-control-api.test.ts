@@ -19,6 +19,7 @@ import {
   createVoiceControlApi,
   defaultRules,
   lines,
+  parseAutotest,
   parseTestDetail,
   parseVoiceControlSettings,
   pct,
@@ -180,6 +181,101 @@ for (const d of [appUk, appRu, appEn]) {
     parseTestDetail({ id: 't2', report: { result: '?' } })?.report,
     null
   );
+  assert.equal(d?.autotest, null, 'у отчёта мастера подробностей Т-3 нет');
+}
+
+// 3б. Заход 11: подробности отчёта автотеста Т-3 — строго; статусы и поля —
+// как у сервера (voice-monitor-autotest.ts); без результата — тоже видны.
+{
+  const src = read(
+    'assist-site-voice-control/system/voice-monitor-autotest.ts'
+  );
+  assert.deepEqual(quoted(src, /status: ('found' \| 'lost' \| 'unchecked')/), [
+    'found',
+    'lost',
+    'unchecked',
+  ]);
+  for (const f of [
+    'version',
+    'pages',
+    'lostTargets',
+    'lostTargetsTotal',
+    'fragileTargets',
+    'commands',
+    'checked',
+    'lost',
+    'error',
+  ])
+    assert.ok(new RegExp(`\\n    ${f}: `).test(src), `поле autotest.${f}`);
+  assert.ok(/\n {2}text: string;/.test(src), 'фраза команды в отчёте сервера');
+
+  const at = parseTestDetail({
+    id: 'a1',
+    kind: 'autotest',
+    reportedAt: '2026-10-08T03:00:00.000Z',
+    result: 'partial',
+    report: {
+      kind: 'autotest',
+      result: 'partial',
+      autotest: {
+        version: 4,
+        pages: [
+          { path: '/', ok: true, error: null },
+          { path: 'javascript:x', ok: false, error: 'nav_timeout' },
+        ],
+        lostTargets: ['buy', 7, ''],
+        lostTargetsTotal: 75,
+        fragileTargets: 2,
+        commands: [
+          { id: 'c1', path: '/', text: 'відкрий кошик', status: 'found' },
+          { id: 'c2', path: '/cart', text: 'ж'.repeat(300), status: 'lost' },
+          { id: 'c3', path: '/x', status: 'evil' },
+        ],
+        checked: 5,
+        lost: 2,
+        error: null,
+      },
+    },
+  });
+  assert.equal(at?.kind, 'autotest');
+  assert.equal(at?.autotest?.version, 4);
+  assert.deepEqual(at?.autotest?.pages[1], {
+    path: '/',
+    ok: false,
+    error: 'nav_timeout',
+  });
+  assert.deepEqual(at?.autotest?.lostTargets, ['buy']);
+  assert.equal(at?.autotest?.lostTargetsTotal, 75, 'всего — с сервера');
+  assert.equal(at?.autotest?.commands[1].text.length, 120);
+  assert.equal(at?.autotest?.commands[2].status, 'unchecked');
+  assert.equal(at?.autotest?.commands[2].text, '', 'старый отчёт без фразы');
+  assert.equal(at?.autotest?.checked, 5);
+  // Отказ воркера: результата нет, подробности (код) — есть.
+  const failed = parseTestDetail({
+    id: 'a2',
+    kind: 'autotest',
+    report: { result: null, autotest: { error: 'pages_failed' } },
+  });
+  assert.equal(failed?.report, null);
+  assert.equal(failed?.autotest?.error, 'pages_failed');
+  assert.equal(failed?.autotest?.version, null);
+  // Старый отчёт без lostTargetsTotal — по длине списка.
+  assert.equal(parseAutotest({ lostTargets: ['a', 'b'] })?.lostTargetsTotal, 2);
+  assert.equal(parseAutotest('x'), null);
+  assert.equal(parseAutotest({ error: '<b>' })?.error, null);
+  // Словари: статусы и коды ошибок — на трёх языках.
+  for (const d of [appUk, appRu, appEn]) {
+    const a = d.voiceControl.autotest;
+    for (const st of ['found', 'lost', 'unchecked'] as const)
+      assert.ok(a.commandStatus[st], st);
+    for (const r of ['pass', 'partial', 'fail'] as const)
+      assert.ok(a.results[r], r);
+    assert.ok(a.errors.other.includes('{c}'));
+    assert.ok(a.summary.includes('{c}') && a.summary.includes('{l}'));
+    assert.ok(a.lostTargets.includes('{list}'));
+    assert.ok(a.moreTargets.includes('{n}'));
+    assert.ok(a.noDetails);
+  }
 }
 
 // 4. Клиент: пути и тело (risksVersion — только при включении).

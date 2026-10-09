@@ -28,6 +28,11 @@ export class FakeSoniox {
   /** Текст распознавания (токенами, как отдаёт Soniox). */
   transcript = 'Скільки коштує доставка?';
   language = 'uk';
+  /**
+   * №113 (заход 11): уверенность слов (слово без пробелов → 0…1); слова
+   * без записи — без поля `confidence` (как старые ответы).
+   */
+  confidence: Record<string, number> = {};
   audioMs = 2_400;
   tts: 'ok' | 'fail' = 'ok';
   ttsAudio = Buffer.from('ID3-fake-mp3-bytes');
@@ -43,6 +48,7 @@ export class FakeSoniox {
     this.stt = 'ok';
     this.tts = 'ok';
     this.deleteBusy = 0;
+    this.confidence = {};
   }
 
   count(method: string, prefix: string): number {
@@ -120,6 +126,9 @@ export class FakeSoniox {
             text: w,
             language: this.language,
             end_ms: (i + 1) * 300,
+            ...(this.confidence[w.trim()] !== undefined
+              ? { confidence: this.confidence[w.trim()] }
+              : {}),
           })),
           { text: '<end>', end_ms: words.length * 300 + 10 },
         ],

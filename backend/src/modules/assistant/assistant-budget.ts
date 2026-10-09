@@ -7,8 +7,9 @@
  *
  * Схема — «резерв → вызов → снятие», как у `SerpApiUsageService`, но в
  * деньгах и БЕЗ миграции backend:
- *  - транзакция с `pg_advisory_xact_lock` на UTC-сутки сериализует
- *    резервы (тот же приём, что `CreditLedgerService.reserveForGeneration`);
+ *  - транзакция с `pg_advisory_xact_lock` (один замок консультанта; до
+ *    захода 11 — на UTC-сутки) сериализует резервы (тот же приём, что
+ *    `CreditLedgerService.reserveForGeneration`);
  *  - внутри: потрачено за сутки (`AiUsage`, `operation: 'assistant'`) +
  *    «в полёте» (строки `rate_limits` с ключом
  *    `assistant-budget:<YYYY-MM-DD>:<uuid>`, `count` — оценка в µ$) +
@@ -25,6 +26,20 @@
  *    `windowStart` = конец суток — «в полёте» считает его весь день,
  *    чистка `rate_limits` уберёт через час после полуночи).
  *
+ *  - полночь UTC (заход 11, Р-З11-Г6; хвост П-Г5): расход вопроса пишется
+ *    в `AiUsage` в момент ответа, то есть в те сутки, когда вопрос
+ *    ЗАКОНЧИЛСЯ. Поэтому «в полёте» — живые резервы ЛЮБЫХ суток (вопрос,
+ *    начатый в 23:59:50, в 00:00:05 ещё идёт и заплатит новые сутки), а
+ *    замок — один на консультанта, не на сутки (резервы 23:59:59 и
+ *    00:00:01 больше не идут мимо друг друга). Оборванный вопрос
+ *    становится расходом суток ОБРЫВА: строка переименовывается в
+ *    `assistant-budget:spent:<сутки обрыва>:<uuid>` (`windowStart` = конец
+ *    этих суток) — живым резервом она больше не считается, а расход
+ *    вчерашнего обрыва не съедает сегодняшний бюджет. Строки старого
+ *    формата (обрыв до выката: ключ суток резерва, `windowStart` = конец
+ *    суток) считаются живыми, пока не выйдет TTL от полуночи, — в первые
+ *    5 минут после полуночи дня выката запас, а не перерасход.
+ *
  * Почему по строке на резерв, а не один счётчик на день (как предлагала
  * инвентаризация): у строки своё время (`windowStart` = момент резерва),
  * и резерв процесса, убитого посреди стрима (таймаут функции Vercel),
@@ -39,6 +54,13 @@ import { startOfDayUtc } from '../../common/spend-limits';
 import type { PrismaService } from '../../prisma/prisma.service';
 
 export const ASSISTANT_BUDGET_KEY_PREFIX = 'assistant-budget:';
+/** Расход оборванного вопроса: `assistant-budget:spent:<сутки>:<uuid>`. */
+export const ASSISTANT_SPENT_KEY_PREFIX = `${ASSISTANT_BUDGET_KEY_PREFIX}spent:`;
+/**
+ * Замок резервов — один на консультанта (не на сутки): иначе резервы по
+ * обе стороны полуночи шли бы параллельно, не видя друг друга.
+ */
+const ASSISTANT_BUDGET_LOCK = 'assistant-budget';
 /**
  * Срок жизни резерва: стрим ≤ 90 с (`DEFAULT_CHAT_TIMEOUTS`) + запись
  * обмена — с запасом. Старше — резерв процесса, который не дожил до
@@ -74,6 +96,12 @@ function dayKey(now: Date): string {
   return startOfDayUtc(now).toISOString().slice(0, 10);
 }
 
+/** Ключ расхода оборванного вопроса — сутки обрыва, тот же uuid. */
+export function assistantSpentKey(reserveKey: string, now: Date): string {
+  const id = reserveKey.slice(reserveKey.lastIndexOf(':') + 1);
+  return `${ASSISTANT_SPENT_KEY_PREFIX}${dayKey(now)}:${id}`;
+}
+
 export type AssistantReserveResult =
   | { ok: true; key: string }
   | { ok: false; spentMicroUsd: number; inFlightMicroUsd: number };
@@ -94,15 +122,24 @@ export async function reserveAssistantBudget(
   const aliveAfter = new Date(now.getTime() - ASSISTANT_RESERVE_TTL_MS);
   const prefix = `${ASSISTANT_BUDGET_KEY_PREFIX}${day}:`;
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ASSISTANT_BUDGET_KEY_PREFIX}${day}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ASSISTANT_BUDGET_LOCK}))`;
     const spent = (await tx.aiUsage.aggregate({
       where: { operation: 'assistant', createdAt: { gte: since } },
       _sum: { costMicroUsd: true },
     })) as { _sum: { costMicroUsd: number | bigint | null } };
     const spentMicroUsd = Number(spent._sum.costMicroUsd ?? 0);
+    // «В полёте»: живые резервы любых суток (вопрос через полночь
+    // заплатит эти сутки) + расход оборванных в ЭТИ сутки. Одним
+    // диапазоном по индексу `windowStart` (аудит P3-8: `OR`/`LIKE` при
+    // сортировке не «C» — полный проход `rate_limits` под замком): у
+    // расхода этих суток `windowStart` = конец суток > `aliveAfter`, у
+    // вчерашнего расхода ключ другого дня — отсекается условием ключа.
     const rows = await tx.$queryRaw<{ s: bigint | number | null }[]>`
       SELECT COALESCE(SUM("count"), 0) AS s FROM "rate_limits"
-      WHERE "key" LIKE ${`${prefix}%`} AND "windowStart" > ${aliveAfter}
+      WHERE "windowStart" > ${aliveAfter}
+        AND "key" LIKE ${`${ASSISTANT_BUDGET_KEY_PREFIX}%`}
+        AND ("key" NOT LIKE ${`${ASSISTANT_SPENT_KEY_PREFIX}%`}
+             OR "key" LIKE ${`${ASSISTANT_SPENT_KEY_PREFIX}${day}:%`})
     `;
     const inFlightMicroUsd = Number(rows[0]?.s ?? 0);
     if (
@@ -130,7 +167,9 @@ export function endOfDayUtc(now: Date): Date {
 
 /**
  * Резерв оборванного после первого токена вопроса — в расход до конца
- * суток (P2-1). Никогда не бросает: не вышло — резерв истечёт по TTL.
+ * суток ОБРЫВА (P2-1; Р-З11-Г6: вопрос, начатый вчера и оборванный
+ * сегодня, платит сегодня). Никогда не бросает: не вышло — резерв истечёт
+ * по TTL.
  */
 export async function commitAssistantReserve(
   prisma: PrismaService,
@@ -139,7 +178,8 @@ export async function commitAssistantReserve(
 ): Promise<boolean> {
   try {
     await prisma.$executeRaw`
-      UPDATE "rate_limits" SET "windowStart" = ${endOfDayUtc(now)}
+      UPDATE "rate_limits"
+      SET "key" = ${assistantSpentKey(key, now)}, "windowStart" = ${endOfDayUtc(now)}
       WHERE "key" = ${key}
     `;
     return true;

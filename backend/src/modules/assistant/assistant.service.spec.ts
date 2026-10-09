@@ -83,11 +83,18 @@ function build(
       }
       return 1;
     }),
+    // Р-З11-Г6: `windowStart` > v[0] И ключ с префиксом v[1] И (не
+    // расход v[2] ИЛИ расход этих суток v[3]).
     $queryRaw: jest.fn(async (_q: TemplateStringsArray, ...v: any[]) => {
-      const prefix = String(v[0]).replace(/%$/, '');
+      const p = (i: number) => String(v[i]).replace(/%$/, '');
       let sum = 0;
       for (const [k, r] of budget.rows) {
-        if (k.startsWith(prefix) && r.at > v[1]) sum += r.amount;
+        if (
+          r.at > v[0] &&
+          k.startsWith(p(1)) &&
+          (!k.startsWith(p(2)) || k.startsWith(p(3)))
+        )
+          sum += r.amount;
       }
       return [{ s: sum }];
     }),
@@ -112,8 +119,12 @@ function build(
         budget.log.push('release');
       }
       if (sqlOf(q).includes('UPDATE "rate_limits"')) {
-        const row = budget.rows.get(v[1]);
-        if (row) row.at = v[0];
+        // SET "key" = v[0], "windowStart" = v[1] WHERE "key" = v[2]
+        const row = budget.rows.get(v[2]);
+        if (row) {
+          budget.rows.delete(v[2]);
+          budget.rows.set(v[0], { ...row, at: v[1] });
+        }
         budget.log.push('commit');
       }
       return 1;
@@ -569,10 +580,16 @@ describe('AssistantService.streamChat (ТЗ §4.4)', () => {
         await gen.return(undefined);
         expect(budget.log).toEqual(['reserve', 'commit']);
         expect(budget.rows.size).toBe(1);
-        const [row] = [...budget.rows.values()];
+        const [[key, row]] = [...budget.rows.entries()];
         const end = new Date();
         end.setUTCHours(24, 0, 0, 0);
         expect(row.at.getTime()).toBe(end.getTime());
+        // Р-З11-Г6: расход — сутками обрыва, отдельным ключом.
+        expect(key).toMatch(
+          new RegExp(
+            `^assistant-budget:spent:${new Date().toISOString().slice(0, 10)}:[0-9a-f-]{36}$`,
+          ),
+        );
       } finally {
         jest.clearAllTimers();
         jest.useRealTimers();

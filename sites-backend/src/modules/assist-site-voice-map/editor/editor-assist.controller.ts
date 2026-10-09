@@ -8,6 +8,8 @@
  *   GET  /editor/v1/suggestions?path= «Предложения» из очереди обучения
  *   POST /editor/v1/suggestions/mute  { id } | { key, lang, text } — не
  *                                     предлагать 30 дней
+ *   POST /editor/v1/suggestions/term  { expectedRevision, id } — (заход 11)
+ *                                     термин распознавания → черновик карты
  * Допуск — заголовок сессии редактора, как у `editor.controller.ts`.
  */
 import {
@@ -65,5 +67,11 @@ export class EditorAssistController {
   @HttpCode(200)
   async mute(@Headers(H) s: string | undefined, @Body() body: unknown) {
     return this.assist.mute(await this.editor.resolve(s), body);
+  }
+
+  @Post('suggestions/term')
+  @HttpCode(200)
+  async acceptTerm(@Headers(H) s: string | undefined, @Body() body: unknown) {
+    return this.assist.acceptTerm(await this.editor.resolve(s), body);
   }
 }

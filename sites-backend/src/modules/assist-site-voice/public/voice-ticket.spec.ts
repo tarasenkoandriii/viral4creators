@@ -1,4 +1,8 @@
-import { issueVoiceTicket, verifyVoiceTicket } from './voice-ticket';
+import {
+  issueVoiceTicket,
+  readVoiceTicket,
+  verifyVoiceTicket,
+} from './voice-ticket';
 
 const KEY = Buffer.from('k'.repeat(32));
 const now = new Date('2026-10-05T10:00:00Z');
@@ -39,5 +43,41 @@ describe('билет голоса (Э5, §7.1)', () => {
     for (const junk of [null, 42, '', 'v1..', `${t}x`, 'v2' + t.slice(2)]) {
       expect(verifyVoiceTicket(KEY, junk, base)).toBe(false);
     }
+  });
+  it('заход 11 (Р-З11-Б8): v2 — места неуверенных слов в подписи; слова — из ТЕКСТА; подмена спанов/текста — нет; без спанов — v1', () => {
+    const text = 'Яка гарантія на Ксіомі';
+    const t2 = issueVoiceTicket(KEY, {
+      ...base,
+      text,
+      ttlMs: 600_000,
+      spans: [
+        { start: 16, len: 6 },
+        { start: 40, len: 3 }, // за пределами текста — отброшен
+      ],
+    });
+    expect(t2).toMatch(/^v2\.\d+\.16-6\.[A-Za-z0-9_-]{43}$/);
+    expect(readVoiceTicket(KEY, t2, { ...base, text })).toEqual({
+      spans: ['Ксіомі'],
+    });
+    expect(verifyVoiceTicket(KEY, t2, { ...base, text })).toBe(true);
+    // Подменили места — подпись не сходится.
+    expect(
+      readVoiceTicket(KEY, t2.replace('.16-6.', '.4-8.'), { ...base, text }),
+    ).toBeNull();
+    // Другой текст той же длины — нет.
+    expect(
+      readVoiceTicket(KEY, t2, { ...base, text: 'Яка гарантія на Самсун' }),
+    ).toBeNull();
+    // v1 читается, спанов нет; пустые места — v1.
+    expect(readVoiceTicket(KEY, t, base)).toEqual({ spans: [] });
+    expect(
+      issueVoiceTicket(KEY, { ...base, ttlMs: 600_000, spans: [] }),
+    ).toMatch(/^v1\./);
+    for (const junk of [
+      t2.replace(/^v2/, 'v1'),
+      t2.replace('.16-6.', '.16-6_1-1_2-2_3-3.'),
+      t2.replace('.16-6.', '..'),
+    ])
+      expect(readVoiceTicket(KEY, junk, { ...base, text })).toBeNull();
   });
 });

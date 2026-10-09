@@ -8,6 +8,12 @@ import type { Dict } from './i18n';
 const D: Dict = {
   linkBad:
     'The editor link is invalid or already used — get a new one in Telegram.',
+  noStaff:
+    'No staff sign-in in the admin panel — sign in and open the link from Telegram again.',
+  ownerOnly:
+    'The map editor is for the owner only: in the admin role map your role must map to the assistant role owner.',
+  rowPd:
+    'An element in a table row: the customer name and number are not stored in the map (personal data). Add data-assist-id to it for a reliable binding.',
   expired:
     'The editor session has ended — open the editor again from Telegram.',
   tabTarget: 'Target',

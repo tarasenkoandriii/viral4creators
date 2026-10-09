@@ -4,7 +4,7 @@
  * «промах карты» (`mapMiss` с ключом названной цели — пишет план) и
  * страницы таких промахов — чистая свёртка журнала.
  */
-import { mapMissStats, type MapMissRow } from './map-misses';
+import { mapMissStats, mapMissWrongs, type MapMissRow } from './map-misses';
 
 const T0 = Date.parse('2026-10-08T10:00:00Z');
 let n = 0;
@@ -129,5 +129,44 @@ describe('промахи Т-4 по целям голосовой карты', ()
       expect.objectContaining({ key: 'delivery', missed: 2, self: 0 }),
     ]);
     expect(k.pages.map((p) => p.misses).reduce((a, b) => a + b)).toBe(2);
+  });
+  it('заход 11 (№113): `all` — и цели только с «выполнено» (тепловые значки); без `all` — прежний список', () => {
+    const rows = [
+      row({ planId: 'h1', mapKey: 'cart', result: 'manual', reason: 'x' }),
+      row({ planId: 'h2', mapKey: 'ok', result: 'done' }),
+      row({ planId: 'h3', mapKey: 'ok', result: 'done' }),
+    ];
+    expect(mapMissStats(rows).items.map((i) => i.key)).toEqual(['cart']);
+    const all = mapMissStats(rows, { all: true }).items;
+    expect(all.map((i) => [i.key, i.done, i.self])).toEqual([
+      ['cart', 0, 1],
+      ['ok', 2, 0],
+    ]);
+  });
+
+  it('заход 11 (№113): `mapMissWrongs` — план и цель «не туда» (те же правила, что счётчик `wrong`)', () => {
+    const rows = [
+      row({ planId: 'w1', mapKey: 'footer', result: 'done', dt: 1_000 }),
+      row({ planId: 'w1', action: 'stop', reason: 'click', dt: 3_000 }),
+      row({ planId: 'w2', mapKey: 'footer', result: 'done', dt: 10_000 }),
+      row({ planId: 'w2', action: 'stop', reason: 'click', dt: 16_000 }),
+      row({ planId: 'w3', mapKey: 'menu', result: 'done', dt: 20_000 }),
+      row({ planId: 'w3', action: 'stop', reason: 'timeout', dt: 21_000 }),
+    ];
+    expect(mapMissWrongs(rows)).toEqual([
+      { key: 'footer', planId: 'w1', multi: false },
+    ]);
+    // Аудит P3-9 (г): план нескольких целей карты — `multi` (фраза не про одну цель).
+    const two = [
+      row({ planId: 'm1', mapKey: 'cart', result: 'done', dt: 30_000 }),
+      row({ planId: 'm1', mapKey: 'pay', result: 'done', dt: 31_000 }),
+      row({ planId: 'm1', action: 'stop', reason: 'esc', dt: 32_000 }),
+    ];
+    expect(mapMissWrongs(two)).toEqual([
+      { key: 'pay', planId: 'm1', multi: true },
+    ]);
+    expect(mapMissStats(rows).items.map((i) => [i.key, i.wrong])).toEqual([
+      ['footer', 1],
+    ]);
   });
 });

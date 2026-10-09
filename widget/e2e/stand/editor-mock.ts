@@ -11,6 +11,12 @@
  * Здесь — форма протокола: одноразовый обмен ссылки с origin родителя,
  * сессия-заголовок, ревизия черновика, журнал операций (для «0 изменений
  * без клика человека»).
+ *
+ * Заход 11 (№117): тот же мок — панель карты «Админки» на origin «Админки»
+ * (`127.0.0.1`, admin-mock.ts): `/wa/v1/editor-frame` (метка контура в
+ * разметке) и `/assist-admin/v1/editor/*` — те же тела, плюс сессия
+ * сотрудника `X-Assist-Admin-Session`; сессия редактора привязана к ней
+ * (другая сессия сотрудника — 401, как на сервере).
  */
 import type http from 'node:http';
 import crypto from 'node:crypto';
@@ -25,6 +31,11 @@ interface Target {
 const E = {
   links: new Map<string, { origin: string; used: boolean }>(),
   sessions: new Set<string>(),
+  /** Заход 11: сессия редактора → сессия сотрудника «Админки» ('' — «Сайт»). */
+  bound: new Map<string, string>(),
+  /** Раунд исправлений: зоны владельца «Админки» (denySelectors/allowSelectors). */
+  deny: [] as string[],
+  allow: [] as string[],
   revision: 0,
   targets: new Map<string, Target>(),
   templates: [] as Array<Record<string, unknown>>,
@@ -34,11 +45,16 @@ const E = {
   publishAttempts: 0,
   /** Заход 10 (№113): «не предлагать» — id предложений. */
   muted: new Set<string>(),
+  /** Заход 11 (№113): термины черновика (принятые из распознавания). */
+  terms: [] as string[],
 };
 
 export function editorReset(): void {
   E.links.clear();
   E.sessions.clear();
+  E.bound.clear();
+  E.deny = [];
+  E.allow = [];
   E.revision = 0;
   E.targets.clear();
   E.templates = [];
@@ -46,6 +62,12 @@ export function editorReset(): void {
   E.log.length = 0;
   E.publishAttempts = 0;
   E.muted.clear();
+  E.terms = [];
+}
+
+export function editorZones(deny: string[], allow: string[]): void {
+  E.deny = deny;
+  E.allow = allow;
 }
 
 export function editorLink(token: string, origin: string): void {
@@ -60,6 +82,7 @@ export function editorLog() {
     templates: E.templates,
     voiceBytes: E.voiceBytes,
     publishAttempts: E.publishAttempts,
+    terms: E.terms,
   };
 }
 
@@ -75,6 +98,11 @@ const FRAME_HTML = [
   '<script src="/v1/editor-panel.js" defer></script>',
   '</head><body><div id="app"></div></body></html>',
 ].join('\n');
+/** Заход 11: HTML панели «Админки» — тот же чанк + метка контура (как сервер). */
+const ADMIN_FRAME_HTML = FRAME_HTML.replace(
+  '<link',
+  '<meta name="v4c-editor-kind" content="admin">\n<link'
+);
 
 function json(res: http.ServerResponse, status: number, body: unknown) {
   res.writeHead(status, {
@@ -104,9 +132,10 @@ async function body(
   }
 }
 
-function mapView(path: string) {
+function mapView(path: string, admin: boolean) {
   const targets = [...E.targets.values()];
   return {
+    ...(admin ? { denySelectors: E.deny, allowSelectors: E.allow } : {}),
     revision: E.revision,
     publishedVersion: 0,
     path,
@@ -118,14 +147,33 @@ function mapView(path: string) {
   };
 }
 
+/**
+ * `admin` — только для origin «Админки»: сессия сотрудника из заголовка
+ * (''/нет — не вошёл); маршруты `/assist-admin/v1/editor/*` = `/editor/v1/*`.
+ */
 export async function editorRoute(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   url: URL,
-  ancestors: string
+  ancestors: string,
+  admin?: string,
+  /** «Админка»: `sub` сессии сотрудника (и истёкшей) — для `rebind`. */
+  subOf: (token: string) => string | null = () => null
 ): Promise<void> {
-  const p = url.pathname;
-  if (p === '/we/v1/frame') {
+  const isAdmin = admin !== undefined;
+  let p = url.pathname;
+  if (isAdmin) {
+    if (p !== '/wa/v1/editor-frame') {
+      if (!p.startsWith('/assist-admin/v1/editor/'))
+        return err(res, 404, 'NOT_FOUND');
+      if (!admin) {
+        E.log.push({ path: p, body: null });
+        return err(res, 401, 'ADMIN_SESSION_INVALID');
+      }
+      p = p.replace('/assist-admin/v1/editor/', '/editor/v1/');
+    }
+  }
+  if (p === '/we/v1/frame' || (isAdmin && p === '/wa/v1/editor-frame')) {
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': [
@@ -143,7 +191,7 @@ export async function editorRoute(
       'Referrer-Policy': 'no-referrer',
       'Cache-Control': 'no-store',
     });
-    return void res.end(FRAME_HTML);
+    return void res.end(isAdmin ? ADMIN_FRAME_HTML : FRAME_HTML);
   }
   if (!p.startsWith('/editor/v1/')) return err(res, 404, 'NOT_FOUND');
   // Заход 9: запись микрофона — сырое тело `audio/*` (как на сервере).
@@ -159,7 +207,7 @@ export async function editorRoute(
     return ok(res, { text: 'натисни в кошик', lang: 'uk', left: 97 });
   }
   const b = req.method === 'POST' ? await body(req) : {};
-  E.log.push({ path: p, body: b });
+  E.log.push({ path: url.pathname, body: b });
   if (p === '/editor/v1/session') {
     const link = E.links.get(String(b.token || ''));
     if (!link || link.used || link.origin !== b.parentOrigin)
@@ -167,6 +215,7 @@ export async function editorRoute(
     link.used = true;
     const s = crypto.randomBytes(24).toString('base64url');
     E.sessions.add(s);
+    E.bound.set(s, admin ?? '');
     return ok(res, {
       session: s,
       expiresAt: new Date(Date.now() + 1_800_000).toISOString(),
@@ -174,13 +223,26 @@ export async function editorRoute(
       pagePath: '/',
       focusKey: null,
       host: 'shop',
+      ...(isAdmin ? { kind: 'admin' } : {}),
     });
   }
-  if (!E.sessions.has(String(req.headers['x-assist-editor'] || '')))
+  const es = String(req.headers['x-assist-editor'] || '');
+  // Раунд исправлений: перепривязка к новой сессии ТОГО ЖЕ сотрудника.
+  if (isAdmin && p === '/editor/v1/rebind') {
+    const old = E.bound.get(es);
+    if (!E.sessions.has(es) || !old || subOf(old) !== subOf(admin!))
+      return err(res, 401, 'EDITOR_SESSION_EXPIRED');
+    E.bound.set(es, admin!);
+    return ok(res, {
+      expiresAt: new Date(Date.now() + 1_800_000).toISOString(),
+      absoluteExpiresAt: new Date(Date.now() + 14_400_000).toISOString(),
+    });
+  }
+  if (!E.sessions.has(es) || E.bound.get(es) !== (admin ?? ''))
     return err(res, 401, 'EDITOR_SESSION_EXPIRED');
   switch (p) {
     case '/editor/v1/map':
-      return ok(res, mapView(url.searchParams.get('path') || '/'));
+      return ok(res, mapView(url.searchParams.get('path') || '/', isAdmin));
     case '/editor/v1/ops': {
       if (b.expectedRevision !== E.revision)
         return err(res, 409, 'VOICE_MAP_CONFLICT');
@@ -234,6 +296,21 @@ export async function editorRoute(
             names: (t.names as object) || prev?.names || {},
             status: 'active',
           });
+        } else if (op.op === 'add-synonym') {
+          // Заход 11: «перепривязати» к существующей цели.
+          const t = E.targets.get(String(op.key));
+          if (t) {
+            const syn = { ...((t.synonyms as object) || {}) } as Record<
+              string,
+              Array<{ text: string; origin: string }>
+            >;
+            const l = String(op.lang);
+            syn[l] = [
+              ...(syn[l] || []),
+              { text: String(op.text), origin: 'owner' },
+            ];
+            t.synonyms = syn;
+          }
         } else if (op.op === 'remove-target') E.targets.delete(String(op.key));
       }
       E.revision++;
@@ -432,6 +509,33 @@ export async function editorRoute(
               },
             ]
           : [],
+        // Заход 11: тепловые значки (все цели страницы с шагами) и «не туди».
+        heat: k
+          ? [
+              {
+                key: k,
+                page: '/',
+                self: 3,
+                notFound: 0,
+                wrong: 1,
+                missed: 0,
+                done: 2,
+                last: new Date().toISOString(),
+              },
+            ]
+          : [],
+        wrong: k
+          ? [
+              {
+                id: 'd'.repeat(24),
+                key: k,
+                phrase: 'доставка',
+                lang: 'uk',
+                count: 2,
+                visitors: 2,
+              },
+            ]
+          : [],
         asked: [
           {
             id: 'a'.repeat(24),
@@ -459,10 +563,42 @@ export async function editorRoute(
             key: null,
           },
           ...(k
+            ? [
+                {
+                  id: 'd'.repeat(24),
+                  kind: 'wrong',
+                  key: k,
+                  phrase: 'доставка',
+                  lang: 'uk',
+                  visitors: 2,
+                },
+              ]
+            : []),
+          ...(E.terms.includes('Ксіомі')
+            ? []
+            : [
+                {
+                  id: 'e'.repeat(24),
+                  kind: 'term',
+                  phrase: 'Ксіомі',
+                  visitors: 2,
+                },
+              ]),
+          ...(k
             ? [{ id: 'c'.repeat(24), kind: 'self', key: k, count: 3 }]
             : []),
         ].filter((x) => !E.muted.has(x.id)),
       });
+    }
+    // Заход 11 (№113): принять термин распознавания (текст — по id, у сервера).
+    case '/editor/v1/suggestions/term': {
+      if (b.expectedRevision !== E.revision)
+        return err(res, 409, 'VOICE_MAP_CONFLICT');
+      if (b.id !== 'e'.repeat(24) || E.terms.includes('Ксіомі'))
+        return err(res, 400, 'EDITOR_BAD_REQUEST');
+      E.terms.push('Ксіомі');
+      E.revision++;
+      return ok(res, { revision: E.revision, term: 'Ксіомі' });
     }
     case '/editor/v1/suggestions/mute': {
       const id =

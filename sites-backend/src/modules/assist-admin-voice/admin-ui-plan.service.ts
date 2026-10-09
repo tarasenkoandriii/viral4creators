@@ -22,6 +22,11 @@
  *  6. Единицы и деньги — ход диалога сотрудника, суточный потолок.
  *  7. План: прямой путь или модель → `checkAdminPlan` КОДОМ → план в базе,
  *     журнал `ui-plan` в append-only журнале действий.
+ *  Заход 11 (№117): опубликованная карта «Админки» (`assist_admin_voice_map*`,
+ *  ТОЛЬКО свой контур — синонимы карты «Сайта» здесь не действуют, №62):
+ *  denylist карты — вон из снимка до плана (и мемо), фраза = имя/синоним
+ *  ровно одной цели — прямой путь без модели, риск карты — нижняя граница в
+ *  `checkAdminPlan`, `mapKey`/`mapMiss` — в журнал `ui-plan`.
  * Исполнение (`dispatched` до действия — один раз; `done` после; стоп;
  * продолжение после перехода; «верни как было» — только поля до
  * «Сохранить»), нарушение запрета → режим `off` сразу, монитор «Админки» —
@@ -66,6 +71,13 @@ import { directPlan, looksLikeCommand } from '../assist-ui-core/direct-plan';
 import { onSiteHost, resolveAfterSteps } from '../assist-ui-core/plan-checks';
 import type { RawStep } from '../assist-ui-core/plan-checks';
 import { buildPlanPrompt, parseModelPlan } from '../assist-ui-core/plan-prompt';
+import {
+  directMapPlan,
+  mapHintsOf,
+  resolveVoiceMap,
+  type ResolvedMap,
+} from '../assist-ui-core/voice-map';
+import { readPublishedAdminVoiceMap } from '../assist-admin-voice-map/admin-voice-map-store';
 import { zoneAllowed } from '../assist-ui-core/rules';
 import {
   maskPageUrl,
@@ -78,6 +90,7 @@ import {
   type UiPlanNote,
   type UiPlanStatus,
   type UiStepResult,
+  type UiSnapshot,
   type UiStopReason,
   type VoiceControlRules,
 } from '../assist-ui-core/types';
@@ -206,6 +219,21 @@ function pathOf(url: unknown): string | null {
 
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f]/g;
+
+/** Снимок без элементов denylist карты «Админки» (до плана, мемо и модели). */
+function withoutDenied(
+  snapshot: UiSnapshot,
+  resolved: ResolvedMap | null,
+): UiSnapshot {
+  return resolved && resolved.denyRefs.length
+    ? {
+        ...snapshot,
+        elements: snapshot.elements.filter(
+          (e) => !resolved.denyRefs.includes(e.ref),
+        ),
+      }
+    : snapshot;
+}
 
 function cleanUtterance(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
@@ -489,6 +517,9 @@ export class AdminUiPlanService {
       return failPlan('bad_request');
     const pagePath = pathOf(snapshot.url) ?? '/';
     if (!zoneAllowed(pagePath, rules)) return refused('denied');
+    // ── (заход 11, №117) голосовая карта «Админки»: подсказка, не разрешение ──
+    const resolved = await this.voiceMapFor(s, snapshot, pagePath);
+    const work = withoutDenied(snapshot, resolved);
     const actor = this.actorOf(s, null, lang);
     const employee = this.employee(s);
 
@@ -521,7 +552,7 @@ export class AdminUiPlanService {
         };
       const seg = await this.memos.uiSegment(actor, memoRunId, now);
       if (!seg) return failPlan('not_found');
-      const c = compileAdminMemoUi(seg.steps, seg.slots, snapshot);
+      const c = compileAdminMemoUi(seg.steps, seg.slots, work);
       memo = {
         runId: seg.runId,
         number: seg.memoNumber,
@@ -570,7 +601,7 @@ export class AdminUiPlanService {
         }
         const seg = await this.memos.uiSegment(actor, r.ui.runId, now);
         if (!seg) return failPlan('conflict');
-        const c = compileAdminMemoUi(seg.steps, seg.slots, snapshot);
+        const c = compileAdminMemoUi(seg.steps, seg.slots, work);
         memo = {
           runId: seg.runId,
           number: seg.memoNumber,
@@ -584,6 +615,9 @@ export class AdminUiPlanService {
       }
     }
     const utterance = text as string;
+    const direct =
+      !memo && resolved ? directMapPlan(utterance, resolved) : null;
+    const mapMiss = direct && 'miss' in direct ? direct.miss : null;
     // ── предпочтение API (Р-Э6б-5): изменение с операцией — не кликами ──
     let apiMissing = false;
     let catalog: ApiCatalogOp[] = [];
@@ -622,7 +656,9 @@ export class AdminUiPlanService {
       apiMissing = pref?.kind === 'never';
     }
 
-    if (!memo && !looksLikeCommand(utterance)) return emptyView('not_command');
+    // Фраза карты может не начинаться с глагола («статус замовлення»).
+    if (!memo && !(direct && 'raw' in direct) && !looksLikeCommand(utterance))
+      return emptyView('not_command');
 
     // ── диалог и единицы (тестовая сессия мастера их не тратит) ──
     const conversationId = test
@@ -632,7 +668,9 @@ export class AdminUiPlanService {
     // ── план: мемо, прямой путь или модель ──
     let raw: RawStep[] | null = memo
       ? memo.raw
-      : directPlan(utterance, snapshot);
+      : direct && 'raw' in direct
+        ? direct.raw
+        : directPlan(utterance, work);
     let origin: 'model' | 'direct' | 'memo' = memo
       ? 'memo'
       : raw
@@ -642,9 +680,10 @@ export class AdminUiPlanService {
     if (!raw) {
       const p = buildPlanPrompt({
         transcript: utterance,
-        snapshot,
+        snapshot: work,
         map: [],
         lang,
+        voiceMap: resolved?.hits.map((h) => ({ ref: h.ref, names: h.names })),
       });
       const block = apiOperationsBlock(catalog, (x) =>
         detectInjection(x).quarantine ? null : x,
@@ -707,13 +746,14 @@ export class AdminUiPlanService {
     // ── проверка кодом: правила «Админки» поверх нейтральных ──
     const checked = checkAdminPlan({
       transcript: utterance,
-      snapshot,
+      snapshot: work,
       map: [],
       steps: raw,
       rules,
       hosts: a.hosts,
       state: a.mode,
       noSubmit: !!test && !test.testHost,
+      ...(resolved ? { mapHints: mapHintsOf(resolved) } : {}),
       ...(memo ? { trusted: memo.trusted } : {}),
     });
     // ── предпочтение API по целям плана (Р-З9-23): поля + «Сохранить», а
@@ -829,6 +869,11 @@ export class AdminUiPlanService {
         pnr,
         notes: notes.map((n) => n.code),
         ...(memo ? { memo: memo.number } : {}),
+        // Заход 11: цель карты «Админки» (прямой путь) или промах карты
+        // (цель названа, а на странице её нет — сигнал владельцу).
+        mapKey: direct && 'raw' in direct ? direct.key : mapMiss,
+        mapMiss: mapMiss !== null,
+        ...(resolved ? { mapVersion: resolved.version } : {}),
         // Попытки по запрещённым целям (мастер: регистратор считает и их).
         refused: notes
           .filter((n) =>
@@ -870,6 +915,32 @@ export class AdminUiPlanService {
           }
         : null,
     };
+  }
+
+  /**
+   * Опубликованная карта «Админки» этой страницы (кэш 5 мин) — или null.
+   * Сбой чтения — не сбой плана: снимок + модель, как без карты.
+   */
+  private async voiceMapFor(
+    s: ResolvedAdminSession,
+    snapshot: UiSnapshot,
+    path: string,
+  ): Promise<(ResolvedMap & { version: number }) | null> {
+    try {
+      const m = await readPublishedAdminVoiceMap(
+        this.db(s.accountId),
+        s.siteId,
+        this.now().getTime(),
+      );
+      return m
+        ? { ...resolveVoiceMap(m.content, snapshot, path), version: m.version }
+        : null;
+    } catch (e) {
+      this.logger.warn(
+        `admin voice-map read failed site=${s.siteId}: ${(e as Error | null)?.name ?? 'Error'}`,
+      );
+      return null;
+    }
   }
 
   private async journalApi(
@@ -1524,10 +1595,18 @@ export class AdminUiPlanService {
     if (!zoneAllowed(pathOf(snapshot.url) ?? '/', a.rules))
       return this.stop(ctx, id, { by: 'close' });
     const steps = this.stepsOf(row);
+    // Заход 11: карта «Админки» действует и после перехода (denylist новой
+    // страницы — вон из снимка, риск карты — нижняя граница).
+    const resolved = await this.voiceMapFor(
+      ctx.session,
+      snapshot,
+      pathOf(snapshot.url) ?? '/',
+    );
     const r = resolveAfterSteps({
       steps,
       from: row.currentStep,
-      snapshot,
+      snapshot: withoutDenied(snapshot, resolved),
+      ...(resolved ? { mapHints: mapHintsOf(resolved) } : {}),
       transcript: row.liveUtterance ?? '',
       rules: a.rules,
       hosts: a.hosts,

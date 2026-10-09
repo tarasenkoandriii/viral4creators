@@ -334,4 +334,27 @@ describeDb('Мемо «Админки»: гонка лимита и lite-выб�
     expect(calls).toHaveLength(3);
     expect(await rows()).toHaveLength(2);
   });
+  it('заход 11 (аудит P3-3): фраза карты «Админки» не меняет выбор мемо — «поверни гроші» + цель карты «поверни гроші замовлення» → мемо; команда-фраза карты — без lite-выбора моделью', async () => {
+    const s = await proSite();
+    await refundMemo(s);
+    for (const norm of ['поверни гроші замовлення', 'покажи історію'])
+      await prisma.assistAdminPhrase.create({
+        data: {
+          siteId: s.siteId,
+          accountId: s.accountId,
+          lang: 'uk',
+          norm,
+          owner: 'voice-map',
+          kind: 'voice-map',
+        },
+      });
+    // Длинная фраза карты — не затеняет более короткую фразу мемо.
+    const hit = await memos.match(actor(s), 'поверни гроші замовлення 1042');
+    expect(hit).toMatchObject({ kind: 'memo', rest: 'замовлення 1042' });
+    expect(calls).toHaveLength(0);
+    // Команда — фраза карты (без фразы мемо): прямой путь карты, модель не зовём.
+    reply = JSON.stringify({ memo: 'refund', slots: {} });
+    expect(await memos.match(actor(s), 'покажи історію повернення')).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
 });

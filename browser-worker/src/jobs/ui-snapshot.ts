@@ -133,16 +133,12 @@ export async function runUiSnapshot(
   const states: WorkerSnapshotState[] = [];
   const mapElements = p.mapElements ? [...c.mapElements] : [];
   if (want > 0) {
-    // Аудит P3 (4): на время раскрытий — только чтение: запросы, кроме
-    // GET/HEAD, обрываются (кнопка-«раскрывашка», которая на деле шлёт
-    // POST, ничего не изменит). GraphQL-меню на POST тоже не догрузятся —
-    // осознанно: «Снимок» не действует на сайте.
-    const readOnly = async (route: import('playwright-core').Route) => {
-      const m = route.request().method();
-      if (m === 'GET' || m === 'HEAD') await route.fallback();
-      else await route.abort('blockedbyclient');
-    };
-    await page.route('**/*', readOnly);
+    // Аудит P3 (4): на время раскрытий — только чтение (кнопка-
+    // «раскрывашка», которая на деле шлёт POST, ничего не изменит). Тот же
+    // страж, что у обхода «Админки» (`safety/write-guard.ts`, Р-З11-Г2):
+    // доказанное чтение GraphQL (меню на POST-запросе `query`) проходит,
+    // мутации и прочая запись — обрыв.
+    ctx.jb.setReadOnly(true);
     try {
       await expand(ctx, page, p, limits, c, want, states, mapElements, () =>
         p.screenshot && nextArtifact < WORKER_LIMITS.artifactsPerJob
@@ -157,7 +153,7 @@ export async function runUiSnapshot(
         code: e instanceof Error ? e.name : 'error',
       });
     } finally {
-      await page.unroute('**/*', readOnly).catch(() => undefined);
+      ctx.jb.setReadOnly(false);
     }
   }
   return {

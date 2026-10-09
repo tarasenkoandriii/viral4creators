@@ -88,6 +88,11 @@ async function frameOf(page: Page, open = true): Promise<Frame> {
 }
 
 async function say(f: Frame, text: string) {
+  // Флейк аудита З11 (`admin-voice:234` под нагрузкой): «Подключение» уже
+  // скрыто, а ленивый `admin-vc.js` ещё грузится — команда ушла бы вопросом
+  // в чат и карточка «Так» не появилась бы. Ждём корень голосового
+  // управления (во всех тестах файла режим или ссылка мастера включены).
+  await expect(f.locator('.wa-vc-p')).toBeAttached();
   await f.locator('.wa-i').fill(text);
   await f.locator('.wa-s').click();
 }

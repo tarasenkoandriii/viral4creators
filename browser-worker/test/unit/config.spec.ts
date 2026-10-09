@@ -1,4 +1,7 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { ConfigError, loadConfig } from '../../src/config';
+import { BROWSER_JOB_KINDS } from '../../src/shared/browser-job-protocol';
 import { generateWorkerSealKeys } from '../../src/shared/worker-seal';
 
 const base = {
@@ -105,5 +108,25 @@ describe('config воркера', () => {
     });
     expect(c.testDns?.get('shop.test')).toEqual(['93.184.216.34']);
     expect(c.testIgnoreTls).toBe(true);
+  });
+
+  it('.env.example: комментарий BROWSER_WORKER_KINDS называет все виды протокола', () => {
+    const env = readFileSync(join(__dirname, '../../.env.example'), 'utf8');
+    const block = env.slice(0, env.indexOf('# BROWSER_WORKER_KINDS='));
+    const line = block
+      .split('\n')
+      .reverse()
+      .find((l) => /^#\s+[a-z-]+(,[a-z-]+)+\s*$/.test(l));
+    expect(line).toBeDefined();
+    const listed = line!.replace(/^#\s+/, '').trim().split(',');
+    expect([...listed].sort()).toEqual([...BROWSER_JOB_KINDS].sort());
+    // И весь этот список — допустимое значение.
+    const c = loadConfig({
+      ...base,
+      BROWSER_WORKER_KINDS: listed.join(','),
+    });
+    expect(c.kinds).toEqual(
+      expect.arrayContaining(['ui-snapshot', 'knowledge-render']),
+    );
   });
 });

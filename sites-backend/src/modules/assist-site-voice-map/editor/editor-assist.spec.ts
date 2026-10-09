@@ -34,9 +34,12 @@ import {
   buildSynonymPrompt,
   EDITOR_ASSIST,
   filterSynonyms,
+  lowConfTermItems,
   parseSynonymReply,
   suggestionCards,
   suggestionId,
+  termId,
+  wrongAsked,
   type AskedRow,
 } from './editor-assist';
 import { EditorAssistController } from './editor-assist.controller';
@@ -273,6 +276,172 @@ describe('№113 — чистая часть подсказок редактор
       suggestionCards(asked, misses, new Set([suggestionId('self', 'cart')])),
     ).toHaveLength(1);
     expect(EDITOR_ASSIST.minVisitors).toBe(3);
+  });
+
+  it('заход 11: «не туда» — свёртка по цели, телу команды и языку; ПД — нет; ≤ 5 фраз на цель', () => {
+    const w = (key: string, v: string, u: string, lang = 'uk') => ({
+      key,
+      planId: `p-${v}-${u}`,
+      visitorId: v,
+      ipHash: `ip-${v}`,
+      utterance: u,
+      lang,
+    });
+    const items = wrongAsked([
+      w('footer', 'v1', 'відкрий доставку'),
+      w('footer', 'v2', 'доставку'),
+      w('footer', 'v2', 'покажи доставку'),
+      w('footer', 'v3', 'подзвоніть 0671234567'),
+      w('footer', 'v4', 'доставку', 'ru'),
+      ...['а1', 'а2', 'а3', 'а4', 'а5', 'а6'].map((x) =>
+        w('menu', 'v9', `відкрий розділ ${x}`),
+      ),
+    ]);
+    const footer = items.filter((i) => i.key === 'footer');
+    expect(footer.map((i) => [i.phrase, i.lang, i.visitors, i.count])).toEqual([
+      ['доставку', 'uk', 2, 3],
+      ['доставку', 'ru', 1, 1],
+    ]);
+    expect(footer[0].id).toBe(
+      suggestionId('wrong', 'footer', 'uk', 'доставку'),
+    );
+    expect(items.filter((i) => i.key === 'menu')).toHaveLength(
+      EDITOR_ASSIST.wrongPerKey,
+    );
+    expect(JSON.stringify(items)).not.toContain('067');
+  });
+
+  it('заход 11: термины распознавания — разные посетители, частая подпись, известное карте/ПД/подмена нормы — нет', () => {
+    const r = (
+      word: string,
+      visitorHash: string,
+      norm = word.toLowerCase(),
+    ) => ({
+      norm,
+      word,
+      visitorHash,
+      ipHash: `ip-${visitorHash}`,
+    });
+    const items = lowConfTermItems(
+      [
+        r('Ксіомі', 'h1'),
+        r('ксіомі', 'h2'),
+        r('Ксіомі', 'h3'),
+        r('Ксіомі', 'h3'),
+        r('Нова Пошта', 'h1'),
+        r('Делівері', 'h1'),
+        r('Делівері', 'h2'),
+        r('пишіть a@b.ua', 'h1', 'пишіть a b ua'),
+        r('Підробка', 'h1', 'інша норма'),
+      ],
+      new Set(['нова пошта']),
+    );
+    expect(items.map((i) => [i.phrase, i.visitors, i.count])).toEqual([
+      ['Ксіомі', 3, 4],
+      ['Делівері', 2, 2],
+    ]);
+    expect(items[0].id).toBe(termId('ксіомі'));
+    // Карточки: «не туда» и термин — от 2 посетителей; отклонённое — нет.
+    const wrong = [
+      {
+        id: 'd'.repeat(24),
+        key: 'footer',
+        phrase: 'доставку',
+        lang: 'uk',
+        count: 2,
+        visitors: 2,
+      },
+      {
+        id: 'e'.repeat(24),
+        key: 'footer',
+        phrase: 'оплату',
+        lang: 'uk',
+        count: 1,
+        visitors: 1,
+      },
+    ];
+    expect(
+      suggestionCards([], [], new Set([termId('делівері')]), {
+        wrong,
+        terms: items,
+      }).map((c) => [c.kind, 'phrase' in c ? c.phrase : '']),
+    ).toEqual([
+      ['wrong', 'доставку'],
+      ['term', 'Ксіомі'],
+    ]);
+  });
+
+  it('аудит P3-2: «разных посетителей» — min(посетители, IP): новые сессии одного IP порог не набирают', () => {
+    const t = (visitorHash: string, ipHash: string) => ({
+      norm: 'ксіомі',
+      word: 'Ксіомі',
+      visitorHash,
+      ipHash,
+    });
+    expect(
+      lowConfTermItems(
+        [t('h1', 'ip'), t('h2', 'ip'), t('h3', 'ip')],
+        new Set(),
+      )[0].visitors,
+    ).toBe(1);
+    expect(
+      lowConfTermItems([t('h1', 'ip1'), t('h2', 'ip2')], new Set())[0].visitors,
+    ).toBe(2);
+    const w = (visitorId: string, ipHash: string | null) => ({
+      key: 'footer',
+      planId: `p-${visitorId}`,
+      visitorId,
+      ipHash,
+      utterance: 'відкрий доставку',
+      lang: 'uk',
+    });
+    expect(wrongAsked([w('v1', 'ip'), w('v2', 'ip')])[0].visitors).toBe(1);
+    expect(wrongAsked([w('v1', null), w('v2', null)])[0].visitors).toBe(2);
+  });
+
+  it('аудит P3-8: «не предлагать» — до среза: 20 отклонённых терминов не прячут 21-й', () => {
+    const rows = Array.from({ length: 21 }, (_, i) => {
+      const word = `термін${String.fromCharCode(1072 + i)}`;
+      return [1, 2].map((v) => ({
+        norm: word,
+        word,
+        visitorHash: `h${v}`,
+        ipHash: `ip${v}`,
+      }));
+    }).flat();
+    const all = lowConfTermItems(rows, new Set());
+    expect(all).toHaveLength(EDITOR_ASSIST.termItems);
+    const muted = new Set(all.map((x) => x.id));
+    const rest = lowConfTermItems(rows, new Set(), muted);
+    expect(rest.map((x) => x.phrase)).toEqual([
+      `термін${String.fromCharCode(1072 + 20)}`,
+    ]);
+    // То же у «не туда» и «просили».
+    const wr = Array.from({ length: 31 }, (_, i) => ({
+      key: `k${i}`,
+      planId: `p${i}`,
+      visitorId: `v${i}`,
+      ipHash: `ip${i}`,
+      utterance: 'відкрий доставку',
+      lang: 'uk',
+    }));
+    const w30 = wrongAsked(wr);
+    expect(w30).toHaveLength(EDITOR_ASSIST.wrongItems);
+    expect(wrongAsked(wr, new Set(w30.map((x) => x.id)))).toHaveLength(1);
+    const ar = Array.from({ length: 21 }, (_, i) => ({
+      planId: `p${i}`,
+      visitorId: `v${i}`,
+      utterance: `відкрий розділ ${String.fromCharCode(1072 + i)}${String.fromCharCode(1072 + i)}`,
+      lang: 'uk',
+      page: '/',
+      key: null,
+      at: new Date(0),
+    }));
+    const a20 = askedNotFound(ar, new Set());
+    expect(a20).toHaveLength(EDITOR_ASSIST.asked);
+    expect(
+      askedNotFound(ar, new Set(), new Set(a20.map((x) => x.id))),
+    ).toHaveLength(1);
   });
 });
 
@@ -796,5 +965,233 @@ describeDb('№113 — маршруты подсказок панели реда
       code: 'EDITOR_SUGGEST_LIMIT',
       scope: 'mute',
     });
+  });
+  it('заход 11: «Промахи» — тепловые значки (и цели только с «выполнено») и «не туда» с командами; «Пропозиції» — карточки wrong/term; термин — в черновик (409/400, повтор — нет)', async () => {
+    const s = await vcSite();
+    const { who, s: ses } = await session(s);
+    await seedMap(s, who);
+    const now = new Date(clock);
+    const at = (ms: number) => new Date(clock - ms);
+    // Диалог на посетителя — свой хеш IP (порог «разных» — и по IP).
+    const mkPlan = async (visitorId: string, utteranceMasked: string) => {
+      const conv = await st.owner.assistSiteConversation.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          visitorId,
+          ipHash: `ip-${visitorId}`,
+          parentOrigin: s.origin,
+          lastMessageAt: new Date(),
+        },
+      });
+      return st.owner.assistSiteUiPlan.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          conversationId: conv.id,
+          visitorId,
+          utteranceMasked,
+          source: 'voice',
+          lang: 'uk',
+          pageUrl: s.url('/product/1'),
+          steps: [],
+          status: 'stopped',
+          needsConfirm: false,
+          confirmBefore: now,
+          expiresAt: now,
+        },
+      });
+    };
+    const log = (planId: string, data: Record<string, unknown>) =>
+      st.owner.assistSiteUiActionLog.create({
+        data: {
+          accountId: s.accountId,
+          siteId: s.siteId,
+          planId,
+          stepIndex: 0,
+          action: 'click',
+          risk: 'auto',
+          result: 'done',
+          url: s.url('/product/1'),
+          ...data,
+        },
+      });
+    // «Не туда»: «доставку» → цель `cart`, человек остановил через 2 с (2 посетителя).
+    for (const v of ['w-1', 'w-2']) {
+      const p = await mkPlan(v, 'відкрий доставку');
+      await log(p.id, { mapKey: 'cart', createdAt: at(10_000) });
+      await log(p.id, {
+        action: 'stop',
+        reason: 'click',
+        stepIndex: 1,
+        createdAt: at(8_000),
+      });
+    }
+    // Мастер Т-2 (сухой прогон) — не в «не туда».
+    const dry = await mkPlan('w-9', 'відкрий оплату');
+    await st.owner.assistSiteUiPlan.update({
+      where: { id: dry.id },
+      data: { dryRun: true },
+    });
+    await log(dry.id, { mapKey: 'cart', createdAt: at(6_000) });
+    await log(dry.id, {
+      action: 'stop',
+      reason: 'voice',
+      createdAt: at(5_000),
+    });
+    // Аудит P3-9 (г): план ДВУХ целей («додай подарунок і в кошик») —
+    // «не туда» считается, но фраза команды целиком в «перепривязать» не идёт.
+    const multi = await mkPlan('w-5', 'додай подарунок і в кошик');
+    await log(multi.id, { mapKey: 'gift', createdAt: at(7_000) });
+    await log(multi.id, { mapKey: 'cart', createdAt: at(6_500) });
+    await log(multi.id, {
+      action: 'stop',
+      reason: 'esc',
+      createdAt: at(6_000),
+    });
+    // `gift` — только «выполнено»: в списке промахов нет, в тепловых значках — есть.
+    const g = await mkPlan('w-3', 'подарунок');
+    await log(g.id, { mapKey: 'gift', createdAt: at(4_000) });
+    const m = await ctrl.misses(ses, '/product/3');
+    expect(m.items.map((i) => [i.key, i.wrong])).toEqual([['cart', 4]]);
+    expect(m.heat.map((i) => [i.key, i.done, i.wrong]).sort()).toEqual([
+      ['cart', 4, 4],
+      ['gift', 2, 0],
+    ]);
+    expect(m.wrong.map((w) => [w.key, w.phrase, w.visitors])).toEqual([
+      ['cart', 'доставку', 2],
+    ]);
+    expect(JSON.stringify(m.wrong)).not.toContain('оплат');
+
+    // Термины распознавания: 2 посетителя — карточка; известное карте и 1 посетитель — нет.
+    await st.owner.assistSiteSttLowTerm.createMany({
+      data: [
+        ['ксіомі', 'Ксіомі', 'a'],
+        ['ксіомі', 'Ксіомі', 'b'],
+        ['подарунок', 'Подарунок', 'a'],
+        ['подарунок', 'Подарунок', 'b'],
+        ['делівері', 'Делівері', 'a'],
+      ].map(([norm, word, h]) => ({
+        accountId: s.accountId,
+        siteId: s.siteId,
+        day: now.toISOString().slice(0, 10),
+        norm,
+        word,
+        visitorHash: h.repeat(32),
+        ipHash: `ip-${h}`,
+      })),
+    });
+    const sg = await ctrl.suggestions(ses, '/product/3');
+    expect(
+      sg.items.map((c) => [c.kind, 'phrase' in c ? c.phrase : '']),
+    ).toEqual([
+      ['wrong', 'доставку'],
+      ['term', 'Ксіомі'],
+    ]);
+    const term = sg.items.find((c) => c.kind === 'term')!;
+    const rev = (await maps.draft(who, s.siteId)).revision;
+    expect(
+      await code(
+        ctrl.acceptTerm(ses, { expectedRevision: rev + 3, id: term.id }),
+      ),
+    ).toMatchObject({ status: 409, code: 'VOICE_MAP_CONFLICT' });
+    expect(
+      await code(
+        ctrl.acceptTerm(ses, { expectedRevision: rev, id: 'f'.repeat(24) }),
+      ),
+    ).toMatchObject({ status: 400 });
+    expect(
+      await code(
+        ctrl.acceptTerm(undefined, { expectedRevision: rev, id: term.id }),
+      ),
+    ).toMatchObject({ status: 401 });
+    expect(
+      await ctrl.acceptTerm(ses, { expectedRevision: rev, id: term.id }),
+    ).toEqual({ revision: rev + 1, term: 'Ксіомі' });
+    expect((await maps.draft(who, s.siteId)).content.terms).toEqual(['Ксіомі']);
+    // Аудит P3-4: термин одного посетителя (ниже порога) — не принять.
+    expect(
+      await code(
+        ctrl.acceptTerm(ses, {
+          expectedRevision: rev + 1,
+          id: termId('делівері'),
+        }),
+      ),
+    ).toMatchObject({ status: 400 });
+    // Принятое — уже известно карте: карточки и повторного принятия нет.
+    expect(
+      await code(
+        ctrl.acceptTerm(ses, { expectedRevision: rev + 1, id: term.id }),
+      ),
+    ).toMatchObject({ status: 400 });
+    // Аудит P3-5: терминов уже 100 — 422, черновик не меняется.
+    await maps.patch(
+      who,
+      s.siteId,
+      {
+        expectedRevision: rev + 1,
+        ops: [
+          {
+            op: 'set-terms',
+            // «Ксіомі» + 99: место кончилось.
+            terms: [
+              'Ксіомі',
+              ...Array.from(
+                { length: 99 },
+                (_, i) =>
+                  `слово${'абвгдежзик'[Math.floor(i / 10)]}${'абвгдежзик'[i % 10]}`,
+              ),
+            ],
+          },
+        ],
+      },
+      'tma',
+    );
+    await st.owner.assistSiteSttLowTerm.createMany({
+      data: ['c', 'd'].map((h) => ({
+        accountId: s.accountId,
+        siteId: s.siteId,
+        day: now.toISOString().slice(0, 10),
+        norm: 'самсунг',
+        word: 'Самсунг',
+        visitorHash: h.repeat(32),
+        ipHash: `ip-${h}`,
+      })),
+    });
+    expect(
+      await code(
+        ctrl.acceptTerm(ses, {
+          expectedRevision: rev + 2,
+          id: termId('самсунг'),
+        }),
+      ),
+    ).toMatchObject({ status: 422, code: 'VOICE_MAP_INVALID' });
+    // Отказ — своим кодом `limit` (до операции карты), а не общим разбором.
+    const lim = await ctrl
+      .acceptTerm(ses, { expectedRevision: rev + 2, id: termId('самсунг') })
+      .catch((e: HttpException) => e.getResponse() as Record<string, unknown>);
+    expect(JSON.stringify(lim)).toContain('"code":"limit"');
+    expect((await maps.draft(who, s.siteId)).content.terms).toHaveLength(100);
+    // «Не туда» — «не пропонувати» по id карточки.
+    const wrongId = sg.items[0].id;
+    await ctrl.mute(ses, { id: wrongId });
+    expect(
+      (await ctrl.suggestions(ses, '/product/3')).items.map((c) => [
+        c.kind,
+        'phrase' in c ? c.phrase : '',
+      ]),
+    ).toEqual([['term', 'Самсунг']]);
+    // Журнал карты — без текста термина.
+    const ch = await st.owner.assistSiteVoiceMapChange.findMany({
+      where: { siteId: s.siteId, source: 'editor' },
+    });
+    expect(ch.map((c) => (c.op as { op: string }).op)).toContain('set-terms');
+    expect(JSON.stringify(ch)).not.toContain('Ксіомі');
+    // Чужой сайт кандидатов не видит.
+    const other = await vcSite();
+    const o = await session(other);
+    await seedMap(other, o.who);
+    const os = await ctrl.suggestions(o.s, '/product/3');
+    expect(os.items).toEqual([]);
   });
 });

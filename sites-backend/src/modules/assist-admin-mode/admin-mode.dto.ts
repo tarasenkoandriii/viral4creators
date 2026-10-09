@@ -293,7 +293,10 @@ export class ActionLogQueryDto {
   @Max(500)
   limit?: number;
 
-  /** Э8: read | write | danger | proposal | decision | chain | memo | actions. */
+  /**
+   * Э8: read | write | danger | proposal | decision | chain | memo | actions;
+   * заход 11: voice-map (изменения голосовой карты «Админки»).
+   */
   @IsOptional()
   @IsIn([
     'read',
@@ -304,6 +307,7 @@ export class ActionLogQueryDto {
     'chain',
     'memo',
     'actions',
+    'voice-map',
   ])
   kind?: string;
 }

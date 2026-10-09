@@ -34,6 +34,7 @@ export interface ActionLogEntry {
    * статус цепочки (компенсация, §5-бис.15 п.11); memo — изменение мемо
    * АМ-N (§5-бис.17 п.10); Э6-бис (б): ui-plan / ui-step / ui-test /
    * voice-control — голосовое управление «Админкой».
+   * Заход 11: voice-map — голосовая карта «Админки».
    */
   kind?: ActionLogKind;
   outcome: string;
@@ -58,7 +59,10 @@ export type ActionLogKind =
   | 'ui-plan'
   | 'ui-step'
   | 'ui-test'
-  | 'voice-control';
+  | 'voice-control'
+  // Заход 11 (№117): изменения голосовой карты «Админки» (черновик, версии,
+  // публикация, откат, ссылки и сессии редактора; §5-кватер.9 «Изоляция»).
+  | 'voice-map';
 
 export interface ActionLogView {
   id: string;

@@ -139,6 +139,42 @@ export const voiceControlEn: VoiceControlDictionary = {
     fragment: 'Markup snippet for the developer',
     denyAdd: 'Add {n} to “Forbidden elements”',
   },
+  // Round 11: scheduled T-3 reports (“autotest”, #29, R-Z10-19/43).
+  autotest: {
+    title: 'Autotest (daily)',
+    intro:
+      'Once a day the worker opens the pages of the published voice map and the control commands — no clicks, no sound — and checks that the targets are still found. It signals that the layout changed; it cannot turn voice control on for everyone — only a wizard check can.',
+    none: 'No autotests yet: the browser worker must be on and voice control must not be “Off”.',
+    results: { pass: 'all found', partial: 'partial', fail: 'failed' },
+    running: 'running',
+    noResult: 'no result',
+    details: 'Details',
+    hide: 'Hide',
+    summary: 'Targets and commands checked: {c}, lost: {l}',
+    version: 'Voice map v{v}',
+    noMap: 'No published map — only control commands were checked.',
+    pages: 'Pages',
+    pageOk: 'opened',
+    pageFail: 'did not open ({e})',
+    moreTargets: '…and {n} more',
+    noDetails: 'No details — the report has no check data.',
+    lostTargets: 'Lost map targets: {list}',
+    fragile: 'Fragile map targets: {n}',
+    commands: 'Control commands',
+    commandStatus: {
+      found: 'found',
+      lost: 'not found',
+      unchecked: 'not checked',
+    },
+    noText: 'command without a phrase',
+    commandsOk: 'All checked control commands are in place ({n}).',
+    errors: {
+      pages_failed: 'No page opened — no result, retry tomorrow.',
+      nothing_checked:
+        'Nothing to check: no published map and no control commands.',
+      other: 'The worker did not run the check ({c}) — retry tomorrow.',
+    },
+  },
   monitor: {
     title: 'How it works over 24 hours',
     plans: 'Commands',

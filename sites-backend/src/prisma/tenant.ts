@@ -95,6 +95,12 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   // маршрут находит по хешу токена, дальше — кабинет сессии.
   AssistAdminUiPlan: 'accountId',
   AssistAdminVoiceTest: 'accountId',
+  // Заход 11 (№117): голосовая карта «Админки» — черновик, версии, сессии
+  // редактора (составные FK (siteId, accountId)); сессию редактора маршрут
+  // находит системным чтением по хешу токена, дальше — кабинет сессии.
+  AssistAdminVoiceMap: 'accountId',
+  AssistAdminVoiceMapVersion: 'accountId',
+  AssistAdminVoiceMapEditorSession: 'accountId',
   // Заход 10, №57: аналитика «Админки» — разметка, суточная свёртка, выводы
   // недели, выгрузки (составные FK (conversationId|siteId, accountId)).
   // Пишет крон assist-admin-embed-run системным клиентом с причиной и
@@ -180,6 +186,8 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   AssistSiteVoiceMap: 'accountId',
   AssistSiteVoiceMapVersion: 'accountId',
   AssistSiteVoiceMapChange: 'accountId',
+  // №113 (заход 11): кандидаты в термины из неуверенного распознавания.
+  AssistSiteSttLowTerm: 'accountId',
   AssistSiteVoiceMapEditorSession: 'accountId',
   // Заход 9: отчёт для разработчика — ссылку по хешу токена находит
   // системное чтение (кабинета в запросе нет), дальше — клиент тенанта.

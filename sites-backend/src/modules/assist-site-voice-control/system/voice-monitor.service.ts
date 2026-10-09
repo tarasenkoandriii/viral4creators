@@ -1136,7 +1136,12 @@ export class VoiceMonitorService {
     if (!row || row.reportedAt) return null;
     const cmds = await db.assistSiteVoiceControlCommand.findMany({
       where: { siteId: i.siteId },
-      select: { id: true, pagePath: true, expected: true },
+      select: {
+        id: true,
+        pagePath: true,
+        expected: true,
+        utteranceMasked: true,
+      },
     });
     const { report, commands } = autotestReport(cmds, i.outcome);
     const { count } = await db.assistSiteVoiceTest.updateMany({

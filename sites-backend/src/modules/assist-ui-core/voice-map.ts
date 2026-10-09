@@ -1815,16 +1815,24 @@ export interface VoiceMapExport {
   memos?: Array<Record<string, unknown>>;
 }
 
+/**
+ * Контур карты (К-9, §5-кватер.9 «Изоляция»): «Сайт» и «Админка» — два
+ * экземпляра одного ядра; файл несёт свой `kind`, импорт другого — отказ
+ * целиком (У-28). Заход 11 (№117): ядро параметризовано контуром.
+ */
+export type VoiceMapKind = VoiceMapExport['kind'];
+
 /** Файл экспорта — без внутренних id, образцов страниц и журнала. */
 export function exportPayload(
   c: VoiceMapContent,
   memos?: ReadonlyArray<Record<string, unknown>>,
+  kind: VoiceMapKind = 'site',
 ): VoiceMapExport {
   const tpls = c.templates.filter((t) => t.status === 'active');
   const refOf = new Map(tpls.map((t, i) => [t.id, `t${i + 1}`]));
   return {
     schemaVersion: 1,
-    kind: 'site',
+    kind,
     templates: tpls.map((t) => ({
       ref: refOf.get(t.id) as string,
       name: t.name,
@@ -1860,20 +1868,22 @@ export function exportPayload(
 }
 
 /**
- * Импорт в черновик как пакет операций (§5-кватер.12): `kind` другого вида
- * — отказ целиком; каждая цель — со всеми проверками («только вверх»,
- * тексты, ключ); отклонённые — в отчёт с причиной. Происхождение синонимов
- * и целей — `import`.
+ * Импорт в черновик как пакет операций (§5-кватер.12): файл другого
+ * контура (`kind` ≠ контур карты, в которую импортируют) — отказ целиком;
+ * каждая цель — со всеми проверками («только вверх», тексты, ключ);
+ * отклонённые — в отчёт с причиной. Происхождение синонимов и целей —
+ * `import`.
  */
 export function importOps(
   raw: unknown,
   newId: () => string,
+  kind: VoiceMapKind = 'site',
 ):
   | { ok: false; reason: 'format' | 'kind' }
   | { ok: true; ops: MapOp[]; templateIds: Map<string, string> } {
   if (!isObj(raw) || raw.schemaVersion !== 1)
     return { ok: false, reason: 'format' };
-  if (raw.kind !== 'site') return { ok: false, reason: 'kind' };
+  if (raw.kind !== kind) return { ok: false, reason: 'kind' };
   if (!Array.isArray(raw.targets) || !Array.isArray(raw.templates))
     return { ok: false, reason: 'format' };
   const ops: MapOp[] = [];

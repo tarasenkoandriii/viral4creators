@@ -14,7 +14,13 @@
  * разбирает его строго заново. Значений полей, HTML и скриншотов нет.
  */
 import { EDITOR_MESSAGE_NS } from './brand';
-import type { Snapshot, UiGesture, UiRole } from './ui-plan';
+import { isJwt } from './jwt';
+import {
+  selectorOk,
+  type Snapshot,
+  type UiGesture,
+  type UiRole,
+} from './ui-plan';
 
 export const EDITOR_PROTOCOL_VERSION = 1;
 
@@ -78,6 +84,25 @@ export function maskHrefPath(path: string): string {
     .join('/');
 }
 
+const POLITE = ['будь', 'ласка', 'пожалуйста', 'please'];
+
+/**
+ * Норма фразы — порт `phraseNorm` сервера (`assist-ui-core/memo.ts`:
+ * регистр, ё/е, апострофы, пунктуация, пробелы, вежливость; сверка —
+ * scripts/editor.test.ts). Заход 11 (аудит P2-3): панель сравнивает фразы
+ * так же, как сервер считает конфликт фраз карты.
+ */
+export function phraseNorm(raw: string): string {
+  return raw
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[’ʼ`´']/g, '')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w && POLITE.indexOf(w) < 0)
+    .join(' ');
+}
+
 /** Цель карты для покрытия и разрешения на странице. */
 export interface PageTarget {
   key: string;
@@ -105,6 +130,11 @@ export type ToPanel =
       pid?: string | null;
       /** (заход 9) `Shift`+клик — добавить к массовому выбору. */
       multi?: boolean;
+      /**
+       * (раунд исправлений заход 11, «Админка») элемент в строке таблицы /
+       * пункте списка: подпись и номера сняты (ПД клиента) — предупреждение.
+       */
+      row?: boolean;
     }
   /** (заход 9) Выбор рамкой (`Shift` + протянуть): элементы внутри рамки. */
   | { type: 'picks'; items: Descriptor[] }
@@ -124,7 +154,14 @@ export type ToPanel =
       red: number;
       violet: number;
     }
-  | { type: 'mode'; mode: EditorMode };
+  | { type: 'mode'; mode: EditorMode }
+  /**
+   * (заход 11, №117) Панель карты «Админки» (`wa.`): employee-JWT от чанка
+   * `admin.js` в ответ на `need-identity` (null — сотрудник не вошёл).
+   */
+  | { type: 'identity'; jwt: string | null }
+  /** (раунд исправлений) Сотрудник вышел из админки — редактор завершается. */
+  | { type: 'logout' };
 
 export type ToPicker =
   | { type: 'targets'; items: PageTarget[] }
@@ -132,7 +169,18 @@ export type ToPicker =
   | { type: 'mode'; mode: EditorMode }
   | { type: 'highlight'; items: Array<{ ref: string; label: string }> }
   | { type: 'focus'; key: string }
-  | { type: 'snapshot-req'; id: number }
+  /**
+   * `rows` (заход 11, «Админка»): номера строк таблиц, названные в команде
+   * «Сказать сейчас» — только эти строки остаются в снимке (Р-Э6б-6).
+   */
+  | {
+      type: 'snapshot-req';
+      id: number;
+      rows?: string[];
+      /** «Админка»: зоны владельца, как у боевого снимка (`admin-act.js`). */
+      deny?: string[];
+      allow?: string[];
+    }
   | {
       type: 'resolve';
       id: number;
@@ -145,7 +193,22 @@ export type ToPicker =
    * элементе, выбранном настоящим кликом человека (`isTrusted`) последним.
    */
   | { type: 'perform'; pid: string }
+  /**
+   * (заход 11, №113) Тепловые значки режима «Промахи»: на элементе цели
+   * карты — подпись за 7 дней (просили / натисніть самі / не туди / не
+   * знайдено); `bad` — есть промахи (красный). Пустой список — снять.
+   * Подпись — только `textContent` (≤ 40), цель — по ключу из `targets`.
+   */
+  | { type: 'heat'; items: HeatItem[] }
+  /** (заход 11, №117) Панель «Админки» просит employee-JWT (обмен на сессию `wa.`). */
+  | { type: 'need-identity' }
   | { type: 'exit' };
+
+export interface HeatItem {
+  key: string;
+  label: string;
+  bad: boolean;
+}
 
 export function editorEnvelope<T extends { type: string }>(
   m: T
@@ -202,12 +265,24 @@ export function parseDescriptor(v: unknown): Descriptor | null {
   };
 }
 
+/** Селекторы зон владельца: строки ≤ 200 без `<`/управляющих, ≤ 30. */
+const selectors = (v: unknown): string[] =>
+  Array.isArray(v)
+    ? v
+        .slice(0, 30)
+        .filter(
+          (x): x is string =>
+            typeof x === 'string' && !!x.trim() && selectorOk(x)
+        )
+    : [];
+
 /** Сообщение панели → пикер (пикер проверяет source/origin ДО разбора). */
 export function parseToPicker(raw: unknown): ToPicker | null {
   if (!isObj(raw) || raw.ns !== EDITOR_MESSAGE_NS) return null;
   switch (raw.type) {
     case 'exit':
-      return { type: 'exit' };
+    case 'need-identity':
+      return { type: raw.type };
     case 'perform':
       return typeof raw.pid === 'string' && raw.pid.length <= 16
         ? { type: 'perform', pid: raw.pid }
@@ -222,7 +297,35 @@ export function parseToPicker(raw: unknown): ToPicker | null {
         : null;
     case 'snapshot-req':
       return typeof raw.id === 'number'
-        ? { type: 'snapshot-req', id: raw.id }
+        ? {
+            type: 'snapshot-req',
+            id: raw.id,
+            rows: Array.isArray(raw.rows)
+              ? raw.rows
+                  .filter(
+                    (r): r is string =>
+                      typeof r === 'string' && /^[0-9]{3,12}$/.test(r)
+                  )
+                  .slice(0, 5)
+              : [],
+            deny: selectors(raw.deny),
+            allow: selectors(raw.allow),
+          }
+        : null;
+    case 'heat':
+      return Array.isArray(raw.items)
+        ? {
+            type: 'heat',
+            items: raw.items
+              .slice(0, 200)
+              .filter(isObj)
+              .map((i) => ({
+                key: str(i.key, 40) ?? '',
+                label: str(i.label, 40) ?? '',
+                bad: i.bad === true,
+              }))
+              .filter((i) => i.key && i.label),
+          }
         : null;
     case 'focus':
       return typeof raw.key === 'string'
@@ -282,7 +385,12 @@ export function parseToPanel(raw: unknown): ToPanel | null {
     case 'route':
       return { type: 'route', path: str(raw.path, 300) ?? '/' };
     case 'search':
-      return { type: 'search' };
+    case 'logout':
+      return { type: raw.type };
+    case 'identity':
+      return raw.jwt === null || isJwt(raw.jwt)
+        ? { type: 'identity', jwt: raw.jwt }
+        : null;
     case 'picks':
       return Array.isArray(raw.items)
         ? {
@@ -313,6 +421,7 @@ export function parseToPanel(raw: unknown): ToPanel | null {
         fieldName: str(raw.fieldName, 64),
         pid: str(raw.pid, 16),
         multi: raw.multi === true,
+        row: raw.row === true,
         options: Array.isArray(raw.options)
           ? raw.options
               .slice(0, 40)

@@ -14,7 +14,9 @@ import {
   parseAdminFrameMessage,
   parseAdminParentMessage,
 } from '../src/shared/admin-protocol';
+import { isJwt as isJwtShared } from '../src/shared/jwt';
 import {
+  editorFlag,
   ADMIN_MESSAGE_NS,
   WIDGET_MESSAGE_NS,
   WIDGET_PK_LIVE_PREFIX,
@@ -181,6 +183,26 @@ for (const f of walk(src)) {
       `${rel}: «Админка» импортирует код публичного виджета`
     );
   }
+}
+// Заход 11 (№117): форма JWT — одна на оба протокола (shared/jwt.ts), код
+// редактора («Сайт» и «Админка») протокол «Админки» не импортирует (правило
+// выше); admin.js берёт пикер редактора только ленивым `import()` по пути
+// бренда (статического импорта кода редактора в чанке «Админки» нет).
+{
+  assert.equal(isJwt, isJwtShared, 'isJwt — из shared/jwt.ts');
+  const a = readFileSync(`${src}/admin/index.ts`, 'utf8');
+  assert.ok(
+    !importsOf(`${src}/admin/index.ts`).some((s) => /editor/.test(s)),
+    'admin.js: статический импорт кода редактора'
+  );
+  assert.match(
+    a,
+    /import\(\s*\/\* @vite-ignore \*\/ origin \+ WIDGET_EDITOR_PATH\)/
+  );
+  // Раунд исправлений (аудит P3-4): флаг продолжения — свой у контура и pk.
+  assert.equal(editorFlag(false, pk), 'v4c_edit');
+  assert.equal(editorFlag(true, pk), `v4c_edit:admin:${pk}`);
+  assert.notEqual(editorFlag(true, pk), editorFlag(true, `${pk}x`));
 }
 console.log('admin: протокол «Админки» и граница кода — ок');
 

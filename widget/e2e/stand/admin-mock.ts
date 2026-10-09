@@ -12,6 +12,7 @@
  */
 import type http from 'node:http';
 import crypto from 'node:crypto';
+import { editorRoute } from './editor-mock';
 
 export const ADMIN_HOST_PREFIX = '127.0.0.1:';
 
@@ -58,6 +59,11 @@ const A = {
   /** Исполнения «Да» на «стенд-API» (приёмка §4-бис.10 п.4 (б): ровно одно). */
   execs: [] as string[],
 };
+
+/** Раунд исправлений: все сессии сотрудников истекли (`exp` JWT прошёл). */
+export function adminExpire(): void {
+  for (const s of A.sessions.values()) s.exp = 0;
+}
 
 export function adminReset(): void {
   A.sessions.clear();
@@ -191,8 +197,20 @@ export async function adminRoute(
     return void res.end(FRAME_HTML);
   }
   const token = String(req.headers['x-assist-admin-session'] || '');
-  const sess = A.sessions.get(token) || null;
+  const raw = A.sessions.get(token) || null;
+  // Как сервер: сессия сотрудника живёт до `exp` JWT.
+  const sess = raw && raw.exp * 1000 > Date.now() ? raw : null;
   A.log.push({ path: p, sub: sess?.sub ?? null });
+  // Заход 11 (№117): панель редактора карты «Админки» (editor-mock.ts).
+  if (p === '/wa/v1/editor-frame' || p.startsWith('/assist-admin/v1/editor/'))
+    return editorRoute(
+      req,
+      res,
+      url,
+      siteOrigins,
+      sess ? token : '',
+      (t) => A.sessions.get(t)?.sub ?? null
+    );
   if (req.method === 'POST' && p === '/assist-admin/v1/session') {
     const b = await body(req);
     const jwt = typeof b.jwt === 'string' ? b.jwt : '';

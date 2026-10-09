@@ -84,6 +84,13 @@ describe('стоп-лист кликов и переходов воркера', 
     ['https://admin.shop.test/stripe/session', 'Деталі', 'danger'],
     ['https://admin.shop.test/paypal/redirect', 'Деталі', 'danger'],
     ['https://admin.shop.test/admin/approvals-history', 'Деталі', null],
+    // Заход 11 (аудит P3-4): camelCase и archive/restore/confirm.
+    ['https://admin.shop.test/api/deleteOrder?id=5', 'Деталі', 'danger'],
+    ['https://admin.shop.test/account/logoutAll', 'Деталі', 'logout'],
+    ['https://admin.shop.test/orders/5/archive', 'Деталі', 'danger'],
+    ['https://admin.shop.test/orders/5/restore', 'Деталі', 'danger'],
+    ['https://admin.shop.test/orders/5/confirm', 'Деталі', 'danger'],
+    ['https://admin.shop.test/admin/orderDetails', 'Деталі', null],
   ])('%s «%s» → %s', (href, text, want) => {
     expect(linkRefusal(href, text, H)).toBe(want);
   });

@@ -43,6 +43,7 @@ import {
   SigningSecret,
 } from './AdminActionsParts';
 import { AdminVoiceSection } from './AdminVoiceSection';
+import { AdminVoiceMapSection } from './AdminVoiceMapSection';
 import { AdminAnalytics } from './AdminAnalyticsParts';
 
 /**
@@ -50,7 +51,8 @@ import { AdminAnalytics } from './AdminAnalyticsParts';
  * вызовов, «Обучение (сотрудники)», «Статистика (сотрудники)»; Э8 —
  * действия write/danger, журнал действий с откатом, мемо АМ-N. Только
  * `assistAdmin: owner` — остальные видят отказ (сервер всё равно 403).
- * Э6-бис (б): «Голос» — голосовое управление админкой (AdminVoiceSection).
+ * Э6-бис (б): «Голос» — голосовое управление админкой (AdminVoiceSection);
+ * заход 11 (№117): там же голосовая карта «Админки» (AdminVoiceMapSection).
  */
 export function AdminModeScreen({
   siteId,
@@ -89,7 +91,13 @@ export function AdminModeScreen({
       {tab === 'memos' && <MemosTab siteId={siteId} />}
       {tab === 'learning' && <StaffLearning siteId={siteId} />}
       {tab === 'stats' && <Stats siteId={siteId} />}
-      {tab === 'voice' && <AdminVoiceSection siteId={siteId} />}
+      {tab === 'voice' && (
+        <div className="space-y-4">
+          <AdminVoiceSection siteId={siteId} />
+          {/* Заход 11 (№117): голосовая карта «Админки». */}
+          <AdminVoiceMapSection siteId={siteId} />
+        </div>
+      )}
     </div>
   );
 }

@@ -22,6 +22,19 @@
  *    к элементу»; ≥ 3 «нажмите сами» на цели → «синтетический клик здесь не
  *    срабатывает»; отклонённое (`id` — хеш пары, не текст) не показывается
  *    30 дней (`VOICE_MAP_LIMITS.suggestionMuteMs`).
+ *
+ * Заход 11 (остаток №113):
+ *  - «не туда → перепривязать»: команды планов, где человек остановил
+ *    исполнение ≤ 5 с после шага цели A (`mapMissWrongs`), — свёртка по
+ *    цели, телу команды и языку (планы нескольких целей — нет); ≥ 2 разных
+ *    посетителей и IP → карточка
+ *    «вела не туда — перепривязать?» (принять = фраза — синоним другой
+ *    цели, выбранной кликом; со старой цели снимается, если была её
+ *    синонимом);
+ *  - термины по низкой уверенности распознавания (`assist_site_stt_low_terms`,
+ *    Soniox `confidence` < 0.6): свёртка по норме, ≥ 2 разных посетителей,
+ *    уже известное карте (имена, синонимы, термины) — нет → карточка
+ *    «додати „…“ до словника термінів?» (принять — `set-terms` черновика).
  */
 import { createHash } from 'crypto';
 import { replyKind } from '../../assist-ui-core/action-words';
@@ -60,6 +73,16 @@ export const EDITOR_ASSIST = {
   cards: 30,
   /** «Не предлагать» — не больше стольких в сутки на сайт. */
   mutePerDay: 200,
+  /** Заход 11: «не туда» — фраз на цель / всего; карточка — от стольких посетителей. */
+  wrongPerKey: 5,
+  wrongItems: 30,
+  minWrongVisitors: 2,
+  /** Заход 11: термины — строк базы за окно, кандидатов, порог посетителей. */
+  termRows: 5_000,
+  termItems: 20,
+  minTermVisitors: 2,
+  /** Терминов в карте — не больше (как `set-terms`). */
+  termsMax: 100,
 } as const;
 
 /** Почему фраза модели не попала в предложения (для отчёта, без текста). */
@@ -263,6 +286,8 @@ export interface AskedItem {
 export function askedNotFound(
   rows: readonly AskedRow[],
   known: ReadonlySet<string>,
+  /** (заход 11, аудит P3-8) Отклонённые — до среза, а не после. */
+  muted?: ReadonlySet<string>,
 ): AskedItem[] {
   const by = new Map<
     string,
@@ -300,6 +325,7 @@ export function askedNotFound(
     }
   }
   return [...by.values()]
+    .filter((x) => !muted?.has(x.id))
     .sort(
       (a, b) =>
         b.visitors - a.visitors ||
@@ -311,6 +337,172 @@ export function askedNotFound(
     .map(({ who: _w, lastMs: _l, ...x }) => x);
 }
 
+// ── заход 11: «не туда → перепривязать» и термины распознавания ─────────
+
+export interface WrongRow {
+  key: string;
+  planId: string;
+  visitorId: string;
+  /** Хеш IP диалога плана (аудит P3-2: порог — и по IP). */
+  ipHash: string | null;
+  utterance: string;
+  lang: string | null;
+}
+
+/**
+ * «Разных посетителей» (аудит P3-2): min(разных id/хешей посетителя,
+ * разных хешей IP) — новая сессия виджета того же клиента порог не
+ * набирает. Нет хеша IP — строка считается своим IP.
+ */
+function distinct(rows: ReadonlyArray<{ who: string; ip: string | null }>) {
+  const who = new Set(rows.map((r) => r.who));
+  const ip = new Set(rows.map((r, i) => r.ip ?? `\u0000${i}`));
+  return Math.min(who.size, ip.size);
+}
+
+export interface WrongItem {
+  id: string;
+  /** Цель, на которую команда сработала «не туда». */
+  key: string;
+  phrase: string;
+  lang: string | null;
+  count: number;
+  visitors: number;
+}
+
+/**
+ * Свёртка команд «не туда» по цели, телу команды и языку (команды —
+ * маскированные; фразы с ПД/ссылками — нет). ≤ 5 на цель, ≤ 30 всего.
+ */
+export function wrongAsked(
+  rows: readonly WrongRow[],
+  muted?: ReadonlySet<string>,
+): WrongItem[] {
+  const by = new Map<
+    string,
+    WrongItem & { seen: Array<{ who: string; ip: string | null }> }
+  >();
+  for (const r of rows) {
+    const body = commandBody(r.utterance);
+    if (!body || memoTextProblem(body, VOICE_MAP_LIMITS.synonymChars) !== null)
+      continue;
+    const lang = r.lang && /^[a-z]{2}$/.test(r.lang) ? r.lang : null;
+    const k = `${r.key}|${lang ?? ''}|${body}`;
+    let it = by.get(k);
+    if (!it) {
+      it = {
+        id: suggestionId('wrong', r.key, lang ?? '', body),
+        key: r.key,
+        phrase: body,
+        lang,
+        count: 0,
+        visitors: 0,
+        seen: [],
+      };
+      by.set(k, it);
+    }
+    it.count++;
+    it.seen.push({ who: r.visitorId, ip: r.ipHash });
+    it.visitors = distinct(it.seen);
+  }
+  const perKey = new Map<string, number>();
+  return [...by.values()]
+    .filter((x) => !muted?.has(x.id))
+    .sort(
+      (a, b) =>
+        b.visitors - a.visitors ||
+        b.count - a.count ||
+        a.key.localeCompare(b.key) ||
+        a.phrase.localeCompare(b.phrase),
+    )
+    .filter((x) => {
+      const n = perKey.get(x.key) ?? 0;
+      perKey.set(x.key, n + 1);
+      return n < EDITOR_ASSIST.wrongPerKey;
+    })
+    .slice(0, EDITOR_ASSIST.wrongItems)
+    .map(({ seen: _s, ...x }) => x);
+}
+
+export interface TermRow {
+  norm: string;
+  word: string;
+  visitorHash: string;
+  ipHash: string;
+}
+
+export interface TermItem {
+  id: string;
+  phrase: string;
+  /** Строк (посетитель × день). */
+  count: number;
+  visitors: number;
+}
+
+/** Id карточки термина: хеш нормы (текст не хранится). */
+export const termId = (norm: string) => suggestionId('term', norm);
+
+/**
+ * Кандидаты в термины из неуверенного распознавания: свёртка по норме
+ * (подпись — самый частый вариант), разные посетители; `known` — нормы
+ * имён/синонимов целей и терминов черновика: уже известное не предлагается.
+ * Строки пишет публичная роль — фраза проверяется ещё раз.
+ */
+export function lowConfTermItems(
+  rows: readonly TermRow[],
+  known: ReadonlySet<string>,
+  muted?: ReadonlySet<string>,
+): TermItem[] {
+  const by = new Map<
+    string,
+    TermItem & {
+      seen: Array<{ who: string; ip: string | null }>;
+      words: Map<string, number>;
+    }
+  >();
+  for (const r of rows) {
+    const norm = phraseNorm(r.word);
+    if (
+      !norm ||
+      norm !== r.norm ||
+      known.has(norm) ||
+      memoTextProblem(r.word, VOICE_MAP_LIMITS.synonymChars) !== null
+    )
+      continue;
+    let it = by.get(norm);
+    if (!it) {
+      it = {
+        id: termId(norm),
+        phrase: r.word,
+        count: 0,
+        visitors: 0,
+        seen: [],
+        words: new Map(),
+      };
+      by.set(norm, it);
+    }
+    it.count++;
+    it.seen.push({ who: r.visitorHash, ip: r.ipHash });
+    it.visitors = distinct(it.seen);
+    it.words.set(r.word, (it.words.get(r.word) ?? 0) + 1);
+  }
+  return [...by.values()]
+    .filter((x) => !muted?.has(x.id))
+    .map(({ seen: _s, words, ...x }) => ({
+      ...x,
+      phrase: [...words.entries()].sort(
+        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+      )[0][0],
+    }))
+    .sort(
+      (a, b) =>
+        b.visitors - a.visitors ||
+        b.count - a.count ||
+        a.phrase.localeCompare(b.phrase),
+    )
+    .slice(0, EDITOR_ASSIST.termItems);
+}
+
 export type SuggestionCard =
   | {
       id: string;
@@ -320,6 +512,15 @@ export type SuggestionCard =
       visitors: number;
       key: string | null;
     }
+  | {
+      id: string;
+      kind: 'wrong';
+      key: string;
+      phrase: string;
+      lang: string | null;
+      visitors: number;
+    }
+  | { id: string; kind: 'term'; phrase: string; visitors: number }
   | { id: string; kind: 'self'; key: string; count: number };
 
 /** Карточки «Предложения» из очереди: пороги и отклонённые за 30 дней. */
@@ -327,6 +528,7 @@ export function suggestionCards(
   asked: readonly AskedItem[],
   misses: readonly MapMissItem[],
   muted: ReadonlySet<string>,
+  more: { wrong?: readonly WrongItem[]; terms?: readonly TermItem[] } = {},
 ): SuggestionCard[] {
   const out: SuggestionCard[] = [];
   for (const a of asked)
@@ -338,6 +540,24 @@ export function suggestionCards(
         lang: a.lang,
         visitors: a.visitors,
         key: a.key,
+      });
+  for (const w of more.wrong ?? [])
+    if (w.visitors >= EDITOR_ASSIST.minWrongVisitors && !muted.has(w.id))
+      out.push({
+        id: w.id,
+        kind: 'wrong',
+        key: w.key,
+        phrase: w.phrase,
+        lang: w.lang,
+        visitors: w.visitors,
+      });
+  for (const t of more.terms ?? [])
+    if (t.visitors >= EDITOR_ASSIST.minTermVisitors && !muted.has(t.id))
+      out.push({
+        id: t.id,
+        kind: 'term',
+        phrase: t.phrase,
+        visitors: t.visitors,
       });
   for (const m of misses) {
     const id = suggestionId('self', m.key);

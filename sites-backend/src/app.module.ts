@@ -39,6 +39,7 @@ import { AssistAdminChatModule } from './modules/assist-admin-chat/assist-admin-
 import { AssistAdminCrawlModule } from './modules/assist-admin-crawl/assist-admin-crawl.module';
 import { AssistAdminActionsModule } from './modules/assist-admin-actions/assist-admin-actions.module';
 import { AssistAdminVoiceModule } from './modules/assist-admin-voice/assist-admin-voice.module';
+import { AssistAdminVoiceMapModule } from './modules/assist-admin-voice-map/assist-admin-voice-map.module';
 import { AssistAdminAnalyticsModule } from './modules/assist-admin-analytics/assist-admin-analytics.module';
 import { AssistSiteKnowledgeApiModule } from './modules/assist-site-knowledge-api/assist-site-knowledge-api.module';
 import { BrowserJobsModule } from './modules/browser-jobs/browser-jobs.module';
@@ -109,6 +110,8 @@ import { InternalWorkerModule } from './modules/internal-worker/internal-worker.
     // (кабинет), планы кликов сотрудника (iframe `wa.`), мемо АМ-N с шагами
     // на странице.
     AssistAdminVoiceModule,
+    // Заход 11 (№117): голосовая карта «Админки» (второй экземпляр карты).
+    AssistAdminVoiceMapModule,
     // Заход 10 (№57): аналитика «Админки» — разметка диалогов сотрудников,
     // свёртка по ролям, выводы и отчёт недели, выгрузки CSV, push по тревоге
     // компенсаций; исполняется из крона assist-admin-embed-run.

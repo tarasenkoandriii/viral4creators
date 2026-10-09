@@ -24,7 +24,11 @@
 import type { Browser } from 'playwright-core';
 import { ApiError, type WorkerApi } from './api-client';
 import type { BrowserPool } from './browser/pool';
-import { JobBrowser, type EgressOptions } from './browser/context';
+import {
+  JobBrowser,
+  WRITE_BLOCK_REASONS,
+  type EgressOptions,
+} from './browser/context';
 import { JobError } from './errors';
 import { EXECUTORS } from './jobs';
 import type { JobContext, JobCredentials, JobExecutor } from './jobs/types';
@@ -323,6 +327,7 @@ export class Runner {
         kind: job.kind,
         ms: Date.now() - started,
         bytes: opened.traffic().bytesIn,
+        writes: opened.writesBlocked().total,
       });
     } catch (e) {
       if (r.reason === 'lease_lost') {
@@ -374,6 +379,18 @@ export class Runner {
             bytes: t.bytesIn,
             cut: t.cutJob ? 'job' : 'response',
             count: t.cutResponses,
+          });
+        // Р-З11-Г3: «только чтение» оборвало запись — журнал задания (по
+        // причинам: метод, GraphQL, выход, разрушительный адрес, WebSocket).
+        const w = jb.writesBlocked();
+        if (w.total)
+          log.info('запись оборвана (только чтение)', {
+            jobId: job.id,
+            kind: job.kind,
+            writes: w.total,
+            reason: WRITE_BLOCK_REASONS.filter((k) => w[k])
+              .map((k) => `${k}:${w[k]}`)
+              .join(','),
           });
         await jb.close();
       }

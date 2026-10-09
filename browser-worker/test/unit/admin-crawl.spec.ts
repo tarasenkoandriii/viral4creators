@@ -20,6 +20,7 @@ describe('admin-crawl: затирание секретов при сбое бр�
         cookies.wipe();
       },
     };
+    const order: string[] = [];
     const ctx = {
       job: {
         id: 'job-1',
@@ -39,8 +40,16 @@ describe('admin-crawl: затирание секретов при сбое бр�
         },
       },
       jb: {
-        newPage: () =>
-          Promise.reject(new Error('Target page, context or browser closed')),
+        sessionReadOnly: () => {
+          order.push('read-only');
+          return Promise.resolve();
+        },
+        newPage: () => {
+          order.push('newPage');
+          return Promise.reject(
+            new Error('Target page, context or browser closed'),
+          );
+        },
       },
       signal: new AbortController().signal,
       log: createLogger('error', () => undefined),
@@ -52,5 +61,7 @@ describe('admin-crawl: затирание секретов при сбое бр�
     expect(password.wiped).toBe(true);
     expect(cookies.wiped).toBe(true);
     expect(liveSecretCount()).toBe(0);
+    // Р-З11-Г1: «только чтение» включается ДО первой страницы.
+    expect(order).toEqual(['read-only', 'newPage']);
   });
 });

@@ -45,13 +45,20 @@ import {
   type ModelStep,
 } from './ui-plan-mock';
 import { vcStandRoute } from './vc-stands';
-import { adminLog, adminReset, adminRoute, isAdminHost } from './admin-mock';
+import {
+  adminExpire,
+  adminLog,
+  adminReset,
+  adminRoute,
+  isAdminHost,
+} from './admin-mock';
 import { adminVcLog, adminVcReset, adminVcSet } from './admin-vc-mock';
 import {
   editorLink,
   editorLog,
   editorReset,
   editorRoute,
+  editorZones,
   isEditorHost,
 } from './editor-mock';
 
@@ -1503,6 +1510,18 @@ async function widgetServer(
   if (p === '/__mock/editor-link') {
     const b = (await readBody(req)) as { token?: string; origin?: string };
     editorLink(String(b.token || ''), String(b.origin || ''));
+    res.writeHead(204);
+    return res.end();
+  }
+  // Раунд исправлений захода 11: истечение сессий сотрудников и зоны «Админки».
+  if (p === '/__mock/admin-expire') {
+    adminExpire();
+    res.writeHead(204);
+    return res.end();
+  }
+  if (p === '/__mock/editor-zones') {
+    const b = (await readBody(req)) as { deny?: string[]; allow?: string[] };
+    editorZones(b.deny ?? [], b.allow ?? []);
     res.writeHead(204);
     return res.end();
   }

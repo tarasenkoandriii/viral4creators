@@ -27,6 +27,7 @@ const cmd = (
   id,
   pagePath: '/',
   expected: [{ kind: 'click', role: 'button', text, assistId }],
+  utteranceMasked: `команда ${id}`,
 });
 
 const outcome = (
@@ -65,6 +66,26 @@ describe('отчёт Т-3 по расписанию (voice-monitor-autotest)', (
     ]);
     expect(report.result).toBe('partial');
     expect(report.autotest).toMatchObject({ checked: 3, lost: 1, error: null });
+    // Заход 11: фраза команды — в отчёте (TMA показывает, что потерялось).
+    expect(report.autotest.commands.map((c) => c.text)).toEqual([
+      'команда a',
+      'команда b',
+      'команда c',
+      'команда d',
+    ]);
+  });
+
+  it('заход 11: фраза команды в отчёте — не длиннее 120 символов; нет фразы — пустая строка', () => {
+    const long = { ...cmd('a', 'Купити'), utteranceMasked: 'ж'.repeat(300) };
+    const bare = { id: 'b', pagePath: '/', expected: [] };
+    const { commands } = autotestReport([long, bare], outcome([el('Купити')]));
+    expect(commands[0].text).toBe(`${'ж'.repeat(119)}…`);
+    expect(commands[1]).toEqual({
+      id: 'b',
+      path: '/',
+      text: '',
+      status: 'unchecked',
+    });
   });
 
   it('цели карты считаются вместе с командами; ≥ половины потеряно — fail', () => {
@@ -87,6 +108,7 @@ describe('отчёт Т-3 по расписанию (voice-monitor-autotest)', (
       checked: 4,
       lost: 2,
       lostTargets: ['t1', 't2'],
+      lostTargetsTotal: 2,
       fragileTargets: 1,
     });
     expect(report.result).toBe('fail');
@@ -101,6 +123,39 @@ describe('отчёт Т-3 по расписанию (voice-monitor-autotest)', (
     const empty = autotestReport([], outcome([el('x')]));
     expect(empty.report.result).toBeNull();
     expect(empty.report.autotest.error).toBe('nothing_checked');
+  });
+
+  it('аудит з11 P2-1: фраза — второй слой маски (карта с двойными пробелами, телефон, e-mail), без управляющих символов; обрезка не режет метку маски', () => {
+    const { commands } = autotestReport(
+      [
+        {
+          ...cmd('a', 'Купити'),
+          utteranceMasked: 'оплати картою 4111  1111  1111  1111',
+        },
+        {
+          ...cmd('b', 'Купити'),
+          utteranceMasked: 'передзвоніть на +380 (50) 123-45-67',
+        },
+        {
+          ...cmd('c', 'Купити'),
+          utteranceMasked: 'лист на ivan@shop.ua\u202eкошик',
+        },
+        {
+          ...cmd('d', 'Купити'),
+          utteranceMasked: `${'а'.repeat(115)} 4111 1111 1111 1111`,
+        },
+      ],
+      outcome([el('Купити')]),
+    );
+    expect(commands[0].text).toBe('оплати картою [№]');
+    expect(commands[0].text).not.toMatch(/\d{4}/);
+    expect(commands[1].text).not.toMatch(/\d{3}/);
+    expect(commands[1].text).toMatch(/^передзвоніть на \[/);
+    expect(commands[2].text).not.toContain('ivan@shop.ua');
+    expect(commands[2].text).not.toMatch(/\u202e/);
+    // Метка маски не влезает целиком — отрезается вся, без «[№» на конце.
+    expect(commands[3].text.length).toBeLessThanOrEqual(120);
+    expect(commands[3].text).toBe(`${'а'.repeat(115)}…`);
   });
 
   it('отказ воркера — отчёт без результата, код — только из безопасного набора символов', () => {

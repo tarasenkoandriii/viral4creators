@@ -8,6 +8,15 @@
  *   GET  /editor/v1/misses?path=       «Промахи»: Т-4 по целям страницы + «просили, не нашли»
  *   GET  /editor/v1/suggestions?path=  «Предложения» из очереди (пороги, без отклонённых)
  *   POST /editor/v1/suggestions/mute   { id } | { key, lang, text } — «не предлагать 30 дней»
+ *   POST /editor/v1/suggestions/term   { expectedRevision, id } — (заход 11) принять
+ *                                      термин распознавания → `set-terms` черновика
+ *
+ * Заход 11 (остаток №113): «Промахи» отдают ещё `heat` — по ВСЕМ целям
+ * страницы с шагами за 7 дней (тепловые значки на странице: просили /
+ * «натисніть самі» / «не туди» / не знайдено) и `wrong` — команды «не
+ * туда» по целям (кнопка «перепривязати»); «Предложения» — ещё карточки
+ * `wrong` (≥ 2 посетителей) и `term` (неуверенное распознавание, ≥ 2
+ * посетителей; принять — термин в черновик, публикуется обычным путём).
  *
  * ИИ-синонимы — порядок как у фраз мемо (деньги — до модели):
  *  1. цель черновика активна и не «никогда» (иначе 422 — ей синонимы
@@ -30,6 +39,7 @@ import { SitesDb } from '../../../prisma/sites-db.service';
 import { estimateCost } from '../../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../../shared/gemini-model';
 import { parsePersona } from '../../assist-site-setup/persona';
+import { phraseNorm } from '../../assist-ui-core/memo';
 import {
   effectiveRisk,
   parseVoiceMapContent,
@@ -50,12 +60,15 @@ import {
 } from '../../site-ai/text-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type { MapMissItem } from '../map-misses';
-import { MapMissesService } from '../map-misses';
+import { MAP_MISSES_LIMITS, MapMissesService } from '../map-misses';
 import { voiceMapError } from '../voice-map-errors';
 import { VoiceMapService } from '../voice-map.service';
 import {
   aiMuteId,
   askedNotFound,
+  lowConfTermItems,
+  termId,
+  wrongAsked,
   buildSynonymPrompt,
   EDITOR_ASSIST,
   filterSynonyms,
@@ -66,6 +79,9 @@ import {
   type AskedRow,
   type SuggestionCard,
   type SynonymDropCode,
+  type TermItem,
+  type WrongItem,
+  type WrongRow,
 } from './editor-assist';
 import type { ResolvedEditor } from './editor-session.service';
 
@@ -89,6 +105,10 @@ export interface EditorMissesView {
   items: MapMissItem[];
   /** «Просили, не нашли» на этом шаблоне страниц. */
   asked: AskedItem[];
+  /** (заход 11) Все цели страницы с шагами за 7 дней — тепловые значки. */
+  heat: MapMissItem[];
+  /** (заход 11) Команды «не туда» по целям страницы — «перепривязать». */
+  wrong: WrongItem[];
 }
 
 export interface EditorSuggestionsView {
@@ -327,6 +347,9 @@ export class EditorAssistService {
         actor: ed.memberId,
         source: 'suggestion',
         op: op as Prisma.InputJsonValue,
+        // Часы сервиса (а не базы): частота и «не предлагать» считаются
+        // ими же — тест на подменённых часах не зависит от нагрузки.
+        createdAt: this.now(),
       },
     });
   }
@@ -506,34 +529,187 @@ export class EditorAssistService {
     ed: ResolvedEditor,
     pathRaw: unknown,
   ): Promise<EditorMissesView> {
+    return (await this.collect(ed, pathRaw)).view;
+  }
+
+  private async collect(
+    ed: ResolvedEditor,
+    pathRaw: unknown,
+    /** «Предложения»: отклонённые отсекаются ДО срезов (аудит P3-8). */
+    muted?: ReadonlySet<string>,
+  ): Promise<{ view: EditorMissesView; content: VoiceMapContent; db: Db }> {
     const path = this.pathOf(pathRaw);
     const db = this.sitesDb.forAccount(ed.accountId);
     const row = await this.maps.loadMap(db, ed.accountId, ed.siteId);
     const content = parseVoiceMapContent(row.draft);
-    const stats = await this.missesSvc.statsFor(ed.accountId, ed.siteId);
+    const { view: stats, wrongs } = await this.missesSvc.detailFor(
+      ed.accountId,
+      ed.siteId,
+    );
     const keys = new Set(targetsForPage(content, path).map((t) => t.key));
-    return {
+    const heat = stats.items.filter((i) => keys.has(i.key));
+    const view: EditorMissesView = {
       days: stats.days,
       path,
-      items: stats.items.filter((i) => keys.has(i.key)),
-      asked: await this.asked(db, ed.siteId, content, path),
+      items: heat
+        .filter((i) => i.self + i.notFound + i.wrong + i.missed > 0)
+        .slice(0, MAP_MISSES_LIMITS.items),
+      asked: await this.asked(db, ed.siteId, content, path, muted),
+      heat,
+      wrong: await this.wrong(
+        db,
+        ed.siteId,
+        wrongs.filter((w) => keys.has(w.key) && !w.multi),
+        muted,
+      ),
     };
+    return { view, content, db };
   }
 
   async suggestions(
     ed: ResolvedEditor,
     pathRaw: unknown,
   ): Promise<EditorSuggestionsView> {
-    const v = await this.misses(ed, pathRaw);
-    const db = this.sitesDb.forAccount(ed.accountId);
+    const muted = await this.mutedIds(
+      this.sitesDb.forAccount(ed.accountId),
+      ed.siteId,
+    );
+    const { view: v, content, db } = await this.collect(ed, pathRaw, muted);
     return {
       path: v.path,
-      items: suggestionCards(
-        v.asked,
-        v.items,
-        await this.mutedIds(db, ed.siteId),
-      ),
+      items: suggestionCards(v.asked, v.items, muted, {
+        wrong: v.wrong,
+        terms: await this.terms(db, ed.siteId, content, muted),
+      }),
     };
+  }
+
+  /** (заход 11) Команды планов «не туда» (маскированные; мастер и сухие — нет). */
+  private async wrong(
+    db: Db,
+    siteId: string,
+    wrongs: ReadonlyArray<{ key: string; planId: string }>,
+    muted?: ReadonlySet<string>,
+  ): Promise<WrongItem[]> {
+    if (!wrongs.length) return [];
+    const plans = await db.assistSiteUiPlan.findMany({
+      where: {
+        siteId,
+        id: { in: [...new Set(wrongs.map((w) => w.planId))].slice(0, 2000) },
+        voiceTestId: null,
+        dryRun: false,
+      },
+      select: {
+        id: true,
+        visitorId: true,
+        utteranceMasked: true,
+        lang: true,
+        conversationId: true,
+      },
+    });
+    // Хеш IP — диалога плана (аудит P3-2: порог посетителей — и по IP).
+    const convs = await db.assistSiteConversation.findMany({
+      where: {
+        siteId,
+        id: { in: [...new Set(plans.map((p) => p.conversationId))] },
+      },
+      select: { id: true, ipHash: true },
+    });
+    const ipOf = new Map(convs.map((c) => [c.id, c.ipHash]));
+    const byId = new Map(plans.map((p) => [p.id, p]));
+    const rows: WrongRow[] = [];
+    for (const w of wrongs) {
+      const p = byId.get(w.planId);
+      if (p)
+        rows.push({
+          key: w.key,
+          planId: p.id,
+          visitorId: p.visitorId,
+          ipHash: ipOf.get(p.conversationId) ?? null,
+          utterance: p.utteranceMasked,
+          lang: p.lang,
+        });
+    }
+    return wrongAsked(rows, muted);
+  }
+
+  /** (заход 11) Кандидаты в термины за 7 дней (известное карте — нет). */
+  private async terms(
+    db: Db,
+    siteId: string,
+    content: VoiceMapContent,
+    muted?: ReadonlySet<string>,
+  ): Promise<TermItem[]> {
+    const rows = await db.assistSiteSttLowTerm.findMany({
+      where: {
+        siteId,
+        createdAt: {
+          gte: new Date(this.now().getTime() - EDITOR_ASSIST.windowMs),
+        },
+      },
+      select: { norm: true, word: true, visitorHash: true, ipHash: true },
+      orderBy: { createdAt: 'desc' },
+      take: EDITOR_ASSIST.termRows,
+    });
+    const known = new Set<string>();
+    for (const t of content.targets)
+      if (t.status === 'active')
+        for (const p of targetPhrases(t)) known.add(p.norm);
+    for (const x of content.terms) known.add(phraseNorm(x));
+    return lowConfTermItems(rows, known, muted);
+  }
+
+  /**
+   * (заход 11) Принять термин распознавания: id — из СВЕЖЕГО списка
+   * кандидатов (текст берёт сервер, не панель), запись — `set-terms`
+   * черновика обычной операцией (ревизия 409, ≤ 100 терминов — 422);
+   * публикуется, как всё, через ворота и подтверждение.
+   */
+  async acceptTerm(
+    ed: ResolvedEditor,
+    body: unknown,
+  ): Promise<{ revision: number; term: string }> {
+    const b = (body ?? {}) as { expectedRevision?: unknown; id?: unknown };
+    if (
+      typeof b.expectedRevision !== 'number' ||
+      !Number.isInteger(b.expectedRevision) ||
+      typeof b.id !== 'string' ||
+      !ID_RE.test(b.id)
+    )
+      throw this.bad('Нужны ревизия черновика и id предложения');
+    const db = this.sitesDb.forAccount(ed.accountId);
+    const row = await this.maps.loadMap(db, ed.accountId, ed.siteId);
+    if (row.draftRevision !== b.expectedRevision)
+      throw voiceMapError(
+        HttpStatus.CONFLICT,
+        'VOICE_MAP_CONFLICT',
+        'Карту изменили в другой вкладке — обновите',
+      );
+    const content = parseVoiceMapContent(row.draft);
+    const item = (await this.terms(db, ed.siteId, content)).find(
+      (t) => t.id === b.id && t.visitors >= EDITOR_ASSIST.minTermVisitors,
+    );
+    if (!item) throw this.bad('Такого предложения термина нет');
+    if (content.terms.length >= EDITOR_ASSIST.termsMax)
+      throw voiceMapError(
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        'VOICE_MAP_INVALID',
+        `Терминов в карте больше нет места (≤ ${EDITOR_ASSIST.termsMax})`,
+        { errors: [{ path: 'terms', code: 'limit' }] },
+      );
+    const res = await this.maps.patch(
+      { accountId: ed.accountId, memberId: ed.memberId },
+      ed.siteId,
+      {
+        expectedRevision: row.draftRevision,
+        ops: [{ op: 'set-terms', terms: [...content.terms, item.phrase] }],
+      },
+      'editor',
+    );
+    this.logger.log(
+      `editor term site=${ed.siteId} id=${termId(phraseNorm(item.phrase))} terms=${content.terms.length + 1}`,
+    );
+    return { revision: res.revision, term: item.phrase };
   }
 
   /**
@@ -546,6 +722,7 @@ export class EditorAssistService {
     siteId: string,
     content: VoiceMapContent,
     path: string,
+    muted?: ReadonlySet<string>,
   ): Promise<AskedItem[]> {
     const since = new Date(this.now().getTime() - EDITOR_ASSIST.windowMs);
     const logs = await db.assistSiteUiActionLog.findMany({
@@ -616,6 +793,6 @@ export class EditorAssistService {
     for (const t of content.targets)
       if (t.status === 'active')
         for (const p of targetPhrases(t)) known.add(`${p.lang}:${p.norm}`);
-    return askedNotFound(rows, known);
+    return askedNotFound(rows, known, muted);
   }
 }

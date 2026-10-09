@@ -98,7 +98,13 @@ import type {
 } from '../assist-site-learning/api-types';
 import { LearningSignals } from '../assist-site-learning/public/learning-signals';
 import { markVoiceDialog } from '../assist-site-voice/public/voice-dialog';
-import { verifyVoiceTicket } from '../assist-site-voice/public/voice-ticket';
+import {
+  inSiteDictionary,
+  termsFromSpans,
+} from '../assist-site-voice/public/stt-low-conf';
+import { insertLowConfTerms } from '../assist-site-voice/public/stt-low-terms';
+import { siteSttTerms } from '../assist-site-voice/public/stt-terms';
+import { readVoiceTicket } from '../assist-site-voice/public/voice-ticket';
 import { voiceTicketKeys } from '../../config/voice-env';
 import { parsePersona, type PersonaConfig } from '../assist-site-setup/persona';
 import { AiUsageRecorder } from '../site-ai/usage-recorder';
@@ -478,15 +484,17 @@ export class SiteChatService {
     // Э5 (§4.10, §7.1): вопрос задан голосом — билет распознавания на ЭТОТ
     // текст этого посетителя; диалог — весом 2 (доплата, если он уже
     // засчитан текстом; не поместилась — вопрос идёт как текстовый).
-    if (
-      input.voiceTicket &&
-      verifyVoiceTicket(voiceTicketKeys(this.env), input.voiceTicket, {
-        siteId: site.siteId,
-        visitorId: input.visitor.visitorId,
-        text: question,
-        now,
-      })
-    ) {
+    const ticket = input.voiceTicket
+      ? readVoiceTicket(voiceTicketKeys(this.env), input.voiceTicket, {
+          siteId: site.siteId,
+          visitorId: input.visitor.visitorId,
+          text: question,
+          now,
+        })
+      : null;
+    // №113 (заход 11): неуверенно распознанные слова вопроса (билет v2).
+    const lowSpans = ticket?.spans ?? [];
+    if (ticket) {
       await markVoiceDialog(db, {
         accountId: site.accountId,
         conversationId: convId,
@@ -758,6 +766,8 @@ export class SiteChatService {
         vector: emb.vector,
       });
       actual += found.costMicroUsd;
+      if (lowSpans.length && !site.preview)
+        await this.lowConfTerms(site, input.visitor, lowSpans, found.hits, now);
       ctx.trace.translated = found.translated;
       if (!found.hits.length) {
         ctx.trace.rule ??= 'no_knowledge';
@@ -809,6 +819,44 @@ export class SiteChatService {
         reserved.reservation as BudgetReservation,
         actual,
       );
+    }
+  }
+
+  /**
+   * №113 (заход 11, Р-З11-Б8): неуверенные слова ВОПРОСА — в кандидаты
+   * терминов, только если слово есть в словаре сайта: найденные фрагменты
+   * знаний (не UGC: отзывы несут имена), имена/термины опубликованной карты
+   * и мемо (`siteSttTerms`, кэш). Фамилия или улица из вопроса, которых на
+   * сайте нет, не сохраняются. Сбой — только warn.
+   */
+  private async lowConfTerms(
+    site: AskInput['site'],
+    visitor: AskInput['visitor'],
+    spans: readonly string[],
+    hits: readonly SearchHit[],
+    now: Date,
+  ): Promise<void> {
+    try {
+      const cands = termsFromSpans(spans);
+      if (!cands.length) return;
+      const sources = [
+        ...hits
+          .filter((h) => !h.ugc)
+          .flatMap((h) => [h.text, h.title ?? '', h.headingPath ?? '']),
+        ...(await siteSttTerms(this.db, site.siteId)),
+      ];
+      const terms = cands.filter((c) => inSiteDictionary(c.norm, sources));
+      if (terms.length)
+        await insertLowConfTerms(this.db, {
+          accountId: site.accountId,
+          siteId: site.siteId,
+          visitorId: visitor.visitorId,
+          ipHash: visitor.ipHash,
+          now,
+          terms,
+        });
+    } catch (e) {
+      this.logger.warn(`ask low-conf terms: ${(e as Error).name}`);
     }
   }
 

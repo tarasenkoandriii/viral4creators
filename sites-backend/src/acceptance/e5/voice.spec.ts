@@ -816,4 +816,82 @@ describeDb('Приёмка Э5 — голос виджета', () => {
     expect(left).toHaveLength(1);
     expect(left[0].key).not.toBe('site:old');
   });
+  it('№113 (заход 11, Р-З11-Б8): распознавание НЕ пишет кандидатов — места неуверенных слов идут в билет v2; вопрос чата пишет только слово из словаря сайта (знания), фамилию — нет; предпросмотр — нет; ретенция 30 дней (29 — остаётся)', async () => {
+    const s = await voiceSite();
+    const before = fake.transcript;
+    const rows = () =>
+      st.owner.assistSiteSttLowTerm.findMany({
+        where: { siteId: s.siteId },
+        orderBy: { createdAt: 'asc' },
+      });
+    try {
+      fake.transcript = 'Яка гарантія на електрочайник Тарасенко?';
+      fake.confidence = { електрочайник: 0.3, 'Тарасенко?': 0.2 };
+      const v = st.visitor();
+      const r = await voice.transcribe(
+        ctx(s, v),
+        fakeRecording(),
+        'audio/webm',
+      );
+      expect(r.ok).toBe(true);
+      const heard = r as { text: string; ticket: string };
+      // «електрочайник Тарасенко» — одна фраза из двух неуверенных слов.
+      expect(heard.ticket).toMatch(/^v2\.\d+\.16-23\./);
+      expect(await rows()).toEqual([]);
+      // Вопрос чата с билетом: «електрочайник Тарасенко» в знаниях нет —
+      // ни фраза, ни фамилия не пишутся.
+      await st.ask(s, heard.text, { visitor: v, voiceTicket: heard.ticket });
+      expect(await rows()).toEqual([]);
+      // Фамилия отдельно (не соседи): «електрочайник» есть в знаниях — пишется.
+      fake.transcript = 'Яка гарантія на електрочайник для Тарасенко?';
+      const v2 = st.visitor();
+      const r2 = (await voice.transcribe(
+        ctx(s, v2),
+        fakeRecording(),
+        'audio/webm',
+      )) as { text: string; ticket: string };
+      await st.ask(s, r2.text, { visitor: v2, voiceTicket: r2.ticket });
+      const got = await rows();
+      expect(got.map((x) => [x.norm, x.word, x.ipHash])).toEqual([
+        ['електрочайник', 'електрочайник', v2.ipHash],
+      ]);
+      expect(got[0].visitorHash).toMatch(/^[0-9a-f]{32}$/);
+      expect(got[0].visitorHash).not.toContain(v2.visitorId);
+      // Предпросмотр владельца — не пишет.
+      const v3 = st.visitor();
+      const r3 = (await voice.transcribe(
+        ctx(s, v3),
+        fakeRecording(),
+        'audio/webm',
+      )) as { text: string; ticket: string };
+      await st.ask(s, r3.text, {
+        site: { ...s.ctx(), preview: true },
+        visitor: v3,
+        voiceTicket: r3.ticket,
+      });
+      expect(await rows()).toHaveLength(1);
+      // Ретенция: 31 день — удаляется, 29 — остаётся (срок ровно 30).
+      const old = (days: number, h: string) => ({
+        accountId: s.accountId,
+        siteId: s.siteId,
+        day: '2026-09-01',
+        norm: `x${days}`,
+        word: `x${days}`,
+        visitorHash: h.repeat(32),
+        ipHash: 'ip',
+        createdAt: new Date(Date.now() - days * 86_400_000),
+      });
+      await st.owner.assistSiteSttLowTerm.createMany({
+        data: [old(31, 'a'), old(29, 'b')],
+      });
+      const rr = await st.retention.run(new Date());
+      expect(rr.sttLowTermsDeleted).toBeGreaterThanOrEqual(1);
+      expect((await rows()).map((x) => x.norm).sort()).toEqual([
+        'x29',
+        'електрочайник',
+      ]);
+    } finally {
+      fake.transcript = before;
+    }
+  });
 });

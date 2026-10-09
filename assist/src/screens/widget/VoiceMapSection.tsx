@@ -9,6 +9,8 @@
  * имя, «в карту»/«запретить», «открыть в редакторе»), сверка версии
  * воркером с сухим прогоном (§5-кватер.10) в «Версиях», «отчёт для
  * разработчика» — ссылка только на чтение (§5-кватер.4).
+ * Заход 11 (Ш3 (5)): раскрытия «Снимка» — переключатель «Страница / меню
+ * N» над кадром; у состояния свой скриншот и рамки его новых элементов.
  */
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -435,6 +437,8 @@ function SnapshotPanel({
   const [sel, setSel] = useState<SnapshotElement | null>(null);
   const [name, setName] = useState('');
   const [notice, setNotice] = useState<Notice | null>(null);
+  /** −1 — страница; 0…n−1 — раскрытое состояние (Ш3 (5)). */
+  const [layer, setLayer] = useState(-1);
   const timer = useRef<number | null>(null);
   useEffect(
     () => () => {
@@ -465,6 +469,7 @@ function SnapshotPanel({
     setNotice(null);
     setSel(null);
     setView(null);
+    setLayer(-1);
     try {
       poll(await voiceControl.voiceMap.snapshot(siteId, url.trim(), vp), 45);
     } catch (e) {
@@ -508,6 +513,9 @@ function SnapshotPanel({
       </Button>
     );
   const vw = view?.viewport ?? null;
+  const state = view && layer >= 0 ? (view.states[layer] ?? null) : null;
+  const shot = state ? state.screenshot : (view?.screenshot ?? null);
+  const elements = state ? state.elements : (view?.elements ?? []);
   return (
     <div className="space-y-2 rounded-lg border border-silver-200 dark:border-silver-800 p-2">
       <div className="text-xs font-medium">{t.snap.title}</div>
@@ -539,10 +547,39 @@ function SnapshotPanel({
           {fmt(t.snap.failed, { c: view.errorCode ?? '—' })}
         </p>
       )}
+      {view && view.status === 'done' && view.states.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[11px] text-silver-500">
+            {fmt(t.snap.states, { n: view.states.length })}
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {[-1, ...view.states.map((_, i) => i)].map((i) => (
+              <Button
+                key={i}
+                variant={layer === i ? 'solid' : 'outline'}
+                aria-pressed={layer === i}
+                onClick={() => {
+                  setLayer(i);
+                  setSel(null);
+                }}
+              >
+                {i < 0
+                  ? t.snap.page
+                  : fmt(t.snap.stateLabel, {
+                      l: (view.states[i].label || '—').slice(0, 24),
+                    })}
+              </Button>
+            ))}
+          </div>
+          {state && !state.elements.length && (
+            <p className="text-[11px]">{t.snap.stateNone}</p>
+          )}
+        </div>
+      )}
       {view && view.status === 'done' && vw && (
         <div className="relative w-full overflow-hidden rounded border border-silver-200 dark:border-silver-800">
-          {view.screenshot ? (
-            <img src={view.screenshot.url} alt="" className="block w-full" />
+          {shot ? (
+            <img src={shot.url} alt="" className="block w-full" />
           ) : (
             <div
               className="w-full bg-silver-100 dark:bg-silver-900 text-[11px] p-2"
@@ -551,7 +588,7 @@ function SnapshotPanel({
               {t.snap.none}
             </div>
           )}
-          {view.elements
+          {elements
             .filter((e) => e.box)
             .map((e) => (
               <button

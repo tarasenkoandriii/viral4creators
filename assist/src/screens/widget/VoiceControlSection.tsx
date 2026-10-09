@@ -17,6 +17,7 @@
  * (д) Р-67: включено по прежней редакции рисков — баннер «текст обновлён»
  * и «Прочитал(а)» (без перевода в `test`); метрики цепочек в мониторе.
  * (е) «Голос → Мемо» — `MemoSection` под монитором.
+ * Заход 11: «Автотест» (Т-3 по расписанию) — `AutotestPanel` под мастером.
  */
 import { useState } from 'react';
 import { ExternalLink, FileText, Save, ShieldCheck } from 'lucide-react';
@@ -43,6 +44,7 @@ import {
   type VoiceTestDetail,
 } from '../../lib/voice-control-api';
 import { NoticeBar, type Notice } from '../knowledge/parts';
+import { AutotestPanel } from './AutotestPanel';
 import { Field, Toggle } from './controls';
 import { MemoSection } from './MemoSection';
 import { VoiceMapSection } from './VoiceMapSection';
@@ -463,6 +465,9 @@ function VoiceControlForm({
           </div>
         )}
       </div>
+
+      {/* Заход 11: автотест Т-3 по расписанию */}
+      <AutotestPanel siteId={siteId} />
 
       {/* Монитор Т-4 */}
       {view.monitor && m && (

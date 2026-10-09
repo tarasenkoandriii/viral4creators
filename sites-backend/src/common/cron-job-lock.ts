@@ -21,6 +21,14 @@ import { randomUUID } from 'crypto';
 import type { PrismaService } from '../prisma/prisma.service';
 import { SITES_DB_SCHEMA } from '../prisma/prisma.service';
 
+/**
+ * Ключ замка утренней сводки `/cron/assist-digest` (заход 11, Р-З11-В3):
+ * по его `lastStartedAt`/`lockedUntil` крон «Админки» узнаёт, прошла ли
+ * сегодняшняя сводка (модуль assist-digest не импортирует никто —
+ * правило графа `digest-leaf`, поэтому ключ — здесь).
+ */
+export const ASSIST_DIGEST_CRON_JOB = 'assist-digest';
+
 export interface CronLockResult<T> {
   /** false — замок занят другим тиком, `fn` не вызывалась. */
   ran: boolean;

@@ -3,7 +3,10 @@
  * отчёт недели). withCronLock + CRON_SECRET.
  */
 import { Controller, Get, Headers } from '@nestjs/common';
-import { withCronLock } from '../../../common/cron-job-lock';
+import {
+  ASSIST_DIGEST_CRON_JOB,
+  withCronLock,
+} from '../../../common/cron-job-lock';
 import { assertCronSecret } from '../../../common/cron-secret';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PublicRoute } from '../../telegram-auth/allow-apps.decorator';
@@ -30,7 +33,7 @@ export class AssistDigestController {
     assertCronSecret(authHeader);
     const r = await withCronLock(
       this.prisma,
-      'assist-digest',
+      ASSIST_DIGEST_CRON_JOB,
       DIGEST_LOCK_MS,
       () => this.digest.run(this.digest.now()),
     );

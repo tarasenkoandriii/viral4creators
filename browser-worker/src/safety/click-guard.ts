@@ -31,10 +31,21 @@ export function clickRefusal(t: {
   return null;
 }
 
-const LOGOUT =
+/** «Выход» — словом в тексте или адресе (общий с `write-guard.ts`). */
+export const LOGOUT =
   /(?<![\p{L}\p{N}])(logout|log-out|log_out|logoff|signout|sign-out|sign_out|выйти|выход|вийти|вихід)(?![\p{L}\p{N}])/iu;
-const DESTRUCTIVE =
-  /(^|[/_.=&?:-])(delete|del|remove|destroy|erase|drop|purge|wipe|cancel|refund|void|deactivate|disable|ban|block|reset|logout|logoff|signout|unsubscribe|truncate|clear|approve|reject|send|publish|import|export|download)([/_.=&?:-]|$)/i;
+/** Разрушительное слово в адресе (общий с `write-guard.ts`). */
+export const DESTRUCTIVE =
+  /(^|[/_.=&?:-])(delete|del|remove|destroy|erase|drop|purge|wipe|cancel|refund|void|deactivate|disable|ban|block|reset|logout|logoff|signout|unsubscribe|truncate|clear|approve|reject|send|publish|import|export|download|archive|unarchive|restore|confirm)([/_.=&?:-]|$)/i;
+
+/**
+ * camelCase адреса — на слова через `-` (`/api/deleteOrder` →
+ * `/api/delete-Order`, `logoutAll` → `logout-All`): словари выше ищут
+ * слово целиком, между разделителями (заход 11, аудит P3-4).
+ */
+export function splitCamel(s: string): string {
+  return s.replace(/(\p{Ll}|\p{N})(\p{Lu})/gu, '$1-$2');
+}
 
 export type LinkRefusal = 'offhost' | 'logout' | 'danger' | 'scheme';
 
@@ -52,7 +63,9 @@ export function linkRefusal(
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'scheme';
   if (u.username || u.password) return 'scheme';
   if (!allowedHosts.includes(lockHostOf(u))) return 'offhost';
-  const pathQuery = decodeURIComponentSafe(`${u.pathname}${u.search}`);
+  const pathQuery = splitCamel(
+    decodeURIComponentSafe(`${u.pathname}${u.search}`),
+  );
   if (LOGOUT.test(text) || LOGOUT.test(pathQuery)) return 'logout';
   if (DESTRUCTIVE.test(pathQuery) || paymentPath(u.pathname)) return 'danger';
   if (actionKindsFor(text).length) return 'danger';

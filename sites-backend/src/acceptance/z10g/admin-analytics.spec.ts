@@ -145,6 +145,10 @@ describeE7(
         svc.env = { ...process.env, ...botEnv };
       }
       st.app.get(AdminWeekly).fetchImpl = fetchImpl;
+      // Заход 11 (Р-З11-В3): своя строка замка «сводки» — ожидать нечего,
+      // отчёт недели уходит сразу (общий `assist-digest` берут e3-спеки).
+      st.app.get(AdminWeekly).digest.digestJobKey =
+        `assist-digest:z10g:${randomUUID().slice(0, 8)}`;
       st.app.get(AdminCompensationAlerts).fetchImpl = fetchImpl;
     });
 

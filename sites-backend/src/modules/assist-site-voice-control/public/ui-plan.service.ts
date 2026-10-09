@@ -89,7 +89,15 @@ import {
 import type { UiVisitorViewport } from '../../site-core/ui-map/ui-map-model';
 import { SiteVoiceService } from '../../assist-site-voice/public/site-voice.service';
 import { markVoiceDialog } from '../../assist-site-voice/public/voice-dialog';
-import { verifyVoiceTicket } from '../../assist-site-voice/public/voice-ticket';
+import {
+  carriesFieldValues,
+  termsFromSpans,
+} from '../../assist-site-voice/public/stt-low-conf';
+import { insertLowConfTerms } from '../../assist-site-voice/public/stt-low-terms';
+import {
+  readVoiceTicket,
+  verifyVoiceTicket,
+} from '../../assist-site-voice/public/voice-ticket';
 import { replyKind } from '../../assist-ui-core/action-words';
 import {
   chainAfterUndo,
@@ -448,18 +456,17 @@ export class SiteUiPlanService {
     if (!text) return fail('bad_request');
     // §5-бис.6 п.1: команда — только из речи (билет) или набора в iframe.
     let source: 'voice' | 'typed';
+    // №113 (заход 11): неуверенно распознанные слова из билета v2.
+    let lowSpans: string[] = [];
     if (body.source === 'voice') {
-      const ok = verifyVoiceTicket(
-        voiceTicketKeys(this.env),
-        body.voiceTicket,
-        {
-          siteId: site.siteId,
-          visitorId: visitor.visitorId,
-          text,
-          now,
-        },
-      );
-      if (!ok) return fail('bad_request');
+      const tk = readVoiceTicket(voiceTicketKeys(this.env), body.voiceTicket, {
+        siteId: site.siteId,
+        visitorId: visitor.visitorId,
+        text,
+        now,
+      });
+      if (!tk) return fail('bad_request');
+      lowSpans = tk.spans;
       source = 'voice';
     } else if (body.source === 'typed') {
       source = 'typed';
@@ -798,6 +805,26 @@ export class SiteUiPlanService {
       extra: memo ? { trusted, memoText } : undefined,
       live: this.liveKeys(),
     });
+    // №113 (заход 11, Р-З11-Б8): неуверенные слова команды — кандидаты в
+    // термины карты, но НИКОГДА — если команда несёт значения полей
+    // (диктовка, слоты мемо); не предпросмотр, не мастер, не сухой прогон.
+    if (
+      lowSpans.length &&
+      !site.preview &&
+      !test &&
+      !dryRun &&
+      !carriesFieldValues(raw, memo?.values)
+    )
+      await insertLowConfTerms(this.db, {
+        accountId: site.accountId,
+        siteId: site.siteId,
+        visitorId: visitor.visitorId,
+        ipHash: visitor.ipHash,
+        now,
+        terms: termsFromSpans(lowSpans),
+      }).catch((e: Error) =>
+        this.logger.warn(`ui-plan low-conf terms: ${e.name}`),
+      );
     // Журнал: сам план и каждая отказанная цель (метрика «0 нарушений» Т-4
     // считает попытки по запрещённым целям — часть (г)).
     const top = steps.reduce<UiRisk>(

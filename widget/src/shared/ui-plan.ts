@@ -146,7 +146,7 @@ export const ASSIST_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const TARGET_REF = /^(e[1-9]\d{0,2}|m[1-9]\d?|after)$/;
 
 /** Селектор карты — печатный CSS без `<`, обратных кавычек и управляющих. */
-function selectorOk(s: string): boolean {
+export function selectorOk(s: string): boolean {
   // eslint-disable-next-line no-control-regex
   return s.length <= 200 && !/[\u0000-\u001f\u007f<`]/.test(s);
 }

@@ -294,6 +294,14 @@ export const ADMIN_SESSION_HEADER = 'X-Assist-Admin-Session';
 export const ADMIN_MESSAGE_NS = 'v4c-admin';
 /** BroadcastChannel вкладок `wa.`: `<префикс>:<pk>` (сброс при смене сотрудника). */
 export const ADMIN_CHANNEL_PREFIX = 'v4c-admin';
+/**
+ * Заход 11 (№117): HTML iframe панели редактора карты «Админки» на `wa.`
+ * (тот же чанк `editor-panel.js`, что у `we.`) и метка контура в его
+ * разметке (`<meta name="…" content="admin">`): по ней панель берёт API
+ * `/assist-admin/v1/editor/*` и сессию сотрудника `wa.`.
+ */
+export const WIDGET_ADMIN_EDITOR_FRAME_PATH = '/wa/v1/editor-frame';
+export const EDITOR_KIND_META = 'v4c-editor-kind';
 
 // ── Э3-бис: связанный режим (согласие), эксперименты, поведение ──────────
 // Зеркало — widget/src/shared/brand.ts (сверяет widget/scripts/brand.test.ts).

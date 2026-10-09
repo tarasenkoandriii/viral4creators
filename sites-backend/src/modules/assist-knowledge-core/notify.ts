@@ -131,6 +131,8 @@ export async function sendToMembers(p: {
   chatIds: bigint[];
   text: string;
   button: { text: string; hashPath: string };
+  /** Заход 11 (Р-З11-В3): ещё кнопки web_app — каждая своей строкой. */
+  moreButtons?: Array<{ text: string; hashPath: string }>;
   env?: BotNotifyEnv;
   fetchImpl?: FetchLike;
 }): Promise<number> {
@@ -144,7 +146,9 @@ export async function sendToMembers(p: {
     return 0;
   }
   const doFetch = p.fetchImpl ?? (fetch as unknown as FetchLike);
-  const url = tmaLink(base, p.button.hashPath);
+  const keyboard = [p.button, ...(p.moreButtons ?? [])].map((x) => [
+    { text: x.text, web_app: { url: tmaLink(base, x.hashPath) } },
+  ]);
   let sent = 0;
   for (const chatId of p.chatIds) {
     try {
@@ -156,9 +160,7 @@ export async function sendToMembers(p: {
           body: JSON.stringify({
             chat_id: chatId.toString(),
             text: p.text,
-            reply_markup: {
-              inline_keyboard: [[{ text: p.button.text, web_app: { url } }]],
-            },
+            reply_markup: { inline_keyboard: keyboard },
           }),
         },
       );

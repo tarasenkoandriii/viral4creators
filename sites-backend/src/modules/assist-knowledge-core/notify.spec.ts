@@ -55,6 +55,43 @@ describe('уведомление в бот помощника', () => {
       '"web_app":{"url":"https://t.example/#/sites/s/knowledge/site/versions"}',
     );
   });
+
+  it('заход 11 (Р-З11-В3): ещё кнопки — каждая своей строкой после основной', async () => {
+    const bodies: Array<{
+      reply_markup: {
+        inline_keyboard: Array<
+          Array<{ text: string; web_app: { url: string } }>
+        >;
+      };
+    }> = [];
+    await sendToMembers({
+      chatIds: [7n],
+      text: 'сводка',
+      button: { text: 'Статистика', hashPath: '/sites/s/stats' },
+      moreButtons: [
+        { text: 'Статистика «Админки»', hashPath: '/sites/s/admin-mode/stats' },
+      ],
+      env: { ASSIST_BOT_TOKEN: 'TKN', ASSIST_TMA_URL: 'https://t.example/' },
+      fetchImpl: async (_u, init) => {
+        bodies.push(JSON.parse(init.body));
+        return { ok: true, status: 200 };
+      },
+    });
+    expect(bodies[0].reply_markup.inline_keyboard).toEqual([
+      [
+        {
+          text: 'Статистика',
+          web_app: { url: 'https://t.example/#/sites/s/stats' },
+        },
+      ],
+      [
+        {
+          text: 'Статистика «Админки»',
+          web_app: { url: 'https://t.example/#/sites/s/admin-mode/stats' },
+        },
+      ],
+    ]);
+  });
 });
 
 describe('язык уведомления (Р-З9-7)', () => {

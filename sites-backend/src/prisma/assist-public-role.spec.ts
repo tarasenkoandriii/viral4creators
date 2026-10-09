@@ -278,6 +278,47 @@ if (!RAW_URL) {
       }
     });
 
+    it('№113 (заход 11): план/чат пишут кандидатов в термины (ровно SQL stt-low-terms.ts, одним INSERT), но не читают и не правят их; длины/формат — триггер', async () => {
+      const { lowTermsSql } =
+        await import('../modules/assist-site-voice/public/stt-low-terms');
+      const run = async (sql: string, params: unknown[]) => {
+        await client.query('BEGIN');
+        try {
+          await client.query('SET LOCAL ROLE assist_public');
+          await client.query(sql, params);
+        } finally {
+          await client.query('ROLLBACK');
+        }
+      };
+      const head = ['a', 's', '2026-10-11', 'f'.repeat(32), 'ip'];
+      // Права есть: дальше падает только внешний ключ (сайта 's' нет).
+      for (const n of [1, 3])
+        await expect(
+          run(lowTermsSql(n), [
+            ...head,
+            ...Array.from({ length: n }, (_, i) => [`x${i}`, `x${i}`]).flat(),
+          ]),
+        ).rejects.toMatchObject({ code: '23503' });
+      // Триггер до ключа: неверный хеш посетителя, длинное слово, дата.
+      for (const bad of [
+        ['a', 's', '2026-10-11', 'h', 'ip', 'x', 'x'],
+        ['a', 's', '2026-10-11', 'f'.repeat(32), 'ip', 'x', 'x'.repeat(41)],
+        ['a', 's', '11.10.2026', 'f'.repeat(32), 'ip', 'x', 'x'],
+      ])
+        await expect(run(lowTermsSql(1), bad)).rejects.toMatchObject({
+          code: '23514',
+        });
+      for (const sql of [
+        `SELECT "word" FROM ${S}."assist_site_stt_low_terms" LIMIT 1`,
+        `UPDATE ${S}."assist_site_stt_low_terms" SET "word" = 'x' WHERE false`,
+        `DELETE FROM ${S}."assist_site_stt_low_terms" WHERE false`,
+        `INSERT INTO ${S}."assist_site_stt_low_terms" ("accountId", "siteId", "day", "norm", "word", "visitorHash", "ipHash") SELECT 'a', 's', '2026-10-11', 'x', 'x', 'h', 'ip' WHERE false ON CONFLICT ("siteId", "day", "norm", "visitorHash") DO NOTHING`,
+        `INSERT INTO ${S}."assist_site_stt_low_terms" ("accountId", "siteId", "day", "norm", "word", "visitorHash", "ipHash", "createdAt") SELECT 'a', 's', '2026-10-11', 'x', 'x', 'h', 'ip', now() WHERE false`,
+      ]) {
+        await expect(asPublic(sql)).rejects.toMatchObject({ code: '42501' });
+      }
+    });
+
     it('Э3: виджет создаёт передачу, сигнал очереди, событие цели и счётчик; отвязывает лид', async () => {
       for (const sql of [
         `SELECT "handoffConfig", "handoffEtaMinutes", "timezone", "analytics" FROM ${S}."assist_sites" LIMIT 1`,
@@ -757,6 +798,9 @@ if (!RAW_URL) {
         // Э5 (миграция _assist_voice): кэш озвучки — чтение своей записи
         // и вставка без цели конфликта.
         assist_site_tts_cache: ['column:SELECT', 'column:INSERT'],
+        // №113 (заход 11, миграция _assist_stt_low_terms): неуверенные
+        // слова распознавания — только вставка, без цели конфликта.
+        assist_site_stt_low_terms: ['column:INSERT'],
         // Э6 (миграция _assist_video_highlight): ролики сайта — только
         // чтение колонок показа и ссылки; карта интерфейса — элементы
         // страницы и счётчик промахов «карта устарела».

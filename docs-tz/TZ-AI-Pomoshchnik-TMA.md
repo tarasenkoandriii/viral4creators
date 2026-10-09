@@ -7456,10 +7456,31 @@ model AssistSiteVoiceMapSnapshot { id String @id; siteId String; hostId String; 
 // AssistSiteUiSynonym (§4-тер.14) — упраздняется: синонимы живут в целях карты
 // AssistSiteVoiceControlCommand — остаётся; источник: цели карты и мемо с control = true + топ боя
 // AssistSiteUiActionLog: + mapKey String?; mapMiss Boolean @default(false)
-// «Админка»: assist_admin_voice_maps, assist_admin_voice_map_templates, assist_admin_voice_map_targets,
+// «Админка»: assist_admin_voice_maps (черновик JSON + draftRevision, publishedVersion),
 //   assist_admin_voice_map_versions (мемо «Админки» — assist_admin_memo*, §5-бис.17), assist_admin_voice_map_editor_sessions;
-//   изменения — строки `voice-map` в assist_admin_action_log; voiceMapVersion «Админки» — в assist_admin_settings
+//   изменения — строки `voice-map` в assist_admin_action_log; voiceMapVersion «Админки» —
+//   assist_admin_voice_maps.publishedVersion (поправка ниже, Р-З11-А1)
+// Модели …Template/…Target выше (и их «Админки») не реализованы — см. поправку ниже.
 ```
+
+**Поправка (заход 11, 09.10.2026, Р-З11-А1).** Модель данных голосовой
+карты (оба контура). Цели и шаблоны страниц хранятся не отдельными
+таблицами (`assist_site_voice_map_templates/_targets`,
+`assist_admin_voice_map_templates/_targets`), а JSON-содержимым: черновик —
+в строке карты (`assist_site_voice_maps.draft` /
+`assist_admin_voice_maps.draft`, с ревизией `draftRevision`), версия —
+неизменяемым снимком в строке версии (`…_voice_map_versions.content`).
+Номер опубликованной версии — `assist_site_voice_maps.publishedVersion` /
+`assist_admin_voice_maps.publishedVersion` (не
+`assist_admin_settings.voiceMapVersion`). Обоснование: одно чистое ядро
+(`applyMapOps`, ворота, дифф, экспорт/импорт) работает над
+JSON-содержимым; версия — атомарный снимок одной строкой; индекс фраз для
+прямого пути — общие таблицы фраз (`assist_site_phrases` /
+`assist_admin_phrases`, владелец `voice-map`). Для «Сайта» это уже
+действовало с Э6-тер (Р-Э6т-1, Р-Э6т-4); журнал изменений «Админки» —
+только строки `voice-map.*` в `assist_admin_action_log` (своей таблицы,
+как `assist_site_voice_map_changes`, нет), снимков режима «Снимок» у
+«Админки» нет. Миграция «Админки» — `20261012100000_assist_admin_voice_map`.
 
 Представление `assist_site_voice_map_published` (ключ, шаблон,
 дескриптор, риск, denylist опубликованной версии — **без** имён и

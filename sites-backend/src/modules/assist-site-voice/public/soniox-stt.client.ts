@@ -52,6 +52,11 @@ import {
   type SonioxSweepResult,
 } from '../../../shared/soniox-sweep';
 import { VOICE_DEFAULTS } from '../voice-config';
+import {
+  lowConfidenceTerms,
+  type LowConfTerm,
+  type SonioxConfToken,
+} from './stt-low-conf';
 
 export interface SiteSttRequest {
   audio: Buffer;
@@ -76,6 +81,11 @@ export interface SiteSttResult {
   seconds: number;
   /** Задача у Soniox создана — вызов оплачен, даже без текста. */
   billable: boolean;
+  /**
+   * №113 (заход 11): неуверенно распознанные слова — кандидаты в словарь
+   * терминов (`stt-low-conf.ts`); только при тексте. В лог — не идут.
+   */
+  lowConf?: LowConfTerm[];
 }
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -202,6 +212,9 @@ export class SiteSonioxStt {
                 language: parsed.language,
                 seconds,
                 billable: true,
+                lowConf: lowConfidenceTerms(
+                  t.tokens as SonioxConfToken[] | undefined,
+                ),
               }
             : { ...fail('no_speech'), seconds };
         }

@@ -1216,10 +1216,25 @@ export class AdminMemoService {
         take: 2000,
       });
       if (!phrases.length) return null;
-      const index = new Map(phrases.map((p) => [p.norm, p.owner]));
+      // Раунд исправлений захода 11 (аудит P3-3): выбор мемо — только по
+      // фразам МЕМО. Фраза карты «Админки» (`owner: voice-map`) больше не
+      // затеняет более короткую фразу мемо («статус» + «статус замовлення»):
+      // порядок плана прежний — мемо → API → прямой путь карты.
+      const memos = phrases.filter((p) => p.owner.startsWith('memo:'));
+      const index = new Map(memos.map((p) => [p.norm, p.owner]));
       const hit = phrasePrefix(text, (n) => index.has(n));
-      // Ни номера, ни фразы — lite-выбор моделью (как у «Сайта»).
-      if (!hit) return this.liteMatch(ctx, text);
+      if (!hit) {
+        // Команда — фраза карты: это явная команда цели (прямой путь карты),
+        // lite-выбор мемо моделью её не перехватывает.
+        if (
+          phrasePrefix(text, (n) =>
+            phrases.some((p) => p.norm === n && !p.owner.startsWith('memo:')),
+          )
+        )
+          return null;
+        // Ни номера, ни фразы — lite-выбор моделью (как у «Сайта»).
+        return this.liteMatch(ctx, text);
+      }
       const owner = index.get(hit.norm)!;
       memo = await db.assistAdminMemo.findFirst({
         where: { siteId: ctx.siteId, id: owner.replace(/^memo:/, '') },

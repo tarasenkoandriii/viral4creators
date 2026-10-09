@@ -333,6 +333,68 @@ describeDb('Приёмка Э6-бис (а) — голосовое управле
     expect(conv!.voice).toBe(true);
   });
 
+  it('№113 (заход 11, Р-З11-Б8): неуверенные слова команды (билет v2) — в кандидаты терминов под ролью виджета; команда с вводом (диктовка в поле) — НИКОГДА; билет v2 на другой текст — отказ', async () => {
+    const s = await vcSite();
+    const key = voiceTicketKey(env)!;
+    const v2 = (
+      ctx: UiPlanCtx,
+      text: string,
+      spans: Array<{ start: number; len: number }>,
+    ) =>
+      issueVoiceTicket(key, {
+        siteId: s.siteId,
+        visitorId: ctx.visitor.visitorId,
+        text,
+        now: new Date(),
+        ttlMs: 60_000,
+        spans,
+      });
+    const low = () =>
+      st.owner.assistSiteSttLowTerm.findMany({
+        where: { siteId: s.siteId },
+        orderBy: { norm: 'asc' },
+      });
+    // Прямой путь «відкрий доставку»: «доставку» распознана неуверенно.
+    const c1 = ctxOf(s);
+    const t1 = v2(c1, 'відкрий доставку', [{ start: 8, len: 8 }]);
+    expect(t1).toMatch(/^v2\.\d+\.8-8\./);
+    const p1 = await create(
+      c1,
+      typed(s, 'відкрий доставку', { source: 'voice', voiceTicket: t1 }),
+    );
+    expect(p1.kind).toBe('plan');
+    expect((await low()).map((r) => [r.norm, r.word, r.ipHash])).toEqual([
+      ['доставку', 'доставку', c1.visitor.ipHash],
+    ]);
+    // Диктовка в поле: «введи ім'я Тарасенко» — модель даёт fill; фамилия
+    // распознана неуверенно, но значения полей не пишутся никогда.
+    modelReply = JSON.stringify({
+      command: true,
+      steps: [{ kind: 'fill', target: 'e6', value: 'Тарасенко' }],
+    });
+    const c2 = ctxOf(s);
+    const text2 = "введи ім'я Тарасенко";
+    await create(
+      c2,
+      typed(s, text2, {
+        source: 'voice',
+        voiceTicket: v2(c2, text2, [
+          { start: text2.indexOf('Тарасенко'), len: 9 },
+        ]),
+      }),
+    );
+    expect((await low()).map((r) => r.norm)).toEqual(['доставку']);
+    // Билет v2 на другой текст — 400 (спаны не дают обойти подпись).
+    expect(
+      await failure(
+        create(
+          c1,
+          typed(s, 'відкрий кошик', { source: 'voice', voiceTicket: t1 }),
+        ),
+      ),
+    ).toBe('bad_request');
+  });
+
   // ── прямой путь, запись плана, единицы ─────────────────────────────────
 
   it('прямой путь без модели: «відкрий доставку» → клик по ссылке своего хоста, навигация, без карточки; единица засчитана, журнал «plan»', async () => {

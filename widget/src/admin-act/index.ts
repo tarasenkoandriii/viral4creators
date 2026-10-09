@@ -32,12 +32,7 @@
  */
 import type { ActApi, ActHost } from '../act';
 import { mem, Runner, wordsOf as wordList, type ActNatives } from '../act/exec';
-import {
-  closestDeep,
-  factsOf,
-  takeSnapshot,
-  visibleText,
-} from '../act/snapshot';
+import { dropRows, factsOf, takeSnapshot, visibleText } from '../act/snapshot';
 import {
   maskLabel,
   neverTarget,
@@ -129,13 +124,6 @@ function rowsOf(v: unknown): string[] {
         .filter((x): x is string => typeof x === 'string' && ROW.test(x))
         .slice(0, 5)
     : [];
-}
-
-/** Строка таблицы с одним из названных номеров (целым словом). */
-function rowNamed(row: Element, rows: string[]): boolean {
-  if (!rows.length) return false;
-  const text = ` ${(row.textContent || '').replace(/[^0-9]+/g, ' ')} `;
-  return rows.some((n) => text.indexOf(` ${n} `) >= 0);
 }
 
 export function start(host: ActHost): ActApi {
@@ -274,23 +262,9 @@ export function start(host: ActHost): ActApi {
 
   const snap = (rows: string[]) => {
     const s = takeSnapshot(deny, allow);
-    const drop = new Set<string>();
-    s.refs.forEach((el, ref) => {
-      if (el.getAttribute('data-assist-id')) return;
-      // Строки таблиц и гридов, а вне навигации — и пункты списков (карточки
-      // клиентов `li`/`listitem`): ПД не уходят на сервер (Р-Э6б-6).
-      const row =
-        closestDeep(el, 'tr,[role=row],[role=gridcell],[role=cell]') ||
-        (closestDeep(
-          el,
-          'nav,[role=navigation],[role=menu],[role=menubar],[role=tablist],header,aside'
-        )
-          ? null
-          : closestDeep(el, 'li,[role=listitem]'));
-      if (row && !rowNamed(row, rows)) drop.add(ref);
-    });
-    for (const ref of drop) s.refs.delete(ref);
-    s.snapshot.elements = s.snapshot.elements.filter((e) => !drop.has(e.ref));
+    // Строки таблиц и гридов, а вне навигации — и пункты списков (карточки
+    // клиентов `li`/`listitem`): ПД не уходят на сервер (Р-Э6б-6).
+    dropRows(s, rows);
     // Подпись иконки внутри цели — серверу (стоп-лист «никогда» её увидит).
     for (const e of s.snapshot.elements) {
       const el = s.refs.get(e.ref);

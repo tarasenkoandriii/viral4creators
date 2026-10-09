@@ -21,7 +21,12 @@
  *     живо; огромный документ и суммарный трафик — `traffic_limit`;
  *  9. ПД «Админки» вне таблиц (Ш3-хвост (17)): карточки заказа/покупателя
  *     (Хорошоп-подобная и WooCommerce-разметка) — только структура, вторая
- *     карточка того же вида не открыта.
+ *     карточка того же вида не открыта;
+ * 10. «только чтение» под сессией учётки (заход 11, Р-З11-Г1): запись при
+ *     загрузке и в раскрывашках (POST/PUT, beacon, форма скриптом,
+ *     GraphQL-мутация, GET «выхода», переход на «/cancel», WebSocket) до
+ *     сайта не дошла, доказанное чтение GraphQL прошло; счётчик — в
+ *     журнале; контроль — без сессии WebSocket доходит.
  *
  * Браузер: BROWSER_WORKER_CHROMIUM_PATH, иначе /opt/pw-browsers/chromium,
  * иначе браузер Playwright (PLAYWRIGHT_BROWSERS_PATH). Нет браузера —
@@ -179,6 +184,33 @@ const DASHBOARD = `<!doctype html><html><head><title>Адмінка</title></hea
 <tbody><tr><td>Іван Петренко</td><td>1200 грн</td></tr></tbody></table>
 </body></html>`;
 
+/**
+ * Заход 11 (Р-З11-Г1): страница «Админки», которая пишет сама — при
+ * загрузке (beacon, POST, PUT, GraphQL-мутация, WebSocket) и в
+ * обработчиках раскрывашек (POST, beacon, GET «выхода», отправка формы
+ * скриптом, переход на «/cancel»). Доказанное чтение GraphQL проходит.
+ */
+const RO_PAGE = `<!doctype html><html><head><title>Огляд</title></head><body>
+<h1>Огляд магазину</h1><div id="gql"></div>
+<button aria-expanded="false" onclick="var f=document.createElement('form');f.method='post';f.action='/hit/form';document.body.appendChild(f);f.submit()">Розділи</button>
+<button aria-expanded="false" onclick="location.href='/admin/orders/9/cancel'">Фільтри списку</button>
+<button aria-expanded="false" onclick="document.getElementById('more').hidden=false;this.setAttribute('aria-expanded','true');fetch('/hit/toggle-post',{method:'POST',body:'seen=1'}).catch(function(){});navigator.sendBeacon('/hit/toggle-beacon','x');fetch('/hit/sign-out').catch(function(){});new Image().src='/hit/logout'">Деталі</button>
+<div id="more" hidden><h2>Розгорнуті деталі</h2></div>
+<script>
+navigator.sendBeacon('/hit/beacon', 'seen=1');
+fetch('/hit/load-post', {method:'POST', body:'x'}).catch(function(){});
+fetch('/hit/put', {method:'PUT', body:'x'}).catch(function(){});
+var j = {'content-type':'application/json'};
+fetch('/api/graphql', {method:'POST', headers:j, body: JSON.stringify({query:'mutation { markSeen(id: 1) }'})}).catch(function(){});
+fetch('/api/graphql', {method:'POST', headers:j, body: JSON.stringify({operationName:'Menu', query:'query Menu { menu { title } }'})})
+  .then(function(r){return r.json()}).then(function(d){var h=document.createElement('h2');h.textContent=d.data.menu[0].title;document.getElementById('gql').appendChild(h)}).catch(function(){});
+try { var ws = new WebSocket('wss://${ADMIN}/ws'); ws.onopen = function(){ ws.send('mark-read') }; } catch (e) {}
+</script></body></html>`;
+
+/** Контроль: без сессии (обычный «Снимок») WebSocket до сайта доходит. */
+const WS_PAGE = `<!doctype html><html><head><title>WS</title></head><body><h1>Живий канал</h1>
+<script>try { new WebSocket('wss://${SHOP}/ws-live') } catch (e) {}</script></body></html>`;
+
 d('browser-worker e2e (настоящий Chromium)', () => {
   const stand = new Stand();
   const internet = new FakeInternet(stand);
@@ -190,6 +222,7 @@ d('browser-worker e2e (настоящий Chromium)', () => {
   let sessions = 0;
   const echoed: string[] = [];
   const sessionCookies: string[] = [];
+  const gqlBodies: string[] = [];
 
   beforeAll(async () => {
     await stand.start();
@@ -228,6 +261,7 @@ d('browser-worker e2e (настоящий Chromium)', () => {
           '<!doctype html><title>set</title><h1>Cookie</h1><button>Ок</button>',
         );
       })
+      .page(SHOP, '/ws-page', WS_PAGE)
       .page(ADMIN, '/login', LOGIN)
       .on(ADMIN, '/login', (q, res, body) => {
         if (q.method === 'POST') {
@@ -285,6 +319,14 @@ d('browser-worker e2e (настоящий Chromium)', () => {
         '/admin/reports',
         authed('<!doctype html><title>Звіти</title><h1>Звіти</h1>'),
       )
+      .on(ADMIN, '/admin/ro', authed(RO_PAGE))
+      .on(ADMIN, '/api/graphql', (q, res, body) => {
+        gqlBodies.push(body);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({ data: { menu: [{ title: 'Розділ з GraphQL' }] } }),
+        );
+      })
       // Аудит P1-1: раскрывашка уводит сюда, страница отвечает > 1 с.
       .on(ADMIN, '/admin/slow', (q, res) => {
         setTimeout(
@@ -561,6 +603,81 @@ d('browser-worker e2e (настоящий Chromium)', () => {
     expect(sessionCookies.join(';')).not.toContain('leak');
     // Ни пароля, ни cookie учётки в памяти воркера после задания.
     expect(liveSecretCount()).toBe(0);
+  });
+
+  it('Р-З11-Г1: под сессией учётки — только чтение: запись при загрузке и в раскрывашках не дошла, чтение GraphQL прошло, счётчик в журнале', async () => {
+    gqlBodies.length = 0;
+    const hitsBefore = stand.hits.length;
+    sites.credentials = {
+      username: 'manager',
+      password: '',
+      sessionCookies: JSON.stringify([
+        { name: 'sid', value: 'ok', domain: ADMIN, path: '/', secure: true },
+      ]),
+    };
+    const j = await sites.waitDone(
+      sites.add('admin-crawl', {
+        startUrl: `https://${ADMIN}/admin/ro`,
+        allowedHosts: [ADMIN],
+        viewport: 'desktop',
+        maxPages: 1,
+        maxDepth: 0,
+        loginMethod: 'session',
+      }),
+    );
+    expect(j.error).toBeNull();
+    const r = j.result as { pages: Array<{ url: string; text: string }> };
+    expect(r.pages).toHaveLength(1);
+    // Доказанное чтение GraphQL дошло и отрисовалось; раскрывашка «Деталі»
+    // раскрылась (клик работает — оборваны только запросы).
+    expect(r.pages[0].text).toContain('Розділ з GraphQL');
+    expect(r.pages[0].text).toContain('Розгорнуті деталі');
+    expect(gqlBodies.length).toBeGreaterThanOrEqual(1);
+    expect(gqlBodies.every((b) => b.includes('query Menu'))).toBe(true);
+    expect(gqlBodies.join('\n')).not.toContain('mutation');
+    // Ни записи, ни «выхода», ни перехода на «/cancel», ни WebSocket.
+    const hits = stand.hits.slice(hitsBefore);
+    expect(hits.filter((h) => h.includes('/hit/'))).toEqual([]);
+    expect(hits.some((h) => h.includes('/admin/orders/9/cancel'))).toBe(false);
+    expect(hits.some((h) => h.startsWith('UPGRADE'))).toBe(false);
+    expect(
+      hits.filter((h) => !h.startsWith('GET ') && !h.startsWith('POST ')),
+    ).toEqual([]);
+    expect(
+      hits.filter((h) => h.startsWith('POST ') && !h.includes('/api/graphql')),
+    ).toEqual([]);
+    // Счётчик — в журнале задания, по причинам.
+    let rec: Record<string, unknown> | undefined;
+    for (let i = 0; i < 40 && !rec; i++) {
+      rec = lines
+        .map((l) => JSON.parse(l) as Record<string, unknown>)
+        .find(
+          (x) =>
+            x.msg === 'запись оборвана (только чтение)' && x.jobId === j.id,
+        );
+      if (!rec) await new Promise((res) => setTimeout(res, 50));
+    }
+    expect(rec).toBeDefined();
+    const reason = String(rec!.reason);
+    for (const k of ['method', 'graphql', 'logout', 'danger', 'websocket'])
+      expect(reason).toContain(`${k}:`);
+    expect(Number(rec!.writes)).toBeGreaterThanOrEqual(9);
+  });
+
+  it('контроль к Р-З11-Г1: без сессии («Снимок» без раскрытий) WebSocket до сайта доходит', async () => {
+    const before = stand.hits.length;
+    const j = await sites.waitDone(
+      sites.add(
+        'ui-snapshot',
+        snap(`https://${SHOP}/ws-page`, { screenshot: false }),
+      ),
+    );
+    expect(j.error).toBeNull();
+    for (let i = 0; i < 40; i++) {
+      if (stand.hits.slice(before).some((h) => h.startsWith('UPGRADE'))) break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    expect(stand.hits.slice(before)).toContain(`UPGRADE ${SHOP}/ws-live`);
   });
 
   it('Ш3-хвост (17): карточки заказа и покупателя — структура без имён; вторая карточка того же вида не открыта', async () => {

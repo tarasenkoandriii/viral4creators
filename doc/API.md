@@ -260,7 +260,7 @@
 | `POST /api/assistant/chat` | открыто (`PublicOriginGuard` + `RateLimitGuard`, 10/мин и 60/час) | вопрос посетителя → потоковый ответ; SSE при `Accept: text/event-stream`, иначе JSON-запасной вариант `{text,actions,usage}` (§4.3) — единственный маршрут во всём бэкенде, что сам пишет `@Res()` в обход `ResponseInterceptor` |
 | `POST /api/assistant/event` | открыто (`PublicOriginGuard` + `RateLimitGuard`, 30/мин) | батч клиентской телеметрии виджета (open/ask/action_click/close/proactive_*) — best-effort, ошибка записи не возвращается как ошибка ответа |
 
-Заход 10 (10.10.2026, П-Г5): суточный бюджет консультанта резервируется
+Заход 10 (08.10.2026, П-Г5): суточный бюджет консультанта резервируется
 **до** вызова модели (advisory-lock на сутки, строка резерва в
 `rate_limits` на вопрос, TTL 5 мин). `budget_exhausted` — и когда
 остаток меньше худшей оценки вопроса (≈ $0,012), даже если потрачено
@@ -268,6 +268,13 @@
 SSE клиентом), — расход до конца суток (потолок не обходится); без
 токенов — резерв снимается. Сбой базы при резерве — `upstream`, не ответ
 мимо бюджета.
+
+Заход 11 (09.10.2026, Р-З11-Г6 — полночь UTC): контракт маршрутов не
+менялся. Замок резерва — один на консультанта (не на сутки); «в полёте»
+— живые резервы любых суток, поэтому вопрос, начатый в 23:59, виден и
+после 00:00; расход вопроса, оборванного после первого токена,
+засчитывается суткам обрыва (ключ `assistant-budget:spent:<сутки>:<uuid>`
+в `rate_limits`).
 
 ## Ролики обучалки и статус демо (заход 1 после аудита кронов, 06.10.2026)
 
@@ -577,7 +584,7 @@ sites-backend, внутренний API генератора (HMAC как у Ш1
 `CREDENTIALS_NOT_CONFIGURED`; метаданные учёток работают. Нечитаемый секрет
 (ключ удалён, подмена шифротекста/AAD) — 409 `CREDENTIAL_UNREADABLE`.
 
-Заход 10 (10.10.2026): `POST /internal/sites/credentials/test-accounts/upsert`
+Заход 10 (08.10.2026): `POST /internal/sites/credentials/test-accounts/upsert`
 принимает `account.products: []`, если у учётки остаются продукты вне
 видимости генератора (вне `tutorial|qa`, напр. `assist-admin`) — «хотя бы
 один продукт» проверяется после слияния (Р-З10-45). `assist-admin` —
@@ -659,6 +666,20 @@ on\|degraded, denySelectors, allowSelectors, maxSteps } | null` (только п
 голосовом вводе). Журнал — `assist_site_ui_action_log` (план, шаги, отказы;
 значения полей — только маскированные).
 
+Заход 11 (09.10.2026, №113, Р-З11-Б2/Б3/Б8; миграция
+`20261011150000_assist_stt_low_terms`): `POST /widget/v1/voice` — ответ
+прежний, но `voiceTicket` бывает `v2.<exp>.<спаны>.<sig>` (спаны
+`start-len` неуверенных слов Soniox `confidence` < 0.6, до 3, через `_`;
+подпись над `v2|сайт|посетитель|хеш текста|exp|спаны`, самого текста в
+билете нет; v1 — без неуверенных слов). Формат для клиента непрозрачен,
+его принимают те же `/widget/v1/chat` и `/widget/v1/ui-plan`. Само
+распознавание ничего не пишет; кандидатов в `assist_site_stt_low_terms`
+(≤ 3 на запись, роль виджета — только колоночный INSERT, 30 дней) пишут:
+`POST /widget/v1/ui-plan` — только план без значений полей (не
+предпросмотр, не мастер, не сухой прогон; диктовка в поля — никогда) и
+`POST /widget/v1/chat` — только слова из словаря сайта (знания не-UGC,
+имена/синонимы/термины опубликованной карты и мемо).
+
 ## Э6-бис помощника (г): мастер проверки Т-2, монитор Т-4, канарейка
 
 ТЗ помощника §5-бис.10 п.14–16, §5-бис.12–14; решения владельца 03.10.2026
@@ -695,7 +716,7 @@ sites-backend, виджет (iframe; ссылка мастера `?v4c_voicetest
 Потолок планов сайта в сутки — решение п.2: Business 300 / Pro 1000 или
 `voiceControlPlansPerDay` оператора; посетитель 8/мин и 60/сутки.
 
-Заход 9 (09.10.2026): `POST /widget/v1/voice-test/session` сначала
+Заход 9 (08.10.2026): `POST /widget/v1/voice-test/session` сначала
 проверяет доступ (режим и голос сайта), потом тратит токен — при
 недоступном голосе отказ «выключено» (`off`, 403 `VOICE_CONTROL_OFF`) ДО
 обмена, ссылка остаётся целой (аудит (г)(5)). `POST /widget/v1/voice` (голос Э5) — необязательный
@@ -708,7 +729,7 @@ sites-backend, виджет (iframe; ссылка мастера `?v4c_voicetest
 мастера, «устарел» или промахи ≥ 2 посетителей после отчёта →
 `markup_changed`. Уведомления владельцу — на языке получателя.
 
-Заход 10 (10.10.2026):
+Заход 10 (08.10.2026):
 - `POST /widget/v1/tts` (озвучка ответа, Э5): отказ `limit` — **до**
   платного синтеза (проверка доплаты голоса диалога только чтением);
   параллельные запросы одного ответа — один синтез (Promise в процессе +
@@ -724,6 +745,15 @@ sites-backend, виджет (iframe; ссылка мастера `?v4c_voicetest
   потеря ≥ 50 % целей, тревога не чаще раза в 7 дней, отчёты 30 дней;
   годности для `on` автотест не даёт. Крон
   `/cron/assist-analytics-run` → + `autotests`, `autotestSkipped`.
+
+Заход 11 (09.10.2026, Р-З11-В2): `GET /assist/sites/:id/voice-control/site/tests/:tid`
+— у отчёта `kind: autotest` в `report.autotest` новые поля
+`lostTargetsTotal` (всего потерянных целей; список может быть короче) и
+`commands[].text` — маскированная фраза контрольной команды (`maskLabel`
+поверх маски чата: длинные цифры → `[№]`, без управляющих и bidi-символов,
+≤ 120 с «…»). В отчётах до захода 11 этих полей нет (TMA показывает
+«команда без фразы», «всего» = длина списка). TMA показывает автотест
+отдельным блоком под мастером Т-2.
 
 internal admin (`/internal/admin/assist`, ключ админки):
 
@@ -803,7 +833,7 @@ sites-backend, виджет:
 меняется). Монитор: + метрики цепочек и код `undo_low` (только
 оповещение), инциденты `memo_review` (мемо → `needs_review`).
 
-Заход 9 (09.10.2026):
+Заход 9 (08.10.2026):
 - `POST /widget/v1/ui-plan/:id/undo` в `degraded` (Р-З9-39): + `show[]{ i,
   text, row, assistId, at, variant }` — обратная кнопка объявленной пары
   только для ПОДСВЕТКИ (действия нет); протокол чанка — `ui-undo { comp:
@@ -846,7 +876,7 @@ css-путь), с кандидатами, устойчивостью (`strong | 
 | `GET /assist/sites/:id/videos` | `uiMap{ pages, stalePages, staleElements, lastCapturedAt }` — `stalePages` теперь страницы с устаревшими ЭЛЕМЕНТАМИ |
 | `/internal/sites/tutorial/ui-map` | тело + `viewport?` (`desktop \| mobile \| any`, умолчание `mobile` — окно исследователя обучалки 390×844); элементы — форма Э6 или с `candidates[{ kind, selector?, role?, name? }]`, `assistId`, `role`; пустой массив — снимок обучалки страницы снимается; страниц в карте сайта > 1000 — 403 `UI_MAP_PAGES_LIMIT` |
 
-Заход 9 (09.10.2026): `POST /widget/v1/chat` — вид вёрстки посетителя
+Заход 9 (08.10.2026): `POST /widget/v1/chat` — вид вёрстки посетителя
 (Ш4 (2), Р-З9-1) сервер берёт из заголовков iframe (`Sec-CH-UA-Mobile`,
 иначе User-Agent; `visitorViewport`), как подсветка и план: в промпт идут
 элементы карты своего вида без устаревших для него; тело запроса вид не
@@ -940,7 +970,7 @@ sites-backend, кабинет (initData помощника); права — **т
 conversations, log, proposalsPurged, proposalsDeleted, memoRuns }` (поля
 предложений и мемо — с Э8).
 
-Заход 9 (09.10.2026; миграция `20261009300000_assist_admin_z9c`):
+Заход 9 (08.10.2026; миграция `20261009300000_assist_admin_z9c`):
 - `POST /assist/sites/:id/admin-mode/identity-secret` (и
   `…/connectors/:cn/signing-secret`, Э8) — тело `{ expectedSetAt }` (какой
   выпуск видела TMA; `null` — секрета не было): условный UPDATE, второй
@@ -975,7 +1005,7 @@ conversations, log, proposalsPurged, proposalsDeleted, memoRuns }` (поля
   реплики сотрудника и тексты ответов без результатов инструментов
   (Р-З9-19).
 
-Заход 10 (10.10.2026; миграция `20261010100000_assist_admin_analytics`) —
+Заход 10 (08.10.2026; миграция `20261010100000_assist_admin_analytics`) —
 аналитика «Админки» (№57), только `assistAdmin: owner`:
 
 | Метод и путь | Что |
@@ -999,6 +1029,20 @@ conversations, log, proposalsPurged, proposalsDeleted, memoRuns }` (поля
   тик, 3 попытки), отчёт недели (понедельник ≥ 06:00 UTC) и push
   владельцам по тревоге компенсаций (≤ раза в 10 мин, дедуп сайт × сутки,
   язык получателя; заменяет Р-З9-43).
+
+Заход 11 (09.10.2026; миграция `20261011160000_assist_admin_weekly_digest`,
+Р-З11-В3…В8) — отчёт недели «Админки» разделом сводки:
+- Крон `GET /cron/assist-admin-embed-run` — в `analytics.weekly` новые
+  поля `queued` (сайтов, чей отчёт ждёт сегодняшней сводки) и `flushed`
+  (досланных отдельно сообщений). Пока сводка `assist-digest` впереди
+  (жива ≤ 36 ч и сегодня по UTC не стартовала), неделя обрабатывает до 25
+  сайтов за тик.
+- Сообщение `assist-digest` получателю с разделом «Админка» в день отчёта
+  недели может нести в конце раздел отчёта недели «Админки» (на языке
+  получателя) и вторую web_app-кнопку `#/sites/<id>/admin-mode/stats`;
+  пустые для «Сайта» сутки — отдельный отчёт «Админки» без рамки «Сайта».
+  Не влезло в 4 096 знаков или сводка не дошла — отчёт отдельно после её
+  прохода или через 8 ч; без дублей.
 
 ## Э8 помощника: «Админка» — действия
 
@@ -1081,7 +1125,7 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 `write`/`danger` (ключ `exec:<id>:<попытка>`), `decision`, `chain`
 (статус цепочки компенсации — новой записью), `memo`.
 
-Заход 9 (09.10.2026):
+Заход 9 (08.10.2026):
 - `POST /assist/sites/:id/connectors/:cn/signing-secret` — `{ expectedSetAt }`,
   гонка — 409 `ADMIN_SECRET_CHANGED` (как у секрета JWT, раздел «Э7»).
 - `GET …/admin-chat/state`, `GET /assist-admin/v1/state`, `GET
@@ -1130,7 +1174,7 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 (`host_unknown`). Роль виджета
 видит только колонку `site_hosts.assistRole` (`public|admin`, зеркало
 `adminHostIds` — триггер БД), настроек «Админки» — нет.
-Заход 9 (09.10.2026, остаток (б), Р-З9-24) — знания «Сайта»:
+Заход 9 (08.10.2026, остаток (б), Р-З9-24) — знания «Сайта»:
 `POST /assist/sites/:id/knowledge/site/sources` (url-источник), `PATCH
 …/knowledge/site/sources/:sid` и `PUT …/knowledge/site/hot-pages` с адресом
 на хосте «Админки» — 400 `URL_ADMIN_HOST`; `POST …/knowledge/site/recrawl`,
@@ -1177,7 +1221,7 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 отрезок на странице исполняется только из виджета с голосовым управлением
 (из чата/TMA — честный стоп).
 
-Заход 9 (09.10.2026):
+Заход 9 (08.10.2026):
 - `POST /assist-admin/v1/ui-plan` — предпочтение API и по ЦЕЛЯМ плана
   (Р-З9-23): план «поля + Зберегти», где каждое поле — параметр включённой
   write-операции коннектора (строгая сверка: голова имени параметра и
@@ -1193,6 +1237,19 @@ UTF-8), `X-V4C-Signature` (если выпущен секрет; подписа�
 - Отчёт мастера: `report.fragment` (фрагмент разметки для разработчика),
   `items[].data` (данные пункта для человеческого текста uk/ru/en в TMA);
   сухой прогон — отметка «вірно/не те» на каждом шаге.
+
+Заход 11 (09.10.2026, №117, Р-З11-А7): `POST /assist-admin/v1/ui-plan` и
+`…/:id/resume` используют опубликованную голосовую карту «Админки»
+(маршруты — раздел «Э6-тер», абзац «Заход 11: голосовая карта
+„Админки“»). Порядок: мемо → предпочтение API → прямой путь карты
+(`origin: direct`, без модели) → прямой путь кода → модель; элементы
+denylist карты убираются из снимка до мемо, модели и проверок (и в
+`resume`); фраза карты без глагола — команда; риск карты — нижняя
+граница, решает `checkAdminPlan`. В журнале `ui.plan` — `mapKey`,
+`mapMiss`, `mapVersion`. Синонимы карты «Сайта» здесь не действуют, а
+синонимы карты «Админки» — в плане посетителя (№62). Выбор мемо — только
+по фразам мемо; команда с фразой карты в lite-выбор мемо моделью не
+уходит (Р-З11-А2-13).
 
 ## Э3-бис помощника: аналитика с ИИ
 
@@ -1244,7 +1301,7 @@ API страницы: `V4CAssist('consent', { analytics: true|false })`,
 помощника / с ним / нет эксперимента), `V4CAssist('ref', cb)` →
 `cb(ref|null)` — колбэки, не Promise.
 
-Заход 9 (09.10.2026; миграция `20261009100000_assist_analytics_z9`): крон
+Заход 9 (08.10.2026; миграция `20261009100000_assist_analytics_z9`): крон
 `GET /cron/assist-analytics-run` → `ai.labels` + `batched` (диалогов,
 отправленных пакетным заданием Gemini Batch API; только при
 `ASSIST_LABEL_BATCH=1`, по умолчанию выкл.; статус разметки `batch`,
@@ -1254,7 +1311,7 @@ API страницы: `V4CAssist('consent', { analytics: true|false })`,
 тарифу на момент уборки: Pro 25 мес (+ 90 дней после ухода с Pro),
 остальные 13 мес.
 
-Заход 10 (10.10.2026): выводы кабинета — новые коды находок `N1` (уход
+Заход 10 (08.10.2026): выводы кабинета — новые коды находок `N1` (уход
 ≤ 60 с после ответа), `N9` (источник UTM не тот), `N11` (после изменения
 страницы; оговорку «совпадение во времени» дописывает код) по ТЗ
 §5-тер.5; у находок — поля `campaign`, `changedAt`. Сверка «до/после» —
@@ -1335,7 +1392,7 @@ code }] } } }`:
 percent-кодировке); пикер шлёт его уже маской и ищет цель по маске пути
 (аудит Э6-тер (3)).
 
-Заход 10 (10.10.2026, №113; сессия редактора, как прочие `/editor/v1/*`):
+Заход 10 (08.10.2026, №113; сессия редактора, как прочие `/editor/v1/*`):
 
 | Метод и путь | Что |
 |---|---|
@@ -1346,6 +1403,92 @@ percent-кодировке); пикер шлёт его уже маской и �
 
 Словари панели ru/en — ленивые `/v1/editor-panel-{ru,en}.js`, режимы —
 ленивый `/v1/editor-assist.js` (DEPLOYMENT §6.22 п.8).
+
+Заход 11 (09.10.2026, остаток №113, Р-З11-Б2…Б9; сессия редактора):
+
+| Метод и путь | Что |
+|---|---|
+| `GET /editor/v1/misses?path=` | + `heat: MapMissItem[]` — все цели страницы с шагами за 7 дней (и только с «выполнено»), ≤ 500, для тепловых значков; + `wrong: [{ id, key, phrase, lang, count, visitors }]` — команды «не туда» (стоп человеком ≤ 5 с после шага цели) по целям страницы: маскированные `utteranceMasked`, без мастера и сухих прогонов, без ПД и ссылок, ≤ 5 на цель, ≤ 30; план нескольких целей карты считается в `wrong`, но фразы не даёт. `items` и TMA-маршрут `…/voice-map/site/misses` — прежние |
+| `GET /editor/v1/suggestions?path=` | новые виды карточек: `{ id, kind: 'wrong', key, phrase, lang, visitors }` и `{ id, kind: 'term', phrase, visitors }` (неуверенное распознавание; известное карте — нет); порог — 2 посетителя за 7 дней, `visitors` = min(разных посетителей, разных IP) (у `asked` — прежние 3); «не предлагать» отсекается до среза; порядок: asked, wrong, term, self; ≤ 30 |
+| `POST /editor/v1/suggestions/term` | `{ expectedRevision, id }` → `{ revision, term }` — принять термин распознавания: текст берёт сервер из свежей свёртки по `id` (произвольный текст маршрут не принимает), `set-terms` черновика (источник `editor`), дальше — обычная публикация. 400 `EDITOR_BAD_REQUEST` (тело; нет такого предложения или один посетитель), 401 `EDITOR_SESSION_EXPIRED`, 409 `VOICE_MAP_CONFLICT`, 422 `VOICE_MAP_INVALID` (`errors[].code: limit` — терминов уже 100). Отклонить — `POST /editor/v1/suggestions/mute { id }` |
+
+Протокол пикер ↔ панель (ns `v4c-editor`): панель → пикер `{ type:
+'heat', items: [{ key, label ≤ 40, bad }] }` (≤ 200; пустой — снять
+значки) — пикер рисует значки `textContent` в закрытом Shadow DOM,
+только пока открыта вкладка «Промахи». «Перепривязать» — пакет
+`upsert-target`/`add-synonym` новой цели + снятие фразы со старой цели
+(только если была её синонимом; сравнение — нормой `phraseNorm`, порт
+сервера), откат — одной «Скасувати останню зміну»; фраза = имя старой
+цели — предупреждение и «Перейменувати» (Р-З11-Б9).
+
+Заход 11: голосовая карта «Админки» (№117, Р-З11-А1…А14,
+Р-З11-А2-1…15; миграция `20261012100000_assist_admin_voice_map`). Модуль
+`assist-admin-voice-map` на общем ядре карты (`assist-ui-core`, контур
+`site|admin`); тела и ответы — как у карты «Сайта» выше, отличия —
+ниже. Коды: общие `VOICE_MAP_*` и `EDITOR_*`, свои
+`ADMIN_VOICE_MAP_PLAN_REQUIRED`, `ADMIN_VOICE_MAP_HOST_REQUIRED`,
+`ADMIN_VOICE_MAP_OWNER_ROLE_REQUIRED`, `EDITOR_OWNER_REQUIRED`.
+
+Кабинет TMA — только `assistAdmin: owner` (менеджер «Сайта» и сотрудник —
+403); изменения (черновик, ссылка, сборка, публикация, откат, импорт) —
+тариф Pro, иначе 402 `ADMIN_VOICE_MAP_PLAN_REQUIRED`; журнал — строки
+`voice-map.*` в `assist_admin_action_log`:
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/admin-mode/voice-map` | сводка: `publishedVersion, draftRevision`, счётчики, `draftGates, draftDirty, versions[], activeSessions, hosts[]` (хосты самой админки), `planAllows` |
+| `GET /assist/sites/:id/admin-mode/voice-map/draft` | `{ revision, publishedVersion, content, gates }` |
+| `PATCH /assist/sites/:id/admin-mode/voice-map/draft` | `{ expectedRevision, ops[] }` → `{ revision, applied }`; 409 `VOICE_MAP_CONFLICT`, 422 `VOICE_MAP_INVALID { errors[{ path, code }] }` |
+| `POST /assist/sites/:id/admin-mode/voice-map/editor-link` | `{ host?, path?, focus? }` → `{ url (https-хост админки + ?v4c_edit=), expiresAt (10 мин), host }`; хоста нет — 409 `ADMIN_VOICE_MAP_HOST_REQUIRED`; в карте ролей «Админки» нет роли → `owner` — 409 `ADMIN_VOICE_MAP_OWNER_ROLE_REQUIRED`; путь `//host`, `/\host` → `/` (Р-З11-А10, так же у «Сайта») |
+| `GET /assist/sites/:id/admin-mode/voice-map/editor-sessions` | `{ items[{ id, host, pagePath, memberId, employeeRef, createdAt, exchangedAt, expiresAt, lastSeenAt }] }` |
+| `DELETE /assist/sites/:id/admin-mode/voice-map/editor-sessions[/:sid]` | «завершить все» / одну → `{ revoked }` |
+| `POST /assist/sites/:id/admin-mode/voice-map/versions` | собрать → версия `checking\|held` (сухого прогона воркером у «Админки» нет — Р-14) |
+| `GET /assist/sites/:id/admin-mode/voice-map/versions[/:n]` | список / версия (`gateReport`, `content`, `diffKeys`) |
+| `POST /assist/sites/:id/admin-mode/voice-map/versions/:n/publish\|discard\|rollback` | как у «Сайта»; `discard` опубликованной — 409 `VOICE_MAP_VERSION_STATE`; «затронутые мемо» — только предупреждение ворот (Р-З11-А4); гонка фраз — 409 `VOICE_MAP_PHRASE_TAKEN` |
+| `GET /assist/sites/:id/admin-mode/voice-map/export` | `{ name, file{ schemaVersion, kind: 'admin', …, signature } }` — без мемо |
+| `POST /assist/sites/:id/admin-mode/voice-map/import` | `{ expectedRevision, file }` → `{ revision, accepted, rejected[], signed }`; без целого `expectedRevision` — 400 `VOICE_MAP_INVALID`; `kind ≠ admin` — 422 `VOICE_MAP_IMPORT_KIND` |
+| `GET /assist/sites/:id/action-log?kind=voice-map` | журнал изменений карты (`voice-map.draft`, `.version`, `.publish`, `.discard`, `.editor-link`, `.editor-session`, `.editor-revoke`; путь страницы — маской `maskPagePath`) |
+
+Панель редактора — iframe на origin `wa.` (заголовок
+`X-Assist-Admin-Session: <сессия сотрудника>` обязателен; `X-Assist-Editor:
+<сессия редактора>` — кроме `session`; CORS — существующее правило
+`/assist-admin/v1/*`):
+
+| Маршрут | Что |
+|---|---|
+| `GET /wa/v1/editor-frame?pk=` | HTML панели (`/v1/editor-panel.js`), метка `<meta name="v4c-editor-kind" content="admin">`; CSP как у чата сотрудника, `frame-ancestors` — только https verified-хосты админки (без Telegram Web); `no-store` |
+| `POST /assist-admin/v1/editor/session` | `{ token, parentOrigin }` → `{ session, expiresAt, absoluteExpiresAt, pagePath, focusKey, host, kind: 'admin' }`; только сотрудник, чья роль JWT в карте ролей ведёт к `owner`, не `pk_test_` — иначе 403 `EDITOR_OWNER_REQUIRED` (до проверки токена, ссылка не сгорает); повтор, срок, чужой origin, сессия другого сайта — 403 `EDITOR_LINK_INVALID`. Редактор привязан к этой сессии сотрудника и её `sub` |
+| `GET /assist-admin/v1/editor/map?path=` | как `/editor/v1/map` + `denySelectors[]`, `allowSelectors[]` (правила голосового управления «Админки») |
+| `POST /assist-admin/v1/editor/ops` | как `/editor/v1/ops`; 409/422 |
+| `POST /assist-admin/v1/editor/try` | `{ text, snapshot }` → `{ heard, via: map\|direct\|model_needed\|none, key, phrase, steps, notes, left }` (без `voice`); снимок не с хоста админки — 400; 429 `EDITOR_TRY_LIMIT` |
+| `POST /assist-admin/v1/editor/publish-request` | версия + сообщение владельцам в бот на их языке; 429 `EDITOR_PUBLISH_LIMIT { scope, retryAfterSec }` (1/мин на сессию, 10/сутки на сайт) |
+| `POST /assist-admin/v1/editor/publish` | всегда 403 `EDITOR_PUBLISH_FORBIDDEN` |
+| `POST /assist-admin/v1/editor/rebind` | `X-Assist-Admin-Session` — НОВАЯ сессия того же `sub` с ролью владельца, `X-Assist-Editor` — живой редактор → `{ expiresAt, absoluteExpiresAt }`; другой `sub`/сайт/роль, редактор истёк или отозван — 401 `EDITOR_SESSION_EXPIRED`; журнал `voice-map.editor-session` `rebound`; срок не продлевается сверх 30 мин / 4 ч |
+| `POST /assist-admin/v1/editor/exit` | сессия гаснет |
+| любой (кроме `session`) | другая сессия сотрудника, перелогин, участник больше не `owner`, роль убрана из карты ролей, хост снят, нет Pro, срок 30 мин / 4 ч — 401 `EDITOR_SESSION_EXPIRED` |
+
+Виджет: на странице админки с тегом `data-mode="admin"` (`wa.`) параметр
+`?v4c_edit=<токен>` снимает `admin.js` и лениво грузит
+`<wa.>/v1/editor.js` (`start(token, pk, <wa.>, lang, jwtProvider)`);
+кнопка и чат сотрудника на этой вкладке не поднимаются. iframe —
+`<wa.>/wa/v1/editor-frame?pk=<pk>#t=<токен>`. Сессию сотрудника панель
+получает сама: JWT от `admin.js` через пикер → `POST
+/assist-admin/v1/session { pk, jwt }`; обновляет её за 90 с до `exp` и на
+401 `ADMIN_SESSION_INVALID` (новая сессия → `rebind` → повтор запроса);
+хранит в `sessionStorage` `wa.` `v4c_ed:<pk>` = `{ s, o, a, x }`. Флаг
+продолжения после перехода (`sessionStorage` страницы): «Сайт» —
+`v4c_edit`, «Админка» — `v4c_edit:admin:<pk>`. `V4CAssist('logout')` на
+странице админки завершает редактор (`exit`). Протокол пикер ↔ панель,
+заход 11: панель → пикер `{ type: 'need-identity' }`; пикер → только
+своему iframe с точным origin `{ type: 'identity', jwt: <employee-JWT> |
+null }`; `snapshot-req { id, rows?: string[≤ 5, ^[0-9]{3,12}$], deny?:
+string[≤ 30], allow?: string[≤ 30] }` (снимок «Админки» без строк таблиц,
+кроме названных номером, и без зон владельца — Р-З11-А2-6); `pick { …,
+row?: boolean }` (элемент строки таблицы/карточки клиента без
+`data-assist-id` — без подписи, цифр в id и `hrefPath`; панель
+предупреждает); пикер → панель `{ type: 'logout' }`. Мемо, «Промахи»,
+«Пропозиції», ИИ-синонимы и микрофон в панели «Админки» скрыты —
+серверных маршрутов нет (Р-З11-А11).
 
 ## Э-С Ш5: системный API знаний сайта (консультант лендинга → тенант)
 
@@ -1502,7 +1645,7 @@ internal`; затем хуки `reconcile` продуктов (обход «Ад
 отменённые задания; потолки на кабинет и сайт считаются под
 `pg_advisory_xact_lock`.
 
-Заход 10 (10.10.2026; миграция `20261010200000_browser_jobs_knowledge_render`
+Заход 10 (08.10.2026; миграция `20261010200000_browser_jobs_knowledge_render`
 — триггер видов/источников):
 - Новый вид `knowledge-render`: вход `{ urls ≤ 4, allowedHosts[1],
   viewport }` → результат `{ pages: [{ i, ok, error, html, links }] }` —
@@ -1518,6 +1661,16 @@ internal`; затем хуки `reconcile` продуктов (обход «Ад
   сохраняется, прочие управляющие → пробел).
 - `stats` прогона обхода «Сайта»: + `excludedHosts` (хосты «Админки» у
   прогонов assist — ни robots, ни sitemap, ни страниц), `render{…}`.
+
+Заход 11 (09.10.2026, Р-З11-Г1…Г8): протокол очереди не менялся
+(`blockedWrites` в результат не добавлен — хвост). `admin-crawl` под
+сессией учётки — «только чтение» на всё задание (кроме окна входа, только
+хостам замка); в раскрытиях `ui-snapshot` тот же страж: доказанное чтение
+GraphQL (`query` на путь `graphql`/`gql`) теперь проходит, так что
+GraphQL-меню попадают в `states` (уточняет заход 10). Переход страницы во
+время `goto`, оборванный стражем, — код `egress_blocked` (был в закрытом
+списке), обход пропускает такую страницу; стартовая — задание
+завершается этим кодом.
 
 ### Сквозной аудит 06.10.2026 — изменения контрактов
 
@@ -1742,7 +1895,7 @@ sites-backend:
   `sonioxForeignSkipped`, `sonioxSkipped?`: уборка у Soniox только своих
   объектов (метка `v4c-sites`) старше часа.
 
-### Заход 9 (09.10.2026) — ИИ-помощник: изменения контрактов
+### Заход 9 (08.10.2026) — ИИ-помощник: изменения контрактов
 
 Подробно — в разделах помощника выше (абзацы «Заход 9» и строки таблиц с
 пометкой «заход 9»); миграции sites-backend
@@ -1777,7 +1930,7 @@ sites-backend:
   (новые); `worker-check` — `dryRun`, `templates`; сборка версии ставит
   сверку сама.
 
-### Заход 10 (10.10.2026) — «остаток TODO»: изменения контрактов
+### Заход 10 (08.10.2026) — «остаток TODO»: изменения контрактов
 
 Подробно — в разделах выше (абзацы «Заход 10»); миграции sites-backend
 `20261010100000_assist_admin_analytics`,
@@ -1825,3 +1978,49 @@ sites-backend:
   — ленивые чанки.
 - Адрес клиента в sites-backend — `clientIp` с `TRUSTED_PROXY_CIDRS` (вне
   Vercel); на Vercel поведение прежнее.
+
+### Заход 11 (09.10.2026) — «вторая волна»: изменения контрактов
+
+Подробно — в разделах выше (абзацы «Заход 11»); миграции sites-backend
+`20261011150000_assist_stt_low_terms`,
+`20261011160000_assist_admin_weekly_digest`,
+`20261012100000_assist_admin_voice_map`; миграций backend нет. Сводно:
+
+- Карта «Админки» (№117), TMA (только `assistAdmin: owner`, изменения —
+  Pro): `GET …/admin-mode/voice-map`, `GET|PATCH …/voice-map/draft`,
+  `POST …/voice-map/editor-link`, `GET|DELETE
+  …/voice-map/editor-sessions[/:sid]`, `POST|GET …/voice-map/versions[/:n]`,
+  `POST …/versions/:n/publish|discard|rollback`, `GET …/voice-map/export`,
+  `POST …/voice-map/import`, `GET …/action-log?kind=voice-map` (новые);
+  коды `ADMIN_VOICE_MAP_PLAN_REQUIRED` (402),
+  `ADMIN_VOICE_MAP_HOST_REQUIRED`, `ADMIN_VOICE_MAP_OWNER_ROLE_REQUIRED`
+  (409); файл экспорта `kind: 'admin'`, чужой контур — 422
+  `VOICE_MAP_IMPORT_KIND` в обе стороны; импорт без `expectedRevision` —
+  400 `VOICE_MAP_INVALID`.
+- Панель редактора «Админки» (`wa.`): `GET /wa/v1/editor-frame?pk=`,
+  `POST /assist-admin/v1/editor/{session,ops,try,publish-request,publish,rebind,exit}`,
+  `GET /assist-admin/v1/editor/map` (новые; `map` — с `denySelectors`/
+  `allowSelectors`); 403 `EDITOR_OWNER_REQUIRED` при обмене ссылки не
+  владельцем; `rebind` — перепривязка к новой сессии сотрудника того же
+  `sub`. Протокол пикер ↔ панель: `need-identity`, `identity`, `logout`,
+  `snapshot-req.rows|deny|allow`, `pick.row`, `heat`; флаг продолжения
+  «Админки» — `v4c_edit:admin:<pk>`.
+- План сотрудника (`POST /assist-admin/v1/ui-plan`, `resume`):
+  опубликованная карта «Админки» — прямой путь, denylist, нижняя граница
+  риска; `mapKey`, `mapMiss`, `mapVersion` в журнале `ui.plan`.
+- Редактор «Сайта» (№113 остаток): `GET /editor/v1/misses` → + `heat`,
+  `wrong`; `GET /editor/v1/suggestions` → карточки `wrong`, `term`;
+  `POST /editor/v1/suggestions/term` (новый).
+- Голос «Сайта»: `voiceTicket` бывает `v2.<exp>.<спаны>.<sig>` (непрозрачен
+  для клиента); кандидаты терминов пишут `ui-plan` (без значений полей) и
+  `chat` (словарь сайта).
+- Автотест Т-3: `report.autotest.lostTargetsTotal`,
+  `report.autotest.commands[].text` (маска `maskLabel`, ≤ 120).
+- «Админка», аналитика: крон `assist-admin-embed-run` →
+  `analytics.weekly.queued`, `flushed`; сводка `assist-digest` — раздел
+  отчёта недели «Админки» и вторая кнопка.
+- Воркер: протокол без изменений; `admin-crawl` под сессией — «только
+  чтение», GraphQL-`query` в «Снимке» проходит; `egress_blocked` при
+  оборванном переходе страницы.
+- Консультант лендинга (`POST /api/assistant/chat`): контракт прежний;
+  резерв бюджета корректен через полночь UTC.

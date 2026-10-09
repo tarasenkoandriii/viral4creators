@@ -23,19 +23,42 @@
  *    выдаёт сервер), затем цели на его id;
  *  - заход 10: вкладки «Промахи»/«Пропозиції» и «✨ Синоніми від ШІ» в
  *    карточке (№113) — ленивый чанк `/v1/editor-assist.js` (`assist.ts`);
- *    словари ru/en — ленивые чанки (`i18n.ts`).
+ *    словари ru/en — ленивые чанки (`i18n.ts`);
+ *  - заход 11 (остаток №113): тепловые значки «Промахов» на странице
+ *    (сообщение `heat` пикеру), «не туди → перепривязати» (фраза — синоним
+ *    выбранной цели, со старой снимается), термины распознавания;
+ *  - заход 11 (№117): та же панель — редактор карты «Админки» в iframe `wa.`
+ *    (метка `<meta name="v4c-editor-kind" content="admin">` в HTML iframe):
+ *    API `/assist-admin/v1/editor/*`, на каждом запросе ещё и сессия
+ *    сотрудника `wa.` (её панель получает сама: JWT от `admin.js` через
+ *    пикер → `POST /assist-admin/v1/session`; редактор привязан к ней, после
+ *    перехода — из `sessionStorage` `wa.`). Мемо, «Промахи»/«Пропозиції»,
+ *    ИИ-синонимы и микрофон у «Админки» скрыты (маршрутов сервера нет);
+ *  - раунд исправлений захода 11: сессия сотрудника живёт до `exp` JWT
+ *    (≤ 15 мин) — за 90 с до него и на 401 `ADMIN_SESSION_INVALID` панель
+ *    берёт свежий JWT, новую сессию сотрудника и `rebind` (тот же `sub`),
+ *    запрос повторяется; «Сказать сейчас» — с зонами владельца
+ *    (`denySelectors`/`allowSelectors`); элемент строки таблицы — без имён и
+ *    номеров (предупреждение); выход сотрудника из админки гасит редактор.
  */
 import './editor-panel.css';
-import { EDITOR_SESSION_HEADER } from '../shared/brand';
+import {
+  ADMIN_SESSION_HEADER,
+  EDITOR_KIND_META,
+  EDITOR_SESSION_HEADER,
+} from '../shared/brand';
 import {
   editorEnvelope,
   parseToPanel,
   type Descriptor,
   type PageTarget,
   type Stability,
+  phraseNorm,
+  type HeatItem,
   type ToPanel,
   type ToPicker,
 } from '../shared/editor-protocol';
+import { rowsInText } from '../act/snapshot';
 import type { AssistApi, AssistCtx } from './assist';
 import { T, fmt, loadLang, type PanelLang } from './i18n';
 import { createMemo } from './memo';
@@ -77,6 +100,9 @@ interface MapView {
   targets: Target[];
   keys: string[];
   gates: { ok: boolean; problems: Array<{ code: string; key?: string }> };
+  /** «Админка»: зоны владельца (правила голосового управления). */
+  denySelectors?: string[];
+  allowSelectors?: string[];
 }
 
 interface Picked {
@@ -84,6 +110,8 @@ interface Picked {
   how: string;
   stability: Stability;
   never: boolean;
+  /** «Админка»: элемент строки таблицы — подпись и номера сняты пикером. */
+  row?: boolean;
 }
 
 interface TryView {
@@ -123,10 +151,24 @@ const KEY_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const params = new URLSearchParams(location.search);
 const PK = params.get('pk') || '';
 const STORE = `v4c_ed:${PK}`;
+/** Заход 11 (№117): контур «Админка» — по метке в разметке HTML iframe `wa.`. */
+const ADMIN =
+  document
+    .querySelector(`meta[name="${EDITOR_KIND_META}"]`)
+    ?.getAttribute('content') === 'admin';
 
 const S = {
   lang: 'uk' as PanelLang,
   session: '',
+  /** «Админка»: сессия сотрудника `wa.`, к которой привязан редактор. */
+  admin: '',
+  /** «Админка»: ждём employee-JWT от `admin.js` (через пикер). */
+  idWait: null as ((jwt: string | null) => void) | null,
+  /** «Админка»: срок сессии сотрудника (мс) — до него обновить JWT. */
+  adminExp: 0,
+  /** «Админка»: зоны владельца для снимка «Сказать сейчас». */
+  deny: [] as string[],
+  allow: [] as string[],
   parentOrigin: '',
   path: '/',
   map: null as MapView | null,
@@ -145,8 +187,13 @@ const S = {
     phrase: string;
     /** Язык фразы (аудит Ж P3-5: «просили» — на языке посетителя). */
     lang: PanelLang;
+    /** (заход 11) «Не туди → перепривязати»: цель, куда фраза вела. */
+    from: string | null;
   } | null,
   wrongLang: 'uk' as PanelLang,
+  wrongFrom: null as string | null,
+  /** (заход 11) Последние отправленные пикеру тепловые значки. */
+  heatSent: '[]',
   pendingLoad: false,
   /** Цель, открытая по ссылке из TMA (находка Т-3/Т-4, §5-кватер.10). */
   focusKey: null as string | null,
@@ -212,11 +259,17 @@ function ask(m: ToPicker & { id: number }): Promise<ToPanel> {
 async function api<T>(
   path: string,
   init: RequestInit = {},
-  type = 'application/json'
+  type = 'application/json',
+  again = true
 ): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': type };
   if (S.session) headers[EDITOR_SESSION_HEADER] = S.session;
-  const r = await fetch(path, { ...init, headers, credentials: 'omit' });
+  if (S.admin) headers[ADMIN_SESSION_HEADER] = S.admin;
+  // «Админка»: те же тела и ответы, свой префикс маршрутов (`wa.`).
+  const url = ADMIN
+    ? path.replace('/editor/v1/', '/assist-admin/v1/editor/')
+    : path;
+  const r = await fetch(url, { ...init, headers, credentials: 'omit' });
   let body: {
     success?: boolean;
     data?: T;
@@ -244,6 +297,16 @@ async function api<T>(
   err.status = r.status;
   err.code = code || body.error?.code || '';
   err.errors = body.error?.details?.errors ?? [];
+  // «Админка»: сессия сотрудника истекла (`exp` JWT) — свежая и `rebind`,
+  // запрос — ещё раз (один).
+  if (
+    again &&
+    ADMIN &&
+    S.session &&
+    err.code === 'ADMIN_SESSION_INVALID' &&
+    (await renew())
+  )
+    return api<T>(path, init, type, false);
   throw err;
 }
 
@@ -275,12 +338,48 @@ const memo = createMemo({
   },
 });
 
-/** Следующий клик по сайту — цель; фраза станет её синонимом («не те → вибрати»). */
-function bind(phrase: string, lang?: string | null): void {
+/**
+ * Следующий клик по сайту — цель; фраза станет её синонимом («не те →
+ * вибрати»). `from` (заход 11, «не туди → перепривязати») — цель, куда
+ * фраза вела: со старой цели фраза снимается, если была её синонимом.
+ */
+function bind(phrase: string, lang?: string | null, from?: string): void {
   S.wrongFor = phrase;
   S.wrongLang = lang === 'uk' || lang === 'ru' || lang === 'en' ? lang : S.lang;
+  S.wrongFrom = from ?? null;
   toPicker({ type: 'mode', mode: 'select' });
   render();
+}
+
+/** (заход 11) Снять фразу со старой цели (если была её синонимом) — операции и обратные. */
+function detach(
+  from: string | null,
+  phrase: string,
+  to: string
+): [unknown[], unknown[]] {
+  const a = from && from !== to && S.map?.targets.find((x) => x.key === from);
+  // Норма — как у сервера (конфликт фраз карты), аудит P2-3.
+  const n = phraseNorm;
+  const langs: PanelLang[] = ['uk', 'ru', 'en'];
+  if (
+    !a ||
+    !langs.some((l) =>
+      (a.synonyms[l] ?? []).some((x) => n(x.text) === n(phrase))
+    )
+  )
+    return [[], []];
+  const synonyms = Object.fromEntries(
+    langs
+      .map((l) => [
+        l,
+        (a.synonyms[l] ?? []).filter((x) => n(x.text) !== n(phrase)),
+      ])
+      .filter(([, v]) => v.length)
+  );
+  return [
+    [{ op: 'upsert-target', target: { key: a.key, synonyms } }],
+    [{ op: 'upsert-target', target: a }],
+  ];
 }
 
 // №113 (заход 10): «Промахи», «Пропозиції», ШІ-синоніми — ленивый чанк.
@@ -401,6 +500,8 @@ async function loadMap(): Promise<void> {
     S.map = await api<MapView>(
       `/editor/v1/map?path=${encodeURIComponent(S.path)}`
     );
+    S.deny = S.map.denySelectors ?? [];
+    S.allow = S.map.allowSelectors ?? [];
     // Карточка — по свежему черновику (после «Зберегти» новая цель уже есть;
     // заход 10: ИИ-синонимы цели — её актуальные `suggested`).
     const e = S.edit;
@@ -420,7 +521,7 @@ async function loadMap(): Promise<void> {
     });
     // «Открыть в редакторе» мемо `memo-<N>-<шаг с 1>` (сигнал needs_review).
     const fm = /^memo-(\d{1,6})(?:-(\d{1,2}))?$/.exec(S.focusKey ?? '');
-    if (fm) {
+    if (fm && !ADMIN) {
       S.focusKey = null;
       S.tab = 'memo';
       void memo.open(+fm[1], fm[2] ? +fm[2] - 1 : null);
@@ -623,6 +724,7 @@ function cardView(): HTMLElement {
           class: 'pri',
           click: human(() => {
             S.pendingSyn = null;
+            const [fwd, back] = detach(syn.from, syn.phrase, t.key);
             void ops(
               [
                 {
@@ -631,13 +733,14 @@ function cardView(): HTMLElement {
                   lang: syn.lang,
                   text: syn.phrase,
                 },
+                ...fwd,
               ],
-              [{ op: 'upsert-target', target: t }],
+              [{ op: 'upsert-target', target: t }, ...back],
               t.key
             );
           }),
         },
-        `+ «${syn.phrase}» → ${t.key}`
+        `+ «${syn.phrase}» → ${t.key}${syn.from && syn.from !== t.key ? ` (${syn.from} ↛)` : ''}`
       )
     );
   box.append(
@@ -647,6 +750,8 @@ function cardView(): HTMLElement {
       `${d.text ? `«${d.text}»` : '—'} · ${d.role || d.tag} · ${p.how} · ${p.stability}`
     )
   );
+  // «Админка»: элемент строки таблицы — имя/номер клиента в карту не идут.
+  if (p.row) box.append(h('p', { class: 'warn row-pd' }, L().rowPd));
   if (p.never) box.append(h('p', { class: 'warn' }, L().never));
   else if (p.stability === 'fragile')
     box.append(h('p', { class: 'warn' }, L().fragile));
@@ -829,9 +934,25 @@ function cardView(): HTMLElement {
           : null,
       },
     });
-    const inverse = t
+    const inverse: unknown[] = t
       ? [{ op: 'upsert-target', target: t }]
       : [{ op: 'remove-target', key: k }];
+    // Заход 11: новая цель из «перепривязати» — фраза уходит со старой цели.
+    const ps = S.pendingSyn;
+    // Аудит P3-7: фраза осталась в поле — точное совпадение по норме.
+    if (
+      !t &&
+      ps &&
+      !ps.key &&
+      list(syns[ps.lang].value).some(
+        (x) => phraseNorm(x.text) === phraseNorm(ps.phrase)
+      )
+    ) {
+      const [fwd, back] = detach(ps.from, ps.phrase, k);
+      opsList.push(...fwd);
+      inverse.push(...back);
+      S.pendingSyn = null;
+    }
     void ops(opsList, inverse, k);
   });
   box.append(
@@ -842,7 +963,7 @@ function cardView(): HTMLElement {
     )
   );
   // №113: ИИ-синонимы цели (`suggested` — только после «Прийняти»).
-  if (t && !p.never && t.status === 'active')
+  if (t && !p.never && t.status === 'active' && !ADMIN)
     box.append(
       ax
         ? ax.card(t)
@@ -1010,14 +1131,15 @@ function tryView(): HTMLElement {
       'div',
       { class: 'row' },
       input,
-      h(
-        'button',
-        {
-          type: 'button',
-          click: human(() => void mic()),
-        },
-        S.mic ? '■' : '🎤'
-      ),
+      !ADMIN &&
+        h(
+          'button',
+          {
+            type: 'button',
+            click: human(() => void mic()),
+          },
+          S.mic ? '■' : '🎤'
+        ),
       h('button', { type: 'button', class: 'pri', click: run }, L().say)
     )
   );
@@ -1119,7 +1241,12 @@ async function runTry(text: string): Promise<void> {
   if (!text) return;
   S.say = text;
   const id = ++S.reqId;
-  const r = await ask({ type: 'snapshot-req', id });
+  // «Админка»: в снимок — только строки таблиц, названные номером в команде.
+  const r = await ask({
+    type: 'snapshot-req',
+    id,
+    ...(ADMIN ? { rows: rowsInText(text), deny: S.deny, allow: S.allow } : {}),
+  });
   if (r.type !== 'snapshot') return;
   try {
     S.tryRes = await api<TryView>('/editor/v1/try', {
@@ -1188,6 +1315,26 @@ function publishView(): HTMLElement {
   return box;
 }
 
+/** Выход: сессия гаснет на сервере ДО снятия пикера (iframe уйдёт с ним). */
+async function leave(): Promise<void> {
+  clearTimeout(renewTimer);
+  await api(
+    '/editor/v1/exit',
+    { method: 'POST', body: '{}' },
+    undefined,
+    false
+  ).catch(() => null);
+  try {
+    sessionStorage.removeItem(STORE);
+    sessionStorage.removeItem(`${STORE}:m`);
+  } catch {
+    /* — */
+  }
+  toPicker({ type: 'exit' });
+  S.fatal = L().exited;
+  render();
+}
+
 function render(): void {
   const root = document.getElementById('app');
   if (!root) return;
@@ -1206,22 +1353,24 @@ function render(): void {
     ['sugg', L().tabSugg],
     ['publish', L().tabPublish],
   ] as const)
-    tabs.append(
-      h(
-        'button',
-        {
-          type: 'button',
-          class: S.tab === id ? 'on' : '',
-          click: () => {
-            S.tab = id;
-            // №113: чанк подсказок — по клику на вкладку (не из перерисовки).
-            if (id === 'miss' || id === 'sugg') assist(axErr);
-            render();
+    // «Админка» (заход 11): мемо и подсказки №113 — следующим шагом.
+    if (!ADMIN || !/^(memo|miss|sugg)$/.test(id))
+      tabs.append(
+        h(
+          'button',
+          {
+            type: 'button',
+            class: S.tab === id ? 'on' : '',
+            click: () => {
+              S.tab = id;
+              // №113: чанк подсказок — по клику на вкладку (не из перерисовки).
+              if (id === 'miss' || id === 'sugg') assist(axErr);
+              render();
+            },
           },
-        },
-        label
-      )
-    );
+          label
+        )
+      );
   root.append(tabs);
   if (S.note) root.append(h('p', { class: 'note' }, S.note));
   root.append(
@@ -1245,25 +1394,18 @@ function render(): void {
       {
         type: 'button',
         class: 'exit',
-        click: human(async () => {
-          // Сессия гаснет на сервере ДО снятия пикера (iframe уйдёт вместе с ним).
-          await api('/editor/v1/exit', { method: 'POST', body: '{}' }).catch(
-            () => null
-          );
-          try {
-            sessionStorage.removeItem(STORE);
-            sessionStorage.removeItem(`${STORE}:m`);
-          } catch {
-            /* — */
-          }
-          toPicker({ type: 'exit' });
-          S.fatal = L().exited;
-          render();
-        }),
+        click: human(() => void leave()),
       },
       L().exit
     )
   );
+  // №113 (заход 11): тепловые значки на странице — только во вкладке «Промахи».
+  const heat: HeatItem[] = S.tab === 'miss' && ax ? ax.heat() : [];
+  const hk = JSON.stringify(heat);
+  if (hk !== S.heatSent) {
+    S.heatSent = hk;
+    toPicker({ type: 'heat', items: heat });
+  }
   if (S.undo.length)
     root.append(
       h(
@@ -1298,6 +1440,13 @@ window.addEventListener('message', (e) => {
     return;
   }
   switch (m.type) {
+    case 'identity':
+      S.idWait?.(m.jwt);
+      return;
+    case 'logout':
+      // Сотрудник вышел из админки — сессия редактора гаснет (аудит P3-5).
+      if (ADMIN) void leave();
+      return;
     case 'ready':
       S.lang = m.lang === 'ru' || m.lang === 'en' ? m.lang : 'uk';
       S.path = m.path;
@@ -1343,14 +1492,17 @@ window.addEventListener('message', (e) => {
           key: t ? t.key : null,
           phrase: S.wrongFor,
           lang: S.wrongLang,
+          from: S.wrongFrom,
         };
         S.wrongFor = null;
+        S.wrongFrom = null;
       }
       S.picked = {
         descriptor: m.descriptor,
         how: m.how,
         stability: m.stability,
         never: m.never,
+        row: m.row,
       };
       S.edit = targetFor(m.descriptor);
       S.tab = 'target';
@@ -1379,7 +1531,7 @@ window.addEventListener('keydown', (e) => {
     S.tab = 'page';
     render();
     document.querySelector<HTMLInputElement>('input[name="q"]')?.focus();
-  } else if (e.key === 's' && !S.mic) {
+  } else if (e.key === 's' && !S.mic && !ADMIN) {
     S.tab = 'try';
     void mic();
   }
@@ -1387,6 +1539,93 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   if (e.key === 's' && S.mic) S.mic.stop();
 });
+
+/**
+ * «Админка» (заход 11): employee-JWT от `admin.js` (через пикер) → сессия
+ * сотрудника `wa.`. Нет JWT за 8 с или сервер его не принял — ошибка
+ * `staff` (сообщение «увійдіть в адмінку»).
+ */
+async function staff(): Promise<{ session: string; exp: number }> {
+  const jwt = await new Promise<string | null>((done) => {
+    S.idWait = done;
+    toPicker({ type: 'need-identity' });
+    setTimeout(() => done(null), 8000);
+  });
+  S.idWait = null;
+  try {
+    if (!jwt) throw new Error('');
+    const r = await api<{ session: string; expiresAt: string }>(
+      '/assist-admin/v1/session',
+      { method: 'POST', body: JSON.stringify({ pk: PK, jwt }) },
+      'application/json',
+      false
+    );
+    return { session: r.session, exp: Date.parse(r.expiresAt) || 0 };
+  } catch {
+    throw Object.assign(new Error(''), { staff: true });
+  }
+}
+
+/** Сессии панели — в sessionStorage `wa.`/`we.` (продолжение после перехода). */
+function save(): void {
+  try {
+    sessionStorage.setItem(
+      STORE,
+      JSON.stringify({
+        s: S.session,
+        o: S.parentOrigin,
+        a: S.admin,
+        x: S.adminExp,
+      })
+    );
+  } catch {
+    /* продолжение после перехода — недоступно */
+  }
+}
+
+/**
+ * «Админка» (раунд исправлений, аудит P1-1): свежий JWT → новая сессия
+ * сотрудника → `rebind` редактора (сервер: тот же `sub` и сайт). Один
+ * запрос на всех; неудача — false (дальше обычный 401 → «сесію завершено»).
+ */
+let renewing: Promise<boolean> | null = null;
+let renewTimer = 0;
+function renew(): Promise<boolean> {
+  return (renewing ||= (async () => {
+    const prev = S.admin;
+    try {
+      const a = await staff();
+      S.admin = a.session;
+      await api(
+        '/editor/v1/rebind',
+        { method: 'POST', body: '{}' },
+        undefined,
+        false
+      );
+      const longer = a.exp > S.adminExp;
+      S.adminExp = a.exp;
+      save();
+      // Тот же (не свежий) JWT — не крутимся каждые 5 с: ждём 401.
+      if (longer) plan();
+      return true;
+    } catch {
+      S.admin = prev;
+      return false;
+    } finally {
+      renewing = null;
+    }
+  })());
+}
+
+/** Обновить сессию сотрудника за 90 с до её срока. */
+function plan(): void {
+  clearTimeout(renewTimer);
+  if (ADMIN && S.adminExp)
+    renewTimer = window.setTimeout(
+      () => void renew(),
+      Math.max(5_000, S.adminExp - Date.now() - 90_000)
+    );
+}
 
 async function boot(): Promise<void> {
   const hash = location.hash;
@@ -1410,6 +1649,11 @@ async function boot(): Promise<void> {
   S.parentOrigin = guess;
   try {
     if (token) {
+      if (ADMIN) {
+        const a = await staff();
+        S.admin = a.session;
+        S.adminExp = a.exp;
+      }
       const s = await api<{ session: string; focusKey: string | null }>(
         '/editor/v1/session',
         {
@@ -1421,28 +1665,33 @@ async function boot(): Promise<void> {
       S.focusKey = typeof s.focusKey === 'string' ? s.focusKey : null;
       memo.reset();
       S.parentOrigin = guess;
-      try {
-        sessionStorage.setItem(
-          STORE,
-          JSON.stringify({ s: s.session, o: guess })
-        );
-      } catch {
-        /* продолжение после перехода — недоступно */
-      }
+      save();
     } else {
       const raw = sessionStorage.getItem(STORE);
       const saved = raw
-        ? (JSON.parse(raw) as { s?: string; o?: string })
+        ? (JSON.parse(raw) as {
+            s?: string;
+            o?: string;
+            a?: string;
+            x?: number;
+          })
         : null;
-      if (!saved?.s || saved.o !== guess)
+      if (!saved?.s || saved.o !== guess || (ADMIN && !saved.a))
         throw Object.assign(new Error(''), { status: 403 });
       S.session = saved.s;
+      S.admin = (ADMIN && saved.a) || '';
+      S.adminExp = (ADMIN && Number(saved.x)) || 0;
       S.parentOrigin = guess;
       // Запись мемо продолжается на новой странице (MPA).
-      if (memo.has()) S.tab = 'memo';
+      if (memo.has() && !ADMIN) S.tab = 'memo';
     }
-  } catch {
-    S.fatal = L().linkBad;
+  } catch (e) {
+    const x = e as { staff?: boolean; code?: string };
+    S.fatal = x.staff
+      ? L().noStaff
+      : x.code === 'EDITOR_OWNER_REQUIRED'
+        ? L().ownerOnly
+        : L().linkBad;
     // Продолжение после перехода без живой сессии — пикер уходит сам
     // (иначе вкладка владельца так и перехватывала бы клики).
     if (!token) toPicker({ type: 'exit' });
@@ -1451,6 +1700,7 @@ async function boot(): Promise<void> {
     else toPicker({ type: 'mode', mode: 'nav' });
   }
   render();
+  plan();
   // Пикер шлёт `ready` по load iframe — он мог прийти раньше обмена.
   if (S.session && S.pendingLoad) void loadMap();
 }

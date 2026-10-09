@@ -11,6 +11,9 @@
  * 90 дней удаляются (вместе с диалогом — каскадом, без диалога — здесь),
  * значения слотов незавершённых запусков мемо — по истечении запуска.
  *
+ * Заход 11 (№117): ссылки и сессии редактора карты «Админки» — через сутки
+ * после срока или отзыва.
+ *
  * Аудит 06.10: страховочный проход монитора мемо «Админки» (§5-бис.17 п.8,
  * `AdminMemoMonitorService`) — отдельного крона нет (Vercel Hobby); основной
  * путь — на концах запусков со сбоем. Сбой монитора не роняет сроки
@@ -40,6 +43,8 @@ export interface AdminRetentionResult {
   memoRuns: number;
   /** Мемо, переведённые монитором в «требует проверки» (null — сбой прохода). */
   memoReviews: number | null;
+  /** Заход 11 (№117): ссылки и сессии редактора карты «Админки». */
+  editorSessions: number;
 }
 
 /** Э8: параметры предложений живут окно компенсации + 1 день. */
@@ -115,6 +120,19 @@ export class AssistAdminRetentionController {
         },
       },
     });
+    // Заход 11 (№117): ссылки и сессии редактора карты «Админки» — через
+    // сутки после срока/отзыва (как у «Сайта» в assist-retention).
+    const dayAgo = new Date(now.getTime() - DAY);
+    const editorSessions =
+      await this.prisma.assistAdminVoiceMapEditorSession.deleteMany({
+        where: {
+          OR: [
+            { exchangedAt: null, linkExpiresAt: { lt: dayAgo } },
+            { absoluteExpiresAt: { lt: dayAgo } },
+            { revokedAt: { lt: dayAgo } },
+          ],
+        },
+      });
     let memoReviews: number | null = null;
     try {
       memoReviews = (await this.memoMonitor.run(now)).reviews;
@@ -129,6 +147,7 @@ export class AssistAdminRetentionController {
       proposalsDeleted: deleted.count,
       memoRuns: runsExpired.count + runsDeleted.count,
       memoReviews,
+      editorSessions: editorSessions.count,
     };
   }
 
@@ -153,6 +172,7 @@ export class AssistAdminRetentionController {
         proposalsDeleted: 0,
         memoRuns: 0,
         memoReviews: 0,
+        editorSessions: 0,
       };
     }
     return { ran: true, ...lock.result };

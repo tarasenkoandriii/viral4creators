@@ -39,8 +39,10 @@ import {
   visibleText,
 } from '../src/act/snapshot';
 import { undo } from '../src/undo/index';
+import * as awNs from '../../sites-backend/src/modules/assist-ui-core/action-words';
 import { parseStep, type UiStep } from '../src/shared/ui-plan';
 
+const aw = (awNs as typeof awNs & { default?: typeof awNs }).default ?? awNs;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const E = (n: FakeNode) => n as unknown as Element;
 
@@ -681,8 +683,87 @@ async function main() {
     assert.ok(!('undo' in el) && !('undoAt' in el));
   }
 
+  // ── заход 11: heading() не берёт UGC-заголовки; зону «никогда» — берёт ──
+  {
+    const doc = installFakeDom();
+    const sec = new FakeNode('div');
+    const rev = new FakeNode('div');
+    rev.setAttribute('class', 'review');
+    const rh = new FakeNode('h3');
+    rh.innerText = 'Пишіть мені olena@example.com';
+    rev.appendChild(rh);
+    const own = new FakeNode('h1');
+    own.setAttribute('data-assist-ugc', '');
+    own.innerText = 'Тема форуму від користувача';
+    const h2 = new FakeNode('h2');
+    h2.innerText = 'Доставка';
+    const btn = new FakeNode('button');
+    btn.innerText = 'Оформити';
+    for (const n of [rev, own, h2, btn]) sec.appendChild(n);
+    doc.body.appendChild(sec);
+    const one = () =>
+      takeSnapshot([], []).snapshot.elements.find(
+        (e) => e.text === 'Оформити'
+      )!;
+    assert.equal(one().heading, 'Доставка', 'UGC пропущены');
+    // Только UGC-заголовки на всех уровнях — заголовка нет вовсе.
+    h2.remove();
+    assert.equal(one().heading, null);
+    assert.ok(!/olena|форуму/.test(JSON.stringify(one())));
+  }
+  // Аудит P2-1: заголовок зоны «никогда» — контекст цены, НЕ пропускается:
+  // «Підписатися» под «Преміум — 199 грн/міс» остаётся платной подпиской.
+  {
+    const doc = installFakeDom();
+    const top = new FakeNode('h2');
+    top.innerText = 'Тарифи';
+    const sec = new FakeNode('div');
+    const nev = new FakeNode('div');
+    nev.setAttribute('data-assist', 'never');
+    const price = new FakeNode('h3');
+    price.innerText = 'Преміум — 199 грн/міс';
+    nev.appendChild(price);
+    const sub = new FakeNode('button');
+    sub.innerText = 'Підписатися';
+    sec.appendChild(nev);
+    sec.appendChild(sub);
+    doc.body.appendChild(top);
+    doc.body.appendChild(sec);
+    const e = takeSnapshot([], []).snapshot.elements.find(
+      (x) => x.text === 'Підписатися'
+    )!;
+    assert.equal(e.heading, 'Преміум — 199 грн/міс');
+    assert.deepEqual(aw.actionKindsFor(e.text, e.heading), [
+      'платная подписка',
+    ]);
+    // Пробой (если бы заголовок зоны пропускался): «Тарифи» — уже не платная.
+    assert.deepEqual(aw.actionKindsFor(e.text, 'Тарифи'), ['подписка']);
+  }
+  {
+    const doc = installFakeDom();
+    // Прежнее: первый заголовок уровня, содержащий элемент, — уровнем выше.
+    const card = new FakeNode('div');
+    const title = new FakeNode('h3');
+    const link = new FakeNode('a');
+    link.setAttribute('href', '/p/2');
+    link.innerText = 'Товар 2';
+    title.appendChild(link);
+    const later = new FakeNode('h3');
+    later.innerText = 'Наступна секція';
+    card.appendChild(title);
+    card.appendChild(later);
+    const top = new FakeNode('h2');
+    top.innerText = 'Каталог';
+    doc.body.appendChild(top);
+    doc.body.appendChild(card);
+    const l = takeSnapshot([], []).snapshot.elements.find(
+      (e) => e.text === 'Товар 2'
+    )!;
+    assert.equal(l.heading, 'Каталог', 'не следующая секция того же уровня');
+  }
+
   console.log(
-    'act: ack перед действием, гонка ui-run, bfcache (и «Админка»), стоп-лист опций, снимок без ввода, чувствительные поля, возврат только своего поля (name/id), пара разметки в снимке — ok'
+    'act: ack перед действием, гонка ui-run, bfcache (и «Админка»), стоп-лист опций, снимок без ввода, чувствительные поля, возврат только своего поля (name/id), пара разметки в снимке, заголовок без UGC (зона «никогда» — с ценой) — ok'
   );
 }
 

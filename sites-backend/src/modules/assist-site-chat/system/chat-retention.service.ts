@@ -50,7 +50,12 @@ export interface ChatRetentionResult {
   /** Э6-тер: истёкшие ссылки/сессии редактора голосовой карты (сутки после срока) и журнал карты (180 дней). */
   editorSessionsDeleted?: number;
   voiceMapChangesDeleted?: number;
+  /** №113 (заход 11): кандидаты в термины из неуверенного распознавания (30 дней). */
+  sttLowTermsDeleted?: number;
 }
+
+/** №113 (заход 11): неуверенно распознанные фразы храним 30 дней. */
+export const STT_LOW_TERMS_KEEP_DAYS = 30;
 
 /** Э6-бис (е): история и метаданные мемо, ключ удалённого мемо — 180 дней. */
 export const MEMO_KEEP_DAYS = 180;
@@ -177,6 +182,15 @@ export class ChatRetention {
       `DELETE FROM ${S}."assist_site_tts_cache" WHERE "id" IN (
          SELECT "id" FROM ${S}."assist_site_tts_cache" WHERE "expiresAt" < $1 LIMIT $2)`,
       now,
+    );
+    // №113 (заход 11): кандидаты в термины (фразы посетителей) — 30 дней;
+    // рано в задаче (аудит P3-9 (в)): срок хранения ПД важнее истории мемо.
+    r.sttLowTermsDeleted = await this.drain(
+      deadline,
+      `DELETE FROM ${S}."assist_site_stt_low_terms" WHERE ("siteId", "day", "norm", "visitorHash") IN (
+         SELECT "siteId", "day", "norm", "visitorHash" FROM ${S}."assist_site_stt_low_terms"
+          WHERE "createdAt" < $1 LIMIT $2)`,
+      new Date(now.getTime() - STT_LOW_TERMS_KEEP_DAYS * day),
     );
     // Э6-бис: значения полей и текст команды держатся, только пока план
     // живой (plan-store.ts); посетитель ушёл, не дождавшись конца, — здесь.

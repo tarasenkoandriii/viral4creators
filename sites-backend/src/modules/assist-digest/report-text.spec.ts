@@ -4,6 +4,7 @@
  * атрибуции — строго §5-тер.2; каждое число — из входа.
  */
 import {
+  appendAdminWeekly,
   DIGEST_LANGS,
   FINDINGS_MAX,
   digestTexts,
@@ -260,5 +261,30 @@ describe('report-text — язык получателя (заход 10, Р-З10-
         expect(t.length).toBeLessThanOrEqual(TELEGRAM_TEXT_LIMIT);
       }
     }
+  });
+});
+
+describe('report-text — отчёт недели «Админки» разделом сводки (заход 11, Р-З11-В3)', () => {
+  it('раздел дописывается в конец через пустую строку; кнопка «Админки» — на каждом языке', () => {
+    const base = weeklyReportText(facts, null, 'uk');
+    const out = appendAdminWeekly(
+      base,
+      '  Тиждень «Адмінки» з 2026-09-28 · М\n\nДіалогів: 3 ',
+    );
+    expect(out).toBe(
+      `${base}\n\nТиждень «Адмінки» з 2026-09-28 · М\n\nДіалогів: 3`,
+    );
+    expect(digestTexts('uk').admin.weeklyButton).toBe('Статистика «Адмінки»');
+    expect(digestTexts('ru').admin.weeklyButton).toBe('Статистика «Админки»');
+    expect(digestTexts('en').admin.weeklyButton).toBe('“Admin” statistics');
+  });
+
+  it('не влезает в 4 096 символов или пусто — null (отчёт уйдёт отдельно, не обрезанным)', () => {
+    const base = 'x'.repeat(TELEGRAM_TEXT_LIMIT - 10);
+    expect(appendAdminWeekly(base, 'y'.repeat(8))).toBe(
+      `${base}\n\n${'y'.repeat(8)}`,
+    );
+    expect(appendAdminWeekly(base, 'y'.repeat(9))).toBeNull();
+    expect(appendAdminWeekly('сводка', '   ')).toBeNull();
   });
 });

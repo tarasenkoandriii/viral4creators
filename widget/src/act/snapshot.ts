@@ -233,15 +233,25 @@ export function sensitiveField(el: Element): boolean {
   );
 }
 
+/**
+ * Ближайший заголовок (первый на уровне, ≤ 5 уровней вверх). Заход 11:
+ * заголовок отзыва/комментария (UGC, в т. ч. `data-assist-ugc` на самом
+ * `<h1>` — Р-З10-44) — не подпись: пропускается, берётся следующий на том
+ * же уровне. Заголовок зоны «никогда» НЕ пропускается (аудит P2-1): он —
+ * контекст цены («Преміум — 199 грн/міс» → платная подписка, §5-бис.5);
+ * подмена его заголовком выше понизила бы класс действия.
+ */
 function heading(el: Element): string | null {
   let cur: Element | null = el.parentElement;
-  for (let k = 0; cur && k < 5; k++, cur = cur.parentElement) {
-    const h = cur.querySelector('h1,h2,h3,h4,legend');
-    if (h && !h.contains(el)) {
-      const t = clean((h as HTMLElement).innerText || h.textContent || '');
+  for (let k = 0; cur && k < 5; k++, cur = cur.parentElement)
+    for (const h of cur.querySelectorAll('h1,h2,h3,h4,legend')) {
+      if (closestDeep(h, UGC)) continue;
+      const t =
+        !h.contains(el) &&
+        clean((h as HTMLElement).innerText || h.textContent || '');
       if (t) return t;
+      break;
     }
-  }
   return null;
 }
 
@@ -401,4 +411,62 @@ export function takeSnapshot(
     },
     refs,
   };
+}
+
+// ── «Админка»: строки таблиц не уходят в снимок (Р-Э6б-6) ──────────────
+// Общее для исполнителя `admin-act.js` и пикера редактора карты «Админки»
+// (`editor.js`, заход 11). act.js их не импортирует — сборка их выбрасывает.
+
+const ROW_NUM = /(?:^|[^0-9])([0-9]{3,12})(?![0-9])/g;
+
+/** Номера ≥ 3 цифр, названные в команде (строки таблиц для снимка), ≤ 5. */
+export function rowsInText(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(ROW_NUM))
+    if (out.length < 5 && out.indexOf(m[1]) < 0) out.push(m[1]);
+  return out;
+}
+
+/** Строка таблицы с одним из названных номеров (целым словом). */
+function rowNamed(row: Element, rows: string[]): boolean {
+  if (!rows.length) return false;
+  const text = ` ${(row.textContent || '').replace(/[^0-9]+/g, ' ')} `;
+  return rows.some((n) => text.indexOf(` ${n} `) >= 0);
+}
+
+/**
+ * Элемент — в строке таблицы/грида или (вне навигации) в пункте списка —
+ * там ПД клиентов и заказов (Р-Э6б-6). `data-assist-id` — опора владельца,
+ * не ПД. Строка — для `rowsInText`-исключения.
+ */
+export function pdRow(el: Element): Element | null {
+  if (el.getAttribute('data-assist-id')) return null;
+  return (
+    closestDeep(el, 'tr,[role=row],[role=gridcell],[role=cell]') ||
+    (closestDeep(
+      el,
+      'nav,[role=navigation],[role=menu],[role=menubar],[role=tablist],header,aside'
+    )
+      ? null
+      : closestDeep(el, 'li,[role=listitem]'))
+  );
+}
+
+/**
+ * Из снимка «Админки» — элементы строк таблиц и гридов, а вне навигации —
+ * и пунктов списков (карточки клиентов `li`/`listitem`) без
+ * `data-assist-id`: ПД клиентов и заказов не уходят на сервер; кроме строк
+ * с номером, который сотрудник сам назвал (`rows`).
+ */
+export function dropRows(
+  s: { snapshot: Snapshot; refs: Map<string, Element> },
+  rows: string[]
+): void {
+  const drop = new Set<string>();
+  s.refs.forEach((el, ref) => {
+    const row = pdRow(el);
+    if (row && !rowNamed(row, rows)) drop.add(ref);
+  });
+  for (const ref of drop) s.refs.delete(ref);
+  s.snapshot.elements = s.snapshot.elements.filter((e) => !drop.has(e.ref));
 }

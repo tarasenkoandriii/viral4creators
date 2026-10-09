@@ -31,8 +31,22 @@
  * Заход 10 (Ш6 (4), Р-З10-15): своя подпись кнопки — атрибут `data-label`
  * тега (≤ 40 символов, без HTML и управляющих символов; иначе — подпись по
  * умолчанию). Без сетевого запроса до кнопки; загрузчик не меняется.
+ *
+ * Заход 11 (№117): редактор голосовой карты «Админки» — ссылка владельца
+ * из TMA `?v4c_edit=<токен>` (снимается с адреса сразу) или флаг
+ * продолжения после перехода (sessionStorage вкладки, ставит пикер) —
+ * лениво тот же пикер `/v1/editor.js` своего origin; панель — iframe `wa.`
+ * (`/wa/v1/editor-frame`), JWT сотрудника — ей по запросу через пикер.
+ * Кнопка и чат сотрудника на вкладке редактора не поднимаются (как чат
+ * «Сайта» на вкладке его редактора); admin.js почти не растёт.
  */
-import { WIDGET_ADMIN_FRAME_PATH, WIDGET_GLOBAL } from '../shared/brand';
+import {
+  WIDGET_ADMIN_FRAME_PATH,
+  WIDGET_EDITOR_PARAM,
+  WIDGET_EDITOR_PATH,
+  WIDGET_GLOBAL,
+  editorFlag,
+} from '../shared/brand';
 import {
   adminEnvelope,
   isAdminPk,
@@ -63,15 +77,15 @@ const N = {
 };
 const ACT_KEY = 'v4c-admin-act';
 
-/** Ссылка мастера: снять с адреса сразу (история без токена). */
-function takeVoiceTest(): string | null {
+/** Ссылка мастера/редактора: снять с адреса сразу (история без токена). */
+function take(name: string, max: number): string | null {
   try {
     const u = new URL(location.href);
-    const t = u.searchParams.get(WIDGET_VOICE_TEST_PARAM);
+    const t = u.searchParams.get(name);
     if (!t) return null;
-    u.searchParams.delete(WIDGET_VOICE_TEST_PARAM);
+    u.searchParams.delete(name);
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-    return /^[A-Za-z0-9_-]{20,100}$/.test(t) ? t : null;
+    return new RegExp(`^[A-Za-z0-9_-]{20,${max}}$`).test(t) ? t : null;
   } catch {
     return null;
   }
@@ -140,7 +154,14 @@ export function start(script: HTMLScriptElement): void {
     }
   }
 
-  const vt = takeVoiceTest();
+  const vt = take(WIDGET_VOICE_TEST_PARAM, 100);
+  // Заход 11: ссылка редактора карты или продолжение после перехода (MPA).
+  let ed = take(WIDGET_EDITOR_PARAM, 128);
+  try {
+    ed ||= sessionStorage.getItem(editorFlag(true, pk)) ? '-' : null;
+  } catch {
+    /* без хранилища — только по ссылке */
+  }
   const host = document.createElement('div');
   // Свой корень: в снимок голосового управления не попадает (§5-бис.3 п.2).
   host.setAttribute('data-v4c', '');
@@ -268,6 +289,7 @@ export function start(script: HTMLScriptElement): void {
     }
   });
 
+  let edApi: { logout(): void } | null = null;
   const api: Api = (...args: unknown[]) => {
     const [cmd, a] = args;
     if (cmd === 'identify-admin' && isJwt(a)) {
@@ -276,6 +298,8 @@ export function start(script: HTMLScriptElement): void {
       host.style.display = '';
       send({ type: 'identity', jwt: a });
     } else if (cmd === 'logout') {
+      // Раунд исправлений (аудит P3-5): выход сотрудника завершает и редактор.
+      edApi?.logout();
       jwt = null;
       send({ type: 'logout' });
       host.style.display = 'none';
@@ -286,6 +310,13 @@ export function start(script: HTMLScriptElement): void {
   api.l = 1;
   W[WIDGET_GLOBAL] = api;
   for (const args of queued) api(...args);
+  if (ed)
+    return void import(/* @vite-ignore */ origin + WIDGET_EDITOR_PATH)
+      .then(
+        (m: { start: (...a: unknown[]) => { logout(): void } | undefined }) =>
+          (edApi = m.start(ed, pk, origin, lang, freshJwt) || null)
+      )
+      .catch(() => null);
   if (!jwt && !endpoint) host.style.display = 'none';
   (document.body || document.documentElement).appendChild(host);
   // Turbo заменяет <body> целиком (`replaceWith`), htmx — его содержимое:

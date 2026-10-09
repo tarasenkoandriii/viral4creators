@@ -575,6 +575,14 @@ async function runWith(
       ({
         close: async () => undefined,
         blocked: () => 0,
+        writesBlocked: () => ({
+          method: 0,
+          graphql: 0,
+          logout: 0,
+          danger: 0,
+          websocket: 0,
+          total: 0,
+        }),
         traffic: () => ({
           bytesIn: 0,
           bytesOut: 0,

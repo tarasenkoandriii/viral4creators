@@ -39,6 +39,7 @@ export const LOG_FIELDS = [
   'forced',
   'bytes',
   'cut',
+  'writes',
 ] as const;
 export type LogField = (typeof LOG_FIELDS)[number];
 export type LogFields = Partial<Record<LogField, string | number | boolean>>;

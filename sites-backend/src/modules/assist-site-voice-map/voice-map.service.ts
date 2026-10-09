@@ -19,11 +19,10 @@
  *  - ссылка редактора: только владелец/менеджер (гвард маршрута), только
  *    verified-хост «Сайта» без льготы и не admin-хост; в базе — SHA-256.
  */
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { randomBytes } from 'crypto';
 import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { WIDGET_EDITOR_PARAM } from '../../brand';
-import { derivedKeys } from '../../common/secrets-keyring';
 import { SitesDb } from '../../prisma/sites-db.service';
 import {
   recipients,
@@ -34,7 +33,6 @@ import { loadAssistSite } from '../assist-site-setup/widget-settings.service';
 import { hostOriginOf } from '../assist-site-setup/widget-settings.service';
 import {
   applyMapOps,
-  canonicalJson,
   descriptorCandidates,
   emptyVoiceMap,
   exportPayload,
@@ -52,6 +50,17 @@ import {
   type MapGateReport,
   type VoiceMapContent,
 } from '../assist-ui-core/voice-map';
+import {
+  editorFocusKey,
+  editorLinkPath,
+  mapExportSigner,
+  mapIssuesToErrors,
+  mapVersionSummary,
+  mapVersionView,
+  sha256Hex,
+  voiceMapContentHash,
+  type MapExportSigner,
+} from '../assist-ui-core/voice-map-service-core';
 import { parseMemoContent } from '../assist-ui-core/memo';
 import type { AccountMembership } from '../site-core/account/roles';
 import { adminHostIdsOf } from '../site-core/ownership/host-roles';
@@ -79,23 +88,14 @@ export interface MapActor {
   memberId: string;
 }
 
-export function sha256Hex(s: string): string {
-  return createHash('sha256').update(s).digest('hex');
-}
-
-/** Ошибки операций → поле `errors` конверта (`{ path: ops.N.поле, code }`). */
-export function issuesToErrors(
-  issues: ReadonlyArray<{ index: number; code: string; path?: string }>,
-): Array<{ path: string; code: string }> {
-  return issues.map((i) => ({
-    path: `ops.${i.index}${i.path ? `.${i.path}` : ''}`,
-    code: i.code,
-  }));
-}
-
-export function contentHash(c: VoiceMapContent): string {
-  return createHash('sha256').update(canonicalJson(c)).digest('base64url');
-}
+// Заход 11 (№117): общая сервисная часть двух контуров карты — в ядре
+// (`assist-ui-core/voice-map-service-core.ts`); прежние имена — для модулей
+// «Сайта», которые их уже импортируют.
+export {
+  sha256Hex,
+  mapIssuesToErrors as issuesToErrors,
+  voiceMapContentHash as contentHash,
+};
 
 const PHRASE_OWNER = 'voice-map';
 
@@ -391,7 +391,7 @@ export class VoiceMapService {
         res.issues.some((i) => i.code === 'risk_lowering_forbidden')
           ? 'Риск можно только ужесточить'
           : 'Изменение карты не прошло проверку',
-        { errors: issuesToErrors(res.issues) },
+        { errors: mapIssuesToErrors(res.issues) },
       );
     return this.commitDraft(
       db,
@@ -455,24 +455,7 @@ export class VoiceMapService {
     v: VersionRow,
     prev: VoiceMapContent | null,
   ): VoiceMapVersionSummary {
-    const g = (v.gateReport ?? null) as MapGateReport | null;
-    const d = voiceMapDiff(prev, parseVoiceMapContent(v.content));
-    return {
-      number: v.number,
-      status: v.status,
-      requestedVia: v.requestedVia,
-      rollbackOf: v.rollbackOf,
-      createdAt: v.createdAt.toISOString(),
-      publishedAt: v.publishedAt ? v.publishedAt.toISOString() : null,
-      ok: g?.ok ?? false,
-      problems: g?.problems?.length ?? 0,
-      warnings: g?.warnings?.length ?? 0,
-      diff: {
-        added: d.added.length,
-        changed: d.changed.length,
-        removed: d.removed.length,
-      },
-    };
+    return mapVersionSummary(v, prev);
   }
 
   private async publishedContent(
@@ -529,7 +512,7 @@ export class VoiceMapService {
         number,
         status: gates.ok ? 'checking' : 'held',
         content: content as unknown as Prisma.InputJsonValue,
-        contentHash: contentHash(content),
+        contentHash: voiceMapContentHash(content),
         gateReport: gates as unknown as Prisma.InputJsonValue,
         rollbackOf,
         requestedBy: actor.memberId,
@@ -572,13 +555,7 @@ export class VoiceMapService {
     v: VersionRow,
     prev: VoiceMapContent | null,
   ): VoiceMapVersionView {
-    const content = parseVoiceMapContent(v.content);
-    return {
-      ...this.summaryOf(v, prev),
-      gateReport: (v.gateReport ?? null) as MapGateReport | null,
-      content,
-      diffKeys: voiceMapDiff(prev, content),
-    };
+    return mapVersionView(v, prev);
   }
 
   private async notifyRequest(
@@ -985,16 +962,10 @@ export class VoiceMapService {
         'VOICE_MAP_HOST_REQUIRED',
         'Редактор — только на подтверждённом адресе сайта (не «Админки», без льготы)',
       );
-    const path =
-      typeof b.path === 'string' &&
-      b.path.length <= 300 &&
-      /^\/[A-Za-z0-9\-._~%!$&'()*+,;=:@/]*$/.test(b.path)
-        ? b.path
-        : '/';
-    const focus =
-      typeof b.focus === 'string' && VOICE_MAP_LIMITS.keyRe.test(b.focus)
-        ? b.focus
-        : null;
+    // Заход 11: путь — только своего хоста (`//чужой` → `/`, иначе ссылка
+    // с токеном ушла бы на другой хост: `new URL('//x', origin)`).
+    const path = editorLinkPath(b.path);
+    const focus = editorFocusKey(b.focus);
     const token = randomBytes(24).toString('base64url');
     const origin = hostOriginOf(h);
     const expiresAt = new Date(now.getTime() + VOICE_MAP_LIMITS.linkTtlMs);
@@ -1078,41 +1049,25 @@ export class VoiceMapService {
   // ── экспорт / импорт (§5-кватер.12) ────────────────────────────────────
 
   /**
-   * Ключ подписи экспорта (аудит Н-5): свой `ASSIST_VOICE_MAP_EXPORT_KEY`
-   * или ПРОИЗВОДНЫЙ от `ASSIST_SECRETS_KEY` с меткой — сам KEK как ключ
-   * HMAC файла, который уходит владельцу, не используется (тот же приём,
-   * что lead-crypto). Нет ни того, ни другого — `null`: подпись в файле
-   * есть (формат), но признаком «наш файл» не считается.
+   * Подпись файла экспорта (аудит Н-5, №60): свой `ASSIST_VOICE_MAP_EXPORT_KEY`
+   * или ПРОИЗВОДНЫЙ от `ASSIST_SECRETS_KEY` с меткой «Сайта»; проверка — всеми
+   * версиями связки. Общий код контуров — `mapExportSigner` ядра (заход 11).
    */
-  private signKey(): Buffer | null {
-    return this.signKeys()[0] ?? null;
+  private signer(): MapExportSigner {
+    return mapExportSigner(this.env, {
+      ownKeyEnv: 'ASSIST_VOICE_MAP_EXPORT_KEY',
+      label: VOICE_MAP_EXPORT_LABEL,
+      unsignedKey: UNSIGNED_EXPORT_KEY,
+    });
   }
 
-  /**
-   * Ключи ПРОВЕРКИ подписи файла: свой ключ — он один; производный — всех
-   * версий связки `ASSIST_SECRETS_KEY` (№60, Р-З10-12): файл, выгруженный
-   * до ротации, при импорте остаётся «нашим». Подпись — текущим (первым).
-   */
-  private signKeys(): readonly Buffer[] {
-    const own = this.env.ASSIST_VOICE_MAP_EXPORT_KEY?.trim();
-    if (own) return [Buffer.from(own, 'utf8')];
-    return derivedKeys(this.env, VOICE_MAP_EXPORT_LABEL)?.all ?? [];
-  }
-
-  private signature(payload: unknown, key?: Buffer): string {
-    return createHmac('sha256', key ?? this.signKey() ?? UNSIGNED_EXPORT_KEY)
-      .update(canonicalJson(payload))
-      .digest('base64url');
+  private signature(payload: unknown): string {
+    return this.signer().sign(payload);
   }
 
   /** Подпись файла сошлась (за постоянное время; без ключа — никогда). */
   private signatureValid(payload: unknown, got: unknown): boolean {
-    if (typeof got !== 'string') return false;
-    const a = Buffer.from(got, 'utf8');
-    return this.signKeys().some((key) => {
-      const b = Buffer.from(this.signature(payload, key), 'utf8');
-      return a.length === b.length && timingSafeEqual(a, b);
-    });
+    return this.signer().valid(payload, got);
   }
 
   async exportFile(

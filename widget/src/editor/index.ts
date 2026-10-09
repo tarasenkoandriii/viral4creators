@@ -18,22 +18,34 @@
  *    атрибут, id, путь ссылки), якорь, признаки риска, единственность —
  *    БЕЗ значений полей, HTML и скриншотов (§5-кватер.11 п.7);
  *  - покрытие страницы (🟩🟨🟥🟪, ≤ 600 рамок, только видимая область);
+ *  - (заход 11, №113) тепловые значки режима «Промахи» — подпись панели
+ *    (просили / натисніть самі / не туди / не знайдено) над элементом цели;
  *  - снимок страницы для «Сказать сейчас» — тот же код, что исполнитель
  *    (`act/snapshot.ts`), но шаги НЕ исполняются: только подсветка;
  *  - (заход 9, Э6-тер (9)) массовый выбор: `Shift`+клик добавляет элемент,
  *    `Shift` + протянуть — рамка (элементы целиком внутри, ≤ 40); `/` —
  *    поиск цели в панели; панель перетаскивается за заголовок (положение —
  *    `sessionStorage` вкладки, переживает переход).
+ *  - (заход 11, №117) карта «Админки»: тот же пикер грузит чанк `admin.js`
+ *    (тег `data-mode="admin"`, origin `wa.`); панель — iframe того же `wa.`
+ *    (`/wa/v1/editor-frame`), employee-JWT ей отдаёт `admin.js` через
+ *    пикер (`need-identity` → `identity`, только своему iframe).
  * Не хранит токенов (сессия — в iframe), не ходит в наш API, не решает ничего
  * о карте. Выход — снятие всех обработчиков и корня: DOM страницы как был.
  * Без HTML-приёмников и eval: только createElement/textContent, стили —
  * `adoptedStyleSheets` (работает под строгим CSP и Trusted Types).
  */
-import { WIDGET_EDITOR_FRAME_PATH, WIDGET_EDITOR_PARAM } from '../shared/brand';
+import {
+  WIDGET_ADMIN_EDITOR_FRAME_PATH,
+  WIDGET_EDITOR_FRAME_PATH,
+  editorFlag,
+} from '../shared/brand';
 import {
   closestDeep,
   deepQuery,
+  dropRows,
   factsOf,
+  pdRow,
   takeSnapshot,
   visible,
 } from '../act/snapshot';
@@ -46,6 +58,7 @@ import {
   type Coverage,
   type Descriptor,
   type EditorMode,
+  type HeatItem,
   type PageTarget,
   type ToPanel,
 } from '../shared/editor-protocol';
@@ -61,6 +74,7 @@ const T: Record<Lang, Record<string, string>> = {
     min: 'Згорнути',
     cov: 'Покриття',
     csp: 'CSP сайту блокує панель редактора: додайте frame-src {o} або відкрийте режим «Знімок» у Telegram.',
+    cspA: 'CSP адмінки блокує панель редактора: додайте frame-src {o}.',
     noname: 'без імені — помічник не зможе назвати',
     never: 'помічник не натисне ніколи',
     found: 'Знайде за',
@@ -73,6 +87,7 @@ const T: Record<Lang, Record<string, string>> = {
     min: 'Свернуть',
     cov: 'Покрытие',
     csp: 'CSP сайта блокирует панель редактора: добавьте frame-src {o} или откройте режим «Снимок» в Telegram.',
+    cspA: 'CSP админки блокирует панель редактора: добавьте frame-src {o}.',
     noname: 'без имени — помощник не сможет назвать',
     never: 'помощник не нажмёт никогда',
     found: 'Найдёт по',
@@ -85,6 +100,7 @@ const T: Record<Lang, Record<string, string>> = {
     min: 'Collapse',
     cov: 'Coverage',
     csp: 'The site CSP blocks the editor panel: add frame-src {o} or use Snapshot mode in Telegram.',
+    cspA: 'The admin panel CSP blocks the editor panel: add frame-src {o}.',
     noname: 'no name — the assistant cannot name it',
     never: 'the assistant will never press it',
     found: 'Found by',
@@ -97,6 +113,7 @@ const STYLE = `:host{all:initial}*{box-sizing:border-box}
 .tip{position:fixed;z-index:2147483646;pointer-events:none;max-width:min(420px,90vw);padding:6px 9px;border-radius:7px;background:#111827;color:#fff;font:12px/1.4 system-ui,sans-serif;display:none;white-space:pre-line}
 .cv{position:fixed;z-index:2147483645;pointer-events:none;border:2px solid;border-radius:3px}
 .green{border-color:#16a34a;background:rgba(22,163,74,.08)}.yellow{border-color:#ca8a04;background:rgba(202,138,4,.08)}.red{border-color:#dc2626;background:rgba(220,38,38,.1)}.violet{border-color:#7c3aed;background:rgba(124,58,237,.12)}
+.ht{position:fixed;z-index:2147483646;pointer-events:none;transform:translate(-100%,-100%);padding:1px 6px;border-radius:9px;background:#2563eb;color:#fff;font:11px/1.5 system-ui,sans-serif;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.3)}.ht.bad{background:#dc2626}
 .hl{position:fixed;z-index:2147483646;pointer-events:none;border:3px solid #f97316;border-radius:5px}
 .hl span{position:absolute;left:-3px;top:-24px;padding:2px 6px;border-radius:5px;background:#f97316;color:#fff;font:12px/1.4 system-ui,sans-serif;white-space:nowrap}
 .pn{position:fixed;z-index:2147483646;right:12px;bottom:12px;width:min(390px,calc(100vw - 24px));height:min(600px,calc(100vh - 24px));display:flex;flex-direction:column;border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 10px 40px rgba(0,0,0,.35);font:13px/1.4 system-ui,sans-serif}
@@ -127,7 +144,8 @@ const EVENTS = [
   'touchend',
   'submit',
 ];
-const FLAG = WIDGET_EDITOR_PARAM;
+/** «Админка»: элементы строк таблиц — без подписи и номеров (ПД клиентов). */
+let adminRows = false;
 const MAX_FRAMES = 600;
 
 const esc = (v: string) => {
@@ -232,7 +250,11 @@ export function findAll(d: Descriptor): Element[] {
 }
 
 /** Дескриптор элемента (§5-кватер.4 «Привязка») — без значений полей. */
-export function describe(e: Element): { d: Descriptor; how: string } {
+export function describe(e: Element): {
+  d: Descriptor;
+  how: string;
+  row: boolean;
+} {
   const f = factsOf(e);
   const tag0 = e.tagName.toLowerCase();
   const tag = (
@@ -285,6 +307,19 @@ export function describe(e: Element): { d: Descriptor; how: string } {
     unique: false,
     css: cssPath(e),
   };
+  // «Админка» (ТЗ §5-кватер.14 п.6, аудит P2-3): элемент строки таблицы или
+  // карточки клиента — в карту без имён и номеров (как `dropRows` снимка);
+  // опора — `data-assist-id` (её владелец добавит по предупреждению).
+  const row = adminRows && !!pdRow(e);
+  if (row) {
+    const noNum = (v: string | null) => (v && !/\d{3}/.test(v) ? v : null);
+    d.text = '';
+    d.hiddenLabel = null;
+    d.testId = noNum(d.testId);
+    d.elId = noNum(d.elId);
+    d.formName = noNum(d.formName);
+    d.hrefPath = d.hrefPath && d.hrefPath.replace(/\d{3,}/g, ':n');
+  }
   d.unique = findAll(d).length === 1;
   const how = d.assistId
     ? 'assist-id'
@@ -297,7 +332,7 @@ export function describe(e: Element): { d: Descriptor; how: string } {
           : d.text
             ? 'text'
             : 'css';
-  return { d, how };
+  return { d, how, row };
 }
 
 /** Похоже на «никогда» (подсказка цвета; решает сервер, §5-кватер.4). */
@@ -329,17 +364,24 @@ function colorOf(e: Element, mapped: Map<Element, PageTarget>): Coverage {
   return 'yellow';
 }
 
+/**
+ * `jwt` — только у карты «Админки» (вызов из `admin.js`): свежий
+ * employee-JWT сотрудника; панель тогда — iframe того же origin `wa.`.
+ */
 export function start(
   token: string,
   pk: string,
   widgetOrigin: string,
-  lang0: string
-): void {
+  lang0: string,
+  jwt?: () => Promise<string | null>
+): { logout(): void } | void {
   if ((window as unknown as Record<string, unknown>).__v4cEditor) return;
   (window as unknown as Record<string, unknown>).__v4cEditor = 1;
   const lang: Lang = lang0 === 'ru' || lang0 === 'en' ? lang0 : 'uk';
   const L = T[lang];
-  const pOrigin = panelOrigin(widgetOrigin);
+  const pOrigin = jwt ? widgetOrigin : panelOrigin(widgetOrigin);
+  const FLAG = editorFlag(!!jwt, pk);
+  adminRows = !!jwt;
   try {
     sessionStorage.setItem(FLAG, '1');
   } catch {
@@ -362,6 +404,7 @@ export function start(
   const band = el('div', 'band');
   const tip = el('div', 'tip');
   const layer = el('div');
+  const heatLayer = el('div');
   const hls = el('div');
   const pn = el('div', 'pn');
   const bar = el('div', 'bar');
@@ -375,11 +418,11 @@ export function start(
   const frame = document.createElement('iframe');
   frame.setAttribute('title', L.title);
   frame.setAttribute('allow', 'microphone');
-  frame.src = `${pOrigin}${WIDGET_EDITOR_FRAME_PATH}?pk=${encodeURIComponent(pk)}${
+  frame.src = `${pOrigin}${jwt ? WIDGET_ADMIN_EDITOR_FRAME_PATH : WIDGET_EDITOR_FRAME_PATH}?pk=${encodeURIComponent(pk)}${
     token && token !== '-' ? `#t=${encodeURIComponent(token)}` : ''
   }`;
   pn.append(bar, frame);
-  root.append(layer, hls, box, band, tip, pn);
+  root.append(layer, heatLayer, hls, box, band, tip, pn);
   document.documentElement.appendChild(host);
 
   let mode: EditorMode = 'select';
@@ -389,6 +432,7 @@ export function start(
   let chain: Element[] = [];
   let level = 0;
   let targets: PageTarget[] = [];
+  let heat: HeatItem[] = [];
   let refs = new Map<string, Element>();
   let lastPath = location.pathname;
   let raf = 0;
@@ -472,13 +516,13 @@ export function start(
   let passing = false;
 
   const pick = (t: Element, real = false, multi = false) => {
-    const { d, how } = describe(t);
+    const { d, how, row } = describe(t);
     armed = real ? t : null;
     pid = real ? Math.random().toString(36).slice(2, 12) : '';
     const tag = t.tagName;
     const field = /^(INPUT|SELECT|TEXTAREA)$/.test(tag);
     const options: string[] = [];
-    if (tag === 'SELECT') {
+    if (tag === 'SELECT' && !row) {
       const o = (t as HTMLSelectElement).options;
       for (let i = 0; i < o.length && i < 20; i++)
         options.push(clean(o[i].text));
@@ -495,6 +539,7 @@ export function start(
       options,
       pid: pid || null,
       multi,
+      row,
     });
   };
 
@@ -648,9 +693,24 @@ export function start(
   const drawCoverage = () => {
     raf = 0;
     const mapped = new Map<Element, PageTarget>();
+    const firstOf = new Map<string, Element>();
     for (const t of targets) {
       const found = findAll(t.descriptor);
       if (found.length === 1) mapped.set(found[0], t);
+      if (found[0]) firstOf.set(t.key, found[0]);
+    }
+    // Тепловые значки «Промахов» — у правого верхнего угла элемента цели.
+    while (heatLayer.firstChild) heatLayer.removeChild(heatLayer.firstChild);
+    for (const it of heat) {
+      const e = firstOf.get(it.key);
+      if (!e || own(e) || !visible(e)) continue;
+      const r = e.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > innerHeight) continue;
+      const b = el('div', it.bad ? 'ht bad' : 'ht', it.label);
+      b.setAttribute('data-key', it.key);
+      b.style.left = `${Math.max(r.right, 80)}px`;
+      b.style.top = `${Math.max(r.top, 18)}px`;
+      heatLayer.appendChild(b);
     }
     const counts = { green: 0, yellow: 0, red: 0, violet: 0 };
     let n = 0;
@@ -783,7 +843,9 @@ export function start(
     const e = ev as SecurityPolicyViolationEvent;
     if (e.blockedURI && e.blockedURI.indexOf(pOrigin) === 0) {
       frame.remove();
-      pn.appendChild(el('div', 'msg', L.csp.replace('{o}', pOrigin)));
+      pn.appendChild(
+        el('div', 'msg', (jwt ? L.cspA : L.csp).replace('{o}', pOrigin))
+      );
     }
   });
 
@@ -796,6 +858,13 @@ export function start(
     switch (m.type) {
       case 'exit':
         return exit();
+      case 'need-identity':
+        // Карта «Админки»: JWT — только своему iframe `wa.` (send — точный origin).
+        if (jwt)
+          void jwt()
+            .catch(() => null)
+            .then((v) => send({ type: 'identity', jwt: v }));
+        return;
       case 'perform': {
         // Только элемент последнего настоящего клика, ещё на странице.
         const t = armed;
@@ -823,10 +892,19 @@ export function start(
         targets = m.items;
         schedule();
         return;
+      case 'heat':
+        heat = m.items;
+        schedule();
+        return;
       case 'highlight':
         return highlight(m.items);
       case 'snapshot-req': {
-        const s = takeSnapshot([], []);
+        // «Админка»: зоны владельца — как у боевого снимка (аудит P2-2).
+        const s = jwt
+          ? takeSnapshot(m.deny ?? [], m.allow ?? [])
+          : takeSnapshot([], []);
+        // «Админка»: строки таблиц (ПД клиентов) — только названные (Р-Э6б-6).
+        if (jwt) dropRows(s, m.rows ?? []);
         refs = s.refs;
         send({ type: 'snapshot', id: m.id, snapshot: s.snapshot });
         return;
@@ -872,4 +950,13 @@ export function start(
     }
   }, 500);
   cleanups.push(() => clearInterval(timer));
+  // «Админка»: сотрудник вышел (`V4CAssist('logout')`) — панель гасит сессию
+  // редактора на сервере и снимает пикер; молчит 3 с — снимаем сами.
+  return {
+    logout() {
+      if (!host.isConnected) return;
+      send({ type: 'logout' });
+      setTimeout(() => host.isConnected && exit(), 3000);
+    },
+  };
 }

@@ -5,6 +5,7 @@
  * assist_admin_* и нейтральные модули (site-ai, assist-knowledge-core/notify);
  * модули «Сайта» не импортирует (правила графа admin↛site, admin-names↛site).
  * Исполнение — из крона assist-admin-embed-run (AdminAnalyticsRunner).
+ * Заход 11: отчёт недели — разделом утренней сводки (AdminWeeklyDigest).
  */
 import { Module } from '@nestjs/common';
 import { AssistAdminModeModule } from '../assist-admin-mode/assist-admin-mode.module';
@@ -18,6 +19,7 @@ import { AdminExportStorage } from './admin-export-storage';
 import { AdminExports } from './admin-exports.service';
 import { AdminLabeler } from './admin-labeler.service';
 import { AdminRollup } from './admin-rollup.service';
+import { AdminWeeklyDigest } from './admin-weekly-digest';
 import { AdminWeekly } from './admin-weekly.service';
 
 @Module({
@@ -30,9 +32,11 @@ import { AdminWeekly } from './admin-weekly.service';
     AdminLabeler,
     AdminRollup,
     AdminWeekly,
+    AdminWeeklyDigest,
     AdminCompensationAlerts,
     AdminAnalyticsRunner,
   ],
-  exports: [AdminAnalyticsRunner],
+  // Р-З11-В3: AdminWeeklyDigest — сводке assist-digest (раздел отчёта недели).
+  exports: [AdminAnalyticsRunner, AdminWeeklyDigest],
 })
 export class AssistAdminAnalyticsModule {}

@@ -178,7 +178,8 @@ export const adminModeEn: AdminModeTexts = {
     minutesTitle: 'Minutes per task type',
     minutesHint:
       'How many minutes an employee would spend without the assistant — for "≈ hours saved". 0 — do not count.',
-    weeklyReport: 'Weekly admin-mode report in Telegram (on Mondays)',
+    weeklyReport:
+      'Weekly admin-mode report in Telegram (on Mondays; if you get the morning summary — as its section)',
     save: 'Save',
     saved2: 'Saved',
     taskTypes: {

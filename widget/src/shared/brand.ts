@@ -83,6 +83,19 @@ export const WIDGET_ADMIN_MODE = 'admin';
 export const ADMIN_SESSION_HEADER = 'X-Assist-Admin-Session';
 export const ADMIN_MESSAGE_NS = 'v4c-admin';
 export const ADMIN_CHANNEL_PREFIX = 'v4c-admin';
+// Заход 11 (№117): панель редактора карты «Админки» — iframe `wa.` (тот же
+// чанк `editor-panel.js`, контур — по метке в разметке HTML iframe).
+export const WIDGET_ADMIN_EDITOR_FRAME_PATH = '/wa/v1/editor-frame';
+export const EDITOR_KIND_META = 'v4c-editor-kind';
+/**
+ * Флаг продолжения редактора после перехода (sessionStorage вкладки) — свой
+ * у каждого контура (раунд исправлений захода 11, аудит P3-4): «Сайт» —
+ * `v4c_edit`, «Админка» — `v4c_edit:admin:<pk>` (публичная часть и админка
+ * на одном origin не подхватывают чужой редактор).
+ */
+export function editorFlag(admin: boolean, pk: string): string {
+  return admin ? `${WIDGET_EDITOR_PARAM}:admin:${pk}` : WIDGET_EDITOR_PARAM;
+}
 
 // Э3-бис (зеркало блока «Э3-бис» sites-backend/src/brand.ts): связанный режим
 // по согласию посетителя и поведение — ленивые чанки, загрузчик не растёт.

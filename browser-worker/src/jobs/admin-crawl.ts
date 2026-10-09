@@ -13,6 +13,15 @@
  *     Раскрывашки (меню, вкладки) — клик только по стоп-листу
  *     (`safety/click-guard.ts`); «Видалити», «Оплатити», отправка формы —
  *     отказ (считается в `refusedClicks`).
+ *  3а. Только чтение (заход 11, Р-З11-Г1): с начала задания до конца —
+ *     кроме окна отправки входа — сеть пропускает лишь чтение
+ *     (`safety/write-guard.ts`): POST/PUT/PATCH/DELETE, beacon, отправка
+ *     формы скриптом, GraphQL-мутация, GET «выхода» и разрушительного
+ *     адреса из скрипта (и редиректом на него), WebSocket, Worker и
+ *     SharedWorker, попапы — обрыв; доказанное чтение GraphQL проходит.
+ *     Окно записи входа — от Enter до признака входа (смена адреса или
+ *     исчезновение поля пароля, ≤ 15 с), только хостам замка. Счётчик — в
+ *     журнале задания (`writes`).
  *  4. Результат — только «знания об интерфейсе» страниц (заголовки,
  *     подписи меню, кнопок и полей, шапки таблиц), без содержимого ячеек.
  *     ПД вне таблиц (Ш3-хвост (17), `admin-crawl-entity.ts`): на карточке
@@ -36,6 +45,8 @@ import { entityRouteKey, sanitizeAdminPage } from './admin-crawl-entity';
 import type { JobContext, JobCredentials } from './types';
 
 const TOGGLES_PER_PAGE = 5;
+/** Потолок окна записи шага входа: ждём признак входа не дольше. */
+const LOGIN_SIGNAL_MS = 15_000;
 
 interface CdpLikeCookie {
   name: string;
@@ -124,12 +135,59 @@ async function loginWithForm(
   await creds.password.reveal((plain) => pass.fill(plain, { timeout: 10_000 }));
   // Секрет больше не нужен — затереть ДО отправки и обхода.
   creds.wipe();
-  await Promise.all([
-    page
-      .waitForLoadState('domcontentloaded', { timeout: 15_000 })
-      .catch(() => undefined),
-    pass.press('Enter', { timeout: 10_000 }),
-  ]);
+  // Единственное окно записи задания (Р-З11-Г1): от Enter до ПРИЗНАКА
+  // входа — смены адреса или исчезновения поля пароля (≤ 15 с; аудит
+  // P2-1: SPA-вход шлёт `fetch` из обработчика `submit` с задержкой, и
+  // окно «до загрузки» закрывалось раньше запроса). В окне запись — только
+  // хостам замка; загрузка дашборда после признака — уже только чтение
+  // («последний вход», «прочитано» не пишутся).
+  const before = page.url();
+  await ctx.jb.loginStep(async () => {
+    let timer: NodeJS.Timeout | undefined;
+    // Ожидание, которое упало (таймаут, страница ушла), признаком не
+    // считается: окно держит другое ожидание или потолок.
+    const settle = (w: Promise<unknown>) =>
+      w.then(
+        () => undefined,
+        () => new Promise<void>(() => undefined),
+      );
+    const signal = Promise.race([
+      settle(
+        page.waitForURL((u) => u.toString() !== before, {
+          waitUntil: 'commit',
+          timeout: LOGIN_SIGNAL_MS,
+        }),
+      ),
+      // Поле пароля пропало или скрыто — проверка на каждом кадре (`raf`):
+      // опрос локатора (до 500 мс) пропускал запись дашборда SPA.
+      settle(
+        page.waitForFunction(
+          () =>
+            !Array.from(
+              document.querySelectorAll('input[type="password"]'),
+            ).some(
+              (e) =>
+                e.getClientRects().length > 0 &&
+                getComputedStyle(e).visibility !== 'hidden',
+            ),
+          undefined,
+          { polling: 'raf', timeout: LOGIN_SIGNAL_MS },
+        ),
+      ),
+      new Promise<void>((r) => {
+        timer = setTimeout(r, LOGIN_SIGNAL_MS);
+      }),
+    ]);
+    try {
+      await pass.press('Enter', { timeout: 10_000 });
+      await signal;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+  await page
+    .waitForLoadState('domcontentloaded', { timeout: 15_000 })
+    .catch(() => undefined);
   await page
     .waitForLoadState('networkidle', { timeout: 8_000 })
     .catch(() => undefined);
@@ -147,6 +205,9 @@ export async function runAdminCrawl(
   try {
     // Внутри try: упал браузер на `newPage` — секреты всё равно затираются
     // (аудит Ш3: раньше SecretBox оставался жить до перезапуска процесса).
+    // Только чтение — ДО первой страницы и до cookie учётки: под сессией
+    // ни загрузка, ни раскрывашки не меняют данные заказчика (Р-З11-Г1).
+    await ctx.jb.sessionReadOnly();
     page = await ctx.jb.newPage();
     if (creds.cookies) {
       await creds.cookies.reveal(async (raw) => {

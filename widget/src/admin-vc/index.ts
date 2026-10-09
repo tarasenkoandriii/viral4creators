@@ -49,6 +49,7 @@ import {
   type UiPlanUi,
 } from '../chat/ui-plan';
 import type { Dict } from '../chat/i18n';
+import { rowsInText } from '../act/snapshot';
 import { VC_TEXTS, type VcTexts } from './i18n';
 
 export type VcLang = 'uk' | 'ru' | 'en';
@@ -97,7 +98,6 @@ export const ADMIN_VOICE_TEST_HEADER = 'X-Assist-Admin-Voice-Test';
 const VT_PATH = '/assist-admin/v1/voice-test';
 const LIMITS = { maxRecordMs: 12_000, minSpeechMs: 250, endSilenceMs: 1_200 };
 const MEMO_REF = /(?:^|[\s(«"])(?:АМ|AM|АM|AМ)[-‐–\s]?\d{1,4}\b/iu;
-const ROW_NUM = /(?:^|[^0-9])([0-9]{3,12})(?![0-9])/g;
 
 /** Прогон мемо «Админки» (аудит 06.10): карточка, проверенные страницы, итог. */
 interface Mc {
@@ -144,13 +144,8 @@ const rand = () =>
     24
   );
 
-/** Номера ≥ 3 цифр, названные в команде (строки таблиц для снимка). */
-export function rowsInText(text: string): string[] {
-  const out: string[] = [];
-  for (const m of text.matchAll(ROW_NUM))
-    if (out.length < 5 && out.indexOf(m[1]) < 0) out.push(m[1]);
-  return out;
-}
+/** Номера ≥ 3 цифр, названные в команде — общий с редактором (act/snapshot). */
+export { rowsInText };
 
 /** Текст — для голосового управления, а не вопрос в чат. */
 export function vcWants(text: string): boolean {

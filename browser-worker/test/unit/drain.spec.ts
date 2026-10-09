@@ -13,6 +13,15 @@ import { createLogger } from '../../src/logger';
 import { Runner } from '../../src/runner';
 import type { ClaimedJob } from '../../src/shared/browser-job-protocol';
 
+const NO_WRITES = {
+  method: 0,
+  graphql: 0,
+  logout: 0,
+  danger: 0,
+  websocket: 0,
+  total: 0,
+};
+
 interface FakeBrowser {
   id: number;
   running: number;
@@ -150,6 +159,7 @@ describe('дренаж перед ротацией под непрерывной
             fb.running -= 1;
           },
           blocked: () => 0,
+          writesBlocked: () => NO_WRITES,
           traffic: () => ({
             bytesIn: 0,
             bytesOut: 0,

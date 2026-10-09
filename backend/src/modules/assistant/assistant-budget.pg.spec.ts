@@ -17,6 +17,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   ASSISTANT_BUDGET_KEY_PREFIX,
   ASSISTANT_RESERVE_TTL_MS,
+  ASSISTANT_SPENT_KEY_PREFIX,
   commitAssistantReserve,
   releaseAssistantBudget,
   reserveAssistantBudget,
@@ -71,10 +72,17 @@ maybe('П-Г5: резерв бюджета консультанта на нас�
     });
   }
 
+  /** Строки суток: живые резервы (ключ суток резерва) и расход обрывов. */
+  const patterns = (day: string): [string, string] => [
+    `${ASSISTANT_BUDGET_KEY_PREFIX}${day}:%`,
+    `${ASSISTANT_SPENT_KEY_PREFIX}${day}:%`,
+  ];
+
   async function inFlightRows(day: Date): Promise<number> {
-    const prefix = `${ASSISTANT_BUDGET_KEY_PREFIX}${day.toISOString().slice(0, 10)}:%`;
+    const [live, spent] = patterns(day.toISOString().slice(0, 10));
     const r = await prisma.$queryRaw<{ n: bigint }[]>`
-      SELECT COUNT(*) AS n FROM "rate_limits" WHERE "key" LIKE ${prefix}
+      SELECT COUNT(*) AS n FROM "rate_limits"
+      WHERE "key" LIKE ${live} OR "key" LIKE ${spent}
     `;
     return Number(r[0]?.n ?? 0);
   }
@@ -85,11 +93,26 @@ maybe('П-Г5: резерв бюджета консультанта на нас�
    * стёрла бы весь `rate_limits` общей базы CI.
    */
   async function pruneOwn(day: Date, now: Date): Promise<void> {
-    const prefix = `${ASSISTANT_BUDGET_KEY_PREFIX}${day.toISOString().slice(0, 10)}:%`;
+    const [live, spent] = patterns(day.toISOString().slice(0, 10));
     const cutoff = new Date(now.getTime() - 3_600_000);
     await prisma.$executeRaw`
-      DELETE FROM "rate_limits" WHERE "key" LIKE ${prefix} AND "windowStart" < ${cutoff}
+      DELETE FROM "rate_limits"
+      WHERE ("key" LIKE ${live} OR "key" LIKE ${spent}) AND "windowStart" < ${cutoff}
     `;
+  }
+
+  /**
+   * Свои строки всех своих суток. Р-З11-Г6: «в полёте» — живые резервы
+   * ЛЮБЫХ суток, поэтому строки одного теста (резерв «завтра») не должны
+   * доживать до следующего.
+   */
+  async function dropOwn(): Promise<void> {
+    for (const d of days) {
+      const [live, spent] = patterns(d);
+      await prisma.$executeRaw`
+        DELETE FROM "rate_limits" WHERE "key" LIKE ${live} OR "key" LIKE ${spent}
+      `;
+    }
   }
 
   beforeAll(async () => {
@@ -98,14 +121,15 @@ maybe('П-Г5: резерв бюджета консультанта на нас�
     await prisma.$connect();
   });
 
+  afterEach(async () => {
+    await dropOwn();
+  });
+
   afterAll(async () => {
     if (usageIds.length) {
       await prisma.$executeRaw`DELETE FROM "ai_usage" WHERE "id" = ANY(${usageIds}::text[])`;
     }
-    for (const d of days) {
-      const prefix = `${ASSISTANT_BUDGET_KEY_PREFIX}${d}:%`;
-      await prisma.$executeRaw`DELETE FROM "rate_limits" WHERE "key" LIKE ${prefix}`;
-    }
+    await dropOwn();
     await prisma.$disconnect();
   });
 
@@ -245,5 +269,151 @@ maybe('П-Г5: резерв бюджета консультанта на нас�
         now,
       }),
     ).toMatchObject({ ok: false, spentMicroUsd: 999_500 });
+  });
+
+  // ── Р-З11-Г6: полночь UTC ────────────────────────────────────────────────
+  /** Сутки n (свои) в hh:mm:ss.ms UTC. */
+  function at(n: number, h: number, m: number, sec = 0, ms = 0): Date {
+    const d = new Date(Date.UTC(2031, 0, 1 + n, h, m, sec, ms));
+    days.push(d.toISOString().slice(0, 10));
+    return d;
+  }
+
+  it('Р-З11-Г6: вчерашний резерв, ещё «в полёте» после полуночи, — учитывается; после снятия — нет', async () => {
+    const late = at(10, 23, 59, 50);
+    const a = await reserveAssistantBudget(prisma, {
+      budgetMicroUsd: 1_500,
+      estimateMicroUsd: 1_000,
+      now: late,
+    });
+    if (!a.ok) throw new Error('резерв не прошёл');
+    const early = at(11, 0, 0, 5);
+    // До захода 11: префикс суток — новых суток резерв не видел, ok: true.
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: early,
+      }),
+    ).toMatchObject({ ok: false, spentMicroUsd: 0, inFlightMicroUsd: 1_000 });
+    await releaseAssistantBudget(prisma, a.key);
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: early,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('Р-З11-Г6: вчерашний неснятый резерв (процесс умер) уходит по TTL и после полуночи', async () => {
+    const late = at(12, 23, 59, 50);
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: late,
+      }),
+    ).toMatchObject({ ok: true });
+    const afterTtl = new Date(
+      late.getTime() + ASSISTANT_RESERVE_TTL_MS + 1_000,
+    );
+    expect(afterTtl.getUTCDate()).not.toBe(late.getUTCDate());
+    days.push(afterTtl.toISOString().slice(0, 10));
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: afterTtl,
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('Р-З11-Г6: вопрос начат вчера, оборван после полуночи — расход НОВЫХ суток (весь день), следующие сутки свободны', async () => {
+    const late = at(14, 23, 59, 50);
+    const a = await reserveAssistantBudget(prisma, {
+      budgetMicroUsd: 1_500,
+      estimateMicroUsd: 1_000,
+      now: late,
+    });
+    if (!a.ok) throw new Error('резерв не прошёл');
+    const cut = at(15, 0, 0, 30);
+    await expect(commitAssistantReserve(prisma, a.key, cut)).resolves.toBe(
+      true,
+    );
+    const rows = await prisma.$queryRaw<{ key: string; ws: Date }[]>`
+      SELECT "key", "windowStart" AS ws FROM "rate_limits"
+      WHERE "key" LIKE ${`%${a.key.slice(a.key.lastIndexOf(':') + 1)}`}
+    `;
+    expect(rows).toHaveLength(1);
+    expect(
+      rows[0].key.startsWith(`${ASSISTANT_SPENT_KEY_PREFIX}2031-01-16:`),
+    ).toBe(true);
+    expect(rows[0].ws.toISOString()).toBe('2031-01-17T00:00:00.000Z');
+    // Вечером тех же суток — всё ещё расход (не живой резерв с TTL).
+    const evening = at(15, 22, 0);
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: evening,
+      }),
+    ).toMatchObject({ ok: false, inFlightMicroUsd: 1_000 });
+    // Штатная чистка в тех сутках строку не трогает.
+    await pruneOwn(cut, evening);
+    expect(await inFlightRows(cut)).toBe(1);
+    // Следующие сутки — свободны (в т. ч. в первые минуты после полуночи).
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: at(16, 0, 0, 1),
+      }),
+    ).toMatchObject({ ok: true, key: expect.any(String) });
+  });
+
+  it('Р-З11-Г6: оборван вчера до полуночи — расход вчерашних суток, первые минуты новых его не видят', async () => {
+    const t0 = at(17, 23, 59, 0);
+    const a = await reserveAssistantBudget(prisma, {
+      budgetMicroUsd: 1_500,
+      estimateMicroUsd: 1_000,
+      now: t0,
+    });
+    if (!a.ok) throw new Error('резерв не прошёл');
+    await commitAssistantReserve(prisma, a.key, at(17, 23, 59, 58));
+    // Вчера — расход учтён до конца суток.
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: at(17, 23, 59, 59),
+      }),
+    ).toMatchObject({ ok: false, inFlightMicroUsd: 1_000 });
+    // Через 1 с после полуночи — новые сутки, бюджет свободен.
+    expect(
+      await reserveAssistantBudget(prisma, {
+        budgetMicroUsd: 1_500,
+        estimateMicroUsd: 1_000,
+        now: at(18, 0, 0, 1),
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it('Р-З11-Г6: параллельные резервы по обе стороны полуночи — один замок: проходят ровно 2 на остаток 2', async () => {
+    const before = at(19, 23, 59, 59, 900);
+    const after = at(20, 0, 0, 0, 100);
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_v, i) =>
+        reserveAssistantBudget(prisma, {
+          budgetMicroUsd: 2_500,
+          estimateMicroUsd: 1_000,
+          now: i % 2 ? after : before,
+        }),
+      ),
+    );
+    // До захода 11 (замок и «в полёте» по суткам) — до 4: по 2 с каждой
+    // стороны полуночи.
+    expect(results.filter((r) => r.ok)).toHaveLength(2);
+    expect((await inFlightRows(before)) + (await inFlightRows(after))).toBe(2);
   });
 });

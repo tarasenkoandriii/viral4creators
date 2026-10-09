@@ -17,6 +17,15 @@ import type { ClaimedJob } from '../../src/shared/browser-job-protocol';
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
+const NO_WRITES = {
+  method: 0,
+  graphql: 0,
+  logout: 0,
+  danger: 0,
+  websocket: 0,
+  total: 0,
+};
+
 function job(id: string, extra: Partial<ClaimedJob> = {}): ClaimedJob {
   return {
     id,
@@ -128,6 +137,7 @@ function make(
       ({
         close: async () => undefined,
         blocked: () => 0,
+        writesBlocked: () => NO_WRITES,
         traffic: () => ({
           bytesIn: 0,
           bytesOut: 0,
@@ -364,6 +374,7 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
           return {
             close: async () => undefined,
             blocked: () => 0,
+            writesBlocked: () => NO_WRITES,
             traffic: () => ({
               bytesIn: 9_000_000,
               bytesOut: 1_000,
@@ -384,6 +395,51 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
       .map((l) => JSON.parse(l) as Record<string, unknown>)
       .find((r) => r.msg === 'потолок трафика');
     expect(rec).toMatchObject({ jobId: 'fat', bytes: 9_000_000, cut: 'job' });
+  });
+
+  it('Р-З11-Г3: оборванные записи «только чтения» — в журнале задания по причинам', async () => {
+    const api = new FakeApi();
+    api.queue = [job('ro')];
+    const lines: string[] = [];
+    const { runner } = make(api, async () => okResult, 1, {
+      logger: createLogger('info', (l) => lines.push(l)),
+      openJobBrowser: async () =>
+        ({
+          close: async () => undefined,
+          blocked: () => 0,
+          writesBlocked: () => ({
+            ...NO_WRITES,
+            method: 3,
+            graphql: 1,
+            websocket: 2,
+            total: 6,
+          }),
+          traffic: () => ({
+            bytesIn: 10,
+            bytesOut: 10,
+            connections: 1,
+            refused: 0,
+            cutResponses: 0,
+            cutJob: false,
+          }),
+        }) as unknown as JobBrowser,
+    });
+    runner.start();
+    for (let i = 0; i < 100 && api.completed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.completed).toEqual(['ro']);
+    const recs = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(recs.find((r) => r.msg === 'задание выполнено')).toMatchObject({
+      jobId: 'ro',
+      writes: 6,
+    });
+    expect(
+      recs.find((r) => r.msg === 'запись оборвана (только чтение)'),
+    ).toMatchObject({
+      jobId: 'ro',
+      writes: 6,
+      reason: 'method:3,graphql:1,websocket:2',
+    });
   });
 
   it('дренаж: пул держит claim — свободные места не заполняются', async () => {

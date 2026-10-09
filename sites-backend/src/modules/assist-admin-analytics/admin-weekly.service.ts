@@ -14,9 +14,12 @@
  *    `assist-admin-insight`;
  *  - отчёт — ТОЛЬКО владельцу кабинета и `assistAdmin: owner` (У-27), каждому
  *    на ЕГО языке (`recipientsWithLang`, Р-З9-7); выключатель — настройка
- *    `weeklyReport`. Недели без диалогов — без вывода и без отчёта.
+ *    `weeklyReport`. Недели без диалогов — без вывода и без отчёта;
+ *  - заход 11 (Р-З11-В3): сегодняшняя сводка `assist-digest` ещё впереди —
+ *    отчёт ждёт её и уходит её разделом (одно сообщение); остаток после
+ *    сводки досылает `flush` отдельным сообщением (admin-weekly-digest.ts).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -58,9 +61,24 @@ import {
   weeklyReportText,
 } from './admin-report-text';
 import { recordAdminUsage } from './admin-usage';
+import {
+  AdminWeeklyDigest,
+  type AdminWeeklyTexts,
+  digestAhead,
+  digestPassed,
+  parseWeeklyTexts,
+} from './admin-weekly-digest';
 
 /** С какого часа понедельника (UTC) делается неделя. */
 export const ADMIN_WEEKLY_HOUR_UTC = 6;
+/**
+ * Аудит з11 P2-2 (решение координатора): пока сегодняшняя сводка впереди,
+ * тик недели берёт до стольких сайтов (обычно — `maxSites` раннера, 5),
+ * чтобы до 06:30 отчёт разделом сводки получило как можно больше сайтов.
+ * Время тика (10–25 с) по-прежнему ограничивает проход: модель — только
+ * если успевает (`ADMIN_INSIGHT_MIN_CALL_MS`), иначе сухие строки кодом.
+ */
+export const ADMIN_WEEKLY_SITES_BEFORE_DIGEST = 25;
 const INSIGHT_RETENTION_DAYS = 400;
 /** Таймаут вызова выводов и минимум остатка тика для него. */
 export const ADMIN_INSIGHT_CALL_TIMEOUT_MS = 20_000;
@@ -71,6 +89,10 @@ export interface AdminWeeklyTickResult {
   sites: number;
   reports: number;
   insightsWithModel: number;
+  /** Р-З11-В3: сайтов, чей отчёт ждёт раздела сегодняшней сводки. */
+  queued: number;
+  /** Р-З11-В3: досланных отдельно (получатели без сводки). */
+  flushed: number;
 }
 
 /** Владелец кабинета или `assistAdmin: owner` (§3.2, У-27). */
@@ -86,11 +108,20 @@ export class AdminWeekly {
   /** Подмена отправки — только тестами (никогда из env). */
   fetchImpl: FetchLike | undefined;
 
+  /**
+   * Р-З11-В3: ожидание сводки — тот же провайдер, что у assist-digest
+   * (ключ замка и часы подменяют только тесты).
+   */
+  readonly digest: AdminWeeklyDigest;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly sitesDb: SitesDb,
     private readonly text: GeminiText,
-  ) {}
+    @Optional() digest?: AdminWeeklyDigest,
+  ) {
+    this.digest = digest ?? new AdminWeeklyDigest(prisma, sitesDb);
+  }
 
   /** Неделя к обработке (понедельник прошлой недели) или null — рано. */
   static dueWeek(now: Date): string | null {
@@ -112,9 +143,27 @@ export class AdminWeekly {
       sites: 0,
       reports: 0,
       insightsWithModel: 0,
+      queued: 0,
+      flushed: 0,
     };
+    // Досылка остатка ожиданий — в каждом тике, и вне понедельника.
+    try {
+      out.flushed = await this.flush(p.deadline, p.siteIds);
+    } catch (e) {
+      this.logger.error(
+        `досылка недели «Админки»: ${(e as Error | null)?.name ?? 'Error'}`,
+      );
+    }
     const week = out.week;
     if (!week) return out;
+    // P2-2: сводка сегодня впереди — сайтов за тик больше.
+    const ahead = digestAhead(
+      await this.digest.dbNow(),
+      await this.digest.digestState(),
+    );
+    const maxSites = ahead
+      ? Math.max(p.maxSites, ADMIN_WEEKLY_SITES_BEFORE_DIGEST)
+      : p.maxSites;
     const due = await this.prisma.$queryRawUnsafe<
       Array<{ accountId: string; siteId: string }>
     >(
@@ -124,7 +173,7 @@ export class AdminWeekly {
           AND ($3::text[] IS NULL OR "siteId" = ANY($3::text[]))
         ORDER BY "siteId" LIMIT $2`,
       week,
-      Math.max(1, p.maxSites),
+      Math.max(1, maxSites),
       p.siteIds ?? null,
     );
     for (const s of due) {
@@ -153,6 +202,7 @@ export class AdminWeekly {
           p.deadline,
         );
         if (r.sent) out.reports++;
+        if (r.queued) out.queued++;
         if (r.model) out.insightsWithModel++;
       } catch (e) {
         this.logger.error(
@@ -161,6 +211,59 @@ export class AdminWeekly {
       }
     }
     return out;
+  }
+
+  /**
+   * Р-З11-В3: остаток ожидания сводки — отдельным сообщением, когда сводка,
+   * стартовавшая после постановки, прошла (или ждём дольше страховки).
+   * Остаток забирается атомарно (`takeRest`) — с разделом сводки не
+   * пересечётся. Получатели — те, кто и сейчас владелец «Админки»; отчёт
+   * выключили в настройках — не шлём.
+   */
+  async flush(deadline: number, siteIds?: string[] | null): Promise<number> {
+    const rows = await this.digest.pendingRows(siteIds);
+    if (!rows.length) return 0;
+    // Часы базы — те же, что у замка сводки и `digestPendingAt` (P3-6).
+    const now = await this.digest.dbNow();
+    const state = await this.digest.digestState();
+    let sent = 0;
+    for (const r of rows) {
+      if (Date.now() >= deadline) break;
+      if (!digestPassed(now, r.digestPendingAt, state)) continue;
+      const taken = await this.digest.takeRest(r.accountId, r.id);
+      const texts = parseWeeklyTexts(r.digestTexts);
+      if (!taken.length || !texts) continue;
+      try {
+        const settings = await this.sitesDb
+          .forAccount(r.accountId)
+          .assistAdminSettings.findFirst({
+            where: { siteId: r.siteId },
+            select: { weeklyReport: true },
+          });
+        if (!settings?.weeklyReport) continue;
+        const want = new Set(taken);
+        const to = (
+          await recipientsWithLang(this.sitesDb, r.accountId, adminOwner)
+        ).filter((x) => want.has(x.chatId.toString()));
+        sent += await sendToMembersByLang({
+          recipients: to,
+          texts,
+          hashPath: `/sites/${r.siteId}/admin-mode/stats`,
+          env: this.env,
+          fetchImpl: this.fetchImpl,
+        });
+      } catch (e) {
+        // P3-5: сбой между забором и отправкой — получатели возвращаются в
+        // ожидание (следующий тик дошлёт), а не пропадают молча.
+        await this.digest
+          .releaseMany(r.accountId, r.id, taken)
+          .catch(() => undefined);
+        this.logger.error(
+          `досылка недели «Админки» ${r.siteId}: ${(e as Error | null)?.name ?? 'Error'}, получатели возвращены`,
+        );
+      }
+    }
+    return sent;
   }
 
   /** Выводы старше `INSIGHT_RETENTION_DAYS` — прочь (раз в сутки). */
@@ -199,7 +302,13 @@ export class AdminWeekly {
     now: Date,
     /** Срок тика (мс эпохи): модель — только если успевает. */
     deadline = Date.now() + 30_000,
-  ): Promise<{ sent: boolean; model: boolean; findings: AdminFinding[] }> {
+  ): Promise<{
+    sent: boolean;
+    model: boolean;
+    findings: AdminFinding[];
+    /** Р-З11-В3: получателей, чей отчёт ждёт сводки (0 — ушёл сразу). */
+    queued?: number;
+  }> {
     const db = this.sitesDb.forAccount(accountId);
     const totals = await this.totals(accountId, siteId, week);
     if (totals.conversations === 0 && totals.questions === 0) {
@@ -264,7 +373,21 @@ export class AdminWeekly {
           items: items?.items ?? null,
         }),
       ]),
-    ) as Parameters<typeof sendToMembersByLang>[0]['texts'];
+    ) as AdminWeeklyTexts;
+    // Р-З11-В3: сводка сегодня ещё впереди — отчёт уйдёт её разделом.
+    // Часы — базы (P3-6): с ними сравниваются старт и замок сводки.
+    const dbNow = to.length ? await this.digest.dbNow() : now;
+    if (to.length && digestAhead(dbNow, await this.digest.digestState())) {
+      await db.assistAdminInsight.updateMany({
+        where: { siteId, weekStart: week },
+        data: {
+          digestPending: to.map((r) => r.chatId.toString()),
+          digestPendingAt: dbNow,
+          digestTexts: texts as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return { sent: false, model: !!items, findings, queued: to.length };
+    }
     const sent = await sendToMembersByLang({
       recipients: to,
       texts,

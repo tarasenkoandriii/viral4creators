@@ -171,6 +171,11 @@ model Site {
   // (ТЗ §5-бис.2, §5-бис.9, §5-бис.13; только assist_admin_*).
   adminUiPlans        AssistAdminUiPlan[]
   adminVoiceTests     AssistAdminVoiceTest[]
+  // Заход 11 (№117): голосовая карта «Админки» — второй экземпляр карты
+  // (ТЗ §5-кватер.9 «Изоляция», К-9; только assist_admin_*).
+  adminVoiceMap               AssistAdminVoiceMap?
+  adminVoiceMapVersions       AssistAdminVoiceMapVersion[]
+  adminVoiceMapEditorSessions AssistAdminVoiceMapEditorSession[]
   sandboxes           AssistSandbox[]
 
   // Э2: виджет режима «Сайт» (контракт /tmp/k/CONTRACT-E2.md).
@@ -242,6 +247,8 @@ model Site {
   voiceMapEditorSessions AssistSiteVoiceMapEditorSession[]
   /// Заход 9: отчёт для разработчика — ссылка только на чтение (Э6-тер (9)).
   voiceMapDevReports     AssistSiteVoiceMapDevReport[]
+  /// Заход 11 (№113): неуверенно распознанные слова — кандидаты в термины.
+  sttLowTerms            AssistSiteSttLowTerm[]
 
   // Э3-бис: аналитика с ИИ — разметка диалогов, lead score, выводы недели,
   // эксперименты, поведенческие факторы (ТЗ §5-тер.3–5, §5-тер.8–10).
@@ -2501,23 +2508,32 @@ model AssistAdminDailyStat {
 /// assist_admin_*): находки считает код, модель лишь формулирует (uk/ru/en);
 /// каждое число текста проверяется против находок, провал — сухие строки.
 model AssistAdminInsight {
-  id           String              @id @default(cuid())
-  accountId    String
-  siteId       String
-  settings     AssistAdminSettings @relation(fields: [siteId, accountId], references: [siteId, accountId], onDelete: Cascade)
+  id              String              @id @default(cuid())
+  accountId       String
+  siteId          String
+  settings        AssistAdminSettings @relation(fields: [siteId, accountId], references: [siteId, accountId], onDelete: Cascade)
   /// Понедельник недели (UTC), YYYY-MM-DD.
-  weekStart    String
-  findings     Json
+  weekStart       String
+  findings        Json
   /// [{ findingIds, uk: {title, action}, ru: …, en: … }]; NULL — без модели.
-  text         Json?
-  model        String?
+  text            Json?
+  model           String?
   /// new | done | dismissed
-  status       String              @default("new")
-  doneAt       DateTime?
-  feedback     Int?
-  costMicroUsd Int                 @default(0)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  status          String              @default("new")
+  doneAt          DateTime?
+  feedback        Int?
+  costMicroUsd    Int                 @default(0)
+  /// Заход 11 (Р-З11-В3): получатели отчёта недели (chat id строкой), чей
+  /// отчёт ждёт раздела в сегодняшней сводке `assist-digest`. Забирает
+  /// сводка (по одному id) или досылка крона «Админки» — без дублей.
+  digestPending   String[]            @default([])
+  /// Когда отчёт поставлен в ожидание сводки (NULL — не ставился).
+  digestPendingAt DateTime?
+  /// Готовые тексты отчёта недели {uk|ru|en: {text, button}} — для раздела
+  /// сводки и досылки; NULL — отчёт ушёл сразу.
+  digestTexts     Json?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   @@unique([siteId, weekStart])
   @@index([accountId])
@@ -2551,6 +2567,106 @@ model AssistAdminExport {
   @@index([siteId, createdAt])
   @@index([accountId])
   @@map("assist_admin_exports")
+}
+
+// ══ Заход 11 (№117): голосовая карта «Админки» — второй экземпляр карты
+// Э6-тер (ТЗ §5-кватер.9 «Изоляция», §5-кватер.13; К-9, В-55 — тариф Pro).
+// Ядро то же (`assist-ui-core/voice-map.ts`), таблицы, маршруты
+// (`…/admin-mode/voice-map/*`, `/assist-admin/v1/editor/*`), origin (`wa.`) и
+// хосты (роль `admin`) — свои. Цели и шаблоны — в JSON черновика/версии,
+// как у «Сайта» (Р-З11-А1); журнал изменений — строки `voice-map` в
+// append-only `assist_admin_action_log`. Роли assist_public — ничего. ═══
+
+/// Голосовая карта «Админки»: черновик (`VoiceMapContent`) с ревизией (409 —
+/// две вкладки), номер опубликованной версии (= `voiceMapVersion` «Админки»,
+/// план сотрудника читает её основной ролью), суточные счётчики «Сказать
+/// сейчас» и запросов публикации из редактора.
+model AssistAdminVoiceMap {
+  siteId           String   @id
+  accountId        String
+  site             Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Опубликованная версия (0 — карты нет: снимок + модель).
+  publishedVersion Int      @default(0)
+  versionSeq       Int      @default(0)
+  draftRevision    Int      @default(0)
+  draft            Json
+  tryDay           String?
+  tryCount         Int      @default(0)
+  publishReqDay    String?
+  publishReqCount  Int      @default(0)
+  updatedBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([siteId, accountId])
+  @@index([accountId])
+  @@map("assist_admin_voice_maps")
+}
+
+/// Неизменяемая версия карты «Админки»: сборка → ворота кода (`held`) →
+/// публикация ТОЛЬКО владельцем «Админки» в TMA; откат — новая версия с
+/// содержимым N; последние 20.
+model AssistAdminVoiceMapVersion {
+  id           String    @id @default(cuid())
+  accountId    String
+  siteId       String
+  site         Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  number       Int
+  /// checking | published | held | discarded
+  status       String
+  content      Json
+  contentHash  String
+  gateReport   Json?
+  rollbackOf   Int?
+  /// `tg:<id>` — владелец «Админки», собравший версию (TMA или редактор).
+  requestedBy  String
+  /// editor | tma
+  requestedVia String
+  publishedBy  String?
+  createdAt    DateTime  @default(now())
+  publishedAt  DateTime?
+
+  @@unique([siteId, number])
+  @@index([accountId])
+  @@map("assist_admin_voice_map_versions")
+}
+
+/// Ссылка и сессия редактора карты «Админки» (iframe `wa.`): ссылка —
+/// одноразовая, 10 мин, только verified-хост САМОЙ админки (`adminHostIds`,
+/// L1 `assist-admin` без льготы); при обмене привязывается к живой сессии
+/// сотрудника `wa.` (employee-JWT заказчика) — дальше каждый запрос панели
+/// несёт обе (§5-кватер.2 «Админка»). Токены — только SHA-256.
+model AssistAdminVoiceMapEditorSession {
+  id                   String    @id @default(cuid())
+  accountId            String
+  siteId               String
+  site                 Site      @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// Участник кабинета (assistAdmin: owner), выдавший ссылку в TMA.
+  memberId             String
+  hostId               String
+  host                 String
+  parentOrigin         String
+  pagePath             String    @default("/")
+  focusKey             String?
+  linkTokenHash        String    @unique
+  sessionTokenHash     String?   @unique
+  /// Сессия сотрудника `wa.` (assist_admin_sessions.id) и её `jwt:<sub>` —
+  /// с какой сессией обменяна ссылка; другая сессия — 401.
+  adminSessionId       String?
+  employeeRef          String?
+  linkExpiresAt        DateTime
+  exchangedAt          DateTime?
+  expiresAt            DateTime?
+  absoluteExpiresAt    DateTime?
+  lastSeenAt           DateTime?
+  revokedAt            DateTime?
+  revokeReason         String?
+  lastPublishRequestAt DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@index([siteId])
+  @@index([accountId])
+  @@map("assist_admin_voice_map_editor_sessions")
 }
 
 // ══ Э2: виджет режима «Сайт» (ТЗ §3-бис, §4-бис, §4.5, §4.12–§4.13, §6.3) ══
@@ -4057,6 +4173,36 @@ model AssistSiteVoiceMapDevReport {
   @@index([siteId])
   @@index([accountId])
   @@map("assist_site_voice_map_dev_reports")
+}
+
+/// №113 (заход 11): слово голоса посетителя, которое Soniox распознал
+/// неуверенно (`confidence` < 0.6), — кандидат в словарь терминов карты
+/// (`context.terms`, ТЗ §4-тер.5, §5-кватер.10 «Предложения»). Одна строка
+/// на (сайт, день UTC, норма фразы, посетитель): свёртка «разные
+/// посетители» — числом строк. Пишут под assist_public (колоночный
+/// INSERT, `ON CONFLICT DO NOTHING` без цели) план голосовой команды БЕЗ
+/// значений полей и вопрос чата при совпадении со словарём сайта (Р-З11-Б8);
+/// читает панель редактора основной ролью. Посетитель — хеш (не id); фраза
+/// прошла разбор фразы карты; длины и формат — триггер в базе. Хранение — 30
+/// дней (`assist-retention`), с сайтом — каскадом.
+model AssistSiteSttLowTerm {
+  accountId   String
+  siteId      String
+  site        Site     @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  /// YYYY-MM-DD (UTC).
+  day         String
+  norm        String
+  word        String
+  visitorHash String
+  /// Суточный хеш IP токена (`ipHash`): «разных посетителей» = min(хеши
+  /// посетителя, хеши IP) — новая сессия того же клиента порог не набирает.
+  ipHash      String
+  createdAt   DateTime @default(now())
+
+  @@id([siteId, day, norm, visitorHash])
+  @@index([accountId])
+  @@index([createdAt])
+  @@map("assist_site_stt_low_terms")
 }
 
 /// Э6-бис (г): проверка голосового управления на сайте заказчика — мастер

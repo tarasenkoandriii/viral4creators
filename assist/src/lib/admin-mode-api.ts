@@ -10,6 +10,10 @@ import type { ApiClient } from '../kit';
 import { type Proposal, parseProposal } from './admin-actions-api';
 import { seg } from './handoff-api';
 import { createAdminVoiceApi, type AdminVoiceApi } from './admin-voice-api';
+import {
+  createAdminVoiceMapApi,
+  type AdminVoiceMapApi,
+} from './admin-voice-map-api';
 
 export const ADMIN_MODE_TABS = [
   'settings',
@@ -753,6 +757,8 @@ export interface AdminModeApi {
   ): Promise<void>;
   /** Э6-бис (б): голосовое управление «Админкой» (вкладка «Голос»). */
   voice: AdminVoiceApi;
+  /** Заход 11 (№117): голосовая карта «Админки» (вкладка «Голос»). */
+  voiceMap: AdminVoiceMapApi;
 }
 
 function parseCrawl(v: unknown): PrivateCrawlView {
@@ -1001,5 +1007,6 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
       );
     },
     voice: createAdminVoiceApi(client),
+    voiceMap: createAdminVoiceMapApi(client),
   };
 }
