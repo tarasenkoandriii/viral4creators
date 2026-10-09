@@ -53,8 +53,15 @@ export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary;
           <a href={GITHUB_REPO_URL} target="_blank" rel="noreferrer">
             {dict.footer.github}
           </a>
+          {/* Обычные `<a>`, не `next/link`: у `/legal` свой корневой
+              документ (`app/legal/layout.tsx` рисует свой `<html>`), и
+              переход туда — всё равно полная загрузка страницы; `Link`
+              добавил бы только префетч. Правило `no-html-link-for-pages`
+              видит `app/` с eslint-config-next 15 (в 14 — только `pages/`). */}
+          {/* eslint-disable @next/next/no-html-link-for-pages */}
           <a href="/legal/offer">{dict.footer.offer}</a>
           <a href="/legal/terms-of-use">{dict.footer.terms}</a>
+          {/* eslint-enable @next/next/no-html-link-for-pages */}
           <a href={SPEC_KIT_URL} target="_blank" rel="noreferrer">
             {dict.footer.builtWith}
           </a>

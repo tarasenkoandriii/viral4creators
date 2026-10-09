@@ -44,33 +44,46 @@ const APP = path.join(__dirname, '..', 'src', 'app');
 const SRC = path.join(__dirname, '..', 'src');
 
 // ── 1. Пять локалей — пять разных `lang` ──
-for (const locale of locales) {
-  const html = renderToStaticMarkup(
-    React.createElement(LocaleLayout, {
-      params: { locale },
-      children: React.createElement('main', null, 'x'),
-    }),
-  );
-  const open = /^<html\b[^>]*>/.exec(html)?.[0];
-  assert.ok(
-    open,
-    `[locale]/layout на ${locale}: первым тегом не <html>: ${html.slice(0, 80)}`,
-  );
-  assert.match(
-    open,
-    new RegExp(`\\blang="${locale}"`),
-    `[locale]/layout на ${locale}: ${open}`,
-  );
-  assert.match(
-    open,
-    new RegExp(`\\bdir="${LOCALE_DIR[locale]}"`),
-    `[locale]/layout на ${locale}: нет dir="${LOCALE_DIR[locale]}": ${open}`,
-  );
-  assert.match(
-    html,
-    /<body><main>x<\/main><\/body><\/html>$/,
-    `[locale]/layout на ${locale}: дети не в <body>`,
-  );
+// С Next 15 layout асинхронный (`params` — Promise), а `react-dom/server`
+// async-компоненты не рендерит (это умеет только RSC-рендер Next), —
+// поэтому layout вызывается как функция, и рендерится уже его результат.
+async function renderLocaleLayout(locale: string): Promise<string> {
+  const tree = await LocaleLayout({
+    params: Promise.resolve({ locale }),
+    children: React.createElement('main', null, 'x'),
+  });
+  return renderToStaticMarkup(tree);
+}
+
+async function checkLocaleLayouts() {
+  for (const locale of locales) {
+    const html = await renderLocaleLayout(locale);
+    const open = /^<html\b[^>]*>/.exec(html)?.[0];
+    assert.ok(
+      open,
+      `[locale]/layout на ${locale}: первым тегом не <html>: ${html.slice(0, 80)}`,
+    );
+    assert.match(
+      open,
+      new RegExp(`\\blang="${locale}"`),
+      `[locale]/layout на ${locale}: ${open}`,
+    );
+    assert.match(
+      open,
+      new RegExp(`\\bdir="${LOCALE_DIR[locale]}"`),
+      `[locale]/layout на ${locale}: нет dir="${LOCALE_DIR[locale]}": ${open}`,
+    );
+    assert.match(
+      open,
+      /\bdata-scroll-behavior="smooth"/,
+      `[locale]/layout на ${locale}: нет data-scroll-behavior (плавная прокрутка в globals.css): ${open}`,
+    );
+    assert.match(
+      html,
+      /<body><main>x<\/main><\/body><\/html>$/,
+      `[locale]/layout на ${locale}: дети не в <body>`,
+    );
+  }
 }
 
 // ── 2. Корень пропускает детей, корневой 404 и вне-локальные разделы — `ru` ──
@@ -96,9 +109,11 @@ for (const [name, html] of [
     renderToStaticMarkup(React.createElement(QaLayout, null, 'x')),
   ],
 ] as const) {
+  // `<head></head>` — его дописывает сам `react-dom/server` React 19
+  // (место для поднятых в `<head>` ресурсов); в Next его наполняют метаданные.
   assert.match(
     html,
-    /^<html lang="ru" dir="ltr"><body>/,
+    /^<html lang="ru" dir="ltr" data-scroll-behavior="smooth">(<head><\/head>)?<body>/,
     `${name}: ${html.slice(0, 80)}`,
   );
 }
@@ -159,6 +174,13 @@ for (const file of walk(SRC).filter((f) => /\.tsx?$/.test(f))) {
   );
 }
 
-console.log(
-  `html-lang: ${locales.length} локалей, ${pages.length} страниц — <html lang> серверный`,
+checkLocaleLayouts().then(
+  () =>
+    console.log(
+      `html-lang: ${locales.length} локалей, ${pages.length} страниц — <html lang> серверный`,
+    ),
+  (err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  },
 );

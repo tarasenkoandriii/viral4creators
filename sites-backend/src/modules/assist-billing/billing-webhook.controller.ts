@@ -9,7 +9,8 @@
  * читает квитанцию на верхнем уровне JSON.
  *
  * Тело — не DTO: схему задаёт WayForPay. Некоторые интеграции WayForPay
- * присылают JSON строкой-ключом формы — разбираем и этот вид.
+ * присылают JSON строкой-ключом формы — разбираем и этот вид
+ * (`shared/wayforpay-body.ts`, общий с backend).
  */
 import {
   Body,
@@ -20,35 +21,13 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { wayforpayBody } from '../../shared/wayforpay-body';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import {
   AssistPayments,
   type WayForPayAck,
   type WayForPayWebhookBody,
 } from './payments.service';
-
-export function wayforpayBody(body: unknown): WayForPayWebhookBody {
-  if (body && typeof body === 'object' && !Array.isArray(body)) {
-    const o = body as Record<string, unknown>;
-    const keys = Object.keys(o);
-    if (keys.length === 1 && o[keys[0]] === '' && keys[0].startsWith('{')) {
-      try {
-        return JSON.parse(keys[0]) as WayForPayWebhookBody;
-      } catch {
-        return {} as WayForPayWebhookBody;
-      }
-    }
-    return o as unknown as WayForPayWebhookBody;
-  }
-  if (typeof body === 'string') {
-    try {
-      return JSON.parse(body) as WayForPayWebhookBody;
-    } catch {
-      return {} as WayForPayWebhookBody;
-    }
-  }
-  return {} as WayForPayWebhookBody;
-}
 
 @Controller('assist/billing/webhook')
 @PublicRoute('вебхук WayForPay: подлинность — подпись мерчанта в теле')
@@ -59,7 +38,7 @@ export class AssistBillingWebhookController {
   @HttpCode(200)
   async wayforpay(@Body() body: unknown, @Res() res: Response): Promise<void> {
     const ack: WayForPayAck | null = await this.payments.handleWayForPay(
-      wayforpayBody(body),
+      wayforpayBody<WayForPayWebhookBody>(body) as WayForPayWebhookBody,
     );
     if (!ack) {
       throw new ServiceUnavailableException(

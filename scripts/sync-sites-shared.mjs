@@ -48,6 +48,14 @@ export const ENTRIES = [
   { from: 'backend/src/common/client-ip.spec.ts', to: 'client-ip.spec.ts' },
   // Сравнение Origin со списком CORS, включая `*.vercel.app` (main.ts).
   { from: 'backend/src/common/cors-origin-match.ts', to: 'cors-origin-match.ts' },
+  // Заход 12 (Express 5): `req.body` без тела — `{}`, как в Express 4
+  // (первый слой express в app.setup.ts обоих пакетов).
+  { from: 'backend/src/common/express-body-default.ts', to: 'express-body-default.ts' },
+  { from: 'backend/src/common/express-body-default.spec.ts', to: 'express-body-default.spec.ts' },
+  // Заход 12 (аудит P3-3/P3-4): ошибки body-parser → свой 4xx, 404 Nest без
+  // query — общие куски фильтров ошибок обоих пакетов.
+  { from: 'backend/src/common/http-error-helpers.ts', to: 'http-error-helpers.ts' },
+  { from: 'backend/src/common/http-error-helpers.spec.ts', to: 'http-error-helpers.spec.ts' },
   // Диагностика сбоя связи с Postgres без утечки пароля (PrismaService).
   { from: 'backend/src/prisma/db-error.ts', to: 'db-error.ts' },
   { from: 'backend/src/prisma/db-error.spec.ts', to: 'db-error.spec.ts' },
@@ -93,6 +101,10 @@ export const ENTRIES = [
   { from: 'backend/src/common/wayforpay-signature.ts', to: 'wayforpay-signature.ts' },
   { from: 'backend/src/common/wayforpay-signature.spec.ts', to: 'wayforpay-signature.spec.ts' },
   { from: 'backend/src/common/wayforpay-sanitize.ts', to: 'wayforpay-sanitize.ts' },
+  // Заход 12 (аудит P2-3): тело вебхука WayForPay в один вид (JSON, форма с
+  // JSON строкой-ключом, строка, без тела) — у генератора и Помощника.
+  { from: 'backend/src/common/wayforpay-body.ts', to: 'wayforpay-body.ts' },
+  { from: 'backend/src/common/wayforpay-body.spec.ts', to: 'wayforpay-body.spec.ts' },
   { from: 'backend/src/common/token-crypto.ts', to: 'token-crypto.ts' },
   { from: 'backend/src/common/token-crypto.spec.ts', to: 'token-crypto.spec.ts' },
   // Э-С Ш1 (П-С3): HMAC внутреннего API генератор → sites-backend — один

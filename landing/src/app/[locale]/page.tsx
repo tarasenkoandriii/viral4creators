@@ -22,10 +22,15 @@ export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export default async function LandingPage({ params }: { params: { locale: string } }) {
+export default async function LandingPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
   // Валидность локали уже проверена в app/[locale]/layout.tsx (notFound()
   // там же) — здесь просто безопасно сужаем тип для getDictionary().
-  const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
+  const { locale: raw } = await params;
+  const locale: Locale = isLocale(raw) ? raw : 'ru';
   const dict = getDictionary(locale);
   // Э-С Ш5: старый консультант или виджет платформы — переключатель сборки.
   const assist = assistWidgetFromBuildEnv();

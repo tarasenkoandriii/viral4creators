@@ -137,6 +137,10 @@ export function SiteChrome({
           <div>
             <h2 className="footer-heading">{dict.common.footer.legalHeading}</h2>
             <ul className="footer-links">
+              {/* Обычные `<a>`, не `next/link`: у `/legal` свой корневой документ
+                  (`app/legal/layout.tsx`), переход туда — всё равно полная загрузка.
+                  Правило видит `app/` с eslint-config-next 15 (в 14 — только `pages/`). */}
+              {/* eslint-disable @next/next/no-html-link-for-pages */}
               <li>
                 <a href="/legal/privacy">{dict.common.footer.privacy}</a>
               </li>
@@ -146,6 +150,7 @@ export function SiteChrome({
               <li>
                 <a href="/legal/cookies">{dict.common.footer.cookies}</a>
               </li>
+              {/* eslint-enable @next/next/no-html-link-for-pages */}
             </ul>
             <p className="footer-note">{dict.common.footer.draftNote}</p>
           </div>

@@ -3,7 +3,7 @@ import { headers } from 'next/headers';
 import { locales } from '../lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
-import { BLOG_REVALIDATE_SECONDS, listAllBlogPosts } from '../lib/blog-api';
+import { listAllBlogPosts } from '../lib/blog-api';
 import { SITE_URL } from '../lib/content';
 
 /**
@@ -36,7 +36,11 @@ import { SITE_URL } from '../lib/content';
  *    Интервал здесь тот же, что у самого блога: держать sitemap свежее
  *    его источника смысла нет.
  */
-export const revalidate = BLOG_REVALIDATE_SECONDS;
+// Литерал, а не `BLOG_REVALIDATE_SECONDS`: Next 15 читает конфиг сегмента
+// статически, по исходнику, и импортированную константу отвергает ошибкой
+// сборки (Next 14 брал значение из модуля). Равенство константе держит
+// scripts/segment-config.test.ts.
+export const revalidate = 900;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   /**
@@ -51,7 +55,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
    * страница-редирект в карте сайта — прямая ошибка, о которой Search
    * Console сообщает отдельной строкой.
    */
-  const host = headers().get('host');
+  const host = (await headers()).get('host');
   if (isGreetingHost(host)) {
     return locales.map((locale) => ({
       url: `${GREETING_SITE_URL}/${locale}`,

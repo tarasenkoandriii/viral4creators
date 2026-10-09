@@ -112,12 +112,12 @@ function localeOf(raw: string): Locale {
   return isLocale(raw) ? raw : 'ru';
 }
 
-export function generateMetadata({
+export async function generateMetadata({
   params,
 }: {
-  params: { locale: string };
-}): Metadata {
-  const locale = localeOf(params.locale);
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const locale = localeOf((await params).locale);
   const dict = getDictionary(locale);
   const g = dict.greetingsLanding;
   return {
@@ -144,12 +144,12 @@ export function generateMetadata({
   };
 }
 
-export default function GreetingsLandingPage({
+export default async function GreetingsLandingPage({
   params,
 }: {
-  params: { locale: string };
+  params: Promise<{ locale: string }>;
 }) {
-  const locale = localeOf(params.locale);
+  const locale = localeOf((await params).locale);
   const dict = getDictionary(locale);
   const g = dict.greetingsLanding;
   // Метка источника для воронки (§4 п.1 ТЗ) — по ней потом отличить
@@ -205,8 +205,6 @@ export default function GreetingsLandingPage({
        «покажи, что получится» убеждает раньше перечисления возможностей.
        Секции не будет вовсе, пока оператор ничего не отобрал. */
     samples: () => (
-      /* @ts-expect-error Async Server Component — поддерживается Next
-         App Router, но типы JSX в React 18 ещё не выражают async-узел */
       <GreetingSampleGallery
         dict={dict}
         title={g.samples.title}

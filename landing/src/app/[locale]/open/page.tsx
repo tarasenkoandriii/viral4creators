@@ -22,20 +22,30 @@ export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
-  if (!isLocale(params.locale)) return {};
-  const t = OPEN_APP_COPY[params.locale];
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  if (!isLocale(locale)) return {};
+  const t = OPEN_APP_COPY[locale];
   return {
     title: t.metaTitle,
     description: t.metaDescription,
-    alternates: { canonical: `${SITE_URL}/${params.locale}` },
+    alternates: { canonical: `${SITE_URL}/${locale}` },
     robots: { index: false, follow: true },
   };
 }
 
-export default function OpenAppPage({ params }: { params: { locale: string } }) {
+export default async function OpenAppPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
   // Локаль уже проверена в app/[locale]/layout.tsx (notFound() там же).
-  const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
+  const { locale: raw } = await params;
+  const locale: Locale = isLocale(raw) ? raw : 'ru';
   const t = OPEN_APP_COPY[locale];
   const dict = getDictionary(locale);
   const hasTelegram = normalizeBotUsername(TELEGRAM_BOT_USERNAME) !== null;

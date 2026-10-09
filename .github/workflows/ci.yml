@@ -63,6 +63,7 @@ jobs:
       frontend: ${{ steps.f.outputs.frontend }}
       admin: ${{ steps.f.outputs.admin }}
       landing: ${{ steps.f.outputs.landing }}
+      marketplace: ${{ steps.f.outputs.marketplace }}
       live_login_relay: ${{ steps.f.outputs.live_login_relay }}
       browser_worker: ${{ steps.f.outputs.browser_worker }}
       next_apps: ${{ steps.f.outputs.next_apps }}
@@ -120,12 +121,10 @@ jobs:
         working-directory: backend
       # `npm audit` на высоких (этап 53, В-6.17): TODO вёл 14 предупреждений
       # руками, и новое высокое никто не заметил бы до следующего аудита.
-      # Пока `continue-on-error` — известные высокие закрываются мажорными
-      # обновлениями (I-Б.5), и красить весь CI ими до того дня нечестно;
-      # шаг виден в логе и станет обязательным вместе с обновлением.
+      # Обязательный с захода 12 (Р-З12-А7): после NestJS 11 / Express 5
+      # high/critical в рантайм-дереве 0 — новое высокое красит CI сразу.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
         working-directory: backend
 
       - name: prisma validate
@@ -256,9 +255,9 @@ jobs:
       # binaries.prisma.sh есть.
       - run: npm ci
         working-directory: sites-backend
+      # Обязательный с захода 12 (Р-З12-А7): high/critical в рантайм-дереве 0.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
         working-directory: sites-backend
 
       - name: prisma validate
@@ -461,7 +460,7 @@ jobs:
         working-directory: assist-integrations
 
   # Лендинг клиентских сайтов (Л0–Л3 ТЗ лендинга помощника). Свой
-  # проект Next 14 со своими бюджетами (§9) — поэтому своя джоба, а не
+  # проект Next 15 со своими бюджетами (§9) — поэтому своя джоба, а не
   # строка матрицы `next-apps`: Lighthouse CI и axe есть только здесь.
   # Л2–Л3: проверки собранного сайта идут С ВИДЖЕТОМ — сборка указывает на
   # лабораторный стенд продукта (scripts/built/assist-stand.ts, :3011) с
@@ -523,7 +522,7 @@ jobs:
       - name: собранный HTML (SEO, реестр утверждений, виджет не в HTML, секреты не в бандле)
         run: npm run check:built
         working-directory: sites-landing
-      - name: бюджет JS первой загрузки (≤ 110 КБ, /widget и /try ≤ 160 КБ gzip)
+      - name: бюджет JS первой загрузки (≤ 118 КБ, /widget и /try ≤ 160 КБ gzip)
         run: npm run budget:js
         working-directory: sites-landing
       - name: виджет для стенда (настоящий загрузчик)

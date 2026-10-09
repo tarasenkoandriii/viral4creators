@@ -2,7 +2,7 @@
   "name": "@viral4creators/admin",
   "version": "0.1.0",
   "private": true,
-  "description": "viral4creators — admin panel (session list + telemetry). Next.js 14 App Router, Telegram Login Widget + httpOnly AdminSession cookie — see doc/TELEGRAM-ADMIN.md.",
+  "description": "viral4creators — admin panel (session list + telemetry). Next.js 15 App Router, Telegram Login Widget + httpOnly AdminSession cookie — see doc/TELEGRAM-ADMIN.md.",
   "scripts": {
     "dev": "next dev -p 3002",
     "build": "next build",
@@ -12,17 +12,20 @@
     "test": "for f in src/lib/*.test.ts; do npx tsx \"$f\" || exit 1; done"
   },
   "dependencies": {
-    "next": "^14.2.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "next": "^15.5.27",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.0",
+    "eslint-config-next": "^15.5.27",
     "tsx": "^4.23.15",
     "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.29"
   }
 }

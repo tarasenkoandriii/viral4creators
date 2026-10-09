@@ -7,7 +7,7 @@ import { defaultLocale, isLocale, LOCALE_COOKIE, type Locale } from './i18n';
  * который лендинг считает явным выбором человека (см. middleware.ts).
  * Вызывать только из динамических маршрутов: `cookies()` снимает статику.
  */
-export function cookieLocale(): Locale {
-  const raw = cookies().get(LOCALE_COOKIE)?.value;
+export async function cookieLocale(): Promise<Locale> {
+  const raw = (await cookies()).get(LOCALE_COOKIE)?.value;
   return raw && isLocale(raw) ? raw : defaultLocale;
 }

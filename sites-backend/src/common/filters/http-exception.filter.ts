@@ -24,6 +24,11 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import {
+  bodyParserMessage,
+  bodyParserStatus,
+  stripRouteNotFoundQuery,
+} from '../../shared/http-error-helpers';
 
 export const INTERNAL_ERROR_MESSAGE =
   'Внутренняя ошибка сервера. Если она повторяется, сообщите код обращения из ответа.';
@@ -88,6 +93,7 @@ const CODE_BY_STATUS: Record<number, string> = {
   [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
   [HttpStatus.CONFLICT]: 'CONFLICT',
   [HttpStatus.PAYLOAD_TOO_LARGE]: 'PAYLOAD_TOO_LARGE',
+  [HttpStatus.UNSUPPORTED_MEDIA_TYPE]: 'UNSUPPORTED_MEDIA_TYPE',
   [HttpStatus.UNPROCESSABLE_ENTITY]: 'VALIDATION_ERROR',
   [HttpStatus.TOO_MANY_REQUESTS]: 'RATE_LIMIT_EXCEEDED',
   [HttpStatus.SERVICE_UNAVAILABLE]: 'SERVICE_UNAVAILABLE',
@@ -102,28 +108,6 @@ function messageOf(value: unknown): string | undefined {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(String).join('; ');
   return undefined;
-}
-
-/**
- * Ошибка разбора тела (body-parser/raw-body: `http-errors` с `expose`,
- * статусом 4xx и `type` вида `entity.too.large`/`entity.parse.failed`) —
- * это отказ клиенту, а не авария: раньше слишком большое тело давало 500.
- * Текст пакета наружу не отдаём — своя фраза по статусу.
- */
-export function bodyParserStatus(exception: unknown): number | null {
-  if (!exception || typeof exception !== 'object') return null;
-  const e = exception as { expose?: unknown; status?: unknown; type?: unknown };
-  if (
-    e.expose === true &&
-    typeof e.status === 'number' &&
-    e.status >= 400 &&
-    e.status < 500 &&
-    typeof e.type === 'string' &&
-    /^(entity|request|charset|encoding)\./.test(e.type)
-  ) {
-    return e.status;
-  }
-  return null;
 }
 
 function stackOf(exception: unknown): string | undefined {
@@ -163,16 +147,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
         }
         errorDetails = detailsOf(obj);
       }
+      // Заход 12 (аудит P3-4): 404 Nest «Cannot GET /x?code=…» — без query.
+      errorMessage = stripRouteNotFoundQuery(errorMessage);
       const line = `${request.method} ${safePath(request)} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
       if (status >= 500) this.logger.error(line, stackOf(exception));
       else this.logger.warn(line);
     } else if (bodyParserStatus(exception) !== null) {
       status = bodyParserStatus(exception) as number;
       errorCode = codeFromStatus(status);
-      errorMessage =
-        status === HttpStatus.PAYLOAD_TOO_LARGE
-          ? 'Тело запроса слишком большое'
-          : 'Неверное тело запроса';
+      errorMessage = bodyParserMessage(status);
       this.logger.warn(
         `${request.method} ${safePath(request)} → ${status} ${errorCode} [${requestId}]`,
       );

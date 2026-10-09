@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { getCreatorProfile, getPortfolioItem } from '../../../../../lib/api';
 import { getDictionary } from '../../../../../lib/get-dictionary';
-import type { Locale } from '../../../../../lib/i18n';
+import { defaultLocale, isLocale, type Locale } from '../../../../../lib/i18n';
 
 /**
  * Готовый шаблон для Stories Instagram/TikTok (ТЗ §20 №12) — 1080×1920,
@@ -14,11 +14,15 @@ export const runtime = 'edge';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3004';
 
-export async function GET(_req: Request, { params }: { params: { locale: Locale; id: string } }) {
-  const item = await getPortfolioItem(params.id);
+export async function GET(_req: Request, { params }: { params: Promise<{ locale: string; id: string }> }) {
+  // Обработчик маршрута не проходит через [locale]/layout.tsx с его
+  // notFound() — сегмент тут произвольная строка, проверяем сами.
+  const { locale: raw, id } = await params;
+  const locale: Locale = isLocale(raw) ? raw : defaultLocale;
+  const item = await getPortfolioItem(id);
   const creator = item ? await getCreatorProfile(item.creatorProfileId) : null;
-  const dict = getDictionary(params.locale);
-  const link = `${SITE_URL}/${params.locale}/item/${params.id}`;
+  const dict = getDictionary(locale);
+  const link = `${SITE_URL}/${locale}/item/${id}`;
 
   return new ImageResponse(
     (

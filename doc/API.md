@@ -20,6 +20,28 @@
 | **вход/выход** | маршруты `telegram-login/*` и `admin/auth/*` под `OriginGuard` (этап 49): форма с чужого сайта не может ни посадить посетителя в чужую сессию, ни выкинуть оператора. С этапа 54 входы (`callback`, `dev-login`) и `POST /api/sessions` ещё и под `RateLimitGuard` — 10 (входы) / 30 (сессии) запросов в минуту с одного адреса, счётчик в базе (`rate_limits`); сверх — 429 с `Retry-After` |
 | **секрет крона** | заголовок `Authorization: Bearer $CRON_SECRET`, сравнение constant-time. Переменная не задана — 503 на всех маршрутах `cron.controller.ts` (на 30.09.2026 их двадцать пять — столько же, сколько записей `crons` в `backend/vercel.json`; этап 54, Б-3.3); открыты без секрета они только на dev-стенде (`ALLOW_DEV_AUTH=true` вне production) |
 
+Заход 12 (09.10.2026, NestJS 11 / Express 5 — backend и sites-backend):
+общие правила разбора запроса для всех маршрутов обоих бэкендов.
+- **Тело без содержимого** (нет тела, `Content-Length: 0`, чужой
+  Content-Type, например `text/plain` на JSON-маршрут) обработчик видит
+  как `{}` — как в Express 4 (слой `defaultEmptyBody`, Р-З12-А2). Маршрут
+  с DTO отвечает 400 валидации, без DTO — по своей логике; 500 из-за
+  `undefined` не бывает. Свои парсеры путей sites-backend (сырые тела с
+  подписью: `goal-events`, `knowledge`, `/internal/*`) не изменились —
+  тело доходит строкой байт-в-байт.
+- **Query** — простой разбор: повтор ключа (`?a=1&a=2`) — массив;
+  скобки (`a[b]=1`, `ids[]=1`) объектов и массивов не дают — это
+  литеральный ключ `'a[b]'`, и маршрут с DTO отвечает 400 (`property
+  a[b] should not exist`), как и `__proto__[x]` (Р-З12-А3).
+- **Ошибки разбора тела** — в обычном конверте ошибки: битый JSON — 400
+  `BAD_REQUEST`; тело больше лимита парсера (общий JSON — 100 КБ) — 413
+  `PAYLOAD_TOO_LARGE`; неподдержанная `Content-Encoding` — 415
+  `UNSUPPORTED_MEDIA_TYPE` (раньше backend отвечал на оба 500; свои коды
+  маршрутов вроде `UI_PLAN_TOO_LARGE` — прежние).
+- **404 неизвестного маршрута** — текст `Cannot <METHOD> <путь>` без
+  query (раньше в ответ и в лог уходил весь адрес с `?code=…`);
+  `meta.path` без query — как и раньше.
+
 ## Служебные
 
 | Метод и путь | Доступ | Назначение |
@@ -235,6 +257,14 @@
 | `POST /api/billing/checkout/credit-pack` | идентичность | `{ packId, method }` → та же форма ответа, что у подписки |
 | `POST /api/billing/webhook/telegram` | открыто, секрет в заголовке `X-Telegram-Bot-Api-Secret-Token` (`TELEGRAM_WEBHOOK_SECRET`) | `pre_checkout_query`/`successful_payment` из тела Telegram Update; идемпотентность — `@@unique([method, providerRef])` на `Payment`, `providerRef = telegram_payment_charge_id` |
 | `POST /api/billing/webhook/wayforpay` | открыто, подпись `merchantSignature` в теле | приём результата оплаты/регулярного платежа; обязан ответить строгой квитанцией `{orderReference, status:'accept', time, signature}` — иначе WayForPay повторяет доставку |
+
+Заход 12 (09.10.2026, аудит А P2-3): тело вебхука WayForPay разбирает
+общий `wayforpayBody()` (`common/wayforpay-body.ts`, тот же у вебхука
+оплаты помощника в sites-backend) — JSON, форма с JSON строкой-ключом
+(так шлют некоторые интеграции WayForPay), строка; нераспознанное или
+не-объект — `{}`. Без `orderReference` — **400** (раньше 500, и платёж
+висел в повторах доставки); `merchantSignature` не строкой — подпись не
+сошлась: тревога `bad-signature` и квитанция, как при неверной подписи.
 
 ## Блог (ТЗ §36, TODO §II.3–II.4, этап 57)
 
@@ -2024,3 +2054,32 @@ sites-backend:
   оборванном переходе страницы.
 - Консультант лендинга (`POST /api/assistant/chat`): контракт прежний;
   резерв бюджета корректен через полночь UTC.
+
+### Заход 12 (09.10.2026) — «безопасность зависимостей»: изменения контрактов
+
+NestJS 10 → 11 / Express 4 → 5 (backend, sites-backend); Next 14 → 15.5 /
+React 19 (landing, sites-landing, admin, marketplace — их маршруты и
+ответы не менялись: таблицы маршрутов ○/●/ƒ до и после совпадают).
+Миграций нет. Подробно — абзацы «Заход 12» в «Кто может звать» и
+«Оплата». Сводно:
+
+- Пустое тело — `{}` для любого маршрута обоих бэкендов (поведение Express
+  4 сохранено).
+- Query без скобок-объектов: `a[b]=…`/`ids[]=…` — литеральный ключ, на
+  DTO-маршрутах 400; повтор ключа — массив.
+- 413 `PAYLOAD_TOO_LARGE` и 415 `UNSUPPORTED_MEDIA_TYPE` вместо 500 в
+  backend; в sites-backend 415 получил свой код (был
+  `INTERNAL_SERVER_ERROR` при статусе 415).
+- 404 неизвестного маршрута — текст без query.
+- `POST /api/billing/webhook/wayforpay`: форма с JSON-ключом
+  принимается; без `orderReference` — 400; подпись не строкой —
+  `bad-signature` и квитанция. Вебхук оплаты помощника (sites-backend)
+  — на том же общем разборе (разница одна: JSON-ключ формы с массивом
+  теперь даёт `{}`, а не массив).
+- sites-backend, s2s-вебхук целей (`POST /assist/v1/sites/:id/goal-events`):
+  контракт прежний; возврат или отмена учтённого заказа теперь
+  действительно пересчитывают свёртку дня заказа (раньше вычет молча не
+  выполнялся).
+- Landing и marketplace: ISR-ответы несут `Cache-Control: s-maxage=N,
+  stale-while-revalidate=<1 год − N>`; landing `/sitemap-news.xml` —
+  `s-maxage=900` (DEPLOYMENT, раздел «Заход 12»).

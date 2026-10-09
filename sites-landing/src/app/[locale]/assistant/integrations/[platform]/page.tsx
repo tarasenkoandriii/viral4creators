@@ -24,15 +24,20 @@ export function generateStaticParams() {
 }
 export const dynamicParams = false;
 
-export function generateMetadata({ params }: { params: { locale: Locale; platform: string } }): Metadata {
-  const p = platform(params.platform);
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: Locale; platform: string }>;
+}): Promise<Metadata> {
+  const { locale, platform: raw } = await params;
+  const p = platform(raw);
   if (!p) return {};
-  return pageMetadata(`integrations-${p.slug as PlatformSlug}`, params.locale);
+  return pageMetadata(`integrations-${p.slug as PlatformSlug}`, locale);
 }
 
-export default function PlatformPage({ params }: { params: { locale: Locale; platform: string } }) {
-  const { locale } = params;
-  const p = platform(params.platform);
+export default async function PlatformPage({ params }: { params: Promise<{ locale: Locale; platform: string }> }) {
+  const { locale, platform: raw } = await params;
+  const p = platform(raw);
   if (!p || claimStatus(p.claim) === 'hidden' || claimStatus('integrations') === 'hidden') notFound();
   const slug = p.slug as PlatformSlug;
   const dict = getDictionary(locale);

@@ -19,6 +19,7 @@
  */
 
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -528,12 +529,24 @@ export class BillingService {
 
   // ── WayForPay: вебхук ────────────────────────────────────────────
 
-  async handleWayForPayWebhook(body: WayForPayWebhookBody): Promise<{
+  async handleWayForPayWebhook(input: Partial<WayForPayWebhookBody>): Promise<{
     orderReference: string;
     status: 'accept';
     time: number;
     signature: string;
   }> {
+    // Заход 12 (аудит P2-3): без orderReference квитировать нечего и
+    // платёж не найти — 400, а не TypeError → 500. Не-строковая подпись —
+    // `verifyServiceCallback` → false → тревога и квитанция, как у любой
+    // неверной подписи.
+    if (
+      typeof input.orderReference !== 'string' ||
+      input.orderReference === ''
+    ) {
+      this.logger.warn('Вебхук WayForPay без orderReference — 400');
+      throw new BadRequestException('WayForPay: в теле нет orderReference');
+    }
+    const body = input as WayForPayWebhookBody;
     const ack = this.wayforpay.buildWebhookAck(body.orderReference);
     if (!this.wayforpay.verifyServiceCallback(body)) {
       await this.notify.alert(
@@ -590,9 +603,10 @@ export class BillingService {
       return ack;
     }
 
-    const recTokenEnc = body.recToken
-      ? encryptToken(body.recToken, this.cfg().paymentTokenKey)
-      : null;
+    const recTokenEnc =
+      typeof body.recToken === 'string' && body.recToken
+        ? encryptToken(body.recToken, this.cfg().paymentTokenKey)
+        : null;
     // Г-2.5/Г-2.6 (аудит round4): статус платежа и применение выгод — в
     // одной транзакции под advisory-замком по `orderReference`. Замок
     // заодно сериализует конкурентные доставки одного вебхука (WayForPay

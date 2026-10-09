@@ -13,7 +13,7 @@
  * оставлен на следующий проход, чтобы не раздувать эту форму.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   ApiError,
@@ -24,7 +24,8 @@ import {
 import { useDictionary } from '../../../lib/dictionary-context';
 import type { Locale } from '../../../lib/i18n';
 
-export default function SettingsPage({ params }: { params: { locale: Locale } }) {
+export default function SettingsPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const [profile, setProfile] = useState<CreatorProfileFullView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -93,7 +94,7 @@ export default function SettingsPage({ params }: { params: { locale: Locale } })
   if (!profile) {
     return (
       <p className="mp-empty">
-        {dict.dashboard.errorPrefix} <Link href={`/${params.locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
+        {dict.dashboard.errorPrefix} <Link href={`/${locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
       </p>
     );
   }
@@ -102,7 +103,7 @@ export default function SettingsPage({ params }: { params: { locale: Locale } })
     <>
       <h1>{dict.settings.heading}</h1>
       <p className="mp-hint">
-        <Link href={`/${params.locale}/my-portfolio`}>{dict.settings.myPortfolioLink}</Link>
+        <Link href={`/${locale}/my-portfolio`}>{dict.settings.myPortfolioLink}</Link>
       </p>
 
       <form className="mp-form" onSubmit={(e) => void handleSubmit(e)}>

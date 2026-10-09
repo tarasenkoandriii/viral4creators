@@ -11,12 +11,12 @@ import { href, pageMetadata } from '../../../../lib/pages';
  * «невозможно взломать» (§13). Про продукт — `soon`; про сам лендинг
  * (`landing-no-trackers`) — `live`, это правда уже сейчас.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('security', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('security', (await params).locale);
 }
 
-export default function SecurityPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function SecurityPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const s = dict.security;
   return (

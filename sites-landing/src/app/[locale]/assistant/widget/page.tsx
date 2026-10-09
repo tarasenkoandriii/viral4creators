@@ -21,8 +21,8 @@ import { widgetMeasurement } from '../../../../lib/widget-measure';
  * (4) скорость — с нашим лабораторным замером, (5) доступность.
  * Страница существует, только пока `configurator` не `hidden`.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('widget', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('widget', (await params).locale);
 }
 
 /** `{brand}` подставляется на сервере; остальные плейсхолдеры — в компоненте. */
@@ -35,8 +35,8 @@ function withBrand<T>(value: T): T {
   return value;
 }
 
-export default function WidgetPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function WidgetPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const status = claimStatus('configurator');
   if (status === 'hidden') notFound();
   const dict = getDictionary(locale);

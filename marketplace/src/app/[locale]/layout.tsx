@@ -15,28 +15,30 @@ export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
-  if (!isLocale(params.locale)) return {};
-  const dict = getDictionary(params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
+  const { locale } = await params;
+  if (!isLocale(locale)) return {};
+  const dict = getDictionary(locale);
   const languages = Object.fromEntries(locales.map((l) => [l, `/${l}`]));
   return {
     title: dict.meta.title,
     description: dict.meta.description,
     alternates: { languages: { ...languages, 'x-default': '/ru' } },
-    openGraph: { title: dict.meta.title, description: dict.meta.description, locale: OG_LOCALES[params.locale] },
+    openGraph: { title: dict.meta.title, description: dict.meta.description, locale: OG_LOCALES[locale] },
     robots: { index: true, follow: true },
   };
 }
 
-export default function LocaleSiteLayout({
+export default async function LocaleSiteLayout({
   children,
   params,
 }: {
   children: React.ReactNode;
-  params: { locale: string };
+  params: Promise<{ locale: string }>;
 }) {
-  if (!isLocale(params.locale)) notFound();
-  const locale: Locale = params.locale;
+  const { locale: raw } = await params;
+  if (!isLocale(raw)) notFound();
+  const locale: Locale = raw;
   const dict = getDictionary(locale);
 
   return (

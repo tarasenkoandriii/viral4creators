@@ -13,13 +13,14 @@ export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export function generateMetadata({
+export async function generateMetadata({
   params,
 }: {
-  params: { locale: string };
-}): Metadata {
-  if (!isLocale(params.locale)) return {};
-  const dict = getDictionary(params.locale);
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  if (!isLocale(locale)) return {};
+  const dict = getDictionary(locale);
   return {
     title: dict.meta.title,
     description: dict.meta.description,
@@ -31,28 +32,29 @@ export function generateMetadata({
     alternates: localeAlternates(
       (l) => `${SITE_URL}/${l}`,
       (l) => `/${l}`,
-      params.locale,
+      locale,
     ),
     ...socialMeta({
       title: dict.meta.title,
       description: dict.meta.description,
-      url: `${SITE_URL}/${params.locale}`,
-      locale: params.locale,
-      image: ogImageUrl(SITE_URL, 'main', params.locale),
+      url: `${SITE_URL}/${locale}`,
+      locale,
+      image: ogImageUrl(SITE_URL, 'main', locale),
     }),
     robots: { index: true, follow: true },
   };
 }
 
-export default function LocaleLayout({
+export default async function LocaleLayout({
   children,
   params,
 }: {
   children: React.ReactNode;
-  params: { locale: string };
+  params: Promise<{ locale: string }>;
 }) {
-  if (!isLocale(params.locale)) notFound();
-  const locale: Locale = params.locale;
+  const { locale: raw } = await params;
+  if (!isLocale(raw)) notFound();
+  const locale: Locale = raw;
   const dict = getDictionary(locale);
 
   return (

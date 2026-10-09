@@ -6,7 +6,7 @@
  * CONTACTED и уводит на публичный профиль — сама сделка вне платформы.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   contactCreator,
@@ -19,7 +19,12 @@ import {
 import { useDictionary } from '../../../../lib/dictionary-context';
 import type { Locale } from '../../../../lib/i18n';
 
-export default function BriefMatchesPage({ params }: { params: { locale: Locale; id: string } }) {
+export default function BriefMatchesPage({
+  params,
+}: {
+  params: Promise<{ locale: Locale; id: string }>;
+}) {
+  const { locale, id } = use(params);
   const { dict } = useDictionary();
   const [matches, setMatches] = useState<InquiryMatchView[] | null>(null);
   const [advice, setAdvice] = useState<FormatAdviceView | null>(null);
@@ -27,7 +32,7 @@ export default function BriefMatchesPage({ params }: { params: { locale: Locale;
   const [contactedId, setContactedId] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getInquiryMatches(params.id), getFormatAdvice(params.id), getInquiry(params.id)])
+    Promise.all([getInquiryMatches(id), getFormatAdvice(id), getInquiry(id)])
       .then(([m, a, inquiry]) => {
         setMatches(m);
         setAdvice(a);
@@ -38,11 +43,11 @@ export default function BriefMatchesPage({ params }: { params: { locale: Locale;
       })
       .catch(() => setError(dict.matches.errorLoad));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.id]);
+  }, [id]);
 
   const handleContact = async (creatorProfileId: string) => {
     try {
-      await contactCreator(params.id, creatorProfileId);
+      await contactCreator(id, creatorProfileId);
       setContactedId(creatorProfileId);
     } catch {
       // Аудит: раньше это молчаливо игнорировалось. Теперь короткое
@@ -71,7 +76,7 @@ export default function BriefMatchesPage({ params }: { params: { locale: Locale;
 
       {matches && matches.length === 0 && (
         <p className="mp-empty">
-          {dict.matches.emptyPrefix} <Link href={`/${params.locale}`}>{dict.matches.emptyLink}</Link>{' '}
+          {dict.matches.emptyPrefix} <Link href={`/${locale}`}>{dict.matches.emptyLink}</Link>{' '}
           {dict.matches.emptySuffix}
         </p>
       )}
@@ -94,7 +99,7 @@ export default function BriefMatchesPage({ params }: { params: { locale: Locale;
                 </span>
               )}
               <div style={{ display: 'flex', gap: 8 }}>
-                <Link href={`/${params.locale}/creator/${m.creatorProfileId}`} className="mp-cta-secondary">
+                <Link href={`/${locale}/creator/${m.creatorProfileId}`} className="mp-cta-secondary">
                   {dict.matches.portfolioButton}
                 </Link>
                 <button type="button" className="mp-cta" onClick={() => void handleContact(m.creatorProfileId)}>

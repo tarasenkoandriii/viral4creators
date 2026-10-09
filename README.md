@@ -55,7 +55,7 @@ viral4creators allows marketers to upload a reference UGC advertisement video, e
 ## Tech Stack
 
 ### Backend
-- **Framework**: NestJS (Node.js/TypeScript)
+- **Framework**: NestJS 11 on Express 5 (Node.js 24/TypeScript)
 - **Video Analysis**: Google Gemini 2.5 Flash API
 - **Text Generation**: OpenAI GPT-5 (via Laozhang API)
 - **Video Generation**: Google Veo 3.1 (via Gemini API)
@@ -72,7 +72,7 @@ viral4creators allows marketers to upload a reference UGC advertisement video, e
 - Also works as a Telegram Mini App (see `doc/TELEGRAM-ADMIN.md`) — same codebase, no separate app
 
 ### Admin panel (`admin/`) and landing (`landing/`)
-- **Framework**: Next.js 14, App Router
+- **Framework**: Next.js 15 (15.5), React 19, App Router
 - `admin/`: seven tabs — sessions, publication moderation, analysis-library moderation, users (service mode, operator rights, blocking), AI costs, telemetry, env-settings check; Telegram Login Widget (+ dev-login for local Docker), httpOnly cookie session
 - `landing/`: static marketing page, no backend calls
 
@@ -118,13 +118,13 @@ viral4creators/
 │       ├── lib/          # Telegram WebApp wrapper (telegram.ts)
 │       ├── services/     # API client
 │       └── types/        # TypeScript definitions
-├── admin/                # Admin panel — Next.js 14
+├── admin/                # Admin panel — Next.js 15
 │   └── src/
 │       ├── app/           # login, sessions, sessions/[id], publications,
 │       │                  # library, users, costs, telemetry, settings
 │       ├── components/    # AdminNav
 │       └── lib/           # API client, auth context
-├── landing/              # Marketing landing — Next.js 14, static
+├── landing/              # Marketing landing — Next.js 15, static
 ├── scripts/              # Utility scripts (e.g. sync-legal.mjs — legal docs
 │                         # → landing/TMA) and their output directory
 ├── doc/                  # All supplementary documentation (deployment,
@@ -136,7 +136,7 @@ viral4creators/
 ## Getting Started
 
 ### Prerequisites
-- Node.js 18+
+- Node.js 24 (`.nvmrc`; `engines.node` 24.x)
 - A Vercel Blob store (all file storage — reference video, product image,
   generated video)
 - A Supabase project (Postgres) — see `doc/PRISMA-SUPABASE.md`
@@ -254,11 +254,11 @@ separate limits document in [doc/API-LIMITS.md](doc/API-LIMITS.md);
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 10059
+a hand-written migration drifting from the schema, types, lint, 10099
 tests with per-file coverage thresholds), frontend (types, lint, 89 unit
-scripts, build), admin and landing
+scripts, build), admin, landing and marketplace
 (types + lint + build), `npm audit --audit-level=high` in every job
-(advisory for now), plus the legal-text sync check and a script that
+(blocking for backend, sites-backend and widget, advisory elsewhere), plus the legal-text sync check and a script that
 verifies the numbers quoted in `doc/` still match the code — including
 that every environment variable the code reads is described in
 `doc/DEPLOYMENT.md` or `.env.docker.example`. `make ci` runs the same

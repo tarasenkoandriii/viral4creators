@@ -13,23 +13,25 @@ export function generateStaticParams() {
 }
 export const dynamicParams = false;
 
-export function generateMetadata({ params }: { params: { slug: string } }): Metadata {
-  if (!isLegalSlug(params.slug)) return {};
-  const md = legalMarkdown(params.slug);
-  const draft = LEGAL_DOCS.find((d) => d.slug === params.slug)!.draft;
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  const { slug } = await params;
+  if (!isLegalSlug(slug)) return {};
+  const md = legalMarkdown(slug);
+  const draft = LEGAL_DOCS.find((d) => d.slug === slug)!.draft;
   return {
     title: `${legalTitle(md)} — ${BRAND.name}`,
-    alternates: { canonical: `${siteUrl()}/legal/${params.slug}` },
+    alternates: { canonical: `${siteUrl()}/legal/${slug}` },
     // Черновик в поиске не нужен (и в sitemap его нет).
     robots: draft ? { index: false, follow: true } : { index: true, follow: true },
   };
 }
 
-export default function LegalPage({ params }: { params: { slug: string } }) {
-  if (!isLegalSlug(params.slug)) notFound();
+export default async function LegalPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  if (!isLegalSlug(slug)) notFound();
   const uk = getDictionary('uk');
-  const doc = LEGAL_DOCS.find((d) => d.slug === params.slug)!;
-  const md = legalMarkdown(params.slug);
+  const doc = LEGAL_DOCS.find((d) => d.slug === slug)!;
+  const md = legalMarkdown(slug);
   const others = LEGAL_DOCS.filter((d) => d.slug !== doc.slug);
   return (
     // Та же шапка и тот же футер (уроки Ф-2, С-3). Переключатель языка

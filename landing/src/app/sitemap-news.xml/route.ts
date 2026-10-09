@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { locales } from '../../lib/i18n';
-import { listAllBlogPosts, BLOG_REVALIDATE_SECONDS } from '../../lib/blog-api';
+import { listAllBlogPosts } from '../../lib/blog-api';
 import { SITE_URL, SITE_NAME } from '../../lib/content';
 import { escapeXml } from '../../lib/rss';
 
@@ -22,7 +22,11 @@ import { escapeXml } from '../../lib/rss';
  * отдельная организационная заявка издателя, техническая часть на этом
  * заканчивается.
  */
-export const revalidate = BLOG_REVALIDATE_SECONDS;
+// Литерал, а не `BLOG_REVALIDATE_SECONDS`: Next 15 читает конфиг сегмента
+// статически, по исходнику, и импортированную константу отвергает ошибкой
+// сборки (Next 14 брал значение из модуля). Равенство константе держит
+// scripts/segment-config.test.ts.
+export const revalidate = 900;
 
 const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
 

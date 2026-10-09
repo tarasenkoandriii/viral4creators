@@ -25,15 +25,16 @@ const BOT_USERNAME = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
 export async function generateMetadata({
   params,
 }: {
-  params: { locale: Locale; id: string };
+  params: Promise<{ locale: Locale; id: string }>;
 }): Promise<Metadata> {
-  const profile = await getCreatorProfile(params.id);
+  const { locale, id } = await params;
+  const profile = await getCreatorProfile(id);
   if (!profile) return {};
-  const dict = getDictionary(params.locale);
+  const dict = getDictionary(locale);
   return {
     title: `${profile.displayName ?? dict.catalog.noName} — ${dict.profile.portfolioHeading}`,
     description: profile.bio ?? profile.niches.join(', '),
-    alternates: { canonical: `${SITE_URL}/${params.locale}/creator/${profile.slug ?? profile.id}` },
+    alternates: { canonical: `${SITE_URL}/${locale}/creator/${profile.slug ?? profile.id}` },
     openGraph: { title: profile.displayName ?? dict.catalog.noName, description: profile.bio ?? undefined },
   };
 }
@@ -41,9 +42,9 @@ export async function generateMetadata({
 export default async function CreatorProfilePage({
   params,
 }: {
-  params: { locale: Locale; id: string };
+  params: Promise<{ locale: Locale; id: string }>;
 }) {
-  const { locale, id } = params;
+  const { locale, id } = await params;
   const dict = getDictionary(locale);
   const profile = await getCreatorProfile(id);
   if (!profile) notFound();

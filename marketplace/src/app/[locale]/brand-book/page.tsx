@@ -6,7 +6,7 @@
  * отдельный presigned-Blob флоу, сознательно не часть этого прохода.
  */
 
-import { useState } from 'react';
+import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { addBrandCharacter, addBrandScene, ApiError, createBrandManifest, VoiceMode } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
@@ -19,7 +19,8 @@ interface NamedItem {
   description: string;
 }
 
-export default function BrandBookPage({ params }: { params: { locale: Locale } }) {
+export default function BrandBookPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -67,7 +68,7 @@ export default function BrandBookPage({ params }: { params: { locale: Locale } }
       <>
         <h1>{dict.brandBook.doneHeading}</h1>
         <p className="mp-hint">{dict.brandBook.doneHint}</p>
-        <button className="mp-cta" onClick={() => router.push(`/${params.locale}/brief?brandManifestId=${createdId}`)}>
+        <button className="mp-cta" onClick={() => router.push(`/${locale}/brief?brandManifestId=${createdId}`)}>
           {dict.brandBook.createBriefButton}
         </button>
       </>

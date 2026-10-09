@@ -41,7 +41,8 @@ function run(dir: string, env: Record<string, string> = {}) {
 }
 
 const base = {
-  'static/chunks/main.js': 60,
+  // Рантайм с запасом под Next 15 + React 19 (общая часть ≈ 100 КБ).
+  'static/chunks/main.js': 75,
   'static/chunks/polyfills.js': 500, // nomodule — не в счёт
   'static/chunks/app/layout.js': 20,
   'static/chunks/app/[locale]/layout.js': 5,
@@ -59,12 +60,12 @@ const pages = {
 };
 const root = ['static/chunks/main.js'];
 
-// 60 + 20 + 5 + 10 ≈ 95 КБ на главной (+ накладные gzip) — в бюджете 116.
+// 75 + 20 + 5 + 10 ≈ 110 КБ на главной (+ накладные gzip) — в бюджете 126.
 const ok = fakeBuild(base, pages, root);
 try {
   const r = run(ok);
   assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout, /ok\s+9\d\.\d КБ \/ 116 КБ\s+\/\[locale\]\/page/);
+  assert.match(r.stdout, /ok\s+11\d\.\d КБ \/ 126 КБ\s+\/\[locale\]\/page/);
   // polyfills (500) и ленивый чанк (400) в счёт не вошли.
   assert.doesNotMatch(r.stdout, /[3-9]\d\d\.\d КБ/);
   // Тот же замер с потолками × 0.8 — громкий отказ с разбором по чанкам.
@@ -73,14 +74,14 @@ try {
   assert.match(tight.stderr, /FAIL бюджет JS первой загрузки лендинга превышен/);
   assert.match(tight.stderr, /static\/chunks\/app\/\[locale\]\/page\.js/);
   // `--platform` (сборка NEXT_PUBLIC_ASSIST_WIDGET=platform): у how-it-works
-  // свой потолок 106 вместо 118, остальные — как были.
+  // свой потолок 115 вместо 128, остальные — как были.
   const plat = spawnSync(process.execPath, [script, '--platform'], {
     env: { ...process.env, FIRST_LOAD_NEXT_DIR: ok },
     encoding: 'utf8',
   });
   assert.equal(plat.status, 0, plat.stdout + plat.stderr);
-  assert.match(plat.stdout, /ok\s+9\d\.\d КБ \/ 106 КБ\s+\/\[locale\]\/how-it-works\/page/);
-  assert.match(plat.stdout, /\/ 116 КБ\s+\/\[locale\]\/page/);
+  assert.match(plat.stdout, /ok\s+11\d\.\d КБ \/ 115 КБ\s+\/\[locale\]\/how-it-works\/page/);
+  assert.match(plat.stdout, /\/ 126 КБ\s+\/\[locale\]\/page/);
   assert.match(plat.stdout, /\(сборка platform\)/);
 } finally {
   rmSync(ok, { recursive: true, force: true });
@@ -91,8 +92,8 @@ const heavy = fakeBuild({ ...base, 'static/chunks/app/[locale]/page.js': 40 }, p
 try {
   const r = run(heavy);
   assert.equal(r.status, 1, r.stdout);
-  assert.match(r.stdout, /FAIL\s+12\d\.\d КБ \/ 116 КБ\s+\/\[locale\]\/page/);
-  assert.match(r.stdout, /ok\s+\d+\.\d КБ \/ 118 КБ\s+\/\[locale\]\/how-it-works\/page/);
+  assert.match(r.stdout, /FAIL\s+14\d\.\d КБ \/ 126 КБ\s+\/\[locale\]\/page/);
+  assert.match(r.stdout, /ok\s+\d+\.\d КБ \/ 128 КБ\s+\/\[locale\]\/how-it-works\/page/);
 } finally {
   rmSync(heavy, { recursive: true, force: true });
 }
@@ -107,7 +108,7 @@ try {
   rmSync(layoutHeavy, { recursive: true, force: true });
 }
 
-// Новый маршрут без своей строки — общий потолок 106.
+// Новый маршрут без своей строки — общий потолок 123.
 const extra = fakeBuild(
   { ...base, 'static/chunks/app/new/page.js': 30 },
   { ...pages, '/new/page': ['static/chunks/app/new/page.js'] },
@@ -116,7 +117,7 @@ const extra = fakeBuild(
 try {
   const r = run(extra);
   assert.equal(r.status, 1);
-  assert.match(r.stdout, /FAIL\s+\d+\.\d КБ \/ 106 КБ\s+\/new\/page/);
+  assert.match(r.stdout, /FAIL\s+\d+\.\d КБ \/ 123 КБ\s+\/new\/page/);
 } finally {
   rmSync(extra, { recursive: true, force: true });
 }

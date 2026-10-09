@@ -17,12 +17,12 @@ import { FEATURE_ROWS, formatNumber, formatUsd, PLANS, type AssistPlan } from '.
  * диалогов нужно» (§3.8) — не в Л1: клиентский компонент без данных
  * продукта, вернётся вместе с живыми тарифами.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('pricing', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('pricing', (await params).locale);
 }
 
-export default function PricingPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function PricingPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const p = dict.pricing;
   const plans = PLANS.plans;

@@ -9,7 +9,7 @@
  * модерации, удаление в любом статусе.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   ApiError,
@@ -24,7 +24,8 @@ import {
 import { useDictionary } from '../../../lib/dictionary-context';
 import type { Locale } from '../../../lib/i18n';
 
-export default function MyPortfolioPage({ params }: { params: { locale: Locale } }) {
+export default function MyPortfolioPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const [items, setItems] = useState<PortfolioItemView[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -152,7 +153,7 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
   if (needsQuiz) {
     return (
       <p className="mp-empty">
-        {dict.errors.needsCreatorProfile} <Link href={`/${params.locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
+        {dict.errors.needsCreatorProfile} <Link href={`/${locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
       </p>
     );
   }
@@ -161,7 +162,7 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
     <>
       <h1>{dict.myPortfolio.heading}</h1>
       <p className="mp-hint">
-        <Link href={`/${params.locale}/dashboard`}>{dict.dashboard.heading}</Link>
+        <Link href={`/${locale}/dashboard`}>{dict.dashboard.heading}</Link>
       </p>
 
       <h2>{dict.myPortfolio.addHeading}</h2>
@@ -254,7 +255,7 @@ export default function MyPortfolioPage({ params }: { params: { locale: Locale }
                   {item.soldPrice != null && (
                     <span className="mp-hint">
                       {dict.myPortfolio.soldInfoPrefix} {item.soldPrice}
-                      {item.soldAt ? ` · ${new Date(item.soldAt).toLocaleDateString(params.locale)}` : ''}
+                      {item.soldAt ? ` · ${new Date(item.soldAt).toLocaleDateString(locale)}` : ''}
                     </span>
                   )}
                 </div>

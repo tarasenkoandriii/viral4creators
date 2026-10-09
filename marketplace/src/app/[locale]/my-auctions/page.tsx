@@ -14,7 +14,7 @@
  * тихо считать эту фильтрацию достаточной.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   ApiError,
@@ -33,7 +33,8 @@ import type { Locale } from '../../../lib/i18n';
 
 const LIVE_STATUSES: AuctionListingStatusValue[] = ['PENDING_MODERATION', 'QUEUED', 'ACTIVE', 'WON'];
 
-export default function MyAuctionsPage({ params }: { params: { locale: Locale } }) {
+export default function MyAuctionsPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const [listings, setListings] = useState<AuctionListingView[] | null>(null);
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItemView[] | null>(null);
@@ -110,7 +111,7 @@ export default function MyAuctionsPage({ params }: { params: { locale: Locale } 
   if (needsQuiz) {
     return (
       <p className="mp-empty">
-        {dict.errors.needsCreatorProfile} <Link href={`/${params.locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
+        {dict.errors.needsCreatorProfile} <Link href={`/${locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
       </p>
     );
   }
@@ -253,7 +254,7 @@ export default function MyAuctionsPage({ params }: { params: { locale: Locale } 
               )}
               <div style={{ display: 'flex', gap: 8 }}>
                 {listing.status === 'ACTIVE' && (
-                  <Link href={`/${params.locale}/auctions/${listing.id}`} className="mp-cta-secondary">
+                  <Link href={`/${locale}/auctions/${listing.id}`} className="mp-cta-secondary">
                     {dict.myAuctions.viewOnAuction}
                   </Link>
                 )}

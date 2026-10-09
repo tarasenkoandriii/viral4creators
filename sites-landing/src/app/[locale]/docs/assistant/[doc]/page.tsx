@@ -16,13 +16,19 @@ export function generateStaticParams() {
 }
 export const dynamicParams = false;
 
-export function generateMetadata({ params }: { params: { locale: Locale; doc: string } }): Metadata {
-  const key = docKey(params.doc);
-  return key ? docsMetadata(key, params.locale) : {};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: Locale; doc: string }>;
+}): Promise<Metadata> {
+  const { locale, doc } = await params;
+  const key = docKey(doc);
+  return key ? docsMetadata(key, locale) : {};
 }
 
-export default function DocsSubPage({ params }: { params: { locale: Locale; doc: string } }) {
-  const key = docKey(params.doc);
+export default async function DocsSubPage({ params }: { params: Promise<{ locale: Locale; doc: string }> }) {
+  const { locale, doc } = await params;
+  const key = docKey(doc);
   if (!key) notFound();
-  return <DocsPage docKey={key} locale={params.locale} />;
+  return <DocsPage docKey={key} locale={locale} />;
 }

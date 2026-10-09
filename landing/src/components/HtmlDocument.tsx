@@ -30,8 +30,17 @@ export function HtmlDocument({
   locale: Locale;
   children: ReactNode;
 }) {
+  // `data-scroll-behavior="smooth"`: в globals.css у `<html>` плавная
+  // прокрутка (якоря меню), и Next 15.5 по этому атрибуту на время
+  // клиентского перехода её отключает — иначе переход «плывёт» к началу
+  // страницы (в Next 16 без атрибута отключать перестанет). Один атрибут на
+  // все документы лендинга: `<html>` рисуется только здесь.
   return (
-    <html lang={locale} dir={LOCALE_DIR[locale]}>
+    <html
+      lang={locale}
+      dir={LOCALE_DIR[locale]}
+      data-scroll-behavior="smooth"
+    >
       <body>{children}</body>
     </html>
   );

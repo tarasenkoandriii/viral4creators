@@ -106,7 +106,7 @@ assert.doesNotMatch(
   /id="compare"|id=\{?['"]compare|className="compare-table/,
   'разметка «Сравнения» прописана в странице напрямую, мимо компонента',
 );
-const metaSrc = /export function generateMetadata[\s\S]*?\n\}\n/.exec(
+const metaSrc = /export (?:async )?function generateMetadata[\s\S]*?\n\}\n/.exec(
   pageSrc,
 )?.[0];
 assert.ok(metaSrc, 'в page.tsx не нашёлся generateMetadata');

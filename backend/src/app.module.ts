@@ -204,6 +204,10 @@ export class AppModule implements NestModule {
    * rest of the app.
    */
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(TelegramIdentityMiddleware).forRoutes('*');
+    // Заход 12 (Nest 11 / Express 5, path-to-regexp 8): безымянный `*`
+    // больше не синтаксис — «все маршруты, включая корень» пишутся
+    // `{*splat}`. Голый '*' Nest переводил бы сам, но с глобальным
+    // префиксом `api` печатал бы предупреждение на каждом старте.
+    consumer.apply(TelegramIdentityMiddleware).forRoutes('{*splat}');
   }
 }

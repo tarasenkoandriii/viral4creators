@@ -354,7 +354,7 @@ II и III.
       1/7/30 дней по-прежнему целиком в сырых строках. Все отчёты «за
       всё время» с этого этапа читают оба источника и складывают их,
       иначе свёртка молча занизила бы деньги.
-- [ ] **Мажорные обновления зависимостей** (часть Б-3.10): в бэкенде
+- [x] ~~**Мажорные обновления зависимостей** (часть Б-3.10): в бэкенде
       остаются 14 предупреждений (7 высоких) — `@nestjs/core`,
       `express`/`body-parser`, `ajv`, `file-type`; в админке и лендинге
       — два высоких на `next@14` (DoS в оптимизаторе картинок и RSC;
@@ -362,7 +362,15 @@ II и III.
       закрывается мажорными версиями (`@nestjs/*`, `next@15`) со своим
       прогоном и своей проверкой совместимости. *(Заход 10: Р-З10-22 —
       отдельной волной после захода 10, см. «Новые хвосты (вторая волна)»
-      захода 10.)*
+      захода 10.)*~~ — **сделано 09.10.2026 (заход 12)** (Р-З12-0):
+      backend и sites-backend — NestJS 11.2.7 + Express 5.2.1; landing,
+      sites-landing, admin, marketplace — Next 15.5.27 + React 19.3;
+      `npm audit --omit=dev` — high/critical 0 во всех шести пакетах
+      (было: backend 1 critical + 10 high, sites-backend 6 high, у
+      четырёх Next-приложений critical `next` и high `postcss`). Остались
+      только moderate без исправления или с ценой мажорного отката — «Новые
+      хвосты (заход 12)». Подробно — сводка «Заход 12 (09.10.2026)» в конце
+      файла.
 - [x] **`jsonb_set` по ключу вместо записи всей колонки** (Б-1.10) —
       **закрыто на этапе 47** иначе, чем планировалось: не `jsonb_set`
       по каждому ключу, а `"data" || $patch` одним запросом — верхние
@@ -6808,7 +6816,12 @@ P0 — решение владельца 02.10.2026, см. ниже)
       github-actions ежемесячно одним PR (cooldown 7), npm `/browser-worker`
       только `playwright-core` еженедельно (≤ 1 PR, cooldown 7). Осталось
       владельцу: Settings → Code security → alerts + security updates →
-      Владельцу заход 10 №3.
+      Владельцу заход 10 №3. *(Заход 12, 09.10.2026: в рантайм-деревьях
+      backend, sites-backend, landing, sites-landing, admin, marketplace
+      high/critical — 0; шаг `npm audit (high)` у backend и sites-backend
+      обязательный. После включения alerts ожидаемы только moderate из
+      «Новых хвостов (заход 12)» и dev-only `braces` линтера; marketplace
+      с захода 12 имеет `package-lock.json` — alerts по нему точные.)*
 - [x] ~~П-К4 — `permissions: contents: read` в workflow, SHA-пин
       стороннего action.~~ — **сделано 08.10.2026 (заход 10)** (Р-З10-25):
       верхний `permissions: contents: read`; `setup-php` по SHA
@@ -8462,7 +8475,8 @@ S2; Е — backend/frontend генератора; Ж — виджет), зате
       ≈ 75 до 06:30; остальным — отдельно, как в заходе 10; страховка 8 ч,
       без дублей. Остаток — сайты сверх успевших к сводке («Владельцу
       (заход 11)»).
-- [ ] Мажорные обновления (`@nestjs` 11 / `next@15`, Р-З10-22), ~~№117 карта
+- [ ] ~~Мажорные обновления (`@nestjs` 11 / `next@15`, Р-З10-22)~~
+      (**сделано 09.10.2026, заход 12**), ~~№117 карта
       «Админки», №62 (после №117)~~ (**сделано 09.10.2026, заход 11**),
       мёртвые клики и поведенческие триггеры (после пилотов, В-40), 10
       старых ручных конвертов (по желанию). — остаток перенесён в «Новые
@@ -8741,8 +8755,10 @@ sites-backend (необязательная) — `ASSIST_ADMIN_VOICE_MAP_EXPORT_
       воркере GraphQL-админок и SPA с CSRF (WebKit не проверялся) — П.
 - [ ] Флейк e2e `admin-voice.spec.ts:417` «мастер на РАБОЧЕМ хосте…» под
       параллельной нагрузкой (повторы зелёные) — наблюдать.
-- [ ] Мажорные обновления (`@nestjs` 11 / `next@15`, Р-З10-22) — отдельной
-      волной.
+- [x] ~~Мажорные обновления (`@nestjs` 11 / `next@15`, Р-З10-22) — отдельной
+      волной.~~ — **сделано 09.10.2026 (заход 12)**: NestJS 11.2.7 /
+      Express 5.2.1, Next 15.5.27 / React 19.3, high/critical в
+      `npm audit --omit=dev` — 0 (сводка «Заход 12 (09.10.2026)»).
 - [ ] Мёртвые клики и поведенческие триггеры, A/B триггеров (№94/№95,
       В-40) — после пилотов.
 - [ ] 10 старых ручных конвертов ответа контроллеров backend — по
@@ -8815,3 +8831,340 @@ sites-backend (необязательная) — `ASSIST_ADMIN_VOICE_MAP_EXPORT_
 - [ ] консультант лендинга (backend) в первые минуты после полуночи UTC
       видит вчерашние резервы; в `rate_limits` — ключи
       `assistant-budget:spent:<сутки>:<uuid>`, их убирает штатная чистка.
+
+**Заход 12 (09.10.2026) — «безопасность зависимостей».** Мажорные
+обновления (Р-З10-22): цель — убрать high/critical из `npm audit
+--omit=dev` в backend, sites-backend, landing, sites-landing, admin и
+marketplace с минимальным риском для прода. Три пакета: А — backend и
+sites-backend (NestJS 11 / Express 5); Б — landing и sites-landing (Next
+15.5 / React 19); В — admin и marketplace (Next 15.5 / React 19). Затем два
+независимых аудита (А: P1×0, P2×3, P3×5; Б+В: P1×0, P2×1, P3×8 — всего
+P1×0, P2×4, P3×13) и раунд исправлений: все P2 закрыты, из P3 — 10
+исправлены, P3-4 Б+В закрыт решением (Р-З12-Б11), P3-5 Б+В — текст в
+DEPLOYMENT, P3-5 А действий не требует. Регрессий Express 5 / Nest 11 /
+Next 15 / React 19 аудиты не нашли: три P2 аудита А существовали до
+захода, P2 аудита Б+В — исчерпанный бюджет §9 (рост рантайма).
+Миграций нет ни в backend, ни в sites-backend; env и кроны не менялись;
+`frontend/` (Vite, React 18), `widget/`, `live-login-relay/`,
+`browser-worker/` не трогались. Документы: DEPLOYMENT — раздел «Заход 12
+(09.10.2026): обновление зависимостей — что изменилось для выката», §1
+п.3–4, §7 (Next 15); CI.md — таблица джоб, «Чего в CI нет»; API — абзацы
+«Заход 12» («Кто может звать», «Оплата») и сводка «Заход 12
+(09.10.2026)»; ТЗ лендинга помощника §9 — бюджет 110 → 118 КБ
+(Р-З12-Б10); README — версии и счётчик тестов.
+
+Версии (до → после, lock):
+- backend, sites-backend: `@nestjs/common|core|platform-express|testing`
+  10.4.x → **11.2.7** (ветка `legacy`), `@nestjs/cli` 10.4.9 → 11.0.24,
+  `@nestjs/schematics` 10.2.3 → 11.1.0, `@types/express` 4 → 5.0.6;
+  транзитивно express 4.22.1 → **5.2.1**, body-parser 1.20 → 2.3.0,
+  path-to-regexp 3.3 → 8.4.2, multer 2.0.2 → 2.4.0, proxy-addr 2.0.7 →
+  2.0.8, qs 6.14 → 6.16, undici 6.28 → 6.29, file-type 20 → 21, ajv 8.12 →
+  8.18, send 0.19 → 1.2, serve-static 1.16 → 2.2; `overrides`:
+  `deepmerge-ts ^8.0.2` (7.1.5 → 8.0.2), `mysql2 ^3.24.5` (3.15.3 →
+  3.24.5); `express ^5.2.1` — явной зависимостью sites-backend. Prisma
+  7.10.0, TypeScript 5.9.3, jest 29, eslint 8 — без изменений.
+- landing, sites-landing, admin, marketplace: `next` 14.2.35 → **15.5.27**
+  (ветка `backport`, не 16), `react`/`react-dom` 18.3.1 → **19.3.0**
+  (`^19.3.0` во всех четырёх), `@types/react*` → 19.3.0,
+  `eslint-config-next` → 15.5.27 (eslint 8.57.1 остался); `overrides`
+  `postcss ^8.5.29` (Next 15.5 пинует уязвимый 8.4.31); `sanitize-html`
+  landing 2.17.1 → 2.18.0; `tsx ^4.23.15` в devDependencies landing и
+  marketplace; marketplace получил `package-lock.json` (lockfileVersion 3).
+
+`npm audit --omit=dev` до → после:
+- backend: critical 1, high 10, moderate 9, low 1 → **critical 0, high
+  0**, moderate 4 (`fflate`, `satori`, `sanitize-html`, `uuid`);
+- sites-backend: high 6, moderate 9, low 1 → **high 0**, moderate 4
+  (`argparse`, `mammoth`, `sprintf-js`, `uuid`);
+- landing: 4 (critical `next`, high `postcss`, `source-map-js`, moderate
+  `sanitize-html`) → **0**; sites-landing: 2 (critical `next`, high
+  `postcss`) → **0**; admin: 3 (critical `next`, high `postcss`,
+  `source-map-js`) → **0**; marketplace: 2 (critical `next`, high
+  `postcss`; «до» — на временном lock) → **0**.
+- С dev-зависимостями: backend 78 → 46, sites-backend 71 → 44 (critical 2
+  и 1 → 0); landing 15 → 5 high, admin 14 → 5 high, marketplace 5 → 5
+  high, sites-landing 22 → 22 — остаток dev-only: `braces` ←
+  `@next/eslint-plugin-next` → `fast-glob@3.3.1` (исправления нет), у
+  sites-landing ещё цепочка `@lhci/cli`; в прод-сборку не попадает.
+
+Правки кода:
+- **Express 5, пустое тело.** body-parser 2 не ставит `req.body = {}`: без
+  тела или с чужим Content-Type оно `undefined`, а обработчиков с
+  `@Body() body: unknown` / `Record<string, unknown>` в двух пакетах 111 —
+  было бы 500 вместо 400/422. Общий слой `common/express-body-default.ts`
+  (`defaultEmptyBody`, копия в `sites-backend/src/shared/`) первым в стеке
+  возвращает поведение Express 4 (Р-З12-А2). Глобальная настройка backend
+  вынесена из `main.ts` в `backend/src/app.setup.ts` (`configureApp`, как у
+  sites) и покрыта `app.setup.spec.ts` (мутация — 2 теста падают);
+  `check-docs.mjs` (проверка 8) ищет конверты в `app.setup.ts`.
+- **path-to-regexp 8:** `forRoutes('*')` → `forRoutes('{*splat}')`
+  (`TelegramIdentityMiddleware`); других wildcard-путей нет, на старте 536
+  (backend) и 476 (sites-backend) маршрутов без «Unsupported route path».
+- **Query** — простой разбор Express 5: повтор ключа — массив, скобки
+  (`a[b]=1`) — литеральный ключ, DTO-маршруты отвечают 400 whitelist
+  (Р-З12-А3).
+- **Next 15, async API:** `params`/`searchParams`/`cookies()`/`headers()` —
+  через `await` (серверные страницы, `generateMetadata`, route handlers) и
+  `use(params)` в клиентских страницах marketplace (Р-З12-В7); OG-картинки
+  marketplace — `params` синхронно, как в 15.5 (Р-З12-В8); admin — ни
+  строки исходников.
+- **revalidate-литералы:** Next 15 читает конфиг сегмента статически —
+  `export const revalidate = <импорт константы>` ронял сборку landing
+  (7 файлов → `900`/`300`) и не распознавался в marketplace (5 файлов →
+  `60`). Значения ISR те же (сверено по `prerender-manifest`); тест-сторож
+  `scripts/segment-config.test.ts` в landing и marketplace разрешает только
+  `export const <ключ> = <литерал>;` (Р-З12-Б4, Р-З12-В6).
+- **marketplace — lockfile и CI:** создан `package-lock.json`, пакет в
+  матрице `next-apps` (`scripts/ci-changes.mjs`: правило
+  `marketplace/`, `NEXT_APPS`; строка outputs в `ci.yml`); до этого CI его
+  не проверял вовсе, и линт был красным (2 × `no-img-element`, теперь
+  `eslint-disable` с причиной, Р-З12-В10) (Р-З12-В3, Р-З12-В4).
+- Прочее: `<a>` на `/legal/*` под точечным `eslint-disable` (Р-З12-Б6);
+  `data-scroll-behavior="smooth"` на `<html>` landing и marketplace
+  (Р-З12-В11); тесты sites-landing — `renderPage`, `notFound()` в Next 15
+  бросает `NEXT_HTTP_ERROR_FALLBACK;404`; `next-env.d.ts` переписан самим
+  Next 15 (коммитить как есть).
+- CI: шаг `npm audit (high)` у backend и sites-backend — без
+  `continue-on-error` (обязательный); бюджеты — ниже (Р-З12-Б7, Б8, Б10).
+
+Найдено попутно и исправлено (было до захода 12):
+- **sites-backend: возвраты не вычитались из свёртки дня заказа**
+  (аудит А P2-1). Цикл импортов `goal-webhook.service` ↔
+  `analytics-rollup.service` (`mergeNearestPage`) давал `undefined` в
+  `design:paramtypes`, `@Optional()` молча оставлял
+  `GoalWebhookService.rollup = undefined`, и `rerollDay()` выходил сразу:
+  s2s-возврат или отмена учтённого заказа не пересчитывали день заказа
+  (кроны пересчитывают только 3 последних дня). Отсюда же строка
+  `Nest encountered an undefined dependency` на каждом старте.
+  `mergeNearestPage` вынесена в `assist-analytics/goal-page-merge.ts`;
+  тесты: `rollup injected` и страж «нет `undefined` в
+  `design:paramtypes`» на реальном `AppModule`, `goal-webhook.reroll.spec.ts`
+  (4).
+- **backend `server.js`** требовал `./dist/main.js`, а `nest build`
+  кладёт вход в `dist/src/main.js` (в программу попадают корневые
+  `prisma.config.ts` и `vercel.json` из `cron-schedule.ts`); `start:prod`
+  был сломан так же (аудит А P2-2). Теперь берётся существующий из двух
+  (оба есть — более свежий), оба `require` — литералы для `@vercel/nft`;
+  `start:prod` → `node server.js`; `server-entry.spec.ts` (6). Что реально
+  стартует на Vercel — проверить владельцу (ниже).
+- **backend, вебхук WayForPay — 500 на нестандартном теле** (аудит А
+  P2-3): без тела, `text/plain`, форма с JSON строкой-ключом —
+  `ERR_INVALID_ARG_TYPE` в сравнении подписи. `wayforpayBody()` — общий
+  `common/wayforpay-body.ts` (копия в sites-backend, её локальная функция
+  удалена); без `orderReference` — **400**, подпись не строкой — `false`
+  → тревога `bad-signature` и квитанция; `billing-wayforpay-body.e2e.spec.ts`
+  (6).
+- backend: ошибки body-parser кроме битого JSON (слишком большое тело,
+  чужая `Content-Encoding`) давали 500 и ERROR в лог — теперь 413
+  `PAYLOAD_TOO_LARGE` / 415 `UNSUPPORTED_MEDIA_TYPE` (общий
+  `common/http-error-helpers.ts`; у sites добавлен код 415).
+- 404 неизвестного маршрута нёс query (`Cannot GET /x?code=…`) в ответе и
+  warn-логе — query отрезается в обоих фильтрах
+  (`stripRouteNotFoundQuery`).
+- landing: `npm test` звал `npx tsx` без зависимости (скачивание
+  последней версии в CI) — `tsx` в devDependencies (как у marketplace,
+  Р-З12-В5).
+
+Проверки (числа): backend jest — **493 набора / 10099 тестов**, все
+passed (было 487 / 10059: +40 тестов в 6 наборах —
+`express-body-default` 7, `app.setup` 9, `server-entry` 6,
+`wayforpay-body` 7, `billing-wayforpay-body.e2e` 6, `http-error-helpers`
+5), покрытие statements 85.05 %, lines 86.01 %, пороги выполнены;
+sites-backend — полный прогон 318 наборов / 3524 (3521 + 3 skipped),
+раунд — затронутое 76 / 718 зелёное, итого spec-файлов 321, тестов по
+расчёту 3543; tsc и eslint `--max-warnings 0` — 0 во всех пакетах;
+`migrate diff` пуст в обоих бэкендах; `sync-sites-shared --check` — 55
+копий (было 49); `ci-changes --self-test` — 105 случаев; landing — 21
+unit-скрипт, `next build` без предупреждений, `budget:js` 13 маршрутов;
+sites-landing — 19 скриптов, `check:built` (99 HTML), axe 0 нарушений,
+`e2e:widget`, `e2e:sandbox`; все 99 пререндеренных HTML sites-landing и
+`<head>` landing на 14 адресах × 3 хоста до/после совпадают после
+нормализации; admin — 6/6, 36 страниц; marketplace — 13 проверок, 69
+страниц, таблица маршрутов 14 и 15 идентична; гидратация React 19
+(Playwright) — 0 ошибок консоли; оба бэкенда подняты из `dist` и
+прозвонены (SSE виджета, ассистента, аукциона; подписи по сырому телу
+байт-в-байт). Node: пакеты А и Б — 22.22.2 (24 в песочнице не было), В и
+аудит Б+В — 24.21.0.
+
+Бюджеты: landing `budget:js` — потолки пересняты «замер + ≈ 10 %»
+(рантайм Next 15 + React 19 85.5 → 100.5 КБ gzip; главная 126,
+how-it-works 128 / platform 115, общий 123; Р-З12-Б7). sites-landing:
+§9 ТЗ лендинга помощника для статических страниц **110 → 118 КБ** gzip
+(Р-З12-Б10; при 110 запас был 1.4 КБ — pilot 108.6), `/widget` и `/try`
+— 160 КБ без изменений; порог Lighthouse
+`resource-summary:script:size` — 118 + 12 (загрузчик) + 8
+(`LAZY_TRANSFER_KB`: ленивый web-vitals и gzip-6/заголовки) = **138
+КБ**, `/widget` и `/try` — 180 КБ (Р-З12-Б8).
+
+Решения захода 12 (Р-З12; приняты):
+- Р-З12-0 (координатор) NestJS 10 → 11 (ветка `legacy`, 11.2.x), не 12;
+  Next 14 → 15.5.x (ветка `backport`), React 19, не 16; prisma 7.10
+  оставить, транзитивные — `overrides`; немажорные — `npm audit fix` без
+  `--force`; lockfile — `npm install`; Node 24.
+- Р-З12-А1 Nest 11.2.7, всё `@nestjs/*` одной версией; CLI 11.0.24,
+  schematics 11.1.0.
+- Р-З12-А2 `req.body` по умолчанию `{}` — одним слоем первым в стеке
+  (`defaultEmptyBody`, общий через sync), а не правкой 111 обработчиков.
+- Р-З12-А3 Query — простой разбор Express 5 (`extended` не включаем):
+  клиенты строят query через `URLSearchParams`, скобки дают литеральный
+  ключ, вложенных объектов из query нет.
+- Р-З12-А4 `sanitize-html` в backend остаётся 2.17.1 (moderate):
+  исправленные версии тянут ESM-only `htmlparser2@12`, jest 29 (CJS)
+  падает; advisory к allow-list `sanitize-blog-html.ts` не применимы.
+- Р-З12-А5 `overrides` `deepmerge-ts ^8.0.2`, `mysql2 ^3.24.5` для prisma
+  CLI; `generate`/`validate` работают; prisma 8 (rc) не трогаем.
+- Р-З12-А6 Оставшиеся moderate (`uuid` — только v3/v5/v6 с `buf`, у нас
+  `v4()`; `satori` → `fflate`; `mammoth` → `argparse`) не закрываем —
+  фикс npm только мажорным откатом.
+- Р-З12-А7 dev-зависимости (jest 29, `@typescript-eslint` 6) — вне цели
+  `--omit=dev`; шаг `npm audit (high)` backend и sites-backend —
+  обязательный.
+- Р-З12-Б1 `next ^15.5.27`, `react ^19` (выровнено до `^19.3.0`),
+  `@types/react*` 19; eslint 8 остаётся (flat config / ESLint 9 —
+  отдельно).
+- Р-З12-Б2 `postcss` — override `^8.5.29` (во всех четырёх
+  Next-приложениях, см. и Р-З12-В2).
+- Р-З12-Б3 `sanitize-html` landing 2.17.1 → 2.18.0 (точный пин); политика
+  `sanitize-blog-html.ts` не менялась.
+- Р-З12-Б4 Конфиг сегментов — литералы + тест-сторож (не обходы);
+  значения ISR те же.
+- Р-З12-Б5 Prettier в sites-landing: конфига в пакете нет, большинство
+  файлов ему не соответствует ни под каким конфигом — **решение
+  координатора: пакет prettier'ом не форматируется**, конфиг не заводим,
+  правки — руками в стиле файла.
+- Р-З12-Б6 `<a>` на `/legal/*` вместо `next/link` (свой корневой
+  `<html>`, переход — всё равно полная загрузка), `eslint-disable`
+  точечно с причиной.
+- Р-З12-Б7 Потолки `budget:js` landing пересняты «замер + ≈ 10 %»;
+  потолок `platform` (115) ниже legacy-замера — ловит вернувшийся код
+  чата.
+- Р-З12-Б8 Порог Lighthouse по скриптам sites-landing = §9 + загрузчик
+  12 + `LAZY_TRANSFER_KB` 8 (ассерт оставлен).
+- Р-З12-Б10 (координатор, по аудиту Б+В P2-1) Бюджет §9 sites-landing
+  для статических страниц — 118 КБ gzip (было 110): рантайм Next 15 +
+  React 19 +15 КБ на каждую страницу, собственный код не вырос; запас
+  ≈ 17.6 КБ над рантаймом. Lighthouse — 138 / 180 КБ.
+- Р-З12-Б11 `staleTimes` — дефолт Next 15 (`dynamic: 0`, `static: 300`):
+  повторный мягкий переход на динамическую страницу идёт на сервер
+  (данные — из data cache); вернуть 30 с —
+  `experimental.staleTimes.dynamic` в `marketplace/next.config.js`, если
+  вызовы функций заметно вырастут.
+- Р-З12-В1 admin/marketplace: `next ^15.5.27`, `react ^19.3.0`,
+  `eslint-config-next ^15.5.27` поверх eslint 8.
+- Р-З12-В2 `postcss` — `overrides ^8.5.29` (8.4 → 8.5 — минорное, CSS
+  обрабатывает только Next).
+- Р-З12-В3 Lockfile marketplace — создать (воспроизводимость, `npm
+  audit`, точные alerts, условие `npm ci` джобы `next-apps`).
+- Р-З12-В4 marketplace — в матрицу `next-apps` (правило по папке).
+- Р-З12-В5 `tsx` в devDependencies marketplace (и landing — аудит Б+В
+  P3-7).
+- Р-З12-В6 `revalidate` marketplace — литерал `60` + тест.
+- Р-З12-В7 Клиентские страницы marketplace — `use(params)`.
+- Р-З12-В8 OG-картинки — `params` синхронно (контракт 15.5; Promise — в
+  Next 16).
+- Р-З12-В9 story-image: `locale: string` + `isLocale()` с откатом на
+  `defaultLocale`.
+- Р-З12-В10 Два `no-img-element` в marketplace — `eslint-disable` с
+  причиной (QR внешнего сервиса, страница печати).
+- Р-З12-В11 `data-scroll-behavior="smooth"` на `<html>` (marketplace, по
+  аудиту — и landing `HtmlDocument`).
+- Р-З12-В12 `next-env.d.ts` — генерирует Next, коммитить как есть.
+- Р-З12-В13 dev-high `braces` в цепочке `eslint-config-next` — без фикса,
+  уйдёт с ESLint 9 / flat config.
+
+Новые хвосты (заход 12):
+- [ ] ESLint 8 → 9 / flat config и уход с `next lint` (в Next 15.5
+      печатает deprecation, удаляется в Next 16) — во всех четырёх
+      Next-приложениях, **до перехода на Next 16**; снимет dev-high
+      `braces` (`@next/eslint-plugin-next` → `fast-glob@3.3.1`).
+- [ ] Оставшиеся moderate (prod): `sanitize-html` 2.17.1 в backend —
+      исправленные версии на ESM-only `htmlparser2@12`, вернуться при
+      переходе jest на ESM или на jest 30 (landing уже 2.18.0, Р-З12-А4);
+      `uuid` 9 → ≥ 11.1.1 при касании (advisory к `v4()` не применим);
+      `satori` → `fflate` 0.7.3 (backend; ждать исправленную
+      `satori`/`fflate`, откат satori на 0.32 — нет); `mammoth` →
+      `argparse` → `sprintf-js` (sites-backend; ждать исправленную
+      `mammoth`, откат на 0.3.29 — нет).
+- [ ] npm 12: `npm ci` на npm 11.21 печатает `install-scripts … not yet
+      covered by allowScripts` (esbuild, unrs-resolver) — до перехода на
+      npm 12 явно разрешить скрипты установки (`allowScripts` в
+      `.npmrc`/`package.json`).
+- [ ] Prisma 8 — при выходе стабильной (сейчас rc); тогда же снять
+      `overrides` `deepmerge-ts`/`mysql2`.
+- [ ] Next 16 — позже, после ESLint 9 (там `params` OG-картинок —
+      Promise, `staleTimes`, плавная прокрутка — атрибут уже стоит).
+      `postcss` override — при каждом обновлении `next` проверить
+      `npm ls postcss` и снять, когда Next перестанет пинить 8.4.31.
+- [x] ~~Prettier-конфиг sites-landing~~ — **решение 09.10.2026 (заход
+      12, Р-З12-Б5):** пакет prettier'ом не форматируется, конфиг не
+      заводим.
+- [ ] `continue-on-error` у шага `npm audit (high)` остался в джобах
+      `frontend`, `sites-landing`, `next-apps`, `live-login-relay`,
+      `browser-worker`; у sites-landing и всей матрицы `next-apps`
+      high/critical теперь 0 — снять по решению (frontend, реле и воркер
+      в заходе 12 не аудировались).
+- [ ] sites-backend: полный jest после раунда исправлений не гонялся
+      (затронутое 76 / 718 зелёное) — первый CI-прогон; Node 24 для
+      пакетов А и Б локально не проверен — первый CI-прогон на 24.
+- [ ] Запас бюджетов sites-landing после Р-З12-Б10: §9 — 9.4 КБ (pilot
+      108.6 / 118), Lighthouse — 128.3 / 138; тайминги LH (TBT/LCP
+      гидратации React 19) в песочнице не сравнить — смотреть первый
+      CI-прогон джобы `sites-landing`.
+- [ ] marketplace: `metadataBase` из `NEXT_PUBLIC_SITE_URL` — если в
+      проде `og:image` указывает не на боевой домен; наблюдать вызовы
+      функций Vercel (Р-З12-Б11); `marketplace/README.md` — раздел «Не
+      проверено в этой сборке» устарел (теперь `tsc`, линт, тесты и
+      сборка — в CI; «Запуск» — `npm ci`).
+- [ ] Свёртки дней с возвратами, пришедшими до исправления цикла
+      `goal-webhook` ↔ свёртка, старше трёх дней не пересчитаны — разовый
+      пересчёт `rollupDay` за затронутые дни, если нужны точные цифры
+      (по желанию; на проде sites-backend всё равно до 01.10 — §6.1-бис).
+
+Владельцу (заход 12):
+- [ ] 1. **Первоочерёдно — прод `assist-api` всё ещё падает** (Владельцу
+      заход 11 №1, DEPLOYMENT §6.1-бис): пока он красный, NestJS 11 /
+      Express 5 и исправления sites-backend (свёртка возвратов, WayForPay,
+      413/415) на прод не доедут. Остальные проекты выкатываются
+      независимо, в любом порядке: миграций, env и кронов в заходе 12 нет.
+- [ ] 2. Выкат: в логе **первой сборки каждого проекта** (backend,
+      assist-api, landing, assist-landing, admin, marketplace) — Node
+      24.x; у backend — что реально стартует (`server.js` → `dist/main.js`
+      или `dist/src/main.js`; Framework/Entrypoint) и дата последнего
+      успешного production-деплоя; у обоих бэкендов — шаг `prisma migrate
+      deploy` прошёл (prisma CLI с `deepmerge-ts` 8). «Странности» Next —
+      Redeploy без кэша сборки.
+- [ ] 3. marketplace — первая сборка по lockfile и на Next 15: OG-превью
+      профиля и работы (`og:image` на боевом домене, не `*.vercel.app`),
+      `/feed.xml`, `/feed.json`, `/sitemap.xml`, `/sitemap-news.xml`,
+      `/auctions/feed/google-ads.xml`, лот и редирект закрытого лота,
+      `/ru/brief` → бриф.
+- [ ] 4. admin — вход через Telegram Login Widget, сессии/пользователи
+      (`/users?q=`), `/sessions/<id>` на живых данных (гидратация React 19).
+- [ ] 5. ISR-заголовки Next 15 (`s-maxage=N, stale-while-revalidate=<1 год
+      − N>`) — на Vercel CDN без действий; при внешнем CDN или самохостинге
+      — учесть (DEPLOYMENT, раздел «Заход 12»).
+- [ ] 6. Подтвердить решения: бюджет §9 sites-landing 118 КБ (Р-З12-Б10);
+      `staleTimes` по умолчанию (Р-З12-Б11); query без скобок-объектов
+      (Р-З12-А3 — внешние интеграции со `a[b]=` получат 400).
+
+Проверки на проде после деплоя:
+- [ ] backend `GET /api/health` и assist-api `GET /health` — 200; в логе
+      старта assist-api нет `Nest encountered an undefined dependency`;
+- [ ] POST без тела на действиях кабинета (например, «взять» диалог) и
+      на вебхуках — 4xx/2xx, не 500; `GET /api/no/such?code=x` — 404 с
+      текстом без query;
+- [ ] WayForPay (backend): тестовый платёж — квитанция `accept`, ERROR в
+      логе нет; первые сутки — логи 400 на вебхуках и запросах с `[` в
+      query;
+- [ ] SSE: чат виджета на живом сайте, консультант лендинга, поток
+      аукциона — ответ идёт потоком;
+- [ ] sites-backend (после зелёного деплоя): s2s-возврат учтённого
+      заказа → вычет в свёртке дня заказа (в поясе сайта);
+- [ ] landing: `/ru/blog`, `/sitemap.xml`, `/sitemap-news.xml`,
+      `/feed.xml`, `/video/<id>` обновляются в пределах 15 / 5 минут;
+      `/r/<код>` — переход засчитан, язык из cookie; поддомены
+      `greeting.`/`tutorial.` — свои `robots.txt`/`sitemap.xml`;
+- [ ] sites-landing: страницы и форма пилота, `/api/vitals`; первый
+      CI-прогон джобы `sites-landing` — Lighthouse зелёный;
+- [ ] marketplace и admin — пункты 3–4 «Владельцу (заход 12)».

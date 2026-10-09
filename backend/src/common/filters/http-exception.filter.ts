@@ -30,6 +30,11 @@ import {
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { localeFromRequest, SupportedLocale } from '../locale';
+import {
+  bodyParserMessage,
+  bodyParserStatus,
+  stripRouteNotFoundQuery,
+} from '../http-error-helpers';
 
 /**
  * Поля, которые исключение может передать клиенту ПОМИМО текста. Раньше
@@ -148,11 +153,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
           (responseObj.error as string) || this.getErrorCodeFromStatus(status);
         errorDetails = detailsOf(responseObj);
       }
+      // Заход 12 (аудит P3-4): 404 Nest «Cannot GET /x?code=…» — без query.
+      errorMessage = stripRouteNotFoundQuery(errorMessage);
       // 4xx — ожидаемые ответы, им хватает warn; 5xx, брошенные нами
       // намеренно, — всё равно авария.
       const line = `${request.method} ${safePath(request)} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
       if (status >= 500) this.logger.error(line, stackOf(exception));
       else this.logger.warn(line);
+    } else if (bodyParserStatus(exception) !== null) {
+      // Заход 12 (аудит P3-3): 413/415/400 body-parser — отказ клиенту,
+      // не авария (как у sites-backend): свой статус, warn без текста пакета.
+      status = bodyParserStatus(exception) as number;
+      errorCode = this.getErrorCodeFromStatus(status);
+      errorMessage = bodyParserMessage(status);
+      this.logger.warn(
+        `${request.method} ${safePath(request)} → ${status} ${errorCode} [${requestId}]`,
+      );
     } else {
       // Не наше исключение: подробности — только в лог.
       const detail =
@@ -194,6 +210,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
         return 'NOT_FOUND';
       case HttpStatus.CONFLICT:
         return 'CONFLICT';
+      case HttpStatus.PAYLOAD_TOO_LARGE:
+        return 'PAYLOAD_TOO_LARGE';
+      case HttpStatus.UNSUPPORTED_MEDIA_TYPE:
+        return 'UNSUPPORTED_MEDIA_TYPE';
       case HttpStatus.UNPROCESSABLE_ENTITY:
         return 'VALIDATION_ERROR';
       case HttpStatus.TOO_MANY_REQUESTS:

@@ -10,12 +10,12 @@ import { href, pageMetadata } from '../../../../lib/pages';
  * «Как работает» (§3.3). Скриншотов нет: продукта ещё нет, а рисунок за
  * скриншот не выдаём (§0). Блоки — по реестру утверждений.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('how-it-works', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('how-it-works', (await params).locale);
 }
 
-export default function HowItWorksPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function HowItWorksPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const h = dict.howItWorks;
   const lists: Array<{ id: string; heading: string; items: ReadonlyArray<{ claim: string; text: string }> }> = [

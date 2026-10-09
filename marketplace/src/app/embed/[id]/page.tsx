@@ -13,10 +13,11 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3004';
  * текста. Исходящие ссылки на полноценные страницы ведут на defaultLocale
  * явно, а не через редирект middleware (на один хоп быстрее).
  */
-export default async function EmbedPage({ params }: { params: { id: string } }) {
-  const profile = await getCreatorProfile(params.id);
+export default async function EmbedPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const profile = await getCreatorProfile(id);
   if (!profile) notFound();
-  const portfolio = await getCreatorPortfolio(params.id);
+  const portfolio = await getCreatorPortfolio(id);
 
   return (
     <div className="wrap" style={{ padding: '16px 12px' }}>

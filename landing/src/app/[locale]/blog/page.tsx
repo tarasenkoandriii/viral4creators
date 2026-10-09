@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Header } from '../../../components/Header';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { isLocale, locales, type Locale } from '../../../lib/i18n';
-import { listBlogPosts, BLOG_REVALIDATE_SECONDS } from '../../../lib/blog-api';
+import { listBlogPosts } from '../../../lib/blog-api';
 import { localeAlternates } from '../../../lib/alternates';
 import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
 import { SITE_URL } from '../../../lib/content';
@@ -16,29 +16,38 @@ import { SITE_URL } from '../../../lib/content';
  * BLOG_REVALIDATE_SECONDS секунд запросом с сервера Vercel, не из
  * браузера посетителя.
  */
-export const revalidate = BLOG_REVALIDATE_SECONDS;
+// Литерал, а не `BLOG_REVALIDATE_SECONDS`: Next 15 читает конфиг сегмента
+// статически, по исходнику, и импортированную константу отвергает ошибкой
+// сборки (Next 14 брал значение из модуля). Равенство константе держит
+// scripts/segment-config.test.ts.
+export const revalidate = 900;
 
 export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
-  if (!isLocale(params.locale)) return {};
-  const dict = getDictionary(params.locale);
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  if (!isLocale(locale)) return {};
+  const dict = getDictionary(locale);
   return {
     title: `${dict.blog.listTitle}${dict.blog.metaTitleSuffix}`,
     description: dict.blog.listLead,
     alternates: localeAlternates(
       (l) => `${SITE_URL}/${l}/blog`,
       (l) => `/${l}/blog`,
-      params.locale,
+      locale,
     ),
     ...socialMeta({
       title: `${dict.blog.listTitle}${dict.blog.metaTitleSuffix}`,
       description: dict.blog.listLead,
-      url: `${SITE_URL}/${params.locale}/blog`,
-      locale: params.locale,
-      image: ogImageUrl(SITE_URL, 'main', params.locale),
+      url: `${SITE_URL}/${locale}/blog`,
+      locale,
+      image: ogImageUrl(SITE_URL, 'main', locale),
     }),
     robots: { index: true, follow: true },
   };
@@ -47,9 +56,10 @@ export function generateMetadata({ params }: { params: { locale: string } }): Me
 export default async function BlogListPage({
   params,
 }: {
-  params: { locale: string };
+  params: Promise<{ locale: string }>;
 }) {
-  const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
+  const { locale: raw } = await params;
+  const locale: Locale = isLocale(raw) ? raw : 'ru';
   const dict = getDictionary(locale);
   const page = await listBlogPosts({ locale, pageSize: 24 });
   const items = page?.items ?? [];

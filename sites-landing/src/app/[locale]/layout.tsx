@@ -19,12 +19,19 @@ export const dynamicParams = false;
  * заместила бы их целиком. Canonical/hreflang каждая страница получает
  * из `pageMetadata()`.
  */
-export default function LocaleLayout({ children, params }: { children: React.ReactNode; params: { locale: string } }) {
-  if (!isLocale(params.locale)) notFound();
-  const dict = getDictionary(params.locale);
+export default async function LocaleLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
+  if (!isLocale(locale)) notFound();
+  const dict = getDictionary(locale);
   const origin = siteUrl();
   return (
-    <HtmlDocument lang={params.locale} widget={liveWidgetTag(params.locale)}>
+    <HtmlDocument lang={locale} widget={liveWidgetTag(locale)}>
       {/* Organization + WebSite — на всех страницах (§8.3). */}
       <JsonLd
         data={{
@@ -35,8 +42,8 @@ export default function LocaleLayout({ children, params }: { children: React.Rea
               '@type': 'WebSite',
               '@id': `${origin}/#website`,
               name: BRAND.name,
-              url: `${origin}/${params.locale}`,
-              inLanguage: params.locale,
+              url: `${origin}/${locale}`,
+              inLanguage: locale,
               description: fmt(dict.pages.home.description),
               publisher: { '@id': `${origin}/#org` },
             },

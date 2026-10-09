@@ -16,6 +16,7 @@ export function QrCode({ data, size = 180 }: { data: string; size?: number }) {
   const { dict } = useDictionary();
   const src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}`;
   return (
+    // eslint-disable-next-line @next/next/no-img-element -- картинка внешнего сервиса QR (см. выше), next/image потребовал бы remotePatterns ради 180×180 PNG
     <img
       src={src}
       width={size}

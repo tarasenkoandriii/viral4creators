@@ -136,6 +136,9 @@ export class WayForPayService {
     reasonCode: number | string;
     merchantSignature: string;
   }): boolean {
+    // Заход 12 (аудит P2-3): подписи нет или она не строка (форма, мусор) —
+    // просто «не сошлась», а не TypeError в `safeEqual` → 500.
+    if (typeof body.merchantSignature !== 'string') return false;
     const expected = wayforpayCallbackSignature(
       body,
       this.cfg().wayforpayMerchantSecret,

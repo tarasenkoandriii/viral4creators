@@ -1096,18 +1096,27 @@ function checkGuideSeams() {
   //    `ResponseInterceptor` в `{success, data, meta}`, отказ —
   //    `HttpExceptionFilter` в `{error, meta}`. Для внутренних
   //    маршрутов это деталь, для `/v1` — публичный контракт, который
-  //    держат две строки в `main.ts`. Снять их «для порядка» можно, не
-  //    заметив, что ломаешь чужие интеграции: свои экраны читают ответ
-  //    через один общий клиент и переживут, чужой код — нет.
+  //    держат две строки глобальной настройки. Снять их «для порядка»
+  //    можно, не заметив, что ломаешь чужие интеграции: свои экраны читают
+  //    ответ через один общий клиент и переживут, чужой код — нет.
+  //    С захода 12 (аудит P3-1) настройка — `configureApp` в
+  //    `app.setup.ts`, `main.ts` её зовёт: проверяем обе половины.
   const mainSource = read("backend/src/main.ts");
+  const setupSource = read("backend/src/app.setup.ts");
+  if (!mainSource.includes("configureApp(app, config)")) {
+    problems.push(
+      "внешний контракт /v1: main.ts не зовёт «configureApp(app, config)» " +
+        "(конверты успеха и отказа включаются там).",
+    );
+  }
   const V1_CONTRACT = [
     ["useGlobalInterceptors(new ResponseInterceptor())", "конверт успеха"],
     ["useGlobalFilters(new HttpExceptionFilter())", "конверт отказа"],
   ];
   for (const [needle, what] of V1_CONTRACT) {
-    if (!mainSource.includes(needle)) {
+    if (!setupSource.includes(needle)) {
       problems.push(
-        `внешний контракт /v1: в main.ts нет «${needle}» (${what}). ` +
+        `внешний контракт /v1: в app.setup.ts нет «${needle}» (${what}). ` +
           "Форма ответа /v1 описана в doc/API.md и на неё опирается чужой код.",
       );
     }

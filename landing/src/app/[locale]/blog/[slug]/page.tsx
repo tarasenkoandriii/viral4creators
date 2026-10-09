@@ -4,18 +4,18 @@ import { notFound } from 'next/navigation';
 import { Header } from '../../../../components/Header';
 import { getDictionary } from '../../../../lib/get-dictionary';
 import { isLocale, locales, OG_LOCALES, type Locale } from '../../../../lib/i18n';
-import {
-  getBlogPost,
-  listAllBlogPosts,
-  BLOG_REVALIDATE_SECONDS,
-} from '../../../../lib/blog-api';
+import { getBlogPost, listAllBlogPosts } from '../../../../lib/blog-api';
 import { TMA_URL, SITE_URL, SITE_NAME } from '../../../../lib/content';
 import { localeAlternates } from '../../../../lib/alternates';
 import { ogImageUrl } from '../../../../lib/social-meta';
 import { jsonLdScript } from '../../../../lib/json-ld';
 import { sanitizeBlogHtml } from '../../../../lib/sanitize-blog-html';
 
-export const revalidate = BLOG_REVALIDATE_SECONDS;
+// Литерал, а не `BLOG_REVALIDATE_SECONDS`: Next 15 читает конфиг сегмента
+// статически, по исходнику, и импортированную константу отвергает ошибкой
+// сборки (Next 14 брал значение из модуля). Равенство константе держит
+// scripts/segment-config.test.ts.
+export const revalidate = 900;
 
 /**
  * Слаги известны только с backend'а, а не на сборке из статического
@@ -39,24 +39,25 @@ export async function generateStaticParams({
 export async function generateMetadata({
   params,
 }: {
-  params: { locale: string; slug: string };
+  params: Promise<{ locale: string; slug: string }>;
 }): Promise<Metadata> {
-  if (!isLocale(params.locale)) return {};
-  const dict = getDictionary(params.locale);
-  const post = await getBlogPost(params.slug, params.locale);
+  const { locale, slug } = await params;
+  if (!isLocale(locale)) return {};
+  const dict = getDictionary(locale);
+  const post = await getBlogPost(slug, locale);
   if (!post) return { title: dict.blog.notFoundTitle };
 
   const languages = Object.fromEntries(
-    locales.map((l) => [l, `/${l}/blog/${params.slug}`])
+    locales.map((l) => [l, `/${l}/blog/${slug}`])
   );
   const description = stripHtml(post.bodyHtml).slice(0, 200);
   return {
     title: `${post.title}${dict.blog.metaTitleSuffix}`,
     description,
     alternates: localeAlternates(
-      (l) => `${SITE_URL}/${l}/blog/${params.slug}`,
-      (l) => `/${l}/blog/${params.slug}`,
-      params.locale,
+      (l) => `${SITE_URL}/${l}/blog/${slug}`,
+      (l) => `/${l}/blog/${slug}`,
+      locale,
     ),
     // Своя картинка записи важнее общей — но если её нет, ссылка
     // раньше разворачивалась вовсе без изображения (находка Ф-3).
@@ -64,16 +65,16 @@ export async function generateMetadata({
       title: post.title,
       description,
       type: 'article',
-      url: `${SITE_URL}/${params.locale}/blog/${params.slug}`,
-      locale: OG_LOCALES[params.locale],
-      images: [post.thumbnailUrl ?? ogImageUrl(SITE_URL, 'main', params.locale)],
+      url: `${SITE_URL}/${locale}/blog/${slug}`,
+      locale: OG_LOCALES[locale],
+      images: [post.thumbnailUrl ?? ogImageUrl(SITE_URL, 'main', locale)],
       publishedTime: post.publishedAt ?? undefined,
     },
     twitter: {
       card: 'summary_large_image',
       title: post.title,
       description,
-      images: [post.thumbnailUrl ?? ogImageUrl(SITE_URL, 'main', params.locale)],
+      images: [post.thumbnailUrl ?? ogImageUrl(SITE_URL, 'main', locale)],
     },
     robots: { index: post.isRequestedLocale, follow: true },
   };
@@ -86,11 +87,12 @@ function stripHtml(html: string): string {
 export default async function BlogPostPage({
   params,
 }: {
-  params: { locale: string; slug: string };
+  params: Promise<{ locale: string; slug: string }>;
 }) {
-  const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
+  const { locale: raw, slug } = await params;
+  const locale: Locale = isLocale(raw) ? raw : 'ru';
   const dict = getDictionary(locale);
-  const post = await getBlogPost(params.slug, locale);
+  const post = await getBlogPost(slug, locale);
   if (!post) notFound();
 
   // TODO §II.5: разметка Article/NewsArticle + BreadcrumbList — отдаётся

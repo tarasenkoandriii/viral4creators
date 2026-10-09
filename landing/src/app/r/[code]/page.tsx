@@ -51,14 +51,14 @@ import {
  */
 export const dynamic = 'force-dynamic';
 
-export function generateMetadata({
+export async function generateMetadata({
   params,
 }: {
-  params: { code: string };
-}): Metadata {
-  const code = normalizeCode(params.code);
+  params: Promise<{ code: string }>;
+}): Promise<Metadata> {
+  const code = normalizeCode((await params).code);
   if (!code) return {};
-  const locale = cookieLocale();
+  const locale = await cookieLocale();
   const t = getDictionary(locale).referral;
   return {
     title: t.metaTitle,
@@ -86,9 +86,9 @@ export function generateMetadata({
 export default async function ReferralPage({
   params,
 }: {
-  params: { code: string };
+  params: Promise<{ code: string }>;
 }) {
-  const code = normalizeCode(params.code);
+  const code = normalizeCode((await params).code);
   // Форма кода известна заранее — мусор отсекается здесь, а не походом
   // в API: маршрут анонимный, и перебирать им коды не должно быть
   // дёшево. Существующий ли это код, страница не выясняет и не
@@ -99,11 +99,11 @@ export default async function ReferralPage({
   // переписке, сам идёт за Open Graph-карточкой — и без этой проверки
   // отправленное в три чата приглашение показывало бы три перехода
   // раньше, чем его кто-нибудь открыл (а §12.1 делит на это число).
-  if (!isLinkPreviewAgent(headers().get('user-agent'))) {
+  if (!isLinkPreviewAgent((await headers()).get('user-agent'))) {
     await registerReferralVisit(code);
   }
 
-  const locale = cookieLocale();
+  const locale = await cookieLocale();
   const dict = getDictionary(locale);
   const t = dict.referral;
   const telegramUrl = TELEGRAM_BOT_USERNAME

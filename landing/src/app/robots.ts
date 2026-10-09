@@ -42,8 +42,8 @@ import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
  * остальные два.
  */
 const DISALLOWED_PATHS = ['/r/', '/qa/'];
-export default function robots(): MetadataRoute.Robots {
-  const host = headers().get('host');
+export default async function robots(): Promise<MetadataRoute.Robots> {
+  const host = (await headers()).get('host');
   if (isGreetingHost(host)) {
     return {
       rules: { userAgent: '*', allow: '/', disallow: DISALLOWED_PATHS },

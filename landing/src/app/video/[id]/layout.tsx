@@ -16,9 +16,9 @@ export default async function SharedVideoLayout({
   params,
 }: {
   children: React.ReactNode;
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const page = await getSharedVideo(params.id);
+  const page = await getSharedVideo((await params).id);
   const locale = page && isLocale(page.locale) ? page.locale : 'ru';
   return <HtmlDocument locale={locale}>{children}</HtmlDocument>;
 }

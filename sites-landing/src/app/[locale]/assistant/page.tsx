@@ -27,12 +27,12 @@ import { siteUrl } from '../../../lib/site-url';
  * GET-форма, без JS), блок 7 — в интеграции. «Подключить в Telegram» и
  * сравнение — `hidden` и в разметке отсутствуют.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('assistant', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('assistant', (await params).locale);
 }
 
-export default function AssistantPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function AssistantPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const a = dict.assistant;
   const hero = a.hero[heroVariant()];

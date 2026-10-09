@@ -7,6 +7,8 @@ export const runtime = 'edge';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
+// params здесь — обычный объект, не Promise: в Next 15.5 картинкам метаданных
+// (opengraph-image) его передают синхронно (асинхронным он станет в Next 16).
 export default async function OgImage({ params }: { params: { locale: Locale; id: string } }) {
   const profile = await getCreatorProfile(params.id);
   const dict = getDictionary(params.locale);

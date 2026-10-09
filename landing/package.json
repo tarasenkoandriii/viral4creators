@@ -2,7 +2,7 @@
   "name": "@viral4creators/landing",
   "version": "0.1.0",
   "private": true,
-  "description": "viral4creators — marketing landing. Next.js 14 App Router, static content, single locale (no i18n — see doc/TELEGRAM-ADMIN.md for how to add it later, following the same pattern as admin/).",
+  "description": "viral4creators — marketing landing. Next.js 15 App Router, static content, single locale (no i18n — see doc/TELEGRAM-ADMIN.md for how to add it later, following the same pattern as admin/).",
   "scripts": {
     "dev": "next dev -p 3003",
     "build": "next build",
@@ -13,18 +13,22 @@
     "budget:js": "node scripts/first-load-js.mjs"
   },
   "dependencies": {
-    "next": "^14.2.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "sanitize-html": "2.17.1"
+    "next": "^15.5.27",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sanitize-html": "2.18.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/sanitize-html": "^2.16.1",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.0",
+    "eslint-config-next": "^15.5.27",
+    "tsx": "^4.23.15",
     "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.29"
   }
 }

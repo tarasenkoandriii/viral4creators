@@ -2,7 +2,7 @@
   "name": "@viral4creators/marketplace",
   "version": "0.1.0",
   "private": true,
-  "description": "viral4creators — публичная витрина маркетплейса исполнителей (ТЗ на маркетплейс §19–§21, Этап 0 / Фаза 1). Next.js 14 App Router, тот же стек и дизайн-токены, что у landing/ — отдельное приложение, а не раздел внутри лендинга, чтобы держать зоны продукта разделёнными (§17.2 ТЗ).",
+  "description": "viral4creators — публичная витрина маркетплейса исполнителей (ТЗ на маркетплейс §19–§21, Этап 0 / Фаза 1). Next.js 15 App Router, тот же стек и дизайн-токены, что у landing/ — отдельное приложение, а не раздел внутри лендинга, чтобы держать зоны продукта разделёнными (§17.2 ТЗ).",
   "scripts": {
     "dev": "next dev -p 3004",
     "build": "next build",
@@ -12,16 +12,20 @@
     "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done"
   },
   "dependencies": {
-    "next": "^14.2.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "next": "^15.5.27",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/react": "^18.3.0",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.0",
+    "eslint-config-next": "^15.5.27",
+    "tsx": "^4.23.15",
     "typescript": "^5.0.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.29"
   }
 }

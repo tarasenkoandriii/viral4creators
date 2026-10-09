@@ -35,10 +35,12 @@ import { DEMO_SHOP_COPY, resolveDemoShopLang } from "./demo-shop-copy";
  * «заказ» и «запись» только меняют состояние страницы.
  */
 
-type Props = { searchParams: { lang?: string | string[] } };
+type Props = { searchParams: Promise<{ lang?: string | string[] }> };
 
-export function generateMetadata({ searchParams }: Props): Metadata {
-  const lang = resolveDemoShopLang(searchParams.lang);
+export async function generateMetadata({
+  searchParams,
+}: Props): Promise<Metadata> {
+  const lang = resolveDemoShopLang((await searchParams).lang);
   return {
     title: DEMO_SHOP_COPY[lang].meta.title,
     // Служебная страница: три замка, как у `site-sandbox` — `noindex`
@@ -56,6 +58,7 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-export default function QaDemoShopPage({ searchParams }: Props) {
-  return <DemoShopClient lang={resolveDemoShopLang(searchParams.lang)} />;
+export default async function QaDemoShopPage({ searchParams }: Props) {
+  const lang = resolveDemoShopLang((await searchParams).lang);
+  return <DemoShopClient lang={lang} />;
 }

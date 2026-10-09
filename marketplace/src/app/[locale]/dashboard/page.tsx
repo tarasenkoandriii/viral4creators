@@ -5,13 +5,14 @@
  * публичная, только свои цифры.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { CreatorStatsView, getOwnStats } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
 import type { Locale } from '../../../lib/i18n';
 
-export default function DashboardPage({ params }: { params: { locale: Locale } }) {
+export default function DashboardPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const [stats, setStats] = useState<CreatorStatsView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,13 +28,13 @@ export default function DashboardPage({ params }: { params: { locale: Locale } }
     <>
       <h1>{dict.dashboard.heading}</h1>
       <p className="mp-hint">
-        <Link href={`/${params.locale}/settings`}>{dict.settings.heading}</Link>
+        <Link href={`/${locale}/settings`}>{dict.settings.heading}</Link>
         {' · '}
-        <Link href={`/${params.locale}/my-portfolio`}>{dict.myPortfolio.heading}</Link>
+        <Link href={`/${locale}/my-portfolio`}>{dict.myPortfolio.heading}</Link>
       </p>
       {error && (
         <p className="mp-empty">
-          {error} <Link href={`/${params.locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
+          {error} <Link href={`/${locale}/become-creator`}>{dict.dashboard.takeQuiz}</Link>
         </p>
       )}
       {!error && !stats && <p className="mp-empty">{dict.dashboard.loading}</p>}

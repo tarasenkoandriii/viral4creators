@@ -21,12 +21,12 @@ import { OPT_OUT_HONEYPOT, OPT_OUT_LIMITS } from '../../../../server/opt-out';
  * ядра, ≤ 72 ч, §13). Форма — обычная HTML-отправка без клиентского JS:
  * `POST /api/opt-out` → 303 на страницу результата.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('bot', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('bot', (await params).locale);
 }
 
-export default function BotPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function BotPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   if (claimStatus('crawler-opt-out') === 'hidden') notFound();
   const dict = getDictionary(locale);
   const b = dict.botPage;
@@ -89,6 +89,7 @@ export default function BotPage({ params }: { params: { locale: Locale } }) {
           <div className="field field-check">
             <input id="oo-consent" name="consent" type="checkbox" required />
             <label htmlFor="oo-consent">
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- /legal: свой корневой документ, см. SiteChrome */}
               {f.consent} <a href="/legal/privacy">{dict.common.footer.privacy}</a>
             </label>
           </div>

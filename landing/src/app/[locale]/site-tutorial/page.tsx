@@ -71,12 +71,12 @@ function localeOf(raw: string): Locale {
   return isLocale(raw) ? raw : 'ru';
 }
 
-export function generateMetadata({
+export async function generateMetadata({
   params,
 }: {
-  params: { locale: string };
-}): Metadata {
-  const locale = localeOf(params.locale);
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const locale = localeOf((await params).locale);
   const t = getDictionary(locale).siteTutorialLanding;
   return {
     title: t.meta.title,
@@ -109,12 +109,12 @@ export function generateMetadata({
   };
 }
 
-export default function SiteTutorialLandingPage({
+export default async function SiteTutorialLandingPage({
   params,
 }: {
-  params: { locale: string };
+  params: Promise<{ locale: string }>;
 }) {
-  const locale = localeOf(params.locale);
+  const locale = localeOf((await params).locale);
   const dict = getDictionary(locale);
   const t = dict.siteTutorialLanding;
   /**

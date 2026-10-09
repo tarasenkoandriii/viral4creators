@@ -25,9 +25,14 @@ export function generateStaticParams() {
   return locales.map((locale) => ({ locale }));
 }
 
-export function generateMetadata({ params }: { params: { locale: string } }): Metadata {
-  if (!isLocale(params.locale)) return {};
-  const dict = getDictionary(params.locale);
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  if (!isLocale(locale)) return {};
+  const dict = getDictionary(locale);
   const { metaTitle, metaDescription } = dict.steps.page;
   return {
     title: metaTitle,
@@ -35,21 +40,26 @@ export function generateMetadata({ params }: { params: { locale: string } }): Me
     alternates: localeAlternates(
       (l) => `${SITE_URL}/${l}/how-it-works`,
       (l) => `/${l}/how-it-works`,
-      params.locale,
+      locale,
     ),
     ...socialMeta({
       title: metaTitle,
       description: metaDescription,
-      url: `${SITE_URL}/${params.locale}/how-it-works`,
-      locale: params.locale,
-      image: ogImageUrl(SITE_URL, 'main', params.locale),
+      url: `${SITE_URL}/${locale}/how-it-works`,
+      locale,
+      image: ogImageUrl(SITE_URL, 'main', locale),
     }),
     robots: { index: true, follow: true },
   };
 }
 
-export default function HowItWorksPage({ params }: { params: { locale: string } }) {
-  const locale: Locale = isLocale(params.locale) ? params.locale : 'ru';
+export default async function HowItWorksPage({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale: raw } = await params;
+  const locale: Locale = isLocale(raw) ? raw : 'ru';
   const dict = getDictionary(locale);
   // Э-С Ш5: старый консультант или виджет платформы — переключатель сборки.
   const assist = assistWidgetFromBuildEnv();

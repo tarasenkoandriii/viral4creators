@@ -163,7 +163,7 @@ assert.doesNotMatch(
   /g\.privacy\.items\.map/,
   '«Данные» рисуются мимо greetingPrivacyItems — выключатель не сработает',
 );
-const metaSrc = /export function generateMetadata[\s\S]*?\n\}\n/.exec(
+const metaSrc = /export (?:async )?function generateMetadata[\s\S]*?\n\}\n/.exec(
   pageSrc,
 )?.[0];
 assert.ok(metaSrc, 'в page.tsx не нашёлся generateMetadata');

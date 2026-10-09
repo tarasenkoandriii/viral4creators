@@ -11,11 +11,16 @@ import { PrintButton } from '../../../../../components/PrintButton';
  * здесь — из тех же переводов профиля/каталога, чтобы не заводить
  * отдельную секцию словаря ради одной вспомогательной страницы.
  */
-export default async function CreatorPrintPage({ params }: { params: { locale: Locale; id: string } }) {
-  const dict = getDictionary(params.locale);
-  const profile = await getCreatorProfile(params.id);
+export default async function CreatorPrintPage({
+  params,
+}: {
+  params: Promise<{ locale: Locale; id: string }>;
+}) {
+  const { locale, id } = await params;
+  const dict = getDictionary(locale);
+  const profile = await getCreatorProfile(id);
   if (!profile) notFound();
-  const portfolio = await getCreatorPortfolio(params.id);
+  const portfolio = await getCreatorPortfolio(id);
 
   return (
     <div className="mp-print-page">
@@ -36,6 +41,7 @@ export default async function CreatorPrintPage({ params }: { params: { locale: L
       <div className="mp-print-grid">
         {portfolio.map((item) => (
           <div key={item.id} className="mp-print-item">
+            {/* eslint-disable-next-line @next/next/no-img-element -- страница для печати/PDF: внешнее превью как есть, оптимизатор next/image здесь не нужен */}
             {item.thumbnailUrl && <img src={item.thumbnailUrl} alt={item.title} />}
             <p>{item.title}</p>
             <p style={{ fontSize: 11, color: '#666' }}>{item.videoUrl}</p>

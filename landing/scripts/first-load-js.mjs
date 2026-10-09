@@ -8,8 +8,9 @@
  * обещает не трогать первую отрисовку: загрузчик — после `load` + idle,
  * чат — по клику. Обещание без числа в CI не держится: любой «удобный»
  * импорт в общий layout или на главную тихо утяжеляет каждую страницу.
- * Здесь — потолки маршрутов с запасом ≈ 10 % к замеру на 07.10.2026,
- * превышение — громкий отказ (код 1) с разбором по чанкам.
+ * Здесь — потолки маршрутов с запасом ≈ 10 % к замеру (07.10.2026;
+ * пересняты 09.10.2026 после Next 15 + React 19, заход 12), превышение —
+ * громкий отказ (код 1) с разбором по чанкам.
  *
  * Считаем сами, а не берём число из вывода `next build` (как sites-landing):
  * gzip ровно того, что браузер грузит при первом заходе на маршрут, —
@@ -30,7 +31,7 @@
  * Переопределение (разовая проверка, не способ «пройти CI»):
  * `FIRST_LOAD_BUDGET_KB` — общий потолок, `FIRST_LOAD_BUDGET_SCALE` —
  * множитель всех потолков (проверка запаса: при `0.9` сборка на
- * 07.10.2026 не проходит — запас не больше ≈ 10 %).
+ * 09.10.2026 не проходит — запас не больше ≈ 10 %).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,39 +46,41 @@ const NEXT = process.env.FIRST_LOAD_NEXT_DIR
 const SCALE = Number(process.env.FIRST_LOAD_BUDGET_SCALE ?? 1);
 /**
  * Общий потолок маршрута без своей строки (КБ gzip): самый тяжёлый из
- * таких на замере — `/qa/demo-shop` 96.6 КБ.
+ * таких на замере — `/qa/demo-shop` 111.5 КБ (на Next 14 — 96.6).
  */
-const DEFAULT_BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 106);
+const DEFAULT_BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 123);
 /**
- * Потолки маршрутов, КБ gzip уровня 9: замер этого скрипта 07.10.2026
- * (в скобках) + ≈ 10 %. Таблица `next build` показывает на 1–2 КБ больше
- * (другой уровень сжатия) — главная 107, «Как это работает» 109,
- * «Обучалка по сайту» 96.
+ * Потолки маршрутов, КБ gzip уровня 9: замер этого скрипта (в скобках) +
+ * ≈ 10 %. Замер 09.10.2026 (заход 12) — после перехода на Next 15.5 +
+ * React 19: общая часть (рантайм Next + React + корневой layout) выросла
+ * 85.5 → 100.5 КБ, маршруты — на 9–15 КБ; свои чанки страниц — те же.
+ * Прежние замеры (Next 14, 07–08.10.2026) — вторым числом. Таблица
+ * `next build` показывает на 1–3 КБ больше (другой уровень сжатия).
  */
 export const ROUTE_BUDGET_KB = {
-  // Главная: виджет помощника (ленивый), демо, EntryActions (105.3).
-  '/[locale]/page': 116,
-  // «Как это работает»: встроенная панель помощника в сетке (107.3; с
-  // 08.10.2026 — 107.4, а в сборке `platform` без кода чата — 103.2,
-  // см. components/EmbeddedAssistant.tsx; её потолок —
-  // `PLATFORM_ROUTE_BUDGET_KB`).
-  '/[locale]/how-it-works/page': 118,
-  '/[locale]/greetings/page': 113, // (102.4)
-  '/[locale]/site-tutorial/page': 104, // (94.0)
-  '/[locale]/blog/page': 107, // (97.2)
-  '/[locale]/blog/[slug]/page': 107, // (97.2)
-  // Служебная страница-переход «Открыть приложение», Ш5 (6) (95.2).
-  '/[locale]/open/page': 105,
+  // Главная: виджет помощника (ленивый), демо, EntryActions (114.4; 105.3).
+  '/[locale]/page': 126,
+  // «Как это работает»: встроенная панель помощника в сетке (116.4; 107.4),
+  // а в сборке `platform` без кода чата — 112.2 (103.2), см.
+  // components/EmbeddedAssistant.tsx; её потолок — `PLATFORM_ROUTE_BUDGET_KB`.
+  '/[locale]/how-it-works/page': 128,
+  '/[locale]/greetings/page': 123, // (112.2; 102.4)
+  '/[locale]/site-tutorial/page': 120, // (109.2; 94.0)
+  '/[locale]/blog/page': 117, // (106.2; 97.2)
+  '/[locale]/blog/[slug]/page': 117, // (106.2; 97.2)
+  // Служебная страница-переход «Открыть приложение», Ш5 (6) (104.9; 95.2).
+  '/[locale]/open/page': 115,
 };
 /**
  * Потолки сборки `platform` (`--platform`) поверх `ROUTE_BUDGET_KB`. Запас
  * здесь не ≈ 10 %, а меньше разницы режимов: смысл строки — поймать чат
  * `AssistantWidget`, вернувшийся в First Load JS how-it-works (с ним
- * 107,3 КБ, как в legacy), а +10 % к замеру его бы пропустили.
+ * 116,4 КБ, как в legacy), а +10 % к замеру его бы пропустили.
  */
 export const PLATFORM_ROUTE_BUDGET_KB = {
-  // Без кода чата, см. components/EmbeddedAssistant.tsx (103.2).
-  '/[locale]/how-it-works/page': 106,
+  // Без кода чата, см. components/EmbeddedAssistant.tsx (112.2; на Next 14 —
+  // 103.2 при потолке 106).
+  '/[locale]/how-it-works/page': 115,
 };
 const PLATFORM = process.argv.slice(2).includes('--platform');
 const routeBudget = PLATFORM ? { ...ROUTE_BUDGET_KB, ...PLATFORM_ROUTE_BUDGET_KB } : ROUTE_BUDGET_KB;

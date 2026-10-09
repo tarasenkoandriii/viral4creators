@@ -6,13 +6,14 @@
  * /brief/[id], не мог найти свой бриф снова.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getMyInquiries, InquiryView } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
 import type { Locale } from '../../../lib/i18n';
 
-export default function BriefsListPage({ params }: { params: { locale: Locale } }) {
+export default function BriefsListPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const [inquiries, setInquiries] = useState<InquiryView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +32,7 @@ export default function BriefsListPage({ params }: { params: { locale: Locale } 
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h1>{dict.briefsList.heading}</h1>
-        <Link href={`/${params.locale}/brief`} className="mp-cta">
+        <Link href={`/${locale}/brief`} className="mp-cta">
           {dict.briefsList.newButton}
         </Link>
       </div>
@@ -46,7 +47,7 @@ export default function BriefsListPage({ params }: { params: { locale: Locale } 
             <div key={inquiry.id} className="mp-creator-card">
               <span className="mp-creator-card-name">{inquiry.productDescription.slice(0, 60)}</span>
               <span className="mp-pill">{statusLabel(inquiry.status)}</span>
-              <Link href={`/${params.locale}/brief/${inquiry.id}`} className="mp-cta-secondary">
+              <Link href={`/${locale}/brief/${inquiry.id}`} className="mp-cta-secondary">
                 {dict.briefsList.openMatches}
               </Link>
             </div>

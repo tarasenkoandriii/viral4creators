@@ -13,12 +13,12 @@ import { pageMetadata } from '../../../../lib/pages';
  * `FAQPage`; `soon` — с меткой. `FAQPage` — для семантики и ИИ-поиска,
  * не ради сниппета (§8.3).
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('faq', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('faq', (await params).locale);
 }
 
-export default function FaqPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function FaqPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const groups = faqGroups(locale);
   return (

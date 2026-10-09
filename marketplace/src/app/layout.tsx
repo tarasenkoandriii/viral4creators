@@ -15,8 +15,11 @@ export const metadata: Metadata = {
  * и без локали вообще (ТЗ §20 №15, см. lib/i18n.ts).
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // data-scroll-behavior: в globals.css у <html> плавная прокрутка; с этим
+  // атрибутом Next 15.5+ по-прежнему выключает её на время переходов между
+  // маршрутами (без него — предупреждение, а в Next 16 — перестанет).
   return (
-    <html lang="ru">
+    <html lang="ru" data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );

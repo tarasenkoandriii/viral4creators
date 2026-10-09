@@ -7,8 +7,11 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { ModulesContainer } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { AppModule } from './app.module';
+import { GoalWebhookService } from './modules/assist-analytics/goal-webhook.service';
+import { AnalyticsRollup } from './modules/assist-analytics/system/analytics-rollup.service';
 
 describe('AppModule', () => {
   it('собирается: все провайдеры и контроллеры разрешаются', async () => {
@@ -16,6 +19,54 @@ describe('AppModule', () => {
       imports: [AppModule],
     }).compile();
     expect(ref).toBeDefined();
+    await ref.close();
+  });
+
+  /**
+   * Заход 12, аудит P2-1. Цикл импортов `goal-webhook.service` ↔
+   * `analytics-rollup.service` делал `design:paramtypes[2]` равным
+   * `undefined`. Nest молча ставил `undefined` в `@Optional()`-параметр:
+   * возврат по вебхуку не пересчитывал день заказа. Порядок загрузки — как в
+   * проде: сначала AppModule.
+   */
+  it('GoalWebhookService получает AnalyticsRollup (rollup injected)', async () => {
+    const ref = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    const hook = ref.get(GoalWebhookService, { strict: false });
+    const rollup = ref.get(AnalyticsRollup, { strict: false });
+    expect(rollup).toBeInstanceOf(AnalyticsRollup);
+    expect((hook as unknown as { rollup?: unknown }).rollup).toBe(rollup);
+    await ref.close();
+  });
+
+  /**
+   * Страж от повторения: у провайдеров и контроллеров приложения нет
+   * `undefined` в типах параметров конструктора (признак цикла импортов,
+   * который Nest для `@Optional()` не замечает).
+   */
+  it('нет undefined в design:paramtypes провайдеров и контроллеров', async () => {
+    const ref = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    const bad: string[] = [];
+    for (const mod of ref.get(ModulesContainer).values()) {
+      const wrappers = [
+        ...mod.providers.values(),
+        ...mod.controllers.values(),
+        ...mod.injectables.values(),
+      ];
+      for (const w of wrappers) {
+        const t = w.metatype as unknown;
+        if (typeof t !== 'function' || w.inject) continue;
+        const types = Reflect.getMetadata('design:paramtypes', t) as
+          unknown[] | undefined;
+        types?.forEach((x, i) => {
+          if (x === undefined) bad.push(`${(t as { name: string }).name}#${i}`);
+        });
+      }
+    }
+    expect([...new Set(bad)]).toEqual([]);
     await ref.close();
   });
 });

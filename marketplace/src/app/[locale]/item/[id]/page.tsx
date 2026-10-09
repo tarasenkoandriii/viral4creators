@@ -26,13 +26,14 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3004';
 export async function generateMetadata({
   params,
 }: {
-  params: { locale: Locale; id: string };
+  params: Promise<{ locale: Locale; id: string }>;
 }): Promise<Metadata> {
-  const item = await getPortfolioItem(params.id);
+  const { locale, id } = await params;
+  const item = await getPortfolioItem(id);
   if (!item) return {};
   return {
     title: item.title,
-    alternates: { canonical: `${SITE_URL}/${params.locale}/item/${item.id}` },
+    alternates: { canonical: `${SITE_URL}/${locale}/item/${item.id}` },
     openGraph: { title: item.title, type: 'video.other', videos: [{ url: item.videoUrl }] },
     robots: { index: item.likeCount > 0 || item.viewCount > 0, follow: true },
   };
@@ -41,9 +42,9 @@ export async function generateMetadata({
 export default async function PortfolioItemPage({
   params,
 }: {
-  params: { locale: Locale; id: string };
+  params: Promise<{ locale: Locale; id: string }>;
 }) {
-  const { locale, id } = params;
+  const { locale, id } = await params;
   const dict = getDictionary(locale);
   const item = await getPortfolioItem(id);
   if (!item) notFound();

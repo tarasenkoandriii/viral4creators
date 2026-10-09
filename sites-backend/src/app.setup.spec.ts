@@ -7,6 +7,7 @@ import {
   INestApplication,
   Logger,
   Post,
+  Query,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { IsString } from 'class-validator';
@@ -52,6 +53,17 @@ class ProbeController {
   @Post('echo')
   echo(@Body() dto: EchoDto) {
     return dto;
+  }
+
+  /** Заход 12: тело без DTO-класса — как у сотни обработчиков `body: unknown`. */
+  @Post('nobody')
+  nobody(@Body() body: { x?: unknown }) {
+    return { type: typeof body, x: body.x ?? null };
+  }
+
+  @Get('query')
+  query(@Query() q: Record<string, unknown>) {
+    return { ...q };
   }
 }
 
@@ -323,6 +335,55 @@ describe('приложение: конверт, ошибки, валидация
       .send('{"name":');
     expect(broken.status).toBe(400);
     expect(broken.body.error.code).toBe('BAD_REQUEST');
+  });
+
+  it('Express 5 (заход 12): без тела и с чужим Content-Type — {} как в Express 4, не 500', async () => {
+    const none = await request(app.getHttpServer())
+      .post('/probe/nobody')
+      .expect(201);
+    expect(none.body.data).toEqual({ type: 'object', x: null });
+    const wrongType = await request(app.getHttpServer())
+      .post('/probe/nobody')
+      .set('Content-Type', 'text/plain')
+      .send('x=1')
+      .expect(201);
+    expect(wrongType.body.data).toEqual({ type: 'object', x: null });
+    const json = await request(app.getHttpServer())
+      .post('/probe/nobody')
+      .send({ x: 5 })
+      .expect(201);
+    expect(json.body.data).toEqual({ type: 'object', x: 5 });
+    // Сырой путь с пустым телом (Content-Length: 0) — пустая строка от
+    // своего text-парсера, как и в Express 4: подпись сверится с ''.
+    const hook = await request(app.getHttpServer())
+      .post('/assist/v1/sites/s1/goal-events')
+      .expect(201);
+    expect(hook.body.data).toEqual({ type: 'string', body: '' });
+  });
+
+  it('заход 12 (аудит P3-3/P3-4): 404 — без query в тексте; Content-Encoding не та — 415, не 500', async () => {
+    const warn = Logger.prototype.warn as unknown as jest.Mock;
+    warn.mockClear();
+    const nf = await request(app.getHttpServer())
+      .get('/no/such?code=ONE-TIME-SECRET')
+      .expect(404);
+    expect(nf.body.error.message).toBe('Cannot GET /no/such');
+    expect(JSON.stringify(nf.body)).not.toContain('ONE-TIME-SECRET');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('ONE-TIME-SECRET');
+    const enc = await request(app.getHttpServer())
+      .post('/probe/nobody')
+      .set('Content-Type', 'application/json')
+      .set('Content-Encoding', 'bogus')
+      .send('{"x":1}')
+      .expect(415);
+    expect(enc.body.error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+  });
+
+  it('Express 5 (заход 12): query — простой разбор: повтор ключа — массив, скобки — не объект', async () => {
+    const r = await request(app.getHttpServer())
+      .get('/probe/query?a=1&a=2&b[c]=1&d=%D1%82')
+      .expect(200);
+    expect(r.body.data).toEqual({ a: ['1', '2'], 'b[c]': '1', d: 'т' });
   });
 
   it('CORS: чужой Origin на общем пути (лендинг) — 403 ORIGIN_DENIED в конверте, не 500, до обработчика', async () => {

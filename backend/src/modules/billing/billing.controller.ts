@@ -32,6 +32,7 @@ import {
 } from './dto/start-checkout.dto';
 import { CheckoutResult } from './billing.types';
 import { localeFromRequest } from '../../common/locale';
+import { wayforpayBody } from '../../common/wayforpay-body';
 
 @Controller('billing')
 export class BillingController {
@@ -84,13 +85,21 @@ export class BillingController {
    * выводит ответ из-под интерцептора (тот же приём, что у
    * `sites-backend` assist-billing/billing-webhook.controller.ts).
    */
+  // Заход 12 (аудит P2-3): тело — не DTO, схему задаёт WayForPay. Без
+  // тела, `text/plain` или форма с JSON строкой-ключом раньше доходили
+  // как `{}`/форма → TypeError в сверке подписи → 500, провайдер повторял
+  // доставку, оплата не зачитывалась. `wayforpayBody` (общий с
+  // sites-backend) приводит тело к одному виду, сервис отвечает
+  // квитанцией или 400 (нет orderReference).
   @Post('webhook/wayforpay')
   @HttpCode(200)
   async wayforpayWebhook(
-    @Body() body: WayForPayWebhookBody,
+    @Body() body: unknown,
     @Res() res: Response,
   ): Promise<void> {
-    const ack = await this.service.handleWayForPayWebhook(body);
+    const ack = await this.service.handleWayForPayWebhook(
+      wayforpayBody<WayForPayWebhookBody>(body),
+    );
     res.status(200).json(ack);
   }
 }

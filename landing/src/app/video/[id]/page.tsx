@@ -3,10 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getDictionary } from '../../../lib/get-dictionary';
 import { OG_LOCALES, isLocale, type Locale } from '../../../lib/i18n';
-import {
-  getSharedVideo,
-  SHARED_VIDEO_REVALIDATE_SECONDS,
-} from '../../../lib/shared-video-api';
+import { getSharedVideo } from '../../../lib/shared-video-api';
 import { SITE_URL, SITE_NAME, TMA_URL } from '../../../lib/content';
 import { ShareButtons } from '../../../components/ShareButtons';
 import { jsonLdScript } from '../../../lib/json-ld';
@@ -27,7 +24,11 @@ import { previewImageOf } from '../../../lib/shared-video-preview';
  * оператора — маршрут рендерится по требованию и держится `revalidate`
  * (тот же ISR-приём, что и у блога, см. lib/shared-video-api.ts).
  */
-export const revalidate = SHARED_VIDEO_REVALIDATE_SECONDS;
+// Литерал, а не `SHARED_VIDEO_REVALIDATE_SECONDS`: Next 15 читает конфиг
+// сегмента статически, по исходнику, и импортированную константу отвергает
+// ошибкой сборки (Next 14 брал значение из модуля). Равенство константе
+// держит scripts/segment-config.test.ts.
+export const revalidate = 300;
 
 const INTL_LOCALE: Record<string, string> = {
   ru: 'ru-RU',
@@ -50,9 +51,9 @@ function cssAspectRatio(raw: string | null): string {
 export async function generateMetadata({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }): Promise<Metadata> {
-  const page = await getSharedVideo(params.id);
+  const page = await getSharedVideo((await params).id);
   if (!page) return {};
   const locale = localeOf(page.locale);
   const dict = getDictionary(locale);
@@ -106,9 +107,9 @@ export async function generateMetadata({
 export default async function SharedVideoPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const page = await getSharedVideo(params.id);
+  const page = await getSharedVideo((await params).id);
   if (!page) notFound();
 
   const locale = localeOf(page.locale);

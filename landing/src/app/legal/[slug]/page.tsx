@@ -9,20 +9,26 @@ export function generateStaticParams() {
   return LEGAL_DOCS.map((d) => ({ slug: d.slug }));
 }
 
-export function generateMetadata({
+export async function generateMetadata({
   params,
 }: {
-  params: { slug: string };
-}): Metadata {
-  const doc = LEGAL_DOCS.find((d) => d.slug === params.slug);
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const doc = LEGAL_DOCS.find((d) => d.slug === slug);
   return {
     title: doc ? `${doc.title} — viral4creators` : 'Документ не найден',
     robots: { index: true, follow: true },
   };
 }
 
-export default function LegalPage({ params }: { params: { slug: string } }) {
-  const doc = LEGAL_DOCS.find((d) => d.slug === params.slug);
+export default async function LegalPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const doc = LEGAL_DOCS.find((d) => d.slug === slug);
   if (!doc) notFound();
   const other = LEGAL_DOCS.filter((d) => d.slug !== doc.slug);
   return (

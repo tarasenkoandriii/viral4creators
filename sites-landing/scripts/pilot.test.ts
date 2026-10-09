@@ -12,7 +12,7 @@ import { handlePilotRequest } from '../src/server/pilot-handler';
 import { formatPilotMessage, notifyConfig, QUOTE_PREFIX } from '../src/server/pilot-notify';
 import { ipKeyPart, PILOT_RATE, RateLimiter, rateKey } from '../src/server/rate-limit';
 import * as React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderPage } from './lib/page';
 import PilotStatusPage from '../src/app/[locale]/assistant/pilot/status/[code]/page';
 import { getDictionary } from '../src/lib/get-dictionary';
 import { locales } from '../src/lib/i18n';
@@ -244,13 +244,13 @@ async function logsWithoutPersonalData() {
 // Формы на ней нет, поэтому тексты формы («поля, отмеченные ниже», «ваши
 // данные остались в форме») здесь были бы неправдой: на этой странице —
 // свои тексты, и для неуспешных кодов они не совпадают с текстами формы.
-function statusPageTexts(): number {
+async function statusPageTexts(): Promise<number> {
   (globalThis as { React?: typeof React }).React = React;
   let n = 0;
   for (const locale of locales) {
     const dict = getDictionary(locale);
     for (const code of PILOT_RESULT_CODES) {
-      const html = renderToStaticMarkup(PilotStatusPage({ params: { locale, code } }));
+      const html = await renderPage(PilotStatusPage, { locale, code });
       n++;
       assert.ok(!/<form\b/.test(html), `${locale}/${code}: на странице результата появилась форма — пересмотрите тексты`);
       const shown = /<p class="form-status[^"]*" role="status">([^<]*)<\/p>/.exec(html)?.[1];
@@ -310,9 +310,9 @@ function staticChecks() {
 }
 
 main()
-  .then(() => {
+  .then(async () => {
     const n = staticChecks();
-    const pages = statusPageTexts();
+    const pages = await statusPageTexts();
     console.log(`ok   страницы результата без JS: ${pages} (локаль × код) — свои тексты, без обещаний про форму`);
     console.log(`ok   форма пилота: поля, согласие, ловушка, лимит (IPv4/IPv6 /64, окно, потолок), нет env → 503, Telegram 4xx → 502, Origin, без JS → 303; клиентский граф (${n} модулей) секретов не видит`);
   })

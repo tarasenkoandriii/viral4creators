@@ -15,15 +15,16 @@ export default async function AuctionsPage({
   params,
   searchParams,
 }: {
-  params: { locale: Locale };
-  searchParams: { ended?: string };
+  params: Promise<{ locale: Locale }>;
+  searchParams: Promise<{ ended?: string }>;
 }) {
-  const dict = getDictionary(params.locale);
+  const [{ locale }, { ended }, requestHeaders] = await Promise.all([params, searchParams, headers()]);
+  const dict = getDictionary(locale);
   const listings = await getAuctionListings();
   // Та же информационная оценка, что на карточке лота (§22, предложение
   // «валюта той страны, которая в заголовке vercel») — не авторитетная,
   // только подсказка зрителю из другой страны.
-  const viewerCountry = headers().get('x-vercel-ip-country');
+  const viewerCountry = requestHeaders.get('x-vercel-ip-country');
   const viewerCurrency = viewerCountry ? COUNTRY_CURRENCY[viewerCountry] : undefined;
   const estimateFor = (amount: number, currency: AuctionCurrencyValue): string | null =>
     viewerCurrency && viewerCurrency !== currency
@@ -32,12 +33,12 @@ export default async function AuctionsPage({
 
   return (
     <>
-      <EndedAuctionBanner show={searchParams.ended === '1'} />
+      <EndedAuctionBanner show={ended === '1'} />
       <h1>{dict.auctions.heading}</h1>
       <p className="mp-hint">
-        {dict.auctions.subheading} · <Link href={`/${params.locale}/my-auctions`}>{dict.auctions.myListingsLink}</Link>
+        {dict.auctions.subheading} · <Link href={`/${locale}/my-auctions`}>{dict.auctions.myListingsLink}</Link>
         {' · '}
-        <Link href={`/${params.locale}/my-bids`}>{dict.myBids.heading}</Link>
+        <Link href={`/${locale}/my-bids`}>{dict.myBids.heading}</Link>
       </p>
 
       {listings.length === 0 ? (
@@ -48,7 +49,7 @@ export default async function AuctionsPage({
             const amount = item.highestBidAmount ?? item.startingPrice;
             const label = item.highestBidAmount != null ? dict.auctions.currentBidLabel : dict.auctions.startingPriceLabel;
             return (
-              <Link key={item.id} href={`/${params.locale}/auctions/${item.id}`} className="mp-portfolio-item" style={{ textDecoration: 'none' }}>
+              <Link key={item.id} href={`/${locale}/auctions/${item.id}`} className="mp-portfolio-item" style={{ textDecoration: 'none' }}>
                 {/* eslint-disable-next-line jsx-a11y/media-has-caption -- превью без звука, как остальные превью проекта */}
                 <video src={item.videoUrl} muted playsInline poster={item.thumbnailUrl ?? undefined} />
                 <div className="mp-portfolio-item-footer" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>

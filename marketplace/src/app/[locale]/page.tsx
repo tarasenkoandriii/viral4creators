@@ -12,15 +12,15 @@ export default async function CatalogPage({
   params,
   searchParams,
 }: {
-  params: { locale: Locale };
-  searchParams: { niche?: string; priceMax?: string; cursor?: string };
+  params: Promise<{ locale: Locale }>;
+  searchParams: Promise<{ niche?: string; priceMax?: string; cursor?: string }>;
 }) {
-  const { locale } = params;
+  const [{ locale }, query] = await Promise.all([params, searchParams]);
   const dict = getDictionary(locale);
   const catalog = await getCreatorCatalog({
-    niche: searchParams.niche,
-    priceMax: searchParams.priceMax ? Number(searchParams.priceMax) : undefined,
-    cursor: searchParams.cursor,
+    niche: query.niche,
+    priceMax: query.priceMax ? Number(query.priceMax) : undefined,
+    cursor: query.cursor,
   });
 
   return (
@@ -36,14 +36,14 @@ export default async function CatalogPage({
           type="text"
           name="niche"
           placeholder={dict.catalog.nichePlaceholder}
-          defaultValue={searchParams.niche}
+          defaultValue={query.niche}
         />
         <input
           className="mp-filter-input"
           type="number"
           name="priceMax"
           placeholder={dict.catalog.budgetPlaceholder}
-          defaultValue={searchParams.priceMax}
+          defaultValue={query.priceMax}
         />
         <button className="mp-cta-secondary" type="submit">
           {dict.catalog.searchButton}
@@ -90,8 +90,8 @@ export default async function CatalogPage({
           <Link
             className="mp-cta-secondary"
             href={`/${locale}?${new URLSearchParams({
-              ...(searchParams.niche ? { niche: searchParams.niche } : {}),
-              ...(searchParams.priceMax ? { priceMax: searchParams.priceMax } : {}),
+              ...(query.niche ? { niche: query.niche } : {}),
+              ...(query.priceMax ? { priceMax: query.priceMax } : {}),
               cursor: catalog.nextCursor,
             }).toString()}`}
           >

@@ -15,12 +15,12 @@ import { MORE_PLATFORMS, PLATFORMS } from '../../../../lib/platforms';
  * (§13: «совместимо с», не «партнёр»). У каждой карточки — утверждение
  * своей страницы и пометка, как проверена инструкция.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('integrations', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('integrations', (await params).locale);
 }
 
-export default function IntegrationsPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function IntegrationsPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   if (claimStatus('integrations') === 'hidden') notFound();
   const dict = getDictionary(locale);
   const t = dict.integrations;

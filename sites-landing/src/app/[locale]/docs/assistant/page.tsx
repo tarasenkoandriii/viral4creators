@@ -10,10 +10,10 @@ export function generateStaticParams() {
 export const dynamicParams = false;
 
 /** Документация: установка (Л5, §3.13). */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return docsMetadata('docs', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return docsMetadata('docs', (await params).locale);
 }
 
-export default function DocsInstallPage({ params }: { params: { locale: Locale } }) {
-  return <DocsPage docKey="docs" locale={params.locale} />;
+export default async function DocsInstallPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  return <DocsPage docKey="docs" locale={(await params).locale} />;
 }

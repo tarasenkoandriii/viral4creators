@@ -9,13 +9,14 @@
  * notifyWinner) со ссылкой сюда.
  */
 
-import { useEffect, useState } from 'react';
+import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ApiError, getMyBids, MyBidView, startAuctionCheckout } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
 import type { Locale } from '../../../lib/i18n';
 
-export default function MyBidsPage({ params }: { params: { locale: Locale } }) {
+export default function MyBidsPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const [bids, setBids] = useState<MyBidView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,7 +104,7 @@ export default function MyBidsPage({ params }: { params: { locale: Locale } }) {
               {!bid.isWinner && <span className="mp-pill">{statusLabel(bid.listingStatus)}</span>}
 
               {bid.listingStatus === 'ACTIVE' && (
-                <Link href={`/${params.locale}/auctions/${bid.listingId}`} className="mp-cta-secondary">
+                <Link href={`/${locale}/auctions/${bid.listingId}`} className="mp-cta-secondary">
                   {dict.myAuctions.viewOnAuction}
                 </Link>
               )}

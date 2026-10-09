@@ -11,12 +11,12 @@ import { href, pageMetadata } from '../../lib/pages';
  * Помощник (посадочная — `/assistant`) и QA (`soon`, раздел делает автор
  * QA-ТЗ в этой же оболочке).
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('home', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('home', (await params).locale);
 }
 
-export default function HomePage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function HomePage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const h = dict.home;
   return (

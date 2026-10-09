@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict';
 import * as React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderPage } from './lib/page';
 
 process.env.SITE_URL = 'https://assist.example.com';
 
@@ -106,7 +106,7 @@ async function main() {
   }
 
   // ── 5. Страница бота ──
-  const html = renderToStaticMarkup(BotPage({ params: { locale: 'uk' } }));
+  const html = await renderPage(BotPage, { locale: 'uk' as const });
   const formHtml = /<form[^>]*data-testid="optout-form"[\s\S]*?<\/form>/.exec(html)?.[0] ?? '';
   assert.match(formHtml, /method="post"/);
   assert.match(formHtml, /action="\/api\/opt-out"/);

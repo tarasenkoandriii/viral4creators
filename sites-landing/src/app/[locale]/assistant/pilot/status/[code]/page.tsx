@@ -16,8 +16,8 @@ export function generateStaticParams() {
 }
 export const dynamicParams = false;
 
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  const dict = getDictionary(params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  const dict = getDictionary((await params).locale);
   return {
     title: fmt(dict.pages['pilot-status'].title),
     description: fmt(dict.pages['pilot-status'].description),
@@ -25,10 +25,10 @@ export function generateMetadata({ params }: { params: { locale: Locale } }): Me
   };
 }
 
-export default function PilotStatusPage({ params }: { params: { locale: Locale; code: string } }) {
-  const { locale } = params;
-  if (!(PILOT_RESULT_CODES as readonly string[]).includes(params.code)) notFound();
-  const code = params.code as PilotResultCode;
+export default async function PilotStatusPage({ params }: { params: Promise<{ locale: Locale; code: string }> }) {
+  const { locale, code: raw } = await params;
+  if (!(PILOT_RESULT_CODES as readonly string[]).includes(raw)) notFound();
+  const code = raw as PilotResultCode;
   const dict = getDictionary(locale);
   return (
     <SiteChrome locale={locale} path={`/assistant/pilot/status/${code}`}>

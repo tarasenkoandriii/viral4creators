@@ -21,8 +21,8 @@ import { SANDBOX_PUBLIC_LIMITS, sandboxEndpoint } from '../../../../lib/sandbox'
  * Страница существует, пока `sandbox` не `hidden`. Результат песочницы — не
  * адрес, а состояние вкладки: OG, индексации и публичной ссылки у него нет.
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('try', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('try', (await params).locale);
 }
 
 function withBrand<T>(value: T): T {
@@ -32,8 +32,8 @@ function withBrand<T>(value: T): T {
   return value;
 }
 
-export default function TryPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function TryPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const status = claimStatus('sandbox');
   if (status === 'hidden') notFound();
   const dict = getDictionary(locale);
@@ -106,6 +106,7 @@ export default function TryPage({ params }: { params: { locale: Locale } }) {
             cta={{ href: href(locale, 'bot'), label: t.owners.cta, place: 'bot' }}
           />
           <p className="note">
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- /legal: свой корневой документ, см. SiteChrome */}
             {t.privacy} <a href="/legal/privacy">{dict.common.footer.privacy}</a>
           </p>
         </div>

@@ -14,13 +14,14 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3004';
 export async function generateMetadata({
   params,
 }: {
-  params: { locale: Locale; id: string };
+  params: Promise<{ locale: Locale; id: string }>;
 }): Promise<Metadata> {
-  const listing = await getAuctionListing(params.id);
+  const { locale, id } = await params;
+  const listing = await getAuctionListing(id);
   if (!listing) return {};
   return {
     title: listing.title,
-    alternates: { canonical: `${SITE_URL}/${params.locale}/auctions/${listing.id}` },
+    alternates: { canonical: `${SITE_URL}/${locale}/auctions/${listing.id}` },
     openGraph: { title: listing.title, type: 'video.other', videos: [{ url: listing.videoUrl }] },
   };
 }
@@ -28,9 +29,9 @@ export async function generateMetadata({
 export default async function AuctionListingPage({
   params,
 }: {
-  params: { locale: Locale; id: string };
+  params: Promise<{ locale: Locale; id: string }>;
 }) {
-  const { locale, id } = params;
+  const { locale, id } = await params;
   const dict = getDictionary(locale);
   // §22 «не должна оставлять мёртвые публичные ссылки» — не-ACTIVE лот
   // отдаёт 404 уже на бэкенде. На фронте вместо голого 404 — редирект на
@@ -86,7 +87,7 @@ export default async function AuctionListingPage({
   // Саму конвертацию считает клиентский компонент — сюда, серверу,
   // достаточно определить страну и передать код валюты как данные, не
   // функцию: функции не пересекают границу сервер/клиент в Next.js.
-  const viewerCountry = headers().get('x-vercel-ip-country');
+  const viewerCountry = (await headers()).get('x-vercel-ip-country');
   const viewerCurrency = viewerCountry ? COUNTRY_CURRENCY[viewerCountry] : undefined;
   const estimateCurrency = viewerCurrency && viewerCurrency !== listing.payoutCurrency ? viewerCurrency : null;
 

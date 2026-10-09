@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { defaultLocale, isLocale } from '../../lib/i18n';
-import { listAllBlogPosts, BLOG_REVALIDATE_SECONDS } from '../../lib/blog-api';
+import { listAllBlogPosts } from '../../lib/blog-api';
 import { SITE_URL, SITE_NAME } from '../../lib/content';
 import { buildRssXml } from '../../lib/rss';
 
@@ -9,7 +9,11 @@ import { buildRssXml } from '../../lib/rss';
  * умолчанию на `defaultLocale`, либо на языке из `?locale=`. Отдельный
  * файл на категорию — `feed/[category]/route.ts`.
  */
-export const revalidate = BLOG_REVALIDATE_SECONDS;
+// Литерал, а не `BLOG_REVALIDATE_SECONDS`: Next 15 читает конфиг сегмента
+// статически, по исходнику, и импортированную константу отвергает ошибкой
+// сборки (Next 14 брал значение из модуля). Равенство константе держит
+// scripts/segment-config.test.ts.
+export const revalidate = 900;
 
 export async function GET(request: NextRequest) {
   const localeParam = request.nextUrl.searchParams.get('locale');

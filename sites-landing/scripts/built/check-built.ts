@@ -66,7 +66,8 @@ for (const page of PAGES) {
     const html = read(rel);
     pages++;
     const url = `${origin}/${locale}${page.path}`;
-    if (!new RegExp(`^<!DOCTYPE html><html lang="${locale}"`).test(html)) problems.push(`${where}: <html lang> не ${locale}`);
+    // Next 15 вписывает после DOCTYPE комментарий с id сборки (`<!--…-->`).
+    if (!new RegExp(`^<!DOCTYPE html>(?:<!--[^>]*-->)?<html lang="${locale}"`).test(html)) problems.push(`${where}: <html lang> не ${locale}`);
     const h1 = (html.match(/<h1\b/g) ?? []).length;
     if (h1 !== 1) problems.push(`${where}: h1 — ${h1}`);
     const canonical = linkHref(html, 'canonical');

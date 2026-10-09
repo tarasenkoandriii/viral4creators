@@ -136,6 +136,9 @@ export const FILTERS = {
   frontend: ['frontend/', 'backend/src/'],
   admin: ['admin/'],
   landing: ['landing/'],
+  // Витрина маркетплейса (заход 12): до перехода на Next 15 в CI её не
+  // было вовсе — ни типов, ни линта, ни сборки (линт падал незамеченным).
+  marketplace: ['marketplace/'],
   // Реле живого входа (Э-С Ш0.2): свои исходники и источники копий
   // фильтра исходящего трафика (scripts/sync-relay-shared.mjs).
   live_login_relay: [
@@ -173,7 +176,7 @@ export const GLOBAL = ['.github/workflows/ci.yml', 'scripts/ci-changes.mjs', '.n
 export const AGGREGATOR_JOB = 'ci';
 export const ALWAYS_JOBS = ['changes', 'repo', 'secrets', AGGREGATOR_JOB];
 /** Джобы матрицы next-apps (их имя в матрице = ключ FILTERS). */
-export const NEXT_APPS = ['admin', 'landing'];
+export const NEXT_APPS = ['admin', 'landing', 'marketplace'];
 
 export function decide(files) {
   const all = files === null || files.some((f) => GLOBAL.includes(f));
@@ -261,6 +264,8 @@ function selfTest() {
   eq('кит TMA', on(['site-tma-kit/src/telegram.ts']), ['assist']);
   eq('next_apps', decide(['admin/src/a.tsx']).next_apps, ['admin']);
   eq('next_apps пусто', decide(['widget/x']).next_apps, []);
+  eq('витрина маркетплейса — только своя джоба матрицы', on(['marketplace/src/app/layout.tsx']), ['marketplace']);
+  eq('next_apps marketplace', decide(['marketplace/package-lock.json']).next_apps, ['marketplace']);
   eq('точный файл, не префикс', on(['scripts/sync-sites-shared.mjs.bak']), []);
   eq('реле — только своя джоба', on(['live-login-relay/src/session.ts']), ['live_login_relay']);
   eq('скрипт правил хоста реле', on(['doc/relay-egress-docker-user.sh']), ['live_login_relay']);

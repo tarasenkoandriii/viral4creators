@@ -39,6 +39,7 @@ import {
 import { IntegrationsService } from './integrations.service';
 import type { AssistPublicDb } from '../../prisma/assist-public-db.service';
 import { AiIntake, verifyRef } from './public/ai-intake.service';
+import { mergeNearestPage } from './goal-page-merge';
 import { dayInTz, siteTz } from './site-time';
 import { AnalyticsRollup } from './system/analytics-rollup.service';
 import { verifyGoalWebhook } from './webhook-signature';
@@ -56,8 +57,6 @@ const BODY_KEYS = [
 ];
 const ISO =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})$/;
-
-type Db = Pick<PrismaService, '$queryRawUnsafe' | '$executeRawUnsafe'>;
 
 /** Разбор тела вебхука: белый список полей, типы, даты. */
 export function parseWebhookEvent(
@@ -113,51 +112,6 @@ export function parseWebhookEvent(
           : null,
     },
   };
-}
-
-/**
- * Слить page-событие той же цели без orderId (±30 мин) в verified-строку.
- * Один UPDATE … FROM (DELETE … RETURNING): page-строка исчезает, её
- * атрибуция/диалог/путь переходят в verified. true — слили.
- */
-export async function mergeNearestPage(
-  db: Db,
-  verifiedId: string,
-): Promise<boolean> {
-  const win = Math.round(ANALYTICS_DEFAULTS.mergeWindowMs / 1000);
-  const n = await db.$executeRawUnsafe(
-    `WITH v AS (
-       SELECT "id", "siteId", "goalId", "occurredAt"
-         FROM "sites"."assist_site_goal_events"
-        WHERE "id" = $1 AND "trust" = 'verified'
-     ),
-     p AS (
-       SELECT e."id" FROM "sites"."assist_site_goal_events" e, v
-        WHERE e."siteId" = v."siteId" AND e."goalId" = v."goalId"
-          AND e."trust" = 'page' AND e."orderId" IS NULL
-          AND e."occurredAt" BETWEEN v."occurredAt" - ($2::int * interval '1 second')
-                                 AND v."occurredAt" + ($2::int * interval '1 second')
-        ORDER BY abs(extract(epoch FROM e."occurredAt" - v."occurredAt")), e."id"
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-     ),
-     d AS (
-       DELETE FROM "sites"."assist_site_goal_events" e USING p
-        WHERE e."id" = p."id"
-        RETURNING e."attribution", e."conversationId", e."assist", e."path"
-     )
-     UPDATE "sites"."assist_site_goal_events" t
-        SET "attribution" = CASE WHEN d."attribution" IN ('direct', 'assisted', 'unassisted')
-                                 THEN d."attribution" ELSE t."attribution" END,
-            "conversationId" = COALESCE(t."conversationId", d."conversationId"),
-            "assist" = COALESCE(t."assist", d."assist"),
-            "path" = COALESCE(t."path", d."path")
-       FROM d
-      WHERE t."id" = $1`,
-    verifiedId,
-    win,
-  );
-  return n > 0;
 }
 
 @Injectable()

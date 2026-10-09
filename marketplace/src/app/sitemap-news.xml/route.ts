@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAuctionListings, PROFILE_REVALIDATE_SECONDS } from '../../lib/api';
+import { getAuctionListings } from '../../lib/api';
 import { defaultLocale } from '../../lib/i18n';
 
 /**
@@ -20,7 +20,10 @@ import { defaultLocale } from '../../lib/i18n';
  * нет, но здесь оно и не нужно — для BLITZ дата выводится точно, без
  * догадки.
  */
-export const revalidate = PROFILE_REVALIDATE_SECONDS;
+// = PROFILE_REVALIDATE_SECONDS (lib/api.ts). Литерал, а не импорт: Next 15
+// разбирает конфиг сегмента статически и отвергает идентификаторы;
+// совпадение сверяет scripts/segment-config.test.ts.
+export const revalidate = 60;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3004';
 const SITE_NAME = 'viral4creators';

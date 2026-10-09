@@ -18,6 +18,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { VALIDATION_PIPE_OPTIONS } from './common/validation-pipe';
 import { corsDeniedHandler, corsOptionsDelegate } from './common/cors';
+import { defaultEmptyBody } from './shared/express-body-default';
 import { SitesConfig } from './config/configuration';
 import { VOICE_DEFAULTS } from './modules/assist-site-voice/voice-config';
 import { VOICE_CONTROL_DEFAULTS } from './modules/assist-site-voice-control/voice-control-config';
@@ -122,6 +123,9 @@ export const ADMIN_UI_PLAN_PATHS = [
 ];
 
 export function configureApp(app: INestApplication, config: SitesConfig) {
+  // Заход 12 (Express 5): `req.body` без тела — `{}`, как в Express 4.
+  // Первым слоем, до любых парсеров (shared/express-body-default.ts).
+  app.use(defaultEmptyBody);
   // API отдаёт только JSON: CSP/COEP ему не нужны, а nosniff, HSTS и
   // отсутствие X-Powered-By стоят одну строку (как у backend).
   app.use(
@@ -135,8 +139,9 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
   app.enableCors(corsOptionsDelegate(config));
   // Сразу за `cors`: его отказ — 403 в конверте, а не 500 express.
   app.use(corsDeniedHandler);
-  // Раньше общего парсера Nest (он регистрируется в `init`): разобранное
-  // тело (`req._body`) общий парсер уже не трогает. Обёртка с СВОИМ именем
+  // Раньше общего парсера Nest (он регистрируется в `init`): прочитанное
+  // тело общий парсер уже не трогает (body-parser 2 смотрит, дочитан ли
+  // поток запроса; в Express 4 — флаг `req._body`). Обёртка с СВОИМ именем
   // обязательна: Nest пропускает общий парсер, если в стеке express уже
   // есть слой с именем `jsonParser` (имя функции body-parser), — и тогда
   // JSON перестал бы разбираться на всех остальных маршрутах.
@@ -185,8 +190,8 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       },
     );
   }
-  // Э-С Ш2: раньше общего `/internal/sites` — разобранное тело (`_body`)
-  // следующий парсер не трогает, и потолок здесь свой.
+  // Э-С Ш2: раньше общего `/internal/sites` — прочитанное тело следующий
+  // парсер не трогает, и потолок здесь свой.
   const credentialsText = text({
     type: () => true,
     limit: INTERNAL_CREDENTIALS_BODY_LIMIT,

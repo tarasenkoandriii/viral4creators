@@ -26,8 +26,8 @@ Vercel либо откажет в деплое такого `vercel.json`, ли�
 там, где живёт `vercel.json` с этим расписанием.
 
 **Почему несколько проектов, а не один `vercel.json` с rewrites**:
-`backend` (NestJS), `frontend` (Vite SPA / TMA), `admin` и `landing`
-(Next.js 14) — разные типы сборки. Практичнее завести отдельные
+`backend` (NestJS 11), `frontend` (Vite SPA / TMA), `admin` и `landing`
+(Next.js 15, до захода 12 — 14) — разные типы сборки. Практичнее завести отдельные
 Vercel-проекты на один и тот же git-репозиторий, у каждого свой Root
 Directory, чем городить монорепо-роутинг в одном `vercel.json`. Ни то,
 ни другое пока не настроено — ниже пошагово. `admin`/`landing`
@@ -43,9 +43,14 @@ Telegram-логин, который их и породил.
 2. **Root Directory**: `backend`.
 3. Framework Preset: Vercel обычно определяет как "Other" — это ок,
    реальный запуск идёт через `backend/server.js` (см. пункт 1 в
-   аудите), а не через framework-пресет.
+   аудите), а не через framework-пресет. С захода 12 `server.js` берёт
+   тот вход, что есть после сборки — `dist/main.js` или
+   `dist/src/main.js` (сейчас `nest build` кладёт второй), оба есть —
+   более свежий; что реально стартует — лог сборки (раздел «Заход 12»
+   ниже).
 4. **Build Command**: оставить дефолтный из `backend/package.json`
-   (`npm run build` → `prisma generate && nest build`).
+   (`npm run build` → `prisma generate && prisma migrate deploy &&
+   nest build`).
 5. **Environment Variables** — перенести из `backend/.env.example` (не
    коммитить реальные значения!):
    - `DATABASE_URL`, `DIRECT_URL` — из Supabase (см. `PRISMA-SUPABASE.md`).
@@ -1181,7 +1186,8 @@ Redeploy; ignore-скрипт сравнивает с последним **ус�
 миграций (`prisma migrate deploy`); упала одна — сборка красная, прод
 остаётся на прежней версии, по ошибке Prisma (P3009/P3018) исправить и
 `prisma migrate resolve`, затем Redeploy. Затем — пункты «Проверки на
-проде после деплоя» заходов 9–11 в `doc/TODO.md`. Порядок с воркером —
+проде после деплоя» заходов 9–12 в `doc/TODO.md` (заход 12 — NestJS 11 /
+Express 5, раздел «Заход 12 (09.10.2026)» ниже). Порядок с воркером —
 §6.25 (сначала воркер, потом sites-backend).
 
 ### 6.2. База: схема `sites`
@@ -3353,8 +3359,9 @@ claim пуст, идущие задания гасятся на ближайше
 ## 7. Лендинг клиентских сайтов (sites-landing)
 
 Л0–Л1 ТЗ `docs-tz/TZ-AI-Pomoshchnik-Landing.md` (вариант Б, §2): отдельный
-Next.js 14-проект `sites-landing/` — витрина семейства «клиентские сайты»
-(Помощник + QA), посадочная Помощника, тарифы из снимка, форма пилота.
+Next.js 15-проект `sites-landing/` (до захода 12 — Next 14) — витрина
+семейства «клиентские сайты» (Помощник + QA), посадочная Помощника,
+тарифы из снимка, форма пилота.
 Бренд и домен не решены (В-1): все публичные имена — в
 `sites-landing/src/brand.ts`, адрес сайта — env `SITE_URL`.
 
@@ -3477,6 +3484,108 @@ Next.js 14-проект `sites-landing/` — витрина семейства �
    — `https://assist.viral4creators.app/<loc>/assistant/bot` до решения В-1.
 4. Плагин WordPress и npm-пакет на лендинге — `soon`, пока не
    опубликованы (после бренда).
+
+## Заход 12 (09.10.2026): обновление зависимостей — что изменилось для выката
+
+Мажорные обновления ради `npm audit` (TODO, сводка «Заход 12»): в
+рантайм-деревьях шести пакетов high/critical — 0. **Миграций, новых env и
+кронов нет; настройки Vercel-проектов (Framework, Root Directory, Build
+Command, Node 24.x) не меняются.**
+
+| Проект (Root Directory) | Было | Стало |
+|---|---|---|
+| `backend`, `sites-backend` (`assist-api`) | NestJS 10.4 / Express 4.22 | **NestJS 11.2.7** (ветка `legacy`) / **Express 5.2.1**; prisma 7.10 та же, `overrides` `deepmerge-ts ^8.0.2`, `mysql2 ^3.24.5` |
+| `landing`, `sites-landing` (`assist-landing`), `admin`, `marketplace` | Next 14.2.35 / React 18.3 | **Next 15.5.27** (ветка `backport`) / **React 19.3.0**; `overrides` `postcss ^8.5.29` |
+
+**Порядок выката.** Проекты независимы — каждый выкатывается своим
+деплоем, в любом порядке. **Первоочерёдное — §6.1-бис:** прод-деплой
+`assist-api` падает с 01.10.2026 до начала сборки; пока он красный,
+sites-backend на NestJS 11 (и исправления захода 12 в нём) на прод не
+доедет. Откат любого проекта — Deployments → предыдущий Ready-деплой →
+Instant Rollback / Promote (миграций нет, откат безопасен).
+
+**Node 24.** Как и раньше — `.nvmrc` 24, у всех проектов в панели 24.x
+(раздел «Версия Node»). Пакеты backend/sites-backend и landing/sites-landing
+в песочнице проверялись на Node 22.22.2 — первая сборка на Vercel и
+первый CI-прогон на 24 — главная проверка: в логе первой сборки каждого
+проекта смотреть строку версии Node. npm 11 печатает `install-scripts …
+not yet covered by allowScripts` (esbuild, unrs-resolver) — пока только
+предупреждение.
+
+**backend и sites-backend — поведение Express 5:**
+- **Пустое тело.** body-parser 2 оставляет `req.body` `undefined` без тела
+  или при чужом Content-Type; слой `defaultEmptyBody`
+  (`common/express-body-default.ts`, копия в `sites-backend/src/shared/`)
+  первым в стеке ставит `{}` — поведение Express 4 сохранено. Код,
+  отличающий `undefined` от `{}`, — помнить про этот слой.
+- **Query** — простой разбор (`querystring`): повтор ключа — массив,
+  `a[b]=1` — литеральный ключ, не объект; DTO-маршруты отвечают 400.
+  Клиентов с таким форматом в репозитории нет; внешние интеграции —
+  первые сутки смотреть 400 в логах.
+- **Коды ошибок:** тело больше лимита парсера — 413 `PAYLOAD_TOO_LARGE`,
+  неподдержанная `Content-Encoding` — 415 `UNSUPPORTED_MEDIA_TYPE` (раньше
+  500 и ERROR в лог); 404 неизвестного маршрута — текст без query.
+- **WayForPay (backend `POST /api/billing/webhook/wayforpay`):** тело
+  форма/строка/JSON разбирает общий `wayforpayBody()`; без
+  `orderReference` — 400 (было 500); подпись не строкой — тревога
+  `bad-signature` и квитанция.
+- `forRoutes('{*splat}')` — синтаксис path-to-regexp 8; Nest 11 вызывает
+  хуки завершения в обратном порядке (`enableShutdownHooks` не
+  используется, на Vercel не влияет).
+- **sites-backend:** `GoalWebhookService.rollup` больше не `undefined` —
+  s2s-возврат или отмена учтённого заказа пересчитывает свёртку дня
+  заказа (раньше вычет не работал; исторические возвраты старше трёх
+  дней не пересчитаны — TODO, хвосты захода 12); `express ^5.2.1` —
+  явная зависимость.
+- **`backend/server.js` (фолбэк входа).** `nest build` кладёт вход в
+  `dist/src/main.js` (в программу попадают `prisma.config.ts` и
+  `vercel.json`), а `server.js` требовал `./dist/main.js` — локально
+  `start:prod` падал «Cannot find module». Теперь берётся существующий
+  из двух (оба есть — более свежий: `deleteOutDir: false`), оба `require`
+  — литералы, их видит трассировщик Vercel (`@vercel/nft`); сборка не
+  менялась. До захода так же работал прод — значит, Vercel, вероятно,
+  запускает не `server.js` (zero-config вход). **Владельцу:** в логе
+  сборки проекта backend посмотреть Framework/Entrypoint и дату
+  последнего успешного production-деплоя.
+- Шаг `prisma migrate deploy` в сборке грузит `prisma.config.ts` через
+  `deepmerge-ts` 8 (`overrides`) — в логе первой сборки обоих бэкендов он
+  должен пройти.
+
+**Next-приложения (landing, sites-landing, admin, marketplace):**
+- **ISR-заголовки Next 15.** У ISR-страниц `Cache-Control: s-maxage=N,
+  stale-while-revalidate=<1 год − N>` (раньше — голый
+  `stale-while-revalidate`; новое значение задаёт дефолтный
+  `expireTime`). Статичные GET-обработчики сами отдают `s-maxage`:
+  landing `/sitemap-news.xml` теперь `s-maxage=900` (на 14 — без
+  `Cache-Control`); у полностью статических страниц хвоста
+  `stale-while-revalidate` нет. На Vercel CDN этим управляет платформа;
+  при внешнем CDN или самохостинге — уважать `s-maxage` /
+  `stale-while-revalidate` из ответа. Окна `revalidate` прежние (блог и
+  ленты landing — 900 с, главная/поздравления/`/video/[id]` — 300 с, ленты
+  и карты marketplace — 60 с): Next 15 читает их только литералами.
+- **Клиентский кэш переходов** — дефолт Next 15 (`staleTimes.dynamic` 0):
+  повторный мягкий переход на динамическую страницу идёт в функцию
+  Vercel (данные бэкенда — из data cache). Вернуть 30 с —
+  `experimental.staleTimes.dynamic` в `marketplace/next.config.js`
+  (Р-З12-Б11), если вызовы функций заметно вырастут.
+- `postcss` закреплён `overrides` в `package.json` (Next 15.5 тянет
+  уязвимый 8.4.31) — при обновлении `next` проверить `npm ls postcss`.
+- **marketplace** с захода 12 ставится по `package-lock.json` (раньше —
+  плавающие версии на каждом деплое) и проверяется CI (матрица
+  `next-apps`). `metadataBase` не задан (как и раньше) — `og:image`
+  должен указывать на боевой домен, не на `*.vercel.app`.
+- **Бюджет §9 sites-landing** (ТЗ лендинга помощника): JS первой загрузки
+  статических страниц — **118 КБ** gzip (было 110, Р-З12-Б10: рантайм Next
+  15 + React 19 +15 КБ на каждую страницу), `/widget` и `/try` — 160 КБ;
+  порог Lighthouse по скриптам — 138 / 180 КБ.
+- Странности первой сборки Next 15 — Redeploy без кэша сборки.
+
+**Проверить после выката** (подробно — TODO, «Проверки на проде» захода
+12): `/api/health`, `/health`; POST без тела — не 500; тестовый платёж
+WayForPay — квитанция; SSE (виджет, консультант, аукцион); landing — блог,
+ленты, карты сайта, `/video/<id>`, `/r/<код>`, поддомены; marketplace —
+OG-превью, ленты, sitemap, лот, бриф; admin — вход через Telegram Login
+Widget, списки, `/sessions/<id>`.
 
 ## Версия Node
 

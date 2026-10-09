@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getPortfolioFeed, PROFILE_REVALIDATE_SECONDS } from '../../lib/api';
+import { getPortfolioFeed } from '../../lib/api';
 import { defaultLocale } from '../../lib/i18n';
 
 /**
@@ -9,7 +9,10 @@ import { defaultLocale } from '../../lib/i18n';
  * независимые приложения монорепо, без общего пакета для этого).
  */
 
-export const revalidate = PROFILE_REVALIDATE_SECONDS;
+// = PROFILE_REVALIDATE_SECONDS (lib/api.ts). Литерал, а не импорт: Next 15
+// разбирает конфиг сегмента статически и отвергает идентификаторы;
+// совпадение сверяет scripts/segment-config.test.ts.
+export const revalidate = 60;
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3004';
 

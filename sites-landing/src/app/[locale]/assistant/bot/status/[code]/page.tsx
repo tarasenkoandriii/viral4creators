@@ -13,8 +13,8 @@ export function generateStaticParams() {
 }
 export const dynamicParams = false;
 
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  const dict = getDictionary(params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  const dict = getDictionary((await params).locale);
   return {
     title: fmt(dict.pages['bot-status'].title),
     description: fmt(dict.pages['bot-status'].description),
@@ -22,10 +22,10 @@ export function generateMetadata({ params }: { params: { locale: Locale } }): Me
   };
 }
 
-export default function BotStatusPage({ params }: { params: { locale: Locale; code: string } }) {
-  const { locale } = params;
-  if (!(OPT_OUT_CODES as readonly string[]).includes(params.code)) notFound();
-  const code = params.code as OptOutCode;
+export default async function BotStatusPage({ params }: { params: Promise<{ locale: Locale; code: string }> }) {
+  const { locale, code: raw } = await params;
+  if (!(OPT_OUT_CODES as readonly string[]).includes(raw)) notFound();
+  const code = raw as OptOutCode;
   const dict = getDictionary(locale);
   return (
     <SiteChrome locale={locale} path={`/assistant/bot/status/${code}`}>

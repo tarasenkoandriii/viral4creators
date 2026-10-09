@@ -23,8 +23,41 @@
  * produces dist/main.js with a real compiler before Vercel gets to this
  * file, so requiring it here sidesteps the problem entirely.
  *
- * Local/native/Docker dev is unaffected — this file is Vercel-only.
- * `nest start` / `node dist/main` (see package.json scripts) still run
- * src/main.ts directly, same as before this fix.
+ * Local/native/Docker dev is unaffected — `nest start` still runs
+ * src/main.ts directly. `npm run start:prod` goes through this file too.
+ *
+ * Where the compiled entry lands (заход 12, аудит P2-2): `tsc` puts it at
+ * dist/main.js only while every compiled file lives under src/. Since
+ * `cron-schedule.ts` imports ../../../vercel.json (and the root
+ * prisma.config.ts is in the program), rootDir becomes backend/ and the
+ * entry is dist/src/main.js — `require('./dist/main.js')` alone threw
+ * "Cannot find module". So: use whichever of the two exists; if both do
+ * (dist is not wiped between builds — nest-cli.json `deleteOutDir: false`),
+ * the newer one, so a stale leftover never wins. Both requires stay
+ * literal string calls so Vercel's file tracer (@vercel/nft) still sees
+ * them and bundles dist/ — the build itself is not changed.
  */
-require('./dist/main.js');
+const fs = require('fs');
+const path = require('path');
+
+/** Модификация файла в мс или -1, если файла нет. */
+function mtime(rel) {
+  try {
+    return fs.statSync(path.join(__dirname, rel)).mtimeMs;
+  } catch {
+    return -1;
+  }
+}
+
+const flat = mtime('dist/main.js');
+const nested = mtime('dist/src/main.js');
+if (flat < 0 && nested < 0) {
+  throw new Error(
+    'backend/server.js: нет ни dist/main.js, ни dist/src/main.js — сначала `npm run build` (nest build)',
+  );
+}
+if (flat >= nested) {
+  require('./dist/main.js');
+} else {
+  require('./dist/src/main.js');
+}

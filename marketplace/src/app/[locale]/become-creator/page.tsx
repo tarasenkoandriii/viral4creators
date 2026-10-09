@@ -5,7 +5,7 @@
  * минимум одна публичная соцсеть. Обратимо в любой момент.
  */
 
-import { useState } from 'react';
+import { use, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ApiError, submitCreatorQuiz } from '../../../lib/client-api';
 import { useDictionary } from '../../../lib/dictionary-context';
@@ -13,7 +13,12 @@ import type { Locale } from '../../../lib/i18n';
 
 const PLATFORMS = ['instagram', 'tiktok', 'youtube', 'other'] as const;
 
-export default function BecomeCreatorPage({ params }: { params: { locale: Locale } }) {
+export default function BecomeCreatorPage({
+  params,
+}: {
+  params: Promise<{ locale: Locale }>;
+}) {
+  const { locale } = use(params);
   const { dict } = useDictionary();
   const router = useRouter();
   const [niches, setNiches] = useState('');
@@ -45,7 +50,7 @@ export default function BecomeCreatorPage({ params }: { params: { locale: Locale
         socialLinks: [{ platform, url: socialUrl }],
         consent,
       });
-      router.push(`/${params.locale}`);
+      router.push(`/${locale}`);
     } catch (e) {
       // Аудит-фикс: раньше всегда показывался один и тот же текст «войдите
       // через Telegram», даже если реальная причина — уже существующий

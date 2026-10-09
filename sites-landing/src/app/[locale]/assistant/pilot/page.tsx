@@ -13,12 +13,12 @@ import { pageMetadata } from '../../../../lib/pages';
  * служебный Telegram-канал (см. `server/pilot-handler.ts`). Пока кейсов
  * нет, `/cases` не существует (урок Б-3), в навигации — «Пилот».
  */
-export function generateMetadata({ params }: { params: { locale: Locale } }): Metadata {
-  return pageMetadata('pilot', params.locale);
+export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
+  return pageMetadata('pilot', (await params).locale);
 }
 
-export default function PilotPage({ params }: { params: { locale: Locale } }) {
-  const { locale } = params;
+export default async function PilotPage({ params }: { params: Promise<{ locale: Locale }> }) {
+  const { locale } = await params;
   const dict = getDictionary(locale);
   const p = dict.pilot;
   return (

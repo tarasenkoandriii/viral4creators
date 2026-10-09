@@ -38,7 +38,7 @@ import { ANALYTICS_DEFAULTS } from '../../../config/assist-defaults';
 import { PrismaService } from '../../../prisma/prisma.service';
 import type { CronScope } from '../../../common/cron-scope';
 import { ExportsService } from '../exports.service';
-import { mergeNearestPage } from '../goal-webhook.service';
+import { mergeNearestPage } from '../goal-page-merge';
 import { seedDefaultGoals } from '../goals.service';
 import {
   BASE_AGGREGATES_RETENTION_MS,
