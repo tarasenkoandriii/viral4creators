@@ -77,6 +77,8 @@ export interface SiteSttResult {
   text: string | null;
   /** Машинная причина без текста провайдера: no_key | empty | no_speech | error | timeout. */
   reason?: 'no_key' | 'empty' | 'no_speech' | 'error' | 'timeout';
+  /** Безопасный код без тела ответа провайдера. */
+  reasonCode?: string;
   /** Язык речи по Soniox (преобладающий); null — не сообщил. */
   language: string | null;
   speechConfidence?: number;
@@ -236,11 +238,20 @@ export class SiteSonioxStt {
       }
       return fail('timeout');
     } catch (e) {
-      const timeout = e instanceof Error && e.name === 'TimeoutError';
+      const timeout =
+        e !== null &&
+        typeof e === 'object' &&
+        'name' in e &&
+        ['TimeoutError', 'AbortError'].includes(String(e.name));
       this.logger.warn(
         `распознавание Soniox не удалось: ${e instanceof SonioxHttpError ? `${e.path.replace(/^(\/(?:files|transcriptions))\/[^/]+/, '$1/:id')} ${e.status}` : timeout ? 'таймаут' : errName(e)}`,
       );
-      return fail(timeout ? 'timeout' : 'error');
+      return {
+        ...fail(timeout ? 'timeout' : 'error'),
+        ...(e instanceof SonioxHttpError
+          ? { reasonCode: `http-${e.status}` }
+          : {}),
+      };
     } finally {
       // Обещание Условий (3.4) и DPA: запись не остаётся у провайдера.
       await this.cleanup(key, transcriptionId, fileId);

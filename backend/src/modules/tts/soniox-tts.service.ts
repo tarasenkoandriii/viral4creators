@@ -45,6 +45,7 @@ import {
 } from './tts.types';
 
 const EXTERNAL_TIMEOUT_MS = 60_000;
+const CATALOG_TIMEOUT_MS = 20_000;
 
 interface SonioxTtsModels {
   models?: Array<{
@@ -129,11 +130,10 @@ export class SonioxTtsService implements TtsProvider {
         }),
       });
       if (!res.ok) {
-        const body = await res.text().catch(() => '');
         return {
           ok: false,
           skipped: false,
-          reason: `Soniox TTS ответил ${res.status}: ${body.slice(0, 200)}`,
+          reason: `Soniox TTS ответил ${res.status}`,
         };
       }
       const audio = Buffer.from(await res.arrayBuffer());
@@ -152,12 +152,19 @@ export class SonioxTtsService implements TtsProvider {
         durationSeconds: mp3DurationSeconds(audio),
         voiceId,
         model,
+        language,
       };
     } catch (e) {
       return {
         ok: false,
         skipped: false,
-        reason: `ошибка Soniox TTS: ${e instanceof Error ? e.message : String(e)}`,
+        reason:
+          e !== null &&
+          typeof e === 'object' &&
+          'name' in e &&
+          ['TimeoutError', 'AbortError'].includes(String(e.name))
+            ? 'Soniox TTS: таймаут'
+            : 'Soniox TTS: ошибка сети или ответа',
       };
     }
   }
@@ -191,14 +198,20 @@ export class SonioxTtsService implements TtsProvider {
       // 01.10.2026).
       const res = await fetch(`${SONIOX_API_BASE}/tts-models`, {
         headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
       });
       if (!res.ok) return { voices: [], error: `Soniox ответил ${res.status}` };
       return sonioxVoicesFrom((await res.json()) as SonioxTtsModels, language);
     } catch (e) {
       return {
         voices: [],
-        error: `ошибка Soniox: ${e instanceof Error ? e.message : String(e)}`,
+        error:
+          e !== null &&
+          typeof e === 'object' &&
+          'name' in e &&
+          ['TimeoutError', 'AbortError'].includes(String(e.name))
+            ? 'Soniox: таймаут каталога'
+            : 'Soniox: ошибка сети или ответа каталога',
       };
     }
   }

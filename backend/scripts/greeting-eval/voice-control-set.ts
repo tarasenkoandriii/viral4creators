@@ -10,6 +10,7 @@ export const VOICE_CONTROL_SET = [
     pending: true,
     kind: 'cancel',
   },
+  { id: 'uk-no', lang: 'uk', text: 'Ні', pending: true, kind: 'cancel' },
   { id: 'ru-back', lang: 'ru', text: 'Назад', kind: 'navigate', to: 'back' },
   { id: 'uk-next', lang: 'uk', text: 'Далі', kind: 'navigate', to: 'next' },
   { id: 'ru-help', lang: 'ru', text: 'Помощь', kind: 'help' },

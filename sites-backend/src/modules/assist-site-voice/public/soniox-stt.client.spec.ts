@@ -75,11 +75,12 @@ describe('SiteSonioxStt', () => {
     const fake = new FakeSoniox();
     fake.stt = 'create-fails';
     logs.length = 0;
-    await client(fake).transcribe({
+    const result = await client(fake).transcribe({
       audio: fakeRecording(),
       mimeType: 'audio/webm',
       languageHints: [],
     });
+    expect(result).toMatchObject({ reason: 'error', reasonCode: 'http-400' });
     expect(logs.join('\n')).toMatch(/\/transcriptions 400/);
     expect(logs.join('\n')).not.toMatch(/bad|Секретний|0671234567/);
   });

@@ -107,6 +107,12 @@ const POLL_DELAY_MS = 1_000;
 /** Сколько ждать конца обработки, чтобы удалить транскрипцию после 409. */
 const CLEANUP_GRACE_MS = 6_000;
 
+class SonioxHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Soniox HTTP ${status}`);
+  }
+}
+
 interface SonioxTranscriptionStatus {
   status: string;
   error_message?: string;
@@ -633,7 +639,7 @@ export class SonioxSttClient {
         if (status.status === 'error') {
           return {
             text: null,
-            reason: `Soniox: ${status.error_message ?? 'ошибка распознавания'}`,
+            reason: 'Soniox: ошибка распознавания',
             seconds: billedSeconds(audioMs, 0),
             billable: true,
             ...(audioMs !== null ? { audioMs } : {}),
@@ -642,13 +648,21 @@ export class SonioxSttClient {
       }
       return {
         text: null,
-        reason: 'Soniox: распознавание не уложилось во время',
+        reason: 'Soniox: таймаут — распознавание не уложилось во время',
         seconds: billedSeconds(audioMs, 0),
         billable: true,
         ...(audioMs !== null ? { audioMs } : {}),
       };
     } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
+      const reason =
+        e instanceof SonioxHttpError
+          ? `Soniox HTTP ${e.status}`
+          : e !== null &&
+              typeof e === 'object' &&
+              'name' in e &&
+              ['TimeoutError', 'AbortError'].includes(String(e.name))
+            ? 'Soniox: таймаут распознавания'
+            : 'Soniox: ошибка сети или ответа';
       this.logger.error(`распознавание Soniox не удалось: ${reason}`);
       return {
         text: null,
@@ -744,8 +758,7 @@ export class SonioxSttClient {
       signal: AbortSignal.timeout(left),
     });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`Soniox ${path}: ${res.status} ${body.slice(0, 200)}`);
+      throw new SonioxHttpError(res.status);
     }
     return (await res.json()) as T;
   }

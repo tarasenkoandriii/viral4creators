@@ -118,6 +118,8 @@ export const ENTRIES = [
   // Сеть и уборку у провайдера в `finally` sites-backend держит своим
   // клиентом (assist-site-voice/public/soniox-stt.client.ts) — с Nest.
   { from: 'backend/src/common/soniox.ts', to: 'soniox.ts' },
+  { from: 'backend/src/common/mp3-duration.ts', to: 'mp3-duration.ts' },
+  { from: 'backend/src/common/mp3-duration.spec.ts', to: 'mp3-duration.spec.ts' },
   { from: 'backend/src/common/soniox-stt-core.ts', to: 'soniox-stt-core.ts' },
   { from: 'backend/src/common/soniox-stt-core.spec.ts', to: 'soniox-stt-core.spec.ts' },
   // Уборка своего у Soniox по списку провайдера, по метке продукта (C4 захода 8).

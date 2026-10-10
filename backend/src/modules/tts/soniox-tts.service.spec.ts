@@ -153,6 +153,7 @@ describe('SonioxTtsService.synthesize', () => {
     const r = await new SonioxTtsService().synthesize({ text: 'a' });
     expect(r).toMatchObject({ ok: false, skipped: false });
     expect((r as { reason: string }).reason).toContain('402');
+    expect(JSON.stringify(r)).not.toContain('budget exhausted');
   });
 
   it('пустой ответ — сбой', async () => {

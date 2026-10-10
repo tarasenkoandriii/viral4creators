@@ -655,7 +655,7 @@ describe('resolveIntent — карточка и прочие виды', () => {
   it('confirm/cancel — только при карточке на экране', () => {
     const yes = normalizeModelAnswer({ kind: 'confirm', confidence: 0.9 });
     expect(resolveIntent(yes, 'ага', ctx()).intent.kind).toBe('unknown');
-    expect(resolveIntent(yes, 'ага', ctx({ pending })).intent).toEqual({
+    expect(resolveIntent(yes, 'да', ctx({ pending })).intent).toEqual({
       kind: 'confirm',
     });
     const no = normalizeModelAnswer({ kind: 'cancel', confidence: 0.9 });
@@ -663,6 +663,19 @@ describe('resolveIntent — карточка и прочие виды', () => {
       kind: 'cancel',
     });
   });
+
+  it.each(['Quốc.', 'Не, с косудью.', 'не подтверждай', 'случайный текст'])(
+    'модель не может подтвердить неизвестную или отрицательную реплику %s',
+    (transcript) => {
+      for (const kind of ['confirm', 'consent']) {
+        const answer = normalizeModelAnswer({ kind, confidence: 1 });
+        expect(
+          resolveIntent(answer, transcript, ctx({ pending, hasScript: true }))
+            .intent.kind,
+        ).toBe('unknown');
+      }
+    },
+  );
 
   it('уточнение поверх карточки — только исправленное поле (клиент сливает сам)', () => {
     const r = resolveIntent(

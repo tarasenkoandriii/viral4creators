@@ -88,3 +88,12 @@ export function sonioxHourSeries(
     );
   });
 }
+
+/** Keep sub-cent provider charges visible; absent amounts are not zero. */
+export const sonioxCost = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? value.toLocaleString("ru-RU", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 6,
+      })
+    : "—";

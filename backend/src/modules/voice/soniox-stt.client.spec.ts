@@ -214,7 +214,8 @@ describe('SonioxSttClient.transcribe', () => {
       languageHints: [],
     });
     expect(r.text).toBeNull();
-    expect(r.reason).toContain('bad audio');
+    expect(r.reason).toBe('Soniox: ошибка распознавания');
+    expect(JSON.stringify(r)).not.toContain('bad audio');
     expect(calls.filter((c) => c.method === 'DELETE')).toHaveLength(2);
   });
 
