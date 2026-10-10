@@ -26,12 +26,43 @@ function edits(a, b) {
   }
   return row[b.length];
 }
+async function expectApiSuccess(response, phase, info) {
+  const status = response.status();
+  if (status !== 200) {
+    let envelope;
+    try {
+      envelope = await response.json();
+    } catch {
+      envelope = null;
+    }
+    const code = envelope?.error?.code;
+    const requestId = envelope?.meta?.requestId;
+    await info.attach(`api-failure-${phase}.json`, {
+      contentType: "application/json",
+      body: Buffer.from(
+        JSON.stringify({
+          phase,
+          status,
+          code:
+            typeof code === "string" && /^[A-Z_]{1,48}$/.test(code)
+              ? code
+              : null,
+          requestId:
+            typeof requestId === "string" && /^[a-f0-9-]{36}$/i.test(requestId)
+              ? requestId
+              : null,
+        }),
+      ),
+    });
+  }
+  expect(status, `${phase}: HTTP ${status}`).toBe(200);
+}
 // API traces can capture visitor credentials; keep only aggregate metrics.
 test.use({ trace: "off" });
 test.describe("live Soniox voice", () => {
   test.describe.configure({ retries: 0 });
   for (const lang of ["ru", "uk"]) {
-    test(`assistant TTS → STT → voice ticket (${lang})`, async ({
+    test(`assistant TTS → STT → voice ticket (UI ${lang})`, async ({
       request,
     }, info) => {
       test.skip(
@@ -42,7 +73,10 @@ test.describe("live Soniox voice", () => {
         process.env.ASSIST_SANDBOX_VOICE_QA !== "1",
         "Paid live QA is enabled only on the owned deployed sandbox",
       );
-      test.setTimeout(210000);
+      test.setTimeout(285000);
+      // Separate paid language scenarios by a full minute window; no retries.
+      if (lang === "uk")
+        await new Promise((resolve) => setTimeout(resolve, 65000));
       expect(
         process.env.ASSIST_SANDBOX_PUBLIC_KEY,
         "Sandbox public key must be configured",
@@ -80,7 +114,11 @@ test.describe("live Soniox voice", () => {
             uiLang: lang,
           },
         });
-        expect(response.status()).toBe(200);
+        await expectApiSuccess(
+          response,
+          voiceTicket ? "chat-followup" : "chat-seed",
+          info,
+        );
         const answer = (await response.json()).data;
         expect(answer.refused).toBe(false);
         expect(answer.streaming).toBe(false);
@@ -100,7 +138,7 @@ test.describe("live Soniox voice", () => {
         timeout: 90000,
         data: { messageId: answer.messageId },
       });
-      expect(tts.status()).toBe(200);
+      await expectApiSuccess(tts, "tts", info);
       expect(tts.headers()["content-type"]).toMatch(/^audio\/mpeg/);
       const audio = await tts.body();
       expect(audio.length).toBeGreaterThan(100);
@@ -114,7 +152,7 @@ test.describe("live Soniox voice", () => {
         timeout: 90000,
         data: audio,
       });
-      expect(stt.status()).toBe(200);
+      await expectApiSuccess(stt, "stt", info);
       const speech = (await stt.json()).data;
       expect(Boolean(speech?.voiceTicket)).toBe(true);
       expect(typeof speech?.text).toBe("string");
@@ -126,7 +164,8 @@ test.describe("live Soniox voice", () => {
         contentType: "application/json",
         body: Buffer.from(
           JSON.stringify({
-            language: lang,
+            uiLanguage: lang,
+            recognizedLanguage: speech.lang ?? speech.language ?? null,
             ttsBytes: audio.length,
             referenceWords: reference.length,
             recognizedWords: recognized.length,
@@ -134,7 +173,7 @@ test.describe("live Soniox voice", () => {
             wer,
             threshold: 0.2,
             limitation:
-              "Synthetic roundtrip; TTS may be cached; does not prove command execution or device audio playback",
+              "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback",
           }),
         ),
       });
