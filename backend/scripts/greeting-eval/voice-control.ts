@@ -18,14 +18,22 @@ export function matchesControl(
     (!('command' in i) || i.command !== expected.command)
   )
     return false;
-  if (
-    'target' in expected &&
-    (i.kind !== 'fill' ||
-      !i.fields.some(
-        (f) => f.target === expected.target && f.value === expected.value,
-      ))
-  )
-    return false;
+  if ('target' in expected || 'fields' in expected) {
+    const fields = Array.isArray(expected.fields)
+      ? (expected.fields as Array<{ target: unknown; value: unknown }>)
+      : [{ target: expected.target, value: expected.value }];
+    if (
+      i.kind !== 'fill' ||
+      i.fields.length !== fields.length ||
+      !fields.every((field) =>
+        i.fields.some(
+          (actual) =>
+            actual.target === field.target && actual.value === field.value,
+        ),
+      )
+    )
+      return false;
+  }
   return true;
 }
 export async function main(argv: string[]): Promise<number> {
@@ -61,18 +69,21 @@ export async function main(argv: string[]): Promise<number> {
   const { liveProviders, geminiMicro, keyStatus } = await import('./providers');
   if (!keyStatus().ffmpeg)
     throw new Error('Нужен ffmpeg для синтезированного аудио.');
-  const { GreetingVoiceUnderstandService } =
-    await import('../../src/modules/voice/greeting-voice-understand.service');
+  const { GreetingVoiceUnderstandService } = await import(
+    '../../src/modules/voice/greeting-voice-understand.service'
+  );
   const budget = new Budget(Math.round(cap * 1e6));
   let telemetry:
     | import('../../src/modules/soniox-observability/soniox-observability.service').SonioxObservability
     | undefined;
   let telemetryDb:
-    import('../../src/prisma/prisma.service').PrismaService | undefined;
+    | import('../../src/prisma/prisma.service').PrismaService
+    | undefined;
   if (process.env.DATABASE_URL) {
     const { PrismaService } = await import('../../src/prisma/prisma.service');
-    const { SonioxObservability, sonioxContext } =
-      await import('../../src/modules/soniox-observability/soniox-observability.service');
+    const { SonioxObservability, sonioxContext } = await import(
+      '../../src/modules/soniox-observability/soniox-observability.service'
+    );
     telemetryDb = new PrismaService();
     telemetry = new SonioxObservability(telemetryDb);
     sonioxContext.enterWith({
@@ -202,7 +213,7 @@ export async function main(argv: string[]): Promise<number> {
   } catch (e) {
     if (e instanceof Error && e.message === 'VOICE_EVAL_BUDGET') stopped = true;
     else {
-      rows.push({ error: e instanceof Error ? e.message : 'upstream failed' });
+      rows.push({ error: 'upstream_failed' });
       failures++;
     }
   }
@@ -212,6 +223,12 @@ export async function main(argv: string[]): Promise<number> {
     JSON.stringify(
       {
         rows,
+        expectedChecks: VOICE_CONTROL_SET.length * 2 + 1,
+        completedChecks: rows.filter((row) => 'passed' in (row as object))
+          .length,
+        complete:
+          rows.filter((row) => 'passed' in (row as object)).length ===
+          VOICE_CONTROL_SET.length * 2 + 1,
         failures,
         stopped,
         spentUsd: budget.spent / 1e6,
