@@ -89,3 +89,64 @@ describe('SiteSonioxTts (Э5)', () => {
     expect(fake.count('GET', '/tts-models')).toBe(2);
   });
 });
+
+describe('Soniox delayed response deadline', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+  function client(delay: number) {
+    jest.useFakeTimers();
+    jest.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException('Timed out', 'TimeoutError')),
+        ms,
+      );
+      return controller.signal;
+    });
+    const t = new SiteSonioxTts();
+    t.env = { SONIOX_API_KEY: 'test' };
+    t.fetch = jest.fn(
+      (_input, init) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve(new Response(new Uint8Array([1, 2, 3]))),
+            delay,
+          );
+          init?.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(timer);
+              reject(init.signal?.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    return t;
+  }
+  it('keeps a response arriving after the previous 20-second deadline', async () => {
+    const t = client(25_000);
+    const pending = t.synthesize({
+      text: 'Long response',
+      voice: null,
+      lang: 'en',
+    });
+    await jest.advanceTimersByTimeAsync(25_000);
+    expect(await pending).toMatchObject({
+      ok: true,
+      audio: Buffer.from([1, 2, 3]),
+    });
+  });
+  it('still aborts a stalled provider rather than waiting indefinitely', async () => {
+    const t = client(120_000);
+    const pending = t.synthesize({
+      text: 'Long response',
+      voice: null,
+      lang: 'en',
+    });
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(await pending).toEqual({ ok: false, reason: 'error' });
+  });
+});

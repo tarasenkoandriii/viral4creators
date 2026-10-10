@@ -46,7 +46,9 @@ export interface VoiceChoice {
   description: string | null;
 }
 
-const TIMEOUT_MS = 20_000;
+// Complete response audio may take longer than the catalogue request.
+export const SONIOX_TTS_TIMEOUT_MS = 60_000;
+const CATALOG_TIMEOUT_MS = 20_000;
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 
 /** Язык синтеза: явный → по буквам текста → украинский (рынок — Украина). */
@@ -108,7 +110,7 @@ export class SiteSonioxTts {
     try {
       const res = await this.fetch(`${SONIOX_TTS_BASE}/tts`, {
         method: 'POST',
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(SONIOX_TTS_TIMEOUT_MS),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${key}`,
@@ -159,7 +161,7 @@ export class SiteSonioxTts {
     try {
       const res = await this.fetch(`${SONIOX_API_BASE}/tts-models`, {
         headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
       });
       if (!res.ok) {
         this.logger.warn(`Soniox tts-models ответил ${res.status}`);
