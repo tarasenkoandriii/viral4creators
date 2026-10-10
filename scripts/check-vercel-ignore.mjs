@@ -29,12 +29,12 @@ const SCRIPT = path.join(ROOT, 'scripts', 'vercel-ignore-build.sh');
  * лежат внутри пакета: sites-backend/src/shared, assist/src/kit).
  */
 const PROJECTS = {
-  backend: ['.', '../landing/src/dictionaries', '../frontend/src/dictionaries'],
+  backend: ['.', '../landing/src/dictionaries', '../frontend/src/dictionaries', '../scripts/build-prisma-migrations.mjs'],
   frontend: ['.'],
   admin: ['.'],
   landing: ['.'],
   marketplace: ['.'],
-  'sites-backend': ['.'],
+  'sites-backend': ['.', '../scripts/build-prisma-migrations.mjs'],
   assist: ['.'],
   'sites-landing': ['.'],
   widget: ['.'],
