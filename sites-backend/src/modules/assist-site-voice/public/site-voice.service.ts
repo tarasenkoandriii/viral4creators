@@ -55,7 +55,11 @@ import { parsePersona } from '../../assist-site-setup/persona';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import { VOICE_DEFAULTS, audioMimeOf, sniffAudio } from '../voice-config';
 import { SiteSonioxStt } from './soniox-stt.client';
-import { SiteSonioxTts, ttsLanguage } from './soniox-tts.client';
+import {
+  SiteSonioxTts,
+  ttsLanguage,
+  SONIOX_TTS_TIMEOUT_MS,
+} from './soniox-tts.client';
 import { readTtsCache, ttsCacheKey, writeTtsCache } from './tts-cache';
 import { speakableText } from './tts-text';
 import {
@@ -133,8 +137,8 @@ export type TranscribeResult =
  * а дольше `TTS_CLAIM_WAIT_MS` не ждёт — синтезирует сам.
  */
 export const TTS_CLAIM_SCOPE = 'tts-claim';
-export const TTS_CLAIM_TTL_MS = 30_000;
-export const TTS_CLAIM_WAIT_MS = 25_000;
+export const TTS_CLAIM_TTL_MS = SONIOX_TTS_TIMEOUT_MS + 30_000;
+export const TTS_CLAIM_WAIT_MS = SONIOX_TTS_TIMEOUT_MS + 15_000;
 
 type SynthOutcome =
   | {
