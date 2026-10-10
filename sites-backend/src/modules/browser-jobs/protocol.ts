@@ -154,6 +154,7 @@ export const WORKER_ERROR_CODES = [
   'egress_blocked',
   'offhost_redirect',
   'login_form_missing',
+  'login_fields_unsupported',
   'login_failed',
   'credentials_unavailable',
   'host_not_verified',

@@ -901,13 +901,20 @@ export class BrowserJobsService {
   }
 
   /** Задание под действующей арендой этого токена (иначе 409). */
-  async leased(jobId: string, token: string): Promise<JobRow> {
+  async leased(
+    jobId: string,
+    token: string,
+    rejectCancelled = false,
+  ): Promise<JobRow> {
     const row = await this.sys('проверка аренды').siteBrowserJob.findFirst({
       where: { id: jobId },
     });
     if (
       !row ||
       row.status !== 'running' ||
+      !row.leaseUntil ||
+      row.leaseUntil.getTime() <= this.now().getTime() ||
+      (rejectCancelled && !!row.cancelRequestedAt) ||
       !sameHash(row.leaseTokenHash, hashToken(token))
     ) {
       throw leaseLost();
@@ -921,6 +928,13 @@ export class BrowserJobsService {
   ): Promise<{ ok: true; cancel: boolean; leaseUntil: string }> {
     const now = this.now();
     const row = await this.leased(jobId, token);
+    if (row.cancelRequestedAt || !this.enabled()) {
+      return {
+        ok: true,
+        cancel: true,
+        leaseUntil: row.leaseUntil!.toISOString(),
+      };
+    }
     const leaseUntil = new Date(now.getTime() + WORKER_LIMITS.leaseMs);
     const { count } = await this.sys(
       'продление аренды',
@@ -929,10 +943,22 @@ export class BrowserJobsService {
         id: jobId,
         status: 'running',
         leaseTokenHash: row.leaseTokenHash,
+        leaseUntil: { gt: this.now() },
+        cancelRequestedAt: null,
       },
       data: { leaseUntil, heartbeatAt: now },
     });
-    if (count !== 1) throw leaseLost();
+    if (count !== 1) {
+      const current = await this.leased(jobId, token);
+      if (current.cancelRequestedAt) {
+        return {
+          ok: true,
+          cancel: true,
+          leaseUntil: current.leaseUntil!.toISOString(),
+        };
+      }
+      throw leaseLost();
+    }
     return {
       ok: true,
       // Выключатель — kill-switch: идущие задания гасятся тоже.
@@ -948,7 +974,11 @@ export class BrowserJobsService {
   ): Promise<{ ok: true; retry: boolean }> {
     const now = this.now();
     const row = await this.leased(jobId, token);
-    const cond = { status: 'running', leaseTokenHash: row.leaseTokenHash };
+    const cond = {
+      status: 'running',
+      leaseTokenHash: row.leaseTokenHash,
+      leaseUntil: { gt: this.now() },
+    };
     if (
       RETRYABLE_ERRORS.has(code) &&
       row.attempts < row.maxAttempts &&
@@ -995,7 +1025,7 @@ export class BrowserJobsService {
     raw: unknown,
   ): Promise<{ ok: true }> {
     const now = this.now();
-    const row = await this.leased(jobId, token);
+    const row = await this.leased(jobId, token, true);
     if (!isBrowserJobKind(row.kind) || !isBrowserJobOrigin(row.origin)) {
       throw leaseLost();
     }
@@ -1041,6 +1071,8 @@ export class BrowserJobsService {
         id: jobId,
         status: 'running',
         leaseTokenHash: row.leaseTokenHash,
+        leaseUntil: { gt: this.now() },
+        cancelRequestedAt: null,
       },
       data: {
         status: 'done',
@@ -1104,7 +1136,7 @@ export class BrowserJobsService {
     /** Продукт аренды Ш2: обход «Админки» или раунд обучалки. */
     product: 'assist-admin' | 'tutorial';
   }> {
-    const row = await this.leased(jobId, token);
+    const row = await this.leased(jobId, token, true);
     if (!needsCredentials(row) || !row.testAccountId || !row.hostId) {
       throw leaseLost();
     }
@@ -1115,6 +1147,8 @@ export class BrowserJobsService {
         id: jobId,
         status: 'running',
         leaseTokenHash: row.leaseTokenHash,
+        leaseUntil: { gt: this.now() },
+        cancelRequestedAt: null,
         OR: [
           { credentialsAttempt: null },
           { credentialsAttempt: { lt: row.attempts } },
@@ -1123,6 +1157,7 @@ export class BrowserJobsService {
       data: { credentialsAttempt: row.attempts },
     });
     if (count !== 1) {
+      await this.leased(jobId, token, true);
       throw jobError(
         HttpStatus.CONFLICT,
         'WORKER_CREDENTIALS_USED',
@@ -1150,7 +1185,7 @@ export class BrowserJobsService {
       height: number | null;
     },
   ): Promise<{ ok: true; idx: number; bytes: number }> {
-    const row = await this.leased(jobId, token);
+    const row = await this.leased(jobId, token, true);
     if (
       !Number.isInteger(a.idx) ||
       a.idx < 0 ||

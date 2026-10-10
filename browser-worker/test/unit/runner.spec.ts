@@ -13,6 +13,11 @@ import { JobError } from '../../src/errors';
 import type { JobExecutor } from '../../src/jobs/types';
 import { createLogger } from '../../src/logger';
 import { Runner } from '../../src/runner';
+import {
+  generateWorkerSealKeys,
+  sealForWorker,
+  sealAad,
+} from '../../src/shared/worker-seal';
 import type { ClaimedJob } from '../../src/shared/browser-job-protocol';
 
 const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
@@ -333,6 +338,54 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
     expect(api.failed).toEqual([['crawl', 'credentials_unavailable']]);
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    'дополнительные поля входа отвергаются (stored=%s)',
+    async (stored) => {
+      const api = new FakeApi();
+      const keys = generateWorkerSealKeys();
+      const j = job('fields', { kind: 'admin-crawl', needsCredentials: true });
+      api.queue = [j];
+      jest.spyOn(api, 'credentials').mockResolvedValue({
+        attempt: j.attempt,
+        sealed: sealForWorker(
+          keys.publicKey,
+          Buffer.from(
+            JSON.stringify({
+              username: 'demo',
+              password: 'secret',
+              ...(stored
+                ? {
+                    stored: [
+                      {
+                        purpose: 'login-fields',
+                        sealed: 'unused',
+                        aad: 'unused',
+                      },
+                    ],
+                  }
+                : { loginFields: '{"tenant":"demo"}' }),
+            }),
+          ),
+          sealAad(j.id, j.attempt),
+        ),
+      });
+      const { runner } = make(
+        api,
+        async (ctx) => {
+          await ctx.credentials();
+          return okResult;
+        },
+        2,
+        { sealPrivateKey: keys.privateKey },
+      );
+      runner.start();
+      for (let i = 0; i < 100 && api.failed.length < 1; i++) await tick();
+      await runner.shutdown();
+      expect(api.failed).toEqual([['fields', 'login_fields_unsupported']]);
+      expect(api.completed).toEqual([]);
+    },
+  );
 
   it('остановка: идущее задание после срока — shutdown (повторяемый код)', async () => {
     const api = new FakeApi();

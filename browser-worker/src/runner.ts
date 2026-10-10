@@ -186,6 +186,7 @@ export class Runner {
       let parsed: {
         username?: unknown;
         password?: unknown;
+        loginFields?: unknown;
         sessionCookies?: unknown;
         stored?: unknown;
       };
@@ -222,6 +223,16 @@ export class Runner {
             inner.fill(0);
           }
         }
+      }
+      // Additional login fields are not implemented by either executor.
+      // Refuse explicitly rather than attempting an incomplete login.
+      if (
+        parsed.loginFields ||
+        (parsed.stored as Array<{ purpose?: unknown }> | undefined)?.some(
+          (item) => item.purpose === 'login-fields',
+        )
+      ) {
+        throw new JobError('login_fields_unsupported');
       }
       parsed.stored = undefined;
       const password =
