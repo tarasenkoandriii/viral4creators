@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../soniox-observability/soniox-observability.service';
 /**
  * Внутренний API вкладки «Помощник» админки платформы (ТЗ §8 п.1–5, 8).
  * Зовёт ТОЛЬКО backend/ (admin-panel, AdminAssistController) с секретом —
@@ -80,7 +81,10 @@ function id(v: string): string {
 @PublicRoute('внутренний API админки платформы: секрет X-Sites-Internal-Secret')
 @UseGuards(InternalSecretGuard)
 export class PlatformAdminController {
-  constructor(private readonly admin: PlatformAdmin) {}
+  constructor(private readonly admin: PlatformAdmin, private readonly soniox: SonioxObservability) {}
+
+  @Get('soniox')
+  sonioxReport() { return this.soniox.report(); }
 
   @Get('summary')
   summary(@Query('days') d?: string) {

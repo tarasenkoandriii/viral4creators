@@ -1,3 +1,4 @@
+import { SonioxObservabilityModule } from './modules/soniox-observability/soniox-observability.module';
 /**
  * Корневой модуль sites-backend.
  *
@@ -47,6 +48,7 @@ import { InternalWorkerModule } from './modules/internal-worker/internal-worker.
 
 @Module({
   imports: [
+    SonioxObservabilityModule,
     PrismaModule,
     HealthModule,
     // Глобальный гвард двух ботов: маршрут без @AllowApps/@PublicRoute закрыт.

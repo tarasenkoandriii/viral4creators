@@ -76,6 +76,7 @@ export interface TranscriptionResult {
   language?: string | null;
   /** Длительность звука по данным провайдера, мс (Soniox); у Gemini нет. */
   durationMs?: number | null;
+  speechConfidence?: number | null;
 }
 
 /**
@@ -240,6 +241,9 @@ export class VoiceTranscriptionService {
           return {
             text: r.text,
             language: r.language ?? null,
+            ...(typeof r.speechConfidence === 'number'
+              ? { speechConfidence: r.speechConfidence }
+              : {}),
             ...withDuration,
           };
         }

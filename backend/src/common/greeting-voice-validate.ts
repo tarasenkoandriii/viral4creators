@@ -965,12 +965,7 @@ export function checkCommand(
       if (command !== 'regenerate-script' && !ctx.hasScript) {
         return { ok: false, reason: t.needScript };
       }
-      // «Короче» — честный отказ (аудит волны K, B1): кнопки «сократить»
-      // в мастере нет, а обещать действие, которого клиент не выполнит,
-      // хуже, чем сказать, как сделать это руками.
-      if (command === 'shorter') {
-        return { ok: false, reason: t.shorterByHand };
-      }
+
       return { ok: true };
     }
   }

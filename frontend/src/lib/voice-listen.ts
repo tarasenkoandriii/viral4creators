@@ -378,6 +378,12 @@ export const RECORDER_MIME_CANDIDATES = [
 export function pickRecorderMime(
   isSupported: (mime: string) => boolean
 ): string | null {
-  for (const c of RECORDER_MIME_CANDIDATES) if (isSupported(c)) return c;
+  for (const c of RECORDER_MIME_CANDIDATES) {
+    try {
+      if (isSupported(c)) return c;
+    } catch {
+      /* Старые WebView могут бросать. */
+    }
+  }
   return null;
 }

@@ -67,6 +67,7 @@ export interface Providers {
     text: string | null;
     /** Язык речи по звуку — только если провайдер его сообщил. */
     language?: string | null;
+    speechConfidence?: number | null;
     micro: number;
     reason?: string;
   }>;

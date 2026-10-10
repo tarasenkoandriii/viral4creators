@@ -480,6 +480,18 @@ export class GreetingVoiceUnderstandService {
           reply: t.scriptMismatch,
         };
       }
+      // Уверенность модели понимания не исправляет ошибку распознавания.
+      // В частности, неуверенное «да» не должно подтверждать карточку.
+      const speechConfidence = recognized.speechConfidence;
+      if (typeof speechConfidence === 'number' && speechConfidence < 0.6) {
+        return {
+          ...base,
+          status: 'ok',
+          intent: { kind: 'unknown' },
+          confidence: speechConfidence,
+          reply: t.notHeard,
+        };
+      }
       const transcript = recognized.text;
 
       const quick = input.pending ? quickPendingAnswer(transcript) : null;
@@ -550,11 +562,10 @@ export class GreetingVoiceUnderstandService {
           reply: t.unavailable,
         };
       }
-      const resolved = resolveIntent(
-        normalizeModelAnswer(raw),
-        transcript,
-        ctx,
-      );
+      const answer = normalizeModelAnswer(raw);
+      if (typeof speechConfidence === 'number')
+        answer.confidence = Math.min(answer.confidence, speechConfidence);
+      const resolved = resolveIntent(answer, transcript, ctx);
       return {
         ...base,
         status: 'ok',

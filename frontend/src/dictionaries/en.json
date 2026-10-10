@@ -1679,6 +1679,10 @@
     }
   },
   "greetingVideoWizard": {
+    "shortenScriptButton": "Shorten text",
+    "shorteningScript": "Shortening…",
+    "shortenScriptHint": "Review the shortened text, then press Save. The saved script is not changed automatically.",
+
     "title": "Greeting video",
     "hint": "A personal video greeting: occasion, recipient, tone — the script does the rest.",
     "occasionLabel": "Occasion",
@@ -1918,6 +1922,7 @@
     "talkDone": "Done",
     "idleStopped": "20 seconds of silence — the microphone is off. Tap “Voice control” to continue.",
     "denied": "No microphone access — allow it in settings or type instead.",
+    "recordingError": "Recording stopped unexpectedly. The microphone is off; try again or type instead.",
     "unsupported": "This browser can't record audio — please type instead.",
     "notHeard": "I didn't catch that, please repeat.",
     "unavailable": "Speech recognition is unavailable — please type instead.",

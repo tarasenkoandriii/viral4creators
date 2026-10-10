@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../../soniox-observability/soniox-observability.service';
 /**
  * Распознавание вопроса посетителя — Soniox async (Э5, ТЗ помощника §4.10,
  * §5-бис.7; приёмка Э5: «запись удаляется у нас и у провайдера при успехе,
@@ -36,11 +37,12 @@
  * Звук у НАС — только `Buffer` в памяти запроса: в базу, Blob и логи он не
  * попадает (шов — спек «запись не хранится у нас»).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { SONIOX_API_BASE, sonioxApiKey } from '../../../shared/soniox';
 import {
   billedSeconds,
   sonioxTranscriptText,
+  sonioxSpeechConfidence,
   sonioxTranscriptionBody,
   type SonioxToken,
 } from '../../../shared/soniox-stt-core';
@@ -77,6 +79,7 @@ export interface SiteSttResult {
   reason?: 'no_key' | 'empty' | 'no_speech' | 'error' | 'timeout';
   /** Язык речи по Soniox (преобладающий); null — не сообщил. */
   language: string | null;
+  speechConfidence?: number;
   /** Секунды для счёта (по длительности Soniox, иначе по токенам). */
   seconds: number;
   /** Задача у Soniox создана — вызов оплачен, даже без текста. */
@@ -110,6 +113,7 @@ class SonioxHttpError extends Error {
 @Injectable()
 export class SiteSonioxStt {
   private readonly logger = new Logger(SiteSonioxStt.name);
+  constructor(@Optional() private readonly telemetry?: SonioxObservability) {}
   /** Тесты подменяют сеть, env и сроки. */
   fetch: typeof fetch = (...a) => fetch(...a);
   env: NodeJS.ProcessEnv = process.env;
@@ -123,6 +127,11 @@ export class SiteSonioxStt {
 
   /** Никогда не бросает: отказ провайдера — `text: null` с причиной. */
   async transcribe(req: SiteSttRequest): Promise<SiteSttResult> {
+    return this.telemetry
+      ? this.telemetry.track('stt', 'system', () => this.transcribeImpl(req))
+      : this.transcribeImpl(req);
+  }
+  private async transcribeImpl(req: SiteSttRequest): Promise<SiteSttResult> {
     const key = sonioxApiKey(this.env);
     if (!key) {
       return {
@@ -209,6 +218,11 @@ export class SiteSonioxStt {
           return parsed.text
             ? {
                 text: parsed.text,
+                ...(sonioxSpeechConfidence(t.tokens ?? []) !== null
+                  ? {
+                      speechConfidence: sonioxSpeechConfidence(t.tokens ?? [])!,
+                    }
+                  : {}),
                 language: parsed.language,
                 seconds,
                 billable: true,

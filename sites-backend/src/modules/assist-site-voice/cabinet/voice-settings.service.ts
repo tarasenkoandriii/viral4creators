@@ -1,3 +1,4 @@
+import { sonioxScope } from '../../soniox-observability/soniox-context';
 /**
  * Кабинет: голос виджета (Э5, ТЗ §3.5 «Голос: выбор голоса из пресетов
  * текущего TTS-провайдера, прослушать пример»; §4.10). Экран — раздел
@@ -219,6 +220,7 @@ export class VoiceSettingsService {
     let actual = 0;
     let res: Awaited<ReturnType<SiteSonioxTts['synthesize']>>;
     try {
+      sonioxScope({ accountId: m.accountId, siteId });
       res = await this.tts.synthesize({ text, voice, lang });
       if (res.ok) {
         actual = (

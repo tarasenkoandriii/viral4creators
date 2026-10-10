@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../soniox-observability/soniox-observability.service';
 /**
  * GET /cron/assist-retention — K3 (§4.15, `0 3 * * *` UTC — свой крон в
  * sites-backend/vercel.json). Э1: удаляет песочницы с истёкшим expiresAt
@@ -10,7 +11,7 @@
  * C4 захода 8: + уборка у Soniox файлов и транскрипций старше часа
  * (`sweepStaleSoniox`) — своего срока хранения у провайдера нет.
  */
-import { Controller, Get, Headers } from '@nestjs/common';
+import { Controller, Get, Headers, Optional } from '@nestjs/common';
 import { withCronLock } from '../../common/cron-job-lock';
 import { assertCronSecret } from '../../common/cron-secret';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -33,6 +34,7 @@ export class AssistRetentionController {
     private readonly sandbox: SandboxService,
     private readonly crawl: SiteCrawlService,
     private readonly chat: ChatRetention,
+    @Optional() private readonly soniox?: SonioxObservability,
   ) {}
 
   @Get('assist-retention')
@@ -48,7 +50,10 @@ export class AssistRetentionController {
           new Date(Date.now() - CRAWL_QUEUE_RETENTION_MS),
         ),
         ...(await this.chat.run()),
-        ...(await sweepStaleSoniox()),
+        ...(await (this.soniox
+          ? this.soniox.track('cleanup', 'cron', () => sweepStaleSoniox())
+          : sweepStaleSoniox())),
+        sonioxEventsDeleted: (await this.soniox?.prune()) ?? 0,
       }),
     );
     return r.ran

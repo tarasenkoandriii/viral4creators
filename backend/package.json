@@ -34,7 +34,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "eval:voice-control": "ts-node --transpile-only scripts/greeting-eval/voice-control.ts"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",

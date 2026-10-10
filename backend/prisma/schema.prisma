@@ -5169,3 +5169,27 @@ model PersonaLook {
   @@index([personaId, deletedAt])
   @@map("persona_looks")
 }
+
+/// Soniox operational events: no audio or transcript is retained.
+model SonioxEvent {
+  id String @id
+  operation String
+  source String
+  actorRole String @map("actor_role")
+  actorId String? @map("actor_id")
+  accountId String? @map("account_id")
+  siteId String? @map("site_id")
+  startedAt DateTime @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  status String @default("running")
+  reasonCode String? @map("reason_code")
+  elapsedMs Int? @map("elapsed_ms")
+  seconds Float @default(0)
+  characters Int @default(0)
+  words Int @default(0)
+  language String?
+  confidence Float?
+  @@index([startedAt])
+  @@index([status, startedAt])
+  @@map("soniox_events")
+}

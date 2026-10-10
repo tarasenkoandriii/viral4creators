@@ -213,6 +213,11 @@ export function useVoiceListening(opts: {
     ctxRef.current = null;
   }, []);
 
+  const recordingError = useCallback(() => {
+    releaseAll();
+    apply({ type: 'recording-error' });
+  }, [apply, releaseAll]);
+
   const process = useCallback(
     async (
       blob: Blob,
@@ -229,6 +234,8 @@ export function useVoiceListening(opts: {
             tooLarge: blob.size > voiceMaxBytesFor(mime),
           });
         }
+      } catch {
+        if (isCurrent()) recordingError();
       } finally {
         if (mountedRef.current && isCurrent()) {
           apply({ type: 'processed', seq });
@@ -243,31 +250,40 @@ export function useVoiceListening(opts: {
         }
       }
     },
-    [apply, releaseAll]
+    [apply, releaseAll, recordingError]
   );
 
-  const startRecorder = useCallback((stream: MediaStream): boolean => {
-    try {
-      const mime = pickRecorderMime(
-        (m) => MediaRecorder.isTypeSupported?.(m) ?? false
-      );
-      // Ни один формат не подтверждён — пусть браузер выберет сам, чем
-      // упасть в конструкторе; формат потом берётся из `rec.mimeType`.
-      const rec = mime
-        ? new MediaRecorder(stream, { mimeType: mime })
-        : new MediaRecorder(stream);
-      const chunks: Blob[] = [];
-      chunksRef.current = chunks;
-      rec.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-      rec.start();
-      recorderRef.current = rec;
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
+  const startRecorder = useCallback(
+    (stream: MediaStream): boolean => {
+      try {
+        const mime = pickRecorderMime(
+          (m) => MediaRecorder.isTypeSupported?.(m) ?? false
+        );
+        // Ни один формат не подтверждён — пусть браузер выберет сам, чем
+        // упасть в конструкторе; формат потом берётся из `rec.mimeType`.
+        const rec = mime
+          ? new MediaRecorder(stream, { mimeType: mime })
+          : new MediaRecorder(stream);
+        const chunks: Blob[] = [];
+        chunksRef.current = chunks;
+        rec.onerror = () => {
+          if (recorderRef.current === rec) recordingError();
+        };
+        rec.onstop = () => {
+          if (recorderRef.current === rec) recordingError();
+        };
+        rec.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        rec.start();
+        recorderRef.current = rec;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [recordingError]
+  );
 
   /**
    * Остановить отрезок: `keep` — отправить, иначе выбросить. `seq` —
@@ -309,6 +325,7 @@ export function useVoiceListening(opts: {
       switch (event.type) {
         case 'start':
           if (startRecorder(stream)) apply({ type: 'speech-start' });
+          else recordingError();
           return;
         case 'end':
           apply({ type: 'utterance', keep: event.keep });
@@ -331,7 +348,7 @@ export function useVoiceListening(opts: {
           return;
       }
     },
-    [apply, releaseAll, startRecorder, stopRecorder]
+    [apply, recordingError, releaseAll, startRecorder, stopRecorder]
   );
 
   /** Поток микрофона для запроса `token`; устаревший — закрывается. */
@@ -350,6 +367,22 @@ export function useVoiceListening(opts: {
           return null;
         }
         streamRef.current = stream;
+        stream.getAudioTracks().forEach((track) =>
+          track.addEventListener(
+            'ended',
+            () => {
+              if (
+                streamRef.current === stream &&
+                token === requestRef.current &&
+                ['requesting', 'listening', 'recording', 'holding'].includes(
+                  stateRef.current.phase
+                )
+              )
+                recordingError();
+            },
+            { once: true }
+          )
+        );
         return stream;
       } catch {
         if (mountedRef.current && token === requestRef.current) {
@@ -358,7 +391,7 @@ export function useVoiceListening(opts: {
         return null;
       }
     },
-    [apply]
+    [apply, recordingError]
   );
 
   const enable = useCallback(() => {
@@ -371,9 +404,17 @@ export function useVoiceListening(opts: {
     // разрешает звук только в самом жесте, а после `await getUserMedia`
     // жеста уже нет — контекст остался бы приостановленным, кадры
     // тихими, и через 20 с микрофон бы молча погас (аудит волны 1).
-    const ctx = new Ctor();
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctor();
+    } catch {
+      recordingError();
+      return;
+    }
     ctxRef.current = ctx;
-    void ctx.resume().catch(() => undefined);
+    void ctx.resume().catch(() => {
+      if (ctxRef.current === ctx) recordingError();
+    });
     void (async () => {
       const stream = await openStream(token);
       if (!stream) {
@@ -381,46 +422,50 @@ export function useVoiceListening(opts: {
         void ctx.close().catch(() => undefined);
         return;
       }
-      storeArmed();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      // Граф без выхода в `destination` Safari не крутит вовсе — анализатор
-      // отдаёт нули. Выход через нулевую громкость: граф живёт, в динамике
-      // тишина (своего голоса человек не слышит).
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-      ctx.createMediaStreamSource(stream).connect(analyser);
-      analyser.connect(mute);
-      mute.connect(ctx.destination);
-      const buf = new Float32Array(analyser.fftSize);
-      detectorRef.current = initialDetector(CONFIG);
-      apply({ type: 'granted' });
-      timerRef.current = window.setInterval(() => {
-        const phase = stateRef.current.phase;
-        // Во время разбора детектор на паузе: ответ помощника и
-        // следующая фраза не должны наложиться.
-        if (phase !== 'listening' && phase !== 'recording') return;
-        // Микрофон взяла запись образца голоса — пауза, как под
-        // репликой советника, но без перебивания (изменение контракта 5).
-        if (micBusyRef.current()) {
-          const r = pauseDetector(detectorRef.current);
+      try {
+        storeArmed();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        // Граф без выхода в `destination` Safari не крутит вовсе — анализатор
+        // отдаёт нули. Выход через нулевую громкость: граф живёт, в динамике
+        // тишина (своего голоса человек не слышит).
+        const mute = ctx.createGain();
+        mute.gain.value = 0;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        analyser.connect(mute);
+        mute.connect(ctx.destination);
+        const buf = new Float32Array(analyser.fftSize);
+        detectorRef.current = initialDetector(CONFIG);
+        apply({ type: 'granted' });
+        timerRef.current = window.setInterval(() => {
+          const phase = stateRef.current.phase;
+          // Во время разбора детектор на паузе: ответ помощника и
+          // следующая фраза не должны наложиться.
+          if (phase !== 'listening' && phase !== 'recording') return;
+          // Микрофон взяла запись образца голоса — пауза, как под
+          // репликой советника, но без перебивания (изменение контракта 5).
+          if (micBusyRef.current()) {
+            const r = pauseDetector(detectorRef.current);
+            detectorRef.current = r.state;
+            for (const ev of r.events) onDetector(ev, stream);
+            return;
+          }
+          analyser.getFloatTimeDomainData(buf);
+          const playing = playbackRef.current?.isPlaying() ?? false;
+          const r = stepDetector(
+            detectorRef.current,
+            rmsOf(buf),
+            CONFIG,
+            playing
+          );
           detectorRef.current = r.state;
           for (const ev of r.events) onDetector(ev, stream);
-          return;
-        }
-        analyser.getFloatTimeDomainData(buf);
-        const playing = playbackRef.current?.isPlaying() ?? false;
-        const r = stepDetector(
-          detectorRef.current,
-          rmsOf(buf),
-          CONFIG,
-          playing
-        );
-        detectorRef.current = r.state;
-        for (const ev of r.events) onDetector(ev, stream);
-      }, CONFIG.frameMs);
+        }, CONFIG.frameMs);
+      } catch {
+        recordingError();
+      }
     })();
-  }, [apply, onDetector, openStream]);
+  }, [apply, onDetector, openStream, recordingError]);
 
   const disable = useCallback(() => {
     releaseAll();
@@ -460,7 +505,7 @@ export function useVoiceListening(opts: {
       if (!stream) return;
       if (!startRecorder(stream)) {
         releaseAll();
-        apply({ type: 'hold-end', keep: false });
+        apply({ type: 'recording-error' });
         return;
       }
       talkStartedRef.current = Date.now();

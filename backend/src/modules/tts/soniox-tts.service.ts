@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../soniox-observability/soniox-observability.service';
 /**
  * SonioxTtsService — синтез речи Soniox, четвёртый пункт «Озвучки по
  * умолчанию» рядом с ElevenLabs, Resemble и Veo (решение владельца
@@ -24,7 +25,7 @@
  * опубликованных «≈ $0.70 за час речи» — ПРОВЕРИТЬ по первому счёту.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { mp3DurationSeconds } from '../../common/mp3-duration';
 import { detectLanguage } from '../../common/voiceover';
 import {
@@ -68,6 +69,7 @@ export function sonioxTtsLanguage(
 export class SonioxTtsService implements TtsProvider {
   readonly providerKey = 'soniox';
   private readonly logger = new Logger(SonioxTtsService.name);
+  constructor(@Optional() private readonly telemetry?: SonioxObservability) {}
 
   configured(): boolean {
     return !!sonioxApiKey();
@@ -78,6 +80,15 @@ export class SonioxTtsService implements TtsProvider {
   }
 
   async synthesize(request: SynthesisRequest): Promise<SynthesisOutcome> {
+    return this.telemetry
+      ? this.telemetry.track('tts', 'system', () =>
+          this.synthesizeImpl(request),
+        )
+      : this.synthesizeImpl(request);
+  }
+  private async synthesizeImpl(
+    request: SynthesisRequest,
+  ): Promise<SynthesisOutcome> {
     const key = sonioxApiKey();
     if (!key) {
       return {
@@ -160,6 +171,9 @@ export class SonioxTtsService implements TtsProvider {
   async voices(
     language?: string,
   ): Promise<{ voices: VoiceOption[]; error?: string }> {
+    return this.telemetry ? this.telemetry.track('catalog', 'system', () => this.voicesImpl(language)) : this.voicesImpl(language);
+  }
+  private async voicesImpl(language?: string): Promise<{ voices: VoiceOption[]; error?: string }> {
     const key = sonioxApiKey();
     if (!key) return { voices: [], error: 'SONIOX_API_KEY не задан' };
     try {

@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../soniox-observability/soniox-observability.service';
 /**
  * VoiceUploadService — голосовая запись удаляется в пределах часа, даже
  * если её никто не обработал (финальный аудит ветки K ТЗ
@@ -39,7 +40,7 @@
  * продуктами) не трогается и только считается.
  */
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { VOICE_RECORDING_MAX_AGE_MS } from '../../common/orphan-sweep';
@@ -86,6 +87,7 @@ export class VoiceUploadService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly blobService: BlobService,
+    @Optional() private readonly sonioxTelemetry?: SonioxObservability,
   ) {}
 
   /**
@@ -122,6 +124,19 @@ export class VoiceUploadService {
    * Soniox. Очередь не бросает — её сбой не роняет уборку записей.
    */
   async sweepExpired(now: Date = new Date()): Promise<VoiceUploadSweepResult> {
+    await this.sonioxTelemetry?.prune();
+    return this.sonioxTelemetry
+      ? this.sonioxTelemetry.track('cleanup', 'cron', () =>
+          this.sweepExpiredImpl(now).then((r) => ({
+            ...r,
+            skipped: !!r.soniox?.skipped && !!r.sonioxStale?.sonioxSkipped,
+            sonioxFailed:
+              (r.sonioxStale?.sonioxFailed ?? 0) + (r.soniox?.dropped ?? 0),
+          })),
+        )
+      : this.sweepExpiredImpl(now);
+  }
+  private async sweepExpiredImpl(now: Date): Promise<VoiceUploadSweepResult> {
     const files = await this.sweepFiles(now);
     const soniox = await drainSonioxPendingDeletes(
       this.prisma,

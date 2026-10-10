@@ -1,3 +1,4 @@
+import { sonioxScope } from '../../soniox-observability/soniox-context';
 /**
  * Голос посетителя — распознавание вопроса и озвучка ответа (Э5; ТЗ
  * помощника §4.10, §4.13, §6.3, §6.6, §7.1–§7.3; план, Приложение А
@@ -240,6 +241,7 @@ export class SiteVoiceService {
         ]);
         hints = languageHints;
         termsCount = terms.length;
+        sonioxScope({ accountId: site.accountId, siteId: site.siteId });
         r = await this.stt.transcribe({
           audio,
           mimeType: mime,
@@ -423,6 +425,7 @@ export class SiteVoiceService {
     let actual = 0;
     let res: Awaited<ReturnType<SiteSonioxTts['synthesize']>>;
     try {
+      sonioxScope({ accountId: site.accountId, siteId: site.siteId });
       res = await this.tts.synthesize({
         text: p.text,
         voice: p.voice,
