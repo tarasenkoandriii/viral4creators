@@ -6,8 +6,8 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Play, Save } from 'lucide-react';
-import { fmt, useAsync } from '../../kit';
-import { Alert, Button, Card, inputClass } from '../../kit/ui';
+import { fmt, useAsync, useKit } from '../../kit';
+import { Alert, Button, Card, Spinner, inputClass } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
 import { useSetupErrorText } from '../../lib/use-error-text';
 import {
@@ -16,7 +16,7 @@ import {
   type VoiceConfig,
   type VoiceSettingsView,
 } from '../../lib/voice-api';
-import { NoticeBar, type Notice } from '../knowledge/parts';
+import { LoadError, NoticeBar, type Notice } from '../knowledge/parts';
 import { Field, Toggle } from './controls';
 import { SamplePlayer } from './sample-player';
 
@@ -27,9 +27,24 @@ export function VoiceSection({
   siteId: string;
   lang: 'uk' | 'ru' | 'en';
 }) {
+  // Изоляция загрузки, несохранённых настроек и проигрывателя по сайту.
+  return <VoiceSectionForSite key={siteId} siteId={siteId} lang={lang} />;
+}
+
+function VoiceSectionForSite({
+  siteId,
+  lang,
+}: {
+  siteId: string;
+  lang: 'uk' | 'ru' | 'en';
+}) {
+  const { dict } = useKit();
   const { voice } = useAssist();
   const loaded = useAsync(() => voice.get(siteId), [voice, siteId]);
-  if (!loaded.data) return null;
+  if (loaded.loading && !loaded.data)
+    return <Spinner label={dict.common.loading} />;
+  if (!loaded.data)
+    return <LoadError error={loaded.error} onRetry={loaded.reload} />;
   return <VoiceForm siteId={siteId} lang={lang} initial={loaded.data} />;
 }
 
