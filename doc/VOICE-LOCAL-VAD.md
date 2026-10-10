@@ -6,6 +6,8 @@ Continuous listening now uses pinned Silero v5 through @ricky0123/vad-web 0.0.31
 
 The adapter owns the inference model and processing node; the hook owns MediaStream and AudioContext. Shutdown cancels callbacks, disconnects the graph, drains the bounded inference queue and releases model memory. Late model/worklet initialization cannot reactivate listening after disable/unmount. ScriptProcessor fallback supports older WebViews; a queue larger than 64 frames is an error rather than unbounded accumulation.
 
+The existing Sandbox daily QA workflow runs the local model and lifecycle suites every day at 06:17 UTC, alongside its browser checks. These local suites need no Soniox credentials and incur no API charges.
+
 Tests: `npm test` includes real-model synthetic ru/uk noise matrix (30 speech and 4 noise-only/silence cases), device lifecycle checks and neural lifecycle checks. Two synthetic phrases are regression coverage for the known constant-noise defect, not broad language/voice acceptance. Local Chromium worklet smoke: synthetic stream produces one completed utterance; after destroy, context closed and tracks ended. Soniox transcription quality and real microphone behavior are separate checks.
 
 Remaining acceptance: real iOS/Android/Telegram devices, short commands, different voices, echo, music/background speakers and slow devices. VAD does not identify the speaker or guarantee rejection of speech from a TV. No claim of complete hands-free/streaming voice acceptance.
