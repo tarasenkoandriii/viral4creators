@@ -3661,3 +3661,8 @@ login_fields_unsupported, без попытки неполного входа. �
 
 Отдельный домен для pull-воркера QA/AI не требуется: входящих портов нет.
 Новый бренд и публичный домен кабинета можно подключить независимо от VPS.
+
+
+### API preview: сборка без миграций
+
+В `backend` и `sites-backend` сборка Vercel Preview генерирует Prisma Client и компилирует Nest без `migrate deploy`. Production и локальная сборка сохраняют обязательные миграции и отказ при ошибке. Preview без собственных runtime переменных базы не является рабочим API; для интеграционных проверок нужна отдельная тестовая база. Production credentials в Preview не копировать. Политика проверяется `node scripts/build-prisma-migrations.test.mjs` в CI.
