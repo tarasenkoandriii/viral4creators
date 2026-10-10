@@ -29,6 +29,7 @@ import {
   Card,
   CopyField,
   inputClass,
+  Spinner,
 } from '../../kit/ui';
 import { useAssist } from '../../lib/assist-context';
 import { openExternal } from '../../lib/open-link';
@@ -43,19 +44,27 @@ import {
   type VoiceControlState,
   type VoiceTestDetail,
 } from '../../lib/voice-control-api';
-import { NoticeBar, type Notice } from '../knowledge/parts';
+import { LoadError, NoticeBar, type Notice } from '../knowledge/parts';
 import { AutotestPanel } from './AutotestPanel';
 import { Field, Toggle } from './controls';
 import { MemoSection } from './MemoSection';
 import { VoiceMapSection } from './VoiceMapSection';
 
 export function VoiceControlSection({ siteId }: { siteId: string }) {
+  return <VoiceControlSectionForSite key={siteId} siteId={siteId} />;
+}
+
+function VoiceControlSectionForSite({ siteId }: { siteId: string }) {
+  const { dict } = useKit();
   const { voiceControl } = useAssist();
   const loaded = useAsync(
     () => voiceControl.get(siteId),
     [voiceControl, siteId]
   );
-  if (!loaded.data) return null;
+  if (loaded.loading && !loaded.data)
+    return <Spinner label={dict.common.loading} />;
+  if (!loaded.data)
+    return <LoadError error={loaded.error} onRetry={loaded.reload} />;
   return <VoiceControlForm siteId={siteId} initial={loaded.data} />;
 }
 
