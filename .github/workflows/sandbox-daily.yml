@@ -21,6 +21,7 @@ jobs:
         working-directory: sandbox
     env:
       SANDBOX_URL: ${{ github.event_name != 'pull_request' && vars.SANDBOX_URL || '' }}
+      ASSIST_SANDBOX_PUBLIC_KEY: ${{ github.event_name != 'pull_request' && vars.ASSIST_SANDBOX_PUBLIC_KEY || '' }}
       ASSIST_API_URL: https://assist-api.viral4creators.app
     steps:
       - uses: actions/checkout@v4
