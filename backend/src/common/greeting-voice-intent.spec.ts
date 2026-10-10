@@ -256,6 +256,9 @@ describe('закрытые списки', () => {
     expect(quickPendingAnswer('Да.')).toBe('confirm');
     expect(quickPendingAnswer('так')).toBe('confirm');
     expect(quickPendingAnswer('Нет!')).toBe('cancel');
+    expect(quickPendingAnswer('Ні.')).toBe('cancel');
+    expect(quickPendingAnswer('Не.')).toBe('cancel');
+    expect(quickPendingAnswer('не меняй имя')).toBeNull();
     expect(quickPendingAnswer('нет, имя Марина')).toBeNull();
     // Согласие при карточке на экране — ответ на карточку (аудит волны K).
     expect(quickPendingAnswer('Згоден.')).toBe('confirm');
