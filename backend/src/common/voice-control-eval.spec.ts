@@ -52,6 +52,45 @@ describe('voice-control synthetic evaluation', () => {
       }),
     ).toBe(false);
   });
+  it('rejects unexpected extra field mutations', () => {
+    expect(
+      matchesControl(
+        result({
+          kind: 'fill',
+          fields: [
+            { target: 'greeting-field-date', value: '2027-03-12' },
+            { target: 'greeting-field-recipient', value: 'Wrong person' },
+          ],
+        }),
+        { kind: 'fill', target: 'greeting-field-date', value: '2027-03-12' },
+      ),
+    ).toBe(false);
+    expect(
+      matchesControl(result({ kind: 'fill', fields: [] }), {
+        kind: 'fill',
+        target: 'greeting-field-date',
+        value: '2027-03-12',
+      }),
+    ).toBe(false);
+  });
+  it('requires every expected field in a mixed-language command', () => {
+    const fields = [
+      { target: 'greeting-field-sender', value: 'Тарас' },
+      { target: 'greeting-field-recipient', value: 'Марина' },
+    ];
+    expect(
+      matchesControl(result({ kind: 'fill', fields: [...fields].reverse() }), {
+        kind: 'fill',
+        fields,
+      }),
+    ).toBe(true);
+    expect(
+      matchesControl(result({ kind: 'fill', fields: [fields[1]] }), {
+        kind: 'fill',
+        fields,
+      }),
+    ).toBe(false);
+  });
   it('includes an isolated Ukrainian negative response in provider acceptance', () => {
     expect(VOICE_CONTROL_SET).toContainEqual({
       id: 'uk-no',

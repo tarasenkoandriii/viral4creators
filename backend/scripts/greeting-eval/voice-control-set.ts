@@ -44,8 +44,10 @@ export const VOICE_CONTROL_SET = [
     lang: 'uk',
     text: 'Отправитель Тарас, одержувач Марина',
     kind: 'fill',
-    target: 'greeting-field-recipient',
-    value: 'Марина',
+    fields: [
+      { target: 'greeting-field-sender', value: 'Тарас' },
+      { target: 'greeting-field-recipient', value: 'Марина' },
+    ],
   },
   {
     id: 'ru-shorter',
