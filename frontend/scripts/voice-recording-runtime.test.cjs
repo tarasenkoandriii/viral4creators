@@ -116,6 +116,15 @@ function environment() {
   });
   global.MediaRecorder = Recorder;
   global.localStorage = { getItem: () => null, setItem() {} };
+  global.__createVAD = async (_stream, _ctx, onFrame) => ({
+    start: async () => {
+      const id = ++serial;
+      intervals.set(id, () => onFrame(0.9, new Float32Array([0.1])));
+    },
+    destroy: async () => {
+      intervals.clear();
+    },
+  });
   global.__voiceHooks = {
     useCallback: (f) => f,
     useRef: (value) => ({ current: value }),
@@ -144,6 +153,10 @@ async function main() {
       {
         name: 'device-harness',
         setup(b) {
+          b.onResolve({ filter: /\/lib\/voice-neural$/ }, () => ({
+            path: 'neural',
+            namespace: 'mock',
+          }));
           b.onResolve({ filter: /^react$/ }, () => ({
             path: 'react',
             namespace: 'mock',
@@ -154,9 +167,11 @@ async function main() {
           }));
           b.onLoad({ filter: /.*/, namespace: 'mock' }, (a) => ({
             contents:
-              a.path === 'react'
-                ? 'module.exports=global.__voiceHooks'
-                : 'export function getTelegramWebApp(){return null;}',
+              a.path === 'neural'
+                ? 'export const createNeuralVoiceDetector=(...args)=>global.__createVAD(...args);'
+                : a.path === 'react'
+                  ? 'module.exports=global.__voiceHooks'
+                  : 'export function getTelegramWebApp(){return null;}',
           }));
         },
       },
@@ -258,6 +273,56 @@ async function main() {
     assert.equal(stream.track.stopped, true);
     assert.equal(context.closed, true);
     assert.equal(intervals.size, 0);
+  });
+  await test('neural model failure closes mic and context', async (make) => {
+    global.__createVAD = async () => {
+      throw Error('model');
+    };
+    const { h } = make();
+    h.enable();
+    await flush();
+    assert.equal(state.notice, 'recording-error');
+    assert.equal(stream.track.stopped, true);
+    assert.equal(context.closed, true);
+  });
+  await test('disable while model loads destroys the stale model', async (make) => {
+    let resolve,
+      destroyed = false,
+      started = false;
+    global.__createVAD = () =>
+      new Promise((r) => {
+        resolve = r;
+      });
+    const { h } = make();
+    h.enable();
+    await flush();
+    h.disable();
+    resolve({
+      start: async () => {
+        started = true;
+      },
+      destroy: async () => {
+        destroyed = true;
+      },
+    });
+    await flush();
+    assert.equal(destroyed, true);
+    assert.equal(started, false);
+    assert.equal(stream.track.stopped, true);
+    assert.equal(state.phase, 'off');
+  });
+  await test('neural noise frames do not open a recorder', async (make) => {
+    let frame;
+    global.__createVAD = async (_s, _c, onFrame) => {
+      frame = onFrame;
+      return { start: async () => {}, destroy: async () => {} };
+    };
+    const { h } = make();
+    h.enable();
+    await flush();
+    for (let i = 0; i < 100; i++) frame(0.01, new Float32Array([0.3]));
+    assert.equal(state.phase, 'listening');
+    h.disable();
   });
   console.log(n + ' runtime checks passed');
 }

@@ -6,6 +6,11 @@ on:
   pull_request:
     paths:
       - "sandbox/**"
+      - "frontend/src/lib/voice-*.ts"
+      - "frontend/src/features/voice/useVoiceListening.ts"
+      - "frontend/scripts/*voice*"
+      - "frontend/scripts/fixtures/voice/**"
+      - "frontend/package*.json"
       - ".github/workflows/sandbox-daily.yml"
 permissions:
   contents: read
@@ -44,3 +49,25 @@ jobs:
             sandbox/playwright-report/
             sandbox/test-results/
           retention-days: 14
+
+  voice-segmentation:
+    name: Local voice regression — speech, noise, device lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Pinned model assets
+        run: node scripts/prepare-voice-vad.mjs
+      - name: Real model — synthetic speech and noise
+        run: npm run test:voice-neural
+      - name: Device cleanup and late initialization
+        run: npm run test:voice-runtime

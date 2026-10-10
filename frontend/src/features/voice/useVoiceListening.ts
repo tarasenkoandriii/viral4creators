@@ -15,6 +15,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  createNeuralVoiceDetector,
+  type NeuralVoiceDetector,
+} from '../../lib/voice-neural';
 import { releaseMicrophone } from '../../lib/mic-recorder';
 import {
   SPEECH_DETECTOR_DEFAULTS,
@@ -42,7 +46,7 @@ import { getTelegramWebApp } from '../../lib/telegram';
 import { isMicBusy } from '../../lib/media-playback';
 
 const ARMED_KEY = 'greeting-voice-listen-armed';
-const CONFIG = SPEECH_DETECTOR_DEFAULTS;
+const CONFIG = { ...SPEECH_DETECTOR_DEFAULTS, frameMs: 32 };
 
 type AudioContextCtor = typeof AudioContext;
 
@@ -176,7 +180,7 @@ export function useVoiceListening(opts: {
   const mountedRef = useRef(true);
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const vadRef = useRef<NeuralVoiceDetector | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const detectorRef = useRef<SpeechDetectorState>(initialDetector(CONFIG));
@@ -192,8 +196,9 @@ export function useVoiceListening(opts: {
 
   const releaseAll = useCallback(() => {
     requestRef.current += 1;
-    if (timerRef.current !== null) window.clearInterval(timerRef.current);
-    timerRef.current = null;
+    const vad = vadRef.current;
+    vadRef.current = null;
+    void vad?.destroy().catch(() => undefined);
     if (talkTimerRef.current !== null)
       window.clearTimeout(talkTimerRef.current);
     talkTimerRef.current = null;
@@ -424,45 +429,51 @@ export function useVoiceListening(opts: {
       }
       try {
         storeArmed();
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 2048;
-        // Граф без выхода в `destination` Safari не крутит вовсе — анализатор
-        // отдаёт нули. Выход через нулевую громкость: граф живёт, в динамике
-        // тишина (своего голоса человек не слышит).
-        const mute = ctx.createGain();
-        mute.gain.value = 0;
-        ctx.createMediaStreamSource(stream).connect(analyser);
-        analyser.connect(mute);
-        mute.connect(ctx.destination);
-        const buf = new Float32Array(analyser.fftSize);
         detectorRef.current = initialDetector(CONFIG);
-        apply({ type: 'granted' });
-        timerRef.current = window.setInterval(() => {
-          const phase = stateRef.current.phase;
-          // Во время разбора детектор на паузе: ответ помощника и
-          // следующая фраза не должны наложиться.
-          if (phase !== 'listening' && phase !== 'recording') return;
-          // Микрофон взяла запись образца голоса — пауза, как под
-          // репликой советника, но без перебивания (изменение контракта 5).
-          if (micBusyRef.current()) {
-            const r = pauseDetector(detectorRef.current);
+        const vad = await createNeuralVoiceDetector(
+          stream,
+          ctx,
+          (probability, samples) => {
+            if (token !== requestRef.current || !mountedRef.current) return;
+            const phase = stateRef.current.phase;
+            // Во время разбора детектор на паузе: ответ помощника и
+            // следующая фраза не должны наложиться.
+            if (phase !== 'listening' && phase !== 'recording') return;
+            // Микрофон взяла запись образца голоса — пауза, как под
+            // репликой советника, но без перебивания (изменение контракта 5).
+            if (micBusyRef.current()) {
+              const r = pauseDetector(detectorRef.current);
+              detectorRef.current = r.state;
+              for (const ev of r.events) onDetector(ev, stream);
+              return;
+            }
+            const playing = playbackRef.current?.isPlaying() ?? false;
+            const r = stepDetector(
+              detectorRef.current,
+              rmsOf(samples),
+              CONFIG,
+              playing,
+              probability
+            );
             detectorRef.current = r.state;
             for (const ev of r.events) onDetector(ev, stream);
-            return;
+          },
+          () => {
+            if (token === requestRef.current && mountedRef.current)
+              recordingError();
           }
-          analyser.getFloatTimeDomainData(buf);
-          const playing = playbackRef.current?.isPlaying() ?? false;
-          const r = stepDetector(
-            detectorRef.current,
-            rmsOf(buf),
-            CONFIG,
-            playing
-          );
-          detectorRef.current = r.state;
-          for (const ev of r.events) onDetector(ev, stream);
-        }, CONFIG.frameMs);
+        );
+        if (!mountedRef.current || token !== requestRef.current) {
+          await vad.destroy();
+          return;
+        }
+        vadRef.current = vad;
+        await vad.start();
+        if (token !== requestRef.current || !mountedRef.current) return;
+        apply({ type: 'granted' });
       } catch {
-        recordingError();
+        if (token === requestRef.current && mountedRef.current)
+          recordingError();
       }
     })();
   }, [apply, onDetector, openStream, recordingError]);

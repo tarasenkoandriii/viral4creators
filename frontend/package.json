@@ -8,17 +8,22 @@
     "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done && npm run test:voice-runtime",
+    "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done && npm run test:voice-runtime && npm run test:voice-neural",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
-    "test:voice-runtime": "node scripts/voice-recording-runtime.test.cjs"
+    "test:voice-runtime": "node scripts/voice-recording-runtime.test.cjs && node scripts/voice-neural-runtime.test.cjs",
+    "prebuild": "node scripts/prepare-voice-vad.mjs",
+    "predev": "node scripts/prepare-voice-vad.mjs",
+    "test:voice-neural": "node scripts/voice-neural-acceptance.test.cjs"
   },
   "dependencies": {
+    "@ricky0123/vad-web": "0.0.31",
     "axios": "^1.6.0",
     "lucide-react": "^0.451.0",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "onnxruntime-web": "1.30.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
@@ -27,6 +32,7 @@
     "@typescript-eslint/parser": "^6.14.0",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "esbuild": "^0.21.5",
     "eslint": "^8.55.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.0.1",
@@ -36,7 +42,6 @@
     "prettier": "^3.1.1",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.2.2",
-    "vite": "^5.0.8",
-    "esbuild": "^0.21.5"
+    "vite": "^5.0.8"
   }
 }

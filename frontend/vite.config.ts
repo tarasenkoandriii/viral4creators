@@ -1,5 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { createReadStream } from 'node:fs';
+import { resolve } from 'node:path';
 import { appBuildVersion, injectAppBuildMeta } from './app-build-meta';
 
 /**
@@ -45,9 +47,36 @@ function appBuildMetaPlugin(): Plugin {
   };
 }
 
+// ONNX dynamically imports its runtime module. Serve generated assets directly
+// in development too: Vite's public-file import transform otherwise rejects it.
+function voiceAssetsPlugin(): Plugin {
+  const files: Record<string, string> = {
+    'ort-wasm-simd-threaded.mjs': 'text/javascript',
+    'ort-wasm-simd-threaded.wasm': 'application/wasm',
+    'silero_vad_v5.onnx': 'application/octet-stream',
+    'vad.worklet.bundle.min.js': 'text/javascript',
+  };
+  return {
+    name: 'voice-model-assets',
+    configureServer(server) {
+      server.middlewares.use('/voice-vad', (req, res, next) => {
+        const file = (req.url ?? '').split('?')[0].slice(1);
+        if (!files[file]) return next();
+        res.setHeader('Content-Type', files[file]);
+        const stream = createReadStream(resolve('public/voice-vad', file));
+        stream.on('error', () => {
+          res.statusCode = 404;
+          res.end();
+        });
+        stream.pipe(res);
+      });
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), appBuildMetaPlugin()],
+  plugins: [react(), appBuildMetaPlugin(), voiceAssetsPlugin()],
   define: {
     __APP_BUILD__: JSON.stringify(buildStamp()),
   },
