@@ -556,6 +556,10 @@ export class WorkerPageExplorer implements PageExplorer {
         return new BadRequestException(
           'кнопка не найдена или не кликается — выберите другой элемент',
         );
+      case 'login_fields_unsupported':
+        return new BadRequestException(
+          'воркер пока поддерживает только логин и пароль или сессию: дополнительные поля входа не поддерживаются',
+        );
       case 'login_form_missing':
         return new LoginFieldsNotFoundError(['password']);
       case 'nav_timeout':

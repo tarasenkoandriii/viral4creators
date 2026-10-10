@@ -32,7 +32,21 @@ export function isHealthy(
 ): boolean {
   try {
     const s = JSON.parse(readFileSync(file, 'utf8')) as HealthState;
-    return typeof s.t === 'number' && now - s.t <= maxAgeMs;
+    const fresh = (t: unknown, age: number) =>
+      typeof t === 'number' &&
+      Number.isFinite(t) &&
+      t > 0 &&
+      t <= now &&
+      now - t <= age;
+    // Successful empty claims count too; transient failures may recover.
+    // Long jobs and browser draining temporarily pause claims.
+    return (
+      fresh(s.t, maxAgeMs) &&
+      s.browser === true &&
+      (fresh(s.lastClaimAt, 90_000) ||
+        ((s.running > 0 || s.draining === true) &&
+          fresh(s.lastClaimAt, 420_000)))
+    );
   } catch {
     return false;
   }

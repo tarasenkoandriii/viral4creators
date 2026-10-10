@@ -399,6 +399,7 @@ describe('режим B / неизвестен (аудит захода 7): от�
       ['offhost_redirect', 't', BadRequestException],
       ['target_missing', 't', BadRequestException],
       ['login_form_missing', 't', LoginFieldsNotFoundError],
+      ['login_fields_unsupported', 't', BadRequestException],
       ['nav_timeout', 't', GatewayTimeoutException],
       ['internal', 't', ServiceUnavailableException],
     ];

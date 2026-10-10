@@ -423,6 +423,117 @@ describeDb('очередь браузерного воркера на Postgres (
     const [j] = await claim();
     return j;
   }
+  it.each([
+    'heartbeat',
+    'markCredentialsIssued',
+    'complete',
+    'putArtifact',
+  ] as const)('просроченная аренда до reap: %s отклоняется', async (action) => {
+    const j = await leasedJob(await site());
+    await prisma.siteBrowserJob.update({
+      where: { id: j.id },
+      data: { leaseUntil: new Date(Date.now() - 1000) },
+    });
+    const before = await prisma.siteBrowserJob.findUniqueOrThrow({
+      where: { id: j.id },
+    });
+    const call =
+      action === 'heartbeat'
+        ? svc.heartbeat(j.id, j.leaseToken)
+        : action === 'markCredentialsIssued'
+          ? svc.markCredentialsIssued(j.id, j.leaseToken)
+          : action === 'complete'
+            ? svc.complete(j.id, j.leaseToken, {})
+            : svc.putArtifact(j.id, j.leaseToken, art());
+    await expect(call).rejects.toMatchObject({ status: 409 });
+    const after = await prisma.siteBrowserJob.findUniqueOrThrow({
+      where: { id: j.id },
+    });
+    expect(after.leaseUntil).toEqual(before.leaseUntil);
+    expect(after.status).toBe('running');
+    expect(after.credentialsAttempt).toBeNull();
+  });
+
+  it('отмена: heartbeat не продлевает аренду, credentials и результат закрыты', async () => {
+    const j = await leasedJob(await site());
+    const row = await prisma.siteBrowserJob.update({
+      where: { id: j.id },
+      data: { cancelRequestedAt: new Date() },
+    });
+    await expect(svc.heartbeat(j.id, j.leaseToken)).resolves.toMatchObject({
+      cancel: true,
+    });
+    await expect(
+      svc.markCredentialsIssued(j.id, j.leaseToken),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(svc.complete(j.id, j.leaseToken, {})).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(
+      (await prisma.siteBrowserJob.findUniqueOrThrow({ where: { id: j.id } }))
+        .leaseUntil,
+    ).toEqual(row.leaseUntil);
+  });
+
+  it.each(['expire', 'cancel'] as const)(
+    'credentials: %s между чтением и UPDATE не выдаёт учётку',
+    async (change) => {
+      const s = await site();
+      const j = await leasedJob(s);
+      await prisma.siteBrowserJob.update({
+        where: { id: j.id },
+        data: {
+          kind: 'admin-crawl',
+          testAccountId: 'lease-regression-account',
+        },
+      });
+      const read = svc.leased.bind(svc);
+      const spy = jest
+        .spyOn(svc, 'leased')
+        .mockImplementationOnce(async (...args) => {
+          const row = await read(...args);
+          await prisma.siteBrowserJob.update({
+            where: { id: j.id },
+            data:
+              change === 'expire'
+                ? { leaseUntil: new Date(Date.now() - 1000) }
+                : { cancelRequestedAt: new Date() },
+          });
+          return row;
+        });
+      try {
+        await expect(
+          svc.markCredentialsIssued(j.id, j.leaseToken),
+        ).rejects.toMatchObject({ status: 409 });
+        expect((await status(j.id)).credentialsAttempt).toBeNull();
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
+
+  it('аренда истекла между чтением и heartbeat UPDATE: продления нет', async () => {
+    const j = await leasedJob(await site());
+    const read = svc.leased.bind(svc);
+    const spy = jest
+      .spyOn(svc, 'leased')
+      .mockImplementationOnce(async (...args) => {
+        const row = await read(...args);
+        await prisma.siteBrowserJob.update({
+          where: { id: j.id },
+          data: { leaseUntil: new Date(Date.now() - 1000) },
+        });
+        return row;
+      });
+    try {
+      await expect(svc.heartbeat(j.id, j.leaseToken)).rejects.toMatchObject({
+        status: 409,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   const art = (idx = 0) => ({
     idx,
     contentType: 'image/jpeg',
