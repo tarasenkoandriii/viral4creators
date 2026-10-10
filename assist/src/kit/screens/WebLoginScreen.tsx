@@ -6,15 +6,7 @@ import {
   type TelegramLoginPayload,
 } from '../web-auth';
 import { Alert, Card, Spinner } from '../ui';
-
-/** Глобальное имя колбэка виджета — своё, чтобы не задеть чужие страницы. */
-const CALLBACK = '__sitesTelegramAuth';
-
-declare global {
-  interface Window {
-    __sitesTelegramAuth?: (user: TelegramLoginPayload) => void;
-  }
-}
+import { readTelegramWidgetMessage } from '../telegram-widget-message';
 
 /**
  * Вход в веб-кабинет — Telegram Login Widget, как у главной админки
@@ -46,25 +38,10 @@ export function WebLoginScreen({
   const ref = useRef<HTMLDivElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Колбэк читает свежий onAuth через ref: глобальная функция ставится
-  // один раз, а родитель может перерисоваться.
+  // Обработчик сообщений читает свежий onAuth через ref.
   const onAuthRef = useRef(onAuth);
   onAuthRef.current = onAuth;
   const failText = t.loginFailed;
-
-  useEffect(() => {
-    window[CALLBACK] = (user: TelegramLoginPayload) => {
-      setBusy(true);
-      setError(null);
-      onAuthRef.current(user).catch(() => {
-        setError(failText);
-        setBusy(false);
-      });
-    };
-    return () => {
-      delete window[CALLBACK];
-    };
-  }, [failText]);
 
   useEffect(() => {
     const box = ref.current;
@@ -74,12 +51,29 @@ export function WebLoginScreen({
     script.src = TELEGRAM_LOGIN_WIDGET_SRC;
     script.setAttribute('data-telegram-login', botUsername.replace(/^@/, ''));
     script.setAttribute('data-size', 'large');
-    script.setAttribute('data-onauth', `${CALLBACK}(user)`);
+    // data-onauth is parsed with eval by Telegram's script. Receive the
+    // same signed payload through its iframe message instead; keep CSP strict.
+    const handleMessage = (event: MessageEvent) => {
+      const frame = box.querySelector('iframe');
+      const user = readTelegramWidgetMessage(
+        event,
+        frame?.contentWindow ?? null
+      );
+      if (!user) return;
+      setBusy(true);
+      setError(null);
+      onAuthRef.current(user).catch(() => {
+        setError(failText);
+        setBusy(false);
+      });
+    };
+    window.addEventListener('message', handleMessage);
     box.appendChild(script);
     return () => {
+      window.removeEventListener('message', handleMessage);
       box.innerHTML = '';
     };
-  }, [botUsername]);
+  }, [botUsername, failText]);
 
   return (
     <div className="mx-auto max-w-md px-4 pt-16 md:pt-24">
