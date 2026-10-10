@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../soniox-observability/soniox-observability.service';
 /**
  * Распознавание команды сотрудника «Админки» — Soniox async (Э6-бис (б),
  * ТЗ помощника §4.10 «„Админка“: голосовые команды — тот же путь
@@ -20,11 +21,12 @@
  */
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { hmacKeyList, type HmacKeys } from '../../common/secrets-keyring';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { SONIOX_API_BASE, sonioxApiKey } from '../../shared/soniox';
 import {
   billedSeconds,
   sonioxTranscriptText,
+  sonioxSpeechConfidence,
   sonioxTranscriptionBody,
   type SonioxToken,
 } from '../../shared/soniox-stt-core';
@@ -134,6 +136,7 @@ export interface AdminSttResult {
   text: string | null;
   reason?: 'no_key' | 'empty' | 'no_speech' | 'error' | 'timeout';
   language: string | null;
+  speechConfidence?: number;
   seconds: number;
   /** Задача у Soniox создана — вызов оплачен, даже без текста. */
   billable: boolean;
@@ -160,6 +163,7 @@ function errName(e: unknown): string {
 @Injectable()
 export class AdminSonioxStt {
   private readonly logger = new Logger(AdminSonioxStt.name);
+  constructor(@Optional() private readonly telemetry?: SonioxObservability) {}
   /** Тесты подменяют сеть, env и сроки. */
   fetch: typeof fetch = (...a) => fetch(...a);
   env: NodeJS.ProcessEnv = process.env;
@@ -173,6 +177,19 @@ export class AdminSonioxStt {
 
   /** Никогда не бросает: отказ провайдера — `text: null` с причиной. */
   async transcribe(req: {
+    audio: Buffer;
+    mimeType: string;
+    languageHints: readonly string[];
+    /** `context.terms` — имена и фразы мемо «Админки» (admin-stt-terms.ts). */
+    terms?: readonly string[];
+  }): Promise<AdminSttResult> {
+    return this.telemetry
+      ? this.telemetry.track('stt', 'administrator', () =>
+          this.transcribeImpl(req),
+        )
+      : this.transcribeImpl(req);
+  }
+  private async transcribeImpl(req: {
     audio: Buffer;
     mimeType: string;
     languageHints: readonly string[];
@@ -259,6 +276,11 @@ export class AdminSonioxStt {
           return parsed.text
             ? {
                 text: parsed.text,
+                ...(sonioxSpeechConfidence(t.tokens ?? []) !== null
+                  ? {
+                      speechConfidence: sonioxSpeechConfidence(t.tokens ?? [])!,
+                    }
+                  : {}),
                 language: parsed.language,
                 seconds,
                 billable: true,

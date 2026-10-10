@@ -1,3 +1,8 @@
+import { PrismaService } from '../../../prisma/prisma.service';
+import {
+  SonioxObservability,
+  sonioxContext,
+} from '../../soniox-observability/soniox-observability.service';
 /**
  * Живой прогон приёмки Э5 п.3 — WER распознавания украинской речи на 30
  * записях (`npm run eval:voice`). Нужны: записи дикторов в
@@ -38,7 +43,16 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
-  const stt = new SiteSonioxStt();
+  const db = process.env.SITES_DATABASE_URL ? new PrismaService() : undefined;
+  const telemetry = db ? new SonioxObservability(db) : undefined;
+  sonioxContext.enterWith({
+    source: 'qa/site-voice-wer',
+    actorRole: 'qa',
+    actorId: null,
+    accountId: null,
+    siteId: null,
+  });
+  const stt = new SiteSonioxStt(telemetry);
   if (!stt.configured()) {
     console.error('SONIOX_API_KEY не задан');
     process.exit(2);
@@ -72,6 +86,7 @@ async function main(): Promise<void> {
   console.log(
     `ИТОГО: записей ${items.length}/${VOICE_EVAL_SIZE}, слов ${rep.words}, правок ${rep.edits}, WER ${(rep.wer * 100).toFixed(1)}% (порог ${VOICE_WER_THRESHOLD * 100}%)`,
   );
+  await db?.$disconnect();
   process.exit(
     items.length >= VOICE_EVAL_SIZE && rep.wer <= VOICE_WER_THRESHOLD ? 0 : 1,
   );

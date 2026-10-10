@@ -1,3 +1,4 @@
+import { SonioxObservabilityModule } from './modules/soniox-observability/soniox-observability.module';
 /**
  * AppModule
  *
@@ -100,6 +101,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
 @Global()
 @Module({
   imports: [
+    SonioxObservabilityModule,
     PrismaModule,
     StorageModule,
     ApiKeyModule,

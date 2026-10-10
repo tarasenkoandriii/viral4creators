@@ -1,3 +1,4 @@
+import { AdminSonioxController } from './admin-soniox.controller';
 import { Module } from '@nestjs/common';
 import { WizardGuideModule } from '../wizard-guide/wizard-guide.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
@@ -76,6 +77,7 @@ import { AdminAssistClient } from './admin-assist.client';
   // sites-backend (без DSN схемы sites в генераторе).
   // П-Т9 (заход 7): выключатель и суточные потолки обучалки по сайту.
   controllers: [
+    AdminSonioxController,
     AdminPanelController,
     AdminAssistController,
     AdminSiteTutorialSettingsController,

@@ -1,3 +1,4 @@
+import { sonioxScope } from '../soniox-observability/soniox-context';
 /**
  * Голосовой ввод команды сотрудника «Админки» (Э6-бис (б), §4.10, §5-бис.7;
  * Р-Э6б-2): `POST /assist-admin/v1/voice` — запись → Soniox → текст + билет
@@ -80,6 +81,12 @@ export class AdminVoiceInputService {
       // Деньги — до провайдера (суточный потолок «Админки» сайта).
       await this.chat.assertDailyBudget(this.plans.employee(s), now);
       // Подсказки распознаванию — только мемо «Админки» этого сайта.
+      sonioxScope({
+        accountId: s.accountId,
+        siteId: s.siteId,
+        actorId: s.employeeRef ?? null,
+        actorRole: 'administrator',
+      });
       const r = await this.stt.transcribe({
         audio,
         mimeType: mime,

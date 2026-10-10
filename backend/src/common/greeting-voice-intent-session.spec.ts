@@ -1020,7 +1020,7 @@ describe('аудит волны K2', () => {
     });
   });
 
-  it('«короче» — честный отказ, и инструкция не обещает его выполнить', () => {
+  it('«короче» — команда сокращения с ручным сохранением', () => {
     const r = resolveIntent(
       normalizeModelAnswer({
         kind: 'command',
@@ -1031,11 +1031,11 @@ describe('аудит волны K2', () => {
       ctx(),
     );
     expect(r).toMatchObject({
-      intent: { kind: 'unknown' },
-      reply: t.shorterByHand,
+      intent: { kind: 'command', command: 'shorter' },
+      reply: null,
     });
     expect(buildUnderstandPrompt('…', ctx())).toContain(
-      'голосом это пока не выполняется',
+      'результат показывается для проверки и ручного сохранения',
     );
   });
 });

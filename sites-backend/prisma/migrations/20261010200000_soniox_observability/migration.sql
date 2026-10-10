@@ -1,0 +1,3 @@
+CREATE TABLE sites."soniox_events" ("id" TEXT PRIMARY KEY, "operation" TEXT NOT NULL, "source" TEXT NOT NULL, "actor_role" TEXT NOT NULL, "actor_id" TEXT, "account_id" TEXT, "site_id" TEXT, "started_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "finished_at" TIMESTAMP(3), "status" TEXT NOT NULL DEFAULT 'running', "reason_code" TEXT, "elapsed_ms" INTEGER, "seconds" DOUBLE PRECISION NOT NULL DEFAULT 0, "characters" INTEGER NOT NULL DEFAULT 0, "words" INTEGER NOT NULL DEFAULT 0, "language" TEXT, "confidence" DOUBLE PRECISION);
+CREATE INDEX "soniox_events_started_at_idx" ON sites."soniox_events" ("started_at");
+CREATE INDEX "soniox_events_status_started_at_idx" ON sites."soniox_events" ("status", "started_at");

@@ -116,6 +116,7 @@ export interface GreetingVoiceResult {
    * отказ входа (выключатель оператора, нужен вход, лимит аккаунта).
    */
   reason?: VoiceReason | null;
+  speechConfidence?: number | null;
 }
 
 /** Результат «запись длиннее минуты» — без платного разбора. */
@@ -334,6 +335,7 @@ export class GreetingVoiceService {
         text: stripNonSpeech(r.text),
         reason: r.reason,
         language: r.language ?? null,
+        speechConfidence: r.speechConfidence ?? null,
       };
     };
 
@@ -360,14 +362,32 @@ export class GreetingVoiceService {
     const retried = allowed
       ? await run(true)
       : needRetry
-        ? { text: null, reason: undefined, language: null }
+        ? {
+            text: null,
+            reason: undefined,
+            language: null,
+            speechConfidence: null,
+          }
         : undefined;
     // Язык речи — по ПЕРВОЙ попытке: повтор идёт со строгими
     // подсказками (`language_hints_strict`) и тянет определение к ним,
     // а первая слушала свободно. Повтор — только если первая языка не
     // сообщила.
     const language = first.language ?? retried?.language ?? null;
-    return settleGreetingVoice(first.text, retried?.text, hints, language);
+    const settled = settleGreetingVoice(
+      first.text,
+      retried?.text,
+      hints,
+      language,
+    );
+    // Метрика принадлежит выбранной расшифровке, а не первой попытке.
+    const selected = retried?.text ? retried : first;
+    return {
+      ...settled,
+      ...(typeof selected.speechConfidence === 'number'
+        ? { speechConfidence: selected.speechConfidence }
+        : {}),
+    };
   }
 
   private async load(sessionId: string): Promise<Session> {

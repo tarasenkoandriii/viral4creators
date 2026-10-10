@@ -1,3 +1,4 @@
+import type { SonioxObservability } from '../../src/modules/soniox-observability/soniox-observability.service';
 /**
  * Живые провайдеры замеров — клиенты продукта, без своих копий запросов:
  *
@@ -114,7 +115,9 @@ function mp3ToPcm(mp3: Buffer): Float32Array {
   }
 }
 
-export async function liveProviders(): Promise<Providers> {
+export async function liveProviders(
+  telemetry?: SonioxObservability,
+): Promise<Providers> {
   const tap = usageTap();
   const [{ GreetingRegisterClassifier }, { SonioxTtsService }, voice, stt] =
     await Promise.all([
@@ -141,8 +144,8 @@ export async function liveProviders(): Promise<Providers> {
         noMemory,
       ]) as InstanceType<typeof GreetingRegisterClassifier>)
     : null;
-  const tts = new SonioxTtsService();
-  const soniox = new stt.SonioxSttClient();
+  const tts = new SonioxTtsService(telemetry);
+  const soniox = new stt.SonioxSttClient(undefined, telemetry);
   const transcription = new voice.VoiceTranscriptionService(
     tap.aiUsage as never,
     { get: async () => null } as never,
@@ -187,6 +190,7 @@ export async function liveProviders(): Promise<Providers> {
         return {
           text: r.text,
           language: r.language ?? null,
+          speechConfidence: r.speechConfidence ?? null,
           reason: r.reason,
           micro: r.billable
             ? estimateCost('soniox-stt-async', { seconds: r.seconds })

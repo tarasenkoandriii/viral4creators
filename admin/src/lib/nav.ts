@@ -103,6 +103,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/ui-snapshots', label: 'Снимки интерфейса' },
       { href: '/testing', label: 'Тестирование' },
       { href: '/telemetry', label: 'Телеметрия' },
+      { href: '/soniox', label: 'Soniox: голос и ошибки' },
       { href: '/settings', label: 'Настройки' },
     ],
   },

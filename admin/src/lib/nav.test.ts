@@ -28,7 +28,7 @@ const appDir = path.join(__dirname, '..', 'app');
 
 // ── 1 ──
 const hrefs = ALL_NAV_LINKS.map((l) => l.href);
-assert.equal(hrefs.length, 31, 'в меню 31 рабочая страница');
+assert.equal(hrefs.length, 32, 'в меню 32 рабочие страницы');
 assert.equal(new Set(hrefs).size, hrefs.length, 'без дублей');
 assert.equal(NAV_GROUPS.length, 8, 'восемь групп');
 for (const g of NAV_GROUPS) {
@@ -51,7 +51,7 @@ assert.deepEqual([...topLevelPages].sort(), [...hrefs].sort(), 'меню пок�
 const ops = NAV_GROUPS.find((g) => g.key === 'ops');
 assert.deepEqual(
   ops?.links.map((l) => l.href),
-  ['/cron', '/ui-snapshots', '/testing', '/telemetry', '/settings'],
+  ['/cron', '/ui-snapshots', '/testing', '/telemetry', '/soniox', '/settings'],
 );
 
 // ── 2 ──

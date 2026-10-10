@@ -38,7 +38,7 @@ export interface ListenState {
   /** Куда вернуться после разбора: в прослушивание или к кнопке. */
   resumeTo: 'listening' | 'off';
   /** Почему микрофон закрыт — чтобы сказать об этом, а не молчать. */
-  notice: 'idle' | 'denied' | null;
+  notice: 'idle' | 'denied' | 'recording-error' | null;
   /**
    * Номер отрезка на разборе. Растёт при каждой отправке и при каждом
    * выключении: ответ приходит асинхронно, и `processed` со старым
@@ -53,6 +53,7 @@ export type ListenEvent =
   | { type: 'enable' }
   | { type: 'granted' }
   | { type: 'denied' }
+  | { type: 'recording-error' }
   | { type: 'speech-start' }
   | { type: 'utterance'; keep: boolean }
   | { type: 'idle-timeout' }
@@ -98,6 +99,14 @@ export function listenReducer(
       return phase === 'requesting' || phase === 'holding'
         ? { ...state, phase: 'off', resumeTo: 'off', notice: 'denied' }
         : state;
+    case 'recording-error':
+      return {
+        ...state,
+        phase: 'off',
+        resumeTo: 'off',
+        notice: 'recording-error',
+        seq: state.seq + 1,
+      };
     case 'speech-start':
       return phase === 'listening' ? { ...state, phase: 'recording' } : state;
     case 'utterance':

@@ -301,3 +301,20 @@ check('потолок снят сменой тарифа — к кнопке, н
 
 console.log(failed ? `\n${failed} провалено` : `\n${passed} проверок пройдено`);
 if (failed) process.exit(1);
+
+for (const phase of [
+  'requesting',
+  'listening',
+  'recording',
+  'processing',
+  'holding',
+] as const) {
+  const before = { ...LISTEN_INITIAL, phase, seq: 4 };
+  const after = listenReducer(before, { type: 'recording-error' });
+  if (
+    after.phase !== 'off' ||
+    after.notice !== 'recording-error' ||
+    isCurrentUtterance(after, 4)
+  )
+    throw new Error('Ошибка записи не остановила ' + phase);
+}

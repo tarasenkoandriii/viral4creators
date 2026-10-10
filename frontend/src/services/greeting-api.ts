@@ -636,6 +636,19 @@ export async function listGreetingPresetVoices(
 
 // ── Сценарий + видео (§5.1–§5.3 ТЗ) ─────────────────────────────────────
 
+export async function shortenGreetingScript(
+  sessionId: string,
+  text: string
+): Promise<{ text: string }> {
+  return unwrap(
+    await api.post<{ text: string }>(
+      `/sessions/${sessionId}/greeting-prompt/shorten`,
+      { text }
+    ),
+    'greeting-script-shorten'
+  );
+}
+
 export async function generateGreetingPrompt(
   sessionId: string
 ): Promise<GenerationPrompt> {

@@ -65,7 +65,7 @@ describe('миграции схемы sites', () => {
     const unknown: string[] = [];
     for (const m of migs) {
       for (const r of m.sql.matchAll(
-        /(?:ALTER|CREATE) TABLE(?: IF NOT EXISTS)?\s+"([^"]+)"/g,
+        /(?:ALTER|CREATE) TABLE(?: IF NOT EXISTS)?\s+(?:(?:"sites"|sites)\.)?"([^"]+)"/g,
       )) {
         if (!tables.has(r[1]) && !DROPPED_TABLES.has(r[1])) {
           unknown.push(`${m.name}: "${r[1]}"`);
@@ -79,7 +79,7 @@ describe('миграции схемы sites', () => {
     const created = new Set<string>();
     for (const m of migs) {
       for (const r of m.sql.matchAll(
-        /CREATE TABLE(?: IF NOT EXISTS)?\s+"([^"]+)"/g,
+        /CREATE TABLE(?: IF NOT EXISTS)?\s+(?:(?:"sites"|sites)\.)?"([^"]+)"/g,
       )) {
         created.add(r[1]);
       }

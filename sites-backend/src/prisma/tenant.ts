@@ -215,6 +215,8 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
  * Модели вне тенанта — с причиной, почему.
  */
 export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
+  SonioxEvent:
+    'глобальный operational-журнал провайдера; чтение только оператором через внутренний API',
   SiteOptOutDomain: 'глобальный справочник отказов, общий для всех кабинетов',
   // Сессия — личность Telegram (кто вошёл), а не членство: один человек в
   // нескольких кабинетах — одна сессия; кабинет и роль проверяются на

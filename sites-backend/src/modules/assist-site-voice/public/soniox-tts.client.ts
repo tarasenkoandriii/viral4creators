@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../../soniox-observability/soniox-observability.service';
 /**
  * Озвучка ответа — Soniox TTS (Э5, ТЗ помощника §4.10 «Вывод», §7.2: для
  * массового виджета — самый дешёвый провайдер с приемлемым украинским,
@@ -10,7 +11,7 @@
  * (§6.6), каталог голосов кэшируется в памяти экземпляра на час (кабинет
  * зовёт его при каждом открытии экрана персоны).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import {
   SONIOX_API_BASE,
   SONIOX_TTS_BASE,
@@ -70,6 +71,7 @@ interface TtsModels {
 @Injectable()
 export class SiteSonioxTts {
   private readonly logger = new Logger(SiteSonioxTts.name);
+  constructor(@Optional() private readonly telemetry?: SonioxObservability) {}
   fetch: typeof fetch = (...a) => fetch(...a);
   env: NodeJS.ProcessEnv = process.env;
   private catalog: { at: number; voices: VoiceChoice[] } | null = null;
@@ -92,6 +94,11 @@ export class SiteSonioxTts {
   }
 
   async synthesize(req: SiteTtsRequest): Promise<SiteTtsResult> {
+    return this.telemetry
+      ? this.telemetry.track('tts', 'system', () => this.synthesizeImpl(req))
+      : this.synthesizeImpl(req);
+  }
+  private async synthesizeImpl(req: SiteTtsRequest): Promise<SiteTtsResult> {
     const key = sonioxApiKey(this.env);
     if (!key) return { ok: false, reason: 'no_key' };
     const text = req.text.trim().slice(0, SONIOX_TTS_MAX_CHARACTERS);
@@ -139,6 +146,11 @@ export class SiteSonioxTts {
 
   /** Голоса модели (справочник `GET /v1/tts-models`); ошибка — пустой список. */
   async voices(now: number = Date.now()): Promise<VoiceChoice[]> {
+    return this.telemetry
+      ? this.telemetry.track('catalog', 'system', () => this.voicesImpl(now))
+      : this.voicesImpl(now);
+  }
+  private async voicesImpl(now: number): Promise<VoiceChoice[]> {
     if (this.catalog && now - this.catalog.at < CATALOG_TTL_MS) {
       return this.catalog.voices;
     }

@@ -474,6 +474,40 @@ describe('разбор реплики — путь целиком', () => {
     expect(b.generateContent).not.toHaveBeenCalled();
   });
 
+  it('низкая STT-уверенность блокирует быстрое «да»', async () => {
+    const b = build({ recognized: { text: 'да', speechConfidence: 0.3 } });
+    const result = await project(b, {
+      pending: {
+        kind: 'fill',
+        fields: [{ target: 'greeting-field-recipient', value: 'Марина' }],
+      },
+    });
+    expect(b.generateContent).not.toHaveBeenCalled();
+    expect(result.intent).toEqual({ kind: 'unknown' });
+    expect(result.confidence).toBe(0.3);
+  });
+
+  it('уверенность Soniox ограничивает согласие даже при уверенной модели', async () => {
+    const b = build({
+      recognized: { text: 'генерируй', speechConfidence: 0.7 },
+      model: { kind: 'consent', confidence: 0.99 },
+      session: {
+        id: SID,
+        userId: 'u-1',
+        locale: 'ru',
+        greetingBriefSnapshot: snapshot(),
+        generationPrompt: { finalText: 'x' },
+      },
+    });
+    const result = await b.service.understandForSession(
+      SID,
+      { pathname: SPATH, screen: SCREEN } as any,
+      'ru',
+    );
+    expect(result.intent).toEqual({ kind: 'unknown' });
+    expect(result.reply).toMatch(/расслышал/);
+  });
+
   it('дважды латиницей (K2 scriptMismatch) — текст показан, но не разобран', async () => {
     const b = build({
       recognized: { text: 'Marina', scriptMismatch: true },

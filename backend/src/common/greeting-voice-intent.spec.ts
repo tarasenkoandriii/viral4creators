@@ -767,8 +767,8 @@ describe('команды', () => {
     });
     // «Короче» — честный отказ с подсказкой, как руками (аудит волны K, B1).
     const shorter = cmd('shorter', ctx({ scope: 'session', hasScript: true }));
-    expect(shorter.intent).toEqual({ kind: 'unknown' });
-    expect(shorter.reply).toBe(REPLIES.ru.shorterByHand);
+    expect(shorter.intent).toEqual({ kind: 'command', command: 'shorter' });
+    expect(shorter.reply).toBeNull();
   });
 
   it('команда без имени из списка — unknown', () => {

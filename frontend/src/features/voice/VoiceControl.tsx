@@ -169,6 +169,11 @@ export function VoiceControl({
           {v.idleStopped}
         </p>
       )}
+      {state.notice === 'recording-error' && (
+        <p className="text-xs text-amber-600 dark:text-amber-400" role="status">
+          {v.recordingError}
+        </p>
+      )}
       {state.notice === 'denied' && (
         <p className="text-xs text-amber-600 dark:text-amber-400" role="status">
           {v.denied}

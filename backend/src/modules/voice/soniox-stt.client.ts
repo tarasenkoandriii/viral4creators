@@ -1,3 +1,4 @@
+import { SonioxObservability } from '../soniox-observability/soniox-observability.service';
 /**
  * SonioxSttClient — короткая запись → текст через асинхронный API Soniox.
  * Вариант распознавания рядом с Gemini, выбирается в админке
@@ -49,6 +50,7 @@ import {
 import {
   billedSeconds,
   sonioxTranscriptText,
+  sonioxSpeechConfidence,
   sonioxTranscriptionBody,
   type SonioxSttRequest,
   type SonioxToken,
@@ -88,6 +90,7 @@ export interface SonioxSttResult {
    * отвергает запись длиннее минуты (финальный аудит ветки K).
    */
   audioMs?: number | null;
+  speechConfidence?: number | null;
 }
 
 /**
@@ -507,7 +510,10 @@ export class SonioxSttClient {
    * База — для очереди неудалённого (C4). Необязательна: без неё (тесты,
    * сборка без Prisma) неудалённое, как прежде, только пишется в лог.
    */
-  constructor(@Optional() private readonly prisma?: PrismaService) {}
+  constructor(
+    @Optional() private readonly prisma?: PrismaService,
+    @Optional() private readonly telemetry?: SonioxObservability,
+  ) {}
 
   configured(): boolean {
     return !!sonioxApiKey();
@@ -525,6 +531,13 @@ export class SonioxSttClient {
    * получает не больше, чем от него осталось.
    */
   async transcribe(req: SonioxSttRequest): Promise<SonioxSttResult> {
+    return this.telemetry
+      ? this.telemetry.track('stt', 'system', () => this.transcribeImpl(req))
+      : this.transcribeImpl(req);
+  }
+  private async transcribeImpl(
+    req: SonioxSttRequest,
+  ): Promise<SonioxSttResult> {
     const key = sonioxApiKey();
     if (!key)
       return { text: null, reason: 'SONIOX_API_KEY not set', seconds: 0 };
@@ -599,6 +612,13 @@ export class SonioxSttClient {
                 text: parsed.text,
                 seconds,
                 language: parsed.language,
+                ...(sonioxSpeechConfidence(transcript.tokens ?? []) !== null
+                  ? {
+                      speechConfidence: sonioxSpeechConfidence(
+                        transcript.tokens ?? [],
+                      ),
+                    }
+                  : {}),
                 billable: true,
                 ...(audioMs !== null ? { audioMs } : {}),
               }

@@ -7,6 +7,7 @@ import {
   dominantSonioxLanguage,
   sonioxTranscriptText,
   sonioxTranscriptionBody,
+  sonioxSpeechConfidence,
 } from './soniox-stt-core';
 
 // Копия этого спека проверяет копию модуля в sites-backend
@@ -53,5 +54,39 @@ describe('soniox-stt-core', () => {
   it('секунды счёта — по длительности Soniox, иначе по токенам', () => {
     expect(billedSeconds(2345, 1)).toBe(2.3);
     expect(billedSeconds(null, 1.5)).toBe(1.5);
+  });
+});
+
+describe('speech confidence and service markers', () => {
+  it('слабое слово не скрывается средней оценкой и служебными токенами', () => {
+    expect(
+      sonioxSpeechConfidence([
+        { text: 'да', confidence: 0.3 },
+        { text: ' верно', confidence: 0.99 },
+        { text: '<end>', confidence: 0 },
+      ]),
+    ).toBe(0.3);
+    expect(
+      sonioxSpeechConfidence([
+        { text: '[noise]', is_audio_event: true, confidence: 0 },
+        { text: 'так', confidence: 0.9 },
+      ]),
+    ).toBe(0.9);
+  });
+  it('отсутствующая/невалидная метрика — null', () => {
+    expect(
+      sonioxSpeechConfidence([
+        { text: 'да' },
+        { text: 'да', confidence: NaN },
+        { text: 'да', confidence: 2 },
+      ]),
+    ).toBeNull();
+  });
+  it('финализация не попадает в речь', () => {
+    expect(
+      sonioxTranscriptText({
+        tokens: [{ text: 'назад' }, { text: '<fin>' }, { text: '<end>' }],
+      }).text,
+    ).toBe('назад');
   });
 });

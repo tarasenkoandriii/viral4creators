@@ -33,6 +33,7 @@ export interface SonioxToken {
   language?: string;
   end_ms?: number;
   is_audio_event?: boolean;
+  confidence?: number;
 }
 
 /**
@@ -58,7 +59,7 @@ export function sonioxTranscriptText(transcript: {
 }): { text: string | null; seconds: number; language: string | null } {
   const tokens = transcript.tokens ?? [];
   const spoken = tokens.filter(
-    (t) => t.text !== '<end>' && t.is_audio_event !== true,
+    (t) => !/^<[^>]+>$/.test(t.text ?? '') && t.is_audio_event !== true,
   );
   const joined = tokens.length
     ? spoken.map((t) => t.text ?? '').join('')
@@ -74,6 +75,25 @@ export function sonioxTranscriptText(transcript: {
     seconds: Math.round(lastEnd / 100) / 10,
     language: dominantSonioxLanguage(spoken),
   };
+}
+
+/** Минимальная уверенность речевых токенов; отсутствие метрики не означает 100%. */
+export function sonioxSpeechConfidence(
+  tokens: readonly SonioxToken[],
+): number | null {
+  const scores = tokens
+    .filter(
+      (t) =>
+        t.is_audio_event !== true &&
+        /[\p{L}\p{N}]/u.test(t.text ?? '') &&
+        !/^<[^>]+>$/.test(t.text ?? ''),
+    )
+    .map((t) => t.confidence)
+    .filter(
+      (n): n is number =>
+        typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1,
+    );
+  return scores.length ? Math.min(...scores) : null;
 }
 
 /**

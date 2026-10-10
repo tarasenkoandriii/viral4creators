@@ -1679,6 +1679,10 @@
     }
   },
   "greetingVideoWizard": {
+    "shortenScriptButton": "Text kürzen",
+    "shorteningScript": "Wird gekürzt…",
+    "shortenScriptHint": "Prüfen Sie den gekürzten Text und speichern Sie ihn. Das gespeicherte Skript bleibt bis dahin unverändert.",
+
     "title": "Grußvideo",
     "hint": "Ein persönliches Video-Grußwort: Anlass, Empfänger, Ton — den Rest übernimmt das Skript.",
     "occasionLabel": "Anlass",
@@ -1918,6 +1922,7 @@
     "talkDone": "Fertig",
     "idleStopped": "20 Sekunden Stille — das Mikrofon ist aus. Tippe auf „Sprachsteuerung“, um fortzufahren.",
     "denied": "Kein Mikrofonzugriff — erlaube ihn in den Einstellungen oder tippe stattdessen.",
+    "recordingError": "Die Aufnahme wurde unterbrochen. Das Mikrofon ist aus; versuchen Sie es erneut oder tippen Sie.",
     "unsupported": "Dieser Browser kann keinen Ton aufnehmen — bitte tippen.",
     "notHeard": "Nicht verstanden, bitte wiederholen.",
     "unavailable": "Spracherkennung nicht verfügbar — bitte von Hand eingeben.",

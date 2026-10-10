@@ -7,7 +7,7 @@
  * требовала листать остальные. Поведение и `data-qa` — без изменений.
  */
 
-import { useState, useEffect, useId } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { Check, Pencil, RefreshCw } from 'lucide-react';
 import {
   Card,
@@ -21,6 +21,7 @@ import { useI18n } from '../../../lib/i18n-context';
 import {
   updateGreetingScript,
   generateGreetingPrompt,
+  shortenGreetingScript,
   greetingErrorMessage,
 } from '../../../services/greeting-api';
 import { type GenerationPrompt, ModerationStatus } from '../../../types';
@@ -85,7 +86,7 @@ export function ScriptStep({
   }, [current]);
 
   const saveText = async () => {
-    if (videoBusy) return;
+    if (videoBusy || loading || savingText || shortening) return;
     setSavingText(true);
     setError(null);
     setSavedText(false);
@@ -104,7 +105,7 @@ export function ScriptStep({
   };
 
   const generate = async () => {
-    if (videoBusy) return;
+    if (videoBusy || loading || savingText || shortening) return;
     setLoading(true);
     setError(null);
     try {
@@ -115,6 +116,52 @@ export function ScriptStep({
       setLoading(false);
     }
   };
+
+  const [shortening, setShortening] = useState(false);
+  const editVersion = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    editVersion.current += 1;
+  }, [text, current, videoBusy, sessionId]);
+  const shorten = async () => {
+    if (!prompt || videoBusy || loading || savingText || shortening) return;
+    const version = editVersion.current;
+    setShortening(true);
+    setError(null);
+    try {
+      const result = await shortenGreetingScript(sessionId, text);
+      if (mounted.current && version === editVersion.current) {
+        setText(result.text);
+        setSavedText(false);
+      }
+    } catch (e) {
+      if (mounted.current) setError(greetingErrorMessage(e, dict));
+    } finally {
+      if (mounted.current) setShortening(false);
+    }
+  };
+  useVoiceCommand(
+    'shorter',
+    !prompt || videoBusy || loading || savingText || shortening
+      ? null
+      : {
+          propose: () => ({
+            kind: 'propose',
+            card: {
+              kind: 'action',
+              command: 'shorter',
+              label: w.shortenScriptButton,
+            },
+          }),
+          run: () => void shorten(),
+        }
+  );
 
   // Голос в поле правки (K5): ПОЛНЫЙ текст в то же поле, что `onChange`,
   // с тем же потолком; сохраняет человек той же кнопкой — сервер
@@ -127,10 +174,11 @@ export function ScriptStep({
     apply: (fields) => {
       const plan = planScriptVoice(
         !!prompt,
-        loading || savingText || videoBusy,
+        loading || savingText || shortening || videoBusy,
         fields
       );
       if (plan.text !== undefined) {
+        editVersion.current += 1;
         setText(plan.text);
         setSavedText(false);
       }
@@ -147,7 +195,7 @@ export function ScriptStep({
   // кнопки нет — нет и команды (сервер ответил бы 409).
   useVoiceCommand(
     'regenerate-script',
-    videoDone || loading || videoBusy
+    videoDone || loading || savingText || shortening || videoBusy
       ? null
       : {
           propose: () => ({
@@ -169,6 +217,19 @@ export function ScriptStep({
         action={<HelpButton cardHook="greeting-script-card" />}
       />
       {error && <Alert tone="error">{error}</Alert>}
+      {prompt && (
+        <div className="mb-3 space-y-1">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={videoBusy || loading || savingText || shortening}
+            onClick={() => void shorten()}
+          >
+            {shortening ? w.shorteningScript : w.shortenScriptButton}
+          </Button>
+          <p className="text-xs text-silver-500">{w.shortenScriptHint}</p>
+        </div>
+      )}
       {prompt ? (
         <div className="space-y-3">
           <Field
@@ -187,6 +248,7 @@ export function ScriptStep({
               rows={4}
               value={text}
               onChange={(e) => {
+                editVersion.current += 1;
                 setText(e.target.value.slice(0, 2000));
                 setSavedText(false);
               }}
@@ -211,6 +273,7 @@ export function ScriptStep({
                 !text.trim() ||
                 text.trim() === current.trim() ||
                 loading ||
+                shortening ||
                 videoBusy
               }
               onClick={() => void saveText()}
@@ -224,7 +287,7 @@ export function ScriptStep({
                 size="sm"
                 icon={<RefreshCw size={14} />}
                 loading={loading}
-                disabled={savingText || videoBusy}
+                disabled={savingText || shortening || videoBusy}
                 onClick={() => void generate()}
               >
                 {w.regenerateScriptButton}

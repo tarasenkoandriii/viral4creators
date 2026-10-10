@@ -1679,6 +1679,10 @@
     }
   },
   "greetingVideoWizard": {
+    "shortenScriptButton": "Acortar texto",
+    "shorteningScript": "Acortando…",
+    "shortenScriptHint": "Revise el texto y pulse Guardar. El guion guardado no cambia automáticamente.",
+
     "title": "Vídeo de felicitación",
     "hint": "Un vídeo de felicitación personal: ocasión, destinatario, tono — el guion se encarga del resto.",
     "occasionLabel": "Ocasión",
@@ -1918,6 +1922,7 @@
     "talkDone": "Listo",
     "idleStopped": "20 segundos de silencio — el micrófono se ha apagado. Toca «Control por voz» para continuar.",
     "denied": "Sin acceso al micrófono — permítelo en los ajustes o escribe a mano.",
+    "recordingError": "La grabación se interrumpió. El micrófono está apagado; inténtelo de nuevo o escriba.",
     "unsupported": "Este navegador no puede grabar audio — escribe a mano.",
     "notHeard": "No te he oído bien, repite.",
     "unavailable": "El reconocimiento de voz no está disponible — escribe a mano.",

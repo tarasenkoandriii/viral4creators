@@ -10,13 +10,22 @@
  * POST /projects/:id/greeting-brief/sessions route.
  */
 
-import { Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Param, Post } from '@nestjs/common';
 import { GreetingPromptService } from './greeting-prompt.service';
+import { ShortenGreetingScriptDto } from './shorten-script.dto';
 import { GenerationPrompt } from '../../common/types/prompt.types';
 
 @Controller('sessions/:sessionId/greeting-prompt')
 export class GreetingPromptController {
   constructor(private readonly service: GreetingPromptService) {}
+
+  @Post('shorten')
+  shorten(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: ShortenGreetingScriptDto,
+  ): Promise<{ text: string }> {
+    return this.service.shortenScript(sessionId, dto.text);
+  }
 
   @Post()
   generate(@Param('sessionId') sessionId: string): Promise<GenerationPrompt> {
