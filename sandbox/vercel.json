@@ -1,0 +1,1 @@
+{"framework":null,"buildCommand":"mkdir -p dist && cp public/* dist/","outputDirectory":"dist","headers":[{"source":"/(.*)","headers":[{"key":"X-Robots-Tag","value":"noindex, nofollow"},{"key":"X-Content-Type-Options","value":"nosniff"}]}]}
