@@ -49,25 +49,42 @@ async function main() {
     return { state, kept };
   }
   try {
-    for (const lang of ['ru', 'uk'])
-      for (const snr of [null, 20, 15, 10, 5])
-        for (const seed of [123, 456, 789]) {
-          const { samples } = decodeWav(
-            fs.readFileSync(root + `/scripts/fixtures/voice/${lang}.wav`)
-          );
-          const { state, kept } = await evaluate(
-            snr === null
-              ? framed(samples)
-              : noisyFramed(samples, 'pink', snr, seed)
-          );
-          assert.equal(
-            kept,
-            1,
-            `${lang} SNR=${snr} seed=${seed}: one completed phrase`
-          );
-          assert.equal(state.phase, 'idle', 'no recording held by background');
-          count++;
-        }
+    for (const sample of ['phrase', 'short'])
+      for (const lang of ['ru', 'uk'])
+        for (const snr of [null, 20, 15, 10, 5])
+          for (const seed of [123, 456, 789]) {
+            const { samples } = decodeWav(
+              fs.readFileSync(
+                root +
+                  `/scripts/fixtures/voice/${lang}${sample === 'short' ? '-short' : ''}.wav`
+              )
+            );
+            const base =
+              snr === null
+                ? framed(samples)
+                : noisyFramed(samples, 'pink', snr, seed);
+            // Continue the same background after short words, not clean silence.
+            const pcm = new Float32Array(
+              base.length + (sample === 'short' ? 32000 : 0)
+            );
+            pcm.set(base);
+            if (sample === 'short') {
+              pcm.set(base.subarray(base.length - 16000), base.length);
+              pcm.set(base.subarray(base.length - 16000), base.length + 16000);
+            }
+            const { state, kept } = await evaluate(pcm);
+            assert.equal(
+              kept,
+              1,
+              `${lang} SNR=${snr} seed=${seed}: one completed phrase`
+            );
+            assert.equal(
+              state.phase,
+              'idle',
+              'no recording held by background'
+            );
+            count++;
+          }
     for (const level of [0, 0.01, 0.03, 0.1]) {
       const pcm = noise('pink', 23, 123);
       for (let i = 0; i < pcm.length; i++) pcm[i] *= level;
