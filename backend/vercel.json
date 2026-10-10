@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh . ../landing/src/dictionaries ../frontend/src/dictionaries",
+  "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh . ../landing/src/dictionaries ../frontend/src/dictionaries ../scripts/build-prisma-migrations.mjs",
   "crons": [
     {
       "path": "/api/cron/cleanup-sessions",

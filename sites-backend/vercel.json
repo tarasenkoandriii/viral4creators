@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh .",
+  "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh . ../scripts/build-prisma-migrations.mjs",
   "crons": [
     {
       "path": "/cron/site-ownership-recheck",

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "postinstall": "prisma generate",
-    "build": "prisma generate && prisma migrate deploy && nest build",
+    "build": "prisma generate && node ../scripts/build-prisma-migrations.mjs && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma.config.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

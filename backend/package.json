@@ -11,7 +11,7 @@
   "scripts": {
     "postinstall": "prisma generate",
     "prebuild": "ts-node --transpile-only scripts/build-assistant-knowledge.ts && ts-node --transpile-only scripts/build-wizard-ui-strings.ts",
-    "build": "prisma generate && prisma migrate deploy && nest build",
+    "build": "prisma generate && node ../scripts/build-prisma-migrations.mjs && nest build",
     "build:assistant-knowledge": "ts-node --transpile-only scripts/build-assistant-knowledge.ts",
     "assist:knowledge-sync": "ts-node --transpile-only scripts/sync-assistant-knowledge.ts",
     "build:wizard-ui-strings": "ts-node --transpile-only scripts/build-wizard-ui-strings.ts",

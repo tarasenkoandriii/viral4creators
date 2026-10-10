@@ -858,6 +858,8 @@ jobs:
       # doc/legal/*.md — единственный источник правды; сгенерированные
       # модули в frontend/ и landing/ обязаны ему соответствовать, а
       # версия — совпадать с TERMS_VERSION на бэкенде.
+      - name: preview не применяет production миграции
+        run: node scripts/build-prisma-migrations.test.mjs
       - name: юридические тексты синхронны
         run: node scripts/sync-legal.mjs --check
 
