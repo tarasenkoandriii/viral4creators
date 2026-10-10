@@ -4,7 +4,9 @@
  * «на сервер — только речь; двадцать секунд тишины меряются тоже на
  * телефоне».
  *
- * Энергетический детектор (RMS кадра против порога над уровнем шума) с
+ * В браузере кадр классифицирует локальная Silero VAD; RMS остаётся для
+ * ограничения перебивания. Без вероятности используется энергетический
+ * детектор (RMS кадра против порога над уровнем шума) с
  * «хвостом» (hangover) и минимальной длиной речи — по образцу
  * `silence-watchdog` Devil's Advocate, где диктовка сама останавливается
  * после долгой тишины. Не нейросеть и не Web Speech API (§4А.3: его нет и
@@ -14,7 +16,8 @@
  * Модуль чистый: кадры приходят числами, время — счётом кадров, без
  * `Date.now()` и без Web Audio. Поэтому правила «сколько тишины — конец
  * фразы» и «20 с — микрофон гаснет» проверяются синтетическими кадрами
- * (`scripts/voice-listen.test.ts`), а не голосом в браузере.
+ * (`scripts/voice-listen.test.ts`), а модель — синтетической речью
+ * (`scripts/voice-neural-acceptance.test.cjs`).
  */
 
 export interface SpeechDetectorConfig {
@@ -153,6 +156,9 @@ const idleOf = (state: SpeechDetectorState): SpeechDetectorState => ({
  * Один кадр. Возвращает новое состояние и события, которые хук
  * превращает в действия с `MediaRecorder`.
  *
+ * `speechProbability` — вероятность речи Silero (0..1); 0.3 открывает
+ * кандидата, 0.5 засчитывает речевой кадр. Отсутствие сохраняет RMS-режим.
+ *
  * `playing` — звучит реплика советника (K1). Пока она звучит, отрезок
  * не начинается вовсе: иначе советник, услышанный микрофоном, ушёл бы на
  * платный разбор как реплика человека. Громкая речь поверх — перебивание
@@ -163,11 +169,13 @@ export function stepDetector(
   state: SpeechDetectorState,
   rms: number,
   config: SpeechDetectorConfig = SPEECH_DETECTOR_DEFAULTS,
-  playing = false
+  playing = false,
+  speechProbability?: number
 ): { state: SpeechDetectorState; events: SpeechDetectorEvent[] } {
   if (state.stopped) return { state, events: [] };
   const threshold = speechThreshold(state.noiseFloor, config);
-  const loud = rms >= threshold;
+  const classified = speechProbability !== undefined;
+  const loud = classified ? speechProbability >= 0.5 : rms >= threshold;
 
   if (playing) {
     if (state.phase === 'speech') {
@@ -185,7 +193,9 @@ export function stepDetector(
         ],
       };
     }
-    const strong = rms >= threshold * config.bargeInFactor;
+    const strong =
+      rms >= threshold * config.bargeInFactor &&
+      (!classified || speechProbability >= 0.8);
     const bargeMs = strong ? state.bargeMs + config.frameMs : 0;
     // Пока говорит советник, человек не молчит, а слушает: 20 с тишины
     // считаются после реплики, а не во время неё.
@@ -199,7 +209,11 @@ export function stepDetector(
   }
 
   if (state.phase === 'idle') {
-    if (rms >= threshold * config.onsetRatio) {
+    if (
+      classified
+        ? speechProbability >= 0.3
+        : rms >= threshold * config.onsetRatio
+    ) {
       // Запись начинается с ПЕРВОГО кадра над порогом начала, а не после
       // `minSpeechMs`: `MediaRecorder` не пишет задним числом, и начало
       // слова иначе терялось бы. Короткий шум потом просто выбрасывается.
