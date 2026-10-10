@@ -146,7 +146,9 @@ export class SiteSonioxTts {
 
   /** Голоса модели (справочник `GET /v1/tts-models`); ошибка — пустой список. */
   async voices(now: number = Date.now()): Promise<VoiceChoice[]> {
-    return this.telemetry ? this.telemetry.track('catalog','system',()=>this.voicesImpl(now)) : this.voicesImpl(now);
+    return this.telemetry
+      ? this.telemetry.track('catalog', 'system', () => this.voicesImpl(now))
+      : this.voicesImpl(now);
   }
   private async voicesImpl(now: number): Promise<VoiceChoice[]> {
     if (this.catalog && now - this.catalog.at < CATALOG_TTL_MS) {

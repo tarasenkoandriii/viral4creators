@@ -81,10 +81,15 @@ function id(v: string): string {
 @PublicRoute('внутренний API админки платформы: секрет X-Sites-Internal-Secret')
 @UseGuards(InternalSecretGuard)
 export class PlatformAdminController {
-  constructor(private readonly admin: PlatformAdmin, private readonly soniox: SonioxObservability) {}
+  constructor(
+    private readonly admin: PlatformAdmin,
+    private readonly soniox: SonioxObservability,
+  ) {}
 
   @Get('soniox')
-  sonioxReport() { return this.soniox.report(); }
+  sonioxReport() {
+    return this.soniox.report();
+  }
 
   @Get('summary')
   summary(@Query('days') d?: string) {

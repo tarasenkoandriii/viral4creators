@@ -491,9 +491,19 @@ describe('разбор реплики — путь целиком', () => {
     const b = build({
       recognized: { text: 'генерируй', speechConfidence: 0.7 },
       model: { kind: 'consent', confidence: 0.99 },
-      session: { id:SID,userId:'u-1',locale:'ru',greetingBriefSnapshot:snapshot(),generationPrompt:{finalText:'x'} },
+      session: {
+        id: SID,
+        userId: 'u-1',
+        locale: 'ru',
+        greetingBriefSnapshot: snapshot(),
+        generationPrompt: { finalText: 'x' },
+      },
     });
-    const result = await b.service.understandForSession(SID,{pathname:SPATH,screen:SCREEN} as any,'ru');
+    const result = await b.service.understandForSession(
+      SID,
+      { pathname: SPATH, screen: SCREEN } as any,
+      'ru',
+    );
     expect(result.intent).toEqual({ kind: 'unknown' });
     expect(result.reply).toMatch(/расслышал/);
   });

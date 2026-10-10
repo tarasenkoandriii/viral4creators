@@ -8,16 +8,14 @@ const SOURCE =
   'Марина, поздравляем с 30-летием! Желаем здоровья, счастья, успехов и радости каждый день.';
 function build(output = 'Марина, с 30-летием! Здоровья и счастья!') {
   const sessions = {
-    getSession: jest
-      .fn()
-      .mockResolvedValue({
-        greetingBriefSnapshot: {
-          occasion: 'BIRTHDAY',
-          recipientName: 'Марина',
-          tone: 'WARM',
-        },
-        generationPrompt: {},
-      }),
+    getSession: jest.fn().mockResolvedValue({
+      greetingBriefSnapshot: {
+        occasion: 'BIRTHDAY',
+        recipientName: 'Марина',
+        tone: 'WARM',
+      },
+      generationPrompt: {},
+    }),
     claimWork: jest.fn().mockResolvedValue(true),
     releaseWork: jest.fn(),
     updateSession: jest.fn(),

@@ -171,9 +171,15 @@ export class SonioxTtsService implements TtsProvider {
   async voices(
     language?: string,
   ): Promise<{ voices: VoiceOption[]; error?: string }> {
-    return this.telemetry ? this.telemetry.track('catalog', 'system', () => this.voicesImpl(language)) : this.voicesImpl(language);
+    return this.telemetry
+      ? this.telemetry.track('catalog', 'system', () =>
+          this.voicesImpl(language),
+        )
+      : this.voicesImpl(language);
   }
-  private async voicesImpl(language?: string): Promise<{ voices: VoiceOption[]; error?: string }> {
+  private async voicesImpl(
+    language?: string,
+  ): Promise<{ voices: VoiceOption[]; error?: string }> {
     const key = sonioxApiKey();
     if (!key) return { voices: [], error: 'SONIOX_API_KEY не задан' };
     try {

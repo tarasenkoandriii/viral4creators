@@ -1031,7 +1031,7 @@ describe('аудит волны K2', () => {
       ctx(),
     );
     expect(r).toMatchObject({
-      intent: { kind: 'command', command:'shorter' },
+      intent: { kind: 'command', command: 'shorter' },
       reply: null,
     });
     expect(buildUnderstandPrompt('…', ctx())).toContain(
