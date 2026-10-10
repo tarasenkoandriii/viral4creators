@@ -48,6 +48,7 @@ import {
 } from '../../modules/assist-billing/testing/billing-fixtures.testing';
 import { PlatformAdminController } from '../../modules/platform-admin/platform-admin.controller';
 import { PlatformAdmin } from '../../modules/platform-admin/platform-admin.service';
+import { SonioxObservability } from '../../modules/soniox-observability/soniox-observability.service';
 import { TelegramWebhookController } from '../../modules/telegram-webhook/telegram-webhook.controller';
 import type { AssistBotUpdates } from '../../modules/assist-site-handoff/bot/assist-bot-updates.service';
 import {
@@ -120,6 +121,7 @@ describeDb(
           AssistBillingTick,
           BillingNotices,
           PlatformAdmin,
+          SonioxObservability,
         ],
       }).compile();
       const notices = mod.get(BillingNotices);
@@ -300,6 +302,20 @@ describeDb(
 
     it('внутренний API: без секрета — 401, без X-Admin-Actor — 401; без env — 503', async () => {
       await request(srv()).get('/internal/admin/assist/summary').expect(401);
+      await request(srv()).get('/internal/admin/assist/soniox').expect(401);
+      await request(srv())
+        .get('/internal/admin/assist/soniox')
+        .set('X-Sites-Internal-Secret', INTERNAL)
+        .expect(401);
+      const soniox = await request(srv())
+        .get('/internal/admin/assist/soniox')
+        .set(internal())
+        .expect(200);
+      expect(soniox.body.data).toMatchObject({
+        available: true,
+        billingAvailable: true,
+      });
+      expect(Array.isArray(soniox.body.data.groups)).toBe(true);
       await request(srv())
         .get('/internal/admin/assist/summary')
         .set('X-Sites-Internal-Secret', INTERNAL)
