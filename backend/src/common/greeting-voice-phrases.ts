@@ -161,6 +161,8 @@ export const CONFIRM_PHRASES: readonly string[] = [
 ];
 
 export const CANCEL_PHRASES: readonly string[] = [
+  // Короткое uk «Ні» может распознаваться как «Не»: только отмена карточки.
+  'не',
   'нет',
   'не так',
   'неверно',
