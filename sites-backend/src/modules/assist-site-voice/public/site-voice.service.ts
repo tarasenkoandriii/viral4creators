@@ -1,3 +1,4 @@
+import { ttsFailureBudgetCost } from './tts-budget';
 import { sonioxScope } from '../../soniox-observability/soniox-context';
 /**
  * Голос посетителя — распознавание вопроса и озвучка ответа (Э5; ТЗ
@@ -426,7 +427,7 @@ export class SiteVoiceService {
       this.logger.warn(`tts: ${reserved.denied} (site ${site.siteId})`);
       return { ok: false, failure: 'limit' };
     }
-    let actual = 0;
+    let actual = reserved.reservation.estMicroUsd;
     let res: Awaited<ReturnType<SiteSonioxTts['synthesize']>>;
     try {
       sonioxScope({ accountId: site.accountId, siteId: site.siteId });
@@ -444,6 +445,9 @@ export class SiteVoiceService {
             characters: res.characters,
           },
         );
+      }
+      if (!res.ok) {
+        actual = ttsFailureBudgetCost(res, reserved.reservation.estMicroUsd);
       }
     } finally {
       await this.budget.settle(this.db, reserved.reservation, actual);

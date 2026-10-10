@@ -171,9 +171,7 @@ export class SiteSonioxTts {
       : await this.voicesImpl(now);
     return result.voices;
   }
-  private async voicesImpl(
-    now: number,
-  ): Promise<{
+  private async voicesImpl(now: number): Promise<{
     voices: VoiceChoice[];
     error?: 'no_key' | 'error' | 'timeout';
     reasonCode?: string;
