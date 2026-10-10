@@ -69,6 +69,7 @@ import {
   isConsentPhrase,
   normalizeUtterance,
   stripPolite,
+  quickPendingAnswer,
 } from './greeting-voice-phrases';
 import { REPLIES } from './greeting-voice-replies';
 import {
@@ -238,7 +239,8 @@ export function resolveIntent(
     ctx.pending &&
     (isConsentPhrase(transcript) || answer.kind === 'consent')
   ) {
-    return answer.confidence < FIELD_CONFIDENCE_MIN
+    return !isConsentPhrase(transcript) ||
+      answer.confidence < FIELD_CONFIDENCE_MIN
       ? unknown(t.notUnderstood)
       : {
           intent: { kind: 'confirm' },
@@ -290,6 +292,14 @@ export function resolveIntent(
 
   switch (answer.kind) {
     case 'confirm':
+      // Модель не превращает неизвестную транскрипцию в согласие.
+      return ctx.pending && quickPendingAnswer(transcript) === 'confirm'
+        ? {
+            intent: { kind: 'confirm' },
+            confidence: answer.confidence,
+            reply: null,
+          }
+        : unknown(t.notUnderstood);
     case 'cancel':
       return ctx.pending
         ? {

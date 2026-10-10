@@ -27,6 +27,12 @@ describe('Soniox observability', () => {
       }),
     ).toMatchObject({ actorRole: 'administrator', actorId: '123' });
     expect(
+      sonioxRequestContext({
+        route: { path: '/assist/sites/:id/voice-config/sample' },
+        identity: { telegramId: 123n },
+      }),
+    ).toMatchObject({ actorRole: 'administrator', actorId: '123' });
+    expect(
       sonioxRequestContext({ route: { path: '/cron/assist-retention' } })
         .actorRole,
     ).toBe('cron');
@@ -105,6 +111,7 @@ describe('Soniox observability', () => {
     ['no_key', 'not-configured'],
     ['SONIOX_API_KEY not set', 'not-configured'],
     ['no_speech', 'empty'],
+    ['no speech recognised', 'empty'],
     ['Soniox TTS ответил 429: sensitive body', 'error'],
   ])('safe failure reason %s', (reason, status) => {
     expect(sonioxResultMetrics('stt', { reason }).status).toBe(status);
@@ -126,6 +133,27 @@ describe('Soniox observability', () => {
     expect(sonioxResultMetrics('cleanup', { sonioxSkipped: true }).status).toBe(
       'skipped',
     );
+  });
+  it('preserves safe TTS language, timeout and HTTP codes without provider bodies', () => {
+    expect(sonioxResultMetrics('tts', { ok: true, lang: 'uk' }).language).toBe(
+      'uk',
+    );
+    expect(sonioxResultMetrics('tts', { reason: 'timeout' })).toMatchObject({
+      status: 'timeout',
+      reasonCode: 'timeout',
+    });
+    expect(
+      sonioxResultMetrics('tts', { reason: 'error', reasonCode: 'http-429' }),
+    ).toMatchObject({ status: 'error', reasonCode: 'http-429' });
+    expect(
+      sonioxResultMetrics('tts', {
+        reason: 'error',
+        reasonCode: 'secret transcript',
+      }).reasonCode,
+    ).toBe('error');
+    expect(
+      sonioxResultMetrics('stt', { speechConfidence: 2 }).confidence,
+    ).toBeNull();
   });
   it('reports bounded recent and active tasks, marks interrupted separately, and limits retention deletion', async () => {
     const { service, db } = build();

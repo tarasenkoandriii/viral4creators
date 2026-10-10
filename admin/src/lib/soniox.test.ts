@@ -3,6 +3,7 @@ import {
   sonioxFailures,
   sonioxInWindow,
   sonioxHourSeries,
+  sonioxCost,
   type SonioxGroup,
 } from "./soniox";
 assert.equal(sonioxFailures("timeout"), true);
@@ -24,3 +25,7 @@ assert.equal(sonioxHourSeries([], 7, now).length, 169);
 console.log(
   "Soniox periods, error states and continuous hourly timeline passed",
 );
+
+assert.equal(sonioxCost(0.000012), "0,000012");
+assert.equal(sonioxCost(0), "0,00");
+assert.equal(sonioxCost(null), "—");

@@ -1,3 +1,4 @@
+import { ttsFailureBudgetCost } from '../public/tts-budget';
 import { sonioxScope } from '../../soniox-observability/soniox-context';
 /**
  * Кабинет: голос виджета (Э5, ТЗ §3.5 «Голос: выбор голоса из пресетов
@@ -217,7 +218,7 @@ export class VoiceSettingsService {
         'Суточный бюджет голоса сайта исчерпан — попробуйте завтра',
       );
     }
-    let actual = 0;
+    let actual = reserved.reservation.estMicroUsd;
     let res: Awaited<ReturnType<SiteSonioxTts['synthesize']>>;
     try {
       sonioxScope({ accountId: m.accountId, siteId });
@@ -232,6 +233,9 @@ export class VoiceSettingsService {
             units: { characters: res.characters },
           })
         ).costMicroUsd;
+      }
+      if (!res.ok) {
+        actual = ttsFailureBudgetCost(res, reserved.reservation.estMicroUsd);
       }
     } finally {
       await this.budget.settle(this.prisma, reserved.reservation, actual);

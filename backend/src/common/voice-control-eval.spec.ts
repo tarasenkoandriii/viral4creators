@@ -2,6 +2,7 @@ import {
   matchesControl,
   main,
 } from '../../scripts/greeting-eval/voice-control';
+import { VOICE_CONTROL_SET } from '../../scripts/greeting-eval/voice-control-set';
 import type { VoiceUnderstandResult } from './greeting-voice-intent';
 const result = (intent: unknown, status = 'ok') =>
   ({ status, intent }) as VoiceUnderstandResult;
@@ -50,6 +51,15 @@ describe('voice-control synthetic evaluation', () => {
         value: '2027-12-03',
       }),
     ).toBe(false);
+  });
+  it('includes an isolated Ukrainian negative response in provider acceptance', () => {
+    expect(VOICE_CONTROL_SET).toContainEqual({
+      id: 'uk-no',
+      lang: 'uk',
+      text: 'Ні',
+      pending: true,
+      kind: 'cancel',
+    });
   });
   it('dry run needs no provider keys and makes no paid calls', async () => {
     expect(await main([])).toBe(0);

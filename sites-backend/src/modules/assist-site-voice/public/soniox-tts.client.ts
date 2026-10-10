@@ -20,6 +20,7 @@ import {
   sonioxApiKey,
   sonioxLanguage,
 } from '../../../shared/soniox';
+import { mp3DurationSeconds } from '../../../shared/mp3-duration';
 import { defaultTtsVoice } from '../../../config/voice-env';
 
 export interface SiteTtsRequest {
@@ -34,11 +35,16 @@ export type SiteTtsResult =
       audio: Buffer;
       mime: 'audio/mpeg';
       characters: number;
+      durationSeconds?: number | null;
       voice: string;
       lang: string;
       model: string;
     }
-  | { ok: false; reason: 'no_key' | 'empty' | 'error' };
+  | {
+      ok: false;
+      reason: 'no_key' | 'empty' | 'error' | 'timeout';
+      reasonCode?: string;
+    };
 
 export interface VoiceChoice {
   id: string;
@@ -125,7 +131,7 @@ export class SiteSonioxTts {
       });
       if (!res.ok) {
         this.logger.warn(`Soniox TTS ответил ${res.status}`);
-        return { ok: false, reason: 'error' };
+        return { ok: false, reason: 'error', reasonCode: `http-${res.status}` };
       }
       const audio = Buffer.from(await res.arrayBuffer());
       if (audio.length === 0) return { ok: false, reason: 'error' };
@@ -134,6 +140,7 @@ export class SiteSonioxTts {
         audio,
         mime: 'audio/mpeg',
         characters: text.length,
+        durationSeconds: mp3DurationSeconds(audio),
         voice,
         lang,
         model: SONIOX_TTS_MODEL,
@@ -142,22 +149,38 @@ export class SiteSonioxTts {
       this.logger.warn(
         `Soniox TTS не удался: ${e instanceof Error ? e.name : typeof e}`,
       );
-      return { ok: false, reason: 'error' };
+      return {
+        ok: false,
+        reason:
+          e !== null &&
+          typeof e === 'object' &&
+          'name' in e &&
+          ['TimeoutError', 'AbortError'].includes(String(e.name))
+            ? 'timeout'
+            : 'error',
+      };
     }
   }
 
   /** Голоса модели (справочник `GET /v1/tts-models`); ошибка — пустой список. */
   async voices(now: number = Date.now()): Promise<VoiceChoice[]> {
-    return this.telemetry
-      ? this.telemetry.track('catalog', 'system', () => this.voicesImpl(now))
-      : this.voicesImpl(now);
+    const result = this.telemetry
+      ? await this.telemetry.track('catalog', 'system', () =>
+          this.voicesImpl(now),
+        )
+      : await this.voicesImpl(now);
+    return result.voices;
   }
-  private async voicesImpl(now: number): Promise<VoiceChoice[]> {
+  private async voicesImpl(now: number): Promise<{
+    voices: VoiceChoice[];
+    error?: 'no_key' | 'error' | 'timeout';
+    reasonCode?: string;
+  }> {
     if (this.catalog && now - this.catalog.at < CATALOG_TTL_MS) {
-      return this.catalog.voices;
+      return { voices: this.catalog.voices };
     }
     const key = sonioxApiKey(this.env);
-    if (!key) return [];
+    if (!key) return { voices: [], error: 'no_key' };
     try {
       const res = await this.fetch(`${SONIOX_API_BASE}/tts-models`, {
         headers: { Authorization: `Bearer ${key}` },
@@ -165,16 +188,19 @@ export class SiteSonioxTts {
       });
       if (!res.ok) {
         this.logger.warn(`Soniox tts-models ответил ${res.status}`);
-        return [];
+        return { voices: [], error: 'error', reasonCode: `http-${res.status}` };
       }
       const voices = voicesFrom((await res.json()) as TtsModels);
       this.catalog = { at: now, voices };
-      return voices;
+      return { voices };
     } catch (e) {
-      this.logger.warn(
-        `Soniox tts-models не удался: ${e instanceof Error ? e.name : typeof e}`,
-      );
-      return [];
+      const timeout =
+        e !== null &&
+        typeof e === 'object' &&
+        'name' in e &&
+        ['TimeoutError', 'AbortError'].includes(String(e.name));
+      this.logger.warn('Soniox tts-models не удался');
+      return { voices: [], error: timeout ? 'timeout' : 'error' };
     }
   }
 }

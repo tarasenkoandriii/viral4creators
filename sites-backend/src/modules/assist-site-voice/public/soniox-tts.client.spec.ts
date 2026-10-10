@@ -1,3 +1,4 @@
+import { sonioxResultMetrics } from '../../soniox-observability/soniox-observability.service';
 import { FakeSoniox } from '../testing/fake-soniox.testing';
 import { SiteSonioxTts, ttsLanguage, voicesFrom } from './soniox-tts.client';
 
@@ -55,7 +56,42 @@ describe('SiteSonioxTts (Э5)', () => {
     fake.tts = 'fail';
     expect(
       await make(fake).synthesize({ text: 'a', voice: null, lang: 'uk' }),
-    ).toEqual({ ok: false, reason: 'error' });
+    ).toMatchObject({ ok: false, reason: 'error', reasonCode: 'http-500' });
+  });
+
+  it('catalog failures remain failures in telemetry while the public result stays an array', async () => {
+    const metrics: unknown[] = [];
+    const telemetry = {
+      track: async (
+        operation: 'catalog',
+        _role: string,
+        run: () => Promise<unknown>,
+      ) => {
+        const result = await run();
+        metrics.push(sonioxResultMetrics(operation, result));
+        return result;
+      },
+    };
+    const t = new SiteSonioxTts(telemetry as never);
+    t.env = { SONIOX_API_KEY: 'test' };
+    t.fetch = jest.fn(
+      async () => new Response('sensitive provider body', { status: 429 }),
+    );
+    expect(await t.voices()).toEqual([]);
+    expect(metrics.at(-1)).toMatchObject({
+      status: 'error',
+      reasonCode: 'http-429',
+    });
+    t.env = {};
+    expect(await t.voices()).toEqual([]);
+    expect(metrics.at(-1)).toMatchObject({ status: 'not-configured' });
+    t.env = { SONIOX_API_KEY: 'test' };
+    t.fetch = jest.fn(async () => {
+      throw new DOMException('sensitive', 'TimeoutError');
+    });
+    expect(await t.voices()).toEqual([]);
+    expect(metrics.at(-1)).toMatchObject({ status: 'timeout' });
+    expect(JSON.stringify(metrics)).not.toContain('sensitive');
   });
 
   it('язык: явный → по буквам → украинский', () => {
@@ -147,6 +183,6 @@ describe('Soniox delayed response deadline', () => {
       lang: 'en',
     });
     await jest.advanceTimersByTimeAsync(60_000);
-    expect(await pending).toEqual({ ok: false, reason: 'error' });
+    expect(await pending).toEqual({ ok: false, reason: 'timeout' });
   });
 });

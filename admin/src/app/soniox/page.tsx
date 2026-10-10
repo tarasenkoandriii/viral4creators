@@ -5,6 +5,7 @@ import {
   sonioxFailures,
   sonioxInWindow,
   sonioxHourSeries,
+  sonioxCost,
   type SonioxDashboard,
   type SonioxSource,
 } from "../../lib/soniox";
@@ -454,8 +455,8 @@ export default function SonioxPage() {
                 {(s.usage ?? []).map((u) => (
                   <li key={u.operation}>
                     {u.operation}: {n(u.calls)} вызовов, {n(u.seconds / 60)}{" "}
-                    мин., {n(u.characters)} символов, ${n(u.costUsd)}; без цены:{" "}
-                    {n(u.unpriced)}
+                    мин., {n(u.characters)} символов, ${sonioxCost(u.costUsd)};
+                    без цены: {n(u.unpriced)}
                   </li>
                 ))}
               </ul>

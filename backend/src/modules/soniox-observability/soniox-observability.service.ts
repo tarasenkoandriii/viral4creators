@@ -10,7 +10,19 @@ export function sonioxResultMetrics(
   value: unknown,
 ) {
   const r = (value ?? {}) as Record<string, unknown>;
-  const reason = String(r.reason ?? '');
+  const reason = String(r.reason ?? r.error ?? '');
+  const safeHttpCode =
+    typeof r.reasonCode === 'string' && /^http-[45][0-9]{2}$/.test(r.reasonCode)
+      ? r.reasonCode
+      : null;
+  const language = r.language ?? r.lang;
+  const failureStatus = /timeout|срок|таймаут/i.test(reason)
+    ? 'timeout'
+    : /no_key|not set|не задан/i.test(reason)
+      ? 'not-configured'
+      : /empty|no[_ ]speech|пуст/i.test(reason)
+        ? 'empty'
+        : 'error';
   const status =
     operation === 'catalog'
       ? Array.isArray(value) && value.length
@@ -18,7 +30,7 @@ export function sonioxResultMetrics(
         : Array.isArray(r.voices) && r.voices.length
           ? 'ok'
           : r.error
-            ? 'error'
+            ? failureStatus
             : 'empty'
       : operation === 'cleanup'
         ? r.skipped || r.sonioxSkipped
@@ -34,7 +46,7 @@ export function sonioxResultMetrics(
             ? 'timeout'
             : /no_key|not set|не задан/i.test(reason)
               ? 'not-configured'
-              : /empty|no_speech|пуст/i.test(reason)
+              : /empty|no[_ ]speech|пуст/i.test(reason)
                 ? 'empty'
                 : 'error';
   const number = (v: unknown) =>
@@ -44,20 +56,22 @@ export function sonioxResultMetrics(
     reasonCode:
       status === 'ok'
         ? null
-        : /\b(400|401|403|408|409|429|500|502|503|504)\b/.exec(reason)?.[1]
-          ? 'http-' +
-            /\b(400|401|403|408|409|429|500|502|503|504)\b/.exec(reason)![1]
-          : status,
+        : (safeHttpCode ??
+          (/\b([45][0-9]{2})\b/.exec(reason)?.[1]
+            ? 'http-' + /\b([45][0-9]{2})\b/.exec(reason)![1]
+            : status)),
     seconds: number(r.seconds ?? r.durationSeconds),
     characters: number(r.characters),
     words:
       operation === 'stt' && typeof r.text === 'string'
         ? r.text.trim().split(/\s+/).filter(Boolean).length
         : 0,
-    language: typeof r.language === 'string' ? r.language.slice(0, 12) : null,
+    language: typeof language === 'string' ? language.slice(0, 12) : null,
     confidence:
       typeof r.speechConfidence === 'number' &&
-      Number.isFinite(r.speechConfidence)
+      Number.isFinite(r.speechConfidence) &&
+      r.speechConfidence >= 0 &&
+      r.speechConfidence <= 1
         ? r.speechConfidence
         : null,
   };

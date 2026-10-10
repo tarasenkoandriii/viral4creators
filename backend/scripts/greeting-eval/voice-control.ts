@@ -46,7 +46,7 @@ export async function main(argv: string[]): Promise<number> {
     outArg?.slice(6) || join(process.cwd(), 'voice-control-eval'),
   );
   console.log(
-    `16 команд × чистый звук/шум SNR 10 = 32 семантические проверки + тишина. Потолок $${cap}. ${apply ? 'Живой режим' : 'Сухой режим, без платных вызовов'}`,
+    `${VOICE_CONTROL_SET.length} команд × чистый звук/шум SNR 10 = ${VOICE_CONTROL_SET.length * 2} семантические проверки + тишина. Потолок $${cap}. ${apply ? 'Живой режим' : 'Сухой режим, без платных вызовов'}`,
   );
   if (!apply) return 0;
   const valid = (key: string | undefined) =>
@@ -61,21 +61,18 @@ export async function main(argv: string[]): Promise<number> {
   const { liveProviders, geminiMicro, keyStatus } = await import('./providers');
   if (!keyStatus().ffmpeg)
     throw new Error('Нужен ffmpeg для синтезированного аудио.');
-  const { GreetingVoiceUnderstandService } = await import(
-    '../../src/modules/voice/greeting-voice-understand.service'
-  );
+  const { GreetingVoiceUnderstandService } =
+    await import('../../src/modules/voice/greeting-voice-understand.service');
   const budget = new Budget(Math.round(cap * 1e6));
   let telemetry:
     | import('../../src/modules/soniox-observability/soniox-observability.service').SonioxObservability
     | undefined;
   let telemetryDb:
-    | import('../../src/prisma/prisma.service').PrismaService
-    | undefined;
+    import('../../src/prisma/prisma.service').PrismaService | undefined;
   if (process.env.DATABASE_URL) {
     const { PrismaService } = await import('../../src/prisma/prisma.service');
-    const { SonioxObservability, sonioxContext } = await import(
-      '../../src/modules/soniox-observability/soniox-observability.service'
-    );
+    const { SonioxObservability, sonioxContext } =
+      await import('../../src/modules/soniox-observability/soniox-observability.service');
     telemetryDb = new PrismaService();
     telemetry = new SonioxObservability(telemetryDb);
     sonioxContext.enterWith({

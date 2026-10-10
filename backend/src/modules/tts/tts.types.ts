@@ -28,6 +28,8 @@ export interface SynthesisRequest {
 }
 
 export interface SynthesisResult {
+  /** Фактический язык синтеза, если провайдер сообщает его. */
+  language?: string;
   audio: Buffer;
   mimeType: string;
   /** Что реально ушло в счёт: символы. */

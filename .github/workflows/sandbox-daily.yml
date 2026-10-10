@@ -28,6 +28,7 @@ jobs:
       SANDBOX_URL: ${{ github.event_name != 'pull_request' && vars.SANDBOX_URL || '' }}
       ASSIST_SANDBOX_PUBLIC_KEY: ${{ github.event_name != 'pull_request' && vars.ASSIST_SANDBOX_PUBLIC_KEY || '' }}
       ASSIST_API_URL: https://assist-api.viral4creators.app
+      ASSIST_SANDBOX_VOICE_QA: ${{ github.event_name != 'pull_request' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

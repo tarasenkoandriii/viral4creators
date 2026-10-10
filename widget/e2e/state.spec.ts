@@ -159,16 +159,34 @@ test('§4-бис.10 п.2 SPA без Navigation API (Safari/Firefox): ловим 
   });
   await page.goto(stand('example.localhost', { pk, spa: true }));
   await openChat(page);
+  // Route propagation crosses the parent → iframe message queue. Observe
+  // delivery before exercising the next question; no fixed sleeps or retries.
+  await chatFrame(page).evaluate(() => {
+    window.addEventListener('message', (event) => {
+      if (event.source !== window.parent || event.data?.type !== 'route')
+        return;
+      document.documentElement.dataset.qaRoutePath = new URL(
+        event.data.page.url
+      ).pathname;
+    });
+  });
+  const waitRoute = (pathname: string) =>
+    expect(chat(page).locator('html')).toHaveAttribute(
+      'data-qa-route-path',
+      pathname
+    );
   const pathOf = async (i: number) =>
     new URL((await log()).modelCalls[i].page.url as string).pathname;
   await page.locator('#spa-next').click();
   await page.locator('#spa-next').click(); // pushState → /spa/3
+  await waitRoute('/spa/3');
   await ask(page, 'После pushState');
   await waitAnswer(page, 1);
   expect(await pathOf(0)).toBe('/spa/3');
   await page.evaluate(() =>
     history.replaceState(null, '', '/spa/replaced?x=1')
   );
+  await waitRoute('/spa/replaced');
   await ask(page, 'После replaceState');
   await waitAnswer(page, 2);
   expect(await pathOf(1)).toBe('/spa/replaced');
@@ -176,6 +194,7 @@ test('§4-бис.10 п.2 SPA без Navigation API (Safari/Firefox): ловим 
   await expect
     .poll(() => page.evaluate(() => location.pathname))
     .toBe('/spa/2');
+  await waitRoute('/spa/2');
   await ask(page, 'После popstate');
   await waitAnswer(page, 3);
   expect(await pathOf(2)).toBe('/spa/2');

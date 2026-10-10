@@ -21,7 +21,7 @@ export function sonioxRequestContext(req: {
     ? 'operator'
     : /cron|worker/.test(source)
       ? 'cron'
-      : /admin/.test(source)
+      : /^\/assist(?:\/|$)|admin/.test(source)
         ? 'administrator'
         : 'client';
   const id = (v: unknown) =>
