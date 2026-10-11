@@ -391,6 +391,7 @@ describe('launchHeadlessBrowser', () => {
       expect.objectContaining({
         executablePath: '/usr/bin/chromium',
         headless: true,
+        protocolTimeout: 30_000,
       }),
     );
   });
