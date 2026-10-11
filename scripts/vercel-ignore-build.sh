@@ -22,6 +22,14 @@
 # деплой дешевле пропущенного.
 set -u
 
+# Env-only changes have no Git diff. Enable for one deployment, then remove.
+case "${VERCEL_FORCE_BUILD:-}" in
+  1|true)
+    echo "vercel-ignore-build: принудительный выпуск настроек — собираю"
+    exit 1
+    ;;
+esac
+
 if [ "$#" -eq 0 ]; then
   echo "vercel-ignore-build: не заданы пути — собираю"
   exit 1
