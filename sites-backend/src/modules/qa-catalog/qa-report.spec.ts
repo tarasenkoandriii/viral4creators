@@ -89,6 +89,21 @@ describe('QA report import validation', () => {
       parseQaReport({ expectedRevision: 1, project: 'desktop', report }),
     ).toThrow();
   });
+  it.each(['runnerStatus', 'caseType', 'attemptStatus'])(
+    'rejects coerced enum %s',
+    (field) => {
+      const report = reportFixture();
+      if (field === 'runnerStatus')
+        Object.assign(report, { runnerStatus: ['passed'] });
+      if (field === 'caseType')
+        Object.assign(report.cases[0], { type: ['automated'] });
+      if (field === 'attemptStatus')
+        Object.assign(report.results[0], { status: ['failed'] });
+      expect(() =>
+        parseQaReport({ expectedRevision: 1, project: 'desktop', report }),
+      ).toThrow();
+    },
+  );
   it('requires exact automated snapshots and leaves manual cases separate', () => {
     const r = parseQaReport({
       expectedRevision: 1,
