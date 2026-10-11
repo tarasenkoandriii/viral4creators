@@ -127,6 +127,7 @@ model Site {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  qaTestCases QaTestCase[]
   hosts SiteHost[]
 
   // Э1: обход (общий с QA) и знания помощника. Все — составным ключом
@@ -4946,4 +4947,40 @@ model SonioxEvent {
   @@index([startedAt])
   @@index([status, startedAt])
   @@map("soniox_events")
+}
+
+
+/// Versioned QA catalog; tenant boundaries use compound foreign keys.
+model QaTestCase {
+  id             String               @id @default(cuid())
+  accountId      String
+  siteId         String
+  site           Site                 @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  caseKey        String
+  title          String
+  currentVersion Int                  @default(1)
+  archived       Boolean              @default(false)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  revisions      QaTestCaseRevision[]
+
+  @@unique([id, accountId])
+  @@unique([siteId, caseKey])
+  @@index([accountId, siteId, updatedAt])
+  @@map("qa_test_cases")
+}
+
+model QaTestCaseRevision {
+  id                String     @id @default(cuid())
+  accountId         String
+  caseId            String
+  testCase          QaTestCase @relation(fields: [caseId, accountId], references: [id, accountId], onDelete: Cascade)
+  version           Int
+  payload           Json
+  createdByMemberId String
+  createdAt         DateTime   @default(now())
+
+  @@unique([caseId, version])
+  @@index([accountId, caseId])
+  @@map("qa_test_case_revisions")
 }
