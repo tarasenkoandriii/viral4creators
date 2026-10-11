@@ -30,6 +30,7 @@ export type Route =
   | { name: 'sites' }
   | { name: 'site-new' }
   | { name: 'site'; siteId: string }
+  | { name: 'qa-cases'; siteId: string }
   | { name: 'host'; siteId: string; hostId: string }
   | { name: 'host-access'; siteId: string; hostId: string }
   | { name: 'members' }
@@ -165,6 +166,9 @@ export function parseRoute(hash: string): Route {
     }
     if (p.length === 3 && p[2] === 'videos' && ID.test(p[1])) {
       return { name: 'videos', siteId: p[1] };
+    }
+    if (p.length === 3 && p[2] === 'qa-cases' && ID.test(p[1])) {
+      return { name: 'qa-cases', siteId: p[1] };
     }
     if (p.length === 3 && p[2] === 'test-accounts' && ID.test(p[1])) {
       return { name: 'test-accounts', siteId: p[1] };
@@ -303,6 +307,8 @@ export function routeHref(r: Route): string {
       return `#/sites/${r.siteId}/persona`;
     case 'videos':
       return `#/sites/${r.siteId}/videos`;
+    case 'qa-cases':
+      return `#/sites/${r.siteId}/qa-cases`;
     case 'test-accounts':
       return `#/sites/${r.siteId}/test-accounts`;
     case 'admin-mode':

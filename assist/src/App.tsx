@@ -75,6 +75,8 @@ import {
   useAssist,
   type AssistValue,
 } from './lib/assist-context';
+import { createQaCatalogApi } from './lib/qa-catalog-api';
+import { QaCatalogScreen, QaCatalogButton } from './screens/QaCatalogScreen';
 import { createBillingApi } from './lib/billing-api';
 import { createHandoffApi } from './lib/handoff-api';
 import { createKnowledgeApi } from './lib/knowledge-api';
@@ -251,6 +253,7 @@ export function App({ startParam }: { startParam: string | null }) {
     () => createAdminActionsApi(client),
     [client]
   );
+  const qaCatalog = useMemo(() => createQaCatalogApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
       knowledge: knowledgeApi,
@@ -268,6 +271,7 @@ export function App({ startParam }: { startParam: string | null }) {
       adminMode: adminModeApi,
       adminActions: adminActionsApi,
       ai: aiApi,
+      qaCatalog,
     }),
     [
       knowledgeApi,
@@ -285,6 +289,7 @@ export function App({ startParam }: { startParam: string | null }) {
       adminModeApi,
       adminActionsApi,
       aiApi,
+      qaCatalog,
     ]
   );
 
@@ -583,6 +588,7 @@ function navActive(key: string, route: Route): boolean {
       'sandbox-transfer',
       'plan',
       'test-accounts',
+      'qa-cases',
       'admin-mode',
       'admin-chat',
       'verify-host',
@@ -913,6 +919,7 @@ function Screen({
             <SiteSetupButtons siteId={route.siteId} />
             <SiteE3Buttons siteId={route.siteId} />
             <TestAccountsButton siteId={route.siteId} />
+            <QaCatalogButton siteId={route.siteId} />
             <AdminModeButton siteId={route.siteId} />
           </div>
           <SiteScreen
@@ -924,6 +931,8 @@ function Screen({
           />
         </>
       );
+    case 'qa-cases':
+      return <QaCatalogScreen siteId={route.siteId} />;
     case 'host':
       return (
         <HostVerifyScreen
