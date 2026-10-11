@@ -31,8 +31,9 @@ export function parseQaReport(input: unknown) {
     Buffer.byteLength(JSON.stringify(report), 'utf8') > 512 * 1024 ||
     report.schemaVersion !== 1 ||
     report.unknownTests !== 0 ||
+    typeof report.runnerStatus !== 'string' ||
     !['passed', 'failed', 'timedout', 'interrupted'].includes(
-      String(report.runnerStatus),
+      report.runnerStatus,
     )
   )
     return invalid();
@@ -42,7 +43,8 @@ export function parseQaReport(input: unknown) {
     return invalid();
   const cases = rawCases.map((v) => {
     const c = obj(v);
-    if (!['manual', 'automated'].includes(String(c.type))) return invalid();
+    if (typeof c.type !== 'string' || !['manual', 'automated'].includes(c.type))
+      return invalid();
     const projects = list(c.projects).map(project);
     if (!projects.length || new Set(projects).size !== projects.length)
       return invalid();
@@ -72,7 +74,8 @@ export function parseQaReport(input: unknown) {
       typeof a.durationMs !== 'number' ||
       !Number.isFinite(a.durationMs) ||
       a.durationMs < 0 ||
-      !['passed', 'failed', 'blocked', 'skipped'].includes(String(a.status))
+      typeof a.status !== 'string' ||
+      !['passed', 'failed', 'blocked', 'skipped'].includes(a.status)
     )
       return invalid();
     return {
