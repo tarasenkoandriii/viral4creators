@@ -478,6 +478,24 @@ export async function prepareFrame(
 export async function measurePointer(
   page: ScenarioPage,
   selector: string,
+  timeoutMs = 3_000,
+): Promise<FramePointer | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      readPointer(page, selector),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function readPointer(
+  page: ScenarioPage,
+  selector: string,
 ): Promise<FramePointer | null> {
   if (!page.$ || !page.viewport) return null;
   try {
