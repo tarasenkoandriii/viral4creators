@@ -719,6 +719,41 @@ describe('measurePointer — CDP deadline', () => {
 });
 
 describe('runScenario — несостоявшийся снимок', () => {
+  it('поздняя подготовка кадра не начинает съёмку после дедлайна', async () => {
+    jest.useFakeTimers();
+    try {
+      let finishPreparation!: () => void;
+      const screenshot = jest.fn().mockResolvedValue(new Uint8Array([1]));
+      const page = buildPage({
+        screenshot,
+        waitForNetworkIdle: jest.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              finishPreparation = resolve;
+            }),
+        ),
+      });
+      const pending = runScenario(
+        page,
+        [{ kind: 'goto', route: 'generate' }],
+        resolveOk,
+        1000,
+        true,
+      );
+      await jest.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      expect(result.steps[0].error).toContain('подготовка страницы');
+      finishPreparation();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(screenshot).not.toHaveBeenCalled();
+      expect(result.frames).toEqual([]);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('зависший снимок останавливает сценарий и называет кадр', async () => {
     jest.useFakeTimers();
     try {
@@ -744,7 +779,7 @@ describe('runScenario — несостоявшийся снимок', () => {
       expect(result.steps).toHaveLength(1);
       expect(result.steps[0].ok).toBe(false);
       expect(result.steps.find((s) => !s.ok)?.error).toContain(
-        'кадр шага 1 (goto) не снят за 1000мс',
+        'кадр шага 1 (goto) не снят за 1000мс: съёмка скриншота',
       );
       expect(click).not.toHaveBeenCalled();
       expect(result.frames).toEqual([]);
