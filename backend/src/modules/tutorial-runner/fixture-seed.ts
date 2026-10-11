@@ -524,6 +524,8 @@ export async function seedFixtureUser(
       productItemId: item.id,
       status,
       generationStatus: extra.generationStatus ?? null,
+      deletedAt: null,
+      lastActivityAt: new Date(),
       data,
       liveData,
     };
@@ -680,6 +682,8 @@ export async function seedFixtureUser(
         ? SessionStatus.PROMPT_GENERATED
         : SessionStatus.CREATED,
       generationStatus: null,
+      deletedAt: null,
+      lastActivityAt: new Date(),
       data: data as Prisma.InputJsonValue,
       liveData: {},
     };
@@ -687,7 +691,14 @@ export async function seedFixtureUser(
       where: { id },
       // Владелец — и при непересеве: фикстура могла переехать на
       // другого пользователя, и чужая сессия не открылась бы в мастере.
-      update: overwrite ? fields : { userId: user.id, projectId },
+      update: overwrite
+        ? fields
+        : {
+            userId: user.id,
+            projectId,
+            deletedAt: null,
+            lastActivityAt: new Date(),
+          },
       create: { id, ...fields },
     });
     log.push(`${note}: ${id}`);
