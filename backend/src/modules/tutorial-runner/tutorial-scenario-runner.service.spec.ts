@@ -515,6 +515,12 @@ describe('TutorialScenarioRunnerService', () => {
     expect(result.outcomes).toHaveLength(2);
     expect(second.newPage).toHaveBeenCalledTimes(1);
     expect(second.close).toHaveBeenCalledTimes(1);
+    expect(launchHeadlessBrowserMock).toHaveBeenNthCalledWith(1, {
+      softwareRendering: true,
+    });
+    expect(launchHeadlessBrowserMock).toHaveBeenNthCalledWith(2, {
+      softwareRendering: true,
+    });
   });
 
   it('records a failed relaunch rather than reporting the partial batch as successful', async () => {

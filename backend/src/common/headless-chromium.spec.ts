@@ -518,6 +518,28 @@ describe('launchArgs — чужой сайт (Ш0.3)', () => {
     expect(args).toEqual(['--single-process', '--no-sandbox']);
   });
 
+  it('software rendering removes SwiftShader without changing security or default launches', () => {
+    const graphics = [
+      ...planArgs,
+      '--ignore-gpu-blocklist',
+      '--in-process-gpu',
+      '--use-gl=angle',
+      '--use-angle=swiftshader',
+      '--enable-unsafe-swiftshader',
+    ];
+    expect(launchArgs(graphics)).toEqual(graphics);
+    expect(launchArgs(graphics, { softwareRendering: true })).toEqual([
+      ...planArgs,
+      '--disable-gpu',
+    ]);
+    expect(
+      launchArgs(graphics, { softwareRendering: true, untrustedContent: true }),
+    ).toEqual(['--single-process', '--no-sandbox', '--disable-gpu']);
+    expect(launchArgs(['--disable-gpu'], { softwareRendering: true })).toEqual([
+      '--disable-gpu',
+    ]);
+  });
+
   it('extraArgs дописываются в конец (прокси)', () => {
     expect(
       launchArgs(['--a'], { extraArgs: ['--proxy-server=http://127.0.0.1:1'] }),
