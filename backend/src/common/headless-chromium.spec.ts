@@ -33,6 +33,33 @@ jest.mock('./chromium-pack-verify', () => ({
 }));
 
 import { Logger } from '@nestjs/common';
+import { execFileSync } from 'node:child_process';
+import * as path from 'node:path';
+
+describe('production ESM compatibility without Jest package mocks', () => {
+  it('loads both real browser packages when the CommonJS loader rejects ESM', () => {
+    const script = `
+      const { loadBrowserEsm } = require('./src/common/headless-chromium');
+      Promise.all(['@sparticuz/chromium-min','puppeteer-core'].map(async name => {
+        const mod = await loadBrowserEsm(async () => {
+          throw Object.assign(new Error('production loader'), {code:'ERR_REQUIRE_ESM'});
+        }, name);
+        if (name === 'puppeteer-core' && typeof mod.launch !== 'function') throw Error('missing launch');
+        if (name !== 'puppeteer-core' && typeof mod.default.executablePath !== 'function') throw Error('missing executablePath');
+      })).then(() => console.log('real ESM verified')).catch(() => process.exit(1));
+    `;
+    const output = execFileSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', '-e', script],
+      {
+        cwd: path.resolve(__dirname, '../..'),
+        encoding: 'utf8',
+        timeout: 15000,
+      },
+    );
+    expect(output).toContain('real ESM verified');
+  });
+});
 import { downloadVerifiedPack } from './chromium-pack-verify';
 import { fetchWithRetry } from './fetch-with-retry';
 import { stat, rm } from 'node:fs/promises';

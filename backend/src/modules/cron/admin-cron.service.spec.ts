@@ -174,7 +174,11 @@ describe('AdminCronService — реестр и неизвестный jobKey', (
 
     for (const { jobKey } of registry) {
       const row = await service.run(jobKey, 'admin-1', false);
-      expect(row.status).toBe('SUCCESS');
+      expect(row.status).toBe(
+        ['tutorial-scenario-generate', 'tutorial-scenario-run'].includes(jobKey)
+          ? 'FAILED'
+          : 'SUCCESS',
+      );
     }
 
     // И наоборот: у каждого вызванного джоба сработал ровно один метод
@@ -278,7 +282,7 @@ describe('AdminCronService — debug у девяти джобов только �
       false,
     );
     expect(jobs.runTutorialScenarioGenerate).toHaveBeenCalledTimes(1);
-    expect(row.status).toBe('SUCCESS');
+    expect(row.status).toBe('FAILED'); // fixture contains a failed item
     expect(row.summary).toContain('generated=9');
   });
 
@@ -286,7 +290,7 @@ describe('AdminCronService — debug у девяти джобов только �
     const { service, jobs } = build();
     const row = await service.run('tutorial-scenario-run', 'admin-1', false);
     expect(jobs.runTutorialScenarioRun).toHaveBeenCalledTimes(1);
-    expect(row.status).toBe('SUCCESS');
+    expect(row.status).toBe('FAILED'); // partial success is not a green run
     expect(row.summary).toContain('passed=2');
   });
 

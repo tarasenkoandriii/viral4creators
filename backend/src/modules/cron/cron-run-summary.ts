@@ -88,9 +88,15 @@ function extractReasons(result: Record<string, unknown>): string[] {
         subjectKey?: unknown;
         locale?: unknown;
         error?: unknown;
+        routeKey?: unknown;
       };
-      if (row.ok !== false || typeof row.error !== 'string') continue;
-      out.push(`${String(row.subjectKey)}/${String(row.locale)}: ${row.error}`);
+      if (typeof row.error !== 'string' || !row.error.trim()) continue;
+      if (row.ok !== false && typeof row.routeKey !== 'string') continue;
+      const key =
+        typeof row.routeKey === 'string'
+          ? row.routeKey
+          : `${String(row.subjectKey)}/${String(row.locale)}`;
+      out.push(`${key}: ${row.error}`);
     }
   }
   return out;
@@ -218,6 +224,34 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
  * история читают её оттуда.
  */
 export const CRON_OUTCOME_SKIPPED = 'SKIPPED' as const;
+
+/** A returned batch result can contain failures without throwing.
+ * Scope this to audited Tutorial jobs; an unrelated counter must not
+ * change another subsystem's status contract. */
+export function tutorialResultFailed(jobKey: string, result: unknown): boolean {
+  if (
+    ![
+      'tutorial-scenario-generate',
+      'tutorial-scenario-run',
+      'tutorial-assembly-poll',
+      'ui-snapshot-run',
+    ].includes(jobKey)
+  )
+    return false;
+  if (!result || typeof result !== 'object' || skipReasonOf(result))
+    return false;
+  const failed = (result as { failed?: unknown }).failed;
+  return typeof failed === 'number' && Number.isFinite(failed) && failed > 0;
+}
+
+/** Read-only interpretation of old green rows; never rewrites audit history. */
+export function historicalTutorialFailed(
+  jobKey: string,
+  summary: string | null,
+): boolean {
+  const match = /(?:^|, )failed=([1-9][0-9]*)(?:,|$)/.exec(summary ?? '');
+  return !!match && tutorialResultFailed(jobKey, { failed: Number(match[1]) });
+}
 export type CronOutcome = typeof CRON_OUTCOME_SKIPPED;
 
 const LOCK_SKIP_REASON = 'предыдущий прогон ещё держал замок';

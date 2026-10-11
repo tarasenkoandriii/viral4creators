@@ -15,7 +15,51 @@ import {
   skipReasonOf,
   successLogFields,
   summarizeCounters,
+  tutorialResultFailed,
+  historicalTutorialFailed,
 } from './cron-run-summary';
+
+describe('Tutorial batch failures are not successful runs', () => {
+  it('interprets historical failures without confusing zero or another job', () => {
+    expect(
+      historicalTutorialFailed(
+        'ui-snapshot-run',
+        'total=5, changed=0, failed=5',
+      ),
+    ).toBe(true);
+    expect(
+      historicalTutorialFailed('ui-snapshot-run', 'total=5, failed=0'),
+    ).toBe(false);
+    expect(historicalTutorialFailed('publish', 'failed=5')).toBe(false);
+  });
+  it.each([
+    'tutorial-scenario-generate',
+    'tutorial-scenario-run',
+    'tutorial-assembly-poll',
+    'ui-snapshot-run',
+  ])('%s detects partial and total failures', (key) => {
+    expect(tutorialResultFailed(key, { failed: 5 })).toBe(true);
+    expect(tutorialResultFailed(key, { failed: 0 })).toBe(false);
+    expect(tutorialResultFailed(key, { failed: 5, skipped: 'locked' })).toBe(
+      false,
+    );
+  });
+  it('does not change unrelated job contracts or accept malformed counts', () => {
+    expect(tutorialResultFailed('publish', { failed: 1 })).toBe(false);
+    expect(tutorialResultFailed('ui-snapshot-run', { failed: '5' })).toBe(
+      false,
+    );
+  });
+  it('includes route failure reasons without requiring scenario ok flag', () => {
+    expect(
+      buildRunSummary('ui-snapshot-run', {
+        total: 5,
+        failed: 5,
+        outcomes: [{ routeKey: 'generate', error: 'browser unavailable' }],
+      }),
+    ).toContain('generate: browser unavailable');
+  });
+});
 
 describe('summarizeCounters', () => {
   it('собирает числовые поля, нечисловые не выдумывает', () => {
