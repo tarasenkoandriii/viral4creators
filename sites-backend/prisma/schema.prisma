@@ -128,6 +128,7 @@ model Site {
   updatedAt DateTime @updatedAt
 
   qaTestCases QaTestCase[]
+  qaTestRuns QaTestRun[]
   hosts SiteHost[]
 
   // Э1: обход (общий с QA) и знания помощника. Все — составным ключом
@@ -4983,4 +4984,35 @@ model QaTestCaseRevision {
   @@unique([caseId, version])
   @@index([accountId, caseId])
   @@map("qa_test_case_revisions")
+}
+
+model QaTestRun {
+  id String @id @default(cuid())
+  accountId String
+  siteId String
+  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  title String
+  snapshot Json
+  revision Int @default(1)
+  createdByMemberId String
+  createdAt DateTime @default(now())
+  attempts QaTestRunAttempt[]
+  @@unique([id, accountId])
+  @@index([accountId, siteId, id])
+  @@map("qa_test_runs")
+}
+model QaTestRunAttempt {
+  id String @id @default(cuid())
+  accountId String
+  runId String
+  run QaTestRun @relation(fields: [runId, accountId], references: [id, accountId], onDelete: Cascade)
+  caseKey String
+  attemptNumber Int
+  status String
+  comment String
+  createdByMemberId String
+  createdAt DateTime @default(now())
+  @@unique([runId, caseKey, attemptNumber])
+  @@index([accountId, runId, id])
+  @@map("qa_test_run_attempts")
 }

@@ -26,7 +26,7 @@ const conflict = () =>
 @Injectable()
 export class QaCatalogService {
   constructor(private readonly db: SitesDb) {}
-  private async scoped(m: AccountMembership, siteId: string, write = false) {
+  async scoped(m: AccountMembership, siteId: string, write = false) {
     if (!satisfiesProductRoles(m, write ? QA_WRITE : QA_READ))
       throw new ForbiddenException({
         code: 'PRODUCT_ROLE_REQUIRED',

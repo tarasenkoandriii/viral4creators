@@ -19,3 +19,14 @@ caseKey — стабильный uppercase ID, например SBX-LOGIN, не 
 Размер нормализованного payload ≤64 KiB, title ≤200, 1–100 шагов, action/expected ≤2000, tags/requirements ≤20 элементов. Не хранить пароли или записи посетителей в шагах. Серверный модуль не даёт публичного доступа к артефактам и не запускает CI.
 
 Это backend редактора; frontend, сохранение plans/runs и связка локального pilot reporter с БД ещё не подключены. Production storage станет доступно только после применения additive migration 20261013090000_qa_catalog. Авторизация и optimistic concurrency проверяются unit-тестами; миграционную совместимость проверяет schema job CI.
+
+
+## Stored runs (manual result API)
+
+- POST /qa/sites/:siteId/runs — `{title,caseIds}`, 1–100 unique existing unarchived cases in this site's tenant. Freezes IDs, keys, versions and complete payloads; ≤1 MiB snapshot.
+- GET /qa/sites/:siteId/runs — 50 headers, `?before=ID`, nextBeforeId.
+- GET /qa/sites/:siteId/runs/:id — frozen snapshot, revision, latestAttempts, counts (including notRun) and flakyCaseKeys (passed after a recorded failure).
+- GET /qa/sites/:siteId/runs/:id/attempts — append-only history, 100 rows, `?before=ID`, nextBeforeId.
+- POST /qa/sites/:siteId/runs/:id/attempts — `{expectedRevision,caseKey,status,comment}`. Manual cases only; status passed/failed/blocked/skipped. Non-passing results require an explanation (comment ≤4000 chars). Member attribution and attemptNumber are server-owned. A stale revision returns QA_RUN_CONFLICT/409 without creating an attempt.
+
+Runs use the same QA read/write roles and tenant isolation. Head CAS and appended attempt commit in one transaction. Old failures are retained; complete means all cases have an executed passed/failed result, not overall success. Blocked/skipped/notRun never become passed. The endpoint records a human declaration; it does not certify physical-device acceptance or execute tests. Automated case results remain notRun until a separately authenticated reporter is implemented. No run editor, close/finalize action, report ingestion, artifact upload, or execution worker is added in this delivery.
