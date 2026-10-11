@@ -699,6 +699,39 @@ describe('runScenario — платный клик', () => {
  * успеха: ролик из пяти кадров вместо десяти и ни строчки об этом.
  */
 describe('runScenario — несостоявшийся снимок', () => {
+  it('зависший снимок останавливает сценарий и называет кадр', async () => {
+    jest.useFakeTimers();
+    try {
+      const click = jest.fn().mockResolvedValue(undefined);
+      const page = buildPage({
+        screenshot: jest.fn(() => new Promise<Uint8Array>(() => {})),
+        locator: jest.fn(() => ({ click, fill: jest.fn() })),
+      });
+      const pending = runScenario(
+        page,
+        [
+          { kind: 'goto', route: 'generate' },
+          { kind: 'click', selector: '[data-qa="next"]' },
+        ],
+        resolveOk,
+        1000,
+        true,
+      );
+      await jest.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      expect(result.failedAt).toBe(0);
+      expect(result.steps.find((s) => !s.ok)?.error).toContain(
+        'кадр шага 1 (goto) не снят за 1000мс',
+      );
+      expect(click).not.toHaveBeenCalled();
+      expect(result.frames).toEqual([]);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('сбой скриншота не роняет прогон, но попадает в skippedFrames', async () => {
     let n = 0;
     const page = {
