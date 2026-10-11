@@ -76,6 +76,8 @@ import {
   type AssistValue,
 } from './lib/assist-context';
 import { createQaRunsApi } from './lib/qa-runs-api';
+import { createQaFindingsApi } from './lib/qa-findings-api';
+import { QaFindingsScreen } from './screens/QaFindingsScreen';
 import { QaRunsScreen, QaRunsButton } from './screens/QaRunsScreen';
 import { createQaCatalogApi } from './lib/qa-catalog-api';
 import { QaCatalogScreen, QaCatalogButton } from './screens/QaCatalogScreen';
@@ -255,6 +257,7 @@ export function App({ startParam }: { startParam: string | null }) {
     () => createAdminActionsApi(client),
     [client]
   );
+  const qaFindings = useMemo(() => createQaFindingsApi(client), [client]);
   const qaRuns = useMemo(() => createQaRunsApi(client), [client]);
   const qaCatalog = useMemo(() => createQaCatalogApi(client), [client]);
   const assist = useMemo<AssistValue>(
@@ -276,6 +279,7 @@ export function App({ startParam }: { startParam: string | null }) {
       ai: aiApi,
       qaCatalog,
       qaRuns,
+      qaFindings,
     }),
     [
       knowledgeApi,
@@ -295,6 +299,7 @@ export function App({ startParam }: { startParam: string | null }) {
       aiApi,
       qaCatalog,
       qaRuns,
+      qaFindings,
     ]
   );
 
@@ -595,6 +600,7 @@ function navActive(key: string, route: Route): boolean {
       'test-accounts',
       'qa-cases',
       'qa-runs',
+      'qa-findings',
       'admin-mode',
       'admin-chat',
       'verify-host',
@@ -938,6 +944,8 @@ function Screen({
           />
         </>
       );
+    case 'qa-findings':
+      return <QaFindingsScreen siteId={route.siteId} />;
     case 'qa-runs':
       return <QaRunsScreen siteId={route.siteId} />;
     case 'qa-cases':

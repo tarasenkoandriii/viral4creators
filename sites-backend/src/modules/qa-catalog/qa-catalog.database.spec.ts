@@ -4,11 +4,13 @@ import { SitesDb } from '../../prisma/sites-db.service';
 import { AccountMembership } from '../site-core/account/roles';
 import { QaRunService } from './qa-run.service';
 import { QaCatalogService } from './qa-catalog.service';
+import { QaFindingService } from './qa-finding.service';
 const ciDescribe = process.env.CI === 'true' ? describe : describe.skip;
 ciDescribe('QA catalog on isolated CI Postgres', () => {
   let prisma: PrismaService;
   let service: QaCatalogService;
   let runs: QaRunService;
+  let findings: QaFindingService;
   let accountA: string,
     accountB: string,
     siteA: string,
@@ -43,6 +45,7 @@ ciDescribe('QA catalog on isolated CI Postgres', () => {
     const db = new SitesDb(prisma);
     service = new QaCatalogService(db);
     runs = new QaRunService(service);
+    findings = new QaFindingService(service);
     const raw = db.system('QA isolated acceptance fixture');
     accountA = (
       await raw.siteAccount.create({ data: { verifyToken: randomUUID() } })
@@ -306,4 +309,62 @@ ciDescribe('QA catalog on isolated CI Postgres', () => {
     ).rejects.toMatchObject({ status: 400 });
     expect((await runs.get(member(accountA), siteA, run.id)).revision).toBe(2);
   });
+  it('finding revisions enforce compound tenant keys, CAS, history and scoped dedupe', async () => {
+    const observation = {
+      title: 'Observed overlap',
+      category: 'layout',
+      severity: 'P2',
+      status: 'needs_confirmation',
+      url: 'https://example.com/login',
+      context: '390x844 dark ru',
+      steps: 'Open login',
+      expected: 'Button visible',
+      actual: 'Button covered',
+      impact: 'Cannot submit',
+      evidence: [],
+      deployedSha: null,
+      observedAt: '2026-10-10T10:00:00Z',
+      verification: null,
+    };
+    const f = await findings.create(member(accountA), siteA, observation);
+    await expect(
+      findings.get(member(accountB), siteB, f.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      findings.create(member(accountA), siteA, observation),
+    ).rejects.toMatchObject({
+      response: { code: 'QA_FINDING_DUPLICATE', details: { findingId: f.id } },
+    });
+    await expect(
+      prisma.qaFindingRevision.create({
+        data: {
+          accountId: accountB,
+          findingId: f.id,
+          version: 99,
+          payload: observation,
+          createdByMemberId: 'fixture',
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2003' });
+    const results = await Promise.allSettled(
+      ['A', 'B'].map((title) =>
+        findings.replace(member(accountA), siteA, f.id, {
+          expectedRevision: 1,
+          payload: { ...observation, title },
+        }),
+      ),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      (results.find((r) => r.status === 'rejected') as PromiseRejectedResult)
+        .reason,
+    ).toMatchObject({ status: 409 });
+    const history = await findings.history(member(accountA), siteA, f.id);
+    expect(history.items.map((r) => r.version)).toEqual([2, 1]);
+    expect(history.items[1].payload).toMatchObject({
+      title: 'Observed overlap',
+    });
+    const older = await findings.history(member(accountA), siteA, f.id, '2');
+    expect(older.items.map((r) => r.version)).toEqual([1]);
+  }, 30000);
 });

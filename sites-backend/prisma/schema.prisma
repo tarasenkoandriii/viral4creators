@@ -129,6 +129,7 @@ model Site {
 
   qaTestCases QaTestCase[]
   qaTestRuns QaTestRun[]
+  qaFindings QaFinding[]
   hosts SiteHost[]
 
   // Э1: обход (общий с QA) и знания помощника. Все — составным ключом
@@ -5023,4 +5024,37 @@ model QaTestRunAttempt {
   @@unique([runId, reportHash, caseKey, sourceAttempt])
   @@index([accountId, runId, id])
   @@map("qa_test_run_attempts")
+}
+
+
+model QaFinding {
+  id String @id @default(cuid())
+  accountId String
+  siteId String
+  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  fingerprint String
+  title String
+  status String
+  severity String
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  revisions QaFindingRevision[]
+  @@unique([id, accountId])
+  @@unique([siteId, fingerprint])
+  @@index([accountId, siteId, id])
+  @@map("qa_findings")
+}
+model QaFindingRevision {
+  id String @id @default(cuid())
+  accountId String
+  findingId String
+  finding QaFinding @relation(fields: [findingId, accountId], references: [id, accountId], onDelete: Cascade)
+  version Int
+  payload Json
+  createdByMemberId String
+  createdAt DateTime @default(now())
+  @@unique([findingId, version])
+  @@index([accountId, findingId, id])
+  @@map("qa_finding_revisions")
 }
