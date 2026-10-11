@@ -19,7 +19,10 @@ function build() {
     brandCharacter: { upsert: upsert('c') },
     project: { upsert: upsert('p') },
     productItem: { upsert: upsert('i') },
-    session: { upsert: upsert('s') },
+    session: {
+      upsert: upsert('s'),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     // Бриф поздравления: 1:1 к проекту, поэтому `where` — `projectId`,
     // а не `id`. Отдельный мок нужен потому, что три фикстурных
     // проекта-поздравления заводятся вместе с брифами (29.09.2026).
@@ -40,6 +43,19 @@ function build() {
 }
 
 describe('seedFixtureUser', () => {
+  it('restores the empty greeting fixture without removing paid render sessions', async () => {
+    const { prisma } = build();
+    await seedFixtureUser(prisma as any, '42');
+    expect(prisma.session.updateMany).toHaveBeenCalledWith({
+      where: {
+        userId: 'usr_fixture',
+        projectId: 'fixture-tutorial-greeting-project',
+        deletedAt: null,
+        generationStatus: null,
+      },
+      data: { deletedAt: expect.any(Date) },
+    });
+  });
   it('пересев восстанавливает фиксированные сессии после мягкого удаления', async () => {
     const { prisma, session } = build();
     await seedFixtureUser(prisma as any, '42');
