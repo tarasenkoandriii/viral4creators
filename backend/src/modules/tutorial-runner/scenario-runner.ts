@@ -140,7 +140,10 @@ export interface ScenarioPage {
    * `captureFrames: true`. Реальный puppeteer `Page.screenshot()`
    * структурно совместим (возвращает `Buffer`/`Uint8Array`); моки в
    * тестах, не собирающие кадры, могут его не реализовывать вовсе. */
-  screenshot?(): Promise<Uint8Array>;
+  screenshot?(options?: {
+    type: 'png';
+    optimizeForSpeed: boolean;
+  }): Promise<Uint8Array>;
   /**
    * Опционально (этап H ТЗ `docs-tz/TZ-Tutorial-Video-Voiced.md`) —
    * нужны только указателю клика. `$` — БЕЗ ожидания: элемент ищется
@@ -533,7 +536,9 @@ async function captureFrameWithDeadline(
         if (!active)
           throw new FrameDeadlineError('съёмка отменена после дедлайна');
         phase = 'съёмка скриншота';
-        return await page.screenshot!();
+        // Tutorial re-encodes these intermediate PNGs into video. Prefer
+        // capture speed over PNG compression; keep pixels lossless.
+        return await page.screenshot!({ type: 'png', optimizeForSpeed: true });
       })(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
