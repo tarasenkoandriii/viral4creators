@@ -146,3 +146,15 @@ PR39 выпущен на 856a422, оба production Ready, legacy aliases пер
 Следующее исправление отключает in-process SwiftShader GPU только для браузеров регресс-сценариев TMA; остальная browser-инфраструктура сохраняет свой профиль. Размер viewport, DPI, PNG, тема, локаль и ограничения платных действий не меняются. Это проверяемая гипотеза устранения native capture hang, а не подтверждённая причина. Требуется production-контроль после выпуска. fromSurface=false не используется: upstream Puppeteer исключает этот тест для chrome-headless-shell, поэтому такой обход не принят.
 
 Основание для отказа от view-capture: [upstream TestExpectations Puppeteer](https://github.com/puppeteer/puppeteer/blob/main/test/TestExpectations.json). 266 целевых тестов прошли; TypeScript и lint также проверены.
+
+
+## Native screenshot timeout follow-up
+
+PR40 production batch passed 8/8. A second batch passed 5 and failed 2: the outdated greeting-video script was correctly rejected, and subject 1/ru timed out on fill after a skipped screenshot. Software rendering is therefore not a confirmed complete fix.
+
+Native Puppeteer timeout errors previously took the nonfatal missing-frame path. The runner now treats a native capture timeout as fatal, names the capture phase and stops before the next action, allowing the service to dispose of that scenario browser. Ordinary transient screenshot failures retain their existing behavior. This fixes continuation on a potentially unhealthy CDP page; it does not establish the original cause of native hangs.
+
+Validation: 56 runner tests passed, including three native timeout variants and no subsequent fill; backend TypeScript passed. Missing real completed greeting fixture remains an acceptance blocker.
+
+
+Production log follow-up: deployment dpl_D8sgjwZPMSdhNUT6NpCo5Ueug8ws recorded subject 1/ru frame 3 failing with `Attempted to use detached Frame`, followed by fill timeout. Native timeout handling alone would not catch this actual loss of page. Fatal capture classification now also covers detached frame, target/session/connection closure, including failures during capture preparation/motion evaluation. A failed browser is disposed by the existing service isolation; restoration is not attempted after a fatal screenshot failure. No automatic retry or false success is introduced. 59 runner tests, backend TypeScript and targeted ESLint pass.
