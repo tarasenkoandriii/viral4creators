@@ -317,6 +317,17 @@ export function buildScenarioPrompt(
     '',
     `Заголовок шага: ${step.title}`,
     `Описание: ${step.text}`,
+    ...(subjectKey === '8'
+      ? ['product-photo-card', 'video-provider', 'aspect-ratio-picker']
+      : subjectKey === 'greeting-script'
+        ? ['greeting-script-card', 'greeting-script-edit']
+        : []
+    ).map((hook) => {
+      const entry = QA_HOOKS[hook];
+      return entry
+        ? `Проверка перед ответом: ${qaSelector(hook)} принадлежит ТОЛЬКО экрану "${entry.route}". Перед waitFor/assertVisible этого хука открой goto "${entry.route}"; соседний экран его не содержит. Не переносить хук на экран с похожим названием.`
+        : '';
+    }),
     ...(subjectKey === 'greeting-video'
       ? [
           'Покажи НАСТОЯЩЕЕ готовое поздравление: goto greeting-video-done и assertVisible [data-qa="greeting-video-result"] обязательны. Если готового рендера нет, сценарий не выполнится: нельзя заменять результат кнопкой генерации и рассказывать о скачивании по чужому экрану.',
