@@ -1609,7 +1609,7 @@ export class TutorialScenarioRunnerService {
       return this.skip(reason);
     }
 
-    const launched = await launchHeadlessBrowser();
+    const launched = await launchHeadlessBrowser({ softwareRendering: true });
     if ('error' in launched) {
       this.logger.warn(`headless-браузер недоступен: ${launched.error}`);
       await this.recordInfraFailure(scenarios, launched.error);
@@ -1669,7 +1669,9 @@ export class TutorialScenarioRunnerService {
           break;
         }
         if (!browser) {
-          const fresh = await launchHeadlessBrowser();
+          const fresh = await launchHeadlessBrowser({
+            softwareRendering: true,
+          });
           if ('error' in fresh) {
             this.logger.warn(`повторный запуск Chromium: ${fresh.error}`);
             const error = `повторный запуск Chromium: ${fresh.error}`;

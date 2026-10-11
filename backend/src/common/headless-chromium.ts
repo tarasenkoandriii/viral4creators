@@ -188,6 +188,8 @@ export interface HeadlessLaunchOptions {
   extraArgs?: readonly string[];
   /** Браузер откроет ЧУЖОЙ сайт — снять `UNTRUSTED_STRIPPED_ARGS`. */
   untrustedContent?: boolean;
+  /** Static TMA screenshots do not need the in-process SwiftShader GPU. */
+  softwareRendering?: boolean;
 }
 
 /** Итоговые флаги запуска: план + опции. Экспорт — для тестов. */
@@ -195,9 +197,20 @@ export function launchArgs(
   planArgs: readonly string[],
   options: HeadlessLaunchOptions = {},
 ): string[] {
-  const base = options.untrustedContent
+  let base = options.untrustedContent
     ? planArgs.filter((a) => !UNTRUSTED_STRIPPED_ARGS.includes(a))
     : [...planArgs];
+  if (options.softwareRendering) {
+    const gpuArgs = [
+      '--ignore-gpu-blocklist',
+      '--in-process-gpu',
+      '--use-gl=angle',
+      '--use-angle=swiftshader',
+      '--enable-unsafe-swiftshader',
+    ];
+    base = base.filter((arg) => !gpuArgs.includes(arg));
+    if (!base.includes('--disable-gpu')) base.push('--disable-gpu');
+  }
   return [...base, ...(options.extraArgs ?? [])];
 }
 
