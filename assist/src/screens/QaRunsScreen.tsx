@@ -453,6 +453,7 @@ function Runs({ siteId }: { siteId: string }) {
                 <label className="block">
                   Отчёт Playwright (.json)
                   <input
+                    className="block w-full max-w-full"
                     type="file"
                     accept=".json,application/json"
                     disabled={busy}
@@ -534,7 +535,7 @@ function Runs({ siteId }: { siteId: string }) {
                 : 'Ручная попытка'}{' '}
               · {new Date(a.createdAt).toLocaleString()} · {a.comment}
               {a.sourceMetadata && (
-                <span className="block text-sm">
+                <span className="block break-all text-sm">
                   Источник тестов:{' '}
                   {a.sourceMetadata.testSourceSha ?? 'не указан'} · версия
                   деплоя: {a.sourceMetadata.deployedSha ?? 'не подтверждена'} ·
