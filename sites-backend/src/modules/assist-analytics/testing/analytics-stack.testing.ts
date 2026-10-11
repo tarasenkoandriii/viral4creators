@@ -5,7 +5,7 @@
  * кроны зовутся только со `scope` своих сайтов (контракт Э3 §9 п.6).
  * Telegram — подменённый fetch; Blob выгрузок — в памяти.
  */
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import { LeadDelivery } from '../../assist-site-chat/system/lead-delivery.service';
@@ -183,9 +183,8 @@ export class AnalyticsStack {
       assistAdmin: 'none',
       ...productRoles,
     };
-    const tg =
-      BigInt(Date.now()) * BigInt(1000) +
-      BigInt(Math.floor(Math.random() * 1000));
+    // Avoid collisions in rapid multi-member fixtures; fit signed Postgres bigint.
+    const tg = randomBytes(8).readBigUInt64BE() & BigInt('0x7fffffffffffffff');
     const m = await this.owner.siteAccountMember.create({
       data: { accountId: s.accountId, telegramId: tg, role, productRoles: pr },
     });
