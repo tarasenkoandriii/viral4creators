@@ -208,6 +208,7 @@ export interface FramePointer {
 }
 
 export interface ScenarioLocator {
+  setTimeout?(timeoutMs: number): ScenarioLocator;
   click(): Promise<unknown>;
   fill(value: string): Promise<unknown>;
 }
@@ -326,7 +327,7 @@ export async function runScenario(
       continue;
     }
     try {
-      await runStep(page, step, resolveRoute, stepTimeoutMs);
+      await runStepWithDeadline(page, step, resolveRoute, stepTimeoutMs, i);
       results.push({ index: i, step, ok: true });
       if (
         captureFrames &&
@@ -489,11 +490,61 @@ export async function measurePointer(
   }
 }
 
+function boundedLocator(
+  page: ScenarioPage,
+  selector: string,
+  timeoutMs: number,
+): ScenarioLocator {
+  const locator = page.locator(selector);
+  return locator.setTimeout ? locator.setTimeout(timeoutMs) : locator;
+}
+
+/** Covers CDP operations too; the caller closes the page after a failure. */
+async function runStepWithDeadline(
+  page: ScenarioPage,
+  step: ScenarioStep,
+  resolveRoute: ScenarioRouteResolver,
+  timeoutMs: number,
+  index: number,
+): Promise<void> {
+  const target =
+    'selector' in step
+      ? step.selector
+      : step.kind === 'goto'
+        ? step.route
+        : step.kind;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let active = true;
+  const assertActive = () => {
+    if (!active) throw new Error('действие отменено после дедлайна шага');
+  };
+  try {
+    await Promise.race([
+      runStep(page, step, resolveRoute, timeoutMs, assertActive),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `шаг ${index + 1} (${step.kind}, ${target}) не уложился в ${timeoutMs}мс`,
+              ),
+            ),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    active = false;
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function runStep(
   page: ScenarioPage,
   step: ScenarioStep,
   resolveRoute: ScenarioRouteResolver,
   timeoutMs: number,
+  assertActive: () => void,
 ): Promise<void> {
   switch (step.kind) {
     case 'goto': {
@@ -512,7 +563,7 @@ async function runStep(
       // кликабельности элемента с повтором, в отличие от классического
       // `page.type()`, который бросает немедленно, если элемент ещё не
       // отрисован (частый случай сразу после `goto`/`click` в SPA).
-      await page.locator(step.selector).fill(step.value);
+      await boundedLocator(page, step.selector, timeoutMs).fill(step.value);
       return;
     case 'click': {
       // Выключенная кнопка — отдельный, НАЗВАННЫЙ отказ, а не таймаут
@@ -532,6 +583,7 @@ async function runStep(
             .evaluate((el) => (el as HTMLButtonElement).disabled === true)
             .catch(() => false)
         : false;
+      assertActive();
       if (disabled) {
         throw new Error(
           `элемент ${step.selector} есть на экране, но выключен — ` +
@@ -539,7 +591,7 @@ async function runStep(
             'пройденных шагов',
         );
       }
-      await page.locator(step.selector).click();
+      await boundedLocator(page, step.selector, timeoutMs).click();
       return;
     }
     case 'waitFor':

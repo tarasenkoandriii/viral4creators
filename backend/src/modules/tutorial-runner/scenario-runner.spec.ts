@@ -910,3 +910,96 @@ describe('кадр с экрана другого шага не снимаетс
     ).toBe(true);
   });
 });
+
+describe('bounded scenario actions', () => {
+  it.each(['click', 'fill'] as const)(
+    'sets the locator timeout for %s',
+    async (kind) => {
+      const bounded = { click: jest.fn(), fill: jest.fn() };
+      const setTimeout = jest.fn().mockReturnValue(bounded);
+      const page = buildPage({
+        locator: jest.fn(() => ({ ...bounded, setTimeout })),
+      });
+      const step: ScenarioStep =
+        kind === 'click'
+          ? { kind, selector: '[data-qa="item-photo-skip"]' }
+          : {
+              kind,
+              selector: '[data-qa="item-description-input"]',
+              value: 'private input',
+            };
+      const result = await runScenario(page, [step], resolveOk, 1234);
+      expect(result.ok).toBe(true);
+      expect(setTimeout).toHaveBeenCalledWith(1234);
+      expect(bounded[kind]).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('names a hung action, omits input values and stops later actions', async () => {
+    jest.useFakeTimers();
+    try {
+      const click = jest.fn();
+      const page = buildPage({
+        locator: jest.fn(() => ({
+          click,
+          fill: () => new Promise<void>(() => {}),
+        })),
+      });
+      const pending = runScenario(
+        page,
+        [
+          {
+            kind: 'fill',
+            selector: '[data-qa="item-description-input"]',
+            value: 'private input',
+          },
+          { kind: 'click', selector: '[data-qa="item-photo-skip"]' },
+        ],
+        resolveOk,
+        1234,
+      );
+      await jest.advanceTimersByTimeAsync(1234);
+      const result = await pending;
+      expect(result).toMatchObject({ ok: false, failedAt: 0 });
+      expect(result.steps[0].error).toContain(
+        'шаг 1 (fill, [data-qa="item-description-input"])',
+      );
+      expect(result.steps[0].error).not.toContain('private input');
+      expect(click).not.toHaveBeenCalled();
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+it('does not click if the disabled-state check finishes after the deadline', async () => {
+  jest.useFakeTimers();
+  try {
+    let completeCheck!: (disabled: boolean) => void;
+    const click = jest.fn();
+    const page = buildPage({
+      locator: jest.fn(() => ({ click, fill: jest.fn() })),
+      $: jest.fn().mockResolvedValue({
+        boundingBox: jest.fn(),
+        evaluate: () =>
+          new Promise<boolean>((resolve) => {
+            completeCheck = resolve;
+          }),
+      }),
+    });
+    const pending = runScenario(
+      page,
+      [{ kind: 'click', selector: '[data-qa="item-photo-skip"]' }],
+      resolveOk,
+      1234,
+    );
+    await jest.advanceTimersByTimeAsync(1234);
+    expect((await pending).ok).toBe(false);
+    completeCheck(false);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(click).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+  }
+});
