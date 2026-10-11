@@ -2766,6 +2766,10 @@ export class TutorialScenarioRunnerService {
           deletedAt: null,
           generationStatus: GenerationStatus.COMPLETE,
           project: { type: { in: AD_TYPES } },
+          // A completed render can have no reference analysis (for
+          // example a template-only video). The seeded wizard routes
+          // need that analysis to enable their stepper positions.
+          data: { path: ['videoAnalysis', 'status'], equals: 'complete' },
         },
         orderBy: { createdAt: 'desc' },
       }),

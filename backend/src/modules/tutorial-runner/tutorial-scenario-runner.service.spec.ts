@@ -909,6 +909,7 @@ describe('TutorialScenarioRunnerService', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           generationStatus: GenerationStatus.COMPLETE,
+          data: { path: ['videoAnalysis', 'status'], equals: 'complete' },
         }),
       }),
     );
