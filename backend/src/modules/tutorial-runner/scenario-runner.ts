@@ -547,6 +547,20 @@ async function captureFrameWithDeadline(
             type: 'png',
             optimizeForSpeed: true,
           });
+        } catch (error) {
+          // Chromium can reject before our outer deadline. A capture timeout
+          // still leaves CDP unhealthy: do not continue with another action.
+          const message =
+            error instanceof Error ? error.message : String(error);
+          if (
+            (error instanceof Error && error.name === 'TimeoutError') ||
+            /timed?\s*out|timeout/i.test(message)
+          ) {
+            throw new FrameDeadlineError(
+              `кадр шага ${index + 1} (${step.kind}): таймаут съёмки скриншота: ${message}`,
+            );
+          }
+          throw error;
         } finally {
           phase = 'восстановление анимаций';
           // Restore the live UI before the next action. This is a still
