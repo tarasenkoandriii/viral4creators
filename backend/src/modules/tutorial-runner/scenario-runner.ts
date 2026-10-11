@@ -328,7 +328,6 @@ export async function runScenario(
     }
     try {
       await runStepWithDeadline(page, step, resolveRoute, stepTimeoutMs, i);
-      results.push({ index: i, step, ok: true });
       if (
         captureFrames &&
         page.screenshot &&
@@ -339,10 +338,16 @@ export async function runScenario(
         // прогон ради необязательного кадра для слайд-шоу.
         let frame: ScenarioFrame | null = null;
         try {
-          await prepareFrame(page, step);
-          frame = { stepIndex: i, bytes: await page.screenshot() };
+          const bytes = await captureFrameWithDeadline(
+            page,
+            step,
+            stepTimeoutMs,
+            i,
+          );
+          frame = { stepIndex: i, bytes };
           frames.push(frame);
         } catch (err) {
+          if (err instanceof FrameDeadlineError) throw err;
           // Пропускаем кадр, не весь прогон — но НЕ молча (сквозной
           // аудит 29.09.2026). Пустой `catch` прятал единственный след
           // частичного успеха: ролик собирался из пяти кадров вместо
@@ -363,6 +368,7 @@ export async function runScenario(
           if (pointer) frame.pointer = pointer;
         }
       }
+      results.push({ index: i, step, ok: true });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       results.push({ index: i, step, ok: false, error });
@@ -487,6 +493,43 @@ export async function measurePointer(
     return { x: round(x), y: round(y) };
   } catch {
     return null;
+  }
+}
+
+class FrameDeadlineError extends Error {}
+
+/** A hung CDP capture must stop the scenario before another action starts. */
+async function captureFrameWithDeadline(
+  page: ScenarioPage,
+  step: ScenarioStep,
+  timeoutMs: number,
+  index: number,
+): Promise<Uint8Array> {
+  let active = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        await prepareFrame(page, step);
+        if (!active)
+          throw new FrameDeadlineError('съёмка отменена после дедлайна');
+        return await page.screenshot!();
+      })(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new FrameDeadlineError(
+                `кадр шага ${index + 1} (${step.kind}) не снят за ${timeoutMs}мс`,
+              ),
+            ),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    active = false;
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
