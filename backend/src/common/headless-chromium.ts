@@ -31,8 +31,9 @@
  *
  * Оба пакета начиная с этих версий — только ESM. Бэкенд собирается в
  * CommonJS, и `await import()` здесь компилируется в `require()`: Node
- * 22.12+ и 24 (рантайм проекта — `engines.node: 24.x`) грузят ESM без
- * верхнеуровневого `await` через `require` штатно. В jest оба модуля
+ * 22.12+ и 24 обычно грузят ESM через require, но загрузчик Vercel
+ * может его отвергать. На ERR_REQUIRE_ESM используется нативный import,
+ * который компилятор не переписывает. В jest оба модуля
  * всегда подменяются (`jest.mock`), настоящий браузер в CI не
  * поднимается.
  *
@@ -43,6 +44,23 @@
  */
 
 import { Logger } from '@nestjs/common';
+
+/** TypeScript CommonJS rewrites import() to require(). Some production
+ * loaders still reject ESM even on a recent Node runtime. Keep static
+ * imports for dependency tracing and use native import only for that error. */
+export async function loadBrowserEsm<T>(
+  load: () => Promise<T>,
+  packageName: '@sparticuz/chromium-min' | 'puppeteer-core',
+): Promise<T> {
+  try {
+    return await load();
+  } catch (error) {
+    if ((error as { code?: string })?.code !== 'ERR_REQUIRE_ESM') throw error;
+    const nativeImport = new Function('name', 'return import(name)') as
+      (name: string) => Promise<T>;
+    return nativeImport(packageName);
+  }
+}
 
 // Флаги для системного Chromium в Docker-образе (если он когда-либо
 // понадобится локально — на Vercel этой ветки не будет).
@@ -209,7 +227,7 @@ export async function launchHeadlessBrowser(
   let handedOver = false;
   let launching: Promise<import('puppeteer-core').Browser> | null = null;
   try {
-    const puppeteer = await import('puppeteer-core');
+    const puppeteer = await loadBrowserEsm(() => import('puppeteer-core'), 'puppeteer-core');
     launching = puppeteer.launch({
       executablePath: plan.executablePath,
       headless: plan.headless,
@@ -320,7 +338,7 @@ async function buildBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
   }
 
   try {
-    const mod: unknown = await import('@sparticuz/chromium-min');
+    const mod: unknown = await loadBrowserEsm(() => import('@sparticuz/chromium-min'), '@sparticuz/chromium-min');
     // Пакет ESM (`export default Chromium`): через `require(esm)` он
     // приезжает пространством имён с `.default`, а подменённый в тестах —
     // самим объектом. Берём то, что есть.

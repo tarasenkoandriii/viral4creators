@@ -28,6 +28,8 @@ import {
   cronOutcomeOf,
   CRON_OUTCOME_SKIPPED,
   successLogFields,
+  tutorialResultFailed,
+  historicalTutorialFailed,
 } from './cron-run-summary';
 import {
   CronHistoryQuery,
@@ -478,20 +480,28 @@ export class AdminCronService {
           Array<{
             jobKey: string;
             skipped: number | bigint | string | null;
+            historicalFailed?: number | bigint | string | null;
             lastSuccessAt: Date | string | null;
             lastFailureAt: Date | string | null;
           }>
         >`SELECT "jobKey",
+          COUNT(*) FILTER (WHERE "status" = 'SUCCESS' AND "effectiveStatus" = 'FAILED'
+            AND "startedAt" >= ${since}) AS "historicalFailed",
           COUNT(*) FILTER (
             WHERE "status" = 'SUCCESS' AND "startedAt" >= ${since}
               AND ("debugLog"->>'cronOutcome') = ${CRON_OUTCOME_SKIPPED}
           ) AS "skipped",
           MAX("startedAt") FILTER (
-            WHERE "status" = 'SUCCESS'
+            WHERE "effectiveStatus" = 'SUCCESS'
               AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}
           ) AS "lastSuccessAt",
-          MAX("startedAt") FILTER (WHERE "status" = 'FAILED') AS "lastFailureAt"
-        FROM "cron_run_logs"
+          MAX("startedAt") FILTER (WHERE "effectiveStatus" = 'FAILED') AS "lastFailureAt"
+        FROM (SELECT *, CASE WHEN "status" = 'SUCCESS'
+          AND "jobKey" IN ('tutorial-scenario-generate', 'tutorial-scenario-run', 'tutorial-assembly-poll', 'ui-snapshot-run')
+          AND "summary" ~ '(^|, )failed=[1-9][0-9]*(,|$)'
+          AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}
+          THEN 'FAILED' ELSE "status" END AS "effectiveStatus"
+          FROM "cron_run_logs") AS interpreted
         WHERE "startedAt" < ${until}
         GROUP BY "jobKey"`,
       ]);
@@ -558,6 +568,9 @@ export class AdminCronService {
           ? floorToMinute(firstScheduledRunAt)
           : expectedSince;
       const outcomeRow = outcomes.find((r) => r.jobKey === jobKey);
+      const historicalFailed = Math.min(byStatus.SUCCESS, Math.max(0, Number(outcomeRow?.historicalFailed ?? 0)));
+      byStatus.SUCCESS -= historicalFailed;
+      byStatus.FAILED += historicalFailed;
       const toDate = (v: Date | string | null | undefined) =>
         v == null ? null : new Date(v);
       const schedule = schedules?.[jobKey] ?? null;
@@ -786,7 +799,7 @@ export class AdminCronService {
       const updated = (await this.prisma.cronRunLog.update({
         where: { id: row.id },
         data: {
-          status: 'SUCCESS',
+          status: tutorialResultFailed(jobKey, result) ? 'FAILED' : 'SUCCESS',
           finishedAt: new Date(),
           durationMs,
           summary,
@@ -888,5 +901,7 @@ export class AdminCronService {
 
 /** Строка журнала с выведенным исходом (см. `CronRunLogRow.outcome`). */
 function withOutcome(row: CronRunLogRow): CronRunLogRow {
-  return { ...row, outcome: cronOutcomeOf(row.debugLog) };
+  const outcome = cronOutcomeOf(row.debugLog);
+  const failed = row.status === 'SUCCESS' && outcome !== 'SKIPPED' && historicalTutorialFailed(row.jobKey, row.summary);
+  return { ...row, status: failed ? 'FAILED' : row.status, outcome };
 }
