@@ -51,7 +51,7 @@ function boolean(value: unknown): boolean {
   if (typeof value !== 'boolean') throw bad();
   return value;
 }
-function payload(value: unknown): QaCasePayload {
+export function payload(value: unknown): QaCasePayload {
   const o = object(value);
   if (
     typeof o.type !== 'string' ||
