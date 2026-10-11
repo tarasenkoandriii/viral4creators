@@ -535,10 +535,23 @@ async function captureFrameWithDeadline(
         await prepareFrame(page, step);
         if (!active)
           throw new FrameDeadlineError('съёмка отменена после дедлайна');
+        phase = 'остановка анимаций';
+        await page.evaluate?.(setCaptureMotion, true);
+        if (!active)
+          throw new FrameDeadlineError('съёмка отменена после дедлайна');
         phase = 'съёмка скриншота';
         // Tutorial re-encodes these intermediate PNGs into video. Prefer
         // capture speed over PNG compression; keep pixels lossless.
-        return await page.screenshot!({ type: 'png', optimizeForSpeed: true });
+        try {
+          return await page.screenshot!({
+            type: 'png',
+            optimizeForSpeed: true,
+          });
+        } finally {
+          // Restore the live UI before the next action. This is a still
+          // frame, so CSS motion adds compositor work without useful video.
+          await page.evaluate?.(setCaptureMotion, false);
+        }
       })(),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
@@ -556,6 +569,21 @@ async function captureFrameWithDeadline(
     active = false;
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+export function setCaptureMotion(enabled: boolean): void {
+  const id = 'tutorial-capture-motion';
+  const existing = document.getElementById(id);
+  if (!enabled) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent =
+    '*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}';
+  document.head.appendChild(style);
 }
 
 function boundedLocator(

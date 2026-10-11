@@ -5,6 +5,7 @@ import {
   measurePointer,
   opensOtherStepScreen,
   runScenario,
+  setCaptureMotion,
   ScenarioPage,
   ScenarioRouteResolver,
 } from './scenario-runner';
@@ -176,6 +177,37 @@ describe('runScenario', () => {
     expect(result.steps).toEqual([]);
     expect(result.frames).toEqual([]);
   });
+
+  it.each([false, true])(
+    'restores live motion after capture, failure=%s',
+    async (fails) => {
+      const events: string[] = [];
+      const page = buildPage({
+        evaluate: jest.fn(async (_fn, enabled) => {
+          if (_fn === setCaptureMotion)
+            events.push(enabled ? 'freeze' : 'restore');
+        }),
+        screenshot: jest.fn(async () => {
+          events.push('capture');
+          if (fails) throw new Error('capture failed');
+          return new Uint8Array([1]);
+        }),
+      });
+      const result = await runScenario(
+        page,
+        [{ kind: 'waitFor', selector: '.ready' }],
+        resolveOk,
+        15000,
+        true,
+      );
+      expect(events).toEqual(['freeze', 'capture', 'restore']);
+      expect(page.evaluate).toHaveBeenCalledWith(setCaptureMotion, true);
+      expect(page.evaluate).toHaveBeenCalledWith(setCaptureMotion, false);
+      expect(result.ok).toBe(true);
+      expect(result.frames).toHaveLength(fails ? 0 : 1);
+      expect(result.skippedFrames).toHaveLength(fails ? 1 : 0);
+    },
+  );
 
   it('captureFrames:false (по умолчанию) — кадры не снимаются, даже если page.screenshot есть', async () => {
     const screenshot = jest.fn().mockResolvedValue(new Uint8Array([1]));
@@ -895,7 +927,7 @@ describe('подготовка кадра (просмотр роликов пр�
         log.push('spinner');
       }),
       evaluate: jest.fn(async (_fn: unknown, arg: unknown) => {
-        log.push(`scroll:${String(arg)}`);
+        if (_fn !== setCaptureMotion) log.push(`scroll:${String(arg)}`);
       }) as ScenarioPage['evaluate'],
     });
     return { page, log };
@@ -966,7 +998,9 @@ describe('подготовка кадра (просмотр роликов пр�
     const { page } = recordingPage();
     (page.waitForNetworkIdle as jest.Mock).mockRejectedValue(new Error('t'));
     (page.waitForFunction as jest.Mock).mockRejectedValue(new Error('t'));
-    (page.evaluate as jest.Mock).mockRejectedValue(new Error('t'));
+    (page.evaluate as jest.Mock).mockImplementation(async (fn: unknown) => {
+      if (fn !== setCaptureMotion) throw new Error('t');
+    });
     const result = await runScenario(
       page,
       [
