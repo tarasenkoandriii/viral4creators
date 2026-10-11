@@ -1565,19 +1565,19 @@ export class TutorialScenarioRunnerService {
     // кадре через раз оказывалась снятой — прошлый прогон её уже
     // включил, этот выключил. Пересев — те же upsert'ы, что у кнопки
     // «Завести фикстуру»: десяток запросов, оплаченный ролик готового
-    // поздравления он не трогает. Сбой — не повод не снимать: будет
-    // прежнее состояние, как до этой правки.
+    // поздравления он не трогает. Сбой подготовки останавливает запись:
+    // старое состояние не позволяет достоверно проверить сценарии.
     try {
       await seedFixtureUser(
         this.prisma as unknown as Parameters<typeof seedFixtureUser>[0],
         telegramId,
       );
-    } catch (err) {
-      this.logger.warn(
-        `фикстура: пересев перед прогоном не удался, снимаем на прежнем состоянии: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+    } catch {
+      const reason = 'не удалось подготовить тестовые данные Tutorial';
+      this.logger.warn(reason);
+      await this.recordInfraFailure(scenarios, reason);
+      await this.notify.alert('tutorial-scenario-run:fixture', reason);
+      return this.skip(reason);
     }
     const ctx = await this.resolveFixtureContext(user.id);
     // Потолок открывается ОДИН раз на тик и ведётся в памяти — см.
