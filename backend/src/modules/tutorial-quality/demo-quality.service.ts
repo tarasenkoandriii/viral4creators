@@ -266,6 +266,8 @@ export interface DemoQualityTickResult {
   retried: number;
   /** Окончательная ошибка проверки (не вердикт видео). */
   errors: number;
+  /** Сбой самой очереди (например, чтение базы); отдельно от вердикта видео. */
+  queueErrors?: number;
   /** Шагов сигналов декодера за тик (отправка/опрос), если были. */
   signals?: number;
 }
@@ -943,6 +945,7 @@ export class TutorialDemoQualityService {
         if (outcome === 'budget') break;
       }
     } catch (err) {
+      result.queueErrors = (result.queueErrors ?? 0) + 1;
       this.logger.warn(`очередь проверки качества: ${errMessage(err)}`);
     }
     // Чёрные/замершие кадры (заход 7) — после основной очереди и тем же

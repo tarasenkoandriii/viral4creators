@@ -86,26 +86,38 @@ describe('openTutorialBudget', () => {
     });
   });
 
-  it('журнал расходов недоступен — считаем ноль, работу не останавливаем', async () => {
-    // Предохранитель не должен ронять исправный прогон.
-    const budget = await openTutorialBudget(
-      { get: jest.fn().mockResolvedValue('3') } as never,
-      {
-        spentTodayForOperation: jest.fn().mockRejectedValue(new Error('база')),
-      } as never,
-    );
-    expect(budget.spentMicroUsd).toBe(0);
-    expect(budgetExhausted(budget)).toBe(false);
+  it('неизвестный или некорректный расход останавливает платную работу', async () => {
+    await expect(
+      openTutorialBudget(
+        { get: jest.fn().mockResolvedValue('3') } as never,
+        {
+          spentTodayForOperation: jest
+            .fn()
+            .mockRejectedValue(new Error('база')),
+        } as never,
+      ),
+    ).rejects.toThrow('платный запуск остановлен');
+    for (const invalid of [NaN, Infinity, -1, 1.5, '0']) {
+      await expect(
+        openTutorialBudget(
+          { get: jest.fn().mockResolvedValue('3') } as never,
+          {
+            spentTodayForOperation: jest.fn().mockResolvedValue(invalid),
+          } as never,
+        ),
+      ).rejects.toThrow('платный запуск остановлен');
+    }
   });
 
-  it('настройка недоступна — умолчание, а не снятый потолок', async () => {
-    const budget = await openTutorialBudget(
-      { get: jest.fn().mockRejectedValue(new Error('база')) } as never,
-      { spentTodayForOperation: jest.fn().mockResolvedValue(0) } as never,
-    );
-    expect(budget.limitMicroUsd).toBe(
-      DEFAULT_TUTORIAL_DAILY_BUDGET_USD * 1_000_000,
-    );
+  it('настройка недоступна — платный запуск остановлен до чтения расхода', async () => {
+    const spent = jest.fn().mockResolvedValue(0);
+    await expect(
+      openTutorialBudget(
+        { get: jest.fn().mockRejectedValue(new Error('база')) } as never,
+        { spentTodayForOperation: spent } as never,
+      ),
+    ).rejects.toThrow('платный запуск остановлен');
+    expect(spent).not.toHaveBeenCalled();
   });
 });
 

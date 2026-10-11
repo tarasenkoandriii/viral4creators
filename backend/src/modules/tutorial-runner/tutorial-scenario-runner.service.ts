@@ -590,6 +590,8 @@ export interface TutorialScenarioRunResult {
   /** Заполнено, если прогон пропущен целиком (фикстура не настроена/не
    * заведена, браузер недоступен) — total/passed/failed тогда 0. */
   skipped?: string;
+  /** TMA пропущен, но независимый полигон выполнил работу. */
+  tmaSkipped?: string;
   total: number;
   passed: number;
   failed: number;
@@ -714,6 +716,11 @@ export interface TutorialAssemblyPollResult {
    *  выключена или модуля нет. */
   qualityProcessed?: number;
   qualityCompleted?: number;
+  qualityDeferred?: number;
+  qualityRetried?: number;
+  qualityErrors?: number;
+  qualityQueueErrors?: number;
+  qualitySkipped?: string;
 }
 
 /**
@@ -1547,6 +1554,8 @@ export class TutorialScenarioRunnerService {
     const scenarios = planned.map((p) => p.scenario);
     if (planned.length === 0) {
       return {
+        skipped:
+          'нет сценариев к исполнению: допустимые темы актуальны либо отсутствуют',
         total: 0,
         passed: 0,
         failed: 0,
@@ -3792,8 +3801,14 @@ export class TutorialScenarioRunnerService {
           ? {
               qualityProcessed: quality.processed,
               qualityCompleted: quality.completed,
+              qualityDeferred: quality.deferred,
+              qualityRetried: quality.retried,
+              qualityErrors: quality.errors,
+              qualityQueueErrors: quality.queueErrors ?? 0,
             }
-          : {}),
+          : quality?.skipped
+            ? { qualitySkipped: quality.skipped }
+            : {}),
       };
     } finally {
       await releaseJobLock(this.prisma, ASSEMBLY_POLL_LOCK, acquired);
@@ -5012,6 +5027,9 @@ export function mergePolygonPass(
       : (tma.themeMismatches ?? 0) + (poly.themeMismatches ?? 0);
   return {
     ...tma,
+    ...(tma.skipped && poly.total > 0
+      ? { skipped: undefined, tmaSkipped: tma.skipped }
+      : {}),
     total: tma.total + poly.total,
     executed: (tma.executed ?? 0) + (poly.executed ?? 0),
     passed: tma.passed + poly.passed,

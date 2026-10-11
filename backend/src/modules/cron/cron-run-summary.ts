@@ -180,6 +180,14 @@ export function buildRunSummary(jobKey: string, result: unknown): string {
   ) {
     return `пропущен — ${(result as { skipped: string }).skipped}`;
   }
+  if (
+    jobKey === 'tutorial-assembly-poll' &&
+    result &&
+    typeof result === 'object' &&
+    typeof (result as { qualitySkipped?: unknown }).qualitySkipped === 'string'
+  ) {
+    return `${summarizeCounters(result as Record<string, unknown>)}; проверка качества пропущена — ${(result as { qualitySkipped: string }).qualitySkipped}`;
+  }
   if (jobKey === 'blog' && result && typeof result === 'object') {
     const r = result as {
       generation?: { notConfigured?: string | null };
@@ -240,8 +248,17 @@ export function tutorialResultFailed(jobKey: string, result: unknown): boolean {
     return false;
   if (!result || typeof result !== 'object' || skipReasonOf(result))
     return false;
-  const failed = (result as { failed?: unknown }).failed;
-  return typeof failed === 'number' && Number.isFinite(failed) && failed > 0;
+  const r = result as Record<string, unknown>;
+  const keys =
+    jobKey === 'tutorial-assembly-poll'
+      ? ['failed', 'qualityErrors', 'qualityQueueErrors']
+      : ['failed'];
+  return keys.some(
+    (key) =>
+      typeof r[key] === 'number' &&
+      Number.isFinite(r[key]) &&
+      (r[key] as number) > 0,
+  );
 }
 
 /** Read-only interpretation of old green rows; never rewrites audit history. */
@@ -249,8 +266,24 @@ export function historicalTutorialFailed(
   jobKey: string,
   summary: string | null,
 ): boolean {
-  const match = /(?:^|, )failed=([1-9][0-9]*)(?:,|$)/.exec(summary ?? '');
-  return !!match && tutorialResultFailed(jobKey, { failed: Number(match[1]) });
+  const counts: Record<string, number> = {};
+  for (const match of (summary ?? '').matchAll(
+    /(?:^|, )(failed|qualityErrors|qualityQueueErrors)=([1-9][0-9]*)(?=,|$)/g,
+  ))
+    counts[match[1]] = Number(match[2]);
+  return tutorialResultFailed(jobKey, counts);
+}
+/** Старые нулевые сценарные тики — без исполнения; исходные строки не меняем. */
+export function historicalTutorialIdle(
+  jobKey: string,
+  summary: string | null,
+): boolean {
+  if (jobKey !== 'tutorial-scenario-run' || !summary) return false;
+  return (
+    ['total', 'passed', 'failed'].every((key) =>
+      new RegExp(`(?:^|, )${key}=0(?=,|$)`).test(summary),
+    ) && !/(?:^|, )executed=[1-9][0-9]*(?=,|$)/.test(summary)
+  );
 }
 export type CronOutcome = typeof CRON_OUTCOME_SKIPPED;
 

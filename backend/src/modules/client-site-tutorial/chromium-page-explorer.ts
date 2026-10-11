@@ -46,6 +46,7 @@ import {
   restoreCookieJar,
 } from '../../common/cookie-jar';
 import { launchHeadlessBrowser } from '../../common/headless-chromium';
+import { closeOwnedBrowser } from '../tutorial-runner/browser-cleanup';
 import {
   egressProxyChromiumArgs,
   startEgressFilterProxy,
@@ -507,6 +508,7 @@ export class ChromiumPageExplorer implements PageExplorer {
     }
 
     const browser = launched.browser as unknown as ExplorerBrowser;
+    let workFailed = false;
     try {
       const deadline = this.now() + timeoutMs;
       return await withForeignTimeout(
@@ -514,8 +516,20 @@ export class ChromiumPageExplorer implements PageExplorer {
         timeoutMs,
         `${what} не уложилась в ${Math.round(timeoutMs / 1000)}с — сайт заказчика отвечает слишком медленно`,
       );
+    } catch (err) {
+      workFailed = true;
+      throw err;
     } finally {
-      await browser.close().catch(() => undefined);
+      try {
+        await closeOwnedBrowser(launched.browser);
+      } catch (err) {
+        if (!workFailed) throw err;
+        this.logger.warn(
+          `${what}: завершение собственного Chromium не подтверждено`,
+        );
+      } finally {
+        await proxy.close();
+      }
       const blocked = proxy.stats()['blocked-address'];
       if (blocked > 0) {
         // Без адресов и URL — только счёт: сам факт «страница заказчика
@@ -524,7 +538,6 @@ export class ChromiumPageExplorer implements PageExplorer {
           `${what}: прокси отклонил ${blocked} обращений к служебным адресам`,
         );
       }
-      await proxy.close();
     }
   }
 

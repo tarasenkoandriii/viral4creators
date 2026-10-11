@@ -85,22 +85,33 @@ export function budgetExhausted(budget: TutorialBudget): boolean {
  * Открыть потолок на тик: прочитать настройку и уже потраченное за
  * сегодня.
  *
- * Оба чтения терпимы к отказу (`catch`): потолок — предохранитель, и
- * упавшая база не должна останавливать работу, которая в остальном
- * исправна. При недоступном журнале расходов считаем потраченным ноль
- * — то есть предохранитель на эту ночь не сработает, но и не соврёт в
- * другую сторону, остановив исправный прогон.
+ * Недоступные настройки или журнал расходов останавливают платный
+ * запуск: неизвестный расход нельзя считать нулём. Отсутствующее
+ * значение настройки по-прежнему использует штатное умолчание.
  */
 export async function openTutorialBudget(
   settings: Pick<PlatformSettingsService, 'get'>,
   aiUsage: Pick<AiUsageService, 'spentTodayForOperation'>,
 ): Promise<TutorialBudget> {
   const limitUsd = parseTutorialBudgetSetting(
-    await settings.get(TUTORIAL_BUDGET_SETTING_KEY).catch(() => null),
+    await settings.get(TUTORIAL_BUDGET_SETTING_KEY).catch(() => {
+      throw new Error(
+        'Не удалось прочитать лимит Tutorial; платный запуск остановлен.',
+      );
+    }),
   );
   const spentMicroUsd = await aiUsage
     .spentTodayForOperation(TUTORIAL_PAID_OPERATIONS)
-    .catch(() => 0);
+    .catch(() => {
+      throw new Error(
+        'Не удалось проверить суточный расход Tutorial; платный запуск остановлен.',
+      );
+    });
+  if (!Number.isSafeInteger(spentMicroUsd) || spentMicroUsd < 0) {
+    throw new Error(
+      'Суточный расход Tutorial некорректен; платный запуск остановлен.',
+    );
+  }
   return {
     limitMicroUsd: limitUsd === null ? null : Math.round(limitUsd * 1_000_000),
     spentMicroUsd,
