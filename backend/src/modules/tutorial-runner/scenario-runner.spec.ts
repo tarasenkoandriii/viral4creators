@@ -698,6 +698,26 @@ describe('runScenario — платный клик', () => {
  * 29.09.2026. Пустой `catch` прятал единственный след частичного
  * успеха: ролик из пяти кадров вместо десяти и ни строчки об этом.
  */
+describe('measurePointer — CDP deadline', () => {
+  it('зависшая геометрия не задерживает ролик и не оставляет таймер', async () => {
+    jest.useFakeTimers();
+    try {
+      const page = buildPage({
+        viewport: () => ({ width: 100, height: 100 }),
+        $: jest.fn().mockResolvedValue({
+          boundingBox: () => new Promise(() => {}),
+        }),
+      });
+      const pending = measurePointer(page, '#next', 1000);
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(await pending).toBeNull();
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('runScenario — несостоявшийся снимок', () => {
   it('зависший снимок останавливает сценарий и называет кадр', async () => {
     jest.useFakeTimers();

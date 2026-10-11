@@ -55,3 +55,8 @@ PR #23 объединён в main: 1d02fd2c04da79407fef9db39f4afa46ca8ccd3f. Ф�
 ### Контроль после PR #25, 11.10.2026 13:40 Киев
 
 Production 7b01136, deployment dpl_HF1GgbDbAdBB3TAEcMRuYpk5b5Wc: health ok, database up. CI: 10 151 тест, 10 146 passed, 5 skipped. Ручной прогон: total=15, executed=2, passed=0, failed=2, 141.887 секунды. Сценарий 3/ru: шаг 2 click — wizard-step-analysis выключен; сценарий 2/ru всё ещё превысил общий лимит 90 секунд. Полная приёмка не пройдена. Следующее исправление ограничивает подготовку и съёмку каждого кадра отдельным дедлайном; до выпуска и повторного прогона оно не считается подтверждённым исправлением production.
+
+
+### Контроль после PR #26, 11.10.2026
+
+Production 413ca4d, deployment dpl_5kbf2MRD5TLAqdwxfjDaMMmKeCVm: health ok, database up. CI: 10 152 теста, 10 147 passed, 5 skipped. Ручной прогон после выпуска: total=15, executed=5, passed=0, failed=5, длительность 223.439 секунды. В видимой summary: 4/ru — кадр шага 1 goto не снят за 15 секунд; 5/ru — выключен wizard-step-analysis; 6/ru — выключен wizard-step-prompt; ещё две причины свернуты. Ограничение кадров подтверждено конкретной production-ошибкой; успешная приёмка сценариев не подтверждена. Отдельный предел измерения указателя подготовлен следующим изменением; до выпуска его нельзя считать production-исправлением.
