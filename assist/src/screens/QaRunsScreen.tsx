@@ -3,6 +3,7 @@ import { ApiError, useKit } from '../kit';
 import { Button, Card, inputClass } from '../kit/ui';
 import { useAssist } from '../lib/assist-context';
 import { qaAccess } from '../lib/qa-editor';
+import { qaFixPrompt } from '../lib/qa-fix-prompt';
 import { navigate } from '../lib/router';
 import {
   qaRunSummary,
@@ -346,6 +347,29 @@ function Runs({ siteId }: { siteId: string }) {
               ]
             }
           </p>
+          {(() => {
+            const prompt = qaFixPrompt(
+              selected,
+              run.latestAttempts.find((a) => a.caseKey === key)
+            );
+            return prompt ? (
+              <details className="space-y-2">
+                <summary>Промпт для разбора ошибки</summary>
+                <p>
+                  Локальный черновик по сохранённому результату. Перед
+                  копированием удалите пароли, токены и личные данные. Ничего не
+                  отправляется ИИ автоматически.
+                </p>
+                <textarea
+                  className={inputClass}
+                  aria-label="Промпт для разбора ошибки"
+                  readOnly
+                  rows={12}
+                  value={prompt}
+                />
+              </details>
+            ) : null;
+          })()}
           {access.write && selected.payload.type === 'manual' && (
             <div className="space-y-2">
               <label className="block">
