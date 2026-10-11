@@ -40,6 +40,18 @@ function build() {
 }
 
 describe('seedFixtureUser', () => {
+  it('пересев восстанавливает фиксированные сессии после мягкого удаления', async () => {
+    const { prisma, session } = build();
+    await seedFixtureUser(prisma as any, '42');
+    expect(session.mock.calls.length).toBeGreaterThan(0);
+    for (const [args] of session.mock.calls) {
+      expect(args.update.deletedAt).toBeNull();
+      expect(args.update.lastActivityAt).toBeInstanceOf(Date);
+      expect(args.create.deletedAt).toBeNull();
+      expect(args.create.lastActivityAt).toBeInstanceOf(Date);
+    }
+  });
+
   it('фикстура помечена тестовой И в create, и в update', async () => {
     // Расход ночной обучалки пишется на неё. Без флага он попадал бы
     // в общие числа отчёта вперемешку с настоящими людьми; без флага
@@ -349,9 +361,14 @@ describe('seedFixtureUser: поздравление под кадр «готов
     expect(args.create.data.greetingBriefSnapshot.recipientName).toBe(
       'Коллеги',
     );
-    // В `update` — только владелец и проект: ни `data`, ни `liveData`,
+    // В `update` — владелец, проект и доступность: ни `data`, ни `liveData`,
     // ни статуса, иначе «Завести фикстуру» стирало бы ролик.
-    expect(Object.keys(args.update).sort()).toEqual(['projectId', 'userId']);
+    expect(Object.keys(args.update).sort()).toEqual([
+      'deletedAt',
+      'lastActivityAt',
+      'projectId',
+      'userId',
+    ]);
   });
 
   it('три прежних проекта-поздравления по-прежнему перезаписываются целиком', async () => {
