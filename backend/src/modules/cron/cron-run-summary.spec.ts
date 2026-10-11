@@ -17,6 +17,7 @@ import {
   summarizeCounters,
   tutorialResultFailed,
   historicalTutorialFailed,
+  historicalTutorialIdle,
 } from './cron-run-summary';
 
 describe('Tutorial batch failures are not successful runs', () => {
@@ -58,6 +59,79 @@ describe('Tutorial batch failures are not successful runs', () => {
         outcomes: [{ routeKey: 'generate', error: 'browser unavailable' }],
       }),
     ).toContain('generate: browser unavailable');
+  });
+});
+
+describe('Tutorial quality outcomes reach cron monitoring', () => {
+  it.each(['qualityErrors', 'qualityQueueErrors'])(
+    '%s prevents a false green',
+    (key) => {
+      expect(
+        tutorialResultFailed('tutorial-assembly-poll', { failed: 0, [key]: 1 }),
+      ).toBe(true);
+      expect(
+        historicalTutorialFailed(
+          'tutorial-assembly-poll',
+          `failed=0, ${key}=1`,
+        ),
+      ).toBe(true);
+      expect(tutorialResultFailed('tutorial-scenario-run', { [key]: 1 })).toBe(
+        false,
+      );
+    },
+  );
+  it('budget deferral and retry are visible without becoming terminal failures', () => {
+    const result = {
+      failed: 0,
+      qualityErrors: 0,
+      qualityQueueErrors: 0,
+      qualityDeferred: 2,
+      qualityRetried: 1,
+    };
+    expect(tutorialResultFailed('tutorial-assembly-poll', result)).toBe(false);
+    expect(buildRunSummary('tutorial-assembly-poll', result)).toContain(
+      'qualityDeferred=2',
+    );
+    expect(
+      tutorialResultFailed('tutorial-assembly-poll', { qualityErrors: '1' }),
+    ).toBe(false);
+  });
+  it('disabled quality does not hide successful assembly work', () => {
+    const result = { polled: 1, failed: 0, qualitySkipped: 'выключено' };
+    expect(skipReasonOf(result)).toBeNull();
+    expect(buildRunSummary('tutorial-assembly-poll', result)).toContain(
+      'проверка качества пропущена — выключено',
+    );
+  });
+});
+
+describe('historical Tutorial idle rows', () => {
+  it('recognizes only unambiguous zero scenario work', () => {
+    expect(
+      historicalTutorialIdle(
+        'tutorial-scenario-run',
+        'total=0, passed=0, failed=0',
+      ),
+    ).toBe(true);
+    expect(
+      historicalTutorialIdle(
+        'tutorial-scenario-run',
+        'total=0, passed=0, failed=0, executed=1',
+      ),
+    ).toBe(false);
+    expect(
+      historicalTutorialIdle(
+        'tutorial-scenario-run',
+        'total=1, passed=0, failed=1',
+      ),
+    ).toBe(false);
+    expect(historicalTutorialIdle('tutorial-scenario-run', null)).toBe(false);
+    expect(
+      historicalTutorialIdle(
+        'tutorial-assembly-poll',
+        'total=0, passed=0, failed=0',
+      ),
+    ).toBe(false);
   });
 });
 

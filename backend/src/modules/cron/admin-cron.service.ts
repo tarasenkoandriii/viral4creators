@@ -30,6 +30,7 @@ import {
   successLogFields,
   tutorialResultFailed,
   historicalTutorialFailed,
+  historicalTutorialIdle,
 } from './cron-run-summary';
 import {
   CronHistoryQuery,
@@ -489,16 +490,23 @@ export class AdminCronService {
             AND "startedAt" >= ${since}) AS "historicalFailed",
           COUNT(*) FILTER (
             WHERE "status" = 'SUCCESS' AND "startedAt" >= ${since}
-              AND ("debugLog"->>'cronOutcome') = ${CRON_OUTCOME_SKIPPED}
+              AND "effectiveSkipped"
           ) AS "skipped",
           MAX("startedAt") FILTER (
             WHERE "effectiveStatus" = 'SUCCESS'
-              AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}
+              AND NOT "effectiveSkipped"
           ) AS "lastSuccessAt",
           MAX("startedAt") FILTER (WHERE "effectiveStatus" = 'FAILED') AS "lastFailureAt"
-        FROM (SELECT *, CASE WHEN "status" = 'SUCCESS'
+        FROM (SELECT *, COALESCE(("debugLog"->>'cronOutcome') = ${CRON_OUTCOME_SKIPPED}, false)
+          OR COALESCE(("jobKey" = 'tutorial-scenario-run'
+            AND "summary" ~ '(^|, )total=0(,|$)'
+            AND "summary" ~ '(^|, )passed=0(,|$)'
+            AND "summary" ~ '(^|, )failed=0(,|$)'
+            AND "summary" !~ '(^|, )executed=[1-9][0-9]*(,|$)'), false) AS "effectiveSkipped",
+          CASE WHEN "status" = 'SUCCESS'
           AND "jobKey" IN ('tutorial-scenario-generate', 'tutorial-scenario-run', 'tutorial-assembly-poll', 'ui-snapshot-run')
-          AND "summary" ~ '(^|, )failed=[1-9][0-9]*(,|$)'
+          AND ("summary" ~ '(^|, )failed=[1-9][0-9]*(,|$)'
+            OR ("jobKey" = 'tutorial-assembly-poll' AND "summary" ~ '(^|, )quality(Queue)?Errors=[1-9][0-9]*(,|$)'))
           AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}
           THEN 'FAILED' ELSE "status" END AS "effectiveStatus"
           FROM "cron_run_logs") AS interpreted
@@ -678,7 +686,8 @@ export class AdminCronService {
               WHERE "jobKey" = ${j.jobKey}
                 AND "startedAt" >= ${since} AND "startedAt" < ${until}
                 AND ("status" = 'FAILED' OR ("status" = 'SUCCESS'
-                  AND "summary" ~ '(^|, )failed=[1-9][0-9]*(,|$)'
+                  AND ("summary" ~ '(^|, )failed=[1-9][0-9]*(,|$)'
+            OR ("jobKey" = 'tutorial-assembly-poll' AND "summary" ~ '(^|, )quality(Queue)?Errors=[1-9][0-9]*(,|$)'))
                   AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}))
               ORDER BY "startedAt" DESC, "id" DESC
               LIMIT ${SUMMARY_RECENT_FAILURES}`;
@@ -917,7 +926,11 @@ export class AdminCronService {
 
 /** Строка журнала с выведенным исходом (см. `CronRunLogRow.outcome`). */
 function withOutcome(row: CronRunLogRow): CronRunLogRow {
-  const outcome = cronOutcomeOf(row.debugLog);
+  const outcome =
+    cronOutcomeOf(row.debugLog) ??
+    (row.status === 'SUCCESS' && historicalTutorialIdle(row.jobKey, row.summary)
+      ? CRON_OUTCOME_SKIPPED
+      : null);
   const failed =
     row.status === 'SUCCESS' &&
     outcome !== 'SKIPPED' &&

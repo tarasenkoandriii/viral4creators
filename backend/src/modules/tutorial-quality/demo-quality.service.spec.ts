@@ -496,6 +496,18 @@ describe('постановка в очередь', () => {
 // ── тик ──────────────────────────────────────────────────────────────
 
 describe('тик очереди', () => {
+  it('сбой чтения очереди не маскируется нулевым успехом', async () => {
+    const spy = jest
+      .spyOn(checks, 'findMany')
+      .mockRejectedValueOnce(new Error('database unavailable'));
+    expect(await svc.processQueue()).toMatchObject({
+      processed: 0,
+      completed: 0,
+      errors: 0,
+      queueErrors: 1,
+    });
+    spy.mockRestore();
+  });
   beforeEach(async () => {
     await svc.enqueueAssembled('a1', BYTES);
   });

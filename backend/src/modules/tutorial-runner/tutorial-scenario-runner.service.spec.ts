@@ -604,6 +604,8 @@ describe('TutorialScenarioRunnerService', () => {
     const { service } = build([]);
     const result = await service.run();
     expect(result).toEqual({
+      skipped:
+        'нет сценариев к исполнению: допустимые темы актуальны либо отсутствуют',
       total: 0,
       passed: 0,
       failed: 0,
@@ -5818,6 +5820,27 @@ describe('проверка качества демо в тике сборок (0
     expect(result).not.toHaveProperty('qualityProcessed');
   });
 
+  it('опрос сохраняет отдельные исходы качества для журнала cron', async () => {
+    const built = withQuality();
+    built.quality.processQueue.mockResolvedValue({
+      processed: 3,
+      completed: 0,
+      deferred: 1,
+      retried: 1,
+      errors: 1,
+      queueErrors: 1,
+    });
+    expect(await built.service.pollAssemblies()).toMatchObject({
+      failed: 0,
+      qualityProcessed: 3,
+      qualityCompleted: 0,
+      qualityDeferred: 1,
+      qualityRetried: 1,
+      qualityErrors: 1,
+      qualityQueueErrors: 1,
+    });
+  });
+
   it('занятый замок — очередь качества не трогается', async () => {
     const built = withQuality();
     built.prisma.cronJobLock.create.mockRejectedValue(
@@ -5912,7 +5935,8 @@ describe('TutorialScenarioRunnerService — демо обучающего лен
 
     const result = await built.service.run();
 
-    expect(result.skipped).toBeDefined();
+    expect(result.skipped).toBeUndefined();
+    expect(result.tmaSkipped).toBeDefined();
     expect(result.polygon).toEqual(
       expect.objectContaining({
         origin: LANDING,

@@ -402,6 +402,27 @@ describe('AdminCronService — провал джоба', () => {
 });
 
 describe('AdminCronService — история', () => {
+  it('старый нулевой сценарный тик отображается холостым без перезаписи строки', async () => {
+    const { service, prisma } = build();
+    const row = {
+      id: 'idle',
+      jobKey: 'tutorial-scenario-run',
+      status: 'SUCCESS',
+      summary: 'total=0, passed=0, failed=0',
+      debugLog: null,
+    };
+    prisma.cronRunLog.findMany.mockResolvedValue([row]);
+    expect(await service.getHistory()).toEqual([
+      expect.objectContaining({
+        id: 'idle',
+        status: 'SUCCESS',
+        outcome: 'SKIPPED',
+      }),
+    ]);
+    expect(row).not.toHaveProperty('outcome');
+    expect(prisma.cronRunLog.update).not.toHaveBeenCalled();
+  });
+
   it('getHistory без jobKey отдаёт все, с jobKey — фильтрует', async () => {
     const { service, prisma } = build();
     await service.getHistory();
