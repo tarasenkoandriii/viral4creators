@@ -180,6 +180,10 @@ describe('runScenario', () => {
 
     expect(result.ok).toBe(true);
     expect(screenshot).toHaveBeenCalledTimes(2);
+    expect(screenshot).toHaveBeenCalledWith({
+      type: 'png',
+      optimizeForSpeed: true,
+    });
     expect(result.frames).toHaveLength(2);
     expect(Array.from(result.frames[0].bytes)).toEqual([1]);
     expect(result.frames.map((f) => f.stepIndex)).toEqual([0, 1]);
