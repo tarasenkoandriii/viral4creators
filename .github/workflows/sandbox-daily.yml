@@ -72,3 +72,51 @@ jobs:
         run: npm run test:voice-neural
       - name: Device cleanup and late initialization
         run: npm run test:voice-runtime
+
+  voice-semantics:
+    name: Paid Soniox command semantics — clean, noise, silence
+    if: github.event_name != 'pull_request' && vars.SONIOX_SEMANTIC_QA_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require protected provider credentials
+        env:
+          SONIOX_API_KEY: ${{ secrets.SONIOX_QA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_QA_API_KEY }}
+        run: |
+          node - <<'JS'
+          const valid = key => !!key?.trim() && !key.includes('[SENSITIVE]');
+          if (!valid(process.env.SONIOX_API_KEY) || !valid(process.env.GEMINI_API_KEY)) {
+            console.error('Semantic QA enabled but provider credentials are missing.');
+            process.exit(1);
+          }
+          JS
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Audio conversion dependency
+        run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - name: TTS, STT and command parser — synthetic data, one dollar ceiling
+        env:
+          SONIOX_API_KEY: ${{ secrets.SONIOX_QA_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_QA_API_KEY }}
+        run: |
+          # Keep raw SDK logs outside the uploaded evidence.
+          if ! npm run eval:voice-control -- --apply --max-usd=1 --out=voice-control-eval > "$RUNNER_TEMP/voice-semantic.log" 2>&1; then
+            echo 'Semantic QA failed or stopped; inspect the structured acceptance report.'
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soniox-semantic-acceptance
+          path: backend/voice-control-eval/summary.json
+          retention-days: 14
+          if-no-files-found: warn
