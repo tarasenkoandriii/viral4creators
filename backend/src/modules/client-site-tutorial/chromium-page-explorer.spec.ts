@@ -405,6 +405,38 @@ describe('результат раунда', () => {
 });
 
 describe('браузер закрывается всегда', () => {
+  it('зависший close ограничен по времени; собственный процесс завершён до закрытия прокси', async () => {
+    jest.useFakeTimers();
+    try {
+      const { explorer, browser } = setup();
+      let onExit: (() => void) | undefined;
+      const child = {
+        exitCode: null as number | null,
+        signalCode: null as string | null,
+        once: jest.fn((_event: string, fn: () => void) => {
+          onExit = fn;
+        }),
+        removeListener: jest.fn(),
+        kill: jest.fn(() => {
+          child.signalCode = 'SIGKILL';
+          onExit?.();
+          return true;
+        }),
+      };
+      Object.assign(browser, { process: () => child });
+      browser.close.mockImplementation(() => new Promise(() => undefined));
+      const round = explorer.runRound(REQUEST);
+      await jest.advanceTimersByTimeAsync(5001);
+      await round;
+      expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+      expect(child.kill.mock.invocationCallOrder[0]).toBeLessThan(
+        proxyCloseMock.mock.invocationCallOrder[0],
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('после успешного раунда', async () => {
     const { explorer, browser } = setup();
     await explorer.runRound(REQUEST);
