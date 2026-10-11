@@ -121,6 +121,15 @@ test('§4-бис.10 п.2 SPA: 5 переходов — iframe не переза�
   await site(pk);
   await page.goto(stand('example.localhost', { pk, spa: true }));
   await openChat(page);
+  // Host navigation and iframe context delivery are separate events.
+  const frame = await chatFrame(page);
+  await frame.evaluate(() => {
+    const w = window as Window & { __lastRouteUrl?: string };
+    window.addEventListener('message', (event) => {
+      if (event.source === parent && event.data?.type === 'route')
+        w.__lastRouteUrl = event.data.page?.url;
+    });
+  });
   for (let i = 0; i < 5; i++) await page.locator('#spa-next').click();
   // history.back() — асинхронный обход: следующий pushState до его конца
   // (под нагрузкой CI) обход потом откатывает на /spa/5 — ждём popstate.
@@ -131,6 +140,15 @@ test('§4-бис.10 п.2 SPA: 5 переходов — iframe не переза�
   await page.locator('#spa-next').click();
   await expect
     .poll(() => page.evaluate(() => location.pathname))
+    .toBe('/spa/7');
+  await expect
+    .poll(() =>
+      frame.evaluate(() => {
+        const url = (window as Window & { __lastRouteUrl?: string })
+          .__lastRouteUrl;
+        return url ? new URL(url).pathname : null;
+      })
+    )
     .toBe('/spa/7');
   await ask(page, 'Где я?');
   await waitAnswer(page);
