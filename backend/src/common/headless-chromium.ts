@@ -235,6 +235,10 @@ export async function launchHeadlessBrowser(
     launching = puppeteer.launch({
       executablePath: plan.executablePath,
       headless: plan.headless,
+      // Puppeteer defaults to 180s per CDP command. A screenshot that
+      // outlives the runner's 15s deadline holds the screenshot lock;
+      // Page.close waits on that lock. Bound the native request too.
+      protocolTimeout: 30_000,
       args,
     });
     const browser = await withTimeout(
