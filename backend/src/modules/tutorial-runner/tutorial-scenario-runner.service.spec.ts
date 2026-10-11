@@ -492,6 +492,60 @@ function matchesTheme(
 }
 
 describe('TutorialScenarioRunnerService', () => {
+  it('closes the previous browser before launching the next scenario', async () => {
+    const first = {
+      newPage: jest.fn().mockResolvedValue(buildFakePage()),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    const second = {
+      newPage: jest.fn().mockResolvedValue(buildFakePage()),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock
+      .mockResolvedValueOnce({ browser: first })
+      .mockImplementationOnce(async () => {
+        expect(first.close).toHaveBeenCalledTimes(1);
+        return { browser: second };
+      });
+    const { service } = build([
+      SCENARIO_OK,
+      { ...SCENARIO_OK, id: 'second', subjectKey: '2' },
+    ]);
+    const result = await service.run();
+    expect(result.outcomes).toHaveLength(2);
+    expect(second.newPage).toHaveBeenCalledTimes(1);
+    expect(second.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('records a failed relaunch rather than reporting the partial batch as successful', async () => {
+    launchHeadlessBrowserMock
+      .mockResolvedValueOnce({
+        browser: {
+          newPage: jest.fn().mockResolvedValue(buildFakePage()),
+          close: jest.fn().mockResolvedValue(undefined),
+        },
+      })
+      .mockResolvedValueOnce({ error: 'launch failed' });
+    const { service, prisma } = build([
+      SCENARIO_OK,
+      { ...SCENARIO_OK, id: 'second', subjectKey: '2' },
+    ]);
+    const result = await service.run();
+    expect(result.failed).toBeGreaterThan(0);
+    expect(
+      result.outcomes?.some((o) =>
+        o.error?.includes('повторный запуск Chromium'),
+      ),
+    ).toBe(true);
+    expect(prisma.tutorialScenario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          lastRunStatus: 'failed',
+          lastRunError: expect.stringContaining('launch failed'),
+        }),
+      }),
+    );
+  });
   it('без FIXTURE_USER_TOKEN/FIXTURE_TELEGRAM_ID — пропуск, ни одного запроса к БД', async () => {
     delete process.env.FIXTURE_USER_TOKEN;
     const { service, prisma } = build([]);
