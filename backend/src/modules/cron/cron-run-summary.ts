@@ -92,8 +92,10 @@ function extractReasons(result: Record<string, unknown>): string[] {
       };
       if (typeof row.error !== 'string' || !row.error.trim()) continue;
       if (row.ok !== false && typeof row.routeKey !== 'string') continue;
-      const key = typeof row.routeKey === 'string'
-        ? row.routeKey : `${String(row.subjectKey)}/${String(row.locale)}`;
+      const key =
+        typeof row.routeKey === 'string'
+          ? row.routeKey
+          : `${String(row.subjectKey)}/${String(row.locale)}`;
       out.push(`${key}: ${row.error}`);
     }
   }
@@ -227,15 +229,26 @@ export const CRON_OUTCOME_SKIPPED = 'SKIPPED' as const;
  * Scope this to audited Tutorial jobs; an unrelated counter must not
  * change another subsystem's status contract. */
 export function tutorialResultFailed(jobKey: string, result: unknown): boolean {
-  if (!['tutorial-scenario-generate', 'tutorial-scenario-run',
-    'tutorial-assembly-poll', 'ui-snapshot-run'].includes(jobKey)) return false;
-  if (!result || typeof result !== 'object' || skipReasonOf(result)) return false;
+  if (
+    ![
+      'tutorial-scenario-generate',
+      'tutorial-scenario-run',
+      'tutorial-assembly-poll',
+      'ui-snapshot-run',
+    ].includes(jobKey)
+  )
+    return false;
+  if (!result || typeof result !== 'object' || skipReasonOf(result))
+    return false;
   const failed = (result as { failed?: unknown }).failed;
   return typeof failed === 'number' && Number.isFinite(failed) && failed > 0;
 }
 
 /** Read-only interpretation of old green rows; never rewrites audit history. */
-export function historicalTutorialFailed(jobKey: string, summary: string | null): boolean {
+export function historicalTutorialFailed(
+  jobKey: string,
+  summary: string | null,
+): boolean {
   const match = /(?:^|, )failed=([1-9][0-9]*)(?:,|$)/.exec(summary ?? '');
   return !!match && tutorialResultFailed(jobKey, { failed: Number(match[1]) });
 }

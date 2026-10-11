@@ -174,7 +174,11 @@ describe('AdminCronService — реестр и неизвестный jobKey', (
 
     for (const { jobKey } of registry) {
       const row = await service.run(jobKey, 'admin-1', false);
-      expect(row.status).toBe(['tutorial-scenario-generate', 'tutorial-scenario-run'].includes(jobKey) ? 'FAILED' : 'SUCCESS');
+      expect(row.status).toBe(
+        ['tutorial-scenario-generate', 'tutorial-scenario-run'].includes(jobKey)
+          ? 'FAILED'
+          : 'SUCCESS',
+      );
     }
 
     // И наоборот: у каждого вызванного джоба сработал ровно один метод

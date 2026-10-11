@@ -568,7 +568,10 @@ export class AdminCronService {
           ? floorToMinute(firstScheduledRunAt)
           : expectedSince;
       const outcomeRow = outcomes.find((r) => r.jobKey === jobKey);
-      const historicalFailed = Math.min(byStatus.SUCCESS, Math.max(0, Number(outcomeRow?.historicalFailed ?? 0)));
+      const historicalFailed = Math.min(
+        byStatus.SUCCESS,
+        Math.max(0, Number(outcomeRow?.historicalFailed ?? 0)),
+      );
       byStatus.SUCCESS -= historicalFailed;
       byStatus.FAILED += historicalFailed;
       const toDate = (v: Date | string | null | undefined) =>
@@ -668,6 +671,19 @@ export class AdminCronService {
       jobs
         .filter((j) => j.byStatus.FAILED > 0)
         .map(async (j) => {
+          if (historicalTutorialFailed(j.jobKey, 'failed=1')) {
+            j.recentFailures = await this.prisma.$queryRaw<CronFailureRow[]>`
+              SELECT "id", "startedAt", "triggeredBy", "durationMs", "summary", "errorMessage"
+              FROM "cron_run_logs"
+              WHERE "jobKey" = ${j.jobKey}
+                AND "startedAt" >= ${since} AND "startedAt" < ${until}
+                AND ("status" = 'FAILED' OR ("status" = 'SUCCESS'
+                  AND "summary" ~ '(^|, )failed=[1-9][0-9]*(,|$)'
+                  AND ("debugLog"->>'cronOutcome') IS DISTINCT FROM ${CRON_OUTCOME_SKIPPED}))
+              ORDER BY "startedAt" DESC, "id" DESC
+              LIMIT ${SUMMARY_RECENT_FAILURES}`;
+            return;
+          }
           j.recentFailures = (await this.prisma.cronRunLog.findMany({
             where: { jobKey: j.jobKey, status: 'FAILED', startedAt: range },
             orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
@@ -902,6 +918,9 @@ export class AdminCronService {
 /** Строка журнала с выведенным исходом (см. `CronRunLogRow.outcome`). */
 function withOutcome(row: CronRunLogRow): CronRunLogRow {
   const outcome = cronOutcomeOf(row.debugLog);
-  const failed = row.status === 'SUCCESS' && outcome !== 'SKIPPED' && historicalTutorialFailed(row.jobKey, row.summary);
+  const failed =
+    row.status === 'SUCCESS' &&
+    outcome !== 'SKIPPED' &&
+    historicalTutorialFailed(row.jobKey, row.summary);
   return { ...row, status: failed ? 'FAILED' : row.status, outcome };
 }

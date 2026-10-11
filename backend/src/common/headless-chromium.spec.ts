@@ -48,9 +48,15 @@ describe('production ESM compatibility without Jest package mocks', () => {
         if (name !== 'puppeteer-core' && typeof mod.default.executablePath !== 'function') throw Error('missing executablePath');
       })).then(() => console.log('real ESM verified')).catch(() => process.exit(1));
     `;
-    const output = execFileSync(process.execPath, ['-r', 'ts-node/register/transpile-only', '-e', script], {
-      cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 15000,
-    });
+    const output = execFileSync(
+      process.execPath,
+      ['-r', 'ts-node/register/transpile-only', '-e', script],
+      {
+        cwd: path.resolve(__dirname, '../..'),
+        encoding: 'utf8',
+        timeout: 15000,
+      },
+    );
     expect(output).toContain('real ESM verified');
   });
 });

@@ -56,8 +56,9 @@ export async function loadBrowserEsm<T>(
     return await load();
   } catch (error) {
     if ((error as { code?: string })?.code !== 'ERR_REQUIRE_ESM') throw error;
-    const nativeImport = new Function('name', 'return import(name)') as
-      (name: string) => Promise<T>;
+    const nativeImport = new Function('name', 'return import(name)') as (
+      name: string,
+    ) => Promise<T>;
     return nativeImport(packageName);
   }
 }
@@ -227,7 +228,10 @@ export async function launchHeadlessBrowser(
   let handedOver = false;
   let launching: Promise<import('puppeteer-core').Browser> | null = null;
   try {
-    const puppeteer = await loadBrowserEsm(() => import('puppeteer-core'), 'puppeteer-core');
+    const puppeteer = await loadBrowserEsm(
+      () => import('puppeteer-core'),
+      'puppeteer-core',
+    );
     launching = puppeteer.launch({
       executablePath: plan.executablePath,
       headless: plan.headless,
@@ -338,7 +342,10 @@ async function buildBrowserLaunchPlan(): Promise<HeadlessBrowserLaunchPlan> {
   }
 
   try {
-    const mod: unknown = await loadBrowserEsm(() => import('@sparticuz/chromium-min'), '@sparticuz/chromium-min');
+    const mod: unknown = await loadBrowserEsm(
+      () => import('@sparticuz/chromium-min'),
+      '@sparticuz/chromium-min',
+    );
     // Пакет ESM (`export default Chromium`): через `require(esm)` он
     // приезжает пространством имён с `.default`, а подменённый в тестах —
     // самим объектом. Берём то, что есть.
