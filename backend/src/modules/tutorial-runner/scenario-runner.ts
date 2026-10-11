@@ -624,6 +624,15 @@ async function runStep(
         waitUntil: 'networkidle2',
         timeout: timeoutMs,
       });
+      // networkidle2 permits two outstanding requests. Session hydration
+      // can still be pending, leaving the wizard stepper temporarily disabled.
+      if (/\/#\/generate(?:[/?]|$)/.test(resolved.url)) {
+        assertActive();
+        await page.waitForSelector('[data-workflow-ready="true"]', {
+          visible: true,
+          timeout: timeoutMs,
+        });
+      }
       return;
     }
     case 'fill':

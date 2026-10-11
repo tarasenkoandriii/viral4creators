@@ -29,6 +29,32 @@ const resolveOk: ScenarioRouteResolver = (route) => ({
 });
 
 describe('runScenario', () => {
+  it('waits for session hydration before clicking the generation stepper', async () => {
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const page = buildPage({
+      waitForSelector: jest.fn().mockReturnValue(ready),
+    });
+    const run = runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate' },
+        { kind: 'click', selector: '[data-qa="wizard-step-analysis"]' },
+      ],
+      resolveOk,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(page.waitForSelector).toHaveBeenCalledWith(
+      '[data-workflow-ready="true"]',
+      expect.objectContaining({ visible: true }),
+    );
+    expect(page.locator).not.toHaveBeenCalled();
+    release();
+    expect((await run).ok).toBe(true);
+  });
+
   it('проигрывает все виды шагов по порядку и возвращает ok:true', async () => {
     const page = buildPage();
     const steps: ScenarioStep[] = [
@@ -401,7 +427,11 @@ describe('указатель клика: замер в момент снимка
     // Второй `$` — перед кликом: спросить, не выключена ли кнопка,
     // дешевле, чем узнать это таймаутом через тридцать секунд.
     expect(order).toEqual(['screenshot', 'screenshot', '$', '$', 'screenshot']);
-    expect(page.waitForSelector).not.toHaveBeenCalled();
+    expect(page.waitForSelector).toHaveBeenCalledTimes(1);
+    expect(page.waitForSelector).toHaveBeenCalledWith(
+      '[data-workflow-ready="true"]',
+      expect.anything(),
+    );
   });
 
   it('снимок не удался — нет кадра, нет и указателя, и прогон не падает', async () => {

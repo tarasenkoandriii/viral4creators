@@ -446,7 +446,7 @@ export function GenerationWizard() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-workflow-ready={!isInitializing}>
       {error && (
         <Alert
           tone="error"
