@@ -1111,6 +1111,38 @@ describe('TutorialScenarioGeneratorService — ротация пар по дав
     }
   });
 
+  it('остаток меньше 10 секунд откладывается до модели, в том числе после задержки базы', async () => {
+    const first = buildNights();
+    generateContent.mockImplementation(async () => {
+      clock += GENERATE_DEADLINE_MS - 9_000;
+      return { text: FREE_SCENARIO_TEXT, usageMetadata: {} };
+    });
+    expect(await first.service.run()).toMatchObject({
+      generated: 1,
+      failed: 0,
+      deferred: 5,
+    });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(
+      generateContent.mock.calls[0][0].config.httpOptions.timeout,
+    ).toBeGreaterThanOrEqual(10_000);
+    clock = 0;
+    generateContent.mockClear();
+    const second = buildNights();
+    second.prisma.tutorialScenario.findUnique.mockImplementationOnce(
+      async () => {
+        clock = GENERATE_DEADLINE_MS - 9_000;
+        return null;
+      },
+    );
+    expect(await second.service.run()).toMatchObject({
+      generated: 0,
+      failed: 0,
+      deferred: 6,
+    });
+    expect(generateContent).not.toHaveBeenCalled();
+  });
+
   it('отметки ротации пишутся после КАЖДОЙ пары, а не в конце', async () => {
     // Обрыв посреди прогона (зависший вызов, смерть функции) больше не
     // теряет отметки уже взятых пар — следующая ночь не платит за них
