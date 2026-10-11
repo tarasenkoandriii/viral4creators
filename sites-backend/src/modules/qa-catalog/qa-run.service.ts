@@ -99,16 +99,21 @@ export class QaRunService {
         },
       });
       if (cases.length !== body.caseIds.length) throw invalid();
+      const revisions = await tx.qaTestCaseRevision.findMany({
+        where: {
+          accountId: m.accountId,
+          OR: cases.map((item) => ({
+            caseId: item.id,
+            version: item.currentVersion,
+          })),
+        },
+      });
       const snapshot = [];
       for (const id of body.caseIds) {
         const item = cases.find((c) => c.id === id)!;
-        const revision = await tx.qaTestCaseRevision.findFirst({
-          where: {
-            caseId: item.id,
-            accountId: m.accountId,
-            version: item.currentVersion,
-          },
-        });
+        const revision = revisions.find(
+          (r) => r.caseId === item.id && r.version === item.currentVersion,
+        );
         if (!revision) throw missing();
         snapshot.push({
           caseId: item.id,
