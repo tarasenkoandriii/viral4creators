@@ -4,6 +4,7 @@ import { Button, Card, inputClass } from '../kit/ui';
 import { useAssist } from '../lib/assist-context';
 import { qaAccess } from '../lib/qa-editor';
 import { qaFixPrompt } from '../lib/qa-fix-prompt';
+import { QaFindingForm } from '../components/QaFindingForm';
 import { navigate } from '../lib/router';
 import {
   qaRunSummary,
@@ -363,6 +364,15 @@ function Runs({ siteId }: { siteId: string }) {
           })()}
           {access.write && selected.payload.type === 'manual' && (
             <div className="space-y-2">
+              <QaFindingForm
+                key={`${run.id}:${selected.caseKey}`}
+                disabled={busy || conflict}
+                onDirty={() => setDirty(true)}
+                onApply={(text) => {
+                  setComment(text);
+                  setDirty(true);
+                }}
+              />
               <label className="block">
                 Результат
                 <select
