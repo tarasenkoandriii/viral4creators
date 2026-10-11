@@ -70,6 +70,10 @@ const ENV_KEYS = [
 const envBefore: Record<string, string | undefined> = {};
 
 beforeEach(() => {
+  // Подготовка данных тестируется отдельно; здесь проверяем исполнитель.
+  jest
+    .spyOn(fixtureSeedModule, 'seedFixtureUser')
+    .mockResolvedValue({} as never);
   for (const key of ENV_KEYS) envBefore[key] = process.env[key];
   process.env.FIXTURE_TELEGRAM_ID = 'fixture-1';
   process.env.FIXTURE_USER_TOKEN = 'sekret';
@@ -3819,14 +3823,24 @@ describe('TutorialScenarioRunnerService', () => {
         expect(seed).toHaveBeenCalledWith(prisma, 'fixture-1');
       });
 
-      it('сбой пересева не отменяет прогон', async () => {
+      it('сбой пересева останавливает браузер и сохраняет причину', async () => {
         jest
           .spyOn(fixtureSeedModule, 'seedFixtureUser')
           .mockRejectedValue(new Error('база'));
-        const { service } = build([SCENARIO_OK]);
-        await expect(service.run()).resolves.toBeDefined();
-        // Дошли до запуска браузера — прогон не оборвался на пересеве.
-        expect(launchHeadlessBrowserMock).toHaveBeenCalled();
+        const { service, prisma } = build([SCENARIO_OK]);
+        const result = await service.run();
+        expect(result.skipped).toBe(
+          'не удалось подготовить тестовые данные Tutorial',
+        );
+        expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+        expect(prisma.tutorialScenario.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              lastRunStatus: 'failed',
+              lastRunError: result.skipped,
+            }),
+          }),
+        );
       });
 
       it('нет сценариев — фикстуру не трогаем', async () => {
