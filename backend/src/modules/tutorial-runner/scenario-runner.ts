@@ -524,6 +524,7 @@ async function captureFrameWithDeadline(
   index: number,
 ): Promise<Uint8Array> {
   let active = true;
+  let phase = 'подготовка страницы';
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -531,6 +532,7 @@ async function captureFrameWithDeadline(
         await prepareFrame(page, step);
         if (!active)
           throw new FrameDeadlineError('съёмка отменена после дедлайна');
+        phase = 'съёмка скриншота';
         return await page.screenshot!();
       })(),
       new Promise<never>((_, reject) => {
@@ -538,7 +540,7 @@ async function captureFrameWithDeadline(
           () =>
             reject(
               new FrameDeadlineError(
-                `кадр шага ${index + 1} (${step.kind}) не снят за ${timeoutMs}мс`,
+                `кадр шага ${index + 1} (${step.kind}) не снят за ${timeoutMs}мс: ${phase}`,
               ),
             ),
           timeoutMs,
