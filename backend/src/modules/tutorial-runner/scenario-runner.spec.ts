@@ -721,6 +721,8 @@ describe('runScenario — несостоявшийся снимок', () => {
       const result = await pending;
       expect(result.ok).toBe(false);
       expect(result.failedAt).toBe(0);
+      expect(result.steps).toHaveLength(1);
+      expect(result.steps[0].ok).toBe(false);
       expect(result.steps.find((s) => !s.ok)?.error).toContain(
         'кадр шага 1 (goto) не снят за 1000мс',
       );

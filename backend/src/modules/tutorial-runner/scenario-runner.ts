@@ -328,7 +328,6 @@ export async function runScenario(
     }
     try {
       await runStepWithDeadline(page, step, resolveRoute, stepTimeoutMs, i);
-      results.push({ index: i, step, ok: true });
       if (
         captureFrames &&
         page.screenshot &&
@@ -369,6 +368,7 @@ export async function runScenario(
           if (pointer) frame.pointer = pointer;
         }
       }
+      results.push({ index: i, step, ok: true });
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       results.push({ index: i, step, ok: false, error });
