@@ -584,7 +584,7 @@ export async function seedFixtureUser(
       // Советник и его голос — выключены при КАЖДОМ сидировании, а не
       // только при создании: включённый кем-то голос открывал бы панель
       // «управление голосом» и платную озвучку в кадрах обучалки.
-      update: { userId: user.id, ...GUIDE_OFF },
+      update: { userId: user.id, deletedAt: null, ...GUIDE_OFF },
       create: {
         id: projectId,
         userId: user.id,
@@ -624,6 +624,17 @@ export async function seedFixtureUser(
     'Fixture Greeting (бриф без сессии)',
     'Анна',
   );
+  // Opening the brief creates a session. Restore the empty fixture on
+  // subsequent runs, but preserve completed or active paid renders.
+  await prisma.session.updateMany({
+    where: {
+      userId: user.id,
+      projectId: greetingFresh.projectId,
+      deletedAt: null,
+      generationStatus: null,
+    },
+    data: { deletedAt: new Date() },
+  });
   const greetingDrafting = await seedGreetingProject(
     FIXTURE_IDS.greetingDraftingProject,
     'Fixture Greeting (сессия без сценария)',
