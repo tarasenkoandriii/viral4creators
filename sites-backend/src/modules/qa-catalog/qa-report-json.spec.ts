@@ -8,6 +8,9 @@ const app = () => {
   a.use(qaReportImportJson());
   a.use(json());
   a.post(path, (req, res) => res.json({ length: req.body.data.length }));
+  a.post('/qa/ci/reports', (req, res) =>
+    res.json({ length: req.body.data.length }),
+  );
   a.post('/other', (req, res) => res.json(req.body));
   return a;
 };
@@ -15,6 +18,10 @@ describe('QA report scoped JSON transport', () => {
   it('accepts a report above default 100KiB only on report imports', async () => {
     await request(app())
       .post(path)
+      .send({ data: 'x'.repeat(150 * 1024) })
+      .expect(200, { length: 150 * 1024 });
+    await request(app())
+      .post('/qa/ci/reports')
       .send({ data: 'x'.repeat(150 * 1024) })
       .expect(200, { length: 150 * 1024 });
     await request(app())

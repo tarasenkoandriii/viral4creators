@@ -87,7 +87,12 @@ export function runSummary(
 @Injectable()
 export class QaRunService {
   constructor(private readonly catalog: QaCatalogService) {}
-  async create(m: AccountMembership, siteId: string, input: unknown) {
+  async create(
+    m: AccountMembership,
+    siteId: string,
+    input: unknown,
+    ciRunId?: string,
+  ) {
     const db = await this.catalog.scoped(m, siteId, true),
       body = parseRunInput(input);
     return db.$transaction(async (tx) => {
@@ -129,6 +134,7 @@ export class QaRunService {
         data: {
           accountId: m.accountId,
           siteId,
+          ...(ciRunId ? { id: ciRunId } : {}),
           title: body.title,
           snapshot,
           createdByMemberId: m.memberId,

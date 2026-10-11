@@ -9,7 +9,11 @@ export function qaReportImportJson() {
     res: Response,
     next: NextFunction,
   ) {
-    if (req.method !== 'POST' || !REPORT_PATH.test(req.path)) return next();
+    if (
+      req.method !== 'POST' ||
+      !(REPORT_PATH.test(req.path) || req.path === '/qa/ci/reports')
+    )
+      return next();
     parse(req, res, (error?: unknown) => {
       if (!error) return next();
       const tooLarge = (error as { type?: string }).type === 'entity.too.large';

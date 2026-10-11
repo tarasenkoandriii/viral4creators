@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Module,
   Param,
   Post,
@@ -17,6 +18,8 @@ import {
   SiteAccountGuard,
 } from '../site-core/account/site-account.guard';
 import { AllowApps } from '../telegram-auth/allow-apps.decorator';
+import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
+import { QaCiService } from './qa-ci.service';
 import { QaRunService } from './qa-run.service';
 import { QA_READ, QA_WRITE, QaCatalogService } from './qa-catalog.service';
 @Controller('qa/sites')
@@ -132,9 +135,23 @@ export class QaCatalogController {
     return this.catalog.replace(m, site, id, body);
   }
 }
+@Controller('qa/ci')
+@PublicRoute(
+  'GitHub OIDC identity is verified by QaCiService; no Telegram session accepted.',
+)
+export class QaCiController {
+  constructor(private readonly ci: QaCiService) {}
+  @Post('reports')
+  deliver(
+    @Headers('authorization') authorization: string | undefined,
+    @Body() body: unknown,
+  ) {
+    return this.ci.deliver(authorization, body);
+  }
+}
 @Module({
   imports: [SiteCoreModule],
-  controllers: [QaCatalogController],
-  providers: [QaCatalogService, QaRunService],
+  controllers: [QaCatalogController, QaCiController],
+  providers: [QaCatalogService, QaRunService, QaCiService],
 })
 export class QaCatalogModule {}
