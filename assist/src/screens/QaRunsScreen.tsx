@@ -370,6 +370,7 @@ function Runs({ siteId }: { siteId: string }) {
                 onDirty={() => setDirty(true)}
                 onApply={(text) => {
                   setComment(text);
+                  setStatus('blocked');
                   setDirty(true);
                 }}
               />

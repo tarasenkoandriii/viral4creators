@@ -26,9 +26,12 @@ assert.ok(
   findingComment({
     ...f,
     deployedSha: 'a'.repeat(40),
+    evidence: 'Screenshot of overlapping login button',
     confidence: 'confirmed',
   })?.includes('указаны автором')
 );
 console.log(
   'Finding evidence requirements, URL credential rejection and size bounds passed'
 );
+
+assert.equal(findingComment({ ...f, confidence: 'confirmed' }), null);

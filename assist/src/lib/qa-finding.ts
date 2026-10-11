@@ -51,6 +51,7 @@ export function findingComment(f: QaFinding): string | null {
     return null;
   const url = safeUrl(f.url.trim());
   if (
+    (f.confidence === 'confirmed' && !f.evidence.trim()) ||
     !url ||
     [f.context, f.steps, f.expected, f.actual, f.impact].some(
       (s) => !s.trim()
