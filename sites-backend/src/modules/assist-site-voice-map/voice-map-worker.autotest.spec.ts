@@ -28,6 +28,7 @@ import { FakeArtifactStorage } from '../browser-jobs/testing/fake-artifact-stora
 import {
   ageSiteJobs,
   leaseJobForTest,
+  serializeQueueTests,
   siteJobs,
 } from '../browser-jobs/testing/jobs-db.testing';
 import { attachVoiceAutotest } from './voice-map-worker.autotest';
@@ -61,6 +62,8 @@ const el = (ref: string, text: string, role = 'button') => ({
 });
 
 describeDb('Т-3 по расписанию: монитор → воркер → отчёт autotest (№29)', () => {
+  // Queue suites perform global claim/drain; protect this product's leases too.
+  serializeQueueTests();
   serializeDbTests('voice-monitor');
   const st = new ChatStack();
   let mon: VoiceMonitorService;
