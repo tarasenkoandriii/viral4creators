@@ -317,6 +317,11 @@ export function buildScenarioPrompt(
     '',
     `Заголовок шага: ${step.title}`,
     `Описание: ${step.text}`,
+    ...(subjectKey === 'greeting-video'
+      ? [
+          'Покажи НАСТОЯЩЕЕ готовое поздравление: goto greeting-video-done и assertVisible [data-qa="greeting-video-result"] обязательны. Если готового рендера нет, сценарий не выполнится: нельзя заменять результат кнопкой генерации и рассказывать о скачивании по чужому экрану.',
+        ]
+      : []),
   ];
   if (step.details.length > 0) {
     lines.push('Детали:');
@@ -531,6 +536,25 @@ function rejectForeignRoutes(
       droppedNarrations: [],
       droppedPaidOperations: [],
     };
+  }
+  if (subjectKey === 'greeting-video') {
+    const openedDone = parsed.steps.some(
+      (step) => step.kind === 'goto' && step.route === 'greeting-video-done',
+    );
+    const checkedResult = parsed.steps.some(
+      (step) =>
+        step.kind === 'assertVisible' &&
+        step.selector === '[data-qa="greeting-video-result"]',
+    );
+    if (!openedDone || !checkedResult)
+      return {
+        ok: false,
+        steps: [],
+        reason:
+          'тема greeting-video требует greeting-video-done и assertVisible готового greeting-video-result; экран запуска не является результатом',
+        droppedNarrations: [],
+        droppedPaidOperations: [],
+      };
   }
   return parsed;
 }

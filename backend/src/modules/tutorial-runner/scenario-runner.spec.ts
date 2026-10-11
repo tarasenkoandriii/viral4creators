@@ -785,6 +785,33 @@ describe('measurePointer — CDP deadline', () => {
 });
 
 describe('runScenario — несостоявшийся снимок', () => {
+  it('различает зависшую съёмку и восстановление анимаций', async () => {
+    jest.useFakeTimers();
+    try {
+      const page = buildPage({
+        screenshot: jest.fn().mockResolvedValue(new Uint8Array([1])),
+        evaluate: jest
+          .fn()
+          .mockImplementation((_fn, enabled) =>
+            enabled === false ? new Promise(() => {}) : Promise.resolve(),
+          ),
+      });
+      const pending = runScenario(
+        page,
+        [{ kind: 'waitFor', selector: '#ready' }],
+        resolveOk,
+        1000,
+        true,
+      );
+      await jest.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      expect(result.steps[0].error).toContain('восстановление анимаций');
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
   it('поздняя подготовка кадра не начинает съёмку после дедлайна', async () => {
     jest.useFakeTimers();
     try {

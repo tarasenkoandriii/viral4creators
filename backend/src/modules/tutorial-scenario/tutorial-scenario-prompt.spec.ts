@@ -1096,10 +1096,19 @@ describe('граница семей в валидаторе (01.10.2026)', () =>
   });
   it('свои и общие экраны проходят; без темы граница не проверяется', () => {
     expect(
-      validateScenarioSteps(steps('greeting-video-done'), 'greeting-video').ok,
+      validateScenarioSteps(
+        [
+          ...steps('greeting-video-done'),
+          {
+            kind: 'assertVisible',
+            selector: '[data-qa="greeting-video-result"]',
+          },
+        ],
+        'greeting-video',
+      ).ok,
     ).toBe(true);
     expect(validateScenarioSteps(steps('postprod'), 'greeting-video').ok).toBe(
-      true,
+      false,
     );
     expect(validateScenarioSteps(steps('postprod-video'), '10').ok).toBe(true);
     expect(validateScenarioSteps(steps('postprod-video')).ok).toBe(true);
@@ -1108,5 +1117,37 @@ describe('граница семей в валидаторе (01.10.2026)', () =>
     const text = JSON.stringify({ steps: steps('postprod-video') });
     expect(parseScenarioResponse(text, 'greeting-video').ok).toBe(false);
     expect(parseScenarioResponse(text, '10').ok).toBe(true);
+  });
+});
+
+describe('готовое поздравление требует видимый результат', () => {
+  it('отвергает экран запуска и маршрут done без проверки результата', () => {
+    expect(
+      validateScenarioSteps(
+        [
+          { kind: 'goto', route: 'greeting-video-ready' },
+          {
+            kind: 'assertVisible',
+            selector: '[data-qa="greeting-video-card"]',
+          },
+        ],
+        'greeting-video',
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateScenarioSteps(
+        [{ kind: 'goto', route: 'greeting-video-done' }],
+        'greeting-video',
+      ).ok,
+    ).toBe(false);
+  });
+  it('промпт требует завершённый результат и не предлагает подмену', () => {
+    const prompt = buildScenarioPrompt('greeting-video', 'ru', {
+      title: 'Ролик',
+      text: 'Скачайте видео',
+      details: [],
+    });
+    expect(prompt).toContain('assertVisible [data-qa="greeting-video-result"]');
+    expect(prompt).toContain('нельзя заменять результат кнопкой генерации');
   });
 });
