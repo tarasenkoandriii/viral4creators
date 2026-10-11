@@ -21,6 +21,7 @@ import { AllowApps } from '../telegram-auth/allow-apps.decorator';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { QaCiService } from './qa-ci.service';
 import { QaRunService } from './qa-run.service';
+import { QaFindingService } from './qa-finding.service';
 import { QA_READ, QA_WRITE, QaCatalogService } from './qa-catalog.service';
 @Controller('qa/sites')
 @AllowApps('qa', 'assist')
@@ -135,6 +136,59 @@ export class QaCatalogController {
     return this.catalog.replace(m, site, id, body);
   }
 }
+@Controller('qa/sites/:siteId/findings')
+@AllowApps('qa', 'assist')
+@UseGuards(SiteAccountGuard)
+export class QaFindingsController {
+  constructor(private readonly findings: QaFindingService) {}
+  @Get()
+  @RequireProductRoles(QA_READ)
+  list(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Query('before') before?: string,
+  ) {
+    return this.findings.list(m, site, before);
+  }
+  @Post()
+  @RequireProductRoles(QA_WRITE)
+  create(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Body() body: unknown,
+  ) {
+    return this.findings.create(m, site, body);
+  }
+  @Get(':id')
+  @RequireProductRoles(QA_READ)
+  get(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+  ) {
+    return this.findings.get(m, site, id);
+  }
+  @Get(':id/history')
+  @RequireProductRoles(QA_READ)
+  history(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Query('before') before?: string,
+  ) {
+    return this.findings.history(m, site, id, before);
+  }
+  @Put(':id')
+  @RequireProductRoles(QA_WRITE)
+  replace(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.findings.replace(m, site, id, body);
+  }
+}
 @Controller('qa/ci')
 @PublicRoute(
   'GitHub OIDC identity is verified by QaCiService; no Telegram session accepted.',
@@ -151,7 +205,7 @@ export class QaCiController {
 }
 @Module({
   imports: [SiteCoreModule],
-  controllers: [QaCatalogController, QaCiController],
-  providers: [QaCatalogService, QaRunService, QaCiService],
+  controllers: [QaCatalogController, QaCiController, QaFindingsController],
+  providers: [QaCatalogService, QaRunService, QaCiService, QaFindingService],
 })
 export class QaCatalogModule {}
