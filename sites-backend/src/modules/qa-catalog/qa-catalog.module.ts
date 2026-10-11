@@ -17,12 +17,63 @@ import {
   SiteAccountGuard,
 } from '../site-core/account/site-account.guard';
 import { AllowApps } from '../telegram-auth/allow-apps.decorator';
+import { QaRunService } from './qa-run.service';
 import { QA_READ, QA_WRITE, QaCatalogService } from './qa-catalog.service';
 @Controller('qa/sites')
 @AllowApps('qa', 'assist')
 @UseGuards(SiteAccountGuard)
 export class QaCatalogController {
-  constructor(private readonly catalog: QaCatalogService) {}
+  constructor(
+    private readonly catalog: QaCatalogService,
+    private readonly runs: QaRunService,
+  ) {}
+  @Post(':siteId/runs')
+  @RequireProductRoles(QA_WRITE)
+  createRun(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Body() body: unknown,
+  ) {
+    return this.runs.create(m, site, body);
+  }
+  @Get(':siteId/runs')
+  @RequireProductRoles(QA_READ)
+  listRuns(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Query('before') before?: string,
+  ) {
+    return this.runs.list(m, site, before);
+  }
+  @Get(':siteId/runs/:id')
+  @RequireProductRoles(QA_READ)
+  getRun(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+  ) {
+    return this.runs.get(m, site, id);
+  }
+  @Get(':siteId/runs/:id/attempts')
+  @RequireProductRoles(QA_READ)
+  listAttempts(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Query('before') before?: string,
+  ) {
+    return this.runs.attempts(m, site, id, before);
+  }
+  @Post(':siteId/runs/:id/attempts')
+  @RequireProductRoles(QA_WRITE)
+  recordAttempt(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.runs.record(m, site, id, body);
+  }
   @Get(':siteId/cases')
   @RequireProductRoles(QA_READ)
   list(
@@ -74,6 +125,6 @@ export class QaCatalogController {
 @Module({
   imports: [SiteCoreModule],
   controllers: [QaCatalogController],
-  providers: [QaCatalogService],
+  providers: [QaCatalogService, QaRunService],
 })
 export class QaCatalogModule {}
