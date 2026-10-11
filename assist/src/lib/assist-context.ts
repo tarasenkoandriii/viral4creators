@@ -22,7 +22,10 @@ import type { AdminModeApi } from './admin-mode-api';
 import type { AdminActionsApi } from './admin-actions-api';
 import type { AiApi } from './ai-api';
 
+import type { createQaCatalogApi } from './qa-catalog-api';
+
 export interface AssistValue {
+  qaCatalog: ReturnType<typeof createQaCatalogApi>;
   knowledge: KnowledgeApi;
   appDict: AppDictionary;
   /** Э2 (W4). */
