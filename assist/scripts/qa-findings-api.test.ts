@@ -30,8 +30,15 @@ for (const v of [
   { ...payload, severity: 'P9' },
   { ...payload, evidence: [{}] },
   { ...payload, deployedSha: 'unknown' },
-])
-  assert.throws(() => decodeFindingPayload(v), ApiError);
+]) {
+  let caught: unknown;
+  try {
+    decodeFindingPayload(v);
+  } catch (e) {
+    caught = e;
+  }
+  assert.ok(caught instanceof ApiError);
+}
 const f: Finding = {
   id: 'finding',
   title: 'Login',
@@ -71,9 +78,14 @@ const api = createQaFindingsApi({
     throw new ApiError('QA_FINDING_CONFLICT', 'Conflict', 409);
   },
 } as unknown as ApiClient);
-await assert.rejects(
-  api.replace('site', 'finding', 2, payload),
-  (e) => e instanceof ApiError && e.code === 'QA_FINDING_CONFLICT'
+let conflict: unknown;
+try {
+  await api.replace('site', 'finding', 2, payload);
+} catch (e) {
+  conflict = e;
+}
+assert.ok(
+  conflict instanceof ApiError && conflict.code === 'QA_FINDING_CONFLICT'
 );
 assert.equal(calls, 1);
 console.log(
