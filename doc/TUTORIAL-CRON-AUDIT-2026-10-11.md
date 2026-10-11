@@ -165,3 +165,12 @@ Production log follow-up: deployment dpl_D8sgjwZPMSdhNUT6NpCo5Ueug8ws recorded s
 PR42 full CI passed (10175 backend tests, 3669 database tests). Released main fed6ea8, alias switched. Actual production control at 15:48 UTC: 9 executed, 5 passed, 4 failed, no missing frames. Failures now retain fatal capture cause (Target closed / detached Frame) rather than later fill timeouts. Browser stability remains unaccepted.
 
 Add optional TUTORIAL_SCENARIO_RUN_MAX_PER_TICK (integer 1..30; default 30) for TMA planning only. Production trial uses 3. Existing theme/last-run rotation retains unselected scenarios for subsequent hourly ticks (09:05–23:05 UTC). This limits launches per invocation without changing paid-action guards, approval or marking deferred cases successful. This is a load mitigation experiment, not a proven explanation of the crashes. At a cap of 3, daily capacity is at most 45 selected scenario/theme runs before failures or other time limits; do not claim full daily coverage of all languages/themes.
+
+
+## Real greeting and process-exit control (17:00 UTC)
+
+The operator fixture render now completed through the real Gemini/Grok and voice pipeline. Final recorded cost: $2.12; voiced media loads in the browser (720x1280, 21.9s) and contains a non-silent AAC track. No generationStatus was fabricated. The ru greeting-video scenario was edited through the admin UI to goto greeting-video-done and assert greeting-video-result, with reviewed narration; it is now manual, preserving the corrected steps from generation. The first actual control at 17:01:31–17:02:02 UTC passed 1/1.
+
+The 15 current ru cases were deliberately requeued by clearing only lastRunStatus; historical cron logs were preserved. First bounded batch 17:04:28–17:05:28 passed 3/3. Next batch 17:05:50–17:07:23 failed: 1 passed, 2 failed, framesMissed=1; 8/ru and 2/ru lost Target during capture. Thus cap=3 does not prove browser stability.
+
+The owned browser cleanup previously sent SIGKILL without waiting for process exit, and exitCode=null also occurs on signal termination. Cleanup now checks signalCode, waits up to 2s for the owned child exit after killing, and rejects when exit cannot be confirmed, preventing the next launch in that invocation. Six focused cleanup tests cover normal exit, hanging CDP, close error, pending signal exit, already signal-terminated child and missing exit confirmation. This closes a resource-lifecycle gap; production root-cause resolution still requires control after release.
