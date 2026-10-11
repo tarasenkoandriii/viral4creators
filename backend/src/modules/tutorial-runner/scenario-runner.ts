@@ -528,6 +528,8 @@ async function captureFrameWithDeadline(
 ): Promise<Uint8Array> {
   let active = true;
   let phase = 'подготовка страницы';
+  let captureFailure: unknown;
+  let captureFailurePhase: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -548,20 +550,11 @@ async function captureFrameWithDeadline(
             optimizeForSpeed: true,
           });
         } catch (error) {
-          // Chromium can reject before our outer deadline. A capture timeout
-          // still leaves CDP unhealthy: do not continue with another action.
-          const message =
-            error instanceof Error ? error.message : String(error);
-          if (
-            (error instanceof Error && error.name === 'TimeoutError') ||
-            /timed?\s*out|timeout/i.test(message)
-          ) {
-            throw new FrameDeadlineError(
-              `кадр шага ${index + 1} (${step.kind}): таймаут съёмки скриншота: ${message}`,
-            );
-          }
+          captureFailure = error;
+          captureFailurePhase = phase;
           throw error;
         } finally {
+          if (isFatalCaptureError(captureFailure)) throw captureFailure;
           phase = 'восстановление анимаций';
           // Restore the live UI before the next action. This is a still
           // frame, so CSS motion adds compositor work without useful video.
@@ -580,10 +573,30 @@ async function captureFrameWithDeadline(
         );
       }),
     ]);
+  } catch (error) {
+    if (error instanceof FrameDeadlineError) throw error;
+    if (isFatalCaptureError(error)) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new FrameDeadlineError(
+        `кадр шага ${index + 1} (${step.kind}) прерван (${captureFailurePhase ?? phase}): ${message}`,
+      );
+    }
+    throw error;
   } finally {
     active = false;
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function isFatalCaptureError(error: unknown): boolean {
+  if (error === undefined) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    (error instanceof Error && error.name === 'TimeoutError') ||
+    /timed?\s*out|timeout|detached frame|target closed|session closed|connection closed/i.test(
+      message,
+    )
+  );
 }
 
 export function setCaptureMotion(enabled: boolean): void {

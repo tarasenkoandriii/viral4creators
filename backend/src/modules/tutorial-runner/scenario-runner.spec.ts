@@ -886,31 +886,31 @@ describe('runScenario — несостоявшийся снимок', () => {
     new Error('Timed out after waiting 15000ms'),
     Object.assign(new Error('capture deadline'), { name: 'TimeoutError' }),
     new Error('Page.captureScreenshot: Protocol timeout'),
-  ])(
-    'native capture timeout stops before the next action: %s',
-    async (error) => {
-      const fill = jest.fn();
-      const page = buildPage({
-        screenshot: jest.fn().mockRejectedValue(error),
-        locator: jest.fn(() => ({ click: jest.fn(), fill })),
-      });
-      const result = await runScenario(
-        page,
-        [
-          { kind: 'goto', route: 'generate' },
-          { kind: 'fill', selector: '[data-qa="input"]', value: 'example' },
-        ],
-        resolveOk,
-        1000,
-        true,
-      );
-      expect(result.ok).toBe(false);
-      expect(result.failedAt).toBe(0);
-      expect(result.steps[0].error).toContain('таймаут съёмки скриншота');
-      expect(result.skippedFrames).toEqual([]);
-      expect(fill).not.toHaveBeenCalled();
-    },
-  );
+    new Error("Attempted to use detached Frame 'test-frame'"),
+    new Error('Target closed'),
+    new Error('Session closed'),
+  ])('fatal capture error stops before the next action: %s', async (error) => {
+    const fill = jest.fn();
+    const page = buildPage({
+      screenshot: jest.fn().mockRejectedValue(error),
+      locator: jest.fn(() => ({ click: jest.fn(), fill })),
+    });
+    const result = await runScenario(
+      page,
+      [
+        { kind: 'goto', route: 'generate' },
+        { kind: 'fill', selector: '[data-qa="input"]', value: 'example' },
+      ],
+      resolveOk,
+      1000,
+      true,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.failedAt).toBe(0);
+    expect(result.steps[0].error).toContain('прерван (съёмка скриншота)');
+    expect(result.skippedFrames).toEqual([]);
+    expect(fill).not.toHaveBeenCalled();
+  });
 
   it('сбой скриншота не роняет прогон, но попадает в skippedFrames', async () => {
     let n = 0;

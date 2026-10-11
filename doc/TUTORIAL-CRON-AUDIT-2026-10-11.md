@@ -155,3 +155,6 @@ PR40 production batch passed 8/8. A second batch passed 5 and failed 2: the outd
 Native Puppeteer timeout errors previously took the nonfatal missing-frame path. The runner now treats a native capture timeout as fatal, names the capture phase and stops before the next action, allowing the service to dispose of that scenario browser. Ordinary transient screenshot failures retain their existing behavior. This fixes continuation on a potentially unhealthy CDP page; it does not establish the original cause of native hangs.
 
 Validation: 56 runner tests passed, including three native timeout variants and no subsequent fill; backend TypeScript passed. Missing real completed greeting fixture remains an acceptance blocker.
+
+
+Production log follow-up: deployment dpl_D8sgjwZPMSdhNUT6NpCo5Ueug8ws recorded subject 1/ru frame 3 failing with `Attempted to use detached Frame`, followed by fill timeout. Native timeout handling alone would not catch this actual loss of page. Fatal capture classification now also covers detached frame, target/session/connection closure, including failures during capture preparation/motion evaluation. A failed browser is disposed by the existing service isolation; restoration is not attempted after a fatal screenshot failure. No automatic retry or false success is introduced. 59 runner tests, backend TypeScript and targeted ESLint pass.
