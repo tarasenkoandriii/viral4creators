@@ -492,6 +492,30 @@ function matchesTheme(
 }
 
 describe('TutorialScenarioRunnerService', () => {
+  it('caps TMA launches without dropping the remaining stored scenarios', async () => {
+    const previous = process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK;
+    process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK = '1';
+    try {
+      launchHeadlessBrowserMock.mockResolvedValue({
+        browser: {
+          newPage: jest.fn().mockResolvedValue(buildFakePage()),
+          close: jest.fn().mockResolvedValue(undefined),
+        },
+      });
+      const { service } = build([
+        SCENARIO_OK,
+        { ...SCENARIO_OK, id: 'second', subjectKey: '2' },
+      ]);
+      const result = await service.run();
+      expect(result.outcomes).toHaveLength(1);
+      expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previous === undefined)
+        delete process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK;
+      else process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK = previous;
+    }
+  });
+
   it('closes the previous browser before launching the next scenario', async () => {
     const first = {
       newPage: jest.fn().mockResolvedValue(buildFakePage()),

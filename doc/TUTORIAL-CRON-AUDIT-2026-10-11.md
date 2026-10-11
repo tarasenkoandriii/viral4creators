@@ -158,3 +158,10 @@ Validation: 56 runner tests passed, including three native timeout variants and 
 
 
 Production log follow-up: deployment dpl_D8sgjwZPMSdhNUT6NpCo5Ueug8ws recorded subject 1/ru frame 3 failing with `Attempted to use detached Frame`, followed by fill timeout. Native timeout handling alone would not catch this actual loss of page. Fatal capture classification now also covers detached frame, target/session/connection closure, including failures during capture preparation/motion evaluation. A failed browser is disposed by the existing service isolation; restoration is not attempted after a fatal screenshot failure. No automatic retry or false success is introduced. 59 runner tests, backend TypeScript and targeted ESLint pass.
+
+
+## Bounded production batch experiment
+
+PR42 full CI passed (10175 backend tests, 3669 database tests). Released main fed6ea8, alias switched. Actual production control at 15:48 UTC: 9 executed, 5 passed, 4 failed, no missing frames. Failures now retain fatal capture cause (Target closed / detached Frame) rather than later fill timeouts. Browser stability remains unaccepted.
+
+Add optional TUTORIAL_SCENARIO_RUN_MAX_PER_TICK (integer 1..30; default 30) for TMA planning only. Production trial uses 3. Existing theme/last-run rotation retains unselected scenarios for subsequent hourly ticks (09:05–23:05 UTC). This limits launches per invocation without changing paid-action guards, approval or marking deferred cases successful. This is a load mitigation experiment, not a proven explanation of the crashes. At a cap of 3, daily capacity is at most 45 selected scenario/theme runs before failures or other time limits; do not claim full daily coverage of all languages/themes.
