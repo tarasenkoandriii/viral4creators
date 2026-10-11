@@ -9,10 +9,12 @@ export function QaFindingForm({
   disabled,
   onApply,
   onDirty,
+  onDiscard,
 }: {
   disabled: boolean;
   onApply: (comment: string) => void;
   onDirty: () => void;
+  onDiscard: () => void;
 }) {
   const [finding, setFinding] = useState(emptyQaFinding);
   const comment = findingComment(finding);
@@ -108,6 +110,16 @@ export function QaFindingForm({
         }}
       >
         Перенести замечание в комментарий
+      </Button>
+      <Button
+        variant="outline"
+        disabled={disabled}
+        onClick={() => {
+          setFinding(emptyQaFinding());
+          onDiscard();
+        }}
+      >
+        Сбросить черновик замечания
       </Button>
       <p>
         Перенос заменит комментарий и выберет «Заблокирован», чтобы замечание не
