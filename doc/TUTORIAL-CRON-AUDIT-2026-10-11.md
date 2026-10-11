@@ -183,3 +183,13 @@ PR45 merged as 75d7b27. Scoped CI 38158695528 and broad CI 38158691392 succeeded
 Five consecutive manual invocations of the same cron handler after release: 17:24:46–17:25:48, 17:27:26–17:28:00, 17:28:47–17:29:47, 17:30:28–17:31:15, 17:32:27–17:33:24 UTC. Each executed and passed three scenarios, failed zero. All five have zero framesMissed, withoutFrames, assemblyTimeouts and themeMismatches. Fourth batch safely skipped one paid click; it does not certify that paid action. DB count confirms all 15 current ru cases lastRunStatus=ok after release, errors=0, including greeting-video.
 
 Current ru TMA baseline accepted for this controlled series. Schedule remains daily 5 9-23 UTC, cap three. Other locales, complete coverage of both themes, long-term availability and client-site worker acceptance remain distinct checks. Earlier failed cron records remain intact. This result supports the lifecycle fix but does not establish it as the sole root cause of every historical Chromium failure.
+
+
+## Follow-up: themes and real quality results (17:54 UTC)
+
+An additional control passed 2/2, with one paid click safely skipped and no frame/browser errors. Persisted ru theme records are light 15/15 ok and dark 15/15 ok; these records include earlier controls, not thirty new post-release executions. Broad CI 38160389057 completed successfully. SQL now confirms 15 complete quality checks, all verdict=ok, total recorded cost 77185 microUSD; another 15 remain pending and are not accepted. Other locales, pending quality work and multi-day scheduled stability remain open.
+
+
+### F.19. Очередь анализа качества и суточный лимит
+
+SQL-проверка 11.10.2026 подтвердила 15 завершённых анализов с verdict=ok; суммарная учтённая стоимость $0.077185. Ещё 15 проверок остаются pending в фазе upload, attempts=0. Причина ожидания: «суточный лимит 5 мин видео выбран». nextAttemptAt для всех — 12.10.2026 00:00 UTC (03:00 по Киеву). Это штатная отсрочка по бюджету, а не отказ обработчика; лимит не увеличивался, успешные результаты не подменялись. После открытия следующего суточного окна требуется проверить фактическое завершение очереди.
