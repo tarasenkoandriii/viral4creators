@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node server.cjs",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:qa-model": "node --test qa/*.test.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"

@@ -5,7 +5,11 @@ module.exports = defineConfig({
   workers: process.env.ASSIST_SANDBOX_VOICE_QA === "1" ? 1 : undefined,
   timeout: 60000,
   retries: 1,
-  reporter: [["list"], ["html", { open: "never" }]],
+  reporter: [
+    ["list"],
+    ["html", { open: "never" }],
+    ["./qa/playwright-reporter.cjs"],
+  ],
   use: {
     baseURL: remote || "http://127.0.0.1:4173",
     trace: "retain-on-failure",

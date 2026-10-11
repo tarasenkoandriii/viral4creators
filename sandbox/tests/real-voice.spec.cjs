@@ -62,7 +62,7 @@ test.use({ trace: "off" });
 test.describe("live Soniox voice", () => {
   test.describe.configure({ retries: 0 });
   for (const lang of ["ru", "uk"]) {
-    test(`assistant TTS → STT → voice ticket (UI ${lang})`, async ({
+    test(`[SBX-VOICE-${lang.toUpperCase()}] assistant TTS → STT → voice ticket (UI ${lang})`, async ({
       request,
     }, info) => {
       test.skip(
