@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { AccountMembership } from '../site-core/account/roles';
 import { QaCatalogService } from './qa-catalog.service';
+import { parseQaReport, validateReportSnapshot } from './qa-report-input';
 import { parseCaseInput, parseCaseKey, parseVersion } from './qa-case-input';
 const invalid = () =>
   new BadRequestException({
@@ -229,6 +230,92 @@ export class QaRunService {
     });
     const items = rows.slice(0, 100);
     return { items, nextBeforeId: rows.length > 100 ? items.at(-1)!.id : null };
+  }
+  async importReport(
+    m: AccountMembership,
+    siteId: string,
+    id: string,
+    input: unknown,
+  ) {
+    const db = await this.catalog.scoped(m, siteId, true),
+      body = parseQaReport(input);
+    return db.$transaction(async (tx) => {
+      const run = await tx.qaTestRun.findFirst({
+        where: { id, accountId: m.accountId, siteId },
+      });
+      if (!run) throw missing();
+      validateReportSnapshot(run.snapshot, body);
+      if (run.automationProject && run.automationProject !== body.project)
+        throw invalid();
+      const existing = await tx.qaTestRunAttempt.count({
+        where: {
+          accountId: m.accountId,
+          runId: id,
+          reportHash: body.reportHash,
+        },
+      });
+      if (existing === body.attempts.length) {
+        const current = await tx.qaTestRun.findFirst({
+          where: { id, accountId: m.accountId, siteId },
+          select: { revision: true },
+        });
+        return {
+          revision: current!.revision,
+          imported: 0,
+          replayed: true,
+          project: body.project,
+        };
+      }
+      if (existing) throw conflict();
+      const updated = await tx.qaTestRun.updateMany({
+        where: {
+          id,
+          accountId: m.accountId,
+          siteId,
+          revision: body.expectedRevision,
+        },
+        data: {
+          revision: body.expectedRevision + 1,
+          automationProject: body.project,
+        },
+      });
+      if (updated.count !== 1) throw conflict();
+      const heads = await tx.qaTestRunAttempt.groupBy({
+        by: ['caseKey'],
+        where: { accountId: m.accountId, runId: id },
+        _max: { attemptNumber: true },
+      });
+      const counters = new Map(
+        heads.map((h) => [h.caseKey, h._max.attemptNumber ?? 0]),
+      );
+      await tx.qaTestRunAttempt.createMany({
+        data: body.attempts.map((a) => {
+          const attemptNumber = (counters.get(a.caseKey) ?? 0) + 1;
+          counters.set(a.caseKey, attemptNumber);
+          return {
+            accountId: m.accountId,
+            runId: id,
+            caseKey: a.caseKey,
+            attemptNumber,
+            status: a.status,
+            comment: `Playwright: ${body.project}, retry ${a.sourceAttempt}.`,
+            createdByMemberId: m.memberId,
+            origin: 'automated',
+            project: body.project,
+            sourceAttempt: a.sourceAttempt,
+            reportHash: body.reportHash,
+            durationMs: a.durationMs,
+            sourceMetadata: body.metadata,
+          };
+        }),
+      });
+      return {
+        revision: body.expectedRevision + 1,
+        imported: body.attempts.length,
+        replayed: false,
+        project: body.project,
+      };
+    });
   }
   async record(
     m: AccountMembership,

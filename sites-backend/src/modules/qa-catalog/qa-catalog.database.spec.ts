@@ -214,4 +214,96 @@ ciDescribe('QA catalog on isolated CI Postgres', () => {
       ).rejects.toMatchObject({ status: 400 });
     expect((await runs.get(member(accountA), siteA, run.id)).revision).toBe(1);
   });
+  it('imports retries atomically, replays safely and rejects project/tenant/version mixing', async () => {
+    const automated = await service.create(member(accountA), siteA, {
+      caseKey: 'QA-IMPORT',
+      payload: { ...payload(), type: 'automated' },
+    });
+    const run = await runs.create(member(accountA), siteA, {
+      title: 'Imported',
+      caseIds: [automated.id, caseId],
+    });
+    const report = {
+      schemaVersion: 1,
+      unknownTests: 0,
+      runnerStatus: 'passed',
+      metadata: { source: 'playwright', startedAt: '2026-10-11T00:00:00Z' },
+      cases: [
+        {
+          id: 'QA-IMPORT',
+          version: 1,
+          type: 'automated',
+          projects: ['desktop', 'mobile'],
+        },
+      ],
+      results: [
+        {
+          caseId: 'QA-IMPORT',
+          caseVersion: 1,
+          project: 'desktop',
+          attempt: 0,
+          status: 'failed',
+          durationMs: 10,
+          origin: 'automated',
+        },
+        {
+          caseId: 'QA-IMPORT',
+          caseVersion: 1,
+          project: 'desktop',
+          attempt: 1,
+          status: 'passed',
+          durationMs: 12,
+          origin: 'automated',
+        },
+        {
+          caseId: 'QA-IMPORT',
+          caseVersion: 1,
+          project: 'mobile',
+          attempt: 0,
+          status: 'failed',
+          durationMs: 12,
+          origin: 'automated',
+        },
+      ],
+    };
+    const body = { expectedRevision: 1, project: 'desktop', report };
+    const concurrent = await Promise.allSettled(
+      [1, 2].map(() =>
+        runs.importReport(member(accountA), siteA, run.id, body),
+      ),
+    );
+    expect(concurrent.some((r) => r.status === 'fulfilled')).toBe(true);
+    expect(
+      (await runs.importReport(member(accountA), siteA, run.id, body)).replayed,
+    ).toBe(true);
+    const read = await runs.get(member(accountA), siteA, run.id);
+    expect(read.revision).toBe(2);
+    expect(read.automationProject).toBe('desktop');
+    expect(read.summary).toMatchObject({
+      passed: 1,
+      notRun: 1,
+      complete: false,
+    });
+    expect(read.flakyCaseKeys).toEqual(['QA-IMPORT']);
+    expect(
+      (await runs.attempts(member(accountA), siteA, run.id)).items,
+    ).toHaveLength(2);
+    await expect(
+      runs.importReport(member(accountA), siteA, run.id, {
+        ...body,
+        expectedRevision: 2,
+        project: 'mobile',
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      runs.importReport(member(accountB), siteB, run.id, body),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      runs.importReport(member(accountA), siteA, run.id, {
+        ...body,
+        report: { ...report, cases: [{ ...report.cases[0], version: 2 }] },
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    expect((await runs.get(member(accountA), siteA, run.id)).revision).toBe(2);
+  });
 });

@@ -1,3 +1,4 @@
+import { qaReportImportJson } from './modules/qa-catalog/qa-report-json';
 /**
  * Всё глобальное приложения — в одной функции: её же зовёт тест
  * приложения (app.setup.spec.ts), чтобы проверять ТОТ ЖЕ конверт, фильтр,
@@ -145,6 +146,7 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
   // обязательна: Nest пропускает общий парсер, если в стеке express уже
   // есть слой с именем `jsonParser` (имя функции body-parser), — и тогда
   // JSON перестал бы разбираться на всех остальных маршрутах.
+  app.use(qaReportImportJson());
   const assetJson = json({ limit: ASSET_UPLOAD_JSON_LIMIT });
   app.use(
     ASSET_UPLOAD_PATH,
