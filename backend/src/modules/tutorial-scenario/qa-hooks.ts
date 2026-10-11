@@ -825,7 +825,13 @@ export const QA_HOOKS: Record<string, QaHook> = {
   },
   'greeting-video-card': {
     route: 'greeting-video-ready',
-    description: 'карточка готового ролика поздравления',
+    description:
+      'карточка запуска рендера поздравления; готового ролика и экспорта здесь ещё нет',
+  },
+  'greeting-video-result': {
+    route: 'greeting-video-done',
+    description:
+      'готовое поздравление с реальным результатом рендера и экспортом; обязательно assertVisible для темы greeting-video',
   },
   'greeting-render': {
     route: 'greeting-video-ready',

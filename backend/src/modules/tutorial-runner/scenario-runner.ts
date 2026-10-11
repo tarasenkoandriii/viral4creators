@@ -548,6 +548,7 @@ async function captureFrameWithDeadline(
             optimizeForSpeed: true,
           });
         } finally {
+          phase = 'восстановление анимаций';
           // Restore the live UI before the next action. This is a still
           // frame, so CSS motion adds compositor work without useful video.
           await page.evaluate?.(setCaptureMotion, false);

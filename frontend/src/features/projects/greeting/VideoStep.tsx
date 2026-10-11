@@ -499,7 +499,7 @@ export function VideoStep({
           </div>
         )}
         {video && video.status === GenerationStatus.COMPLETE && (
-          <div className="space-y-3">
+          <div className="space-y-3" data-qa="greeting-video-result">
             <Badge tone="success">{w.videoReady}</Badge>
             {voiceIssue && (
               // Причину говорим своими словами: `voiceError` — технический

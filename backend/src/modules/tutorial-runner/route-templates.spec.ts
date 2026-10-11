@@ -26,27 +26,8 @@ const KNOWN_UNSUPPORTED = [
   'persona',
 ];
 
-/** Маршруты, которые резолвятся В ПРИНЦИПЕ, но фикстурных данных для них
- *  нет — значит в `ROUTE_DESCRIPTIONS` им не место: предложенный модели
- *  маршрут, который потом откажет на прогоне, это ровно та поломка, из-за
- *  которой описания вообще завели (см. доккомментарий route-templates). */
-/**
- * Маршруты, которые резолвятся, но НЕ предлагаются модели, потому что
- * фикстурных данных под них нет.
- *
- * С 29.09.2026 список пуст: фикстура завела три проекта-поздравления, и
- * `greeting-video` из «резолвится, но не предлагается» переехал в
- * обычные описанные маршруты. Массив оставлен, а не удалён: проверка
- * ниже — про ПРАВИЛО («описан ⇒ есть данные»), а не про конкретное имя,
- * и следующий маршрут без фикстуры впишется сюда, а не заведёт вторую
- * такую же проверку.
- */
-const NO_FIXTURE_DATA: string[] = [
-  // Этап I ТЗ Greeting 2.0: проект под кадр «готовый ролик» фикстура
-  // заводит, а сам ролик — только платный рендер по кнопке оператора.
-  // До него маршрут честно отказывает, и предлагать его модели нельзя.
-  'greeting-video-done',
-];
+/** Conditional routes require a completed real render, not just seeded data. */
+const NO_FIXTURE_DATA: string[] = ['greeting-video-done'];
 
 describe('resolveScenarioRoute', () => {
   it('маршруты без параметров резолвятся без фикстурного контекста', () => {
@@ -211,6 +192,7 @@ describe('ROUTE_DESCRIPTIONS — единственный источник пр�
       greetingProjectId: 'g1',
       greetingDraftingProjectId: 'g2',
       greetingReadyProjectId: 'g3',
+      greetingDoneProjectId: 'g4',
     };
     for (const key of Object.keys(ROUTE_DESCRIPTIONS)) {
       expect(resolveScenarioRoute(key, fullCtx).ok).toBe(true);
@@ -223,9 +205,9 @@ describe('ROUTE_DESCRIPTIONS — единственный источник пр�
     }
   });
 
-  it('не предлагает маршруты, под которые нет фикстурных данных', () => {
+  it('маршрут готового ролика требует настоящий рендер', () => {
     for (const key of NO_FIXTURE_DATA) {
-      expect(ROUTE_DESCRIPTIONS[key]).toBeUndefined();
+      expect(ROUTE_DESCRIPTIONS[key]).toContain('без завершённого рендера');
       // При этом сам билдер существовать обязан: иначе отказ был бы
       // «неизвестное имя», а это другая причина и другое действие
       // оператора.
