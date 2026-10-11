@@ -75,6 +75,8 @@ import {
   useAssist,
   type AssistValue,
 } from './lib/assist-context';
+import { createQaRunsApi } from './lib/qa-runs-api';
+import { QaRunsScreen, QaRunsButton } from './screens/QaRunsScreen';
 import { createQaCatalogApi } from './lib/qa-catalog-api';
 import { QaCatalogScreen, QaCatalogButton } from './screens/QaCatalogScreen';
 import { createBillingApi } from './lib/billing-api';
@@ -253,6 +255,7 @@ export function App({ startParam }: { startParam: string | null }) {
     () => createAdminActionsApi(client),
     [client]
   );
+  const qaRuns = useMemo(() => createQaRunsApi(client), [client]);
   const qaCatalog = useMemo(() => createQaCatalogApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
@@ -272,6 +275,7 @@ export function App({ startParam }: { startParam: string | null }) {
       adminActions: adminActionsApi,
       ai: aiApi,
       qaCatalog,
+      qaRuns,
     }),
     [
       knowledgeApi,
@@ -290,6 +294,7 @@ export function App({ startParam }: { startParam: string | null }) {
       adminActionsApi,
       aiApi,
       qaCatalog,
+      qaRuns,
     ]
   );
 
@@ -589,6 +594,7 @@ function navActive(key: string, route: Route): boolean {
       'plan',
       'test-accounts',
       'qa-cases',
+      'qa-runs',
       'admin-mode',
       'admin-chat',
       'verify-host',
@@ -920,6 +926,7 @@ function Screen({
             <SiteE3Buttons siteId={route.siteId} />
             <TestAccountsButton siteId={route.siteId} />
             <QaCatalogButton siteId={route.siteId} />
+            <QaRunsButton siteId={route.siteId} />
             <AdminModeButton siteId={route.siteId} />
           </div>
           <SiteScreen
@@ -931,6 +938,8 @@ function Screen({
           />
         </>
       );
+    case 'qa-runs':
+      return <QaRunsScreen siteId={route.siteId} />;
     case 'qa-cases':
       return <QaCatalogScreen siteId={route.siteId} />;
     case 'host':

@@ -24,7 +24,9 @@ import type { AiApi } from './ai-api';
 
 import type { createQaCatalogApi } from './qa-catalog-api';
 
+import type { createQaRunsApi } from './qa-runs-api';
 export interface AssistValue {
+  qaRuns: ReturnType<typeof createQaRunsApi>;
   qaCatalog: ReturnType<typeof createQaCatalogApi>;
   knowledge: KnowledgeApi;
   appDict: AppDictionary;
