@@ -139,6 +139,7 @@ import {
 } from '../../common/headless-chromium';
 import { runScenario, ScenarioFrame, ScenarioPage } from './scenario-runner';
 import { FIXTURE_IDS, seedFixtureUser } from './fixture-seed';
+import { checkFixtureAccess } from './fixture-access';
 import {
   FRESH_WIZARD_ROUTE,
   FixtureRouteContext,
@@ -1580,6 +1581,18 @@ export class TutorialScenarioRunnerService {
       return this.skip(reason);
     }
     const ctx = await this.resolveFixtureContext(user.id);
+    try {
+      await checkFixtureAccess(apiOrigin, token);
+    } catch (error) {
+      const status =
+        error instanceof Error &&
+        /^Tutorial fixture API HTTP \d+$/.test(error.message)
+          ? error.message
+          : 'Tutorial fixture API недоступен';
+      await this.recordInfraFailure(scenarios, status);
+      await this.notify.alert('tutorial-scenario-run:fixture-access', status);
+      return this.skip(status);
+    }
     // Потолок открывается ОДИН раз на тик и ведётся в памяти — см.
     // `openBudget`. Читается до запуска браузера: если он уже выбран,
     // поднимать Chromium незачем.

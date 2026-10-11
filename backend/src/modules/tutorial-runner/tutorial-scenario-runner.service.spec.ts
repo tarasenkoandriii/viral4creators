@@ -1,4 +1,8 @@
 import * as fixtureSeedModule from './fixture-seed';
+import { checkFixtureAccess } from './fixture-access';
+jest.mock('./fixture-access', () => ({
+  checkFixtureAccess: jest.fn().mockResolvedValue(undefined),
+}));
 import { TERMS_VERSION } from '../legal/legal.service';
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
@@ -3850,6 +3854,28 @@ describe('TutorialScenarioRunnerService', () => {
         const { service } = build([]);
         await service.run();
         expect(seed).not.toHaveBeenCalled();
+      });
+
+      it('отказ runtime-доступа сохраняет HTTP-причину и не запускает браузер', async () => {
+        jest
+          .mocked(checkFixtureAccess)
+          .mockRejectedValueOnce(new Error('Tutorial fixture API HTTP 403'));
+        const { service, prisma, notify } = build([SCENARIO_OK]);
+        const result = await service.run();
+        expect(result.skipped).toBe('Tutorial fixture API HTTP 403');
+        expect(launchHeadlessBrowserMock).not.toHaveBeenCalled();
+        expect(notify.alert).toHaveBeenCalledWith(
+          'tutorial-scenario-run:fixture-access',
+          result.skipped,
+        );
+        expect(prisma.tutorialScenario.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              lastRunStatus: 'failed',
+              lastRunError: result.skipped,
+            }),
+          }),
+        );
       });
     });
 
