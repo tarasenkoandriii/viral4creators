@@ -142,7 +142,9 @@ describe('configureApp (backend): то, что включает main.ts', () => 
     const src = fs.readFileSync(path.join(__dirname, 'main.ts'), 'utf8');
     const call = src.indexOf('configureApp(app, config);');
     const listen = src.indexOf('app.listen(');
-    expect(call).toBeGreaterThan(-1);
+    const identity = src.indexOf('registerTelegramIdentity(app);');
+    expect(identity).toBeGreaterThan(-1);
+    expect(call).toBeGreaterThan(identity);
     expect(listen).toBeGreaterThan(call);
   });
 });

@@ -11,6 +11,7 @@ dotenv.config();
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
+import { registerTelegramIdentity } from './modules/telegram-auth/register-telegram-identity';
 import {
   loadConfiguration,
   validateConfiguration,
@@ -30,6 +31,7 @@ async function bootstrap() {
 
   // Префикс, слои express (`{}` без тела, helmet), CORS, pipe/фильтр/
   // интерцептор — `app.setup.ts` (её же проверяет `app.setup.spec.ts`).
+  registerTelegramIdentity(app);
   configureApp(app, config);
 
   // Start server

@@ -4,8 +4,8 @@ import { TelegramIdentityMiddleware } from './telegram-identity.middleware';
 /**
  * TelegramAuthModule
  *
- * Exports TelegramIdentityMiddleware so AppModule can wire it up globally
- * via NestModule.configure() — see app.module.ts.
+ * Exports TelegramIdentityMiddleware so bootstrap can register it globally
+ * on Express before routes are initialized.
  */
 @Module({
   providers: [TelegramIdentityMiddleware],

@@ -5,7 +5,7 @@ import { SonioxObservabilityModule } from './modules/soniox-observability/soniox
  * Root application module that imports all feature modules.
  */
 
-import { Module, Global, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
 import { ApiKeyModule } from './modules/api-key/api-key.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StorageModule } from './modules/storage/storage.module';
@@ -17,7 +17,6 @@ import { PromptModule } from './modules/prompt/prompt.module';
 import { GenerationModule } from './modules/generation/generation.module';
 import { CronModule } from './modules/cron/cron.module';
 import { TelegramAuthModule } from './modules/telegram-auth/telegram-auth.module';
-import { TelegramIdentityMiddleware } from './modules/telegram-auth/telegram-identity.middleware';
 import { AdminAuthModule } from './modules/admin-auth/admin-auth.module';
 import { AdminPanelModule } from './modules/admin-panel/admin-panel.module';
 import { TelegramLoginModule } from './modules/telegram-login/telegram-login.module';
@@ -195,21 +194,4 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
   ],
   exports: [SessionService],
 })
-export class AppModule implements NestModule {
-  /**
-   * TelegramIdentityMiddleware runs on every route (including /admin/*
-   * — harmless there, it only ever sets req.telegramUserId and never
-   * blocks; the admin routes use their own, separate AdminSessionGuard
-   * for actual authorization, see modules/admin-auth). Registered here
-   * rather than in main.ts's app.use() so it stays a proper Nest
-   * provider with PrismaService injected via DI, consistent with the
-   * rest of the app.
-   */
-  configure(consumer: MiddlewareConsumer): void {
-    // Заход 12 (Nest 11 / Express 5, path-to-regexp 8): безымянный `*`
-    // больше не синтаксис — «все маршруты, включая корень» пишутся
-    // `{*splat}`. Голый '*' Nest переводил бы сам, но с глобальным
-    // префиксом `api` печатал бы предупреждение на каждом старте.
-    consumer.apply(TelegramIdentityMiddleware).forRoutes('{*splat}');
-  }
-}
+export class AppModule {}

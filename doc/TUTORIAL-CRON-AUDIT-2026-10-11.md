@@ -67,3 +67,8 @@ Production 413ca4d, deployment dpl_5kbf2MRD5TLAqdwxfjDaMMmKeCVm: health ok, data
 В installed puppeteer-core Connection timeout по умолчанию — 180000 мс. Page.screenshot держит screenshot-lock, а Page.close сначала ждёт освобождения этого lock. Promise.race с лимитом кадра 15000 мс не отменяет CDP-команду: сценарий уже остановлен, но закрытие страницы может ждать нативный timeout. В общую точку запуска браузера добавлен protocolTimeout=30000 мс. Он ограничивает каждую CDP-команду; верхние лимиты сценария и кадра сохранены. Это ограничение освобождает ожидающий запрос и предотвращает трёхминутное ожидание по умолчанию; оно само по себе не доказывает успешную съёмку проблемных экранов.
 
 Проверка реального Connection из установленного Puppeteer с транспортом без ответов и лимитом 25 мс: captureScreenshot завершился timeout через 26 мс, очередь ожидающих команд пуста. Значения production-секретов в тесте не использовались.
+
+
+### 11.10: явная регистрация identity в bootstrap
+
+В свежем production-deploy защищённый маршрут с fixture-токеном возвращал 401 (cache MISS); локальный helper принимал токен. Регистрация DI-провайдера перенесена из NestModule.configure/шаблона маршрута в явный Express app.use перед configureApp и app.listen. Секрет, источники identity и SessionOwnerGuard не менялись. Отдельный интеграционный тест реального Nest/Express, actual TelegramIdentityMiddleware и TelegramIdentityGuard проверяет глубокий /api/projects/:id/items/:id/sessions: верный токен даёт 200 и один upsert; отсутствующий и неверный токены дают 401 без upsert; async-ошибка identity даёт 500, а не зависание. Причинная связь с production-сбоем требует проверки после выпуска.
