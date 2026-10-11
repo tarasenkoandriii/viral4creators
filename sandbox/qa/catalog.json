@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "projectId": "owned-sandbox-tma",
+  "cases": [
+    {
+      "id": "SBX-LOGIN",
+      "version": 1,
+      "title": "Вход, сохранение сессии и выход",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop", "mobile"],
+      "steps": [
+        "Неверный пароль отклонён",
+        "Верная тестовая пара открывает кабинет",
+        "Перезагрузка сохраняет настройки",
+        "Выход закрывает кабинет"
+      ],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-FORM",
+      "version": 1,
+      "title": "Обязательные поля формы",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop", "mobile"],
+      "steps": [
+        "Пустая форма не отправляется",
+        "Вымышленная заявка принимается"
+      ],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-TUTORIAL",
+      "version": 1,
+      "title": "Прохождение и сброс tutorial",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop", "mobile"],
+      "steps": ["Шаги завершаются", "Сброс возвращает первый шаг"],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-HEALTH",
+      "version": 1,
+      "title": "Доступность базы API",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop", "mobile"],
+      "steps": ["Health возвращает database up"],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-AI",
+      "version": 1,
+      "title": "Ответ ИИ по базе sandbox",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop"],
+      "steps": ["Ответ объясняет отправку заявки"],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-WIDGET",
+      "version": 1,
+      "title": "Открытие опубликованного виджета",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop", "mobile"],
+      "steps": ["Виджет открывается и принимает текст"],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-VOICE-RU",
+      "version": 1,
+      "title": "Голосовой цикл с UI ru",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop"],
+      "steps": ["TTS → STT → voiceTicket → ответ ИИ"],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "SBX-VOICE-UK",
+      "version": 1,
+      "title": "Голосовой цикл с UI uk",
+      "type": "automated",
+      "required": true,
+      "projects": ["desktop"],
+      "steps": ["TTS → STT → voiceTicket → ответ ИИ"],
+      "requirementIds": ["QA-SANDBOX"]
+    },
+    {
+      "id": "TMA-DEVICE-VOICE",
+      "version": 1,
+      "title": "Голос и верстка собственного TMA на физических телефонах",
+      "type": "manual",
+      "required": true,
+      "projects": ["physical-ios", "physical-android"],
+      "steps": [
+        "Открыть собственный TMA на физическом телефоне",
+        "Проверить верстку, фокус и клавиатуру",
+        "Проверить голосовое подтверждение и отмену",
+        "Проверить выключение микрофона и возврат из фона"
+      ],
+      "requirementIds": ["QA-TMA", "SONIOX-DEVICE"]
+    }
+  ]
+}
