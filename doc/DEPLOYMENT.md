@@ -3666,3 +3666,10 @@ login_fields_unsupported, без попытки неполного входа. �
 ### API preview: сборка без миграций
 
 В `backend` и `sites-backend` сборка Vercel Preview генерирует Prisma Client и компилирует Nest без `migrate deploy`. Production и локальная сборка сохраняют обязательные миграции и отказ при ошибке. Preview без собственных runtime переменных базы не является рабочим API; для интеграционных проверок нужна отдельная тестовая база. Production credentials в Preview не копировать. Политика проверяется `node scripts/build-prisma-migrations.test.mjs` в CI.
+
+
+### Изменения env без изменения кода в Vercel
+
+Ignored Build Step сравнивает Git-файлы; после изменения только env обычный redeploy может быть Canceled, и новые настройки не попадут в runtime. Для такого выпуска добавьте в нужный проект production Config VERCEL_FORCE_BUILD=1, выполните redeploy и подтвердите Ready, commit и рабочий alias. После успешного выпуска удалите VERCEL_FORCE_BUILD; пропуск неизменённых проектов снова применяется. Не храните флаг постоянно: иначе каждый следующий deployment будет собираться. Значения 1 и true включают принудительную сборку; false и отсутствие флага сохраняют обычную проверку файлов.
+
+Tutorial quality: TUTORIAL_DEMO_QUALITY_ENABLED=true включает очередь Gemini. На 11.10.2026 установлен ограниченный production-профиль TUTORIAL_DEMO_QUALITY_DAILY_USD=0.25 и TUTORIAL_DEMO_QUALITY_DAILY_VIDEO_MINUTES=5. Одного добавления env недостаточно — требуется подтверждённый выпуск. Эти лимиты относятся к quality-проверке, не ко всем остальным AI-операциям.
