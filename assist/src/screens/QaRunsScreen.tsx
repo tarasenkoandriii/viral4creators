@@ -4,6 +4,7 @@ import { Button, Card, inputClass } from '../kit/ui';
 import { useAssist } from '../lib/assist-context';
 import { qaAccess } from '../lib/qa-editor';
 import { qaFixPrompt } from '../lib/qa-fix-prompt';
+import { QaFindingForm } from '../components/QaFindingForm';
 import { navigate } from '../lib/router';
 import {
   qaRunSummary,
@@ -52,6 +53,7 @@ function Runs({ siteId }: { siteId: string }) {
     [status, setStatus] = useState<QaResult>('passed'),
     [comment, setComment] = useState(''),
     [dirty, setDirty] = useState(false),
+    [findingPending, setFindingPending] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -136,6 +138,7 @@ function Runs({ siteId }: { siteId: string }) {
       setComment('');
       setStatus('passed');
       setDirty(false);
+      setFindingPending(false);
       setConflict(false);
       setReport(null);
       setReportName('');
@@ -315,6 +318,7 @@ function Runs({ siteId }: { siteId: string }) {
                 setComment('');
                 setStatus('passed');
                 setDirty(false);
+                setFindingPending(false);
               }}
             >
               {run.snapshot.map((s) => (
@@ -363,6 +367,21 @@ function Runs({ siteId }: { siteId: string }) {
           })()}
           {access.write && selected.payload.type === 'manual' && (
             <div className="space-y-2">
+              <QaFindingForm
+                key={`${run.id}:${selected.caseKey}`}
+                disabled={busy || conflict}
+                onDirty={() => {
+                  setDirty(true);
+                  setFindingPending(true);
+                }}
+                onDiscard={() => setFindingPending(false)}
+                onApply={(text) => {
+                  setComment(text);
+                  setFindingPending(false);
+                  setStatus('blocked');
+                  setDirty(true);
+                }}
+              />
               <label className="block">
                 Результат
                 <select
@@ -396,9 +415,18 @@ function Runs({ siteId }: { siteId: string }) {
                   }}
                 />
               </label>
+              {findingPending && (
+                <p role="status">
+                  Перенесите замечание в комментарий или сбросьте его перед
+                  записью результата.
+                </p>
+              )}
               <Button
                 disabled={
-                  busy || conflict || (status !== 'passed' && !comment.trim())
+                  busy ||
+                  conflict ||
+                  findingPending ||
+                  (status !== 'passed' && !comment.trim())
                 }
                 onClick={() =>
                   void act(async () => {
@@ -422,6 +450,7 @@ function Runs({ siteId }: { siteId: string }) {
                     });
                     setHistory((old) => [saved.attempt, ...old]);
                     setDirty(false);
+                    setFindingPending(false);
                     setComment('');
                     setNotice(
                       'Результат записан. Предыдущие попытки сохранены.'
@@ -543,7 +572,7 @@ function Runs({ siteId }: { siteId: string }) {
             )}
           <h3 className="font-semibold">Попытки</h3>
           {history.map((a) => (
-            <p key={a.id}>
+            <p key={a.id} className="whitespace-pre-wrap break-words">
               {a.caseKey} · #{a.attemptNumber} · {labels[a.status]} ·{' '}
               {a.origin === 'automated'
                 ? `Playwright: ${a.project}`
