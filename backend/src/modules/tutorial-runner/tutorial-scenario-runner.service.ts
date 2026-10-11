@@ -120,6 +120,7 @@ import { Prisma, ProjectType } from '@prisma/client';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { GenerationStatus } from '../../common/types/generation.types';
 import { closeOwnedBrowser } from './browser-cleanup';
+import { scenarioRunBatchLimit } from './scenario-batch-limit';
 import { SessionStatus } from '../../common/types/session.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { estimateCost } from '../../common/ai-pricing';
@@ -1541,7 +1542,7 @@ export class TutorialScenarioRunnerService {
       themeRuns,
       Date.now(),
       OK_RERUN_INTERVAL_MS,
-      RUN_BATCH_LIMIT,
+      scenarioRunBatchLimit(process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK),
     );
     const scenarios = planned.map((p) => p.scenario);
     if (planned.length === 0) {
