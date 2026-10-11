@@ -572,7 +572,7 @@ function Runs({ siteId }: { siteId: string }) {
             )}
           <h3 className="font-semibold">Попытки</h3>
           {history.map((a) => (
-            <p key={a.id}>
+            <p key={a.id} className="whitespace-pre-wrap break-words">
               {a.caseKey} · #{a.attemptNumber} · {labels[a.status]} ·{' '}
               {a.origin === 'automated'
                 ? `Playwright: ${a.project}`
