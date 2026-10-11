@@ -43,6 +43,8 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   SiteAccountMember: 'accountId',
   SiteAccountInvite: 'accountId',
   Site: 'accountId',
+  QaTestCase: 'accountId',
+  QaTestCaseRevision: 'accountId',
   SiteHost: 'accountId',
   SiteOwnershipChallenge: 'accountId',
   SiteAiUsage: 'accountId',

@@ -1,3 +1,4 @@
+import { QaCatalogModule } from './modules/qa-catalog/qa-catalog.module';
 import { SonioxObservabilityModule } from './modules/soniox-observability/soniox-observability.module';
 /**
  * Корневой модуль sites-backend.
@@ -56,6 +57,7 @@ import { InternalWorkerModule } from './modules/internal-worker/internal-worker.
     TelegramWebhookModule,
     // Ядро: кабинет, сайты, хосты, подтверждение владения, крон перепроверки.
     SiteCoreModule,
+    QaCatalogModule,
     // Э1 «Знания» (контракт /tmp/k/CONTRACT-E1.md): обход (общий с QA), ИИ,
     // нейтральное ядро знаний, два раздельных режима, песочница.
     SiteCrawlModule,

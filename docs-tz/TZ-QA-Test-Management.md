@@ -65,3 +65,12 @@ AI помогает создавать кейсы из требований и �
 В `sandbox/qa` реализованы локальный каталог пилота со стабильными ID/версиями/шагами/requirement IDs, snapshot кейсов в запуске и Playwright reporter. JSON-отчёт содержит матрицу, attempts, flaky, неизвестные ID и раздельные manual/automated статусы. Обязательная физическая приёмка TMA остаётся not-run; повтор passed сохраняет исходный failed. Отчёт сохраняется существующим GitHub Actions artifact.
 
 Это первый адаптер и модель запуска. Клиентский API, tenant isolation, БД, UI редактора/ручной приёмки, общие шаги, CSV/JUnit и права на скачивание артефактов пока planned. Текущий JSON не объявляется реализацией всего P0.
+
+
+### Хранилище и API каталога
+
+Добавлен серверный модуль `qa-catalog`: таблицы qa_test_cases/qa_test_case_revisions, составные tenant FK и регистрация в SitesDb; доступ только с Telegram/web identity и отдельной ролью qa (admin пишет, viewer читает, owner кабинета имеет права). Assist role сама по себе доступа не даёт. Маршруты допускают общий кабинет assist и приложение qa.
+
+Создание и изменение атомарны: head + новая immutable revision с member attribution. Замена требует expectedVersion; конфликт возвращает 409, исторические версии не перезаписываются. Архивирование — новая версия payload.archived=true. Публичная роль виджета не получает доступ к таблицам QA.
+
+API `/qa/sites/:siteId/cases`: GET/POST; `/:id`: GET/PUT; `/:id/history`: GET. Полный редактор, планы/запуски в БД, CSV/JUnit и файловые артефакты ещё planned. Список и история имеют cursor pagination по 100 записей; расширенный поиск — следующий этап. Миграция применится при production build после merge; до этого storage/API не считать развёрнутыми.

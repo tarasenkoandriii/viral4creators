@@ -164,11 +164,12 @@ describeE7(
     async function conversation(p: {
       role: string | null;
       hoursAgo: number;
+      at?: Date;
       questions: string[];
       refused?: boolean;
       employeeRef?: string;
     }): Promise<string> {
-      const at = new Date(Date.now() - p.hoursAgo * 3_600_000);
+      const at = p.at ?? new Date(Date.now() - p.hoursAgo * 3_600_000);
       const c = await st.prisma.assistAdminConversation.create({
         data: {
           accountId: s.accountId,
@@ -608,7 +609,15 @@ describeE7(
 
     it('свёртка дня по ролям из сырых строк (идемпотентна)', async () => {
       const rollup = st.app.get(AdminRollup);
-      const day = new Date().toISOString().slice(0, 10);
+      // Seed the asserted day explicitly; relative-hour fixtures fall on yesterday near UTC midnight.
+      const at = new Date('2026-01-15T12:00:00Z');
+      await conversation({
+        role: 'qa-rollup',
+        hoursAgo: 0,
+        at,
+        questions: ['Rollup fixture'],
+      });
+      const day = at.toISOString().slice(0, 10);
       await rollup.day(s.accountId, s.siteId, day);
       await rollup.day(s.accountId, s.siteId, day);
       const rows = await st.prisma.assistAdminDailyStat.findMany({

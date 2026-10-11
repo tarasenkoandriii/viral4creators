@@ -559,6 +559,20 @@ describeDb(
 
       it('в логах — ни orderId, ни сумм, ни текста элемента, ни токенов', () => {
         const all = cap.lines.join('\n');
+        // Approved correlation/site metadata can randomly contain the short amount fixture.
+        // Strip only those identifiers; message content remains subject to the privacy check.
+        const scrubMetadata = (text: string) =>
+          text
+            .replace(
+              /\[[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\](?= HttpExceptionFilter$)/gim,
+              '[request-id]',
+            )
+            .replace(/site=c[a-z0-9]{20,31}(?=\s|$)/g, 'site=[id]');
+        const collision =
+          '[12345678-1299-1234-abcd-123456789abc] HttpExceptionFilter';
+        expect(scrubMetadata(`event ${collision}`)).not.toContain('1299');
+        expect(scrubMetadata(`value=1299 ${collision}`)).toContain('1299');
+        const messages = scrubMetadata(all);
         for (const secret of [
           'A-1042',
           '1299',
@@ -567,7 +581,7 @@ describeDb(
           'ivan@example.com',
           '380671234567',
         ]) {
-          expect(all).not.toContain(secret);
+          expect(messages).not.toContain(secret);
         }
         expect(all).toMatch(/goal page site=/);
         expect(all).toMatch(/picker pick site=/);
