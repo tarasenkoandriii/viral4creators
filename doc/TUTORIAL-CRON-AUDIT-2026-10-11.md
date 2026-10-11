@@ -174,3 +174,12 @@ The operator fixture render now completed through the real Gemini/Grok and voice
 The 15 current ru cases were deliberately requeued by clearing only lastRunStatus; historical cron logs were preserved. First bounded batch 17:04:28–17:05:28 passed 3/3. Next batch 17:05:50–17:07:23 failed: 1 passed, 2 failed, framesMissed=1; 8/ru and 2/ru lost Target during capture. Thus cap=3 does not prove browser stability.
 
 The owned browser cleanup previously sent SIGKILL without waiting for process exit, and exitCode=null also occurs on signal termination. Cleanup now checks signalCode, waits up to 2s for the owned child exit after killing, and rejects when exit cannot be confirmed, preventing the next launch in that invocation. Six focused cleanup tests cover normal exit, hanging CDP, close error, pending signal exit, already signal-terminated child and missing exit confirmation. This closes a resource-lifecycle gap; production root-cause resolution still requires control after release.
+
+
+## Post-release acceptance of the current ru set
+
+PR45 merged as 75d7b27. Scoped CI 38158695528 and broad CI 38158691392 succeeded (10191 backend tests passed, 5 skipped, 10196 total / 500 suites). Production viral-backend-j67cl2iyc built from that commit; legacy alias switched, health ok/database up.
+
+Five consecutive manual invocations of the same cron handler after release: 17:24:46–17:25:48, 17:27:26–17:28:00, 17:28:47–17:29:47, 17:30:28–17:31:15, 17:32:27–17:33:24 UTC. Each executed and passed three scenarios, failed zero. All five have zero framesMissed, withoutFrames, assemblyTimeouts and themeMismatches. Fourth batch safely skipped one paid click; it does not certify that paid action. DB count confirms all 15 current ru cases lastRunStatus=ok after release, errors=0, including greeting-video.
+
+Current ru TMA baseline accepted for this controlled series. Schedule remains daily 5 9-23 UTC, cap three. Other locales, complete coverage of both themes, long-term availability and client-site worker acceptance remain distinct checks. Earlier failed cron records remain intact. This result supports the lifecycle fix but does not establish it as the sole root cause of every historical Chromium failure.
