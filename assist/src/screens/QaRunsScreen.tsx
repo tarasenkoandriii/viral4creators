@@ -55,6 +55,10 @@ function Runs({ siteId }: { siteId: string }) {
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [conflict, setConflict] = useState(false);
+  const [report, setReport] = useState<unknown>(null),
+    [reportName, setReportName] = useState(''),
+    [project, setProject] = useState('');
+  const hasDraft = dirty || report !== null;
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -63,14 +67,14 @@ function Runs({ siteId }: { siteId: string }) {
     };
   }, []);
   useEffect(() => {
-    if (!dirty) return;
+    if (!hasDraft) return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [hasDraft]);
   useEffect(() => {
     if (!access.read) return;
     let active = true;
@@ -116,7 +120,8 @@ function Runs({ siteId }: { siteId: string }) {
     }
   }
   async function open(id: string) {
-    if (dirty && !window.confirm('Отбросить несохранённый результат?')) return;
+    if (hasDraft && !window.confirm('Отбросить несохранённый результат?'))
+      return;
     await act(async () => {
       const [r, h] = await Promise.all([
         api.get(siteId, id),
@@ -131,6 +136,9 @@ function Runs({ siteId }: { siteId: string }) {
       setStatus('passed');
       setDirty(false);
       setConflict(false);
+      setReport(null);
+      setReportName('');
+      setProject(r.automationProject ?? '');
     });
   }
   if (!access.read) return <Card>Нет доступа к QA.</Card>;
@@ -143,15 +151,16 @@ function Runs({ siteId }: { siteId: string }) {
         variant="outline"
         disabled={busy}
         onClick={() => {
-          if (!dirty || window.confirm('Отбросить несохранённый результат?'))
+          if (!hasDraft || window.confirm('Отбросить несохранённый результат?'))
             navigate({ name: 'qa-cases', siteId });
         }}
       >
         Каталог кейсов
       </Button>
       <p>
-        Запуск сохраняет версии выбранных кейсов. Автоматические проверки пока
-        не подключены: их результаты остаются «Не выполнен».
+        Запуск сохраняет версии выбранных кейсов. Автоматические результаты
+        загружаются из отчёта Playwright. Без отчёта кейс остаётся «Не
+        выполнен».
       </p>
       {error && (
         <p role="alert" className="text-red-600">
@@ -215,7 +224,7 @@ function Runs({ siteId }: { siteId: string }) {
             disabled={busy || !title.trim() || !ids.length}
             onClick={() => {
               if (
-                dirty &&
+                hasDraft &&
                 !window.confirm('Отбросить несохранённый результат?')
               )
                 return;
@@ -297,7 +306,7 @@ function Runs({ siteId }: { siteId: string }) {
               disabled={busy}
               onChange={(e) => {
                 if (
-                  dirty &&
+                  hasDraft &&
                   !window.confirm('Отбросить несохранённый результат?')
                 )
                   return;
@@ -421,11 +430,117 @@ function Runs({ siteId }: { siteId: string }) {
           {run.flakyCaseKeys.length > 0 && (
             <p>Успешно после ошибки: {run.flakyCaseKeys.join(', ')}</p>
           )}
+          {access.write &&
+            run.snapshot.some((s) => s.payload.type === 'automated') && (
+              <div className="space-y-2">
+                <h3 className="font-semibold">Импорт отчёта Playwright</h3>
+                <p>
+                  Выберите один браузерный проект. После первого импорта он
+                  закрепляется за запуском. Все автоматические кейсы и версии
+                  должны совпадать с запуском. Данные отчёта предоставлены
+                  пользователем, подпись CI пока не проверяется.
+                </p>
+                <label className="block">
+                  Браузерный проект
+                  <input
+                    className={inputClass}
+                    maxLength={80}
+                    value={run.automationProject ?? project}
+                    disabled={busy || !!run.automationProject}
+                    onChange={(e) => setProject(e.target.value)}
+                  />
+                </label>
+                <label className="block">
+                  Отчёт Playwright (.json)
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    disabled={busy}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      void act(async () => {
+                        if (file.size > 512 * 1024)
+                          throw new Error('Report too large');
+                        const parsed: unknown = JSON.parse(await file.text());
+                        if (mounted.current) {
+                          setReport(parsed);
+                          setReportName(file.name);
+                        }
+                      });
+                    }}
+                  />
+                </label>
+                <p>{reportName}</p>
+                <Button
+                  disabled={
+                    busy ||
+                    conflict ||
+                    report === null ||
+                    !(run.automationProject ?? project).trim()
+                  }
+                  onClick={() =>
+                    void act(async () => {
+                      const saved = await api.importReport(
+                        siteId,
+                        run.id,
+                        run.revision,
+                        run.automationProject ?? project,
+                        report
+                      );
+                      if (!mounted.current) return;
+                      setReport(null);
+                      setReportName('');
+                      setNotice(
+                        saved.replayed
+                          ? 'Этот отчёт уже импортирован; дубликаты не созданы.'
+                          : `Импортировано попыток: ${saved.imported}.`
+                      );
+                      setRun({
+                        ...run,
+                        revision: saved.revision,
+                        automationProject: saved.project,
+                      });
+                      try {
+                        const [fresh, h] = await Promise.all([
+                          api.get(siteId, run.id),
+                          api.history(siteId, run.id),
+                        ]);
+                        if (mounted.current) {
+                          setRun(fresh);
+                          setHistory(h.items);
+                          setHistoryBefore(h.nextBeforeId);
+                        }
+                      } catch {
+                        if (mounted.current)
+                          setNotice(
+                            'Отчёт импортирован. Обновите запуск для загрузки сводки.'
+                          );
+                      }
+                    })
+                  }
+                >
+                  Импортировать результаты
+                </Button>
+              </div>
+            )}
           <h3 className="font-semibold">Попытки</h3>
           {history.map((a) => (
             <p key={a.id}>
               {a.caseKey} · #{a.attemptNumber} · {labels[a.status]} ·{' '}
-              {new Date(a.createdAt).toLocaleString()} · {a.comment}
+              {a.origin === 'automated'
+                ? `Playwright: ${a.project}`
+                : 'Ручная попытка'}{' '}
+              · {new Date(a.createdAt).toLocaleString()} · {a.comment}
+              {a.sourceMetadata && (
+                <span className="block text-sm">
+                  Источник тестов:{' '}
+                  {a.sourceMetadata.testSourceSha ?? 'не указан'} · версия
+                  деплоя: {a.sourceMetadata.deployedSha ?? 'не подтверждена'} ·
+                  runner: {a.sourceMetadata.runnerStatus}
+                </span>
+              )}
             </p>
           ))}
           {historyBefore && (

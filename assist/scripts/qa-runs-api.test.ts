@@ -121,3 +121,49 @@ assert.equal(routeHref({ name: 'qa-runs', siteId: 's' }), '#/sites/s/qa-runs');
 console.log(
   'QA runs: snapshots, statuses, malformed responses, conflict no retry, route passed'
 );
+
+const autoSnapshot = [
+  { ...snapshot[0], payload: { ...snapshot[0].payload, type: 'automated' } },
+];
+const imported = {
+  ...attempt,
+  origin: 'automated',
+  sourceMetadata: {
+    testSourceSha: null,
+    deployedSha: null,
+    runnerStatus: 'passed',
+  },
+  project: 'desktop',
+  status: 'passed',
+};
+assert.equal(
+  qaRunSummary(
+    decodeQaRun({
+      ...run,
+      snapshot: autoSnapshot,
+      automationProject: 'desktop',
+      latestAttempts: [imported],
+      flakyCaseKeys: ['QA-LOGIN'],
+    })
+  ).passed,
+  1
+);
+let invalidProject = false;
+try {
+  decodeQaRun({
+    ...run,
+    snapshot: autoSnapshot,
+    automationProject: 'mobile',
+    latestAttempts: [imported],
+  });
+} catch {
+  invalidProject = true;
+}
+assert.ok(invalidProject);
+response = { revision: 3, imported: 2, replayed: false, project: 'desktop' };
+await api.importReport('s', 'r', 2, 'desktop', { schemaVersion: 1 });
+assert.deepEqual(calls[calls.length - 1][2], {
+  expectedRevision: 2,
+  project: 'desktop',
+  report: { schemaVersion: 1 },
+});

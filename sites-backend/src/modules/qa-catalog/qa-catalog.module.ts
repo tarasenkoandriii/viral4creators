@@ -54,6 +54,16 @@ export class QaCatalogController {
   ) {
     return this.runs.get(m, site, id);
   }
+  @Post(':siteId/runs/:id/reports')
+  @RequireProductRoles(QA_WRITE)
+  importReport(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.runs.importReport(m, site, id, body);
+  }
   @Get(':siteId/runs/:id/attempts')
   @RequireProductRoles(QA_READ)
   listAttempts(

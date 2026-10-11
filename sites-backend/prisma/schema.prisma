@@ -4987,6 +4987,7 @@ model QaTestCaseRevision {
 }
 
 model QaTestRun {
+  automationProject String?
   id String @id @default(cuid())
   accountId String
   siteId String
@@ -5002,6 +5003,12 @@ model QaTestRun {
   @@map("qa_test_runs")
 }
 model QaTestRunAttempt {
+  origin String @default("manual")
+  project String?
+  sourceAttempt Int?
+  reportHash String?
+  durationMs Float?
+  sourceMetadata Json?
   id String @id @default(cuid())
   accountId String
   runId String
@@ -5013,6 +5020,7 @@ model QaTestRunAttempt {
   createdByMemberId String
   createdAt DateTime @default(now())
   @@unique([runId, caseKey, attemptNumber])
+  @@unique([runId, reportHash, caseKey, sourceAttempt])
   @@index([accountId, runId, id])
   @@map("qa_test_run_attempts")
 }

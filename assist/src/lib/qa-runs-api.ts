@@ -2,6 +2,13 @@ import { ApiError, type ApiClient } from '../kit';
 import { payload, type QaCasePayload } from './qa-catalog-api';
 export type QaResult = 'passed' | 'failed' | 'blocked' | 'skipped';
 export interface QaAttempt {
+  origin: 'manual' | 'automated';
+  project: string | null;
+  sourceMetadata: {
+    testSourceSha: string | null;
+    deployedSha: string | null;
+    runnerStatus: string;
+  } | null;
   id: string;
   caseKey: string;
   attemptNumber: number;
@@ -23,6 +30,7 @@ export interface QaSnapshot {
   payload: QaCasePayload;
 }
 export interface QaRun extends QaRunHead {
+  automationProject: string | null;
   snapshot: QaSnapshot[];
   latestAttempts: QaAttempt[];
   flakyCaseKeys: string[];
@@ -60,7 +68,29 @@ function attempt(v: unknown): QaAttempt {
   const o = obj(v);
   if (!['passed', 'failed', 'blocked', 'skipped'].includes(str(o.status)))
     return bad();
+  const origin = o.origin ?? 'manual';
+  if (!['manual', 'automated'].includes(str(origin))) return bad();
+  const project =
+    o.project === null || o.project === undefined ? null : str(o.project);
+  if ((origin === 'automated') !== (project !== null)) return bad();
+  const sha = (v: unknown) =>
+    v === null
+      ? null
+      : typeof v === 'string' && /^[a-f0-9]{40}$/i.test(v)
+        ? v
+        : bad();
+  const meta = origin === 'automated' ? obj(o.sourceMetadata) : null;
+  const sourceMetadata = meta
+    ? {
+        testSourceSha: sha(meta.testSourceSha),
+        deployedSha: sha(meta.deployedSha),
+        runnerStatus: str(meta.runnerStatus),
+      }
+    : null;
   return {
+    sourceMetadata,
+    origin: origin as QaAttempt['origin'],
+    project,
     id: str(o.id),
     caseKey: str(o.caseKey),
     attemptNumber: num(o.attemptNumber),
@@ -93,7 +123,7 @@ export function decodeQaRun(v: unknown): QaRun {
     latestAttempts.some(
       (a) =>
         !snapshot.some(
-          (s) => s.caseKey === a.caseKey && s.payload.type === 'manual'
+          (s) => s.caseKey === a.caseKey && s.payload.type === a.origin
         )
     )
   )
@@ -106,7 +136,23 @@ export function decodeQaRun(v: unknown): QaRun {
     )
   )
     return bad();
-  return { ...head(o), snapshot, latestAttempts, flakyCaseKeys };
+  const automationProject =
+    o.automationProject === null || o.automationProject === undefined
+      ? null
+      : str(o.automationProject);
+  if (
+    latestAttempts.some(
+      (a) => a.origin === 'automated' && a.project !== automationProject
+    )
+  )
+    return bad();
+  return {
+    ...head(o),
+    snapshot,
+    latestAttempts,
+    flakyCaseKeys,
+    automationProject,
+  };
 }
 export function qaRunSummary(run: QaRun) {
   const counts = { passed: 0, failed: 0, blocked: 0, skipped: 0, notRun: 0 };
@@ -150,6 +196,33 @@ export function createQaRunsApi(client: ApiClient) {
         ),
         attempt
       ),
+    importReport: async (
+      site: string,
+      id: string,
+      expectedRevision: number,
+      project: string,
+      report: unknown
+    ) => {
+      const o = obj(
+        await client.request('POST', item(site, id) + '/reports', {
+          expectedRevision,
+          project,
+          report,
+        })
+      );
+      if (
+        !Number.isSafeInteger(o.imported) ||
+        (o.imported as number) < 0 ||
+        typeof o.replayed !== 'boolean'
+      )
+        return bad();
+      return {
+        revision: num(o.revision),
+        imported: o.imported as number,
+        replayed: o.replayed,
+        project: str(o.project),
+      };
+    },
     record: async (
       site: string,
       id: string,
