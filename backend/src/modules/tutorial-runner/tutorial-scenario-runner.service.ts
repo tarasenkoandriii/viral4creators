@@ -119,6 +119,7 @@ import { LandingVideosService } from '../client-site-media/landing-videos.servic
 import { Prisma, ProjectType } from '@prisma/client';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { GenerationStatus } from '../../common/types/generation.types';
+import { closeOwnedBrowser } from './browser-cleanup';
 import { SessionStatus } from '../../common/types/session.types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { estimateCost } from '../../common/ai-pricing';
@@ -1655,7 +1656,7 @@ export class TutorialScenarioRunnerService {
       };
     }
 
-    const { browser } = launched;
+    let browser: typeof launched.browser | null = launched.browser;
     const outcomes: TutorialScenarioRunOutcome[] = [];
     const failures: string[] = [];
     const deadline = tickStartedAt + RUN_DEADLINE_MS;
@@ -1666,6 +1667,39 @@ export class TutorialScenarioRunnerService {
             `тик исчерпал бюджет времени — ${scenarios.length - outcomes.length} сценариев отложено до следующего прогона`,
           );
           break;
+        }
+        if (!browser) {
+          const fresh = await launchHeadlessBrowser();
+          if ('error' in fresh) {
+            this.logger.warn(`повторный запуск Chromium: ${fresh.error}`);
+            const error = `повторный запуск Chromium: ${fresh.error}`;
+            outcomes.push({
+              id: scenario.id,
+              subjectKey: scenario.subjectKey,
+              locale: scenario.locale,
+              theme,
+              ok: false,
+              error,
+            });
+            failures.push(`${scenario.subjectKey}/${scenario.locale}/${theme}`);
+            await this.prisma.tutorialScenario.update({
+              where: { id: scenario.id },
+              data: {
+                lastRunAt: new Date(),
+                lastRunStatus: 'failed',
+                lastRunError: error,
+              },
+            });
+            recordThemeRun(themeRuns, scenario, theme, {
+              at: new Date().toISOString(),
+              status: 'failed',
+              error,
+              stepsSha,
+            });
+            await this.saveThemeRuns(themeRuns);
+            break;
+          }
+          browser = fresh.browser;
         }
         const outcome = await this.runOne(
           browser,
@@ -1697,6 +1731,10 @@ export class TutorialScenarioRunnerService {
           stepsSha,
         });
         await this.saveThemeRuns(themeRuns);
+        // Serverless Chromium runs all renderers in one process. Do not
+        // carry renderer/GPU state or storage into the next scenario.
+        await closeOwnedBrowser(browser);
+        browser = null;
         if (!outcome.ok) {
           failures.push(`${scenario.subjectKey}/${scenario.locale}/${theme}`);
           // Локаль в fingerprint И в тексте. Без неё пять локалей
@@ -1735,7 +1773,7 @@ export class TutorialScenarioRunnerService {
         }
       }
     } finally {
-      await browser.close().catch(() => undefined);
+      if (browser) await closeOwnedBrowser(browser);
     }
 
     // Итоговое сообщение вместо хвоста поимённых: причина у них
@@ -2422,12 +2460,14 @@ export class TutorialScenarioRunnerService {
       // уже нет.
       const capture = {
         capturedAt: new Date(),
-        captureBuild: await readCaptureBuild(page),
+        captureBuild: result.ok ? await readCaptureBuild(page) : null,
       };
       // Какой темой на деле нарисованы кадры — тоже на открытой
       // странице. `null` — замерить не удалось: решения нет, ролик
       // собирается как прежде (замер — страховка, не условие).
-      const themeVia = captureThemeVia(theme, await readCaptureTheme(page));
+      const themeVia = result.ok
+        ? captureThemeVia(theme, await readCaptureTheme(page))
+        : null;
       return await this.finishScenarioRun(scenario, result, {
         capture,
         themeVia,
@@ -2456,7 +2496,13 @@ export class TutorialScenarioRunnerService {
         error,
       };
     } finally {
-      await page?.close().catch(() => undefined);
+      if (page) {
+        await withTimeout(
+          page.close(),
+          5_000,
+          'закрытие вкладки Chromium',
+        ).catch(() => undefined);
+      }
     }
   }
 
