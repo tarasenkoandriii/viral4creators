@@ -221,7 +221,9 @@ export function themeRunState(
       stepsSha: rec.stepsSha || null,
     };
   }
-  if (theme === 'light') {
+  // Once a dark run exists, the shared row may describe that run.
+  // Missing light evidence must not inherit the dark result.
+  if (theme === 'light' && !runs.get(scenario.id)?.dark) {
     return {
       at: scenario.lastRunAt ? scenario.lastRunAt.getTime() : null,
       status: scenario.lastRunStatus ?? null,

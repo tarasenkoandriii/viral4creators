@@ -384,10 +384,17 @@ export const QA_HOOKS: Record<string, QaHook> = {
   },
   'character-casting': {
     route: 'generate-ready',
+    clickCost: 'forbidden',
     description: 'карточка персонажей разбора (состав кадра)',
+  },
+  'character-toggle': {
+    route: 'generate-ready',
+    description:
+      'кнопка переключения участия персонажа; в фикстуре один персонаж, при нескольких выбирается первый (click)',
   },
   'scene-casting': {
     route: 'generate-ready',
+    clickCost: 'forbidden',
     description: 'карточка сцен и массовки (состав кадра)',
   },
 
