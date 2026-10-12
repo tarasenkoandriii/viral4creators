@@ -31,6 +31,8 @@ import { MODEL_RATES } from '../../common/ai-pricing';
 import { VideoProviderKey } from '../generation/default-video-provider';
 import {
   isResolvableRoute,
+  SEEDED_SESSION_ROUTES,
+  FRESH_WIZARD_ROUTE,
   ROUTE_DESCRIPTIONS,
 } from '../tutorial-runner/route-templates';
 import { knownQaHook, qaSelector, QA_HOOKS } from './qa-hooks';
@@ -518,6 +520,28 @@ export function validateScenarioSteps(
   }
   const parsed = parseScenarioSteps(rawSteps);
   if (!parsed.ok) return parsed;
+  const routes = parsed.steps.flatMap((step) =>
+    step.kind === 'goto' ? [step.route] : [],
+  );
+  const seededFields = new Set(
+    routes.flatMap((route) => {
+      const field = SEEDED_SESSION_ROUTES.get(route);
+      return field ? [field] : [];
+    }),
+  );
+  if (
+    seededFields.size > 1 ||
+    (seededFields.size > 0 && routes.includes(FRESH_WIZARD_ROUTE))
+  ) {
+    return {
+      ok: false,
+      steps: [],
+      reason:
+        'сценарий смешивает несколько маршрутов с подсевом сессии либо чистый мастер и готовую сессию; разделите на два сценария',
+      droppedNarrations: [],
+      droppedPaidOperations: [],
+    };
+  }
   return dropDanglingPaidOperations(
     rejectUnpricedModels(
       rejectHooksOffRoute(
