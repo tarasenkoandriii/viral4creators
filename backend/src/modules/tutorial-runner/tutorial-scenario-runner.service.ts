@@ -526,6 +526,12 @@ export interface TutorialScenarioRunOutcome {
   theme: ScenarioTheme;
   ok: boolean;
   error?: string;
+  /** One bounded fresh-browser retry before any scenario action or paid work. */
+  browserRecovery?: {
+    firstError: string;
+    recovered: boolean;
+    launchError?: string;
+  };
   /** Сколько платных кликов прогон пропустил, не нажимая (см.
    * `scenario-runner.ts`). Больше нуля означает, что ролик показывает
    * экран ДО нажатия, а не результат — исход, отличный и от «прошло», и
@@ -623,6 +629,8 @@ export interface TutorialScenarioRunResult {
   /** У скольких прогонов кадры сняты не в той теме, и ролик не собран
    *  (см. `themeMismatch`). Необязательное — его нет у пропусков. */
   themeMismatches?: number;
+  /** Fresh-browser recovery attempts, including unsuccessful attempts. */
+  browserRetries?: number;
   outcomes: TutorialScenarioRunOutcome[];
   /** Проход демо обучающего лендинга этого тика; нет поля — его не было
    *  (полигон не настроен, строк семейства нет или снимать нечего). */
@@ -1713,7 +1721,7 @@ export class TutorialScenarioRunnerService {
           }
           browser = fresh.browser;
         }
-        const outcome = await this.runOne(
+        let outcome = await this.runOne(
           browser,
           // «Чем упал в прошлый раз» — у ЭТОЙ темы, а не у строки:
           // колонка строки помнит последний прогон любой темы, и тёмная
@@ -1732,6 +1740,45 @@ export class TutorialScenarioRunnerService {
           budget,
           theme,
         );
+        // Retry only a disconnected browser on the first goto. Later steps
+        // may have performed actions, so they must never be replayed here.
+        if (
+          !outcome.ok &&
+          outcome.error &&
+          /^шаг 1 \(goto\):/.test(outcome.error) &&
+          /Target closed|Navigating frame was detached|Session closed|Connection closed/i.test(
+            outcome.error,
+          ) &&
+          Date.now() + 60_000 < deadline
+        ) {
+          const firstError = outcome.error;
+          await closeOwnedBrowser(browser);
+          browser = null;
+          const recovered = await launchHeadlessBrowser({
+            softwareRendering: true,
+          });
+          if ('error' in recovered) {
+            outcome.browserRecovery = {
+              firstError,
+              recovered: false,
+              launchError: recovered.error,
+            };
+          } else {
+            browser = recovered.browser;
+            outcome = await this.runOne(
+              browser,
+              { ...scenario, lastRunError: lastError },
+              ctx,
+              user.id,
+              token,
+              apiOrigin,
+              tmaBaseUrl,
+              budget,
+              theme,
+            );
+            outcome.browserRecovery = { firstError, recovered: outcome.ok };
+          }
+        }
         outcomes.push(outcome);
         // Отметка темы — после КАЖДОГО прогона, а не в конце тика:
         // функцию могут убить на потолке, и тогда недописанные отметки
@@ -1745,7 +1792,7 @@ export class TutorialScenarioRunnerService {
         await this.saveThemeRuns(themeRuns);
         // Serverless Chromium runs all renderers in one process. Do not
         // carry renderer/GPU state or storage into the next scenario.
-        await closeOwnedBrowser(browser);
+        if (browser) await closeOwnedBrowser(browser);
         browser = null;
         if (!outcome.ok) {
           failures.push(`${scenario.subjectKey}/${scenario.locale}/${theme}`);
@@ -1823,6 +1870,9 @@ export class TutorialScenarioRunnerService {
       repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
       assemblyTimeouts: outcomes.filter((o) => o.assemblyTimedOut).length,
       themeMismatches: outcomes.filter((o) => o.themeMismatch).length,
+      ...(outcomes.some((o) => o.browserRecovery)
+        ? { browserRetries: outcomes.filter((o) => o.browserRecovery).length }
+        : {}),
       outcomes,
     };
   }
@@ -5042,6 +5092,12 @@ export function mergePolygonPass(
     repeatFailures: tma.repeatFailures + poly.repeatFailures,
     assemblyTimeouts: tma.assemblyTimeouts + poly.assemblyTimeouts,
     ...(mismatches === undefined ? {} : { themeMismatches: mismatches }),
+    ...((tma.browserRetries ?? 0) + (poly.browserRetries ?? 0) > 0
+      ? {
+          browserRetries:
+            (tma.browserRetries ?? 0) + (poly.browserRetries ?? 0),
+        }
+      : {}),
     outcomes: [...tma.outcomes, ...poly.outcomes],
     polygon: pass.summary,
   };

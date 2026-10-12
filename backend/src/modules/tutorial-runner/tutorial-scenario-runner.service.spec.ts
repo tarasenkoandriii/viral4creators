@@ -492,6 +492,148 @@ function matchesTheme(
 }
 
 describe('TutorialScenarioRunnerService', () => {
+  it.each([
+    'Navigating frame was detached',
+    'Protocol error (Page.captureScreenshot): Target closed',
+  ])(
+    'restarts once after a first-goto browser failure and retains its evidence: %s',
+    async (error) => {
+      const page = buildFakePage();
+      page.goto.mockRejectedValue(new Error(error));
+      const first = {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      const second = {
+        newPage: jest.fn().mockResolvedValue(buildFakePage()),
+        close: jest.fn().mockResolvedValue(undefined),
+      };
+      launchHeadlessBrowserMock
+        .mockResolvedValueOnce({ browser: first })
+        .mockImplementationOnce(async () => {
+          expect(first.close).toHaveBeenCalledTimes(1);
+          return { browser: second };
+        });
+      const { service } = build([SCENARIO_OK]);
+      const result = await service.run();
+      expect(result.passed).toBe(1);
+      expect(result.browserRetries).toBe(1);
+      expect(result.failed).toBe(0);
+      expect(result.outcomes[0].browserRecovery).toEqual({
+        firstError: expect.stringContaining(error),
+        recovered: true,
+      });
+      expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(2);
+      expect(second.close).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('recovers a real first-frame capture failure on a fresh page', async () => {
+    const page = buildFakePage({ screenshot: true });
+    page.screenshot!.mockRejectedValue(
+      new Error('Protocol error (Page.captureScreenshot): Target closed'),
+    );
+    launchHeadlessBrowserMock
+      .mockResolvedValueOnce({
+        browser: {
+          newPage: jest.fn().mockResolvedValue(page),
+          close: jest.fn().mockResolvedValue(undefined),
+        },
+      })
+      .mockResolvedValueOnce({
+        browser: {
+          newPage: jest
+            .fn()
+            .mockResolvedValue(buildFakePage({ screenshot: true })),
+          close: jest.fn().mockResolvedValue(undefined),
+        },
+      });
+    const { service } = build([SCENARIO_OK]);
+    const result = await service.run();
+    expect(page.screenshot).toHaveBeenCalledTimes(1);
+    expect(result.outcomes[0].browserRecovery?.firstError).toContain(
+      'Page.captureScreenshot',
+    );
+    expect(result.passed).toBe(1);
+  });
+
+  it('does not retry a navigation failure without browser-disconnect evidence', async () => {
+    const page = buildFakePage();
+    page.goto.mockRejectedValue(
+      new Error('Navigation timeout of 15000 ms exceeded'),
+    );
+    launchHeadlessBrowserMock.mockResolvedValue({
+      browser: {
+        newPage: jest.fn().mockResolvedValue(page),
+        close: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+    const { service } = build([SCENARIO_OK]);
+    const result = await service.run();
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0].browserRecovery).toBeUndefined();
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries a disconnected browser more than once', async () => {
+    const page = buildFakePage();
+    page.goto.mockRejectedValue(new Error('Navigating frame was detached'));
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service } = build([SCENARIO_OK]);
+    const result = await service.run();
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0].browserRecovery?.recovered).toBe(false);
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not replay a later goto after prior scenario actions', async () => {
+    const page = buildFakePage();
+    page.goto
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new Error('Navigating frame was detached'));
+    const browser = {
+      newPage: jest.fn().mockResolvedValue(page),
+      close: jest.fn().mockResolvedValue(undefined),
+    };
+    launchHeadlessBrowserMock.mockResolvedValue({ browser });
+    const { service } = build([
+      {
+        ...SCENARIO_OK,
+        steps: [...SCENARIO_OK.steps, { kind: 'goto', route: 'generate' }],
+      },
+    ]);
+    const result = await service.run();
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0].browserRecovery).toBeUndefined();
+    expect(launchHeadlessBrowserMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a failed recovery launch without replacing the first error', async () => {
+    const page = buildFakePage();
+    page.goto.mockRejectedValue(new Error('Navigating frame was detached'));
+    launchHeadlessBrowserMock
+      .mockResolvedValueOnce({
+        browser: {
+          newPage: jest.fn().mockResolvedValue(page),
+          close: jest.fn().mockResolvedValue(undefined),
+        },
+      })
+      .mockResolvedValueOnce({ error: 'no memory' });
+    const { service } = build([SCENARIO_OK]);
+    const result = await service.run();
+    expect(result.failed).toBe(1);
+    expect(result.outcomes[0].error).toContain('Navigating frame was detached');
+    expect(result.outcomes[0].browserRecovery).toEqual({
+      firstError: expect.stringContaining('Navigating frame was detached'),
+      recovered: false,
+      launchError: 'no memory',
+    });
+  });
+
   it('caps TMA launches without dropping the remaining stored scenarios', async () => {
     const previous = process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK;
     process.env.TUTORIAL_SCENARIO_RUN_MAX_PER_TICK = '1';
