@@ -19,3 +19,7 @@ export const TUTORIAL_DEMO_PRODUCT = {
     'Спортивное купе BMW: мощный двигатель, полный привод и салон премиум-класса.',
   brand: 'BMW',
 } as const;
+
+/** Safe synthetic message for the ready greeting fixture; never the paid render. */
+export const TUTORIAL_DEMO_GREETING_SCRIPT =
+  'Это тестовое поздравление. Желаем радости, здоровья и новых достижений!';

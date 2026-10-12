@@ -109,6 +109,58 @@ describe('runScenario', () => {
     expect(page.locator).not.toHaveBeenCalled();
   });
 
+  it.each(['INPUT', 'TEXTAREA'])(
+    'assertText checks %s value, not textContent',
+    async (tagName) => {
+      const node = {
+        tagName,
+        type: 'text',
+        value: 'Готово: сообщение',
+        textContent: 'подпись',
+      };
+      const page = buildPage({
+        $eval: jest.fn(async (_selector, fn) => fn(node as never)),
+      });
+      const steps: ScenarioStep[] = [
+        {
+          kind: 'assertText',
+          selector: '[data-testid="message"]',
+          value: 'Готово',
+        },
+      ];
+      expect((await runScenario(page, steps, resolveOk)).ok).toBe(true);
+      node.value = '';
+      node.textContent = 'Готово';
+      expect((await runScenario(page, steps, resolveOk)).ok).toBe(false);
+    },
+  );
+  it('assertText never reads or reports password value', async () => {
+    const node = {
+      tagName: 'INPUT',
+      type: 'password',
+      get value() {
+        throw new Error('SECRET_READ');
+      },
+    };
+    const page = buildPage({
+      $eval: jest.fn(async (_selector, fn) => fn(node as never)),
+    });
+    const result = await runScenario(
+      page,
+      [
+        {
+          kind: 'assertText',
+          selector: '[data-testid="password"]',
+          value: 'expected',
+        },
+      ],
+      resolveOk,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.steps[0].error).toContain('не читает секретное поле');
+    expect(result.steps[0].error).not.toContain('SECRET_READ');
+  });
+
   it('assertText с несовпавшим текстом — провал шага, не бросает наружу', async () => {
     const page = buildPage({ $eval: jest.fn().mockResolvedValue('Ошибка') });
     const steps: ScenarioStep[] = [

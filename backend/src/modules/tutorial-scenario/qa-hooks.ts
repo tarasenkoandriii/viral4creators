@@ -145,6 +145,8 @@ import { WizardPaidOperation } from './scenario-steps.types';
 export interface QaHook {
   /** Маршрут из `ROUTE_DESCRIPTIONS`, на экране которого живёт элемент. */
   route: string;
+  /** Подтверждённые дополнительные состояния той же формы. */
+  routes?: readonly string[];
   /** Что это за элемент и что с ним делать — текст для промпта. */
   description: string;
   /**
@@ -224,6 +226,12 @@ export interface QaHook {
   };
 }
 
+const PRODUCT_STEPPER_ROUTES = [
+  'generate-ready',
+  'generate-prompt-pending',
+  'generate-ready-to-render',
+] as const;
+
 export const QA_HOOKS: Record<string, QaHook> = {
   // ── Экран товара (`item`), шаг 1 обучалки ─────────────────────────
   'item-step-photo': {
@@ -291,27 +299,32 @@ export const QA_HOOKS: Record<string, QaHook> = {
   },
   'wizard-step-upload': {
     route: 'generate-ready',
+    routes: PRODUCT_STEPPER_ROUTES,
     description:
       'позиция «Референс» в степпере мастера (click — вернуться на пройденный шаг)',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-analysis': {
     route: 'generate-ready',
+    routes: PRODUCT_STEPPER_ROUTES,
     description: 'позиция «Анализ» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-product': {
     route: 'generate-ready',
+    routes: PRODUCT_STEPPER_ROUTES,
     description: 'позиция «Товар» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-prompt': {
     route: 'generate-ready',
+    routes: PRODUCT_STEPPER_ROUTES,
     description: 'позиция «Промпт» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
   'wizard-step-video': {
     route: 'generate-ready',
+    routes: PRODUCT_STEPPER_ROUTES,
     description: 'позиция «Видео» в степпере мастера',
     clickOnlyWhenVisited: true,
   },
