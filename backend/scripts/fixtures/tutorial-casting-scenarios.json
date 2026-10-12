@@ -1,0 +1,187 @@
+{
+  "ru": [
+    {
+      "kind": "goto",
+      "route": "generate-ready",
+      "narration": "Открываем готовый разбор видео."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"wizard-step-analysis\"]",
+      "narration": "Переходим к персонажам."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-casting\"]",
+      "narration": "Находим блок персонажей."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Меняем участие персонажа."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Возвращаем персонажа в кадр."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"scene-casting\"]",
+      "narration": "Проверяем настройки сцен."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"analysis-continue\"]",
+      "narration": "Переходим к следующему шагу."
+    }
+  ],
+  "uk": [
+    {
+      "kind": "goto",
+      "route": "generate-ready",
+      "narration": "Відкриваємо готовий розбір відео."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"wizard-step-analysis\"]",
+      "narration": "Переходимо до персонажів."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-casting\"]",
+      "narration": "Чекаємо на блок персонажів."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Змінюємо участь персонажа."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Повертаємо персонажа в кадр."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"scene-casting\"]",
+      "narration": "Перевіряємо налаштування сцен."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"analysis-continue\"]",
+      "narration": "Переходимо до наступного кроку."
+    }
+  ],
+  "en": [
+    {
+      "kind": "goto",
+      "route": "generate-ready",
+      "narration": "We open the completed video analysis."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"wizard-step-analysis\"]",
+      "narration": "We open the character settings."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-casting\"]",
+      "narration": "We wait for the character panel."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "We toggle the character’s participation."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "We restore the character to the scene."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"scene-casting\"]",
+      "narration": "We check the scene settings."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"analysis-continue\"]",
+      "narration": "We continue to the next step."
+    }
+  ],
+  "de": [
+    {
+      "kind": "goto",
+      "route": "generate-ready",
+      "narration": "Wir öffnen die fertige Videoanalyse."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"wizard-step-analysis\"]",
+      "narration": "Wir wechseln zu den Figuren."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-casting\"]",
+      "narration": "Wir warten auf den Figurenbereich."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Wir ändern die Teilnahme der Figur."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Wir nehmen die Figur wieder ins Bild auf."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"scene-casting\"]",
+      "narration": "Wir prüfen die Szeneneinstellungen."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"analysis-continue\"]",
+      "narration": "Wir gehen zum nächsten Schritt."
+    }
+  ],
+  "es": [
+    {
+      "kind": "goto",
+      "route": "generate-ready",
+      "narration": "Abrimos el análisis terminado del vídeo."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"wizard-step-analysis\"]",
+      "narration": "Pasamos a los personajes."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-casting\"]",
+      "narration": "Esperamos al panel de personajes."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Cambiamos la participación del personaje."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Volvemos a incluir al personaje."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"scene-casting\"]",
+      "narration": "Comprobamos los ajustes de las escenas."
+    },
+    {
+      "kind": "click",
+      "selector": "[data-qa=\"analysis-continue\"]",
+      "narration": "Pasamos al siguiente paso."
+    }
+  ]
+}

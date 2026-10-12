@@ -1244,3 +1244,27 @@ describe('shared product wizard stepper', () => {
     ).toBe(false);
   });
 });
+
+describe('casting interaction targets', () => {
+  it('rejects clicking the informational casting container', () => {
+    const result = validateScenarioSteps(
+      [
+        { kind: 'goto', route: 'generate-ready' },
+        { kind: 'click', selector: '[data-qa="character-casting"]' },
+      ],
+      '5',
+    );
+    expect(result.ok).toBe(false);
+  });
+  it('accepts the real character toggle while retaining container visibility checks', () => {
+    const result = validateScenarioSteps(
+      [
+        { kind: 'goto', route: 'generate-ready' },
+        { kind: 'assertVisible', selector: '[data-qa="character-casting"]' },
+        { kind: 'click', selector: '[data-qa="character-toggle"]' },
+      ],
+      '5',
+    );
+    expect(result.ok).toBe(true);
+  });
+});

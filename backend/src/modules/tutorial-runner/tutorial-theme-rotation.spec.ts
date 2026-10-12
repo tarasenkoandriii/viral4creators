@@ -59,6 +59,27 @@ const plan = (rows: ReturnType<typeof scenario>[], r: ThemeRuns, limit = 30) =>
   );
 
 describe('planThemedRuns', () => {
+  it('dark-only history does not certify light from the shared row', () => {
+    const row = scenario('a', { lastRunAt: at(1), lastRunStatus: 'ok' });
+    const history = runs({ a: { dark: { hoursAgo: 1 } } });
+    expect(themeRunState(row, 'light', history).status).toBeNull();
+    expect(plan([row], history)).toEqual(['a/light']);
+  });
+
+  it('queues light after a manually edited scenario first passes dark', () => {
+    const edited = scenario('a', { lastRunAt: at(2), lastRunStatus: null });
+    const history: ThemeRuns = new Map();
+    recordThemeRun(history, edited, 'dark', {
+      at: at(1).toISOString(),
+      status: 'ok',
+      error: null,
+      stepsSha: stepsSha(edited.steps),
+    });
+    const persisted = parseThemeRuns(serializeThemeRuns(history, NOW));
+    const rowAfterDark = { ...edited, lastRunAt: at(1), lastRunStatus: 'ok' };
+    expect(plan([rowAfterDark], persisted)).toEqual(['a/light']);
+  });
+
   it('ни разу не снимавшийся сценарий — светлая первой (порядок тем при равной давности)', () => {
     expect(plan([scenario('a')], new Map())).toEqual(['a/light']);
   });
@@ -156,7 +177,10 @@ describe('planThemedRuns', () => {
       }),
     ];
     const r = runs({
-      a: { dark: { hoursAgo: 30, status: 'failed', error: 'тёмная' } },
+      a: {
+        light: { hoursAgo: 1, status: 'failed', error: 'светлая' },
+        dark: { hoursAgo: 30, status: 'failed', error: 'тёмная' },
+      },
     });
     const [p] = planThemedRuns(rows, r, NOW, OK_RERUN, 30);
     expect(p.theme).toBe('dark');

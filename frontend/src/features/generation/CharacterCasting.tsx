@@ -241,8 +241,9 @@ export function CharacterCasting({
                 <button
                   key={ch.id}
                   type="button"
+                  data-qa="character-toggle"
                   onClick={() => onToggle(ch.id)}
-                  disabled={saving}
+                  disabled={saving || !cast}
                   aria-pressed={active}
                   className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all disabled:opacity-60 ${
                     active
