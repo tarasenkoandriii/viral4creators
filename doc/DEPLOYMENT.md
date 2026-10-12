@@ -281,7 +281,7 @@ Telegram-логин, который их и породил.
      Resemble нет универсального голоса каталога, поэтому без
      `RESEMBLE_VOICE_ID` и без выбора голоса в манифесте бренда синтез
      тоже пропускается — это ожидаемо, не поломка. **Значение продукта
-     (решение владельца, 26.09.2026): `RESEMBLE_VOICE_ID=8561c50d`** —
+     (решение владельца, 12.10.2026): `RESEMBLE_VOICE_ID=a9fc5a41`** —
      женский голос по умолчанию для брендов, не выбравших свой. Это
      идентификатор голоса, не секрет; меняется в переменных проекта на
      Vercel и вступает в силу только после передеплоя (в админке
@@ -3848,3 +3848,17 @@ Tutorial quality: TUTORIAL_DEMO_QUALITY_ENABLED=true включает очере
 ### Tutorial TMA capture batch cap
 
 `TUTORIAL_SCENARIO_RUN_MAX_PER_TICK`: optional integer 1..30, default 30. Limits selected TMA scenario/theme runs per cron invocation; polygon execution is unchanged. Production experiment uses 3 to reduce repeated Chromium launches in one serverless request. Remaining cases stay stored and rotate into later scheduled ticks. This changes throughput, not acceptance: failed/deferred cases are not marked passed, paid actions remain blocked.
+
+
+### Закреплённый голос Nova — 12.10.2026
+
+Владелец прослушал и одобрил русский образец Nova (`a9fc5a41`). Этот голос
+используется как дефолт Resemble; менять его можно только по прямому указанию
+владельца. Tutorial: `postprod.tutorialVoice=on:a9fc5a41`. Помощник мастера:
+`voice_assistant_voice={"provider":"resemble","voiceId":"a9fc5a41"}`.
+Явно выбранные клиентом голоса сохраняются. Массовую переозвучку существующих
+роликов не запускать.
+
+Виджет клиентских сайтов в `sites-backend` пока использует Soniox TTS. Для Nova
+нужен отдельный адаптер Resemble; UUID Resemble нельзя записывать в настройку
+голоса Soniox. Это остаётся задачей интеграции, а не выполненной настройкой.
