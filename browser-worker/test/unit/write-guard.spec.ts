@@ -398,3 +398,122 @@ describe('write-guard: адреса из скрипта', () => {
     ).toBe('danger');
   });
 });
+
+describe('write-guard: загрузки ресурсов под сессией (заход 13, Р-З13-Г2 + раунд исправлений)', () => {
+  const img = (url: string, session = true, resourceType = 'image') =>
+    writeRefusal(req({ url, resourceType, session }));
+
+  it('картинка, медиа, объект, prefetch, прочее с разрушительным адресом — обрыв (passive, не danger)', () => {
+    expect(img('https://a.test/orders/5/delete')).toBe('passive');
+    expect(img('https://a.test/api/deleteOrder?id=5')).toBe('passive');
+    expect(img('https://a.test/orders/5/remove', true, 'media')).toBe(
+      'passive',
+    );
+    expect(img('https://a.test/orders/5/cancel', true, 'object')).toBe(
+      'passive',
+    );
+    expect(img('https://a.test/orders/5/purge', true, 'prefetch')).toBe(
+      'passive',
+    );
+    expect(img('https://a.test/orders/5/restore', true, 'other')).toBe(
+      'passive',
+    );
+  });
+
+  it('аудит P3-3: скрипт и стиль под сессией — каталог и query (JSONP), имя файла кода прощается', () => {
+    expect(
+      img('https://a.test/api/orders/5/delete?callback=cb', true, 'script'),
+    ).toBe('passive');
+    expect(img('https://a.test/x.js?op=delete', true, 'script')).toBe(
+      'passive',
+    );
+    expect(
+      img('https://a.test/orders/5/cancel/s.css', true, 'stylesheet'),
+    ).toBe('passive');
+    expect(img('https://a.test/js/delete-modal.js', true, 'script')).toBeNull();
+    expect(
+      img('https://a.test/js/delete-modal.mjs', true, 'script'),
+    ).toBeNull();
+    expect(img('https://a.test/css/remove.css', true, 'stylesheet')).toBeNull();
+    // Шрифт, манифест, субтитры — не проверяются.
+    expect(img('https://a.test/delete/cancel.woff2', true, 'font')).toBeNull();
+    expect(img('https://a.test/delete/m.json', true, 'manifest')).toBeNull();
+    // Без сессии код не проверяется вовсе.
+    expect(
+      img('https://a.test/api/orders/5/delete?callback=cb', false, 'script'),
+    ).toBeNull();
+  });
+
+  it('без сессии («Снимок») — загрузки как прежде (только «выход»)', () => {
+    expect(img('https://a.test/orders/5/delete', false)).toBeNull();
+    expect(
+      writeRefusal(
+        req({ url: 'https://a.test/orders/5/delete', resourceType: 'image' }),
+      ),
+    ).toBeNull();
+    expect(img('https://a.test/logout', false)).toBe('logout');
+    expect(img('https://a.test/hit/logout', true)).toBe('logout');
+  });
+
+  it('имя файла своего вида — не действие (и не «выход»); каталог и query — да', () => {
+    expect(img('https://a.test/icons/delete.svg')).toBeNull();
+    expect(img('https://a.test/img/removeItem.PNG')).toBeNull();
+    expect(img('https://a.test/sounds/cancel.mp3', true, 'media')).toBeNull();
+    // Аудит P3-2(б): иконка «выхода».
+    expect(img('https://a.test/icons/logout.svg')).toBeNull();
+    expect(img('https://a.test/icons/logout.svg', false)).toBeNull();
+    expect(img('https://a.test/orders/5/delete/thumb.png')).toBe('passive');
+    expect(img('https://a.test/pixel.gif?action=delete&id=5')).toBe('passive');
+    // Расширение чужого вида не прощается: у картинки `.mp3`, у объекта всё.
+    expect(img('https://a.test/x/delete.mp3')).toBe('passive');
+    expect(img('https://a.test/files/delete.svg', true, 'object')).toBe(
+      'passive',
+    );
+  });
+
+  it('аудит P3-4: матричный параметр — `delete;.png` не иконка, `delete;jsessionid` — действие', () => {
+    expect(img('https://a.test/orders/5/delete;.png')).toBe('passive');
+    expect(img('https://a.test/orders/5/delete%3B.png')).toBe('passive');
+    expect(
+      img('https://a.test/orders/5/delete;jsessionid=1', true, 'fetch'),
+    ).toBe('danger');
+    expect(img('https://a.test/sign-out;x=1', true, 'fetch')).toBe('logout');
+  });
+
+  it('аудит P3-2(в): каталоги ресурсов со словами block/send/import/export/download/clear/archive/publish — не обрыв', () => {
+    for (const url of [
+      'https://a.test/uploads/import/2024/photo.jpg',
+      'https://a.test/img/block/hero.png',
+      'https://a.test/media/download/123/x.png',
+      'https://a.test/static/export-icons/a.png',
+      'https://a.test/sprites/clear/x.svg?v=2',
+      'https://a.test/assets/send/arrow.webp',
+      'https://a.test/archive/2024/cover.jpg',
+      'https://a.test/publish/banner',
+    ])
+      expect([url, img(url)]).toEqual([url, null]);
+    // Но у активных видов словарь полный.
+    expect(img('https://a.test/api/export', true, 'fetch')).toBe('danger');
+  });
+
+  it('платёжный путь у загрузок не проверяется (логотипы)', () => {
+    expect(img('https://a.test/img/payments/visa.svg')).toBeNull();
+    expect(img('https://a.test/checkout/banner')).toBeNull();
+  });
+
+  it('активные виды — как прежде (с сессией и без)', () => {
+    for (const session of [true, false]) {
+      expect(img('https://a.test/orders/5/delete', session, 'fetch')).toBe(
+        'danger',
+      );
+      expect(img('https://a.test/checkout/pay', session, 'xhr')).toBe('danger');
+      // Имя файла у активного вида не прощается.
+      expect(img('https://a.test/x/delete.png', session, 'fetch')).toBe(
+        'danger',
+      );
+      expect(img('https://a.test/x/logout.svg', session, 'fetch')).toBe(
+        'logout',
+      );
+    }
+  });
+});

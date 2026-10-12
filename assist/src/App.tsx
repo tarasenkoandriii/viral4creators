@@ -1019,6 +1019,7 @@ function Screen({
           key={route.siteId}
           siteId={route.siteId}
           tab={route.tab}
+          focus={route.focus}
         />
       );
     case 'admin-chat':

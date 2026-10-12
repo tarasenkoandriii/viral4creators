@@ -254,11 +254,11 @@ separate limits document in [doc/API-LIMITS.md](doc/API-LIMITS.md);
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 10234
+a hand-written migration drifting from the schema, types, lint, 10238
 tests with per-file coverage thresholds), frontend (types, lint, 89 unit
 scripts, build), admin, landing and marketplace
-(types + lint + build), `npm audit --audit-level=high` in every job
-(blocking for backend, sites-backend and widget, advisory elsewhere), plus the legal-text sync check and a script that
+(types + lint + build), `npm audit --audit-level=high --omit=dev` in every
+job (blocking everywhere except `live-login-relay`, since pass 13), plus the legal-text sync check and a script that
 verifies the numbers quoted in `doc/` still match the code — including
 that every environment variable the code reads is described in
 `doc/DEPLOYMENT.md` or `.env.docker.example`. `make ci` runs the same
@@ -367,7 +367,10 @@ All supplementary documentation lives in [`doc/`](doc/):
   page can never show real frames under a caption that calls them diagrams.
   `check-docs` seam 17 refuses a locale declared without its files, and files
   dropped in without the locale.
-- **Linting**: `npm run lint` in respective directories
+- **Linting**: `npm run lint` in respective directories — ESLint 9 with a flat
+  `eslint.config.mjs` in every package except `live-login-relay/` (still
+  ESLint 8); the Next apps run `eslint .` instead of the removed `next lint`
+  (see [`doc/CI.md`](doc/CI.md), «Линт: ESLint 9 и flat config»)
 - **Formatting**: `npm run format` in respective directories
 - **API reference**: [`doc/API.md`](doc/API.md) — every route the backend serves
 

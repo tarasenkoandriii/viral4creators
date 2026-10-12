@@ -32,8 +32,11 @@
  *    API `/assist-admin/v1/editor/*`, на каждом запросе ещё и сессия
  *    сотрудника `wa.` (её панель получает сама: JWT от `admin.js` через
  *    пикер → `POST /assist-admin/v1/session`; редактор привязан к ней, после
- *    перехода — из `sessionStorage` `wa.`). Мемо, «Промахи»/«Пропозиції»,
- *    ИИ-синонимы и микрофон у «Админки» скрыты (маршрутов сервера нет);
+ *    перехода — из `sessionStorage` `wa.`). Заход 13: у «Админки» — тот же
+ *    набор: мемо АМ-N записью кликами (шаги `ui` без серверного эффекта,
+ *    `api`/`say` черновика — только порядок; без «Чекати це»),
+ *    «Промахи»/«Пропозиції» с тепловыми значками и «не туди →
+ *    перепривʼязати», ИИ-синонимы, микрофон (`/assist-admin/v1/editor/*`);
  *  - раунд исправлений захода 11: сессия сотрудника живёт до `exp` JWT
  *    (≤ 15 мин) — за 90 с до него и на 401 `ADMIN_SESSION_INVALID` панель
  *    берёт свежий JWT, новую сессию сотрудника и `rebind` (тот же `sub`),
@@ -316,7 +319,12 @@ const memo = createMemo({
   api,
   toPicker,
   snapshot: async () => {
-    const r = await ask({ type: 'snapshot-req', id: ++S.reqId });
+    // «Админка»: «Прогнати» — с зонами владельца, как «Сказать сейчас».
+    const r = await ask({
+      type: 'snapshot-req',
+      id: ++S.reqId,
+      ...(ADMIN ? { deny: S.deny, allow: S.allow } : {}),
+    });
     return r.type === 'snapshot' ? r.snapshot : null;
   },
   L,
@@ -328,6 +336,7 @@ const memo = createMemo({
   fail,
   render,
   store: STORE,
+  admin: ADMIN,
   edit: (key) => {
     const t = S.map?.targets.find((x) => x.key === key);
     if (!t) {
@@ -521,7 +530,7 @@ async function loadMap(): Promise<void> {
     });
     // «Открыть в редакторе» мемо `memo-<N>-<шаг с 1>` (сигнал needs_review).
     const fm = /^memo-(\d{1,6})(?:-(\d{1,2}))?$/.exec(S.focusKey ?? '');
-    if (fm && !ADMIN) {
+    if (fm) {
       S.focusKey = null;
       S.tab = 'memo';
       void memo.open(+fm[1], fm[2] ? +fm[2] - 1 : null);
@@ -963,7 +972,7 @@ function cardView(): HTMLElement {
     )
   );
   // №113: ИИ-синонимы цели (`suggested` — только после «Прийняти»).
-  if (t && !p.never && t.status === 'active' && !ADMIN)
+  if (t && !p.never && t.status === 'active')
     box.append(
       ax
         ? ax.card(t)
@@ -1131,15 +1140,14 @@ function tryView(): HTMLElement {
       'div',
       { class: 'row' },
       input,
-      !ADMIN &&
-        h(
-          'button',
-          {
-            type: 'button',
-            click: human(() => void mic()),
-          },
-          S.mic ? '■' : '🎤'
-        ),
+      h(
+        'button',
+        {
+          type: 'button',
+          click: human(() => void mic()),
+        },
+        S.mic ? '■' : '🎤'
+      ),
       h('button', { type: 'button', class: 'pri', click: run }, L().say)
     )
   );
@@ -1353,24 +1361,23 @@ function render(): void {
     ['sugg', L().tabSugg],
     ['publish', L().tabPublish],
   ] as const)
-    // «Админка» (заход 11): мемо и подсказки №113 — следующим шагом.
-    if (!ADMIN || !/^(memo|miss|sugg)$/.test(id))
-      tabs.append(
-        h(
-          'button',
-          {
-            type: 'button',
-            class: S.tab === id ? 'on' : '',
-            click: () => {
-              S.tab = id;
-              // №113: чанк подсказок — по клику на вкладку (не из перерисовки).
-              if (id === 'miss' || id === 'sugg') assist(axErr);
-              render();
-            },
+    // Заход 13: у «Админки» — те же вкладки (сервер `/assist-admin/v1/editor/*`).
+    tabs.append(
+      h(
+        'button',
+        {
+          type: 'button',
+          class: S.tab === id ? 'on' : '',
+          click: () => {
+            S.tab = id;
+            // №113: чанк подсказок — по клику на вкладку (не из перерисовки).
+            if (id === 'miss' || id === 'sugg') assist(axErr);
+            render();
           },
-          label
-        )
-      );
+        },
+        label
+      )
+    );
   root.append(tabs);
   if (S.note) root.append(h('p', { class: 'note' }, S.note));
   root.append(
@@ -1531,7 +1538,7 @@ window.addEventListener('keydown', (e) => {
     S.tab = 'page';
     render();
     document.querySelector<HTMLInputElement>('input[name="q"]')?.focus();
-  } else if (e.key === 's' && !S.mic && !ADMIN) {
+  } else if (e.key === 's' && !S.mic) {
     S.tab = 'try';
     void mic();
   }
@@ -1683,7 +1690,7 @@ async function boot(): Promise<void> {
       S.adminExp = (ADMIN && Number(saved.x)) || 0;
       S.parentOrigin = guess;
       // Запись мемо продолжается на новой странице (MPA).
-      if (memo.has() && !ADMIN) S.tab = 'memo';
+      if (memo.has()) S.tab = 'memo';
     }
   } catch (e) {
     const x = e as { staff?: boolean; code?: string };

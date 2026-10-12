@@ -1095,6 +1095,9 @@ export function adminMemoUiProblem(s: AdminMemoUiStep): string | null {
     if (role !== 'link' && role !== 'tab' && role !== 'menuitem')
       return 'click_forbidden';
   }
+  // Заход 13 (аудит З13-А P2-1): переключатель (`switch`) сохраняется сразу
+  // — серверный эффект; в мемо «Админки» — только шагом `api`.
+  if (s.target?.role === 'switch') return 'click_forbidden';
   if (s.target && SAVE_WORDS.test(text)) return 'click_forbidden';
   if (s.target && actionKindsFor(text).some((k) => NEVER_KINDS.has(k)))
     return 'click_forbidden';

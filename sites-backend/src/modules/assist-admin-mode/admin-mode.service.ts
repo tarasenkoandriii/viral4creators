@@ -23,8 +23,13 @@ import type { AccountMembership } from '../site-core/account/roles';
 import { HostAccessService } from '../site-core/ownership/host-access.service';
 import { evaluateHostAccess } from '../site-core/ownership/host-access';
 import { notFoundSite } from '../site-core/site-core.constants';
+import type { ActionLogTx } from './action-log.service';
 import { adminError } from './admin-errors';
-import { ASSIST_ROLE_RE, PatchAdminModeDto } from './admin-mode.dto';
+import {
+  ASSIST_ROLE_RE,
+  PatchAdminModeDto,
+  ROLE_KEY_RE,
+} from './admin-mode.dto';
 import {
   parseTaskMinutes,
   readTaskMinutes,
@@ -81,20 +86,68 @@ export interface AdminModeView {
 /** AAD владельца секрета подписи JWT сайта. */
 export const IDENTITY_SECRET_OWNER = 'identity';
 
-const ROLE_KEY_RE = /^[\p{L}\p{N}_.:-]{1,64}$/u;
-
 /** Строгий разбор карты ролей: мусор — 400, а не «тихо пусто». */
 export function parseRoleMap(v: unknown): Record<string, string> | null {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
   const entries = Object.entries(v as Record<string, unknown>);
   if (entries.length > 30) return null;
-  const out: Record<string, string> = {};
   for (const [k, val] of entries) {
     if (!ROLE_KEY_RE.test(k) || typeof val !== 'string') return null;
     if (!ASSIST_ROLE_RE.test(val)) return null;
-    out[k] = val;
   }
-  return out;
+  // Аудит З13 P3-1: собственные свойства (без сеттера прототипа); ключ
+  // «__proto__» и так отвергает ROLE_KEY_RE.
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+/**
+ * Роль помощника «владелец»: её сопоставление открывает редактор карты
+ * «Админки» (Р-З11-А2-11) и даёт инструменты роли `owner` в чате.
+ */
+export const ADMIN_OWNER_ROLE = 'owner';
+/** Пар в карте ролей не больше (как у `parseRoleMap`). */
+export const ROLE_MAP_MAX = 30;
+
+/** Замок правок карты ролей сайта (PATCH и «моя роль → owner»). */
+const roleMapLock = (siteId: string) => `assist-admin-rolemap:${siteId}`;
+
+const hasOwn = (o: object, k: string) =>
+  Object.prototype.hasOwnProperty.call(o, k);
+
+/**
+ * Строка журнала изменения карты ролей — в ТОЙ ЖЕ транзакции, что и запись
+ * карты (аудит З13 P2-1): сбой журнала откатывает изменение прав.
+ */
+export type RoleMapJournal = (
+  tx: ActionLogTx,
+  request: Record<string, unknown>,
+) => Promise<void>;
+
+export interface RoleMapChange {
+  before: Record<string, string>;
+  after: Record<string, string>;
+  /** Прежнее значение пары (null — роли в карте не было). */
+  previous: string | null;
+  changed: boolean;
+}
+
+/**
+ * Р-З13-Б2: разница карт ролей для журнала — новые/изменённые пары и
+ * снятые ключи (роли заказчика — идентификаторы, не персональные данные).
+ */
+export function roleMapDiff(
+  before: Record<string, string>,
+  after: Record<string, string>,
+): { set: Record<string, string>; removed: string[] } | null {
+  const set: Record<string, string> = Object.fromEntries(
+    Object.entries(after).filter(
+      ([k, v]) => !hasOwn(before, k) || before[k] !== v,
+    ),
+  );
+  const removed = Object.keys(before)
+    .filter((k) => !hasOwn(after, k))
+    .sort();
+  return Object.keys(set).length || removed.length ? { set, removed } : null;
 }
 
 /**
@@ -257,10 +310,17 @@ export class AdminModeService {
     };
   }
 
+  /**
+   * `journal` (заход 13, аудит P2-1/P2-2): карта ролей в PATCH — под замком
+   * карты ролей сайта (тот же, что у «моя роль → owner»): прежняя карта
+   * читается под замком, разница пишется строкой журнала в той же
+   * транзакции; сбой журнала — изменение откатывается целиком.
+   */
   async patch(
     m: AccountMembership,
     siteId: string,
     dto: PatchAdminModeDto,
+    journal?: RoleMapJournal,
   ): Promise<AdminModeView> {
     const now = new Date();
     await this.requireSite(m.accountId, siteId);
@@ -364,12 +424,90 @@ export class AdminModeService {
       data.analyticsTaskMinutes = tm;
     }
     if (dto.weeklyReport !== undefined) data.weeklyReport = dto.weeklyReport;
-    if (Object.keys(data).length) {
+    if (data.roleMap !== undefined) {
+      const after = data.roleMap as Record<string, string>;
+      await this.db.forAccount(m.accountId).$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${roleMapLock(siteId)}))`;
+        const s = await tx.assistAdminSettings.findFirstOrThrow({
+          where: { siteId },
+          select: { roleMap: true },
+        });
+        await tx.assistAdminSettings.updateMany({ where: { siteId }, data });
+        const diff = roleMapDiff(parseRoleMap(s.roleMap) ?? {}, after);
+        if (diff && journal) await journal(tx, diff);
+      });
+    } else if (Object.keys(data).length) {
       await this.db
         .forAccount(m.accountId)
         .assistAdminSettings.updateMany({ where: { siteId }, data });
     }
     return this.view(m, siteId);
+  }
+
+  /**
+   * Р-З13-Б1 (хвост захода 11, Р-З11-А2-11): «сопоставить мою роль у
+   * заказчика с ролью помощника `owner`» — одна пара карты ролей; прочие
+   * пары не трогаются. Пара уже `owner` — без записи.
+   *  - замок карты ролей сайта (общий с PATCH) сериализует правки карты;
+   *  - `expectedPrevious` (аудит P3-6): значение пары, которое видел экран
+   *    (null — пары не было); не совпало — 409 `ADMIN_ROLEMAP_CHANGED`,
+   *    замена по устаревшему подтверждению не проходит;
+   *  - `journal` — строка журнала в той же транзакции (аудит P2-1/P3-2).
+   */
+  async mapOwnerRole(
+    m: AccountMembership,
+    siteId: string,
+    role: string,
+    opts: {
+      expectedPrevious?: string | null;
+      journal?: RoleMapJournal;
+    } = {},
+  ): Promise<RoleMapChange> {
+    await this.requireSite(m.accountId, siteId);
+    if (!ROLE_KEY_RE.test(role))
+      throw adminError(
+        400,
+        'ADMIN_ROLEMAP_INVALID',
+        'Роль у вас: 1–64 символа — буквы, цифры, _ . : -',
+      );
+    await this.ensureSettings(m.accountId, siteId);
+    return this.db.forAccount(m.accountId).$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${roleMapLock(siteId)}))`;
+      const s = await tx.assistAdminSettings.findFirstOrThrow({
+        where: { siteId },
+        select: { roleMap: true },
+      });
+      const before = parseRoleMap(s.roleMap) ?? {};
+      const previous = hasOwn(before, role) ? before[role] : null;
+      if (previous === ADMIN_OWNER_ROLE)
+        return { before, after: before, previous, changed: false };
+      if (
+        opts.expectedPrevious !== undefined &&
+        opts.expectedPrevious !== previous
+      )
+        throw adminError(
+          409,
+          'ADMIN_ROLEMAP_CHANGED',
+          'Карту ролей изменили в другом окне — проверьте и повторите',
+        );
+      if (previous === null && Object.keys(before).length >= ROLE_MAP_MAX)
+        throw adminError(
+          409,
+          'ADMIN_ROLEMAP_INVALID',
+          `В карте ролей уже ${ROLE_MAP_MAX} пар — удалите лишнюю`,
+        );
+      const after: Record<string, string> = Object.fromEntries([
+        ...Object.entries(before).filter(([k]) => k !== role),
+        [role, ADMIN_OWNER_ROLE],
+      ]);
+      await tx.assistAdminSettings.updateMany({
+        where: { siteId },
+        data: { roleMap: after },
+      });
+      if (opts.journal)
+        await opts.journal(tx, { role, from: previous, to: ADMIN_OWNER_ROLE });
+      return { before, after, previous, changed: true };
+    });
   }
 
   /**

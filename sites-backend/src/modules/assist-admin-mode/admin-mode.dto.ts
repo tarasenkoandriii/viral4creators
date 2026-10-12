@@ -25,6 +25,11 @@ import { Type } from 'class-transformer';
 
 /** Роль помощника (значение roleMap, роль операции). */
 export const ASSIST_ROLE_RE = /^[a-z0-9_-]{1,32}$/;
+/**
+ * Роль заказчика из JWT (ключ roleMap). «__proto__» — нет (аудит З13 P3-1:
+ * ключ объекта-прототипа, тихо терялся бы при разборе).
+ */
+export const ROLE_KEY_RE = /^(?!__proto__$)[\p{L}\p{N}_.:-]{1,64}$/u;
 
 export class PatchAdminModeDto {
   @IsOptional()
@@ -263,6 +268,28 @@ export class PutConnectorSecretDto {
  * показанный TMA секрет не оказывается «мёртвым». Без поля — как раньше
  * (старые сборки TMA).
  */
+/**
+ * Р-З13-Б1: «сопоставить мою роль с owner» — одна пара карты ролей
+ * (`POST …/admin-mode/role-map/owner`), остальные пары не трогаются.
+ */
+export class MapOwnerRoleDto {
+  @IsString()
+  @Matches(ROLE_KEY_RE, {
+    message: 'Роль у вас: 1–64 символа — буквы, цифры, _ . : -',
+  })
+  role!: string;
+
+  /**
+   * Аудит З13 P3-6: значение пары, которое видел экран (null — пары не
+   * было); не совпало с текущим — 409 `ADMIN_ROLEMAP_CHANGED`. Нет поля —
+   * без проверки (старые сборки TMA).
+   */
+  @IsOptional()
+  @IsString()
+  @Matches(ASSIST_ROLE_RE)
+  expectedPrevious?: string | null;
+}
+
 export class IssueSecretDto {
   @IsOptional()
   @IsISO8601({ strict: true })
@@ -295,7 +322,8 @@ export class ActionLogQueryDto {
 
   /**
    * Э8: read | write | danger | proposal | decision | chain | memo | actions;
-   * заход 11: voice-map (изменения голосовой карты «Админки»).
+   * заход 11: voice-map (изменения голосовой карты «Админки»); заход 13:
+   * settings (изменения карты ролей, Р-З13-Б2).
    */
   @IsOptional()
   @IsIn([
@@ -308,6 +336,7 @@ export class ActionLogQueryDto {
     'memo',
     'actions',
     'voice-map',
+    'settings',
   ])
   kind?: string;
 }

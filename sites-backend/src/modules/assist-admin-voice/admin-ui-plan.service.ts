@@ -475,6 +475,9 @@ export class AdminUiPlanService {
       value: s.value ? maskSensitiveEcho(s.value) : null,
       risk: s.risk,
       undo: s.undo,
+      // Заход 13 (Р-З13-А2): цель карты «Админки», по которой найден элемент
+      // шага, — источник «Промахов» и тепловых значков панели `wa.`.
+      ...(s.mapKey ? { mapKey: s.mapKey } : {}),
     };
   }
 

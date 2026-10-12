@@ -276,6 +276,15 @@ export interface AdminActionStatsView {
   }>;
 }
 
+/**
+ * Оборванная запись обхода (заход 13): `reasons` — только ненулевые,
+ * ключи — причины сервера (`method|graphql|logout|danger|passive|websocket|popup|other`).
+ */
+export interface CrawlBlockedWrites {
+  total: number;
+  reasons: Record<string, number>;
+}
+
 export interface PrivateCrawlView {
   enabled: boolean;
   hostId: string | null;
@@ -294,6 +303,11 @@ export interface PrivateCrawlView {
     status: string;
     createdAt: string;
     note: string | null;
+    /**
+     * Заход 13 (Р-З13-Г1): запись, оборванная «только чтением» воркера —
+     * итог и по причинам; null — результата нет или старый воркер.
+     */
+    blockedWrites: CrawlBlockedWrites | null;
   }>;
   /** Э-С Ш3: `ready` — браузерный воркер подключён, `waiting_sh3` — нет. */
   worker: 'waiting_sh3' | 'ready';
@@ -636,6 +650,56 @@ export function parseChatMessage(v: unknown): AdminChatMessage {
   };
 }
 
+/**
+ * Заход 13 (Р-З13-Б1): роль помощника «владелец» — её сопоставление
+ * открывает редактор карты «Админки» (иначе 409
+ * `ADMIN_VOICE_MAP_OWNER_ROLE_REQUIRED`) и даёт инструменты owner в чате.
+ */
+export const ADMIN_OWNER_ROLE = 'owner';
+/** Роль заказчика из JWT — как ключ карты ролей на сервере. */
+export const ROLE_KEY_RE = /^(?!__proto__$)[\p{L}\p{N}_.:-]{1,64}$/u;
+
+/**
+ * Аудит З13 P3-7: пара «роль → owner» сохранена кнопкой, а владелец правит
+ * текст карты ролей и ещё не сохранил — дописать пару в его текст (строку
+ * этой роли заменить), а не выбрасывать правку.
+ */
+export function withOwnerLine(text: string, role: string): string {
+  const lines = text.split('\n');
+  const line = `${role}=${ADMIN_OWNER_ROLE}`;
+  const i = lines.findIndex((l) => l.split('=')[0]?.trim() === role);
+  if (i >= 0) lines[i] = line;
+  else if (lines.length && !lines[lines.length - 1].trim())
+    lines[lines.length - 1] = line;
+  else lines.push(line);
+  return lines.join('\n');
+}
+
+/** Роли заказчика, сопоставленные с `owner` (по алфавиту). */
+export function ownerRoleKeys(roleMap: Record<string, string>): string[] {
+  return Object.keys(roleMap)
+    .filter((k) => roleMap[k] === ADMIN_OWNER_ROLE)
+    .sort();
+}
+
+/**
+ * Что сделает «Зіставити з owner» для введённой роли: мусор — `invalid`;
+ * уже `owner` — `already`; роль сопоставлена с другой ролью помощника —
+ * `replace` (кнопка с подтверждением); иначе — `new`.
+ */
+export function ownerRoleAction(
+  roleMap: Record<string, string>,
+  input: string
+): { kind: 'invalid' | 'already' | 'replace' | 'new'; current: string | null } {
+  const role = input.trim();
+  if (!ROLE_KEY_RE.test(role)) return { kind: 'invalid', current: null };
+  const current = Object.prototype.hasOwnProperty.call(roleMap, role)
+    ? roleMap[role]
+    : null;
+  if (current === ADMIN_OWNER_ROLE) return { kind: 'already', current };
+  return { kind: current === null ? 'new' : 'replace', current };
+}
+
 export interface AdminModeApi {
   get(siteId: string): Promise<AdminModeView>;
   patch(
@@ -658,6 +722,23 @@ export interface AdminModeApi {
       weeklyReport: boolean;
     }>
   ): Promise<AdminModeView>;
+  /**
+   * Заход 13 (Р-З13-Б1): одна пара «моя роль у заказчика → owner» (прочие
+   * пары не трогаются; журнал «Админки»). `previous` — прежнее значение.
+   */
+  mapOwnerRole(
+    siteId: string,
+    role: string,
+    /**
+     * Аудит З13 P3-6: значение пары, которое видел экран (null — пары не
+     * было); изменили в другом окне — 409 `ADMIN_ROLEMAP_CHANGED`.
+     */
+    expectedPrevious?: string | null
+  ): Promise<{
+    previous: string | null;
+    changed: boolean;
+    view: AdminModeView;
+  }>;
   /**
    * Перевыпуск секрета подписи JWT (Р-З9-18): `expectedSetAt` — выпуск,
    * который видит экран (null — секрета не было); параллельный перевыпуск
@@ -761,6 +842,23 @@ export interface AdminModeApi {
   voiceMap: AdminVoiceMapApi;
 }
 
+const count = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null;
+
+/** `blockedWrites` задания обхода (строго: чужая форма — null). */
+export function parseCrawlBlockedWrites(v: unknown): CrawlBlockedWrites | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = obj(v);
+  const total = count(o.total);
+  if (total === null) return null;
+  const reasons: Record<string, number> = {};
+  for (const [k, n] of Object.entries(obj(o.reasons))) {
+    const c = count(n);
+    if (/^[a-z][a-z0-9_-]{0,31}$/.test(k) && c) reasons[k] = c;
+  }
+  return { total, reasons };
+}
+
 function parseCrawl(v: unknown): PrivateCrawlView {
   const o = obj(v);
   return {
@@ -788,6 +886,7 @@ function parseCrawl(v: unknown): PrivateCrawlView {
         status: str(x.status),
         createdAt: str(x.createdAt),
         note: strOrNull(x.note),
+        blockedWrites: parseCrawlBlockedWrites(x.blockedWrites),
       };
     }),
     worker: o.worker === 'ready' ? 'ready' : 'waiting_sh3',
@@ -806,6 +905,20 @@ export function createAdminModeApi(client: ApiClient): AdminModeApi {
       parseAdminMode(await client.request('GET', `${base(s)}/admin-mode`)),
     patch: async (s, b) =>
       parseAdminMode(await client.request('PATCH', `${base(s)}/admin-mode`, b)),
+    mapOwnerRole: async (s, role, expectedPrevious) => {
+      if (!ROLE_KEY_RE.test(role)) throw new Error('bad role');
+      const o = obj(
+        await client.request('POST', `${base(s)}/admin-mode/role-map/owner`, {
+          role,
+          ...(expectedPrevious === undefined ? {} : { expectedPrevious }),
+        })
+      );
+      return {
+        previous: typeof o.previous === 'string' ? o.previous : null,
+        changed: o.changed === true,
+        view: parseAdminMode(o.view),
+      };
+    },
     issueIdentitySecret: async (s, expectedSetAt) => {
       const o = obj(
         await client.request(

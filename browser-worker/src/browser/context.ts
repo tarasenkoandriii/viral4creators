@@ -31,10 +31,14 @@
  *    сессией — не соединяется, сообщения страницы вне окна входа не
  *    уходят; `Worker`/`SharedWorker` под сессией запрещены скриптом
  *    инициализации (SharedWorker сетью контекста не маршрутизируется, а
- *    WebSocket из воркера идёт мимо шлюза); редирект GET запроса скрипта,
- *    картинки или перехода, начатого страницей, на хосты замка проверяется
- *    по `Location` (`route.fetch`, `maxRedirects: 0`) — «выход» через 302
- *    обрывается; счётчик по причинам — `writesBlocked()`, в журнал задания;
+ *    WebSocket из воркера идёт мимо шлюза); редирект GET fetch/XHR/ping,
+ *    картинки или документа, начатого страницей, воркер проходит сам по
+ *    `Location` (`route.fetch`, `maxRedirects: 0`, ≤ 5 шагов; под сессией
+ *    — на любом хосте, вся цепочка) — «выход» или действие через 302
+ *    обрываются; cookie шага — из банки по адресу шага, `authorization` и
+ *    `x-*` после смены origin снимаются; скрипты, стили и EventSource так
+ *    не проверяются; счётчик по причинам — `writesBlocked()`, в журнал
+ *    задания;
  *  - решение маршрута — «закрыто при сбое»: попап (запрос без доступного
  *    фрейма или из чужой страницы) и любая ошибка решения — обрыв
  *    (раньше ошибка глоталась, а закрытие попапа отпускало запрос);
@@ -53,8 +57,11 @@ import type {
 import {
   VIEWPORT_SIZE,
   WORKER_LIMITS,
+  WRITE_BLOCK_REASONS,
   lockHostOf,
+  type BlockedWrites,
   type BrowserViewport,
+  type WriteBlockReason,
 } from '../shared/browser-job-protocol';
 import {
   startEgressFilterProxy,
@@ -62,11 +69,7 @@ import {
   type EgressUpstream,
 } from '../shared/egress-filter-proxy';
 import { JobError } from '../errors';
-import {
-  WRITE_REFUSALS,
-  writeRefusal,
-  type WriteRefusal,
-} from '../safety/write-guard';
+import { WRITE_REFUSALS, writeRefusal } from '../safety/write-guard';
 import {
   DEFAULT_TRAFFIC_LIMITS,
   authorityOfUrl,
@@ -96,13 +99,42 @@ interface InFlight {
   encoded: number;
 }
 
-/** Причины оборванной записи в журнале задания. */
-export type WriteBlockReason = WriteRefusal | 'websocket' | 'popup';
-export const WRITE_BLOCK_REASONS: readonly WriteBlockReason[] = [
-  ...WRITE_REFUSALS,
-  'websocket',
-  'popup',
-];
+/**
+ * Причины оборванной записи — журнал задания и `blockedWrites` результата
+ * обхода (заход 13): список общий с sites-backend (протокол очереди), чтобы
+ * сервер и TMA знали каждую причину. Причины стража — его подмножество
+ * (проверка типов ниже; равенство списков — юнит-тест).
+ */
+export { WRITE_BLOCK_REASONS, type WriteBlockReason };
+const REFUSALS_ARE_REASONS: readonly WriteBlockReason[] = WRITE_REFUSALS;
+void REFUSALS_ARE_REASONS;
+
+/** Потолок счётчика в результате — тот же, что у разбора протокола. */
+export const BLOCKED_WRITES_MAX = 1_000_000;
+
+/**
+ * Счётчик стража → поле результата `blockedWrites` (только ненулевые).
+ * Итог не больше `BLOCKED_WRITES_MAX` (аудит P3-6: иначе самопроверка
+ * протокола уронила бы весь обход): причины усекаются по порядку, сумма
+ * причин по-прежнему равна итогу.
+ */
+export function blockedWritesOf(
+  w: Record<WriteBlockReason, number>,
+): BlockedWrites {
+  const reasons: BlockedWrites['reasons'] = {};
+  let total = 0;
+  for (const k of WRITE_BLOCK_REASONS) {
+    const n = Math.min(
+      Math.max(0, Math.floor(w[k] || 0)),
+      BLOCKED_WRITES_MAX - total,
+    );
+    if (n > 0) {
+      reasons[k] = n;
+      total += n;
+    }
+  }
+  return { total, reasons };
+}
 
 /** Виды GET, у которых редирект на хост замка проверяется по `Location`. */
 const REDIRECT_CHECK_TYPES = new Set([
@@ -112,8 +144,34 @@ const REDIRECT_CHECK_TYPES = new Set([
   'image',
   'document',
 ]);
-/** Шагов редиректа, которые воркер проходит сам (fetch/XHR/картинка). */
-const REDIRECT_MAX_HOPS = 5;
+/** Шагов редиректа, которые воркер проходит сам; дальше — обрыв. */
+export const REDIRECT_MAX_HOPS = 5;
+
+/**
+ * Заголовки шага редиректа (заход 13, аудит P1-1): без `cookie` (её
+ * добавит банка контекста по адресу шага) и сжатия; после смены origin —
+ * и без `authorization`, `proxy-authorization`, пользовательских `x-*`.
+ */
+export function hopHeaders(
+  h: Record<string, string>,
+  crossOrigin: boolean,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(h)) {
+    const n = k.toLowerCase();
+    if (n === 'cookie' || n === 'accept-encoding') continue;
+    if (
+      crossOrigin &&
+      (n === 'authorization' ||
+        n === 'proxy-authorization' ||
+        n.startsWith('x-'))
+    )
+      continue;
+    out[n] = v;
+  }
+  out['accept-encoding'] = 'identity';
+  return out;
+}
 const REDIRECT_FETCH_MS = 20_000;
 
 /**
@@ -161,12 +219,17 @@ export class JobBrowser {
   private ownNavUrl: string | null = null;
   /** Страницы задания (`newPage`); запрос из любой другой — попап. */
   private readonly ownPages = new WeakSet<Page>();
+  /**
+   * Под сессией учётки (`sessionReadOnly`): шлюз WebSocket стоит, и страж
+   * записи проверяет адрес и у пассивных видов (картинка — заход 13).
+   */
   private wsGuarded = false;
   private readonly writeBlocks: Record<WriteBlockReason, number> = {
     method: 0,
     graphql: 0,
     logout: 0,
     danger: 0,
+    passive: 0,
     websocket: 0,
     popup: 0,
   };
@@ -302,6 +365,7 @@ export class JobBrowser {
           ownNavigation: own,
           contentType: req.headers()['content-type'] ?? null,
           body: () => req.postData(),
+          session: this.wsGuarded,
         });
         if (why) {
           this.writeBlocks[why] += 1;
@@ -320,7 +384,7 @@ export class JobBrowser {
         !own &&
         this.redirectChecked(req, u)
       ) {
-        await this.fetchChecked(route, req, u);
+        await this.fetchChecked(route, req, u, main);
         return;
       }
       await route.continue();
@@ -337,34 +401,54 @@ export class JobBrowser {
     return true;
   }
 
-  /** GET/HEAD скрипта, картинки или документа на хост замка. */
+  /**
+   * GET/HEAD fetch/XHR/ping, картинки или документа: под сессией учётки — на
+   * ЛЮБОЙ хост (заход 13, аудит P2-1: цепочка «чужой хост → назад на хост
+   * замка» тоже проверяется), у «Снимка» — на хосты замка.
+   */
   private redirectChecked(req: Request, u: URL): boolean {
     const m = req.method().toUpperCase();
     return (
       (m === 'GET' || m === 'HEAD') &&
       REDIRECT_CHECK_TYPES.has(req.resourceType()) &&
-      this.allowedHosts.includes(lockHostOf(u))
+      (this.wsGuarded || this.allowedHosts.includes(lockHostOf(u)))
     );
   }
 
   /**
    * Редирект — по `Location` (аудит P2-4): маршрут Playwright не видит
-   * перенаправленных запросов, поэтому запрос делается здесь (тот же
-   * прокси, cookie контекста, `maxRedirects: 0`). `Location`, которому
-   * страж отказал бы как GET того же вида, — обрыв. fetch/XHR/картинку
-   * воркер ведёт по цепочке сам (≤ 5 шагов, каждый проверен) и отдаёт
-   * итог; документу отдаётся проверенный первый шаг — дальше браузер идёт
-   * сам (адрес документа должен остаться настоящим). `identity` — без
-   * распаковки в процессе воркера (тело ответа здесь целиком в памяти).
+   * перенаправленных запросов, поэтому воркер проходит цепочку сам (тот же
+   * прокси, `maxRedirects: 0`, ≤ 5 шагов — дальше обрыв); `Location`,
+   * которому страж отказал бы как GET того же вида, — обрыв. Цепочка
+   * проверяется целиком, в том числе шаги через хост вне замка и возврат с
+   * него (заход 13, аудит P2-1).
+   *
+   * Заголовки шага — как у браузера (заход 13, аудит P1-1): `cookie` явно
+   * не передаётся никогда — `route.fetch` берёт cookie из банки контекста
+   * по адресу ШАГА (сессия хоста A не уходит ни на чужой хост, ни на хост
+   * замка B); с первой смены origin снимаются `authorization`,
+   * `proxy-authorization` и пользовательские `x-*` (CSRF-токены).
+   * `identity` — без распаковки в процессе воркера (тело здесь целиком в
+   * памяти).
+   *
+   * Итог: fetch/XHR/картинке — ответ конца цепочки. Документу (Р-З13-Г3) —
+   * ОДИН редирект прямо на проверенный конечный адрес (адрес документа
+   * должен остаться настоящим, а запрос по редиректу маршрут не видит —
+   * промежуточные шаги браузеру не отдаются); цена — конечный адрес
+   * запрашивается дважды, и второй запрос браузера уже не проверяется (см.
+   * Р-З13-Г3, остаток). Конец цепочки главного фрейма вне замка — обрыв с
+   * `offhost` (как прямой переход на чужой хост).
    */
   private async fetchChecked(
     route: Route,
     req: Request,
     u: URL,
+    main: boolean,
   ): Promise<void> {
     const type = req.resourceType();
     const doc = type === 'document';
-    const headers = { ...req.headers(), 'accept-encoding': 'identity' };
+    let headers = hopHeaders(req.headers(), false);
+    let crossed = false;
     let url = u.toString();
     let resp = await route.fetch({
       headers,
@@ -390,22 +474,24 @@ export class JobBrowser {
               ownNavigation: false,
               contentType: null,
               body: () => null,
+              session: this.wsGuarded,
             })
           : 'danger';
+      await resp.dispose().catch(() => undefined);
       if (why || !next) {
         this.writeBlocks[why ?? 'danger'] += 1;
-        await resp.dispose().catch(() => undefined);
         await route.abort('blockedbyclient');
         return;
       }
-      if (doc) break;
       if (hop + 1 >= REDIRECT_MAX_HOPS) {
-        await resp.dispose().catch(() => undefined);
         await route.abort('blockedbyclient');
         return;
       }
-      await resp.dispose().catch(() => undefined);
       url = next.toString();
+      if (!crossed && next.origin !== u.origin) {
+        crossed = true;
+        headers = hopHeaders(req.headers(), true);
+      }
       resp = await route.fetch({
         url,
         headers,
@@ -413,7 +499,26 @@ export class JobBrowser {
         timeout: REDIRECT_FETCH_MS,
       });
     }
+    if (doc && url !== u.toString()) {
+      await resp.dispose().catch(() => undefined);
+      if (main && !this.allowedHosts.includes(lockHostOf(new URL(url)))) {
+        this.offhost = true;
+        await route.abort('blockedbyclient');
+        return;
+      }
+      await this.redirectDocument(route, url);
+      return;
+    }
     await route.fulfill({ response: resp });
+  }
+
+  /** Документу — один редирект на проверенный адрес (браузер идёт сам). */
+  private async redirectDocument(route: Route, to: string): Promise<void> {
+    await route.fulfill({
+      status: 302,
+      headers: { location: to, 'cache-control': 'no-store' },
+      body: '',
+    });
   }
 
   /** Окно шага входа и адрес хоста замка — запись разрешена. */

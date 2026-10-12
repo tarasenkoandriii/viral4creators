@@ -79,6 +79,8 @@ export const voiceMapEn: VoiceMapDictionary = {
     VOICE_MAP_CHECK_NOT_FOUND: 'This version has not been checked yet.',
     VOICE_MAP_DEV_REPORT_NOT_FOUND:
       'The report link is invalid, expired or revoked.',
+    VOICE_MAP_SUGGESTION_GONE:
+      'This suggestion is no longer relevant — the list has been refreshed.',
   },
   snap: {
     title: 'Page snapshot',

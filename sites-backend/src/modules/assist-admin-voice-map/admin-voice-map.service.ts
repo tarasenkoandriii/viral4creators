@@ -136,6 +136,61 @@ const UNSIGNED_EXPORT_KEY = 'v4c-admin-voice-map-export-unsigned';
 /** Сжатых операций в одной строке журнала (остаток — счётчиком). */
 const JOURNAL_OPS = 30;
 
+/**
+ * Заход 13 (Р-З13-А8): ИИ-синонимы «Админки» (`suggested`, панель `wa.`)
+ * публикуются ТОЛЬКО принятием человека в панели. Экран TMA карты «Админки»
+ * присылает синонимы без поля `origin` (ядро читает их как `owner`): правка
+ * имени цели в TMA молча «приняла» бы предложения ИИ. Для правок из TMA
+ * синоним без `origin`, чей текст у цели в черновике — `suggested`, остаётся
+ * `suggested`; панель (`editor`) присылает `origin` сама («✓ прийняти»).
+ */
+export function keepSuggestedSynonyms(
+  content: VoiceMapContent,
+  ops: unknown,
+): unknown {
+  if (!Array.isArray(ops)) return ops;
+  const norm = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
+  return ops.map((op) => {
+    const o = op as {
+      op?: unknown;
+      target?: { key?: unknown; synonyms?: unknown };
+    } | null;
+    if (
+      !o ||
+      o.op !== 'upsert-target' ||
+      !o.target ||
+      typeof o.target !== 'object' ||
+      !o.target.synonyms ||
+      typeof o.target.synonyms !== 'object'
+    )
+      return op;
+    const prev = content.targets.find((t) => t.key === o.target?.key);
+    if (!prev) return op;
+    const syn = o.target.synonyms as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [l, list] of Object.entries(syn)) {
+      const was = new Set(
+        (prev.synonyms[l as keyof typeof prev.synonyms] ?? [])
+          .filter((x) => x.origin === 'suggested')
+          .map((x) => norm(x.text)),
+      );
+      out[l] = Array.isArray(list)
+        ? list.map((x) => {
+            const it = x as { text?: unknown; origin?: unknown } | null;
+            return it &&
+              typeof it === 'object' &&
+              it.origin === undefined &&
+              typeof it.text === 'string' &&
+              was.has(norm(it.text))
+              ? { ...it, origin: 'suggested' }
+              : x;
+          })
+        : list;
+    }
+    return { ...o, target: { ...o.target, synonyms: out } };
+  });
+}
+
 @Injectable()
 export class AdminVoiceMapService {
   private readonly logger = new Logger(AdminVoiceMapService.name);
@@ -367,7 +422,10 @@ export class AdminVoiceMapService {
     const row = await this.loadMap(db, actor.accountId, siteId);
     if (row.draftRevision !== b.expectedRevision) throw this.conflict();
     const hosts = this.hostNames(await this.adminHosts(db, siteId, this.now()));
-    const res = applyMapOps(parseVoiceMapContent(row.draft), b.ops, {
+    const current = parseVoiceMapContent(row.draft);
+    const ops =
+      source === 'tma' ? keepSuggestedSynonyms(current, b.ops) : b.ops;
+    const res = applyMapOps(current, ops, {
       hosts,
       newId: () => `t-${randomBytes(5).toString('hex')}`,
       source,

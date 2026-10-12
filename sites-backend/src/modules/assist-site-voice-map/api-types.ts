@@ -44,7 +44,9 @@ export type VoiceMapErrorCode =
   | 'EDITOR_SUGGEST_NEVER'
   | 'EDITOR_SUGGEST_LIMIT'
   | 'EDITOR_SUGGEST_BUDGET'
-  | 'EDITOR_SUGGEST_UNAVAILABLE';
+  | 'EDITOR_SUGGEST_UNAVAILABLE'
+  // Заход 13 (Р-З13-Б3): карточка TMA «Обучение → Голос» уже неактуальна.
+  | 'VOICE_MAP_SUGGESTION_GONE';
 
 export interface VoiceMapVersionSummary {
   number: number;
@@ -172,4 +174,51 @@ export interface EditorTryView {
   notes: UiPlanNote[];
   /** Проверок «Сказать сейчас» осталось сегодня. */
   left: number;
+}
+
+// ── заход 13 (Р-З13-Б3): TMA «Обучение → Голос» — карточки подсказок ──
+
+/** Термин распознавания (неуверенное распознавание у ≥ 2 посетителей). */
+export interface TmaTermCard {
+  id: string;
+  phrase: string;
+  visitors: number;
+  count: number;
+}
+
+/** «Вела не туда»: команда сработала на цели `key`, человек сразу остановил. */
+export interface TmaWrongCard {
+  id: string;
+  key: string;
+  phrase: string;
+  lang: 'uk' | 'ru' | 'en' | null;
+  visitors: number;
+  count: number;
+  /** Фраза — ИМЯ цели `key`: после перепривязки публикацию остановит конфлікт (Р-З11-Б9). */
+  nameClash: boolean;
+}
+
+/** Цель для «перепривязать» (выбор из списка — пикера в TMA нет). */
+export interface TmaRebindTarget {
+  key: string;
+  name: string;
+  scope: 'site' | 'template' | 'page';
+  page: string | null;
+}
+
+export interface TmaSuggestionsView {
+  days: number;
+  /** Ревизия черновика — `expectedRevision` следующего действия. */
+  revision: number;
+  terms: TmaTermCard[];
+  wrong: TmaWrongCard[];
+  targets: TmaRebindTarget[];
+  /** Сколько терминов ещё помещается в карту (≤ 100). */
+  termsLeft: number;
+}
+
+/** Ответ действия: новая ревизия и обратные операции («Отменить» → PATCH draft). */
+export interface TmaSuggestionActionView {
+  revision: number;
+  undo: Array<Record<string, unknown>>;
 }

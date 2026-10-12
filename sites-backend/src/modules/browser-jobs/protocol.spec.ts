@@ -263,6 +263,94 @@ describe('протокол очереди браузерного воркера'
     expect(() => multiline(5, 10, 'f')).toThrow(ProtocolError);
   });
 
+  // ── заход 13, пакет Г: blockedWrites (Р-З13-Г1) ─────────────────────────
+
+  describe('admin-crawl: blockedWrites — необязательное поле результата', () => {
+    const ac = parseJobParams('admin-crawl', {
+      startUrl: 'https://admin.example.com/',
+      allowedHosts: ['admin.example.com'],
+      viewport: 'desktop',
+      maxPages: 2,
+      maxDepth: 1,
+      loginMethod: 'password',
+    });
+    const base = {
+      loggedIn: true,
+      pages: [],
+      refusedClicks: 1,
+      skippedLinks: 2,
+    };
+    const parse = (bw: unknown) =>
+      parseJobResult('admin-crawl', ac, { ...base, blockedWrites: bw });
+
+    it('старый воркер (без поля) — принят, поля в итоге нет', () => {
+      const r = parseJobResult('admin-crawl', ac, base);
+      expect(r).toEqual(base);
+      expect('blockedWrites' in r).toBe(false);
+    });
+
+    it('итог и причины; нули отброшены', () => {
+      expect(
+        parse({ total: 5, reasons: { method: 3, logout: 2, popup: 0 } }),
+      ).toEqual({
+        ...base,
+        blockedWrites: { total: 5, reasons: { method: 3, logout: 2 } },
+      });
+      expect(parse({ total: 0, reasons: {} })).toMatchObject({
+        blockedWrites: { total: 0, reasons: {} },
+      });
+      // Раунд исправлений з13 (P3-2): загрузки ресурсов — своя причина.
+      expect(parse({ total: 2, reasons: { passive: 2 } })).toMatchObject({
+        blockedWrites: { total: 2, reasons: { passive: 2 } },
+      });
+    });
+
+    it('причина, которой сервер не знает (воркер новее), — в other, обход не падает', () => {
+      expect(
+        parse({
+          total: 7,
+          reasons: { danger: 1, webtransport: 4, future_x: 2 },
+        }),
+      ).toMatchObject({
+        blockedWrites: { total: 7, reasons: { danger: 1, other: 6 } },
+      });
+    });
+
+    it('форма строгая: сумма ≠ итог, лишний ключ, не число, плохое имя, > 16 причин — отказ', () => {
+      const bad: unknown[] = [
+        null,
+        5,
+        [],
+        { total: 2, reasons: { method: 1 } },
+        { total: 1, reasons: { method: 1 }, extra: 1 },
+        { total: 1 },
+        { total: 1, reasons: [1] },
+        { total: 1, reasons: { method: '1' } },
+        { total: 1, reasons: { method: 1.5 } },
+        { total: -1, reasons: { method: -1 } },
+        { total: 2e6, reasons: { method: 2e6 } },
+        { total: 1, reasons: { Method: 1 } },
+        { total: 1, reasons: { __proto__x: 1 } },
+        {
+          total: 17,
+          reasons: Object.fromEntries(
+            Array.from({ length: 17 }, (_, i) => [`r${i}`, 1]),
+          ),
+        },
+      ];
+      for (const bw of bad) {
+        expect(() => parse(bw)).toThrow(/result\.blockedWrites/);
+      }
+    });
+
+    it('JSON с ключом "__proto__" в причинах — отказ, прототип не трогается', () => {
+      const raw = JSON.parse(
+        '{"total":1,"reasons":{"__proto__":1}}',
+      ) as unknown;
+      expect(() => parse(raw)).toThrow(/result\.blockedWrites/);
+    });
+  });
+
   const kr = {
     urls: ['https://shop.example.com/', 'https://shop.example.com/about?x=1'],
     allowedHosts: ['shop.example.com'],

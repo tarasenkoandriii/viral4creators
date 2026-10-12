@@ -9,7 +9,8 @@
  *  - кнопка/чат сотрудника на вкладке редактора не поднимаются;
  *  - выбор элемента — админка не реагирует; сохранение цели — кликом в
  *    панели, черновик меняется ровно одним пакетом операций;
- *  - мемо, «Промахи»/«Пропозиції», ИИ-синонимы и микрофон скрыты;
+ *  - (заход 13) те же вкладки, что у «Сайта»: мемо, «Промахи»/«Пропозиції»,
+ *    ИИ-синонимы и микрофон — сценарии в `admin-editor-tools.spec.ts`;
  *  - «Сказать сейчас» — без нажатий; запрос публикации — без публикации;
  *  - переход по админке (MPA) — панель продолжает по своим сессиям из
  *    `sessionStorage` `wa.` без нового входа сотрудника; выход — DOM как был;
@@ -128,11 +129,14 @@ test('«Админка»: вход по ссылке в admin.js, сохране
   // Кнопка и чат сотрудника на вкладке редактора не поднимаются.
   expect(requests.some((u) => u.includes('/wa/v1/frame'))).toBe(false);
   await expect(page.locator('[data-v4c=""]')).toHaveCount(0);
-  // Режим `admin`: только Ціль / Сторінка / Перевірка / Публікація.
+  // Заход 13: у «Админки» — все вкладки панели «Сайта».
   await expect(frame.locator('.tabs button')).toHaveText([
     'Ціль',
     'Сторінка',
+    'Мемо',
     'Перевірка',
+    'Промахи',
+    'Пропозиції',
     'Публікація',
   ]);
   // Вход сотрудника — один обмен JWT самой панелью; редактор — с обеими сессиями.
@@ -154,7 +158,7 @@ test('«Админка»: вход по ссылке в admin.js, сохране
   await page.click('#ak-save');
   await expect(frame.locator('.pick')).toContainText('Зберегти');
   await expect(page.locator('#ak-saves')).toHaveText('0');
-  // ИИ-синонимов у «Админки» нет (следующий шаг).
+  // ИИ-синонимы — у сохранённой цели (новой ещё нет в черновике).
   await expect(frame.locator('button', { hasText: 'ШІ' })).toHaveCount(0);
   expect(
     (await editorLog()).log.filter(
@@ -189,9 +193,11 @@ test('«Админка»: вход по ссылке в admin.js, сохране
   expect(up.target.pagePath).toBe('/page');
   await expect(page.locator('#ak-saves')).toHaveText('0');
 
-  // «Сказать сейчас»: показ без нажатий; микрофона у «Админки» нет.
+  // ИИ-синонимы у сохранённой цели «Админки» — как у «Сайта» (заход 13).
+  await expect(frame.locator('button', { hasText: 'ШІ' })).toHaveCount(1);
+  // «Сказать сейчас»: показ без нажатий; микрофон — как у «Сайта» (заход 13).
   await frame.locator('.tabs button', { hasText: 'Перевірка' }).click();
-  await expect(frame.locator('button', { hasText: '🎤' })).toHaveCount(0);
+  await expect(frame.locator('button', { hasText: '🎤' })).toHaveCount(1);
   await frame.locator('input[name="say"]').fill('Відкрий деталі 1042');
   await frame.locator('button.pri', { hasText: 'Перевірити' }).click();
   await expect(frame.locator('ol li').first()).toContainText('Деталі 1042');

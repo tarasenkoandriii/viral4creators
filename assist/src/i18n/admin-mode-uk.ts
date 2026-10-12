@@ -72,6 +72,13 @@ export interface AdminModeTexts {
     /** Э-С Ш3: статусы задания обхода и подсказка про продукт учётки. */
     crawlStatus: Record<string, string>;
     crawlNeedsProduct: string;
+    /**
+     * Заход 13 (Р-З13-Г1): «тільки читання» обходу — скільки запитів запису
+     * воркер обірвав (`{n}`), і причини (`method|graphql|logout|danger|
+     * passive|websocket|popup|other`; невідома — як `other`).
+     */
+    crawlBlocked: string;
+    crawlBlockedReasons: Record<string, string>;
   };
   connectors: {
     add: string;
@@ -302,6 +309,17 @@ export const adminModeUk: AdminModeTexts = {
     },
     crawlNeedsProduct:
       'Дозвольте обліковому запису продукт «Помічник: обхід Адмінки» у реєстрі тестових облікових записів.',
+    crawlBlocked: 'лише читання — заблоковано записів: {n}',
+    crawlBlockedReasons: {
+      method: 'запити запису',
+      graphql: 'GraphQL-мутації',
+      logout: 'вихід',
+      danger: 'небезпечні адреси',
+      passive: 'завантаження з небезпечною адресою (картинки, скрипти)',
+      websocket: 'WebSocket',
+      popup: 'спливні вікна',
+      other: 'інше',
+    },
   },
   connectors: {
     add: 'Додати API (OpenAPI 3.x)',

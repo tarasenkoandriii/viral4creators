@@ -395,6 +395,37 @@ export interface DescriptorResolveResult {
   }>;
 }
 
+/**
+ * Причины оборванной записи «только чтения» под сессией учётки (заход 11,
+ * Р-З11-Г1…Г4; воркер — `JobBrowser.writesBlocked`): метод записи,
+ * GraphQL-мутация, «выход», разрушительный адрес запроса скрипта или
+ * перехода, загрузка ресурса с разрушительным адресом (`passive`: картинка,
+ * медиа, скрипт — заход 13), WebSocket, попап.
+ */
+export const WRITE_BLOCK_REASONS = [
+  'method',
+  'graphql',
+  'logout',
+  'danger',
+  'passive',
+  'websocket',
+  'popup',
+] as const;
+export type WriteBlockReason = (typeof WRITE_BLOCK_REASONS)[number];
+/** Причина, которой сервер не знает (новый воркер), — сумма в `other`. */
+export type BlockedWriteBucket = WriteBlockReason | 'other';
+
+/**
+ * Заход 13 (Р-З13-Г1): оборванная запись обхода — итог и по причинам
+ * (только ненулевые). Поле результата НЕОБЯЗАТЕЛЬНОЕ: старый воркер его не
+ * шлёт, а новый воркер, получив отказ старого сервера, сдаёт результат без
+ * него (`runner.ts`, `OPTIONAL_RESULT_KEYS`).
+ */
+export interface BlockedWrites {
+  total: number;
+  reasons: Partial<Record<BlockedWriteBucket, number>>;
+}
+
 export interface AdminCrawlResult {
   loggedIn: boolean;
   pages: Array<{ url: string; title: string; text: string }>;
@@ -402,6 +433,8 @@ export interface AdminCrawlResult {
   refusedClicks: number;
   /** Сколько ссылок пропущено (опасные, выход, чужой хост, лимит). */
   skippedLinks: number;
+  /** Заход 13: оборванная запись «только чтения» (нет — старый воркер). */
+  blockedWrites?: BlockedWrites;
 }
 
 export interface FramesCaptureResult {
@@ -1325,6 +1358,42 @@ function renderResult(
   };
 }
 
+/** Имя причины оборванной записи (знакомой серверу или нет). */
+const WRITE_REASON_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const isWriteBlockReason = (v: string): v is WriteBlockReason =>
+  (WRITE_BLOCK_REASONS as readonly string[]).includes(v);
+
+/**
+ * `blockedWrites` (заход 13, Р-З13-Г1): `{ total, reasons }`, сумма причин
+ * равна итогу. Форма строгая, имена причин — нет: причина, которой этот
+ * сервер не знает (воркер новее), складывается в `other` — так новый вид
+ * обрыва не роняет весь обход (как неизвестные виды в claim). Нули
+ * отбрасываются.
+ */
+export function blockedWritesOf(raw: unknown): BlockedWrites {
+  const f = 'result.blockedWrites';
+  if (!isObj(raw)) throw new ProtocolError(f);
+  exactKeys(raw, ['total', 'reasons'], f);
+  const total = intIn(raw.total, 0, 1e6, `${f}.total`);
+  if (!isObj(raw.reasons)) throw new ProtocolError(`${f}.reasons`);
+  const entries = Object.entries(raw.reasons);
+  if (entries.length > 16) throw new ProtocolError(`${f}.reasons`);
+  const reasons: Partial<Record<BlockedWriteBucket, number>> = {};
+  let sum = 0;
+  for (const [k, v] of entries) {
+    if (!WRITE_REASON_NAME_RE.test(k)) {
+      throw new ProtocolError(`${f}.reasons`);
+    }
+    const n = intIn(v, 0, 1e6, `${f}.reasons.${k}`);
+    sum += n;
+    if (!n) continue;
+    const bucket: BlockedWriteBucket = isWriteBlockReason(k) ? k : 'other';
+    reasons[bucket] = (reasons[bucket] ?? 0) + n;
+  }
+  if (sum !== total) throw new ProtocolError(`${f}.total`);
+  return { total, reasons };
+}
+
 /**
  * Строгий разбор результата по виду и параметрам задания: адреса — только
  * хосты замка, лимиты — те же, что у воркера. Сервер зовёт это ДО записи
@@ -1437,9 +1506,10 @@ function parseJobResultRaw(
       };
     }
     case 'admin-crawl': {
+      const keys = ['loggedIn', 'pages', 'refusedClicks', 'skippedLinks'];
       exactKeys(
         raw,
-        ['loggedIn', 'pages', 'refusedClicks', 'skippedLinks'],
+        'blockedWrites' in raw ? [...keys, 'blockedWrites'] : keys,
         'result',
       );
       const p = params as AdminCrawlParams;
@@ -1460,6 +1530,9 @@ function parseJobResultRaw(
         }),
         refusedClicks: intIn(raw.refusedClicks, 0, 1e6, 'result.refusedClicks'),
         skippedLinks: intIn(raw.skippedLinks, 0, 1e6, 'result.skippedLinks'),
+        ...('blockedWrites' in raw
+          ? { blockedWrites: blockedWritesOf(raw.blockedWrites) }
+          : {}),
       };
     }
     case 'tutorial-explore':

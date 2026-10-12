@@ -42,6 +42,25 @@ export type AdminVoiceMapErrorCode =
   | 'EDITOR_PUBLISH_LIMIT'
   | 'EDITOR_BAD_REQUEST';
 
+/**
+ * Заход 13 (Р-З13-А1): коды инструментов панели `wa.` — ИИ-синонимы,
+ * «Промахи»/«Пропозиції», мемо, микрофон. Те же коды и смысл, что у панели
+ * `we.` «Сайта»; TMA их не показывает (только панель) — отдельный тип, вне
+ * сверки `assist/scripts/admin-voice-map-api.test.ts`.
+ */
+export type AdminEditorToolErrorCode =
+  | 'EDITOR_SUGGEST_NEVER'
+  | 'EDITOR_SUGGEST_LIMIT'
+  | 'EDITOR_SUGGEST_BUDGET'
+  | 'EDITOR_SUGGEST_UNAVAILABLE'
+  | 'EDITOR_VOICE_AUDIO_INVALID'
+  | 'EDITOR_VOICE_UNAVAILABLE'
+  | 'EDITOR_VOICE_BUDGET'
+  | 'EDITOR_VOICE_NOT_HEARD'
+  | 'EDITOR_VOICE_UPSTREAM'
+  | 'EDITOR_MEMO_BAD_REQUEST'
+  | 'EDITOR_MEMO_INVALID';
+
 export type AdminVoiceMapVersionSummary = MapVersionSummaryView;
 export type AdminVoiceMapVersionView = MapVersionDetailView;
 
@@ -145,5 +164,23 @@ export interface AdminEditorTryView {
   phrase: string | null;
   steps: UiPlanStep[];
   notes: UiPlanNote[];
+  left: number;
+}
+
+// ── заход 13: инструменты панели `wa.` (паритет с панелью `we.`) ──
+
+export interface AdminEditorSuggestView {
+  revision: number;
+  key: string;
+  langs: Array<'uk' | 'ru' | 'en'>;
+  /** Сколько фраз принято в предложения (`suggested`) по языкам. */
+  kept: Partial<Record<'uk' | 'ru' | 'en', number>>;
+  dropped: Partial<Record<string, number>>;
+}
+
+export interface AdminEditorVoiceView {
+  text: string;
+  lang: string | null;
+  /** Проверок «Сказать сейчас» осталось сегодня (запись — одна из них). */
   left: number;
 }

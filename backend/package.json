@@ -58,10 +58,10 @@
     "puppeteer-core": "~25.11.0",
     "reflect-metadata": "^0.1.13",
     "rxjs": "^7.8.1",
-    "sanitize-html": "2.17.1",
+    "sanitize-html": "2.18.0",
     "satori": "^0.33.4",
     "tldts": "^6.1.86",
-    "uuid": "^9.0.0"
+    "uuid": "^11.1.1"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.24",
@@ -75,13 +75,11 @@
     "@types/pngjs": "^6.0.5",
     "@types/sanitize-html": "^2.16.1",
     "@types/supertest": "^2.0.12",
-    "@types/uuid": "^9.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "eslint": "^8.42.0",
+    "eslint": "^9.39.5",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-jest": "^28.14.0",
     "eslint-plugin-prettier": "^5.0.0",
+    "globals": "^17.13.0",
     "jest": "^29.5.0",
     "prettier": "^3.0.0",
     "prisma": "^7.10.0",
@@ -91,7 +89,8 @@
     "ts-loader": "^9.4.3",
     "ts-node": "^10.9.1",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.1.3"
+    "typescript": "^5.1.3",
+    "typescript-eslint": "^8.71.1"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -102,8 +101,12 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
+      "/node_modules/(htmlparser2|domhandler|domutils|dom-serializer|entities|domelementtype)/.+\\.js$": "<rootDir>/../test/esm-to-cjs.transform.js",
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(htmlparser2|domhandler|domutils|dom-serializer|entities|domelementtype)/)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

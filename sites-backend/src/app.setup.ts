@@ -118,6 +118,12 @@ export const WIDGET_UI_PLAN_PATH = '/widget/v1/ui-plan';
  * JSON ≤ 96 КБ, как у «Сайта»; больше — 413 `ADMIN_VC_TOO_LARGE`).
  */
 export const ADMIN_VOICE_PATH = '/assist-admin/v1/voice';
+/**
+ * Заход 13: микрофон «Сказать сейчас» панели редактора карты «Админки»
+ * (iframe `wa.`) — та же запись `audio/*` ≤ 1 МБ, что у голоса «Админки»;
+ * не тот тип или больше — 400 `EDITOR_VOICE_AUDIO_INVALID` до маршрута.
+ */
+export const ADMIN_EDITOR_VOICE_PATH = '/assist-admin/v1/editor/voice';
 export const ADMIN_UI_PLAN_PATHS = [
   '/assist-admin/v1/ui-plan',
   '/assist-admin/v1/voice-test',
@@ -330,6 +336,29 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
             message: 'Запись не подходит — повторите или напишите текстом',
           },
           meta: { timestamp: new Date().toISOString(), path: ADMIN_VOICE_PATH },
+        });
+      });
+    },
+  );
+  app.use(
+    ADMIN_EDITOR_VOICE_PATH,
+    function adminEditorVoiceRawAudio(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      adminVoiceRaw(req, res, (err?: unknown) => {
+        if (!err) return next();
+        res.status(400).json({
+          success: false,
+          error: {
+            code: 'EDITOR_VOICE_AUDIO_INVALID',
+            message: 'Запись не подходит — повторите или напишите текстом',
+          },
+          meta: {
+            timestamp: new Date().toISOString(),
+            path: ADMIN_EDITOR_VOICE_PATH,
+          },
         });
       });
     },

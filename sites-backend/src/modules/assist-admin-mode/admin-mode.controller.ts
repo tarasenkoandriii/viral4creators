@@ -1,6 +1,7 @@
 /**
  * Кабинет «Админки» — Э7 (ТЗ §3.8, §4.16):
  *   GET|PATCH /assist/sites/:id/admin-mode
+ *   POST      /assist/sites/:id/admin-mode/role-map/owner      (заход 13) { role } — «моя роль → owner»
  *   POST      /assist/sites/:id/admin-mode/identity-secret   секрет подписи JWT (показ 1 раз)
  *   GET       /assist/sites/:id/admin-mode/stats?days=7|30   «Статистика (сотрудники)»
  *   GET|POST  /assist/sites/:id/connectors                   (OpenAPI url|файл)
@@ -26,6 +27,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   AccountMembership,
   REQUIRE_ASSIST_ADMIN_OWNER,
@@ -40,13 +42,14 @@ import { AdminActionLogService } from './action-log.service';
 import {
   ActionLogQueryDto,
   CreateConnectorDto,
+  MapOwnerRoleDto,
   PatchAdminModeDto,
   PatchConnectorDto,
   PatchOperationDto,
   PutConnectorSecretDto,
   IssueSecretDto,
 } from './admin-mode.dto';
-import { AdminModeService } from './admin-mode.service';
+import { AdminModeService, type RoleMapJournal } from './admin-mode.service';
 import { AdminStatsService } from './admin-stats.service';
 import { ConnectorsService } from './connectors.service';
 
@@ -67,13 +70,71 @@ export class AdminModeController {
     return this.mode.view(m, id);
   }
 
+  /**
+   * Р-З13-Б2: изменение карты ролей — строка `settings` в журнале «Админки»
+   * (кто, какие пары появились/изменились/сняты; роли — идентификаторы).
+   */
   @Patch(':id/admin-mode')
   patch(
     @Membership() m: AccountMembership,
     @Param('id') id: string,
     @Body() dto: PatchAdminModeDto,
   ) {
-    return this.mode.patch(m, id, dto);
+    return this.mode.patch(m, id, dto, this.journalRoles(m, id, 'role-map'));
+  }
+
+  /**
+   * Р-З13-Б1 (хвост захода 11, Р-З11-А2-11): одна пара «роль у заказчика →
+   * owner» — кнопка раздела «Роли» в TMA (туда же ведёт подсказка 409
+   * `ADMIN_VOICE_MAP_OWNER_ROLE_REQUIRED` у ссылки редактора карты).
+   * Изменение прав и его строка журнала — одна транзакция (аудит P2-1/P3-2):
+   * журнал не записался — пара не меняется, ответ — ошибка.
+   */
+  @Post(':id/admin-mode/role-map/owner')
+  @HttpCode(200)
+  async mapOwnerRole(
+    @Membership() m: AccountMembership,
+    @Param('id') id: string,
+    @Body() dto: MapOwnerRoleDto,
+  ) {
+    const ch = await this.mode.mapOwnerRole(m, id, dto.role, {
+      expectedPrevious: dto.expectedPrevious,
+      journal: this.journalRoles(m, id, 'role-map.owner'),
+    });
+    return {
+      role: dto.role,
+      previous: ch.previous,
+      changed: ch.changed,
+      view: await this.mode.view(m, id),
+    };
+  }
+
+  /** Р-З13-Б2: строка `settings` журнала «Админки» в транзакции правки. */
+  private journalRoles(
+    m: AccountMembership,
+    siteId: string,
+    operation: string,
+  ): RoleMapJournal {
+    return async (tx, request) => {
+      await this.log.appendIn(tx, {
+        accountId: m.accountId,
+        siteId,
+        actor: `tg:${m.telegramId}`,
+        actorRole: 'owner',
+        channel: 'tma',
+        conversationId: null,
+        connectorId: null,
+        operationRowId: null,
+        operation,
+        kind: 'settings',
+        outcome: 'ok',
+        httpStatus: null,
+        durationMs: null,
+        requestMasked: request as Prisma.InputJsonValue,
+        responseBytes: null,
+        error: null,
+      });
+    };
   }
 
   @Post(':id/admin-mode/identity-secret')

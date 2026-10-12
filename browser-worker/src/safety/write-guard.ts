@@ -34,19 +34,43 @@
  *    обхода: GET «/orders/5/delete» — тоже действие; camelCase делится:
  *    `deleteOrder`, `logoutAll`). Переходы самого
  *    воркера (`JobBrowser.goto`) уже проверены стоп-листом ссылок — им
- *    проверка адреса не нужна (стартовый адрес задаёт владелец).
+ *    проверка адреса не нужна (стартовый адрес задаёт владелец);
+ *  - под СЕССИЕЙ учётки (заход 13, Р-З13-Г2) — и загрузки ресурсов
+ *    (причина `passive`): картинка (`<img src="/orders/5/delete">`,
+ *    CSS-фон), медиа, объект, prefetch, а также скрипт и стиль (JSONP):
+ *    GET с cookie сотрудника исполняется сервером одинаково, кто бы его ни
+ *    начал. Словарь — `DESTRUCTIVE_PASSIVE` (без слов каталогов ресурсов:
+ *    `block`, `export`, `download`…). Имя файла своего вида с расширением
+ *    (`/icons/delete.svg`, `delete-modal.js`) — не действие: проверяются
+ *    каталог и query; имя с `;` (`delete;.png`) не прощается. Шрифты,
+ *    манифест, субтитры — не проверяются. «Снимок» (без cookie) — как
+ *    прежде: GET без сессии ничего не меняет, а сломанные картинки
+ *    испортили бы кадр. «Выход» картинкой (`/hit/logout`) — обрыв всегда,
+ *    но иконка `/icons/logout.svg` — нет.
  * Модуль чистый — решение по описанию запроса; исполняет его `JobBrowser`.
  */
 import { paymentPath } from '../shared/action-words';
-import { DESTRUCTIVE, LOGOUT, splitCamel } from './click-guard';
+import {
+  DESTRUCTIVE,
+  DESTRUCTIVE_PASSIVE,
+  LOGOUT,
+  splitCamel,
+} from './click-guard';
 
-export type WriteRefusal = 'method' | 'graphql' | 'logout' | 'danger';
+/**
+ * `passive` (заход 13, аудит P3-2) — загрузка ресурса (картинка, медиа,
+ * скрипт, стиль, объект) под сессией с разрушительным адресом: отдельно от
+ * `danger`, чтобы отчёт обхода не выдавал оборванные иконки за «записи».
+ */
+export type WriteRefusal =
+  'method' | 'graphql' | 'logout' | 'danger' | 'passive';
 
 export const WRITE_REFUSALS: readonly WriteRefusal[] = [
   'method',
   'graphql',
   'logout',
   'danger',
+  'passive',
 ];
 
 export interface GuardedRequest {
@@ -59,6 +83,11 @@ export interface GuardedRequest {
   contentType: string | null;
   /** Тело (лениво: читается только у POST-кандидата в GraphQL). */
   body: () => string | null;
+  /**
+   * Под сессией учётки (`JobBrowser.sessionReadOnly`, обход «Админки»):
+   * разрушительный адрес обрывается и у пассивных видов (заход 13).
+   */
+  session?: boolean;
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -81,6 +110,18 @@ const STATIC_TYPES = new Set([
   'manifest',
   'texttrack',
 ]);
+/**
+ * Имя файла с расширением своего вида — не действие (иконка
+ * `/icons/delete.svg`, `delete-modal.js`): проверяются каталог и query.
+ */
+const FILE_NAME: Readonly<Record<string, RegExp>> = {
+  image: /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp|tiff?|apng)$/i,
+  media: /\.(mp4|webm|ogg|ogv|oga|mp3|wav|m4a|aac|flac|mov)$/i,
+  script: /\.(m?js|cjs)$/i,
+  stylesheet: /\.css$/i,
+};
+/** Под сессией не проверяются адресом вовсе: шрифты, манифест, субтитры. */
+const NEVER_ACTION_TYPES = new Set(['font', 'manifest', 'texttrack']);
 /** Потолок тела GraphQL, которое вообще разбираем. */
 export const GRAPHQL_BODY_MAX = 128 * 1024;
 const GRAPHQL_BATCH_MAX = 20;
@@ -127,16 +168,39 @@ export function writeRefusal(r: GuardedRequest): WriteRefusal | null {
     return 'graphql';
   }
   if (r.ownNavigation) return null;
-  const pathQuery = splitCamel(decodeSafe(`${u.pathname}${u.search}`));
-  if (!STATIC_TYPES.has(r.resourceType) && LOGOUT.test(pathQuery))
-    return 'logout';
-  if (
-    ACTIVE_TYPES.has(r.resourceType) &&
-    (DESTRUCTIVE.test(pathQuery) || paymentPath(decodeSafe(u.pathname)))
-  ) {
-    return 'danger';
+  const type = r.resourceType;
+  const path = decodeSafe(u.pathname);
+  const search = decodeSafe(u.search);
+  if (ACTIVE_TYPES.has(type)) {
+    const pathQuery = splitCamel(`${path}${search}`);
+    if (LOGOUT.test(pathQuery)) return 'logout';
+    if (DESTRUCTIVE.test(pathQuery) || paymentPath(path)) return 'danger';
+    return null;
   }
+  // Загрузка ресурса: имя файла своего вида — не действие (аудит P3-2(б):
+  // `/icons/logout.svg` — иконка, не «выход»); имя с `;` (матричный
+  // параметр `delete;.png`, аудит P3-4) — не прощается.
+  const dirQuery = splitCamel(`${resourceDir(type, path)}${search}`);
+  if (!STATIC_TYPES.has(type) && LOGOUT.test(dirQuery)) return 'logout';
+  // Под сессией (Р-З13-Г2) — и разрушительный адрес загрузки: картинка,
+  // медиа, объект, prefetch, а также скрипт и стиль (JSONP
+  // `/orders/5/delete?callback=…`, аудит P3-3). Словарь — без слов
+  // каталогов ресурсов; платёжный путь не проверяется (логотипы).
+  if (
+    r.session &&
+    !NEVER_ACTION_TYPES.has(type) &&
+    DESTRUCTIVE_PASSIVE.test(dirQuery)
+  )
+    return 'passive';
   return null;
+}
+
+/** Путь ресурса без имени файла своего вида (если оно есть и без `;`). */
+function resourceDir(type: string, path: string): string {
+  const re = FILE_NAME[type];
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  if (!re || !re.test(name) || name.includes(';')) return path;
+  return path.slice(0, path.length - name.length);
 }
 
 /**

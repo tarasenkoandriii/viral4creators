@@ -94,6 +94,17 @@ export interface ResolvedAdminEditor {
   customerRole: string | null;
 }
 
+/** Кто меняет карту из панели `wa.`: сотрудник (`jwt:<sub>`), канал `embed`. */
+export function adminEditorActor(ed: ResolvedAdminEditor): AdminMapActor {
+  return {
+    accountId: ed.accountId,
+    memberId: ed.memberId,
+    actor: ed.employeeRef,
+    actorRole: ed.customerRole,
+    channel: 'embed',
+  };
+}
+
 const TOKEN_RE = /^[A-Za-z0-9_-]{20,128}$/;
 
 @Injectable()
@@ -174,13 +185,7 @@ export class AdminEditorSessionService {
   }
 
   private actor(ed: ResolvedAdminEditor): AdminMapActor {
-    return {
-      accountId: ed.accountId,
-      memberId: ed.memberId,
-      actor: ed.employeeRef,
-      actorRole: ed.customerRole,
-      channel: 'embed',
-    };
+    return adminEditorActor(ed);
   }
 
   /**
@@ -434,7 +439,7 @@ export class AdminEditorSessionService {
   }
 
   /** Правила голосового управления «Админки» кабинета (или по умолчанию). */
-  private async rules(ed: ResolvedAdminEditor) {
+  async rules(ed: ResolvedAdminEditor) {
     const st = await this.sitesDb
       .forAccount(ed.accountId)
       .assistAdminSettings.findFirst({
@@ -607,7 +612,7 @@ export class AdminEditorSessionService {
   }
 
   /** Потолок «Сказать сейчас» на сайт в сутки (UTC). */
-  private async spendTry(ed: ResolvedAdminEditor): Promise<number> {
+  async spendTry(ed: ResolvedAdminEditor): Promise<number> {
     const db = this.sitesDb.forAccount(ed.accountId);
     const day = utcDay(this.now());
     const cap = VOICE_MAP_LIMITS.tryPerDay;

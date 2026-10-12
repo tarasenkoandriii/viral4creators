@@ -82,8 +82,8 @@ ci:
 	cd frontend && npm run -s lint
 	cd frontend && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
 	cd frontend && npx vite build
-	cd admin && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npm run -s test && npx next build
-	cd landing && npx tsc --noEmit -p tsconfig.json && npx next lint --max-warnings 0 && npx next build
+	cd admin && npx tsc --noEmit -p tsconfig.json && npm run -s lint && npm run -s test && npx next build
+	cd landing && npx tsc --noEmit -p tsconfig.json && npm run -s lint && npx next build
 	cd landing && npm run -s budget:js
 	$(MAKE) ci-sites-landing
 	$(MAKE) ci-sites
@@ -112,7 +112,8 @@ LANDING_STAND_ENV = SITE_URL=https://assist.viral4creators.app PILOT_TELEGRAM_BO
 	ASSIST_WIDGET_PK=pk_live_landingstand01 ASSIST_BOT_USERNAME=assist_stand_bot
 ci-sites-landing:
 	cd sites-landing && npx tsc --noEmit
-	cd sites-landing && npx next lint --max-warnings 0
+	# Линт — как в CI (заход 13: ESLint 9, `eslint .` вместо устаревшего `next lint`).
+	cd sites-landing && npm run -s lint
 	# Unit-скрипты — с тем же env стенда, что в CI: иначе тест, читающий ASSIST_*, зелёный локально и красный в CI.
 	cd sites-landing && $(LANDING_STAND_ENV) sh -c 'for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done'
 	cd sites-landing && if SITE_URL= npx next build >/dev/null 2>&1; then echo "sites-landing: сборка без SITE_URL прошла"; exit 1; fi

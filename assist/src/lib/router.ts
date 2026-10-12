@@ -74,7 +74,16 @@ export type Route =
   // Э-С Ш2: тестовые учётные записи сайта (общие с обучалкой и QA).
   | { name: 'test-accounts'; siteId: string }
   // Э7: «Админка» — кабинет режима (владелец) и чат сотрудника (7a).
-  | { name: 'admin-mode'; siteId: string; tab: AdminModeTab }
+  | {
+      name: 'admin-mode';
+      siteId: string;
+      tab: AdminModeTab;
+      /**
+       * Заход 13 (Р-З13-Б1): `#/sites/:id/admin-mode/roles` — вкладка
+       * «Режим», прокрутка к «Ролям» (из подсказки 409 ссылки редактора).
+       */
+      focus?: 'roles';
+    }
   | { name: 'admin-chat'; siteId: string }
   // Ш1-хвост: «подтвердить этот хост» (startapp `vh-…` из обучалки).
   | { name: 'verify-host'; host: string }
@@ -181,6 +190,19 @@ export function parseRoute(hash: string): Route {
     }
     // Э7: #/sites/:id/admin-mode[/вкладка]; #/sites/:id/learning/admin —
     // «Обучение (сотрудники)» (§4-тер.13); #/sites/:id/admin-chat — 7a.
+    if (
+      p.length === 4 &&
+      p[2] === 'admin-mode' &&
+      p[3] === 'roles' &&
+      ID.test(p[1])
+    ) {
+      return {
+        name: 'admin-mode',
+        siteId: p[1],
+        tab: 'settings',
+        focus: 'roles',
+      };
+    }
     if (
       (p.length === 3 || p.length === 4) &&
       p[2] === 'admin-mode' &&
@@ -322,6 +344,8 @@ export function routeHref(r: Route): string {
     case 'test-accounts':
       return `#/sites/${r.siteId}/test-accounts`;
     case 'admin-mode':
+      if (r.focus === 'roles' && r.tab === 'settings')
+        return `#/sites/${r.siteId}/admin-mode/roles`;
       return `#/sites/${r.siteId}/admin-mode${
         r.tab === 'settings' ? '' : `/${r.tab}`
       }`;

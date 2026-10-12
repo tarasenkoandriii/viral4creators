@@ -8,7 +8,7 @@
     "dev": "vite --config vite.dev.config.ts",
     "build": "vite build --config vite.loader.config.ts && vite build --config vite.chat.config.ts && vite build --config vite.picker.config.ts && vite build --config vite.engage.config.ts && vite build --config vite.voice.config.ts && vite build --config vite.highlight.config.ts && vite build --config vite.act.config.ts && vite build --config vite.undo.config.ts && vite build --config vite.comp.config.ts && vite build --config vite.check.config.ts && vite build --config vite.vt.config.ts && vite build --config vite.admin.config.ts && vite build --config vite.admin-chat.config.ts && vite build --config vite.admin-act.config.ts && vite build --config vite.admin-vc.config.ts && vite build --config vite.ana.config.ts && vite build --config vite.bf.config.ts && vite build --config vite.editor.config.ts && vite build --config vite.editor-panel.config.ts && vite build --config vite.editor-lazy.config.ts && node scripts/release.mjs",
     "size": "node scripts/size-budget.mjs",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "test": "for f in scripts/*.test.ts; do echo \"── $f\"; npx tsx \"$f\" || exit 1; done",
@@ -21,13 +21,13 @@
     "preact": "^10.29.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@playwright/test": "1.56.1",
     "@types/node": "^22.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.14.0",
-    "@typescript-eslint/parser": "^6.14.0",
-    "eslint": "^8.55.0",
+    "eslint": "^9.39.5",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.0.1",
+    "globals": "^17.13.0",
     "jquery": "^3.7.1",
     "prettier": "^3.1.1",
     "react": "^18.3.1",
@@ -35,6 +35,7 @@
     "react-router-dom": "^6.30.6",
     "tsx": "^4.19.0",
     "typescript": "^5.2.2",
+    "typescript-eslint": "^8.71.1",
     "vite": "5.4.21",
     "vue": "^3.5.43",
     "vue-router": "^4.6.4"

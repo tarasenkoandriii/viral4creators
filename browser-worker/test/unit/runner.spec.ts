@@ -92,8 +92,20 @@ class FakeApi implements WorkerApi {
   }
   /** complete отвечает этой ошибкой (сервер не принял результат). */
   completeError: ApiError | null = null;
-  async complete(id: string) {
+  /** «Старый сервер» (заход 13): ключ результата, которого он не знает. */
+  unknownResultKey: string | null = null;
+  /** Каждая попытка сдачи: id и результат. */
+  attempts: Array<[string, unknown]> = [];
+  async complete(id: string, _t: string, result: unknown) {
+    this.attempts.push([id, result]);
     if (this.completeError) throw this.completeError;
+    if (
+      this.unknownResultKey &&
+      result &&
+      typeof result === 'object' &&
+      this.unknownResultKey in result
+    )
+      throw new ApiError(400, 'WORKER_BAD_RESULT');
     this.completed.push(id);
   }
   async fail(id: string, _t: string, code: string) {
@@ -493,6 +505,143 @@ describe('цикл воркера: аренда, heartbeat, повтор, ост
       writes: 6,
       reason: 'method:3,graphql:1,websocket:2',
     });
+  });
+
+  // ── заход 13 (Р-З13-Г1): blockedWrites и старый sites-backend ──────────
+  const crawlJob = (id: string) =>
+    job(id, {
+      kind: 'admin-crawl',
+      params: {
+        startUrl: 'https://admin.shop.test/admin',
+        allowedHosts: ['admin.shop.test'],
+        viewport: 'desktop',
+        maxPages: 2,
+        maxDepth: 1,
+        loginMethod: 'password',
+      },
+    });
+  const crawlResult = {
+    loggedIn: true,
+    pages: [],
+    refusedClicks: 0,
+    skippedLinks: 1,
+    blockedWrites: { total: 2, reasons: { method: 2 } },
+  };
+
+  it('Р-З13-Г1: новый сервер — blockedWrites уходит с результатом, одна сдача', async () => {
+    const api = new FakeApi();
+    api.queue = [crawlJob('new')];
+    const { runner } = make(api, async () => crawlResult);
+    runner.start();
+    for (let i = 0; i < 100 && api.completed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.completed).toEqual(['new']);
+    expect(api.attempts).toEqual([['new', crawlResult]]);
+  });
+
+  it('Р-З13-Г1: старый сервер не знает blockedWrites (400) — вторая сдача без поля, обход не пропал', async () => {
+    const api = new FakeApi();
+    api.unknownResultKey = 'blockedWrites';
+    api.queue = [crawlJob('old')];
+    const lines: string[] = [];
+    const { runner } = make(api, async () => crawlResult, 1, {
+      logger: createLogger('info', (l) => lines.push(l)),
+    });
+    runner.start();
+    for (let i = 0; i < 100 && api.completed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.completed).toEqual(['old']);
+    expect(api.failed).toEqual([]);
+    const stripped: Record<string, unknown> = { ...crawlResult };
+    delete stripped.blockedWrites;
+    expect(api.attempts).toEqual([
+      ['old', crawlResult],
+      ['old', stripped],
+    ]);
+    const recs = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(
+      recs.find(
+        (r) =>
+          r.msg ===
+          'сервер не принял необязательные поля результата — сдано без них',
+      ),
+    ).toMatchObject({
+      jobId: 'old',
+      kind: 'admin-crawl',
+      reason: 'blockedWrites',
+    });
+  });
+
+  it('Р-З13-Г1: отказ и без поля — too_large (без третьей сдачи); у вида без необязательных полей — без повтора', async () => {
+    const api = new FakeApi();
+    api.completeError = new ApiError(400, 'WORKER_BAD_RESULT');
+    api.queue = [crawlJob('bad'), job('snap')];
+    const { runner } = make(api, async (ctx) =>
+      ctx.job.kind === 'admin-crawl' ? crawlResult : okResult,
+    );
+    runner.start();
+    for (let i = 0; i < 100 && api.failed.length < 2; i++) await tick();
+    await runner.shutdown();
+    expect(api.failed.sort()).toEqual([
+      ['bad', 'too_large'],
+      ['snap', 'too_large'],
+    ]);
+    expect(api.attempts.filter(([id]) => id === 'bad')).toHaveLength(2);
+    expect(api.attempts.filter(([id]) => id === 'snap')).toHaveLength(1);
+  });
+
+  it('аудит P3-6: самопроверка не приняла blockedWrites (> 1e6) — сдано без поля, обход не пропал', async () => {
+    const api = new FakeApi();
+    api.queue = [crawlJob('huge')];
+    const lines: string[] = [];
+    const huge = {
+      ...crawlResult,
+      blockedWrites: { total: 2e6, reasons: { method: 2e6 } },
+    };
+    const { runner } = make(api, async () => huge, 1, {
+      logger: createLogger('info', (l) => lines.push(l)),
+    });
+    runner.start();
+    for (let i = 0; i < 100 && api.completed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.completed).toEqual(['huge']);
+    expect(api.failed).toEqual([]);
+    const stripped: Record<string, unknown> = { ...huge };
+    delete stripped.blockedWrites;
+    expect(api.attempts).toEqual([['huge', stripped]]);
+    const recs = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(
+      recs.find(
+        (r) =>
+          r.msg ===
+          'самопроверка не приняла необязательные поля результата — сдаю без них',
+      ),
+    ).toMatchObject({ jobId: 'huge', reason: 'blockedWrites' });
+  });
+
+  it('самопроверка: ошибка не в необязательном поле — fail, как раньше', async () => {
+    const api = new FakeApi();
+    api.queue = [crawlJob('bad-host')];
+    const { runner } = make(api, async () => ({
+      ...crawlResult,
+      pages: [{ url: 'https://evil.test/', title: 't', text: 'x' }],
+    }));
+    runner.start();
+    for (let i = 0; i < 100 && api.failed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.attempts).toEqual([]);
+    expect(api.failed).toEqual([['bad-host', 'too_large']]);
+  });
+
+  it('Р-З13-Г1: другой отказ сервера (не 400 WORKER_BAD_RESULT) — без сдачи без поля', async () => {
+    const api = new FakeApi();
+    api.completeError = new ApiError(409, 'WORKER_LEASE_LOST');
+    api.queue = [crawlJob('lost')];
+    const { runner } = make(api, async () => crawlResult);
+    runner.start();
+    for (let i = 0; i < 100 && api.failed.length < 1; i++) await tick();
+    await runner.shutdown();
+    expect(api.attempts).toHaveLength(1);
   });
 
   it('дренаж: пул держит claim — свободные места не заполняются', async () => {

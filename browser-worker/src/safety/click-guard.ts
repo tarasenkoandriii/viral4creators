@@ -34,9 +34,22 @@ export function clickRefusal(t: {
 /** «Выход» — словом в тексте или адресе (общий с `write-guard.ts`). */
 export const LOGOUT =
   /(?<![\p{L}\p{N}])(logout|log-out|log_out|logoff|signout|sign-out|sign_out|выйти|выход|вийти|вихід)(?![\p{L}\p{N}])/iu;
-/** Разрушительное слово в адресе (общий с `write-guard.ts`). */
+/**
+ * Разрушительное слово в адресе (общий с `write-guard.ts`). `;` — тоже
+ * граница: матричный параметр (`/orders/5/delete;jsessionid=…`) сервер
+ * отрезает и исполняет `…/delete` (заход 13, аудит P3-4).
+ */
 export const DESTRUCTIVE =
-  /(^|[/_.=&?:-])(delete|del|remove|destroy|erase|drop|purge|wipe|cancel|refund|void|deactivate|disable|ban|block|reset|logout|logoff|signout|unsubscribe|truncate|clear|approve|reject|send|publish|import|export|download|archive|unarchive|restore|confirm)([/_.=&?:-]|$)/i;
+  /(^|[/_.=&?:;-])(delete|del|remove|destroy|erase|drop|purge|wipe|cancel|refund|void|deactivate|disable|ban|block|reset|logout|logoff|signout|unsubscribe|truncate|clear|approve|reject|send|publish|import|export|download|archive|unarchive|restore|confirm)([/_.=&?:;-]|$)/i;
+/**
+ * Разрушительное слово для ЗАГРУЗОК ресурсов под сессией (картинка, медиа,
+ * скрипт, стиль — заход 13, аудит P3-2): без слов, которыми часто называют
+ * каталоги ресурсов (`block`, `send`, `import`, `export`, `download`,
+ * `clear`, `archive`, `publish`: блоки CMS, `media/import` Magento,
+ * `/archive/2024/…`), — их обрыв ломал бы картинки, а не запись.
+ */
+export const DESTRUCTIVE_PASSIVE =
+  /(^|[/_.=&?:;-])(delete|del|remove|destroy|erase|drop|purge|wipe|cancel|refund|void|deactivate|disable|ban|reset|logout|logoff|signout|unsubscribe|truncate|approve|reject|unarchive|restore|confirm)([/_.=&?:;-]|$)/i;
 
 /**
  * camelCase адреса — на слова через `-` (`/api/deleteOrder` →

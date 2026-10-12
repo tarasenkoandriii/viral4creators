@@ -12,6 +12,8 @@ export type AdminErrorCode =
   | 'ADMIN_HOST_INVALID'
   | 'ADMIN_ACCESS_INVALID'
   | 'ADMIN_ROLEMAP_INVALID'
+  // Заход 13 (аудит P3-6): пару карты ролей изменили после показа экрана.
+  | 'ADMIN_ROLEMAP_CHANGED'
   | 'ADMIN_IDENTITY_NOT_SET'
   | 'ADMIN_IDENTITY_REJECTED'
   | 'ADMIN_SESSION_INVALID'

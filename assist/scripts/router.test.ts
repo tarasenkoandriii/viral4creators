@@ -320,10 +320,21 @@ const E7_ROUTES: Route[] = [
   { name: 'admin-mode', siteId: 's1', tab: 'memos' },
   { name: 'admin-mode', siteId: 's1', tab: 'learning' },
   { name: 'admin-mode', siteId: 's1', tab: 'stats' },
+  // Заход 13: «Роли» на вкладке «Режим» (из подсказки 409 редактора карты).
+  { name: 'admin-mode', siteId: 's1', tab: 'settings', focus: 'roles' },
   { name: 'admin-chat', siteId: 's1' },
 ];
 for (const r of E7_ROUTES) assert.deepEqual(parseRoute(routeHref(r)), r);
 assert.equal(routeHref(E7_ROUTES[0]), '#/sites/s1/admin-mode');
+assert.equal(
+  routeHref({
+    name: 'admin-mode',
+    siteId: 's1',
+    tab: 'settings',
+    focus: 'roles',
+  }),
+  '#/sites/s1/admin-mode/roles'
+);
 assert.deepEqual(parseRoute('#/sites/s1/learning/admin'), {
   name: 'admin-mode',
   siteId: 's1',
@@ -332,6 +343,7 @@ assert.deepEqual(parseRoute('#/sites/s1/learning/admin'), {
 for (const bad of [
   '#/sites/s1/admin-mode/settings',
   '#/sites/s1/admin-mode/nope',
+  '#/sites/s1/admin-mode/roles/x',
   '#/sites/s1/admin-chat/x',
   '#/sites/s1/learning/admin/queue',
 ]) {

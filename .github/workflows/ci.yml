@@ -348,6 +348,11 @@ jobs:
           cache-dependency-path: assist/package-lock.json
       - run: npm ci
         working-directory: assist
+      # Шага не было вовсе; заведён строгим (заход 13, Р-З13-В6):
+      # high/critical в рантайме — 0.
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        working-directory: assist
       # Копия site-tma-kit в assist/src/kit совпадает с источником.
       - name: site-tma-kit синхронен
         run: node scripts/sync-site-tma-kit.mjs --check
@@ -385,10 +390,11 @@ jobs:
           cache-dependency-path: widget/package-lock.json
       - run: npm ci
         working-directory: widget
-      # Строго, без continue-on-error — осознанно, в отличие от остальных
-      # пакетов: с --omit=dev здесь только рантайм виджета (Preact), а он
-      # исполняется на ЧУЖИХ сайтах заказчиков. Высокая уязвимость в нём —
-      # повод остановиться, а не строка в логе.
+      # Строго, без continue-on-error — осознанно (а с захода 13, Р-З13-В6,
+      # строго везде, кроме live-login-relay): с --omit=dev здесь только
+      # рантайм виджета (Preact), а он исполняется на ЧУЖИХ сайтах
+      # заказчиков. Высокая уязвимость в нём — повод остановиться, а не
+      # строка в логе.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
         working-directory: widget
@@ -447,6 +453,10 @@ jobs:
           tools: none
       - run: npm ci
         working-directory: assist-integrations
+      # Шага не было; заведён строгим (заход 13, Р-З13-В6): уязвимостей 0.
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        working-directory: assist-integrations
       - name: типы
         run: npm run typecheck
         working-directory: assist-integrations
@@ -498,15 +508,18 @@ jobs:
             widget/package-lock.json
       - run: npm ci
         working-directory: sites-landing
+      # Строго с захода 13 (Р-З13-В6): после Next 15.5 (заход 12) high/
+      # critical в рантайм-зависимостях — 0.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
         working-directory: sites-landing
       - name: типы
         run: npx tsc --noEmit
         working-directory: sites-landing
+      # ESLint 9 + flat config (заход 13, Р-З13-В1): `eslint` CLI вместо
+      # устаревшего `next lint`; команда — в package.json (`npm run lint`).
       - name: линт
-        run: npx next lint --max-warnings 0
+        run: npm run lint
         working-directory: sites-landing
       - name: unit-скрипты
         run: npm test
@@ -515,7 +528,7 @@ jobs:
       # падает именно на проверке адреса (а не на чём-то случайном).
       - name: сборка без SITE_URL падает
         run: |
-          if SITE_URL= npx next build > no-site-url.log 2>&1; then
+          if SITE_URL='' npx next build > no-site-url.log 2>&1; then
             echo "сборка без SITE_URL прошла — замок снят"; exit 1
           fi
           grep -q 'SITE_URL не задан' no-site-url.log
@@ -580,9 +593,9 @@ jobs:
 
       - run: npm ci
         working-directory: frontend
+      # Строго с захода 13 (Р-З13-В6): high/critical в рантайме — 0.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
         working-directory: frontend
 
       - name: типы
@@ -640,9 +653,10 @@ jobs:
 
       - run: npm ci
         working-directory: ${{ matrix.app }}
+      # Строго с захода 13 (Р-З13-В6): после Next 15.5 (заход 12) high/
+      # critical в рантайм-зависимостях всех трёх приложений — 0.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
         working-directory: ${{ matrix.app }}
 
       - name: типы
@@ -651,8 +665,11 @@ jobs:
 
       # Этап 53 (В-6.11): две кодовые базы из четырёх не линтовались никогда
       # — у admin/ и landing/ не было ни конфигурации, ни скрипта.
+      # Заход 13 (Р-З13-В1): ESLint 9 + flat config, `eslint .` вместо
+      # устаревшего `next lint` (тот смотрел только src/); команда — в
+      # package.json.
       - name: линт
-        run: npx next lint --max-warnings 0
+        run: npm run lint
         working-directory: ${{ matrix.app }}
 
       # У `landing/` появились первые тесты — до этого он проверялся
@@ -760,9 +777,9 @@ jobs:
         run: node scripts/sync-worker-shared.mjs --check
       - run: npm ci
         working-directory: browser-worker
+      # Строго с захода 13 (Р-З13-В6): high/critical в рантайме — 0.
       - name: npm audit (high)
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
         working-directory: browser-worker
       - name: линт
         run: npx eslint "src/**/*.ts" "test/**/*.ts" --max-warnings 0

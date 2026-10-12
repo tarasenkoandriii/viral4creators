@@ -21,7 +21,8 @@
  *     SharedWorker, попапы — обрыв; доказанное чтение GraphQL проходит.
  *     Окно записи входа — от Enter до признака входа (смена адреса или
  *     исчезновение поля пароля, ≤ 15 с), только хостам замка. Счётчик — в
- *     журнале задания (`writes`).
+ *     журнале задания (`writes`) и в результате (`blockedWrites`, заход 13:
+ *     итог и по причинам — отчёт обхода в TMA).
  *  4. Результат — только «знания об интерфейсе» страниц (заголовки,
  *     подписи меню, кнопок и полей, шапки таблиц), без содержимого ячеек.
  *     ПД вне таблиц (Ш3-хвост (17), `admin-crawl-entity.ts`): на карточке
@@ -31,6 +32,7 @@
  *     вида открывается ОДНА (структура у них общая).
  */
 import type { Page } from 'playwright-core';
+import { blockedWritesOf } from '../browser/context';
 import { collectInterface } from '../page/collect';
 import { toggleKey, tryToggle } from '../page/toggles';
 import { linkRefusal } from '../safety/click-guard';
@@ -355,5 +357,13 @@ export async function runAdminCrawl(
   // Один адрес — одна страница (разные query одного пути — первая).
   const uniq = new Map<string, AdminCrawlResult['pages'][number]>();
   for (const pg of pages) if (!uniq.has(pg.url)) uniq.set(pg.url, pg);
-  return { loggedIn, pages: [...uniq.values()], refusedClicks, skippedLinks };
+  return {
+    loggedIn,
+    pages: [...uniq.values()],
+    refusedClicks,
+    skippedLinks,
+    // Заход 13 (Р-З13-Г1): оборванная запись — в отчёт обхода TMA. Старый
+    // sites-backend поле не примет — `runner.ts` сдаст результат без него.
+    blockedWrites: blockedWritesOf(ctx.jb.writesBlocked()),
+  };
 }

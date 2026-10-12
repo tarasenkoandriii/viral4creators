@@ -41,6 +41,8 @@ import { AdminMemoCheckService } from './admin-memo-check.service';
     AdminVoiceSettingsService,
     AdminVoiceTestService,
   ],
-  exports: [AdminUiPlanService, AdminVoiceSettingsService],
+  // Заход 13: клиент Soniox «Админки» — и микрофону панели редактора карты
+  // (`assist-admin-voice-map`, тот же путь распознавания, Р-З13-А6).
+  exports: [AdminUiPlanService, AdminVoiceSettingsService, AdminSonioxStt],
 })
 export class AssistAdminVoiceModule {}

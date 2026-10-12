@@ -27,6 +27,8 @@ import { EditorVoiceService } from './editor/editor-voice.service';
 import { DevReportController } from './dev-report.controller';
 import { DevReportService } from './dev-report.service';
 import { MapMissesService } from './map-misses';
+import { VoiceMapSuggestionsController } from './voice-map-suggestions.controller';
+import { VoiceMapSuggestionsService } from './voice-map-suggestions.service';
 import { VoiceMapToolsController } from './voice-map-tools.controller';
 import { VoiceMapController } from './voice-map.controller';
 import { VoiceMapWorkerController } from './voice-map-worker.controller';
@@ -48,6 +50,8 @@ import { VoiceMapService } from './voice-map.service';
     EditorFrameController,
     // Заход 10 (№113): ИИ-синонимы, «Промахи», «Предложения».
     EditorAssistController,
+    // Заход 13 (Р-З13-Б3): те же подсказки в TMA «Обучение → Голос».
+    VoiceMapSuggestionsController,
   ],
   providers: [
     VoiceMapService,
@@ -65,6 +69,7 @@ import { VoiceMapService } from './voice-map.service';
     EditorVoiceService,
     // Заход 10 (№113): ИИ-синонимы, «Промахи», «Предложения» в панели.
     EditorAssistService,
+    VoiceMapSuggestionsService,
   ],
   exports: [VoiceMapService],
 })

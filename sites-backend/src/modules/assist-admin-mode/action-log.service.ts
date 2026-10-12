@@ -34,7 +34,8 @@ export interface ActionLogEntry {
    * статус цепочки (компенсация, §5-бис.15 п.11); memo — изменение мемо
    * АМ-N (§5-бис.17 п.10); Э6-бис (б): ui-plan / ui-step / ui-test /
    * voice-control — голосовое управление «Админкой».
-   * Заход 11: voice-map — голосовая карта «Админки».
+   * Заход 11: voice-map — голосовая карта «Админки». Заход 13: settings —
+   * изменения карты ролей кабинета.
    */
   kind?: ActionLogKind;
   outcome: string;
@@ -62,7 +63,10 @@ export type ActionLogKind =
   | 'voice-control'
   // Заход 11 (№117): изменения голосовой карты «Админки» (черновик, версии,
   // публикация, откат, ссылки и сессии редактора; §5-кватер.9 «Изоляция»).
-  | 'voice-map';
+  | 'voice-map'
+  // Заход 13 (Р-З13-Б2): изменения прав в настройках кабинета — карта ролей
+  // (в т. ч. «моя роль → owner»: редактор карты и инструменты owner в чате).
+  | 'settings';
 
 export interface ActionLogView {
   id: string;
@@ -137,6 +141,11 @@ export interface ChainHeadView {
   hash: string;
 }
 
+/** Клиент транзакции тенанта (`forAccount(...).$transaction`). */
+export type ActionLogTx = Parameters<
+  Parameters<ReturnType<SitesDb['forAccount']>['$transaction']>[0]
+>[0];
+
 @Injectable()
 export class AdminActionLogService {
   /** Тесты: размер пачки проверки цепочки. */
@@ -168,48 +177,62 @@ export class AdminActionLogService {
     now = new Date(),
     key?: string,
   ): Promise<string> {
-    const db = this.db.forAccount(e.accountId);
+    return this.db
+      .forAccount(e.accountId)
+      .$transaction((tx) => this.appendIn(tx, e, now, key));
+  }
+
+  /**
+   * Заход 13 (Р-З13-Б2, аудит P2-1): строка журнала ВНУТРИ транзакции
+   * вызывающего — изменение (карта ролей) и его строка коммитятся вместе;
+   * сбой журнала откатывает и изменение. Замок цепочки сайта берётся в той
+   * же транзакции.
+   */
+  async appendIn(
+    tx: ActionLogTx,
+    e: ActionLogEntry,
+    now = new Date(),
+    key?: string,
+  ): Promise<string> {
     const idempotencyKey = key ?? `${e.kind ?? 'read'}:${randomUUID()}`;
-    return db.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`assist-admin-log:${e.siteId}`}))`;
-      const last = await tx.assistAdminActionLog.findFirst({
-        where: { siteId: e.siteId },
-        orderBy: [{ at: 'desc' }, { id: 'desc' }],
-        select: { hash: true, at: true },
-      });
-      // Время строки не раньше предыдущей — порядок цепочки = порядок `at`.
-      const at =
-        last && last.at.getTime() >= now.getTime()
-          ? new Date(last.at.getTime() + 1)
-          : now;
-      const prevHash = last?.hash ?? null;
-      const row = await tx.assistAdminActionLog.create({
-        data: {
-          accountId: e.accountId,
-          siteId: e.siteId,
-          at,
-          actor: e.actor,
-          actorRole: e.actorRole,
-          channel: e.channel,
-          conversationId: e.conversationId,
-          connectorId: e.connectorId,
-          operationRowId: e.operationRowId,
-          operation: e.operation.slice(0, 200),
-          kind: e.kind ?? 'read',
-          outcome: e.outcome,
-          httpStatus: e.httpStatus,
-          durationMs: e.durationMs,
-          requestMasked: e.requestMasked,
-          responseBytes: e.responseBytes,
-          error: e.error,
-          idempotencyKey,
-          prevHash,
-          hash: actionLogHash(prevHash, e, at, idempotencyKey),
-        },
-        select: { id: true },
-      });
-      return row.id;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`assist-admin-log:${e.siteId}`}))`;
+    const last = await tx.assistAdminActionLog.findFirst({
+      where: { siteId: e.siteId },
+      orderBy: [{ at: 'desc' }, { id: 'desc' }],
+      select: { hash: true, at: true },
     });
+    // Время строки не раньше предыдущей — порядок цепочки = порядок `at`.
+    const at =
+      last && last.at.getTime() >= now.getTime()
+        ? new Date(last.at.getTime() + 1)
+        : now;
+    const prevHash = last?.hash ?? null;
+    const row = await tx.assistAdminActionLog.create({
+      data: {
+        accountId: e.accountId,
+        siteId: e.siteId,
+        at,
+        actor: e.actor,
+        actorRole: e.actorRole,
+        channel: e.channel,
+        conversationId: e.conversationId,
+        connectorId: e.connectorId,
+        operationRowId: e.operationRowId,
+        operation: e.operation.slice(0, 200),
+        kind: e.kind ?? 'read',
+        outcome: e.outcome,
+        httpStatus: e.httpStatus,
+        durationMs: e.durationMs,
+        requestMasked: e.requestMasked,
+        responseBytes: e.responseBytes,
+        error: e.error,
+        idempotencyKey,
+        prevHash,
+        hash: actionLogHash(prevHash, e, at, idempotencyKey),
+      },
+      select: { id: true },
+    });
+    return row.id;
   }
 
   async list(

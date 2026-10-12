@@ -41,6 +41,7 @@ import { GEMINI_MODEL } from '../../../shared/gemini-model';
 import { parsePersona } from '../../assist-site-setup/persona';
 import { phraseNorm } from '../../assist-ui-core/memo';
 import {
+  commandBody,
   effectiveRisk,
   parseVoiceMapContent,
   targetPhrases,
@@ -117,6 +118,23 @@ export interface EditorSuggestionsView {
 }
 
 type Db = ReturnType<SitesDb['forAccount']>;
+
+/**
+ * Кто действует с подсказками: сессия редактора `we.` или (заход 13,
+ * Р-З13-Б3) участник кабинета в TMA «Обучение → Голос» — право проверено
+ * вызывающим (сессия редактора / гвард кабинета + сайт кабинета).
+ */
+export type SuggestionActor = Pick<
+  ResolvedEditor,
+  'accountId' | 'siteId' | 'memberId'
+>;
+
+/** (заход 13) Принятый термин: прежний список — для «Отменить» в TMA. */
+export interface AcceptedTerm {
+  revision: number;
+  term: string;
+  before: string[];
+}
 
 @Injectable()
 export class EditorAssistService {
@@ -335,7 +353,7 @@ export class EditorAssistService {
   /** Строка журнала карты без правки черновика (источник `suggestion`). */
   private async journal(
     db: Db,
-    ed: ResolvedEditor,
+    ed: SuggestionActor,
     revision: number,
     op: Record<string, string>,
   ): Promise<void> {
@@ -411,7 +429,7 @@ export class EditorAssistService {
   }
 
   /** Языки опубликованной персоны сайта (без персоны — пусто). */
-  private async siteLangs(db: Db, siteId: string): Promise<string[]> {
+  async siteLangs(db: Db, siteId: string): Promise<string[]> {
     const row = await db.assistSite.findFirst({
       where: { siteId },
       select: { configVersion: true, personaDraft: true },
@@ -453,7 +471,7 @@ export class EditorAssistService {
   // ── «Не предлагать» ─────────────────────────────────────────────────────
 
   /** Отклонённые за 30 дней (id пар) — по журналу карты. */
-  private async mutedIds(db: Db, siteId: string): Promise<Set<string>> {
+  async mutedIds(db: Db, siteId: string): Promise<Set<string>> {
     const rows = await this.journalRows(
       db,
       siteId,
@@ -469,7 +487,7 @@ export class EditorAssistService {
     return out;
   }
 
-  async mute(ed: ResolvedEditor, body: unknown): Promise<{ id: string }> {
+  async mute(ed: SuggestionActor, body: unknown): Promise<{ id: string }> {
     const b = (body ?? {}) as {
       id?: unknown;
       key?: unknown;
@@ -585,11 +603,17 @@ export class EditorAssistService {
   }
 
   /** (заход 11) Команды планов «не туда» (маскированные; мастер и сухие — нет). */
-  private async wrong(
+  /**
+   * `keep` (заход 13, аудит P3-4): отбор фраз ДО срезов свёртки (≤ 5 на
+   * цель, ≤ 30) — TMA отсекает уже перепривязанные и чужие языки, чтобы они
+   * не занимали места свежих карточек (как «не предлагать», аудит P3-8).
+   */
+  async wrong(
     db: Db,
     siteId: string,
     wrongs: ReadonlyArray<{ key: string; planId: string }>,
     muted?: ReadonlySet<string>,
+    keep?: (r: { key: string; phrase: string; lang: string | null }) => boolean,
   ): Promise<WrongItem[]> {
     if (!wrongs.length) return [];
     const plans = await db.assistSiteUiPlan.findMany({
@@ -620,6 +644,17 @@ export class EditorAssistService {
     const rows: WrongRow[] = [];
     for (const w of wrongs) {
       const p = byId.get(w.planId);
+      if (
+        p &&
+        keep &&
+        !keep({
+          key: w.key,
+          phrase: commandBody(p.utteranceMasked),
+          // Норма языка — как у свёртки (`wrongAsked`).
+          lang: p.lang && /^[a-z]{2}$/.test(p.lang) ? p.lang : null,
+        })
+      )
+        continue;
       if (p)
         rows.push({
           key: w.key,
@@ -634,7 +669,7 @@ export class EditorAssistService {
   }
 
   /** (заход 11) Кандидаты в термины за 7 дней (известное карте — нет). */
-  private async terms(
+  async terms(
     db: Db,
     siteId: string,
     content: VoiceMapContent,
@@ -669,6 +704,25 @@ export class EditorAssistService {
     ed: ResolvedEditor,
     body: unknown,
   ): Promise<{ revision: number; term: string }> {
+    const r = await this.acceptTermFor(ed, body, 'editor', () =>
+      this.bad('Такого предложения термина нет'),
+    );
+    return { revision: r.revision, term: r.term };
+  }
+
+  /**
+   * Общая часть «принять термин» — панель редактора (источник `editor`) и
+   * TMA «Обучение → Голос» (заход 13, источник `tma`): ревизия, свежий
+   * список по id, лимит терминов, `set-terms` черновика (журнал карты —
+   * в `VoiceMapService.patch`). `gone` — отказ «такого предложения нет»
+   * своим кодом у каждого канала.
+   */
+  async acceptTermFor(
+    who: SuggestionActor,
+    body: unknown,
+    source: 'editor' | 'tma',
+    gone: () => Error,
+  ): Promise<AcceptedTerm> {
     const b = (body ?? {}) as { expectedRevision?: unknown; id?: unknown };
     if (
       typeof b.expectedRevision !== 'number' ||
@@ -676,9 +730,15 @@ export class EditorAssistService {
       typeof b.id !== 'string' ||
       !ID_RE.test(b.id)
     )
-      throw this.bad('Нужны ревизия черновика и id предложения');
-    const db = this.sitesDb.forAccount(ed.accountId);
-    const row = await this.maps.loadMap(db, ed.accountId, ed.siteId);
+      throw source === 'editor'
+        ? this.bad('Нужны ревизия черновика и id предложения')
+        : voiceMapError(
+            HttpStatus.BAD_REQUEST,
+            'VOICE_MAP_INVALID',
+            'Нужны ревизия черновика и id предложения',
+          );
+    const db = this.sitesDb.forAccount(who.accountId);
+    const row = await this.maps.loadMap(db, who.accountId, who.siteId);
     if (row.draftRevision !== b.expectedRevision)
       throw voiceMapError(
         HttpStatus.CONFLICT,
@@ -686,10 +746,10 @@ export class EditorAssistService {
         'Карту изменили в другой вкладке — обновите',
       );
     const content = parseVoiceMapContent(row.draft);
-    const item = (await this.terms(db, ed.siteId, content)).find(
+    const item = (await this.terms(db, who.siteId, content)).find(
       (t) => t.id === b.id && t.visitors >= EDITOR_ASSIST.minTermVisitors,
     );
-    if (!item) throw this.bad('Такого предложения термина нет');
+    if (!item) throw gone();
     if (content.terms.length >= EDITOR_ASSIST.termsMax)
       throw voiceMapError(
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -698,18 +758,22 @@ export class EditorAssistService {
         { errors: [{ path: 'terms', code: 'limit' }] },
       );
     const res = await this.maps.patch(
-      { accountId: ed.accountId, memberId: ed.memberId },
-      ed.siteId,
+      { accountId: who.accountId, memberId: who.memberId },
+      who.siteId,
       {
         expectedRevision: row.draftRevision,
         ops: [{ op: 'set-terms', terms: [...content.terms, item.phrase] }],
       },
-      'editor',
+      source,
     );
     this.logger.log(
-      `editor term site=${ed.siteId} id=${termId(phraseNorm(item.phrase))} terms=${content.terms.length + 1}`,
+      `${source} term site=${who.siteId} id=${termId(phraseNorm(item.phrase))} terms=${content.terms.length + 1}`,
     );
-    return { revision: res.revision, term: item.phrase };
+    return {
+      revision: res.revision,
+      term: item.phrase,
+      before: [...content.terms],
+    };
   }
 
   /**

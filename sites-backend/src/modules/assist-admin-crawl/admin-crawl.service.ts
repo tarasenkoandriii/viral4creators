@@ -31,6 +31,7 @@ import {
   Logger,
   OnModuleInit,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { maskLabel } from '../assist-ui-core/snapshot';
 import { hostOrigin } from '../browser-jobs/browser-job-rules';
@@ -39,7 +40,12 @@ import {
   BrowserJobHandlers,
   type HandlerJob,
 } from '../browser-jobs/job-handlers';
-import type { AdminCrawlResult } from '../browser-jobs/protocol';
+import {
+  WRITE_BLOCK_REASONS,
+  type AdminCrawlResult,
+  type BlockedWriteBucket,
+  type BlockedWrites,
+} from '../browser-jobs/protocol';
 import { AdminKnowledgeService } from '../assist-admin-knowledge/admin-knowledge.service';
 import { questionLang } from '../assist-knowledge-core/answer/prompt';
 import type { DocumentInput } from '../assist-knowledge-core/types';
@@ -135,9 +141,39 @@ export interface PrivateCrawlView {
     status: string;
     createdAt: string;
     note: string | null;
+    /**
+     * Заход 13 (Р-З13-Г1): запись, оборванная «только чтением» воркера
+     * (итог и по причинам); null — результата нет или старый воркер.
+     */
+    blockedWrites: BlockedWrites | null;
   }>;
   /** `waiting_sh3` — воркер Ш3 не подключён (задания ждут); `ready` — подключён. */
   worker: 'waiting_sh3' | 'ready';
+}
+
+const BLOCKED_WRITE_BUCKETS: readonly BlockedWriteBucket[] = [
+  ...WRITE_BLOCK_REASONS,
+  'other',
+];
+
+/**
+ * `blockedWrites` из строки обхода → вид (столбец JSONB записан разбором
+ * протокола; здесь — защитно: чужая форма — null, неизвестная причина —
+ * не показывается).
+ */
+export function storedBlockedWrites(v: unknown): BlockedWrites | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = v as { total?: unknown; reasons?: unknown };
+  if (!Number.isInteger(o.total) || (o.total as number) < 0) return null;
+  const reasons: BlockedWrites['reasons'] = {};
+  if (o.reasons && typeof o.reasons === 'object') {
+    const r = o.reasons as Record<string, unknown>;
+    for (const k of BLOCKED_WRITE_BUCKETS) {
+      const n = r[k];
+      if (Number.isInteger(n) && (n as number) > 0) reasons[k] = n as number;
+    }
+  }
+  return { total: o.total as number, reasons };
 }
 
 const bad = (message: string) =>
@@ -254,11 +290,25 @@ export class AdminCrawlService implements OnModuleInit {
     return this.jobs.enabled() ? 'ready' : 'waiting_sh3';
   }
 
-  private async mark(j: HandlerJob, status: string, note: string | null) {
+  private async mark(
+    j: HandlerJob,
+    status: string,
+    note: string | null,
+    extra: { blockedWrites?: BlockedWrites } = {},
+  ) {
     if (!j.refId) return;
     await this.db.forAccount(j.accountId).assistAdminCrawlJob.updateMany({
       where: { id: j.refId, status: { in: ACTIVE } },
-      data: { status, ...(note !== null ? { note } : {}) },
+      data: {
+        status,
+        ...(note !== null ? { note } : {}),
+        ...(extra.blockedWrites
+          ? {
+              blockedWrites:
+                extra.blockedWrites as unknown as Prisma.InputJsonValue,
+            }
+          : {}),
+      },
     });
   }
 
@@ -341,12 +391,15 @@ export class AdminCrawlService implements OnModuleInit {
       r.loggedIn
         ? `страниц: ${urls.length}${indexNote}`
         : FAIL_NOTES.login_failed,
+      // Р-З13-Г1: и при неудачном входе — окно «только чтения» было открыто.
+      r.blockedWrites ? { blockedWrites: r.blockedWrites } : {},
     );
     return {
       loggedIn: r.loggedIn,
       pages: urls.length,
       refusedClicks: r.refusedClicks,
       skippedLinks: r.skippedLinks,
+      ...(r.blockedWrites ? { blockedWrites: r.blockedWrites } : {}),
     };
   }
 
@@ -452,6 +505,7 @@ export class AdminCrawlService implements OnModuleInit {
         status: j.status,
         createdAt: j.createdAt.toISOString(),
         note: j.note,
+        blockedWrites: storedBlockedWrites(j.blockedWrites),
       })),
       worker: this.worker(),
     };

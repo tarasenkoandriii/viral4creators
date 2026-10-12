@@ -71,6 +71,37 @@ export interface RunnerOptions {
   ) => Promise<JobBrowser>;
 }
 
+/**
+ * Необязательные поля результата по виду (заход 13, Р-З13-Г1). Ключи
+ * результата sites-backend проверяет строго: сервер старше воркера такого
+ * поля не знает и отвечает 400 `WORKER_BAD_RESULT` ДО записи (аренда цела).
+ * Тогда результат сдаётся ещё раз без этих полей: обход не пропадает из-за
+ * счётчика, а порядок выката («сначала воркер») остаётся прежним.
+ */
+export const OPTIONAL_RESULT_KEYS: Readonly<
+  Partial<Record<BrowserJobKind, readonly string[]>>
+> = {
+  'admin-crawl': ['blockedWrites'],
+};
+
+/** Результат без необязательных полей вида; null — снимать нечего. */
+function withoutOptional(
+  kind: BrowserJobKind,
+  result: unknown,
+): { result: Record<string, unknown>; keys: string[] } | null {
+  if (!result || typeof result !== 'object') return null;
+  const keys = (OPTIONAL_RESULT_KEYS[kind] ?? []).filter((k) => k in result);
+  if (!keys.length) return null;
+  const out: Record<string, unknown> = {
+    ...(result as Record<string, unknown>),
+  };
+  for (const k of keys) delete out[k];
+  return { result: out, keys };
+}
+
+const badResult = (e: unknown) =>
+  e instanceof ApiError && e.status === 400 && e.code === 'WORKER_BAD_RESULT';
+
 interface Running {
   job: ClaimedJob;
   abort: AbortController;
@@ -330,8 +361,8 @@ export class Runner {
       const result = await exec(ctx);
       if (r.abort.signal.aborted) throw new JobError('cancelled');
       // Та же проверка, что на сервере: лишнее/чужой хост/лимит — здесь.
-      parseJobResult(job.kind, job.params, result);
-      await this.o.api.complete(job.id, job.leaseToken, result);
+      const checked = this.selfCheck(job, result);
+      await this.completeCompat(job, checked);
       this.completed += 1;
       log.info('задание выполнено', {
         jobId: job.id,
@@ -351,9 +382,7 @@ export class Runner {
           ? e.code
           : // Сервер не принял результат (400 WORKER_BAD_RESULT: формат,
             // потолок байтов) — повтор дал бы тот же результат: без повтора.
-            e instanceof ApiError &&
-              e.status === 400 &&
-              e.code === 'WORKER_BAD_RESULT'
+            badResult(e)
             ? 'too_large'
             : jb === null && browser === null
               ? 'browser_crashed'
@@ -406,6 +435,48 @@ export class Runner {
         await jb.close();
       }
       if (browser) this.o.pool.release(browser);
+    }
+  }
+
+  /**
+   * Самопроверка результата тем же разбором, что на сервере. Не прошла, а
+   * в результате есть необязательные поля (`OPTIONAL_RESULT_KEYS`) — ещё
+   * одна проверка без них (заход 13, аудит P3-6: счётчик не должен ронять
+   * весь обход); снова нет — ошибка, как раньше.
+   */
+  private selfCheck(job: ClaimedJob, result: unknown): unknown {
+    try {
+      parseJobResult(job.kind, job.params, result);
+      return result;
+    } catch (e) {
+      const stripped = withoutOptional(job.kind, result);
+      if (!stripped) throw e;
+      parseJobResult(job.kind, job.params, stripped.result);
+      this.o.logger.warn(
+        'самопроверка не приняла необязательные поля результата — сдаю без них',
+        { jobId: job.id, kind: job.kind, reason: stripped.keys.join(',') },
+      );
+      return stripped.result;
+    }
+  }
+
+  /**
+   * Сдать результат; отказ 400 `WORKER_BAD_RESULT` при необязательных полях
+   * (`OPTIONAL_RESULT_KEYS`) — ещё одна сдача без них (старый sites-backend).
+   * Второй отказ — как раньше (`too_large`, без повтора).
+   */
+  private async completeCompat(job: ClaimedJob, result: unknown) {
+    try {
+      await this.o.api.complete(job.id, job.leaseToken, result);
+      return;
+    } catch (e) {
+      const stripped = withoutOptional(job.kind, result);
+      if (!badResult(e) || !stripped) throw e;
+      await this.o.api.complete(job.id, job.leaseToken, stripped.result);
+      this.o.logger.warn(
+        'сервер не принял необязательные поля результата — сдано без них',
+        { jobId: job.id, kind: job.kind, reason: stripped.keys.join(',') },
+      );
     }
   }
 

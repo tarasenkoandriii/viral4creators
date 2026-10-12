@@ -31,14 +31,27 @@ cookie-контур, что уже использует `admin/` и `frontend/`
 
 ## Запуск
 
+Node 24 (`.nvmrc` в корне). Зависимости — строго по `package-lock.json`:
+
 ```bash
-cp .env.example .env.local   # заполнить NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-npm install
+npm ci
+# .env.local (файла-примера нет): NEXT_PUBLIC_TELEGRAM_BOT_USERNAME,
+# API_BASE_URL и NEXT_PUBLIC_API_BASE_URL (по умолчанию
+# http://localhost:3000/api), NEXT_PUBLIC_SITE_URL
 npm run dev                  # порт 3004
 ```
 
 Бэкенду нужно разрешить этот origin в `CORS_ORIGIN` (см. `backend/.env.example`)
 — иначе браузер отклонит куки Telegram-логина при обращении с `credentials: 'include'`.
+
+Проверки — те же, что в CI:
+
+```bash
+npm run typecheck            # tsc --noEmit
+npm run lint                 # eslint . --max-warnings 0 (ESLint 9, eslint.config.mjs)
+npm test                     # scripts/*.test.ts через tsx
+npx next build
+```
 
 ## Явно НЕ реализовано (Фаза 2, по сигналу §19.4)
 
@@ -50,10 +63,30 @@ npm run dev                  # порт 3004
   портфолио пополняется только через self-upload (`sourceType: SELF_UPLOAD`).
 - Чат, споры, публичное голосование.
 
-## Не проверено в этой сборке
+## Что проверяется автоматически, а что — нет
 
-В песочнице, где писался код, нет сети для `npm install`/`prisma generate`,
-поэтому ни `tsc`, ни `next build`, ни сама Prisma-миграция не прогонялись
-по-настоящему. Перед мёрджем: `npm run typecheck` здесь и в `backend/`,
-`npx prisma migrate dev` (или ручное применение `migration.sql`), и ручной
-прогон обоих флоу (каталог → бриф → подбор; квиз → появление в каталоге).
+Раздел «Не проверено в этой сборке» (код писался без сети, ни `tsc`, ни
+сборка, ни миграция не прогонялись) устарел — по состоянию на 09.10.2026:
+
+- **Версии.** Next 15.5 (ветка `backport`) + React 19 — с захода 12;
+  `postcss` закреплён `overrides` (Next 15.5 тянет уязвимый 8.4.31). Линт —
+  ESLint 9 с flat config (`eslint.config.mjs`, `next/core-web-vitals`
+  через `FlatCompat`) вместо устаревшего `next lint` — с захода 13;
+  `fast-glob` плагина `@next/eslint-plugin-next` подменён в `overrides` на
+  `tinyglobby` (уходит dev-уязвимость цепочки `braces`).
+- **Lockfile.** `package-lock.json` есть с захода 12 — и CI, и Vercel
+  ставят ровно его (`npm ci`), а не плавающие версии.
+- **CI.** Пакет — строка матрицы `next-apps` в `.github/workflows/ci.yml`
+  (джоба запускается, когда меняется `marketplace/`, —
+  `scripts/ci-changes.mjs`): `npm ci` → `npm audit --audit-level=high
+  --omit=dev` (строгий) → `tsc --noEmit` → `npm run lint` (0 ошибок и 0
+  предупреждений) → `npm test` → `next build`.
+- **Миграции.** Таблицы маркетплейса живут в схеме бэкенда
+  (`backend/prisma/migrations/20261122090000_marketplace_stage0` и
+  следующие); джоба `backend` накатывает все миграции на чистый Postgres и
+  проверяет, что схема и миграции не разошлись (`prisma migrate diff`).
+
+Руками по-прежнему: оба флоу на стенде с бэкендом (каталог → бриф →
+подбор; квиз → появление в каталоге), вход через Telegram Login Widget на
+боевом домене и OG-превью — `metadataBase` не задан, `og:image` должен
+указывать на боевой домен, а не на `*.vercel.app` (`doc/DEPLOYMENT.md`).

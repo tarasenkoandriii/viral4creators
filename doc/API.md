@@ -1074,6 +1074,22 @@ conversations, log, proposalsPurged, proposalsDeleted, memoRuns }` (поля
   Не влезло в 4 096 знаков или сводка не дошла — отчёт отдельно после её
   прохода или через 8 ч; без дублей.
 
+Заход 13 (12.10.2026, Р-З13-Б1/Б2/Б8, Р-З13-Г1/Г4; миграции
+`20261013100000_assist_admin_digest_pending_idx`,
+`20261013110000_assist_admin_crawl_blocked_writes`) — карта ролей,
+журнал, обход:
+
+| Маршрут | Что |
+|---|---|
+| `POST /assist/sites/:id/admin-mode/role-map/owner` | новый; гвард контроллера (`assistAdmin: owner`). `{ role, expectedPrevious? }` → `{ role, previous, changed, view: AdminModeView }` — одна пара «роль из JWT → `owner`», прочие пары не трогаются; уже `owner` — 200 `changed: false` без записи (при любом `expectedPrevious`). `role` — 1–64 символа, буквы/цифры/`_ . : -`, не `__proto__` (иначе 400 ValidationPipe); `expectedPrevious` (`string \| null`) — значение пары, которое видел экран (null — пары не было): не совпало с текущим — 409 `ADMIN_ROLEMAP_CHANGED` (новый код; без поля проверки нет — для старых сборок TMA); новая пара при 30 парах — 409 `ADMIN_ROLEMAP_INVALID`; 403/404 — как у кабинета. Замок `assist-admin-rolemap:<site>`; строка журнала `kind: settings`, `operation: role-map.owner`, `request: { role, from, to: 'owner' }` пишется **в той же транзакции**: журнал недоступен — 500, карта прежняя |
+| `PATCH /assist/sites/:id/admin-mode` | с `roleMap` — под тем же замком и в одной транзакции со строкой журнала `kind: settings`, `operation: role-map`, `request: { set: { <роль>: <роль помощника> }, removed: [<роль>] }` (только при изменении); журнал недоступен — 500, карта прежняя. Карта с ключом `__proto__` — 400 (ключ JSON `__proto__` в теле отбрасывается ещё разбором тела) |
+| `GET /assist/sites/:id/action-log?kind=settings` | фильтр по строкам карты ролей; `kind` строк журнала — + `settings` (входит в хеш-цепочку) |
+| `GET /assist/sites/:id/admin-mode/private-crawl` | `jobs[]` → + `blockedWrites: { total, reasons: { method\|graphql\|logout\|danger\|websocket\|popup\|passive\|other: number } } \| null` — сколько записей оборвал воркер в режиме «только чтение» (только ненулевые причины; null — старый воркер или задание до захода 13; чужая форма столбца — null). Протокол — раздел «Э-С Ш3», абзац «Заход 13» |
+
+Отчёт недели «Админки»: `pendingRows` крона `assist-admin-embed-run` идёт
+по частичному индексу `assist_admin_insights_digest_pending_idx`;
+контракт крона прежний.
+
 ## Э8 помощника: «Админка» — действия
 
 ТЗ помощника §5.2–5.7, §4-бис.5, §5-бис.15 п.14, §5-бис.17 п.10; план этапов
@@ -1451,6 +1467,30 @@ percent-кодировке); пикер шлёт его уже маской и �
 сервера), откат — одной «Скасувати останню зміну»; фраза = имя старой
 цели — предупреждение и «Перейменувати» (Р-З11-Б9).
 
+Заход 13 (12.10.2026, Р-З13-Б3…Б6): карточки терминов и «не туда» в TMA
+«Навчання → Голос» (кабинет, права как у карты «Сайта»: владелец или
+`assist: manager`, оператор — 403, чужой сайт — 404). Текст фразы сервер
+берёт из свежего списка по `id` (произвольный текст маршруты не
+принимают); запись — `PATCH` черновика с ревизией, источник `tma`, журнал
+карты. Коды `EDITOR_*` у этих маршрутов не используются (кроме лимита
+`mute`); панель `we.` отвечает как раньше:
+
+| Маршрут | Что |
+|---|---|
+| `GET /assist/sites/:id/voice-map/site/suggestions` | `Cache-Control: no-store` → `{ days: 7, revision, terms: [{ id, phrase, visitors, count }], wrong: [{ id, key, phrase, lang: uk\|ru\|en\|null, visitors, count, nameClash }], targets: [{ key, name, scope, page }], termsLeft }`. `terms` — ≥ 2 посетителей (min по IP), известное карте — нет; `wrong` — по ВСЕМ страницам, ≥ 2 посетителей, без мастера, сухих прогонов и планов нескольких целей; уже перепривязанные (фраза стала фразой ДРУГОЙ активной цели) и команды не на uk/ru/en отсекаются до срезов свёртки (≤ 5 на цель, ≤ 30); `targets` — активные цели не «никогда» (для выбора при перепривязке) |
+| `POST /assist/sites/:id/voice-map/site/suggestions/term` | `{ expectedRevision, id }` → `{ revision, term, undo }` — `set-terms` черновика; ≤ 100 терминов — иначе 422 `VOICE_MAP_INVALID` |
+| `POST /assist/sites/:id/voice-map/site/suggestions/rebind` | `{ expectedRevision, id, to }` → `{ revision, key, from, phrase, lang, detached, undo }` — фраза становится синонимом цели `to` (язык — язык команды; нет языка — основной язык персоны, если uk/ru/en, иначе `uk`); со старой цели снимается во всех языках, только если была её синонимом и цель активна; имя не трогается (`nameClash`). Та же цель, цель «никогда» или нет такой, мусор — 400 `VOICE_MAP_INVALID` |
+| `POST /assist/sites/:id/voice-map/site/suggestions/mute` | `{ id }` → `{ id }` — «не предлагать» 30 дней, общий журнал с панелью; > 200/сутки — 429 `EDITOR_SUGGEST_LIMIT` |
+
+Общие коды: 409 `VOICE_MAP_CONFLICT` — ревизия; 409
+`VOICE_MAP_SUGGESTION_GONE` (новый) — карточки уже нет (перечитать
+список); 400 `VOICE_MAP_INVALID` — тело. `undo` — узкие обратные операции
+(`set-terms` или `upsert-target` затронутых целей): «Скасувати» =
+`PATCH …/voice-map/site/draft { expectedRevision: revision, ops: undo }`
+(карту успели поменять — 409). «Не предлагать» не отменяется. Панель
+`/editor/v1/suggestions/term` — без изменений (общая `acceptTermFor`,
+источник `editor`).
+
 Заход 11: голосовая карта «Админки» (№117, Р-З11-А1…А14,
 Р-З11-А2-1…15; миграция `20261012100000_assist_admin_voice_map`). Модуль
 `assist-admin-voice-map` на общем ядре карты (`assist-ui-core`, контур
@@ -1518,7 +1558,43 @@ row?: boolean }` (элемент строки таблицы/карточки к
 `data-assist-id` — без подписи, цифр в id и `hrefPath`; панель
 предупреждает); пикер → панель `{ type: 'logout' }`. Мемо, «Промахи»,
 «Пропозиції», ИИ-синонимы и микрофон в панели «Админки» скрыты —
-серверных маршрутов нет (Р-З11-А11).
+серверных маршрутов нет (Р-З11-А11). *(С захода 13 — есть, ниже.)*
+
+Заход 13 (12.10.2026, Р-З13-А1…А10): панель «Админки» до паритета с `we.`.
+Те же заголовки (`X-Assist-Admin-Session` + `X-Assist-Editor`) и привязка
+к сессии сотрудника-владельца, что у маршрутов выше (чужая пара сессий —
+401); тела и ответы — как у `/editor/v1/*`, отличия — в таблице. Чистое
+ядро общее (`assist-ui-core/editor-assist.ts`, `map-misses-core.ts`,
+`memo-record-core.ts`; «Сайт» его реэкспортирует, поведение `/editor/v1/*`
+не менялось); данные, деньги, журнал и коды частоты — свои у «Админки».
+Источник «Промахов» — журнал планов «Админки» (`ui-plan`/`ui-step`;
+мастер, сухие прогоны и уход в API — не сигнал); «посетитель» —
+сотрудник (`jwt:<sub>`). Фразы с 3+ цифрами подряд, словом с заглавной
+буквы не в начале команды или уже замаскированным фрагментом карточками
+не становятся (ПД клиентов заказчика, Р-З13-А10):
+
+| Метод и путь | Что |
+|---|---|
+| `POST /assist-admin/v1/editor/suggest-synonyms` | `{ expectedRevision, key }` → `{ revision, key, langs[uk, ru (, en — если у цели есть английское имя)], kept, dropped }`; 409 `VOICE_MAP_CONFLICT`, 422 `EDITOR_SUGGEST_NEVER`, 429 `EDITOR_SUGGEST_LIMIT { scope: target\|site }` (1/мин на цель — скользящая по журналу `voice-map.ai-synonyms`; 30 в UTC-сутки на сайт — `assist_rate_buckets`), 402 `EDITOR_SUGGEST_BUDGET` (суточный потолок «Админки»; окон частоты не тратит), 503 `EDITOR_SUGGEST_UNAVAILABLE`. Деньги — операция `assist-admin-map-synonyms` (факт дня «Админки», не `assist-learn`); журнал `voice-map.draft` (источник `suggestion`) и `voice-map.ai-synonyms` (ключ и числа, без фраз) |
+| `GET /assist-admin/v1/editor/misses?path=` | `{ days, path, items[], asked[], heat[], wrong[] }` — как у «Сайта»; значки — только цели этой страницы |
+| `GET /assist-admin/v1/editor/suggestions?path=` | `{ path, items[asked\|wrong\|self] }` — карточек `term` нет (Р-З13-А5); пороги «Админки»: `asked` — ≥ 2 разных сотрудников **и** ≥ 3 повторов, `wrong` — ≥ 2 сотрудников, `self` — 3 (Р-З13-А3) |
+| `POST /assist-admin/v1/editor/suggestions/mute` | `{ id }` \| `{ key, lang, text }` → `{ id }`; ≤ 200/сутки — 429 `EDITOR_SUGGEST_LIMIT { scope: mute }`; журнал `voice-map.suggestion-mute` — только хеш пары |
+| `POST /assist-admin/v1/editor/suggestions/term` | всегда 400 `EDITOR_BAD_REQUEST` — терминов распознавания у «Админки» нет |
+| `POST /assist-admin/v1/editor/voice` | тело — запись `audio/*` ≤ 1 МБ → `{ text, lang, left }`; 400 `EDITOR_VOICE_AUDIO_INVALID`, 409 `EDITOR_VOICE_UNAVAILABLE` (нет голоса платформы/ключа провайдера), 402 `EDITOR_VOICE_BUDGET`, 422 `EDITOR_VOICE_NOT_HEARD`, 502 `EDITOR_VOICE_UPSTREAM`, 429 `EDITOR_TRY_LIMIT` (общий с `try`, 100/сутки на сайт; резерв при отказе снимается). Soniox «Админки», учёт `assist-admin-stt`, резерв до провайдера; текст ничего не исполняет — только `try` (Р-З13-А6) |
+| `GET /assist-admin/v1/editor/memo/list?lang=` | `{ items[{ number, key, name, status, page: null, steps }], limit{ used, max } }` — мемо АМ-N |
+| `POST /assist-admin/v1/editor/memo/record/start` | `{ path, memo?, lang }` → `{ page, maxSteps: 10, limit, memo: { …, steps[{ action, page: '', target{ pin{ text }, assistId, role }, value, expect: null, keep? }], slots, undo[], counter: null } \| null }`; 402 `MEMO_LIMIT` |
+| `POST /assist-admin/v1/editor/memo/record/step` | `{ path, descriptor, fieldName?, options?, slots[], count, prev?, row?: true }` → `{ kind: step, step, slot, risk, exec, undo: null }` \| `{ kind: stop, reason: …\|server_effect, step: null }`. Только шаги `ui` без серверного эффекта: ссылка/вкладка/пункт меню — `click` (`exec: true`, переход выполняется); поле/список — `fill`/`select` со слотом без значения; флажок внутри формы — `check` с `exec: false` (переключает владелец); кнопка с эффектом («Зберегти»), `role: switch`, флажок/radio вне формы — `stop` `server_effect` (Р-З13-А7, А9). Элемент строки таблицы (`row: true`) без `data-assist-id` — 422 `EDITOR_MEMO_STEP_SKIPPED { reason: 'row' }` |
+| `POST /assist-admin/v1/editor/memo/record/stop` | `{ memo?, expectedRevision?, lang, name, goalText, steps[], slots[] }` → `{ number, key, status, draftRevision, gates{ ok, problems } }`; шаги `api`/`say` черновика — `{ keep: <индекс в черновике той же ревизии> }` (только переставить/удалить); ревизия сверяется до разбора `keep` — 409 `MEMO_REVISION`; подделанный `keep` или подложенный шаг (клик, switch) — 422 `EDITOR_MEMO_INVALID { errors[] }`; `memo` не целое ≥ 1 — 400 `EDITOR_MEMO_BAD_REQUEST`. Журнал `memo` — от `jwt:<sub>` (канал `embed`, `source: editor`), `createdBy`/`updatedBy` мемо — тот же `jwt:<sub>` |
+| `POST /assist-admin/v1/editor/memo/record/wait` | 404 — «Чекати це» только у мемо «Сайта» |
+| `POST /assist-admin/v1/editor/memo/:key/try` | `{ snapshot, from? }` → `{ steps[{ i, action, ok, problem, ref }], stopAt, problem, next{ i, page } \| null, goal: null, done, number, key, left }` — «Прогнати» по снимку с зонами владельца (`deny`/`allow`), без строк таблиц; удалённое мемо — 404 `MEMO_NOT_FOUND`; поле без «Зберегти» — ⚠, не сбой |
+
+`PATCH /assist/sites/:id/admin-mode/voice-map/draft` (заход 13, Р-З13-А8):
+синоним без `origin`, чей текст у цели в черновике помечен `suggested`,
+остаётся `suggested` — правка цели в TMA не «принимает» предложения ИИ
+молча (принять — только в панели, она шлёт `origin`). Журнал `ui-step`
+«Админки» — + `mapKey` цели карты (Р-З13-А2). Протокол пикер ↔ панель:
+`pick` → + `row?: boolean` уходит и в `record/step`; в «Админке» `perform`
+пикеру — только для шага `click`.
 
 ## Э-С Ш5: системный API знаний сайта (консультант лендинга → тенант)
 
@@ -1701,6 +1777,25 @@ GraphQL-меню попадают в `states` (уточняет заход 10). 
 время `goto`, оборванный стражем, — код `egress_blocked` (был в закрытом
 списке), обход пропускает такую страницу; стартовая — задание
 завершается этим кодом.
+
+Заход 13 (12.10.2026, Р-З13-Г1; миграция
+`20261013110000_assist_admin_crawl_blocked_writes`): результат
+`admin-crawl` — + необязательное `blockedWrites: { total: number,
+reasons: { method|graphql|logout|danger|websocket|popup|passive|other?:
+number } }` — только ненулевые причины, целые 0…1e6 (воркер усекает до
+1e6), сумма причин = `total`, ≤ 16 причин, имя — `^[a-z][a-z0-9_-]{0,31}$`;
+незнакомую причину (воркер новее сервера) сервер засчитывает в `other`, а
+не отклоняет обход. Список причин — `WRITE_BLOCK_REASONS` протокола
+(общая копия воркера; `passive` — загрузка ресурса под сессией с
+разрушительным адресом). В `exactKeys` поле разрешено, только если
+пришло: результат без поля (старый воркер) принимается как раньше. Кривая
+форма — 400 `WORKER_BAD_RESULT` до записи, аренда цела; воркер в этом
+случае (и при отказе собственной самопроверки) сдаёт результат ещё раз
+без необязательных полей (`OPTIONAL_RESULT_KEYS`, один повтор; второй
+отказ — `too_large`; 409/5xx — без повтора). Поле пишется в
+`assist_admin_crawl_jobs.blockedWrites` (в т. ч. при неудачном входе) и в
+`site_browser_jobs.result`; вид обхода — `GET …/admin-mode/private-crawl`
+→ `jobs[].blockedWrites` (раздел «Э7», абзац «Заход 13»).
 
 ### Сквозной аудит 06.10.2026 — изменения контрактов
 
@@ -2083,3 +2178,46 @@ React 19 (landing, sites-landing, admin, marketplace — их маршруты �
 - Landing и marketplace: ISR-ответы несут `Cache-Control: s-maxage=N,
   stale-while-revalidate=<1 год − N>`; landing `/sitemap-news.xml` —
   `s-maxage=900` (DEPLOYMENT, раздел «Заход 12»).
+
+### Заход 13 (12.10.2026) — «хвосты 11–12»: изменения контрактов
+
+Подробно — в разделах выше (абзацы «Заход 13»); миграции sites-backend
+`20261013100000_assist_admin_digest_pending_idx` (частичный индекс, без
+изменения контрактов) и `20261013110000_assist_admin_crawl_blocked_writes`;
+миграций backend нет. Сводно:
+
+- Панель редактора «Админки» (`wa.`, Р-З13-А1…А10) — новые
+  `POST /assist-admin/v1/editor/{suggest-synonyms, suggestions/mute,
+  suggestions/term (всегда 400), voice}`, `GET
+  /assist-admin/v1/editor/{misses, suggestions}`, `GET
+  /assist-admin/v1/editor/memo/list`, `POST
+  /assist-admin/v1/editor/memo/record/{start, step, stop, wait (всегда
+  404)}`, `POST /assist-admin/v1/editor/memo/:key/try`; тела — как у
+  `/editor/v1/*`; пороги «Пропозицій» «Админки» свои; `record/step` — +
+  `row?`, switch и флажок вне формы — `stop server_effect`; деньги —
+  `assist-admin-map-synonyms` и `assist-admin-stt` в суточном потолке
+  «Админки». `PATCH …/admin-mode/voice-map/draft` из TMA не снимает
+  `suggested` у синонима без `origin`; журнал `ui-step` — + `mapKey`.
+- Карта ролей «Админки» (Р-З13-Б1/Б2/Б8): новый `POST
+  /assist/sites/:id/admin-mode/role-map/owner { role, expectedPrevious? }`
+  → `{ role, previous, changed, view }`; новый код 409
+  `ADMIN_ROLEMAP_CHANGED`; роль `__proto__` — 400; `PATCH …/admin-mode` с
+  `roleMap` и `role-map/owner` — замок карты ролей и строка журнала
+  `kind: settings` (`role-map`, `role-map.owner`) в одной транзакции
+  (журнал недоступен — 500, карта прежняя); `GET …/action-log?kind=settings`.
+- Голосовая карта «Сайта», TMA (Р-З13-Б3…Б6): новые `GET
+  /assist/sites/:id/voice-map/site/suggestions` (no-store), `POST
+  …/suggestions/{term, rebind, mute}`; новый код 409
+  `VOICE_MAP_SUGGESTION_GONE`; отмена — `undo` через `PATCH …/draft`.
+- Воркер (Р-З13-Г1): результат `admin-crawl` — + необязательное
+  `blockedWrites { total, reasons }` (причины протокола + `passive`;
+  незнакомая — в `other`); сервер принимает и без поля, воркер против
+  старого сервера сдаёт повторно без поля. `GET
+  …/admin-mode/private-crawl` → `jobs[].blockedWrites | null`.
+- Поведение воркера под сессией учётки (Р-З13-Г2/Г3, раунд исправлений;
+  контракт не меняется): загрузки с разрушительным адресом — обрыв
+  `passive`; редиректы fetch/XHR/картинок/документов — проход воркером на
+  любом хосте (≤ 5 шагов), `Authorization`/`x-*` после смены origin
+  снимаются, cookie — только из банки по адресу шага.
+- Backend: `sanitize-html` 2.18 / `uuid` 11 — контракты прежние (политика
+  санитайзера блога та же).

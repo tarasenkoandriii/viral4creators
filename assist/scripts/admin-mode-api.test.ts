@@ -4,6 +4,7 @@
  * action-log, learning/admin, admin-chat).
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   createAdminModeApi,
   parseActionStats,
@@ -13,11 +14,12 @@ import {
   parseExport,
   parseInsight,
   parseLabels,
+  parseCrawlBlockedWrites,
   parseTaskMinutes,
 } from '../src/lib/admin-mode-api';
 import { getAppDictionary } from '../src/i18n';
 import { ApiError } from '../src/kit';
-import { adminErrorText } from '../src/lib/admin-mode-view';
+import { adminErrorText, crawlBlockedText } from '../src/lib/admin-mode-view';
 
 // №63 (заход 10): тексты «Админки» — в AppDictionary (`adminMode`).
 const ADMIN_MODE_TEXTS = {
@@ -293,4 +295,89 @@ for (const l of ['uk', 'ru', 'en'] as const) {
     'fallback'
   );
 }
+// ── Заход 13 (Р-З13-Г1): оборванная запись в отчёте обхода ─────────────
+{
+  // Причины — зеркало протокола очереди sites-backend: у каждой есть
+  // подпись на трёх языках (и «other» для причин, которых TMA не знает).
+  const proto = readFileSync(
+    new URL(
+      '../../sites-backend/src/modules/browser-jobs/protocol.ts',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  const m = proto.match(
+    /export const WRITE_BLOCK_REASONS = \[([\s\S]*?)\] as const/
+  );
+  assert.ok(m, 'protocol.ts: не найден WRITE_BLOCK_REASONS');
+  const reasons = [...m![1].matchAll(/'([a-z_-]+)'/g)].map((x) => x[1]);
+  assert.ok(reasons.length >= 6);
+  for (const lang of ['uk', 'ru', 'en'] as const) {
+    const t = ADMIN_MODE_TEXTS[lang].settings;
+    assert.deepEqual(
+      Object.keys(t.crawlBlockedReasons).sort(),
+      [...reasons, 'other'].sort(),
+      `${lang}: причины blockedWrites`
+    );
+    assert.ok(t.crawlBlocked.includes('{n}'), `${lang}: {n}`);
+  }
+
+  // Разбор: строгий, чужая форма — null, мусорные причины отброшены.
+  assert.equal(parseCrawlBlockedWrites(null), null);
+  assert.equal(parseCrawlBlockedWrites([]), null);
+  assert.equal(parseCrawlBlockedWrites({ total: -1, reasons: {} }), null);
+  assert.equal(parseCrawlBlockedWrites({ total: 1.5, reasons: {} }), null);
+  assert.deepEqual(
+    parseCrawlBlockedWrites({
+      total: 6,
+      reasons: { method: 3, logout: 0, constructor: 1, 'Bad Key': 2, x: 'y' },
+    }),
+    { total: 6, reasons: { method: 3, constructor: 1 } }
+  );
+
+  // Вид: старый воркер (поля нет) — null; новый — итог и причины.
+  const crawlApi = createAdminModeApi({
+    request: async <T>() =>
+      ({
+        enabled: true,
+        jobs: [
+          { id: 'a', status: 'done', createdAt: 'x', note: 'страниц: 2' },
+          {
+            id: 'b',
+            status: 'done',
+            createdAt: 'x',
+            note: null,
+            blockedWrites: { total: 5, reasons: { logout: 2, method: 3 } },
+          },
+        ],
+      }) as T,
+  });
+  const v = await crawlApi.privateCrawl('s1');
+  assert.equal(v.jobs[0].blockedWrites, null);
+  assert.deepEqual(v.jobs[1].blockedWrites, {
+    total: 5,
+    reasons: { logout: 2, method: 3 },
+  });
+
+  // Строка отчёта: порядок словаря, неизвестная причина — «інше», ноль — пусто.
+  const uk = ADMIN_MODE_TEXTS.uk.settings;
+  assert.equal(
+    crawlBlockedText(v.jobs[1].blockedWrites, uk),
+    'лише читання — заблоковано записів: 5 (запити запису: 3, вихід: 2)'
+  );
+  assert.equal(
+    crawlBlockedText(
+      { total: 4, reasons: { webtransport: 1, other: 2, constructor: 1 } },
+      ADMIN_MODE_TEXTS.en.settings
+    ),
+    'read-only — writes blocked: 4 (other: 4)'
+  );
+  assert.equal(
+    crawlBlockedText({ total: 2, reasons: {} }, ADMIN_MODE_TEXTS.ru.settings),
+    'только чтение — заблокировано записей: 2'
+  );
+  assert.equal(crawlBlockedText({ total: 0, reasons: {} }, uk), '');
+  assert.equal(crawlBlockedText(null, uk), '');
+}
+
 console.log('admin-mode-api: ok');

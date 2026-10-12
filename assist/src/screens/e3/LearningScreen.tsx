@@ -40,6 +40,7 @@ import {
   type Notice,
 } from '../knowledge/parts';
 import { MiniTable } from './parts';
+import { VoiceSuggestionCards } from './VoiceSuggestions';
 
 /** «Обучение → Сайт» (§4-тер.3–4, §4-тер.15): очередь, проверенные ответы, качество. */
 export function LearningScreen({
@@ -113,6 +114,8 @@ function VoiceMisses({ siteId }: { siteId: string }) {
   if (!v) return <LoadError error={loaded.error} onRetry={loaded.reload} />;
   return (
     <div className="space-y-3">
+      {/* Заход 13 (Р-З13-Б3): термины распознавания и «вела не туда». */}
+      <VoiceSuggestionCards siteId={siteId} />
       <p className="text-sm text-silver-500">{fmt(t.intro, { d: v.days })}</p>
       <NoticeBar notice={notice} />
       {v.items.length === 0 && v.pages.length === 0 && (

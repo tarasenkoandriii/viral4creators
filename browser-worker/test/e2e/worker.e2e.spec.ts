@@ -26,7 +26,8 @@
  *     загрузке и в раскрывашках (POST/PUT, beacon, форма скриптом,
  *     GraphQL-мутация, GET «выхода», переход на «/cancel», WebSocket) до
  *     сайта не дошла, доказанное чтение GraphQL прошло; счётчик — в
- *     журнале; контроль — без сессии WebSocket доходит.
+ *     журнале и в результате (`blockedWrites`, заход 13); контроль — без
+ *     сессии WebSocket доходит.
  *
  * Браузер: BROWSER_WORKER_CHROMIUM_PATH, иначе /opt/pw-browsers/chromium,
  * иначе браузер Playwright (PLAYWRIGHT_BROWSERS_PATH). Нет браузера —
@@ -662,6 +663,21 @@ d('browser-worker e2e (настоящий Chromium)', () => {
     for (const k of ['method', 'graphql', 'logout', 'danger', 'websocket'])
       expect(reason).toContain(`${k}:`);
     expect(Number(rec!.writes)).toBeGreaterThanOrEqual(9);
+    // Заход 13 (Р-З13-Г1): тот же счётчик — в результате обхода (отчёт TMA).
+    // Журнал пишется после сдачи (страница ещё жива) — в нём не меньше.
+    const bw = (
+      j.result as {
+        blockedWrites?: { total: number; reasons: Record<string, number> };
+      }
+    ).blockedWrites;
+    expect(bw).toBeDefined();
+    expect(bw!.total).toBeGreaterThanOrEqual(9);
+    expect(bw!.total).toBeLessThanOrEqual(Number(rec!.writes));
+    for (const k of ['method', 'graphql', 'logout', 'danger', 'websocket'])
+      expect(bw!.reasons[k]).toBeGreaterThanOrEqual(1);
+    expect(Object.values(bw!.reasons).reduce((a, b) => a + b, 0)).toBe(
+      bw!.total,
+    );
   });
 
   it('контроль к Р-З11-Г1: без сессии («Снимок» без раскрытий) WebSocket до сайта доходит', async () => {

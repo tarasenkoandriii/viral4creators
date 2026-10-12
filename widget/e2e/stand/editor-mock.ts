@@ -17,6 +17,11 @@
  * разметке) и `/assist-admin/v1/editor/*` — те же тела, плюс сессия
  * сотрудника `X-Assist-Admin-Session`; сессия редактора привязана к ней
  * (другая сессия сотрудника — 401, как на сервере).
+ *
+ * Заход 13: и инструменты панели «Админки» — ИИ-синонимы, «Промахи»/
+ * «Пропозиції» (без карточки термина — у «Админки» их нет), мемо АМ-N
+ * (кнопка с эффектом — стоп `server_effect`), микрофон (`voice` — тоже под
+ * сессией сотрудника и привязкой редактора).
  */
 import type http from 'node:http';
 import crypto from 'node:crypto';
@@ -198,8 +203,12 @@ export async function editorRoute(
   if (p === '/editor/v1/voice') {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
-    E.log.push({ path: p, body: { type: req.headers['content-type'] } });
-    if (!E.sessions.has(String(req.headers['x-assist-editor'] || '')))
+    E.log.push({
+      path: url.pathname,
+      body: { type: req.headers['content-type'] },
+    });
+    const ves = String(req.headers['x-assist-editor'] || '');
+    if (!E.sessions.has(ves) || E.bound.get(ves) !== (admin ?? ''))
       return err(res, 401, 'EDITOR_SESSION_EXPIRED');
     if (!/^audio\//.test(String(req.headers['content-type'] || '')))
       return err(res, 400, 'EDITOR_VOICE_AUDIO_INVALID');
@@ -399,6 +408,14 @@ export async function editorRoute(
           reason: 'payment',
           step: st('highlight'),
         });
+      // Раунд исправлений З13-А (P3-3): элемент строки таблицы без
+      // разметки — не шаг (подпись = ПД клиента), как на сервере.
+      if (isAdmin && b.row === true && !d.assistId)
+        return err(res, 422, 'EDITOR_MEMO_STEP_SKIPPED');
+      // Заход 13: «Админка» — кнопка с серверным эффектом в мемо АМ-N не
+      // шаг (только шагом API в Telegram), запись — стоп.
+      if (isAdmin && d.tag === 'button' && d.role !== 'tab')
+        return ok(res, { kind: 'stop', reason: 'server_effect', step: null });
       if (d.tag === 'input')
         return ok(res, {
           kind: 'step',
@@ -574,7 +591,8 @@ export async function editorRoute(
                 },
               ]
             : []),
-          ...(E.terms.includes('Ксіомі')
+          // Заход 13: терминов распознавания у «Админки» нет.
+          ...(isAdmin || E.terms.includes('Ксіомі')
             ? []
             : [
                 {

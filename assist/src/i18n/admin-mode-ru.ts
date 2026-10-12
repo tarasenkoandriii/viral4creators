@@ -82,6 +82,17 @@ export const adminModeRu: AdminModeTexts = {
     },
     crawlNeedsProduct:
       'Разрешите учётной записи продукт «Помощник: обход Админки» в реестре тестовых учётных записей.',
+    crawlBlocked: 'только чтение — заблокировано записей: {n}',
+    crawlBlockedReasons: {
+      method: 'запросы записи',
+      graphql: 'GraphQL-мутации',
+      logout: 'выход',
+      danger: 'опасные адреса',
+      passive: 'загрузки с опасным адресом (картинки, скрипты)',
+      websocket: 'WebSocket',
+      popup: 'всплывающие окна',
+      other: 'другое',
+    },
   },
   connectors: {
     ...adminModeUk.connectors,

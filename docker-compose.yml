@@ -56,7 +56,7 @@ services:
       - ./backend/prisma.config.ts:/app/prisma.config.ts
       - ./backend/nest-cli.json:/app/nest-cli.json
       - ./backend/tsconfig.json:/app/tsconfig.json
-      - ./backend/.eslintrc.js:/app/.eslintrc.js
+      - ./backend/eslint.config.mjs:/app/eslint.config.mjs
       - ./backend/.prettierrc:/app/.prettierrc
       # Anonymous volume: keeps the container's own node_modules (installed
       # for Linux/musl during image build) instead of whatever got bind-mounted

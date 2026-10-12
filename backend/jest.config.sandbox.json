@@ -7,6 +7,7 @@
   "rootDir": "src",
   "testRegex": ".*\\.spec\\.ts$",
   "transform": {
+    "/node_modules/(htmlparser2|domhandler|domutils|dom-serializer|entities|domelementtype)/.+\\.js$": "<rootDir>/../test/esm-to-cjs.transform.js",
     "^.+\\.(t|j)s$": [
       "ts-jest",
       {
@@ -14,6 +15,9 @@
       }
     ]
   },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!(htmlparser2|domhandler|domutils|dom-serializer|entities|domelementtype)/)"
+  ],
   "testEnvironment": "node",
   "moduleNameMapper": {
     "^@prisma/client$": "<rootDir>/../test/prisma-client-shim.ts"

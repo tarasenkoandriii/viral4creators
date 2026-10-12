@@ -76,6 +76,7 @@ export const voiceMapUk: VoiceMapDictionary = {
     VOICE_MAP_CHECK_NOT_FOUND: 'Звірки цієї версії ще не було.',
     VOICE_MAP_DEV_REPORT_NOT_FOUND:
       'Посилання на звіт недійсне, застаріло або відкликане.',
+    VOICE_MAP_SUGGESTION_GONE: 'Пропозиція вже неактуальна — список оновлено.',
   },
   snap: {
     title: 'Знімок сторінки',

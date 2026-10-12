@@ -334,7 +334,8 @@ describeE7('Э7 «Админка: чтение» — приёмка по HTTP', 
     });
     expect(log.length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify(log)).not.toContain(MARKER);
-    expect(log[0]).toMatchObject({
+    // Заход 13 (Р-З13-Б2): в журнале и строки `settings` (карта ролей).
+    expect(log.find((r) => r.kind === 'read')).toMatchObject({
       actor: 'jwt:emp-A',
       outcome: 'ok',
       operation: 'shop.getOrder',

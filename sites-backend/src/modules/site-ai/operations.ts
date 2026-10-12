@@ -61,6 +61,11 @@ export const SITE_AI_OPERATIONS = [
   // платформы (ADMIN_DAILY_USAGE_OPERATIONS); не бюджет аналитики «Сайта».
   'assist-admin-label',
   'assist-admin-insight',
+  // Заход 13 (Р-З13-А4): ИИ-синонимы цели в редакторе карты «Админки»
+  // (панель `wa.`). Платит суточный потолок «Админки» сайта и общий потолок
+  // платформы (резерв `reserveAdminTurn`, ADMIN_DAILY_USAGE_OPERATIONS);
+  // не бюджет обучения «Сайта» (`assist-learn`).
+  'assist-admin-map-synonyms',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

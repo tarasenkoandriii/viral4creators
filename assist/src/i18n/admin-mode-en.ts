@@ -79,6 +79,17 @@ export const adminModeEn: AdminModeTexts = {
     },
     crawlNeedsProduct:
       'Allow the "Assistant: admin panel crawl" product for this account in the test accounts registry.',
+    crawlBlocked: 'read-only — writes blocked: {n}',
+    crawlBlockedReasons: {
+      method: 'write requests',
+      graphql: 'GraphQL mutations',
+      logout: 'logout',
+      danger: 'dangerous URLs',
+      passive: 'resource loads with dangerous URLs (images, scripts)',
+      websocket: 'WebSocket',
+      popup: 'pop-ups',
+      other: 'other',
+    },
   },
   connectors: {
     add: 'Add an API (OpenAPI 3.x)',

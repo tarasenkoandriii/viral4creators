@@ -1,7 +1,7 @@
 # CI — что проверяется автоматически и почему именно это
 
 `.github/workflows/ci.yml`, появился на этапе 33. До него все проверки
-прогонялись руками на каждом этапе: тогда 442 теста (сейчас 10234), 17
+прогонялись руками на каждом этапе: тогда 442 теста (сейчас 10238), 17
 написанных вручную (сейчас 132)
 миграций и `sync-legal --check`, специально сделанный «для CI»,
 существовали — но запускал их только человек и только когда вспоминал.
@@ -45,9 +45,9 @@ PRISMA_SCHEMA_ENGINE_BINARY=/tmp/se PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
 | --- | --- |
 | `backend` | `npm ci` (генерирует Prisma-клиент), `prisma validate`, `migrate deploy` на Postgres 16, **`migrate diff --exit-code`**, `tsc`, eslint, jest с **пофайловыми порогами покрытия** (этап 40: `blob-paths`, `ai-pricing`, `spend-limits`, `plan.service`, `plan.controller`; этап 49: `serpapi-usage`, `youtube-search-usage`, `telegram-notify`), сверка чисел в документах. Jest этой джобы получает `GREETING_SNAPSHOT_PG_URL` = `DATABASE_URL` джобы (заход 8, 07.10.2026): набор `greeting-snapshot-write.pg.spec.ts` — гонка точечной записи снимка поздравления — идёт на настоящем Postgres с накатанными миграциями (строки заводит и удаляет сам, ≈15 с); при `CI=true` без строки базы набор падает, а не пропускается молча; локально без строки — пропускается с причиной в названии |
 | `frontend` | `tsc`, **`typecheck:scripts`** (типы самих проверочных скриптов), eslint через `npm run lint` (с `--report-unused-disable-directives`), 89 unit-скриптов `npx tsx frontend/scripts/*.test.ts`, `vite build` |
-| `sites-landing` | `tsc`, `next lint --max-warnings 0`, unit-скрипты `npx tsx sites-landing/scripts/*.test.ts`, «сборка без `SITE_URL` падает», `next build`, проверка собранного HTML (`check:built`: canonical/hreflang/OG, реестр утверждений, секреты формы не в бандле), бюджет JS первой загрузки ≤ 118 КБ gzip на статических страницах, `/widget` и `/try` ≤ 160 КБ (заход 12, Р-З12-Б10: было 110 — рантайм Next 15 + React 19 вырос на 15 КБ), axe (WCAG 2.2 A/AA, обе темы, 360 px), Lighthouse CI (медиана 5 прогонов, бюджеты ТЗ лендинга §9; порог `resource-summary:script:size` = 118 + 12 (загрузчик) + 8 (`LAZY_TRANSFER_KB`: ленивый web-vitals и gzip-6/заголовки) = 138 КБ, `/widget` и `/try` — 180 КБ, Р-З12-Б8) |
-| `next-apps` | матрица `admin` / `landing` / `marketplace` (marketplace — с захода 12, 09.10.2026, Р-З12-В4: до этого не проверялся вовсе, его линт был красным; с захода 12 у него есть `package-lock.json`): `npm ci`, `npm audit` (информ.), `tsc`, `next lint --max-warnings 0` (этап 53), `npm run test --if-present`, `next build`, затем `npm run budget:js --if-present` — бюджет First Load JS (у `landing`: `scripts/first-load-js.mjs`, gzip 9, потолки по маршрутам; заход 6, 07.10.2026; пересняты в заходе 12 под Next 15 + React 19 — общая часть 85.5 → 100.5 КБ, главная 126, how-it-works 128 / `platform` 115, общий 123, Р-З12-Б7). У landing и marketplace unit-скрипт `scripts/segment-config.test.ts` (заход 12): конфиг сегментов (`revalidate`, `dynamic`…) — только `export const <ключ> = <литерал>;` (Next 15 читает его статически), без `as`, аннотаций, `let`/`var`, экспорта списком и реэкспорта, литералы равны константам кода |
-| `live-login-relay` | `sync-relay-shared --check` (копии фильтра исходящего трафика браузера из `backend/src/common`), eslint `--max-warnings 0`, jest, `tsc`-сборка; запускается правкой `live-login-relay/`, источников копий или скрипта синхронизации (Э-С Ш0.2) |
+| `sites-landing` | `tsc`, линт `npm run lint` (ESLint 9, `eslint . --max-warnings 0`; с захода 13 вместо `next lint`; `scripts/**` в `ignores` — Р-З13-В3), unit-скрипты `npx tsx sites-landing/scripts/*.test.ts`, «сборка без `SITE_URL` падает», `next build`, проверка собранного HTML (`check:built`: canonical/hreflang/OG, реестр утверждений, секреты формы не в бандле), бюджет JS первой загрузки ≤ 118 КБ gzip на статических страницах, `/widget` и `/try` ≤ 160 КБ (заход 12, Р-З12-Б10: было 110 — рантайм Next 15 + React 19 вырос на 15 КБ), axe (WCAG 2.2 A/AA, обе темы, 360 px), Lighthouse CI (медиана 5 прогонов, бюджеты ТЗ лендинга §9; порог `resource-summary:script:size` = 118 + 12 (загрузчик) + 8 (`LAZY_TRANSFER_KB`: ленивый web-vitals и gzip-6/заголовки) = 138 КБ, `/widget` и `/try` — 180 КБ, Р-З12-Б8) |
+| `next-apps` | матрица `admin` / `landing` / `marketplace` (marketplace — с захода 12, 09.10.2026, Р-З12-В4: до этого не проверялся вовсе, его линт был красным; с захода 12 у него есть `package-lock.json`): `npm ci`, `npm audit` (с захода 13 — обязательный), `tsc`, линт `npm run lint` (этап 53 — `next lint --max-warnings 0`; с захода 13 — ESLint 9, `eslint . --max-warnings 0`, всё приложение, а не только `src/`), `npm run test --if-present`, `next build`, затем `npm run budget:js --if-present` — бюджет First Load JS (у `landing`: `scripts/first-load-js.mjs`, gzip 9, потолки по маршрутам; заход 6, 07.10.2026; пересняты в заходе 12 под Next 15 + React 19 — общая часть 85.5 → 100.5 КБ, главная 126, how-it-works 128 / `platform` 115, общий 123, Р-З12-Б7). У landing и marketplace unit-скрипт `scripts/segment-config.test.ts` (заход 12): конфиг сегментов (`revalidate`, `dynamic`…) — только `export const <ключ> = <литерал>;` (Next 15 читает его статически), без `as`, аннотаций, `let`/`var`, экспорта списком и реэкспорта, литералы равны константам кода |
+| `live-login-relay` | `sync-relay-shared --check` (копии фильтра исходящего трафика браузера из `backend/src/common`), eslint `--max-warnings 0` (единственный пакет на ESLint 8 и `.eslintrc.js`; `npm audit` — с `continue-on-error`), jest, `tsc`-сборка; запускается правкой `live-login-relay/`, источников копий или скрипта синхронизации (Э-С Ш0.2) |
 | `browser-worker` | `sync-worker-shared --check` (копии фильтра трафика, подписи, протокола очереди, конверта учёток и стоп-листа кликов), eslint `--max-warnings 0`, `tsc`-сборка, jest unit, установка headless-оболочки Chromium Playwright той же версии, что `playwright-core`, и **e2e на настоящем Chromium** (стенды, egress, обход за логином, стоп-лист); запускается правкой `browser-worker/`, источников копий или скрипта синхронизации (Э-С Ш3) |
 | `changes` | выбирает, какие джобы запускать: файлы, изменённые с последнего **успешного** прогона на ветке, против правил `scripts/ci-changes.mjs` (у PR — с базой PR); нет базы или правка `ci.yml` — запускается всё. Остальные джобы, кроме `repo`, идут по `needs: changes` + `if` |
 | `repo` | на каждом коммите: `sync-legal --check` — юридические тексты и их версия; `check-vercel-ignore`; самотест `ci-changes`; `check-docs` без счётчиков тестов. Заход 10: самотест `ci-changes` проверяет и сборщик (`ci` — `if: always()`, в `needs` все джобы файла), права токена (верхний `permissions: contents: read`; `write`/`write-all`/`read-all` запрещены) и SHA-пины сторонних actions (полный SHA с версией в комментарии) |
@@ -101,6 +101,53 @@ Jest в джобах `backend` и `sites-backend` запускается с
 Скрипт проверяет **числа, а не смысл**: он не знает, правильно ли описан
 §26, он знает только, что число тестов в документе должно равняться тому, сколько их
 на самом деле.
+
+## Линт: ESLint 9 и flat config (заход 13, 12.10.2026)
+
+Во всех пакетах, кроме `live-login-relay/`, — ESLint **9.39.5** и
+`eslint.config.mjs` (flat config; старые `.eslintrc.*` удалены),
+`typescript-eslint` 8.71 (Р-З13-В1). Правила перенесены 1:1: сверка
+`--print-config` до/после на 33 файлах 10 пакетов (и ещё 14 новых файлах
+на аудите) — 0 неожиданных расхождений; разница пресетов погашена
+блоками `TS_ESLINT_V6_PARITY` / `ESLINT8_PARITY` в конфигах, новые
+правила пресетов (`no-require-imports`, `no-unused-expressions`,
+`no-constant-binary-expression` и др.) выключены — включение — хвост
+захода 13 (Р-З13-В2). Набор проверяемых файлов не сузился ни в одном
+пакете (аудит В, п. 3.4).
+
+| Пакеты | Команда (как в CI и `make ci`) |
+| --- | --- |
+| `admin`, `landing`, `marketplace`, `sites-landing` | `npm run lint` = `eslint . --max-warnings 0`; `next/core-web-vitals` через `FlatCompat`; `next lint` удалён (в Next 15.5 устарел, в 16 убран; смотрел только `src/` и т. п.) — Р-З13-В3; у sites-landing `scripts/**` в `ignores` |
+| `assist`, `frontend`, `widget` | `npm run lint` = `eslint . --report-unused-disable-directives --max-warnings 0` (без `--ext`, область — в конфиге) |
+| `backend`, `sites-backend`, `browser-worker` | прежние явные команды: `eslint "src/**/*.ts"`, `… prisma.config.ts`, `"src/**/*.ts" "test/**/*.ts"`; typed-линт с тем же `project` |
+| `live-login-relay` | ESLint 8 и `.eslintrc.js` — не переводился (хвост) |
+
+У четырёх Next-приложений в `package.json` — `overrides`
+`"@next/eslint-plugin-next": { "fast-glob": "npm:tinyglobby@^0.2.15" }`
+(снимает dev-high `braces`, Р-З13-В4; задевает только dev-линт; при
+`settings.next.rootDir` поведение отличалось бы — не задавать, при Next 16
+пересмотреть). `docker-compose.yml` и `docker-compose.dev.yml` монтируют
+`backend/eslint.config.mjs` вместо `backend/.eslintrc.js`.
+
+Jest backend: `sanitize-html` 2.18 тянет ESM-only `htmlparser2@12`;
+`transformIgnorePatterns` пропускает к трансформу 6 его ESM-пакетов
+(`htmlparser2|domhandler|domutils|dom-serializer|entities|domelementtype`),
+трансформ — `backend/test/esm-to-cjs.transform.js` (Р-З13-В5; аудит:
+ts-jest с ключом `^.+\.(t|j)s$` справился бы и сам — упрощение в хвостах).
+Локальный `--transform` поверх конфига заменяет весь `transform` — ключ
+должен покрывать и `.js`.
+
+Новые наборы захода 13 — в существующих джобах: sites-backend —
+`src/acceptance/z13a/admin-editor-tools.spec.ts`,
+`src/acceptance/z13b/{admin-owner-role,tma-suggestions}.http.spec.ts`,
+`assist-admin-voice-map/editor/admin-editor-tools{,.db}.spec.ts`,
+`assist-admin-mode/role-map.spec.ts`,
+`assist-site-voice-map/voice-map-suggestions.spec.ts`,
+`assist-admin-analytics/admin-weekly-digest.db.spec.ts`; widget —
+`e2e/admin-editor-tools.spec.ts` (Chromium с поддельным микрофоном);
+browser-worker — `test/unit/blocked-writes.spec.ts` и новые e2e в
+`write-guard.e2e.spec.ts`; assist — `scripts/owner-role.test.ts`,
+`scripts/voice-suggestions.test.ts`.
 
 ## Локально
 
@@ -178,23 +225,30 @@ exported member» исчезли. Остались только TS7006/TS7031 �
   не попадали. Завести их в CI имеет смысл вместе с эталонами, с которыми
   сравнивать, — иначе это просто ещё одна долгая джоба. До этапа 53 этот
   абзац говорил о скриншотах в настоящем времени (В-6.8).
-- **Обязательного `npm audit` — пока не везде.** С этапа 53 `npm audit
-  --audit-level=high --omit=dev` идёт в каждой джобе пакета, но с
-  `continue-on-error`: известные высокие закрывались мажорными
+- **Обязательного `npm audit` — только у `live-login-relay`.** С этапа 53
+  `npm audit --audit-level=high --omit=dev` идёт в каждой джобе пакета, но
+  с `continue-on-error`: известные высокие закрывались мажорными
   обновлениями (`doc/TODO.md`, I-Б.5), и красить ими весь CI до того дня
   было нечестно. **Заход 12 (09.10.2026):** после NestJS 11 / Express 5
   high/critical в рантайм-дереве backend и sites-backend — 0, и в этих
-  двух джобах `continue-on-error` снят — шаг обязательный, новое высокое
-  красит CI сразу. У `widget` шаг строгий с самого начала (рантайм
-  исполняется на чужих сайтах). Остальные — `frontend`, `sites-landing`,
-  матрица `next-apps`, `live-login-relay`, `browser-worker` — пока
-  информационные; у `sites-landing` и всей `next-apps` после захода 12
-  тоже 0 (TODO, «Новые хвосты (заход 12)»). Dev-зависимости (`braces` в
-  цепочке `eslint-config-next`, jest 29) — вне `--omit=dev`.
+  двух джобах `continue-on-error` снят. У `widget` шаг строгий с самого
+  начала (рантайм исполняется на чужих сайтах). **Заход 13 (12.10.2026,
+  Р-З13-В6):** `continue-on-error` снят и у `frontend`, `sites-landing`,
+  всей матрицы `next-apps` и `browser-worker` (prod high/critical — 0
+  везде), строгий шаг добавлен в `assist` и `assist-integrations` (его там
+  не было вовсе). Информационным он остался только у `live-login-relay`
+  (prod 0/7/0/0, пакет не трогался). Dev-зависимости — вне `--omit=dev`:
+  `braces` остаётся через jest 29 (backend, sites-backend, browser-worker)
+  и tailwind 3 (assist, frontend), у четырёх Next-приложений цепочка
+  снята (Р-З13-В4). Пакет `sandbox/` (Codex, свой workflow
+  `sandbox-daily.yml`) в `ci.yml` не входит: ни линта, ни audit (prod-
+  зависимостей нет) — TODO, хвосты захода 13.
 - **Полного `make ci` как копии CI.** `make ci` повторяет все шаги, кроме
   тех, что требуют сети до Prisma (`migrate deploy`, `migrate diff`); с
   этапа 53 в него входят и пороги покрытия, и линт Next-приложений
-  (В-6.12).
+  (В-6.12); с захода 13 линт Next-приложений в `make ci` — тот же
+  `npm run -s lint`, что в CI (раньше `next lint` смотрел только `src/` и
+  т. п.).
 - **Деплоя.** Vercel собирает четыре проекта сам по пушу (см.
   `doc/DEPLOYMENT.md`); дублировать это в Actions незачем.
 - **Кеша `node_modules` между джобами.** `actions/setup-node` кеширует

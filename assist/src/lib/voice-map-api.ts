@@ -24,6 +24,8 @@ export const VOICE_MAP_ERROR_CODES = [
   'VOICE_MAP_CHECK_NOT_FOUND',
   // Заход 9: отчёт для разработчика по ссылке.
   'VOICE_MAP_DEV_REPORT_NOT_FOUND',
+  // Заход 13 (Р-З13-Б3): карточка «Обучение → Голос» уже неактуальна.
+  'VOICE_MAP_SUGGESTION_GONE',
 ] as const;
 export type VoiceMapErrorCode = (typeof VOICE_MAP_ERROR_CODES)[number];
 
@@ -566,6 +568,146 @@ export function parseMisses(v: unknown): MapMisses {
   };
 }
 
+// ── Заход 13 (Р-З13-Б3): карточки «Обучение → Голос» ─────────────────
+
+export type SuggestionLang = 'uk' | 'ru' | 'en';
+
+/** Термин распознавания (неуверенное распознавание у ≥ 2 посетителей). */
+export interface TermCard {
+  id: string;
+  phrase: string;
+  visitors: number;
+  count: number;
+}
+
+/** «Вела не туда»: команда сработала на цели `key`, человек сразу остановил. */
+export interface WrongCard {
+  id: string;
+  key: string;
+  phrase: string;
+  lang: SuggestionLang | null;
+  visitors: number;
+  count: number;
+  /** Фраза — ИМЯ цели `key`: после перепривязки публикацию остановит конфлікт. */
+  nameClash: boolean;
+}
+
+export interface RebindTarget {
+  key: string;
+  name: string;
+  scope: 'site' | 'template' | 'page';
+  page: string | null;
+}
+
+export interface VoiceSuggestions {
+  days: number;
+  revision: number;
+  terms: TermCard[];
+  wrong: WrongCard[];
+  targets: RebindTarget[];
+  termsLeft: number;
+}
+
+/** Ответ действия: новая ревизия и обратные операции для «Отменить». */
+export interface SuggestionAction {
+  revision: number;
+  undo: unknown[];
+}
+
+const SUG_ID = /^[0-9a-f]{24}$/;
+const LANGS: readonly SuggestionLang[] = ['uk', 'ru', 'en'];
+const SCOPES = ['site', 'template', 'page'] as const;
+
+/** Обратные операции — только известные операции черновика (без мусора). */
+function parseUndo(v: unknown): unknown[] {
+  return arr(v)
+    .map(obj)
+    .filter((o) => o.op === 'set-terms' || o.op === 'upsert-target')
+    .slice(0, 5);
+}
+
+export function parseSuggestions(v: unknown): VoiceSuggestions {
+  const o = obj(v);
+  const lang = (x: unknown): SuggestionLang | null =>
+    (LANGS as readonly unknown[]).includes(x) ? (x as SuggestionLang) : null;
+  return {
+    days: num(o.days) || 7,
+    revision: num(o.revision),
+    terms: arr(o.terms)
+      .map(obj)
+      .filter((x) => SUG_ID.test(text(x.id)) && text(x.phrase))
+      .slice(0, 50)
+      .map((x) => ({
+        id: text(x.id),
+        phrase: text(x.phrase).slice(0, 80),
+        visitors: num(x.visitors),
+        count: num(x.count),
+      })),
+    wrong: arr(o.wrong)
+      .map(obj)
+      .filter(
+        (x) =>
+          SUG_ID.test(text(x.id)) && KEY.test(text(x.key)) && text(x.phrase)
+      )
+      .slice(0, 50)
+      .map((x) => ({
+        id: text(x.id),
+        key: text(x.key),
+        phrase: text(x.phrase).slice(0, 80),
+        lang: lang(x.lang),
+        visitors: num(x.visitors),
+        count: num(x.count),
+        nameClash: x.nameClash === true,
+      })),
+    targets: arr(o.targets)
+      .map(obj)
+      .filter((x) => KEY.test(text(x.key)))
+      .slice(0, 500)
+      .map((x) => ({
+        key: text(x.key),
+        name: text(x.name).slice(0, 80) || text(x.key),
+        scope: (SCOPES as readonly unknown[]).includes(x.scope)
+          ? (x.scope as RebindTarget['scope'])
+          : 'site',
+        page: PATH.test(text(x.page)) ? text(x.page) : null,
+      })),
+    termsLeft: num(o.termsLeft),
+  };
+}
+
+function parseAction(v: unknown): SuggestionAction {
+  const o = obj(v);
+  return { revision: num(o.revision), undo: parseUndo(o.undo) };
+}
+
+/**
+ * Карточки к показу: без скрытых оптимистично (действие в полёте или уже
+ * выполнено, а список ещё не перечитан).
+ */
+export function visibleSuggestions(
+  v: VoiceSuggestions,
+  hidden: readonly string[]
+): { terms: TermCard[]; wrong: WrongCard[] } {
+  const h = new Set(hidden);
+  return {
+    terms: v.terms.filter((x) => !h.has(x.id)),
+    wrong: v.wrong.filter((x) => !h.has(x.id)),
+  };
+}
+
+/** Цели для «перепривязать»: все, кроме той, куда команда вела не туда. */
+export function rebindChoices(
+  v: VoiceSuggestions,
+  card: Pick<WrongCard, 'key'>
+): RebindTarget[] {
+  return v.targets.filter((t) => t.key !== card.key);
+}
+
+const sugId = (id: string) => {
+  if (!SUG_ID.test(id)) throw new Error('bad suggestion id');
+  return id;
+};
+
 export interface VoiceMapApi {
   summary(siteId: string): Promise<VoiceMapSummary>;
   editorLink(
@@ -611,6 +753,20 @@ export interface VoiceMapApi {
   /** Живая ссылка отчёта (без токена — он показывается один раз). */
   devReportStatus(siteId: string): Promise<DevReportStatus | null>;
   misses(siteId: string): Promise<MapMisses>;
+  /** Заход 13: карточки «Обучение → Голос» (термины, «не туда»). */
+  suggestions(siteId: string): Promise<VoiceSuggestions>;
+  acceptTerm(
+    siteId: string,
+    expectedRevision: number,
+    id: string
+  ): Promise<SuggestionAction & { term: string }>;
+  rebind(
+    siteId: string,
+    expectedRevision: number,
+    id: string,
+    to: string
+  ): Promise<SuggestionAction & { key: string; detached: boolean }>;
+  muteSuggestion(siteId: string, id: string): Promise<void>;
 }
 
 const SEG = /^[A-Za-z0-9_-]{1,64}$/;
@@ -738,5 +894,32 @@ export function createVoiceMapApi(client: ApiClient): VoiceMapApi {
       num(obj(await client.request('DELETE', `${p(id)}/dev-report`)).revoked),
     misses: async (id) =>
       parseMisses(await client.request('GET', `${p(id)}/misses`)),
+    suggestions: async (id) =>
+      parseSuggestions(await client.request('GET', `${p(id)}/suggestions`)),
+    acceptTerm: async (id, expectedRevision, sid) => {
+      const o = await client.request('POST', `${p(id)}/suggestions/term`, {
+        expectedRevision,
+        id: sugId(sid),
+      });
+      return { ...parseAction(o), term: text(obj(o).term) };
+    },
+    rebind: async (id, expectedRevision, sid, to) => {
+      if (!KEY.test(to)) throw new Error('bad key');
+      const o = await client.request('POST', `${p(id)}/suggestions/rebind`, {
+        expectedRevision,
+        id: sugId(sid),
+        to,
+      });
+      return {
+        ...parseAction(o),
+        key: text(obj(o).key),
+        detached: obj(o).detached === true,
+      };
+    },
+    muteSuggestion: async (id, sid) => {
+      await client.request('POST', `${p(id)}/suggestions/mute`, {
+        id: sugId(sid),
+      });
+    },
   };
 }

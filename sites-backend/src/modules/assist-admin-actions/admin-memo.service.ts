@@ -133,6 +133,17 @@ export interface AdminMemoView extends AdminMemoListItem {
 export const ADMIN_MEMO_STATS_DAYS = { list: 30, review: 7 } as const;
 const DAY_MS = 86_400_000;
 
+/**
+ * Заход 13: кто меняет черновик мемо из панели редактора карты «Админки»
+ * (`wa.`) — сотрудник-владелец `jwt:<sub>`, канал `embed`; без него — участник
+ * TMA (`tg:<id>`).
+ */
+export interface AdminMemoJournalActor {
+  actor: string;
+  actorRole: string | null;
+  channel: 'embed' | 'tma';
+}
+
 const MEMO_TEXT = {
   started: {
     uk: (n: number, name: string) => `Виконую АМ-${n} «${name}».`,
@@ -413,6 +424,19 @@ export class AdminMemoService {
 
   // ── каталог операций сайта ─────────────────────────────────────────────
 
+  /**
+   * Заход 13: ворота черновика мемо по живому каталогу — для панели
+   * редактора карты «Админки» (`wa.`, «Зберегти чернетку» мемо записью
+   * кликами показывает, что ещё держит публикацию).
+   */
+  async draftGates(
+    accountId: string,
+    siteId: string,
+    c: AdminMemoContent,
+  ): Promise<AdminMemoGateReport> {
+    return adminMemoGates(c, await this.catalog(accountId, siteId));
+  }
+
   private async catalog(
     accountId: string,
     siteId: string,
@@ -477,13 +501,14 @@ export class AdminMemoService {
     memo: { number: number; id: string },
     outcome: string,
     details: Record<string, unknown> = {},
+    via?: AdminMemoJournalActor,
   ) {
     await this.log.append({
       accountId: m.accountId,
       siteId,
-      actor: `tg:${m.telegramId.toString()}`,
-      actorRole: 'owner',
-      channel: 'tma',
+      actor: via?.actor ?? `tg:${m.telegramId.toString()}`,
+      actorRole: via ? via.actorRole : 'owner',
+      channel: via?.channel ?? 'tma',
       conversationId: null,
       connectorId: null,
       operationRowId: null,
@@ -660,6 +685,7 @@ export class AdminMemoService {
     m: AccountMembership,
     siteId: string,
     body: { key?: string; draft?: unknown },
+    via?: AdminMemoJournalActor,
   ): Promise<AdminMemoView> {
     await this.mode.requireSite(m.accountId, siteId);
     const limit = await this.limit(m.accountId);
@@ -689,7 +715,8 @@ export class AdminMemoService {
       );
     }
     await this.mode.ensureSettings(m.accountId, siteId);
-    const actor = `tg:${m.telegramId.toString()}`;
+    // Заход 13 (аудит З13-А P3-5): из панели `wa.` — сотрудник `jwt:<sub>`, как в журнале.
+    const actor = via?.actor ?? `tg:${m.telegramId.toString()}`;
     const row = await db.$transaction(async (tx) => {
       const taken = await tx.assistAdminMemo.findFirst({
         where: { siteId, key },
@@ -723,7 +750,14 @@ export class AdminMemoService {
         },
       });
     });
-    await this.memoLog(m, siteId, row, 'create', { key });
+    await this.memoLog(
+      m,
+      siteId,
+      row,
+      'create',
+      { key, ...(via ? { source: 'editor' } : {}) },
+      via,
+    );
     return this.get(m, siteId, row.number);
   }
 
@@ -732,6 +766,7 @@ export class AdminMemoService {
     siteId: string,
     n: number,
     body: { expectedRevision: number; draft: unknown; key?: string },
+    via?: AdminMemoJournalActor,
   ): Promise<AdminMemoView> {
     await this.mode.requireSite(m.accountId, siteId);
     const r = await this.memoRow(m.accountId, siteId, n);
@@ -740,7 +775,7 @@ export class AdminMemoService {
     const data: Prisma.AssistAdminMemoUpdateManyMutationInput = {
       draft: parsed.content as unknown as Prisma.InputJsonValue,
       draftRevision: { increment: 1 },
-      updatedBy: `tg:${m.telegramId.toString()}`,
+      updatedBy: via?.actor ?? `tg:${m.telegramId.toString()}`,
     };
     if (body.key !== undefined && body.key !== r.key) {
       if (r.publishedVersion !== null) {
@@ -772,10 +807,18 @@ export class AdminMemoService {
         'Мемо изменили в другой вкладке — обновите',
       );
     }
-    await this.memoLog(m, siteId, r, 'draft', {
-      revision: body.expectedRevision + 1,
-      steps: parsed.content.steps.length,
-    });
+    await this.memoLog(
+      m,
+      siteId,
+      r,
+      'draft',
+      {
+        revision: body.expectedRevision + 1,
+        steps: parsed.content.steps.length,
+        ...(via ? { source: 'editor' } : {}),
+      },
+      via,
+    );
     return this.get(m, siteId, n);
   }
 

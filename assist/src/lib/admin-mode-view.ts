@@ -3,6 +3,7 @@ import { ApiError, useKit } from '../kit';
 import { getAppDictionary } from '../i18n';
 import { useErrorText } from './use-error-text';
 import type { AdminModeTexts } from '../i18n/admin-mode-uk';
+import type { CrawlBlockedWrites } from './admin-mode-api';
 import {
   ADMIN_ACTIONS_TEXTS,
   type AdminActionsTexts,
@@ -54,4 +55,29 @@ export function useAdminErrorText(): (e: unknown) => string {
   const t = useAdminTexts();
   const base = useErrorText();
   return (e) => adminErrorText(e, t, base);
+}
+
+/**
+ * Заход 13 (Р-З13-Г1): строка отчёта обхода «Админки» — запись, оборванная
+ * «только чтением» воркера: «лише читання — заблоковано записів: 5 (запити
+ * запису: 3, вихід: 2)». Причины — в порядке словаря; причина, которой TMA
+ * не знает, — в «інше». Ноль или нет данных (старый воркер) — пусто.
+ */
+export function crawlBlockedText(
+  bw: CrawlBlockedWrites | null,
+  t: Pick<AdminModeTexts['settings'], 'crawlBlocked' | 'crawlBlockedReasons'>
+): string {
+  if (!bw || bw.total <= 0) return '';
+  const names = t.crawlBlockedReasons;
+  const known = (k: string) => Object.prototype.hasOwnProperty.call(names, k);
+  const sums = new Map<string, number>();
+  for (const [k, n] of Object.entries(bw.reasons)) {
+    const key = known(k) ? k : 'other';
+    sums.set(key, (sums.get(key) ?? 0) + n);
+  }
+  const parts = Object.keys(names)
+    .filter((k) => sums.has(k))
+    .map((k) => `${names[k]}: ${sums.get(k)}`);
+  const head = t.crawlBlocked.replace('{n}', String(bw.total));
+  return parts.length ? `${head} (${parts.join(', ')})` : head;
 }

@@ -311,6 +311,12 @@ const until = async (fn: () => Promise<boolean>, ms = 90_000) => {
       // («; в базе «Админки»: версия K» или причину) — проверяем начало.
       expect(job.status).toBe('done');
       expect(job.note).toMatch(/^страниц: 2(;|$)/);
+      // Заход 13 (Р-З13-Г1): настоящий воркер шлёт счётчик «только чтения»,
+      // сервер принимает его и хранит в итоге обхода.
+      expect(job.blockedWrites).toMatchObject({
+        total: expect.any(Number),
+        reasons: expect.any(Object),
+      });
       const pages = await st.prisma.assistAdminPage.findMany({
         where: { siteId: s.siteId },
       });

@@ -25,6 +25,8 @@ export const ADMIN_DAILY_USAGE_OPERATIONS = [
   'assist-admin-memo',
   'assist-admin-label',
   'assist-admin-insight',
+  // Заход 13: ИИ-синонимы редактора карты «Админки» (панель `wa.`).
+  'assist-admin-map-synonyms',
 ] as const;
 
 /** Начало UTC-суток. */

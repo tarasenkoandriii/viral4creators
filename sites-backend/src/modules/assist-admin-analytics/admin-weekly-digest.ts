@@ -108,6 +108,20 @@ export interface AdminWeeklyPending {
 const T = `"${SITES_DB_SCHEMA}"."assist_admin_insights"`;
 
 /**
+ * Строки с непустым ожиданием, старые первыми. Условие WHERE дословно
+ * совпадает с условием частичного индекса
+ * `assist_admin_insights_digest_pending_idx` (заход 13, Р-З13-Г4): тик крона
+ * читает только ждущие строки, а не всю таблицу недель. Меняешь условие —
+ * меняй и индекс (тест EXPLAIN — admin-weekly-digest.db.spec.ts).
+ */
+export const PENDING_ROWS_SQL = `SELECT "id", "accountId", "siteId", "digestPendingAt", "digestTexts"
+         FROM ${T}
+        WHERE cardinality("digestPending") > 0
+          AND "digestPendingAt" IS NOT NULL
+          AND ($1::text[] IS NULL OR "siteId" = ANY($1::text[]))
+        ORDER BY "digestPendingAt" LIMIT $2`;
+
+/**
  * Доступ сводки к ожидающему отчёту недели. Экспортируется модулем
  * аналитики «Админки» для assist-digest (оркестратор — единственный, кто
  * собирает «Сайт» и «Админку» в одно сообщение, правило `digest-leaf`).
@@ -262,7 +276,10 @@ export class AdminWeeklyDigest {
     return rows[0]?.taken ?? [];
   }
 
-  /** Строки с непустым ожиданием (все сайты или `siteIds` — тесты). */
+  /**
+   * Строки с непустым ожиданием (все сайты или `siteIds` — тесты) — по
+   * частичному индексу (`PENDING_ROWS_SQL`).
+   */
   async pendingRows(
     siteIds?: string[] | null,
     limit = 50,
@@ -276,12 +293,7 @@ export class AdminWeeklyDigest {
     }>
   > {
     return this.prisma.$queryRawUnsafe(
-      `SELECT "id", "accountId", "siteId", "digestPendingAt", "digestTexts"
-         FROM ${T}
-        WHERE cardinality("digestPending") > 0
-          AND "digestPendingAt" IS NOT NULL
-          AND ($1::text[] IS NULL OR "siteId" = ANY($1::text[]))
-        ORDER BY "digestPendingAt" LIMIT $2`,
+      PENDING_ROWS_SQL,
       siteIds ?? null,
       limit,
     );

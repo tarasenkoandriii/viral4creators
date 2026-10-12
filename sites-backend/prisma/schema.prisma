@@ -2101,6 +2101,10 @@ model AssistAdminCrawlJob {
   status                String  @default("waiting_worker")
   requestedByTelegramId BigInt
   note                  String?
+  /// Заход 13 (Р-З13-Г1): оборванная запись «только чтения» воркера —
+  /// { total, reasons: { method|graphql|logout|danger|passive|websocket|popup|other: N } };
+  /// NULL — результата нет или старый воркер поле не прислал.
+  blockedWrites         Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

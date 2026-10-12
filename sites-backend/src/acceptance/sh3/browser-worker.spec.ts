@@ -797,13 +797,109 @@ describeDb('Приёмка Э-С Ш3 — браузерный воркер', () 
       refusedClicks: 2,
       skippedLinks: 3,
     });
-    expect(
-      (
-        await st.prisma.assistAdminCrawlJob.findUniqueOrThrow({
-          where: { id: run.jobId },
-        })
-      ).status,
-    ).toBe('done');
+    const done = await st.prisma.assistAdminCrawlJob.findUniqueOrThrow({
+      where: { id: run.jobId },
+    });
+    expect(done.status).toBe('done');
+    // Заход 13 (Р-З13-Г1): старый воркер поле не шлёт — принято, в итоге null.
+    expect(done.blockedWrites).toBeNull();
+    const view = body(
+      await request(st.srv()).get(crawlPath).set(st.as(s.ownerTg)).expect(200),
+    ) as { jobs: Array<{ id: string; blockedWrites: unknown }> };
+    expect(view.jobs.find((x) => x.id === run.jobId)?.blockedWrites).toBeNull();
+  });
+
+  it('заход 13 (Р-З13-Г1): blockedWrites — в итоге обхода и в виде TMA; кривое поле — 400 без потери аренды', async () => {
+    await drain();
+    const creds = st.app.get(SiteCredentialsService);
+    const acc = await creds.create(
+      s.accountId,
+      s.siteId,
+      {
+        label: 'Менеджер-z13',
+        hostIds: [s.adminHostId],
+        products: ['assist-admin'],
+        confirmedTestAccount: true,
+        username: 'z13',
+        password: 'pw-z13-xxxx',
+      },
+      'tma:test',
+    );
+    const crawlPath = `/assist/sites/${s.siteId}/admin-mode/private-crawl`;
+    await request(st.srv())
+      .put(crawlPath)
+      .set(st.as(s.ownerTg))
+      .send({ enabled: true, hostId: s.adminHostId, testAccountId: acc.id })
+      .expect(200);
+    const run = body(
+      await request(st.srv())
+        .post(`${crawlPath}/run`)
+        .set(st.as(s.ownerTg))
+        .expect(200),
+    );
+    const j = (await claim()).jobs[0];
+    expect(j).toMatchObject({ kind: 'admin-crawl' });
+    const lease = { jobId: j.id, leaseToken: j.leaseToken };
+    const pages = [
+      {
+        url: `https://${s.adminHost}/admin`,
+        title: 'Адмінка',
+        text: '# Панель',
+      },
+    ];
+    // Сумма причин ≠ итог — результат не принят, поле названо в ответе.
+    const bad = await st
+      .worker(WORKER_ROUTES.complete, {
+        ...lease,
+        result: {
+          loggedIn: true,
+          pages,
+          refusedClicks: 0,
+          skippedLinks: 0,
+          blockedWrites: { total: 9, reasons: { method: 1 } },
+        },
+      })
+      .expect(400);
+    expect(errCode(bad)).toBe('WORKER_BAD_RESULT');
+    expect(JSON.stringify(bad.body)).toContain('result.blockedWrites');
+    // Аренда цела: та же сдача с верным полем проходит.
+    await st
+      .worker(WORKER_ROUTES.complete, {
+        ...lease,
+        result: {
+          loggedIn: true,
+          pages,
+          refusedClicks: 1,
+          skippedLinks: 0,
+          blockedWrites: {
+            total: 6,
+            reasons: { method: 3, logout: 1, popup: 0, webtransport: 2 },
+          },
+        },
+      })
+      .expect(200);
+    const bw = { total: 6, reasons: { method: 3, logout: 1, other: 2 } };
+    const cj = await st.prisma.assistAdminCrawlJob.findUniqueOrThrow({
+      where: { id: run.jobId },
+    });
+    expect(cj.status).toBe('done');
+    expect(cj.blockedWrites).toEqual(bw);
+    const job = await st.prisma.siteBrowserJob.findUniqueOrThrow({
+      where: { id: j.id },
+    });
+    expect(job.result).toEqual({
+      loggedIn: true,
+      pages: 1,
+      refusedClicks: 1,
+      skippedLinks: 0,
+      blockedWrites: bw,
+    });
+    const view = body(
+      await request(st.srv()).get(crawlPath).set(st.as(s.ownerTg)).expect(200),
+    ) as { jobs: Array<{ id: string; blockedWrites: unknown }> };
+    expect(view.jobs.find((x) => x.id === run.jobId)?.blockedWrites).toEqual(
+      bw,
+    );
   });
 
   it('обход: продукт сняли за время аренды — учётка не выдаётся, обход failed с понятной причиной', async () => {

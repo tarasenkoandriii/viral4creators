@@ -18,6 +18,9 @@ import { Download, ExternalLink, ShieldOff, Upload } from 'lucide-react';
 import { fmt, formatDate, useAsync, useKit } from '../../kit';
 import { Alert, Badge, Button, inputClass } from '../../kit/ui';
 import { ADMIN_VOICE_MAP_TEXTS } from '../../i18n/admin-voice-map';
+import { OWNER_ROLE_TEXTS } from '../../i18n/owner-role';
+import { ownerRoleKeys } from '../../lib/admin-mode-api';
+import { navigate } from '../../lib/router';
 import {
   adminVoiceMapErrorCode,
   MAP_LANGS,
@@ -72,7 +75,15 @@ export function AdminVoiceMapSection({ siteId }: { siteId: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const file = useRef<HTMLInputElement | null>(null);
+  // Заход 13 (Р-З13-Б1): нет пары «роль → owner» — ссылку редактора сервер
+  // не выдаст (409); предупреждаем заранее и ведём прямо к «Ролям».
+  const mode = useAsync(() => adminMode.get(siteId), [adminMode, siteId]);
+  const [ownerNeeded, setOwnerNeeded] = useState(false);
+  const ot = OWNER_ROLE_TEXTS[locale];
   if (!sum.data || !draft.data) return null;
+  const noOwner =
+    ownerNeeded ||
+    (!!mode.data && ownerRoleKeys(mode.data.roleMap).length === 0);
   const s = sum.data;
   const d = draft.data;
   const ro = !s.planAllows;
@@ -84,6 +95,7 @@ export function AdminVoiceMapSection({ siteId }: { siteId: string }) {
       await fn();
     } catch (e) {
       const code = adminVoiceMapErrorCode(e);
+      if (code === 'ADMIN_VOICE_MAP_OWNER_ROLE_REQUIRED') setOwnerNeeded(true);
       setNotice({ tone: 'danger', text: code ? t.errors[code] : errText(e) });
     } finally {
       setBusy(false);
@@ -115,6 +127,24 @@ export function AdminVoiceMapSection({ siteId }: { siteId: string }) {
       {ro && <Alert tone="warning">{t.needPlan}</Alert>}
       {!s.hosts.length && <Alert tone="warning">{t.noHosts}</Alert>}
       <NoticeBar notice={notice} />
+      {noOwner && (
+        <div className="space-y-1" data-owner-role-needed="">
+          <Alert tone="warning">{ot.needOwner}</Alert>
+          <Button
+            variant="outline"
+            onClick={() =>
+              navigate({
+                name: 'admin-mode',
+                siteId,
+                tab: 'settings',
+                focus: 'roles',
+              })
+            }
+          >
+            {ot.goRoles}
+          </Button>
+        </div>
+      )}
       <Button
         icon={<ExternalLink size={16} />}
         loading={busy}

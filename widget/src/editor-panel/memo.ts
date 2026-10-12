@@ -28,8 +28,10 @@ interface Step {
   action: string;
   page: string;
   target: { pin: { text: string }; mapKey?: string | null } | null;
-  value: { slot: string } | null;
+  value: { slot?: string; const?: string } | null;
   expect?: { appear?: string } | null;
+  /** «Админка»: шаг `api`/`say` черновика — по индексу (сервер). */
+  keep?: number;
   /** «Як скасувати» цели карты — только показ (сервер его не читает). */
   u?: Undo | null;
 }
@@ -86,6 +88,12 @@ export interface MemoDeps {
   store: string;
   /** Открыть карточку цели карты (правка «Як скасувати»). */
   edit: (key: string) => void;
+  /**
+   * Заход 13: мемо «Админки» АМ-N — номер «АМ-», без «Чекати це» (целей-
+   * ожиданий у АМ-N нет); шаги `api`/`say` черновика (`keep`) — только
+   * порядок и ✕, их содержимое правится в Telegram.
+   */
+  admin?: boolean;
 }
 
 const post = (body: unknown): RequestInit => ({
@@ -95,6 +103,7 @@ const post = (body: unknown): RequestInit => ({
 
 export function createMemo(d: MemoDeps) {
   const K = `${d.store}:m`;
+  const pfx = () => d.L()[d.admin ? 'amPfx' : 'mPfx'] || 'М-';
   let r: Rec | null = null;
   let list: Item[] | null = null;
   try {
@@ -164,7 +173,7 @@ export function createMemo(d: MemoDeps) {
         r.on = true;
         d.toPicker({ type: 'mode', mode: 'select' });
       }
-      d.note(m ? fmt(d.L().mOpened, { n: m.number }) : d.L().mHint);
+      d.note(m ? fmt(d.L().mOpened, { n: m.number, m: pfx() }) : d.L().mHint);
       save();
     } catch (e) {
       d.fail(e);
@@ -214,6 +223,9 @@ export function createMemo(d: MemoDeps) {
           descriptor: m.descriptor,
           fieldName: m.fieldName,
           options: m.options,
+          // «Админка» (аудит З13-А P3-3): элемент строки таблицы — сервер
+          // без `data-assist-id` его не пишет (подпись = ПД клиента).
+          ...(d.admin && m.row ? { row: true } : {}),
           slots: r.slots.map((s) => s.name),
           count: r.steps.length,
           prev: rb !== null ? r.steps[rb] : undefined,
@@ -225,7 +237,9 @@ export function createMemo(d: MemoDeps) {
           ? L.mManual
           : v.reason === 'too_many_steps'
             ? L.mMax
-            : L.mNever;
+            : v.reason === 'server_effect'
+              ? L.mSrv
+              : L.mNever;
         d.note(`${why} (${v.reason})`);
         if (rb === null) {
           if (v.step) {
@@ -247,7 +261,13 @@ export function createMemo(d: MemoDeps) {
         }
         d.note('');
         // Переход/раскрытие — по-настоящему (элемент настоящего клика).
-        if (v.exec && rb === null && m.pid)
+        // «Админка» (аудит З13-А P2-1): по-настоящему — только переход.
+        if (
+          v.exec &&
+          rb === null &&
+          m.pid &&
+          (!d.admin || v.step.action === 'click')
+        )
           d.toPicker({ type: 'perform', pid: m.pid });
       }
     } catch (e) {
@@ -287,6 +307,7 @@ export function createMemo(d: MemoDeps) {
       d.note(
         fmt(d.L().mSaved, {
           n: v.number,
+          m: pfx(),
           p: v.gates.ok ? 0 : v.gates.problems.length,
         })
       );
@@ -376,7 +397,7 @@ export function createMemo(d: MemoDeps) {
             'li',
             {},
             btn(
-              `М-${m.number} ${m.name ?? ''} · ${L[`s_${m.status}`] || m.status}${m.page ? ` · ${m.page}` : ''}`,
+              `${pfx()}${m.number} ${m.name ?? ''} · ${L[`s_${m.status}`] || m.status}${m.page ? ` · ${m.page}` : ''}`,
               () => void open(m.number)
             )
           )
@@ -409,7 +430,7 @@ export function createMemo(d: MemoDeps) {
       h(
         'p',
         { class: rec.on ? 'warn' : 'hint' },
-        rec.on ? L.mOn : `${rec.memo ? `М-${rec.memo}` : ''}`
+        rec.on ? L.mOn : `${rec.memo ? `${pfx()}${rec.memo}` : ''}`
       ),
       name,
       goal
@@ -438,18 +459,19 @@ export function createMemo(d: MemoDeps) {
                 save();
               },
             },
-            `${s.action} «${s.target?.pin.text ?? ''}»${s.value ? ` {${s.value.slot}}` : ''}${rec.warn[i] ? ' ⚠' : ''}${s.expect?.appear ? ` → «${s.expect.appear}»` : ''}${s.u ? ` ↶${s.u.assistId}` : ''}`
+            `${s.action} «${s.target?.pin.text ?? ''}»${s.value ? ` {${s.value.slot ?? s.value.const}}` : ''}${rec.warn[i] ? ' ⚠' : ''}${s.expect?.appear ? ` → «${s.expect.appear}»` : ''}${s.u ? ` ↶${s.u.assistId}` : ''}`
           ),
           !!s.u?.key && btn('↶', () => d.edit(s.u!.key!)),
           i > 0 && btn('↑', move(i - 1)),
           i < rec.steps.length - 1 && btn('↓', move(i + 1)),
-          btn('⌖', () => {
-            rec.sel = i;
-            rec.rebind = true;
-            d.note(L.mRebind);
-            d.toPicker({ type: 'mode', mode: 'select' });
-            save();
-          }),
+          s.keep === undefined &&
+            btn('⌖', () => {
+              rec.sel = i;
+              rec.rebind = true;
+              d.note(L.mRebind);
+              d.toPicker({ type: 'mode', mode: 'select' });
+              save();
+            }),
           btn('✕', () => {
             rec.steps.splice(i, 1);
             rec.warn.splice(i, 1);
@@ -483,12 +505,13 @@ export function createMemo(d: MemoDeps) {
           if (rec.on) d.toPicker({ type: 'mode', mode: 'select' });
           save();
         }),
-        btn(rec.wait ? '…' : L.mWait, () => {
-          rec.wait = true;
-          d.note(L.mWaitHint);
-          d.toPicker({ type: 'mode', mode: 'select' });
-          save();
-        }),
+        !d.admin &&
+          btn(rec.wait ? '…' : L.mWait, () => {
+            rec.wait = true;
+            d.note(L.mWaitHint);
+            d.toPicker({ type: 'mode', mode: 'select' });
+            save();
+          }),
         btn(L.mSave, () => void store(), 'pri'),
         rec.key && btn(L.mTry, () => void run()),
         btn(L.mNew, () => {

@@ -12,6 +12,7 @@ import {
   inputClass,
 } from '../../kit/ui';
 import {
+  crawlBlockedText,
   isAdminOwner,
   useAdminErrorText,
   useAdminTexts,
@@ -24,6 +25,7 @@ import {
   type OperationView,
   ADMIN_MODE_TABS,
   cleanWidgetLabel,
+  withOwnerLine,
 } from '../../lib/admin-mode-api';
 import { useAssist } from '../../lib/assist-context';
 import { navigate } from '../../lib/router';
@@ -45,6 +47,7 @@ import {
 import { AdminVoiceSection } from './AdminVoiceSection';
 import { AdminVoiceMapSection } from './AdminVoiceMapSection';
 import { AdminAnalytics } from './AdminAnalyticsParts';
+import { AdminOwnerRole } from './AdminOwnerRole';
 
 /**
  * «Админка» (Э7, ТЗ §3.8): режим и секрет подписи, коннекторы API, журнал
@@ -57,9 +60,12 @@ import { AdminAnalytics } from './AdminAnalyticsParts';
 export function AdminModeScreen({
   siteId,
   tab,
+  focus,
 }: {
   siteId: string;
   tab: AdminModeTab;
+  /** Заход 13: `#/sites/:id/admin-mode/roles` — прокрутка к «Ролям». */
+  focus?: 'roles';
 }) {
   const { account } = useKit();
   const t = useAdminTexts();
@@ -77,7 +83,7 @@ export function AdminModeScreen({
       />
       {tab === 'settings' && (
         <div className="space-y-4">
-          <Settings siteId={siteId} />
+          <Settings siteId={siteId} focus={focus} />
           <ActionsSettingsCard siteId={siteId} />
         </div>
       )}
@@ -117,7 +123,7 @@ function parseRoleMapText(s: string): Record<string, string> {
   return out;
 }
 
-function Settings({ siteId }: { siteId: string }) {
+function Settings({ siteId, focus }: { siteId: string; focus?: 'roles' }) {
   const { adminMode } = useAssist();
   const { dict, locale } = useKit();
   const t = useAdminTexts();
@@ -244,6 +250,25 @@ function Settings({ siteId }: { siteId: string }) {
             {t.settings.roleMapHint}
           </div>
         </div>
+        {/* Заход 13 (Р-З13-Б1): «моя роль → owner» одной кнопкой. */}
+        <AdminOwnerRole
+          siteId={siteId}
+          roleMap={st.data.roleMap}
+          focus={focus}
+          onChanged={(_view, role) => {
+            // Аудит P3-7: несохранённую правку текста карты ролей не
+            // выбрасываем — пара дописывается в неё; прочие правки целы.
+            const edited = draft.roleText !== undefined;
+            if (edited && role)
+              setDraft((d) =>
+                d.roleText === undefined
+                  ? d
+                  : { ...d, roleText: withOwnerLine(d.roleText, role) }
+              );
+            st.reload();
+            return edited && !!role;
+          }}
+        />
         <div>
           <div className="text-xs text-silver-500 mb-1">
             {t.settings.tmaEmployeeRole}
@@ -522,6 +547,9 @@ function PrivateCrawl({ siteId }: { siteId: string }) {
             ? t.settings.crawlWaiting
             : (t.settings.crawlStatus[j.status] ?? j.status)}
           {j.note && j.status !== 'waiting_worker' ? ` · ${j.note}` : ''}
+          {j.blockedWrites && j.blockedWrites.total > 0
+            ? ` · ${crawlBlockedText(j.blockedWrites, t.settings)}`
+            : ''}
         </div>
       ))}
     </Card>
