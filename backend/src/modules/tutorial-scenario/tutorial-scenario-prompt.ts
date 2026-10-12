@@ -694,7 +694,11 @@ function rejectHooksOffRoute(parsed: ParseScenarioResult): ParseScenarioResult {
       };
     const hookRoute = QA_HOOKS[key].route;
     const allowedRoutes = QA_HOOKS[key].routes ?? [hookRoute];
-    if (!allowedRoutes.includes(route)) {
+    if (
+      !allowedRoutes.includes(
+        route === 'generate-ready-casting' ? 'generate-ready' : route,
+      )
+    ) {
       return {
         ok: false,
         steps: [],

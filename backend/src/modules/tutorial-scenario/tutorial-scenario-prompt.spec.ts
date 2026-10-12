@@ -1304,3 +1304,26 @@ describe('seeded session boundaries before saving a scenario', () => {
     ).toBe(true);
   });
 });
+
+it('validates real casting actions on the dedicated character fixture', () => {
+  const r = validateScenarioSteps(
+    [
+      { kind: 'goto', route: 'generate-ready-casting' },
+      { kind: 'click', selector: '[data-qa="wizard-step-analysis"]' },
+      { kind: 'click', selector: '[data-qa="character-toggle"]' },
+    ],
+    '5',
+  );
+  expect(r.ok).toBe(true);
+});
+it('rejects mixing casting and another seeded session', () => {
+  expect(
+    validateScenarioSteps(
+      [
+        { kind: 'goto', route: 'generate-ready-casting' },
+        { kind: 'goto', route: 'generate-ready' },
+      ],
+      '5',
+    ).ok,
+  ).toBe(false);
+});

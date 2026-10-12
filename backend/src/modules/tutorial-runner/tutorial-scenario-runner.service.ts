@@ -2789,6 +2789,7 @@ export class TutorialScenarioRunnerService {
       session,
       promptPending,
       readyToRender,
+      castingSession,
     ] = await Promise.all([
       this.prisma.project.findFirst({
         where: { userId, deletedAt: null, type: { in: AD_TYPES } },
@@ -2942,8 +2943,23 @@ export class TutorialScenarioRunnerService {
         },
         orderBy: { createdAt: 'desc' },
       }),
+      this.prisma.session.findFirst({
+        where: {
+          id: FIXTURE_IDS.session,
+          userId,
+          project: { type: { in: AD_TYPES } },
+          deletedAt: null,
+          generationStatus: GenerationStatus.COMPLETE,
+          data: {
+            path: ['videoAnalysis', 'characters', '0', 'id'],
+            equals: 'c1',
+          },
+        },
+        select: { id: true },
+      }),
     ]);
     return {
+      castingSessionId: castingSession?.id,
       projectId: project?.id,
       itemId: item?.id,
       manifestId: manifest?.id,
