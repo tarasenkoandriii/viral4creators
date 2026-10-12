@@ -270,6 +270,8 @@ locally except the two Prisma steps that need network (`migrate deploy`,
 
 All supplementary documentation lives in [`doc/`](doc/):
 
+- [`doc/ai-publisher/README.md`](doc/ai-publisher/README.md) — target product **AI Publisher / ai-publisher.org**, imported v2.1 specification, acceptance and staged integration roadmap; target requirements, not completed pilot results.
+
 - [`doc/CI.md`](doc/CI.md) — what the pipeline checks and why those
   particular things.
 - [`doc/PRODUCT-PROJECT-SPEC.md`](doc/PRODUCT-PROJECT-SPEC.md) — the

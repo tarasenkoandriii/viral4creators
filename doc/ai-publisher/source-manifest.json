@@ -1,0 +1,92 @@
+{
+  "source_archive": "AI-Publisher-Specification-v2.1.zip",
+  "archive_sha256": "7446881f91278123be58c2a1f1e04113ad3a11d3e369f53ca8d453a9e8f67cba",
+  "imported_at": "2026-10-12",
+  "files": [
+    {
+      "file": "AI-Publisher-Technical-Specification-v2.1.md",
+      "bytes": 78176,
+      "sha256": "7da57d0f30637adcde8bca4e6569ca425b4577e7d89a588ea5b2481452b49a2e"
+    },
+    {
+      "file": "archive/v2-before-audit/pilot-acceptance-v2.md",
+      "bytes": 27259,
+      "sha256": "29c81adb7156bea853e6f9e72553cba98e41ac29d257ef317eca768f039cede9"
+    },
+    {
+      "file": "archive/v2-before-audit/pilot-features-v2.md",
+      "bytes": 45638,
+      "sha256": "531db326c4c510c0165b99510170fd01d0800babbee2c7a11355da399a39f8c0"
+    },
+    {
+      "file": "archive/v2-before-audit/pilot-spec-v2.md",
+      "bytes": 60254,
+      "sha256": "e35d67648616e5ee6a76f2ec64ef8c7900b69db4722374c0157039578672b62c"
+    },
+    {
+      "file": "archive/v2-before-final-audit/pilot-acceptance-v2.md",
+      "bytes": 27611,
+      "sha256": "f7e3ffef2e571417c271a06c2cace8309ab1da3bc12459bdafdde0ee765f3233"
+    },
+    {
+      "file": "archive/v2-before-final-audit/pilot-ai-eval-v2.md",
+      "bytes": 17203,
+      "sha256": "373198e3362b02756a9cad912c6046d38bb29014b61bba520adcdbbeafa378fd"
+    },
+    {
+      "file": "archive/v2-before-final-audit/pilot-audit-v2.md",
+      "bytes": 18205,
+      "sha256": "4a4c57a2106539e9e7c01aa4a207429f789fd581a0ba457887cd7d4dc5369387"
+    },
+    {
+      "file": "archive/v2-before-final-audit/pilot-features-v2.md",
+      "bytes": 47067,
+      "sha256": "98fe956384350ac6b4633c9d40b0796ab46e074108b7f5421665d836bb5bdb22"
+    },
+    {
+      "file": "archive/v2-before-final-audit/pilot-spec-v2.md",
+      "bytes": 70433,
+      "sha256": "c4840e4830dc34de9f65172f1d8237e022c23564dc93e7c2353415f6d06ffebe"
+    },
+    {
+      "file": "pilot-acceptance-v2.md",
+      "bytes": 29536,
+      "sha256": "f2242cfc80743b8059351c1ba95de19cdf0a47a4713679158f0f45697c28c421"
+    },
+    {
+      "file": "pilot-ai-eval-v2.md",
+      "bytes": 17549,
+      "sha256": "b44fc38d0fd995afc3c3f1ba6ae52431027ec5c70ec9f4491454bd242c4ebbab"
+    },
+    {
+      "file": "pilot-audit-v2.md",
+      "bytes": 18369,
+      "sha256": "4b70827ff0a30de1eaa940b15c1a6e60334e02d2154f09f4dfc3585d8c1754dd"
+    },
+    {
+      "file": "pilot-audit.md",
+      "bytes": 16631,
+      "sha256": "830bda746ce641333f81987bd35b2b3502fc29a1e8797d0101874d99a4c4c304"
+    },
+    {
+      "file": "pilot-features-v2.md",
+      "bytes": 47513,
+      "sha256": "f0cd48bb313d61aad18bb0b9180c6ed31dd06b3b6e068c96b484833031872d9f"
+    },
+    {
+      "file": "pilot-final-audit.md",
+      "bytes": 15677,
+      "sha256": "b43e363b2d8b1644b28338187541701d03d96fa45a7aa2111347e01e9a2ecbe7"
+    },
+    {
+      "file": "pilot-spec-v2.md",
+      "bytes": 78176,
+      "sha256": "7da57d0f30637adcde8bca4e6569ca425b4577e7d89a588ea5b2481452b49a2e"
+    },
+    {
+      "file": "pilot-spec.md",
+      "bytes": 59349,
+      "sha256": "cf2f7ad88cecd39156b4c7c348dcfb2d375537c98b155317f6369cbb709b85c9"
+    }
+  ]
+}
