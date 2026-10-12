@@ -69,6 +69,8 @@ export interface FixtureRouteContext {
   itemId?: string;
   manifestId?: string;
   sessionId?: string;
+  /** Deterministic analysis with a character, separate from the latest real render. */
+  castingSessionId?: string;
   /**
    * Сессия НА ШАГЕ ПРОМПТА, промпт ещё не сгенерирован (разбор
    * достижимости 29.09.2026). Нужна не для удобства: карточка
@@ -159,6 +161,8 @@ export const ROUTE_DESCRIPTIONS: Record<string, string> = {
   item: 'экран одного товара: фото → аналоги → голосовое описание → цена — все шаги ОДНОГО товара внутри этого экрана, не отдельные маршруты',
   generate:
     'ЧИСТЫЙ мастер создания рекламного ролика: открывается на первом шаге «Референс», сессии ещё нет. Годится ТОЛЬКО для шагов 1–2 (согласие с офертой, выбор референса). Разбора, товара, промпта и ролика здесь нет и появиться им неоткуда: платные кнопки сценарию нажимать запрещено',
+  'generate-ready-casting':
+    'Мастер на детерминированной фикстуре с персонажем. Для демонстрации включения/выключения персонажа используйте этот экран вместо generate-ready: в настоящем последнем ролике людей может не быть. Открывается на готовом видео; переключитесь на wizard-step-analysis.',
   'generate-ready':
     'ТОТ ЖЕ мастер на фикстурной сессии с ГОТОВЫМ роликом: разбор готов, товар заполнен, промпт одобрен, ролик отрендерен. Открывается на экране готового ролика — это состояние ПОСЛЕ последнего шага. Поэтому сценарий ОБЯЗАН сначала кликнуть нужную позицию степпера (wizard-step-upload / wizard-step-analysis / wizard-step-product / wizard-step-prompt / wizard-step-video) и только ПОТОМ ждать карточку. Что здесь ЕСТЬ: разбор, персонажи и сцены, форма товара, редактор промпта, фото товара, готовый ролик. Чего здесь НЕТ И НЕ БУДЕТ: карточки релевантности и кнопки «Сгенерировать промпт» (они только пока промпт не написан) и всей формы запуска рендера — формата кадра, движка, длительности, референс-слотов, кнопки «Сгенерировать» (их прячет уже готовый ролик). Для них есть отдельные маршруты ниже',
   'generate-prompt-pending':
@@ -222,6 +226,10 @@ const ROUTE_BUILDERS: Record<string, RouteBuilder> = {
   // формальность: без фикстурной сессии подсевать нечего, и сценарий
   // честнее не запустить вовсе, чем открыть пустой мастер и упасть на
   // `waitFor` через 15 секунд.
+  'generate-ready-casting': (ctx) =>
+    ctx.castingSessionId
+      ? { ok: true, path: '/generate' }
+      : missingFixtureData('castingSessionId'),
   'generate-ready': (ctx) =>
     ctx.sessionId
       ? { ok: true, path: '/generate' }
@@ -347,9 +355,13 @@ const ROUTE_BUILDERS: Record<string, RouteBuilder> = {
  */
 export const SEEDED_SESSION_ROUTES: ReadonlyMap<
   string,
-  'sessionId' | 'promptPendingSessionId' | 'readyToRenderSessionId'
+  | 'sessionId'
+  | 'promptPendingSessionId'
+  | 'readyToRenderSessionId'
+  | 'castingSessionId'
 > = new Map([
   ['generate-ready', 'sessionId' as const],
+  ['generate-ready-casting', 'castingSessionId' as const],
   ['generate-prompt-pending', 'promptPendingSessionId' as const],
   ['generate-ready-to-render', 'readyToRenderSessionId' as const],
 ]);

@@ -2,7 +2,7 @@
   "ru": [
     {
       "kind": "goto",
-      "route": "generate-ready",
+      "route": "generate-ready-casting",
       "narration": "Открываем готовый разбор видео."
     },
     {
@@ -14,6 +14,11 @@
       "kind": "waitFor",
       "selector": "[data-qa=\"character-casting\"]",
       "narration": "Находим блок персонажей."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Находим переключатель персонажа."
     },
     {
       "kind": "click",
@@ -34,7 +39,7 @@
   "uk": [
     {
       "kind": "goto",
-      "route": "generate-ready",
+      "route": "generate-ready-casting",
       "narration": "Відкриваємо готовий розбір відео."
     },
     {
@@ -46,6 +51,11 @@
       "kind": "waitFor",
       "selector": "[data-qa=\"character-casting\"]",
       "narration": "Чекаємо на блок персонажів."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Знаходимо перемикач персонажа."
     },
     {
       "kind": "click",
@@ -66,7 +76,7 @@
   "en": [
     {
       "kind": "goto",
-      "route": "generate-ready",
+      "route": "generate-ready-casting",
       "narration": "We open the completed video analysis."
     },
     {
@@ -78,6 +88,11 @@
       "kind": "waitFor",
       "selector": "[data-qa=\"character-casting\"]",
       "narration": "We wait for the character panel."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "We locate the character toggle."
     },
     {
       "kind": "click",
@@ -98,7 +113,7 @@
   "de": [
     {
       "kind": "goto",
-      "route": "generate-ready",
+      "route": "generate-ready-casting",
       "narration": "Wir öffnen die fertige Videoanalyse."
     },
     {
@@ -110,6 +125,11 @@
       "kind": "waitFor",
       "selector": "[data-qa=\"character-casting\"]",
       "narration": "Wir warten auf den Figurenbereich."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Wir finden den Figurenschalter."
     },
     {
       "kind": "click",
@@ -130,7 +150,7 @@
   "es": [
     {
       "kind": "goto",
-      "route": "generate-ready",
+      "route": "generate-ready-casting",
       "narration": "Abrimos el análisis terminado del vídeo."
     },
     {
@@ -142,6 +162,11 @@
       "kind": "waitFor",
       "selector": "[data-qa=\"character-casting\"]",
       "narration": "Esperamos al panel de personajes."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"character-toggle\"]",
+      "narration": "Buscamos el interruptor del personaje."
     },
     {
       "kind": "click",

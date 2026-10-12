@@ -934,7 +934,18 @@ describe('TutorialScenarioRunnerService', () => {
     const wheres = prisma.session.findFirst.mock.calls.map(
       (c: any[]) => c[0].where,
     );
-    expect(wheres.length).toBe(3);
+    expect(wheres.length).toBe(4);
+    expect(
+      wheres.find((w: any) => w.id === 'fixture-tutorial-session'),
+    ).toEqual(
+      expect.objectContaining({
+        userId: expect.any(String),
+        data: {
+          path: ['videoAnalysis', 'characters', '0', 'id'],
+          equals: 'c1',
+        },
+      }),
+    );
     for (const where of wheres) {
       expect(where.project).toEqual({ type: { in: ['SINGLE', 'LINE'] } });
     }
@@ -942,7 +953,9 @@ describe('TutorialScenarioRunnerService', () => {
     // первую попавшуюся рекламную сессию, а нужны три разных.
     expect(
       wheres.map((w: any) => w.status ?? w.generationStatus).sort(),
-    ).toEqual(['complete', 'product_info_added', 'prompt_generated'].sort());
+    ).toEqual(
+      ['complete', 'complete', 'product_info_added', 'prompt_generated'].sort(),
+    );
   });
 
   it('пропущенный платный клик доезжает до журнала крона отдельным числом', async () => {
@@ -1157,6 +1170,7 @@ describe('TutorialScenarioRunnerService', () => {
    */
   it.each([
     ['generate-ready', 'sess-done'],
+    ['generate-ready-casting', 'sess-casting'],
     ['generate-prompt-pending', 'sess-prompt-pending'],
     ['generate-ready-to-render', 'sess-ready-to-render'],
   ])(
@@ -1176,8 +1190,10 @@ describe('TutorialScenarioRunnerService', () => {
       // как это делает сама выборка.
       prisma.session.findFirst.mockImplementation(
         async (args: {
-          where?: { generationStatus?: unknown; status?: string };
+          where?: { id?: string; generationStatus?: unknown; status?: string };
         }) => {
+          if (args?.where?.id === 'fixture-tutorial-session')
+            return { id: 'sess-casting' };
           if (args?.where?.generationStatus === GenerationStatus.COMPLETE) {
             return { id: 'sess-done' };
           }

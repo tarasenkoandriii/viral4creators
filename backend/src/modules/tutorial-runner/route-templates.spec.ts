@@ -172,6 +172,7 @@ describe('resolveScenarioRoute', () => {
         itemId: 'i1',
         manifestId: 'm1',
         sessionId: 's1',
+        castingSessionId: 'casting',
       });
       expect(result.ok).toBe(false);
       expect((result as { reason: string }).reason).toContain('не поддержан');
@@ -182,6 +183,7 @@ describe('resolveScenarioRoute', () => {
 describe('ROUTE_DESCRIPTIONS — единственный источник правды для промпта генератора (этап 106)', () => {
   it('каждый описанный ключ реально резолвится (с полным фикстурным контекстом)', () => {
     const fullCtx = {
+      castingSessionId: 'casting',
       projectId: 'p1',
       itemId: 'i1',
       manifestId: 'm1',
@@ -319,4 +321,16 @@ describe('темп обучалки (06.10.2026)', () => {
     const r = resolveScenarioRoute('postprod-tutorial', {});
     expect(r.ok).toBe(false);
   });
+});
+
+it('casting route does not fall back to a real render without a character', () => {
+  expect(
+    resolveScenarioRoute('generate-ready-casting', { sessionId: 'real-video' })
+      .ok,
+  ).toBe(false);
+  expect(
+    resolveScenarioRoute('generate-ready-casting', {
+      castingSessionId: 'seeded-casting',
+    }).ok,
+  ).toBe(true);
 });
