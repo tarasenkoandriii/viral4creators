@@ -321,6 +321,7 @@ function build(scenarios: unknown[]) {
   const settings = { get: jest.fn().mockResolvedValue(null), set: jest.fn() };
   const ttsProvider = {
     providerKey: 'elevenlabs',
+    defaultVoice: jest.fn().mockReturnValue(undefined),
     configured: jest.fn().mockReturnValue(true),
     synthesize: jest.fn().mockResolvedValue({
       ok: true,
@@ -3146,6 +3147,37 @@ describe('TutorialScenarioRunnerService', () => {
 
         expect(paths).toHaveLength(2);
         expect(paths[0]).not.toBe(paths[1]);
+      });
+
+      it('changing provider defaults invalidates cached speech', async () => {
+        const paths: string[] = [];
+        for (const voiceId of ['default-old', 'default-new']) {
+          const { service, blob, ttsProvider } = voicedRun();
+          ttsProvider.defaultVoice.mockReturnValue(voiceId);
+          blob.uploadBuffer.mockImplementation(async (pathname: string) => {
+            if (pathname.endsWith('.mp3')) paths.push(pathname);
+            return { url: 'https://blob.example.com/x' };
+          });
+          await service.run();
+          expect(ttsProvider.defaultVoice).toHaveBeenCalledTimes(1);
+          expect(ttsProvider.synthesize).toHaveBeenCalledWith(
+            expect.objectContaining({ voiceId }),
+          );
+        }
+        expect(paths).toHaveLength(2);
+        expect(paths[0]).not.toBe(paths[1]);
+      });
+
+      it('a pinned Tutorial voice takes precedence over provider defaults', async () => {
+        const { service, ttsProvider } = voicedRun({
+          setting: 'on:pinned-voice',
+        });
+        ttsProvider.defaultVoice.mockReturnValue('another-voice');
+        await service.run();
+        expect(ttsProvider.defaultVoice).not.toHaveBeenCalled();
+        expect(ttsProvider.synthesize).toHaveBeenCalledWith(
+          expect.objectContaining({ voiceId: 'pinned-voice' }),
+        );
       });
 
       it('смена провайдера меняет ключ кеша — второй уровень отката работает', async () => {
@@ -6562,6 +6594,20 @@ describe('заход 7: темп пары на новом ролике сцен�
       .map((c: any[]) => c[0])
       .find((a: any) => a.data?.assemblyStatus === 'pending');
   }
+
+  it('records the resolved default narrator in every speech frame', async () => {
+    const built = tempoRun(null);
+    built.ttsProvider.defaultVoice.mockReturnValue('a9fc5a41');
+    await built.service.run();
+    const frames = pendingWrite(built).data.tempoManifest.frames;
+    expect(frames).toHaveLength(2);
+    frames.forEach((frame: any) => {
+      expect(frame.speech.provenance.voiceId).toBe('a9fc5a41');
+      expect(frame.speech.provenance.provider).toBe(
+        built.ttsProvider.providerKey,
+      );
+    });
+  });
 
   it('темп пары выбран — одна сборка сразу с ним; manifest хранит исходную сетку и appliedTempo', async () => {
     const plain = tempoRun(null);

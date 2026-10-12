@@ -168,6 +168,9 @@
   },
   "overrides": {
     "deepmerge-ts": "^8.0.2",
-    "mysql2": "^3.24.5"
+    "mysql2": "^3.24.5",
+    "sanitize-html": {
+      "htmlparser2": "10.0.0"
+    }
   }
 }

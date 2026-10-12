@@ -950,6 +950,10 @@ export class TutorialScenarioRunnerService {
       // Провайдер выбирается ДО обращения к кешу: он входит в ключ.
       // Сети тут нет — `resolve()` читает настройку.
       const provider = await this.tts.resolve();
+      // Freeze the narrator before cache lookup: defaults must be part of
+      // the cache key and recorded provenance, just like explicit voices.
+      voice.voiceId =
+        voice.voiceId ?? provider.defaultVoice?.()?.trim() ?? null;
 
       // Вариант Б включается, только если реплик хватает на
       // БОЛЬШИНСТВО снятых кадров. Иначе — запасной путь.
