@@ -1189,3 +1189,58 @@ describe('grounding routes for observed multilingual generation failures', () =>
     ).toBe(false);
   });
 });
+
+describe('shared product wizard stepper', () => {
+  it('allows shared selectors on the three actual wizard states', () => {
+    for (const route of [
+      'generate-ready',
+      'generate-prompt-pending',
+      'generate-ready-to-render',
+    ]) {
+      for (const name of ['upload', 'analysis', 'product', 'prompt', 'video']) {
+        expect(
+          validateScenarioSteps([
+            { kind: 'goto', route },
+            {
+              kind: 'assertVisible',
+              selector: `[data-qa="wizard-step-${name}"]`,
+            },
+          ]).ok,
+        ).toBe(true);
+      }
+      for (const name of ['upload', 'analysis', 'product'])
+        expect(
+          validateScenarioSteps([
+            { kind: 'goto', route },
+            { kind: 'click', selector: `[data-qa="wizard-step-${name}"]` },
+          ]).ok,
+        ).toBe(true);
+    }
+  });
+  it.each([
+    ['generate-prompt-pending', 'prompt'],
+    ['generate-prompt-pending', 'video'],
+    ['generate-ready-to-render', 'video'],
+  ])('rejects disabled %s/%s positions', (route, name) => {
+    expect(
+      validateScenarioSteps([
+        { kind: 'goto', route },
+        { kind: 'click', selector: `[data-qa="wizard-step-${name}"]` },
+      ]).ok,
+    ).toBe(false);
+  });
+  it('retains closed route boundaries and ordinary hook checks', () => {
+    expect(
+      validateScenarioSteps([
+        { kind: 'goto', route: 'greeting-video-ready' },
+        { kind: 'assertVisible', selector: '[data-qa="wizard-step-upload"]' },
+      ]).ok,
+    ).toBe(false);
+    expect(
+      validateScenarioSteps([
+        { kind: 'goto', route: 'generate-prompt-pending' },
+        { kind: 'assertVisible', selector: '[data-qa="product-photo-card"]' },
+      ]).ok,
+    ).toBe(false);
+  });
+});

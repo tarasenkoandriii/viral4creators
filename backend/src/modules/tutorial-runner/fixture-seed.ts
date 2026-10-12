@@ -36,7 +36,10 @@ import { GenerationStatus } from '../../common/types/generation.types';
 import { AnalysisStatus } from '../../common/types/analysis.types';
 import { SessionStatus } from '../../common/types/session.types';
 import { DEFAULT_VOICE_MODE } from '../../common/voice-mode';
-import { TUTORIAL_DEMO_PRODUCT as DEMO } from '../../common/tutorial-demo-product';
+import {
+  TUTORIAL_DEMO_PRODUCT as DEMO,
+  TUTORIAL_DEMO_GREETING_SCRIPT,
+} from '../../common/tutorial-demo-product';
 import { greetingBriefSnapshotFrom } from '../project-session/snapshot';
 import { fixtureRelevanceState } from '../relevance/fixture-relevance';
 
@@ -681,7 +684,26 @@ export async function seedFixtureUser(
     const data: Record<string, unknown> = {
       locale: 'ru',
       greetingBriefSnapshot: greetingBriefSnapshotFrom(brief),
-      ...(withPrompt ? { generationPrompt: approvedPrompt(id) } : {}),
+      ...(withPrompt
+        ? {
+            generationPrompt: {
+              ...approvedPrompt(id),
+              // ScriptStep reads these fields; a scene-only ad prompt left the
+              // "ready" greeting textarea empty. Only the synthetic ready fixture
+              // is seeded; the real completed greeting remains untouched.
+              generatedText:
+                'Нейтральная праздничная сцена с тёплым светом для тестового поздравления.',
+              finalText:
+                'Нейтральная праздничная сцена с тёплым светом для тестового поздравления.',
+              characterCount:
+                'Нейтральная праздничная сцена с тёплым светом для тестового поздравления.'
+                  .length,
+              voiceoverScript: TUTORIAL_DEMO_GREETING_SCRIPT,
+              finalVoiceoverScript: TUTORIAL_DEMO_GREETING_SCRIPT,
+              voiceoverScriptSource: 'field',
+            },
+          }
+        : {}),
     };
     const fields = {
       userId: user.id,

@@ -437,3 +437,27 @@ describe('seedFixtureUser: демо-товар в кадре (решение в�
     );
   });
 });
+
+describe('ready greeting fixture contains actual editable script text', () => {
+  it('seeds both UI voice fields only in synthetic ready session', async () => {
+    const { prisma, session } = build();
+    await seedFixtureUser(prisma as any, '42');
+    const ready = session.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'fixture-tutorial-greeting-ready-session',
+    )?.[0];
+    expect(ready.create.data.generationPrompt.voiceoverScript).toContain(
+      'тестовое поздравление',
+    );
+    expect(ready.create.data.generationPrompt.finalVoiceoverScript).toEqual(
+      ready.create.data.generationPrompt.voiceoverScript,
+    );
+    expect(ready.update.data.generationPrompt.finalVoiceoverScript).toEqual(
+      ready.create.data.generationPrompt.finalVoiceoverScript,
+    );
+    const done = session.mock.calls.find(
+      (c: any[]) => c[0].where.id === 'fixture-tutorial-greeting-done-session',
+    )?.[0];
+    expect(done.update).not.toHaveProperty('data');
+    expect(done.update).not.toHaveProperty('generationStatus');
+  });
+});

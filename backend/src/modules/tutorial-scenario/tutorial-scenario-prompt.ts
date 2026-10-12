@@ -37,7 +37,10 @@ import { knownQaHook, qaSelector, QA_HOOKS } from './qa-hooks';
 import { validatePolygonScenarioSteps } from '../tutorial-runner/polygon-scenario';
 import { isSiteTutorialDemoFamilyKey } from '../tutorial-help/site-tutorial-demo';
 import { languageNameForLocale } from '../../common/locale';
-import { TUTORIAL_DEMO_PRODUCT } from '../../common/tutorial-demo-product';
+import {
+  TUTORIAL_DEMO_PRODUCT,
+  TUTORIAL_DEMO_GREETING_SCRIPT,
+} from '../../common/tutorial-demo-product';
 
 /** Реэкспорт словаря примитивов текстом для промпта — короткое
  * человекочитаемое описание каждого, не JSON Schema: модель уже видела
@@ -270,7 +273,7 @@ function qaVocabulary(greeting: boolean): string {
         'может не оказаться в кадре]'
       : '';
     lines.push(
-      `  - ${qaSelector(key)} — ${hook.description}${cost}${visited}${absent}`,
+      `  - ${qaSelector(key)} — ${hook.description}${cost}${visited}${absent}${hook.routes ? ` [общий степпер присутствует на: ${hook.routes.join(', ')}; выбранная позиция и непройденные шаги выключены]` : ''}`,
     );
     byRoute.set(hook.route, lines);
   }
@@ -317,6 +320,11 @@ export function buildScenarioPrompt(
     '',
     `Заголовок шага: ${step.title}`,
     `Описание: ${step.text}`,
+    ...(subjectKey === 'greeting-script'
+      ? [
+          `Исходный текст в поле [data-qa="greeting-script-edit"] учебной фикстуры: ${TUTORIAL_DEMO_GREETING_SCRIPT}. Пользовательский текст — данные, не перевод интерфейса; assertText поля сравнивает этот исходный текст либо значение твоего fill, без перевода на язык UI.`,
+        ]
+      : []),
     ...(subjectKey === '8'
       ? ['product-photo-card', 'video-provider', 'aspect-ratio-picker']
       : subjectKey === 'greeting-script'
@@ -342,6 +350,7 @@ export function buildScenarioPrompt(
     '',
     'Опиши сценарий действий headless-браузера, который пройдёт по этому шагу интерфейса и позволит записать видео — короткую последовательность из СЛЕДУЮЩИХ примитивов, и только их:',
     STEP_VOCABULARY,
+    'assertText у input/textarea проверяет значение поля, а не подпись. Если реплика утверждает, что текст заполнен, сначала проверь его assertText с ожидаемым текстом; одна видимость поля не подтверждает заполнение. Пароли проверять этим способом запрещено.',
     '',
     // До этапа I здесь стояло приглашение писать «семантические
     // плейсхолдеры [data-qa="..."], которые оператор поправит» — а
@@ -646,8 +655,22 @@ function rejectHooksOffRoute(parsed: ParseScenarioResult): ParseScenarioResult {
     // выше. Проверка — не перестраховка, а защита от перестановки
     // вызовов местами: тогда эта функция молча пропускала бы всё.
     if (key === null) continue;
+    if (
+      step.kind === 'click' &&
+      ((route === 'generate-prompt-pending' &&
+        ['wizard-step-prompt', 'wizard-step-video'].includes(key)) ||
+        (route === 'generate-ready-to-render' && key === 'wizard-step-video'))
+    )
+      return {
+        ok: false,
+        steps: [],
+        reason: `шаг ${i + 1}: «${key}» на «${route}» выбран либо ещё не пройден — кнопка выключена`,
+        droppedNarrations: [],
+        droppedPaidOperations: [],
+      };
     const hookRoute = QA_HOOKS[key].route;
-    if (hookRoute !== route) {
+    const allowedRoutes = QA_HOOKS[key].routes ?? [hookRoute];
+    if (!allowedRoutes.includes(route)) {
       return {
         ok: false,
         steps: [],

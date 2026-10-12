@@ -743,7 +743,20 @@ async function runStep(
         visible: true,
         timeout: timeoutMs,
       });
-      const actual = await page.$eval(step.selector, (el) => el.textContent);
+      const actual = await page.$eval(step.selector, (el) => {
+        const node = el as unknown as {
+          tagName?: string;
+          type?: string;
+          value?: unknown;
+          textContent?: string | null;
+        };
+        if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') {
+          if (node.type?.toLowerCase() === 'password')
+            throw new Error('assertText не читает секретное поле');
+          return typeof node.value === 'string' ? node.value : null;
+        }
+        return node.textContent ?? null;
+      });
       // includes(), не строгое равенство: ожидаемый текст пишет модель
       // по описанию шага обучалки, а не копирует байт-в-байт из
       // реального DOM (пробелы/переносы/обрамляющий текст) — точное
