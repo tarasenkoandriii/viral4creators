@@ -74,6 +74,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
+      - name: CI baseline lookup regression
+        # Protect authenticated private-repository lookup and fallback behavior.
+        # Run before selecting jobs: these checks must never be filtered out.
+        run: node --test scripts/ci-last-success.test.mjs
       - id: f
         run: node scripts/ci-changes.mjs >> "$GITHUB_OUTPUT"
         env:

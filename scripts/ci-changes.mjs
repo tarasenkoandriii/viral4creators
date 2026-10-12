@@ -26,6 +26,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { lastSuccessfulSha } from './ci-last-success.mjs';
 import { ENTRIES as SITES_SHARED_ENTRIES } from './sync-sites-shared.mjs';
 import { ENTRIES as WORKER_SHARED_ENTRIES } from './sync-worker-shared.mjs';
 
@@ -168,7 +169,7 @@ export const FILTERS = {
 };
 /** Изменение любого из этих путей запускает всё. */
 /** `.nvmrc` — версия Node для всех джоб: её смена перепроверяет всё. */
-export const GLOBAL = ['.github/workflows/ci.yml', 'scripts/ci-changes.mjs', '.nvmrc'];
+export const GLOBAL = ['.github/workflows/ci.yml', 'scripts/ci-changes.mjs', 'scripts/ci-last-success.mjs', '.nvmrc'];
 /**
  * Джобы без правила по папкам: `changes` (сам выбор), `repo` и `secrets`
  * (на каждом коммите), `ci` — сборщик результата (Р-З10-8).
@@ -190,18 +191,6 @@ export function decide(files) {
 
 function git(...args) {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim();
-}
-
-async function lastSuccessfulSha() {
-  const { GITHUB_REPOSITORY: repo, GITHUB_REF_NAME: branch, GH_TOKEN: token } = process.env;
-  if (!repo || !branch || !token) return null;
-  const url = `https://api.github.com/repos/${repo}/actions/workflows/ci.yml/runs?branch=${encodeURIComponent(branch)}&status=success&per_page=1`;
-  const r = await fetch(url, {
-    headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json' },
-  });
-  if (!r.ok) return null;
-  const j = await r.json();
-  return j.workflow_runs?.[0]?.head_sha ?? null;
 }
 
 async function changedFiles() {
@@ -246,6 +235,7 @@ function selfTest() {
   const on = (files) => Object.keys(FILTERS).filter((k) => decide(files)[k]);
   eq('нет базы — всё', on(null), Object.keys(FILTERS));
   eq('ci.yml — всё', on(['.github/workflows/ci.yml']), Object.keys(FILTERS));
+  eq('API helper — всё', on(['scripts/ci-last-success.mjs']), Object.keys(FILTERS));
   eq('только документы — ничего', on(['doc/DEPLOYMENT.md', 'docs-tz/x.md', 'README.md']), []);
   eq('виджет — и лендинг (стенд виджета)', on(['widget/src/loader/index.ts']), ['widget', 'sites_landing']);
   eq('.nvmrc — всё', on(['.nvmrc']), Object.keys(FILTERS));
