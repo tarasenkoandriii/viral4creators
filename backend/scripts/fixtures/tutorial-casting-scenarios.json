@@ -23,17 +23,12 @@
     {
       "kind": "click",
       "selector": "[data-qa=\"character-toggle\"]",
-      "narration": "Возвращаем персонажа в кадр."
+      "narration": "Возвращаем исходный выбор."
     },
     {
       "kind": "assertVisible",
       "selector": "[data-qa=\"scene-casting\"]",
       "narration": "Проверяем настройки сцен."
-    },
-    {
-      "kind": "click",
-      "selector": "[data-qa=\"analysis-continue\"]",
-      "narration": "Переходим к следующему шагу."
     }
   ],
   "uk": [
@@ -60,17 +55,12 @@
     {
       "kind": "click",
       "selector": "[data-qa=\"character-toggle\"]",
-      "narration": "Повертаємо персонажа в кадр."
+      "narration": "Повертаємо початковий вибір."
     },
     {
       "kind": "assertVisible",
       "selector": "[data-qa=\"scene-casting\"]",
       "narration": "Перевіряємо налаштування сцен."
-    },
-    {
-      "kind": "click",
-      "selector": "[data-qa=\"analysis-continue\"]",
-      "narration": "Переходимо до наступного кроку."
     }
   ],
   "en": [
@@ -97,17 +87,12 @@
     {
       "kind": "click",
       "selector": "[data-qa=\"character-toggle\"]",
-      "narration": "We restore the character to the scene."
+      "narration": "We restore the original selection."
     },
     {
       "kind": "assertVisible",
       "selector": "[data-qa=\"scene-casting\"]",
       "narration": "We check the scene settings."
-    },
-    {
-      "kind": "click",
-      "selector": "[data-qa=\"analysis-continue\"]",
-      "narration": "We continue to the next step."
     }
   ],
   "de": [
@@ -134,17 +119,12 @@
     {
       "kind": "click",
       "selector": "[data-qa=\"character-toggle\"]",
-      "narration": "Wir nehmen die Figur wieder ins Bild auf."
+      "narration": "Wir stellen die ursprüngliche Auswahl wieder her."
     },
     {
       "kind": "assertVisible",
       "selector": "[data-qa=\"scene-casting\"]",
       "narration": "Wir prüfen die Szeneneinstellungen."
-    },
-    {
-      "kind": "click",
-      "selector": "[data-qa=\"analysis-continue\"]",
-      "narration": "Wir gehen zum nächsten Schritt."
     }
   ],
   "es": [
@@ -171,17 +151,12 @@
     {
       "kind": "click",
       "selector": "[data-qa=\"character-toggle\"]",
-      "narration": "Volvemos a incluir al personaje."
+      "narration": "Restauramos la selección inicial."
     },
     {
       "kind": "assertVisible",
       "selector": "[data-qa=\"scene-casting\"]",
       "narration": "Comprobamos los ajustes de las escenas."
-    },
-    {
-      "kind": "click",
-      "selector": "[data-qa=\"analysis-continue\"]",
-      "narration": "Pasamos al siguiente paso."
     }
   ]
 }
