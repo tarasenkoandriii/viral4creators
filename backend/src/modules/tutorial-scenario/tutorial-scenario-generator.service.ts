@@ -100,6 +100,8 @@ type RotationPair = { locale: string; key: string; item: AssistantStepItem };
  * бы с ним при первой правке.
  */
 export const GENERATE_DEADLINE_MS = 4 * 60 * 1000;
+/** Gemini rejects manually set request deadlines below 10 seconds. */
+export const GENERATE_REQUEST_MIN_MS = 10_000;
 
 export interface TutorialScenarioGenerateResult {
   /**
@@ -584,7 +586,7 @@ export class TutorialScenarioGeneratorService {
         );
         continue;
       }
-      if (Date.now() >= deadline) {
+      if (deadline - Date.now() < GENERATE_REQUEST_MIN_MS) {
         result.deferred = pairs.length - i;
         this.logger.warn(
           `бюджет времени исчерпан на теме ${subjectKey} (${locale}) — пар отложено ${result.deferred}, они первыми пойдут в следующий прогон`,
@@ -604,7 +606,9 @@ export class TutorialScenarioGeneratorService {
       // ночь стояла бы в голове очереди и съедала бюджет, а круг по
       // остальным парам растягивался бы на её длину. Случайный отказ
       // от этого не теряется: пара вернётся через круг (≈3 ночи).
-      stamps.set(rotationKey(locale, subjectKey), Date.now());
+      const stampKey = rotationKey(locale, subjectKey);
+      const previousStamp = stamps.get(stampKey);
+      stamps.set(stampKey, Date.now());
       taken.add(locale);
       try {
         // Правленная руками пара проверяется ДО вызова модели
@@ -637,9 +641,14 @@ export class TutorialScenarioGeneratorService {
         // кронов 06.10.2026). Бюджет проверялся только МЕЖДУ парами, а
         // сам вызов модели не был ограничен ничем: зависшее соединение
         // на последней паре уводило функцию за потолок платформы.
-        // Остаток не меньше секунды — иначе вызов с нулевым таймаутом
-        // упал бы, ещё не начавшись, и выглядел бы как отказ модели.
-        const callTimeoutMs = Math.max(1_000, deadline - Date.now());
+        // Повторная проверка после чтения базы: ожидание тоже съело время.
+        const callTimeoutMs = deadline - Date.now();
+        if (callTimeoutMs < GENERATE_REQUEST_MIN_MS) {
+          if (previousStamp === undefined) stamps.delete(stampKey);
+          else stamps.set(stampKey, previousStamp);
+          result.deferred = pairs.length - i;
+          break;
+        }
         const res = await this.genai.models.generateContent({
           model: GEMINI_MODEL,
           contents: [{ text: prompt }],

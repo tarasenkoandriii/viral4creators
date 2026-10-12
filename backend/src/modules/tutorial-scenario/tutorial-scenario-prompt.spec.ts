@@ -1151,3 +1151,41 @@ describe('готовое поздравление требует видимый 
     expect(prompt).toContain('нельзя заменять результат кнопкой генерации');
   });
 });
+
+describe('grounding routes for observed multilingual generation failures', () => {
+  it('uses current hook routes for every locale without weakening validation', () => {
+    for (const locale of ['ru', 'uk', 'en', 'de', 'es']) {
+      for (const [topic, hooks] of [
+        ['8', ['product-photo-card', 'video-provider', 'aspect-ratio-picker']],
+        ['greeting-script', ['greeting-script-card', 'greeting-script-edit']],
+      ] as const) {
+        const prompt = buildScenarioPrompt(topic, locale, step);
+        for (const hook of hooks)
+          expect(prompt).toContain(
+            `data-qa="${hook}"] принадлежит ТОЛЬКО экрану "${QA_HOOKS[hook].route}"`,
+          );
+      }
+    }
+    expect(
+      validateScenarioSteps(
+        [
+          { kind: 'goto', route: 'generate-ready-to-render' },
+          { kind: 'assertVisible', selector: '[data-qa="product-photo-card"]' },
+        ],
+        '8',
+      ).ok,
+    ).toBe(false);
+    expect(
+      validateScenarioSteps(
+        [
+          { kind: 'goto', route: 'greeting-video-ready' },
+          {
+            kind: 'assertVisible',
+            selector: '[data-qa="greeting-script-card"]',
+          },
+        ],
+        'greeting-script',
+      ).ok,
+    ).toBe(false);
+  });
+});
