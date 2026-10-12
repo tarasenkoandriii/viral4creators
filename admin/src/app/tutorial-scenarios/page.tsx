@@ -458,7 +458,7 @@ export default function TutorialScenariosPage() {
                         разворотов и семь прокруток, чтобы выяснить,
                         что причина у всех одна.
 
-                        Три состояния, а не два: «переписан генератором»
+                        Три состояния, а не два: «изменён после прогона»
                         (`lastRunAt` есть, `lastRunStatus` обнулён) до
                         этой правки рисовалось как «— 28.09.2026» и
                         читалось «прогон был, результат непонятен». */}
@@ -467,7 +467,7 @@ export default function TutorialScenariosPage() {
                         'ещё не запускался'
                       ) : row.lastRunStatus === null ? (
                         <>
-                          переписан генератором{' '}
+                          изменён после прогона{' '}
                           {new Date(row.lastRunAt).toLocaleDateString('ru-RU')}
                         </>
                       ) : (
