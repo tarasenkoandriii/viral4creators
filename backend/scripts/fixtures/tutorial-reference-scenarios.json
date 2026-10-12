@@ -1,0 +1,87 @@
+{
+  "ru": [
+    {
+      "kind": "goto",
+      "route": "greeting-video-drafting",
+      "narration": "Открываем черновик поздравления."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Находим блок референс-изображений."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Проверяем блок: фотографии ещё не добавлены."
+    }
+  ],
+  "uk": [
+    {
+      "kind": "goto",
+      "route": "greeting-video-drafting",
+      "narration": "Відкриваємо чернетку привітання."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Знаходимо блок референс-зображень."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Перевіряємо блок: фотографії ще не додано."
+    }
+  ],
+  "en": [
+    {
+      "kind": "goto",
+      "route": "greeting-video-drafting",
+      "narration": "We open the greeting draft."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "We locate the reference image panel."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "We check the panel: no photos have been added."
+    }
+  ],
+  "de": [
+    {
+      "kind": "goto",
+      "route": "greeting-video-drafting",
+      "narration": "Wir öffnen den Entwurf des Grußvideos."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Wir finden den Bereich für Referenzbilder."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Wir prüfen den Bereich: Fotos sind noch nicht hinzugefügt."
+    }
+  ],
+  "es": [
+    {
+      "kind": "goto",
+      "route": "greeting-video-drafting",
+      "narration": "Abrimos el borrador de la felicitación."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Buscamos el panel de imágenes de referencia."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"greeting-references-card\"]",
+      "narration": "Comprobamos el panel: aún no hay fotografías."
+    }
+  ]
+}

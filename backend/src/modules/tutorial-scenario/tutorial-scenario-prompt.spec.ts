@@ -1268,3 +1268,39 @@ describe('casting interaction targets', () => {
     expect(result.ok).toBe(true);
   });
 });
+
+describe('seeded session boundaries before saving a scenario', () => {
+  it('rejects two fixture sessions before execution', () => {
+    expect(
+      validateScenarioSteps(
+        [
+          { kind: 'goto', route: 'generate-ready' },
+          { kind: 'goto', route: 'generate-ready-to-render' },
+        ],
+        '8',
+      ).ok,
+    ).toBe(false);
+  });
+  it('rejects fresh wizard combined with a seeded session', () => {
+    expect(
+      validateScenarioSteps(
+        [
+          { kind: 'goto', route: 'generate' },
+          { kind: 'goto', route: 'generate-ready' },
+        ],
+        '4',
+      ).ok,
+    ).toBe(false);
+  });
+  it('allows revisiting the same seeded session', () => {
+    expect(
+      validateScenarioSteps(
+        [
+          { kind: 'goto', route: 'generate-ready' },
+          { kind: 'goto', route: 'generate-ready' },
+        ],
+        '5',
+      ).ok,
+    ).toBe(true);
+  });
+});

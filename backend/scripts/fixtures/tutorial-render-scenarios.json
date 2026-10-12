@@ -1,0 +1,87 @@
+{
+  "ru": [
+    {
+      "kind": "goto",
+      "route": "generate-ready-to-render",
+      "narration": "Открываем настройки рендера."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Находим кнопку генерации видео."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Проверяем кнопку без платного запуска."
+    }
+  ],
+  "uk": [
+    {
+      "kind": "goto",
+      "route": "generate-ready-to-render",
+      "narration": "Відкриваємо налаштування рендера."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Знаходимо кнопку генерації відео."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Перевіряємо кнопку без платного запуску."
+    }
+  ],
+  "en": [
+    {
+      "kind": "goto",
+      "route": "generate-ready-to-render",
+      "narration": "We open the render settings."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "We locate the video generation button."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "We check the button without a paid launch."
+    }
+  ],
+  "de": [
+    {
+      "kind": "goto",
+      "route": "generate-ready-to-render",
+      "narration": "Wir öffnen die Rendereinstellungen."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Wir finden die Schaltfläche für die Videogenerierung."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Wir prüfen die Schaltfläche ohne kostenpflichtigen Start."
+    }
+  ],
+  "es": [
+    {
+      "kind": "goto",
+      "route": "generate-ready-to-render",
+      "narration": "Abrimos los ajustes de renderizado."
+    },
+    {
+      "kind": "waitFor",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Buscamos el botón para generar vídeo."
+    },
+    {
+      "kind": "assertVisible",
+      "selector": "[data-qa=\"video-generate\"]",
+      "narration": "Comprobamos el botón sin iniciar una operación de pago."
+    }
+  ]
+}
