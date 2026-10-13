@@ -39,6 +39,12 @@ const HAS_FFMPEG =
   spawnSync('ffmpeg', ['-version']).status === 0 &&
   spawnSync('ffprobe', ['-version']).status === 0;
 const maybe = HAS_FFMPEG ? describe : describe.skip;
+// Some local FFmpeg builds omit libass. Keep non-caption acceptance active;
+// execute caption acceptance only when its actual filter is available.
+const HAS_SUBTITLES = /\bsubtitles\s+V->V/.test(
+  spawnSync('ffmpeg', ['-hide_banner', '-filters'], { encoding: 'utf8' })
+    .stdout ?? '',
+);
 
 function run(cmd: string): void {
   const r = spawnSync('bash', ['-c', cmd], {
@@ -188,122 +194,126 @@ maybe('приёмка темпа на настоящем ffmpeg', () => {
   ];
 
   for (const c of cases) {
-    it(`×${c.factor}, ${c.motion}${c.captions ? ', с подписями' : ''}: кадры и сэмплы сходятся с планом, речь не обрезана`, () => {
-      const m = buildTutorialManifest({
-        sourceAssetId: 'a1',
-        owner: { kind: 'client-site', draftId: 'd1', userId: 'u1' },
-        assetContentHash: 'h',
-        locale: 'ru',
-        theme: null,
-        motion: c.motion,
-        captions: c.captions,
-        narration: 'per-frame',
-        storage: 'draft-frames',
-        frames,
-      });
-      const tempo = planTempo(tempoInputs(m), {
-        factor: c.factor,
-        motion: c.motion,
-      })!;
-      let captionsUrl: string | null = null;
-      if (c.captions) {
-        const ass = join(dir, `c-${c.factor}.ass`);
-        writeFileSync(
-          ass,
-          buildTutorialCaptionsAss(
-            manifestCaptionFrames(m, tempo.seconds),
-            c.motion,
-          ),
-        );
-        captionsUrl = 'https://blob/captions.ass';
-        files[captionsUrl] = ass;
-      }
-      const plan = planSlideshow(manifestSlides(m, tempo.seconds), {
-        captionsUrl,
-        motion: c.motion,
-      })!;
-      expect(plan.durationMs).toBe(tempo.durationMs);
-      const out = join(dir, `out-${c.factor}-${c.motion}.mp4`);
-      localAssemble(plan, files, out);
-
-      // ffprobe: число кадров видео и размер.
-      const v = ffprobeJson(
-        out,
-        '-count_frames -select_streams v:0 -show_entries stream=nb_read_frames,width,height',
-      ).streams[0];
-      const expectedFrames = Math.round((tempo.durationMs / 1000) * 30);
-      expect(Number(v.nb_read_frames)).toBe(expectedFrames);
-      expect([v.width, v.height]).toEqual([720, 1560]);
-
-      // Наш разбор контейнера совпадает с ffprobe — и проверка проходит.
-      const bytes = readFileSync(out);
-      const probe = probeMp4(bytes)!;
-      const video = probe.tracks.find((t) => t.kind === 'video')!;
-      const audio = probe.tracks.find((t) => t.kind === 'audio')!;
-      expect(video.samples).toBe(Number(v.nb_read_frames));
-      const a = ffprobeJson(
-        out,
-        '-select_streams a:0 -show_entries stream=duration',
-      ).streams[0];
-      expect(Math.abs(audio.durationSeconds - Number(a.duration))).toBeLessThan(
-        0.03,
-      );
-      const check = checkTutorialVideo(probe, {
-        durationMs: tempo.durationMs,
-        hasAudio: true,
-        width: 720,
-        height: 1560,
-      });
-      expect(check).toMatchObject({ ok: true, problems: [] });
-
-      // Речь: каждая реплика звучит целиком, начинается в начале своего
-      // кадра и кончается до начала следующего; немые кадры молчат.
-      const spans = frameSpansSeconds(
-        tempo.seconds.map((s) => ({ seconds: s })),
-        c.motion,
-      );
-      const runs = voicedRuns(out, dir);
-      const violations: string[] = [];
-      SPEECH.forEach((nominal, i) => {
-        // Окно 10 мс: начало реплики следующего кадра может попасть в
-        // последнее окно этого — сравнение с допуском в три окна.
-        const inside = runs.filter(
-          (r) =>
-            r.start >= spans[i].start - 0.03 && r.start < spans[i].end - 0.03,
-        );
-        if (nominal === null) {
-          if (inside.length > 0) violations.push(`${i}: немой кадр звучит`);
-          return;
-        }
-        const speech = frames[i].speech!.seconds!;
-        const r = inside[0];
-        if (inside.length !== 1) {
-          violations.push(`${i}: реплик в кадре ${inside.length}`);
-          return;
-        }
-        if (Math.abs(r.start - spans[i].start) > 0.03) {
-          violations.push(`${i}: реплика не с начала кадра`);
-        }
-        if (r.end - r.start < speech - 0.04) {
-          violations.push(
-            `${i}: реплика обрезана (${r.end - r.start} < ${speech})`,
+    const runCase = c.captions && !HAS_SUBTITLES ? it.skip : it;
+    runCase(
+      `×${c.factor}, ${c.motion}${c.captions ? ', с подписями' : ''}: кадры и сэмплы сходятся с планом, речь не обрезана`,
+      () => {
+        const m = buildTutorialManifest({
+          sourceAssetId: 'a1',
+          owner: { kind: 'client-site', draftId: 'd1', userId: 'u1' },
+          assetContentHash: 'h',
+          locale: 'ru',
+          theme: null,
+          motion: c.motion,
+          captions: c.captions,
+          narration: 'per-frame',
+          storage: 'draft-frames',
+          frames,
+        });
+        const tempo = planTempo(tempoInputs(m), {
+          factor: c.factor,
+          motion: c.motion,
+        })!;
+        let captionsUrl: string | null = null;
+        if (c.captions) {
+          const ass = join(dir, `c-${c.factor}.ass`);
+          writeFileSync(
+            ass,
+            buildTutorialCaptionsAss(
+              manifestCaptionFrames(m, tempo.seconds),
+              c.motion,
+            ),
           );
+          captionsUrl = 'https://blob/captions.ass';
+          files[captionsUrl] = ass;
         }
-        if (i < SPEECH.length - 1) {
-          if (r.end > spans[i + 1].start + 0.01) {
-            violations.push(`${i}: реплика заходит на следующий кадр`);
+        const plan = planSlideshow(manifestSlides(m, tempo.seconds), {
+          captionsUrl,
+          motion: c.motion,
+        })!;
+        expect(plan.durationMs).toBe(tempo.durationMs);
+        const out = join(dir, `out-${c.factor}-${c.motion}.mp4`);
+        localAssemble(plan, files, out);
+
+        // ffprobe: число кадров видео и размер.
+        const v = ffprobeJson(
+          out,
+          '-count_frames -select_streams v:0 -show_entries stream=nb_read_frames,width,height',
+        ).streams[0];
+        const expectedFrames = Math.round((tempo.durationMs / 1000) * 30);
+        expect(Number(v.nb_read_frames)).toBe(expectedFrames);
+        expect([v.width, v.height]).toEqual([720, 1560]);
+
+        // Наш разбор контейнера совпадает с ffprobe — и проверка проходит.
+        const bytes = readFileSync(out);
+        const probe = probeMp4(bytes)!;
+        const video = probe.tracks.find((t) => t.kind === 'video')!;
+        const audio = probe.tracks.find((t) => t.kind === 'audio')!;
+        expect(video.samples).toBe(Number(v.nb_read_frames));
+        const a = ffprobeJson(
+          out,
+          '-select_streams a:0 -show_entries stream=duration',
+        ).streams[0];
+        expect(
+          Math.abs(audio.durationSeconds - Number(a.duration)),
+        ).toBeLessThan(0.03);
+        const check = checkTutorialVideo(probe, {
+          durationMs: tempo.durationMs,
+          hasAudio: true,
+          width: 720,
+          height: 1560,
+        });
+        expect(check).toMatchObject({ ok: true, problems: [] });
+
+        // Речь: каждая реплика звучит целиком, начинается в начале своего
+        // кадра и кончается до начала следующего; немые кадры молчат.
+        const spans = frameSpansSeconds(
+          tempo.seconds.map((s) => ({ seconds: s })),
+          c.motion,
+        );
+        const runs = voicedRuns(out, dir);
+        const violations: string[] = [];
+        SPEECH.forEach((nominal, i) => {
+          // Окно 10 мс: начало реплики следующего кадра может попасть в
+          // последнее окно этого — сравнение с допуском в три окна.
+          const inside = runs.filter(
+            (r) =>
+              r.start >= spans[i].start - 0.03 && r.start < spans[i].end - 0.03,
+          );
+          if (nominal === null) {
+            if (inside.length > 0) violations.push(`${i}: немой кадр звучит`);
+            return;
           }
-          // Запас после речи сохранён и на самом быстром темпе.
-          if (
-            spans[i + 1].start - (spans[i].start + speech) <
-            SPEECH_GUARD_SECONDS - 0.035
-          ) {
-            violations.push(`${i}: нет запаса после речи`);
+          const speech = frames[i].speech!.seconds!;
+          const r = inside[0];
+          if (inside.length !== 1) {
+            violations.push(`${i}: реплик в кадре ${inside.length}`);
+            return;
           }
-        }
-      });
-      expect(violations).toEqual([]);
-    });
+          if (Math.abs(r.start - spans[i].start) > 0.03) {
+            violations.push(`${i}: реплика не с начала кадра`);
+          }
+          if (r.end - r.start < speech - 0.04) {
+            violations.push(
+              `${i}: реплика обрезана (${r.end - r.start} < ${speech})`,
+            );
+          }
+          if (i < SPEECH.length - 1) {
+            if (r.end > spans[i + 1].start + 0.01) {
+              violations.push(`${i}: реплика заходит на следующий кадр`);
+            }
+            // Запас после речи сохранён и на самом быстром темпе.
+            if (
+              spans[i + 1].start - (spans[i].start + speech) <
+              SPEECH_GUARD_SECONDS - 0.035
+            ) {
+              violations.push(`${i}: нет запаса после речи`);
+            }
+          }
+        });
+        expect(violations).toEqual([]);
+      },
+    );
   }
 
   it('техническая проверка ловит файл не той длины', () => {

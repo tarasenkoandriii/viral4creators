@@ -598,3 +598,20 @@ describe('аудит Ш0: Host и ресурсы', () => {
     }
   });
 });
+
+describe('numeric hosts are blocked before DNS', () => {
+  it.each(['0177.0.0.1', '2130706433', '0x7f.1'])(
+    '%s never reaches the resolver',
+    async (host) => {
+      const lookup = jest.fn(async () => {
+        throw new Error('DNS must not run');
+      });
+      proxy = await startEgressFilterProxy({ lookup });
+      expect(await raw(proxy.port, connectThenGet(host, 443))).toMatch(
+        /^HTTP\/1\.1 403/,
+      );
+      expect(lookup).not.toHaveBeenCalled();
+      expect(targetHits).toHaveLength(0);
+    },
+  );
+});

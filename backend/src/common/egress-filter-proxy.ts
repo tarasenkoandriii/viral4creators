@@ -309,7 +309,17 @@ export async function startEgressFilterProxy(
   /** Резолв ОДИН раз и проверка ВСЕХ адресов. Возвращает IP для подключения. */
   const pinTarget = async (host: string, port: number): Promise<string> => {
     if (!ports.has(port)) throw new EgressDeniedError('blocked-port');
-    const bare = stripBrackets(host);
+    let bare = stripBrackets(host);
+    // Chromium accepts legacy numeric IPv4 forms. Normalize them before DNS,
+    // whose treatment (notably octal literals) differs between operating systems.
+    if (!isIP(bare)) {
+      try {
+        const canonical = stripBrackets(new URL(`http://${host}`).hostname);
+        if (isIP(canonical)) bare = canonical;
+      } catch {
+        throw new EgressDeniedError('bad-request');
+      }
+    }
     let addresses: string[];
     if (isIP(bare)) {
       addresses = [bare];
