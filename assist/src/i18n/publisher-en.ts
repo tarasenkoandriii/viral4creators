@@ -208,6 +208,7 @@ export const pubEn: PublisherDict = {
       pilot_calendar: 'Pilot calendar',
       launch_evidence_d0: 'D0 launch protocol',
       launch_evidence_purchase: 'Pre-purchase protocol',
+      reddit_rules_stale_days: 'Reddit rules check freshness (days)',
     },
     statuses: {
       assumption: 'not approved',
@@ -441,6 +442,10 @@ export const pubEn: PublisherDict = {
       PUB_NOT_IMPLEMENTED:
         'This part of the server is not connected yet — nothing was done.',
     },
+    conflictReasons: {
+      reddit_evidence_locked:
+        'Reddit evidence changes only via a new rules snapshot or an excerpt edit in the Reddit section.',
+    },
     conflictText:
       'The record changed while you were viewing it. Your changes were not saved — reload and try again.',
     responseInvalid:
@@ -472,6 +477,12 @@ export const pubEn: PublisherDict = {
       no_supporting_source: 'no supporting source',
       ai_call: 'unsuitable AI call',
       limit_not_reached: 'limit not reached yet',
+      community_mismatch: 'community in the link differs from the selected one',
+      project_mismatch: 'object belongs to another project',
+      derived: 'computed by the server — not an input',
+      future: 'date is in the future',
+      profile_ref: 'profile link or username — remove it',
+      unknown: 'unknown value',
     },
     reasons: 'Reason: {reason}',
     importReasons: {
@@ -488,6 +499,8 @@ export const pubEn: PublisherDict = {
       empty: 'no text on the page',
       spa: 'text is rendered by a script — copy the fragment manually',
       noindex: 'the page is closed to indexing',
+      reddit_manual_only:
+        'Reddit is manual-only: Reddit URLs are never fetched, copy the excerpt by hand',
     },
     blockers: {
       qa_editorial_missing: 'no editorial check',

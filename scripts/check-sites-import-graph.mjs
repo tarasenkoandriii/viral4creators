@@ -165,6 +165,14 @@
  *     (`publisher-ai-no-authority`); в `publisher` нет имён таблиц/моделей
  *     помощника и QA, в `assist-*`/`qa-*` — Publisher (`publisher-names`,
  *     `assist-names`; имена — из schema.prisma).
+ *     Пакет P-R (Reddit Manual MVP, doc/ai-publisher/reddit-manual-mvp-
+ *     adapted.md §M1.0, §8.3): `publisher/reddit/**` не берёт `site-crawl/**`
+ *     (там `pinned-fetch`), импорт источников по URL и ревалидацию сайта
+ *     (`publisher-reddit-no-network`) и не называет сетевые пакеты Node,
+ *     `fetch(` и HTTP-клиенты (`publisher-reddit-no-network-io`); AI-слой не
+ *     берёт сервисы P-R (`publisher-ai-no-authority`; чистые normalize/
+ *     policy/score — можно) и не называет таблицы и модели P-R
+ *     (`publisher-ai-no-reddit-rules`): модель не меняет policy и статусы.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -247,7 +255,17 @@ const PUBLISHER_PUBLIC_ALLOWED =
   /^(public\/.+|contracts\/.+|core\/(kyiv-time|money|utm|contact-crypto|clock)|(.+\/)?[\w-]+\.module)$/;
 /** Чего AI-слой Publisher не импортирует (принцип 6, §5.1). */
 const PUBLISHER_AI_FORBIDDEN =
-  /^(leads\/.+|distribution\/.+|core\/(approvals|parameters|role-grants|gates)[^/]*)$/;
+  /^(leads\/.+|distribution\/.+|core\/(approvals|parameters|role-grants|gates)[^/]*|reddit\/(?!(normalize|policy|score)$).+)$/;
+/** P-R: сетевые входы, которых нет в `publisher/reddit/**` (Р-RD-0, §8.3). */
+const PUBLISHER_REDDIT_NETWORK =
+  /^modules\/(site-crawl\/.+|publisher\/content\/source-import|publisher\/core\/site-revalidate[^/]*)$/;
+/** P-R: сетевые пакеты Node и клиенты, `fetch(` в коде `publisher/reddit/**`. */
+const REDDIT_NETWORK_IO =
+  /(['"](node:)?(http|https|http2|net|tls|dgram|dns|undici|axios|node-fetch|got|superagent|ws)['"])|\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b/;
+const inPublisherReddit = (moduleName, inModule) =>
+  moduleName === PUBLISHER &&
+  /^reddit\//.test(inModule) &&
+  !/\.spec\.ts$/.test(inModule);
 const inPublisherPublic = (moduleName, inModule) =>
   moduleName === PUBLISHER &&
   /^public\//.test(inModule) &&
@@ -471,6 +489,12 @@ export const PATH_RULES = [
     },
   },
   {
+    id: 'publisher-reddit-no-network',
+    why: 'AI Publisher P-R (Р-RD-0): publisher/reddit/** не берёт site-crawl/**, импорт источников по URL и ревалидацию сайта — запросов к Reddit нет',
+    from: inPublisherReddit,
+    to: (target) => PUBLISHER_REDDIT_NETWORK.test(target.replace(SOURCE_RE, '')),
+  },
+  {
     id: 'worker-seal-private',
     why: 'Э-С Ш3: запечатывание секретов под ключ воркера (browser-jobs/worker-seal) — только browser-jobs и internal-worker',
     from: (moduleName) =>
@@ -610,6 +634,18 @@ export const LITERAL_RULES = [
     why: 'AI Publisher §5.1: публичный код Publisher называет только pub_public_products, pub_public_contents и таблицы приёма (pub_leads, pub_lead_contacts, pub_events, pub_sessions, pub_lead_outbox, pub_rate_hits)',
     in: (m, inModule) => inPublisherPublic(m, inModule ?? ''),
     re: PUBLISHER_PUBLIC_NAMES,
+  },
+  {
+    id: 'publisher-reddit-no-network-io',
+    why: 'AI Publisher P-R (Р-RD-0): в publisher/reddit/** нет сетевых пакетов Node, HTTP-клиентов и fetch( — Reddit не запрашивается',
+    in: (m, inModule) => inPublisherReddit(m, inModule ?? ''),
+    re: REDDIT_NETWORK_IO,
+  },
+  {
+    id: 'publisher-ai-no-reddit-rules',
+    why: 'AI Publisher P-R (§M1.3, аудит S3-5): AI-слой не называет таблицы и модели Reddit (pub_reddit_*, PubReddit*) — модель не меняет policy, статусы и снимки',
+    in: (m, inModule) => m === PUBLISHER && /^ai\//.test(inModule ?? ''),
+    re: /\bpub_reddit_\w+|\bpubReddit\w+|\bPubReddit\w+/,
   },
   {
     id: 'publisher-names',
@@ -890,6 +926,42 @@ function selfTest() {
       'modules/publisher/content/pa12.ts',
       `const rows = await db.assistSiteFaq.findMany({});`,
       'publisher-names',
+    ],
+    // P-R (Reddit Manual MVP): сеть и полномочия AI.
+    [
+      'modules/publisher/reddit/pa14.ts',
+      `import { pinnedFetch } from '../../site-crawl/net/pinned-fetch';`,
+      'publisher-reddit-no-network',
+    ],
+    [
+      'modules/publisher/reddit/pa15.ts',
+      `import { fetchForImport } from '../content/source-import';`,
+      'publisher-reddit-no-network',
+    ],
+    [
+      'modules/publisher/reddit/pa16.ts',
+      `import * as https from 'node:https';`,
+      'publisher-reddit-no-network-io',
+    ],
+    [
+      'modules/publisher/reddit/pa17.ts',
+      `const r = await fetch('https://www.reddit.com/r/x/about.json');`,
+      'publisher-reddit-no-network-io',
+    ],
+    [
+      'modules/publisher/ai/pa18.ts',
+      `import { RedditCommunitiesService } from '../reddit/communities.service';`,
+      'publisher-ai-no-authority',
+    ],
+    [
+      'modules/publisher/ai/pa20.ts',
+      `await tx.pubRedditOpportunity.updateMany({ data: { policy: 'ok', status: 'qualified' } });`,
+      'publisher-ai-no-reddit-rules',
+    ],
+    [
+      'modules/publisher/ai/generators/pa19.generator.ts',
+      `await tx.pubRedditRuleSnapshot.updateMany({ data: { reviewState: 'reviewed' } });`,
+      'publisher-ai-no-reddit-rules',
     ],
     [
       'modules/qa-catalog/pa13.ts',
@@ -1352,6 +1424,19 @@ function selfTest() {
     [
       'modules/publisher/ai/okp4.ts',
       `import { kyivDateOf } from '../core/kyiv-time';\nimport type { AiContext } from '../contracts/ai';\nimport { GeminiText } from '../../site-ai/gemini-text';`,
+    ],
+    // P-R: сервисы контента/каналов и ядро — можно; AI берёт только чистые функции P-R.
+    [
+      'modules/publisher/reddit/okp6.ts',
+      `import { SourcesService } from '../content/sources.service';\nimport { ChannelsService } from '../distribution/channels.service';\nimport { PubOperations } from '../core/operation';\nimport type { RedditOpportunityView } from '../contracts/reddit-api';\nimport { Injectable } from '@nestjs/common';\nconst refetch = 1;`,
+    ],
+    [
+      'modules/publisher/reddit/okp7.spec.ts',
+      `import * as http from 'node:http';\nglobalThis.fetch = () => { throw new Error('egress'); };`,
+    ],
+    [
+      'modules/publisher/ai/okp8.ts',
+      `import { policyGate } from '../reddit/policy';\nimport { computeScore } from '../reddit/score';\nimport { normalizeThreadUrl } from '../reddit/normalize';`,
     ],
     [
       'modules/assist-site-chat/okp5.ts',

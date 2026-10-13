@@ -2,7 +2,7 @@
  * AI Publisher — параметры продукта (P-A1, проектный документ §6.2, §10,
  * §11.3; Р-PUB-0 п.4; аудит P2-9).
  *
- *  - новый продукт сеется 38 ключами со статусом `assumption` (ТЗ §26/§17);
+ *  - новый продукт сеется 39 ключами со статусом `assumption` (ТЗ §26/§17);
  *  - предложение (`pub_parameter_proposals`) НЕ меняет действующее
  *    значение и не закрывает гейты: аналитик, предложивший новый
  *    `form_limit`, не останавливает приём заявок;
@@ -173,7 +173,7 @@ export class ParametersService implements ParameterPort {
     private readonly ports: PubPorts,
   ) {}
 
-  /** 38 ключей-допущений нового продукта (без решений: статус assumption). */
+  /** 39 ключей-допущений нового продукта (без решений: статус assumption). */
   async seed(tx: PubTx, product: ProductRef, actor: string): Promise<void> {
     await tx.pubParameter.createMany({
       data: PARAMETER_KEYS.map((key) => ({

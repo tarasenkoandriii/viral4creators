@@ -12,6 +12,9 @@ import { pubUk } from '../src/i18n/publisher-uk';
 import { pubContentEn } from '../src/i18n/publisher-content-en';
 import { pubContentRu } from '../src/i18n/publisher-content-ru';
 import { pubContentUk } from '../src/i18n/publisher-content-uk';
+import { pubRedditEn } from '../src/i18n/publisher-reddit-en';
+import { pubRedditRu } from '../src/i18n/publisher-reddit-ru';
+import { pubRedditUk } from '../src/i18n/publisher-reddit-uk';
 
 /** Пути ко всем строкам словаря + число элементов массивов. */
 function shape(v: unknown, prefix = ''): string[] {
@@ -43,6 +46,9 @@ assert.deepEqual(shape(pubUk), shape(pubRu));
 assert.deepEqual(shape(pubEn), shape(pubRu));
 assert.deepEqual(shape(pubContentUk), shape(pubContentRu));
 assert.deepEqual(shape(pubContentEn), shape(pubContentRu));
+// P-R: раздел «Reddit».
+assert.deepEqual(shape(pubRedditUk), shape(pubRedditRu));
+assert.deepEqual(shape(pubRedditEn), shape(pubRedditRu));
 
 // Плейсхолдеры одинаковы во всех языках.
 function placeholders(v: unknown): string[] {
@@ -62,6 +68,8 @@ assert.deepEqual(placeholders(appUk), placeholders(appRu));
 assert.deepEqual(placeholders(appEn), placeholders(appRu));
 assert.deepEqual(placeholders(pubUk), placeholders(pubRu));
 assert.deepEqual(placeholders(pubEn), placeholders(pubRu));
+assert.deepEqual(placeholders(pubRedditUk), placeholders(pubRedditRu));
+assert.deepEqual(placeholders(pubRedditEn), placeholders(pubRedditRu));
 // Плейсхолдеры словарей контента (ключи с точками: `pub.helper.answer`) —
 // в `publisher-view.test.ts` (там путь не разбирается по точкам).
 

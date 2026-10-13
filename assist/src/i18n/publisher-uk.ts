@@ -207,6 +207,7 @@ export const pubUk: PublisherDict = {
       pilot_calendar: 'Календар пілоту',
       launch_evidence_d0: 'Протокол запуску D0',
       launch_evidence_purchase: 'Протокол перед закупівлями',
+      reddit_rules_stale_days: 'Свіжість перевірки правил Reddit (днів)',
     },
     statuses: {
       assumption: 'не затверджено',
@@ -436,6 +437,10 @@ export const pubUk: PublisherDict = {
       PUB_NOT_IMPLEMENTED:
         'Цю частину сервера ще не підключено — дію не виконано.',
     },
+    conflictReasons: {
+      reddit_evidence_locked:
+        'Доказ Reddit змінюється новим знімком правил або правкою витягу в розділі Reddit.',
+    },
     conflictText:
       'Поки ви дивилися, запис змінили. Ваші зміни не записано — перезавантажте й повторіть.',
     responseInvalid:
@@ -466,6 +471,12 @@ export const pubUk: PublisherDict = {
       no_supporting_source: 'немає підтверджувального джерела',
       ai_call: 'невідповідний AI-виклик',
       limit_not_reached: 'ліміт ще не вичерпано',
+      community_mismatch: 'спільнота в посиланні не збігається з обраною',
+      project_mismatch: "об'єкт з іншого проєкту",
+      derived: 'обчислюється сервером — не вводиться',
+      future: 'дата в майбутньому',
+      profile_ref: 'посилання на профіль або нік — приберіть',
+      unknown: 'невідоме значення',
     },
     reasons: 'Причина: {reason}',
     importReasons: {
@@ -482,6 +493,8 @@ export const pubUk: PublisherDict = {
       empty: 'на сторінці немає тексту',
       spa: 'текст малює скрипт — скопіюйте фрагмент вручну',
       noindex: 'сторінку закрито від індексації',
+      reddit_manual_only:
+        'Reddit — лише ручне введення: адреси Reddit не завантажуються, скопіюйте витяг вручну',
     },
     blockers: {
       qa_editorial_missing: 'немає редакційної перевірки',

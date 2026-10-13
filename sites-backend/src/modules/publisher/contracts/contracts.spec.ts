@@ -48,8 +48,19 @@ import { SITE_AI_OPERATIONS } from '../../site-ai/operations';
 import { PUB_ROLES } from './states';
 
 describe('contracts/parameters', () => {
-  it('38 ключей (с dev_investment, Р-PUB-Z2-24); умолчания ТЗ §26/§17 проходят свои схемы', () => {
-    expect(PARAMETER_KEYS).toHaveLength(38);
+  it('39 ключей (с dev_investment, Р-PUB-Z2-24, и reddit_rules_stale_days P-R); умолчания ТЗ §26/§17 проходят свои схемы', () => {
+    expect(PARAMETER_KEYS).toHaveLength(39);
+    // P-R (§M1.3): 1..365, по умолчанию 30; гейтов P0 не трогает.
+    expect(DEFAULT_PARAMETER_VALUES.reddit_rules_stale_days).toEqual({
+      days: 30,
+    });
+    expect(
+      parameterValueIssues('reddit_rules_stale_days', { days: 0 }),
+    ).not.toEqual([]);
+    expect(
+      parameterValueIssues('reddit_rules_stale_days', { days: 365 }),
+    ).toEqual([]);
+    expect(gatesOfKey('reddit_rules_stale_days')).toEqual([]);
     expect(Object.keys(DEFAULT_PARAMETER_VALUES).sort()).toEqual(
       [...PARAMETER_KEYS].sort(),
     );

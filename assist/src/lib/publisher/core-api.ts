@@ -68,6 +68,8 @@ export interface ProductView {
   createdAt: string;
   myRoles: MyRoles;
   gates: Record<GateName, { open: boolean; missingCount: number }>;
+  /** Разделы вне P0 (P-R): `reddit` — env-флаг сервера; выключен — раздела нет. */
+  features: { reddit: boolean };
 }
 export interface ParameterView {
   key: string;
@@ -185,6 +187,12 @@ export function decodeProduct(v: unknown): ProductView {
     createdAt: iso(o.createdAt, 'product.createdAt'),
     myRoles: decodeMyRoles(o.myRoles),
     gates,
+    features: {
+      reddit: bool(
+        obj(o.features, 'product.features').reddit,
+        'features.reddit'
+      ),
+    },
   };
 }
 

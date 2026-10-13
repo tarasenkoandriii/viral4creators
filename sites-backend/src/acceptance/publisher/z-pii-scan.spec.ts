@@ -10,6 +10,10 @@
  *    с контактом заявителя; модель «возвращает» оба контакта → журнал вызова;
  *  - отказы с контактом в полях (форма, тест-флаг, материал) — тела ошибок;
  *  - отчёт `ad_hoc` за период заявки;
+ *  - Reddit (пакет P-R): выдержка треда, правила, заголовок и запрос с
+ *    контактом → 400 (значение не сохраняется и не возвращается); белый
+ *    список `pub_sources.fragment` на Reddit-выдержки и первоисточники
+ *    правил НЕ распространяется (отдельный поиск по ним);
  *  - раскрытие контакта и заметок — первым шагом проверки (§17.1).
  * Затем сырой поиск синтетических значений во ВСЕХ колонках ВСЕХ таблиц
  * `pub_*` (включая `pub_idempotency_keys`, `pub_audit_events`, журнал AI),
@@ -62,6 +66,13 @@ import {
 import { PublisherContentPublicModule } from '../../modules/publisher/public/content-public.module';
 import { PublisherIntakePublicModule } from '../../modules/publisher/public/intake-public.module';
 import { PublisherReportsModule } from '../../modules/publisher/reports/reports.module';
+import { PUBLISHER_REDDIT_ENABLED_ENV } from '../../config/publisher-env';
+import { PublisherRedditModule } from '../../modules/publisher/reddit/reddit.module';
+import {
+  rulesBody,
+  subredditName,
+  threadUrl,
+} from '../../modules/publisher/reddit/testing/reddit-kit.testing';
 import {
   seedMembers,
   type SeededMembers,
@@ -75,6 +86,7 @@ const MODULES = [
   PublisherDistributionModule,
   PublisherLeadsModule,
   PublisherReportsModule,
+  PublisherRedditModule,
   PublisherContentPublicModule,
   PublisherIntakePublicModule,
 ];
@@ -104,6 +116,7 @@ ciDescribe(
     let model: ScriptedModel;
     let restore: Array<() => void>;
     const saved = process.env[FLAG];
+    const savedReddit = process.env[PUBLISHER_REDDIT_ENABLED_ENV];
     const logs: string[] = [];
     const responses: Array<{ route: string; text: string }> = [];
     const srv = () => s.app!.getHttpServer();
@@ -111,6 +124,7 @@ ciDescribe(
     beforeAll(async () => {
       restore = [useTestSecrets(), trustLocalProxy()];
       process.env[FLAG] = 'true';
+      process.env[PUBLISHER_REDDIT_ENABLED_ENV] = 'true';
       s = await coreStack({ http: true, imports: MODULES });
       w = await intakeProduct(s, { kind: 'working', analytics: 'session' });
       team = await seedMembers(s.prisma, w.product, w.account.owner);
@@ -135,6 +149,9 @@ ciDescribe(
     afterAll(async () => {
       if (saved === undefined) delete process.env[FLAG];
       else process.env[FLAG] = saved;
+      if (savedReddit === undefined)
+        delete process.env[PUBLISHER_REDDIT_ENABLED_ENV];
+      else process.env[PUBLISHER_REDDIT_ENABLED_ENV] = savedReddit;
       await s.close();
       restore.forEach((r) => r());
     });
@@ -479,6 +496,151 @@ ciDescribe(
         );
         expect(helper400.status).toBe(400);
 
+        // ── Reddit (P-R): контакт из чужого треда/правил не сохраняется ──
+        const R = `${P}/reddit`;
+        const proj = keep(
+          'reddit project',
+          await request(srv()).post(`${R}/projects`).set(ed).send({
+            opKey: randomUUID(),
+            title: 'Reddit',
+            locale: 'en',
+            market: 'US',
+          }),
+        );
+        expect(proj.status).toBe(201);
+        const rName = subredditName('pii');
+        const comm = keep(
+          'reddit community',
+          await request(srv())
+            .post(`${R}/communities`)
+            .set(ed)
+            .send({
+              opKey: randomUUID(),
+              projectId: proj.body.data.id,
+              community: `r/${rName}`,
+            }),
+        );
+        expect(comm.status).toBe(201);
+        const rulesPii = keep(
+          'reddit rules 400',
+          await request(srv())
+            .post(`${R}/communities/${comm.body.data.id}/rules`)
+            .set(ed)
+            .send({
+              opKey: randomUUID(),
+              ...rulesBody(rName, 'allowed'),
+              sourceExcerpt: `Modmail ${srcPerson.email}, ${srcPerson.phone}`,
+            }),
+        );
+        expect(rulesPii.status).toBe(400);
+        expect(
+          keep(
+            'reddit rules',
+            await request(srv())
+              .post(`${R}/communities/${comm.body.data.id}/rules`)
+              .set(ed)
+              .send({ opKey: randomUUID(), ...rulesBody(rName, 'allowed') }),
+          ).status,
+        ).toBe(201);
+        const opBody = {
+          projectId: proj.body.data.id,
+          communityId: comm.body.data.id,
+          titleManual: 'Which widget answers from site content?',
+          intent: 'recommendation',
+        };
+        for (const [label, extra] of [
+          [
+            'reddit excerpt 400',
+            {
+              excerpt: `Write me: ${srcPerson.email} or call ${srcPerson.phone}`,
+            },
+          ],
+          ['reddit title 400', { titleManual: `Ask ${p.email}` }],
+          ['reddit angle 400', { angle: `Подзвонити ${p.phone}` }],
+        ] as const) {
+          const r = keep(
+            label,
+            await request(srv())
+              .post(`${R}/opportunities`)
+              .set(ed)
+              .send({
+                opKey: randomUUID(),
+                ...opBody,
+                threadUrl: threadUrl(rName),
+                ...extra,
+              }),
+          );
+          expect(r.status).toBe(400);
+        }
+        expect(
+          keep(
+            'reddit keyword 400',
+            await request(srv())
+              .post(`${R}/keywords`)
+              .set(ed)
+              .send({
+                opKey: randomUUID(),
+                projectId: proj.body.data.id,
+                phrase: `widget ${p.phone}`,
+                intent: 'other',
+                priority: 1,
+              }),
+          ).status,
+        ).toBe(400);
+        const rOpp = keep(
+          'reddit opportunity',
+          await request(srv())
+            .post(`${R}/opportunities`)
+            .set(ed)
+            .send({
+              opKey: randomUUID(),
+              ...opBody,
+              threadUrl: threadUrl(rName),
+              excerpt: 'We need answers only from our own docs.',
+            }),
+        );
+        expect(rOpp.status).toBe(201);
+        // Аудит P-R S1-2: общий PATCH /sources не дописывает контакт в
+        // выдержку (409 reddit_evidence_locked), новая редакция через
+        // маршрут P-R с контактом — 400.
+        const exId = rOpp.body.data.excerpt.sourceId as string;
+        const exRev = (
+          await s.prisma.pubSource.findUniqueOrThrow({ where: { id: exId } })
+        ).revision;
+        const locked = keep(
+          'reddit evidence 409',
+          await request(srv())
+            .patch(`${P}/sources/${exId}`)
+            .set(ed)
+            .send({
+              opKey: randomUUID(),
+              expectedRevision: exRev,
+              fragment: `Contact ${srcPerson.email}, ${srcPerson.phone}`,
+              author: p.name,
+            }),
+        );
+        expect(locked.status).toBe(409);
+        expect(
+          keep(
+            'reddit excerpt revision 400',
+            await request(srv())
+              .patch(`${R}/opportunities/${rOpp.body.data.id}`)
+              .set(ed)
+              .send({
+                opKey: randomUUID(),
+                expectedRevision: rOpp.body.data.revision,
+                excerpt: `Call ${srcPerson.phone}`,
+              }),
+          ).status,
+        ).toBe(400);
+        keep(
+          'reddit csv',
+          await request(srv())
+            .get(`${R}/opportunities`)
+            .query({ format: 'csv' })
+            .set(ed),
+        );
+
         // ── Отчёт ───────────────────────────────────────────────────────
         const rep = keep(
           'report',
@@ -504,6 +666,19 @@ ciDescribe(
         // ── Поиск ────────────────────────────────────────────────────────
         expect(await scan(leadNeedles, PII_ALLOWED_COLUMNS)).toEqual([]);
         expect(await scan(sourceNeedles, SOURCE_ALLOWED)).toEqual([]);
+        // Белый список `pub_sources.fragment` сужен: Reddit-выдержки и
+        // первоисточники правил (P-R проверяет их на контакты) — без
+        // исключения, поиск ВСЕХ значений.
+        const redditFragments = await s.prisma.$queryRaw<Array<{ f: string }>>`
+          SELECT s."fragment" AS f FROM "sites"."pub_sources" s
+           WHERE s."productId" = ${w.product.id}
+             AND (s."id" IN (SELECT o."excerptSourceId" FROM "sites"."pub_reddit_opportunities" o
+                              WHERE o."productId" = ${w.product.id})
+               OR s."id" IN (SELECT r."sourceId" FROM "sites"."pub_reddit_rule_snapshots" r
+                              WHERE r."productId" = ${w.product.id}))`;
+        expect(redditFragments.length).toBe(2);
+        for (const v of [...leadNeedles, ...sourceNeedles])
+          expect(redditFragments.filter((x) => x.f.includes(v))).toEqual([]);
         // Источник действительно хранит свой контакт (колонка разрешена) —
         // поиск не «слепой».
         const raw = await s.prisma.pubSource.findUniqueOrThrow({

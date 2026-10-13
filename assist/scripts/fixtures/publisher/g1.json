@@ -11,7 +11,10 @@
     "revision": 3,
     "createdAt": "2026-10-13T08:00:00.000Z",
     "myRoles": {
-      "roles": ["product_owner", "editor"],
+      "roles": [
+        "product_owner",
+        "editor"
+      ],
       "admin": false,
       "accountOwner": false
     },
@@ -36,6 +39,9 @@
         "open": false,
         "missingCount": 3
       }
+    },
+    "features": {
+      "reddit": false
     }
   },
   "GateResults": {
@@ -106,7 +112,10 @@
     "revision": 1,
     "updatedAt": "2026-10-13T08:00:00.000Z",
     "openProposals": 0,
-    "gates": ["public_publish", "real_leads"]
+    "gates": [
+      "public_publish",
+      "real_leads"
+    ]
   },
   "ParameterDecisionView": {
     "id": "dec1",
@@ -121,7 +130,9 @@
     "decidedBy": "member:m1",
     "decidedAt": "2026-10-13T09:00:00.000Z",
     "basis": "Протокол наради",
-    "dependentStages": ["public_publish"]
+    "dependentStages": [
+      "public_publish"
+    ]
   },
   "ParameterProposalView": {
     "id": "prop1",
@@ -245,7 +256,9 @@
     "mergeRisk": null,
     "status": "confirmed",
     "aiCallId": null,
-    "questionIds": ["q1"],
+    "questionIds": [
+      "q1"
+    ],
     "revision": 1
   },
   "BrandFactView": {
@@ -332,7 +345,12 @@
     "status": "draft",
     "aiCallId": null,
     "sourceIds": [],
-    "missing": ["own_contribution", "cta", "cta_intent_note", "allowed_source"],
+    "missing": [
+      "own_contribution",
+      "cta",
+      "cta_intent_note",
+      "allowed_source"
+    ],
     "revision": 1
   },
   "ContentView": {
@@ -358,7 +376,10 @@
         "objectType": "content_version"
       }
     ],
-    "allowedTransitions": ["changes_requested", "approved"],
+    "allowedTransitions": [
+      "changes_requested",
+      "approved"
+    ],
     "revision": 4
   },
   "VersionView": {
@@ -369,7 +390,9 @@
     "body": "Текст",
     "meta": {
       "description": "Опис",
-      "limitations": ["одне"]
+      "limitations": [
+        "одне"
+      ]
     },
     "format": "article",
     "isScript": false,
@@ -380,8 +403,12 @@
     "status": "submitted",
     "hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "frozenAt": "2026-10-13T10:00:00.000Z",
-    "sourceIds": ["src1"],
-    "claimIds": ["cl1"],
+    "sourceIds": [
+      "src1"
+    ],
+    "claimIds": [
+      "cl1"
+    ],
     "factIds": [],
     "revision": 2
   },
@@ -403,14 +430,18 @@
       }
     ],
     "bodyCoarse": false,
-    "metaChanged": ["description"],
+    "metaChanged": [
+      "description"
+    ],
     "offerChanged": false,
     "sources": {
       "added": [],
       "removed": []
     },
     "claims": {
-      "added": ["cl2"],
+      "added": [
+        "cl2"
+      ],
       "removed": []
     },
     "facts": {
@@ -440,7 +471,9 @@
         "note": null
       }
     ],
-    "versionIds": ["v1"],
+    "versionIds": [
+      "v1"
+    ],
     "revision": 1
   },
   "QaCheckView": {
@@ -482,10 +515,14 @@
     "output": {
       "question": "Q",
       "audience": null,
-      "source_ids": ["src1"],
+      "source_ids": [
+        "src1"
+      ],
       "original_contribution": null,
       "short_answer": "A",
-      "structure": ["1"],
+      "structure": [
+        "1"
+      ],
       "format": "instruction",
       "cta": {
         "text": "CTA",
@@ -508,7 +545,9 @@
     "requestedAt": "2026-10-13T11:00:00.000Z",
     "finishedAt": "2026-10-13T11:00:05.000Z",
     "contextFactIds": [],
-    "contextSourceIds": ["src1"]
+    "contextSourceIds": [
+      "src1"
+    ]
   },
   "AiStartResponse": {
     "callId": "call1",
@@ -554,7 +593,9 @@
     "instructionVersions": {
       "pub.helper.answer": "helper@1"
     },
-    "coveredGenerators": ["pub.helper.answer"],
+    "coveredGenerators": [
+      "pub.helper.answer"
+    ],
     "evalSetVersion": "2.2",
     "evalStatus": "not_run",
     "evalRunId": null,
@@ -604,7 +645,9 @@
     "input": {
       "q": 1
     },
-    "allowedSourceIds": ["s1"],
+    "allowedSourceIds": [
+      "s1"
+    ],
     "firstAnswer": {
       "answer": "x"
     },

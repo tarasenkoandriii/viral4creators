@@ -3655,6 +3655,12 @@ API: в коде сайта их нет.
      переадресации не выполняются;
    - `PUBLISHER_REVALIDATE_SECRET` — тот же секрет, что у сайта (≥ 16
      символов).
+   Раздел «Reddit» (пакет P-R, ручной режим без API Reddit,
+   [ТЗ](ai-publisher/reddit-manual-mvp-adapted.md)) — флаг sites-backend
+   `PUBLISHER_REDDIT_ENABLED=true` (по умолчанию выключен: маршруты
+   `…/reddit/**` отвечают 404, раздел в кабинете скрыт). Миграция
+   `20261020090000_publisher_reddit` накатывается при обычном деплое и без
+   флага ничего не меняет в поведении.
    Задание крона `site-revalidate` (`/cron/publisher-minute`, раз в минуту)
    после снятия материала/публикации, отзыва согласования показанной
    версии, решения `rejected|revoked` по ключу гейта `public_publish` или

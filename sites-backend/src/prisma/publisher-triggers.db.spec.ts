@@ -45,11 +45,11 @@ if (!PUB_RAW_URL) {
   });
 
   describe('каталог: правила схемы', () => {
-    it('66 таблиц pub_*, у каждой — триггеры актёра и неизменяемых колонок (кроме pub_rate_hits)', async () => {
+    it('71 таблица pub_* (66 P0 + 5 P-R), у каждой — триггеры актёра и неизменяемых колонок (кроме pub_rate_hits)', async () => {
       const tables = await db.q<{ t: string }>(
         `SELECT tablename AS t FROM pg_tables WHERE schemaname = 'sites' AND tablename LIKE 'pub\\_%' ORDER BY 1`,
       );
-      expect(tables).toHaveLength(66);
+      expect(tables).toHaveLength(71);
       const trg = await db.q<{ t: string; n: string }>(
         `SELECT c.relname AS t, t.tgname AS n FROM pg_trigger t
            JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace s ON s.oid = c.relnamespace
@@ -125,7 +125,8 @@ if (!PUB_RAW_URL) {
         `SELECT count(*) AS n FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
           WHERE c.relname LIKE 'pub\\_%' AND t.tgname LIKE '%\\_no\\_truncate'`,
       );
-      expect(Number(n[0].n)).toBe(20);
+      // 20 P0 + снимки правил Reddit (P-R, …_publisher_reddit).
+      expect(Number(n[0].n)).toBe(21);
     });
   });
 

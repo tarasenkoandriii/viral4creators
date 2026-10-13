@@ -199,3 +199,21 @@ export function publisherRevalidateTarget(
     problem: null,
   };
 }
+
+// ── Reddit Manual MVP, пакет P-R (reddit-manual-mvp-adapted.md §M1.0) ─────
+//
+// `PUBLISHER_REDDIT_ENABLED=true` включает раздел «Reddit» (маршруты
+// `/publisher/products/:pid/reddit/**` и `features.reddit` продукта). По
+// умолчанию выключен: маршруты отвечают 404 `PUB_NOT_FOUND` без `details`.
+// Флаг читается на каждом запросе (переключение без пересборки). Флаг
+// продукта не вводится (Р-RD-9). `PUBLISHER_REDDIT_AI_ENABLED` — генерация
+// M2, здесь не читается.
+
+export const PUBLISHER_REDDIT_ENABLED_ENV = 'PUBLISHER_REDDIT_ENABLED';
+
+/** Раздел Reddit включён (`PUBLISHER_REDDIT_ENABLED=true`). */
+export function publisherRedditEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return flag(env[PUBLISHER_REDDIT_ENABLED_ENV]);
+}

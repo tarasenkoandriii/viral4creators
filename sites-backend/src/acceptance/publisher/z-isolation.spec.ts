@@ -19,6 +19,10 @@
  *  6. побочных эффектов нет: число строк всех таблиц `pub_*` обоих
  *     кабинетов до и после проверок одинаково (ни ключей идемпотентности, ни
  *     аудита, ни объектов).
+ * Раздел Reddit (пакет P-R, AT-RD-01): `REDDIT_ROUTES` в реестре, флаг
+ * `PUBLISHER_REDDIT_ENABLED=true` на время набора, у кабинета B — проект,
+ * сообщество, снимок правил, возможность и запрос (их id — в чужих
+ * объектах проверки 2).
  */
 import { randomUUID } from 'crypto';
 import { ModulesContainer } from '@nestjs/core';
@@ -38,6 +42,15 @@ import { CORE_ROUTES } from '../../modules/publisher/contracts/core-api';
 import { DISTRIBUTION_ROUTES } from '../../modules/publisher/contracts/distribution-api';
 import { LEADS_ROUTES } from '../../modules/publisher/contracts/leads-api';
 import { PUBLIC_ROUTES } from '../../modules/publisher/contracts/public-api';
+import { REDDIT_ROUTES } from '../../modules/publisher/contracts/reddit-api';
+import { PUBLISHER_REDDIT_ENABLED_ENV } from '../../config/publisher-env';
+import { PublisherRedditModule } from '../../modules/publisher/reddit/reddit.module';
+import {
+  api as redditApi,
+  ok as redditOk,
+  seedCommunity,
+  seedOpportunity,
+} from '../../modules/publisher/reddit/testing/reddit-kit.testing';
 import { REPORTS_ROUTES } from '../../modules/publisher/contracts/reports-api';
 import {
   enumerateRoutes,
@@ -74,6 +87,7 @@ const MODULES = [
   PublisherDistributionModule,
   PublisherLeadsModule,
   PublisherReportsModule,
+  PublisherRedditModule,
   PublisherContentPublicModule,
   PublisherIntakePublicModule,
 ];
@@ -90,6 +104,7 @@ const REGISTRY: Named[] = Object.entries({
   ...prefixed('leads', LEADS_ROUTES),
   ...prefixed('reports', REPORTS_ROUTES),
   ...prefixed('public', PUBLIC_ROUTES),
+  ...prefixed('reddit', REDDIT_ROUTES),
 }).map(([name, r]) => ({ ...(r as Spec), name }));
 
 function prefixed(
@@ -204,7 +219,10 @@ ciDescribe(
         : req.send({ opKey: op(), expectedRevision: 1 });
     }
 
+    const savedReddit = process.env[PUBLISHER_REDDIT_ENABLED_ENV];
+
     beforeAll(async () => {
+      process.env[PUBLISHER_REDDIT_ENABLED_ENV] = 'true';
       s = (await coreStack({ http: true, imports: MODULES })) as ContentStack;
       a = await seedAccount(s.prisma);
       b = await seedAccount(s.prisma);
@@ -213,6 +231,25 @@ ciDescribe(
       // Объекты чужого кабинета: материал целиком (источник, вопрос, бриф,
       // версия, утверждение, согласование) + то, что дал product-init.
       await approvedArticle(new Kit(s, b, pb));
+      // Объекты P-R кабинета B (AT-RD-01): проект, сообщество (+ канал),
+      // снимок правил (+ первоисточник), возможность (+ выдержка), запрос.
+      const rb = redditApi(
+        { ...s, srv: () => s.app!.getHttpServer() },
+        b.accountId,
+        b.owner,
+      );
+      const RB = `/publisher/products/${pb.id}/reddit`;
+      const rc = await seedCommunity(rb, RB, { rules: 'allowed' });
+      redditOk(await seedOpportunity(rb, RB, rc), 201);
+      redditOk(
+        await rb.post(`${RB}/keywords`, {
+          projectId: rc.projectId,
+          phrase: 'isolation keyword',
+          intent: 'other',
+          priority: 1,
+        }),
+        201,
+      );
       team = await seedMembers(s.prisma, pa, a.owner);
       // Участник, которому выдали и затем отозвали ВСЕ роли продукта.
       const m = await s.prisma.siteAccountMember.create({
@@ -260,6 +297,9 @@ ciDescribe(
     }, 300_000);
     afterAll(async () => {
       await s?.close();
+      if (savedReddit === undefined)
+        delete process.env[PUBLISHER_REDDIT_ENABLED_ENV];
+      else process.env[PUBLISHER_REDDIT_ENABLED_ENV] = savedReddit;
     });
 
     it('реестр контрактов = маршруты приложения /publisher/* и /public/publisher/* (новый маршрут вне контрактов роняет набор)', () => {
@@ -275,6 +315,9 @@ ciDescribe(
       expect(new Set(reg).size).toBe(reg.length);
       expect(app).toEqual(reg);
       expect(CABINET.length).toBeGreaterThan(150);
+      expect(CABINET.filter((r) => r.name.startsWith('reddit.'))).toHaveLength(
+        25,
+      );
       expect(foreignIds.length).toBeGreaterThan(15);
     });
 

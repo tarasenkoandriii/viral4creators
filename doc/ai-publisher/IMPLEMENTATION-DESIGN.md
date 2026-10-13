@@ -1898,6 +1898,26 @@ interface CronJob { key: string; schedule: 'tick'|'daily'; run(ctx: { now; scope
 
 F01, F02, F03, F04, F06 → P-B1 (+P-B2 для брифа, QA-проверки и адаптаций; +P-G1 экраны); F09, F10, F12 → P-C (+P-G2); F11 → P-D (+P-F, P-A1 атрибуция); F17 → P-E (+P-G2). Сквозные требования: форма, события, SEO, доступность — P-F/P-D; роли, гейты, параметры, аудит — P-A1; схема, роль БД, GRANT — P-A0; бэкап — P-E; AI-набор — P-B2; изоляция и поиск ПД — этап Z.
 
+### 18.5 Reddit Manual MVP (пакет P-R, вне P0 2.2) → тесты
+
+Источник — [reddit-manual-mvp-adapted.md](reddit-manual-mvp-adapted.md) §9; каталог — `reports/qa/at-catalog.ts` `AT_RD_CATALOG` (отдельно от 44 сценариев P0, шлюзы D0/закупки не меняет). Файлы — `src/acceptance/publisher/reddit-m1-*.spec.ts` и `src/modules/publisher/reddit/*.spec.ts`.
+
+| AT-RD | Этап | Тип | Файл | Статус (13.10.2026) |
+|---|---|---|---|---|
+| 01 | M1 | http, db | `reddit-m1-access.spec`, `z-isolation.spec` | автотест |
+| 02 | M1 | http, unit | `reddit-m1-access.spec`, `roles.spec` | автотест |
+| 03 | M1 | http, unit, db | `reddit-m1-policy.spec`, `reddit-pure.spec`, `reddit-triggers.db.spec` | автотест |
+| 04 | M1 | http, db | `reddit-m1-policy.spec` | автотест (отзыв согласований Reddit-материалов — M2) |
+| 05 | M1 | http | `reddit-m1-opportunities.spec` | автотест |
+| 06 | M1 | unit | `reddit-m1-score.spec` | автотест (свойства, 5 000 наборов) |
+| 07–14 | M2 | http | `reddit-m2-*.spec`, `reddit-egress.spec` (план) | не реализовано |
+| 15 | M1 (+M2) | http, unit | `reddit-m1-opportunities.spec`, `reddit-pure.spec`; M2 — `reddit-m2-handoff.spec` | автотест M1 |
+| 16 | M1 | http, unit | `reddit-m1-egress.spec`, граф `publisher-reddit-no-network(-io)` | автотест |
+| 17 | M1 | http, ui | `reddit-m1-flag.spec`; UI — смоук assist | автотест API; UI — у экранов |
+| 18 | M1 | db | `reddit-m1-restore.spec` | автотест |
+
+E2E-RD-01 (секция `--reddit` стенда) — хвост пакета: сквозной путь M1 по всем 25 маршрутам покрыт `reddit-m1-egress.spec`, данные стенда — `test/publisher-reddit/seed.cjs`.
+
 ## 19. Открытые вопросы и рекомендованные решения
 
 Решения по Р-PUB-4/5/7/9/17/23/30 пересмотрены по аудиту документа (решение координатора); новые — Р-PUB-31…36.
@@ -2140,3 +2160,10 @@ B1-F-13: регрессия общих модулей — jest `backend/` (teleg
 ## 27. Пакет внутреннего предаудита (13.10.2026)
 
 Итоги внутреннего предаудита по плану внешнего аудита v1.1 (этапы A–D) и раундов исправлений (Z-2c — раздел 26, AI-зона — пакет P-B2) собраны в каталоге [`preaudit-2026-10/`](preaudit-2026-10/README.md): реестры документов и модулей (A2), матрица трассировки и находки по требованиям (B1), протоколы AT/E2E, нефункциональные испытания и CI (C), безопасность и AI (D1/D2), единый реестр находок (`defects.csv`), вопросы владельцу (`owner-decisions.md`) и пакет передачи внешнему исполнителю (`handover-appendix-B.md`). Предаудит выполнен той же командой, что писала код: он не является независимым аудитом по плану v1.1 §1 и не заменяет внешнее заключение. Исправленные внутри находки имеют статус `ready_for_retest`, а не закрыты.
+
+## 28. Пакет P-R «Reddit Manual MVP», этап M1 Research (13.10.2026)
+
+ADR «Manual only» (Р-RD-0): Reddit MVP — пакет P-R модуля Publisher вне объёма P0 ТЗ 2.2, режим только MANUAL_COPY; сервер не обращается к Reddit ни API, ни страницами, ни oEmbed (правила графа `publisher-reddit-no-network`, `publisher-reddit-no-network-io`, отказ `source-import` `reddit_manual_only`, runtime-тест AT-RD-16). Включение раздела — env `PUBLISHER_REDDIT_ENABLED` (по умолчанию выключен: 404 на `/publisher/products/:pid/reddit/**`, `ProductView.features.reddit=false`).
+
+Сделано в коде (M1): миграция `20261020090000_publisher_reddit` (пять таблиц `pub_reddit_*`, гварды, append-only снимков правил, частичный индекс «один текущий снимок», `pub_object_types()` + `reddit_*`, действия аудита `copy`/`report_publication`, параметр `reddit_rules_stale_days` — 39-й ключ); владелец таблиц — пакет `P-R` (пишет только `pub_reddit_*`; источники — через `SourcesService` P-B1, каналы — через `ChannelsService` P-C); матрица §4.2 + `reddit.read|manage|rules.review|handoff`; контракт `contracts/reddit-api.ts` (25 маршрутов: 23 + два чтения доказательств Р-RD-46); чистые функции `reddit/{normalize,policy,score}.ts`. Решения адаптации M1 — Р-RD-18…Р-RD-30 в [reddit-manual-mvp-adapted.md](reddit-manual-mvp-adapted.md) §11; трассировка — §18.5. Раунд исправлений внутреннего аудита (Р-RD-31…39): колонка `pub_sources.origin` и гвард `pub_reddit_sources_guard` (доказательства P-R неизменны и скрыты из общих `/sources`, общий PATCH — 409 `reddit_evidence_locked`), отзыв первоисточника → гейт `block` и перепроверка, гейт «сейчас» (`policyNow`) при чтении, `existingId` при гонке, ники `r/u_*`/`/user/`, 409 при архивных родителях; хвосты M2 — там же. Раунд 2 по повторному аудиту (Р-RD-40…45): отзыв выдержки окончателен (409 `PUB_SOURCE_NOT_ALLOWED {revoked}` на правку), ответ отзыва доказательства P-R без текста и URL, гвард замораживает `injectionFlag` и метаданные, `profile_ref` с границей слова и знаками, похожими на `/`, каскад P-R при восстановлении P-E (отзыв после копии), фильтр `?policyNow` в списке и CSV возможностей. Раунд 3 по аудиту экранов (Р-RD-46, Р-RD-47): чтения `…/opportunities/:id/excerpts` и `…/communities/:id/rules/:sid/source` для отзыва прежних редакций и первоисточников, `r/u_*` → код `profile_ref`.
+

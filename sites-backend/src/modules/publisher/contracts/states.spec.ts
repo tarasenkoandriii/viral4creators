@@ -23,13 +23,39 @@ import {
   PUB_CLOSED_LISTS,
 } from './states';
 
-const SQL = fs.readFileSync(
-  path.join(
-    __dirname,
-    '../../../../prisma/migrations/20261016090000_publisher_core/migration.sql',
-  ),
-  'utf8',
-);
+const MIGRATIONS = path.join(__dirname, '../../../../prisma/migrations');
+const read = (name: string) =>
+  fs.readFileSync(path.join(MIGRATIONS, name, 'migration.sql'), 'utf8');
+
+/** Блок `CREATE [OR REPLACE] FUNCTION "<имя>"(…) … $$;`. */
+const FN_BLOCK =
+  /CREATE (?:OR REPLACE )?FUNCTION "([a-z_]+)"\(([^)]*)\)[\s\S]*?\$\$[\s\S]*?\$\$;/g;
+
+/**
+ * Действующий SQL закрытых списков: `…_publisher_core`, в котором функции,
+ * пересозданные миграцией P-R `…_publisher_reddit` (`CREATE OR REPLACE`:
+ * `pub_object_types`, `pub_parameter_keys`, `pub_audit_events_guard`),
+ * заменены новыми определениями, плюс остальной SQL миграции P-R (таблицы
+ * `pub_reddit_*` и их гварды). Старые определения в разбор не попадают.
+ */
+function effectiveSql(): string {
+  const core = read('20261016090000_publisher_core');
+  const reddit = read('20261020090000_publisher_reddit');
+  const redefined = new Map<string, string>();
+  for (const m of reddit.matchAll(FN_BLOCK))
+    if (/CREATE OR REPLACE/.test(m[0]))
+      redefined.set(m[1], m[0].replace('CREATE OR REPLACE', 'CREATE'));
+  const patched = core.replace(
+    FN_BLOCK,
+    (block, name: string) => redefined.get(name) ?? block,
+  );
+  const rest = reddit.replace(FN_BLOCK, (block) =>
+    /CREATE OR REPLACE/.test(block) ? '' : block,
+  );
+  return `${patched}\n${rest}`;
+}
+
+const SQL = effectiveSql();
 
 const listsIn = (text: string): string[][] =>
   [...text.matchAll(/ARRAY\[((?:'[^']*'\s*,?\s*)+)\]/g)].map((m) =>
@@ -54,7 +80,25 @@ const KNOWN: ReadonlyArray<readonly string[]> = [
 ];
 const key = (l: readonly string[]) => JSON.stringify(l);
 
-describe('contracts/states.ts ≡ триггеры миграции publisher_core', () => {
+describe('contracts/states.ts ≡ триггеры миграций publisher_core + publisher_reddit', () => {
+  it('миграция P-R пересоздаёт три функции-списка ядра (разбор действующего SQL работает)', () => {
+    const reddit = read('20261020090000_publisher_reddit');
+    const names = [...reddit.matchAll(FN_BLOCK)]
+      .filter((m) => /CREATE OR REPLACE/.test(m[0]))
+      .map((m) => m[1])
+      .sort();
+    expect(names).toEqual([
+      'pub_audit_events_guard',
+      'pub_object_types',
+      'pub_parameter_keys',
+    ]);
+    expect(SQL).toContain(`'reddit_rules_stale_days'`);
+    expect(SQL).toContain(`'report_publication'`);
+    expect(SQL.match(/CREATE FUNCTION "pub_object_types"\(\)/g)).toHaveLength(
+      1,
+    );
+  });
+
   const all = listsIn(SQL);
 
   it('в миграции есть списки (разбор работает)', () => {

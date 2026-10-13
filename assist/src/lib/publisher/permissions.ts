@@ -37,6 +37,8 @@ const ALL: readonly MatrixRole[] = [PO, ED, OP, AN, SA, VW, AD];
 
 interface Permission {
   roles: readonly MatrixRole[];
+  /** «(с)» матрицы: разрешено, но при авторстве сервер пишет `selfReview`. */
+  selfReview?: readonly PubRole[];
   accountOwnerOnly?: boolean;
 }
 
@@ -59,17 +61,17 @@ export const PUB_PERMISSIONS = {
   'brand.activate': { roles: [PO] },
   'brief.manage': { roles: [PO, ED] },
   'version.manage': { roles: [PO, ED] },
-  'claim.verify': { roles: [PO, ED] },
-  'qa.editorial': { roles: [PO, ED] },
-  'qa.technical': { roles: [PO, ED, OP] },
-  'version.approve': { roles: [PO] },
+  'claim.verify': { roles: [PO, ED], selfReview: [PO, ED] },
+  'qa.editorial': { roles: [PO, ED], selfReview: [PO, ED] },
+  'qa.technical': { roles: [PO, ED, OP], selfReview: [PO, ED] },
+  'version.approve': { roles: [PO], selfReview: [PO] },
   'approval.revoke': { roles: [PO, ED] },
   'channel.manage': { roles: [PO, OP] },
   'distribution.manage': { roles: [PO, ED, OP] },
   'publication.manage': { roles: [PO, OP] },
   'venue.manage': { roles: [PO, OP] },
   'placement.propose': { roles: [PO, OP] },
-  'placement.approve': { roles: [PO] },
+  'placement.approve': { roles: [PO], selfReview: [PO] },
   'budget.operate': { roles: [PO, OP] },
   'placement.claim': { roles: [PO, OP] },
   'budget.reserve_release': { roles: [PO] },
@@ -96,9 +98,27 @@ export const PUB_PERMISSIONS = {
   'ai.extra': { roles: [PO, ED] },
   'ai.eval.review': { roles: [PO, ED] },
   'ai.bind': { roles: [PO] },
+  // Reddit Manual MVP (P-R, reddit-manual-mvp-adapted.md §5): SA доступа нет;
+  // review своего снимка разрешён с пометкой `selfReview`; handoff — M2.
+  'reddit.read': { roles: [PO, ED, OP, AN, VW, AD] },
+  'reddit.manage': { roles: [PO, ED] },
+  'reddit.rules.review': { roles: [PO, ED], selfReview: [PO, ED] },
+  'reddit.handoff': { roles: [PO, OP] },
 } as const satisfies Record<string, Permission>;
 
 export type PubAction = keyof typeof PUB_PERMISSIONS;
+
+/** Действие помечается `selfReview`, если участник — автор объекта. */
+export function selfReviewOf(
+  action: PubAction,
+  authorActor: string | null | undefined,
+  memberId: string
+): boolean {
+  const p: Permission = PUB_PERMISSIONS[action];
+  return (
+    !!p.selfReview && !!authorActor && authorActor === `member:${memberId}`
+  );
+}
 
 /** Как `can()` сервера: владелец кабинета — всё; `admin` — только «AD»-строки. */
 export function canDo(my: MyRoles, action: PubAction): boolean {

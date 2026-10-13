@@ -109,6 +109,14 @@ export const PUB_PERMISSIONS = {
   'ai.extra': { roles: [PO, ED] },
   'ai.eval.review': { roles: [PO, ED] },
   'ai.bind': { roles: [PO] },
+  // Reddit Manual MVP, пакет P-R (reddit-manual-mvp-adapted.md §5, Р-RD-11):
+  // без новой роли; SA доступа не имеет; review правил своего снимка не
+  // запрещён — помечается `selfReview`; `reddit.handoff` — копирование и
+  // отчёт о ручной публикации (M2), как `publication.manage`.
+  'reddit.read': { roles: [PO, ED, OP, AN, VW, AD] },
+  'reddit.manage': { roles: [PO, ED] },
+  'reddit.rules.review': { roles: [PO, ED], selfReview: [PO, ED] },
+  'reddit.handoff': { roles: [PO, OP] },
 } as const satisfies Record<string, PubPermission>;
 
 export type PubAction = keyof typeof PUB_PERMISSIONS;

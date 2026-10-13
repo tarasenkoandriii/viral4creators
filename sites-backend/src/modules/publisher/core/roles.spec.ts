@@ -72,7 +72,20 @@ describe('roles: матрица §4.2', () => {
     expect(allowedActions(acc(['viewer']))).toEqual([
       'product.read',
       'site.product.read',
+      'reddit.read',
     ]);
+    // P-R (reddit-manual-mvp-adapted.md §5): SA — без доступа; review правил —
+    // PO/ED с пометкой selfReview; копирование — PO/OP.
+    expect(can(acc(['sales']), 'reddit.read')).toBe(false);
+    expect(can(acc(['analyst']), 'reddit.read')).toBe(true);
+    expect(can(acc([], { admin: true }), 'reddit.read')).toBe(true);
+    expect(can(acc(['viewer']), 'reddit.rules.review')).toBe(false);
+    expect(can(acc(['operator']), 'reddit.manage')).toBe(false);
+    expect(can(acc(['operator']), 'reddit.handoff')).toBe(true);
+    expect(can(acc(['editor']), 'reddit.handoff')).toBe(false);
+    expect(isSelfReview(acc(['editor']), 'reddit.rules.review', 'm1')).toBe(
+      true,
+    );
     // AI: оператор — только helper
     expect(can(acc(['operator']), 'ai.helper')).toBe(true);
     expect(can(acc(['operator']), 'ai.generate')).toBe(false);

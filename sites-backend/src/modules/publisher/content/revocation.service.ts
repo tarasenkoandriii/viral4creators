@@ -15,11 +15,14 @@
  *  - активные факты бренда, готовые брифы и выбранные вопросы с этим
  *    источником — задачи проверки;
  *  - из нового AI-контекста и общих выгрузок источник выпадает сразу
- *    (выборка по `usage` в момент запроса, кэша нет — §12.3).
+ *    (выборка по `usage` в момент запроса, кэша нет — §12.3);
+ *  - доказательство P-R (`origin='reddit'`): каскад гейта Reddit, в ответе
+ *    — без текста, URL и заголовка (Р-RD-41).
  */
 import { Injectable } from '@nestjs/common';
 import type { RevokeSourceResponse } from '../contracts/content-api';
 import { PubError } from '../core/errors';
+import { redditOnSourceRevoked } from '../reddit/cascade';
 import {
   PubPorts,
   type ProductRef,
@@ -207,9 +210,30 @@ export class RevocationService {
       now,
     });
     opened += cascade.tasksOpened;
+    // P-R (аудит S2-2): отозван первоисточник действующих правил Reddit —
+    // гейт `block` (`rules_source_revoked`), возможности → recheck_required.
+    const reddit =
+      cur.origin === 'reddit'
+        ? await redditOnSourceRevoked(tx, product, chain)
+        : [];
+    const view = await loadSource(tx, product.id, id);
     return {
       body: {
-        source: await loadSource(tx, product.id, id),
+        // Реаудит P-R N-6: доказательство Reddit через `/sources` не
+        // читается (карточка — 404), поэтому и ответ отзыва (он же хранится
+        // в `pub_idempotency_keys`) не несёт его текст, URL и заголовок —
+        // только состояние отзыва.
+        source:
+          cur.origin === 'reddit'
+            ? {
+                ...view,
+                url: null,
+                title: null,
+                author: null,
+                externalRef: null,
+                fragment: '',
+              }
+            : view,
         revocationId: rev.id,
         tasksOpened: opened,
       },
@@ -228,6 +252,7 @@ export class RevocationService {
             approvalsSuperseded: cascade.approvalsSuperseded.length,
           },
         },
+        ...reddit,
       ],
     };
   }

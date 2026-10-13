@@ -36,6 +36,7 @@ import {
   NAV_GROUPS,
   PUBLISHER_SECTIONS,
   findSection,
+  sectionEnabled,
 } from './registry';
 
 export function PublisherShell({
@@ -172,9 +173,14 @@ function ShellFrame({
 }) {
   const { product: p, t, roles, href, locale } = usePublisher();
   const visible = PUBLISHER_SECTIONS.filter(
-    (s) => !HIDDEN_SECTIONS.has(s.key) && canAny(roles, s.actions)
+    (s) =>
+      !HIDDEN_SECTIONS.has(s.key) &&
+      sectionEnabled(s, p.features) &&
+      canAny(roles, s.actions)
   );
-  const current = findSection(section);
+  // Раздел за выключенным флагом сервера — как несуществующий (AT-RD-17).
+  const found = findSection(section);
+  const current = found && sectionEnabled(found, p.features) ? found : null;
   const activeKey =
     section === 'briefs' ? 'plan' : section === null ? '' : section;
 

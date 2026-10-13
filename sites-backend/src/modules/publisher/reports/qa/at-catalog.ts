@@ -564,6 +564,192 @@ export const AT_CATALOG: readonly AtCase[] = [
 /** Версия каталога для qa-catalog (`caseVersion`); растёт при правке сценариев. */
 export const AT_CATALOG_VERSION = 1;
 
+// ── Reddit Manual MVP, пакет P-R (вне P0 ТЗ 2.2, Р-RD-0) ─────────────────
+
+/** Сценарий приёмки P-R: этап выпуска M1 (Research) или M2 (Studio). */
+export interface AtRdCase extends AtCase {
+  stage: 'M1' | 'M2';
+}
+
+/**
+ * Каталог AT-RD-01…18 (reddit-manual-mvp-adapted.md §9; трассировка §18.5
+ * проектного документа). Отдельно от 44 сценариев P0: шлюзы D0/закупки он
+ * не меняет (`gates` пусто), отчёт P0 его не включает; отчёт Reddit —
+ * `buildAtReport(jest, { catalog: AT_RD_CATALOG })`. У M2 файлы — план
+ * (сценарии ещё не реализованы → `blocked`, не «успех»).
+ */
+export const AT_RD_CATALOG: readonly AtRdCase[] = [
+  {
+    id: 'AT-RD-01',
+    stage: 'M1',
+    title: 'Изоляция кабинета на маршрутах Reddit',
+    gates: [],
+    packages: ['P-R'],
+    files: [
+      'reddit-m1-evidence.spec',
+      'reddit-m1-access.spec',
+      'z-isolation.spec',
+    ],
+    types: ['http', 'db'],
+    automated:
+      'чужой кабинет или продукт на всех 25 маршрутах …/reddit/** → 404 как несуществующий; объект чужого кабинета в своём продукте — как несуществующий; строк pub_* не прибавилось',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-02',
+    stage: 'M1',
+    title: 'Наблюдатель не проверяет правила и не согласует',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m1-evidence.spec', 'reddit-m1-access.spec', 'roles.spec'],
+    types: ['http', 'unit'],
+    automated:
+      'VW: POST /rules/:id/review и approve версии → 403 PUB_ROLE_REQUIRED; матрица §5 по ролям на всех маршрутах раздела; SA без доступа',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-03',
+    stage: 'M1',
+    title: 'unknown/prohibited → block, score не снимает',
+    gates: [],
+    packages: ['P-R'],
+    files: [
+      'reddit-m1-evidence.spec',
+      'reddit-m1-policy.spec',
+      'reddit-pure.spec',
+      'reddit-triggers.db.spec',
+    ],
+    types: ['http', 'unit', 'db'],
+    automated:
+      'снимок unknown или promotion prohibited → policy block; все факторы 100 — qualify 409 policy_block; триггер не даёт qualified при policy≠ok',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-04',
+    stage: 'M1',
+    title: 'Новые или устаревшие правила → recheck_required',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m1-evidence.spec', 'reddit-m1-policy.spec'],
+    types: ['http', 'db'],
+    automated:
+      'stale → recheck_required и отбор запрещён; новая версия → прежняя superseded, возможности new/qualified → recheck_required с аудитом, новый снимок block до повторного review; отзыв согласований — M2',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-05',
+    stage: 'M1',
+    title: 'Дубль треда',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m1-evidence.spec', 'reddit-m1-opportunities.spec'],
+    types: ['http'],
+    automated:
+      'тот же id36 в проекте (любая форма URL) → 409 PUB_CONFLICT {existingId}; строк возможностей, источников и аудита не прибавилось',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-06',
+    stage: 'M1',
+    title: 'Детерминизм score',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m1-score.spec'],
+    types: ['unit'],
+    automated:
+      'тест свойств 5 000 наборов: одинаковые входы → побайтно одинаковый результат, эталон в рациональных числах, монотонность, null → missing',
+    manual: null,
+  },
+  ...(
+    [
+      ['07', 'Вымышленный отзыв → BLOCK', 'reddit-m2-checks.spec'],
+      ['08', 'Нет раскрытия → BLOCK', 'reddit-m2-checks.spec'],
+      [
+        '09',
+        'Правка после согласования → новая версия',
+        'reddit-m2-approval.spec',
+      ],
+      ['10', 'LLM недоступна → ручной редактор', 'reddit-m2-manual.spec'],
+      ['11', 'Копирование без исходящих запросов', 'reddit-egress.spec'],
+      [
+        '12',
+        'Отчёт о публикации только user_reported',
+        'reddit-m2-handoff.spec',
+      ],
+      ['13', 'Comment без контекста → 400', 'reddit-m2-brief.spec'],
+      ['14', 'Вредный текст в выдержке', 'reddit-m2-injection.spec'],
+    ] as const
+  ).map(([n, title, file]): AtRdCase => ({
+    id: `AT-RD-${n}`,
+    stage: 'M2',
+    title,
+    gates: [],
+    packages: ['P-R'],
+    files: [file],
+    types: ['http'],
+    automated: 'этап M2 — ещё не реализован',
+    manual: null,
+  })),
+  {
+    id: 'AT-RD-15',
+    stage: 'M1',
+    title: 'Невалидный Reddit-URL или чужое сообщество → 400',
+    gates: [],
+    packages: ['P-R'],
+    files: [
+      'reddit-m1-evidence.spec',
+      'reddit-m1-opportunities.spec',
+      'reddit-pure.spec',
+    ],
+    types: ['http', 'unit'],
+    automated:
+      'M1: http/redd.it/share/чужой хост/профиль/без id → 400 threadUrl/format; тред другого сообщества → 400 community_mismatch; часть M2 (URL отчёта о публикации) — reddit-m2-handoff.spec',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-16',
+    stage: 'M1',
+    title: 'Ноль запросов к Reddit-хостам',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m1-egress.spec', 'check-sites-import-graph.mjs'],
+    types: ['http', 'unit'],
+    automated:
+      'fetch/http(s).request бросают, соединения и DNS только localhost по всем 25 маршрутам; импорт по URL Reddit → reddit_manual_only до сети; правила графа publisher-reddit-no-network(-io)',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-17',
+    stage: 'M1',
+    title: 'Флаг выключен → раздела нет',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m1-flag.spec'],
+    types: ['http', 'ui'],
+    automated:
+      'PUBLISHER_REDDIT_ENABLED выключен → 404 PUB_NOT_FOUND без details на всех маршрутах, features.reddit=false; флаг читается на запросе',
+    manual: 'кабинет не показывает раздел (смоук assist)',
+  },
+  {
+    id: 'AT-RD-18',
+    stage: 'M1',
+    title: 'Бэкап и восстановление переносят Reddit-сущности',
+    gates: [],
+    packages: ['P-R', 'P-E'],
+    files: ['reddit-m1-restore.spec'],
+    types: ['db'],
+    automated:
+      'экспорт пяти таблиц pub_reddit_*; восстановление: снимки reviewed/selfReview/версии как были, возможности без изменений, ссылки и keywordIds на строки нового продукта',
+    manual: null,
+  },
+];
+
+const AT_RD_ID_RE = /^AT-RD-\d{2}$/;
+
+export function isAtRdId(v: string): boolean {
+  return AT_RD_ID_RE.test(v);
+}
+
 const AT_ID_RE = /^AT-(CORE|F\d{2})-\d{2}$/;
 
 export function isAtId(v: string): boolean {

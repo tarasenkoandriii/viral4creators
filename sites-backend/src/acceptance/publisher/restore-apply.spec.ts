@@ -445,6 +445,8 @@ ciDescribe(
         revocations: 2,
         sourcesMarkedRevoked: 1,
         claimsNeedsReview: 1,
+        // Каскад P-R (реаудит P-R N-5): в TD-10 нет снимков правил Reddit.
+        redditOpportunitiesRecheck: 0,
       });
     });
 

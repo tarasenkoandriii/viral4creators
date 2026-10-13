@@ -20,6 +20,7 @@ export const CONTRACT_FILES = [
   'distribution-api.ts',
   'leads-api.ts',
   'reports-api.ts',
+  'reddit-api.ts',
 ] as const;
 
 /** Все контракты одной строкой (имена типов уникальны в пределах пакета). */
@@ -143,6 +144,11 @@ export interface RouteDef {
 /** Маршруты `*_ROUTES` файла: имя, метод, путь, тип тела. */
 export function routesOf(file: string): RouteDef[] {
   const out: RouteDef[] = [];
+  // Префикс файла (`const P = '/publisher/products/:pid/reddit'` у P-R);
+  // у файлов без своего — путь продукта.
+  const prefix =
+    (/const [PC] = '([^']+)'/.exec(file) ?? [])[1] ??
+    '/publisher/products/:pid';
   const re = /(\w+):\s*route<\s*/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(file))) {
@@ -160,7 +166,7 @@ export function routesOf(file: string): RouteDef[] {
     const rest = file.slice(i, i + 600);
     const mm = /method: '(\w+)',\s*path: [`']([^`']+)[`']/.exec(rest);
     if (!mm) continue;
-    const path = mm[2].replace(/\$\{[PC]\}/, '/publisher/products/:pid');
+    const path = mm[2].replace(/\$\{[PC]\}/, prefix);
     out.push({
       name: m[1],
       method: mm[1],

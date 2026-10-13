@@ -213,6 +213,7 @@ export const pubRu = {
       pilot_calendar: 'Календарь пилота',
       launch_evidence_d0: 'Протокол запуска D0',
       launch_evidence_purchase: 'Протокол перед закупками',
+      reddit_rules_stale_days: 'Свежесть проверки правил Reddit (дней)',
     },
     statuses: {
       assumption: 'не утверждено',
@@ -444,6 +445,10 @@ export const pubRu = {
       PUB_NOT_IMPLEMENTED:
         'Эта часть сервера ещё не подключена — действие не выполнено.',
     },
+    conflictReasons: {
+      reddit_evidence_locked:
+        'Доказательство Reddit меняется новым снимком правил или правкой выдержки в разделе Reddit.',
+    },
     conflictText:
       'Пока вы смотрели, запись изменили. Ваши изменения не записаны — перезагрузите и повторите.',
     responseInvalid:
@@ -474,6 +479,12 @@ export const pubRu = {
       no_supporting_source: 'нет подтверждающего источника',
       ai_call: 'неподходящий AI-вызов',
       limit_not_reached: 'лимит ещё не исчерпан',
+      community_mismatch: 'сообщество в ссылке не совпадает с выбранным',
+      project_mismatch: 'объект из другого проекта',
+      derived: 'вычисляется сервером — не вводится',
+      future: 'дата в будущем',
+      profile_ref: 'ссылка на профиль или ник — уберите',
+      unknown: 'неизвестное значение',
     },
     reasons: 'Причина: {reason}',
     importReasons: {
@@ -490,6 +501,8 @@ export const pubRu = {
       empty: 'на странице нет текста',
       spa: 'текст рисуется скриптом — скопируйте фрагмент вручную',
       noindex: 'страница закрыта от индексации',
+      reddit_manual_only:
+        'Reddit — только ручной ввод: адреса Reddit не загружаются, скопируйте выдержку вручную',
     },
     blockers: {
       qa_editorial_missing: 'нет редакционной проверки',

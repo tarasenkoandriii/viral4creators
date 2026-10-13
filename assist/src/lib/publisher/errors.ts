@@ -120,7 +120,16 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
 
   switch (code) {
     case 'PUB_CONFLICT':
-      lines.push(t.errors.conflictText);
+      // Конфликт не версии, а правила (P-R `reddit_evidence_locked`) —
+      // словами и без «перезагрузить»: перезагрузка его не снимет.
+      if (
+        typeof d.reason === 'string' &&
+        Object.prototype.hasOwnProperty.call(t.errors.conflictReasons, d.reason)
+      ) {
+        lines.push(labelOf(t.errors.conflictReasons, d.reason));
+      } else {
+        lines.push(t.errors.conflictText);
+      }
       break;
     case 'PUB_GATE_CLOSED': {
       const gate = typeof d.gate === 'string' ? d.gate : '';
@@ -213,8 +222,13 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
     default:
       break;
   }
+  const ruleConflict =
+    code === 'PUB_CONFLICT' &&
+    typeof d.reason === 'string' &&
+    Object.prototype.hasOwnProperty.call(t.errors.conflictReasons, d.reason);
   if (
     typeof d.reason === 'string' &&
+    !ruleConflict &&
     !['PUB_IMPORT_BLOCKED', 'PUB_APPROVAL_STALE'].includes(code)
   ) {
     lines.push(fmtText(t.errors.reasons, { reason: d.reason }));
@@ -226,7 +240,7 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
     code,
     title,
     lines,
-    conflict: code === 'PUB_CONFLICT',
+    conflict: code === 'PUB_CONFLICT' && !ruleConflict,
     retryable: code === 'PUB_BUSY' || code === 'network' || e.status === 0,
     manualPath: MANUAL.has(code),
   };

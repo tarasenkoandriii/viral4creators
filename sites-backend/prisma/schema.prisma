@@ -5161,6 +5161,11 @@ model PubProduct {
   aiCalls                  PubAiCall[] @relation("PubAiCall_product")
   aiEvalRuns               PubAiEvalRun[] @relation("PubAiEvalRun_product")
   aiEvalResults            PubAiEvalResult[] @relation("PubAiEvalResult_product")
+  redditProjects           PubRedditProject[] @relation("PubRedditProject_product")
+  redditCommunitys         PubRedditCommunity[] @relation("PubRedditCommunity_product")
+  redditRuleSnapshots      PubRedditRuleSnapshot[] @relation("PubRedditRuleSnapshot_product")
+  redditKeywords           PubRedditKeyword[] @relation("PubRedditKeyword_product")
+  redditOpportunitys       PubRedditOpportunity[] @relation("PubRedditOpportunity_product")
   @@unique([id, accountId])
   @@unique([siteId])
   @@index([accountId])
@@ -5404,6 +5409,7 @@ model PubSource {
   supersedesId             String?
   injectionFlag            String?
   isSynthetic              Boolean @default(false)
+  origin                   String @default("content") /// content | reddit — доказательство P-R (неизменно; правка — новой редакцией через P-R)
   revokedAt                DateTime? @db.Timestamptz(3)
   revokedBy                String?
   revokeReason             String?
@@ -5421,6 +5427,8 @@ model PubSource {
   versionSourceSourceOf    PubVersionSource[] @relation("PubVersionSource_source")
   claimSourceSourceOf      PubClaimSource[] @relation("PubClaimSource_source")
   venueEvidenceSourceOf    PubVenueEvidence[] @relation("PubVenueEvidence_source")
+  redditRuleSnapshotSourceOf PubRedditRuleSnapshot[] @relation("PubRedditRuleSnapshot_source")
+  redditOpportunityExcerptSourceOf PubRedditOpportunity[] @relation("PubRedditOpportunity_excerptSource")
   @@unique([id, accountId])
   @@index([productId, usage])
   @@map("pub_sources")
@@ -5919,6 +5927,7 @@ model PubChannel {
   revision                 Int @default(1)
   distributionActionChannelOf PubDistributionAction[] @relation("PubDistributionAction_channel")
   publicationChannelOf     PubPublication[] @relation("PubPublication_channel")
+  redditCommunityChannelOf PubRedditCommunity[] @relation("PubRedditCommunity_channel")
   @@unique([id, accountId])
   @@unique([productId, code])
   @@map("pub_channels")
@@ -6940,4 +6949,154 @@ model PubAiEvalResult {
   @@unique([id, accountId])
   @@index([runId, taskCode])
   @@map("pub_ai_eval_results")
+}
+
+// ══ AI Publisher, пакет P-R «Reddit Manual MVP» (миграция …_publisher_reddit) ══
+// doc/ai-publisher/reddit-manual-mvp-adapted.md §1–2. Режим только
+// MANUAL_COPY: Reddit не запрашивается (Р-RD-0). Списки, длины и
+// межтабличные условия — триггерами `pub_reddit_*_guard` (CHECK нет, §5.2).
+
+/// Проект Reddit — группа внутри продукта: язык, рынок (Р-RD-1).
+model PubRedditProject {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRedditProject_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  name                     String /// 1..120; в API — `title`
+  locale                   String /// BCP-47, ≤ 16
+  market                   String /// 1..64
+  status                   String @default("active") /// active | archived
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  redditCommunityProjectOf PubRedditCommunity[] @relation("PubRedditCommunity_project")
+  redditKeywordProjectOf   PubRedditKeyword[] @relation("PubRedditKeyword_project")
+  redditOpportunityProjectOf PubRedditOpportunity[] @relation("PubRedditOpportunity_project")
+  @@unique([id, accountId])
+  @@index([productId, status])
+  @@map("pub_reddit_projects")
+}
+
+/// Сообщество Reddit (сабреддит) с обязательным каналом `community` (Р-RD-2).
+model PubRedditCommunity {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRedditCommunity_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  projectId                String
+  channelId                String
+  name                     String /// r/<name> без префикса, ^[a-z0-9_]{2,21}$; в API — `subreddit`
+  canonicalUrl             String /// https://www.reddit.com/r/<name>
+  descriptionManual        String?
+  language                 String?
+  topics                   Json @default("[]") /// ≤ 20 строк ≤ 64
+  status                   String @default("active") /// active | archived
+  project                  PubRedditProject @relation("PubRedditCommunity_project", fields: [projectId, accountId], references: [id, accountId], onDelete: Restrict)
+  channel                  PubChannel @relation("PubRedditCommunity_channel", fields: [channelId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  redditRuleSnapshotCommunityOf PubRedditRuleSnapshot[] @relation("PubRedditRuleSnapshot_community")
+  redditOpportunityCommunityOf PubRedditOpportunity[] @relation("PubRedditOpportunity_community")
+  @@unique([id, accountId])
+  @@unique([productId, name])
+  @@unique([channelId])
+  @@index([projectId, status])
+  @@map("pub_reddit_communities")
+}
+
+/// Снимок правил сообщества (AO, кроме полей review и status; Р-RD-3).
+model PubRedditRuleSnapshot {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRedditRuleSnapshot_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  communityId              String
+  version                  Int /// предыдущая + 1 (триггер)
+  sourceId                 String /// pub_sources kind=url, manual, private — URL и выдержка правил
+  promotionPolicy          String /// allowed_with_conditions | prohibited | unknown
+  linksPolicy              String /// allowed | restricted | prohibited | unknown
+  flairRequired            Boolean?
+  conditions               Json @default("[]") /// ≤ 20 строк ≤ 300
+  checkedAt                DateTime @db.Timestamptz(3)
+  reviewState              String @default("unreviewed") /// unreviewed | reviewed; stale вычисляется
+  reviewedBy               String?
+  reviewedAt               DateTime? @db.Timestamptz(3)
+  selfReview               Boolean @default(false)
+  status                   String @default("current") /// current | superseded
+  community                PubRedditCommunity @relation("PubRedditRuleSnapshot_community", fields: [communityId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   PubSource @relation("PubRedditRuleSnapshot_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  redditOpportunityRuleSnapshotOf PubRedditOpportunity[] @relation("PubRedditOpportunity_ruleSnapshot")
+  @@unique([id, accountId])
+  @@unique([communityId, version])
+  @@index([productId, status])
+  @@map("pub_reddit_rule_snapshots")
+}
+
+/// Ключевой запрос проекта.
+model PubRedditKeyword {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRedditKeyword_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  projectId                String
+  phrase                   String /// 1..200, без контактов
+  phraseNorm               String /// нижний регистр, сжатые пробелы (ставит триггер)
+  intent                   String
+  locale                   String?
+  priority                 Int /// 1..5
+  status                   String @default("active") /// active | archived
+  project                  PubRedditProject @relation("PubRedditKeyword_project", fields: [projectId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([projectId, phraseNorm])
+  @@index([productId, status])
+  @@map("pub_reddit_keywords")
+}
+
+/// Возможность — тред Reddit для ручного ответа (score v1, Policy Gate).
+model PubRedditOpportunity {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRedditOpportunity_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  projectId                String
+  communityId              String
+  threadUrl                String /// https://www.reddit.com/r/<name>/comments/<id36>[/<slug>]
+  threadKey                String /// <id36>; уникален в проекте
+  titleManual              String /// ≤ 300
+  excerptSourceId          String? /// pub_sources discussion, private, restricted, ≤ 2000 (Р-RD-4)
+  intent                   String
+  angle                    String?
+  keywordIds               Json @default("[]") /// ≤ 10 id ключевых запросов проекта (сервис)
+  factors                  Json @default("{}") /// 8 факторов {value 0..100|null, why}
+  relevance                Int?
+  risk                     Int?
+  priority                 Int?
+  scoreVersion             String @default("v1")
+  ruleSnapshotId           String?
+  policy                   String @default("block") /// ok | block | recheck_required
+  policyReasons            Json @default("[]")
+  status                   String @default("new")
+  project                  PubRedditProject @relation("PubRedditOpportunity_project", fields: [projectId, accountId], references: [id, accountId], onDelete: Restrict)
+  community                PubRedditCommunity @relation("PubRedditOpportunity_community", fields: [communityId, accountId], references: [id, accountId], onDelete: Restrict)
+  excerptSource            PubSource? @relation("PubRedditOpportunity_excerptSource", fields: [excerptSourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  ruleSnapshot             PubRedditRuleSnapshot? @relation("PubRedditOpportunity_ruleSnapshot", fields: [ruleSnapshotId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([projectId, threadKey])
+  @@index([productId, status])
+  @@index([projectId, status])
+  @@index([communityId])
+  @@map("pub_reddit_opportunities")
 }

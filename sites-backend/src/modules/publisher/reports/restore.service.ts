@@ -49,6 +49,7 @@ import {
   sealContact,
   sealText,
 } from '../core/contact-crypto';
+import { AuditService } from '../core/audit';
 import { PubError, validationError } from '../core/errors';
 import type { AuditInput, ProductRef, PubTx } from '../core/ports';
 import { newPublicKey } from '../core/product.service';
@@ -64,6 +65,7 @@ import type { BackupDocument, BackupRow } from './backup-format';
 import { tableCountsOf } from './backup-format';
 import { newRowId } from './experiments.service';
 import { erasedRequestHash, leadEraseEffect } from '../leads/erase-effect';
+import { redditOnSourceRevoked } from '../reddit/cascade';
 
 /** Основание отзыва ролей восстановленного продукта (аудит P-E S1-5). */
 export const RESTORE_GRANT_REVOKE_REASON =
@@ -71,6 +73,9 @@ export const RESTORE_GRANT_REVOKE_REASON =
 
 type RestoreRow = Prisma.PubRestoreGetPayload<object>;
 type BackupDbRow = Prisma.PubBackupGetPayload<object>;
+
+/** Аудит каскадов внутри переноса (сервис без состояния). */
+const RESTORE_AUDIT = new AuditService();
 
 /** Пакет вставки (один оператор INSERT … SELECT FROM jsonb_populate_recordset). */
 export const RESTORE_CHUNK = 1000;
@@ -944,6 +949,30 @@ export class RestoreService {
         `restore: сверка не сошлась — ${mismatches.slice(0, 5).join('; ')}`,
       );
     }
+
+    // ── Каскад P-R отзыва после копии (реаудит P-R N-5) ──────────────────
+    // Отозван после копии первоисточник действующих правил Reddit — тот же
+    // эффект, что у штатного отзыва (`revocation.service` →
+    // `redditOnSourceRevoked`): гейт `block [rules_source_revoked]`,
+    // возможности → `recheck_required`, запись аудита от `restore:<id>`.
+    // Хранимое состояние восстановленного продукта = живому гейту. После
+    // сверки: записи аудита каскада — сверх строк копии.
+    const redditAudit = newlyRevokedSources.size
+      ? await redditOnSourceRevoked(
+          tx,
+          { id: target, accountId },
+          [...newlyRevokedSources].map((id) => map.get(id) ?? id),
+        )
+      : [];
+    for (const e of redditAudit) {
+      await RESTORE_AUDIT.write(tx, {
+        ...e,
+        accountId,
+        productId: target,
+        actor,
+        meta: { ...(e.meta ?? {}), restoreId },
+      });
+    }
     const durationMs = Date.now() - started;
     const report = {
       mode: 'apply_new_product',
@@ -962,6 +991,7 @@ export class RestoreService {
         revocations: revokedSource.size,
         sourcesMarkedRevoked: revokedApplied,
         claimsNeedsReview,
+        redditOpportunitiesRecheck: redditAudit.length,
       },
       suppressed: { leadOutbox: 0, notifications: 0, externalActions: 'none' },
       history: {

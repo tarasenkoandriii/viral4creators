@@ -256,6 +256,7 @@ export const PARAMETER_SCHEMAS: {
     qaRunId: s.nullable(s.string({ min: 1, max: 100 })),
     note: optText(),
   }),
+  reddit_rules_stale_days: s.object({ days: s.int({ min: 1, max: 365 }) }),
 };
 
 /** Форма значения ключа (пустой список — подходит). */

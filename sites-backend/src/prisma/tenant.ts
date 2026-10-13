@@ -285,6 +285,12 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   PubAiCall: 'accountId',
   PubAiEvalRun: 'accountId',
   PubAiEvalResult: 'accountId',
+  // P-R Reddit Manual MVP (миграция …_publisher_reddit).
+  PubRedditProject: 'accountId',
+  PubRedditCommunity: 'accountId',
+  PubRedditRuleSnapshot: 'accountId',
+  PubRedditKeyword: 'accountId',
+  PubRedditOpportunity: 'accountId',
 };
 
 /**

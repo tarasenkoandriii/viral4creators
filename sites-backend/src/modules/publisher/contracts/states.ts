@@ -1,9 +1,10 @@
 /**
  * AI Publisher — закрытые списки (контракт P-A1, проектный документ §6.9,
  * §7). Источник правды для значений — триггеры `pub_<таблица>_guard`
- * миграции `20261016090000_publisher_core` (P-A0): каждый список здесь
- * дословно равен списку триггера (тест `states.spec.ts` разбирает
- * migration.sql и сверяет). Значение вне списка база отвергает SQLSTATE
+ * миграции `20261016090000_publisher_core` (P-A0) и следующих миграций
+ * Publisher (`…_publisher_reddit` — P-R: списки Reddit, `pub_object_types()`,
+ * действия аудита): каждый список здесь дословно равен списку триггера
+ * (тест `states.spec.ts` собирает действующий SQL миграций и сверяет). Значение вне списка база отвергает SQLSTATE
  * 23514 с текстом `<таблица>.<поле>: вне списка`.
  *
  * Чистый модуль: ни Nest, ни базы — его берут публичный код
@@ -108,6 +109,13 @@ export const OBJECT_TYPES = [
   'ai_budget_month',
   'ai_eval_run',
   'ai_eval_result',
+  // P-R Reddit Manual MVP (миграция …_publisher_reddit, Р-RD-0).
+  'reddit_project',
+  'reddit_community',
+  'reddit_rule_snapshot',
+  'reddit_keyword',
+  'reddit_opportunity',
+  'reddit_brief',
 ] as const;
 export type ObjectType = (typeof OBJECT_TYPES)[number];
 
@@ -134,6 +142,9 @@ export const AUDIT_ACTIONS = [
   'dismiss',
   'retry',
   'reset',
+  // P-R: копирование утверждённого текста и отчёт о ручной публикации (M2).
+  'copy',
+  'report_publication',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
@@ -189,6 +200,8 @@ export type SourceUsage = (typeof SOURCE_USAGES)[number];
 export const SOURCE_VISIBILITIES = ['public', 'private'] as const;
 export const SOURCE_FRESHNESS = ['current', 'stale', 'unknown'] as const;
 export const SOURCE_IMPORTED_VIA = ['manual', 'url_import'] as const;
+/** Происхождение (P-R, `…_publisher_reddit`): `reddit` — доказательство Reddit. */
+export const SOURCE_ORIGINS = ['content', 'reddit'] as const;
 
 export const QUESTION_STAGES = [
   'awareness',
@@ -600,6 +613,73 @@ export type AiCostStatus = (typeof AI_COST_STATUSES)[number];
 export const AI_EVAL_MODES = ['fake', 'live'] as const;
 export const AI_EVAL_SCHEMAS = ['answer', 'brief', 'qa', 'adaptation'] as const;
 
+// ── Reddit Manual MVP, пакет P-R (миграция …_publisher_reddit) ───────────
+// doc/ai-publisher/reddit-manual-mvp-adapted.md §1–2. Режим только
+// MANUAL_COPY: запросов к Reddit нет (Р-RD-0).
+
+export const REDDIT_PROJECT_STATUSES = ['active', 'archived'] as const;
+export type RedditProjectStatus = (typeof REDDIT_PROJECT_STATUSES)[number];
+export const REDDIT_COMMUNITY_STATUSES = ['active', 'archived'] as const;
+export type RedditCommunityStatus = (typeof REDDIT_COMMUNITY_STATUSES)[number];
+export const REDDIT_PROMOTION_POLICIES = [
+  'allowed_with_conditions',
+  'prohibited',
+  'unknown',
+] as const;
+export type RedditPromotionPolicy = (typeof REDDIT_PROMOTION_POLICIES)[number];
+export const REDDIT_LINKS_POLICIES = [
+  'allowed',
+  'restricted',
+  'prohibited',
+  'unknown',
+] as const;
+export type RedditLinksPolicy = (typeof REDDIT_LINKS_POLICIES)[number];
+export const REDDIT_REVIEW_STATES = ['unreviewed', 'reviewed'] as const;
+export type RedditReviewState = (typeof REDDIT_REVIEW_STATES)[number];
+export const REDDIT_SNAPSHOT_STATUSES = ['current', 'superseded'] as const;
+export type RedditSnapshotStatus = (typeof REDDIT_SNAPSHOT_STATUSES)[number];
+export const REDDIT_INTENTS = [
+  'how_to',
+  'comparison',
+  'alternative',
+  'troubleshooting',
+  'recommendation',
+  'discussion',
+  'other',
+] as const;
+export type RedditIntent = (typeof REDDIT_INTENTS)[number];
+export const REDDIT_KEYWORD_STATUSES = ['active', 'archived'] as const;
+export type RedditKeywordStatus = (typeof REDDIT_KEYWORD_STATUSES)[number];
+export const REDDIT_POLICY_VERDICTS = [
+  'ok',
+  'block',
+  'recheck_required',
+] as const;
+export type RedditPolicyVerdict = (typeof REDDIT_POLICY_VERDICTS)[number];
+export const REDDIT_OPPORTUNITY_STATUSES = [
+  'new',
+  'qualified',
+  'recheck_required',
+  'blocked',
+  'skipped',
+  'in_brief',
+  'archived',
+] as const;
+export type RedditOpportunityStatus =
+  (typeof REDDIT_OPPORTUNITY_STATUSES)[number];
+/** Факторы score v1 (§M1.4): первые четыре — relevance, остальные — risk. */
+export const REDDIT_SCORE_FACTORS = [
+  'topic_fit',
+  'intent_fit',
+  'audience_fit',
+  'answerability',
+  'policy_risk',
+  'promotionality',
+  'evidence_gap',
+  'context_uncertainty',
+] as const;
+export type RedditScoreFactor = (typeof REDDIT_SCORE_FACTORS)[number];
+
 /**
  * Сводная таблица «колонка → список» в формате сообщений триггеров
  * (`<таблица>.<поле>`). По ней `states.spec.ts` сверяет миграцию: каждый
@@ -633,6 +713,7 @@ export const PUB_CLOSED_LISTS: Readonly<Record<string, readonly string[]>> = {
   'pub_sources.visibility': SOURCE_VISIBILITIES,
   'pub_sources.freshness': SOURCE_FRESHNESS,
   'pub_sources.importedVia': SOURCE_IMPORTED_VIA,
+  'pub_sources.origin': SOURCE_ORIGINS,
   'pub_question_groups.stage': QUESTION_STAGES,
   'pub_question_groups.status': QUESTION_GROUP_STATUSES,
   'pub_questions.stage': QUESTION_STAGES,
@@ -717,6 +798,18 @@ export const PUB_CLOSED_LISTS: Readonly<Record<string, readonly string[]>> = {
   'pub_ai_eval_runs.mode': AI_EVAL_MODES,
   'pub_ai_eval_results.schema': AI_EVAL_SCHEMAS,
   'pub_ai_eval_results.costStatus': AI_COST_STATUSES,
+  'pub_reddit_projects.status': REDDIT_PROJECT_STATUSES,
+  'pub_reddit_communities.status': REDDIT_COMMUNITY_STATUSES,
+  'pub_reddit_rule_snapshots.promotionPolicy': REDDIT_PROMOTION_POLICIES,
+  'pub_reddit_rule_snapshots.linksPolicy': REDDIT_LINKS_POLICIES,
+  'pub_reddit_rule_snapshots.reviewState': REDDIT_REVIEW_STATES,
+  'pub_reddit_rule_snapshots.status': REDDIT_SNAPSHOT_STATUSES,
+  'pub_reddit_keywords.intent': REDDIT_INTENTS,
+  'pub_reddit_keywords.status': REDDIT_KEYWORD_STATUSES,
+  'pub_reddit_opportunities.intent': REDDIT_INTENTS,
+  'pub_reddit_opportunities.policy': REDDIT_POLICY_VERDICTS,
+  'pub_reddit_opportunities.status': REDDIT_OPPORTUNITY_STATUSES,
+  'pub_reddit_opportunities.factors': REDDIT_SCORE_FACTORS,
 };
 
 /** Значение из закрытого списка (сужение типа). */

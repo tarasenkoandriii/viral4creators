@@ -18,6 +18,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import { PUBLISHER_KEY_PREFIX } from '../../../brand';
+import { publisherRedditEnabled } from '../../../config/publisher-env';
 import {
   GATE_NAMES,
   type GateName,
@@ -193,6 +194,7 @@ export class ProductService {
       createdAt: p.createdAt.toISOString(),
       myRoles: myRolesOf(access),
       gates,
+      features: { reddit: publisherRedditEnabled() },
     };
   }
 

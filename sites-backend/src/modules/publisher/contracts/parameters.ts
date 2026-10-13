@@ -63,6 +63,8 @@ export const PARAMETER_KEYS = [
   'pilot_calendar',
   'launch_evidence_d0',
   'launch_evidence_purchase',
+  // P-R Reddit (миграция …_publisher_reddit): срок свежести проверки правил.
+  'reddit_rules_stale_days',
 ] as const;
 export type ParameterKey = (typeof PARAMETER_KEYS)[number];
 
@@ -202,6 +204,12 @@ export interface ParameterValues {
     note: string | null;
   };
   launch_evidence_purchase: { qaRunId: string | null; note: string | null };
+  /**
+   * P-R (reddit-manual-mvp-adapted.md §M1.3): через сколько дней после
+   * `checkedAt` проверенный снимок правил сообщества считается `stale`
+   * (1..365, по умолчанию 30). Свежесть не гарантирует актуальность правил.
+   */
+  reddit_rules_stale_days: { days: number };
 }
 
 // ── Гейты → ключи (§10) ───────────────────────────────────────────────────
@@ -447,4 +455,5 @@ export const DEFAULT_PARAMETER_VALUES: {
   pilot_calendar: { t0Planned: null },
   launch_evidence_d0: { qaRunId: null, perfProtocolRef: null, note: null },
   launch_evidence_purchase: { qaRunId: null, note: null },
+  reddit_rules_stale_days: { days: 30 },
 };

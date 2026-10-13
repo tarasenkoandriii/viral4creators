@@ -41,6 +41,7 @@ export function packageOf(rel: string): PackageId | null {
   if (/^distribution\//.test(rel)) return 'P-C';
   if (/^leads\//.test(rel)) return 'P-D';
   if (/^reports\//.test(rel)) return 'P-E';
+  if (/^reddit\//.test(rel)) return 'P-R';
   if (/^public\/content-public/.test(rel)) return 'P-B1';
   if (/^public\//.test(rel)) return 'P-D';
   return null;
@@ -209,5 +210,6 @@ describe('table-ownership (§6.8)', () => {
     ]);
     expect(packageOf('public/content-public.controller.ts')).toBe('P-B1');
     expect(packageOf('public/lead-intake.ts')).toBe('P-D');
+    expect(packageOf('reddit/opportunities.service.ts')).toBe('P-R');
   });
 });

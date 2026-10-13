@@ -1,0 +1,252 @@
+{
+  "RedditGateView": {
+    "verdict": "block",
+    "reasons": ["rules_unreviewed"],
+    "warnings": []
+  },
+  "RedditProjectView": {
+    "id": "rp1",
+    "title": "SaaS UA",
+    "locale": "uk",
+    "market": "UA",
+    "status": "active",
+    "revision": 1,
+    "createdAt": "2026-10-13T08:00:00.000Z",
+    "updatedAt": "2026-10-13T08:00:00.000Z"
+  },
+  "RedditRulesSummary": {
+    "snapshotId": "rs2",
+    "version": 2,
+    "state": "reviewed",
+    "reviewState": "reviewed",
+    "checkedAt": "2026-10-12T08:00:00.000Z",
+    "reviewedAt": "2026-10-12T09:00:00.000Z",
+    "selfReview": true,
+    "promotionPolicy": "allowed_with_conditions",
+    "linksPolicy": "restricted",
+    "gate": {
+      "verdict": "ok",
+      "reasons": [],
+      "warnings": []
+    }
+  },
+  "RedditCommunityView": {
+    "id": "rc1",
+    "projectId": "rp1",
+    "channelId": "ch9",
+    "subreddit": "saas",
+    "canonicalUrl": "https://www.reddit.com/r/saas",
+    "descriptionManual": null,
+    "language": "en",
+    "topics": ["b2b", "pricing"],
+    "status": "active",
+    "rules": {
+      "snapshotId": "rs2",
+      "version": 2,
+      "state": "reviewed",
+      "reviewState": "reviewed",
+      "checkedAt": "2026-10-12T08:00:00.000Z",
+      "reviewedAt": "2026-10-12T09:00:00.000Z",
+      "selfReview": true,
+      "promotionPolicy": "allowed_with_conditions",
+      "linksPolicy": "restricted",
+      "gate": {
+        "verdict": "block",
+        "reasons": ["rules_source_revoked"],
+        "warnings": []
+      }
+    },
+    "staleDays": 30,
+    "revision": 3,
+    "createdAt": "2026-10-13T08:00:00.000Z",
+    "updatedAt": "2026-10-13T08:00:00.000Z"
+  },
+  "RedditRuleSnapshotView": {
+    "id": "rs3",
+    "communityId": "rc1",
+    "version": 3,
+    "source": {
+      "id": "src7",
+      "url": "https://www.reddit.com/r/saas/about/rules",
+      "excerpt": "Self-promotion only in the weekly thread.\n10:1 rule.",
+      "injectionFlag": null,
+      "usage": "restricted"
+    },
+    "promotionPolicy": "allowed_with_conditions",
+    "linksPolicy": "restricted",
+    "flairRequired": null,
+    "conditions": ["weekly thread only"],
+    "checkedAt": "2026-10-13T07:00:00.000Z",
+    "reviewState": "unreviewed",
+    "state": "unreviewed",
+    "createdBy": "member:m1",
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "selfReview": false,
+    "status": "current",
+    "gate": {
+      "verdict": "block",
+      "reasons": ["rules_unreviewed"],
+      "warnings": []
+    },
+    "createdAt": "2026-10-13T07:05:00.000Z"
+  },
+  "RedditKeywordView": {
+    "id": "rk1",
+    "projectId": "rp1",
+    "phrase": "Best CRM  for startups",
+    "phraseNorm": "best crm for startups",
+    "intent": "recommendation",
+    "locale": null,
+    "priority": 4,
+    "status": "active",
+    "revision": 1,
+    "createdAt": "2026-10-13T08:00:00.000Z",
+    "updatedAt": "2026-10-13T08:00:00.000Z"
+  },
+  "RedditScoreView": {
+    "scoreVersion": "v1",
+    "relevance": 71,
+    "risk": null,
+    "priority": null,
+    "missing": ["evidence_gap"]
+  },
+  "RedditOpportunityView": {
+    "id": "ro1",
+    "projectId": "rp1",
+    "communityId": "rc1",
+    "subreddit": "saas",
+    "threadUrl": "https://www.reddit.com/r/saas/comments/abc123/which_crm",
+    "threadKey": "abc123",
+    "titleManual": "Which CRM for a 5-person team?",
+    "excerpt": {
+      "sourceId": "src8",
+      "text": "Looking for a CRM under $50/mo.",
+      "injectionFlag": null,
+      "usage": "restricted"
+    },
+    "intent": "recommendation",
+    "angle": null,
+    "keywordIds": ["rk1"],
+    "factors": {
+      "topic_fit": {
+        "value": 80,
+        "why": "CRM — наша тема"
+      },
+      "intent_fit": {
+        "value": 70,
+        "why": "просят рекомендацию"
+      },
+      "audience_fit": {
+        "value": 60,
+        "why": "малая команда"
+      },
+      "answerability": {
+        "value": 70,
+        "why": "есть кейсы"
+      },
+      "policy_risk": {
+        "value": 50,
+        "why": null,
+        "reasons": ["promotion_allowed_with_conditions", "links_restricted"]
+      },
+      "promotionality": {
+        "value": 30,
+        "why": "без ссылки"
+      },
+      "evidence_gap": {
+        "value": null,
+        "why": null
+      },
+      "context_uncertainty": {
+        "value": 20,
+        "why": "контекст ясен"
+      }
+    },
+    "score": {
+      "scoreVersion": "v1",
+      "relevance": 71,
+      "risk": null,
+      "priority": null,
+      "missing": ["evidence_gap"]
+    },
+    "ruleSnapshotId": "rs2",
+    "ruleSnapshotVersion": 2,
+    "policy": "ok",
+    "policyReasons": [],
+    "policyNow": "recheck_required",
+    "policyNowReasons": ["rules_changed"],
+    "status": "new",
+    "revision": 2,
+    "createdAt": "2026-10-13T08:00:00.000Z",
+    "updatedAt": "2026-10-13T08:00:00.000Z"
+  },
+  "RedditEvidenceView": {
+    "sourceId": "src8",
+    "revision": 2,
+    "supersedesId": "src7",
+    "current": true,
+    "url": "https://www.reddit.com/r/saas/comments/abc123/which_crm",
+    "fragment": "Looking for a CRM under $50/mo.",
+    "injectionFlag": null,
+    "usage": "restricted",
+    "revokedAt": null,
+    "revokeReason": null,
+    "createdAt": "2026-10-13T08:00:00.000Z",
+    "createdBy": "member:m1"
+  },
+  "RedditExcerptsView": {
+    "opportunityId": "ro1",
+    "currentSourceId": "src8",
+    "items": [
+      {
+        "sourceId": "src7",
+        "revision": 1,
+        "supersedesId": null,
+        "current": false,
+        "url": "https://www.reddit.com/r/saas/comments/abc123/which_crm",
+        "fragment": "old text",
+        "injectionFlag": null,
+        "usage": "revoked",
+        "revokedAt": "2026-10-13T09:00:00.000Z",
+        "revokeReason": "автор попросив",
+        "createdAt": "2026-10-13T08:00:00.000Z",
+        "createdBy": "member:m1"
+      },
+      {
+        "sourceId": "src8",
+        "revision": 2,
+        "supersedesId": "src7",
+        "current": true,
+        "url": "https://www.reddit.com/r/saas/comments/abc123/which_crm",
+        "fragment": "Looking for a CRM under $50/mo.",
+        "injectionFlag": null,
+        "usage": "restricted",
+        "revokedAt": null,
+        "revokeReason": null,
+        "createdAt": "2026-10-13T08:00:00.000Z",
+        "createdBy": "member:m1"
+      }
+    ]
+  },
+  "RedditRulesSourceView": {
+    "snapshotId": "rs2",
+    "communityId": "rc1",
+    "version": 2,
+    "status": "superseded",
+    "source": {
+      "sourceId": "src2",
+      "revision": 1,
+      "supersedesId": null,
+      "current": false,
+      "url": "https://www.reddit.com/r/saas/about/rules",
+      "fragment": "rules text",
+      "injectionFlag": null,
+      "usage": "restricted",
+      "revokedAt": null,
+      "revokeReason": null,
+      "createdAt": "2026-10-13T08:00:00.000Z",
+      "createdBy": "member:m1"
+    }
+  }
+}

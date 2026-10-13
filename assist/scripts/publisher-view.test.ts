@@ -17,6 +17,7 @@ import { pubUk } from '../src/i18n/publisher-uk';
 import type { Computable } from '../src/lib/publisher/decode';
 import { describePubError, PUB_ERROR_CODES } from '../src/lib/publisher/errors';
 import {
+  PUB_PERMISSIONS,
   canAny,
   canCreateProduct,
   canDo,
@@ -733,6 +734,140 @@ for (const d of [pubContentUk, pubContentRu, pubContentEn]) {
     assert.ok(d.channels.statuses[k], k);
   for (const k of ['published', 'failed', 'withdrawn'] as const)
     assert.ok(d.materials.pubTo[k], k);
+}
+
+// ═══ P-R Reddit (M1): матрица §5, selfReview, тексты причин ══════════════
+{
+  const { readFileSync } = await import('node:fs');
+  const back = (f: string) =>
+    readFileSync(
+      new URL(
+        `../../sites-backend/src/modules/publisher/${f}`,
+        import.meta.url
+      ),
+      'utf8'
+    );
+  // selfReview зеркала ≡ core/roles.ts (рантайм-сверка ролей — publisher-api).
+  const ROLES_SRC = back('core/roles.ts');
+  const ab: Record<string, string> = {
+    PO: 'product_owner',
+    ED: 'editor',
+    OP: 'operator',
+    AN: 'analyst',
+    SA: 'sales',
+    VW: 'viewer',
+  };
+  const server: Record<string, string[]> = {};
+  for (const m of ROLES_SRC.matchAll(
+    /'([a-z_.]+)': \{[^}]*selfReview: \[([^\]]*)\]/g
+  ))
+    server[m[1]] = [...m[2].matchAll(/[A-Z]{2}/g)].map((x) => ab[x[0]]);
+  const mine: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(PUB_PERMISSIONS) as Array<
+    [string, { selfReview?: readonly string[] }]
+  >)
+    if (v.selfReview) mine[k] = [...v.selfReview];
+  assert.deepEqual(mine, server, 'selfReview ≠ core/roles.ts');
+  assert.deepEqual(server['reddit.rules.review'], ['product_owner', 'editor']);
+  // Матрица Reddit по ролям (AT-RD-02: VW не подтверждает правила).
+  const rows: Array<[MyRoles, [boolean, boolean, boolean, boolean]]> = [
+    [role(['product_owner']), [true, true, true, true]],
+    [role(['editor']), [true, true, true, false]],
+    [role(['operator']), [true, false, false, true]],
+    [role(['analyst']), [true, false, false, false]],
+    [role(['sales']), [false, false, false, false]],
+    [role(['viewer']), [true, false, false, false]],
+    [role([], true), [true, false, false, false]],
+    [role([], true, true), [true, true, true, true]],
+  ];
+  for (const [my, exp] of rows) {
+    assert.deepEqual(
+      [
+        canDo(my, 'reddit.read'),
+        canDo(my, 'reddit.manage'),
+        canDo(my, 'reddit.rules.review'),
+        canDo(my, 'reddit.handoff'),
+      ],
+      exp,
+      JSON.stringify(my)
+    );
+  }
+  // Вкладка раздела — `reddit.read`: продажи её не видят.
+  assert.equal(canAny(role(['sales']), ['reddit.read']), false);
+  assert.equal(canAny(viewer, ['reddit.read']), true);
+  // Причины отказа импорта (P-B1 + P-R `reddit_manual_only`) — словами.
+  const IMPORT = back('content/source-import.ts');
+  const reasons = [
+    ...(/export const IMPORT_BLOCK_REASONS = \[([\s\S]*?)\] as const/.exec(
+      IMPORT
+    ) ?? ['', ''])[1].matchAll(/'([a-z_0-9]+)'/g),
+  ].map((x) => x[1]);
+  assert.ok(reasons.includes('reddit_manual_only'));
+  for (const d of [pubUk, pubRu, pubEn])
+    for (const x of reasons)
+      assert.ok(
+        (d.errors.importReasons as Record<string, string>)[x],
+        `importReasons.${x}`
+      );
+  // Коды полей P-R — словами (`PUB_VALIDATION.details.fields[].code`).
+  for (const d of [pubUk, pubRu, pubEn])
+    for (const c of [
+      'community_mismatch',
+      'project_mismatch',
+      'derived',
+      'future',
+      'profile_ref',
+      'unknown',
+      'unknown_field',
+      'pii',
+    ])
+      assert.ok((d.errors.fieldCodes as Record<string, string>)[c], c);
+  // Объекты журнала P-R ведут в раздел «Reddit».
+  for (const ot of [
+    'reddit_project',
+    'reddit_community',
+    'reddit_rule_snapshot',
+    'reddit_keyword',
+    'reddit_opportunity',
+    'reddit_brief',
+  ])
+    assert.equal(objectSection(ot), 'reddit', ot);
+  // Раунд 2 P-R: правка источника Reddit в общем разделе → 409
+  // `reddit_evidence_locked` — словами, без «перезагрузить» (это правило,
+  // а не устаревшая версия); все причины `PUB_CONFLICT` сервисов источников.
+  const SRC = back('content/sources.service.ts');
+  const conflictReasons = [
+    ...SRC.matchAll(/PUB_CONFLICT', \{ reason: '([a-z_]+)' \}/g),
+  ].map((x) => x[1]);
+  assert.ok(conflictReasons.includes('reddit_evidence_locked'));
+  for (const d of [pubUk, pubRu, pubEn]) {
+    for (const x of conflictReasons)
+      assert.ok(
+        (d.errors.conflictReasons as Record<string, string>)[x],
+        `conflictReasons.${x}`
+      );
+    const v = describePubError(
+      new ApiError('PUB_CONFLICT', 'x', 409, 'rq', {
+        reason: 'reddit_evidence_locked',
+      }),
+      d
+    );
+    assert.deepEqual(v.lines, [
+      d.errors.conflictReasons.reddit_evidence_locked,
+    ]);
+    assert.equal(v.conflict, false);
+    // CAS-конфликт по-прежнему — «перезагрузить».
+    const cas = describePubError(
+      new ApiError('PUB_CONFLICT', 'x', 409, 'rq', { currentRevision: 2 }),
+      d
+    );
+    assert.equal(cas.conflict, true);
+    assert.deepEqual(cas.lines, [d.errors.conflictText]);
+  }
+  // Параметр свежести правил — подписан и в группе экрана «Запуск».
+  assert.ok(S.PARAMETER_KEYS.includes('reddit_rules_stale_days'));
+  for (const d of [pubUk, pubRu, pubEn])
+    assert.ok(d.params.keys.reddit_rules_stale_days);
 }
 
 console.log('publisher-view: ok');

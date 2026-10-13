@@ -29,6 +29,7 @@ import {
 import type { Locale } from '../../kit';
 import { getPublisherDict } from '../../lib/publisher/i18n';
 import type { PubAction } from '../../lib/publisher/permissions';
+import type { ProductView } from '../../lib/publisher/core-api';
 import type { PubQuery } from './publisher-context';
 import { LaunchScreen } from './core/LaunchScreen';
 import { RolesScreen } from './core/RolesScreen';
@@ -45,6 +46,7 @@ import { CalendarScreen } from './content/CalendarScreen';
 import { AiScreen } from './content/AiScreen';
 import { DueCard } from './core/DueCard';
 import { opsHomeCards as G2C, opsSections as G2 } from './ops/sections'; // P-G2
+import { redditSections as PR } from './reddit/sections'; // P-R
 
 export type PublisherNavGroup =
   | 'start'
@@ -65,6 +67,9 @@ export const NAV_GROUPS: readonly PublisherNavGroup[] = [
   'admin',
 ];
 
+/** Пакет-владелец строки реестра (§16.0; P-R — Reddit Manual MVP). */
+export type PublisherOwner = 'P-G1' | 'P-G2' | 'P-R';
+
 export interface PublisherSectionProps {
   /** `<раздел>/<id>` — карточка; `null` — список. */
   id: string | null;
@@ -75,18 +80,23 @@ export interface PublisherSectionProps {
 export interface PublisherSection {
   /** Сегмент URL: `/^[a-z][a-z0-9-]{0,31}$/`, уникален. */
   key: string;
-  owner: 'P-G1' | 'P-G2';
+  owner: PublisherOwner;
   group: PublisherNavGroup;
   order: number;
   icon: LucideIcon;
   label: (locale: Locale) => string;
   actions?: readonly PubAction[];
+  /**
+   * Раздел вне P0 за флагом сервера (`ProductView.features`): выключен —
+   * вкладки нет, прямая ссылка — «раздел не найден» (AT-RD-17).
+   */
+  feature?: keyof ProductView['features'];
   Screen: ComponentType<PublisherSectionProps>;
 }
 
 export interface PublisherHomeCard {
   key: string;
-  owner: 'P-G1' | 'P-G2';
+  owner: PublisherOwner;
   order: number;
   actions?: readonly PubAction[];
   /** Без пропсов: всё — из `usePublisher()`. */
@@ -220,6 +230,8 @@ export const PUBLISHER_SECTIONS: readonly PublisherSection[] = [
   G2.reports,
   G2.time,
   G2.backups,
+  // ── P-R ── (Reddit Manual MVP; за флагом `features.reddit`)
+  PR.reddit,
 ];
 
 /** Разделы, которые не показываются вкладкой (карточки внутри других). */
@@ -238,4 +250,12 @@ export const PUBLISHER_HOME_CARDS: readonly PublisherHomeCard[] = [
 export function findSection(key: string | null): PublisherSection | null {
   if (!key) return null;
   return PUBLISHER_SECTIONS.find((s) => s.key === key) ?? null;
+}
+
+/** Раздел включён для продукта (флаг сервера `features`; без флага — да). */
+export function sectionEnabled(
+  s: Pick<PublisherSection, 'feature'>,
+  features: ProductView['features']
+): boolean {
+  return !s.feature || features[s.feature] === true;
 }

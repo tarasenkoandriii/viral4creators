@@ -62,6 +62,13 @@ import { VenuesService } from './venues.service';
     { provide: BUDGET_READ_PORT, useExisting: BudgetService },
     { provide: PUBLICATIONS_PORT, useExisting: PublicationsService },
   ],
-  exports: [BUDGET_LIMIT_PORT, BUDGET_READ_PORT, PUBLICATIONS_PORT],
+  // ChannelsService — пакету P-R (канал `community` сообщества Reddit
+  // создаётся сервисом P-C в операции P-R, Р-RD-2).
+  exports: [
+    BUDGET_LIMIT_PORT,
+    BUDGET_READ_PORT,
+    PUBLICATIONS_PORT,
+    ChannelsService,
+  ],
 })
 export class PublisherDistributionModule {}

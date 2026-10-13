@@ -17,6 +17,7 @@ import {
   PUBLISHER_HOME_CARDS,
   PUBLISHER_SECTIONS,
   findSection,
+  sectionEnabled,
 } from '../src/screens/publisher/registry';
 
 const pub = (
@@ -128,6 +129,21 @@ for (const k of [
   assert.ok(s && s.owner === 'P-G1', `нет раздела P-G1 ${k}`);
 }
 assert.ok(HIDDEN_SECTIONS.has('briefs'));
+// P-R: раздел «Reddit» — за флагом `features.reddit` и `reddit.read`
+// (AT-RD-17: флаг выключен — вкладки нет, прямая ссылка — «не найден»).
+{
+  const rd = findSection('reddit');
+  assert.ok(rd && rd.owner === 'P-R' && rd.group === 'content');
+  assert.deepEqual(rd!.actions, ['reddit.read']);
+  assert.equal(rd!.feature, 'reddit');
+  assert.equal(sectionEnabled(rd!, { reddit: false }), false);
+  assert.equal(sectionEnabled(rd!, { reddit: true }), true);
+  // Разделы P0 от флага не зависят.
+  for (const s of PUBLISHER_SECTIONS.filter((x) => x.key !== 'reddit'))
+    assert.equal(sectionEnabled(s, { reddit: false }), true, s.key);
+  for (const sec of ['reddit/ro1', 'reddit?tab=rules&projectId=rp1'])
+    assert.equal(parseRoute(`#/sites/s1/publisher/${sec}`).name, 'publisher');
+}
 assert.equal(findSection('teleport'), null);
 assert.equal(findSection(null), null);
 const cardKeys = PUBLISHER_HOME_CARDS.map((c) => c.key);

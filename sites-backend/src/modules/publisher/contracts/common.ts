@@ -129,6 +129,12 @@ export interface ProductView {
   createdAt: string;
   myRoles: MyRoles;
   gates: Record<GateName, { open: boolean; missingCount: number }>;
+  /**
+   * Включённые разделы вне P0 (пакет P-R, Р-RD-9): `reddit` — env-флаг
+   * `PUBLISHER_REDDIT_ENABLED`; выключен — кабинет скрывает раздел, а API
+   * `…/reddit/**` отвечает 404.
+   */
+  features: { reddit: boolean };
 }
 
 // ── Гейты (§10) ──────────────────────────────────────────────────────────

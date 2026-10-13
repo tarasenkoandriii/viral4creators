@@ -47,6 +47,8 @@ import { SourcesService } from './sources.service';
     ContentsMemberReassign,
     { provide: CONTENT_PORT, useExisting: ContentPortImpl },
   ],
-  exports: [CONTENT_PORT, ContentsService],
+  // SourcesService — пакету P-R (первоисточники правил и выдержки тредов
+  // Reddit пишутся в pub_sources только сервисом P-B1, §1 reddit-manual-mvp).
+  exports: [CONTENT_PORT, ContentsService, SourcesService],
 })
 export class PublisherContentModule {}

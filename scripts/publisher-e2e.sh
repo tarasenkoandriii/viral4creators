@@ -5,7 +5,15 @@
 # драйвер assist/scripts/publisher-e2e.ts (HTTP-клиент кабинета).
 #
 #   WORK=/tmp/pub-e2e PG=postgresql://postgres@localhost:55432 \
-#     bash scripts/publisher-e2e.sh [--site]
+#     bash scripts/publisher-e2e.sh [--site | --reddit]
+#
+# `--reddit` — E2E-RD-01 пакета P-R (Reddit Manual MVP, M1): сервер с
+# `PUBLISHER_REDDIT_ENABLED=true`, драйвер `assist/scripts/publisher-e2e-
+# reddit.ts` (проект → 10 сообществ → снимки/review → 20 возможностей →
+# score → блокировки); сайт не нужен. `BACKEND_ROOT` — каталог с готовым
+# `dist` (и `node_modules`, например ссылкой) вместо `sites-backend`: сборка
+# не запускается, сид копируется рядом с этим `dist` (стенд без записи в
+# рабочее дерево).
 #
 # Нужны: роли CI `publisher_public_ci`/`assist_widget_ci` в Postgres (как в
 # CI), для `--site` — Chromium (`PLAYWRIGHT_BROWSERS_PATH`). Предаудит
@@ -32,6 +40,7 @@ PG=${PG:-postgresql://postgres@localhost:55432}
 DB=${DB:-sites_pube2e}
 PORT=${PORT:-4141}
 SITE_PORT=${SITE_PORT:-3020}
+MODE=${1:-}
 mkdir -p "$WORK"
 U="$PG/$DB"
 
@@ -56,6 +65,13 @@ psql "$U" -qc "GRANT CONNECT ON DATABASE $DB TO assist_widget_ci" -c "GRANT CONN
 # Часы сервера БД стенда (Р-PUB-Z2-21): триггер только в базе стенда.
 psql "$U" -q -v ON_ERROR_STOP=1 -f "$ROOT/sites-backend/test/publisher-e2e/stand-db-clock.sql" || exit 1
 
+BACK=${BACKEND_ROOT:-$ROOT/sites-backend}
+if [ -n "${BACKEND_ROOT:-}" ]; then
+  # Готовый dist вне рабочего дерева: сид — копией рядом (он ищет `../../dist`).
+  [ -f "$BACK/dist/main.js" ] || { echo "BACKEND_ROOT: нет $BACK/dist/main.js"; exit 1; }
+  mkdir -p "$BACK/test/publisher-e2e"
+  cp "$ROOT/sites-backend/test/publisher-e2e/seed.cjs" "$BACK/test/publisher-e2e/seed.cjs"
+fi
 cd "$ROOT/sites-backend"
 # dist ≡ src (DEF-C-01): метка последней сборки этим скриптом
 # (`dist/.publisher-e2e-build`; tsc с инкрементом не переписывает
@@ -63,7 +79,7 @@ cd "$ROOT/sites-backend"
 # новее метки или метки нет — сборка.
 STAMP=dist/.publisher-e2e-build
 newest=$(find src prisma/schema.prisma tsconfig.json -type f -newer "$STAMP" 2>/dev/null | head -1)
-if [ ! -f dist/main.js ] || [ ! -f "$STAMP" ] || [ -n "$newest" ]; then
+if [ -z "${BACKEND_ROOT:-}" ] && { [ ! -f dist/main.js ] || [ ! -f "$STAMP" ] || [ -n "$newest" ]; }; then
   if [ -n "${PUB_E2E_NO_BUILD:-}" ]; then
     echo "dist устарел (${newest:-нет dist/main.js}) — соберите sites-backend"; exit 1
   fi
@@ -73,7 +89,9 @@ if [ ! -f dist/main.js ] || [ ! -f "$STAMP" ] || [ -n "$newest" ]; then
   # Метка — время НАЧАЛА сборки: правка во время сборки даст пересборку.
   touch -r "$WORK/.build-start" "$STAMP"
 fi
-SITES_DATABASE_URL=$U node test/publisher-e2e/seed.cjs "$WORK/seed.json" "${SITE_HOST:-pubsite.test}" || exit 1
+SITES_DATABASE_URL=$U node "$BACK/test/publisher-e2e/seed.cjs" "$WORK/seed.json" "${SITE_HOST:-pubsite.test}" || exit 1
+# Раздел Reddit (P-R) — только для `--reddit`; иначе флаг выключен (по умолчанию).
+if [ "$MODE" = "--reddit" ]; then export PUBLISHER_REDDIT_ENABLED=true; else unset PUBLISHER_REDDIT_ENABLED; fi
 
 E2E_SECRETS_KEY=e2e-secrets-key-0123456789 # gitleaks:allow — поддельный ключ стенда
 export NODE_ENV=development PORT SITES_DATABASE_URL=$U SITES_DIRECT_URL="$U?schema=sites" \
@@ -86,13 +104,19 @@ export NODE_ENV=development PORT SITES_DATABASE_URL=$U SITES_DIRECT_URL="$U?sche
   PUBLISHER_STAND_CLOCK=true PUBLISHER_STAND_BACKUP_DIR="$WORK/backups" \
   TRUSTED_PROXY_CIDRS="127.0.0.0/8,::1/128"
 rm -rf "$WORK/backups"
-NODE_OPTIONS=--max-old-space-size=1024 node dist/main.js > "$WORK/server.log" 2>&1 &
+NODE_OPTIONS=--max-old-space-size=1024 node "$BACK/dist/main.js" > "$WORK/server.log" 2>&1 &
 echo $! > "$WORK/server.pid"
 for i in $(seq 1 60); do curl -sf "localhost:$PORT/health" >/dev/null && break; sleep 1; done
 
 cd "$ROOT/assist"
 export PUB_E2E_API=http://localhost:$PORT PUB_E2E_SEED="$WORK/seed.json" PUB_E2E_DB="$U" PUB_E2E_SITE_PORT=$SITE_PORT
-if [ "${1:-}" != "--site" ]; then
+if [ "$MODE" = "--reddit" ]; then
+  PUB_E2E_OUT="$WORK/e2e-reddit.json" npx tsx scripts/publisher-e2e-reddit.ts
+  rc=$?
+  [ -n "${KEEP_SERVER:-}" ] || stop
+  exit $rc
+fi
+if [ "$MODE" != "--site" ]; then
   PUB_E2E_OUT="$WORK/e2e.json" npx tsx scripts/publisher-e2e.ts
   rc=$?
   [ -n "${KEEP_SERVER:-}" ] || stop

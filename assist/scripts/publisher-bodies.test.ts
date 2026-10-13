@@ -19,6 +19,7 @@ import type * as CrC from '../../sites-backend/src/modules/publisher/contracts/c
 import type * as DiC from '../../sites-backend/src/modules/publisher/contracts/distribution-api';
 import type * as LeC from '../../sites-backend/src/modules/publisher/contracts/leads-api';
 import type * as ReC from '../../sites-backend/src/modules/publisher/contracts/reports-api';
+import type * as RdC from '../../sites-backend/src/modules/publisher/contracts/reddit-api';
 import type { createAiApi } from '../src/lib/publisher/ai-api';
 import type { createCalendarApi } from '../src/lib/publisher/calendar-api';
 import type {
@@ -33,6 +34,7 @@ import type {
 } from '../src/lib/publisher/distribution-api';
 import type { createLeadsApi } from '../src/lib/publisher/leads-api';
 import type { createReportsApi } from '../src/lib/publisher/reports-api';
+import type { createRedditApi } from '../src/lib/publisher/reddit-api';
 import {
   bodyIssues,
   bodyKeys,
@@ -47,6 +49,7 @@ import { createCoreApi as createCoreApiRt } from '../src/lib/publisher/core-api'
 import { createDistributionApi as createDistributionApiRt } from '../src/lib/publisher/distribution-api';
 import { createLeadsApi as createLeadsApiRt } from '../src/lib/publisher/leads-api';
 import { createReportsApi as createReportsApiRt } from '../src/lib/publisher/reports-api';
+import { createRedditApi as createRedditApiRt } from '../src/lib/publisher/reddit-api';
 
 // ── Помощники типов ─────────────────────────────────────────────────────
 type NoOp<B> = Omit<B, 'opKey'>;
@@ -76,6 +79,7 @@ type Ca = ReturnType<typeof createCalendarApi>;
 type Di = ReturnType<typeof createDistributionApi>;
 type Le = ReturnType<typeof createLeadsApi>;
 type Re = ReturnType<typeof createReportsApi>;
+type Rd = ReturnType<typeof createRedditApi>;
 
 // ── Ядро (P-G1) ─────────────────────────────────────────────────────────
 ok<Fits<BodyOf<Co['createProduct']>, CrC.CreateProductBody>>('createProduct');
@@ -237,6 +241,38 @@ ok<
 >('recomputeReport');
 ok<Fits<BodyOf<Re['restore']>, ReC.RestoreBody>>('restore');
 
+// ── Reddit Manual MVP, M1 (P-R) ─────────────────────────────────────────
+ok<Fits<BodyOf<Rd['createProject']>, RdC.CreateRedditProjectBody>>(
+  'createRedditProject'
+);
+ok<Fits<BodyOf<Rd['patchProject']>, RdC.PatchRedditProjectBody>>(
+  'patchRedditProject'
+);
+ok<Fits<BodyOf<Rd['createCommunity']>, RdC.CreateRedditCommunityBody>>(
+  'createRedditCommunity'
+);
+ok<Fits<BodyOf<Rd['patchCommunity']>, RdC.PatchRedditCommunityBody>>(
+  'patchRedditCommunity'
+);
+ok<Fits<BodyOf<Rd['createRules']>, RdC.CreateRedditRulesBody>>(
+  'createRedditRules'
+);
+ok<Fits<BodyOf<Rd['createOpportunity']>, RdC.CreateRedditOpportunityBody>>(
+  'createRedditOpportunity'
+);
+ok<Fits<BodyOf<Rd['patchOpportunity']>, RdC.PatchRedditOpportunityBody>>(
+  'patchRedditOpportunity'
+);
+ok<
+  Fits<BodyOf<Rd['transitionOpportunity']>, RdC.RedditOpportunityTransitionBody>
+>('redditTransition');
+ok<Fits<BodyOf<Rd['createKeyword']>, RdC.CreateRedditKeywordBody>>(
+  'createRedditKeyword'
+);
+ok<Fits<BodyOf<Rd['patchKeyword']>, RdC.PatchRedditKeywordBody>>(
+  'patchRedditKeyword'
+);
+
 // ── Сверка не слепа: заведомые расхождения tsc отвергает ────────────────
 // @ts-expect-error — лишний ключ (старое тело согласования, аудит A8)
 ok<Fits<ApproveIn & { approverDisplayName: string }, CoC.ApproveBody>>('x');
@@ -246,7 +282,13 @@ ok<Fits<{ reason?: 'manual' | 'other' }, ReC.RecomputeReportBody>>('x');
 ok<Fits<{ expectedRevision: number; url: string }, DiC.PlacementVerifyBody>>(
   'x'
 );
-names.length -= 3;
+// @ts-expect-error — `policy_risk` выводится из снимка, не вводится (P-R)
+ok<Fits<{ policy_risk: number }, RdC.RedditFactorsInput>>('x');
+// @ts-expect-error — имя сообщества — `community`, не `name` (P-R)
+ok<Fits<{ projectId: string; name: string }, RdC.CreateRedditCommunityBody>>(
+  'x'
+);
+names.length -= 5;
 
 // ── Рантайм: методы со скалярными аргументами тело строят сами — каждый
 // вызывается через подменённый `PublisherHttp`, тело сверяется с `*Body`
@@ -289,6 +331,7 @@ const fake: PublisherHttp = {
   const di = createDistributionApiRt(fake);
   const le = createLeadsApiRt(fake);
   const re = createReportsApiRt(fake);
+  const rd = createRedditApiRt(fake, pid);
   const calls: Array<Promise<unknown>> = [
     co.propose(pid, 'niche', { text: 'x' }, K),
     co.withdraw(pid, 'niche', 'pr1', K),
@@ -323,6 +366,16 @@ const fake: PublisherHttp = {
     re.reportDecision(pid, 'r1', K, 'go'),
     re.recomputeReport(pid, 'r1', K, 'manual'),
     re.createBackup(pid, K),
+    // P-R: тела из скаляров (архив проекта, review, пересчёт, переходы).
+    rd.archiveProject('rp1', K, 1),
+    rd.reviewRules('rs1', K),
+    rd.scoreOpportunity('ro1', K, 2),
+    rd.transitionOpportunity('ro1', 'qualify', K, { expectedRevision: 2 }),
+    rd.transitionOpportunity('ro1', 'skip', K, {
+      expectedRevision: 2,
+      reason: 'r',
+    }),
+    rd.transitionOpportunity('ro1', 'archive', K, { expectedRevision: 2 }),
   ];
   await Promise.all(calls.map((p) => p.catch(() => undefined)));
 }
@@ -333,6 +386,7 @@ const ROUTES = [
   'distribution-api.ts',
   'leads-api.ts',
   'reports-api.ts',
+  'reddit-api.ts',
 ]
   .flatMap((f) => routesOf(contractSrc(f)))
   .filter((r) => r.method !== 'GET')
@@ -353,7 +407,14 @@ assert.equal(runtime.size, sent.length, 'каждый рантайм-вызов 
 // имя `*Body` в `ok<Fits<…>>`) или в рантайме выше. Общие тела
 // (`MutationBody`, `RevisionedBody`, пересечения) — только рантаймом:
 // по имени они не различают маршруты. Исключений нет. ─────────────────────
-const SHARED = new Set(['MutationBody', 'RevisionedBody']);
+const SHARED = new Set([
+  'MutationBody',
+  'RevisionedBody',
+  // Псевдонимы общих тел P-R (сверяются рантаймом, как сами общие).
+  'ArchiveRedditProjectBody',
+  'ReviewRedditRulesBody',
+  'ScoreRedditOpportunityBody',
+]);
 const self = (await import('node:fs')).readFileSync(
   new URL(import.meta.url),
   'utf8'

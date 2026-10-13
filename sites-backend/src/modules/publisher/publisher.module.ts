@@ -7,6 +7,7 @@ import { PublisherAiModule } from './ai/ai.module';
 import { PublisherDistributionModule } from './distribution/distribution.module';
 import { PublisherLeadsModule } from './leads/leads.module';
 import { PublisherReportsModule } from './reports/reports.module';
+import { PublisherRedditModule } from './reddit/reddit.module';
 import { PublisherContentPublicModule } from './public/content-public.module';
 import { PublisherIntakePublicModule } from './public/intake-public.module';
 
@@ -22,6 +23,7 @@ import { PublisherIntakePublicModule } from './public/intake-public.module';
  *   distribution/P-C   F09, F10, F12, бюджет
  *   leads/       P-D   заявки, F11
  *   reports/     P-E   отчёты, F17, бэкап
+ *   reddit/      P-R   Reddit Manual MVP (M1; флаг PUBLISHER_REDDIT_ENABLED)
  *   public/      P-B1 (контент) и P-D (приём) — под ролью publisher_public
  *
  * Граница модуля — правила графа `publisher-*`
@@ -38,6 +40,7 @@ import { PublisherIntakePublicModule } from './public/intake-public.module';
     PublisherDistributionModule,
     PublisherLeadsModule,
     PublisherReportsModule,
+    PublisherRedditModule,
     PublisherContentPublicModule,
     PublisherIntakePublicModule,
     // Стенд E2E (Р-PUB-Z2-21): вне стенда — пустой модуль без маршрутов.

@@ -271,8 +271,8 @@ describe('AI Publisher (P-A0, §5.2): модели Pub* в тенанте', () =
     .map((m) => m.name)
     .filter((n) => n.startsWith('Pub'));
 
-  it('66 моделей; все, кроме окна лимита формы, — по accountId', () => {
-    expect(pub).toHaveLength(66);
+  it('71 модель (66 P0 + 5 P-R); все, кроме окна лимита формы, — по accountId', () => {
+    expect(pub).toHaveLength(71);
     expect(pub.filter((n) => TENANT_COLUMNS[n] !== 'accountId')).toEqual([
       'PubRateHit',
     ]);

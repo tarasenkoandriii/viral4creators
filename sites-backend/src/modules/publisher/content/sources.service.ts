@@ -60,6 +60,12 @@ export class SourcesService {
     product: ProductRef,
     b: Body,
     actor: string,
+    /**
+     * Пакет P-R: доказательство Reddit (`origin='reddit'` — первоисточник
+     * правил, выдержка треда) и новая редакция (`supersedesId`). Такие строки
+     * скрыты из общих `/sources` и неизменны (триггер `pub_reddit_sources_guard`).
+     */
+    opts: { origin?: 'content' | 'reddit'; supersedesId?: string } = {},
   ): Promise<OpOut<SourceView>> {
     const is = new Issues();
     const kind = is.oneOf(b, 'kind', SOURCE_KINDS, true) as
@@ -108,6 +114,8 @@ export class SourcesService {
         importedVia: 'manual',
         contentHash: sourceContentHash(url, fragment!),
         injectionFlag: injectionOf(title, fragment!),
+        origin: opts.origin ?? 'content',
+        supersedesId: opts.supersedesId ?? null,
         createdBy: actor,
       },
     });
@@ -119,7 +127,12 @@ export class SourcesService {
           objectId: row.id,
           action: 'create',
           toStatus: row.usage,
-          meta: { kind: row.kind, visibility: row.visibility },
+          meta: {
+            kind: row.kind,
+            visibility: row.visibility,
+            ...(row.origin !== 'content' ? { origin: row.origin } : {}),
+            ...(row.supersedesId ? { supersedesId: row.supersedesId } : {}),
+          },
         },
       ],
     };
@@ -179,6 +192,12 @@ export class SourcesService {
       where: { id, productId: product.id },
     });
     if (!cur) throw new PubError('PUB_NOT_FOUND');
+    // Аудит P-R S1-1/S1-2: доказательство Reddit (первоисточник правил,
+    // выдержка треда) меняется только новой редакцией через маршруты P-R
+    // (новый снимок правил, `PATCH …/reddit/opportunities/:id`), не здесь.
+    if (cur.origin === 'reddit') {
+      throw new PubError('PUB_CONFLICT', { reason: 'reddit_evidence_locked' });
+    }
     const is = new Issues();
     const data: Prisma.PubSourceUpdateManyMutationInput = {};
     if (has(b, 'title'))

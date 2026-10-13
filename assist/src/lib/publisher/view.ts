@@ -293,6 +293,13 @@ export function objectSection(objectType: string): string | null {
       return 'venues';
     case 'report':
       return 'reports';
+    case 'reddit_project':
+    case 'reddit_community':
+    case 'reddit_rule_snapshot':
+    case 'reddit_keyword':
+    case 'reddit_opportunity':
+    case 'reddit_brief':
+      return 'reddit';
     default:
       return null;
   }

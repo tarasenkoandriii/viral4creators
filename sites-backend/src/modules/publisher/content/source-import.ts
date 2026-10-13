@@ -20,6 +20,10 @@
  * `robots` из-за того, что сам robots.txt недоступен по SSRF (имя
  * резолвится во внутренний адрес), — `ssrf`; имя не резолвится — `timeout`.
  * Эти уточнения только меняют код причины: защита — в `pinnedFetch`.
+ *
+ * Хосты Reddit (`reddit.com`, `*.reddit.com`, `redd.it`, `*.redd.it`,
+ * `*.redditmedia.com`, `*.redditstatic.com`) — `reddit_manual_only` до сети:
+ * режим P-R только MANUAL_COPY (Р-RD-0, AT-RD-16).
  */
 import {
   assertCrawlableUrl,
@@ -30,6 +34,7 @@ import {
 import type { PublicPageFetcher } from '../../site-crawl/page-fetcher';
 import type { CrawlCacheDb, SkipReason } from '../../site-crawl/types';
 import { PubError } from '../core/errors';
+import { isRedditHost } from '../reddit/normalize';
 
 export const IMPORT_FRAGMENT_MAX = 20_000;
 
@@ -48,6 +53,9 @@ export const IMPORT_BLOCK_REASONS = [
   'empty',
   'spa',
   'noindex',
+  // P-R (reddit-manual-mvp-adapted.md §M1.0, Р-RD-0): Reddit — только
+  // ручной ввод; импорт по URL с хостов Reddit отклоняется ДО сети.
+  'reddit_manual_only',
 ] as const;
 export type ImportBlockReason = (typeof IMPORT_BLOCK_REASONS)[number];
 
@@ -75,6 +83,7 @@ export function preNetworkReason(url: string): ImportBlockReason | null {
   } catch {
     return 'not_https';
   }
+  if (isRedditHost(u.hostname)) return 'reddit_manual_only';
   if (u.protocol !== 'https:') return 'not_https';
   try {
     assertCrawlableUrl(u.toString());

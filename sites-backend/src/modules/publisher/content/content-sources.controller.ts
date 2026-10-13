@@ -25,7 +25,7 @@ import {
   SOURCE_USAGES,
   SOURCE_VISIBILITIES,
 } from '../contracts/states';
-import { validationError } from '../core/errors';
+import { PubError, validationError } from '../core/errors';
 import { PubOperations, type OperationRef } from '../core/operation';
 import type { PubTx } from '../core/ports';
 import {
@@ -131,6 +131,9 @@ export class ContentSourcesController extends ContentControllerBase {
     const rows = await db.pubSource.findMany({
       where: {
         productId: p.id,
+        // Доказательства Reddit (P-R) — только в маршрутах раздела Reddit
+        // (`reddit.read` + флаг), не в общем списке (аудит P-R S2-1).
+        origin: 'content',
         // Общая выгрузка — без отозванных источников (AT-CORE-21).
         // И без прежних редакций — только последняя (аудит P-B1 S1-1/S2-4).
         ...(csv
@@ -193,7 +196,15 @@ export class ContentSourcesController extends ContentControllerBase {
   @Get('sources/:id')
   @PubAllow('product.read')
   async getSource(@PubRequest() ctx: PubRequestCtx, @Param('id') id: string) {
-    return loadSource(this.tenant(ctx), productOf(ctx).id, id);
+    const db = this.tenant(ctx);
+    const pid = productOf(ctx).id;
+    // Доказательство Reddit (P-R) — как несуществующий источник (S2-1).
+    const hidden = await db.pubSource.findFirst({
+      where: { id, productId: pid, origin: 'reddit' },
+      select: { id: true },
+    });
+    if (hidden) throw new PubError('PUB_NOT_FOUND');
+    return loadSource(db, pid, id);
   }
 
   @Post('sources')

@@ -16,7 +16,15 @@
  */
 import { Prisma } from '@prisma/client';
 
-export type PackageId = 'P-A1' | 'P-B1' | 'P-B2' | 'P-C' | 'P-D' | 'P-E';
+export type PackageId =
+  | 'P-A1'
+  | 'P-B1'
+  | 'P-B2'
+  | 'P-C'
+  | 'P-D'
+  | 'P-E'
+  /** Reddit Manual MVP (reddit-manual-mvp-adapted.md §1): только `pub_reddit_*`. */
+  | 'P-R';
 
 /** Кто пишет таблицу (§6.8). `pub_approvals` — по типам: P-B1, P-B2, P-C. */
 export const TABLE_OWNERS: Readonly<Record<string, readonly PackageId[]>> = {
@@ -86,6 +94,11 @@ export const TABLE_OWNERS: Readonly<Record<string, readonly PackageId[]>> = {
   pub_integrations: ['P-E'],
   pub_backups: ['P-E'],
   pub_restores: ['P-E'],
+  pub_reddit_projects: ['P-R'],
+  pub_reddit_communities: ['P-R'],
+  pub_reddit_rule_snapshots: ['P-R'],
+  pub_reddit_keywords: ['P-R'],
+  pub_reddit_opportunities: ['P-R'],
 };
 
 /** Не экспортируются (§15.4): вне тенанта, служебные очереди. */

@@ -380,6 +380,8 @@ export const PARAMETER_KEYS = [
   'pilot_calendar',
   'launch_evidence_d0',
   'launch_evidence_purchase',
+  // P-R Reddit: срок свежести проверки правил сообщества (`{days}`, 1..365).
+  'reddit_rules_stale_days',
 ] as const;
 export type ParameterKey = (typeof PARAMETER_KEYS)[number];
 
@@ -395,6 +397,7 @@ export const PARAMETER_GROUPS = {
     'market',
     'offer_active_version',
     'own_channels',
+    'reddit_rules_stale_days',
   ],
   site: [
     'domain_host',

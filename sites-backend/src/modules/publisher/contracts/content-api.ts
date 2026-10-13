@@ -109,6 +109,10 @@ export interface RevokeSourceBody extends MutationBody {
   reason: string;
 }
 export interface RevokeSourceResponse {
+  /**
+   * Доказательство P-R (выдержка, первоисточник правил Reddit): `url`,
+   * `title`, `author`, `externalRef` — `null`, `fragment` — `''` (Р-RD-41).
+   */
   source: SourceView;
   revocationId: string;
   /** Новые задачи проверки (claims, версии, материалы, публикации). */
