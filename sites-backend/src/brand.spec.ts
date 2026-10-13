@@ -61,9 +61,11 @@ describe('brand Э2 — публичные имена виджета тольк�
     expect(brand.WIDGET_RESUME_COOKIE.startsWith('__Host-')).toBe(true);
   });
 
-  it('домены — заглушки .invalid, пока бренд не решён', () => {
+  it('origin без настройки — заглушка; публичная ссылка ведёт на действующий лендинг', () => {
     expect(new URL(brand.WIDGET_ORIGIN_DEFAULT).hostname).toMatch(/\.invalid$/);
-    expect(new URL(brand.WIDGET_POWERED_BY_URL).hostname).toMatch(/\.invalid$/);
+    expect(new URL(brand.WIDGET_POWERED_BY_URL).hostname).toBe(
+      'assist.viral4creators.app',
+    );
   });
 
   it('ни один файл src (кроме brand.ts) не пишет имена виджета литералом', () => {

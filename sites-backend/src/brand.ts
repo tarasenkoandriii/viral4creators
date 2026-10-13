@@ -197,7 +197,7 @@ export const WIDGET_VIDEO_LINK_HMAC_LABEL = 'v4c-widget-video-link';
 
 /** Ссылка «Работает на …» в подвале чата (§3-бис.1) — с UTM. */
 export const WIDGET_POWERED_BY_URL =
-  'https://v4c.example.invalid/assistant?utm_source=widget&utm_medium=powered_by';
+  'https://assist.viral4creators.app/?utm_source=widget&utm_medium=powered_by';
 
 // ══ Э3: цели, выбор цели на сайте, интеграции (ТЗ §5-тер.1, §3-бис.2) ═════
 // Те же правила, что у блока Э2: заказчик пишет эти имена в вёрстку,

@@ -42,6 +42,39 @@ describe('composite cron failures', () => {
     ).toBeNull();
     expect(cronPartialError('other', { filesError: 'error' })).toBeNull();
   });
+  it('keeps nested failure counters and does not flag intentional admin throttling', () => {
+    expect(
+      cronPartialError('assist-analytics-run', {
+        ai: { labels: { failed: 1 }, weekly: {}, experiments: {} },
+      }),
+    ).toBe('PartialFailure: ai.labels');
+    expect(
+      cronPartialError('assist-admin-embed-run', {
+        analytics: {
+          exports: { failed: 0 },
+          throttled: true,
+          alerts: null,
+          labels: null,
+          rollup: null,
+          weekly: null,
+        },
+      }),
+    ).toBeNull();
+    expect(
+      cronPartialError('assist-admin-embed-run', {
+        analytics: {
+          exports: { failed: 1 },
+          throttled: false,
+          alerts: {},
+          labels: { errors: 1 },
+          rollup: {},
+          weekly: null,
+        },
+      }),
+    ).toBe(
+      'PartialFailure: analytics.exports, analytics.labels, analytics.weekly',
+    );
+  });
   it('provider diagnostics contain only a valid HTTP status', () => {
     expect(providerErrorStatus({ status: 402, message: 'secret prompt' })).toBe(
       '402',
