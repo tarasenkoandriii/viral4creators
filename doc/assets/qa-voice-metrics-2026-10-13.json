@@ -1,0 +1,136 @@
+{
+  "workflowRun": 38382991606,
+  "testSourceSha": "b252e513defdc1fb8f9e16c7bdf43f92e5af9f57",
+  "metrics": [
+    {
+      "uiLanguage": "ru",
+      "recognizedLanguage": "ru",
+      "ttsBytes": 245420,
+      "referenceWords": 25,
+      "recognizedWords": 25,
+      "edits": 3,
+      "wer": 0.12,
+      "threshold": 0.2,
+      "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+    },
+    {
+      "uiLanguage": "uk",
+      "recognizedLanguage": "uk",
+      "ttsBytes": 261932,
+      "referenceWords": 28,
+      "recognizedWords": 27,
+      "edits": 3,
+      "wer": 0.10714285714285714,
+      "threshold": 0.2,
+      "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+    }
+  ],
+  "followupRuns": [
+    {
+      "workflowRun": 38385527294,
+      "testSourceSha": "29c3f043bf96f921e47ae231c0c21b91e941a0d3",
+      "metrics": [
+        {
+          "uiLanguage": "ru",
+          "recognizedLanguage": "ru",
+          "ttsBytes": 245420,
+          "referenceWords": 25,
+          "recognizedWords": 25,
+          "edits": 3,
+          "wer": 0.12,
+          "threshold": 0.2,
+          "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+        },
+        {
+          "uiLanguage": "uk",
+          "recognizedLanguage": "uk",
+          "ttsBytes": 261932,
+          "referenceWords": 28,
+          "recognizedWords": 27,
+          "edits": 3,
+          "wer": 0.10714285714285714,
+          "threshold": 0.2,
+          "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+        }
+      ]
+    },
+    {
+      "workflowRunId": 38388871473,
+      "sourceSha": "61e46d1e39580080dcc2d2883a9c012b14acda4a",
+      "status": "success",
+      "automatedPassed": 13,
+      "automatedFailed": 0,
+      "model": "gemini-3.1-flash-lite",
+      "semanticCacheBypassed": true,
+      "metrics": [
+        {
+          "uiLanguage": "ru",
+          "recognizedLanguage": "ru",
+          "ttsBytes": 149804,
+          "referenceWords": 18,
+          "recognizedWords": 17,
+          "edits": 1,
+          "wer": 0.05555555555555555,
+          "threshold": 0.2,
+          "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+        },
+        {
+          "uiLanguage": "uk",
+          "recognizedLanguage": "uk",
+          "ttsBytes": 174380,
+          "referenceWords": 21,
+          "recognizedWords": 20,
+          "edits": 1,
+          "wer": 0.047619047619047616,
+          "threshold": 0.2,
+          "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+        }
+      ]
+    },
+    {
+      "workflowRunId": 38389574892,
+      "sourceSha": "61e46d1e39580080dcc2d2883a9c012b14acda4a",
+      "status": "success",
+      "automatedPassed": 13,
+      "automatedFailed": 0,
+      "model": "gemini-3.1-flash-lite",
+      "semanticCacheBypassed": true,
+      "metrics": [
+        {
+          "uiLanguage": "ru",
+          "recognizedLanguage": "ru",
+          "ttsBytes": 213932,
+          "referenceWords": 24,
+          "recognizedWords": 23,
+          "edits": 1,
+          "wer": 0.041666666666666664,
+          "threshold": 0.2,
+          "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+        },
+        {
+          "uiLanguage": "uk",
+          "recognizedLanguage": "uk",
+          "ttsBytes": 211244,
+          "referenceWords": 24,
+          "recognizedWords": 23,
+          "edits": 1,
+          "wer": 0.041666666666666664,
+          "threshold": 0.2,
+          "limitation": "Synthetic roundtrip; site language policy chooses content; UI language does not restrict STT; TTS may be cached; does not prove command execution or device audio playback"
+        }
+      ]
+    }
+  ],
+  "latestAcceptance": {
+    "workflowRunIds": [
+      38388871473,
+      38389574892
+    ],
+    "sourceSha": "61e46d1e39580080dcc2d2883a9c012b14acda4a",
+    "model": "gemini-3.1-flash-lite",
+    "consecutiveAutomatedSuccesses": 2,
+    "voiceModelAnswersVerifiedInProduction": 8,
+    "deviceAcceptance": "not-run",
+    "scheduledStability": "not-established-by-manual-runs"
+  }
+}

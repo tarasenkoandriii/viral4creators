@@ -9673,10 +9673,10 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 Отчёт: [QA-AI-HELPER-AUDIT-2026-10-13.md](QA-AI-HELPER-AUDIT-2026-10-13.md).
 
 - [x] Не терять частичные ошибки источников и индексации в общем cron-результате; безопасная диагностика HTTP статуса chat-провайдера (`a25af59`).
-- [ ] Подтвердить устранение живого chat UPSTREAM 502 и зелёный RU/UK голосовой прогон.
+- [x] Подтвердить устранение живого chat UPSTREAM 502 и зелёный RU/UK голосовой прогон: `61e46d1`, QA `38388871473` и `38389574892` — каждый 13 passed / 3 skipped / 0 failed; свежие RU/UK model → TTS → STT → voice ticket → model прошли на production gemini-3.1-flash-lite. [Отчёт](GEMINI-VOICE-RU-UK-2026-10-13.md).
 - [ ] Подтвердить последующие ежедневные scheduled QA; ручные и PR-запуски учитывать отдельно.
 - [ ] Полная история cron по этапам вместо вывода исторической надёжности из последнего состояния замков.
 
 - [ ] Проверить безопасное устранение moderate DOCX dependency advisory `GHSA-hp3w-g68c-fv3c` без `npm audit fix --force` и отката mammoth.
 
-- [ ] Отдельная приёмка нового LLM-ответа: подтверждать `answerPath=model` и complete; `SBX-AI` с cache/FAQ и HTTP 200/refusal не считать доказательством доступности Gemini.
+- [x] Отдельная приёмка нового LLM-ответа: подтверждены `answerPath=model`, complete и фактические токены после исправления `61e46d1`, QA-контекст voice отключает семантический cache; `SBX-AI` с cache/FAQ и HTTP 200/refusal по-прежнему не считать доказательством доступности Gemini.
