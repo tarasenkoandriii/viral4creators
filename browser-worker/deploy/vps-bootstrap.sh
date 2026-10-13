@@ -6,7 +6,9 @@
 #
 #   sudo SITES_BACKEND_URL=https://<домен sites-backend> bash vps-bootstrap.sh
 #   sudo bash vps-bootstrap.sh --check     # только посмотреть состояние
-#   sudo bash vps-bootstrap.sh --update    # git pull + пересборка (cron раз в неделю)
+#   sudo bash vps-bootstrap.sh --update    # git pull + пересборка (cron раз в неделю);
+#                                          # после pull перезапускается свежей копией
+#                                          # (--post-update): fail2ban, сторож, сборка
 #
 # Что делает (идемпотентно, повторный запуск безопасен):
 #   1. Docker Engine + compose из официального репозитория Docker; проверка,
@@ -24,6 +26,9 @@
 #   7. Проверка изоляции: метаданные облака, SSH хоста, частная сеть —
 #      закрыто; DNS — работает.
 #   10. Еженедельное обновление (cron, воскресенье 04:17 UTC, --update).
+#   11. Сторож (cron раз в 5 мин, deploy/worker-watch.sh): перезапуск
+#       упавшего/unhealthy контейнера, отметка первого выполненного
+#       задания, файл состояния /var/lib/bworker/status (его печатает --check).
 #
 # Чего НЕ делает (требования владельца): не трогает sshd, парольный вход и
 # порт 22, не включает ufw/nftables для INPUT, не открывает портов —
@@ -53,7 +58,7 @@ die() {
 }
 
 [ "$(id -u)" -eq 0 ] || die "запускать от root (sudo bash $0)"
-case "$MODE" in install | --update | --check) ;; *) die "неизвестный режим «$MODE» (нет аргумента | --update | --check)" ;; esac
+case "$MODE" in install | --update | --post-update | --check) ;; *) die "неизвестный режим «$MODE» (нет аргумента | --update | --check)" ;; esac
 
 # --- ОС -------------------------------------------------------------------
 . /etc/os-release
@@ -77,6 +82,49 @@ health_report() {
     sh "$WD/deploy/worker-egress-docker-user.sh" --status 2>/dev/null | tail -5 || true
   fi
   systemctl is-enabled bworker-egress 2>/dev/null | sed 's/^/   bworker-egress: /' || true
+  if fail2ban-client status sshd >/dev/null 2>&1; then
+    echo "   fail2ban: работает ($(fail2ban-client status sshd | sed -n 's/.*Currently banned:[[:space:]]*/забанено сейчас: /p'))"
+  else
+    echo "   fail2ban: НЕ работает"
+  fi
+  if [ -f /var/lib/bworker/status ]; then
+    say "Сторож (/var/lib/bworker/status, журнал /var/log/bworker-watch.log)"
+    sed 's/^/   /' /var/lib/bworker/status
+  else
+    echo "   сторож: ещё не запускался"
+  fi
+}
+
+# --- fail2ban и сторож (установка и --post-update) ---------------------------
+ensure_fail2ban() {
+  [ "$INSTALL_FAIL2BAN" = 1 ] || return 0
+  command -v fail2ban-server >/dev/null 2>&1 || apt-get install -y -q fail2ban >/dev/null || warn "fail2ban не поставился"
+  command -v fail2ban-server >/dev/null 2>&1 || return 0
+  # Debian 12/13 без rsyslog: /var/log/auth.log нет, и sshd-jail с умолчаниями
+  # не стартует («Have not found any log file») — читать журнал systemd.
+  apt-get install -y -q python3-systemd >/dev/null 2>&1 || true
+  if [ ! -f /etc/fail2ban/jail.d/v4c-sshd-systemd.local ]; then
+    printf '[sshd]\nbackend = systemd\n' >/etc/fail2ban/jail.d/v4c-sshd-systemd.local
+  fi
+  systemctl enable fail2ban >/dev/null 2>&1 || true
+  if ! fail2ban-client status sshd >/dev/null 2>&1; then
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+    sleep 2
+  fi
+  if fail2ban-client status sshd >/dev/null 2>&1; then
+    ok "fail2ban работает (sshd-jail, журнал systemd; sshd не менялся)"
+  else
+    warn "fail2ban не запустился — journalctl -u fail2ban -n 30"
+  fi
+}
+
+ensure_watch() {
+  cat >/etc/cron.d/bworker-watch <<EOF
+# browser-worker: сторож раз в 5 минут (DEPLOYMENT §6.25 п.11)
+*/5 * * * * root /bin/sh $LINK_DIR/deploy/worker-watch.sh >/dev/null 2>&1
+EOF
+  /bin/sh "$LINK_DIR/deploy/worker-watch.sh" || true
+  ok "cron /etc/cron.d/bworker-watch (раз в 5 мин; состояние /var/lib/bworker/status)"
 }
 
 if [ "$MODE" = --check ]; then
@@ -112,10 +160,18 @@ if [ "$MODE" = --update ]; then
   [ -d "$REPO_DIR/.git" ] || die "нет $REPO_DIR — сначала установка без аргументов"
   say "Обновление $(date -u +%FT%TZ)"
   git -C "$REPO_DIR" pull --ff-only -q
+  # Дальше — свежей копией скрипта: этот блок bash прочитал до pull.
+  exec /bin/bash "$LINK_DIR/deploy/vps-bootstrap.sh" --post-update
+fi
+
+if [ "$MODE" = --post-update ]; then
+  say "После обновления: fail2ban, сторож, сборка"
+  ensure_fail2ban
   check_chromium_age
   (cd "$WD" && docker compose build --pull -q && docker compose up -d)
   upd_if=$(ip -4 route show default | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
   EXT_IF="${upd_if:-eth0}" sh "$WD/deploy/worker-egress-docker-user.sh" --apply >/dev/null
+  ensure_watch
   health_report
   exit 0
 fi
@@ -145,25 +201,7 @@ if [ "$userns" = 0 ] || [ "$maxns" = 0 ]; then
 fi
 ok "user namespaces: unprivileged_userns_clone=$userns, max_user_namespaces=$maxns"
 
-if [ "$INSTALL_FAIL2BAN" = 1 ]; then
-  command -v fail2ban-server >/dev/null 2>&1 || apt-get install -y -q fail2ban >/dev/null || warn "fail2ban не поставился"
-  # Debian 12/13 без rsyslog: /var/log/auth.log нет, и sshd-jail с умолчаниями
-  # не стартует («Have not found any log file») — читать журнал systemd.
-  if command -v fail2ban-server >/dev/null 2>&1; then
-    apt-get install -y -q python3-systemd >/dev/null 2>&1 || true
-    if [ ! -f /etc/fail2ban/jail.d/v4c-sshd-systemd.local ]; then
-      printf '[sshd]\nbackend = systemd\n' >/etc/fail2ban/jail.d/v4c-sshd-systemd.local
-    fi
-    systemctl enable fail2ban >/dev/null 2>&1 || true
-    systemctl restart fail2ban >/dev/null 2>&1 || true
-    sleep 2
-    if fail2ban-client status sshd >/dev/null 2>&1; then
-      ok "fail2ban работает (sshd-jail, журнал systemd; sshd не менялся)"
-    else
-      warn "fail2ban не запустился — journalctl -u fail2ban -n 30"
-    fi
-  fi
-fi
+ensure_fail2ban
 
 # --- 2. Код -------------------------------------------------------------------
 say "2. Код ($REPO_URL, $BRANCH → $REPO_DIR, только browser-worker/)"
@@ -311,6 +349,7 @@ cat >/etc/cron.d/bworker-update <<EOF
 17 4 * * 0 root /bin/bash $LINK_DIR/deploy/vps-bootstrap.sh --update >>/var/log/bworker-update.log 2>&1
 EOF
 ok "cron /etc/cron.d/bworker-update (вс 04:17 UTC, журнал /var/log/bworker-update.log)"
+ensure_watch
 
 health_report
 
