@@ -1,6 +1,8 @@
 // Run after registering the separate sandbox site and publishing its knowledge.
 const { test, expect } = require("@playwright/test");
 const { randomUUID } = require("node:crypto");
+// Live API requests contain visitor credentials; never record them in traces.
+test.use({ trace: "off" });
 test("[SBX-AI] real assistant answers a sandbox knowledge question", async ({
   request,
 }, testInfo) => {
@@ -23,7 +25,10 @@ test("[SBX-AI] real assistant answers a sandbox knowledge question", async ({
     headers: { Origin: widgetOrigin },
     data: { pk: process.env.ASSIST_SANDBOX_PUBLIC_KEY, parentOrigin },
   });
-  expect(sessionResponse.status(), await sessionResponse.text()).toBe(200);
+  expect(
+    sessionResponse.status(),
+    `session: HTTP ${sessionResponse.status()}`,
+  ).toBe(200);
   const session = (await sessionResponse.json()).data;
   expect(session.visitorToken).toBeTruthy();
   const answerResponse = await request.post(api + "/widget/v1/chat", {
@@ -42,7 +47,9 @@ test("[SBX-AI] real assistant answers a sandbox knowledge question", async ({
     },
     timeout: 90000,
   });
-  expect(answerResponse.status(), await answerResponse.text()).toBe(200);
+  expect(answerResponse.status(), `chat: HTTP ${answerResponse.status()}`).toBe(
+    200,
+  );
   const answer = (await answerResponse.json()).data;
   expect(answer.refused).toBe(false);
   expect(answer.streaming).toBe(false);
