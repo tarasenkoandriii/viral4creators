@@ -1547,10 +1547,15 @@ async function e2e05(): Promise<void> {
     E,
     'недельный снимок: pending ≠ qualified, уникальные проспекты, unknown отдельно, деньги раздельно, без контактов',
     async () => {
+      // The cohort is half-open: the cutoff must follow the fixtures.
+      // Subtracting a second drops fresh pending leads on a fast runner,
+      // so their later qualification cannot invalidate this snapshot.
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const cutoff = Date.now();
       const r = await an.createReport(ctx.pid, randomUUID(), {
         kind: 'weekly',
-        periodStart: new Date(Date.now() - 2 * 86_400_000).toISOString(),
-        periodEnd: new Date(Date.now() - 1000).toISOString(),
+        periodStart: new Date(cutoff - 2 * 86_400_000).toISOString(),
+        periodEnd: new Date(cutoff).toISOString(),
       });
       reportId = r.id;
       const m = r.metrics.leads;
