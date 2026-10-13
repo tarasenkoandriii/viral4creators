@@ -89,7 +89,9 @@ export class SiteSourcesService {
     });
   }
 
-  async processPendingFiles(budgetMs: number): Promise<{ processed: number }> {
+  async processPendingFiles(
+    budgetMs: number,
+  ): Promise<{ processed: number; failed: number }> {
     try {
       await this.requeueAdminHostSources();
     } catch (e) {

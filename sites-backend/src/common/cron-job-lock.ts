@@ -18,6 +18,7 @@
  * assist-retention (K3).
  */
 import { randomUUID } from 'crypto';
+import { cronPartialError } from './cron-partial-error';
 import type { PrismaService } from '../prisma/prisma.service';
 import { SITES_DB_SCHEMA } from '../prisma/prisma.service';
 
@@ -90,6 +91,7 @@ export async function withCronLock<T>(
   let error: string | null = null;
   try {
     const result = await fn();
+    error = cronPartialError(jobKey, result);
     return { ran: true, result };
   } catch (e) {
     error = e instanceof Error ? `${e.name}: ${e.message}` : String(e);

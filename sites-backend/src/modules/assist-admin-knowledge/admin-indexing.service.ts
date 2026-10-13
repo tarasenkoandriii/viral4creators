@@ -22,6 +22,8 @@ export interface AdminIndexTickResult {
   sitesTouched: number;
   versionsCreated: number;
   budgetExhausted: boolean;
+  failed?: number;
+  cleanupErrors?: number;
 }
 
 const SITES_PER_TICK = 20;
@@ -156,10 +158,13 @@ export class AdminIndexingService {
       sitesTouched: 0,
       versionsCreated: 0,
       budgetExhausted: false,
+      failed: 0,
+      cleanupErrors: 0,
     };
     try {
       await this.knowledge.engine.reapStaleBuilds();
     } catch (e) {
+      res.cleanupErrors = (res.cleanupErrors ?? 0) + 1;
       this.logger.error(
         `Уборка зависших сборок «Админки» не удалась: ${(e as Error).message}`,
       );
@@ -173,6 +178,7 @@ export class AdminIndexingService {
         if (out?.version) res.versionsCreated++;
         res.budgetExhausted ||= !!out?.budgetExhausted;
       } catch (e) {
+        res.failed = (res.failed ?? 0) + 1;
         this.logger.error(
           `Копия обхода в «Админку» для сайта ${c.siteId} не удалась: ${(e as Error).message}`,
         );

@@ -36,6 +36,8 @@ export interface IndexTickResult {
   chunksEmbedded: number;
   chunksReused: number;
   budgetExhausted: boolean;
+  failed?: number;
+  cleanupErrors?: number;
   /** Сборок, приостановленных дедлайном (продолжит следующий тик). */
   buildsPaused?: number;
   /** Снятых зависших сборок (уборка). */
@@ -198,12 +200,15 @@ export class SiteIndexingService {
       chunksEmbedded: 0,
       chunksReused: 0,
       budgetExhausted: false,
+      failed: 0,
+      cleanupErrors: 0,
       buildsPaused: 0,
       buildsReaped: 0,
     };
     try {
       res.buildsReaped = await this.knowledge.engine.reapStaleBuilds();
     } catch (e) {
+      res.cleanupErrors = (res.cleanupErrors ?? 0) + 1;
       this.logger.error(
         `Уборка зависших сборок «Сайта» не удалась: ${(e as Error).message}`,
       );
@@ -221,6 +226,7 @@ export class SiteIndexingService {
         res.chunksReused += out.reused;
         res.budgetExhausted ||= out.budgetExhausted;
       } catch (e) {
+        res.failed = (res.failed ?? 0) + 1;
         // Один сломанный сайт не останавливает остальные; прогон не
         // отмечен проиндексированным — повторится следующим тиком.
         this.logger.error(

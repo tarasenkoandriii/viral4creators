@@ -32,6 +32,7 @@ export const ADMIN_ANALYTICS_MAX_MS = 25_000;
 export interface AdminEmbedRunResult {
   ran: boolean;
   filesProcessed: number;
+  filesFailed?: number;
   filesError: string | null;
   index: AdminIndexTickResult | null;
   analytics?: AdminAnalyticsRunResult | null;
@@ -62,11 +63,14 @@ export class AssistAdminEmbedRunController {
       budget + 60_000,
       async () => {
         let filesProcessed = 0;
+        let filesFailed = 0;
         let filesError: string | null = null;
         try {
-          filesProcessed = (
-            await this.sources.processPendingFiles(Math.floor(budget / 3))
-          ).processed;
+          const files = await this.sources.processPendingFiles(
+            Math.floor(budget / 3),
+          );
+          filesProcessed = files.processed;
+          filesFailed = files.failed ?? 0;
         } catch (e) {
           filesError = (e as Error).name;
           this.logger.error(
@@ -88,7 +92,7 @@ export class AssistAdminEmbedRunController {
             `Аналитика «Админки» не удалась: ${(e as Error | null)?.name ?? 'Error'}`,
           );
         }
-        return { filesProcessed, filesError, index, analytics };
+        return { filesProcessed, filesFailed, filesError, index, analytics };
       },
     );
     if (!lock.ran || !lock.result) {

@@ -106,7 +106,9 @@ export class AdminSourcesService {
     });
   }
 
-  async processPendingFiles(budgetMs: number): Promise<{ processed: number }> {
+  async processPendingFiles(
+    budgetMs: number,
+  ): Promise<{ processed: number; failed: number }> {
     return this.core.processPending(budgetMs);
   }
 

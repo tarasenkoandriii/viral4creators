@@ -1,3 +1,4 @@
+import { providerErrorStatus } from '../../common/provider-error-status';
 /**
  * Конвейер ответа виджета «Сайта» — W3 (ТЗ §4.5–§4.9, §4-бис.4, §4-тер.7,
  * §4-тер.10, §4.13 п.5–6, §6.5). Вызывает W2 из `POST /widget/v1/chat`.
@@ -936,7 +937,7 @@ export class SiteChatService {
         validateSiteActions(raw, { linkUrls, siteHosts, media }),
       upstreamError: (e) => {
         this.logger.warn(
-          `ask: модель недоступна (site ${site.siteId}, msg ${ctx.answerId}): ${(e as Error | null)?.name ?? 'Error'}`,
+          `ask: модель недоступна (site ${site.siteId}, msg ${ctx.answerId}): ${(e as Error | null)?.name ?? 'Error'} status=${providerErrorStatus(e)}`,
         );
         return { code: 'upstream', message: TEMPLATE_TEXT.partial[ctx.lang] };
       },

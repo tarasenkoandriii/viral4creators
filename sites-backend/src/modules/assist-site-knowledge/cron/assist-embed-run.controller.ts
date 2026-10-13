@@ -24,6 +24,7 @@ export const EMBED_RUN_JOB = 'assist-embed-run';
 export interface EmbedRunResult {
   ran: boolean;
   filesProcessed: number;
+  filesFailed?: number;
   filesError: string | null;
   index: IndexTickResult | null;
 }
@@ -52,11 +53,14 @@ export class AssistEmbedRunController {
       budget + 60_000,
       async () => {
         let filesProcessed = 0;
+        let filesFailed = 0;
         let filesError: string | null = null;
         try {
-          filesProcessed = (
-            await this.sources.processPendingFiles(Math.floor(budget / 3))
-          ).processed;
+          const files = await this.sources.processPendingFiles(
+            Math.floor(budget / 3),
+          );
+          filesProcessed = files.processed;
+          filesFailed = files.failed ?? 0;
         } catch (e) {
           filesError = (e as Error).name;
           this.logger.error(
@@ -65,7 +69,7 @@ export class AssistEmbedRunController {
         }
         const left = Math.max(1_000, budget - (Date.now() - started));
         const index = await this.indexing.tick(left);
-        return { filesProcessed, filesError, index };
+        return { filesProcessed, filesFailed, filesError, index };
       },
     );
     if (!lock.ran || !lock.result) {

@@ -1392,10 +1392,11 @@ export class ModeKnowledgeCore {
   async processPending(
     budgetMs: number,
     now = () => new Date(),
-  ): Promise<{ processed: number }> {
+  ): Promise<{ processed: number; failed: number }> {
     const deadline = now().getTime() + budgetMs;
     const sys = this.adapter.systemSources();
     let processed = 0;
+    let failed = 0;
     const tried = new Set<string>();
     while (now().getTime() < deadline) {
       const t = now();
@@ -1415,7 +1416,7 @@ export class ModeKnowledgeCore {
           // catch (функцию убили — память на «zip-бомбе», maxDuration).
           // Без этого такой файл ронял бы крон каждые 5 минут, а разбор
           // файлов идёт ПЕРЕД индексацией всех кабинетов.
-          await sys.updateMany({
+          const exhausted = await sys.updateMany({
             where: { id: row.id, status: 'processing', ...due },
             data: {
               status: 'failed',
@@ -1424,6 +1425,7 @@ export class ModeKnowledgeCore {
               lockedUntil: null,
             },
           });
+          failed += exhausted.count;
           continue;
         }
         const claimed = await sys.updateMany({
@@ -1434,18 +1436,18 @@ export class ModeKnowledgeCore {
           },
         });
         if (claimed.count === 0) continue;
-        await this.processOne(row, row.attempts + 1, now());
+        if (!(await this.processOne(row, row.attempts + 1, now()))) failed++;
         processed++;
       }
     }
-    return { processed };
+    return { processed, failed };
   }
 
   private async processOne(
     row: SourceRow,
     attempt: number,
     now: Date,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const rows = this.adapter.rows(row.accountId);
     const ctx: KnowledgeCtx = { accountId: row.accountId, siteId: row.siteId };
     try {
@@ -1465,6 +1467,7 @@ export class ModeKnowledgeCore {
           ...(outcome.data ?? {}),
         },
       });
+      return true;
     } catch (e) {
       const permanent = permanentFailure(e);
       const giveUp = permanent !== null || attempt >= PROCESS_MAX_ATTEMPTS;
@@ -1486,6 +1489,7 @@ export class ModeKnowledgeCore {
           : // Повтор — следующим тиком после паузы (lease и есть пауза).
             { error: null },
       });
+      return false;
     }
   }
 
