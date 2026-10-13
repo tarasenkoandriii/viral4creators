@@ -388,6 +388,7 @@ export default async function SiteTutorialLandingPage({
             <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>
           )}
         </div>
+        <p className="wrap platform-status">{dict.footer.platformStatus}</p>
       </footer>
     </>
   );

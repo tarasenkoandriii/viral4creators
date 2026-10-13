@@ -463,6 +463,7 @@ export default async function GreetingsLandingPage({
             <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>
           )}
         </div>
+        <p className="wrap platform-status">{dict.footer.platformStatus}</p>
       </footer>
     </>
   );
