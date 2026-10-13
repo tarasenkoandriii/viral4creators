@@ -3573,6 +3573,166 @@ Next.js 15-проект `sites-landing/` (до захода 12 — Next 14) — 
 4. Плагин WordPress и npm-пакет на лендинге — `soon`, пока не
    опубликованы (после бренда).
 
+## 8. Публичный сайт AI Publisher (publisher-site)
+
+Пакет P-F (`doc/ai-publisher/IMPLEMENTATION-DESIGN.md` §13): отдельный
+Next.js 15-проект `publisher-site/` — посадочная, материалы и форма
+обращения продукта AI Publisher на `ai-publisher.org`. Страницы собираются
+из публичного API sites-backend (`/public/publisher/v1`: `site-config`,
+`contents`), заявки и события сайт шлёт туда же из браузера. Факты на
+страницах (оффер, цена, FAQ, контакты, уведомление о данных) — только из
+API: в коде сайта их нет.
+
+### 8.1. Vercel-проект publisher-site
+
+1. Vercel Dashboard → **Add New** → **Project** → тот же репозиторий.
+2. **Root Directory**: `publisher-site`. Framework Preset — Next.js. Hobby
+   достаточен (кронов нет). `vercel.json` проекта уже содержит
+   `ignoreCommand` (собирается только при изменениях в своей папке).
+3. **Environment Variables** (описание — `publisher-site/.env.example`):
+   - `SITE_URL` — origin сайта: в **Production** — `https://ai-publisher.org`
+     (обязателен; без него, с `http://`, `localhost`, путём или портом
+     `next build` падает). В **Preview** его можно не задавать: сборка
+     берёт постоянный адрес ветки `https://$VERCEL_BRANCH_URL` (не
+     меняется от деплоя к деплою, в отличие от `VERCEL_URL`); canonical
+     превью указывает на него, превью всегда noindex. Форма и события в
+     превью работают, только если этот адрес внесён в параметр
+     `test_hosts` тестового продукта (иначе 403 `PUB_ORIGIN_DENIED`) —
+     адрес по деплою (`VERCEL_URL`) туда вносить бессмысленно.
+   - `PUBLISHER_API_ORIGIN` — https-origin sites-backend (временный
+     `https://assist-api.viral4creators.app`, §6.0).
+   - `PUBLISHER_PUBLIC_KEY` — публичный ключ продукта `pp_…` (кабинет →
+     продукт). Публичен, но читается только сервером сборки.
+   - `PUBLISHER_INDEXING=on` — **только Production**. Индексация включается
+     лишь при двух ключах: эта переменная И `site-config.indexable` (гейт
+     `public_publish` открыт, хост `SITE_URL` подтверждён в site-core). Иначе
+     все ответы идут с `X-Robots-Tag: noindex, nofollow` и
+     `<meta name="robots" content="noindex,nofollow">`; превью-деплои —
+     noindex всегда. Флаг заголовка вычисляется при сборке: после открытия
+     или закрытия гейта — **Redeploy** (или `POST /api/revalidate` для мета-тегов).
+   - `PUBLISHER_REVALIDATE_SECRET` (необязательно, ≥ 16 символов) —
+     `POST /api/revalidate` с `Authorization: Bearer <секрет>` сбрасывает
+     данные API и страницы сразу (после публикации/снятия материала, снятия
+     индексации). Без него — ISR 300 с.
+   - `PUBLISHER_OWNERSHIP_TOKEN` (необязательно) — токен site-core для
+     подтверждения владения способом «файл» (`/.well-known/v4c-verify.txt`).
+     Для `ai-publisher.org` рекомендован TXT.
+4. **sites-backend**: хост сайта — в списке допустимых Origin продукта
+   (live — подтверждённые хосты site-core; test — параметр `test_hosts`),
+   иначе форма и события получат 403. Мгновенное обновление сайта после
+   снятия (интеграция Z-2a, Р-PUB-Z2-8) — две переменные sites-backend:
+   - `PUBLISHER_SITE_URL` — https-origin сайта (`https://ai-publisher.org`,
+     без пути, запроса и учётных данных; `http://localhost` — только вне
+     production). Вызывается ТОЛЬКО `<PUBLISHER_SITE_URL>/api/revalidate`,
+     переадресации не выполняются;
+   - `PUBLISHER_REVALIDATE_SECRET` — тот же секрет, что у сайта (≥ 16
+     символов).
+   Задание крона `site-revalidate` (`/cron/publisher-minute`, раз в минуту)
+   после снятия материала/публикации, отзыва согласования показанной
+   версии, решения `rejected|revoked` по ключу гейта `public_publish` или
+   ухода продукта из `live` шлёт `POST` с `Authorization: Bearer <секрет>`;
+   сбой (сеть, 5xx, таймаут 5 с) повторяется каждую минуту в течение часа,
+   успешный вызов отмечается в журнале продукта (`system:site-revalidate`).
+   Без переменных — предупреждение в журнале приложения, обновление по ISR
+   (≤ 300 с), не ошибка.
+5. **Домен**: Settings → Domains → `ai-publisher.org`; подтверждение
+   владения в site-core (TXT); затем пересборка.
+6. **Снятие материала — окно видимости.** При снятии материала и закрытии
+   `public_publish` sites-backend сам вызывает `POST <SITE_URL>/api/revalidate`
+   (задание `site-revalidate`, Р-PUB-Z2-8; нужны `PUBLISHER_SITE_URL` и тот же
+   `PUBLISHER_REVALIDATE_SECRET` у бэкенда). Ревалидация сбрасывает data cache
+   Next (тег `publisher`) — страницы, список снятых (`/api/withdrawn`) и
+   «эпоху» запросов к API (`rv=`: следующий запрос к API — мимо CDN-кэша
+   ответа `s-maxage=60, stale-while-revalidate=300`). Middleware (edge, своя
+   память, общей с route handlers нет) спрашивает `/api/withdrawn` не реже
+   раза в секунду: **после успешной ревалидации снятый материал отдаёт 410
+   не позже чем через ≈ 1 с** на экземпляр (ни 404, ни текста). Если вызов
+   ревалидации не дошёл (бэкенд повторяет его раз в минуту в течение часа) —
+   окно: data cache списка 60 с + CDN API до 60 с (и до 300 с
+   `stale-while-revalidate`); если API недоступен и статус узнать нельзя —
+   страница материала отвечает **503 без текста** (fail-closed). Ручной вызов
+   при срочности: `curl -X POST -H "Authorization: Bearer
+   <PUBLISHER_REVALIDATE_SECRET>" <SITE_URL>/api/revalidate`.
+7. **Заголовки**: сайт сам ставит CSP (`default-src 'self'`, `connect-src`
+   — сайт и `PUBLISHER_API_ORIGIN`, без фреймов/плагинов), `nosniff`,
+   `Referrer-Policy`, `X-Frame-Options`, `Permissions-Policy`; HSTS — от
+   Vercel (проверить `curl -sI` после деплоя).
+
+### 8.2. Проверка после деплоя
+
+- `<SITE_URL>/`, `/materials`, страница материала, `/contact` — 200; в
+  исходнике `<link rel="canonical" href="<SITE_URL>/…">`, у материала
+  `<meta name="pub-version">`; основной текст материала виден без JS.
+- Тестовый хост: `curl -sI <SITE_URL>/ | grep -i x-robots-tag` →
+  `noindex, nofollow`; `robots.txt` без `Disallow` и без `Sitemap`.
+  Production с двумя ключами: заголовка нет, в `robots.txt` — `Sitemap`.
+- Снятый материал — 410, неизвестный — 404.
+- Повтор проверок на публичном адресе после переноса (ТЗ §28): из
+  `publisher-site/` — `SITE_URL=<адрес> PUBLISHER_API_ORIGIN=… PUBLISHER_PUBLIC_KEY=…
+  npm run check:built -- --base-url <адрес> --expect-indexable` (или
+  `--expect-noindex`); форма и события — тестовой заявкой в режиме `test`
+  (номер обращения на экране = заявка в кабинете).
+
+### AI Publisher: резервные копии и восстановление
+
+Предаудит A2 (Z-2c, 13.10.2026). Два уровня, и оба нужны: копия уровня
+приложения переносит ОДИН продукт с применением удалений и отзывов, дамп
+базы спасает от потери всей базы. Контакты и заметки в обоих —
+шифротекст: без ключа (`ASSIST_SECRETS_KEY` текущей и прежних версий,
+`ASSIST_SECRETS_KEYS_OLD`) восстановленные контакты не читаются — ключи
+хранятся отдельно от копий (менеджер паролей владельца), и не дольше
+срока ротации копий.
+
+**1. Копии продукта (приложение, проектный документ §15.4).**
+
+- Где: приватный Vercel Blob (`BLOB_READ_WRITE_TOKEN` sites-backend); путь в
+  базе — шифротекстом (`pub_backups`). Без токена — `PUBLISHER_BACKUP_DISABLED=true`
+  (копии пропускаются с предупреждением, ручная копия — 501).
+- Когда: задание `backup-weekly` (крон `/cron/publisher-daily`), копия после
+  каждой закупки (`backup-post-purchase`, тик) и ручная — кабинет → «Копії»
+  (роль администратора). Ротация — `retention_policy.backupRotationDays`
+  (90 дней), задание `backup-rotation` удаляет blob и помечает строку.
+- Проверка копии (раз в месяц и перед изменением схемы): кабинет → копия →
+  «Пробне відновлення» (`dry_run`): sha256, расшифровка, связи без висячих,
+  что будет подавлено и применено. Ничего не пишет.
+- Восстановление: только владелец кабинета; цель — ПУСТОЙ сайт того же
+  кабинета (тестовый). Создаётся новый продукт `kind=restored`, режим
+  `closed`; применяются ТЕКУЩИЕ удаления контактов (`pub_erasures`) и отзывы
+  источников (со снятием подтверждения claims — Р-PUB-Z2-23); роли
+  создаются отозванными, исходящая очередь и уведомления не повторяются;
+  раскрытие контактов в `restored` закрыто всем (Р-PUB-Z2-14). Продукт
+  `restored` — для сверки и выгрузки, не для работы: рабочий продукт
+  остаётся прежним.
+
+**2. Дамп базы Supabase (вся схема `sites`).**
+
+- Проверить план проекта Supabase: ежедневные копии и PITR есть не на
+  всех планах. Если их нет — свой дамп раз в сутки и ПЕРЕД каждой миграцией
+  (прямое подключение, порт 5432, не пулер 6543):
+
+  ```bash
+  pg_dump "$SITES_DIRECT_URL_WITHOUT_SCHEMA" --schema=sites --format=custom \
+    --file="sites-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  ```
+
+  Файл — в зашифрованное хранилище владельца (контакты в нём —
+  шифротекст, но служебные данные кабинетов — нет), срок хранения не
+  больше `backupRotationDays`.
+- Проверка дампа (раз в месяц): восстановить в ОТДЕЛЬНУЮ базу
+  (`pg_restore --no-owner --dbname=<staging>`), прогнать
+  `npx prisma migrate status` и выборочно открыть продукт в кабинете
+  staging-бэкенда.
+- Восстановление в production — только при потере базы и решением
+  владельца: остановить кроны (Vercel → Cron Jobs → Disable), восстановить
+  дамп, затем ПОВТОРНО применить удаления и отзывы, сделанные после дампа:
+  их список — `pub_erasures` и `pub_source_revocations` с датой новее дампа
+  (из последней копии уровня 1 или журнала `pub_audit_events`); удалённый
+  контакт не должен вернуться (ТЗ §21, AT-CORE-20). Затем включить кроны и
+  проверить гейты продукта.
+- Логин-роль `publisher_public` (раздел 6, SQL создания) живёт на уровне
+  кластера: при восстановлении в новый проект Supabase её создают заново
+  тем же SQL до старта бэкенда — иначе публичный приём закрыт (503).
+
 ## Заход 12 (09.10.2026): обновление зависимостей — что изменилось для выката
 
 Мажорные обновления ради `npm audit` (TODO, сводка «Заход 12»): в
@@ -3775,7 +3935,7 @@ projects → Requirements).
 | Проект (Root Directory) | Собирается, если изменилось |
 |---|---|
 | `backend` | `backend/`, `landing/src/dictionaries/`, `frontend/src/dictionaries/` (из них `prebuild` собирает базу знаний консультанта) |
-| `frontend`, `admin`, `landing`, `marketplace`, `sites-backend`, `assist` (и новые `sites-landing`, `widget`) | только своя папка |
+| `frontend`, `admin`, `landing`, `marketplace`, `sites-backend`, `assist` (и новые `sites-landing`, `widget`, `publisher-site`) | только своя папка |
 
 Скрипт сравнивает `HEAD` с `VERCEL_GIT_PREVIOUS_SHA` — коммитом
 последнего **успешного** деплоя этого проекта на ветке, поэтому пачка

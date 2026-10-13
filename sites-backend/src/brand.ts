@@ -315,3 +315,47 @@ export const EDITOR_KIND_META = 'v4c-editor-kind';
 export const WIDGET_ANA_PATH = '/v1/ana.js';
 /** Ленивый чанк поведения страниц (только с согласием и при включённом поведении). */
 export const WIDGET_BF_PATH = '/v1/bf.js';
+
+/**
+ * AI Publisher (P-A0, проектный документ §5.3). Технические имена, которые
+ * видят посетитель сайта продукта и его разметка; publisher-site держит
+ * зеркало (`publisher-site/src/brand.ts`, P-F) и сверяет его тестом с этим
+ * файлом. Имя продукта и домен сюда не входят — они в зеркале сайта.
+ */
+/** Префикс публичного ключа продукта: `pp_` + 24 символа base62 (как `pk_` виджета — публичен). */
+export const PUBLISHER_KEY_PREFIX = 'pp_';
+/** Формат публичного ключа — тот же, что у триггера `pub_products_guard`. */
+export const PUBLISHER_PUBLIC_KEY_RE = /^pp_[A-Za-z0-9]{24}$/;
+/** `name` мета-тега с hash опубликованной версии (`<meta name="pub-version" content="<hash>">`). */
+export const PUBLISHER_VERSION_META = 'pub-version';
+/** Ключ sessionStorage для `session_ref` (только при analytics_storage=session). */
+export const PUBLISHER_SESSION_STORAGE_KEY = 'pub_sref';
+/** События сайта продукта (ТЗ §14); `lead_submit_success` пишет только сервер. */
+export const PUBLISHER_EVENT_NAMES = [
+  'content_view',
+  'cta_click',
+  'lead_submit_success',
+] as const;
+export type PublisherEventName = (typeof PUBLISHER_EVENT_NAMES)[number];
+/** События, которые принимает `POST /public/publisher/v1/events` (успех заявки — нет). */
+export const PUBLISHER_CLIENT_EVENT_NAMES = [
+  'content_view',
+  'cta_click',
+] as const;
+/**
+ * Метки производных ключей связки `ASSIST_SECRETS_KEY` (§5.4): шифр
+ * контакта заявителя, HMAC совпадения контактов, шифр заметок, HMAC ключа
+ * IP окна формы, шифр резервной копии. Новая метка — новый производный ключ;
+ * смена метки делает прежние шифротексты нечитаемыми — только с миграцией.
+ */
+export const PUBLISHER_SECRET_LABELS = {
+  leadContact: 'publisher-lead-contact-v1',
+  contactMatch: 'publisher-contact-match-v1',
+  leadNotes: 'publisher-lead-notes-v1',
+  rateIp: 'publisher-rate-ip-v1',
+  backup: 'publisher-backup-v1',
+} as const;
+
+export function isPublisherPublicKey(v: unknown): v is string {
+  return typeof v === 'string' && PUBLISHER_PUBLIC_KEY_RE.test(v);
+}

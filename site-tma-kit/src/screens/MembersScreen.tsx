@@ -10,7 +10,7 @@ import {
   memberRolePatch,
   type InviteRole,
 } from '../invite';
-import type { AccountMember } from '../types';
+import type { AccountMember, ProductRoles } from '../types';
 import { Alert, Badge, Button, Card, ScreenTitle, inputClass } from '../ui';
 
 /**
@@ -76,6 +76,25 @@ export function MembersScreen({ onInvite }: { onInvite?: () => void }) {
           memberRolePatch(app, role, m.productRoles.assistAdmin)
         ),
       t.roleSaved
+    );
+  }
+
+  /**
+   * AI Publisher (§14.2): третий выбор прав — допуск к Publisher
+   * (`productRoles.publisher`). Роли внутри продукта выдаются на экране
+   * «Ролі» Publisher, а не здесь. PATCH частичный — прочие права не
+   * меняются.
+   */
+  function changePublisher(
+    m: AccountMember,
+    value: NonNullable<ProductRoles['publisher']>
+  ) {
+    if (!m.memberId || value === (m.productRoles.publisher ?? 'none')) return;
+    const id = m.memberId;
+    void run(
+      id,
+      () => api.patchMember(id, { productRoles: { publisher: value } }),
+      t.publisher.saved
     );
   }
 
@@ -147,6 +166,40 @@ export function MembersScreen({ onInvite }: { onInvite?: () => void }) {
                         </select>
                       </label>
                     )}
+                    {can.changeRole &&
+                      m.role !== 'owner' &&
+                      app === 'assist' && (
+                        <label className="flex items-center gap-2 text-sm">
+                          <span className="text-silver-500">
+                            {t.publisher.label}
+                          </span>
+                          <select
+                            className={`${inputClass} w-auto`}
+                            value={m.productRoles.publisher ?? 'none'}
+                            disabled={busy === m.memberId}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (
+                                v === 'none' ||
+                                v === 'member' ||
+                                v === 'admin'
+                              ) {
+                                changePublisher(m, v);
+                              }
+                            }}
+                          >
+                            <option value="none">
+                              {t.publisher.roles.none}
+                            </option>
+                            <option value="member">
+                              {t.publisher.roles.member}
+                            </option>
+                            <option value="admin">
+                              {t.publisher.roles.admin}
+                            </option>
+                          </select>
+                        </label>
+                      )}
                     {(can.remove || can.leave) && (
                       <Button
                         variant={armed === m.memberId ? 'danger' : 'outline'}

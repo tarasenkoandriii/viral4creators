@@ -515,6 +515,8 @@ const ENV_PACKAGES = [
   // и браузерный воркер.
   { dir: "sites-backend/src", ownDocs: "sites-backend/.env.example" },
   { dir: "browser-worker/src", ownDocs: "browser-worker/.env.example" },
+  // Публичный сайт AI Publisher (P-F, проектный документ §5.3, §13.7).
+  { dir: "publisher-site/src", ownDocs: "publisher-site/.env.example" },
 ];
 
 /**

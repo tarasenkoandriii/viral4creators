@@ -94,10 +94,18 @@ function parseRoles(v: unknown): ProductRoles {
   const o = obj(v);
   const pick = <T extends string>(x: unknown, allowed: T[]): T =>
     allowed.includes(x as T) ? (x as T) : ('none' as T);
+  // AI Publisher: «поздний» ключ, как у сервера (Р-PUB-A0-3) — `none` не
+  // пишется вовсе, прежняя форма прав не меняется; отсутствие = `none`.
+  const publisher = pick<'admin' | 'member' | 'none'>(o.publisher, [
+    'admin',
+    'member',
+    'none',
+  ]);
   return {
     qa: pick(o.qa, ['admin', 'viewer', 'none']),
     assist: pick(o.assist, ['manager', 'operator', 'none']),
     assistAdmin: pick(o.assistAdmin, ['owner', 'employee', 'none']),
+    ...(publisher !== 'none' ? { publisher } : {}),
   };
 }
 

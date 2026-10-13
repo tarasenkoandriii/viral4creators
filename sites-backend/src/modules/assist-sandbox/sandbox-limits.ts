@@ -17,7 +17,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { createHmac } from 'crypto';
-import { isIP } from 'net';
+import { ipLimitKey } from '../../common/ip-limit-key';
 import { MICRO_USD, SANDBOX_LIMITS } from '../../config/assist-defaults';
 import { hashIpWithDailySalt } from '../../shared/assist-chat-core';
 import { matchesAllowedOrigin } from '../../shared/cors-origin-match';
@@ -39,47 +39,11 @@ export function utcDay(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
 
-/** IPv6 → 8 групп по 4 hex (с IPv4 в хвосте — тоже). null — не IPv6. */
-export function expandIPv6(ip: string): string[] | null {
-  let s = ip.trim().toLowerCase().replace(/%.*$/, '');
-  if (isIP(s) !== 6) return null;
-  const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
-  if (v4) {
-    const p = v4[1].split('.').map(Number);
-    s =
-      s.slice(0, -v4[1].length) +
-      `${((p[0] << 8) | p[1]).toString(16)}:${((p[2] << 8) | p[3]).toString(16)}`;
-  }
-  const [head, tail] = s.split('::');
-  const h = head ? head.split(':') : [];
-  const t = tail !== undefined ? (tail ? tail.split(':') : []) : [];
-  const fill = s.includes('::') ? 8 - h.length - t.length : 0;
-  const groups = [...h, ...Array<string>(fill).fill('0'), ...t];
-  if (groups.length !== 8) return null;
-  return groups.map((g) => g.padStart(4, '0'));
-}
-
-/**
- * Ключ лимита: IPv4 как есть; IPv4-mapped IPv6 (`::ffff:a.b.c.d`) — как
- * IPv4 (иначе один адрес считался бы двумя ключами); IPv6 — /64.
- */
-export function ipLimitKey(ip: string): string {
-  const raw = ip
-    .trim()
-    .toLowerCase()
-    .replace(/^\[|\]$/g, '');
-  if (isIP(raw) === 4) return raw;
-  const groups = expandIPv6(raw);
-  if (!groups) return `raw:${raw}`;
-  const mapped =
-    groups.slice(0, 5).every((g) => g === '0000') && groups[5] === 'ffff';
-  if (mapped) {
-    const a = parseInt(groups[6], 16);
-    const b = parseInt(groups[7], 16);
-    return `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
-  }
-  return `${groups.slice(0, 4).join(':')}::/64`;
-}
+// Р-PUB-12 (AI Publisher, P-A0): ключ лимита по IP переехал в
+// common/ip-limit-key.ts — общий для песочницы, виджета, assist/v1 и
+// Publisher (Publisher не импортирует модуль песочницы). Реэкспорт —
+// чтобы прежние импорты не менялись.
+export { expandIPv6, ipLimitKey } from '../../common/ip-limit-key';
 
 /** Хеш ключа IP с суточной солью; null — нет ASSIST_SECRETS_KEY (песочница закрыта). */
 export function sandboxIpHash(

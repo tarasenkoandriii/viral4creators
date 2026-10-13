@@ -54,7 +54,11 @@ import {
   signMemoPage,
   verifyMemoPage,
 } from '../modules/assist-site-voice-control/public/memo-check';
-import { WIDGET_VOICE_TICKET_HMAC_LABEL } from '../brand';
+import {
+  PUBLISHER_SECRET_LABELS,
+  WIDGET_VOICE_TICKET_HMAC_LABEL,
+} from '../brand';
+import { deriveSecretKey, derivedKeys } from './secrets-keyring';
 
 const K1 = 'legacy-secret-k1';
 const K2 = 'rotated-secret-k2';
@@ -379,5 +383,53 @@ describe('билеты голоса и итоги мемо (P3-2): подпис�
     expect(verifyMemoPage(voiceTicketKeys(ROTATED), 'test1', t)).toEqual(page);
     expect(verifyMemoPage(voiceTicketKeys(ONLY_K2), 'test1', t)).toBeNull();
     expect(verifyMemoPage(voiceTicketKeys(ROTATED), 'test2', t)).toBeNull();
+  });
+});
+
+/**
+ * AI Publisher (P-A0, проектный документ §5.4): метки производных ключей
+ * связки `ASSIST_SECRETS_KEY` для контакта заявителя, совпадения контактов,
+ * заметок, окна формы и резервных копий. Шифр и HMAC пишет P-A1
+ * (`publisher/core/contact-crypto.ts`) поверх этих меток; здесь — что
+ * метки свои (ключ не совпадает ни с одним потребителем помощника) и что
+ * связка даёт по ним ключи всех версий (ротация не теряет прежние).
+ */
+describe('AI Publisher: метки связки ключей', () => {
+  // Метки помощника и виджета — литералами (их модули Publisher не импортирует).
+  const ASSIST_LABELS = [
+    'assist-site-lead-fields-v1',
+    'assist-site-identity-v1',
+    'assist-site-integration-secret-v1',
+    'assist-site-plan-live-v1',
+    'assist-admin-secrets-v1',
+    'assist-payment-token-v1',
+    'voice-map-export-v1',
+    'admin-voice-map-export-v1',
+    'v4c-sandbox-ip',
+    WIDGET_TOKEN_HMAC_LABEL,
+    WIDGET_VIDEO_LINK_HMAC_LABEL,
+    WIDGET_VOICE_TICKET_HMAC_LABEL,
+  ];
+
+  it('пять меток Publisher дают пять разных ключей, не совпадающих с ключами помощника', () => {
+    const pub = Object.values(PUBLISHER_SECRET_LABELS);
+    const keys = [...pub, ...ASSIST_LABELS].map((l) =>
+      deriveSecretKey(K1, l).toString('hex'),
+    );
+    expect(new Set(keys).size).toBe(pub.length + ASSIST_LABELS.length);
+  });
+
+  it('после ротации связка отдаёт ключ текущей версии первым и прежний — для чтения', () => {
+    for (const label of Object.values(PUBLISHER_SECRET_LABELS)) {
+      const before = derivedKeys(BEFORE, label);
+      const after = derivedKeys(ROTATED, label);
+      expect(before?.current).toBe('v1');
+      expect(after?.current).toBe('v2');
+      expect(after?.versions).toEqual(['v2', 'v1']);
+      // Прежний ключ после ротации — тот же, что был текущим до неё.
+      expect(after?.key('v1')?.equals(before?.currentKey as Buffer)).toBe(true);
+      expect(derivedKeys(ONLY_K2, label)?.key('v1')).toBeNull();
+    }
+    expect(derivedKeys({}, PUBLISHER_SECRET_LABELS.leadContact)).toBeNull();
   });
 });

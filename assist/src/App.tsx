@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -45,6 +47,7 @@ import {
   useAsync,
   useKit,
   type AccountInfo,
+  type ApiClientOptions,
   type AuthMode,
   type InviteFlow,
   type KitValue,
@@ -134,6 +137,18 @@ import { SiteE3Buttons } from './screens/e3/parts';
 import { TestAccountsScreen } from './kit/screens/TestAccountsScreen';
 import { TestAccountsButton } from './screens/TestAccountsButton';
 import { StatsScreen, StatsSitesScreen } from './screens/e3/StatsScreens';
+import { createPublisherHttp, createRawGet } from './lib/publisher/common-api';
+import { PublisherButton } from './screens/publisher/PublisherButton';
+
+/**
+ * AI Publisher (§14.1) — отдельный чанк: экраны P-G1/P-G2 и их словари
+ * грузятся только при входе в раздел, стартовый бандл TMA не растёт.
+ */
+const PublisherShell = lazy(() =>
+  import('./screens/publisher/PublisherShell').then((m) => ({
+    default: m.PublisherShell,
+  }))
+);
 
 /**
  * Где мы: `checking` — веб, спрашиваем `/sites/auth/me`; `login` — веб без
@@ -215,26 +230,33 @@ export function App({ startParam }: { startParam: string | null }) {
     return a;
   }, []);
 
-  const client = useMemo(
-    () =>
-      createApiClient({
-        baseUrl: SITES_API_URL,
-        auth: () =>
-          buildRequestAuth(
-            APP_ID,
-            mode,
-            getTelegramWebApp()?.initData,
-            DEV_AUTH
-          ),
-        accountId: () => accountIdRef.current,
-        locale: () => localeRef.current,
-        // Веб: 401 — сессия истекла или её нет → экран входа.
-        onUnauthorized: () => {
-          if (mode === 'web') setPhase('login');
-        },
-      }),
+  const clientOpts = useMemo<ApiClientOptions>(
+    () => ({
+      baseUrl: SITES_API_URL,
+      auth: () =>
+        buildRequestAuth(APP_ID, mode, getTelegramWebApp()?.initData, DEV_AUTH),
+      accountId: () => accountIdRef.current,
+      locale: () => localeRef.current,
+      // Веб: 401 — сессия истекла или её нет → экран входа.
+      onUnauthorized: () => {
+        if (mode === 'web') setPhase('login');
+      },
+    }),
     [mode]
   );
+  const client = useMemo(() => createApiClient(clientOpts), [clientOpts]);
+  // AI Publisher (§14.1): JSON-клиент, отдельный клиент AI-операций с
+  // таймаутом 65 с (опрос вызова) и сырой GET для выгрузки CSV.
+  const publisherClients = useMemo(() => {
+    const raw = createRawGet(clientOpts);
+    return {
+      http: createPublisherHttp(client, raw),
+      aiHttp: createPublisherHttp(
+        createApiClient({ ...clientOpts, timeoutMs: 65_000 }),
+        raw
+      ),
+    };
+  }, [clientOpts, client]);
   const api = useMemo(() => createSitesApi(client), [client]);
   const webAuth = useMemo(() => createWebAuthApi(client), [client]);
   const knowledgeApi = useMemo(() => createKnowledgeApi(client), [client]);
@@ -280,6 +302,7 @@ export function App({ startParam }: { startParam: string | null }) {
       qaCatalog,
       qaRuns,
       qaFindings,
+      publisher: publisherClients,
     }),
     [
       knowledgeApi,
@@ -300,6 +323,7 @@ export function App({ startParam }: { startParam: string | null }) {
       qaCatalog,
       qaRuns,
       qaFindings,
+      publisherClients,
     ]
   );
 
@@ -604,6 +628,7 @@ function navActive(key: string, route: Route): boolean {
       'admin-mode',
       'admin-chat',
       'verify-host',
+      'publisher',
     ].includes(route.name);
   }
   if (key === 'members') {
@@ -934,6 +959,7 @@ function Screen({
             <QaCatalogButton siteId={route.siteId} />
             <QaRunsButton siteId={route.siteId} />
             <AdminModeButton siteId={route.siteId} />
+            <PublisherButton siteId={route.siteId} />
           </div>
           <SiteScreen
             key={route.siteId}
@@ -1057,6 +1083,18 @@ function Screen({
           siteId={route.siteId}
           tab={route.tab}
         />
+      );
+    case 'publisher':
+      return (
+        <Suspense fallback={<Spinner />}>
+          <PublisherShell
+            key={route.siteId}
+            siteId={route.siteId}
+            section={route.section}
+            id={route.id}
+            query={route.query ?? {}}
+          />
+        </Suspense>
       );
     case 'not-found':
       return <NotFound appDict={appDict} />;

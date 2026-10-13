@@ -69,6 +69,18 @@
     {
       "path": "/cron/browser-jobs-reap",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/cron/publisher-minute",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/cron/publisher-tick",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/cron/publisher-daily",
+      "schedule": "25 4 * * *"
     }
   ]
 }

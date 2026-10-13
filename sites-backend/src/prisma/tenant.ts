@@ -214,7 +214,77 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   // кабинетов — только системным клиентом с причиной (browser-jobs.service:
   // claim, аренда, ретенция); продукты ставят и читают — с тенантом.
   SiteBrowserJob: 'accountId',
-  SiteBrowserArtifact: 'accountId',
+  SiteBrowserArtifact: 'accountId', // AI Publisher (P-A0, миграция …_publisher_core): все таблицы pub_* несут
+  // accountId (составные FK (xId, accountId) держат то же в базе) и читаются
+  // через SitesDb.forAccount. Публичный код (роль publisher_public) пишет
+  // pub_leads, pub_lead_contacts, pub_events, pub_sessions, pub_lead_outbox
+  // сырым SQL клиентом PublisherPublicDb (accountId — из pub_public_products);
+  // ключ идемпотентности создания продукта — без productId, но с кабинетом.
+  PubProduct: 'accountId',
+  PubParameter: 'accountId',
+  PubParameterProposal: 'accountId',
+  PubParameterDecision: 'accountId',
+  PubRoleGrant: 'accountId',
+  PubAuditEvent: 'accountId',
+  PubIdempotencyKey: 'accountId',
+  PubReviewTask: 'accountId',
+  PubIntegration: 'accountId',
+  PubCampaign: 'accountId',
+  PubSource: 'accountId',
+  PubSourceRevocation: 'accountId',
+  PubQuestionGroup: 'accountId',
+  PubQuestion: 'accountId',
+  PubQuestionSource: 'accountId',
+  PubBrandFact: 'accountId',
+  PubOfferVersion: 'accountId',
+  PubOfferFact: 'accountId',
+  PubBrief: 'accountId',
+  PubBriefSource: 'accountId',
+  PubContent: 'accountId',
+  PubContentVersion: 'accountId',
+  PubVersionSource: 'accountId',
+  PubVersionClaim: 'accountId',
+  PubVersionFact: 'accountId',
+  PubClaim: 'accountId',
+  PubClaimSource: 'accountId',
+  PubQaCheck: 'accountId',
+  PubApproval: 'accountId',
+  PubChannel: 'accountId',
+  PubDistributionAction: 'accountId',
+  PubPublication: 'accountId',
+  PubVenue: 'accountId',
+  PubVenueEvidence: 'accountId',
+  PubPlacement: 'accountId',
+  PubBudgetLimit: 'accountId',
+  PubReserveMove: 'accountId',
+  PubExpense: 'accountId',
+  PubExpenseEntry: 'accountId',
+  PubTimeEntry: 'accountId',
+  PubProspect: 'accountId',
+  PubLeadProspectLink: 'accountId',
+  PubLead: 'accountId',
+  PubLeadContact: 'accountId',
+  PubLeadDecision: 'accountId',
+  PubErasure: 'accountId',
+  PubPayment: 'accountId',
+  PubSession: 'accountId',
+  PubEvent: 'accountId',
+  PubLeadOutbox: 'accountId',
+  PubNotification: 'accountId',
+  PubQueueCheck: 'accountId',
+  PubMetricImport: 'accountId',
+  PubExperiment: 'accountId',
+  PubExperimentContent: 'accountId',
+  PubReport: 'accountId',
+  PubBackup: 'accountId',
+  PubRestore: 'accountId',
+  PubAiConfig: 'accountId',
+  PubAiConfigBinding: 'accountId',
+  PubAiTask: 'accountId',
+  PubAiBudgetMonth: 'accountId',
+  PubAiCall: 'accountId',
+  PubAiEvalRun: 'accountId',
+  PubAiEvalResult: 'accountId',
 };
 
 /**
@@ -286,7 +356,10 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   AssistSiteExperimentUnit:
     'единица эксперимента (хеш визита) — по experimentId, пишет виджет',
   AssistSitePageView:
-    'сырой итог просмотра страницы (7 дней) — по siteId, пишет виджет',
+    'сырой итог просмотра страницы (7 дней) — по siteId, пишет виджет', // AI Publisher: скользящее окно лимита публичной формы — ключ
+  // <productId>:<scope>:<HMAC IP>, строки живут ≤ 1 ч (раздел 6.2).
+  PubRateHit:
+    'окно лимита публичной формы Publisher (HMAC IP, ≤ 1 ч) — пишет publisher_public, вне кабинета',
 };
 
 const WHERE_OPERATIONS = new Set([

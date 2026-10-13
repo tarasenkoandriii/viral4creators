@@ -85,16 +85,83 @@ export type Route =
       focus?: 'roles';
     }
   | { name: 'admin-chat'; siteId: string }
+  // AI Publisher (§14.1): `#/sites/:id/publisher[/<раздел>[/<id>]][?k=v]`.
+  // Раздел — любой сегмент-слаг: какие разделы есть, знает реестр
+  // `screens/publisher/registry.ts` (P-G1/P-G2), неизвестный — «не
+  // найдено» внутри оболочки. `query` — фильтры списков (ссылки на
+  // отфильтрованные записи, ТЗ §8.4).
+  | {
+      name: 'publisher';
+      siteId: string;
+      section: string | null;
+      id: string | null;
+      query?: Readonly<Record<string, string>>;
+    }
   // Ш1-хвост: «подтвердить этот хост» (startapp `vh-…` из обучалки).
   | { name: 'verify-host'; host: string }
   | { name: 'not-found'; path: string };
 
 const SECTIONS: Section[] = ['knowledge', 'widget', 'dialogs'];
+/** Раздел Publisher: слаг (`venues`, `ai`, `audit` …). */
+export const PUB_SECTION_RE = /^[a-z][a-z0-9-]{0,31}$/;
+/** Ключ и значение фильтра в `?…` маршрута Publisher. */
+const PUB_QUERY_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** `a=1&b=x` → `{a:'1', b:'x'}`; чужие символы — пара пропускается. */
+export function parsePubQuery(q: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of q.split('&').slice(0, 20)) {
+    if (!part) continue;
+    const i = part.indexOf('=');
+    let k: string;
+    let v: string;
+    try {
+      k = decodeURIComponent(i < 0 ? part : part.slice(0, i));
+      v = decodeURIComponent(i < 0 ? '' : part.slice(i + 1));
+    } catch {
+      continue;
+    }
+    if (PUB_QUERY_RE.test(k) && PUB_QUERY_RE.test(v)) out[k] = v;
+  }
+  return out;
+}
+
+function pubQueryString(q?: Readonly<Record<string, string>>): string {
+  if (!q) return '';
+  const parts = Object.keys(q)
+    .filter((k) => PUB_QUERY_RE.test(k) && PUB_QUERY_RE.test(q[k]))
+    .sort()
+    .map((k) => `${k}=${q[k]}`);
+  return parts.length ? `?${parts.join('&')}` : '';
+}
 // Идентификаторы — cuid и подобные; всё прочее в сегменте — не наш путь.
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function parseRoute(hash: string): Route {
-  const path = hash.replace(/^#/, '').replace(/^\/+/, '').replace(/\/+$/, '');
+  const full = hash.replace(/^#/, '').replace(/^\/+/, '');
+  // `?…` есть только у маршрутов Publisher; у прочих — «не найдено», как раньше.
+  const qi = full.indexOf('?');
+  const pathOnly = (qi < 0 ? full : full.slice(0, qi)).replace(/\/+$/, '');
+  const pp = pathOnly ? pathOnly.split('/') : [];
+  if (
+    pp.length >= 3 &&
+    pp.length <= 5 &&
+    pp[0] === 'sites' &&
+    ID.test(pp[1]) &&
+    pp[2] === 'publisher' &&
+    (pp.length < 4 || PUB_SECTION_RE.test(pp[3])) &&
+    (pp.length < 5 || ID.test(pp[4]))
+  ) {
+    const query = qi < 0 ? {} : parsePubQuery(full.slice(qi + 1));
+    return {
+      name: 'publisher',
+      siteId: pp[1],
+      section: pp.length >= 4 ? pp[3] : null,
+      id: pp.length === 5 ? pp[4] : null,
+      ...(Object.keys(query).length ? { query } : {}),
+    };
+  }
+  const path = full.replace(/\/+$/, '');
   const p = path ? path.split('/') : [];
 
   if (p.length === 0) return { name: 'home' };
@@ -381,6 +448,10 @@ export function routeHref(r: Route): string {
       return r.plan ? `#/billing/${r.plan}` : '#/billing';
     case 'verify-host':
       return `#/verify-host/${r.host}`;
+    case 'publisher':
+      return `#/sites/${r.siteId}/publisher${r.section ? `/${r.section}` : ''}${
+        r.section && r.id ? `/${r.id}` : ''
+      }${pubQueryString(r.query)}`;
     case 'not-found':
       return `#/${r.path}`;
   }

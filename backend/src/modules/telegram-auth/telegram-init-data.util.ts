@@ -120,6 +120,11 @@ export function validateTelegramInitData(
   if (!authDateRaw) {
     throw new TelegramInitDataInvalidError('missing auth_date field');
   }
+  // Только целое неотрицательное число секунд: Number('NaN'/'1e9'/' 1') прошёл бы
+  // сравнения ниже (NaN > x === false) и обошёл бы проверку возраста.
+  if (!/^\d{1,12}$/.test(authDateRaw)) {
+    throw new TelegramInitDataInvalidError('invalid auth_date');
+  }
   const authDate = new Date(Number(authDateRaw) * 1000);
   const ageSeconds = (Date.now() - authDate.getTime()) / 1000;
   if (ageSeconds > maxAgeSeconds) {

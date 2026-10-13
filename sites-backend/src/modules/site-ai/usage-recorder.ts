@@ -44,6 +44,15 @@ function count(n: number | undefined): number {
     : 0;
 }
 
+/** Продукт строки `site_ai_usage` по имени операции. */
+export function productOf(
+  operation: SiteAiOperation | string,
+): 'publisher' | 'qa' | 'assist' {
+  if (operation.startsWith('pub-')) return 'publisher';
+  if (operation.startsWith('qa-')) return 'qa';
+  return 'assist';
+}
+
 @Injectable()
 export class AiUsageRecorder {
   async record(
@@ -56,8 +65,9 @@ export class AiUsageRecorder {
         {
           accountId: entry.accountId,
           siteId: entry.siteId,
-          // Все операции Э1 — помощника (operations.ts); QA добавит свои.
-          product: entry.operation.startsWith('qa-') ? 'qa' : 'assist',
+          // Продукт — по префиксу операции (operations.ts): `pub-*` — AI
+          // Publisher (§12.1), `qa-*` — QA, остальное — помощник.
+          product: productOf(entry.operation),
           provider: rateFor(entry.model)?.provider ?? 'GEMINI',
           operation: entry.operation,
           model: entry.model,

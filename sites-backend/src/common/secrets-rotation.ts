@@ -22,6 +22,18 @@
  * (ключ потерян или порча; данные не восстановить). `remaining` = 0 — и
  * только тогда — прежний ключ можно убирать (с учётом сроков токенов).
  *
+ * AI Publisher (P-A1, `publisher/core/contact-crypto.ts`, проектный
+ * документ §5.4, §6.5, §15.4): перешифровываются контакт заявителя
+ * `pub_lead_contacts.contactEnc` (вместе с `matchHash` — HMAC текущим
+ * ключом — и колонкой `keyVersion`, одним условным UPDATE), заметка
+ * проспекта `pub_prospects.noteEnc` и заметка решения по заявке
+ * `pub_lead_decisions.noteEnc` (AAD — id решения; триггер P-A0 после
+ * раунда 2 разрешает перешифровку другой версией ключа — запрос
+ * Р-PUB-A1-12 закрыт). Только СЧИТАЮТСЯ живые резервные копии
+ * `pub_backups.keyVersion` (`status='ok'`, `rotationUntil` впереди: blob
+ * зашифрован прежним ключом, его не перешифровать — ключ держится до
+ * `rotationUntil`, §15.4).
+ *
  * Запись условная (`WHERE id AND столбец = прежнее значение`): строку,
  * которую в это время переписал сервис, скрипт не затирает. Повторный
  * запуск безопасен. В отчёте только счётчики — ни id, ни текста.
@@ -58,7 +70,19 @@ import {
   type AdminSecretPurpose,
 } from '../modules/assist-admin-mode/admin-secrets-crypto';
 import { IDENTITY_SECRET_OWNER } from '../modules/assist-admin-mode/admin-mode.service';
-import { parseSecretsKeyring, splitKeyVersion } from './secrets-keyring';
+import {
+  contactMatchHash,
+  openContact,
+  openNote,
+  publisherKeys,
+  sealContact,
+  sealNote,
+} from '../modules/publisher/core/contact-crypto';
+import {
+  parseSecretsKeyring,
+  splitKeyVersion,
+  type DerivedKeys,
+} from './secrets-keyring';
 
 /** Минимум клиента Prisma (основная роль, владелец схемы). */
 export interface RotationDb {
@@ -99,6 +123,14 @@ export interface RotationReport {
   adminConnectorSigning: RotationTableReport;
   /** Живые значения планов по версии ключа (только счёт). */
   liveValues: Record<string, number>;
+  /** AI Publisher: контакт заявителя (+ matchHash, keyVersion). */
+  publisherContacts: RotationTableReport;
+  /** AI Publisher: заметка проспекта. */
+  publisherProspectNotes: RotationTableReport;
+  /** AI Publisher: заметка решения по заявке (AAD — id решения). */
+  publisherDecisionNotes: RotationTableReport;
+  /** AI Publisher: живые резервные копии по версии ключа (только счёт). */
+  publisherBackups: Record<string, number>;
   /**
    * Строк, которые держат прежний ключ или не открылись: во всех
    * перешифровываемых таблицах + `liveValues` прежних версий. Пока > 0 —
@@ -308,6 +340,90 @@ async function countByVersion(
   return out;
 }
 
+/**
+ * AI Publisher: контакт заявителя. Каноничная строка — текущий ключ И
+ * `matchHash` текущим ключом И `keyVersion` = текущая; иначе (apply) —
+ * шифр, HMAC и версия пишутся одним условным UPDATE по прежнему шифру.
+ */
+async function rotatePublisherContacts(
+  db: RotationDb,
+  contactKeys: DerivedKeys | null,
+  matchKeys: DerivedKeys | null,
+  apply: boolean,
+  scope: RotationScope | undefined,
+): Promise<RotationTableReport> {
+  const out = emptyTable();
+  let after = '';
+  for (;;) {
+    const rows = await db.$queryRawUnsafe<
+      Array<{
+        id: string;
+        leadId: string;
+        productId: string;
+        enc: string;
+        matchHash: string | null;
+        keyVersion: string;
+      }>
+    >(
+      `SELECT "id", "leadId", "productId", "contactEnc" AS enc, "matchHash", "keyVersion"
+         FROM ${S}."pub_lead_contacts"
+        WHERE "id" > $1${scopeSql(scope, 2)}
+        ORDER BY "id" LIMIT ${BATCH}`,
+      after,
+      ...scopeArgs(scope),
+    );
+    if (!rows.length) break;
+    after = rows[rows.length - 1].id;
+    for (const row of rows) {
+      out.total++;
+      const opened =
+        contactKeys && matchKeys
+          ? openContact(row.enc, row.leadId, contactKeys)
+          : null;
+      if (!opened || !contactKeys || !matchKeys) {
+        out.failed++;
+        continue;
+      }
+      out.versions[opened.version] = (out.versions[opened.version] ?? 0) + 1;
+      const hash = contactMatchHash(
+        row.productId,
+        opened.value.contactMethod,
+        opened.value.contact,
+        matchKeys,
+      );
+      const canonical =
+        opened.version === contactKeys.current &&
+        row.keyVersion === contactKeys.current &&
+        row.matchHash === hash;
+      if (canonical) {
+        out.current++;
+        continue;
+      }
+      if (!apply) {
+        out.rewritten++;
+        continue;
+      }
+      const next =
+        opened.version === contactKeys.current
+          ? { enc: row.enc, keyVersion: contactKeys.current }
+          : sealContact(opened.value, row.leadId, contactKeys);
+      const n = await db.$executeRawUnsafe(
+        `UPDATE ${S}."pub_lead_contacts"
+            SET "contactEnc" = $1, "matchHash" = $2, "keyVersion" = $3
+          WHERE "id" = $4 AND "contactEnc" = $5`,
+        next.enc,
+        hash,
+        next.keyVersion,
+        row.id,
+        row.enc,
+      );
+      if (n === 1) out.rewritten++;
+      else out.raced++;
+    }
+  }
+  return out;
+}
+
 export async function rotateAssistSecrets(
   db: RotationDb,
   opts: { apply: boolean; env?: NodeJS.ProcessEnv; scope?: RotationScope },
@@ -466,6 +582,59 @@ export async function rotateAssistSecrets(
        GROUP BY 1 ORDER BY 1`,
     opts.scope,
   );
+  // AI Publisher (P-A1).
+  const publisherContacts = await rotatePublisherContacts(
+    db,
+    publisherKeys('leadContact', env),
+    publisherKeys('contactMatch', env),
+    opts.apply,
+    opts.scope,
+  );
+  const noteKeys = publisherKeys('leadNotes', env);
+  const publisherProspectNotes = await rotateTable(
+    db,
+    {
+      table: 'pub_prospects',
+      id: 'id',
+      column: 'noteEnc',
+      open: (enc, id) => (noteKeys ? openNote(enc, id, noteKeys) : null),
+      reseal: (enc, id) => {
+        const o = noteKeys ? openNote(enc, id, noteKeys) : null;
+        return o && noteKeys ? sealNote(o.value, id, noteKeys).enc : null;
+      },
+    },
+    current,
+    opts.apply,
+    opts.scope,
+  );
+  const publisherDecisionNotes = await rotateTable(
+    db,
+    {
+      table: 'pub_lead_decisions',
+      id: 'id',
+      column: 'noteEnc',
+      open: (enc, id) => (noteKeys ? openNote(enc, id, noteKeys) : null),
+      reseal: (enc, id) => {
+        const o = noteKeys ? openNote(enc, id, noteKeys) : null;
+        return o && noteKeys ? sealNote(o.value, id, noteKeys).enc : null;
+      },
+    },
+    current,
+    opts.apply,
+    opts.scope,
+  );
+  const publisherBackups = await countByVersion(
+    db,
+    `SELECT "keyVersion" AS v, count(*)::int AS n
+       FROM ${S}."pub_backups"
+      WHERE "status" = 'ok' AND "rotationUntil" > now()${scopeSql(opts.scope, 1)}
+      GROUP BY 1 ORDER BY 1`,
+    opts.scope,
+  );
+  const staleCount = (r: Record<string, number>) =>
+    Object.entries(r)
+      .filter(([v]) => v !== current)
+      .reduce((n, [, c]) => n + c, 0);
   const stale = (t: RotationTableReport) =>
     opts.apply ? t.failed + t.raced : t.rewritten + t.failed;
   const liveStale = Object.entries(liveValues)
@@ -483,6 +652,10 @@ export async function rotateAssistSecrets(
     adminConnectorSecrets,
     adminConnectorSigning,
     liveValues,
+    publisherContacts,
+    publisherProspectNotes,
+    publisherDecisionNotes,
+    publisherBackups,
     remaining:
       stale(leads) +
       stale(leadIdentities) +
@@ -492,6 +665,10 @@ export async function rotateAssistSecrets(
       stale(adminIdentity) +
       stale(adminConnectorSecrets) +
       stale(adminConnectorSigning) +
-      liveStale,
+      liveStale +
+      stale(publisherContacts) +
+      stale(publisherProspectNotes) +
+      stale(publisherDecisionNotes) +
+      staleCount(publisherBackups),
   };
 }

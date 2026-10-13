@@ -146,6 +146,26 @@
  *     четвёртый допущенный потребитель `site-credentials` (аренда
  *     `assist-admin-login`).
  *
+ * 20. (AI Publisher, P-A0; doc/ai-publisher/IMPLEMENTATION-DESIGN.md §5.1)
+ *     `publisher-scope` — модуль `publisher` берёт из модулей только
+ *     `site-core`, `site-ai`, `site-crawl`, `telegram-auth` и ровно два
+ *     чистых файла `assist-knowledge-core/{injection,notify}`; `publisher-leaf`
+ *     — его не импортирует ни один модуль (Publisher не прорастает в помощник
+ *     и QA); `publisher` — в PRODUCT_MODULES/MODE_MODULES (site-crawl и
+ *     нейтральные site-ai/assist-knowledge-core его не берут); папка
+ *     `publisher/public/` — публичная зона правила 8 (`public-db`), её клиент
+ *     — только `prisma/publisher-public-db.service` (`publisher-public-db`:
+ *     не AssistPublicDb), а сам этот клиент берёт только `publisher/public/**`
+ *     и спеки/`testing/` модуля (`publisher-public-db-zone`); публичный код
+ *     из других папок `publisher` берёт только `contracts/**`, чистые
+ *     `core/{kyiv-time,money,utm,contact-crypto,clock}` и `*.module`
+ *     (`publisher-public-zone`) и называет только таблицы/представления
+ *     приёма (`publisher-public-names`); код `publisher/ai/**` не берёт
+ *     заявки, распространение, согласования, параметры, роли и гейты
+ *     (`publisher-ai-no-authority`); в `publisher` нет имён таблиц/моделей
+ *     помощника и QA, в `assist-*`/`qa-*` — Publisher (`publisher-names`,
+ *     `assist-names`; имена — из schema.prisma).
+ *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
  * относительные и от `baseUrl` (`src/…`). Тесты (*.spec.ts) проверяются
@@ -206,8 +226,33 @@ const MODE_MODULES = [
   /^assist-admin-/,
   /^assist-sandbox$/,
   /^assist-widget$/,
+  // AI Publisher (P-A0, §5.1): нейтральные site-ai/assist-knowledge-core его не берут.
+  /^publisher$/,
 ];
-const PRODUCT_MODULES = [/^assist-/, /^qa-/];
+const PRODUCT_MODULES = [/^assist-/, /^qa-/, /^publisher$/];
+/** AI Publisher (правило 20): модуль, его допустимые зависимости и зоны. */
+const PUBLISHER = 'publisher';
+const PUBLISHER_SCOPE = new Set([
+  'site-core',
+  'site-ai',
+  'site-crawl',
+  'telegram-auth',
+]);
+/** Два чистых файла помощника, которые Publisher может взять (§5.1). */
+const PUBLISHER_KNOWLEDGE_FILES =
+  /^modules\/assist-knowledge-core\/(injection|notify)$/;
+const PUBLISHER_PUBLIC_DB = 'prisma/publisher-public-db.service';
+/** Что публичный код Publisher берёт из других папок модуля (§5.1). */
+const PUBLISHER_PUBLIC_ALLOWED =
+  /^(public\/.+|contracts\/.+|core\/(kyiv-time|money|utm|contact-crypto|clock)|(.+\/)?[\w-]+\.module)$/;
+/** Чего AI-слой Publisher не импортирует (принцип 6, §5.1). */
+const PUBLISHER_AI_FORBIDDEN =
+  /^(leads\/.+|distribution\/.+|core\/(approvals|parameters|role-grants|gates)[^/]*)$/;
+const inPublisherPublic = (moduleName, inModule) =>
+  moduleName === PUBLISHER &&
+  /^public\//.test(inModule) &&
+  !/\.spec\.ts$/.test(inModule) &&
+  !/(^|\/)testing\//.test(inModule);
 
 const matches = (name, patterns) =>
   name !== null && patterns.some((re) => re.test(name));
@@ -307,6 +352,12 @@ export const RULES = [
     from: (m) => matches(m, UI_CORE),
     to: (m) => matches(m, [/^assist-site-/, ...ADMIN_MODE]),
   },
+  {
+    id: 'publisher-leaf',
+    why: 'AI Publisher §5.1: модуль publisher не импортирует ни один модуль — Publisher не прорастает в помощник, QA и ядро',
+    from: (m) => m !== PUBLISHER,
+    to: (m) => m === PUBLISHER,
+  },
 ];
 
 /**
@@ -328,6 +379,9 @@ const PUBLIC_ZONES = [
   { module: 'assist-site-media', only: /^public\// },
   // Э6-бис: голосовой план посетителя под assist_public.
   { module: 'assist-site-voice-control', only: /^public\// },
+  // AI Publisher: публичные маршруты /public/publisher/v1/* — под
+  // publisher_public (PublisherPublicDb), не основной ролью.
+  { module: PUBLISHER, only: /^public\// },
 ];
 const inPublicZone = (moduleName, inModule) =>
   !/\.spec\.ts$/.test(inModule) &&
@@ -365,6 +419,57 @@ const MAIN_DB_TARGETS = [
   /^modules\/site-core\/ui-map\/ui-map-maintenance\.service$/,
 ];
 export const PATH_RULES = [
+  {
+    id: 'publisher-scope',
+    why: 'AI Publisher §5.1: publisher берёт из модулей только site-core, site-ai, site-crawl, telegram-auth и assist-knowledge-core/{injection,notify}',
+    from: (moduleName) => moduleName === PUBLISHER,
+    to: (target) => {
+      const t = target.replace(SOURCE_RE, '');
+      const m = /^modules\/([^/]+)/.exec(t);
+      if (!m) return false;
+      const name = m[1];
+      if (name === PUBLISHER || PUBLISHER_SCOPE.has(name)) return false;
+      return !PUBLISHER_KNOWLEDGE_FILES.test(t);
+    },
+  },
+  {
+    id: 'publisher-public-db-zone',
+    why: 'AI Publisher §5.1: клиент роли publisher_public (prisma/publisher-public-db.service) берёт только publisher/public/** (и спеки/testing/ модуля)',
+    from: (moduleName, inModule) =>
+      !(
+        moduleName === PUBLISHER &&
+        (/^public\//.test(inModule) ||
+          /\.spec\.ts$/.test(inModule) ||
+          /(^|\/)testing\//.test(inModule))
+      ),
+    to: (target) => target.replace(SOURCE_RE, '') === PUBLISHER_PUBLIC_DB,
+  },
+  {
+    id: 'publisher-public-db',
+    why: 'AI Publisher Р-PUB-5: публичный код Publisher работает только под publisher_public — не AssistPublicDb (основную роль ловит public-db)',
+    from: inPublisherPublic,
+    to: (target) =>
+      /^prisma\/assist-public-db\.service$/.test(target.replace(SOURCE_RE, '')),
+  },
+  {
+    id: 'publisher-public-zone',
+    why: 'AI Publisher §5.1: публичный код Publisher берёт из других папок модуля только contracts/**, core/{kyiv-time,money,utm,contact-crypto,clock} и *.module',
+    from: inPublisherPublic,
+    to: (target) => {
+      const m = /^modules\/publisher\/(.+)$/.exec(target.replace(SOURCE_RE, ''));
+      return !!m && !PUBLISHER_PUBLIC_ALLOWED.test(m[1]);
+    },
+  },
+  {
+    id: 'publisher-ai-no-authority',
+    why: 'AI Publisher принцип 6: publisher/ai/** не импортирует заявки, распространение и core/{approvals,parameters,role-grants,gates}* — AI предлагает, человек решает',
+    from: (moduleName, inModule) =>
+      moduleName === PUBLISHER && /^ai\//.test(inModule),
+    to: (target) => {
+      const m = /^modules\/publisher\/(.+)$/.exec(target.replace(SOURCE_RE, ''));
+      return !!m && PUBLISHER_AI_FORBIDDEN.test(m[1]);
+    },
+  },
   {
     id: 'worker-seal-private',
     why: 'Э-С Ш3: запечатывание секретов под ключ воркера (browser-jobs/worker-seal) — только browser-jobs и internal-worker',
@@ -470,10 +575,54 @@ const VOICE_MAP_TABLE_NAMES =
   /\bassist_site_voice_maps\b|\bassist_site_voice_map_(?:versions|changes|editor_sessions)\b|\bAssistSiteVoiceMap(?:Version|Change|EditorSession)?\b|\bassistSiteVoiceMap(?:Version|Change|EditorSession)?\b/;
 const CREDENTIAL_NAMES =
   /\b(site_test_accounts|site_credentials|site_credential_leases|site_credential_audit|user_site_sessions|user_site_secrets)\b|\b(siteTestAccount|siteCredential|siteCredentialLease|siteCredentialAudit|userSiteSession|userSiteSecret)\b/;
+/**
+ * AI Publisher (правило 20): имена таблиц (`@@map`) и моделей схемы с
+ * делегатами Prisma (`pubLead`, `assistSiteFaq`). Список — из schema.prisma,
+ * а не регэксп по префиксу: `pubRow` или `QaChecksService` — не имена схемы.
+ */
+function schemaNames(prefixModel, prefixTable) {
+  const file = path.join(ROOT, 'sites-backend', 'prisma', 'schema.prisma');
+  const schema = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  const models = [...schema.matchAll(/^model (\w+) \{/gm)]
+    .map((m) => m[1])
+    .filter((n) => prefixModel.test(n));
+  const tables = [...schema.matchAll(/@@map\("([^"]+)"\)/g)]
+    .map((m) => m[1])
+    .filter((n) => prefixTable.test(n));
+  const delegates = models.map((n) => n.charAt(0).toLowerCase() + n.slice(1));
+  const all = [...tables, ...models, ...delegates];
+  // Пустая схема (нет файла) — регэксп, который не совпадает ни с чем.
+  return all.length
+    ? new RegExp(`\\b(?:${all.sort((a, b) => b.length - a.length).join('|')})\\b`)
+    : /(?!)/;
+}
+const PUB_NAMES = schemaNames(/^Pub[A-Z]/, /^pub_/);
+const ASSIST_QA_NAMES = schemaNames(/^(Assist|Qa)[A-Z]/, /^(assist_|qa_)/);
+/** Таблицы и представления, которые называет публичный код Publisher. */
+const PUBLISHER_PUBLIC_NAMES =
+  /\bpub_(?!(?:public_products|public_contents|leads|lead_contacts|events|sessions|lead_outbox|rate_hits|sref)\b)[a-z][a-z_]*/;
 /** Э-С Ш3: таблицы и модели очереди браузерного воркера. */
 const BROWSER_JOB_NAMES =
   /\b(site_browser_jobs|site_browser_artifacts)\b|\b(siteBrowserJob|siteBrowserArtifact|SiteBrowserJob|SiteBrowserArtifact)\b/;
 export const LITERAL_RULES = [
+  {
+    id: 'publisher-public-names',
+    why: 'AI Publisher §5.1: публичный код Publisher называет только pub_public_products, pub_public_contents и таблицы приёма (pub_leads, pub_lead_contacts, pub_events, pub_sessions, pub_lead_outbox, pub_rate_hits)',
+    in: (m, inModule) => inPublisherPublic(m, inModule ?? ''),
+    re: PUBLISHER_PUBLIC_NAMES,
+  },
+  {
+    id: 'publisher-names',
+    why: 'AI Publisher §5.1: в publisher нет имён таблиц и моделей помощника и QA (assist_*, Assist*, qa_*, Qa*)',
+    in: (m) => m === PUBLISHER,
+    re: ASSIST_QA_NAMES,
+  },
+  {
+    id: 'assist-names',
+    why: 'AI Publisher §5.1: в assist-* и qa-* нет имён таблиц и моделей Publisher (pub_*, Pub*)',
+    in: (m) => /^(assist-|qa-)/.test(m),
+    re: PUB_NAMES,
+  },
   {
     id: 'browser-jobs-names',
     why: 'Э-С Ш3: имена таблиц/моделей очереди воркера — только в browser-jobs (продукты и каналы ходят через BrowserJobsService)',
@@ -681,6 +830,72 @@ function selfTest() {
 
   // Каждая фикстура-нарушитель — ровно одно нарушение своего правила.
   const bad = [
+    // AI Publisher (правило 20, P-A0).
+    [
+      'modules/publisher/content/pa1.ts',
+      `import { SiteChat } from '../../assist-site-chat/chat.service';`,
+      'publisher-scope',
+    ],
+    [
+      'modules/publisher/pa2.ts',
+      `import { chunk } from '../assist-knowledge-core/chunker';`,
+      'publisher-scope',
+    ],
+    [
+      'modules/assist-site-chat/pa3.ts',
+      `import { PublisherModule } from '../publisher/publisher.module';`,
+      'publisher-leaf',
+    ],
+    [
+      'modules/publisher/public/pa4.ts',
+      `import { SitesDb } from '../../../prisma/sites-db.service';`,
+      'public-db',
+    ],
+    [
+      'modules/publisher/public/pa5.ts',
+      `import { AssistPublicDb } from '../../../prisma/assist-public-db.service';`,
+      'publisher-public-db',
+    ],
+    [
+      'modules/publisher/core/pa6.ts',
+      `import { PublisherPublicDb } from '../../../prisma/publisher-public-db.service';`,
+      'publisher-public-db-zone',
+    ],
+    [
+      'modules/assist-widget/pa7.ts',
+      `import type { PublisherPublicDb } from '../../prisma/publisher-public-db.service';`,
+      'publisher-public-db-zone',
+    ],
+    [
+      'modules/publisher/public/pa8.ts',
+      `import { runOperation } from '../core/operation';`,
+      'publisher-public-zone',
+    ],
+    [
+      'modules/publisher/public/pa9.ts',
+      'const q = `SELECT "value" FROM "sites"."pub_parameters" WHERE "productId" = $1`;',
+      'publisher-public-names',
+    ],
+    [
+      'modules/publisher/ai/pa10.ts',
+      `import { LeadsService } from '../leads/leads.service';`,
+      'publisher-ai-no-authority',
+    ],
+    [
+      'modules/publisher/ai/generators/pa11.generator.ts',
+      `import { approvePublish } from '../../core/approvals-publish';`,
+      'publisher-ai-no-authority',
+    ],
+    [
+      'modules/publisher/content/pa12.ts',
+      `const rows = await db.assistSiteFaq.findMany({});`,
+      'publisher-names',
+    ],
+    [
+      'modules/qa-catalog/pa13.ts',
+      'const q = `SELECT 1 FROM "sites"."pub_leads"`;',
+      'assist-names',
+    ],
     // Э-С Ш3: очередь браузерного воркера и его канал.
     [
       'modules/browser-jobs/sh3a.ts',
@@ -1121,6 +1336,27 @@ function selfTest() {
   // Разрешённое: своё внутри модуля, общий код, site-crawl из «Админки»,
   // пакеты, импорт в комментарии, «Админка» → «Админка».
   const good = [
+    // AI Publisher (правило 20): разрешённое.
+    [
+      'modules/publisher/content/okp1.ts',
+      `import { HostAccessService } from '../../site-core/ownership/host-access.service';\nimport { GeminiText } from '../../site-ai/gemini-text';\nimport { PublicPageFetcher } from '../../site-crawl/page-fetcher';\nimport { PublicRoute } from '../../telegram-auth/allow-apps.decorator';\nimport { detectInjection } from '../../assist-knowledge-core/injection';\nimport { recipients } from '../../assist-knowledge-core/notify';\nimport { SitesDb } from '../../../prisma/sites-db.service';\nimport { ipLimitKey } from '../../../common/ip-limit-key';\nimport { kyivDateOf } from '../core/kyiv-time';\nconst r = db.pubSource;\nconst q = 'SELECT 1 FROM "sites"."pub_parameters"';\n// assist_site_faq в комментарии — можно`,
+    ],
+    [
+      'modules/publisher/public/okp2.ts',
+      `import { PublisherPublicDb } from '../../../prisma/publisher-public-db.service';\nimport type { LeadBody } from '../contracts/public-api';\nimport { kyivDateOf } from '../core/kyiv-time';\nimport { openContact } from '../core/contact-crypto';\nimport { LeadsModule } from '../leads/leads.module';\nimport { SiteConfig } from './site-config';\nconst q = 'SELECT "formOpen" FROM "sites"."pub_public_products"; INSERT INTO "sites"."pub_leads"; INSERT INTO "sites"."pub_rate_hits"';\nconst k = 'pub_sref';`,
+    ],
+    [
+      'modules/publisher/core/okp3.spec.ts',
+      `import { PublisherPublicDb } from '../../../prisma/publisher-public-db.service';`,
+    ],
+    [
+      'modules/publisher/ai/okp4.ts',
+      `import { kyivDateOf } from '../core/kyiv-time';\nimport type { AiContext } from '../contracts/ai';\nimport { GeminiText } from '../../site-ai/gemini-text';`,
+    ],
+    [
+      'modules/assist-site-chat/okp5.ts',
+      `const pubRow = 1;\nconst QaChecksLike = 2;`,
+    ],
     // Э-С Ш3: продукты ставят задания через сервис; канал воркера арендует учётки.
     [
       'modules/assist-admin-crawl/oksh3a.ts',

@@ -226,6 +226,15 @@ export const en: Dictionary = {
     removed: 'Member removed from the account.',
     left: 'You left the account.',
     roleSaved: 'Role changed.',
+    publisher: {
+      label: 'Publisher',
+      roles: {
+        none: 'No access',
+        member: 'Member (roles are set inside Publisher)',
+        admin: 'Administrator',
+      },
+      saved: 'Publisher access updated.',
+    },
     errors: {
       MEMBER_NOT_FOUND:
         'Member not found — they may have been removed already.',

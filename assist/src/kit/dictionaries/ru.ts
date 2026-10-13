@@ -230,6 +230,15 @@ export const ru = {
     removed: 'Участник удалён из кабинета.',
     left: 'Вы вышли из кабинета.',
     roleSaved: 'Роль изменена.',
+    publisher: {
+      label: 'Publisher',
+      roles: {
+        none: 'Нет доступа',
+        member: 'Участник (роли — внутри Publisher)',
+        admin: 'Администратор',
+      },
+      saved: 'Доступ к Publisher изменён.',
+    },
     errors: {
       MEMBER_NOT_FOUND: 'Участник не найден — возможно, его уже удалили.',
       MEMBER_LAST_OWNER:

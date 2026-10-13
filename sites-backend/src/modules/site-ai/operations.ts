@@ -6,7 +6,8 @@
  *  - платформы (онбординг/лендинг, суточный потолок): assist-sandbox-*;
  *  - виджета (суточный потолок сайта + платформы, `assist_budget_days`):
  *    assist-chat, assist-classify; голос (Э5) — ещё и потолок голоса сайта:
- *    assist-stt, assist-tts; Э6-бис — план голосового управления assist-ui-plan.
+ *    assist-stt, assist-tts; Э6-бис — план голосового управления assist-ui-plan;
+ *  - AI Publisher (`pub-*`): месячный потолок AI продукта, не бюджеты помощника.
  */
 export const SITE_AI_OPERATIONS = [
   'assist-embed',
@@ -66,6 +67,20 @@ export const SITE_AI_OPERATIONS = [
   // платформы (резерв `reserveAdminTurn`, ADMIN_DAILY_USAGE_OPERATIONS);
   // не бюджет обучения «Сайта» (`assist-learn`).
   'assist-admin-map-synonyms',
+  // AI Publisher (P-A0, проектный документ §12.1): генераторы модуля
+  // `publisher` и прогон набора 30 задач (`pub-eval`, только CLI). Продукт в
+  // site_ai_usage — `publisher` (usage-recorder); платит месячный потолок AI
+  // продукта (`pub_ai_budget_months`, Р-PUB-9) — не бюджеты помощника.
+  'pub-questions-cluster',
+  'pub-brief-draft',
+  'pub-draft-write',
+  'pub-claims-extract',
+  'pub-qa-review',
+  'pub-adaptation-make',
+  'pub-distribution-plan',
+  'pub-venues-compare',
+  'pub-helper-answer',
+  'pub-eval',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

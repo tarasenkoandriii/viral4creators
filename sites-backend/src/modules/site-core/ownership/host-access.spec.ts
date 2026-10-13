@@ -32,6 +32,8 @@ const NON_WIDGET: HostPurpose[] = [
   // Э-С Ш1: обучалка генератора — L1 без льготы 72 ч (режим A).
   'tutorial',
   'tutorial-login',
+  // AI Publisher: хост сайта продукта — L1 без льготы.
+  'publisher-public',
 ];
 
 describe('evaluateHostAccess — уровни и льгота', () => {
@@ -206,5 +208,56 @@ describe('HostAccessService.assertHostVerified', () => {
     await expect(
       svc.assertHostVerified('h1', 'assist-sandbox', { now: NOW }),
     ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+describe('AI Publisher (P-A0, §3.2): назначения publisher-*', () => {
+  it("'publisher-import' — L0, как песочница: подтверждение не нужно", () => {
+    for (const r of [
+      row({ status: 'pending', expiresAt: null }),
+      row({ status: 'revoked', revokedAt: ago(H) }),
+      row({ status: 'verified', reverifyBlockedAt: ago(H) }),
+    ]) {
+      expect(evaluateHostAccess(r, 'publisher-import', NOW)).toEqual({
+        ok: true,
+        level: 'L0',
+        grace: false,
+      });
+    }
+  });
+
+  it("'publisher-public' — L1 без льготы 72 ч", () => {
+    expect(evaluateHostAccess(row({}), 'publisher-public', NOW)).toEqual({
+      ok: true,
+      level: 'L1',
+      grace: false,
+    });
+    expect(
+      evaluateHostAccess(
+        row({ status: 'revoked', revokedAt: ago(H) }),
+        'publisher-public',
+        NOW,
+      ),
+    ).toEqual({ ok: false, reason: 'revoked' });
+    expect(
+      evaluateHostAccess(
+        row({ status: 'verified', expiresAt: ago(1) }),
+        'publisher-public',
+        NOW,
+      ),
+    ).toEqual({ ok: false, reason: 'expired' });
+  });
+
+  it('опечатки назначений Publisher — закрыто', () => {
+    for (const typo of [
+      'publisher',
+      'publisher-',
+      'publisher-widget',
+      'Publisher-public',
+    ]) {
+      expect(() =>
+        evaluateHostAccess(row({}), typo as HostPurpose, NOW),
+      ).toThrow(/неизвестное/);
+    }
   });
 });

@@ -23,6 +23,14 @@ export interface ProductRoles {
   qa: 'admin' | 'viewer' | 'none';
   assist: 'manager' | 'operator' | 'none';
   assistAdmin: 'owner' | 'employee' | 'none';
+  /**
+   * AI Publisher (проектный документ §4.1, §14.2): допуск к продукту —
+   * `admin` (роли продукта, режим, бэкап) или `member` (роли задают гранты
+   * внутри Publisher). «Поздний» ключ, как у сервера (Р-PUB-A0-3): при
+   * `none` его нет ни в ответе, ни после разбора кита; отсутствие = `none`
+   * (прежние литералы `productRoles` по проекту не правятся).
+   */
+  publisher?: 'admin' | 'member' | 'none';
 }
 
 /** Итог последней проверки — сервер пишет человеку текст сам. */

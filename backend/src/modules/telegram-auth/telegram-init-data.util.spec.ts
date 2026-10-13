@@ -167,6 +167,16 @@ describe('validateTelegramInitData — свежесть и содержимое'
     ).toThrow(/future/);
   });
 
+  it.each(['NaN', 'abc', '1e9', ' 1', '-5', '1.5', ''])(
+    'подписанный auth_date=%p, не целое число секунд, отвергается — NaN обходил бы проверку возраста',
+    (bad) => {
+      const { raw } = initData({ auth_date: bad });
+      expect(() =>
+        validateTelegramInitData(raw, { botToken: BOT_TOKEN }),
+      ).toThrow(/auth_date/);
+    },
+  );
+
   it('подписанный, но бессодержательный initData не даёт личности', () => {
     // Подпись верна — а пользователя в ней нет. Пропустить такое значило
     // бы завести сессию без владельца.

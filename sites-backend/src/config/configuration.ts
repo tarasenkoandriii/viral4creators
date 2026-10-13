@@ -11,6 +11,7 @@ import { devFakeGeminiProblem } from './dev-ai-env';
 import { widgetOrigin } from './widget-env';
 import { adminWidgetOrigin } from './admin-env';
 import { editorWidgetOrigin } from './editor-env';
+import { publisherAiUnevaluatedProblem } from './publisher-env';
 
 export interface SitesConfig {
   nodeEnv: string;
@@ -29,6 +30,8 @@ export interface SitesConfig {
   devFakeGeminiProblem?: string | null;
   /** Предупреждение: прод вне Vercel без TRUSTED_PROXY_CIDRS (П-С1). */
   clientIpProblem?: string | null;
+  /** AI Publisher: PUBLISHER_AI_ALLOW_UNEVALUATED в production — ошибка старта. */
+  publisherAiUnevaluatedProblem?: string | null;
 }
 
 export function loadConfiguration(
@@ -54,6 +57,7 @@ export function loadConfiguration(
     editorWidgetOrigin: editorWidgetOrigin(env),
     devFakeGeminiProblem: devFakeGeminiProblem(env),
     clientIpProblem: clientIpEnvProblem(env),
+    publisherAiUnevaluatedProblem: publisherAiUnevaluatedProblem(env),
   };
 }
 
@@ -103,6 +107,9 @@ export function validateConfiguration(config: SitesConfig): void {
   }
   if (config.devFakeGeminiProblem) {
     throw new Error(config.devFakeGeminiProblem);
+  }
+  if (config.publisherAiUnevaluatedProblem) {
+    throw new Error(config.publisherAiUnevaluatedProblem);
   }
   if (!Number.isInteger(config.port) || config.port <= 0) {
     throw new Error(

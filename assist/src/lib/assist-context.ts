@@ -26,6 +26,7 @@ import type { createQaCatalogApi } from './qa-catalog-api';
 
 import type { createQaRunsApi } from './qa-runs-api';
 import type { createQaFindingsApi } from './qa-findings-api';
+import type { PublisherHttp } from './publisher/common-api';
 export interface AssistValue {
   qaFindings: ReturnType<typeof createQaFindingsApi>;
   qaRuns: ReturnType<typeof createQaRunsApi>;
@@ -54,6 +55,11 @@ export interface AssistValue {
   adminActions: AdminActionsApi;
   /** Э3-бис: аналитика с ИИ, выводы, эксперименты, поведение. */
   ai: AiApi;
+  /**
+   * AI Publisher (§14.1): клиенты `/publisher/*` — обычный и AI (таймаут
+   * 65 с); экраны берут их через `usePublisher()` оболочки.
+   */
+  publisher: { http: PublisherHttp; aiHttp: PublisherHttp };
 }
 
 export const AssistContext = createContext<AssistValue | null>(null);

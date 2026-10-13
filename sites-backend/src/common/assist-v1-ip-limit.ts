@@ -38,7 +38,7 @@ import { catchError, mergeMap } from 'rxjs/operators';
 import { widgetIpSecret } from '../config/widget-env';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashIpWithDailySalt } from '../shared/assist-chat-core';
-import { ipLimitKey } from '../modules/assist-sandbox/sandbox-limits';
+import { ipLimitKey } from './ip-limit-key';
 import { clientIp } from '../modules/telegram-auth/web/web-request';
 
 export const ASSIST_V1_IP_LIMITS = {

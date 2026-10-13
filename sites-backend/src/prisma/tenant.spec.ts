@@ -265,3 +265,39 @@ describe('extension на настоящем PrismaClient', () => {
     }
   });
 });
+
+describe('AI Publisher (P-A0, §5.2): модели Pub* в тенанте', () => {
+  const pub = Prisma.dmmf.datamodel.models
+    .map((m) => m.name)
+    .filter((n) => n.startsWith('Pub'));
+
+  it('66 моделей; все, кроме окна лимита формы, — по accountId', () => {
+    expect(pub).toHaveLength(66);
+    expect(pub.filter((n) => TENANT_COLUMNS[n] !== 'accountId')).toEqual([
+      'PubRateHit',
+    ]);
+    expect(
+      Object.keys(NON_TENANT_MODELS).filter((n) => n.startsWith('Pub')),
+    ).toEqual(['PubRateHit']);
+  });
+
+  it('запрос к таблице продукта без кабинета бросает; forAccount подставляет кабинет', () => {
+    expect(() =>
+      scopeArgs('PubLead', 'findMany', { where: { productId: 'p1' } }, null),
+    ).toThrow(TenantScopeError);
+    expect(
+      scopeArgs('PubLead', 'findMany', { where: { productId: 'p1' } }, A),
+    ).toEqual({ where: { productId: 'p1', accountId: A } });
+    expect(() =>
+      scopeArgs(
+        'PubProduct',
+        'update',
+        { where: { id: 'p1' }, data: { accountId: B } },
+        A,
+      ),
+    ).toThrow(TenantScopeError);
+    // Окно лимита формы — вне тенанта (ключ — HMAC IP, кабинета нет).
+    const args = { where: { key: 'k' } };
+    expect(scopeArgs('PubRateHit', 'findMany', args, null)).toBe(args);
+  });
+});

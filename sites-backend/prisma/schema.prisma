@@ -263,6 +263,11 @@ model Site {
   pageViews          AssistSitePageView[]
   dailyPages         AssistSiteDailyPage[]
 
+  /// AI Publisher (P-A0): продукт сайта — в P0 не больше одного
+  /// (`@@unique([siteId])` у PubProduct). Удаление сайта с продуктом
+  /// запрещено (RESTRICT): финансовые записи — «применимые обязательства».
+  publisherProducts PubProduct[]
+
   /// Цель составного внешнего ключа хоста (siteId, accountId): база сама не
   /// даст привязать хост кабинета A к сайту кабинета B.
   @@unique([id, accountId])
@@ -5061,4 +5066,1878 @@ model QaFindingRevision {
   @@unique([findingId, version])
   @@index([accountId, findingId, id])
   @@map("qa_finding_revisions")
+}
+
+// ══ AI Publisher (модуль publisher, таблицы pub_*) ══
+// Пакет P-A0, миграция 20261016090000_publisher_core (проектный документ
+// doc/ai-publisher/IMPLEMENTATION-DESIGN.md v1.1, раздел 6). Закрытые списки,
+// диапазоны и межколоночные условия — триггерами pub_*_guard() миграции (CHECK
+// в pub_* запрещён, раздел 5.2); «одна активная строка» — частичными
+// уникальными индексами миграции (Prisma их не описывает). Все метки —
+// timestamptz(3). После P-A0 таблицы заморожены: правка — запрос координатору.
+
+/// Продукт Publisher (ТЗ §9 Product). Один на сайт (Р-PUB-1); тенант — кабинет.
+model PubProduct {
+  id                       String @id @default(cuid())
+  accountId                String
+  siteId                   String
+  kind                     String /// working | test | eval | restored — неизменяем
+  name                     String
+  publicKey                String @unique /// pp_ + 24 base62; неизменяем
+  mode                     String @default("closed") /// closed | test | live
+  liveSince                DateTime? @db.Timestamptz(3)
+  paramsPublicPublishOk    Boolean @default(false)
+  paramsRealLeadsOk        Boolean @default(false)
+  status                   String @default("active") /// active | archived
+  restoredFromBackupId     String?
+  site                     Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Restrict)
+  restoredFromBackup       PubBackup? @relation("PubProduct_restoredFromBackup", fields: [restoredFromBackupId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  parameters               PubParameter[] @relation("PubParameter_product")
+  parameterProposals       PubParameterProposal[] @relation("PubParameterProposal_product")
+  parameterDecisions       PubParameterDecision[] @relation("PubParameterDecision_product")
+  roleGrants               PubRoleGrant[] @relation("PubRoleGrant_product")
+  auditEvents              PubAuditEvent[] @relation("PubAuditEvent_product")
+  idempotencyKeys          PubIdempotencyKey[] @relation("PubIdempotencyKey_product")
+  reviewTasks              PubReviewTask[] @relation("PubReviewTask_product")
+  integrations             PubIntegration[] @relation("PubIntegration_product")
+  campaigns                PubCampaign[] @relation("PubCampaign_product")
+  sources                  PubSource[] @relation("PubSource_product")
+  sourceRevocations        PubSourceRevocation[] @relation("PubSourceRevocation_product")
+  questionGroups           PubQuestionGroup[] @relation("PubQuestionGroup_product")
+  questions                PubQuestion[] @relation("PubQuestion_product")
+  questionSources          PubQuestionSource[] @relation("PubQuestionSource_product")
+  brandFacts               PubBrandFact[] @relation("PubBrandFact_product")
+  offerVersions            PubOfferVersion[] @relation("PubOfferVersion_product")
+  offerFacts               PubOfferFact[] @relation("PubOfferFact_product")
+  briefs                   PubBrief[] @relation("PubBrief_product")
+  briefSources             PubBriefSource[] @relation("PubBriefSource_product")
+  contents                 PubContent[] @relation("PubContent_product")
+  contentVersions          PubContentVersion[] @relation("PubContentVersion_product")
+  versionSources           PubVersionSource[] @relation("PubVersionSource_product")
+  versionClaims            PubVersionClaim[] @relation("PubVersionClaim_product")
+  versionFacts             PubVersionFact[] @relation("PubVersionFact_product")
+  claims                   PubClaim[] @relation("PubClaim_product")
+  claimSources             PubClaimSource[] @relation("PubClaimSource_product")
+  qaChecks                 PubQaCheck[] @relation("PubQaCheck_product")
+  approvals                PubApproval[] @relation("PubApproval_product")
+  channels                 PubChannel[] @relation("PubChannel_product")
+  distributionActions      PubDistributionAction[] @relation("PubDistributionAction_product")
+  publications             PubPublication[] @relation("PubPublication_product")
+  venues                   PubVenue[] @relation("PubVenue_product")
+  venueEvidences           PubVenueEvidence[] @relation("PubVenueEvidence_product")
+  placements               PubPlacement[] @relation("PubPlacement_product")
+  budgetLimits             PubBudgetLimit[] @relation("PubBudgetLimit_product")
+  reserveMoves             PubReserveMove[] @relation("PubReserveMove_product")
+  expenses                 PubExpense[] @relation("PubExpense_product")
+  expenseEntrys            PubExpenseEntry[] @relation("PubExpenseEntry_product")
+  timeEntrys               PubTimeEntry[] @relation("PubTimeEntry_product")
+  prospects                PubProspect[] @relation("PubProspect_product")
+  leadProspectLinks        PubLeadProspectLink[] @relation("PubLeadProspectLink_product")
+  leads                    PubLead[] @relation("PubLead_product")
+  leadContacts             PubLeadContact[] @relation("PubLeadContact_product")
+  leadDecisions            PubLeadDecision[] @relation("PubLeadDecision_product")
+  erasures                 PubErasure[] @relation("PubErasure_product")
+  payments                 PubPayment[] @relation("PubPayment_product")
+  sessions                 PubSession[] @relation("PubSession_product")
+  events                   PubEvent[] @relation("PubEvent_product")
+  leadOutboxs              PubLeadOutbox[] @relation("PubLeadOutbox_product")
+  notifications            PubNotification[] @relation("PubNotification_product")
+  queueChecks              PubQueueCheck[] @relation("PubQueueCheck_product")
+  metricImports            PubMetricImport[] @relation("PubMetricImport_product")
+  experiments              PubExperiment[] @relation("PubExperiment_product")
+  experimentContents       PubExperimentContent[] @relation("PubExperimentContent_product")
+  reports                  PubReport[] @relation("PubReport_product")
+  backups                  PubBackup[] @relation("PubBackup_product")
+  restoreTargetProductOf   PubRestore[] @relation("PubRestore_targetProduct")
+  restores                 PubRestore[] @relation("PubRestore_product")
+  aiConfigs                PubAiConfig[] @relation("PubAiConfig_product")
+  aiConfigBindings         PubAiConfigBinding[] @relation("PubAiConfigBinding_product")
+  aiTasks                  PubAiTask[] @relation("PubAiTask_product")
+  aiBudgetMonths           PubAiBudgetMonth[] @relation("PubAiBudgetMonth_product")
+  aiCalls                  PubAiCall[] @relation("PubAiCall_product")
+  aiEvalRuns               PubAiEvalRun[] @relation("PubAiEvalRun_product")
+  aiEvalResults            PubAiEvalResult[] @relation("PubAiEvalResult_product")
+  @@unique([id, accountId])
+  @@unique([siteId])
+  @@index([accountId])
+  @@map("pub_products")
+}
+
+/// Профиль продукта: голова ключа с действующим значением (PARAMETER_KEYS).
+model PubParameter {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubParameter_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  key                      String
+  value                    Json
+  status                   String @default("assumption") /// assumption | approved | rejected | revoked
+  version                  Int @default(1)
+  approvedAt               DateTime? @db.Timestamptz(3)
+  approvedBy               String?
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([productId, key])
+  @@map("pub_parameters")
+}
+
+/// Предложение изменить параметр; не меняет действующее значение и гейты (аудит P2-9).
+model PubParameterProposal {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubParameterProposal_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  parameterKey             String
+  value                    Json
+  proposedBy               String
+  proposedAt               DateTime @default(now()) @db.Timestamptz(3)
+  status                   String @default("open") /// open | accepted | rejected | withdrawn
+  decisionId               String?
+  decision                 PubParameterDecision? @relation("PubParameterProposal_decision", fields: [decisionId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  parameterDecisionProposalOf PubParameterDecision[] @relation("PubParameterDecision_proposal")
+  @@unique([id, accountId])
+  @@index([productId, parameterKey, status])
+  @@map("pub_parameter_proposals")
+}
+
+/// Журнал решений по параметрам (ParameterDecision), append-only.
+model PubParameterDecision {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubParameterDecision_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  parameterKey             String
+  version                  Int
+  proposalId               String?
+  fromStatus               String
+  toStatus                 String
+  valueSnapshot            Json
+  decidedBy                String
+  decidedAt                DateTime @default(now()) @db.Timestamptz(3)
+  basis                    String
+  dependentStages          Json
+  proposal                 PubParameterProposal? @relation("PubParameterDecision_proposal", fields: [proposalId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  parameterProposalDecisionOf PubParameterProposal[] @relation("PubParameterProposal_decision")
+  @@unique([id, accountId])
+  @@unique([productId, parameterKey, version])
+  @@map("pub_parameter_decisions")
+}
+
+/// Роли в продукте; «одна активная» — частичный уникальный индекс миграции.
+model PubRoleGrant {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRoleGrant_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  memberId                 String
+  memberDisplayName        String
+  role                     String /// product_owner | editor | operator | analyst | sales | viewer
+  grantedBy                String
+  grantedAt                DateTime @default(now()) @db.Timestamptz(3)
+  revokedBy                String?
+  revokedAt                DateTime? @db.Timestamptz(3)
+  reason                   String?
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId, memberId])
+  @@map("pub_role_grants")
+}
+
+/// Журнал аудита (AuditEvent), append-only; meta без ключей ПД (триггер).
+model PubAuditEvent {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAuditEvent_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  actor                    String
+  objectType               String
+  objectId                 String
+  action                   String
+  fromStatus               String?
+  toStatus                 String?
+  reason                   String?
+  meta                     Json?
+  occurredAt               DateTime @default(now()) @db.Timestamptz(3)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId, occurredAt])
+  @@index([productId, objectType, objectId])
+  @@map("pub_audit_events")
+}
+
+/// Ключи идемпотентности уровня кабинета (opKey); responseBody без ПД (триггер).
+model PubIdempotencyKey {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String?
+  product                  PubProduct? @relation("PubIdempotencyKey_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  siteId                   String?
+  opKey                    String
+  scope                    String
+  requestHash              String
+  responseStatus           Int? /// NULL до завершения операции (вставка идёт первой, 8.1)
+  responseBody             Json?
+  expiresAt                DateTime @db.Timestamptz(3)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([accountId, opKey])
+  @@index([expiresAt])
+  @@map("pub_idempotency_keys")
+}
+
+/// Задача проверки (F02/F04/F06, AT-CORE-21).
+model PubReviewTask {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubReviewTask_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  objectType               String
+  objectId                 String
+  reason                   String
+  triggerRef               String
+  severity                 String /// critical | normal
+  status                   String @default("open") /// open | resolved | dismissed
+  assigneeMemberId         String?
+  dueAt                    DateTime? @db.Timestamptz(3)
+  resolution               String?
+  resolvedBy               String?
+  resolvedAt               DateTime? @db.Timestamptz(3)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([productId, objectType, objectId, reason, triggerRef])
+  @@index([productId, status])
+  @@map("pub_review_tasks")
+}
+
+/// Статус интеграций (Integration status).
+model PubIntegration {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubIntegration_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  kind                     String
+  status                   String /// connected | degraded | disconnected
+  manual                   Boolean @default(false)
+  lastSuccessAt            DateTime? @db.Timestamptz(3)
+  lastCheckedAt            DateTime? @db.Timestamptz(3)
+  staleAfterHours          Int
+  note                     String?
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([productId, kind])
+  @@map("pub_integrations")
+}
+
+/// Кампания (utm_campaign); в P0 одна — «пилот».
+model PubCampaign {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubCampaign_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  code                     String
+  name                     String
+  startsAt                 DateTime? @db.Timestamptz(3)
+  endsAt                   DateTime? @db.Timestamptz(3)
+  experimentId             String?
+  experiment               PubExperiment? @relation("PubCampaign_experiment", fields: [experimentId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  placementCampaignOf      PubPlacement[] @relation("PubPlacement_campaign")
+  leadCampaignOf           PubLead[] @relation("PubLead_campaign")
+  @@unique([id, accountId])
+  @@unique([productId, code])
+  @@map("pub_campaigns")
+}
+
+/// Скользящее окно лимитов публичной формы (вне тенанта; пишет publisher_public).
+model PubRateHit {
+  id                       String @id @default(cuid())
+  key                      String /// <productId>:<scope>:<ipKeyHmac>
+  at                       DateTime @default(now()) @db.Timestamptz(3)
+  @@index([key, at])
+  @@index([at])
+  @@map("pub_rate_hits")
+}
+
+/// Источник (Source).
+model PubSource {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubSource_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  kind                     String
+  url                      String?
+  externalRef              String?
+  title                    String?
+  author                   String?
+  publishedOn              DateTime? @db.Timestamptz(3)
+  fragment                 String
+  language                 String?
+  usage                    String @default("restricted") /// allowed | restricted | revoked (необратимо)
+  visibility               String @default("private") /// public | private
+  checkedAt                DateTime? @db.Timestamptz(3)
+  freshness                String @default("unknown") /// current | stale | unknown
+  importedVia              String @default("manual") /// manual | url_import
+  contentHash              String
+  supersedesId             String?
+  injectionFlag            String?
+  isSynthetic              Boolean @default(false)
+  revokedAt                DateTime? @db.Timestamptz(3)
+  revokedBy                String?
+  revokeReason             String?
+  supersedes               PubSource? @relation("PubSource_supersedes", fields: [supersedesId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  sourceSupersedesOf       PubSource[] @relation("PubSource_supersedes")
+  sourceRevocationSourceOf PubSourceRevocation[] @relation("PubSourceRevocation_source")
+  questionFrequencySourceOf PubQuestion[] @relation("PubQuestion_frequencySource")
+  questionSourceSourceOf   PubQuestionSource[] @relation("PubQuestionSource_source")
+  brandFactSourceOf        PubBrandFact[] @relation("PubBrandFact_source")
+  briefSourceSourceOf      PubBriefSource[] @relation("PubBriefSource_source")
+  versionSourceSourceOf    PubVersionSource[] @relation("PubVersionSource_source")
+  claimSourceSourceOf      PubClaimSource[] @relation("PubClaimSource_source")
+  venueEvidenceSourceOf    PubVenueEvidence[] @relation("PubVenueEvidence_source")
+  @@unique([id, accountId])
+  @@index([productId, usage])
+  @@map("pub_sources")
+}
+
+/// Отзывы источников (AO).
+model PubSourceRevocation {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubSourceRevocation_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  sourceId                 String
+  revokedAt                DateTime @default(now()) @db.Timestamptz(3)
+  revokedBy                String
+  reason                   String
+  source                   PubSource @relation("PubSourceRevocation_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId])
+  @@map("pub_source_revocations")
+}
+
+/// Группа вопросов (F01).
+model PubQuestionGroup {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubQuestionGroup_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  key                      String
+  task                     String
+  stage                    String
+  audience                 String?
+  rationale                String
+  mergeRisk                String?
+  status                   String @default("proposed")
+  aiCallId                 String?
+  aiCall                   PubAiCall? @relation("PubQuestionGroup_aiCall", fields: [aiCallId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  questionGroupOf          PubQuestion[] @relation("PubQuestion_group")
+  @@unique([id, accountId])
+  @@unique([productId, key])
+  @@map("pub_question_groups")
+}
+
+/// Вопрос (Question, F01).
+model PubQuestion {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubQuestion_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  text                     String
+  audience                 String?
+  stage                    String
+  groupId                  String?
+  observedRepeats          Int? /// NULL = неизвестно
+  frequency                Int?
+  frequencySourceId        String?
+  scores                   Json
+  priorityNote             String?
+  status                   String @default("candidate")
+  selectedRank             Int?
+  group                    PubQuestionGroup? @relation("PubQuestion_group", fields: [groupId, accountId], references: [id, accountId], onDelete: Restrict)
+  frequencySource          PubSource? @relation("PubQuestion_frequencySource", fields: [frequencySourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  questionSourceQuestionOf PubQuestionSource[] @relation("PubQuestionSource_question")
+  briefQuestionOf          PubBrief[] @relation("PubBrief_question")
+  @@unique([id, accountId])
+  @@unique([productId, selectedRank])
+  @@index([productId, status])
+  @@map("pub_questions")
+}
+
+/// Связь вопроса с источником.
+model PubQuestionSource {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubQuestionSource_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  questionId               String
+  sourceId                 String
+  fragment                 String?
+  question                 PubQuestion @relation("PubQuestionSource_question", fields: [questionId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   PubSource @relation("PubQuestionSource_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([questionId, sourceId])
+  @@index([sourceId])
+  @@map("pub_question_sources")
+}
+
+/// Факт бренда (F02); «одна активная» — частичный индекс.
+model PubBrandFact {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubBrandFact_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  factKey                  String
+  kind                     String
+  value                    Json
+  scope                    String?
+  sourceId                 String?
+  version                  Int
+  status                   String @default("draft")
+  approvedBy               String?
+  approvedAt               DateTime? @db.Timestamptz(3)
+  conflictWithId           String?
+  source                   PubSource? @relation("PubBrandFact_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  conflictWith             PubBrandFact? @relation("PubBrandFact_conflictWith", fields: [conflictWithId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  brandFactConflictWithOf  PubBrandFact[] @relation("PubBrandFact_conflictWith")
+  offerFactFactOf          PubOfferFact[] @relation("PubOfferFact_fact")
+  versionFactFactOf        PubVersionFact[] @relation("PubVersionFact_fact")
+  @@unique([id, accountId])
+  @@unique([productId, factKey, version])
+  @@map("pub_brand_facts")
+}
+
+/// Версия оффера; «одна активная» — частичный индекс.
+model PubOfferVersion {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubOfferVersion_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  version                  Int
+  title                    String
+  text                     String
+  priceNote                String?
+  status                   String @default("draft")
+  approvedBy               String?
+  approvedAt               DateTime? @db.Timestamptz(3)
+  hash                     String
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  offerFactOfferVersionOf  PubOfferFact[] @relation("PubOfferFact_offerVersion")
+  briefOfferVersionOf      PubBrief[] @relation("PubBrief_offerVersion")
+  contentVersionOfferVersionOf PubContentVersion[] @relation("PubContentVersion_offerVersion")
+  @@unique([id, accountId])
+  @@unique([productId, version])
+  @@map("pub_offer_versions")
+}
+
+/// Связь версии оффера с фактами.
+model PubOfferFact {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubOfferFact_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  offerVersionId           String
+  factId                   String
+  offerVersion             PubOfferVersion @relation("PubOfferFact_offerVersion", fields: [offerVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  fact                     PubBrandFact @relation("PubOfferFact_fact", fields: [factId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([offerVersionId, factId])
+  @@index([factId])
+  @@map("pub_offer_facts")
+}
+
+/// Бриф (F03).
+model PubBrief {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubBrief_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  questionId               String
+  offerVersionId           String
+  goal                     String
+  format                   String
+  ownContribution          String?
+  shortAnswer              String?
+  cta                      String?
+  ctaIntentNote            String?
+  structure                Json
+  channels                 Json
+  readinessCriteria        Json
+  effortMinutes            Int?
+  unresolved               Json
+  status                   String @default("draft")
+  aiCallId                 String?
+  question                 PubQuestion @relation("PubBrief_question", fields: [questionId, accountId], references: [id, accountId], onDelete: Restrict)
+  offerVersion             PubOfferVersion @relation("PubBrief_offerVersion", fields: [offerVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  aiCall                   PubAiCall? @relation("PubBrief_aiCall", fields: [aiCallId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  briefSourceBriefOf       PubBriefSource[] @relation("PubBriefSource_brief")
+  contentBriefOf           PubContent[] @relation("PubContent_brief")
+  @@unique([id, accountId])
+  @@index([productId, status])
+  @@map("pub_briefs")
+}
+
+/// Связь брифа с источником.
+model PubBriefSource {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubBriefSource_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  briefId                  String
+  sourceId                 String
+  brief                    PubBrief @relation("PubBriefSource_brief", fields: [briefId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   PubSource @relation("PubBriefSource_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([briefId, sourceId])
+  @@index([sourceId])
+  @@map("pub_brief_sources")
+}
+
+/// Материал/адаптация — голова (машина 7.1).
+model PubContent {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubContent_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  kind                     String
+  parentContentId          String?
+  briefId                  String?
+  slug                     String?
+  status                   String @default("brief")
+  currentVersionId         String?
+  approvedVersionId        String?
+  publishedVersionId       String?
+  ownerMemberId            String?
+  ownerDisplayName         String?
+  nextDueAt                DateTime? @db.Timestamptz(3)
+  blockReason              String?
+  criticalStale            Boolean @default(false)
+  firstPublishedAt         DateTime? @db.Timestamptz(3)
+  parentContent            PubContent? @relation("PubContent_parentContent", fields: [parentContentId, accountId], references: [id, accountId], onDelete: Restrict)
+  brief                    PubBrief? @relation("PubContent_brief", fields: [briefId, accountId], references: [id, accountId], onDelete: Restrict)
+  currentVersion           PubContentVersion? @relation("PubContent_currentVersion", fields: [currentVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  approvedVersion          PubContentVersion? @relation("PubContent_approvedVersion", fields: [approvedVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  publishedVersion         PubContentVersion? @relation("PubContent_publishedVersion", fields: [publishedVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  contentParentContentOf   PubContent[] @relation("PubContent_parentContent")
+  contentVersionContentOf  PubContentVersion[] @relation("PubContentVersion_content")
+  timeEntryContentOf       PubTimeEntry[] @relation("PubTimeEntry_content")
+  leadContentOf            PubLead[] @relation("PubLead_content")
+  sessionLandingContentOf  PubSession[] @relation("PubSession_landingContent")
+  eventContentOf           PubEvent[] @relation("PubEvent_content")
+  experimentContentContentOf PubExperimentContent[] @relation("PubExperimentContent_content")
+  @@unique([id, accountId])
+  @@unique([productId, slug])
+  @@index([productId, status])
+  @@map("pub_contents")
+}
+
+/// Версия материала; после frozenAt содержимое неизменно.
+model PubContentVersion {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubContentVersion_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  contentId                String
+  number                   Int
+  title                    String
+  body                     String
+  meta                     Json
+  format                   String
+  parentVersionId          String?
+  offerVersionId           String
+  authorMemberId           String
+  aiCallId                 String?
+  status                   String @default("draft")
+  hash                     String?
+  frozenAt                 DateTime? @db.Timestamptz(3)
+  content                  PubContent @relation("PubContentVersion_content", fields: [contentId, accountId], references: [id, accountId], onDelete: Restrict)
+  parentVersion            PubContentVersion? @relation("PubContentVersion_parentVersion", fields: [parentVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  offerVersion             PubOfferVersion @relation("PubContentVersion_offerVersion", fields: [offerVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  aiCall                   PubAiCall? @relation("PubContentVersion_aiCall", fields: [aiCallId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  contentCurrentVersionOf  PubContent[] @relation("PubContent_currentVersion")
+  contentApprovedVersionOf PubContent[] @relation("PubContent_approvedVersion")
+  contentPublishedVersionOf PubContent[] @relation("PubContent_publishedVersion")
+  contentVersionParentVersionOf PubContentVersion[] @relation("PubContentVersion_parentVersion")
+  versionSourceVersionOf   PubVersionSource[] @relation("PubVersionSource_version")
+  versionClaimVersionOf    PubVersionClaim[] @relation("PubVersionClaim_version")
+  versionFactVersionOf     PubVersionFact[] @relation("PubVersionFact_version")
+  claimExtractedFromVersionOf PubClaim[] @relation("PubClaim_extractedFromVersion")
+  qaCheckVersionOf         PubQaCheck[] @relation("PubQaCheck_version")
+  distributionActionVersionOf PubDistributionAction[] @relation("PubDistributionAction_version")
+  publicationVersionOf     PubPublication[] @relation("PubPublication_version")
+  placementVersionOf       PubPlacement[] @relation("PubPlacement_version")
+  experimentBaselineVersionOf PubExperiment[] @relation("PubExperiment_baselineVersion")
+  experimentNewVersionOf   PubExperiment[] @relation("PubExperiment_newVersion")
+  @@unique([id, accountId])
+  @@unique([contentId, number])
+  @@map("pub_content_versions")
+}
+
+/// Источники версии (неизменны после frozenAt).
+model PubVersionSource {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubVersionSource_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionId                String
+  sourceId                 String
+  version                  PubContentVersion @relation("PubVersionSource_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   PubSource @relation("PubVersionSource_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([versionId, sourceId])
+  @@index([sourceId])
+  @@map("pub_version_sources")
+}
+
+/// Утверждения версии (неизменны после frozenAt).
+model PubVersionClaim {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubVersionClaim_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionId                String
+  claimId                  String
+  version                  PubContentVersion @relation("PubVersionClaim_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  claim                    PubClaim @relation("PubVersionClaim_claim", fields: [claimId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([versionId, claimId])
+  @@index([claimId])
+  @@map("pub_version_claims")
+}
+
+/// Факты бренда версии (аудит P2-13).
+model PubVersionFact {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubVersionFact_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionId                String
+  factId                   String
+  version                  PubContentVersion @relation("PubVersionFact_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  fact                     PubBrandFact @relation("PubVersionFact_fact", fields: [factId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([versionId, factId])
+  @@index([factId])
+  @@map("pub_version_facts")
+}
+
+/// Утверждение (Claim, F04).
+model PubClaim {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubClaim_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  statement                String
+  type                     String
+  risk                     String
+  status                   String @default("unverified")
+  extractedFromVersionId   String?
+  experimentId             String?
+  supersedesId             String?
+  verifiedBy               String?
+  verifiedAt               DateTime? @db.Timestamptz(3)
+  nextCheckAt              DateTime? @db.Timestamptz(3)
+  aiCallId                 String?
+  extractedFromVersion     PubContentVersion? @relation("PubClaim_extractedFromVersion", fields: [extractedFromVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  experiment               PubExperiment? @relation("PubClaim_experiment", fields: [experimentId, accountId], references: [id, accountId], onDelete: Restrict)
+  supersedes               PubClaim? @relation("PubClaim_supersedes", fields: [supersedesId, accountId], references: [id, accountId], onDelete: Restrict)
+  aiCall                   PubAiCall? @relation("PubClaim_aiCall", fields: [aiCallId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  versionClaimClaimOf      PubVersionClaim[] @relation("PubVersionClaim_claim")
+  claimSupersedesOf        PubClaim[] @relation("PubClaim_supersedes")
+  claimSourceClaimOf       PubClaimSource[] @relation("PubClaimSource_claim")
+  @@unique([id, accountId])
+  @@index([productId, status])
+  @@map("pub_claims")
+}
+
+/// Доказательство claim источником.
+model PubClaimSource {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubClaimSource_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  claimId                  String
+  sourceId                 String
+  supports                 String /// yes | no | partial | unknown
+  checkedBy                String?
+  checkedAt                DateTime? @db.Timestamptz(3)
+  note                     String?
+  claim                    PubClaim @relation("PubClaimSource_claim", fields: [claimId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   PubSource @relation("PubClaimSource_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([claimId, sourceId])
+  @@index([sourceId])
+  @@map("pub_claim_sources")
+}
+
+/// QA-проверка версии (AO).
+model PubQaCheck {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubQaCheck_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionId                String
+  kind                     String
+  result                   String
+  blockers                 Json
+  checkedBy                String
+  checkedAt                DateTime @default(now()) @db.Timestamptz(3)
+  selfReview               Boolean @default(false)
+  aiCallId                 String?
+  version                  PubContentVersion @relation("PubQaCheck_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  aiCall                   PubAiCall? @relation("PubQaCheck_aiCall", fields: [aiCallId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([versionId, kind])
+  @@map("pub_qa_checks")
+}
+
+/// Согласование (Approval): публикация, закупка, резерв, доп. генерация AI.
+model PubApproval {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubApproval_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  type                     String
+  objectType               String
+  objectId                 String
+  versionHash              String?
+  priceSnapshotHash        String?
+  maxAmountMinor           BigInt?
+  currency                 String?
+  approverMemberId         String
+  approverDisplayName      String
+  decidedAt                DateTime @default(now()) @db.Timestamptz(3)
+  expiresAt                DateTime? @db.Timestamptz(3)
+  status                   String @default("active")
+  selfReview               Boolean @default(false)
+  reason                   String?
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  publicationApprovalOf    PubPublication[] @relation("PubPublication_approval")
+  placementApprovalOf      PubPlacement[] @relation("PubPlacement_approval")
+  reserveMoveApprovalOf    PubReserveMove[] @relation("PubReserveMove_approval")
+  aiTaskExtraApprovalOf    PubAiTask[] @relation("PubAiTask_extraApproval")
+  @@unique([id, accountId])
+  @@index([productId, objectType, objectId])
+  @@index([status, expiresAt])
+  @@map("pub_approvals")
+}
+
+/// Канал распространения.
+model PubChannel {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubChannel_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  code                     String
+  name                     String
+  kind                     String
+  utmSource                String
+  utmMedium                String
+  adsAllowed               Boolean?
+  rulesNote                String?
+  status                   String @default("available")
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  distributionActionChannelOf PubDistributionAction[] @relation("PubDistributionAction_channel")
+  publicationChannelOf     PubPublication[] @relation("PubPublication_channel")
+  @@unique([id, accountId])
+  @@unique([productId, code])
+  @@map("pub_channels")
+}
+
+/// Действие плана распространения (F09).
+model PubDistributionAction {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubDistributionAction_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionId                String
+  channelId                String
+  format                   String
+  goal                     String
+  plannedAt                DateTime @db.Timestamptz(3)
+  ownerMemberId            String
+  ownerDisplayName         String
+  status                   String @default("planned")
+  blockReason              String?
+  measurableUrl            String
+  publicationId            String?
+  aiCallId                 String?
+  version                  PubContentVersion @relation("PubDistributionAction_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  channel                  PubChannel @relation("PubDistributionAction_channel", fields: [channelId, accountId], references: [id, accountId], onDelete: Restrict)
+  publication              PubPublication? @relation("PubDistributionAction_publication", fields: [publicationId, accountId], references: [id, accountId], onDelete: Restrict)
+  aiCall                   PubAiCall? @relation("PubDistributionAction_aiCall", fields: [aiCallId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@index([productId, status])
+  @@map("pub_distribution_actions")
+}
+
+/// Публикация версии в канале.
+model PubPublication {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubPublication_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  versionId                String
+  channelId                String
+  approvalId               String
+  stage                    String
+  finalUrl                 String
+  publishedAt              DateTime? @db.Timestamptz(3)
+  status                   String @default("pending")
+  verifyStatus             String @default("not_checked")
+  evidenceUrl              String?
+  lastVerifiedAt           DateTime? @db.Timestamptz(3)
+  verifiedBy               String?
+  verifyResult             String?
+  opKey                    String
+  version                  PubContentVersion @relation("PubPublication_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  channel                  PubChannel @relation("PubPublication_channel", fields: [channelId, accountId], references: [id, accountId], onDelete: Restrict)
+  approval                 PubApproval @relation("PubPublication_approval", fields: [approvalId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  distributionActionPublicationOf PubDistributionAction[] @relation("PubDistributionAction_publication")
+  @@unique([id, accountId])
+  @@unique([productId, opKey])
+  @@unique([channelId, finalUrl, versionId])
+  @@index([versionId])
+  @@index([productId, stage, status])
+  @@map("pub_publications")
+}
+
+/// Карточка площадки (F10).
+model PubVenue {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubVenue_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  name                     String
+  url                      String
+  topic                    String?
+  market                   String?
+  language                 String?
+  audienceNote             String?
+  formats                  Json
+  criteria                 Json
+  completeness             Int @default(0)
+  checkTopicMarket         Boolean @default(false)
+  checkPriceConfirmed      Boolean @default(false)
+  checkFormatConfirmed     Boolean @default(false)
+  checkTermSet             Boolean @default(false)
+  checkSupplierKnown       Boolean @default(false)
+  linkMarking              String @default("unknown")
+  riskNote                 String?
+  rejectReason             String?
+  status                   String @default("candidate")
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  venueEvidenceVenueOf     PubVenueEvidence[] @relation("PubVenueEvidence_venue")
+  placementVenueOf         PubPlacement[] @relation("PubPlacement_venue")
+  @@unique([id, accountId])
+  @@index([productId, status])
+  @@map("pub_venues")
+}
+
+/// Доказательства критериев площадки (аудит P2-27).
+model PubVenueEvidence {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubVenueEvidence_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  venueId                  String
+  criterion                String
+  sourceId                 String
+  checkedAt                DateTime @db.Timestamptz(3)
+  venue                    PubVenue @relation("PubVenueEvidence_venue", fields: [venueId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   PubSource @relation("PubVenueEvidence_source", fields: [sourceId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([venueId, criterion, sourceId])
+  @@index([sourceId])
+  @@map("pub_venue_evidence")
+}
+
+/// Закупка размещения (машина 7.2).
+model PubPlacement {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubPlacement_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  venueId                  String
+  versionId                String
+  campaignId               String
+  placementCode            String
+  issuedUrl                String?
+  purchaseSeq              Int
+  basePriceMinor           BigInt
+  feesMinor                BigInt
+  totalPriceMinor          BigInt
+  currency                 String
+  origCurrency             String?
+  origAmountMinor          BigInt?
+  fxRate                   Decimal? @db.Decimal(18, 8)
+  fxSource                 String?
+  fxAt                     DateTime? @db.Timestamptz(3)
+  priceConfirmedAt         DateTime? @db.Timestamptz(3)
+  priceSource              String?
+  offerExpiresAt           DateTime? @db.Timestamptz(3)
+  terms                    String?
+  externalOrderId          String?
+  status                   String @default("proposed")
+  paymentStatus            String @default("unpaid")
+  approvalId               String?
+  expenseId                String?
+  reportDecisionId         String?
+  publishDueAt             DateTime? @db.Timestamptz(3)
+  publishedAt              DateTime? @db.Timestamptz(3)
+  verifiedAt               DateTime? @db.Timestamptz(3)
+  claimStatus              String @default("none")
+  claimOwnerMemberId       String?
+  nextActionAt             DateTime? @db.Timestamptz(3)
+  observationOk            Boolean @default(false)
+  venue                    PubVenue @relation("PubPlacement_venue", fields: [venueId, accountId], references: [id, accountId], onDelete: Restrict)
+  version                  PubContentVersion @relation("PubPlacement_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
+  campaign                 PubCampaign @relation("PubPlacement_campaign", fields: [campaignId, accountId], references: [id, accountId], onDelete: Restrict)
+  approval                 PubApproval? @relation("PubPlacement_approval", fields: [approvalId, accountId], references: [id, accountId], onDelete: Restrict)
+  expense                  PubExpense? @relation("PubPlacement_expense", fields: [expenseId, accountId], references: [id, accountId], onDelete: Restrict)
+  reportDecision           PubReport? @relation("PubPlacement_reportDecision", fields: [reportDecisionId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  expensePlacementOf       PubExpense[] @relation("PubExpense_placement")
+  leadPlacementOf          PubLead[] @relation("PubLead_placement")
+  sessionPlacementOf       PubSession[] @relation("PubSession_placement")
+  eventPlacementOf         PubEvent[] @relation("PubEvent_placement")
+  @@unique([id, accountId])
+  @@unique([productId, placementCode])
+  @@unique([campaignId, purchaseSeq])
+  @@unique([venueId, externalOrderId])
+  @@index([productId, status])
+  @@map("pub_placements")
+}
+
+/// Лимит бюджета со счётчиками (владелец — P-C).
+model PubBudgetLimit {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubBudgetLimit_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  currency                 String
+  totalLimitMinor          BigInt @default(0)
+  placementsLimitMinor     BigInt @default(0)
+  toolsLimitMinor          BigInt @default(0)
+  protectedReserveMinor    BigInt @default(0)
+  perPurchaseMaxMinor      BigInt @default(0)
+  netPaidMinor             BigInt @default(0)
+  openCommitMinor          BigInt @default(0)
+  usedPlacementsMinor      BigInt @default(0)
+  usedToolsMinor           BigInt @default(0)
+  aiMonthMinor             BigInt @default(0)
+  warnRatioBp              Int @default(8000)
+  paramVersion             Int @default(0)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([productId])
+  @@map("pub_budget_limits")
+}
+
+/// Перевод защищённого резерва (AO).
+model PubReserveMove {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubReserveMove_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  toCategory               String
+  amountMinor              BigInt
+  approvalId               String
+  movedAt                  DateTime @default(now()) @db.Timestamptz(3)
+  approval                 PubApproval @relation("PubReserveMove_approval", fields: [approvalId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId])
+  @@map("pub_reserve_moves")
+}
+
+/// Обязательство (Expense).
+model PubExpense {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubExpense_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  category                 String
+  description              String
+  placementId              String?
+  amountTotalMinor         BigInt
+  paidMinor                BigInt @default(0)
+  refundedMinor            BigInt @default(0)
+  cancelledMinor           BigInt @default(0)
+  deliveredMinor           BigInt @default(0)
+  currency                 String
+  origCurrency             String?
+  origAmountMinor          BigInt?
+  fxRate                   Decimal? @db.Decimal(18, 8)
+  fxSource                 String?
+  fxAt                     DateTime? @db.Timestamptz(3)
+  sourceDocument           String?
+  reconcileRequired        Boolean @default(false)
+  status                   String @default("open")
+  placement                PubPlacement? @relation("PubExpense_placement", fields: [placementId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  placementExpenseOf       PubPlacement[] @relation("PubPlacement_expense")
+  expenseEntryExpenseOf    PubExpenseEntry[] @relation("PubExpenseEntry_expense")
+  aiBudgetMonthExpenseOf   PubAiBudgetMonth[] @relation("PubAiBudgetMonth_expense")
+  @@unique([id, accountId])
+  @@index([productId, category, status])
+  @@map("pub_expenses")
+}
+
+/// Движение по обязательству (AO, кроме сверки статуса).
+model PubExpenseEntry {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubExpenseEntry_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  expenseId                String
+  kind                     String
+  amountMinor              BigInt
+  status                   String
+  externalRef              String?
+  sourceDocument           String?
+  note                     String?
+  occurredAt               DateTime @db.Timestamptz(3)
+  confirmedAt              DateTime? @db.Timestamptz(3)
+  confirmedBy              String?
+  opKey                    String
+  expense                  PubExpense @relation("PubExpenseEntry_expense", fields: [expenseId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  @@unique([id, accountId])
+  @@unique([expenseId, kind, externalRef])
+  @@unique([expenseId, opKey])
+  @@index([productId, status])
+  @@map("pub_expense_entries")
+}
+
+/// Учёт времени (TimeEntry).
+model PubTimeEntry {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubTimeEntry_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  memberId                 String
+  memberDisplayName        String
+  role                     String
+  task                     String
+  featureId                String?
+  contentId                String?
+  minutes                  Int
+  rateMinorPerHour         BigInt?
+  rateParamVersion         Int?
+  workDate                 DateTime @db.Date /// дата в Europe/Kyiv
+  category                 String
+  isInvestment             Boolean
+  content                  PubContent? @relation("PubTimeEntry_content", fields: [contentId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@index([productId, workDate])
+  @@map("pub_time_entries")
+}
+
+/// Потенциальный клиент (prospect_id).
+model PubProspect {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubProspect_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  code                     String
+  isExternal               Boolean
+  isTeamOrPartner          Boolean
+  priorExternalPayment     String @default("unknown")
+  mergedIntoId             String?
+  noteEnc                  String?
+  mergedInto               PubProspect? @relation("PubProspect_mergedInto", fields: [mergedIntoId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  prospectMergedIntoOf     PubProspect[] @relation("PubProspect_mergedInto")
+  leadProspectLinkProspectOf PubLeadProspectLink[] @relation("PubLeadProspectLink_prospect")
+  leadProspectOf           PubLead[] @relation("PubLead_prospect")
+  paymentProspectOf        PubPayment[] @relation("PubPayment_prospect")
+  @@unique([id, accountId])
+  @@unique([productId, code])
+  @@map("pub_prospects")
+}
+
+/// История идентификации заявки (AO).
+model PubLeadProspectLink {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubLeadProspectLink_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  leadId                   String
+  prospectId               String
+  validFrom                DateTime @default(now()) @db.Timestamptz(3)
+  reason                   String
+  decidedBy                String
+  lead                     PubLead @relation("PubLeadProspectLink_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  prospect                 PubProspect @relation("PubLeadProspectLink_prospect", fields: [prospectId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([leadId, validFrom])
+  @@index([prospectId])
+  @@map("pub_lead_prospect_links")
+}
+
+/// Заявка без контакта (Lead).
+model PubLead {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubLead_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  submissionKey            String
+  requestHash              String
+  publicRef                String @unique
+  prospectId               String?
+  status                   String @default("new")
+  responsibleMemberId      String?
+  responsibleDisplayName   String?
+  testFlag                 Boolean
+  testReason               String?
+  suspectedSpam            Boolean @default(false)
+  duplicateOfLeadId        String?
+  contactMethod            String
+  budgetRange              String?
+  selfReportedChannel      String?
+  contentSlugRaw           String?
+  placementCodeRaw         String?
+  campaignId               String?
+  contentId                String?
+  placementId              String?
+  sessionRef               String?
+  consentState             String
+  attribution              Json?
+  enrichedAt               DateTime? @db.Timestamptz(3)
+  receivedAt               DateTime @default(now()) @db.Timestamptz(3)
+  contactDueAt             DateTime? @db.Timestamptz(3)
+  closedAt                 DateTime? @db.Timestamptz(3)
+  reviewDueAt              DateTime @db.Timestamptz(3)
+  retentionBasis           String?
+  erasedAt                 DateTime? @db.Timestamptz(3)
+  prospect                 PubProspect? @relation("PubLead_prospect", fields: [prospectId, accountId], references: [id, accountId], onDelete: Restrict)
+  duplicateOf              PubLead? @relation("PubLead_duplicateOf", fields: [duplicateOfLeadId, accountId], references: [id, accountId], onDelete: Restrict)
+  campaign                 PubCampaign? @relation("PubLead_campaign", fields: [campaignId, accountId], references: [id, accountId], onDelete: Restrict)
+  content                  PubContent? @relation("PubLead_content", fields: [contentId, accountId], references: [id, accountId], onDelete: Restrict)
+  placement                PubPlacement? @relation("PubLead_placement", fields: [placementId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String @default("public") /// публичный приём пишет без колонки (DEFAULT), Р-PUB-A0-21
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  leadProspectLinkLeadOf   PubLeadProspectLink[] @relation("PubLeadProspectLink_lead")
+  leadDuplicateOfOf        PubLead[] @relation("PubLead_duplicateOf")
+  leadContactLeadOf        PubLeadContact[] @relation("PubLeadContact_lead")
+  leadDecisionLeadOf       PubLeadDecision[] @relation("PubLeadDecision_lead")
+  erasureLeadOf            PubErasure[] @relation("PubErasure_lead")
+  paymentLeadOf            PubPayment[] @relation("PubPayment_lead")
+  eventLeadOf              PubEvent[] @relation("PubEvent_lead")
+  leadOutboxLeadOf         PubLeadOutbox[] @relation("PubLeadOutbox_lead")
+  notificationLeadOf       PubNotification[] @relation("PubNotification_lead")
+  @@unique([id, accountId])
+  @@unique([productId, submissionKey])
+  @@index([productId, status, receivedAt])
+  @@index([reviewDueAt])
+  @@map("pub_leads")
+}
+
+/// Защищённый контур контакта (шифр AES-256-GCM).
+model PubLeadContact {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubLeadContact_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  leadId                   String @unique
+  contactEnc               String
+  matchHash                String?
+  keyVersion               String
+  lead                     PubLead @relation("PubLeadContact_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String @default("public") /// публичный приём пишет без колонки (DEFAULT), Р-PUB-A0-21
+  @@unique([id, accountId])
+  @@index([productId, matchHash])
+  @@map("pub_lead_contacts")
+}
+
+/// Решения по статусу заявки (AO).
+model PubLeadDecision {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubLeadDecision_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  leadId                   String
+  fromStatus               String
+  toStatus                 String
+  reasonCode               String?
+  noteEnc                  String?
+  confirmedInterestAt      DateTime? @db.Timestamptz(3)
+  decidedBy                String
+  decidedAt                DateTime @default(now()) @db.Timestamptz(3)
+  supersedesId             String?
+  lead                     PubLead @relation("PubLeadDecision_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  supersedes               PubLeadDecision? @relation("PubLeadDecision_supersedes", fields: [supersedesId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  leadDecisionSupersedesOf PubLeadDecision[] @relation("PubLeadDecision_supersedes")
+  @@unique([id, accountId])
+  @@index([leadId, decidedAt])
+  @@map("pub_lead_decisions")
+}
+
+/// Обезличенная запись удаления контакта (AO).
+model PubErasure {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubErasure_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  leadId                   String
+  erasedAt                 DateTime @default(now()) @db.Timestamptz(3)
+  erasedBy                 String
+  basis                    String
+  scope                    Json
+  lead                     PubLead @relation("PubErasure_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId])
+  @@map("pub_erasures")
+}
+
+/// Оплата клиента (Payment).
+model PubPayment {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubPayment_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  prospectId               String
+  leadId                   String?
+  recordType               String
+  payerKind                String
+  amountMinor              BigInt
+  currency                 String
+  occurredAt               DateTime @db.Timestamptz(3)
+  paymentRef               String
+  confirmation             String?
+  status                   String @default("pending")
+  confirmedBy              String?
+  confirmedAt              DateTime? @db.Timestamptz(3)
+  isNewCustomer            String @default("unknown")
+  opKey                    String
+  prospect                 PubProspect @relation("PubPayment_prospect", fields: [prospectId, accountId], references: [id, accountId], onDelete: Restrict)
+  lead                     PubLead? @relation("PubPayment_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([productId, paymentRef])
+  @@unique([productId, opKey])
+  @@index([prospectId])
+  @@map("pub_payments")
+}
+
+/// Сессия посетителя (при analytics_storage=session).
+model PubSession {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubSession_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  sessionRef               String
+  startedAt                DateTime @default(now()) @db.Timestamptz(3)
+  landingPath              String
+  contentSlugRaw           String?
+  placementCodeRaw         String?
+  utm                      Json
+  consentState             String
+  testFlag                 Boolean
+  landingContentId         String?
+  placementId              String?
+  channelGroup             String?
+  enrichedAt               DateTime? @db.Timestamptz(3)
+  landingContent           PubContent? @relation("PubSession_landingContent", fields: [landingContentId, accountId], references: [id, accountId], onDelete: Restrict)
+  placement                PubPlacement? @relation("PubSession_placement", fields: [placementId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String @default("public") /// публичный приём пишет без колонки (DEFAULT), Р-PUB-A0-21
+  @@unique([id, accountId])
+  @@unique([productId, sessionRef])
+  @@index([productId, startedAt])
+  @@map("pub_sessions")
+}
+
+/// Событие (content_view | cta_click | lead_submit_success).
+model PubEvent {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubEvent_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  eventId                  String
+  name                     String
+  occurredAt               DateTime @default(now()) @db.Timestamptz(3)
+  clientAt                 DateTime? @db.Timestamptz(3)
+  contentSlugRaw           String?
+  placementCodeRaw         String?
+  referrerHost             String?
+  contentId                String?
+  placementId              String?
+  channelGroup             String?
+  sessionRef               String?
+  utm                      Json?
+  utmRedacted              Boolean @default(false) /// значение UTM похоже на контакт → [redacted] (11.4)
+  leadId                   String?
+  testFlag                 Boolean
+  enrichedAt               DateTime? @db.Timestamptz(3)
+  updatedAt                DateTime? @db.Timestamptz(3)
+  content                  PubContent? @relation("PubEvent_content", fields: [contentId, accountId], references: [id, accountId], onDelete: Restrict)
+  placement                PubPlacement? @relation("PubEvent_placement", fields: [placementId, accountId], references: [id, accountId], onDelete: Restrict)
+  lead                     PubLead? @relation("PubEvent_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String @default("public") /// публичный приём пишет без колонки (DEFAULT), Р-PUB-A0-21
+  @@unique([id, accountId])
+  @@unique([productId, eventId])
+  @@index([productId, occurredAt])
+  @@index([productId, sessionRef])
+  @@map("pub_events")
+}
+
+/// Исходящая очередь приёма заявки (аудит P1-2).
+model PubLeadOutbox {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubLeadOutbox_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  leadId                   String
+  kind                     String @default("lead_received")
+  status                   String @default("pending")
+  attempts                 Int @default(0)
+  leaseUntil               DateTime? @db.Timestamptz(3)
+  lastErrorCode            String?
+  lead                     PubLead @relation("PubLeadOutbox_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String @default("public") /// публичный приём пишет без колонки (DEFAULT), Р-PUB-A0-21
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  @@unique([id, accountId])
+  @@unique([leadId, kind])
+  @@index([status, leaseUntil])
+  @@map("pub_lead_outbox")
+}
+
+/// Уведомление менеджеру (без контактов).
+model PubNotification {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubNotification_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  leadId                   String
+  kind                     String
+  recipientMemberId        String
+  status                   String @default("pending")
+  attempts                 Int @default(0)
+  leaseUntil               DateTime? @db.Timestamptz(3)
+  nextAttemptAt            DateTime @default(now()) @db.Timestamptz(3)
+  lastErrorCode            String?
+  sentAt                   DateTime? @db.Timestamptz(3)
+  lead                     PubLead @relation("PubNotification_lead", fields: [leadId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  @@unique([id, accountId])
+  @@unique([leadId, kind, recipientMemberId])
+  @@index([status, nextAttemptAt])
+  @@map("pub_notifications")
+}
+
+/// Отметка «очередь заявок проверена» (AO).
+model PubQueueCheck {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubQueueCheck_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  checkedBy                String
+  checkedAt                DateTime @default(now()) @db.Timestamptz(3)
+  workDate                 DateTime @db.Date
+  openCount                Int
+  overdueCount             Int
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([productId, workDate, checkedBy])
+  @@map("pub_queue_checks")
+}
+
+/// Ручной импорт внешних метрик (AO).
+model PubMetricImport {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubMetricImport_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  source                   String
+  periodStart              DateTime @db.Timestamptz(3)
+  periodEnd                DateTime @db.Timestamptz(3)
+  granularity              String @default("kyiv_day")
+  payload                  Json
+  importedBy               String
+  importedAt               DateTime @default(now()) @db.Timestamptz(3)
+  fileRef                  String?
+  note                     String?
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId, source, periodStart])
+  @@map("pub_metric_imports")
+}
+
+/// Эксперимент (F17), версионный; существенные поля неизменны.
+model PubExperiment {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubExperiment_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  key                      String
+  version                  Int
+  kind                     String
+  hypothesis               String
+  change                   String
+  metric                   String
+  expectedSignal           String
+  stopConditions           String
+  baselineVersionId        String?
+  newVersionId             String?
+  windowStart              DateTime @db.Timestamptz(3)
+  windowEnd                DateTime @db.Timestamptz(3)
+  limitMinor               BigInt?
+  thresholds               Json
+  t0Planned                DateTime? @db.Timestamptz(3)
+  t0                       DateTime? @db.Timestamptz(3)
+  t42                      DateTime? @db.Timestamptz(3)
+  t72                      DateTime? @db.Timestamptz(3)
+  t90                      DateTime? @db.Timestamptz(3)
+  lateCohortEnd            DateTime? @db.Timestamptz(3)
+  registeredAt             DateTime @default(now()) @db.Timestamptz(3)
+  appliedAt                DateTime? @db.Timestamptz(3)
+  status                   String @default("registered")
+  conclusion               String?
+  conclusionReason         String?
+  decision                 String?
+  decidedBy                String?
+  decidedAt                DateTime? @db.Timestamptz(3)
+  supersedesId             String?
+  baselineVersion          PubContentVersion? @relation("PubExperiment_baselineVersion", fields: [baselineVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  newVersion               PubContentVersion? @relation("PubExperiment_newVersion", fields: [newVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  supersedes               PubExperiment? @relation("PubExperiment_supersedes", fields: [supersedesId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  campaignExperimentOf     PubCampaign[] @relation("PubCampaign_experiment")
+  claimExperimentOf        PubClaim[] @relation("PubClaim_experiment")
+  experimentSupersedesOf   PubExperiment[] @relation("PubExperiment_supersedes")
+  experimentContentExperimentOf PubExperimentContent[] @relation("PubExperimentContent_experiment")
+  reportExperimentOf       PubReport[] @relation("PubReport_experiment")
+  @@unique([id, accountId])
+  @@unique([productId, key, version])
+  @@map("pub_experiments")
+}
+
+/// Материалы эксперимента (аудит P2-27).
+model PubExperimentContent {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubExperimentContent_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  experimentId             String
+  contentId                String
+  experiment               PubExperiment @relation("PubExperimentContent_experiment", fields: [experimentId, accountId], references: [id, accountId], onDelete: Restrict)
+  content                  PubContent @relation("PubExperimentContent_content", fields: [contentId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@unique([experimentId, contentId])
+  @@index([contentId])
+  @@map("pub_experiment_contents")
+}
+
+/// Отчёт-снимок (AO, неизменяем целиком).
+model PubReport {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubReport_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  kind                     String
+  periodStart              DateTime @db.Timestamptz(3)
+  periodEnd                DateTime @db.Timestamptz(3)
+  snapshotAt               DateTime @db.Timestamptz(3)
+  experimentId             String?
+  cohort                   Json
+  attributionModel         String
+  sources                  Json
+  metrics                  Json
+  costs                    Json
+  assumptions              String?
+  decision                 String?
+  inputsHash               String
+  supersedesReportId       String?
+  recomputeReason          String?
+  experiment               PubExperiment? @relation("PubReport_experiment", fields: [experimentId, accountId], references: [id, accountId], onDelete: Restrict)
+  supersedesReport         PubReport? @relation("PubReport_supersedesReport", fields: [supersedesReportId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  placementReportDecisionOf PubPlacement[] @relation("PubPlacement_reportDecision")
+  reportSupersedesReportOf PubReport[] @relation("PubReport_supersedesReport")
+  @@unique([id, accountId])
+  @@index([productId, kind, snapshotAt])
+  @@map("pub_reports")
+}
+
+/// Зашифрованная резервная копия продукта.
+model PubBackup {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubBackup_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  kind                     String
+  blobPathEnc              String
+  sha256                   String
+  sizeBytes                BigInt
+  tableCounts              Json
+  keyVersion               String
+  rotationUntil            DateTime @db.Timestamptz(3)
+  status                   String
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  productRestoredFromBackupOf PubProduct[] @relation("PubProduct_restoredFromBackup")
+  restoreBackupOf          PubRestore[] @relation("PubRestore_backup")
+  @@unique([id, accountId])
+  @@index([productId, createdAt])
+  @@index([rotationUntil])
+  @@map("pub_backups")
+}
+
+/// Восстановление из копии (dry-run / в новый продукт).
+model PubRestore {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRestore_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  backupId                 String
+  mode                     String
+  targetProductId          String?
+  status                   String @default("running")
+  report                   Json
+  startedBy                String
+  backup                   PubBackup @relation("PubRestore_backup", fields: [backupId, accountId], references: [id, accountId], onDelete: Restrict)
+  targetProduct            PubProduct? @relation("PubRestore_targetProduct", fields: [targetProductId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  @@unique([id, accountId])
+  @@index([productId])
+  @@map("pub_restores")
+}
+
+/// Оцениваемая конфигурация AI (в eval-продукте).
+model PubAiConfig {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiConfig_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  provider                 String
+  model                    String
+  contextRulesVersion      String
+  schemaSetVersion         String
+  instructionVersions      Json
+  configHash               String
+  coveredGenerators        Json
+  evalSetVersion           String @default("2.2")
+  evalStatus               String @default("not_run")
+  evalRunId                String?
+  decidedBy                String?
+  decidedAt                DateTime? @db.Timestamptz(3)
+  basis                    String?
+  evalRun                  PubAiEvalRun? @relation("PubAiConfig_evalRun", fields: [evalRunId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  aiConfigBindingConfigOf  PubAiConfigBinding[] @relation("PubAiConfigBinding_config")
+  aiCallConfigOf           PubAiCall[] @relation("PubAiCall_config")
+  aiEvalRunConfigOf        PubAiEvalRun[] @relation("PubAiEvalRun_config")
+  @@unique([id, accountId])
+  @@unique([productId, configHash])
+  @@map("pub_ai_configs")
+}
+
+/// Привязка рабочего продукта к конфигурации (журнал).
+model PubAiConfigBinding {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiConfigBinding_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  configId                 String
+  boundBy                  String
+  boundAt                  DateTime @default(now()) @db.Timestamptz(3)
+  basis                    String
+  unboundAt                DateTime? @db.Timestamptz(3)
+  unboundBy                String?
+  config                   PubAiConfig @relation("PubAiConfigBinding_config", fields: [configId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  @@unique([id, accountId])
+  @@index([productId])
+  @@map("pub_ai_config_bindings")
+}
+
+/// AI-задача: лимит генераций на объект.
+model PubAiTask {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiTask_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  generator                String
+  objectType               String
+  objectId                 String
+  generationsUsed          Int @default(0)
+  extraAllowance           Int @default(0)
+  extraApprovalId          String?
+  status                   String @default("open")
+  extraApproval            PubApproval? @relation("PubAiTask_extraApproval", fields: [extraApprovalId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  aiCallTaskOf             PubAiCall[] @relation("PubAiCall_task")
+  @@unique([id, accountId])
+  @@unique([productId, generator, objectType, objectId])
+  @@map("pub_ai_tasks")
+}
+
+/// Потолок AI месяца (Р-PUB-9).
+model PubAiBudgetMonth {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiBudgetMonth_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  month                    String /// YYYY-MM по Kyiv
+  capMicroUsd              BigInt
+  reservedMicroUsd         BigInt @default(0)
+  spentMicroUsd            BigInt @default(0)
+  expenseId                String?
+  expense                  PubExpense? @relation("PubAiBudgetMonth_expense", fields: [expenseId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  @@unique([id, accountId])
+  @@unique([productId, month])
+  @@map("pub_ai_budget_months")
+}
+
+/// Вызов AI (AICall), AO кроме полей завершения.
+model PubAiCall {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiCall_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  taskId                   String
+  attemptNo                Int
+  generator                String
+  purpose                  String
+  configId                 String?
+  instructionVersion       String
+  contextRulesVersion      String
+  sourceIds                Json
+  provider                 String
+  model                    String
+  opKey                    String
+  requestedAt              DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt               DateTime? @db.Timestamptz(3)
+  status                   String @default("running")
+  inputTokens              Int?
+  cachedInputTokens        Int?
+  outputTokens             Int?
+  costMicroUsd             BigInt?
+  costStatus               String @default("unknown")
+  output                   Json?
+  rawExcerpt               String?
+  errorCode                String?
+  requestedBy              String
+  task                     PubAiTask @relation("PubAiCall_task", fields: [taskId, accountId], references: [id, accountId], onDelete: Restrict)
+  config                   PubAiConfig? @relation("PubAiCall_config", fields: [configId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  questionGroupAiCallOf    PubQuestionGroup[] @relation("PubQuestionGroup_aiCall")
+  briefAiCallOf            PubBrief[] @relation("PubBrief_aiCall")
+  contentVersionAiCallOf   PubContentVersion[] @relation("PubContentVersion_aiCall")
+  claimAiCallOf            PubClaim[] @relation("PubClaim_aiCall")
+  qaCheckAiCallOf          PubQaCheck[] @relation("PubQaCheck_aiCall")
+  distributionActionAiCallOf PubDistributionAction[] @relation("PubDistributionAction_aiCall")
+  @@unique([id, accountId])
+  @@unique([taskId, attemptNo])
+  @@unique([productId, opKey])
+  @@index([status, requestedAt])
+  @@map("pub_ai_calls")
+}
+
+/// Прогон набора 30 задач.
+model PubAiEvalRun {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiEvalRun_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  configId                 String
+  mode                     String
+  startedAt                DateTime @default(now()) @db.Timestamptz(3)
+  finishedAt               DateTime? @db.Timestamptz(3)
+  totals                   Json?
+  config                   PubAiConfig @relation("PubAiEvalRun_config", fields: [configId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  aiConfigEvalRunOf        PubAiConfig[] @relation("PubAiConfig_evalRun")
+  aiEvalResultRunOf        PubAiEvalResult[] @relation("PubAiEvalResult_run")
+  @@unique([id, accountId])
+  @@index([configId])
+  @@map("pub_ai_eval_runs")
+}
+
+/// Результат задачи набора; первый ответ и флаги неизменны.
+model PubAiEvalResult {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubAiEvalResult_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  runId                    String
+  taskCode                 String
+  schema                   String
+  input                    Json
+  allowedSourceIds         Json
+  firstAnswer              Json?
+  firstAnswerRaw           String?
+  claimSources             Json?
+  autoHardFail             Json
+  autoFlags                Json
+  flagResolutions          Json
+  criticalPass             Boolean?
+  usefulnessPass           Boolean?
+  explanation              String?
+  reviewerMemberId         String?
+  secondReviewerMemberId   String?
+  costMicroUsd             BigInt?
+  costStatus               String @default("unknown")
+  retryOfResultId          String?
+  run                      PubAiEvalRun @relation("PubAiEvalResult_run", fields: [runId, accountId], references: [id, accountId], onDelete: Restrict)
+  retryOf                  PubAiEvalResult? @relation("PubAiEvalResult_retryOf", fields: [retryOfResultId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  aiEvalResultRetryOfOf    PubAiEvalResult[] @relation("PubAiEvalResult_retryOf")
+  @@unique([id, accountId])
+  @@index([runId, taskCode])
+  @@map("pub_ai_eval_results")
 }

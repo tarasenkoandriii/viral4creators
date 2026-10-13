@@ -22,6 +22,7 @@ import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
 import { QaCiService } from './qa-ci.service';
 import { QaRunService } from './qa-run.service';
 import { QaFindingService } from './qa-finding.service';
+import { QA_RUN_EVIDENCE_TOKEN, QaRunEvidenceReader } from './qa-run-evidence';
 import { QA_READ, QA_WRITE, QaCatalogService } from './qa-catalog.service';
 @Controller('qa/sites')
 @AllowApps('qa', 'assist')
@@ -206,6 +207,13 @@ export class QaCiController {
 @Module({
   imports: [SiteCoreModule],
   controllers: [QaCatalogController, QaCiController, QaFindingsController],
-  providers: [QaCatalogService, QaRunService, QaCiService, QaFindingService],
+  providers: [
+    QaCatalogService,
+    QaRunService,
+    QaCiService,
+    QaFindingService,
+    // Сводка прогона для гейтов запуска AI Publisher (Р-PUB-Z2-27).
+    { provide: QA_RUN_EVIDENCE_TOKEN, useClass: QaRunEvidenceReader },
+  ],
 })
 export class QaCatalogModule {}

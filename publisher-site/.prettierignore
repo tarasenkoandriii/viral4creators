@@ -1,0 +1,7 @@
+.next/
+node_modules/
+.lighthouseci/
+package-lock.json
+next-env.d.ts
+# Копия контракта sites-backend (scripts/sync-shared.mjs): форматирует источник.
+src/shared/

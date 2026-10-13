@@ -254,7 +254,7 @@ separate limits document in [doc/API-LIMITS.md](doc/API-LIMITS.md);
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 10262
+a hand-written migration drifting from the schema, types, lint, 10269
 tests with per-file coverage thresholds), frontend (types, lint, 89 unit
 scripts, build), admin, landing and marketplace
 (types + lint + build), `npm audit --audit-level=high --omit=dev` in every
@@ -273,6 +273,8 @@ All supplementary documentation lives in [`doc/`](doc/):
 - Investor report v3.15 (12 October 2026): [standalone Markdown](doc/reports/investor-report-2026-10-12-v3.15.md) and [PDF](doc/reports/investor-report-2026-10-12-v3.15.pdf).
 
 - [`doc/ai-publisher/README.md`](doc/ai-publisher/README.md) — target product **AI Publisher / ai-publisher.org**, audited v2.2 specification, acceptance and staged integration roadmap; target requirements, not completed pilot results.
+- [`doc/ai-publisher/IMPLEMENTATION-DESIGN.md`](doc/ai-publisher/IMPLEMENTATION-DESIGN.md) — implementation design of the Publisher module (`sites-backend/src/modules/publisher`, `publisher-site/`, assist screens): AT → test trace (§18.1), integration decisions Р-PUB-Z*; end-to-end E2E-01…05 against the real backend — `scripts/publisher-e2e.sh [--site]`, CI job `publisher-stand` (§25–§26).
+- [`doc/ai-publisher/preaudit-2026-10/`](doc/ai-publisher/preaudit-2026-10/README.md) — internal pre-audit package (stages A–D of the external audit plan v1.1): registries, traceability, AT/E2E protocols, security and AI reports, defect register, owner decisions, hand-over for the external auditor. Internal, not independent; does not replace the external verdict.
 
 - [`doc/CI.md`](doc/CI.md) — what the pipeline checks and why those
   particular things.

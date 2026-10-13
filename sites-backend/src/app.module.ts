@@ -46,6 +46,7 @@ import { AssistAdminAnalyticsModule } from './modules/assist-admin-analytics/ass
 import { AssistSiteKnowledgeApiModule } from './modules/assist-site-knowledge-api/assist-site-knowledge-api.module';
 import { BrowserJobsModule } from './modules/browser-jobs/browser-jobs.module';
 import { InternalWorkerModule } from './modules/internal-worker/internal-worker.module';
+import { PublisherModule } from './modules/publisher/publisher.module';
 
 @Module({
   imports: [
@@ -124,6 +125,10 @@ import { InternalWorkerModule } from './modules/internal-worker/internal-worker.
     // самого воркера (`/internal/worker/v1/*`, HMAC, лист графа).
     BrowserJobsModule,
     InternalWorkerModule,
+    // AI Publisher (P-A0, doc/ai-publisher/IMPLEMENTATION-DESIGN.md §2):
+    // модуль `publisher` — лист графа, таблицы pub_*, публичные маршруты под
+    // ролью publisher_public.
+    PublisherModule,
   ],
 })
 export class AppModule {}

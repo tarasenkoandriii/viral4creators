@@ -4,7 +4,11 @@
  *  - роль кабинета: `owner | manager | operator`;
  *  - `productRoles`: `qa: admin|viewer|none`, `assist: manager|operator|none`,
  *    `assistAdmin: owner|employee|none` — ОТДЕЛЬНОЕ право на «Админку»
- *    (К-9): `assist` к данным «Админки» не даёт ничего.
+ *    (К-9): `assist` к данным «Админки» не даёт ничего;
+ *  - `publisher: admin|member|none` — допуск к AI Publisher (проектный
+ *    документ §4.1, P-A0): `admin` — администратор ТЗ (роли продукта,
+ *    режим, бэкап), `member` — участник, чьи роли в продукте задают гранты
+ *    `pub_role_grants`. Права `assist`/`qa` к Publisher не дают ничего.
  *
  * Умолчание для всех, кроме владельца кабинета, — `none`. Разбор строгий:
  * неизвестное значение в JSON базы — `none`, а не «что-то похожее».
@@ -17,11 +21,25 @@ export const PRODUCT_ROLE_VALUES = {
   qa: ['admin', 'viewer', 'none'],
   assist: ['manager', 'operator', 'none'],
   assistAdmin: ['owner', 'employee', 'none'],
+  publisher: ['admin', 'member', 'none'],
 } as const;
 
 export type ProductKey = keyof typeof PRODUCT_ROLE_VALUES;
+/**
+ * Ключи, добавленные после того, как по проекту разошлись сотни литералов
+ * `productRoles` (фикстуры, сид QA): в ТИПЕ они необязательны, разбор
+ * (`parseProductRoles`) заполняет их всегда, а отсутствие значит `none`
+ * (`satisfiesProductRoles`). Р-PUB-A0-3: AI Publisher не правит чужие
+ * фикстуры ради одного ключа.
+ */
+type LateProductKey = 'publisher';
+const LATE_PRODUCT_KEYS: readonly ProductKey[] = ['publisher'];
 export type ProductRoles = {
-  [K in ProductKey]: (typeof PRODUCT_ROLE_VALUES)[K][number];
+  [
+    K in Exclude<ProductKey, LateProductKey>
+  ]: (typeof PRODUCT_ROLE_VALUES)[K][number];
+} & {
+  [K in LateProductKey]?: (typeof PRODUCT_ROLE_VALUES)[K][number];
 };
 
 export const NO_PRODUCT_ROLES: ProductRoles = {
@@ -35,6 +53,7 @@ export const OWNER_PRODUCT_ROLES: ProductRoles = {
   qa: 'admin',
   assist: 'manager',
   assistAdmin: 'owner',
+  publisher: 'admin',
 };
 
 export function parseAccountRole(v: unknown): AccountRole | null {
@@ -49,11 +68,16 @@ export function parseProductRoles(v: unknown): ProductRoles {
     v !== null && typeof v === 'object' && !Array.isArray(v)
       ? (v as Record<string, unknown>)
       : {};
-  const out = { ...NO_PRODUCT_ROLES } as Record<ProductKey, string>;
+  const out = { ...NO_PRODUCT_ROLES } as Record<string, string>;
   for (const key of Object.keys(PRODUCT_ROLE_VALUES) as ProductKey[]) {
     const allowed = PRODUCT_ROLE_VALUES[key] as readonly string[];
     if (typeof o[key] === 'string' && allowed.includes(o[key] as string)) {
       out[key] = o[key] as string;
+    }
+    // Поздний ключ со значением `none` не пишется вовсе: «нет ключа» и есть
+    // `none`, а прежние строки и ответы API не меняют форму.
+    if (LATE_PRODUCT_KEYS.includes(key) && out[key] === 'none') {
+      delete out[key];
     }
   }
   return out as ProductRoles;
@@ -89,7 +113,7 @@ export interface AccountMembership {
 
 /** Требование маршрута к правам по продукту: `{ assistAdmin: ['owner'] }`. */
 export type ProductRoleRequirement = {
-  [K in ProductKey]?: ReadonlyArray<ProductRoles[K]>;
+  [K in ProductKey]?: ReadonlyArray<NonNullable<ProductRoles[K]>>;
 };
 
 /**
@@ -104,7 +128,7 @@ export function satisfiesProductRoles(
   if (m.role === 'owner') return true;
   return (Object.keys(req) as ProductKey[]).every((key) => {
     const allowed = req[key] as readonly string[] | undefined;
-    return !!allowed && allowed.includes(m.productRoles[key]);
+    return !!allowed && allowed.includes(m.productRoles[key] ?? 'none');
   });
 }
 
@@ -127,4 +151,17 @@ export const REQUIRE_ASSIST_MANAGER: ProductRoleRequirement = {
 };
 export const REQUIRE_ASSIST_ANY: ProductRoleRequirement = {
   assist: ['manager', 'operator'],
+};
+
+/**
+ * AI Publisher (§4.1): маршруты продукта — любой допущенный участник;
+ * роли, режим, бэкап, восстановление — только `publisher=admin`. Что
+ * участнику можно в самом продукте, решает `PubRoleGuard` (P-A1) по
+ * `pub_role_grants`.
+ */
+export const REQUIRE_PUBLISHER_ANY: ProductRoleRequirement = {
+  publisher: ['admin', 'member'],
+};
+export const REQUIRE_PUBLISHER_ADMIN: ProductRoleRequirement = {
+  publisher: ['admin'],
 };

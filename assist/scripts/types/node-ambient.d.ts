@@ -34,10 +34,28 @@ declare module 'node:fs' {
   export function readFileSync(path: string | URL, encoding: 'utf8'): string;
   export function existsSync(path: string | URL): boolean;
   export function readdirSync(path: string | URL): string[];
+  // Z-2b: драйвер сквозных маршрутов `publisher-e2e.ts` пишет итог в файл.
+  export function writeFileSync(path: string | URL, data: string): void;
+}
+
+// Z-2b: `publisher-e2e.ts` — подпись initData стенда и `pg` из зависимостей
+// sites-backend (синтетическое время стенда).
+declare module 'node:crypto' {
+  interface Hmac {
+    update(data: string | Uint8Array): Hmac;
+    digest(): Uint8Array;
+    digest(encoding: 'hex'): string;
+  }
+  export function createHmac(alg: string, key: string | Uint8Array): Hmac;
+  export function randomUUID(): string;
+}
+declare module 'node:module' {
+  export function createRequire(from: string | URL): (id: string) => unknown;
 }
 
 declare const process: {
   exit(code?: number): never;
+  exitCode?: number;
   argv: string[];
   env: Record<string, string | undefined>;
 };

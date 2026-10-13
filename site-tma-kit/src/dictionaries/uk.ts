@@ -227,6 +227,15 @@ export const uk: Dictionary = {
     removed: 'Учасника видалено з кабінету.',
     left: 'Ви вийшли з кабінету.',
     roleSaved: 'Роль змінено.',
+    publisher: {
+      label: 'Publisher',
+      roles: {
+        none: 'Немає доступу',
+        member: 'Учасник (ролі — всередині Publisher)',
+        admin: 'Адміністратор',
+      },
+      saved: 'Доступ до Publisher змінено.',
+    },
     errors: {
       MEMBER_NOT_FOUND: 'Учасника не знайдено — можливо, його вже видалили.',
       MEMBER_LAST_OWNER:

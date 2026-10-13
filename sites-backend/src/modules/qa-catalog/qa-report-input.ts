@@ -116,15 +116,17 @@ export function parseQaReport(input: unknown) {
         : typeof v === 'string' && /^[a-f0-9]{40}$/i.test(v)
           ? v.toLowerCase()
           : invalid();
+  // Источник отчёта: Playwright (e2e) или jest (приёмка AI Publisher,
+  // `publisher/reports/qa/at-report.ts`; интеграция Z-1, Р-PUB-Z1-5).
   if (
-    rawMeta.source !== 'playwright' ||
+    (rawMeta.source !== 'playwright' && rawMeta.source !== 'jest') ||
     typeof rawMeta.startedAt !== 'string' ||
     rawMeta.startedAt.length > 40 ||
     !Number.isFinite(Date.parse(rawMeta.startedAt))
   )
     return invalid();
   const metadata = {
-    source: 'playwright',
+    source: rawMeta.source as 'playwright' | 'jest',
     startedAt: new Date(rawMeta.startedAt).toISOString(),
     testSourceSha: sha(rawMeta.testSourceSha),
     deployedSha: sha(rawMeta.deployedSha),

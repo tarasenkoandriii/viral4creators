@@ -89,6 +89,30 @@ describe('QA report import validation', () => {
       parseQaReport({ expectedRevision: 1, project: 'desktop', report }),
     ).toThrow();
   });
+  it('accepts jest reports (AI Publisher acceptance) and rejects other sources', () => {
+    const jest = reportFixture();
+    jest.metadata.source = 'jest';
+    const a = parseQaReport({
+      expectedRevision: 1,
+      project: 'desktop',
+      report: jest,
+    });
+    expect(a.metadata.source).toBe('jest');
+    expect(a.reportHash).not.toBe(
+      parseQaReport({
+        expectedRevision: 1,
+        project: 'desktop',
+        report: reportFixture(),
+      }).reportHash,
+    );
+    for (const source of ['vitest', 'Jest', undefined]) {
+      const bad = reportFixture();
+      Object.assign(bad.metadata, { source });
+      expect(() =>
+        parseQaReport({ expectedRevision: 1, project: 'desktop', report: bad }),
+      ).toThrow();
+    }
+  });
   it.each(['runnerStatus', 'caseType', 'attemptStatus'])(
     'rejects coerced enum %s',
     (field) => {

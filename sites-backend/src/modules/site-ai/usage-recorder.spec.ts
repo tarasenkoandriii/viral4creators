@@ -1,5 +1,6 @@
 import { geminiUsageUnits } from '../../shared/ai-pricing';
-import { AiUsageRecorder, type UsageDb } from './usage-recorder';
+import { AiUsageRecorder, productOf, type UsageDb } from './usage-recorder';
+import { LEARNING_BUDGET_OPERATIONS, SITE_AI_OPERATIONS } from './operations';
 
 function fakeDb() {
   const rows: Array<Record<string, unknown>> = [];
@@ -94,6 +95,49 @@ describe('AiUsageRecorder → site_ai_usage', () => {
       inputTokens: 0,
       outputTokens: 0,
       cachedInputTokens: 2,
+    });
+  });
+});
+
+describe('AI Publisher (P-A0, §12.1): операции pub-* — продукт publisher', () => {
+  it('десять операций Publisher в списке, все — продукт publisher', () => {
+    const pub = SITE_AI_OPERATIONS.filter((o) => o.startsWith('pub-'));
+    expect(pub).toEqual([
+      'pub-questions-cluster',
+      'pub-brief-draft',
+      'pub-draft-write',
+      'pub-claims-extract',
+      'pub-qa-review',
+      'pub-adaptation-make',
+      'pub-distribution-plan',
+      'pub-venues-compare',
+      'pub-helper-answer',
+      'pub-eval',
+    ]);
+    for (const o of pub) expect(productOf(o)).toBe('publisher');
+    // Бюджет обучения помощника операции Publisher не трогают.
+    expect(LEARNING_BUDGET_OPERATIONS.some((o) => o.startsWith('pub-'))).toBe(
+      false,
+    );
+  });
+
+  it('прочие операции — прежние продукты', () => {
+    expect(productOf('assist-chat')).toBe('assist');
+    expect(productOf('qa-anything')).toBe('qa');
+  });
+
+  it('строка вызова Publisher пишется с product=publisher', async () => {
+    const { db, rows } = fakeDb();
+    await new AiUsageRecorder().record(db, {
+      accountId: 'acc',
+      siteId: 'site',
+      operation: 'pub-brief-draft',
+      model: 'gemini-2.5-flash',
+      units: { inputTokens: 10, outputTokens: 5 },
+    });
+    expect(rows[0]).toMatchObject({
+      product: 'publisher',
+      operation: 'pub-brief-draft',
     });
   });
 });

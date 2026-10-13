@@ -304,7 +304,7 @@ export class QaRunService {
             caseKey: a.caseKey,
             attemptNumber,
             status: a.status,
-            comment: `Playwright: ${body.project}, retry ${a.sourceAttempt}.`,
+            comment: `${body.metadata.source === 'jest' ? 'Jest' : 'Playwright'}: ${body.project}, retry ${a.sourceAttempt}.`,
             createdByMemberId: m.memberId,
             origin: 'automated',
             project: body.project,

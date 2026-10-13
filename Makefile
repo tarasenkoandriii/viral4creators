@@ -5,7 +5,7 @@
 
 COMPOSE = docker compose -f docker-compose.dev.yml
 
-.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing ci-integrations ci-relay ci-worker
+.PHONY: up down restart reset logs ps psql shell-backend seed-dev test ci ci-docs ci-sites ci-widget ci-sites-landing ci-publisher-site ci-integrations ci-relay ci-worker
 
 up:
 	@test -f .env.docker || cp .env.docker.example .env.docker
@@ -86,6 +86,7 @@ ci:
 	cd landing && npx tsc --noEmit -p tsconfig.json && npm run -s lint && npx next build
 	cd landing && npm run -s budget:js
 	$(MAKE) ci-sites-landing
+	$(MAKE) ci-publisher-site
 	$(MAKE) ci-sites
 	node scripts/sync-site-tma-kit.mjs --check
 	cd assist && npx tsc --noEmit -p tsconfig.json
@@ -120,6 +121,31 @@ ci-sites-landing:
 	cd sites-landing && $(LANDING_STAND_ENV) npx next build >/dev/null
 	cd sites-landing && $(LANDING_STAND_ENV) npm run -s check:built
 	cd sites-landing && npm run -s budget:js
+
+# Публичный сайт AI Publisher (P-F; джоба `publisher-site` в CI): типы, линт,
+# prettier, unit-скрипты (копия правил формы ≡ sites-backend, типы API ↔
+# контракты), «сборка без SITE_URL падает», две сборки на стенде API —
+# тестовая (noindex) и с двумя ключами индексации — с проверкой собранного
+# HTML, бюджет JS. axe, e2e и Lighthouse — отдельно (нужны `next start` и
+# Chromium):
+#   cd publisher-site && STAND_MODE=live npm run stand & npx next start -p 3020 &
+#   npm run axe && npm run e2e && LHCI_BASE_URL=http://localhost:3020 CHROME_PATH=<chromium> npm run lhci
+#   (env — PUBLISHER_STAND_ENV ниже; e2e нужен тот же PUBLISHER_REVALIDATE_SECRET, что у сборки)
+PUBLISHER_STAND_ENV = PUBLISHER_API_ORIGIN=http://localhost:3021 PUBLISHER_PUBLIC_KEY=pp_standPublisherKey0000001 \
+	PUBLISHER_REVALIDATE_SECRET=ci-sentinel-revalidate-secret-000 PUBLISHER_OWNERSHIP_TOKEN=ci-sentinel-ownership-token
+ci-publisher-site:
+	cd publisher-site && npx tsc --noEmit
+	cd publisher-site && npm run -s lint
+	cd publisher-site && npm run -s format:check >/dev/null
+	cd publisher-site && npm test >/dev/null
+	cd publisher-site && if SITE_URL= $(PUBLISHER_STAND_ENV) npx next build >/dev/null 2>&1; then echo "publisher-site: сборка без SITE_URL прошла"; exit 1; fi
+	cd publisher-site && STAND_MODE=live node --import tsx scripts/built/stand.ts >/dev/null 2>&1 & pid=$$!; trap 'kill $$pid' EXIT; \
+		cd publisher-site && for i in $$(seq 1 30); do curl -sf -o /dev/null http://localhost:3021/__stand/log && break; sleep 1; done; \
+		SITE_URL=https://test.ai-publisher.org $(PUBLISHER_STAND_ENV) npx next build >/dev/null && \
+		SITE_URL=https://test.ai-publisher.org $(PUBLISHER_STAND_ENV) npm run -s check:built -- --expect-noindex && \
+		SITE_URL=https://ai-publisher.org PUBLISHER_INDEXING=on $(PUBLISHER_STAND_ENV) npx next build >/dev/null && \
+		SITE_URL=https://ai-publisher.org $(PUBLISHER_STAND_ENV) npm run -s check:built -- --expect-indexable && \
+		npm run -s budget:js
 
 # Виджет помощника (Э2; джоба `widget` в CI): типы, линт, unit-скрипты,
 # сборка и размерный бюджет. E2E (Playwright) — `cd widget && npm run e2e`

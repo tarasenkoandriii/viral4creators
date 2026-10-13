@@ -6,8 +6,8 @@
  * ToS — в модулях QA, не здесь).
  *
  * Уровни:
- *  - L0 (`assist-sandbox`) — подтверждение не нужно; ядро проверяет только
- *    отказ домена (opt-out). SSRF — на каждом запросе обхода.
+ *  - L0 (`assist-sandbox`, `publisher-import`) — подтверждение не нужно;
+ *    ядро проверяет только отказ домена (opt-out). SSRF — на каждом запросе.
  *  - L1 (всё остальное) — `verified` у ЭТОГО кабинета и не истёк.
  *
  * Льгота 72 ч — свойство ТОЛЬКО `purpose = 'assist-widget'` (согласовано
@@ -42,7 +42,17 @@ export type QaPurpose = `qa-${string}`;
  * браузер по сайту с отозванным подтверждением — уже режим B.
  */
 export type TutorialPurpose = 'tutorial' | `tutorial-${string}`;
-export type HostPurpose = AssistPurpose | QaPurpose | TutorialPurpose;
+/**
+ * AI Publisher (P-A0, проектный документ §3.2): `publisher-import` — импорт
+ * источника по URL (чужая публичная страница; L0, как песочница: только
+ * opt-out и SSRF на запросе); `publisher-public` — хост сайта продукта, на
+ * который форма принимает заявки и индексируется контент (L1 без льготы:
+ * verified этим кабинетом и не истёк). Представление `pub_public_products`
+ * повторяет то же решение в SQL (тест — publisher-public-role.spec.ts).
+ */
+export type PublisherPurpose = 'publisher-public' | 'publisher-import';
+export type HostPurpose =
+  AssistPurpose | QaPurpose | TutorialPurpose | PublisherPurpose;
 
 export interface HostAccessRow {
   id: string;
@@ -66,6 +76,8 @@ function isKnownPurpose(p: string): p is HostPurpose {
     p === 'assist-crawl' ||
     p === 'assist-admin' ||
     p === 'assist-admin-login' ||
+    p === 'publisher-public' ||
+    p === 'publisher-import' ||
     /^qa-[a-z0-9-]+$/.test(p) ||
     /^tutorial(-[a-z0-9-]+)?$/.test(p)
   );
@@ -84,7 +96,7 @@ export function evaluateHostAccess(
     // Опечатка в назначении не должна тихо попасть в «самый мягкий» класс.
     throw new Error(`assertHostVerified: неизвестное назначение «${purpose}»`);
   }
-  if (purpose === 'assist-sandbox') {
+  if (purpose === 'assist-sandbox' || purpose === 'publisher-import') {
     return { ok: true, level: 'L0', grace: false };
   }
   // Блокировка повторного подтверждения (отзыв другим кабинетом, QA §5.1)

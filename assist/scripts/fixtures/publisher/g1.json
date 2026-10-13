@@ -1,0 +1,685 @@
+{
+  "ProductView": {
+    "id": "prod1",
+    "siteId": "site1",
+    "kind": "working",
+    "name": "AI Publisher",
+    "publicKey": "pp_abc",
+    "mode": "test",
+    "liveSince": null,
+    "status": "active",
+    "revision": 3,
+    "createdAt": "2026-10-13T08:00:00.000Z",
+    "myRoles": {
+      "roles": ["product_owner", "editor"],
+      "admin": false,
+      "accountOwner": false
+    },
+    "gates": {
+      "public_publish": {
+        "open": false,
+        "missingCount": 15
+      },
+      "real_leads": {
+        "open": false,
+        "missingCount": 20
+      },
+      "spend": {
+        "open": false,
+        "missingCount": 2
+      },
+      "purchases": {
+        "open": false,
+        "missingCount": 12
+      },
+      "ai_use": {
+        "open": false,
+        "missingCount": 3
+      }
+    }
+  },
+  "GateResults": {
+    "public_publish": {
+      "gate": "public_publish",
+      "open": false,
+      "missing": [
+        {
+          "kind": "parameter",
+          "key": "niche",
+          "detail": "not_approved"
+        },
+        {
+          "kind": "host",
+          "key": "ai-publisher.org",
+          "detail": "not_verified"
+        }
+      ]
+    },
+    "real_leads": {
+      "gate": "real_leads",
+      "open": false,
+      "missing": [
+        {
+          "kind": "parameter",
+          "key": "form_limit",
+          "detail": "not_approved"
+        }
+      ]
+    },
+    "spend": {
+      "gate": "spend",
+      "open": true,
+      "missing": []
+    },
+    "purchases": {
+      "gate": "purchases",
+      "open": false,
+      "missing": [
+        {
+          "kind": "integration",
+          "key": "events_collector",
+          "detail": "not_connected"
+        }
+      ]
+    },
+    "ai_use": {
+      "gate": "ai_use",
+      "open": false,
+      "missing": [
+        {
+          "kind": "ai_config",
+          "key": "binding",
+          "detail": "missing"
+        }
+      ]
+    }
+  },
+  "ParameterView": {
+    "key": "niche",
+    "value": {
+      "text": "Малий бізнес"
+    },
+    "status": "assumption",
+    "version": 1,
+    "approvedAt": null,
+    "approvedBy": null,
+    "revision": 1,
+    "updatedAt": "2026-10-13T08:00:00.000Z",
+    "openProposals": 0,
+    "gates": ["public_publish", "real_leads"]
+  },
+  "ParameterDecisionView": {
+    "id": "dec1",
+    "parameterKey": "niche",
+    "version": 2,
+    "proposalId": "prop1",
+    "fromStatus": "assumption",
+    "toStatus": "approved",
+    "valueSnapshot": {
+      "text": "Бухгалтерія"
+    },
+    "decidedBy": "member:m1",
+    "decidedAt": "2026-10-13T09:00:00.000Z",
+    "basis": "Протокол наради",
+    "dependentStages": ["public_publish"]
+  },
+  "ParameterProposalView": {
+    "id": "prop1",
+    "parameterKey": "niche",
+    "value": {
+      "text": "Бухгалтерія"
+    },
+    "status": "open",
+    "proposedBy": "member:m2",
+    "proposedAt": "2026-10-13T08:00:00.000Z",
+    "decisionId": null,
+    "revision": 1,
+    "mine": true,
+    "canWithdraw": true
+  },
+  "AuditEventView": {
+    "id": "a1",
+    "actor": "member:m1",
+    "objectType": "content",
+    "objectId": "c1",
+    "action": "transition",
+    "fromStatus": "drafting",
+    "toStatus": "editorial_review",
+    "reason": null,
+    "meta": null,
+    "occurredAt": "2026-10-13T09:00:00.000Z"
+  },
+  "ReviewTaskView": {
+    "id": "rt1",
+    "objectType": "content",
+    "objectId": "c1",
+    "reason": "source_revoked",
+    "triggerRef": "src1",
+    "severity": "critical",
+    "status": "open",
+    "assigneeMemberId": null,
+    "dueAt": "2026-10-14T18:00:00.000Z",
+    "resolution": null,
+    "resolvedBy": null,
+    "resolvedAt": null,
+    "createdAt": "2026-10-13T09:00:00.000Z",
+    "revision": 1
+  },
+  "RoleGrantView": {
+    "id": "g1",
+    "memberId": "m2",
+    "memberDisplayName": "Учасник …abcdef",
+    "role": "editor",
+    "grantedBy": "member:m1",
+    "grantedAt": "2026-10-13T09:00:00.000Z",
+    "revokedBy": null,
+    "revokedAt": null,
+    "reason": null,
+    "active": true
+  },
+  "SourceView": {
+    "id": "src1",
+    "kind": "url",
+    "url": "https://example.com/a",
+    "externalRef": null,
+    "title": "Стаття",
+    "author": null,
+    "publishedOn": null,
+    "fragment": "Текст фрагмента",
+    "language": "uk",
+    "usage": "restricted",
+    "visibility": "public",
+    "checkedAt": null,
+    "freshness": "unknown",
+    "importedVia": "url_import",
+    "contentHash": "h",
+    "supersedesId": null,
+    "injectionFlag": null,
+    "isSynthetic": false,
+    "revokedAt": null,
+    "revokedBy": null,
+    "revokeReason": null,
+    "locked": false,
+    "createdAt": "2026-10-13T09:00:00.000Z",
+    "createdBy": "member:m1",
+    "revision": 1
+  },
+  "QuestionView": {
+    "id": "q1",
+    "text": "Як вибрати бухгалтера?",
+    "audience": null,
+    "stage": "consideration",
+    "groupId": null,
+    "observedRepeats": 3,
+    "frequency": null,
+    "frequencySourceId": null,
+    "frequencyLabel": "невідомо",
+    "scores": {
+      "offer_fit": {
+        "score": 2,
+        "why": "прямо"
+      },
+      "cost": {
+        "score": null,
+        "why": null
+      }
+    },
+    "priorityNote": null,
+    "status": "selected",
+    "selectedRank": 1,
+    "sources": [
+      {
+        "sourceId": "src1",
+        "fragment": null
+      }
+    ],
+    "revision": 2
+  },
+  "QuestionGroupView": {
+    "id": "grp1",
+    "key": "choose",
+    "task": "Вибір",
+    "stage": "consideration",
+    "audience": null,
+    "rationale": "одна задача",
+    "mergeRisk": null,
+    "status": "confirmed",
+    "aiCallId": null,
+    "questionIds": ["q1"],
+    "revision": 1
+  },
+  "BrandFactView": {
+    "id": "f1",
+    "factKey": "price_basic",
+    "kind": "price",
+    "value": {
+      "amountMinor": 150000,
+      "currency": "UAH"
+    },
+    "scope": null,
+    "sourceId": null,
+    "version": 1,
+    "status": "needs_resolution",
+    "approvedBy": null,
+    "approvedAt": null,
+    "conflictWithId": "f0",
+    "revision": 1
+  },
+  "OfferVersionView": {
+    "id": "o1",
+    "version": 1,
+    "title": "Оффер",
+    "text": "Текст",
+    "priceNote": null,
+    "status": "active",
+    "approvedBy": "member:m1",
+    "approvedAt": "2026-10-13T09:00:00.000Z",
+    "hash": "abc",
+    "factIds": [],
+    "revision": 1
+  },
+  "ContextPreview": {
+    "purpose": "helper",
+    "audience": "internal",
+    "sources": [
+      {
+        "id": "src1",
+        "title": "Стаття",
+        "visibility": "public",
+        "injectionFlag": null
+      }
+    ],
+    "facts": [
+      {
+        "id": "f1",
+        "factKey": "price_basic",
+        "kind": "price",
+        "version": 1,
+        "value": {
+          "text": "x"
+        }
+      }
+    ],
+    "offer": {
+      "id": "o1",
+      "version": 1,
+      "title": "Оффер",
+      "priceNote": null
+    },
+    "forbiddenPromises": [],
+    "excluded": {
+      "restricted": 1,
+      "revoked": 0,
+      "privateForPublic": 0,
+      "notRequested": 0
+    }
+  },
+  "BriefView": {
+    "id": "b1",
+    "questionId": "q1",
+    "offerVersionId": "o1",
+    "goal": "Пояснити вибір",
+    "format": "choice_guide",
+    "ownContribution": null,
+    "shortAnswer": null,
+    "cta": null,
+    "ctaIntentNote": null,
+    "structure": [],
+    "channels": [],
+    "readinessCriteria": [],
+    "effortMinutes": null,
+    "unresolved": [],
+    "status": "draft",
+    "aiCallId": null,
+    "sourceIds": [],
+    "missing": ["own_contribution", "cta", "cta_intent_note", "allowed_source"],
+    "revision": 1
+  },
+  "ContentView": {
+    "id": "c1",
+    "kind": "article",
+    "parentContentId": null,
+    "briefId": "b1",
+    "slug": "yak-vybraty",
+    "status": "editorial_review",
+    "currentVersionId": "v1",
+    "approvedVersionId": null,
+    "publishedVersionId": null,
+    "ownerMemberId": "m1",
+    "ownerDisplayName": "Редактор",
+    "nextDueAt": "2026-10-15T10:00:00.000Z",
+    "blockReason": null,
+    "criticalStale": false,
+    "firstPublishedAt": null,
+    "openTasks": [
+      {
+        "id": "rt1",
+        "reason": "source_revoked",
+        "objectType": "content_version"
+      }
+    ],
+    "allowedTransitions": ["changes_requested", "approved"],
+    "revision": 4
+  },
+  "VersionView": {
+    "id": "v1",
+    "contentId": "c1",
+    "number": 1,
+    "title": "Як вибрати",
+    "body": "Текст",
+    "meta": {
+      "description": "Опис",
+      "limitations": ["одне"]
+    },
+    "format": "article",
+    "isScript": false,
+    "parentVersionId": null,
+    "offerVersionId": "o1",
+    "authorMemberId": "m1",
+    "aiCallId": null,
+    "status": "submitted",
+    "hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "frozenAt": "2026-10-13T10:00:00.000Z",
+    "sourceIds": ["src1"],
+    "claimIds": ["cl1"],
+    "factIds": [],
+    "revision": 2
+  },
+  "VersionDiff": {
+    "a": "v1",
+    "b": "v2",
+    "title": {
+      "from": "A",
+      "to": "B"
+    },
+    "body": [
+      {
+        "op": "eq",
+        "text": "x"
+      },
+      {
+        "op": "add",
+        "text": "y"
+      }
+    ],
+    "bodyCoarse": false,
+    "metaChanged": ["description"],
+    "offerChanged": false,
+    "sources": {
+      "added": [],
+      "removed": []
+    },
+    "claims": {
+      "added": ["cl2"],
+      "removed": []
+    },
+    "facts": {
+      "added": [],
+      "removed": []
+    }
+  },
+  "ClaimView": {
+    "id": "cl1",
+    "statement": "Ціна від 1500",
+    "type": "fact",
+    "risk": "critical",
+    "status": "unverified",
+    "extractedFromVersionId": "v1",
+    "experimentId": null,
+    "supersedesId": null,
+    "verifiedBy": null,
+    "verifiedAt": null,
+    "nextCheckAt": null,
+    "aiCallId": null,
+    "sources": [
+      {
+        "sourceId": "src1",
+        "supports": "partial",
+        "checkedBy": "member:m1",
+        "checkedAt": "2026-10-13T10:00:00.000Z",
+        "note": null
+      }
+    ],
+    "versionIds": ["v1"],
+    "revision": 1
+  },
+  "QaCheckView": {
+    "id": "qa1",
+    "versionId": "v1",
+    "kind": "editorial",
+    "result": "fail",
+    "blockers": [
+      {
+        "code": "tone",
+        "text": "Тон",
+        "claimId": null
+      }
+    ],
+    "checkedBy": "member:m1",
+    "checkedAt": "2026-10-13T10:00:00.000Z",
+    "selfReview": true,
+    "aiCallId": null
+  },
+  "ApprovalView": {
+    "id": "ap1",
+    "type": "publish_version",
+    "objectType": "content_version",
+    "objectId": "v1",
+    "versionHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "approverMemberId": "m1",
+    "approverDisplayName": "Власник",
+    "decidedAt": "2026-10-13T11:00:00.000Z",
+    "status": "active",
+    "selfReview": false,
+    "reason": null
+  },
+  "AiCallView": {
+    "callId": "call1",
+    "generator": "pub.brief.draft",
+    "status": "ok",
+    "taskId": "t1",
+    "attemptNo": 1,
+    "output": {
+      "question": "Q",
+      "audience": null,
+      "source_ids": ["src1"],
+      "original_contribution": null,
+      "short_answer": "A",
+      "structure": ["1"],
+      "format": "instruction",
+      "cta": {
+        "text": "CTA",
+        "intent_fit_note": "N"
+      },
+      "channels": [],
+      "limitations": [],
+      "unresolved_questions": []
+    },
+    "findings": [
+      {
+        "code": "x",
+        "severity": "warning",
+        "text": "Перевірте"
+      }
+    ],
+    "errorCode": null,
+    "costStatus": "unpriced",
+    "costMicroUsd": null,
+    "requestedAt": "2026-10-13T11:00:00.000Z",
+    "finishedAt": "2026-10-13T11:00:05.000Z",
+    "contextFactIds": [],
+    "contextSourceIds": ["src1"]
+  },
+  "AiStartResponse": {
+    "callId": "call1",
+    "status": "running",
+    "call": null
+  },
+  "AiCallListItem": {
+    "callId": "call1",
+    "generator": "pub.helper.answer",
+    "status": "ok",
+    "taskId": "t1",
+    "attemptNo": 1,
+    "objectRef": "helper",
+    "requestedBy": "member:m1",
+    "requestedAt": "2026-10-13T11:00:00.000Z",
+    "finishedAt": null,
+    "costStatus": "priced",
+    "costMicroUsd": "1234",
+    "model": "gemini",
+    "instructionVersion": "helper@1",
+    "errorCode": null
+  },
+  "AiTaskView": {
+    "id": "t1",
+    "generator": "pub.brief.draft",
+    "objectType": "question",
+    "objectId": "q1",
+    "generationsUsed": 2,
+    "extraAllowance": 0,
+    "remaining": 0,
+    "status": "open",
+    "extraApprovalId": null,
+    "revision": 2,
+    "updatedAt": "2026-10-13T11:00:00.000Z"
+  },
+  "AiConfigView": {
+    "id": "cfg1",
+    "provider": "gemini",
+    "model": "gemini-2.5",
+    "configHash": "abcdef0123456789",
+    "contextRulesVersion": "ctx@1",
+    "schemaSetVersion": "s1",
+    "instructionVersions": {
+      "pub.helper.answer": "helper@1"
+    },
+    "coveredGenerators": ["pub.helper.answer"],
+    "evalSetVersion": "2.2",
+    "evalStatus": "not_run",
+    "evalRunId": null,
+    "decidedBy": null,
+    "decidedAt": null,
+    "basis": null,
+    "createdAt": "2026-10-13T11:00:00.000Z",
+    "runs": [
+      {
+        "id": "run1",
+        "configId": "cfg1",
+        "mode": "fake",
+        "startedAt": "2026-10-13T11:00:00.000Z",
+        "finishedAt": null,
+        "totals": null
+      }
+    ]
+  },
+  "AiBindingView": {
+    "id": "bind1",
+    "configId": "cfg1",
+    "boundBy": "member:m1",
+    "boundAt": "2026-10-13T11:00:00.000Z",
+    "basis": "протокол",
+    "unboundAt": null,
+    "unboundBy": null,
+    "active": true,
+    "config": {
+      "configHash": "abcdef0123456789",
+      "provider": "gemini",
+      "model": "gemini-2.5",
+      "evalStatus": "passed"
+    }
+  },
+  "EvalRunSummary": {
+    "id": "run1",
+    "configId": "cfg1",
+    "mode": "live",
+    "startedAt": "2026-10-13T11:00:00.000Z",
+    "finishedAt": null,
+    "totals": null
+  },
+  "EvalResultView": {
+    "id": "res1",
+    "taskCode": "AI-01",
+    "schema": "answer",
+    "input": {
+      "q": 1
+    },
+    "allowedSourceIds": ["s1"],
+    "firstAnswer": {
+      "answer": "x"
+    },
+    "firstAnswerRaw": null,
+    "claimSources": null,
+    "autoHardFail": [],
+    "autoFlags": [
+      {
+        "id": "fl1",
+        "code": "neg",
+        "text": "Перевірте заперечення"
+      }
+    ],
+    "flagResolutions": [
+      {
+        "flagId": "fl1",
+        "resolution": "dismissed",
+        "explanation": "ok",
+        "by": "member:m1",
+        "at": "2026-10-13T11:00:00.000Z"
+      }
+    ],
+    "criticalPass": null,
+    "usefulnessPass": null,
+    "explanation": null,
+    "reviewerMemberId": null,
+    "secondReviewerMemberId": null,
+    "costMicroUsd": null,
+    "costStatus": "unknown",
+    "retryOfResultId": null,
+    "createdAt": "2026-10-13T11:00:00.000Z"
+  },
+  "ChannelView": {
+    "id": "ch1",
+    "code": "site",
+    "title": "Сайт",
+    "kind": "site",
+    "utmSource": "site",
+    "utmMedium": "organic",
+    "adsAllowed": null,
+    "rulesNote": null,
+    "status": "available",
+    "revision": 1
+  },
+  "DistributionActionView": {
+    "id": "da1",
+    "versionId": "v1",
+    "contentId": "c1",
+    "channelId": "ch1",
+    "format": "post",
+    "goal": "охоплення",
+    "plannedAt": "2026-10-16T09:00:00.000Z",
+    "ownerMemberId": "m1",
+    "ownerDisplayName": "Оператор",
+    "status": "blocked",
+    "blockReason": "approval",
+    "measurableUrl": "https://ai-publisher.org/a?utm_source=x",
+    "publicationId": null,
+    "doneUrl": null,
+    "revision": 1
+  },
+  "PublicationView": {
+    "id": "pub1",
+    "versionId": "v1",
+    "channelId": "ch1",
+    "approvalId": "ap1",
+    "stage": "test",
+    "finalUrl": "https://test.ai-publisher.org/yak-vybraty",
+    "publishedAt": null,
+    "status": "pending",
+    "verifyStatus": "not_checked",
+    "evidenceUrl": null,
+    "lastVerifiedAt": null,
+    "verifiedBy": null,
+    "verifyResult": null,
+    "revision": 1
+  }
+}

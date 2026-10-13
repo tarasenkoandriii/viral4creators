@@ -102,3 +102,57 @@ describe('brand Э2 — публичные имена виджета тольк�
     expect(hits).toEqual([]);
   });
 });
+
+describe('brand AI Publisher — публичные имена сайта продукта (§5.3)', () => {
+  it('публичный ключ: pp_ + 24 base62 — как триггер pub_products_guard', () => {
+    expect(brand.PUBLISHER_KEY_PREFIX).toBe('pp_');
+    expect(brand.isPublisherPublicKey(`pp_${'A1b2C3d4E5f6G7h8I9j0K1l2'}`)).toBe(
+      true,
+    );
+    for (const bad of [
+      'pp_short',
+      `pk_${'a'.repeat(24)}`,
+      `pp_${'a'.repeat(23)}-`,
+      `pp_${'a'.repeat(25)}`,
+      null,
+    ]) {
+      expect(brand.isPublisherPublicKey(bad)).toBe(false);
+    }
+    // Тот же формат, что в миграции (одна правда для базы и кода).
+    const migration = fs.readFileSync(
+      path.join(
+        __dirname,
+        '..',
+        'prisma',
+        'migrations',
+        '20261016090000_publisher_core',
+        'migration.sql',
+      ),
+      'utf8',
+    );
+    expect(migration).toContain(
+      `NEW."publicKey" ~ '${brand.PUBLISHER_PUBLIC_KEY_RE.source}'`,
+    );
+  });
+
+  it('мета версии, ключ сессии и события — как в проектном документе', () => {
+    expect(brand.PUBLISHER_VERSION_META).toBe('pub-version');
+    expect(brand.PUBLISHER_SESSION_STORAGE_KEY).toBe('pub_sref');
+    expect([...brand.PUBLISHER_EVENT_NAMES]).toEqual([
+      'content_view',
+      'cta_click',
+      'lead_submit_success',
+    ]);
+    // Клиент не может сам объявить успех заявки (AT-CORE-03).
+    expect(brand.PUBLISHER_CLIENT_EVENT_NAMES).not.toContain(
+      'lead_submit_success',
+    );
+  });
+
+  it('метки ключей связки — пять разных, с префиксом publisher- и версией', () => {
+    const labels = Object.values(brand.PUBLISHER_SECRET_LABELS);
+    expect(labels).toHaveLength(5);
+    expect(new Set(labels).size).toBe(5);
+    for (const l of labels) expect(l).toMatch(/^publisher-[a-z-]+-v\d+$/);
+  });
+});

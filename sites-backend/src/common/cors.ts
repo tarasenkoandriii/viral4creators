@@ -109,6 +109,30 @@ const ADMIN_PATHS = /^\/(assist-admin|wa)\/v1\//;
  */
 const EDITOR_PATHS = /^\/(editor|we)\/v1\//;
 
+/**
+ * AI Publisher (P-A0, проектный документ §11.4): публичные маршруты
+ * сайта продукта (`/public/publisher/v1/*`: конфиг, контент, форма,
+ * события). Origin — любой (отражается), без cookie; допуск по существу
+ * решает гвард Publisher: Origin ∈ `allowedOrigins` продукта для его режима
+ * (`pub_public_products`), иначе 403 `PUB_ORIGIN_DENIED`. Origin не
+ * защищает от небраузерных клиентов — от них лимиты и минимальная запись.
+ */
+const PUBLISHER_PUBLIC_PATHS = /^\/public\/publisher\/v1\//;
+
+/**
+ * AI Publisher, кабинет (`/publisher/*`, Р-PUB-Z2-7, запрос P-G2 17.4 №2):
+ * при API на другом origin (`VITE_SITES_API_URL`) браузер не отдаёт
+ * скрипту заголовки вне списка CORS-safelisted. Файлы журнала AI и отчётов
+ * несут курсор следующей части `X-Next-Before` и имя файла
+ * `Content-Disposition` — их открываем. Origin и credentials — по общему
+ * правилу (список CORS_ORIGIN), остальные пути не затронуты.
+ */
+const PUBLISHER_CABINET_PATHS = /^\/publisher\//;
+export const PUBLISHER_EXPOSED_HEADERS = [
+  'X-Next-Before',
+  'Content-Disposition',
+] as const;
+
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'];
 
 export function corsOptionsDelegate(cfg: {
@@ -135,6 +159,14 @@ export function corsOptionsDelegate(cfg: {
       return callback(null, {
         origin: true,
         methods: ['POST', 'OPTIONS'],
+        credentials: false,
+        maxAge: 600,
+      });
+    }
+    if (PUBLISHER_PUBLIC_PATHS.test(url)) {
+      return callback(null, {
+        origin: true,
+        methods: ['GET', 'POST', 'OPTIONS'],
         credentials: false,
         maxAge: 600,
       });
@@ -167,6 +199,14 @@ export function corsOptionsDelegate(cfg: {
         origin: origin === cfg.widgetOrigin ? origin : false,
         methods: METHODS,
         credentials: true,
+      });
+    }
+    if (PUBLISHER_CABINET_PATHS.test(url)) {
+      return callback(null, {
+        origin: general,
+        methods: METHODS,
+        credentials: true,
+        exposedHeaders: [...PUBLISHER_EXPOSED_HEADERS],
       });
     }
     // Авторизация TMA — заголовок с initData, cookie не нужны; но клиент,

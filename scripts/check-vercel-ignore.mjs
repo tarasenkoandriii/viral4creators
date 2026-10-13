@@ -38,6 +38,8 @@ const PROJECTS = {
   assist: ['.'],
   'sites-landing': ['.'],
   widget: ['.'],
+  // Сайт AI Publisher (P-F): копия правил формы — в самом пакете (src/shared).
+  'publisher-site': ['.'],
 };
 
 const expected = (paths) => `bash ../scripts/vercel-ignore-build.sh ${paths.join(' ')}`;

@@ -60,6 +60,8 @@ jobs:
       widget: ${{ steps.f.outputs.widget }}
       assist_integrations: ${{ steps.f.outputs.assist_integrations }}
       sites_landing: ${{ steps.f.outputs.sites_landing }}
+      publisher_site: ${{ steps.f.outputs.publisher_site }}
+      publisher_stand: ${{ steps.f.outputs.publisher_stand }}
       frontend: ${{ steps.f.outputs.frontend }}
       admin: ${{ steps.f.outputs.admin }}
       landing: ${{ steps.f.outputs.landing }}
@@ -254,6 +256,10 @@ jobs:
       # assist_public; роль создаёт шаг после миграций, как владелец на
       # Supabase (doc/DEPLOYMENT.md, 6.4). Пароль — только для CI-базы.
       ASSIST_PUBLIC_DATABASE_URL: postgresql://assist_widget_ci:assist_widget_ci@localhost:5432/sites
+      # AI Publisher (P-A0): клиент PublisherPublicDb — под логин-ролью в
+      # NOLOGIN-роли publisher_public (её создаёт миграция …_publisher_core);
+      # логин-роль создаёт шаг после миграций, как для assist_public.
+      PUBLISHER_PUBLIC_DATABASE_URL: postgresql://publisher_public_ci:publisher_public_ci@localhost:5432/sites
 
     steps:
       - uses: actions/checkout@v4
@@ -297,6 +303,15 @@ jobs:
           psql "postgresql://postgres:postgres@localhost:5432/sites" -v ON_ERROR_STOP=1 \
             -c "CREATE ROLE assist_widget_ci LOGIN PASSWORD 'assist_widget_ci' IN ROLE assist_public" \
             -c "ALTER ROLE assist_widget_ci SET search_path = sites, extensions"
+
+      # AI Publisher (P-A0): логин-роль публичных маршрутов Publisher — тем же
+      # SQL, что владелец выполняет на Supabase (doc/DEPLOYMENT.md, раздел
+      # sites-backend). Права проверяет src/prisma/publisher-public-role.spec.ts.
+      - name: логин-роль публичного приёма Publisher в publisher_public
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/sites" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE publisher_public_ci LOGIN PASSWORD 'publisher_public_ci' IN ROLE publisher_public" \
+            -c "ALTER ROLE publisher_public_ci SET search_path = sites"
 
       # Миграции написаны РУКАМИ — сверка базы со схемой обязана быть
       # пустой (тот же шаг, что у backend; флаги Prisma 7).
@@ -584,6 +599,193 @@ jobs:
         with:
           name: lighthouse-sites-landing
           path: sites-landing/.lighthouseci/reports
+          if-no-files-found: ignore
+
+  # Публичный сайт AI Publisher (P-F, doc/ai-publisher/IMPLEMENTATION-DESIGN.md
+  # §13, §16.8): Next 15 со своими бюджетами, axe, e2e и Lighthouse — своя
+  # джоба. Страницы собираются из публичного API, поэтому стенд API
+  # (scripts/built/stand.ts — мок по замороженным контрактам с инъекцией
+  # отказов; правила формы — НАСТОЯЩИЙ contracts/lead-validation.ts, без npm ci
+  # бэкенда) поднимается ДО сборки. Две сборки: тестовая (noindex) и с двумя
+  # ключами индексации (PUBLISHER_INDEXING=on + indexable стенда) — дальше
+  # проверки идут на второй.
+  publisher-site:
+    name: publisher-site — типы, линт, тесты, две сборки (noindex/index), бюджет JS, axe, e2e, Lighthouse
+    needs: changes
+    if: needs.changes.outputs.publisher_site == 'true'
+    runs-on: ubuntu-latest
+    # Зависший стенд/Lighthouse не держит раннер 6 ч (обычный прогон ≈ 12 мин).
+    timeout-minutes: 30
+    env:
+      PUBLISHER_API_ORIGIN: http://localhost:3021
+      PUBLISHER_PUBLIC_KEY: pp_standPublisherKey0000001
+      # Приманки: check:built ищет их значения в клиентском бандле и HTML. Не секреты.
+      PUBLISHER_REVALIDATE_SECRET: ci-sentinel-revalidate-secret-000
+      PUBLISHER_OWNERSHIP_TOKEN: ci-sentinel-ownership-token
+      # Стенд: режим live (индексируемые хосты есть только у live).
+      STAND_MODE: live
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: publisher-site/package-lock.json
+      - run: npm ci
+        working-directory: publisher-site
+      - name: npm audit (high)
+        run: npm audit --audit-level=high --omit=dev
+        working-directory: publisher-site
+      - name: типы
+        run: npx tsc --noEmit
+        working-directory: publisher-site
+      - name: линт
+        run: npm run lint
+        working-directory: publisher-site
+      - name: prettier
+        run: npm run format:check
+        working-directory: publisher-site
+      # Копия правил формы ≡ contracts/lead-validation.ts (sync-shared --check) и
+      # unit-скрипты: векторы через копию и источник, зеркало бренда, типы API ↔
+      # контракты (tsc), markdown без сырого HTML, атрибуция, трекер, словарь, контраст.
+      - name: unit-скрипты
+        run: npm test
+        working-directory: publisher-site
+      - name: стенд API
+        run: |
+          npm run stand > stand.log 2>&1 &
+          npx --yes wait-on@8.0.5 -t 60000 http://localhost:3021/__stand/log
+        working-directory: publisher-site
+      - name: сборка без SITE_URL падает
+        run: |
+          if SITE_URL='' npx next build > no-site-url.log 2>&1; then
+            echo "сборка без SITE_URL прошла — замок снят"; exit 1
+          fi
+          grep -q 'SITE_URL не задан' no-site-url.log
+        working-directory: publisher-site
+      - name: тестовая сборка (PUBLISHER_INDEXING не задан) → noindex
+        run: npx next build && npm run check:built -- --expect-noindex
+        env:
+          SITE_URL: https://test.ai-publisher.org
+        working-directory: publisher-site
+      - name: сборка с двумя ключами (PUBLISHER_INDEXING=on, стенд indexable) → index
+        run: npx next build && npm run check:built -- --expect-indexable
+        env:
+          SITE_URL: https://ai-publisher.org
+          PUBLISHER_INDEXING: 'on'
+        working-directory: publisher-site
+      - name: бюджет JS первой загрузки (контент ≤ 118 КБ, /contact ≤ 130 КБ gzip, трекер ≤ 2 КБ)
+        run: npm run budget:js
+        working-directory: publisher-site
+      - name: Chromium для axe, e2e и Lighthouse
+        run: npx playwright-core install --with-deps chromium
+        working-directory: publisher-site
+      - name: сайт (next start) и та же проверка по HTTP (заголовки, 410)
+        run: |
+          npx next start -p 3020 > next-start.log 2>&1 &
+          npx --yes wait-on@8.0.5 -t 60000 http://localhost:3020/robots.txt
+          npm run check:built -- --expect-indexable --base-url http://localhost:3020
+        env:
+          SITE_URL: https://ai-publisher.org
+        working-directory: publisher-site
+      - name: axe (WCAG 2.2 A/AA, состояния формы) и 320/360 px
+        run: npm run axe
+        working-directory: publisher-site
+      - name: e2e (клавиатура, отказы, повтор, 5 параллельных, 429, sessionRef/unknown, без JS)
+        run: npm run e2e
+        working-directory: publisher-site
+      # Тот же сервер; Chrome — системный на раннере. Условия прогона — в артефакте.
+      - name: Lighthouse CI (медиана 5 прогонов)
+        run: npx lhci autorun --config=lighthouserc.cjs
+        env:
+          LHCI_BASE_URL: http://localhost:3020
+        working-directory: publisher-site
+      - name: журналы и отчёты
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publisher-site-reports
+          path: |
+            publisher-site/.lighthouseci/reports
+            publisher-site/stand.log
+            publisher-site/next-start.log
+          if-no-files-found: ignore
+
+  # AI Publisher, предаудит DEF-C-06 (Р-PUB-Z2-29): сквозные E2E-01…05
+  # против НАСТОЯЩЕГО sites-backend (собранный dist, свежая база из всех
+  # миграций, AI без сети) — клиент кабинета assist и собранный
+  # publisher-site в Chromium (https-домен продукта через CONNECT-прокси,
+  # без :443). Джоба publisher-site проверяет сайт против мок-стенда; эта —
+  # контракт сайт ↔ API на настоящем бэкенде. Итог — JSON по шагам.
+  publisher-stand:
+    name: Publisher — сквозные E2E-01…05 против настоящего sites-backend и сайта
+    needs: changes
+    if: needs.changes.outputs.publisher_stand == 'true'
+    runs-on: ubuntu-latest
+    # Обычный прогон ≈ 15 мин (три npm ci, nest build, next build, 51 шаг).
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sites
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PG: postgresql://postgres:postgres@localhost:5432
+      SITES_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/sites?schema=sites
+      SITES_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sites
+      WORK: ${{ github.workspace }}/.pub-e2e
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: |
+            sites-backend/package-lock.json
+            assist/package-lock.json
+            publisher-site/package-lock.json
+      - run: npm ci
+        working-directory: sites-backend
+      - run: npm ci
+        working-directory: assist
+      - run: npm ci
+        working-directory: publisher-site
+      - name: Chromium для сайта
+        run: npx playwright-core install --with-deps chromium
+        working-directory: publisher-site
+      # NOLOGIN-роли publisher_public/assist_public создаёт миграция (общие
+      # для кластера), логин-роли — как владелец на Supabase; базу стенда
+      # скрипт создаёт сам.
+      - name: роли публичного приёма (как в джобе sites-backend)
+        run: |
+          psql "$PG/sites" -v ON_ERROR_STOP=1 \
+            -c 'CREATE SCHEMA IF NOT EXISTS sites' \
+            -c 'CREATE SCHEMA IF NOT EXISTS extensions'
+          (cd sites-backend && npx prisma migrate deploy)
+          psql "$PG/sites" -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE assist_widget_ci LOGIN PASSWORD 'assist_widget_ci' IN ROLE assist_public" \
+            -c "CREATE ROLE publisher_public_ci LOGIN PASSWORD 'publisher_public_ci' IN ROLE publisher_public"
+      - name: E2E-01…05 (стенд, драйвер, сайт в Chromium)
+        run: bash scripts/publisher-e2e.sh --site
+      - name: протокол E2E и журналы
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publisher-e2e
+          path: |
+            .pub-e2e/*.json
+            .pub-e2e/*.log
           if-no-files-found: ignore
 
   frontend:
@@ -1039,6 +1241,8 @@ jobs:
       - widget
       - assist-integrations
       - sites-landing
+      - publisher-site
+      - publisher-stand
       - frontend
       - next-apps
       - live-login-relay

@@ -1,0 +1,6 @@
+52e0a1bd7394344136fd1ddbc21971865d6eafd0eaa4a61d798f1a5ef7dce243  scripts/publisher-e2e.sh
+c365aeb0ec5f5199e63ab8442c6be61e6011e52d05d37af8298b3be0c8868aac  .github/workflows/ci.yml
+e9adef667dfbc07f7691250d7470db1556bfe1e7d25c39b2dade26b91f760adf  scripts/ci-changes.mjs
+ff13fabedda73900151a835f59aa4f9dd7788ebe12b39f24b3f071aa9d9dd45f  sites-backend/test/publisher-e2e/seed.cjs
+78d525bfba9439c6d64f23f99b14d94b8493dddff88b3c79198aae1954cc492e  assist/scripts/publisher-e2e.ts
+a756b12eaa2704a1b71450580e0c01f71a21a53cf346170d42ab1b2df448a61c  publisher-site/scripts/built/z-e2e-site.mjs

@@ -134,6 +134,34 @@ export const FILTERS = {
     'sites-backend/src/modules/site-core/hosts/host-normalize.ts',
     'assist-integrations/',
   ],
+  // Публичный сайт AI Publisher (P-F, проектный документ §16.8, аудит P3-25):
+  // зеркало бренда, копия правил формы и типы API сверяются с контрактами
+  // sites-backend; hash версии (`pub-version`) — из content-hash.
+  publisher_site: [
+    'publisher-site/',
+    'sites-backend/src/brand.ts',
+    'sites-backend/src/modules/publisher/contracts/',
+    'sites-backend/src/modules/publisher/core/content-hash.ts',
+    // Предаудит DEF-C-06 (Р-PUB-Z2-29): публичные контроллеры/сервисы приёма
+    // (Origin, лимит, идемпотентность, заголовки) и представления публичной
+    // роли в миграции — тоже контракт сайта.
+    'sites-backend/src/modules/publisher/public/',
+    'sites-backend/prisma/migrations/20261016090000_publisher_core/',
+  ],
+  // Сквозные E2E-01…05 против НАСТОЯЩЕГО sites-backend (DEF-C-06): модуль
+  // Publisher и его миграции, сайт, клиент кабинета assist, драйвер и стенд.
+  publisher_stand: [
+    'sites-backend/src/modules/publisher/',
+    'sites-backend/src/modules/qa-catalog/qa-run-evidence.ts',
+    'sites-backend/prisma/migrations/20261016090000_publisher_core/',
+    'sites-backend/prisma/migrations/20261016092000_publisher_budget_fn/',
+    'sites-backend/prisma/migrations/20261016093000_publisher_leads_fn/',
+    'sites-backend/test/publisher-e2e/',
+    'publisher-site/',
+    'assist/src/lib/publisher/',
+    'assist/scripts/publisher-e2e.ts',
+    'scripts/publisher-e2e.sh',
+  ],
   frontend: ['frontend/', 'backend/src/'],
   admin: ['admin/'],
   landing: ['landing/'],
@@ -240,7 +268,18 @@ function selfTest() {
   eq('виджет — и лендинг (стенд виджета)', on(['widget/src/loader/index.ts']), ['widget', 'sites_landing']);
   eq('.nvmrc — всё', on(['.nvmrc']), Object.keys(FILTERS));
   eq('формы событий лендинга', on(['sites-backend/src/modules/assist-widget/landing/landing.service.ts']), ['sites_backend', 'assist', 'sites_landing']);
-  eq('brand.ts бэкенда — бэк, assist, виджет, интеграции, лендинг', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget', 'assist_integrations', 'sites_landing']);
+  eq('brand.ts бэкенда — бэк, assist, виджет, интеграции, лендинг, сайт Publisher', on(['sites-backend/src/brand.ts']), ['sites_backend', 'assist', 'widget', 'assist_integrations', 'sites_landing', 'publisher_site']);
+  // P-F: сайт Publisher — свои файлы и контракты/hash версии бэкенда, но не прочий модуль publisher.
+  eq('сайт Publisher — своя джоба и E2E', on(['publisher-site/src/app/page.tsx']), ['publisher_site', 'publisher_stand']);
+  eq('контракт формы Publisher — бэк, assist, сайт и E2E', on(['sites-backend/src/modules/publisher/contracts/lead-validation.ts']), ['sites_backend', 'assist', 'publisher_site', 'publisher_stand']);
+  eq('hash версии Publisher — бэк, assist, сайт и E2E', on(['sites-backend/src/modules/publisher/core/content-hash.ts']), ['sites_backend', 'assist', 'publisher_site', 'publisher_stand']);
+  eq('прочий модуль Publisher — без сайта, с E2E', on(['sites-backend/src/modules/publisher/leads/leads.service.ts']), ['sites_backend', 'assist', 'publisher_stand']);
+  eq('прочее ядро Publisher — без сайта, с E2E', on(['sites-backend/src/modules/publisher/core/roles.ts']), ['sites_backend', 'assist', 'publisher_stand']);
+  // DEF-C-06: публичный приём и представления публичной роли — контракт сайта.
+  eq('публичный контроллер Publisher — бэк, assist, сайт и E2E', on(['sites-backend/src/modules/publisher/public/lead-intake.ts']), ['sites_backend', 'assist', 'publisher_site', 'publisher_stand']);
+  eq('миграция ядра Publisher — бэк, сайт и E2E', on(['sites-backend/prisma/migrations/20261016090000_publisher_core/migration.sql']), ['sites_backend', 'publisher_site', 'publisher_stand']);
+  eq('стенд и драйвер E2E — только E2E (драйвер — и assist)', on(['scripts/publisher-e2e.sh', 'assist/scripts/publisher-e2e.ts']), ['assist', 'publisher_stand']);
+  eq('клиент кабинета Publisher — assist и E2E', on(['assist/src/lib/publisher/leads-api.ts']), ['assist', 'publisher_stand']);
   eq('плагин WordPress — интеграции и лендинг (сверка документации)', on(['assist-integrations/wordpress/v4c-assist/v4c-assist.php']), ['assist_integrations', 'sites_landing']);
   eq('векторы подписи — интеграции, бэк и лендинг', on(['assist-integrations/fixtures/goal-webhook-vectors.json']), ['sites_backend', 'assist_integrations', 'sites_landing']);
   eq('модуль sites-backend — бэк и assist', on(['sites-backend/src/modules/x.ts']), ['sites_backend', 'assist']);

@@ -1,7 +1,7 @@
 # CI — что проверяется автоматически и почему именно это
 
 `.github/workflows/ci.yml`, появился на этапе 33. До него все проверки
-прогонялись руками на каждом этапе: тогда 442 теста (сейчас 10262), 17
+прогонялись руками на каждом этапе: тогда 442 теста (сейчас 10269), 17
 написанных вручную (сейчас 132)
 миграций и `sync-legal --check`, специально сделанный «для CI»,
 существовали — но запускал их только человек и только когда вспоминал.
@@ -148,6 +148,29 @@ ts-jest с ключом `^.+\.(t|j)s$` справился бы и сам — у�
 browser-worker — `test/unit/blocked-writes.spec.ts` и новые e2e в
 `write-guard.e2e.spec.ts`; assist — `scripts/owner-role.test.ts`,
 `scripts/voice-suggestions.test.ts`.
+
+Publisher, интеграция Z-2b (13.10.2026, `doc/ai-publisher/IMPLEMENTATION-DESIGN.md`
+§25): наборы этапа Z — в джобе `sites-backend` без новой джобы:
+`src/acceptance/publisher/z-isolation.spec.ts` (AT-CORE-08: маршруты из
+реестра `contracts/*_ROUTES`, сверка с роутером — новый маршрут вне
+контрактов роняет набор) и `z-pii-scan.spec.ts` (AT-CORE-09: сырой поиск
+синтетических контактов во всех `pub_*`, журналах, ответах, промпте вне
+явного списка шифротекстов). Сквозные E2E-01…05 —
+`scripts/publisher-e2e.sh --site` — с Z-2c (предаудит DEF-C-06,
+Р-PUB-Z2-29) отдельная джоба **`publisher-stand`**: Postgres-сервис как у
+`sites-backend`, три `npm ci`, Chromium, затем скрипт сам собирает `dist`
+(метка сборки — DEF-C-01), сайт — в своей копии `$WORK/site` (свой
+`.next`), https-домен продукта — через CONNECT-прокси на свободном порту
+(не :443). Артефакт — JSON по шагам (`passed/failed/blocked` с причиной) и
+журналы. Запускается правилом `publisher_stand` (`scripts/ci-changes.mjs`):
+модуль Publisher и его миграции, сайт, клиент кабинета assist, драйвер и
+стенд. Джоба `publisher-site` (мок-стенд) теперь запускается и правками
+публичного приёма (`modules/publisher/public/`) и миграции ядра Publisher
+(представления публичной роли). Стенд включает часы стенда
+(`PUBLISHER_STAND_CLOCK`, календарь D42/D72/D90) и копии в локальном
+каталоге (`PUBLISHER_STAND_BACKUP_DIR`) — оба флага действуют только при
+`NODE_ENV=development|test` и не на Vercel (Р-PUB-Z2-21/22, проверка —
+`core/stand.spec.ts` в джобе `sites-backend`).
 
 ## Локально
 

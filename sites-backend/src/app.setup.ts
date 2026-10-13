@@ -129,6 +129,36 @@ export const ADMIN_UI_PLAN_PATHS = [
   '/assist-admin/v1/voice-test',
 ];
 
+/**
+ * AI Publisher (P-A0, проектный документ §11.4): публичный приём сайта
+ * продукта. Заявка — JSON ≤ 8 КБ; событие — тело строкой ≤ 2 КБ с JSON
+ * внутри, любой Content-Type (трекер шлёт `sendBeacon` с `text/plain`:
+ * межсайтовый `application/json` браузер без preflight не отправит, аудит
+ * P2-24), JSON разбирает маршрут. Больше потолка — 413
+ * `PUB_PAYLOAD_TOO_LARGE` в общем конверте ДО маршрута (лимиты и запись не
+ * трогаются); битый JSON заявки — 400 `PUB_VALIDATION`.
+ */
+export const PUBLISHER_LEADS_PATH = '/public/publisher/v1/leads';
+export const PUBLISHER_LEADS_BODY_LIMIT = '8kb';
+export const PUBLISHER_EVENTS_PATH = '/public/publisher/v1/events';
+export const PUBLISHER_EVENTS_BODY_LIMIT = '2kb';
+
+/** Отказ парсера публичного тела Publisher — в общем конверте. */
+function publisherBodyError(res: Response, path: string, err: unknown): void {
+  const tooLarge = (err as { type?: string }).type === 'entity.too.large';
+  res.status(tooLarge ? 413 : 400).json({
+    success: false,
+    error: tooLarge
+      ? { code: 'PUB_PAYLOAD_TOO_LARGE', message: 'Запит завеликий' }
+      : {
+          code: 'PUB_VALIDATION',
+          message: 'Некоректний запит',
+          details: { fields: [{ field: 'body', code: 'json' }] },
+        },
+    meta: { timestamp: new Date().toISOString(), path },
+  });
+}
+
 export function configureApp(app: INestApplication, config: SitesConfig) {
   // Заход 12 (Express 5): `req.body` без тела — `{}`, как в Express 4.
   // Первым слоем, до любых парсеров (shared/express-body-default.ts).
@@ -390,6 +420,42 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
       },
     );
   }
+  // AI Publisher: свои потолки публичного приёма (заявка, событие).
+  // Заявка — JSON при ЛЮБОМ Content-Type (аудит P-D S3-1): иначе
+  // urlencoded/text уходили бы в общий парсер Nest (100 КБ) мимо потолка
+  // 8 КБ; не-JSON тело — 400 PUB_VALIDATION body/json, больше 8 КБ — 413.
+  const publisherLeadsJson = json({
+    limit: PUBLISHER_LEADS_BODY_LIMIT,
+    type: () => true,
+  });
+  app.use(
+    PUBLISHER_LEADS_PATH,
+    function publisherLeadsJsonBody(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      publisherLeadsJson(req, res, (err?: unknown) =>
+        err ? publisherBodyError(res, PUBLISHER_LEADS_PATH, err) : next(),
+      );
+    },
+  );
+  const publisherEventsText = text({
+    type: () => true,
+    limit: PUBLISHER_EVENTS_BODY_LIMIT,
+  });
+  app.use(
+    PUBLISHER_EVENTS_PATH,
+    function publisherEventsRawText(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      publisherEventsText(req, res, (err?: unknown) =>
+        err ? publisherBodyError(res, PUBLISHER_EVENTS_PATH, err) : next(),
+      );
+    },
+  );
   // Э6-тер (хвост аудита (4)): импорт голосовой карты — до 1 МБ, только здесь.
   app.use(VOICE_MAP_IMPORT_PATH, voiceMapImportJson());
   // Заход 9: запись «Сказать сейчас» панели редактора — `audio/*` ≤ 1 МБ.
