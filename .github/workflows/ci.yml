@@ -339,7 +339,9 @@ jobs:
         # github-actions — упавшие тесты видны аннотациями проверки (публичный
         # API без входа); workerIdleMemoryLimit в package.json — воркер jest
         # перезапускается, если после файла держит > 1 ГБ (набор вырос до
-        # ~2850 тестов на одной базе).
+        # сотен наборов на одной базе). tsconfig.spec.json компилирует файлы
+        # отдельно, чтобы перезапуск воркера не пересобирал весь TS-проект;
+        # полная проверка типов приложения и тестов остаётся шагом выше.
         run: npx jest --ci --reporters=default --reporters=github-actions
         working-directory: sites-backend
 

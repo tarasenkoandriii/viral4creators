@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  // CI checks all application/test types separately with tsc --noEmit.
+  // Jest only needs per-file compilation, avoiding full-project rebuilds
+  // whenever its memory-limited workers restart.
+  "compilerOptions": {
+    "isolatedModules": true,
+    "incremental": false,
+    "declaration": false
+  }
+}
