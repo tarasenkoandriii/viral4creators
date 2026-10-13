@@ -270,7 +270,7 @@ locally except the two Prisma steps that need network (`migrate deploy`,
 
 All supplementary documentation lives in [`doc/`](doc/):
 
-- Investor report v3.15 (12 October 2026): [standalone Markdown](doc/reports/investor-report-2026-10-12-v3.15.md) and [PDF](doc/reports/investor-report-2026-10-12-v3.15.pdf).
+- Investor report v3.16 (13 October 2026): [standalone Markdown](doc/reports/investor-report-2026-10-13-v3.16.md) and [PDF](doc/reports/investor-report-2026-10-13-v3.16.pdf).
 
 - [`doc/ai-publisher/README.md`](doc/ai-publisher/README.md) — target product **AI Publisher / ai-publisher.org**, audited v2.2 specification, acceptance and staged integration roadmap; target requirements, not completed pilot results.
 - [`doc/ai-publisher/IMPLEMENTATION-DESIGN.md`](doc/ai-publisher/IMPLEMENTATION-DESIGN.md) — implementation design of the Publisher module (`sites-backend/src/modules/publisher`, `publisher-site/`, assist screens): AT → test trace (§18.1), integration decisions Р-PUB-Z*; end-to-end E2E-01…05 against the real backend — `scripts/publisher-e2e.sh [--site]`, CI job `publisher-stand` (§25–§26).

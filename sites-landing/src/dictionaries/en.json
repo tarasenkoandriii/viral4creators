@@ -26,7 +26,7 @@
     },
     "footer": {
       "label": "Site footer",
-      "about": "{brand} is an AI assistant for websites that answers visitors from your site’s own content. In development.",
+      "about": "{brand} is an AI assistant for websites that answers visitors from your site’s own content. In development. The browser infrastructure for Tutorial, QA and the AI assistant is running. Customer-site workflows are undergoing pilot validation.",
       "productHeading": "Assistant",
       "legalHeading": "Documents",
       "draftNote": "Legal pages are drafts pending legal review.",
@@ -1056,7 +1056,7 @@
     "screenshot": {
       "claim": "sandbox-screenshot",
       "title": "A screenshot of your site with the widget",
-      "text": "The home page screenshot is taken only by an isolated browser worker with a network filter. Until it exists, you see a mock-up in your site's colours instead."
+      "text": "The isolated browser worker is deployed. A screenshot becomes available after the site connection and job execution are verified; until then, we show a mock-up in your site’s colours."
     },
     "owners": {
       "claim": "crawler-opt-out",

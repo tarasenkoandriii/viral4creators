@@ -1051,7 +1051,8 @@
     "madeWithClaude": "Erstellt mit Claude — 1 Woche gratis",
     "marketplace": "Marktplatz",
     "greetings": "Grußvideos",
-    "siteTutorial": "Website-Anleitungen"
+    "siteTutorial": "Website-Anleitungen",
+    "platformStatus": "Die Browser-Infrastruktur für Tutorial, QA und den KI-Assistenten läuft. Abläufe auf Kundenwebsites werden im Pilotbetrieb geprüft."
   },
   "notFound": {
     "title": "Seite nicht gefunden",

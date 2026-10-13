@@ -2910,3 +2910,9 @@ body:not(:has(.assistant-widget)) .step-ask-btn {
   justify-content: center;
   flex-wrap: wrap;
 }
+
+.platform-status {
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}

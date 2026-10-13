@@ -79,6 +79,7 @@ export function Footer({ dict, locale, demoHref = '#demo' }: { dict: Dictionary;
           <p className="legal-notice">{dict.footer.legalNoticeOtherLocale}</p>
         )}
       </div>
+      <p className="wrap platform-status">{dict.footer.platformStatus}</p>
     </footer>
   );
 }

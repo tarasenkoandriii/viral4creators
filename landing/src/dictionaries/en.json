@@ -1051,7 +1051,8 @@
     "madeWithClaude": "Made with Claude — 1 week free",
     "marketplace": "Marketplace",
     "greetings": "Greetings",
-    "siteTutorial": "Site walkthroughs"
+    "siteTutorial": "Site walkthroughs",
+    "platformStatus": "The browser infrastructure for Tutorial, QA and the AI assistant is running. Customer-site workflows are undergoing pilot validation."
   },
   "notFound": {
     "title": "Page not found",
