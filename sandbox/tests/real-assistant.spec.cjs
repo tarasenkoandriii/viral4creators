@@ -1,9 +1,10 @@
 // Run after registering the separate sandbox site and publishing its knowledge.
+// This checks the deployed helper including FAQ/cache, not fresh Gemini generation.
 const { test, expect } = require("@playwright/test");
 const { randomUUID } = require("node:crypto");
 // Live API requests contain visitor credentials; never record them in traces.
 test.use({ trace: "off" });
-test("[SBX-AI] real assistant answers a sandbox knowledge question", async ({
+test("[SBX-AI] deployed assistant serves a sandbox knowledge answer", async ({
   request,
 }, testInfo) => {
   test.skip(

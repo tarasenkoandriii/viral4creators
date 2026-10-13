@@ -9678,3 +9678,5 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 - [ ] Полная история cron по этапам вместо вывода исторической надёжности из последнего состояния замков.
 
 - [ ] Проверить безопасное устранение moderate DOCX dependency advisory `GHSA-hp3w-g68c-fv3c` без `npm audit fix --force` и отката mammoth.
+
+- [ ] Отдельная приёмка нового LLM-ответа: подтверждать `answerPath=model` и complete; `SBX-AI` с cache/FAQ и HTTP 200/refusal не считать доказательством доступности Gemini.
