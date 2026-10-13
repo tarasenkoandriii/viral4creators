@@ -742,6 +742,7 @@ describe('CatalogBatchWorkerService', () => {
       generation.getVideoStatus.mockRejectedValueOnce(new Error('сеть легла'));
       const result = await service.runBatch();
       expect(result.renderFailed).toBe(0);
+      expect(result.renderPollErrors).toBe(1);
       expect(result.renderCompleted).toBe(0);
       expect(prisma.catalogBatchItem.update).toHaveBeenCalledWith({
         where: { id: 'gitem1' },
