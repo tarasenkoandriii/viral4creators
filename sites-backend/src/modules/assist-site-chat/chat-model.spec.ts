@@ -81,3 +81,63 @@ describe('SiteChatModel.openStream', () => {
     expect(await readAll(b)).toBe('ok');
   });
 });
+
+describe('transient stream opening', () => {
+  it('retries one 503 before opening, using the same model and signal', async () => {
+    const open = jest
+      .fn()
+      .mockRejectedValueOnce({ status: 503 })
+      .mockResolvedValue(
+        (async function* () {
+          yield { text: 'ok' };
+        })(),
+      );
+    const model = new SiteChatModel().useClient({
+      models: { generateContentStream: open },
+    } as unknown as ChatModelClient);
+    const signal = new AbortController().signal;
+    expect(await readAll(await model.openStream(req, signal))).toBe('ok');
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open.mock.calls[0][0]).toEqual(open.mock.calls[1][0]);
+  });
+  it.each([402, 401, 429])(
+    'does not retry billing/auth/limit status %s',
+    async (status) => {
+      const error = { status };
+      const open = jest.fn().mockRejectedValue(error);
+      const model = new SiteChatModel().useClient({
+        models: { generateContentStream: open },
+      } as unknown as ChatModelClient);
+      await expect(
+        model.openStream(req, new AbortController().signal),
+      ).rejects.toBe(error);
+      expect(open).toHaveBeenCalledTimes(1);
+    },
+  );
+  it('does not reopen a stream after it emits text and fails', async () => {
+    const error = { status: 503 };
+    const open = jest.fn().mockResolvedValue(
+      (async function* () {
+        yield { text: 'first' };
+        throw error;
+      })(),
+    );
+    const model = new SiteChatModel().useClient({
+      models: { generateContentStream: open },
+    } as unknown as ChatModelClient);
+    const stream = await model.openStream(req, new AbortController().signal);
+    await expect(readAll(stream)).rejects.toBe(error);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+  it('cancels the wait without making a second request', async () => {
+    const abort = new AbortController();
+    const open = jest.fn().mockRejectedValue({ status: 503 });
+    const model = new SiteChatModel().useClient({
+      models: { generateContentStream: open },
+    } as unknown as ChatModelClient);
+    const pending = model.openStream(req, abort.signal);
+    abort.abort();
+    await expect(pending).rejects.toBeDefined();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});

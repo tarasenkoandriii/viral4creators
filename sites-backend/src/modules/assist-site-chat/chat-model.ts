@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 /**
  * Стрим ответа модели для виджета — W3 (ТЗ §4.5: `gemini-3.6-flash` =
  * GEMINI_MODEL). GeminiText (site-ai, Э1) стрима не умеет — здесь только
@@ -105,16 +106,31 @@ export class SiteChatModel {
     signal: AbortSignal,
     finish?: StreamFinish,
   ): Promise<AsyncIterable<ModelStreamChunk>> {
-    const stream = await this.getClient().models.generateContentStream({
-      model: this.model,
-      contents: req.contents.map(toGeminiContent),
-      config: {
-        systemInstruction: req.system,
-        maxOutputTokens: geminiOutputCeiling(req.maxOutputTokens),
-        temperature: req.temperature ?? 0.2,
-        abortSignal: signal,
-      },
-    });
+    const open = () =>
+      this.getClient().models.generateContentStream({
+        model: this.model,
+        contents: req.contents.map(toGeminiContent),
+        config: {
+          systemInstruction: req.system,
+          maxOutputTokens: geminiOutputCeiling(req.maxOutputTokens),
+          temperature: req.temperature ?? 0.2,
+          abortSignal: signal,
+        },
+      });
+    // Retry only a refused stream opening: never replay emitted text or actions.
+    // Abort and the existing first-token deadline also bound the retry delay.
+    let stream;
+    try {
+      stream = await open();
+    } catch (error) {
+      if (
+        signal.aborted ||
+        (error as { status?: unknown } | null)?.status !== 503
+      )
+        throw error;
+      await delay(500, undefined, { signal });
+      stream = await open();
+    }
     const chunks = stream as AsyncIterable<SdkChunk>;
     return finish ? watchFinish(chunks, finish) : chunks;
   }
