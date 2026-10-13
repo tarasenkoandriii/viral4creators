@@ -86,7 +86,7 @@ import {
   pruneAssistantExchanges,
   pruneAssistantEvents,
 } from '../assistant/assistant-prune';
-import { successLogFields, tutorialResultFailed } from './cron-run-summary';
+import { successLogFields, cronResultFailed } from './cron-run-summary';
 import { loadVercelSchedules } from './cron-schedule';
 import { tryAcquireJobLock, releaseJobLock } from '../../common/cron-job-lock';
 import {
@@ -323,7 +323,7 @@ export class CronJobsService {
       await this.prisma.cronRunLog.update({
         where: { id: row.id },
         data: {
-          status: tutorialResultFailed(jobKey, result) ? 'FAILED' : 'SUCCESS',
+          status: cronResultFailed(jobKey, result) ? 'FAILED' : 'SUCCESS',
           finishedAt: new Date(),
           durationMs,
           summary,

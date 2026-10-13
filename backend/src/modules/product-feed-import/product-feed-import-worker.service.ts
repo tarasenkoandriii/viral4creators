@@ -116,6 +116,8 @@ interface ClaimableItem {
 
 export interface FeedImportTickResult {
   fetchedRuns: number;
+  /** Failed download/parse attempts, distinct from individual item failures. */
+  failedRuns: number;
   importedItems: number;
   skippedItems: number;
   failedItems: number;
@@ -153,6 +155,7 @@ export class ProductFeedImportWorkerService {
       );
       return {
         fetchedRuns: 0,
+        failedRuns: 0,
         importedItems: 0,
         skippedItems: 0,
         failedItems: 0,
@@ -166,18 +169,18 @@ export class ProductFeedImportWorkerService {
   }
 
   private async runTickLocked(): Promise<FeedImportTickResult> {
-    const fetchedRuns = await this.runFetchPhase();
+    const fetchResult = await this.runFetchPhase();
     const itemResult = await this.runImportPhase();
-    const result: FeedImportTickResult = { fetchedRuns, ...itemResult };
+    const result: FeedImportTickResult = { ...fetchResult, ...itemResult };
     if (
-      fetchedRuns > 0 ||
+      fetchResult.fetchedRuns > 0 ||
       itemResult.importedItems +
         itemResult.skippedItems +
         itemResult.failedItems >
         0
     ) {
       this.logger.log(
-        `Крон импорта фида: забрано запусков ${fetchedRuns}, заведено ${itemResult.importedItems}, ` +
+        `Крон импорта фида: забрано запусков ${fetchResult.fetchedRuns}, отказов загрузки ${fetchResult.failedRuns}, заведено ${itemResult.importedItems}, ` +
           `пропущено ${itemResult.skippedItems}, провалено ${itemResult.failedItems}`,
       );
     }
@@ -186,7 +189,10 @@ export class ProductFeedImportWorkerService {
 
   // ── Фаза 1: забрать фид ──────────────────────────────────────────────
 
-  private async runFetchPhase(): Promise<number> {
+  private async runFetchPhase(): Promise<{
+    fetchedRuns: number;
+    failedRuns: number;
+  }> {
     const runs: ClaimableRun[] =
       await this.prisma.productFeedImportRun.findMany({
         where: {
@@ -201,6 +207,7 @@ export class ProductFeedImportWorkerService {
       });
 
     let processed = 0;
+    let failedRuns = 0;
     for (const run of runs) {
       const claim = await this.prisma.productFeedImportRun.updateMany({
         where: {
@@ -215,9 +222,10 @@ export class ProductFeedImportWorkerService {
         await this.fetchAndParse(run);
       } catch (error) {
         await this.recordRunFailure(run, error);
+        failedRuns += 1;
       }
     }
-    return processed;
+    return { fetchedRuns: processed, failedRuns };
   }
 
   private async fetchAndParse(run: ClaimableRun): Promise<void> {

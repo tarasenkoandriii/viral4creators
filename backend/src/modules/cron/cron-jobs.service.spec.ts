@@ -1204,7 +1204,7 @@ describe('CronJobsService — метла идёт до конца курсора
 });
 
 describe('CronJobsService.runAndLog — история настоящего Vercel Cron (пятый аудит, Д-4.3)', () => {
-  it('успех: пишет RUNNING → SUCCESS со сводкой и duration, возвращает результат задачи как есть', async () => {
+  it('частичный отказ: пишет RUNNING → FAILED со сводкой и duration, возвращает результат задачи как есть', async () => {
     const { service, prisma } = build();
     const task = jest.fn().mockResolvedValue({ processed: 3, failed: 1 });
 
@@ -1230,7 +1230,7 @@ describe('CronJobsService.runAndLog — история настоящего Verc
     expect(prisma.cronRunLog.update).toHaveBeenCalledWith({
       where: { id: 'run-log-1' },
       data: expect.objectContaining({
-        status: 'SUCCESS',
+        status: 'FAILED',
         finishedAt: expect.any(Date),
         durationMs: expect.any(Number),
         summary: 'processed=3, failed=1',

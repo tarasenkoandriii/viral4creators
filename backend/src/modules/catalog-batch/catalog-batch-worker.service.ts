@@ -130,6 +130,8 @@ export interface CatalogBatchRunResult {
   renderChecked: number;
   renderCompleted: number;
   renderFailed: number;
+  /** Polling failed, but the render remains retryable. */
+  renderPollErrors: number;
   /** Доп. запрос владельца продукта (ТЗ §13, этап 2 плана §14) — то
    * же самое, что renderChecked/renderCompleted/renderFailed выше, но
    * для строк, ушедших через xAI Batch API, не синхронный путь. */
@@ -218,6 +220,7 @@ export class CatalogBatchWorkerService {
         renderChecked: 0,
         renderCompleted: 0,
         renderFailed: 0,
+        renderPollErrors: 0,
         grokBatchesSubmitted: 0,
         grokBatchItemsCompleted: 0,
         grokBatchItemsFailed: 0,
@@ -297,6 +300,7 @@ export class CatalogBatchWorkerService {
       renderChecked: advanced.checked,
       renderCompleted: advanced.completed,
       renderFailed: advanced.renderFailed,
+      renderPollErrors: advanced.renderPollErrors,
       grokBatchesSubmitted: grokBatches.submitted,
       grokBatchItemsCompleted: grokBatches.completed,
       grokBatchItemsFailed: grokBatches.failed,
@@ -330,6 +334,8 @@ export class CatalogBatchWorkerService {
     checked: number;
     completed: number;
     renderFailed: number;
+    /** Polling failed, but the render remains retryable. */
+    renderPollErrors: number;
   }> {
     const rows = await this.prisma.catalogBatchItem.findMany({
       // М-3.5 седьмого аудита: Grok-строки досматриваются пачкой
@@ -354,6 +360,7 @@ export class CatalogBatchWorkerService {
 
     let completed = 0;
     let renderFailed = 0;
+    let renderPollErrors = 0;
     for (const row of rows) {
       // Тот же claim, что у новых строк — два перекрывающихся тика не
       // должны опрашивать Veo по одной и той же сессии параллельно.
@@ -409,6 +416,7 @@ export class CatalogBatchWorkerService {
             .catch(() => undefined);
         }
       } catch (error) {
+        renderPollErrors += 1;
         // `getVideoStatus` по контракту не бросает на штатных путях
         // (сетевые сбои возвращают видео без изменений) — но
         // защищаемся: одна сбойная проверка не должна портить весь тик
@@ -422,7 +430,7 @@ export class CatalogBatchWorkerService {
           .catch(() => undefined);
       }
     }
-    return { checked: rows.length, completed, renderFailed };
+    return { checked: rows.length, completed, renderFailed, renderPollErrors };
   }
 
   /**

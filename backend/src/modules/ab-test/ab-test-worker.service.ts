@@ -101,6 +101,8 @@ export interface AbTestRunResult {
   renderChecked: number;
   renderCompleted: number;
   renderFailed: number;
+  /** Polling failed, but the render remains retryable. */
+  renderPollErrors: number;
 }
 
 /** Отказ по правилам сервиса (план понижен, пользователь заблокирован,
@@ -155,6 +157,7 @@ export class AbTestWorkerService {
         renderChecked: 0,
         renderCompleted: 0,
         renderFailed: 0,
+        renderPollErrors: 0,
       };
     }
     try {
@@ -227,6 +230,7 @@ export class AbTestWorkerService {
       renderChecked: advanced.checked,
       renderCompleted: advanced.completed,
       renderFailed: advanced.renderFailed,
+      renderPollErrors: advanced.renderPollErrors,
     };
     if (rows.length > 0 || advanced.checked > 0) {
       this.logger.log(
@@ -249,6 +253,8 @@ export class AbTestWorkerService {
     checked: number;
     completed: number;
     renderFailed: number;
+    /** Polling failed, but the render remains retryable. */
+    renderPollErrors: number;
   }> {
     const rows = await this.prisma.abTestVariant.findMany({
       where: { status: 'GENERATING', sessionId: { not: null } },
@@ -259,6 +265,7 @@ export class AbTestWorkerService {
 
     let completed = 0;
     let renderFailed = 0;
+    let renderPollErrors = 0;
     for (const row of rows) {
       const claim = await this.prisma.abTestVariant.updateMany({
         where: {
@@ -310,6 +317,7 @@ export class AbTestWorkerService {
             .catch(() => undefined);
         }
       } catch (error) {
+        renderPollErrors += 1;
         this.logger.warn(
           `Проверка статуса рендера (запуск ${row.runId}, вариант ${row.variantIndex}) не удалась: ` +
             `${error instanceof Error ? error.message : String(error)}`,
@@ -319,7 +327,7 @@ export class AbTestWorkerService {
           .catch(() => undefined);
       }
     }
-    return { checked: rows.length, completed, renderFailed };
+    return { checked: rows.length, completed, renderFailed, renderPollErrors };
   }
 
   /** Снимок запуска — с кэшем на один прогон `runBatch` (несколько

@@ -28,7 +28,7 @@ import {
   cronOutcomeOf,
   CRON_OUTCOME_SKIPPED,
   successLogFields,
-  tutorialResultFailed,
+  cronResultFailed,
   historicalTutorialFailed,
   historicalTutorialIdle,
 } from './cron-run-summary';
@@ -824,7 +824,7 @@ export class AdminCronService {
       const updated = (await this.prisma.cronRunLog.update({
         where: { id: row.id },
         data: {
-          status: tutorialResultFailed(jobKey, result) ? 'FAILED' : 'SUCCESS',
+          status: cronResultFailed(jobKey, result) ? 'FAILED' : 'SUCCESS',
           finishedAt: new Date(),
           durationMs,
           summary,

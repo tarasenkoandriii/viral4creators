@@ -274,6 +274,14 @@ describe('AdminCronService — debug у девяти джобов только �
     expect(row.summary).toContain('checked=3');
   });
 
+  it('manual merchandise tick reports an item failure without throwing', async () => {
+    const { service, jobs } = build();
+    jobs.runCatalogBatchRun.mockResolvedValueOnce({ processed: 2, failed: 1 });
+    const row = await service.run('catalog-batch-run', 'admin-1', false);
+    expect(row.status).toBe('FAILED');
+    expect(row.summary).toContain('failed=1');
+  });
+
   it('tutorial-scenario-generate: делегирует CronJobsService.runTutorialScenarioGenerate (этап 94, ТЗ §4.10)', async () => {
     const { service, jobs } = build();
     const row = await service.run(

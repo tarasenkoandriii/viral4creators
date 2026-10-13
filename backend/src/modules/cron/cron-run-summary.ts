@@ -276,6 +276,34 @@ export function tutorialResultFailed(jobKey: string, result: unknown): boolean {
   );
 }
 
+/** Audited merchandise workers report item failures instead of throwing.
+ * Retry/deferred counters alone are not failures, and unrelated jobs retain
+ * their existing status contract. */
+export function cronResultFailed(jobKey: string, result: unknown): boolean {
+  if (tutorialResultFailed(jobKey, result)) return true;
+  if (!result || typeof result !== 'object' || skipReasonOf(result))
+    return false;
+  const keysByJob: Record<string, string[]> = {
+    'catalog-batch-run': [
+      'failed',
+      'renderFailed',
+      'renderPollErrors',
+      'grokBatchItemsFailed',
+    ],
+    'ab-test-run': ['failed', 'renderFailed', 'renderPollErrors'],
+    'feed-import-run': ['failedRuns', 'failedItems'],
+    'api-video': ['failed', 'gaveUp'],
+    'export-sync-run': ['failed'],
+  };
+  const counters = result as Record<string, unknown>;
+  return (keysByJob[jobKey] ?? []).some(
+    (key) =>
+      typeof counters[key] === 'number' &&
+      Number.isFinite(counters[key]) &&
+      (counters[key] as number) > 0,
+  );
+}
+
 /** Read-only interpretation of old green rows; never rewrites audit history. */
 export function historicalTutorialFailed(
   jobKey: string,

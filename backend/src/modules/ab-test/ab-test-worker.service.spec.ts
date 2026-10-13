@@ -181,6 +181,7 @@ const NO_RENDER_ADVANCE = {
   renderChecked: 0,
   renderCompleted: 0,
   renderFailed: 0,
+  renderPollErrors: 0,
 };
 
 describe('AbTestWorkerService', () => {

@@ -187,6 +187,26 @@ beforeEach(() => {
 });
 
 describe('runTick — фаза 1 (забрать фид)', () => {
+  it('download refusal reaches cron counters while preserving retry scheduling', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 503 });
+    const { service, prisma } = setup({ runs: [runRow()] });
+    const result = await service.runTick();
+    expect(result).toEqual(
+      expect.objectContaining({
+        fetchedRuns: 1,
+        failedRuns: 1,
+        failedItems: 0,
+      }),
+    );
+    expect(prisma.productFeedImportRun.update).toHaveBeenCalledWith({
+      where: { id: 'run1' },
+      data: expect.objectContaining({
+        status: 'FAILED',
+        nextAttemptAt: expect.any(Date),
+      }),
+    });
+  });
+
   it('нет claimable-запусков — fetchedRuns: 0, к сети не обращается', async () => {
     const { service } = setup({ runs: [] });
     const result = await service.runTick();
@@ -608,6 +628,7 @@ describe('джоб-уровневый замок (Д-3.3, пятый аудит)
     const result = await service.runTick();
     expect(result).toEqual({
       fetchedRuns: 0,
+      failedRuns: 0,
       importedItems: 0,
       skippedItems: 0,
       failedItems: 0,

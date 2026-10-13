@@ -16,6 +16,7 @@ import {
   successLogFields,
   summarizeCounters,
   tutorialResultFailed,
+  cronResultFailed,
   historicalTutorialFailed,
   historicalTutorialIdle,
 } from './cron-run-summary';
@@ -354,5 +355,41 @@ describe('assembly outcome reporting', () => {
         assemblyDeferred: 3,
       }),
     ).toBe(false);
+  });
+});
+
+describe('merchandise partial failures reach both cron entry points', () => {
+  it.each([
+    ['catalog-batch-run', 'failed'],
+    ['catalog-batch-run', 'renderFailed'],
+    ['catalog-batch-run', 'renderPollErrors'],
+    ['catalog-batch-run', 'grokBatchItemsFailed'],
+    ['ab-test-run', 'failed'],
+    ['ab-test-run', 'renderFailed'],
+    ['ab-test-run', 'renderPollErrors'],
+    ['feed-import-run', 'failedRuns'],
+    ['feed-import-run', 'failedItems'],
+    ['api-video', 'failed'],
+    ['api-video', 'gaveUp'],
+    ['export-sync-run', 'failed'],
+  ])('%s reports %s failure without a thrown exception', (job, counter) => {
+    expect(cronResultFailed(job, { [counter]: 1 })).toBe(true);
+    expect(cronResultFailed(job, { [counter]: 0 })).toBe(false);
+    expect(cronResultFailed(job, { [counter]: '1' })).toBe(false);
+    expect(cronResultFailed(job, { [counter]: 1, skipped: 'locked' })).toBe(
+      false,
+    );
+  });
+  it('keeps retries, idle ticks and unrelated counters separate from errors', () => {
+    expect(cronResultFailed('api-video', { retried: 1, failed: 0 })).toBe(
+      false,
+    );
+    expect(cronResultFailed('feed-import-run', { skippedItems: 2 })).toBe(
+      false,
+    );
+    expect(cronResultFailed('publish', { failed: 1 })).toBe(false);
+    expect(
+      cronResultFailed('tutorial-scenario-run', { assemblyFailures: 1 }),
+    ).toBe(true);
   });
 });
