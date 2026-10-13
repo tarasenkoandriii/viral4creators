@@ -117,20 +117,47 @@ export class SiteChatModel {
           abortSignal: signal,
         },
       });
-    // Retry only a refused stream opening: never replay emitted text or actions.
-    // Abort and the existing first-token deadline also bound the retry delay.
-    let stream;
-    try {
-      stream = await open();
-    } catch (error) {
+    // SDK may deliver a 503 inside the first iterator.next() after HTTP 200.
+    // Both opening and consuming share two retries, bounded by the caller's
+    // first-token deadline. Never replay any chunk already given to the caller.
+    let retries = 0;
+    const retry = async (error: unknown): Promise<void> => {
       if (
         signal.aborted ||
+        retries >= 2 ||
         (error as { status?: unknown } | null)?.status !== 503
       )
         throw error;
-      await delay(500, undefined, { signal });
-      stream = await open();
-    }
+      await delay(1000 * 2 ** retries++, undefined, { signal });
+    };
+    const openWithRetry = async () => {
+      for (;;) {
+        try {
+          return await open();
+        } catch (error) {
+          await retry(error);
+        }
+      }
+    };
+    const initial = await openWithRetry();
+    const guarded = async function* (): AsyncGenerator<ModelStreamChunk> {
+      let stream = initial;
+      let emitted = false;
+      for (;;) {
+        try {
+          for await (const chunk of stream) {
+            emitted = true;
+            yield chunk;
+          }
+          return;
+        } catch (error) {
+          if (emitted) throw error;
+          await retry(error);
+          stream = await openWithRetry();
+        }
+      }
+    };
+    const stream = guarded();
     const chunks = stream as AsyncIterable<SdkChunk>;
     return finish ? watchFinish(chunks, finish) : chunks;
   }

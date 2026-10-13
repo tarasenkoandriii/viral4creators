@@ -100,6 +100,45 @@ describe('transient stream opening', () => {
     expect(open).toHaveBeenCalledTimes(2);
     expect(open.mock.calls[0][0]).toEqual(open.mock.calls[1][0]);
   });
+  it('retries a 503 in the first stream read before any chunk', async () => {
+    const open = jest
+      .fn()
+      .mockResolvedValueOnce(
+        (async function* () {
+          throw { status: 503 };
+        })(),
+      )
+      .mockResolvedValue(
+        (async function* () {
+          yield { text: 'recovered' };
+        })(),
+      );
+    const model = new SiteChatModel().useClient({
+      models: { generateContentStream: open },
+    } as unknown as ChatModelClient);
+    expect(
+      await readAll(await model.openStream(req, new AbortController().signal)),
+    ).toBe('recovered');
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+  it('shares the retry limit between opening and first read', async () => {
+    const error = { status: 503 };
+    const open = jest
+      .fn()
+      .mockRejectedValueOnce(error)
+      .mockImplementation(async () =>
+        (async function* () {
+          throw error;
+        })(),
+      );
+    const model = new SiteChatModel().useClient({
+      models: { generateContentStream: open },
+    } as unknown as ChatModelClient);
+    await expect(
+      readAll(await model.openStream(req, new AbortController().signal)),
+    ).rejects.toBe(error);
+    expect(open).toHaveBeenCalledTimes(3);
+  });
   it.each([402, 401, 429])(
     'does not retry billing/auth/limit status %s',
     async (status) => {
