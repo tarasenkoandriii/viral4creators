@@ -89,7 +89,13 @@ function extractReasons(result: Record<string, unknown>): string[] {
         locale?: unknown;
         error?: unknown;
         routeKey?: unknown;
+        assemblyError?: unknown;
       };
+      if (typeof row.assemblyError === 'string' && row.assemblyError.trim()) {
+        out.push(
+          `${String(row.subjectKey)}/${String(row.locale)}: сборка: ${row.assemblyError}`,
+        );
+      }
       if (typeof row.error !== 'string' || !row.error.trim()) continue;
       if (row.ok !== false && typeof row.routeKey !== 'string') continue;
       const key =
@@ -252,7 +258,16 @@ export function tutorialResultFailed(jobKey: string, result: unknown): boolean {
   const keys =
     jobKey === 'tutorial-assembly-poll'
       ? ['failed', 'qualityErrors', 'qualityQueueErrors']
-      : ['failed'];
+      : jobKey === 'tutorial-scenario-run'
+        ? [
+            'failed',
+            'assemblyFailures',
+            'assemblyTimeouts',
+            'lostRaces',
+            'withoutFrames',
+            'themeMismatches',
+          ]
+        : ['failed'];
   return keys.some(
     (key) =>
       typeof r[key] === 'number' &&
@@ -268,7 +283,7 @@ export function historicalTutorialFailed(
 ): boolean {
   const counts: Record<string, number> = {};
   for (const match of (summary ?? '').matchAll(
-    /(?:^|, )(failed|qualityErrors|qualityQueueErrors)=([1-9][0-9]*)(?=,|$)/g,
+    /(?:^|, )(failed|qualityErrors|qualityQueueErrors|assemblyFailures|assemblyTimeouts|lostRaces|withoutFrames|themeMismatches)=([1-9][0-9]*)(?=,|$)/g,
   ))
     counts[match[1]] = Number(match[2]);
   return tutorialResultFailed(jobKey, counts);

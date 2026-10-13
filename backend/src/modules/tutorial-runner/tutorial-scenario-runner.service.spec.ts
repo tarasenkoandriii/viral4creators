@@ -1787,9 +1787,21 @@ describe('TutorialScenarioRunnerService', () => {
         // Запись идёт ПОСЛЕ `submit`, а не до: иначе отказ ffmpeg
         // оставлял бы в отчёте расход, которого не было.
         const { service, ffmpeg, aiUsage } = voicedRun();
-        ffmpeg.submit.mockRejectedValue(new Error('ffmpeg-api недоступен'));
+        ffmpeg.submit.mockRejectedValue(
+          new Error('ffmpeg api 402: paymentRequired'),
+        );
 
-        await service.run();
+        const run = await service.run();
+        expect(run).toMatchObject({
+          passed: 1,
+          failed: 0,
+          assemblyFailures: 1,
+          assemblyDeferred: 0,
+        });
+        expect(run.outcomes[0]).toMatchObject({
+          ok: true,
+          assemblyError: 'ffmpeg api 402: paymentRequired',
+        });
 
         expect(operationsRecorded(aiUsage)).not.toContain(
           'tutorial-video-assembly',
@@ -5562,7 +5574,13 @@ describe('TutorialScenarioRunnerService — аудит кронов 06.10.2026',
         async (key: string) => settings[key] ?? null,
       );
 
-      await built.service.run();
+      const run = await built.service.run();
+      expect(run).toMatchObject({
+        passed: 1,
+        failed: 0,
+        assemblyFailures: 0,
+        assemblyDeferred: 1,
+      });
 
       expect(built.ffmpeg.submit).not.toHaveBeenCalled();
       expect(built.prisma.tutorialVideoAsset.updateMany).toHaveBeenCalledWith({

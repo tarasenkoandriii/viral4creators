@@ -557,6 +557,8 @@ export interface TutorialScenarioRunOutcome {
    *  прошли, ролика не будет. Без этой отметки обрыв выглядел бы как
    *  чистый успех: regression-результат к этому моменту уже записан. */
   assemblyTimedOut?: true;
+  assemblyError?: string;
+  assemblyDeferred?: true;
   /**
    * Как на деле нарисована тема кадров (см. `CaptureThemeVia`):
    * `telegram` — через SDK Telegram, как в клиенте; `media-query` — SDK
@@ -593,6 +595,8 @@ export interface TutorialScenarioRunResult {
   /** Сколько строк реально дошло до исполнения. Меньше `total`,
    *  когда бюджет прогона исчерпан. */
   executed?: number;
+  assemblyFailures?: number;
+  assemblyDeferred?: number;
   /** Заполнено, если прогон пропущен целиком (фикстура не настроена/не
    * заведена, браузер недоступен) — total/passed/failed тогда 0. */
   skipped?: string;
@@ -1872,6 +1876,14 @@ export class TutorialScenarioRunnerService {
       withoutFrames: outcomes.filter((o) => o.noFrames).length,
       lostRaces: outcomes.filter((o) => o.lostRace).length,
       repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
+      ...(outcomes.some((o) => o.assemblyError)
+        ? {
+            assemblyFailures: outcomes.filter(
+              (o) => o.assemblyError && !o.assemblyDeferred,
+            ).length,
+            assemblyDeferred: outcomes.filter((o) => o.assemblyDeferred).length,
+          }
+        : {}),
       assemblyTimeouts: outcomes.filter((o) => o.assemblyTimedOut).length,
       themeMismatches: outcomes.filter((o) => o.themeMismatch).length,
       ...(outcomes.some((o) => o.browserRecovery)
@@ -2073,6 +2085,15 @@ export class TutorialScenarioRunnerService {
         withoutFrames: outcomes.filter((o) => o.noFrames).length,
         lostRaces: outcomes.filter((o) => o.lostRace).length,
         repeatFailures: outcomes.filter((o) => o.repeatFailure).length,
+        ...(outcomes.some((o) => o.assemblyError)
+          ? {
+              assemblyFailures: outcomes.filter(
+                (o) => o.assemblyError && !o.assemblyDeferred,
+              ).length,
+              assemblyDeferred: outcomes.filter((o) => o.assemblyDeferred)
+                .length,
+            }
+          : {}),
         assemblyTimeouts: outcomes.filter((o) => o.assemblyTimedOut).length,
         themeMismatches: outcomes.filter((o) => o.themeMismatch).length,
         outcomes,
@@ -2646,6 +2667,8 @@ export class TutorialScenarioRunnerService {
       noFrames?: true;
       lostRace?: true;
       assemblyTimedOut?: true;
+      assemblyError?: string;
+      assemblyDeferred?: true;
     } = {};
     // Владельца расхода нет (демо витрины без тестовой фикстуры, см.
     // `polygonSpendOwner`) — платного не начинаем вовсе: строка расхода
@@ -2719,6 +2742,12 @@ export class TutorialScenarioRunnerService {
         : {}),
       ...(result.skippedFrames.length > 0
         ? { framesMissed: result.skippedFrames.length }
+        : {}),
+      ...(assemblyNotes.assemblyError
+        ? { assemblyError: assemblyNotes.assemblyError }
+        : {}),
+      ...(assemblyNotes.assemblyDeferred
+        ? { assemblyDeferred: true as const }
         : {}),
       ...(assemblyNotes.noFrames ? { noFrames: true as const } : {}),
       ...(assemblyNotes.lostRace ? { lostRace: true as const } : {}),
@@ -3086,6 +3115,8 @@ export class TutorialScenarioRunnerService {
       narrationFallback?: true;
       noFrames?: true;
       lostRace?: true;
+      assemblyError?: string;
+      assemblyDeferred?: true;
     },
     /** Когда и какой сборкой фронтенда сняты кадры — в строку ролика. */
     capture: { capturedAt: Date; captureBuild: string | null } = {
@@ -3114,6 +3145,7 @@ export class TutorialScenarioRunnerService {
       return;
     }
     if (!this.ffmpeg.configured()) {
+      assemblyNotes.assemblyError = 'FFMPEG_API_KEY не настроен';
       this.logger.warn(
         `сценарий ${scenario.subjectKey}: FFMPEG_API_KEY не настроен — слайд-шоу не собирается (regression-результат уже учтён)`,
       );
@@ -3397,6 +3429,8 @@ export class TutorialScenarioRunnerService {
         },
       })) as { id: string };
     } catch (err) {
+      assemblyNotes.assemblyError =
+        err instanceof Error ? err.message : String(err);
       this.logger.warn(
         `сценарий ${scenario.subjectKey}: не удалось завести строку ролика: ${
           err instanceof Error ? err.message : String(err)
@@ -3635,6 +3669,7 @@ export class TutorialScenarioRunnerService {
         // Кадры уже залиты — снимаем их и строку за собой, иначе
         // получили бы ровно ту сироту, ради которой всё это и
         // переставлено.
+        assemblyNotes.assemblyError = 'кадры не годятся для сборки';
         await this.abandonAssembly(
           asset.id,
           'кадры не годятся для сборки',
@@ -3660,6 +3695,9 @@ export class TutorialScenarioRunnerService {
         this.logger.warn(
           `сценарий ${scenario.subjectKey} (${scenario.locale}): суточный потолок расхода обучалки выбран — сборка отложена до завтра`,
         );
+        assemblyNotes.assemblyError =
+          'суточный потолок расхода обучалки выбран';
+        assemblyNotes.assemblyDeferred = true;
         await this.abandonAssembly(
           asset.id,
           'суточный потолок расхода обучалки выбран',
@@ -3742,6 +3780,8 @@ export class TutorialScenarioRunnerService {
         `сценарий ${scenario.subjectKey}: слайд-шоу отправлено на сборку (задача ${job.jobId}, ${frames.length} кадров)`,
       );
     } catch (err) {
+      assemblyNotes.assemblyError =
+        err instanceof Error ? err.message : String(err);
       // Заливки и submit — сеть и хранилище, а не содержимое: такой
       // провал в счёт попыток одного содержимого не идёт.
       await this.abandonAssembly(

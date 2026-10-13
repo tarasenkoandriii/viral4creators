@@ -319,3 +319,40 @@ describe('исход «пропущен» (аудит кронов 06.10.2026)',
     expect(cronOutcomeOf(debug.debugLog)).toBeNull();
   });
 });
+
+describe('assembly outcome reporting', () => {
+  it('marks a passing regression with failed assembly as failed and names the cause', () => {
+    const result = {
+      passed: 1,
+      failed: 0,
+      assemblyFailures: 1,
+      outcomes: [
+        {
+          ok: true,
+          subjectKey: '3',
+          locale: 'es',
+          assemblyError: 'ffmpeg api 402: paymentRequired',
+        },
+      ],
+    };
+    expect(tutorialResultFailed('tutorial-scenario-run', result)).toBe(true);
+    expect(buildRunSummary('tutorial-scenario-run', result)).toContain(
+      '3/es: сборка: ffmpeg api 402',
+    );
+    expect(
+      historicalTutorialFailed(
+        'tutorial-scenario-run',
+        'passed=1, failed=0, assemblyFailures=1',
+      ),
+    ).toBe(true);
+  });
+  it('shows budget deferral separately without inventing a failed regression', () => {
+    expect(
+      tutorialResultFailed('tutorial-scenario-run', {
+        failed: 0,
+        assemblyFailures: 0,
+        assemblyDeferred: 3,
+      }),
+    ).toBe(false);
+  });
+});
