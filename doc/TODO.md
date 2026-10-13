@@ -9701,3 +9701,14 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 - [ ] Проверить безопасное устранение moderate DOCX dependency advisory `GHSA-hp3w-g68c-fv3c` без `npm audit fix --force` и отката mammoth.
 
 - [x] Отдельная приёмка нового LLM-ответа: подтверждены `answerPath=model`, complete и фактические токены после исправления `61e46d1`, QA-контекст voice отключает семантический cache; `SBX-AI` с cache/FAQ и HTTP 200/refusal по-прежнему не считать доказательством доступности Gemini.
+
+### Браузерный воркер: второй VPS (13.10.2026)
+
+Сервер `Viral4Creators-Serv02` (78.47.129.110, Hetzner, Rebuild на Debian 12) поднят скриптом `browser-worker/deploy/vps-bootstrap.sh` (DEPLOYMENT §6.25, коммит 9cf9ff0).
+
+- [x] Docker 29.9, воркер `healthy`, песочница Chromium (`"sandbox":true`, Chromium 156); правила исходящего трафика `BWORKER-EGRESS` + unit `bworker-egress`; изнутри контейнера закрыты метаданные облака, SSH хоста, 10/8 и 192.168/16, DNS работает; cron `--update` по воскресеньям 04:17 UTC.
+- [x] Секрет `SITES_WORKER_HMAC_SECRET` перевыпущен (первое значение попало в чат), в Vercel `assist-api` (Production) внесены `SITES_WORKER_HMAC_SECRET`, `SITES_WORKER_SEAL_PUBLIC_KEY`, `BROWSER_WORKER_ENABLED=true`, Redeploy; бэкенд отвечает `INTERNAL_SIGNATURE_MISSING` на неподписанный запрос (конфигурация принята), ошибок `claim` после Redeploy нет.
+- [x] Снаружи открыт только 22 (`ss -tlnp`: только `sshd`; `nc` с Мака: 22 открыт, 80/443/3000/8080/8088 закрыты); новый SSH-вход по ключу проходит. Ключ хоста сменился при Rebuild — проверен по метаданным Hetzner (`hostname` = `Viral4Creators-Serv02`), отпечаток ED25519 `SHA256:FjNwmPqDLBL9BUaaeq5NP6vnV9QitZ5PUgkA/XjR5qk`.
+- [ ] **fail2ban на сервере не работает**: на Debian 12 нет `/var/log/auth.log`, sshd-jail с умолчаниями не стартует, а скрипт печатал «ok». Включить из открытой сессии: `apt-get install -y python3-systemd`; `printf '[sshd]\nbackend = systemd\n' > /etc/fail2ban/jail.d/v4c-sshd-systemd.local`; `systemctl restart fail2ban && fail2ban-client status sshd`; затем проверить новый вход из второго окна. Доступа к консоли Hetzner нет — не закрывать сессию до проверки.
+- [x] `vps-bootstrap.sh` исправлен: ставит `python3-systemd`, переключает sshd-jail на журнал systemd и пишет «ok» только если `fail2ban-client status sshd` отвечает, иначе — предупреждение.
+- [ ] Подтвердить первое реальное задание воркера (строка взятия задачи в `docker compose logs`) — после постановки обхода сайта или снимка интерфейса из кабинета.

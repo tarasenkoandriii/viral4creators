@@ -145,9 +145,24 @@ if [ "$userns" = 0 ] || [ "$maxns" = 0 ]; then
 fi
 ok "user namespaces: unprivileged_userns_clone=$userns, max_user_namespaces=$maxns"
 
-if [ "$INSTALL_FAIL2BAN" = 1 ] && ! command -v fail2ban-server >/dev/null 2>&1; then
-  apt-get install -y -q fail2ban >/dev/null && systemctl enable --now fail2ban >/dev/null 2>&1 || warn "fail2ban не поставился"
-  ok "fail2ban (sshd-jail по умолчанию; sshd не менялся)"
+if [ "$INSTALL_FAIL2BAN" = 1 ]; then
+  command -v fail2ban-server >/dev/null 2>&1 || apt-get install -y -q fail2ban >/dev/null || warn "fail2ban не поставился"
+  # Debian 12/13 без rsyslog: /var/log/auth.log нет, и sshd-jail с умолчаниями
+  # не стартует («Have not found any log file») — читать журнал systemd.
+  if command -v fail2ban-server >/dev/null 2>&1; then
+    apt-get install -y -q python3-systemd >/dev/null 2>&1 || true
+    if [ ! -f /etc/fail2ban/jail.d/v4c-sshd-systemd.local ]; then
+      printf '[sshd]\nbackend = systemd\n' >/etc/fail2ban/jail.d/v4c-sshd-systemd.local
+    fi
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+    sleep 2
+    if fail2ban-client status sshd >/dev/null 2>&1; then
+      ok "fail2ban работает (sshd-jail, журнал systemd; sshd не менялся)"
+    else
+      warn "fail2ban не запустился — journalctl -u fail2ban -n 30"
+    fi
+  fi
 fi
 
 # --- 2. Код -------------------------------------------------------------------
