@@ -513,18 +513,27 @@ export class BrowserJobsService {
   }
 
   toView(row: JobRow): BrowserJobView {
+    // Completion claims the lease before the product handler persists its result.
+    // Keep polling while that handler runs; never expose its internal marker.
+    const pending =
+      row.status === 'done' &&
+      typeof row.result === 'object' &&
+      row.result !== null &&
+      !Array.isArray(row.result) &&
+      'pending' in row.result &&
+      row.result.pending === true;
     return {
       id: row.id,
       kind: row.kind,
       origin: row.origin,
       refId: row.refId,
-      status: row.status,
+      status: pending ? 'running' : row.status,
       attempts: row.attempts,
       errorCode: row.errorCode,
-      result: row.status === 'done' ? row.result : null,
+      result: row.status === 'done' && !pending ? row.result : null,
       createdAt: row.createdAt,
       startedAt: row.startedAt,
-      finishedAt: row.finishedAt,
+      finishedAt: pending ? null : row.finishedAt,
       expiresAt: row.expiresAt,
     };
   }
