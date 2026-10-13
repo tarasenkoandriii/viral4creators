@@ -25,6 +25,10 @@ import {
 import { siteGeminiClient } from '../site-ai/dev-fake-gemini';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
 import {
+  providerErrorStatus,
+  providerQuotaDiagnostic,
+} from '../../common/provider-error-status';
+import {
   GEMINI_FINISH_MAX_TOKENS,
   geminiOutputCeiling,
 } from '../site-ai/gemini-output';
@@ -122,13 +126,24 @@ export class SiteChatModel {
     // first-token deadline. Never replay any chunk already given to the caller.
     let retries = 0;
     const retry = async (error: unknown): Promise<void> => {
-      if (
-        signal.aborted ||
-        retries >= 2 ||
-        (error as { status?: unknown } | null)?.status !== 503
-      )
-        throw error;
-      await delay(1000 * 2 ** retries++, undefined, { signal });
+      if (signal.aborted || retries >= 2) throw error;
+      let waitMs: number;
+      if (providerErrorStatus(error) === '503') {
+        waitMs = 1000 * 2 ** retries;
+      } else {
+        const quota = providerQuotaDiagnostic(error);
+        // Only an explicit short minute-window RetryInfo is retriable.
+        // Daily quota, billing, auth, unknown 429 and long waits fail promptly.
+        if (
+          quota.period !== 'minute' ||
+          quota.retryAfterSeconds === null ||
+          quota.retryAfterSeconds > 10
+        )
+          throw error;
+        waitMs = Math.max(1000, Math.ceil(quota.retryAfterSeconds * 1000));
+      }
+      retries++;
+      await delay(waitMs, undefined, { signal });
     };
     const openWithRetry = async () => {
       for (;;) {

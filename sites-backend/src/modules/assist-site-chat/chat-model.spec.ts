@@ -139,6 +139,76 @@ describe('transient stream opening', () => {
     ).rejects.toBe(error);
     expect(open).toHaveBeenCalledTimes(3);
   });
+  it('honors a short explicit minute quota retry without changing the model', async () => {
+    const error = {
+      status: 429,
+      message: JSON.stringify({
+        error: {
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+              violations: [
+                { quotaId: 'GenerateRequestsPerMinutePerProjectPerModel' },
+              ],
+            },
+            {
+              '@type': 'type.googleapis.com/google.rpc.RetryInfo',
+              retryDelay: '0.001s',
+            },
+          ],
+        },
+      }),
+    };
+    const open = jest
+      .fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue(
+        (async function* () {
+          yield { text: 'ok' };
+        })(),
+      );
+    const model = new SiteChatModel().useClient({
+      models: { generateContentStream: open },
+    } as unknown as ChatModelClient);
+    expect(
+      await readAll(await model.openStream(req, new AbortController().signal)),
+    ).toBe('ok');
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(open.mock.calls[0][0]).toEqual(open.mock.calls[1][0]);
+  });
+  it.each([
+    ['GenerateRequestsPerDayPerProjectPerModel', '1s'],
+    ['GenerateRequestsPerMinutePerProjectPerModel', '45s'],
+  ])(
+    'does not retry daily quota or a wait exceeding the deadline (%s)',
+    async (quotaId, retryDelay) => {
+      const error = {
+        status: 429,
+        message: JSON.stringify({
+          error: {
+            details: [
+              {
+                '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                violations: [{ quotaId }],
+              },
+              {
+                '@type': 'type.googleapis.com/google.rpc.RetryInfo',
+                retryDelay,
+              },
+            ],
+          },
+        }),
+      };
+      const open = jest.fn().mockRejectedValue(error);
+      const model = new SiteChatModel().useClient({
+        models: { generateContentStream: open },
+      } as unknown as ChatModelClient);
+      await expect(
+        model.openStream(req, new AbortController().signal),
+      ).rejects.toBe(error);
+      expect(open).toHaveBeenCalledTimes(1);
+    },
+  );
   it.each([402, 401, 429])(
     'does not retry billing/auth/limit status %s',
     async (status) => {

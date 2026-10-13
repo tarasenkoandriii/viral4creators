@@ -73,7 +73,7 @@ test.describe("live Soniox voice", () => {
         process.env.ASSIST_SANDBOX_VOICE_QA !== "1",
         "Paid live QA is enabled only on the owned deployed sandbox",
       );
-      test.setTimeout(285000);
+      test.setTimeout(350000);
       // Separate paid language scenarios by a full minute window; no retries.
       if (lang === "uk")
         await new Promise((resolve) => setTimeout(resolve, 65000));
@@ -181,6 +181,10 @@ test.describe("live Soniox voice", () => {
         wer,
         "Synthetic TTS/STT regression exceeds 20% word error rate",
       ).toBeLessThanOrEqual(0.2);
+      // Gemini project quota is shared with product workers. Keep the second
+      // real generation outside the seed's minute window; this is pacing,
+      // not a test retry, and all original assertions still apply.
+      await new Promise((resolve) => setTimeout(resolve, 65000));
       const followup = await chat(speech.text, speech.voiceTicket);
       expect(followup.text.length).toBeGreaterThan(0);
     });
