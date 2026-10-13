@@ -9663,6 +9663,7 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 - [ ] Решения по ДТ-1 (t0/D0), ДТ-2, ДТ-3 и новым расхождениям предаудита (ТЗ §5 «администратор восстанавливает» ↔ `restore.apply` только владелец кабинета; ТЗ §9 `updated_at` у AO-таблиц).
 - [ ] Production: логин-роль `publisher_public` на Supabase, `PUBLISHER_SITE_URL`/`PUBLISHER_REVALIDATE_SECRET`, `BLOB_READ_WRITE_TOKEN`; резервное копирование — [DEPLOYMENT.md, «AI Publisher: резервные копии»](DEPLOYMENT.md#ai-publisher-резервные-копии-и-восстановление).
 - [ ] Внешний аудит по плану v1.1. Пакет передачи и итоги внутреннего предаудита — [`ai-publisher/preaudit-2026-10/`](ai-publisher/preaudit-2026-10/README.md): реестр находок `defects.csv`, вопросы владельцу `owner-decisions.md`, Приложение B `handover-appendix-B.md`.
+- [ ] Reddit Manual MVP (M1 Research + M2 AI Content Studio, только ручное копирование) — ТЗ v1.3 адаптировано к коду как пакет P-R модуля Publisher: [`ai-publisher/reddit-manual-mvp-adapted.md`](ai-publisher/reddit-manual-mvp-adapted.md) (решения Р-RD-0…17, AT-RD-01…18, оценка 12–19 дней). Ждёт решения владельца о включении (§12 документа); реализация не начата.
 
 - [x] Tutorial: первый scheduled после #63 в 14:05 UTC дал executed=3/passed=3/failed=0, без пропуска кадров/сборочных ошибок. Это один подтверждённый тик; многодневная серия остаётся открытой.
 
