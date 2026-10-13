@@ -107,3 +107,12 @@ Loopback блокируется немедленно; добавлены про�
 TypeScript и линт изменённых файлов прошли. CI 38331491002 коммита
 6647353 завершился success; дополнительная нормализация адресов выпускается
 следующим коммитом и требует собственного CI.
+
+## Финальный результат выпуска
+
+Коммит 961875d в main. CI [38332067607](https://github.com/tarasenkoandriii/viral4creators/actions/runs/38332067607)
+завершился success: backend, frontend, live-login-relay и browser-worker,
+включая e2e на настоящем Chromium. Backend production 6nn5efrm6 Ready;
+публичный alias переключён, `/api/health` подтвердил status=ok/database=up.
+Исходные ограничения FFmpeg 402 и суточного анализа качества остаются
+открытыми; техническая публикация не подменяет завершение этих операций.
