@@ -29,6 +29,23 @@ describe('ai-pricing (ТЗ §26)', () => {
     expect(costMicroUsd).toBe(2_800_000); // $2.80
   });
 
+  it('prices Gemini 3.1 Flash-Lite text, output and cached tokens without unpriced fallback', () => {
+    expect(
+      estimateCost(
+        'gemini-3.1-flash-lite',
+        {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cachedInputTokens: 100_000,
+        },
+        {},
+      ),
+    ).toMatchObject({ unpriced: false, costMicroUsd: 1_727_500 });
+    expect(rateFor('gemini-3.1-flash-lite', {})).toMatchObject({
+      audioInputPerMTok: 500_000,
+      cachedAudioInputPerMTok: 50_000,
+    });
+  });
   it('секунды видео считаются по ставке за секунду', () => {
     // Veo Lite $0.15/сек × 8 секунд ролика.
     expect(
@@ -818,6 +835,18 @@ describe('ai-pricing — крайние случаи (модальности, к
         'AI_PRICE_GEMINI_2_5_PRO_IMAGE_INPUT',
         'AI_PRICE_GEMINI_2_5_PRO_VIDEO_INPUT',
         'AI_PRICE_GEMINI_2_5_PRO_CACHED_AUDIO',
+      ],
+      'gemini-3.1-flash-lite': [
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_CACHED',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_OUTPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_SECOND',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_CALL',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_CHARS',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_3_1_FLASH_LITE_CACHED_AUDIO',
       ],
       'gemini-3.6-flash': [
         'AI_PRICE_GEMINI_3_6_FLASH_INPUT',

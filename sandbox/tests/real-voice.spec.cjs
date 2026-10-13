@@ -110,7 +110,9 @@ test.describe("live Soniox voice", () => {
             question,
             ...(voiceTicket ? { voiceTicket } : {}),
             page: { url: parentOrigin + "/", title: "Sandbox voice QA" },
-            context: null,
+            // Explicit context bypasses semantic cache: each voice scenario
+            // must exercise a real model response, not a previous FAQ/cache reply.
+            context: { qaRunId: process.env.GITHUB_RUN_ID || "live-voice-smoke" },
             uiLang: lang,
           },
         });

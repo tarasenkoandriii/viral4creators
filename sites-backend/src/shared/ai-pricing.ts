@@ -528,6 +528,17 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     outputPerMTok: 10 * USD,
     note: 'ai.google.dev, сверено 2026-09-06 (ставка для запросов до 200k токенов); кеш $0.125 — 2026-10-07, ПРОВЕРИТЬ по счёту',
   },
+  // Standard Gemini Developer API pricing, verified 2026-10-13:
+  // https://ai.google.dev/gemini-api/docs/pricing#gemini-3.1-flash-lite
+  'gemini-3.1-flash-lite': {
+    provider: 'GEMINI',
+    inputPerMTok: 0.25 * USD,
+    audioInputPerMTok: 0.5 * USD,
+    cachedInputPerMTok: 0.025 * USD,
+    cachedAudioInputPerMTok: 0.05 * USD,
+    outputPerMTok: 1.5 * USD,
+    note: 'ai.google.dev/gemini-api/docs/pricing, Standard, сверено 2026-10-13',
+  },
   // Найдено при аудите (Gemini API вернул 404 на новый ключ — `gemini-2.5-flash`
   // недоступна новым пользователям, Google сам указал заменить на эту модель).
   // Официальная страница cloud.google.com/gemini-enterprise-agent-platform:
