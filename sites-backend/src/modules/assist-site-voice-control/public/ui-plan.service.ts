@@ -1005,18 +1005,20 @@ export class SiteUiPlanService {
     }
     let actual = 0;
     const record = async (r: TextModelSpent) => {
-      const u = await this.usage.record(insertOnlyUsageDb(this.db), {
+      const units = {
+        inputTokens: r.inputTokens,
+        cachedInputTokens: r.cachedInputTokens,
+        outputTokens: r.outputTokens,
+      };
+      // Provider spend must survive a failed usage-ledger write.
+      actual = estimateCost(r.model, units).costMicroUsd;
+      await this.usage.record(insertOnlyUsageDb(this.db), {
         accountId: site.accountId,
         siteId: site.siteId,
         operation: 'assist-ui-plan',
         model: r.model,
-        units: {
-          inputTokens: r.inputTokens,
-          cachedInputTokens: r.cachedInputTokens,
-          outputTokens: r.outputTokens,
-        },
+        units,
       });
-      actual = u.costMicroUsd;
     };
     try {
       const r = await this.model.generate({
