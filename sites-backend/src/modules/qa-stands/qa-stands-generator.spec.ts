@@ -60,6 +60,22 @@ describe('stand providers accounting and boundaries', () => {
     expect(f.usage.record.mock.calls[0][1].operation).toBe('qa-stand-plan');
     expect(f.budget.adjust).toHaveBeenCalled();
   });
+  it('preserves the explicit user title and rejects oversized title before provider', async () => {
+    const f = fixture();
+    const c = await f.service.generate(m, 'site', {
+      description: 'Кабинет заказов и клиентов',
+      title: 'Мой стенд',
+    });
+    expect(c.title).toBe('Мой стенд');
+    f.model.generate.mockClear();
+    await expect(
+      f.service.generate(m, 'site', {
+        description: 'Кабинет заказов и клиентов',
+        title: 'x'.repeat(101),
+      }),
+    ).rejects.toThrow('Название');
+    expect(f.model.generate).not.toHaveBeenCalled();
+  });
   it('never calls provider without scope or budget', async () => {
     const f = fixture();
     f.catalog.scoped.mockRejectedValue(new Error('denied'));

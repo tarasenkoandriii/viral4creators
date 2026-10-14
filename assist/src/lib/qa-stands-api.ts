@@ -50,9 +50,10 @@ export function createQaStandsApi(client: ApiClient) {
       ) as Promise<Stand>,
     remove: (site: string, id: string) =>
       client.request('DELETE', base(site) + `/${encodeURIComponent(id)}`),
-    generate: (site: string, description: string) =>
+    generate: (site: string, description: string, title?: string) =>
       client.request('POST', base(site) + '/generate', {
         description,
+        title,
       }) as Promise<StandContract>,
     voice: (site: string, audio: string) =>
       client.request('POST', base(site) + '/voice', { audio }) as Promise<{

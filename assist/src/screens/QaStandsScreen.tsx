@@ -100,11 +100,12 @@ function Stands({ siteId }: { siteId: string }) {
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">QA → Стенды · MVP</h1>
       <p>
-        Тестовый кабинет с синтетическими данными. Шаблон: вход с ролями,
-        список, поиск, создание и удаление. Произвольная генерация кода и
-        настоящие аккаунты не используются.
+        Опишите тестовый сайт текстом или голосом: ИИ предложит сущности, формы,
+        списки и обзорные экраны с mock API. Перед созданием проверьте контракт
+        и допущения. Все данные синтетические.
       </p>
       {error && <p role="alert">{error}</p>}
+      {busy && <p role="status">Выполняем запрос…</p>}
       {write && (
         <Card>
           <label>
@@ -151,7 +152,15 @@ function Stands({ siteId }: { siteId: string }) {
             disabled={busy || voiceBusy}
             onClick={() =>
               action(async () => {
-                setPlan(await api.generate(siteId, description));
+                setPlan(
+                  await api.generate(
+                    siteId,
+                    description,
+                    title.trim() && title !== 'Тестовый кабинет'
+                      ? title
+                      : undefined
+                  )
+                );
                 setRequestId(crypto.randomUUID());
               })
             }
@@ -171,7 +180,7 @@ function Stands({ siteId }: { siteId: string }) {
               })
             }
           >
-            Подготовить контракт
+            Подготовить базовый шаблон
           </Button>
           {plan && (
             <div>
