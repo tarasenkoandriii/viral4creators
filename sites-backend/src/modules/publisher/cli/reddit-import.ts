@@ -95,7 +95,13 @@ export function parseArgs(argv: string[]): ImportArgs {
       throw new Error('--base-url: не URL');
     }
     if (!/^https?:$/.test(u.protocol)) throw new Error('--base-url: http(s)');
-    if (/(^|\.)(reddit\.com|redd\.it|redditmedia\.com)$/i.test(u.hostname))
+    if (u.username || u.password || u.search || u.hash)
+      throw new Error('--base-url: credentials, query и fragment запрещены');
+    if (
+      /(^|\.)(reddit\.com|redd\.it|redditmedia\.com|redditstatic\.com)$/i.test(
+        u.hostname.replace(/\.+$/, ''),
+      )
+    )
       throw new Error('--base-url: адреса Reddit запрещены (MANUAL_COPY)');
   }
   const site = str('site');
@@ -153,7 +159,7 @@ export function parseAuthHeaders(
       typeof x !== 'string' ||
       /[\r\n]/.test(x)
     )
-      throw new Error(`${AUTH_ENV}: недопустимый заголовок ${k}`);
+      throw new Error(`${AUTH_ENV}: недопустимый заголовок`);
     out[k] = x;
   }
   return out;
@@ -172,8 +178,13 @@ export function loadSegments(
   const read = (seg: string, kind: string) => {
     try {
       return parseCsv(readFileSync(join(dir, `${seg}-${kind}.csv`), 'utf8'));
-    } catch {
-      return [];
+    } catch (e) {
+      if (
+        kind !== 'communities' &&
+        (e as NodeJS.ErrnoException).code === 'ENOENT'
+      )
+        return [];
+      throw new Error(`Не удалось прочитать CSV ${seg}-${kind}.csv`);
     }
   };
   return names.map((segment) => ({
@@ -206,6 +217,7 @@ export function cabinetHttp(
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
       redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
     });
     let parsed: ImportResponse['body'] = null;
     try {
@@ -264,7 +276,15 @@ export async function main(
     console.error((e as Error).message);
     return { code: 1, report: null };
   }
-  const segments = loadSegments(args.dir, args.segments);
+  let segments: ResearchSegment[];
+  try {
+    segments = loadSegments(args.dir, args.segments);
+  } catch {
+    console.error(
+      'Ошибка чтения CSV: проверьте доступ к каталогу и формат файлов',
+    );
+    return { code: 1, report: null };
+  }
   if (!segments.length) {
     console.error(`у ${args.dir} немає файлів <сегмент>-communities.csv`);
     return { code: 1, report: null };

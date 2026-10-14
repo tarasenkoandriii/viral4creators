@@ -160,6 +160,7 @@ export const FILTERS = {
     'publisher-site/',
     'assist/src/lib/publisher/',
     'assist/scripts/publisher-e2e.ts',
+    'assist/scripts/publisher-e2e-reddit.ts',
     'scripts/publisher-e2e.sh',
   ],
   frontend: ['frontend/', 'backend/src/'],
@@ -279,6 +280,7 @@ function selfTest() {
   eq('публичный контроллер Publisher — бэк, assist, сайт и E2E', on(['sites-backend/src/modules/publisher/public/lead-intake.ts']), ['sites_backend', 'assist', 'publisher_site', 'publisher_stand']);
   eq('миграция ядра Publisher — бэк, сайт и E2E', on(['sites-backend/prisma/migrations/20261016090000_publisher_core/migration.sql']), ['sites_backend', 'publisher_site', 'publisher_stand']);
   eq('стенд и драйвер E2E — только E2E (драйвер — и assist)', on(['scripts/publisher-e2e.sh', 'assist/scripts/publisher-e2e.ts']), ['assist', 'publisher_stand']);
+  eq('драйвер Reddit E2E — стенд и assist', on(['assist/scripts/publisher-e2e-reddit.ts']), ['assist', 'publisher_stand']);
   eq('клиент кабинета Publisher — assist и E2E', on(['assist/src/lib/publisher/leads-api.ts']), ['assist', 'publisher_stand']);
   eq('плагин WordPress — интеграции и лендинг (сверка документации)', on(['assist-integrations/wordpress/v4c-assist/v4c-assist.php']), ['assist_integrations', 'sites_landing']);
   eq('векторы подписи — интеграции, бэк и лендинг', on(['assist-integrations/fixtures/goal-webhook-vectors.json']), ['sites_backend', 'assist_integrations', 'sites_landing']);

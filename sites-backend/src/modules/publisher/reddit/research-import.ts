@@ -61,6 +61,7 @@ export function parseCsv(text: string): Array<Record<string, string | null>> {
   let row: string[] = [];
   let cell = '';
   let quoted = false;
+  let closedQuote = false;
   const s = text.replace(/^﻿/, '');
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
@@ -68,20 +69,30 @@ export function parseCsv(text: string): Array<Record<string, string | null>> {
       if (c === '"' && s[i + 1] === '"') {
         cell += '"';
         i++;
-      } else if (c === '"') quoted = false;
-      else cell += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ',') {
+      } else if (c === '"') {
+        quoted = false;
+        closedQuote = true;
+      } else cell += c;
+    } else if (closedQuote && c !== ',' && c !== '\n' && c !== '\r') {
+      if (c !== ' ' && c !== '\t')
+        throw new Error('CSV: текст после закрывающей кавычки');
+    } else if (c === '"') {
+      if (cell.length) throw new Error('CSV: кавычка внутри обычного поля');
+      quoted = true;
+    } else if (c === ',') {
       row.push(cell);
       cell = '';
+      closedQuote = false;
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && s[i + 1] === '\n') i++;
       row.push(cell);
       rows.push(row);
       row = [];
       cell = '';
+      closedQuote = false;
     } else cell += c;
   }
+  if (quoted) throw new Error('CSV: незакрытая кавычка');
   if (cell !== '' || row.length) {
     row.push(cell);
     rows.push(row);
@@ -89,7 +100,11 @@ export function parseCsv(text: string): Array<Record<string, string | null>> {
   const data = rows.filter((r) => r.some((x) => x.trim() !== ''));
   if (!data.length) return [];
   const head = data[0].map((h) => h.trim());
+  if (head.some((h) => !h) || new Set(head).size !== head.length)
+    throw new Error('CSV: пустые или повторяющиеся заголовки');
   return data.slice(1).map((r) => {
+    if (r.length > head.length)
+      throw new Error('CSV: полей больше, чем заголовков');
     const o: Record<string, string | null> = {};
     head.forEach((h, k) => {
       const v = (r[k] ?? '').trim();
@@ -584,18 +599,33 @@ async function listAll<T>(
 ): Promise<T[]> {
   const out: T[] = [];
   let before: string | null = null;
+  const cursors = new Set<string>();
   for (let i = 0; i < 200; i++) {
     const q = new URLSearchParams({ ...query, limit: '100' });
     if (before) q.set('before', before);
     const r = await http.get(`${path}?${q.toString()}`);
     if (r.status !== 200) throw new ImportError(path, r);
     const page = r.body?.data as Page<T> | T[];
-    const items = Array.isArray(page) ? page : page.items;
+    const items = Array.isArray(page) ? page : page?.items;
+    if (!Array.isArray(items))
+      throw new ImportError(path, {
+        status: 502,
+        body: { error: { code: 'IMPORT_INVALID_PAGE' } },
+      });
     out.push(...items);
     before = Array.isArray(page) ? null : page.nextBefore;
-    if (!before) break;
+    if (!before) return out;
+    if (typeof before !== 'string' || cursors.has(before))
+      throw new ImportError(path, {
+        status: 502,
+        body: { error: { code: 'IMPORT_INVALID_CURSOR' } },
+      });
+    cursors.add(before);
   }
-  return out;
+  throw new ImportError(path, {
+    status: 502,
+    body: { error: { code: 'IMPORT_PAGE_LIMIT' } },
+  });
 }
 
 export class ImportError extends Error {
@@ -659,6 +689,8 @@ export async function runImport(
       if (r.status !== 503) break;
     }
     const res = r!;
+    if (res.status === 401 || res.status === 403)
+      throw new ImportError(path, res);
     if (res.status === 200 || res.status === 201)
       return {
         outcome: 'created',

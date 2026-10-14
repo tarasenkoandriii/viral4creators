@@ -63,6 +63,18 @@ describe('research-import: CSV и план (Р-RD-87)', () => {
     expect(parseCsv('')).toEqual([]);
   });
 
+  it('rejects malformed CSV rather than silently changing research fields', () => {
+    for (const csv of [
+      'a,b\n"unfinished,b',
+      'a,b\n"closed"garbage,b',
+      'a,b\nx"y,z',
+      'a,a\nx,y',
+      'a,\nx,y',
+      'a,b\nx,y,z',
+    ])
+      expect(() => parseCsv(csv)).toThrow('CSV:');
+  });
+
   it('обоснования факторов из колонки why; opKey — детерминированный UUID v4', () => {
     expect(
       parseWhy('tf: direct; itf: comparison; xx: ignored; cu: old'),

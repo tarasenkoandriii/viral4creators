@@ -780,6 +780,11 @@ jobs:
             -c "CREATE ROLE publisher_public_ci LOGIN PASSWORD 'publisher_public_ci' IN ROLE publisher_public"
       - name: E2E-01…05 (стенд, драйвер, сайт в Chromium)
         run: bash scripts/publisher-e2e.sh --site
+      - name: Reddit Research и Content Studio — настоящий HTTP стенд, fake AI
+        run: bash scripts/publisher-e2e.sh --reddit
+        env:
+          DB: sites_reddit_e2e
+          WORK: ${{ github.workspace }}/.pub-e2e/reddit
       - name: протокол E2E и журналы
         if: always()
         uses: actions/upload-artifact@v4
@@ -788,6 +793,8 @@ jobs:
           path: |
             .pub-e2e/*.json
             .pub-e2e/*.log
+            .pub-e2e/reddit/*.json
+            .pub-e2e/reddit/*.log
           if-no-files-found: ignore
 
   frontend:
