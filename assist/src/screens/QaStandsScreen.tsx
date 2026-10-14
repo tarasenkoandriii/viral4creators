@@ -305,7 +305,7 @@ function Stands({ siteId }: { siteId: string }) {
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
-          <Button disabled={busy || !write} onClick={() => command('GET')}>
+          <Button disabled={busy} onClick={() => command('GET')}>
             Выполнить GET
           </Button>
           <ul>

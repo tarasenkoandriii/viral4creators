@@ -71,12 +71,26 @@ export function createQaStandsApi(client: ApiClient) {
         ...contract,
         requestId,
       }) as Promise<Stand>,
-    command: (site: string, id: string, body: unknown) =>
-      client.request(
-        'POST',
-        base(site) + `/${encodeURIComponent(id)}/mock`,
-        body
-      ) as Promise<MockResult>,
+    command: (site: string, id: string, body: unknown) => {
+      const path = base(site) + `/${encodeURIComponent(id)}/mock`;
+      const command = body as {
+        method?: string;
+        entityId?: string;
+        query?: string;
+        scenario?: string;
+      };
+      if (command?.method === 'GET') {
+        const query = new URLSearchParams();
+        if (command.entityId) query.set('entity', command.entityId);
+        if (command.query) query.set('q', command.query);
+        if (command.scenario) query.set('scenario', command.scenario);
+        return client.request(
+          'GET',
+          path + (query.size ? `?${query}` : '')
+        ) as Promise<MockResult>;
+      }
+      return client.request('POST', path, body) as Promise<MockResult>;
+    },
     check: (site: string, id: string) =>
       client.request(
         'POST',

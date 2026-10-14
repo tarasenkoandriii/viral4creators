@@ -44,6 +44,18 @@ describe('QA stands persistence boundaries', () => {
     ).rejects.toThrow('forbidden');
     expect(f.db.qaStand.updateMany).not.toHaveBeenCalled();
   });
+  it('allows read permission for GET without persisting or escalating access', async () => {
+    const f = fixture();
+    const result = await f.service.command(m, 'site', 's', {
+      method: 'GET',
+      role: 'viewer',
+      scenario: 'normal',
+    });
+    expect(f.catalog.scoped).toHaveBeenCalledWith(m, 'site', false);
+    expect(result.status).toBe(200);
+    expect(result.revision).toBe(1);
+    expect(f.db.qaStand.updateMany).not.toHaveBeenCalled();
+  });
   it('scopes read by account and site', async () => {
     const f = fixture();
     await f.service.get(m, 'site', 's');

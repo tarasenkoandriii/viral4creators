@@ -299,6 +299,24 @@ export class QaStandsController {
     const { row } = await this.stands.get(m, site, id);
     return checkStand(row.contract as unknown as StandContract);
   }
+  @Get(':id/mock')
+  @RequireProductRoles(QA_READ)
+  readMock(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Query('entity') entityId: string,
+    @Query('q') query: string,
+    @Query('scenario') scenario: string,
+  ) {
+    return this.stands.command(m, site, id, {
+      method: 'GET',
+      role: 'viewer',
+      entityId,
+      query,
+      scenario: scenario || 'normal',
+    });
+  }
   @Post(':id/mock') @RequireProductRoles(QA_WRITE) command(
     @Membership() m: AccountMembership,
     @Param('siteId') site: string,

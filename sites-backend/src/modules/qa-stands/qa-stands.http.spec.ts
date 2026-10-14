@@ -1,3 +1,7 @@
+import {
+  NO_PRODUCT_ROLES,
+  satisfiesProductRoles,
+} from '../site-core/account/roles';
 import { parseGenerated } from './generated-contract';
 import { generatedFixture } from './generated-fixture.testing';
 import type { StandContract } from './stand-contract';
@@ -6,7 +10,10 @@ import { Test } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request = require('supertest');
 import { QaStandsController, QaStandsService } from './qa-stands.module';
-import { SiteAccountGuard } from '../site-core/account/site-account.guard';
+import {
+  PRODUCT_ROLES_KEY,
+  SiteAccountGuard,
+} from '../site-core/account/site-account.guard';
 import { baseline, mockTransition, planStand } from './stand-contract';
 describe('mock REST HTTP contract', () => {
   let app: INestApplication;
@@ -53,6 +60,40 @@ describe('mock REST HTTP contract', () => {
   });
   afterAll(async () => app?.close());
   const path = '/qa/sites/test/stands/test/mock/records';
+  it('QA viewer may read but cannot invoke any mutation route', () => {
+    const viewer = {
+      role: 'member' as const,
+      productRoles: { ...NO_PRODUCT_ROLES, qa: 'viewer' as const },
+    };
+    const read = Reflect.getMetadata(
+      PRODUCT_ROLES_KEY,
+      QaStandsController.prototype.readMock,
+    );
+    expect(satisfiesProductRoles(viewer, read)).toBe(true);
+    for (const method of [
+      'command',
+      'createRecord',
+      'deleteRecord',
+      'reset',
+    ] as const) {
+      const requirement = Reflect.getMetadata(
+        PRODUCT_ROLES_KEY,
+        QaStandsController.prototype[method],
+      );
+      expect(satisfiesProductRoles(viewer, requirement)).toBe(false);
+    }
+  });
+  it('read-only envelope ignores mutation inputs and preserves records', async () => {
+    const before = JSON.stringify(records);
+    const result = await request(app.getHttpServer())
+      .get(
+        '/qa/sites/test/stands/test/mock?method=DELETE&role=admin&scenario=empty',
+      )
+      .expect(200);
+    expect(result.body.status).toBe(200);
+    expect(result.body.data.items).toEqual([]);
+    expect(JSON.stringify(records)).toBe(before);
+  });
   it('returns genuine HTTP errors and created records', async () => {
     await request(app.getHttpServer())
       .get(path + '?scenario=429')
