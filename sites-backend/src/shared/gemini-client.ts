@@ -18,7 +18,9 @@ import { GoogleGenAI } from '@google/genai';
 export function geminiApiKey(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  return env.GEMINI_API_KEY || env.GOOGLE_GEMINI_API_KEY || undefined;
+  return (
+    env.GEMINI_API_KEY?.trim() || env.GOOGLE_GEMINI_API_KEY?.trim() || undefined
+  );
 }
 
 /** Клиент с явным ключом. Без ключа — бросает: молча работать нечем. */

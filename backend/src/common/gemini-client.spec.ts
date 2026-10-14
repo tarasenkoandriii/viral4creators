@@ -22,6 +22,14 @@ describe('gemini-client', () => {
     expect(geminiApiKey({ GOOGLE_GEMINI_API_KEY: 'b' })).toBe('b');
     expect(geminiApiKey({})).toBeUndefined();
     expect(geminiApiKey({ GEMINI_API_KEY: '' })).toBeUndefined();
+    expect(geminiApiKey({ GEMINI_API_KEY: ' key\n' })).toBe('key');
+    expect(
+      geminiApiKey({
+        GEMINI_API_KEY: ' \n',
+        GOOGLE_GEMINI_API_KEY: ' alternate ',
+      }),
+    ).toBe('alternate');
+    expect(geminiApiKey({ GEMINI_API_KEY: ' \n' })).toBeUndefined();
   });
 
   it('ключ передаётся SDK явно — в том числе из GOOGLE_GEMINI_API_KEY', () => {

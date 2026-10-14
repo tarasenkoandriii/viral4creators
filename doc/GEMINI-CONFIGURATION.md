@@ -36,3 +36,5 @@ Planner теперь вычисляет стоимость по фактичес
 - [Billing](https://ai.google.dev/gemini-api/docs/billing): Prepay, платные проекты и ограничения.
 - [Pricing](https://ai.google.dev/gemini-api/docs/pricing): Standard ставки, включая thinking tokens.
 - [Gemini 3.1 Flash-Lite](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite): поддерживаемые возможности.
+
+Дополнительная прямая проверка тем же ключом: gemini-embedding-001 HTTP 200, 768 измерений, 2519 мс; Flash-Lite structured JSON HTTP 200, JSON ok=true, STOP, 1081 мс (без thinking override). Ключи обоих имён нормализуются trim; пустое/пробельное основное значение допускает существующий альтернативный ключ. 3 теста каждого сервера прошли.
