@@ -194,11 +194,17 @@ export function factorsBody(v = 70): Record<string, unknown> {
   };
 }
 
-let threadSeq = 0;
-/** Уникальный id36 треда (только `[a-z0-9]`). */
+/** Alphabetic base36-compatible fixture IDs cannot resemble a phone in keyword phrases. */
 export function threadKey(): string {
-  threadSeq++;
-  return `t${Date.now().toString(36)}${threadSeq.toString(36)}`.slice(0, 13);
+  return (
+    't' +
+    randomUUID()
+      .replace(/-/g, '')
+      .slice(0, 12)
+      .split('')
+      .map((ch) => String.fromCharCode(97 + parseInt(ch, 16)))
+      .join('')
+  );
 }
 
 export function threadUrl(name: string, key = threadKey()): string {
