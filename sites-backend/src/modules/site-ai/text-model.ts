@@ -23,6 +23,7 @@ import {
 } from '../../shared/assist-chat-core';
 import { siteGeminiClient } from './dev-fake-gemini';
 import { GEMINI_MODEL } from '../../shared/gemini-model';
+import { providerErrorStatus } from '../../common/provider-error-status';
 import { GEMINI_FINISH_MAX_TOKENS, geminiOutputCeiling } from './gemini-output';
 
 export interface GenerateRequest {
@@ -157,9 +158,9 @@ export class GeminiText {
     } catch (e) {
       if (e instanceof TextModelError) throw e;
       const kind = abort.signal.aborted ? 'timeout' : 'unavailable';
-      // Только класс ошибки — тело провайдера в лог не пишем (У-11).
+      // Только фиксированный HTTP-код — ни тело, ни произвольное имя ошибки.
       this.logger.warn(
-        `Gemini ${model}: ${kind} (${(e as Error | null)?.name ?? 'Error'})`,
+        `Gemini ${model}: ${kind} (status=${providerErrorStatus(e)})`,
       );
       throw new TextModelError(kind);
     } finally {

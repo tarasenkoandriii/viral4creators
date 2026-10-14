@@ -78,6 +78,31 @@ describe('GeminiText', () => {
     await expect(p).rejects.not.toThrow(/AIza|секрет/);
   });
 
+  it('логирует код 503 без сообщения и произвольного имени ошибки', async () => {
+    const warn = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => {});
+    try {
+      const { client, calls } = fakeClient(async () => {
+        throw { status: 503, name: 'AIzaSECRET', message: 'private prompt' };
+      });
+      await expect(
+        new GeminiText().useClient(client).generate({
+          system: 's',
+          user: 'u',
+          maxOutputTokens: 10,
+        }),
+      ).rejects.toMatchObject({ kind: 'unavailable' });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('status=503'));
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(
+        /AIzaSECRET|private prompt/,
+      );
+      expect(calls).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('таймаут — kind=timeout (сигнал отмены дошёл до запроса)', async () => {
     const { client } = fakeClient(
       (p) =>
