@@ -50,6 +50,7 @@ import {
   ok as redditOk,
   seedCommunity,
   seedOpportunity,
+  seedStudio,
 } from '../../modules/publisher/reddit/testing/reddit-kit.testing';
 import { REPORTS_ROUTES } from '../../modules/publisher/contracts/reports-api';
 import {
@@ -250,6 +251,13 @@ ciDescribe(
         }),
         201,
       );
+      // P-R M2: бриф и Reddit-материал кабинета B (маршруты :id и :cid).
+      await seedStudio(
+        { ...s, srv: () => s.app!.getHttpServer() },
+        { acc: b, product: pb, team: undefined as never, P: RB },
+        rb,
+        rb,
+      );
       team = await seedMembers(s.prisma, pa, a.owner);
       // Участник, которому выдали и затем отозвали ВСЕ роли продукта.
       const m = await s.prisma.siteAccountMember.create({
@@ -315,8 +323,9 @@ ciDescribe(
       expect(new Set(reg).size).toBe(reg.length);
       expect(app).toEqual(reg);
       expect(CABINET.length).toBeGreaterThan(150);
+      // P-R: M1 — 25 маршрутов, M2 (Studio) — ещё 14.
       expect(CABINET.filter((r) => r.name.startsWith('reddit.'))).toHaveLength(
-        25,
+        39,
       );
       expect(foreignIds.length).toBeGreaterThan(15);
     });

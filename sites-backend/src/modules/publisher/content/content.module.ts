@@ -17,6 +17,7 @@ import { ContentsService } from './contents.service';
 import { ContentsMemberReassign } from './member-reassign';
 import { QaChecksService } from './qa-checks.service';
 import { QuestionsService } from './questions.service';
+import { RedditMaterialsService } from './reddit-materials.service';
 import { RevocationService } from './revocation.service';
 import { SourcesService } from './sources.service';
 
@@ -45,10 +46,18 @@ import { SourcesService } from './sources.service';
     ContentPortImpl,
     ApprovalsExpirePublishJob,
     ContentsMemberReassign,
+    RedditMaterialsService,
     { provide: CONTENT_PORT, useExisting: ContentPortImpl },
   ],
   // SourcesService — пакету P-R (первоисточники правил и выдержки тредов
   // Reddit пишутся в pub_sources только сервисом P-B1, §1 reddit-manual-mvp).
-  exports: [CONTENT_PORT, ContentsService, SourcesService],
+  // RedditMaterialsService — пакету P-R M2: Reddit-материалы, их QA и
+  // копирование пишет P-B1 (таблицы материалов и версий — его).
+  exports: [
+    CONTENT_PORT,
+    ContentsService,
+    SourcesService,
+    RedditMaterialsService,
+  ],
 })
 export class PublisherContentModule {}

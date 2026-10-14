@@ -14,6 +14,8 @@ import {
 import { enumerateControllers } from '../core/route-enumerator';
 import {
   GENERATOR_IDS,
+  EVAL_COVERED_GENERATORS,
+  EVAL_SET_VERSION,
   P0_ENABLED_GENERATORS,
   aiOperationOf,
   isEnabledInP0,
@@ -48,8 +50,19 @@ import { SITE_AI_OPERATIONS } from '../../site-ai/operations';
 import { PUB_ROLES } from './states';
 
 describe('contracts/parameters', () => {
-  it('39 ключей (с dev_investment, Р-PUB-Z2-24, и reddit_rules_stale_days P-R); умолчания ТЗ §26/§17 проходят свои схемы', () => {
-    expect(PARAMETER_KEYS).toHaveLength(39);
+  it('40 ключей (с dev_investment, Р-PUB-Z2-24, reddit_rules_stale_days P-R и reddit_excerpt_retention_days P-R M2); умолчания ТЗ §26/§17 проходят свои схемы', () => {
+    expect(PARAMETER_KEYS).toHaveLength(40);
+    // P-R M2 (§4): ретенция выдержек 1..3650, по умолчанию 180; гейтов нет.
+    expect(DEFAULT_PARAMETER_VALUES.reddit_excerpt_retention_days).toEqual({
+      days: 180,
+    });
+    expect(
+      parameterValueIssues('reddit_excerpt_retention_days', { days: 0 }),
+    ).not.toEqual([]);
+    expect(
+      parameterValueIssues('reddit_excerpt_retention_days', { days: 3650 }),
+    ).toEqual([]);
+    expect(gatesOfKey('reddit_excerpt_retention_days')).toEqual([]);
     // P-R (§M1.3): 1..365, по умолчанию 30; гейтов P0 не трогает.
     expect(DEFAULT_PARAMETER_VALUES.reddit_rules_stale_days).toEqual({
       days: 30,
@@ -60,7 +73,8 @@ describe('contracts/parameters', () => {
     expect(
       parameterValueIssues('reddit_rules_stale_days', { days: 365 }),
     ).toEqual([]);
-    expect(gatesOfKey('reddit_rules_stale_days')).toEqual([]);
+    // P-R M2 (Р-RD-9): ключ гейта копирования reddit_publish.
+    expect(gatesOfKey('reddit_rules_stale_days')).toEqual(['reddit_publish']);
     expect(Object.keys(DEFAULT_PARAMETER_VALUES).sort()).toEqual(
       [...PARAMETER_KEYS].sort(),
     );
@@ -329,8 +343,14 @@ describe('contracts/lead-validation (§11.4)', () => {
 });
 
 describe('contracts/ai + ai-schemas (§12.2)', () => {
-  it('девять генераторов; в P0 включены четыре; операции site-ai — pub-*', () => {
-    expect(GENERATOR_IDS).toHaveLength(9);
+  it('десять генераторов; в P0 включены четыре; набор P0 — 2.2, набор 2.3 (отдельно) покрывает ещё pub.reddit.draft; операции site-ai — pub-*', () => {
+    expect(GENERATOR_IDS).toHaveLength(10);
+    expect(isEnabledInP0('pub.reddit.draft')).toBe(false);
+    expect([...EVAL_COVERED_GENERATORS]).toEqual([
+      ...P0_ENABLED_GENERATORS,
+      'pub.reddit.draft',
+    ]);
+    expect(EVAL_SET_VERSION).toBe('2.2');
     expect([...P0_ENABLED_GENERATORS]).toEqual([
       'pub.helper.answer',
       'pub.brief.draft',
@@ -342,7 +362,7 @@ describe('contracts/ai + ai-schemas (§12.2)', () => {
       [...GENERATOR_IDS].sort(),
     );
     expect(Object.keys(EVAL_SCHEMA_OF).sort()).toEqual(
-      [...P0_ENABLED_GENERATORS].sort(),
+      [...EVAL_COVERED_GENERATORS].sort(),
     );
     for (const g of GENERATOR_IDS)
       expect(SITE_AI_OPERATIONS).toContain(aiOperationOf(g));

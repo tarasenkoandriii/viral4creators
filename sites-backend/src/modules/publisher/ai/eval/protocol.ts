@@ -1,5 +1,5 @@
 /**
- * AI Publisher — протокол прогона набора 30 задач и подсчёт порогов (P-B2,
+ * AI Publisher — протокол прогона набора задач и подсчёт порогов (P-B2,
  * проектный документ §12.6, §18.2; `pilot-ai-eval-v2.md`, «Протокол
  * будущего запуска»).
  *
@@ -12,8 +12,9 @@
  *
  * Порог применения (§12.6, ≡ триггер `pub_eval_guard`; аудит S1-1): по
  * ПЕРВОМУ ответу каждой задачи (самая ранняя строка, где модель ответила:
- * всё, кроме `not_run:*`/`no_answer:*`, предаудит D2-01) — все 30
- * оценены человеком, 30 `criticalPass` и `usefulnessPass` ≥ 24; плюс НИ ОДНОЙ строки с ответом (включая повторы)
+ * всё, кроме `not_run:*`/`no_answer:*`, предаудит D2-01) — все N задач
+ * набора оценены человеком, N `criticalPass` и `usefulnessPass` ≥ ⌈0,8·N⌉
+ * (P-R M2: 2.2 — 30/24, 2.3 — 42/34); плюс НИ ОДНОЙ строки с ответом (включая повторы)
  * с жёстким автопровалом или `criticalPass ≠ true`: повтор не заменяет
  * первый ответ и не скрывает провал. Строка без ответа (модель не
  * вызывалась; таймаут/недоступность без расхода) ответом не считается —
@@ -23,10 +24,25 @@
  * Чистый модуль.
  */
 import type { AiCallParams } from '../config';
-import { EVAL_TASKS } from './tasks';
+import { EVAL_SET_VERSION, isEvalSetVersion } from '../../contracts/ai';
+import { evalTasksOf } from './tasks';
 
-export const EVAL_TASK_COUNT = 30;
-export const USEFULNESS_THRESHOLD = 24;
+/**
+ * Размер набора по версии (≡ `pub_eval_set_size()` миграции P-R M2):
+ * 2.2 — 30 задач P0, 2.3 — 30 + 12 задач Reddit. Неизвестная — null.
+ */
+export function evalSetSize(version: string): number | null {
+  return version === '2.2' ? 30 : version === '2.3' ? 42 : null;
+}
+
+/** Порог полезных: ⌈0,8·N⌉ (целочисленно, ≡ `(4·N + 4) / 5` триггера). */
+export function usefulnessThreshold(n: number): number {
+  return Math.floor((4 * n + 4) / 5);
+}
+
+/** Задач в текущем наборе P0 (`EVAL_SET_VERSION` = 2.2 → 30). */
+export const EVAL_TASK_COUNT = evalTasksOf(EVAL_SET_VERSION).length;
+export const USEFULNESS_THRESHOLD = usefulnessThreshold(EVAL_TASK_COUNT);
 
 export interface FlagResolution {
   flagId: string;
@@ -91,6 +107,10 @@ export interface Totals {
   blocking: number;
   /** Порог §12.6 по первым ответам; у `fake` — всегда false. */
   thresholdsMet: boolean;
+  /** N — задач в наборе версии конфигурации (P-R M2: 2.3 → 42). */
+  taskCount?: number;
+  /** ⌈0,8·N⌉. */
+  usefulnessThreshold?: number;
   /** Сумма известных затрат (микродоллары строкой) и число неизвестных. */
   costMicroUsd: string;
   costUnknown: number;
@@ -157,6 +177,7 @@ export function isBlocking(
 export function totalsOf(
   mode: 'fake' | 'live',
   results: readonly ResultRow[],
+  n: number = EVAL_TASK_COUNT,
 ): Totals {
   const first = [...firstByTask(results).values()];
   const blocking = results.filter(isBlocking).length;
@@ -185,10 +206,12 @@ export function totalsOf(
     blocking,
     thresholdsMet:
       mode === 'live' &&
-      graded.length === EVAL_TASK_COUNT &&
-      critical === EVAL_TASK_COUNT &&
-      useful >= USEFULNESS_THRESHOLD &&
+      graded.length === n &&
+      critical === n &&
+      useful >= usefulnessThreshold(n) &&
       blocking === 0,
+    taskCount: n,
+    usefulnessThreshold: usefulnessThreshold(n),
     costMicroUsd: cost.toString(),
     costUnknown: unknown,
   };
@@ -216,8 +239,16 @@ export function protocolOf(
   return {
     evalSetVersion: run.config.evalSetVersion,
     run,
-    totals: totalsOf(run.mode, results),
-    tasks: EVAL_TASKS.map((t) => ({
+    totals: totalsOf(
+      run.mode,
+      results,
+      evalSetSize(run.config.evalSetVersion) ?? EVAL_TASK_COUNT,
+    ),
+    tasks: evalTasksOf(
+      isEvalSetVersion(run.config.evalSetVersion)
+        ? run.config.evalSetVersion
+        : EVAL_SET_VERSION,
+    ).map((t) => ({
       code: t.code,
       group: t.group,
       schema: t.schema,
@@ -255,7 +286,7 @@ export function protocolMarkdown(p: Protocol): string {
     `- Правила контексту ${p.run.config.contextRulesVersion}, схеми ${p.run.config.schemaSetVersion}`,
     `- Параметри виклику: ${callParamsLine(t.callParams)}`,
     `- Почато ${p.run.startedAt}${p.run.finishedAt ? `, завершено ${p.run.finishedAt}` : ''}`,
-    `- Оцінено ${t.graded}/${EVAL_TASK_COUNT} (за першою відповіддю); critical_pass ${t.criticalPass}/${EVAL_TASK_COUNT}; usefulness_pass ${t.usefulnessPass} (поріг ${USEFULNESS_THRESHOLD}); жорстких провалів ${t.hardFailed}; відкритих прапорців ${t.flagsOpen}`,
+    `- Оцінено ${t.graded}/${t.taskCount ?? EVAL_TASK_COUNT} (за першою відповіддю); critical_pass ${t.criticalPass}/${t.taskCount ?? EVAL_TASK_COUNT}; usefulness_pass ${t.usefulnessPass} (поріг ${t.usefulnessThreshold ?? USEFULNESS_THRESHOLD}); жорстких провалів ${t.hardFailed}; відкритих прапорців ${t.flagsOpen}`,
     `- Рядків, що блокують допуск (провал або без оцінки, разом із повторами): ${t.blocking ?? 0}`,
     `- Поріг застосування: **${t.thresholdsMet ? 'досягнуто' : 'не досягнуто'}**; витрати ${t.costMicroUsd} мкд USD${t.costUnknown ? `, невідомих ${t.costUnknown}` : ''}`,
     '',

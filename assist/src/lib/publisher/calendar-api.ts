@@ -28,6 +28,7 @@ import {
   DISTRIBUTION_BLOCK_REASONS,
   DISTRIBUTION_STATUSES,
   PUBLICATION_STAGES,
+  PUBLICATION_REPORT_KINDS,
   PUBLICATION_STATUSES,
   PUBLICATION_VERIFY_STATUSES,
   type DistributionBlockReason,
@@ -75,6 +76,8 @@ export interface PublicationView {
   publishedAt: string | null;
   status: (typeof PUBLICATION_STATUSES)[number];
   verifyStatus: (typeof PUBLICATION_VERIFY_STATUSES)[number];
+  /** P-R M2: `user_reported` — со слов пользователя, проверки не бывает. */
+  reportKind: (typeof PUBLICATION_REPORT_KINDS)[number];
   evidenceUrl: string | null;
   lastVerifiedAt: string | null;
   verifiedBy: string | null;
@@ -141,6 +144,11 @@ export function decodePublication(v: unknown): PublicationView {
       o.verifyStatus,
       PUBLICATION_VERIFY_STATUSES,
       'publication.verifyStatus'
+    ),
+    reportKind: oneOf(
+      o.reportKind,
+      PUBLICATION_REPORT_KINDS,
+      'publication.reportKind'
     ),
     evidenceUrl: strOrNull(o.evidenceUrl),
     lastVerifiedAt: isoOrNull(o.lastVerifiedAt),

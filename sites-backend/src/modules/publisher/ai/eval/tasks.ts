@@ -1,6 +1,8 @@
 /**
- * AI Publisher — 30 задач контрольного набора AI 2.2 (P-B2, проектный
- * документ §12.6, §18.2; `doc/ai-publisher/pilot-ai-eval-v2.md`).
+ * AI Publisher — задачи контрольного набора AI 2.3 (P-B2, проектный
+ * документ §12.6, §18.2; `doc/ai-publisher/pilot-ai-eval-v2.md`): 30 задач
+ * P0 набора 2.2 без изменений + 12 задач Reddit AI-31…AI-42 пакета P-R M2
+ * (`tasks-reddit.ts`, reddit-manual-mvp-adapted.md §M2.3.1).
  *
  * Схема, генератор, язык и режим каждой задачи зафиксированы ДО запуска
  * (AUD-12): AI-06 — QA-схема, AI-20 — бриф, AI-11…AI-16 — адаптация,
@@ -17,11 +19,29 @@
  *
  * Чистый модуль.
  */
-import type { GeneratorId } from '../../contracts/ai';
+import type { EvalSetVersion, GeneratorId } from '../../contracts/ai';
 import type { AdaptationFormat } from '../generators/adaptation-make.generator';
+import type { RedditDraftInput } from '../generators/reddit-draft.generator';
 import type { FixtureCode } from './fixtures';
+import { REDDIT_EVAL_TASKS } from './tasks-reddit';
 
-export type EvalSchema = 'answer' | 'brief' | 'qa' | 'adaptation';
+export type EvalSchema = 'answer' | 'brief' | 'qa' | 'adaptation' | 'reddit';
+
+/**
+ * Вход задачи Reddit (P-R M2): как `RedditDraftInput`, но источники
+ * тезисов — коды фикстур (id подставляет прогон).
+ */
+export interface RedditEvalInput extends Omit<
+  RedditDraftInput,
+  'brief' | 'rewrite'
+> {
+  brief: Omit<RedditDraftInput['brief'], 'keyPoints'> & {
+    keyPoints: Array<{
+      text: string;
+      sources: FixtureCode[] | 'needs_verification';
+    }>;
+  };
+}
 
 /** Ответ задачи в виде для проверок. */
 export interface EvalAnswer {
@@ -41,17 +61,27 @@ export interface EvalCheck {
 
 export interface EvalTask {
   code: string;
-  group: 'facts' | 'adaptation' | 'language' | 'data' | 'commands' | 'versions';
+  group:
+    | 'facts'
+    | 'adaptation'
+    | 'language'
+    | 'data'
+    | 'commands'
+    | 'versions'
+    | 'reddit';
   schema: EvalSchema;
   generator: GeneratorId;
   mode: 'internal' | 'public';
-  language: 'uk';
+  /** Язык ответа: `uk` (P0), `en` — тексты вариантов Reddit (язык брифа). */
+  language: 'uk' | 'en';
   allowedSources: FixtureCode[];
   /** Вход: запрос дословно; для адаптации — формат и метка батьківської версії. */
   input: {
     prompt: string;
     format?: AdaptationFormat;
     parentVersion?: string;
+    /** Задачи Reddit (AI-31…AI-42): вход генератора `pub.reddit.draft`. */
+    reddit?: RedditEvalInput;
   };
   hard: EvalCheck[];
   flags: EvalCheck[];
@@ -87,7 +117,7 @@ const ADAPT: Pick<EvalTask, 'schema' | 'generator' | 'language' | 'mode'> = {
 const DISCOUNT = /знижк|скидк|акці[яї]|промокод/u;
 const CURRENT = /поточн|зараз|актуальн|чинн|діюч/u;
 
-export const EVAL_TASKS: readonly EvalTask[] = [
+export const P0_EVAL_TASKS: readonly EvalTask[] = [
   // ── Факты и источники ────────────────────────────────────────────────
   {
     code: 'AI-01',
@@ -750,6 +780,20 @@ export const EVAL_TASKS: readonly EvalTask[] = [
     ],
   },
 ];
+
+/** Все задачи всех наборов (AI-01…AI-42; справочник по коду). */
+export const EVAL_TASKS: readonly EvalTask[] = [
+  ...P0_EVAL_TASKS,
+  ...REDDIT_EVAL_TASKS,
+];
+
+/**
+ * Задачи версии набора: `2.2` — 30 задач P0 (текущий допуск P0); `2.3` —
+ * плюс 12 задач Reddit (P-R M2, только решением владельца, Р-RD-64).
+ */
+export function evalTasksOf(set: EvalSetVersion): readonly EvalTask[] {
+  return set === '2.2' ? P0_EVAL_TASKS : EVAL_TASKS;
+}
 
 export const EVAL_TASK_BY_CODE: ReadonlyMap<string, EvalTask> = new Map(
   EVAL_TASKS.map((t) => [t.code, t]),

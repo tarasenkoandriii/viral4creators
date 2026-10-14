@@ -171,7 +171,8 @@
  *     (`publisher-reddit-no-network`) и не называет сетевые пакеты Node,
  *     `fetch(` и HTTP-клиенты (`publisher-reddit-no-network-io`); AI-слой не
  *     берёт сервисы P-R (`publisher-ai-no-authority`; чистые normalize/
- *     policy/score — можно) и не называет таблицы и модели P-R
+ *     policy/score/markers — можно, markers — признаки текста для находок
+ *     `pub.reddit.draft`, M2) и не называет таблицы и модели P-R
  *     (`publisher-ai-no-reddit-rules`): модель не меняет policy и статусы.
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
@@ -255,7 +256,7 @@ const PUBLISHER_PUBLIC_ALLOWED =
   /^(public\/.+|contracts\/.+|core\/(kyiv-time|money|utm|contact-crypto|clock)|(.+\/)?[\w-]+\.module)$/;
 /** Чего AI-слой Publisher не импортирует (принцип 6, §5.1). */
 const PUBLISHER_AI_FORBIDDEN =
-  /^(leads\/.+|distribution\/.+|core\/(approvals|parameters|role-grants|gates)[^/]*|reddit\/(?!(normalize|policy|score)$).+)$/;
+  /^(leads\/.+|distribution\/.+|core\/(approvals|parameters|role-grants|gates)[^/]*|reddit\/(?!(normalize|policy|score|markers)$).+)$/;
 /** P-R: сетевые входы, которых нет в `publisher/reddit/**` (Р-RD-0, §8.3). */
 const PUBLISHER_REDDIT_NETWORK =
   /^modules\/(site-crawl\/.+|publisher\/content\/source-import|publisher\/core\/site-revalidate[^/]*)$/;
@@ -954,6 +955,11 @@ function selfTest() {
       'publisher-ai-no-authority',
     ],
     [
+      'modules/publisher/ai/generators/pa21.generator.ts',
+      `import { redditChecks } from '../../reddit/checks';`,
+      'publisher-ai-no-authority',
+    ],
+    [
       'modules/publisher/ai/pa20.ts',
       `await tx.pubRedditOpportunity.updateMany({ data: { policy: 'ok', status: 'qualified' } });`,
       'publisher-ai-no-reddit-rules',
@@ -1436,7 +1442,7 @@ function selfTest() {
     ],
     [
       'modules/publisher/ai/okp8.ts',
-      `import { policyGate } from '../reddit/policy';\nimport { computeScore } from '../reddit/score';\nimport { normalizeThreadUrl } from '../reddit/normalize';`,
+      `import { policyGate } from '../reddit/policy';\nimport { computeScore } from '../reddit/score';\nimport { normalizeThreadUrl } from '../reddit/normalize';\nimport { hasLink } from '../reddit/markers';`,
     ],
     [
       'modules/assist-site-chat/okp5.ts',

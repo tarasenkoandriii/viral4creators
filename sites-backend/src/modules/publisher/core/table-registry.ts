@@ -99,6 +99,7 @@ export const TABLE_OWNERS: Readonly<Record<string, readonly PackageId[]>> = {
   pub_reddit_rule_snapshots: ['P-R'],
   pub_reddit_keywords: ['P-R'],
   pub_reddit_opportunities: ['P-R'],
+  pub_reddit_briefs: ['P-R'],
 };
 
 /** Не экспортируются (§15.4): вне тенанта, служебные очереди. */

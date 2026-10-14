@@ -1,7 +1,11 @@
 /**
- * AI Publisher — контракт маршрутов пакета P-R «Reddit Manual MVP», этап
- * M1 Research (doc/ai-publisher/reddit-manual-mvp-adapted.md §M1.5; Р-RD-13:
- * префикс `/publisher/products/:pid/reddit/**`). Заполнен по `_template.ts`;
+ * AI Publisher — контракт маршрутов пакета P-R «Reddit Manual MVP»: этап
+ * M1 Research (25 маршрутов, doc/ai-publisher/reddit-manual-mvp-adapted.md
+ * §M1.5) и M2 AI Content Studio (14: брифы, генерация `pub.reddit.draft`,
+ * материалы, проверка `reddit_policy`, копирование, отчёт о публикации —
+ * §M2.7, Р-RD-48…63); Р-RD-13: префикс `/publisher/products/:pid/reddit/**`.
+ * Версии, заморозка, QA и согласование Reddit-материала — общие маршруты
+ * `contracts/content-api.ts` (ветвь Reddit, Р-RD-49). Заполнен по `_template.ts`;
  * `reddit/reddit-api.spec.ts` сверяет `REDDIT_ROUTES` с контроллером (метод,
  * путь, действие), `z-isolation.spec.ts` берёт реестр отсюда.
  *
@@ -23,10 +27,22 @@
  * флаг выключен); 409 `PUB_CONFLICT` (CAS — `{reason:'revision'}`; дубль —
  * `{reason:'duplicate', existingId}`), `PUB_TRANSITION_INVALID {reason, from}`,
  * `PUB_IDEMPOTENCY_REUSED`; 503 `PUB_BUSY` (повторить с тем же `opKey`).
+ * M2: 409 `PUB_BRIEF_NOT_READY {missing}`, `PUB_GATE_CLOSED {gate:'reddit_publish'
+ * | 'ai_use', missing}`, `PUB_AI_DISABLED {manual:true}` (ручной редактор),
+ * `PUB_APPROVAL_STALE {reason:'rules_changed'|'rules_stale'}`; 503
+ * `PUB_AI_UNAVAILABLE`; 422 `PUB_AI_SCHEMA_INVALID`.
  */
 import { route } from './_template';
+import type { AiCallView } from './ai';
 import type { ListPage, MutationBody, RevisionedBody } from './common';
+import type { ContentView, QaCheckView, VersionView } from './content-api';
+import type { PublicationView } from './distribution-api';
 import type {
+  AiCallStatus,
+  PublicationStatus,
+  RedditAffiliation,
+  RedditBriefStatus,
+  RedditContentType,
   RedditCommunityStatus,
   RedditIntent,
   RedditKeywordStatus,
@@ -41,6 +57,9 @@ import type {
 } from './states';
 
 export type {
+  RedditAffiliation,
+  RedditBriefStatus,
+  RedditContentType,
   RedditCommunityStatus,
   RedditIntent,
   RedditKeywordStatus,
@@ -430,6 +449,231 @@ export interface RedditListQuery {
   format?: 'json' | 'csv';
 }
 
+// ── M2 AI Content Studio (§M2.1–M2.7) ────────────────────────────────────
+
+/**
+ * Плейсхолдер ретенции выдержки треда и контекста архивного брифа (§4,
+ * задание `reddit-retention`; = строка гварда `pub_reddit_sources_guard`).
+ */
+export const REDDIT_RETENTION_PLACEHOLDER = '[видалено за терміном зберігання]';
+
+/** Источники тезиса/пункта claimMap: id источников продукта или пометка. */
+export type RedditClaimSources = string[] | 'needs_verification';
+export interface RedditKeyPoint {
+  /** 1..300, без контактов и ников. */
+  text: string;
+  sourceIds: RedditClaimSources;
+}
+
+/** Чего не хватает брифу СЕЙЧАС (пусто — ready/генерация/версии возможны). */
+export type RedditBriefMissing =
+  | 'brief_ready'
+  | 'objective'
+  | 'affiliation'
+  /** Р-RD-65: имя продукта/бренда для раскрытия (при affiliation ≠ none). */
+  | 'brand'
+  | 'key_points'
+  | `key_points[${number}]`
+  | 'context'
+  | 'thread'
+  | 'offer_active';
+
+export interface RedditBriefView {
+  id: string;
+  projectId: string;
+  communityId: string;
+  subreddit: string;
+  canonicalUrl: string;
+  opportunityId: string | null;
+  /** Тред возможности (канон) — для comment всегда есть. */
+  threadUrl: string | null;
+  offerVersionId: string;
+  contentType: RedditContentType;
+  objective: string;
+  audience: string | null;
+  context: string | null;
+  /**
+   * Пометка выдержки треда возможности (`pub_sources.injectionFlag`, AT-RD-14;
+   * раунд 4): не null — в выдержке похоже на команду; контекст брифа, если он
+   * её копия, показывать с той же пометкой. Отозванная выдержка — null.
+   */
+  injectionFlag: string | null;
+  keyPoints: RedditKeyPoint[];
+  affiliation: RedditAffiliation | null;
+  /** Имя продукта/бренда, которое должно стоять в раскрытии (Р-RD-65). */
+  brand: string | null;
+  linksAllowed: boolean;
+  tone: string | null;
+  language: string;
+  constraints: string[];
+  forbiddenClaims: string[];
+  cta: string | null;
+  status: RedditBriefStatus;
+  missing: RedditBriefMissing[];
+  /** Гейт правил сообщества сейчас (без текста — ссылки не учтены). */
+  gate: RedditGateView;
+  /** Генерация: доступна ли и почему нет (ручной редактор — всегда). */
+  ai: { available: boolean; reason: 'flag_off' | 'generator_disabled' | null };
+  contentIds: string[];
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface CreateRedditBriefBody extends MutationBody {
+  projectId: string;
+  contentType: RedditContentType;
+  /** comment — обязателен (A13); post — по желанию. */
+  opportunityId?: string | null;
+  /** post без возможности — обязателен; иначе — из возможности. */
+  communityId?: string;
+  objective: string;
+  audience?: string | null;
+  /** comment: не задан — копия выдержки возможности; пусто → 400 required. */
+  context?: string | null;
+  keyPoints?: RedditKeyPoint[];
+  affiliation?: RedditAffiliation | null;
+  /** 2..64, без контактов; по умолчанию — имя продукта (Р-RD-65). */
+  brand?: string | null;
+  linksAllowed?: boolean;
+  tone?: string | null;
+  /** BCP-47 ≤ 16; по умолчанию — `locale` проекта. */
+  language?: string;
+  constraints?: string[];
+  forbiddenClaims?: string[];
+  cta?: string | null;
+}
+export interface PatchRedditBriefBody extends RevisionedBody {
+  objective?: string;
+  audience?: string | null;
+  context?: string | null;
+  keyPoints?: RedditKeyPoint[];
+  affiliation?: RedditAffiliation | null;
+  brand?: string | null;
+  linksAllowed?: boolean;
+  tone?: string | null;
+  language?: string;
+  constraints?: string[];
+  forbiddenClaims?: string[];
+  cta?: string | null;
+  /** Только ТЕКУЩАЯ активная версия оффера. */
+  offerVersionId?: string;
+}
+
+export const REDDIT_DRAFT_TEMPLATES = [
+  'helpful_answer',
+  'educational_post',
+  'comparison',
+  'troubleshooting',
+  'feedback_request',
+] as const;
+export type RedditDraftTemplate = (typeof REDDIT_DRAFT_TEMPLATES)[number];
+
+export interface GenerateRedditDraftBody extends MutationBody {
+  template: RedditDraftTemplate;
+  /** 2 или 3 (по умолчанию 3) — одним вызовом (Р-RD-15). */
+  variants?: 2 | 3;
+  /** Указание редактора, ≤ 1000. */
+  request?: string | null;
+  /** «Перегенерировать абзац» черновика материала брифа (абзацы — с 0). */
+  rewrite?: { versionId: string; paragraph: number } | null;
+}
+/** 200 — вызов завершён (`call`), 202 — исполняется очередью (`call: null`). */
+export interface RedditGenerateResponse {
+  callId: string;
+  status: AiCallStatus;
+  call: AiCallView | null;
+}
+
+export interface CreateRedditContentBody extends MutationBody {
+  ownerMemberId?: string | null;
+}
+
+export interface RedditPublicationView extends PublicationView {
+  contentId: string;
+  communityId: string;
+  subreddit: string;
+}
+
+/** Материал раздела + всё, что нужно студии (одним чтением). */
+export interface RedditMaterialView {
+  content: ContentView;
+  briefId: string;
+  contentType: RedditContentType;
+  communityId: string;
+  subreddit: string;
+  canonicalUrl: string;
+  threadUrl: string | null;
+  /** «Открыть Reddit»: тред (comment) или сообщество (post); сервер не открывает. */
+  openUrl: string;
+  rules: RedditRulesSummary | null;
+  currentVersion: VersionView | null;
+  approvedVersion: VersionView | null;
+  /** Последняя `reddit_policy` текущей (иначе согласованной) версии. */
+  policyCheck: QaCheckView | null;
+  copies: { count: number; lastAt: string | null };
+  publications: RedditPublicationView[];
+  /** Последний вызов `pub.reddit.draft` по брифу (Р-RD-72); null — не было. */
+  lastGeneration: {
+    callId: string;
+    status: AiCallStatus;
+    requestedAt: string;
+  } | null;
+}
+
+/**
+ * Тело копирования (Р-RD-69): WARN, появившиеся после согласования,
+ * подтверждает копирующий (иначе 409 `warnings_not_acknowledged {codes}`).
+ */
+export interface CopyRedditContentBody extends MutationBody {
+  acknowledgedWarnings?: string[];
+}
+
+/** Ответ копирования: точный утверждённый текст (§M2.6). */
+export interface RedditCopyView {
+  contentId: string;
+  versionId: string;
+  versionHash: string;
+  contentType: RedditContentType;
+  /** post — заголовок; comment — null (служебный заголовок не копируется). */
+  title: string | null;
+  body: string;
+  flairSuggestion: string | null;
+  /** Раскрытие (уже внутри body) — для подсветки. */
+  disclosure: string;
+  openUrl: string;
+  /** sha256(versionHash + время копирования). */
+  copyToken: string;
+  copiedAt: string;
+  /** Этот вызов перевёл материал `approved → scheduled`. */
+  scheduled: boolean;
+  policyCheckId: string;
+  rules: { snapshotId: string; version: number; checkedAt: string };
+}
+
+export interface ReportRedditPublicationBody extends MutationBody {
+  /** https://(www|old|new|m|np|sh).reddit.com/r/<name>/comments/<id36>/… */
+  url: string;
+  /** ISO, не в будущем. */
+  postedAt: string;
+  /** ≤ 1000, без контактов (пишется в reason аудита). */
+  notes?: string | null;
+}
+
+/** Параметры списков M2. */
+export interface RedditBriefListQuery extends RedditListQuery {
+  opportunityId?: string;
+  contentType?: RedditContentType;
+}
+export interface RedditPublicationListQuery {
+  before?: string;
+  limit?: number;
+  status?: PublicationStatus;
+  stage?: 'test' | 'live';
+  communityId?: string;
+  contentId?: string;
+  format?: 'json' | 'csv';
+}
+
 // ── Маршруты ─────────────────────────────────────────────────────────────
 
 const P = '/publisher/products/:pid/reddit';
@@ -624,7 +868,131 @@ export const REDDIT_ROUTES = {
     mutation: true,
     status: 200,
   }),
+  // ── M2: брифы, генерация, материалы, копирование, отчёт ──────────────
+  listBriefs: route<void, ListPage<RedditBriefView>>({
+    method: 'GET',
+    path: `${P}/briefs`,
+    action: 'reddit.read',
+    mutation: false,
+    status: 200,
+  }),
+  createBrief: route<CreateRedditBriefBody, RedditBriefView>({
+    method: 'POST',
+    path: `${P}/briefs`,
+    action: 'reddit.manage',
+    mutation: true,
+    status: 201,
+  }),
+  getBrief: route<void, RedditBriefView>({
+    method: 'GET',
+    path: `${P}/briefs/:id`,
+    action: 'reddit.read',
+    mutation: false,
+    status: 200,
+  }),
+  patchBrief: route<PatchRedditBriefBody, RedditBriefView>({
+    method: 'PATCH',
+    path: `${P}/briefs/:id`,
+    action: 'reddit.manage',
+    mutation: true,
+    status: 200,
+  }),
+  briefReady: route<RevisionedBody, RedditBriefView>({
+    method: 'POST',
+    path: `${P}/briefs/:id/ready`,
+    action: 'reddit.manage',
+    mutation: true,
+    status: 200,
+  }),
+  archiveBrief: route<RevisionedBody, RedditBriefView>({
+    method: 'POST',
+    path: `${P}/briefs/:id/archive`,
+    action: 'reddit.manage',
+    mutation: true,
+    status: 200,
+  }),
+  generateDraft: route<GenerateRedditDraftBody, RedditGenerateResponse>({
+    method: 'POST',
+    path: `${P}/briefs/:id/generate`,
+    action: 'ai.generate',
+    mutation: true,
+    status: 200,
+  }),
+  listBriefContents: route<void, { items: RedditMaterialView[] }>({
+    method: 'GET',
+    path: `${P}/briefs/:id/contents`,
+    action: 'reddit.read',
+    mutation: false,
+    status: 200,
+  }),
+  createContent: route<CreateRedditContentBody, RedditMaterialView>({
+    method: 'POST',
+    path: `${P}/briefs/:id/contents`,
+    action: 'reddit.manage',
+    mutation: true,
+    status: 201,
+  }),
+  getContent: route<void, RedditMaterialView>({
+    method: 'GET',
+    path: `${P}/contents/:cid`,
+    action: 'reddit.read',
+    mutation: false,
+    status: 200,
+  }),
+  checkContent: route<MutationBody, QaCheckView>({
+    method: 'POST',
+    path: `${P}/contents/:cid/check`,
+    action: 'qa.technical',
+    mutation: true,
+    status: 201,
+  }),
+  copyContent: route<CopyRedditContentBody, RedditCopyView>({
+    method: 'POST',
+    path: `${P}/contents/:cid/copy`,
+    action: 'reddit.handoff',
+    mutation: true,
+    status: 200,
+  }),
+  reportPublication: route<ReportRedditPublicationBody, RedditPublicationView>({
+    method: 'POST',
+    path: `${P}/contents/:cid/report-publication`,
+    action: 'reddit.handoff',
+    mutation: true,
+    status: 201,
+  }),
+  listPublications: route<void, ListPage<RedditPublicationView>>({
+    method: 'GET',
+    path: `${P}/publications`,
+    action: 'reddit.read',
+    mutation: false,
+    status: 200,
+  }),
 } as const;
+
+export type RedditRouteName = keyof typeof REDDIT_ROUTES;
+
+/** Маршруты этапа M2 (Studio, 14): брифы, генерация, материалы, handoff. */
+export const REDDIT_M2_ROUTE_NAMES: readonly RedditRouteName[] = [
+  'listBriefs',
+  'createBrief',
+  'getBrief',
+  'patchBrief',
+  'briefReady',
+  'archiveBrief',
+  'generateDraft',
+  'listBriefContents',
+  'createContent',
+  'getContent',
+  'checkContent',
+  'copyContent',
+  'reportPublication',
+  'listPublications',
+];
+
+/** Маршруты этапа M1 (Research, 25). */
+export const REDDIT_M1_ROUTE_NAMES: readonly RedditRouteName[] = (
+  Object.keys(REDDIT_ROUTES) as RedditRouteName[]
+).filter((k) => !REDDIT_M2_ROUTE_NAMES.includes(k));
 
 /** Колонки CSV-выгрузок (`?format=csv`). */
 export const REDDIT_CSV_COLUMNS = {
@@ -668,5 +1036,32 @@ export const REDDIT_CSV_COLUMNS = {
     'locale',
     'priority',
     'status',
+  ],
+  briefs: [
+    'id',
+    'projectId',
+    'subreddit',
+    'opportunityId',
+    'contentType',
+    'objective',
+    'affiliation',
+    'linksAllowed',
+    'language',
+    'status',
+    'missing',
+    'contentIds',
+    'createdAt',
+  ],
+  publications: [
+    'id',
+    'contentId',
+    'versionId',
+    'subreddit',
+    'finalUrl',
+    'stage',
+    'status',
+    'reportKind',
+    'verifyStatus',
+    'publishedAt',
   ],
 } as const;

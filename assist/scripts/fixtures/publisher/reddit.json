@@ -248,5 +248,116 @@
       "createdAt": "2026-10-13T08:00:00.000Z",
       "createdBy": "member:m1"
     }
+  },
+  "RedditBriefView": {
+    "id": "rb1",
+    "projectId": "rp1",
+    "communityId": "rc1",
+    "subreddit": "saas",
+    "canonicalUrl": "https://www.reddit.com/r/saas/",
+    "opportunityId": "ro1",
+    "threadUrl": "https://www.reddit.com/r/saas/comments/abc123/how_to_reuse/",
+    "offerVersionId": "ov1",
+    "contentType": "comment",
+    "objective": "Допомогти автору треду переробити статтю у формати",
+    "audience": null,
+    "context": "Автор питає, як перетворити одну статтю на пост, картки і сценарій.",
+    "injectionFlag": null,
+    "keyPoints": [
+      {
+        "text": "Одна перевірена стаття → кілька форматів",
+        "sourceIds": ["src1"]
+      },
+      {
+        "text": "Перевіряйте кожен формат перед публікацією",
+        "sourceIds": "needs_verification"
+      }
+    ],
+    "affiliation": "founder",
+    "brand": "Пілот",
+    "linksAllowed": false,
+    "tone": null,
+    "language": "en",
+    "constraints": ["Без посилань"],
+    "forbiddenClaims": ["гарантуємо ріст"],
+    "cta": null,
+    "status": "ready",
+    "missing": [],
+    "gate": {
+      "verdict": "ok",
+      "reasons": [],
+      "warnings": ["links_restricted"]
+    },
+    "ai": {
+      "available": false,
+      "reason": "generator_disabled"
+    },
+    "contentIds": ["c1"],
+    "revision": 3,
+    "createdAt": "2026-10-14T08:00:00.000Z",
+    "updatedAt": "2026-10-14T08:10:00.000Z"
+  },
+  "RedditCopyView": {
+    "contentId": "c1",
+    "versionId": "v1",
+    "versionHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentType": "comment",
+    "title": null,
+    "body": "Disclosure: I'm the founder of the product.\n\nStart from one verified article.",
+    "flairSuggestion": null,
+    "disclosure": "Disclosure: I'm the founder of the product.",
+    "openUrl": "https://www.reddit.com/r/saas/comments/abc123/how_to_reuse/",
+    "copyToken": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "copiedAt": "2026-10-14T09:00:00.000Z",
+    "scheduled": true,
+    "policyCheckId": "qa9",
+    "rules": {
+      "snapshotId": "rs3",
+      "version": 3,
+      "checkedAt": "2026-10-13T07:00:00.000Z"
+    }
+  },
+  "RedditDraftOutput": {
+    "variants": [
+      {
+        "title": null,
+        "body": "Disclosure: I'm the founder.\n\nVariant A: start from one verified article.",
+        "disclosure": "Disclosure: I'm the founder.",
+        "flair_suggestion": null,
+        "claim_map": [
+          {
+            "text": "One article can become several formats",
+            "source_ids": ["src1"]
+          }
+        ],
+        "uncertainties": ["Which formats the author tried"]
+      },
+      {
+        "title": null,
+        "body": "Disclosure: I'm the founder.\n\nVariant B: start from one verified article.",
+        "disclosure": "Disclosure: I'm the founder.",
+        "flair_suggestion": null,
+        "claim_map": [
+          {
+            "text": "One article can become several formats",
+            "source_ids": ["src1"]
+          }
+        ],
+        "uncertainties": ["Which formats the author tried"]
+      },
+      {
+        "title": null,
+        "body": "Disclosure: I'm the founder.\n\nVariant C: start from one verified article.",
+        "disclosure": "Disclosure: I'm the founder.",
+        "flair_suggestion": null,
+        "claim_map": [
+          {
+            "text": "One article can become several formats",
+            "source_ids": ["src1"]
+          }
+        ],
+        "uncertainties": ["Which formats the author tried"]
+      }
+    ]
   }
 }

@@ -16,7 +16,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { evaluateHostAccess } from '../../site-core/ownership/host-access';
-import { P0_ENABLED_GENERATORS } from '../contracts/ai';
+import { EVAL_COVERED_GENERATORS } from '../contracts/ai';
 import type {
   GateContext,
   GateMissing,
@@ -218,7 +218,7 @@ async function aiMissing(
   const out: GateMissing[] = [];
   if (
     ctx &&
-    !(P0_ENABLED_GENERATORS as readonly string[]).includes(ctx.generator)
+    !(EVAL_COVERED_GENERATORS as readonly string[]).includes(ctx.generator)
   ) {
     out.push({
       kind: 'ai_config',
@@ -378,6 +378,14 @@ export async function evaluateGate(
       break;
     case 'ai_use':
       missing.push(...(await aiMissing(tx, productId, params, ctx.ai)));
+      break;
+    case 'reddit_publish':
+      // P-R M2 (Р-RD-9, Р-RD-53): копирование Reddit-текста — только
+      // утверждённые ключи продукта; параметры сайта не нужны. Стадия
+      // публикации — отдельно (`public_publish` + продукт live).
+      missing.push(
+        ...missingParams(params, GATE_PARAMETER_KEYS.reddit_publish),
+      );
       break;
   }
   return done(missing);

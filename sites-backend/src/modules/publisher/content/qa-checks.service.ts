@@ -9,6 +9,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import type { QaCheckView } from '../contracts/content-api';
+import { isRedditContentKind } from '../contracts/states';
 import { PubError, validationError } from '../core/errors';
 import type { ProductRef, PubTx } from '../core/ports';
 import {
@@ -85,7 +86,10 @@ export class QaChecksService {
         hint: 'submit_first',
       });
     }
-    if (kind === 'adaptation_meaning' && v.content.kind === 'article') {
+    if (
+      kind === 'adaptation_meaning' &&
+      (v.content.kind === 'article' || isRedditContentKind(v.content.kind))
+    ) {
       throw validationError([{ field: 'kind', code: 'adaptation_only' }]);
     }
     const claimIds = new Set(v.versionClaimVersionOf.map((c) => c.claimId));

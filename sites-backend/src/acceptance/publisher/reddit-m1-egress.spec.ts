@@ -4,7 +4,7 @@
  * `http.request/get`, `https.request/get` подменены БРОСАЮЩИМИ функциями,
  * а `net.Socket#connect` и `dns.lookup` — записывающими (база тестов ходит
  * через них на localhost). Затем полный сценарий M1 по ВСЕМ 25 маршрутам
- * `REDDIT_ROUTES` (проект → сообщество → снимок → review → возможности →
+ * M1 `REDDIT_ROUTES` (M2 — `reddit-m2-egress.spec.ts`) (проект → сообщество → снимок → review → возможности →
  * score → переходы → запросы → списки и CSV) и импорт источника по URL
  * Reddit (`reddit_manual_only` до сети). Ожидание: ни одного вызова HTTP-
  * клиентов, ни одного соединения и DNS-запроса не к localhost.
@@ -17,7 +17,10 @@ import * as http from 'http';
 import * as https from 'https';
 import * as net from 'net';
 import { ciDescribe } from '../../prisma/ci-describe.testing';
-import { REDDIT_ROUTES } from '../../modules/publisher/contracts/reddit-api';
+import {
+  REDDIT_M1_ROUTE_NAMES,
+  REDDIT_ROUTES,
+} from '../../modules/publisher/contracts/reddit-api';
 import {
   api,
   ok,
@@ -347,7 +350,8 @@ ciDescribe(
         });
       }
 
-      expect([...used].sort()).toEqual(Object.keys(REDDIT_ROUTES).sort());
+      // M2 (14 маршрутов Studio) — reddit-m2-egress.spec.ts.
+      expect([...used].sort()).toEqual([...REDDIT_M1_ROUTE_NAMES].sort());
       expect(outbound).toEqual([]);
       expect(sockets.filter((h) => !LOCAL.has(h))).toEqual([]);
       expect(lookups.filter((h) => !LOCAL.has(h))).toEqual([]);

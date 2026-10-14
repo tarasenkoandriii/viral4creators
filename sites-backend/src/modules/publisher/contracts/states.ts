@@ -2,8 +2,8 @@
  * AI Publisher — закрытые списки (контракт P-A1, проектный документ §6.9,
  * §7). Источник правды для значений — триггеры `pub_<таблица>_guard`
  * миграции `20261016090000_publisher_core` (P-A0) и следующих миграций
- * Publisher (`…_publisher_reddit` — P-R: списки Reddit, `pub_object_types()`,
- * действия аудита): каждый список здесь дословно равен списку триггера
+ * Publisher (`…_publisher_reddit` и `…_publisher_reddit_m2` — P-R: списки
+ * Reddit, `pub_object_types()`, действия аудита, виды материалов и QA): каждый список здесь дословно равен списку триггера
  * (тест `states.spec.ts` собирает действующий SQL миграций и сверяет). Значение вне списка база отвергает SQLSTATE
  * 23514 с текстом `<таблица>.<поле>: вне списка`.
  *
@@ -43,6 +43,8 @@ export const DEPENDENT_STAGES = [
   'purchases',
   'ai_use',
   'reports',
+  // P-R M2 (миграция …_publisher_reddit_m2): гейт копирования Reddit-текста.
+  'reddit_publish',
 ] as const;
 export type DependentStage = (typeof DEPENDENT_STAGES)[number];
 
@@ -262,6 +264,9 @@ export const CONTENT_KINDS = [
   'cards',
   'checklist',
   'video_script',
+  // P-R M2 (Р-RD-6): Reddit-материалы по Reddit-брифу (`redditBriefId`).
+  'reddit_post',
+  'reddit_comment',
 ] as const;
 export type ContentKind = (typeof CONTENT_KINDS)[number];
 export const CONTENT_STATUSES = [
@@ -316,7 +321,10 @@ export const QA_CHECK_KINDS = [
   'technical',
   'ai_review',
   'adaptation_meaning',
+  /** P-R M2: детерминированная проверка `system:reddit-policy` (Р-RD-8). */
+  'reddit_policy',
 ] as const;
+export type QaCheckKind = (typeof QA_CHECK_KINDS)[number];
 export const QA_RESULTS = ['pass', 'fail', 'unknown'] as const;
 
 export const APPROVAL_TYPES = [
@@ -371,6 +379,9 @@ export const PUBLICATION_STATUSES = [
   'withdrawn',
 ] as const;
 export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
+/** Вид записи публикации (P-R M2, Р-RD-10): `user_reported` — отчёт человека. */
+export const PUBLICATION_REPORT_KINDS = ['standard', 'user_reported'] as const;
+export type PublicationReportKind = (typeof PUBLICATION_REPORT_KINDS)[number];
 export const PUBLICATION_VERIFY_STATUSES = [
   'not_checked',
   'ok',
@@ -611,7 +622,14 @@ export type AiCallStatus = (typeof AI_CALL_STATUSES)[number];
 export const AI_COST_STATUSES = ['priced', 'unpriced', 'unknown'] as const;
 export type AiCostStatus = (typeof AI_COST_STATUSES)[number];
 export const AI_EVAL_MODES = ['fake', 'live'] as const;
-export const AI_EVAL_SCHEMAS = ['answer', 'brief', 'qa', 'adaptation'] as const;
+export const AI_EVAL_SCHEMAS = [
+  'answer',
+  'brief',
+  'qa',
+  'adaptation',
+  // P-R M2: задачи AI-31…AI-42 набора 2.3 (`pub.reddit.draft`).
+  'reddit',
+] as const;
 
 // ── Reddit Manual MVP, пакет P-R (миграция …_publisher_reddit) ───────────
 // doc/ai-publisher/reddit-manual-mvp-adapted.md §1–2. Режим только
@@ -680,6 +698,30 @@ export const REDDIT_SCORE_FACTORS = [
 ] as const;
 export type RedditScoreFactor = (typeof REDDIT_SCORE_FACTORS)[number];
 
+// ── M2 AI Content Studio (миграция …_publisher_reddit_m2) ────────────────
+
+export const REDDIT_CONTENT_TYPES = ['post', 'comment'] as const;
+export type RedditContentType = (typeof REDDIT_CONTENT_TYPES)[number];
+export const REDDIT_AFFILIATIONS = [
+  'founder',
+  'employee',
+  'agency',
+  'customer',
+  'none',
+] as const;
+export type RedditAffiliation = (typeof REDDIT_AFFILIATIONS)[number];
+export const REDDIT_BRIEF_STATUSES = ['draft', 'ready', 'archived'] as const;
+export type RedditBriefStatus = (typeof REDDIT_BRIEF_STATUSES)[number];
+/** Вид материала по типу брифа. */
+export const REDDIT_CONTENT_KIND_OF: Readonly<
+  Record<RedditContentType, 'reddit_post' | 'reddit_comment'>
+> = { post: 'reddit_post', comment: 'reddit_comment' };
+export function isRedditContentKind(
+  kind: string,
+): kind is 'reddit_post' | 'reddit_comment' {
+  return kind === 'reddit_post' || kind === 'reddit_comment';
+}
+
 /**
  * Сводная таблица «колонка → список» в формате сообщений триггеров
  * (`<таблица>.<поле>`). По ней `states.spec.ts` сверяет миграцию: каждый
@@ -744,6 +786,7 @@ export const PUB_CLOSED_LISTS: Readonly<Record<string, readonly string[]>> = {
   'pub_publications.stage': PUBLICATION_STAGES,
   'pub_publications.status': PUBLICATION_STATUSES,
   'pub_publications.verifyStatus': PUBLICATION_VERIFY_STATUSES,
+  'pub_publications.reportKind': PUBLICATION_REPORT_KINDS,
   'pub_venues.linkMarking': VENUE_LINK_MARKINGS,
   'pub_venues.status': VENUE_STATUSES,
   'pub_venues.criteria': VENUE_CRITERIA,
@@ -810,6 +853,9 @@ export const PUB_CLOSED_LISTS: Readonly<Record<string, readonly string[]>> = {
   'pub_reddit_opportunities.policy': REDDIT_POLICY_VERDICTS,
   'pub_reddit_opportunities.status': REDDIT_OPPORTUNITY_STATUSES,
   'pub_reddit_opportunities.factors': REDDIT_SCORE_FACTORS,
+  'pub_reddit_briefs.contentType': REDDIT_CONTENT_TYPES,
+  'pub_reddit_briefs.status': REDDIT_BRIEF_STATUSES,
+  'pub_reddit_briefs.affiliation': REDDIT_AFFILIATIONS,
 };
 
 /** Значение из закрытого списка (сужение типа). */

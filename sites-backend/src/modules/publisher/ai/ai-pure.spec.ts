@@ -6,6 +6,8 @@
 import { createHash } from 'crypto';
 import {
   GENERATOR_IDS,
+  EVAL_COVERED_GENERATORS,
+  EVAL_SET_GENERATORS,
   P0_ENABLED_GENERATORS,
   type AiContext,
 } from '../contracts/ai';
@@ -412,7 +414,7 @@ describe('P-B2 ядро шлюзу', () => {
     expect(previousMonth('2026-10')).toBe('2026-09');
   });
 
-  it('конфігурація: чотири генератори; зміна моделі або версії інструкції — інший configHash', () => {
+  it('Р-RD-64: конфігурація P0 — набір 2.2 і чотири генератори, hash = hash до M2 (Reddit не входить); 2.3 — окремо', () => {
     const spec = currentConfigSpec('gemini', 'gemini-3.6-flash');
     expect(spec.coveredGenerators.sort()).toEqual(
       [...P0_ENABLED_GENERATORS].sort(),
@@ -420,6 +422,22 @@ describe('P-B2 ядро шлюзу', () => {
     expect(Object.keys(spec.instructionVersions).sort()).toEqual(
       [...P0_ENABLED_GENERATORS].sort(),
     );
+    expect(Object.keys(spec.callParams.maxOutputTokens).sort()).toEqual(
+      [...P0_ENABLED_GENERATORS].sort(),
+    );
+    expect(spec.evalSetVersion).toBe('2.2');
+    // Тот же состав, что до M2 (аудит M2 S2-5: hash P0/2.2 `87203499…`).
+    expect(configHashOf(currentConfigSpec('gemini', 'gemini-2.5-flash'))).toBe(
+      '8720349936c5f66d3996425f4038d0bafcaa1ae0ae05c9b765f8543bd2f36b58',
+    );
+    const r = currentConfigSpec('gemini', 'gemini-3.6-flash', '2.3');
+    expect(r.evalSetVersion).toBe('2.3');
+    expect(r.coveredGenerators).toEqual([
+      ...P0_ENABLED_GENERATORS,
+      'pub.reddit.draft',
+    ]);
+    expect(configHashOf(r)).not.toBe(configHashOf(spec));
+    expect(EVAL_SET_GENERATORS['2.3']).toEqual([...EVAL_COVERED_GENERATORS]);
     const h = configHashOf(spec);
     expect(h).toMatch(/^[0-9a-f]{64}$/);
     expect(

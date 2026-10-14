@@ -68,6 +68,7 @@ export function publicationView(p: PublicationRow): PublicationView {
     lastVerifiedAt: p.lastVerifiedAt?.toISOString() ?? null,
     verifiedBy: p.verifiedBy,
     verifyResult: p.verifyResult,
+    reportKind: p.reportKind as PublicationView['reportKind'],
     revision: p.revision,
   };
 }
@@ -195,6 +196,11 @@ export class PublicationsService implements PublicationsPort {
     }
     const target = await versionTarget(tx, product.id, versionId);
     if (!target) throw new PubError('PUB_NOT_FOUND', { field: 'versionId' });
+    // P-R M2 (Р-RD-10, Р-RD-54): Reddit-материал публикуется только отчётом
+    // человека (`…/reddit/contents/:cid/report-publication`, user_reported).
+    if (await isRedditVersion(tx, product.id, versionId)) {
+      throw new PubError('PUB_TRANSITION_INVALID', { reason: 'manual_only' });
+    }
     const channel = await tx.pubChannel.findFirst({
       where: { id: channelId, productId: product.id },
     });
@@ -375,6 +381,95 @@ export class PublicationsService implements PublicationsPort {
     };
   }
 
+  /**
+   * Отчёт человека о ручной публикации Reddit-материала (P-R M2, §M2.6;
+   * Р-RD-10, Р-RD-58). URL уже приведён к канону вызывающим (P-R), канал —
+   * канал сообщества брифа. Стадия — по общему правилу: `live` только в
+   * рабочем продукте `mode=live` при открытом `public_publish` (оценка, не
+   * требование), иначе `test` — материал тогда не меняется (ДТ-1).
+   * `verifyStatus='not_checked'` навсегда. Тот же URL этой версии — 409.
+   */
+  async reportUserPublication(
+    tx: PubTx,
+    product: ProductCtx,
+    step: Step,
+    input: {
+      versionId: string;
+      channelId: string;
+      finalUrl: string;
+      publishedAt: Date;
+      opKey: string;
+    },
+  ): Promise<OpResult<PublicationView>> {
+    const channel = await tx.pubChannel.findFirst({
+      where: { id: input.channelId, productId: product.id },
+      select: { kind: true },
+    });
+    if (!channel || channel.kind !== 'community')
+      throw new PubError('PUB_NOT_FOUND', { field: 'channelId' });
+    const live =
+      product.kind === 'working' &&
+      product.mode === 'live' &&
+      (
+        await this.ports
+          .gates()
+          .evaluate(tx, product, 'public_publish', step.now)
+      ).open;
+    const stage = live ? 'live' : 'test';
+    const finalUrl = canonicalUrl(input.finalUrl);
+    const pv = await this.ports
+      .content()
+      .publishableVersion(tx, product, input.versionId);
+    if (pv.criticalStale)
+      throw new PubError('PUB_CONTENT_STALE', { versionId: input.versionId });
+    if (!pv.approvalActive)
+      throw new PubError('PUB_APPROVAL_REQUIRED', {
+        versionId: input.versionId,
+      });
+    const dup = await tx.pubPublication.findFirst({
+      where: {
+        productId: product.id,
+        channelId: input.channelId,
+        finalUrl,
+        versionId: input.versionId,
+      },
+      select: { id: true },
+    });
+    if (dup)
+      throw new PubError('PUB_CONFLICT', {
+        publicationId: dup.id,
+        reason: 'already_published',
+      });
+    const row = await tx.pubPublication.create({
+      data: {
+        accountId: product.accountId,
+        productId: product.id,
+        versionId: input.versionId,
+        channelId: input.channelId,
+        approvalId: pv.approvalId,
+        stage,
+        finalUrl,
+        publishedAt: input.publishedAt,
+        status: 'published',
+        reportKind: 'user_reported',
+        opKey: input.opKey,
+        createdBy: step.actor,
+      },
+    });
+    await this.onPublished(
+      tx,
+      product,
+      {
+        id: row.id,
+        versionId: input.versionId,
+        stage,
+        channelKind: 'community',
+      },
+      step.now,
+    );
+    return { body: publicationView(row), audit: [] };
+  }
+
   /** Ручная проверка URL (другие каналы; сайт — ещё и задание). */
   async verify(
     tx: PubTx,
@@ -394,6 +489,13 @@ export class PublicationsService implements PublicationsPort {
     const note = f.str(b, 'note', 2000, { optional: true });
     f.done();
     const p = await this.row(tx, product.id, id);
+    // A12 (Р-RD-10): отчёт человека не проверяется — статуса VERIFIED нет.
+    if (p.reportKind === 'user_reported') {
+      throw new PubError('PUB_TRANSITION_INVALID', {
+        reason: 'manual_only',
+        from: p.verifyStatus,
+      });
+    }
     assertRevision(p.revision, expected);
     const r = await tx.pubPublication.updateMany({
       where: { id, revision: expected },
@@ -679,4 +781,19 @@ export class PublicationsVerifyJob implements CronJob {
       }
     });
   }
+}
+
+/** Версия принадлежит Reddit-материалу (P-R M2). */
+async function isRedditVersion(
+  tx: PubTx,
+  productId: string,
+  versionId: string,
+): Promise<boolean> {
+  const v = await tx.pubContentVersion.findFirst({
+    where: { id: versionId, productId },
+    select: { content: { select: { kind: true } } },
+  });
+  return (
+    v?.content.kind === 'reddit_post' || v?.content.kind === 'reddit_comment'
+  );
 }

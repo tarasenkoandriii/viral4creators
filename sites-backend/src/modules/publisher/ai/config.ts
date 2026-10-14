@@ -21,8 +21,9 @@
  */
 import {
   CONTEXT_RULES_VERSION,
+  EVAL_SET_GENERATORS,
   EVAL_SET_VERSION,
-  P0_ENABLED_GENERATORS,
+  type EvalSetVersion,
 } from '../contracts/ai';
 import { GEMINI_THINKING_HEADROOM } from '../../site-ai/gemini-output';
 import { canonicalJson, sha256Hex } from '../core/content-hash';
@@ -48,12 +49,14 @@ export interface AiCallParams {
   thinkingBudget: 'provider_default';
 }
 
-export function currentCallParams(): AiCallParams {
+export function currentCallParams(
+  set: EvalSetVersion = EVAL_SET_VERSION,
+): AiCallParams {
   return {
     temperature: AI_TEMPERATURE,
     json: true,
     maxOutputTokens: Object.fromEntries(
-      P0_ENABLED_GENERATORS.map((g) => [g, GENERATORS[g].maxOutputTokens]),
+      EVAL_SET_GENERATORS[set].map((g) => [g, GENERATORS[g].maxOutputTokens]),
     ),
     thinkingHeadroom: GEMINI_THINKING_HEADROOM,
     thinkingBudget: 'provider_default',
@@ -74,10 +77,15 @@ export interface AiConfigSpec {
   callParams: AiCallParams;
 }
 
-/** Конфигурация текущего кода для модели (P0: четыре генератора совместно). */
+/**
+ * Конфигурация текущего кода для модели и версии набора: генераторы набора
+ * совместно (`2.2` — четыре генератора P0, по умолчанию; `2.3` — плюс
+ * `pub.reddit.draft`, только решением владельца, Р-RD-64).
+ */
 export function currentConfigSpec(
   provider: string,
   model: string,
+  set: EvalSetVersion = EVAL_SET_VERSION,
 ): AiConfigSpec {
   return {
     provider,
@@ -85,11 +93,11 @@ export function currentConfigSpec(
     contextRulesVersion: CONTEXT_RULES_VERSION,
     schemaSetVersion: SCHEMA_SET_VERSION,
     instructionVersions: Object.fromEntries(
-      P0_ENABLED_GENERATORS.map((g) => [g, INSTRUCTIONS[g].version]),
+      EVAL_SET_GENERATORS[set].map((g) => [g, INSTRUCTIONS[g].version]),
     ),
-    coveredGenerators: [...P0_ENABLED_GENERATORS],
-    evalSetVersion: EVAL_SET_VERSION,
-    callParams: currentCallParams(),
+    coveredGenerators: [...EVAL_SET_GENERATORS[set]],
+    evalSetVersion: set,
+    callParams: currentCallParams(set),
   };
 }
 

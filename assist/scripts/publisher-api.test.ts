@@ -24,7 +24,12 @@ import { computable, PubDecodeError } from '../src/lib/publisher/decode';
 import { PUB_ERROR_CODES } from '../src/lib/publisher/errors';
 import { PUB_PERMISSIONS, PUB_ROLES } from '../src/lib/publisher/permissions';
 import * as S from '../src/lib/publisher/states';
-import { bodyIssues, bodyKeys, routesOf } from './publisher-contract-lib';
+import {
+  bodyIssues,
+  bodyIssuesOf,
+  bodyKeys,
+  routesOf,
+} from './publisher-contract-lib';
 
 const BACK = '../../sites-backend/src/modules/publisher/';
 const src = (rel: string) =>
@@ -147,6 +152,27 @@ assert.deepEqual([...S.GENERATOR_IDS], constList(AIT, 'GENERATOR_IDS'));
     [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1])
   );
 }
+// Наборы eval (P-R M2 §9.13): версии, текущая P0 и генераторы наборов.
+assert.deepEqual([...S.EVAL_SET_VERSIONS], constList(AIT, 'EVAL_SET_VERSIONS'));
+assert.equal(
+  /EVAL_SET_VERSION: EvalSetVersion = '([^']+)'/.exec(AIT)?.[1],
+  S.EVAL_SET_VERSION
+);
+assert.equal(S.EVAL_SET_VERSION, '2.2');
+assert.equal(
+  /REDDIT_EVAL_SET_VERSION: EvalSetVersion = '([^']+)'/.exec(AIT)?.[1],
+  S.REDDIT_EVAL_SET_VERSION
+);
+assert.ok(
+  /'2\.2': P0_ENABLED_GENERATORS,\s*'2\.3': \[\.\.\.P0_ENABLED_GENERATORS, 'pub\.reddit\.draft'\]/.test(
+    AIT
+  ),
+  'EVAL_SET_GENERATORS ≠ сервер'
+);
+assert.deepEqual(
+  [...S.EVAL_SET_GENERATORS['2.3']],
+  [...S.P0_ENABLED_GENERATORS, 'pub.reddit.draft']
+);
 assert.deepEqual([...S.PARAMETER_KEYS], constList(PARAMS, 'PARAMETER_KEYS'));
 // Группы «Запуска» покрывают ключи ровно по одному разу.
 {
@@ -255,12 +281,19 @@ const CASES: Array<[string, string, (v: unknown) => unknown]> = [
   ['DistributionActionView', DIST, cal.decodeAction],
   ['PublicationView', DIST, cal.decodePublication],
 ];
+// Необязательные ключи, которых нет в общих фикстурах (проверены отдельно
+// ниже): `ContentView.redditStudio` — только у Reddit-материалов (§12.5).
+const FIXTURE_OPTIONAL: Record<string, string[]> = {
+  ContentView: ['redditStudio'],
+};
 for (const [name, file, decode] of CASES) {
   const fx = FX[name];
   assert.ok(fx, `нет фикстуры ${name}`);
   assert.deepEqual(
     Object.keys(fx).sort(),
-    interfaceKeys(file, name).sort(),
+    interfaceKeys(file, name)
+      .filter((k) => !(FIXTURE_OPTIONAL[name] ?? []).includes(k))
+      .sort(),
     `фикстура ${name} ≠ контракт`
   );
   const out = decode(fx) as Record<string, unknown>;
@@ -268,6 +301,46 @@ for (const [name, file, decode] of CASES) {
   for (const k of Object.keys(out)) {
     assert.ok(allowed.has(k), `${name}: декодер придумал ключ ${k}`);
   }
+}
+// `redditStudio` — только `true` (иное — чужая форма); у статьи ключа нет.
+{
+  const rc = content.decodeContent({
+    ...FX.ContentView,
+    kind: 'reddit_comment',
+    redditStudio: true,
+  });
+  assert.equal(rc.redditStudio, true);
+  assert.equal(content.decodeContent(FX.ContentView).redditStudio, undefined);
+  assert.throws(() =>
+    content.decodeContent({ ...FX.ContentView, redditStudio: false })
+  );
+  // Параметры находок `reddit_policy` (§12.1): строки, числа, их списки.
+  const q = content.decodeQaCheck({
+    ...FX.QaCheckView,
+    kind: 'reddit_policy',
+    blockers: [
+      {
+        code: 'reddit_disclosure_missing',
+        text: 'reddit_disclosure_missing',
+        params: { reason: 'no_brand', brand: 'Demo' },
+      },
+    ],
+    warnings: [
+      {
+        code: 'reddit_claim_needs_verification',
+        text: 'reddit_claim_needs_verification',
+        params: { claims: [0, 2] },
+      },
+    ],
+  });
+  assert.deepEqual(q.blockers[0].params, { reason: 'no_brand', brand: 'Demo' });
+  assert.deepEqual(q.warnings[0].params, { claims: [0, 2] });
+  assert.throws(() =>
+    content.decodeQaCheck({
+      ...FX.QaCheckView,
+      warnings: [{ code: 'x', text: 'x', params: { found: [{}] } }],
+    })
+  );
 }
 // Гейты: все пять, зелёный только без пунктов — проверяет view-тест.
 assert.deepEqual(
@@ -568,7 +641,7 @@ for (const c of calls) {
     assert.ok(def, `нет маршрута ${c.method} ${path}`);
     const { opKey: _op, ...body } = c.body as Record<string, unknown>;
     void _op;
-    const issues = bodyIssues(body, bodyKeys(def!.body));
+    const issues = bodyIssuesOf(body, def!.body);
     assert.deepEqual(issues, [], `${def!.name} (${def!.body}): ${issues}`);
     checked++;
   }

@@ -16,6 +16,8 @@ import type {
 } from '../contracts/content-api';
 import type { FieldIssue } from '../contracts/errors';
 import { QUESTION_SCORE_KEYS } from '../contracts/states';
+import { redditContact } from '../reddit/markers';
+import { hasProfileRef } from '../reddit/normalize';
 import { canonicalJson, sha256Hex } from '../core/content-hash';
 import {
   contactValuesIn,
@@ -130,6 +132,153 @@ export function checkVersionMeta(
   return { meta: meta as VersionMeta, issues };
 }
 
+// ── Reddit-версии (P-R M2, §M2.1) ────────────────────────────────────────
+
+/**
+ * Ключи `meta` Reddit-версии, которые присылает клиент. Остальные ключи
+ * ставит сервер (`REDDIT_SERVER_META_KEYS`); весь `meta` входит в hash
+ * (Р-RD-7). Это не белый список публичного чтения: Reddit-материалы на
+ * сайте не показываются (`pub_public_contents` — только `article`).
+ */
+export const REDDIT_VERSION_META_KEYS = [
+  'disclosure',
+  'flairSuggestion',
+  'claimMap',
+  'uncertainties',
+] as const;
+export const REDDIT_SERVER_META_KEYS = [
+  'ruleSnapshotId',
+  'affiliation',
+  'threadUrl',
+] as const;
+
+const SOURCE_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
+
+export interface RedditClientMeta {
+  disclosure?: string;
+  flairSuggestion?: string | null;
+  claimMap?: Array<{
+    text: string;
+    sourceIds: string[] | 'needs_verification';
+  }>;
+  uncertainties?: string[];
+}
+
+/** Проверка клиентской части `meta` Reddit-версии; серверные ключи — `derived`. */
+export function checkRedditVersionMeta(
+  raw: unknown,
+  field = 'meta',
+): { meta: RedditClientMeta; issues: FieldIssue[] } {
+  const issues: FieldIssue[] = [];
+  const meta: RedditClientMeta = {};
+  if (raw === undefined || raw === null) return { meta, issues };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { meta, issues: [{ field, code: 'type' }] };
+  }
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const f = `${field}.${k}`;
+    if ((REDDIT_SERVER_META_KEYS as readonly string[]).includes(k)) {
+      issues.push({ field: f, code: 'derived' });
+      continue;
+    }
+    if (!(REDDIT_VERSION_META_KEYS as readonly string[]).includes(k)) {
+      issues.push({ field: f, code: 'unknown_key' });
+      continue;
+    }
+    if (v === undefined) continue;
+    if (k === 'disclosure') {
+      if (typeof v !== 'string' || [...v].length > 300)
+        issues.push({ field: f, code: 'type' });
+      else meta.disclosure = v.trim();
+    } else if (k === 'flairSuggestion') {
+      if (v === null) meta.flairSuggestion = null;
+      else if (typeof v !== 'string' || [...v].length > 64)
+        issues.push({ field: f, code: 'type' });
+      else meta.flairSuggestion = v.trim() || null;
+    } else if (k === 'uncertainties') {
+      if (
+        !Array.isArray(v) ||
+        v.length > 20 ||
+        !v.every(
+          (x) => typeof x === 'string' && x.trim() && [...x].length <= 500,
+        )
+      )
+        issues.push({ field: f, code: 'type' });
+      else meta.uncertainties = (v as string[]).map((x) => x.trim());
+    } else if (k === 'claimMap') {
+      if (!Array.isArray(v) || v.length > 30) {
+        issues.push({ field: f, code: 'type' });
+        continue;
+      }
+      const out: NonNullable<RedditClientMeta['claimMap']> = [];
+      v.forEach((x, i) => {
+        const o = x as Record<string, unknown> | null;
+        const fi = `${f}[${i}]`;
+        if (
+          !o ||
+          typeof o !== 'object' ||
+          Array.isArray(o) ||
+          Object.keys(o).some((kk) => kk !== 'text' && kk !== 'sourceIds')
+        ) {
+          issues.push({ field: fi, code: 'type' });
+          return;
+        }
+        const text = typeof o.text === 'string' ? o.text.trim() : '';
+        if (!text || [...text].length > 500) {
+          issues.push({ field: `${fi}.text`, code: 'length' });
+          return;
+        }
+        const sid = o.sourceIds;
+        if (sid === 'needs_verification') {
+          out.push({ text, sourceIds: 'needs_verification' });
+        } else if (
+          Array.isArray(sid) &&
+          sid.length >= 1 &&
+          sid.length <= 10 &&
+          sid.every((y) => typeof y === 'string' && SOURCE_ID_RE.test(y))
+        ) {
+          out.push({ text, sourceIds: [...new Set(sid as string[])] });
+        } else {
+          issues.push({ field: `${fi}.sourceIds`, code: 'type' });
+        }
+      });
+      meta.claimMap = out;
+    }
+  }
+  // Контакты и ники (аудит M2 S3-7): все строки meta, включая пункты
+  // claimMap и uncertainties; контакт — правило Reddit-текста (раунд 2,
+  // Р-RD-81: `@scope/pkg`, `pkg@1.2.3` — не контакт).
+  const strings: Array<[string, string]> = [
+    ['disclosure', meta.disclosure ?? ''],
+    ['flairSuggestion', meta.flairSuggestion ?? ''],
+    ...(meta.claimMap ?? []).map((c, i): [string, string] => [
+      `claimMap[${i}].text`,
+      c.text,
+    ]),
+    ...(meta.uncertainties ?? []).map((u, i): [string, string] => [
+      `uncertainties[${i}]`,
+      u,
+    ]),
+  ];
+  for (const [k, t] of strings) {
+    if (!t) continue;
+    if (redditContact(t)) issues.push({ field: `${field}.${k}`, code: 'pii' });
+    else if (hasProfileRef(t))
+      issues.push({ field: `${field}.${k}`, code: 'profile_ref' });
+  }
+  return { meta, issues };
+}
+
+/** id источников пунктов claimMap (связи версии `pub_version_sources`). */
+export function claimMapSourceIds(
+  claimMap: RedditClientMeta['claimMap'] | undefined,
+): string[] {
+  const out = new Set<string>();
+  for (const c of claimMap ?? [])
+    if (Array.isArray(c.sourceIds)) c.sourceIds.forEach((x) => out.add(x));
+  return [...out].sort();
+}
+
 /**
  * Требования формата при отправке на проверку (F06): у адаптации свой
  * заголовок и следующий шаг (CTA); карточки — `meta.cards`, сценарий —
@@ -152,6 +301,15 @@ export function formatIssues(
     !(v.meta.scenes && v.meta.scenes.length > 0)
   ) {
     out.push({ field: 'meta.scenes', code: 'required' });
+  }
+  if (format === 'reddit_post' || format === 'reddit_comment') {
+    // P-R M2: заголовок поста и тело; CTA и отличие от родителя не нужны.
+    if (!v.body.trim()) out.push({ field: 'body', code: 'required' });
+    if (format === 'reddit_comment' && [...v.body].length > 10_000)
+      out.push({ field: 'body', code: 'length' });
+    if (format === 'reddit_post' && [...v.body].length > 40_000)
+      out.push({ field: 'body', code: 'length' });
+    return out;
   }
   if (format !== 'article') {
     if (!v.meta.cta) out.push({ field: 'meta.cta', code: 'required' });

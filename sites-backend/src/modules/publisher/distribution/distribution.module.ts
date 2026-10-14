@@ -69,6 +69,8 @@ import { VenuesService } from './venues.service';
     BUDGET_READ_PORT,
     PUBLICATIONS_PORT,
     ChannelsService,
+    // P-R M2: отчёт о ручной публикации Reddit-материала (`user_reported`).
+    PublicationsService,
   ],
 })
 export class PublisherDistributionModule {}

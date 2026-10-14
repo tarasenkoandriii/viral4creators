@@ -10,7 +10,9 @@
 # `--reddit` — E2E-RD-01 пакета P-R (Reddit Manual MVP, M1): сервер с
 # `PUBLISHER_REDDIT_ENABLED=true`, драйвер `assist/scripts/publisher-e2e-
 # reddit.ts` (проект → 10 сообществ → снимки/review → 20 возможностей →
-# score → блокировки); сайт не нужен. `BACKEND_ROOT` — каталог с готовым
+# score → блокировки) и E2E-RD-02 (M2 Studio: бриф → варианты → правка →
+# QA → согласование → копирование → отметка о публикации, post и comment);
+# сайт не нужен. `BACKEND_ROOT` — каталог с готовым
 # `dist` (и `node_modules`, например ссылкой) вместо `sites-backend`: сборка
 # не запускается, сид копируется рядом с этим `dist` (стенд без записи в
 # рабочее дерево).
@@ -91,7 +93,10 @@ if [ -z "${BACKEND_ROOT:-}" ] && { [ ! -f dist/main.js ] || [ ! -f "$STAMP" ] ||
 fi
 SITES_DATABASE_URL=$U node "$BACK/test/publisher-e2e/seed.cjs" "$WORK/seed.json" "${SITE_HOST:-pubsite.test}" || exit 1
 # Раздел Reddit (P-R) — только для `--reddit`; иначе флаг выключен (по умолчанию).
-if [ "$MODE" = "--reddit" ]; then export PUBLISHER_REDDIT_ENABLED=true; else unset PUBLISHER_REDDIT_ENABLED; fi
+# M2 (E2E-RD-02): генерация по HTTP — флаг генерации и стендовый
+# fake-провайдер (`PUBLISHER_STAND_FAKE_AI`, только NODE_ENV=development|test
+# и не Vercel; включает `pub.reddit.draft` только на стенде, Р-RD-73).
+if [ "$MODE" = "--reddit" ]; then export PUBLISHER_REDDIT_ENABLED=true PUBLISHER_REDDIT_AI_ENABLED=true PUBLISHER_STAND_FAKE_AI=true; else unset PUBLISHER_REDDIT_ENABLED PUBLISHER_REDDIT_AI_ENABLED PUBLISHER_STAND_FAKE_AI; fi
 
 E2E_SECRETS_KEY=e2e-secrets-key-0123456789 # gitleaks:allow — поддельный ключ стенда
 export NODE_ENV=development PORT SITES_DATABASE_URL=$U SITES_DIRECT_URL="$U?schema=sites" \

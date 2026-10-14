@@ -7,6 +7,11 @@
  * recheck_required, новая версия → recheck_required) плюс проверенные,
  * selfReview и «правил нет», 20 возможностей со score v1, 6 ключевых
  * запросов; в кабинете B — проект, сообщество и 2 возможности (изоляция).
+ * P-R M2 (Studio, §M2.1): в кабинете A — активная версия оффера, разрешённый
+ * источник продукта, comment-бриф `ready` по возможности r/smallbusiness
+ * (возможность `in_brief`, контекст — выдержка) с материалом
+ * `reddit_comment` и черновиком версии (раскрытие в начале, claimMap), и
+ * post-бриф `draft` r/saas без affiliation (`missing`).
  *
  * Данные синтетические (§12 п.3: список сообществ для приёмки — решение
  * владельца): имена сабреддитов публичные, треды — `seedNN`, выдержки —
@@ -26,6 +31,7 @@ const policy = require(`${dist}/modules/publisher/reddit/policy.js`);
 const score = require(`${dist}/modules/publisher/reddit/score.js`);
 const norm = require(`${dist}/modules/publisher/reddit/normalize.js`);
 const hash = require(`${dist}/modules/publisher/core/content-hash.js`);
+const briefRules = require(`${dist}/modules/publisher/reddit/brief-rules.js`);
 
 const DAY = 86_400_000; // сид: возраст проверки правил (стенд, не прод-арифметика)
 
@@ -243,6 +249,167 @@ async function cabinet(db, label) {
   return { acc, product, team, project, ed, po, who };
 }
 
+const BRAND = 'SiteAssist';
+const DISCLOSURE = `Disclosure: I'm the founder of ${BRAND}, the assistant discussed here.`;
+
+/**
+ * M2: оффер, источник, comment-бриф ready с материалом и черновиком версии,
+ * post-бриф draft без affiliation. Строки проходят гварды миграции M2.
+ */
+async function seedStudio(db, A, communities, now) {
+  const p = A.product;
+  const offer = await db.pubOfferVersion.create({
+    data: {
+      accountId: p.accountId,
+      productId: p.id,
+      version: 1,
+      title: 'Синтетичний офер помічника сайту',
+      text: 'Помічник відповідає лише з матеріалів сайту; без гарантій заявок.',
+      status: 'active',
+      approvedBy: A.po,
+      approvedAt: now,
+      hash: hash.sha256Hex(`seed-offer:${p.id}`),
+      createdBy: A.po,
+    },
+  });
+  const fragment =
+    'Помічник відповідає лише з опублікованих матеріалів сайту і чесно каже «не знаю».';
+  const src = await db.pubSource.create({
+    data: {
+      accountId: p.accountId,
+      productId: p.id,
+      kind: 'document',
+      title: 'Опис помічника (синтетика)',
+      fragment,
+      usage: 'allowed',
+      visibility: 'private',
+      contentHash: hash.sourceContentHash(null, fragment),
+      createdBy: A.ed,
+    },
+  });
+  const sb = communities.find((c) => c.subreddit === 'smallbusiness');
+  const opp = await db.pubRedditOpportunity.findFirst({
+    where: { productId: p.id, communityId: sb.id, policy: 'ok' },
+    orderBy: { createdAt: 'asc' },
+  });
+  // new → qualified → in_brief (как сервис: гейт ok, бриф создан).
+  for (const status of ['qualified', 'in_brief'])
+    await db.pubRedditOpportunity.update({
+      where: { id: opp.id },
+      data: { status, revision: { increment: 1 } },
+    });
+  const excerpt = await db.pubSource.findUnique({
+    where: { id: opp.excerptSourceId },
+  });
+  const keyPoints = [
+    {
+      text: 'The assistant answers only from published site content',
+      sourceIds: [src.id],
+    },
+    {
+      text: 'Ask which docs the author already has',
+      sourceIds: 'needs_verification',
+    },
+  ];
+  const comment = await db.pubRedditBrief.create({
+    data: {
+      accountId: p.accountId,
+      productId: p.id,
+      projectId: A.project.id,
+      communityId: sb.id,
+      opportunityId: opp.id,
+      offerVersionId: offer.id,
+      contentType: 'comment',
+      objective: 'Help the author answer visitors from existing docs',
+      audience: 'Small business owners with a docs page',
+      context: excerpt.fragment,
+      keyPoints,
+      affiliation: 'founder',
+      brand: BRAND,
+      linksAllowed: false,
+      tone: 'helpful, plain',
+      language: 'en',
+      constraints: ['No links'],
+      forbiddenClaims: ['guaranteed leads'],
+      status: 'ready',
+      createdBy: A.ed,
+    },
+  });
+  const content = await db.pubContent.create({
+    data: {
+      accountId: p.accountId,
+      productId: p.id,
+      kind: 'reddit_comment',
+      redditBriefId: comment.id,
+      status: 'brief',
+      createdBy: A.ed,
+    },
+  });
+  const version = await db.pubContentVersion.create({
+    data: {
+      accountId: p.accountId,
+      productId: p.id,
+      contentId: content.id,
+      number: 1,
+      title: briefRules.commentServiceTitle(sb.subreddit, opp.titleManual),
+      body: `${DISCLOSURE}\n\nStart from the docs you already have: the assistant answers only from them and says it does not know otherwise.`,
+      meta: {
+        disclosure: DISCLOSURE,
+        claimMap: [
+          {
+            text: 'The assistant answers only from published site content',
+            sourceIds: [src.id],
+          },
+        ],
+        uncertainties: ['Which docs the author already has'],
+        flairSuggestion: null,
+        ruleSnapshotId: sb.snapshotId,
+        affiliation: 'founder',
+        threadUrl: opp.threadUrl,
+      },
+      format: 'reddit_comment',
+      offerVersionId: offer.id,
+      authorMemberId: A.team.editor.memberId,
+      status: 'draft',
+      createdBy: A.ed,
+    },
+  });
+  await db.pubContent.update({
+    where: { id: content.id },
+    data: {
+      currentVersionId: version.id,
+      status: 'drafting',
+      revision: { increment: 1 },
+    },
+  });
+  const saas = communities.find((c) => c.subreddit === 'saas');
+  const post = await db.pubRedditBrief.create({
+    data: {
+      accountId: p.accountId,
+      productId: p.id,
+      projectId: A.project.id,
+      communityId: saas.id,
+      offerVersionId: offer.id,
+      contentType: 'post',
+      objective: 'Explain how to keep a site assistant honest',
+      keyPoints,
+      affiliation: null,
+      language: 'en',
+      status: 'draft',
+      createdBy: A.ed,
+    },
+  });
+  return {
+    offerVersionId: offer.id,
+    sourceId: src.id,
+    commentBriefId: comment.id,
+    opportunityId: opp.id,
+    contentId: content.id,
+    versionId: version.id,
+    postBriefId: post.id,
+  };
+}
+
 async function main() {
   const out = process.argv[2];
   if (!out) throw new Error('укажите файл результата');
@@ -319,6 +486,8 @@ async function main() {
     keywords.push(k.id);
   }
 
+  const studio = await seedStudio(db, A, communities, now);
+
   const B = await cabinet(db, 'B');
   const cb = await community(db, B.product, B.project, 'saas', B.ed);
   const sb = await snapshot(db, B.product, cb, 1, 'allowed', B.ed, {
@@ -353,7 +522,7 @@ async function main() {
     out,
     JSON.stringify(
       {
-        a: { ...team(A), communities, opportunities: opps, keywords },
+        a: { ...team(A), communities, opportunities: opps, keywords, studio },
         b: {
           ...team(B),
           communityId: cb.id,
@@ -367,7 +536,7 @@ async function main() {
   );
   await db.$disconnect();
   console.log(
-    `reddit seed: A — 10 сообществ, ${opps.length} возможностей, ${keywords.length} запросов; B — 1 сообщество, ${oppsB.length} возможности → ${out}`,
+    `reddit seed: A — 10 сообществ, ${opps.length} возможностей, ${keywords.length} запросов, 2 брифа, 1 материал; B — 1 сообщество, ${oppsB.length} возможности → ${out}`,
   );
 }
 

@@ -7,7 +7,8 @@
  *    в своём продукте — как несуществующий; побочных эффектов нет (число
  *    строк `pub_*` обоих кабинетов не меняется). Систематически по всем
  *    маршрутам Publisher — ещё и `z-isolation.spec.ts` (реестр включает
- *    `REDDIT_ROUTES`).
+ *    `REDDIT_ROUTES`). С P-R M2 — и 14 маршрутов Studio (бриф/материал
+ *    кабинета B — чужие `:id`/`:cid`).
  *  - AT-RD-02: наблюдатель (VW) на review правил и на согласование версии →
  *    403 `PUB_ROLE_REQUIRED`; матрица §5 по ролям на всех маршрутах: роль
  *    без действия — 403, с действием — не 403; SA к разделу доступа не имеет.
@@ -31,6 +32,7 @@ import {
   redditWorld,
   seedCommunity,
   seedOpportunity,
+  seedStudio,
   type RedditStack,
   type RedditWorld,
 } from '../../modules/publisher/reddit/testing/reddit-kit.testing';
@@ -51,6 +53,7 @@ ciDescribe('P-R M1: изоляция и роли раздела Reddit', () => {
   let a: RedditWorld;
   let b: RedditWorld;
   let foreign: string[] = [];
+  let foreignContent: string[] = [];
 
   beforeAll(async () => {
     s = await redditStack();
@@ -69,7 +72,22 @@ ciDescribe('P-R M1: изоляция и роли раздела Reddit', () => {
       }),
       201,
     );
-    foreign = [c.projectId, c.communityId, c.snapshotId!, o.id, k.id];
+    // P-R M2: бриф и Reddit-материал кабинета B (маршруты :id и :cid).
+    const st = await seedStudio(
+      s,
+      b,
+      eb,
+      api(s, b.acc.accountId, b.team.product_owner),
+    );
+    foreign = [
+      c.projectId,
+      c.communityId,
+      c.snapshotId!,
+      o.id,
+      k.id,
+      st.briefId,
+    ];
+    foreignContent = [st.contentId];
   });
   afterAll(async () => {
     await s?.close();
@@ -111,7 +129,8 @@ ciDescribe('P-R M1: изоляция и роли раздела Reddit', () => {
 
   describe('[AT-RD-01] чужой кабинет или продукт → 404 на всех маршрутах …/reddit/**', () => {
     it('реестр REDDIT_ROUTES не пуст, все пути под /publisher/products/:pid/reddit/', () => {
-      expect(ROUTES.length).toBe(25);
+      // M1 — 25, M2 (Studio) — ещё 14.
+      expect(ROUTES.length).toBe(39);
       for (const r of ROUTES)
         expect(r.path.startsWith('/publisher/products/:pid/reddit/')).toBe(
           true,
@@ -131,16 +150,21 @@ ciDescribe('P-R M1: изоляция и роли раздела Reddit', () => {
           shape(f) !== shape(g)
         )
           bad.push({ route: r.name, foreign: shape(f), ghost: shape(g) });
-        if (!r.path.includes(':id')) continue;
+        const key = r.path.includes(':id')
+          ? 'id'
+          : r.path.includes(':cid')
+            ? 'cid'
+            : null;
+        if (!key) continue;
         const gid = await call(
           r,
-          fillPath(r.path, { pid: a.product.id, id: ghost() }),
+          fillPath(r.path, { pid: a.product.id, [key]: ghost() }),
           owner,
         );
-        for (const id of foreign) {
+        for (const id of key === 'id' ? foreign : foreignContent) {
           const x = await call(
             r,
-            fillPath(r.path, { pid: a.product.id, id }),
+            fillPath(r.path, { pid: a.product.id, [key]: id }),
             owner,
           );
           if (
@@ -234,7 +258,7 @@ ciDescribe('P-R M1: изоляция и роли раздела Reddit', () => {
           // 400/404/409, не 403; запись не происходит.
           const res = await call(
             r,
-            fillPath(r.path, { pid: a.product.id, id: ghost() }),
+            fillPath(r.path, { pid: a.product.id, id: ghost(), cid: ghost() }),
             h,
           );
           checked++;

@@ -1,8 +1,8 @@
 /**
  * P-R — каталог AT-RD (reddit-manual-mvp-adapted.md §9) ↔ тесты с метками:
- * у каждого сценария M1 есть `describe`/`it` с меткой `[AT-RD-NN]` в файле
- * из каталога; у M2 меток ещё нет (не «успех» вместо нереализованного);
- * отчёт P0 (44 сценария) каталог P-R не затрагивает.
+ * у каждого сценария M1 и M2 есть `describe`/`it` с меткой `[AT-RD-NN]` в
+ * файле из каталога (P-R M2: AT-RD-07…14 реализованы); отчёт P0 (44
+ * сценария) каталог P-R не затрагивает.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -53,21 +53,30 @@ describe('qa/at-catalog: AT-RD (P-R) ↔ метки тестов', () => {
     ]);
   });
 
-  it('M1: у каждого сценария есть тест с меткой в файле каталога; M2 — меток нет', () => {
+  it('M1 и M2: у каждого сценария есть тест с меткой в файле каталога', () => {
     const verdict = AT_RD_CATALOG.map((c) => {
       const hits = labelled(c.id).map((f) => path.basename(f, '.ts'));
-      return {
-        id: c.id,
-        ok:
-          c.stage === 'M1'
-            ? hits.some((h) => c.files.includes(h))
-            : hits.length === 0,
-      };
+      return { id: c.id, ok: hits.some((h) => c.files.includes(h)) };
     });
     expect(verdict.filter((v) => !v.ok)).toEqual([]);
+    expect(
+      AT_RD_CATALOG.filter((c) => c.stage === 'M2').map((c) => c.id),
+    ).toEqual([
+      'AT-RD-07',
+      'AT-RD-08',
+      'AT-RD-09',
+      'AT-RD-10',
+      'AT-RD-11',
+      'AT-RD-12',
+      'AT-RD-13',
+      'AT-RD-14',
+    ]);
+    expect(
+      AT_RD_CATALOG.filter((c) => /не реализован/.test(c.automated)),
+    ).toEqual([]);
   });
 
-  it('отчёт по каталогу P-R: M2 без тестов → blocked (не passed)', () => {
+  it('отчёт по каталогу P-R без результатов jest → blocked (не passed)', () => {
     const r = buildAtReport(
       { success: true, startTime: 0, testResults: [] } as never,
       { catalog: AT_RD_CATALOG },

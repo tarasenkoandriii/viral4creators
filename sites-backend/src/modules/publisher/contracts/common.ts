@@ -145,6 +145,8 @@ export const GATE_NAMES = [
   'spend',
   'purchases',
   'ai_use',
+  /** P-R M2 (Р-RD-9): копирование утверждённого Reddit-текста. */
+  'reddit_publish',
 ] as const;
 export type GateName = (typeof GATE_NAMES)[number];
 

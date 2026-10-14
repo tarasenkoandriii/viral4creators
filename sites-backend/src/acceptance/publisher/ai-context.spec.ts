@@ -219,23 +219,47 @@ ciDescribe('[AT-CORE-09] AI-контекст на базі (§12.3)', () => {
       },
     });
     const built = await ctxOf(p.id, { audience: 'internal', allowAll: true });
+    // P-R M2: у генератора Reddit свой вход (бриф — объект, тред, правила).
+    const reddit = {
+      template: 'helpful_answer',
+      contentType: 'comment',
+      variants: 2,
+      brief: {
+        objective: 'o',
+        audience: null,
+        keyPoints: [{ text: 'k', sourceIds: 'needs_verification' }],
+        affiliation: 'founder',
+        tone: null,
+        language: 'en',
+        constraints: [],
+        forbiddenClaims: [],
+        cta: null,
+        linksAllowed: false,
+      },
+      community: { name: 'smallbusiness', rules: null },
+      thread: { title: 't', excerpt: 'e', injectionFlag: null },
+      request: 'r',
+      rewrite: null,
+    };
     for (const g of Object.values(GENERATORS)) {
       const text = JSON.stringify(
         g.buildPrompt(
-          {
-            question: 'q',
-            audience: 'internal',
-            questions: [],
-            versions: [],
-            channels: [],
-            venues: [],
-            brief: 'b',
-            body: 'b',
-            versionLabel: 'v',
-            parentVersion: 'p',
-            format: 'post',
-            request: 'r',
-          } as never,
+          g.id === 'pub.reddit.draft'
+            ? (reddit as never)
+            : ({
+                question: 'q',
+                audience: 'internal',
+                questions: [],
+                versions: [],
+                channels: [],
+                venues: [],
+                brief: 'b',
+                body: 'b',
+                versionLabel: 'v',
+                parentVersion: 'p',
+                format: 'post',
+                request: 'r',
+              } as never),
           built.ctx,
         ),
       );

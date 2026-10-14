@@ -57,6 +57,23 @@ export async function recheckOpportunities(
   }));
 }
 
+/** Сообщества, у которых первоисточник ТЕКУЩЕГО снимка — в цепочке `chain`. */
+export async function communitiesOfRulesSources(
+  tx: PubTx,
+  product: ProductRef,
+  chain: string[],
+): Promise<string[]> {
+  const snaps = await tx.pubRedditRuleSnapshot.findMany({
+    where: {
+      productId: product.id,
+      status: 'current',
+      sourceId: { in: chain },
+    },
+    select: { communityId: true },
+  });
+  return [...new Set(snaps.map((s) => s.communityId))];
+}
+
 /**
  * Отозван первоисточник (вся цепочка редакций `chain`) текущих снимков
  * правил: гейт этих сообществ — `block` (`rules_source_revoked`),

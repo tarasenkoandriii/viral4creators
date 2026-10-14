@@ -138,6 +138,41 @@ export class SourcesService {
     };
   }
 
+  /**
+   * Ретенция выдержки треда P-R (reddit-manual-mvp-adapted.md §4, хвост M2
+   * (2), Р-RD-59): фрагмент → плейсхолдер, `contentHash` пересчитан —
+   * единственный путь правки доказательства P-R (гвард
+   * `pub_reddit_sources_guard`). Выдержка с версиями не связана (Р-RD-4),
+   * поэтому неизменность источника версии не мешает. Повтор — no-op.
+   * Возвращает прежний фрагмент (для очистки копий ответов) или null.
+   */
+  async redactRedditExcerpt(
+    tx: PubTx,
+    product: ProductRef,
+    id: string,
+    placeholder: string,
+  ): Promise<string | null> {
+    const cur = await tx.pubSource.findFirst({
+      where: {
+        id,
+        productId: product.id,
+        origin: 'reddit',
+        kind: 'discussion',
+      },
+      select: { fragment: true, url: true },
+    });
+    if (!cur || cur.fragment === placeholder) return null;
+    const n = await tx.pubSource.updateMany({
+      where: { id, productId: product.id, fragment: cur.fragment },
+      data: {
+        fragment: placeholder,
+        contentHash: sourceContentHash(cur.url, placeholder),
+        revision: { increment: 1 },
+      },
+    });
+    return n.count === 1 ? cur.fragment : null;
+  }
+
   /** Запись импорта (страница уже загружена ВНЕ транзакции). */
   async storeImport(
     tx: PubTx,

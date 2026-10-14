@@ -3,14 +3,18 @@
  * действие матрицы), первый гвард — флаг раздела; действия P-R в матрице §5.
  */
 import { GUARDS_METADATA } from '@nestjs/common/constants';
-import { REDDIT_ROUTES } from '../contracts/reddit-api';
+import {
+  REDDIT_M1_ROUTE_NAMES,
+  REDDIT_M2_ROUTE_NAMES,
+  REDDIT_ROUTES,
+} from '../contracts/reddit-api';
 import { enumerateControllers } from '../core/route-enumerator';
 import { PUB_PERMISSIONS } from '../core/roles';
 import { PublisherRedditController } from './reddit.controller';
 import { RedditEnabledGuard } from './reddit-flag.guard';
 
 describe('contracts/reddit-api ↔ контроллер P-R', () => {
-  it('REDDIT_ROUTES = маршруты контроллера (метод, путь, действие); 25 маршрутов', () => {
+  it('REDDIT_ROUTES = маршруты контроллера (метод, путь, действие); 39 маршрутов (M1 25 + M2 14)', () => {
     const fromController = enumerateControllers([
       PublisherRedditController as never,
     ])
@@ -23,7 +27,11 @@ describe('contracts/reddit-api ↔ контроллер P-R', () => {
       )
       .sort();
     expect(fromController).toEqual(fromContract);
-    expect(fromContract).toHaveLength(25);
+    expect(fromContract).toHaveLength(39);
+    expect([
+      REDDIT_M1_ROUTE_NAMES.length,
+      REDDIT_M2_ROUTE_NAMES.length,
+    ]).toEqual([25, 14]);
   });
 
   it('первый гвард контроллера — флаг PUBLISHER_REDDIT_ENABLED (до членства и ролей)', () => {
@@ -35,13 +43,21 @@ describe('contracts/reddit-api ↔ контроллер P-R', () => {
     expect(guards.length).toBeGreaterThan(1);
   });
 
-  it('мутации — reddit.manage / reddit.rules.review, чтения — reddit.read; reddit.handoff объявлен для M2', () => {
-    const wrong = Object.entries(REDDIT_ROUTES).filter(([, r]) =>
+  it('мутации — reddit.manage / reddit.rules.review, чтения — reddit.read; M2: генерация ai.generate, проверка qa.technical, копирование и отчёт reddit.handoff', () => {
+    const M2_ACTIONS: Record<string, string> = {
+      generateDraft: 'ai.generate',
+      checkContent: 'qa.technical',
+      copyContent: 'reddit.handoff',
+      reportPublication: 'reddit.handoff',
+    };
+    const wrong = Object.entries(REDDIT_ROUTES).filter(([k, r]) =>
       r.method === 'GET'
         ? r.action !== 'reddit.read' || r.mutation
-        : !['reddit.manage', 'reddit.rules.review'].includes(
-            r.action as string,
-          ) || !r.mutation,
+        : (M2_ACTIONS[k]
+            ? r.action !== M2_ACTIONS[k]
+            : !['reddit.manage', 'reddit.rules.review'].includes(
+                r.action as string,
+              )) || !r.mutation,
     );
     expect(wrong.map(([k]) => k)).toEqual([]);
     expect(PUB_PERMISSIONS['reddit.handoff'].roles).toEqual([

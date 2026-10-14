@@ -81,6 +81,8 @@ export const SITE_AI_OPERATIONS = [
   'pub-venues-compare',
   'pub-helper-answer',
   'pub-eval',
+  // P-R M2 (reddit-manual-mvp-adapted.md §M2.3.1): черновики Reddit.
+  'pub-reddit-draft',
 ] as const;
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 

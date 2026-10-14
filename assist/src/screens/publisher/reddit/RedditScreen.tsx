@@ -1,7 +1,8 @@
 /**
- * AI Publisher (P-R, Reddit Manual MVP, M1 Research) — раздел «Reddit»
- * (reddit-manual-mvp-adapted.md §M1.2, §7): вкладки Проекты · Сообщества ·
- * Правила · Возможности · Запросы. Маршруты:
+ * AI Publisher (P-R, Reddit Manual MVP, M1 Research + M2 Content Studio) —
+ * раздел «Reddit» (reddit-manual-mvp-adapted.md §M1.2, §M2, §7): вкладки
+ * Проекты · Сообщества · Правила · Возможности · Запросы · Брифы ·
+ * Публикации; студия материала — `reddit/<cid>?tab=studio`. Маршруты:
  *   `reddit?tab=<вкладка>[&projectId=…&communityId=…&status=…]` — список;
  *   `reddit/<id>?tab=<вкладка>` — карточка (для «Правил» id — сообщество).
  * Раздел виден только при `product.features.reddit` и `reddit.read`
@@ -16,17 +17,22 @@ import { CommunitiesTab } from './CommunitiesTab';
 import { RulesTab } from './RulesTab';
 import { OpportunitiesTab } from './OpportunitiesTab';
 import { KeywordsTab } from './KeywordsTab';
+import { BriefsTab } from './BriefsTab';
+import { StudioTab } from './StudioTab';
+import { PublicationsTab } from './PublicationsTab';
 
 export function RedditSection({ id, query }: PublisherSectionProps) {
   const { r, t, go, product } = useReddit();
   if (!product.features.reddit) {
     return <Alert tone="warning">{t.nav.sectionNotFound}</Alert>;
   }
-  const tab: RedditTab = (REDDIT_TABS as readonly string[]).includes(
-    query.tab ?? ''
-  )
-    ? (query.tab as RedditTab)
-    : 'projects';
+  // Студия материала — карточка внутри «Брифов» (`reddit/<cid>?tab=studio`).
+  const studio = query.tab === 'studio';
+  const tab: RedditTab = studio
+    ? 'briefs'
+    : (REDDIT_TABS as readonly string[]).includes(query.tab ?? '')
+      ? (query.tab as RedditTab)
+      : 'projects';
   // Фильтр проекта переносится между вкладками; прочие — у своей вкладки.
   const switchTo = (k: RedditTab) => {
     const q: Record<string, string> = { tab: k };
@@ -48,6 +54,12 @@ export function RedditSection({ id, query }: PublisherSectionProps) {
       {tab === 'rules' && <RulesTab id={id} query={query} />}
       {tab === 'opportunities' && <OpportunitiesTab id={id} query={query} />}
       {tab === 'keywords' && <KeywordsTab query={query} />}
+      {studio ? (
+        <StudioTab id={id} query={query} />
+      ) : (
+        tab === 'briefs' && <BriefsTab id={id} query={query} />
+      )}
+      {tab === 'publications' && <PublicationsTab query={query} />}
     </div>
   );
 }

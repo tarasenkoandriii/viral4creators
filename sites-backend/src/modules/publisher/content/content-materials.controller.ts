@@ -18,7 +18,9 @@ import {
   CONTENT_KINDS,
   CONTENT_STATUSES,
 } from '../contracts/states';
-import { validationError } from '../core/errors';
+import { memberActor } from '../contracts/common';
+import { PubError, validationError } from '../core/errors';
+import type { PubTx } from '../core/ports';
 import { PubOperations } from '../core/operation';
 import {
   PubAllow,
@@ -632,28 +634,55 @@ export class ContentMaterialsController extends ContentControllerBase {
   ) {
     const b = bodyOf(raw);
     const p = productOf(ctx);
-    return this.run(
-      ctx,
-      res,
-      'version.approve',
-      'version.approve',
-      { pid: p.id, vid },
-      b,
-      (tx, s) =>
-        this.approvals.approve(
-          tx,
-          p,
-          vid,
-          b,
-          {
-            memberId: ctx.m.memberId,
-            access: ctx.access,
-            actors: actorsOf(ctx.access),
-          },
-          s.now,
-        ),
-      { status: 201 },
-    );
+    try {
+      return await this.run(
+        ctx,
+        res,
+        'version.approve',
+        'version.approve',
+        { pid: p.id, vid },
+        b,
+        (tx, s) =>
+          this.approvals.approve(
+            tx,
+            p,
+            vid,
+            b,
+            {
+              memberId: ctx.m.memberId,
+              access: ctx.access,
+              actors: actorsOf(ctx.access),
+            },
+            s.now,
+          ),
+        { status: 201 },
+      );
+    } catch (e) {
+      // P-R M2, раунд 4 (аудит экранов S2-1): набор WARN изменился — свежая
+      // проверка `reddit_policy` сохраняется, клиент подтверждает её состав.
+      if (
+        e instanceof PubError &&
+        e.code === 'PUB_CONFLICT' &&
+        e.details.reason === 'warnings_not_acknowledged'
+      ) {
+        const kept = await this.db
+          .forAccount(ctx.m.accountId)
+          .$transaction((tx) =>
+            this.approvals.keepPolicyCheck(
+              tx as unknown as PubTx,
+              p,
+              vid,
+              memberActor(ctx.m.memberId),
+              new Date(),
+            ),
+          );
+        throw new PubError('PUB_CONFLICT', {
+          reason: 'warnings_not_acknowledged',
+          ...kept,
+        });
+      }
+      throw e;
+    }
   }
 
   @Get('approvals')

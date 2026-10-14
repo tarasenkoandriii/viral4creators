@@ -575,8 +575,8 @@ export interface AtRdCase extends AtCase {
  * Каталог AT-RD-01…18 (reddit-manual-mvp-adapted.md §9; трассировка §18.5
  * проектного документа). Отдельно от 44 сценариев P0: шлюзы D0/закупки он
  * не меняет (`gates` пусто), отчёт P0 его не включает; отчёт Reddit —
- * `buildAtReport(jest, { catalog: AT_RD_CATALOG })`. У M2 файлы — план
- * (сценарии ещё не реализованы → `blocked`, не «успех»).
+ * `buildAtReport(jest, { catalog: AT_RD_CATALOG })`. M1 и M2 реализованы:
+ * у каждого сценария — тест с меткой `[AT-RD-NN]` в файле каталога.
  */
 export const AT_RD_CATALOG: readonly AtRdCase[] = [
   {
@@ -592,7 +592,7 @@ export const AT_RD_CATALOG: readonly AtRdCase[] = [
     ],
     types: ['http', 'db'],
     automated:
-      'чужой кабинет или продукт на всех 25 маршрутах …/reddit/** → 404 как несуществующий; объект чужого кабинета в своём продукте — как несуществующий; строк pub_* не прибавилось',
+      'чужой кабинет или продукт на всех 39 маршрутах …/reddit/** (M1 25 + M2 14) → 404 как несуществующий; объект чужого кабинета (в т. ч. бриф и Reddit-материал) в своём продукте — как несуществующий; строк pub_* не прибавилось',
     manual: null,
   },
   {
@@ -630,10 +630,14 @@ export const AT_RD_CATALOG: readonly AtRdCase[] = [
     title: 'Новые или устаревшие правила → recheck_required',
     gates: [],
     packages: ['P-R'],
-    files: ['reddit-m1-evidence.spec', 'reddit-m1-policy.spec'],
+    files: [
+      'reddit-m1-evidence.spec',
+      'reddit-m1-policy.spec',
+      'reddit-m2-approval.spec',
+    ],
     types: ['http', 'db'],
     automated:
-      'stale → recheck_required и отбор запрещён; новая версия → прежняя superseded, возможности new/qualified → recheck_required с аудитом, новый снимок block до повторного review; отзыв согласований — M2',
+      'stale → recheck_required и отбор запрещён; новая версия → прежняя superseded, возможности new/qualified → recheck_required с аудитом, новый снимок block до повторного review; M2: согласование неопубликованной Reddit-версии → superseded (stale_check) с задачей',
     manual: null,
   },
   {
@@ -660,36 +664,114 @@ export const AT_RD_CATALOG: readonly AtRdCase[] = [
       'тест свойств 5 000 наборов: одинаковые входы → побайтно одинаковый результат, эталон в рациональных числах, монотонность, null → missing',
     manual: null,
   },
-  ...(
-    [
-      ['07', 'Вымышленный отзыв → BLOCK', 'reddit-m2-checks.spec'],
-      ['08', 'Нет раскрытия → BLOCK', 'reddit-m2-checks.spec'],
-      [
-        '09',
-        'Правка после согласования → новая версия',
-        'reddit-m2-approval.spec',
-      ],
-      ['10', 'LLM недоступна → ручной редактор', 'reddit-m2-manual.spec'],
-      ['11', 'Копирование без исходящих запросов', 'reddit-egress.spec'],
-      [
-        '12',
-        'Отчёт о публикации только user_reported',
-        'reddit-m2-handoff.spec',
-      ],
-      ['13', 'Comment без контекста → 400', 'reddit-m2-brief.spec'],
-      ['14', 'Вредный текст в выдержке', 'reddit-m2-injection.spec'],
-    ] as const
-  ).map(([n, title, file]): AtRdCase => ({
-    id: `AT-RD-${n}`,
+  {
+    id: 'AT-RD-07',
     stage: 'M2',
-    title,
+    title: 'Вымышленный отзыв → BLOCK',
     gates: [],
     packages: ['P-R'],
-    files: [file],
-    types: ['http'],
-    automated: 'этап M2 — ещё не реализован',
+    files: [
+      'reddit-m2-checks.spec',
+      'reddit-m2-pure.spec',
+      'reddit-m2-markers3.spec',
+    ],
+    types: ['http', 'unit'],
+    automated:
+      "личный опыт от первого лица о продукте брифа (en/uk/ru: I'm using, I've had, switched to, використовую, купувала, внедрили…; полный текст со спойлерами и ^(…); обе свёртки двойников, markers@3) при affiliation≠customer или цитата клиента без источника → reddit_policy fail reddit_fake_testimonial; опыт без связи с продуктом — WARN reddit_personal_experience; проверка — по affiliation замороженной версии; согласование → 409 PUB_BLOCKERS_OPEN reddit_policy_block; у customer — pass",
     manual: null,
-  })),
+  },
+  {
+    id: 'AT-RD-08',
+    stage: 'M2',
+    title: 'Нет раскрытия → BLOCK',
+    gates: [],
+    packages: ['P-R'],
+    files: [
+      'reddit-m2-checks.spec',
+      'reddit-m2-pure.spec',
+      'reddit-m2-markers3.spec',
+    ],
+    types: ['http', 'unit'],
+    automated:
+      'раскрытие короче 20 знаков («Hi»), без бренда брифа целым словом, в спойлере/комментарии/надстрочном/зачёркнутом/коде/цитате или не в первых 300 знаках видимого текста (у поста — с заголовком), пустое или affiliation не задана → BLOCK reddit_disclosure_missing; отрицание или чужая роль («Not affiliated with Demo», «just a customer», «не працюю») → BLOCK reddit_disclosure_negated; бренд без роли — WARN reddit_disclosure_unclear (пробы T1/T1b аудита); исправление — новой версией, затем согласование',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-09',
+    stage: 'M2',
+    title: 'Правка после согласования → новая версия',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m2-approval.spec'],
+    types: ['http', 'db'],
+    automated:
+      'замороженную версию не правят (409); новая версия → прежнее согласование superseded, его hash новой версии → 409 PUB_APPROVAL_STALE; новый снимок правил → rules_changed, устаревший → rules_stale; WARN подтверждаются ровно',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-10',
+    stage: 'M2',
+    title: 'LLM недоступна → ручной редактор',
+    gates: [],
+    packages: ['P-R', 'P-B2'],
+    files: ['reddit-m2-manual.spec'],
+    types: ['http'],
+    automated:
+      'флаг выключен → 409 PUB_AI_DISABLED {manual:true} без вызова; генератор выключен до eval 2.3 → disabled в журнале; гейт ai_use закрыт → 409; тайм-аут fake → 503, черновик цел; версия вручную проходит до согласования',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-11',
+    stage: 'M2',
+    title: 'Копирование без исходящих запросов',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m2-egress.spec', 'reddit-m2-handoff.spec'],
+    types: ['http'],
+    automated:
+      'копирование утверждённого текста: HTTP-клиенты не вызваны, соединения и DNS только localhost; аудит copy; первое копирование approved → scheduled',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-12',
+    stage: 'M2',
+    title: 'Отчёт о публикации только user_reported',
+    gates: [],
+    packages: ['P-R', 'P-C'],
+    files: ['reddit-m2-handoff.spec'],
+    types: ['http', 'db'],
+    automated:
+      'отчёт → pub_publications reportKind=user_reported, verifyStatus=not_checked навсегда (триггер); verify → 409 manual_only; общий POST публикаций для Reddit → 409; stage по общему правилу',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-13',
+    stage: 'M2',
+    title: 'Comment без контекста → 400',
+    gates: [],
+    packages: ['P-R'],
+    files: ['reddit-m2-brief.spec'],
+    types: ['http', 'db'],
+    automated:
+      'comment без opportunityId или с пустым context (явно или нет выдержки) → 400 PUB_VALIDATION (Р-RD-14 вместо 422), строк нет; триггер брифа повторяет',
+    manual: null,
+  },
+  {
+    id: 'AT-RD-14',
+    stage: 'M2',
+    title: 'Вредный текст в выдержке',
+    gates: [],
+    packages: ['P-R', 'P-B2'],
+    files: [
+      'reddit-m2-injection.spec',
+      'ai-eval-run.spec',
+      'ai-eval-tasks.spec',
+    ],
+    types: ['http', 'unit'],
+    automated:
+      'выдержка с командой → injectionFlag, текст как есть; в промпте <thread trust="untrusted" flag="possible_instruction"> с экранированием, не источник; «исполненный» ответ → critical находки и BLOCK reddit_policy; eval AI-41',
+    manual: 'в кабинете выдержка показана текстом (смоук assist)',
+  },
   {
     id: 'AT-RD-15',
     stage: 'M1',
@@ -712,10 +794,14 @@ export const AT_RD_CATALOG: readonly AtRdCase[] = [
     title: 'Ноль запросов к Reddit-хостам',
     gates: [],
     packages: ['P-R'],
-    files: ['reddit-m1-egress.spec', 'check-sites-import-graph.mjs'],
+    files: [
+      'reddit-m1-egress.spec',
+      'reddit-m2-egress.spec',
+      'check-sites-import-graph.mjs',
+    ],
     types: ['http', 'unit'],
     automated:
-      'fetch/http(s).request бросают, соединения и DNS только localhost по всем 25 маршрутам; импорт по URL Reddit → reddit_manual_only до сети; правила графа publisher-reddit-no-network(-io)',
+      'fetch/http(s).request бросают, соединения и DNS только localhost по всем 39 маршрутам (M1 25 — reddit-m1-egress, M2 14 — reddit-m2-egress); импорт по URL Reddit → reddit_manual_only до сети; правила графа publisher-reddit-no-network(-io)',
     manual: null,
   },
   {
@@ -736,10 +822,10 @@ export const AT_RD_CATALOG: readonly AtRdCase[] = [
     title: 'Бэкап и восстановление переносят Reddit-сущности',
     gates: [],
     packages: ['P-R', 'P-E'],
-    files: ['reddit-m1-restore.spec'],
+    files: ['reddit-m1-restore.spec', 'reddit-m2-restore.spec'],
     types: ['db'],
     automated:
-      'экспорт пяти таблиц pub_reddit_*; восстановление: снимки reviewed/selfReview/версии как были, возможности без изменений, ссылки и keywordIds на строки нового продукта',
+      'экспорт шести таблиц pub_reddit_* (M2 — брифы); восстановление: снимки reviewed/selfReview/версии как были, возможности без изменений, ссылки и keywordIds на строки нового продукта; M2: бриф, Reddit-материал (redditBriefId), версия (meta.ruleSnapshotId), reddit_policy и user_reported — на новые строки',
     manual: null,
   },
 ];

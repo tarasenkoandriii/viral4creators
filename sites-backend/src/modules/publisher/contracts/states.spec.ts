@@ -31,28 +31,44 @@ const read = (name: string) =>
 const FN_BLOCK =
   /CREATE (?:OR REPLACE )?FUNCTION "([a-z_]+)"\(([^)]*)\)[\s\S]*?\$\$[\s\S]*?\$\$;/g;
 
+/** Миграции Publisher по порядку (ядро, затем пакеты, пересоздающие функции). */
+const CHAIN = [
+  '20261016090000_publisher_core',
+  '20261020090000_publisher_reddit',
+  '20261021090000_publisher_reddit_m2',
+];
+
 /**
- * Действующий SQL закрытых списков: `…_publisher_core`, в котором функции,
- * пересозданные миграцией P-R `…_publisher_reddit` (`CREATE OR REPLACE`:
- * `pub_object_types`, `pub_parameter_keys`, `pub_audit_events_guard`),
- * заменены новыми определениями, плюс остальной SQL миграции P-R (таблицы
- * `pub_reddit_*` и их гварды). Старые определения в разбор не попадают.
+ * Действующий SQL закрытых списков: `…_publisher_core`, затем по порядку
+ * миграции P-R (`…_publisher_reddit`, `…_publisher_reddit_m2`): функции,
+ * пересозданные `CREATE OR REPLACE`, заменяют прежние определения (в т. ч.
+ * определения предыдущей миграции P-R), остальной SQL миграции
+ * добавляется. Старые определения в разбор не попадают.
  */
 function effectiveSql(): string {
-  const core = read('20261016090000_publisher_core');
-  const reddit = read('20261020090000_publisher_reddit');
-  const redefined = new Map<string, string>();
-  for (const m of reddit.matchAll(FN_BLOCK))
-    if (/CREATE OR REPLACE/.test(m[0]))
-      redefined.set(m[1], m[0].replace('CREATE OR REPLACE', 'CREATE'));
-  const patched = core.replace(
-    FN_BLOCK,
-    (block, name: string) => redefined.get(name) ?? block,
-  );
-  const rest = reddit.replace(FN_BLOCK, (block) =>
-    /CREATE OR REPLACE/.test(block) ? '' : block,
-  );
-  return `${patched}\n${rest}`;
+  let acc = read(CHAIN[0]);
+  for (const name of CHAIN.slice(1)) {
+    const sql = read(name);
+    const redefined = new Map<string, string>();
+    for (const m of sql.matchAll(FN_BLOCK))
+      if (/CREATE OR REPLACE/.test(m[0]))
+        redefined.set(m[1], m[0].replace('CREATE OR REPLACE', 'CREATE'));
+    const seen = new Set<string>();
+    acc = acc.replace(FN_BLOCK, (block, fn: string) => {
+      const next = redefined.get(fn);
+      if (!next) return block;
+      seen.add(fn);
+      return next;
+    });
+    const extra = [...redefined.entries()]
+      .filter(([fn]) => !seen.has(fn))
+      .map(([, b]) => b);
+    const rest = sql.replace(FN_BLOCK, (block) =>
+      /CREATE OR REPLACE/.test(block) ? '' : block,
+    );
+    acc = `${acc}\n${extra.join('\n')}\n${rest}`;
+  }
+  return acc;
 }
 
 const SQL = effectiveSql();
@@ -80,7 +96,33 @@ const KNOWN: ReadonlyArray<readonly string[]> = [
 ];
 const key = (l: readonly string[]) => JSON.stringify(l);
 
-describe('contracts/states.ts ≡ триггеры миграций publisher_core + publisher_reddit', () => {
+describe('contracts/states.ts ≡ триггеры миграций publisher_core + publisher_reddit (+ M2)', () => {
+  it('миграция P-R M2 пересоздаёт гварды ядра и M1 (разбор действующего SQL работает)', () => {
+    const m2 = read('20261021090000_publisher_reddit_m2');
+    const names = [...m2.matchAll(FN_BLOCK)]
+      .filter((m) => /CREATE OR REPLACE/.test(m[0]))
+      .map((m) => m[1])
+      .sort();
+    expect(names).toEqual([
+      'pub_ai_eval_results_guard',
+      'pub_content_versions_guard',
+      'pub_contents_guard',
+      'pub_eval_guard',
+      'pub_generators',
+      'pub_parameter_decisions_guard',
+      'pub_parameter_keys',
+      'pub_qa_checks_guard',
+      'pub_reddit_sources_guard',
+    ]);
+    expect(SQL).toContain(`'reddit_excerpt_retention_days'`);
+    expect(SQL).toContain(`'pub.reddit.draft'`);
+    expect(SQL).toContain(`'reddit_policy'`);
+    for (const fn of names)
+      expect(
+        SQL.match(new RegExp(`CREATE FUNCTION "${fn}"\\(`, 'g')),
+      ).toHaveLength(1);
+  });
+
   it('миграция P-R пересоздаёт три функции-списка ядра (разбор действующего SQL работает)', () => {
     const reddit = read('20261020090000_publisher_reddit');
     const names = [...reddit.matchAll(FN_BLOCK)]

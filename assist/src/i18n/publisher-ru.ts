@@ -85,6 +85,7 @@ export const pubRu = {
       spend: 'Расходы',
       purchases: 'Закупки',
       ai_use: 'Рабочий AI',
+      reddit_publish: 'Копирование в Reddit',
     },
     open: 'Открыт',
     closed: 'Закрыт',
@@ -214,6 +215,7 @@ export const pubRu = {
       launch_evidence_d0: 'Протокол запуска D0',
       launch_evidence_purchase: 'Протокол перед закупками',
       reddit_rules_stale_days: 'Свежесть проверки правил Reddit (дней)',
+      reddit_excerpt_retention_days: 'Хранение выдержек Reddit (дней)',
     },
     statuses: {
       assumption: 'не утверждено',
@@ -446,6 +448,9 @@ export const pubRu = {
         'Эта часть сервера ещё не подключена — действие не выполнено.',
     },
     conflictReasons: {
+      warnings_not_acknowledged:
+        'Подтвердите предупреждения проверки правил Reddit (список изменился).',
+      already_published: 'Эта публикация уже отмечена.',
       reddit_evidence_locked:
         'Доказательство Reddit меняется новым снимком правил или правкой выдержки в разделе Reddit.',
     },
@@ -485,6 +490,14 @@ export const pubRu = {
       future: 'дата в будущем',
       profile_ref: 'ссылка на профиль или ник — уберите',
       unknown: 'неизвестное значение',
+      restricted_source: 'доказательство Reddit не может быть источником',
+      comment_required: 'нужна ссылка на сам комментарий',
+      thread_mismatch: 'ссылка ведёт в другой тред',
+      before_material: 'раньше создания материала',
+      reddit_route: 'Reddit-материал создаётся в разделе Reddit',
+      not_allowed: 'не допускается',
+      adaptation_only: 'только для адаптаций',
+      draft_exists: 'черновик уже есть',
     },
     reasons: 'Причина: {reason}',
     importReasons: {
@@ -515,12 +528,15 @@ export const pubRu = {
       offer_inactive: 'оффер не активен',
       change_task_open: 'открыта задача изменения',
       parent_not_approved: 'родительская статья не согласована',
+      reddit_policy_block: 'проверка правил Reddit не пройдена',
     },
     staleReasons: {
       hash_param: 'hash в запросе не совпал с версией',
       hash_mismatch: 'версия изменилась после согласования',
       price_changed: 'выросла цена',
       offer_inactive: 'оффер не активен',
+      rules_changed: 'правила сообщества изменились после версии',
+      rules_stale: 'проверка правил устарела',
     },
     transition: 'Переход {from} → {to} недопустим; можно: {allowed}',
     budget: 'Доступно {available}, нужно {requested}',

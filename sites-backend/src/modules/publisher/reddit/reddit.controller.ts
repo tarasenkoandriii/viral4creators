@@ -58,6 +58,21 @@ import {
 import { RedditOpportunitiesService } from './opportunities.service';
 import { RedditProjectsService } from './projects.service';
 import { RedditEnabledGuard } from './reddit-flag.guard';
+import { RedditMaterialsService } from '../content/reddit-materials.service';
+import { loadBriefView, loadMaterialView } from './brief-views';
+import { RedditBriefsService } from './briefs.service';
+import { RedditGenerateService } from './generate.service';
+import { RedditHandoffService } from './handoff.service';
+import {
+  briefCsvRow,
+  briefListParams,
+  listBriefs,
+  listPublications,
+  publicationCsvRow,
+  publicationListParams,
+} from './lists-m2';
+import { bodyOf } from '../distribution/input';
+import { actorsOf } from '../distribution/placements.service';
 import {
   communityRow,
   loadCommunityView,
@@ -85,6 +100,10 @@ export class PublisherRedditController {
     private readonly projects: RedditProjectsService,
     private readonly communities: RedditCommunitiesService,
     private readonly opportunities: RedditOpportunitiesService,
+    private readonly briefs: RedditBriefsService,
+    private readonly materials: RedditMaterialsService,
+    private readonly generator: RedditGenerateService,
+    private readonly handoff: RedditHandoffService,
   ) {}
 
   private tenant(ctx: PubRequestCtx) {
@@ -599,6 +618,285 @@ export class PublisherRedditController {
       raw,
       200,
       (tx, _step, b) => this.projects.patchKeyword(tx, productOf(ctx), id, b),
+    );
+  }
+
+  // ── M2: брифы (§M2.1–M2.2) ─────────────────────────────────────────────
+
+  @Get(`${R}/briefs`)
+  @PubAllow(READ)
+  async listBriefs(
+    @PubRequest() ctx: PubRequestCtx,
+    @Query() q: Q,
+    @Res() res: Response,
+  ): Promise<void> {
+    const csv = formatOf(q.format) === 'csv';
+    const limit = limitOf(q.limit, csv);
+    const p = briefListParams(q, csv ? limit : limit + 1);
+    const rows = await listBriefs(
+      this.tenant(ctx) as never,
+      productOf(ctx).id,
+      p,
+      new Date(),
+    );
+    await this.respond(res, ctx, 'briefs', csv, rows, limit, briefCsvRow);
+  }
+
+  @Post(`${R}/briefs`)
+  @PubAllow(MANAGE)
+  createBrief(
+    @PubRequest() ctx: PubRequestCtx,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      MANAGE,
+      'reddit.brief.create',
+      {},
+      raw,
+      201,
+      (tx, step, b) => this.briefs.create(tx, productOf(ctx), step, b),
+    );
+  }
+
+  @Get(`${R}/briefs/:id`)
+  @PubAllow(READ)
+  getBrief(@PubRequest() ctx: PubRequestCtx, @Param('id') id: string) {
+    return loadBriefView(this.tenant(ctx) as never, productOf(ctx).id, id);
+  }
+
+  @Patch(`${R}/briefs/:id`)
+  @PubAllow(MANAGE)
+  patchBrief(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      MANAGE,
+      'reddit.brief.update',
+      { id },
+      raw,
+      200,
+      (tx, step, b) => this.briefs.patch(tx, productOf(ctx), id, step, b),
+    );
+  }
+
+  @Post(`${R}/briefs/:id/ready`)
+  @PubAllow(MANAGE)
+  briefReady(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      MANAGE,
+      'reddit.brief.ready',
+      { id },
+      raw,
+      200,
+      (tx, step, b) => this.briefs.ready(tx, productOf(ctx), id, step, b),
+    );
+  }
+
+  @Post(`${R}/briefs/:id/archive`)
+  @PubAllow(MANAGE)
+  archiveBrief(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      MANAGE,
+      'reddit.brief.archive',
+      { id },
+      raw,
+      200,
+      (tx, step, b) => this.briefs.archive(tx, productOf(ctx), id, step, b),
+    );
+  }
+
+  /**
+   * Генерация `pub.reddit.draft` (§M2.3): флаг, бриф, гейт правил, затем
+   * шлюз P-B2 (идемпотентность по `opKey` — у шлюза, как у AI P0).
+   */
+  @Post(`${R}/briefs/:id/generate`)
+  @PubAllow('ai.generate')
+  generateDraft(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.generator.generate(
+      productOf(ctx),
+      ctx.m.memberId,
+      id,
+      bodyOf(raw),
+      res,
+    );
+  }
+
+  // ── M2: материалы, проверка, копирование, отчёт (§M2.4–M2.6) ──────────
+
+  @Get(`${R}/briefs/:id/contents`)
+  @PubAllow(READ)
+  async listBriefContents(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+  ) {
+    const db = this.tenant(ctx) as never;
+    const p = productOf(ctx);
+    const brief = await loadBriefView(db, p.id, id);
+    const items = [];
+    for (const cid of brief.contentIds)
+      items.push(await loadMaterialView(db, p.id, cid));
+    return { items };
+  }
+
+  @Post(`${R}/briefs/:id/contents`)
+  @PubAllow(MANAGE)
+  createContent(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const p = productOf(ctx);
+    return this.run(
+      res,
+      ctx,
+      MANAGE,
+      'reddit.content.create',
+      { id },
+      raw,
+      201,
+      async (tx, step, b) => {
+        const out = await this.materials.createMaterial(
+          tx,
+          p,
+          id,
+          b,
+          step.actor,
+        );
+        return {
+          body: await loadMaterialView(tx, p.id, out.body.id, step.now),
+          audit: out.audit,
+        };
+      },
+    );
+  }
+
+  @Get(`${R}/contents/:cid`)
+  @PubAllow(READ)
+  getContent(@PubRequest() ctx: PubRequestCtx, @Param('cid') cid: string) {
+    return loadMaterialView(this.tenant(ctx) as never, productOf(ctx).id, cid);
+  }
+
+  @Post(`${R}/contents/:cid/check`)
+  @PubAllow('qa.technical')
+  checkContent(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('cid') cid: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      'qa.technical',
+      'reddit.content.check',
+      { cid },
+      raw,
+      201,
+      (tx, step) =>
+        this.materials.recheck(tx, productOf(ctx), cid, step.actor, step.now),
+    );
+  }
+
+  @Post(`${R}/contents/:cid/copy`)
+  @PubAllow('reddit.handoff')
+  copyContent(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('cid') cid: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      'reddit.handoff',
+      'reddit.content.copy',
+      { cid },
+      raw,
+      200,
+      (tx, step, b) =>
+        this.materials.copy(
+          tx,
+          productOf(ctx),
+          cid,
+          actorsOf(ctx.access),
+          step.now,
+          b,
+        ),
+    );
+  }
+
+  @Post(`${R}/contents/:cid/report-publication`)
+  @PubAllow('reddit.handoff')
+  reportPublication(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('cid') cid: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      'reddit.handoff',
+      'reddit.content.report',
+      { cid },
+      raw,
+      201,
+      (tx, step, b, opKey) =>
+        this.handoff.report(tx, productOf(ctx), cid, step, b, opKey),
+    );
+  }
+
+  @Get(`${R}/publications`)
+  @PubAllow(READ)
+  async listPublications(
+    @PubRequest() ctx: PubRequestCtx,
+    @Query() q: Q,
+    @Res() res: Response,
+  ): Promise<void> {
+    const csv = formatOf(q.format) === 'csv';
+    const limit = limitOf(q.limit, csv);
+    const p = publicationListParams(q, csv ? limit : limit + 1);
+    const rows = await listPublications(
+      this.tenant(ctx) as never,
+      productOf(ctx).id,
+      p,
+    );
+    await this.respond(
+      res,
+      ctx,
+      'publications',
+      csv,
+      rows,
+      limit,
+      publicationCsvRow,
     );
   }
 }

@@ -21,8 +21,9 @@ import {
 } from '../src/lib/publisher/common-api';
 import { PubDecodeError } from '../src/lib/publisher/decode';
 import * as R from '../src/lib/publisher/reddit-api';
+import * as S from '../src/lib/publisher/reddit-studio-api';
 import {
-  bodyIssues,
+  bodyIssuesOf,
   bodyKeys,
   contractSrc,
   routesOf,
@@ -143,7 +144,7 @@ assert.deepEqual(
   assert.ok(m);
   assert.deepEqual(
     [...m![1].matchAll(/^\s{2}(\w+):/gm)].map((x) => x[1]),
-    [...R.REDDIT_LISTS]
+    [...R.REDDIT_LISTS, ...S.REDDIT_STUDIO_LISTS]
   );
 }
 // Причины 409 переходов — все, что бросают сервисы P-R.
@@ -400,9 +401,226 @@ assert.equal(
   null
 );
 
+// Формы M2 из общих фикстур (контент, AI, публикации — g1.json).
+const G1 = JSON.parse(
+  readFileSync(new URL('./fixtures/publisher/g1.json', import.meta.url), 'utf8')
+) as Record<string, Record<string, unknown>>;
+const PUBLICATION = {
+  ...G1.PublicationView,
+  reportKind: 'user_reported',
+  contentId: 'c1',
+  communityId: 'rc1',
+  subreddit: 'saas',
+};
+const MATERIAL = {
+  content: { ...G1.ContentView, kind: 'reddit_comment', redditBriefId: 'rb1' },
+  briefId: 'rb1',
+  contentType: 'comment',
+  communityId: 'rc1',
+  subreddit: 'saas',
+  canonicalUrl: 'https://www.reddit.com/r/saas/',
+  threadUrl: 'https://www.reddit.com/r/saas/comments/abc123/how_to_reuse/',
+  openUrl: 'https://www.reddit.com/r/saas/comments/abc123/how_to_reuse/',
+  rules: (FX.RedditCommunityView as { rules: unknown }).rules,
+  currentVersion: G1.VersionView,
+  approvedVersion: null,
+  policyCheck: {
+    ...G1.QaCheckView,
+    kind: 'reddit_policy',
+    warnings: [{ code: 'reddit_links_restricted', text: 'w' }],
+  },
+  copies: { count: 1, lastAt: '2026-10-14T09:00:00.000Z' },
+  publications: [PUBLICATION],
+  lastGeneration: {
+    callId: 'call1',
+    status: 'ok',
+    requestedAt: '2026-10-14T08:30:00.000Z',
+  },
+};
+const GENERATE = {
+  callId: 'call1',
+  status: 'ok',
+  call: {
+    ...G1.AiCallView,
+    generator: 'pub.reddit.draft',
+    output: FX.RedditDraftOutput,
+  },
+};
+// ═══ 2b. M2: списки, фикстуры и декодеры студии ════════════════════════
+{
+  const CHECKS = readFileSync(
+    new URL(
+      '../../sites-backend/src/modules/publisher/reddit/checks.ts',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  same(S.REDDIT_CONTENT_TYPES, STATES, 'REDDIT_CONTENT_TYPES');
+  same(S.REDDIT_AFFILIATIONS, STATES, 'REDDIT_AFFILIATIONS');
+  same(S.REDDIT_BRIEF_STATUSES, STATES, 'REDDIT_BRIEF_STATUSES');
+  same(S.REDDIT_DRAFT_TEMPLATES, RAPI, 'REDDIT_DRAFT_TEMPLATES');
+  same(S.REDDIT_CHECK_BLOCKERS, CHECKS, 'REDDIT_CHECK_BLOCKERS');
+  same(S.REDDIT_CHECK_WARNINGS, CHECKS, 'REDDIT_CHECK_WARNINGS');
+  // Чего не хватает брифу — `RedditBriefMissing` (шаблон тезиса — отдельно).
+  const miss = /export type RedditBriefMissing =([^;]+);/.exec(RAPI);
+  assert.deepEqual(
+    [...miss![1].matchAll(/\| '([a-z_]+)'/g)].map((x) => x[1]).sort(),
+    [...S.REDDIT_BRIEF_MISSING].sort()
+  );
+  assert.ok(/`key_points\[\$\{number\}\]`/.test(miss![1]));
+  // Находки генератора.
+  const GEN = readFileSync(
+    new URL(
+      '../../sites-backend/src/modules/publisher/ai/generators/reddit-draft.generator.ts',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  for (const f of S.REDDIT_AI_FINDINGS)
+    assert.ok(GEN.includes(`'${f}'`), `находка ${f} у генератора`);
+  // Причины недоступности AI — как в `RedditBriefView.ai`.
+  assert.ok(
+    /reason: 'flag_off' \| 'generator_disabled' \| null/.test(RAPI),
+    'ai.reason'
+  );
+
+  const M2_CASES: Array<[string, (v: unknown) => object, unknown]> = [
+    ['RedditBriefView', S.decodeRedditBrief, FX.RedditBriefView],
+    ['RedditCopyView', S.decodeCopy, FX.RedditCopyView],
+    ['RedditMaterialView', S.decodeMaterial, MATERIAL],
+    ['RedditPublicationView', S.decodeRedditPublication, PUBLICATION],
+    ['RedditGenerateResponse', S.decodeGenerate, GENERATE],
+  ];
+  for (const [name, decode, fx] of M2_CASES) {
+    const keys = interfaceKeys(RAPI, name);
+    const own = Object.keys(fx as object);
+    // RedditPublicationView расширяет PublicationView (общий P-C).
+    if (name !== 'RedditPublicationView')
+      assert.deepEqual(own.sort(), [...keys].sort(), `фикстура ${name}`);
+    else for (const key of keys) assert.ok(own.includes(key), key);
+    const out = decode(fx) as Record<string, unknown>;
+    assert.deepEqual(
+      Object.keys(out).sort(),
+      own.sort(),
+      `${name}: ключи декодера`
+    );
+  }
+  const b = S.decodeRedditBrief(FX.RedditBriefView);
+  assert.equal(b.keyPoints[1].sourceIds, 'needs_verification');
+  assert.deepEqual(b.ai, { available: false, reason: 'generator_disabled' });
+  const fb = FX.RedditBriefView;
+  throwsDecode(
+    () => S.decodeRedditBrief({ ...fb, missing: ['vibes'] }),
+    'missing'
+  );
+  assert.deepEqual(
+    S.decodeRedditBrief({ ...fb, missing: ['brief_ready', 'key_points[1]'] })
+      .missing,
+    ['brief_ready', 'key_points[1]']
+  );
+  throwsDecode(
+    () => S.decodeRedditBrief({ ...fb, affiliation: 'friend' }),
+    'affiliation'
+  );
+  throwsDecode(
+    () => S.decodeRedditBrief({ ...fb, ai: { available: true, reason: 'x' } }),
+    'ai.reason'
+  );
+  throwsDecode(
+    () =>
+      S.decodeRedditBrief({
+        ...fb,
+        keyPoints: [{ text: 't', sourceIds: 'maybe' }],
+      }),
+    'sourceIds тезиса'
+  );
+  assert.equal(
+    S.decodeRedditBrief({ ...fb, affiliation: null }).affiliation,
+    null
+  );
+  // Варианты: 2..3, строго.
+  const out = S.decodeDraftOutput(FX.RedditDraftOutput);
+  assert.equal(out.length, 3);
+  const vs = (FX.RedditDraftOutput as { variants: unknown[] }).variants;
+  throwsDecode(
+    () => S.decodeDraftOutput({ variants: vs.slice(0, 1) }),
+    '1 вариант'
+  );
+  throwsDecode(
+    () => S.decodeDraftOutput({ variants: [...vs, vs[0]] }),
+    '4 варианта'
+  );
+  throwsDecode(
+    () =>
+      S.decodeDraftOutput({
+        variants: [{ ...(vs[0] as object), body: 5 }, vs[1]],
+      }),
+    'body числом'
+  );
+  throwsDecode(() => S.decodeRedditBrief({ ...fb, brand: 5 }), 'brand числом');
+  assert.equal(S.decodeRedditBrief({ ...fb, brand: null }).brand, null);
+  assert.deepEqual(S.decodeRedditBrief({ ...fb, missing: ['brand'] }).missing, [
+    'brand',
+  ]);
+  throwsDecode(
+    () =>
+      S.decodeMaterial({
+        ...MATERIAL,
+        lastGeneration: {
+          callId: 'c',
+          status: 'maybe',
+          requestedAt: '2026-10-14T08:30:00.000Z',
+        },
+      }),
+    'lastGeneration.status'
+  );
+  throwsDecode(() => {
+    const x: Record<string, unknown> = { ...MATERIAL };
+    delete x.lastGeneration;
+    S.decodeMaterial(x);
+  }, 'нет lastGeneration');
+  assert.equal(
+    S.decodeMaterial({ ...MATERIAL, lastGeneration: null }).lastGeneration,
+    null
+  );
+  const mat = S.decodeMaterial(MATERIAL);
+  assert.equal(mat.policyCheck?.warnings[0].code, 'reddit_links_restricted');
+  assert.equal(mat.publications[0].reportKind, 'user_reported');
+  throwsDecode(
+    () => S.decodeMaterial({ ...MATERIAL, contentType: 'thread' }),
+    'contentType'
+  );
+  throwsDecode(
+    () =>
+      S.decodeMaterial({ ...MATERIAL, copies: { count: null, lastAt: null } }),
+    'copies.count null'
+  );
+  throwsDecode(
+    () =>
+      S.decodeRedditPublication({ ...PUBLICATION, reportKind: 'confirmed' }),
+    'reportKind'
+  );
+  throwsDecode(
+    () => S.decodeCopy({ ...FX.RedditCopyView, copyToken: null }),
+    'copyToken'
+  );
+  // Точный текст копирования не трогается декодером (пробелы, переводы строк).
+  const raw = '  **x**\n\n<b>y</b>  ';
+  assert.equal(S.decodeCopy({ ...FX.RedditCopyView, body: raw }).body, raw);
+  assert.equal(S.decodeGenerate({ ...GENERATE, call: null }).call, null);
+}
+
 // ═══ 3. Каждый маршрут REDDIT_ROUTES — свой вызов клиента ═════════════════
 const ROUTES = routesOf(RAPI);
-assert.equal(ROUTES.length, 25, `маршрутов P-R ${ROUTES.length}`);
+const ROUTES_CONTENT = routesOf(contractSrc('content-api.ts'));
+assert.equal(ROUTES.length, 39, `маршрутов P-R ${ROUTES.length}`);
+// M2 — ровно `REDDIT_M2_ROUTE_NAMES` (14); их вызывает клиент студии.
+const M2_NAMES = (() => {
+  const m = /REDDIT_M2_ROUTE_NAMES[^=]*=\s*\[([\s\S]*?)\];/.exec(RAPI);
+  assert.ok(m, 'нет REDDIT_M2_ROUTE_NAMES');
+  return [...m![1].matchAll(/'(\w+)'/g)].map((x) => x[1]);
+})();
+assert.equal(M2_NAMES.length, 14);
 for (const r of ROUTES) {
   assert.ok(
     r.path.startsWith('/publisher/products/:pid/reddit/'),
@@ -424,7 +642,19 @@ const respond = (method: string, path: string): unknown => {
     if (/\/opportunities$/.test(p)) return listOf(FX.RedditOpportunityView);
     if (/\/opportunities\/[^/]+$/.test(p)) return FX.RedditOpportunityView;
     if (/\/keywords$/.test(p)) return listOf(FX.RedditKeywordView);
+    if (/\/briefs$/.test(p)) return listOf(FX.RedditBriefView);
+    if (/\/briefs\/[^/]+\/contents$/.test(p)) return { items: [MATERIAL] };
+    if (/\/briefs\/[^/]+$/.test(p)) return FX.RedditBriefView;
+    if (/\/reddit\/contents\/[^/]+$/.test(p)) return MATERIAL;
+    if (/\/reddit\/publications$/.test(p)) return listOf(PUBLICATION);
   }
+  if (/\/briefs\/[^/]+\/generate$/.test(p)) return GENERATE;
+  if (/\/briefs\/[^/]+\/contents$/.test(p)) return MATERIAL;
+  if (/\/briefs/.test(p)) return FX.RedditBriefView;
+  if (/\/check$/.test(p)) return G1.QaCheckView;
+  if (/\/copy$/.test(p)) return FX.RedditCopyView;
+  if (/\/report-publication$/.test(p)) return PUBLICATION;
+  if (/\/contents\/[^/]+\/versions/.test(p)) return G1.VersionView;
   if (/\/projects/.test(p)) return FX.RedditProjectView;
   if (/\/rules/.test(p)) return FX.RedditRuleSnapshotView;
   if (/\/communities/.test(p)) return FX.RedditCommunityView;
@@ -513,6 +743,57 @@ const outs = await Promise.all([
   api.patchKeyword('rk1', k(), { expectedRevision: 1, status: 'archived' }),
 ]);
 assert.equal(outs.length, 25);
+const studio = S.createRedditStudioApi(http, 'prod1');
+const vcalls: typeof calls = [];
+const outs2 = await Promise.all([
+  studio.briefs({ status: 'ready', contentType: 'comment', q: '  crm ' }),
+  studio.brief('rb1'),
+  studio.createBrief(k(), {
+    projectId: 'rp1',
+    contentType: 'comment',
+    opportunityId: 'ro1',
+    objective: 'o',
+    context: 'c',
+    keyPoints: [{ text: 't', sourceIds: 'needs_verification' }],
+    affiliation: 'founder',
+    linksAllowed: false,
+  }),
+  studio.patchBrief('rb1', k(), { expectedRevision: 3, affiliation: null }),
+  studio.briefReady('rb1', k(), 3),
+  studio.archiveBrief('rb1', k(), 3),
+  studio.generate('rb1', k(), {
+    template: 'helpful_answer',
+    variants: 3,
+    rewrite: { versionId: 'v1', paragraph: 1 },
+  }),
+  studio.briefContents('rb1'),
+  studio.createContent('rb1', k(), {}),
+  studio.material('c1'),
+  studio.check('c1', k()),
+  studio.copy('c1', k(), { acknowledgedWarnings: ['reddit_duplicate'] }),
+  studio.reportPublication('c1', k(), {
+    url: 'https://www.reddit.com/r/saas/comments/abc123/x/comment/def456',
+    postedAt: '2026-10-14T09:30:00.000Z',
+  }),
+  studio.publications({ stage: 'test', status: 'published' }),
+]);
+assert.equal(outs2.length, 14);
+// Версии Reddit-материала — общие маршруты контента (ветвь Reddit, §3.1).
+{
+  const before = calls.length;
+  await studio.createVersion('c1', k(), {
+    body: 'b',
+    meta: { disclosure: '', claimMap: [] },
+    aiCallId: 'call1',
+    variantIndex: 2,
+  });
+  await studio.patchVersion('c1', 'v1', k(), {
+    expectedRevision: 1,
+    title: 't',
+    meta: { flairSuggestion: null },
+  });
+  vcalls.push(...calls.splice(before));
+}
 const covered = new Set<string>();
 for (const c of calls) {
   assert.ok(c.path.startsWith('publisher/products/prod1/reddit/'), c.path);
@@ -529,7 +810,7 @@ for (const c of calls) {
   }
   const { opKey, ...body } = c.body as Record<string, unknown>;
   assert.ok(OP_KEY_RE.test(String(opKey)), `нет opKey: ${c.path}`);
-  const issues = bodyIssues(body, bodyKeys(def.body));
+  const issues = bodyIssuesOf(body, def.body);
   assert.deepEqual(issues, [], `${def.name} (${def.body}): ${issues}`);
 }
 assert.deepEqual(
@@ -537,6 +818,84 @@ assert.deepEqual(
   ROUTES.map((r) => r.name).sort(),
   'не все маршруты P-R вызываются клиентом'
 );
+for (const n of M2_NAMES) assert.ok(covered.has(n), `M2 ${n} не вызван`);
+// Версии Reddit-ветви: общий путь контента, тела — РОВНО
+// `CreateRedditVersionBody`/`PatchRedditVersionBody` (контракт §9.9), без
+// производных ключей; у comment нет `title`; `meta` — `RedditVersionClientMeta`.
+{
+  const DERIVED = ['offerVersionId', 'sourceIds', 'parentVersionId'];
+  assert.equal(vcalls.length, 2);
+  const [cv, pv] = vcalls;
+  assert.equal(cv.method, 'POST');
+  assert.equal(cv.path, 'publisher/products/prod1/contents/c1/versions');
+  assert.equal(pv.method, 'PATCH');
+  assert.equal(pv.path, 'publisher/products/prod1/contents/c1/versions/v1');
+  const metaKeys = [...bodyKeys('RedditVersionClientMeta').keys()];
+  for (const [c, name] of [
+    [cv, 'CreateRedditVersionBody'],
+    [pv, 'PatchRedditVersionBody'],
+  ] as const) {
+    const { opKey, ...b } = c.body as Record<string, unknown>;
+    assert.ok(OP_KEY_RE.test(String(opKey)));
+    const issues = bodyIssuesOf(b, name);
+    assert.deepEqual(issues, [], `${name}: ${issues}`);
+    for (const key of Object.keys(b))
+      assert.ok(!DERIVED.includes(key), `производный ключ ${key}`);
+    // Общий маршрут типизирован объединением — Reddit-тело в нём есть.
+    const def = ROUTES_CONTENT.find(
+      (d) => d.method === c.method && d.re.test(`/${c.path}`)
+    );
+    assert.ok(def && def.body.includes(name), `${c.method}: ${def?.body}`);
+    const metaIn = (b.meta ?? {}) as Record<string, unknown>;
+    for (const mk of Object.keys(metaIn))
+      assert.ok(
+        metaKeys.includes(mk),
+        `meta.${mk} вне RedditVersionClientMeta`
+      );
+    for (const mk of Object.keys(metaIn))
+      assert.ok(
+        (S.REDDIT_VERSION_META_KEYS as readonly string[]).includes(mk),
+        `meta.${mk} ставит сервер`
+      );
+  }
+  assert.ok(!('title' in (cv.body as object)), 'comment без title');
+  // `REDDIT_VERSION_META_KEYS` — как у сервера.
+  assert.deepEqual(
+    [...S.REDDIT_VERSION_META_KEYS],
+    constList(
+      readFileSync(
+        new URL(
+          '../../sites-backend/src/modules/publisher/content/rules.ts',
+          import.meta.url
+        ),
+        'utf8'
+      ),
+      'REDDIT_VERSION_META_KEYS'
+    )
+  );
+}
+// Фильтры M2: брифы и публикации, q обрезан.
+{
+  const b = calls.find((c) => /reddit\/briefs\?/.test(c.path));
+  assert.equal(b!.path.split('?')[1], 'status=ready&contentType=comment&q=crm');
+  const pb = calls.find((c) => /reddit\/publications\?/.test(c.path));
+  assert.equal(pb!.path.split('?')[1], 'stage=test&status=published');
+  const g = calls.find((c) => c.path.endsWith('/generate'));
+  assert.deepEqual((g!.body as { rewrite: unknown }).rewrite, {
+    versionId: 'v1',
+    paragraph: 1,
+  });
+  const cp = calls.find((c) => c.path.endsWith('/copy'));
+  assert.deepEqual((cp!.body as Record<string, unknown>).acknowledgedWarnings, [
+    'reddit_duplicate',
+  ]);
+  for (const tail of ['/check'])
+    assert.deepEqual(
+      Object.keys(calls.find((c) => c.path.endsWith(tail))!.body as object),
+      ['opKey'],
+      `${tail}: только opKey`
+    );
+}
 // Фильтры: limit 1..100, q обрезан, пустое не уходит.
 {
   const list = calls.find((c) => /\/projects\?/.test(c.path));
@@ -618,5 +977,5 @@ await assert.rejects(
 }
 
 console.log(
-  `publisher-reddit-api: ok (${ROUTES.length} маршрутов, ${CASES.length} форм)`
+  `publisher-reddit-api: ok (${ROUTES.length} маршрутов, ${CASES.length} + 5 форм)`
 );

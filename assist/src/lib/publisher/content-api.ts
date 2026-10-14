@@ -247,6 +247,10 @@ export interface ContentView {
   blockReason: string | null;
   criticalStale: boolean;
   firstPublishedAt: string | null;
+  /** P-R M2: Reddit-бриф материала `reddit_post|reddit_comment`. */
+  redditBriefId: string | null;
+  /** P-R M2 §12.5: Reddit-материал — действия только в студии. */
+  redditStudio?: true;
   openTasks: Array<{ id: string; reason: ReviewReason; objectType: string }>;
   allowedTransitions: ContentStatus[];
   revision: number;
@@ -262,6 +266,18 @@ export interface VersionMeta {
   cards?: Array<{ title: string; text: string }>;
   scenes?: Array<{ visual: string; voice: string; caption: string }>;
   substantiallyUpdatedAt?: string;
+  // ── P-R M2: Reddit-версия (`RedditVersionMeta`; входит в hash) ──
+  disclosure?: string;
+  flairSuggestion?: string | null;
+  claimMap?: Array<{
+    text: string;
+    sourceIds: string[] | 'needs_verification';
+  }>;
+  uncertainties?: string[];
+  /** Ставит сервер. */
+  ruleSnapshotId?: string | null;
+  affiliation?: string;
+  threadUrl?: string | null;
 }
 
 export interface VersionView {
@@ -327,10 +343,20 @@ export interface ClaimView {
   revision: number;
 }
 
+/**
+ * Параметры находки `reddit_policy` (P-R M2 §12.1): `found` — найденные
+ * фрагменты, `reason`/`brand` — причина раскрытия, `claims` — номера пунктов
+ * `meta.claimMap` (с 0). Текст находки клиент строит по коду и параметрам.
+ */
+export type QaFindingParams = Record<
+  string,
+  string | number | string[] | number[]
+>;
 export interface QaBlocker {
   code: string;
   claimId?: string | null;
   text: string;
+  params?: QaFindingParams;
 }
 export interface QaCheckView {
   id: string;
@@ -338,6 +364,8 @@ export interface QaCheckView {
   kind: QaCheckKind;
   result: QaResult;
   blockers: QaBlocker[];
+  /** P-R M2: WARN `reddit_policy` (у прочих видов — пусто). */
+  warnings: Array<{ code: string; text: string; params?: QaFindingParams }>;
   checkedBy: string;
   checkedAt: string;
   selfReview: boolean;
@@ -588,6 +616,14 @@ export function decodeContent(v: unknown): ContentView {
     blockReason: strOrNull(o.blockReason),
     criticalStale: bool(o.criticalStale),
     firstPublishedAt: isoOrNull(o.firstPublishedAt),
+    redditBriefId: strOrNull(o.redditBriefId),
+    ...(o.redditStudio === undefined
+      ? {}
+      : o.redditStudio === true
+        ? { redditStudio: true as const }
+        : (() => {
+            throw new PubDecodeError('content.redditStudio');
+          })()),
     openTasks: arr(o.openTasks, (x) => {
       const t = obj(x, 'content.openTasks');
       return {
@@ -632,6 +668,26 @@ function decodeMeta(v: unknown): VersionMeta {
   if (o.substantiallyUpdatedAt !== undefined) {
     out.substantiallyUpdatedAt = str(o.substantiallyUpdatedAt);
   }
+  if (o.disclosure !== undefined) out.disclosure = str(o.disclosure);
+  if (o.flairSuggestion !== undefined)
+    out.flairSuggestion = strOrNull(o.flairSuggestion);
+  if (o.claimMap !== undefined) {
+    out.claimMap = arr(o.claimMap, (x) => {
+      const c = obj(x, 'meta.claimMap');
+      return {
+        text: str(c.text),
+        sourceIds:
+          c.sourceIds === 'needs_verification'
+            ? ('needs_verification' as const)
+            : strs(c.sourceIds),
+      };
+    });
+  }
+  if (o.uncertainties !== undefined) out.uncertainties = strs(o.uncertainties);
+  if (o.ruleSnapshotId !== undefined)
+    out.ruleSnapshotId = strOrNull(o.ruleSnapshotId);
+  if (o.affiliation !== undefined) out.affiliation = str(o.affiliation);
+  if (o.threadUrl !== undefined) out.threadUrl = strOrNull(o.threadUrl);
   return out;
 }
 
@@ -718,10 +774,30 @@ export function decodeClaim(v: unknown): ClaimView {
   };
 }
 
+/** Параметры находки: строки, числа и их списки (иное — чужая форма). */
+export function decodeFindingParams(v: unknown): QaFindingParams {
+  const o = obj(v, 'finding.params');
+  const out: QaFindingParams = {};
+  for (const [k, x] of Object.entries(o)) {
+    if (typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x)))
+      out[k] = x;
+    else if (Array.isArray(x) && x.every((y) => typeof y === 'string'))
+      out[k] = x as string[];
+    else if (
+      Array.isArray(x) &&
+      x.every((y) => typeof y === 'number' && Number.isFinite(y))
+    )
+      out[k] = x as number[];
+    else throw new PubDecodeError(`finding.params.${k}`);
+  }
+  return out;
+}
+
 function decodeBlocker(v: unknown): QaBlocker {
   const o = obj(v, 'blocker');
   const out: QaBlocker = { code: str(o.code), text: str(o.text) };
   if (o.claimId !== undefined) out.claimId = strOrNull(o.claimId);
+  if (o.params !== undefined) out.params = decodeFindingParams(o.params);
   return out;
 }
 
@@ -733,6 +809,16 @@ export function decodeQaCheck(v: unknown): QaCheckView {
     kind: oneOf(o.kind, QA_CHECK_KINDS, 'qa.kind'),
     result: oneOf(o.result, QA_RESULTS, 'qa.result'),
     blockers: arr(o.blockers, decodeBlocker),
+    warnings: arr(o.warnings ?? [], (x) => {
+      const w = obj(x, 'qa.warning');
+      return {
+        code: str(w.code),
+        text: str(w.text),
+        ...(w.params !== undefined
+          ? { params: decodeFindingParams(w.params) }
+          : {}),
+      };
+    }),
     checkedBy: str(o.checkedBy),
     checkedAt: iso(o.checkedAt),
     selfReview: bool(o.selfReview),
@@ -938,6 +1024,8 @@ export type QaCheckIn = {
 export type ApproveIn = {
   versionHash: string;
   reason?: Nul<string>;
+  /** P-R M2: ровно коды WARN свежей `reddit_policy` (подтверждение человеком). */
+  acknowledgedWarnings?: string[];
 };
 
 /** Тело согласования из формы: hash версии и необязательное основание. */

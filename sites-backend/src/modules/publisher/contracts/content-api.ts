@@ -435,6 +435,15 @@ export interface ContentView {
   blockReason: string | null;
   criticalStale: boolean;
   firstPublishedAt: string | null;
+  /** P-R M2: Reddit-бриф материала `reddit_post|reddit_comment` (иначе null). */
+  redditBriefId: string | null;
+  /**
+   * P-R M2 (раунд 4, аудит экранов S3-10): есть только у Reddit-материала —
+   * его версии, согласование с подтверждением WARN, копирование и отметка о
+   * публикации ведутся в студии Reddit; общий экран «Матеріали» прячет
+   * общие действия публикации и согласования и даёт ссылку в студию.
+   */
+  redditStudio?: true;
   /** Открытые задачи проверки по материалу и его версиям. */
   openTasks: Array<{ id: string; reason: ReviewReason; objectType: string }>;
   /** Допустимые переходы машины 7.1 из текущего статуса. */
@@ -471,13 +480,32 @@ export interface VersionMeta {
   scenes?: Array<{ visual: string; voice: string; caption: string }>;
   substantiallyUpdatedAt?: string;
 }
+
+/**
+ * `meta` версии Reddit-материала (P-R M2, §M2.1; белый список
+ * `REDDIT_VERSION_META_KEYS` в `content/rules.ts`). Весь `meta` входит в
+ * hash версии (Р-RD-7). Поля `ruleSnapshotId`, `affiliation`, `threadUrl`
+ * ставит сервер (переданные клиентом → 400 `derived`).
+ */
+export interface RedditVersionMeta {
+  disclosure?: string;
+  flairSuggestion?: string | null;
+  claimMap?: Array<{
+    text: string;
+    sourceIds: string[] | 'needs_verification';
+  }>;
+  uncertainties?: string[];
+  ruleSnapshotId?: string | null;
+  affiliation?: 'founder' | 'employee' | 'agency' | 'customer' | 'none';
+  threadUrl?: string | null;
+}
 export interface VersionView {
   id: string;
   contentId: string;
   number: number;
   title: string;
   body: string;
-  meta: VersionMeta;
+  meta: VersionMeta & RedditVersionMeta;
   format: ContentKind;
   /** Сценарий видео помечен как сценарий (F06, не готовый ролик). */
   isScript: boolean;
@@ -512,6 +540,8 @@ export interface CreateVersionBody extends MutationBody {
   parentVersionId?: string | null;
   /** Предложение `pub.adaptation.make`, принятое человеком. */
   aiCallId?: string | null;
+  /** P-R M2: индекс выбранного варианта вызова `pub.reddit.draft` (0..2). */
+  variantIndex?: number | null;
 }
 export interface PatchVersionBody extends RevisionedBody {
   title?: string;
@@ -522,6 +552,39 @@ export interface PatchVersionBody extends RevisionedBody {
   factIds?: string[];
   offerVersionId?: string;
   parentVersionId?: string | null;
+}
+/**
+ * P-R M2 (замечание экранов, Р-RD-72): тела версий Reddit-материала на тех
+ * же маршрутах `createVersion`/`patchVersion`. `title` — только у
+ * `reddit_post` (у комментария служебный, клиент → 400 `derived`);
+ * `offerVersionId`/`sourceIds` ставит сервер (→ 400 `derived`), родителя
+ * нет (→ 400 `not_allowed`); `meta` — клиентская часть
+ * (`RedditVersionClientMeta`); выбор варианта генерации — `aiCallId` +
+ * `variantIndex` (и при PATCH черновика).
+ */
+export type RedditVersionClientMeta = Pick<
+  RedditVersionMeta,
+  'disclosure' | 'flairSuggestion' | 'claimMap' | 'uncertainties'
+>;
+export interface CreateRedditVersionBody extends MutationBody {
+  /** Только `reddit_post` (≤ 300). */
+  title?: string;
+  /** post ≤ 40 000, comment ≤ 10 000, без сырого HTML. */
+  body: string;
+  meta?: RedditVersionClientMeta;
+  claimIds?: string[];
+  factIds?: string[];
+  aiCallId?: string | null;
+  variantIndex?: number | null;
+}
+export interface PatchRedditVersionBody extends RevisionedBody {
+  title?: string;
+  body?: string;
+  meta?: RedditVersionClientMeta;
+  claimIds?: string[];
+  factIds?: string[];
+  aiCallId?: string | null;
+  variantIndex?: number | null;
 }
 export type SubmitVersionBody = RevisionedBody;
 export interface DiffLine {
@@ -613,22 +676,41 @@ export interface VerifyClaimBody extends RevisionedBody {
 }
 
 export type QaKind = 'editorial' | 'technical' | 'adaptation_meaning';
+/**
+ * Машиночитаемые параметры находки (P-R M2, раунд 4, аудит экранов S3-4):
+ * у `reddit_policy` — найденные фрагменты (`found`), причина (`reason`),
+ * бренд брифа (`brand`), номера пунктов claimMap (`claims`); тексты по
+ * коду и параметрам делает клиент (`text` у `reddit_policy` = код).
+ */
+export type QaFindingParams = Record<
+  string,
+  string | number | string[] | number[]
+>;
 export interface QaBlocker {
   code: string;
   claimId?: string | null;
   text: string;
+  params?: QaFindingParams;
 }
 export interface QaCheckBody extends MutationBody {
   kind: QaKind;
   result: 'pass' | 'fail' | 'unknown';
   blockers?: QaBlocker[];
 }
+/** Предупреждение проверки (P-R M2, Р-RD-8): подтверждается при согласовании. */
+export interface QaWarning {
+  code: string;
+  text: string;
+  params?: QaFindingParams;
+}
 export interface QaCheckView {
   id: string;
   versionId: string;
-  kind: QaKind | 'ai_review';
+  kind: QaKind | 'ai_review' | 'reddit_policy';
   result: 'pass' | 'fail' | 'unknown';
   blockers: QaBlocker[];
+  /** WARN `reddit_policy` (у прочих видов — пусто). */
+  warnings: QaWarning[];
   checkedBy: string;
   checkedAt: string;
   selfReview: boolean;
@@ -638,6 +720,13 @@ export interface QaCheckView {
 export interface ApproveBody extends MutationBody {
   versionHash: string;
   reason?: string | null;
+  /**
+   * P-R M2 (§M2.4): коды WARN свежей проверки `reddit_policy` — ровно они
+   * (порядок не важен), иначе 409 `PUB_CONFLICT {reason:
+   * 'warnings_not_acknowledged', codes}`; хранится в `meta` аудита
+   * согласования. У не-Reddit материала непустой список — 400.
+   */
+  acknowledgedWarnings?: string[];
 }
 export interface ApprovalView {
   id: string;
@@ -671,8 +760,12 @@ export interface ApprovalBlocker {
     | 'source_not_allowed'
     | 'offer_inactive'
     | 'change_task_open'
-    | 'parent_not_approved';
+    | 'parent_not_approved'
+    /** P-R M2: последняя `reddit_policy` версии отсутствует или с блокерами. */
+    | 'reddit_policy_block';
   id?: string;
+  /** `reddit_policy_block`: коды BLOCK последней проверки (без id строки). */
+  codes?: string[];
 }
 
 // ── Публичное чтение (§11.4) ─────────────────────────────────────────────
@@ -943,14 +1036,17 @@ export const CONTENT_ROUTES = {
     mutation: false,
     status: 200,
   }),
-  createVersion: route<CreateVersionBody, VersionView>({
+  createVersion: route<
+    CreateVersionBody | CreateRedditVersionBody,
+    VersionView
+  >({
     method: 'POST',
     path: `${C}/contents/:cid/versions`,
     action: 'version.manage',
     mutation: true,
     status: 201,
   }),
-  patchVersion: route<PatchVersionBody, VersionView>({
+  patchVersion: route<PatchVersionBody | PatchRedditVersionBody, VersionView>({
     method: 'PATCH',
     path: `${C}/contents/:cid/versions/:vid`,
     action: 'version.manage',

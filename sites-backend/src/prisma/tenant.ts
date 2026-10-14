@@ -291,6 +291,8 @@ export const TENANT_COLUMNS: Readonly<Record<string, string>> = {
   PubRedditRuleSnapshot: 'accountId',
   PubRedditKeyword: 'accountId',
   PubRedditOpportunity: 'accountId',
+  // P-R M2 (миграция …_publisher_reddit_m2).
+  PubRedditBrief: 'accountId',
 };
 
 /**

@@ -52,11 +52,65 @@ import { approvalView } from './views';
 const HEX64 = /^[0-9a-f]{64}$/;
 
 import { approvalBlockers } from './blockers';
+import {
+  ackCodes,
+  assertRedditBriefReadyFor,
+  assertRedditRulesFresh,
+  writeRedditPolicyCheck,
+} from './reddit-policy-check';
+import { isRedditContentKind } from '../contracts/states';
 export { approvalBlockers };
 
+/** Коды подтверждённых WARN (P-R M2): массив строк-кодов или нет поля. */
 @Injectable()
 export class ApprovalsPublishService {
-  constructor(private readonly contents: ContentsService) {}
+  constructor(
+    private readonly contents: ContentsService,
+    private readonly ports: PubPorts,
+  ) {}
+
+  /**
+   * Раунд 4 (аудит экранов S2-1): после 409 `warnings_not_acknowledged`
+   * свежая проверка `reddit_policy` СОХРАНЯЕТСЯ (отдельная транзакция, без
+   * согласования): клиент показывает и подтверждает именно её состав, а
+   * перезагрузка экрана видит её как последнюю проверку версии.
+   */
+  async keepPolicyCheck(
+    tx: PubTx,
+    product: ProductRef,
+    versionId: string,
+    actor: string,
+    now: Date,
+  ): Promise<{
+    policyCheckId: string;
+    codes: string[];
+    warnings: Array<{ code: string; params: Record<string, unknown> }>;
+  }> {
+    const w = await writeRedditPolicyCheck(
+      this.ports,
+      tx,
+      product,
+      versionId,
+      now,
+      'approve',
+    );
+    await this.ports.audit().write(tx, {
+      ...w.audit,
+      accountId: product.accountId,
+      productId: product.id,
+      actor,
+      occurredAt: now,
+      meta: { ...(w.audit.meta ?? {}), outcome: 'warnings_not_acknowledged' },
+    });
+    return {
+      policyCheckId: w.view.id,
+      codes: w.check.warnings.map((x) => x.code).sort(),
+      warnings: w.check.warnings.map((x) => ({
+        code: x.code,
+        params: x.params ?? {},
+      })),
+    };
+  }
 
   async approve(
     tx: PubTx,
@@ -73,6 +127,7 @@ export class ApprovalsPublishService {
       re: HEX64,
     });
     const reason = is.str(b, 'reason', { max: 2000, pii: true });
+    const ack = ackCodes(is, b.acknowledgedWarnings);
     is.throwIfAny();
     const head = await tx.pubContentVersion.findFirst({
       where: { id: versionId, productId: product.id },
@@ -106,8 +161,48 @@ export class ApprovalsPublishService {
       });
     }
     await assertHashCurrent(tx, product.id, versionId, v.hash);
+    // P-R M2 (§M2.6, Р-RD-51/52): снимок правил версии текущий и не stale;
+    // свежая `reddit_policy` (пишется в этой транзакции — входит в блокеры);
+    // WARN подтверждены человеком.
+    const reddit = isRedditContentKind(c.kind);
+    if (!reddit && ack && ack.length) {
+      throw validationError([
+        { field: 'acknowledgedWarnings', code: 'not_allowed' },
+      ]);
+    }
+    let policy: Awaited<ReturnType<typeof writeRedditPolicyCheck>> | null =
+      null;
+    if (reddit) {
+      await assertRedditBriefReadyFor(this.ports, tx, product, versionId);
+      await assertRedditRulesFresh(this.ports, tx, product, versionId, now);
+      policy = await writeRedditPolicyCheck(
+        this.ports,
+        tx,
+        product,
+        versionId,
+        now,
+        'approve',
+      );
+    }
     const blockers = await approvalBlockers(tx, product.id, versionId);
     if (blockers.length) throw new PubError('PUB_BLOCKERS_OPEN', { blockers });
+    if (policy) {
+      const codes = policy.check.warnings.map((w) => w.code).sort();
+      const given = [...new Set(ack ?? [])].sort();
+      if (codes.join(',') !== given.join(',')) {
+        // Проверка этой транзакции откатится вместе с 409; контроллер
+        // сохраняет свежую проверку отдельной транзакцией (`keepPolicyCheck`,
+        // раунд 4, аудит экранов S2-1) и отдаёт её id и состав.
+        throw new PubError('PUB_CONFLICT', {
+          reason: 'warnings_not_acknowledged',
+          codes,
+          warnings: policy.check.warnings.map((w) => ({
+            code: w.code,
+            params: w.params ?? {},
+          })),
+        });
+      }
+    }
     const already = await tx.pubApproval.count({
       where: {
         productId: product.id,
@@ -173,8 +268,22 @@ export class ApprovalsPublishService {
           action: 'approve',
           toStatus: 'active',
           reason: reason ?? null,
-          meta: { versionId, versionHash: v.hash!, selfReview },
+          meta: {
+            versionId,
+            versionHash: v.hash!,
+            selfReview,
+            ...(policy
+              ? {
+                  acknowledgedWarnings: policy.check.warnings.map(
+                    (w) => w.code,
+                  ),
+                  policyCheckId: policy.view.id,
+                  ruleSnapshotId: policy.check.snapshotId,
+                }
+              : {}),
+          },
         },
+        ...(policy ? [policy.audit] : []),
         {
           objectType: 'content',
           objectId: c.id,

@@ -10,7 +10,9 @@
  *     --product=<evalProductId> --max-usd=2 [--config=<configHash>] [--model=<id>] \
  *     [--only=AI-01,AI-05] [--run=<runId> — повторы в тот же прогон] \
  *     [--out=protocol.md] [--json=protocol.json] \
- *     [--allow-unpriced — модель без ставки: потолок по наибольшим ставкам]
+ *     [--allow-unpriced — модель без ставки: потолок по наибольшим ставкам] \
+ *     [--set=2.2|2.3 — версия набора: 2.2 (P0, умолчание), 2.3 — с задачами
+ *      Reddit AI-31…42, только решением владельца, Р-RD-64]
  *
  * Прогон пишет `pub_ai_eval_runs/results` и `pub_ai_calls` (операция
  * `pub-eval`) под eval-продуктом; первый ответ сохраняется. Оценку
@@ -35,6 +37,11 @@ import { GEMINI_MODEL } from '../../../../shared/gemini-model';
 import { GeminiText } from '../../../site-ai/text-model';
 import { AiUsageRecorder } from '../../../site-ai/usage-recorder';
 import { AuditService } from '../../core/audit';
+import {
+  EVAL_SET_VERSION,
+  isEvalSetVersion,
+  type EvalSetVersion,
+} from '../../contracts/ai';
 import { AI_PROVIDER } from '../gateway-core';
 import {
   CliEvalGateway,
@@ -57,6 +64,8 @@ export interface CliArgs {
   allowUnpriced: boolean;
   out?: string;
   json?: string;
+  /** Версия набора (Р-RD-64): 2.2 — P0 (умолчание), 2.3 — с Reddit. */
+  set: EvalSetVersion;
 }
 
 /** Разбор аргументов (`--key=value`, `--seed`). */
@@ -79,6 +88,8 @@ export function parseArgs(argv: readonly string[]): CliArgs {
       'Живой прогон — только с лимитом стоимости --max-usd (§12.6)',
     );
   }
+  const set = get('set') ?? EVAL_SET_VERSION;
+  if (!isEvalSetVersion(set)) throw new Error('--set=2.2|2.3');
   const only = get('only')
     ?.split(',')
     .map((s) => s.trim())
@@ -95,6 +106,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     allowUnpriced: argv.includes('--allow-unpriced'),
     out: get('out'),
     json: get('json'),
+    set,
   };
 }
 
@@ -124,6 +136,7 @@ async function main(): Promise<void> {
       provider: fake ? FAKE_PROVIDER : AI_PROVIDER,
       modelName: fake ? FAKE_MODEL : (args.model ?? GEMINI_MODEL),
       fake,
+      evalSet: args.set,
     });
     const product = await gw.evalProduct(args.product);
     if (args.seed) {

@@ -188,6 +188,75 @@ export interface ContentPort {
 }
 
 /**
+ * P-R M2 (reddit-manual-mvp-adapted.md §M2.1, §M2.4; Р-RD-50): то, что
+ * P-B1 нужно знать о Reddit-материале, и детерминированная проверка
+ * `reddit_policy`. Реализация — `reddit/reddit-port.ts` (читает таблицы
+ * P-R и версию, ничего не пишет); строку проверки пишет P-B1.
+ */
+export interface RedditMaterialContext {
+  briefId: string;
+  kind: 'reddit_post' | 'reddit_comment';
+  briefStatus: string;
+  /** Чего не хватает брифу сейчас (пусто + ready — можно версию). */
+  briefMissing: string[];
+  offerVersionId: string;
+  affiliation: string | null;
+  projectId: string;
+  communityId: string;
+  subreddit: string;
+  canonicalUrl: string;
+  channelId: string;
+  opportunityId: string | null;
+  threadUrl: string | null;
+  /** Служебный заголовок комментария `r/<name> · <titleManual>` (≤ 300). */
+  serviceTitle: string | null;
+  /** Текущий снимок правил сообщества (null — правил нет). */
+  currentSnapshotId: string | null;
+}
+/** Параметры находки `reddit_policy` (как `QaFindingParams`). */
+export type RedditFindingParams = Record<
+  string,
+  string | number | string[] | number[]
+>;
+export interface RedditPolicyCheck {
+  result: 'pass' | 'fail';
+  /** Находки: `text` = код, `params` — машиночитаемые (раунд 4, Р-RD-86). */
+  blockers: Array<{ code: string; text: string; params?: RedditFindingParams }>;
+  warnings: Array<{ code: string; text: string; params?: RedditFindingParams }>;
+  /** Текущий снимок, на котором проверено (null — правил нет). */
+  snapshotId: string | null;
+}
+export interface RedditRulesStale {
+  reason: 'rules_changed' | 'rules_stale';
+  ruleSnapshotId: string | null;
+  currentSnapshotId: string | null;
+}
+export interface RedditPort {
+  materialContext(
+    tx: PubTx,
+    product: ProductRef,
+    redditBriefId: string,
+  ): Promise<RedditMaterialContext>;
+  /** Проверка `reddit_policy` замороженной или черновой версии (§M2.4). */
+  check(
+    tx: PubTx,
+    product: ProductRef,
+    versionId: string,
+    now: Date,
+  ): Promise<RedditPolicyCheck>;
+  /**
+   * Снимок правил версии (`meta.ruleSnapshotId`) больше не текущий или
+   * проверка правил устарела — согласование/копирование недействительны.
+   */
+  rulesStale(
+    tx: PubTx,
+    product: ProductRef,
+    versionId: string,
+    now: Date,
+  ): Promise<RedditRulesStale | null>;
+}
+
+/**
  * qa-catalog: сводка сохранённого прогона приёмки (Р-PUB-Z2-27, DEF-C-07):
  * доказательство в `launch_evidence_*` — id прогона, а не свободная строка.
  * Реализация — `modules/qa-catalog/qa-run-evidence.ts` (структурно та же
@@ -349,6 +418,8 @@ export const RATE_LIMIT_RESET_PORT = 'PUB_RATE_LIMIT_RESET_PORT';
 export const AI_GATEWAY = 'PUB_AI_GATEWAY';
 export const PUBLICATIONS_PORT = 'PUB_PUBLICATIONS_PORT';
 export const AI_TASKS_PORT = 'PUB_AI_TASKS_PORT';
+/** P-R M2: контекст Reddit-материала и проверка `reddit_policy`. */
+export const REDDIT_PORT = 'PUB_REDDIT_PORT';
 /** Провайдер — qa-catalog (`QA_RUN_EVIDENCE_TOKEN`, то же значение). */
 export const QA_RUN_EVIDENCE_PORT = 'PUB_QA_RUN_EVIDENCE_PORT';
 
@@ -367,6 +438,7 @@ export const PORT_OWNERS = {
   [AI_GATEWAY]: 'P-B2',
   [PUBLICATIONS_PORT]: 'P-C',
   [AI_TASKS_PORT]: 'P-B2',
+  [REDDIT_PORT]: 'P-R',
   [QA_RUN_EVIDENCE_PORT]: 'qa-catalog',
 } as const;
 export type PortToken = keyof typeof PORT_OWNERS;
@@ -385,6 +457,7 @@ interface PortTypes {
   [AI_GATEWAY]: AiGateway;
   [PUBLICATIONS_PORT]: PublicationsPort;
   [AI_TASKS_PORT]: AiTasksPort;
+  [REDDIT_PORT]: RedditPort;
   [QA_RUN_EVIDENCE_PORT]: QaRunEvidencePort;
 }
 
@@ -449,6 +522,7 @@ export class PubPorts {
   aiGateway = (): AiGateway => this.get(AI_GATEWAY);
   publications = (): PublicationsPort => this.get(PUBLICATIONS_PORT);
   aiTasks = (): AiTasksPort => this.get(AI_TASKS_PORT);
+  reddit = (): RedditPort => this.get(REDDIT_PORT);
   qaRuns = (): QaRunEvidencePort => this.get(QA_RUN_EVIDENCE_PORT);
 }
 

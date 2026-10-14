@@ -206,8 +206,14 @@ export function publisherRevalidateTarget(
 // `/publisher/products/:pid/reddit/**` и `features.reddit` продукта). По
 // умолчанию выключен: маршруты отвечают 404 `PUB_NOT_FOUND` без `details`.
 // Флаг читается на каждом запросе (переключение без пересборки). Флаг
-// продукта не вводится (Р-RD-9). `PUBLISHER_REDDIT_AI_ENABLED` — генерация
-// M2, здесь не читается.
+// продукта не вводится (Р-RD-9).
+//
+// `PUBLISHER_REDDIT_AI_ENABLED=true` (M2, §M2.3 «Kill switch») разрешает
+// маршрут генерации `…/reddit/briefs/:id/generate`; по умолчанию выключен —
+// маршрут отвечает 409 `PUB_AI_DISABLED {generator, manual:true}` без
+// записи вызова, экран показывает ручной редактор. Независимо от флага
+// генератор работает только допущенным (`enabledInP0`, гейт `ai_use`,
+// eval 2.3). Исследование (M1) и ручной путь от флага не зависят.
 
 export const PUBLISHER_REDDIT_ENABLED_ENV = 'PUBLISHER_REDDIT_ENABLED';
 
@@ -216,4 +222,31 @@ export function publisherRedditEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return flag(env[PUBLISHER_REDDIT_ENABLED_ENV]);
+}
+
+export const PUBLISHER_REDDIT_AI_ENABLED_ENV = 'PUBLISHER_REDDIT_AI_ENABLED';
+
+/**
+ * Стендовый fake-провайдер AI (`PUBLISHER_STAND_FAKE_AI=true`, P-R M2,
+ * Р-RD-73): модель без сети для E2E-RD-02 и стендовое включение
+ * `pub.reddit.draft`. Правило стенда (Р-PUB-Z2-21): только
+ * `NODE_ENV=development|test` и не Vercel, иначе игнор с предупреждением.
+ */
+export const PUBLISHER_STAND_FAKE_AI_ENV = 'PUBLISHER_STAND_FAKE_AI';
+
+export function publisherStandFakeAi(
+  env: NodeJS.ProcessEnv = process.env,
+): PublisherStandSwitch {
+  return standSwitch(
+    PUBLISHER_STAND_FAKE_AI_ENV,
+    flag(env[PUBLISHER_STAND_FAKE_AI_ENV]),
+    env,
+  );
+}
+
+/** Генерация Reddit-черновиков включена (`PUBLISHER_REDDIT_AI_ENABLED=true`). */
+export function publisherRedditAiEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return flag(env[PUBLISHER_REDDIT_AI_ENABLED_ENV]);
 }

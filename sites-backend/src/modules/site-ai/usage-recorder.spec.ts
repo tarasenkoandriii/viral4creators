@@ -100,7 +100,7 @@ describe('AiUsageRecorder → site_ai_usage', () => {
 });
 
 describe('AI Publisher (P-A0, §12.1): операции pub-* — продукт publisher', () => {
-  it('десять операций Publisher в списке, все — продукт publisher', () => {
+  it('одиннадцать операций Publisher в списке, все — продукт publisher', () => {
     const pub = SITE_AI_OPERATIONS.filter((o) => o.startsWith('pub-'));
     expect(pub).toEqual([
       'pub-questions-cluster',
@@ -113,6 +113,7 @@ describe('AI Publisher (P-A0, §12.1): операции pub-* — продукт
       'pub-venues-compare',
       'pub-helper-answer',
       'pub-eval',
+      'pub-reddit-draft',
     ]);
     for (const o of pub) expect(productOf(o)).toBe('publisher');
     // Бюджет обучения помощника операции Publisher не трогают.

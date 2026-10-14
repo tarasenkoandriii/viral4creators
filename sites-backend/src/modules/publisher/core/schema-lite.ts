@@ -210,6 +210,23 @@ export const s = {
     );
   },
 
+  /**
+   * Одна из схем (P-R M2: `source_ids: [...] | "needs_verification"`):
+   * значение подходит, если подходит хотя бы под одну; иначе — ошибки
+   * первой схемы, у которой совпал JSON-тип, или `type`.
+   */
+  union<A, B>(a: SchemaLite<A>, b: SchemaLite<B>): SchemaLite<A | B> {
+    return node<A | B>((v, path, out) => {
+      const ia = a.validate(v, path);
+      if (ia.length === 0) return;
+      const ib = b.validate(v, path);
+      if (ib.length === 0) return;
+      const typeOnly = (x: FieldIssue[]) =>
+        x.length === 1 && x[0].code === 'type' && x[0].field === (path || '$');
+      out.push(...(typeOnly(ia) ? (typeOnly(ib) ? ia : ib) : ia));
+    });
+  },
+
   /** Любое JSON-значение (размер проверяет вызывающий). */
   json(): SchemaLite<unknown> {
     return node<unknown>((v, path, out) => {

@@ -87,9 +87,12 @@ export function RedditErrorAlert({
 export function PlainQuote({
   text,
   injectionFlag,
+  label,
 }: {
   text: string;
   injectionFlag?: string | null;
+  /** Имя прокручиваемой области (axe `scrollable-region-focusable`). */
+  label?: string;
 }) {
   const { r } = useReddit();
   return (
@@ -101,6 +104,9 @@ export function PlainQuote({
       )}
       <pre
         data-reddit-quote=""
+        tabIndex={0}
+        role="region"
+        aria-label={label ?? r.common.textRegion}
         className="text-sm whitespace-pre-wrap break-words font-sans rounded-lg bg-silver-100 dark:bg-silver-950 px-3 py-2 max-h-72 overflow-auto"
       >
         {text}

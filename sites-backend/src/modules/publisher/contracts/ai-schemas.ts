@@ -186,6 +186,36 @@ export const VENUES_COMPARE_SCHEMA = s.object({
 });
 export type VenuesCompareOutput = Infer<typeof VENUES_COMPARE_SCHEMA>;
 
+/**
+ * `pub.reddit.draft` (P-R M2, §M2.3): 2–3 варианта одним вызовом
+ * (Р-RD-15). `title` — null у комментария (проверка против входа —
+ * `inputIssues` генератора), `disclosure` пуст только при `affiliation=none`
+ * (находка `disclosure_missing`); `source_ids` пункта claim_map —
+ * подмножество переданных или пометка `needs_verification`.
+ */
+export const REDDIT_DRAFT_SCHEMA = s.object({
+  variants: s.array(
+    s.object({
+      title: s.nullable(str(300)),
+      body: str(10_000),
+      disclosure: s.string({ min: 0, max: 300 }),
+      flair_suggestion: s.nullable(str(64)),
+      claim_map: s.array(
+        s.object({
+          text: str(500),
+          source_ids: s.union(
+            s.array(s.string({ min: 1, max: 100 }), { min: 1, max: 10 }),
+            s.literal('needs_verification'),
+          ),
+        }),
+      ),
+      uncertainties: s.array(str(500), { max: 20 }),
+    }),
+    { min: 2, max: 3 },
+  ),
+});
+export type RedditDraftOutput = Infer<typeof REDDIT_DRAFT_SCHEMA>;
+
 export const GENERATOR_SCHEMAS: Record<GeneratorId, SchemaLite<unknown>> = {
   'pub.helper.answer': HELPER_ANSWER_SCHEMA,
   'pub.brief.draft': BRIEF_DRAFT_SCHEMA,
@@ -196,16 +226,18 @@ export const GENERATOR_SCHEMAS: Record<GeneratorId, SchemaLite<unknown>> = {
   'pub.claims.extract': QA_REVIEW_SCHEMA,
   'pub.distribution.plan': DISTRIBUTION_PLAN_SCHEMA,
   'pub.venues.compare': VENUES_COMPARE_SCHEMA,
+  'pub.reddit.draft': REDDIT_DRAFT_SCHEMA,
 };
 
-/** Схема набора 30 задач для генератора (`pub_ai_eval_results.schema`). */
+/** Схема набора задач для генератора (`pub_ai_eval_results.schema`). */
 export const EVAL_SCHEMA_OF: Partial<
-  Record<GeneratorId, 'answer' | 'brief' | 'qa' | 'adaptation'>
+  Record<GeneratorId, 'answer' | 'brief' | 'qa' | 'adaptation' | 'reddit'>
 > = {
   'pub.helper.answer': 'answer',
   'pub.brief.draft': 'brief',
   'pub.qa.review': 'qa',
   'pub.adaptation.make': 'adaptation',
+  'pub.reddit.draft': 'reddit',
 };
 
 /**

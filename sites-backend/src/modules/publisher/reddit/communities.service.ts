@@ -30,6 +30,7 @@ import {
   REDDIT_LINKS_POLICIES,
   REDDIT_PROMOTION_POLICIES,
 } from '../contracts/states';
+import { RedditMaterialsService } from '../content/reddit-materials.service';
 import { SourcesService } from '../content/sources.service';
 import { has, httpsUrl, Issues, type Body } from '../content/input';
 import { PubError } from '../core/errors';
@@ -71,6 +72,7 @@ export class RedditCommunitiesService {
   constructor(
     private readonly channels: ChannelsService,
     private readonly sources: SourcesService,
+    private readonly materials: RedditMaterialsService,
   ) {}
 
   async create(
@@ -365,6 +367,17 @@ export class RedditCommunitiesService {
         reason: 'rules_changed',
         ruleSnapshotId: snap.id,
       })),
+    );
+    // M2 (хвост M2 (3), Р-RD-28 → Р-RD-50): Reddit-материалы сообщества с
+    // принятым решением — каскад `stale_check` (согласования
+    // неопубликованных версий → superseded, опубликованные → на исправление).
+    await this.materials.onRulesChanged(
+      tx,
+      product,
+      [communityId],
+      `reddit-rules:${snap.id}`,
+      step.actor,
+      step.now,
     );
     return {
       body: await loadSnapshotView(tx, product.id, snap.id, step.now),

@@ -265,6 +265,9 @@ export const pubContentUk: PublisherContentDict = {
     aiRef: 'З AI-чернетки {id}',
   },
   materials: {
+    redditStudio:
+      'Reddit-матеріал: правка, погодження з підтвердженням попереджень, копіювання й позначки про публікацію — у студії Reddit.',
+    openRedditStudio: 'Відкрити студію Reddit',
     pubActions: 'Змінити статус публікації',
     pubTo: {
       published: 'Опубліковано',
@@ -287,6 +290,8 @@ export const pubContentUk: PublisherContentDict = {
       cards: 'Картки',
       checklist: 'Чек-лист',
       video_script: 'Сценарій відео',
+      reddit_post: 'Reddit: пост',
+      reddit_comment: 'Reddit: коментар',
     },
     statuses: {
       brief: 'бриф',
@@ -402,6 +407,7 @@ export const pubContentUk: PublisherContentDict = {
       technical: 'Технічна',
       ai_review: 'AI-перевірка',
       adaptation_meaning: 'Зміст адаптації',
+      reddit_policy: 'Правила Reddit (автоматично)',
     },
     qaResults: { pass: 'пройдена', fail: 'не пройдена', unknown: 'невідомо' },
     qaAdd: 'Записати перевірку',
@@ -564,6 +570,7 @@ export const pubContentUk: PublisherContentDict = {
       'pub.claims.extract': 'Витягання тверджень',
       'pub.distribution.plan': 'План поширення',
       'pub.venues.compare': 'Порівняння майданчиків',
+      'pub.reddit.draft': 'Чернетка Reddit',
     },
     disabledP0: 'вимкнено в пілоті',
     callStatuses: {

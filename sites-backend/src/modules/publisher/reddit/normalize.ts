@@ -152,19 +152,27 @@ function threadCandidate(input: unknown): NormalizedThread | null {
   return { url, subreddit, threadKey };
 }
 
+/**
+ * Домены Reddit (сам домен и любые поддомены) для отказа импорта по URL
+ * (`reddit_manual_only`). M2 (хвост S3-7): + `reddituploads.com`,
+ * `redditmail.com`, `redditinc.com`, `reddit.app.link`, `rdt.li`.
+ */
+export const REDDIT_HOST_DOMAINS = [
+  'reddit.com',
+  'redd.it',
+  'redditmedia.com',
+  'redditstatic.com',
+  'reddituploads.com',
+  'redditmail.com',
+  'redditinc.com',
+  'reddit.app.link',
+  'rdt.li',
+] as const;
+
 /** Хост Reddit (для отказа импорта по URL, `reddit_manual_only`). */
 export function isRedditHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, '');
-  return (
-    h === 'reddit.com' ||
-    h.endsWith('.reddit.com') ||
-    h === 'redd.it' ||
-    h.endsWith('.redd.it') ||
-    h.endsWith('.redditmedia.com') ||
-    h === 'redditmedia.com' ||
-    h.endsWith('.redditstatic.com') ||
-    h === 'redditstatic.com'
-  );
+  return REDDIT_HOST_DOMAINS.some((d) => h === d || h.endsWith(`.${d}`));
 }
 
 /**
@@ -203,4 +211,65 @@ export function hasProfileRef(text: string | null | undefined): boolean {
 /** Нормальная форма ключевого запроса (= `pub_reddit_phrase_norm` базы). */
 export function phraseNorm(phrase: string): string {
   return phrase.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** Ссылка, о которой сообщает человек (P-R M2, §M2.6 «Отметить опубликованным»). */
+export interface ReportedUrl {
+  /** Канон: пост — как тред; комментарий — `…/comments/<id36>/comment/<cid>`. */
+  url: string;
+  subreddit: string;
+  threadKey: string;
+  /** id36 комментария (ссылка на комментарий) или null (ссылка на пост). */
+  commentId: string | null;
+}
+
+/**
+ * URL опубликованного поста или комментария → канон (A15). Пост —
+ * `/r/<name>/comments/<id36>[/<slug>]`; комментарий —
+ * `/r/<name>/comments/<id36>/<slug|_|comment>/<cid36>` (вид new reddit
+ * `/comment/<cid>` и `/<slug>/comment/<cid>` тоже). Хвост, query, fragment отбрасываются; профиль
+ * `r/u_*` → `profile_ref`; прочее → `format`.
+ */
+export function normalizeReportedUrl(
+  input: unknown,
+): { ok: ReportedUrl } | { issue: 'format' | 'profile_ref' } {
+  if (typeof input !== 'string' || input.length > 2048)
+    return { issue: 'format' };
+  const u = parseRedditUrl(input);
+  if (!u) return { issue: 'format' };
+  const parts = pathParts(u);
+  if (
+    parts.length < 4 ||
+    parts[0].toLowerCase() !== 'r' ||
+    parts[2].toLowerCase() !== 'comments'
+  )
+    return { issue: 'format' };
+  const subreddit = parts[1].toLowerCase();
+  const threadKey = parts[3].toLowerCase();
+  if (!SUBREDDIT_RE.test(subreddit) || !THREAD_KEY_RE.test(threadKey))
+    return { issue: 'format' };
+  if (PROFILE_SUBREDDIT_RE.test(subreddit)) return { issue: 'profile_ref' };
+  let commentId: string | null = null;
+  if (parts.length >= 6) {
+    // Новый вид со slug: `…/comments/<id>/<slug>/comment/<cid>` (замечание
+    // экранов M2): «comment» — не id комментария.
+    const cidRaw = parts[5].toLowerCase() === 'comment' ? parts[6] : parts[5];
+    if (!cidRaw) return { issue: 'format' };
+    const cid = cidRaw.toLowerCase();
+    if (!THREAD_KEY_RE.test(cid)) return { issue: 'format' };
+    commentId = cid;
+  }
+  const base = `${REDDIT_CANONICAL_ORIGIN}/r/${subreddit}/comments/${threadKey}`;
+  if (commentId)
+    return {
+      ok: {
+        url: `${base}/comment/${commentId}`,
+        subreddit,
+        threadKey,
+        commentId,
+      },
+    };
+  const t = normalizeThreadUrl(input);
+  if (!t) return { issue: 'format' };
+  return { ok: { url: t.url, subreddit, threadKey, commentId: null } };
 }

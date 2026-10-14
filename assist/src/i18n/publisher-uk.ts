@@ -79,6 +79,7 @@ export const pubUk: PublisherDict = {
       spend: 'Витрати',
       purchases: 'Закупівлі',
       ai_use: 'Робочий AI',
+      reddit_publish: 'Копіювання в Reddit',
     },
     open: 'Відкритий',
     closed: 'Закритий',
@@ -208,6 +209,7 @@ export const pubUk: PublisherDict = {
       launch_evidence_d0: 'Протокол запуску D0',
       launch_evidence_purchase: 'Протокол перед закупівлями',
       reddit_rules_stale_days: 'Свіжість перевірки правил Reddit (днів)',
+      reddit_excerpt_retention_days: 'Зберігання витягів Reddit (днів)',
     },
     statuses: {
       assumption: 'не затверджено',
@@ -438,6 +440,9 @@ export const pubUk: PublisherDict = {
         'Цю частину сервера ще не підключено — дію не виконано.',
     },
     conflictReasons: {
+      warnings_not_acknowledged:
+        'Підтвердьте попередження перевірки правил Reddit (список змінився).',
+      already_published: 'Цю публікацію вже позначено.',
       reddit_evidence_locked:
         'Доказ Reddit змінюється новим знімком правил або правкою витягу в розділі Reddit.',
     },
@@ -477,6 +482,14 @@ export const pubUk: PublisherDict = {
       future: 'дата в майбутньому',
       profile_ref: 'посилання на профіль або нік — приберіть',
       unknown: 'невідоме значення',
+      restricted_source: 'доказ Reddit не може бути джерелом',
+      comment_required: 'потрібне посилання на сам коментар',
+      thread_mismatch: 'посилання веде в інший тред',
+      before_material: 'раніше за створення матеріалу',
+      reddit_route: 'Reddit-матеріал створюється в розділі Reddit',
+      not_allowed: 'не допускається',
+      adaptation_only: 'лише для адаптацій',
+      draft_exists: 'чернетка вже є',
     },
     reasons: 'Причина: {reason}',
     importReasons: {
@@ -507,12 +520,15 @@ export const pubUk: PublisherDict = {
       offer_inactive: 'офер не активний',
       change_task_open: 'відкрита задача зміни',
       parent_not_approved: 'батьківську статтю не погоджено',
+      reddit_policy_block: 'перевірку правил Reddit не пройдено',
     },
     staleReasons: {
       hash_param: 'hash у запиті не збігся з версією',
       hash_mismatch: 'версія змінилася після погодження',
       price_changed: 'зросла ціна',
       offer_inactive: 'офер не активний',
+      rules_changed: 'правила спільноти змінилися після версії',
+      rules_stale: 'перевірка правил застаріла',
     },
     transition: 'Перехід {from} → {to} неприпустимий; можна: {allowed}',
     budget: 'Доступно {available}, потрібно {requested}',

@@ -17,7 +17,7 @@ import type { PublisherHttp, Query } from '../src/lib/publisher/common-api';
 import * as D from '../src/lib/publisher/distribution-api';
 import * as L from '../src/lib/publisher/leads-api';
 import * as R from '../src/lib/publisher/reports-api';
-import { ALL, bodyIssues, bodyKeys, routesOf } from './publisher-contract-lib';
+import { ALL, bodyIssuesOf, routesOf } from './publisher-contract-lib';
 import {
   experimentVersionBody,
   placementStepRequest,
@@ -1121,7 +1121,7 @@ for (const c of calls) {
   } else if (c.reveal) {
     // Раскрытие ПД — POST без opKey; тело = тип тела маршрута.
     assert.equal(c.opKey, undefined, `раскрытие без opKey: ${full}`);
-    const issues = bodyIssues(c.body ?? {}, bodyKeys(hit!.body, ALL));
+    const issues = bodyIssuesOf(c.body ?? {}, hit!.body, ALL);
     assert.deepEqual(issues, [], `${c.method} ${hit!.path} (${hit!.body})`);
     bodyChecked++;
   } else {
@@ -1131,7 +1131,7 @@ for (const c of calls) {
       'opKey кладёт PublisherHttp, а не клиент'
     );
     // Тело = `*Body` контракта: без лишних ключей, обязательные на месте.
-    const issues = bodyIssues(c.body ?? {}, bodyKeys(hit!.body, ALL));
+    const issues = bodyIssuesOf(c.body ?? {}, hit!.body, ALL);
     assert.deepEqual(issues, [], `${c.method} ${hit!.path} (${hit!.body})`);
     bodyChecked++;
   }

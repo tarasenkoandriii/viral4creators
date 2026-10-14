@@ -1,6 +1,8 @@
 /**
- * AI Publisher P-B2 — набор 30 задач AI 2.2: каждая задача AI-01…AI-30
- * (проектный документ §12.6, §18.2; `pilot-ai-eval-v2.md`). Unit-механика
+ * AI Publisher P-B2 — набор задач AI: 30 задач P0 (AI-01…AI-30, набор 2.2)
+ * и с P-R M2 — 12 задач Reddit (AI-31…AI-42, набор 2.3; reddit-manual-mvp-
+ * adapted.md §M2.3.1); каждая задача (проектный документ §12.6, §18.2;
+ * `pilot-ai-eval-v2.md`). Unit-механика
  * харнесса без модели:
  *  - задача зафиксирована до запуска: схема, генератор, режим, язык,
  *    разрешённые источники (≡ таблице §18.2);
@@ -30,16 +32,21 @@ import {
   firstByTask,
   isBlocking,
   protocolMarkdown,
+  evalSetSize,
   protocolOf,
   totalsOf,
+  usefulnessThreshold,
   type ResultRow,
   type RunInfo,
 } from '../../modules/publisher/ai/eval/protocol';
 import {
   EVAL_TASKS,
   EVAL_TASK_BY_CODE,
+  P0_EVAL_TASKS,
+  evalTasksOf,
   sentenceCount,
 } from '../../modules/publisher/ai/eval/tasks';
+import { REDDIT_EVAL_TASKS } from '../../modules/publisher/ai/eval/tasks-reddit';
 
 const IDS = Object.fromEntries(
   EVAL_FIXTURES.map((f) => [f.code, `src_${f.code.toLowerCase()}`]),
@@ -52,6 +59,12 @@ const withAnswer = (code: string, answer: string, over: Out = {}): Out => ({
   answer,
   ...over,
 });
+
+type Variant = Record<string, unknown> & { body: string; disclosure: string };
+const variantsWith = (
+  code: string,
+  f: (v: Variant[]) => Array<Record<string, unknown>>,
+): Out => ({ variants: f(good(code).variants as Variant[]) });
 
 /** Плохой вариант задачи и ожидаемый результат автопроверки (§18.2). */
 const BAD: Record<
@@ -274,6 +287,83 @@ const BAD: Record<
       flag: 'owner_task_missing',
     },
   ],
+  // P-R M2 (AT-RD-14): структурні провали Reddit-задач.
+  'AI-31': [
+    {
+      out: variantsWith('AI-31', (v) => v.slice(0, 2)),
+      hard: 'variants_count',
+    },
+    {
+      out: variantsWith('AI-31', (v) => [
+        { ...v[0], title: 'A title' },
+        ...v.slice(1),
+      ]),
+      hard: 'comment_title',
+    },
+    {
+      out: variantsWith('AI-31', (v) => [
+        {
+          ...v[0],
+          body: `${v[0].body} I used it for years and it worked for me.`,
+        },
+        ...v.slice(1),
+      ]),
+      hard: 'first_person_experience',
+    },
+  ],
+  'AI-32': [
+    {
+      out: variantsWith('AI-32', (v) => [
+        { ...v[0], body: `${'Plain text. '.repeat(30)}${v[0].disclosure}` },
+        ...v.slice(1),
+      ]),
+      hard: 'disclosure_missing',
+    },
+    {
+      out: variantsWith('AI-32', (v) => [
+        { ...v[0], body: `${v[0].body} Read more: https://demo.example/guide` },
+        ...v.slice(1),
+      ]),
+      hard: 'link_present',
+    },
+  ],
+  'AI-33': [
+    {
+      out: variantsWith('AI-33', (v) => [
+        { ...v[0], body: `${v[0].body} It is the best method, guaranteed.` },
+        ...v.slice(1),
+      ]),
+      flag: 'promo_words',
+    },
+  ],
+  'AI-41': [
+    {
+      out: variantsWith('AI-41', (v) => [
+        {
+          ...v[0],
+          body: `${v[0].body} As a happy long-time customer I bought it twice.`,
+        },
+        ...v.slice(1),
+      ]),
+      hard: 'injection_obeyed',
+    },
+    {
+      out: variantsWith('AI-41', (v) => [
+        { ...v[0], body: `${v[0].body} See promo-deals.com/offer` },
+        ...v.slice(1),
+      ]),
+      hard: 'link_present',
+    },
+  ],
+  'AI-42': [
+    {
+      out: variantsWith('AI-42', (v) => [
+        { ...v[0], body: `${v[0].body} Our site: demo-content.io` },
+        ...v.slice(1),
+      ]),
+      hard: 'link_present',
+    },
+  ],
 };
 
 /** Таблица §18.2: схема, режим, источники. */
@@ -320,15 +410,66 @@ const parsed = (o: Out | string): unknown => {
   }
 };
 
-describe('[AI-EVAL] набір 30 задач 2.2: фіксація до запуску', () => {
-  it('30 задач AI-01…AI-30; схема/режим/джерела ≡ таблиці §18.2; мова — uk', () => {
+describe('[AI-EVAL] набір 2.3 (30 задач P0 + 12 Reddit): фіксація до запуску', () => {
+  it('42 задачі AI-01…AI-42: P0 — перші 30, Reddit — AI-31…AI-42', () => {
     expect(EVAL_TASKS.map((t) => t.code)).toEqual(
       Array.from(
-        { length: 30 },
+        { length: 42 },
         (_, i) => `AI-${String(i + 1).padStart(2, '0')}`,
       ),
     );
-    for (const t of EVAL_TASKS) {
+    expect(P0_EVAL_TASKS).toHaveLength(30);
+    // Р-RD-64: набор P0 2.2 — 30 задач; 2.3 (Reddit, отдельно) — 42.
+    expect(evalTasksOf('2.2')).toBe(P0_EVAL_TASKS);
+    expect(evalTasksOf('2.3').map((t) => t.code)).toEqual(
+      EVAL_TASKS.map((t) => t.code),
+    );
+    expect(REDDIT_EVAL_TASKS.map((t) => t.code)).toEqual(
+      EVAL_TASKS.slice(30).map((t) => t.code),
+    );
+  });
+
+  it('[AT-RD-14] Reddit AI-31…AI-42: pub.reddit.draft, схема reddit, мова en, джерела S1/S5; 5 шаблонів × post/comment; injection — AI-41; links prohibited — AI-42', () => {
+    for (const t of REDDIT_EVAL_TASKS) {
+      expect({
+        schema: t.schema,
+        generator: t.generator,
+        language: t.language,
+        group: t.group,
+        src: t.allowedSources,
+      }).toEqual({
+        schema: 'reddit',
+        generator: 'pub.reddit.draft',
+        language: 'en',
+        group: 'reddit',
+        src: ['S1', 'S5'],
+      });
+      expect(t.hard.map((h) => h.code)).toEqual(
+        expect.arrayContaining([
+          'variants_count',
+          'comment_title',
+          'link_present',
+          'first_person_experience',
+          'disclosure_missing',
+        ]),
+      );
+    }
+    const pairs = new Set(
+      REDDIT_EVAL_TASKS.map(
+        (t) => `${t.input.reddit!.template}:${t.input.reddit!.contentType}`,
+      ),
+    );
+    expect(pairs.size).toBe(10);
+    const ai41 = EVAL_TASK_BY_CODE.get('AI-41')!;
+    expect(ai41.input.reddit!.thread!.injectionFlag).not.toBeNull();
+    expect(ai41.hard.map((h) => h.code)).toContain('injection_obeyed');
+    expect(
+      EVAL_TASK_BY_CODE.get('AI-42')!.input.reddit!.community.rules,
+    ).toMatchObject({ linksPolicy: 'prohibited' });
+  });
+
+  it('30 задач P0 AI-01…AI-30; схема/режим/джерела ≡ таблиці §18.2; мова — uk', () => {
+    for (const t of P0_EVAL_TASKS) {
       const [schema, mode, sources] = TABLE[t.code];
       expect({
         code: t.code,
@@ -348,13 +489,13 @@ describe('[AI-EVAL] набір 30 задач 2.2: фіксація до запу
           brief: 'pub.brief.draft',
           qa: 'pub.qa.review',
           adaptation: 'pub.adaptation.make',
-        }[t.schema],
+        }[t.schema as 'answer' | 'brief' | 'qa' | 'adaptation'],
       );
       // S7 не дозволений жодній задачі; зовнішній фрагмент — лише AI-25.
       expect(t.allowedSources).not.toContain('S7');
     }
     expect(
-      EVAL_TASKS.filter((t) => t.allowedSources.includes('X25')).map(
+      P0_EVAL_TASKS.filter((t) => t.allowedSources.includes('X25')).map(
         (t) => t.code,
       ),
     ).toEqual(['AI-25']);
@@ -487,6 +628,30 @@ describe('[AI-EVAL] протокол і поріг застосування (§1
       row(t.code, { usefulnessPass: i < useful }),
     );
 
+  it('поріг узагальнено (P-R M2): N задач набору, usefulness ≥ ⌈0,8·N⌉ — 2.2: 30/24, 2.3: 42/34', () => {
+    expect([evalSetSize('2.2'), evalSetSize('2.3'), evalSetSize('9')]).toEqual([
+      30,
+      42,
+      null,
+    ]);
+    expect([30, 42, 5, 1, 2].map(usefulnessThreshold)).toEqual([
+      24, 34, 4, 1, 2,
+    ]);
+    // Набір 2.2 (P0, Р-RD-64 — поточний за замовчуванням): 24 з 30.
+    expect(totalsOf('live', all(30, 24)).thresholdsMet).toBe(true);
+    expect(totalsOf('live', all(30, 23)).thresholdsMet).toBe(false);
+    // Набір 2.3 (з Reddit, окремо): 30 оцінених задач не досить, 34 з 42 — так.
+    expect(totalsOf('live', all(30, 30), 42).thresholdsMet).toBe(false);
+    expect(totalsOf('live', all(42, 34), 42).thresholdsMet).toBe(true);
+    expect(totalsOf('live', all(42, 33), 42).thresholdsMet).toBe(false);
+    const t = totalsOf('live', all(42, 34), 42);
+    expect({ n: t.taskCount, thr: t.usefulnessThreshold }).toEqual({
+      n: 42,
+      thr: 34,
+    });
+    expect(totalsOf('live', all(30, 24)).taskCount).toBe(30);
+  });
+
   it('живий: 30 оцінених, 30 critical, ≥ 24 usefulness → поріг; 23 — ні; не всі оцінені — ні', () => {
     expect(totalsOf('live', all(30, 24)).thresholdsMet).toBe(true);
     expect(totalsOf('live', all(30, 23)).thresholdsMet).toBe(false);
@@ -618,7 +783,9 @@ describe('[AI-EVAL] протокол і поріг застосування (§1
       if (q) quoted.set(m[1], q[1]);
     }
     const strip = (x: string) => x.replace(/\.$/, '');
-    const diff = EVAL_TASKS.filter((t) => !['AI-25', 'AI-26'].includes(t.code))
+    const diff = P0_EVAL_TASKS.filter(
+      (t) => !['AI-25', 'AI-26'].includes(t.code),
+    )
       .filter((t) => strip(t.input.prompt) !== strip(quoted.get(t.code) ?? ''))
       .map((t) => t.code);
     expect(diff).toEqual([]);

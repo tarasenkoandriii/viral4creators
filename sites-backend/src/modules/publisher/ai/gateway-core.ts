@@ -35,7 +35,10 @@ import { Prisma } from '@prisma/client';
 import { estimateCost, rateFor } from '../../../shared/ai-pricing';
 import { GEMINI_MODEL } from '../../../shared/gemini-model';
 import { geminiOutputCeiling } from '../../site-ai/gemini-output';
-import { publisherAiUnevaluatedAllowed } from '../../../config/publisher-env';
+import {
+  publisherAiUnevaluatedAllowed,
+  publisherStandFakeAi,
+} from '../../../config/publisher-env';
 import {
   TextModelError,
   spentOf,
@@ -47,6 +50,8 @@ import type { AiUsageRecorder, UsageDb } from '../../site-ai/usage-recorder';
 import type { SiteAiOperation } from '../../site-ai/operations';
 import {
   aiOperationOf,
+  isEvalCovered,
+  isEvalSetVersion,
   type AiContext,
   type GeneratorId,
   type PostCheckFinding,
@@ -362,6 +367,7 @@ async function boundConfig(
   model: string;
   provider: string;
   configHash: string;
+  evalSetVersion: string;
 } | null> {
   const b = await tx.pubAiConfigBinding.findFirst({
     where: { productId, unboundAt: null },
@@ -371,7 +377,13 @@ async function boundConfig(
   // Конфигурация — eval-продукта того же кабинета (составной FK привязки).
   const c = await tx.pubAiConfig.findFirst({
     where: { id: b.configId },
-    select: { id: true, model: true, provider: true, configHash: true },
+    select: {
+      id: true,
+      model: true,
+      provider: true,
+      configHash: true,
+      evalSetVersion: true,
+    },
   });
   return c ?? null;
 }
@@ -388,7 +400,12 @@ async function aiGateMissing(
   gates: GatePort,
   product: ProductRef,
   now: Date,
-  bound: { provider: string; model: string; configHash: string } | null,
+  bound: {
+    provider: string;
+    model: string;
+    configHash: string;
+    evalSetVersion: string;
+  } | null,
   ai: {
     generator: string;
     model: string;
@@ -408,10 +425,15 @@ async function aiGateMissing(
   }
   // Предаудит D2-04: hash привязанной конфигурации ≡ hash текущего кода для
   // её провайдера и модели (инструкции, правила, схемы И параметры вызова).
+  // P-R M2 (Р-RD-64): hash кода — для версии набора привязанной
+  // конфигурации (2.2 — P0; 2.3 — с Reddit, только решением владельца).
   if (
     bound &&
-    bound.configHash !==
-      configHashOf(currentConfigSpec(bound.provider, bound.model))
+    (!isEvalSetVersion(bound.evalSetVersion) ||
+      bound.configHash !==
+        configHashOf(
+          currentConfigSpec(bound.provider, bound.model, bound.evalSetVersion),
+        ))
   ) {
     missing.push({ kind: 'ai_config', key: 'config_hash', detail: 'mismatch' });
   }
@@ -624,7 +646,17 @@ export async function openCall(
   };
 
   // Выключенный генератор (ДТ-2, Р-PUB-31): ручной путь, модель не зовём.
-  if (!spec.enabledInP0) return blocked('disabled', 'PUB_AI_DISABLED');
+  // Исключение — прогон набора задач (CLI) для генератора, который набор
+  // покрывает, но который ещё не включён (P-R M2, Р-RD-17): его допуск и
+  // проверяет этот прогон (`pub.reddit.draft`, набор 2.3).
+  // Стенд E2E (Р-RD-73): fake-провайдер AI включает `pub.reddit.draft`
+  // (только стенд — правило Р-PUB-Z2-21, иначе флаг игнорируется).
+  if (
+    !spec.enabledInP0 &&
+    !(mode.kind === 'eval' && isEvalCovered(generator)) &&
+    !(generator === 'pub.reddit.draft' && publisherStandFakeAi().enabled)
+  )
+    return blocked('disabled', 'PUB_AI_DISABLED');
 
   // Аудит S3-5: генерация — только по открытой задаче (принятая `done` и
   // `needs_human` без решения редактора — нет).
@@ -925,7 +957,12 @@ async function attempt(
     parsed: v.parsed,
     output: v.ok ? v.parsed : null,
     issues: v.issues,
-    findings: v.ok ? (plan.spec.postCheck?.(v.parsed, plan.ctx) ?? []) : [],
+    findings: v.ok
+      ? [
+          ...(plan.spec.postCheck?.(v.parsed, plan.ctx) ?? []),
+          ...(plan.spec.inputFindings?.(v.parsed, plan.input, plan.ctx) ?? []),
+        ]
+      : [],
     ...cost,
     spent,
   };

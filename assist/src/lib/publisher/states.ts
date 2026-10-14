@@ -37,6 +37,8 @@ export const DEPENDENT_STAGES = [
   'purchases',
   'ai_use',
   'reports',
+  // P-R M2: гейт копирования Reddit-текста.
+  'reddit_publish',
 ] as const;
 export type DependentStage = (typeof DEPENDENT_STAGES)[number];
 
@@ -46,6 +48,8 @@ export const GATE_NAMES = [
   'spend',
   'purchases',
   'ai_use',
+  /** P-R M2: копирование утверждённого Reddit-текста. */
+  'reddit_publish',
 ] as const;
 export type GateName = (typeof GATE_NAMES)[number];
 export const GATE_MISSING_KINDS = [
@@ -171,6 +175,9 @@ export const CONTENT_KINDS = [
   'cards',
   'checklist',
   'video_script',
+  // P-R M2: Reddit-материалы по Reddit-брифу (`redditBriefId`).
+  'reddit_post',
+  'reddit_comment',
 ] as const;
 export type ContentKind = (typeof CONTENT_KINDS)[number];
 export const ADAPTATION_KINDS = [
@@ -227,6 +234,8 @@ export const QA_CHECK_KINDS = [
   'technical',
   'ai_review',
   'adaptation_meaning',
+  /** P-R M2: детерминированная проверка `system:reddit-policy`. */
+  'reddit_policy',
 ] as const;
 export type QaCheckKind = (typeof QA_CHECK_KINDS)[number];
 export const QA_RESULTS = ['pass', 'fail', 'unknown'] as const;
@@ -250,6 +259,7 @@ export const APPROVAL_BLOCKER_CODES = [
   'offer_inactive',
   'change_task_open',
   'parent_not_approved',
+  'reddit_policy_block',
 ] as const;
 
 export const CHANNEL_KINDS = [
@@ -289,6 +299,7 @@ export const PUBLICATION_STATUSES = [
   'failed',
   'withdrawn',
 ] as const;
+export const PUBLICATION_REPORT_KINDS = ['standard', 'user_reported'] as const;
 export const PUBLICATION_VERIFY_STATUSES = [
   'not_checked',
   'ok',
@@ -306,6 +317,8 @@ export const GENERATOR_IDS = [
   'pub.claims.extract',
   'pub.distribution.plan',
   'pub.venues.compare',
+  /** P-R M2: черновики Reddit (2–3 варианта); до eval 2.3 выключен. */
+  'pub.reddit.draft',
 ] as const;
 export type GeneratorId = (typeof GENERATOR_IDS)[number];
 /** Допуск P0 (ДТ-2): остальные пять — `PUB_AI_DISABLED`, ручной путь. */
@@ -315,6 +328,20 @@ export const P0_ENABLED_GENERATORS = [
   'pub.qa.review',
   'pub.adaptation.make',
 ] as const;
+/**
+ * Наборы задач eval (§6.7, Р-RD-64): P0 — `2.2` (30 задач, четыре
+ * генератора); `2.3` (+ Reddit, 42) — только решением владельца.
+ */
+export const EVAL_SET_VERSIONS = ['2.2', '2.3'] as const;
+export type EvalSetVersion = (typeof EVAL_SET_VERSIONS)[number];
+export const EVAL_SET_VERSION: EvalSetVersion = '2.2';
+export const REDDIT_EVAL_SET_VERSION: EvalSetVersion = '2.3';
+export const EVAL_SET_GENERATORS: Readonly<
+  Record<EvalSetVersion, readonly GeneratorId[]>
+> = {
+  '2.2': P0_ENABLED_GENERATORS,
+  '2.3': [...P0_ENABLED_GENERATORS, 'pub.reddit.draft'],
+};
 export const AI_TASK_STATUSES = ['open', 'done', 'needs_human'] as const;
 export type AiTaskStatus = (typeof AI_TASK_STATUSES)[number];
 export const AI_CALL_STATUSES = [
@@ -382,6 +409,8 @@ export const PARAMETER_KEYS = [
   'launch_evidence_purchase',
   // P-R Reddit: срок свежести проверки правил сообщества (`{days}`, 1..365).
   'reddit_rules_stale_days',
+  // P-R M2: срок хранения выдержек тредов (`{days}`, 1..3650, 180).
+  'reddit_excerpt_retention_days',
 ] as const;
 export type ParameterKey = (typeof PARAMETER_KEYS)[number];
 
@@ -398,6 +427,7 @@ export const PARAMETER_GROUPS = {
     'offer_active_version',
     'own_channels',
     'reddit_rules_stale_days',
+    'reddit_excerpt_retention_days',
   ],
   site: [
     'domain_host',

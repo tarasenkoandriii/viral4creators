@@ -18,6 +18,7 @@ export * from './i18n';
 export * from './telegram';
 export * from './api-client';
 export * from './sites-api';
+export * from './clipboard';
 export * from './format';
 export * from './errors';
 export * from './web-auth';

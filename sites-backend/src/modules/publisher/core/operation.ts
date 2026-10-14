@@ -342,3 +342,64 @@ export class PubOperations {
     }
   }
 }
+
+/**
+ * Ретенция P-R M2 (reddit-manual-mvp-adapted.md §4, хвост M2 (2), Р-RD-59):
+ * сохранённые ответы мутаций (`pub_idempotency_keys.responseBody`, живут
+ * до 30 дней) могут нести текст, который задание ретенции убирает из
+ * таблиц (выдержка треда в ответе возможности, контекст брифа). Значение
+ * заменяется ЦЕЛИКОМ: ищется JSON-строка, равная тексту (экранирование —
+ * `to_jsonb` самой базы), а не подстрока — короткий текст не портит чужие
+ * поля. Таблица ядра (P-A1) — поэтому функция здесь. Возвращает число
+ * изменённых ключей.
+ */
+export async function redactStoredResponses(
+  tx: PubTx,
+  product: { id: string; accountId: string },
+  texts: readonly string[],
+  replacement: string,
+): Promise<number> {
+  let n = 0;
+  for (const t of new Set(texts)) {
+    if (!t || t === replacement) continue;
+    n += await tx.$executeRaw`
+      UPDATE "sites"."pub_idempotency_keys"
+         SET "responseBody" = replace("responseBody"::text, to_jsonb(${t}::text)::text,
+                                      to_jsonb(${replacement}::text)::text)::jsonb
+       WHERE "accountId" = ${product.accountId} AND "productId" = ${product.id}
+         AND "responseBody" IS NOT NULL
+         AND strpos("responseBody"::text, to_jsonb(${t}::text)::text) > 0`;
+  }
+  return n;
+}
+
+/**
+ * Сохранённые ответы мутаций продукта, содержащие одну из строк `needles`
+ * (например, id вызова AI): JSON ответа переписывается функцией `scrub`
+ * (P-R M2, ретенция, Р-RD-70). Возвращает число изменённых строк.
+ */
+export async function scrubStoredResponses(
+  tx: PubTx,
+  product: { id: string; accountId: string },
+  needles: readonly string[],
+  scrub: (v: unknown) => { value: unknown; changed: boolean },
+): Promise<number> {
+  let n = 0;
+  for (const needle of new Set(needles)) {
+    if (!needle) continue;
+    const rows = await tx.$queryRaw<Array<{ id: string; body: unknown }>>`
+      SELECT "id", "responseBody" AS body FROM "sites"."pub_idempotency_keys"
+       WHERE "accountId" = ${product.accountId} AND "productId" = ${product.id}
+         AND "responseBody" IS NOT NULL
+         AND strpos("responseBody"::text, ${needle}) > 0`;
+    for (const r of rows) {
+      const s = scrub(r.body);
+      if (!s.changed) continue;
+      n += await tx.$executeRaw`
+        UPDATE "sites"."pub_idempotency_keys"
+           SET "responseBody" = ${JSON.stringify(s.value)}::jsonb
+         WHERE "id" = ${r.id} AND "accountId" = ${product.accountId}`;
+    }
+  }
+  return n;
+}

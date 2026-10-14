@@ -714,6 +714,24 @@ function OpportunityCardBody({
             />
           )}
           <Transitions o={o} reload={reload} onSaved={onSaved} />
+          {(o.status === 'qualified' || o.status === 'in_brief') &&
+            o.policyNow === 'ok' && (
+              <Section title={r.briefs.title}>
+                <div className="text-xs text-silver-500">
+                  {r.briefs.opportunityHint}
+                </div>
+                <RecordLink
+                  section="reddit"
+                  query={{
+                    tab: 'briefs',
+                    projectId: o.projectId,
+                    opportunityId: o.id,
+                  }}
+                >
+                  {r.briefs.createFromOpportunity}
+                </RecordLink>
+              </Section>
+            )}
         </>
       )}
     </>

@@ -5166,6 +5166,7 @@ model PubProduct {
   redditRuleSnapshots      PubRedditRuleSnapshot[] @relation("PubRedditRuleSnapshot_product")
   redditKeywords           PubRedditKeyword[] @relation("PubRedditKeyword_product")
   redditOpportunitys       PubRedditOpportunity[] @relation("PubRedditOpportunity_product")
+  redditBriefs             PubRedditBrief[] @relation("PubRedditBrief_product")
   @@unique([id, accountId])
   @@unique([siteId])
   @@index([accountId])
@@ -5578,6 +5579,7 @@ model PubOfferVersion {
   offerFactOfferVersionOf  PubOfferFact[] @relation("PubOfferFact_offerVersion")
   briefOfferVersionOf      PubBrief[] @relation("PubBrief_offerVersion")
   contentVersionOfferVersionOf PubContentVersion[] @relation("PubContentVersion_offerVersion")
+  redditBriefOfferVersionOf PubRedditBrief[] @relation("PubRedditBrief_offerVersion")
   @@unique([id, accountId])
   @@unique([productId, version])
   @@map("pub_offer_versions")
@@ -5674,8 +5676,10 @@ model PubContent {
   blockReason              String?
   criticalStale            Boolean @default(false)
   firstPublishedAt         DateTime? @db.Timestamptz(3)
+  redditBriefId            String? /// P-R M2: бриф Reddit-материала (kind reddit_post|reddit_comment)
   parentContent            PubContent? @relation("PubContent_parentContent", fields: [parentContentId, accountId], references: [id, accountId], onDelete: Restrict)
   brief                    PubBrief? @relation("PubContent_brief", fields: [briefId, accountId], references: [id, accountId], onDelete: Restrict)
+  redditBrief              PubRedditBrief? @relation("PubContent_redditBrief", fields: [redditBriefId, accountId], references: [id, accountId], onDelete: Restrict)
   currentVersion           PubContentVersion? @relation("PubContent_currentVersion", fields: [currentVersionId, accountId], references: [id, accountId], onDelete: Restrict)
   approvedVersion          PubContentVersion? @relation("PubContent_approvedVersion", fields: [approvedVersionId, accountId], references: [id, accountId], onDelete: Restrict)
   publishedVersion         PubContentVersion? @relation("PubContent_publishedVersion", fields: [publishedVersionId, accountId], references: [id, accountId], onDelete: Restrict)
@@ -5693,6 +5697,7 @@ model PubContent {
   @@unique([id, accountId])
   @@unique([productId, slug])
   @@index([productId, status])
+  @@index([redditBriefId])
   @@map("pub_contents")
 }
 
@@ -5861,6 +5866,7 @@ model PubQaCheck {
   kind                     String
   result                   String
   blockers                 Json
+  warnings                 Json @default("[]") /// P-R M2: WARN reddit_policy [{code,text}] (Р-RD-8)
   checkedBy                String
   checkedAt                DateTime @default(now()) @db.Timestamptz(3)
   selfReview               Boolean @default(false)
@@ -5982,6 +5988,7 @@ model PubPublication {
   lastVerifiedAt           DateTime? @db.Timestamptz(3)
   verifiedBy               String?
   verifyResult             String?
+  reportKind               String @default("standard") /// standard | user_reported (P-R M2, Р-RD-10)
   opKey                    String
   version                  PubContentVersion @relation("PubPublication_version", fields: [versionId, accountId], references: [id, accountId], onDelete: Restrict)
   channel                  PubChannel @relation("PubPublication_channel", fields: [channelId, accountId], references: [id, accountId], onDelete: Restrict)
@@ -6973,6 +6980,7 @@ model PubRedditProject {
   redditCommunityProjectOf PubRedditCommunity[] @relation("PubRedditCommunity_project")
   redditKeywordProjectOf   PubRedditKeyword[] @relation("PubRedditKeyword_project")
   redditOpportunityProjectOf PubRedditOpportunity[] @relation("PubRedditOpportunity_project")
+  redditBriefProjectOf     PubRedditBrief[] @relation("PubRedditBrief_project")
   @@unique([id, accountId])
   @@index([productId, status])
   @@map("pub_reddit_projects")
@@ -7000,6 +7008,7 @@ model PubRedditCommunity {
   revision                 Int @default(1)
   redditRuleSnapshotCommunityOf PubRedditRuleSnapshot[] @relation("PubRedditRuleSnapshot_community")
   redditOpportunityCommunityOf PubRedditOpportunity[] @relation("PubRedditOpportunity_community")
+  redditBriefCommunityOf   PubRedditBrief[] @relation("PubRedditBrief_community")
   @@unique([id, accountId])
   @@unique([productId, name])
   @@unique([channelId])
@@ -7089,6 +7098,7 @@ model PubRedditOpportunity {
   community                PubRedditCommunity @relation("PubRedditOpportunity_community", fields: [communityId, accountId], references: [id, accountId], onDelete: Restrict)
   excerptSource            PubSource? @relation("PubRedditOpportunity_excerptSource", fields: [excerptSourceId, accountId], references: [id, accountId], onDelete: Restrict)
   ruleSnapshot             PubRedditRuleSnapshot? @relation("PubRedditOpportunity_ruleSnapshot", fields: [ruleSnapshotId, accountId], references: [id, accountId], onDelete: Restrict)
+  redditBriefOpportunityOf PubRedditBrief[] @relation("PubRedditBrief_opportunity")
   createdAt                DateTime @default(now()) @db.Timestamptz(3)
   createdBy                String /// member:<id> | system:<job> | public | restore:<id>
   updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
@@ -7099,4 +7109,45 @@ model PubRedditOpportunity {
   @@index([projectId, status])
   @@index([communityId])
   @@map("pub_reddit_opportunities")
+}
+
+/// Reddit-бриф (P-R M2, Р-RD-5): голова с ревизией; материал Reddit
+/// (`pub_contents.kind` reddit_post|reddit_comment) ссылается на него.
+model PubRedditBrief {
+  id                       String @id @default(cuid())
+  accountId                String
+  productId                String
+  product                  PubProduct @relation("PubRedditBrief_product", fields: [productId, accountId], references: [id, accountId], onDelete: Restrict)
+  projectId                String
+  communityId              String
+  opportunityId            String? /// обязателен для comment
+  offerVersionId           String /// активная версия оффера (версии материала: offerVersionId NOT NULL)
+  contentType              String /// post | comment
+  objective                String /// 1..500
+  audience                 String? /// ≤ 500
+  context                  String? /// ≤ 2000; у comment обязателен
+  keyPoints                Json @default("[]") /// 0..5 × {text ≤ 300, sourceIds[] | 'needs_verification'}
+  affiliation              String? /// founder|employee|agency|customer|none — обязателен для ready
+  brand                    String? /// 2..64: имя продукта/бренда в раскрытии (Р-RD-65); ready при affiliation≠none
+  linksAllowed             Boolean @default(false)
+  tone                     String? /// ≤ 64
+  language                 String /// BCP-47 ≤ 16
+  constraints              Json @default("[]") /// ≤ 10 × ≤ 300
+  forbiddenClaims          Json @default("[]") /// ≤ 20 × ≤ 300
+  cta                      String? /// ≤ 300
+  status                   String @default("draft") /// draft | ready | archived
+  project                  PubRedditProject @relation("PubRedditBrief_project", fields: [projectId, accountId], references: [id, accountId], onDelete: Restrict)
+  community                PubRedditCommunity @relation("PubRedditBrief_community", fields: [communityId, accountId], references: [id, accountId], onDelete: Restrict)
+  opportunity              PubRedditOpportunity? @relation("PubRedditBrief_opportunity", fields: [opportunityId, accountId], references: [id, accountId], onDelete: Restrict)
+  offerVersion             PubOfferVersion @relation("PubRedditBrief_offerVersion", fields: [offerVersionId, accountId], references: [id, accountId], onDelete: Restrict)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  createdBy                String /// member:<id> | system:<job> | public | restore:<id>
+  updatedAt                DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  revision                 Int @default(1)
+  contentRedditBriefOf     PubContent[] @relation("PubContent_redditBrief")
+  @@unique([id, accountId])
+  @@index([productId, status])
+  @@index([projectId, status])
+  @@index([opportunityId])
+  @@map("pub_reddit_briefs")
 }

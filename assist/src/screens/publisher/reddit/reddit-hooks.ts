@@ -9,6 +9,8 @@ import {
   createRedditApi,
   type RedditProjectView,
 } from '../../../lib/publisher/reddit-api';
+import { createRedditStudioApi } from '../../../lib/publisher/reddit-studio-api';
+import { createContentApi } from '../../../lib/publisher/content-api';
 import {
   getRedditDict,
   rebaseForm,
@@ -22,6 +24,8 @@ export const REDDIT_TABS = [
   'rules',
   'opportunities',
   'keywords',
+  'briefs',
+  'publications',
 ] as const;
 export type RedditTab = (typeof REDDIT_TABS)[number];
 
@@ -41,6 +45,54 @@ export function useReddit() {
     canManage: can('reddit.manage'),
     canReview: can('reddit.rules.review'),
   };
+}
+
+/**
+ * Студия M2: клиент брифов/материалов (`studio`; генерация — `studioAi` с
+ * таймаутом AI-операций 65 с) и права студии (подсказка; решает сервер).
+ */
+export function useRedditStudio() {
+  const base = useReddit();
+  const { http, aiHttp, pid, can } = base;
+  const studio = useMemo(() => createRedditStudioApi(http, pid), [http, pid]);
+  const studioAi = useMemo(
+    () => createRedditStudioApi(aiHttp, pid),
+    [aiHttp, pid]
+  );
+  return {
+    ...base,
+    studio,
+    studioAi,
+    canGenerate: can('ai.generate'),
+    canVersion: can('version.manage'),
+    canApprove: can('version.approve'),
+    canHandoff: can('reddit.handoff'),
+    canQaEditorial: can('qa.editorial'),
+    canQaTechnical: can('qa.technical'),
+  };
+}
+
+/**
+ * Источники продукта (`origin=content`, до 100) — выбор источников тезисов
+ * и подписи вместо сырых id (аудит S3-4). Ошибка — пустой список.
+ */
+export function useProductSources() {
+  const pub = usePublisher();
+  const { http, product } = pub;
+  const api = useMemo(
+    () => createContentApi(http, product.id),
+    [http, product.id]
+  );
+  const state = useAsync(async () => {
+    try {
+      return (await api.sources({ limit: 100 })).items;
+    } catch {
+      return [];
+    }
+  }, [api]);
+  const list = state.data ?? [];
+  const titles = new Map(list.map((x) => [x.id, x.title ?? x.id]));
+  return { list, titles };
 }
 
 /**

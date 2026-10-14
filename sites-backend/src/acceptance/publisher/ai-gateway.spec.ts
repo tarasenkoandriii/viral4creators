@@ -165,13 +165,14 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
       where: { productId, month: kyivMonthOf(new Date()) },
     });
 
-  it('п’ять генераторів поза набором — `disabled` без виклику моделі; генерація не зараховується', async () => {
+  it('шість генераторів поза P0 (з P-R M2 — і `pub.reddit.draft` до живого прогону 2.3) — `disabled` без виклику моделі; генерація не зараховується', async () => {
     process.env[FLAG] = 'true';
     const { p } = await freshProduct();
     const off = GENERATOR_IDS.filter(
       (g) => !(P0_ENABLED_GENERATORS as readonly string[]).includes(g),
     );
-    expect(off).toHaveLength(5);
+    expect(off).toHaveLength(6);
+    expect(off).toContain('pub.reddit.draft');
     for (const g of off) {
       const opKey = randomUUID();
       const r = await start(p, {

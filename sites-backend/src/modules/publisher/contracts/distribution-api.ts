@@ -28,6 +28,7 @@ import type {
   PlacementStatus,
   PUBLICATION_STAGES,
   PUBLICATION_VERIFY_STATUSES,
+  PublicationReportKind,
   PublicationStatus,
   VENUE_CRITERIA,
   VENUE_LINK_MARKINGS,
@@ -52,6 +53,7 @@ export type {
   DistributionStatus,
   ExpenseCategory,
   PlacementStatus,
+  PublicationReportKind,
   PublicationStatus,
   VenueStatus,
 };
@@ -149,6 +151,11 @@ export interface PublicationView {
   lastVerifiedAt: string | null;
   verifiedBy: string | null;
   verifyResult: string | null;
+  /**
+   * P-R M2 (Р-RD-10): `user_reported` — отчёт человека о ручной публикации
+   * Reddit-материала (проверки нет и не будет, `verify` → 409 manual_only).
+   */
+  reportKind: PublicationReportKind;
   revision: number;
 }
 export interface CreatePublicationBody extends MutationBody {

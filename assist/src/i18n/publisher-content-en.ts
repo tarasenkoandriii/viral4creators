@@ -256,6 +256,9 @@ export const pubContentEn: PublisherContentDict = {
     aiRef: 'From AI draft {id}',
   },
   materials: {
+    redditStudio:
+      'Reddit material: editing, approval with warning acknowledgement, copying and publication marks are in the Reddit studio.',
+    openRedditStudio: 'Open the Reddit studio',
     pubActions: 'Change publication status',
     pubTo: { published: 'Published', failed: 'Failed', withdrawn: 'Withdraw' },
     pubReason: 'Reason (for the log; required to withdraw)',
@@ -274,6 +277,8 @@ export const pubContentEn: PublisherContentDict = {
       cards: 'Cards',
       checklist: 'Checklist',
       video_script: 'Video script',
+      reddit_post: 'Reddit: post',
+      reddit_comment: 'Reddit: comment',
     },
     statuses: {
       brief: 'brief',
@@ -389,6 +394,7 @@ export const pubContentEn: PublisherContentDict = {
       technical: 'Technical',
       ai_review: 'AI review',
       adaptation_meaning: 'Adaptation meaning',
+      reddit_policy: 'Reddit rules (automatic)',
     },
     qaResults: { pass: 'passed', fail: 'failed', unknown: 'unknown' },
     qaAdd: 'Record a check',
@@ -554,6 +560,7 @@ export const pubContentEn: PublisherContentDict = {
       'pub.claims.extract': 'Claim extraction',
       'pub.distribution.plan': 'Distribution plan',
       'pub.venues.compare': 'Venue comparison',
+      'pub.reddit.draft': 'Reddit draft',
     },
     disabledP0: 'disabled in the pilot',
     callStatuses: {

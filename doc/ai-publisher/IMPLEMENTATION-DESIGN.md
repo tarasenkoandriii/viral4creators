@@ -1401,7 +1401,7 @@ interface AiGateway {
 - `auto-checks.ts` (аудит P2-20): **жёсткий провал** `critical` — только однозначные структурные нарушения: ответ не по схеме, `used_source_ids ⊄ allowed`, канарейка S7/настроек в ответе, язык не украинский, `is_script≠true` у сценария, число карточек ≠ 5 (AI-12), `audience≠null` (AI-20). Смысловые признаки (слова «гарант», «знижк», «CAC», «опубліковано», числа против эталона) — **флаги** для человека: правильный ответ «це не CAC», «без гарантій», «не опубліковано» их тоже вызывает. Человек подтверждает или снимает каждый флаг с объяснением; первый ответ, жёсткие провалы и флаги неизменны.
 - `run.ts` — CLI `npm run eval:publisher -- --mode=fake|live --product=<evalProductId> --config=<configHash> [--only=AI-01,AI-05] [--max-usd=N]`: гонит задачи через тот же шлюз (`CliEvalGateway` с флагом `evalRun`, недоступным HTTP; пишет `pub_ai_calls` с операцией `pub-eval`), записывает результаты с первым ответом, печатает протокол `json` и `md`.
 - `fake` (CI, детерминированные заготовленные ответы) проверяет механику: схемы, журнал, протокол, неизменность первого ответа, флаги, подсчёт порогов; прохождением набора **не является** (`mode=fake` не может перевести конфигурацию в `passed` — триггер).
-- `live` — отдельно владельцем с реальным ключом и лимитом стоимости; затем человек разбирает флаги и ставит `criticalPass/usefulnessPass` в кабинете eval-продукта; конфигурация `passed` ⇔ по ПЕРВОМУ ответу каждой задачи (самая ранняя строка, где модель ответила; ответом не считаются только `not_run:*` — модель не вызывалась — и `no_answer:*` — провайдер не вернул ответа и расхода нет; оплаченный обрезанный/пустой/не-JSON ответ — первый ответ и провал, предаудит D2-01) все 30 `criticalPass=true` и `usefulnessPass` ≥ 24, и ни одной строки с ответом (включая повторы в тот же прогон) с жёстким провалом или `criticalPass≠true` — повтор не заменяет первый ответ и не скрывает провал (аудит P-B2 S1-1; `protocol.ts` ≡ триггер `pub_eval_guard`); `live` — только у конфигурации не-`fake` провайдера, `criticalPass=true` при жёстком провале невозможен (триггеры, S2-3); итоги прогона несут hash синтетики S1–S7, решение `passed` сверяет его с эталоном (S3-10); решение владельца с основанием. Провал — изменение инструкции (новая версия → новая конфигурация) и повтор, первый результат остаётся. После смены модели, провайдера, общих правил контекста или доступа — весь набор заново (ТЗ §28).
+- `live` — отдельно владельцем с реальным ключом и лимитом стоимости; затем человек разбирает флаги и ставит `criticalPass/usefulnessPass` в кабинете eval-продукта; конфигурация `passed` ⇔ по ПЕРВОМУ ответу каждой задачи (самая ранняя строка, где модель ответила; ответом не считаются только `not_run:*` — модель не вызывалась — и `no_answer:*` — провайдер не вернул ответа и расхода нет; оплаченный обрезанный/пустой/не-JSON ответ — первый ответ и провал, предаудит D2-01) все N задач набора её версии `criticalPass=true` и `usefulnessPass` ≥ ⌈0,8·N⌉ (`pub_eval_set_size`: 2.2 — 30/24; 2.3 с P-R M2 — 42/34, Р-RD-57), и ни одной строки с ответом (включая повторы в тот же прогон) с жёстким провалом или `criticalPass≠true` — повтор не заменяет первый ответ и не скрывает провал (аудит P-B2 S1-1; `protocol.ts` ≡ триггер `pub_eval_guard`); `live` — только у конфигурации не-`fake` провайдера, `criticalPass=true` при жёстком провале невозможен (триггеры, S2-3); итоги прогона несут hash синтетики S1–S7, решение `passed` сверяет его с эталоном (S3-10); решение владельца с основанием. Провал — изменение инструкции (новая версия → новая конфигурация) и повтор, первый результат остаётся. После смены модели, провайдера, общих правил контекста или доступа — весь набор заново (ТЗ §28).
 - Пять выключенных генераторов включаются только по утверждённому дополнительному набору задач их схем (новая версия набора по правилу AI-eval «новые ошибки добавляются как регрессионные проверки с новой версией набора»), тем же механизмом конфигураций.
 
 ## 13. Публичный сайт `publisher-site/` (P-F)
@@ -1864,7 +1864,7 @@ interface CronJob { key: string; schedule: 'tick'|'daily'; run(ctx: { now; scope
 | AI-29 | версии | answer | internal | S1, S4 | — | текущая цена ≠ 2 000; v1 как действующая |
 | AI-30 | версии | answer | internal | S1, S6 | — | «1 800» как текущая; нет задачи владельцу в `next_action` |
 
-Порог применения: 30 из 30 `critical_pass` и ≥ 24 `usefulness_pass` для конфигурации; смена модели/провайдера/инструкции/правил контекста — весь набор заново (ТЗ §28).
+Порог применения: N из N `critical_pass` и ≥ ⌈0,8·N⌉ `usefulness_pass` для конфигурации (набор 2.2 — 30/24; 2.3 — 42/34, P-R M2); смена модели/провайдера/инструкции/правил контекста — весь набор заново (ТЗ §28).
 
 ### 18.3 Сущности §9 ТЗ → таблицы
 
@@ -1900,23 +1900,30 @@ F01, F02, F03, F04, F06 → P-B1 (+P-B2 для брифа, QA-проверки �
 
 ### 18.5 Reddit Manual MVP (пакет P-R, вне P0 2.2) → тесты
 
-Источник — [reddit-manual-mvp-adapted.md](reddit-manual-mvp-adapted.md) §9; каталог — `reports/qa/at-catalog.ts` `AT_RD_CATALOG` (отдельно от 44 сценариев P0, шлюзы D0/закупки не меняет). Файлы — `src/acceptance/publisher/reddit-m1-*.spec.ts` и `src/modules/publisher/reddit/*.spec.ts`.
+Источник — [reddit-manual-mvp-adapted.md](reddit-manual-mvp-adapted.md) §9; каталог — `reports/qa/at-catalog.ts` `AT_RD_CATALOG` (отдельно от 44 сценариев P0, шлюзы D0/закупки не меняет). Файлы — `src/acceptance/publisher/reddit-m{1,2}-*.spec.ts` и `src/modules/publisher/reddit/*.spec.ts`.
 
-| AT-RD | Этап | Тип | Файл | Статус (13.10.2026) |
+| AT-RD | Этап | Тип | Файл | Статус (14.10.2026) |
 |---|---|---|---|---|
-| 01 | M1 | http, db | `reddit-m1-access.spec`, `z-isolation.spec` | автотест |
+| 01 | M1 (+M2) | http, db | `reddit-m1-access.spec`, `z-isolation.spec` (39 маршрутов, чужие бриф и материал) | автотест |
 | 02 | M1 | http, unit | `reddit-m1-access.spec`, `roles.spec` | автотест |
 | 03 | M1 | http, unit, db | `reddit-m1-policy.spec`, `reddit-pure.spec`, `reddit-triggers.db.spec` | автотест |
-| 04 | M1 | http, db | `reddit-m1-policy.spec` | автотест (отзыв согласований Reddit-материалов — M2) |
+| 04 | M1 (+M2) | http, db | `reddit-m1-policy.spec`; M2 — `reddit-m2-approval.spec` (согласование → `superseded`, `stale_check`) | автотест |
 | 05 | M1 | http | `reddit-m1-opportunities.spec` | автотест |
 | 06 | M1 | unit | `reddit-m1-score.spec` | автотест (свойства, 5 000 наборов) |
-| 07–14 | M2 | http | `reddit-m2-*.spec`, `reddit-egress.spec` (план) | не реализовано |
-| 15 | M1 (+M2) | http, unit | `reddit-m1-opportunities.spec`, `reddit-pure.spec`; M2 — `reddit-m2-handoff.spec` | автотест M1 |
-| 16 | M1 | http, unit | `reddit-m1-egress.spec`, граф `publisher-reddit-no-network(-io)` | автотест |
+| 07 | M2 | http, unit | `reddit-m2-checks.spec`, `reddit-m2-pure.spec` | автотест |
+| 08 | M2 | http, unit | `reddit-m2-checks.spec`, `reddit-m2-pure.spec` | автотест |
+| 09 | M2 | http, db | `reddit-m2-approval.spec` | автотест |
+| 10 | M2 | http | `reddit-m2-manual.spec` | автотест (fake-модель) |
+| 11 | M2 | http | `reddit-m2-egress.spec`, `reddit-m2-handoff.spec` | автотест |
+| 12 | M2 | http, db | `reddit-m2-handoff.spec`, `reddit-m2-triggers.db.spec` | автотест |
+| 13 | M2 | http, db | `reddit-m2-brief.spec`, `reddit-m2-triggers.db.spec` | автотест |
+| 14 | M2 | http, unit | `reddit-m2-injection.spec`, `ai-eval-run.spec`, `ai-eval-tasks.spec` (AI-41) | автотест; кабинет — смоук assist |
+| 15 | M1 + M2 | http, unit | `reddit-m1-opportunities.spec`, `reddit-pure.spec`; M2 — `reddit-m2-handoff.spec`, `reddit-m2-pure.spec` | автотест |
+| 16 | M1 + M2 | http, unit | `reddit-m1-egress.spec` (25), `reddit-m2-egress.spec` (14), граф `publisher-reddit-no-network(-io)` | автотест |
 | 17 | M1 | http, ui | `reddit-m1-flag.spec`; UI — смоук assist | автотест API; UI — у экранов |
-| 18 | M1 | db | `reddit-m1-restore.spec` | автотест |
+| 18 | M1 + M2 | db | `reddit-m1-restore.spec`, `reddit-m2-restore.spec` | автотест |
 
-E2E-RD-01 (секция `--reddit` стенда) — хвост пакета: сквозной путь M1 по всем 25 маршрутам покрыт `reddit-m1-egress.spec`, данные стенда — `test/publisher-reddit/seed.cjs`.
+E2E-RD-01 (секция `--reddit` стенда) — хвост пакета: сквозной путь M1 по всем 25 маршрутам покрыт `reddit-m1-egress.spec`, данные стенда — `test/publisher-reddit/seed.cjs`. E2E-RD-02 (бриф → 3 варианта fake → правка → QA → согласование → копирование → ручной URL, post и comment) — `reddit-m2-generate.spec`; секция стенда — вместе с экранами.
 
 ## 19. Открытые вопросы и рекомендованные решения
 
@@ -2161,9 +2168,11 @@ B1-F-13: регрессия общих модулей — jest `backend/` (teleg
 
 Итоги внутреннего предаудита по плану внешнего аудита v1.1 (этапы A–D) и раундов исправлений (Z-2c — раздел 26, AI-зона — пакет P-B2) собраны в каталоге [`preaudit-2026-10/`](preaudit-2026-10/README.md): реестры документов и модулей (A2), матрица трассировки и находки по требованиям (B1), протоколы AT/E2E, нефункциональные испытания и CI (C), безопасность и AI (D1/D2), единый реестр находок (`defects.csv`), вопросы владельцу (`owner-decisions.md`) и пакет передачи внешнему исполнителю (`handover-appendix-B.md`). Предаудит выполнен той же командой, что писала код: он не является независимым аудитом по плану v1.1 §1 и не заменяет внешнее заключение. Исправленные внутри находки имеют статус `ready_for_retest`, а не закрыты.
 
-## 28. Пакет P-R «Reddit Manual MVP», этап M1 Research (13.10.2026)
+## 28. Пакет P-R «Reddit Manual MVP», этапы M1 Research (13.10.2026) и M2 AI Content Studio (14.10.2026)
 
 ADR «Manual only» (Р-RD-0): Reddit MVP — пакет P-R модуля Publisher вне объёма P0 ТЗ 2.2, режим только MANUAL_COPY; сервер не обращается к Reddit ни API, ни страницами, ни oEmbed (правила графа `publisher-reddit-no-network`, `publisher-reddit-no-network-io`, отказ `source-import` `reddit_manual_only`, runtime-тест AT-RD-16). Включение раздела — env `PUBLISHER_REDDIT_ENABLED` (по умолчанию выключен: 404 на `/publisher/products/:pid/reddit/**`, `ProductView.features.reddit=false`).
 
 Сделано в коде (M1): миграция `20261020090000_publisher_reddit` (пять таблиц `pub_reddit_*`, гварды, append-only снимков правил, частичный индекс «один текущий снимок», `pub_object_types()` + `reddit_*`, действия аудита `copy`/`report_publication`, параметр `reddit_rules_stale_days` — 39-й ключ); владелец таблиц — пакет `P-R` (пишет только `pub_reddit_*`; источники — через `SourcesService` P-B1, каналы — через `ChannelsService` P-C); матрица §4.2 + `reddit.read|manage|rules.review|handoff`; контракт `contracts/reddit-api.ts` (25 маршрутов: 23 + два чтения доказательств Р-RD-46); чистые функции `reddit/{normalize,policy,score}.ts`. Решения адаптации M1 — Р-RD-18…Р-RD-30 в [reddit-manual-mvp-adapted.md](reddit-manual-mvp-adapted.md) §11; трассировка — §18.5. Раунд исправлений внутреннего аудита (Р-RD-31…39): колонка `pub_sources.origin` и гвард `pub_reddit_sources_guard` (доказательства P-R неизменны и скрыты из общих `/sources`, общий PATCH — 409 `reddit_evidence_locked`), отзыв первоисточника → гейт `block` и перепроверка, гейт «сейчас» (`policyNow`) при чтении, `existingId` при гонке, ники `r/u_*`/`/user/`, 409 при архивных родителях; хвосты M2 — там же. Раунд 2 по повторному аудиту (Р-RD-40…45): отзыв выдержки окончателен (409 `PUB_SOURCE_NOT_ALLOWED {revoked}` на правку), ответ отзыва доказательства P-R без текста и URL, гвард замораживает `injectionFlag` и метаданные, `profile_ref` с границей слова и знаками, похожими на `/`, каскад P-R при восстановлении P-E (отзыв после копии), фильтр `?policyNow` в списке и CSV возможностей. Раунд 3 по аудиту экранов (Р-RD-46, Р-RD-47): чтения `…/opportunities/:id/excerpts` и `…/communities/:id/rules/:sid/source` для отзыва прежних редакций и первоисточников, `r/u_*` → код `profile_ref`.
+
+Этап M2 AI Content Studio (14.10.2026): миграция `20261021090000_publisher_reddit_m2` (forward-only) — таблица `pub_reddit_briefs` (40-й ключ параметров `reddit_excerpt_retention_days`), виды материала `reddit_post`/`reddit_comment` с `pub_contents.redditBriefId`, `pub_qa_checks.warnings` и вид QA `reddit_policy` (актёр `system:reddit-policy`), `pub_publications.reportKind` (`user_reported` — без проверки навсегда), гейт `reddit_publish`, генератор `pub.reddit.draft` (выключен в коде до живого прогона набора `2.3`, 42 задачи — отдельной конфигурацией: конфигурация P0 остаётся набором `2.2` с прежним hash, Р-RD-64; порог по N задач — `pub_eval_set_size`; на стенде E2E — fake-провайдер `PUBLISHER_STAND_FAKE_AI`, Р-RD-73), путь ретенции выдержки в гварде доказательств P-R и задание `reddit-retention`. Порт `REDDIT_PORT` (P-R → P-B1: контекст материала, проверка `reddit/checks.ts`, свежесть правил); ветви Reddit в P-B1 (версии, заморозка, блокеры, согласование с подтверждением WARN), P-C (`reportUserPublication`, `verify` → `manual_only`), P-B2 (`inputFindings`, режим eval). Контракт — 39 маршрутов. Решения — Р-RD-48…63 и раунд исправлений внутреннего аудита M2 Р-RD-64…73 (раскрытие с маркером и брендом в видимом тексте, факты тела против claimMap, нормализация и словари `markers@2`, проверка по аффилированности версии и готовому брифу, WARN при копировании, ретенция с отбором по сроку и маскированием журнала AI), раунд 2 Р-RD-74…84, раунд 3 Р-RD-85 и раунд 4 Р-RD-86 (BLOCK только при высокой уверенности, неоднозначное — WARN; словари `markers@3`; «перегенерировать абзац» — отдельная задача черновика; ретенция и в архивных продуктах) в [reddit-manual-mvp-adapted.md](reddit-manual-mvp-adapted.md) §11.
 

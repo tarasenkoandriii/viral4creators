@@ -8,11 +8,21 @@
  * критическая). Поэтому `inputIssues` шлюз считает частью схемы: непустой
  * список — `schema_invalid` (и одна повторная попытка).
  */
-import type { GeneratorSpec } from '../../contracts/ai';
+import type {
+  AiContext,
+  GeneratorSpec,
+  PostCheckFinding,
+} from '../../contracts/ai';
 import type { FieldIssue } from '../../contracts/errors';
 
 export interface PubGeneratorSpec<I, O> extends GeneratorSpec<I, O> {
   inputIssues?(out: O, input: I): FieldIssue[];
+  /**
+   * Находки после схемы, которым нужен вход (P-R M2, `pub.reddit.draft`:
+   * политика ссылок, аффилированность брифа). Шлюз добавляет их к
+   * `postCheck` — как находки, а не как ошибку схемы (Р-RD-56).
+   */
+  inputFindings?(out: O, input: I, ctx: AiContext): PostCheckFinding[];
 }
 
 export function outsideIssues(field: string, ids: string[]): FieldIssue[] {

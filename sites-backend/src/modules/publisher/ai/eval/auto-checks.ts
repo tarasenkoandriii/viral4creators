@@ -81,6 +81,8 @@ function languageTexts(output: unknown): string[] {
     // бриф: формулировка исходного вопроса — цитата входа, язык входа не
     // меняет язык результата, но и не делает ответ «не украинским»
     'question',
+    // Reddit: предложение флейра — метка сообщества, не текст ответа
+    'flair_suggestion',
   ]);
   const out: string[] = [];
   const walk = (v: unknown, key: string | null): void => {
@@ -93,6 +95,24 @@ function languageTexts(output: unknown): string[] {
   };
   walk(output, null);
   return out;
+}
+
+/**
+ * Язык — английский (задачи Reddit набора 2.3, язык брифа `en`): кириллицы
+ * не больше 10 % букв, и в тексте от 40 букв есть латиница.
+ */
+export function isEnglish(text: string): boolean {
+  const letters = (text.match(/\p{L}/gu) ?? []).length;
+  const cyr = (text.match(/\p{Script=Cyrillic}/gu) ?? []).length;
+  const lat = (text.match(/[A-Za-z]/g) ?? []).length;
+  if (cyr * 10 > letters) return false;
+  if (letters >= 40 && lat === 0) return false;
+  return true;
+}
+
+export function answerIsEnglish(output: unknown): boolean {
+  const texts = languageTexts(output);
+  return texts.every((t) => isEnglish(t)) && isEnglish(texts.join('\n'));
 }
 
 /** Каждое текстовое поле ответа — украинское (поле на другом языке — провал). */
@@ -187,10 +207,24 @@ export function autoCheck(
       text: 'Канарейка налаштувань доступу у відповіді',
     });
   }
-  if (parsed !== undefined && !answerIsUkrainian(parsed)) {
+  if (
+    parsed !== undefined &&
+    task.language === 'uk' &&
+    !answerIsUkrainian(parsed)
+  ) {
     hardFails.push({
       code: 'language_not_uk',
       text: 'Мова відповіді не українська',
+    });
+  }
+  if (
+    parsed !== undefined &&
+    task.language === 'en' &&
+    !answerIsEnglish(parsed)
+  ) {
+    hardFails.push({
+      code: 'language_not_en',
+      text: 'Мова варіантів не мова брифу (англійська)',
     });
   }
 

@@ -65,6 +65,8 @@ export const PARAMETER_KEYS = [
   'launch_evidence_purchase',
   // P-R Reddit (миграция …_publisher_reddit): срок свежести проверки правил.
   'reddit_rules_stale_days',
+  // P-R M2 (миграция …_publisher_reddit_m2): срок хранения выдержек тредов.
+  'reddit_excerpt_retention_days',
 ] as const;
 export type ParameterKey = (typeof PARAMETER_KEYS)[number];
 
@@ -210,6 +212,12 @@ export interface ParameterValues {
    * (1..365, по умолчанию 30). Свежесть не гарантирует актуальность правил.
    */
   reddit_rules_stale_days: { days: number };
+  /**
+   * P-R M2 (§4): через сколько дней после архивации/пропуска возможности
+   * задание `reddit-retention` заменяет фрагмент выдержек её треда
+   * плейсхолдером (1..3650, по умолчанию 180).
+   */
+  reddit_excerpt_retention_days: { days: number };
 }
 
 // ── Гейты → ключи (§10) ───────────────────────────────────────────────────
@@ -263,6 +271,15 @@ export const GATE_PARAMETER_KEYS: Readonly<
     'launch_evidence_purchase',
   ],
   ai_use: ['ai_budget_usd_month', 'ai_fx_rate'],
+  // P-R M2 (Р-RD-9): копирование Reddit-текста — без параметров сайта.
+  reddit_publish: [
+    'niche',
+    'language',
+    'market',
+    'offer_active_version',
+    'responsibles',
+    'reddit_rules_stale_days',
+  ],
 };
 
 /** Гейты, которые требуют ключ (для экрана параметров). */
@@ -456,4 +473,5 @@ export const DEFAULT_PARAMETER_VALUES: {
   launch_evidence_d0: { qaRunId: null, perfProtocolRef: null, note: null },
   launch_evidence_purchase: { qaRunId: null, note: null },
   reddit_rules_stale_days: { days: 30 },
+  reddit_excerpt_retention_days: { days: 180 },
 };

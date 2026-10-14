@@ -45,11 +45,11 @@ if (!PUB_RAW_URL) {
   });
 
   describe('каталог: правила схемы', () => {
-    it('71 таблица pub_* (66 P0 + 5 P-R), у каждой — триггеры актёра и неизменяемых колонок (кроме pub_rate_hits)', async () => {
+    it('72 таблицы pub_* (66 P0 + 6 P-R), у каждой — триггеры актёра и неизменяемых колонок (кроме pub_rate_hits)', async () => {
       const tables = await db.q<{ t: string }>(
         `SELECT tablename AS t FROM pg_tables WHERE schemaname = 'sites' AND tablename LIKE 'pub\\_%' ORDER BY 1`,
       );
-      expect(tables).toHaveLength(71);
+      expect(tables).toHaveLength(72);
       const trg = await db.q<{ t: string; n: string }>(
         `SELECT c.relname AS t, t.tgname AS n FROM pg_trigger t
            JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace s ON s.oid = c.relnamespace
@@ -2588,7 +2588,7 @@ if (!PUB_RAW_URL) {
       }
     }
 
-    it('pub_ai_configs: только в eval-продукте; passed — только по live-прогону с 30 оценками (critical 30, useful ≥ 24)', async () => {
+    it('pub_ai_configs: только в eval-продукте; passed — только по live-прогону с N оценками набора (2.2: critical 30, useful ≥ 24)', async () => {
       await db.rejects(
         async () =>
           db.child('pub_ai_configs', w, {
@@ -2637,7 +2637,7 @@ if (!PUB_RAW_URL) {
       await db.rejects(
         async () =>
           db.upd('pub_ai_configs', cfg, { ...decided, evalRunId: live2 }),
-        /usefulnessPass ≥ 24/,
+        /usefulnessPass ≥ ⌈0,8·N⌉/,
       );
       const live3 = await db.child('pub_ai_eval_runs', ev, {
         configId: cfg,

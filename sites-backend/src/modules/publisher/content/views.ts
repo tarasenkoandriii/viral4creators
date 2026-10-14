@@ -350,6 +350,10 @@ export async function loadContent(
     blockReason: r.blockReason,
     criticalStale: r.criticalStale,
     firstPublishedAt: iso(r.firstPublishedAt),
+    redditBriefId: r.redditBriefId,
+    // P-R M2, раунд 4 (аудит экранов S3-10): Reddit-материал ведётся в
+    // студии — общий экран прячет общие действия публикации/согласования.
+    ...(r.redditBriefId ? { redditStudio: true as const } : {}),
     openTasks: await openTasksOf(tx, productId, r.id),
     allowedTransitions: allowedFrom(CONTENT_MACHINE, r.status as ContentStatus),
     revision: r.revision,
@@ -443,6 +447,9 @@ export function qaView(r: PubQaCheck): QaCheckView {
     blockers: (Array.isArray(r.blockers)
       ? r.blockers
       : []) as unknown as QaBlocker[],
+    warnings: (Array.isArray(r.warnings)
+      ? r.warnings
+      : []) as unknown as QaCheckView['warnings'],
     checkedBy: r.checkedBy,
     checkedAt: r.checkedAt.toISOString(),
     selfReview: r.selfReview,

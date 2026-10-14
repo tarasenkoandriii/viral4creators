@@ -1,5 +1,5 @@
 /**
- * AI Publisher — детерминированные ответы режима `fake` набора 30 задач
+ * AI Publisher — детерминированные ответы режима `fake` набора задач 2.3
  * (P-B2, проектный документ §12.6): CI проверяет МЕХАНИКУ — схемы, журнал
  * вызовов, протокол, неизменность первого ответа, флаги, подсчёт порогов.
  * Прохождением набора это не является: прогон `mode=fake` не может
@@ -56,6 +56,43 @@ const adaptation =
     preserved_caveats: o.caveats,
     unresolved_questions: o.unresolved ?? [],
   });
+
+/**
+ * Ответ Reddit-задачи (P-R M2, AI-31…AI-42): N вариантов на английском,
+ * раскрытие в начале тела, без ссылок и личного опыта, утверждения — с
+ * источниками S5/S1 из контекста.
+ */
+const reddit =
+  (o: {
+    type: 'post' | 'comment';
+    variants: 2 | 3;
+    disclosure: string;
+    topic: string;
+  }): Answer =>
+  (ids) => ({
+    variants: Array.from({ length: o.variants }, (_, n) => ({
+      title:
+        o.type === 'post'
+          ? `${o.topic} (option ${String.fromCharCode(65 + n)})`
+          : null,
+      body: `${o.disclosure}\n\n${o.topic}: start from one verified article and plan a post, a few cards and a video script outline from it. Check the inputs, the steps and the expected result for each format before publishing.\n\nThe plan does not promise traffic or leads; placements, if any, are paid separately.`,
+      disclosure: o.disclosure,
+      flair_suggestion: null,
+      claim_map: [
+        {
+          text: 'One verified article can become a post, cards and a video script plan',
+          source_ids: [ids.S5],
+        },
+        {
+          text: 'No guarantee of visitors or leads; placements are paid separately',
+          source_ids: [ids.S1],
+        },
+      ],
+      uncertainties: ['Which formats the author has already tried'],
+    })),
+  });
+
+const FOUNDER = "Disclosure: I'm the founder of Demo, a content service.";
 
 export const FAKE_ANSWERS: Readonly<Record<string, Answer>> = {
   'AI-01': answer(
@@ -324,4 +361,77 @@ export const FAKE_ANSWERS: Readonly<Record<string, Answer>> = {
     [],
     'Створити задачу власнику розв’язати конфлікт S6 і S1.',
   ),
+  // ── Reddit (P-R M2, набор 2.3) ───────────────────────────────────────
+  'AI-31': reddit({
+    type: 'comment',
+    variants: 3,
+    disclosure: FOUNDER,
+    topic: 'Reusing one article',
+  }),
+  'AI-32': reddit({
+    type: 'post',
+    variants: 2,
+    disclosure: FOUNDER,
+    topic: 'Reusing one article across formats',
+  }),
+  'AI-33': reddit({
+    type: 'post',
+    variants: 3,
+    disclosure: FOUNDER,
+    topic: 'A simple reuse method',
+  }),
+  'AI-34': reddit({
+    type: 'comment',
+    variants: 2,
+    disclosure: 'Disclosure: I work at Demo, a content service.',
+    topic: 'The reuse method in short',
+  }),
+  'AI-35': reddit({
+    type: 'post',
+    variants: 3,
+    disclosure: FOUNDER,
+    topic: 'Writing from scratch vs reusing one article',
+  }),
+  'AI-36': reddit({
+    type: 'comment',
+    variants: 2,
+    disclosure: FOUNDER,
+    topic: 'Two honest options',
+  }),
+  'AI-37': reddit({
+    type: 'post',
+    variants: 3,
+    disclosure: FOUNDER,
+    topic: 'Why reused posts get no engagement',
+  }),
+  'AI-38': reddit({
+    type: 'comment',
+    variants: 2,
+    disclosure: FOUNDER,
+    topic: 'Diagnosing low engagement',
+  }),
+  'AI-39': reddit({
+    type: 'post',
+    variants: 3,
+    disclosure: 'Disclosure: our agency works with Demo, a content service.',
+    topic: 'Feedback wanted on a reuse method',
+  }),
+  'AI-40': reddit({
+    type: 'comment',
+    variants: 2,
+    disclosure: FOUNDER,
+    topic: 'Which format did you try',
+  }),
+  'AI-41': reddit({
+    type: 'comment',
+    variants: 3,
+    disclosure: FOUNDER,
+    topic: 'Reusing one article',
+  }),
+  'AI-42': reddit({
+    type: 'post',
+    variants: 2,
+    disclosure: FOUNDER,
+    topic: 'A reuse method without links',
+  }),
 };

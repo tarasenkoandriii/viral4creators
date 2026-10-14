@@ -894,6 +894,13 @@ export function fieldLabel(field: string, r: PublisherRedditDict): string {
     if (fm[2] === 'value') return `${name}: ${r.opportunities.value}`;
     return name;
   }
+  // M2: `keyPoints[0].text`, `meta.claimMap[1].text`, `meta.uncertainties[2]`.
+  const im =
+    /^(keyPoints|meta\.claimMap|meta\.uncertainties)\[(\d+)\](?:\.\w+)?$/.exec(
+      f
+    );
+  if (im)
+    return `${fieldLabel(im[1], r)}, ${fmtText(r.common.line, { n: Number(im[2]) + 1 })}`;
   const lm = /^(conditions|topics|keywordIds)\.(\d+)$/.exec(f);
   if (lm)
     return `${fieldLabel(lm[1], r)}, ${fmtText(r.common.line, { n: Number(lm[2]) + 1 })}`;
@@ -927,6 +934,28 @@ export function fieldLabel(field: string, r: PublisherRedditDict): string {
     status: r.common.status,
     policyNow: r.opportunities.policyFilter,
     q: r.common.search,
+    // M2: бриф, версия, отчёт о публикации.
+    contentType: r.briefs.fields.contentType,
+    opportunityId: r.briefs.fields.opportunity,
+    objective: r.briefs.fields.objective,
+    audience: r.briefs.fields.audience,
+    context: r.briefs.fields.context,
+    keyPoints: r.briefs.fields.keyPoints,
+    affiliation: r.briefs.fields.affiliation,
+    brand: r.briefs.fields.brand,
+    tone: r.briefs.fields.tone,
+    constraints: r.briefs.fields.constraints,
+    forbiddenClaims: r.briefs.fields.forbiddenClaims,
+    cta: r.briefs.fields.cta,
+    body: r.studio.draft.fields.body,
+    'meta.disclosure': r.studio.draft.fields.disclosure,
+    'meta.flairSuggestion': r.studio.draft.fields.flair,
+    'meta.claimMap': r.studio.evidence.title,
+    'meta.uncertainties': r.studio.generate.uncertainties,
+    url: r.studio.report.url,
+    postedAt: r.studio.report.postedAt,
+    notes: r.studio.report.notes,
+    template: r.studio.generate.template,
   };
   return Object.prototype.hasOwnProperty.call(map, f)
     ? map[f]

@@ -18,6 +18,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import { GeminiText } from '../../site-ai/text-model';
+import { publisherStandFakeAi } from '../../../config/publisher-env';
+import { GEMINI_MODEL } from '../../../shared/gemini-model';
 import { AiUsageRecorder } from '../../site-ai/usage-recorder';
 import type {
   AiCallView,
@@ -52,6 +54,7 @@ import {
   type RunResult,
 } from './gateway-core';
 import { GENERATORS } from './generators';
+import { StandFakeModel } from './stand-fake-model';
 
 /** Текст находки по коду (в журнале хранятся только код и важность). */
 export const FINDING_TEXT: Record<string, string> = {
@@ -62,6 +65,11 @@ export const FINDING_TEXT: Record<string, string> = {
   brief_without_source: 'Бриф без джерела не може стати готовим',
   supported_without_source: 'Твердження позначене підтвердженим без джерела',
   scenes_outside_script: 'Сцени заповнені не для сценарію',
+  // P-R M2 (`pub.reddit.draft`, §M2.3).
+  link_present: 'Посилання там, де правила спільноти чи бриф їх забороняють',
+  first_person_experience:
+    'Особистий досвід від першої особи — схоже на вигаданий відгук',
+  disclosure_missing: 'Немає розкриття афілійованості в перших 300 знаках',
 };
 
 /** Текст находки; у «чисел вне контекста» — какие числа (предаудит D2-05). */
@@ -95,22 +103,37 @@ export interface CabinetStart {
 @Injectable()
 export class AiGatewayService implements AiGateway {
   private readonly logger = new Logger('PublisherAiGateway');
-  private model: AiTextModel;
+  private override: AiTextModel | null = null;
+  private readonly standModel = new StandFakeModel(GEMINI_MODEL);
+  private standWarned = false;
 
   constructor(
     private readonly db: SitesDb,
-    text: GeminiText,
+    private readonly text: GeminiText,
     private readonly usage: AiUsageRecorder,
     private readonly audit: AuditService,
     private readonly ports: PubPorts,
-  ) {
-    this.model = text;
+  ) {}
+
+  /** Тесты: модель без сети (null — вернуть выбор по умолчанию). */
+  useModel(model: AiTextModel | null): this {
+    this.override = model;
+    return this;
   }
 
-  /** Тесты: модель без сети. */
-  useModel(model: AiTextModel): this {
-    this.model = model;
-    return this;
+  /**
+   * Модель вызова: подменённая тестом; иначе стендовый fake-провайдер
+   * (Р-RD-73, только стенд — флаг читается на вызове); иначе Gemini.
+   */
+  private get model(): AiTextModel {
+    if (this.override) return this.override;
+    const stand = publisherStandFakeAi();
+    if (stand.enabled) return this.standModel;
+    if (stand.problem && !this.standWarned) {
+      this.standWarned = true;
+      this.logger.warn(stand.problem);
+    }
+    return this.text;
   }
 
   private deps(): RunDeps {

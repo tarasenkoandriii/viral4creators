@@ -65,15 +65,15 @@ function literalKeys(raw: string): KeySet {
   return out;
 }
 
-/** Разбить выражение типа по `&` верхнего уровня. */
-function splitAmp(expr: string): string[] {
+/** Разбить выражение типа по `&` (или `|`) верхнего уровня. */
+function splitAmp(expr: string, sep = '&'): string[] {
   const parts: string[] = [];
   let depth = 0;
   let cur = '';
   for (const ch of expr) {
     if ('{(<['.includes(ch)) depth++;
     else if ('})>]'.includes(ch)) depth--;
-    if (ch === '&' && depth === 0) {
+    if (ch === sep && depth === 0) {
       parts.push(cur.trim());
       cur = '';
     } else cur += ch;
@@ -97,6 +97,13 @@ export function bodyKeys(expr: string, src = ALL): KeySet {
   if (m) {
     const inner = bodyKeys(m[1], src);
     return new Map([...inner.keys()].map((k) => [k, false]));
+  }
+  m = /^Pick<([\s\S]*?),\s*([^>]*)>$/.exec(e);
+  if (m) {
+    const inner = bodyKeys(m[1], src);
+    const keep = new Set([...m[2].matchAll(/'([^']+)'/g)].map((x) => x[1]));
+    for (const k of [...inner.keys()]) if (!keep.has(k)) inner.delete(k);
+    return inner;
   }
   m = /^Omit<([\s\S]*?),\s*([^>]*)>$/.exec(e);
   if (m) {
@@ -195,4 +202,25 @@ export function bodyIssues(
     if (req && k !== 'opKey' && !(k in body)) issues.push(`нет ключа ${k}`);
   }
   return issues;
+}
+
+/**
+ * Сверка тела с типом маршрута, в т. ч. с объединением `A | B` верхнего
+ * уровня (P-R M2: `CreateVersionBody | CreateRedditVersionBody`): тело
+ * должно подходить хотя бы одному члену; иначе — расхождения ближайшего.
+ */
+export function bodyIssuesOf(
+  body: Record<string, unknown>,
+  expr: string,
+  src = ALL
+): string[] {
+  const members = splitAmp(expr.trim(), '|');
+  let best: string[] | null = null;
+  for (const m of members) {
+    const issues = bodyIssues(body, bodyKeys(m, src));
+    if (!issues.length) return [];
+    if (!best || issues.length < best.length)
+      best = members.length > 1 ? issues.map((x) => `${m}: ${x}`) : issues;
+  }
+  return best ?? [];
 }

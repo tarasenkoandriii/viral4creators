@@ -28,6 +28,7 @@ import type {
 import {
   CONTENT_BLOCK_REASONS,
   CONTENT_KINDS,
+  isRedditContentKind,
   type ContentStatus,
 } from '../contracts/states';
 import { contentVersionHash } from '../core/content-hash';
@@ -54,13 +55,18 @@ import {
   assertSourceIds,
 } from './refs';
 import {
+  checkRedditVersionMeta,
   checkVersionMeta,
+  claimMapSourceIds,
   formatIssues,
   hasRawHtml,
   lineDiff,
   metaChangedKeys,
   setDiff,
+  type RedditClientMeta,
 } from './rules';
+import { writeRedditPolicyCheck } from './reddit-policy-check';
+import type { RedditMaterialContext } from '../core/ports';
 import type { OpOut } from './sources.service';
 import { assertHashCurrent, versionHashInput } from './version-hash';
 import { approvalBlockers } from './blockers';
@@ -125,7 +131,11 @@ export class ContentsService {
       max: 200,
       pii: true,
     });
-    if (kind === 'article') {
+    if (kind && isRedditContentKind(kind)) {
+      // P-R M2 (Р-RD-49): Reddit-материал создаётся из Reddit-брифа
+      // (`POST …/reddit/briefs/:id/contents`), не общим маршрутом.
+      is.add('kind', 'reddit_route');
+    } else if (kind === 'article') {
       if (!briefId) is.add('briefId', 'required');
       if (parentContentId) is.add('parentContentId', 'not_allowed');
     } else if (kind) {
@@ -448,6 +458,9 @@ export class ContentsService {
       where: { id: contentId, productId: product.id },
     });
     if (!c) throw new PubError('PUB_NOT_FOUND');
+    if (isRedditContentKind(c.kind)) {
+      return this.createRedditVersion(tx, product, c, b, m, now);
+    }
     const is = new Issues();
     const { data, links } = this.readVersionFields(is, b, true);
     const aiRaw = is.str(b, 'aiCallId', { max: 100 });
@@ -585,7 +598,11 @@ export class ContentsService {
     const expected = parseExpectedRevision(b.expectedRevision);
     const v = await tx.pubContentVersion.findFirst({
       where: { id: versionId, contentId, productId: product.id },
-      include: { content: { select: { kind: true, parentContentId: true } } },
+      include: {
+        content: {
+          select: { kind: true, parentContentId: true, redditBriefId: true },
+        },
+      },
     });
     if (!v) throw new PubError('PUB_NOT_FOUND');
     if (v.status !== 'draft') {
@@ -596,6 +613,16 @@ export class ContentsService {
         allowed: [],
         hint: 'frozen_version_create_new',
       });
+    }
+    if (isRedditContentKind(v.content.kind)) {
+      return this.patchRedditVersion(
+        tx,
+        product,
+        contentId,
+        versionId,
+        b,
+        actor,
+      );
     }
     const is = new Issues();
     const { data, links } = this.readVersionFields(is, b, false);
@@ -712,6 +739,28 @@ export class ContentsService {
         reason: 'revoked',
       });
     }
+    const reddit = isRedditContentKind(c.kind);
+    if (reddit) {
+      // P-R M2 (Р-RD-7): серверная часть meta — по ТЕКУЩЕМУ снимку правил и
+      // брифу на момент заморозки; входит в hash ниже.
+      const ctx = await this.ports
+        .reddit()
+        .materialContext(tx, product, c.redditBriefId!);
+      // Аудит M2 S3-5 (Р-RD-66): заморозка — только при готовом брифе
+      // (иначе была бы сырая ошибка гварда meta.affiliation).
+      this.assertRedditBriefReady(ctx);
+      const n0 = await tx.pubContentVersion.updateMany({
+        where: { id: versionId, revision: expected, status: 'draft' },
+        data: {
+          meta: redditMeta(v.meta, ctx) as Prisma.InputJsonObject,
+          ...(c.kind === 'reddit_comment' && ctx.serviceTitle
+            ? { title: ctx.serviceTitle }
+            : {}),
+        },
+      });
+      if (n0.count !== 1)
+        throw new PubError('PUB_CONFLICT', { currentRevision: expected + 1 });
+    }
     const hash = contentVersionHash(
       await versionHashInput(tx, product.id, versionId),
     );
@@ -762,7 +811,378 @@ export class ContentsService {
         toStatus: 'editorial_review',
       },
     );
+    if (reddit) {
+      // §M2.4: проверка `reddit_policy` — сразу при заморозке.
+      const w = await writeRedditPolicyCheck(
+        this.ports,
+        tx,
+        product,
+        versionId,
+        now,
+        'submit',
+      );
+      audit.push(w.audit);
+    }
     return { body: await loadVersion(tx, product.id, versionId), audit };
+  }
+
+  // ── Reddit-материал (P-R M2, §M2.1, Р-RD-49) ──────────────────────────
+
+  /**
+   * Поля версии Reddit-материала: заголовок (у комментария — служебный,
+   * клиент не передаёт), тело (post ≤ 40 000, comment ≤ 10 000), клиентская
+   * часть `meta`, claims/факты; оффер, родитель и `sourceIds` — от сервера
+   * (оффер — из брифа, источники — из `claimMap`). `aiCallId` +
+   * `variantIndex` — выбранный вариант `pub.reddit.draft`.
+   */
+  private readRedditFields(
+    is: Issues,
+    b: Body,
+    kind: 'reddit_post' | 'reddit_comment',
+    create: boolean,
+  ): {
+    data: Record<string, unknown>;
+    clientMeta: RedditClientMeta | undefined;
+    links: Partial<Links>;
+    aiRaw: string | null | undefined;
+    variantIndex: number | null | undefined;
+  } {
+    const data: Record<string, unknown> = {};
+    const opt = (k: string) => create || has(b, k);
+    if (kind === 'reddit_comment') {
+      if (has(b, 'title')) is.add('title', 'derived');
+    } else if (opt('title')) {
+      data.title = is.str(b, 'title', { required: true, max: 300 });
+    }
+    if (opt('body')) {
+      const body = b.body;
+      const max = kind === 'reddit_comment' ? 10_000 : 40_000;
+      if (typeof body !== 'string' && !(create && body === undefined))
+        is.add('body', 'type');
+      else {
+        const t = typeof body === 'string' ? body : '';
+        if ([...t].length > max) is.add('body', 'length');
+        else if (hasRawHtml(t)) is.add('body', 'raw_html');
+        else data.body = t;
+      }
+    }
+    for (const k of ['offerVersionId', 'sourceIds'] as const)
+      if (has(b, k)) is.add(k, 'derived');
+    if (has(b, 'parentVersionId')) is.add('parentVersionId', 'not_allowed');
+    let clientMeta: RedditClientMeta | undefined;
+    if (opt('meta')) {
+      const m = checkRedditVersionMeta(b.meta);
+      m.issues.forEach((x) => is.add(x.field, x.code));
+      clientMeta = m.meta;
+    }
+    const links: Partial<Links> = {};
+    for (const k of ['claimIds', 'factIds'] as const) {
+      if (opt(k)) links[k] = is.ids(b, k, 200) ?? [];
+    }
+    if (clientMeta) links.sourceIds = claimMapSourceIds(clientMeta.claimMap);
+    const aiRaw = is.str(b, 'aiCallId', { max: 100 });
+    const variantIndex = is.int(b, 'variantIndex', { min: 0, max: 2 });
+    if (aiRaw && (variantIndex === undefined || variantIndex === null))
+      is.add('variantIndex', 'required');
+    if (!aiRaw && typeof variantIndex === 'number')
+      is.add('aiCallId', 'required');
+    return { data, clientMeta, links, aiRaw, variantIndex };
+  }
+
+  /** Бриф готов (иначе 409 `PUB_BRIEF_NOT_READY {missing}`). */
+  private assertRedditBriefReady(ctx: RedditMaterialContext): void {
+    if (ctx.briefStatus !== 'ready' || ctx.briefMissing.length) {
+      throw new PubError('PUB_BRIEF_NOT_READY', {
+        missing:
+          ctx.briefStatus !== 'ready'
+            ? ['brief_ready', ...ctx.briefMissing]
+            : ctx.briefMissing,
+      });
+    }
+  }
+
+  /**
+   * Источники `claimMap`: источники продукта (`origin=content`), не
+   * отозванные, последние редакции; доказательства P-R (выдержка, правила)
+   * — 400 `restricted_source` (Р-RD-4).
+   */
+  private async checkClaimSources(
+    tx: PubTx,
+    productId: string,
+    ids: readonly string[],
+  ): Promise<void> {
+    if (!ids.length) return;
+    await assertSourceIds(tx, productId, ids, 'meta.claimMap.sourceIds');
+    const reddit = await tx.pubSource.count({
+      where: { productId, id: { in: [...ids] }, origin: 'reddit' },
+    });
+    if (reddit)
+      throw validationError([
+        { field: 'meta.claimMap.sourceIds', code: 'restricted_source' },
+      ]);
+  }
+
+  /**
+   * Вариант вызова `pub.reddit.draft` ЭТОГО брифа (P-R M2): задача брифа
+   * (`reddit_brief`) или задача переписывания абзаца черновика материала
+   * этого брифа (`content_version`, раунд 2, Р-RD-83).
+   */
+  private async assertRedditVariant(
+    tx: PubTx,
+    productId: string,
+    briefId: string,
+    aiRaw: string | null | undefined,
+    variantIndex: number | null | undefined,
+  ): Promise<string | null> {
+    const aiCallId = await assertAiCall(tx, productId, aiRaw, [
+      'pub.reddit.draft',
+    ]);
+    if (!aiCallId) return null;
+    const call = await tx.pubAiCall.findFirst({
+      where: { id: aiCallId, productId },
+      select: {
+        output: true,
+        task: { select: { objectType: true, objectId: true } },
+      },
+    });
+    const ofBrief =
+      !!call &&
+      call.task.objectType === 'reddit_brief' &&
+      call.task.objectId === briefId;
+    const ofDraft =
+      !!call &&
+      call.task.objectType === 'content_version' &&
+      (await tx.pubContentVersion.count({
+        where: {
+          id: call.task.objectId,
+          productId,
+          content: { redditBriefId: briefId },
+        },
+      })) === 1;
+    if (!call || (!ofBrief && !ofDraft))
+      throw validationError([{ field: 'aiCallId', code: 'ai_call' }]);
+    const variants = (call.output as { variants?: unknown } | null)?.variants;
+    if (
+      !Array.isArray(variants) ||
+      typeof variantIndex !== 'number' ||
+      variantIndex >= variants.length
+    )
+      throw validationError([{ field: 'variantIndex', code: 'range' }]);
+    return aiCallId;
+  }
+
+  private async createRedditVersion(
+    tx: PubTx,
+    product: ProductRef,
+    c: {
+      id: string;
+      kind: string;
+      status: string;
+      currentVersionId: string | null;
+      approvedVersionId: string | null;
+      publishedVersionId: string | null;
+      redditBriefId: string | null;
+    },
+    b: Body,
+    m: { memberId: string; actor: string; actors: Actor[] },
+    now: Date,
+  ): Promise<OpOut<VersionView>> {
+    const kind = c.kind as 'reddit_post' | 'reddit_comment';
+    const is = new Issues();
+    const f = this.readRedditFields(is, b, kind, true);
+    is.throwIfAny();
+    const from = c.status as ContentStatus;
+    if (!NEW_VERSION_FROM.includes(from)) {
+      throw new PubError('PUB_TRANSITION_INVALID', {
+        machine: 'content',
+        from,
+        to: 'drafting',
+        allowed: [],
+        hint: 'new_version_not_allowed_in_status',
+      });
+    }
+    if (c.currentVersionId) {
+      const curV = await tx.pubContentVersion.findFirst({
+        where: { id: c.currentVersionId },
+        select: { status: true },
+      });
+      if (curV?.status === 'draft') {
+        throw new PubError('PUB_CONFLICT', {
+          reason: 'draft_exists',
+          versionId: c.currentVersionId,
+        });
+      }
+    }
+    if (from !== 'drafting') {
+      assertTransition(CONTENT_MACHINE, from, 'drafting', { actors: m.actors });
+    }
+    const ctx = await this.ports
+      .reddit()
+      .materialContext(tx, product, c.redditBriefId!);
+    this.assertRedditBriefReady(ctx);
+    await this.checkVersionRefs(
+      tx,
+      product.id,
+      { offerVersionId: ctx.offerVersionId },
+      { claimIds: f.links.claimIds, factIds: f.links.factIds },
+    );
+    await this.checkClaimSources(tx, product.id, f.links.sourceIds ?? []);
+    const aiCallId = await this.assertRedditVariant(
+      tx,
+      product.id,
+      ctx.briefId,
+      f.aiRaw,
+      f.variantIndex,
+    );
+    const last = await tx.pubContentVersion.findFirst({
+      where: { contentId: c.id },
+      orderBy: { number: 'desc' },
+      select: { number: true },
+    });
+    const audit: AuditInput[] = [];
+    if (from === 'approved' || from === 'correction_required') {
+      await this.supersedeUnpublished(tx, product, c, 'new_version', audit);
+    }
+    const v = await tx.pubContentVersion.create({
+      data: {
+        accountId: product.accountId,
+        productId: product.id,
+        contentId: c.id,
+        number: (last?.number ?? 0) + 1,
+        title:
+          kind === 'reddit_comment'
+            ? (ctx.serviceTitle ?? `r/${ctx.subreddit}`)
+            : (f.data.title as string),
+        body: (f.data.body as string) ?? '',
+        meta: redditMeta(f.clientMeta ?? {}, ctx) as Prisma.InputJsonObject,
+        format: c.kind,
+        parentVersionId: null,
+        offerVersionId: ctx.offerVersionId,
+        authorMemberId: m.memberId,
+        aiCallId,
+        status: 'draft',
+        createdBy: m.actor,
+      },
+    });
+    await this.replaceLinks(
+      tx,
+      product,
+      v.id,
+      { sourceIds: f.links.sourceIds ?? [], ...f.links },
+      m.actor,
+    );
+    await tx.pubContent.update({
+      where: { id: c.id },
+      data: {
+        currentVersionId: v.id,
+        status: 'drafting',
+        ...(from === 'approved'
+          ? { approvedVersionId: c.publishedVersionId }
+          : {}),
+        revision: { increment: 1 },
+      },
+    });
+    audit.push(
+      {
+        objectType: 'content_version',
+        objectId: v.id,
+        action: 'create',
+        toStatus: 'draft',
+        meta: {
+          number: v.number,
+          aiCallId,
+          variantIndex: aiCallId ? (f.variantIndex ?? null) : null,
+          ruleSnapshotId: ctx.currentSnapshotId,
+        },
+      },
+      ...(from !== 'drafting'
+        ? [
+            {
+              objectType: 'content' as const,
+              objectId: c.id,
+              action: 'transition' as const,
+              fromStatus: from,
+              toStatus: 'drafting',
+              occurredAt: now,
+            },
+          ]
+        : []),
+      ...(await acceptAiCall(this.ports, tx, product, aiCallId, m.actors)),
+    );
+    return { body: await loadVersion(tx, product.id, v.id), audit };
+  }
+
+  private async patchRedditVersion(
+    tx: PubTx,
+    product: ProductRef,
+    contentId: string,
+    versionId: string,
+    b: Body,
+    actor: string,
+  ): Promise<OpOut<VersionView>> {
+    const expected = parseExpectedRevision(b.expectedRevision);
+    const v = await tx.pubContentVersion.findFirst({
+      where: { id: versionId, contentId, productId: product.id },
+      include: { content: { select: { kind: true, redditBriefId: true } } },
+    });
+    if (!v) throw new PubError('PUB_NOT_FOUND');
+    const kind = v.content.kind as 'reddit_post' | 'reddit_comment';
+    const is = new Issues();
+    const f = this.readRedditFields(is, b, kind, false);
+    is.throwIfAny();
+    const ctx = await this.ports
+      .reddit()
+      .materialContext(tx, product, v.content.redditBriefId!);
+    await this.checkVersionRefs(
+      tx,
+      product.id,
+      {},
+      {
+        claimIds: f.links.claimIds,
+        factIds: f.links.factIds,
+      },
+    );
+    if (f.links.sourceIds)
+      await this.checkClaimSources(tx, product.id, f.links.sourceIds);
+    const data: Record<string, unknown> = { ...f.data };
+    // Серверная часть meta пересчитывается при каждой правке (Р-RD-7).
+    const client =
+      f.clientMeta ?? (v.meta as Record<string, unknown> as RedditClientMeta);
+    data.meta = redditMeta(client, ctx);
+    if (kind === 'reddit_comment' && ctx.serviceTitle)
+      data.title = ctx.serviceTitle;
+    let aiCallId: string | null | undefined;
+    if (has(b, 'aiCallId') || has(b, 'variantIndex')) {
+      aiCallId = await this.assertRedditVariant(
+        tx,
+        product.id,
+        ctx.briefId,
+        f.aiRaw,
+        f.variantIndex,
+      );
+      data.aiCallId = aiCallId;
+    }
+    await casUpdate(tx.pubContentVersion, versionId, expected, data);
+    await this.replaceLinks(tx, product, versionId, f.links, actor);
+    return {
+      body: await loadVersion(tx, product.id, versionId),
+      audit: [
+        {
+          objectType: 'content_version',
+          objectId: versionId,
+          action: 'update',
+          meta: {
+            fields: [...Object.keys(f.data), ...Object.keys(f.links)]
+              .concat(f.clientMeta ? ['meta'] : [])
+              .sort(),
+            ...(aiCallId !== undefined
+              ? { aiCallId, variantIndex: f.variantIndex ?? null }
+              : {}),
+            ruleSnapshotId: ctx.currentSnapshotId,
+          },
+        },
+      ],
+    };
   }
 
   // ── Ручные переходы машины 7.1 ─────────────────────────────────────────
@@ -823,6 +1243,17 @@ export class ContentsService {
       await tx.pubContentVersion.updateMany({
         where: { id: c.currentVersionId ?? '', status: 'submitted' },
         data: { status: 'changes_requested' },
+      });
+    }
+    if (t.action === 'schedule' && isRedditContentKind(c.kind)) {
+      // P-R M2: Reddit-материал планируется копированием утверждённого
+      // текста (гейт reddit_publish, свежая проверка правил, аудит copy).
+      throw new PubError('PUB_TRANSITION_INVALID', {
+        machine: 'content',
+        from,
+        to,
+        allowed: [],
+        hint: 'use_dedicated_action:copy',
       });
     }
     if (t.action === 'schedule') {
@@ -1012,4 +1443,31 @@ export class ContentsService {
       facts: setDiff(va.factIds, vb.factIds),
     };
   }
+}
+
+/**
+ * `meta` Reddit-версии: клиентская часть + серверная (снимок правил,
+ * аффилированность брифа, тред возможности) — входит в hash (Р-RD-7).
+ */
+export function redditMeta(
+  client: unknown,
+  ctx: Pick<
+    RedditMaterialContext,
+    'currentSnapshotId' | 'affiliation' | 'threadUrl'
+  >,
+): Record<string, unknown> {
+  const c = (client ?? {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of [
+    'disclosure',
+    'flairSuggestion',
+    'claimMap',
+    'uncertainties',
+  ])
+    if (c[k] !== undefined) out[k] = c[k];
+  out.disclosure = typeof out.disclosure === 'string' ? out.disclosure : '';
+  out.ruleSnapshotId = ctx.currentSnapshotId;
+  out.affiliation = ctx.affiliation;
+  out.threadUrl = ctx.threadUrl;
+  return out;
 }

@@ -640,6 +640,43 @@ ciDescribe(
             .query({ format: 'csv' })
             .set(ed),
         );
+        // P-R M2: бриф с контактом (цель, аудитория, тезис, ограничения) — 400.
+        const briefBase = () => ({
+          opKey: randomUUID(),
+          projectId: proj.body.data.id,
+          communityId: comm.body.data.id,
+          contentType: 'post',
+          objective: 'Help small shops reuse one article',
+        });
+        for (const [label, extra] of [
+          ['reddit brief objective 400', { objective: `Call ${p.phone}` }],
+          ['reddit brief audience 400', { audience: `Mail ${p.email}` }],
+          [
+            'reddit brief keyPoints 400',
+            {
+              keyPoints: [
+                { text: `Ask ${p.email}`, sourceIds: 'needs_verification' },
+              ],
+            },
+          ],
+          ['reddit brief constraints 400', { constraints: [`No ${p.phone}`] }],
+        ] as const) {
+          const r = keep(
+            label,
+            await request(srv())
+              .post(`${R}/briefs`)
+              .set(ed)
+              .send({ ...briefBase(), ...extra }),
+          );
+          expect(r.status).toBe(400);
+        }
+        keep(
+          'reddit briefs csv',
+          await request(srv())
+            .get(`${R}/briefs`)
+            .query({ format: 'csv' })
+            .set(ed),
+        );
 
         // ── Отчёт ───────────────────────────────────────────────────────
         const rep = keep(

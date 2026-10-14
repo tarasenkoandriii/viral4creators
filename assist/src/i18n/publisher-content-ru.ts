@@ -260,6 +260,9 @@ export const pubContentRu = {
     aiRef: 'Из AI-черновика {id}',
   },
   materials: {
+    redditStudio:
+      'Reddit-материал: правка, согласование с подтверждением предупреждений, копирование и отметки о публикации — в студии Reddit.',
+    openRedditStudio: 'Открыть студию Reddit',
     pubActions: 'Сменить статус публикации',
     pubTo: {
       published: 'Опубликовано',
@@ -282,6 +285,8 @@ export const pubContentRu = {
       cards: 'Карточки',
       checklist: 'Чек-лист',
       video_script: 'Сценарий видео',
+      reddit_post: 'Reddit: пост',
+      reddit_comment: 'Reddit: комментарий',
     },
     statuses: {
       brief: 'бриф',
@@ -397,6 +402,7 @@ export const pubContentRu = {
       technical: 'Техническая',
       ai_review: 'AI-проверка',
       adaptation_meaning: 'Смысл адаптации',
+      reddit_policy: 'Правила Reddit (автоматически)',
     },
     qaResults: { pass: 'пройдена', fail: 'не пройдена', unknown: 'неизвестно' },
     qaAdd: 'Записать проверку',
@@ -560,6 +566,7 @@ export const pubContentRu = {
       'pub.claims.extract': 'Извлечение утверждений',
       'pub.distribution.plan': 'План распространения',
       'pub.venues.compare': 'Сравнение площадок',
+      'pub.reddit.draft': 'Черновик Reddit',
     },
     disabledP0: 'выключен в пилоте',
     callStatuses: {

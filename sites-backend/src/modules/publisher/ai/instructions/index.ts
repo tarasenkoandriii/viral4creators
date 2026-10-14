@@ -18,6 +18,7 @@ import * as draft from './draft-write.v1';
 import * as helper from './helper-answer.v1';
 import * as qa from './qa-review.v1';
 import * as cluster from './questions-cluster.v1';
+import * as reddit from './reddit-draft.v1';
 import * as venues from './venues-compare.v1';
 
 export interface Instruction {
@@ -43,6 +44,7 @@ export const INSTRUCTIONS: Readonly<Record<GeneratorId, Instruction>> = {
   'pub.claims.extract': of(claims),
   'pub.distribution.plan': of(distribution),
   'pub.venues.compare': of(venues),
+  'pub.reddit.draft': of(reddit),
 };
 
 /** Записанный sha256 текста версии инструкции (правка без новой версии — тест падает). */
@@ -65,4 +67,6 @@ export const INSTRUCTION_SHA256: Readonly<Record<string, string>> = {
     'b192040440d017b18552c1582c54ee210c07fff8782b4ed5ae2833d6773c3454',
   'pub.venues.compare@1':
     'e3930af74f2960d140e8023048c111b4e7dd36aa2cdf5346a14764da11590317',
+  'pub.reddit.draft@1':
+    'e163943d6f7d46604919729bdc4646d226accc621f7154c5f299395a28bc1ed6',
 };

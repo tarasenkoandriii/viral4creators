@@ -80,6 +80,7 @@ export const pubEn: PublisherDict = {
       spend: 'Spending',
       purchases: 'Purchases',
       ai_use: 'Working AI',
+      reddit_publish: 'Copying to Reddit',
     },
     open: 'Open',
     closed: 'Closed',
@@ -209,6 +210,7 @@ export const pubEn: PublisherDict = {
       launch_evidence_d0: 'D0 launch protocol',
       launch_evidence_purchase: 'Pre-purchase protocol',
       reddit_rules_stale_days: 'Reddit rules check freshness (days)',
+      reddit_excerpt_retention_days: 'Reddit excerpt retention (days)',
     },
     statuses: {
       assumption: 'not approved',
@@ -443,6 +445,9 @@ export const pubEn: PublisherDict = {
         'This part of the server is not connected yet — nothing was done.',
     },
     conflictReasons: {
+      warnings_not_acknowledged:
+        'Acknowledge the Reddit rules check warnings (the list has changed).',
+      already_published: 'This publication is already recorded.',
       reddit_evidence_locked:
         'Reddit evidence changes only via a new rules snapshot or an excerpt edit in the Reddit section.',
     },
@@ -483,6 +488,14 @@ export const pubEn: PublisherDict = {
       future: 'date is in the future',
       profile_ref: 'profile link or username — remove it',
       unknown: 'unknown value',
+      restricted_source: 'Reddit evidence cannot be a source',
+      comment_required: 'a link to the comment itself is required',
+      thread_mismatch: 'the link points to another thread',
+      before_material: 'earlier than the material was created',
+      reddit_route: 'Reddit materials are created in the Reddit section',
+      not_allowed: 'not allowed',
+      adaptation_only: 'adaptations only',
+      draft_exists: 'a draft already exists',
     },
     reasons: 'Reason: {reason}',
     importReasons: {
@@ -513,12 +526,15 @@ export const pubEn: PublisherDict = {
       offer_inactive: 'offer not active',
       change_task_open: 'an open change task',
       parent_not_approved: 'the parent article is not approved',
+      reddit_policy_block: 'Reddit rules check failed',
     },
     staleReasons: {
       hash_param: 'the hash in the request does not match the version',
       hash_mismatch: 'the version changed after approval',
       price_changed: 'the price went up',
       offer_inactive: 'offer not active',
+      rules_changed: 'community rules changed after the version',
+      rules_stale: 'rules check is stale',
     },
     transition: 'Transition {from} → {to} not allowed; allowed: {allowed}',
     budget: 'Available {available}, needed {requested}',

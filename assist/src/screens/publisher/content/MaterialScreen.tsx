@@ -79,6 +79,7 @@ const lines = (s: string) =>
  */
 export function MaterialScreen({ cid }: { cid: string }) {
   const { product } = usePublisher();
+  const c = usePubContent();
   const apis = usePubApis();
   const content = useAsync(
     () => apis.content.content(cid),
@@ -104,6 +105,17 @@ export function MaterialScreen({ cid }: { cid: string }) {
           null;
         return (
           <div className="space-y-4">
+            {x.redditStudio && (
+              <Alert tone="neutral" title={c.materials.redditStudio}>
+                <RecordLink
+                  section="reddit"
+                  id={x.id}
+                  query={{ tab: 'studio' }}
+                >
+                  {c.materials.openRedditStudio}
+                </RecordLink>
+              </Alert>
+            )}
             <ContentHeader
               key={`h-${x.revision}`}
               content={x}
@@ -125,7 +137,10 @@ export function MaterialScreen({ cid }: { cid: string }) {
                   version={selected}
                   onChanged={reload}
                 />
-                <PublicationsPanel version={selected} />
+                <PublicationsPanel
+                  version={selected}
+                  studio={!!x.redditStudio}
+                />
               </>
             )}
             {x.kind === 'article' && <AdaptationsPanel content={x} />}
@@ -263,6 +278,7 @@ function ContentHeader({
         </Card>
       )}
       {(editable || can('publication.manage')) &&
+        !x.redditStudio &&
         x.allowedTransitions.length > 0 && (
           <Card className="space-y-2">
             <div className="font-medium text-sm">{c.materials.transitions}</div>
@@ -361,7 +377,7 @@ function VersionsPanel({
     <Section
       title={c.materials.versions}
       action={
-        can('version.manage') ? (
+        can('version.manage') && !x.redditStudio ? (
           <Button
             variant="outline"
             onClick={() => setMode(mode === 'new' ? null : 'new')}
@@ -429,7 +445,12 @@ function VersionsPanel({
           </div>
           <div className="font-semibold">{selected.title}</div>
           <MetaView meta={selected.meta} />
-          <pre className="text-sm whitespace-pre-wrap break-words max-h-96 overflow-auto">
+          <pre
+            className="text-sm whitespace-pre-wrap break-words max-h-96 overflow-auto"
+            tabIndex={0}
+            role="region"
+            aria-label={c.materials.versions}
+          >
             {selected.body}
           </pre>
           <div className="text-xs text-silver-500">
@@ -437,32 +458,34 @@ function VersionsPanel({
             {c.materials.vfields.claims}: {selected.claimIds.length} ·{' '}
             {c.materials.vfields.facts}: {selected.factIds.length}
           </div>
-          {can('version.manage') && selected.status === 'draft' && (
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => setMode(mode === 'edit' ? null : 'edit')}
-              >
-                {c.materials.editDraft}
-              </Button>
-              <Button
-                loading={submit.busy}
-                onClick={async () => {
-                  const r = await submit.run((k) =>
-                    apis.content.submitVersion(
-                      x.id,
-                      selected.id,
-                      selected.revision,
-                      k
-                    )
-                  );
-                  if (r) onChanged();
-                }}
-              >
-                {c.materials.submit}
-              </Button>
-            </div>
-          )}
+          {can('version.manage') &&
+            !x.redditStudio &&
+            selected.status === 'draft' && (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setMode(mode === 'edit' ? null : 'edit')}
+                >
+                  {c.materials.editDraft}
+                </Button>
+                <Button
+                  loading={submit.busy}
+                  onClick={async () => {
+                    const r = await submit.run((k) =>
+                      apis.content.submitVersion(
+                        x.id,
+                        selected.id,
+                        selected.revision,
+                        k
+                      )
+                    );
+                    if (r) onChanged();
+                  }}
+                >
+                  {c.materials.submit}
+                </Button>
+              </div>
+            )}
           <PubErrorAlert error={submit.error} onReload={onChanged} />
           {versions.length > 1 && (
             <Field label={c.materials.diffWith}>
@@ -516,7 +539,12 @@ function VersionsPanel({
                         </div>
                       ) : null
                     )}
-                    <pre className="text-xs whitespace-pre-wrap max-h-80 overflow-auto">
+                    <pre
+                      className="text-xs whitespace-pre-wrap max-h-80 overflow-auto"
+                      tabIndex={0}
+                      role="region"
+                      aria-label={c.materials.diffWith}
+                    >
                       {d.body.map((l, i) => (
                         <div
                           key={i}
@@ -1376,7 +1404,7 @@ function ApprovalPanel({
       </Loadable>
       {!hash ? (
         <Alert tone="neutral">{c.materials.noHash}</Alert>
-      ) : can('version.approve') ? (
+      ) : can('version.approve') && !content.redditStudio ? (
         <div className="space-y-2">
           <p className="text-xs text-silver-500">
             {c.materials.approverFromRole}
@@ -1464,7 +1492,14 @@ function ApprovalRow({
 
 // ── Публикации ───────────────────────────────────────────────────────────
 
-function PublicationsPanel({ version }: { version: VersionView }) {
+function PublicationsPanel({
+  version,
+  studio = false,
+}: {
+  version: VersionView;
+  /** Reddit-материал: отметка о публикации — только в студии (§12.5). */
+  studio?: boolean;
+}) {
   const { can } = usePublisher();
   const c = usePubContent();
   const apis = usePubApis();
@@ -1504,7 +1539,7 @@ function PublicationsPanel({ version }: { version: VersionView }) {
           )
         }
       </Loadable>
-      {can('publication.manage') && (
+      {can('publication.manage') && !studio && (
         <Card className="space-y-2">
           <Field label={c.materials.channel}>
             <select

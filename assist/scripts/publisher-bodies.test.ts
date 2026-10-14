@@ -35,12 +35,8 @@ import type {
 import type { createLeadsApi } from '../src/lib/publisher/leads-api';
 import type { createReportsApi } from '../src/lib/publisher/reports-api';
 import type { createRedditApi } from '../src/lib/publisher/reddit-api';
-import {
-  bodyIssues,
-  bodyKeys,
-  contractSrc,
-  routesOf,
-} from './publisher-contract-lib';
+import type { createRedditStudioApi } from '../src/lib/publisher/reddit-studio-api';
+import { bodyIssuesOf, contractSrc, routesOf } from './publisher-contract-lib';
 import type { PublisherHttp } from '../src/lib/publisher/common-api';
 import { createAiApi as createAiApiRt } from '../src/lib/publisher/ai-api';
 import { createCalendarApi as createCalendarApiRt } from '../src/lib/publisher/calendar-api';
@@ -50,6 +46,7 @@ import { createDistributionApi as createDistributionApiRt } from '../src/lib/pub
 import { createLeadsApi as createLeadsApiRt } from '../src/lib/publisher/leads-api';
 import { createReportsApi as createReportsApiRt } from '../src/lib/publisher/reports-api';
 import { createRedditApi as createRedditApiRt } from '../src/lib/publisher/reddit-api';
+import { createRedditStudioApi as createRedditStudioApiRt } from '../src/lib/publisher/reddit-studio-api';
 
 // ── Помощники типов ─────────────────────────────────────────────────────
 type NoOp<B> = Omit<B, 'opKey'>;
@@ -80,6 +77,7 @@ type Di = ReturnType<typeof createDistributionApi>;
 type Le = ReturnType<typeof createLeadsApi>;
 type Re = ReturnType<typeof createReportsApi>;
 type Rd = ReturnType<typeof createRedditApi>;
+type St = ReturnType<typeof createRedditStudioApi>;
 
 // ── Ядро (P-G1) ─────────────────────────────────────────────────────────
 ok<Fits<BodyOf<Co['createProduct']>, CrC.CreateProductBody>>('createProduct');
@@ -273,6 +271,31 @@ ok<Fits<BodyOf<Rd['patchKeyword']>, RdC.PatchRedditKeywordBody>>(
   'patchRedditKeyword'
 );
 
+// ── Reddit Manual MVP, M2 Studio (P-R) ──────────────────────────────────
+ok<Fits<BodyOf<St['createBrief']>, RdC.CreateRedditBriefBody>>(
+  'createRedditBrief'
+);
+ok<Fits<BodyOf<St['patchBrief']>, RdC.PatchRedditBriefBody>>(
+  'patchRedditBrief'
+);
+ok<Fits<BodyOf<St['generate']>, RdC.GenerateRedditDraftBody>>(
+  'generateRedditDraft'
+);
+ok<Fits<BodyOf<St['createContent']>, RdC.CreateRedditContentBody>>(
+  'createRedditContent'
+);
+ok<Fits<BodyOf<St['reportPublication']>, RdC.ReportRedditPublicationBody>>(
+  'reportRedditPublication'
+);
+// Версии Reddit-ветви общего маршрута — свои тела контракта (§9.9).
+ok<Fits<BodyOf<St['createVersion']>, CoC.CreateRedditVersionBody>>(
+  'createRedditVersion'
+);
+ok<Fits<BodyOf<St['patchVersion']>, CoC.PatchRedditVersionBody>>(
+  'patchRedditVersion'
+);
+ok<Fits<BodyOf<St['copy']>, RdC.CopyRedditContentBody>>('copyRedditContent');
+
 // ── Сверка не слепа: заведомые расхождения tsc отвергает ────────────────
 // @ts-expect-error — лишний ключ (старое тело согласования, аудит A8)
 ok<Fits<ApproveIn & { approverDisplayName: string }, CoC.ApproveBody>>('x');
@@ -288,7 +311,12 @@ ok<Fits<{ policy_risk: number }, RdC.RedditFactorsInput>>('x');
 ok<Fits<{ projectId: string; name: string }, RdC.CreateRedditCommunityBody>>(
   'x'
 );
-names.length -= 5;
+type RdAffMeta = { body: string; meta: { affiliation: 'none' } };
+// @ts-expect-error — серверный ключ `meta.affiliation` от клиента (P-R M2)
+ok<Fits<RdAffMeta, CoC.CreateRedditVersionBody>>('x');
+// @ts-expect-error — шаблон генерации вне списка (P-R M2)
+ok<Fits<{ template: 'essay' }, RdC.GenerateRedditDraftBody>>('x');
+names.length -= 7;
 
 // ── Рантайм: методы со скалярными аргументами тело строят сами — каждый
 // вызывается через подменённый `PublisherHttp`, тело сверяется с `*Body`
@@ -332,6 +360,7 @@ const fake: PublisherHttp = {
   const le = createLeadsApiRt(fake);
   const re = createReportsApiRt(fake);
   const rd = createRedditApiRt(fake, pid);
+  const st = createRedditStudioApiRt(fake, pid);
   const calls: Array<Promise<unknown>> = [
     co.propose(pid, 'niche', { text: 'x' }, K),
     co.withdraw(pid, 'niche', 'pr1', K),
@@ -376,6 +405,11 @@ const fake: PublisherHttp = {
       reason: 'r',
     }),
     rd.transitionOpportunity('ro1', 'archive', K, { expectedRevision: 2 }),
+    // P-R M2: ready/архив брифа, проверка и копирование (общие тела).
+    st.briefReady('rb1', K, 3),
+    st.archiveBrief('rb1', K, 3),
+    st.check('c1', K),
+    st.copy('c1', K),
   ];
   await Promise.all(calls.map((p) => p.catch(() => undefined)));
 }
@@ -397,9 +431,11 @@ for (const c of sent) {
   const path = `/publisher/${c.path.split('?')[0]}`;
   const def = ROUTES.find((d) => d.method === c.method && d.re.test(path));
   assert.ok(def, `нет маршрута ${c.method} ${path}`);
-  const issues = bodyIssues(c.body, bodyKeys(def!.body));
+  const issues = bodyIssuesOf(c.body, def!.body);
   assert.deepEqual(issues, [], `${def!.name} (${def!.body}): ${issues}`);
-  runtime.add(def!.name);
+  // Ключ — метод и путь: имена маршрутов разных пакетов совпадают
+  // (`briefReady` у P-B1 и у P-R M2).
+  runtime.add(`${def!.method} ${def!.path}`);
 }
 assert.equal(runtime.size, sent.length, 'каждый рантайм-вызов — свой маршрут');
 
@@ -421,11 +457,15 @@ const self = (await import('node:fs')).readFileSync(
 );
 let typed = 0;
 for (const r of ROUTES) {
-  const named = /^\w+$/.test(r.body) && !SHARED.has(r.body);
-  const byType = named && new RegExp(`\\.${r.body}\\s*>`).test(self);
+  // Объединение (`CreateVersionBody | CreateRedditVersionBody`) — сверен
+  // каждый член.
+  const members = r.body.split('|').map((x) => x.trim());
+  const named = members.every((m) => /^\w+$/.test(m) && !SHARED.has(m));
+  const byType =
+    named && members.every((m) => new RegExp(`\\.${m}\\s*>`).test(self));
   if (byType) typed++;
   assert.ok(
-    byType || runtime.has(r.name),
+    byType || runtime.has(`${r.method} ${r.path}`),
     `маршрут ${r.name} (${r.method} ${r.path}, ${r.body}) не сверен: добавь ok<Fits<…>> или вызов в рантайм-часть`
   );
 }

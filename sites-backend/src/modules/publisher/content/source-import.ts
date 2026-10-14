@@ -21,9 +21,11 @@
  * резолвится во внутренний адрес), — `ssrf`; имя не резолвится — `timeout`.
  * Эти уточнения только меняют код причины: защита — в `pinnedFetch`.
  *
- * Хосты Reddit (`reddit.com`, `*.reddit.com`, `redd.it`, `*.redd.it`,
- * `*.redditmedia.com`, `*.redditstatic.com`) — `reddit_manual_only` до сети:
- * режим P-R только MANUAL_COPY (Р-RD-0, AT-RD-16).
+ * Хосты Reddit (`reddit.com`, `redd.it`, `redditmedia.com`,
+ * `redditstatic.com`, с M2 — `reddituploads.com`, `redditmail.com`,
+ * `redditinc.com`, `reddit.app.link`, `rdt.li`; сами домены и поддомены,
+ * `REDDIT_HOST_DOMAINS`) — `reddit_manual_only` до сети: режим P-R только
+ * MANUAL_COPY (Р-RD-0, AT-RD-16, Р-RD-60).
  */
 import {
   assertCrawlableUrl,

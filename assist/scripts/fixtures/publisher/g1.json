@@ -38,6 +38,10 @@
       "ai_use": {
         "open": false,
         "missingCount": 3
+      },
+      "reddit_publish": {
+        "open": false,
+        "missingCount": 6
       }
     },
     "features": {
@@ -96,6 +100,17 @@
           "kind": "ai_config",
           "key": "binding",
           "detail": "missing"
+        }
+      ]
+    },
+    "reddit_publish": {
+      "gate": "reddit_publish",
+      "open": false,
+      "missing": [
+        {
+          "kind": "parameter",
+          "key": "reddit_rules_stale_days",
+          "detail": "not_approved"
         }
       ]
     }
@@ -369,6 +384,7 @@
     "blockReason": null,
     "criticalStale": false,
     "firstPublishedAt": null,
+    "redditBriefId": null,
     "openTasks": [
       {
         "id": "rt1",
@@ -488,6 +504,7 @@
         "claimId": null
       }
     ],
+    "warnings": [],
     "checkedBy": "member:m1",
     "checkedAt": "2026-10-13T10:00:00.000Z",
     "selfReview": true,
@@ -719,6 +736,7 @@
     "publishedAt": null,
     "status": "pending",
     "verifyStatus": "not_checked",
+    "reportKind": "standard",
     "evidenceUrl": null,
     "lastVerifiedAt": null,
     "verifiedBy": null,

@@ -26,7 +26,8 @@ import type { CronScope } from '../../../common/cron-scope';
 import { PubContributions } from '../core/contributions';
 import type { CronJob, CronResult, CronSchedule } from '../core/ports';
 
-export type CronOwner = 'P-A1' | 'P-B1' | 'P-B2' | 'P-C' | 'P-D' | 'P-E';
+export type CronOwner =
+  'P-A1' | 'P-B1' | 'P-B2' | 'P-C' | 'P-D' | 'P-E' | 'P-R';
 
 /** §15.1 (+ Р-PUB-A1-9: `approvals-expire` — по задаче на тип, `backup-rotation`). */
 export const PUB_CRON_SCHEDULE: Readonly<
@@ -58,6 +59,11 @@ export const PUB_CRON_SCHEDULE: Readonly<
   'backup-weekly': { schedule: 'daily', owner: 'P-E' },
   'backup-rotation': { schedule: 'daily', owner: 'P-E' },
   housekeeping: { schedule: 'daily', owner: 'P-A1' },
+  /**
+   * P-R M2 (§4): ретенция выдержек тредов Reddit — своё задание пакета, не
+   * `housekeeping` (`pub_sources` пишет P-B1 через сервис, Р-RD-59).
+   */
+  'reddit-retention': { schedule: 'daily', owner: 'P-R' },
 };
 
 /** Бюджет прохода: запас до maxDuration функции (как перепроверка хостов). */

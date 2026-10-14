@@ -257,6 +257,9 @@ export const PARAMETER_SCHEMAS: {
     note: optText(),
   }),
   reddit_rules_stale_days: s.object({ days: s.int({ min: 1, max: 365 }) }),
+  reddit_excerpt_retention_days: s.object({
+    days: s.int({ min: 1, max: 3650 }),
+  }),
 };
 
 /** Форма значения ключа (пустой список — подходит). */

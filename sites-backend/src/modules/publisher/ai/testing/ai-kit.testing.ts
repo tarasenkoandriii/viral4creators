@@ -11,7 +11,7 @@ import {
   type GenerateRequest,
   type GenerateResult,
 } from '../../../site-ai/text-model';
-import { P0_ENABLED_GENERATORS } from '../../contracts/ai';
+import type { EvalSetVersion } from '../../contracts/ai';
 import type { ParameterKey } from '../../contracts/parameters';
 import { sha256Hex, sourceContentHash } from '../../core/content-hash';
 import { kyivMonthOf } from '../../core/kyiv-time';
@@ -196,6 +196,8 @@ export async function seedBoundConfig(
     contextRulesVersion?: string;
     schemaSetVersion?: string;
     callParams?: AiCallParams;
+    /** Версия набора (Р-RD-64): 2.2 — P0 (умолчание), 2.3 — с Reddit. */
+    evalSet?: EvalSetVersion;
   } = {},
 ): Promise<{ configId: string; bindingId: string }> {
   // Hash — честный hash состава (предаудит D2-04: шлюз сверяет hash
@@ -206,6 +208,7 @@ export async function seedBoundConfig(
     ...currentConfigSpec(
       opts.provider ?? 'gemini',
       opts.model ?? 'gemini-3.6-flash',
+      opts.evalSet,
     ),
     ...(opts.contextRulesVersion
       ? { contextRulesVersion: opts.contextRulesVersion }
@@ -237,7 +240,8 @@ export async function seedBoundConfig(
             schemaSetVersion: spec.schemaSetVersion,
             instructionVersions: spec.instructionVersions,
             configHash,
-            coveredGenerators: [...P0_ENABLED_GENERATORS],
+            coveredGenerators: [...spec.coveredGenerators],
+            evalSetVersion: spec.evalSetVersion,
             createdBy: 'system:test-seed',
           },
         });

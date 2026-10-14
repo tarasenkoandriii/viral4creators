@@ -22,7 +22,11 @@
 import { Injectable } from '@nestjs/common';
 import type { RevokeSourceResponse } from '../contracts/content-api';
 import { PubError } from '../core/errors';
-import { redditOnSourceRevoked } from '../reddit/cascade';
+import {
+  communitiesOfRulesSources,
+  redditOnSourceRevoked,
+} from '../reddit/cascade';
+import { redditDecidedVersions } from './reddit-materials.service';
 import {
   PubPorts,
   type ProductRef,
@@ -216,6 +220,24 @@ export class RevocationService {
       cur.origin === 'reddit'
         ? await redditOnSourceRevoked(tx, product, chain)
         : [];
+    // P-R M2 (хвост M2 (3)): Reddit-материалы этих сообществ с принятым
+    // решением — общий каскад `stale_check` (согласования неопубликованных
+    // версий снимаются, опубликованные — на исправление).
+    if (cur.origin === 'reddit') {
+      const communities = await communitiesOfRulesSources(tx, product, chain);
+      const decided = await redditDecidedVersions(tx, product.id, communities);
+      if (decided.length) {
+        const r = await this.cascades.run(tx, product, {
+          reason: 'stale_check',
+          triggerRef: `reddit-rules-revoked:${id}`,
+          versionIds: decided,
+          critical: false,
+          actor,
+          now,
+        });
+        opened += r.tasksOpened;
+      }
+    }
     const view = await loadSource(tx, product.id, id);
     return {
       body: {

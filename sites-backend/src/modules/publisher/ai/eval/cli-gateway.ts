@@ -25,6 +25,7 @@ import type {
 } from '../../../site-ai/text-model';
 import type { AiUsageRecorder } from '../../../site-ai/usage-recorder';
 import type { ProductCtx } from '../../contracts/common';
+import { EVAL_SET_VERSION, type EvalSetVersion } from '../../contracts/ai';
 import { EVAL_SCHEMA_OF } from '../../contracts/ai-schemas';
 import type {
   ProductKind,
@@ -63,7 +64,7 @@ import {
   type ResultRow,
   type RunInfo,
 } from './protocol';
-import { EVAL_TASKS, type EvalTask } from './tasks';
+import { evalTasksOf, type EvalTask } from './tasks';
 
 export const EVAL_ACTOR = 'system:eval';
 export const FAKE_PROVIDER = 'fake';
@@ -148,8 +149,14 @@ export class CliEvalGateway {
       provider: string;
       modelName: string;
       fake: boolean;
+      /** Версия набора (Р-RD-64): `2.2` — P0 (умолчание), `2.3` — с Reddit. */
+      evalSet?: EvalSetVersion;
     },
   ) {}
+
+  private get set(): EvalSetVersion {
+    return this.deps.evalSet ?? EVAL_SET_VERSION;
+  }
 
   private tx<T>(accountId: string, fn: (tx: PubTx) => Promise<T>): Promise<T> {
     return this.db
@@ -194,7 +201,11 @@ export class CliEvalGateway {
   async ensureConfig(
     product: ProductCtx,
   ): Promise<{ id: string; configHash: string }> {
-    const spec = currentConfigSpec(this.deps.provider, this.deps.modelName);
+    const spec = currentConfigSpec(
+      this.deps.provider,
+      this.deps.modelName,
+      this.set,
+    );
     const configHash = configHashOf(spec);
     return this.tx(product.accountId, async (tx) => {
       const found = await tx.pubAiConfig.findFirst({
@@ -299,10 +310,11 @@ export class CliEvalGateway {
     }
     const ids = await this.fixtureIds(product);
     const config = await this.ensureConfig(product);
-    const tasks = EVAL_TASKS.filter(
+    const setTasks = evalTasksOf(this.set);
+    const tasks = setTasks.filter(
       (t) => !opts.only?.length || opts.only.includes(t.code),
     );
-    if (opts.only?.some((c) => !EVAL_TASKS.some((t) => t.code === c))) {
+    if (opts.only?.some((c) => !setTasks.some((t) => t.code === c))) {
       throw new Error(`Неизвестная задача в --only: ${opts.only.join(',')}`);
     }
     const runId = opts.runId
@@ -388,7 +400,7 @@ export class CliEvalGateway {
             select: { id: true },
           })
         : [];
-      const input = this.inputOf(task);
+      const input = this.inputOf(task, ids);
       if (this.deps.model instanceof FakeEvalModel) {
         const custom = opts.fakeAnswer?.(task, ids);
         this.deps.model.next =
@@ -524,7 +536,10 @@ export class CliEvalGateway {
     return r.id;
   }
 
-  private inputOf(task: EvalTask): {
+  private inputOf(
+    task: EvalTask,
+    ids: Readonly<Record<FixtureCode, string>>,
+  ): {
     generatorInput: unknown;
     record: Record<string, unknown>;
   } {
@@ -570,6 +585,27 @@ export class CliEvalGateway {
           },
           record,
         };
+      case 'reddit': {
+        // P-R M2 (AI-31…AI-42): источники тезисов — id фикстур продукта.
+        const r = task.input.reddit!;
+        return {
+          generatorInput: {
+            ...r,
+            brief: {
+              ...r.brief,
+              keyPoints: r.brief.keyPoints.map((k) => ({
+                text: k.text,
+                sourceIds:
+                  k.sources === 'needs_verification'
+                    ? k.sources
+                    : k.sources.map((c) => ids[c]),
+              })),
+            },
+            rewrite: null,
+          },
+          record: { ...record, reddit: r },
+        };
+      }
     }
   }
 
@@ -584,7 +620,7 @@ export class CliEvalGateway {
           totals: {
             ...p.totals,
             fixtureSetHash: EVAL_FIXTURE_SET_HASH,
-            callParams: currentCallParams(),
+            callParams: currentCallParams(this.set),
           } as unknown as object,
         },
       });
@@ -594,7 +630,7 @@ export class CliEvalGateway {
       totals: {
         ...p.totals,
         fixtureSetHash: EVAL_FIXTURE_SET_HASH,
-        callParams: currentCallParams(),
+        callParams: currentCallParams(this.set),
       },
       run: { ...p.run, finishedAt: new Date().toISOString() },
     };
