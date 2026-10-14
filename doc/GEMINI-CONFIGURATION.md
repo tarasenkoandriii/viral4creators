@@ -38,3 +38,10 @@ Planner теперь вычисляет стоимость по фактичес
 - [Gemini 3.1 Flash-Lite](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite): поддерживаемые возможности.
 
 Дополнительная прямая проверка тем же ключом: gemini-embedding-001 HTTP 200, 768 измерений, 2519 мс; Flash-Lite structured JSON HTTP 200, JSON ok=true, STOP, 1081 мс (без thinking override). Ключи обоих имён нормализуются trim; пустое/пробельное основное значение допускает существующий альтернативный ключ. 3 теста каждого сервера прошли.
+
+
+## Результат production-проверки
+
+b162848 развёрнут: assist-api Ready dpl_8EheQ9LNGEdCw64G5f4JrhrEgXZg с production alias; viral-backend Ready dpl_GVGKnnhMh9w8jgQzwz5dRcweyNzp. Свежий widget chat вернул HTTP 200. UK provider roundtrip полностью прошёл (1 passed, 2.9m, WER ≤20%). Шестишаговое М-1 реально исполнено в отдельной sandbox staging-сессии: после «Да» получены итог страницы и «Готово» виджета. После проверки off сохранён. Эти результаты не объявляют стабильность Flash 3.6, все видео-конвейеры или физические устройства прошедшими приёмку.
+
+Финальный функциональный [CI #38612946838](https://github.com/tarasenkoandriii/viral4creators/actions/runs/38612946838) на b162848 — success: backend, sites-backend, widget, оба TMA и обязательные проверки. Неприменимые jobs skipped не считаются пройденными.
