@@ -1817,7 +1817,9 @@ export function memoCheckPage(
               (x) =>
                 'slot' in s.value! &&
                 x.name === (s.value as { slot: string }).slot,
-            )?.options[0]?.value ?? 'x')
+            )?.options[0]?.value ??
+            (s.action === 'select' ? el.options[0] : null) ??
+            'x')
           : null;
     const j = judgeStep(s.action as UiStepKind, factsOfSnap(el), value, {
       transcript: say,

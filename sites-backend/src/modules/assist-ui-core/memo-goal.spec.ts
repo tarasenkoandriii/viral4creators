@@ -423,3 +423,40 @@ describe('passive memo result text', () => {
     expect(parsed?.elements).toEqual([]);
   });
 });
+
+describe('select slot dry-check', () => {
+  it('uses an available option as a dry sample, without changing the slot', () => {
+    const c = cartMemo([{ kind: 'text', text: 'Готово' }], {
+      slots: [{ name: 'topic', kind: 'text' }],
+    });
+    const source = c.steps[0];
+    c.steps = [
+      {
+        ...source,
+        action: 'select',
+        target: {
+          ...source.target!,
+          pin: {
+            ...source.target!.pin,
+            text: 'Тема',
+            role: 'combobox',
+            assistId: 'topic',
+          },
+        },
+        value: { slot: 'topic' },
+      },
+    ];
+    const s = snap([
+      el({
+        text: 'Тема',
+        assistId: 'topic',
+        tag: 'select',
+        role: 'combobox',
+        options: ['Проверить QA', 'Tutorial'],
+      }),
+    ]);
+    const result = memoCheckPage(c, null, s, { rules, hosts: [HOST] });
+    expect(result.steps[0].ok).toBe(true);
+    expect(c.steps[0].value).toEqual({ slot: 'topic' });
+  });
+});

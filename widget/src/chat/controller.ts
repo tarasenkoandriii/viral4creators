@@ -381,7 +381,7 @@ export class ChatController {
         if (this.state.voice.mic) this.voice.press();
       },
       plans: {
-        snap: () => this.plans.snap(),
+        snap: (statuses) => this.plans.snap(statuses),
         dry: (text) => this.plans.dry(text),
         command: (text) => this.plans.command(text, 'typed', null),
       },
