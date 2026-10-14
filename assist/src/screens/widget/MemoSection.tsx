@@ -326,13 +326,16 @@ function MemoCard({
   };
   const set = (p: Partial<typeof e>) => setEdit({ ...e, ...p });
 
-  const run = async (fn: () => Promise<MemoDetail | null | void>) => {
+  const run = async (
+    fn: () => Promise<MemoDetail | null | void>,
+    clearEdit = false
+  ) => {
     setBusy(true);
     setNotice(null);
     try {
       const r = await fn();
       if (r) loaded.setData(r);
-      setEdit(null);
+      if (clearEdit) setEdit(null);
       onChanged();
       setNotice({ tone: 'success', text: tv.saved });
     } catch (err) {
@@ -346,8 +349,8 @@ function MemoCard({
     }
   };
 
-  const patch = (ops: MemoOp[]) =>
-    run(() => api.patch(siteId, n, d.draftRevision, ops));
+  const patch = (ops: MemoOp[], clearEdit = false) =>
+    run(() => api.patch(siteId, n, d.draftRevision, ops), clearEdit);
 
   const saveDraft = () => {
     const triggers: Partial<Record<MemoLang, string[]>> = {};
@@ -366,18 +369,24 @@ function MemoCard({
       e.goalUrl,
       e.goalAppear
     );
-    return patch([
-      { op: 'set', field: 'names', value: names },
-      { op: 'set', field: 'triggers', value: triggers },
-      {
-        op: 'set',
-        field: 'goal',
-        value: {
-          text: { ...draft.goal.text, [lang]: e.goalText.trim() || undefined },
-          expect,
+    return patch(
+      [
+        { op: 'set', field: 'names', value: names },
+        { op: 'set', field: 'triggers', value: triggers },
+        {
+          op: 'set',
+          field: 'goal',
+          value: {
+            text: {
+              ...draft.goal.text,
+              [lang]: e.goalText.trim() || undefined,
+            },
+            expect,
+          },
         },
-      },
-    ]);
+      ],
+      true
+    );
   };
 
   const applyElement = (uiElementId: string, page: string) =>
@@ -445,6 +454,7 @@ function MemoCard({
           htmlFor={`mn-${n}-${l}`}
         >
           <input
+            disabled={busy}
             id={`mn-${n}-${l}`}
             className={inputClass}
             maxLength={60}
@@ -462,6 +472,7 @@ function MemoCard({
           htmlFor={`mt-${n}-${l}`}
         >
           <textarea
+            disabled={busy}
             id={`mt-${n}-${l}`}
             className={inputClass}
             rows={2}
@@ -507,6 +518,7 @@ function MemoCard({
       <div className="font-medium text-sm">{t.goal}</div>
       <Field label={t.goalText} htmlFor={`mg-${n}`}>
         <input
+          disabled={busy}
           id={`mg-${n}`}
           className={inputClass}
           maxLength={160}
@@ -516,6 +528,7 @@ function MemoCard({
       </Field>
       <Field label={t.goalUrl} htmlFor={`mu-${n}`}>
         <input
+          disabled={busy}
           id={`mu-${n}`}
           className={inputClass}
           value={e.goalUrl}
@@ -525,6 +538,7 @@ function MemoCard({
       </Field>
       <Field label={t.goalAppear} htmlFor={`ma-${n}`}>
         <input
+          disabled={busy}
           id={`ma-${n}`}
           className={inputClass}
           maxLength={80}
