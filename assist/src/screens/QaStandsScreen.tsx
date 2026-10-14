@@ -232,7 +232,9 @@ function Stands({ siteId }: { siteId: string }) {
             key={s.id}
             variant="outline"
             disabled={busy || voiceBusy}
-            onClick={() => choose(s)}
+            onClick={() =>
+              action(async () => choose(await api.get(siteId, s.id)))
+            }
           >
             {s.contract.title}
           </Button>
@@ -253,7 +255,7 @@ function Stands({ siteId }: { siteId: string }) {
       )}
       {selected?.contract.template === 'generated' && (
         <GeneratedStandPreview
-          key={selected.id}
+          key={`${selected.id}:${selected.revision}`}
           stand={selected}
           api={api}
           siteId={siteId}
