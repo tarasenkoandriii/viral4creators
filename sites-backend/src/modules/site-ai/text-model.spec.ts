@@ -78,13 +78,13 @@ describe('GeminiText', () => {
     await expect(p).rejects.not.toThrow(/AIza|секрет/);
   });
 
-  it('логирует код 503 без сообщения и произвольного имени ошибки', async () => {
+  it('логирует код 502 без сообщения и произвольного имени ошибки', async () => {
     const warn = jest
       .spyOn(Logger.prototype, 'warn')
       .mockImplementation(() => {});
     try {
       const { client, calls } = fakeClient(async () => {
-        throw { status: 503, name: 'AIzaSECRET', message: 'private prompt' };
+        throw { status: 502, name: 'AIzaSECRET', message: 'private prompt' };
       });
       await expect(
         new GeminiText().useClient(client).generate({
@@ -93,7 +93,7 @@ describe('GeminiText', () => {
           maxOutputTokens: 10,
         }),
       ).rejects.toMatchObject({ kind: 'unavailable' });
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('status=503'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('status=502'));
       expect(JSON.stringify(warn.mock.calls)).not.toMatch(
         /AIzaSECRET|private prompt/,
       );
@@ -101,6 +101,68 @@ describe('GeminiText', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('повторяет 503, но прекращает повторы после успешного ответа', async () => {
+    let attempt = 0;
+    const { client, calls } = fakeClient(async () => {
+      if (++attempt < 3) throw { status: 503 };
+      return { text: 'ok' };
+    });
+    const result = new GeminiText().useClient(client).generate({
+      system: 's',
+      user: 'u',
+      maxOutputTokens: 10,
+    });
+    await expect(result).resolves.toMatchObject({ text: 'ok' });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('не повторяет платный пустой ответ после 503', async () => {
+    let attempt = 0;
+    const { client, calls } = fakeClient(async () => {
+      if (++attempt === 1) throw { status: 503 };
+      return { text: '', usageMetadata: { thoughtsTokenCount: 5 } };
+    });
+    const result = new GeminiText().useClient(client).generate({
+      system: 's',
+      user: 'u',
+      maxOutputTokens: 10,
+    });
+    await expect(result).rejects.toMatchObject({
+      kind: 'empty',
+      spent: { outputTokens: 5 },
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  it('503 ограничен тремя попытками', async () => {
+    const { client, calls } = fakeClient(async () => {
+      throw { status: 503 };
+    });
+    await expect(
+      new GeminiText().useClient(client).generate({
+        system: 's',
+        user: 'u',
+        maxOutputTokens: 10,
+      }),
+    ).rejects.toMatchObject({ kind: 'unavailable' });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('таймаут прерывает ожидание повтора 503', async () => {
+    const { client, calls } = fakeClient(async () => {
+      throw { status: 503 };
+    });
+    await expect(
+      new GeminiText().useClient(client).generate({
+        system: 's',
+        user: 'u',
+        maxOutputTokens: 10,
+        timeoutMs: 20,
+      }),
+    ).rejects.toMatchObject({ kind: 'timeout' });
+    expect(calls).toHaveLength(1);
   });
 
   it('таймаут — kind=timeout (сигнал отмены дошёл до запроса)', async () => {

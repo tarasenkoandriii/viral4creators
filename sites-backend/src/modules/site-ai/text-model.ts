@@ -16,6 +16,7 @@
  * считаются выходом — за них платят по ставке выхода).
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { GoogleGenAI } from '@google/genai';
 import {
   chatUsageFromMeta,
@@ -123,7 +124,7 @@ export class GeminiText {
     const model = req.model || GEMINI_MODEL;
     const ceiling = geminiOutputCeiling(req.maxOutputTokens);
     try {
-      const res = await this.getClient().models.generateContent({
+      const request = {
         model,
         contents: [{ role: 'user', parts: [{ text: req.user }] }],
         config: {
@@ -133,7 +134,27 @@ export class GeminiText {
           ...(req.json ? { responseMimeType: 'application/json' } : {}),
           abortSignal: abort.signal,
         },
-      });
+      };
+      // Retry only an explicit unavailable response, within the original
+      // deadline. Never retry a returned (potentially paid) empty/truncated result.
+      const generate = async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await this.getClient().models.generateContent(request);
+          } catch (error) {
+            if (
+              abort.signal.aborted ||
+              attempt >= 2 ||
+              providerErrorStatus(error) !== '503'
+            )
+              throw error;
+            await delay(1000 * 2 ** attempt, undefined, {
+              signal: abort.signal,
+            });
+          }
+        }
+      };
+      const res = await generate();
       const usage = chatUsageFromMeta(res.usageMetadata);
       const text = res.text ?? '';
       const spent: TextModelSpent = {
