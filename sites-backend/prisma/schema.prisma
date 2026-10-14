@@ -7158,7 +7158,7 @@ model QaStand {
   id String @id @default(cuid())
   accountId String
   siteId String
-  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade, onUpdate: NoAction, map: "qa_stands_site_fk")
   contract Json
   records Json
   revision Int @default(1)
