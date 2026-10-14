@@ -1,3 +1,6 @@
+import { SiteAiModule } from '../site-ai/site-ai.module';
+import { SiteSonioxStt } from '../assist-site-voice/public/soniox-stt.client';
+import { QaStandsGenerator } from './qa-stands-generator.service';
 import type { Response } from 'express';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -161,7 +164,10 @@ export class QaStandsService {
 @AllowApps('qa', 'assist')
 @UseGuards(SiteAccountGuard)
 export class QaStandsController {
-  constructor(private readonly stands: QaStandsService) {}
+  constructor(
+    private readonly stands: QaStandsService,
+    private readonly generator: QaStandsGenerator,
+  ) {}
   @Get() @RequireProductRoles(QA_READ) list(
     @Membership() m: AccountMembership,
     @Param('siteId') site: string,
@@ -191,6 +197,24 @@ export class QaStandsController {
     });
     return { deleted: true };
   }
+  @Post('generate')
+  @RequireProductRoles(QA_WRITE)
+  generate(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Body() body: unknown,
+  ) {
+    return this.generator.generate(m, site, body);
+  }
+  @Post('voice')
+  @RequireProductRoles(QA_WRITE)
+  voice(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Body() body: unknown,
+  ) {
+    return this.generator.transcribe(m, site, body);
+  }
   @Post('plan') @RequireProductRoles(QA_WRITE) plan(@Body() input: unknown) {
     return planStand(input);
   }
@@ -208,11 +232,13 @@ export class QaStandsController {
     @Param('siteId') site: string,
     @Param('id') id: string,
     @Query('q') query: string,
+    @Query('entity') entityId: string,
     @Query('scenario') scenario: string,
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.stands.command(m, site, id, {
       method: 'GET',
+      entityId,
       role: 'viewer',
       query,
       scenario: scenario || 'normal',
@@ -231,11 +257,13 @@ export class QaStandsController {
   ) {
     const body = input as {
       role?: string;
+      entityId?: string;
       values?: unknown;
       scenario?: string;
     };
     const result = await this.stands.command(m, site, id, {
       method: 'POST',
+      entityId: body?.entityId,
       role: body?.role || 'editor',
       values: body?.values,
       scenario: body?.scenario || 'normal',
@@ -251,10 +279,12 @@ export class QaStandsController {
     @Param('id') id: string,
     @Param('recordId') recordId: string,
     @Query('role') role: string,
+    @Query('entity') entityId: string,
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.stands.command(m, site, id, {
       method: 'DELETE',
+      entityId,
       role: role || 'admin',
       id: recordId,
     });
@@ -286,8 +316,8 @@ export class QaStandsController {
   }
 }
 @Module({
-  imports: [SiteCoreModule, QaCatalogModule],
+  imports: [SiteCoreModule, QaCatalogModule, SiteAiModule],
   controllers: [QaStandsController],
-  providers: [QaStandsService],
+  providers: [QaStandsService, QaStandsGenerator, SiteSonioxStt],
 })
 export class QaStandsModule {}

@@ -1,12 +1,23 @@
+import { parseGenerated, type GeneratedContract } from './generated-contract';
 import { BadRequestException } from '@nestjs/common';
-export interface StandContract {
+export interface TemplateContract {
   title: string;
   description: string;
   fields: string[];
   template: 'records';
   version: 1;
 }
+export type StandContract = TemplateContract | GeneratedContract;
 export function planStand(input: unknown): StandContract {
+  if (
+    input &&
+    typeof input === 'object' &&
+    (input as { template?: string }).template === 'generated'
+  )
+    return parseGenerated(
+      input,
+      (input as { description: string }).description,
+    );
   const o = input as { description?: unknown; title?: unknown };
   if (
     !o ||
@@ -44,8 +55,10 @@ export function planStand(input: unknown): StandContract {
 export interface StandRecord {
   id: string;
   values: string[];
+  entityId?: string;
 }
 export function baseline(c: StandContract): StandRecord[] {
+  if (c.template === 'generated') return [];
   return [
     {
       id: 'demo-1',
@@ -61,6 +74,7 @@ export function mockTransition(
   input: unknown,
 ) {
   const o = input as {
+    entityId?: string;
     method?: string;
     role?: string;
     values?: unknown;
@@ -75,6 +89,16 @@ export function mockTransition(
     !['normal', '500', '429', 'empty'].includes(o.scenario ?? 'normal')
   )
     throw new BadRequestException('Неизвестная команда mock API.');
+  const entity =
+    c.template === 'generated'
+      ? c.entities.find((e) => e.id === o.entityId)
+      : null;
+  if (c.template === 'generated' && !entity)
+    throw new BadRequestException('Выберите сущность mock API.');
+  const fields = entity ? entity.fields.map((f) => f.name) : c.fields;
+  const bucket = entity
+    ? records.filter((r) => r.entityId === entity.id)
+    : records;
   if (o.scenario === '500' || o.scenario === '429')
     return {
       status: Number(o.scenario),
@@ -89,7 +113,7 @@ export function mockTransition(
         items:
           o.scenario === 'empty'
             ? []
-            : records.filter((r) =>
+            : bucket.filter((r) =>
                 r.values
                   .join(' ')
                   .toLowerCase()
@@ -113,12 +137,34 @@ export function mockTransition(
   if (o.method === 'POST') {
     if (
       !Array.isArray(o.values) ||
-      o.values.length !== c.fields.length ||
-      o.values.some((x) => typeof x !== 'string' || !x.trim() || x.length > 500)
+      o.values.length !== fields.length ||
+      o.values.some(
+        (x) =>
+          typeof x !== 'string' || (!entity && !x.trim()) || x.length > 500,
+      )
     )
       return {
         status: 422,
         data: { error: 'Заполните все поля (до 500 символов)' },
+        records,
+        changed: false,
+      };
+    if (
+      entity &&
+      o.values.some((value, index) => {
+        const f = entity.fields[index],
+          v = String(value).trim();
+        return (
+          (f.required && !v) ||
+          (v && f.type === 'number' && !Number.isFinite(Number(v))) ||
+          (v && f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) ||
+          (v && f.type === 'select' && !f.options.includes(v))
+        );
+      })
+    )
+      return {
+        status: 422,
+        data: { error: 'Проверьте обязательные поля и типы данных' },
         records,
         changed: false,
       };
@@ -131,6 +177,7 @@ export function mockTransition(
       };
     const item = {
       id: crypto.randomUUID(),
+      ...(entity ? { entityId: entity.id } : {}),
       values: o.values.map((x) => (x as string).trim()),
     };
     return {
@@ -140,7 +187,7 @@ export function mockTransition(
       changed: true,
     };
   }
-  const item = records.find((r) => r.id === o.id);
+  const item = bucket.find((r) => r.id === o.id);
   if (!item)
     return {
       status: 404,
@@ -156,6 +203,47 @@ export function mockTransition(
   };
 }
 export function checkStand(c: StandContract) {
+  if (c.template === 'generated')
+    return {
+      scope: 'Проверка контрактов всех сущностей; данные стенда не меняются.',
+      checks: c.entities.flatMap((e) => {
+        const values = e.fields.map((f) =>
+          f.type === 'number'
+            ? '1'
+            : f.type === 'email'
+              ? 'demo@example.invalid'
+              : f.type === 'select'
+                ? f.options[0]
+                : 'test',
+        );
+        const created = mockTransition(c, [], {
+          method: 'POST',
+          role: 'editor',
+          entityId: e.id,
+          values,
+        });
+        const denied = mockTransition(c, [], {
+          method: 'POST',
+          role: 'viewer',
+          entityId: e.id,
+          values,
+        });
+        const deleted = mockTransition(c, created.records, {
+          method: 'DELETE',
+          role: 'admin',
+          entityId: e.id,
+          id: created.records[0]?.id,
+        });
+        return [
+          { name: e.title + ': создание', passed: created.status === 201 },
+          { name: e.title + ': роли', passed: denied.status === 403 },
+          {
+            name: e.title + ': удаление',
+            passed: deleted.status === 200 && deleted.records.length === 0,
+          },
+        ];
+      }),
+    };
   const seed = baseline(c);
   const read = mockTransition(c, seed, { method: 'GET', role: 'viewer' });
   const denied = mockTransition(c, seed, {

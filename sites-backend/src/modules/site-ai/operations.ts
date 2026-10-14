@@ -10,6 +10,8 @@
  *  - AI Publisher (`pub-*`): месячный потолок AI продукта, не бюджеты помощника.
  */
 export const SITE_AI_OPERATIONS = [
+  'qa-stand-plan',
+  'qa-stand-stt',
   'assist-embed',
   'assist-eval',
   'assist-learn',
@@ -87,6 +89,8 @@ export const SITE_AI_OPERATIONS = [
 export type SiteAiOperation = (typeof SITE_AI_OPERATIONS)[number];
 
 export const LEARNING_BUDGET_OPERATIONS: readonly SiteAiOperation[] = [
+  'qa-stand-plan',
+  'qa-stand-stt',
   'assist-embed',
   'assist-eval',
   'assist-learn',

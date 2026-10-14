@@ -1,3 +1,5 @@
+import { StandVoiceInput } from '../components/StandVoiceInput';
+import { GeneratedStandPreview } from '../components/GeneratedStandPreview';
 import { useEffect, useState } from 'react';
 import { useKit } from '../kit';
 import { Button, Card, inputClass } from '../kit/ui';
@@ -38,6 +40,7 @@ function Stands({ siteId }: { siteId: string }) {
     [values, setValues] = useState<string[]>([]),
     [query, setQuery] = useState(''),
     [result, setResult] = useState<MockResult | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [requestId, setRequestId] = useState('');
   const [checks, setChecks] = useState<{
     scope: string;
@@ -109,6 +112,7 @@ function Stands({ siteId }: { siteId: string }) {
             <input
               className={inputClass}
               value={title}
+              disabled={busy || voiceBusy}
               maxLength={100}
               onChange={(e) => {
                 setTitle(e.target.value);
@@ -121,6 +125,7 @@ function Stands({ siteId }: { siteId: string }) {
             <textarea
               className={inputClass}
               value={description}
+              disabled={busy || voiceBusy}
               maxLength={4000}
               onChange={(e) => {
                 setDescription(e.target.value);
@@ -133,8 +138,32 @@ function Stands({ siteId }: { siteId: string }) {
             требования сохраняются как описание; MVP реализует только указанный
             шаблон.
           </p>
+          <StandVoiceInput
+            disabled={busy || voiceBusy}
+            onBusyChange={setVoiceBusy}
+            transcribe={(audio) => api.voice(siteId, audio)}
+            onText={(text) => {
+              setDescription(text);
+              setPlan(null);
+            }}
+          />
           <Button
-            disabled={busy}
+            disabled={busy || voiceBusy}
+            onClick={() =>
+              action(async () => {
+                setPlan(await api.generate(siteId, description));
+                setRequestId(crypto.randomUUID());
+              })
+            }
+          >
+            Сгенерировать UI и mock API с ИИ
+          </Button>
+          <p>
+            Используется бюджет обучения аккаунта. Перед созданием проверьте
+            предложенные экраны и допущения.
+          </p>
+          <Button
+            disabled={busy || voiceBusy}
             onClick={() =>
               action(async () => {
                 setPlan(await api.plan(siteId, description, title));
@@ -146,13 +175,30 @@ function Stands({ siteId }: { siteId: string }) {
           </Button>
           {plan && (
             <div>
+              {plan.template === 'generated' && (
+                <div>
+                  <p>
+                    Сущности: {plan.entities?.map((e) => e.title).join(', ')}
+                  </p>
+                  <p>Экраны: {plan.screens?.map((e) => e.title).join(', ')}</p>
+                  {plan.assumptions?.map((a, i) => (
+                    <p key={i}>{a}</p>
+                  ))}
+                  <details>
+                    <summary>Проверить полный контракт</summary>
+                    <pre className="overflow-auto">
+                      {JSON.stringify(plan, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              )}
               <p>
                 Поля: {plan.fields.join(', ')}. API: GET список, POST создание,
                 DELETE удаление. Viewer читает; editor создаёт; admin удаляет.
                 Лимит 100 записей.
               </p>
               <Button
-                disabled={busy}
+                disabled={busy || voiceBusy}
                 onClick={() =>
                   action(async () => {
                     const s = await api.create(siteId, plan, requestId);
@@ -176,7 +222,7 @@ function Stands({ siteId }: { siteId: string }) {
           <Button
             key={s.id}
             variant="outline"
-            disabled={busy}
+            disabled={busy || voiceBusy}
             onClick={() => choose(s)}
           >
             {s.contract.title}
@@ -185,7 +231,7 @@ function Stands({ siteId }: { siteId: string }) {
       </Card>
       {items.length >= 50 && (
         <Button
-          disabled={busy}
+          disabled={busy || voiceBusy}
           onClick={() =>
             action(async () => {
               const x = await api.list(siteId, items[items.length - 1]?.id);
@@ -196,7 +242,20 @@ function Stands({ siteId }: { siteId: string }) {
           Загрузить более ранние
         </Button>
       )}
-      {selected && (
+      {selected?.contract.template === 'generated' && (
+        <GeneratedStandPreview
+          key={selected.id}
+          stand={selected}
+          api={api}
+          siteId={siteId}
+          write={write}
+          onDeleted={() => {
+            setItems((v) => v.filter((s) => s.id !== selected.id));
+            setSelected(null);
+          }}
+        />
+      )}
+      {selected && selected.contract.template === 'records' && (
         <Card>
           <h2>
             {selected.contract.title} · версия данных {selected.revision}
@@ -307,7 +366,7 @@ function Stands({ siteId }: { siteId: string }) {
             Сбросить данные
           </Button>
           <Button
-            disabled={busy}
+            disabled={busy || voiceBusy}
             onClick={() =>
               action(async () =>
                 setChecks(await api.check(siteId, selected.id))

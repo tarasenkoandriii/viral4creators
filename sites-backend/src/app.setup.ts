@@ -1,3 +1,4 @@
+import { qaStandVoiceJson } from './modules/qa-stands/qa-stand-voice-json';
 import { qaReportImportJson } from './modules/qa-catalog/qa-report-json';
 /**
  * Всё глобальное приложения — в одной функции: её же зовёт тест
@@ -183,6 +184,7 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
   // есть слой с именем `jsonParser` (имя функции body-parser), — и тогда
   // JSON перестал бы разбираться на всех остальных маршрутах.
   app.use(qaReportImportJson());
+  app.use(qaStandVoiceJson());
   const assetJson = json({ limit: ASSET_UPLOAD_JSON_LIMIT });
   app.use(
     ASSET_UPLOAD_PATH,

@@ -1,3 +1,5 @@
+import { parseGenerated } from './generated-contract';
+import { generatedFixture } from './generated-fixture.testing';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -94,5 +96,31 @@ ciDescribe('QA stand isolated Postgres acceptance', () => {
         },
       }),
     ).rejects.toThrow();
+  });
+  it('persists generated multi-entity state and deterministic reset', async () => {
+    const contract = parseGenerated(
+      generatedFixture(),
+      'Кабинет заказов и клиентов',
+    );
+    const stand = await service.create(member(account), site, {
+      ...contract,
+      requestId: randomUUID(),
+    });
+    await service.command(member(account), site, stand.id, {
+      method: 'POST',
+      role: 'editor',
+      entityId: 'orders',
+      values: ['Order', '42.5'],
+    });
+    const read = await service.command(member(account), site, stand.id, {
+      method: 'GET',
+      role: 'viewer',
+      entityId: 'clients',
+    });
+    expect(read.data).toEqual({ items: [] });
+    await service.command(member(account), site, stand.id, {}, true);
+    expect(
+      (await service.get(member(account), site, stand.id)).row.records,
+    ).toEqual([]);
   });
 });

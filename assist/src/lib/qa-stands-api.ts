@@ -3,13 +3,31 @@ export interface StandContract {
   title: string;
   description: string;
   fields: string[];
-  template: 'records';
-  version: 1;
+  template: 'records' | 'generated';
+  version: 1 | 2;
+  entities?: Array<{
+    id: string;
+    title: string;
+    fields: Array<{
+      name: string;
+      type: 'text' | 'number' | 'email' | 'select';
+      required: boolean;
+      options: string[];
+    }>;
+  }>;
+  screens?: Array<{
+    id: string;
+    title: string;
+    kind: 'list' | 'form' | 'dashboard';
+    entityId: string;
+    nextScreenId: string | null;
+  }>;
+  assumptions?: string[];
 }
 export interface Stand {
   id: string;
   contract: StandContract;
-  records: Array<{ id: string; values: string[] }>;
+  records: Array<{ id: string; values: string[]; entityId?: string }>;
   revision: number;
 }
 export interface MockResult {
@@ -32,6 +50,16 @@ export function createQaStandsApi(client: ApiClient) {
       ) as Promise<Stand>,
     remove: (site: string, id: string) =>
       client.request('DELETE', base(site) + `/${encodeURIComponent(id)}`),
+    generate: (site: string, description: string) =>
+      client.request('POST', base(site) + '/generate', {
+        description,
+      }) as Promise<StandContract>,
+    voice: (site: string, audio: string) =>
+      client.request('POST', base(site) + '/voice', { audio }) as Promise<{
+        text: string;
+        language: string | null;
+        confidence: number | null;
+      }>,
     plan: (site: string, description: string, title: string) =>
       client.request('POST', base(site) + '/plan', {
         description,
