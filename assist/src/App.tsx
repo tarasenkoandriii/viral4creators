@@ -1,3 +1,5 @@
+import { createQaStandsApi } from './lib/qa-stands-api';
+import { QaStandsScreen, QaStandsButton } from './screens/QaStandsScreen';
 import {
   Suspense,
   lazy,
@@ -281,6 +283,7 @@ export function App({ startParam }: { startParam: string | null }) {
   );
   const qaFindings = useMemo(() => createQaFindingsApi(client), [client]);
   const qaRuns = useMemo(() => createQaRunsApi(client), [client]);
+  const qaStands = useMemo(() => createQaStandsApi(client), [client]);
   const qaCatalog = useMemo(() => createQaCatalogApi(client), [client]);
   const assist = useMemo<AssistValue>(
     () => ({
@@ -300,6 +303,7 @@ export function App({ startParam }: { startParam: string | null }) {
       adminActions: adminActionsApi,
       ai: aiApi,
       qaCatalog,
+      qaStands,
       qaRuns,
       qaFindings,
       publisher: publisherClients,
@@ -321,6 +325,7 @@ export function App({ startParam }: { startParam: string | null }) {
       adminActionsApi,
       aiApi,
       qaCatalog,
+      qaStands,
       qaRuns,
       qaFindings,
       publisherClients,
@@ -623,6 +628,7 @@ function navActive(key: string, route: Route): boolean {
       'plan',
       'test-accounts',
       'qa-cases',
+      'qa-stands',
       'qa-runs',
       'qa-findings',
       'admin-mode',
@@ -957,6 +963,7 @@ function Screen({
             <SiteE3Buttons siteId={route.siteId} />
             <TestAccountsButton siteId={route.siteId} />
             <QaCatalogButton siteId={route.siteId} />
+            <QaStandsButton siteId={route.siteId} />
             <QaRunsButton siteId={route.siteId} />
             <AdminModeButton siteId={route.siteId} />
             <PublisherButton siteId={route.siteId} />
@@ -974,6 +981,8 @@ function Screen({
       return <QaFindingsScreen siteId={route.siteId} />;
     case 'qa-runs':
       return <QaRunsScreen siteId={route.siteId} />;
+    case 'qa-stands':
+      return <QaStandsScreen siteId={route.siteId} />;
     case 'qa-cases':
       return <QaCatalogScreen siteId={route.siteId} />;
     case 'host':

@@ -1,3 +1,4 @@
+import type { createQaStandsApi } from './qa-stands-api';
 /**
  * Контекст приложения Помощника поверх кита: клиенты знаний/песочницы,
  * виджета, персоны и мастера и словарь приложения. Отдельно от
@@ -28,6 +29,7 @@ import type { createQaRunsApi } from './qa-runs-api';
 import type { createQaFindingsApi } from './qa-findings-api';
 import type { PublisherHttp } from './publisher/common-api';
 export interface AssistValue {
+  qaStands: ReturnType<typeof createQaStandsApi>;
   qaFindings: ReturnType<typeof createQaFindingsApi>;
   qaRuns: ReturnType<typeof createQaRunsApi>;
   qaCatalog: ReturnType<typeof createQaCatalogApi>;

@@ -127,6 +127,7 @@ model Site {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  qaStands QaStand[]
   qaTestCases QaTestCase[]
   qaTestRuns QaTestRun[]
   qaFindings QaFinding[]
@@ -7150,4 +7151,20 @@ model PubRedditBrief {
   @@index([projectId, status])
   @@index([opportunityId])
   @@map("pub_reddit_briefs")
+}
+
+model QaStand {
+  requestId String
+  id String @id @default(cuid())
+  accountId String
+  siteId String
+  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  contract Json
+  records Json
+  revision Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([accountId, siteId, createdAt])
+  @@unique([accountId, siteId, requestId])
+  @@map("qa_stands")
 }

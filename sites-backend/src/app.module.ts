@@ -1,3 +1,4 @@
+import { QaStandsModule } from './modules/qa-stands/qa-stands.module';
 import { QaCatalogModule } from './modules/qa-catalog/qa-catalog.module';
 import { SonioxObservabilityModule } from './modules/soniox-observability/soniox-observability.module';
 /**
@@ -59,6 +60,7 @@ import { PublisherModule } from './modules/publisher/publisher.module';
     // Ядро: кабинет, сайты, хосты, подтверждение владения, крон перепроверки.
     SiteCoreModule,
     QaCatalogModule,
+    QaStandsModule,
     // Э1 «Знания» (контракт /tmp/k/CONTRACT-E1.md): обход (общий с QA), ИИ,
     // нейтральное ядро знаний, два раздельных режима, песочница.
     SiteCrawlModule,

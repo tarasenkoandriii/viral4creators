@@ -31,6 +31,7 @@ export type Route =
   | { name: 'site-new' }
   | { name: 'site'; siteId: string }
   | { name: 'qa-cases'; siteId: string }
+  | { name: 'qa-stands'; siteId: string }
   | { name: 'qa-runs'; siteId: string }
   | { name: 'qa-findings'; siteId: string }
   | { name: 'host'; siteId: string; hostId: string }
@@ -247,6 +248,8 @@ export function parseRoute(hash: string): Route {
     }
     if (p.length === 3 && p[2] === 'qa-findings' && ID.test(p[1]))
       return { name: 'qa-findings', siteId: p[1] };
+    if (p.length === 3 && p[2] === 'qa-stands' && ID.test(p[1]))
+      return { name: 'qa-stands', siteId: p[1] };
     if (p.length === 3 && p[2] === 'qa-runs' && ID.test(p[1]))
       return { name: 'qa-runs', siteId: p[1] };
     if (p.length === 3 && p[2] === 'qa-cases' && ID.test(p[1])) {
@@ -406,6 +409,8 @@ export function routeHref(r: Route): string {
       return `#/sites/${r.siteId}/qa-findings`;
     case 'qa-runs':
       return `#/sites/${r.siteId}/qa-runs`;
+    case 'qa-stands':
+      return `#/sites/${r.siteId}/qa-stands`;
     case 'qa-cases':
       return `#/sites/${r.siteId}/qa-cases`;
     case 'test-accounts':
