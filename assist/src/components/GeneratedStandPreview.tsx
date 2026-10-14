@@ -1,3 +1,4 @@
+import { downloadStandOpenApi } from '../lib/qa-stand-openapi';
 import { useState } from 'react';
 import { Button, Card, inputClass } from '../kit/ui';
 import type {
@@ -295,6 +296,12 @@ export function GeneratedStandPreview({
         }}
       >
         Экспорт контракта
+      </Button>
+      <Button
+        variant="outline"
+        onClick={() => downloadStandOpenApi(siteId, stand)}
+      >
+        Скачать OpenAPI
       </Button>
       <Button
         disabled={busy || !write}

@@ -1,3 +1,4 @@
+import { downloadStandOpenApi } from '../lib/qa-stand-openapi';
 import { StandVoiceInput } from '../components/StandVoiceInput';
 import { GeneratedStandPreview } from '../components/GeneratedStandPreview';
 import { useEffect, useState } from 'react';
@@ -422,6 +423,12 @@ function Stands({ siteId }: { siteId: string }) {
             }}
           >
             Экспорт контракта
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => downloadStandOpenApi(siteId, selected)}
+          >
+            Скачать OpenAPI
           </Button>
           <Button
             disabled={busy || !write}
