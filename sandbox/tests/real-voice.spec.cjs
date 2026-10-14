@@ -1,6 +1,7 @@
 // Provider smoke, distinct from VAD, command execution and human/device acceptance.
 const { test, expect } = require("@playwright/test");
 const { randomUUID } = require("node:crypto");
+const { safeProviderPost } = require("../qa/safe-provider-request.cjs");
 function words(text) {
   return text
     .toLowerCase()
@@ -88,10 +89,15 @@ test.describe("live Soniox voice", () => {
       ).origin;
       expect(parentOrigin).toBe("https://sandbox.viral4creators.app");
       const origin = "https://assist-w.viral4creators.app";
-      const sessionResponse = await request.post(api + "/widget/v1/session", {
-        headers: { Origin: origin },
-        data: { pk: process.env.ASSIST_SANDBOX_PUBLIC_KEY, parentOrigin },
-      });
+      const sessionResponse = await safeProviderPost(
+        request,
+        api + "/widget/v1/session",
+        {
+          headers: { Origin: origin },
+          data: { pk: process.env.ASSIST_SANDBOX_PUBLIC_KEY, parentOrigin },
+        },
+        "session",
+      );
       expect(sessionResponse.status()).toBe(200);
       const token = (await sessionResponse.json()).data?.visitorToken;
       expect(Boolean(token)).toBe(true);
@@ -101,21 +107,28 @@ test.describe("live Soniox voice", () => {
         "X-Assist-Visitor": token,
       };
       const chat = async (question, voiceTicket) => {
-        const response = await request.post(api + "/widget/v1/chat", {
-          headers,
-          timeout: 90000,
-          data: {
-            conversationId: null,
-            clientRequestId: randomUUID(),
-            question,
-            ...(voiceTicket ? { voiceTicket } : {}),
-            page: { url: parentOrigin + "/", title: "Sandbox voice QA" },
-            // Explicit context bypasses semantic cache: each voice scenario
-            // must exercise a real model response, not a previous FAQ/cache reply.
-            context: { qaRunId: process.env.GITHUB_RUN_ID || "live-voice-smoke" },
-            uiLang: lang,
+        const response = await safeProviderPost(
+          request,
+          api + "/widget/v1/chat",
+          {
+            headers,
+            timeout: 90000,
+            data: {
+              conversationId: null,
+              clientRequestId: randomUUID(),
+              question,
+              ...(voiceTicket ? { voiceTicket } : {}),
+              page: { url: parentOrigin + "/", title: "Sandbox voice QA" },
+              // Explicit context bypasses semantic cache: each voice scenario
+              // must exercise a real model response, not a previous FAQ/cache reply.
+              context: {
+                qaRunId: process.env.GITHUB_RUN_ID || "live-voice-smoke",
+              },
+              uiLang: lang,
+            },
           },
-        });
+          "chat",
+        );
         await expectApiSuccess(
           response,
           voiceTicket ? "chat-followup" : "chat-seed",
@@ -135,25 +148,35 @@ test.describe("live Soniox voice", () => {
       expect(answer.text.length).toBeGreaterThan(10);
       // Bound the paid request before synthesis; site budget remains authoritative.
       expect(answer.text.length).toBeLessThanOrEqual(1000);
-      const tts = await request.post(api + "/widget/v1/tts", {
-        headers,
-        timeout: 90000,
-        data: { messageId: answer.messageId },
-      });
+      const tts = await safeProviderPost(
+        request,
+        api + "/widget/v1/tts",
+        {
+          headers,
+          timeout: 90000,
+          data: { messageId: answer.messageId },
+        },
+        "tts",
+      );
       await expectApiSuccess(tts, "tts", info);
       expect(tts.headers()["content-type"]).toMatch(/^audio\/mpeg/);
       const audio = await tts.body();
       expect(audio.length).toBeGreaterThan(100);
-      const stt = await request.post(api + "/widget/v1/voice", {
-        headers: {
-          Origin: origin,
-          "Content-Type": "audio/mpeg",
-          "X-Assist-Visitor": token,
-          "X-Assist-Lang": lang,
+      const stt = await safeProviderPost(
+        request,
+        api + "/widget/v1/voice",
+        {
+          headers: {
+            Origin: origin,
+            "Content-Type": "audio/mpeg",
+            "X-Assist-Visitor": token,
+            "X-Assist-Lang": lang,
+          },
+          timeout: 90000,
+          data: audio,
         },
-        timeout: 90000,
-        data: audio,
-      });
+        "stt",
+      );
       await expectApiSuccess(stt, "stt", info);
       const speech = (await stt.json()).data;
       expect(Boolean(speech?.voiceTicket)).toBe(true);
