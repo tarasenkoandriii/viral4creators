@@ -62,7 +62,7 @@ describe('mock REST HTTP contract', () => {
   const path = '/qa/sites/test/stands/test/mock/records';
   it('QA viewer may read but cannot invoke any mutation route', () => {
     const viewer = {
-      role: 'member' as const,
+      role: 'operator' as const,
       productRoles: { ...NO_PRODUCT_ROLES, qa: 'viewer' as const },
     };
     const read = Reflect.getMetadata(

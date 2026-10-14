@@ -2221,3 +2221,20 @@ React 19 (landing, sites-landing, admin, marketplace — их маршруты �
   снимаются, cookie — только из банки по адресу шага.
 - Backend: `sanitize-html` 2.18 / `uuid` 11 — контракты прежние (политика
   санитайзера блога та же).
+
+## QA-стенды и mock API
+
+Кабинет: `/qa/sites/:siteId/stands`, приложения `qa`/`assist`, SiteAccountGuard и account/site scope. Владелец либо продуктовая роль QA admin выполняет запись; QA viewer имеет чтение. Демо-роль в контракте не заменяет настоящую авторизацию. Руководство: [QA-STANDS.md](QA-STANDS.md).
+
+- GET `/` — список, до 50, query `before`; GET `/:id` — текущая карточка/revision.
+- POST `/plan` — бесплатный базовый контракт из description/title; POST `/generate` — Gemini-контракт v2 из description и необязательного title; POST `/voice` — `{audio:base64}`, Soniox возвращает text/language/confidence. Все три требуют QA_WRITE.
+- POST `/` — подтверждённое создание: контракт и requestId; одинаковый повтор идемпотентен, повтор с другим контрактом — 409.
+- DELETE `/:id` — удаление; POST `/:id/reset` — базовое состояние. QA_WRITE.
+- POST `/:id/check` — QA_READ, проверки mock engine на изолированных данных; не проверяет браузерную вёрстку и не создаёт QA-прогон.
+- GET `/:id/mock` — QA_READ, query `entity/q/scenario`; всегда выполняет только GET, ответ envelope `{status,data,revision}`. Смоделированные ошибки находятся в status.
+- POST `/:id/mock` — QA_WRITE, envelope для команд GET/POST/DELETE. Для чтения из UI предпочтителен отдельный GET; mutation сохраняет CAS по revision.
+- GET `/:id/mock/records` — QA_READ, query `entity/q/scenario`, список `{items}` и настоящие HTTP-статусы.
+- POST `/:id/mock/records` — QA_WRITE, `{entityId,role,values[],scenario}`, успех 201 с записью.
+- DELETE `/:id/mock/records/:recordId` — QA_WRITE, query `entity/role`, успех 200 с `{deleted}`.
+
+Для generated/v2 выбор сущности обязателен; records/v1 его не требует. Значения values[] — строки в порядке полей контракта. Mock роли viewer/editor/admin, сценарии normal/empty/429/500. DELETE REST не принимает scenario. Основные ошибки: 400, 403, 404, 409, 422; ошибки провайдера/бюджета описаны в руководстве. Экспорт OpenAPI 3.0.3 строится в клиенте и описывает REST records; отдельного серверного маршрута OpenAPI нет. Токены и записи в экспорт не включены.

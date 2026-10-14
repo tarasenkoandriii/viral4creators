@@ -383,3 +383,7 @@ UNLICENSED - Private project
 ## Contributing
 
 This project follows spec-first development practices. See [specs/001-ugc-video-generator/](specs/001-ugc-video-generator/) for detailed specifications and development plans.
+
+### QA-стенды по описанию
+
+[Инструкция, права, ограничения и подключение внешних тестов](doc/QA-STANDS.md). [ТЗ и roadmap](docs-tz/TZ-Voice-Generated-Test-Stands.md). [Production-приёмка](doc/reports/qa-stands-generative-2026-10-14.md). [Дополнение к инвесторскому отчёту от 14.10](doc/reports/investor-addendum-qa-stands-2026-10-14.md).
