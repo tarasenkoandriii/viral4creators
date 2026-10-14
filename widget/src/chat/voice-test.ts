@@ -170,7 +170,7 @@ export interface VtHost {
   /** «Скажите „перевірка зв'язку“» — обычная запись голоса чата. */
   listen(): void;
   plans: {
-    snap(): Promise<unknown>;
+    snap(statuses?: boolean): Promise<unknown>;
     dry(text: string): Promise<PlanView | null>;
     command(text: string): Promise<boolean>;
   };
@@ -341,7 +341,7 @@ export class VoiceTestController {
     const m = u.memo;
     if (!u.testId || !m) return;
     this.host.setUi({ busy: true, error: null });
-    const snap = await this.host.plans.snap();
+    const snap = await this.host.plans.snap(true);
     if (!snap) return this.host.setUi({ busy: false, error: 'failed' });
     let r: Record<string, unknown>;
     try {

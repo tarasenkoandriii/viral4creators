@@ -59,6 +59,7 @@ export interface Snapshot {
   url: string;
   title: string;
   elements: SnapElement[];
+  statusTexts?: string[];
 }
 
 export type UiStepKind =
@@ -432,7 +433,13 @@ export function skillsPhrase(text: string): boolean {
 // ── Команды плана iframe → загрузчик (строгий разбор — в чанке act.js) ────
 
 export type UiCommand =
-  | { type: 'ui-snap'; rid: string; deny: string[]; allow: string[] }
+  | {
+      type: 'ui-snap';
+      rid: string;
+      deny: string[];
+      allow: string[];
+      statuses?: boolean;
+    }
   | {
       type: 'ui-run';
       planId: string;
@@ -462,7 +469,13 @@ export function parseUiCommand(m: Record<string, unknown>): UiCommand | null {
       const deny = list(m.deny);
       const allow = list(m.allow);
       return typeof m.rid === 'string' && RID.test(m.rid) && deny && allow
-        ? { type: 'ui-snap', rid: m.rid, deny, allow }
+        ? {
+            type: 'ui-snap',
+            rid: m.rid,
+            deny,
+            allow,
+            ...(m.statuses === true ? { statuses: true } : {}),
+          }
         : null;
     }
     case 'ui-run': {

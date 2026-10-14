@@ -1842,9 +1842,11 @@ export function memoCheckPage(
     ? pathMatches(path, url.path)
     : !!last && pathMatches(path, last.page);
   if (onGoalPage) {
-    const texts = [snapshot.title, ...snapshot.elements.map((e) => e.text)].map(
-      (t) => normText(t),
-    );
+    const texts = [
+      snapshot.title,
+      ...snapshot.elements.map((e) => e.text),
+      ...(snapshot.statusTexts ?? []),
+    ].map((t) => normText(t));
     // Счётчик — элемент найден и число читается; поле — поле на странице.
     const ok = c.goal.expect.every((g) =>
       g.kind === 'text'

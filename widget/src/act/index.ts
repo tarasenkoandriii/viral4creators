@@ -56,7 +56,7 @@ export function start(host: ActHost): ActApi {
         case 'ui-snap': {
           deny = m.deny;
           allow = m.allow;
-          const s = takeSnapshot(deny, allow);
+          const s = takeSnapshot(deny, allow, m.statuses === true);
           refs = s.refs;
           host.post({ type: 'ui-snapshot', rid: m.rid, snapshot: s.snapshot });
           return;

@@ -524,8 +524,8 @@ export class UiPlanController {
   }
 
   /** (г) Снимок страницы для мастера проверки (тот же, что у плана). */
-  snap(): Promise<unknown> {
-    return this.snapshot();
+  snap(statuses = false): Promise<unknown> {
+    return this.snapshot(statuses);
   }
 
   /**
@@ -571,7 +571,7 @@ export class UiPlanController {
     return v;
   }
 
-  private snapshot(): Promise<unknown> {
+  private snapshot(statuses = false): Promise<unknown> {
     const cfg = this.host.cfg();
     const rid = this.host.random();
     return new Promise((resolve) => {
@@ -579,6 +579,7 @@ export class UiPlanController {
       this.host.toParent({
         type: 'ui-snap',
         rid,
+        ...(statuses ? { statuses: true } : {}),
         deny: cfg ? cfg.denySelectors : [],
         allow: cfg ? cfg.allowSelectors : [],
       });

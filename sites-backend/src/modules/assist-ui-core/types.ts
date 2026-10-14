@@ -99,6 +99,7 @@ export interface UiSnapshot {
   url: string;
   title: string;
   elements: UiSnapElement[];
+  statusTexts?: string[];
 }
 
 /** Шаги плана — словарь §5-бис.3 п.3. */

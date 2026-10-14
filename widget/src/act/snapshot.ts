@@ -360,7 +360,8 @@ export function factsOf(el: Element): Facts | null {
 /** Снимок страницы и карта ref → элемент (для исполнителя на этой странице). */
 export function takeSnapshot(
   deny: string[],
-  allow: string[]
+  allow: string[],
+  includeStatuses = false
 ): { snapshot: Snapshot; refs: Map<string, Element> } {
   const seen = new Set<Element>();
   const facts: Facts[] = [];
@@ -403,11 +404,36 @@ export function takeSnapshot(
         : {}),
     };
   });
+  // Passive results are collected only for memo dry checks, never as refs/actions.
+  const statusTexts = includeStatuses
+    ? deepQuery(document, '[role="status"]')
+        .filter((el) => !excluded(el, deny, allow) && visible(el))
+        .slice(0, 10)
+        .map((el) => {
+          // Clone before removing protected descendants: live DOM is untouched.
+          const copy = el.cloneNode(true) as Element;
+          const originals = Array.from(el.querySelectorAll('*'));
+          const copies = Array.from(copy.querySelectorAll('*'));
+          originals.forEach((child, index) => {
+            if (
+              excluded(child, deny, allow) ||
+              !visible(child) ||
+              /^(INPUT|TEXTAREA|SELECT|IFRAME|SCRIPT|STYLE)$/.test(
+                child.tagName
+              )
+            )
+              copies[index]?.remove();
+          });
+          return clean(copy.textContent, 160);
+        })
+        .filter(Boolean)
+    : [];
   return {
     snapshot: {
       url: location.origin + location.pathname,
       title: clean(document.title, 200),
       elements,
+      ...(includeStatuses ? { statusTexts } : {}),
     },
     refs,
   };

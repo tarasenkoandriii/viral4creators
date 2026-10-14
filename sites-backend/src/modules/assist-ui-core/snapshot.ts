@@ -291,5 +291,13 @@ export function parseSnapshot(raw: unknown): UiSnapshot | null {
     url,
     title: cleanText(raw.title, SNAPSHOT_LIMITS.title) ?? '',
     elements,
+    ...(Array.isArray(raw.statusTexts)
+      ? {
+          statusTexts: raw.statusTexts
+            .slice(0, 10)
+            .map((text) => cleanText(text, 160))
+            .filter((text): text is string => !!text),
+        }
+      : {}),
   };
 }

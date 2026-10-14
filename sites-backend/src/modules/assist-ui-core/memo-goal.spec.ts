@@ -1,3 +1,4 @@
+import { parseSnapshot } from './snapshot';
 /**
  * Э6-тер (к), хвост (11): условия цели мемо «счётчик ±N» и «значение поля =
  * слот» (ТЗ §5-бис.17 п.3, п.5 п.7; приёмка п.14): разбор и ворота, сборка
@@ -380,5 +381,45 @@ describe('сухой прогон: цель на странице', () => {
     expect(
       memoCheckPage(c, null, snap([add, inp]), { rules, hosts: [HOST] }).goal,
     ).toBe('ok');
+  });
+});
+
+describe('passive memo result text', () => {
+  it('accepts a status result without adding an executable target', () => {
+    const c = cartMemo([{ kind: 'text', text: 'Заявка принята' }]);
+    const add = el({
+      text: 'В кошик',
+      assistId: 'add-to-cart',
+      submit: true,
+      inForm: true,
+    });
+    const base = snap([add]);
+    expect(memoCheckPage(c, null, base, { rules, hosts: [HOST] }).goal).toBe(
+      'missing',
+    );
+    expect(
+      memoCheckPage(
+        c,
+        null,
+        { ...base, statusTexts: ['Заявка принята'] },
+        { rules, hosts: [HOST] },
+      ).goal,
+    ).toBe('ok');
+    expect(base.elements).toHaveLength(1);
+  });
+  it('bounds and masks passive text independently from interactive refs', () => {
+    const parsed = parseSnapshot({
+      url: 'https://example.test/',
+      title: '',
+      elements: [],
+      statusTexts: Array(15).fill('qa@example.com ' + 'x'.repeat(200)),
+    });
+    expect(parsed?.statusTexts).toHaveLength(10);
+    expect(
+      parsed?.statusTexts?.every(
+        (text) => text.length <= 160 && !text.includes('qa@example.com'),
+      ),
+    ).toBe(true);
+    expect(parsed?.elements).toEqual([]);
   });
 });
