@@ -579,7 +579,7 @@ export class UiPlanController {
       this.host.toParent({
         type: 'ui-snap',
         rid,
-        ...(statuses ? { statuses: true } : {}),
+        statuses,
         deny: cfg ? cfg.denySelectors : [],
         allow: cfg ? cfg.allowSelectors : [],
       });

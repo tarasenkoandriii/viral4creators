@@ -708,6 +708,8 @@ function VoiceTestPanel({
               {c.bad
                 ? fmtVt(t.memoPageBad, { path: c.path, n: c.bad })
                 : fmtVt(t.memoPageOk, { path: c.path })}
+              {!!c.failedSteps?.length &&
+                ` · ${fmtVt(t.memoFailedSteps, { steps: c.failedSteps.join(', ') })}`}
               {c.goal
                 ? ` · ${c.goal === 'ok' ? t.memoGoalOk : t.memoGoalMissing}`
                 : ''}

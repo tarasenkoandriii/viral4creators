@@ -85,6 +85,7 @@ const uk = {
   memoFinish: 'Завершити перевірку',
   memoPageOk: '{path}: усе знайдено',
   memoPageBad: '{path}: проблем — {n}',
+  memoFailedSteps: 'Не пройшли кроки: {steps}',
   memoGoalOk: 'мета на сторінці є',
   memoGoalMissing: 'мети на сторінці не видно',
   memoResult: {
@@ -196,6 +197,7 @@ const ru: VtDict = {
   memoFinish: 'Завершить проверку',
   memoPageOk: '{path}: всё найдено',
   memoPageBad: '{path}: проблем — {n}',
+  memoFailedSteps: 'Не прошли шаги: {steps}',
   memoGoalOk: 'цель на странице есть',
   memoGoalMissing: 'цели на странице не видно',
   memoResult: {
@@ -300,6 +302,7 @@ const en: VtDict = {
   memoFinish: 'Finish the check',
   memoPageOk: '{path}: everything found',
   memoPageBad: '{path}: problems — {n}',
+  memoFailedSteps: 'Failed steps: {steps}',
   memoGoalOk: 'the goal is on the page',
   memoGoalMissing: 'the goal is not visible on the page',
   memoResult: {

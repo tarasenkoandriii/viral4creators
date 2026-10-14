@@ -56,9 +56,31 @@ export function start(host: ActHost): ActApi {
         case 'ui-snap': {
           deny = m.deny;
           allow = m.allow;
-          const s = takeSnapshot(deny, allow, m.statuses === true);
+          const s = takeSnapshot(deny, allow);
           refs = s.refs;
-          host.post({ type: 'ui-snapshot', rid: m.rid, snapshot: s.snapshot });
+          const post = (statusTexts?: string[]) =>
+            host.post({
+              type: 'ui-snapshot',
+              rid: m.rid,
+              snapshot: {
+                ...s.snapshot,
+                ...(statusTexts ? { statusTexts } : {}),
+              },
+            });
+          if (m.statuses) {
+            void import(
+              /* @vite-ignore */ new URL('check.js', import.meta.url).href
+            )
+              .then(
+                (x: {
+                  readStatusTexts: (
+                    deny: string[],
+                    allow: string[]
+                  ) => string[];
+                }) => post(x.readStatusTexts(m.deny, m.allow))
+              )
+              .catch(() => post());
+          } else post();
           return;
         }
         case 'ui-run': {

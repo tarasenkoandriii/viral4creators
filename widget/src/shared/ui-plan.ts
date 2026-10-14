@@ -474,7 +474,7 @@ export function parseUiCommand(m: Record<string, unknown>): UiCommand | null {
             rid: m.rid,
             deny,
             allow,
-            ...(m.statuses === true ? { statuses: true } : {}),
+            statuses: m.statuses === true,
           }
         : null;
     }

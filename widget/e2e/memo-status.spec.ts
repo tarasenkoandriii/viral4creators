@@ -16,12 +16,19 @@ test('memo status snapshot is opt-in, read-only and excludes protected text', as
     const messages: Array<{
       snapshot: { statusTexts?: string[]; elements: Array<{ text: string }> };
     }> = [];
+    let done!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      done = resolve;
+    });
     const api = start({
       N: {
         on: (target: EventTarget, event: string, fn: EventListener) =>
           target.addEventListener(event, fn),
       },
-      post: (m: (typeof messages)[number]) => messages.push(m),
+      post: (m: (typeof messages)[number]) => {
+        messages.push(m);
+        if (messages.length === 2) done();
+      },
       min() {},
       mark() {},
     });
@@ -38,6 +45,7 @@ test('memo status snapshot is opt-in, read-only and excludes protected text', as
       allow: [],
       statuses: true,
     });
+    await ready;
     return messages;
   });
   expect(messages[0].snapshot.statusTexts).toBeUndefined();

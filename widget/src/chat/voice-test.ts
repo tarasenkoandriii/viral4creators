@@ -120,7 +120,12 @@ export interface VtMemo {
   name: string;
   pages: string[];
   goalPage: string;
-  checked: Array<{ path: string; bad: number; goal: 'ok' | 'missing' | null }>;
+  checked: Array<{
+    path: string;
+    bad: number;
+    failedSteps?: number[];
+    goal: 'ok' | 'missing' | null;
+  }>;
   tokens: string[];
   result: VtResult | null;
 }
@@ -367,7 +372,20 @@ export class VoiceTestController {
         ...m,
         checked: [
           ...m.checked.filter((c) => c.path !== path),
-          { path, bad: steps.filter((x) => x.ok !== true).length, goal },
+          {
+            path,
+            bad: steps.filter((x) => x.ok !== true).length,
+            failedSteps: steps
+              .filter(
+                (x) =>
+                  x.ok !== true &&
+                  Number.isInteger(x.i) &&
+                  Number(x.i) >= 0 &&
+                  Number(x.i) < 20
+              )
+              .map((x) => Number(x.i) + 1),
+            goal,
+          },
         ].slice(-12),
         tokens: [...m.tokens, token].slice(-20),
       },
