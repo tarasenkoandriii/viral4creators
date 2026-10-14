@@ -248,6 +248,7 @@ async function wizard() {
             denySelectors: ['#x'],
             allowSelectors: [],
             maxSteps: 6,
+            memos: true,
           },
         };
       if (path.endsWith('/analyze'))
@@ -378,7 +379,7 @@ async function wizard() {
     denySelectors: ['#x'],
     allowSelectors: [],
     maxSteps: 6,
-    memos: false,
+    memos: true,
   });
   assert.equal(ui.step, 1);
   assert.deepEqual(ui.env, {

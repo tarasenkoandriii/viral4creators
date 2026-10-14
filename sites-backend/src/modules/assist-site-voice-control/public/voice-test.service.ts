@@ -250,6 +250,9 @@ export class VoiceTestService {
         denySelectors: access.rules.denySelectors,
         allowSelectors: access.rules.allowSelectors,
         maxSteps: access.rules.maxSteps,
+        memos:
+          !memo &&
+          (await readPublishedMemos(this.db, ctx.site.siteId)).length > 0,
       },
     };
   }

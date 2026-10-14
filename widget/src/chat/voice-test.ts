@@ -303,7 +303,7 @@ export class VoiceTestController {
             .slice(0, 30)
         : [],
       maxSteps: typeof vc.maxSteps === 'number' ? vc.maxSteps : 6,
-      memos: false,
+      memos: vc.memos === true,
     };
     this.host.storage('vtsess', JSON.stringify({ s: session, e: exp, cfg }));
     this.host.setSession(session);
