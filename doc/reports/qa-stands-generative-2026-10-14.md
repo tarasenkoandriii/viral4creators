@@ -54,3 +54,7 @@ CI кода 4dfa4ea: https://github.com/tarasenkoandriii/viral4creators/actions/
 `6ee517a`: UI читает envelope отдельным GET-маршрутом QA_READ. POST/DELETE/reset сохраняют QA_WRITE. Регрессионные проверки подтверждают, что QA viewer проходит только чтение, GET игнорирует mutation-параметры и не меняет records/revision. Локальные service/HTTP проверки — 11 тестов; клиентский transport-тест, типы, build и lint прошли. Результат CI/деплоя фиксируется отдельно от локальных тестов. Полная инструкция и ограничения: [QA-STANDS.md](../QA-STANDS.md).
 
 Vercel assist-api и assist-tma для `6ee517a` успешно развёрнуты. CI #38583600327: frontend прошёл, backend typecheck обнаружил неверную роль аккаунта `member` в новой тестовой фикстуре; исправлена на допустимую `operator` с продуктовой ролью QA viewer. Продуктовые права и production-код этой правкой не меняются. Повторная приёмка CI требуется.
+
+## Финальная сверка документации и CI
+
+Повторный CI коммита `62810fd`: [38584502353](https://github.com/tarasenkoandriii/viral4creators/actions/runs/38584502353) — success, включая sites-backend, assist и проверку документации. Ошибка типов тестовой роли устранена; прежний неуспешный прогон остаётся историческим фактом. Проверка документации `check-docs --no-jest` и локальных ссылок прошла. [Чеклист приёмки](../QA-STANDS-ACCEPTANCE.md) различает реальные production-проверки, автоматические тесты и открытые критерии. Отдельная production-сессия QA viewer и аппаратная приёмка микрофонов ещё не выполнены.

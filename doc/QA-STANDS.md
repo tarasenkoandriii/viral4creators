@@ -1,6 +1,6 @@
 # QA → «Стенды»: использование и границы
 
-Актуально на 14.10.2026. Код генератора и OpenAPI принят в production; исправление чтения для QA viewer — `6ee517a`, Vercel assist-api/assist-tma успешно развёрнуты, повторный CI после исправления тестовой фикстуры фиксируется в [отчёте](reports/qa-stands-generative-2026-10-14.md). Полный план развития: [ТЗ](../docs-tz/TZ-Voice-Generated-Test-Stands.md).
+Актуально на 14.10.2026. Код генератора и OpenAPI принят в production; исправление чтения для QA viewer — `6ee517a`, Vercel assist-api/assist-tma успешно развёрнуты, повторный CI #38584502353 прошёл; доказательства приведены в [отчёте](reports/qa-stands-generative-2026-10-14.md). [Чеклист приёмки](QA-STANDS-ACCEPTANCE.md). Полный план развития: [ТЗ](../docs-tz/TZ-Voice-Generated-Test-Stands.md).
 
 ## Для чего использовать
 
