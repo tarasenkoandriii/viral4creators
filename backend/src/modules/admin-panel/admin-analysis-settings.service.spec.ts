@@ -1,3 +1,5 @@
+import { ANALYSIS_MODEL_SETTING } from '../../common/analysis-model';
+import { GEMINI_MODEL } from '../../common/gemini-model';
 import { BadRequestException } from '@nestjs/common';
 import { AdminAnalysisSettingsService } from './admin-analysis-settings.service';
 import { DEFAULT_ANALYSIS_PROVIDER_SETTING_KEY } from '../analysis/default-analysis-provider';
@@ -83,6 +85,36 @@ describe('AdminAnalysisSettingsService', () => {
     await expect(svc.setDefault('claude', 'admin-1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('Gemini analysis model selection', () => {
+  it('preserves the environment default until explicitly changed', async () => {
+    const { svc, settings } = build(null);
+    expect(await svc.get()).toMatchObject({
+      model: GEMINI_MODEL,
+      modelSource: 'env-default',
+    });
+    expect(settings.set).not.toHaveBeenCalled();
+  });
+  it('persists the selected model and operator attribution', async () => {
+    const { svc, settings } = build(null);
+    expect(await svc.setModel('gemini-4-argon', 'operator')).toMatchObject({
+      model: 'gemini-4-argon',
+      modelSource: 'admin',
+    });
+    expect(settings.set).toHaveBeenCalledWith(
+      ANALYSIS_MODEL_SETTING,
+      'gemini-4-argon',
+      'operator',
+    );
+  });
+  it('rejects unknown models without mutating settings', async () => {
+    const { svc, settings } = build(null);
+    await expect(
+      svc.setModel('arbitrary-model', 'operator'),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(settings.set).not.toHaveBeenCalled();
   });
 });

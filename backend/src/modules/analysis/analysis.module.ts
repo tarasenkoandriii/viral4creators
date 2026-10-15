@@ -1,3 +1,4 @@
+import { PlatformSettingsService } from '../../common/platform-settings.service';
 import { Module } from '@nestjs/common';
 import { LegalModule } from '../legal/legal.module';
 import { AnalysisController } from './analysis.controller';
@@ -21,6 +22,7 @@ import { LibraryModule } from '../library/library.module';
   controllers: [AnalysisController],
   providers: [
     AnalysisService,
+    PlatformSettingsService,
     GeminiFilesService,
     AnalysisPreviewsService,
     AnalysisSelectionService,

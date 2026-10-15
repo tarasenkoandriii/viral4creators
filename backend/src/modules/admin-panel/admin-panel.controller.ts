@@ -1,3 +1,4 @@
+import { ANALYSIS_MODELS } from '../../common/analysis-model';
 import {
   Body,
   Controller,
@@ -503,6 +504,11 @@ export class SetMusicCatalogDto {
   raw!: string;
 }
 
+export class SetAnalysisModelDto {
+  @IsIn(ANALYSIS_MODELS)
+  model!: string;
+}
+
 export class SetAnalysisProviderDto {
   @IsIn(ANALYSIS_PROVIDER_KEYS as unknown as string[])
   provider!: string;
@@ -879,6 +885,15 @@ export class AdminPanelController {
   async getAnalysisProvider(@Req() req: AdminAuthenticatedRequest) {
     await this.adminPanel.assertOperator(req.userId);
     return this.analysisSettings.get();
+  }
+
+  @Patch('settings/analysis-model')
+  async setAnalysisModel(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() dto: SetAnalysisModelDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.analysisSettings.setModel(dto.model, req.userId);
   }
 
   @Patch('settings/analysis-provider')

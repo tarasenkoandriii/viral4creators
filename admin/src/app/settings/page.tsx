@@ -19,6 +19,7 @@ import {
   setAudioSeparationState,
   getAnalysisProviderSettings,
   setAnalysisProviderDefault,
+  setAnalysisModel,
   getVideoProviderSettings,
   setVideoProviderDefault,
   getGrokTransportSettings,
@@ -1140,6 +1141,15 @@ function AnalysisProviderCard() {
     }
   };
 
+  const handleModel = async (model: string) => {
+    if (!state || model === state.model) return;
+    setSaving(true);
+    setError(null);
+    try { setState(await setAnalysisModel(model)); }
+    catch (err) { setError(err instanceof ApiRequestError ? err.message : 'Не удалось сохранить модель Gemini'); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div className="card" style={{ marginBottom: 24 }}>
       <h2 style={{ fontSize: 16, marginBottom: 4 }}>Разбор референса по умолчанию</h2>
@@ -1183,6 +1193,20 @@ function AnalysisProviderCard() {
             </select>
             {saving && <span className="muted">Сохраняю…</span>}
           </div>
+          <label style={{ display: 'block', marginBottom: 8 }}>
+            Модель Gemini для разбора видео
+            <select aria-label="Модель Gemini для разбора видео" value={state.model}
+              disabled={saving} onChange={(e) => handleModel(e.target.value)} style={{ marginLeft: 12 }}>
+              {(state.models ?? []).map((model) => <option key={model} value={model}>{model}</option>)}
+            </select>
+          </label>
+          <p className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+            {state.modelSource === 'admin' ? 'Модель сохранена в админке.' : 'Используется серверный GEMINI_MODEL.'}
+            {' '}Применяется к новым разборам референсов, переводу и извлечению реплик в течение 15 секунд.
+            Кэш разделён по моделям. Существующие ролики не пересоздаются. Доступность зависит от API-ключа;
+            автоматической подмены модели нет. Для новых моделей стоимость может быть ещё не определена.
+            Это выбор модели разбора, отдельная оценка естественности ещё не подключена.
+          </p>
           <p className="muted" style={{ fontSize: 13 }}>
             {state.source === 'admin'
               ? 'Задано вручную на этом экране.'

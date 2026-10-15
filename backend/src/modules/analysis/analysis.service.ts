@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Optional,
   BadRequestException,
   ConflictException,
   Logger,
@@ -31,7 +32,12 @@ import {
 } from './analysis-translation';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { PlanService } from '../plan/plan.service';
-import { GEMINI_MODEL } from '../../common/gemini-model';
+import { PlatformSettingsService } from '../../common/platform-settings.service';
+import {
+  ANALYSIS_MODEL_SETTING,
+  resolveAnalysisModel,
+  analysisModelCacheKey,
+} from '../../common/analysis-model';
 import {
   describeGeminiOutput,
   geminiOutputCeiling,
@@ -159,10 +165,17 @@ export class AnalysisService {
     private readonly aiUsage: AiUsageService,
     private readonly plans: PlanService,
     private readonly legal: LegalService,
+    @Optional() private readonly modelSettings?: PlatformSettingsService,
   ) {
     // Ключ — явно в SDK (этап 53, В-6.15): `new GoogleGenAI({})` читал
     // только свои переменные, и GOOGLE_GEMINI_API_KEY до него не доходил.
     this.genai = createGeminiClient();
+  }
+
+  private async analysisModel(): Promise<string> {
+    return resolveAnalysisModel(
+      await this.modelSettings?.get(ANALYSIS_MODEL_SETTING),
+    );
   }
 
   /**
@@ -257,12 +270,14 @@ export class AnalysisService {
       // For a YouTube link the key is known upfront; an upload is keyed by
       // the file hash, checked inside performAnalysis once the bytes are
       // in hand (still before the expensive call).
-      const key = sourceKeyOf(originalVideo);
+      const model = await this.analysisModel();
+      const sourceKey = sourceKeyOf(originalVideo);
+      const key = sourceKey ? analysisModelCacheKey(sourceKey, model) : null;
       const cached = key ? await this.library.findAnalysis(key) : null;
       if (cached) {
         await this.applyCached(sessionId, key!, cached);
       } else {
-        await this.performAnalysis(sessionId, originalVideo);
+        await this.performAnalysis(sessionId, originalVideo, model);
       }
     } catch (error) {
       const message =
@@ -333,9 +348,10 @@ export class AnalysisService {
     if (locale === 'en') return; // канонический язык разбора — переводить нечего
 
     try {
+      const model = await this.analysisModel();
       const languageName = languageNameForLocale(locale);
       const response = await this.genai.models.generateContent({
-        model: GEMINI_MODEL,
+        model,
         contents: [
           { text: buildAnalysisTranslationPrompt(analysis, languageName) },
         ],
@@ -343,7 +359,7 @@ export class AnalysisService {
       });
       await this.aiUsage.recordGemini(response, {
         operation: 'analysis-translate',
-        model: GEMINI_MODEL,
+        model,
         sessionId,
       });
       const translated = applyAnalysisTranslation(
@@ -412,6 +428,7 @@ export class AnalysisService {
   private async performAnalysis(
     sessionId: string,
     originalVideo: OriginalVideo,
+    model: string,
   ): Promise<void> {
     this.logger.log(
       `Starting analysis for session ${sessionId} (source: ${originalVideo.sourceType})`,
@@ -437,8 +454,9 @@ export class AnalysisService {
         );
         // §21: an upload is keyed by its bytes — check the library before
         // paying for Gemini (and before uploading the file to it).
-        uploadKey = uploadSourceKey(
-          createHash('sha256').update(buffer).digest('hex'),
+        uploadKey = analysisModelCacheKey(
+          uploadSourceKey(createHash('sha256').update(buffer).digest('hex')),
+          model,
         );
         const cached = await this.library.findAnalysis(uploadKey);
         if (cached) {
@@ -477,7 +495,7 @@ export class AnalysisService {
       this.logger.log('Sending request to Gemini API...');
 
       const response = await this.genai.models.generateContent({
-        model: GEMINI_MODEL,
+        model,
         contents: [videoPart, { text: ANALYSIS_PROMPT }],
         // JSON mode: with a second structured key (characters, spec §10)
         // we want the model held to JSON, not just asked for it. The
@@ -493,7 +511,7 @@ export class AnalysisService {
       // должны быть.
       await this.aiUsage.recordGemini(response, {
         operation: 'analysis',
-        model: GEMINI_MODEL,
+        model,
         sessionId,
       });
 
@@ -572,7 +590,10 @@ export class AnalysisService {
         const stored = await this.sessionService.getSession(sessionId);
         const key =
           originalVideo.sourceType === VideoSourceType.YOUTUBE
-            ? youtubeSourceKey(originalVideo.youtubeUrl)
+            ? analysisModelCacheKey(
+                youtubeSourceKey(originalVideo.youtubeUrl),
+                model,
+              )
             : uploadKey;
         if (key && stored?.videoAnalysis) {
           await this.sessionService.updateSession(sessionId, {
@@ -700,8 +721,9 @@ export class AnalysisService {
 
     let sample: string | null = null;
     try {
+      const model = await this.analysisModel();
       const response = await this.genai.models.generateContent({
-        model: GEMINI_MODEL,
+        model,
         contents: [
           {
             text: `Below is a scene-by-scene breakdown of a reference video ad. Extract ONLY the spoken dialogue/voiceover lines (not scene descriptions, not on-screen text) as a single short sample suitable for a text-to-speech voice preview — combine the lines in order, ≤280 characters total. If there is no spoken dialogue/voiceover at all, respond with an empty string.\n\nBreakdown:\n${analysis.sceneBreakdown}\n\nRespond with a valid JSON object only: {"sample": "..."}`,
@@ -715,7 +737,7 @@ export class AnalysisService {
       });
       await this.aiUsage.recordGemini(response, {
         operation: 'original-dialogue-extraction',
-        model: GEMINI_MODEL,
+        model,
         sessionId,
       });
       const out = readGeminiOutput(response);

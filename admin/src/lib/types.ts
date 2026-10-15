@@ -313,6 +313,9 @@ export interface AnalysisProviderOptionView {
 }
 
 export interface AnalysisProviderSettingsView {
+  model: string;
+  modelSource: 'admin' | 'env-default';
+  models: string[];
   active: AnalysisProviderKey;
   source: 'admin' | 'env-default';
   options: AnalysisProviderOptionView[];

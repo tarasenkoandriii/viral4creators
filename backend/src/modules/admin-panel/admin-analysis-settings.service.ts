@@ -1,3 +1,8 @@
+import {
+  ANALYSIS_MODEL_SETTING,
+  ANALYSIS_MODELS,
+  resolveAnalysisModel,
+} from '../../common/analysis-model';
 /**
  * AdminAnalysisSettingsService — «Разбор референса по умолчанию» на
  * вкладке /settings (доп. запрос владельца продукта: тот же ручной
@@ -41,6 +46,9 @@ export interface AnalysisProviderSettingsView {
    * разу не трогал селектор, используется `gemini` по умолчанию. */
   source: 'admin' | 'env-default';
   options: AnalysisProviderOptionView[];
+  model: string;
+  modelSource: 'admin' | 'env-default';
+  models: string[];
 }
 
 @Injectable()
@@ -69,11 +77,29 @@ export class AdminAnalysisSettingsService {
     const stored = await this.settings.get(
       DEFAULT_ANALYSIS_PROVIDER_SETTING_KEY,
     );
+    const storedModel = await this.settings.get(ANALYSIS_MODEL_SETTING);
     return {
+      model: resolveAnalysisModel(storedModel),
+      modelSource:
+        storedModel && ANALYSIS_MODELS.includes(storedModel)
+          ? 'admin'
+          : 'env-default',
+      models: ANALYSIS_MODELS,
       active: resolveDefaultAnalysisProvider(stored),
       source: isAnalysisProviderKey(stored) ? 'admin' : 'env-default',
       options: this.options(),
     };
+  }
+
+  async setModel(
+    model: string,
+    updatedBy: string,
+  ): Promise<AnalysisProviderSettingsView> {
+    if (!ANALYSIS_MODELS.includes(model)) {
+      throw new BadRequestException('Неизвестная модель Gemini');
+    }
+    await this.settings.set(ANALYSIS_MODEL_SETTING, model, updatedBy);
+    return this.get();
   }
 
   async setDefault(

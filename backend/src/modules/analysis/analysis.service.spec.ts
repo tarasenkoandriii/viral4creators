@@ -95,6 +95,7 @@ const storedAnalysis = (): VideoAnalysis =>
 
 function build(
   over: {
+    model?: string;
     originalVideo?: unknown;
     userId?: string | null;
     cached?: VideoAnalysis | null;
@@ -151,6 +152,7 @@ function build(
     aiUsage as never,
     plans as never,
     legal as never,
+    { get: jest.fn().mockResolvedValue(over.model ?? null) } as never,
   );
   return {
     svc,
@@ -733,5 +735,28 @@ describe('AnalysisService — проба реплик оригинала и об
 
     await expect(svc.extractOriginalDialogueSample('s1')).resolves.toBeNull();
     expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('admin-selected Gemini model', () => {
+  it('uses the selected model for the request, billing and separate cache', async () => {
+    const model = 'gemini-4-argon';
+    const { svc, aiUsage, library } = build({ model });
+    await svc.analyzeVideo('s1');
+    expect(generateContent).toHaveBeenCalledWith(
+      expect.objectContaining({ model }),
+    );
+    expect(aiUsage.recordGemini).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ model, operation: 'analysis' }),
+    );
+    expect(library.findAnalysis).toHaveBeenCalledWith(
+      expect.stringContaining(':model:gemini-4-argon'),
+    );
+    expect(library.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKey: expect.stringContaining(':model:gemini-4-argon'),
+      }),
+    );
   });
 });

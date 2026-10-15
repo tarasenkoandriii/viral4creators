@@ -404,6 +404,10 @@ export function getAnalysisProviderSettings() {
   return apiGet<AnalysisProviderSettingsView>('/admin/settings/analysis-provider');
 }
 
+export function setAnalysisModel(model: string) {
+  return apiPatch<AnalysisProviderSettingsView>('/admin/settings/analysis-model', { model });
+}
+
 export function setAnalysisProviderDefault(provider: AnalysisProviderKey) {
   return apiPatch<AnalysisProviderSettingsView>('/admin/settings/analysis-provider', {
     provider,
