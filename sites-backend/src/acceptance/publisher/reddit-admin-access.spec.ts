@@ -49,9 +49,13 @@ ciDescribe(
   () => {
     describe('флаг включён', () => {
       let s: RedditStack;
+      let accountId: string;
       let restore: () => void;
       beforeAll(async () => {
         s = await redditStack();
+        const w = await redditWorld(s, 'working');
+        accountId = w.acc.accountId;
+        restore = useAdminEnv(w.acc.siteId);
       });
       afterAll(async () => {
         restore?.();
@@ -59,8 +63,6 @@ ciDescribe(
       });
 
       it('секрет: нет и неверный — 401 одинаково; env не задан — 503; секрет раньше актора', async () => {
-        const w = await redditWorld(s, 'working');
-        restore = useAdminEnv(w.acc.siteId);
         const none = shape(await adminApi(s, { secret: null }).get('status'));
         const wrong = shape(
           await adminApi(s, { secret: 'x'.repeat(40) }).get('status'),
@@ -90,7 +92,9 @@ ciDescribe(
       });
 
       it('актор: нет или не тот формат — 400 ADMIN_ACTOR_REQUIRED (и на мутации — без записей)', async () => {
-        const before = await s.prisma.pubAuditEvent.count();
+        const before = await s.prisma.pubAuditEvent.count({
+          where: { accountId },
+        });
         for (const actor of [null, '', 'admin:x', 'a b', 'x'.repeat(59), 'ä']) {
           for (const r of [
             await adminApi(s, { actor }).get('status'),
@@ -109,7 +113,9 @@ ciDescribe(
             });
           }
         }
-        expect(await s.prisma.pubAuditEvent.count()).toBe(before);
+        expect(
+          await s.prisma.pubAuditEvent.count({ where: { accountId } }),
+        ).toBe(before);
         expect(
           (await adminApi(s, { actor: 'x'.repeat(58) }).get('status')).status,
         ).toBe(200);
@@ -286,10 +292,12 @@ ciDescribe(
 
     describe('флаг выключен', () => {
       let s: RedditStack;
+      let accountId: string;
       let restore: () => void;
       beforeAll(async () => {
         s = await redditStack({ enabled: false });
         const w = await redditWorld(s, 'working');
+        accountId = w.acc.accountId;
         restore = useAdminEnv(w.acc.siteId);
       });
       afterAll(async () => {
@@ -304,8 +312,12 @@ ciDescribe(
           product: null,
           gate: null,
         });
-        const before = await s.prisma.pubAuditEvent.count();
-        const keys = await s.prisma.pubIdempotencyKey.count();
+        const before = await s.prisma.pubAuditEvent.count({
+          where: { accountId },
+        });
+        const keys = await s.prisma.pubIdempotencyKey.count({
+          where: { accountId },
+        });
         for (const r of [
           await A.postRaw('setup', {}),
           await A.get('rx/projects'),
@@ -329,8 +341,12 @@ ciDescribe(
             details: null,
           });
         }
-        expect(await s.prisma.pubAuditEvent.count()).toBe(before);
-        expect(await s.prisma.pubIdempotencyKey.count()).toBe(keys);
+        expect(
+          await s.prisma.pubAuditEvent.count({ where: { accountId } }),
+        ).toBe(before);
+        expect(
+          await s.prisma.pubIdempotencyKey.count({ where: { accountId } }),
+        ).toBe(keys);
       });
     });
   },
