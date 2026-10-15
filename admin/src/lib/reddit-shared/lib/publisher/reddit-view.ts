@@ -690,7 +690,9 @@ export const flairOf = (v: boolean | null): Flair =>
  * показывает подсказку (`needsSourceForReview`).
  */
 export function canReviewSnapshot(
-  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState' | 'source'>
+  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState'> & {
+    source: Pick<RedditRuleSnapshotView['source'], 'url'>;
+  }
 ): boolean {
   return (
     s.status === 'current' &&
@@ -701,7 +703,9 @@ export function canReviewSnapshot(
 
 /** Текущий неподтверждённый снимок без первоисточника: подтвердить нельзя. */
 export function needsSourceForReview(
-  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState' | 'source'>
+  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState'> & {
+    source: Pick<RedditRuleSnapshotView['source'], 'url'>;
+  }
 ): boolean {
   return (
     s.status === 'current' &&

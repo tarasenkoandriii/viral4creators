@@ -1372,13 +1372,14 @@ async function e2eRd02(): Promise<void> {
       );
       const url =
         'https://www.reddit.com/r/contentops/comments/pst2k/reuse_one_article/';
+      // Р-RD-AUD-5: postedAt не раньше первого копирования (допуск 1 мин) —
+      // берём «полминуты назад»; канон поста — без slug (аудит m2-12).
       const pub = await st.po.reportPublication(m.content.id, key(), {
         url,
-        postedAt: new Date(Date.now() + clockOffsetMs - 60_000).toISOString(),
+        postedAt: new Date(Date.now() + clockOffsetMs - 30_000).toISOString(),
       });
       expect(
-        pub.finalUrl ===
-          'https://www.reddit.com/r/contentops/comments/pst2k/reuse_one_article' &&
+        pub.finalUrl === 'https://www.reddit.com/r/contentops/comments/pst2k' &&
           pub.reportKind === 'user_reported',
         `post URL: ${pub.finalUrl}`
       );
