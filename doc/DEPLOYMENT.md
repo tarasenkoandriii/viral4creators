@@ -4123,3 +4123,9 @@ Tutorial quality: TUTORIAL_DEMO_QUALITY_ENABLED=true включает очере
 ### Gemini: сверенная production-конфигурация (2026-10-14)
 
 Ключи Production assist-api и viral-backend привязаны к проверенному платному проекту; подробности billing, моделей, ошибок, учёта расходов и обязательной живой приёмки: [GEMINI-CONFIGURATION.md](GEMINI-CONFIGURATION.md). Env-save не заменяет Ready deployment. Не включать автопополнение ради 503: этот код отличается от 402 depleted credits и 429 quota.
+
+### Reddit: закрепление runtime после аудита 15.10.2026
+
+`viral-backend` и `assist-api`: Fluid Compute включён, project Default Max Duration явно сохранён **300 секунд**. Supabase `lezkdrjihoogbifntwkc` → General показывает `eu-west-2` (London); оба Vercel проекта переведены с `iad1` на `lhr1`, регион закреплён в `backend/vercel.json` и `sites-backend/vercel.json`. Изменения настроек применяются новым deployment; один факт сохранения в Settings ещё не доказывает регион уже работающей функции. Если Supabase переносится в другой регион, синхронно обновить оба backend. Контроль цепочки таймаутов: импорт 200 с → прокси 240 с → функции 300 с.
+
+Ежедневный `reddit-retention`: помимо очистки архивных выдержек создаёт `retention_review` для активных тредов без изменений N дней (по умолчанию 180), до 200 задач за запуск. Счётчик `details.reviewTasksCreated` — только новые задачи, повтор безопасен. Задачи видны в общей очереди кабинета Publisher; отдельного списка во вкладке Reddit Админки пока нет. Это запрос человеческого решения, без автоматического архива рабочих материалов.

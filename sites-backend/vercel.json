@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["lhr1"],
   "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh . ../scripts/build-prisma-migrations.mjs",
   "crons": [
     {

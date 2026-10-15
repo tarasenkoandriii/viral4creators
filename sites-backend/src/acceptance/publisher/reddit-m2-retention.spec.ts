@@ -415,6 +415,59 @@ ciDescribe('P-R M2: ретенция выдержек тредов (reddit-reten
     expect(src.fragment).toBe(REDDIT_RETENTION_PLACEHOLDER);
   });
 
+  it('AUD-6: stale active evidence opens one review task, preserves text, and respects scope', async () => {
+    const ids = await seedStudio(s, w, ed, po, {
+      opportunity: { excerpt: EXCERPT },
+      withContent: false,
+    });
+    const job = s.mod.get(RedditRetentionJob);
+    const ctx = {
+      now: new Date(),
+      scope: { siteIds: [w.product.siteId!] },
+      deadline: new Date(Date.now() + 60_000),
+    };
+    await job.reviewHeldThreads(ctx);
+    expect(
+      await s.prisma.pubReviewTask.count({
+        where: { objectId: ids.opportunityId!, reason: 'retention_review' },
+      }),
+    ).toBe(0);
+    await s.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'SET LOCAL session_replication_role = replica',
+      );
+      await tx.$executeRawUnsafe(
+        `UPDATE "sites"."pub_reddit_opportunities" SET "updatedAt" = now() - interval '181 days' WHERE "id" = $1`,
+        ids.opportunityId,
+      );
+      await tx.$executeRawUnsafe(
+        `UPDATE "sites"."pub_reddit_briefs" SET "updatedAt" = now() - interval '181 days' WHERE "id" = $1`,
+        ids.briefId,
+      );
+    });
+    await job.reviewHeldThreads({
+      ...ctx,
+      scope: { siteIds: ['unrelated-site'] },
+    });
+    expect(
+      await s.prisma.pubReviewTask.count({
+        where: { objectId: ids.opportunityId!, reason: 'retention_review' },
+      }),
+    ).toBe(0);
+    await job.reviewHeldThreads(ctx);
+    await job.reviewHeldThreads(ctx);
+    expect(
+      await s.prisma.pubReviewTask.count({
+        where: { objectId: ids.opportunityId!, reason: 'retention_review' },
+      }),
+    ).toBe(1);
+    const brief = await s.prisma.pubRedditBrief.findUniqueOrThrow({
+      where: { id: ids.briefId },
+    });
+    expect(brief.status).toBe('ready');
+    expect(brief.context).toBe(EXCERPT);
+  });
+
   it('гвард базы: выдержку P-R правят только плейсхолдером (иное — 23514)', async () => {
     const { sourceId } = await archived();
     await expect(

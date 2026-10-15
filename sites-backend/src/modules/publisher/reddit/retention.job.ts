@@ -87,7 +87,9 @@ export class RedditRetentionJob implements CronJob {
     const scope = ctx.scope
       ? Prisma.sql`AND p."siteId" = ANY(${ctx.scope.siteIds}::text[])`
       : Prisma.empty;
+    const reviewTasksCreated = await this.reviewHeldThreads(ctx);
     const totals = {
+      reviewTasksCreated,
       threads: 0,
       sourcesRedacted: 0,
       briefsRedacted: 0,
@@ -112,6 +114,7 @@ export class RedditRetentionJob implements CronJob {
             FROM "sites"."pub_products" p
             LEFT JOIN "sites"."pub_parameters" prm
               ON prm."productId" = p."id" AND prm."key" = 'reddit_excerpt_retention_days'
+             AND prm."status" IN ('assumption', 'approved')
            WHERE p."kind" IN ('working', 'test') ${scope}
         )
         SELECT DISTINCT o."accountId", o."productId", o."threadUrl"
@@ -162,6 +165,72 @@ export class RedditRetentionJob implements CronJob {
     return { processed: totals.threads, details: totals };
   }
 
+  /** Р-RD-AUD-6: stale active evidence needs a human decision, never auto-archive. */
+  async reviewHeldThreads(ctx: PubCronContext): Promise<number> {
+    if (Date.now() > ctx.deadline.getTime()) return 0;
+    const scope = ctx.scope
+      ? Prisma.sql`AND p."siteId" = ANY(${ctx.scope.siteIds}::text[])`
+      : Prisma.empty;
+    const rows = await this.db.system('reddit-retention: review held evidence')
+      .$queryRaw<
+      Array<{
+        accountId: string;
+        productId: string;
+        id: string;
+        triggerRef: string;
+      }>
+    >`
+      WITH held AS (
+        SELECT o."accountId", o."productId", o."id",
+               GREATEST(o."updatedAt", max(b."updatedAt")) AS activity,
+               CASE WHEN jsonb_typeof(prm."value" -> 'days') = 'number'
+                     AND (prm."value" ->> 'days')::numeric BETWEEN 1 AND 3650
+                     AND (prm."value" ->> 'days')::numeric = trunc((prm."value" ->> 'days')::numeric)
+                    THEN (prm."value" ->> 'days')::int ELSE ${RETENTION_DAYS_DEFAULT}::int END AS days
+          FROM "sites"."pub_reddit_opportunities" o
+          JOIN "sites"."pub_products" p ON p."id" = o."productId"
+          LEFT JOIN "sites"."pub_parameters" prm ON prm."productId" = p."id"
+            AND prm."key" = 'reddit_excerpt_retention_days' AND prm."status" IN ('assumption', 'approved')
+          LEFT JOIN "sites"."pub_reddit_briefs" b ON b."opportunityId" = o."id" AND b."productId" = o."productId"
+         WHERE p."kind" IN ('working', 'test') ${scope}
+           AND EXISTS (SELECT 1 FROM "sites"."pub_sources" s
+             WHERE s."productId" = o."productId" AND s."origin" = 'reddit'
+               AND s."kind" = 'discussion' AND s."url" = o."threadUrl"
+               AND s."fragment" <> ${REDDIT_RETENTION_PLACEHOLDER})
+         GROUP BY o."id", o."accountId", o."productId", o."updatedAt", o."status", prm."value"
+        HAVING o."status" NOT IN ('archived', 'skipped') OR bool_or(b."status" <> 'archived')
+      ), due AS (
+        SELECT *, 'reddit-retention:' || floor(extract(epoch FROM activity) * 1000)::text || ':' || days::text AS ref
+          FROM held WHERE ((activity AT TIME ZONE 'Europe/Kyiv') + make_interval(days => days)) AT TIME ZONE 'Europe/Kyiv' <= ${ctx.now}
+      )
+      SELECT d."accountId", d."productId", d."id", d.ref AS "triggerRef" FROM due d
+       WHERE NOT EXISTS (SELECT 1 FROM "sites"."pub_review_tasks" t
+         WHERE t."productId" = d."productId" AND t."objectType" = 'reddit_opportunity'
+           AND t."objectId" = d."id" AND t."reason" = 'retention_review' AND t."triggerRef" = d.ref)
+       ORDER BY d.activity, d."id" LIMIT ${this.batchSize}`;
+    let created = 0;
+    for (const row of rows) {
+      if (Date.now() > ctx.deadline.getTime()) break;
+      created += await this.db.forAccount(row.accountId).$transaction((tx) =>
+        this.ports.review().open(
+          tx as unknown as PubTx,
+          { id: row.productId, accountId: row.accountId },
+          [
+            {
+              objectType: 'reddit_opportunity',
+              objectId: row.id,
+              reason: 'retention_review',
+              triggerRef: row.triggerRef,
+              severity: 'normal',
+            },
+          ],
+          { actor: ACTOR },
+        ),
+      );
+    }
+    return created;
+  }
+
   /** Один тред продукта (в транзакции кабинета). */
   async redactThread(
     tx: PubTx,
@@ -171,7 +240,11 @@ export class RedditRetentionJob implements CronJob {
   ): Promise<RetentionOutcome> {
     const none = { sources: 0, briefs: 0, responses: 0, aiCalls: 0 };
     const param = await tx.pubParameter.findFirst({
-      where: { productId: product.id, key: 'reddit_excerpt_retention_days' },
+      where: {
+        productId: product.id,
+        key: 'reddit_excerpt_retention_days',
+        status: { in: ['assumption', 'approved'] },
+      },
       select: { value: true },
     });
     const days = retentionDaysOf(param?.value ?? null);
