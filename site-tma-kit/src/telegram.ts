@@ -147,9 +147,28 @@ export function buildRequestAuth(
 /** Тёмная/светлая тема — по Telegram, вне Telegram — по системе. */
 export function resolveDark(
   webApp: Pick<TelegramWebApp, 'colorScheme'> | null,
-  systemPrefersDark: boolean
+  systemPrefersDark: boolean,
+  preference: 'light' | 'dark' | null = null
 ): boolean {
+  if (preference) return preference === 'dark';
   return webApp ? webApp.colorScheme === 'dark' : systemPrefersDark;
+}
+
+export function storedTheme(): 'light' | 'dark' | null {
+  try {
+    const value = localStorage.getItem('v4c_theme');
+    return value === 'light' || value === 'dark' ? value : null;
+  } catch {
+    return null;
+  }
+}
+export function setTheme(theme: 'light' | 'dark'): void {
+  try {
+    localStorage.setItem('v4c_theme', theme);
+  } catch {
+    /* private mode */
+  }
+  applyTheme(theme);
 }
 
 function systemDark(): boolean {
@@ -163,10 +182,17 @@ function systemDark(): boolean {
 /** Фон шапки Telegram — в цвет нашего фона, иначе два оттенка рядом. */
 const CHROME = { dark: '#0e1621', light: '#f7f8fa' };
 
-export function applyTheme(): void {
+export function applyTheme(override?: 'light' | 'dark'): void {
   const webApp = getTelegramWebApp();
-  const dark = resolveDark(webApp, systemDark());
+  // SDK exists in ordinary browsers too; its empty initData must not override the OS theme.
+  const dark = resolveDark(
+    webApp?.initData ? webApp : null,
+    systemDark(),
+    override ?? storedTheme()
+  );
   document.documentElement.classList.toggle('dark', dark);
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  window.dispatchEvent(new Event('v4c-theme-changed'));
   const color = dark ? CHROME.dark : CHROME.light;
   webApp?.setBackgroundColor?.(color);
   webApp?.setHeaderColor?.(color);
@@ -222,12 +248,16 @@ export function initTelegram(): { startParam: string | null } {
   if (webApp) {
     webApp.ready();
     webApp.expand();
-    webApp.onEvent?.('themeChanged', applyTheme);
-  } else if (typeof window.matchMedia === 'function') {
+    webApp.onEvent?.('themeChanged', () => applyTheme());
+  }
+  if (typeof window.matchMedia === 'function') {
     window
       .matchMedia('(prefers-color-scheme: dark)')
-      .addEventListener?.('change', applyTheme);
+      .addEventListener?.('change', () => applyTheme());
   }
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'v4c_theme') applyTheme();
+  });
   return { startParam };
 }
 

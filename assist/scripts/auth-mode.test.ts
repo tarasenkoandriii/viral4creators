@@ -2,11 +2,70 @@ import assert from 'node:assert/strict';
 import { createApiClient } from '../src/kit/api-client';
 import { ApiError } from '../src/kit/envelope';
 import { createSitesApi } from '../src/kit/sites-api';
-import { buildRequestAuth, detectAuthMode } from '../src/kit/telegram';
+import {
+  buildRequestAuth,
+  detectAuthMode,
+  resolveDark,
+  applyTheme,
+  setTheme,
+} from '../src/kit/telegram';
 import { createWebAuthApi } from '../src/kit/web-auth';
 
 // ── Режим решает только initData ──────────────────────────────────────
 const off = { enabled: false };
+assert.equal(resolveDark(null, true), true);
+assert.equal(resolveDark({ colorScheme: 'light' }, true), false);
+assert.equal(resolveDark({ colorScheme: 'dark' }, false, 'light'), false);
+assert.equal(resolveDark({ colorScheme: 'light' }, false, 'dark'), true);
+// Browser SDK with empty initData cannot force light; storage denial is non-fatal.
+{
+  const keys = ['window', 'document', 'localStorage'] as const;
+  const saved = keys.map((k) => Object.getOwnPropertyDescriptor(globalThis, k));
+  let dark = false;
+  try {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        Telegram: { WebApp: { initData: '', colorScheme: 'light' } },
+        matchMedia: () => ({ matches: true }),
+        dispatchEvent: () => true,
+      },
+    });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: {
+        documentElement: {
+          classList: {
+            toggle: (_k: string, value: boolean) => {
+              dark = value;
+            },
+          },
+          style: { colorScheme: '' },
+        },
+      },
+    });
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: () => {
+          throw new Error('denied');
+        },
+        setItem: () => {
+          throw new Error('denied');
+        },
+      },
+    });
+    applyTheme();
+    assert.equal(dark, true);
+    setTheme('light');
+    assert.equal(dark, false);
+  } finally {
+    keys.forEach((k, i) => {
+      if (saved[i]) Object.defineProperty(globalThis, k, saved[i]!);
+      else Reflect.deleteProperty(globalThis, k);
+    });
+  }
+}
 const dev = { enabled: true, userId: '7' };
 assert.equal(detectAuthMode('query_id=1&hash=x', off), 'tma');
 assert.equal(detectAuthMode('query_id=1&hash=x', dev), 'tma');

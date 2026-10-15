@@ -59,6 +59,7 @@ import {
 import { Alert, Button, Spinner } from './kit/ui';
 import { AccountSwitcher } from './kit/ui/AccountSwitcher';
 import { LanguageSwitcher } from './kit/ui/LanguageSwitcher';
+import { ThemeToggle } from './kit/ui/ThemeToggle';
 import { AddSiteScreen } from './kit/screens/AddSiteScreen';
 import { AuthorizationsScreen } from './kit/screens/AuthorizationsScreen';
 import { HostVerifyScreen } from './kit/screens/HostVerifyScreen';
@@ -456,6 +457,7 @@ export function App({ startParam }: { startParam: string | null }) {
   const header = (
     <header className="flex items-center gap-2 mb-4">
       <div className="flex-1 font-bold">{product}</div>
+      <ThemeToggle locale={locale} />
     </header>
   );
 
@@ -716,7 +718,7 @@ function Shell({
   onLogout?: () => void;
   consumeLaunch: () => LaunchAction | null;
 }) {
-  const { mode, dict } = useKit();
+  const { mode, dict, locale } = useKit();
   const { widget } = useAssist();
   const route = useRoute();
   useTelegramBackButton(route);
@@ -735,6 +737,7 @@ function Shell({
       <UsageChip />
       <AccountSwitcher onSwitch={onSwitchAccount} />
       <LanguageSwitcher />
+      <ThemeToggle locale={locale} />
       {onLogout && (
         <Button
           variant="ghost"
