@@ -240,12 +240,14 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
         pathname: 'sessions/s1/generated.mp4',
         postPathname: 'sessions/s1/generated-post.mp4',
         voiceoverPathname: 'sessions/s1/voiceover.mp3',
+        preparedGreetingVoice: { pathname: 'sessions/s1/voiceover-attempt.mp3' },
       },
     } as unknown as Session;
 
     expect(sessionBlobPathnames(session).sort()).toEqual([
       'sessions/s1/generated-post.mp4',
       'sessions/s1/generated.mp4',
+      'sessions/s1/voiceover-attempt.mp3',
       'sessions/s1/voiceover.mp3',
     ]);
   });

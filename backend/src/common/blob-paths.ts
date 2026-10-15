@@ -44,6 +44,10 @@ export function sessionBlobPathnames(session: Session): string[] {
   if (session.generatedVideo?.voiceoverPathname) {
     paths.add(session.generatedVideo.voiceoverPathname);
   }
+  // Подготовленная дорожка остаётся отдельной после ручной переозвучки.
+  if (session.generatedVideo?.preparedGreetingVoice?.pathname) {
+    paths.add(session.generatedVideo.preparedGreetingVoice.pathname);
+  }
   // Автоэкспорт под площадки, ярус A (TODO §III, п.35, этап 75) — файлы
   // дешёвой обрезки лежат в том же префиксе сессии
   // (`sessions/{id}/export-*.mp4`, см. `PostProductionService.pollExport`).
@@ -82,6 +86,8 @@ export function sessionBlobPathnames(session: Session): string[] {
     if (past.pathname) paths.add(past.pathname);
     if (past.postPathname) paths.add(past.postPathname);
     if (past.voiceoverPathname) paths.add(past.voiceoverPathname);
+    if (past.preparedGreetingVoice?.pathname)
+      paths.add(past.preparedGreetingVoice.pathname);
     if (past.subtitlePathname) paths.add(past.subtitlePathname);
     for (const v of past.exportVariants ?? []) {
       if (v.pathname) paths.add(v.pathname);
