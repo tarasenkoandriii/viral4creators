@@ -26,6 +26,7 @@
 // они не пишут), а файлы в Blob публичные и живут, пока их не удалят.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import GreetingModelComparison from './model-comparison';
 import {
   captureGreetingFrames,
   getGreetingFixtureVideoState,
@@ -331,6 +332,8 @@ export default function GreetingFramesPage() {
         сценарий и готовый ролик — по пяти локалям. Порядок и чек-лист отбора — <code>doc/GREETING-FRAMES-CAPTURE.md</code>.
         Имена в кадрах размываются самим прогоном; ролик в кадре 4 — только фикстурный.
       </p>
+
+      <GreetingModelComparison />
 
       {/* ── Шаг 1 ── */}
       <section className="card" style={{ marginTop: 16 }}>

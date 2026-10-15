@@ -1,3 +1,6 @@
+import { GreetingModelEvaluationController } from './greeting-model-evaluation.controller';
+import { GreetingModelEvaluationService } from './greeting-model-evaluation.service';
+import { GeminiFilesService } from '../analysis/gemini-files.service';
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
@@ -49,9 +52,11 @@ import { GreetingSessionEditModule } from '../greeting-session-edit/greeting-ses
     // готовый ролик на месте не перерендеривается).
     GreetingSessionEditModule,
   ],
-  controllers: [UiSnapshotAdminController],
+  controllers: [UiSnapshotAdminController, GreetingModelEvaluationController],
   providers: [
     UiSnapshotRunnerService,
+    GreetingModelEvaluationService,
+    GeminiFilesService,
     TutorialFramesCaptureService,
     GreetingFramesCaptureService,
     // Чтение истории снимков для админки — только внутри модуля.
