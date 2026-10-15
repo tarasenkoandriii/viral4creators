@@ -448,6 +448,7 @@ export type UiCommand =
       lang: 'uk' | 'ru' | 'en';
     }
   | { type: 'ui-ack'; planId: string; index: number }
+  | { type: 'ui-arm'; planId: string }
   | { type: 'ui-stop'; planId: string }
   | { type: 'ui-pause'; on: boolean };
 
@@ -498,6 +499,8 @@ export function parseUiCommand(m: Record<string, unknown>): UiCommand | null {
             index: m.index as number,
           }
         : null;
+    case 'ui-arm':
+      return plan ? { type: 'ui-arm', planId: m.planId as string } : null;
     case 'ui-stop':
       return plan ? { type: 'ui-stop', planId: m.planId as string } : null;
     case 'ui-pause':

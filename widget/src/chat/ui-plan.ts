@@ -704,6 +704,7 @@ export class UiPlanController {
   }
 
   private showCard(v: PlanView) {
+    if (v.planId) this.host.toParent({ type: 'ui-arm', planId: v.planId });
     const marks = v.marks || [];
     // Второе «Да» прямо перед точкой невозврата — только этот шаг.
     const steps = v.steps
@@ -848,6 +849,15 @@ export class UiPlanController {
       return;
     }
     const v = this.plan;
+    if (
+      v &&
+      v.planId === m.planId &&
+      m.type === 'ui-stopped' &&
+      this.host.ui().phase === 'confirm'
+    ) {
+      this.stop(m.by === 'esc' ? 'esc' : 'button');
+      return;
+    }
     if (!v || v.planId !== m.planId || this.host.ui().phase !== 'running')
       return;
     if (m.type === 'ui-stopped') {

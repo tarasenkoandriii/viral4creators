@@ -29,6 +29,7 @@ test("[SBX-FORM] required fields block empty request and valid fixture succeeds"
   page,
 }) => {
   const form = page.locator("#request-form");
+  await expect(page.locator("#form-count")).toContainText(": 0");
   await form.getByRole("button").click();
   await expect(page.locator("#form-status")).toBeEmpty();
   await form.getByLabel("Имя", { exact: true }).fill("QA Demo");
@@ -39,6 +40,9 @@ test("[SBX-FORM] required fields block empty request and valid fixture succeeds"
   await expect(page.locator("#form-status")).toContainText(
     "Тестовая заявка принята",
   );
+  await expect(page.locator("#form-count")).toContainText(": 1");
+  await page.reload();
+  await expect(page.locator("#form-count")).toContainText(": 1");
 });
 test("[SBX-TUTORIAL] tutorial completes and resets", async ({ page }) => {
   await page.getByRole("button", { name: "Следующий шаг" }).click();

@@ -673,7 +673,7 @@ void (async () => {
   await new Promise((r) => setTimeout(r, 5));
   assert.deepEqual(
     toParent.map((m) => m.type),
-    ['ui-stop'],
+    ['ui-stop', 'ui-arm'],
     'второе «Да»: исполнитель стоп ДО клика, ack нет'
   );
   assert.equal(ui.phase, 'confirm');

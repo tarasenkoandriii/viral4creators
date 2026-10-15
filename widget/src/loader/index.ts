@@ -215,6 +215,8 @@ class Loader {
   stop = false;
   /** Э6-бис: идёт голосовой план — на следующей странице поднять iframe. */
   private _acting = false;
+  private _pendingPlan: string | null = null;
+  private _cancelledPlans: string[] = [];
   /** Без `_`: как `chkQ` — `this[k]`. */
   private actQ: Promise<ActApi | null> | null = null;
   private _batch: Array<{ kind: string; key: string | null }> = [];
@@ -638,6 +640,19 @@ class Loader {
           break;
       }
     };
+    const onPlanEsc = (e: Event) => {
+      if (
+        !e.isTrusted ||
+        (e as KeyboardEvent).key !== 'Escape' ||
+        !this._pendingPlan
+      )
+        return;
+      const planId = this._pendingPlan;
+      this._cancelPlan(planId);
+      this.post({ type: 'ui-stopped', planId, by: 'esc' });
+    };
+    N.on(window, 'keydown', onPlanEsc, true);
+    this.cleanups.push(() => N.off(window, 'keydown', onPlanEsc, true));
     N.on(window, 'message', onMsg);
     this.cleanups.push(() => N.off(window, 'message', onMsg));
 
@@ -958,7 +973,31 @@ class Loader {
    * чанку, он разбирает её строго. Чанк не загрузился (CSP без script-src
    * виджета) — iframe не получит ответа и скажет «нажмите сами».
    */
+  private _cancelPlan(id: string) {
+    if (this._pendingPlan === id) this._pendingPlan = null;
+    if (!this._cancelledPlans.includes(id)) this._cancelledPlans.push(id);
+    if (this._cancelledPlans.length > 32) this._cancelledPlans.shift();
+  }
+
   private _act(raw: Record<string, unknown>) {
+    const id =
+      typeof raw.planId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(raw.planId)
+        ? raw.planId
+        : null;
+    if (raw.type === 'ui-arm') {
+      if (id && !this._cancelledPlans.includes(id)) this._pendingPlan = id;
+      return;
+    }
+    if (id && raw.type === 'ui-stop' && this._pendingPlan === id)
+      this._pendingPlan = null;
+    if (id && raw.type === 'ui-run') {
+      if (this._cancelledPlans.includes(id)) {
+        this.post({ type: 'ui-stopped', planId: id, by: 'esc' });
+        return;
+      }
+      if (this._pendingPlan === id) this._pendingPlan = null;
+    }
+
     const host: ActHost = {
       N,
       post: (m) => this.post(m),

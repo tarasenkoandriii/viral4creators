@@ -4,7 +4,11 @@ $('login-form').addEventListener('submit', e => { e.preventDefault(); const data
 $('logout').addEventListener('click', () => { sessionStorage.removeItem('sandbox-demo-session'); $('login-status').textContent = 'Вы вышли'; renderLogin(); });
 $('save-settings').addEventListener('click', () => { sessionStorage.setItem('sandbox-demo-notifications', $('notifications').value); $('settings-status').textContent = 'Настройки сохранены'; });
 $('notifications').value = sessionStorage.getItem('sandbox-demo-notifications') || 'daily';
-$('request-form').addEventListener('submit', e => { e.preventDefault(); $('form-status').textContent = 'Тестовая заявка принята. Отправка отключена.'; e.target.reset(); });
+const requestCountKey = 'sandbox-request-count';
+let requestCount = Math.max(0, Number(sessionStorage.getItem(requestCountKey)) || 0);
+const renderRequestCount = () => { $('form-count').textContent = `Принято заявок в этой вкладке: ${requestCount}`; };
+renderRequestCount();
+$('request-form').addEventListener('submit', e => { e.preventDefault(); requestCount++; sessionStorage.setItem(requestCountKey, String(requestCount)); renderRequestCount(); $('form-status').textContent = 'Тестовая заявка принята. Отправка отключена.'; e.target.reset(); });
 let step = 1;
 function renderStep() { $('tutorial-step').textContent = ['Шаг 1 из 3: выберите тему', 'Шаг 2 из 3: проверьте поля формы', 'Шаг 3 из 3: обучение завершено'][step - 1]; $('next-step').disabled = step === 3; }
 $('next-step').addEventListener('click', () => { step = Math.min(3, step + 1); renderStep(); });

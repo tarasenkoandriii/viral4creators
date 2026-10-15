@@ -721,6 +721,7 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
     // сообщение ленивому чанку act.js, который разбирает его СТРОГО
     // (`parseUiCommand`): разбор шагов не утяжеляет загрузчик (12 КБ).
     // (г) `vt-*` — проверка страницы мастера: тем же путём чанку check.js.
+    case 'ui-arm':
     case 'ui-snap':
     case 'ui-run':
     case 'ui-ack':
