@@ -181,3 +181,10 @@ Production отдаёт 0.2.1; архив совпал побайтно по с�
 После настоящего toolbar capture пользователь импортировал qa-sandbox-drift-plan.json с искусственно устаревшим required email=false и нажал передачу изменений из popup в QA. В обычном подключённом Chrome Profile 1 открылась вкладка qa-stands?handoff с baseline/current: фактический email required=true. Агент принял именно эту пользовательскую вкладку (не сформировал новую ссылку) и выполнил явную сверку. UI вернул «Уже существует замечание: cmv9foxaj000006l9egrd7ltg» и changed:field_8a8753c7:required. Дубль не создан, заполнение заблокировано. Скриншоты пользователя 15:18:22 и 15:24:40 подтверждают этапы toolbar capture и handoff; агент сохранил chrome-toolbar-handoff-dedup-2026-10-15.png с результатом API в UI.
 
 Закрыта приёмка Chrome: настоящая кнопка/activeTab → capture → импорт плана → структурный drift → handoff → явная сверка → дедупликация. Действия внутри popup выполнил пользователь, кабинет проверил агент. Это контролируемый тест baseline, не фактический дефект sandbox. Скачивание JSON из popup и Edge этим не подтверждены и остаются отдельными пунктами.
+
+
+### Скачивание из настоящего popup Chrome · 15.10.2026
+
+Обнаружен пользовательский файл /Users/macbook/Downloads/qa-form-snapshot.json. JSON разобран и проверен: верхние ключи ровно fields/url/version; URL https://sandbox.viral4creators.app/; версия capture-v1; два поля password/email с id/type/required, без значений и дополнительных свойств. Структура совпадает со скриншотом реального toolbar capture 15:18:22. Скачивание JSON в Chrome подтверждено артефактом. Тем самым Chrome install → popup → activeTab capture → download и drift handoff → QA → dedup подтверждены совместной пользовательской и агентской приёмкой.
+
+Microsoft Edge в /Applications не установлен; приёмка Edge не проводилась, устанавливать его для этой проверки не начинали. Поддержку Edge не обозначать как подтверждённую только по общему Chromium API.

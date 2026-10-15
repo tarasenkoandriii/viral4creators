@@ -9792,7 +9792,8 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 - [x] Локальный сборщик структуры формы Chrome/Edge и импорт JSON в сверку; минимальные activeTab/scripting, без значений и сети, архив проверяется по исходникам.
 - [x] Chrome 0.2.1: реальная установка → toolbar Q → activeTab → capture структуры sandbox; выполнено пользователем, подтверждено скриншотом 15.10.2026 15:18, Profile 1. Без значений и постоянных host permissions.
 - [x] Chrome Profile 1: toolbar/activeTab capture → импорт тестового baseline → drift → handoff из настоящего popup → сверка в том же пользовательском профиле → существующий finding cmv9foxaj000006l9egrd7ltg без дубля (15.10.2026 15:24; popup — пользователь, кабинет — агент).
-- [ ] Отдельно подтвердить скачивание JSON из настоящего popup и приёмку Edge. iframe/Shadow DOM, custom controls и доверенные версии адаптера остаются открытыми.
+- [x] Скачивание JSON из настоящего popup Chrome: проверен Downloads/qa-form-snapshot.json, capture-v1, sandbox, только структура двух полей без значений (15.10.2026).
+- [ ] Отдельная приёмка Edge (браузер на текущем Mac не установлен). iframe/Shadow DOM, custom controls и доверенные версии адаптера остаются открытыми.
 
 - [x] Сборщик 0.1.1: E2E установленного расширения в изолированном Chromium (реальный scripting API + preview/download, отказ без доступа, неудачный повтор и очистка экспорта), отдельный CI. Test-only host grant и iframe harness не подтверждают production toolbar/activeTab; ручной Chrome/Edge цикл остаётся открытым.
 
