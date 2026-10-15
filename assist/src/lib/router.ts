@@ -31,7 +31,7 @@ export type Route =
   | { name: 'site-new' }
   | { name: 'site'; siteId: string }
   | { name: 'qa-cases'; siteId: string }
-  | { name: 'qa-stands'; siteId: string }
+  | { name: 'qa-stands'; siteId: string; handoff?: string }
   | { name: 'qa-runs'; siteId: string }
   | { name: 'qa-findings'; siteId: string }
   | { name: 'host'; siteId: string; hostId: string }
@@ -160,6 +160,21 @@ export function parseRoute(hash: string): Route {
       section: pp.length >= 4 ? pp[3] : null,
       id: pp.length === 5 ? pp[4] : null,
       ...(Object.keys(query).length ? { query } : {}),
+    };
+  }
+  if (
+    pp.length === 3 &&
+    pp[0] === 'sites' &&
+    ID.test(pp[1]) &&
+    pp[2] === 'qa-stands' &&
+    qi >= 0 &&
+    full.length <= 60000
+  ) {
+    const params = new URLSearchParams(full.slice(qi + 1));
+    return {
+      name: 'qa-stands',
+      siteId: pp[1],
+      handoff: params.get('handoff') ?? undefined,
     };
   }
   const path = full.replace(/\/+$/, '');
@@ -410,7 +425,7 @@ export function routeHref(r: Route): string {
     case 'qa-runs':
       return `#/sites/${r.siteId}/qa-runs`;
     case 'qa-stands':
-      return `#/sites/${r.siteId}/qa-stands`;
+      return `#/sites/${r.siteId}/qa-stands${r.handoff ? `?handoff=${encodeURIComponent(r.handoff)}` : ''}`;
     case 'qa-cases':
       return `#/sites/${r.siteId}/qa-cases`;
     case 'test-accounts':

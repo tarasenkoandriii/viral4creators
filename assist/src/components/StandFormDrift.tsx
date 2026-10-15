@@ -7,14 +7,20 @@ export function StandFormDrift({
   siteId,
   standId,
   write,
+  initial,
 }: {
   api: ReturnType<typeof createQaStandsApi>;
   siteId: string;
   standId: string;
   write: boolean;
+  initial?: { baseline: unknown; current: unknown };
 }) {
-  const [baseline, setBaseline] = useState(''),
-    [current, setCurrent] = useState('');
+  const [baseline, setBaseline] = useState(
+      initial ? JSON.stringify(initial.baseline, null, 2) : ''
+    ),
+    [current, setCurrent] = useState(
+      initial ? JSON.stringify(initial.current, null, 2) : ''
+    );
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [result, setResult] = useState<Awaited<
@@ -31,12 +37,13 @@ export function StandFormDrift({
         В снимках допустимы только описание полей и ограничения. Не добавляйте
         значения, пароли, ключи и cookies.
       </p>
-      <details>
+      <details open={!!initial}>
         <summary>Подготовить снимки формы</summary>
         <p>
           Получите структуру в открытой вкладке через локальный сборщик
           Chrome/Edge или подготовьте снимок вручную. Расширение устанавливается
-          вами; автоматическая передача из браузера не подключена.
+          вами; при изменении формы можно открыть кабинет со снимками для
+          проверки.
         </p>
         <a className="underline" href="/downloads/qa-form-capture.zip" download>
           Скачать локальный сборщик и инструкцию

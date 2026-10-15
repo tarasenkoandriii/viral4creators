@@ -7,6 +7,7 @@ import {
   type TransferField,
 } from '../lib/stand-transfer';
 export function StandTransferPlan({
+  siteId,
   standId,
   recordId,
   recordVersion,
@@ -14,6 +15,7 @@ export function StandTransferPlan({
   values,
   stateField,
 }: {
+  siteId: string;
   standId: string;
   recordId: string;
   recordVersion: number;
@@ -163,7 +165,7 @@ export function StandTransferPlan({
                   );
                 const plan = {
                   version: 1,
-                  source: { standId, recordId, recordVersion },
+                  source: { siteId, standId, recordId, recordVersion },
                   target: {
                     url: target.href,
                     formIndex,

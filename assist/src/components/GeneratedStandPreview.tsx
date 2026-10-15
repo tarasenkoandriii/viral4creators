@@ -289,6 +289,7 @@ export function GeneratedStandPreview({
                 {transferRecord === r.id && (
                   <StandTransferPlan
                     key={`${r.id}:${r.version}`}
+                    siteId={siteId}
                     standId={stand.id}
                     recordId={r.id}
                     recordVersion={r.version ?? 1}

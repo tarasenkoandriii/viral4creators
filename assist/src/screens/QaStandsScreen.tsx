@@ -1,3 +1,4 @@
+import { parseFormSnapshot } from '../lib/stand-transfer';
 import { StandFormDrift } from '../components/StandFormDrift';
 import { downloadStandOpenApi } from '../lib/qa-stand-openapi';
 import { StandVoiceInput } from '../components/StandVoiceInput';
@@ -22,14 +23,55 @@ export function QaStandsButton({ siteId }: { siteId: string }) {
     </Button>
   ) : null;
 }
-export function QaStandsScreen({ siteId }: { siteId: string }) {
+export function QaStandsScreen({
+  siteId,
+  handoff,
+}: {
+  siteId: string;
+  handoff?: string;
+}) {
   const { account } = useKit();
-  return <Stands key={`${account.account.id}:${siteId}`} siteId={siteId} />;
+  return (
+    <Stands
+      key={`${account.account.id}:${siteId}`}
+      siteId={siteId}
+      handoff={handoff}
+    />
+  );
 }
-function Stands({ siteId }: { siteId: string }) {
+function Stands({ siteId, handoff }: { siteId: string; handoff?: string }) {
   const { qaStands: api } = useAssist();
   const { account } = useKit();
   const write = qaAccess(account.me).write;
+  let imported: {
+    standId: string;
+    baseline: ReturnType<typeof parseFormSnapshot>;
+    current: ReturnType<typeof parseFormSnapshot>;
+  } | null = null;
+  let importError = '';
+  if (handoff) {
+    try {
+      if (handoff.length > 30000) throw new Error('Снимки больше 30 КБ');
+      const data = JSON.parse(handoff);
+      if (
+        Object.keys(data).some(
+          (k) => !['standId', 'baseline', 'current'].includes(k)
+        ) ||
+        typeof data.standId !== 'string'
+      )
+        throw new Error('Неверный пакет снимков');
+      imported = {
+        standId: data.standId,
+        baseline: parseFormSnapshot(data.baseline),
+        current: parseFormSnapshot(data.current),
+      };
+      if (imported.baseline.url !== imported.current.url)
+        throw new Error('Адреса снимков различаются');
+    } catch (e) {
+      imported = null;
+      importError = e instanceof Error ? e.message : 'Неверные снимки';
+    }
+  }
   const [items, setItems] = useState<Stand[]>([]),
     [selected, setSelected] = useState<Stand | null>(null),
     [plan, setPlan] = useState<StandContract | null>(null),
@@ -108,6 +150,22 @@ function Stands({ siteId }: { siteId: string }) {
         списки и обзорные экраны с mock API. Перед созданием проверьте контракт
         и допущения. Все данные синтетические.
       </p>
+      {importError && <p role="alert">{importError}</p>}
+      {imported && items.some((s) => s.id === imported.standId) && (
+        <>
+          <p>
+            Снимки из расширения. Проверьте структуру перед созданием замечания.
+          </p>
+          <StandFormDrift
+            key={handoff}
+            api={api}
+            siteId={siteId}
+            standId={imported.standId}
+            write={write}
+            initial={imported}
+          />
+        </>
+      )}
       {error && <p role="alert">{error}</p>}
       {busy && <p role="status">Выполняем запрос…</p>}
       {write && (

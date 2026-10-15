@@ -1,6 +1,56 @@
 import { captureFormStructure } from "./capture.js";
 const get = (id) => document.getElementById(id);
 let snapshot = null;
+let driftHandoff = null;
+function prepareDrift(result, plan) {
+  driftHandoff = null;
+  get("drift-open").disabled = true;
+  if (!result?.blocked || !result.snapshot) return;
+  const id = /^[a-zA-Z0-9_-]{1,100}$/;
+  if (
+    !id.test(plan?.source?.siteId ?? "") ||
+    !id.test(plan?.source?.standId ?? "")
+  )
+    return;
+  // Reconstruct structure only: never copy entries, values, labels or source credentials.
+  const fields = (xs) =>
+    xs.map((f) =>
+      Object.fromEntries(
+        ["id", "type", "required", "min", "max", "maxLength"]
+          .filter((k) => f[k] !== undefined)
+          .map((k) => [k, f[k]]),
+      ),
+    );
+  const url = new URL(plan.target.url).origin + "/";
+  const data = {
+    standId: plan.source.standId,
+    baseline: {
+      url,
+      version: "baseline-v1",
+      fields: fields(plan.target.fields),
+    },
+    current: {
+      url,
+      version: "current-v1",
+      fields: fields(result.snapshot.fields),
+    },
+  };
+  const payload = JSON.stringify(data);
+  if (payload.length > 30000) return;
+  driftHandoff =
+    "https://assist-app.viral4creators.app/#/sites/" +
+    plan.source.siteId +
+    "/qa-stands?handoff=" +
+    encodeURIComponent(payload);
+  if (driftHandoff.length > 59000) {
+    driftHandoff = null;
+    return;
+  }
+  get("drift-open").disabled = false;
+}
+get("drift-open").addEventListener("click", async () => {
+  if (driftHandoff) await chrome.tabs.create({ url: driftHandoff });
+});
 get("capture").addEventListener("click", async () => {
   snapshot = null;
   get("save").disabled = true;
@@ -55,6 +105,8 @@ let transferPlan = null,
   reviewed = null;
 const clearReview = () => {
   reviewed = null;
+  driftHandoff = null;
+  get("drift-open").disabled = true;
   get("transfer-apply").disabled = true;
   get("transfer-diff").textContent = "";
 };
@@ -92,6 +144,7 @@ get("transfer-preview").addEventListener("click", async () => {
       ],
     });
     const result = results[0]?.result;
+    prepareDrift(result, transferPlan);
     if (result?.blocked && result.snapshot) {
       snapshot = result.snapshot;
       get("preview").textContent = JSON.stringify(snapshot, null, 2);
@@ -126,6 +179,8 @@ get("transfer-apply").addEventListener("click", async () => {
   const preview = reviewed;
   if (!preview) return;
   reviewed = null;
+  driftHandoff = null;
+  get("drift-open").disabled = true;
   get("transfer-apply").disabled = true;
   get("transfer-preview").disabled = true;
   try {
@@ -144,6 +199,7 @@ get("transfer-apply").addEventListener("click", async () => {
       ],
     });
     const result = results[0]?.result;
+    prepareDrift(result, preview.plan);
     if (result?.blocked && result.snapshot) {
       snapshot = result.snapshot;
       get("preview").textContent = JSON.stringify(snapshot, null, 2);

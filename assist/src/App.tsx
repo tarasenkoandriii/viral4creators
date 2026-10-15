@@ -985,7 +985,7 @@ function Screen({
     case 'qa-runs':
       return <QaRunsScreen siteId={route.siteId} />;
     case 'qa-stands':
-      return <QaStandsScreen siteId={route.siteId} />;
+      return <QaStandsScreen siteId={route.siteId} handoff={route.handoff} />;
     case 'qa-cases':
       return <QaCatalogScreen siteId={route.siteId} />;
     case 'host':

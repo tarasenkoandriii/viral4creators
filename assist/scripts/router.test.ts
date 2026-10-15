@@ -351,3 +351,10 @@ for (const bad of [
 }
 
 console.log('router: ok');
+
+const handoffRoute: Route = {
+  name: 'qa-stands',
+  siteId: 'site123',
+  handoff: JSON.stringify({ standId: 'stand123', baseline: {}, current: {} }),
+};
+assert.deepEqual(parseRoute(routeHref(handoffRoute)), handoffRoute);

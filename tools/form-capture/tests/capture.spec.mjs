@@ -152,7 +152,12 @@ async function planFor(w) {
   const snapshot = JSON.parse(await w.popup.locator("#preview").textContent());
   return {
     version: 1,
-    source: { standId: "stand", recordId: "record", recordVersion: 1 },
+    source: {
+      siteId: "site123",
+      standId: "stand",
+      recordId: "record",
+      recordVersion: 1,
+    },
     target: {
       url: "https://capture-fixture.invalid/user/private",
       formIndex: 0,
@@ -168,13 +173,11 @@ async function planFor(w) {
   };
 }
 async function importPlan(w, plan) {
-  await w.popup
-    .getByLabel("План переноса", { exact: true })
-    .setInputFiles({
-      name: "qa-form-transfer.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(plan)),
-    });
+  await w.popup.getByLabel("План переноса", { exact: true }).setInputFiles({
+    name: "qa-form-transfer.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(plan)),
+  });
   await w.popup
     .getByRole("button", { name: "Сверить и показать изменения", exact: true })
     .click();
@@ -260,6 +263,21 @@ test("form drift blocks filling and makes the current snapshot available for QA"
     await apply.click();
     await expect(w.popup.locator("#transfer-status")).toContainText(
       "Структура формы изменилась",
+    );
+    const opened = w.context.waitForEvent("page");
+    await w.popup.locator("#drift-open").click();
+    const cabinet = await opened;
+    await cabinet.waitForURL("https://assist-app.viral4creators.app/**");
+    const address = new URL(cabinet.url());
+    expect(address.search).toBe("");
+    const payload = JSON.parse(
+      new URLSearchParams(address.hash.split("?")[1]).get("handoff"),
+    );
+    expect(payload.standId).toBe("stand");
+    expect(payload.baseline.fields).toHaveLength(2);
+    expect(payload.current.fields).toHaveLength(2);
+    expect(JSON.stringify(payload)).not.toMatch(
+      /PRIVATE_|prepared@|entries|before|after/,
     );
     await expect(w.target.locator("#email")).toHaveValue("PRIVATE_EMAIL");
     await expect(
