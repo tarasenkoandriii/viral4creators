@@ -1,0 +1,44 @@
+name: Form capture extension
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/form-capture/**'
+      - 'scripts/package-form-capture.py'
+      - 'assist/public/downloads/qa-form-capture.zip'
+      - '.github/workflows/form-capture.yml'
+  pull_request:
+    paths:
+      - 'tools/form-capture/**'
+      - 'scripts/package-form-capture.py'
+      - 'assist/public/downloads/qa-form-capture.zip'
+      - '.github/workflows/form-capture.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: form-capture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  extension:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/form-capture/tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+          cache-dependency-path: tools/form-capture/tests/package-lock.json
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - name: Archive matches reviewed sources
+        run: python3 ../../../scripts/package-form-capture.py --check
+      - name: Collector privacy tests
+        run: node --test ../capture.test.js
+      - run: npx playwright install --with-deps chromium
+      - name: Installed extension scripting and JSON download
+        run: npm test

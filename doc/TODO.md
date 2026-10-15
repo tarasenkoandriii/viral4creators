@@ -9791,3 +9791,5 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 
 - [x] Локальный сборщик структуры формы Chrome/Edge и импорт JSON в сверку; минимальные activeTab/scripting, без значений и сети, архив проверяется по исходникам.
 - [ ] Полная приёмка установленного расширения (install → popup → capture → download) в Chrome/Edge; iframe/Shadow DOM, custom controls, доверенные версии адаптера и автоматическая передача/заполнение остаются открытыми.
+
+- [x] Сборщик 0.1.1: E2E установленного расширения в изолированном Chromium (реальный scripting API + preview/download, отказ без доступа, неудачный повтор и очистка экспорта), отдельный CI. Test-only host grant и iframe harness не подтверждают production toolbar/activeTab; ручной Chrome/Edge цикл остаётся открытым.

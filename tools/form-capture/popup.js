@@ -18,6 +18,7 @@ get("capture").addEventListener("click", async () => {
       args: [Number(get("form-index").value)],
     });
     const result = results[0]?.result;
+    if (result?.error) throw new Error(result.error);
     if (!result?.snapshot) throw new Error("Не удалось получить снимок.");
     snapshot = result.snapshot;
     get("preview").textContent = JSON.stringify(snapshot, null, 2);

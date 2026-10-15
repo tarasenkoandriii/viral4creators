@@ -68,9 +68,9 @@ test("fails closed for duplicate/missing identity, unsupported radio and oversiz
     [control("INPUT", { id: "r", type: "radio" })],
     Array.from({ length: 51 }, (_, i) => control("INPUT", { id: "f" + i })),
   ])
-    assert.throws(() => run(fields));
-  assert.throws(() => run([a], 1));
-  assert.throws(() => run([a], 0, "http://example.invalid/"));
+    assert.ok(run(fields).error);
+  assert.ok(run([a], 1).error);
+  assert.ok(run([a], 0, "http://example.invalid/").error);
 });
 test("manifest grants only temporary active-tab scripting and no hosts/background", () => {
   const m = JSON.parse(
@@ -79,4 +79,5 @@ test("manifest grants only temporary active-tab scripting and no hosts/backgroun
   assert.deepEqual(m.permissions, ["activeTab", "scripting"]);
   assert.equal(m.host_permissions, undefined);
   assert.equal(m.background, undefined);
+  assert.equal(m.web_accessible_resources, undefined);
 });
