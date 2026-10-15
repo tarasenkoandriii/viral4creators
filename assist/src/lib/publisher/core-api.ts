@@ -4,8 +4,8 @@
  * `common.ts`). Декодеры строгие (`decode.ts`).
  */
 
-import type { PublisherHttp } from './common-api';
-import { seg } from './common-api';
+import type { PublisherHttp } from './common-pure';
+import { seg } from './common-pure';
 import {
   arr,
   bool,

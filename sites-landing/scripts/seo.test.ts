@@ -7,7 +7,9 @@
  *  2. `localeAlternates`: canonical + hreflang на все локали + `x-default`
  *     → `/en/…`, всё абсолютное.
  *  3. Метаданные каждой страницы × локали: title/description, canonical,
- *     hreflang, OG + Twitter одной парой, картинка существует в public/og.
+ *     hreflang, OG + Twitter одной парой, картинка существует в public/og;
+ *     имя сайта (`og:site_name`, title) — на языке страницы, не заглушка
+ *     `<бренд>`, и в карточки впечатано то же имя (Р-З15-1).
  *  4. sitemap: каждая страница × локаль, абсолютные адреса, hreflang с
  *     `x-default`, `lastModified` — дата из реестра, не дата сборки;
  *     robots: sitemap абсолютным адресом.
@@ -19,6 +21,7 @@ import path from 'node:path';
 
 process.env.SITE_URL = 'https://assist.example.com';
 
+import { BRAND_IS_PLACEHOLDER, brandDisplayName } from '../src/brand';
 import { localeAlternates } from '../src/lib/alternates';
 import { localeFromAcceptLanguage, locales } from '../src/lib/i18n';
 import { PAGES, pageMetadata, pageLocales, type DocsKey } from '../src/lib/pages';
@@ -144,9 +147,20 @@ for (const page of PAGES) {
     assert.equal(og.images[0].url, `${ORIGIN}/og/${ogKey}-${locale}.jpg`);
     assert.equal(tw.images[0].url, og.images[0].url);
     assert.ok(fs.existsSync(path.join(OG_DIR, `${ogKey}-${locale}.jpg`)), `${where}: нет OG-картинки — npm run og`);
+    assert.equal((og as unknown as { siteName: string }).siteName, brandDisplayName(locale), `${where}: og:site_name`);
+    for (const s of [m.title, m.description] as string[]) assert.ok(!s.includes('<бренд>') && !s.includes('{brand}'), `${where}: заглушка бренда в метаданных`);
+    // Р-З15-1: title (= og:title = twitter:title), который уже называет помощника, не повторяет родовое имя.
+    if (BRAND_IS_PLACEHOLDER) {
+      const name = brandDisplayName(locale);
+      const t = m.title as string;
+      assert.ok(!(t.includes(name) && /помічник|помощник|assistant/i.test(t.split(name).join(''))), `${where}: тавтология в title «${t}»`);
+    }
     metaCount++;
   }
 }
+// В карточки впечатано текущее публичное имя (штамп пишет `npm run og`).
+const ogStamp = JSON.parse(fs.readFileSync(path.join(__dirname, 'og-cards.brand.json'), 'utf8')) as Record<string, string>;
+for (const locale of locales) assert.equal(ogStamp[locale], brandDisplayName(locale), `OG-карточки ${locale} с другим именем — npm run og`);
 // Заголовки уникальны в пределах локали.
 for (const locale of locales) {
   const titles = PAGES.filter((p) => pageLocales(p.key).includes(locale)).map((p) => metaOf(p.key, locale).title);

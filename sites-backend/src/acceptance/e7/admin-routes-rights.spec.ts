@@ -110,7 +110,9 @@ describe('Э7: права «Админки» на всех маршрутах (�
         !/^\/assist-admin\/v1\//.test(r.path) &&
         !/^\/wa\/v1\//.test(r.path) &&
         !/^\/cron\/assist-admin-/.test(r.path) &&
-        !/^\/internal\/admin\/assist/.test(r.path),
+        !/^\/internal\/admin\/assist/.test(r.path) &&
+        // P-R-ADM: вкладка «Reddit» Админки платформы — тот же секрет.
+        !/^\/internal\/admin\/reddit\//.test(r.path),
     );
     expect(unexpected.map((r) => `${r.method} ${r.path}`)).toEqual([]);
   });

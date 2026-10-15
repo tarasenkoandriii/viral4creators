@@ -639,3 +639,16 @@ for (const d of [pubOpsUk, pubOpsRu, pubOpsEn]) {
 }
 
 console.log('publisher-ops-view: ok');
+
+// `purchases_disabled` (per_purchase_max = 0) рядом с `per_purchase_cap`.
+for (const o of [pubOpsUk, pubOpsRu, pubOpsEn]) {
+  assert.ok(o.purchases.insufficientReasons.purchases_disabled);
+  assert.deepEqual(
+    Object.keys(o.purchases.insufficientReasons).sort(),
+    Object.keys(pubOpsRu.purchases.insufficientReasons).sort()
+  );
+}
+assert.equal(
+  pubOpsRu.purchases.insufficientReasons.purchases_disabled,
+  'закупки отключены: максимум одной закупки — 0'
+);

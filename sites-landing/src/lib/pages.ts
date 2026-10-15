@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { BRAND } from '../brand';
+import { brandDisplayName } from '../brand';
 import { localeAlternates, pathFor } from './alternates';
 import { fmt } from './format';
 import { getDictionary } from './get-dictionary';
@@ -123,7 +123,7 @@ export function pageMetadata(key: PageKey, locale: Locale, override?: { title: s
       url,
       locale,
       image: ogImageUrl(origin, def.og ?? key, locale),
-      siteName: BRAND.name,
+      siteName: brandDisplayName(locale),
     }),
     robots: { index: true, follow: true },
   };

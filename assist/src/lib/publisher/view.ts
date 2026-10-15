@@ -11,7 +11,7 @@
  *  - деньги: `null` → «неизвестно», не 0.
  */
 
-import type { Locale } from '../../kit';
+import type { Locale } from '../../kit/i18n';
 import type { PublisherDict } from '../../i18n/publisher-ru';
 import type { Completeness, Computable } from './decode';
 import type { GateResult } from './core-api';
@@ -256,11 +256,19 @@ export function statusLabel(
   return status;
 }
 
-/** `member:abc` → «abc»-хвост для показа; системные актёры — как есть. */
-export function actorLabel(actor: string | null | undefined): string {
+/**
+ * `member:abc` → «abc»-хвост для показа; `admin:<id>` (оператор Админки
+ * платформы, P-R-ADM) — словами и хвостом id; системные актёры — как есть.
+ */
+export function actorLabel(
+  actor: string | null | undefined,
+  adminLabel = 'admin'
+): string {
   if (!actor) return '—';
   const m = /^member:(.+)$/.exec(actor);
-  return m ? `…${m[1].slice(-6)}` : actor;
+  if (m) return `…${m[1].slice(-6)}`;
+  const a = /^admin:(.+)$/.exec(actor);
+  return a ? `${adminLabel} …${a[1].slice(-6)}` : actor;
 }
 
 /** Раздел экрана для объекта задачи проверки (ссылка на связанную запись). */

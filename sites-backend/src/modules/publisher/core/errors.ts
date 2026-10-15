@@ -26,8 +26,8 @@ import {
 import type { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import {
-  PUB_ERROR_MESSAGES,
   PUB_ERROR_STATUS,
+  pubErrorMessage,
   pubLangOf,
   type FieldIssue,
   type PubErrorCode,
@@ -40,14 +40,19 @@ export class PubError extends HttpException {
     readonly details: Record<string, unknown> = {},
   ) {
     super(
-      { error: code, code, message: PUB_ERROR_MESSAGES[code].uk, details },
+      {
+        error: code,
+        code,
+        message: pubErrorMessage(code, 'uk', details.reason),
+        details,
+      },
       PUB_ERROR_STATUS[code],
     );
     this.name = 'PubError';
   }
 
   messageIn(lang: PubLang): string {
-    return PUB_ERROR_MESSAGES[this.code][lang];
+    return pubErrorMessage(this.code, lang, this.details.reason);
   }
 }
 

@@ -116,6 +116,8 @@ export const pubEn: PublisherDict = {
       inconsistent: 'inconsistent',
       missing: 'missing',
       not_covered_by_eval_set: 'not covered by the 30-task set',
+      purchases_disabled:
+        'purchases disabled: the single purchase maximum is 0',
     },
     showMissing: 'What is missing',
     goLaunch: 'To parameters',
@@ -312,6 +314,7 @@ export const pubEn: PublisherDict = {
     loading: 'Loading…',
     retry: 'Retry',
     reload: 'Reload',
+    adminActor: 'Admin operator',
     save: 'Save',
     cancel: 'Cancel',
     close: 'Close',
@@ -527,6 +530,19 @@ export const pubEn: PublisherDict = {
       change_task_open: 'an open change task',
       parent_not_approved: 'the parent article is not approved',
       reddit_policy_block: 'Reddit rules check failed',
+    },
+    aiBudgetReasons: {
+      month_not_open:
+        'The AI month is not open yet: AI and budget parameters must be approved, then the next run of the month-opening job opens it. Nothing has been spent.',
+      cap_exhausted: 'The monthly AI cap is used up.',
+    },
+    budgetReasons: {
+      insufficient: 'The overall budget remainder is not enough.',
+      category_cap: 'The category limit is reached.',
+      per_purchase_cap: 'The single purchase maximum is exceeded.',
+      concurrent: 'The remainder is taken by a concurrent purchase.',
+      purchases_disabled:
+        'Purchases are disabled: the single purchase maximum is 0.',
     },
     staleReasons: {
       hash_param: 'the hash in the request does not match the version',

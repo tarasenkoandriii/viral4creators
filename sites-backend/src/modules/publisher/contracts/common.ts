@@ -243,11 +243,48 @@ export interface ParameterDecisionView {
   dependentStages: DependentStage[];
 }
 
-/** Формат актёра журналов (§4.1, триггер `pub_actor_format`). */
+/**
+ * Формат актёра журналов (§4.1, функция `pub_is_actor` триггера
+ * `pub_actor_format`). `admin:<userId>` — оператор Админки платформы
+ * (P-R-ADM, Р-RD-ADM-2; миграция `20261023090000_publisher_admin_actor`):
+ * id пользователя backend ≤ 58 знаков — актор целиком ≤ 64, как столбцы
+ * `…MemberId` (длина 1..64), куда попадает синтетический `memberId`.
+ */
 export const ACTOR_RE =
-  /^(member:[A-Za-z0-9_-]{1,64}|system:[a-z0-9][a-z0-9-]{0,63}|public|restore:[A-Za-z0-9_-]{1,64})$/;
+  /^(member:[A-Za-z0-9_-]{1,64}|admin:[A-Za-z0-9_-]{1,58}|system:[a-z0-9][a-z0-9-]{0,63}|public|restore:[A-Za-z0-9_-]{1,64})$/;
 export const MEMBER_ACTOR_RE = /^member:[A-Za-z0-9_-]{1,64}$/;
-export const memberActor = (memberId: string): string => `member:${memberId}`;
+/** Оператор Админки платформы (только внутренний путь `internal/admin/reddit`). */
+export const ADMIN_ACTOR_RE = /^admin:[A-Za-z0-9_-]{1,58}$/;
+/** Id пользователя backend в заголовке `X-Admin-Actor`. */
+export const ADMIN_USER_ID_RE = /^[A-Za-z0-9_-]{1,58}$/;
+/**
+ * Человек (решения, проверки, согласования): участник кабинета или
+ * оператор Админки (функция `pub_is_person`).
+ */
+export const PERSON_ACTOR_RE =
+  /^(member:[A-Za-z0-9_-]{1,64}|admin:[A-Za-z0-9_-]{1,58})$/;
+export const adminActor = (userId: string): string => `admin:${userId}`;
+export const isAdminActor = (v: string | null | undefined): boolean =>
+  typeof v === 'string' && ADMIN_ACTOR_RE.test(v);
+/**
+ * Актор участника. Синтетическое членство Админки несёт `memberId` вида
+ * `admin:<userId>` (настоящие id участников — cuid без `:`), и его актор —
+ * этот же `admin:<userId>`, а не `member:admin:…`.
+ */
+export const memberActor = (memberId: string): string =>
+  isAdminActor(memberId) ? memberId : `member:${memberId}`;
+/**
+ * `memberId` автора по актору: `member:<id>` → `<id>`, `admin:<id>` →
+ * `admin:<id>` (синтетический участник), прочее — null (для `selfReview`).
+ */
+export function memberIdOfActor(
+  actor: string | null | undefined,
+): string | null {
+  if (!actor) return null;
+  if (isAdminActor(actor)) return actor;
+  const m = /^member:([A-Za-z0-9_-]{1,64})$/.exec(actor);
+  return m ? m[1] : null;
+}
 export const systemActor = (job: string): string => `system:${job}`;
 
 /** opKey — UUID v4 нижним регистром (триггер `pub_uuid4`). */

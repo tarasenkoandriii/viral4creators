@@ -13,10 +13,13 @@ import * as path from 'path';
 import * as request from 'supertest';
 import { configureApp } from './app.setup';
 
+let rawCalls = 0;
+
 @Controller('probe')
 class ProbeController {
   @Post('raw')
   raw(@Body() body: unknown) {
+    rawCalls++;
     return {
       kind: body === undefined ? 'undefined' : typeof body,
       body: body ?? null,
@@ -90,6 +93,63 @@ describe('configureApp (backend): то, что включает main.ts', () => 
       'https://app.example.com',
     );
     expect(res.headers['access-control-allow-credentials']).toBe('true');
+  });
+
+  it('S3-6: чужой Origin — 403 ORIGIN_DENIED в конверте (не 500), без стека и ERROR в логе; маршрут не выполняется', async () => {
+    const calls = rawCalls;
+    for (const t of [
+      () =>
+        request(app.getHttpServer())
+          .get('/api/probe/ok?token=SECRET-Q')
+          .set('Origin', 'https://evil.example.com'),
+      () =>
+        request(app.getHttpServer())
+          .post('/api/probe/raw')
+          .set('Origin', 'https://evil.example.com')
+          .send({ a: 1 }),
+      () =>
+        request(app.getHttpServer())
+          .options('/api/probe/raw')
+          .set('Origin', 'https://evil.example.com')
+          .set('Access-Control-Request-Method', 'POST'),
+    ]) {
+      const res = await t();
+      expect(res.status).toBe(403);
+      expect(res.headers['content-type']).toMatch(/application\/json/);
+      expect(res.body).toMatchObject({
+        success: false,
+        error: {
+          code: 'ORIGIN_DENIED',
+          message: 'Запрос с этого сайта не разрешён',
+        },
+      });
+      expect(typeof res.body.meta.requestId).toBe('string');
+      const text = JSON.stringify(res.body);
+      expect(text).not.toContain('evil.example.com');
+      expect(text).not.toContain('SECRET-Q');
+      expect(text).not.toMatch(/at \w|stack|Error:/);
+      expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    }
+    expect(rawCalls).toBe(calls);
+    expect(errors).not.toHaveBeenCalled();
+  });
+
+  it('S3-6: свой Origin и запрос без Origin — как раньше (preflight 204, ответ 200/201)', async () => {
+    const pre = await request(app.getHttpServer())
+      .options('/api/probe/raw')
+      .set('Origin', 'https://app.example.com')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(pre.status).toBe(204);
+    expect(pre.headers['access-control-allow-origin']).toBe(
+      'https://app.example.com',
+    );
+    const own = await request(app.getHttpServer())
+      .post('/api/probe/raw')
+      .set('Origin', 'https://app.example.com')
+      .send({ a: 1 });
+    expect(own.status).toBe(201);
+    const none = await request(app.getHttpServer()).get('/api/probe/ok');
+    expect(none.status).toBe(200);
   });
 
   it('JSON больше лимита — 413 PAYLOAD_TOO_LARGE в конверте, без ERROR в логе', async () => {

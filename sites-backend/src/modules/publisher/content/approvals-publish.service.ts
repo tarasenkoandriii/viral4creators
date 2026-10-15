@@ -24,7 +24,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { ApprovalView } from '../contracts/content-api';
-import { memberActor } from '../contracts/common';
+import { isAdminActor, memberActor } from '../contracts/common';
 import { PubError, validationError } from '../core/errors';
 import { PubContribution } from '../core/contributions';
 import type {
@@ -236,7 +236,10 @@ export class ApprovalsPublishService {
         versionHash: v.hash!,
         approverMemberId: m.memberId,
         approverDisplayName:
-          grant?.memberDisplayName ?? `Учасник …${m.memberId.slice(-6)}`,
+          grant?.memberDisplayName ??
+          (isAdminActor(m.memberId)
+            ? `Адмін платформи …${m.memberId.slice(-6)}`
+            : `Учасник …${m.memberId.slice(-6)}`),
         decidedAt: now,
         status: 'active',
         selfReview,

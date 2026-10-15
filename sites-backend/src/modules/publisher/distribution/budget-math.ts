@@ -57,7 +57,11 @@ export interface BudgetSnapshotMath {
 }
 
 export type ReserveRefusal =
-  'insufficient' | 'category_cap' | 'per_purchase_cap' | 'stopped';
+  | 'insufficient'
+  | 'category_cap'
+  | 'per_purchase_cap'
+  | 'purchases_disabled'
+  | 'stopped';
 
 const max0 = (v: Minor): Minor => (v > 0n ? v : 0n);
 const min = (a: Minor, b: Minor): Minor => (a < b ? a : b);
@@ -148,6 +152,10 @@ export function canReserve(
 ): { ok: true } | { ok: false; reason: ReserveRefusal } {
   if (amount <= 0n) throw new RangeError('canReserve: сумма ≤ 0');
   if (s.stopped) return { ok: false, reason: 'stopped' };
+  // `per_purchase_max = 0` — закупки отключены (не «мало бюджета»).
+  if (category === 'placements' && s.perPurchaseMax === 0n) {
+    return { ok: false, reason: 'purchases_disabled' };
+  }
   if (category === 'placements' && amount > s.perPurchaseMax) {
     return { ok: false, reason: 'per_purchase_cap' };
   }

@@ -115,6 +115,7 @@ export const pubUk: PublisherDict = {
       inconsistent: 'не сходиться',
       missing: 'відсутній',
       not_covered_by_eval_set: 'не покритий набором 30 задач',
+      purchases_disabled: 'закупівлі вимкнено: максимум однієї закупівлі — 0',
     },
     showMissing: 'Чого бракує',
     goLaunch: 'До параметрів',
@@ -310,6 +311,7 @@ export const pubUk: PublisherDict = {
     loading: 'Завантаження…',
     retry: 'Повторити',
     reload: 'Перезавантажити',
+    adminActor: 'оператор Адмінки',
     save: 'Зберегти',
     cancel: 'Скасувати',
     close: 'Закрити',
@@ -521,6 +523,18 @@ export const pubUk: PublisherDict = {
       change_task_open: 'відкрита задача зміни',
       parent_not_approved: 'батьківську статтю не погоджено',
       reddit_policy_block: 'перевірку правил Reddit не пройдено',
+    },
+    aiBudgetReasons: {
+      month_not_open:
+        'Місяць AI ще не відкрито: потрібні затверджені параметри AI і бюджету, потім найближчий прохід завдання відкриття місяця. Нічого не витрачено.',
+      cap_exhausted: 'Місячну стелю AI вичерпано.',
+    },
+    budgetReasons: {
+      insufficient: 'Не вистачає загального залишку бюджету.',
+      category_cap: 'Досягнуто ліміту категорії.',
+      per_purchase_cap: 'Перевищено максимум однієї закупівлі.',
+      concurrent: 'Залишок зайнято паралельною закупівлею.',
+      purchases_disabled: 'Закупівлі вимкнено: максимум однієї закупівлі — 0.',
     },
     staleReasons: {
       hash_param: 'hash у запиті не збігся з версією',

@@ -239,6 +239,7 @@ export const pubOpsRu = {
       insufficient: 'общий остаток',
       category_cap: 'лимит категории',
       per_purchase_cap: 'максимум одной закупки',
+      purchases_disabled: 'закупки отключены: максимум одной закупки — 0',
       concurrent: 'остаток занят параллельной закупкой',
     },
     staleApproval: 'Нужно новое согласование: {reason}.',

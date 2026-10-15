@@ -121,6 +121,7 @@ export const pubRu = {
       inconsistent: 'не сходится',
       missing: 'отсутствует',
       not_covered_by_eval_set: 'не покрыт набором 30 задач',
+      purchases_disabled: 'закупки отключены: максимум одной закупки — 0',
     },
     showMissing: 'Что не хватает',
     goLaunch: 'К параметрам',
@@ -316,6 +317,7 @@ export const pubRu = {
     loading: 'Загрузка…',
     retry: 'Повторить',
     reload: 'Перезагрузить',
+    adminActor: 'оператор Админки',
     save: 'Сохранить',
     cancel: 'Отмена',
     close: 'Закрыть',
@@ -529,6 +531,18 @@ export const pubRu = {
       change_task_open: 'открыта задача изменения',
       parent_not_approved: 'родительская статья не согласована',
       reddit_policy_block: 'проверка правил Reddit не пройдена',
+    },
+    aiBudgetReasons: {
+      month_not_open:
+        'Месяц AI ещё не открыт: нужны утверждённые параметры AI и бюджета, затем ближайший проход задания открытия месяца. Потрачено ничего не было.',
+      cap_exhausted: 'Месячный потолок AI исчерпан.',
+    },
+    budgetReasons: {
+      insufficient: 'Не хватает общего остатка бюджета.',
+      category_cap: 'Достигнут лимит категории.',
+      per_purchase_cap: 'Превышен максимум одной закупки.',
+      concurrent: 'Остаток занят параллельной закупкой.',
+      purchases_disabled: 'Закупки отключены: максимум одной закупки — 0.',
     },
     staleReasons: {
       hash_param: 'hash в запросе не совпал с версией',

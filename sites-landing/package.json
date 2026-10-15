@@ -14,7 +14,7 @@
     "budget:js": "node scripts/built/first-load-js.mjs",
     "axe": "node scripts/built/axe-check.mjs",
     "lhci": "lhci autorun --config=lighthouserc.cjs",
-    "og": "node scripts/og-cards.mjs",
+    "og": "tsx scripts/og-cards.mjs",
     "stand": "tsx scripts/built/assist-stand.ts",
     "e2e:widget": "node scripts/built/widget-e2e.mjs",
     "e2e:sandbox": "node scripts/built/sandbox-e2e.mjs",

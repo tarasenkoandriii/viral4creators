@@ -13,7 +13,7 @@ import {
   type DependentStage,
   type ParameterGroup,
 } from '../../../lib/publisher/states';
-import { fmtText, statusLabel } from '../../../lib/publisher/view';
+import { actorLabel, fmtText, statusLabel } from '../../../lib/publisher/view';
 import { useMutation, usePubApis } from '../hooks';
 import {
   DateText,
@@ -343,7 +343,8 @@ function ProposalsList({
                       <Badge tone="neutral">{t.params.proposalMine}</Badge>
                     )}
                     <span className="text-xs text-silver-500">
-                      {t.params.proposalBy} {x.proposedBy} ·{' '}
+                      {t.params.proposalBy}{' '}
+                      {actorLabel(x.proposedBy, t.common.adminActor)} ·{' '}
                       <DateText iso={x.proposedAt} time />
                     </span>
                   </div>
@@ -441,7 +442,8 @@ function DecisionsJournal({ keyFilter }: { keyFilter: string | null }) {
                     </span>
                   </div>
                   <div className="text-xs text-silver-500">
-                    {d.decidedBy} · <DateText iso={d.decidedAt} time />
+                    {actorLabel(d.decidedBy, t.common.adminActor)} ·{' '}
+                    <DateText iso={d.decidedAt} time />
                   </div>
                   <div>{d.basis}</div>
                 </li>

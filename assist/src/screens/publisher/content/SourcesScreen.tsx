@@ -9,7 +9,8 @@ import {
   type SourceKind,
   type SourceVisibility,
 } from '../../../lib/publisher/states';
-import { fmtText } from '../../../lib/publisher/view';
+import { sourceBody } from '../../../lib/publisher/brand-view';
+import { actorLabel, fmtText } from '../../../lib/publisher/view';
 import {
   useListFilters,
   useMutation,
@@ -145,7 +146,7 @@ function SourceRow({
   source: SourceView;
   onChanged: () => void;
 }) {
-  const { can, href } = usePublisher();
+  const { can, href, t } = usePublisher();
   const c = usePubContent();
   const apis = usePubApis();
   const [reason, setReason] = useState('');
@@ -170,7 +171,8 @@ function SourceRow({
         {s.fragment}
       </div>
       <div className="text-xs text-silver-500">
-        {c.sources.via[s.importedVia]} · {s.createdBy} ·{' '}
+        {c.sources.via[s.importedVia]} ·{' '}
+        {actorLabel(s.createdBy, t.common.adminActor)} ·{' '}
         <DateText iso={s.createdAt} />
         {s.supersedesId && (
           <>
@@ -271,6 +273,17 @@ function ManualSource({ onDone }: { onDone: () => void }) {
   const [usage, setUsage] = useState<'allowed' | 'restricted' | ''>('allowed');
   const [notice, setNotice] = useState<string | null>(null);
   const m = useMutation();
+  const body = sourceBody({
+    kind,
+    title,
+    url,
+    author,
+    publishedOn,
+    fragment,
+    language,
+    visibility,
+    usage,
+  });
   return (
     <Section title={c.sources.add}>
       <Field label={c.sources.kind}>
@@ -327,27 +340,10 @@ function ManualSource({ onDone }: { onDone: () => void }) {
       <PubErrorAlert error={m.error} />
       <Button
         loading={m.busy}
-        disabled={
-          !kind || !title.trim() || !fragment.trim() || !visibility || !usage
-        }
+        disabled={!body}
         onClick={async () => {
-          if (!kind || !visibility || !usage) return;
-          const r = await m.run((k) =>
-            apis.content.createSource(
-              {
-                kind,
-                title: title.trim(),
-                url: url.trim() || null,
-                author: author.trim() || null,
-                publishedOn: publishedOn || null,
-                fragment: fragment.trim(),
-                language: language.trim() || null,
-                visibility,
-                usage,
-              },
-              k
-            )
-          );
+          if (!body) return;
+          const r = await m.run((k) => apis.content.createSource(body, k));
           if (r) {
             setNotice(c.sources.created);
             setTitle('');

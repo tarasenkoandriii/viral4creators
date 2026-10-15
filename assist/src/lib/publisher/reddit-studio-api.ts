@@ -13,7 +13,7 @@
  *
  * Чистый модуль (без React).
  */
-import type { PublisherHttp, Query } from './common-api';
+import type { PublisherHttp, Query } from './common-pure';
 import {
   decodeContent,
   decodeQaCheck,
@@ -198,6 +198,13 @@ export interface RedditPublicationView extends PublicationView {
   communityId: string;
   subreddit: string;
 }
+export interface RedditMaterialApproval {
+  id: string;
+  versionId: string;
+  status: 'active';
+  selfReview: boolean;
+  decidedAt: string;
+}
 export interface RedditMaterialView {
   content: ContentView;
   briefId: string;
@@ -210,6 +217,11 @@ export interface RedditMaterialView {
   rules: RedditRulesSummary | null;
   currentVersion: VersionView | null;
   approvedVersion: VersionView | null;
+  /**
+   * Активное согласование утверждённой версии — id для отзыва
+   * (`…/approvals/:id/revoke`); null — нет или отозвано/истекло (P-R-ADM v1.3).
+   */
+  approval: RedditMaterialApproval | null;
   policyCheck: QaCheckView | null;
   copies: { count: number; lastAt: string | null };
   publications: RedditPublicationView[];
@@ -458,6 +470,24 @@ function decodeLastGeneration(
   };
 }
 
+function decodeMaterialApproval(v: unknown): RedditMaterialApproval | null {
+  if (v === null) return null;
+  const a = obj(v, 'material.approval');
+  const id = (x: unknown, where: string): string => {
+    const t = str(x, where);
+    // id идёт в путь отзыва — только безопасные символы.
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(t)) bad(where);
+    return t;
+  };
+  return {
+    id: id(a.id, 'approval.id'),
+    versionId: id(a.versionId, 'approval.versionId'),
+    status: choice(a.status, ['active'] as const, 'approval.status'),
+    selfReview: bool(a.selfReview, 'approval.selfReview'),
+    decidedAt: iso(a.decidedAt, 'approval.decidedAt'),
+  };
+}
+
 export function decodeMaterial(v: unknown): RedditMaterialView {
   const o = obj(v, 'redditMaterial');
   const cp = obj(o.copies, 'material.copies');
@@ -475,6 +505,7 @@ export function decodeMaterial(v: unknown): RedditMaterialView {
       o.currentVersion === null ? null : decodeVersion(o.currentVersion),
     approvedVersion:
       o.approvedVersion === null ? null : decodeVersion(o.approvedVersion),
+    approval: decodeMaterialApproval(o.approval),
     policyCheck: o.policyCheck === null ? null : decodeQaCheck(o.policyCheck),
     copies: {
       count: int(cp.count, 'material.copies.count'),

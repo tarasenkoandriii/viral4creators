@@ -29,6 +29,9 @@ import { pubRedditUk } from '../src/i18n/publisher-reddit-uk';
 import type { VersionView } from '../src/lib/publisher/content-api';
 import * as S from '../src/lib/publisher/reddit-studio-api';
 import * as V from '../src/lib/publisher/reddit-studio-view';
+import { rebaseForm, changedKeys } from '../src/lib/publisher/reddit-view';
+import { actorLabel } from '../src/lib/publisher/view';
+import { describePubError } from '../src/lib/publisher/errors';
 import * as SN from '../../sites-backend/src/modules/publisher/reddit/normalize';
 import {
   PublisherContext,
@@ -1270,6 +1273,209 @@ const VARIANT: S.RedditDraftVariant = {
   assert.equal(copied, exact, 'запасной путь копирует РОВНО строку');
   delete g.document;
   if (navDesc) Object.defineProperty(globalThis, 'navigator', navDesc);
+}
+
+// ═══ Аудит P-R-ADM S2-2: правка тезисов брифа не теряется ═══════════════
+{
+  const brief = {
+    revision: 2,
+    contentType: 'comment' as const,
+    opportunityId: 'ro1',
+    communityId: 'rc1',
+    objective: 'Цель',
+    audience: null,
+    context: 'Контекст треда',
+    keyPoints: [
+      { text: 'Тезис 1', sourceIds: ['src1'] },
+      { text: 'Тезис 2', sourceIds: ['src1'] },
+    ],
+    affiliation: 'founder' as const,
+    brand: 'Acme',
+    linksAllowed: false,
+    tone: null,
+    language: 'en',
+    constraints: [],
+    forbiddenClaims: [],
+    cta: null,
+  } as unknown as S.RedditBriefView;
+  const base = V.briefForm(brief);
+  // 1) только текст тезиса 2 — тело с тезисами (раньше: null, «Сохранить» недоступна).
+  const onlyKp = {
+    ...base,
+    keyPoints: base.keyPoints.map((k, i) =>
+      i === 1 ? { ...k, text: 'Тезис 2 (правка)' } : k
+    ),
+  };
+  assert.deepEqual(changedKeys(base, onlyKp), ['keyPoints']);
+  assert.deepEqual(V.briefPatchBody(brief, onlyKp, base), {
+    expectedRevision: 2,
+    keyPoints: [
+      { text: 'Тезис 1', sourceIds: ['src1'] },
+      { text: 'Тезис 2 (правка)', sourceIds: ['src1'] },
+    ],
+  });
+  // Источник тезиса и «нужна проверка» — тоже правка.
+  const srcKp = {
+    ...base,
+    keyPoints: base.keyPoints.map((k, i) =>
+      i === 0 ? { ...k, sources: 'src1, src2' } : k
+    ),
+  };
+  assert.ok(changedKeys(base, srcKp).includes('keyPoints'));
+  const nvKp = {
+    ...base,
+    keyPoints: base.keyPoints.map((k, i) =>
+      i === 0 ? { ...k, needsVerification: true } : k
+    ),
+  };
+  assert.ok(changedKeys(base, nvKp).includes('keyPoints'));
+  // Порядок тезисов значим (это не множество).
+  const swapped = {
+    ...base,
+    keyPoints: [base.keyPoints[1], base.keyPoints[0]],
+  };
+  assert.ok(changedKeys(base, swapped).includes('keyPoints'));
+  // Множества строк — по-прежнему без учёта порядка.
+  assert.deepEqual(changedKeys({ ids: ['a', 'b'] }, { ids: ['b', 'a'] }), []);
+  // 2) цель + тезис — оба поля в теле.
+  const both = { ...onlyKp, objective: 'Новая цель' };
+  const pb = V.briefPatchBody(brief, both, base);
+  assert.equal(pb?.objective, 'Новая цель');
+  assert.equal(pb?.keyPoints?.[1].text, 'Тезис 2 (правка)');
+  // 3) 409 → перечитали: сервер правил тезисы иначе — конфликт, правка пользователя цела.
+  const fresh = {
+    ...base,
+    keyPoints: base.keyPoints.map((k, i) =>
+      i === 1 ? { ...k, text: 'Тезис 2 (чужая правка)' } : k
+    ),
+  };
+  const rb = rebaseForm(base, onlyKp, fresh);
+  assert.equal(
+    rb.mine.keyPoints[1].text,
+    'Тезис 2 (правка)',
+    'ввод не потерян'
+  );
+  assert.deepEqual(
+    rb.conflicts.map((c) => c.key),
+    ['keyPoints'],
+    'конфликт показан'
+  );
+  // Сервер правил ДРУГОЕ поле — тезисы пользователя остаются, конфликта нет.
+  const rb2 = rebaseForm(base, onlyKp, { ...base, objective: 'Цель (сервер)' });
+  assert.equal(rb2.mine.objective, 'Цель (сервер)');
+  assert.equal(rb2.mine.keyPoints[1].text, 'Тезис 2 (правка)');
+  assert.deepEqual(rb2.conflicts, []);
+}
+
+// ═══ Аудит P-R-ADM S3-2/S3-4/S3-5, S2-1 (тексты) ═══════════════════════════
+{
+  assert.equal(V.generationClosed([{ aiCallId: null }]), false);
+  assert.equal(
+    V.generationClosed([{ aiCallId: null }, { aiCallId: 'aic_1' }]),
+    true
+  );
+  const br = { updatedAt: '2026-10-14T10:00:00.000Z' };
+  assert.equal(
+    V.variantsStale({ requestedAt: '2026-10-14T09:00:00.000Z' }, br),
+    true
+  );
+  assert.equal(
+    V.variantsStale({ requestedAt: '2026-10-14T11:00:00.000Z' }, br),
+    false
+  );
+  assert.equal(V.variantsStale(null, br), false);
+  const content = (status: string) =>
+    ({ status }) as unknown as S.RedditMaterialView['content'];
+  assert.equal(
+    V.approvalRevoked({ content: content('approved'), approvedVersion: null }),
+    true
+  );
+  assert.equal(
+    V.approvalRevoked({
+      content: content('approved'),
+      approvedVersion: {} as VersionView,
+    }),
+    false
+  );
+  assert.equal(
+    V.approvalRevoked({ content: content('drafting'), approvedVersion: null }),
+    false
+  );
+  // Отзыв после копирования (`scheduled`): тоже «отозвано», отметку не предлагаем.
+  assert.equal(
+    V.approvalRevoked({ content: content('scheduled'), approvedVersion: null }),
+    true
+  );
+  assert.equal(
+    V.approvalRevoked({
+      content: content('scheduled'),
+      approvedVersion: null,
+      approval: null,
+    }),
+    true
+  );
+  assert.equal(
+    V.approvalRevoked({
+      content: content('scheduled'),
+      approvedVersion: null,
+      approval: {
+        id: 'ap1',
+        versionId: 'v1',
+        status: 'active',
+        selfReview: false,
+        decidedAt: '2026-10-14T10:00:00.000Z',
+      },
+    }),
+    false
+  );
+  const stepsOf = (status: string, approved: boolean) =>
+    V.materialSteps({
+      content: { status } as unknown as S.RedditMaterialView['content'],
+      currentVersion: null,
+      approvedVersion: approved ? ({ id: 'v1' } as VersionView) : null,
+    });
+  assert.equal(stepsOf('scheduled', true).report, true);
+  assert.equal(
+    stepsOf('scheduled', false).report,
+    false,
+    'после отзыва — без отметки (иначе not_copied)'
+  );
+  assert.equal(stepsOf('scheduled', false).copy, false);
+  assert.equal(
+    stepsOf('scheduled', false).unscheduleFirst,
+    true,
+    'путь: снять с плана → новая версия'
+  );
+  assert.equal(stepsOf('published', false).report, true);
+  assert.equal(
+    actorLabel('admin:abcdefghijkl', pubUk.common.adminActor),
+    'оператор Адмінки …ghijkl'
+  );
+  assert.equal(
+    actorLabel('admin:caudop1aaaaaaaaaaaaaaaaaa', pubUk.common.adminActor),
+    'оператор Адмінки …aaaaaa'
+  );
+  assert.equal(actorLabel('member:m123456789'), '…456789');
+  assert.equal(actorLabel('system'), 'system');
+  const notOpen = describePubError(
+    new ApiError('PUB_AI_BUDGET', 'x', 409, undefined, {
+      reason: 'month_not_open',
+    }),
+    pubUk
+  );
+  assert.equal(notOpen.title, pubUk.errors.aiBudgetReasons.month_not_open);
+  assert.ok(
+    !notOpen.lines.some((l) => l.includes('month_not_open')),
+    'без сырого кода'
+  );
+  const capped = describePubError(
+    new ApiError('PUB_AI_BUDGET', 'x', 409, undefined, {
+      reason: 'cap_exhausted',
+    }),
+    pubUk
+  );
+  assert.equal(capped.title, pubUk.errors.aiBudgetReasons.cap_exhausted);
+  assert.notEqual(notOpen.title, capped.title, '«не открыт» ≠ «исчерпан»');
 }
 
 console.log('publisher-reddit-studio: ok');

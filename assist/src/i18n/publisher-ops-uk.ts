@@ -232,6 +232,7 @@ export const pubOpsUk: PublisherOpsDict = {
       insufficient: 'загальний залишок',
       category_cap: 'ліміт категорії',
       per_purchase_cap: 'максимум однієї закупівлі',
+      purchases_disabled: 'закупівлі вимкнено: максимум однієї закупівлі — 0',
       concurrent: 'залишок зайняла паралельна закупівля',
     },
     staleApproval: 'Потрібне нове погодження: {reason}.',

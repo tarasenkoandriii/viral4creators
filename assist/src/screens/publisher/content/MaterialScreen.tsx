@@ -1175,7 +1175,7 @@ function QaPanel({
   content: ContentView;
   version: VersionView;
 }) {
-  const { can } = usePublisher();
+  const { can, t } = usePublisher();
   const c = usePubContent();
   const apis = usePubApis();
   const checks = useAsync(
@@ -1211,7 +1211,7 @@ function QaPanel({
                     />
                     {q.selfReview && <Badge tone="warning">self</Badge>}
                     <span className="text-xs text-silver-500">
-                      {actorLabel(q.checkedBy)} ·{' '}
+                      {actorLabel(q.checkedBy, t.common.adminActor)} ·{' '}
                       <DateText iso={q.checkedAt} time />
                     </span>
                   </div>
@@ -1881,7 +1881,7 @@ function AdaptationsPanel({ content: x }: { content: ContentView }) {
 // ── История ──────────────────────────────────────────────────────────────
 
 function HistoryPanel({ cid }: { cid: string }) {
-  const { product, can } = usePublisher();
+  const { product, can, t } = usePublisher();
   const c = usePubContent();
   const apis = usePubApis();
   const audit = useAsync(
@@ -1925,7 +1925,7 @@ function HistoryPanel({ cid }: { cid: string }) {
                       ? `${e.fromStatus ?? '∅'} → ${e.toStatus ?? '∅'}`
                       : ''}{' '}
                     <span className="text-xs text-silver-500">
-                      {actorLabel(e.actor)}
+                      {actorLabel(e.actor, t.common.adminActor)}
                     </span>
                     {e.reason ? ` — ${e.reason}` : ''}
                   </li>

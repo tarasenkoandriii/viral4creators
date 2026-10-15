@@ -5388,6 +5388,21 @@ model PubRateHit {
   @@map("pub_rate_hits")
 }
 
+/// P-R-ADM (Р-RD-ADM-7): журнал доступа Админки к вкладке «Reddit»
+/// (`/internal/admin/reddit/**`) — вне тенанта, append-only, без тел и query:
+/// кто (`admin:<userId>`), шаблон маршрута, метод, статус, время. Ретенция —
+/// 365 дней (задание `admin-access-log-retention`).
+model PubRedditAdminAccessLog {
+  id                       String @id @default(cuid())
+  actor                    String
+  method                   String
+  route                    String
+  status                   Int
+  at                       DateTime @default(now()) @db.Timestamptz(3)
+  @@index([at])
+  @@map("pub_reddit_admin_access_log")
+}
+
 /// Источник (Source).
 model PubSource {
   id                       String @id @default(cuid())

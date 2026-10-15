@@ -6,7 +6,17 @@ import { qaReportImportJson } from './modules/qa-catalog/qa-report-json';
  * валидацию и CORS, что на проде, а не их копию.
  */
 
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  HttpException,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
+import { randomUUID } from 'crypto';
+import {
+  INTERNAL_SECRET_HEADER,
+  assertInternalSecret,
+  headerOf,
+} from './common/internal-secret.guard';
 import {
   json,
   raw,
@@ -143,6 +153,49 @@ export const PUBLISHER_LEADS_PATH = '/public/publisher/v1/leads';
 export const PUBLISHER_LEADS_BODY_LIMIT = '8kb';
 export const PUBLISHER_EVENTS_PATH = '/public/publisher/v1/events';
 export const PUBLISHER_EVENTS_BODY_LIMIT = '2kb';
+
+/**
+ * P-R-ADM (Р-RD-ADM-4): импорт исследования Reddit из Админки — CSV в JSON
+ * ≤ 1 МБ (общий парсер Nest — 100 КБ). Только этот внутренний путь; больше —
+ * 413 `PUB_PAYLOAD_TOO_LARGE` в общем конверте до маршрута (секрет и
+ * актора проверяет гвард маршрута).
+ */
+export const ADMIN_REDDIT_IMPORT_PATH = '/internal/admin/reddit/import';
+export const ADMIN_REDDIT_IMPORT_BODY_LIMIT = '1mb';
+export const ADMIN_REDDIT_PATH = '/internal/admin/reddit';
+
+/**
+ * P-R-ADM (v1.2): секрет `X-Sites-Internal-Secret` до разбора тела — отказ
+ * в том же конверте и с тем же текстом, что у гварда (401 одинаково для
+ * «нет» и «неверный», 503 — секрет не задан).
+ */
+function adminRedditSecretFirst(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  try {
+    assertInternalSecret(headerOf(req, INTERNAL_SECRET_HEADER));
+    next();
+  } catch (e) {
+    const status = e instanceof HttpException ? e.getStatus() : 500;
+    res
+      .status(status)
+      .setHeader('Cache-Control', 'private, no-store')
+      .json({
+        success: false,
+        error: {
+          code: status === 401 ? 'UNAUTHORIZED' : 'SERVICE_UNAVAILABLE',
+          message: e instanceof Error ? e.message : 'Внутренний API закрыт',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+          requestId: randomUUID(),
+          path: (req.originalUrl ?? '').split('?')[0],
+        },
+      });
+  }
+}
 
 /** Отказ парсера публичного тела Publisher — в общем конверте. */
 function publisherBodyError(res: Response, path: string, err: unknown): void {
@@ -455,6 +508,24 @@ export function configureApp(app: INestApplication, config: SitesConfig) {
     ) {
       publisherEventsText(req, res, (err?: unknown) =>
         err ? publisherBodyError(res, PUBLISHER_EVENTS_PATH, err) : next(),
+      );
+    },
+  );
+  // P-R-ADM (v1.2): секрет внутреннего API вкладки «Reddit» — ДО любого
+  // разбора тела (свой парсер импорта ≤ 1 МБ ниже и общий парсер Nest):
+  // без секрета тело не читается. Гвард маршрута проверяет его ещё раз.
+  app.use(ADMIN_REDDIT_PATH, adminRedditSecretFirst);
+  // P-R-ADM: импорт исследования Reddit из Админки — JSON ≤ 1 МБ.
+  const adminRedditImportJson = json({ limit: ADMIN_REDDIT_IMPORT_BODY_LIMIT });
+  app.use(
+    ADMIN_REDDIT_IMPORT_PATH,
+    function adminRedditImportJsonBody(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      adminRedditImportJson(req, res, (err?: unknown) =>
+        err ? publisherBodyError(res, ADMIN_REDDIT_IMPORT_PATH, err) : next(),
       );
     },
   );

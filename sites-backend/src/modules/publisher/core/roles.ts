@@ -136,6 +136,13 @@ export interface PubAccess {
   roles: ReadonlySet<PubRole>;
   admin: boolean;
   accountOwner: boolean;
+  /**
+   * Закрытый список действий (синтетическое членство Админки платформы,
+   * P-R-ADM, Р-RD-ADM-2): действие вне списка запрещено при любых ролях —
+   * `can()` проверяет его первым (гвард, `runOperation`, `recordRead`).
+   * У участников кабинета поля нет.
+   */
+  only?: ReadonlySet<PubAction>;
 }
 
 export function accessOf(input: {
@@ -166,6 +173,7 @@ export function deniedForKind(
 
 /** Разрешено ли действие (матрица §4.2). */
 export function can(access: PubAccess, action: PubAction): boolean {
+  if (access.only && !access.only.has(action)) return false;
   const p: PubPermission = PUB_PERMISSIONS[action];
   if (p.accountOwnerOnly) return access.accountOwner;
   if (access.accountOwner) return true;

@@ -10,9 +10,9 @@
  *  - незнакомый код — текст сервера (он уже на языке `Accept-Language`).
  */
 
-import { ApiError } from '../../kit';
+import { ApiError } from '../../kit/envelope';
 import type { PublisherDict } from '../../i18n/publisher-ru';
-import { fieldIssues } from './common-api';
+import { fieldIssues } from './common-pure';
 import { fmtText } from './view';
 
 export const PUB_ERROR_CODES = [
@@ -118,6 +118,14 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
   else if (code === 'network' || e.status === 0) title = t.errors.network;
   else title = e.message || t.errors.title;
 
+  // Причина нехватки бюджета / закрытого гейта закупок (в т.ч.
+  // `purchases_disabled`: per_purchase_max = 0) — словами, а не кодом.
+  const budgetReason =
+    (code === 'PUB_BUDGET_INSUFFICIENT' || code === 'PUB_GATE_CLOSED') &&
+    typeof d.reason === 'string' &&
+    Object.prototype.hasOwnProperty.call(t.errors.budgetReasons, d.reason)
+      ? labelOf(t.errors.budgetReasons, d.reason)
+      : null;
   switch (code) {
     case 'PUB_CONFLICT':
       // Конфликт не версии, а правила (P-R `reddit_evidence_locked`) —
@@ -191,6 +199,15 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
     case 'PUB_BRIEF_NOT_READY':
       for (const m of strList(d.missing)) lines.push(m);
       break;
+    case 'PUB_AI_BUDGET':
+      // v1.4: «месяц не открыт» ≠ «потолок исчерпан» (аудит P-R-ADM S2-1).
+      if (
+        typeof d.reason === 'string' &&
+        Object.prototype.hasOwnProperty.call(t.errors.aiBudgetReasons, d.reason)
+      ) {
+        title = labelOf(t.errors.aiBudgetReasons, d.reason);
+      }
+      break;
     case 'PUB_APPROVAL_STALE':
       if (typeof d.reason === 'string') {
         lines.push(labelOf(t.errors.staleReasons, d.reason));
@@ -222,6 +239,7 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
     default:
       break;
   }
+  if (budgetReason) lines.push(budgetReason);
   const ruleConflict =
     code === 'PUB_CONFLICT' &&
     typeof d.reason === 'string' &&
@@ -229,7 +247,10 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
   if (
     typeof d.reason === 'string' &&
     !ruleConflict &&
-    !['PUB_IMPORT_BLOCKED', 'PUB_APPROVAL_STALE'].includes(code)
+    !budgetReason &&
+    !['PUB_IMPORT_BLOCKED', 'PUB_APPROVAL_STALE', 'PUB_AI_BUDGET'].includes(
+      code
+    )
   ) {
     lines.push(fmtText(t.errors.reasons, { reason: d.reason }));
   }

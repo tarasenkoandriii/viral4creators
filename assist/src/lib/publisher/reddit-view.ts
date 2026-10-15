@@ -14,7 +14,7 @@
  *  - ошибки P-R человеческим текстом (409 `policy_block` с причинами,
  *    дубль с `existingId`).
  */
-import type { Locale } from '../../kit';
+import type { Locale } from '../../kit/i18n';
 import { pubRedditEn } from '../../i18n/publisher-reddit-en';
 import {
   pubRedditRu,
@@ -22,8 +22,8 @@ import {
 } from '../../i18n/publisher-reddit-ru';
 import { pubRedditUk } from '../../i18n/publisher-reddit-uk';
 import type { PublisherDict } from '../../i18n/publisher-ru';
-import { ApiError } from '../../kit';
-import { fieldIssues } from './common-api';
+import { ApiError } from '../../kit/envelope';
+import { fieldIssues } from './common-pure';
 import { describePubError, type PubErrorView } from './errors';
 import { selfReviewOf } from './permissions';
 import {
@@ -439,18 +439,26 @@ function sameFactor(
 
 // ── Формы правки: «только изменённые поля» и перебазирование после 409 ────
 
-/** Значение поля формы для сравнения (строки — без краевых пробелов). */
+/**
+ * Значение поля формы для сравнения (строки — без краевых пробелов).
+ * Массив строк/чисел — множество (порядок не важен: темы, id запросов);
+ * массив объектов (тезисы брифа) — упорядоченный список, каждый элемент
+ * нормализуется целиком (аудит P-R-ADM S2-2: `String(obj)` делал любые два
+ * списка тезисов одной длины «равными», и правка тезиса терялась).
+ */
 function norm(v: unknown): string {
   if (typeof v === 'string') return v.trim();
-  if (Array.isArray(v)) return JSON.stringify([...v].map(String).sort());
+  if (Array.isArray(v)) {
+    const flat = v.every((x) => x === null || typeof x !== 'object');
+    return flat
+      ? JSON.stringify([...v].map((x) => norm(x)).sort())
+      : JSON.stringify(v.map((x) => norm(x)));
+  }
   if (v && typeof v === 'object')
     return JSON.stringify(
-      Object.fromEntries(
-        Object.entries(v as Record<string, unknown>).map(([k, x]) => [
-          k,
-          norm(x),
-        ])
-      )
+      Object.entries(v as Record<string, unknown>)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([k, x]) => [k, norm(x)])
     );
   return JSON.stringify(v ?? null);
 }

@@ -33,6 +33,8 @@ import { AdminTestTicketsService } from './admin-test-tickets.service';
 import { AdminUserAvatarService } from './admin-user-avatar.service';
 import { AdminAssistController } from './admin-assist.controller';
 import { AdminAssistClient } from './admin-assist.client';
+import { AdminRedditController } from './admin-reddit.controller';
+import { AdminRedditClient } from './admin-reddit.client';
 
 @Module({
   // StorageModule здесь больше не нужен (этап 89): удаление сессии
@@ -76,14 +78,18 @@ import { AdminAssistClient } from './admin-assist.client';
   // Э4 ИИ-помощника: вкладка «Помощник» — прокси к внутреннему API
   // sites-backend (без DSN схемы sites в генераторе).
   // П-Т9 (заход 7): выключатель и суточные потолки обучалки по сайту.
+  // P-R-ADM: вкладка «Reddit» — тот же мост к sites-backend
+  // (`/internal/admin/reddit/*`, строгий список маршрутов).
   controllers: [
     AdminSonioxController,
     AdminPanelController,
     AdminAssistController,
+    AdminRedditController,
     AdminSiteTutorialSettingsController,
   ],
   providers: [
     AdminAssistClient,
+    AdminRedditClient,
     AdminTesterInvitesService,
     AdminTestTicketsService,
     ProviderBalancesService,

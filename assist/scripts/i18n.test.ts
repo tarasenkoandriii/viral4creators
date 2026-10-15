@@ -49,6 +49,12 @@ assert.deepEqual(shape(pubContentEn), shape(pubContentRu));
 // P-R: раздел «Reddit».
 assert.deepEqual(shape(pubRedditUk), shape(pubRedditRu));
 assert.deepEqual(shape(pubRedditEn), shape(pubRedditRu));
+// Один термин для подтверждённого снимка правил: список «Спільноти» (M1),
+// вкладка правил и студия (M2) — «перевірено людиною», не «підтверджено».
+for (const d of [pubRedditUk, pubRedditRu, pubRedditEn]) {
+  assert.equal(d.rules.states.reviewed, d.studio.rules.reviewed);
+}
+assert.equal(pubRedditUk.rules.states.reviewed, 'перевірено людиною');
 
 // Плейсхолдеры одинаковы во всех языках.
 function placeholders(v: unknown): string[] {

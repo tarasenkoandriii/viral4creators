@@ -4,7 +4,6 @@ import { Breadcrumbs } from '../../../../components/Breadcrumbs';
 import { ClaimCard } from '../../../../components/Claim';
 import { SandboxTry, type SandboxStrings } from '../../../../components/SandboxTry';
 import { SiteChrome, StatusBanner } from '../../../../components/SiteChrome';
-import { BRAND } from '../../../../brand';
 import { assistEnv } from '../../../../lib/assist-env';
 import { claimStatus, isVisible } from '../../../../lib/claims';
 import { fmt } from '../../../../lib/format';
@@ -23,13 +22,6 @@ import { SANDBOX_PUBLIC_LIMITS, sandboxEndpoint } from '../../../../lib/sandbox'
  */
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
   return pageMetadata('try', (await params).locale);
-}
-
-function withBrand<T>(value: T): T {
-  if (typeof value === 'string') return value.replace(/\{brand\}/g, () => BRAND.name) as T;
-  if (Array.isArray(value)) return value.map(withBrand) as T;
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withBrand(v)])) as T;
-  return value;
 }
 
 export default async function TryPage({ params }: { params: Promise<{ locale: Locale }> }) {
@@ -61,12 +53,11 @@ export default async function TryPage({ params }: { params: Promise<{ locale: Lo
       ) : (
         <section className="section wrap claim claim-live sb" data-claim="sandbox" data-claim-status="live" aria-label={t.sandbox.formLabel} data-testid="sandbox">
           <SandboxTry
-            strings={withBrand(t.sandbox) as SandboxStrings}
+            strings={t.sandbox as SandboxStrings}
             endpoint={sandboxEndpoint(env.apiOrigin)}
             botUsername={env.botUsername}
             pilotHref={href(locale, 'pilot')}
             widgetHref={isVisible('configurator') ? href(locale, 'widget') : null}
-            brandName={BRAND.name}
             locale={locale}
           />
         </section>

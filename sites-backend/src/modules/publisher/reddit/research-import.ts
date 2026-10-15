@@ -308,6 +308,57 @@ function gateOf(
   ).reasons;
 }
 
+const OPEN_BRACKETS: Record<string, string> = {
+  '(': ')',
+  '[': ']',
+  '«': '»',
+  '“': '”',
+};
+
+/**
+ * Условия правил из ячейки CSV (аудит Админки S3-7): разделитель — `;` с
+ * пробелом после него или перевод строки, но `;` внутри скобок `()`/`[]`
+ * и кавычек `"…"`, `«…»`, `“…”` условие не режет («Max 1 mention OR 3
+ * links per 60 days (posts+comments; alt accounts count)» — одно условие).
+ * Перевод строки делит всегда и сбрасывает незакрытые скобки/кавычки
+ * (незакрытая скобка не склеивает весь столбец).
+ */
+export function splitConditions(raw: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let stack: string[] = [];
+  let quoted = false;
+  const flush = () => {
+    if (cur.trim()) out.push(cur.trim());
+    cur = '';
+  };
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch === '\n' || ch === '\r') {
+      flush();
+      stack = [];
+      quoted = false;
+      continue;
+    }
+    if (ch === '"') quoted = !quoted;
+    else if (!quoted && OPEN_BRACKETS[ch]) stack.push(OPEN_BRACKETS[ch]);
+    else if (!quoted && stack.length && ch === stack[stack.length - 1])
+      stack.pop();
+    if (
+      ch === ';' &&
+      !quoted &&
+      stack.length === 0 &&
+      /\s/.test(raw[i + 1] ?? '')
+    ) {
+      flush();
+      continue;
+    }
+    cur += ch;
+  }
+  flush();
+  return out;
+}
+
 function rulesOf(
   r: CsvRow,
   subreddit: string,
@@ -325,8 +376,8 @@ function rulesOf(
     `https://www.reddit.com/r/${subreddit}/about/rules`;
   let sanitized = false;
   const conditions: string[] = [];
-  for (const c of (r.conditions ?? '').split(/;\s+|\n/)) {
-    if (!c.trim() || conditions.length >= 19) continue;
+  for (const c of splitConditions(r.conditions ?? '')) {
+    if (conditions.length >= 19) continue;
     const t = safeText(c, 300);
     if (!t) continue;
     sanitized ||= t.sanitized;

@@ -608,6 +608,18 @@ export interface RedditMaterialView {
   rules: RedditRulesSummary | null;
   currentVersion: VersionView | null;
   approvedVersion: VersionView | null;
+  /**
+   * Активное согласование утверждённой версии (`approvedVersion`) — id для
+   * отзыва (`POST …/approvals/:id/revoke`) без ручного ввода; null — нет
+   * утверждённой версии или её согласование отозвано/истекло (P-R-ADM, v1.3).
+   */
+  approval: {
+    id: string;
+    versionId: string;
+    status: 'active';
+    selfReview: boolean;
+    decidedAt: string;
+  } | null;
   /** Последняя `reddit_policy` текущей (иначе согласованной) версии. */
   policyCheck: QaCheckView | null;
   copies: { count: number; lastAt: string | null };

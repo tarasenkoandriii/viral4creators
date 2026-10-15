@@ -7,13 +7,25 @@
  * контроллере.
  */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { json } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import { defaultEmptyBody } from './common/express-body-default';
 import { matchesAllowedOrigin } from './common/cors-origin-match';
+import { CorsOriginDeniedError, corsDeniedHandler } from './common/cors-denied';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { VALIDATION_PIPE_OPTIONS } from './common/validation-pipe';
 import type { Configuration } from './config/configuration';
+import { IMPORT_MAX_BODY_BYTES } from './modules/admin-panel/admin-reddit.routes';
+
+/**
+ * P-R-ADM: импорт исследования Reddit из админки — три CSV в одном JSON
+ * (≤ 1 МБ); общий JSON-парсер Nest держит 100 КБ. Свой парсер — только на
+ * этом пути (`/api/admin/reddit/import/plan|apply`); дальше общий парсер
+ * тело не трогает (body-parser 2 видит дочитанный поток).
+ */
+export const ADMIN_REDDIT_IMPORT_PATH = '/api/admin/reddit/import';
 
 export function configureApp(
   app: INestApplication,
@@ -25,6 +37,21 @@ export function configureApp(
   // Заход 12 (Express 5): `req.body` без тела — `{}`, как в Express 4.
   // Первым слоем, до любых парсеров (common/express-body-default.ts).
   app.use(defaultEmptyBody);
+
+  // Обёртка с СВОИМ именем обязательна: Nest не ставит общий JSON-парсер,
+  // если в стеке уже есть слой с именем `jsonParser` (имя функции
+  // body-parser), — и JSON перестал бы разбираться на всех маршрутах.
+  const importJson = json({ limit: IMPORT_MAX_BODY_BYTES });
+  app.use(
+    ADMIN_REDDIT_IMPORT_PATH,
+    function adminRedditImportJson(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      importJson(req, res, next);
+    },
+  );
 
   // Этап 54 (Б-3.7): заголовки безопасности. API отдаёт только JSON, так
   // что CSP и COEP ему не нужны — а вот `X-Content-Type-Options`, HSTS и
@@ -64,16 +91,15 @@ export function configureApp(
       // `PublicOriginGuard` — сравнение осталось буквально тем же.
       const isAllowed = matchesAllowedOrigin(requestOrigin, allowedOrigins);
 
-      callback(
-        isAllowed
-          ? null
-          : new Error(`Origin ${requestOrigin} not allowed by CORS`),
-        isAllowed,
-      );
+      // Аудит Админки S3-6: отказ — `CorsOriginDeniedError`, его ловит
+      // `corsDeniedHandler` ниже (403 в конверте, а не 500 express).
+      callback(isAllowed ? null : new CorsOriginDeniedError(), isAllowed);
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
   });
+  // Сразу за `cors`: его `next(err)` при чужом Origin — 403, не 500.
+  app.use(corsDeniedHandler);
   // М-4.4 седьмого аудита (снятие `Access-Control-Allow-Credentials` для
   // wildcard-origin'ов) ОТКАЧЕНО в тот же день: мини-апп шлёт ВСЕ запросы
   // с `withCredentials: true` (frontend/src/services/api.ts), и браузер

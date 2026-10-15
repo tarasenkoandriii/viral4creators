@@ -64,6 +64,8 @@ export const PUB_CRON_SCHEDULE: Readonly<
    * `housekeeping` (`pub_sources` пишет P-B1 через сервис, Р-RD-59).
    */
   'reddit-retention': { schedule: 'daily', owner: 'P-R' },
+  /** P-R-ADM (Р-RD-ADM-7): журнал доступа Админки старше 365 дней. */
+  'admin-access-log-retention': { schedule: 'daily', owner: 'P-R' },
 };
 
 /** Бюджет прохода: запас до maxDuration функции (как перепроверка хостов). */

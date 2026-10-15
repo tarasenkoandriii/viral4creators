@@ -82,6 +82,7 @@ ci:
 	cd frontend && npm run -s lint
 	cd frontend && for f in scripts/*.test.ts; do npx tsx "$$f" >/dev/null || exit 1; done
 	cd frontend && npx vite build
+	node scripts/sync-admin-reddit-shared.mjs --check
 	cd admin && npx tsc --noEmit -p tsconfig.json && npm run -s lint && npm run -s test && npx next build
 	cd landing && npx tsc --noEmit -p tsconfig.json && npm run -s lint && npx next build
 	cd landing && npm run -s budget:js

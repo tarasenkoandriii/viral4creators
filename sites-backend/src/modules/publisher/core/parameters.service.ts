@@ -38,7 +38,7 @@ import type {
 import {
   LIST_LIMIT_DEFAULT,
   LIST_LIMIT_MAX,
-  MEMBER_ACTOR_RE,
+  PERSON_ACTOR_RE,
 } from '../contracts/common';
 import {
   BUDGET_LIMIT_PARAMETER_KEYS,
@@ -334,8 +334,11 @@ export class ParametersService implements ParameterPort {
     product: ProductRef,
     input: Omit<DecisionInput, 'key'> & { key: ParameterKey },
   ): Promise<DecisionResult> {
-    if (!MEMBER_ACTOR_RE.test(input.decidedBy)) {
-      throw new Error('parameters.decide: решает человек (member:<id>)');
+    // Человек: участник кабинета или оператор Админки (Р-RD-ADM-2).
+    if (!PERSON_ACTOR_RE.test(input.decidedBy)) {
+      throw new Error(
+        'parameters.decide: решает человек (member:<id> | admin:<id>)',
+      );
     }
     if (!Array.isArray(input.actors) || input.actors.length === 0) {
       throw new Error(

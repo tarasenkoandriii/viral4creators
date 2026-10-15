@@ -126,6 +126,24 @@ describe('[AT-F12-01] вектор ТЗ §17 (budget-math)', () => {
       reason: 'insufficient',
     });
   });
+
+  it('canReserve: perPurchaseMax = 0 — закупки отключены (purchases_disabled), инструменты — как прежде', () => {
+    const off = budgetSnapshot(limit({ perPurchaseMax: 0n }), [paid, open]);
+    for (const amount of [1n, K(100), K(9_000)])
+      expect(canReserve(off, amount, 'placements')).toEqual({
+        ok: false,
+        reason: 'purchases_disabled',
+      });
+    expect(canReserve(off, K(500), 'tools')).toEqual({ ok: true });
+    expect(canReserve(off, K(500), 'other')).toEqual({ ok: true });
+    // ненулевой предел — прежние причины
+    const s = budgetSnapshot(limit({ perPurchaseMax: 1n }), [paid, open]);
+    expect(canReserve(s, 2n, 'placements')).toEqual({
+      ok: false,
+      reason: 'per_purchase_cap',
+    });
+    expect(canReserve(s, 1n, 'placements')).toEqual({ ok: true });
+  });
 });
 
 describe('[AT-CORE-17] отмена и возврат (budget-math)', () => {

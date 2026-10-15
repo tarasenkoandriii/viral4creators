@@ -57,7 +57,11 @@ import {
   type PostCheckFinding,
 } from '../contracts/ai';
 import { sourceIdsOutside } from '../contracts/ai-schemas';
-import type { GateMissing, ProductCtx } from '../contracts/common';
+import {
+  isAdminActor,
+  type GateMissing,
+  type ProductCtx,
+} from '../contracts/common';
 import type { FieldIssue } from '../contracts/errors';
 import type { AiCallStatus, AiCostStatus } from '../contracts/states';
 import { canonicalJson, sha256Hex } from '../core/content-hash';
@@ -79,7 +83,9 @@ import {
   currentConfigSpec,
 } from './config';
 import { memberAccessIn } from '../core/product-access.service';
-import { can, deniedForKind } from '../core/roles';
+import { can, deniedForKind, type PubAccess } from '../core/roles';
+import { ADMIN_GENERATORS, adminRedditAccess } from '../core/admin-actor';
+import { publisherPlatformSiteId } from '../../../config/publisher-env';
 import { maskContacts, maskDeep } from './pii-mask';
 import { GENERATORS } from './generators';
 import type { PubGeneratorSpec } from './generators/spec';
@@ -1372,6 +1378,20 @@ export async function planFromRow(
   };
 }
 
+/** Продукт — платформенный (сайт из `ASSIST_INTERNAL_SITE_IDS`, P-R-ADM). */
+async function isPlatformProduct(
+  tx: PubTx,
+  productId: string,
+): Promise<boolean> {
+  const site = publisherPlatformSiteId();
+  if (!site) return false;
+  const p = await tx.pubProduct.findFirst({
+    where: { id: productId },
+    select: { siteId: true },
+  });
+  return p?.siteId === site;
+}
+
 /**
  * Перепроверка отложенного вызова перед исполнением очередью (предаудит
  * D2-03): то же, что проверил маршрут, — действующее право автора на
@@ -1397,11 +1417,24 @@ export async function recheckCall(
   gates: GatePort,
   now: Date,
 ): Promise<string | null> {
-  const memberId = /^member:(.+)$/.exec(row.requestedBy)?.[1];
-  if (!memberId) return 'PUB_ROLE_REQUIRED';
   const action =
     row.generator === 'pub.helper.answer' ? 'ai.helper' : 'ai.generate';
-  const access = await memberAccessIn(tx, row.productId, memberId);
+  let access: PubAccess | null;
+  if (isAdminActor(row.requestedBy)) {
+    // P-R-ADM (Р-RD-ADM-2): оператор Админки — только `pub.reddit.draft` и
+    // только в платформенном продукте (как на внутреннем маршруте).
+    if (
+      !(ADMIN_GENERATORS as readonly string[]).includes(row.generator) ||
+      !(await isPlatformProduct(tx, row.productId))
+    ) {
+      return 'PUB_ROLE_REQUIRED';
+    }
+    access = adminRedditAccess(row.requestedBy.slice('admin:'.length));
+  } else {
+    const memberId = /^member:(.+)$/.exec(row.requestedBy)?.[1];
+    if (!memberId) return 'PUB_ROLE_REQUIRED';
+    access = await memberAccessIn(tx, row.productId, memberId);
+  }
   if (
     !access ||
     !can(access, action) ||
@@ -1481,6 +1514,21 @@ export async function refuseCall(
     meta: { errorCode: reason.slice(0, 100) },
   });
   return true;
+}
+
+/**
+ * Причина `PUB_AI_BUDGET` из `errorCode` вызова (`PUB_AI_BUDGET:<reason>`,
+ * Р-RD-ADM-15): `month_not_open` — месяц AI не открыт (гейт `spend` или
+ * задание `ai-month-open`), `cap_exhausted` — потолок месяца исчерпан. Та же
+ * пара, что у `POST …/ai/tasks/:id/extra`; код ошибки прежний.
+ */
+export function aiBudgetReasonOf(
+  errorCode: string | null | undefined,
+): 'month_not_open' | 'cap_exhausted' | null {
+  const m = /^PUB_AI_BUDGET:(month_not_open|cap_exhausted)$/.exec(
+    errorCode ?? '',
+  );
+  return m ? (m[1] as 'month_not_open' | 'cap_exhausted') : null;
 }
 
 /** Код ошибки маршрута для итогового/блокирующего статуса вызова (§11.2). */

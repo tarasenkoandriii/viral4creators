@@ -22,6 +22,8 @@ import {
   approvableValue,
 } from '../testing/fixtures.testing';
 import { sha256Hex } from './content-hash';
+import { PUB_ERROR_MESSAGES } from '../contracts/errors';
+import type { PubError } from './errors';
 import { GateService, evaluateGate } from './gates';
 import { OPERATION_TX_OPTIONS } from './operation';
 import { ParametersService } from './parameters.service';
@@ -363,6 +365,107 @@ ciDescribe('Publisher P-A1: гейты (§10) на базе', () => {
       key: 'mode',
       detail: 'closed',
     });
+  });
+
+  it('per_purchase_max = 0: purchases закрыт purchases_disabled (reason и текст), spend открыт', async () => {
+    const p = await seedProduct(s.prisma, {
+      accountId: acc.accountId,
+      kind: 'test',
+    });
+    await approve(p.id, GATE_PARAMETER_KEYS.purchases, {
+      per_purchase_max: { amountMinor: 0 },
+      rates_by_role: {
+        currency: 'UAH',
+        rates: {
+          product_owner: 1,
+          editor: 1,
+          operator: 1,
+          analyst: 1,
+          sales: 1,
+          viewer: null,
+          admin: null,
+        },
+      },
+      allowed_cpl_inputs: {
+        contributionMinor: 100_000,
+        pPayBp: 3000,
+        shareBp: 5000,
+      },
+      own_channels: { channels: [{ code: 'tg', name: 'Канал', url: null }] },
+      launch_evidence_purchase: { qaRunId: 'qa-30', note: null },
+    });
+    await s.prisma.pubBudgetLimit.create({
+      data: {
+        accountId: acc.accountId,
+        productId: p.id,
+        currency: 'UAH',
+        perPurchaseMaxMinor: 0n,
+        paramVersion: 6,
+        createdBy: 'system:test',
+      },
+    });
+    for (const kind of ['events_collector', 'web_analytics'] as const)
+      await s.prisma.pubIntegration.create({
+        data: {
+          accountId: acc.accountId,
+          productId: p.id,
+          kind,
+          status: 'connected',
+          lastSuccessAt: new Date(now.getTime() - 3_600_000),
+          staleAfterHours: 24,
+          createdBy: 'system:test',
+        },
+      });
+    const disabled = {
+      kind: 'budget',
+      key: 'per_purchase_max',
+      detail: 'purchases_disabled',
+    };
+    expect(await gate(p.id, 'purchases')).toEqual({
+      gate: 'purchases',
+      open: false,
+      missing: [disabled],
+    });
+    // инструменты и месяц AI (продукт «только AI») — не задеты
+    expect(await gate(p.id, 'spend')).toEqual({
+      gate: 'spend',
+      open: true,
+      missing: [],
+    });
+    const err = await s.db
+      .forAccount(acc.accountId)
+      .$transaction((tx) =>
+        s.mod.get(GateService).assertOpen(tx, p, 'purchases', now),
+      )
+      .then(
+        () => null,
+        (e: PubError) => e,
+      );
+    expect(err?.code).toBe('PUB_GATE_CLOSED');
+    expect(err?.details).toEqual({
+      gate: 'purchases',
+      missing: [disabled],
+      reason: 'purchases_disabled',
+    });
+    expect(err?.messageIn('ru')).toBe(
+      'Закупки отключены: максимум одной закупки — 0',
+    );
+    // прочие закрытия purchases — без reason, текст кода
+    const q = await seedProduct(s.prisma, {
+      accountId: acc.accountId,
+      kind: 'test',
+    });
+    const other = await s.db
+      .forAccount(acc.accountId)
+      .$transaction((tx) =>
+        s.mod.get(GateService).assertOpen(tx, q, 'purchases', now),
+      )
+      .then(
+        () => null,
+        (e: PubError) => e,
+      );
+    expect(other?.details.reason).toBeUndefined();
+    expect(other?.messageIn('ru')).toBe(PUB_ERROR_MESSAGES.PUB_GATE_CLOSED.ru);
   });
 
   it('ai_use: нет привязки; привязка к конфигурации не passed; passed — сверка генератора, модели, инструкции, цены', async () => {

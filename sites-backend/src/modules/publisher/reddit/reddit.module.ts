@@ -14,6 +14,12 @@ import { PublisherRedditController } from './reddit.controller';
 import { RedditEnabledGuard } from './reddit-flag.guard';
 import { RedditPortImpl } from './reddit-port';
 import { RedditRetentionJob } from './retention.job';
+import { AdminRedditController } from './admin/admin-reddit.controller';
+import { AdminRedditService } from './admin/admin-reddit.service';
+import {
+  AdminAccessLog,
+  AdminAccessLogRetentionJob,
+} from './admin/admin-access-log';
 
 /**
  * AI Publisher — зона P-R «Reddit Manual MVP» (doc/ai-publisher/
@@ -39,7 +45,8 @@ import { RedditRetentionJob } from './retention.job';
     PublisherDistributionModule,
     PublisherAiModule,
   ],
-  controllers: [PublisherRedditController],
+  // P-R-ADM: внутренний API вкладки «Reddit» Админки (`admin/`).
+  controllers: [PublisherRedditController, AdminRedditController],
   providers: [
     RedditEnabledGuard,
     RedditProjectsService,
@@ -51,6 +58,9 @@ import { RedditRetentionJob } from './retention.job';
     RedditPortImpl,
     { provide: REDDIT_PORT, useExisting: RedditPortImpl },
     RedditRetentionJob,
+    AdminRedditService,
+    AdminAccessLog,
+    AdminAccessLogRetentionJob,
   ],
 })
 export class PublisherRedditModule {}

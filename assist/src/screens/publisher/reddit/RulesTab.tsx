@@ -141,7 +141,7 @@ function SnapshotCard({
   s: RedditRuleSnapshotView;
   onChanged: () => void;
 }) {
-  const { r, api, canReview, memberId } = useReddit();
+  const { r, t, api, canReview, memberId } = useReddit();
   const m = useMutation();
   const [done, setDone] = useState<string | null>(null);
   const own = isOwnSnapshot(s, memberId);
@@ -197,10 +197,13 @@ function SnapshotCard({
       <Row label={r.rules.checkedAt}>
         <DateText iso={s.checkedAt} time />
       </Row>
-      <Row label={r.rules.createdBy}>{actorLabel(s.createdBy)}</Row>
+      <Row label={r.rules.createdBy}>
+        {actorLabel(s.createdBy, t.common.adminActor)}
+      </Row>
       {s.reviewedAt && (
         <Row label={r.rules.reviewedBy}>
-          {actorLabel(s.reviewedBy)} · <DateText iso={s.reviewedAt} time />
+          {actorLabel(s.reviewedBy, t.common.adminActor)} ·{' '}
+          <DateText iso={s.reviewedAt} time />
         </Row>
       )}
       <Row label={r.rules.source}>

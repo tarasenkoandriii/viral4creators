@@ -3,7 +3,7 @@
 //   npx --prefix ../sites-landing tsx src/lib/nav.test.ts
 // Next не трогает этот файл: в app/ маршрутами становятся только
 // page/route/layout, а lib/ — не app/.
-//  1. Все 31 рабочая страница в меню ровно по одному разу; каждая ссылка
+//  1. Все 33 рабочие страницы в меню ровно по одному разу; каждая ссылка
 //     ведёт на существующую страницу; групп восемь, в каждой 2–6.
 //  2. Активный пункт: root — только точное совпадение, вложенные
 //     маршруты отмечают родителя, соседи с общим началом — нет.
@@ -28,7 +28,7 @@ const appDir = path.join(__dirname, '..', 'app');
 
 // ── 1 ──
 const hrefs = ALL_NAV_LINKS.map((l) => l.href);
-assert.equal(hrefs.length, 32, 'в меню 32 рабочие страницы');
+assert.equal(hrefs.length, 33, 'в меню 33 рабочие страницы');
 assert.equal(new Set(hrefs).size, hrefs.length, 'без дублей');
 assert.equal(NAV_GROUPS.length, 8, 'восемь групп');
 for (const g of NAV_GROUPS) {
@@ -53,6 +53,11 @@ assert.deepEqual(
   ops?.links.map((l) => l.href),
   ['/cron', '/ui-snapshots', '/testing', '/telemetry', '/soniox', '/settings'],
 );
+// P-R-ADM: «Reddit» — в «Продвижении», последним пунктом группы.
+const growth = NAV_GROUPS.find((g) => g.key === 'growth');
+assert.equal(growth?.links.at(-1)?.href, '/reddit', '«Reddit» в группе «Продвижение»');
+assert.equal(activeGroupKey('/reddit?tab=studio&id=x'), 'growth');
+assert.equal(activeLabel('/reddit'), 'Reddit');
 
 // ── 2 ──
 assert.equal(isNavActive('/', '/'), true);

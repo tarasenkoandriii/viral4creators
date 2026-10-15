@@ -20,7 +20,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
-import type { ProductCtx } from '../contracts/common';
+import { memberIdOfActor, type ProductCtx } from '../contracts/common';
 import type {
   RedditCommunityView,
   RedditRuleSnapshotView,
@@ -406,9 +406,9 @@ export class RedditCommunitiesService {
         from: s.reviewState,
       });
     }
-    const author = /^member:/.test(s.createdBy)
-      ? s.createdBy.slice('member:'.length)
-      : null;
+    // `member:<id>` → id участника, `admin:<id>` → синтетический участник
+    // Админки (тот же оператор — пометка selfReview, Р-RD-ADM-2).
+    const author = memberIdOfActor(s.createdBy);
     const selfReview = isSelfReview(access, 'reddit.rules.review', author);
     const r = await tx.pubRedditRuleSnapshot.updateMany({
       where: { id: s.id, reviewState: 'unreviewed', status: 'current' },

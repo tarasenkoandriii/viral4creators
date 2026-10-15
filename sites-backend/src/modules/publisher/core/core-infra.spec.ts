@@ -36,8 +36,8 @@ describe('table-registry (§15.4)', () => {
   const reg = pubTableRegistry();
   const index = new Map(reg.map((t, i) => [t.table, i]));
 
-  it('72 таблицы pub_* из DMMF (66 P0 + 6 P-R); родитель раньше ребёнка; продукт первым', () => {
-    expect(reg).toHaveLength(72);
+  it('73 таблицы pub_* из DMMF (66 P0 + 7 P-R); родитель раньше ребёнка; продукт первым', () => {
+    expect(reg).toHaveLength(73);
     expect(reg[0].table).toBe('pub_products');
     for (const t of reg)
       for (const r of t.refs)
@@ -143,8 +143,9 @@ describe('cron/job-registry (§15.1)', () => {
       schedule: 'minute',
       owner: 'P-A1',
     });
-    // + `reddit-retention` (daily, P-R M2).
-    expect(Object.keys(PUB_CRON_SCHEDULE)).toHaveLength(23);
+    // + `reddit-retention` (daily, P-R M2), `admin-access-log-retention`
+    // (daily, P-R-ADM).
+    expect(Object.keys(PUB_CRON_SCHEDULE)).toHaveLength(24);
     const reg = new PubCronRegistry(contributions([]));
     expect(() => reg.validate([fakeCronJob('unknown-job', 'tick')])).toThrow(
       /не описано/,

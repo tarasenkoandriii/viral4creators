@@ -33,7 +33,9 @@ import { CORE_ROUTES } from './core-api';
 import {
   PUB_ERROR_CODES,
   PUB_ERROR_MESSAGES,
+  PUB_ERROR_REASON_MESSAGES,
   PUB_ERROR_STATUS,
+  pubErrorMessage,
   pubLangOf,
 } from './errors';
 import { validateLeadBody } from './lead-validation';
@@ -247,6 +249,25 @@ describe('contracts/errors (§11.2)', () => {
     expect(PUB_ERROR_STATUS.PUB_BUSY).toBe(503);
     expect(PUB_ERROR_STATUS.PUB_AI_SCHEMA_INVALID).toBe(422);
     expect(PUB_ERROR_STATUS.PUB_RATE_LIMITED).toBe(429);
+  });
+
+  it('тексты по reason: ключ <код>:<reason> существующего кода, три языка; нет записи — текст кода', () => {
+    for (const [k, m] of Object.entries(PUB_ERROR_REASON_MESSAGES)) {
+      const [code, reason] = k.split(':');
+      expect(PUB_ERROR_CODES).toContain(code);
+      expect(reason).toMatch(/^[a-z_]+$/);
+      expect(Object.keys(m).sort()).toEqual(['en', 'ru', 'uk']);
+    }
+    expect(
+      pubErrorMessage('PUB_BUDGET_INSUFFICIENT', 'ru', 'purchases_disabled'),
+    ).toBe('Закупки отключены: максимум одной закупки — 0');
+    expect(pubErrorMessage('PUB_GATE_CLOSED', 'en', 'purchases_disabled')).toBe(
+      'Purchases are disabled: the single purchase maximum is 0',
+    );
+    for (const reason of ['per_purchase_cap', undefined, 42])
+      expect(pubErrorMessage('PUB_BUDGET_INSUFFICIENT', 'uk', reason)).toBe(
+        PUB_ERROR_MESSAGES.PUB_BUDGET_INSUFFICIENT.uk,
+      );
   });
 
   it('язык из Accept-Language (q-веса; умолчание — uk)', () => {

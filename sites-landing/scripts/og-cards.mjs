@@ -7,8 +7,10 @@
  * Chromium снимает HTML-шаблон, результат коммитится, `next/og` не
  * используется. Отличие — без ImageMagick: Chromium сам отдаёт JPEG.
  *
- * Тексты — из словарей (`og.<page>`) и имя — из `src/brand.ts`, поэтому
- * после смены бренда (В-1) карточки нужно пересобрать: `npm run og`.
+ * Тексты — из словарей (`og.<page>`) и имя — `brandDisplayName(locale)`
+ * из `src/brand.ts` (пока бренд — заглушка, родовое имя на языке карточки,
+ * Р-З15-1), поэтому после смены бренда (В-1) карточки нужно пересобрать:
+ * `npm run og` (запуск через tsx — он читает `brand.ts` как модуль).
  * Что для каждой страницы × локали файл есть, проверяет
  * `scripts/seo.test.ts`. Скриншота виджета на карточке нет — виджета
  * ещё нет (§0: рисунок за скриншот не выдаём).
@@ -20,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { brandDisplayName } from '../src/brand.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const LOCALES = ['uk', 'en', 'ru'];
@@ -29,13 +32,10 @@ const ALL_PAGES = ['home', 'assistant', 'how-it-works', 'widget', 'try', 'bot', 
 const onlyIdx = process.argv.indexOf('--only');
 const PAGES = onlyIdx > 0 ? process.argv[onlyIdx + 1].split(',') : ALL_PAGES;
 for (const p of PAGES) if (!ALL_PAGES.includes(p)) throw new Error(`og-cards: неизвестная страница ${p}`);
-const brandSrc = fs.readFileSync(path.join(ROOT, 'src/brand.ts'), 'utf8');
-const BRAND = /name: '([^']+)'/.exec(brandSrc)?.[1];
-if (!BRAND) throw new Error('og-cards: не нашлось BRAND.name в src/brand.ts');
 
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-function html(title, badge) {
+function html(brand, title, badge) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   *{box-sizing:border-box;margin:0}
   body{width:1200px;height:630px;font-family:system-ui,'Segoe UI',Roboto,'Noto Sans',Arial,sans-serif;
@@ -47,7 +47,7 @@ function html(title, badge) {
   .badge{display:inline-block;padding:8px 22px;border-radius:999px;background:#fef3c7;color:#7c2d12;
     font-size:30px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
   </style></head><body>
-  <div class="brand"><span class="mark"></span>${esc(BRAND)}</div>
+  <div class="brand"><span class="mark"></span>${esc(brand)}</div>
   <h1>${esc(title)}</h1>
   <div><span class="badge">${esc(badge)}</span></div>
   </body></html>`;
@@ -55,18 +55,29 @@ function html(title, badge) {
 
 const outDir = path.join(ROOT, 'public/og');
 fs.mkdirSync(outDir, { recursive: true });
+// Какое имя впечатано в карточки — сверяет `scripts/seo.test.ts` с
+// `brandDisplayName()`: забытый `npm run og` после В-1 — красный тест.
+const STAMP = path.join(ROOT, 'scripts/og-cards.brand.json');
+const names = Object.fromEntries(LOCALES.map((l) => [l, brandDisplayName(l)]));
+if (PAGES !== ALL_PAGES) {
+  const prev = fs.existsSync(STAMP) ? JSON.parse(fs.readFileSync(STAMP, 'utf8')) : {};
+  if (LOCALES.some((l) => prev[l] !== names[l])) throw new Error('og-cards: имя изменилось — пересоберите все карточки (без --only)');
+}
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });
 let count = 0;
 for (const locale of LOCALES) {
   const dict = JSON.parse(fs.readFileSync(path.join(ROOT, `src/dictionaries/${locale}.json`), 'utf8'));
+  const brand = brandDisplayName(locale);
+  if (!brand || brand.includes('<')) throw new Error(`og-cards: публичное имя для ${locale} — заглушка`);
   for (const key of PAGES) {
     const title = dict.og[key];
     if (!title) throw new Error(`og-cards: нет og.${key} в ${locale}.json`);
-    await page.setContent(html(title, dict.og.badge), { waitUntil: 'load' });
+    await page.setContent(html(brand, title, dict.og.badge), { waitUntil: 'load' });
     await page.screenshot({ path: path.join(outDir, `${key}-${locale}.jpg`), type: 'jpeg', quality: 82 });
     count++;
   }
 }
 await browser.close();
+fs.writeFileSync(STAMP, JSON.stringify(names, null, 2) + '\n');
 console.log(`og-cards: ${count} карточек в public/og/`);

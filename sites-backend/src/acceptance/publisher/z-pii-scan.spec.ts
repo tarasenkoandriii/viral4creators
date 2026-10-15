@@ -14,6 +14,9 @@
  *    контактом → 400 (значение не сохраняется и не возвращается); белый
  *    список `pub_sources.fragment` на Reddit-выдержки и первоисточники
  *    правил НЕ распространяется (отдельный поиск по ним);
+ *  - Админка (P-R-ADM, `internal/admin/reddit`): те же тела с контактом
+ *    через внутренний API — 400; импорт CSV с контактом — строки
+ *    отклонены, в отчёте скрыты; журнал доступа Админки — без значений;
  *  - раскрытие контакта и заметок — первым шагом проверки (§17.1).
  * Затем сырой поиск синтетических значений во ВСЕХ колонках ВСЕХ таблиц
  * `pub_*` (включая `pub_idempotency_keys`, `pub_audit_events`, журнал AI),
@@ -73,6 +76,10 @@ import {
   subredditName,
   threadUrl,
 } from '../../modules/publisher/reddit/testing/reddit-kit.testing';
+import {
+  adminApi,
+  useAdminEnv,
+} from '../../modules/publisher/reddit/testing/admin-kit.testing';
 import {
   seedMembers,
   type SeededMembers,
@@ -678,6 +685,120 @@ ciDescribe(
             .set(ed),
         );
 
+        // ── Админка (P-R-ADM): внутренний API с контактом в теле и CSV ──
+        const restoreAdmin = useAdminEnv(w.product.siteId);
+        try {
+          const A = adminApi({ srv });
+          const aProj = keep(
+            'admin reddit project',
+            await A.post('rx/projects', {
+              title: 'Admin Reddit',
+              locale: 'en',
+              market: 'US',
+            }),
+          );
+          expect(aProj.status).toBe(201);
+          const aName = subredditName('apii');
+          const aComm = keep(
+            'admin reddit community',
+            await A.post('rx/communities', {
+              projectId: aProj.body.data.id,
+              community: `r/${aName}`,
+            }),
+          );
+          expect(aComm.status).toBe(201);
+          for (const [label, res] of [
+            [
+              'admin rules 400',
+              await A.post(`rx/communities/${aComm.body.data.id}/rules`, {
+                ...rulesBody(aName, 'allowed'),
+                sourceExcerpt: `Modmail ${srcPerson.email}, ${srcPerson.phone}`,
+              }),
+            ],
+            [
+              'admin excerpt 400',
+              await A.post('rx/opportunities', {
+                projectId: aProj.body.data.id,
+                communityId: aComm.body.data.id,
+                threadUrl: threadUrl(aName),
+                titleManual: 'Which widget answers from site content?',
+                intent: 'recommendation',
+                excerpt: `Write me: ${p.email} or call ${p.phone}`,
+              }),
+            ],
+            [
+              'admin brief 400',
+              await A.post('rx/briefs', {
+                projectId: aProj.body.data.id,
+                communityId: aComm.body.data.id,
+                contentType: 'post',
+                objective: `Call ${p.phone}`,
+              }),
+            ],
+            [
+              'admin keyword 400',
+              await A.post('rx/keywords', {
+                projectId: aProj.body.data.id,
+                phrase: `widget ${p.email}`,
+                intent: 'other',
+                priority: 1,
+              }),
+            ],
+          ] as const)
+            expect({ label, status: keep(label, res).status }).toEqual({
+              label,
+              status: 400,
+            });
+          // v1.2: источник с контактом в заголовке, причина отзыва
+          // доказательства Reddit с контактом — 400 (значение не хранится).
+          expect(
+            keep(
+              'admin source 400',
+              await A.post('cx/sources', {
+                kind: 'manual_text',
+                title: `Від ${p.email}`,
+                fragment: 'текст',
+                visibility: 'private',
+                usage: 'allowed',
+              }),
+            ).status,
+          ).toBe(400);
+          const evidence =
+            await s.prisma.pubRedditRuleSnapshot.findFirstOrThrow({
+              where: { productId: w.product.id },
+            });
+          expect(
+            keep(
+              'admin revoke 400',
+              await A.post(`cx/sources/${evidence.sourceId}/revoke`, {
+                reason: `Дзвоніть ${p.phone}`,
+              }),
+            ).status,
+          ).toBe(400);
+          const imp = keep(
+            'admin import',
+            await A.postRaw('import/apply', {
+              projectTitle: 'Admin import',
+              locale: 'en',
+              market: 'US',
+              communitiesCsv: `name,url,topic,size,promotion_policy,links_policy,flair_required,conditions,source_url,checked_at
+r/${aName}x,https://www.reddit.com/r/${aName}x/,Write ${p.email},null,unknown,unknown,null,"Ask ${srcPerson.phone}",https://www.reddit.com/r/${aName}x/about/rules,2026-10-13
+`,
+              keywordsCsv: `phrase,intent,priority
+call ${p.phone},other,1
+`,
+              opportunitiesCsv: '',
+            }),
+          );
+          expect(imp.status).toBe(200);
+          keep(
+            'admin opportunities csv',
+            await A.get('rx/opportunities', { format: 'csv' }),
+          );
+        } finally {
+          restoreAdmin();
+        }
+
         // ── Отчёт ───────────────────────────────────────────────────────
         const rep = keep(
           'report',
@@ -713,7 +834,9 @@ ciDescribe(
                               WHERE o."productId" = ${w.product.id})
                OR s."id" IN (SELECT r."sourceId" FROM "sites"."pub_reddit_rule_snapshots" r
                               WHERE r."productId" = ${w.product.id}))`;
-        expect(redditFragments.length).toBe(2);
+        // 2 — кабинет (выдержка, правила), 1 — снимок правил импорта Админки
+        // (контакт из CSV вычищен до записи: поиск ниже — по всем значениям).
+        expect(redditFragments.length).toBe(3);
         for (const v of [...leadNeedles, ...sourceNeedles])
           expect(redditFragments.filter((x) => x.f.includes(v))).toEqual([]);
         // Источник действительно хранит свой контакт (колонка разрешена) —
@@ -746,6 +869,10 @@ ciDescribe(
       const joined = logs.join('\n');
       // Журнал действительно писался (отказ формы — строка фильтра).
       expect(joined).toContain('/public/publisher/v1/leads → 400');
+      // Журнал доступа Админки (P-R-ADM) писался — и без значений.
+      expect(joined).toContain(
+        'POST /internal/admin/reddit/rx/opportunities → 400',
+      );
       for (const v of [...leadNeedles, ...sourceNeedles])
         expect({ v, inLogs: joined.includes(v) }).toEqual({
           v,

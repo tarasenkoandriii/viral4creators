@@ -118,7 +118,9 @@ export const PARAMETER_SCHEMAS: {
     toolsMinor: minor(),
     reserveMinor: minor(),
   }),
-  per_purchase_max: s.object({ amountMinor: minor(1) }),
+  // 0 — «закупок нет» (продукт только с AI, Р-RD-ADM-14): функция лимитов
+  // P-C принимает 0, любая закупка > 0 упирается в потолок одной закупки.
+  per_purchase_max: s.object({ amountMinor: minor() }),
   ai_budget_usd_month: s.object({ microUsd: minor() }),
   // Аудит P3-8: формат — тот же `FX_RATE_RE`, что у `parseFxRate` (без
   // ведущих нулей), и курс > 0 — иначе утверждённое значение давало 500.

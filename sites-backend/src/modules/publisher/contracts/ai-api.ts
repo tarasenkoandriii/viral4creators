@@ -13,7 +13,9 @@
  *  - ошибки (тело ошибки несёт `details.callId`, если вызов записан):
  *    409 `PUB_AI_DISABLED` (пять генераторов вне набора — ручной путь),
  *    409 `PUB_AI_NOT_EVALUATED {missing}` / `PUB_GATE_CLOSED {gate:'ai_use',
- *    missing}`, 409 `PUB_AI_UNPRICED`, 409 `PUB_AI_BUDGET`, 409
+ *    missing}`, 409 `PUB_AI_UNPRICED`, 409 `PUB_AI_BUDGET {reason:
+ *    'month_not_open'|'cap_exhausted'}` (месяц AI не открыт / потолок
+ *    исчерпан; Р-RD-ADM-15), 409
  *    `PUB_AI_LIMIT {taskId}` (без записи вызова), 422
  *    `PUB_AI_SCHEMA_INVALID` (после повтора; задача `needs_human`), 503
  *    `PUB_AI_UNAVAILABLE` (таймаут/недоступность — ручной путь доступен),

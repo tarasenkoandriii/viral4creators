@@ -231,6 +231,8 @@ export const pubOpsEn: PublisherOpsDict = {
       insufficient: 'overall remainder',
       category_cap: 'category limit',
       per_purchase_cap: 'single purchase maximum',
+      purchases_disabled:
+        'purchases disabled: the single purchase maximum is 0',
       concurrent: 'remainder taken by a parallel purchase',
     },
     staleApproval: 'A new approval is needed: {reason}.',

@@ -6,7 +6,7 @@
  * та же `PUB_RESPONSE_INVALID` (502): ноль вместо неизвестного не
  * подставляется.
  */
-import { seg, type PublisherHttp, type Query } from './common-api';
+import { seg, type PublisherHttp, type Query } from './common-pure';
 import {
   PubDecodeError,
   completeness,

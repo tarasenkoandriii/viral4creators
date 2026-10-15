@@ -289,7 +289,7 @@ function CallsJournal({ query }: { query: PublisherSectionProps['query'] }) {
                       {c.ai.object}: {x.objectRef}
                     </span>
                     <span>
-                      {actorLabel(x.requestedBy)} ·{' '}
+                      {actorLabel(x.requestedBy, t.common.adminActor)} ·{' '}
                       <DateText iso={x.requestedAt} time />
                     </span>
                     {x.errorCode && (

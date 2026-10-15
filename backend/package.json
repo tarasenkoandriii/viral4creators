@@ -51,6 +51,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
     "dotenv": "^17.2.3",
+    "express": "^5.2.1",
     "fast-xml-parser": "^5.11.1",
     "helmet": "^8.3.0",
     "pg": "^8.23.0",

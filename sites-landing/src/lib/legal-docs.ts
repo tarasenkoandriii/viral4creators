@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { BRAND } from '../brand';
+import { BRAND, brandDisplayName } from '../brand';
 import { fmt } from './format';
 
 /**
  * Юридические черновики (§3.15, §13): Markdown в `sites-landing/legal/`,
  * одна редакция (украинская) вне `[locale]` — переводим только
  * проверенный юристом текст. Читаются при сборке (страницы статические),
- * `{brand}` и `{entity}` подставляются из `brand.ts`.
+ * `{brand}` и `{entity}` подставляются из `brand.ts` (`{brand}` — имя
+ * для украинской редакции, `brandDisplayName('uk')`: пока бренд — заглушка,
+ * родовое «ШІ-помічник для сайту»; стоит только в именительном — после
+ * «— » или в лапках, иначе не склоняется, Р-З15-1).
  *
  * Все три — ЧЕРНОВИКИ: на странице плашка, в поиске `noindex`, в
  * sitemap их нет. Снять пометку = юрист проверил + `draft: false` здесь.
@@ -26,7 +29,7 @@ export function isLegalSlug(s: string): s is LegalSlug {
 
 export function legalMarkdown(slug: LegalSlug, root: string = process.cwd()): string {
   const raw = fs.readFileSync(path.join(root, 'legal', `${slug}.md`), 'utf8');
-  return fmt(raw, { entity: BRAND.legalEntity });
+  return fmt(raw, { brand: brandDisplayName('uk'), entity: BRAND.legalEntity });
 }
 
 /** Заголовок документа — первая строка `# …`. */

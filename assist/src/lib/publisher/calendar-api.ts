@@ -6,8 +6,8 @@
  * (`distribution-api.ts`); каналы и публикации P-G2 может брать отсюда.
  */
 
-import type { PublisherHttp, Query } from './common-api';
-import { seg } from './common-api';
+import type { PublisherHttp, Query } from './common-pure';
+import { seg } from './common-pure';
 import {
   bool,
   int,

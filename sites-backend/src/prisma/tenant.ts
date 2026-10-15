@@ -369,6 +369,9 @@ export const NON_TENANT_MODELS: Readonly<Record<string, string>> = {
   // <productId>:<scope>:<HMAC IP>, строки живут ≤ 1 ч (раздел 6.2).
   PubRateHit:
     'окно лимита публичной формы Publisher (HMAC IP, ≤ 1 ч) — пишет publisher_public, вне кабинета',
+  // P-R-ADM: журнал доступа оператора Админки платформы (не участник кабинета).
+  PubRedditAdminAccessLog:
+    'журнал доступа Админки к вкладке «Reddit» (оператор платформы, шаблон маршрута, статус) — вне кабинета',
 };
 
 const WHERE_OPERATIONS = new Set([

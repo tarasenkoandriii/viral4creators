@@ -29,7 +29,7 @@ interface ApiSuccessResponse<T> {
 
 interface ApiErrorResponse {
   success: false;
-  error: { message: string; code?: string };
+  error: { message: string; code?: string; details?: unknown };
 }
 
 type ApiResponse<T> = ApiSuccessResponse<T> | ApiErrorResponse;
@@ -38,6 +38,13 @@ export class ApiRequestError extends Error {
   constructor(
     message: string,
     public readonly httpStatus: number,
+    /**
+     * Машинный код конверта (`error.code`) и его `details` — вкладке
+     * «Reddit» нужны коды Publisher (`PUB_CONFLICT {reason}` и т.п.), чтобы
+     * объяснить отказ словами; прочие экраны их не читают.
+     */
+    public readonly code?: string,
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'ApiRequestError';
@@ -80,12 +87,17 @@ async function handle<T>(response: Response): Promise<T> {
   if (!body.success) {
     // Ответ шлюза вида `{"error":"…"}` или без `error` вовсе не должен
     // превращаться в TypeError вместо сообщения (этап 50, В-5.14).
-    const err = (body as { error?: { message?: string } | string }).error;
+    const err = (body as { error?: { message?: string; code?: unknown; details?: unknown } | string }).error;
     const message =
       typeof err === 'string'
         ? err
         : err?.message || `Сервер ответил ${response.status}`;
-    throw new ApiRequestError(message, response.status);
+    const code = typeof err === 'object' && typeof err?.code === 'string' ? err.code : undefined;
+    const details =
+      typeof err === 'object' && err?.details && typeof err.details === 'object' && !Array.isArray(err.details)
+        ? (err.details as Record<string, unknown>)
+        : undefined;
+    throw new ApiRequestError(message, response.status, code, details);
   }
   return body.data;
 }
@@ -111,6 +123,30 @@ export async function apiGetBlob(path: string): Promise<Blob | null> {
     throw new ApiRequestError(`Сервер ответил ${response.status}`, response.status);
   }
   return response.blob();
+}
+
+/**
+ * Файл-выгрузка (вкладка «Reddit», `?format=csv`): backend отдаёт CSV
+ * файлом (`text/csv`), а ошибку — обычным конвертом. Тот же fetch с
+ * credentials, что у JSON-запросов; разбор — у вызывающего.
+ */
+export async function apiGetFile(
+  path: string,
+  query?: ApiReqOptions['query'],
+): Promise<{ status: number; contentType: string; disposition: string; text: string; nextBefore: string | null }> {
+  const response = await fetch(`${API_BASE_URL}${path}${buildQuery(query)}`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: { Accept: 'text/csv, application/json;q=0.9' },
+  });
+  return {
+    status: response.status,
+    contentType: response.headers.get('content-type') ?? '',
+    disposition: response.headers.get('content-disposition') ?? '',
+    // Курсор следующей части выгрузки (до 5000 строк на часть).
+    nextBefore: response.headers.get('x-next-before'),
+    text: await response.text(),
+  };
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {

@@ -75,6 +75,9 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/referrals', label: 'Приглашения' },
       // Кадры «Как это работает» страницы поздравлений (заход 8).
       { href: '/greeting-frames', label: 'Кадры лендинга поздравлений' },
+      // Reddit от имени платформы (пакет P-R-ADM): исследование, студия,
+      // ручная публикация — данные Publisher в sites-backend.
+      { href: '/reddit', label: 'Reddit' },
     ],
   },
   {

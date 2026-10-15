@@ -4,8 +4,8 @@
  * мутации — `opKey` в теле, головы — `expectedRevision`.
  */
 
-import type { PublisherHttp, Query } from './common-api';
-import { seg } from './common-api';
+import type { PublisherHttp, Query } from './common-pure';
+import { seg } from './common-pure';
 import {
   arr,
   bool,

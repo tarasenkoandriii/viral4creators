@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { BRAND } from '../../../brand';
 import { LegalArticle } from '../../../components/LegalArticle';
 import { SiteChrome } from '../../../components/SiteChrome';
 import { getDictionary } from '../../../lib/get-dictionary';
@@ -19,7 +18,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const md = legalMarkdown(slug);
   const draft = LEGAL_DOCS.find((d) => d.slug === slug)!.draft;
   return {
-    title: `${legalTitle(md)} — ${BRAND.name}`,
+    // Имя сайта уже в заголовке документа («…сайту «{brand}»») — без повтора суффиксом.
+    title: legalTitle(md),
     alternates: { canonical: `${siteUrl()}/legal/${slug}` },
     // Черновик в поиске не нужен (и в sitemap его нет).
     robots: draft ? { index: false, follow: true } : { index: true, follow: true },

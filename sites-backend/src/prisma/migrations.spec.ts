@@ -132,8 +132,11 @@ describe('миграции AI Publisher (pub_*)', () => {
     'pub_rate_hits',
   ]);
 
-  it('проверка не пустая: 72 таблицы (66 P0 + 6 pub_reddit_* P-R) и миграции publisher_core, publisher_reddit, publisher_reddit_m2 на месте', () => {
-    expect(tables).toHaveLength(72);
+  it('проверка не пустая: 73 таблицы (66 P0 + 7 pub_reddit_* P-R) и миграции publisher_core, publisher_reddit, publisher_reddit_m2, publisher_admin_actor на месте', () => {
+    expect(tables).toHaveLength(73);
+    expect(pubMigs.map((m) => m.name)).toContain(
+      '20261023090000_publisher_admin_actor',
+    );
     expect(pubMigs.map((m) => m.name)).toContain(
       '20261021090000_publisher_reddit_m2',
     );

@@ -112,7 +112,10 @@ export class PublisherRedditController {
 
   /**
    * Ответ списка: JSON-страница или CSV (аудит `export` до отдачи файла —
-   * отдельной короткой транзакцией `recordRead`).
+   * отдельной короткой транзакцией `recordRead`). CSV — часть до `limit`
+   * строк (5000); запрошено `limit + 1`: есть ещё — курсор следующей части в
+   * заголовке `X-Next-Before` (`?before=`), как у журнала AI — выгрузка не
+   * обрезается молча (кабинет склеивает части, `csvAll`).
    */
   private async respond<T extends { id: string }>(
     res: Response,
@@ -124,8 +127,9 @@ export class PublisherRedditController {
     toRow: (r: T) => Record<string, unknown> = (r) =>
       jsonSafe(r) as Record<string, unknown>,
   ): Promise<void> {
+    const page = pageOf(rows, limit);
     if (!csv) {
-      sendEnvelope(res, pageOf(rows, limit));
+      sendEnvelope(res, page);
       return;
     }
     const p = productOf(ctx);
@@ -133,12 +137,13 @@ export class PublisherRedditController {
       objectType: 'product',
       objectId: p.id,
       action: 'export',
-      meta: { list: `reddit-${name}`, rows: rows.length },
+      meta: { list: `reddit-${name}`, rows: page.items.length },
     });
+    if (page.nextBefore) res.setHeader('X-Next-Before', page.nextBefore);
     sendCsv(
       res,
       `reddit-${name}`,
-      toCsv(REDDIT_CSV_COLUMNS[name], rows.map(toRow)),
+      toCsv(REDDIT_CSV_COLUMNS[name], page.items.map(toRow)),
     );
   }
 
@@ -148,7 +153,7 @@ export class PublisherRedditController {
     return {
       csv,
       limit,
-      p: listParams(q, statuses, csv ? limit : limit + 1, withPolicyNow),
+      p: listParams(q, statuses, limit + 1, withPolicyNow),
     };
   }
 
@@ -632,7 +637,7 @@ export class PublisherRedditController {
   ): Promise<void> {
     const csv = formatOf(q.format) === 'csv';
     const limit = limitOf(q.limit, csv);
-    const p = briefListParams(q, csv ? limit : limit + 1);
+    const p = briefListParams(q, limit + 1);
     const rows = await listBriefs(
       this.tenant(ctx) as never,
       productOf(ctx).id,
@@ -883,7 +888,7 @@ export class PublisherRedditController {
   ): Promise<void> {
     const csv = formatOf(q.format) === 'csv';
     const limit = limitOf(q.limit, csv);
-    const p = publicationListParams(q, csv ? limit : limit + 1);
+    const p = publicationListParams(q, limit + 1);
     const rows = await listPublications(
       this.tenant(ctx) as never,
       productOf(ctx).id,

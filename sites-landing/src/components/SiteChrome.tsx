@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BRAND } from '../brand';
+import { brandDisplayName } from '../brand';
 import { pathFor } from '../lib/alternates';
 import { fmt } from '../lib/format';
 import { isVisible } from '../lib/claims';
@@ -62,7 +62,7 @@ export function SiteChrome({
         <div className="wrap header-row">
           <a className="brand" href={href(locale, 'home')} aria-label={fmt(dict.common.nav.home)}>
             <span className="brand-mark" aria-hidden="true" />
-            <span className="brand-name">{BRAND.name}</span>
+            <span className="brand-name">{brandDisplayName(locale)}</span>
           </a>
           <nav className="locale-switcher" aria-label={dict.common.localeSwitcher.label}>
             <ul>

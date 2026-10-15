@@ -143,7 +143,7 @@ export const pubRedditEn: PublisherRedditDict = {
     flair: { yes: 'yes', no: 'no', unknown: 'unknown' },
     states: {
       unreviewed: 'not confirmed',
-      reviewed: 'confirmed',
+      reviewed: 'checked by a person',
       stale: 'stale',
     },
     snapshotStatuses: { current: 'current', superseded: 'superseded' },
@@ -453,6 +453,10 @@ export const pubRedditEn: PublisherRedditDict = {
       stillRunning: 'Generation is still running — reload the page later.',
       failed:
         'The call ended without variants (status: {status}). You can write the text yourself.',
+      staleVariants:
+        'The brief changed after this generation — the variants follow the earlier version.',
+      closedHint:
+        'A variant is already in the draft: full generation for this brief is closed. Edit the draft or use “Regenerate paragraph”.',
       taskClosed:
         'Full generation for this brief is closed (a variant was already chosen). “Regenerate a paragraph” in the draft is available.',
       variant: 'Variant {n}',
@@ -667,6 +671,8 @@ export const pubRedditEn: PublisherRedditDict = {
       'The cabinet does not contact Reddit: the mark is recorded as reported by the user and is not verified.',
     publications: 'Publication marks',
     stages: { test: 'test', live: 'live' },
+    approvalRevoked:
+      'Approval revoked: this version is no longer approved. Create a new version (draft) and approve it again.',
     unscheduleFirst:
       'The text has already been copied (material scheduled): to edit, unschedule it first — the edit becomes a new version.',
     unschedule: 'Unschedule',

@@ -174,6 +174,11 @@
  *     policy/score/markers — можно, markers — признаки текста для находок
  *     `pub.reddit.draft`, M2) и не называет таблицы и модели P-R
  *     (`publisher-ai-no-reddit-rules`): модель не меняет policy и статусы.
+ *     P-R-ADM (вкладка «Reddit» Админки, Р-RD-ADM-6): внутренний контроллер
+ *     живёт ВНУТРИ `publisher/reddit/admin/` (лист графа сохраняется —
+ *     `publisher-leaf`), секрет внутреннего API — общий
+ *     `common/internal-secret.guard` (вынесен из `platform-admin`; импорт
+ *     `platform-admin/**` из publisher ловит `publisher-scope`).
  *
  * Учитываются все виды ссылок: `import … from`, `export … from`,
  * `import '…'`, `import(…)`, `require(…)`, `jest.mock(…)`; пути —
@@ -883,6 +888,18 @@ function selfTest() {
       `import { PublisherModule } from '../publisher/publisher.module';`,
       'publisher-leaf',
     ],
+    // P-R-ADM: секрет внутреннего API — только из common/, не из
+    // platform-admin (иначе publisher тянет чужой модуль).
+    [
+      'modules/publisher/reddit/admin/pa9.ts',
+      `import { assertInternalSecret } from '../../../platform-admin/internal-secret.guard';`,
+      'publisher-scope',
+    ],
+    [
+      'modules/platform-admin/pa10.ts',
+      `import { AdminRedditService } from '../publisher/reddit/admin/admin-reddit.service';`,
+      'publisher-leaf',
+    ],
     [
       'modules/publisher/public/pa4.ts',
       `import { SitesDb } from '../../../prisma/sites-db.service';`,
@@ -1439,6 +1456,16 @@ function selfTest() {
     [
       'modules/publisher/reddit/okp7.spec.ts',
       `import * as http from 'node:http';\nglobalThis.fetch = () => { throw new Error('egress'); };`,
+    ],
+    // P-R-ADM: внутренний API Админки внутри publisher — общий гвард из
+    // common/, контроллеры кабинета того же модуля.
+    [
+      'modules/publisher/reddit/admin/okp9.ts',
+      `import { assertInternalSecret } from '../../../../common/internal-secret.guard';\nimport { PublisherCoreController } from '../../core/product.controller';\nimport { ContentMaterialsController } from '../../content/content-materials.controller';\nimport { runImport } from '../research-import';`,
+    ],
+    [
+      'modules/platform-admin/okp10.ts',
+      `import { InternalSecretGuard } from '../../common/internal-secret.guard';`,
     ],
     [
       'modules/publisher/ai/okp8.ts',

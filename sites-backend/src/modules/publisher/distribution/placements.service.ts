@@ -277,7 +277,11 @@ export async function assertPerPurchaseCap(
   });
   if (l && total > l.perPurchaseMaxMinor) {
     throw new PubError('PUB_BUDGET_INSUFFICIENT', {
-      reason: 'per_purchase_cap',
+      // 0 — закупки отключены (продукт «только AI»), а не «мало бюджета»
+      reason:
+        l.perPurchaseMaxMinor === 0n
+          ? 'purchases_disabled'
+          : 'per_purchase_cap',
       requested: total.toString(),
       perPurchaseMax: l.perPurchaseMaxMinor.toString(),
     });

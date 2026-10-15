@@ -23,6 +23,13 @@
  *     вставки и CSP в ней — для origin виджета из env; страница бота — с
  *     формой opt-out без JS; служебные страницы результата opt-out —
  *     `noindex`; поле адреса в hero ведёт в песочницу GET-формой.
+ *  9. Р-З15-1: заглушки бренда `<бренд>` (в любом экранировании, вкл.
+ *     числовые сущности) и плейсхолдеров `{brand}`/`%%brand%%` нет ни в
+ *     одном файле, который уходит посетителю — HTML, RSC, метаданные,
+ *     sitemap/robots, клиентский JS (`.next/static`);
+ *     в шапке, `og:site_name` и JSON-LD каждой локали — имя на её языке
+ *     (`brandDisplayName`), юр-страницы — с украинским; при заглушке в
+ *     JSON-LD нет Organization.
  *
  * Запуск: `npm run check:built` после `next build` с тем же `SITE_URL`.
  */
@@ -36,7 +43,7 @@ import { PAGES } from '../../src/lib/pages';
 import { cspLines, embedTag } from '../../src/lib/install';
 import { attr, claimViolations, elementsWith, headTags, jsonLdViolations } from '../lib/html';
 import { readAssistEnv } from '../../src/lib/assist-env';
-import { WIDGET_NAMES } from '../../src/brand';
+import { BRAND_IS_PLACEHOLDER, brandDisplayName, WIDGET_NAMES } from '../../src/brand';
 
 const ROOT = path.join(__dirname, '..', '..');
 const APP = path.join(ROOT, '.next', 'server', 'app');
@@ -204,9 +211,58 @@ for (const rel of ['ru/docs/assistant.html', 'ru/docs/assistant/js-api.html']) {
   if (bundle.includes('assist-w.viral4creators.app') && assist.widgetOrigin !== 'https://assist-w.viral4creators.app') problems.push('клиентский бандл: адрес виджета литералом, мимо env');
 }
 
+// 9. Заглушка бренда не видна посетителю (Р-З15-1).
+// RSC/JSON/JS экранируют `<` и кириллицу как \uXXXX — сначала раскрываем их.
+// Числовые сущности HTML (`&#x3C;`, `&#060;`) — тоже. `{brand}`/`%%brand%%` — неподставленный
+// плейсхолдер словаря/документации на ЛЮБОЙ странице (общая проверка выше — только страницы локалей).
+const PLACEHOLDER_FORMS = ['<бренд>', '&lt;бренд&gt;', encodeURIComponent('<бренд>'), '{brand}', '%%brand%%'];
+const cp = (n: number, raw: string) => (n <= 0x10ffff ? String.fromCodePoint(n) : raw);
+const unescapeU = (s: string) =>
+  s
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#x([0-9a-fA-F]{1,6});/g, (m, h: string) => cp(parseInt(h, 16), m))
+    .replace(/&#(\d{1,7});/g, (m, d: string) => cp(Number(d), m));
+const allBuilt: string[] = [];
+const walkAll = (d: string) => {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walkAll(p);
+    // Серверный JS (`route.js`, чанки) посетителю не уходит: там заглушка законна —
+    // служебные сообщения владельцу (`server/pilot-notify.ts`, `opt-out.ts`).
+    else if (/\.(html|rsc|body|meta|json|xml|txt)$/.test(e.name)) allBuilt.push(p);
+  }
+};
+walkAll(APP);
+let brandScanned = 0;
+for (const f of [...allBuilt, ...files]) {
+  const text = unescapeU(fs.readFileSync(f, 'utf8'));
+  brandScanned++;
+  const upper = text.toUpperCase();
+  const hit = PLACEHOLDER_FORMS.find((s) => upper.includes(s.toUpperCase()));
+  if (hit) problems.push(`${path.relative(ROOT, f)}: заглушка бренда «${hit}» в собранном файле`);
+}
+const brandOnPage = (rel: string, locale: (typeof locales)[number]) => {
+  const html = read(rel);
+  const name = brandDisplayName(locale);
+  const shown = /<span class="brand-name">([^<]*)<\/span>/.exec(html)?.[1];
+  if (decode(shown ?? '') !== name) problems.push(`${rel}: в шапке «${shown}», а не «${name}»`);
+  return html;
+};
+for (const l of locales) {
+  for (const rel of [`${l}.html`, `${l}/assistant.html`, `${l}/assistant/try.html`, `${l}/assistant/pilot.html`, `${l}/assistant/widget.html`]) {
+    const html = brandOnPage(rel, l);
+    if (decode(meta(html, 'og:site_name') ?? '') !== brandDisplayName(l)) problems.push(`${rel}: og:site_name «${meta(html, 'og:site_name')}»`);
+    const ld = [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
+    if (!ld.includes(`"name":"${brandDisplayName(l)}"`)) problems.push(`${rel}: в JSON-LD нет имени «${brandDisplayName(l)}»`);
+    if (BRAND_IS_PLACEHOLDER && /"@type":"Organization"|#org"/.test(ld)) problems.push(`${rel}: JSON-LD Organization при заглушке бренда (Р-З15-1)`);
+  }
+}
+for (const slug of ['privacy', 'terms', 'cookies']) brandOnPage(`legal/${slug}.html`, 'uk');
+
 assert.deepEqual(problems, [], `собранный сайт:\n${problems.join('\n')}`);
 console.log(
   `ok   собранный сайт: ${pages} страниц × локалей — lang, один h1, canonical, hreflang+x-default, OG/Twitter, реестр утверждений, таблицы, JSON-LD без цен/оферт; ` +
     `noindex у ${noindexFiles.length} служебных; ${files.length} клиентских файлов без секретов${token ? ' (с приманкой токена)' : ' (БЕЗ приманки: PILOT_TELEGRAM_BOT_TOKEN не задан)'}; ` +
-      `${htmlFiles.length} HTML без тега загрузчика и ссылок в Telegram; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран; песочница, страница бота с opt-out, документация uk/en с кодом для origin из env`,
+      `${htmlFiles.length} HTML без тега загрузчика и ссылок в Telegram; живой виджет ${assist.widgetPk ? 'есть (ключ задан)' : 'не подключён (нет ключа) — блок «запись»'}; конфигуратор собран; песочница, страница бота с opt-out, документация uk/en с кодом для origin из env; ` +
+      `заглушки бренда нет в ${brandScanned} собранных файлах, имя на языке страницы — в шапке, og:site_name и JSON-LD`,
 );

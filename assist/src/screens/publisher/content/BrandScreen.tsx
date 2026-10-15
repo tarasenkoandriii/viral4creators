@@ -12,7 +12,8 @@ import {
   BRAND_FACT_STATUSES,
   type BrandFactKind,
 } from '../../../lib/publisher/states';
-import { fmtText } from '../../../lib/publisher/view';
+import { factValue } from '../../../lib/publisher/brand-view';
+import { actorLabel, fmtText } from '../../../lib/publisher/view';
 import {
   useListFilters,
   useMutation,
@@ -209,7 +210,7 @@ function FactRow({
   onDone: (cs: CascadeSummary | null) => void;
 }) {
   const c = usePubContent();
-  const { can } = usePublisher();
+  const { can, t } = usePublisher();
   const apis = usePubApis();
   const [reason, setReason] = useState('');
   const m = useMutation();
@@ -224,7 +225,8 @@ function FactRow({
       <div className="text-sm">{factValueText(x.value)}</div>
       {x.approvedAt && (
         <div className="text-xs text-silver-500">
-          {x.approvedBy} · <DateText iso={x.approvedAt} />
+          {actorLabel(x.approvedBy, t.common.adminActor)} ·{' '}
+          <DateText iso={x.approvedAt} />
         </div>
       )}
       {can('brand.activate') && (
@@ -347,24 +349,14 @@ function NewFact({ onDone }: { onDone: () => void }) {
   const [scope, setScope] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const m = useMutation();
-  const value =
-    kind === 'price'
-      ? {
-          amountMinor: Number(amount),
-          currency: currency.trim(),
-          ...(text.trim() ? { note: text.trim() } : {}),
-        }
-      : kind === 'faq'
-        ? { question: question.trim(), answer: answer.trim() }
-        : { text: text.trim() };
-  const ready =
-    factKey.trim() &&
-    kind &&
-    (kind === 'price'
-      ? /^\d+$/.test(amount) && currency.trim()
-      : kind === 'faq'
-        ? question.trim() && answer.trim()
-        : text.trim());
+  const { value, ready } = factValue(kind, {
+    text,
+    amount,
+    currency,
+    question,
+    answer,
+  });
+  const canAdd = !!factKey.trim() && ready;
   return (
     <Section title={c.brand.addFact}>
       <div className="grid gap-2 md:grid-cols-2">
@@ -411,7 +403,7 @@ function NewFact({ onDone }: { onDone: () => void }) {
       <PubErrorAlert error={m.error} />
       <Button
         loading={m.busy}
-        disabled={!ready}
+        disabled={!canAdd}
         onClick={async () => {
           if (!kind) return;
           const r = await m.run((k) =>

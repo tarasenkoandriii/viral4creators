@@ -18,8 +18,10 @@ import {
   seedArticle,
   seedTd08,
   seedTestPublication,
+  TZ17_BUDGET,
   type DistStack,
 } from '../../modules/publisher/distribution/testing/td08.testing';
+import { PUB_ERROR_MESSAGES } from '../../modules/publisher/contracts/errors';
 
 jest.setTimeout(120_000);
 
@@ -30,6 +32,75 @@ ciDescribe('[AT-CORE-12] закупка закрыта гейтом при не�
   });
   afterAll(async () => {
     await s.close();
+  });
+
+  it('per_purchase_max = 0 (закупки отключены): гейт purchases закрыт purchases_disabled; предложение, согласование и резерв — 409 с reason; tools — как прежде', async () => {
+    const w = await seedTd08(s.prisma, s.budget, {
+      budget: { ...TZ17_BUDGET, perPurchase: 0 },
+    });
+    const op = apiAs(s.app!.getHttpServer(), w.acc.accountId, w.team.operator);
+    const P = `/publisher/products/${w.product.id}`;
+    const off = 'Закупівлі вимкнено: максимум однієї закупівлі — 0';
+    const disabled = {
+      kind: 'budget',
+      key: 'per_purchase_max',
+      detail: 'purchases_disabled',
+    };
+    // предложение закупки — не «недостаточно бюджета», а «закупки отключены»
+    const create = await op.post(`${P}/placements`, {
+      venueId: w.venueId,
+      versionId: w.versionId,
+      price: { currency: 'UAH', baseMinor: '1000', feesMinor: '0' },
+      priceSource: 'Прайс',
+      terms: 'Умови',
+    });
+    expect(create.status).toBe(409);
+    expect(create.body.error).toMatchObject({
+      code: 'PUB_BUDGET_INSUFFICIENT',
+      message: off,
+      details: { reason: 'purchases_disabled', perPurchaseMax: '0' },
+    });
+    // согласованная напрямую закупка: резерв — гейт закрыт с причиной
+    const x = await approvedPlacementDirect(s.prisma, w, {
+      seq: 1,
+      totalUah: 10,
+    });
+    const r = await op.post(`${P}/placements/${x.placementId}/reserve`, {
+      expectedRevision: x.revision,
+    });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatchObject({
+      code: 'PUB_GATE_CLOSED',
+      message: off,
+      details: { gate: 'purchases', reason: 'purchases_disabled' },
+    });
+    expect(r.body.error.details.missing).toEqual([disabled]);
+    const row = await s.prisma.pubPlacement.findUniqueOrThrow({
+      where: { id: x.placementId },
+    });
+    expect([row.status, row.expenseId]).toEqual(['approved', null]);
+    // ненулевой предел (прочие наборы P0) — прежний текст кода и причина
+    const w2 = await seedTd08(s.prisma, s.budget);
+    const op2 = apiAs(
+      s.app!.getHttpServer(),
+      w2.acc.accountId,
+      w2.team.operator,
+    );
+    const big = await op2.post(
+      `/publisher/products/${w2.product.id}/placements`,
+      {
+        venueId: w2.venueId,
+        versionId: w2.versionId,
+        price: { currency: 'UAH', baseMinor: '210000', feesMinor: '0' },
+        priceSource: 'Прайс',
+        terms: 'Умови',
+      },
+    );
+    expect(big.status).toBe(409);
+    expect(big.body.error).toMatchObject({
+      message: PUB_ERROR_MESSAGES.PUB_BUDGET_INSUFFICIENT.uk,
+      details: { reason: 'per_purchase_cap' },
+    });
   });
 
   it('интеграция degraded → PUB_GATE_CLOSED на резерв; устаревшая connected — тоже; восстановление → резерв проходит', async () => {

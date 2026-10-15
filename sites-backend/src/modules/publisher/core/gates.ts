@@ -26,6 +26,7 @@ import type {
 import {
   BUDGET_LIMIT_PARAMETER_KEYS,
   GATE_PARAMETER_KEYS,
+  PURCHASES_DISABLED,
   budgetParamVersion,
   type ParameterKey,
 } from '../contracts/parameters';
@@ -159,6 +160,27 @@ async function budgetMissing(
   return limit.paramVersion === expected
     ? []
     : [{ kind: 'budget', key: 'pub_budget_limits', detail: 'stale' }];
+}
+
+/**
+ * `per_purchase_max = 0` — закупки отключены (`PURCHASES_DISABLED`): гейт
+ * `purchases` закрыт честно, а не «открыт, но любая закупка упадёт».
+ * Гейт `spend` (инструменты, месяц AI) это не трогает.
+ */
+function purchasesDisabledMissing(
+  params: ReadonlyMap<string, ParamRow>,
+): GateMissing[] {
+  const v = params.get('per_purchase_max')?.value as
+    { amountMinor?: unknown } | undefined;
+  return v?.amountMinor === 0
+    ? [
+        {
+          kind: 'budget',
+          key: 'per_purchase_max',
+          detail: PURCHASES_DISABLED,
+        },
+      ]
+    : [];
 }
 
 /**
@@ -352,6 +374,7 @@ export async function evaluateGate(
       break;
     case 'purchases':
       missing.push(...missingParams(params, GATE_PARAMETER_KEYS.purchases));
+      missing.push(...purchasesDisabledMissing(params));
       missing.push(...budgetConsistencyMissing(params, true));
       missing.push(...(await budgetMissing(tx, productId, params)));
       missing.push(...(await integrationsMissing(tx, productId, now)));
@@ -419,7 +442,13 @@ export class GateService implements GatePort {
     await lockProduct(tx, product);
     const r = await evaluateGate(tx, product.id, gate, now, ctx);
     if (!r.open) {
-      throw new PubError('PUB_GATE_CLOSED', { gate, missing: r.missing });
+      throw new PubError('PUB_GATE_CLOSED', {
+        gate,
+        missing: r.missing,
+        ...(r.missing.some((m) => m.detail === PURCHASES_DISABLED)
+          ? { reason: PURCHASES_DISABLED }
+          : {}),
+      });
     }
   }
 }

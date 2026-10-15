@@ -25,16 +25,6 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: L
   return pageMetadata('widget', (await params).locale);
 }
 
-/** `{brand}` подставляется на сервере; остальные плейсхолдеры — в компоненте. */
-function withBrand<T>(value: T): T {
-  if (typeof value === 'string') return value.replace(/\{brand\}/g, () => fmt('{brand}')) as T;
-  if (Array.isArray(value)) return value.map(withBrand) as T;
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, withBrand(v)])) as T;
-  }
-  return value;
-}
-
 export default async function WidgetPage({ params }: { params: Promise<{ locale: Locale }> }) {
   const { locale } = await params;
   const status = claimStatus('configurator');
@@ -63,7 +53,8 @@ export default async function WidgetPage({ params }: { params: Promise<{ locale:
       ) : (
       <section className="section wrap claim claim-live" data-claim="configurator" data-claim-status="live" aria-label={w.configurator.label}>
         <Configurator
-          strings={withBrand(w.configurator) as ConfiguratorStrings}
+          // `{brand}` уже подставлен `getDictionary` (имя на языке страницы); остальные плейсхолдеры — в компоненте.
+          strings={w.configurator as ConfiguratorStrings}
           locale={locale}
           defaultName={w.configurator.defaultName}
           defaultGreetings={{

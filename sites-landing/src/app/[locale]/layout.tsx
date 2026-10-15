@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { BRAND } from '../../brand';
+import { BRAND_IS_PLACEHOLDER, brandDisplayName } from '../../brand';
 import { HtmlDocument } from '../../components/HtmlDocument';
 import { JsonLd } from '../../components/JsonLd';
 import { getDictionary } from '../../lib/get-dictionary';
@@ -30,22 +30,25 @@ export default async function LocaleLayout({
   if (!isLocale(locale)) notFound();
   const dict = getDictionary(locale);
   const origin = siteUrl();
+  const name = brandDisplayName(locale);
   return (
     <HtmlDocument lang={locale} widget={liveWidgetTag(locale)}>
-      {/* Organization + WebSite — на всех страницах (§8.3). */}
+      {/* Organization + WebSite — на всех страницах (§8.3). Пока бренд — заглушка
+          (Р-З15-1), Organization нет: родовое имя — название продукта, а не организации,
+          и разметка не должна утверждать организацию с таким именем. */}
       <JsonLd
         data={{
           '@context': 'https://schema.org',
           '@graph': [
-            { '@type': 'Organization', '@id': `${origin}/#org`, name: BRAND.name, url: origin },
+            ...(BRAND_IS_PLACEHOLDER ? [] : [{ '@type': 'Organization', '@id': `${origin}/#org`, name, url: origin }]),
             {
               '@type': 'WebSite',
               '@id': `${origin}/#website`,
-              name: BRAND.name,
+              name,
               url: `${origin}/${locale}`,
               inLanguage: locale,
               description: fmt(dict.pages.home.description),
-              publisher: { '@id': `${origin}/#org` },
+              ...(BRAND_IS_PLACEHOLDER ? {} : { publisher: { '@id': `${origin}/#org` } }),
             },
           ],
         }}

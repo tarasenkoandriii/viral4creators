@@ -100,6 +100,8 @@ export const TABLE_OWNERS: Readonly<Record<string, readonly PackageId[]>> = {
   pub_reddit_keywords: ['P-R'],
   pub_reddit_opportunities: ['P-R'],
   pub_reddit_briefs: ['P-R'],
+  /** P-R-ADM: журнал доступа Админки (вне тенанта, не экспортируется). */
+  pub_reddit_admin_access_log: ['P-R'],
 };
 
 /** Не экспортируются (§15.4): вне тенанта, служебные очереди. */
@@ -108,6 +110,7 @@ export const NOT_EXPORTED = [
   'pub_idempotency_keys',
   'pub_notifications',
   'pub_lead_outbox',
+  'pub_reddit_admin_access_log',
 ] as const;
 
 /** Шифротексты (переносятся как есть; перешифровка — под новый AAD). */

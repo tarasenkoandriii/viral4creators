@@ -271,14 +271,15 @@ describe('AI Publisher (P-A0, §5.2): модели Pub* в тенанте', () =
     .map((m) => m.name)
     .filter((n) => n.startsWith('Pub'));
 
-  it('72 модели (66 P0 + 6 P-R); все, кроме окна лимита формы, — по accountId', () => {
-    expect(pub).toHaveLength(72);
+  it('73 модели (66 P0 + 7 P-R); все, кроме окна лимита формы и журнала доступа Админки, — по accountId', () => {
+    expect(pub).toHaveLength(73);
     expect(pub.filter((n) => TENANT_COLUMNS[n] !== 'accountId')).toEqual([
       'PubRateHit',
+      'PubRedditAdminAccessLog',
     ]);
     expect(
       Object.keys(NON_TENANT_MODELS).filter((n) => n.startsWith('Pub')),
-    ).toEqual(['PubRateHit']);
+    ).toEqual(['PubRateHit', 'PubRedditAdminAccessLog']);
   });
 
   it('запрос к таблице продукта без кабинета бросает; forAccount подставляет кабинет', () => {

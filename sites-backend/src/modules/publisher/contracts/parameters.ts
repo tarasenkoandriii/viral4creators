@@ -319,6 +319,14 @@ export function defaultDependentStages(key: ParameterKey): DependentStage[] {
  * (`BudgetLimitPort.applyParameters`, §8.2). После решения по любому из них
  * ядро вызывает порт.
  */
+/**
+ * `per_purchase_max = 0` — закупки отключены (продукт «только AI»,
+ * Р-RD-ADM-14; аудит Админки, раунд 2): пункт гейта `purchases`
+ * `{kind:'budget', key:'per_purchase_max', detail}` и `details.reason`
+ * ошибок закупки (`PUB_GATE_CLOSED`, `PUB_BUDGET_INSUFFICIENT`).
+ */
+export const PURCHASES_DISABLED = 'purchases_disabled';
+
 export const BUDGET_LIMIT_PARAMETER_KEYS = [
   'budget_total',
   'budget_split',

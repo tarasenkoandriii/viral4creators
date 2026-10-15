@@ -143,3 +143,36 @@ describe('HttpExceptionFilter — машинный код отказа (CONTRACT
     expect(r.body.error.details).toBeUndefined();
   });
 });
+
+describe('HttpExceptionFilter — details sites-backend (P-R-ADM, вкладка «Reddit»)', () => {
+  it('`upstreamDetails` разворачивается в error.details как есть; сам ключ наружу не уходит', () => {
+    const r = run(
+      new HttpException(
+        {
+          message: 'Объект изменился',
+          error: 'PUB_CONFLICT',
+          upstreamDetails: { reason: 'revision', currentRevision: 4 },
+        },
+        409,
+      ),
+    );
+    expect(r.status).toBe(409);
+    expect(r.body.error).toEqual({
+      code: 'PUB_CONFLICT',
+      message: 'Объект изменился',
+      details: { reason: 'revision', currentRevision: 4 },
+    });
+  });
+
+  it('`upstreamDetails` не объект (массив, строка) — игнорируется; прочие ключи по-прежнему не уходят', () => {
+    for (const upstreamDetails of [['x'], 'x', null]) {
+      const r = run(
+        new HttpException(
+          { message: 'm', error: 'E', upstreamDetails, secretField: 's' },
+          400,
+        ),
+      );
+      expect(r.body.error.details).toBeUndefined();
+    }
+  });
+});

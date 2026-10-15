@@ -197,6 +197,26 @@ export async function loadMaterialView(
   const contentType: RedditContentType =
     c.kind === 'reddit_post' ? 'post' : 'comment';
   const threadUrl = st.opportunity?.threadUrl ?? null;
+  // Активное согласование утверждённой версии — id для отзыва (экраны).
+  const approval = approvedVersion
+    ? await db.pubApproval.findFirst({
+        where: {
+          productId,
+          type: 'publish_version',
+          objectType: 'content_version',
+          objectId: approvedVersion.id,
+          status: 'active',
+        },
+        orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
+        select: {
+          id: true,
+          objectId: true,
+          status: true,
+          selfReview: true,
+          decidedAt: true,
+        },
+      })
+    : null;
   return {
     content: await loadContent(db, productId, c.id),
     briefId: c.redditBriefId,
@@ -214,6 +234,15 @@ export async function loadMaterialView(
       : null,
     currentVersion,
     approvedVersion,
+    approval: approval
+      ? {
+          id: approval.id,
+          versionId: approval.objectId,
+          status: approval.status as 'active',
+          selfReview: approval.selfReview,
+          decidedAt: approval.decidedAt.toISOString(),
+        }
+      : null,
     policyCheck: check ? (qaView(check) as QaCheckView) : null,
     copies: {
       count: copies.length,

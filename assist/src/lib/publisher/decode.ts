@@ -8,7 +8,7 @@
  * Чистый модуль (общий с P-G2).
  */
 
-import { ApiError } from '../../kit';
+import { ApiError } from '../../kit/envelope';
 
 export class PubDecodeError extends ApiError {
   constructor(where: string) {

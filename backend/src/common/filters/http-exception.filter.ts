@@ -62,7 +62,16 @@ const MACHINE_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
 export function detailsOf(
   responseObj: Record<string, unknown>,
 ): Record<string, unknown> | null {
-  const details: Record<string, unknown> = {};
+  // P-R-ADM (вкладка «Reddit»): `details` ответа sites-backend целиком —
+  // их кладёт ТОЛЬКО `AdminRedditClient` (уже вычищенные от секрета и
+  // ограниченные по размеру), чтобы Админка видела те же `fields`,
+  // `reason`, `missing`, что кабинет. Никакое другое исключение этот ключ
+  // не заполняет.
+  const upstream = responseObj.upstreamDetails;
+  const details: Record<string, unknown> =
+    upstream && typeof upstream === 'object' && !Array.isArray(upstream)
+      ? { ...(upstream as Record<string, unknown>) }
+      : {};
   for (const key of PASSTHROUGH_KEYS) {
     if (responseObj[key] !== undefined) details[key] = responseObj[key];
   }

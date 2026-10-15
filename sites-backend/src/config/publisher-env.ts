@@ -224,6 +224,28 @@ export function publisherRedditEnabled(
   return flag(env[PUBLISHER_REDDIT_ENABLED_ENV]);
 }
 
+/**
+ * Платформенный сайт вкладки «Reddit» Админки (P-R-ADM, Р-RD-ADM-1): первый
+ * id из `ASSIST_INTERNAL_SITE_IDS` (тот же список, что у тарифа внутреннего
+ * тенанта `assist-billing/subscription-state.ts`; = `ASSIST_LANDING_SITE_ID`
+ * backend). Разбор — тот же (запятая или пробел, `[A-Za-z0-9_-]{1,64}`);
+ * своя копия — Publisher не импортирует модули помощника (`publisher-scope`).
+ * null — список пуст: Админке нечего заводить.
+ */
+export const PUBLISHER_PLATFORM_SITE_IDS_ENV = 'ASSIST_INTERNAL_SITE_IDS';
+
+export function publisherPlatformSiteId(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const raw = env[PUBLISHER_PLATFORM_SITE_IDS_ENV]?.trim();
+  if (!raw) return null;
+  for (const v of raw.split(/[\s,]+/)) {
+    const id = v.trim();
+    if (/^[A-Za-z0-9_-]{1,64}$/.test(id)) return id;
+  }
+  return null;
+}
+
 export const PUBLISHER_REDDIT_AI_ENABLED_ENV = 'PUBLISHER_REDDIT_AI_ENABLED';
 
 /**

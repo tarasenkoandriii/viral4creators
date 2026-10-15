@@ -281,6 +281,40 @@ export const PUB_ERROR_MESSAGES: Record<
   },
 };
 
+/**
+ * Уточнённые тексты по `details.reason` (код и HTTP-статус прежние, клиент
+ * по-прежнему ветвится по коду): ключ `<код>:<reason>`. Записи нет — текст
+ * кода (`PUB_ERROR_MESSAGES`).
+ */
+export const PUB_ERROR_REASON_MESSAGES: Readonly<
+  Record<string, Record<PubLang, string>>
+> = {
+  // `per_purchase_max = 0` (аудит Админки, раунд 2): не «мало бюджета».
+  'PUB_GATE_CLOSED:purchases_disabled': {
+    uk: 'Закупівлі вимкнено: максимум однієї закупівлі — 0',
+    ru: 'Закупки отключены: максимум одной закупки — 0',
+    en: 'Purchases are disabled: the single purchase maximum is 0',
+  },
+  'PUB_BUDGET_INSUFFICIENT:purchases_disabled': {
+    uk: 'Закупівлі вимкнено: максимум однієї закупівлі — 0',
+    ru: 'Закупки отключены: максимум одной закупки — 0',
+    en: 'Purchases are disabled: the single purchase maximum is 0',
+  },
+};
+
+/** Текст ошибки: уточнённый по `reason`, если есть, иначе — текст кода. */
+export function pubErrorMessage(
+  code: PubErrorCode,
+  lang: PubLang,
+  reason?: unknown,
+): string {
+  const byReason =
+    typeof reason === 'string'
+      ? PUB_ERROR_REASON_MESSAGES[`${code}:${reason}`]
+      : undefined;
+  return (byReason ?? PUB_ERROR_MESSAGES[code])[lang];
+}
+
 /** Язык из `Accept-Language` (первый поддерживаемый; умолчание — uk). */
 export function pubLangOf(acceptLanguage: string | undefined | null): PubLang {
   if (!acceptLanguage) return 'uk';

@@ -4,7 +4,7 @@ import { ClaimCard, visibleClaims } from '../../../components/Claim';
 import { Faq } from '../../../components/Faq';
 import { JsonLd } from '../../../components/JsonLd';
 import { SiteChrome, StatusBanner } from '../../../components/SiteChrome';
-import { BRAND } from '../../../brand';
+import { BRAND, BRAND_IS_PLACEHOLDER, brandDisplayName } from '../../../brand';
 import { heroVariant, isVisible } from '../../../lib/claims';
 import { liveWidgetTag } from '../../../lib/live-widget';
 import { WidgetPlayground } from '../../../components/WidgetPlayground';
@@ -244,7 +244,8 @@ export default async function AssistantPage({ params }: { params: Promise<{ loca
         data={{
           '@context': 'https://schema.org',
           '@type': 'SoftwareApplication',
-          name: `${BRAND.name} — ${dict.common.nav.assistant}`,
+          // Родовое имя (бренд не решён) уже называет продукт — без «— Помічник».
+          name: BRAND_IS_PLACEHOLDER ? brandDisplayName(locale) : `${BRAND.name} — ${dict.common.nav.assistant}`,
           applicationCategory: 'BusinessApplication',
           operatingSystem: 'Web',
           url: `${siteUrl()}${href(locale, 'assistant')}`,

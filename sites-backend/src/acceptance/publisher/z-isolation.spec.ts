@@ -54,6 +54,15 @@ import {
 } from '../../modules/publisher/reddit/testing/reddit-kit.testing';
 import { REPORTS_ROUTES } from '../../modules/publisher/contracts/reports-api';
 import {
+  CX_ROUTES,
+  RX_ROUTES,
+} from '../../modules/publisher/reddit/admin/admin-reddit-routes';
+import {
+  ADMIN_BASE,
+  adminApi,
+  useAdminEnv,
+} from '../../modules/publisher/reddit/testing/admin-kit.testing';
+import {
   enumerateRoutes,
   fillPath,
 } from '../../modules/publisher/core/route-enumerator';
@@ -443,6 +452,71 @@ ciDescribe(
       expect(bad).toEqual([]);
       expect(viewerChecked).toBeGreaterThan(80);
       expect(await counts()).toEqual(before);
+    });
+
+    it('Админка (internal/admin/reddit): платформенный продукт A — объекты кабинета B как несуществующие на всех rx/cx; неверный секрет — 401 одинаково; без побочных эффектов', async () => {
+      const restore = useAdminEnv(a.siteId);
+      try {
+        const app = enumerateRoutes(s.mod.get(ModulesContainer))
+          .filter((r) => r.path.startsWith(ADMIN_BASE))
+          .map((r) => `${r.method} ${r.path}`);
+        expect(app).toHaveLength(14);
+        expect(RX_ROUTES).toHaveLength(39);
+        expect(CX_ROUTES).toHaveLength(24);
+        const before = await counts();
+        const A = adminApi({ srv });
+        const W = adminApi({ srv }, { secret: 'w'.repeat(40) });
+        // Проверка не «слепая»: платформенный продукт найден, раздел отвечает.
+        expect((await A.get('status')).body.data.product.id).toBe(pa.id);
+        expect((await A.get('rx/projects')).status).toBe(200);
+        const routes = [
+          ...RX_ROUTES.map((r) => ({ ...r, prefix: 'rx' })),
+          ...CX_ROUTES.map((r) => ({ ...r, prefix: 'cx' })),
+        ];
+        const send = (
+          api: typeof A,
+          method: string,
+          path: string,
+        ): Promise<request.Response> =>
+          method === 'GET'
+            ? api.get(path)
+            : method === 'PATCH'
+              ? api.patch(path, { expectedRevision: 1 })
+              : api.post(path, { expectedRevision: 1 });
+        const bad: unknown[] = [];
+        let wrong: Shape | null = null;
+        for (const r of routes) {
+          const params = [...r.pattern.matchAll(/:([A-Za-z0-9_]+)/g)].map(
+            (m) => m[1],
+          );
+          const path = (vals: Record<string, string>) =>
+            `${r.prefix}/${fillPath(r.pattern, vals)}`;
+          const ghostVals = Object.fromEntries(
+            params.map((p) => [p, ghostId()]),
+          );
+          const w = shape(await send(W, r.method, path(ghostVals)));
+          wrong ??= w;
+          if (w.status !== 401 || JSON.stringify(w) !== JSON.stringify(wrong))
+            bad.push({ route: r.name, wrongSecret: w });
+          if (params.length === 0) continue;
+          const g = shape(await send(A, r.method, path(ghostVals)));
+          for (const id of foreignIds) {
+            const vals = Object.fromEntries(params.map((p) => [p, id]));
+            const rs = shape(await send(A, r.method, path(vals)));
+            if (rs.status < 400 || JSON.stringify(rs) !== JSON.stringify(g))
+              bad.push({
+                route: `${r.prefix}.${r.name}`,
+                id,
+                res: rs,
+                ghost: g,
+              });
+          }
+        }
+        expect(bad).toEqual([]);
+        expect(await counts()).toEqual(before);
+      } finally {
+        restore();
+      }
     });
 
     it('публичные маршруты: неизвестный ключ — 404, ключ чужого продукта с чужим Origin — 403; без побочных эффектов', async () => {

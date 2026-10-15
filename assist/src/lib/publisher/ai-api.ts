@@ -10,8 +10,8 @@
  * отдельной мутацией со ссылкой `aiCallId` (§12.5).
  */
 
-import type { PublisherHttp, Query } from './common-api';
-import { seg } from './common-api';
+import type { PublisherHttp, Query } from './common-pure';
+import { seg } from './common-pure';
 import {
   arr,
   bool,

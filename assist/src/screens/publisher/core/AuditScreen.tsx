@@ -84,8 +84,8 @@ export function AuditScreen({ query }: PublisherSectionProps) {
                     )}
                   </div>
                   <div className="text-xs text-silver-500">
-                    {t.audit.actor}: {actorLabel(e.actor)} ·{' '}
-                    <DateText iso={e.occurredAt} time />
+                    {t.audit.actor}: {actorLabel(e.actor, t.common.adminActor)}{' '}
+                    · <DateText iso={e.occurredAt} time />
                     {e.reason ? ` · ${e.reason}` : ''}
                   </div>
                 </li>

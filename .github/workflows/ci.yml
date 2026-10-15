@@ -878,6 +878,13 @@ jobs:
         run: npm audit --audit-level=high --omit=dev
         working-directory: ${{ matrix.app }}
 
+      # P-R-ADM: вкладка «Reddit» Админки переиспользует чистую логику
+      # кабинета assist — копии в admin/src/lib/reddit-shared совпадают с
+      # источниками (scripts/sync-admin-reddit-shared.mjs).
+      - name: копии логики Reddit кабинета синхронны (admin)
+        if: matrix.app == 'admin'
+        run: node scripts/sync-admin-reddit-shared.mjs --check
+
       - name: типы
         run: npx tsc --noEmit -p tsconfig.json
         working-directory: ${{ matrix.app }}

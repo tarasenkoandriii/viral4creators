@@ -49,7 +49,7 @@ import { sendCsv, sendEnvelope } from '../content/http';
 import { usableSourceIds, type ContextRequest } from './context';
 import { EvalReviewService } from './eval/eval-review.service';
 import { protocolMarkdown } from './eval/protocol';
-import { errorCodeOfStatus } from './gateway-core';
+import { aiBudgetReasonOf, errorCodeOfStatus } from './gateway-core';
 
 type Body = Record<string, unknown>;
 
@@ -198,6 +198,9 @@ export class PublisherAiController {
         taskId: view.taskId,
         generator: view.generator,
         ...(code === 'PUB_GATE_CLOSED' ? { gate: 'ai_use' } : {}),
+        ...(code === 'PUB_AI_BUDGET'
+          ? { reason: aiBudgetReasonOf(view.errorCode) }
+          : {}),
         ...(missing.length ? { missing } : {}),
       });
     }

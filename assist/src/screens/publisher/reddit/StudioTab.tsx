@@ -34,6 +34,7 @@ import {
 import { publicationTransitionBody } from '../../../lib/publisher/channels-view';
 import {
   ackWarningsOf,
+  approvalRevoked,
   approveAckBody,
   approveRedditBody,
   findingText,
@@ -180,6 +181,9 @@ function StudioBody({
         </div>
         {steps.unscheduleFirst && (
           <Alert tone="warning">{r.studio.unscheduleFirst}</Alert>
+        )}
+        {approvalRevoked(m) && (
+          <Alert tone="warning">{r.studio.approvalRevoked}</Alert>
         )}
       </Section>
       <Loadable state={brief}>

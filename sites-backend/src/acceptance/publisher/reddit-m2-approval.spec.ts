@@ -139,6 +139,19 @@ ciDescribe('P-R M2: согласование Reddit-версии', () => {
   it('[AT-RD-09] правка после согласования → новая версия; прежнее согласование superseded, его hash новой версии не подходит', async () => {
     const ids = await seedStudio(s, w, ed, po);
     const v1 = await approvedVersion(ed, po, w, ids);
+    // Вид материала несёт активное согласование утверждённой версии (id для
+    // отзыва, P-R-ADM v1.3); после правки (superseded) — null.
+    const active = await s.prisma.pubApproval.findFirstOrThrow({
+      where: { objectId: v1.id, status: 'active' },
+    });
+    const m1 = ok<{
+      approval: { id: string; versionId: string; status: string } | null;
+    }>(await ed.get(`${w.P}/contents/${ids.contentId}`), 200);
+    expect(m1.approval).toMatchObject({
+      id: active.id,
+      versionId: v1.id,
+      status: 'active',
+    });
     // Замороженную версию править нельзя.
     const patch = await ed.patch(
       `${C}/contents/${ids.contentId}/versions/${v1.id}`,
@@ -152,6 +165,11 @@ ciDescribe('P-R M2: согласование Reddit-версии', () => {
       where: { objectId: v1.id },
     });
     expect(approvals.map((x) => x.status)).toEqual(['superseded']);
+    const m2 = ok<{ approval: unknown }>(
+      await ed.get(`${w.P}/contents/${ids.contentId}`),
+      200,
+    );
+    expect(m2.approval).toBeNull();
     const v2 = await submitVersion(ed, w, ids.contentId, d2);
     expect(v2.hash).not.toBe(v1.hash);
     await humanQaPass(po, w, v2.id);

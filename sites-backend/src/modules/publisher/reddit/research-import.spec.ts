@@ -19,6 +19,7 @@ import {
   parseCsv,
   parseWhy,
   safeText,
+  splitConditions,
   stableOpKey,
   type ResearchSegment,
 } from './research-import';
@@ -228,6 +229,59 @@ describe('research-import: CSV и план (Р-RD-87)', () => {
     expect(formatReport(r)).toMatch(
       /r\/saas: зараз rules_unreviewed; після перевірки власником — ok/,
     );
+  });
+});
+
+describe('research-import: условия правил (аудит Админки S3-7)', () => {
+  it('«; » делит условия, но не внутри скобок и кавычек; перевод строки делит всегда', () => {
+    expect(
+      splitConditions(
+        'Max 1 mention OR 3 links per 60 days (posts+comments; alt accounts count); 10:1 ratio',
+      ),
+    ).toEqual([
+      'Max 1 mention OR 3 links per 60 days (posts+comments; alt accounts count)',
+      '10:1 ratio',
+    ]);
+    expect(
+      splitConditions(
+        'Title must say "[Promo]; weekly"; no DMs; tag «self; promo» only; see [rules; wiki]',
+      ),
+    ).toEqual([
+      'Title must say "[Promo]; weekly"',
+      'no DMs',
+      'tag «self; promo» only',
+      'see [rules; wiki]',
+    ]);
+    // прежние правила: «;» без пробела — не разделитель; пустые — отброшены
+    expect(splitConditions('a;b;  c\n\nd;\te ;  ')).toEqual([
+      'a;b',
+      'c',
+      'd',
+      'e',
+    ]);
+    // незакрытая скобка не склеивает следующие строки
+    expect(splitConditions('one (unclosed; x\ntwo; three')).toEqual([
+      'one (unclosed; x',
+      'two',
+      'three',
+    ]);
+    expect(splitConditions('')).toEqual([]);
+  });
+
+  it('план импорта: условие со «;» в скобках — одно условие снимка', () => {
+    const csv = COMMUNITIES.replace(
+      '"Promo only in weekly thread; 10:1 ratio"',
+      '"Max 1 mention OR 3 links per 60 days (posts+comments; alt accounts count); 10:1 ratio"',
+    );
+    expect(csv).not.toBe(COMMUNITIES);
+    const p = buildImportPlan(
+      [{ ...seg('saas'), communities: parseCsv(csv) }],
+      { projectTitle: 'Pilot', locale: 'en', market: 'US', now: NOW },
+    );
+    expect(p.communities[0].rules.conditions!.slice(0, 2)).toEqual([
+      'Max 1 mention OR 3 links per 60 days (posts+comments; alt accounts count)',
+      '10:1 ratio',
+    ]);
   });
 });
 

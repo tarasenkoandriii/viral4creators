@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { lastSuccessfulSha } from './ci-last-success.mjs';
 import { ENTRIES as SITES_SHARED_ENTRIES } from './sync-sites-shared.mjs';
 import { ENTRIES as WORKER_SHARED_ENTRIES } from './sync-worker-shared.mjs';
+import { ENTRIES as ADMIN_REDDIT_ENTRIES } from './sync-admin-reddit-shared.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -57,7 +58,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  *  - backend: спеки guide-assist сверяются с разбором OpenAPI и подписью
  *    employee-JWT платформы (assist-admin-mode, аудит P2-3);
  *  - assist_integrations: тест GTM исполняет snippet.ts (и его импорты) —
- *    тег должен совпасть с тегом TMA (аудит P3-5).
+ *    тег должен совпасть с тегом TMA (аудит P3-5);
+ *  - admin (next-apps): копии чистой логики раздела Reddit кабинета
+ *    (sync-admin-reddit-shared, P-R-ADM) — источники из его `ENTRIES`.
  * Тест «джобы ↔ правила» ниже падает, если в ci.yml появилась джоба без
  * условия или условие без правила.
  */
@@ -70,6 +73,12 @@ export const SITES_SHARED_SOURCES = SITES_SHARED_ENTRIES.map((e) => (e.fromDir ?
  * кадра) — теперь берётся из самого скрипта.
  */
 export const WORKER_SHARED_SOURCES = WORKER_SHARED_ENTRIES.map((e) => e.from);
+/**
+ * Источники копий вкладки «Reddit» Админки (scripts/sync-admin-reddit-shared.mjs,
+ * P-R-ADM): чистые модули кабинета assist и кита — правка любого запускает
+ * джобу admin (там `--check` копий в admin/src/lib/reddit-shared).
+ */
+export const ADMIN_REDDIT_SOURCES = ADMIN_REDDIT_ENTRIES.map((e) => e.from);
 
 export const FILTERS = {
   backend: [
@@ -164,7 +173,7 @@ export const FILTERS = {
     'scripts/publisher-e2e.sh',
   ],
   frontend: ['frontend/', 'backend/src/'],
-  admin: ['admin/'],
+  admin: ['admin/', 'scripts/sync-admin-reddit-shared.mjs', ...ADMIN_REDDIT_SOURCES],
   landing: ['landing/'],
   // Витрина маркетплейса (заход 12): до перехода на Next 15 в CI её не
   // было вовсе — ни типов, ни линта, ни сборки (линт падал незамеченным).
@@ -322,6 +331,10 @@ function selfTest() {
   // Список источников sync-sites-shared и правило sites_backend — одно и то же.
   for (const src of SITES_SHARED_SOURCES) eq(`источник копии ${src} — sites_backend`, decide([src.endsWith('/') ? `${src}x.ts` : src]).sites_backend, true);
   eq('скрипт копий воркера', on(['scripts/sync-worker-shared.mjs']), ['browser_worker']);
+  // P-R-ADM: копии логики кабинета в admin/src/lib/reddit-shared.
+  eq('скрипт копий вкладки «Reddit» — admin', on(['scripts/sync-admin-reddit-shared.mjs']), ['admin']);
+  eq('next_apps при правке логики Reddit кабинета', decide(['assist/src/lib/publisher/reddit-view.ts']).next_apps, ['admin']);
+  for (const src of ADMIN_REDDIT_SOURCES) eq(`источник копии Админки ${src} — admin`, decide([src]).admin, true);
   for (const src of WORKER_SHARED_SOURCES) eq(`источник копии воркера ${src} — browser_worker`, decide([src]).browser_worker, true);
 
   // Заход 10: служебные файлы корня не запускают джоб по папкам (gitleaks

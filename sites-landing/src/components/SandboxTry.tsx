@@ -125,7 +125,6 @@ export function SandboxTry(props: {
   botUsername: string | null;
   pilotHref: string;
   widgetHref: string | null;
-  brandName: string;
   locale: string;
 }) {
   const t = props.strings;
@@ -453,7 +452,8 @@ export function SandboxTry(props: {
             <span className="badge-mock sb-mock-badge">{t.mockBadge}</span>
           </div>
           <figcaption className="sb-mock-caption" data-testid="sb-caption">
-            {fill(t.mockCaption, { host: v.host, brand: props.brandName })}
+            {/* `{brand}` подставлен сервером (`getDictionary`, Р-З15-1). */}
+            {fill(t.mockCaption, { host: v.host })}
           </figcaption>
         </figure>
 

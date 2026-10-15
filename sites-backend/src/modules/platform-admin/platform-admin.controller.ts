@@ -2,7 +2,7 @@ import { SonioxObservability } from '../soniox-observability/soniox-observabilit
 /**
  * Внутренний API вкладки «Помощник» админки платформы (ТЗ §8 п.1–5, 8).
  * Зовёт ТОЛЬКО backend/ (admin-panel, AdminAssistController) с секретом —
- * internal-secret.guard.ts; оператор (assertOperator) проверяется там.
+ * common/internal-secret.guard.ts; оператор (assertOperator) проверяется там.
  *
  *   GET    /internal/admin/assist/summary?days=7
  *   GET    /internal/admin/assist/accounts?q=&limit=
@@ -40,7 +40,10 @@ import {
 } from '@nestjs/common';
 import { RELEASE_RE } from '../../common/voice-control-platform';
 import { PublicRoute } from '../telegram-auth/allow-apps.decorator';
-import { AdminActor, InternalSecretGuard } from './internal-secret.guard';
+import {
+  AdminActor,
+  InternalSecretGuard,
+} from '../../common/internal-secret.guard';
 import { PlatformAdmin, adminError } from './platform-admin.service';
 
 type Obj = Record<string, unknown>;

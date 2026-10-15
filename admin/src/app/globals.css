@@ -811,3 +811,322 @@ td a {
   border-color: var(--signal-critical);
   color: var(--signal-critical);
 }
+
+/* ---------- Вкладка «Reddit» (P-R-ADM, `components/reddit/*`) ----------
+   Своя сетка без внешних библиотек: всё переносится на 360px без
+   горизонтальной прокрутки документа (широкое — только внутри
+   `.table-scroll` и строки под-вкладок). Тексты пользователей и Reddit —
+   `.rx-pre` (как есть, без разметки). */
+.badge-status-neutral {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+}
+.badge-status-accent {
+  color: var(--accent);
+  background: rgba(110, 168, 254, 0.14);
+}
+.rx-page {
+  min-width: 0;
+}
+/* Бейджи с текстом пользователя/причиной переносятся, а не растягивают
+   строку (360px). */
+.rx-page .badge-status {
+  white-space: normal;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.rx-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.rx-tab {
+  flex: 0 0 auto;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+.rx-tab-on {
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.rx-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.rx-stack > button,
+.rx-stack > a,
+.rx-stack > .badge-status {
+  align-self: flex-start;
+  max-width: 100%;
+}
+.rx-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.rx-grow {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.rx-section h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.rx-section-head {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.rx-section + .rx-section,
+.rx-stack > .rx-section {
+  margin-top: 0;
+}
+.rx-inner {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: transparent;
+}
+.rx-dim {
+  opacity: 0.8;
+}
+.rx-divider {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.rx-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.rx-field > input:not([type='checkbox']):not([type='radio']),
+.rx-field > select,
+.rx-field > textarea {
+  width: 100%;
+}
+.rx-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.rx-hint {
+  font-size: 12px;
+}
+.rx-warn {
+  color: var(--signal-warning);
+}
+.rx-grid2,
+.rx-grid3 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+@media (min-width: 640px) {
+  .rx-grid2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rx-grid3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.rx-fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0;
+  min-width: 0;
+}
+.rx-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  padding-top: 12px;
+  font-size: 13px;
+}
+.rx-kv {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  font-size: 13px;
+}
+@media (min-width: 640px) {
+  .rx-kv {
+    grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+.rx-wrap {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.rx-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+.rx-list li + li {
+  margin-top: 4px;
+}
+.rx-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rx-item {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.rx-linkbtn {
+  background: transparent;
+  border: none;
+  padding: 8px 0;
+  color: var(--accent);
+  text-align: left;
+  text-decoration: underline;
+  max-width: 100%;
+}
+.rx-link {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.rx-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  background: #101013;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 24rem;
+  overflow: auto;
+}
+.rx-select {
+  user-select: all;
+}
+.rx-preview {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 24rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.rx-preview p,
+.rx-preview ul,
+.rx-preview ol {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+.rx-preview blockquote {
+  margin: 0 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.rx-diff div {
+  white-space: pre-wrap;
+}
+.rx-diff-add {
+  background: rgba(95, 191, 119, 0.14);
+}
+.rx-diff-del {
+  background: rgba(243, 106, 106, 0.14);
+  text-decoration: line-through;
+}
+.rx-alert {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.rx-alert-title {
+  font-weight: 600;
+}
+.rx-alert-success {
+  border-color: var(--signal-ok);
+}
+.rx-alert-warning {
+  border-color: var(--signal-warning);
+}
+.rx-alert-danger {
+  border-color: var(--signal-critical);
+  color: var(--signal-critical);
+}
+.rx-alert-accent {
+  border-color: var(--accent);
+}
+.rx-notice {
+  margin: 0;
+  color: var(--signal-ok);
+  font-size: 13px;
+}
+.rx-derived {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.rx-factor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+@media (min-width: 640px) {
+  .rx-factor {
+    grid-template-columns: minmax(0, 1fr) 7rem minmax(0, 2fr);
+    align-items: end;
+  }
+}
+.rx-factor-name {
+  font-size: 13px;
+  padding-bottom: 12px;
+}
+.rx-variants {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+@media (min-width: 900px) {
+  .rx-variants {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.rx-version {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.rx-version-on {
+  border-color: var(--accent);
+}
+.rx-projectbar {
+  margin-bottom: 12px;
+}

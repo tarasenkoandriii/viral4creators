@@ -27,6 +27,7 @@ import {
 import * as S from '../src/lib/publisher/states';
 import * as V from '../src/lib/publisher/view';
 import * as CA from '../src/lib/publisher/common-api';
+import { redditListPath } from '../src/lib/publisher/reddit-api';
 import * as CH from '../src/lib/publisher/channels-view';
 import { PLACEMENT_STATUSES } from '../src/lib/publisher/distribution-api';
 import {
@@ -290,6 +291,62 @@ const err = (code: string, status: number, details?: Record<string, unknown>) =>
   );
   assert.ok(v.lines.includes(t.errors.importReasons.ssrf));
   assert.ok(!v.lines.some((l) => l.includes('ssrf')), 'причина — словами');
+}
+// `purchases_disabled` (per_purchase_max = 0): гейт закупок и 409 бюджета —
+// словами во всех языках, без сырого кода причины.
+for (const d of [pubUk, pubRu, pubEn]) {
+  assert.ok(d.gates.details.purchases_disabled, 'gates.details');
+  assert.ok(d.errors.budgetReasons.purchases_disabled, 'budgetReasons');
+  assert.deepEqual(
+    Object.keys(d.errors.budgetReasons).sort(),
+    Object.keys(pubRu.errors.budgetReasons).sort()
+  );
+  for (const code of ['PUB_BUDGET_INSUFFICIENT', 'PUB_GATE_CLOSED']) {
+    const v = describePubError(
+      err(code, 409, {
+        reason: 'purchases_disabled',
+        available: 0,
+        requested: 500,
+        gate: 'purchases',
+      }),
+      d
+    );
+    assert.ok(v.lines.includes(d.errors.budgetReasons.purchases_disabled));
+    assert.ok(
+      !v.lines.some((l) => l.includes('purchases_disabled')),
+      `${code}: причина — словами`
+    );
+  }
+  const g = describePubError(
+    err('PUB_GATE_CLOSED', 409, {
+      gate: 'purchases',
+      missing: [
+        {
+          kind: 'parameter',
+          key: 'per_purchase_max',
+          detail: 'purchases_disabled',
+        },
+      ],
+    }),
+    d
+  );
+  assert.ok(
+    g.lines.some((l) => l.endsWith(d.gates.details.purchases_disabled)),
+    'деталь гейта словами'
+  );
+}
+assert.ok(
+  pubRu.errors.budgetReasons.purchases_disabled.startsWith(
+    'Закупки отключены: максимум одной закупки — 0'
+  )
+);
+{
+  // Незнакомая причина бюджета — по-прежнему строкой «Причина: …».
+  const v = describePubError(
+    err('PUB_BUDGET_INSUFFICIENT', 409, { reason: 'new_reason_x' }),
+    t
+  );
+  assert.ok(v.lines.some((l) => l.includes('new_reason_x')));
 }
 {
   const v = describePubError(err('PUB_NOT_IMPLEMENTED', 501), t);
@@ -615,6 +672,40 @@ for (const d of [pubUk, pubRu, pubEn]) {
   assert.equal(big.truncated, true);
   assert.equal(asked.length, CA.CSV_MAX_PARTS);
   assert.equal(big.text.split('id,cost').length, 2);
+}
+
+// Раунд 3 P-R-ADM: Reddit-списки тоже выгружаются частями (`X-Next-Before`
+// сервера, ≤ 5000 строк на часть) — кабинет склеивает 5000 + 1000 строк
+// без потерь, дублей и повторного заголовка; фильтр списка сохраняется.
+{
+  const asked: string[] = [];
+  const rows = (from: number, n: number) =>
+    Array.from({ length: n }, (_, k) => `k${from + k},phrase`).join('\n');
+  const raw: CA.RawGet = async (p) => {
+    asked.push(p);
+    const second = /before=k4999(&|$)/.test(p);
+    return {
+      status: 200,
+      contentType: 'text/csv; charset=utf-8',
+      disposition: 'attachment; filename="publisher-reddit-keywords.csv"',
+      text: `id,phrase\n${second ? rows(5000, 1000) : rows(0, 5000)}\n`,
+      nextBefore: second ? null : 'k4999',
+    };
+  };
+  const path = redditListPath('p1', 'keywords');
+  const f = await CA.csvAll(raw, path, { status: 'active' });
+  const lines = f.text.trim().split('\n');
+  assert.equal(lines[0], 'id,phrase');
+  assert.equal(lines.length - 1, 6000);
+  assert.equal(new Set(lines.slice(1)).size, 6000);
+  assert.equal(f.parts, 2);
+  assert.equal(f.truncated, false);
+  assert.ok(
+    asked[0].includes('/reddit/keywords') && asked[0].includes('format=csv')
+  );
+  assert.ok(
+    asked[1].includes('before=k4999') && asked[1].includes('status=active')
+  );
 }
 
 // ═══ Каналы и смена статуса публикации (раунд 2) ═══════════════════════

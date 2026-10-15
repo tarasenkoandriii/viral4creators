@@ -12,7 +12,8 @@
  *  4. шлюз P-B2 (`AiGatewayService.startSync`): генератор выключен в коде
  *     до eval 2.3 (`disabled` → `PUB_AI_DISABLED {manual:true}`; на стенде
  *     E2E — fake-провайдер `PUBLISHER_STAND_FAKE_AI`, Р-RD-73), гейт
- *     `ai_use`, лимит генераций задачи, бюджет, маска ПД, схема, находки.
+ *     `ai_use`, лимит генераций задачи, бюджет (`PUB_AI_BUDGET {reason:
+ *     month_not_open|cap_exhausted}`, Р-RD-ADM-15), маска ПД, схема, находки.
  *     Задача генерации — бриф (`reddit_brief`); «перегенерировать абзац» —
  *     ОТДЕЛЬНАЯ задача черновика (`content_version`, id версии; раунд 2
  *     M2, Р-RD-83): выбор варианта закрывает задачу брифа, а переписывание
@@ -27,7 +28,7 @@ import type { Response } from 'express';
 import { SitesDb } from '../../../prisma/sites-db.service';
 import { publisherRedditAiEnabled } from '../../../config/publisher-env';
 import { AiGatewayService } from '../ai/ai-gateway.service';
-import { errorCodeOfStatus } from '../ai/gateway-core';
+import { aiBudgetReasonOf, errorCodeOfStatus } from '../ai/gateway-core';
 import {
   REDDIT_DRAFT_TEMPLATES,
   type RedditDraftInput,
@@ -237,6 +238,9 @@ export class RedditGenerateService {
         generator: view.generator,
         ...(code === 'PUB_AI_DISABLED' ? { manual: true } : {}),
         ...(code === 'PUB_GATE_CLOSED' ? { gate: 'ai_use' } : {}),
+        ...(code === 'PUB_AI_BUDGET'
+          ? { reason: aiBudgetReasonOf(view.errorCode) }
+          : {}),
         ...(missing.length ? { missing } : {}),
       });
     }

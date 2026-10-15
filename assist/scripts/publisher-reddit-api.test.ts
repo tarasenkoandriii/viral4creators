@@ -424,6 +424,7 @@ const MATERIAL = {
   rules: (FX.RedditCommunityView as { rules: unknown }).rules,
   currentVersion: G1.VersionView,
   approvedVersion: null,
+  approval: null,
   policyCheck: {
     ...G1.QaCheckView,
     kind: 'reddit_policy',
@@ -582,6 +583,45 @@ const GENERATE = {
   assert.equal(
     S.decodeMaterial({ ...MATERIAL, lastGeneration: null }).lastGeneration,
     null
+  );
+  // P-R-ADM v1.3: активное согласование утверждённой версии (id отзыва).
+  const APPROVAL = {
+    id: 'ap1',
+    versionId: 'v1',
+    status: 'active',
+    selfReview: true,
+    decidedAt: '2026-10-14T09:10:00.000Z',
+  };
+  assert.deepEqual(
+    S.decodeMaterial({ ...MATERIAL, approval: APPROVAL }).approval,
+    APPROVAL
+  );
+  assert.equal(S.decodeMaterial(MATERIAL).approval, null);
+  throwsDecode(() => {
+    const x: Record<string, unknown> = { ...MATERIAL };
+    delete x.approval;
+    S.decodeMaterial(x);
+  }, 'нет approval');
+  throwsDecode(
+    () =>
+      S.decodeMaterial({
+        ...MATERIAL,
+        approval: { ...APPROVAL, status: 'revoked' },
+      }),
+    'approval.status'
+  );
+  throwsDecode(
+    () =>
+      S.decodeMaterial({ ...MATERIAL, approval: { ...APPROVAL, id: '../x' } }),
+    'approval.id'
+  );
+  throwsDecode(
+    () =>
+      S.decodeMaterial({
+        ...MATERIAL,
+        approval: { ...APPROVAL, selfReview: 'yes' },
+      }),
+    'approval.selfReview'
   );
   const mat = S.decodeMaterial(MATERIAL);
   assert.equal(mat.policyCheck?.warnings[0].code, 'reddit_links_restricted');

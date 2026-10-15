@@ -13,7 +13,7 @@
  *
  * Чистый модуль (без React).
  */
-import type { PublisherHttp, Query } from './common-api';
+import type { PublisherHttp, Query } from './common-pure';
 import {
   arr,
   bad,

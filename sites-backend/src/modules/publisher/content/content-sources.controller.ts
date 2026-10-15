@@ -174,6 +174,8 @@ export class ContentSourcesController extends ContentControllerBase {
       action: 'export',
       meta: { list: 'sources', count: page.items.length },
     });
+    // Часть ≤ 5000 строк; есть ещё — курсор в `X-Next-Before` (как журнал AI).
+    if (page.nextBefore) res.setHeader('X-Next-Before', page.nextBefore);
     // Без текста фрагментов (приватный текст) и без закрытых ссылок.
     sendCsv(
       res,
@@ -523,6 +525,7 @@ export class ContentSourcesController extends ContentControllerBase {
       action: 'export',
       meta: { list: 'brand-facts', count: page.items.length },
     });
+    if (page.nextBefore) res.setHeader('X-Next-Before', page.nextBefore);
     sendCsv(
       res,
       'brand-facts',

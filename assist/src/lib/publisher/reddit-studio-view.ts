@@ -15,7 +15,7 @@
  *  - ошибки M2 словами (`PUB_BRIEF_NOT_READY`, `warnings_not_acknowledged`,
  *    блокеры `reddit_policy`).
  */
-import { ApiError } from '../../kit';
+import { ApiError } from '../../kit/envelope';
 import type { PublisherDict } from '../../i18n/publisher-ru';
 import type { ContentStatus } from './states';
 import {
@@ -634,7 +634,9 @@ export function materialSteps(
     submit: draft && !scheduled,
     approve: cur?.status === 'submitted' && !!cur.hash,
     copy: COPYABLE.includes(st) && !!m.approvedVersion,
-    report: REPORTABLE.includes(st),
+    // Отзыв согласования после копирования (`scheduled` без утверждённой
+    // версии): отметка заведомо упала бы `not_copied` — не предлагаем.
+    report: REPORTABLE.includes(st) && !(scheduled && !m.approvedVersion),
     unscheduleFirst: scheduled,
   };
 }
@@ -1015,6 +1017,48 @@ export function manualPathShown(
   error: unknown
 ): boolean {
   return !ai.available || isManualPath(error);
+}
+
+// ── Состояние генерации и согласования (аудит P-R-ADM S3-2, S3-4) ─────────
+
+/**
+ * Полная генерация брифа закрыта: вариант уже взят в черновик (у версии
+ * материала есть `aiCallId`) — повтор дал бы 409 `machine:'ai_task'`.
+ * «Перегенерировать абзац» остаётся.
+ */
+export function generationClosed(
+  versions: ReadonlyArray<Pick<VersionView, 'aiCallId'>>
+): boolean {
+  return versions.some((v) => !!v.aiCallId);
+}
+
+/** Варианты сделаны до последней правки брифа — показывать с пометкой. */
+export function variantsStale(
+  call: Pick<AiCallView, 'requestedAt'> | null,
+  brief: Pick<RedditBriefView, 'updatedAt'>
+): boolean {
+  if (!call) return false;
+  const a = Date.parse(call.requestedAt);
+  const b = Date.parse(brief.updatedAt);
+  return Number.isFinite(a) && Number.isFinite(b) && b > a;
+}
+
+/**
+ * Согласование отозвано: материал в статусе `approved` или `scheduled`
+ * (отзыв после копирования), но утверждённой версии и активного
+ * согласования нет (сервер оставляет статус, обнуляя `approvedVersionId`)
+ * — повтор только новой версией (из `scheduled` — сначала «снять с плана»).
+ */
+export function approvalRevoked(
+  m: Pick<RedditMaterialView, 'content' | 'approvedVersion'> & {
+    approval?: RedditMaterialView['approval'];
+  }
+): boolean {
+  return (
+    (m.content.status === 'approved' || m.content.status === 'scheduled') &&
+    !m.approvedVersion &&
+    !m.approval
+  );
 }
 
 /** Ручной путь (`PUB_AI_DISABLED` и пр.): показывать редактор «написать самому». */

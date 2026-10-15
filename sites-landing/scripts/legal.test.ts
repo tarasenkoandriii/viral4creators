@@ -4,7 +4,7 @@
  * `legal-markdown`, и в тексте нет того, что противоречило бы сайту.
  */
 import assert from 'node:assert/strict';
-import { BRAND } from '../src/brand';
+import { brandDisplayName } from '../src/brand';
 import { parseLegalMarkdown } from '../src/lib/legal-markdown';
 import { LEGAL_DOCS, legalMarkdown, legalTitle } from '../src/lib/legal-docs';
 import { SESSION_KEY } from '../src/lib/sandbox';
@@ -14,7 +14,9 @@ for (const doc of LEGAL_DOCS) {
   assert.ok(doc.draft, `${doc.slug}: до юриста — только черновик`);
   assert.match(md, /ЧЕРНЕТКА до перевірки юристом/, `${doc.slug}: нет пометки «чернетка»`);
   assert.ok(!/\{[a-z]+\}/.test(md), `${doc.slug}: неподставленный плейсхолдер`);
-  assert.ok(md.includes(BRAND.name), `${doc.slug}: нет имени из brand.ts`);
+  // Имя — на языке редакции (uk): пока бренд — заглушка, родовое, и «<бренд>» публично не виден (Р-З15-1).
+  assert.ok(md.includes(brandDisplayName('uk')), `${doc.slug}: нет имени из brand.ts`);
+  assert.ok(!md.includes('<бренд>'), `${doc.slug}: заглушка бренда в тексте`);
   assert.ok(legalTitle(md).length > 5);
   const blocks = parseLegalMarkdown(md);
   assert.equal(blocks[0].kind, 'h1');
