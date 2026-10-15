@@ -348,7 +348,9 @@ export default function GreetingFramesPage() {
         {fixture && !fixture.skipped && stage && (
           <>
             <p style={{ marginBottom: 6 }}>
-              <span className={`badge-status badge-status-${stageTone(stage)}`}>{STAGE_LABEL[stage]}</span>
+              <span className={`badge-status badge-status-${stageTone(fixture.video?.postStatus === 'failed' ? 'failed' : stage)}`}>
+                {fixture.video?.postStatus === 'failed' ? 'Видеоряд готов, сборка не завершена' : STAGE_LABEL[stage]}
+              </span>
               {fixture.video?.resolution && (
                 <span className="muted" style={{ marginLeft: 8 }}>
                   {fixture.video.resolution}
@@ -370,8 +372,8 @@ export default function GreetingFramesPage() {
               {fixture.video?.error && <li className="critical">Отказ провайдера: {fixture.video.error}</li>}
               {fixture.video?.postError && (
                 <li className="critical">
-                  Постобработка упала: {fixture.video.postError} — в ролике нет своей озвучки, скорее всего, его придётся
-                  переснять.
+                  Постобработка остановлена: {fixture.video.postError}. Исходный видеоряд сохранён.
+                  Не запускайте новый видеорендер только ради исправления сборки озвучки.
                 </li>
               )}
               {fixture.next && (
@@ -392,8 +394,11 @@ export default function GreetingFramesPage() {
             {stage === 'complete' && fixture.video?.downloadUrl && (
               <div style={{ marginTop: 12 }}>
                 <p style={{ fontSize: 13, marginBottom: 6 }}>
-                  <strong>Посмотрите ролик целиком:</strong> ИИ-ведущий, ни одного имени человека, ни чужого бренда, голос
-                  звучит.
+                  {fixture.video.postStatus === 'failed' ? (
+                    <><strong>Только исходный видеоряд:</strong> сборка озвучки не завершена; этот файл не является готовым поздравлением.</>
+                  ) : (
+                    <><strong>Посмотрите ролик целиком:</strong> ИИ-ведущий, ни одного имени человека, ни чужого бренда, голос звучит.</>
+                  )}
                 </p>
                 <video
                   src={fixture.video.downloadUrl}
