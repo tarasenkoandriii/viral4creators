@@ -733,7 +733,11 @@ void (async () => {
   assert.equal(feed.at(-1), DICTS.uk.vcAfterPnr);
   // Аудит 06.10: двойное «Да» (клик + клик, голос + клик), пока confirm в
   // пути, — один POST и один `ui-run`; кнопки карточки недоступны.
-  {
+  for (const { cancelDuringConfirm, failConfirm } of [
+    { cancelDuringConfirm: false, failConfirm: false },
+    { cancelDuringConfirm: true, failConfirm: false },
+    { cancelDuringConfirm: true, failConfirm: true },
+  ]) {
     let cui: UiPlanUi = uiPlanOff();
     const cParent: Array<Record<string, unknown>> = [];
     const cCalls: string[] = [];
@@ -754,7 +758,9 @@ void (async () => {
         cCalls.push(path);
         if (path === '/widget/v1/ui-plan')
           return { ...view, status: 'proposed' };
+        if (path.endsWith('/stop')) return { ...view, status: 'stopped' };
         await new Promise<void>((r) => held.push(r));
+        if (failConfirm) throw new Error('late confirm failure');
         return { ...view, status: 'confirmed' };
       },
       toParent: (m) => cParent.push(m as unknown as Record<string, unknown>),
@@ -785,6 +791,7 @@ void (async () => {
       true,
       'кнопки «Да/Ні» недоступны, пока confirm в пути'
     );
+    if (cancelDuringConfirm) cc.stop('close');
     // Отпускаем ВСЕ ответы: и второй POST (если бы он ушёл) завершится.
     for (const r of held.splice(0)) r();
     await Promise.all([c1, c2]);
@@ -795,9 +802,10 @@ void (async () => {
     );
     assert.equal(
       cParent.filter((m) => m.type === 'ui-run').length,
-      1,
-      'один ui-run'
+      cancelDuringConfirm ? 0 : 1,
+      'late confirm must not restart a stopped plan'
     );
+    if (cancelDuringConfirm) assert.equal(cui.phase, 'stopped');
     assert.equal(cui.busy, false);
   }
   console.log(

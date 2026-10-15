@@ -762,11 +762,14 @@ export class UiPlanController {
           body
         )
       );
+      // A stop/close or a replacement command may win while confirm is in flight.
+      if (this.plan !== v || this.host.ui().phase !== 'confirm') return;
       if (!r) throw new Error('bad');
       if (r.status === 'stopped') return this.finish('stopped');
       this.plan = r;
       this.run(r, byVoice);
     } catch (e) {
+      if (this.plan !== v || this.host.ui().phase !== 'confirm') return;
       const code = (e as { code?: string }).code;
       this.host.feed(
         'assistant',
