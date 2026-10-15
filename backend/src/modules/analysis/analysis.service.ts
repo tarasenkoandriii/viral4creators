@@ -492,7 +492,7 @@ export class AnalysisService {
     }
 
     try {
-      this.logger.log('Sending request to Gemini API...');
+      this.logger.log(`Sending reference analysis to Gemini (${model})`);
 
       const response = await this.genai.models.generateContent({
         model,

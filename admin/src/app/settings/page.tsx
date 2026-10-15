@@ -1196,7 +1196,7 @@ function AnalysisProviderCard() {
           <label style={{ display: 'block', marginBottom: 8 }}>
             Модель Gemini для разбора видео
             <select aria-label="Модель Gemini для разбора видео" value={state.model}
-              disabled={saving} onChange={(e) => handleModel(e.target.value)} style={{ marginLeft: 12 }}>
+              disabled={saving || !state.models?.length} onChange={(e) => handleModel(e.target.value)} style={{ marginLeft: 12 }}>
               {(state.models ?? []).map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
           </label>
