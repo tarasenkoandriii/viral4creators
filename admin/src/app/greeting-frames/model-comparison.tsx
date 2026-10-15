@@ -22,6 +22,7 @@ export default function GreetingModelComparison() {
   const [selected,setSelected]=useState('');
   const [busy,setBusy]=useState<string|null>(null);
   const [error,setError]=useState<string|null>(null);
+  const [mediaDuration,setMediaDuration]=useState<number|null>(null);
   const player=useRef<HTMLVideoElement>(null);
   const requestLock=useRef(false);
   const load=async()=>{
@@ -56,7 +57,7 @@ export default function GreetingModelComparison() {
     {error && <p className="critical" role="alert">{error}</p>}
     <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center',margin:'16px 0'}}>
       <label>Готовое поздравление{' '}<select aria-label="Поздравление для сравнения" value={selected} disabled={!!busy}
-        onChange={e=>setSelected(e.target.value)}>
+        onChange={e=>{setSelected(e.target.value);setMediaDuration(null);}}>
         {view?.videos.map(v=><option key={v.sessionId} value={v.sessionId}>{v.title} · {new Date(v.createdAt).toLocaleString('ru-RU')} · {v.sessionId.slice(-8)}</option>)}
       </select></label>
       <button type="button" disabled={!!busy} onClick={()=>void load()}>Обновить оценки</button>
@@ -67,8 +68,8 @@ export default function GreetingModelComparison() {
     {view && !view.videos.length && <p>Готовых тестовых поздравлений с завершённой постобработкой пока нет.</p>}
     {!view && !error && <p>Загрузка…</p>}
     {video && <>
-      <video key={video.videoUrl} ref={player} src={video.videoUrl} controls preload="metadata" style={{width:'100%',maxWidth:640,maxHeight:360,background:'black'}} />
-      <p className="muted">Проверка {view?.version}. На одном ролике нельзя установить, какая модель точнее в целом. Выводы с низкой уверенностью проверяются вручную.</p>
+      <video key={video.videoUrl} ref={player} src={video.videoUrl} onLoadedMetadata={e=>setMediaDuration(Number.isFinite(e.currentTarget.duration)?e.currentTarget.duration:null)} controls preload="metadata" style={{width:'100%',maxWidth:640,maxHeight:360,background:'black'}} />
+      <p className="muted">Длительность файла по плееру: {mediaDuration===null?'определяется':`${mediaDuration.toFixed(2)} с`}. Проверка {view?.version}. На одном ролике нельзя установить, какая модель точнее в целом. Выводы с низкой уверенностью проверяются вручную.</p>
       {comparable && <div style={{margin:'12px 0'}}>
         <strong>Расхождения оценок (4 Argon минус 3.6 Flash)</strong>
         <p>{(['naturalness','gestures','lipSync'] as const).map(k=>{
@@ -87,6 +88,11 @@ export default function GreetingModelComparison() {
           {report?.status==='failed' && <><p className="critical">{report.error}</p><button type="button" disabled={!!busy} onClick={()=>void run([model],true)}>Повторить {model} (платно)</button></>}
           {report?.assessment && <>
             <p>{report.assessment.summary}</p>
+            <p className="muted">Длительность по ответу модели: {report.assessment.durationSeconds.toFixed(2)} с.</p>
+            {mediaDuration!==null && Math.abs(mediaDuration-report.assessment.durationSeconds)>1 && <p className="critical" role="note">
+              Длительность по модели расходится с файлом. Выводы о финале и полном охвате требуют проверки;
+              изображение и звук могут иметь разную длительность. Это не доказательство обрыва звука.
+            </p>}
             <dl>{(['naturalness','gestures','lipSync'] as const).map(k=><div key={k} style={{marginBottom:10}}><dt><strong>{LABEL[k]}: {report.assessment!.scores[k].score ?? 'нельзя оценить'}{report.assessment!.scores[k].score!==null?' / 5':''}</strong></dt><dd style={{marginLeft:0}}>{report.assessment!.scores[k].reason}</dd></div>)}</dl>
             {report.assessment.evidence.map((e,i)=><div key={i} style={{margin:'14px 0',paddingLeft:12,borderLeft:'2px solid var(--border-color, #555)'}}>
               <button type="button" aria-label={`Перейти к ${time(e.start)} ${model}`} onClick={()=>{if(player.current) {player.current.currentTime=e.start;player.current.scrollIntoView({block:'center',behavior:'smooth'});}}}>{time(e.start)}–{time(e.end)}</button>
