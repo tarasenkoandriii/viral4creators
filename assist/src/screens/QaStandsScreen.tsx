@@ -1,3 +1,4 @@
+import { StandFormDrift } from '../components/StandFormDrift';
 import { downloadStandOpenApi } from '../lib/qa-stand-openapi';
 import { StandVoiceInput } from '../components/StandVoiceInput';
 import { GeneratedStandPreview } from '../components/GeneratedStandPreview';
@@ -287,6 +288,15 @@ function Stands({ siteId }: { siteId: string }) {
         >
           Загрузить более ранние
         </Button>
+      )}
+      {selected && (
+        <StandFormDrift
+          key={selected.id}
+          api={api}
+          siteId={siteId}
+          standId={selected.id}
+          write={write}
+        />
       )}
       {selected?.contract.template === 'generated' && (
         <GeneratedStandPreview

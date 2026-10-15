@@ -1,3 +1,5 @@
+import { compareForms } from './form-drift';
+import { QaFindingService } from '../qa-catalog/qa-finding.service';
 import { SiteAiModule } from '../site-ai/site-ai.module';
 import { SiteSonioxStt } from '../assist-site-voice/public/soniox-stt.client';
 import { QaStandsGenerator } from './qa-stands-generator.service';
@@ -48,6 +50,7 @@ export class QaStandsService {
   constructor(
     private readonly db: SitesDb,
     private readonly catalog: QaCatalogService,
+    private readonly findings?: QaFindingService,
   ) {}
   async scoped(m: AccountMembership, site: string, write = false) {
     await this.catalog.scoped(m, site, write);
@@ -112,6 +115,78 @@ export class QaStandsService {
     });
     if (!row) throw new NotFoundException('Стенд не найден.');
     return { db, row };
+  }
+  async compareForm(
+    m: AccountMembership,
+    site: string,
+    id: string,
+    input: unknown,
+  ) {
+    const { row } = await this.get(m, site, id, true);
+    const comparison = compareForms(input);
+    if (!comparison.blocked)
+      return {
+        ...comparison,
+        findingId: null,
+        duplicate: false,
+        fillAvailable: false,
+      };
+    const context = `stand:${id}; contract:${(row.contract as unknown as StandContract).version}; baseline:${comparison.baselineVersion}; hash:${comparison.baselineHash}`;
+    const payload = {
+      title: 'Обновить мок: рабочая форма изменилась',
+      category: 'logic',
+      severity: 'P1',
+      status: 'needs_confirmation',
+      url: comparison.url,
+      context,
+      steps:
+        'Промпт для исправления: обновите контракт мока и сопоставление полей по перечисленным различиям. Сохраните запрет переноса credentials и принятия условий. Добавьте регрессионные кейсы; повторите сверку формы и сценарии стенда перед подтверждением адаптера.',
+      expected:
+        'Структура формы совпадает; перед заполнением требуется отдельный предпросмотр и подтверждение.',
+      actual:
+        `current:${comparison.currentHash}; changes:${comparison.changes.length}; ${comparison.changes.join(', ')}`.slice(
+          0,
+          1000,
+        ),
+      impact:
+        'Перенос заблокирован. Проверить все сценарии выбранного стенда и сопоставления полей.',
+      evidence: [
+        `baseline:${comparison.baselineHash}`,
+        `current:${comparison.currentHash}`,
+        `versions:${comparison.baselineVersion} -> ${comparison.currentVersion}`,
+      ],
+      deployedSha: null,
+      observedAt: new Date().toISOString(),
+      verification: null,
+    };
+    try {
+      const finding = await this.findings!.create(m, site, payload);
+      return {
+        ...comparison,
+        findingId: finding.id,
+        duplicate: false,
+        fillAvailable: false,
+      };
+    } catch (e) {
+      const response =
+        e instanceof ConflictException
+          ? (e.getResponse() as {
+              code?: string;
+              details?: { findingId?: string };
+            })
+          : null;
+      if (
+        response?.code !== 'QA_FINDING_DUPLICATE' ||
+        !response.details?.findingId
+      )
+        throw e;
+      return {
+        ...comparison,
+        findingId: response.details.findingId,
+        duplicate: true,
+        fillAvailable: false,
+      };
+    }
   }
   async command(
     m: AccountMembership,
@@ -370,6 +445,14 @@ export class QaStandsController {
     @Body() input: unknown,
   ) {
     return this.stands.command(m, site, id, input);
+  }
+  @Post(':id/bridge/compare') @RequireProductRoles(QA_WRITE) compareForm(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Body() input: unknown,
+  ) {
+    return this.stands.compareForm(m, site, id, input);
   }
   @Post(':id/reset') @RequireProductRoles(QA_WRITE) reset(
     @Membership() m: AccountMembership,

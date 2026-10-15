@@ -83,6 +83,18 @@ export interface MockResult {
 export function createQaStandsApi(client: ApiClient) {
   const base = (site: string) => `/qa/sites/${encodeURIComponent(site)}/stands`;
   return {
+    compareForm: (site: string, stand: string, input: unknown) =>
+      client.request<{
+        blocked: boolean;
+        changes: string[];
+        findingId: string | null;
+        duplicate: boolean;
+        fillAvailable: false;
+      }>(
+        'POST',
+        `${base(site)}/${encodeURIComponent(stand)}/bridge/compare`,
+        input
+      ),
     list: (site: string, before?: string) =>
       client.request(
         'GET',

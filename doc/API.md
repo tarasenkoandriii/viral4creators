@@ -2265,3 +2265,10 @@ React 19 (landing, sites-landing, admin, marketplace — их маршруты �
 Generated/v2 runtime также принимает `type: url|datetime`, числовые `min/max`, флаг `unique`, текстовые `generated: mock-key|mock-secret`. URL — HTTPS без username/password, datetime — ISO-подобная строка даты/времени. Сгенерированные значения возвращаются с MOCK-префиксом; при POST передавать пустую строку, при PATCH — прежнее значение либо пустую строку. Попытка подмены возвращает 422, конфликт уникальности — 409. Значения по-прежнему передаются строками в массиве по порядку полей.
 
 Workflow допускает `invalidateRelatedOnEdit: true`: PATCH атомарно сбрасывает связанные workflow в initial, удаляет seal и повышает версии. Переход `rotateCredentials: true` регенерирует только MOCK-поля, допускает переход из состояния в то же состояние и требует текущую expectedVersion; не совмещается с seal/requireSeal. Эти расширения используются детерминированным TikTok-пресетом. API не обращается к TikTok и не выдаёт действующие credentials.
+
+
+### QA mock bridge: structural comparison (2026-10-15)
+
+POST `/qa/sites/:siteId/stands/:id/bridge/compare` (QA_WRITE) принимает `{baseline,current}` — только ручные метаданные формы: `{url,version,fields:[{id,type,required,options?,min?,max?,maxLength?}]}`. URL обоих снимков должен совпадать (HTTPS, без query/hash/credentials). Неизвестные ключи, дубликаты id, values и cookies отклоняются 400. Поддержаны type text/number/email/url/select/checkbox/date/datetime/password/file; password описывает структуру, пароль не принимается.
+
+Ответ содержит blocked, changes, hashes/versions, findingId, duplicate и fillAvailable:false. Отличия создают обычное QA finding needs_confirmation; повтор возвращает существующий id. Нет исходящей сети, browser capture или заполнения. Подробнее: `doc/QA-STANDS.md`.

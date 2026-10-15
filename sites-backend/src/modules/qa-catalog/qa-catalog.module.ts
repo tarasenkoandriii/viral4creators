@@ -206,7 +206,7 @@ export class QaCiController {
 }
 @Module({
   imports: [SiteCoreModule],
-  exports: [QaCatalogService],
+  exports: [QaCatalogService, QaFindingService],
   controllers: [QaCatalogController, QaCiController, QaFindingsController],
   providers: [
     QaCatalogService,
