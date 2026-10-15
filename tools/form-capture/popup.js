@@ -2,6 +2,14 @@ import { captureFormStructure } from "./capture.js";
 const get = (id) => document.getElementById(id);
 let snapshot = null;
 let driftHandoff = null;
+const readableError = (error, fallback) => {
+  const message = error?.message || fallback;
+  return /Cannot access a chrome:\/\/ URL|Cannot access contents of url.*chrome:\/\//i.test(
+    message,
+  )
+    ? "Откройте HTTPS-страницу сайта (например sandbox.viral4creators.app), затем снова нажмите Q. Служебные страницы Chrome недоступны расширениям."
+    : message;
+};
 function prepareDrift(result, plan) {
   driftHandoff = null;
   get("drift-open").disabled = true;
@@ -86,7 +94,7 @@ get("capture").addEventListener("click", async () => {
     }
     get("save").disabled = false;
   } catch (e) {
-    get("status").textContent = e.message || "Сбор не выполнен.";
+    get("status").textContent = readableError(e, "Сбор не выполнен.");
   }
 });
 get("save").addEventListener("click", () => {
@@ -115,12 +123,30 @@ get("transfer-file").addEventListener("change", async (e) => {
   transferPlan = null;
   get("transfer-preview").disabled = true;
   get("transfer-status").textContent = "";
+  get("transfer-loaded").textContent =
+    "План не загружен. Выберите JSON плана из кабинета; архив расширения сюда не подходит.";
   const file = e.target.files?.[0];
   e.target.value = "";
   if (!file) return;
   try {
     if (file.size > 30000) throw new Error("План больше 30 КБ.");
-    transferPlan = JSON.parse(await file.text());
+    if (/\.zip$/i.test(file.name))
+      throw new Error(
+        "Это архив расширения. Выберите JSON плана переноса из кабинета.",
+      );
+    const parsed = JSON.parse(await file.text());
+    if (
+      parsed?.version !== 1 ||
+      !parsed.target ||
+      !Array.isArray(parsed.target.fields) ||
+      !Array.isArray(parsed.entries)
+    )
+      throw new Error(
+        "Нужен JSON плана переноса, а не снимок формы. Экспортируйте выбранные данные из записи стенда.",
+      );
+    transferPlan = parsed;
+    get("transfer-loaded").textContent =
+      `План загружен: ${file.name}. Выбранных полей: ${parsed.entries.length}. Нажмите «Сверить и показать изменения».`;
     get("transfer-preview").disabled = false;
   } catch (e) {
     get("transfer-status").textContent =
@@ -170,7 +196,10 @@ get("transfer-preview").addEventListener("click", async () => {
       `Изменений: ${result.changes}. Проверьте адрес и все значения; запись не выполнялась.`;
     get("transfer-apply").disabled = !result.changes;
   } catch (e) {
-    get("transfer-status").textContent = e.message || "Сверка не выполнена.";
+    get("transfer-status").textContent = readableError(
+      e,
+      "Сверка не выполнена.",
+    );
   } finally {
     get("transfer-preview").disabled = !transferPlan;
   }
@@ -211,7 +240,10 @@ get("transfer-apply").addEventListener("click", async () => {
     get("transfer-status").textContent =
       `Заполнено полей: ${result.applied}. Кнопка отправки не нажималась. Проверьте результат на сайте.`;
   } catch (e) {
-    get("transfer-status").textContent = e.message || "Заполнение остановлено.";
+    get("transfer-status").textContent = readableError(
+      e,
+      "Заполнение остановлено.",
+    );
   } finally {
     get("transfer-preview").disabled = !transferPlan;
   }

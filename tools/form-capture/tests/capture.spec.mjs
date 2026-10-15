@@ -178,6 +178,9 @@ async function importPlan(w, plan) {
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(plan)),
   });
+  await expect(w.popup.locator("#transfer-loaded")).toContainText(
+    "План загружен: qa-form-transfer.json",
+  );
   await w.popup
     .getByRole("button", { name: "Сверить и показать изменения", exact: true })
     .click();
@@ -312,6 +315,38 @@ test("credentials, protected targets, duplicate mapping and wrong URLs are rejec
         }),
       ).toBeDisabled();
       await expect(w.target.locator("#email")).toHaveValue("PRIVATE_EMAIL");
+    }
+  } finally {
+    await w.close();
+  }
+});
+
+test("archive and structure snapshot are rejected as transfer plans with actionable guidance", async () => {
+  const w = await setup(true);
+  try {
+    for (const [name, body, message] of [
+      ["qa-form-capture.zip", "PK archive", "Это архив расширения"],
+      [
+        "qa-form-snapshot.json",
+        JSON.stringify({
+          url: "https://capture-fixture.invalid/",
+          version: "capture-v1",
+          fields: [],
+        }),
+        "Нужен JSON плана переноса",
+      ],
+    ]) {
+      await w.popup
+        .getByLabel("План переноса", { exact: true })
+        .setInputFiles({
+          name,
+          mimeType: "application/octet-stream",
+          buffer: Buffer.from(body),
+        });
+      await expect(w.popup.locator("#transfer-status")).toContainText(message);
+      await expect(w.popup.locator("#transfer-preview")).toBeDisabled();
+      await expect(w.popup.locator("#transfer-apply")).toBeDisabled();
+      await expect(w.popup.locator("#drift-open")).toBeDisabled();
     }
   } finally {
     await w.close();
