@@ -2272,3 +2272,14 @@ Workflow допускает `invalidateRelatedOnEdit: true`: PATCH атомар�
 POST `/qa/sites/:siteId/stands/:id/bridge/compare` (QA_WRITE) принимает `{baseline,current}` — только ручные метаданные формы: `{url,version,fields:[{id,type,required,options?,min?,max?,maxLength?}]}`. URL обоих снимков должен совпадать (HTTPS, без query/hash/credentials). Неизвестные ключи, дубликаты id, values и cookies отклоняются 400. Поддержаны type text/number/email/url/select/checkbox/date/datetime/password/file; password описывает структуру, пароль не принимается.
 
 Ответ содержит blocked, changes, hashes/versions, findingId, duplicate и fillAvailable:false. Отличия создают обычное QA finding needs_confirmation; повтор возвращает существующий id. Нет исходящей сети, browser capture или заполнения. Подробнее: `doc/QA-STANDS.md`.
+
+
+### Модель Gemini для разбора референса
+
+`GET /api/admin/settings/analysis-provider` дополнительно возвращает `model`,
+`modelSource` (`admin` или `env-default`) и `models` (допустимые идентификаторы).
+`PATCH /api/admin/settings/analysis-model` с `{ "model": "gemini-4-argon" }`
+сохраняет выбор оператора, возвращает ту же сводку. Нужна сессия админки и роль
+оператора; неизвестная модель — 400. Настройка действует на AnalysisService,
+включая перевод и извлечение реплик, в течение 15 секунд; кэш видео разделён
+по модели. Значение окружения остаётся умолчанием до первого сохранения.
