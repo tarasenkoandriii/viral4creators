@@ -9,6 +9,7 @@ import { navigate } from '../lib/router';
 import { qaAccess } from '../lib/qa-editor';
 import type { Stand, StandContract, MockResult } from '../lib/qa-stands-api';
 import redditMock from '../lib/qa-reddit-mock.json';
+import tiktokMock from '../lib/qa-tiktok-mock.json';
 export function QaStandsButton({ siteId }: { siteId: string }) {
   const { account } = useKit();
   return qaAccess(account.me).read ? (
@@ -183,6 +184,16 @@ function Stands({ siteId }: { siteId: string }) {
             }
           >
             Подготовить базовый шаблон
+          </Button>
+          <Button
+            disabled={busy || voiceBusy}
+            variant="outline"
+            onClick={() => {
+              setPlan(tiktokMock as StandContract);
+              setRequestId(crypto.randomUUID());
+            }}
+          >
+            Подготовить TikTok workflow-мок
           </Button>
           <Button
             disabled={busy || voiceBusy}

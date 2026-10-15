@@ -200,11 +200,21 @@ export function GeneratedStandPreview({
               ) : (
                 <input
                   className={inputClass}
-                  type={f.type === 'text' ? 'text' : f.type}
+                  type={f.type === 'datetime' ? 'datetime-local' : f.type}
+                  disabled={!!f.generated}
+                  placeholder={
+                    f.generated
+                      ? 'Стенд создаст только MOCK credentials'
+                      : undefined
+                  }
+                  min={f.min}
+                  max={f.max}
                   step={f.type === 'number' ? 'any' : undefined}
                   required={f.required}
                   maxLength={500}
-                  value={values[i] ?? ''}
+                  value={
+                    f.generated ? (editing?.values[i] ?? '') : (values[i] ?? '')
+                  }
                   onChange={(e) =>
                     setValues((v) =>
                       entity.fields.map((_, j) =>

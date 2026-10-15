@@ -2,9 +2,13 @@ import { BadRequestException } from '@nestjs/common';
 import { parseWorkflows, type MockWorkflow } from './mock-workflow';
 export interface MockField {
   name: string;
-  type: 'text' | 'number' | 'email' | 'select';
+  type: 'text' | 'number' | 'email' | 'select' | 'url' | 'datetime';
   required: boolean;
   options: string[];
+  generated?: 'mock-key' | 'mock-secret';
+  min?: number;
+  max?: number;
+  unique?: boolean;
 }
 export interface MockEntity {
   id: string;
@@ -67,18 +71,48 @@ export function parseGenerated(
     const fields = list(e.fields, 8).map((value) => {
       const f = obj(value);
       if (
-        !['text', 'number', 'email', 'select'].includes(String(f.type)) ||
+        !['text', 'number', 'email', 'select', 'url', 'datetime'].includes(
+          String(f.type),
+        ) ||
         typeof f.required !== 'boolean'
       )
         throw bad();
       const options =
         f.type === 'select' ? list(f.options, 12).map((x) => text(x, 80)) : [];
       unique(options);
+      if (
+        f.generated !== undefined &&
+        (f.type !== 'text' ||
+          !['mock-key', 'mock-secret'].includes(String(f.generated)))
+      )
+        throw bad();
+      for (const key of ['min', 'max'] as const)
+        if (
+          f[key] !== undefined &&
+          (f.type !== 'number' ||
+            typeof f[key] !== 'number' ||
+            !Number.isFinite(f[key]) ||
+            Math.abs(f[key] as number) > 1e12)
+        )
+          throw bad();
+      if (
+        typeof f.min === 'number' &&
+        typeof f.max === 'number' &&
+        f.min > f.max
+      )
+        throw bad();
+      if (f.unique !== undefined && typeof f.unique !== 'boolean') throw bad();
       return {
         name: text(f.name, 60),
         type: f.type as MockField['type'],
         required: f.required,
         options,
+        ...(f.generated !== undefined
+          ? { generated: f.generated as MockField['generated'] }
+          : {}),
+        ...(f.min !== undefined ? { min: f.min as number } : {}),
+        ...(f.max !== undefined ? { max: f.max as number } : {}),
+        ...(f.unique !== undefined ? { unique: f.unique as boolean } : {}),
       };
     });
     unique(fields.map((f) => f.name));

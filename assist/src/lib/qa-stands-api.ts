@@ -1,15 +1,17 @@
 import type { ApiClient } from '../kit';
 /** Disabled workflow fields are derived from the contract/original record, never a cleared form slot. */
 export function standFormValues(
-  fields: Array<{ name: string }>,
+  fields: Array<{ name: string; generated?: 'mock-key' | 'mock-secret' }>,
   values: string[],
   workflow?: { stateField: string; initial: string },
   original?: string[]
 ) {
   return fields.map((f, i) =>
-    workflow?.stateField === f.name
-      ? (original?.[i] ?? workflow.initial)
-      : (values[i] ?? '')
+    f.generated
+      ? (original?.[i] ?? '')
+      : workflow?.stateField === f.name
+        ? (original?.[i] ?? workflow.initial)
+        : (values[i] ?? '')
   );
 }
 export interface StandContract {
@@ -23,9 +25,13 @@ export interface StandContract {
     title: string;
     fields: Array<{
       name: string;
-      type: 'text' | 'number' | 'email' | 'select';
+      type: 'text' | 'number' | 'email' | 'select' | 'url' | 'datetime';
       required: boolean;
       options: string[];
+      generated?: 'mock-key' | 'mock-secret';
+      min?: number;
+      max?: number;
+      unique?: boolean;
     }>;
   }>;
   screens?: Array<{
@@ -40,6 +46,7 @@ export interface StandContract {
     entityId: string;
     stateField: string;
     initial: string;
+    invalidateRelatedOnEdit?: boolean;
     transitions: Array<{
       id: string;
       title: string;
@@ -53,6 +60,7 @@ export interface StandContract {
       }>;
       seal: boolean;
       requireSeal: boolean;
+      rotateCredentials?: boolean;
     }>;
   }>;
 }

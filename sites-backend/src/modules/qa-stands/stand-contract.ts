@@ -60,6 +60,68 @@ export interface StandRecord {
   version?: number;
   approvalDigest?: string;
 }
+function mockCredential(kind: 'mock-key' | 'mock-secret') {
+  return (
+    (kind === 'mock-key' ? 'MOCK_KEY_' : 'MOCK_SECRET_') +
+    crypto.randomUUID().replace(/-/g, '')
+  );
+}
+function validUrl(value: string) {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'https:' && !u.username && !u.password;
+  } catch {
+    return false;
+  }
+}
+/** Reset only explicitly opted-in dependencies, atomically with the edited record. */
+function invalidateDependents(
+  c: GeneratedContract,
+  records: StandRecord[],
+  before: StandRecord,
+  after: StandRecord,
+) {
+  const visited = new Set([before.id]),
+    queue = [{ before, after }];
+  const rows = records.map((r) => (r.id === after.id ? after : r));
+  while (queue.length) {
+    const changed = queue.shift()!;
+    for (const w of c.workflows ?? []) {
+      const target = c.entities.find((e) => e.id === w.entityId)!;
+      const conditions = w.transitions
+        .flatMap((t) => t.conditions)
+        .filter((x) => x.related?.entityId === changed.before.entityId);
+      for (const row of rows) {
+        if (row.entityId !== target.id || visited.has(row.id)) continue;
+        const linked = conditions.some((condition) => {
+          const relation = condition.related!,
+            source = c.entities.find((e) => e.id === relation.entityId)!;
+          const key =
+            row.values[
+              target.fields.findIndex((f) => f.name === relation.viaField)
+            ];
+          const index = source.fields.findIndex(
+            (f) => f.name === relation.matchField,
+          );
+          return (
+            key === changed.before.values[index] ||
+            key === changed.after.values[index]
+          );
+        });
+        if (!linked) continue;
+        visited.add(row.id);
+        const old = { ...row, values: [...row.values] };
+        row.values = row.values.map((v, i) =>
+          target.fields[i].name === w.stateField ? w.initial : v,
+        );
+        row.version = (row.version ?? 1) + 1;
+        delete row.approvalDigest;
+        queue.push({ before: old, after: row });
+      }
+    }
+  }
+  return rows;
+}
 export function baseline(c: StandContract): StandRecord[] {
   if (c.template === 'generated') return [];
   return [
@@ -190,7 +252,11 @@ export function mockTransition(
     const item = {
       ...existing,
       values: existing.values.map((v, i) =>
-        i === stateIndex ? transition.to : v,
+        i === stateIndex
+          ? transition.to
+          : transition.rotateCredentials && entity.fields[i].generated
+            ? mockCredential(entity.fields[i].generated!)
+            : v,
       ),
       version: (existing.version ?? 1) + 1,
       ...(transition.seal ? { approvalDigest: evidence.digest } : {}),
@@ -218,14 +284,51 @@ export function mockTransition(
         records,
         changed: false,
       };
+    const values = o.values.map((x) => (x as string).trim());
+    if (entity)
+      for (const [index, f] of entity.fields.entries()) {
+        if (f.generated) {
+          if (
+            values[index] &&
+            (o.method === 'POST' || values[index] !== existing?.values[index])
+          )
+            return reject(
+              422,
+              'MOCK credentials генерируются стендом; настоящие ключи вводить нельзя',
+            );
+          values[index] =
+            o.method === 'POST'
+              ? mockCredential(f.generated)
+              : existing!.values[index];
+        }
+        if (
+          f.unique &&
+          values[index] &&
+          bucket.some(
+            (r) => r.id !== existing?.id && r.values[index] === values[index],
+          )
+        )
+          return reject(409, `Значение поля «${f.name}» уже существует`);
+      }
     if (
       entity &&
-      o.values.some((value, index) => {
+      values.some((value, index) => {
         const f = entity.fields[index],
           v = String(value).trim();
         return (
           (f.required && !v) ||
           (v && f.type === 'number' && !Number.isFinite(Number(v))) ||
+          (v &&
+            f.type === 'number' &&
+            ((f.min !== undefined && Number(v) < f.min) ||
+              (f.max !== undefined && Number(v) > f.max))) ||
+          (v && f.type === 'url' && !validUrl(v)) ||
+          (v &&
+            f.type === 'datetime' &&
+            !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(
+              v,
+            )) ||
+          (v && f.type === 'datetime' && !Number.isFinite(Date.parse(v))) ||
           (v && f.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) ||
           (v && f.type === 'select' && !f.options.includes(v))
         );
@@ -237,7 +340,6 @@ export function mockTransition(
         records,
         changed: false,
       };
-    const values = o.values.map((x) => (x as string).trim());
     if (
       workflow &&
       values[stateIndex] !==
@@ -258,7 +360,15 @@ export function mockTransition(
       return {
         status: 200,
         data: item,
-        records: records.map((r) => (r.id === item.id ? item : r)),
+        records:
+          workflow?.invalidateRelatedOnEdit && c.template === 'generated'
+            ? invalidateDependents(
+                c,
+                records.map((r) => ({ ...r, values: [...r.values] })),
+                existing,
+                item,
+              )
+            : records.map((r) => (r.id === item.id ? item : r)),
         changed: true,
       };
     }
@@ -305,12 +415,18 @@ export function checkStand(c: StandContract) {
         ...c.entities.flatMap((e) => {
           const values = e.fields.map((f) =>
             f.type === 'number'
-              ? '1'
+              ? String(Math.min(f.max ?? 1, Math.max(f.min ?? 1, 1)))
               : f.type === 'email'
                 ? 'demo@example.invalid'
-                : f.type === 'select'
-                  ? f.options[0]
-                  : 'test',
+                : f.generated
+                  ? ''
+                  : f.type === 'url'
+                    ? 'https://qa.example.invalid/' + e.id + '/' + f.name
+                    : f.type === 'datetime'
+                      ? '2026-10-16T12:00'
+                      : f.type === 'select'
+                        ? f.options[0]
+                        : 'test',
           );
           const workflow = c.workflows?.find((w) => w.entityId === e.id);
           if (workflow)
@@ -421,7 +537,7 @@ function workflowChecks(c: GeneratedContract) {
             : f.type === 'email'
               ? 'qa@example.invalid'
               : f.type === 'number'
-                ? '1'
+                ? String(Math.min(f.max ?? 1, Math.max(f.min ?? 1, 1)))
                 : 'test',
         ),
       }));

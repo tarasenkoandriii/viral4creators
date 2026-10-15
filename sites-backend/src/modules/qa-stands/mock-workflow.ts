@@ -12,6 +12,7 @@ export interface MockWorkflow {
   entityId: string;
   stateField: string;
   initial: string;
+  invalidateRelatedOnEdit?: boolean;
   transitions: Array<{
     id: string;
     title: string;
@@ -21,6 +22,7 @@ export interface MockWorkflow {
     conditions: MockCondition[];
     seal: boolean;
     requireSeal: boolean;
+    rotateCredentials?: boolean;
   }>;
 }
 
@@ -69,7 +71,16 @@ export function parseWorkflows(
         to = text(t.to, 80);
       if (
         [...from, to].some((v) => !state.options.includes(v)) ||
-        from.includes(to)
+        (from.includes(to) && t.rotateCredentials !== true)
+      )
+        return bad();
+      if (
+        t.rotateCredentials !== undefined &&
+        (typeof t.rotateCredentials !== 'boolean' ||
+          (t.rotateCredentials &&
+            (!entity.fields.some((f) => f.generated) ||
+              t.seal ||
+              t.requireSeal)))
       )
         return bad();
       if (
@@ -113,11 +124,27 @@ export function parseWorkflows(
         conditions,
         seal: t.seal,
         requireSeal: t.requireSeal,
+        ...(t.rotateCredentials !== undefined
+          ? { rotateCredentials: t.rotateCredentials as boolean }
+          : {}),
       };
     });
     if (new Set(transitions.map((t) => t.id)).size !== transitions.length)
       return bad();
-    return { entityId, stateField: state.name, initial, transitions };
+    if (
+      w.invalidateRelatedOnEdit !== undefined &&
+      typeof w.invalidateRelatedOnEdit !== 'boolean'
+    )
+      return bad();
+    return {
+      entityId,
+      stateField: state.name,
+      initial,
+      transitions,
+      ...(w.invalidateRelatedOnEdit !== undefined
+        ? { invalidateRelatedOnEdit: w.invalidateRelatedOnEdit as boolean }
+        : {}),
+    };
   });
   if (new Set(workflows.map((w) => w.entityId)).size !== workflows.length)
     return bad();

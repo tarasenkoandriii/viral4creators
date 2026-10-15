@@ -1,0 +1,814 @@
+{
+  "title": "TikTok — приложение и видео · MOCK",
+  "description": "Изолированный Developer Portal и workflow видео: приложение, настройки, только фиктивные credentials, медиа-метаданные и имитация публикации.",
+  "template": "generated",
+  "version": 2,
+  "fields": [
+    "Название",
+    "Описание",
+    "Иконка-placeholder",
+    "Сайт",
+    "Privacy URL",
+    "Terms URL",
+    "Redirect URI",
+    "Статус"
+  ],
+  "entities": [
+    {
+      "id": "apps",
+      "title": "Приложения TikTok (mock)",
+      "fields": [
+        {
+          "name": "Название",
+          "type": "text",
+          "required": true,
+          "options": [],
+          "unique": true
+        },
+        {
+          "name": "Описание",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Иконка-placeholder",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Сайт",
+          "type": "url",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Privacy URL",
+          "type": "url",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Terms URL",
+          "type": "url",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Redirect URI",
+          "type": "url",
+          "required": true,
+          "options": [],
+          "unique": true
+        },
+        {
+          "name": "Статус",
+          "type": "select",
+          "required": true,
+          "options": [
+            "draft",
+            "in_review",
+            "approved",
+            "rejected",
+            "revoked"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "title": "Настройки и MOCK credentials",
+      "fields": [
+        {
+          "name": "Приложение",
+          "type": "text",
+          "required": true,
+          "options": [],
+          "unique": true
+        },
+        {
+          "name": "Платформа",
+          "type": "select",
+          "required": true,
+          "options": [
+            "web",
+            "ios",
+            "android"
+          ]
+        },
+        {
+          "name": "Scopes",
+          "type": "select",
+          "required": true,
+          "options": [
+            "none",
+            "video.upload",
+            "video.publish",
+            "video.upload + video.publish"
+          ]
+        },
+        {
+          "name": "Тестовые пользователи",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Готовность",
+          "type": "select",
+          "required": true,
+          "options": [
+            "missing",
+            "ready"
+          ]
+        },
+        {
+          "name": "MOCK Client Key",
+          "type": "text",
+          "required": false,
+          "options": [],
+          "generated": "mock-key"
+        },
+        {
+          "name": "MOCK Client Secret",
+          "type": "text",
+          "required": false,
+          "options": [],
+          "generated": "mock-secret"
+        },
+        {
+          "name": "Статус",
+          "type": "select",
+          "required": true,
+          "options": [
+            "inactive",
+            "active",
+            "revoked"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "assets",
+      "title": "Медиа-загрузки (mock)",
+      "fields": [
+        {
+          "name": "Название",
+          "type": "text",
+          "required": true,
+          "options": [],
+          "unique": true
+        },
+        {
+          "name": "Имя файла",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Формат",
+          "type": "select",
+          "required": true,
+          "options": [
+            "mp4",
+            "mov"
+          ]
+        },
+        {
+          "name": "Размер МБ",
+          "type": "number",
+          "required": true,
+          "options": [],
+          "min": 1,
+          "max": 100
+        },
+        {
+          "name": "Длительность сек",
+          "type": "number",
+          "required": true,
+          "options": [],
+          "min": 1,
+          "max": 180
+        },
+        {
+          "name": "Статус",
+          "type": "select",
+          "required": true,
+          "options": [
+            "draft",
+            "uploading",
+            "processing",
+            "ready",
+            "failed"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "videos",
+      "title": "Видео TikTok (mock)",
+      "fields": [
+        {
+          "name": "Название",
+          "type": "text",
+          "required": true,
+          "options": [],
+          "unique": true
+        },
+        {
+          "name": "Приложение",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Медиа",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Подпись",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Аудитория",
+          "type": "select",
+          "required": true,
+          "options": [
+            "private",
+            "public"
+          ]
+        },
+        {
+          "name": "QA",
+          "type": "select",
+          "required": true,
+          "options": [
+            "pending",
+            "pass"
+          ]
+        },
+        {
+          "name": "Дата планирования",
+          "type": "datetime",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Статус",
+          "type": "select",
+          "required": true,
+          "options": [
+            "draft",
+            "approved",
+            "scheduled",
+            "simulated_published",
+            "failed",
+            "cancelled"
+          ]
+        }
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "id": "apps_list",
+      "title": "Приложения TikTok (mock)",
+      "kind": "list",
+      "entityId": "apps",
+      "nextScreenId": "apps_form"
+    },
+    {
+      "id": "apps_form",
+      "title": "Добавить: Приложения TikTok (mock)",
+      "kind": "form",
+      "entityId": "apps",
+      "nextScreenId": "apps_list"
+    },
+    {
+      "id": "settings_list",
+      "title": "Настройки и MOCK credentials",
+      "kind": "list",
+      "entityId": "settings",
+      "nextScreenId": "settings_form"
+    },
+    {
+      "id": "settings_form",
+      "title": "Добавить: Настройки и MOCK credentials",
+      "kind": "form",
+      "entityId": "settings",
+      "nextScreenId": "settings_list"
+    },
+    {
+      "id": "assets_list",
+      "title": "Медиа-загрузки (mock)",
+      "kind": "list",
+      "entityId": "assets",
+      "nextScreenId": "assets_form"
+    },
+    {
+      "id": "assets_form",
+      "title": "Добавить: Медиа-загрузки (mock)",
+      "kind": "form",
+      "entityId": "assets",
+      "nextScreenId": "assets_list"
+    },
+    {
+      "id": "videos_list",
+      "title": "Видео TikTok (mock)",
+      "kind": "list",
+      "entityId": "videos",
+      "nextScreenId": "videos_form"
+    },
+    {
+      "id": "videos_form",
+      "title": "Добавить: Видео TikTok (mock)",
+      "kind": "form",
+      "entityId": "videos",
+      "nextScreenId": "videos_list"
+    }
+  ],
+  "workflows": [
+    {
+      "entityId": "apps",
+      "stateField": "Статус",
+      "initial": "draft",
+      "invalidateRelatedOnEdit": true,
+      "transitions": [
+        {
+          "id": "submit",
+          "title": "Отправить на проверку (mock)",
+          "from": [
+            "draft"
+          ],
+          "to": "in_review",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "Готовность",
+              "equals": "ready",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Название",
+                "matchField": "Приложение"
+              }
+            }
+          ],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "approve",
+          "title": "Имитировать одобрение",
+          "from": [
+            "in_review"
+          ],
+          "to": "approved",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "reject",
+          "title": "Имитировать отказ",
+          "from": [
+            "in_review"
+          ],
+          "to": "rejected",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "revise",
+          "title": "Вернуть приложение в черновик",
+          "from": [
+            "rejected",
+            "approved",
+            "revoked"
+          ],
+          "to": "draft",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "revoke",
+          "title": "Отозвать приложение (mock)",
+          "from": [
+            "approved"
+          ],
+          "to": "revoked",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        }
+      ]
+    },
+    {
+      "entityId": "settings",
+      "stateField": "Статус",
+      "initial": "inactive",
+      "invalidateRelatedOnEdit": true,
+      "transitions": [
+        {
+          "id": "issue",
+          "title": "Выдать MOCK credentials",
+          "from": [
+            "inactive",
+            "revoked"
+          ],
+          "to": "active",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "Статус",
+              "equals": "approved",
+              "related": {
+                "entityId": "apps",
+                "viaField": "Приложение",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": false,
+          "requireSeal": false,
+          "rotateCredentials": true
+        },
+        {
+          "id": "rotate",
+          "title": "Ротировать MOCK credentials",
+          "from": [
+            "active"
+          ],
+          "to": "active",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "Статус",
+              "equals": "approved",
+              "related": {
+                "entityId": "apps",
+                "viaField": "Приложение",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": false,
+          "requireSeal": false,
+          "rotateCredentials": true
+        },
+        {
+          "id": "revoke",
+          "title": "Отозвать MOCK credentials",
+          "from": [
+            "active"
+          ],
+          "to": "revoked",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        }
+      ]
+    },
+    {
+      "entityId": "assets",
+      "stateField": "Статус",
+      "initial": "draft",
+      "invalidateRelatedOnEdit": true,
+      "transitions": [
+        {
+          "id": "upload",
+          "title": "Начать mock-загрузку",
+          "from": [
+            "draft"
+          ],
+          "to": "uploading",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "process",
+          "title": "Имитировать обработку",
+          "from": [
+            "uploading"
+          ],
+          "to": "processing",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "ready",
+          "title": "Медиа готово (mock)",
+          "from": [
+            "processing"
+          ],
+          "to": "ready",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "fail",
+          "title": "Имитировать ошибку загрузки",
+          "from": [
+            "uploading",
+            "processing"
+          ],
+          "to": "failed",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "retry",
+          "title": "Повторить mock-загрузку",
+          "from": [
+            "failed"
+          ],
+          "to": "uploading",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        }
+      ]
+    },
+    {
+      "entityId": "videos",
+      "stateField": "Статус",
+      "initial": "draft",
+      "invalidateRelatedOnEdit": true,
+      "transitions": [
+        {
+          "id": "approve",
+          "title": "Согласовать видео",
+          "from": [
+            "draft"
+          ],
+          "to": "approved",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "QA",
+              "equals": "pass"
+            },
+            {
+              "field": "Статус",
+              "equals": "approved",
+              "related": {
+                "entityId": "apps",
+                "viaField": "Приложение",
+                "matchField": "Название"
+              }
+            },
+            {
+              "field": "Статус",
+              "equals": "active",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Приложение",
+                "matchField": "Приложение"
+              }
+            },
+            {
+              "field": "Scopes",
+              "equals": "video.upload + video.publish",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Приложение",
+                "matchField": "Приложение"
+              }
+            },
+            {
+              "field": "Статус",
+              "equals": "ready",
+              "related": {
+                "entityId": "assets",
+                "viaField": "Медиа",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": true,
+          "requireSeal": false
+        },
+        {
+          "id": "schedule",
+          "title": "Запланировать (mock)",
+          "from": [
+            "approved"
+          ],
+          "to": "scheduled",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "QA",
+              "equals": "pass"
+            },
+            {
+              "field": "Статус",
+              "equals": "approved",
+              "related": {
+                "entityId": "apps",
+                "viaField": "Приложение",
+                "matchField": "Название"
+              }
+            },
+            {
+              "field": "Статус",
+              "equals": "active",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Приложение",
+                "matchField": "Приложение"
+              }
+            },
+            {
+              "field": "Scopes",
+              "equals": "video.upload + video.publish",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Приложение",
+                "matchField": "Приложение"
+              }
+            },
+            {
+              "field": "Статус",
+              "equals": "ready",
+              "related": {
+                "entityId": "assets",
+                "viaField": "Медиа",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": false,
+          "requireSeal": true
+        },
+        {
+          "id": "publish",
+          "title": "Имитировать публикацию",
+          "from": [
+            "scheduled"
+          ],
+          "to": "simulated_published",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "QA",
+              "equals": "pass"
+            },
+            {
+              "field": "Статус",
+              "equals": "approved",
+              "related": {
+                "entityId": "apps",
+                "viaField": "Приложение",
+                "matchField": "Название"
+              }
+            },
+            {
+              "field": "Статус",
+              "equals": "active",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Приложение",
+                "matchField": "Приложение"
+              }
+            },
+            {
+              "field": "Scopes",
+              "equals": "video.upload + video.publish",
+              "related": {
+                "entityId": "settings",
+                "viaField": "Приложение",
+                "matchField": "Приложение"
+              }
+            },
+            {
+              "field": "Статус",
+              "equals": "ready",
+              "related": {
+                "entityId": "assets",
+                "viaField": "Медиа",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": false,
+          "requireSeal": true
+        },
+        {
+          "id": "cancel",
+          "title": "Отменить планирование (mock)",
+          "from": [
+            "approved",
+            "scheduled"
+          ],
+          "to": "cancelled",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "fail",
+          "title": "Имитировать ошибку публикации",
+          "from": [
+            "scheduled"
+          ],
+          "to": "failed",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        },
+        {
+          "id": "retry",
+          "title": "Вернуть видео в черновик",
+          "from": [
+            "failed",
+            "cancelled",
+            "simulated_published",
+            "approved"
+          ],
+          "to": "draft",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        }
+      ]
+    }
+  ],
+  "assumptions": [
+    "Это учебная модель, не точная копия актуального TikTok Developer Portal. Никаких внешних запросов, OAuth и настоящих публикаций.",
+    "Все credentials создаёт сервер с префиксом MOCK. Настоящие ключи сюда вводить нельзя. URL не открываются сервером.",
+    "Иконка и загрузка видео представлены только placeholder и метаданными. Лимиты 100 МБ / 180 секунд учебные, не лимиты TikTok.",
+    "Планирование и модерация выполняются кнопками симуляции, не кронами и не реальным временем.",
+    "Изменение приложения, настроек или медиа сбрасывает связанные workflow и согласования. Статусы изменяются только переходами."
+  ]
+}
