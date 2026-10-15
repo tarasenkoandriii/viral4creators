@@ -70,10 +70,10 @@ jobs:
       browser_worker: ${{ steps.f.outputs.browser_worker }}
       next_apps: ${{ steps.f.outputs.next_apps }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
       - name: CI baseline lookup regression
@@ -113,8 +113,8 @@ jobs:
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/viral4creators
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -262,8 +262,8 @@ jobs:
       PUBLISHER_PUBLIC_DATABASE_URL: postgresql://publisher_public_ci:publisher_public_ci@localhost:5432/sites
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -365,8 +365,8 @@ jobs:
     if: needs.changes.outputs.assist == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -407,8 +407,8 @@ jobs:
     if: needs.changes.outputs.widget == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -462,8 +462,8 @@ jobs:
     if: needs.changes.outputs.assist_integrations == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -472,7 +472,7 @@ jobs:
       # автор двигает (и его можно подменить при взломе аккаунта автора), а
       # action исполняется с токеном джобы. Версия — в комментарии;
       # обновления предлагает Dependabot (.github/dependabot.yml).
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: "7.4"
           tools: none
@@ -523,8 +523,8 @@ jobs:
       ASSIST_WIDGET_PK: pk_live_landingstand01
       ASSIST_BOT_USERNAME: assist_stand_bot
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -597,7 +597,7 @@ jobs:
         working-directory: sites-landing
       - name: отчёты Lighthouse
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lighthouse-sites-landing
           path: sites-landing/.lighthouseci/reports
@@ -627,8 +627,8 @@ jobs:
       # Стенд: режим live (индексируемые хосты есть только у live).
       STAND_MODE: live
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -704,7 +704,7 @@ jobs:
         working-directory: publisher-site
       - name: журналы и отчёты
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publisher-site-reports
           path: |
@@ -748,8 +748,8 @@ jobs:
       WORK: ${{ github.workspace }}/.pub-e2e
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -787,7 +787,7 @@ jobs:
           WORK: ${{ github.workspace }}/.pub-e2e/reddit
       - name: протокол E2E и журналы
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: publisher-e2e
           include-hidden-files: true
@@ -804,8 +804,8 @@ jobs:
     if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -869,9 +869,9 @@ jobs:
       - name: unchanged application
         if: ${{ !contains(fromJSON(needs.changes.outputs.next_apps), matrix.app) }}
         run: echo "No changes since the last successful CI; checks reused by path selection." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         with:
           node-version-file: ".nvmrc"
@@ -969,8 +969,8 @@ jobs:
     if: needs.changes.outputs.live_login_relay == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -1008,8 +1008,8 @@ jobs:
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -1059,7 +1059,7 @@ jobs:
       group: assist-knowledge-sync
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Повторный запуск СТАРОГО прогона (Re-run в Actions) отправил бы
       # тенанту базу знаний того коммита и откатил бы свежую. Отправляем,
       # только если коммит прогона — текущий HEAD ветки по умолчанию.
@@ -1083,7 +1083,7 @@ jobs:
             echo "current=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Пропуск синхронизации знаний: прогон для $RUN_SHA, а HEAD $DEFAULT_BRANCH — $head (повторный запуск старого прогона не отправляет старую базу знаний; свежую отправит прогон HEAD)."
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.head.outputs.current == 'true'
         with:
           node-version-file: ".nvmrc"
@@ -1112,8 +1112,8 @@ jobs:
     name: репозиторий — юридические тексты
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
 
@@ -1181,10 +1181,10 @@ jobs:
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: ".nvmrc"
       - name: gitleaks (бинарник релиза, sha256 сверяется)
@@ -1247,7 +1247,7 @@ jobs:
           echo "находок в истории: $(jq length gitleaks-history.json)"
       - name: отчёт по истории
         if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.secrets_history }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gitleaks-history
           path: gitleaks-history.json
