@@ -74,6 +74,8 @@ describe('mock REST HTTP contract', () => {
       'command',
       'createRecord',
       'deleteRecord',
+      'updateRecord',
+      'transitionRecord',
       'reset',
     ] as const) {
       const requirement = Reflect.getMetadata(
@@ -137,6 +139,29 @@ describe('mock REST HTTP contract', () => {
       .get(path + '?entity=orders')
       .expect(200);
     expect(orders.body.items).toHaveLength(1);
+    const order = orders.body.items[0];
+    await request(app.getHttpServer())
+      .patch(path + '/' + order.id)
+      .send({
+        entityId: 'orders',
+        role: 'editor',
+        values: ['Changed', '5'],
+        expectedVersion: 1,
+      })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(path + '/' + order.id)
+      .send({
+        entityId: 'orders',
+        role: 'editor',
+        values: ['Stale', '5'],
+        expectedVersion: 1,
+      })
+      .expect(409);
+    await request(app.getHttpServer())
+      .post(path + '/' + order.id + '/transitions/unknown')
+      .send({ entityId: 'orders', role: 'admin', expectedVersion: 2 })
+      .expect(422);
     await request(app.getHttpServer())
       .get(path + '?entity=missing')
       .expect(400);

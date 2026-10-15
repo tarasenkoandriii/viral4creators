@@ -23,11 +23,35 @@ export interface StandContract {
     nextScreenId: string | null;
   }>;
   assumptions?: string[];
+  workflows?: Array<{
+    entityId: string;
+    stateField: string;
+    initial: string;
+    transitions: Array<{
+      id: string;
+      title: string;
+      from: string[];
+      to: string;
+      roles: Array<'editor' | 'admin'>;
+      conditions: Array<{
+        field: string;
+        equals: string;
+        related?: { entityId: string; viaField: string; matchField: string };
+      }>;
+      seal: boolean;
+      requireSeal: boolean;
+    }>;
+  }>;
 }
 export interface Stand {
   id: string;
   contract: StandContract;
-  records: Array<{ id: string; values: string[]; entityId?: string }>;
+  records: Array<{
+    id: string;
+    values: string[];
+    entityId?: string;
+    version?: number;
+  }>;
   revision: number;
 }
 export interface MockResult {

@@ -38,6 +38,7 @@ export interface GenerateRequest {
   temperature?: number;
   /** Ответ строго JSON (responseMimeType application/json). */
   json?: boolean;
+  jsonSchema?: Record<string, unknown>;
   timeoutMs?: number;
   /**
    * Э3-бис: модель вызова (lite-модель разметки, ASSIST_LITE_MODEL); не
@@ -132,6 +133,12 @@ export class GeminiText {
           maxOutputTokens: ceiling,
           temperature: req.temperature ?? 0.2,
           ...(req.json ? { responseMimeType: 'application/json' } : {}),
+          ...(req.jsonSchema
+            ? {
+                responseMimeType: 'application/json',
+                responseJsonSchema: req.jsonSchema,
+              }
+            : {}),
           abortSignal: abort.signal,
         },
       };

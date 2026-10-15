@@ -34,8 +34,12 @@ export function GeneratedStandPreview({
       scope: string;
       checks: Array<{ name: string; passed: boolean }>;
     } | null>(null);
+  const [editing, setEditing] = useState<Stand['records'][number] | null>(null);
   const screen = screens.find((s) => s.id === screenId),
     entity = entities.find((e) => e.id === screen?.entityId);
+  const workflow = stand.contract.workflows?.find(
+    (w) => w.entityId === entity?.id
+  );
   if (!screen || !entity)
     return <p role="alert">Контракт не содержит выбранный экран.</p>;
   const returned =
@@ -61,22 +65,37 @@ export function GeneratedStandPreview({
       setBusy(false);
     }
   }
-  async function command(method: string, id?: string) {
+  async function command(
+    method: string,
+    id?: string,
+    transitionId?: string,
+    expectedVersion?: number
+  ) {
     await run(async () => {
       const r = await api.command(siteId, stand.id, {
         method,
         role,
         scenario,
         entityId: entity!.id,
-        values: entity!.fields.map((_, i) => values[i] ?? ''),
+        values: entity!.fields.map(
+          (f, i) =>
+            values[i] ??
+            (workflow?.stateField === f.name ? workflow.initial : '')
+        ),
         query,
         id,
+        transitionId,
+        expectedVersion,
       });
       setResult(r);
       setRecords((await api.get(siteId, stand.id)).records);
-      if (r.status === 201 && screen!.nextScreenId) {
+      if (
+        (r.status === 201 || (method === 'PATCH' && r.status === 200)) &&
+        screen!.nextScreenId
+      ) {
         setScreenId(screen!.nextScreenId);
         setValues([]);
+        setEditing(null);
       }
     });
   }
@@ -96,6 +115,7 @@ export function GeneratedStandPreview({
               setResult(null);
               setValues([]);
               setQuery('');
+              setEditing(null);
             }}
           >
             {s.title}
@@ -136,7 +156,12 @@ export function GeneratedStandPreview({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void command('POST');
+            void command(
+              editing ? 'PATCH' : 'POST',
+              editing?.id,
+              undefined,
+              editing?.version ?? (editing ? 1 : undefined)
+            );
           }}
           className="space-y-2"
         >
@@ -148,7 +173,11 @@ export function GeneratedStandPreview({
                 <select
                   required={f.required}
                   className={inputClass}
-                  value={values[i] ?? ''}
+                  disabled={workflow?.stateField === f.name}
+                  value={
+                    values[i] ??
+                    (workflow?.stateField === f.name ? workflow.initial : '')
+                  }
                   onChange={(e) =>
                     setValues((v) =>
                       entity.fields.map((_, j) =>
@@ -182,7 +211,7 @@ export function GeneratedStandPreview({
             </label>
           ))}
           <Button type="submit" disabled={busy || !write}>
-            Сохранить {entity.title}
+            {editing ? 'Обновить' : 'Сохранить'} {entity.title}
           </Button>
         </form>
       ) : (
@@ -207,6 +236,54 @@ export function GeneratedStandPreview({
                   .join(' · ')}
                 <Button
                   variant="outline"
+                  disabled={
+                    busy ||
+                    !write ||
+                    !screens.some(
+                      (s) => s.entityId === entity.id && s.kind === 'form'
+                    )
+                  }
+                  onClick={() => {
+                    setEditing(r);
+                    setValues(r.values);
+                    setResult(null);
+                    setScreenId(
+                      screens.find(
+                        (s) => s.entityId === entity.id && s.kind === 'form'
+                      )!.id
+                    );
+                  }}
+                >
+                  Изменить
+                </Button>
+                {workflow?.transitions
+                  .filter((t) =>
+                    t.from.includes(
+                      r.values[
+                        entity.fields.findIndex(
+                          (f) => f.name === workflow.stateField
+                        )
+                      ]
+                    )
+                  )
+                  .map((t) => (
+                    <Button
+                      key={t.id}
+                      variant="outline"
+                      disabled={
+                        busy ||
+                        !write ||
+                        !t.roles.includes(role as 'editor' | 'admin')
+                      }
+                      onClick={() =>
+                        command('TRANSITION', r.id, t.id, r.version ?? 1)
+                      }
+                    >
+                      {t.title}
+                    </Button>
+                  ))}
+                <Button
+                  variant="outline"
                   disabled={busy || !write}
                   onClick={() => {
                     if (window.confirm('Удалить синтетическую запись?'))
@@ -227,6 +304,7 @@ export function GeneratedStandPreview({
           onClick={() => {
             setScreenId(screen.nextScreenId!);
             setValues([]);
+            setEditing(null);
           }}
         >
           Перейти: {screens.find((s) => s.id === screen.nextScreenId)?.title}
@@ -324,7 +402,9 @@ export function GeneratedStandPreview({
         <p>
           REST /qa/sites/{siteId}/stands/{stand.id}/mock/records?entity=
           {entity.id}. Для POST передайте entityId, role, values; GET/DELETE
-          используют query entity.
+          используют query entity. PATCH records/:recordId и POST
+          records/:recordId/transitions/:transitionId требуют entityId, role,
+          expectedVersion. Правила и переходы включены в экспорт OpenAPI.
         </p>
       </details>
     </Card>

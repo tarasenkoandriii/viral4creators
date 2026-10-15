@@ -46,6 +46,10 @@ describe('GeminiText', () => {
       user: 'USER',
       maxOutputTokens: 800,
       json: true,
+      jsonSchema: {
+        type: 'object',
+        properties: { answer: { type: 'string' } },
+      },
     });
     expect(r).toMatchObject({
       text: '{"answer":"ok"}',
@@ -59,6 +63,10 @@ describe('GeminiText', () => {
       // Видимый ответ 800 + запас на размышления (тратят тот же потолок).
       maxOutputTokens: 800 + GEMINI_THINKING_HEADROOM,
       responseMimeType: 'application/json',
+      responseJsonSchema: {
+        type: 'object',
+        properties: { answer: { type: 'string' } },
+      },
       temperature: 0.2,
     });
     expect(cfg.abortSignal).toBeInstanceOf(AbortSignal);

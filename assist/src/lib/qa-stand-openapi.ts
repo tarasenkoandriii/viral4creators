@@ -32,6 +32,7 @@ export function standOpenApi(siteId: string, stand: Stand) {
     required: ['id', 'values'],
     properties: {
       id: { type: 'string' },
+      version: { type: 'integer', minimum: 1 },
       values: { type: 'array', items: { type: 'string', maxLength: 500 } },
       ...(entityIds.length ? { entityId: entitySchema } : {}),
     },
@@ -59,6 +60,7 @@ export function standOpenApi(siteId: string, stand: Stand) {
             })),
           },
         ],
+    'x-stand-workflows': stand.contract.workflows ?? [],
     paths: {
       [base]: {
         get: {
@@ -123,6 +125,38 @@ export function standOpenApi(siteId: string, stand: Stand) {
         },
       },
       [`${base}/{recordId}`]: {
+        patch: {
+          summary:
+            'Изменить запись; workflow сбрасывается в initial, согласование снимается',
+          parameters: [
+            {
+              name: 'recordId',
+              in: 'path',
+              required: true,
+              schema: { type: 'string' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['entityId', 'role', 'values', 'expectedVersion'],
+              properties: {
+                entityId: entitySchema,
+                role: { type: 'string', enum: ['editor', 'admin'] },
+                values: {
+                  type: 'array',
+                  items: { type: 'string', maxLength: 500 },
+                },
+                expectedVersion: { type: 'integer', minimum: 1 },
+              },
+            }),
+          },
+          responses: {
+            '200': { description: 'Обновлённая запись', content: json(record) },
+            ...errors,
+          },
+        },
         delete: {
           summary:
             'Удалить запись (права QA на запись, демонстрационная роль admin)',
@@ -148,6 +182,37 @@ export function standOpenApi(siteId: string, stand: Stand) {
                 required: ['deleted'],
                 properties: { deleted: { type: 'string' } },
               }),
+            },
+            ...errors,
+          },
+        },
+      },
+      [`${base}/{recordId}/transitions/{transitionId}`]: {
+        post: {
+          summary:
+            'Выполнить переход с проверкой условий, роли и согласованной версии',
+          parameters: ['recordId', 'transitionId'].map((name) => ({
+            name,
+            in: 'path',
+            required: true,
+            schema: { type: 'string' },
+          })),
+          requestBody: {
+            required: true,
+            content: json({
+              type: 'object',
+              required: ['entityId', 'role', 'expectedVersion'],
+              properties: {
+                entityId: entitySchema,
+                role: { type: 'string', enum: ['editor', 'admin'] },
+                expectedVersion: { type: 'integer', minimum: 1 },
+              },
+            }),
+          },
+          responses: {
+            '200': {
+              description: 'Результат перехода (синтетические значения)',
+              content: json(record),
             },
             ...errors,
           },

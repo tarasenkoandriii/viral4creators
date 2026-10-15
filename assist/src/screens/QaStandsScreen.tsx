@@ -8,6 +8,7 @@ import { useAssist } from '../lib/assist-context';
 import { navigate } from '../lib/router';
 import { qaAccess } from '../lib/qa-editor';
 import type { Stand, StandContract, MockResult } from '../lib/qa-stands-api';
+import redditMock from '../lib/qa-reddit-mock.json';
 export function QaStandsButton({ siteId }: { siteId: string }) {
   const { account } = useKit();
   return qaAccess(account.me).read ? (
@@ -183,6 +184,17 @@ function Stands({ siteId }: { siteId: string }) {
           >
             Подготовить базовый шаблон
           </Button>
+          <Button
+            disabled={busy || voiceBusy}
+            variant="outline"
+            onClick={() => {
+              setPlan(redditMock as StandContract);
+              setRequestId(crypto.randomUUID());
+              setError('');
+            }}
+          >
+            Подготовить Reddit workflow-мок
+          </Button>
           {plan && (
             <div>
               {plan.template === 'generated' && (
@@ -191,6 +203,17 @@ function Stands({ siteId }: { siteId: string }) {
                     Сущности: {plan.entities?.map((e) => e.title).join(', ')}
                   </p>
                   <p>Экраны: {plan.screens?.map((e) => e.title).join(', ')}</p>
+                  {!!plan.workflows?.length && (
+                    <p>
+                      Правила и переходы:{' '}
+                      {plan.workflows
+                        .map((w) =>
+                          w.transitions.map((t) => t.title).join(', ')
+                        )
+                        .join('; ')}
+                      . Изменение записи сбрасывает согласование.
+                    </p>
+                  )}
                   {plan.assumptions?.map((a, i) => (
                     <p key={i}>{a}</p>
                   ))}

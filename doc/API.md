@@ -2239,10 +2239,12 @@ React 19 (landing, sites-landing, admin, marketplace — их маршруты �
 - DELETE `/:id` — удаление; POST `/:id/reset` — базовое состояние. QA_WRITE.
 - POST `/:id/check` — QA_READ, проверки mock engine на изолированных данных; не проверяет браузерную вёрстку и не создаёт QA-прогон.
 - GET `/:id/mock` — QA_READ, query `entity/q/scenario`; всегда выполняет только GET, ответ envelope `{status,data,revision}`. Смоделированные ошибки находятся в status.
-- POST `/:id/mock` — QA_WRITE, envelope для команд GET/POST/DELETE. Для чтения из UI предпочтителен отдельный GET; mutation сохраняет CAS по revision.
+- POST `/:id/mock` — QA_WRITE, envelope для команд GET/POST/DELETE и (generated/v2) PATCH/TRANSITION. Для чтения из UI предпочтителен отдельный GET; mutation сохраняет CAS по revision.
 - GET `/:id/mock/records` — QA_READ, query `entity/q/scenario`, список `{items}` и настоящие HTTP-статусы.
 - POST `/:id/mock/records` — QA_WRITE, `{entityId,role,values[],scenario}`, успех 201 с записью.
 - DELETE `/:id/mock/records/:recordId` — QA_WRITE, query `entity/role`, успех 200 с `{deleted}`.
+- PATCH `/:id/mock/records/:recordId` — QA_WRITE, v2, `{entityId,role,values,expectedVersion}`; редактирование сбрасывает workflow/согласование.
+- POST `/:id/mock/records/:recordId/transitions/:transitionId` — QA_WRITE, v2, `{entityId,role,expectedVersion}`; проверяет состояние, роль, условия и digest согласования; 409 при блокировке/устаревшей версии.
 
 Для generated/v2 выбор сущности обязателен; records/v1 его не требует. Значения values[] — строки в порядке полей контракта. Mock роли viewer/editor/admin, сценарии normal/empty/429/500. DELETE REST не принимает scenario. Основные ошибки: 400, 403, 404, 409, 422; ошибки провайдера/бюджета описаны в руководстве. Экспорт OpenAPI 3.0.3 строится в клиенте и описывает REST records; отдельного серверного маршрута OpenAPI нет. Токены и записи в экспорт не включены.
 

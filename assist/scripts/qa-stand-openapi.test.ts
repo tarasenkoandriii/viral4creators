@@ -41,8 +41,10 @@ assert.ok(
   )
 );
 assert.equal(
-  spec.paths[path].post!.requestBody.content['application/json'].schema
-    .properties.values.items.type,
+  (
+    spec.paths[path].post!.requestBody.content['application/json'].schema
+      .properties as { values: { items: { type: string } } }
+  ).values.items.type,
   'string'
 );
 assert.deepEqual(
@@ -52,6 +54,8 @@ assert.deepEqual(
 );
 assert.ok(!JSON.stringify(spec).includes('private@example.com'));
 assert.ok(!JSON.stringify(spec).includes('secret-record'));
+assert.ok(spec.paths[`${path}/{recordId}`].patch);
+assert.ok(spec.paths[`${path}/{recordId}/transitions/{transitionId}`].post);
 const template = standOpenApi('site', {
   ...stand,
   contract: {

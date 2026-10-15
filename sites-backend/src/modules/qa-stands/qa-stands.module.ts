@@ -16,6 +16,7 @@ import {
   Module,
   NotFoundException,
   Param,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -287,6 +288,51 @@ export class QaStandsController {
       entityId,
       role: role || 'admin',
       id: recordId,
+    });
+    res.status(result.status);
+    return result.data;
+  }
+  @Patch(':id/mock/records/:recordId')
+  @RequireProductRoles(QA_WRITE)
+  async updateRecord(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Param('recordId') recordId: string,
+    @Body()
+    body: {
+      entityId?: string;
+      role?: string;
+      values?: unknown;
+      expectedVersion?: number;
+    },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.stands.command(m, site, id, {
+      ...body,
+      method: 'PATCH',
+      id: recordId,
+    });
+    res.status(result.status);
+    return result.data;
+  }
+  @Post(':id/mock/records/:recordId/transitions/:transitionId')
+  @RequireProductRoles(QA_WRITE)
+  async transitionRecord(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('id') id: string,
+    @Param('recordId') recordId: string,
+    @Param('transitionId') transitionId: string,
+    @Body()
+    body: { entityId?: string; role?: string; expectedVersion?: number },
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.stands.command(m, site, id, {
+      ...body,
+      method: 'TRANSITION',
+      id: recordId,
+      transitionId,
     });
     res.status(result.status);
     return result.data;

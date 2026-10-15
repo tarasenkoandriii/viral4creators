@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parseWorkflows, type MockWorkflow } from './mock-workflow';
 export interface MockField {
   name: string;
   type: 'text' | 'number' | 'email' | 'select';
@@ -26,6 +27,7 @@ export interface GeneratedContract {
   entities: MockEntity[];
   screens: MockScreen[];
   assumptions: string[];
+  workflows?: MockWorkflow[];
 }
 const bad = () =>
   new BadRequestException(
@@ -110,5 +112,8 @@ export function parseGenerated(
     entities,
     screens,
     assumptions: o.assumptions.map((x) => text(x, 300)),
+    ...(o.workflows !== undefined
+      ? { workflows: parseWorkflows(o.workflows, entities) }
+      : {}),
   };
 }

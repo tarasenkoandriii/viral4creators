@@ -1,0 +1,291 @@
+{
+  "title": "Reddit — правила и согласование · mock",
+  "description": "Синтетический Reddit manual workflow: проверка правил, QA, согласование и выдача утверждённого текста. Без сети и публикаций.",
+  "template": "generated",
+  "version": 2,
+  "fields": [
+    "Название",
+    "Правила",
+    "Проверка",
+    "Продвижение"
+  ],
+  "entities": [
+    {
+      "id": "communities",
+      "title": "Сообщества",
+      "fields": [
+        {
+          "name": "Название",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Правила",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Проверка",
+          "type": "select",
+          "required": true,
+          "options": [
+            "unreviewed",
+            "reviewed"
+          ]
+        },
+        {
+          "name": "Продвижение",
+          "type": "select",
+          "required": true,
+          "options": [
+            "unknown",
+            "allowed",
+            "prohibited"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "drafts",
+      "title": "Черновики",
+      "fields": [
+        {
+          "name": "Заголовок",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Текст",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Сообщество",
+          "type": "text",
+          "required": true,
+          "options": []
+        },
+        {
+          "name": "Статус",
+          "type": "select",
+          "required": true,
+          "options": [
+            "draft",
+            "approved",
+            "copied"
+          ]
+        },
+        {
+          "name": "Редактура",
+          "type": "select",
+          "required": true,
+          "options": [
+            "pending",
+            "pass"
+          ]
+        },
+        {
+          "name": "Техническая проверка",
+          "type": "select",
+          "required": true,
+          "options": [
+            "pending",
+            "pass"
+          ]
+        },
+        {
+          "name": "Оффер",
+          "type": "select",
+          "required": true,
+          "options": [
+            "missing",
+            "active"
+          ]
+        }
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "id": "overview",
+      "title": "Обзор",
+      "kind": "dashboard",
+      "entityId": "drafts",
+      "nextScreenId": null
+    },
+    {
+      "id": "communities-list",
+      "title": "Сообщества",
+      "kind": "list",
+      "entityId": "communities",
+      "nextScreenId": "communities-form"
+    },
+    {
+      "id": "communities-form",
+      "title": "Добавить сообщество",
+      "kind": "form",
+      "entityId": "communities",
+      "nextScreenId": "communities-list"
+    },
+    {
+      "id": "drafts-list",
+      "title": "Черновики",
+      "kind": "list",
+      "entityId": "drafts",
+      "nextScreenId": "drafts-form"
+    },
+    {
+      "id": "drafts-form",
+      "title": "Добавить черновик",
+      "kind": "form",
+      "entityId": "drafts",
+      "nextScreenId": "drafts-list"
+    }
+  ],
+  "assumptions": [
+    "Все правила, проверки и роли синтетические; они не подтверждают готовность production Reddit.",
+    "Нет запросов к Reddit, OAuth и публикаций. Копирование в моке только выдаёт значения согласованной версии.",
+    "Изменение записи сбрасывает её workflow; изменение связанного сообщества делает согласование черновика устаревшим."
+  ],
+  "workflows": [
+    {
+      "entityId": "communities",
+      "stateField": "Проверка",
+      "initial": "unreviewed",
+      "transitions": [
+        {
+          "id": "review",
+          "title": "Проверить правила",
+          "from": [
+            "unreviewed"
+          ],
+          "to": "reviewed",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        }
+      ]
+    },
+    {
+      "entityId": "drafts",
+      "stateField": "Статус",
+      "initial": "draft",
+      "transitions": [
+        {
+          "id": "approve",
+          "title": "Согласовать",
+          "from": [
+            "draft"
+          ],
+          "to": "approved",
+          "roles": [
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "Редактура",
+              "equals": "pass"
+            },
+            {
+              "field": "Техническая проверка",
+              "equals": "pass"
+            },
+            {
+              "field": "Оффер",
+              "equals": "active"
+            },
+            {
+              "field": "Проверка",
+              "equals": "reviewed",
+              "related": {
+                "entityId": "communities",
+                "viaField": "Сообщество",
+                "matchField": "Название"
+              }
+            },
+            {
+              "field": "Продвижение",
+              "equals": "allowed",
+              "related": {
+                "entityId": "communities",
+                "viaField": "Сообщество",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": true,
+          "requireSeal": false
+        },
+        {
+          "id": "copy",
+          "title": "Получить утверждённый текст",
+          "from": [
+            "approved"
+          ],
+          "to": "copied",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [
+            {
+              "field": "Редактура",
+              "equals": "pass"
+            },
+            {
+              "field": "Техническая проверка",
+              "equals": "pass"
+            },
+            {
+              "field": "Оффер",
+              "equals": "active"
+            },
+            {
+              "field": "Проверка",
+              "equals": "reviewed",
+              "related": {
+                "entityId": "communities",
+                "viaField": "Сообщество",
+                "matchField": "Название"
+              }
+            },
+            {
+              "field": "Продвижение",
+              "equals": "allowed",
+              "related": {
+                "entityId": "communities",
+                "viaField": "Сообщество",
+                "matchField": "Название"
+              }
+            }
+          ],
+          "seal": false,
+          "requireSeal": true
+        },
+        {
+          "id": "revise",
+          "title": "Вернуть в черновик",
+          "from": [
+            "approved",
+            "copied"
+          ],
+          "to": "draft",
+          "roles": [
+            "editor",
+            "admin"
+          ],
+          "conditions": [],
+          "seal": false,
+          "requireSeal": false
+        }
+      ]
+    }
+  ]
+}

@@ -57,6 +57,9 @@ describe('stand providers accounting and boundaries', () => {
       description: 'Кабинет заказов и клиентов',
     });
     expect(c.template).toBe('generated');
+    expect(f.model.generate.mock.calls[0][0]).toHaveProperty(
+      'jsonSchema.properties.entities',
+    );
     expect(f.usage.record.mock.calls[0][1].operation).toBe('qa-stand-plan');
     expect(f.budget.adjust).toHaveBeenCalled();
   });
