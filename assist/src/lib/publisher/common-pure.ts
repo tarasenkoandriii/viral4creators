@@ -136,11 +136,40 @@ export function opKeyAfter(
     : null;
 }
 
-/** Повтор с тем же `opKey` безопасен: сеть, таймаут, `PUB_BUSY`. */
+/**
+ * Статусы шлюза: ответа приложения не было (502/503/504 платформы, 504
+ * `UPSTREAM_TIMEOUT` прокси Админки) — исход запроса неизвестен.
+ */
+const GATEWAY_STATUSES: readonly number[] = [502, 503, 504];
+
+/**
+ * 502/503/504 — ответ шлюза, а не приложения: исход неизвестен. Прикладной
+ * код `PUB_*` (кроме `PUB_BUSY`) при этих статусах — явный ответ сервера
+ * (`PUB_AI_UNAVAILABLE` — отказ модели, сохранённый под этим `opKey`;
+ * `PUB_CONTACT_KEY_MISSING`, `PUB_FORM_CLOSED` — нужна настройка): повтор с
+ * тем же ключом воспроизведёт тот же отказ.
+ */
+export function isGatewayFailure(e: ApiError): boolean {
+  return (
+    GATEWAY_STATUSES.includes(e.status) &&
+    !(e.code.startsWith('PUB_') && e.code !== 'PUB_BUSY')
+  );
+}
+
+/**
+ * Повтор с тем же `opKey` безопасен: сеть, таймаут, `PUB_BUSY`, ответ шлюза
+ * 502/503/504 без прикладного кода и `UPSTREAM_TIMEOUT` (Р-RD-AUD-7): если
+ * сервер операцию дописал, повтор вернёт её сохранённый ответ, а не создаст
+ * дубль; если нет — выполнит её (ошибка операции ключ не занимает).
+ */
 export function isRetryable(e: unknown): boolean {
   return (
     e instanceof ApiError &&
-    (e.code === 'network' || e.code === 'PUB_BUSY' || e.status === 0)
+    (e.code === 'network' ||
+      e.code === 'PUB_BUSY' ||
+      e.code === 'UPSTREAM_TIMEOUT' ||
+      e.status === 0 ||
+      isGatewayFailure(e))
   );
 }
 

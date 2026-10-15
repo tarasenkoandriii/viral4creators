@@ -178,6 +178,13 @@ export interface ContentPort {
     publicationId: string,
     stage: 'test' | 'live',
     at: Date,
+    /**
+     * Отчёт человека о ручной публикации Reddit (`user_reported`, Р-RD-AUD-5):
+     * факт, а не выпуск — без повторных проверок выпуска (согласование,
+     * hash, блокеры, задачи изменения); `approvalId` — согласование версии
+     * (любого статуса) для аудита.
+     */
+    fact?: { approvalId: string },
   ): Promise<void>;
   markWithdrawn(
     tx: PubTx,

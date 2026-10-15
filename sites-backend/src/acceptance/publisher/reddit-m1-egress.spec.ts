@@ -3,7 +3,7 @@
  * adapted.md §M1.0, §8.3, §9; A16). Runtime-инспекция сети: `fetch`,
  * `http.request/get`, `https.request/get` подменены БРОСАЮЩИМИ функциями,
  * а `net.Socket#connect` и `dns.lookup` — записывающими (база тестов ходит
- * через них на localhost). Затем полный сценарий M1 по ВСЕМ 25 маршрутам
+ * через них на localhost). Затем полный сценарий M1 по ВСЕМ 26 маршрутам
  * M1 `REDDIT_ROUTES` (M2 — `reddit-m2-egress.spec.ts`) (проект → сообщество → снимок → review → возможности →
  * score → переходы → запросы → списки и CSV) и импорт источника по URL
  * Reddit (`reddit_manual_only` до сети). Ожидание: ни одного вызова HTTP-
@@ -318,11 +318,20 @@ ciDescribe(
         'listOpportunities',
         (await ed.get(`${P}/opportunities`, { format: 'csv' })).status,
       );
-      mark(
+      const p3 = mark(
         'archiveProject',
-        ok(
+        ok<{ revision: number }>(
           await ed.post(`${P}/projects/${project.id}/archive`, {
             expectedRevision: p2.revision,
+          }),
+          200,
+        ),
+      );
+      mark(
+        'restoreProject',
+        ok(
+          await ed.post(`${P}/projects/${project.id}/restore`, {
+            expectedRevision: p3.revision,
           }),
           200,
         ),

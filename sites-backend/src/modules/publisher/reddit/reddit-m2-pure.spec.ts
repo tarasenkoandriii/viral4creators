@@ -298,7 +298,21 @@ describe('checks.ts — таблица §M2.4 построчно', () => {
     expect(codes(input({ body: quote, claimMap: [] })).b).toEqual([
       'reddit_fake_testimonial',
     ]);
-    expect(codes(input({ body: quote })).b).toEqual([]);
+    // Аудит m2-5: цитату снимает только пункт claimMap О НЕЙ (с источником),
+    // а не любой пункт с источником.
+    expect(codes(input({ body: quote })).b).toEqual([
+      'reddit_fake_testimonial',
+    ]);
+    expect(
+      codes(
+        input({
+          body: quote,
+          claimMap: [
+            { text: 'A customer said it saved hours', sourceIds: ['s1'] },
+          ],
+        }),
+      ).b,
+    ).toEqual([]);
     expect(firstPersonMarkers('They tried several tools.')).toEqual([]);
     expect(hasCustomerQuote('клієнт сказав: «дякую»')).toBe(true);
   });
@@ -383,7 +397,7 @@ describe('checks.ts — таблица §M2.4 построчно', () => {
       REDDIT_CHECK_BLOCKERS.indexOf(b.code as never),
     );
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(REDDIT_CHECK_WARNINGS).toHaveLength(10);
+    expect(REDDIT_CHECK_WARNINGS).toHaveLength(13);
     expect(JSON.stringify(r)).not.toMatch(
       /відповідає правилам Reddit|соответствует правилам/,
     );
@@ -595,14 +609,14 @@ describe('hash версии и meta Reddit', () => {
 });
 
 describe('URL отчёта о публикации, хосты Reddit, правила брифа', () => {
-  it('канон: пост — канон треда M1 (без query/fragment); комментарий — /comment/<cid>; профиль и не-Reddit — отказ', () => {
+  it('канон: пост — …/comments/<id> без slug, query и fragment (аудит m2-12); комментарий — /comment/<cid>; профиль и не-Reddit — отказ', () => {
     expect(
       normalizeReportedUrl(
         'https://old.reddit.com/r/SmallBusiness/comments/abc123/slug/?utm=1#x',
       ),
     ).toEqual({
       ok: {
-        url: 'https://www.reddit.com/r/smallbusiness/comments/abc123/slug',
+        url: 'https://www.reddit.com/r/smallbusiness/comments/abc123',
         subreddit: 'smallbusiness',
         threadKey: 'abc123',
         commentId: null,

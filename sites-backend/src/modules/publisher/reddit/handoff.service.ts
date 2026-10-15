@@ -9,6 +9,15 @@
  * `reportKind='user_reported'`, `verifyStatus='not_checked'` навсегда,
  * стадия по общему правилу; материал отмечает `ContentPort.markPublished`.
  * Аудит — `report_publication`.
+ *
+ * Аудит 15.10.2026 (зона m2, Р-RD-AUD-5): отчёт — факт о версии, которую
+ * КОПИРОВАЛИ (аудит `copy` с `versionId` утверждённой версии; нет — 409
+ * `not_copied`); действующее согласование и блокеры не проверяются (каскад
+ * правил после копирования не мешает отметить уже опубликованный текст);
+ * `postedAt` не раньше первого копирования этой версии (допуск 1 мин) —
+ * иначе 400 `postedAt: before_copy` (m2-10). Пост — канон без slug, прежние
+ * строки со slug сопоставляются по ключу поста; ссылка «Поделиться» —
+ * 400 `url: share_link` (m2-12). Материал блокируется `FOR UPDATE`.
  */
 import { Injectable } from '@nestjs/common';
 import type { ProductCtx } from '../contracts/common';
@@ -19,7 +28,11 @@ import { PublicationsService } from '../distribution/publications.service';
 import { PubError, validationError } from '../core/errors';
 import type { PubTx } from '../core/ports';
 import { redditPublicationViews } from './brief-views';
-import { normalizeReportedUrl, normalizeThreadUrl } from './normalize';
+import {
+  normalizeReportedUrl,
+  normalizeThreadUrl,
+  reportedPostUrlForms,
+} from './normalize';
 import { onlyFields, type OpOut } from './projects.service';
 import { briefState } from './reddit-port';
 
@@ -50,6 +63,8 @@ export class RedditHandoffService {
     is.throwIfAny();
     if (postedAt && postedAt.getTime() > step.now.getTime() + FUTURE_SLACK_MS)
       throw validationError([{ field: 'postedAt', code: 'future' }]);
+    // Отчёты по материалу сериализуются с копированием и снятием с плана.
+    await tx.$queryRaw`SELECT "id" FROM "sites"."pub_contents" WHERE "id" = ${contentId} AND "productId" = ${product.id} FOR UPDATE`;
     const c = await tx.pubContent.findFirst({
       where: { id: contentId, productId: product.id },
       select: {
@@ -75,6 +90,29 @@ export class RedditHandoffService {
         reason: 'not_copied',
         from: c.status,
       });
+    // Р-RD-AUD-5: версию копировали; дата — не раньше первого копирования.
+    const copies = await tx.pubAuditEvent.findMany({
+      where: {
+        productId: product.id,
+        objectType: 'content',
+        objectId: c.id,
+        action: 'copy',
+        meta: { path: ['versionId'], equals: c.approvedVersionId },
+      },
+      orderBy: { occurredAt: 'asc' },
+      take: 1,
+      select: { occurredAt: true },
+    });
+    if (!copies.length)
+      throw new PubError('PUB_TRANSITION_INVALID', {
+        reason: 'not_copied',
+        from: c.status,
+      });
+    if (
+      postedAt &&
+      postedAt.getTime() < copies[0].occurredAt.getTime() - PAST_SLACK_MS
+    )
+      throw validationError([{ field: 'postedAt', code: 'before_copy' }]);
     const st = await briefState(tx, product.id, c.redditBriefId);
     const n = normalizeReportedUrl(urlRaw);
     if ('issue' in n) throw validationError([{ field: 'url', code: n.issue }]);
@@ -102,6 +140,7 @@ export class RedditHandoffService {
         finalUrl: u.url,
         publishedAt: postedAt!,
         opKey,
+        ...(u.commentId ? {} : { postForms: reportedPostUrlForms(u.url) }),
       },
     );
     const row = await tx.pubPublication.findFirstOrThrow({
@@ -111,7 +150,6 @@ export class RedditHandoffService {
     return {
       body: view,
       audit: [
-        ...out.audit,
         {
           objectType: 'publication',
           objectId: row.id,
@@ -126,6 +164,8 @@ export class RedditHandoffService {
             comment: !!u.commentId,
           },
         },
+        // m2-9: прежняя публикация того же URL — `replaced` (после отчёта).
+        ...out.audit,
       ],
     };
   }

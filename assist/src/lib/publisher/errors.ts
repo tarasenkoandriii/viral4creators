@@ -12,7 +12,7 @@
 
 import { ApiError } from '../../kit/envelope';
 import type { PublisherDict } from '../../i18n/publisher-ru';
-import { fieldIssues } from './common-pure';
+import { fieldIssues, isRetryable } from './common-pure';
 import { fmtText } from './view';
 
 export const PUB_ERROR_CODES = [
@@ -72,7 +72,7 @@ export interface PubErrorView {
   lines: string[];
   /** 409 `PUB_CONFLICT`: показать «перезагрузить», не перезаписывать. */
   conflict: boolean;
-  /** Сеть/`PUB_BUSY`: повтор тем же `opKey` безопасен. */
+  /** `isRetryable`: сеть, `PUB_BUSY`, 502–504 — повтор тем же `opKey`. */
   retryable: boolean;
   /** AI недоступен/выключен: экран показывает ручной путь. */
   manualPath: boolean;
@@ -262,7 +262,7 @@ export function describePubError(e: unknown, t: PublisherDict): PubErrorView {
     title,
     lines,
     conflict: code === 'PUB_CONFLICT' && !ruleConflict,
-    retryable: code === 'PUB_BUSY' || code === 'network' || e.status === 0,
+    retryable: isRetryable(e),
     manualPath: MANUAL.has(code),
   };
 }

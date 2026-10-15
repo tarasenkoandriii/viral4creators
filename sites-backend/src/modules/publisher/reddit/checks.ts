@@ -43,6 +43,26 @@
  *    `reddit_personal_experience`;
  *  - контакт — правило Reddit-текста (`redditContact`): `@scope/pkg`,
  *    `pkg@1.2.3`, `git@host:repo` — не контакт.
+ *
+ * Аудит m2 15.10.2026 (`markers@4`, Р-RD-AUD-m2-*):
+ *  - голый домен, метка которого — бренд брифа (`acme.io`, `docs.acme.io`),
+ *    — ссылка (BLOCK там, где ссылки нельзя), а не `reddit_link_suspect`;
+ *    домен, совпадающий с брендом целиком (бренд «Acme.io»), — WARN;
+ *  - социальное доказательство (число пользователей/клиентов, оценка,
+ *    награда, «тысячи…», пересказ чужой похвалы бренду) — WARN
+ *    `reddit_social_proof`;
+ *  - цитата «клиента/пользователя/рецензента» (оба порядка, слова целиком,
+ *    кавычки без апострофа): с похвалой/брендом/числом — BLOCK
+ *    `reddit_fake_testimonial`, техническая — WARN
+ *    `reddit_testimonial_unclear`; снимает её только пункт claimMap с
+ *    разрешённым источником О ЭТОЙ цитате;
+ *  - число «из брифа» — только из тезисов с источником, цели, аудитории,
+ *    оффера и контекста; число, которое есть в выдержке треда
+ *    (`threadTexts`), из брифа не засчитывается (BLOCK как без пункта);
+ *  - число пункта claimMap, которого нет во фрагментах его источников, —
+ *    WARN `reddit_claim_source_mismatch`;
+ *  - «we use Acme ourselves/internally» у founder/employee/agency — WARN
+ *    `reddit_personal_experience`, а не BLOCK.
  */
 import type {
   QaBlocker,
@@ -55,12 +75,14 @@ import {
   DUPLICATE_JACCARD,
   containsPhrase,
   disclosureIssue,
+  brandIn,
+  customerQuotes,
   guaranteesIn,
-  hasCustomerQuote,
   hasPromise,
   jaccard,
   linkFindings,
   normText,
+  numberValuesIn,
   offensiveWords,
   personalExperience,
   redditContact,
@@ -68,6 +90,8 @@ import {
   sameNumber,
   sameStatement,
   sentencesOf,
+  socialProofIn,
+  weakBrand,
   wordSet,
   type ResultNumber,
 } from './markers';
@@ -109,6 +133,9 @@ export const REDDIT_CHECK_WARNINGS = [
   'reddit_claim_from_brief',
   'reddit_guarantee',
   'reddit_personal_experience',
+  'reddit_social_proof',
+  'reddit_testimonial_unclear',
+  'reddit_claim_source_mismatch',
 ] as const;
 export type RedditCheckWarning = (typeof REDDIT_CHECK_WARNINGS)[number];
 
@@ -121,6 +148,8 @@ export interface RedditClaim {
 export interface ClaimSourceState {
   usage: string;
   origin: string;
+  /** Текст источника (`pub_sources.fragment`): сверка чисел пункта (m2-7). */
+  fragment?: string | null;
 }
 
 export interface RedditCheckInput {
@@ -146,6 +175,11 @@ export interface RedditCheckInput {
    * (раунд 2, Р-RD-78; раньше — допуск).
    */
   contextTexts: string[];
+  /**
+   * Выдержка треда (comment): число, которое есть здесь, — слова чужого
+   * треда, «числом из брифа» не считается (аудит m2-6).
+   */
+  threadTexts?: string[];
   /** Текущий снимок сообщества (null — правил нет). */
   snapshot:
     (PolicySnapshot & { id: string; flairRequired: boolean | null }) | null;
@@ -207,8 +241,20 @@ export function redditChecks(i: RedditCheckInput): RedditCheckResult {
   const warn = (code: RedditCheckWarning, params?: QaFindingParams) =>
     put(warnings, code, params);
   const text = [i.title ?? '', i.body].join('\n');
+  const brand = i.brief.brand;
   const found = linkFindings(text);
-  const linkList = found.links;
+  // Аудит m2-3: голый домен с меткой-брендом (`acme.io`) — ссылка на свой
+  // продукт; домен, равный бренду целиком (бренд «Acme.io»), — WARN.
+  const brandHost = (h: string) =>
+    !!brand &&
+    !weakBrand(brand) &&
+    normText(h).trim() !== normText(brand).trim() &&
+    h
+      .split('.')
+      .slice(0, -1)
+      .some((label) => brandIn(label, brand));
+  const linkList = [...found.links, ...found.suspect.filter(brandHost)];
+  const suspect = found.suspect.filter((h) => !brandHost(h));
   const links = linkList.length > 0;
 
   // Правила: гейт по текущему снимку и снимок версии.
@@ -229,8 +275,8 @@ export function redditChecks(i: RedditCheckInput): RedditCheckResult {
     !i.brief.linksAllowed ||
     !i.snapshot ||
     i.snapshot.linksPolicy !== 'allowed';
-  if (found.suspect.length && linksClosed)
-    warn('reddit_link_suspect', { found: found.suspect });
+  if (suspect.length && linksClosed)
+    warn('reddit_link_suspect', { found: suspect });
 
   // Раскрытие аффилированности (A08, Р-RD-65, Р-RD-75): роль без
   // отрицания и бренд целым словом в первых 300 знаках видимого текста.
@@ -274,16 +320,28 @@ export function redditChecks(i: RedditCheckInput): RedditCheckResult {
         ok = false;
       }
     }
-    if (ok) supported.push(c);
+    if (!ok) continue;
+    supported.push(c);
+    // Аудит m2-7: число пункта должно быть в тексте его источников.
+    const nums = resultNumbersIn(c.text);
+    if (nums.length) {
+      const inSources = c.sourceIds.flatMap((id) =>
+        numberValuesIn(i.sources.get(id)?.fragment ?? ''),
+      );
+      if (nums.some((n) => !inSources.includes(n.value)))
+        warn('reddit_claim_source_mismatch', { claims: [k] });
+    }
   }
   // Числа результата и гарантии ТЕЛА (Р-RD-67, Р-RD-78, Р-RD-80): число —
   // только с пунктом claimMap (разрешённый источник) о ТОМ ЖЕ утверждении;
   // только из контекста брифа/оффера — WARN; гарантия — WARN, вместе с
   // числом результата — BLOCK.
   const claimNums = supported.map((c) => resultNumbersIn(c.text));
-  const contextNums = i.contextTexts.flatMap((t) => resultNumbersIn(t));
+  const threadNums = (i.threadTexts ?? []).flatMap((t) => resultNumbersIn(t));
+  const contextNums = i.contextTexts
+    .flatMap((t) => resultNumbersIn(t))
+    .filter((n) => !threadNums.some((x) => sameNumber(x, n)));
   const claimWords = supported.map((c) => wordSet(c.text));
-  const brand = i.brief.brand;
   const unverified: string[] = [];
   const fromBrief: string[] = [];
   const guarantees: string[] = [];
@@ -323,17 +381,33 @@ export function redditChecks(i: RedditCheckInput): RedditCheckResult {
     if (containsPhrase(text, f)) block('reddit_forbidden_claim');
 
   // Фальшивые отзывы (A07, Р-RD-82): личный опыт с продуктом брифа — BLOCK,
-  // личный опыт без связи с продуктом — WARN.
+  // личный опыт без связи с продуктом — WARN; «we use Acme ourselves»
+  // раскрытого автора — WARN (m2-8).
   if (aff !== 'customer') {
     const pe = personalExperience(text, brand);
     if (pe === 'tied') block('reddit_fake_testimonial');
+    else if (pe === 'own_use')
+      if (aff === 'founder' || aff === 'employee' || aff === 'agency')
+        warn('reddit_personal_experience');
+      else block('reddit_fake_testimonial');
     else if (pe === 'loose') warn('reddit_personal_experience');
   }
-  if (
-    hasCustomerQuote(text) &&
-    !i.claimMap.some((c) => Array.isArray(c.sourceIds) && c.sourceIds.length)
-  )
-    block('reddit_fake_testimonial');
+  // Цитата «клиента» (m2-5): снимает только пункт claimMap о ней.
+  for (const q of customerQuotes(text, brand)) {
+    const qw = wordSet(q.quote);
+    const covered = supported.some(
+      (c, k) =>
+        normText(c.text).includes(normText(q.quote)) ||
+        normText(q.quote).includes(normText(c.text)) ||
+        jaccard(qw, claimWords[k]) >= 0.5,
+    );
+    if (covered) continue;
+    if (q.praise) block('reddit_fake_testimonial');
+    else warn('reddit_testimonial_unclear', { found: [q.quote] });
+  }
+  // Социальное доказательство (m2-4) — WARN.
+  const proof = socialProofIn(text, brand);
+  if (proof.length) warn('reddit_social_proof', { found: proof });
 
   // ПД: контакты, ники, профили (и в тексте пунктов claimMap, S3-7).
   for (const t of [

@@ -13,7 +13,7 @@
  *    `public_publish` → `live` (материал `published`); общий POST
  *    /publications с Reddit-версией → 409 manual_only; повтор URL → 409.
  */
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { ciDescribe } from '../../prisma/ci-describe.testing';
 import { approveParams } from '../../modules/publisher/ai/testing/ai-kit.testing';
 import {
@@ -33,6 +33,7 @@ import {
   openRedditPublish,
   redditStack,
   redditWorld,
+  rulesBody,
   seedStudio,
   type Api,
   type RedditStack,
@@ -206,7 +207,9 @@ ciDescribe('P-R M2: копирование и отчёт о ручной пуб�
       `https://www.reddit.com/r/${ids.name}/comments/zzz999/x/k3x9z`,
       'thread_mismatch',
     );
-    await bad(`https://redd.it/${opp.threadKey}`, 'format');
+    // аудит m2-12: короткая и «Поделиться» — отдельный код share_link
+    await bad(`https://redd.it/${opp.threadKey}`, 'share_link');
+    await bad(`https://www.reddit.com/r/${ids.name}/s/AbCdEf123`, 'share_link');
     await bad(
       `http://www.reddit.com/r/${ids.name}/comments/${opp.threadKey}/x/k3x9z`,
       'format',
@@ -342,8 +345,9 @@ ciDescribe('P-R M2: копирование и отчёт о ручной пуб�
       }),
       201,
     );
+    // аудит m2-12: канон поста — без slug
     expect(r.finalUrl).toBe(
-      `https://www.reddit.com/r/${ids.name}/comments/p0st1/one_article`,
+      `https://www.reddit.com/r/${ids.name}/comments/p0st1`,
     );
   });
 
@@ -500,6 +504,303 @@ ciDescribe('P-R M2: копирование и отчёт о ручной пуб�
       const arch = await op.post(`${w.P}/contents/${ids.contentId}/copy`);
       expect(arch.status).toBe(409);
       expect(arch.body.error.code).toBe('PUB_BRIEF_NOT_READY');
+    });
+  });
+
+  describe('аудит 15.10.2026, зона m2 (Р-RD-AUD-5; m2-1, m2-9…m2-12)', () => {
+    const report = (
+      a: Api,
+      w2: RedditWorld,
+      cid: string,
+      b: Record<string, unknown>,
+    ) => a.post(`${w2.P}/contents/${cid}/report-publication`, b);
+
+    it('m2-1/m2-10: после копирования новый снимок правил снял согласование — отчёт 201 (согласование версии, любой статус); postedAt раньше первого копирования → 400 before_copy', async () => {
+      await openRedditPublish(s.prisma, w);
+      const ids = await seedStudio(s, w, ed, po);
+      const v = await approvedVersion(ed, po, w, ids);
+      ok(await op.post(`${w.P}/contents/${ids.contentId}/copy`), 200);
+      const approval = await s.prisma.pubApproval.findFirstOrThrow({
+        where: { objectId: v.id, type: 'publish_version' },
+      });
+      // Материал создан «давно» (обход триггеров — тест): нижняя граница —
+      // первое копирование, а не создание материала.
+      await s.prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SET LOCAL session_replication_role = replica`,
+        );
+        await tx.$executeRawUnsafe(
+          `UPDATE "sites"."pub_contents" SET "createdAt" = now() - interval '3 days' WHERE "id" = $1`,
+          ids.contentId,
+        );
+      });
+      // Штатное обновление правил после копирования → каскад stale_check.
+      const snap = ok<{ id: string }>(
+        await ed.post(
+          `${w.P}/communities/${ids.communityId}/rules`,
+          rulesBody(ids.name, 'restricted'),
+        ),
+        201,
+      );
+      ok(await po.post(`${w.P}/rules/${snap.id}/review`), 200);
+      expect(
+        (
+          await s.prisma.pubApproval.findUniqueOrThrow({
+            where: { id: approval.id },
+          })
+        ).status,
+      ).toBe('superseded');
+      const opp = await s.prisma.pubRedditOpportunity.findFirstOrThrow({
+        where: { id: ids.opportunityId! },
+      });
+      const url = `https://www.reddit.com/r/${ids.name}/comments/${opp.threadKey}/x/c0py1`;
+      const early = await report(op, w, ids.contentId, {
+        url,
+        postedAt: new Date(Date.now() - 86_400_000).toISOString(),
+      });
+      expect(early.status).toBe(400);
+      expect(early.body.error.details.fields).toEqual([
+        { field: 'postedAt', code: 'before_copy' },
+      ]);
+      const r = ok<{ approvalId: string; status: string; versionId: string }>(
+        await report(op, w, ids.contentId, {
+          url,
+          postedAt: new Date().toISOString(),
+        }),
+        201,
+      );
+      expect(r).toMatchObject({
+        approvalId: approval.id,
+        status: 'published',
+        versionId: v.id,
+      });
+    });
+
+    it('m2-12/m2-9/m2-11: пост — по ключу (и прежние строки со slug); правка поста новой версией — прежняя публикация replaced; снятая отметка — 409 withdrawn_exists; чужой материал — 409 url_taken', async () => {
+      await openRedditPublish(s.prisma, w);
+      const title = { body: { title: 'One article, several formats: a plan' } };
+      const ids = await seedStudio(s, w, ed, po, { contentType: 'post' });
+      const v1 = await approvedVersion(ed, po, w, ids, title);
+      ok(await op.post(`${w.P}/contents/${ids.contentId}/copy`), 200);
+      const key = `p${randomBytes(3).toString('hex')}`;
+      const post = `https://www.reddit.com/r/${ids.name}/comments/${key}`;
+      // Строка «до исправления» (канон со slug), как на проде.
+      const channelId = (
+        await s.prisma.pubRedditCommunity.findFirstOrThrow({
+          where: { id: ids.communityId },
+        })
+      ).channelId;
+      const a1 = await s.prisma.pubApproval.findFirstOrThrow({
+        where: { objectId: v1.id, type: 'publish_version' },
+      });
+      const legacy = await s.prisma.pubPublication.create({
+        data: {
+          accountId: w.acc.accountId,
+          productId: w.product.id,
+          versionId: v1.id,
+          channelId,
+          approvalId: a1.id,
+          stage: 'test',
+          finalUrl: `${post}/one_article_several_formats`,
+          publishedAt: new Date(),
+          status: 'published',
+          reportKind: 'user_reported',
+          opKey: randomUUID(),
+          createdBy: `member:${w.team.operator.memberId}`,
+        },
+      });
+      const dup = await report(op, w, ids.contentId, {
+        url: `${post}/?utm_source=share`,
+        postedAt: new Date().toISOString(),
+      });
+      expect(dup.status).toBe(409);
+      expect(dup.body.error.details).toMatchObject({
+        reason: 'already_published',
+        publicationId: legacy.id,
+      });
+      // Правка поста: снять с плана → новая версия → согласование → копия.
+      const m = ok<{ content: { revision: number } }>(
+        await po.get(`${w.P}/contents/${ids.contentId}`),
+        200,
+      );
+      ok(
+        await po.post(`${C}/contents/${ids.contentId}/transition`, {
+          expectedRevision: m.content.revision,
+          to: 'approved',
+          reason: 'правка поста в Reddit',
+        }),
+        200,
+      );
+      const v2 = await approvedVersion(ed, po, w, ids, {
+        body: { title: 'One article, several formats: a plan (edited)' },
+      });
+      ok(await op.post(`${w.P}/contents/${ids.contentId}/copy`), 200);
+      const r2 = ok<{ id: string; versionId: string; finalUrl: string }>(
+        await report(op, w, ids.contentId, {
+          url: `${post}/one_article_several_formats`,
+          postedAt: new Date().toISOString(),
+        }),
+        201,
+      );
+      expect(r2).toMatchObject({ versionId: v2.id, finalUrl: post });
+      const old = await s.prisma.pubPublication.findUniqueOrThrow({
+        where: { id: legacy.id },
+      });
+      expect(old.status).toBe('replaced');
+      expect(
+        await s.prisma.pubAuditEvent.count({
+          where: {
+            objectType: 'publication',
+            objectId: legacy.id,
+            toStatus: 'replaced',
+          },
+        }),
+      ).toBe(1);
+      // Снятая по ошибке отметка — явный отказ, а не «already_published».
+      const row2 = await s.prisma.pubPublication.findUniqueOrThrow({
+        where: { id: r2.id },
+      });
+      ok(
+        await po.post(`${C}/publications/${r2.id}/transition`, {
+          expectedRevision: row2.revision,
+          to: 'withdrawn',
+          reason: 'отметили не тот пост',
+        }),
+        200,
+      );
+      const again = await report(op, w, ids.contentId, {
+        url: post,
+        postedAt: new Date().toISOString(),
+      });
+      expect(again.status).toBe(409);
+      expect(again.body.error.details).toMatchObject({
+        reason: 'withdrawn_exists',
+        publicationId: r2.id,
+        status: 'withdrawn',
+      });
+      // Тот же URL другим материалом того же сообщества — 409 url_taken.
+      const b2 = ok<{ id: string; revision: number }>(
+        await ed.post(`${w.P}/briefs`, {
+          projectId: ids.projectId,
+          contentType: 'post',
+          communityId: ids.communityId,
+          objective: 'Help the author reuse one article across formats',
+          keyPoints: [
+            {
+              text: 'One verified article can become a post, cards and a video script',
+              sourceIds: [ids.sourceId],
+            },
+            { text: 'Ask which formats', sourceIds: 'needs_verification' },
+          ],
+          affiliation: 'founder',
+          brand: 'Demo',
+          language: 'en',
+        }),
+        201,
+      );
+      ok(
+        await ed.post(`${w.P}/briefs/${b2.id}/ready`, {
+          expectedRevision: b2.revision,
+        }),
+        200,
+      );
+      const second = ok<{ content: { id: string } }>(
+        await ed.post(`${w.P}/briefs/${b2.id}/contents`),
+        201,
+      );
+      const other = { ...ids, contentId: second.content.id };
+      await approvedVersion(ed, po, w, other, title);
+      const legacy2 = await s.prisma.pubPublication.create({
+        data: {
+          accountId: w.acc.accountId,
+          productId: w.product.id,
+          versionId: v2.id,
+          channelId,
+          approvalId: (
+            await s.prisma.pubApproval.findFirstOrThrow({
+              where: { objectId: v2.id, type: 'publish_version' },
+            })
+          ).id,
+          stage: 'test',
+          finalUrl: `${post}2`,
+          publishedAt: new Date(),
+          status: 'published',
+          reportKind: 'user_reported',
+          opKey: randomUUID(),
+          createdBy: `member:${w.team.operator.memberId}`,
+        },
+      });
+      expect(legacy2.status).toBe('published');
+      const otherCopy = await op.post(
+        `${w.P}/contents/${other.contentId}/copy`,
+        { acknowledgedWarnings: ['reddit_duplicate'] },
+      );
+      expect(otherCopy.status).toBe(200);
+      const taken = await report(op, w, other.contentId, {
+        url: `${post}2`,
+        postedAt: new Date().toISOString(),
+      });
+      expect(taken.status).toBe(409);
+      expect(taken.body.error.details).toMatchObject({
+        reason: 'url_taken',
+        publicationId: legacy2.id,
+      });
+    });
+
+    it('ревью 2, п. 4: отчёт человека (live, scheduled → published) не снимает criticalStale — флаг снимает только выпуск через повторные проверки', async () => {
+      const ws = await redditWorld(s, 'working');
+      const ed2 = api(s, ws.acc.accountId, ws.team.editor);
+      const po2 = api(s, ws.acc.accountId, ws.team.product_owner);
+      const op2 = api(s, ws.acc.accountId, ws.team.operator);
+      await openRedditPublish(s.prisma, ws);
+      await s.prisma.$executeRaw`
+        UPDATE "sites"."pub_products" SET "mode" = 'live', "liveSince" = now()
+         WHERE "id" = ${ws.product.id}`;
+      const host = `pubs-${randomBytes(4).toString('hex')}.example`;
+      await seedVerifiedHost(s.prisma, ws.acc.accountId, ws.acc.siteId, host);
+      const values: Record<string, unknown> = {};
+      for (const k of GATE_PARAMETER_KEYS.public_publish)
+        values[k] =
+          k === 'domain_host'
+            ? { host }
+            : approvableValue(k, DEFAULT_PARAMETER_VALUES[k]);
+      await approveParams(
+        s.prisma,
+        { accountId: ws.acc.accountId, ownerMemberId: ws.acc.owner.memberId },
+        ws.product.id,
+        values,
+      );
+      const ids = await seedStudio(s, ws, ed2, po2);
+      await approvedVersion(ed2, po2, ws, ids);
+      ok(await op2.post(`${ws.P}/contents/${ids.contentId}/copy`), 200);
+      // Критичный каскад уже отметил материал (обход триггеров — тест).
+      await s.prisma.$transaction(async (tx) => {
+        await tx.$executeRawUnsafe(
+          `SET LOCAL session_replication_role = replica`,
+        );
+        await tx.$executeRawUnsafe(
+          `UPDATE "sites"."pub_contents" SET "criticalStale" = true WHERE "id" = $1`,
+          ids.contentId,
+        );
+      });
+      const opp = await s.prisma.pubRedditOpportunity.findFirstOrThrow({
+        where: { id: ids.opportunityId! },
+      });
+      const r = ok<{ stage: string }>(
+        await report(op2, ws, ids.contentId, {
+          url: `https://www.reddit.com/r/${ids.name}/comments/${opp.threadKey}/x/cst4l`,
+          postedAt: new Date().toISOString(),
+        }),
+        201,
+      );
+      expect(r.stage).toBe('live');
+      const content = await s.prisma.pubContent.findFirstOrThrow({
+        where: { id: ids.contentId },
+      });
+      expect({
+        status: content.status,
+        criticalStale: content.criticalStale,
+      }).toEqual({ status: 'published', criticalStale: true });
     });
   });
 });

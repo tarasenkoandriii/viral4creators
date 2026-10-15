@@ -37,6 +37,7 @@ import {
   approvalRevoked,
   approveAckBody,
   approveRedditBody,
+  diffPartner,
   findingText,
   DISCLOSURE_CODES,
   draftForm,
@@ -921,12 +922,18 @@ function VersionsPanel({
     versions.find((v) => v.id === m.content.currentVersionId) ??
     versions[versions.length - 1] ??
     null;
+  // «Сравнить с» = выбранная (или исчезла) — сравнения нет (аудит ui-10).
+  const partner = diffPartner(
+    selected?.id,
+    other,
+    versions.map((v) => v.id)
+  );
   const diff = useAsync(
     async () =>
-      selected && other
-        ? apis.content.diff(m.content.id, other, selected.id)
+      selected && partner
+        ? apis.content.diff(m.content.id, partner, selected.id)
         : null,
-    [apis, m.content.id, selected?.id, other]
+    [apis, m.content.id, selected?.id, partner]
   );
   if (!versions.length) return null;
   const label = (v: VersionView) =>
@@ -938,7 +945,10 @@ function VersionsPanel({
           <li key={v.id}>
             <button
               type="button"
-              onClick={() => setSel(v.id)}
+              onClick={() => {
+                setSel(v.id);
+                if (v.id === other) setOther('');
+              }}
               className={`w-full text-left rounded-lg px-2 py-1 flex flex-wrap items-center gap-2 text-sm min-h-[44px] ${
                 selected?.id === v.id ? 'bg-accent/10' : ''
               }`}
@@ -967,7 +977,7 @@ function VersionsPanel({
           {versions.length > 1 && (
             <Field label={r.studio.versions.diffWith}>
               <Select
-                value={other}
+                value={partner}
                 options={versions
                   .filter((v) => v.id !== selected.id)
                   .map((v) => v.id)}
@@ -979,8 +989,11 @@ function VersionsPanel({
               />
             </Field>
           )}
-          {other && (
-            <Loadable state={diff}>
+          {partner && (
+            // Пока грузится новое сравнение, прошлое не показывается.
+            <Loadable
+              state={{ ...diff, data: diff.loading ? null : diff.data }}
+            >
               {(d) =>
                 d ? (
                   <pre

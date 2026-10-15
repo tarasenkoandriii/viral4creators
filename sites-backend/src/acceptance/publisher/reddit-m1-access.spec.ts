@@ -129,8 +129,8 @@ ciDescribe('P-R M1: изоляция и роли раздела Reddit', () => {
 
   describe('[AT-RD-01] чужой кабинет или продукт → 404 на всех маршрутах …/reddit/**', () => {
     it('реестр REDDIT_ROUTES не пуст, все пути под /publisher/products/:pid/reddit/', () => {
-      // M1 — 25, M2 (Studio) — ещё 14.
-      expect(ROUTES.length).toBe(39);
+      // M1 — 26 (с restore, Р-RD-AUD-1), M2 (Studio) — ещё 14.
+      expect(ROUTES.length).toBe(40);
       for (const r of ROUTES)
         expect(r.path.startsWith('/publisher/products/:pid/reddit/')).toBe(
           true,

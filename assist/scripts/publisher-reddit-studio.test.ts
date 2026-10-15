@@ -1478,4 +1478,13 @@ const VARIANT: S.RedditDraftVariant = {
   assert.notEqual(notOpen.title, capped.title, '«не открыт» ≠ «исчерпан»');
 }
 
+// Аудит ui-10 (15.10.2026): «сравнить с» ≠ выбранной и есть в списке.
+{
+  const ids = ['v1', 'v2'];
+  assert.equal(V.diffPartner('v2', 'v1', ids), 'v1');
+  assert.equal(V.diffPartner('v2', 'v2', ids), '');
+  assert.equal(V.diffPartner('v2', 'v7', ids), '');
+  assert.equal(V.diffPartner(undefined, 'v1', ids), '');
+}
+
 console.log('publisher-reddit-studio: ok');

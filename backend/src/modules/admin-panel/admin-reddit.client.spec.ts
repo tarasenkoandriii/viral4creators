@@ -72,12 +72,13 @@ const CONTRACT_V1_2 = [
   'POST params/:key/decide',
   'POST import/plan',
   'POST import/apply',
-  // rx/* — все 39 REDDIT_ROUTES
+  // rx/* — все 40 REDDIT_ROUTES
   'GET rx/projects',
   'POST rx/projects',
   'GET rx/projects/:id',
   'PATCH rx/projects/:id',
   'POST rx/projects/:id/archive',
+  'POST rx/projects/:id/restore',
   'GET rx/communities',
   'POST rx/communities',
   'GET rx/communities/:id',
@@ -141,15 +142,15 @@ const CONTRACT_V1_2 = [
 ];
 
 describe('ADMIN_REDDIT_ROUTES — строгий список 1:1 к внутреннему контракту', () => {
-  it('таблица = контракт v1.2 (8 служебных + 39 rx + 24 cx), без повторов', () => {
+  it('таблица = контракт v1.2 (8 служебных + 40 rx + 24 cx), без повторов', () => {
     const table = ALL.map(
       (n) => `${ADMIN_REDDIT_ROUTES[n].method} ${ADMIN_REDDIT_ROUTES[n].path}`,
     );
     expect(new Set(table).size).toBe(table.length);
     expect([...table].sort()).toEqual([...CONTRACT_V1_2].sort());
-    expect(table.filter((r) => r.includes(' rx/'))).toHaveLength(39);
+    expect(table.filter((r) => r.includes(' rx/'))).toHaveLength(40);
     expect(table.filter((r) => r.includes(' cx/'))).toHaveLength(24);
-    expect(table).toHaveLength(71);
+    expect(table).toHaveLength(72);
   });
 
   it('контроллер объявляет ровно маршруты таблицы: имя метода = имя маршрута, тот же HTTP-метод и путь', () => {
@@ -591,12 +592,38 @@ describe('AdminRedditClient — ошибки sites-backend', () => {
     await expect(c.call('status', OP)).rejects.toMatchObject({ status: 502 });
   });
 
-  it('сеть, таймаут, слишком большой ответ — 502', async () => {
+  it('504 самого sites-backend (функция не уложилась в лимит, тело не JSON) — 504 UPSTREAM_TIMEOUT', async () => {
+    const { c, reply } = client();
+    for (const r of [
+      { status: 504, text: 'An error occurred with your deployment' },
+      {
+        status: 504,
+        body: { error: { code: 'FUNCTION_INVOCATION_TIMEOUT', message: 'x' } },
+      },
+    ]) {
+      reply(r);
+      const e = (await c
+        .call('importApply', OP, { body: {} })
+        .catch((x: unknown) => x)) as HttpException;
+      expect(e.getStatus()).toBe(504);
+      expect(e.getResponse()).toMatchObject({ error: 'UPSTREAM_TIMEOUT' });
+    }
+  });
+
+  it('сеть и таймаут — 504 UPSTREAM_TIMEOUT (исход неизвестен, повтор безопасен); слишком большой ответ — 502', async () => {
     const { c, reply } = client();
     c.fetchImpl = (async () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
-    await expect(c.call('status', OP)).rejects.toMatchObject({ status: 502 });
+    const net = (await c
+      .call('createProject', OP, { body: { opKey: 'k' } })
+      .catch((x: unknown) => x)) as HttpException;
+    expect(net.getStatus()).toBe(504);
+    expect(net.getResponse()).toEqual({
+      message:
+        'Бэкенд клиентских сайтов не ответил вовремя — результат неизвестен, повтор безопасен',
+      error: 'UPSTREAM_TIMEOUT',
+    });
 
     jest.useFakeTimers();
     try {
@@ -608,7 +635,10 @@ describe('AdminRedditClient — ошибки sites-backend', () => {
         })) as unknown as typeof fetch;
       const p = c.call('status', OP).catch((x: unknown) => x);
       await jest.advanceTimersByTimeAsync(20_001);
-      expect(await p).toMatchObject({ status: 502 });
+      expect(await p).toMatchObject({ status: 504 });
+      expect(((await p) as HttpException).getResponse()).toMatchObject({
+        error: 'UPSTREAM_TIMEOUT',
+      });
     } finally {
       jest.useRealTimers();
     }
@@ -643,7 +673,7 @@ describe('AdminRedditClient — ошибки sites-backend', () => {
       await jest.advanceTimersByTimeAsync(30_000);
       expect(aborted).toBe(0);
       await jest.advanceTimersByTimeAsync(30_001);
-      expect(await gen).toMatchObject({ status: 502 });
+      expect(await gen).toMatchObject({ status: 504 });
       expect(aborted).toBe(1);
     } finally {
       jest.useRealTimers();
@@ -669,7 +699,7 @@ describe('AdminRedditClient — ошибки sites-backend', () => {
         expect(aborted).toBe(false);
         await jest.advanceTimersByTimeAsync(180_000);
         expect(aborted).toBe(true);
-        expect(await pending).toMatchObject({ status: 502 });
+        expect(await pending).toMatchObject({ status: 504 });
       } finally {
         jest.useRealTimers();
       }

@@ -4,7 +4,10 @@
  * порту приложения (своя база тестов): dry-run ничего не пишет; `--apply`
  * создаёт проект, сообщества, снимки правил `unreviewed` с пометкой
  * «secondary», ключевые запросы и валидные возможности с факторами;
- * повторный запуск — всё «уже есть», строк не прибавилось; заголовки сессии —
+ * повторный запуск — всё «уже есть», строк не прибавилось; страница правил
+ * «not readable» — снимок без первоисточника (`sourceUrl` null, подтвердить
+ * нельзя — 400 `source_required`, Р-RD-AUD-3); текущий снимок импорт не
+ * вытесняет (`kept_current`, Р-RD-AUD-2); заголовки сессии —
  * только из окружения, их значения не печатаются; ноль запросов к Reddit
  * (сеть — только localhost API, `watchEgress`).
  */
@@ -171,29 +174,47 @@ ciDescribe('P-R: импорт исследования через API кабин
       keywords: 3,
       opportunities: 2,
     });
-    // правила — непроверенные, с пометкой «secondary», источник как был
+    // правила — непроверенные, с пометкой «secondary»; страница правил
+    // «not readable» — первоисточника нет (Р-RD-AUD-3), прочитанная — URL.
     const snaps = await s.prisma.pubRedditRuleSnapshot.findMany({
       where: { productId: w.product.id },
-      include: { source: true },
+      include: { source: true, community: true },
       orderBy: { createdAt: 'asc' },
     });
     for (const sn of snaps) expect(sn.reviewState).toBe('unreviewed');
-    const small = snaps.find((x) =>
-      (x.source.url ?? '').includes('/r/smallbusiness/'),
-    )!;
-    expect(small.source.url).toBe(
-      'https://www.reddit.com/r/smallbusiness/about/rules',
-    );
+    const small = snaps.find((x) => x.community.name === 'smallbusiness')!;
+    expect(small.source).toMatchObject({ url: null, kind: 'manual_text' });
     expect(small.conditions).toEqual([
       'Unverified hint (secondary, 2023): promotion only in weekly threads',
-      'secondary: www.indiehackers.com/…',
+      'secondary: rules page not readable; https://www.indiehackers.com/post/list-of-subreddits-72c…',
     ]);
+    const saasSnap = snaps.find((x) => x.community.name === 'saas')!;
+    expect(saasSnap.source).toMatchObject({
+      url: 'https://www.reddit.com/r/SaaS/wiki/rules',
+      kind: 'url',
+    });
+    // сегменты одного CLI-плана сливаются в topics; дубль — предупреждение
+    expect(saasSnap.community.topics).toEqual(['saas', 'smb']);
+    expect(first.report!.warnings).toEqual(
+      expect.arrayContaining([
+        {
+          kind: 'rules',
+          ref: 'smb: r/saas',
+          code: 'merged',
+          detail: 'rules from segment saas',
+        },
+      ]),
+    );
+    expect(first.logs).toMatch(/Попередження \(записано не дослівно\)/);
+    expect(first.report!.complete).toBe(true);
     // возможности: факторы и обоснования из CSV, без выдержки
     const opp = await s.prisma.pubRedditOpportunity.findFirstOrThrow({
       where: { productId: w.product.id, threadKey: '1qa2b3c' },
     });
     expect(opp.excerptSourceId).toBeNull();
-    expect(opp.angle).toBe('Owner asks which website chat to try.');
+    expect(opp.angle).toBe(
+      'Owner asks which website chat to try. · Found via: search',
+    );
     expect(
       (opp.factors as Record<string, { value: number; why: string }>).topic_fit,
     ).toEqual({ value: 80, why: 'site chat' });
@@ -221,18 +242,51 @@ ciDescribe('P-R: импорт исследования через API кабин
     expect(egress.foreign()).toEqual([]);
   });
 
-  it('проверенный владельцем снимок импорт не перезаписывает; без заголовков сессии — отказ', async () => {
+  it('снимок без первоисточника не подтверждается (400 source_required) — только новый с URL; текущий снимок импорт не вытесняет (kept_current); без заголовков сессии — отказ', async () => {
     const po = api(s, w.acc.accountId, w.team.product_owner);
-    const snap = await s.prisma.pubRedditRuleSnapshot.findFirstOrThrow({
-      where: { productId: w.product.id, status: 'current' },
+    const snapOf = (name: string) =>
+      s.prisma.pubRedditRuleSnapshot.findFirstOrThrow({
+        where: {
+          productId: w.product.id,
+          status: 'current',
+          community: { name },
+        },
+      });
+    const saas = await snapOf('saas');
+    expect((await po.post(`${w.P}/rules/${saas.id}/review`, {})).status).toBe(
+      200,
+    );
+    const small = await snapOf('smallbusiness');
+    const denied = await po.post(`${w.P}/rules/${small.id}/review`, {});
+    expect(denied.status).toBe(400);
+    expect(denied.body.error.details.fields).toEqual([
+      { field: 'sourceUrl', code: 'source_required' },
+    ]);
+    // Первоисточник — новым снимком; его подтвердить можно.
+    const v2 = await po.post(`${w.P}/communities/${small.communityId}/rules`, {
+      sourceUrl: 'https://www.reddit.com/r/smallbusiness/about/rules',
+      sourceExcerpt: 'Rule 3: self-promotion only in the weekly thread.',
+      promotionPolicy: 'allowed_with_conditions',
+      linksPolicy: 'restricted',
+      checkedAt: '2026-10-14T09:00:00.000Z',
     });
-    const r = await po.post(`${w.P}/rules/${snap.id}/review`, {});
-    expect(r.status).toBe(200);
+    expect(v2.status).toBe(201);
+    expect(
+      (await po.post(`${w.P}/rules/${v2.body.data.id}/review`, {})).status,
+    ).toBe(200);
+    const before = await s.prisma.pubRedditRuleSnapshot.count({
+      where: { productId: w.product.id },
+    });
     const again = await run(['--apply']);
-    expect(again.report!.summary.rules).toEqual({
-      kept_reviewed: 1,
-      exists: 1,
-    });
+    expect(again.report!.summary.rules).toEqual({ exists: 2 });
+    expect(
+      again.report!.items.filter((i) => i.kind === 'rules').map((i) => i.code),
+    ).toEqual(['kept_current', 'kept_current']);
+    expect(
+      await s.prisma.pubRedditRuleSnapshot.count({
+        where: { productId: w.product.id },
+      }),
+    ).toBe(before);
     const none = await main(
       [
         `--base-url=${base}`,
@@ -244,5 +298,112 @@ ciDescribe('P-R: импорт исследования через API кабин
       fetchApi,
     );
     expect(none.code).toBe(1);
+  });
+
+  it('Р-RD-AUD-9: два одновременных импорта разных сегментов (общее r/SaaS) — снимок правил один; второй — kept_current (сервер: ifNoCurrent → 200 kept)', async () => {
+    const w2 = await redditWorld(s);
+    const owner = api(s, w2.acc.accountId, w2.acc.owner);
+    // Проект заведён заранее — оба импорта находят его по названию.
+    expect(
+      (
+        await owner.post(`${w2.P}/projects`, {
+          title: 'Race research',
+          locale: 'en',
+          market: 'US/EU SMB',
+        })
+      ).status,
+    ).toBe(201);
+    // Барьер: список сообществ отдаётся обоим импортам только после того, как
+    // оба его запросили, — оба видят «текущего снимка нет» и идут создавать.
+    let waiting = 0;
+    let release!: () => void;
+    const barrier = new Promise<void>((r) => (release = r));
+    const listRe = /\/reddit\/communities(\?|$)/;
+    const racing: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (!url.startsWith(base)) throw new Error(`чужой адрес: ${url}`);
+      if ((init?.method ?? 'GET') === 'GET' && listRe.test(url)) {
+        const res = await realFetch(input, init);
+        if (++waiting === 2) release();
+        await barrier;
+        return res;
+      }
+      return realFetch(input, init);
+    };
+    const env = { [AUTH_ENV]: JSON.stringify(owner.headers) };
+    const one = (segment: string) =>
+      main(
+        [
+          `--base-url=${base}`,
+          `--site=${w2.acc.siteId}`,
+          '--project-title=Race research',
+          '--locale=en',
+          '--market=US/EU SMB',
+          `--dir=${dir}`,
+          `--segments=${segment}`,
+          '--apply',
+        ],
+        env,
+        racing,
+      );
+    const log = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const err = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    let reports: Awaited<ReturnType<typeof main>>[];
+    try {
+      reports = await Promise.all([one('smb'), one('saas')]);
+    } finally {
+      log.mockRestore();
+      err.mockRestore();
+    }
+    const saas = await s.prisma.pubRedditCommunity.findFirstOrThrow({
+      where: { productId: w2.product.id, name: 'saas' },
+    });
+    expect(
+      await s.prisma.pubRedditRuleSnapshot.count({
+        where: { productId: w2.product.id, communityId: saas.id },
+      }),
+    ).toBe(1);
+    const rulesOf = (i: number) =>
+      reports[i]
+        .report!.items.filter((x) => x.kind === 'rules' && x.ref === 'r/saas')
+        .map((x) => [x.outcome, x.code ?? null]);
+    expect([...rulesOf(0), ...rulesOf(1)].sort()).toEqual([
+      ['created', null],
+      ['exists', 'kept_current'],
+    ]);
+    // Прямой вызов: ifNoCurrent при текущем снимке — 200, тот же снимок, kept.
+    const snap = await s.prisma.pubRedditRuleSnapshot.findFirstOrThrow({
+      where: { productId: w2.product.id, communityId: saas.id },
+    });
+    const kept = await owner.post(`${w2.P}/communities/${saas.id}/rules`, {
+      sourceUrl: 'https://www.reddit.com/r/SaaS/wiki/rules',
+      sourceExcerpt: 'Promo only in the weekly thread.',
+      promotionPolicy: 'prohibited',
+      linksPolicy: 'prohibited',
+      checkedAt: '2026-10-14T09:00:00.000Z',
+      ifNoCurrent: true,
+    });
+    expect(kept.status).toBe(200);
+    expect(kept.body.data).toMatchObject({
+      id: snap.id,
+      kept: true,
+      status: 'current',
+    });
+    expect(
+      await s.prisma.pubRedditRuleSnapshot.count({
+        where: { productId: w2.product.id, communityId: saas.id },
+      }),
+    ).toBe(1);
+    const bad = await owner.post(`${w2.P}/communities/${saas.id}/rules`, {
+      sourceUrl: 'https://www.reddit.com/r/SaaS/wiki/rules',
+      sourceExcerpt: 'x',
+      promotionPolicy: 'prohibited',
+      linksPolicy: 'prohibited',
+      checkedAt: '2026-10-14T09:00:00.000Z',
+      ifNoCurrent: 'yes',
+    });
+    expect(bad.status).toBe(400);
   });
 });

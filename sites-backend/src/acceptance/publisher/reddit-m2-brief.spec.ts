@@ -442,6 +442,18 @@ ciDescribe('P-R M2: Reddit-бриф', () => {
     expect(csv.text.split('\n')[0]).toBe(
       'id,projectId,subreddit,opportunityId,contentType,objective,affiliation,linksAllowed,language,status,missing,contentIds,createdAt',
     );
+    // Аудит m2-13: список читается пакетом — каждый элемент совпадает с
+    // видом брифа по id (тот же код), порядок — id desc.
+    const all = ok<{ items: Brief[] }>(
+      await po.get(`${w.P}/briefs`, { limit: '100' }),
+      200,
+    );
+    expect(all.items.length).toBeGreaterThan(1);
+    expect(all.items.map((b) => b.id)).toEqual(
+      [...all.items.map((b) => b.id)].sort().reverse(),
+    );
+    for (const b of all.items.slice(0, 10))
+      expect(b).toEqual(ok<Brief>(await po.get(`${w.P}/briefs/${b.id}`), 200));
   });
 
   it('Р-RD-65: brand — по умолчанию имя продукта; без него при affiliation≠none — missing brand; контакт — 400', async () => {

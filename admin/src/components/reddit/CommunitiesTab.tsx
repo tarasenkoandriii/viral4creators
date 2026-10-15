@@ -18,6 +18,7 @@ import {
 } from '../../lib/reddit-shared/lib/publisher/reddit-api';
 import {
   canReviewSnapshot,
+  needsSourceForReview,
   communityBody,
   communityForm,
   communityPatchBody,
@@ -210,7 +211,10 @@ function CommunityCard({ id }: { id: string }) {
   const state = useLoad(() => api.reddit.community(id), [api, id]);
   const rules = useLoad(() => api.reddit.rules(id), [api, id]);
   const [fresh, setFresh] = useState<RedditCommunityView | null>(null);
-  const c = fresh && fresh.id === id && (!state.data || fresh.revision >= state.data.revision) ? fresh : state.data;
+  // Пока грузится другая запись, прежняя (и её снимки) не показывается (аудит ui-9).
+  const loaded = state.data?.id === id ? state.data : null;
+  const c = fresh && fresh.id === id && (!loaded || fresh.revision >= loaded.revision) ? fresh : loaded;
+  const snapshots = rules.data && rules.data.items.every((s) => s.communityId === id) ? rules.data : null;
   const reloadAll = () => {
     setFresh(null);
     state.reload();
@@ -221,23 +225,23 @@ function CommunityCard({ id }: { id: string }) {
       <button type="button" className="rx-linkbtn" onClick={() => go({ id: '' })}>
         {R.common.back}
       </button>
-      {state.error ? <ErrorAlert error={state.error} /> : null}
+      {state.error ? <ErrorAlert error={state.error} onRetry={state.reload} /> : null}
       {!c ? (
         state.loading ? <Loading /> : null
       ) : (
         <>
-          <CommunityCardBody c={c} reload={reloadAll} onSaved={setFresh} />
+          <CommunityCardBody key={c.id} c={c} reload={reloadAll} onSaved={setFresh} />
           <Section title={R.rules.versions}>
-            {rules.error ? <ErrorAlert error={rules.error} onReload={rules.reload} /> : null}
-            {!rules.data ? (
+            {rules.error ? <ErrorAlert error={rules.error} onReload={rules.reload} onRetry={rules.reload} /> : null}
+            {!snapshots ? (
               rules.loading ? <Loading /> : null
-            ) : rules.data.items.length === 0 ? (
+            ) : snapshots.items.length === 0 ? (
               <Alert tone="warning">{R.rules.empty}</Alert>
             ) : (
-              rules.data.items.map((s) => <SnapshotCard key={s.id} s={s} onChanged={reloadAll} />)
+              snapshots.items.map((s) => <SnapshotCard key={s.id} s={s} onChanged={reloadAll} />)
             )}
           </Section>
-          <NewSnapshot c={c} onDone={reloadAll} />
+          <NewSnapshot key={c.id} c={c} onDone={reloadAll} />
         </>
       )}
     </div>
@@ -361,6 +365,7 @@ function SnapshotCard({ s, onChanged }: { s: RedditRuleSnapshotView; onChanged: 
       ) : (
         <RevokeEvidence sourceId={s.source.id} label={R.common.revokeRulesSource} onDone={onChanged} />
       )}
+      {needsSourceForReview(s) && <Alert tone="warning">{R.rules.noSourceReview}</Alert>}
       {canReviewSnapshot(s) && (
         <div className="rx-stack">
           <span className="muted rx-hint">{R.rules.reviewHint}</span>
@@ -396,7 +401,7 @@ function RevokedSourceNote({ communityId, snapshotId }: { communityId: string; s
           {fmtDateTime(st.data.source.revokedAt)} · {R.opportunities.evidenceRevokeReason}: {st.data.source.revokeReason ?? R.common.none}
         </span>
       ) : st.error ? (
-        <ErrorAlert error={st.error} />
+        <ErrorAlert error={st.error} onRetry={st.reload} />
       ) : null}
     </Alert>
   );

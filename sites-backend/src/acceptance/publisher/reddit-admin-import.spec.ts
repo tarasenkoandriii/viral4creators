@@ -3,11 +3,16 @@
  * (`communities`/`opportunities`/`keywords`, формат `research-import.ts`) →
  * `import/plan` (dry-run: ничего не пишет) → `import/apply` (проект,
  * сообщества, снимки правил `unreviewed`, запросы, валидные возможности; актор
- * admin) → повтор — всё «уже есть», строк не прибавилось; проверенный
- * снимок не перезаписывается (`kept_reviewed`); тело > 1 МБ — 413; ошибки
- * тела — 400 по полям; контакт в CSV не сохраняется; ноль запросов к
- * Reddit (in-process, без HTTP-петли).
+ * admin) → повтор — всё «уже есть», строк не прибавилось; текущий снимок
+ * (проверенный или нет, ручной или импортированный) не вытесняется —
+ * `exists`/`kept_current`, сегмент дописывается в `topics` (Р-RD-AUD-2);
+ * сегменты по одному с общим сообществом — один снимок, повтор и другой
+ * оператор — всё «уже есть»; поля проекта — как у создания проекта (120/64,
+ * контакт — 400, аудит ui-2); дедлайн — частичный отчёт `not_attempted`
+ * (Р-RD-AUD-4); тело > 1 МБ — 413; ошибки тела — 400 по полям; контакт в CSV
+ * не сохраняется; ноль запросов к Reddit (in-process, без HTTP-петли).
  */
+import { AdminRedditService } from '../../modules/publisher/reddit/admin/admin-reddit.service';
 import { ciDescribe } from '../../prisma/ci-describe.testing';
 import {
   ADMIN_USER,
@@ -52,12 +57,15 @@ const BODY = {
 interface Report {
   apply: boolean;
   productId: string;
+  complete: boolean;
+  stoppedBy?: string;
   items: Array<{
     kind: string;
     ref: string;
     outcome: string;
     code?: string;
     id?: string;
+    detail?: string;
   }>;
   summary: Record<string, Record<string, number>>;
 }
@@ -94,7 +102,7 @@ ciDescribe('[P-R-ADM] Админка: импорт исследования CSV 
     await s?.close();
   });
 
-  it('plan ничего не пишет → apply создаёт (актор admin) → повтор — всё «уже есть»; проверенный снимок — kept_reviewed', async () => {
+  it('plan ничего не пишет → apply создаёт (актор admin) → повтор — всё «уже есть»; текущий снимок — kept_current', async () => {
     const zero = await counts();
     const plan = ok<Report>(await A.postRaw('import/plan', BODY), 200);
     expect(plan.apply).toBe(false);
@@ -159,9 +167,13 @@ ciDescribe('[P-R-ADM] Админка: импорт исследования CSV 
     };
     const third = ok<Report>(await A.postRaw('import/apply', changed), 200);
     expect(
-      third.items.find((i) => i.kind === 'rules' && /saas/i.test(i.ref))
-        ?.outcome,
-    ).toBe('kept_reviewed');
+      third.items.find((i) => i.kind === 'rules' && /saas/i.test(i.ref)),
+    ).toMatchObject({
+      outcome: 'exists',
+      code: 'kept_current',
+      id: saas.id,
+      detail: 'reviewed',
+    });
     expect(
       await s.prisma.pubRedditRuleSnapshot.count({
         where: { productId: w.product.id },
@@ -237,5 +249,153 @@ contact ${CONTACT},other,1
       for (const x of rows) hits.push(`${t}: ${x.j.slice(0, 200)}`);
     }
     expect(hits).toEqual([]);
+  });
+
+  const HEAD =
+    'name,url,topic,size,promotion_policy,links_policy,flair_required,conditions,source_url,checked_at\n';
+  const comm = (name: string, promo = 'unknown', links = 'unknown') =>
+    `r/${name},,topic ${name},null,${promo},${links},null,Promo only in weekly thread,"https://www.reddit.com/r/${name}/about/rules (not readable); hint: https://redship.io/blog/reddit-self-promotion-rules",2026-10-13\n`;
+  const segBody = (segment: string, rows: string, projectTitle: string) => ({
+    communitiesCsv: HEAD + rows,
+    opportunitiesCsv: '',
+    keywordsCsv: '',
+    projectTitle,
+    locale: 'en',
+    market: 'US/EU SMB',
+    segment,
+  });
+
+  it('Р-RD-AUD-2: сегменты по одному с общим сообществом — один снимок, сегменты в topics, расхождение в отчёте; повтор и другой оператор — всё «уже есть»; ручной непроверенный снимок не вытесняется (imp-2, imp-3, imp-7)', async () => {
+    const T = 'AUD-2 сегменти';
+    const A1 = segBody('smb', comm('segshared') + comm('segonlya'), T);
+    const B1 = segBody(
+      'saas',
+      comm('segshared', 'allowed_with_conditions', 'allowed') +
+        comm('segonlyb'),
+      T,
+    );
+    const names = ['segshared', 'segonlya', 'segonlyb'];
+    const snapCount = () =>
+      s.prisma.pubRedditRuleSnapshot.count({
+        where: { productId: w.product.id, community: { name: { in: names } } },
+      });
+    const a = ok<Report>(await A.postRaw('import/apply', A1), 200);
+    expect(a.summary.rules).toEqual({ created: 2 });
+    const b = ok<Report>(await A.postRaw('import/apply', B1), 200);
+    expect(b.summary.community).toEqual({ exists: 1, created: 1 });
+    expect(b.summary.rules).toEqual({ exists: 1, created: 1 });
+    expect(
+      b.items.find((i) => i.ref === 'r/segshared' && i.kind === 'community'),
+    ).toMatchObject({ code: 'topics_merged', detail: 'topics +saas' });
+    expect(
+      b.items.find((i) => i.ref === 'r/segshared' && i.kind === 'rules'),
+    ).toMatchObject({
+      outcome: 'exists',
+      code: 'kept_current',
+      detail:
+        'unreviewed; differs: promotion unknown, csv allowed_with_conditions; links unknown, csv allowed',
+    });
+    expect(await snapCount()).toBe(3);
+    const shared = await s.prisma.pubRedditCommunity.findFirstOrThrow({
+      where: { productId: w.product.id, name: 'segshared' },
+    });
+    expect(shared.topics).toEqual(['smb', 'saas']);
+    // снимок без первоисточника (not readable): url пуст, подтвердить нельзя
+    const sharedSnap = b.items.find(
+      (i) => i.ref === 'r/segshared' && i.kind === 'rules',
+    )!;
+    const review = await A.post(`rx/rules/${sharedSnap.id}/review`);
+    expect(review.status).toBe(400);
+    expect(review.body.error.details.fields).toEqual([
+      { field: 'sourceUrl', code: 'source_required' },
+    ]);
+
+    // Повтор чужого сегмента тем же и другим оператором — всё «уже есть».
+    const B = adminApi(s, { actor: 'otherOperator02' });
+    for (const api of [A, B]) {
+      const again = ok<Report>(await api.postRaw('import/apply', A1), 200);
+      expect(again.items.filter((i) => i.outcome !== 'exists')).toEqual([]);
+      expect(again.complete).toBe(true);
+    }
+    expect(await snapCount()).toBe(3);
+
+    // imp-7: ручной непроверенный снимок с первоисточником — остаётся текущим.
+    const onlyA = a.items.find(
+      (i) => i.ref === 'r/segonlya' && i.kind === 'community',
+    )!;
+    const manual = ok<{ id: string }>(
+      await A.post(`rx/communities/${onlyA.id}/rules`, {
+        sourceUrl: 'https://www.reddit.com/r/segonlya/about/rules',
+        sourceExcerpt: 'Rule 2: no promotion at all.',
+        promotionPolicy: 'prohibited',
+        linksPolicy: 'prohibited',
+        checkedAt: '2026-10-14T09:00:00.000Z',
+      }),
+      201,
+    );
+    const third = ok<Report>(await A.postRaw('import/apply', A1), 200);
+    expect(
+      third.items.find((i) => i.ref === 'r/segonlya' && i.kind === 'rules'),
+    ).toMatchObject({
+      outcome: 'exists',
+      code: 'kept_current',
+      id: manual.id,
+    });
+    expect(await snapCount()).toBe(4);
+  });
+
+  it('ui-2: название проекта ≤ 120, рынок ≤ 64, без контакта и ника — как у создания проекта (400 по полям, без записей)', async () => {
+    const before = await counts();
+    const base = segBody('smb', comm('uitwolimit'), 'x');
+    const fields = async (b: Record<string, unknown>) => {
+      const r = await A.postRaw('import/plan', b);
+      expect(r.status).toBe(400);
+      return (
+        r.body.error.details.fields as Array<{ field: string; code: string }>
+      )
+        .map((f) => `${f.field}:${f.code}`)
+        .sort();
+    };
+    expect(
+      await fields({
+        ...base,
+        projectTitle: 'т'.repeat(121),
+        market: 'm'.repeat(65),
+      }),
+    ).toEqual(['market:length', 'projectTitle:length']);
+    expect(
+      await fields({
+        ...base,
+        projectTitle: 'ask u/someone',
+        market: 'call +380 67 123 45 67',
+      }),
+    ).toEqual(['market:pii', 'projectTitle:profile_ref']);
+    const edge = await A.postRaw('import/plan', {
+      ...base,
+      projectTitle: 'т'.repeat(120),
+      market: 'm'.repeat(64),
+    });
+    expect(edge.status).toBe(200);
+    expect(await counts()).toEqual(before);
+  });
+
+  it('Р-RD-AUD-4: дедлайн — ответ с частичным отчётом (not_attempted/deadline), ничего не записано; повтор выполняет остаток', async () => {
+    const svc = s.app!.get(AdminRedditService, { strict: false });
+    const body = segBody('smb', comm('deadlinesub'), 'AUD-4 дедлайн');
+    const before = await counts();
+    const late = await svc.importResearch(ADMIN_USER, body, true, {
+      deadlineMs: 0,
+    });
+    expect(late.complete).toBe(false);
+    expect(late.stoppedBy).toBe('deadline');
+    expect(late.items.map((i) => [i.kind, i.outcome, i.code])).toEqual([
+      ['project', 'not_attempted', 'deadline'],
+      ['community', 'not_attempted', 'deadline'],
+      ['rules', 'not_attempted', 'deadline'],
+    ]);
+    expect(await counts()).toEqual(before);
+    const done = ok<Report>(await A.postRaw('import/apply', body), 200);
+    expect(done.complete).toBe(true);
+    expect(done.summary.rules).toEqual({ created: 1 });
   });
 });

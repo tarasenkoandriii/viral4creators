@@ -3,7 +3,7 @@
  * «Reddit» Админки (doc/ai-publisher/reddit-manual-mvp-adapted.md §«Админка»,
  * Р-RD-ADM-3; контракт `<scratchpad>/admin-reddit-internal-contract.md`).
  *
- *  - `rx/<путь>` — ВСЕ 39 маршрутов `REDDIT_ROUTES` (путь после
+ *  - `rx/<путь>` — ВСЕ 40 маршрутов `REDDIT_ROUTES` (путь после
  *    `/publisher/products/:pid/reddit/`): вызов ТОГО ЖЕ обработчика
  *    `PublisherRedditController` в процессе (без HTTP-петли), продукт —
  *    платформенный, членство — синтетическое (`core/admin-actor.ts`);
@@ -84,13 +84,14 @@ export interface AdminRoute<C> {
 type RC = PublisherRedditController;
 type Rx = (c: RC, a: CallArgs) => unknown;
 
-/** Вызов обработчика раздела Reddit по имени `REDDIT_ROUTES` (все 39). */
+/** Вызов обработчика раздела Reddit по имени `REDDIT_ROUTES` (все 40). */
 export const RX_CALLS: Record<RedditRouteName, Rx> = {
   listProjects: (c, a) => c.listProjects(a.ctx, a.q, a.res),
   createProject: (c, a) => c.createProject(a.ctx, a.body, a.res),
   getProject: (c, a) => c.getProject(a.ctx, a.p.id),
   patchProject: (c, a) => c.patchProject(a.ctx, a.p.id, a.body, a.res),
   archiveProject: (c, a) => c.archiveProject(a.ctx, a.p.id, a.body, a.res),
+  restoreProject: (c, a) => c.restoreProject(a.ctx, a.p.id, a.body, a.res),
   listCommunities: (c, a) => c.listCommunities(a.ctx, a.q, a.res),
   createCommunity: (c, a) => c.createCommunity(a.ctx, a.body, a.res),
   getCommunity: (c, a) => c.getCommunity(a.ctx, a.p.id),

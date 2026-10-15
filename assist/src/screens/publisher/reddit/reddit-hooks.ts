@@ -124,6 +124,8 @@ export interface ProjectScope {
   project: RedditProjectView | null;
   loading: boolean;
   error: unknown;
+  /** Перечитать список проектов (повтор после сети/5xx, аудит ui-7). */
+  reload: () => void;
 }
 
 export function useProjectScope(query: PubQuery): ProjectScope {
@@ -137,6 +139,7 @@ export function useProjectScope(query: PubQuery): ProjectScope {
     project: list.find((p) => p.id === projectId) ?? null,
     loading: projects.loading,
     error: projects.error,
+    reload: projects.reload,
   };
 }
 

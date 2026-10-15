@@ -218,6 +218,16 @@ export class AdminRedditController {
     return this.fwd(req, res, 'archiveProject', { params: { id }, body });
   }
 
+  @Post('rx/projects/:id/restore')
+  restoreProject(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<unknown> {
+    return this.fwd(req, res, 'restoreProject', { params: { id }, body });
+  }
+
   @Get('rx/communities')
   listCommunities(
     @Req() req: AdminAuthenticatedRequest,

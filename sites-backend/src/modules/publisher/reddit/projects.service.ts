@@ -19,7 +19,11 @@ import { PubError } from '../core/errors';
 import type { AuditInput, ProductRef, PubTx } from '../core/ports';
 import { casUpdate, parseExpectedRevision } from '../core/revision';
 import { has, Issues, type Body } from '../content/input';
-import { assertParentsActive, insertOrDuplicate } from './guards';
+import {
+  assertParentsActive,
+  insertOrDuplicate,
+  profileRefIssue,
+} from './guards';
 import { phraseNorm } from './normalize';
 import { keywordView, projectRow, projectView } from './views';
 
@@ -28,6 +32,8 @@ const BCP47 = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/;
 export interface OpOut<T> {
   body: T;
   audit: AuditInput[];
+  /** Статус ответа вместо статуса маршрута (createRules `kept` — 200). */
+  status?: number;
 }
 
 /** Поле «неизвестное» в теле — 400 `unknown_field` (опечатка не теряется молча). */
@@ -58,6 +64,9 @@ export class RedditProjectsService {
     const title = is.str(b, 'title', { required: true, max: 120, pii: true });
     const locale = localeField(is, b, 'locale', true);
     const market = is.str(b, 'market', { required: true, max: 64, pii: true });
+    // §8.2: P-R не хранит ников и ссылок на профили (аудит m1-4).
+    profileRefIssue(is, 'title', title);
+    profileRefIssue(is, 'market', market);
     is.throwIfAny();
     const row = await tx.pubRedditProject.create({
       data: {
@@ -110,6 +119,8 @@ export class RedditProjectsService {
       data.market =
         is.str(b, 'market', { required: true, max: 64, pii: true }) ??
         undefined;
+    profileRefIssue(is, 'title', data.name as string | undefined);
+    profileRefIssue(is, 'market', data.market as string | undefined);
     is.throwIfAny();
     if (cur.status === 'archived') {
       throw new PubError('PUB_TRANSITION_INVALID', {
@@ -160,6 +171,47 @@ export class RedditProjectsService {
           action: 'transition',
           fromStatus: 'active',
           toStatus: 'archived',
+        },
+      ],
+    };
+  }
+
+  /**
+   * Восстановление архивного проекта `archived → active` (Р-RD-AUD-1, аудит
+   * m1-1): сообщество одно на продукт и навсегда привязано к проекту, поэтому
+   * без восстановления сабреддиты архивного проекта были бы потеряны для
+   * продукта. Сообщества, запросы и возможности проекта остаются в своих
+   * статусах (архив проекта их не менял).
+   */
+  async restore(
+    tx: PubTx,
+    product: ProductRef,
+    id: string,
+    b: Body,
+  ): Promise<OpOut<RedditProjectView>> {
+    const expected = parseExpectedRevision(b.expectedRevision);
+    const is = new Issues();
+    onlyFields(is, b, ['opKey', 'expectedRevision']);
+    is.throwIfAny();
+    const cur = await projectRow(tx, product.id, id);
+    if (cur.status !== 'archived') {
+      throw new PubError('PUB_TRANSITION_INVALID', {
+        reason: 'status',
+        from: cur.status,
+      });
+    }
+    await casUpdate(tx.pubRedditProject, id, expected, { status: 'active' });
+    const after = await projectRow(tx, product.id, id);
+    return {
+      body: projectView(after),
+      audit: [
+        {
+          objectType: 'reddit_project',
+          objectId: id,
+          action: 'transition',
+          fromStatus: 'archived',
+          toStatus: 'active',
+          meta: { restore: true },
         },
       ],
     };
@@ -224,6 +276,7 @@ export class RedditProjectsService {
     const intent = is.oneOf(b, 'intent', REDDIT_INTENTS, true);
     const locale = localeField(is, b, 'locale', false);
     const priority = is.int(b, 'priority', { min: 1, max: 5, required: true });
+    profileRefIssue(is, 'phrase', phrase);
     is.throwIfAny();
     const project = await projectRow(tx, product.id, projectId!);
     if (project.status !== 'active') {
@@ -294,6 +347,7 @@ export class RedditProjectsService {
         max: 200,
         pii: true,
       });
+      profileRefIssue(is, 'phrase', phrase);
       if (phrase) {
         data.phrase = phrase;
         data.phraseNorm = phraseNorm(phrase);

@@ -260,6 +260,27 @@ export class PublisherRedditController {
     );
   }
 
+  /** `archived → active` (Р-RD-AUD-1). */
+  @Post(`${R}/projects/:id/restore`)
+  @PubAllow(MANAGE)
+  restoreProject(
+    @PubRequest() ctx: PubRequestCtx,
+    @Param('id') id: string,
+    @Body() raw: unknown,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.run(
+      res,
+      ctx,
+      MANAGE,
+      'reddit.project.restore',
+      { id },
+      raw,
+      200,
+      (tx, _step, b) => this.projects.restore(tx, productOf(ctx), id, b),
+    );
+  }
+
   // ── Сообщества ─────────────────────────────────────────────────────────
 
   @Get(`${R}/communities`)

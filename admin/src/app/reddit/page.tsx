@@ -52,9 +52,13 @@ export default function RedditPage() {
   const go = useCallback((patch: Partial<RedditRoute>) => {
     setRoute((cur) => {
       const tabChanged = patch.tab !== undefined && patch.tab !== cur.tab;
+      // Другой проект — возможность для брифа (`opp`) от прежнего не
+      // переносится (аудит ui-8: иначе форма брифа B берёт возможность A).
+      const projectChanged = patch.project !== undefined && patch.project !== cur.project;
       const next: RedditRoute = {
         ...cur,
         ...(tabChanged ? { id: '', opp: '' } : {}),
+        ...(projectChanged ? { opp: '' } : {}),
         ...patch,
       };
       const search = redditRouteSearch(next);
@@ -118,7 +122,7 @@ export default function RedditPage() {
             {WITH_PROJECT.has(route.tab) && !route.id && (
               <>
                 {projects.loading && !projects.data && <Loading />}
-                <ErrorAlert error={projects.error} onReload={projects.reload} />
+                <ErrorAlert error={projects.error} onReload={projects.reload} onRetry={projects.reload} />
                 <ProjectBar projects={projects.data ?? []} />
               </>
             )}

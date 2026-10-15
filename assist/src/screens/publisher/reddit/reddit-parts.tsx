@@ -142,6 +142,9 @@ export function RedditLink({
 
 /** Первоисточник правил (любой https-адрес; не загружается). */
 export function SourceLink({ url }: { url: string }) {
+  const { r } = useReddit();
+  if (url === '')
+    return <span className="text-silver-500">{r.rules.noSource}</span>;
   const href = httpsHref(url);
   if (!href) return <span className="break-all">{url}</span>;
   return (

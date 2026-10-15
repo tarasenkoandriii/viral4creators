@@ -199,6 +199,29 @@ describe('admin/reddit (e2e)', () => {
     expect(JSON.stringify(res.body)).not.toContain(SECRET);
   });
 
+  it('Р-RD-AUD-7: sites-backend не ответил (сеть/таймаут) — 504 UPSTREAM_TIMEOUT в конверте', async () => {
+    const real = client.fetchImpl;
+    client.fetchImpl = (async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof fetch;
+    try {
+      const res = await asOp(
+        request(server()).post(`${URL}/rx/projects`).send({ opKey: 'k' }),
+      ).expect(504);
+      expect(res.body).toMatchObject({
+        success: false,
+        error: {
+          code: 'UPSTREAM_TIMEOUT',
+          message:
+            'Бэкенд клиентских сайтов не ответил вовремя — результат неизвестен, повтор безопасен',
+        },
+      });
+      expect(JSON.stringify(res.body)).not.toContain(SECRET);
+    } finally {
+      client.fetchImpl = real;
+    }
+  });
+
   it('не настроено — 503 с понятным текстом', async () => {
     const env = client.env;
     client.env = {};
@@ -293,6 +316,44 @@ describe('admin/reddit (e2e)', () => {
     ).expect(413);
     expect(big.body.error.code).toBe('PAYLOAD_TOO_LARGE');
     expect(calls).toHaveLength(1);
+  });
+
+  it('adm-6: тело импорта 1 МБ читается только после CORS и при cookie сессии; без cookie — общий лимит и 401', async () => {
+    const mid = { communitiesCsv: 'x'.repeat(150 * 1024) };
+    // Без cookie большой парсер не работает: 150 КБ — 413 общего лимита
+    // (тело не разбирается до 1 МБ), маленькое тело — 401 гварда.
+    const anon = await request(server())
+      .post(`${URL}/import/apply`)
+      .send(mid)
+      .expect(413);
+    expect(anon.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+    await request(server())
+      .post(`${URL}/import/plan`)
+      .set('Cookie', 'other=1')
+      .send({ communitiesCsv: 'a' })
+      .expect(401);
+    // Чужой Origin — 403 до разбора тела (битый JSON не даёт 400).
+    const foreign = await asOp(
+      request(server())
+        .post(`${URL}/import/apply`)
+        .set('Origin', 'https://evil.example.com')
+        .set('Content-Type', 'application/json')
+        .send('{"communitiesCsv":'),
+    ).expect(403);
+    expect(foreign.body.error.code).toBe('ORIGIN_DENIED');
+    // С cookie и своим Origin — свой парсер 1 МБ, как раньше.
+    upstream = {
+      status: 200,
+      body: { success: true, data: { apply: false, items: [] } },
+    };
+    await asOp(
+      request(server())
+        .post(`${URL}/import/plan`)
+        .set('Origin', 'https://admin.example.com')
+        .send(mid),
+    ).expect(200);
+    expect(calls).toHaveLength(1);
+    expect(adminPanel.assertOperator).toHaveBeenCalledTimes(1);
   });
 
   it('прочие маршруты — прежний общий лимит JSON (150 КБ — 413)', async () => {

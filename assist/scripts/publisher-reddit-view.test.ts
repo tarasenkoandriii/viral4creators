@@ -887,6 +887,7 @@ assert.equal(V.opportunityTone('blocked'), 'danger');
     createdBy: 'member:m1',
     status: 'current' as const,
     reviewState: 'unreviewed' as const,
+    source: { url: 'https://www.reddit.com/r/x/about/rules' },
   };
   assert.equal(V.isOwnSnapshot(snap, 'm1'), true);
   assert.equal(V.isOwnSnapshot(snap, 'm2'), false);
@@ -902,6 +903,15 @@ assert.equal(V.opportunityTone('blocked'), 'danger');
     false
   );
   assert.equal(V.canReviewSnapshot({ ...snap, status: 'superseded' }), false);
+  // Р-RD-AUD-3: без первоисточника подтвердить нельзя — подсказка вместо кнопки.
+  const noSrc = { ...snap, source: { url: '' } };
+  assert.equal(V.canReviewSnapshot(noSrc), false);
+  assert.equal(V.needsSourceForReview(noSrc), true);
+  assert.equal(V.needsSourceForReview(snap), false);
+  assert.equal(
+    V.needsSourceForReview({ ...noSrc, reviewState: 'reviewed' }),
+    false
+  );
   const role = (roles: string[], admin = false, owner = false) => ({
     roles: roles as never[],
     admin,
@@ -1099,6 +1109,32 @@ for (const d of [pubRedditUk, pubRedditRu, pubRedditEn]) {
     })
   );
   assert.ok(cas.includes(pubUk.common.reload), '409 CAS — перезагрузка');
+}
+
+// Аудит ui-6/ui-7 (15.10.2026): повтор загрузки и «исход неизвестен».
+{
+  const e = (code: string, status: number) => new ApiError(code, 'x', status);
+  assert.equal(V.isReloadable(e('network', 0)), true);
+  assert.equal(V.isReloadable(e('Bad Gateway', 502)), true);
+  assert.equal(V.isReloadable(e('PUB_INTERNAL', 500)), true);
+  assert.equal(V.isReloadable(e('PUB_BUSY', 409)), true);
+  assert.equal(V.isReloadable(e('UPSTREAM_TIMEOUT', 504)), true);
+  assert.equal(V.isReloadable(e('PUB_NOT_FOUND', 404)), false);
+  assert.equal(V.isReloadable(e('PUB_CONFLICT', 409)), false);
+  assert.equal(V.isReloadable(null), false);
+  assert.equal(V.isUncertainOutcome(e('network', 0)), true);
+  assert.equal(V.isUncertainOutcome(e('http_503', 503)), true);
+  assert.equal(V.isUncertainOutcome(e('UPSTREAM_TIMEOUT', 504)), true);
+  assert.equal(V.isUncertainOutcome(e('PUB_VALIDATION', 400)), false);
+  assert.equal(V.isUncertainOutcome(e('PUB_PAYLOAD_TOO_LARGE', 413)), false);
+  assert.equal(V.isUncertainOutcome(e('PUB_INTERNAL', 500)), false);
+  assert.equal(V.isUncertainOutcome(undefined), false);
+  // 503 с прикладным кодом — исход известен (отказ модели), не «шлюз».
+  assert.equal(V.isUncertainOutcome(e('PUB_AI_UNAVAILABLE', 503)), false);
+  assert.equal(V.isReloadable(e('PUB_AI_UNAVAILABLE', 503)), false);
+  assert.equal(V.isUncertainOutcome(e('http_504', 504)), true);
+  assert.equal(V.isUncertainOutcome(e('PUB_BUSY', 503)), true);
+  assert.equal(V.isReloadable(e('http_503', 503)), true);
 }
 
 console.log('publisher-reddit-view: ok');

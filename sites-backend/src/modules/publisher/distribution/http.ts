@@ -138,7 +138,7 @@ export interface MutationSpec<T> {
     step: { actor: string; now: Date },
     body: Record<string, unknown>,
     opKey: string,
-  ) => Promise<{ body: T; audit: AuditInput[] }>;
+  ) => Promise<{ body: T; audit: AuditInput[]; status?: number }>;
   /**
    * Ответ не хранится в ключе идемпотентности (только hash и `ref` с id):
    * повтор пересобирает его `rebuild` — для ответов со снимком имени
@@ -173,7 +173,11 @@ export async function mutate<T>(res: Response, s: MutationSpec<T>): Promise<T> {
     },
     async (tx, step) => {
       const out = await s.fn(tx, step, body, body.opKey as string);
-      return { status: s.status, body: out.body, audit: out.audit };
+      return {
+        status: out.status ?? s.status,
+        body: out.body,
+        audit: out.audit,
+      };
     },
   );
   res.status(r.status);

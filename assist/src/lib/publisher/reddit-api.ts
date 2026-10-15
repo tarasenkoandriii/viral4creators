@@ -726,6 +726,19 @@ export function createRedditApi(http: PublisherHttp, pid: string) {
           opKey
         )
       ),
+    /** `archived → active` (Р-RD-AUD-1): сабреддиты проекта снова в работе. */
+    restoreProject: async (
+      id: string,
+      opKey: string,
+      expectedRevision: number
+    ) =>
+      decodeRedditProject(
+        await post(
+          `${R}/projects/${seg(id)}/restore`,
+          { expectedRevision },
+          opKey
+        )
+      ),
 
     // Сообщества
     communities: async (

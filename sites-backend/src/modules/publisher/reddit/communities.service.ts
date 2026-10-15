@@ -33,7 +33,7 @@ import {
 import { RedditMaterialsService } from '../content/reddit-materials.service';
 import { SourcesService } from '../content/sources.service';
 import { has, httpsUrl, Issues, type Body } from '../content/input';
-import { PubError } from '../core/errors';
+import { PubError, validationError } from '../core/errors';
 import { looksLikeContact } from '../core/pii-guard';
 import type { AuditInput, PubTx } from '../core/ports';
 import { casUpdate, parseExpectedRevision } from '../core/revision';
@@ -105,6 +105,9 @@ export class RedditCommunitiesService {
       maxLen: 64,
       pii: true,
     });
+    // §8.2: ников и ссылок на профили P-R не хранит (аудит m1-4).
+    profileRefIssue(is, 'descriptionManual', descriptionManual);
+    (topics ?? []).forEach((t, i) => profileRefIssue(is, `topics[${i}]`, t));
     is.throwIfAny();
     const project = await projectRow(tx, product.id, projectId!);
     if (project.status !== 'active') {
@@ -206,6 +209,14 @@ export class RedditCommunitiesService {
         is.strings(b, 'topics', { maxItems: 20, maxLen: 64, pii: true }) ?? [];
     if (has(b, 'status'))
       data.status = is.oneOf(b, 'status', REDDIT_COMMUNITY_STATUSES, true);
+    profileRefIssue(
+      is,
+      'descriptionManual',
+      data.descriptionManual as string | null | undefined,
+    );
+    ((data.topics as string[] | undefined) ?? []).forEach((t, i) =>
+      profileRefIssue(is, `topics[${i}]`, t),
+    );
     is.throwIfAny();
     // Архивный проект: правка и восстановление его сообществ — 409 (S3-6).
     await assertParentsActive(tx, product.id, cur.projectId);
@@ -235,10 +246,11 @@ export class RedditCommunitiesService {
     communityId: string,
     step: Step,
     b: Body,
-  ): Promise<OpOut<RedditRuleSnapshotView>> {
+  ): Promise<OpOut<RedditRuleSnapshotView & { kept?: true }>> {
     const is = new Issues();
     onlyFields(is, b, [
       'opKey',
+      'ifNoCurrent',
       'sourceUrl',
       'sourceExcerpt',
       'promotionPolicy',
@@ -247,7 +259,13 @@ export class RedditCommunitiesService {
       'conditions',
       'checkedAt',
     ]);
-    const rawUrl = is.str(b, 'sourceUrl', { required: true, max: 2048 });
+    // Р-RD-AUD-3: `sourceUrl: null` — первоисточник не прочитан (импорт из
+    // вторичных источников); такой снимок нельзя подтвердить (review — 400
+    // `source_required`), поле обязательно указать явно.
+    const noSource = has(b, 'sourceUrl') && b.sourceUrl === null;
+    const rawUrl = noSource
+      ? null
+      : is.str(b, 'sourceUrl', { required: true, max: 2048 });
     const sourceUrl = rawUrl ? httpsUrl(rawUrl) : null;
     if (rawUrl && !sourceUrl) is.add('sourceUrl', 'format');
     const excerpt = is.str(b, 'sourceExcerpt', {
@@ -268,10 +286,14 @@ export class RedditCommunitiesService {
       maxLen: 300,
       pii: true,
     });
+    profileRefIssue(is, 'sourceUrl', rawUrl);
     profileRefIssue(is, 'sourceExcerpt', excerpt);
     (conditions ?? []).forEach((c, i) =>
       profileRefIssue(is, `conditions[${i}]`, c),
     );
+    // Р-RD-AUD-9: импорт — «только если текущего нет»; проверка — под
+    // блокировкой строки сообщества (два импорта одновременно — один снимок).
+    const ifNoCurrent = is.bool(b, 'ifNoCurrent') === true;
     const checkedAt = is.date(b, 'checkedAt');
     if (checkedAt === undefined && !has(b, 'checkedAt'))
       is.add('checkedAt', 'required');
@@ -298,6 +320,18 @@ export class RedditCommunitiesService {
       (await communityRow(tx, product.id, communityId)).projectId,
     );
     const prev = await currentSnapshot(tx, product.id, communityId);
+    if (prev && ifNoCurrent) {
+      // Текущий снимок уже есть — остаётся (Р-RD-AUD-2): без записи, без
+      // каскада и аудита; 200 и признак `kept`.
+      return {
+        status: 200,
+        body: {
+          ...(await loadSnapshotView(tx, product.id, prev.id, step.now)),
+          kept: true,
+        },
+        audit: [],
+      };
+    }
     const last = await tx.pubRedditRuleSnapshot.findFirst({
       where: { productId: product.id, communityId },
       orderBy: { version: 'desc' },
@@ -308,7 +342,7 @@ export class RedditCommunitiesService {
       tx,
       product,
       {
-        kind: 'url',
+        kind: sourceUrl ? 'url' : 'manual_text',
         url: sourceUrl,
         title: `Правила спільноти Reddit · v${version}`,
         fragment: excerpt,
@@ -405,6 +439,15 @@ export class RedditCommunitiesService {
         reason: s.status !== 'current' ? 'superseded' : 'already_reviewed',
         from: s.reviewState,
       });
+    }
+    // Р-RD-AUD-3: снимок без первоисточника (вторичные источники) не
+    // подтверждается — сначала новый снимок со ссылкой на правила Reddit.
+    const src = await tx.pubSource.findFirst({
+      where: { id: s.sourceId, productId: product.id },
+      select: { url: true },
+    });
+    if (!src?.url?.trim()) {
+      throw validationError([{ field: 'sourceUrl', code: 'source_required' }]);
     }
     // `member:<id>` → id участника, `admin:<id>` → синтетический участник
     // Админки (тот же оператор — пометка selfReview, Р-RD-ADM-2).

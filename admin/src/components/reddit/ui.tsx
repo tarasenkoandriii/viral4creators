@@ -9,7 +9,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   conflictValueText,
+  csvFileText,
   describeAdminRedditError,
+  markMutationError,
   fetchCsv,
   R,
   T,
@@ -28,13 +30,14 @@ import {
 } from '../../lib/reddit-shared/lib/publisher/reddit-studio-view';
 import {
   httpsHref,
+  isReloadable,
   rebaseForm,
   redditHref,
   verdictTone,
   type FieldConflict,
 } from '../../lib/reddit-shared/lib/publisher/reddit-view';
 import type { RedditGateView } from '../../lib/reddit-shared/lib/publisher/reddit-api';
-import { fmtText, type Tone } from '../../lib/reddit-shared/lib/publisher/view';
+import { confirmClick, fmtText, type Tone } from '../../lib/reddit-shared/lib/publisher/view';
 
 // ── Контекст ──────────────────────────────────────────────────────────────
 
@@ -66,7 +69,11 @@ export interface Loaded<T> {
   reload: () => void;
 }
 
-/** Загрузка с перезапуском по `deps`; поздний ответ старого запроса не пишется. */
+/**
+ * Загрузка с перезапуском по `deps`; поздний ответ старого запроса не
+ * пишется. Пока идёт новая загрузка, `data` — прежние (без мигания при
+ * перечитывании); карточки сверяют id записи сами (аудит ui-9).
+ */
 export function useLoad<T>(fn: () => Promise<T>, deps: readonly unknown[]): Loaded<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -126,6 +133,7 @@ export function useMutation(): Mutation {
       return out;
     } catch (e) {
       key.current = opKeyAfter(state, e);
+      markMutationError(e);
       setError(e);
       return undefined;
     } finally {
@@ -248,15 +256,21 @@ export function Loading() {
   return <p className="muted">{T.common.loading}</p>;
 }
 
-/** Ошибка словами; 409 CAS — кнопка «Перечитать» (ввод формы не теряется). */
+/**
+ * Ошибка словами; 409 CAS — кнопка «Перечитать» (ввод формы не теряется);
+ * у загрузчика (`onRetry`) при сети/таймауте/5xx — «Повторить» (аудит ui-7).
+ */
 export function ErrorAlert({
   error,
   onReload,
+  onRetry,
   statusLabels,
   onExisting,
 }: {
   error: unknown;
   onReload?: () => void;
+  /** Повтор загрузки (GET): кнопка — только для повторяемых ошибок. */
+  onRetry?: () => void;
   statusLabels?: Record<string, string>;
   /** 409 дубль: открыть существующую запись (`details.existingId`). */
   onExisting?: (id: string) => void;
@@ -275,6 +289,11 @@ export function ErrorAlert({
       {v.conflict && onReload && (
         <button type="button" onClick={onReload}>
           {T.common.reload}
+        </button>
+      )}
+      {onRetry && !(v.conflict && onReload) && isReloadable(error) && (
+        <button type="button" data-reddit-retry="" onClick={onRetry}>
+          {T.common.retry}
         </button>
       )}
       {v.existingId && onExisting && (
@@ -302,23 +321,29 @@ export function ConfirmButton({
   danger?: boolean;
   confirmText?: string;
 }) {
-  const [armed, setArmed] = useState(false);
+  // Момент взвода (null — не взведена): второй щелчок двойного клика и
+  // нажатие раньше паузы подтверждением не считаются (аудит ui-3).
+  const [armedAt, setArmedAt] = useState<number | null>(null);
+  const armed = armedAt !== null;
   useEffect(() => {
-    if (!armed) return;
-    const t = setTimeout(() => setArmed(false), 5000);
+    if (armedAt === null) return;
+    const t = setTimeout(() => setArmedAt(null), 5000);
     return () => clearTimeout(t);
-  }, [armed]);
+  }, [armedAt]);
   return (
     <button
       type="button"
       className={danger || armed ? 'button-danger' : undefined}
       disabled={disabled || busy}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
+      onClick={(e) => {
+        const now = Date.now();
+        const step = confirmClick(armedAt, now, e.detail);
+        if (step === 'arm') {
+          setArmedAt(now);
           return;
         }
-        setArmed(false);
+        if (step === 'ignore') return;
+        setArmedAt(null);
         onConfirm();
       }}
     >
@@ -525,6 +550,8 @@ export interface Paged<T> {
   hasMore: boolean;
   more: () => void;
   reload: () => void;
+  /** Повтор после ошибки: первой страницы — перечитать, «ещё» — дочитать. */
+  retry: () => void;
 }
 
 /** Первая страница по `deps`, дальше — «Показать ещё» по `nextBefore`. */
@@ -539,41 +566,43 @@ export function usePaged<T>(
     next: undefined,
   });
   const [busy, setBusy] = useState(false);
-  const [moreError, setMoreError] = useState<unknown>(null);
+  // Ошибка «ещё» — тоже от своей первой страницы (сменился фильтр — не видна).
+  const [moreFail, setMoreFail] = useState<{ key: unknown; error: unknown }>({ key: null, error: null });
   // Новая первая страница — хвост прошлой выборки сбрасывается.
   const sameKey = extra.key === first.data;
+  const moreError = moreFail.key === first.data ? moreFail.error : null;
   const items = [...(first.data?.items ?? []), ...(sameKey ? extra.items : [])];
   const next = sameKey && extra.next !== undefined ? extra.next : (first.data?.nextBefore ?? null);
   const fnRef = useRef(fn);
   useEffect(() => {
     fnRef.current = fn;
   });
+  const more = () => {
+    if (!next || busy) return;
+    setBusy(true);
+    const key = first.data;
+    setMoreFail({ key: null, error: null });
+    fnRef
+      .current(next)
+      .then((p) => setExtra((x) => ({ key, items: [...(x.key === key ? x.items : []), ...p.items], next: p.nextBefore })))
+      .catch((error: unknown) => setMoreFail({ key, error }))
+      .finally(() => setBusy(false));
+  };
   return {
     items,
     error: first.error ?? moreError,
     loading: first.loading || busy,
     hasMore: !!next,
-    more: () => {
-      if (!next || busy) return;
-      setBusy(true);
-      setMoreError(null);
-      const key = first.data;
-      fnRef
-        .current(next)
-        .then((p) =>
-          setExtra((x) => ({ key, items: [...(x.key === key ? x.items : []), ...p.items], next: p.nextBefore })),
-        )
-        .catch(setMoreError)
-        .finally(() => setBusy(false));
-    },
+    more,
     reload: first.reload,
+    retry: () => (first.error ? first.reload() : more()),
   };
 }
 
 export function PagedFooter<T>({ page, empty }: { page: Paged<T>; empty: string }) {
   return (
     <>
-      {page.error ? <ErrorAlert error={page.error} /> : null}
+      {page.error ? <ErrorAlert error={page.error} onRetry={page.retry} /> : null}
       {page.loading && !page.items.length ? <Loading /> : null}
       {!page.loading && !page.error && page.items.length === 0 ? <p className="muted">{empty}</p> : null}
       {page.hasMore && (
@@ -625,6 +654,7 @@ export function PlainQuote({ text, injectionFlag, label }: { text: string; injec
 
 /** Ссылка на первоисточник правил: только https, иначе — текстом. */
 export function SourceLink({ url }: { url: string }) {
+  if (url === '') return <span className="muted">{R.rules.noSource}</span>;
   const href = httpsHref(url);
   if (!href) return <span className="rx-wrap">{url}</span>;
   return (
@@ -672,9 +702,13 @@ export function RevokeEvidence({ sourceId, label, onDone }: { sourceId: string; 
 
 // ── Выгрузка CSV ──────────────────────────────────────────────────────────
 
-/** Сохранить текст файлом у оператора (Blob + `a[download]`). */
+/**
+ * Сохранить текст файлом у оператора (Blob + `a[download]`). CSV — с BOM
+ * (`csvFileText`): иначе Excel читает UTF-8 как ANSI (аудит ui-11).
+ */
 export function saveText(filename: string, text: string, type = 'text/csv;charset=utf-8') {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  const body = /^text\/csv\b/i.test(type) ? csvFileText(text) : text;
+  const url = URL.createObjectURL(new Blob([body], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;

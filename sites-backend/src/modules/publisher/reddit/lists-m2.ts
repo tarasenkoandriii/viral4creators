@@ -16,7 +16,7 @@ import {
 } from '../contracts/states';
 import { validationError } from '../core/errors';
 import type { PubTx } from '../core/ports';
-import { loadBriefView, redditPublicationViews } from './brief-views';
+import { loadBriefViews, redditPublicationViews } from './brief-views';
 import { listParams, type ListParams } from './lists';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
@@ -73,9 +73,13 @@ export async function listBriefs(
     take: p.take,
     select: { id: true },
   });
-  const out: RedditBriefView[] = [];
-  for (const r of rows) out.push(await loadBriefView(db, productId, r.id, now));
-  return out;
+  // Аудит m2-13: страница — пакетом (CSV до 5000 строк — тоже).
+  return loadBriefViews(
+    db,
+    productId,
+    rows.map((r) => r.id),
+    now,
+  );
 }
 
 export interface PublicationListParams {

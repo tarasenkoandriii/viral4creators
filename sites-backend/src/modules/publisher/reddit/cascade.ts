@@ -17,6 +17,31 @@ export const RECHECK_ON_RULES_CHANGE = [
   'in_brief',
 ] as const;
 
+/**
+ * Блокировка строк сообществ продукта (порядок по id — без взаимных
+ * блокировок). `FOR UPDATE` — смена правил (новый снимок, отзыв
+ * первоисточника), `FOR SHARE` — расчёт гейта возможности по текущему
+ * снимку (score, правка факторов, qualify, создание): расчёт и смена правил
+ * сообщества сериализуются (аудит m1-2, сценарий «пропуск»).
+ */
+export async function lockCommunities(
+  tx: PubTx,
+  productId: string,
+  communityIds: string[],
+  mode: 'FOR UPDATE' | 'FOR SHARE',
+): Promise<Array<{ id: string; status: string }>> {
+  const ids = [...new Set(communityIds)].sort();
+  return mode === 'FOR UPDATE'
+    ? tx.$queryRaw<Array<{ id: string; status: string }>>`
+        SELECT "id", "status" FROM "sites"."pub_reddit_communities"
+         WHERE "productId" = ${productId} AND "id" = ANY(${ids}::text[])
+         ORDER BY "id" FOR UPDATE`
+    : tx.$queryRaw<Array<{ id: string; status: string }>>`
+        SELECT "id", "status" FROM "sites"."pub_reddit_communities"
+         WHERE "productId" = ${productId} AND "id" = ANY(${ids}::text[])
+         ORDER BY "id" FOR SHARE`;
+}
+
 export async function recheckOpportunities(
   tx: PubTx,
   product: ProductRef,
@@ -28,18 +53,26 @@ export async function recheckOpportunities(
   },
 ): Promise<AuditInput[]> {
   if (communityIds.length === 0) return [];
-  const rows = await tx.pubRedditOpportunity.findMany({
-    where: {
-      productId: product.id,
-      communityId: { in: communityIds },
-      status: { in: [...RECHECK_ON_RULES_CHANGE] },
-    },
-    select: { id: true, status: true },
-    orderBy: { id: 'asc' },
-  });
+  // Аудит m1-2: строки берутся под блокировкой с фильтром статуса, и тот же
+  // фильтр — в UPDATE. Параллельный `archive`/`skip` (зафиксирован раньше)
+  // исключает строку из выборки: после ожидания блокировки Postgres
+  // перепроверяет WHERE по новой версии строки (EvalPlanQual), поэтому
+  // `archived`/`skipped` не воскресают, а аудит пишет фактический статус.
+  const statuses: string[] = [...RECHECK_ON_RULES_CHANGE];
+  const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+    SELECT "id", "status" FROM "sites"."pub_reddit_opportunities"
+     WHERE "productId" = ${product.id}
+       AND "communityId" = ANY(${communityIds}::text[])
+       AND "status" = ANY(${statuses}::text[])
+     ORDER BY "id"
+     FOR UPDATE`;
   if (rows.length === 0) return [];
   await tx.pubRedditOpportunity.updateMany({
-    where: { productId: product.id, id: { in: rows.map((r) => r.id) } },
+    where: {
+      productId: product.id,
+      id: { in: rows.map((r) => r.id) },
+      status: { in: statuses },
+    },
     data: {
       policy: opts.policy,
       policyReasons: [opts.reason],
@@ -84,6 +117,11 @@ export async function redditOnSourceRevoked(
   product: ProductRef,
   chain: string[],
 ): Promise<AuditInput[]> {
+  // Аудит m1-2: сообщества — под блокировкой (как новый снимок), чтобы
+  // параллельный пересчёт score/qualify (`FOR SHARE` сообщества) шёл либо до
+  // отзыва (и попадал в каскад), либо после (и видел отзыв).
+  const ids = await communitiesOfRulesSources(tx, product, chain);
+  if (ids.length > 0) await lockCommunities(tx, product.id, ids, 'FOR UPDATE');
   const snaps = await tx.pubRedditRuleSnapshot.findMany({
     where: {
       productId: product.id,

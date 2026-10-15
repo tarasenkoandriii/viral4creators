@@ -1,7 +1,8 @@
 'use client';
 
 // «Проекты»: список, создание, карточка с правкой (только изменённые поля,
-// CAS `expectedRevision`; 409 — перечитать без потери ввода) и архивом.
+// CAS `expectedRevision`; 409 — перечитать без потери ввода), архивом и
+// восстановлением архивного (Р-RD-AUD-1).
 // Выбранный проект — фильтр остальных вкладок (`?project=`).
 
 import { useState } from 'react';
@@ -174,17 +175,20 @@ function ProjectCard({ id, onChanged }: { id: string; onChanged: () => void }) {
   const { api, go } = useRx();
   const state = useLoad(() => api.reddit.project(id), [api, id]);
   const [fresh, setFresh] = useState<RedditProjectView | null>(null);
-  const p = fresh && fresh.id === id && (!state.data || fresh.revision >= state.data.revision) ? fresh : state.data;
+  // Пока грузится другая запись, прежняя не показывается (аудит ui-9).
+  const loaded = state.data?.id === id ? state.data : null;
+  const p = fresh && fresh.id === id && (!loaded || fresh.revision >= loaded.revision) ? fresh : loaded;
   return (
     <div className="rx-stack">
       <button type="button" className="rx-linkbtn" onClick={() => go({ tab: 'projects', id: '' })}>
         {R.common.back}
       </button>
-      {state.error ? <ErrorAlert error={state.error} /> : null}
+      {state.error ? <ErrorAlert error={state.error} onRetry={state.reload} /> : null}
       {!p ? (
         state.loading ? <Loading /> : null
       ) : (
         <ProjectCardBody
+          key={p.id}
           p={p}
           reload={() => {
             setFresh(null);
@@ -252,6 +256,20 @@ function ProjectCardBody({ p, reload, onSaved }: { p: RedditProjectView; reload:
           <Row label={R.projects.fields.locale}>{p.locale}</Row>
           <Row label={R.projects.fields.market}>{p.market}</Row>
           <p className="muted rx-hint">{R.projects.archiveHint}</p>
+          {/* Р-RD-AUD-1: восстановление архивного проекта (archived → active). */}
+          <div className="rx-row">
+            <ConfirmButton
+              busy={ma.busy}
+              onConfirm={async () => {
+                const x = await ma.run((k) => api.reddit.restoreProject(p.id, k, p.revision), `restoreProject:${p.id}:${p.revision}`);
+                if (x) onSaved(x);
+              }}
+            >
+              {R.projects.restore}
+            </ConfirmButton>
+          </div>
+          <ErrorAlert error={ma.error} onReload={reload} />
+          <p className="muted rx-hint">{R.projects.restoreHint}</p>
         </>
       )}
     </Section>

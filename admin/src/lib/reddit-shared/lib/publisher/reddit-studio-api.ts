@@ -76,7 +76,7 @@ export const REDDIT_DRAFT_TEMPLATES = [
   'feedback_request',
 ] as const;
 export type RedditDraftTemplate = (typeof REDDIT_DRAFT_TEMPLATES)[number];
-/** Коды BLOCK `reddit_policy` (`reddit/checks.ts`, `markers@3`: 18). */
+/** Коды BLOCK `reddit_policy` (`reddit/checks.ts`, `markers@4`: 18). */
 export const REDDIT_CHECK_BLOCKERS = [
   'reddit_rules_missing',
   'reddit_rules_unreviewed',
@@ -97,7 +97,7 @@ export const REDDIT_CHECK_BLOCKERS = [
   'reddit_pii',
   'reddit_thread_missing',
 ] as const;
-/** Коды WARN `reddit_policy` (подтверждаются при согласовании и копировании; 10). */
+/** Коды WARN `reddit_policy` (подтверждаются при согласовании и копировании; 13). */
 export const REDDIT_CHECK_WARNINGS = [
   'reddit_links_restricted',
   'reddit_claim_needs_verification',
@@ -109,6 +109,9 @@ export const REDDIT_CHECK_WARNINGS = [
   'reddit_claim_from_brief',
   'reddit_guarantee',
   'reddit_personal_experience',
+  'reddit_social_proof',
+  'reddit_testimonial_unclear',
+  'reddit_claim_source_mismatch',
 ] as const;
 /** Находки вызова `pub.reddit.draft` (подсказка человеку, все critical). */
 export const REDDIT_AI_FINDINGS = [

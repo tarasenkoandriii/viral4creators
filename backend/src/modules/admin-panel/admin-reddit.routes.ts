@@ -12,7 +12,7 @@
  * `/internal/admin/reddit/<path>` (1:1, тот же метод и та же форма тела).
  * Контракт внутреннего API — v1.4 от 14.10.2026 (код sites-backend
  * `publisher/reddit/admin/admin-reddit-routes.ts`): `status`, `setup`,
- * `params*`, `import/*`, `rx/<путь REDDIT_ROUTES>` (все 39) и `cx/<путь
+ * `params*`, `import/*`, `rx/<путь REDDIT_ROUTES>` (все 40) и `cx/<путь
  * маршрута контента>` (студия, только Reddit-материалы; v1.2 — 24).
  * Тела и ответы — контракты Publisher (`sites-backend/src/modules/publisher/
  * contracts/{reddit-api,content-api}.ts`); генератор их не разбирает
@@ -150,7 +150,7 @@ export const ADMIN_REDDIT_ROUTES = {
     timeoutMs: IMPORT_TIMEOUT_MS,
     maxBodyBytes: IMPORT_MAX_BODY_BYTES,
   },
-  // ── rx/*: те же обработчики, что REDDIT_ROUTES (39) ─────────────────
+  // ── rx/*: те же обработчики, что REDDIT_ROUTES (40) ─────────────────
   // Проекты
   listProjects: {
     method: 'GET',
@@ -162,6 +162,8 @@ export const ADMIN_REDDIT_ROUTES = {
   getProject: { method: 'GET', path: 'rx/projects/:id' },
   patchProject: { method: 'PATCH', path: 'rx/projects/:id' },
   archiveProject: { method: 'POST', path: 'rx/projects/:id/archive' },
+  // Р-RD-AUD-1: восстановление архивного проекта (archived → active).
+  restoreProject: { method: 'POST', path: 'rx/projects/:id/restore' },
   // Сообщества
   listCommunities: {
     method: 'GET',

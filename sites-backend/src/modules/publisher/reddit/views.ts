@@ -62,16 +62,25 @@ export type ReadDb = Pick<
 const strArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
-/** Действующее значение `reddit_rules_stale_days` продукта (иначе 30). */
+/** Статусы параметра, чьё значение действует (посев — допущение 30). */
+const STALE_DAYS_EFFECTIVE = ['approved', 'assumption'];
+
+/**
+ * Действующее значение `reddit_rules_stale_days` продукта (иначе 30).
+ * Отозванное или отклонённое решение хранит прежнее `value`, но не действует
+ * (аудит m1-3): тогда — умолчание.
+ */
 export async function staleDaysFor(
   db: ReadDb,
   productId: string,
 ): Promise<number> {
   const p = await db.pubParameter.findFirst({
     where: { productId, key: 'reddit_rules_stale_days' },
-    select: { value: true },
+    select: { value: true, status: true },
   });
-  return staleDaysOf(p?.value ?? null);
+  return staleDaysOf(
+    p && STALE_DAYS_EFFECTIVE.includes(p.status) ? p.value : null,
+  );
 }
 
 export function projectView(r: ProjectRow): RedditProjectView {

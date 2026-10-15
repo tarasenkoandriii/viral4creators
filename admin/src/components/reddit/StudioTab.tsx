@@ -27,6 +27,7 @@ import {
 import { publicationTransitionBody } from '../../lib/reddit-shared/lib/publisher/channels-view';
 import {
   ackWarningsOf,
+  diffPartner,
   approveAckBody,
   approvalRevoked,
   approveRedditBody,
@@ -175,7 +176,7 @@ export function StudioTab() {
 function StudioLoader({ id }: { id: string }) {
   const { api } = useRx();
   const state = useLoad(() => api.studio.material(id), [api, id]);
-  if (state.error) return <ErrorAlert error={state.error} onReload={state.reload} />;
+  if (state.error) return <ErrorAlert error={state.error} onReload={state.reload} onRetry={state.reload} />;
   if (!state.data) return <Loading />;
   return <StudioBody m={state.data} reload={state.reload} />;
 }
@@ -241,7 +242,7 @@ function StudioBody({ m, reload }: { m: RedditMaterialView; reload: () => void }
           </Alert>
         )}
       </Section>
-      {brief.error ? <ErrorAlert error={brief.error} onReload={brief.reload} /> : null}
+      {brief.error ? <ErrorAlert error={brief.error} onReload={brief.reload} onRetry={brief.reload} /> : null}
       {brief.data && (
         <>
           {write && (
@@ -257,7 +258,7 @@ function StudioBody({ m, reload }: { m: RedditMaterialView; reload: () => void }
           <DisclosurePanel b={brief.data} v={m.currentVersion ?? m.approvedVersion} check={m.policyCheck} />
         </>
       )}
-      {versions.error ? <ErrorAlert error={versions.error} onReload={versions.reload} /> : null}
+      {versions.error ? <ErrorAlert error={versions.error} onReload={versions.reload} onRetry={versions.reload} /> : null}
       {versions.data && <VersionsPanel m={m} versions={versions.data} />}
       <EvidencePanel v={m.currentVersion ?? m.approvedVersion} />
       <RulesPanel m={m} />
@@ -709,7 +710,9 @@ function VersionsPanel({ m, versions }: { m: RedditMaterialView; versions: Versi
   const [other, setOther] = useState('');
   const selected =
     versions.find((v) => v.id === sel) ?? versions.find((v) => v.id === m.content.currentVersionId) ?? versions[versions.length - 1] ?? null;
-  const diff = useLoad(async () => (selected && other ? api.content.diff(m.content.id, other, selected.id) : null), [api, m.content.id, selected?.id, other]);
+  // «Сравнить с» = выбранная (или исчезла) — сравнения нет (аудит ui-10).
+  const partner = diffPartner(selected?.id, other, versions.map((v) => v.id));
+  const diff = useLoad(async () => (selected && partner ? api.content.diff(m.content.id, partner, selected.id) : null), [api, m.content.id, selected?.id, partner]);
   if (!versions.length) return null;
   const label = (v: VersionView) => fmtText(R.studio.versions.version, { n: v.number });
   return (
@@ -717,7 +720,15 @@ function VersionsPanel({ m, versions }: { m: RedditMaterialView; versions: Versi
       <ul className="rx-items">
         {versions.map((v) => (
           <li key={v.id}>
-            <button type="button" className={`rx-version${selected?.id === v.id ? ' rx-version-on' : ''}`} aria-pressed={selected?.id === v.id} onClick={() => setSel(v.id)}>
+            <button
+              type="button"
+              className={`rx-version${selected?.id === v.id ? ' rx-version-on' : ''}`}
+              aria-pressed={selected?.id === v.id}
+              onClick={() => {
+                setSel(v.id);
+                if (v.id === other) setOther('');
+              }}
+            >
               <b>{label(v)}</b> <Badge>{(R.studio.versionStatuses as Record<string, string>)[v.status] ?? v.status}</Badge>
               {v.id === m.content.currentVersionId && <Badge>{R.studio.versions.current}</Badge>}
               {v.id === m.content.approvedVersionId && <Badge tone="success">{R.studio.versions.approved}</Badge>}
@@ -732,7 +743,7 @@ function VersionsPanel({ m, versions }: { m: RedditMaterialView; versions: Versi
           {versions.length > 1 && (
             <Field label={R.studio.versions.diffWith}>
               <Select
-                value={other}
+                value={partner}
                 options={versions.filter((v) => v.id !== selected.id).map((v) => v.id)}
                 labels={Object.fromEntries(versions.map((v) => [v.id, label(v)]))}
                 empty={R.common.none}
@@ -740,8 +751,10 @@ function VersionsPanel({ m, versions }: { m: RedditMaterialView; versions: Versi
               />
             </Field>
           )}
-          {other && diff.error ? <ErrorAlert error={diff.error} /> : null}
-          {other && diff.data && (
+          {partner && diff.error ? <ErrorAlert error={diff.error} onRetry={diff.reload} /> : null}
+          {partner && diff.loading ? <Loading /> : null}
+          {/* Пока грузится новое сравнение, прошлое не показывается. */}
+          {partner && !diff.loading && diff.data && (
             <div className="rx-pre rx-diff" data-reddit-diff="" tabIndex={0} role="region" aria-label={R.studio.versions.diffWith}>
               {diff.data.title && m.contentType === 'post' && (
                 <div>
@@ -907,7 +920,7 @@ function HumanQaPanel({ v }: { v: VersionView }) {
   const checks = useLoad(() => api.content.qaChecks(v.id), [api, v.id]);
   return (
     <Section title={R.studio.humanQa.title}>
-      {checks.error ? <ErrorAlert error={checks.error} onReload={checks.reload} /> : null}
+      {checks.error ? <ErrorAlert error={checks.error} onReload={checks.reload} onRetry={checks.reload} /> : null}
       {!checks.data ? (
         checks.loading ? <Loading /> : null
       ) : (

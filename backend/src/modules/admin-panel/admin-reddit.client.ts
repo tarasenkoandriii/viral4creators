@@ -15,14 +15,18 @@
  * sites-backend — тот же код, машинный код ошибки и её `details`
  * (PUB_VALIDATION `fields`, PUB_CONFLICT `reason`/`existingId`,
  * PUB_GATE_CLOSED `missing` …) — без `meta`, с вычищенным секретом;
- * 401 (секреты не совпали), 5xx и сеть — 502. Исключение (Р-RD-ADM-B3):
+ * 401 (секреты не совпали) и прочие 5xx — 502. Исключение (Р-RD-ADM-B3):
  * 503 `PUB_BUSY`/`PUB_AI_UNAVAILABLE` — «повторите», а не авария, —
- * уходят 503 с тем же кодом. Тела запросов и ответов НЕ логируются — в
+ * уходят 503 с тем же кодом. Таймаут, сеть и 504 самого sites-backend
+ * (функция не уложилась в лимит) — 504 `UPSTREAM_TIMEOUT` (Р-RD-AUD-7):
+ * результат неизвестен, повтор с тем же `opKey` безопасен (идемпотентность
+ * sites-backend вернёт прежний ответ, а не создаст дубль). Тела запросов и ответов НЕ логируются — в
  * журнале только имя маршрута, статус и класс сетевой ошибки.
  */
 import {
   BadGatewayException,
   BadRequestException,
+  GatewayTimeoutException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -51,6 +55,13 @@ const ERROR_DETAILS_MAX_BYTES = 16 * 1024;
 const RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
 /** 503 sites-backend, которые значат «повторите», а не «сломалось». */
 const RETRYABLE_503 = new Set(['PUB_BUSY', 'PUB_AI_UNAVAILABLE']);
+/**
+ * Машинный код 504: sites-backend не ответил (таймаут, сеть, его 504).
+ * Админка считает его повторяемым с тем же `opKey` (Р-RD-AUD-7).
+ */
+export const UPSTREAM_TIMEOUT = 'UPSTREAM_TIMEOUT';
+const UPSTREAM_TIMEOUT_MESSAGE =
+  'Бэкенд клиентских сайтов не ответил вовремя — результат неизвестен, повтор безопасен';
 const MACHINE_CODE = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/;
 /** `X-Admin-Actor` по контракту: id пользователя backend (cuid). */
 const ACTOR_RE = /^[A-Za-z0-9_-]{1,58}$/;
@@ -218,7 +229,11 @@ export class AdminRedditClient {
       this.logger.warn(
         `sites-backend не ответил на reddit.${name}: ${(err as Error)?.name ?? 'Error'}`,
       );
-      throw new BadGatewayException('Бэкенд клиентских сайтов не ответил');
+      // Ответ пришёл, но больше предела — исход известен, это не таймаут.
+      if (err instanceof RangeError) {
+        throw new BadGatewayException('Бэкенд клиентских сайтов вернул ошибку');
+      }
+      throw upstreamTimeout();
     } finally {
       clearTimeout(timer);
     }
@@ -257,6 +272,7 @@ export class AdminRedditClient {
     const passThrough =
       (status >= 400 && status < 500 && status !== 401) ||
       (status === 503 && code !== null && RETRYABLE_503.has(code));
+    if (status === 504) return upstreamTimeout();
     if (!passThrough) {
       return new BadGatewayException(
         status === 401
@@ -280,6 +296,14 @@ export class AdminRedditClient {
       status === 503 ? HttpStatus.SERVICE_UNAVAILABLE : status,
     );
   }
+}
+
+/** 504 `UPSTREAM_TIMEOUT`: исход запроса к sites-backend неизвестен. */
+function upstreamTimeout(): GatewayTimeoutException {
+  return new GatewayTimeoutException({
+    message: UPSTREAM_TIMEOUT_MESSAGE,
+    error: UPSTREAM_TIMEOUT,
+  });
 }
 
 function validParam(key: string, value: string): boolean {

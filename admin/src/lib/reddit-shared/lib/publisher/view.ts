@@ -481,3 +481,25 @@ export function safeHref(url: string | null | undefined): string | null {
     return null;
   }
 }
+
+/**
+ * Пауза между взводом двухшагового подтверждения и подтверждающим
+ * нажатием (аудит ui-3): второй щелчок двойного клика приходит раньше.
+ */
+export const CONFIRM_GUARD_MS = 500;
+
+/**
+ * Нажатие `ConfirmButton`: не взведена — взвести; взведена — подтвердить,
+ * но только после паузы `CONFIRM_GUARD_MS` и не вторым щелчком серии
+ * (`MouseEvent.detail > 1` — двойной/тройной клик). Клавиатура даёт
+ * `detail = 0` и проходит по времени.
+ */
+export function confirmClick(
+  armedAt: number | null,
+  now: number,
+  detail = 0
+): 'arm' | 'ignore' | 'confirm' {
+  if (armedAt === null) return 'arm';
+  if (detail > 1 || now - armedAt < CONFIRM_GUARD_MS) return 'ignore';
+  return 'confirm';
+}

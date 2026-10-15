@@ -23,8 +23,16 @@ import {
   decodeImportReport,
   decodeStatus,
   describeAdminRedditError,
+  markMutationError,
   emptyImportForm,
   IMPORT_MAX_BYTES,
+  IMPORT_MARKET_MAX,
+  IMPORT_TITLE_MAX,
+  importApplyNotice,
+  importBlocksShown,
+  keptCurrentText,
+  IMPORT_WARNING_KIND_LABELS,
+  IMPORT_KIND_LABELS,
   importBody,
   importFingerprint,
   importSummaryRows,
@@ -36,6 +44,7 @@ import {
   sectionState,
   toPubError,
   type Transport,
+  type ImportReport,
 } from './reddit';
 import { ApiError } from './reddit-shared/kit/envelope';
 import { copyText } from './reddit-shared/kit/clipboard';
@@ -145,6 +154,14 @@ async function main() {
     query: undefined,
     body: { expectedRevision: 3, title: 'P2', opKey: 'op' },
   });
+  // Р-RD-AUD-1: восстановление архивного проекта — rx/projects/:id/restore.
+  await api.reddit.restoreProject(ID, 'opr', 4);
+  assert.deepEqual(calls.at(-1), {
+    method: 'POST',
+    path: `/admin/reddit/rx/projects/${ID}/restore`,
+    query: undefined,
+    body: { expectedRevision: 4, opKey: 'opr' },
+  });
   await assert.rejects(api.content.approve(ID, { versionHash: 'h', acknowledgedWarnings: ['reddit_duplicate'] }, 'op2'));
   assert.deepEqual(calls.at(-1), {
     method: 'POST',
@@ -199,6 +216,59 @@ async function main() {
   // Ответ backend без кода Publisher (503 «не подключено») — его текст.
   const off = describeAdminRedditError(toPubError(new ApiRequestError('Reddit не подключён к админке: задайте …', 503, 'SERVICE_UNAVAILABLE')));
   assert.match(off.title, /не подключён/);
+  // Р-RD-AUD-7 (ui-1): 504 UPSTREAM_TIMEOUT и прочие ответы шлюза 502/503/504 —
+  // повторяемые с тем же opKey; текст «результат неизвестен — повтор безопасен».
+  {
+    const { isRetryable, opKeyAfter } = await import('./reddit-shared/lib/publisher/common-pure');
+    const upstream = toPubError(
+      new ApiRequestError('Бэкенд клиентских сайтов не ответил вовремя — результат неизвестен, повтор безопасен', 504, 'UPSTREAM_TIMEOUT'),
+    );
+    assert.ok(upstream instanceof ApiError && upstream.code === 'UPSTREAM_TIMEOUT' && upstream.status === 504);
+    const key = { key: 'k-1', sig: 'POST /x {}' };
+    for (const e of [
+      upstream,
+      toPubError(new ApiRequestError('Бэкенд клиентских сайтов вернул ошибку', 502, 'Bad Gateway')),
+      toPubError(new ApiRequestError('Сервер ответил 504', 504)),
+      toPubError(new ApiRequestError('Сервер ответил 503', 503)),
+      net,
+    ]) {
+      assert.equal(isRetryable(e), true, String((e as ApiError).code));
+      assert.equal(opKeyAfter(key, e), key, 'тот же opKey на повтор');
+      const safe = (x: { lines: string[] }) => x.lines.some((l) => l.startsWith('Результат неизвестен — повтор безопасен'));
+      assert.ok(safe(describeAdminRedditError(e, {}, { mutation: true })));
+      // Загрузчик (GET) — ключа операции нет, строки нет (кнопка «Повторить»).
+      assert.ok(!safe(describeAdminRedditError(e)), 'GET без строки');
+    }
+    // Ошибка из useMutation помечается — ErrorAlert видит её как действие.
+    const marked = toPubError(new ApiRequestError('Сервер ответил 504', 504));
+    markMutationError(marked);
+    assert.ok(describeAdminRedditError(marked).lines.some((l) => l.startsWith('Результат неизвестен')));
+    const ut = describeAdminRedditError(upstream, {}, { mutation: true });
+    assert.equal(ut.title, 'Бэкенд клиентских сайтов не ответил вовремя.');
+    assert.equal(ut.retryable, true);
+    for (const e of [conflict, new ApiError('PUB_VALIDATION', 'x', 400), new ApiError('http_500', 'x', 500)]) {
+      assert.equal(opKeyAfter(key, e), null);
+      assert.ok(!describeAdminRedditError(e, {}, { mutation: true }).lines.some((l) => l.startsWith('Результат неизвестен')));
+    }
+    // 503 с прикладным кодом — исход известен: отказ модели сохранён под
+    // этим opKey, тот же ключ воспроизвёл бы его; строки «повтор безопасен» нет.
+    for (const e of [
+      new ApiError('PUB_AI_UNAVAILABLE', 'x', 503),
+      toPubError(new ApiRequestError('Модель недоступна', 503, 'PUB_AI_UNAVAILABLE')),
+    ]) {
+      assert.equal(isRetryable(e), false);
+      assert.equal(opKeyAfter(key, e), null, 'новый ключ на повтор AI');
+      assert.ok(!describeAdminRedditError(e, {}, { mutation: true }).lines.some((l) => l.startsWith('Результат неизвестен')));
+    }
+    // PUB_BUSY — тот же ключ (повторяем); 503 «раздел не подключён» — исход известен.
+    assert.equal(opKeyAfter(key, new ApiError('PUB_BUSY', 'x', 503)), key);
+    const offM = describeAdminRedditError(
+      toPubError(new ApiRequestError('Раздел Reddit не подключён к админке', 503, 'SERVICE_UNAVAILABLE')),
+      {},
+      { mutation: true },
+    );
+    assert.ok(!offM.lines.some((l) => l.startsWith('Результат неизвестен')), 'не подключён — без «повтор безопасен»');
+  }
 
   // ── 5. Статус раздела ──
   const st = decodeStatus({ enabled: true, aiEnabled: false, platformSiteId: 's1', product: null, gate: null });
@@ -239,6 +309,81 @@ async function main() {
     { kind: 'community', label: 'Сообщества', cells: [['будет создано', 1]] },
     { kind: 'opportunity', label: 'Возможности', cells: [['отклонено', 1]] },
   ]);
+  // Старый ответ без новых полей — полный отчёт без предупреждений.
+  assert.equal(rep.complete, true);
+  assert.deepEqual(rep.warnings, []);
+  assert.equal(rep.blocks[0].firstHandSource, true);
+
+  // Аудит ui-2: границы полей проекта — как у создания проекта (120/64).
+  assert.deepEqual(importBody({ ...f, projectTitle: 'т'.repeat(120), market: 'm'.repeat(64) }).issues, []);
+  assert.deepEqual(importBody({ ...f, projectTitle: 'т'.repeat(121) }).issues, ['title']);
+  assert.deepEqual(importBody({ ...f, market: 'm'.repeat(65) }).issues, ['market']);
+  assert.equal(IMPORT_TITLE_MAX, 120);
+  assert.equal(IMPORT_MARKET_MAX, 64);
+  // Отказ проекта при apply — предупреждение, не «Импорт применён».
+  const applied = (items: ImportReport['items'], extra: Partial<ImportReport> = {}): ImportReport => ({
+    apply: true,
+    productId: 'p',
+    complete: true,
+    items,
+    blocks: [],
+    warnings: [],
+    summary: {},
+    ...extra,
+  });
+  const rejectedProject = importApplyNotice(
+    applied([{ kind: 'project', ref: 'T', outcome: 'rejected', code: 'market:length' }, { kind: 'community', ref: 'r/a', outcome: 'not_attempted', code: 'project_rejected' }], {
+      complete: false,
+      stoppedBy: 'project_rejected',
+    }),
+  );
+  assert.equal(rejectedProject.tone, 'warning');
+  assert.match(rejectedProject.text, /Проект не создан/);
+  assert.doesNotMatch(rejectedProject.text, /Импорт применён\./);
+  const late = importApplyNotice(applied([{ kind: 'community', ref: 'r/a', outcome: 'not_attempted', code: 'deadline' }], { complete: false, stoppedBy: 'deadline' }));
+  assert.equal(late.tone, 'warning');
+  assert.match(late.text, /частично/);
+  assert.deepEqual(importApplyNotice(applied([{ kind: 'project', ref: 'T', outcome: 'created' }])), {
+    tone: 'success',
+    text: 'Импорт применён. Повтор безопасен: существующее останется «уже есть».',
+  });
+  const full = decodeImportReport({
+    apply: true,
+    productId: 'p',
+    complete: false,
+    stoppedBy: 'deadline',
+    items: [{ kind: 'rules', ref: 'r/a', outcome: 'exists', code: 'kept_current', detail: 'unreviewed' }],
+    blocks: [{ subreddit: 'a', now: [], afterReview: [], firstHandSource: false }],
+    warnings: [{ kind: 'rules', ref: 'smb: r/a', code: 'flair_unparsed', field: 'flair_required', detail: 'depends' }],
+    summary: { rules: { exists: 1, not_attempted: 2 } },
+  });
+  assert.equal(full.complete, false);
+  assert.equal(full.stoppedBy, 'deadline');
+  assert.equal(full.blocks[0].firstHandSource, false);
+  assert.deepEqual(full.warnings[0], { kind: 'rules', ref: 'smb: r/a', code: 'flair_unparsed', field: 'flair_required', detail: 'depends' });
+  assert.deepEqual(importSummaryRows(full)[0].cells, [
+    ['уже есть', 1],
+    ['не выполнялось', 2],
+  ]);
+  // Ревью 2 (S3): kept_current — по-русски, без сырых enum; `file` — «Файл»;
+  // гейт/первоисточник — не для сообществ с оставленным текущим снимком.
+  assert.equal(keptCurrentText('unreviewed'), 'текущий снимок: не подтверждён');
+  const kt = keptCurrentText('reviewed; differs: promotion allowed_with_conditions, csv prohibited; links allowed, csv restricted');
+  assert.equal(
+    kt,
+    'текущий снимок: проверено человеком; Продвижение: в снимке «разрешено с условиями», в CSV «запрещено»; Ссылки: в снимке «разрешены», в CSV «ограничены»',
+  );
+  assert.doesNotMatch(keptCurrentText('weird; differs: odd thing; links zzz, csv yyy'), /weird|odd|zzz|yyy|differs/);
+  assert.equal(keptCurrentText(undefined), '');
+  assert.equal(IMPORT_WARNING_KIND_LABELS.file, 'Файл');
+  assert.equal(IMPORT_WARNING_KIND_LABELS.rules, IMPORT_KIND_LABELS.rules);
+  assert.deepEqual(
+    importBlocksShown({
+      items: [...full.items, { kind: 'rules', ref: 'r/b', outcome: 'created' }],
+      blocks: [...full.blocks, { subreddit: 'b', now: [], afterReview: [], firstHandSource: false }],
+    }).map((b) => b.subreddit),
+    ['b'],
+  );
 
   // ── 7. Параметры гейта ──
   assert.deepEqual(parseParamValue('{"days": 30}'), { ok: true, value: { days: 30 } });
@@ -464,6 +609,75 @@ async function main() {
   assert.equal(await copyText(text), true);
   assert.equal(fallback, text, 'запасной путь — та же строка');
   delete g.document;
+
+  // ── 12. Аудит UI 15.10.2026 (ui-3…ui-11): чистая логика экранов ──
+  {
+    const { decodeImportFile, readImportFile, csvFileText, IMPORT_FILE_TEXT } = await import('./reddit');
+    const { confirmClick, CONFIRM_GUARD_MS } = await import('./reddit-shared/lib/publisher/view');
+    const { isReloadable, isUncertainOutcome } = await import('./reddit-shared/lib/publisher/reddit-view');
+    const { diffPartner } = await import('./reddit-shared/lib/publisher/reddit-studio-view');
+
+    // ui-3: двойной клик не проходит двухшаговое подтверждение.
+    assert.equal(confirmClick(null, 1000, 1), 'arm');
+    assert.equal(confirmClick(1000, 1000 + 120, 2), 'ignore', 'второй щелчок двойного клика');
+    assert.equal(confirmClick(1000, 1000 + 120, 1), 'ignore', 'раньше паузы');
+    assert.equal(confirmClick(1000, 1000 + CONFIRM_GUARD_MS + 900, 3), 'ignore', 'тройной клик — серия');
+    assert.equal(confirmClick(1000, 1000 + CONFIRM_GUARD_MS, 1), 'confirm');
+    assert.equal(confirmClick(1000, 1000 + CONFIRM_GUARD_MS, 0), 'confirm', 'клавиатура: detail = 0');
+
+    // ui-4/ui-5: файл импорта — строго UTF-8, ≤ 1 МБ, BOM снимается.
+    const utf8 = new TextEncoder().encode('﻿subreddit,notes\r\nr/startups,заметка\r\n');
+    const ok = decodeImportFile('a.csv', utf8);
+    assert.ok(ok.ok && ok.text === 'subreddit,notes\r\nr/startups,заметка\r\n' && ok.lines === 2, JSON.stringify(ok));
+    // «заметка» в Windows-1251.
+    const cp1251 = new Uint8Array([...new TextEncoder().encode('subreddit,notes\r\nr/x,'), 0xe7, 0xe0, 0xec, 0xe5, 0xf2, 0xea, 0xe0, 0x0d, 0x0a]);
+    const bad = decodeImportFile('b.csv', cp1251);
+    assert.ok(!bad.ok && bad.error === IMPORT_FILE_TEXT.encoding('b.csv') && /UTF-8/.test(bad.error), JSON.stringify(bad));
+    const big = decodeImportFile('c.csv', new Uint8Array(IMPORT_MAX_BYTES + 1));
+    assert.ok(!big.ok && big.error === IMPORT_FILE_TEXT.tooLarge('c.csv'));
+    let readCalls = 0;
+    const tooBig = await readImportFile({ name: 'd.csv', size: IMPORT_MAX_BYTES + 1, arrayBuffer: async () => (readCalls++, new ArrayBuffer(0)) });
+    assert.ok(!tooBig.ok && /больше 1 МБ/.test(tooBig.error) && !/Три файла/.test(tooBig.error), 'один файл — свой текст');
+    assert.equal(readCalls, 0, 'большой файл не читается');
+    const unread = await readImportFile({ name: 'e.csv', size: 10, arrayBuffer: async () => Promise.reject(new Error('NotReadableError')) });
+    assert.ok(!unread.ok && unread.error === IMPORT_FILE_TEXT.unreadable('e.csv'));
+    const read = await readImportFile({ name: 'f.csv', size: utf8.byteLength, arrayBuffer: async () => utf8.slice().buffer });
+    assert.ok(read.ok && read.lines === 2);
+
+    // ui-6: «исход неизвестен» — только сеть/502/503/504/UPSTREAM_TIMEOUT.
+    const err = (code: string, status: number) => new ApiError(code, 'x', status);
+    for (const e of [err('network', 0), err('Bad Gateway', 502), err('http_503', 503), err('UPSTREAM_TIMEOUT', 504), err('Gateway Timeout', 504)]) {
+      assert.equal(isUncertainOutcome(e), true, `${e.code}/${e.status}`);
+    }
+    for (const e of [err('PUB_VALIDATION', 400), err('PUB_PAYLOAD_TOO_LARGE', 413), err('PUB_CONFLICT', 409), err('PUB_INTERNAL', 500), null]) {
+      assert.equal(isUncertainOutcome(e), false, e ? `${e.code}/${e.status}` : 'null');
+    }
+    // Ответ backend 502/504 через адаптер Админки — тоже «неизвестен».
+    assert.equal(isUncertainOutcome(toPubError(new ApiRequestError('Бэкенд клиентских сайтов не ответил', 502, 'Bad Gateway'))), true);
+    assert.equal(isUncertainOutcome(toPubError(new ApiRequestError('timeout', 504, 'UPSTREAM_TIMEOUT'))), true);
+    assert.equal(isUncertainOutcome(toPubError(new TypeError('Failed to fetch'))), true);
+
+    // ui-7: «Повторить» у загрузчика — сеть, таймаут, PUB_BUSY, 5xx; 4xx — нет.
+    for (const e of [err('network', 0), err('Bad Gateway', 502), err('PUB_INTERNAL', 500), err('PUB_BUSY', 409), err('UPSTREAM_TIMEOUT', 504), new Error('decode')]) {
+      assert.equal(isReloadable(e), true, String(e));
+    }
+    for (const e of [err('PUB_NOT_FOUND', 404), err('PUB_CONFLICT', 409), err('PUB_VALIDATION', 400), err('ADMIN_ACTOR_REQUIRED', 401), null, undefined]) {
+      assert.equal(isReloadable(e), false, String(e));
+    }
+
+    // ui-10: «сравнить с» = выбранная или исчезнувшая — сравнения нет.
+    const ids = ['v1', 'v2', 'v3'];
+    assert.equal(diffPartner('v2', 'v1', ids), 'v1');
+    assert.equal(diffPartner('v2', 'v2', ids), '', 'с самой собой не сравнивается');
+    assert.equal(diffPartner('v2', 'v9', ids), '', 'версии больше нет');
+    assert.equal(diffPartner('v2', '', ids), '');
+    assert.equal(diffPartner(null, 'v1', ids), '');
+
+    // ui-11: файл CSV у оператора — с одним BOM (Excel читает UTF-8).
+    assert.equal(csvFileText('id,title\r\n1,Привет\r\n'), '﻿id,title\r\n1,Привет\r\n');
+    assert.equal(csvFileText('﻿id\r\n'), '﻿id\r\n', 'BOM не удваивается');
+    assert.equal(csvFileText(''), '﻿');
+  }
 
   console.log('reddit.test.ts: ok');
 }

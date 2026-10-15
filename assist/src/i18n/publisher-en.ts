@@ -451,6 +451,9 @@ export const pubEn: PublisherDict = {
       warnings_not_acknowledged:
         'Acknowledge the Reddit rules check warnings (the list has changed).',
       already_published: 'This publication is already recorded.',
+      withdrawn_exists:
+        'This link was already recorded for this version and the record was withdrawn (or replaced by a newer version) — the same link cannot be recorded again.',
+      url_taken: 'This link is already recorded for another material.',
       reddit_evidence_locked:
         'Reddit evidence changes only via a new rules snapshot or an excerpt edit in the Reddit section.',
     },
@@ -497,6 +500,10 @@ export const pubEn: PublisherDict = {
       comment_required: 'a link to the comment itself is required',
       thread_mismatch: 'the link points to another thread',
       before_material: 'earlier than the material was created',
+      share_link: 'a short “Share” link — open it and copy the full address',
+      before_copy: 'earlier than the first copy of this version',
+      source_required:
+        'the primary rules source was not read — create a new snapshot with a link to the rules',
       reddit_route: 'Reddit materials are created in the Reddit section',
       not_allowed: 'not allowed',
       adaptation_only: 'adaptations only',

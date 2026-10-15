@@ -332,9 +332,9 @@ ciDescribe(
       expect(new Set(reg).size).toBe(reg.length);
       expect(app).toEqual(reg);
       expect(CABINET.length).toBeGreaterThan(150);
-      // P-R: M1 — 25 маршрутов, M2 (Studio) — ещё 14.
+      // P-R: M1 — 26 маршрутов (с restore, Р-RD-AUD-1), M2 (Studio) — ещё 14.
       expect(CABINET.filter((r) => r.name.startsWith('reddit.'))).toHaveLength(
-        39,
+        40,
       );
       expect(foreignIds.length).toBeGreaterThan(15);
     });
@@ -461,7 +461,7 @@ ciDescribe(
           .filter((r) => r.path.startsWith(ADMIN_BASE))
           .map((r) => `${r.method} ${r.path}`);
         expect(app).toHaveLength(14);
-        expect(RX_ROUTES).toHaveLength(39);
+        expect(RX_ROUTES).toHaveLength(40);
         expect(CX_ROUTES).toHaveLength(24);
         const before = await counts();
         const A = adminApi({ srv });

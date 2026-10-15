@@ -402,4 +402,44 @@ ciDescribe('P-R M2: проверка reddit_policy (BLOCK/WARN)', () => {
       201,
     );
   });
+
+  it('аудит m2-6/m2-7 (порт): число тезиса needs_verification — BLOCK, а не WARN «из брифа»; число пункта claimMap, которого нет в тексте источника, — WARN reddit_claim_source_mismatch', async () => {
+    const ids = await seedStudio(s, w, ed, po, {
+      briefExtra: {
+        keyPoints: [
+          {
+            text: 'Demo boosts sales by 300%',
+            sourceIds: 'needs_verification',
+          },
+          { text: 'Ask which formats', sourceIds: 'needs_verification' },
+        ],
+      },
+    });
+    const v1 = await frozen(ids, {
+      body: versionBody(
+        'Teams using Demo boost sales by 300% in the first month.',
+      ),
+    });
+    const q1 = await policyOf(v1.id);
+    expect(q1.blockers.map((b) => b.code)).toEqual(['reddit_unverified_claim']);
+    expect(q1.warnings.map((b) => b.code)).not.toContain(
+      'reddit_claim_from_brief',
+    );
+    const ids2 = await seedStudio(s, w, ed, po);
+    const v2 = await frozen(ids2, {
+      body: versionBody('Demo boosts sales by 300% for most shops.'),
+      meta: {
+        disclosure: DISCLOSURE,
+        claimMap: [
+          { text: 'Demo boosts sales by 300%', sourceIds: [ids2.sourceId] },
+        ],
+        uncertainties: [],
+      },
+    });
+    const q2 = await policyOf(v2.id);
+    expect(q2.blockers).toEqual([]);
+    expect(q2.warnings.map((x) => x.code)).toContain(
+      'reddit_claim_source_mismatch',
+    );
+  });
 });

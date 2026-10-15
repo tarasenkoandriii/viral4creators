@@ -23,7 +23,7 @@ import {
 import { pubRedditUk } from '../../i18n/publisher-reddit-uk';
 import type { PublisherDict } from '../../i18n/publisher-ru';
 import { ApiError } from '../../kit/envelope';
-import { fieldIssues } from './common-pure';
+import { fieldIssues, isGatewayFailure } from './common-pure';
 import { describePubError, type PubErrorView } from './errors';
 import { selfReviewOf } from './permissions';
 import {
@@ -679,11 +679,31 @@ export function rulesBody(
 export const flairOf = (v: boolean | null): Flair =>
   v === null ? 'unknown' : v ? 'yes' : 'no';
 
-/** Кнопка «Подтвердить проверку»: только текущий неподтверждённый снимок. */
+/**
+ * Кнопка «Подтвердить проверку»: только текущий неподтверждённый снимок с
+ * первоисточником. Без ссылки на правила (импорт «not readable»,
+ * Р-RD-AUD-3) сервер ответит 400 `source_required` — экран вместо кнопки
+ * показывает подсказку (`needsSourceForReview`).
+ */
 export function canReviewSnapshot(
-  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState'>
+  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState' | 'source'>
 ): boolean {
-  return s.status === 'current' && s.reviewState === 'unreviewed';
+  return (
+    s.status === 'current' &&
+    s.reviewState === 'unreviewed' &&
+    s.source.url !== ''
+  );
+}
+
+/** Текущий неподтверждённый снимок без первоисточника: подтвердить нельзя. */
+export function needsSourceForReview(
+  s: Pick<RedditRuleSnapshotView, 'status' | 'reviewState' | 'source'>
+): boolean {
+  return (
+    s.status === 'current' &&
+    s.reviewState === 'unreviewed' &&
+    s.source.url === ''
+  );
 }
 
 /** Подтверждает автор снимка — сервер пометит `selfReview`. */
@@ -1054,6 +1074,37 @@ export function describeRedditError(
     // Дубль — не «устаревшая версия»: перезагрузка не нужна, нужна ссылка.
     conflict: base.conflict && reason !== 'duplicate',
   };
+}
+
+/** Коды «сервер не ответил вовремя» (backend → sites-backend, Р-RD-AUD-7). */
+const UPSTREAM_CODES = new Set(['network', 'UPSTREAM_TIMEOUT']);
+
+/**
+ * Загрузку (GET) стоит предложить повторить (аудит ui-7): сеть, таймаут,
+ * `PUB_BUSY`, 5xx (502/503/504 — только без прикладного кода `PUB_*`, см.
+ * `isGatewayFailure`); ошибка не `ApiError` (сбой разбора) — тоже. 4xx —
+ * нет: повтор того же запроса даст тот же отказ.
+ */
+export function isReloadable(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return e !== null && e !== undefined;
+  return (
+    UPSTREAM_CODES.has(e.code) ||
+    e.code === 'PUB_BUSY' ||
+    e.status === 0 ||
+    isGatewayFailure(e) ||
+    (e.status >= 500 && ![502, 503, 504].includes(e.status))
+  );
+}
+
+/**
+ * Исход записи неизвестен (аудит ui-6): ответа нет или его оборвал
+ * посредник — сеть, статус 0, 502/503/504 без прикладного кода,
+ * `UPSTREAM_TIMEOUT`. Явный отказ (4xx, 500 с кодом, 503
+ * `PUB_AI_UNAVAILABLE`) — исход известен, предупреждать не о чем.
+ */
+export function isUncertainOutcome(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return e !== null && e !== undefined;
+  return UPSTREAM_CODES.has(e.code) || e.status === 0 || isGatewayFailure(e);
 }
 
 /** Подсказки создания при дубле (сообщество/тред/запрос) — экран выбирает. */

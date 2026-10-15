@@ -653,7 +653,7 @@ const GENERATE = {
 // ═══ 3. Каждый маршрут REDDIT_ROUTES — свой вызов клиента ═════════════════
 const ROUTES = routesOf(RAPI);
 const ROUTES_CONTENT = routesOf(contractSrc('content-api.ts'));
-assert.equal(ROUTES.length, 39, `маршрутов P-R ${ROUTES.length}`);
+assert.equal(ROUTES.length, 40, `маршрутов P-R ${ROUTES.length}`);
 // M2 — ровно `REDDIT_M2_ROUTE_NAMES` (14); их вызывает клиент студии.
 const M2_NAMES = (() => {
   const m = /REDDIT_M2_ROUTE_NAMES[^=]*=\s*\[([\s\S]*?)\];/.exec(RAPI);
@@ -727,6 +727,7 @@ const outs = await Promise.all([
   api.createProject(k(), { title: 't', locale: 'uk', market: 'UA' }),
   api.patchProject('rp1', k(), { expectedRevision: 1, title: 't2' }),
   api.archiveProject('rp1', k(), 1),
+  api.restoreProject('rp1', k(), 2),
   api.communities({ projectId: 'rp1' }),
   api.community('rc1'),
   api.createCommunity(k(), { projectId: 'rp1', community: 'r/SaaS' }),
@@ -782,7 +783,7 @@ const outs = await Promise.all([
   }),
   api.patchKeyword('rk1', k(), { expectedRevision: 1, status: 'archived' }),
 ]);
-assert.equal(outs.length, 25);
+assert.equal(outs.length, 26);
 const studio = S.createRedditStudioApi(http, 'prod1');
 const vcalls: typeof calls = [];
 const outs2 = await Promise.all([

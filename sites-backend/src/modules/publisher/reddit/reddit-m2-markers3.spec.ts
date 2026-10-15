@@ -410,7 +410,13 @@ describe('S2-B — надстрочный, спойлер, зачёркнуто�
     expect(linkFindings('>!demo.com!< and ^(demo.com)').suspect).toEqual([
       'demo.com',
     ]);
-    expect(run(input({ body: `${D}\n\n>!demo.com!<` })).w).toEqual([
+    // markers@4 (аудит m2-3): домен с меткой-брендом — ссылка (BLOCK),
+    // чужой голый домен — по-прежнему WARN.
+    expect(run(input({ body: `${D}\n\n>!demo.com!<` })).b).toEqual([
+      'reddit_links_prohibited',
+      'reddit_links_not_allowed',
+    ]);
+    expect(run(input({ body: `${D}\n\n>!othertool.com!<` })).w).toEqual([
       'reddit_link_suspect',
     ]);
   });
@@ -814,8 +820,8 @@ describe('S3 — словарь личного опыта, связь с про�
       changed: true,
     });
   });
-  it('версия словарей — markers@3', () => {
-    expect(REDDIT_MARKERS_VERSION).toBe('markers@3');
+  it('версия словарей — markers@4 (аудит m2 15.10.2026)', () => {
+    expect(REDDIT_MARKERS_VERSION).toBe('markers@4');
   });
 });
 

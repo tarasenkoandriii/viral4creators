@@ -112,6 +112,7 @@ describe('Reddit import boundaries', () => {
           },
         }),
         post,
+        patch: post,
       };
       const plan = buildImportPlan([], {
         projectTitle: 'Audit',
@@ -149,6 +150,7 @@ describe('Reddit import boundaries', () => {
                 },
               },
         post,
+        patch: post,
       };
       const plan = buildImportPlan([], {
         projectTitle: 'Audit',

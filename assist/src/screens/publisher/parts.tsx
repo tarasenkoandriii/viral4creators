@@ -16,6 +16,7 @@ import type { GateName } from '../../lib/publisher/states';
 import {
   completenessTone,
   computableText,
+  confirmClick,
   fmtDate,
   fmtDateTime,
   fmtMinor,
@@ -535,23 +536,29 @@ export function ConfirmButton({
   variant?: 'danger' | 'outline' | 'solid';
 }) {
   const { t } = usePublisher();
-  const [armed, setArmed] = useState(false);
+  // Момент взвода (null — не взведена): подтверждение раньше паузы или
+  // вторым щелчком двойного клика не засчитывается (аудит ui-3).
+  const [armedAt, setArmedAt] = useState<number | null>(null);
+  const armed = armedAt !== null;
   useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), 4000);
+    if (armedAt === null) return;
+    const timer = setTimeout(() => setArmedAt(null), 4000);
     return () => clearTimeout(timer);
-  }, [armed]);
+  }, [armedAt]);
   return (
     <Button
       variant={armed ? 'danger' : variant}
       loading={loading}
       disabled={disabled}
-      onClick={() => {
-        if (!armed) {
-          setArmed(true);
+      onClick={(e) => {
+        const now = Date.now();
+        const step = confirmClick(armedAt, now, e.detail);
+        if (step === 'arm') {
+          setArmedAt(now);
           return;
         }
-        setArmed(false);
+        if (step === 'ignore') return;
+        setArmedAt(null);
         onConfirm();
       }}
     >

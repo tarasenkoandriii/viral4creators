@@ -95,6 +95,15 @@ import {
 export const PLATFORM_PRODUCT_NAME = 'Платформа (Reddit)';
 /** Потолок тела импорта (Р-RD-ADM-4; парсер — app.setup.ts). */
 export const ADMIN_IMPORT_MAX_BYTES = 1024 * 1024;
+/**
+ * Внутренний дедлайн импорта (Р-RD-AUD-4): после него новые строки не
+ * начинаются — остаток `not_attempted`/`deadline`, ответ 200 с частичным
+ * отчётом (backend ждёт 240 с, Max Duration функций ≥ 300 с — DEPLOYMENT).
+ */
+export const ADMIN_IMPORT_DEADLINE_MS = 200_000;
+/** Поля проекта в импорте — как у создания проекта (projects.service). */
+export const ADMIN_IMPORT_TITLE_MAX = 120;
+export const ADMIN_IMPORT_MARKET_MAX = 64;
 
 export interface AdminRedditStatus {
   enabled: boolean;
@@ -164,6 +173,13 @@ export function redactReport(r: ImportReport): ImportReport {
       ref: bad(i.ref) ? IMPORT_REDACTED : i.ref,
       ...(i.detail !== undefined
         ? { detail: bad(i.detail) ? IMPORT_REDACTED : i.detail }
+        : {}),
+    })),
+    warnings: (r.warnings ?? []).map((w) => ({
+      ...w,
+      ref: bad(w.ref) ? IMPORT_REDACTED : w.ref,
+      ...(w.detail !== undefined
+        ? { detail: bad(w.detail) ? IMPORT_REDACTED : w.detail }
         : {}),
     })),
   };
@@ -615,7 +631,8 @@ export class AdminRedditService {
   /**
    * Вызвать обработчик кабинета по `rx/…` или `cx/…`. Ответ пишется в `res`
    * (как у кабинета: конверт или CSV); статус — тот, что выставил
-   * обработчик. Путь вне списка — 404.
+   * обработчик. Путь вне списка — 404. `product` — уже найденный продукт
+   * (импорт: один раз на весь импорт, Р-RD-AUD-4), иначе — поиск.
    */
   async dispatch(input: {
     userId: string;
@@ -625,9 +642,10 @@ export class AdminRedditService {
     query: Q;
     body: unknown;
     res: Response | CaptureResponse;
+    product?: ProductCtx;
   }): Promise<void> {
     this.assertEnabled();
-    const p = await this.product();
+    const p = input.product ?? (await this.product());
     const res = input.res as Response;
     if (input.target === 'rx') {
       const hit = matchRoute(RX_ROUTES, input.method, input.path);
@@ -868,11 +886,17 @@ export class AdminRedditService {
       communities: csv('communitiesCsv', true),
       opportunities: csv('opportunitiesCsv', false),
       keywords: csv('keywordsCsv', false),
-      projectTitle: text('projectTitle', 200),
+      // ui-2: границы и правило контактов — как у создания проекта.
+      projectTitle: text('projectTitle', ADMIN_IMPORT_TITLE_MAX),
       locale: text('locale', 16, /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/),
-      market: text('market', 200),
+      market: text('market', ADMIN_IMPORT_MARKET_MAX),
       segment: text('segment', 40, /^[A-Za-z0-9_-]+$/, 'admin'),
     };
+    for (const k of ['projectTitle', 'market'] as const)
+      if (out[k] && looksLikeContact(out[k]))
+        issues.push({ field: k, code: 'pii' });
+      else if (out[k] && hasProfileRef(out[k]))
+        issues.push({ field: k, code: 'profile_ref' });
     const bytes =
       Buffer.byteLength(out.communities) +
       Buffer.byteLength(out.opportunities) +
@@ -887,13 +911,18 @@ export class AdminRedditService {
   /**
    * План (`apply=false`, только чтение) или выполнение (`apply=true`) —
    * `runImport` с `ImportHttp` поверх `dispatch` (те же обработчики, тот же
-   * актор, детерминированные `opKey`): повтор — «уже есть».
+   * актор, детерминированные `opKey`): повтор — «уже есть». Продукт —
+   * один раз на импорт; строки фазы — пулом; дедлайн
+   * `ADMIN_IMPORT_DEADLINE_MS` — частичный отчёт (Р-RD-AUD-4).
    */
   async importResearch(
     userId: string,
     raw: unknown,
     apply: boolean,
+    opts: { deadlineMs?: number } = {},
   ): Promise<ImportReport> {
+    const deadlineAt =
+      Date.now() + (opts.deadlineMs ?? ADMIN_IMPORT_DEADLINE_MS);
     this.assertEnabled();
     const p = await this.product();
     const input = this.importInput(raw);
@@ -916,7 +945,9 @@ export class AdminRedditService {
       },
     );
     return redactReport(
-      await runImport(this.importHttp(p, userId), p.id, plan, apply),
+      await runImport(this.importHttp(p, userId), p.id, plan, apply, {
+        deadlineAt,
+      }),
     );
   }
 
@@ -924,7 +955,7 @@ export class AdminRedditService {
   importHttp(p: ProductCtx, userId: string): ImportHttp {
     const productPath = `/publisher/products/${p.id}`;
     const call = async (
-      method: 'GET' | 'POST',
+      method: 'GET' | 'POST' | 'PATCH',
       path: string,
       body?: Record<string, unknown>,
     ): Promise<ImportResponse> => {
@@ -951,6 +982,7 @@ export class AdminRedditService {
           query: Object.fromEntries(u.searchParams.entries()),
           body,
           res,
+          product: p,
         });
         return {
           status: res.statusCode,
@@ -972,6 +1004,7 @@ export class AdminRedditService {
     return {
       get: (path) => call('GET', path),
       post: (path, body) => call('POST', path, body),
+      patch: (path, body) => call('PATCH', path, body),
     };
   }
 }

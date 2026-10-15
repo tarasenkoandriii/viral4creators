@@ -162,6 +162,7 @@ export class PublicationsService implements PublicationsPort {
     product: ProductRef,
     p: { id: string; versionId: string; stage: string; channelKind: string },
     at: Date,
+    fact?: { approvalId: string },
   ): Promise<void> {
     await this.ports
       .content()
@@ -172,6 +173,7 @@ export class PublicationsService implements PublicationsPort {
         p.id,
         p.stage as 'test' | 'live',
         at,
+        fact,
       );
     if (p.stage === 'live' && p.channelKind === 'site') {
       await this.ports.pilotClock().setT0Once(tx, product, at);
@@ -387,7 +389,22 @@ export class PublicationsService implements PublicationsPort {
    * канал сообщества брифа. Стадия — по общему правилу: `live` только в
    * рабочем продукте `mode=live` при открытом `public_publish` (оценка, не
    * требование), иначе `test` — материал тогда не меняется (ДТ-1).
-   * `verifyStatus='not_checked'` навсегда. Тот же URL этой версии — 409.
+   * `verifyStatus='not_checked'` навсегда.
+   *
+   * Аудит 15.10.2026 (зона m2):
+   *  - Р-RD-AUD-5 (m2-1): отчёт — факт, а не выпуск. Версию копировали
+   *    (проверяет вызывающий P-R; триггер — аудит `copy`), поэтому
+   *    действующее согласование, hash по текущему состоянию, блокеры,
+   *    `criticalStale` и задачи изменения НЕ проверяются; `approvalId` —
+   *    последнее согласование этой версии с её hash (любого статуса);
+   *  - m2-9: тот же URL (и та же стадия) у ДРУГОЙ версии этого материала —
+   *    прежняя публикация `published → replaced` (аудит), новая —
+   *    `published`; у другого материала — 409 `url_taken`;
+   *  - m2-11: та же версия и тот же URL уже записаны — 409
+   *    `already_published` (активная) или `withdrawn_exists` (снята или
+   *    заменена: запись повторно не создаётся, уникальный ключ);
+   *  - m2-12: `postForms` — пост сопоставляется по ключу (канон без slug и
+   *    прежние строки со slug `…/comments/<id>/<slug>`).
    */
   async reportUserPublication(
     tx: PubTx,
@@ -399,6 +416,8 @@ export class PublicationsService implements PublicationsPort {
       finalUrl: string;
       publishedAt: Date;
       opKey: string;
+      /** Пост: сопоставлять и прежние строки со slug (m2-12). */
+      postForms?: { slugPrefix: string; commentPrefix: string };
     },
   ): Promise<OpResult<PublicationView>> {
     const channel = await tx.pubChannel.findFirst({
@@ -417,36 +436,96 @@ export class PublicationsService implements PublicationsPort {
       ).open;
     const stage = live ? 'live' : 'test';
     const finalUrl = canonicalUrl(input.finalUrl);
-    const pv = await this.ports
-      .content()
-      .publishableVersion(tx, product, input.versionId);
-    if (pv.criticalStale)
-      throw new PubError('PUB_CONTENT_STALE', { versionId: input.versionId });
-    if (!pv.approvalActive)
+    const version = await tx.pubContentVersion.findFirst({
+      where: { id: input.versionId, productId: product.id },
+      select: { hash: true, contentId: true },
+    });
+    if (!version) throw new PubError('PUB_NOT_FOUND');
+    const approval = version.hash
+      ? await tx.pubApproval.findFirst({
+          where: {
+            productId: product.id,
+            type: 'publish_version',
+            objectType: 'content_version',
+            objectId: input.versionId,
+            versionHash: version.hash,
+          },
+          orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
+          select: { id: true },
+        })
+      : null;
+    if (!approval)
       throw new PubError('PUB_APPROVAL_REQUIRED', {
         versionId: input.versionId,
       });
-    const dup = await tx.pubPublication.findFirst({
+    const forms = input.postForms;
+    const same = await tx.pubPublication.findMany({
       where: {
         productId: product.id,
         channelId: input.channelId,
-        finalUrl,
-        versionId: input.versionId,
+        OR: [
+          { finalUrl },
+          ...(forms
+            ? [
+                {
+                  finalUrl: { startsWith: forms.slugPrefix },
+                  NOT: { finalUrl: { startsWith: forms.commentPrefix } },
+                },
+              ]
+            : []),
+        ],
       },
-      select: { id: true },
+      select: {
+        id: true,
+        versionId: true,
+        status: true,
+        stage: true,
+        version: { select: { contentId: true } },
+      },
+      orderBy: { id: 'asc' },
     });
-    if (dup)
+    const active = (st: string) => st === 'pending' || st === 'published';
+    const mine = same.find((p) => p.versionId === input.versionId);
+    if (mine)
       throw new PubError('PUB_CONFLICT', {
-        publicationId: dup.id,
-        reason: 'already_published',
+        publicationId: mine.id,
+        reason: active(mine.status) ? 'already_published' : 'withdrawn_exists',
+        status: mine.status,
       });
+    const audit: OpResult<PublicationView>['audit'] = [];
+    for (const old of same) {
+      if (old.stage !== stage || !active(old.status)) continue;
+      if (old.version.contentId !== version.contentId)
+        throw new PubError('PUB_CONFLICT', {
+          publicationId: old.id,
+          reason: 'url_taken',
+        });
+      const to: PublicationStatus =
+        old.status === 'published' ? 'replaced' : 'withdrawn';
+      const n = await tx.pubPublication.updateMany({
+        where: { id: old.id, status: old.status },
+        data: { status: to, revision: { increment: 1 } },
+      });
+      if (n.count !== 1) throw new PubError('PUB_CONFLICT');
+      audit.push({
+        objectType: 'publication',
+        objectId: old.id,
+        action: 'transition',
+        fromStatus: old.status,
+        toStatus: to,
+        meta: {
+          replacedByVersionId: input.versionId,
+          cause: 'new_version_same_url',
+        },
+      });
+    }
     const row = await tx.pubPublication.create({
       data: {
         accountId: product.accountId,
         productId: product.id,
         versionId: input.versionId,
         channelId: input.channelId,
-        approvalId: pv.approvalId,
+        approvalId: approval.id,
         stage,
         finalUrl,
         publishedAt: input.publishedAt,
@@ -466,8 +545,9 @@ export class PublicationsService implements PublicationsPort {
         channelKind: 'community',
       },
       step.now,
+      { approvalId: approval.id },
     );
-    return { body: publicationView(row), audit: [] };
+    return { body: publicationView(row), audit };
   }
 
   /** Ручная проверка URL (другие каналы; сайт — ещё и задание). */

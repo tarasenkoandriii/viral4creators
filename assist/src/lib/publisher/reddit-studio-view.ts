@@ -707,13 +707,19 @@ export interface ReportedUrl {
   commentId: string | null;
 }
 
-/** Зеркало `normalizeReportedUrl` (`reddit/normalize.ts`), паритет — тест. */
+/**
+ * Зеркало `normalizeReportedUrl` (`reddit/normalize.ts`), паритет — тест.
+ * Аудит m2-12: канон поста — без slug; «Поделиться» (`/r/<name>/s/…`) и
+ * `redd.it/…` — `share_link`.
+ */
 export function normalizeReportedUrl(
   input: unknown
-): { ok: ReportedUrl } | { issue: 'format' | 'profile_ref' } {
+): { ok: ReportedUrl } | { issue: 'format' | 'profile_ref' | 'share_link' } {
   if (typeof input !== 'string' || input.length > 2048)
     return { issue: 'format' };
   const raw = input.trim();
+  if (/^(?:https:\/\/)?(?:www\.)?redd\.it(?:\/|$)/i.test(raw))
+    return { issue: 'share_link' };
   if (/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^https:\/\//i.test(raw))
     return { issue: 'format' };
   let u: URL;
@@ -727,6 +733,12 @@ export function normalizeReportedUrl(
   if (!REDDIT_HOSTS.includes(u.hostname.toLowerCase().replace(/\.$/, '')))
     return { issue: 'format' };
   const parts = u.pathname.split('/').filter((x) => x !== '');
+  if (
+    parts.length >= 3 &&
+    parts[0].toLowerCase() === 'r' &&
+    parts[2].toLowerCase() === 's'
+  )
+    return { issue: 'share_link' };
   if (
     parts.length < 4 ||
     parts[0].toLowerCase() !== 'r' ||
@@ -755,11 +767,19 @@ export function normalizeReportedUrl(
   }
   const t = normalizeThreadUrl(input);
   if (!t) return { issue: 'format' };
-  return { ok: { url: t.url, subreddit, threadKey, commentId: null } };
+  return {
+    ok: {
+      url: `https://www.reddit.com/r/${subreddit}/comments/${threadKey}`,
+      subreddit,
+      threadKey,
+      commentId: null,
+    },
+  };
 }
 
 export type ReportIssue =
   | 'format'
+  | 'share_link'
   | 'profile_ref'
   | 'community_mismatch'
   | 'comment_required'
@@ -1073,3 +1093,17 @@ export const isManualPath = (e: unknown) =>
     'PUB_AI_BUDGET',
     'PUB_AI_UNPRICED',
   ].includes(e.code);
+
+/**
+ * Версия «сравнить с» для выбранной (аудит ui-10): совпала с выбранной или
+ * её больше нет в списке — сравнения нет (`''`), а не diff с самой собой и
+ * пустой `<select>`.
+ */
+export function diffPartner(
+  selectedId: string | null | undefined,
+  other: string,
+  versionIds: readonly string[]
+): string {
+  if (!other || !selectedId || other === selectedId) return '';
+  return versionIds.includes(other) ? other : '';
+}

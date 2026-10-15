@@ -26,6 +26,7 @@ import { loadContent, loadVersion, qaView } from '../content/views';
 import { publicationView } from '../distribution/publications.service';
 import { PubError } from '../core/errors';
 import type { PubTx } from '../core/ports';
+import { briefMissing, keyPointSourceIds, keyPointsOf } from './brief-rules';
 import { briefState } from './reddit-port';
 import { policyGate } from './policy';
 import {
@@ -55,65 +56,155 @@ export async function loadBriefView(
   id: string,
   now: Date = new Date(),
 ): Promise<RedditBriefView> {
-  const st = await briefState(db, productId, id);
-  const b: BriefRow = st.brief;
-  const rules = (await currentRules(db, productId, [b.communityId])).get(
-    b.communityId,
-  );
-  const staleDays = await staleDaysFor(db, productId);
-  const contents = await db.pubContent.findMany({
-    where: { productId, redditBriefId: id },
-    orderBy: { id: 'asc' },
-    select: { id: true },
+  const [view] = await loadBriefViews(db, productId, [id], now);
+  if (!view) throw new PubError('PUB_NOT_FOUND');
+  return view;
+}
+
+/**
+ * Брифы пакетом (аудит m2-13: список брифов и CSV до 5000 строк читались
+ * по ~10 запросов на бриф): брифы, сообщества, возможности, офферы,
+ * разрешённые источники тезисов, текущие правила, материалы и выдержки —
+ * по одному `findMany … IN (…)` на страницу, порядок — как в `ids`.
+ * Отсутствующие (чужой продукт) пропускаются.
+ */
+export async function loadBriefViews(
+  db: PubTx,
+  productId: string,
+  ids: readonly string[],
+  now: Date = new Date(),
+): Promise<RedditBriefView[]> {
+  if (!ids.length) return [];
+  const briefs = await db.pubRedditBrief.findMany({
+    where: { productId, id: { in: [...ids] } },
   });
+  if (!briefs.length) return [];
+  const points = new Map(briefs.map((b) => [b.id, keyPointsOf(b.keyPoints)]));
+  const uniq = (xs: Array<string | null>) => [
+    ...new Set(xs.filter((x): x is string => !!x)),
+  ];
+  const sourceIds = uniq(
+    briefs.flatMap((b) => keyPointSourceIds(points.get(b.id)!)),
+  );
+  const communityIds = uniq(briefs.map((b) => b.communityId));
+  const [communities, opportunities, offers, allowed, rules, staleDays, mats] =
+    await Promise.all([
+      db.pubRedditCommunity.findMany({
+        where: { productId, id: { in: communityIds } },
+        select: { id: true, name: true, canonicalUrl: true },
+      }),
+      db.pubRedditOpportunity.findMany({
+        where: {
+          productId,
+          id: { in: uniq(briefs.map((b) => b.opportunityId)) },
+        },
+        select: { id: true, threadUrl: true, excerptSourceId: true },
+      }),
+      db.pubOfferVersion.findMany({
+        where: {
+          productId,
+          id: { in: uniq(briefs.map((b) => b.offerVersionId)) },
+        },
+        select: { id: true, status: true },
+      }),
+      sourceIds.length
+        ? db.pubSource.findMany({
+            where: {
+              productId,
+              id: { in: sourceIds },
+              usage: 'allowed',
+              origin: 'content',
+            },
+            select: { id: true },
+          })
+        : Promise.resolve([] as Array<{ id: string }>),
+      currentRules(db, productId, communityIds),
+      staleDaysFor(db, productId),
+      db.pubContent.findMany({
+        where: { productId, redditBriefId: { in: briefs.map((b) => b.id) } },
+        orderBy: { id: 'asc' },
+        select: { id: true, redditBriefId: true },
+      }),
+    ]);
+  const communityOf = new Map(communities.map((c) => [c.id, c]));
+  const oppOf = new Map(opportunities.map((o) => [o.id, o]));
+  const offerOf = new Map(offers.map((o) => [o.id, o.status]));
+  const allowedIds = new Set(allowed.map((x) => x.id));
   // Раунд 4 (аудит экранов S3-6, AT-RD-14): пометка выдержки возможности
   // («похоже на команду») видна и в брифе; в промпт она идёт атрибутом
   // `flag="possible_instruction"` тега `<thread>`.
-  const excerpt = st.opportunity?.excerptSourceId
-    ? await db.pubSource.findFirst({
-        where: { id: st.opportunity.excerptSourceId, productId },
-        select: { usage: true, injectionFlag: true },
+  const excerptIds = uniq(opportunities.map((o) => o.excerptSourceId));
+  const excerpts = excerptIds.length
+    ? await db.pubSource.findMany({
+        where: { productId, id: { in: excerptIds } },
+        select: { id: true, usage: true, injectionFlag: true },
       })
-    : null;
-  return {
-    id: b.id,
-    projectId: b.projectId,
-    communityId: b.communityId,
-    subreddit: st.community.name,
-    canonicalUrl: st.community.canonicalUrl,
-    opportunityId: b.opportunityId,
-    threadUrl: st.opportunity?.threadUrl ?? null,
-    offerVersionId: b.offerVersionId,
-    contentType: b.contentType as RedditContentType,
-    objective: b.objective,
-    audience: b.audience,
-    context: b.context,
-    injectionFlag:
-      excerpt && excerpt.usage !== 'revoked' ? excerpt.injectionFlag : null,
-    keyPoints: st.keyPoints,
-    affiliation: b.affiliation as RedditAffiliation | null,
-    brand: b.brand,
-    linksAllowed: b.linksAllowed,
-    tone: b.tone,
-    language: b.language,
-    constraints: strArray(b.constraints),
-    forbiddenClaims: strArray(b.forbiddenClaims),
-    cta: b.cta,
-    status: b.status as RedditBriefStatus,
-    missing: st.missing,
-    gate: policyGate(
-      rules ? policySnapshotOf(rules.snap, rules.sourceRevoked) : null,
-      now,
-      staleDays,
-      b.contentType as RedditContentType,
-      false,
-    ),
-    ai: aiAvailability(),
-    contentIds: contents.map((c) => c.id),
-    revision: b.revision,
-    createdAt: b.createdAt.toISOString(),
-    updatedAt: b.updatedAt.toISOString(),
-  };
+    : [];
+  const excerptOf = new Map(excerpts.map((x) => [x.id, x]));
+  const briefOf = new Map(briefs.map((b) => [b.id, b]));
+  const out: RedditBriefView[] = [];
+  for (const id of ids) {
+    const b: BriefRow | undefined = briefOf.get(id);
+    if (!b) continue;
+    const community = communityOf.get(b.communityId);
+    if (!community) throw new PubError('PUB_NOT_FOUND');
+    const opp = b.opportunityId ? oppOf.get(b.opportunityId) : undefined;
+    const excerpt = opp?.excerptSourceId
+      ? excerptOf.get(opp.excerptSourceId)
+      : undefined;
+    const keyPoints = points.get(b.id)!;
+    const r = rules.get(b.communityId);
+    out.push({
+      id: b.id,
+      projectId: b.projectId,
+      communityId: b.communityId,
+      subreddit: community.name,
+      canonicalUrl: community.canonicalUrl,
+      opportunityId: b.opportunityId,
+      threadUrl: opp?.threadUrl ?? null,
+      offerVersionId: b.offerVersionId,
+      contentType: b.contentType as RedditContentType,
+      objective: b.objective,
+      audience: b.audience,
+      context: b.context,
+      injectionFlag:
+        excerpt && excerpt.usage !== 'revoked' ? excerpt.injectionFlag : null,
+      keyPoints,
+      affiliation: b.affiliation as RedditAffiliation | null,
+      brand: b.brand,
+      linksAllowed: b.linksAllowed,
+      tone: b.tone,
+      language: b.language,
+      constraints: strArray(b.constraints),
+      forbiddenClaims: strArray(b.forbiddenClaims),
+      cta: b.cta,
+      status: b.status as RedditBriefStatus,
+      missing: briefMissing({
+        objective: b.objective,
+        affiliation: b.affiliation,
+        brand: b.brand,
+        contentType: b.contentType as RedditContentType,
+        context: b.context,
+        opportunityId: b.opportunityId,
+        keyPoints,
+        offerActive: offerOf.get(b.offerVersionId) === 'active',
+        allowedSourceIds: allowedIds,
+      }),
+      gate: policyGate(
+        r ? policySnapshotOf(r.snap, r.sourceRevoked) : null,
+        now,
+        staleDays,
+        b.contentType as RedditContentType,
+        false,
+      ),
+      ai: aiAvailability(),
+      contentIds: mats.filter((c) => c.redditBriefId === b.id).map((c) => c.id),
+      revision: b.revision,
+      createdAt: b.createdAt.toISOString(),
+      updatedAt: b.updatedAt.toISOString(),
+    });
+  }
+  return out;
 }
 
 /** Публикации Reddit (канал сообщества) → вид раздела. */

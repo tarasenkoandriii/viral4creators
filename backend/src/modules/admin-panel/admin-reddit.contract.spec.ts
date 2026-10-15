@@ -43,7 +43,7 @@ describe('вкладка «Reddit»: таблица генератора = вн�
     const theirs = Object.values(REDDIT_ROUTES)
       .map((r) => `${r.method} ${r.path.slice(prefix.length)}`)
       .sort();
-    expect(theirs).toHaveLength(39);
+    expect(theirs).toHaveLength(40);
     expect(ours('rx/')).toEqual(theirs);
   });
 

@@ -43,7 +43,8 @@ import {
   insertOrDuplicate,
   profileRefIssue,
 } from './guards';
-import { normalizeThreadUrl, threadUrlIssue } from './normalize';
+import { lockCommunities } from './cascade';
+import { hasProfileRef, normalizeThreadUrl, threadUrlIssue } from './normalize';
 import { policyGate, policyRisk, policyRiskReasons } from './policy';
 import { onlyFields, type OpOut } from './projects.service';
 import {
@@ -129,6 +130,11 @@ export function parseFactors(
         issues.push({ field: `${field}.why`, code: 'pii' });
         continue;
       }
+      // §8.2: ник или ссылка на профиль (аудит m1-4) — как в выдержке.
+      if (hasProfileRef(why)) {
+        issues.push({ field: `${field}.why`, code: 'profile_ref' });
+        continue;
+      }
       w = why.trim() || null;
     }
     if (value !== null && !w) {
@@ -173,6 +179,10 @@ export class RedditOpportunitiesService {
     input: RedditFactorsInput | undefined,
     now: Date,
   ): Promise<Evaluation> {
+    // Аудит m1-2: расчёт по «текущему» снимку сериализуется со сменой
+    // правил сообщества (новый снимок, отзыв первоисточника держат
+    // `FOR UPDATE`): иначе запись по прежнему снимку проскакивала мимо каскада.
+    await lockCommunities(tx, productId, [communityId], 'FOR SHARE');
     const rules = (await currentRules(tx, productId, [communityId])).get(
       communityId,
     );
@@ -632,6 +642,7 @@ export class RedditOpportunitiesService {
     const is = new Issues();
     onlyFields(is, b, ['opKey', 'expectedRevision', 'reason']);
     const reason = is.str(b, 'reason', { max: 2000, pii: true });
+    profileRefIssue(is, 'reason', reason);
     is.throwIfAny();
     const cur = await opportunityRow(tx, product.id, id);
     const from = cur.status as RedditOpportunityStatus;

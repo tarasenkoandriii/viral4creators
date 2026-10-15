@@ -3,7 +3,8 @@
  * маршрута; единственный проект продукта выбирается сам. Формы создания
  * берут выбранный проект; без него — подсказка «сначала проект».
  */
-import { Alert } from '../../../kit/ui';
+import { Alert, Button } from '../../../kit/ui';
+import { isReloadable } from '../../../lib/publisher/reddit-view';
 import { PubErrorAlert } from '../parts';
 import { useReddit, type ProjectScope } from './reddit-hooks';
 import { ProjectSelect } from './reddit-parts';
@@ -16,7 +17,7 @@ export function ProjectBar({
   scope: ProjectScope;
   tab: string;
 }) {
-  const { r, go } = useReddit();
+  const { r, t, go } = useReddit();
   return (
     <div className="space-y-2">
       <ProjectSelect
@@ -29,6 +30,11 @@ export function ProjectBar({
         }
       />
       {scope.error ? <PubErrorAlert error={scope.error} /> : null}
+      {scope.error && isReloadable(scope.error) ? (
+        <Button variant="outline" onClick={scope.reload}>
+          {t.common.retry}
+        </Button>
+      ) : null}
       {!scope.loading && !scope.error && scope.list.length === 0 && (
         <Alert tone="neutral">{r.common.noProject}</Alert>
       )}

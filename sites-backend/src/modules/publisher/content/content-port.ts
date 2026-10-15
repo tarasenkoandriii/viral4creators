@@ -132,6 +132,7 @@ export class ContentPortImpl implements ContentPort {
     publicationId: string,
     stage: 'test' | 'live',
     at: Date,
+    fact?: { approvalId: string },
   ): Promise<void> {
     const v = await tx.pubContentVersion.findFirst({
       where: { id: versionId, productId: product.id },
@@ -139,14 +140,13 @@ export class ContentPortImpl implements ContentPort {
     });
     if (!v) throw new PubError('PUB_NOT_FOUND');
     // Повторные проверки (§7.1, аудит P2-15): согласование, hash, оффер,
-    // источники, задачи изменения по версии.
-    const { approvalId } = await this.contents.recheckPublishable(
-      tx,
-      product,
-      versionId,
-    );
+    // источники, задачи изменения по версии. Отчёт о факте ручной публикации
+    // Reddit (`fact`, Р-RD-AUD-5) их не проходит: текст уже опубликован.
+    const { approvalId } = fact
+      ? fact
+      : await this.contents.recheckPublishable(tx, product, versionId);
     const c = v.content;
-    if (c.publishedVersionId === versionId) {
+    if (!fact && c.publishedVersionId === versionId) {
       // Повторная публикация показанной версии (другой канал/стадия):
       // материал на проверке после изменения входов не распространяется.
       if (c.criticalStale)
@@ -220,7 +220,10 @@ export class ContentPortImpl implements ContentPort {
         status: to,
         publishedVersionId: versionId,
         approvedVersionId: versionId,
-        criticalStale: false,
+        // Отчёт о факте ручной публикации (`fact`, Р-RD-AUD-5) проверок не
+        // проходил — флаг «на проверке после критичного изменения» остаётся
+        // (ревью 2, п. 4): снимает его только выпуск через повторные проверки.
+        ...(fact ? {} : { criticalStale: false }),
         ...(c.firstPublishedAt ? {} : { firstPublishedAt: at }),
         revision: { increment: 1 },
       },

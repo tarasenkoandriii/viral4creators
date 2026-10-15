@@ -19,6 +19,7 @@ import {
 } from '../../../lib/publisher/reddit-api';
 import {
   canReviewSnapshot,
+  needsSourceForReview,
   emptyRulesForm,
   isOwnSnapshot,
   rulesBody,
@@ -226,6 +227,9 @@ function SnapshotCard({
           onDone={onChanged}
           context={fmtText(r.rules.version, { n: s.version })}
         />
+      )}
+      {needsSourceForReview(s) && (
+        <Alert tone="warning">{r.rules.noSourceReview}</Alert>
       )}
       {canReviewSnapshot(s) &&
         (canReview ? (

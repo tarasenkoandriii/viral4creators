@@ -381,6 +381,11 @@ assert.ok(
   assert.equal(v.retryable, true);
   const n = describePubError(new ApiError('network', 'x', 0), t);
   assert.equal(n.retryable, true);
+  assert.equal(describePubError(err('http_504', 504), t).retryable, true);
+  assert.equal(
+    describePubError(err('PUB_VALIDATION', 400), t).retryable,
+    false
+  );
   assert.equal(n.title, t.errors.network);
   const unknown = describePubError(err('SOMETHING_NEW', 418), t);
   assert.equal(unknown.title, 'server text');
@@ -537,6 +542,32 @@ for (const d of [pubContentUk, pubContentRu, pubContentEn]) {
   const kept = CA.opKeyAfter(a, net);
   assert.equal(kept, a);
   assert.equal(CA.opKeyFor(kept, 'POST x {1}', gen).key, 'k1');
+  assert.equal(CA.opKeyAfter(a, new ApiError('PUB_BUSY', 'b', 503)), a);
+  // Р-RD-AUD-7: ответ шлюза (502/503/504, `UPSTREAM_TIMEOUT` прокси
+  // Админки) — исход неизвестен, тот же ключ (сервер вернёт сохранённое).
+  for (const g of [
+    new ApiError('UPSTREAM_TIMEOUT', 't', 504),
+    new ApiError('http_504', 't', 504),
+    new ApiError('http_502', 't', 502),
+    new ApiError('http_503', 't', 503),
+    new ApiError('Bad Gateway', 't', 502),
+  ]) {
+    assert.equal(CA.opKeyAfter(a, g), a, g.code);
+    assert.equal(CA.isRetryable(g), true, g.code);
+  }
+  assert.equal(CA.isRetryable(new ApiError('http_500', 'x', 500)), false);
+  assert.equal(CA.isRetryable(new ApiError('PUB_FORBIDDEN', 'x', 403)), false);
+  // Прикладной код при 502/503/504 — явный ответ сервера, не шлюза: отказ
+  // модели сохранён под этим opKey, тот же ключ воспроизвёл бы его навсегда.
+  for (const g of [
+    new ApiError('PUB_AI_UNAVAILABLE', 'm', 503),
+    new ApiError('PUB_CONTACT_KEY_MISSING', 'm', 503),
+    new ApiError('PUB_FORM_CLOSED', 'm', 503),
+    new ApiError('PUB_INTERNAL', 'm', 502),
+  ]) {
+    assert.equal(CA.opKeyAfter(a, g), null, g.code);
+    assert.equal(CA.isRetryable(g), false, g.code);
+  }
   assert.equal(CA.opKeyAfter(a, new ApiError('PUB_BUSY', 'b', 503)), a);
   // …но ДРУГОЕ действие — новый ключ (иначе 409 PUB_IDEMPOTENCY_REUSED).
   assert.equal(CA.opKeyFor(kept, 'POST y {1}', gen).key, 'k2');
@@ -959,6 +990,17 @@ for (const d of [pubContentUk, pubContentRu, pubContentEn]) {
   assert.ok(S.PARAMETER_KEYS.includes('reddit_rules_stale_days'));
   for (const d of [pubUk, pubRu, pubEn])
     assert.ok(d.params.keys.reddit_rules_stale_days);
+}
+
+// Аудит ui-3 (15.10.2026): двухшаговое подтверждение — второй щелчок
+// двойного клика и нажатие раньше паузы не подтверждают.
+{
+  assert.equal(V.confirmClick(null, 0, 1), 'arm');
+  assert.equal(V.confirmClick(0, 100, 2), 'ignore');
+  assert.equal(V.confirmClick(0, V.CONFIRM_GUARD_MS - 1, 1), 'ignore');
+  assert.equal(V.confirmClick(0, V.CONFIRM_GUARD_MS + 1000, 2), 'ignore');
+  assert.equal(V.confirmClick(0, V.CONFIRM_GUARD_MS, 1), 'confirm');
+  assert.equal(V.confirmClick(0, V.CONFIRM_GUARD_MS, 0), 'confirm');
 }
 
 console.log('publisher-view: ok');

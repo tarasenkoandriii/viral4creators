@@ -76,7 +76,19 @@ export function SetupTab({
   const mu = useMutation();
   const [notice, setNotice] = useState<string | null>(null);
   const [factsTick, setFactsTick] = useState(0);
-  if (statusError) return <ErrorAlert error={statusError} />;
+  // Статус не прочитан — все вкладки выключены; повтор без F5 (аудит ui-7).
+  if (statusError) {
+    return (
+      <div className="rx-stack">
+        <ErrorAlert error={statusError} />
+        <div className="rx-row">
+          <button type="button" data-reddit-retry="" onClick={reloadStatus}>
+            {T.common.retry}
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (!status) return <Loading />;
   const state = sectionState(status);
   return (
@@ -163,7 +175,7 @@ function ParamsPanel({ onChanged, status }: { onChanged: () => void; status: Adm
   // Перечитываются вместе со статусом (оффер активирован → подсказки и гейт).
   const params = useLoad(() => api.admin.params(), [api, status]);
   const [open, setOpen] = useState<string>('');
-  if (params.error) return <ErrorAlert error={params.error} onReload={params.reload} />;
+  if (params.error) return <ErrorAlert error={params.error} onReload={params.reload} onRetry={params.reload} />;
   if (!params.data) return <Loading />;
   const p = params.data;
   const aiKeys: readonly string[] = AI_PARAM_KEYS;
@@ -267,7 +279,7 @@ function ParamCard({ param, hints, onChanged }: { param: ParameterView; hints: P
       <div className="rx-stack">
         <b>{T.params.proposals}</b>
         {proposals.error ? (
-          <ErrorAlert error={proposals.error} />
+          <ErrorAlert error={proposals.error} onRetry={proposals.reload} />
         ) : !proposals.data ? (
           <Loading />
         ) : proposals.data.items.length === 0 ? (

@@ -50,7 +50,7 @@ ciDescribe(
     const count = () =>
       s.prisma.pubAuditEvent.count({ where: { productId: w.product.id } });
 
-    it('все 25 маршрутов: участник (владелец) — 404 PUB_NOT_FOUND без details, как у несуществующего продукта; аноним — тот же отказ входа, что везде; записей нет', async () => {
+    it('все 40 маршрутов (M1 и M2): участник (владелец) — 404 PUB_NOT_FOUND без details, как у несуществующего продукта; аноним — тот же отказ входа, что везде; записей нет', async () => {
       const before = await count();
       const keys = await s.prisma.pubIdempotencyKey.count({
         where: { accountId: w.acc.accountId },

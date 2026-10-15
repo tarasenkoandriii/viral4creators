@@ -85,7 +85,10 @@ export const pubRedditEn: PublisherRedditDict = {
     },
     localeInvalid: 'A language code like uk or en-US.',
     archiveHint:
-      'An archived project cannot be changed; its communities and opportunities stay for the record.',
+      'An archived project cannot be changed; its communities and opportunities stay for the record. The project can be restored.',
+    restore: 'Restore project',
+    restoreHint:
+      'Once restored, the project is active again: its communities, rules, keywords and opportunities can be changed again. A subreddit is still one per product.',
     open: 'Project card',
     counts: 'Communities · opportunities · keywords',
   },
@@ -168,6 +171,9 @@ export const pubRedditEn: PublisherRedditDict = {
     review: 'Confirm the check',
     reviewHint:
       'You confirm that the excerpt and policies match the rules at the link.',
+    noSource: 'none (secondary sources)',
+    noSourceReview:
+      'The primary rules source was not read — this snapshot cannot be confirmed. Create a new snapshot with a link to the rules.',
     selfReviewWarning:
       'You are the author of this snapshot: the confirmation will be marked “checked by the author”. Better ask another editor to check it.',
     reviewed: 'Check confirmed.',
@@ -602,6 +608,12 @@ export const pubRedditEn: PublisherRedditDict = {
         'there is a guarantee without a result number — check the wording',
       reddit_personal_experience:
         'there is a first-person experience not about the brief’s product — check it',
+      reddit_social_proof:
+        'looks like social proof (number of users/customers, a rating, an award, someone else praising the product) — check it is true and sourced',
+      reddit_testimonial_unclear:
+        'there is a quote from a customer or user — check it is not a testimonial (technical quotes are fine)',
+      reddit_claim_source_mismatch:
+        'the number in a claim map item is not in its source text — check the source',
     },
     humanQa: {
       title: 'Human checks (both are needed for approval)',
@@ -665,6 +677,10 @@ export const pubRedditEn: PublisherRedditDict = {
           'A comment needs the link to the comment itself (…/comment/<id>).',
         thread_mismatch:
           'The comment is in another thread, not the brief thread.',
+        share_link:
+          'This is a short “Share” link — open it and copy the full post or comment address (…/comments/<id>/…).',
+        before_copy:
+          'The date is earlier than the first copy of this version — check the date.',
         date: 'Enter the publication date.',
         future: 'The publication date cannot be in the future.',
         notes: 'Note — up to 1000 characters.',

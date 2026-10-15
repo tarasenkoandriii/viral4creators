@@ -44,15 +44,26 @@
  *    мессенджер по `PII_RULE`, `@handle`; `@scope/pkg`, `pkg@1.2.3`,
  *    `git@host:repo` — не контакт.
  *
+ *
+ * `markers@4` (аудит Reddit-подсистемы 15.10.2026, зона m2; §13 ТЗ «Аудит
+ * 15.10.2026»): роль в раскрытии — только «о себе» (`roleLinked`,
+ * `ownedLinked`); личный опыт связан с брендом, только если бренд — объект
+ * или подлежащее опыта (`markerTied`), «we use Acme ourselves» — `own_use`;
+ * цитаты клиента — слова целиком, без апострофа, оба порядка
+ * (`customerQuotes`); социальное доказательство (`socialProofIn`); «2x
+ * longer», «every 30 seconds» — не числа результата; `numberValuesIn` —
+ * числа источника пункта claimMap.
+ *
  * Словари — стартовые списки кода (§12 п.4: утверждает владелец или ED);
- * версия словаря — `REDDIT_MARKERS_VERSION`.
+ * версия словаря — `REDDIT_MARKERS_VERSION` (в строку `pub_qa_checks` не
+ * пишется: новые словари действуют со следующей проверки).
  *
  * Чистый модуль: без базы, сети и LLM.
  */
 import { PII_RULE, piiStripTokens } from '../core/pii-guard';
 
 /** Версия словарей маркеров (личный опыт, раскрытие, числа, ссылки). */
-export const REDDIT_MARKERS_VERSION = 'markers@3';
+export const REDDIT_MARKERS_VERSION = 'markers@4';
 
 /** Предел, в котором раскрытие должно начаться (A08). */
 export const DISCLOSURE_WINDOW = 300;
@@ -555,7 +566,7 @@ export function hasLink(text: string | null | undefined): boolean {
  */
 const FIRST_PERSON_RES: readonly RegExp[] = [
   // en
-  /\b(?:i|we)(?:'ve|'m|'re| have| am| are| had|'d)?(?:\s+(?:been|also|now|personally|actually|really|recently|already|still|just|finally|happily))*\s+(?:using|use|used|tried|trying|bought|buying|purchased|switched to|switching to|switched over to|paid for|pay for|subscribed|subscribed to|rely on|relied on|started using|start using|moved to|migrated to|signed up|installed|rolled out|deployed|adopted|love using|loved using|enjoy using)\b/gu,
+  /\b(?:i|we)(?:'ve|'m|'re| have| am| are| had|'d)?(?:\s+(?:been|also|now|personally|actually|really|recently|already|still|just|finally|happily))*\s+(?:using|use|used|tried|trying|bought|buying|purchased|switched to|switching to|switched over to|switched(?!\s+(?:off|on|it|them|the|this|that|back|between|around|sides|gears|jobs|teams|careers|from\s+(?:it|them)))(?:\s+over)?|paid for|pay for|subscribed|subscribed to|rely on|relied on|started using|start using|moved to|migrated to|signed up|installed|rolled out|deployed|adopted|love using|loved using|enjoy using)\b/gu,
   /\b(?:i|we)(?:'ve| have| had)\s+(?:had|owned|got)\b/gu,
   /(?:^|[^\p{L}])been\s+using\b/gu,
   /\b(?:my|our)\s+(?:own\s+|personal\s+)?(?:experience|results?)\s+(?:with|using|of)\b/gu,
@@ -565,6 +576,7 @@ const FIRST_PERSON_RES: readonly RegExp[] = [
   /\b(?:cut|halved|doubled|tripled|boosted|transformed)\s+(?:my|our)\b/gu,
   /\b(?:a\s+)?(?:life\s?saver|game[- ]changer)\s+for\s+(?:me|us)\b/gu,
   /\bcan't\s+recommend\b[^.!?\n]{0,40}\benough\b/gu,
+  /\bnever\s+looked\s+back\b/gu,
   // uk/ru латиницей (раунд 3): «ya ispolzuyu», «ya vykorystovuyu», «my polzuemsya»
   /\b(?:ya|my|mi)\s+(?:(?:uzhe|vzhe|davno|tozhe|tezh|takozh|kazhdyi|kazhdyy|shchodnia|shchodnya)\s+)?(?:isp[oa]l'?z\p{L}*|v[iy]k[oa]r[iy]st[oa]v\p{L}*|v[iy]k[oa]r[iy]stal\p{L}*|p[oa]l'?z[uo]\p{L}*|k[oa]r[iy]stu\p{L}*|kup[iy]l\p{L}*|kup[iy]v\p{L}*|kupuval\p{L}*|pridba\p{L}*|prydba\p{L}*|yuza\p{L}*|iuza\p{L}*|juza\p{L}*|poprob[oa]v\p{L}*|sprobuv\p{L}*|zakaz\p{L}*|zamov\p{L}*|peresh\p{L}*|vnedr\p{L}*|vprovad\p{L}*)/gu,
   /\b(?:mne|meni|nam)\s+(?:duzhe\s+|ochen'?\s+)?(?:pom[oa]g\p{L}*|dopom\p{L}*|ponrav\p{L}*|spodoba\p{L}*)/gu,
@@ -597,87 +609,356 @@ const PRONOUN_START_RE =
 const PRONOUN_AFTER_RE =
   /^\s+(?:it|this|them|that one|this one|ним|нею|його|ним|цим|цей|ним|им|его|ее|её|этим|этот|это)(?![\p{L}])/u;
 
+/** Слова, на которых обрывается объект/подлежащее опыта (аудит m2-8). */
+const EXPERIENCE_BREAK_RE =
+  /^(?:before|after|building|built|while|when|whenever|because|since|but|than|instead|until|for|so|and|or|which|that|who|although|though|if|unless|without|перед|після|после|бо|тому|потому|але|но|коли|когда|і|и|та)$/u;
+/** Собственное использование («we use Acme ourselves», «internally»). */
+const OWN_USE_RE =
+  /(?<![\p{L}])(?:ourselves|myself|internally|in-house|in house|dogfood\p{L}*|our own|my own)(?![\p{L}])/u;
+const OWN_USE_VERB_RE =
+  /(?<![\p{L}])(?:use|uses|using|used|rely on|relied on)$/u;
+const MARKER_CLAUSE_RE = /[,.;:!?()\n—–]/u;
+
 /**
- * Личный опыт, связанный с продуктом (`tied`: бренд в том же предложении
- * или «…using it» после предложения с брендом), или без такой связи
- * (`loose`: личный опыт с чем-то ещё — WARN); null — маркеров нет.
+ * Маркер опыта связан с брендом (`markers@4`, аудит m2-8): бренд — объект
+ * опыта (≤ 6 слов после маркера до знака препинания или союза: «using
+ * Acme», «switched from X to Acme», но не «switched to Rust for the backend
+ * of Acme», не «tried every tool before building Acme») или подлежащее
+ * (≤ 6 слов перед маркером в той же части фразы: «Acme saved me»,
+ * «Honestly, Acme has been a game changer for us»).
+ */
+function markerTied(t: string, m: RegExpMatchArray, brand: string): boolean {
+  if (brandIn(m[0], brand)) return true;
+  const rest = t.slice(m.index! + m[0].length).split(MARKER_CLAUSE_RE)[0];
+  const obj: string[] = [];
+  for (const w of rest.split(/\s+/u).filter(Boolean)) {
+    if (EXPERIENCE_BREAK_RE.test(w) || obj.length >= 6) break;
+    obj.push(w);
+  }
+  if (obj.length && brandIn(obj.join(' '), brand)) return true;
+  const head = t.slice(0, m.index!).split(MARKER_CLAUSE_RE).pop() ?? '';
+  const words = head.split(/\s+/u).filter(Boolean);
+  const subj: string[] = [];
+  for (let k = words.length - 1; k >= 0 && subj.length < 6; k--) {
+    if (EXPERIENCE_BREAK_RE.test(words[k])) break;
+    subj.unshift(words[k]);
+  }
+  return subj.length > 0 && brandIn(subj.join(' '), brand);
+}
+
+/**
+ * Личный опыт, связанный с продуктом (`tied`: бренд — объект или
+ * подлежащее опыта, или «…using it» / «It worked great for me» после
+ * предложения о бренде — цепочка местоимений «Acme is… It has… I've been
+ * using it»), собственное использование раскрытым автором (`own_use`: «we
+ * use Acme ourselves/internally» — WARN у founder/employee/agency), опыт
+ * без такой связи (`loose`: WARN); null — маркеров нет.
  */
 export function personalExperience(
   text: string,
   brand: string | null,
-): 'tied' | 'loose' | null {
+): 'tied' | 'own_use' | 'loose' | null {
   const sentences = sentencesOf(text);
-  let found: 'tied' | 'loose' | null = null;
+  const strong = !!brand && !weakBrand(brand);
+  // Предложение «о бренде»: бренд в нём или местоимение в начале после такого.
+  const about: boolean[] = [];
+  let tied = false;
+  let ownUse = false;
+  let loose = false;
   sentences.forEach((s, k) => {
     const f = formsOf(s);
+    const pronounStart =
+      PRONOUN_START_RE.test(f.lat) || PRONOUN_START_RE.test(f.cyr);
+    const has = strong && brandIn(s, brand);
+    about[k] = has || (pronounStart && k > 0 && about[k - 1]);
     const ms = firstPersonIn(f);
     if (!ms.length) return;
-    found ??= 'loose';
-    if (!brand || weakBrand(brand)) return;
-    if (brandIn(s, brand)) found = 'tied';
-    else if (
-      k > 0 &&
-      brandIn(sentences[k - 1], brand) &&
-      (PRONOUN_START_RE.test(f.lat) ||
-        PRONOUN_START_RE.test(f.cyr) ||
-        ms.some(
-          (m) =>
-            PRONOUN_AFTER_RE.test(f.lat.slice(m.index! + m[0].length)) ||
-            PRONOUN_AFTER_RE.test(f.cyr.slice(m.index! + m[0].length)),
-        ))
-    )
-      found = 'tied';
+    loose = true;
+    if (!strong) return;
+    for (const m of ms) {
+      const t =
+        f.lat.slice(m.index!, m.index! + m[0].length) === m[0] ? f.lat : f.cyr;
+      let hit = markerTied(t, m, brand);
+      if (!hit) {
+        const after = t.slice(m.index! + m[0].length);
+        const pronounAfter = PRONOUN_AFTER_RE.test(after);
+        const brandBefore = brandIn(t.slice(0, m.index!), brand);
+        hit =
+          (pronounAfter || pronounStart) &&
+          ((k > 0 && about[k - 1]) || (pronounAfter && brandBefore));
+      }
+      if (!hit) continue;
+      if (OWN_USE_RE.test(t) && OWN_USE_VERB_RE.test(m[0].trim()))
+        ownUse = true;
+      else tied = true;
+    }
   });
-  return found;
+  if (tied) return 'tied';
+  if (ownUse) return 'own_use';
+  return loose ? 'loose' : null;
 }
 
-/** Цитата «клиента» («клієнт сказав: “…”», "a customer told us"). */
-const CUSTOMER_QUOTE_RE =
-  /(?:клієнт\p{L}*|клиент\p{L}*|покупц\p{L}*|покупател\p{L}*|customer|client|user)[^.\n]{0,40}(?:сказав|сказала|каже|пише|написав|написала|сказал|говорит|пишет|написал|said|says|told|wrote)[^.\n]{0,10}["«“„']/gu;
+// ── Цитаты клиентов и социальное доказательство (A07, аудит m2-4, m2-5) ──
+
+/** Кто «сказал» (целым словом: не `superuser`, не `clientId`). */
+const QUOTE_WHO = String.raw`(?:customer|client|user|reviewer|buyer|subscriber|fan)s?|клієнт\p{L}*|клиент\p{L}*|покупц\p{L}*|покупател\p{L}*|користувач\p{L}*|пользовател\p{L}*`;
+const QUOTE_SAY = String.raw`сказав|сказала|сказали|каже|кажуть|пише|написав|написала|написали|сказал|говорит|говорят|пишет|написал|said|says|told(?:\s+(?:me|us))?|tells(?:\s+(?:me|us))?|wrote|writes`;
+/** Кавычки цитаты — только двойные и ёлочки (апостроф `it's` — не кавычка). */
+const QUOTE_FWD_RE = new RegExp(
+  String.raw`(?<![\p{L}])(?:${QUOTE_WHO})(?![\p{L}])[^.\n]{0,40}?(?<![\p{L}])(?:${QUOTE_SAY})(?![\p{L}])[^.\n"«“„:]{0,10}(?:["«“„]([^"»”“\n]{1,400})|:\s*([^.!?\n]{1,400}))`,
+  'gu',
+);
+const QUOTE_REV_RE = new RegExp(
+  String.raw`["«“„]([^"»”“\n]{3,400})["»”“]\s*,?\s*(?:says|said|wrote|writes|according\s+to|—|–|-)\s+(?:(?:a|an|one|our|my|the|another|this)\s+)?(?:(?:happy|satisfied|verified|real|long-?time|early|recent|paying)\s+)?(?:${QUOTE_WHO})(?![\p{L}])`,
+  'gu',
+);
+/** Похвала: делает цитату или пересказ отзывом. */
+const PRAISE_RE = rx([
+  String.raw`best|greatest|great|love[sd]?|loving|amazing|awesome|incredible|fantastic|excellent|perfect|brilliant|saved?|saves|game[- ]?changer|life ?saver|lifesaver|recommend\p{L}*|helped|thanks to|changed|must[- ]have|no[- ]brainer|worth (?:it|every)|five stars|5 stars|never looked back`,
+  String.raw`найкращ\p{L}*|чудов\p{L}*|супер|рекоменд\p{L}*|допомі\p{L}*|допомог\p{L}*|врятува\p{L}*`,
+  String.raw`лучш\p{L}*|отличн\p{L}*|помог\p{L}*|обожа\p{L}*|спас\p{L}*`,
+]);
+
+/** Цитата «клиента»: текст цитаты и похвала (бренд, оценка, число результата). */
+export interface CustomerQuote {
+  quote: string;
+  praise: boolean;
+}
+
+/**
+ * Цитаты «клиента/пользователя/рецензента» (`markers@4`, аудит m2-5, m2-4):
+ * прямой порядок («a customer told us: "…"», «One of our users told me:
+ * …»), обратный («"Best purchase," says one reviewer»). Слова — целиком,
+ * кавычки — двойные/ёлочки. `praise=false` — техническая цитата («your
+ * client says "connection refused"», «a customer told us "the export is
+ * broken"»): WARN, а не BLOCK.
+ */
+export function customerQuotes(
+  text: string | null | undefined,
+  brand: string | null = null,
+): CustomerQuote[] {
+  if (!text) return [];
+  const f = formsOf(text);
+  const out: CustomerQuote[] = [];
+  const seen = new Set<string>();
+  for (const re of [QUOTE_FWD_RE, QUOTE_REV_RE])
+    for (const m of matchesIn(re, f)) {
+      const quote = squash(m[1] ?? m[2] ?? '');
+      if (!quote || seen.has(quote)) continue;
+      seen.add(quote);
+      const praise =
+        testIn(PRAISE_RE, formsOf(quote)) ||
+        (!!brand && !weakBrand(brand) && brandIn(quote, brand)) ||
+        resultNumbersIn(quote).length > 0;
+      out.push({ quote, praise });
+    }
+  return out;
+}
 
 export function hasCustomerQuote(text: string | null | undefined): boolean {
-  return !!text && testIn(CUSTOMER_QUOTE_RE, formsOf(text));
+  return customerQuotes(text).length > 0;
+}
+
+const SP_NOUN = String.raw`users|customers|clients|companies|teams|businesses|brands|startups|agencies|subscribers|downloads|installs|members|marketers|creators|developers|founders|shops|stores|sellers|merchants|stars|reviews|ratings|клієнтів|користувачів|компаній|клиентов|пользователей|компаний`;
+/** «50,000 happy users», «300+ companies», «12k users» (значение ≥ 10). */
+const SP_COUNT_RE = new RegExp(
+  String.raw`(?<![\p{L}\p{N}.,])(?:over\s+|more\s+than\s+|almost\s+|nearly\s+)?(\d{1,3}(?:[,   ]\d{3})+|\d+(?:[.,]\d+)?)\s?(k|m|mm|bn|thousand|million|тис\.?|тыс\.?|млн)?\s?\+?\s+(?:(?:happy|satisfied|paying|active|monthly|daily|weekly|loyal|registered|verified|real|задоволених|довольных|активних|активных)\s+)?(?:${SP_NOUN})(?![\p{L}])`,
+  'gu',
+);
+/** Лимит тарифа: «up to 50 users», «per 10 users» — не соцдоказательство. */
+const SP_LIMIT_BEFORE_RE =
+  /(?:^|\s)(?:up\s+to|upto|max(?:imum)?|limit(?:ed)?\s+to|per|for|only|до)\s*$/u;
+/** Оценка: «4.9 rating», «4.8 stars», «4.7/5», «rated 4.9». */
+const SP_RATING_RE =
+  /(?<![\p{L}\p{N}.,])\d(?:[.,]\d)?\s*(?:\/\s*5(?![\p{N}])|out\s+of\s+5(?![\p{N}])|stars?(?![\p{L}])|★|-star(?![\p{L}]))|(?<![\p{L}])(?:rated|rating(?:\s+of)?|score\s+of)\s+\d(?:[.,]\d)?(?![\p{N}])|(?<![\p{L}\p{N}.,])\d[.,]\d\s+rating(?![\p{L}])/gu;
+/** Награды и места: «#1 Product of the Day», «top-rated», «award-winning». */
+const SP_AWARD_RE =
+  /(?<![\p{L}])(?:(?:top|highest)[- ]rated|best[- ]selling|award[- ]winning|product\s+of\s+the\s+(?:day|week|month|year)|editor'?s\s+choice)(?![\p{L}])/gu;
+const SP_RANK_RE =
+  /(?<![\p{L}\p{N}])(?:#\s?1|no\.\s?1|number\s+one)(?![\p{L}\p{N}])/gu;
+const SP_RANK_NOUN_RE =
+  /^\s+(?:\S+\s+){0,2}?(?:product|app|tool|choice|pick|solution|platform|on|in)(?![\p{L}])/u;
+/** Толпа: «thousands of marketers», «trusted by teams at…». */
+const SP_CROWD_RE =
+  /(?<![\p{L}])(?:thousands|hundreds|millions|dozens|tons|lots|plenty)\s+of\s+(?:happy\s+|satisfied\s+)?\p{L}+/gu;
+const SP_CROWD_VERB_RE =
+  /(?<![\p{L}])(?:use|uses|using|rely|relies|trust|trusts|trusted|love|loves|switched|swear|swears|recommend|recommends)(?![\p{L}])/u;
+const SP_BY_RE =
+  /(?<![\p{L}])(?:(trusted|loved|chosen|backed)|used|relied\s+on)\s+by\s+(?:over\s+|more\s+than\s+)?(?:thousands|hundreds|millions|teams|companies|brands|startups|businesses|developers|marketers|agencies|creators|founders|engineers|people\s+at)(?![\p{L}])/gu;
+const SP_EVERYONE_RE =
+  /(?<![\p{L}])(?:everyone|everybody|most\s+(?:people|teams|users|marketers|founders|developers))\s+(?:\S+\s+)?(?:uses|use|loves|love|is\s+using|are\s+using|recommends|recommend|switched|prefers|prefer)(?![\p{L}])/u;
+/** Пересказ чужого мнения о бренде: «a friend tried Acme and said…». */
+const SP_HEARSAY_RE =
+  /(?<![\p{L}])(?:friends?|colleagues?|coworkers?|co-workers?|clients?|customers?|users?|reviewers?|people|folks|someone|somebody|agenc(?:y|ies)|founders?|marketers?|mom|mum|dad|wife|husband|sister|brother|boss|neighbou?rs?|roommates?)(?![\p{L}])[^.!?\n]{0,60}?(?<![\p{L}])(?:said|says|told|tell|tells|telling|wrote|writes|report|reports|reported|claim|claims|swear|swears|rave|raves|raving|mention|mentions|mentioned|uses|use|using|love|loves|relies\s+on|rely\s+on|tried)(?![\p{L}])/u;
+
+const spValue = (num: string, scale: string | undefined): number => {
+  const n = Number(normNumber(num));
+  const k = (scale ?? '').replace('.', '');
+  const mult =
+    k === 'k' || k === 'thousand' || k === 'тис' || k === 'тыс'
+      ? 1e3
+      : k === 'm' || k === 'mm' || k === 'million' || k === 'млн'
+        ? 1e6
+        : k === 'bn'
+          ? 1e9
+          : 1;
+  return n * mult;
+};
+
+/**
+ * Социальное доказательство (`markers@4`, аудит m2-4): число пользователей,
+ * клиентов, компаний, звёзд (≥ 10, не лимит тарифа), оценка и награды,
+ * «тысячи…», «trusted by…», «everyone uses…», пересказ чужого мнения о
+ * бренде с похвалой. Только WARN `reddit_social_proof`: подтверждает
+ * проверяющий (Р-RD-74).
+ */
+export function socialProofIn(text: string, brand: string | null): string[] {
+  const out: string[] = [];
+  const strong = !!brand && !weakBrand(brand);
+  for (const s of sentencesOf(text)) {
+    const f = formsOf(s);
+    const t = f.lat;
+    const branded = strong && brandIn(s, brand);
+    for (const m of matchesIn(SP_COUNT_RE, f)) {
+      if (SP_LIMIT_BEFORE_RE.test(t.slice(0, m.index!))) continue;
+      if (spValue(m[1], m[2]) >= 10) out.push(m[0].trim());
+    }
+    for (const re of [SP_RATING_RE, SP_AWARD_RE])
+      for (const m of matchesIn(re, f)) out.push(m[0].trim());
+    for (const m of matchesIn(SP_RANK_RE, f))
+      if (branded || SP_RANK_NOUN_RE.test(t.slice(m.index! + m[0].length)))
+        out.push(m[0].trim());
+    if (branded || SP_CROWD_VERB_RE.test(t))
+      for (const m of matchesIn(SP_CROWD_RE, f)) out.push(m[0].trim());
+    for (const m of matchesIn(SP_BY_RE, f))
+      if (m[1] || branded) out.push(m[0].trim());
+    if (branded) {
+      const e = SP_EVERYONE_RE.exec(t);
+      if (e) out.push(e[0].trim());
+      const h = SP_HEARSAY_RE.exec(t);
+      if (h && testIn(PRAISE_RE, f)) out.push(h[0].trim());
+    }
+  }
+  return [...new Set(out)];
 }
 
 // ── Раскрытие аффилированности (A08) ─────────────────────────────────────
 
-/** Сильные роли: сами по себе — раскрытие. */
+/**
+ * Сильные роли: сами по себе — раскрытие. `markers@4` (аудит m2-2): только
+ * фразы «о себе» — `owner`, `behind`, `agency`, `partner`, `works with`,
+ * `my team`, `my clients`, `my project` без субъекта автора раскрытием не
+ * считаются («Acme works with Postgres», «great for shop owners like me»,
+ * «I recommend Acme to all my clients», «Acme is behind…», «agency-friendly»).
+ */
 const INSIDER_STRONG = rx([
   // en
-  String.raw`(?:co-?)?founders?|cofounders?|founding (?:team|member|engineer)`,
-  String.raw`ceo|cto|coo|cmo|cpo|owner|owners|maker|makers|creator|creators|maintainers?|employees?|staff member`,
-  String.raw`behind`,
-  String.raw`(?:side|pet|passion)[- ]project`,
-  String.raw`on the(?:\s+\S+){0,4}?\s+team|(?:my|our) team|part of the(?:\s+\S+){0,3}?\s+team`,
-  String.raw`work(?:s|ed|ing)?\s+(?:at|for|on|with)|i(?:'m| am) (?:with|at|from)|employed (?:by|at)`,
+  String.raw`founding (?:team|member|engineer)`,
+  String.raw`on the(?:\s+\S+){0,4}?\s+team|part of the(?:\s+\S+){0,3}?\s+team|(?:my|our)\s+team\s+(?:built|made|created|develops|developed|runs|maintains|launched)`,
+  String.raw`(?:i|we)(?:'ve| have| had)?(?:\s+(?:also|currently|still|now|actually|previously))?\s+work(?:s|ed)?\s+(?:at|for|on)|(?:i|we)(?:'m| am|'re| are)(?:\s+(?:currently|still|now))?\s+(?:working|employed)\s+(?:at|for|on|by)|i(?:'m| am) (?:with|at|from)|employed (?:by|at)`,
   String.raw`(?:i|we)(?:'ve| have| had)?\s+(?:(?:co-?)?founded|started|launched|built|build|made|created|run|develop|developed|wrote|maintain|own|designed)`,
   String.raw`(?:i|we)(?:'m| am|'re| are)\s+(?:building|making|developing|creating|working on|launching|running)`,
-  String.raw`(?:my|our) (?:own )?(?:company|companies|product|startup|app|tool|service|agency|client|clients|project|saas|business|employer|platform|extension|plugin|library|site|website)`,
-  String.raw`(?:affiliated|associated) with|affiliation|sponsored by|paid (?:by|partnership|promotion)|partner(?:ed|ship)? (?:with|of)|on behalf of|hired by|agency|(?:i|we) represent`,
+  String.raw`(?:i|we)(?:'m| am|'re| are)\s+(?:\S+\s+){0,4}?behind`,
+  String.raw`(?:i|we)(?:'m| am|'re| are)\s+(?:an?|the)\s+(?:\S+\s+){0,2}?agency|(?:i|we)\s+(?:run|own)\s+(?:an?|the)\s+(?:\S+\s+){0,2}?agency`,
+  String.raw`(?:i|we)(?:'ve| have)?\s+partnered\s+with|(?:i|we)(?:'m| am|'re| are)\s+(?:an?\s+)?(?:\S+\s+)?partners?\s+(?:of|with)|(?:my|our)\s+(?:\S+\s+)?partnership\s+with`,
+  String.raw`(?:affiliated|associated) with|affiliation|sponsored by|paid (?:by|partnership|promotion)|on behalf of|hired by|(?:i|we) represent`,
   // uk
-  String.raw`(?:спів)?засновни\p{L}*|власник|власниця|співвласни\p{L}*|директор\p{L}*|співробітни\p{L}*|працівни\p{L}*`,
   String.raw`(?:з|із|зі)\s+команди|(?:в|у)\s+команді|наш\p{L}*\s+команд\p{L}*|моя\s+команда`,
   String.raw`працюю\s+(?:в|у|на|з|із|над)|працював\p{L}*\s+(?:в|у|на|над)`,
   String.raw`(?:я|ми)\s+(?:сам\p{L}*\s+)?(?:створи\p{L}*|розроби\p{L}*|розробля\p{L}*|робимо|роблю|зробив|зробила|зробили|запусти\p{L}*|написав|написала|написали|заснува\p{L}*|веду|ведемо|підтриму\p{L}*)`,
   String.raw`(?:наш|наша|наше|мій|моя|моє)\s+(?:власн\p{L}*\s+)?(?:продукт|сервіс|стартап|компані\p{L}*|агенці\p{L}*|застосун\p{L}*|проєкт|проект|інструмент|клієнт)`,
   String.raw`від\s+імені|афілійован\p{L}*|агенці\p{L}*|спонсор\p{L}*|на\s+замовлення`,
   // ru
-  String.raw`(?:со)?основател\p{L}*|(?:со)?владел\p{L}*|директор\p{L}*|сотрудни\p{L}*|работник\p{L}*`,
   String.raw`(?:из|с)\s+команды|в\s+команде|наш\p{L}*\s+команд\p{L}*|моя\s+команда`,
   String.raw`работаю\s+(?:в|на|с|над)|работал\p{L}*\s+(?:в|на|над)`,
   String.raw`(?:я|мы)\s+(?:сам\p{L}*\s+)?(?:созда\p{L}*|разработа\p{L}*|разрабатыва\p{L}*|делаем|делаю|сделал|сделала|сделали|запусти\p{L}*|написал|написала|написали|основал\p{L}*|ведем|ведём|веду|поддержива\p{L}*)`,
   String.raw`(?:наш|наша|наше|мой|моя|моё|мое)\s+(?:собственн\p{L}*\s+)?(?:продукт|сервис|стартап|компани\p{L}*|агентств\p{L}*|приложени\p{L}*|проект|инструмент|клиент)`,
   String.raw`от\s+имени|аффилирован\p{L}*|агентств\p{L}*|спонсор\p{L}*|по\s+заказу`,
 ]);
-/** Слабые роли (профессия): раскрытие только рядом с брендом или `of/at/в`. */
-const INSIDER_WEAK = rx([
-  String.raw`devs?|developers?|engineers?|authors?|contractors?|interns?|staff`,
-  String.raw`розробни\p{L}*|автор\p{L}*|інженер\p{L}*|програміст\p{L}*`,
-  String.raw`разработчи\p{L}*|инженер\p{L}*|программист\p{L}*`,
+/**
+ * Роли-существительные (основатель, владелец, разработчик…): раскрытие,
+ * только если роль — автора (`roleLinked`): «I'm/we're … founder», «as the
+ * founder», «я/ми/мы засновник», «founder of/at Acme», «Acme founder
+ * here», «founder here». «Acme is great for founders» — нет (m2-2).
+ */
+const ROLE_NOUNS = rx([
+  // en
+  String.raw`(?:co-?)?founders?|cofounders?|ceo|cto|coo|cmo|cpo|(?:co-?)?owners?|makers?|creators?|maintainers?|employees?|staff member|staff|devs?|developers?|engineers?|authors?|contractors?|interns?`,
+  // uk
+  String.raw`(?:спів)?засновни\p{L}*|власник|власниця|співвласни\p{L}*|директор\p{L}*|співробітни\p{L}*|працівни\p{L}*|розробни\p{L}*|автор\p{L}*|інженер\p{L}*|програміст\p{L}*`,
+  // ru
+  String.raw`(?:со)?основател\p{L}*|(?:со)?владел\p{L}*|сотрудни\p{L}*|работник\p{L}*|разработчи\p{L}*|инженер\p{L}*|программист\p{L}*`,
 ]);
-const WEAK_LINK_RE =
-  /^\s+(?:of|at|for|behind|on|with|here|в|у|на|з|із|из|компанії|компании|команди|команды)(?![\p{L}])/u;
+/** «Моё»: продукт/компания автора — раскрытие только рядом с брендом. */
+const OWNED_RE = rx([
+  String.raw`(?:my|our)\s+(?:own\s+)?(?:company|companies|product|startup|app|tool|service|agency|project|saas|business|employer|platform|extension|plugin|library|site|website|(?:side|pet|passion)[- ]project)`,
+  String.raw`(?:a|an)\s+(?:side|pet|passion)[- ]project`,
+]);
+/** Субъект-автор перед ролью: «I'm the», «we are one of the», «as the», «я». */
+const SELF_BEFORE_RE =
+  /(?:^|[^\p{L}'])(?:(?:i|we)(?:'m|'re|\s+am|\s+are|\s+was|\s+were|'ve\s+been|\s+have\s+been|\s+had\s+been)(?:\s+\S+){0,4}|as\s+(?:the|a|an|one\s+of\s+the)(?:\s+\S+){0,2}|(?:я|ми|мы)(?:\s+\S+)?)\s*$/u;
+const CLAUSE_SPLIT_RE = /[,.;:!?()\n—–]/u;
+const ROLE_PREP_RE =
+  /^\s*(?:(?:of|at|from|in|@|в|у|на|з|із|из|компанії|компании|команди|команды)\s+)?(?:(?:the|a|an)\s+)?/u;
+const CLAUSE_END_RE = /^\s*(?:$|here(?![\p{L}])|[,.;:!?)\n—–])/u;
 
+const wordsOf = (t: string): string[] =>
+  t
+    .replace(/[,:;()"«»“”„\-—–]/gu, ' ')
+    .split(/\s+/u)
+    .filter(Boolean);
+
+/** Бренд сразу после роли («founder of Acme», «CEO Demo»). */
+function brandRightAfter(rest: string, brand: string | null): boolean {
+  if (!brand || weakBrand(brand)) return false;
+  const n = squash(brand).split(' ').length;
+  const words = rest.replace(ROLE_PREP_RE, '').split(/\s+/u).slice(0, n);
+  return brandIn(words.join(' '), brand);
+}
+
+/** Текст заканчивается брендом («Acme», «Acme's»). */
+function endsWithBrand(before: string, brand: string | null): boolean {
+  if (!brand || weakBrand(brand)) return false;
+  const n = squash(brand).split(' ').length;
+  const words = before.trim().replace(/'s$/u, '').split(/\s+/u).slice(-n);
+  return words.length > 0 && brandIn(words.join(' '), brand);
+}
+
+/** Роль-существительное — роль автора (аудит m2-2). */
+function roleLinked(
+  t: string,
+  index: number,
+  role: string,
+  brand: string | null,
+): boolean {
+  const before = t.slice(0, index).split(CLAUSE_SPLIT_RE).pop() ?? '';
+  const after = t.slice(index + role.length);
+  if (SELF_BEFORE_RE.test(before)) return true;
+  if (/^\s+here(?![\p{L}])/u.test(after)) return true;
+  if (brandRightAfter(after, brand)) return true;
+  // «Acme founder here», «Disclosure: Acme founder.», «— cofounder.»
+  const atEnd = CLAUSE_END_RE.test(after);
+  if (atEnd && (endsWithBrand(before, brand) || !before.trim())) return true;
+  return false;
+}
+
+/** «Моё» (продукт, компания, side project) рядом с брендом брифа. */
+function ownedLinked(
+  t: string,
+  index: number,
+  phrase: string,
+  brand: string | null,
+): boolean {
+  if (!brand || weakBrand(brand)) return false;
+  const after = wordsOf(t.slice(index + phrase.length)).slice(0, 3);
+  if (brandIn(after.join(' '), brand)) return true;
+  const before = (t.slice(0, index).split(CLAUSE_SPLIT_RE).pop() ?? '').trim();
+  return (
+    /(?:^|\s|')(?:is|was|are|s|=)(?:\s+(?:just|basically|actually|really|literally))?$/u.test(
+      before,
+    ) && brandIn(before.split(/\s+/u).slice(-4).join(' '), brand)
+  );
+}
 /** Чужая роль: «я клієнт», «just a user». */
 const CUSTOMER_ROLE = rx([
   String.raw`customers?|clients?|users?|subscribers?|buyers?|fans?|paying`,
@@ -740,23 +1021,25 @@ export function disclosureRole(
   for (const s of sentencesOf(disclosure)) {
     if (/\?\s*\)?$/u.test(s)) continue; // вопрос — не утверждение роли
     const f = formsOf(s);
-    for (const m of matchesIn(INSIDER_STRONG, f)) {
-      if (negatedBefore(f.lat, m.index!) || negatedBefore(f.cyr, m.index!))
+    // Отрицание — перед фразой или внутри неё («I'm not the founder»).
+    const judge = (m: RegExpMatchArray) => {
+      if (
+        negatedBefore(f.lat, m.index!) ||
+        negatedBefore(f.cyr, m.index!) ||
+        NEG_WORD_RE.test(m[0])
+      )
         negated = true;
       else insider = true;
-    }
-    for (const m of matchesIn(INSIDER_WEAK, f)) {
-      const after = m.index! + m[0].length;
-      const linked =
-        WEAK_LINK_RE.test(f.lat.slice(after)) ||
-        WEAK_LINK_RE.test(f.cyr.slice(after)) ||
-        (!!brand &&
-          brandIn(s.slice(Math.max(0, m.index! - 40), after + 40), brand));
-      if (!linked) continue;
-      if (negatedBefore(f.lat, m.index!) || negatedBefore(f.cyr, m.index!))
-        negated = true;
-      else insider = true;
-    }
+    };
+    const linkedIn = (
+      m: RegExpMatchArray,
+      fn: (t: string, i: number, p: string, b: string | null) => boolean,
+    ) => fn(f.lat, m.index!, m[0], brand) || fn(f.cyr, m.index!, m[0], brand);
+    for (const m of matchesIn(INSIDER_STRONG, f)) judge(m);
+    for (const m of matchesIn(ROLE_NOUNS, f))
+      if (linkedIn(m, roleLinked)) judge(m);
+    for (const m of matchesIn(OWNED_RE, f))
+      if (linkedIn(m, ownedLinked)) judge(m);
     if (testIn(NEGATION_PHRASES, f)) negated = true;
     if (testIn(CUSTOMER_ROLE, f)) customer = true;
     if (testIn(EXPLICIT_NEGATION, f)) explicit = true;
@@ -1075,30 +1358,42 @@ const GLUED_UNIT_RE =
 /** Маскировка «не утверждений»: версии, годы, время, склейки, списки. */
 function maskNonClaims(t: string): string {
   const blank = (m: string): string => ' '.repeat(m.length);
-  return t
-    .replace(/(?:^|(?<=[\s:;,(]))\d{1,2}\)(?=\s)/gmu, blank)
-    .replace(/^\s*\d{1,2}\.(?=\s)/gmu, blank)
-    .replace(/(?:^|\s)\/?[ru]\/\S+/gu, blank)
-    .replace(/[\p{L}\p{N}._-]*@\d+(?:\.\d+)*\S*/gu, blank)
-    .replace(
-      /(?<![\p{L}\p{N}])(?:node(?:\.?js)?|python|ios|android|java|php|ruby|go|rust|react|vue|angular|next\.?js|nuxt|django|rails|laravel|postgres(?:ql)?|mysql|windows|macos|ubuntu|debian|chrome|firefox|safari|es|ecmascript|typescript|ts|\.net|dotnet|version|release|versions|lts|api|http|tls|ssl|ipv|gpt|claude|gemini|llama|iphone|pixel|galaxy|версі\p{L}*|верси\p{L}*)\s*v?\d+(?:\.\d+)*(?:\s*(?:lts|beta|rc\d*))?/gu,
-      blank,
-    )
-    .replace(/(?<![\p{L}\p{N}])v\d+(?:\.\d+)*/gu, blank)
-    .replace(/\d+(?:\.\d+){2,}[\w.+-]*/gu, blank)
-    .replace(/\d{1,2}:\d{2}(?::\d{2})?(?:\s?(?:am|pm))?/gu, blank)
-    .replace(/\d{1,2}[./]\d{1,2}[./]\d{2,4}/gu, blank)
-    .replace(/\d+\s*\/\s*\d+/gu, blank)
-    .replace(
-      /(?<![\p{L}])(?:in|since|from|by|until|till|of|around|during|before|after|early|late|mid|в|у|з|із|с|до|від|от|після|после|перед|q[1-4])\s+(?:19|20)\d{2}(?![\p{N}]|[.,]\d)|(?<![\p{N}.,$€£₴₽])(?:19|20)\d{2}\s+(?:year|рік|року|год|году|р\.|г\.)/gu,
-      blank,
-    )
-    .replace(/(?<![\p{L}\p{N}])\d{1,2}\s?(?:am|pm)(?![\p{L}])/gu, blank)
-    .replace(/(?![x×]\d+(?![\p{L}]))[\p{L}]+-?\d+[\p{L}\p{N}]*/gu, blank)
-    .replace(/\d+-(?!fold)(?=\p{L})[\p{L}\p{N}]+/gu, blank)
-    .replace(/\d+(?=\p{L})[\p{L}\p{N}]+/gu, (m) =>
-      GLUED_UNIT_RE.test(m) ? m : blank(m),
-    );
+  return (
+    t
+      // markers@4 (аудит m2-8): периодичность («every 30 seconds») и
+      // «2x longer/slower» — не результат.
+      .replace(
+        /(?<![\p{L}])(?:every|each|кожн\p{L}*|каждые|каждый|каждую|каждое)\s+\d+(?:[.,]\d+)?/gu,
+        blank,
+      )
+      .replace(
+        /\d+(?:[.,]\d+)?\s?(?:[x×]|times|рази?|раза)\s+(?:longer|slower|harder|worse|more\s+(?:expensive|time|work|effort|code)|as\s+long|довше|повільніше|дольше|медленнее)(?![\p{L}])/gu,
+        blank,
+      )
+      .replace(/(?:^|(?<=[\s:;,(]))\d{1,2}\)(?=\s)/gmu, blank)
+      .replace(/^\s*\d{1,2}\.(?=\s)/gmu, blank)
+      .replace(/(?:^|\s)\/?[ru]\/\S+/gu, blank)
+      .replace(/[\p{L}\p{N}._-]*@\d+(?:\.\d+)*\S*/gu, blank)
+      .replace(
+        /(?<![\p{L}\p{N}])(?:node(?:\.?js)?|python|ios|android|java|php|ruby|go|rust|react|vue|angular|next\.?js|nuxt|django|rails|laravel|postgres(?:ql)?|mysql|windows|macos|ubuntu|debian|chrome|firefox|safari|es|ecmascript|typescript|ts|\.net|dotnet|version|release|versions|lts|api|http|tls|ssl|ipv|gpt|claude|gemini|llama|iphone|pixel|galaxy|версі\p{L}*|верси\p{L}*)\s*v?\d+(?:\.\d+)*(?:\s*(?:lts|beta|rc\d*))?/gu,
+        blank,
+      )
+      .replace(/(?<![\p{L}\p{N}])v\d+(?:\.\d+)*/gu, blank)
+      .replace(/\d+(?:\.\d+){2,}[\w.+-]*/gu, blank)
+      .replace(/\d{1,2}:\d{2}(?::\d{2})?(?:\s?(?:am|pm))?/gu, blank)
+      .replace(/\d{1,2}[./]\d{1,2}[./]\d{2,4}/gu, blank)
+      .replace(/\d+\s*\/\s*\d+/gu, blank)
+      .replace(
+        /(?<![\p{L}])(?:in|since|from|by|until|till|of|around|during|before|after|early|late|mid|в|у|з|із|с|до|від|от|після|после|перед|q[1-4])\s+(?:19|20)\d{2}(?![\p{N}]|[.,]\d)|(?<![\p{N}.,$€£₴₽])(?:19|20)\d{2}\s+(?:year|рік|року|год|году|р\.|г\.)/gu,
+        blank,
+      )
+      .replace(/(?<![\p{L}\p{N}])\d{1,2}\s?(?:am|pm)(?![\p{L}])/gu, blank)
+      .replace(/(?![x×]\d+(?![\p{L}]))[\p{L}]+-?\d+[\p{L}\p{N}]*/gu, blank)
+      .replace(/\d+-(?!fold)(?=\p{L})[\p{L}\p{N}]+/gu, blank)
+      .replace(/\d+(?=\p{L})[\p{L}\p{N}]+/gu, (m) =>
+        GLUED_UNIT_RE.test(m) ? m : blank(m),
+      )
+  );
 }
 
 /**
@@ -1180,6 +1475,19 @@ export function resultNumbersIn(text: string): ResultNumber[] {
 /** Совместимость: значения чисел результата. */
 export function numbersIn(text: string): string[] {
   return resultNumbersIn(text).map((n) => n.value);
+}
+
+/**
+ * Все значения чисел текста (источник пункта claimMap, аудит m2-7): числа
+ * результата (в т. ч. словами — «triple», «three hundred percent») и любые
+ * числа цифрами (`1,400` → `1400`, `4,5` → `4.5`).
+ */
+export function numberValuesIn(text: string): string[] {
+  if (!text) return [];
+  const out = new Set(resultNumbersIn(text).map((n) => n.value));
+  for (const m of base(text).matchAll(/\p{Nd}+(?:[   ]\d{3})*(?:[.,]\d+)?/gu))
+    out.add(normNumber(m[0]));
+  return [...out];
 }
 
 /** То же число: значение совпадает, единица та же или одна из них пустая. */

@@ -130,6 +130,8 @@ export interface PatchRedditProjectBody extends RevisionedBody {
 }
 /** Переход `active → archived` (глагол, не PATCH статуса). */
 export type ArchiveRedditProjectBody = RevisionedBody;
+/** Восстановление `archived → active` (Р-RD-AUD-1, аудит m1-1). */
+export type RestoreRedditProjectBody = RevisionedBody;
 
 // ── Сообщества ───────────────────────────────────────────────────────────
 
@@ -220,8 +222,13 @@ export interface RedditRuleSnapshotView {
   createdAt: string;
 }
 export interface CreateRedditRulesBody extends MutationBody {
-  /** https-адрес правил (сайдбар, вики, rules) — хранится, не загружается. */
-  sourceUrl: string;
+  /**
+   * https-адрес правил (сайдбар, вики, rules) — хранится, не загружается.
+   * `null` — первоисточник не прочитан (импорт из вторичных источников,
+   * Р-RD-AUD-3): снимок хранит текст без URL, подтвердить его нельзя
+   * (400 `source_required`) — нужен новый снимок с первоисточником.
+   */
+  sourceUrl: string | null;
   /** Выдержка правил своими словами или цитатой, 1..5000, без контактов. */
   sourceExcerpt: string;
   promotionPolicy: RedditPromotionPolicy;
@@ -231,7 +238,18 @@ export interface CreateRedditRulesBody extends MutationBody {
   conditions?: string[];
   /** ISO; не в будущем. */
   checkedAt: string;
+  /**
+   * Р-RD-AUD-9 (импорт): `true` — создать, только если у сообщества нет
+   * текущего снимка. Есть — ответ 200 с этим снимком и `kept: true`, без
+   * записи и без каскада (проверка под блокировкой строки сообщества: два
+   * импорта одновременно дают один снимок).
+   */
+  ifNoCurrent?: boolean;
 }
+/** Ответ создания снимка: `kept` — только при `ifNoCurrent` (текущий оставлен). */
+export type CreateRedditRulesResponse = RedditRuleSnapshotView & {
+  kept?: true;
+};
 /** Подтверждение проверки (`reddit.rules.review`). */
 export type ReviewRedditRulesBody = MutationBody;
 
@@ -663,9 +681,17 @@ export interface RedditCopyView {
 }
 
 export interface ReportRedditPublicationBody extends MutationBody {
-  /** https://(www|old|new|m|np|sh).reddit.com/r/<name>/comments/<id36>/… */
+  /**
+   * https://(www|old|new|m|np|sh).reddit.com/r/<name>/comments/<id36>/…
+   * (канон поста — без slug; «Поделиться» `/r/<name>/s/…` и `redd.it` —
+   * 400 `share_link`, аудит m2-12).
+   */
   url: string;
-  /** ISO, не в будущем. */
+  /**
+   * ISO, не в будущем и не раньше первого копирования этой версии (400
+   * `before_copy`, Р-RD-AUD-5). Отчёт — факт о скопированной версии: 409
+   * `PUB_CONFLICT` `already_published` | `withdrawn_exists` | `url_taken`.
+   */
   postedAt: string;
   /** ≤ 1000, без контактов (пишется в reason аудита). */
   notes?: string | null;
@@ -727,6 +753,13 @@ export const REDDIT_ROUTES = {
     mutation: true,
     status: 200,
   }),
+  restoreProject: route<RestoreRedditProjectBody, RedditProjectView>({
+    method: 'POST',
+    path: `${P}/projects/:id/restore`,
+    action: 'reddit.manage',
+    mutation: true,
+    status: 200,
+  }),
   // Сообщества
   listCommunities: route<void, ListPage<RedditCommunityView>>({
     method: 'GET',
@@ -764,7 +797,7 @@ export const REDDIT_ROUTES = {
     mutation: false,
     status: 200,
   }),
-  createRules: route<CreateRedditRulesBody, RedditRuleSnapshotView>({
+  createRules: route<CreateRedditRulesBody, CreateRedditRulesResponse>({
     method: 'POST',
     path: `${P}/communities/:id/rules`,
     action: 'reddit.manage',
@@ -1001,7 +1034,7 @@ export const REDDIT_M2_ROUTE_NAMES: readonly RedditRouteName[] = [
   'listPublications',
 ];
 
-/** Маршруты этапа M1 (Research, 25). */
+/** Маршруты этапа M1 (Research, 26 — с восстановлением проекта, Р-RD-AUD-1). */
 export const REDDIT_M1_ROUTE_NAMES: readonly RedditRouteName[] = (
   Object.keys(REDDIT_ROUTES) as RedditRouteName[]
 ).filter((k) => !REDDIT_M2_ROUTE_NAMES.includes(k));

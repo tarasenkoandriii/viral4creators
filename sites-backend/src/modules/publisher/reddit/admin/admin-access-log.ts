@@ -2,8 +2,9 @@
  * AI Publisher, P-R-ADM — журнал доступа Админки к вкладке «Reddit»
  * (Р-RD-ADM-7, v1.2): таблица `pub_reddit_admin_access_log` (вне тенанта,
  * append-only): кто (`admin:<userId>`), метод, ШАБЛОН маршрута (без id,
- * query и тел), статус ответа, время. Пишется после ответа (не задерживает
- * его); сбой записи — предупреждение в журнале процесса, не ошибка запроса.
+ * query и тел), статус ответа, время. Пишется ДО завершения ответа
+ * (`AdminRedditGuard`, аудит adm-1; обрыв клиентом — статус 499); сбой
+ * записи — предупреждение в журнале процесса, не ошибка запроса.
  * Ретенция — 365 дней, задание `admin-access-log-retention` (daily, P-R);
  * удалить строку моложе срока не даёт и сама база.
  *
@@ -27,31 +28,57 @@ export interface AdminAccessEntry {
   status: number;
 }
 
+/** Свои маршруты контроллера (не `rx|cx`). */
+const FIXED_ROUTES = [
+  'status',
+  'setup',
+  'params',
+  'import/plan',
+  'import/apply',
+] as const;
+const PARAM_ACTIONS = ['proposals', 'propose', 'decide'] as const;
+
+/** Значение `route` для пути вне известных шаблонов (аудит adm-2). */
+export const UNKNOWN_ROUTE = 'unknown';
+
 /**
- * Шаблон маршрута по пути запроса: `rx/projects/:id`, `params/:key/propose`;
- * путь `rx|cx` вне таблиц — `rx/?`; прочее вне контроллера — `?`.
+ * Шаблон маршрута по пути запроса: `rx/projects/:id`, `params/:key/propose`,
+ * `cx/ai/calls/:callId` (регистр шаблона сохраняется — триггер журнала
+ * допускает заглавные с миграции 20261024090000); путь `rx|cx` вне таблиц —
+ * `rx/unknown`; прочее вне контроллера — `unknown`. Каждое значение проходит
+ * проверку триггера `pub_reddit_admin_access_log_guard` (тест на все 71).
  */
 export function accessRouteOf(method: string, path: string): string {
   const i = path.indexOf(PREFIX);
-  if (i === -1) return '?';
+  if (i === -1) return UNKNOWN_ROUTE;
   const rest = path.slice(i + PREFIX.length);
   const m = /^(rx|cx)\/(.*)$/.exec(rest);
   if (m) {
     const hit = matchRoute(m[1] === 'rx' ? RX_ROUTES : CX_ROUTES, method, m[2]);
-    return hit ? `${m[1]}/${hit.route.pattern}` : `${m[1]}/?`;
+    return hit ? `${m[1]}/${hit.route.pattern}` : `${m[1]}/${UNKNOWN_ROUTE}`;
   }
-  const fixed = [
-    'status',
-    'setup',
-    'params',
-    'import/plan',
-    'import/apply',
-  ].find((r) => rest === r);
+  const fixed = FIXED_ROUTES.find((r) => rest === r);
   if (fixed) return fixed;
   const p = /^params\/[A-Za-z0-9_]{1,64}\/(proposals|propose|decide)$/.exec(
     rest,
   );
-  return p ? `params/:key/${p[1]}` : '?';
+  return p ? `params/:key/${p[1]}` : UNKNOWN_ROUTE;
+}
+
+/**
+ * Все значения `route`, которые пишет журнал: 63 шаблона `rx|cx` + 8 своих
+ * маршрутов контроллера (= 71) и значения для неизвестного пути.
+ */
+export function accessRouteTemplates(): string[] {
+  return [
+    ...RX_ROUTES.map((r) => `rx/${r.pattern}`),
+    ...CX_ROUTES.map((r) => `cx/${r.pattern}`),
+    ...FIXED_ROUTES,
+    ...PARAM_ACTIONS.map((a) => `params/:key/${a}`),
+    UNKNOWN_ROUTE,
+    `rx/${UNKNOWN_ROUTE}`,
+    `cx/${UNKNOWN_ROUTE}`,
+  ];
 }
 
 @Injectable()

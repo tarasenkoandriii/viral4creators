@@ -397,6 +397,7 @@ const fake: PublisherHttp = {
     re.createBackup(pid, K),
     // P-R: тела из скаляров (архив проекта, review, пересчёт, переходы).
     rd.archiveProject('rp1', K, 1),
+    rd.restoreProject('rp1', K, 2),
     rd.reviewRules('rs1', K),
     rd.scoreOpportunity('ro1', K, 2),
     rd.transitionOpportunity('ro1', 'qualify', K, { expectedRevision: 2 }),
@@ -448,6 +449,7 @@ const SHARED = new Set([
   'RevisionedBody',
   // Псевдонимы общих тел P-R (сверяются рантаймом, как сами общие).
   'ArchiveRedditProjectBody',
+  'RestoreRedditProjectBody',
   'ReviewRedditRulesBody',
   'ScoreRedditOpportunityBody',
 ]);

@@ -1,6 +1,6 @@
 /**
  * [P-R-ADM] [AT-RD-16] Вкладка «Reddit» Админки — «ноль запросов к Reddit»
- * по ВСЕМ маршрутам внутреннего API: 39 `rx/*` (раздел Reddit) + 24 `cx/*` (v1.2)
+ * по ВСЕМ маршрутам внутреннего API: 40 `rx/*` (раздел Reddit) + 24 `cx/*` (v1.2)
  * (студия) + status/setup/params/import (Р-RD-0, Р-RD-ADM-3). Сеть подменена
  * (`reddit-egress.testing.ts`): HTTP-клиенты бросают, соединения и DNS
  * записываются. Сценарий проходит каждый маршрут таблиц (покрытие
@@ -72,7 +72,7 @@ ciDescribe(
       await s?.close();
     });
 
-    it('все 63 маршрута rx/cx и служебные — HTTP-клиенты не вызваны, сеть только localhost', async () => {
+    it('все 64 маршрута rx/cx и служебные — HTTP-клиенты не вызваны, сеть только localhost', async () => {
       const used = new Set<string>();
       const call = async <T = Record<string, unknown>>(
         name: string,
@@ -544,11 +544,18 @@ ciDescribe(
         })) as never,
         201,
       );
-      await call(
+      const p3 = await call<{ revision: number }>(
         'rx.archiveProject',
         200,
         A.post(`rx/projects/${p2.id}/archive`, {
           expectedRevision: p2.revision,
+        }),
+      );
+      await call(
+        'rx.restoreProject',
+        200,
+        A.post(`rx/projects/${p2.id}/restore`, {
+          expectedRevision: p3.revision,
         }),
       );
       // Импорт (dry-run) — тоже без сети.

@@ -14,7 +14,7 @@ import { PublisherRedditController } from './reddit.controller';
 import { RedditEnabledGuard } from './reddit-flag.guard';
 
 describe('contracts/reddit-api ↔ контроллер P-R', () => {
-  it('REDDIT_ROUTES = маршруты контроллера (метод, путь, действие); 39 маршрутов (M1 25 + M2 14)', () => {
+  it('REDDIT_ROUTES = маршруты контроллера (метод, путь, действие); 40 маршрутов (M1 26 + M2 14; +restoreProject, Р-RD-AUD-1)', () => {
     const fromController = enumerateControllers([
       PublisherRedditController as never,
     ])
@@ -27,11 +27,11 @@ describe('contracts/reddit-api ↔ контроллер P-R', () => {
       )
       .sort();
     expect(fromController).toEqual(fromContract);
-    expect(fromContract).toHaveLength(39);
+    expect(fromContract).toHaveLength(40);
     expect([
       REDDIT_M1_ROUTE_NAMES.length,
       REDDIT_M2_ROUTE_NAMES.length,
-    ]).toEqual([25, 14]);
+    ]).toEqual([26, 14]);
   });
 
   it('первый гвард контроллера — флаг PUBLISHER_REDDIT_ENABLED (до членства и ролей)', () => {

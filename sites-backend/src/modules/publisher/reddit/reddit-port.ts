@@ -30,6 +30,9 @@ import {
 } from './brief-rules';
 import { redditChecks, type RedditClaim } from './checks';
 import { DUPLICATE_WINDOW_DAYS } from './markers';
+
+/** Сколько чужих Reddit-версий читается для проверки дублей (m2-15). */
+export const DUPLICATE_SCAN_LIMIT = 200;
 import { snapshotState } from './policy';
 import { currentRules, policySnapshotOf, staleDaysFor } from './views';
 
@@ -189,32 +192,54 @@ export class RedditPortImpl implements RedditPort {
     const sources = ids.length
       ? await tx.pubSource.findMany({
           where: { productId: product.id, id: { in: ids } },
-          select: { id: true, usage: true, origin: true },
+          // Аудит m2-7: текст источника — сверка чисел пункта claimMap.
+          select: { id: true, usage: true, origin: true, fragment: true },
         })
       : [];
     const excerpt = st.opportunity?.excerptSourceId
       ? await tx.pubSource.findFirst({
           where: { id: st.opportunity.excerptSourceId, productId: product.id },
-          select: { usage: true },
+          select: { usage: true, fragment: true },
         })
       : null;
     const since = addKyivCalendarDays(now, -DUPLICATE_WINDOW_DAYS);
+    // Аудит m2-15: для дублей — версии того же языка (основной подтег
+    // брифа), только замороженные или текущие версии других материалов
+    // (старые черновики не читаются), не больше DUPLICATE_SCAN_LIMIT.
+    const lang = st.brief.language.split('-')[0].toLowerCase();
     const others = await tx.pubContentVersion.findMany({
       where: {
         productId: product.id,
         contentId: { not: v.contentId },
         createdAt: { gte: since },
-        content: { kind: { in: ['reddit_post', 'reddit_comment'] } },
+        content: {
+          kind: { in: ['reddit_post', 'reddit_comment'] },
+          redditBrief: {
+            language: { startsWith: lang, mode: 'insensitive' },
+          },
+        },
+        OR: [
+          { frozenAt: { not: null } },
+          { contentCurrentVersionOf: { some: {} } },
+        ],
       },
       select: { id: true, title: true, body: true, format: true },
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: DUPLICATE_SCAN_LIMIT,
     });
     const offer = await tx.pubOfferVersion.findFirst({
       where: { id: st.brief.offerVersionId, productId: product.id },
       select: { text: true },
     });
     const isComment = v.content.kind === 'reddit_comment';
+    // Аудит m2-6: «число из брифа» — только из цели, аудитории, тезисов с
+    // источником (не `needs_verification`), оффера; контекст комментария —
+    // выдержка чужого треда по умолчанию: его числа, которые есть в
+    // выдержке, из брифа не засчитываются (`threadTexts`); без выдержки
+    // контекст комментария не засчитывается вовсе.
+    const excerptText =
+      excerpt && excerpt.usage !== 'revoked' ? excerpt.fragment : null;
+    const contextUsable = !isComment || excerptText !== null;
     const r = redditChecks({
       contentType: isComment ? 'comment' : 'post',
       title: isComment ? null : v.title,
@@ -238,10 +263,13 @@ export class RedditPortImpl implements RedditPort {
       contextTexts: [
         st.brief.objective,
         st.brief.audience ?? '',
-        st.brief.context ?? '',
-        ...st.keyPoints.map((k) => k.text),
+        contextUsable ? (st.brief.context ?? '') : '',
+        ...st.keyPoints
+          .filter((k) => Array.isArray(k.sourceIds))
+          .map((k) => k.text),
         offer?.text ?? '',
       ],
+      threadTexts: isComment && excerptText ? [excerptText] : [],
       snapshot: rules
         ? {
             ...policySnapshotOf(rules.snap, rules.sourceRevoked),
@@ -258,7 +286,10 @@ export class RedditPortImpl implements RedditPort {
           }
         : null,
       sources: new Map(
-        sources.map((s) => [s.id, { usage: s.usage, origin: s.origin }]),
+        sources.map((s) => [
+          s.id,
+          { usage: s.usage, origin: s.origin, fragment: s.fragment },
+        ]),
       ),
       others: others.map((o) => ({
         versionId: o.id,

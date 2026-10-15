@@ -7,7 +7,7 @@
  *
  *   GET          /internal/admin/reddit/status
  *   POST         /internal/admin/reddit/setup
- *   GET|POST|PATCH /internal/admin/reddit/rx/<путь REDDIT_ROUTES>   (39)
+ *   GET|POST|PATCH /internal/admin/reddit/rx/<путь REDDIT_ROUTES>   (40)
  *   GET|POST|PATCH /internal/admin/reddit/cx/<путь кабинета>         (24)
  *   GET          /internal/admin/reddit/params
  *   GET          /internal/admin/reddit/params/:key/proposals

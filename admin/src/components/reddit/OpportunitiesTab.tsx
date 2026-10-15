@@ -411,7 +411,9 @@ function OpportunityCard({ id }: { id: string }) {
   const { api, go } = useRx();
   const state = useLoad(() => api.reddit.opportunity(id), [api, id]);
   const [fresh, setFresh] = useState<RedditOpportunityView | null>(null);
-  const o = fresh && fresh.id === id && (!state.data || fresh.revision >= state.data.revision) ? fresh : state.data;
+  // Пока грузится другая запись, прежняя не показывается (аудит ui-9).
+  const loaded = state.data?.id === id ? state.data : null;
+  const o = fresh && fresh.id === id && (!loaded || fresh.revision >= loaded.revision) ? fresh : loaded;
   const reload = () => {
     setFresh(null);
     state.reload();
@@ -421,8 +423,8 @@ function OpportunityCard({ id }: { id: string }) {
       <button type="button" className="rx-linkbtn" onClick={() => go({ id: '' })}>
         {R.common.back}
       </button>
-      {state.error ? <ErrorAlert error={state.error} /> : null}
-      {!o ? state.loading ? <Loading /> : null : <OpportunityCardBody o={o} reload={reload} onSaved={setFresh} />}
+      {state.error ? <ErrorAlert error={state.error} onRetry={state.reload} /> : null}
+      {!o ? state.loading ? <Loading /> : null : <OpportunityCardBody key={o.id} o={o} reload={reload} onSaved={setFresh} />}
     </div>
   );
 }
@@ -585,7 +587,7 @@ function ExcerptEvidence({ o, reload }: { o: RedditOpportunityView; reload: () =
   };
   return (
     <Section title={R.opportunities.excerptsTitle}>
-      {state.error ? <ErrorAlert error={state.error} onReload={state.reload} /> : null}
+      {state.error ? <ErrorAlert error={state.error} onReload={state.reload} onRetry={state.reload} /> : null}
       {!state.data ? (
         state.loading ? <Loading /> : null
       ) : state.data.items.length === 0 ? (

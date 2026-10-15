@@ -202,7 +202,7 @@ export function cabinetHttp(
   fetchImpl: typeof fetch = fetch,
 ): ImportHttp {
   const call = async (
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'PATCH',
     path: string,
     body?: Record<string, unknown>,
   ): Promise<ImportResponse> => {
@@ -230,6 +230,7 @@ export function cabinetHttp(
   return {
     get: (p) => call('GET', p),
     post: (p, b) => call('POST', p, b),
+    patch: (p, b) => call('PATCH', p, b),
   };
 }
 
@@ -246,11 +247,32 @@ export function formatReport(r: ImportReport): string {
         .map(([k, n]) => `${k} ${n}`)
         .join(', ')}`,
     );
+  if (!r.complete)
+    lines.push(
+      '',
+      r.stoppedBy === 'deadline'
+        ? 'НЕ ЗАВЕРШЕНО: вичерпано час запиту — решту не виконано (not_attempted); повторіть той самий імпорт, створене стане «вже є».'
+        : 'НЕ ЗАВЕРШЕНО: проєкт не створено — решту не виконано (not_attempted); виправте назву/ринок проєкту і повторіть.',
+    );
   lines.push('', 'BLOCK за правилами (знімки імпортуються unreviewed):');
   for (const b of r.blocks)
     lines.push(
-      `  r/${b.subreddit}: зараз ${b.now.join('+') || 'ok'}; після перевірки власником — ${b.afterReview.join('+') || 'ok'}`,
+      `  r/${b.subreddit}: зараз ${b.now.join('+') || 'ok'}; після перевірки власником — ${b.afterReview.join('+') || 'ok'}${b.firstHandSource ? '' : ' (першоджерела немає — перевірка лише після нового знімка з посиланням на правила)'}`,
     );
+  const kept = r.items.filter(
+    (i) => i.code === 'kept_current' && /differs/.test(i.detail ?? ''),
+  );
+  if (kept.length) {
+    lines.push('', 'Правила: поточний знімок збережено, CSV відрізняється:');
+    for (const i of kept) lines.push(`  ${i.ref}: ${i.detail}`);
+  }
+  if (r.warnings?.length) {
+    lines.push('', 'Попередження (записано не дослівно):');
+    for (const w of r.warnings)
+      lines.push(
+        `  ${w.kind} ${w.ref}: ${w.code}${w.field ? ` [${w.field}]` : ''}${w.detail ? ` (${w.detail})` : ''}`,
+      );
+  }
   const bad = r.items.filter((i) => i.outcome === 'rejected');
   if (bad.length) {
     lines.push('', 'Відхилено:');

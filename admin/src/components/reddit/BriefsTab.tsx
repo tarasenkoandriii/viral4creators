@@ -275,7 +275,7 @@ function AddBrief({ projectId, opportunityId }: { projectId: string; opportunity
   const body = briefCreateBody(projectId, v);
   return (
     <Section title={R.briefs.create}>
-      {from.error ? <ErrorAlert error={from.error} /> : null}
+      {from.error ? <ErrorAlert error={from.error} onRetry={from.reload} /> : null}
       <BriefFields v={v} set={setV} create projectId={projectId} />
       <ErrorAlert error={m.error} />
       <button
@@ -297,7 +297,9 @@ function BriefCard({ id }: { id: string }) {
   const { api, go } = useRx();
   const state = useLoad(() => api.studio.brief(id), [api, id]);
   const [fresh, setFresh] = useState<RedditBriefView | null>(null);
-  const b = fresh && fresh.id === id && (!state.data || fresh.revision >= state.data.revision) ? fresh : state.data;
+  // Пока грузится другая запись, прежняя не показывается (аудит ui-9).
+  const loaded = state.data?.id === id ? state.data : null;
+  const b = fresh && fresh.id === id && (!loaded || fresh.revision >= loaded.revision) ? fresh : loaded;
   const reload = () => {
     setFresh(null);
     state.reload();
@@ -307,8 +309,8 @@ function BriefCard({ id }: { id: string }) {
       <button type="button" className="rx-linkbtn" onClick={() => go({ id: '' })}>
         {R.common.back}
       </button>
-      {state.error ? <ErrorAlert error={state.error} /> : null}
-      {!b ? state.loading ? <Loading /> : null : <BriefCardBody b={b} reload={reload} onSaved={setFresh} />}
+      {state.error ? <ErrorAlert error={state.error} onRetry={state.reload} /> : null}
+      {!b ? state.loading ? <Loading /> : null : <BriefCardBody key={b.id} b={b} reload={reload} onSaved={setFresh} />}
     </div>
   );
 }
@@ -371,7 +373,7 @@ function BriefCardBody({ b, reload, onSaved }: { b: RedditBriefView; reload: () 
         <GateBlock gate={b.gate} />
       </Section>
       <Section title={R.briefs.material}>
-        {contents.error ? <ErrorAlert error={contents.error} onReload={contents.reload} /> : null}
+        {contents.error ? <ErrorAlert error={contents.error} onReload={contents.reload} onRetry={contents.reload} /> : null}
         {!contents.data ? (
           contents.loading ? <Loading /> : null
         ) : contents.data.length ? (

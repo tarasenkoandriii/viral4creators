@@ -254,6 +254,22 @@ ciDescribe('P-R db: триггеры pub_reddit_*', () => {
     ).rejects.toThrow(/review требует первоисточник/);
   });
 
+  it('Р-RD-AUD-3: снимок на выдержке manual_text без URL (вторичные источники) создаётся, но review — отказ «требует первоисточник»', async () => {
+    const c = await community();
+    const text = await source({ kind: 'manual_text', url: null });
+    const s = await snapshot(c.id, 1, { sourceId: text });
+    await expect(
+      db.pubRedditRuleSnapshot.update({
+        where: { id: s.id },
+        data: {
+          reviewState: 'reviewed',
+          reviewedBy: R,
+          reviewedAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/review требует первоисточник/);
+  });
+
   it('возможность: тред того же сообщества; excerpt — discussion/private/restricted ≤ 2000 без контактов; qualified только при policy=ok; снимок того же сообщества', async () => {
     const c = await community();
     const other = await community();
@@ -524,7 +540,13 @@ ciDescribe('P-R db: триггеры pub_reddit_*', () => {
     await bad({ author: 'someone' });
     await bad({ fragment: 'call +380 67 123 45 67' });
     await bad({ fragment: 'x'.repeat(2001) });
-    await bad({ kind: 'manual_text' });
+    // Р-RD-AUD-3: `manual_text` — только без URL (правила из вторичных
+    // источников, первоисточник не прочитан); прочие виды — отказ.
+    await bad({ kind: 'manual_text', url: 'https://example.org/rules' });
+    await bad({ kind: 'interview' });
+    await expect(source({ kind: 'manual_text', url: null })).resolves.toEqual(
+      expect.any(String),
+    );
     const id = await source({ kind: 'discussion', url: null });
     const other = await source({ kind: 'discussion', url: null });
     const child = await source({

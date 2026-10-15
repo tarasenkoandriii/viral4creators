@@ -1,7 +1,8 @@
 /**
  * P-R — вкладка «Проекты»: список (статус, поиск, CSV), создание,
  * карточка с правкой (CAS `expectedRevision`, 409 — перезагрузка) и
- * архивом (глагол `…/archive`, двойным нажатием).
+ * архивом (глагол `…/archive`, двойным нажатием) и восстановлением
+ * архивного (`…/restore`, Р-RD-AUD-1).
  */
 import { useState } from 'react';
 import { Badge, Button } from '../../../kit/ui';
@@ -290,7 +291,26 @@ function ProjectCardBody({
       {!canManage ? (
         <ReadOnlyNote />
       ) : !active ? (
-        <Badge tone="warning">{r.projects.archiveHint}</Badge>
+        <Section title={r.projects.restore}>
+          <Badge tone="warning">{r.projects.archiveHint}</Badge>
+          <div className="text-xs text-silver-500">
+            {r.projects.restoreHint}
+          </div>
+          <RedditErrorAlert error={ma.error} onReload={reload} />
+          <ConfirmButton
+            variant="outline"
+            loading={ma.busy}
+            onConfirm={async () => {
+              const x = await ma.run(
+                (k) => api.restoreProject(p.id, k, p.revision),
+                `restore:${p.id}:${p.revision}`
+              );
+              if (x) onSaved(x);
+            }}
+          >
+            {r.projects.restore}
+          </ConfirmButton>
+        </Section>
       ) : (
         <Section title={r.common.edit}>
           <ProjectFields v={v} set={setV} />

@@ -29,7 +29,7 @@ import {
   type ParameterView,
 } from './reddit-shared/lib/publisher/core-api';
 import { arr, bool, int, listPage, obj, str, strOrNull, type ListPage } from './reddit-shared/lib/publisher/decode';
-import { BCP47_RE, type RedditErrorView } from './reddit-shared/lib/publisher/reddit-view';
+import { BCP47_RE, isUncertainOutcome, type RedditErrorView } from './reddit-shared/lib/publisher/reddit-view';
 import { describeStudioError } from './reddit-shared/lib/publisher/reddit-studio-view';
 import type { DependentStage } from './reddit-shared/lib/publisher/states';
 
@@ -49,9 +49,9 @@ const PREFIX = `products/${PID}/`;
 const S = '[A-Za-z0-9_.:-]{1,128}';
 const re = (body: string) => new RegExp(`^${body.replace(/S/g, S)}$`);
 
-/** Раздел Reddit: суффиксы `REDDIT_ROUTES` (контракт §3, все 39). */
+/** Раздел Reddit: суффиксы `REDDIT_ROUTES` (контракт §3, все 40; restore — Р-RD-AUD-1). */
 const RX_ALLOW = [
-  re('projects(/S(/archive)?)?'),
+  re('projects(/S(/(archive|restore))?)?'),
   re('communities(/S(/rules(/S/source)?)?)?'),
   re('rules/S/review'),
   re('opportunities(/S(/(excerpts|score|qualify|skip|archive))?)?'),
@@ -451,15 +451,29 @@ export function hintValue(key: string, h: ParamHints): unknown | null {
 }
 
 export const IMPORT_KINDS = ['project', 'community', 'rules', 'keyword', 'opportunity'] as const;
-export const IMPORT_OUTCOMES = ['created', 'exists', 'would_create', 'kept_reviewed', 'rejected'] as const;
+export const IMPORT_OUTCOMES = ['created', 'exists', 'would_create', 'rejected', 'not_attempted'] as const;
 export type ImportKind = (typeof IMPORT_KINDS)[number];
 export type ImportOutcome = (typeof IMPORT_OUTCOMES)[number];
+
+/** Предупреждение импорта (записано не дословно — research-import.ts `ImportWarning`). */
+export interface ImportWarningView {
+  kind: string;
+  ref: string;
+  code: string;
+  field?: string;
+  detail?: string;
+}
 
 export interface ImportReport {
   apply: boolean;
   productId: string;
+  /** false — часть строк не выполнялась (`not_attempted`), причина — `stoppedBy` (Р-RD-AUD-4). */
+  complete: boolean;
+  stoppedBy?: 'deadline' | 'project_rejected' | string;
   items: Array<{ kind: string; ref: string; outcome: string; id?: string; code?: string; detail?: string }>;
-  blocks: Array<{ subreddit: string; now: string[]; afterReview: string[] }>;
+  /** `firstHandSource:false` — снимок без первоисточника, подтвердить нельзя (Р-RD-AUD-3). */
+  blocks: Array<{ subreddit: string; now: string[]; afterReview: string[]; firstHandSource: boolean }>;
+  warnings: ImportWarningView[];
   summary: Record<string, Partial<Record<string, number>>>;
 }
 
@@ -477,6 +491,26 @@ export function decodeImportReport(v: unknown): ImportReport {
   return {
     apply: bool(o.apply, 'importReport.apply'),
     productId: str(o.productId, 'importReport.productId'),
+    // Старый сервер полей не присылал — отчёт считается полным, без предупреждений.
+    complete: o.complete === undefined ? true : bool(o.complete, 'importReport.complete'),
+    ...(typeof o.stoppedBy === 'string' ? { stoppedBy: o.stoppedBy } : {}),
+    warnings:
+      o.warnings === undefined
+        ? []
+        : arr(
+            o.warnings,
+            (x) => {
+              const w = obj(x, 'importReport.warning');
+              return {
+                kind: str(w.kind, 'warning.kind'),
+                ref: str(w.ref, 'warning.ref'),
+                code: str(w.code, 'warning.code'),
+                ...(typeof w.field === 'string' ? { field: w.field } : {}),
+                ...(typeof w.detail === 'string' ? { detail: w.detail } : {}),
+              };
+            },
+            'importReport.warnings',
+          ),
     items: arr(
       o.items,
       (x) => {
@@ -500,6 +534,7 @@ export function decodeImportReport(v: unknown): ImportReport {
           subreddit: str(b.subreddit, 'block.subreddit'),
           now: strs(b.now, 'block.now'),
           afterReview: strs(b.afterReview, 'block.afterReview'),
+          firstHandSource: b.firstHandSource === undefined ? true : bool(b.firstHandSource, 'block.firstHandSource'),
         };
       },
       'importReport.blocks',
@@ -519,9 +554,98 @@ export const IMPORT_OUTCOME_LABELS: Record<ImportOutcome, string> = {
   created: 'создано',
   exists: 'уже есть',
   would_create: 'будет создано',
-  kept_reviewed: 'оставлен проверенный снимок',
   rejected: 'отклонено',
+  not_attempted: 'не выполнялось',
 };
+
+/** Коды строк отчёта (research-import.ts) — словами. */
+export const IMPORT_CODE_LABELS: Record<string, string> = {
+  kept_current: 'оставлен текущий снимок (новый из CSV не создан)',
+  topics_merged: 'сегмент добавлен в темы',
+  topics_pending: 'сегмент будет добавлен в темы',
+  topics_not_merged: 'сегмент не добавлен в темы',
+  other_actor: 'уже выполнено другим оператором',
+  other_project: 'сообщество в другом проекте',
+  community_missing: 'сообщества нет ни в CSV, ни в разделе',
+  deadline: 'не хватило времени запроса — повторите',
+  project_rejected: 'проект не создан',
+};
+
+/** Вид предупреждения импорта: виды строк и `file` (весь файл CSV). */
+export const IMPORT_WARNING_KIND_LABELS: Record<ImportKind | 'file', string> = {
+  ...IMPORT_KIND_LABELS,
+  file: 'Файл',
+};
+
+const pick = (map: Record<string, string>, k: string, fallback: string) =>
+  Object.prototype.hasOwnProperty.call(map, k) ? map[k] : fallback;
+
+/**
+ * `detail` строки `kept_current` (research-import.ts: `<reviewState>` и
+ * `; differs: promotion A, csv B; links C, csv D`) — по-русски. Неизвестное
+ * не выводится сырым английским: «значение не распознано».
+ */
+export function keptCurrentText(detail: string | undefined): string {
+  if (!detail) return '';
+  const [state, ...rest] = detail.split('; ');
+  const out = [`текущий снимок: ${pick(R.rules.states, state, 'проверка не распознана')}`];
+  rest.forEach((raw, i) => {
+    const part = i === 0 ? raw.replace(/^differs:\s*/, '') : raw;
+    const m = /^(promotion|links) (\S+), csv (\S+)$/.exec(part);
+    if (!m) {
+      out.push('есть расхождение с CSV');
+      return;
+    }
+    const [field, dict] =
+      m[1] === 'promotion' ? [R.rules.fields.promotionPolicy, R.rules.promotion] : [R.rules.fields.linksPolicy, R.rules.links];
+    const v = (k: string) => pick(dict, k, 'значение не распознано');
+    out.push(`${field}: в снимке «${v(m[2])}», в CSV «${v(m[3])}»`);
+  });
+  return out.join('; ');
+}
+
+/**
+ * Гейт и подсказка о первоисточнике в отчёте — про снимок из CSV; у
+ * сообществ, где оставлен текущий снимок (`kept_current`), такого снимка
+ * нет — блок не показывается.
+ */
+export function importBlocksShown(r: Pick<ImportReport, 'blocks' | 'items'>): ImportReport['blocks'] {
+  const kept = new Set(r.items.filter((x) => x.kind === 'rules' && x.code === 'kept_current').map((x) => x.ref));
+  return r.blocks.filter((b) => !kept.has(`r/${b.subreddit}`));
+}
+
+/** Предупреждения импорта — словами. */
+export const IMPORT_WARNING_LABELS: Record<string, string> = {
+  sanitized: 'убрано похожее на контакт',
+  clipped: 'обрезано до лимита',
+  dropped_conditions: 'отброшены условия правил',
+  enum_default: 'значение вне списка заменено',
+  flair_unparsed: 'флейр не распознан (оставлен «неизвестно»)',
+  dropped_columns: 'колонки CSV не переносятся',
+  merged: 'дубль сообщества: правила взяты из первой строки',
+};
+
+/**
+ * Итог применения (аудит ui-2, Р-RD-AUD-4): проект не создан или импорт не
+ * завершён — предупреждение, а не «Импорт применён».
+ */
+export function importApplyNotice(r: ImportReport): { tone: 'success' | 'warning'; text: string } {
+  const projectRejected = r.items.some((x) => x.kind === 'project' && x.outcome === 'rejected');
+  if (projectRejected || r.stoppedBy === 'project_rejected')
+    return {
+      tone: 'warning',
+      text: 'Проект не создан — импорт не применён, ничего не записано. Проверьте название (до 120 символов) и рынок (до 64), затем постройте план заново.',
+    };
+  if (!r.complete)
+    return {
+      tone: 'warning',
+      text:
+        r.stoppedBy === 'deadline'
+          ? 'Импорт применён частично: не хватило времени запроса, часть строк не выполнялась («не выполнялось»). Нажмите «Применить» ещё раз — созданное станет «уже есть», остаток допишется.'
+          : 'Импорт применён частично: часть строк не выполнялась. Повторите применение.',
+    };
+  return { tone: 'success', text: 'Импорт применён. Повтор безопасен: существующее останется «уже есть».' };
+}
 
 /** Строки сводки отчёта: вид × исход, только ненулевые, в порядке контракта. */
 export function importSummaryRows(r: ImportReport): Array<{ kind: string; label: string; cells: Array<[string, number]> }> {
@@ -562,28 +686,74 @@ export const emptyImportForm = (): ImportForm => ({
 /** Предел тела импорта (контракт §6): 1 МБ сериализованного JSON. */
 export const IMPORT_MAX_BYTES = 1024 * 1024;
 
+/**
+ * Чтение одного CSV импорта в браузере (аудит ui-4, ui-5): файл больше
+ * 1 МБ или не прочитанный — отказ (форма сбрасывает поле, а не держит
+ * прошлый файл); байты — строго UTF-8 (`fatal`), иначе Windows-1251 из
+ * Excel молча превратился бы в «�». BOM снимается.
+ */
+export type ImportFileRead = { ok: true; text: string; lines: number } | { ok: false; error: string };
+
+const fileLabel = (name: string) => (name.length > 80 ? `${name.slice(0, 80)}…` : name);
+
+export const IMPORT_FILE_TEXT = {
+  tooLarge: (name: string) => `Файл «${fileLabel(name)}» больше 1 МБ — разделите исследование на части.`,
+  encoding: (name: string) =>
+    `Файл «${fileLabel(name)}» не в кодировке UTF-8 (так бывает, если Excel сохранил «CSV (разделители — запятые)» в Windows-1251). ` +
+    'Сохраните его как «CSV UTF-8 (разделители — запятые)» и выберите снова.',
+  unreadable: (name: string) => `Файл «${fileLabel(name)}» не прочитан — выберите его ещё раз.`,
+};
+
+/** Байты файла → текст UTF-8 или отказ словами. */
+export function decodeImportFile(name: string, bytes: ArrayBuffer | Uint8Array): ImportFileRead {
+  if (bytes.byteLength > IMPORT_MAX_BYTES) return { ok: false, error: IMPORT_FILE_TEXT.tooLarge(name) };
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return { ok: false, error: IMPORT_FILE_TEXT.encoding(name) };
+  }
+  return { ok: true, text, lines: text.split(/\r?\n/).filter(Boolean).length };
+}
+
+/** Выбранный файл (`File`): размер — до чтения, затем `decodeImportFile`. */
+export async function readImportFile(file: { name: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> }): Promise<ImportFileRead> {
+  if (file.size > IMPORT_MAX_BYTES) return { ok: false, error: IMPORT_FILE_TEXT.tooLarge(file.name) };
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch {
+    return { ok: false, error: IMPORT_FILE_TEXT.unreadable(file.name) };
+  }
+  return decodeImportFile(file.name, bytes);
+}
+
 export type ImportIssue = 'communities' | 'title' | 'locale' | 'market' | 'segment' | 'size';
 export const IMPORT_ISSUE_TEXT: Record<ImportIssue, string> = {
   communities: 'Нужен CSV сообществ (файл …-communities.csv).',
-  title: 'Название проекта: 1–200 символов.',
+  title: 'Название проекта: 1–120 символов (как у проекта).',
   locale: 'Язык — код BCP-47 вида en или en-US.',
-  market: 'Рынок: 1–200 символов.',
+  market: 'Рынок: 1–64 символа (как у проекта).',
   segment: 'Метка сегмента: 1–40 знаков — латиница, цифры, «_» и «-» (как у сервера).',
   size: 'Три файла вместе больше 1 МБ — разделите исследование на части.',
 };
 
 const len = (s: string) => [...s].length;
+/** Поля проекта в импорте — как у создания проекта (sites-backend projects.service). */
+export const IMPORT_TITLE_MAX = 120;
+export const IMPORT_MARKET_MAX = 64;
 export const SEGMENT_RE = /^[A-Za-z0-9_-]{1,40}$/;
 
 export function importBody(f: ImportForm): { body: Record<string, string> | null; issues: ImportIssue[] } {
   const issues: ImportIssue[] = [];
   if (!f.communitiesCsv.trim()) issues.push('communities');
   const title = f.projectTitle.trim();
-  if (!title || len(title) > 200) issues.push('title');
+  // Аудит ui-2: границы — как у создания проекта (projectBody, сервер 120/64).
+  if (!title || len(title) > IMPORT_TITLE_MAX) issues.push('title');
   const locale = f.locale.trim();
   if (!BCP47_RE.test(locale) || len(locale) > 16) issues.push('locale');
   const market = f.market.trim();
-  if (!market || len(market) > 200) issues.push('market');
+  if (!market || len(market) > IMPORT_MARKET_MAX) issues.push('market');
   const segment = f.segment.trim();
   // Контракт §6 и сервер: `^[A-Za-z0-9_-]{1,40}$` (пусто — по умолчанию 'admin').
   if (segment && !SEGMENT_RE.test(segment)) issues.push('segment');
@@ -729,6 +899,16 @@ export interface CsvResult {
  * (`?before=<курсор>`), у них отрезается строка заголовка; на пределе
  * `CSV_MAX_PARTS` (20) файл помечается неполным (экран предупреждает).
  */
+/**
+ * Текст CSV для файла у оператора: с BOM (`U+FEFF`), иначе Excel открывает
+ * UTF-8 как ANSI и кириллица — «кракозябры» (аудит ui-11; как
+ * `downloadCsv` кабинета). Сервер BOM не ставит: `fetch().text()` снимает
+ * его при декодировании, а точный текст ответа — контракт тестов.
+ */
+export function csvFileText(text: string): string {
+  return text.startsWith('﻿') ? text : `﻿${text}`;
+}
+
 export async function fetchCsv(list: CsvList, query: Query = {}, get: FileGet = apiGetFile): Promise<CsvResult> {
   const path = `/admin/reddit/${CSV_LISTS[list]}`;
   const base = { ...queryOf(query), format: 'csv' };
@@ -764,6 +944,8 @@ const ADMIN_ERRORS = {
   actor: 'Backend не передал оператора (X-Admin-Actor) — войдите в Админку заново.',
   tooLarge: 'Тело больше 1 МБ — разделите импорт на части.',
   notFound: 'Не найдено: запись удалена, принадлежит другому продукту, раздел выключен или маршрут ещё не открыт для Админки.',
+  upstreamTimeout: 'Бэкенд клиентских сайтов не ответил вовремя.',
+  retrySafe: 'Результат неизвестен — повтор безопасен: повторите то же действие, сервер не выполнит его дважды (тот же ключ операции).',
 };
 
 /**
@@ -771,7 +953,36 @@ const ADMIN_ERRORS = {
  * WARN, блокеры словами) и поверх — отказы, которые бывают только у Админки
  * (контракт §0 «Общие ошибки»).
  */
-export function describeAdminRedditError(e: unknown, statusLabels: Record<string, string> = {}): RedditErrorView {
+export function describeAdminRedditError(
+  e: unknown,
+  statusLabels: Record<string, string> = {},
+  opts: { mutation?: boolean } = {},
+): RedditErrorView {
+  const v = adminErrorView(e, statusLabels);
+  // Р-RD-AUD-7: только у действия (`useMutation` сохранил ключ операции) и
+  // только при неизвестном исходе (сеть, 502/503/504 без прикладного кода,
+  // `UPSTREAM_TIMEOUT`). У загрузчиков (GET) ключа нет — им хватает кнопки
+  // «Повторить»; 503 «раздел не подключён» — исход известен, нужна настройка.
+  const mutation = opts.mutation ?? isMutationError(e);
+  const safe =
+    mutation &&
+    v.retryable &&
+    isUncertainOutcome(e) &&
+    !(e instanceof ApiError && e.code === 'SERVICE_UNAVAILABLE') &&
+    !v.lines.includes(ADMIN_ERRORS.retrySafe);
+  return safe ? { ...v, lines: [...v.lines, ADMIN_ERRORS.retrySafe] } : v;
+}
+
+/** Ошибки действий `useMutation` (ключ операции сохранён) — см. выше. */
+const mutationErrors = new WeakSet<object>();
+export function markMutationError(e: unknown): void {
+  if (e !== null && typeof e === 'object') mutationErrors.add(e);
+}
+function isMutationError(e: unknown): boolean {
+  return e !== null && typeof e === 'object' && mutationErrors.has(e);
+}
+
+function adminErrorView(e: unknown, statusLabels: Record<string, string>): RedditErrorView {
   const v = describeStudioError(e, T, R, statusLabels);
   if (!(e instanceof ApiError)) return v;
   const d = (e.details ?? {}) as Record<string, unknown>;
@@ -788,7 +999,8 @@ export function describeAdminRedditError(e: unknown, statusLabels: Record<string
   if (e.code === 'PUB_CONFLICT' && d.reason === 'platform_site_not_configured') return only(ADMIN_ERRORS.siteNotConfigured);
   if (e.code === 'PUB_CONFLICT' && d.reason === 'platform_site_missing') return only(ADMIN_ERRORS.siteMissing);
   if (e.code === 'PUB_NOT_FOUND' && !v.lines.length) return { ...v, lines: [ADMIN_ERRORS.notFound] };
-  // Ответ backend (503 «не подключено», 502 «не ответил») — его текст точнее.
+  if (e.code === 'UPSTREAM_TIMEOUT') return only(ADMIN_ERRORS.upstreamTimeout);
+  // Ответ backend (503 «не подключено», 502 «вернул ошибку») — его текст точнее.
   if (!e.code.startsWith('PUB_') && e.code !== 'network' && e.message) return only(e.message);
   return v;
 }

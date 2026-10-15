@@ -73,6 +73,7 @@ function ctxOf(headers: Record<string, string>) {
       this.headers[k] = v;
     },
     once() {},
+    end() {},
     statusCode: 200,
   };
   const req = { headers, method: 'GET', path: '/internal/admin/reddit/status' };
@@ -99,8 +100,8 @@ describe('P-R-ADM: маршруты Админки = обработчики ка
       (cls.prototype as Record<string, object>)[name],
     ) as PubAction[];
 
-  it('rx: все 39 маршрутов REDDIT_ROUTES, путь/метод/действие — те же, что у обработчика', () => {
-    expect(RX_ROUTES).toHaveLength(39);
+  it('rx: все 40 маршрутов REDDIT_ROUTES, путь/метод/действие — те же, что у обработчика', () => {
+    expect(RX_ROUTES).toHaveLength(40);
     expect(RX_ROUTES.map((r) => r.name).sort()).toEqual(
       Object.keys(REDDIT_ROUTES).sort(),
     );
@@ -211,13 +212,16 @@ describe('P-R-ADM: маршруты Админки = обработчики ка
     expect(accessRouteOf('POST', `${P}cx/sources/s1/revoke`)).toBe(
       'cx/sources/:id/revoke',
     );
-    expect(accessRouteOf('GET', `${P}cx/claims`)).toBe('cx/?');
+    expect(accessRouteOf('GET', `${P}cx/claims`)).toBe('cx/unknown');
     expect(accessRouteOf('POST', `${P}params/niche/decide`)).toBe(
       'params/:key/decide',
     );
     expect(accessRouteOf('GET', `${P}status`)).toBe('status');
     expect(accessRouteOf('POST', `${P}import/apply`)).toBe('import/apply');
-    expect(accessRouteOf('GET', `${P}nope/x`)).toBe('?');
+    expect(accessRouteOf('GET', `${P}nope/x`)).toBe('unknown');
+    expect(accessRouteOf('GET', `${P}cx/ai/calls/aic_1`)).toBe(
+      'cx/ai/calls/:callId',
+    );
   });
 
   it('контроллер: закрытый список путей, публичный маршрут с секретом, первый гвард — AdminRedditGuard', () => {
@@ -447,8 +451,18 @@ describe('P-R-ADM: отчёт импорта без контактов', () => {
         { kind: 'project', ref: 'Платформа', outcome: 'exists' },
       ],
       blocks: [],
+      complete: true,
+      warnings: [
+        {
+          kind: 'rules',
+          ref: 'admin: r/a',
+          code: 'enum_default',
+          detail: 'call +380 67 123 45 67',
+        },
+      ],
       summary: {},
     });
+    expect(r.warnings[0].detail).toBe(IMPORT_REDACTED);
     expect(r.items.map((i) => [i.ref, i.detail])).toEqual([
       [IMPORT_REDACTED, undefined],
       [IMPORT_REDACTED, undefined],

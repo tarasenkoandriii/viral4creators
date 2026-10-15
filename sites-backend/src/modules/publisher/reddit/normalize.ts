@@ -215,7 +215,10 @@ export function phraseNorm(phrase: string): string {
 
 /** Ссылка, о которой сообщает человек (P-R M2, §M2.6 «Отметить опубликованным»). */
 export interface ReportedUrl {
-  /** Канон: пост — как тред; комментарий — `…/comments/<id36>/comment/<cid>`. */
+  /**
+   * Канон: пост — `…/comments/<id36>` БЕЗ slug (аудит m2-12: один пост —
+   * одна запись, со slug и без); комментарий — `…/comments/<id36>/comment/<cid>`.
+   */
   url: string;
   subreddit: string;
   threadKey: string;
@@ -223,21 +226,37 @@ export interface ReportedUrl {
   commentId: string | null;
 }
 
+/** Короткая ссылка `redd.it/<id>` (сеть не открывается — её не развернуть). */
+const SHORT_LINK_RE = /^(?:https:\/\/)?(?:www\.)?redd\.it(?:\/|$)/i;
+
+/** Код отказа для URL отчёта о публикации. */
+export type ReportedUrlIssue = 'format' | 'profile_ref' | 'share_link';
+
 /**
  * URL опубликованного поста или комментария → канон (A15). Пост —
- * `/r/<name>/comments/<id36>[/<slug>]`; комментарий —
+ * `/r/<name>/comments/<id36>[/<slug>]` → `…/comments/<id36>` (slug
+ * отбрасывается, аудит m2-12); комментарий —
  * `/r/<name>/comments/<id36>/<slug|_|comment>/<cid36>` (вид new reddit
- * `/comment/<cid>` и `/<slug>/comment/<cid>` тоже). Хвост, query, fragment отбрасываются; профиль
- * `r/u_*` → `profile_ref`; прочее → `format`.
+ * `/comment/<cid>` и `/<slug>/comment/<cid>` тоже). Хвост, query, fragment
+ * отбрасываются; профиль `r/u_*` → `profile_ref`; ссылка «Поделиться»
+ * (`/r/<name>/s/<code>`) и короткая `redd.it/…` → `share_link` (откройте
+ * ссылку и скопируйте полный адрес); прочее → `format`.
  */
 export function normalizeReportedUrl(
   input: unknown,
-): { ok: ReportedUrl } | { issue: 'format' | 'profile_ref' } {
+): { ok: ReportedUrl } | { issue: ReportedUrlIssue } {
   if (typeof input !== 'string' || input.length > 2048)
     return { issue: 'format' };
+  if (SHORT_LINK_RE.test(input.trim())) return { issue: 'share_link' };
   const u = parseRedditUrl(input);
   if (!u) return { issue: 'format' };
   const parts = pathParts(u);
+  if (
+    parts.length >= 3 &&
+    parts[0].toLowerCase() === 'r' &&
+    parts[2].toLowerCase() === 's'
+  )
+    return { issue: 'share_link' };
   if (
     parts.length < 4 ||
     parts[0].toLowerCase() !== 'r' ||
@@ -271,5 +290,23 @@ export function normalizeReportedUrl(
     };
   const t = normalizeThreadUrl(input);
   if (!t) return { issue: 'format' };
-  return { ok: { url: t.url, subreddit, threadKey, commentId: null } };
+  return { ok: { url: base, subreddit, threadKey, commentId: null } };
+}
+
+/**
+ * Прежние записи того же поста (аудит m2-12): до `markers@4` канон поста
+ * хранил slug (`…/comments/<id36>/<slug>`) — такие строки на проде уже
+ * есть. Пост сопоставляется по ключу: точный канон или канон + `/<slug>`
+ * (но не `…/comment/<cid>` — это комментарий).
+ */
+export function reportedPostUrlForms(postUrl: string): {
+  exact: string;
+  slugPrefix: string;
+  commentPrefix: string;
+} {
+  return {
+    exact: postUrl,
+    slugPrefix: `${postUrl}/`,
+    commentPrefix: `${postUrl}/comment/`,
+  };
 }
