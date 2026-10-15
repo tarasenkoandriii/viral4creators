@@ -1,3 +1,4 @@
+import { GREETING_VIDEO_DURATION_SECONDS } from '../../common/greeting-duration';
 /**
  * GreetingVideoService — video rendering trigger for GREETING_VIDEO (ТЗ
  * TZ-Greeting-Video-Project-Type.md §5.3).
@@ -269,11 +270,6 @@ function historyWith(session: Session | null | undefined): {
       : (session?.videoHistory ?? []),
   };
 }
-
-/** Полная нативная длительность Grok (§7 ТЗ не задаёт длину ролика явно —
- * взят потолок провайдера как самый безопасный дефолт для короткого
- * поздравления: длиннее пользователь попросить и не может, §5.3). */
-const GREETING_VIDEO_DURATION_SECONDS = 15;
 
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 

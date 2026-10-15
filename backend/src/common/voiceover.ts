@@ -157,3 +157,28 @@ export function voiceoverBriefText(
   );
   return lines.join('\n');
 }
+
+/** A greeting must never silently truncate speech or leave a frozen video tail. */
+export function greetingVoiceTimingError(
+  durationSeconds: number | null | undefined,
+  videoSeconds: number,
+  startSeconds: number,
+): string | null {
+  if (
+    durationSeconds == null ||
+    !Number.isFinite(durationSeconds) ||
+    durationSeconds <= 0 ||
+    !Number.isFinite(videoSeconds) ||
+    videoSeconds <= 0 ||
+    !Number.isFinite(startSeconds) ||
+    startSeconds < 0
+  ) {
+    return 'Не удалось проверить длительность озвучки поздравления. Сборка остановлена; голос не заменён.';
+  }
+  const available = Math.max(0, videoSeconds - startSeconds);
+  // One 24-fps frame plus AAC rounding, not a license to trim a spoken phrase.
+  if (durationSeconds > available + 0.05) {
+    return `Озвучка длится ${durationSeconds.toFixed(2)} с, а для речи доступно ${available.toFixed(2)} с. Сократите текст и запустите озвучку заново. Речь не обрезалась и не ускорялась.`;
+  }
+  return null;
+}

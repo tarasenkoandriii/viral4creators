@@ -1,3 +1,4 @@
+import { greetingVoiceTimingError } from './voiceover';
 import {
   detectLanguage,
   isKnownLanguage,
@@ -95,5 +96,26 @@ describe('voiceoverBriefText', () => {
   it('omits the brand line without notes and returns empty without a product', () => {
     expect(voiceoverBriefText(product(), null)).not.toContain('Brand voice');
     expect(voiceoverBriefText(undefined, 'x')).toBe('');
+  });
+});
+
+describe('greeting voice duration gate', () => {
+  it('rejects the real 21.9-second narration for a 15-second greeting', () => {
+    expect(greetingVoiceTimingError(21.9, 15, 0)).toContain('21.90');
+  });
+  it('includes the speech start offset in the available window', () => {
+    expect(greetingVoiceTimingError(14, 15, 2)).toContain('13.00');
+  });
+  it('does not guess when provider duration is unavailable', () => {
+    expect(greetingVoiceTimingError(null, 15, 0)).toContain('Не удалось');
+  });
+  it('accepts fitting narration and encoder rounding', () => {
+    expect(greetingVoiceTimingError(15.04, 15, 0)).toBeNull();
+    expect(greetingVoiceTimingError(12, 15, 1)).toBeNull();
+  });
+  it('rejects invalid or empty duration data', () => {
+    expect(greetingVoiceTimingError(0, 15, 0)).not.toBeNull();
+    expect(greetingVoiceTimingError(5, 0, 0)).not.toBeNull();
+    expect(greetingVoiceTimingError(NaN, 15, 0)).not.toBeNull();
   });
 });

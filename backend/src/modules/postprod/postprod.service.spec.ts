@@ -56,6 +56,7 @@ function build(
     synthesize: jest.fn().mockResolvedValue({
       ok: true,
       audio: Buffer.from([1, 2, 3]),
+      durationSeconds: 1,
       mimeType: 'audio/mpeg',
       characters: 28,
       voiceId: 'voice-1',
@@ -2537,5 +2538,66 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
       await ok.svc.reVoice('s1', DONE_VIDEO);
       expect(ok.sessions.releaseWork).toHaveBeenCalledWith('s1', 'revoice');
     });
+  });
+});
+
+describe('greeting speech duration protection', () => {
+  const greeting = session({
+    greetingBriefSnapshot: {
+      senderVoice: { provider: 'resemble', voiceId: 'family' },
+    },
+    brandManifestSnapshot: { voiceMode: 'dub', ttsVoiceId: 'family' },
+  });
+  it('keeps the original video and avoids the ffmpeg bill if speech is too long', async () => {
+    const { svc, tts, api, aiUsage } = build({ session: greeting });
+    tts.synthesize.mockResolvedValue({
+      ok: true,
+      audio: Buffer.from('mp3'),
+      mimeType: 'audio/mpeg',
+      characters: 100,
+      voiceId: 'family',
+      model: 'tts',
+      durationSeconds: 21.9,
+    });
+    const result = await svc.start('s1', { ...VIDEO, provider: 'grok' });
+    expect(result.postStatus).toBe('failed');
+    expect(result.voiceError).toContain('21.90');
+    expect(result.downloadUrl).toBe(VIDEO.downloadUrl);
+    expect(api.submit).not.toHaveBeenCalled();
+    expect(aiUsage.record).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'voiceover' }),
+    );
+  });
+  it('blocks an unmeasurable greeting voice instead of silently using it', async () => {
+    const { svc, tts, api } = build({ session: greeting });
+    tts.synthesize.mockResolvedValue({
+      ok: true,
+      audio: Buffer.from('mp3'),
+      mimeType: 'audio/mpeg',
+      characters: 10,
+      voiceId: 'family',
+      model: 'tts',
+      durationSeconds: null,
+    });
+    expect(
+      (await svc.start('s1', { ...VIDEO, provider: 'grok' })).voiceError,
+    ).toContain('Не удалось');
+    expect(api.submit).not.toHaveBeenCalled();
+  });
+  it('allows a 14-second voice using the 15-second greeting window, not the 8-second UGC fallback', async () => {
+    const { svc, tts, api } = build({ session: greeting });
+    tts.synthesize.mockResolvedValue({
+      ok: true,
+      audio: Buffer.from('mp3'),
+      mimeType: 'audio/mpeg',
+      characters: 50,
+      voiceId: 'family',
+      model: 'tts',
+      durationSeconds: 14,
+    });
+    expect(
+      (await svc.start('s1', { ...VIDEO, provider: 'grok' })).voiceStatus,
+    ).toBe('synthesized');
+    expect(api.submit).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,3 +1,5 @@
+import { GREETING_VIDEO_DURATION_SECONDS } from '../../common/greeting-duration';
+import { greetingVoiceTimingError } from '../../common/voiceover';
 /**
  * PostProductionService — доведение готового ролика (ТЗ §15.4/§16.1,
  * этапы 34–35).
@@ -128,6 +130,7 @@ interface BackgroundOutcome {
 }
 
 interface Work {
+  isGreeting: boolean;
   /** Нужна ли обрезка кадра. */
   crop: string | null;
   /** Режим озвучки, как он записан в снимке бренда. */
@@ -433,6 +436,13 @@ export class PostProductionService {
       patch = { ...patch, ...voice.patch };
       voiceUrl = voice.url;
       alignment = voice.alignment;
+      if (voice.blockedByTiming) {
+        return this.save(sessionId, video, {
+          ...patch,
+          postStatus: 'failed',
+          postError: voice.patch.voiceError,
+        });
+      }
     }
 
     // Субтитры собираем ДО задачи, тем же принципом, что и голос: ffmpeg
@@ -1310,6 +1320,7 @@ export class PostProductionService {
       usesOwnVoice(voiceMode) || wantsSubtitles ? speakableText(script) : '';
 
     return {
+      isGreeting: !!session?.greetingBriefSnapshot,
       crop,
       voiceMode,
       sourceHasNoAudio: video.silentSource === true,
@@ -1348,7 +1359,10 @@ export class PostProductionService {
       speech,
       speechStartSeconds: speech ? firstCueSeconds(script) : 0,
       totalDurationSeconds:
-        video.chainTargetDurationSeconds ?? VIDEO_DURATION_SECONDS,
+        video.chainTargetDurationSeconds ??
+        (session?.greetingBriefSnapshot && video.provider === 'grok'
+          ? GREETING_VIDEO_DURATION_SECONDS
+          : VIDEO_DURATION_SECONDS),
       // Фича №34: голос отправителя, выбранный для ЭТОЙ сессии
       // (`GreetingVoiceService`), перебивает голос из манифеста.
       //
@@ -1421,6 +1435,7 @@ export class PostProductionService {
     patch: Partial<GeneratedVideo>;
     url: string | null;
     alignment?: SubtitleAlignment;
+    blockedByTiming?: boolean;
   }> {
     if (!work.speech) {
       return {
@@ -1481,6 +1496,20 @@ export class PostProductionService {
       sessionId,
       characters: outcome.characters,
     });
+
+    if (work.isGreeting) {
+      const problem = greetingVoiceTimingError(
+        outcome.durationSeconds,
+        work.totalDurationSeconds,
+        work.speechStartSeconds,
+      );
+      if (problem)
+        return {
+          patch: { voiceStatus: 'failed', voiceError: problem },
+          url: null,
+          blockedByTiming: true,
+        };
+    }
 
     try {
       const pathname = `sessions/${sessionId}/voiceover.mp3`;
