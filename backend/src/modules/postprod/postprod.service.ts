@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { GREETING_VIDEO_DURATION_SECONDS } from '../../common/greeting-duration';
 import { greetingVoiceTimingError } from '../../common/voiceover';
 /**
@@ -130,6 +131,7 @@ interface BackgroundOutcome {
 }
 
 interface Work {
+  preparedGreetingVoice?: GeneratedVideo['preparedGreetingVoice'];
   isGreeting: boolean;
   /** Нужна ли обрезка кадра. */
   crop: string | null;
@@ -322,6 +324,70 @@ export class PostProductionService {
     @Optional() private readonly prisma?: PrismaService,
   ) {}
 
+  /** Called under Greeting's generate lock, before Grok incurs a render charge. */
+  async prepareGreetingVoice(
+    sessionId: string,
+    video: GeneratedVideo,
+  ): Promise<Partial<GeneratedVideo>> {
+    if (!this.api.configured())
+      throw new BadRequestException(
+        'Сервис наложения озвучки не настроен. Рендер поздравления не запускался.',
+      );
+    const session = await this.sessions.getSession(sessionId);
+    const work = this.planWork(session, video);
+    if (!work.isGreeting || !usesOwnVoice(work.voiceMode) || !work.speech) {
+      throw new BadRequestException(
+        'Не удалось подготовить текст озвучки поздравления. Рендер не запускался.',
+      );
+    }
+    await this.plans.assertCanSpendSession(sessionId);
+    const voice = await this.synthesize(
+      sessionId,
+      work,
+      work.subtitlesMode === 'on',
+      `sessions/${sessionId}/voiceover-${video.generatedVideoId}.mp3`,
+    );
+    if (
+      !voice.url ||
+      !voice.durationSeconds ||
+      !voice.patch.voiceoverPathname
+    ) {
+      throw new BadRequestException(
+        voice.blockedByTiming
+          ? voice.patch.voiceError
+          : 'Не удалось подготовить озвучку. Рендер не запускался. Попробуйте позже.',
+      );
+    }
+    return {
+      ...voice.patch,
+      preparedGreetingVoice: {
+        fingerprint: this.voiceFingerprint(work),
+        url: voice.url,
+        pathname: voice.patch.voiceoverPathname,
+        durationSeconds: voice.durationSeconds,
+        characters: voice.patch.voiceCharacters ?? 0,
+        ...(voice.alignment ? { alignment: voice.alignment } : {}),
+      },
+    };
+  }
+
+  private voiceFingerprint(work: Work): string {
+    return createHash('sha256')
+      .update(
+        JSON.stringify({
+          speech: work.speech,
+          voiceId: work.voiceId,
+          provider: work.ttsProvider,
+          model: work.ttsModel,
+          language: work.language,
+          start: work.speechStartSeconds,
+          duration: work.totalDurationSeconds,
+          mode: work.voiceMode,
+        }),
+      )
+      .digest('hex');
+  }
+
   /**
    * Запустить постобработку только что готового ролика. Возвращает
    * обновлённое состояние — вызывающему не нужно ничего перечитывать.
@@ -432,7 +498,13 @@ export class PostProductionService {
       // Тайминг alignment нужен, только если субтитры реально заказаны —
       // лишний JSON-ответ ElevenLabs вместо сырых байт был бы накладным
       // расходом там, где субтитры выключены.
-      const voice = await this.synthesize(sessionId, work, wantsSubtitles);
+      const voice = await this.synthesize(
+        sessionId,
+        work,
+        wantsSubtitles,
+        undefined,
+        true,
+      );
       patch = { ...patch, ...voice.patch };
       voiceUrl = voice.url;
       alignment = voice.alignment;
@@ -1321,6 +1393,7 @@ export class PostProductionService {
 
     return {
       isGreeting: !!session?.greetingBriefSnapshot,
+      preparedGreetingVoice: video.preparedGreetingVoice,
       crop,
       voiceMode,
       sourceHasNoAudio: video.silentSource === true,
@@ -1431,12 +1504,40 @@ export class PostProductionService {
     sessionId: string,
     work: Work,
     withTimestamps: boolean,
+    pathnameOverride?: string,
+    usePrepared = false,
   ): Promise<{
     patch: Partial<GeneratedVideo>;
     url: string | null;
     alignment?: SubtitleAlignment;
     blockedByTiming?: boolean;
+    durationSeconds?: number;
   }> {
+    const prepared = work.preparedGreetingVoice;
+    if (
+      usePrepared &&
+      work.isGreeting &&
+      prepared &&
+      prepared.fingerprint === this.voiceFingerprint(work) &&
+      !greetingVoiceTimingError(
+        prepared.durationSeconds,
+        work.totalDurationSeconds,
+        work.speechStartSeconds,
+      )
+    ) {
+      return {
+        url: prepared.url,
+        durationSeconds: prepared.durationSeconds,
+        alignment: prepared.alignment,
+        patch: {
+          voiceStatus: 'synthesized',
+          voiceError: undefined,
+          voiceoverUrl: prepared.url,
+          voiceoverPathname: prepared.pathname,
+          voiceCharacters: prepared.characters,
+        },
+      };
+    }
     if (!work.speech) {
       return {
         patch: {
@@ -1512,7 +1613,8 @@ export class PostProductionService {
     }
 
     try {
-      const pathname = `sessions/${sessionId}/voiceover.mp3`;
+      const pathname =
+        pathnameOverride ?? `sessions/${sessionId}/voiceover.mp3`;
       const { url } = await this.blob.uploadBuffer(
         pathname,
         outcome.audio,
@@ -1528,6 +1630,7 @@ export class PostProductionService {
         },
         url,
         alignment: outcome.alignment,
+        durationSeconds: outcome.durationSeconds ?? undefined,
       };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

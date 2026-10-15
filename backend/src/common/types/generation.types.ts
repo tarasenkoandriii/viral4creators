@@ -1,3 +1,4 @@
+import type { SubtitleAlignment } from '../subtitles';
 /**
  * Generation Types
  *
@@ -222,6 +223,15 @@ export interface GeneratedVideo {
   voiceoverUrl?: string;
   /** Символы, ушедшие в счёт провайдера синтеза (§26). */
   voiceCharacters?: number;
+  /** Narration prepared before the paid Grok render; frozen for this attempt. */
+  preparedGreetingVoice?: {
+    fingerprint: string;
+    url: string;
+    pathname: string;
+    durationSeconds: number;
+    characters: number;
+    alignment?: SubtitleAlignment;
+  };
 
   /**
    * Фоновые звуки исходника при дубляже

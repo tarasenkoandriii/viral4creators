@@ -2601,3 +2601,83 @@ describe('greeting speech duration protection', () => {
     expect(api.submit).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('greeting narration before video render', () => {
+  const greeting = session({
+    greetingBriefSnapshot: {},
+    brandManifestSnapshot: { voiceMode: 'dub', ttsVoiceId: 'fixed-voice' },
+  });
+  const draft = { ...VIDEO, provider: 'grok' as const, silentSource: true };
+  it('synthesizes once and reuses that exact audio during post-production', async () => {
+    const { svc, tts, api, aiUsage } = build({ session: greeting });
+    const prepared = await svc.prepareGreetingVoice('s1', draft);
+    expect(prepared.preparedGreetingVoice?.pathname).toContain(
+      'voiceover-v1.mp3',
+    );
+    await svc.start('s1', { ...draft, ...prepared });
+    expect(tts.synthesize).toHaveBeenCalledTimes(1);
+    expect(
+      aiUsage.record.mock.calls.filter(([x]) => x.operation === 'voiceover'),
+    ).toHaveLength(1);
+    expect(api.submit.mock.calls[0][0].inputs.voice).toBe(
+      prepared.preparedGreetingVoice?.url,
+    );
+  });
+  it('does not upload narration that fails duration preflight', async () => {
+    const { svc, tts, blob } = build({ session: greeting });
+    tts.synthesize.mockResolvedValue({
+      ok: true,
+      audio: Buffer.from('mp3'),
+      mimeType: 'audio/mpeg',
+      characters: 50,
+      durationSeconds: 21.9,
+    });
+    await expect(svc.prepareGreetingVoice('s1', draft)).rejects.toThrow(
+      '21.90',
+    );
+    expect(blob.uploadBuffer).not.toHaveBeenCalled();
+  });
+  it('does not reuse audio after the approved speech changes', async () => {
+    const { svc, tts, sessions } = build({ session: greeting });
+    const prepared = await svc.prepareGreetingVoice('s1', draft);
+    sessions.getSession.mockResolvedValue({
+      ...greeting,
+      generationPrompt: { finalVoiceoverScript: 'Другой текст.' },
+    });
+    await svc.start('s1', { ...draft, ...prepared });
+    expect(tts.synthesize).toHaveBeenCalledTimes(2);
+    expect(tts.synthesize.mock.calls[1][0].text).toBe('Другой текст.');
+  });
+  it('does not expose provider diagnostics in a render-start error', async () => {
+    const { svc, tts } = build({ session: greeting });
+    tts.synthesize.mockResolvedValue({
+      ok: false,
+      reason: 'provider secret-value',
+      skipped: false,
+    });
+    await expect(svc.prepareGreetingVoice('s1', draft)).rejects.toThrow(
+      'Не удалось подготовить озвучку',
+    );
+  });
+  it('requires the mixing service before paying for narration', async () => {
+    const { svc, tts } = build({ session: greeting, configured: false });
+    await expect(svc.prepareGreetingVoice('s1', draft)).rejects.toThrow(
+      'не настроен',
+    );
+    expect(tts.synthesize).not.toHaveBeenCalled();
+  });
+});
+
+it('an explicit greeting revoice does not reuse prepared narration', async () => {
+  const greeting = session({
+    greetingBriefSnapshot: {},
+    brandManifestSnapshot: { voiceMode: 'dub', ttsVoiceId: 'fixed-voice' },
+  });
+  const draft = { ...VIDEO, provider: 'grok' as const, silentSource: true };
+  const { svc, tts, sessions } = build({ session: greeting });
+  const prepared = await svc.prepareGreetingVoice('s1', draft);
+  const done = { ...draft, ...prepared, renderedUrl: VIDEO.downloadUrl };
+  sessions.getSession.mockResolvedValue({ ...greeting, generatedVideo: done });
+  await svc.reVoice('s1', done);
+  expect(tts.synthesize).toHaveBeenCalledTimes(2);
+});

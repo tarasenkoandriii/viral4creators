@@ -40,6 +40,7 @@ function build(sessionOver: Record<string, unknown> = {}) {
     .mockImplementation((pathname: string) =>
       Promise.resolve({ url: `https://blob.test/${pathname}` }),
     );
+  const prepareGreetingVoice = jest.fn().mockResolvedValue({});
   const postprodStart = jest
     .fn()
     .mockImplementation((_id: string, v: unknown) => Promise.resolve(v));
@@ -125,7 +126,7 @@ function build(sessionOver: Record<string, unknown> = {}) {
     sessions as any,
     plans as any,
     aiUsage as any,
-    { start: postprodStart } as any,
+    { start: postprodStart, prepareGreetingVoice } as any,
     {
       isConfigured: () => true,
       modelName: 'grok-imagine-video-1.5',
@@ -165,6 +166,7 @@ function build(sessionOver: Record<string, unknown> = {}) {
     getStatus,
     uploadBuffer,
     postprodStart,
+    prepareGreetingVoice,
   };
 }
 
@@ -1443,5 +1445,41 @@ describe('avatarVoiceChoice — голос и провайдер озвучки 
       voiceId: null,
       provider: null,
     });
+  });
+});
+
+describe('Grok greeting narration preflight', () => {
+  it('prepares narration before Grok and carries it with the render attempt', async () => {
+    const { svc, prepareGreetingVoice, startGeneration } = build();
+    const order: string[] = [];
+    prepareGreetingVoice.mockImplementation(async () => {
+      order.push('voice');
+      return { voiceoverUrl: 'https://blob.test/prepared.mp3' };
+    });
+    startGeneration.mockImplementation(async () => {
+      order.push('render');
+      return { requestId: 'one' };
+    });
+    const video = await svc.startVideo('s1');
+    expect(order).toEqual(['voice', 'render']);
+    expect(video.voiceoverUrl).toBe('https://blob.test/prepared.mp3');
+  });
+  it('does not request a paid render if narration preflight fails', async () => {
+    const { svc, prepareGreetingVoice, startGeneration, sessions, credits } =
+      build();
+    prepareGreetingVoice.mockRejectedValue(new Error('speech too long'));
+    await expect(svc.startVideo('s1')).rejects.toThrow('speech too long');
+    expect(startGeneration).not.toHaveBeenCalled();
+    expect(sessions.releaseWork).toHaveBeenCalledWith('s1', 'generate');
+    expect(credits.refundIfReserved).toHaveBeenCalled();
+  });
+  it('rechecks the spending limit after narration and before Grok', async () => {
+    const { svc, plans, startGeneration, prepareGreetingVoice } = build();
+    plans.assertCanSpendSession
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('budget after TTS'));
+    await expect(svc.startVideo('s1')).rejects.toThrow('budget after TTS');
+    expect(prepareGreetingVoice).toHaveBeenCalledTimes(1);
+    expect(startGeneration).not.toHaveBeenCalled();
   });
 });

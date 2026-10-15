@@ -1020,6 +1020,21 @@ export class GreetingVideoService {
     );
 
     try {
+      const preparedVoice = silent
+        ? await this.postprod.prepareGreetingVoice(sessionId, {
+            generatedVideoId,
+            pathname,
+            fileName: 'generated.mp4',
+            mimeType: 'video/mp4',
+            status: GenerationStatus.PENDING,
+            provider: 'grok',
+            resolution,
+            aspectRatio,
+            silentSource: true,
+            initiatedAt: new Date(),
+          })
+        : {};
+      if (silent) await this.plans.assertCanSpendSession(sessionId);
       const { requestId } = await this.grokVideo.startGeneration({
         prompt,
         ...(referenceImageUrls.length ? { referenceImageUrls } : {}),
@@ -1031,6 +1046,7 @@ export class GreetingVideoService {
       });
 
       const video: GeneratedVideo = {
+        ...preparedVoice,
         generatedVideoId,
         pathname,
         fileName: 'generated.mp4',
