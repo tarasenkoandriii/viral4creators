@@ -1,5 +1,6 @@
 import { downloadStandOpenApi } from '../lib/qa-stand-openapi';
 import { useState } from 'react';
+import { standFormValues } from '../lib/qa-stands-api';
 import { Button, Card, inputClass } from '../kit/ui';
 import type {
   Stand,
@@ -77,10 +78,11 @@ export function GeneratedStandPreview({
         role,
         scenario,
         entityId: entity!.id,
-        values: entity!.fields.map(
-          (f, i) =>
-            values[i] ??
-            (workflow?.stateField === f.name ? workflow.initial : '')
+        values: standFormValues(
+          entity!.fields,
+          values,
+          workflow,
+          editing?.values
         ),
         query,
         id,
@@ -175,8 +177,12 @@ export function GeneratedStandPreview({
                   className={inputClass}
                   disabled={workflow?.stateField === f.name}
                   value={
-                    values[i] ??
-                    (workflow?.stateField === f.name ? workflow.initial : '')
+                    standFormValues(
+                      entity.fields,
+                      values,
+                      workflow,
+                      editing?.values
+                    )[i]
                   }
                   onChange={(e) =>
                     setValues((v) =>

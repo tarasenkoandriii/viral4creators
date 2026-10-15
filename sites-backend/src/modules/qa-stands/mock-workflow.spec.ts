@@ -182,6 +182,7 @@ describe('declarative mock workflows', () => {
   it('preserves old contracts and validates the reusable Reddit preset', () => {
     const c = contract();
     expect(c.workflows).toHaveLength(2);
+    c.entities[0].fields[2].options.reverse();
     expect(checkStand(c).checks.every((x) => x.passed)).toBe(true);
   });
 });

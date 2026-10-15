@@ -1,4 +1,17 @@
 import type { ApiClient } from '../kit';
+/** Disabled workflow fields are derived from the contract/original record, never a cleared form slot. */
+export function standFormValues(
+  fields: Array<{ name: string }>,
+  values: string[],
+  workflow?: { stateField: string; initial: string },
+  original?: string[]
+) {
+  return fields.map((f, i) =>
+    workflow?.stateField === f.name
+      ? (original?.[i] ?? workflow.initial)
+      : (values[i] ?? '')
+  );
+}
 export interface StandContract {
   title: string;
   description: string;

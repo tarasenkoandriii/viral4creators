@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
-import { createQaStandsApi } from '../src/lib/qa-stands-api';
+import { createQaStandsApi, standFormValues } from '../src/lib/qa-stands-api';
 import type { ApiClient } from '../src/kit';
 const calls: unknown[][] = [];
+const fields = [{ name: 'Название' }, { name: 'Статус' }];
+const workflow = { stateField: 'Статус', initial: 'draft' };
+assert.deepEqual(standFormValues(fields, ['QA', ''], workflow), [
+  'QA',
+  'draft',
+]);
+assert.deepEqual(
+  standFormValues(fields, ['Changed', 'forged'], workflow, ['Old', 'approved']),
+  ['Changed', 'approved']
+);
+assert.deepEqual(standFormValues(fields, ['QA', 'open']), ['QA', 'open']);
 const api = createQaStandsApi({
   request: async (...args: unknown[]) => {
     calls.push(args);

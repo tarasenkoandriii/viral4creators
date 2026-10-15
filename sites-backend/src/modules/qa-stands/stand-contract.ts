@@ -312,6 +312,10 @@ export function checkStand(c: StandContract) {
                   ? f.options[0]
                   : 'test',
           );
+          const workflow = c.workflows?.find((w) => w.entityId === e.id);
+          if (workflow)
+            values[e.fields.findIndex((f) => f.name === workflow.stateField)] =
+              workflow.initial;
           const created = mockTransition(c, [], {
             method: 'POST',
             role: 'editor',
