@@ -525,9 +525,10 @@ ciDescribe(
       }
       expect(mine).toEqual(expect.arrayContaining(want));
       expect(JSON.stringify(rows)).not.toContain(own.projectId);
-      // Неверный секрет — без актора, в журнал не попадает.
-      expect(rows.every((r) => r.actor === ACTOR)).toBe(true);
-      const fresh = rows[0];
+      // Неверный секрет — в журнал не попадает (401 нет ни у кого: соседние
+      // наборы идут параллельно на той же базе и пишут свои строки).
+      expect(rows.filter((r) => r.status === 401)).toEqual([]);
+      const fresh = rows.find((r) => r.actor === ACTOR)!;
       await expect(
         s.prisma.pubRedditAdminAccessLog.update({
           where: { id: fresh.id },
