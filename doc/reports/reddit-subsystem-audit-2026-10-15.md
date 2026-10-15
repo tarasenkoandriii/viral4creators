@@ -55,3 +55,12 @@ Vercel: у `assist-api` и `viral-backend` включён Fluid Compute, рег�
 Подтверждение доставки `f4920d9`: CI https://github.com/tarasenkoandriii/viral4creators/actions/runs/38756765752 — success; sites-backend 512 наборов / 5339 тестов passed (1 набор / 3 теста skipped), включая DB `reddit-m2-retention.spec.ts`; Publisher E2E также зелёный. Production assist-api `45XkebkRby9W6zypgpVtAhJ2xDfm` — Ready, Resources: LHR1 / Node.js 24.x / ≤300 s.
 
 Новая операционная находка: Vercel viral-backend требует именованные checks admin и landing. Динамическая матрица CI не создавала эти имена при неизменённых приложениях, оставляя deployment в Running Checks при зелёном CI. Исправление — фиксированная матрица имён admin/landing/marketplace; дорогостоящие шаги выполняются только для изменённых приложений по прежней базе последнего успешного CI, для остальных — явный summary. Required checks не отключены. Регрессия `ci-next-app-checks.test.mjs` и самотест 149 случаев проходят.
+
+### Финальная доставка
+
+- `7600cdf`: полный CI https://github.com/tarasenkoandriii/viral4creators/actions/runs/38758530397 — **success**, включая admin, landing, marketplace, sites-backend, Publisher E2E, widget и Lighthouse.
+- `viral-backend`: коммит `7600cdf` доставлен штатным redeploy. Ignore Build Step выключен только для этого запуска, required checks включены. Production `FeMjTZ8pMNUFdLrg6YuuR66w4oEQ` — Ready, рабочий домен назначен; Resources: **LHR1 / Node.js 24.x / ≤300 s**.
+- `assist-api`: production `f4920d9` содержит изменение ретенции, Ready; следующий коммит меняет CI и отчёт, повторная сборка корректно пропущена.
+- Оба health endpoint отвечают `status:ok`, `database:up`; основной backend проверен после redeploy.
+- Первый ежедневный production-прогон новой очереди ретенции ещё не подтверждён; пункт остаётся в TODO. DB-приёмка не подменяет факт будущего cron-запуска.
+- Пользователь подтвердил готовность `ai-publisher.org`. DNS при проверке отвечает `5.39.10.93`, HTTPS-соединение пока не устанавливается. Привязка домена к лендингу и сертификат — отдельный этап.
