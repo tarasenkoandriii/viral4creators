@@ -455,6 +455,7 @@ export const pubUk: PublisherDict = {
     network: 'Немає зв’язку із сервером. Повтор безпечний: дія не задвоїться.',
     fields: 'Поля: {list}',
     fieldCodes: {
+      offer_missing: 'немає активного оферу: створіть і активуйте його в налаштуваннях продукту',
       required: "обов'язково",
       length: 'довжина',
       format: 'формат',

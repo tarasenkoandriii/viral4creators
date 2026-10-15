@@ -462,6 +462,7 @@ export const pubEn: PublisherDict = {
       'No connection to the server. Retrying is safe: the action will not run twice.',
     fields: 'Fields: {list}',
     fieldCodes: {
+      offer_missing: 'no active offer: create and activate one in product settings',
       required: 'required',
       length: 'length',
       format: 'format',

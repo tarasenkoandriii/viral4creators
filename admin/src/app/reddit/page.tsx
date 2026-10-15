@@ -21,7 +21,7 @@ import {
   type AdminRedditStatus,
   type RedditRoute,
 } from '../../lib/reddit';
-import { RedditCtx, useLoad, type RedditCtxValue } from '../../components/reddit/ui';
+import { ErrorAlert, Loading, RedditCtx, useLoad, type RedditCtxValue } from '../../components/reddit/ui';
 import { SetupTab } from '../../components/reddit/SetupTab';
 import { ImportTab } from '../../components/reddit/ImportTab';
 import { ProjectBar, ProjectsTab } from '../../components/reddit/ProjectsTab';
@@ -115,7 +115,13 @@ export default function RedditPage() {
           />
         ) : (
           <>
-            {WITH_PROJECT.has(route.tab) && !route.id && <ProjectBar projects={projects.data ?? []} />}
+            {WITH_PROJECT.has(route.tab) && !route.id && (
+              <>
+                {projects.loading && !projects.data && <Loading />}
+                <ErrorAlert error={projects.error} onReload={projects.reload} />
+                <ProjectBar projects={projects.data ?? []} />
+              </>
+            )}
             {route.tab === 'import' && <ImportTab onApplied={projects.reload} />}
             {route.tab === 'projects' && <ProjectsTab onChanged={projects.reload} />}
             {route.tab === 'communities' && <CommunitiesTab key={`c:${route.project}`} />}

@@ -625,7 +625,7 @@ describe('AdminRedditClient — ошибки sites-backend', () => {
     void reply;
   });
 
-  it('генерация и импорт ждут дольше обычного (60 с), обычный маршрут — 20 с', async () => {
+  it('генерация ждёт 60 с, обычный маршрут — 20 с', async () => {
     jest.useFakeTimers();
     try {
       const { c } = client();
@@ -649,6 +649,32 @@ describe('AdminRedditClient — ошибки sites-backend', () => {
       jest.useRealTimers();
     }
   });
+
+  it.each(['importPlan', 'importApply'] as const)(
+    '%s не обрывается через 60 с и ограничен 240 с',
+    async (name) => {
+      jest.useFakeTimers();
+      try {
+        const { c } = client();
+        let aborted = false;
+        c.fetchImpl = ((_u: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => {
+              aborted = true;
+              reject(new DOMException('aborted', 'AbortError'));
+            });
+          })) as unknown as typeof fetch;
+        const pending = c.call(name, OP, { body: {} }).catch((e: unknown) => e);
+        await jest.advanceTimersByTimeAsync(60_001);
+        expect(aborted).toBe(false);
+        await jest.advanceTimersByTimeAsync(180_000);
+        expect(aborted).toBe(true);
+        expect(await pending).toMatchObject({ status: 502 });
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
 });
 
 describe('AdminRedditClient — секрет и тела не утекают', () => {

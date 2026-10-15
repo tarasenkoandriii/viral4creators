@@ -178,6 +178,11 @@ async function main() {
   const site = describeAdminRedditError(new ApiError('PUB_CONFLICT', 'x', 409, undefined, { reason: 'platform_site_not_configured' }));
   assert.match(site.title, /ASSIST_INTERNAL_SITE_IDS/);
   assert.equal(site.conflict, false);
+  const missingOffer = describeAdminRedditError(
+    new ApiError('PUB_VALIDATION', 'x', 400, undefined, { fields: [{ field: 'offerVersionId', code: 'offer_missing' }] }),
+  );
+  assert.match(missingOffer.lines.join(' '), /нет активного оффера/);
+  assert.ok(!missingOffer.lines.join(' ').includes('offer_missing'));
   // Причины кабинета — словами, без сырых кодов.
   const block = describeAdminRedditError(
     new ApiError('PUB_TRANSITION_INVALID', 'x', 409, undefined, { reason: 'policy_block', reasons: ['rules_unreviewed'] }),

@@ -136,6 +136,13 @@ export function ImportTab({ onApplied }: { onApplied: () => void }) {
         </div>
         {body && planned !== fp && <span className="muted rx-hint">«Применить» — после предпросмотра этого же набора файлов.</span>}
         <ErrorAlert error={apply.error} />
+        {apply.busy && <Alert tone="neutral">Импорт может занять несколько минут. Дождитесь отчёта перед следующим запуском.</Alert>}
+        {!!apply.error && (
+          <Alert tone="warning">
+            Отсутствие ответа не означает откат: сервер мог сохранить часть или весь реестр.
+            Повторите предпросмотр того же набора файлов — он покажет, что уже есть. Не подтверждайте правила автоматически.
+          </Alert>
+        )}
         <Notice text={notice} />
       </Section>
       {report && <ImportReportView report={report} />}

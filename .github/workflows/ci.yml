@@ -790,6 +790,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: publisher-e2e
+          include-hidden-files: true
           path: |
             .pub-e2e/*.json
             .pub-e2e/*.log
