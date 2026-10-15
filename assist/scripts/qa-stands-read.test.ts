@@ -44,3 +44,17 @@ assert.deepEqual(calls[1], [
 console.log(
   'Stand read uses GET without mutation fields; writes retain protected POST'
 );
+
+assert.deepEqual(
+  standFormValues([{ name: 'Key', generated: 'mock-key' }], ['REAL_KEY']),
+  ['']
+);
+assert.deepEqual(
+  standFormValues(
+    [{ name: 'Key', generated: 'mock-key' }],
+    ['REAL_KEY'],
+    undefined,
+    ['MOCK_KEY_existing']
+  ),
+  ['MOCK_KEY_existing']
+);

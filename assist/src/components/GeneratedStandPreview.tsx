@@ -70,7 +70,8 @@ export function GeneratedStandPreview({
     method: string,
     id?: string,
     transitionId?: string,
-    expectedVersion?: number
+    expectedVersion?: number,
+    formValues?: string[]
   ) {
     await run(async () => {
       const r = await api.command(siteId, stand.id, {
@@ -80,7 +81,7 @@ export function GeneratedStandPreview({
         entityId: entity!.id,
         values: standFormValues(
           entity!.fields,
-          values,
+          formValues ?? values,
           workflow,
           editing?.values
         ),
@@ -100,6 +101,11 @@ export function GeneratedStandPreview({
         setEditing(null);
       }
     });
+  }
+  function setFieldValue(index: number, value: string) {
+    setValues((previous) =>
+      entity!.fields.map((_, i) => (i === index ? value : (previous[i] ?? '')))
+    );
   }
   return (
     <Card className="min-w-0 break-words">
@@ -158,11 +164,17 @@ export function GeneratedStandPreview({
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            const form = new FormData(e.currentTarget);
+            const submitted = entity.fields.map((_, i) => {
+              const value = form.get(`mock-field-${i}`);
+              return typeof value === 'string' ? value : (values[i] ?? '');
+            });
             void command(
               editing ? 'PATCH' : 'POST',
               editing?.id,
               undefined,
-              editing?.version ?? (editing ? 1 : undefined)
+              editing?.version ?? (editing ? 1 : undefined),
+              submitted
             );
           }}
           className="space-y-2"
@@ -173,6 +185,7 @@ export function GeneratedStandPreview({
               {f.required ? ' *' : ''}
               {f.type === 'select' ? (
                 <select
+                  name={`mock-field-${i}`}
                   required={f.required}
                   className={inputClass}
                   disabled={workflow?.stateField === f.name}
@@ -184,13 +197,7 @@ export function GeneratedStandPreview({
                       editing?.values
                     )[i]
                   }
-                  onChange={(e) =>
-                    setValues((v) =>
-                      entity.fields.map((_, j) =>
-                        j === i ? e.target.value : (v[j] ?? '')
-                      )
-                    )
-                  }
+                  onChange={(e) => setFieldValue(i, e.target.value)}
                 >
                   <option value="">Выберите…</option>
                   {f.options.map((o) => (
@@ -199,6 +206,8 @@ export function GeneratedStandPreview({
                 </select>
               ) : (
                 <input
+                  name={`mock-field-${i}`}
+                  onInput={(e) => setFieldValue(i, e.currentTarget.value)}
                   className={inputClass}
                   type={f.type === 'datetime' ? 'datetime-local' : f.type}
                   disabled={!!f.generated}
@@ -215,13 +224,7 @@ export function GeneratedStandPreview({
                   value={
                     f.generated ? (editing?.values[i] ?? '') : (values[i] ?? '')
                   }
-                  onChange={(e) =>
-                    setValues((v) =>
-                      entity.fields.map((_, j) =>
-                        j === i ? e.target.value : (v[j] ?? '')
-                      )
-                    )
-                  }
+                  onChange={(e) => setFieldValue(i, e.target.value)}
                 />
               )}
             </label>
