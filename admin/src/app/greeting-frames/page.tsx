@@ -190,11 +190,11 @@ export default function GreetingFramesPage() {
       const r = await stepGreetingFixtureVideo(rerender, expect);
       setLastStep(r);
       setLastPollAt(new Date().toISOString());
+      await loadFixture();
       if (r.skipped) setFixtureError(r.skipped);
-      await loadFixture();
     } catch (e) {
-      setFixtureError(errText(e));
       await loadFixture();
+      setFixtureError(errText(e));
     } finally {
       setFixtureBusy(null);
     }
@@ -216,9 +216,9 @@ export default function GreetingFramesPage() {
         setLastPollAt(new Date().toISOString());
         await loadFixture();
       } catch (e) {
-        setFixtureError(errText(e));
         setAutoPoll(false);
         await loadFixture();
+        setFixtureError(errText(e));
       } finally {
         setFixtureBusy(null);
       }
