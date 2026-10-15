@@ -1,14 +1,9 @@
-const text = (maxLength: number) => ({
-  type: 'string',
-  minLength: 1,
-  maxLength,
-});
-const identifier = { ...text(40), pattern: '^[a-z][a-z0-9_-]*$' };
-const array = (items: unknown, maxItems: number, minItems = 0) => ({
+// Compact provider schema; runtime still enforces every bound and reference.
+const text = (_maxLength: number) => ({ type: 'string' });
+const identifier = text(40);
+const array = (items: unknown, _maxItems: number, _minItems = 0) => ({
   type: 'array',
   items,
-  minItems,
-  maxItems,
 });
 const object = (
   properties: Record<string, unknown>,
@@ -26,7 +21,7 @@ const condition = object(
   },
   ['field', 'equals'],
 );
-/** Provider schema and runtime validator both bound the generated data. Runtime still checks references. */
+/** Provider enforces structure; runtime enforces bounds, identifiers and references. */
 export const QA_STAND_JSON_SCHEMA = object(
   {
     title: text(100),
