@@ -101,7 +101,7 @@ export const pubRedditUk: PublisherRedditDict = {
     duplicate: 'Цю спільноту вже додано до продукту.',
     rules: 'Правила',
     noRules: 'правил немає',
-    lastChecked: 'Правила перевірено',
+    lastChecked: 'Дата, зазначена у знімку',
     staleDays: 'Свіжість перевірки: {n} дн.',
     staleHint:
       'Перевірка застаріває через {n} дн. після дати перевірки — тоді потрібна повторна перевірка (свіжість не гарантує актуальності).',
@@ -159,7 +159,7 @@ export const pubRedditUk: PublisherRedditDict = {
     createdBy: 'Вніс',
     reviewedBy: 'Підтвердив',
     reviewedAt: 'Підтверджено',
-    checkedAt: 'Перевірено',
+    checkedAt: 'Дата, зазначена у знімку',
     sourceRevokedNote: 'Першоджерело відкликано',
     selfReview: 'перевірено автором',
     review: 'Підтвердити перевірку',
@@ -273,7 +273,7 @@ export const pubRedditUk: PublisherRedditDict = {
     skip: 'Пропустити',
     archive: 'В архів',
     qualifyBlocked:
-      '«Підходить» доступно лише новій можливості з гейтом «можна».',
+      'Для відбору потрібен поточний гейт «можна». Підтвердьте актуальні правила й перерахуйте можливість; сервер повторно перевірить умови.',
     open: 'Картка',
     excerptNone: 'витягу немає',
     keywordIds: 'Запити',

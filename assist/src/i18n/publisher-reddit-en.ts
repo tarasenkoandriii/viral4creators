@@ -101,7 +101,7 @@ export const pubRedditEn: PublisherRedditDict = {
     duplicate: 'This community is already in the product.',
     rules: 'Rules',
     noRules: 'no rules',
-    lastChecked: 'Rules checked',
+    lastChecked: 'Date recorded in snapshot',
     staleDays: 'Check freshness: {n} days',
     staleHint:
       'A check goes stale {n} days after its date — then a re-check is needed (freshness does not guarantee the rules are current).',
@@ -158,7 +158,7 @@ export const pubRedditEn: PublisherRedditDict = {
     createdBy: 'Entered by',
     reviewedBy: 'Confirmed by',
     reviewedAt: 'Confirmed',
-    checkedAt: 'Checked',
+    checkedAt: 'Date recorded in snapshot',
     sourceRevokedNote: 'Primary source revoked',
     selfReview: 'checked by the author',
     review: 'Confirm the check',
@@ -272,7 +272,7 @@ export const pubRedditEn: PublisherRedditDict = {
     skip: 'Skip',
     archive: 'Archive',
     qualifyBlocked:
-      '“Qualify” is available only for a new opportunity with an “allowed” gate.',
+      'Qualification requires the current gate to allow it. Review the current rules and rescore the opportunity; the server checks the conditions again.',
     open: 'Card',
     excerptNone: 'no excerpt',
     keywordIds: 'Keywords',
