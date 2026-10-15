@@ -9793,3 +9793,5 @@ DEPLOYMENT — раздел «Заход 13 (12.10.2026)», §6.19 п.10, §6.22
 - [ ] Полная приёмка установленного расширения (install → popup → capture → download) в Chrome/Edge; iframe/Shadow DOM, custom controls, доверенные версии адаптера и автоматическая передача/заполнение остаются открытыми.
 
 - [x] Сборщик 0.1.1: E2E установленного расширения в изолированном Chromium (реальный scripting API + preview/download, отказ без доступа, неудачный повтор и очистка экспорта), отдельный CI. Test-only host grant и iframe harness не подтверждают production toolbar/activeTab; ручной Chrome/Edge цикл остаётся открытым.
+
+- [x] Native HTML MVP моста: экспорт выбранных бизнес-полей записи, локальный preview before/after, отдельный apply без submit/событий, повторная проверка target/структуры/значений и защита повторов. 7 Chromium E2E локально. React/Vue адаптеры, доверенные baseline, автодоставка drift в QA и реальная Chrome/Edge toolbar-приёмка остаются открытыми.

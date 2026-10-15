@@ -1,3 +1,4 @@
+import { StandTransferPlan } from './StandTransferPlan';
 import { downloadStandOpenApi } from '../lib/qa-stand-openapi';
 import { useState } from 'react';
 import { standFormValues } from '../lib/qa-stands-api';
@@ -35,6 +36,7 @@ export function GeneratedStandPreview({
       scope: string;
       checks: Array<{ name: string; passed: boolean }>;
     } | null>(null);
+  const [transferRecord, setTransferRecord] = useState<string | null>(null);
   const [editing, setEditing] = useState<Stand['records'][number] | null>(null);
   const screen = screens.find((s) => s.id === screenId),
     entity = entities.find((e) => e.id === screen?.entityId);
@@ -275,6 +277,26 @@ export function GeneratedStandPreview({
                 >
                   Изменить
                 </Button>
+                <Button
+                  variant="outline"
+                  disabled={busy || !write}
+                  onClick={() =>
+                    setTransferRecord(transferRecord === r.id ? null : r.id)
+                  }
+                >
+                  Подготовить перенос полей
+                </Button>
+                {transferRecord === r.id && (
+                  <StandTransferPlan
+                    key={`${r.id}:${r.version}`}
+                    standId={stand.id}
+                    recordId={r.id}
+                    recordVersion={r.version ?? 1}
+                    fields={entity.fields}
+                    values={r.values}
+                    stateField={workflow?.stateField}
+                  />
+                )}
                 {workflow?.transitions
                   .filter((t) =>
                     t.from.includes(

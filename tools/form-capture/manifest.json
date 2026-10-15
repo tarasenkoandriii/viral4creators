@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "QA Form Structure Capture",
-  "version": "0.1.1",
-  "description": "Local structure-only form snapshots for QA mock comparison. No field values or network requests.",
+  "version": "0.2.0",
+  "description": "Local structure-only form snapshots for QA mock comparison. Local preview and selected HTML field filling; no submission.",
   "permissions": ["activeTab", "scripting"],
   "action": {"default_popup": "popup.html"}
 }

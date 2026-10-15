@@ -142,3 +142,160 @@ test("failed recapture clears the previous export and reports the exact form err
     await w.close();
   }
 });
+async function planFor(w) {
+  await w.popup
+    .getByRole("button", { name: "Собрать снимок", exact: true })
+    .click();
+  await expect(
+    w.popup.getByRole("button", { name: "Скачать JSON", exact: true }),
+  ).toBeEnabled();
+  const snapshot = JSON.parse(await w.popup.locator("#preview").textContent());
+  return {
+    version: 1,
+    source: { standId: "stand", recordId: "record", recordVersion: 1 },
+    target: {
+      url: "https://capture-fixture.invalid/user/private",
+      formIndex: 0,
+      fields: snapshot.fields,
+    },
+    entries: [
+      {
+        targetId: snapshot.fields.find((f) => f.type === "email").id,
+        sourceName: "Email",
+        value: "prepared@company.com",
+      },
+    ],
+  };
+}
+async function importPlan(w, plan) {
+  await w.popup
+    .getByLabel("План переноса", { exact: true })
+    .setInputFiles({
+      name: "qa-form-transfer.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(plan)),
+    });
+  await w.popup
+    .getByRole("button", { name: "Сверить и показать изменения", exact: true })
+    .click();
+}
+test("mapped preview is read-only, fill is explicit and never dispatches or submits", async () => {
+  const w = await setup(true);
+  try {
+    await w.target.evaluate(() => {
+      window.__events = { input: 0, change: 0, submit: 0 };
+      for (const kind of Object.keys(window.__events))
+        document.forms[0].addEventListener(kind, (e) => {
+          window.__events[kind]++;
+          e.preventDefault();
+        });
+    });
+    const plan = await planFor(w);
+    await importPlan(w, plan);
+    const apply = w.popup.getByRole("button", {
+      name: "Заполнить выбранные поля без отправки",
+      exact: true,
+    });
+    await expect(apply).toBeEnabled();
+    await expect(w.target.locator("#email")).toHaveValue("PRIVATE_EMAIL");
+    await apply.click();
+    await expect(w.popup.locator("#transfer-status")).toContainText(
+      "Заполнено полей: 1",
+    );
+    await expect(w.target.locator("#email")).toHaveValue(
+      "prepared@company.com",
+    );
+    await expect(w.target.locator("#password")).toHaveValue("PRIVATE_PASSWORD");
+    expect(await w.target.evaluate(() => window.__events)).toEqual({
+      input: 0,
+      change: 0,
+      submit: 0,
+    });
+    await expect(apply).toBeDisabled();
+    await w.popup
+      .getByRole("button", {
+        name: "Сверить и показать изменения",
+        exact: true,
+      })
+      .click();
+    await expect(w.popup.locator("#transfer-status")).toContainText(
+      "Изменений: 0",
+    );
+    await expect(apply).toBeDisabled();
+  } finally {
+    await w.close();
+  }
+});
+test("editing a value after preview blocks stale fill", async () => {
+  const w = await setup(true);
+  try {
+    await importPlan(w, await planFor(w));
+    const apply = w.popup.getByRole("button", {
+      name: "Заполнить выбранные поля без отправки",
+      exact: true,
+    });
+    await expect(apply).toBeEnabled();
+    await w.target.locator("#email").fill("changed@company.com");
+    await apply.click();
+    await expect(w.popup.locator("#transfer-status")).toContainText(
+      "изменились после предпросмотра",
+    );
+    await expect(w.target.locator("#email")).toHaveValue("changed@company.com");
+  } finally {
+    await w.close();
+  }
+});
+test("form drift blocks filling and makes the current snapshot available for QA", async () => {
+  const w = await setup(true);
+  try {
+    await importPlan(w, await planFor(w));
+    const apply = w.popup.getByRole("button", {
+      name: "Заполнить выбранные поля без отправки",
+      exact: true,
+    });
+    await expect(apply).toBeEnabled();
+    await w.target
+      .locator("#email")
+      .evaluate((el) => el.removeAttribute("required"));
+    await apply.click();
+    await expect(w.popup.locator("#transfer-status")).toContainText(
+      "Структура формы изменилась",
+    );
+    await expect(w.target.locator("#email")).toHaveValue("PRIVATE_EMAIL");
+    await expect(
+      w.popup.getByRole("button", { name: "Скачать JSON", exact: true }),
+    ).toBeEnabled();
+  } finally {
+    await w.close();
+  }
+});
+test("credentials, protected targets, duplicate mapping and wrong URLs are rejected", async () => {
+  const w = await setup(true);
+  try {
+    const original = await planFor(w);
+    for (const modify of [
+      (p) => (p.entries[0].sourceName = "Client Secret"),
+      (p) => (p.entries[0].value = "MOCK_KEY_123"),
+      (p) =>
+        (p.entries[0].targetId = p.target.fields.find(
+          (f) => f.type === "password",
+        ).id),
+      (p) => (p.target.url = "https://other.invalid/user/private"),
+      (p) => p.entries.push({ ...p.entries[0] }),
+    ]) {
+      const plan = structuredClone(original);
+      modify(plan);
+      await importPlan(w, plan);
+      await expect(w.popup.locator("#transfer-status")).not.toBeEmpty();
+      await expect(
+        w.popup.getByRole("button", {
+          name: "Заполнить выбранные поля без отправки",
+          exact: true,
+        }),
+      ).toBeDisabled();
+      await expect(w.target.locator("#email")).toHaveValue("PRIVATE_EMAIL");
+    }
+  } finally {
+    await w.close();
+  }
+});
