@@ -13,7 +13,7 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -21,7 +21,7 @@ on:
       # перевода репозитория в приватный (doc/TODO.md, I-Л). Не блокирует:
       # находки старых коммитов — список ротации, а не повод красить CI.
       secrets_history:
-        description: 'gitleaks по всей истории (отчёт-артефакт, без блокировки)'
+        description: "gitleaks по всей истории (отчёт-артефакт, без блокировки)"
         type: boolean
         default: false
 
@@ -75,11 +75,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
       - name: CI baseline lookup regression
         # Protect authenticated private-repository lookup and fallback behavior.
         # Run before selecting jobs: these checks must never be filtered out.
-        run: node --test scripts/ci-last-success.test.mjs
+        run: node --test scripts/ci-last-success.test.mjs scripts/ci-next-app-checks.test.mjs
       - id: f
         run: node scripts/ci-changes.mjs >> "$GITHUB_OUTPUT"
         env:
@@ -101,7 +101,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: viral4creators
-        ports: ['5432:5432']
+        ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -116,7 +116,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
@@ -240,7 +240,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sites
-        ports: ['5432:5432']
+        ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -265,7 +265,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: sites-backend/package-lock.json
 
@@ -368,7 +368,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: assist/package-lock.json
       - run: npm ci
@@ -410,7 +410,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: widget/package-lock.json
       - run: npm ci
@@ -465,7 +465,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: assist-integrations/package-lock.json
       # П-К4: сторонний action — по SHA коммита, а не по тегу: тег `v2`
@@ -474,7 +474,7 @@ jobs:
       # обновления предлагает Dependabot (.github/dependabot.yml).
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
-          php-version: '7.4'
+          php-version: "7.4"
           tools: none
       - run: npm ci
         working-directory: assist-integrations
@@ -515,8 +515,8 @@ jobs:
       SITE_URL: https://assist.viral4creators.app
       # Приманка: собранный клиентский бандл проверяется на отсутствие
       # этого значения (scripts/built/check-built.ts). Не секрет.
-      PILOT_TELEGRAM_BOT_TOKEN: '000000:ci-sentinel-must-not-leak'
-      PILOT_TELEGRAM_CHAT_ID: '-100000000000'
+      PILOT_TELEGRAM_BOT_TOKEN: "000000:ci-sentinel-must-not-leak"
+      PILOT_TELEGRAM_CHAT_ID: "-100000000000"
       # Лабораторный стенд продукта вместо живых assist-w/assist-api (секретов в CI нет).
       ASSIST_WIDGET_ORIGIN: http://localhost:3011
       ASSIST_API_ORIGIN: http://localhost:3011
@@ -526,7 +526,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: |
             sites-landing/package-lock.json
@@ -630,7 +630,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: publisher-site/package-lock.json
       - run: npm ci
@@ -674,7 +674,7 @@ jobs:
         run: npx next build && npm run check:built -- --expect-indexable
         env:
           SITE_URL: https://ai-publisher.org
-          PUBLISHER_INDEXING: 'on'
+          PUBLISHER_INDEXING: "on"
         working-directory: publisher-site
       - name: бюджет JS первой загрузки (контент ≤ 118 КБ, /contact ≤ 130 КБ gzip, трекер ≤ 2 КБ)
         run: npm run budget:js
@@ -734,7 +734,7 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sites
-        ports: ['5432:5432']
+        ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -751,7 +751,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: |
             sites-backend/package-lock.json
@@ -807,7 +807,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -857,25 +857,34 @@ jobs:
   next-apps:
     name: ${{ matrix.app }} — типы и сборка
     needs: changes
-    if: needs.changes.outputs.next_apps != '[]'
+    if: needs.changes.outputs.next_apps != ''
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        app: ${{ fromJSON(needs.changes.outputs.next_apps) }}
+        app: [admin, landing, marketplace]
+    # Emit stable required check names even when an app is unchanged.
+    # Expensive steps still use the same trusted last-green baseline filter.
     steps:
+      - name: unchanged application
+        if: ${{ !contains(fromJSON(needs.changes.outputs.next_apps), matrix.app) }}
+        run: echo "No changes since the last successful CI; checks reused by path selection." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
       - uses: actions/setup-node@v4
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
 
       - run: npm ci
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         working-directory: ${{ matrix.app }}
       # Строго с захода 13 (Р-З13-В6): после Next 15.5 (заход 12) high/
       # critical в рантайм-зависимостях всех трёх приложений — 0.
       - name: npm audit (high)
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         run: npm audit --audit-level=high --omit=dev
         working-directory: ${{ matrix.app }}
 
@@ -883,10 +892,11 @@ jobs:
       # кабинета assist — копии в admin/src/lib/reddit-shared совпадают с
       # источниками (scripts/sync-admin-reddit-shared.mjs).
       - name: копии логики Reddit кабинета синхронны (admin)
-        if: matrix.app == 'admin'
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app) && (matrix.app == 'admin')
         run: node scripts/sync-admin-reddit-shared.mjs --check
 
       - name: типы
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         run: npx tsc --noEmit -p tsconfig.json
         working-directory: ${{ matrix.app }}
 
@@ -896,6 +906,7 @@ jobs:
       # устаревшего `next lint` (тот смотрел только src/); команда — в
       # package.json.
       - name: линт
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         run: npm run lint
         working-directory: ${{ matrix.app }}
 
@@ -909,10 +920,12 @@ jobs:
       # `test` может не быть у нового приложения. У `admin/` он есть с
       # захода 7 (07.10.2026): `src/lib/*.test.ts` через свой `tsx`.
       - name: unit-скрипты
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         run: npm run test --if-present
         working-directory: ${{ matrix.app }}
 
       - name: сборка
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         run: npx next build
         working-directory: ${{ matrix.app }}
 
@@ -921,6 +934,7 @@ jobs:
       # превышение — отказ с разбором по чанкам. `--if-present` — у
       # `admin/` бюджета нет (шаг общий для матрицы).
       - name: бюджет JS первой загрузки
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app)
         run: npm run budget:js --if-present
         working-directory: ${{ matrix.app }}
 
@@ -932,7 +946,7 @@ jobs:
       # Эти два шага — ПОСЛЕДНИЕ в джобе: сборка перезаписывает `.next`,
       # и всё, что проверяет сборку legacy, должно идти до них.
       - name: сборка platform (landing)
-        if: matrix.app == 'landing'
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app) && (matrix.app == 'landing')
         run: npx next build
         working-directory: landing
         env:
@@ -941,7 +955,7 @@ jobs:
           NEXT_PUBLIC_ASSIST_WIDGET_SITE_KEY: pk_live_abcdefghijklmnopqrstuvwx
 
       - name: бюджет JS первой загрузки, сборка platform (landing)
-        if: matrix.app == 'landing'
+        if: contains(fromJSON(needs.changes.outputs.next_apps), matrix.app) && (matrix.app == 'landing')
         run: npm run budget:js -- --platform
         working-directory: landing
 
@@ -958,7 +972,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: live-login-relay/package-lock.json
       - name: копии фильтра совпадают с backend/src/common
@@ -997,7 +1011,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: browser-worker/package-lock.json
       - name: копии общих модулей совпадают с источниками
@@ -1072,7 +1086,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.head.outputs.current == 'true'
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: backend/package-lock.json
       # Скрипту не нужны ни Prisma, ни база: чистая функция от файлов репо.
@@ -1101,7 +1115,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
 
       # doc/legal/*.md — единственный источник правды; сгенерированные
       # модули в frontend/ и landing/ обязаны ему соответствовать, а
@@ -1172,7 +1186,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version-file: ".nvmrc"
       - name: gitleaks (бинарник релиза, sha256 сверяется)
         run: |
           set -euo pipefail
