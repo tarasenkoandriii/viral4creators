@@ -53,7 +53,18 @@ declare module 'node:module' {
   export function createRequire(from: string | URL): (id: string) => unknown;
 }
 
+declare module 'node:child_process' {
+  export function execFileSync(
+    file: string,
+    args: string[],
+    options: { cwd: string; stdio: 'inherit' }
+  ): void;
+}
+declare module 'node:url' {
+  export function fileURLToPath(url: URL): string;
+}
 declare const process: {
+  execPath: string;
   exit(code?: number): never;
   exitCode?: number;
   argv: string[];

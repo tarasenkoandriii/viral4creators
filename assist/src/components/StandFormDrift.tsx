@@ -24,9 +24,8 @@ export function StandFormDrift({
     <Card>
       <h3 className="font-semibold">Сверка рабочей формы · ранний этап</h3>
       <p>
-        Загрузите два снимка структуры. Если форма изменилась, появится
-        замечание QA на обновление мока. Сайт не открывается, поля не
-        заполняются.
+        Сравните два снимка структуры. Если форма изменилась, появится замечание
+        QA на обновление мока. Сайт не открывается, поля не заполняются.
       </p>
       <p>
         В снимках допустимы только описание полей и ограничения. Не добавляйте
@@ -35,9 +34,50 @@ export function StandFormDrift({
       <details>
         <summary>Подготовить снимки формы</summary>
         <p>
-          Пока снимки вводятся вручную. Автоматический сбор из браузера ещё не
-          подключён.
+          Получите структуру в открытой вкладке через локальный сборщик
+          Chrome/Edge или подготовьте снимок вручную. Расширение устанавливается
+          вами; автоматическая передача из браузера не подключена.
         </p>
+        <a className="underline" href="/downloads/qa-form-capture.zip" download>
+          Скачать локальный сборщик и инструкцию
+        </a>
+        <p>
+          Сборщик не включает путь URL, варианты select и скрытые поля.
+          Проверьте ограничения и укажите одинаковый безопасный адрес формы в
+          обоих снимках.
+        </p>
+        {(['Ожидаемая структура', 'Текущая структура'] as const).map(
+          (label, index) => (
+            <label className="block" key={label}>
+              Импорт файла: {label}
+              <input
+                type="file"
+                accept=".json,application/json"
+                disabled={busy || !write}
+                onChange={async (e) => {
+                  const file = e.currentTarget.files?.[0];
+                  e.currentTarget.value = '';
+                  if (!file) return;
+                  setError('');
+                  setResult(null);
+                  try {
+                    if (file.size > 30000)
+                      throw new Error('Снимок должен быть не больше 30 КБ');
+                    const text = await file.text();
+                    JSON.parse(text);
+                    (index === 0 ? setBaseline : setCurrent)(text);
+                  } catch (error) {
+                    setError(
+                      error instanceof Error
+                        ? error.message
+                        : 'Не удалось прочитать снимок'
+                    );
+                  }
+                }}
+              />
+            </label>
+          )
+        )}
         <pre className="overflow-auto text-xs">
           {JSON.stringify(
             {
