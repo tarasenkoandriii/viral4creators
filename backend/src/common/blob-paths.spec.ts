@@ -347,6 +347,9 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
           pathname: 'sessions/s1/generated-1.mp4',
           postPathname: 'sessions/s1/post-1.mp4',
           voiceoverPathname: 'sessions/s1/voice-1.mp3',
+          preparedGreetingVoice: {
+            pathname: 'sessions/s1/voiceover-history.mp3',
+          },
           subtitlePathname: 'sessions/s1/subs-1.srt',
           exportVariants: [
             { pathname: 'sessions/s1/export-1-1x1.mp4' },
@@ -368,6 +371,7 @@ describe('sessionBlobPathnames (doc/STORAGE-AUDIT.md)', () => {
       'sessions/s1/post-1.mp4',
       'sessions/s1/subs-1.srt',
       'sessions/s1/voice-1.mp3',
+      'sessions/s1/voiceover-history.mp3',
     ]);
   });
 
