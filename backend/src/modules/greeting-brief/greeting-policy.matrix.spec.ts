@@ -644,7 +644,10 @@ function videoService(
       record: jest.fn().mockResolvedValue(undefined),
       countToday: jest.fn().mockResolvedValue(0),
     } as any,
-    { start: jest.fn((_id: string, v: unknown) => Promise.resolve(v)) } as any,
+    {
+      start: jest.fn((_id: string, v: unknown) => Promise.resolve(v)),
+      prepareGreetingVoice: jest.fn().mockResolvedValue({}),
+    } as any,
     {
       isConfigured: () => true,
       modelName: 'grok-imagine-video-1.5',
