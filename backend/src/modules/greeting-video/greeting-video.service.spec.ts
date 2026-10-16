@@ -1530,7 +1530,10 @@ it('Hedra requests restrained movement rather than an unrelated gesture loop', a
   const prompt = hedra.submit.mock.calls[0][0].prompt;
   expect(prompt).toContain('hands resting still');
   expect(prompt).toContain('Do not raise the hands');
-  expect(prompt).toContain('subtle breathing');
+  expect(prompt).toContain('visible gentle breathing');
+  expect(prompt).toContain('do not freeze the torso');
+  expect(prompt).toContain('posture adjustment at a sentence boundary');
+  expect(prompt).toContain('keep it closed until the clip ends');
   expect(prompt).toContain('head accents on spoken emphasis');
   expect(prompt).toContain('blink occasionally');
   expect(prompt).toContain('No continuous arm waving');
