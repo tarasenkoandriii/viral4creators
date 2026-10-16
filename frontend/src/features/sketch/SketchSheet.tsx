@@ -131,7 +131,15 @@ export function SketchSheet({
         if (!alive) return;
         const usable = d.items.filter((i) => i.url);
         setCandidates(usable);
-        setChosenId(d.active?.id ?? usable[usable.length - 1]?.id ?? null);
+        const selected =
+          usable.find((item) => item.id === d.active?.id) ??
+          usable[usable.length - 1];
+        setChosenId(selected?.id ?? null);
+        if (selected) {
+          setStyle(selected.style);
+          setMode(selected.mode);
+          setOptions(selected.options);
+        }
         setQuota(d.quota);
       })
       .catch((e) => {
@@ -238,7 +246,10 @@ export function SketchSheet({
               description={text}
               disabled={locked}
               onMode={setMode}
-              onStyle={setStyle}
+              onStyle={(next) => {
+                setStyle(next);
+                setChosenId(null);
+              }}
               onOptions={setOptions}
               onDescription={setText}
             />
@@ -262,7 +273,7 @@ export function SketchSheet({
               />
             )}
 
-            {candidates.length > 1 && (
+            {candidates.length > 0 && (
               <ul className="flex gap-2 overflow-x-auto pb-1">
                 {candidates.map((c, i) => (
                   <li key={c.id}>
@@ -273,7 +284,12 @@ export function SketchSheet({
                         String(i + 1)
                       )}
                       aria-pressed={c.id === chosenId}
-                      onClick={() => setChosenId(c.id)}
+                      onClick={() => {
+                        setChosenId(c.id);
+                        setStyle(c.style);
+                        setMode(c.mode);
+                        setOptions(c.options);
+                      }}
                       className={`h-14 w-14 overflow-hidden rounded-lg border transition-all ${
                         c.id === chosenId
                           ? 'border-accent ring-2 ring-accent/40'
