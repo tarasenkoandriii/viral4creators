@@ -128,6 +128,21 @@ export class HedraClientService {
    * Создать задачу генерации (§3.2, шаг 3):
    * `POST /v3/models/hedra-character-3`, `202` + `job_id`.
    */
+  async balanceUsd(): Promise<number> {
+    const key = this.key();
+    if (!key) throw new Error('HEDRA_API_KEY не задан');
+    const data = await this.withRetry(
+      () =>
+        this.call('/balance', { headers: { Authorization: `Key ${key}` } }, [
+          200,
+        ]),
+      'hedra balance',
+    );
+    if (typeof data.balance !== 'number' || !Number.isFinite(data.balance))
+      throw new Error('Hedra balance response is invalid');
+    return data.balance;
+  }
+
   async submit(opts: HedraSubmitOptions): Promise<HedraJobRef> {
     const key = this.key();
     if (!key) throw new Error('HEDRA_API_KEY не задан');

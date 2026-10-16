@@ -222,3 +222,16 @@ describe('HedraClientService.status', () => {
     await expect(svc.status('job1')).rejects.toThrow(/вернул не-JSON/);
   });
 });
+
+it('reads the spendable API wallet from the official balance endpoint', async () => {
+  fetchMock.mockResolvedValue(ok(200, { balance: 0 }));
+  expect(await new HedraClientService().balanceUsd()).toBe(0);
+  expect(fetchMock.mock.calls[0][0]).toBe('https://api.hedra.com/v3/balance');
+  expect(headersOf(0).Authorization).toBe('Key ключ');
+});
+it('does not interpret a malformed balance response as available money', async () => {
+  fetchMock.mockResolvedValue(ok(200, {}));
+  await expect(new HedraClientService().balanceUsd()).rejects.toThrow(
+    'balance response',
+  );
+});

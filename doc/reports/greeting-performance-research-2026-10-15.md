@@ -274,3 +274,26 @@ AAC 9,10 с, контейнер 15,041667 с (13 059 949 байт). Подгот
 прошли, включая тело запроса. Основание: [Character 3](https://www.hedra.com/develop/models/video/hedra-character-3),
 [тип input официального SDK](https://github.com/hedra-labs/hedra-node/blob/main/src/api/types/InputHedraCharacter3.ts)
 и [формат media URL](https://github.com/hedra-labs/hedra-node/blob/main/src/api/types/InputHedraCharacter3StartImage.ts).
+
+
+### Текущий блокер Hedra — API wallet, не Studio
+
+Повтор с исправленным контрактом дошёл до проверки оплаты: Hedra вернул
+402 `INSUFFICIENT_BALANCE`, API wallet $0.00, funding URL
+https://www.hedra.com/develop/billing?add_funds=true. Ответ явно отделяет
+API wallet от Studio. Job не принят, поэтому готового audio-driven ролика
+нет; оценки качества и победа над раскачиванием рук НЕ заявляются.
+Выполненный перед отказом TTS остаётся расходом.
+
+Добавлена read-only проверка `GET /v3/balance` до TTS Greeting: нулевой
+баланс останавливает синтез и рендер, неизвестный/невалидный баланс тоже
+не разрешает платный запуск. Поздний 402 после проверки баланса (гонка
+расхода) возвращает ту же понятную причину вместо общего 500. Кредит
+рендера возвращается существующим механизмом. Целевые тесты: 488 passed,
+3 suites; TypeScript и lint прошли. Контракт баланса подтверждён
+[официальным SDK](https://github.com/hedra-labs/hedra-node/blob/main/src/api/types/BalanceResponse.ts).
+
+Чтобы продолжить именно живую приёмку, требуется вход в Hedra и пополнение
+API wallet того аккаунта/workspace, чей ключ установлен у backend. Покупка
+Studio-подписки это условие не заменяет. Автоматическое пополнение, смена
+голоса или обход биллинга не выполнялись.

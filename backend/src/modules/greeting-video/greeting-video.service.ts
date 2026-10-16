@@ -686,6 +686,16 @@ export class GreetingVideoService {
       // Синтез до платного вызова Hedra: если голос не выйдет, мы не
       // заплатим за аватар, которому нечего говорить. Тот же довод, по
       // которому пилот проверяет ключ Hedra ДО обращения к Resemble.
+      let balance: number;
+      try {
+        balance = await this.hedra.balanceUsd();
+      } catch (error) {
+        this.logger.warn(`Hedra balance check failed: ${String(error)}`);
+        throw new BadRequestException(
+          'Не удалось проверить API-баланс Hedra. Озвучка и рендер не запускались. Попробуйте позже.',
+        );
+      }
+      if (balance <= 0) throw new BadRequestException(HEDRA_API_WALLET_EMPTY);
       const voice = await this.synthesizeAvatarSpeech(
         sessionId,
         brief,
@@ -701,15 +711,26 @@ export class GreetingVideoService {
       // прежний, и оба перечислены для метлы (текущий + `videoHistory`).
       const pathname = attemptPath(sessionId, generatedVideoId, 'generated');
 
-      const { jobId } = await this.hedra.submit({
-        // The audio is authoritative; Grok's silent-presenter scene directions
-        // must not countermand articulation or invent unrelated hand gestures.
-        prompt: greetingAvatarPerformancePrompt(brief),
-        startImage: portrait,
-        audioUrl: voice.url,
-        aspectRatio,
-        resolution: hedraResolution(resolution),
-      });
+      const { jobId } = await this.hedra
+        .submit({
+          // The audio is authoritative; Grok's silent-presenter scene directions
+          // must not countermand articulation or invent unrelated hand gestures.
+          prompt: greetingAvatarPerformancePrompt(brief),
+          startImage: portrait,
+          audioUrl: voice.url,
+          aspectRatio,
+          resolution: hedraResolution(resolution),
+        })
+        .catch((error: unknown) => {
+          if (
+            error &&
+            typeof error === 'object' &&
+            'status' in error &&
+            error.status === 402
+          )
+            throw new BadRequestException(HEDRA_API_WALLET_EMPTY);
+          throw error;
+        });
 
       const video: GeneratedVideo = {
         generatedVideoId,
@@ -1255,3 +1276,6 @@ export function greetingAvatarPerformancePrompt(
     'Let the delivery follow the audio pauses and end calmly with the final spoken phrase. No on-screen text.',
   ].join(' ');
 }
+
+const HEDRA_API_WALLET_EMPTY =
+  'В API-кошельке Hedra недостаточно средств. Он пополняется отдельно от Studio: https://www.hedra.com/develop/billing?add_funds=true. Рендер не запущен.';

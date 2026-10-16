@@ -87,6 +87,7 @@ function build(sessionOver: Record<string, unknown> = {}) {
   };
   const hedra = {
     configured: () => true,
+    balanceUsd: jest.fn().mockResolvedValue(1),
     submit: jest.fn().mockResolvedValue({ jobId: 'hj1' }),
     status: jest.fn().mockResolvedValue({ status: 'pending' }),
   };
@@ -1531,4 +1532,22 @@ it('Hedra requests restrained movement rather than an unrelated gesture loop', a
   expect(prompt).toContain('At most one small');
   expect(prompt).toContain('No continuous arm waving');
   expect(prompt).toContain('end calmly with the final spoken phrase');
+});
+
+it('empty Hedra API wallet stops before TTS and refunds the render reservation', async () => {
+  const { svc, hedra, ttsResolver, credits } = build(withPortrait());
+  hedra.balanceUsd.mockResolvedValue(0);
+  const provider = await ttsResolver.resolve();
+  await expect(svc.startVideo('s1')).rejects.toThrow('отдельно от Studio');
+  expect(provider.synthesize).not.toHaveBeenCalled();
+  expect(hedra.submit).not.toHaveBeenCalled();
+  expect(credits.refundIfReserved).toHaveBeenCalledTimes(1);
+});
+
+it('Hedra wallet rejection after TTS exposes a safe actionable error', async () => {
+  const { svc, hedra } = build(withPortrait());
+  hedra.submit.mockRejectedValue(
+    Object.assign(new Error('provider diagnostic'), { status: 402 }),
+  );
+  await expect(svc.startVideo('s1')).rejects.toThrow('отдельно от Studio');
 });
