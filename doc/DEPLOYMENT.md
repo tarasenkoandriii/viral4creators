@@ -924,6 +924,8 @@ Telegram-логин, который их и породил.
 
 ## 2. Frontend-проект
 
+Для браузерного входа добавьте **точные production Origin TMA** в `CORS_ORIGIN` backend: например, `https://viral-frontend.vercel.app` и `https://viral4creators.app`. Маска `*.vercel.app` разрешает CORS, но намеренно не даёт права на cookie-авторизованные POST и вход/выход. После изменения переменной пересоберите backend; проверка должна включать настоящий Telegram-вход, а не только GET `/telegram-login/me`.
+
 1. Vercel Dashboard → **Add New** → **Project** → тот же репозиторий.
 2. **Root Directory**: `frontend`.
 3. Framework Preset: Vite — определится автоматически.
