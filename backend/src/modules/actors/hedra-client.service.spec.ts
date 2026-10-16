@@ -68,6 +68,14 @@ describe('HedraClientService.configured', () => {
 });
 
 describe('HedraClientService.submit', () => {
+  beforeEach(() => {
+    jest
+      .spyOn(HedraClientService.prototype, 'uploadMedia')
+      .mockImplementation(
+        async (_url, kind) => `https://uploads.hedra.com/${kind}`,
+      );
+  });
+  afterEach(() => jest.restoreAllMocks());
   it('без ключа запрос не уходит вовсе', async () => {
     delete process.env.HEDRA_API_KEY;
     const svc = new HedraClientService();
@@ -88,8 +96,8 @@ describe('HedraClientService.submit', () => {
     expect(JSON.parse(init.body as string)).toEqual({
       input: {
         prompt: SUBMIT_OPTS.prompt,
-        start_image: { source: 'url', url: SUBMIT_OPTS.startImage },
-        audio: { source: 'url', url: SUBMIT_OPTS.audioUrl },
+        start_image: { source: 'url', url: 'https://uploads.hedra.com/image' },
+        audio: { source: 'url', url: 'https://uploads.hedra.com/audio' },
         aspect_ratio: SUBMIT_OPTS.aspectRatio,
         resolution: SUBMIT_OPTS.resolution,
       },
@@ -234,4 +242,50 @@ it('does not interpret a malformed balance response as available money', async (
   await expect(new HedraClientService().balanceUsd()).rejects.toThrow(
     'balance response',
   );
+});
+
+describe('Hedra media transport', () => {
+  it('uploads service media as multipart and returns the provider URL', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(new Uint8Array([1, 2]), {
+          headers: { 'content-type': 'image/jpeg' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        ok(201, { url: 'https://uploads.hedra.com/portrait' }),
+      );
+    await expect(
+      new HedraClientService().uploadMedia(
+        'https://store.public.blob.vercel-storage.com/sessions/s1/photo.jpg',
+        'image',
+      ),
+    ).resolves.toBe('https://uploads.hedra.com/portrait');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+    const init = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.headers).toEqual({ Authorization: 'Key ключ' });
+    expect((init.body as FormData).get('file')).toBeInstanceOf(Blob);
+  });
+  it('rejects external sources before fetching', async () => {
+    await expect(
+      new HedraClientService().uploadMedia(
+        'https://example.com/photo.jpg',
+        'image',
+      ),
+    ).rejects.toThrow(/service storage/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it('rejects the wrong media type before uploading', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('html', { headers: { 'content-type': 'text/html' } }),
+    );
+    await expect(
+      new HedraClientService().uploadMedia(
+        'https://store.public.blob.vercel-storage.com/sessions/s1/photo.jpg',
+        'image',
+      ),
+    ).rejects.toThrow(/media type/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

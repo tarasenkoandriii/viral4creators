@@ -18,6 +18,7 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common';
+import { isOwnBlobUrl } from '../../common/blob-url';
 
 export interface HedraSubmitOptions {
   prompt: string;
@@ -143,15 +144,73 @@ export class HedraClientService {
     return data.balance;
   }
 
+  /** Hedra accepts only URLs issued by its own /files endpoint. */
+  async uploadMedia(url: string, kind: 'image' | 'audio'): Promise<string> {
+    const key = this.key();
+    if (!key) throw new Error('HEDRA_API_KEY не задан');
+    const parsed = new URL(url);
+    if (!isOwnBlobUrl(url) || parsed.username || parsed.password || parsed.port)
+      throw new Error('Hedra media must come from service storage');
+    const maxBytes = (kind === 'image' ? 10 : 100) * 1024 * 1024;
+    const response = await fetch(url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(HEDRA_TIMEOUT_MS),
+    });
+    if (!response.ok || !response.body)
+      throw new Error('Hedra source download failed');
+    const mime = (response.headers.get('content-type') ?? '').split(';')[0];
+    if (!mime.startsWith(`${kind}/`))
+      throw new Error('Hedra source media type is invalid');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > maxBytes) throw new Error('Hedra source media is too large');
+        chunks.push(part.value);
+      }
+    } finally {
+      await reader.cancel();
+    }
+    if (!size) throw new Error('Hedra source media is empty');
+    const form = new FormData();
+    form.append(
+      'file',
+      new Blob([Buffer.concat(chunks)], { type: mime }),
+      kind === 'image' ? 'portrait.jpg' : 'voice.mp3',
+    );
+    const data = await this.withRetry(
+      () =>
+        this.call(
+          '/files',
+          {
+            method: 'POST',
+            headers: { Authorization: `Key ${key}` },
+            body: form,
+          },
+          [200, 201],
+        ),
+      'hedra upload',
+    );
+    if (typeof data.url !== 'string' || !data.url.startsWith('https://'))
+      throw new Error('Hedra upload response has no valid URL');
+    return data.url;
+  }
+
   async submit(opts: HedraSubmitOptions): Promise<HedraJobRef> {
     const key = this.key();
     if (!key) throw new Error('HEDRA_API_KEY не задан');
 
+    const startImage = await this.uploadMedia(opts.startImage, 'image');
+    const audioUrl = await this.uploadMedia(opts.audioUrl, 'audio');
     const body = {
       input: {
         prompt: opts.prompt,
-        start_image: { source: 'url', url: opts.startImage },
-        audio: { source: 'url', url: opts.audioUrl },
+        start_image: { source: 'url', url: startImage },
+        audio: { source: 'url', url: audioUrl },
         aspect_ratio: opts.aspectRatio,
         resolution: opts.resolution,
       },
