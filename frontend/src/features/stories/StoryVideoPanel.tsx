@@ -5,6 +5,10 @@ import { api } from '../../services/api';
 type Render = {
   id: string;
   status: string;
+  voiceId: string;
+  voiceLabel: string | null;
+  userVoiceId: string | null;
+  narratorManifestId: string | null;
   preambleText: string;
   preambleDuration: number | null;
   durationSeconds: number | null;
@@ -25,6 +29,9 @@ type View = {
   budgetUsd: number;
   reservedUsd: number;
   renders: Render[];
+  narratorProfiles: { id: string; title: string; voiceLabel: string }[];
+  voiceConsentVersion: string;
+  voiceConsentText: string;
 };
 const errorText = (e: unknown) =>
   (e as { response?: { data?: { message?: string } } }).response?.data
@@ -46,6 +53,9 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
     [error, setError] = useState(''),
     [video, setVideo] = useState<string | null>(null),
     [introAudio, setIntroAudio] = useState<string | null>(null),
+    [mainAudio, setMainAudio] = useState<string | null>(null),
+    [profileId, setProfileId] = useState(''),
+    [voiceConsent, setVoiceConsent] = useState(false),
     [reviewed, setReviewed] = useState(false);
   const lock = useRef(false);
   const render =
@@ -78,6 +88,7 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
   useEffect(() => {
     setVideo(null);
     setIntroAudio(null);
+    setMainAudio(null);
     setReviewed(false);
     if (!renderId || renderStatus! !== 'READY') return;
     let active = true;
@@ -89,14 +100,19 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
       api.get<{ base64: string; mime: string }>(
         `/story-gifts/${giftId}/video/${renderId}/intro`
       ),
+      api.get<{ base64: string; mime: string }>(
+        `/story-gifts/${giftId}/video/${renderId}/main`
+      ),
     ])
-      .then(([v, a]) => {
-        if (!active || !v.data || !a.data) return;
+      .then(([v, a, m]) => {
+        if (!active || !v.data || !a.data || !m.data) return;
         const u = media(v.data.base64, v.data.mime),
-          i = media(a.data.base64, a.data.mime);
-        urls.push(u, i);
+          i = media(a.data.base64, a.data.mime),
+          main = media(m.data.base64, m.data.mime);
+        urls.push(u, i, main);
         setVideo(u);
         setIntroAudio(i);
+        setMainAudio(main);
       })
       .catch((e) => {
         if (active) setError(errorText(e));
@@ -131,16 +147,54 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
         Видео «Репки» · сменная преамбула
       </h3>
       <p>
-        Один базовый видеоряд без речи. Основная Nova уже записана и
-        переиспользуется; сейчас оплачиваются только новая преамбула и сборка.
-        Для родительского голоса позже заменяется отдельная дорожка, не сцены.
+        Один неизменный видеоряд без речи. Nova остаётся по умолчанию. Для
+        голоса из профиля основная речь записывается отдельно один раз;
+        следующие преамбулы переиспользуют её и тот же видеоряд.
       </p>
       <p className="text-sm">
         Бюджет выпуска: ${view.budgetUsd.toFixed(2)} · общий расчётный резерв: $
         {view.reservedUsd.toFixed(2)}. Новая сборка резервирует не меньше $0.52
-        плюс запас на преамбулу. Это оценка, не счёт провайдера; при нехватке
-        лимита запуск блокируется.
+        плюс запас на речь: для нового голоса учитывается и полный текст сказки.
+        Это оценка, не счёт провайдера; при нехватке лимита запуск блокируется.
       </p>
+      <label className="block">
+        Голос рассказчика
+        <select
+          className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
+          value={profileId}
+          disabled={busy}
+          onChange={(e) => {
+            setProfileId(e.target.value);
+            setVoiceConsent(false);
+          }}
+        >
+          <option value="">Nova · по умолчанию</option>
+          {view.narratorProfiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.title} · {p.voiceLabel}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="text-sm">
+        В списке — только ваши профили с готовым пользовательским клоном
+        Resemble и сохранённым согласием. Голос выбирается в брендбуке;
+        библиотечный голос не считается голосом родителя.{' '}
+        <a className="underline" href="#/brand-manifests">
+          Открыть брендбуки
+        </a>
+      </p>
+      {profileId && (
+        <label className="flex gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={voiceConsent}
+            disabled={busy}
+            onChange={(e) => setVoiceConsent(e.target.checked)}
+          />
+          {view.voiceConsentText}
+        </label>
+      )}
       <label className="block">
         Сменная преамбула
         <textarea
@@ -151,19 +205,28 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
         />
       </label>
       <Button
-        disabled={busy || !intro.trim()}
+        disabled={busy || !intro.trim() || (!!profileId && !voiceConsent)}
         onClick={() =>
           void action(async () => {
             const r = await api.post<Render>(
               `/story-gifts/${giftId}/video`,
-              { preambleText: intro },
-              { timeout: 150000 }
+              {
+                preambleText: intro,
+                ...(profileId
+                  ? {
+                      narratorManifestId: profileId,
+                      voiceConsentVersion: view.voiceConsentVersion,
+                      voiceConsentAccepted: voiceConsent,
+                    }
+                  : {}),
+              },
+              { timeout: 240000 }
             );
             if (r.data) setSelected(r.data.id);
           })
         }
       >
-        Собрать видео с Nova
+        {profileId ? 'Собрать с голосом из профиля' : 'Собрать видео с Nova'}
       </Button>
       <div className="flex flex-wrap gap-3 text-sm">
         <a
@@ -198,7 +261,7 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
           disabled={busy}
           onClick={() => setSelected(r.id)}
         >
-          {r.preambleText} · {r.status}
+          {r.preambleText} · {r.voiceLabel || 'Nova'} · {r.status}
         </Button>
       ))}
       {render && (
@@ -241,22 +304,32 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
                 poster={view.coverUrl}
               />
               <div className="flex flex-wrap gap-3">
-                <a href={video} download="repka-nova.mp4" className="underline">
+                <a href={video} download="repka.mp4" className="underline">
                   Скачать готовый MP4
                 </a>
                 {introAudio && (
                   <a
                     href={introAudio}
-                    download="repka-preamble-nova.mp3"
+                    download="repka-preamble.mp3"
                     className="underline"
                   >
                     Преамбула отдельно (MP3)
                   </a>
                 )}
               </div>
+              {mainAudio && (
+                <a
+                  href={mainAudio}
+                  download="repka-main.mp3"
+                  className="underline"
+                >
+                  Основная речь этой версии отдельно (MP3)
+                </a>
+              )}
               <p className="text-sm">
-                Основная озвучка отдельно — кнопка «Скачать MP3» выше. Музыка не
-                добавлялась и не смешана с голосом.
+                Голос этой версии: {render.voiceLabel || 'Nova'}. Музыка не
+                добавлялась и не смешана с голосом. Запись Nova выше сохранена
+                отдельно.
               </p>
             </>
           )}

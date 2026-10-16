@@ -5244,33 +5244,43 @@ model StoryGift {
 
 /// Bounded private exports: reusable silent master plus an independently replaceable preamble and voice track.
 model StoryVideoRender {
-  qaStatus         String    @default("PENDING")
-  qa               Json?
-  id               String    @id @default(uuid())
-  giftId           String
-  gift             StoryGift @relation(fields: [giftId], references: [id], onDelete: Cascade)
-  configHash       String
-  status           String    @default("PREPARING")
-  preambleText     String
-  preambleAudio    Bytes?
-  preambleDuration Float?
-  baseRevision     String
-  baseHash         String
-  mainAudioHash    String
-  voiceId          String
-  reservedMicroUsd Int
-  assetTokenHash   String?   @unique
-  assetExpiresAt   DateTime?
-  jobId            String?
-  video            Bytes?
-  videoHash        String?
-  durationSeconds  Float?
-  approvedAt       DateTime?
-  error            String?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @default(now()) @updatedAt
+  /// Private parent narration; null keeps the original pinned Nova track.
+  mainAudio           Bytes?
+  mainDuration        Float?
+  parentNarrationKey  String?
+  narratorManifestId  String?
+  userVoiceId         String?
+  voiceLabel          String?
+  voiceConsentAt      DateTime?
+  voiceConsentVersion String?
+  qaStatus            String    @default("PENDING")
+  qa                  Json?
+  id                  String    @id @default(uuid())
+  giftId              String
+  gift                StoryGift @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  configHash          String
+  status              String    @default("PREPARING")
+  preambleText        String
+  preambleAudio       Bytes?
+  preambleDuration    Float?
+  baseRevision        String
+  baseHash            String
+  mainAudioHash       String
+  voiceId             String
+  reservedMicroUsd    Int
+  assetTokenHash      String?   @unique
+  assetExpiresAt      DateTime?
+  jobId               String?
+  video               Bytes?
+  videoHash           String?
+  durationSeconds     Float?
+  approvedAt          DateTime?
+  error               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
 
   @@unique([giftId, configHash])
   @@index([giftId, createdAt])
+  @@index([parentNarrationKey])
   @@map("story_video_renders")
 }

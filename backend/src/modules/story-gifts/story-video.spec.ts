@@ -8,6 +8,7 @@ import {
   storyDigest,
   storyVideoConfigHash,
   storyVideoReserve,
+  STORY_PARENT_CONSENT_VERSION,
 } from './story-video-plan';
 import { STORY_VOICE } from './story-catalog';
 import {
@@ -36,7 +37,7 @@ function setup() {
     status: 'APPROVED',
     catalogId: BASE.catalogId,
     voiceId: STORY_VOICE,
-    audioHash: 'a'.repeat(64),
+    audioHash: storyDigest(Buffer.from('main-audio')),
     durationSeconds: 55.74525,
     audio: Buffer.from('main-audio'),
     audioQaStatus: 'PASS',
@@ -81,11 +82,11 @@ function setup() {
     findUniqueOrThrow: jest.fn(async ({ where }: any) => {
       const r = rows.find((r) => r.id === where.id);
       if (!r) throw Error('not found');
-      return { ...r };
+      return { ...r, gift };
     }),
-    findFirst: jest.fn(async ({ where, include }: any) => {
+    findFirst: jest.fn(async ({ where, include, select }: any) => {
       const r = rows.find((r) => match(r, where));
-      return r ? { ...r, ...(include ? { gift } : {}) } : null;
+      return r ? { ...r, ...(include || select?.gift ? { gift } : {}) } : null;
     }),
     findMany: jest.fn(async () => rows.map((r) => ({ ...r }))),
     aggregate: jest.fn(async () => ({
@@ -128,6 +129,39 @@ function setup() {
     },
     $queryRaw: jest.fn(),
   };
+  const parentVoice: any = {
+    id: 'pv',
+    userId: 'u',
+    status: 'READY',
+    resembleVoiceId: 'parent-clone',
+    consentAt: new Date('2026-10-01'),
+    label: 'Мой голос',
+  };
+  const manifest: any = {
+    id: 'manifest',
+    userId: 'u',
+    ttsProvider: 'resemble',
+    ttsVoiceId: 'parent-clone',
+    title: 'Рассказчик',
+  };
+  const matches = (row: any, where: any) =>
+    row && Object.entries(where).every(([k, v]) => row[k] === v);
+  Object.assign(tx, {
+    userVoice: {
+      findFirst: jest.fn(async ({ where }: any) =>
+        matches(parentVoice, where) ? { ...parentVoice } : null,
+      ),
+      findMany: jest.fn(async () =>
+        parentVoice.status === 'READY' ? [{ ...parentVoice }] : [],
+      ),
+    },
+    brandManifest: {
+      findFirst: jest.fn(async ({ where }: any) =>
+        matches(manifest, where) ? { ...manifest } : null,
+      ),
+      findMany: jest.fn(async () => [{ ...manifest }]),
+    },
+  });
   let chain = Promise.resolve();
   const prisma: any = {
     ...tx,
@@ -139,12 +173,12 @@ function setup() {
   };
   const tts: any = {
     configured: () => true,
-    synthesize: jest.fn(async ({ text }: any) => ({
+    synthesize: jest.fn(async ({ text, voiceId }: any) => ({
       ok: true,
-      voiceId: STORY_VOICE,
+      voiceId,
       mimeType: 'audio/mpeg',
-      audio: Buffer.from('intro'),
-      durationSeconds: 5,
+      audio: Buffer.from(text === gift.text ? 'parent-main' : 'intro'),
+      durationSeconds: text === gift.text ? 55 : 5,
       characters: text.length,
     })),
   };
@@ -174,6 +208,9 @@ function setup() {
       stt,
     ),
     gift,
+    parentVoice,
+    manifest,
+    prisma,
     rows,
     db,
     tts,
@@ -330,6 +367,135 @@ describe('Reusable story master, separate speech and preamble', () => {
     ).toBeUndefined();
     expect(Reflect.getMetadata('__guards__', StoryGiftsController)).toContain(
       TelegramIdentityGuard,
+    );
+  });
+});
+
+const parentChoice = {
+  narratorManifestId: 'manifest',
+  voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
+  voiceConsentAccepted: true,
+};
+describe('Parent narration from owned narrator profiles', () => {
+  it('requires explicit current consent before any paid work', async () => {
+    const s = setup();
+    await expect(
+      s.service.create('u', 'g', 'Привет', { narratorManifestId: 'manifest' }),
+    ).rejects.toThrow('согласие');
+    await expect(
+      s.service.create('u', 'g', 'Привет', {
+        ...parentChoice,
+        voiceConsentVersion: 'old',
+      }),
+    ).rejects.toThrow('согласие');
+    expect(s.tts.synthesize).not.toHaveBeenCalled();
+  });
+  it.each(['other-owner', 'training', 'library', 'no-consent'])(
+    'rejects %s profiles before spending',
+    async (kind) => {
+      const s = setup();
+      if (kind === 'other-owner') s.manifest.userId = 'other';
+      if (kind === 'training') s.parentVoice.status = 'TRAINING';
+      if (kind === 'library') s.manifest.ttsVoiceId = STORY_VOICE;
+      if (kind === 'no-consent') s.parentVoice.consentAt = null;
+      await expect(
+        s.service.create('u', 'g', 'Привет', parentChoice),
+      ).rejects.toThrow();
+      expect(s.tts.synthesize).not.toHaveBeenCalled();
+    },
+  );
+  it('synthesizes separate main and intro, then reuses the main for a changed intro without changing the master or Nova', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет', parentChoice);
+    await s.service.create('u', 'g', 'Добрый вечер', parentChoice);
+    expect(s.tts.synthesize.mock.calls.map((c: any) => c[0].text)).toEqual([
+      s.gift.text,
+      'Привет',
+      'Добрый вечер',
+    ]);
+    expect(
+      s.tts.synthesize.mock.calls.every(
+        (c: any) => c[0].voiceId === 'parent-clone',
+      ),
+    ).toBe(true);
+    expect(s.rows[0].mainAudioHash).toBe(s.rows[1].mainAudioHash);
+    expect(s.rows.every((r) => r.baseHash === BASE.baseSha256)).toBe(true);
+    expect(s.rows[0].mainAudioHash).toBe(
+      storyDigest(Buffer.from('parent-main')),
+    );
+    expect(s.rows[0].voiceConsentVersion).toBe(STORY_PARENT_CONSENT_VERSION);
+    expect(s.rows[0].voiceConsentAt).toBeInstanceOf(Date);
+    expect(s.rows[1].reservedMicroUsd).toBeLessThan(s.rows[0].reservedMicroUsd);
+    const view = await s.service.list('u', 'g');
+    expect(view.narratorProfiles).toEqual([
+      { id: 'manifest', title: 'Рассказчик', voiceLabel: 'Мой голос' },
+    ]);
+    expect(s.gift.voiceId).toBe(STORY_VOICE);
+    expect(s.gift.audioHash).toBe(storyDigest(Buffer.from('main-audio')));
+    expect(Buffer.from(s.rows[1].mainAudio).toString()).toBe('parent-main');
+    const main = await s.service.file('u', 'g', 'r2', 'main');
+    expect(Buffer.from(main.base64, 'base64').toString()).toBe('parent-main');
+    await expect(s.service.file('other', 'g', 'r2', 'main')).rejects.toThrow();
+  });
+  it('does not duplicate main synthesis for concurrent different preambles', async () => {
+    const s = setup();
+    await Promise.allSettled([
+      s.service.create('u', 'g', 'Привет', parentChoice),
+      s.service.create('u', 'g', 'Другой', parentChoice),
+    ]);
+    expect(
+      s.tts.synthesize.mock.calls.filter((c: any) => c[0].text === s.gift.text),
+    ).toHaveLength(1);
+  });
+  it('reserves full narration before paying and rejects insufficient remaining budget', async () => {
+    const s = setup();
+    s.gift.text = 'Репка '.repeat(1000);
+    s.gift.budgetCents = 100;
+    await expect(
+      s.service.create('u', 'g', 'Привет', parentChoice),
+    ).rejects.toThrow('бюджета');
+    expect(s.tts.synthesize).not.toHaveBeenCalled();
+  });
+  it('blocks revoked voice downloads, provider input and publication without silently falling back', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет', parentChoice);
+    Object.assign(s.rows[0], {
+      status: 'READY',
+      qaStatus: 'PASS',
+      videoHash: 'b'.repeat(64),
+      approvedAt: new Date(),
+      video: Buffer.from('mp4'),
+    });
+    s.parentVoice.status = 'FAILED';
+    await expect(s.service.file('u', 'g', 'r1', 'main')).rejects.toThrow(
+      'отозван',
+    );
+    await expect(s.service.published('s'.repeat(43))).rejects.toThrow(
+      'отозван',
+    );
+    await expect(
+      s.service.approve('u', 'g', 'r1', 'b'.repeat(64)),
+    ).rejects.toThrow('отозван');
+    s.rows[0].status = 'PENDING';
+    const token = new URL(s.ffmpeg.submit.mock.calls[0][0].inputs.main).pathname
+      .split('/')
+      .at(-2)!;
+    await expect(s.service.input(token, 'main')).rejects.toThrow('отозван');
+  });
+  it('does not silently retry an uncertain main synthesis', async () => {
+    const s = setup();
+    s.tts.synthesize.mockRejectedValue(new Error('timeout'));
+    expect(
+      (await s.service.create('u', 'g', 'Привет', parentChoice)).status,
+    ).toBe('UNKNOWN');
+    await s.service.create('u', 'g', 'Привет', parentChoice);
+    await expect(
+      s.service.create('u', 'g', 'Другой', parentChoice),
+    ).rejects.toThrow('повторная оплата');
+    expect(s.tts.synthesize).toHaveBeenCalledTimes(1);
+    expect(s.ffmpeg.submit).not.toHaveBeenCalled();
+    await expect(s.service.file('u', 'g', 'r1', 'main')).rejects.toThrow(
+      'Файл ещё не готов',
     );
   });
 });

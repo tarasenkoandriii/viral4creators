@@ -103,6 +103,14 @@ export function NarratorProfile({
       >
         {t.save}
       </Button>
+      <p className="text-sm text-silver-400">
+        Для Story‑Tales выберите свой готовый клон в настройке голоса брендбука.
+        В «Репке» он появится как отдельный вариант с подтверждением согласия;
+        Nova по умолчанию не меняется.{' '}
+        <a className="underline" href="#/stories">
+          Открыть сказки
+        </a>
+      </p>
       <h3 className="font-medium">{t.preamble}</h3>
       <p className="text-xs text-silver-400">{t.recordingHint}</p>
       {(preview || manifest.tutorialPreamble?.url) && (

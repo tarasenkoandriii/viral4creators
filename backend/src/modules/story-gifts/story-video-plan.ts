@@ -4,8 +4,10 @@ import { STORY_VIDEO_BASE } from './story-video-base';
 export const storyDigest = (input: string | Uint8Array) =>
   createHash('sha256').update(input).digest('hex');
 /** Main narration is not synthesized here. Reserve includes intro TTS, one render and one QA. */
-export function storyVideoReserve(preamble: string): number {
-  const tts = estimateCost('resemble-tts', { characters: preamble.length });
+export function storyVideoReserve(preamble: string, mainText = ''): number {
+  const tts = estimateCost('resemble-tts', {
+    characters: preamble.length + mainText.length,
+  });
   const assembly = estimateCost('ffmpeg-api', {});
   if (tts.unpriced || assembly.unpriced)
     throw new Error('Story assembly rate unavailable');
@@ -45,3 +47,13 @@ export function planStoryVideo(mainSeconds: number, introSeconds: number) {
     ],
   };
 }
+
+/** Versioned, per-export authorization; clone creation consent is independently required. */
+export const STORY_PARENT_CONSENT_VERSION = 'story-parent-voice-v1';
+export const STORY_PARENT_CONSENT_TEXT =
+  'Подтверждаю: это мой голос либо у меня есть явное разрешение его владельца. Разрешаю использовать выбранный клон для отдельной озвучки текста «Репки» и преамбулы через Resemble; сборку видео через FFmpeg API и проверку речи через Soniox. Получатели ссылки смогут услышать голос после моего одобрения видео.';
+export type StoryVoiceChoice = {
+  narratorManifestId?: string;
+  voiceConsentVersion?: string;
+  voiceConsentAccepted?: boolean;
+};

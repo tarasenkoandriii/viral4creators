@@ -6,6 +6,7 @@ import {
   Delete,
   Get,
   Header,
+  NotFoundException,
   Headers,
   Param,
   Post,
@@ -33,6 +34,9 @@ import {
 import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
 import { StoryGiftsService } from './story-gifts.service';
 class StoryVideoDto {
+  @IsOptional() @IsString() @MaxLength(100) narratorManifestId?: string;
+  @IsOptional() @IsString() @MaxLength(80) voiceConsentVersion?: string;
+  @IsOptional() @IsBoolean() voiceConsentAccepted?: boolean;
   @IsString() @MaxLength(180) preambleText!: string;
 }
 class StoryVideoApproveDto {
@@ -97,7 +101,7 @@ export class StoryGiftsController {
     @Param('id') id: string,
     @Body() dto: StoryVideoDto,
   ) {
-    return this.videos.create(req.telegramUserId, id, dto.preambleText);
+    return this.videos.create(req.telegramUserId, id, dto.preambleText, dto);
   }
   @Get(':id/video/:renderId') videoStatus(
     @Req() req: IdentifiedRequest,
@@ -123,6 +127,15 @@ export class StoryGiftsController {
     @Param('renderId') renderId: string,
   ) {
     return this.videos.file(req.telegramUserId, id, renderId, 'intro');
+  }
+  @Get(':id/video/:renderId/main')
+  @Header('Cache-Control', 'no-store')
+  videoMain(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+  ) {
+    return this.videos.file(req.telegramUserId, id, renderId, 'main');
   }
   @Post(':id/video/:renderId/quality') videoQuality(
     @Req() req: IdentifiedRequest,
@@ -254,7 +267,10 @@ export class PublicStoryGiftController {
   ) {
     this.headers(res);
     const gift = await this.service.publicGift(token);
-    const publishedVideo = await this.videos.published(token).catch(() => null);
+    const publishedVideo = await this.videos.published(token).catch((e) => {
+      if (e instanceof NotFoundException) return null;
+      throw e;
+    });
     const chapters = gift.chapters as unknown as Array<{
       title: string;
       text: string;
@@ -267,7 +283,7 @@ export class PublicStoryGiftController {
     res
       .type('html')
       .send(
-        `<!doctype html><html lang="${esc(gift.locale)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · ${publishedVideo ? 'Видеоподарок' : 'Аудиоподарок'}</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>Синтетическая озвучка Nova. Включает подготовленное взрослым обращение, если оно было добавлено.</p>${publishedVideo ? `<video controls playsinline preload="metadata" style="width:100%;border-radius:18px" src="./${token}/video"></video><p><a style="color:inherit" href="./${token}/audio">Основная озвучка отдельно (MP3)</a></p>` : `<audio controls preload="none" src="./${token}/audio"></audio>`}${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
+        `<!doctype html><html lang="${esc(gift.locale)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · ${publishedVideo ? 'Видеоподарок' : 'Аудиоподарок'}</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>${publishedVideo?.userVoiceId ? 'Синтетическая озвучка выбранным голосом рассказчика.' : 'Синтетическая озвучка Nova.'} Включает подготовленное взрослым обращение, если оно было добавлено.</p>${publishedVideo ? `<video controls playsinline preload="metadata" style="width:100%;border-radius:18px" src="./${token}/video"></video>${publishedVideo.userVoiceId ? '' : `<p><a style="color:inherit" href="./${token}/audio">Основная озвучка отдельно (MP3)</a></p>`}` : `<audio controls preload="none" src="./${token}/audio"></audio>`}${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
       );
   }
   @Get(':token/video') async video(
