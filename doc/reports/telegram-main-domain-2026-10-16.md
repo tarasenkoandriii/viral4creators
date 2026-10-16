@@ -27,6 +27,10 @@
 
 После нажатия ссылки нового Mini App и подтверждения LAUNCH в Telegram Web загрузилось приложение с origin `viral4creators.app`, меню продуктов и сохранённой авторизованной сессией Premium. Браузерный переход `https://viral4creators.app?entry=stories#/stories` показал раздел Story‑Tales.
 
-Новый вход Login Widget без сохранённой сессии и передача `e_stories` именно через Telegram пока отдельно не подтверждены; успех настройки домена не подменяет эти проверки. Старое именованное приложение `viral4creators` не удалено и сохраняет прежний URL `https://viral-frontend.vercel.app/`; новый путь `app` настроен на основной домен. Main Mini App в профиле бота отдельно не переключался.
+Дополнительно выполнен настоящий запуск `https://t.me/Viral4creatorsBot/app?startapp=e_stories` из Избранного второго аккаунта Telegram. Встроенное приложение открылось на `viral4creators.app/?tgWebAppStartParam=e_stories&entry=stories#/stories`, показало заголовок Story‑Tales и кнопку настройки рассказчика. Передача параметра и маршрутизация подтверждены.
+
+Новый вход Login Widget без сохранённой сессии пока отдельно не подтверждён; успех настройки домена не подменяет эту проверку. Старое именованное приложение `viral4creators` не удалено и сохраняет прежний URL `https://viral-frontend.vercel.app/`; новый путь `app` настроен на основной домен. Main Mini App в профиле бота отдельно не переключался.
 
 Подтверждение BotFather сохранено локально: `outputs/telegram-setup/botfather-mini-app-menu.jpg` (вне репозитория, без токенов).
+
+Скриншот сквозного запуска: `outputs/telegram-setup/story-tales-telegram-launch.jpg` (вне репозитория).
