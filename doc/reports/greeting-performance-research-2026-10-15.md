@@ -257,3 +257,20 @@ AAC 9,10 с, контейнер 15,041667 с (13 059 949 байт). Подгот
 устойчивого корпуса, покоя рук большую часть времени и максимум одного
 малого жеста. Качество требует отдельного живого прогона: текстовая
 инструкция сама по себе не гарантирует соответствия результата.
+
+
+### Живая проверка Hedra: совместимость API
+
+Отдельная сессия `fixture-greeting-hedra-calm-20261016` создана в том же
+тестовом проекте; Grok-оригинал сохранён. После смены референса штатная
+проверка fingerprint отклонила старый сценарий до рендера. Сценарий
+пересобран настоящим конвейером, текст закреплён в personalMessage.
+
+Первая отправка в Hedra выявила устаревший контракт клиента: API вернул
+400 с обязательными полями `input.prompt`, `input.aspect_ratio` и др.
+Рендер не принят; выполненный TTS остаётся реальным расходом. Исправлены
+обёртка `input`, media references `{source: "url", url}` и официальный
+заголовок `Authorization: Key …` для submit/status. 17 тестов клиента
+прошли, включая тело запроса. Основание: [Character 3](https://www.hedra.com/develop/models/video/hedra-character-3),
+[тип input официального SDK](https://github.com/hedra-labs/hedra-node/blob/main/src/api/types/InputHedraCharacter3.ts)
+и [формат media URL](https://github.com/hedra-labs/hedra-node/blob/main/src/api/types/InputHedraCharacter3StartImage.ts).

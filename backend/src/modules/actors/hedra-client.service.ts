@@ -133,11 +133,13 @@ export class HedraClientService {
     if (!key) throw new Error('HEDRA_API_KEY не задан');
 
     const body = {
-      prompt: opts.prompt,
-      start_image: opts.startImage,
-      audio: opts.audioUrl,
-      aspect_ratio: opts.aspectRatio,
-      resolution: opts.resolution,
+      input: {
+        prompt: opts.prompt,
+        start_image: { source: 'url', url: opts.startImage },
+        audio: { source: 'url', url: opts.audioUrl },
+        aspect_ratio: opts.aspectRatio,
+        resolution: opts.resolution,
+      },
     };
 
     const data = await this.withRetry(
@@ -147,7 +149,7 @@ export class HedraClientService {
           {
             method: 'POST',
             headers: {
-              'X-API-Key': key,
+              Authorization: `Key ${key}`,
               'Content-Type': 'application/json',
             },
             body: JSON.stringify(body),
@@ -180,7 +182,7 @@ export class HedraClientService {
       () =>
         this.call(
           `/jobs/${encodeURIComponent(jobId)}`,
-          { headers: { 'X-API-Key': key } },
+          { headers: { Authorization: `Key ${key}` } },
           [200],
         ),
       'hedra status',

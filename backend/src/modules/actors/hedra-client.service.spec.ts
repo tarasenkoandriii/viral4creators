@@ -84,13 +84,15 @@ describe('HedraClientService.submit', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.hedra.com/v3/models/hedra-character-3');
     expect(init.method).toBe('POST');
-    expect(headersOf(0)['X-API-Key']).toBe('ключ');
+    expect(headersOf(0).Authorization).toBe('Key ключ');
     expect(JSON.parse(init.body as string)).toEqual({
-      prompt: SUBMIT_OPTS.prompt,
-      start_image: SUBMIT_OPTS.startImage,
-      audio: SUBMIT_OPTS.audioUrl,
-      aspect_ratio: SUBMIT_OPTS.aspectRatio,
-      resolution: SUBMIT_OPTS.resolution,
+      input: {
+        prompt: SUBMIT_OPTS.prompt,
+        start_image: { source: 'url', url: SUBMIT_OPTS.startImage },
+        audio: { source: 'url', url: SUBMIT_OPTS.audioUrl },
+        aspect_ratio: SUBMIT_OPTS.aspectRatio,
+        resolution: SUBMIT_OPTS.resolution,
+      },
     });
   });
 
