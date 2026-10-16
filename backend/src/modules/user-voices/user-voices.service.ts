@@ -26,7 +26,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BlobService } from '../storage/blob.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
-import { ResembleService } from '../tts/resemble.service';
+import {
+  RESEMBLE_NO_CLONE_SLOTS,
+  ResembleService,
+} from '../tts/resemble.service';
 import { resembleWebhookUrl } from './resemble-webhook-secret';
 import {
   VoiceCloneRequestDto,
@@ -71,11 +74,21 @@ type UserVoiceRow = {
   status: 'TRAINING' | 'READY' | 'FAILED';
   resembleVoiceId: string | null;
   sampleUrl: string;
+  consentAt?: Date;
   error: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
+function canRetryClone(row: UserVoiceRow) {
+  return (
+    row.status === 'FAILED' &&
+    !row.personaId &&
+    !row.resembleVoiceId &&
+    !!row.consentAt &&
+    (row.error === 'Resemble 400' || row.error === RESEMBLE_NO_CLONE_SLOTS)
+  );
+}
 function toView(row: UserVoiceRow): UserVoiceView {
   const status: UserVoiceStatus =
     row.status === 'READY'
@@ -85,6 +98,7 @@ function toView(row: UserVoiceRow): UserVoiceView {
         : 'training';
   return {
     id: row.id,
+    ...(canRetryClone(row) ? { retryAllowed: true } : {}),
     label: row.label,
     status,
     resembleVoiceId: row.resembleVoiceId,
@@ -270,6 +284,43 @@ export class UserVoicesService {
       });
     });
 
+    return this.startClone(userId, voiceId, label, sampleUrl);
+  }
+
+  /** Explicit retry only after a definite rejection: reuse the consented recording, never delete a voice. */
+  async retry(userId: string, id: string): Promise<UserVoiceView> {
+    await this.plans.assertUser(userId, 'voiceCloning');
+    await this.plans.assertCanSpendUser(userId);
+    const claim = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`user-voices:${userId}`}))`;
+      const row = await tx.userVoice.findFirst({ where: { id, userId } });
+      if (!row) throw new NotFoundException('Голос не найден');
+      if (row.status !== 'FAILED') return { fresh: false, row };
+      if (!canRetryClone(row))
+        throw new ConflictException(
+          'Результат предыдущего создания требует проверки оператором; повтор отключён',
+        );
+      const active = await tx.userVoice.count({
+        where: { userId, personaId: null, status: { not: 'FAILED' } },
+      });
+      if (active >= MAX_USER_VOICES)
+        throw new BadRequestException('Достигнут лимит клонированных голосов');
+      const updated = await tx.userVoice.update({
+        where: { id },
+        data: { status: 'TRAINING', error: null },
+      });
+      return { fresh: true, row: updated };
+    });
+    if (!claim.fresh) return toView(claim.row);
+    return this.startClone(userId, id, claim.row.label, claim.row.sampleUrl);
+  }
+
+  private async startClone(
+    userId: string,
+    voiceId: string,
+    label: string,
+    sampleUrl: string,
+  ): Promise<UserVoiceView> {
     const clone = await this.resemble.cloneVoice(
       label,
       sampleUrl,

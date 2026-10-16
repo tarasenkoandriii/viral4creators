@@ -54,6 +54,14 @@ export class UserVoicesController {
     return this.service.confirmClone(req.telegramUserId, dto);
   }
 
+  @Post(':id/retry')
+  retry(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ): Promise<UserVoiceView> {
+    return this.service.retry(req.telegramUserId, id);
+  }
+
   @Get()
   list(@Req() req: IdentifiedRequest): Promise<UserVoiceView[]> {
     return this.service.list(req.telegramUserId);

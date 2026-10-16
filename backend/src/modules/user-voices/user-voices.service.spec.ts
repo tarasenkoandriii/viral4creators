@@ -450,3 +450,99 @@ describe('UserVoicesService.handleWebhook', () => {
     });
   });
 });
+
+function retrySetup() {
+  const s = build();
+  const current: any = row({
+    status: 'FAILED',
+    resembleVoiceId: null,
+    error: 'Resemble 400',
+    consentAt: NOW,
+  });
+  s.prisma.userVoice.findFirst.mockImplementation(async ({ where }: any) =>
+    where.userId === current.userId && where.id === current.id
+      ? { ...current }
+      : null,
+  );
+  s.prisma.userVoice.update.mockImplementation(async ({ data }: any) => {
+    Object.assign(current, data);
+    return { ...current };
+  });
+  let chain = Promise.resolve();
+  s.prisma.$transaction.mockImplementation((fn: any) => {
+    const next = chain.then(() => fn(s.prisma));
+    chain = next.catch(() => {});
+    return next;
+  });
+  return { ...s, current };
+}
+describe('UserVoicesService explicit retry of a rejected clone', () => {
+  it('reuses the owned recording and original consent without creating or deleting a row', async () => {
+    const s = retrySetup();
+    const result = await s.svc.retry(USER, 'v1');
+    expect(result.status).toBe('training');
+    expect(s.resemble.cloneVoice).toHaveBeenCalledWith(
+      'Мой голос',
+      s.current.sampleUrl,
+      undefined,
+    );
+    expect(s.current.consentAt).toBe(NOW);
+    expect(s.prisma.userVoice.create).not.toHaveBeenCalled();
+    expect(s.prisma.userVoice.delete).not.toHaveBeenCalled();
+    expect(s.aiUsage.record).toHaveBeenCalledTimes(1);
+  });
+  it('denies another owner before calling the provider', async () => {
+    const s = retrySetup();
+    await expect(s.svc.retry('other', 'v1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+  });
+  it('refuses uncertain responses, provider IDs and missing original consent', async () => {
+    const s = retrySetup();
+    s.current.error = 'ошибка Resemble: timeout';
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow(
+      'проверки оператором',
+    );
+    s.current.error = 'Resemble 400';
+    s.current.resembleVoiceId = 'already-created';
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow(
+      'проверки оператором',
+    );
+    s.current.resembleVoiceId = null;
+    s.current.consentAt = null;
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow(
+      'проверки оператором',
+    );
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+  });
+  it('returns existing training or ready state without another paid start', async () => {
+    const s = retrySetup();
+    for (const status of ['TRAINING', 'READY']) {
+      s.current.status = status;
+      await s.svc.retry(USER, 'v1');
+    }
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+  });
+  it('holds the user slot limit before retry', async () => {
+    const s = retrySetup();
+    s.prisma.userVoice.count.mockResolvedValue(3);
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow('лимит');
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+  });
+  it('deduplicates concurrent retries and does not charge a definite refusal', async () => {
+    const s = retrySetup();
+    await Promise.all([s.svc.retry(USER, 'v1'), s.svc.retry(USER, 'v1')]);
+    expect(s.resemble.cloneVoice).toHaveBeenCalledTimes(1);
+    s.current.status = 'FAILED';
+    s.current.resembleVoiceId = null;
+    s.current.error = 'Resemble 400';
+    s.resemble.cloneVoice.mockResolvedValue({
+      ok: false,
+      reason: 'Resemble 400',
+    });
+    s.aiUsage.record.mockClear();
+    expect((await s.svc.retry(USER, 'v1')).retryAllowed).toBe(true);
+    expect(s.aiUsage.record).not.toHaveBeenCalled();
+  });
+});

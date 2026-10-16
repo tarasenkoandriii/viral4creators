@@ -1426,3 +1426,11 @@ export async function uploadNarratorPreamble(
     'preamble'
   );
 }
+
+/** Reuse the existing owned recording after a definite rejected clone request. */
+export async function retryUserVoice(id: string): Promise<UserVoice> {
+  return unwrap(
+    await api.post<UserVoice>(`/voices/${id}/retry`, {}),
+    'retry-clone'
+  );
+}

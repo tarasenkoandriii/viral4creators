@@ -392,6 +392,7 @@ export interface SoundCheckState {
 export type UserVoiceStatus = 'training' | 'ready' | 'failed';
 
 export interface UserVoice {
+  retryAllowed?: boolean;
   id: string;
   label: string;
   status: UserVoiceStatus;

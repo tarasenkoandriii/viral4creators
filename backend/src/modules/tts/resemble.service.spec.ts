@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 import {
   ResembleService,
+  RESEMBLE_NO_CLONE_SLOTS,
   resembleLocale,
   withLanguage,
 } from './resemble.service';
@@ -381,6 +382,24 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
 
   // Этап 73 (TODO п.32) — клонирование, отдельные методы от TtsProvider.
   describe('cloneVoice — POST /api/v2/voices, ответ приходит сразу с uuid', () => {
+    it('explains exhausted rapid clone slots without automatic retry', async () => {
+      const f = mockFetch(
+        jest.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          text: async () =>
+            JSON.stringify({
+              message: 'You have no rapid clone slots remaining.',
+            }),
+        }),
+      );
+      const r = await withEnv({ RESEMBLE_API_KEY: 'k' }).cloneVoice(
+        'Мой голос',
+        'https://blob/sample.mp3',
+      );
+      expect(r).toEqual({ ok: false, reason: RESEMBLE_NO_CLONE_SLOTS });
+      expect(f).toHaveBeenCalledTimes(1);
+    });
     it('без ключа — отказ без сетевого вызова', async () => {
       const fetchMock = mockFetch(jest.fn());
       const svc = withEnv({});

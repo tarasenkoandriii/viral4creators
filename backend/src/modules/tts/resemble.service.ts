@@ -111,6 +111,8 @@ export function withLanguage(text: string, locale: string): string {
 
 /** М-6.5 седьмого аудита: таймаут внешних HTTP-вызовов. */
 const EXTERNAL_TIMEOUT_MS = 60_000;
+export const RESEMBLE_NO_CLONE_SLOTS =
+  'Нет свободного слота Rapid Clone в Resemble. Освободите слот или подключите дополнительный в кабинете провайдера, затем повторите создание на этой записи.';
 
 @Injectable()
 export class ResembleService implements TtsProvider {
@@ -425,7 +427,13 @@ export class ResembleService implements TtsProvider {
         this.logger.warn(
           `Resemble POST /voices ответил ${res.status}: ${body.slice(0, 300)}`,
         );
-        return { ok: false, reason: `Resemble ${res.status}` };
+        return {
+          ok: false,
+          reason:
+            res.status === 400 && /no rapid clone slots remaining/i.test(body)
+              ? RESEMBLE_NO_CLONE_SLOTS
+              : `Resemble ${res.status}`,
+        };
       }
       // Защитный разбор — тот же принцип, что у voices() выше: точный
       // конверт ответа не проверен реальным вызовом (нет ключа в

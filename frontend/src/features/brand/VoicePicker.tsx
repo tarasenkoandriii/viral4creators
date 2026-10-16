@@ -21,6 +21,7 @@ import {
 } from '../../components/ui';
 import {
   cloneUserVoice,
+  retryUserVoice,
   deleteUserVoice,
   errorMessage,
   getVoices,
@@ -843,6 +844,28 @@ export function MyVoicesSection({
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
+                {v.retryAllowed && (
+                  <Button
+                    size="sm"
+                    disabled={disabled || submitting}
+                    loading={submitting}
+                    onClick={() => {
+                      if (submitting) return;
+                      setSubmitting(true);
+                      setError(null);
+                      void retryUserVoice(v.id)
+                        .then((next) =>
+                          setVoices((prev) =>
+                            prev.map((old) => (old.id === next.id ? next : old))
+                          )
+                        )
+                        .catch((e) => setError(errorMessage(e)))
+                        .finally(() => setSubmitting(false));
+                    }}
+                  >
+                    {t.submitButton}
+                  </Button>
+                )}
                 {v.status === 'ready' && v.resembleVoiceId && (
                   <Button
                     variant="outline"
