@@ -183,7 +183,13 @@ export class HedraClientService {
     form.append(
       'file',
       new Blob([Buffer.concat(chunks)], { type: mime }),
-      kind === 'image' ? 'portrait.jpg' : 'voice.mp3',
+      kind === 'image'
+        ? mime === 'image/png'
+          ? 'portrait.png'
+          : 'portrait.jpg'
+        : mime === 'audio/wav' || mime === 'audio/x-wav'
+          ? 'voice.wav'
+          : 'voice.mp3',
     );
     const data = await this.withRetry(
       () =>

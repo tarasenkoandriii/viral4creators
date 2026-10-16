@@ -279,7 +279,7 @@ describe('Hedra media transport', () => {
     fetchMock
       .mockResolvedValueOnce(
         new Response(new Uint8Array([1, 2]), {
-          headers: { 'content-type': 'image/jpeg' },
+          headers: { 'content-type': 'audio/wav' },
         }),
       )
       .mockResolvedValueOnce(
@@ -287,8 +287,8 @@ describe('Hedra media transport', () => {
       );
     await expect(
       new HedraClientService().uploadMedia(
-        'https://store.public.blob.vercel-storage.com/virtual-studio/studio/imports/portrait.jpg',
-        'image',
+        'https://store.public.blob.vercel-storage.com/virtual-studio/studio/imports/voice.wav',
+        'audio',
       ),
     ).resolves.toBe('https://uploads.hedra.com/portrait');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
@@ -296,6 +296,9 @@ describe('Hedra media transport', () => {
     expect(init.body).toBeInstanceOf(FormData);
     expect(init.headers).toEqual({ Authorization: 'Key ключ' });
     expect((init.body as FormData).get('file')).toBeInstanceOf(Blob);
+    expect(((init.body as FormData).get('file') as File).name).toBe(
+      'voice.wav',
+    );
   });
   it('rejects external sources before fetching', async () => {
     await expect(
