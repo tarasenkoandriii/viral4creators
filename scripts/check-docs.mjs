@@ -894,6 +894,8 @@ function checkGuideSeams() {
   // с причинами — молчаливое исключение по маске рано или поздно
   // накроет настоящий новый старт рендера.
   const RENDER_STARTS_EXEMPT = {
+    "backend/src/modules/ui-snapshot/greeting-avatar-benchmark.service.ts":
+      "operator-only platform-paid benchmark, fixed fixture project, <=12s audio and $2 balance preflight; no customer render access",
     // Операторские пути: рендер запускает человек из админки, за свои
     // деньги продукта и по своему решению. Стена — про бесплатный тариф
     // пользователя, к оператору она отношения не имеет.
