@@ -26,6 +26,7 @@ type Reference = {
     music: string;
     ownProductionPlan: string;
     limitations: string;
+    timelineWarnings?: string;
   };
 };
 const time = (seconds: number) =>
@@ -77,7 +78,7 @@ export function StoryReferencesPanel() {
       </p>
       <p className="text-sm">
         Разбор оплачивается отдельно от бюджета подарка по текущей модели
-        Gemini. До двух новых разборов в сутки UTC; повтор сохранённой ссылки
+        Gemini. До трёх новых разборов в сутки UTC; повтор сохранённой ссылки
         возвращает прежний результат.
       </p>
       <label className="block">
@@ -126,6 +127,7 @@ export function StoryReferencesPanel() {
             {(
               {
                 complete: 'Разбор готов',
+                partial: 'Частичный разбор · проверьте таймкоды',
                 running: 'Выполняется',
                 unavailable: 'Видео не удалось просмотреть',
                 unknown: 'Результат не подтверждён',
@@ -145,6 +147,14 @@ export function StoryReferencesPanel() {
           {r.assessment?.observed && (
             <>
               <p>{r.assessment.summary}</p>
+              {r.assessment.timelineWarnings && (
+                <p
+                  role="status"
+                  className="rounded-lg border border-amber-500 p-2"
+                >
+                  {r.assessment.timelineWarnings}
+                </p>
+              )}
               <p className="text-sm">
                 {r.assessment.audioObserved
                   ? 'Модель сообщает, что звук доступен; выводы требуют просмотра взрослым.'

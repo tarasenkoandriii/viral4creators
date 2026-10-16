@@ -37,6 +37,7 @@ export interface StoryReferenceAssessment {
   music: string;
   ownProductionPlan: string;
   limitations: string;
+  timelineWarnings?: string;
 }
 export interface StoryReferenceRecord {
   id: string;
@@ -45,7 +46,8 @@ export interface StoryReferenceRecord {
   channel: string;
   durationSeconds: number;
   model: string;
-  status: 'running' | 'complete' | 'unavailable' | 'unknown';
+  status: 'running' | 'complete' | 'partial' | 'unavailable' | 'unknown';
+  pendingAssessment?: string;
   startedAt: string;
   completedAt?: string;
   assessment?: StoryReferenceAssessment;
@@ -58,6 +60,7 @@ export function parseStoryReference(
   duration: number,
 ): StoryReferenceAssessment {
   const a = JSON.parse(text) as StoryReferenceAssessment;
+  if (a && typeof a === 'object') delete a.timelineWarnings;
   if (
     !a ||
     typeof a.observed !== 'boolean' ||
@@ -82,22 +85,34 @@ export function parseStoryReference(
     (a.observed && !a.scenes.length)
   )
     throw new Error('Invalid scenes');
-  let previous = 0;
-  for (const s of a.scenes) {
+  const valid: StoryReferenceAssessment['scenes'] = [];
+  let discarded = 0;
+  for (const scene of a.scenes) {
     if (
-      !Number.isFinite(s.start) ||
-      !Number.isFinite(s.end) ||
-      s.start < previous ||
-      s.end <= s.start ||
-      s.end > duration + 0.5 ||
-      typeof s.observation !== 'string' ||
-      s.observation.length > 1000 ||
-      !['low', 'medium', 'high'].includes(s.confidence)
-    )
-      throw new Error('Invalid scene boundaries');
-    previous = s.end;
+      !Number.isFinite(scene.start) ||
+      !Number.isFinite(scene.end) ||
+      scene.start < 0 ||
+      scene.end <= scene.start ||
+      scene.end > duration ||
+      typeof scene.observation !== 'string' ||
+      scene.observation.length > 1000 ||
+      !['low', 'medium', 'high'].includes(scene.confidence)
+    ) {
+      discarded++;
+      continue;
+    }
+    valid.push(scene);
   }
+  if (a.observed && !valid.length) throw new Error('Invalid scene boundaries');
   if (!a.observed && a.scenes.length) throw new Error('Unobserved scenes');
+  valid.sort((x, y) => x.start - y.start);
+  const overlapping = valid.some(
+    (scene, i) => i > 0 && scene.start < valid[i - 1].end,
+  );
+  a.scenes = valid;
+  if (discarded || overlapping)
+    a.timelineWarnings = `${a.limitations} Проверка таймкодов: отброшено ${discarded} недопустимых сегментов.${overlapping ? ' Некоторые наблюдения пересекаются по времени; границы не исправлялись и требуют сверки.' : ''}`;
+  if (a.timelineWarnings) a.limitations += ` ${a.timelineWarnings}`;
   return a;
 }
 const TEXT_FIELDS = [
@@ -143,17 +158,20 @@ export class StoryReferencesService {
     private readonly usage: AiUsageService,
   ) {}
   private decode(value: string): StoryReferenceRecord {
-    const r = JSON.parse(value) as StoryReferenceRecord;
+    const { pendingAssessment: _pending, ...view } = JSON.parse(
+      value,
+    ) as StoryReferenceRecord;
     if (
-      r.status === 'running' &&
-      Date.now() - Date.parse(r.startedAt) > 5 * 60_000
-    )
+      view.status === 'running' &&
+      Date.now() - Date.parse(view.startedAt) > 5 * 60_000
+    ) {
       return {
-        ...r,
+        ...view,
         status: 'unknown',
         error: 'Ожидание истекло; автоматический платный повтор отключён.',
       };
-    return r;
+    }
+    return view;
   }
   async list(userId: string) {
     const rows = await this.prisma.platformSetting.findMany({
@@ -173,6 +191,31 @@ export class StoryReferencesService {
     const previous = await this.prisma.platformSetting.findUnique({
       where: { key },
     });
+    if (previous && !retry) {
+      const saved = JSON.parse(previous.value) as StoryReferenceRecord;
+      if (saved.pendingAssessment && saved.status === 'unknown') {
+        try {
+          saved.assessment = parseStoryReference(
+            saved.pendingAssessment,
+            saved.durationSeconds,
+          );
+          saved.status = saved.assessment.observed
+            ? saved.assessment.timelineWarnings
+              ? 'partial'
+              : 'complete'
+            : 'unavailable';
+          delete saved.pendingAssessment;
+          delete saved.error;
+          await this.prisma.platformSetting.update({
+            where: { key },
+            data: { value: JSON.stringify(saved), updatedBy: userId },
+          });
+          return this.decode(JSON.stringify(saved));
+        } catch {
+          /* Keep the candidate for a future validator fix; no provider call. */
+        }
+      }
+    }
     if (
       previous &&
       (!retry ||
@@ -244,7 +287,7 @@ export class StoryReferencesService {
     };
     // Database uniqueness owns both daily quota and call claim across instances.
     let slot = false;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 3; i++) {
       try {
         await this.prisma.platformSetting.create({
           data: {
@@ -261,7 +304,7 @@ export class StoryReferencesService {
     }
     if (!slot)
       throw new BadRequestException(
-        'Лимит пилота: два новых разбора в сутки UTC. Повтор сохранённого ролика бесплатный.',
+        'Лимит пилота: три новых разбора в сутки UTC. Повтор сохранённого ролика бесплатный.',
       );
     if (previous) {
       const claim = await this.prisma.platformSetting.updateMany({
@@ -315,8 +358,14 @@ export class StoryReferencesService {
       });
       const output = readGeminiOutput(response);
       if (output.truncated) throw new Error('Truncated assessment');
+      if (output.text.length <= 65536) r.pendingAssessment = output.text;
       r.assessment = parseStoryReference(output.text, duration);
-      r.status = r.assessment.observed ? 'complete' : 'unavailable';
+      delete r.pendingAssessment;
+      r.status = r.assessment.observed
+        ? r.assessment.timelineWarnings
+          ? 'partial'
+          : 'complete'
+        : 'unavailable';
     } catch (e) {
       const status =
         (e as { status?: number; code?: number })?.status ??
@@ -343,6 +392,6 @@ export class StoryReferencesService {
       where: { key },
       data: { value: JSON.stringify(r), updatedBy: userId },
     });
-    return r;
+    return this.decode(JSON.stringify(r));
   }
 }

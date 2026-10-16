@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-/** Original pilot story; no third-party edition, translation or family data. */
+/** Versioned story catalogue: original pilot, labelled adaptations and source-verified classics. */
 export const STORY_VOICE = 'a9fc5a41'; // Approved Nova: never substitute silently.
 const ORIGINAL_STORY = [
   {

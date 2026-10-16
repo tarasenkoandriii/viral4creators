@@ -44,7 +44,9 @@ describe('Short catalogue budget and speech scoring', () => {
   it('keeps classic editions short and priced, while detecting missing narration', () => {
     expect(STORY_CATALOG.some((s) => s.kind === 'classic')).toBe(true);
     for (const story of STORY_CATALOG.filter((s) => s.kind === 'classic')) {
-      expect(story.sourceEdition?.textSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(story.sourceEdition?.textSha256).toBe(
+        '39207ca8c60f88adf5cc9085cf2677fb82dd6da3c7ad41715ea17f7bf3cdaeb7',
+      );
       expect(story.chapters.at(-1)?.text).toContain('вытащили репку!');
       expect(storyText(story.id).length).toBeLessThan(1800);
       expect(story.targetSeconds).toBeLessThanOrEqual(90);

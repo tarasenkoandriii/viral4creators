@@ -93,9 +93,10 @@ describe('Story YouTube reference boundaries', () => {
         { recordGemini: jest.fn().mockResolvedValue(undefined) } as never,
       ),
       generateContent,
+      rows,
     };
   }
-  it('rejects impossible, overlapping and unobserved scenes', () => {
+  it('rejects impossible scenes and flags overlapping observations', () => {
     expect(
       parseStoryReference(JSON.stringify(assessment), 60).scenes,
     ).toHaveLength(1);
@@ -108,7 +109,7 @@ describe('Story YouTube reference boundaries', () => {
         60,
       ),
     ).toThrow();
-    expect(() =>
+    expect(
       parseStoryReference(
         JSON.stringify({
           ...assessment,
@@ -118,8 +119,8 @@ describe('Story YouTube reference boundaries', () => {
           ],
         }),
         60,
-      ),
-    ).toThrow();
+      ).limitations,
+    ).toContain('пересекаются');
     expect(() =>
       parseStoryReference(
         JSON.stringify({ ...assessment, observed: false }),
@@ -147,9 +148,24 @@ describe('Story YouTube reference boundaries', () => {
     expect(generateContent).toHaveBeenCalledTimes(1);
   });
   it('isolates saved references by owner', async () => {
-    const { service } = setup();
+    const { service, rows, generateContent } = setup();
     await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM');
     expect(await service.list('someone-else')).toEqual([]);
+    const entry = [...rows.values()].find((row) =>
+      row.key.startsWith('story-ref:v1:'),
+    )!;
+    const saved = JSON.parse(entry.value);
+    saved.status = 'unknown';
+    saved.pendingAssessment = JSON.stringify(assessment);
+    delete saved.assessment;
+    rows.set(entry.key, { ...entry, value: JSON.stringify(saved) });
+    expect(JSON.stringify(await service.list('owner'))).not.toContain(
+      'pendingAssessment',
+    );
+    expect(
+      (await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM')).status,
+    ).toBe('complete');
+    expect(generateContent).toHaveBeenCalledTimes(1);
   });
   it('rejects long videos before model billing', async () => {
     const { service, generateContent } = setup();
@@ -194,13 +210,14 @@ describe('Story YouTube reference boundaries', () => {
       (await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM')).status,
     ).toBe('unavailable');
   });
-  it('caps new paid calls at two a day', async () => {
+  it('caps new paid calls at three a day', async () => {
     const { service, generateContent } = setup();
     await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM');
     await service.analyze('owner', 'https://youtu.be/tOMZ_kKE2Y0');
+    await service.analyze('owner', 'https://youtu.be/_vOhhPLk2ss');
     await expect(
-      service.analyze('owner', 'https://youtu.be/_vOhhPLk2ss'),
-    ).rejects.toThrow('два новых');
-    expect(generateContent).toHaveBeenCalledTimes(2);
+      service.analyze('owner', 'https://youtu.be/Z7FgMniveRI'),
+    ).rejects.toThrow('три новых');
+    expect(generateContent).toHaveBeenCalledTimes(3);
   });
 });
