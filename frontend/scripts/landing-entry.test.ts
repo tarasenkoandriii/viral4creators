@@ -19,12 +19,14 @@ import {
   ENTRY_PROJECT_TYPES,
   ENTRY_SECTION_ROUTES,
   LANDING_ENTRIES,
+  PROJECT_NEW_ROUTE,
   entryHashRoute,
   entryLaunchUrl,
   projectTypeFromSearch,
   siteUrlFromSearch,
 } from '../src/features/projects/landing-entry';
-import { parseRoute } from '../src/lib/router';
+import { readFileSync } from 'node:fs';
+import { parseRoute, routes } from '../src/lib/router';
 
 let passed = 0;
 function it(name: string, fn: () => void): void {
@@ -124,6 +126,24 @@ it('каждая метка — либо тип проекта, либо раз�
       route.name,
       hasSection ? entry : 'project-new',
       `${entry}: ${JSON.stringify(route)}`
+    );
+  }
+});
+
+it('литералы маршрутов меток совпадают с routes из lib/router', () => {
+  assert.equal(PROJECT_NEW_ROUTE, routes.projectNew());
+  assert.equal(ENTRY_SECTION_ROUTES.stories, routes.product('stories'));
+});
+
+it('landing-entry.ts без React: его исполняет проверка лендинга без зависимостей frontend', () => {
+  const src = readFileSync(
+    new URL('../src/features/projects/landing-entry.ts', import.meta.url),
+    'utf8'
+  );
+  for (const m of src.matchAll(/from\s+'([^']+)'/g)) {
+    assert.ok(
+      m[1].startsWith('.') && !m[1].endsWith('/router'),
+      `landing-entry.ts импортирует ${m[1]}`
     );
   }
 });

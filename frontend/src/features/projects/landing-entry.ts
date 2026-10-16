@@ -27,7 +27,6 @@ import {
   type GreetingOccasion,
   type ProjectType,
 } from '../../types/project';
-import { routes } from '../../lib/router';
 
 /**
  * Закрытый список меток источника — по одной на лендинг: главная
@@ -57,9 +56,15 @@ export type LandingEntry = (typeof LANDING_ENTRIES)[number];
  * знать одно и то же, и новая «разделовая» метка не должна молча получить
  * тип проекта по умолчанию.
  */
+// Литералы, а не `routes.*` из `lib/router`: модуль чистый (без React),
+// его исполняет и проверка лендинга (`landing/scripts/telegram-entry.test.ts`),
+// у которой нет зависимостей frontend. Совпадение с `routes` держит
+// `scripts/landing-entry.test.ts`.
 export const ENTRY_SECTION_ROUTES = {
-  stories: routes.product('stories'),
+  stories: '/stories',
 } as const satisfies Partial<Record<LandingEntry, string>>;
+/** Форма нового проекта (`routes.projectNew()`). */
+export const PROJECT_NEW_ROUTE = '/projects/new';
 type SectionEntry = keyof typeof ENTRY_SECTION_ROUTES;
 /** Метки, ведущие в форму нового проекта. */
 export type ProjectEntry = Exclude<LandingEntry, SectionEntry>;
@@ -75,7 +80,7 @@ function isSectionEntry(entry: LandingEntry): entry is SectionEntry {
 export function entryHashRoute(entry: LandingEntry): string {
   return isSectionEntry(entry)
     ? ENTRY_SECTION_ROUTES[entry]
-    : routes.projectNew();
+    : PROJECT_NEW_ROUTE;
 }
 
 export function isLandingEntry(value: unknown): value is LandingEntry {
