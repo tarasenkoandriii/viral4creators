@@ -17,9 +17,14 @@
 import assert from 'node:assert/strict';
 import {
   ENTRY_PROJECT_TYPES,
+  ENTRY_SECTION_ROUTES,
+  LANDING_ENTRIES,
+  entryHashRoute,
+  entryLaunchUrl,
   projectTypeFromSearch,
   siteUrlFromSearch,
 } from '../src/features/projects/landing-entry';
+import { parseRoute } from '../src/lib/router';
 
 let passed = 0;
 function it(name: string, fn: () => void): void {
@@ -81,6 +86,45 @@ it('каждая метка в таблице ведёт на существую
   // вернула бы мастер на умолчание.
   for (const [entry, type] of Object.entries(ENTRY_PROJECT_TYPES)) {
     assert.equal(projectTypeFromSearch(`?entry=${entry}`), type);
+  }
+});
+
+it('метка Story‑Tales (stories) не выбирает тип проекта', () => {
+  // Р-STL-10: мастера сказки нет, ссылка лендинга ведёт в раздел
+  // `#/stories`. Если форму всё-таки открыли с этой меткой — умолчание,
+  // а не поздравление или товарный ролик под видом сказки.
+  assert.equal(projectTypeFromSearch('?entry=stories'), null);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(ENTRY_PROJECT_TYPES, 'stories'),
+    false
+  );
+});
+
+it('метка stories открывает информационный раздел TMA #/stories', () => {
+  assert.equal(entryHashRoute('stories'), '/stories');
+  assert.deepEqual(parseRoute(`#${entryHashRoute('stories')}`), {
+    name: 'stories',
+  });
+  assert.equal(entryLaunchUrl('/', '', 'stories'), '/?entry=stories#/stories');
+});
+
+it('каждая метка — либо тип проекта, либо раздел, ровно одно', () => {
+  for (const entry of LANDING_ENTRIES) {
+    const hasType = Object.prototype.hasOwnProperty.call(
+      ENTRY_PROJECT_TYPES,
+      entry
+    );
+    const hasSection = Object.prototype.hasOwnProperty.call(
+      ENTRY_SECTION_ROUTES,
+      entry
+    );
+    assert.notEqual(hasType, hasSection, entry);
+    const route = parseRoute(`#${entryHashRoute(entry)}`);
+    assert.equal(
+      route.name,
+      hasSection ? entry : 'project-new',
+      `${entry}: ${JSON.stringify(route)}`
+    );
   }
 });
 

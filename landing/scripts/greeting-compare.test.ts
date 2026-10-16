@@ -150,9 +150,11 @@ function numberOf(src: string, re: RegExp, what: string): number {
   assert.ok(m, `в коде бэкенда не нашлось: ${what}`);
   return Number(m[1]);
 }
+// Константа переехала в общий модуль (её читает и постпродакшн) — тест
+// смотрел в старое место и падал на чистом main 0be8251 (16.10.2026).
 const DURATION = numberOf(
-  backend('modules/greeting-video/greeting-video.service.ts'),
-  /const GREETING_VIDEO_DURATION_SECONDS = (\d+);/,
+  backend('common/greeting-duration.ts'),
+  /export const GREETING_VIDEO_DURATION_SECONDS = (\d+);/,
   'GREETING_VIDEO_DURATION_SECONDS',
 );
 const SCENES = numberOf(

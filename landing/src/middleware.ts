@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from './lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from './lib/tutorial-host';
+import {
+  STORIES_REFERRER_POLICY,
+  STORIES_ROBOTS,
+  STORIES_SITE_URL,
+  isStoriesHost,
+  isStoriesPath,
+} from './lib/stories-host';
 import { SITE_URL } from './lib/content';
 import { isReachableOrigin } from './lib/site-origin';
 
@@ -68,7 +75,8 @@ export const config = {
  *
  * Таблица, а не две одинаковые ветки: поддоменов стало два
  * (поздравления и обучалки по сайту заказчика), правило для них ОДНО, и
- * записанное дважды оно разъезжается на третьем. `slug` — путь той же
+ * записанное дважды оно разъезжается на третьем. Третий — Story‑Tales
+ * (16.10.2026) — встал строкой, как и задумано. `slug` — путь той же
  * страницы на главном домене; именно он схлопывается в корень
  * поддомена и с него же уводит редирект в обратную сторону.
  */
@@ -79,9 +87,40 @@ const SUBDOMAIN_SITES: ReadonlyArray<{
 }> = [
   { matches: isGreetingHost, siteUrl: GREETING_SITE_URL, slug: 'greetings' },
   { matches: isTutorialHost, siteUrl: TUTORIAL_SITE_URL, slug: 'site-tutorial' },
+  // Story‑Tales (решение 16.10, вечер): то же правило, что у соседей, но
+  // страница НИКОГДА не индексируется — см. `withStoriesHeaders` ниже.
+  { matches: isStoriesHost, siteUrl: STORIES_SITE_URL, slug: 'stories' },
 ];
 
+/**
+ * Story‑Tales: `X-Robots-Tag` и `Referrer-Policy` на КАЖДОМ ответе,
+ * который рождает middleware для этой страницы — 308 с
+ * `/<locale>/stories` на поддомен, 308 с `/<locale>/stories` поддомена в
+ * `/<locale>`, rewrite корня поддомена, переход на главный домен.
+ *
+ * Тот же заголовок ставит и `next.config.js` (`headers()`), но правила
+ * конфига не обязаны доезжать до ответов, созданных middleware: редирект
+ * отсюда — отдельный ответ, и полагаться на то, что платформа допишет в
+ * него заголовки конфига, значит проверять это на проде. Здесь он
+ * ставится явно; на rewrite заголовки middleware переходят в итоговый
+ * ответ страницы. Статику (`/stories-media/*`) middleware не видит
+ * (matcher исключает пути с точкой) — она только за `next.config.js`.
+ */
+function withStoriesHeaders(response: NextResponse): NextResponse {
+  response.headers.set('X-Robots-Tag', STORIES_ROBOTS);
+  response.headers.set('Referrer-Policy', STORIES_REFERRER_POLICY);
+  return response;
+}
+
 export function middleware(request: NextRequest) {
+  const response = route(request);
+  const host = request.headers.get('host');
+  return isStoriesHost(host) || isStoriesPath(request.nextUrl.pathname, locales)
+    ? withStoriesHeaders(response)
+    : response;
+}
+
+function route(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host');
   const site = SUBDOMAIN_SITES.find((candidate) => candidate.matches(host));

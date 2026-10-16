@@ -27,15 +27,56 @@ import {
   type GreetingOccasion,
   type ProjectType,
 } from '../../types/project';
+import { routes } from '../../lib/router';
 
 /**
  * Закрытый список меток источника — по одной на лендинг: главная
- * (рекламный ролик), поздравления, обучалка по сайту. Тот же список
- * разбирает `startapp=e_<метка>` в Telegram (`lib/start-param.ts`) и
- * собирает лендинг (`landing/src/lib/telegram-entry.ts`).
+ * (рекламный ролик), поздравления, обучалка по сайту и Story‑Tales. Тот
+ * же список разбирает `startapp=e_<метка>` в Telegram
+ * (`lib/start-param.ts`) и собирает лендинг
+ * (`landing/src/lib/telegram-entry.ts`).
+ *
+ * `stories` (лендинг Story‑Tales, решение Р-STL-10
+ * `doc/STORY-TALES-LANDING-ADAPTED.md`) — первая метка, которая ведёт НЕ
+ * в форму нового проекта: мастера сказки ещё нет, и до его приёмки
+ * переход обязан открывать честный информационный раздел `#/stories`, а
+ * не поздравление или товарный ролик под видом сказки.
  */
-export const LANDING_ENTRIES = ['ads', 'greetings', 'site-tutorial'] as const;
+export const LANDING_ENTRIES = [
+  'ads',
+  'greetings',
+  'site-tutorial',
+  'stories',
+] as const;
 export type LandingEntry = (typeof LANDING_ENTRIES)[number];
+
+/**
+ * Метки, которые открывают раздел TMA, а не форму проекта. Отдельная
+ * таблица, а не `if (entry === 'stories')` в двух местах: маршрут запуска
+ * (`entryLaunchUrl`) и предвыбор типа (`projectTypeFromSearch`) обязаны
+ * знать одно и то же, и новая «разделовая» метка не должна молча получить
+ * тип проекта по умолчанию.
+ */
+export const ENTRY_SECTION_ROUTES = {
+  stories: routes.product('stories'),
+} as const satisfies Partial<Record<LandingEntry, string>>;
+type SectionEntry = keyof typeof ENTRY_SECTION_ROUTES;
+/** Метки, ведущие в форму нового проекта. */
+export type ProjectEntry = Exclude<LandingEntry, SectionEntry>;
+
+function isSectionEntry(entry: LandingEntry): entry is SectionEntry {
+  return Object.prototype.hasOwnProperty.call(ENTRY_SECTION_ROUTES, entry);
+}
+
+/**
+ * Hash-маршрут (без `#`), который открывает метка: раздел TMA для
+ * `ENTRY_SECTION_ROUTES`, иначе — форма нового проекта.
+ */
+export function entryHashRoute(entry: LandingEntry): string {
+  return isSectionEntry(entry)
+    ? ENTRY_SECTION_ROUTES[entry]
+    : routes.projectNew();
+}
 
 export function isLandingEntry(value: unknown): value is LandingEntry {
   return (
@@ -53,7 +94,7 @@ export function isLandingEntry(value: unknown): value is LandingEntry {
  * нужна, чтобы вход из Telegram (`startapp=e_ads`) вёл туда же, куда
  * кнопка главной в браузере, — в форму нового проекта, а не в список.
  */
-export const ENTRY_PROJECT_TYPES: Readonly<Record<LandingEntry, ProjectType>> =
+export const ENTRY_PROJECT_TYPES: Readonly<Record<ProjectEntry, ProjectType>> =
   {
     ads: 'SINGLE',
     greetings: 'GREETING_VIDEO',
@@ -84,7 +125,11 @@ export function occasionFromSearch(search: string): GreetingOccasion | null {
 export function projectTypeFromSearch(search: string): ProjectType | null {
   if (occasionFromSearch(search)) return 'GREETING_VIDEO';
   const entry = new URLSearchParams(search).get('entry');
-  return isLandingEntry(entry) ? ENTRY_PROJECT_TYPES[entry] : null;
+  // Метка раздела (`stories`) типа проекта не задаёт: такая ссылка вообще
+  // не ведёт в форму, а если форму открыли руками — остаётся умолчание.
+  return isLandingEntry(entry) && !isSectionEntry(entry)
+    ? ENTRY_PROJECT_TYPES[entry]
+    : null;
 }
 
 /**
@@ -92,7 +137,8 @@ export function projectTypeFromSearch(search: string): ProjectType | null {
  * `startapp=e_<метка>`: ровно тот, что лендинг даёт браузерной кнопке
  * (`?entry=<метка>#/projects/new`), — дальше форма разбирает его тем же
  * `projectTypeFromSearch`, и двух путей в один сценарий не появляется.
- * Прочие query-параметры адреса запуска сохраняются.
+ * Для метки раздела (`stories`) — `?entry=stories#/stories`: раздел TMA,
+ * а не форма. Прочие query-параметры адреса запуска сохраняются.
  */
 export function entryLaunchUrl(
   pathname: string,
@@ -101,7 +147,7 @@ export function entryLaunchUrl(
 ): string {
   const params = new URLSearchParams(search);
   params.set('entry', entry);
-  return `${pathname}?${params.toString()}#/projects/new`;
+  return `${pathname}?${params.toString()}#${entryHashRoute(entry)}`;
 }
 
 /**

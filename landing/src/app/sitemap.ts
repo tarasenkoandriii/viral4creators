@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { locales } from '../lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
+import { isStoriesHost } from '../lib/stories-host';
 import { listAllBlogPosts } from '../lib/blog-api';
 import { SITE_URL } from '../lib/content';
 
@@ -66,6 +67,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     return locales.map((locale) => ({
       url: `${TUTORIAL_SITE_URL}/${locale}`,
     }));
+  }
+  // Третий — Story‑Tales — наоборот: страница не индексируется никогда
+  // (ТЗ `doc/STORY-TALES-LANDING-SPEC.md` §12), и в карте сайта ей не
+  // место ни на поддомене, ни на главном домене ниже. Пустая карта, а не
+  // карта главного домена: чужие адреса здесь были бы той же ошибкой, что
+  // описана выше. Держит `scripts/stories-noindex.test.ts`.
+  if (isStoriesHost(host)) {
+    return [];
   }
 
   const entries: MetadataRoute.Sitemap = [];

@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import {
+  ENTRY_HASH_ROUTES,
   LANDING_ENTRIES,
   START_PARAM_ALPHABET,
   START_PARAM_MAX_LENGTH,
@@ -84,6 +85,14 @@ async function main() {
   assert.equal(browserEntryLink('ads', TMA), `${TMA}?entry=ads#/projects/new`);
   assert.equal(browserEntryLink('greetings', TMA, 'abcd2345'), `${TMA}?entry=greetings&ref=${CODE}#/projects/new`);
   assert.equal(browserEntryLink('greetings', TMA, '<x>'), `${TMA}?entry=greetings#/projects/new`);
+  // Р-STL-10: Story‑Tales — информационный раздел TMA, а не форма проекта
+  // (мастера сказки нет). В адресе — только метка, никаких данных семьи.
+  assert.equal(browserEntryLink('stories', TMA), `${TMA}?entry=stories#/stories`);
+  assert.equal(entryStartParam('stories'), 'e_stories');
+  assert.equal(telegramEntryLink('stories', BOT), 'https://t.me/v4c_bot/app?startapp=e_stories');
+  for (const entry of LANDING_ENTRIES) {
+    assert.equal(new URL(browserEntryLink(entry, TMA)).searchParams.toString(), `entry=${entry}`, entry);
+  }
 
   // ── Словари ──────────────────────────────────────────────────────────
   for (const locale of locales) {
@@ -107,7 +116,17 @@ async function main() {
         assert.deepEqual(fe.parseStartParam(url.searchParams.get('startapp')!), { entry, referralCode: code }, url.href);
       }
     }
-    console.log('telegram-entry: строки лендинга разобраны парсером frontend');
+    // Сверка зеркала: тот же закрытый список и тот же маршрут каждой
+    // метки, что во frontend. Иначе браузерная кнопка лендинга и вход из
+    // Telegram (frontend переписывает адрес сам) разъехались бы молча.
+    const feEntry = (await import(
+      pathToFileURL(path.resolve(here, '../../frontend/src/features/projects/landing-entry.ts')).href
+    )) as { LANDING_ENTRIES: readonly string[]; entryHashRoute: (entry: string) => string };
+    assert.deepEqual([...LANDING_ENTRIES], [...feEntry.LANDING_ENTRIES], 'LANDING_ENTRIES лендинга ≠ frontend');
+    for (const entry of LANDING_ENTRIES) {
+      assert.equal(ENTRY_HASH_ROUTES[entry], feEntry.entryHashRoute(entry), `маршрут метки ${entry}`);
+    }
+    console.log('telegram-entry: строки лендинга разобраны парсером frontend, списки и маршруты меток совпадают');
   } else {
     console.log('telegram-entry: frontend рядом нет — сквозная проверка пропущена');
   }

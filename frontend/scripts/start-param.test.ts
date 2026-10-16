@@ -52,6 +52,10 @@ it('сценарий без кода', () => {
     entry: 'ads',
     referralCode: null,
   });
+  assert.deepEqual(parseStartParam('e_stories'), {
+    entry: 'stories',
+    referralCode: null,
+  });
 });
 
 it('сценарий и код приглашения в одном параметре', () => {
@@ -195,13 +199,19 @@ it('источник: hash запуска первым, SDK — запасной
 it('сценарий из startapp ведёт туда же, куда ?entry= того же лендинга', () => {
   for (const entry of LANDING_ENTRIES) {
     const url = entryLaunchUrl('/', '', entry);
-    assert.equal(url, `/?entry=${entry}#/projects/new`);
     const search = url.slice(url.indexOf('?'), url.indexOf('#'));
     assert.equal(
       projectTypeFromSearch(search),
       projectTypeFromSearch(`?entry=${entry}`)
     );
-    assert.notEqual(projectTypeFromSearch(search), null, entry);
+    if (entry === 'stories') {
+      // Р-STL-10: раздел TMA, а не форма проекта — мастера сказки нет.
+      assert.equal(url, '/?entry=stories#/stories');
+      assert.equal(projectTypeFromSearch(search), null, entry);
+    } else {
+      assert.equal(url, `/?entry=${entry}#/projects/new`);
+      assert.notEqual(projectTypeFromSearch(search), null, entry);
+    }
   }
   // Прочие параметры адреса запуска не теряются.
   assert.equal(
@@ -285,6 +295,22 @@ it('Telegram, e_site-tutorial: мастер обучалки', () => {
     '/?entry=site-tutorial#/projects/new'
   );
   assert.equal(storedReferralCode(), null);
+});
+
+it('Telegram, e_stories: информационный раздел #/stories, не мастер', () => {
+  assert.equal(
+    launch('#tgWebAppData=x&tgWebAppStartParam=e_stories'),
+    '/?entry=stories#/stories'
+  );
+  assert.equal(storedReferralCode(), null);
+});
+
+it('Telegram, e_stories__r_<код>: раздел и код приглашения', () => {
+  assert.equal(
+    launch(`#tgWebAppData=x&tgWebAppStartParam=e_stories__r_${CODE}`),
+    '/?entry=stories#/stories'
+  );
+  assert.equal(storedReferralCode(), CODE);
 });
 
 it('Telegram, параметр только в initDataUnsafe.start_param', () => {

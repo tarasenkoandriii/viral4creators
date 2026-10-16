@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { SITE_URL } from '../lib/content';
 import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
+import { isStoriesHost } from '../lib/stories-host';
 
 /**
  * `robots.txt` (TODO §II.5) — ссылки на карты сайта. Конвенция Next App
@@ -54,6 +55,15 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
     return {
       rules: { userAgent: '*', allow: '/', disallow: DISALLOWED_PATHS },
       sitemap: [`${TUTORIAL_SITE_URL}/sitemap.xml`],
+    };
+  }
+  // Story‑Tales (§12 ТЗ): обход НЕ закрыт — робот должен дойти до
+  // страницы и прочитать её `noindex` (meta + `X-Robots-Tag`); `Disallow`
+  // спрятал бы от него сам запрет, и адрес мог бы попасть в выдачу по
+  // внешним ссылкам. Карты сайта у поддомена нет (`sitemap.ts`).
+  if (isStoriesHost(host)) {
+    return {
+      rules: { userAgent: '*', allow: '/', disallow: DISALLOWED_PATHS },
     };
   }
   return {

@@ -1,7 +1,7 @@
 /**
  * Вход с лендинга в нужный сценарий мини-аппа — и в браузере, и в Telegram.
  *
- * У каждого из трёх лендингов две дороги в продукт:
+ * У каждого из лендингов две дороги в продукт:
  *
  *  - **браузер** — `TMA_URL?entry=<сценарий>#/projects/new`: обычный
  *    фронтенд, форма нового проекта читает `?entry=`
@@ -26,8 +26,25 @@
  */
 
 /** Закрытый список — тот же, что `LANDING_ENTRIES` во frontend. */
-export const LANDING_ENTRIES = ['ads', 'greetings', 'site-tutorial'] as const;
+export const LANDING_ENTRIES = ['ads', 'greetings', 'site-tutorial', 'stories'] as const;
 export type LandingEntry = (typeof LANDING_ENTRIES)[number];
+
+/**
+ * Hash-маршрут TMA, который открывает метка (зеркало `entryHashRoute` во
+ * `frontend/src/features/projects/landing-entry.ts`; равенство держит
+ * `scripts/telegram-entry.test.ts`).
+ *
+ * `stories` — лендинг Story‑Tales (Р-STL-10,
+ * `doc/STORY-TALES-LANDING-ADAPTED.md`): мастера сказки ещё нет, поэтому
+ * метка ведёт в информационный раздел `#/stories`, а не в форму нового
+ * проекта. Остальные — в форму, как и раньше.
+ */
+export const ENTRY_HASH_ROUTES: Readonly<Record<LandingEntry, string>> = {
+  ads: '/projects/new',
+  greetings: '/projects/new',
+  'site-tutorial': '/projects/new',
+  stories: '/stories',
+};
 
 export const ENTRY_START_PREFIX = 'e_';
 /** Тот же префикс, что у приглашения (`referral.ts`, `START_PARAM_PREFIX`). */
@@ -91,11 +108,12 @@ export function telegramEntryLink(
 }
 
 /**
- * Браузерная кнопка: `TMA_URL?entry=<сценарий>[&ref=<КОД>]#/projects/new`.
+ * Браузерная кнопка: `TMA_URL?entry=<сценарий>[&ref=<КОД>]#/projects/new`
+ * (для `stories` — `#/stories`, см. `ENTRY_HASH_ROUTES`).
  * `?ref=` — тот же параметр, что у страницы приглашения (`appInviteLink`).
  */
 export function browserEntryLink(entry: LandingEntry, tmaUrl: string, refCode?: string | null): string {
   const code = entryReferralCode(refCode);
   const query = code ? `entry=${entry}&ref=${code}` : `entry=${entry}`;
-  return `${tmaUrl}?${query}#/projects/new`;
+  return `${tmaUrl}?${query}#${ENTRY_HASH_ROUTES[entry]}`;
 }

@@ -1,9 +1,14 @@
 // Plain assertions runnable with `npx tsx scripts/router.test.ts` — the
 // frontend has no test runner configured; this keeps the parser honest.
-import { parseRoute } from '../src/lib/router';
+import { parseRoute, routes } from '../src/lib/router';
 
 const cases: Array<[string, unknown]> = [
   ['#/stories', { name: 'stories' }],
+  // Р-STL-10: метка лендинга Story‑Tales (`?entry=stories`) открывает
+  // раздел по `routes.product('stories')` — адрес строится той же
+  // функцией и обязан разбираться обратно в раздел, а не в форму.
+  [`#${routes.product('stories')}`, { name: 'stories' }],
+  ['#/stories/', { name: 'stories' }],
   ['#/commerce', { name: 'commerce' }],
   ['#/greetings', { name: 'greetings' }],
   ['#/tutorials', { name: 'tutorials' }],

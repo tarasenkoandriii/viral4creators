@@ -1,0 +1,21 @@
+{
+  "releaseMode": "prep",
+  "locales": ["ru", "uk", "en", "de", "es"],
+  "demo": null,
+  "audioDemo": null,
+  "captions": null,
+  "transcript": null,
+  "catalogEnabled": false,
+  "leadFormEnabled": false,
+  "wizardEnabled": false,
+  "checkoutEnabled": false,
+  "familyVoiceEnabled": false,
+  "syntheticVideoEnabled": false,
+  "wizardUrl": null,
+  "legalLinks": {
+    "offer": "offer",
+    "terms": "terms-of-use",
+    "privacy": "terms-of-use"
+  },
+  "contentVersion": "2026-10-16.1"
+}

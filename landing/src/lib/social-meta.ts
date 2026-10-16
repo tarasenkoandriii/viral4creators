@@ -58,7 +58,7 @@ export function socialMeta(opts: {
 /** Адрес статической OG-картинки сайта и локали. */
 export function ogImageUrl(
   origin: string,
-  site: 'main' | 'greetings' | 'tutorial',
+  site: 'main' | 'greetings' | 'tutorial' | 'stories',
   locale: Locale,
 ): string {
   return `${origin}/og/${site}-${locale}.jpg`;

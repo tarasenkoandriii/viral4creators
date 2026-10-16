@@ -1058,6 +1058,55 @@ Telegram-логин, который их и породил.
    раздел 1, шаг 5). Остальной лендинг — статический контент, как и
    раньше.
 
+### 4.1. Поддомен Story‑Tales (story-tales.viral4creators.app) — 16.10.2026
+
+Лендинг Story‑Tales (`landing/src/app/[locale]/stories`, ТЗ
+`doc/STORY-TALES-LANDING-SPEC.md`, решения — `doc/STORY-TALES-LANDING-ADAPTED.md` §7)
+живёт в том же проекте `landing`, что и `greeting.viral4creators.app`.
+
+0. **Порядок выкладки: frontend (TMA) выкладывается вместе с landing или
+   раньше** — старый TMA не знает метку `stories`: `startapp=e_stories`
+   откроет стартовый экран вместо `#/stories` (браузерная ссылка
+   `?entry=stories#/stories` работает и на старом).
+1. Vercel → проект, который обслуживает landing (тот же, где подключён
+   `greeting.viral4creators.app`) → **Settings → Domains** → добавить
+   `story-tales.viral4creators.app` (CNAME на Vercel, как у соседних
+   поддоменов). Отдельный проект не нужен: middleware сам показывает
+   страницу по корню поддомена.
+2. `NEXT_PUBLIC_STORIES_HOST` — **необязательна**, дефолт в коде
+   `story-tales.viral4creators.app`. Задавать только при другом домене или
+   на стенде (`story-tales.localhost`); значение вклеивается при сборке
+   (и в `middleware.ts`, и в `headers()` `next.config.js`) — смена = новый
+   деплой.
+3. Режим выпуска — файл `landing/src/lib/stories/release.json` (v1:
+   `prep`, без демо/формы/покупки); переменных окружения у него нет.
+   Основная кнопка страницы — «Открыть в Telegram» в раздел `#/stories`
+   (Р-STL-17): нужна уже существующая `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME`;
+   без неё — «Открыть приложение» по `NEXT_PUBLIC_TMA_URL`, без обеих —
+   безопасный откат на якорь «Как это работает». OG-карточки —
+   статика `public/og/stories-<locale>.jpg`, перерисовываются руками
+   (`cd landing && npx tsx scripts/og-stories-cards.tsx`).
+4. Проверка noindex после выкладки (ST-LPL-10) — у каждого ответа
+   должны быть `X-Robots-Tag: noindex, nofollow, noarchive` и
+   `Referrer-Policy: no-referrer`:
+
+   ```bash
+   H=https://story-tales.viral4creators.app
+   for p in /ru /uk /en /de /es /ru/stories /; do curl -sI "$H$p" | grep -iE '^HTTP|^location|x-robots|referrer'; done
+   curl -sI "$H/ru/" | grep -iE '^HTTP|x-robots'          # хвостовой слэш (см. ниже)
+   curl -sI "https://<главный домен landing>/ru/stories" | grep -iE '^HTTP|^location|x-robots'   # 308 на поддомен
+   curl -s "$H/ru" | grep -o '<meta name="robots"[^>]*>'   # noindex, nofollow, noarchive
+   curl -s "$H/sitemap.xml"                                 # пустой <urlset>
+   curl -s "$H/robots.txt"                                  # Allow: /, без Disallow: /
+   # когда появятся медиа (public/stories-media/…), то же с Range:
+   # curl -sI -H 'Range: bytes=0-1' "$H/stories-media/<файл>" | grep -iE '^HTTP|x-robots'
+   ```
+
+   Хвостовой слэш: встроенный 308 Next (`/ru/` → `/ru`) отдаётся до
+   middleware, и под `next start` заголовки `headers()` к нему не
+   применяются (проверено 16.10.2026; цель редиректа noindex несёт). На
+   Vercel посмотреть этот ответ отдельно и записать результат в TODO.
+
 ## 5. Проверка после деплоя
 
 - Открыть frontend-URL, пройти воркфлоу до шага загрузки видео — если

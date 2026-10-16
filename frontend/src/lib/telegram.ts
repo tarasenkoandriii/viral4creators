@@ -195,7 +195,9 @@ export function initTelegramWebApp(): void {
   } else if (launchEntry && typeof window !== 'undefined') {
     // Тот же адрес, что у браузерной кнопки лендинга (`?entry=…`):
     // форма прочитает его как обычно, и сценарий в Telegram и в
-    // браузере открывается одним и тем же путём.
+    // браузере открывается одним и тем же путём. Метка раздела
+    // (`e_stories`, Р-STL-10) ведёт не в форму, а в `#/stories` —
+    // маршрут выбирает `entryHashRoute` там же, в `landing-entry.ts`.
     window.history.replaceState(
       null,
       '',
