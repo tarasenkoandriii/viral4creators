@@ -763,6 +763,20 @@ export function MyVoicesSection({
     }
   };
 
+  const retry = async (v: UserVoice) => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const next = await retryUserVoice(v.id);
+      setVoices((prev) => prev.map((old) => (old.id === next.id ? next : old)));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const remove = async (v: UserVoice) => {
     if (!window.confirm(t.deleteConfirm.replace('{{label}}', v.label))) return;
     setDeletingId(v.id);
@@ -849,19 +863,8 @@ export function MyVoicesSection({
                     size="sm"
                     disabled={disabled || submitting}
                     loading={submitting}
-                    onClick={() => {
-                      if (submitting) return;
-                      setSubmitting(true);
-                      setError(null);
-                      void retryUserVoice(v.id)
-                        .then((next) =>
-                          setVoices((prev) =>
-                            prev.map((old) => (old.id === next.id ? next : old))
-                          )
-                        )
-                        .catch((e) => setError(errorMessage(e)))
-                        .finally(() => setSubmitting(false));
-                    }}
+                    data-assist="never"
+                    onClick={() => void retry(v)}
                   >
                     {t.submitButton}
                   </Button>
