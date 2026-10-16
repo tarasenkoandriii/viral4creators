@@ -14,6 +14,7 @@ type Story = {
   countries: string[];
   targetSeconds: number;
   kind: string;
+  sourceUrl?: string;
   audioReserveUsd: number;
 };
 type Gift = {
@@ -195,7 +196,8 @@ export function StoryGiftsScreen() {
       catalog.find(
         (s) => s.locale === nextLanguage && s.countries.includes(nextCountry)
       ) ||
-      catalog.find((s) => s.locale === nextLanguage && s.kind === 'classic');
+      catalog.find((s) => s.locale === nextLanguage && s.kind === 'classic') ||
+      catalog.find((s) => s.locale === nextLanguage && s.kind === 'adaptation');
     if (candidate) setStoryId(candidate.id);
   }
   const actionLock = useRef(false);
@@ -384,10 +386,24 @@ export function StoryGiftsScreen() {
           <h2 className="text-xl font-semibold">{story.title}</h2>
           <p className="text-sm text-silver-400">
             {story.kind === 'classic'
-              ? 'Классическая народная сказка'
-              : 'Авторская сказка'}{' '}
+              ? 'Классика · текст выбранной редакции'
+              : story.kind === 'adaptation'
+                ? 'Короткая адаптация народного сюжета'
+                : 'Авторская сказка'}{' '}
             · ориентир {story.targetSeconds} с · {story.rights}
           </p>
+          {story.sourceUrl && (
+            <a
+              className="underline"
+              href={story.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {story.kind === 'adaptation'
+                ? 'Источник сюжета (текст адаптации отличается)'
+                : 'Источник выбранного текста'}
+            </a>
+          )}
           <label className="block">
             Повод подарка — необязательно
             <input

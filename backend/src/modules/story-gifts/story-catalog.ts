@@ -37,7 +37,7 @@ export interface StoryCatalogEntry {
   rights: string;
   countries: string[];
   targetSeconds: number;
-  kind: 'classic' | 'original';
+  kind: 'classic' | 'adaptation' | 'original';
   sourceUrl?: string;
   chapters: { title: string; scene: string; text: string }[];
 }
@@ -65,7 +65,7 @@ export const STORY_CATALOG: StoryCatalogEntry[] = [
     sourceUrl: mittenSource,
     countries: ['UA'],
     targetSeconds: 35,
-    kind: 'classic',
+    kind: 'adaptation',
     chapters: [
       {
         title: 'На лесной тропинке',
@@ -94,7 +94,7 @@ export const STORY_CATALOG: StoryCatalogEntry[] = [
     sourceUrl: mittenSource,
     countries: ['UA'],
     targetSeconds: 35,
-    kind: 'classic',
+    kind: 'adaptation',
     chapters: [
       {
         title: 'Лісова стежка',
@@ -123,7 +123,7 @@ export const STORY_CATALOG: StoryCatalogEntry[] = [
     sourceUrl: pigsSource,
     countries: ['GB', 'US'],
     targetSeconds: 35,
-    kind: 'classic',
+    kind: 'adaptation',
     chapters: [
       {
         title: 'Three homes',
@@ -152,7 +152,7 @@ export const STORY_CATALOG: StoryCatalogEntry[] = [
     sourceUrl: pigsSource,
     countries: ['GB', 'US', 'OTHER', 'DE', 'ES'],
     targetSeconds: 35,
-    kind: 'classic',
+    kind: 'adaptation',
     chapters: [
       {
         title: 'Три домика',
