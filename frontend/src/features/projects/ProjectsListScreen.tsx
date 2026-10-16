@@ -11,20 +11,36 @@ import { navigate, routes } from '../../lib/router';
 import { useI18n } from '../../lib/i18n-context';
 import { LoadError, ScreenHeader } from './shared';
 
-export function ProjectsListScreen() {
+export function ProjectsListScreen({
+  area,
+}: { area?: 'commerce' | 'greetings' | 'tutorials' } = {}) {
   const { dict } = useI18n();
-  const { data, loading, error, reload } = useAsync(listProjects, []);
+  const {
+    data: allProjects,
+    loading,
+    error,
+    reload,
+  } = useAsync(listProjects, []);
+  const data = allProjects?.filter(
+    (p) =>
+      !area ||
+      (area === 'commerce'
+        ? p.type === 'SINGLE' || p.type === 'LINE'
+        : area === 'greetings'
+          ? p.type === 'GREETING_VIDEO'
+          : p.type === 'CLIENT_SITE')
+  );
 
   return (
     <div className="animate-fadeIn">
       <ScreenHeader
-        title={dict.projectsListScreen.title}
+        title={area ? dict.productAreas[area] : dict.projectsListScreen.title}
         hint={dict.projectsListScreen.hint}
         action={
           <Button
             size="sm"
             icon={<Plus size={14} />}
-            onClick={() => navigate(routes.projectNew())}
+            onClick={() => navigate(routes.projectNew(area))}
           >
             {dict.projectsListScreen.newButton}
           </Button>
@@ -47,7 +63,7 @@ export function ProjectsListScreen() {
           action={
             <Button
               icon={<Plus size={14} />}
-              onClick={() => navigate(routes.projectNew())}
+              onClick={() => navigate(routes.projectNew(area))}
             >
               {dict.projectsListScreen.createButton}
             </Button>
@@ -83,9 +99,13 @@ export function ProjectsListScreen() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <Badge tone={p.type === 'LINE' ? 'accent' : 'neutral'}>
-                    {p.type === 'LINE'
-                      ? dict.projectsListScreen.typeLine
-                      : dict.projectsListScreen.typeSingle}
+                    {p.type === 'GREETING_VIDEO'
+                      ? dict.productAreas.greetings
+                      : p.type === 'CLIENT_SITE'
+                        ? dict.productAreas.tutorials
+                        : p.type === 'LINE'
+                          ? dict.projectsListScreen.typeLine
+                          : dict.projectsListScreen.typeSingle}
                   </Badge>
                   <span className="tabular text-xs text-silver-400">
                     {dict.projectsListScreen.readyCount

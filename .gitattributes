@@ -1,0 +1,3 @@
+
+# PDFs are opaque artifacts, even when their streams happen to be ASCII.
+*.pdf binary

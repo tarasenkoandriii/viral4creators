@@ -1,8 +1,15 @@
 # viral4creators AI consultant knowledge base
 
-_Собрано автоматически 2026-09-30 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-10-16 из lending/frontend/backend; коммит — local._
 
 ## Mini-app sections
+
+- **Commerce** — UGC and product lines. Projects, brandbook, generation and post-production in one section.
+- **Greetings** — A personal video greeting with a presenter — available on every plan.
+- **Tutorial** — A tutorial video for someone's site or account — no products involved.
+- **Story‑Tales** — A tale from someone close: a personal introduction, illustrations and narration. The full story generator is still in development.
+
+### Tools inside Commerce
 
 - **Projects** — A product or line for which ads are generated
 - **Brand book** — A single style and characters for all of a brand's projects
@@ -213,3 +220,14 @@ anything the consultant can't answer about the product itself, suggest
 opening the mini-app. The terms of use and the offer are at
 `/legal/offer` and `/legal/terms-of-use`; the consultant does not quote
 them verbatim or give legal guarantees, it points to the document.
+
+
+## Product menu, narrator and Tutorial introduction
+
+The four main areas are Commerce, Greetings, Tutorial and Story‑Tales. Commerce groups UGC, product lines, projects, brandbook, generation and post-production. Greetings and Tutorial have filtered project lists and creation shortcuts. Existing direct links remain valid.
+
+Choose the narrator image in the brandbook profile. Photo/sketch actions remain on the character card; voice is selected separately in voice settings. Nova a9fc5a41 remains the global default.
+
+Upload an approved MP4 recording with audio and video, 5–10 seconds and up to 20 MB, choose its language and approve viewing. Explicitly enable the introduction when finishing the tutorial wizard. The project must link to the owned brandbook and use the same language. The recording is neither revoiced nor sped up by tempo changes; introductions are off by default.
+
+Story‑Tales is in development. Narrator profiles and recorded introductions are available; the complete tale generator, family invitations and automatic relative voice cloning are not ready. Do not recommend the rejected Kling sample.

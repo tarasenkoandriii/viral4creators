@@ -2521,5 +2521,34 @@
     },
     "saved": "Gespeichert.",
     "forgotten": "Gelöscht."
+  },
+  "narratorProfile": {
+    "title": "Erzählerprofil",
+    "hint": "Bild/Skizze und Stimme werden unabhängig gewählt. Die Stimme wird in den Spracheinstellungen des Brandbooks festgelegt. Nova bleibt die globale Standardstimme.",
+    "image": "Bild des Erzählers",
+    "none": "Kein Erzählerbild",
+    "save": "Erzähler speichern",
+    "preamble": "Tutorial-Einleitung (optional)",
+    "recordingHint": "Freigegebene Aufnahme hochladen: MP4 mit Ton, 5–10 Sekunden, bis 20 MB. Die Aufnahme wird unverändert verwendet; die Stimmauswahl vertont sie nicht neu. Sie wird nur nach ausdrücklicher Aktivierung eingefügt. Der Schnitt nutzt den bestehenden kostenpflichtigen Videodienst.",
+    "approved": "Ich habe die Aufnahme angesehen und Bild, Sprache und Verwendung als Einleitung freigegeben.",
+    "upload": "Aufnahme speichern",
+    "remove": "Einleitung aus dem Brandbook entfernen",
+    "locale": "Sprache der Aufnahme",
+    "invalid": "MP4 bis 20 MB auswählen und die Aufnahme freigeben.",
+    "enabled": "Freigegebene Einleitung aus dem Brandbook des Projekts einfügen",
+    "enabledHint": "Standardmäßig aus. Die Sprache muss zum Tutorial passen. Vor der Aktivierung Sprache und Firmen-/Produktnamen prüfen; die Einleitung wird nicht neu synthetisiert.",
+    "previewHint": "Die Einleitung wird separat gezeigt. Darunter folgt die Vorschau des Tutorials; im fertigen Video läuft die Aufnahme zuerst."
+  },
+  "productAreas": {
+    "menu": "Produktbereiche",
+    "commerce": "Produkte",
+    "greetings": "Grüße",
+    "tutorials": "Tutorial",
+    "stories": "Story‑Tales",
+    "commerceHint": "UGC und Produktlinien. Projekte, Brandbook, Generierung und Nachbearbeitung in einem Bereich.",
+    "storiesHint": "Eine Geschichte von einem vertrauten Menschen: persönliche Einleitung, Illustrationen und Erzählung. Der vollständige Generator wird noch entwickelt.",
+    "ready": "Bereits verfügbar: Erzählerprofil im Brandbook, Foto/Skizze und Stimmauswahl; eine freigegebene Aufnahme als Tutorial-Einleitung.",
+    "narrator": "Erzähler einrichten",
+    "allProjects": "Alle Projekte"
   }
 }

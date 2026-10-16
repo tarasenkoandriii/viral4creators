@@ -1,3 +1,4 @@
+import { parseNarratorPreamble } from './narrator-preamble';
 /**
  * BrandManifestService — Brand Manifest + Brand Character CRUD.
  * doc/PRODUCT-PROJECT-SPEC.md §12 (+ §5 model, §10 third option on the
@@ -154,6 +155,8 @@ interface AssetDelegate {
 }
 
 interface ManifestRow {
+  narratorCharacterId?: string | null;
+  tutorialPreamble?: unknown;
   id: string;
   title: string;
   styleNotes: string | null;
@@ -289,6 +292,10 @@ export class BrandManifestService {
     // `personalBrand` (на всех тарифах), а не `brandManifest` (Standard+).
     // Персона и режим проверяются раньше тарифа: при выключенном режиме
     // ответ — тот же 404 PERSONA_DISABLED, что у маршрутов персоны.
+    if (dto.narratorCharacterId)
+      throw new BadRequestException(
+        'Сначала создайте бренд-бук и добавьте рассказчика',
+      );
     const personal = dto.kind === 'PERSONAL';
     let personaFields: Record<string, unknown> = {};
     if (personal) {
@@ -372,6 +379,14 @@ export class BrandManifestService {
     // мог уже стоять на аукционе, а личный, ставший корпоративным, ушёл
     // бы туда с лицом автора. Форма пересылает текущий вид при каждом
     // сохранении — то же значение не отказ.
+    if (dto.narratorCharacterId) {
+      await this.findOwnAsset(
+        'characters',
+        userId,
+        manifestId,
+        dto.narratorCharacterId,
+      );
+    }
     const currentKind = current.kind === 'PERSONAL' ? 'PERSONAL' : 'COMPANY';
     if (dto.kind !== undefined && dto.kind !== currentKind) {
       throw new BadRequestException(KIND_IMMUTABLE);
@@ -1063,6 +1078,9 @@ export function manifestDataFromDto(
   currentTtsProvider: string | null = null,
 ): Record<string, unknown> {
   const data: Record<string, unknown> = {};
+  if (dto.narratorCharacterId !== undefined)
+    data.narratorCharacterId = dto.narratorCharacterId;
+  if (dto.clearTutorialPreamble === true) data.tutorialPreamble = Prisma.DbNull;
   if (dto.title !== undefined) data.title = dto.title.trim();
   if (dto.styleNotes !== undefined) {
     data.styleNotes = dto.styleNotes?.trim() ?? null;
@@ -1182,6 +1200,12 @@ export function toCharacterView(row: AssetRow): BrandCharacterView {
 
 export function toManifestView(row: ManifestRow): BrandManifestView {
   return {
+    ...(row.narratorCharacterId !== undefined
+      ? { narratorCharacterId: row.narratorCharacterId }
+      : {}),
+    ...(row.tutorialPreamble !== undefined
+      ? { tutorialPreamble: parseNarratorPreamble(row.tutorialPreamble) }
+      : {}),
     id: row.id,
     title: row.title,
     styleNotes: row.styleNotes,

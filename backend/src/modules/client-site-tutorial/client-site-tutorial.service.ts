@@ -1,3 +1,4 @@
+import { NarratorPreambleService } from '../brand-manifest/narrator-preamble.service';
 /**
  * Визард обучалки по сайту заказчика — оркестрация раунда
  * (doc/CLIENT-SITE-TUTORIAL-SPEC.md §5, этап 111).
@@ -244,6 +245,7 @@ export interface RoundResult {
  * (известное ограничение, `doc/CI.md`), и тесты не должны от него
  * зависеть. */
 interface DraftRow {
+  locale?: string | null;
   id: string;
   projectId: string;
   baseUrl: string;
@@ -298,6 +300,7 @@ export class ClientSiteTutorialService {
     // Темп/озвучка обучалок (06.10.2026): исходники роликов черновика
     // (дорожки озвучки) уходят вместе с черновиком. Без модуля — как раньше.
     @Optional() private readonly versions?: TutorialVideoVersionsService,
+    @Optional() private readonly preambles?: NarratorPreambleService,
   ) {
     this.secrets =
       secretsStore ??
@@ -973,6 +976,7 @@ export class ClientSiteTutorialService {
       title: string;
       /** Галочка «озвучить» (06.10.2026); не передана — выбор черновика
        *  не меняется (по умолчанию ВКЛ). */
+      preamble?: boolean;
       voice?: boolean;
       /** Язык интерфейса, в котором человек записывал черновик. */
       locale?: string;
@@ -986,6 +990,16 @@ export class ClientSiteTutorialService {
     // Сверка в `updateMany` ниже остаётся: между чтением и захватом
     // строки окно всё равно есть.
     if (draft.version !== input.expectedVersion) throw this.conflict();
+    const preamble = input.preamble
+      ? await this.preambles?.forProject(
+          userId,
+          projectId,
+          input.locale ?? draft.locale ?? 'ru',
+          draft.id,
+        )
+      : null;
+    if (input.preamble && !preamble)
+      throw new BadRequestException('Преамбулы временно недоступны');
     const state = this.toRoundsState(draft);
     assertRoundsConsistent(state);
     /**
@@ -1061,6 +1075,9 @@ export class ClientSiteTutorialService {
       },
       data: {
         status: 'PENDING_REVIEW',
+        preambleSnapshot: preamble
+          ? (preamble as unknown as Prisma.InputJsonValue)
+          : Prisma.DbNull,
         title: input.title.trim(),
         previewFrameCount: uploaded,
         // Итоговые кадры только что залиты — уборка снова за них отвечает.

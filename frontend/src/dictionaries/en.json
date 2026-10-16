@@ -2521,5 +2521,34 @@
     },
     "saved": "Saved.",
     "forgotten": "Deleted."
+  },
+  "narratorProfile": {
+    "previewHint": "The introduction is shown separately. The preview below covers the tutorial body; the final video plays the recording first.",
+    "title": "Narrator profile",
+    "hint": "Choose a character below; photo/sketch and voice are independent. The voice is configured in the brand voice settings. Nova remains the global default.",
+    "image": "Narrator image",
+    "none": "No narrator image",
+    "save": "Save narrator",
+    "preamble": "Tutorial introduction (optional)",
+    "recordingHint": "Upload an approved recording: MP4 with audio, 5–10 seconds, up to 20 MB. This recording is reused as-is; selecting a voice does not revoice it. It is added only when explicitly enabled for a tutorial. Assembly uses the existing paid video processing service.",
+    "approved": "I watched this recording and approve its image, speech and use as an introduction.",
+    "upload": "Save recording",
+    "remove": "Remove introduction from brand",
+    "locale": "Recording language",
+    "invalid": "Choose an MP4 up to 20 MB and approve the recording.",
+    "enabled": "Add the approved introduction from this project’s brand",
+    "enabledHint": "Off by default. The recording must match the tutorial language. Review its speech and company/product before enabling; no new voice synthesis is performed for the introduction."
+  },
+  "productAreas": {
+    "menu": "Product sections",
+    "commerce": "Commerce",
+    "greetings": "Greetings",
+    "tutorials": "Tutorial",
+    "stories": "Story‑Tales",
+    "commerceHint": "UGC and product lines. Projects, brandbook, generation and post-production in one section.",
+    "storiesHint": "A tale from someone close: a personal introduction, illustrations and narration. The full story generator is still in development.",
+    "ready": "Available now: narrator profiles in the brandbook, photo/sketch and voice selection; an approved recorded introduction for Tutorial.",
+    "narrator": "Set up narrator",
+    "allProjects": "All projects"
   }
 }

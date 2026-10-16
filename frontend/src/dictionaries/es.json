@@ -2521,5 +2521,34 @@
     },
     "saved": "Guardado.",
     "forgotten": "Eliminado."
+  },
+  "narratorProfile": {
+    "title": "Perfil del narrador",
+    "hint": "La foto/boceto y la voz se eligen por separado. La voz se configura en los ajustes de locución del libro de marca. Nova sigue siendo la voz predeterminada global.",
+    "image": "Imagen del narrador",
+    "none": "Sin imagen del narrador",
+    "save": "Guardar narrador",
+    "preamble": "Introducción del tutorial (opcional)",
+    "recordingHint": "Sube una grabación aprobada: MP4 con sonido, de 5 a 10 segundos, hasta 20 MB. Se usa sin cambios; elegir una voz no la vuelve a doblar. Solo se añade al activarla expresamente. El montaje usa el servicio de vídeo de pago existente.",
+    "approved": "He visto la grabación y apruebo su imagen, voz y uso como introducción.",
+    "upload": "Guardar grabación",
+    "remove": "Quitar introducción del libro de marca",
+    "locale": "Idioma de la grabación",
+    "invalid": "Elige un MP4 de hasta 20 MB y aprueba la grabación.",
+    "enabled": "Añadir la introducción aprobada del libro de marca del proyecto",
+    "enabledHint": "Desactivada por defecto. El idioma debe coincidir con el tutorial. Comprueba la voz y el nombre de la empresa/producto antes de activarla; no se genera una nueva voz para la introducción.",
+    "previewHint": "La introducción se muestra por separado. Debajo se previsualiza el tutorial; el vídeo final reproduce primero la grabación."
+  },
+  "productAreas": {
+    "menu": "Secciones del producto",
+    "commerce": "Productos",
+    "greetings": "Saludos",
+    "tutorials": "Tutorial",
+    "stories": "Story‑Tales",
+    "commerceHint": "UGC y líneas de productos. Proyectos, libro de marca, generación y posproducción en una sección.",
+    "storiesHint": "Un cuento de alguien cercano: introducción personal, ilustraciones y narración. El generador completo sigue en desarrollo.",
+    "ready": "Ya disponibles: perfil del narrador, foto/boceto y elección de voz; una introducción grabada y aprobada para Tutorial.",
+    "narrator": "Configurar narrador",
+    "allProjects": "Todos los proyectos"
   }
 }

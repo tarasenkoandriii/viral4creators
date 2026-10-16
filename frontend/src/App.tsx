@@ -18,7 +18,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Clapperboard, FolderKanban, Palette, Zap } from 'lucide-react';
+import { BookOpen, Gift, GraduationCap, Package } from 'lucide-react';
+import { ProductHub } from './features/products/ProductHub';
+import type { ProductArea } from './lib/router';
 import { TelegramLoginButton } from './components/TelegramLoginButton';
 import { useRoute, navigate, routes } from './lib/router';
 import { PlanContext } from './lib/plan-context';
@@ -107,23 +109,27 @@ if (typeof window !== 'undefined') {
 function App() {
   const { dict, locale } = useI18n();
   const route = useRoute();
-  // «Я в кадре» — под вкладкой бренда: личный бренд-бук строится на персоне.
-  const inBrand = route.name.startsWith('manifest') || route.name === 'persona';
-  const inProjects =
-    !inBrand &&
-    route.name !== 'generate' &&
-    route.name !== 'postprod' &&
-    route.name !== 'postprod-video' &&
-    route.name !== 'postprod-tutorial' &&
-    route.name !== 'plan' &&
-    route.name !== 'channels' &&
-    route.name !== 'credits' &&
-    route.name !== 'invite' &&
-    route.name !== 'not-found';
-  const inPostprod =
-    route.name === 'postprod' ||
-    route.name === 'postprod-video' ||
-    route.name === 'postprod-tutorial';
+  const knownArea: ProductArea | null = [
+    'commerce',
+    'greetings',
+    'tutorials',
+    'stories',
+  ].includes(route.name)
+    ? (route.name as ProductArea)
+    : route.name === 'greeting-video'
+      ? 'greetings'
+      : route.name === 'site-tutorial' || route.name === 'postprod-tutorial'
+        ? 'tutorials'
+        : route.name === 'project-new' && route.projectType === 'GREETING_VIDEO'
+          ? 'greetings'
+          : route.name === 'project-new' && route.projectType === 'CLIENT_SITE'
+            ? 'tutorials'
+            : null;
+  const [lastArea, setLastArea] = useState<ProductArea>('commerce');
+  useEffect(() => {
+    if (knownArea) setLastArea(knownArea);
+  }, [knownArea]);
+  const activeArea = knownArea ?? lastArea;
 
   /**
    * Режим (ТЗ §23) грузится один раз на всё приложение: замков много, и
@@ -282,7 +288,7 @@ function App() {
             <div className="mx-auto flex max-w-2xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2.5 sm:py-3">
               <button
                 type="button"
-                onClick={() => navigate(routes.projects())}
+                onClick={() => navigate(routes.product('commerce'))}
                 className="flex min-h-[44px] items-center gap-2 text-left"
               >
                 <span className="sheen text-lg font-extrabold tracking-tight">
@@ -317,36 +323,37 @@ function App() {
                 )}
                 <TelegramLoginButton />
               </div>
-              {/* Three tabs + login don't fit one 390px row: the nav wraps to
-                its own full-width line on phones, inline from `sm` up. */}
-              <nav className="order-3 flex w-full rounded-xl bg-silver-200/60 dark:bg-silver-800/60 p-0.5 sm:order-none sm:w-auto">
+              <nav
+                aria-label={dict.productAreas.menu}
+                className="order-3 grid w-full grid-cols-4 rounded-xl bg-silver-200/60 dark:bg-silver-800/60 p-0.5"
+              >
                 <NavTab
-                  active={inProjects}
-                  onClick={() => navigate(routes.projects())}
-                  icon={<FolderKanban size={13} />}
+                  active={activeArea === 'commerce'}
+                  onClick={() => navigate(routes.product('commerce'))}
+                  icon={<Package size={14} />}
                 >
-                  {dict.nav.projects}
+                  {dict.productAreas.commerce}
                 </NavTab>
                 <NavTab
-                  active={inBrand}
-                  onClick={() => navigate(routes.manifests())}
-                  icon={<Palette size={13} />}
+                  active={activeArea === 'greetings'}
+                  onClick={() => navigate(routes.product('greetings'))}
+                  icon={<Gift size={14} />}
                 >
-                  {dict.nav.brand}
+                  {dict.productAreas.greetings}
                 </NavTab>
                 <NavTab
-                  active={route.name === 'generate'}
-                  onClick={() => navigate(routes.generate())}
-                  icon={<Zap size={13} />}
+                  active={activeArea === 'tutorials'}
+                  onClick={() => navigate(routes.product('tutorials'))}
+                  icon={<GraduationCap size={14} />}
                 >
-                  {dict.nav.generate}
+                  {dict.productAreas.tutorials}
                 </NavTab>
                 <NavTab
-                  active={inPostprod}
-                  onClick={() => navigate(routes.postprod())}
-                  icon={<Clapperboard size={13} />}
+                  active={activeArea === 'stories'}
+                  onClick={() => navigate(routes.product('stories'))}
+                  icon={<BookOpen size={14} />}
                 >
-                  {dict.nav.postprod}
+                  {dict.productAreas.stories}
                 </NavTab>
               </nav>
             </div>
@@ -376,8 +383,18 @@ function App() {
                 </Alert>
               </div>
             )}
+            {(
+              ['commerce', 'greetings', 'tutorials', 'stories'] as string[]
+            ).includes(route.name) && (
+              <ProductHub area={route.name as ProductArea} />
+            )}
             {route.name === 'projects' && <ProjectsListScreen />}
-            {route.name === 'project-new' && <ProjectCreateScreen />}
+            {route.name === 'project-new' && (
+              <ProjectCreateScreen
+                key={route.projectType ?? 'default'}
+                initialType={route.projectType}
+              />
+            )}
             {route.name === 'project' && (
               <ProjectScreen
                 key={route.projectId}
@@ -650,7 +667,7 @@ function NavTab({
       // приложении, а высота у них была 24px против рекомендованных 44
       // (аудит 2026-09-06, А-3.7). Растёт только область нажатия: сама
       // подпись и иконка остались прежнего размера.
-      className={`inline-flex min-h-[44px] flex-1 items-center justify-center gap-1 rounded-[10px] px-2.5 py-1 text-xs font-medium transition-colors sm:flex-none ${
+      className={`inline-flex min-h-[48px] min-w-0 flex-col items-center justify-center gap-0.5 rounded-[10px] px-1 py-1 text-[10px] font-medium transition-colors sm:flex-row sm:gap-1 sm:text-xs ${
         active
           ? 'bg-accent text-accent-on'
           : 'text-silver-500 hover:text-silver-800 dark:hover:text-silver-200'

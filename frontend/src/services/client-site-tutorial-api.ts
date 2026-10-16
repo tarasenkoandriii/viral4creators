@@ -198,6 +198,7 @@ export async function finishSiteTutorial(
     title: string;
     /** Озвучить по кадрам (06.10.2026); по умолчанию сервер — ВКЛ. */
     voice?: boolean;
+    preamble?: boolean;
     /** Язык реплик и подписей — язык интерфейса. */
     locale?: string;
   }

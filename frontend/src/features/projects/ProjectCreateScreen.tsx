@@ -69,7 +69,9 @@ function occasionFromQuery() {
   return occasionFromSearch(currentSearch());
 }
 
-export function ProjectCreateScreen() {
+export function ProjectCreateScreen({
+  initialType,
+}: { initialType?: ProjectType } = {}) {
   const { dict, locale } = useI18n();
   const countries = useAsync(getCountries, []);
   /**
@@ -94,7 +96,7 @@ export function ProjectCreateScreen() {
   // поздравления даже не показываются, а ссылка лендинга обучалки — на
   // форму товара вместо поля адреса сайта (находка Б-1 аудита).
   const [type, setType] = useState<ProjectType>(
-    projectTypeFromSearch(currentSearch()) ?? 'SINGLE'
+    initialType ?? projectTypeFromSearch(currentSearch()) ?? 'SINGLE'
   );
   const [title, setTitle] = useState('');
   const [countryCode, setCountryCode] = useState<string | null>(null);

@@ -403,6 +403,8 @@ export async function listBrandManifests(): Promise<
 // ── Brand manifests — full CRUD (Stage 9, spec §12) ────────────────────
 
 export interface ManifestInput {
+  narratorCharacterId?: string | null;
+  clearTutorialPreamble?: boolean;
   title?: string;
   styleNotes?: string | null;
   voiceNotes?: string | null;
@@ -1397,4 +1399,30 @@ export function isGenerationLocked(err: unknown): boolean {
     | { error?: { details?: { reason?: unknown } } }
     | undefined;
   return data?.error?.details?.reason === 'generation-locked';
+}
+
+export async function uploadNarratorPreamble(
+  manifestId: string,
+  file: File,
+  locale: string
+) {
+  const base = `/brand-manifests/${manifestId}/preamble`;
+  const target = unwrap(
+    await api.post<PresignedUpload>(`${base}/upload-url`, {
+      fileSize: file.size,
+    }),
+    'upload-url'
+  );
+  await putToBlob(target, file, 'video/mp4');
+  return unwrap(
+    await api.post<import('../types/project').NarratorPreambleView>(
+      `${base}/confirm`,
+      {
+        pathname: target.pathname,
+        locale,
+        approved: true,
+      }
+    ),
+    'preamble'
+  );
 }

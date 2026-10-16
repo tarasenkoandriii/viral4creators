@@ -789,6 +789,10 @@ model ProductAnalog {
 // ТЗ §12.1, решается на этапе 7 плана; менять под неё схему БД не
 // придётся.
 model BrandManifest {
+  /// Explicit narrator image selection; voice uses the existing provider-tagged fields.
+  narratorCharacterId String?
+  tutorialPreamble Json?
+
   id     String  @id @default(cuid())
   userId String?
   /// Cascade по той же причине, что у Project (этап 40, А-1.11).
@@ -3983,6 +3987,9 @@ model UiSnapshot {
 /// пользователю), эта модель по определению принадлежит конкретному
 /// `Project` конкретного пользователя: сайт заказчика у каждого свой.
 model ClientSiteTutorialDraft {
+  /// Immutable approved recording selected explicitly at finish; null means disabled.
+  preambleSnapshot Json?
+
   id        String  @id @default(cuid())
   projectId String  @unique
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)

@@ -245,6 +245,28 @@ function buildKnowledge(locale: Locale): string {
   // ── Разделы мини-аппа (этап 93) ──────────────────────────────────────
   lines.push(`## ${t.navSections}`);
   lines.push('');
+  for (const area of ['commerce', 'greetings', 'tutorials', 'stories']) {
+    const label = get(frontendDict, ['productAreas', area]) as string;
+    const hint =
+      area === 'commerce'
+        ? get(frontendDict, ['productAreas', 'commerceHint'])
+        : area === 'stories'
+          ? get(frontendDict, ['productAreas', 'storiesHint'])
+          : area === 'greetings'
+            ? get(frontendDict, ['projectCreateScreen', 'greetingVideoSub'])
+            : get(frontendDict, ['projectCreateScreen', 'clientSiteSub']);
+    lines.push(`- **${label}** — ${hint}`);
+  }
+  lines.push('');
+  const toolsHeading = {
+    ru: 'Инструменты внутри «Товарки»',
+    uk: 'Інструменти всередині «Товарів»',
+    en: 'Tools inside Commerce',
+    de: 'Werkzeuge im Produktbereich',
+    es: 'Herramientas dentro de Productos',
+  };
+  lines.push(`### ${toolsHeading[locale]}`);
+  lines.push('');
   for (const key of NAV_SECTION_KEYS) {
     const label = get(frontendDict, ['nav', key]) as string;
     const hintPath = NAV_HINT_PATH[key];

@@ -600,7 +600,22 @@ export interface BrandCharacterView {
 /** Permanent brand scene / location (spec §17.1) — same shape as a character. */
 export type BrandSceneView = BrandCharacterView;
 
+export interface NarratorPreambleView {
+  version: 1;
+  url: string;
+  pathname: string;
+  seconds: number;
+  locale: string;
+  approvedAt: string;
+  manifestId: string;
+  characterId: string | null;
+  imageUrl: string | null;
+  voiceId: string | null;
+  voiceProvider: string | null;
+}
 export interface BrandManifestView {
+  narratorCharacterId?: string | null;
+  tutorialPreamble?: NarratorPreambleView | null;
   id: string;
   title: string;
   styleNotes: string | null;

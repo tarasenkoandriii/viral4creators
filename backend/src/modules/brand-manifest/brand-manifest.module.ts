@@ -1,3 +1,4 @@
+import { NarratorPreambleService } from './narrator-preamble.service';
 import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
 import { BrandManifestController } from './brand-manifest.controller';
@@ -13,7 +14,7 @@ import { BrandManifestService } from './brand-manifest.service';
 @Module({
   imports: [StorageModule],
   controllers: [BrandManifestController],
-  providers: [BrandManifestService],
-  exports: [BrandManifestService],
+  providers: [BrandManifestService, NarratorPreambleService],
+  exports: [BrandManifestService, NarratorPreambleService],
 })
 export class BrandManifestModule {}

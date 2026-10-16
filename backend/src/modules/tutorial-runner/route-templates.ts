@@ -155,6 +155,12 @@ function unsupported(reason: string): RouteResolution {
  * происходит ВНУТРИ этих двух экранов, не отдельные маршруты.
  */
 export const ROUTE_DESCRIPTIONS: Record<string, string> = {
+  commerce: 'раздел «Товарка»: UGC, линейки и инструменты производства',
+  greetings: 'раздел поздравлений: список проектов и создание поздравления',
+  tutorials: 'раздел Tutorial: список обучалок по сайтам и создание проекта',
+  stories:
+    'Story-Tales: статус разработки семейных сказок и настройка рассказчика, без генератора сказки',
+
   projects: 'список всех проектов пользователя',
   'project-new': 'создание нового проекта',
   project: 'карточка одного проекта — список товаров в нём',
@@ -196,6 +202,10 @@ export const ROUTE_DESCRIPTIONS: Record<string, string> = {
 /** Копия `routes` из `frontend/src/lib/router.ts` — только пути, без
  * React/hash-навигации, см. доккомментарий файла. */
 const ROUTE_BUILDERS: Record<string, RouteBuilder> = {
+  commerce: () => ({ ok: true, path: '/commerce' }),
+  greetings: () => ({ ok: true, path: '/greetings' }),
+  tutorials: () => ({ ok: true, path: '/tutorials' }),
+  stories: () => ({ ok: true, path: '/stories' }),
   projects: () => ({ ok: true, path: '/projects' }),
   'project-new': () => ({ ok: true, path: '/projects/new' }),
   project: (ctx) =>

@@ -127,6 +127,8 @@
 | `POST/GET /api/projects/:id/items/:itemId/sessions` | идентичность | создать сессию из товара (снимок) / её прогоны |
 | `POST/GET /api/brand-manifests` | идентичность | манифест бренда: создать / список |
 | `GET/PATCH/DELETE /api/brand-manifests/:id` | идентичность | манифест (удаление уносит фото персонажей и сцен) |
+| `POST /api/brand-manifests/:id/preamble/upload-url` | идентичность владельца | presigned PUT MP4 до 20 МБ, случайный staging-путь |
+| `POST /api/brand-manifests/:id/preamble/confirm` | идентичность владельца | `{ pathname, locale, approved: true }`; сервер проверяет MP4 со звуком/видео и длительность 5–10 с, сохраняет отдельную неизменяемую копию |
 | `POST /api/brand-manifests/:id/characters` | идентичность | персонаж бренда |
 | `PATCH/DELETE /api/brand-manifests/:id/characters/:cid` | идентичность | правка / удаление персонажа |
 | `POST /api/brand-manifests/:id/characters/:cid/photo/upload-url` | идентичность | presigned PUT фото персонажа |
@@ -2313,3 +2315,10 @@ submit не оплачивается. Возвращает `{sessionId,state,reu
 Чтение 8 fps со звуком — качественный сигнал, не измерение фонем; длительность
 и наблюдения сообщаются моделью и требуют проверки человеком. Сравнение
 помечается сопоставимым только при совпадении SHA-256 скачанных байтов.
+
+
+### Профиль рассказчика и преамбула Tutorial (16.10.2026)
+
+`PATCH /api/brand-manifests/:id` принимает `narratorCharacterId: string | null` (только персонаж этого брендбука) и `clearTutorialPreamble: true`. Голос остаётся в существующих `ttsVoiceId`/`ttsProvider`/`ttsModel`; выбор рассказчика не меняет глобальные настройки. Ответ брендбука содержит `narratorCharacterId` и `tutorialPreamble`. Фото/скетч переключается существующим API скетчей персонажа.
+
+`POST /api/projects/:projectId/site-tutorial/finish` принимает необязательный `preamble: boolean`. Только `true` включает одобренную запись из собственного брендбука проекта на том же языке. Сервер копирует её в область черновика и фиксирует `preambleSnapshot`; отсутствие параметра выключает преамбулу. Изменение или удаление брендбука не подменяет снимок. Монтаж и пересборка темпа сохраняют вступление без изменения его скорости; подписи накладываются на основную обучалку до склейки.

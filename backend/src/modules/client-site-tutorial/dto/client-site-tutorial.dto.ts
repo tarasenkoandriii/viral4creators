@@ -185,6 +185,10 @@ export class UndoRequestDto {
 }
 
 export class FinishRequestDto {
+  @IsOptional()
+  @IsBoolean()
+  preamble?: boolean;
+
   @IsInt()
   @Min(0)
   expectedVersion!: number;

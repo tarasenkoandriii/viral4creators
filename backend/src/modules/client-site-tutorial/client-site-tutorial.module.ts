@@ -1,3 +1,4 @@
+import { BrandManifestModule } from '../brand-manifest/brand-manifest.module';
 import { Module } from '@nestjs/common';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
@@ -50,6 +51,7 @@ import { SitesInternalClient } from '../sites-internal/sites-internal.client';
  */
 @Module({
   imports: [
+    BrandManifestModule,
     StorageModule,
     AdminAuthModule,
     AdminPanelModule,

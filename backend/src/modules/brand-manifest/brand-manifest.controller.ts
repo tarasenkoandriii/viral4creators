@@ -1,3 +1,8 @@
+import { NarratorPreambleService } from './narrator-preamble.service';
+import {
+  PreambleUploadDto,
+  PreambleConfirmDto,
+} from './dto/narrator-preamble.dto';
 /**
  * BrandManifestController — REST surface of the Brand Manifest section.
  * doc/PRODUCT-PROJECT-SPEC.md §12 ("Экран — управление манифестом");
@@ -58,7 +63,28 @@ import {
 @Controller('brand-manifests')
 @UseGuards(TelegramIdentityGuard)
 export class BrandManifestController {
-  constructor(private readonly service: BrandManifestService) {}
+  constructor(
+    private readonly service: BrandManifestService,
+    private readonly preambles: NarratorPreambleService,
+  ) {}
+
+  @Post(':manifestId/preamble/upload-url')
+  uploadPreamble(
+    @Req() req: IdentifiedRequest,
+    @Param('manifestId') id: string,
+    @Body() _dto: PreambleUploadDto,
+  ) {
+    return this.preambles.upload(req.telegramUserId, id);
+  }
+
+  @Post(':manifestId/preamble/confirm')
+  confirmPreamble(
+    @Req() req: IdentifiedRequest,
+    @Param('manifestId') id: string,
+    @Body() dto: PreambleConfirmDto,
+  ) {
+    return this.preambles.confirm(req.telegramUserId, id, dto);
+  }
 
   @Post()
   create(

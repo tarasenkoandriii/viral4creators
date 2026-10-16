@@ -3,8 +3,17 @@
 import { parseRoute } from '../src/lib/router';
 
 const cases: Array<[string, unknown]> = [
-  ['', { name: 'projects' }],
-  ['#/', { name: 'projects' }],
+  ['#/stories', { name: 'stories' }],
+  ['#/commerce', { name: 'commerce' }],
+  ['#/greetings', { name: 'greetings' }],
+  ['#/tutorials', { name: 'tutorials' }],
+  [
+    '#/create/greetings',
+    { name: 'project-new', projectType: 'GREETING_VIDEO' },
+  ],
+  ['#/create/tutorials', { name: 'project-new', projectType: 'CLIENT_SITE' }],
+  ['', { name: 'commerce' }],
+  ['#/', { name: 'commerce' }],
   ['#/projects', { name: 'projects' }],
   ['#/projects/', { name: 'projects' }],
   ['#/projects/new', { name: 'project-new' }],

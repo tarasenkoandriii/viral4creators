@@ -816,3 +816,24 @@ describe('перенос персонажа из сессии в бренд (§6
     expect(blob.copyBlob).not.toHaveBeenCalled();
   });
 });
+
+describe('narrator selection', () => {
+  it('rejects a character outside the owned brand before saving', async () => {
+    const { svc, prisma } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(manifestRow());
+    prisma.brandCharacter.findFirst.mockResolvedValue(null);
+    await expect(
+      svc.update(USER, 'bm1', { narratorCharacterId: 'foreign' }),
+    ).rejects.toThrow();
+    expect(prisma.brandManifest.update).not.toHaveBeenCalled();
+  });
+  it('saves the narrator independently without replacing voice or image selection', async () => {
+    const { svc, prisma } = build();
+    prisma.brandManifest.findFirst.mockResolvedValue(manifestRow());
+    prisma.brandCharacter.findFirst.mockResolvedValue(characterRow());
+    await svc.update(USER, 'bm1', { narratorCharacterId: 'bc1' });
+    expect(prisma.brandManifest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { narratorCharacterId: 'bc1' } }),
+    );
+  });
+});

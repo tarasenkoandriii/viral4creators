@@ -1,3 +1,4 @@
+import { gridSeconds } from '../tutorial-runner/tutorial-video-assembly';
 /**
  * Версии роликов обучалки с другим темпом — постпродакшен обучалок
  * (doc/TUTORIAL-POSTPROD-TEMPO-SPEC.md; решения владельца 06.10.2026).
@@ -533,9 +534,15 @@ export class TutorialVideoVersionsService {
       return { ...base, editable: false, reason: 'no-manifest' };
     return {
       ...base,
-      durationMs: tempo.durationMs,
-      sourceDurationMs: normal.durationMs,
-      minimumDurationMs: tempo.minimumDurationMs,
+      durationMs:
+        tempo.durationMs +
+        Math.round(gridSeconds(m.preamble?.seconds ?? 0) * 1000),
+      sourceDurationMs:
+        normal.durationMs +
+        Math.round(gridSeconds(m.preamble?.seconds ?? 0) * 1000),
+      minimumDurationMs:
+        tempo.minimumDurationMs +
+        Math.round(gridSeconds(m.preamble?.seconds ?? 0) * 1000),
       warnings: tempo.warnings,
       preview: tempoPreview(m, tempo, m.motion),
     };
@@ -799,6 +806,7 @@ export class TutorialVideoVersionsService {
         captionsUrl = url;
       }
       const plan = planSlideshow(manifestSlides(m, seconds), {
+        preamble: m.preamble,
         captionsUrl,
         motion: m.motion,
         outputName: 'tutorial.mp4',

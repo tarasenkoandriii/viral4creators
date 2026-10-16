@@ -1,3 +1,4 @@
+import { parseNarratorPreamble } from '../brand-manifest/narrator-preamble';
 /**
  * Модерация черновиков обучалки по сайту заказчика — §5.2 (админские
  * эндпоинты) и §8.3 ТЗ (doc/CLIENT-SITE-TUTORIAL-SPEC.md), этап 113.
@@ -151,6 +152,7 @@ export interface DraftDetails extends DraftQueueItem {
 }
 
 interface DraftRow {
+  preambleSnapshot?: unknown;
   id: string;
   projectId: string;
   baseUrl: string;
@@ -193,6 +195,15 @@ export class ClientSiteTutorialAdminService {
       cursor = page.cursor ?? undefined;
     } while (cursor);
     return orderedFramePathnames(draftId, names);
+  }
+
+  private preambleOf(raw: unknown) {
+    const value = parseNarratorPreamble(raw);
+    if (raw && !value)
+      throw new BadRequestException(
+        'Снимок преамбулы повреждён — отправьте обучалку на проверку повторно',
+      );
+    return value;
   }
 
   private readonly logger = new Logger(ClientSiteTutorialAdminService.name);
@@ -280,6 +291,8 @@ export class ClientSiteTutorialAdminService {
    */
   async approve(id: string, approvedBy: string): Promise<DraftQueueItem> {
     const row = await this.require(id);
+    // Validate before any paid speech synthesis or assembly claim.
+    this.preambleOf(row.preambleSnapshot);
     if (row.status !== 'PENDING_REVIEW') {
       throw new ConflictException(
         'одобрить можно только черновик, отправленный на проверку',
@@ -526,7 +539,10 @@ export class ClientSiteTutorialAdminService {
     // одобрения, и менять её картинку оператор ночной обучалки не
     // должен.
     const slides = uniformFrames(frameUrls);
-    const plan = planSlideshow(slides, { motion: 'none' });
+    const plan = planSlideshow(slides, {
+      motion: 'none',
+      preamble: this.preambleOf(row.preambleSnapshot),
+    });
     if (!plan) {
       throw new BadRequestException(
         `${frames} кадров не годятся для сборки: их либо нет, либо больше потолка слайд-шоу, либо у кадра неположительная длительность`,
@@ -809,6 +825,7 @@ export class ClientSiteTutorialAdminService {
         ...(f.speech ? { audioUrl: f.speech.url } : {}),
       }));
       const plan = planSlideshow(slides, {
+        preamble: this.preambleOf(row.preambleSnapshot),
         captionsUrl,
         motion: CLIENT_VOICED_MOTION,
       });
@@ -818,6 +835,7 @@ export class ClientSiteTutorialAdminService {
         );
       }
       const manifest = buildTutorialManifest({
+        preamble: this.preambleOf(row.preambleSnapshot),
         sourceAssetId: asset.id,
         owner: { kind: 'client-site', draftId: row.id, userId: owner.userId },
         assetContentHash: prepared.contentHash,

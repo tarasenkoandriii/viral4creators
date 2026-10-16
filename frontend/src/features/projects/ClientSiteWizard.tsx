@@ -188,6 +188,7 @@ export function ClientSiteWizard({
   const [title, setTitle] = useState('');
   // Озвучка по кадрам (решение владельца 06.10.2026): по умолчанию ВКЛ.
   const [voice, setVoice] = useState(true);
+  const [preamble, setPreamble] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -693,6 +694,7 @@ export function ClientSiteWizard({
         expectedVersion: draft.version,
         title: title.trim(),
         voice,
+        preamble,
         locale,
       })
     );
@@ -1132,6 +1134,8 @@ export function ClientSiteWizard({
           frames={frames}
           title={title}
           setTitle={setTitle}
+          preamble={preamble}
+          setPreamble={setPreamble}
           voice={voice}
           setVoice={setVoice}
           busy={busy}
@@ -1782,6 +1786,8 @@ function ReviewStage(props: {
   frames: string[];
   title: string;
   setTitle: (v: string) => void;
+  preamble: boolean;
+  setPreamble: (v: boolean) => void;
   voice: boolean;
   setVoice: (v: boolean) => void;
   busy: boolean;
@@ -1796,6 +1802,7 @@ function ReviewStage(props: {
   onDiscard: () => void;
 }) {
   const { t, draft, frames, busy, editable } = props;
+  const { dict } = useI18n();
   /** Ролик показывается только у одобренного черновика — у остальных
    * статусов его не существует, и сервер отдаёт `null` (Б-4). */
   const ready = draft.video;
@@ -1908,6 +1915,23 @@ function ReviewStage(props: {
               disabled={busy}
             />
           </Field>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={props.preamble}
+              disabled={busy}
+              onChange={(e) => props.setPreamble(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium">
+                {dict.narratorProfile.enabled}
+              </span>
+              <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                {dict.narratorProfile.enabledHint}
+              </span>
+            </span>
+          </label>
           <label className="flex items-start gap-2">
             <input
               type="checkbox"

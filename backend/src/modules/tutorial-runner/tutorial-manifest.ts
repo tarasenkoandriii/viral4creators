@@ -1,3 +1,7 @@
+import {
+  NarratorPreamble,
+  parseNarratorPreamble,
+} from '../brand-manifest/narrator-preamble';
 /**
  * tutorial-manifest.ts — монтажный manifest ролика обучалки
  * (doc/TUTORIAL-POSTPROD-TEMPO-SPEC.md, «Монтажный план», 06.10.2026).
@@ -133,6 +137,7 @@ export type ManifestOwner =
   | { kind: 'scenario'; scenarioId: string; subjectKey: string };
 
 export interface TutorialTimelineManifest {
+  preamble?: NarratorPreamble | null;
   manifestVersion: number;
   sourceAssetId: string;
   owner: ManifestOwner;
@@ -186,6 +191,7 @@ export function parseTutorialManifest(
   raw: unknown,
 ): TutorialTimelineManifest | null {
   if (!isObj(raw)) return null;
+  if (raw.preamble && !parseNarratorPreamble(raw.preamble)) return null;
   if (raw.manifestVersion !== TUTORIAL_MANIFEST_VERSION) return null;
   if (typeof raw.sourceAssetId !== 'string') return null;
   if (typeof raw.sourceHash !== 'string') return null;
@@ -291,6 +297,7 @@ export function parseTutorialManifest(
     sourceAssetId: raw.sourceAssetId,
     owner: owner as unknown as ManifestOwner,
     sourceHash: raw.sourceHash,
+    ...(raw.preamble ? { preamble: parseNarratorPreamble(raw.preamble) } : {}),
     locale: raw.locale,
     theme: typeof raw.theme === 'string' ? raw.theme : null,
     fps: finiteOrNull(raw.fps) ?? 0,
@@ -352,7 +359,12 @@ export function buildTutorialManifest(
     ...rest,
     manifestVersion: TUTORIAL_MANIFEST_VERSION,
     fps: slideshowFps(),
-    sourceHash: manifestSourceHash(rest.frames, assetContentHash),
+    sourceHash: manifestSourceHash(
+      rest.frames,
+      rest.preamble
+        ? `${assetContentHash}|${rest.preamble.pathname}|${rest.preamble.seconds}`
+        : assetContentHash,
+    ),
   };
 }
 
@@ -463,6 +475,7 @@ export interface PreviewFrame {
 }
 
 export interface TempoPreview {
+  preamble?: { url: string; seconds: number };
   frames: PreviewFrame[];
   durationMs: number;
   /** Длительность перехода, секунды (0 — без переходов). */
@@ -496,6 +509,9 @@ export function tempoPreview(
         )
       : 0;
   return {
+    ...(m.preamble
+      ? { preamble: { url: m.preamble.url, seconds: m.preamble.seconds } }
+      : {}),
     frames: m.frames.map((f, i) => ({
       frameId: f.frameId,
       stepIndex: f.stepIndex,

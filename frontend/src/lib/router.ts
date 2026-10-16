@@ -11,9 +11,17 @@
 
 import { useEffect, useState } from 'react';
 
+export type ProductArea = 'commerce' | 'greetings' | 'tutorials' | 'stories';
 export type Route =
+  | { name: 'commerce' }
+  | { name: 'greetings' }
+  | { name: 'tutorials' }
+  | { name: 'stories' }
   | { name: 'projects' }
-  | { name: 'project-new' }
+  | {
+      name: 'project-new';
+      projectType?: 'SINGLE' | 'CLIENT_SITE' | 'GREETING_VIDEO';
+    }
   | { name: 'project'; projectId: string }
   | { name: 'item'; projectId: string; itemId: string; step?: string }
   | {
@@ -49,7 +57,25 @@ export function parseRoute(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/^\/+/, '').replace(/\/+$/, '');
   const parts = path ? path.split('/') : [];
 
-  if (parts.length === 0 || parts[0] === 'projects') {
+  if (parts.length === 0) return { name: 'commerce' };
+  if (
+    parts.length === 1 &&
+    ['commerce', 'greetings', 'tutorials', 'stories'].includes(parts[0])
+  )
+    return { name: parts[0] as ProductArea };
+  if (parts.length === 2 && parts[0] === 'create') {
+    const types = {
+      commerce: 'SINGLE',
+      greetings: 'GREETING_VIDEO',
+      tutorials: 'CLIENT_SITE',
+    } as const;
+    if (parts[1] in types)
+      return {
+        name: 'project-new',
+        projectType: types[parts[1] as keyof typeof types],
+      };
+  }
+  if (parts[0] === 'projects') {
     if (parts.length <= 1) return { name: 'projects' };
     if (parts[1] === 'new') return { name: 'project-new' };
     if (parts.length === 2) return { name: 'project', projectId: parts[1] };
@@ -183,8 +209,10 @@ export function useRoute(): Route {
 }
 
 export const routes = {
+  product: (area: ProductArea) => `/${area}`,
   projects: () => '/projects',
-  projectNew: () => '/projects/new',
+  projectNew: (area?: Exclude<ProductArea, 'stories'>) =>
+    area ? `/create/${area}` : '/projects/new',
   project: (id: string) => `/projects/${id}`,
   item: (projectId: string, itemId: string, step?: string) =>
     `/projects/${projectId}/items/${itemId}${step ? `/${step}` : ''}`,

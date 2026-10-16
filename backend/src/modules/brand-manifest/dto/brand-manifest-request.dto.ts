@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsIn,
+  IsBoolean,
   IsOptional,
   IsString,
   Length,
@@ -58,6 +59,15 @@ export class CardStyleDto {
  * so one DTO covers both). Explicit `null` clears styleNotes/filters/effects.
  */
 export class BrandManifestRequestDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  narratorCharacterId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  clearTutorialPreamble?: boolean;
+
   @IsOptional()
   @IsString()
   @Length(1, 120, { message: 'title must be between 1 and 120 characters' })

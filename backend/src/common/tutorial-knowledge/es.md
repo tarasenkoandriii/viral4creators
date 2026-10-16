@@ -1,8 +1,15 @@
 # Base de conocimiento del consultor de IA de viral4creators
 
-_Собрано автоматически 2026-09-30 из lending/frontend/backend; коммит — local._
+_Собрано автоматически 2026-10-16 из lending/frontend/backend; коммит — local._
 
 ## Secciones de la mini-app
+
+- **Productos** — UGC y líneas de productos. Proyectos, libro de marca, generación y posproducción en una sección.
+- **Saludos** — Un vídeo de felicitación personal con presentador, disponible en todos los planes.
+- **Tutorial** — Un vídeo tutorial de un sitio o panel ajeno, sin productos.
+- **Story‑Tales** — Un cuento de alguien cercano: introducción personal, ilustraciones y narración. El generador completo sigue en desarrollo.
+
+### Herramientas dentro de Productos
 
 - **Proyectos** — Producto o línea para la que se genera publicidad
 - **Brandbook** — Un estilo y unos personajes unificados para todos los proyectos de la marca
@@ -215,3 +222,14 @@ Telegram del servicio (pregunta abierta para el dueño del producto, spec
 producto, se sugiere abrir la mini-app. Los términos de uso y la oferta
 están en `/legal/offer` y `/legal/terms-of-use`; el consultor no los cita
 textualmente ni da garantías legales, remite al documento.
+
+
+## Menú, narrador e introducción de Tutorial
+
+Cuatro áreas principales: Productos, Saludos, Tutorial y Story‑Tales. Productos agrupa UGC, líneas, proyectos, libro de marca, generación y posproducción. Saludos y Tutorial tienen listas filtradas y formularios del tipo correcto. Los enlaces directos existentes siguen funcionando.
+
+Elige la imagen del narrador en el libro de marca; foto/boceto se configuran en la tarjeta del personaje y la voz por separado. Nova a9fc5a41 sigue siendo la voz predeterminada global.
+
+Sube un MP4 aprobado con audio y vídeo, de 5 a 10 segundos y hasta 20 MB, elige su idioma y confirma que lo has visto. Activa expresamente la introducción al terminar el asistente. El proyecto debe enlazar tu libro de marca con una grabación del mismo idioma. La grabación no se vuelve a doblar ni se acelera al cambiar el ritmo; está desactivada por defecto.
+
+Story‑Tales sigue en desarrollo. El perfil y las introducciones grabadas están disponibles; el generador completo de cuentos, las invitaciones familiares y la clonación automática de voces de familiares aún no están listos. No recomendar la muestra Kling rechazada.

@@ -1,3 +1,4 @@
+import { useI18n } from '../../lib/i18n-context';
 /**
  * Предпросмотр темпа обучалки в браузере (06.10.2026) — бесплатно и
  * по тому же монтажному плану, что уйдёт в платную сборку.
@@ -47,6 +48,7 @@ export function TutorialPreview({
   preview: TempoPreview;
   labels: Labels;
 }) {
+  const { dict } = useI18n();
   const [playing, setPlaying] = useState(false);
   const [t, setT] = useState(0);
   const [audioFallback, setAudioFallback] = useState(false);
@@ -215,6 +217,21 @@ export function TutorialPreview({
 
   return (
     <div className="space-y-2">
+      {preview.preamble && (
+        <div className="space-y-2">
+          <p className="text-xs text-[var(--muted)]">
+            {dict.narratorProfile.previewHint}
+          </p>
+          <video
+            src={preview.preamble.url}
+            controls
+            preload="metadata"
+            className="max-h-48 w-full rounded-lg"
+            onPlay={stop}
+          />
+        </div>
+      )}
+
       <div
         className="relative mx-auto w-full max-w-[220px] overflow-hidden rounded-lg border border-[var(--border)] bg-black"
         style={{ aspectRatio: '720 / 1560' }}

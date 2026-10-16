@@ -77,6 +77,10 @@ export interface BrandSceneView {
 }
 
 export interface BrandManifestView {
+  narratorCharacterId?: string | null;
+  tutorialPreamble?:
+    | import('../../modules/brand-manifest/narrator-preamble').NarratorPreamble
+    | null;
   id: string;
   title: string;
   styleNotes: string | null;

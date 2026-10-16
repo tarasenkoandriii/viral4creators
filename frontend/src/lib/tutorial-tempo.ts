@@ -71,6 +71,7 @@ export interface PreviewFrame {
 }
 
 export interface TempoPreview {
+  preamble?: { url: string; seconds: number };
   frames: PreviewFrame[];
   durationMs: number;
   transitionSeconds: number;

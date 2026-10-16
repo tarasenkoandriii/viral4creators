@@ -1,3 +1,4 @@
+import { NarratorProfile } from './NarratorProfile';
 /**
  * Brand Manifest — create / edit (spec §12 "Экран — управление
  * манифестом"). One screen for both modes: without `manifestId` it is the
@@ -320,6 +321,8 @@ function EditScreen({ manifestId }: { manifestId: string }) {
           {actionError}
         </Alert>
       )}
+
+      <NarratorProfile manifest={manifest} onSaved={setData} />
 
       <StyleForm
         manifest={manifest}

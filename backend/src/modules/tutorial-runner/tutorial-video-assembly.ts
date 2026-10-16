@@ -1,3 +1,7 @@
+import {
+  NarratorPreamble,
+  parseNarratorPreamble,
+} from '../brand-manifest/narrator-preamble';
 /**
  * tutorial-video-assembly.ts — собирает кадры сценария (`scenario-
  * runner.ts`'s `captureFrames`, этап 98) в один ролик-слайд-шоу через
@@ -884,6 +888,7 @@ export function slideshowContentHash(
 export function planSlideshow(
   frames: readonly SlideshowFrame[],
   opts: {
+    preamble?: NarratorPreamble | null;
     outputName?: string;
     voiceoverUrl?: string | null;
     /** Ссылка на `.ass` с подписями (§5 ТЗ, этап E). `null` — ролик
@@ -894,6 +899,8 @@ export function planSlideshow(
     motion: SlideshowMotion;
   },
 ): SlideshowPlan | null {
+  const preamble = opts.preamble ? parseNarratorPreamble(opts.preamble) : null;
+  if (opts.preamble && !preamble) return null;
   const outputName = opts.outputName ?? 'tutorial.mp4';
   const motion = appliedMotion(frames, opts.motion);
   const voiceoverUrl = opts.voiceoverUrl ?? null;
@@ -1213,6 +1220,37 @@ export function planSlideshow(
 
   if (hasAudio) maps.push('-map "[outa]"');
 
+  // Captions are burned onto the tutorial BEFORE the intro is prepended:
+  // all existing frame timestamps stay relative to the body, never over the narrator.
+  if (preamble) {
+    const seconds = gridSeconds(preamble.seconds);
+    const introIndex = inputArgs.join(' ').match(/-i /g)?.length ?? 0;
+    inputs.preamble = preamble.url;
+    inputArgs.push('-i {{preamble}}');
+    const bodyVideo = captionsUrl ? 'outc' : 'outv';
+    parts.push(
+      `[${bodyVideo}]fps=${OUTPUT_FPS},settb=AVTB,setpts=PTS-STARTPTS[bodyv]`,
+    );
+    parts.push(
+      `[${introIndex}:v]scale=${CANVAS.width}:${CANVAS.height}:force_original_aspect_ratio=decrease,pad=${CANVAS.width}:${CANVAS.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${OUTPUT_FPS},tpad=stop_mode=clone:stop_duration=${seconds},trim=duration=${seconds},settb=AVTB,setpts=PTS-STARTPTS[introv]`,
+    );
+    parts.push(
+      `[${introIndex}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=duration=${seconds},asetpts=N/SR/TB[introa]`,
+    );
+    if (hasAudio)
+      parts.push(
+        '[outa]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=N/SR/TB[bodya]',
+      );
+    else
+      parts.push(
+        `anullsrc=r=44100:cl=stereo,atrim=duration=${durationMs / 1000},asetpts=N/SR/TB[bodya]`,
+      );
+    parts.push(
+      '[introv][introa][bodyv][bodya]concat=n=2:v=1:a=1[finalv][finala]',
+    );
+    maps.splice(0, maps.length, '-map "[finalv]"', '-map "[finala]"');
+  }
+
   // `-shortest` только при звуке, и по той же причине, что
   // `-framerate` выше: aac пакует по 1024 сэмпла, поэтому звуковой
   // поток всегда чуть ДЛИННЕЕ заказанного (до 23 мс), и без
@@ -1249,7 +1287,7 @@ export function planSlideshow(
     `${inputArgs.join(' ')} -filter_complex "${parts.join(';')}" ` +
     `${maps.join(' ')} -r ${OUTPUT_FPS} ` +
     `-c:v libx264 -preset veryfast -crf ${OUTPUT_CRF} -pix_fmt yuv420p` +
-    `${hasAudio ? ' -c:a aac -b:a 192k -shortest' : ''}` +
+    `${hasAudio || preamble ? ' -c:a aac -b:a 192k -shortest' : ''}` +
     ` -movflags +faststart {{${outputName}}}`;
 
   return {
@@ -1257,7 +1295,9 @@ export function planSlideshow(
     outputs: [outputName],
     commands: [command],
     outputName,
-    durationMs,
+    durationMs:
+      durationMs +
+      (preamble ? Math.round(gridSeconds(preamble.seconds) * 1000) : 0),
     motion,
   };
 }

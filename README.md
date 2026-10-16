@@ -242,7 +242,7 @@ Telegram login and a project it becomes:
 
 ## API Documentation
 
-`doc/API.md` is the current, complete route list (614 routes in 98 controller files; CI checks the count). The older
+`doc/API.md` is the current, complete route list (616 routes in 98 controller files; CI checks the count). The older
 [specs/001-ugc-video-generator/contracts/openapi.yaml](specs/001-ugc-video-generator/contracts/openapi.yaml)
 covers only the ten routes of the first milestone and is kept as history.
 The external API for integrators (`/v1`, Premium) has its own machine-
@@ -254,7 +254,7 @@ separate limits document in [doc/API-LIMITS.md](doc/API-LIMITS.md);
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 10387
+a hand-written migration drifting from the schema, types, lint, 10411
 tests with per-file coverage thresholds), frontend (types, lint, 89 unit
 scripts, build), admin, landing and marketplace
 (types + lint + build), `npm audit --audit-level=high --omit=dev` in every
@@ -270,7 +270,7 @@ locally except the two Prisma steps that need network (`migrate deploy`,
 
 All supplementary documentation lives in [`doc/`](doc/):
 
-- Investor report v3.16 (13 October 2026): [standalone Markdown](doc/reports/investor-report-2026-10-13-v3.16.md) and [PDF](doc/reports/investor-report-2026-10-13-v3.16.pdf).
+- Investor report v3.17 (16 October 2026): [standalone Markdown](doc/reports/investor-report-2026-10-16-v3.17.md) and [PDF](doc/reports/investor-report-2026-10-16-v3.17.pdf).
 
 - [`doc/ai-publisher/README.md`](doc/ai-publisher/README.md) — target product **AI Publisher / ai-publisher.org**, audited v2.2 specification, acceptance and staged integration roadmap; target requirements, not completed pilot results.
 - [`doc/ai-publisher/IMPLEMENTATION-DESIGN.md`](doc/ai-publisher/IMPLEMENTATION-DESIGN.md) — implementation design of the Publisher module (`sites-backend/src/modules/publisher`, `publisher-site/`, assist screens): AT → test trace (§18.1), integration decisions Р-PUB-Z*; end-to-end E2E-01…05 against the real backend — `scripts/publisher-e2e.sh [--site]`, CI job `publisher-stand` (§25–§26).
