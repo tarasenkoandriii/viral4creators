@@ -505,6 +505,8 @@ export class GreetingVideoService {
           session.userId ?? null,
           attemptId,
           session.locale,
+          session.generationPrompt.finalVoiceoverScript ??
+            session.generationPrompt.voiceoverScript,
         );
       }
       return await this.startGrokVideo(
@@ -612,6 +614,7 @@ export class GreetingVideoService {
     generatedVideoId: string,
     /** Язык интерфейса сессии — запасной язык озвучки (этап C, §3.8). */
     sessionLocale?: string | null,
+    speechScript?: string | null,
   ): Promise<GeneratedVideo> {
     // Тарифный гейт. `resolveGreetingConfig` уже не пропустил бы бриф с
     // 'hedra' ниже PREMIUM, но бриф мог быть сохранён давно, а тариф с
@@ -649,7 +652,8 @@ export class GreetingVideoService {
 
     // Ровно тот же текст, который произнёс бы ведущий в ветке Grok:
     // читаем его той же функцией, что и постобработка.
-    const speech = speakableText(script);
+    // An explicit empty approved speech must not fall back to scene directions.
+    const speech = speakableText(speechScript ?? script);
     if (!speech) {
       throw new BadRequestException(
         'Аватару нечего произнести: в сценарии нет реплик — допишите их на шаге промпта',
@@ -698,7 +702,9 @@ export class GreetingVideoService {
       const pathname = attemptPath(sessionId, generatedVideoId, 'generated');
 
       const { jobId } = await this.hedra.submit({
-        prompt: script,
+        // The audio is authoritative; Grok's silent-presenter scene directions
+        // must not countermand articulation or invent unrelated hand gestures.
+        prompt: greetingAvatarPerformancePrompt(brief),
         startImage: portrait,
         audioUrl: voice.url,
         aspectRatio,
@@ -1233,4 +1239,19 @@ function isExplicitProvider(
   return (EXPLICIT_TTS_PROVIDER_KEYS as readonly string[]).includes(
     value ?? '',
   );
+}
+
+/** Restrained greeting performance driven by the supplied speech, not a gesture loop. */
+export function greetingAvatarPerformancePrompt(
+  brief: Pick<GreetingBriefSnapshot, 'occasion' | 'tone'>,
+): string {
+  return [
+    `A personal video message for ${brief.occasion}, tone: ${brief.tone}.`,
+    'Preserve the person, outfit, lighting and setting of the source portrait.',
+    'Use the supplied audio as the sole timing reference. Articulate the actual spoken phonemes naturally; do not add dialogue.',
+    'Locked camera and stable upright torso. Keep shoulders relaxed and hands resting still for most of the message.',
+    'At most one small, brief greeting gesture if hands are visible. No continuous arm waving, repeated open palms, swaying, dancing or rocking.',
+    'Use subtle blinks and small natural head movements, without a fixed smile through every syllable.',
+    'Let the delivery follow the audio pauses and end calmly with the final spoken phrase. No on-screen text.',
+  ].join(' ');
 }

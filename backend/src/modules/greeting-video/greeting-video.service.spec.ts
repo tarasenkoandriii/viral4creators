@@ -1483,3 +1483,52 @@ describe('Grok greeting narration preflight', () => {
     expect(startGeneration).not.toHaveBeenCalled();
   });
 });
+
+it('Hedra reads the approved speech field instead of visual scene directions', async () => {
+  const { svc, ttsResolver, hedra } = build(
+    withPortrait({
+      generationPrompt: {
+        finalText: 'A silent presenter, no lip-synced dialogue.',
+        finalVoiceoverScript: 'С праздником! Желаем здоровья и радости.',
+        voiceoverScript: 'Старый текст.',
+        moderationStatus: 'APPROVED',
+      },
+    }),
+  );
+  const provider = await ttsResolver.resolve();
+  await svc.startVideo('s1');
+  expect(provider.synthesize).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: 'С праздником! Желаем здоровья и радости.',
+    }),
+  );
+  const prompt = hedra.submit.mock.calls[0][0].prompt;
+  expect(prompt).toContain('supplied audio as the sole timing reference');
+  expect(prompt).not.toContain('no lip-synced dialogue');
+});
+
+it('Hedra does not restore erased approved speech from the scene prompt', async () => {
+  const { svc, ttsResolver, hedra } = build(
+    withPortrait({
+      generationPrompt: {
+        finalText: 'Ведущий говорит: «С праздником!»',
+        finalVoiceoverScript: '',
+        moderationStatus: 'APPROVED',
+      },
+    }),
+  );
+  const provider = await ttsResolver.resolve();
+  await expect(svc.startVideo('s1')).rejects.toThrow('нечего произнести');
+  expect(provider.synthesize).not.toHaveBeenCalled();
+  expect(hedra.submit).not.toHaveBeenCalled();
+});
+
+it('Hedra requests restrained movement rather than an unrelated gesture loop', async () => {
+  const { svc, hedra } = build(withPortrait());
+  await svc.startVideo('s1');
+  const prompt = hedra.submit.mock.calls[0][0].prompt;
+  expect(prompt).toContain('hands resting still');
+  expect(prompt).toContain('At most one small');
+  expect(prompt).toContain('No continuous arm waving');
+  expect(prompt).toContain('end calmly with the final spoken phrase');
+});
