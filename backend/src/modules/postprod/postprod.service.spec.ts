@@ -996,7 +996,16 @@ describe('PostProductionService (ТЗ §15.4/§16.1)', () => {
           backgroundUrls: ['https://blob/no_vocals.mp3'],
           seconds: 16,
         });
-        const r = await svc.start('s1', { ...VIDEO, provider: 'grok' });
+        // The synthetic stem must never trigger real network I/O in a unit test.
+        const fetchSpy = jest
+          .spyOn(global, 'fetch')
+          .mockRejectedValue(new Error('offline fixture'));
+        let r;
+        try {
+          r = await svc.start('s1', { ...VIDEO, provider: 'grok' });
+        } finally {
+          fetchSpy.mockRestore();
+        }
         const call = api.submit.mock.calls[0][0];
         expect(call.commands[0]).not.toContain('[0:a]');
         expect(call.inputs.bg1).toBe('https://blob/no_vocals.mp3');
