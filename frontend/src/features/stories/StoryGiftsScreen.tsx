@@ -1,3 +1,4 @@
+import { StoryReferencesPanel } from './StoryReferencesPanel';
 import { useEffect, useRef, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { Button, Card } from '../../components/ui';
@@ -15,6 +16,13 @@ type Story = {
   targetSeconds: number;
   kind: string;
   sourceUrl?: string;
+  sourceEdition?: {
+    author: string;
+    edition: string;
+    pages: string;
+    changes: string;
+    textSha256: string;
+  };
   audioReserveUsd: number;
 };
 type Gift = {
@@ -85,6 +93,34 @@ async function photoPng(file: File): Promise<string> {
   }
 }
 function Illustration({ scene }: { scene: string }) {
+  if (scene === 'turnip')
+    return (
+      <svg
+        viewBox="0 0 640 360"
+        className="w-full rounded-xl"
+        role="img"
+        aria-label="Большая репка на грядке"
+      >
+        <rect width="640" height="360" rx="24" fill="#d8e9e0" />
+        <circle cx="530" cy="65" r="35" fill="#ffe29a" />
+        <path d="M0 245Q320 195 640 245V360H0" fill="#8ca97c" />
+        <path d="M0 295Q320 250 640 295V360H0" fill="#946f56" />
+        <path
+          d="M310 205Q245 120 280 80Q330 100 324 175Q340 80 390 75Q415 130 340 210"
+          fill="#538759"
+        />
+        <path
+          d="M270 200Q325 165 380 200Q430 250 325 325Q230 270 270 200Z"
+          fill="#f1d09b"
+        />
+        <path
+          d="M300 225Q325 245 350 225"
+          fill="none"
+          stroke="#b4936b"
+          strokeWidth="4"
+        />
+      </svg>
+    );
   if (scene === 'mitten')
     return (
       <svg
@@ -182,7 +218,7 @@ export function StoryGiftsScreen() {
     [shareUrl, setShareUrl] = useState('');
   const [country, setCountry] = useState('UA'),
     [storyLanguage, setStoryLanguage] = useState('ru');
-  const [storyId, setStoryId] = useState('mitten-ru-short-v1'),
+  const [storyId, setStoryId] = useState('turnip-ushinsky-ru-1949-v1'),
     [budget, setBudget] = useState('1');
   const variants = catalog.filter((s) => s.locale === storyLanguage);
   const story =
@@ -297,6 +333,7 @@ export function StoryGiftsScreen() {
           {error}
         </p>
       )}
+      <StoryReferencesPanel />
       {catalog.length > 0 && (
         <Card className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">Сказка и бюджет подарка</h2>
@@ -339,7 +376,9 @@ export function StoryGiftsScreen() {
                   {s.title} · {s.targetSeconds} с{' '}
                   {s.kind === 'original'
                     ? '· длинный аудиообразец'
-                    : '· короткий пересказ'}
+                    : s.kind === 'classic'
+                      ? '· точная классическая редакция'
+                      : '· короткая адаптация'}
                 </option>
               ))}
             </select>
@@ -403,6 +442,19 @@ export function StoryGiftsScreen() {
                 ? 'Источник сюжета (текст адаптации отличается)'
                 : 'Источник выбранного текста'}
             </a>
+          )}
+          {story.sourceEdition && (
+            <details>
+              <summary>Проверенная редакция и происхождение текста</summary>
+              <p>
+                {story.sourceEdition.author} · {story.sourceEdition.edition}, с.{' '}
+                {story.sourceEdition.pages}
+              </p>
+              <p>{story.sourceEdition.changes}</p>
+              <p className="break-all text-xs">
+                SHA-256 текста: {story.sourceEdition.textSha256}
+              </p>
+            </details>
           )}
           <label className="block">
             Повод подарка — необязательно

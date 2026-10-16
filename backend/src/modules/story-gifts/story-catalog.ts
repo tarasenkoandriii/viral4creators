@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /** Original pilot story; no third-party edition, translation or family data. */
 export const STORY_VOICE = 'a9fc5a41'; // Approved Nova: never substitute silently.
 const ORIGINAL_STORY = [
@@ -39,6 +40,15 @@ export interface StoryCatalogEntry {
   targetSeconds: number;
   kind: 'classic' | 'adaptation' | 'original';
   sourceUrl?: string;
+  sourceEdition?: {
+    author: string;
+    edition: string;
+    pages: string;
+    verifiedAt: string;
+    changes: string;
+    textSha256: string;
+  };
+
   chapters: { title: string; scene: string; text: string }[];
 }
 const mittenSource =
@@ -48,6 +58,48 @@ const pigsSource =
 const shortRights =
   'Короткий авторский пересказ народного сюжета. Мягкий финал; не текст современного издания.';
 export const STORY_CATALOG: StoryCatalogEntry[] = [
+  {
+    id: 'turnip-ushinsky-ru-1949-v1',
+    locale: 'ru',
+    title: 'Репка',
+    revision: 'ushinsky-t6-1949-pages45-46-v1',
+    ageBand: '3–7',
+    countries: ['UA', 'OTHER', 'GB', 'US', 'DE', 'ES'],
+    targetSeconds: 65,
+    kind: 'classic',
+    rights:
+      'Народная сказка в обработке К. Д. Ушинского (1824–1871). Точный текст по изданию 1949 года, с. 45–46; без сокращений и новой морали. Используется текст автора в общественном достоянии, без редакционных комментариев и иллюстраций издания.',
+    sourceUrl:
+      'https://imwerden.de/pdf/ushinsky_sobranie_sochineny_tom06_1949_text.pdf#page=46',
+    sourceEdition: {
+      author: 'Константин Дмитриевич Ушинский',
+      edition:
+        'Собрание сочинений. Том 6. Родное слово. Москва — Ленинград: Издательство АПН РСФСР, 1949',
+      pages: '45–46 (PDF 46–47)',
+      verifiedAt: '2026-10-16',
+      changes:
+        'Убраны переносы строк/слов и типографские пробелы; текст, имя кошки Машка и финал сохранены. Заголовки трёх сцен — навигация, не озвучиваются.',
+      textSha256: '',
+    },
+    chapters: [
+      {
+        title: 'Большая репка',
+        scene: 'turnip',
+        text: 'Посадил дед репку — выросла большая, пребольшая. Стал дед репку из земли тащить: тянет-потянет, вытянуть не может. Позвал дед на помощь бабку. Бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут.',
+      },
+      {
+        title: 'Все на помощь',
+        scene: 'turnip',
+        text: 'Позвала бабка внучку. Внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут. Кликнула внучка Жучку. Жучка за внучку, внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут. Кликнула Жучка Машку. Машка за Жучку, Жучка за внучку, внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут.',
+      },
+      {
+        title: 'Мышка помогла',
+        scene: 'turnip',
+        text: 'Кликнула Машка мышку. Мышка за Машку, Машка за Жучку, Жучка за внучку, внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут — вытащили репку!',
+      },
+    ],
+  },
+
   {
     ...ORIGINAL_STORY[0],
     chapters: ORIGINAL_STORY[0].chapters.map((c) => ({ ...c })),
@@ -172,6 +224,12 @@ export const STORY_CATALOG: StoryCatalogEntry[] = [
     ],
   },
 ];
+for (const story of STORY_CATALOG) {
+  if (story.sourceEdition)
+    story.sourceEdition.textSha256 = createHash('sha256')
+      .update(story.chapters.map((c) => c.text).join('\n\n'))
+      .digest('hex');
+}
 export function storyText(catalogId = 'little-lantern-ru-v1') {
   const story = STORY_CATALOG.find((s) => s.id === catalogId);
   if (!story) throw new Error('Unknown story revision');
@@ -188,6 +246,8 @@ export function escapeStoryHtml(value: string): string {
 }
 /** Shared by the catalogue, owner preview and public gift; no external images. */
 export function storyIllustration(scene: string): string {
+  if (scene === 'turnip')
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Большая репка на грядке"><rect width="640" height="360" rx="24" fill="#d8e9e0"/><circle cx="530" cy="65" r="35" fill="#ffe29a"/><path d="M0 245Q320 195 640 245V360H0" fill="#8ca97c"/><path d="M0 295Q320 250 640 295V360H0" fill="#946f56"/><path d="M310 205Q245 120 280 80Q330 100 324 175Q340 80 390 75Q415 130 340 210" fill="#538759"/><path d="M270 200Q325 165 380 200Q430 250 325 325Q230 270 270 200Z" fill="#f1d09b"/><path d="M300 225Q325 245 350 225" fill="none" stroke="#b4936b" stroke-width="4"/><path d="M325 325L305 345" stroke="#f1d09b" stroke-width="6"/></svg>`;
   if (scene === 'mitten')
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Рукавичка в зимнем лесу"><rect width="640" height="360" rx="24" fill="#dcebf0"/><path d="M0 285Q160 220 320 280T640 255V360H0" fill="#f9fcfc"/><path d="M55 260L120 65L185 260ZM460 270L530 80L605 270Z" fill="#4f7774"/><path d="M270 285V175Q270 145 300 145H330Q360 145 360 175V205L380 185Q403 170 416 190Q425 210 405 230L360 280V300H270Z" fill="#cd745d"/><path d="M270 277H360V304H270Z" fill="#efc18d"/><circle cx="250" cy="299" r="16" fill="#a6adb7"/><circle cx="240" cy="285" r="8" fill="#c8cdd2"/><circle cx="260" cy="285" r="8" fill="#c8cdd2"/><circle cx="248" cy="298" r="2"/></svg>`;
   if (scene === 'pigs')

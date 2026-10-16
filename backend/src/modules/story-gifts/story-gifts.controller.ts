@@ -1,3 +1,4 @@
+import { StoryReferencesService } from './story-references.service';
 import {
   Body,
   Controller,
@@ -29,6 +30,9 @@ import {
 } from '../telegram-auth/telegram-identity.guard';
 import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
 import { StoryGiftsService } from './story-gifts.service';
+class StoryReferenceDto {
+  @IsString() @MaxLength(500) url!: string;
+}
 export class CreateStoryDto {
   @IsString() @MaxLength(80) catalogId!: string;
   @IsOptional()
@@ -58,7 +62,19 @@ class ShareStoryDto {
 @Controller('story-gifts')
 @UseGuards(TelegramIdentityGuard)
 export class StoryGiftsController {
-  constructor(private readonly service: StoryGiftsService) {}
+  constructor(
+    private readonly service: StoryGiftsService,
+    private readonly references: StoryReferencesService,
+  ) {}
+  @Get('references') referenceList(@Req() req: IdentifiedRequest) {
+    return this.references.list(req.telegramUserId);
+  }
+  @Post('references/analyze') referenceAnalyze(
+    @Req() req: IdentifiedRequest,
+    @Body() dto: StoryReferenceDto,
+  ) {
+    return this.references.analyze(req.telegramUserId, dto.url);
+  }
   @Get('catalog') catalog() {
     return this.service.catalog();
   }
@@ -156,7 +172,19 @@ export function audioRange(
 }
 @Controller('story-gift')
 export class PublicStoryGiftController {
-  constructor(private readonly service: StoryGiftsService) {}
+  constructor(
+    private readonly service: StoryGiftsService,
+    private readonly references: StoryReferencesService,
+  ) {}
+  @Get('references') referenceList(@Req() req: IdentifiedRequest) {
+    return this.references.list(req.telegramUserId);
+  }
+  @Post('references/analyze') referenceAnalyze(
+    @Req() req: IdentifiedRequest,
+    @Body() dto: StoryReferenceDto,
+  ) {
+    return this.references.analyze(req.telegramUserId, dto.url);
+  }
   private headers(res: Response) {
     res.set({
       'X-Robots-Tag': 'noindex, nofollow, noarchive',
