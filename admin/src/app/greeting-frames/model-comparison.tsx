@@ -67,11 +67,10 @@ export default function GreetingModelComparison() {
     {error && <p className="critical" role="alert">{error}</p>}
     <div style={{display:'flex',gap:12,flexWrap:'wrap',alignItems:'center',margin:'16px 0'}}>
       <label>Готовое поздравление{' '}<select aria-label="Поздравление для сравнения" value={selected} disabled={!!busy}
-        onChange={e=>{setSelected(e.target.value);setMediaDuration(null);}}>
-        {view?.videos.map(v=><option key={v.sessionId} value={v.sessionId}>{v.title} · {new Date(v.createdAt).toLocaleString('ru-RU')} · {v.sessionId.slice(-8)}</option>)}
+        onChange={e=>{setSelected(e.target.value);setMediaDuration(null);setNotice(null);}}>
+        {view?.videos.map(v=><option key={v.sessionId} value={v.sessionId}>{v.sessionId.startsWith('benchmark-kling-')?'Kling Pro · ':''}{v.title} · {new Date(v.createdAt).toLocaleString('ru-RU')} · {v.sessionId.slice(-8)}</option>)}
       </select></label>
       <button type="button" disabled={!!busy} onClick={()=>void load()}>Обновить оценки</button>
-      {notice && <p role="status">{notice}</p>}
     <button type="button" disabled={!!busy || !video || !missing.length} onClick={()=>void run(missing)}>
         {busy?`Оценивает ${busy}…`:'Сравнить на этом ролике'}
       </button>
