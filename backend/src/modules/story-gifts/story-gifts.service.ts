@@ -359,7 +359,9 @@ export class StoryGiftsService {
     return this.own(userId, id);
   }
   async share(userId: string, id: string) {
-    await this.own(userId, id);
+    const row = await this.own(userId, id);
+    if (row.status !== 'APPROVED')
+      throw new ConflictException('Сначала одобрите готовую сказку');
     const token = randomBytes(32).toString('base64url');
     const done = await this.prisma.storyGift.updateMany({
       where: { id, userId, status: 'APPROVED', shareHash: null },
@@ -367,7 +369,7 @@ export class StoryGiftsService {
     });
     if (!done.count)
       throw new ConflictException(
-        'Одобрите сказку; для новой ссылки сначала отзовите прежнюю',
+        'Ссылка уже создана либо выпуск изменён. Для новой ссылки сначала отзовите прежнюю',
       );
     return { token };
   }
