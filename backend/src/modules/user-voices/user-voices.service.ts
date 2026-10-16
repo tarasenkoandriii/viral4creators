@@ -81,6 +81,16 @@ type UserVoiceRow = {
   updatedAt: Date;
 };
 
+const INTERMEDIATE_VOICE_STATES = new Set([
+  'pending',
+  'initializing',
+  'processing',
+  'training',
+  'building',
+  'started',
+  'in_progress',
+  'queued',
+]);
 function needsBuild(row: UserVoiceRow) {
   return (
     row.status === 'TRAINING' &&
@@ -449,7 +459,23 @@ export class UserVoicesService {
     })) as UserVoiceRow[];
 
     const refreshed = await Promise.all(
-      rows.map(async (row) => {
+      rows.map(async (original) => {
+        let row = original;
+        const progressError = row.error?.match(
+          /^Resemble сообщил об ошибке обучения \(status: ([a-z_]+)\)$/,
+        )?.[1];
+        if (
+          row.status === 'FAILED' &&
+          row.resembleVoiceId &&
+          progressError &&
+          INTERMEDIATE_VOICE_STATES.has(progressError)
+        ) {
+          const repaired = await this.prisma.userVoice.updateMany({
+            where: { id: row.id, userId, status: 'FAILED', error: row.error },
+            data: { status: 'TRAINING', error: null },
+          });
+          if (repaired.count) row = { ...row, status: 'TRAINING', error: null };
+        }
         if (row.status !== 'TRAINING' || !row.resembleVoiceId) return row;
         return this.refreshStatus(row);
       }),
@@ -526,16 +552,19 @@ export class UserVoicesService {
       );
       return;
     }
+    const phase = payload.status?.trim().toLowerCase();
+    if (phase && INTERMEDIATE_VOICE_STATES.has(phase)) return;
     if (row.status !== 'TRAINING') return; // уже разрешилось (READY/FAILED) — повторный вебхук не переигрываем
-    if (
-      payload.ok === true &&
-      ['finished', 'ready'].includes(payload.status ?? '')
-    ) {
+    if (payload.ok === true && ['finished', 'ready'].includes(phase ?? '')) {
       await this.prisma.userVoice.update({
         where: { id: row.id },
         data: { status: 'READY' },
       });
-    } else {
+    } else if (
+      payload.ok === false ||
+      phase === 'failed' ||
+      phase === 'error'
+    ) {
       await this.prisma.userVoice.update({
         where: { id: row.id },
         data: {

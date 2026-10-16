@@ -603,3 +603,45 @@ describe('Explicit provider build lifecycle', () => {
     expect(s.resemble.buildVoice).not.toHaveBeenCalled();
   });
 });
+
+describe('Provider progress callbacks are not terminal failures', () => {
+  it('ignores initializing and other intermediate webhooks without changing the voice', async () => {
+    const s = build();
+    s.prisma.userVoice.findFirst.mockResolvedValue(row({ status: 'TRAINING' }));
+    for (const status of [
+      'initializing',
+      'pending',
+      'processing',
+      'training',
+      'building',
+      'queued',
+    ]) {
+      await s.svc.handleWebhook({ id: 'resemble-uuid-1', status, ok: true });
+      await s.svc.handleWebhook({ id: 'resemble-uuid-1', status, ok: false });
+    }
+    expect(s.prisma.userVoice.update).not.toHaveBeenCalled();
+  });
+  it('repairs a legacy initializing misclassification by polling, without any new training', async () => {
+    const s = build();
+    s.prisma.userVoice.findMany.mockResolvedValue([
+      row({
+        status: 'FAILED',
+        error: 'Resemble сообщил об ошибке обучения (status: initializing)',
+        buildRequestedAt: NOW,
+      }),
+    ]);
+    s.resemble.getVoiceStatus.mockResolvedValue({ status: 'ready' });
+    s.prisma.userVoice.update.mockResolvedValue(
+      row({ status: 'READY', error: null }),
+    );
+    expect((await s.svc.list(USER))[0].status).toBe('ready');
+    expect(s.prisma.userVoice.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'FAILED', userId: USER }),
+        data: { status: 'TRAINING', error: null },
+      }),
+    );
+    expect(s.resemble.buildVoice).not.toHaveBeenCalled();
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+  });
+});
