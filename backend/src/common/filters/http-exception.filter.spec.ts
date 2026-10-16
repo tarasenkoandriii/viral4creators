@@ -10,6 +10,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  redactStoryToken,
   HttpExceptionFilter,
   INTERNAL_ERROR_MESSAGE,
 } from './http-exception.filter';
@@ -174,5 +175,19 @@ describe('HttpExceptionFilter — details sites-backend (P-R-ADM, вкладка
       );
       expect(r.body.error.details).toBeUndefined();
     }
+  });
+});
+
+describe('Story‑Tales bearer link redaction', () => {
+  it('keeps a public gift token out of application error messages and paths', () => {
+    expect(redactStoryToken('/api/story-gift/secret-token/audio')).toBe(
+      '/api/story-gift/[redacted]/audio',
+    );
+    expect(
+      redactStoryToken('Cannot GET /api/story-gift/secret-token/unknown'),
+    ).not.toContain('secret-token');
+    expect(redactStoryToken('/api/story-gifts/owner-id')).toBe(
+      '/api/story-gifts/owner-id',
+    );
   });
 });

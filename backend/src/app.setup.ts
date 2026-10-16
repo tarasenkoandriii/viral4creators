@@ -21,6 +21,7 @@ import {
   ADMIN_SESSION_COOKIE_NAME,
   parseCookieHeader,
 } from './modules/admin-auth/cookie.util';
+import { USER_SESSION_COOKIE_NAME } from './modules/telegram-login/cookie.util';
 import { IMPORT_MAX_BODY_BYTES } from './modules/admin-panel/admin-reddit.routes';
 
 /**
@@ -117,6 +118,26 @@ export function configureApp(
     ) {
       if (!hasAdminSessionCookie(req)) return next();
       importJson(req, res, next);
+    },
+  );
+  // Story photo: bounded JSON only on this route; keep Nest's 100 KB
+  // default elsewhere. Presence is not authentication: the controller guard
+  // still verifies the Telegram identity/cookie before reading any gift.
+  const storyPhotoJson = json({ limit: 1450000 });
+  app.use(
+    /^\/api\/story-gifts\/[^/]+\/photo$/,
+    function storyGiftPhotoJson(
+      req: Request,
+      res: Response,
+      next: NextFunction,
+    ) {
+      const hasIdentity =
+        !!parseCookieHeader(req.headers.cookie)[USER_SESSION_COOKIE_NAME] ||
+        !!req.headers['x-telegram-init-data'] ||
+        (process.env.ALLOW_DEV_AUTH === 'true' &&
+          !!req.headers['x-dev-user-id']);
+      if (req.method !== 'POST' || !hasIdentity) return next();
+      storyPhotoJson(req, res, next);
     },
   );
   // М-4.4 седьмого аудита (снятие `Access-Control-Allow-Credentials` для

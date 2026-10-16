@@ -1,28 +1,22 @@
-import { BookOpen, Clapperboard, Palette, Zap } from 'lucide-react';
-import { Button, Card } from '../../components/ui';
+import { StoryGiftsScreen } from '../stories/StoryGiftsScreen';
+import { Clapperboard, Palette, Zap } from 'lucide-react';
+import { Button } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
 import { navigate, routes, type ProductArea } from '../../lib/router';
 import { ProjectsListScreen } from '../projects/ProjectsListScreen';
 
 export function ProductHub({ area }: { area: ProductArea }) {
   const { dict } = useI18n();
-  const t = dict.productAreas;
   return (
     <div className="space-y-5">
       {area === 'stories' ? (
-        <Card className="p-5 space-y-4">
-          <BookOpen size={28} className="text-accent" />
-          <h1 className="text-xl font-semibold">{t.stories}</h1>
-          <p className="text-sm text-silver-400">{t.storiesHint}</p>
-          <p className="text-sm">{t.ready}</p>
-          <Button onClick={() => navigate(routes.manifests())}>
-            {t.narrator}
-          </Button>
-        </Card>
+        <StoryGiftsScreen />
       ) : (
         <>
           {area === 'commerce' && (
-            <p className="text-sm text-silver-400">{t.commerceHint}</p>
+            <p className="text-sm text-silver-400">
+              {dict.productAreas.commerceHint}
+            </p>
           )}
           <div className="flex flex-wrap gap-2">
             <Button

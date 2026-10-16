@@ -1,3 +1,4 @@
+import { StoryGiftsModule } from './modules/story-gifts/story-gifts.module';
 import { SonioxObservabilityModule } from './modules/soniox-observability/soniox-observability.module';
 /**
  * AppModule
@@ -101,6 +102,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
 @Global()
 @Module({
   imports: [
+    StoryGiftsModule,
     SonioxObservabilityModule,
     PrismaModule,
     StorageModule,

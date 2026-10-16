@@ -126,11 +126,12 @@ export function internalErrorMessage(locale: SupportedLocale): string {
  * вебхука Resemble (`?secret=`, по проектному решению) и одноразовый
  * OAuth-`code`; полный `request.url` уходил и в лог, и в `meta.path`.
  */
+export function redactStoryToken(value: string): string {
+  return value.replace(/(\/story-gift\/)[^/?\s]+/g, '$1[redacted]');
+}
 function safePath(request: { url?: string; path?: string }): string {
-  if (request.path) return request.path;
-  const url = request.url ?? '';
-  const q = url.indexOf('?');
-  return q === -1 ? url : url.slice(0, q);
+  const url = request.path || request.url || '';
+  return redactStoryToken(url.split('?')[0]);
 }
 
 @Catch()
@@ -163,7 +164,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         errorDetails = detailsOf(responseObj);
       }
       // Заход 12 (аудит P3-4): 404 Nest «Cannot GET /x?code=…» — без query.
-      errorMessage = stripRouteNotFoundQuery(errorMessage);
+      errorMessage = redactStoryToken(stripRouteNotFoundQuery(errorMessage));
       // 4xx — ожидаемые ответы, им хватает warn; 5xx, брошенные нами
       // намеренно, — всё равно авария.
       const line = `${request.method} ${safePath(request)} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;

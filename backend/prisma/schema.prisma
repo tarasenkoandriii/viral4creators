@@ -144,10 +144,11 @@ enum UserPlan {
 // урезанный до того, что реально нужно этому продукту — без ролей
 // модерации/онбординга, которых здесь нет.
 model User {
-  id         String   @id @default(cuid())
-  telegramId String   @unique
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @default(now()) @updatedAt
+  storyGifts StoryGift[]
+  id         String      @id @default(cuid())
+  telegramId String      @unique
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @default(now()) @updatedAt
 
   // Отображаемое имя — только для UI ("Вошли как ..." в frontend/admin),
   // ни на что не влияет. Приходит из Telegram Login Widget payload или
@@ -791,7 +792,7 @@ model ProductAnalog {
 model BrandManifest {
   /// Explicit narrator image selection; voice uses the existing provider-tagged fields.
   narratorCharacterId String?
-  tutorialPreamble Json?
+  tutorialPreamble    Json?
 
   id     String  @id @default(cuid())
   userId String?
@@ -5179,24 +5180,57 @@ model PersonaLook {
 
 /// Soniox operational events: no audio or transcript is retained.
 model SonioxEvent {
-  id String @id
-  operation String
-  source String
-  actorRole String @map("actor_role")
-  actorId String? @map("actor_id")
-  accountId String? @map("account_id")
-  siteId String? @map("site_id")
-  startedAt DateTime @default(now()) @map("started_at")
+  id         String    @id
+  operation  String
+  source     String
+  actorRole  String    @map("actor_role")
+  actorId    String?   @map("actor_id")
+  accountId  String?   @map("account_id")
+  siteId     String?   @map("site_id")
+  startedAt  DateTime  @default(now()) @map("started_at")
   finishedAt DateTime? @map("finished_at")
-  status String @default("running")
-  reasonCode String? @map("reason_code")
-  elapsedMs Int? @map("elapsed_ms")
-  seconds Float @default(0)
-  characters Int @default(0)
-  words Int @default(0)
-  language String?
+  status     String    @default("running")
+  reasonCode String?   @map("reason_code")
+  elapsedMs  Int?      @map("elapsed_ms")
+  seconds    Float     @default(0)
+  characters Int       @default(0)
+  words      Int       @default(0)
+  language   String?
   confidence Float?
+
   @@index([startedAt])
   @@index([status, startedAt])
   @@map("soniox_events")
+}
+
+// Bounded audio pilot. Bytes stay private in Postgres; never exposed as a Blob URL.
+// Separate select projections keep audio out of list/status queries.
+model StoryGift {
+  chapters         Json
+  giftPhoto        Bytes?
+  hasGiftPhoto     Boolean   @default(false)
+  giftNote         String?
+  giftNotePosition String?
+  occasion         String?
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  catalogId        String
+  title            String
+  text             String
+  textHash         String
+  status           String    @default("DRAFT")
+  voiceId          String
+  audio            Bytes?
+  audioMime        String?
+  durationSeconds  Float?
+  audioHash        String?
+  error            String?
+  approvedAt       DateTime?
+  shareHash        String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+
+  @@index([userId, createdAt])
+  @@map("story_gifts")
 }

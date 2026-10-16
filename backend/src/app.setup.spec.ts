@@ -32,6 +32,13 @@ class ProbeController {
   }
 }
 
+@Controller('story-gifts')
+class StoryPhotoProbeController {
+  @Post(':id/photo') photo(@Body() body: { base64: string }) {
+    return { length: body.base64?.length };
+  }
+}
+
 describe('configureApp (backend): то, что включает main.ts', () => {
   let app: INestApplication;
   let errors: jest.SpyInstance;
@@ -39,7 +46,7 @@ describe('configureApp (backend): то, что включает main.ts', () => 
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({
-      controllers: [ProbeController],
+      controllers: [ProbeController, StoryPhotoProbeController],
     }).compile();
     app = mod.createNestApplication();
     configureApp(app, { cors: { origins: ['https://app.example.com'] } });
@@ -164,6 +171,24 @@ describe('configureApp (backend): то, что включает main.ts', () => 
     });
     expect(errors).not.toHaveBeenCalled();
     expect(warns).toHaveBeenCalled();
+  });
+
+  it('Story photo has a bounded parser without widening unrelated routes', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/story-gifts/g1/photo')
+      .set('Cookie', 'user_session=presence-only')
+      .send({ base64: 'a'.repeat(200000) });
+    expect(res.status).toBe(201);
+    expect(res.body.data.length).toBe(200000);
+    const denied = await request(app.getHttpServer())
+      .post('/api/story-gifts/g1/photo')
+      .send({ base64: 'a'.repeat(200000) });
+    expect(denied.status).toBe(413);
+    const tooLarge = await request(app.getHttpServer())
+      .post('/api/story-gifts/g1/photo')
+      .set('Cookie', 'user_session=presence-only')
+      .send({ base64: 'a'.repeat(1500000) });
+    expect(tooLarge.status).toBe(413);
   });
 
   it('неподдержанная Content-Encoding — 415, без ERROR в логе', async () => {

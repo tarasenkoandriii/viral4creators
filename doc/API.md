@@ -2326,3 +2326,25 @@ submit не оплачивается. Возвращает `{sessionId,state,reu
 ## Импорт собственных материалов виртуальной студии (16.10.2026)
 
 Операторские `POST /admin/virtual-studio/:id/media/upload-url` и `POST /admin/virtual-studio/:id/media/confirm` принимают `kind: image|voice`, `contentType: image/jpeg|image/png|audio/wav`; подтверждение дополнительно принимает `pathname` ранее выданной загрузки этой студии. Лимит 6 МБ; WAV — PCM16, mono/stereo, 0,5–30 с, 16/22,05/24/44,1/48 кГц. Сервер проверяет путь, MIME и байты, сохраняет копию по SHA-256 вне перезаписываемого staging и создаёт готовый референс или VOICE-фрагмент с provider=uploaded. Синтез не вызывается. Материалы — только собственные/с разрешением; хранилище публичное по ссылке, как остальные ресурсы студии.
+
+## Story‑Tales — аудиопилот (16.10.2026)
+
+Префикс `/api`; все `/story-gifts` требуют Telegram identity и проверяют владельца. Ответы — обычный конверт API. Публичные `/story-gift/:token` возвращают HTML/медиа напрямую.
+
+- `GET /story-gifts/catalog` — доступная версия оригинальной RU-сказки и права.
+- `GET /story-gifts` — последние двадцать живых подарков без бинарных медиа.
+- `POST /story-gifts` — `{ catalogId, occasion?, giftNote?, giftNotePosition?: "beginning"|"end" }`, замороженные текст/главы/голос; лимит три создания в UTC-сутки.
+- `GET /story-gifts/:id` — статус, аудиохеш и сохранённые параметры.
+- `POST /story-gifts/:id/photo` — `{ base64 }`, только DRAFT, PNG до 1 МиБ и 1024×1024; нормализация на сервере. Маршрут имеет отдельный JSON-лимит 1 450 000 байт при наличии cookie/initData, затем обязательный identity guard; общий лимит не расширен.
+- `GET /story-gifts/:id/photo` — `{ base64 }`, только владельцу.
+- `POST /story-gifts/:id/render` — один вызов Nova на черновик, повтор возвращает состояние; UNKNOWN не пересинтезируется.
+- `GET /story-gifts/:id/audio` — `{ base64, mime }`, только готовое аудио владельца, до 3 МиБ.
+- `POST /story-gifts/:id/approve` — `{ audioHash, reviewed: true }`, фиксирует просмотр конкретного выпуска.
+- `POST /story-gifts/:id/share` — `{ publicLinkAccepted: true }`, после APPROVED возвращает непрозрачный `token` один раз. В базе только хеш; при существующей ссылке — 409, сначала отозвать.
+- `DELETE /story-gifts/:id/share` — немедленный отзыв публичной выдачи.
+- `DELETE /story-gifts/:id` — снять с выдачи и очистить аудио, фото, пользовательскую реплику и повод. Техническая строка остаётся для суточной квоты.
+- `GET /story-gift/:token` — одобренный публичный подарок: HTML, noindex/noarchive, CSP, no-referrer/no-store.
+- `GET /story-gift/:token/audio` — MP3, поддержка одиночного byte Range/206/416; отзыв проверяется при каждом запросе.
+- `GET /story-gift/:token/photo` — нормализованный PNG; тот же контроль отзыва и индексации.
+
+Права по каталожной редакции и текст — снимок подарка; публичные страницы не раскрывают provider ID, владельца или прямой Blob-origin. Выдача публичная по ссылке, не приватная семейная авторизация. В текущем пилоте нет оплаты, клонирования родителя и MP4. ТЗ: `STORY-TALE-FAMILY-GIFT-SPEC.md` §23.
