@@ -5206,6 +5206,12 @@ model SonioxEvent {
 // Bounded audio pilot. Bytes stay private in Postgres; never exposed as a Blob URL.
 // Separate select projections keep audio out of list/status queries.
 model StoryGift {
+  locale           String    @default("ru")
+  countryCode      String    @default("UA")
+  budgetCents      Int       @default(100)
+  reservedMicroUsd Int       @default(0)
+  audioQaStatus    String    @default("PENDING")
+  audioQa          Json?
   chapters         Json
   giftPhoto        Bytes?
   hasGiftPhoto     Boolean   @default(false)

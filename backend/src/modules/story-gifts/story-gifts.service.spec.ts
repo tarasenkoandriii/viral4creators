@@ -5,7 +5,11 @@ function setup() {
   const row = {
     id: 'g1',
     userId: 'u1',
+    locale: 'ru',
+    budgetCents: 100,
+    reservedMicroUsd: 100000,
     status: 'DRAFT',
+    audioQaStatus: 'PENDING',
     voiceId: STORY_VOICE,
     text: storyText(),
     audioHash: null as string | null,
@@ -22,9 +26,13 @@ function setup() {
         return null;
       return { ...row };
     }),
+    findFirstOrThrow: jest.fn(async () => ({ ...row })),
     findUniqueOrThrow: jest.fn(async () => ({ ...row })),
     updateMany: jest.fn(async ({ where, data }: any) => {
-      if (where.status && where.status !== row.status) return { count: 0 };
+      if (where.audioQaStatus && where.audioQaStatus !== row.audioQaStatus)
+        return { count: 0 };
+      if (typeof where.status === 'string' && where.status !== row.status)
+        return { count: 0 };
       if (where.shareHash === null && row.shareHash !== null)
         return { count: 0 };
       Object.assign(row, data);
@@ -46,6 +54,15 @@ function setup() {
       characters: 1800,
     })),
   };
+  const stt = {
+    configured: jest.fn(() => true),
+    transcribe: jest.fn(async () => ({
+      text: storyText(),
+      language: 'ru',
+      billable: true,
+      seconds: 98,
+    })),
+  };
   const plan = { assertCanSpendUser: jest.fn() },
     usage = { record: jest.fn() };
   return {
@@ -54,6 +71,7 @@ function setup() {
       tts as any,
       plan as any,
       usage as any,
+      stt as any,
     ),
     row,
     db,
@@ -61,6 +79,7 @@ function setup() {
     plan,
     usage,
     tx,
+    stt,
   };
 }
 describe('Story‑Tales owner, cost and edition boundaries', () => {
@@ -154,5 +173,52 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
     expect(s.row.status).toBe('DELETED');
     expect(s.row.shareHash).toBeNull();
     expect(s.row.audio).toBeNull();
+  });
+});
+
+describe('Story server speech QA', () => {
+  it('checks the exact audio once without another synthesis', async () => {
+    const s = setup();
+    await s.service.render('u1', 'g1');
+    await s.service.quality('u1', 'g1');
+    await s.service.quality('u1', 'g1');
+    expect(s.stt.transcribe).toHaveBeenCalledTimes(1);
+    expect(s.row.audioQaStatus).toBe('PASS');
+    expect(s.tts.synthesize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Story country and user budget', () => {
+  it('accepts a five-dollar budget and freezes the selected classical revision and locale', async () => {
+    const s = setup();
+    const gift = await s.service.create(
+      'u1',
+      'mitten-uk-short-v1',
+      undefined,
+      undefined,
+      'end',
+      5,
+      'UA',
+    );
+    expect(gift.budgetCents).toBe(500);
+    expect(gift.locale).toBe('uk');
+    expect(gift.title).toBe('Рукавичка');
+    expect(gift.reservedMicroUsd).toBeLessThan(5000000);
+  });
+});
+
+describe('Short budget edition duration', () => {
+  it('accepts a real short narration instead of requiring a long video-sized track', async () => {
+    const s = setup();
+    s.tts.synthesize.mockResolvedValueOnce({
+      ok: true,
+      voiceId: STORY_VOICE,
+      audio: Buffer.from('short'),
+      durationSeconds: 15,
+      mimeType: 'audio/mpeg',
+      characters: 300,
+    });
+    await s.service.render('u1', 'g1');
+    expect(s.row.status).toBe('READY');
   });
 });

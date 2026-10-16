@@ -1,0 +1,6 @@
+ALTER TABLE "story_gifts" ADD COLUMN "audioQaStatus" TEXT NOT NULL DEFAULT 'PENDING';
+ALTER TABLE "story_gifts" ADD COLUMN "audioQa" JSONB;
+ALTER TABLE "story_gifts" ADD COLUMN "locale" TEXT NOT NULL DEFAULT 'ru';
+ALTER TABLE "story_gifts" ADD COLUMN "countryCode" TEXT NOT NULL DEFAULT 'UA';
+ALTER TABLE "story_gifts" ADD COLUMN "budgetCents" INTEGER NOT NULL DEFAULT 100;
+ALTER TABLE "story_gifts" ADD COLUMN "reservedMicroUsd" INTEGER NOT NULL DEFAULT 0;

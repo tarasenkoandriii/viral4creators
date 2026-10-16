@@ -5,8 +5,27 @@ import { api } from '../../services/api';
 import { navigate, routes } from '../../lib/router';
 
 type Chapter = { title: string; text: string; scene: string };
-type Story = { id: string; title: string; rights: string; chapters: Chapter[] };
+type Story = {
+  id: string;
+  title: string;
+  rights: string;
+  chapters: Chapter[];
+  locale: string;
+  countries: string[];
+  targetSeconds: number;
+  kind: string;
+  audioReserveUsd: number;
+};
 type Gift = {
+  budgetCents: number;
+  reservedMicroUsd: number;
+  locale: string;
+  audioQaStatus: string;
+  audioQa: {
+    wer: number;
+    recognizedWords: number;
+    referenceWords: number;
+  } | null;
   chapters: Chapter[];
   id: string;
   title: string;
@@ -65,6 +84,56 @@ async function photoPng(file: File): Promise<string> {
   }
 }
 function Illustration({ scene }: { scene: string }) {
+  if (scene === 'mitten')
+    return (
+      <svg
+        viewBox="0 0 640 360"
+        className="w-full rounded-xl"
+        role="img"
+        aria-label="Рукавичка в зимнем лесу"
+      >
+        <rect width="640" height="360" rx="24" fill="#dcebf0" />
+        <path d="M0 285Q160 220 320 280T640 255V360H0" fill="#f9fcfc" />
+        <path
+          d="M55 260L120 65L185 260ZM460 270L530 80L605 270Z"
+          fill="#4f7774"
+        />
+        <path
+          d="M270 285V175Q270 145 300 145H330Q360 145 360 175V205L380 185Q403 170 416 190Q425 210 405 230L360 280V300H270Z"
+          fill="#cd745d"
+        />
+        <path d="M270 277H360V304H270Z" fill="#efc18d" />
+        <circle cx="250" cy="299" r="16" fill="#a6adb7" />
+        <circle cx="240" cy="285" r="8" fill="#c8cdd2" />
+        <circle cx="260" cy="285" r="8" fill="#c8cdd2" />
+      </svg>
+    );
+  if (scene === 'pigs')
+    return (
+      <svg
+        viewBox="0 0 640 360"
+        className="w-full rounded-xl"
+        role="img"
+        aria-label="Три поросёнка у кирпичного дома"
+      >
+        <rect width="640" height="360" rx="24" fill="#cfe5e5" />
+        <path d="M0 265Q320 190 640 250V360H0" fill="#86a986" />
+        <path d="M360 135L465 55L570 135" fill="#936b5d" />
+        <rect x="375" y="135" width="180" height="145" rx="8" fill="#ca8d72" />
+        <rect x="440" y="205" width="42" height="75" fill="#6d7769" />
+        {[120, 210, 300].map((x) => (
+          <g key={x}>
+            <ellipse cx={x} cy="275" rx="34" ry="29" fill="#e6aba2" />
+            <circle cx={x} cy="248" r="28" fill="#f4c2b7" />
+            <ellipse cx={x} cy="257" rx="15" ry="10" fill="#d79890" />
+            <circle cx={x - 6} cy="257" r="2" />
+            <circle cx={x + 6} cy="257" r="2" />
+            <circle cx={x - 10} cy="242" r="2" />
+            <circle cx={x + 10} cy="242" r="2" />
+          </g>
+        ))}
+      </svg>
+    );
   return (
     <svg
       viewBox="0 0 640 300"
@@ -110,7 +179,25 @@ export function StoryGiftsScreen() {
     [reviewed, setReviewed] = useState(false),
     [sharing, setSharing] = useState(false),
     [shareUrl, setShareUrl] = useState('');
-  const story = catalog[0];
+  const [country, setCountry] = useState('UA'),
+    [storyLanguage, setStoryLanguage] = useState('ru');
+  const [storyId, setStoryId] = useState('mitten-ru-short-v1'),
+    [budget, setBudget] = useState('1');
+  const variants = catalog.filter((s) => s.locale === storyLanguage);
+  const story =
+    variants.find((s) => s.id === storyId) ||
+    variants.find((s) => s.countries.includes(country)) ||
+    variants[0];
+  function chooseRegion(nextCountry: string, nextLanguage: string) {
+    setCountry(nextCountry);
+    setStoryLanguage(nextLanguage);
+    const candidate =
+      catalog.find(
+        (s) => s.locale === nextLanguage && s.countries.includes(nextCountry)
+      ) ||
+      catalog.find((s) => s.locale === nextLanguage && s.kind === 'classic');
+    if (candidate) setStoryId(candidate.id);
+  }
   const actionLock = useRef(false);
   async function refresh() {
     const res = await api.get<Gift[]>('/story-gifts');
@@ -195,9 +282,9 @@ export function StoryGiftsScreen() {
         <BookOpen className="text-accent" />
         <h1 className="text-2xl font-semibold">Story‑Tales · Создать сказку</h1>
         <p>
-          Первый формат: иллюстрированная аудиосказка на русском, голос Nova.
-          Это синтетический рассказчик, не голос родителя. Семейный голос и
-          видеообращение появятся отдельным этапом.
+          Первый формат: короткая классическая сказка с иллюстрациями и озвучкой
+          Nova. Это синтетический рассказчик, не голос родителя. Семейный голос
+          и видеообращение появятся отдельным этапом.
         </p>
         <Button variant="ghost" onClick={() => navigate(routes.manifests())}>
           Профиль рассказчика в брендбуке
@@ -208,11 +295,98 @@ export function StoryGiftsScreen() {
           {error}
         </p>
       )}
+      {catalog.length > 0 && (
+        <Card className="space-y-4 p-5">
+          <h2 className="text-xl font-semibold">Сказка и бюджет подарка</h2>
+          <label className="block">
+            Страна пользователя
+            <select
+              className={inputStyle}
+              value={country}
+              onChange={(e) => chooseRegion(e.target.value, storyLanguage)}
+            >
+              <option value="UA">Украина</option>
+              <option value="GB">Великобритания</option>
+              <option value="US">США</option>
+              <option value="DE">Германия</option>
+              <option value="ES">Испания</option>
+              <option value="OTHER">Другая страна</option>
+            </select>
+          </label>
+          <label className="block">
+            Язык сказки
+            <select
+              className={inputStyle}
+              value={storyLanguage}
+              onChange={(e) => chooseRegion(country, e.target.value)}
+            >
+              <option value="ru">Русский</option>
+              <option value="uk">Українська</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label className="block">
+            Сказка
+            <select
+              className={inputStyle}
+              value={story?.id || ''}
+              onChange={(e) => setStoryId(e.target.value)}
+            >
+              {variants.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title} · {s.targetSeconds} с{' '}
+                  {s.kind === 'original'
+                    ? '· длинный аудиообразец'
+                    : '· короткий пересказ'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p>
+            Страна подбирает рекомендуемую сказку; язык выбирается отдельно.
+            Каталог пока небольшой, его можно расширять без изменения ваших
+            сохранённых выпусков.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {[1, 2, 3, 5].map((value) => (
+              <Button
+                key={value}
+                size="sm"
+                variant="ghost"
+                onClick={() => setBudget(String(value))}
+              >
+                ${value}
+              </Button>
+            ))}
+          </div>
+          <label className="block">
+            Общий бюджет подарка, USD
+            <input
+              className={inputStyle}
+              type="number"
+              min="1"
+              max="1000"
+              step="0.01"
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+            />
+          </label>
+          <p className="text-sm">
+            Это выбранный потолок, не цена и не списание. В этом проходе
+            оплачивается только озвучка и её проверка: анимация родителя и
+            видеорендер ещё не запускаются. Перед озвучкой черновик покажет
+            расчётный резерв с запасом по внутреннему прайсу.
+          </p>
+        </Card>
+      )}
       {story && (
         <Card className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">{story.title}</h2>
           <p className="text-sm text-silver-400">
-            4–8 лет · оригинальная сказка · {story.rights}
+            {story.kind === 'classic'
+              ? 'Классическая народная сказка'
+              : 'Авторская сказка'}{' '}
+            · ориентир {story.targetSeconds} с · {story.rights}
           </p>
           <label className="block">
             Повод подарка — необязательно
@@ -291,11 +465,19 @@ export function StoryGiftsScreen() {
             сохранённый черновик.
           </p>
           <Button
-            disabled={busy || photoBusy}
+            disabled={
+              busy ||
+              photoBusy ||
+              !Number.isFinite(Number(budget)) ||
+              Number(budget) < 1 ||
+              Number(budget) > 1000
+            }
             onClick={() =>
               void run(async () => {
                 const result = await api.post<Gift>('/story-gifts', {
                   catalogId: story.id,
+                  budgetUsd: Number(budget),
+                  countryCode: country,
                   occasion: occasion || undefined,
                   giftNote: note || undefined,
                   giftNotePosition: position,
@@ -340,6 +522,12 @@ export function StoryGiftsScreen() {
             {selected.title} · {stateNames[selected.status]}
           </h2>
           <p>{selected.occasion}</p>
+          <p>
+            Бюджет: ${(selected.budgetCents / 100).toFixed(2)} · расчётный
+            резерв аудиопилота с запасом: $
+            {(selected.reservedMicroUsd / 1e6).toFixed(2)}. Это оценка, не счёт
+            провайдера.
+          </p>
           {selected.giftNote && (
             <p>
               Фраза{' '}
@@ -429,6 +617,38 @@ export function StoryGiftsScreen() {
                 <p>{c.text}</p>
               </section>
             ))}
+          {['READY', 'APPROVED'].includes(selected.status) && (
+            <div className="space-y-2">
+              <p>
+                Сверка речи с текстом:{' '}
+                {
+                  (
+                    {
+                      PENDING: 'ещё не запускалась',
+                      RUNNING: 'выполняется',
+                      PASS: 'пройдена',
+                      WARN: 'есть расхождения',
+                      UNKNOWN: 'результат не подтверждён',
+                    } as Record<string, string>
+                  )[selected.audioQaStatus]
+                }
+              </p>
+              {selected.audioQa && (
+                <p>
+                  Расхождение слов: {(selected.audioQa.wer * 100).toFixed(1)}%.
+                  Это проверка полноты текста; естественность и произношение
+                  оцениваются при прослушивании.
+                </p>
+              )}
+              <Button
+                variant="ghost"
+                disabled={busy || selected.audioQaStatus !== 'PENDING'}
+                onClick={() => void run(() => update('quality'))}
+              >
+                Проверить озвучку через Soniox
+              </Button>
+            </div>
+          )}
           {selected.status === 'READY' && (
             <>
               <label className="flex gap-2">

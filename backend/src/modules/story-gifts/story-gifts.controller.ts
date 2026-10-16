@@ -14,6 +14,9 @@ import {
 import { Response } from 'express';
 import {
   IsIn,
+  IsNumber,
+  Min,
+  Max,
   IsOptional,
   IsString,
   MaxLength,
@@ -27,7 +30,15 @@ import {
 import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
 import { StoryGiftsService } from './story-gifts.service';
 export class CreateStoryDto {
-  @IsIn(['little-lantern-ru-v1']) catalogId!: string;
+  @IsString() @MaxLength(80) catalogId!: string;
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(1)
+  @Max(1000)
+  budgetUsd?: number;
+  @IsOptional()
+  @IsIn(['UA', 'GB', 'US', 'DE', 'ES', 'OTHER'])
+  countryCode?: string;
   @IsOptional() @IsString() @MaxLength(80) occasion?: string;
   @IsOptional() @IsString() @MaxLength(180) giftNote?: string;
   @IsOptional() @IsIn(['beginning', 'end']) giftNotePosition?:
@@ -61,6 +72,8 @@ export class StoryGiftsController {
       dto.occasion,
       dto.giftNote,
       dto.giftNotePosition,
+      dto.budgetUsd,
+      dto.countryCode,
     );
   }
   @Get(':id') get(@Req() req: IdentifiedRequest, @Param('id') id: string) {
@@ -84,6 +97,12 @@ export class StoryGiftsController {
     @Param('id') id: string,
   ) {
     return this.service.render(req.telegramUserId, id);
+  }
+  @Post(':id/quality') quality(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.service.quality(req.telegramUserId, id);
   }
   @Get(':id/audio')
   @Header('Cache-Control', 'no-store')
@@ -164,7 +183,7 @@ export class PublicStoryGiftController {
     res
       .type('html')
       .send(
-        `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · Аудиоподарок</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>Синтетическая озвучка Nova. Включает подготовленное взрослым обращение, если оно было добавлено.</p><audio controls preload="none" src="./${token}/audio"></audio>${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
+        `<!doctype html><html lang="${esc(gift.locale)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · Аудиоподарок</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>Синтетическая озвучка Nova. Включает подготовленное взрослым обращение, если оно было добавлено.</p><audio controls preload="none" src="./${token}/audio"></audio>${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
       );
   }
   @Get(':token/photo') async photo(

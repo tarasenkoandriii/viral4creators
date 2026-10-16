@@ -1,3 +1,6 @@
+import { STORY_CATALOG } from './story-catalog';
+import { storyAudioReservation } from './story-budget';
+import { storySpeechScore } from './story-audio-qa';
 import { PNG } from 'pngjs';
 import { normalizeStoryPhoto } from './story-photo';
 import { audioRange } from './story-gifts.controller';
@@ -34,5 +37,18 @@ describe('Story public media boundary', () => {
       '&lt;img src=x onerror=&quot;x&quot;&gt;',
     );
     expect(storyText().length + 182).toBeLessThan(3000);
+  });
+});
+
+describe('Short catalogue budget and speech scoring', () => {
+  it('keeps classic editions short and priced, while detecting missing narration', () => {
+    for (const story of STORY_CATALOG.filter((s) => s.kind === 'classic')) {
+      expect(storyText(story.id).length).toBeLessThan(650);
+      expect(story.targetSeconds).toBeLessThanOrEqual(35);
+      expect(story.sourceUrl).toMatch(/^https:/);
+      expect(storyAudioReservation(storyText(story.id))).toBeLessThan(1000000);
+    }
+    expect(storySpeechScore('Ёжик идёт домой.', 'ежик идет домой').wer).toBe(0);
+    expect(storySpeechScore('раз два три четыре', 'раз два').wer).toBe(0.5);
   });
 });
