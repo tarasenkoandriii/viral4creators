@@ -15,6 +15,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { PenTool, X } from 'lucide-react';
 import { Alert, Button, Card, Spinner } from '../../components/ui';
 import { useI18n } from '../../lib/i18n-context';
@@ -202,7 +203,7 @@ export function SketchSheet({
     }
   };
 
-  return (
+  return createPortal(
     <div
       role="presentation"
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm animate-fadeIn sm:items-center sm:p-4"
@@ -372,6 +373,7 @@ export function SketchSheet({
           </div>
         )}
       </Card>
-    </div>
+    </div>,
+    document.body
   );
 }
