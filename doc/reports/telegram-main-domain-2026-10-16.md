@@ -29,7 +29,9 @@
 
 Дополнительно выполнен настоящий запуск `https://t.me/Viral4creatorsBot/app?startapp=e_stories` из Избранного второго аккаунта Telegram. Встроенное приложение открылось на `viral4creators.app/?tgWebAppStartParam=e_stories&entry=stories#/stories`, показало заголовок Story‑Tales и кнопку настройки рассказчика. Передача параметра и маршрутизация подтверждены.
 
-Новый вход Login Widget без сохранённой сессии пока отдельно не подтверждён; успех настройки домена не подменяет эту проверку. Старое именованное приложение `viral4creators` не удалено и сохраняет прежний URL `https://viral-frontend.vercel.app/`; новый путь `app` настроен на основной домен. Main Mini App в профиле бота отдельно не переключался.
+Проверен новый вход Login Widget: из браузерного приложения на `viral4creators.app` выполнен выход, после чего появился iframe `oauth.telegram.org/embed/Viral4creatorsBot` с origin основного домена и кнопкой входа. Ошибки «Bot domain invalid» нет. Нажатие кнопки восстановило авторизацию; после полной перезагрузки страницы сохранились Premium, баланс 1100 А и кнопка выхода. Использована уже авторизованная личность Telegram; ввод телефона/OTP заново не требовался.
+
+Подтверждение: `outputs/telegram-setup/browser-login-persisted.jpg` (вне репозитория). Старое именованное приложение `viral4creators` не удалено и сохраняет прежний URL `https://viral-frontend.vercel.app/`; новый путь `app` настроен на основной домен. Main Mini App в профиле бота отдельно не переключался.
 
 Подтверждение BotFather сохранено локально: `outputs/telegram-setup/botfather-mini-app-menu.jpg` (вне репозитория, без токенов).
 
