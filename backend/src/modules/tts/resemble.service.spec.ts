@@ -476,6 +476,36 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
     });
   });
 
+  it('submits the separate build once with fixed payload and a bounded request', async () => {
+    const f = mockFetch(
+      jest
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => ({ success: true }) }),
+    );
+    expect(
+      await withEnv({ RESEMBLE_API_KEY: 'k' }).buildVoice('voice-id'),
+    ).toEqual({ ok: true });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f).toHaveBeenCalledWith(
+      'https://app.resemble.ai/api/v2/voices/voice-id/build',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ fill: false }),
+        signal: expect.anything(),
+      }),
+    );
+  });
+  it('reads the current voice_status readiness field when status is absent', async () => {
+    mockFetch(
+      jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ item: { voice_status: 'ready' } }),
+      }),
+    );
+    expect(
+      await withEnv({ RESEMBLE_API_KEY: 'k' }).getVoiceStatus('v'),
+    ).toEqual({ status: 'ready' });
+  });
   describe('getVoiceStatus — poll-фоллбек готовности (§5.4)', () => {
     it('без ключа — undefined, без сетевого вызова', async () => {
       const fetchMock = mockFetch(jest.fn());

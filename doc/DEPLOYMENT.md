@@ -4200,3 +4200,5 @@ Tutorial quality: TUTORIAL_DEMO_QUALITY_ENABLED=true включает очере
 #### Story‑Tales: семейная речевая дорожка
 
 Миграция `20270124140000_story_parent_narration` добавляет приватную основную MP3 (до 2 MiB), снимок выбора профиля/клона и версию согласия в существующую таблицу `story_video_renders`; RLS и прежние REVOKE сохраняются. Новых секретов нет: используются существующие Resemble, FFmpeg API и Soniox. Дефолт Nova не меняется. Для приёмки семейного голоса нужен свой READY-клон в брендбуке и ручное подтверждение согласия; автоматические тесты используют только фиктивный клон, не биометрию пользователя.
+
+Миграция `20270124150000_user_voice_build`: `UserVoice.buildRequestedAt` — одноразовый маркер отправки обучения. После создания клона выполняется отдельный provider build; старые записи с provider ID и без маркера можно продолжить явной кнопкой после проверки remote pending. Новых ключей и покупок слотов код не вводит. Источники протокола: https://docs.resemble.ai/voice-creation/voices/clone-overview и https://docs.resemble.ai/voice-creation/voices/get .

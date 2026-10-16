@@ -393,6 +393,7 @@ export type UserVoiceStatus = 'training' | 'ready' | 'failed';
 
 export interface UserVoice {
   retryAllowed?: boolean;
+  buildRequired?: boolean;
   id: string;
   label: string;
   status: UserVoiceStatus;

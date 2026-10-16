@@ -3158,9 +3158,11 @@ model GreetingRegisterAnswer {
 }
 
 model UserVoice {
-  id     String @id @default(cuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Durable one-shot guard for provider training submission.
+  buildRequestedAt DateTime?
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// Имя голоса, как его назвал пользователь — не путать с resembleVoiceId.
   label String

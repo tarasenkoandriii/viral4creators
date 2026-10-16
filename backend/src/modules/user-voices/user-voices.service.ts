@@ -75,14 +75,24 @@ type UserVoiceRow = {
   resembleVoiceId: string | null;
   sampleUrl: string;
   consentAt?: Date;
+  buildRequestedAt?: Date | null;
   error: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
+function needsBuild(row: UserVoiceRow) {
+  return (
+    row.status === 'TRAINING' &&
+    !!row.resembleVoiceId &&
+    !row.buildRequestedAt &&
+    !!row.consentAt
+  );
+}
 function canRetryClone(row: UserVoiceRow) {
   return (
     row.status === 'FAILED' &&
+    !row.buildRequestedAt &&
     !row.personaId &&
     !row.resembleVoiceId &&
     !!row.consentAt &&
@@ -98,7 +108,10 @@ function toView(row: UserVoiceRow): UserVoiceView {
         : 'training';
   return {
     id: row.id,
-    ...(canRetryClone(row) ? { retryAllowed: true } : {}),
+    ...(canRetryClone(row) || (needsBuild(row) && !row.personaId)
+      ? { retryAllowed: true }
+      : {}),
+    ...(needsBuild(row) ? { buildRequired: true } : {}),
     label: row.label,
     status,
     resembleVoiceId: row.resembleVoiceId,
@@ -311,7 +324,10 @@ export class UserVoicesService {
       });
       return { fresh: true, row: updated };
     });
-    if (!claim.fresh) return toView(claim.row);
+    if (!claim.fresh)
+      return needsBuild(claim.row) && !claim.row.personaId
+        ? this.startBuild(userId, claim.row)
+        : toView(claim.row);
     return this.startClone(userId, id, claim.row.label, claim.row.sampleUrl);
   }
 
@@ -351,7 +367,65 @@ export class UserVoicesService {
       where: { id: voiceId },
       data: { resembleVoiceId: clone.resembleVoiceId },
     });
-    return toView(row as UserVoiceRow);
+    return this.startBuild(userId, row as UserVoiceRow, true);
+  }
+
+  private async startBuild(
+    userId: string,
+    row: UserVoiceRow,
+    newlyCreated = false,
+  ): Promise<UserVoiceView> {
+    if (!needsBuild(row)) return toView(row);
+    if (!newlyCreated) {
+      const remote = await this.resemble.getVoiceStatus(row.resembleVoiceId!);
+      if (!remote)
+        throw new ConflictException(
+          'Не удалось проверить статус голоса; запуск обучения пока не отправлен',
+        );
+      if (['finished', 'ready'].includes(remote.status)) {
+        await this.prisma.userVoice.updateMany({
+          where: { id: row.id, userId, status: 'TRAINING' },
+          data: { status: 'READY' },
+        });
+        return toView({ ...row, status: 'READY' });
+      }
+      if (remote.status !== 'pending')
+        throw new ConflictException(
+          'Голос уже обрабатывается либо требует проверки; повтор обучения не отправлен',
+        );
+    }
+    const at = new Date();
+    const claim = await this.prisma.userVoice.updateMany({
+      where: {
+        id: row.id,
+        userId,
+        status: 'TRAINING',
+        resembleVoiceId: row.resembleVoiceId,
+        buildRequestedAt: null,
+      },
+      data: { buildRequestedAt: at },
+    });
+    if (!claim.count) {
+      const current = await this.prisma.userVoice.findFirst({
+        where: { id: row.id, userId },
+      });
+      if (!current) throw new NotFoundException('Голос не найден');
+      return toView(current);
+    }
+    const result = await this.resemble.buildVoice(row.resembleVoiceId!);
+    if (!result.ok) {
+      await this.prisma.userVoice.updateMany({
+        where: { id: row.id, userId, status: 'TRAINING' },
+        data: { status: 'FAILED', error: result.reason },
+      });
+      return toView({
+        ...row,
+        buildRequestedAt: at,
+        status: 'FAILED',
+        error: result.reason,
+      });
+    }
+    return toView({ ...row, buildRequestedAt: at });
   }
 
   /**
@@ -377,7 +451,7 @@ export class UserVoicesService {
   private async refreshStatus(row: UserVoiceRow): Promise<UserVoiceRow> {
     const polled = await this.resemble.getVoiceStatus(row.resembleVoiceId!);
     if (!polled) return row; // не удалось узнать — оставляем TRAINING, попробуем в следующий раз
-    if (polled.status === 'finished') {
+    if (['finished', 'ready'].includes(polled.status)) {
       return (await this.prisma.userVoice.update({
         where: { id: row.id },
         data: { status: 'READY' },
@@ -444,7 +518,10 @@ export class UserVoicesService {
       return;
     }
     if (row.status !== 'TRAINING') return; // уже разрешилось (READY/FAILED) — повторный вебхук не переигрываем
-    if (payload.ok === true && payload.status === 'finished') {
+    if (
+      payload.ok === true &&
+      ['finished', 'ready'].includes(payload.status ?? '')
+    ) {
       await this.prisma.userVoice.update({
         where: { id: row.id },
         data: { status: 'READY' },

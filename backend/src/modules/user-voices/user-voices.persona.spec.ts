@@ -46,6 +46,7 @@ function build(
   const prisma: any = {
     persona: { findFirst: jest.fn().mockResolvedValue(persona) },
     userVoice: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       create: jest.fn(),
       update: jest.fn().mockImplementation(async ({ where, data }: any) => ({
         id: where.id,
@@ -55,6 +56,8 @@ function build(
         status: 'TRAINING',
         resembleVoiceId: null,
         sampleUrl: 'https://blob.test/x.webm',
+        consentAt: new Date(),
+        buildRequestedAt: null,
         error: null,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -87,6 +90,7 @@ function build(
   };
   const aiUsage = { record: jest.fn() };
   const resemble = {
+    buildVoice: jest.fn().mockResolvedValue({ ok: true }),
     cloneVoice: jest
       .fn()
       .mockResolvedValue({ ok: true, resembleVoiceId: 'r-1' }),

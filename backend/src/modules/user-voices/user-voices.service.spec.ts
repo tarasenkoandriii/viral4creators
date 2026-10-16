@@ -17,6 +17,8 @@ const row = (over: Record<string, unknown> = {}) => ({
   status: 'TRAINING',
   resembleVoiceId: 'resemble-uuid-1',
   sampleUrl: 'https://blob.test/users/u1/voices/v1/sample.mp3',
+  consentAt: NOW,
+  buildRequestedAt: null,
   error: null,
   createdAt: NOW,
   updatedAt: NOW,
@@ -31,6 +33,7 @@ function build() {
       findUnique: jest.Mock;
       findFirst: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
       delete: jest.Mock;
       count: jest.Mock;
     };
@@ -44,6 +47,7 @@ function build() {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
     },
@@ -71,6 +75,7 @@ function build() {
   };
   const aiUsage = { record: jest.fn().mockResolvedValue(undefined) };
   const resemble = {
+    buildVoice: jest.fn().mockResolvedValue({ ok: true }),
     cloneVoice: jest
       .fn()
       .mockResolvedValue({ ok: true, resembleVoiceId: 'resemble-uuid-1' }),
@@ -468,6 +473,14 @@ function retrySetup() {
     Object.assign(current, data);
     return { ...current };
   });
+  s.prisma.userVoice.updateMany.mockImplementation(
+    async ({ where, data }: any) => {
+      if (where.buildRequestedAt === null && current.buildRequestedAt)
+        return { count: 0 };
+      Object.assign(current, data);
+      return { count: 1 };
+    },
+  );
   let chain = Promise.resolve();
   s.prisma.$transaction.mockImplementation((fn: any) => {
     const next = chain.then(() => fn(s.prisma));
@@ -537,6 +550,7 @@ describe('UserVoicesService explicit retry of a rejected clone', () => {
     s.current.status = 'FAILED';
     s.current.resembleVoiceId = null;
     s.current.error = 'Resemble 400';
+    s.current.buildRequestedAt = null;
     s.resemble.cloneVoice.mockResolvedValue({
       ok: false,
       reason: 'Resemble 400',
@@ -544,5 +558,44 @@ describe('UserVoicesService explicit retry of a rejected clone', () => {
     s.aiUsage.record.mockClear();
     expect((await s.svc.retry(USER, 'v1')).retryAllowed).toBe(true);
     expect(s.aiUsage.record).not.toHaveBeenCalled();
+  });
+});
+
+describe('Explicit provider build lifecycle', () => {
+  it('starts legacy pending training once under concurrent requests without creating another voice', async () => {
+    const s = retrySetup();
+    Object.assign(s.current, {
+      status: 'TRAINING',
+      resembleVoiceId: 'existing-uuid',
+      error: null,
+    });
+    s.resemble.getVoiceStatus.mockResolvedValue({ status: 'pending' });
+    await Promise.all([s.svc.retry(USER, 'v1'), s.svc.retry(USER, 'v1')]);
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+    expect(s.resemble.buildVoice).toHaveBeenCalledTimes(1);
+    expect(s.current.buildRequestedAt).toBeInstanceOf(Date);
+  });
+  it('never retries an uncertain build submission', async () => {
+    const s = retrySetup();
+    s.resemble.buildVoice.mockResolvedValue({
+      ok: false,
+      reason: 'Результат запуска не подтверждён',
+    });
+    expect((await s.svc.retry(USER, 'v1')).status).toBe('failed');
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow(
+      'проверки оператором',
+    );
+    expect(s.resemble.buildVoice).toHaveBeenCalledTimes(1);
+  });
+  it('recognizes a remote ready clone without rebuilding', async () => {
+    const s = retrySetup();
+    Object.assign(s.current, {
+      status: 'TRAINING',
+      resembleVoiceId: 'existing-uuid',
+      error: null,
+    });
+    s.resemble.getVoiceStatus.mockResolvedValue({ status: 'ready' });
+    expect((await s.svc.retry(USER, 'v1')).status).toBe('ready');
+    expect(s.resemble.buildVoice).not.toHaveBeenCalled();
   });
 });

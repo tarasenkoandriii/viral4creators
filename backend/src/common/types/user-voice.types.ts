@@ -11,6 +11,7 @@ export type UserVoiceStatus = 'training' | 'ready' | 'failed';
 export interface UserVoiceView {
   /** Explicit retry after a definite provider rejection, keeping the recording and consent. */
   retryAllowed?: boolean;
+  buildRequired?: boolean;
   id: string;
   label: string;
   status: UserVoiceStatus;

@@ -844,11 +844,13 @@ export function MyVoicesSection({
                 <div className="flex items-center gap-1.5">
                   <span className="truncate font-medium">{v.label}</span>
                   <Badge tone={statusTone(v.status)}>
-                    {v.status === 'ready'
-                      ? t.statusReady
-                      : v.status === 'failed'
-                        ? t.statusFailed
-                        : t.statusTraining}
+                    {v.buildRequired
+                      ? 'Создан, ожидает запуска обучения'
+                      : v.status === 'ready'
+                        ? t.statusReady
+                        : v.status === 'failed'
+                          ? t.statusFailed
+                          : t.statusTraining}
                   </Badge>
                 </div>
                 {v.status === 'failed' && v.error && (
@@ -866,7 +868,7 @@ export function MyVoicesSection({
                     data-assist="never"
                     onClick={() => void retry(v)}
                   >
-                    {t.submitButton}
+                    {v.buildRequired ? 'Запустить обучение' : t.submitButton}
                   </Button>
                 )}
                 {v.status === 'ready' && v.resembleVoiceId && (

@@ -466,6 +466,54 @@ export class ResembleService implements TtsProvider {
    * `undefined` на любую нештатную форму ответа — вызывающий код просто
    * оставляет голос в TRAINING до следующей попытки, не падает.
    */
+  /** Training is a separate API operation; never retry an uncertain POST automatically. */
+  async buildVoice(
+    voiceId: string,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const key = this.key();
+    if (!key) return { ok: false, reason: 'Ключ Resemble не настроен' };
+    try {
+      const res = await fetch(
+        `${this.manageBase}/voices/${encodeURIComponent(voiceId)}/build`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ fill: false }),
+          signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+        },
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        this.logger.warn(
+          `Resemble build ответил ${res.status}: ${text.slice(0, 300)}`,
+        );
+        return {
+          ok: false,
+          reason: `Обучение Resemble не принято (HTTP ${res.status}); нужен разбор оператором`,
+        };
+      }
+      const data = (await res.json().catch(() => null)) as {
+        success?: boolean;
+      } | null;
+      return data?.success === true
+        ? { ok: true }
+        : {
+            ok: false,
+            reason:
+              'Resemble не подтвердил запуск обучения; автоматического повтора нет',
+          };
+    } catch {
+      return {
+        ok: false,
+        reason:
+          'Результат запуска обучения Resemble не подтверждён; автоматического повтора нет',
+      };
+    }
+  }
+
   async getVoiceStatus(
     resembleVoiceId: string,
   ): Promise<{ status: string } | undefined> {
@@ -485,7 +533,7 @@ export class ResembleService implements TtsProvider {
         unknown
       >;
       const item = (data.item ?? data) as Record<string, unknown>;
-      const status = item.status;
+      const status = item.status ?? item.voice_status;
       return typeof status === 'string' ? { status } : undefined;
     } catch {
       return undefined;
