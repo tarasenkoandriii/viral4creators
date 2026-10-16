@@ -5206,26 +5206,27 @@ model SonioxEvent {
 // Bounded audio pilot. Bytes stay private in Postgres; never exposed as a Blob URL.
 // Separate select projections keep audio out of list/status queries.
 model StoryGift {
-  locale           String    @default("ru")
-  countryCode      String    @default("UA")
-  budgetCents      Int       @default(100)
-  reservedMicroUsd Int       @default(0)
-  audioQaStatus    String    @default("PENDING")
+  videoRenders     StoryVideoRender[]
+  locale           String             @default("ru")
+  countryCode      String             @default("UA")
+  budgetCents      Int                @default(100)
+  reservedMicroUsd Int                @default(0)
+  audioQaStatus    String             @default("PENDING")
   audioQa          Json?
   chapters         Json
   giftPhoto        Bytes?
-  hasGiftPhoto     Boolean   @default(false)
+  hasGiftPhoto     Boolean            @default(false)
   giftNote         String?
   giftNotePosition String?
   occasion         String?
-  id               String    @id @default(uuid())
+  id               String             @id @default(uuid())
   userId           String
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   catalogId        String
   title            String
   text             String
   textHash         String
-  status           String    @default("DRAFT")
+  status           String             @default("DRAFT")
   voiceId          String
   audio            Bytes?
   audioMime        String?
@@ -5233,10 +5234,43 @@ model StoryGift {
   audioHash        String?
   error            String?
   approvedAt       DateTime?
-  shareHash        String?   @unique
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @default(now()) @updatedAt
+  shareHash        String?            @unique
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @default(now()) @updatedAt
 
   @@index([userId, createdAt])
   @@map("story_gifts")
+}
+
+/// Bounded private exports: reusable silent master plus an independently replaceable preamble and voice track.
+model StoryVideoRender {
+  qaStatus         String    @default("PENDING")
+  qa               Json?
+  id               String    @id @default(uuid())
+  giftId           String
+  gift             StoryGift @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  configHash       String
+  status           String    @default("PREPARING")
+  preambleText     String
+  preambleAudio    Bytes?
+  preambleDuration Float?
+  baseRevision     String
+  baseHash         String
+  mainAudioHash    String
+  voiceId          String
+  reservedMicroUsd Int
+  assetTokenHash   String?   @unique
+  assetExpiresAt   DateTime?
+  jobId            String?
+  video            Bytes?
+  videoHash        String?
+  durationSeconds  Float?
+  approvedAt       DateTime?
+  error            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+
+  @@unique([giftId, configHash])
+  @@index([giftId, createdAt])
+  @@map("story_video_renders")
 }

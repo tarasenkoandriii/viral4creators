@@ -1,3 +1,4 @@
+import { StoryVideoService } from './story-video.service';
 import { StoryReferencesService } from './story-references.service';
 import {
   Body,
@@ -31,6 +32,13 @@ import {
 } from '../telegram-auth/telegram-identity.guard';
 import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
 import { StoryGiftsService } from './story-gifts.service';
+class StoryVideoDto {
+  @IsString() @MaxLength(180) preambleText!: string;
+}
+class StoryVideoApproveDto {
+  @Matches(/^[a-f0-9]{64}$/) videoHash!: string;
+  @Equals(true) reviewed!: boolean;
+}
 class StoryReferenceDto {
   @IsOptional() @IsBoolean() retry?: boolean;
   @IsString() @MaxLength(500) url!: string;
@@ -67,6 +75,7 @@ export class StoryGiftsController {
   constructor(
     private readonly service: StoryGiftsService,
     private readonly references: StoryReferencesService,
+    private readonly videos: StoryVideoService,
   ) {}
   @Get('references') referenceList(@Req() req: IdentifiedRequest) {
     return this.references.list(req.telegramUserId);
@@ -76,6 +85,59 @@ export class StoryGiftsController {
     @Body() dto: StoryReferenceDto,
   ) {
     return this.references.analyze(req.telegramUserId, dto.url, dto.retry);
+  }
+  @Get(':id/video') videoList(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.videos.list(req.telegramUserId, id);
+  }
+  @Post(':id/video') videoCreate(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Body() dto: StoryVideoDto,
+  ) {
+    return this.videos.create(req.telegramUserId, id, dto.preambleText);
+  }
+  @Get(':id/video/:renderId') videoStatus(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+  ) {
+    return this.videos.status(req.telegramUserId, id, renderId);
+  }
+  @Get(':id/video/:renderId/file')
+  @Header('Cache-Control', 'no-store')
+  videoFile(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+  ) {
+    return this.videos.file(req.telegramUserId, id, renderId, 'video');
+  }
+  @Get(':id/video/:renderId/intro')
+  @Header('Cache-Control', 'no-store')
+  videoIntro(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+  ) {
+    return this.videos.file(req.telegramUserId, id, renderId, 'intro');
+  }
+  @Post(':id/video/:renderId/quality') videoQuality(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+  ) {
+    return this.videos.quality(req.telegramUserId, id, renderId);
+  }
+  @Post(':id/video/:renderId/approve') videoApprove(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+    @Body() dto: StoryVideoApproveDto,
+  ) {
+    return this.videos.approve(req.telegramUserId, id, renderId, dto.videoHash);
   }
   @Get('catalog') catalog() {
     return this.service.catalog();
@@ -176,17 +238,8 @@ export function audioRange(
 export class PublicStoryGiftController {
   constructor(
     private readonly service: StoryGiftsService,
-    private readonly references: StoryReferencesService,
+    private readonly videos: StoryVideoService,
   ) {}
-  @Get('references') referenceList(@Req() req: IdentifiedRequest) {
-    return this.references.list(req.telegramUserId);
-  }
-  @Post('references/analyze') referenceAnalyze(
-    @Req() req: IdentifiedRequest,
-    @Body() dto: StoryReferenceDto,
-  ) {
-    return this.references.analyze(req.telegramUserId, dto.url, dto.retry);
-  }
   private headers(res: Response) {
     res.set({
       'X-Robots-Tag': 'noindex, nofollow, noarchive',
@@ -201,6 +254,7 @@ export class PublicStoryGiftController {
   ) {
     this.headers(res);
     const gift = await this.service.publicGift(token);
+    const publishedVideo = await this.videos.published(token).catch(() => null);
     const chapters = gift.chapters as unknown as Array<{
       title: string;
       text: string;
@@ -213,8 +267,34 @@ export class PublicStoryGiftController {
     res
       .type('html')
       .send(
-        `<!doctype html><html lang="${esc(gift.locale)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · Аудиоподарок</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>Синтетическая озвучка Nova. Включает подготовленное взрослым обращение, если оно было добавлено.</p><audio controls preload="none" src="./${token}/audio"></audio>${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
+        `<!doctype html><html lang="${esc(gift.locale)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · ${publishedVideo ? 'Видеоподарок' : 'Аудиоподарок'}</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>Синтетическая озвучка Nova. Включает подготовленное взрослым обращение, если оно было добавлено.</p>${publishedVideo ? `<video controls playsinline preload="metadata" style="width:100%;border-radius:18px" src="./${token}/video"></video><p><a style="color:inherit" href="./${token}/audio">Основная озвучка отдельно (MP3)</a></p>` : `<audio controls preload="none" src="./${token}/audio"></audio>`}${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
       );
+  }
+  @Get(':token/video') async video(
+    @Param('token') token: string,
+    @Headers('range') range: string | undefined,
+    @Res() res: Response,
+  ) {
+    this.headers(res);
+    const row = await this.videos.published(token, true);
+    const bytes = Buffer.from(row.video!);
+    const part = audioRange(range, bytes.length);
+    res.set({ 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes' });
+    if (part === false) {
+      res.status(416).set('Content-Range', `bytes */${bytes.length}`).end();
+      return;
+    }
+    if (part) {
+      res
+        .status(206)
+        .set({
+          'Content-Range': `bytes ${part.start}-${part.end}/${bytes.length}`,
+          'Content-Length': String(part.end - part.start + 1),
+        })
+        .send(bytes.subarray(part.start, part.end + 1));
+      return;
+    }
+    res.set('Content-Length', String(bytes.length)).send(bytes);
   }
   @Get(':token/photo') async photo(
     @Param('token') token: string,
@@ -253,5 +333,24 @@ export class PublicStoryGiftController {
       return;
     }
     res.set('Content-Length', String(bytes.length)).send(bytes);
+  }
+}
+
+@Controller('story-render-input')
+export class StoryRenderInputController {
+  constructor(private readonly videos: StoryVideoService) {}
+  @Get(':token/:part') async input(
+    @Param('token') token: string,
+    @Param('part') part: string,
+    @Res() res: Response,
+  ) {
+    res.set({
+      'Cache-Control': 'private, no-store',
+      'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    const file = await this.videos.input(token, part);
+    res.type(file.mime).send(file.bytes);
   }
 }

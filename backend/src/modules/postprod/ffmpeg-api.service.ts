@@ -139,6 +139,7 @@ export class FfmpegApiService {
     inputs: Record<string, string>;
     outputs: string[];
     commands: string[];
+    retrySubmit?: boolean;
   }): Promise<FfmpegJobRef> {
     const key = this.key();
     if (!key) throw new Error('FFMPEG_API_KEY не задан');
@@ -152,19 +153,23 @@ export class FfmpegApiService {
       .update(JSON.stringify(body))
       .digest('hex');
 
-    const data = await this.withRetry(
-      () =>
-        this.call('/ffmpeg', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${key}`,
-            'Content-Type': 'application/json',
-            'Idempotency-Key': idempotencyKey,
-          },
-          body: JSON.stringify(body),
-        }),
-      'ffmpeg submit',
-    );
+    const request = () =>
+      this.call('/ffmpeg', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(body),
+        ...(opts.retrySubmit === false
+          ? { signal: AbortSignal.timeout(25000) }
+          : {}),
+      });
+    const data =
+      opts.retrySubmit === false
+        ? await request()
+        : await this.withRetry(request, 'ffmpeg submit');
 
     const jobId = (data.id ?? data.jobId ?? data.job_id) as string | undefined;
     if (!jobId) {
@@ -175,13 +180,14 @@ export class FfmpegApiService {
     return { jobId, status: String(data.status ?? 'queued') };
   }
 
-  async status(jobId: string): Promise<FfmpegJobStatus> {
+  async status(jobId: string, timeoutMs?: number): Promise<FfmpegJobStatus> {
     const key = this.key();
     if (!key) throw new Error('FFMPEG_API_KEY не задан');
 
     const data = await this.withRetry(
       () =>
         this.call(`/jobs/${encodeURIComponent(jobId)}`, {
+          ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
           headers: { Authorization: `Bearer ${key}` },
         }),
       'ffmpeg status',

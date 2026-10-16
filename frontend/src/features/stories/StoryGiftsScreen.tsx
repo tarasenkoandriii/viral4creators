@@ -1,3 +1,5 @@
+import { exclusiveStoryPlayback } from './story-media-playback';
+import { StoryVideoPanel } from './StoryVideoPanel';
 import { StoryReferencesPanel } from './StoryReferencesPanel';
 import { useEffect, useRef, useState } from 'react';
 import { BookOpen } from 'lucide-react';
@@ -663,6 +665,7 @@ export function StoryGiftsScreen() {
                 Nova · синтетическая озвучка
               </p>
               <audio
+                onPlay={exclusiveStoryPlayback}
                 className="w-full"
                 controls
                 preload="metadata"
@@ -797,6 +800,9 @@ export function StoryGiftsScreen() {
                 Отозвать ссылку
               </Button>
             </>
+          )}
+          {['READY', 'APPROVED'].includes(selected.status) && (
+            <StoryVideoPanel key={selected.id} giftId={selected.id} />
           )}
           <Button
             variant="ghost"

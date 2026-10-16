@@ -383,22 +383,36 @@ export class StoryGiftsService {
   }
   async remove(userId: string, id: string) {
     await this.own(userId, id);
-    await this.prisma.storyGift.updateMany({
-      where: { id, userId },
-      data: {
-        status: 'DELETED',
-        shareHash: null,
-        audio: null,
-        audioHash: null,
-        giftPhoto: null,
-        audioQa: Prisma.DbNull,
-        hasGiftPhoto: false,
-        giftNote: null,
-        giftNotePosition: null,
-        occasion: null,
-        text: '',
-        chapters: [],
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.storyGift.updateMany({
+        where: { id, userId },
+        data: {
+          status: 'DELETED',
+          shareHash: null,
+          audio: null,
+          audioHash: null,
+          giftPhoto: null,
+          audioQa: Prisma.DbNull,
+          hasGiftPhoto: false,
+          giftNote: null,
+          giftNotePosition: null,
+          occasion: null,
+          text: '',
+          chapters: [],
+        },
+      });
+      await tx.storyVideoRender.updateMany({
+        where: { giftId: id },
+        data: {
+          status: 'DELETED',
+          video: null,
+          videoHash: null,
+          preambleAudio: null,
+          preambleText: '',
+          assetTokenHash: null,
+          qa: Prisma.DbNull,
+        },
+      });
     });
     return { deleted: true };
   }

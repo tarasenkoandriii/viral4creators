@@ -41,8 +41,17 @@ function setup() {
     count: jest.fn(async () => 0),
     create: jest.fn(async ({ data }: any) => ({ ...data, id: 'g2' })),
   };
-  const tx = { storyGift: db, $queryRaw: jest.fn() };
-  const prisma = { storyGift: db, $transaction: jest.fn(async (fn) => fn(tx)) };
+  const renderDb = { updateMany: jest.fn().mockResolvedValue({ count: 0 }) };
+  const tx = {
+    storyGift: db,
+    storyVideoRender: renderDb,
+    $queryRaw: jest.fn(),
+  };
+  const prisma = {
+    storyVideoRender: renderDb,
+    storyGift: db,
+    $transaction: jest.fn(async (fn) => fn(tx)),
+  };
   const tts = {
     configured: jest.fn(() => true),
     synthesize: jest.fn(async () => ({
@@ -173,6 +182,16 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
     expect(s.row.status).toBe('DELETED');
     expect(s.row.shareHash).toBeNull();
     expect(s.row.audio).toBeNull();
+    expect(s.tx.storyVideoRender.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { giftId: 'g1' },
+        data: expect.objectContaining({
+          video: null,
+          preambleAudio: null,
+          assetTokenHash: null,
+        }),
+      }),
+    );
   });
 });
 

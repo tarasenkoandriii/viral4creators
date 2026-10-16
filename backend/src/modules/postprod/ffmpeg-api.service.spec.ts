@@ -329,3 +329,13 @@ describe('FfmpegApiService.status — словарь чужих статусов
     await expect(svc.status('job1')).rejects.toThrow(/вернул не-JSON/);
   });
 });
+
+describe('Paid one-shot story export', () => {
+  it('never retries an uncertain paid submission when the caller disables retry', async () => {
+    fetchMock.mockResolvedValue(fail(503, 'upstream'));
+    await expect(
+      new FfmpegApiService().submit({ ...JOB, retrySubmit: false }),
+    ).rejects.toThrow('503');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

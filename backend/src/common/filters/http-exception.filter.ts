@@ -127,7 +127,10 @@ export function internalErrorMessage(locale: SupportedLocale): string {
  * OAuth-`code`; полный `request.url` уходил и в лог, и в `meta.path`.
  */
 export function redactStoryToken(value: string): string {
-  return value.replace(/(\/story-gift\/)[^/?\s]+/g, '$1[redacted]');
+  return value.replace(
+    /(\/(?:story-gift|story-render-input)\/)[^/?\s]+/g,
+    '$1[redacted]',
+  );
 }
 function safePath(request: { url?: string; path?: string }): string {
   const url = request.path || request.url || '';

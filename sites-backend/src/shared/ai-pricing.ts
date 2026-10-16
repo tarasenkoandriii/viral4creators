@@ -227,6 +227,7 @@ export type AiOperation =
   // валидатор принимал любой ключ отсюда, и каждая новая строка отчёта
   // молча расширяла словарь модели.
   | 'story-audio-qa'
+  | 'story-video-assembly'
   | 'story-voiceover'
   | 'tutorial-voiceover'
   // Проверка качества готового демо обучалки через Gemini
@@ -361,6 +362,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'tutorial-scenario-generate': 'Генерация сценария обучающего видео',
   'tutorial-video-assembly': 'Сборка обучающего видео (ffmpeg)',
   'story-audio-qa': 'Проверка озвучки сказки',
+  'story-video-assembly': 'Сказки: сборка видео',
   'story-voiceover': 'Озвучка сказки Story‑Tales',
   'tutorial-voiceover': 'Озвучка обучающего видео',
   'tutorial-demo-quality': 'Проверка качества демо обучалки',

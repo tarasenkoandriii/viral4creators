@@ -1,0 +1,49 @@
+/** Versioned silent master. Never replace published bytes under this revision. */
+export const STORY_VIDEO_BASE = {
+  revision: 'turnip-v1',
+  catalogId: 'turnip-ushinsky-ru-1949-v1',
+  textSha256:
+    '39207ca8c60f88adf5cc9085cf2677fb82dd6da3c7ad41715ea17f7bf3cdaeb7',
+  baseSha256:
+    'a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46',
+  durationSeconds: 55.76,
+  fps: 25,
+  width: 1280,
+  height: 720,
+  audioTracks: 0,
+  scenes: [
+    {
+      start: 0,
+      end: 7,
+      title: 'Посадил дед репку',
+    },
+    {
+      start: 7,
+      end: 15,
+      title: 'Тянет-потянет…',
+    },
+    {
+      start: 15,
+      end: 23,
+      title: 'Бабка за дедку',
+    },
+    {
+      start: 23,
+      end: 33,
+      title: 'Внучка за бабку',
+    },
+    {
+      start: 33,
+      end: 45,
+      title: 'Жучка и Машка на помощь',
+    },
+    {
+      start: 45,
+      end: 55.76,
+      title: 'Мышка помогла — вытащили репку!',
+    },
+  ],
+  rights: 'Own vector artwork, no third-party images, music or voice.',
+  coverSha256:
+    'e59074639e22abc408129e532d39a74bbc7cad4b4b2d897f788475a85ab17a0a',
+} as const;
