@@ -389,11 +389,20 @@ export class UserVoicesService {
         });
         return toView({ ...row, status: 'READY' });
       }
-      if (remote.status !== 'pending')
+      if (
+        [
+          'training',
+          'building',
+          'processing',
+          'started',
+          'in_progress',
+        ].includes(remote.status.toLowerCase())
+      )
         throw new ConflictException(
           'Голос уже обрабатывается либо требует проверки; повтор обучения не отправлен',
         );
     }
+    this.logger.log('Resemble: однократный запуск обучения созданного голоса');
     const at = new Date();
     const claim = await this.prisma.userVoice.updateMany({
       where: {

@@ -597,5 +597,9 @@ describe('Explicit provider build lifecycle', () => {
     s.resemble.getVoiceStatus.mockResolvedValue({ status: 'ready' });
     expect((await s.svc.retry(USER, 'v1')).status).toBe('ready');
     expect(s.resemble.buildVoice).not.toHaveBeenCalled();
+    s.current.status = 'TRAINING';
+    s.resemble.getVoiceStatus.mockResolvedValue({ status: 'processing' });
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow('уже обрабатывается');
+    expect(s.resemble.buildVoice).not.toHaveBeenCalled();
   });
 });

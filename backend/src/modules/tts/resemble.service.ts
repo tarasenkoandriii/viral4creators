@@ -534,7 +534,9 @@ export class ResembleService implements TtsProvider {
       >;
       const item = (data.item ?? data) as Record<string, unknown>;
       const status = item.status ?? item.voice_status;
-      return typeof status === 'string' ? { status } : undefined;
+      return typeof status === 'string'
+        ? { status: status.trim().toLowerCase() }
+        : undefined;
     } catch {
       return undefined;
     }
