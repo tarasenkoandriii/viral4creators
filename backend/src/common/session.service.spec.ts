@@ -62,6 +62,22 @@ describe('SessionService.claimPostProduction (этап 37)', () => {
     expect(sql).toContain("'postStatus' IS NULL");
     // Параметр подставляется драйвером, а не склейкой строк.
     expect(prisma.$executeRaw.mock.calls[0][1]).toBe('s1');
+    expect(prisma.$executeRaw.mock.calls[0].slice(2)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    await svc.claimPostProduction('s1', 'attempt1');
+    const retrySql = (prisma.$executeRaw.mock.calls[1][0] as string[]).join(
+      '?',
+    );
+    expect(retrySql).toContain("'postStatus' = 'failed'");
+    expect(retrySql).toContain("'generatedVideoId' =");
+    expect(prisma.$executeRaw.mock.calls[1].slice(2)).toEqual([
+      'attempt1',
+      'attempt1',
+      'attempt1',
+    ]);
   });
 });
 

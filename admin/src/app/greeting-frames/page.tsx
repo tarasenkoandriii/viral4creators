@@ -418,7 +418,7 @@ export default function GreetingFramesPage() {
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
           <button type="button" disabled={busy} onClick={() => void runStep(false)}>
-            {fixtureBusy === 'step' ? 'Выполняю…' : fixture?.next?.paid ? 'Запустить рендер (платно)…' : 'Шаг ролика / опросить'}
+            {fixtureBusy === 'step' ? 'Выполняю…' : fixture?.next?.action === 'retry-post' ? 'Повторить сборку (платно)…' : fixture?.next?.paid ? 'Запустить рендер (платно)…' : 'Шаг ролика / опросить'}
           </button>
           <button type="button" disabled={busy || !fixture?.rerender} onClick={() => void runStep(true)}>
             Переснять ролик (платно)…

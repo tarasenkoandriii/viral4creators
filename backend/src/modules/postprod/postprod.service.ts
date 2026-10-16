@@ -399,11 +399,17 @@ export class PostProductionService {
   async start(
     sessionId: string,
     video: GeneratedVideo,
+    retryFailed = false,
   ): Promise<GeneratedVideo> {
     // Быстрая отсечка по прочитанному состоянию: дешёвая и покрывает
     // подавляющее большинство повторов. От гонки она НЕ защищает —
     // этим занимается захват ниже.
-    if (video.postStatus && video.postStatus !== 'skipped') return video;
+    if (
+      video.postStatus &&
+      video.postStatus !== 'skipped' &&
+      !(retryFailed && video.postStatus === 'failed')
+    )
+      return video;
 
     const source = video.downloadUrl;
     if (!source) return video;
@@ -479,7 +485,11 @@ export class PostProductionService {
     // `postStatus`, оплатят по своему синтезу и по своей задаче ffmpeg.
     // Захват идёт последним из проверок: занимать нечего, пока не решено,
     // что работа вообще нужна и сервис настроен.
-    if (!(await this.sessions.claimPostProduction(sessionId))) {
+    if (
+      !(await (retryFailed
+        ? this.sessions.claimPostProduction(sessionId, video.generatedVideoId)
+        : this.sessions.claimPostProduction(sessionId)))
+    ) {
       this.logger.log(
         `постобработку уже занял другой опрос — сессия ${sessionId}`,
       );

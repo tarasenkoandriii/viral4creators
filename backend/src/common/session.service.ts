@@ -625,7 +625,10 @@ export class SessionService {
    * Возвращает `true` тому единственному вызову, который занял работу;
    * остальным — `false`, и они просто ничего не делают.
    */
-  async claimPostProduction(sessionId: string): Promise<boolean> {
+  async claimPostProduction(
+    sessionId: string,
+    retryVideoId?: string,
+  ): Promise<boolean> {
     // `jsonb_set(..., true)` создаёт ключ, если его ещё нет. Условие
     // `IS NULL` ловит и «ключа нет», и «ключ есть со значением null» —
     // оба означают «постобработку никто не брал».
@@ -649,7 +652,12 @@ export class SessionService {
           "lastActivityAt" = NOW()
       WHERE "id" = ${sessionId}
         AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') IS NOT NULL
-        AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'postStatus' IS NULL
+        AND (
+          (${retryVideoId ?? null}::text IS NULL AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'postStatus' IS NULL)
+          OR (${retryVideoId ?? null}::text IS NOT NULL
+            AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'postStatus' = 'failed'
+            AND COALESCE("data" -> 'generatedVideo', "liveData" -> 'generatedVideo') ->> 'generatedVideoId' = ${retryVideoId ?? null})
+        )
     `;
     return affected > 0;
   }

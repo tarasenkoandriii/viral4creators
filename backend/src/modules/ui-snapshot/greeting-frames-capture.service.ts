@@ -117,6 +117,7 @@ export type FixtureVideoAction =
   | 'none'
   | 'poll'
   | 'poll-post'
+  | 'retry-post'
   | 'script-and-render'
   | 'render'
   /** Готовый ролик переснять: новая версия сессии и рендер её (CONTRACT6). */
@@ -137,6 +138,7 @@ export function fixtureVideoAction(state: {
     // новый рендер поверх идущей озвучки оплатил бы обе работы, а
     // слушать ролик до её конца бессмысленно — голоса в нём ещё нет.
     if (state.postStatus === 'pending') return 'poll-post';
+    if (state.postStatus === 'failed' && !state.rerender) return 'retry-post';
     // Готовый ролик на месте не перерендеривается (409
     // GREETING_VIDEO_ALREADY_READY, §3.6 ТЗ): переснять — значит завести
     // новую версию сессии тем же сценарием и рендерить её.
@@ -197,6 +199,7 @@ export const FIXTURE_VIDEO_ACTIONS: readonly FixtureVideoAction[] = [
   'none',
   'poll',
   'poll-post',
+  'retry-post',
   'script-and-render',
   'render',
   'new-version-render',
@@ -204,6 +207,7 @@ export const FIXTURE_VIDEO_ACTIONS: readonly FixtureVideoAction[] = [
 
 /** Шаги `fixtureVideo`, которые платят (сценарий и/или рендер Grok). */
 export const PAID_FIXTURE_VIDEO_ACTIONS: readonly FixtureVideoAction[] = [
+  'retry-post',
   'script-and-render',
   'render',
   'new-version-render',
@@ -523,6 +527,11 @@ export class GreetingFramesCaptureService {
         break;
       case 'poll-post':
         video = current ? await this.postprod.poll(row.id, current) : current;
+        break;
+      case 'retry-post':
+        video = current
+          ? await this.postprod.start(row.id, current, true)
+          : current;
         break;
       case 'script-and-render':
         await this.prompt.generateGreetingPrompt(row.id);

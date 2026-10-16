@@ -137,3 +137,6 @@ assert.match(frame4Warning(null) ?? '', /неизвестно/);
 assert.match(frame4Warning({ skipped: 'фикстурный вход не настроен' }) ?? '', /неизвестно/);
 
 console.log('greeting-frames.test.ts: ok');
+
+assert.equal(shouldAutoPoll(state({ next: { action: 'retry-post', paid: true } })), false, 'retry assembly is never automatic');
+assert.ok(paidConfirmText(state({ next: { action: 'retry-post', paid: true } }), false)?.includes('Новый видеорендер не запускается'));

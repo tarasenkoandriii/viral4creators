@@ -68,6 +68,10 @@ function build() {
     pollVideo: jest.fn().mockResolvedValue({ status: 'processing' }),
   };
   const postprod = {
+    start: jest.fn(async (_id: string, v: any) => ({
+      ...v,
+      postStatus: 'pending',
+    })),
     poll: jest.fn(async (_id: string, v: any) => ({
       ...v,
       postStatus: 'complete',
@@ -246,7 +250,7 @@ describe('fixtureVideoAction — ролик фикстуры не оплачив
     ],
     [
       { hasPrompt: true, videoStatus: 'complete', postStatus: 'failed' },
-      'none',
+      'retry-post',
     ],
     [
       { hasPrompt: true, videoStatus: 'complete', postStatus: 'skipped' },
@@ -392,8 +396,9 @@ describe('GreetingFramesCaptureService.fixtureVideo — постобработк
     expect(result.postError).toBeUndefined();
   });
 
-  it('постобработка упала — complete, но причина наружу', async () => {
-    const { service, prisma, video } = build();
+  it('повторная постобработка упала — причина наружу без нового рендера', async () => {
+    const { service, prisma, video, postprod } = build();
+    postprod.start.mockImplementation(async (_id: string, v: any) => v);
     prisma.session.findFirst.mockResolvedValue({
       ...pending,
       liveData: {
@@ -504,7 +509,12 @@ describe('GreetingFramesCaptureService.fixtureVideoState', () => {
 
   it('платные шаги — ровно сценарий+рендер, рендер и новая версия', () => {
     expect([...PAID_FIXTURE_VIDEO_ACTIONS].sort()).toEqual(
-      ['new-version-render', 'render', 'script-and-render'].sort(),
+      [
+        'new-version-render',
+        'render',
+        'retry-post',
+        'script-and-render',
+      ].sort(),
     );
   });
 
@@ -765,4 +775,22 @@ describe('GreetingFramesCaptureService.fixtureVideo — ожидаемый ша�
     await service.fixtureVideo();
     expect(video.startVideo).toHaveBeenCalledTimes(1);
   });
+});
+
+it('retries only failed fixture assembly without forking or rendering video', async () => {
+  const { service, prisma, postprod, video, edits } = build();
+  const current = {
+    status: 'complete',
+    postStatus: 'failed',
+    generatedVideoId: 'attempt1',
+  };
+  prisma.session.findFirst.mockResolvedValue({
+    id: 'sess-done',
+    data: { generationPrompt: {} },
+    liveData: { generatedVideo: current },
+  });
+  await service.fixtureVideo({ expect: 'retry-post' });
+  expect(postprod.start).toHaveBeenCalledWith('sess-done', current, true);
+  expect(video.startVideo).not.toHaveBeenCalled();
+  expect(edits.forkForRerender).not.toHaveBeenCalled();
 });

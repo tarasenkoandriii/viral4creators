@@ -2681,3 +2681,27 @@ it('an explicit greeting revoice does not reuse prepared narration', async () =>
   await svc.reVoice('s1', done);
   expect(tts.synthesize).toHaveBeenCalledTimes(2);
 });
+
+it('retries failed greeting assembly with the prepared voice and an attempt-specific claim', async () => {
+  const greeting = session({
+    greetingBriefSnapshot: {},
+    brandManifestSnapshot: { voiceMode: 'dub', ttsVoiceId: 'fixed-voice' },
+  });
+  const draft = { ...VIDEO, provider: 'grok' as const, silentSource: true };
+  const { svc, tts, api, sessions } = build({ session: greeting });
+  const prepared = await svc.prepareGreetingVoice('s1', draft);
+  await svc.start('s1', { ...draft, ...prepared, postStatus: 'failed' }, true);
+  expect(sessions.claimPostProduction).toHaveBeenCalledWith(
+    's1',
+    draft.generatedVideoId,
+  );
+  expect(tts.synthesize).toHaveBeenCalledTimes(1);
+  expect(api.submit).toHaveBeenCalledTimes(1);
+});
+
+it('a losing retry claim does not synthesize or submit another assembly', async () => {
+  const { svc, api, tts } = build({ claimed: false });
+  await svc.start('s1', { ...VIDEO, postStatus: 'failed' }, true);
+  expect(api.submit).not.toHaveBeenCalled();
+  expect(tts.synthesize).not.toHaveBeenCalled();
+});

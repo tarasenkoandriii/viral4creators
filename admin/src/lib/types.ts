@@ -2246,6 +2246,7 @@ export interface TesterProgress {
 
 /** Что сделает `POST …/greeting-frames/fixture-video` (бэкенд `fixtureVideoAction`). */
 export type GreetingFixtureVideoAction =
+  | 'retry-post'
   | 'none'
   | 'poll'
   | 'poll-post'
