@@ -30,6 +30,12 @@ describe('Story YouTube reference boundaries', () => {
     const rows = new Map<string, { key: string; value: string }>();
     const prisma = {
       platformSetting: {
+        updateMany: jest.fn(async ({ where, data }) => {
+          const old = rows.get(where.key);
+          if (!old || old.value !== where.value) return { count: 0 };
+          rows.set(where.key, { ...old, ...data });
+          return { count: 1 };
+        }),
         findUnique: jest.fn(
           async ({ where: { key } }) => rows.get(key) ?? null,
         ),
@@ -171,6 +177,8 @@ describe('Story YouTube reference boundaries', () => {
     ).toBe('unknown');
     await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM');
     expect(generateContent).toHaveBeenCalledTimes(1);
+    await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM', true);
+    expect(generateContent).toHaveBeenCalledTimes(2);
   });
   it('does not claim inaccessible video was reviewed', async () => {
     const { service, generateContent } = setup();

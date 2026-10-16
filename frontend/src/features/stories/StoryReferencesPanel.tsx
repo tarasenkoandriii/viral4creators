@@ -44,7 +44,7 @@ export function StoryReferencesPanel() {
   useEffect(() => {
     void refresh().catch(() => setError('Не удалось загрузить референсы'));
   }, []);
-  async function analyze() {
+  async function analyze(referenceUrl = url, retry = false) {
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
@@ -52,7 +52,7 @@ export function StoryReferencesPanel() {
     try {
       await api.post(
         '/story-gifts/references/analyze',
-        { url },
+        { url: referenceUrl, retry },
         { timeout: 150000 }
       );
       await refresh();
@@ -133,6 +133,15 @@ export function StoryReferencesPanel() {
             )[r.status] || r.status}
           </p>
           {r.error && <p>{r.error}</p>}
+          {['unknown', 'unavailable'].includes(r.status) && (
+            <Button
+              disabled={busy}
+              variant="ghost"
+              onClick={() => void analyze(r.url, true)}
+            >
+              Повторить разбор явно (новый платный вызов)
+            </Button>
+          )}
           {r.assessment?.observed && (
             <>
               <p>{r.assessment.summary}</p>

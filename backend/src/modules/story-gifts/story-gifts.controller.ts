@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { Response } from 'express';
 import {
+  IsBoolean,
   IsIn,
   IsNumber,
   Min,
@@ -31,6 +32,7 @@ import {
 import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
 import { StoryGiftsService } from './story-gifts.service';
 class StoryReferenceDto {
+  @IsOptional() @IsBoolean() retry?: boolean;
   @IsString() @MaxLength(500) url!: string;
 }
 export class CreateStoryDto {
@@ -73,7 +75,7 @@ export class StoryGiftsController {
     @Req() req: IdentifiedRequest,
     @Body() dto: StoryReferenceDto,
   ) {
-    return this.references.analyze(req.telegramUserId, dto.url);
+    return this.references.analyze(req.telegramUserId, dto.url, dto.retry);
   }
   @Get('catalog') catalog() {
     return this.service.catalog();
@@ -183,7 +185,7 @@ export class PublicStoryGiftController {
     @Req() req: IdentifiedRequest,
     @Body() dto: StoryReferenceDto,
   ) {
-    return this.references.analyze(req.telegramUserId, dto.url);
+    return this.references.analyze(req.telegramUserId, dto.url, dto.retry);
   }
   private headers(res: Response) {
     res.set({
