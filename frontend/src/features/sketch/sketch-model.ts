@@ -22,6 +22,7 @@ export const SKETCH_STYLES: SketchStyle[] = [
   'lineart',
   'flat',
   'watercolor',
+  'cartoon',
 ];
 
 export const DEFAULT_SKETCH_STYLE: SketchStyle = 'pencil';

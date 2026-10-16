@@ -66,6 +66,12 @@ const STYLE_FRAGMENT: Record<SketchStyle, { plain: string; colour: string }> = {
     plain: 'flat vector illustration with solid colours',
     colour: 'flat vector illustration with solid colours',
   },
+  cartoon: {
+    plain:
+      'full-colour storybook cartoon illustration, warm expressive adult character, clean rounded shapes and soft shading',
+    colour:
+      'full-colour storybook cartoon illustration, warm expressive adult character, clean rounded shapes and soft shading',
+  },
   watercolor: {
     plain: 'loose watercolor illustration',
     colour: 'loose watercolor illustration',
@@ -157,6 +163,9 @@ function bodyFor(input: SketchPromptInput): string {
         'Redraw the person from the reference image.',
         'Keep pose, clothing, body type, approximate age group and hairstyle silhouette.',
         keepsOwnFace(input) ? SELF_LIKENESS_LINE : ANONYMISE_LINE,
+        input.style === 'cartoon'
+          ? 'Keep the person visibly adult, with natural proportions, a warm approachable expression and clearly defined eyes and mouth suitable for speaking animation. No exaggerated baby face or oversized eyes.'
+          : '',
         quoted ? `Extra notes about the person: ${quoted}.` : '',
         'Plain light background.',
       ]

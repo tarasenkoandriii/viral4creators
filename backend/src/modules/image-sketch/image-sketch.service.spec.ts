@@ -372,6 +372,25 @@ describe('ImageSketchService.apply / revert / deleteOriginal', () => {
     );
     expect(statuses).toContain('applied');
     expect(statuses).toContain('superseded');
+    const cartoon = build();
+    const generated = await cartoon.service.generate(
+      {
+        target: TARGET,
+        mode: 'from-text',
+        style: 'cartoon',
+        options: { keepColors: false, sketchRendering: 'realistic' },
+      },
+      'u1',
+    );
+    expect(generated.sketch.options).toMatchObject({
+      keepColors: true,
+      sketchRendering: 'stylized',
+    });
+    await cartoon.service.apply(generated.sketch.id, 'u1', 'realistic');
+    expect(cartoon.targets.writeActive.mock.calls[0][1]).toMatchObject({
+      style: 'cartoon',
+      sketchRendering: 'stylized',
+    });
   });
 
   it('применение доводит подмену до опубликованных страниц (A-3)', async () => {

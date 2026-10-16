@@ -221,6 +221,18 @@ describe('лицо меняется всегда, кроме слота persona-
     expect(self).toContain('Do not depict minors');
     expect(self).toContain('No nudity or sexual content');
     expect(self).toContain('Non-photorealistic');
+    const cartoon = buildSketchPrompt({
+      slotKind: 'character',
+      mode: 'from-image',
+      style: 'cartoon',
+      options: { keepColors: false },
+      likeness: 'self',
+    });
+    expect(cartoon).toContain(SELF_LIKENESS_LINE);
+    expect(cartoon).not.toContain(ANONYMISE_LINE);
+    expect(cartoon).toContain('full-colour storybook cartoon');
+    expect(cartoon).toContain('visibly adult');
+    expect(cartoon).toContain('suitable for speaking animation');
 
     for (const slotKind of ['product', 'scene'] as SketchSlotKind[]) {
       for (const mode of SKETCH_MODES as readonly SketchMode[]) {

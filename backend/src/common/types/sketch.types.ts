@@ -14,6 +14,7 @@ export const SKETCH_STYLES = [
   'lineart',
   'flat',
   'watercolor',
+  'cartoon',
 ] as const;
 export type SketchStyle = (typeof SKETCH_STYLES)[number];
 

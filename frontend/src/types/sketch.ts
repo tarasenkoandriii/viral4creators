@@ -38,7 +38,12 @@ export interface SketchTarget {
 }
 
 /** Нефотореалистичные стили из §5.3. «Карандаш» — по умолчанию. */
-export type SketchStyle = 'pencil' | 'lineart' | 'flat' | 'watercolor';
+export type SketchStyle =
+  | 'pencil'
+  | 'lineart'
+  | 'flat'
+  | 'watercolor'
+  | 'cartoon';
 
 /**
  * `from-image` — оригинал уходит в модель один раз на генерацию;

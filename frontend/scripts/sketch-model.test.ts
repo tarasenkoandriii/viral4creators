@@ -46,7 +46,13 @@ it('sketchSubject — шесть слотов сводятся к трём ви�
 });
 
 it('стили — четыре из §5.3, «Карандаш» первым и по умолчанию', () => {
-  assert.deepEqual(SKETCH_STYLES, ['pencil', 'lineart', 'flat', 'watercolor']);
+  assert.deepEqual(SKETCH_STYLES, [
+    'pencil',
+    'lineart',
+    'flat',
+    'watercolor',
+    'cartoon',
+  ]);
   assert.equal(DEFAULT_SKETCH_STYLE, 'pencil');
   assert.equal(SKETCH_STYLES[0], DEFAULT_SKETCH_STYLE);
 });

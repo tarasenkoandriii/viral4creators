@@ -106,11 +106,23 @@ export function SketchForm({
           value={style}
           ariaLabel={t.styleLabel}
           columns={2}
-          onChange={onStyle}
+          onChange={(next) => {
+            onStyle(next);
+            if (next === 'cartoon')
+              onOptions((prev) => ({
+                ...prev,
+                keepColors: true,
+                sketchRendering: 'stylized',
+              }));
+          }}
           options={SKETCH_STYLES.map((s) => ({ value: s, label: t.styles[s] }))}
           disabled={disabled}
         />
       </div>
+
+      {style === 'cartoon' && (
+        <p className="text-xs text-silver-400">{t.cartoonHint}</p>
+      )}
 
       <div className="space-y-1">
         <span className="label">{t.optionsLabel}</span>
@@ -132,7 +144,8 @@ export function SketchForm({
           />
         )}
         <Check
-          checked={options.keepColors ?? false}
+          checked={style === 'cartoon' || (options.keepColors ?? false)}
+          locked={style === 'cartoon'}
           label={t.optKeepColors}
           disabled={disabled}
           onChange={(v) => onOptions((o) => ({ ...o, keepColors: v }))}
@@ -142,16 +155,24 @@ export function SketchForm({
       <div>
         <span className="label">{t.renderingLabel}</span>
         <Pills
-          value={options.sketchRendering ?? 'realistic'}
+          value={
+            style === 'cartoon'
+              ? 'stylized'
+              : (options.sketchRendering ?? 'realistic')
+          }
           ariaLabel={t.renderingLabel}
           onChange={(v) => onOptions((o) => ({ ...o, sketchRendering: v }))}
           options={[
-            { value: 'realistic' as const, label: t.rendering.realistic },
+            {
+              value: 'realistic' as const,
+              label: t.rendering.realistic,
+              disabled: style === 'cartoon',
+            },
             { value: 'stylized' as const, label: t.rendering.stylized },
           ]}
           disabled={disabled}
         />
-        {showsRealisticNote(options) && (
+        {style !== 'cartoon' && showsRealisticNote(options) && (
           <p className="mt-1 text-[11px] text-silver-400">
             {t.renderingRealisticNote}
           </p>

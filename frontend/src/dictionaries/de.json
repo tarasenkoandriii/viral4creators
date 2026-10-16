@@ -1586,6 +1586,7 @@
     "assistLinkErrUnavailable": "Eine Verknüpfung mit diesem Assistenten ist gerade nicht möglich — dafür sind Inhaber- oder Managerrechte für die Website nötig."
   },
   "sketch": {
+    "cartoonHint": "Ein farbiger gezeichneter Look für Geschichten. Das Video behält den Cartoonstil; die Stimme bleibt unverändert. Für ein erkennbares Elternteil nutze dein eigenes „Ich im Bild“-Profil.",
     "button": "KI-Skizze",
     "title": "KI-Skizze statt des Bildes",
     "guestOnly": "Melden Sie sich mit Telegram an, um Skizzen zu erstellen",
@@ -1603,7 +1604,8 @@
       "pencil": "Bleistift",
       "lineart": "Linie",
       "flat": "Flache Illustration",
-      "watercolor": "Aquarell"
+      "watercolor": "Aquarell",
+      "cartoon": "Farbige Cartoonfigur"
     },
     "optionsLabel": "Optionen",
     "optAnonymize": "Gesicht nicht erkennbar",

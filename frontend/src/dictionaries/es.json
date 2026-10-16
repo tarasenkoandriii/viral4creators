@@ -1586,6 +1586,7 @@
     "assistLinkErrUnavailable": "Ahora no puedes vincularlo a este asistente: necesitas permisos de propietario o gestor del sitio."
   },
   "sketch": {
+    "cartoonHint": "Un aspecto ilustrado a color para cuentos. El vídeo conserva el estilo de dibujos; la voz no cambia. Para un padre o madre reconocible, usa tu propio perfil «Yo en cámara».",
     "button": "Boceto IA",
     "title": "Boceto IA en lugar de la imagen",
     "guestOnly": "Inicia sesión con Telegram para crear bocetos",
@@ -1603,7 +1604,8 @@
       "pencil": "Lápiz",
       "lineart": "Línea",
       "flat": "Ilustración plana",
-      "watercolor": "Acuarela"
+      "watercolor": "Acuarela",
+      "cartoon": "Personaje de dibujos a color"
     },
     "optionsLabel": "Opciones",
     "optAnonymize": "Cara irreconocible",

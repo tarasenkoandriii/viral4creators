@@ -1586,6 +1586,7 @@
     "assistLinkErrUnavailable": "You can’t link to this assistant right now — you need owner or manager rights on the site."
   },
   "sketch": {
+    "cartoonHint": "A colour illustrated look for stories. Video keeps the cartoon style; the voice stays unchanged. For a recognisable parent, use your own “Me on screen” profile.",
     "button": "AI sketch",
     "title": "AI sketch instead of the image",
     "guestOnly": "Log in with Telegram to create sketches",
@@ -1603,7 +1604,8 @@
       "pencil": "Pencil",
       "lineart": "Line art",
       "flat": "Flat illustration",
-      "watercolor": "Watercolour"
+      "watercolor": "Watercolour",
+      "cartoon": "Colour cartoon character"
     },
     "optionsLabel": "Options",
     "optAnonymize": "Face unrecognisable",

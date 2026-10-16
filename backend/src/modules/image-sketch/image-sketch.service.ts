@@ -123,7 +123,10 @@ export function sketchRefOf(row: SketchRow): SketchRef {
     pathname: row.pathname!,
     mimeType: row.mimeType || mimeFromPath(row.pathname, 'image/png'),
     style: row.style as SketchStyle,
-    sketchRendering: options.sketchRendering ?? 'realistic',
+    sketchRendering:
+      row.style === 'cartoon'
+        ? 'stylized'
+        : (options.sketchRendering ?? 'realistic'),
     appliedAt: (row.appliedAt ?? new Date()).toISOString(),
   };
 }
@@ -271,7 +274,11 @@ export class ImageSketchService {
         slot.kind === 'character' && input.mode === 'from-image'
           ? likeness !== 'self'
           : input.options.anonymizeFace,
-      sketchRendering: input.options.sketchRendering ?? 'realistic',
+      ...(input.style === 'cartoon' ? { keepColors: true } : {}),
+      sketchRendering:
+        input.style === 'cartoon'
+          ? 'stylized'
+          : (input.options.sketchRendering ?? 'realistic'),
     };
     const prompt = buildSketchPrompt({
       slotKind: slot.kind,
@@ -453,6 +460,7 @@ export class ImageSketchService {
         })
       | null;
     if (!row) throw new NotFoundException('Скетч не найден');
+    if (row.style === 'cartoon') sketchRendering = 'stylized';
     if (!row.url || !row.pathname) {
       throw new BadRequestException('У этого скетча больше нет файла');
     }
