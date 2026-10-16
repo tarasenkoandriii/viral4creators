@@ -287,7 +287,7 @@ describe('Hedra media transport', () => {
       );
     await expect(
       new HedraClientService().uploadMedia(
-        'https://store.public.blob.vercel-storage.com/sessions/s1/photo.jpg',
+        'https://store.public.blob.vercel-storage.com/virtual-studio/studio/imports/portrait.jpg',
         'image',
       ),
     ).resolves.toBe('https://uploads.hedra.com/portrait');

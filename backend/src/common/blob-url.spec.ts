@@ -7,6 +7,8 @@ describe('isOwnBlobUrl (этап 38, А-2.11)', () => {
     for (const p of [
       'sessions/s1/generated.mp4',
       'projects/p1/items/i1/photo.jpg',
+      'virtual-studio/studio/imports/hash.wav',
+      'virtual-studio/studio/imports/hash.jpg',
       'brand-manifests/bm1/characters/c1/photo.png',
       'library/youtube-abc/previews/scene-1.jpg',
     ]) {

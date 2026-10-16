@@ -40,6 +40,7 @@ export const OWN_BLOB_PREFIXES = [
   'sessions/',
   'projects/',
   'brand-manifests/',
+  'virtual-studio/',
   'library/',
   'publications/',
 ] as const;
