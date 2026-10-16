@@ -1,3 +1,7 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { head } from '@vercel/blob';
+import { readBodyWithLimit } from '../../common/external-url-guard';
+import { importedImageType, importedWavSeconds } from './import-media';
 /**
  * VirtualStudioService — оркестрация «Виртуальной студии»
  * (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §2-§6, Этап 1-3):
@@ -51,6 +55,8 @@ import { createGeminiClient } from '../../common/gemini-client';
 import { GEMINI_MODEL } from '../../common/gemini-model';
 import { GenerationStatus } from '../../common/types/generation.types';
 import {
+  ImportStudioMediaDto,
+  ConfirmStudioMediaDto,
   CreateAnalysisFragmentDto,
   CreateVideoFragmentDto,
   CreateVoiceFragmentDto,
@@ -134,6 +140,93 @@ export class VirtualStudioService {
   }
 
   // ── Варианты референс-кадра (§3.2) ──────────────────────────────────
+
+  private importType(dto: ImportStudioMediaDto) {
+    if ((dto.kind === 'voice') !== (dto.contentType === 'audio/wav'))
+      throw new BadRequestException('Тип файла не соответствует виду импорта');
+    return dto.contentType;
+  }
+
+  async mediaUpload(studioId: string, dto: ImportStudioMediaDto) {
+    await this.getStudioOrThrow(studioId);
+    const type = this.importType(dto);
+    const pathname = `virtual-studio/${studioId}/media-uploads/${randomUUID()}`;
+    return {
+      ...(await this.blob.createUploadUrl(pathname, type, 6 * 1024 * 1024)),
+      pathname,
+    };
+  }
+
+  async mediaConfirm(studioId: string, dto: ConfirmStudioMediaDto) {
+    await this.getStudioOrThrow(studioId);
+    const type = this.importType(dto);
+    if (
+      !new RegExp(
+        `^virtual-studio/${studioId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/media-uploads/[a-f0-9-]{36}$`,
+      ).test(dto.pathname)
+    )
+      throw new BadRequestException(
+        'Файл не принадлежит загрузкам этой студии',
+      );
+    const meta = await head(dto.pathname);
+    if (meta.size > 6 * 1024 * 1024 || meta.contentType !== type)
+      throw new BadRequestException('Неверный тип или размер файла (до 6 МБ)');
+    const response = await fetch(meta.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!response.ok)
+      throw new BadRequestException('Не удалось прочитать загрузку');
+    const bytes = await readBodyWithLimit(response, 6 * 1024 * 1024);
+    const seconds = dto.kind === 'voice' ? importedWavSeconds(bytes) : null;
+    if (dto.kind === 'image' && importedImageType(bytes) !== type)
+      throw new BadRequestException(
+        'Содержимое не соответствует типу изображения',
+      );
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    const extension =
+      dto.kind === 'voice' ? 'wav' : type === 'image/png' ? 'png' : 'jpg';
+    // Copy validated bytes outside the writable upload-token namespace.
+    const { url } = await this.blob.uploadBuffer(
+      `virtual-studio/${studioId}/imports/${hash}.${extension}`,
+      bytes,
+      type,
+    );
+    if (dto.kind === 'image') {
+      const existing = await this.prisma.virtualStudioVariant.findFirst({
+        where: { studioId, imageUrl: url },
+      });
+      if (existing) return existing;
+      const variant = await this.prisma.virtualStudioVariant.create({
+        data: {
+          studioId,
+          imageUrl: url,
+          prompt: 'Загруженный собственный референс (без генерации)',
+        },
+      });
+      await this.prisma.virtualStudio.updateMany({
+        where: { id: studioId, selectedVariantId: null, deletedAt: null },
+        data: { selectedVariantId: variant.id, status: 'READY' },
+      });
+      return variant;
+    }
+    const existing = await this.prisma.virtualStudioFragment.findFirst({
+      where: { studioId, kind: 'VOICE', resultUrl: url },
+    });
+    if (existing) return existing;
+    return this.prisma.virtualStudioFragment.create({
+      data: {
+        studioId,
+        kind: 'VOICE',
+        status: GenerationStatus.COMPLETE,
+        provider: 'uploaded',
+        text: 'Загруженная одобренная дорожка — без повторного синтеза',
+        resultUrl: url,
+        durationSec: Math.ceil(seconds!),
+        readyAt: new Date(),
+      },
+    });
+  }
 
   async listVariants(studioId: string) {
     await this.getStudioOrThrow(studioId);

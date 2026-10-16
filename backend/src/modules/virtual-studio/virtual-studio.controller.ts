@@ -23,6 +23,8 @@ import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { RateLimit, RateLimitGuard } from '../../common/rate-limit';
 import { VirtualStudioService } from './virtual-studio.service';
 import {
+  ImportStudioMediaDto,
+  ConfirmStudioMediaDto,
   CreateAnalysisFragmentDto,
   CreateVideoFragmentDto,
   CreateVoiceFragmentDto,
@@ -58,6 +60,30 @@ export class VirtualStudioController {
     await this.adminPanel.assertOperator(req.userId);
     await this.studios.deleteStudio(id);
     return { ok: true };
+  }
+
+  @Post(':id/media/upload-url')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'studio-media-upload', limit: 10, windowSec: 60 })
+  async mediaUpload(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ImportStudioMediaDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.studios.mediaUpload(id, dto);
+  }
+
+  @Post(':id/media/confirm')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ name: 'studio-media-confirm', limit: 10, windowSec: 60 })
+  async mediaConfirm(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ConfirmStudioMediaDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.studios.mediaConfirm(id, dto);
   }
 
   @Get(':id/variants')

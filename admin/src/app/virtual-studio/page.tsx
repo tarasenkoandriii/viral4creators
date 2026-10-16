@@ -7,6 +7,7 @@
 // статуса для асинхронных (видео) фрагментов.
 
 import { useEffect, useRef, useState } from 'react';
+import { ImportStudioMedia } from './ImportStudioMedia';
 import {
   createVirtualStudio,
   createVirtualStudioAnalysisFragment,
@@ -338,6 +339,8 @@ function StudioDetail({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {error && <p className="critical">{error}</p>}
+
+      <ImportStudioMedia studioId={studio.id} onImported={async () => { await loadVariantsAndFragments(); onChanged(); }} />
 
       <div className="card">
         <p style={{ fontWeight: 600, marginBottom: 8 }}>Варианты референс-кадра</p>

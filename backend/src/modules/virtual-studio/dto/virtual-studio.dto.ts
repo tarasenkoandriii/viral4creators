@@ -100,3 +100,18 @@ export class CreateAnalysisFragmentDto {
   @IsString()
   brandManifestId?: string;
 }
+
+/** Admin-only upload of an existing reference or approved voice, without synthesis. */
+export class ImportStudioMediaDto {
+  @IsIn(['image', 'voice'])
+  kind!: 'image' | 'voice';
+
+  @IsIn(['image/jpeg', 'image/png', 'audio/wav'])
+  contentType!: string;
+}
+
+export class ConfirmStudioMediaDto extends ImportStudioMediaDto {
+  @IsString()
+  @MaxLength(500)
+  pathname!: string;
+}

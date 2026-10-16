@@ -1497,3 +1497,15 @@ export function setTestTicketStatus(
 export function replyToTestTicket(id: string, text: string) {
   return apiPost<TestTicketDetail>(`/admin/test-tickets/${id}/reply`, { text });
 }
+
+/** Import approved bytes without calling a speech/image generator. */
+export async function importVirtualStudioMedia(studioId: string, kind: 'image' | 'voice', file: File) {
+  if (file.size > 6 * 1024 * 1024) throw new Error('Файл должен быть не больше 6 МБ');
+  const contentType = kind === 'voice' ? 'audio/wav' : file.type;
+  if (!['audio/wav', 'image/png', 'image/jpeg'].includes(contentType)) throw new Error('Нужен WAV, PNG или JPEG');
+  const base = `/admin/virtual-studio/${studioId}/media`;
+  const target = await apiPost<{uploadUrl: string; pathname: string}>(`${base}/upload-url`, {kind, contentType});
+  const response = await fetch(target.uploadUrl, {method:'PUT', headers:{'Content-Type':contentType}, body:file});
+  if (!response.ok) throw new Error('Не удалось загрузить файл в хранилище');
+  return apiPost(`${base}/confirm`, {kind, contentType, pathname:target.pathname});
+}
