@@ -1,3 +1,4 @@
+import { confirmTutorialApproval } from './tutorial-approval';
 import { apiGet, apiGetBlob, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type { AttentionView } from './attention';
 import type {
@@ -931,8 +932,9 @@ export function getClientSiteDraft(id: string) {
 
 /** Одобрение — ИМЕННО оно запускает платную сборку ролика (§8.3). */
 export function approveClientSiteDraft(id: string) {
-  return apiPatch<ClientSiteDraftRow>(
-    `/admin/site-tutorial-drafts/${id}/approve`,
+  return confirmTutorialApproval<ClientSiteDraftRow>(
+    () => apiPatch<ClientSiteDraftRow>(`/admin/site-tutorial-drafts/${id}/approve`),
+    () => getClientSiteDraft(id),
   );
 }
 
