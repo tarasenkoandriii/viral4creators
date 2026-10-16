@@ -98,6 +98,8 @@ export interface GeneratedVideo {
    * по которой `grokRequestId` отделён от `veoOperationName`: разные
    * провайдеры, разный формат ID. */
   hedraJobId?: string;
+  /** Explicit operator benchmark; absent means Character-3. */
+  hedraModel?: 'hedra-character-3' | 'kling-ai-avatar-v2';
 
   /**
    * Речь УЖЕ внутри файла, синтезировать её второй раз нельзя.

@@ -104,6 +104,36 @@ describe('HedraClientService.submit', () => {
     });
   });
 
+  it('allows an explicit Kling pro benchmark without changing the default', async () => {
+    fetchMock.mockResolvedValue(ok(202, { job_id: 'kling1' }));
+    await new HedraClientService().submit({
+      ...SUBMIT_OPTS,
+      model: 'kling-ai-avatar-v2',
+      quality: 'pro',
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://api.hedra.com/v3/models/kling-ai-avatar-v2',
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).input.quality).toBe(
+      'pro',
+    );
+  });
+
+  it('rejects unsupported model options before media upload or generation', async () => {
+    await expect(
+      new HedraClientService().submit({ ...SUBMIT_OPTS, quality: 'pro' }),
+    ).rejects.toThrow(/Quality tier/);
+    await expect(
+      new HedraClientService().submit({
+        ...SUBMIT_OPTS,
+        model: 'kling-ai-avatar-v2',
+        resolution: '1080p',
+      }),
+    ).rejects.toThrow(/720p/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(HedraClientService.prototype.uploadMedia).not.toHaveBeenCalled();
+  });
+
   it('202 (не только 200) принимается как успех создания задачи', async () => {
     const svc = new HedraClientService();
     fetchMock.mockResolvedValue(ok(202, { job_id: 'job1' }));

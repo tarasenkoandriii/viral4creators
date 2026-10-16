@@ -907,7 +907,7 @@ export class GreetingVideoService {
     if (typeof status.costMicroUsd === 'number') {
       await this.aiUsage.record({
         operation: 'avatar-generation',
-        model: HEDRA_MODEL,
+        model: current.hedraModel ?? HEDRA_MODEL,
         sessionId,
         costMicroUsd: status.costMicroUsd,
         calls: 0,

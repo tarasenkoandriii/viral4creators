@@ -1,3 +1,5 @@
+import { GreetingAvatarBenchmarkService } from './greeting-avatar-benchmark.service';
+import { HedraClientService } from '../actors/hedra-client.service';
 import { GreetingModelEvaluationController } from './greeting-model-evaluation.controller';
 import { GreetingModelEvaluationService } from './greeting-model-evaluation.service';
 import { GeminiFilesService } from '../analysis/gemini-files.service';
@@ -56,6 +58,8 @@ import { GreetingSessionEditModule } from '../greeting-session-edit/greeting-ses
   providers: [
     UiSnapshotRunnerService,
     GreetingModelEvaluationService,
+    GreetingAvatarBenchmarkService,
+    HedraClientService,
     GeminiFilesService,
     TutorialFramesCaptureService,
     GreetingFramesCaptureService,

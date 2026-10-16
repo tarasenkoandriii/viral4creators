@@ -1,3 +1,4 @@
+import { GreetingAvatarBenchmarkService } from './greeting-avatar-benchmark.service';
 import {
   Body,
   Controller,
@@ -19,12 +20,21 @@ export class GreetingModelEvaluationController {
   constructor(
     private readonly admin: AdminPanelService,
     private readonly evaluation: GreetingModelEvaluationService,
+    private readonly benchmark: GreetingAvatarBenchmarkService,
   ) {}
   @Get()
   @Header('Cache-Control', 'no-store')
   async list(@Req() req: AdminAuthenticatedRequest) {
     await this.admin.assertOperator(req.userId);
     return this.evaluation.list();
+  }
+  @Post('benchmark')
+  async compareAvatar(
+    @Req() req: AdminAuthenticatedRequest,
+    @Body() body: { sessionId?: unknown },
+  ) {
+    await this.admin.assertOperator(req.userId);
+    return this.benchmark.run(body.sessionId);
   }
   @Post()
   async run(

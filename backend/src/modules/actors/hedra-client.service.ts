@@ -22,6 +22,9 @@ import { isOwnBlobUrl } from '../../common/blob-url';
 
 export interface HedraSubmitOptions {
   prompt: string;
+  /** Explicit benchmark opt-in; normal callers keep Character-3. */
+  model?: 'hedra-character-3' | 'kling-ai-avatar-v2';
+  quality?: 'standard' | 'pro';
   /** Публичный URL портрета (BrandCharacterSnapshot.photoUrl) — `start_image` в терминах Hedra. */
   startImage: string;
   /** Публичный URL синтезированной Resemble озвучки. */
@@ -204,6 +207,13 @@ export class HedraClientService {
     const key = this.key();
     if (!key) throw new Error('HEDRA_API_KEY не задан');
 
+    const model = opts.model ?? 'hedra-character-3';
+    if (!['hedra-character-3', 'kling-ai-avatar-v2'].includes(model))
+      throw new Error('Unsupported Hedra avatar model');
+    if (model === 'kling-ai-avatar-v2' && opts.resolution !== '720p')
+      throw new Error('Kling avatar requires 720p');
+    if (opts.quality && model !== 'kling-ai-avatar-v2')
+      throw new Error('Quality tier is only supported for Kling avatar');
     const startImage = await this.uploadMedia(opts.startImage, 'image');
     const audioUrl = await this.uploadMedia(opts.audioUrl, 'audio');
     const body = {
@@ -213,13 +223,14 @@ export class HedraClientService {
         audio: { source: 'url', url: audioUrl },
         aspect_ratio: opts.aspectRatio,
         resolution: opts.resolution,
+        ...(opts.quality ? { quality: opts.quality } : {}),
       },
     };
 
     const data = await this.withRetry(
       () =>
         this.call(
-          '/models/hedra-character-3',
+          `/models/${model}`,
           {
             method: 'POST',
             headers: {

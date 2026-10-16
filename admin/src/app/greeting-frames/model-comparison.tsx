@@ -22,6 +22,7 @@ export default function GreetingModelComparison() {
   const [selected,setSelected]=useState('');
   const [busy,setBusy]=useState<string|null>(null);
   const [error,setError]=useState<string|null>(null);
+  const [notice,setNotice]=useState<string|null>(null);
   const [mediaDuration,setMediaDuration]=useState<number|null>(null);
   const player=useRef<HTMLVideoElement>(null);
   const requestLock=useRef(false);
@@ -44,6 +45,13 @@ export default function GreetingModelComparison() {
     } catch(e){setError(message(e));}
     finally {setBusy(null);requestLock.current=false;}
   };
+  const benchmark=async()=>{
+    if(!video || requestLock.current || !window.confirm('Платный тест Kling Avatar v2 Pro, примерно $1.05 для 9 секунд. Использует готовую дорожку Nova без повторного TTS. Один тест на исходный ролик; повтор не создаёт дубль. Продолжить?')) return;
+    requestLock.current=true;setBusy('Kling Avatar v2 Pro');setError(null);setNotice(null);
+    try { const result=await apiPost<{sessionId:string;state:string}>(PATH+'/benchmark',{sessionId:video.sessionId});
+      setNotice('Тест '+result.sessionId+': '+result.state+'. Опросите его в разделе «Ролик фикстуры», затем обновите оценки.');
+    } catch(e){setError(message(e));} finally{setBusy(null);requestLock.current=false;}
+  };
   const missing=view?.models.filter(m=>!video?.reports.some(r=>r.model===m)) ?? [];
   const completed=video?.reports.filter(r=>r.status==='complete' && r.assessment) ?? [];
   const comparable=completed.length===2 && !!completed[0].contentSha256 && completed[0].contentSha256===completed[1].contentSha256;
@@ -52,6 +60,8 @@ export default function GreetingModelComparison() {
     <p className="muted">Gemini 3.6 Flash и 4 Argon оценивают один файл по одинаковой инструкции: 1 — грубые дефекты, 5 — естественно.
       Анализ со звуком, {view?.fps ?? 8} кадров/с. Липсинк оценивается качественно, без измерения задержки в миллисекундах.
       Это мнения моделей, а не подтверждённая экспертиза. Ролики и голос не меняются.</p>
+    {notice && <p role="status">{notice}</p>}
+    <button type="button" disabled={!!busy || !video || video.sessionId.startsWith('benchmark-kling-')} onClick={()=>void benchmark()}>Тест Kling Avatar Pro на той же Nova (платно)</button>
     <p className="muted">Только готовые поздравления тестовых аккаунтов. Каждый запуск модели платный; расход — в журнале «Аудит».
       Повторное открытие использует сохранённый результат. Сбой другой моделью не заменяется.</p>
     {error && <p className="critical" role="alert">{error}</p>}
@@ -61,7 +71,8 @@ export default function GreetingModelComparison() {
         {view?.videos.map(v=><option key={v.sessionId} value={v.sessionId}>{v.title} · {new Date(v.createdAt).toLocaleString('ru-RU')} · {v.sessionId.slice(-8)}</option>)}
       </select></label>
       <button type="button" disabled={!!busy} onClick={()=>void load()}>Обновить оценки</button>
-      <button type="button" disabled={!!busy || !video || !missing.length} onClick={()=>void run(missing)}>
+      {notice && <p role="status">{notice}</p>}
+    <button type="button" disabled={!!busy || !video || !missing.length} onClick={()=>void run(missing)}>
         {busy?`Оценивает ${busy}…`:'Сравнить на этом ролике'}
       </button>
     </div>
