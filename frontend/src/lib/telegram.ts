@@ -107,7 +107,9 @@ export function getTelegramWebApp(): TelegramWebApp | null {
 }
 
 export function isTelegramWebAppAvailable(): boolean {
-  return getTelegramWebApp() !== null;
+  // SDK defines WebApp even in an ordinary browser. Only launch data
+  // distinguishes an actual Mini App session from that empty SDK stub.
+  return Boolean(getTelegramWebApp()?.initData?.trim());
 }
 
 /**

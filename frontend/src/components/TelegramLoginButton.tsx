@@ -101,7 +101,7 @@ export function TelegramLoginButton() {
   }, [dict.telegramLoginButton.loginFailed]);
 
   useEffect(() => {
-    if (me || !BOT_USERNAME || !containerRef.current) return;
+    if (loading || me || !BOT_USERNAME || !containerRef.current) return;
     const container = containerRef.current;
 
     const script = document.createElement('script');
@@ -116,7 +116,7 @@ export function TelegramLoginButton() {
     return () => {
       container.innerHTML = '';
     };
-  }, [me]);
+  }, [loading, me]);
 
   const handleDevLogin = async () => {
     setSubmitting(true);
