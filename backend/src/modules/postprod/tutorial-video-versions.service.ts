@@ -376,14 +376,14 @@ export class TutorialVideoVersionsService {
       !audio ||
       !video.samples ||
       video.width !== 720 ||
-      video.height !== 1560 ||
+      ![1280, 1560].includes(video.height ?? 0) ||
       !Number.isFinite(probe.durationSeconds) ||
       probe.durationSeconds <= 0 ||
       probe.durationSeconds > 600 ||
       Math.abs(video.durationSeconds - audio.durationSeconds) > 0.15
     )
       throw new BadRequestException(
-        'нужен проверенный MP4 720×1560 со звуком без рассинхрона дорожек',
+        'нужен проверенный MP4 720×1280 или 720×1560 со звуком без рассинхрона дорожек',
       );
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const key = `import:${sha256}`;

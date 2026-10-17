@@ -89,7 +89,7 @@ function setup() {
   });
   jest
     .spyOn(global, 'fetch')
-    .mockResolvedValue(new Response(Buffer.from('local-mp4')));
+    .mockImplementation(async () => new Response(Buffer.from('local-mp4')));
   return {
     service,
     asset,
@@ -191,4 +191,41 @@ it('does not grant user actors operator import', async () => {
       oldUrl,
     ),
   ).rejects.toThrow('оператор');
+});
+
+it('accepts the native approved 720x1280 canvas and rejects arbitrary geometry', async () => {
+  const w = setup();
+  (probeMp4 as jest.Mock).mockReturnValue({
+    durationSeconds: 1,
+    tracks: [
+      {
+        kind: 'video',
+        samples: 25,
+        width: 720,
+        height: 1280,
+        durationSeconds: 1,
+      },
+      { kind: 'audio', durationSeconds: 1 },
+    ],
+  });
+  expect(
+    (await w.service.importAssembled(actor, 'a1', pathname, oldUrl)).version
+      .active,
+  ).toBe(true);
+  (probeMp4 as jest.Mock).mockReturnValue({
+    durationSeconds: 1,
+    tracks: [
+      {
+        kind: 'video',
+        samples: 25,
+        width: 640,
+        height: 1280,
+        durationSeconds: 1,
+      },
+      { kind: 'audio', durationSeconds: 1 },
+    ],
+  });
+  await expect(
+    w.service.importAssembled(actor, 'a1', pathname, oldUrl),
+  ).rejects.toThrow('проверенный MP4');
 });
