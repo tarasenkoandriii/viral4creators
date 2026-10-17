@@ -1,3 +1,7 @@
+import {
+  StoryDevelopmentGuard,
+  StoryPublicDisabledGuard,
+} from './story-development.guard';
 import { StoryVideoService } from './story-video.service';
 import { StoryReferencesService } from './story-references.service';
 import {
@@ -74,7 +78,7 @@ class ShareStoryDto {
   @Equals(true) publicLinkAccepted!: boolean;
 }
 @Controller('story-gifts')
-@UseGuards(TelegramIdentityGuard)
+@UseGuards(TelegramIdentityGuard, StoryDevelopmentGuard)
 export class StoryGiftsController {
   constructor(
     private readonly service: StoryGiftsService,
@@ -233,7 +237,9 @@ export class StoryGiftsController {
     @Param('id') id: string,
     @Body() _dto: ShareStoryDto,
   ) {
-    return this.service.share(req.telegramUserId, id);
+    void req;
+    void id;
+    throw new NotFoundException();
   }
   @Delete(':id/share') withdraw(
     @Req() req: IdentifiedRequest,
@@ -266,6 +272,7 @@ export function audioRange(
     : false;
 }
 @Controller('story-gift')
+@UseGuards(StoryPublicDisabledGuard)
 export class PublicStoryGiftController {
   constructor(
     private readonly service: StoryGiftsService,

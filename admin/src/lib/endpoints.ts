@@ -1106,10 +1106,10 @@ export function getDemoQualityChecks(assetIds: string[]) {
   });
 }
 
-export function requestDemoQualityCheck(assetId: string, versionId?: string) {
+export function requestDemoQualityCheck(assetId: string, versionId?: string, ownClientSiteAccepted = false) {
   return apiPost<DemoQualityEnqueueResult>(
     `/admin/tutorial-demo-quality/assets/${assetId}/check`,
-    versionId ? { versionId } : {},
+    { ...(versionId ? { versionId } : {}), ...(ownClientSiteAccepted ? { ownClientSiteAccepted: true } : {}) },
   );
 }
 

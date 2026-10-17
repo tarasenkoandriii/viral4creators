@@ -1,3 +1,7 @@
+import {
+  StoryDevelopmentGuard,
+  StoryPublicDisabledGuard,
+} from './story-development.guard';
 import { StoryVideoService } from './story-video.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { StoryReferencesService } from './story-references.service';
@@ -17,6 +21,8 @@ import {
   ],
   exports: [StoryVideoService],
   providers: [
+    StoryDevelopmentGuard,
+    StoryPublicDisabledGuard,
     StoryVideoService,
     FfmpegApiService,
     StoryGiftsService,

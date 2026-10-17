@@ -176,6 +176,7 @@ let aiUsage: {
   record: jest.Mock;
 };
 let svc: TutorialDemoQualityService;
+let ownClient: jest.Mock;
 
 function asset(over: Record<string, unknown> = {}) {
   return {
@@ -230,7 +231,9 @@ function setup() {
   };
   probeMock.mockReset();
   probeMock.mockReturnValue(GOOD_PROBE);
+  ownClient = jest.fn(async () => null);
   const prisma = {
+    clientSiteTutorialDraft: { findFirst: ownClient },
     tutorialDemoQualityCheck: checks,
     tutorialVideoAsset: assets,
     tutorialVideoVersion: versions,
@@ -404,6 +407,42 @@ describe('постановка в очередь', () => {
     expect(checks.rows).toHaveLength(0);
   });
 
+  it('checks a client Tutorial only after explicit consent and ownership', async () => {
+    assets.rows.push(
+      asset({ id: 'client-own', clientSiteDraftId: 'draft-own' }),
+    );
+    ownClient.mockResolvedValue({ id: 'draft-own' });
+    expect(await svc.enqueueAssembled('client-own', BYTES)).toBe(false);
+    await expect(svc.enqueueByOperator('client-own', 'op')).rejects.toThrow();
+    const r = await svc.enqueueByOperator('client-own', 'op', undefined, true);
+    expect(r.created).toBe(true);
+    expect(ownClient).toHaveBeenCalledWith({
+      where: { id: 'draft-own', project: { userId: 'op', deletedAt: null } },
+      select: { id: true },
+    });
+    expect(gemini.generate).not.toHaveBeenCalled();
+  });
+  it('rejects another owner client Tutorial even with the consent flag', async () => {
+    assets.rows.push(
+      asset({ id: 'client-other', clientSiteDraftId: 'draft-other' }),
+    );
+    await expect(
+      svc.enqueueByOperator('client-other', 'op', undefined, true),
+    ).rejects.toThrow();
+    expect(checks.rows).toHaveLength(0);
+    expect(gemini.generate).not.toHaveBeenCalled();
+  });
+  it('rechecks ownership before uploading a queued client file', async () => {
+    assets.rows.push(
+      asset({ id: 'client-revoked', clientSiteDraftId: 'draft-own' }),
+    );
+    ownClient.mockResolvedValue({ id: 'draft-own' });
+    await svc.enqueueByOperator('client-revoked', 'op', undefined, true);
+    ownClient.mockResolvedValue(null);
+    await svc.processQueue();
+    expect(gemini.upload).not.toHaveBeenCalled();
+    expect(only().status).toBe('error');
+  });
   it('версия темпа — свой файл и длительность; несобранная — отказ', async () => {
     versions.rows.push({
       id: 'v1',

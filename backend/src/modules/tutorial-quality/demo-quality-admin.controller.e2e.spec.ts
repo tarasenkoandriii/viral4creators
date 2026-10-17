@@ -175,6 +175,25 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
     expect(res.body.data).toEqual({ enabled: true, checks: {} });
   });
 
+  it('forwards explicit own-client consent and rejects nonboolean consent', async () => {
+    await asOp(
+      request(server())
+        .post('/api/admin/tutorial-demo-quality/assets/own/check')
+        .send({ ownClientSiteAccepted: true }),
+    ).expect(201);
+    expect(quality.enqueueByOperator).toHaveBeenCalledWith(
+      'own',
+      'usr_op',
+      undefined,
+      true,
+    );
+    await asOp(
+      request(server())
+        .post('/api/admin/tutorial-demo-quality/assets/own/check')
+        .send({ ownClientSiteAccepted: 'true' }),
+    ).expect(400);
+  });
+
   it('оператор: «Проверить» — ролик, автор и версия', async () => {
     await asOp(
       request(server())

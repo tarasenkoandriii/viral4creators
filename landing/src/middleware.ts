@@ -67,6 +67,7 @@ import { isReachableOrigin } from './lib/site-origin';
 export const config = {
   matcher: [
     '/((?!_next|legal|feed|video|r/|qa/|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
+    '/stories-media/:path*',
   ],
 };
 
@@ -113,6 +114,10 @@ function withStoriesHeaders(response: NextResponse): NextResponse {
 }
 
 export function middleware(request: NextRequest) {
+  // Closed development: no public Story landing or promotional media.
+  if (isStoriesHost(request.headers.get('host')) || isStoriesPath(request.nextUrl.pathname, locales) || request.nextUrl.pathname.startsWith('/stories-media/')) {
+    return withStoriesHeaders(new NextResponse('Not Found', { status: 404 }));
+  }
   const response = route(request);
   const host = request.headers.get('host');
   return isStoriesHost(host) || isStoriesPath(request.nextUrl.pathname, locales)

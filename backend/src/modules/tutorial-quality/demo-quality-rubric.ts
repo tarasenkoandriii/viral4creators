@@ -34,7 +34,7 @@ import { Schema, Type } from '@google/genai';
 
 /** Меняется при любой правке запроса, схемы или порогов: смена рубрики
  *  даёт новый ключ дедупликации — то есть только явную переоценку. */
-export const DEMO_QUALITY_RUBRIC_VERSION = 'demo-quality-v1';
+export const DEMO_QUALITY_RUBRIC_VERSION = 'demo-quality-v2';
 
 /** Категории, которые модели разрешено называть. */
 export const MODEL_ISSUE_CATEGORIES = [
@@ -113,6 +113,8 @@ export interface DemoQualityReport {
 
 /** Ожидаемый сценарий — из метаданных съёмки и manifest, не из MP4. */
 export interface DemoQualityContext {
+  rubricVersion?: string;
+  preambleMs?: number;
   subjectKey: string;
   title: string;
   locale: string;
@@ -276,6 +278,11 @@ export function buildDemoQualityPrompt(ctx: DemoQualityContext): string {
     `- duration: ${(ctx.durationMs / 1000).toFixed(1)} s`,
     `- audio: ${narration}`,
     `- captions: ${ctx.captions === null ? 'unknown' : ctx.captions ? 'burned-in captions expected' : 'no captions'}`,
+    ...(ctx.preambleMs
+      ? [
+          `- Approved presenter intro: 0–${(ctx.preambleMs / 1000).toFixed(3)} s. Evaluate its audio, articulation, continuity and artifacts. It is deliberately not a website interaction: UI theme, step matching and screen captions apply only after this intro. Do not excuse stutters, frozen talking avatars or cut speech in the intro.`,
+        ]
+      : []),
     '- steps:',
     steps,
   ].join('\n');
@@ -343,7 +350,7 @@ function invalidReport(
   reason: string,
 ): DemoQualityReport {
   return {
-    rubricVersion: DEMO_QUALITY_RUBRIC_VERSION,
+    rubricVersion: ctx.rubricVersion ?? DEMO_QUALITY_RUBRIC_VERSION,
     summary: '',
     scores: null,
     issues: [],
@@ -518,7 +525,7 @@ export function parseDemoQualityResponse(
   }
 
   return {
-    rubricVersion: DEMO_QUALITY_RUBRIC_VERSION,
+    rubricVersion: ctx.rubricVersion ?? DEMO_QUALITY_RUBRIC_VERSION,
     summary: scrubQualityText(raw.summary, MAX_SUMMARY),
     scores,
     issues,

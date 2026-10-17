@@ -147,6 +147,7 @@ export interface CheckRow {
   versionId: string | null;
   videoUrl: string;
   trigger: string;
+  requestedBy?: string | null;
   contentSha: string | null;
   rubricVersion: string;
   modelId: string;
@@ -401,6 +402,7 @@ export class TutorialDemoQualityService {
     assetId: string,
     operatorId: string,
     versionId?: string | null,
+    ownClientSiteAccepted = false,
   ): Promise<EnqueueResult> {
     this.assertEnabled();
     return this.enqueue({
@@ -408,6 +410,7 @@ export class TutorialDemoQualityService {
       versionId: versionId ?? null,
       trigger: 'operator',
       requestedBy: operatorId,
+      ownClientSiteAccepted,
     });
   }
 
@@ -487,6 +490,7 @@ export class TutorialDemoQualityService {
     trigger: DemoQualityTrigger;
     requestedBy?: string | null;
     contentSha?: string | null;
+    ownClientSiteAccepted?: boolean;
   }): Promise<EnqueueResult> {
     const cfg = readDemoQualityConfig();
     const asset = (await this.prisma.tutorialVideoAsset.findUnique({
@@ -498,9 +502,15 @@ export class TutorialDemoQualityService {
       throw new BadRequestException('Ролик ещё не собран — проверять нечего');
     }
     if (asset.clientSiteDraftId) {
-      throw new BadRequestException(
-        'Это ролик обучалки по сайту заказчика — проверка качества демо его не касается',
-      );
+      if (
+        input.trigger !== 'operator' ||
+        input.ownClientSiteAccepted !== true ||
+        !input.requestedBy ||
+        !(await this.ownsClientAsset(asset, input.requestedBy))
+      )
+        throw new BadRequestException(
+          'Для клиентского Tutorial нужны явное согласие на Gemini и собственный проект оператора',
+        );
     }
     let versionId: string | null;
     let videoUrl: string;
@@ -1555,12 +1565,32 @@ export class TutorialDemoQualityService {
 
   // ── контекст и бюджет ────────────────────────────────────────────
 
+  private async ownsClientAsset(
+    asset: AssetMeta,
+    userId: string,
+  ): Promise<boolean> {
+    if (!asset.clientSiteDraftId) return false;
+    return !!(await this.prisma.clientSiteTutorialDraft.findFirst({
+      where: {
+        id: asset.clientSiteDraftId,
+        project: { userId, deletedAt: null },
+      },
+      select: { id: true },
+    }));
+  }
+
   private async loadTarget(row: CheckRow): Promise<TargetMeta | null> {
     const asset = (await this.prisma.tutorialVideoAsset.findUnique({
       where: { id: row.assetId },
       select: ASSET_SELECT,
     })) as AssetMeta | null;
     if (!asset) return null;
+    if (
+      asset.clientSiteDraftId &&
+      (!row.requestedBy ||
+        !(await this.ownsClientAsset(asset, row.requestedBy)))
+    )
+      return null;
     let plannedMs = asset.durationMs;
     let factor: number | null | undefined = appliedFactor(asset.tempoManifest);
     if (row.versionId) {
@@ -1597,6 +1627,8 @@ export class TutorialDemoQualityService {
     const spans =
       target.factor === undefined ? null : stepSpansMs(manifest, target.factor);
     return {
+      rubricVersion: row.rubricVersion,
+      preambleMs: (manifest?.preamble?.seconds ?? 0) * 1000,
       subjectKey: asset.subjectKey,
       title: asset.title,
       locale: asset.locale,
@@ -1612,7 +1644,9 @@ export class TutorialDemoQualityService {
         endSec: spans ? Math.round(spans[i].endMs / 100) / 10 : null,
       })),
       captureBuild: asset.captureBuild,
-      freshness: await this.freshness(asset.captureBuild),
+      freshness: asset.clientSiteDraftId
+        ? 'unknown'
+        : await this.freshness(asset.captureBuild),
     };
   }
 

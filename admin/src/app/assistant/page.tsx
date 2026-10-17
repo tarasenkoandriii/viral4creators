@@ -471,6 +471,24 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   const [qualityError, setQualityError] = useState<string | null>(null);
   const [qualityMsg, setQualityMsg] = useState<string | null>(null);
   const [reportId, setReportId] = useState<string | null>(init?.quality ?? null);
+  const [ownAssetId, setOwnAssetId] = useState('');
+  const [ownConsent, setOwnConsent] = useState(false);
+  const [ownCheck, setOwnCheck] = useState<DemoQualityCheck | null>(null);
+  const [ownBusy, setOwnBusy] = useState(false);
+  async function ownQuality(enqueue: boolean) {
+    if (ownBusy) return;
+    setOwnBusy(true); setQualityError(null);
+    try {
+      if (enqueue) {
+        const r = await requestDemoQualityCheck(ownAssetId.trim(), undefined, true);
+        setOwnCheck(r.check);
+      } else {
+        const r = await getDemoQualityChecks([ownAssetId.trim()]);
+        setOwnCheck(r.checks[ownAssetId.trim()] ?? null);
+      }
+    } catch (e) { setQualityError(errText(e)); }
+    finally { setOwnBusy(false); }
+  }
   const [approvedBusy, setApprovedBusy] = useState(false);
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const [seek, setSeek] = useState<{ id: string; ms: number; n: number } | null>(null);
@@ -664,6 +682,16 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
         Ролики демо обучающего лендинга (<code>site-tutorial-demo-1..3</code>, витрина-полигон) консультанту
         не выдаются: на лендинг их выводит только галочка «В демо обучающего лендинга» у одобренного ролика.
       </p>
+
+      <details style={{ marginBottom: 16 }}>
+        <summary>Проверка собственного клиентского Tutorial с преамбулой</summary>
+        <p className="muted">Только готовый ролик собственного проекта оператора. Не добавляется в общий каталог и не публикуется. Проверка использует Gemini и общий лимит расходов.</p>
+        <label>ID готового Tutorial <input value={ownAssetId} maxLength={64} onChange={(e) => { setOwnAssetId(e.target.value); setOwnCheck(null); setOwnConsent(false); }} /></label>
+        <label style={{ display: 'block' }}><input type="checkbox" checked={ownConsent} onChange={(e) => setOwnConsent(e.target.checked)} />Подтверждаю: это мой проект и разрешаю передать выбранное видео, включая преамбулу и звук, в Gemini для проверки качества.</label>
+        <button disabled={ownBusy || !ownConsent || !ownAssetId.trim()} onClick={() => void ownQuality(true)}>Проверить собственный Tutorial</button>{' '}
+        <button disabled={ownBusy || !ownAssetId.trim()} onClick={() => void ownQuality(false)}>Обновить собственную проверку</button>
+        {ownCheck && <QualityReportPanel check={ownCheck} canSeek={false} onSeek={() => {}} onChanged={setOwnCheck} />}
+      </details>
 
       <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button

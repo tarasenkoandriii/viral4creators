@@ -101,6 +101,20 @@ describe('запрос', () => {
   });
 });
 
+it('describes approved intro bounds without excusing speech or animation defects', () => {
+  const prompt = buildDemoQualityPrompt(ctx({ preambleMs: 6000 }));
+  expect(prompt).toContain('0–6.000 s');
+  expect(prompt).toContain('only after this intro');
+  expect(prompt).toContain('Do not excuse stutters');
+});
+
+it('keeps the stored rubric identity when reporting a legacy queued check', () => {
+  expect(
+    refusedReport(ctx({ rubricVersion: 'demo-quality-v1' }), 'refused')
+      .rubricVersion,
+  ).toBe('demo-quality-v1');
+});
+
 describe('разбор ответа', () => {
   it('валидный ответ — оценки, тема и язык совпали, вердикт ok', () => {
     const r = parse(good());

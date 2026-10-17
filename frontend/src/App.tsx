@@ -1,3 +1,4 @@
+import { api } from './services/api';
 /**
  * App shell + hash router.
  *
@@ -150,6 +151,20 @@ function App() {
    */
   const [planError, setPlanError] = useState<unknown>(null);
   const [planNonce, setPlanNonce] = useState(0);
+  const [storyAccess, setStoryAccess] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setStoryAccess(false);
+    void api
+      .get('/story-gifts/catalog')
+      .then(() => {
+        if (alive) setStoryAccess(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [planNonce]);
   const refreshPlan = useCallback(() => setPlanNonce((n) => n + 1), []);
 
   useEffect(() => {
@@ -348,13 +363,15 @@ function App() {
                 >
                   {dict.productAreas.tutorials}
                 </NavTab>
-                <NavTab
-                  active={activeArea === 'stories'}
-                  onClick={() => navigate(routes.product('stories'))}
-                  icon={<BookOpen size={14} />}
-                >
-                  {dict.productAreas.stories}
-                </NavTab>
+                {storyAccess && (
+                  <NavTab
+                    active={activeArea === 'stories'}
+                    onClick={() => navigate(routes.product('stories'))}
+                    icon={<BookOpen size={14} />}
+                  >
+                    {dict.productAreas.stories}
+                  </NavTab>
+                )}
               </nav>
             </div>
           </header>

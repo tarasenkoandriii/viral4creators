@@ -64,7 +64,9 @@ export class DemoQualityAdminController {
     @Body() dto: DemoQualityCheckRequestDto,
   ) {
     await this.adminPanel.assertOperator(req.userId);
-    return this.quality.enqueueByOperator(id, req.userId, dto?.versionId);
+    return dto?.ownClientSiteAccepted === true
+      ? this.quality.enqueueByOperator(id, req.userId, dto.versionId, true)
+      : this.quality.enqueueByOperator(id, req.userId, dto?.versionId);
   }
 
   /** «Проверить все одобренные» — с потолком за нажатие. */

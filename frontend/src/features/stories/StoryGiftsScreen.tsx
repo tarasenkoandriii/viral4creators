@@ -215,9 +215,7 @@ export function StoryGiftsScreen() {
   const [audio, setAudio] = useState<string | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
-    [reviewed, setReviewed] = useState(false),
-    [sharing, setSharing] = useState(false),
-    [shareUrl, setShareUrl] = useState('');
+    [reviewed, setReviewed] = useState(false);
   const [country, setCountry] = useState('UA'),
     [storyLanguage, setStoryLanguage] = useState('ru');
   const [storyId, setStoryId] = useState('turnip-ushinsky-ru-1949-v1'),
@@ -238,6 +236,7 @@ export function StoryGiftsScreen() {
       catalog.find((s) => s.locale === nextLanguage && s.kind === 'adaptation');
     if (candidate) setStoryId(candidate.id);
   }
+  const [access, setAccess] = useState<boolean | null>(null);
   const actionLock = useRef(false);
   async function refresh() {
     const res = await api.get<Gift[]>('/story-gifts');
@@ -249,17 +248,19 @@ export function StoryGiftsScreen() {
       api.get<Gift[]>('/story-gifts'),
     ])
       .then(([c, g]) => {
+        setAccess(true);
         setCatalog(c.data || []);
         setGifts(g.data || []);
       })
-      .catch((e) => setError(errorText(e)));
+      .catch((e) => {
+        setAccess(false);
+        setError(errorText(e));
+      });
   }, []);
   useEffect(() => {
     setAudio(null);
     setSavedPhoto(null);
     setReviewed(false);
-    setSharing(false);
-    setShareUrl('');
     if (!selected) return;
     let disposed = false;
     let url: string | null = null;
@@ -316,6 +317,14 @@ export function StoryGiftsScreen() {
     );
     if (res.data) setSelected(res.data);
   }
+  if (access !== true)
+    return (
+      <Card className="p-5">
+        {access === null
+          ? 'Проверяем доступ…'
+          : 'Раздел в закрытой разработке.'}
+      </Card>
+    );
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <Card className="space-y-3 p-5">
@@ -746,62 +755,10 @@ export function StoryGiftsScreen() {
               </Button>
             </>
           )}
-          {selected.status === 'APPROVED' && (
-            <>
-              <label className="flex gap-2">
-                <input
-                  type="checkbox"
-                  checked={sharing}
-                  onChange={(e) => setSharing(e.target.checked)}
-                />
-                Разрешаю доступ по ссылке: её сможет открыть любой получатель.
-                Поисковая индексация запрещена.
-              </label>
-              <Button
-                disabled={busy || !sharing}
-                onClick={() =>
-                  void run(async () => {
-                    const r = await api.post<{ token: string }>(
-                      `/story-gifts/${selected.id}/share`,
-                      { publicLinkAccepted: true }
-                    );
-                    if (r.data)
-                      setShareUrl(
-                        `${(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api').replace(/\/$/, '')}/story-gift/${r.data.token}`
-                      );
-                  })
-                }
-              >
-                Создать ссылку на подарок
-              </Button>
-              {shareUrl && (
-                <a
-                  className="block break-all text-accent underline"
-                  href={shareUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Открыть готовый подарок
-                </a>
-              )}
-              <p className="text-sm">
-                Сохраните ссылку сейчас: секрет повторно не выдаётся. Чтобы
-                получить новую, отзовите прежнюю.
-              </p>
-              <Button
-                variant="ghost"
-                disabled={busy}
-                onClick={() =>
-                  void run(async () => {
-                    await api.delete(`/story-gifts/${selected.id}/share`);
-                    setShareUrl('');
-                  })
-                }
-              >
-                Отозвать ссылку
-              </Button>
-            </>
-          )}
+          <p className="text-sm">
+            Закрытая разработка: публикация и доступ по ссылке отключены.
+            Выпуски доступны только в вашем кабинете.
+          </p>
           {['READY', 'APPROVED'].includes(selected.status) && (
             <StoryVideoPanel key={selected.id} giftId={selected.id} />
           )}
