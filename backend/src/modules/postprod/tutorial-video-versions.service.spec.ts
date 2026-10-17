@@ -722,7 +722,7 @@ describe('озвучка обучалки клиента', () => {
     expect(s.provider.synthesize.mock.calls[0][0]).toEqual({
       text: 'Відкрийте сайт shop.example.',
       language: 'uk',
-      voiceId: null,
+      voiceId: 'a9fc5a41',
     });
     expect(s.aiUsage.record).toHaveBeenCalledWith({
       operation: 'tutorial-voiceover',

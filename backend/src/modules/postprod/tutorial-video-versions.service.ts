@@ -138,6 +138,8 @@ export const INHERITED_TEMPO_REQUESTER = 'system:tempo-inherit';
 /** Провайдер озвучки обучалки клиента — по умолчанию проекта (решение
  *  владельца 06.10.2026: Resemble, не ElevenLabs). */
 export const CLIENT_TUTORIAL_TTS_PROVIDER = 'resemble' as const;
+/** Owner-approved Nova; do not inherit a stale deployment voice environment. */
+export const CLIENT_TUTORIAL_VOICE_ID = 'a9fc5a41';
 
 /** Почему темп недоступен — человеческими словами для текста отказа. */
 const UNAVAILABLE_TEXT: Record<ManifestUnavailableReason, string> = {
@@ -1507,7 +1509,7 @@ export class TutorialVideoVersionsService {
         continue;
       }
       const sha = textSha(
-        `${input.locale}\u0000${provider.providerKey}\u0000${text}`,
+        `${input.locale}\u0000${provider.providerKey}\u0000${CLIENT_TUTORIAL_VOICE_ID}\u0000${text}`,
       );
       try {
         const prev = reuse.get(sha);
@@ -1539,7 +1541,7 @@ export class TutorialVideoVersionsService {
         const outcome = await provider.synthesize({
           text,
           language: input.locale,
-          voiceId: null,
+          voiceId: CLIENT_TUTORIAL_VOICE_ID,
         });
         if (!outcome.ok) {
           this.logger.warn(
