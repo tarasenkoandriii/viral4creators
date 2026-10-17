@@ -29,7 +29,7 @@ import type {
   TutorialTempoWarning,
   TutorialVersionRow,
 } from '../../lib/types';
-import { apiPost, ApiRequestError } from '../../lib/admin-api';
+import { apiPost } from '../../lib/admin-api';
 import { hasSourceFile } from '../../lib/tutorial-tempo';
 
 const PRESETS: Array<{ key: string; label: string; factor: number }> = [
@@ -39,7 +39,7 @@ const PRESETS: Array<{ key: string; label: string; factor: number }> = [
 ];
 
 function errText(e: unknown): string {
-  return e instanceof ApiRequestError ? e.message : 'Не удалось выполнить запрос';
+  return e instanceof Error ? e.message : 'Не удалось выполнить запрос';
 }
 
 function fmt(ms: number | null | undefined): string {
@@ -95,6 +95,7 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
   const [versions, setVersions] = useState<TutorialVersionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deliveryStage, setDeliveryStage] = useState('');
 
   const loadVersions = useCallback(() => {
     getTutorialVersions(assetId)
@@ -167,14 +168,18 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
           if (!file) return;
           if (file.size > 20 * 1024 * 1024) { setError('MP4 до 20 МБ'); return; }
           void run(async () => {
+            setDeliveryStage('Получение адреса загрузки');
             const upload = await apiPost<{ uploadUrl: string; pathname: string; expectedUrl: string }>(`/admin/tutorial-video-assets/${assetId}/import-upload`);
+            setDeliveryStage('Передача MP4 в хранилище');
             const sent = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: file });
-            if (!sent.ok) throw new Error('Загрузка не удалась');
+            if (!sent.ok) throw new Error(`Хранилище ответило HTTP ${sent.status}`);
+            setDeliveryStage('Проверка MP4 и активация версии');
             await apiPost(`/admin/tutorial-video-assets/${assetId}/import-assembled`, { pathname: upload.pathname, expectedUrl: upload.expectedUrl });
           });
           e.target.value = '';
         }} />
       </label>
+      {deliveryStage && <p className="muted">{deliveryStage}{!busy && !error ? ' — готово' : ''}</p>}
       {error && <p className="critical">{error}</p>}
       {!estimate && !error && <p className="muted">Загрузка…</p>}
       {estimate && !estimate.editable && estimate.reason && <p className="muted">{reasonText(estimate.reason)}</p>}
