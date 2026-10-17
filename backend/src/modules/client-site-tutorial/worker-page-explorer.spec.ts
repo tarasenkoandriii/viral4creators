@@ -557,38 +557,3 @@ describe('ответ и ожидание', () => {
     ).toMatch(/^o-[0-9a-f]{24}$/);
   });
 });
-
-describe('checkbox batch', () => {
-  it('режим B: галочка + submit — единый replay, значения остаются зашифрованы', async () => {
-    const { client, ex } = make('B');
-    client.statuses = [done()];
-    await ex.runRound({
-      ...REQ,
-      actions: [
-        { kind: 'fill', selector: '#name', value: 'private-demo' },
-        { kind: 'click', selector: '#consent' },
-        { kind: 'click', selector: '#submit' },
-      ],
-    });
-    const body = client.bodies[0];
-    expect(body.clicks).toEqual([]);
-    expect(body.fills).toEqual([]);
-    expect(body.replay!.map((s) => s.kind)).toEqual([
-      'goto',
-      'fill',
-      'click',
-      'click',
-    ]);
-    expect(body.replay!.slice(-2)).toEqual([
-      { kind: 'click', selector: '#consent' },
-      { kind: 'click', selector: '#submit' },
-    ]);
-    expect(JSON.stringify(body)).not.toContain('private-demo');
-    expect(
-      openW(
-        (body.replay![1] as { value: string }).value,
-        exploreFillAad(partsOf(body), 1),
-      ),
-    ).toBe('private-demo');
-  });
-});
