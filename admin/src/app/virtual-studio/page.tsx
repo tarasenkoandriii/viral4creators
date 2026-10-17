@@ -391,7 +391,9 @@ function StudioDetail({
         onCreated={loadVariantsAndFragments}
       />
 
-      <AnalysisFragmentForm studioId={studio.id} onCreated={loadVariantsAndFragments} />
+      <AnalysisFragmentForm studioId={studio.id} onCreated={(fragment) => {
+        setFragments((prev) => [fragment, ...prev.filter((f) => f.id !== fragment.id)]);
+      }} />
 
       <div className="card">
         <p style={{ fontWeight: 600, marginBottom: 8 }}>Фрагменты</p>
@@ -404,6 +406,7 @@ function StudioDetail({
               </p>
               <span className={`badge-status badge-status-${STATUS_SEVERITY[f.status]}`}>{STATUS_LABEL[f.status]}</span>
             </div>
+            {f.kind === 'ANALYSIS' && f.sourceVideoUrl && <p className="muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>Проверенный файл: {f.sourceVideoUrl.split(/[?#]/, 1)[0].split('/').pop()}</p>}
             {f.text && <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>{f.text}</p>}
             {f.status === 'failed' && f.errorMessage && (
               <p className="critical" style={{ fontSize: 12, marginTop: 4 }}>
@@ -638,7 +641,7 @@ function VoiceFragmentForm({
   );
 }
 
-function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCreated: () => void }) {
+function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCreated: (fragment: VirtualStudioFragment) => void }) {
   const [sourceVideoUrl, setSourceVideoUrl] = useState('');
   const [purpose, setPurpose] = useState<'content' | 'quality'>('content');
   const [brandManifestId, setBrandManifestId] = useState('');
@@ -650,13 +653,13 @@ function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCre
     setRunning(true);
     setError(null);
     try {
-      await createVirtualStudioAnalysisFragment(studioId, {
+      const fragment = await createVirtualStudioAnalysisFragment(studioId, {
         sourceVideoUrl: sourceVideoUrl.trim(),
         purpose,
         brandManifestId: brandManifestId.trim() || undefined,
       });
       setSourceVideoUrl('');
-      onCreated();
+      onCreated(fragment);
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Не удалось запустить анализ');
     } finally {

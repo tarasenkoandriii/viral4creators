@@ -64,6 +64,22 @@
         "evidence": "doc/reports/greeting-performance-research-2026-10-15.md; explicit owner clarification 2026-10-17",
         "recipe": "doc/reports/approved-greeting-recipe-2026-10-17.md"
       }
+    },
+    {
+      "kind": "Tutorial preamble",
+      "assetId": "cmvc5k0br000a07jsihex7od7",
+      "sha256": "550aeb7cfceff097e150f838e5f09d3e963f25173721c5bc92eec7236bc2a9cf",
+      "durationSeconds": 8.76,
+      "voiceId": "a9fc5a41",
+      "performanceProfile": "greeting-tutorial-v1",
+      "userVerdict": "Теперь совпадает",
+      "approvalScope": [
+        "lip sync on this exact preamble"
+      ],
+      "approvalDoesNotCover": [
+        "final Tutorial montage"
+      ],
+      "modelDisagreement": "Argon returned FAIL for both this candidate and the unchanged owner-accepted Greeting reference; do not replace owner judgment with a binary model verdict."
     }
   ],
   "rejected": [
@@ -102,5 +118,12 @@
         "gemini-4-argon": "FAIL, nonuniform articulation mismatch; offset not measurable"
       }
     }
-  ]
+  ],
+  "pendingFinalTutorial": {
+    "path": "outputs/tutorial-final-2026-10-17/Tutorial-Nova-Greeting-v1.mp4",
+    "sha256": "2a0214dcecb3ebec4a823441c2585f757b019a85080f62f8c85a5aa8b79f731f",
+    "durationSeconds": 30.952993,
+    "ownerAccepted": false,
+    "cabinetUpdated": false
+  }
 }
