@@ -393,3 +393,17 @@ describe('merchandise partial failures reach both cron entry points', () => {
     ).toBe(true);
   });
 });
+
+it('reports unresolved Story-Tales recovery as failure rather than green', () => {
+  for (const field of ['failed', 'blocked', 'unknown'])
+    expect(cronResultFailed('story-finalize', { [field]: 1 })).toBe(true);
+  expect(
+    cronResultFailed('story-finalize', {
+      scanned: 2,
+      ready: 2,
+      failed: 0,
+      blocked: 0,
+      unknown: 0,
+    }),
+  ).toBe(false);
+});

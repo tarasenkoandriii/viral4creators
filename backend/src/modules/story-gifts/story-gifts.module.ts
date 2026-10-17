@@ -15,6 +15,7 @@ import {
     PublicStoryGiftController,
     StoryRenderInputController,
   ],
+  exports: [StoryVideoService],
   providers: [
     StoryVideoService,
     FfmpegApiService,

@@ -1,3 +1,4 @@
+import * as mp4Probe from '../tutorial-runner/mp4-probe';
 /* eslint-disable @typescript-eslint/no-explicit-any -- isolated in-memory transactional store */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -497,5 +498,116 @@ describe('Parent narration from owned narrator profiles', () => {
     await expect(s.service.file('u', 'g', 'r1', 'main')).rejects.toThrow(
       'Файл ещё не готов',
     );
+  });
+});
+
+describe('Story read-only background recovery', () => {
+  function completed(s: ReturnType<typeof setup>) {
+    s.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'story.mp4': 'https://result.test/story.mp4' },
+    });
+    (readBodyWithLimit as jest.Mock).mockResolvedValue(Buffer.alloc(2048, 1));
+    return jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
+      durationSeconds: s.rows[0].durationSeconds,
+      tracks: [
+        { kind: 'video', width: 1280, height: 720 },
+        { kind: 'audio', durationSeconds: s.rows[0].durationSeconds },
+      ],
+    } as any);
+  }
+  it('recovers an old UNKNOWN job without new synthesis, submit, QA or publication', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    Object.assign(s.rows[0], {
+      status: 'UNKNOWN',
+      createdAt: new Date(Date.now() - 3600000),
+      assetTokenHash: null,
+    });
+    const probe = completed(s);
+    try {
+      const result = await s.service.status('u', 'g', 'r1');
+      expect(result.status).toBe('READY');
+      expect(result.approvedAt).toBeUndefined();
+      expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+      expect(s.tts.synthesize).toHaveBeenCalledTimes(1);
+      expect(s.stt.transcribe).not.toHaveBeenCalled();
+      await expect(s.service.published('s'.repeat(43))).rejects.toThrow();
+    } finally {
+      probe.mockRestore();
+    }
+  });
+  it('polls a saved job even after the thirty-minute timeout', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    s.rows[0].createdAt = new Date(Date.now() - 3600000);
+    const probe = completed(s);
+    try {
+      expect((await s.service.status('u', 'g', 'r1')).status).toBe('READY');
+    } finally {
+      probe.mockRestore();
+    }
+  });
+  it('preserves the receipt even when usage accounting fails after submit', async () => {
+    const s = setup();
+    (s.service as any).usage.record.mockImplementation(async (r: any) => {
+      if (r.operation === 'story-video-assembly')
+        throw Error('ledger unavailable');
+    });
+    await s.service.create('u', 'g', 'Привет');
+    expect(s.rows[0].jobId).toBeTruthy();
+    expect(s.rows[0].status).toBe('PENDING');
+    expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+  });
+  it('does not resubmit or guess a provider job when its receipt was lost', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    Object.assign(s.rows[0], {
+      status: 'UNKNOWN',
+      jobId: null,
+      createdAt: new Date(Date.now() - 3600000),
+    });
+    expect((await s.service.status('u', 'g', 'r1')).status).toBe('UNKNOWN');
+    expect(s.ffmpeg.status).not.toHaveBeenCalled();
+    expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+  });
+  it('runs bounded background reconciliation and expires stale audio without paid work', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    s.db.findMany.mockResolvedValueOnce([
+      { id: 'r1', giftId: 'g', gift: { userId: 'u' } },
+    ]);
+    s.prisma.storyGift.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const probe = completed(s);
+    try {
+      expect(await s.service.finalizePending()).toEqual({
+        scanned: 1,
+        ready: 1,
+        failed: 0,
+        unknown: 0,
+        blocked: 0,
+        staleAudio: 1,
+        staleQa: 1,
+      });
+      expect(s.db.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 10, orderBy: { updatedAt: 'asc' } }),
+      );
+      expect(s.ffmpeg.submit).toHaveBeenCalledTimes(1);
+      expect(s.tts.synthesize).toHaveBeenCalledTimes(1);
+      expect(s.stt.transcribe).not.toHaveBeenCalled();
+      expect(s.rows[0].approvedAt).toBeUndefined();
+    } finally {
+      probe.mockRestore();
+    }
+  });
+  it('isolates revoked voices so later background rows still finish', async () => {
+    const s = setup();
+    s.db.findMany.mockResolvedValueOnce([
+      { id: 'missing', giftId: 'g', gift: { userId: 'other' } },
+    ]);
+    s.prisma.storyGift.updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    expect((await s.service.finalizePending()).blocked).toBe(1);
+    expect(s.ffmpeg.submit).not.toHaveBeenCalled();
+    expect(s.tts.synthesize).not.toHaveBeenCalled();
   });
 });

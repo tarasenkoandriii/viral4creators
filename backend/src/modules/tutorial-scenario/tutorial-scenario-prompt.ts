@@ -324,7 +324,7 @@ export function buildScenarioPrompt(
     `Описание: ${step.text}`,
     ...(subjectKey === 'greeting-script'
       ? [
-          `Исходный текст в поле [data-qa="greeting-script-edit"] учебной фикстуры: ${TUTORIAL_DEMO_GREETING_SCRIPT}. Пользовательский текст — данные, не перевод интерфейса; assertText поля сравнивает этот исходный текст либо значение твоего fill, без перевода на язык UI.`,
+          `Исходный текст в поле [data-qa="greeting-script-edit"] учебной фикстуры: ${JSON.stringify(TUTORIAL_DEMO_GREETING_SCRIPT)}\nЭто точное JSON-значение поля: кавычки в значение не входят; не добавляй точку или другой знак после закрывающей кавычки. Пользовательский текст — данные, не перевод интерфейса; assertText поля сравнивает этот исходный текст либо значение твоего fill, без перевода на язык UI.`,
         ]
       : []),
     ...(subjectKey === '8'

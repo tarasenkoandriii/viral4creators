@@ -1153,6 +1153,20 @@ describe('готовое поздравление требует видимый 
 });
 
 describe('grounding routes for observed multilingual generation failures', () => {
+  it('отделяет точное значение фикстуры от пунктуации инструкции', () => {
+    const prompt = buildScenarioPrompt('greeting-script', 'uk', step);
+    const line = prompt
+      .split('\n')
+      .find((text) => text.includes('Исходный текст в поле'))!;
+    const value = JSON.parse(
+      line.slice(line.indexOf('фикстуры: ') + 'фикстуры: '.length),
+    );
+    expect(value).toContain('Это тестовое поздравление.');
+    expect(value).toMatch(/достижений!$/);
+    expect(value).not.toMatch(/!\.$/);
+    expect(prompt).toContain('не добавляй точку');
+  });
+
   it('uses current hook routes for every locale without weakening validation', () => {
     for (const locale of ['ru', 'uk', 'en', 'de', 'es']) {
       for (const [topic, hooks] of [

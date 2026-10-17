@@ -284,6 +284,7 @@ export function cronResultFailed(jobKey: string, result: unknown): boolean {
   if (!result || typeof result !== 'object' || skipReasonOf(result))
     return false;
   const keysByJob: Record<string, string[]> = {
+    'story-finalize': ['failed', 'blocked', 'unknown', 'staleAudio', 'staleQa'],
     'catalog-batch-run': [
       'failed',
       'renderFailed',

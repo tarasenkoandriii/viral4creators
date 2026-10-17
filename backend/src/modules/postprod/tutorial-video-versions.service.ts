@@ -363,7 +363,7 @@ export class TutorialVideoVersionsService {
         editable: ed.editable,
         reason: ed.editable ? null : ed.reason,
         activeFactor: this.activeFactor(a, own),
-        voiced: !!m?.frames.some((f) => f.speech),
+        voiced: !!(m?.preamble || m?.frames.some((f) => f.speech)),
         inFlight: own.some(
           (v) => v.status === 'preparing' || v.status === 'pending',
         ),
@@ -520,7 +520,7 @@ export class TutorialVideoVersionsService {
       minimumDurationMs: null,
       warnings: [],
       preview: null,
-      voiced: !!m?.frames.some((f) => f.speech),
+      voiced: !!(m?.preamble || m?.frames.some((f) => f.speech)),
       activeFactor: this.activeFactor(asset, versions),
       inFlight: inFlightRow
         ? this.view(inFlightRow, asset, actor.kind === 'operator')
@@ -974,7 +974,7 @@ export class TutorialVideoVersionsService {
       bytes.length >= MIN_VIDEO_BYTES ? probeMp4(bytes) : null,
       {
         durationMs: v.videoMs ?? 0,
-        hasAudio: !!m?.frames.some((f) => f.speech),
+        hasAudio: !!(m?.preamble || m?.frames.some((f) => f.speech)),
         width: CANVAS.width,
         height: CANVAS.height,
       },

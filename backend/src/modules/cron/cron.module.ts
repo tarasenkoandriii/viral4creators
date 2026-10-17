@@ -1,3 +1,4 @@
+import { StoryGiftsModule } from '../story-gifts/story-gifts.module';
 import { Module } from '@nestjs/common';
 import { CronController } from './cron.controller';
 import { CronJobsService } from './cron-jobs.service';
@@ -80,6 +81,7 @@ import { ClientSiteMediaModule } from '../client-site-media/client-site-media.mo
   // (тогда AdminPanelModule → CronModule → AdminPanelModule) — см.
   // doc/PRODUCT-PROJECT-SPEC.md §69.
   imports: [
+    StoryGiftsModule,
     ImageSketchModule,
     StorageModule,
     AiUsageModule,

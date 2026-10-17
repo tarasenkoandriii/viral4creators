@@ -1,3 +1,4 @@
+import { StoryVideoService } from '../story-gifts/story-video.service';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 import { SessionService } from '../../common/session.service';
@@ -268,6 +269,7 @@ export class CronJobsService {
      */
     @Optional()
     private readonly clientSiteMedia?: ClientSiteMediaService,
+    @Optional() private readonly storyVideos?: StoryVideoService,
   ) {}
 
   /**
@@ -694,6 +696,11 @@ export class CronJobsService {
    * 15 с × 40 = десять минут и сдаётся. См. доккомментарий
    * `TutorialScenarioRunnerService.pollAssemblies`.
    */
+  async runStoryFinalize() {
+    if (!this.storyVideos) throw new Error('Story finalizer is not configured');
+    return this.storyVideos.finalizePending();
+  }
+
   async runTutorialAssemblyPoll(): Promise<TutorialAssemblyPollResult> {
     // Замка здесь НЕТ намеренно: он взят внутри `pollAssemblies()` —
     // см. её доккомментарий. Держать его тут значило бы защитить один

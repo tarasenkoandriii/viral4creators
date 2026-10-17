@@ -305,6 +305,28 @@ function setup(opts: { world?: Partial<World>; asset?: any } = {}) {
   };
 }
 
+// A silent tutorial body still has mandatory sound when its approved intro is present.
+function introOnlyManifest(): TutorialTimelineManifest {
+  return manifest({
+    narration: 'none',
+    captions: false,
+    frames: [frame(0, null), frame(1, null)],
+    preamble: {
+      version: 1,
+      manifestId: 'brand',
+      characterId: null,
+      imageUrl: null,
+      voiceId: null,
+      voiceProvider: null,
+      pathname: 'brand-manifests/brand/preambles/abc123.mp4',
+      url: 'https://store.public.blob.vercel-storage.com/brand-manifests/brand/preambles/abc123.mp4',
+      seconds: 6,
+      locale: 'ru',
+      approvedAt: '2026-10-16T10:00:00.000Z',
+    },
+  });
+}
+
 const USER = { kind: 'user' as const, userId: 'u1' };
 const STRANGER = { kind: 'user' as const, userId: 'u2' };
 const OPERATOR = { kind: 'operator' as const, userId: 'op1' };
@@ -518,6 +540,21 @@ describe('опрос, проверка и активация', () => {
     });
   });
 
+  it('немая основная часть с преамбулой требует звука перед активацией', async () => {
+    const s = await built({ asset: { tempoManifest: introOnlyManifest() } });
+    checkMock.mockImplementation((_probe, expected) => ({
+      ok: !expected.hasAudio,
+      problems: expected.hasAudio ? ['нет звуковой дорожки'] : [],
+    }));
+    await s.service.pollVersions();
+    expect(checkMock.mock.calls[0][1].hasAudio).toBe(true);
+    const version = s.world.versions.find((v) => v.kind === 'tempo');
+    expect(version.status).toBe('failed');
+    expect(version.error).toContain('нет звуковой дорожки');
+    expect(s.world.assets[0].activeVersionId).toBeNull();
+    expect(s.siteMedia.syncForDraft).not.toHaveBeenCalled();
+  });
+
   it('проверка не прошла — версия failed, ролик и набор сайта не тронуты', async () => {
     const s = await built();
     checkMock.mockReturnValue({
@@ -598,6 +635,21 @@ describe('опрос, проверка и активация', () => {
     await s.service.pollVersions();
     expect(v.status).toBe('failed');
     expect(s.world.assets[0].activeVersionId).toBeNull();
+  });
+});
+
+describe('преамбула без озвучки основной части', () => {
+  it('список и бесплатный расчёт сохраняют признак звука и неизменную длину вступления', async () => {
+    const { service, ffmpeg } = setup({
+      asset: { tempoManifest: introOnlyManifest() },
+    });
+    const [item] = await service.listForUser('u1');
+    const estimate = await service.estimate(USER, 'a1', 0.4);
+    expect(item.voiced).toBe(true);
+    expect(estimate.voiced).toBe(true);
+    expect(estimate.preview?.preamble).toMatchObject({ seconds: 6 });
+    expect(estimate.durationMs).toBeGreaterThanOrEqual(6000);
+    expect(ffmpeg.submit).not.toHaveBeenCalled();
   });
 });
 

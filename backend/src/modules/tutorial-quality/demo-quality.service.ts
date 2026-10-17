@@ -1109,7 +1109,7 @@ export class TutorialDemoQualityService {
       durationMs: target.plannedMs,
       width: target.asset.width,
       height: target.asset.height,
-      hasAudio: m ? m.narration !== 'none' : null,
+      hasAudio: m ? !!m.preamble || m.narration !== 'none' : null,
       declaredTheme: target.asset.theme,
       capturedTheme: m?.theme ?? null,
     });

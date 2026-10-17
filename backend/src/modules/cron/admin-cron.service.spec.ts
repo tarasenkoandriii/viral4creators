@@ -153,6 +153,13 @@ function build() {
     runLiveAuctionTick: jest.fn().mockResolvedValue({ ticked: 4 }),
     // Сквозной аудит 27.09.2026 (находка Д-2): отдельный опрос сборок
     // слайд-шоу обучалки.
+    runStoryFinalize: jest.fn().mockResolvedValue({
+      scanned: 1,
+      ready: 1,
+      failed: 0,
+      unknown: 0,
+      blocked: 0,
+    }),
     runTutorialAssemblyPoll: jest.fn().mockResolvedValue({ pending: 2 }),
   };
   const service = new AdminCronService(jobs as never, prisma as never);
@@ -330,6 +337,15 @@ describe('AdminCronService — debug у девяти джобов только �
     const row = await service.run('tutorial-scenario-run', 'admin-1', false);
     expect(row.outcome).toBeNull();
     expect(row.debugLog).toBeUndefined();
+  });
+
+  it('story-finalize delegates only read-only story recovery', async () => {
+    const { service, jobs } = build();
+    const row = await service.run('story-finalize', 'admin-1', false);
+    expect(jobs.runStoryFinalize).toHaveBeenCalledTimes(1);
+    expect(jobs.runTutorialAssemblyPoll).not.toHaveBeenCalled();
+    expect(row.status).toBe('SUCCESS');
+    expect(row.summary).toContain('ready=1');
   });
 
   it('tutorial-assembly-poll: делегирует CronJobsService.runTutorialAssemblyPoll (аудит 27.09.2026, Д-2)', async () => {

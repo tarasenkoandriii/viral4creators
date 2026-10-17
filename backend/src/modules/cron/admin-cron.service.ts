@@ -284,6 +284,11 @@ const JOB_REGISTRY: CronJobInfo[] = [
       'Исполнение уже сгенерированных сценариев headless-браузером против фикстурного пользователя — регрессионный прогон экранов мастера (платный клик не нажимается никогда, платные сценарии — без одобрения).',
   },
   {
+    jobKey: 'story-finalize',
+    description:
+      'Story-Tales: проверка сохранённых заданий монтажа и восстановление UNKNOWN без синтеза, новой сборки, QA и публикации.',
+  },
+  {
     jobKey: 'tutorial-assembly-poll',
     description:
       'Опрос сборок Tutorial без браузера и обработка очереди ИИ-проверки качества. Опрос статуса сборки не запускает новый рендер; анализ качества вызывает платный Gemini в пределах настроенных суточных лимитов.',
@@ -899,6 +904,8 @@ export class AdminCronService {
         return this.jobs.runTutorialScenarioGenerate();
       case 'tutorial-scenario-run':
         return this.jobs.runTutorialScenarioRun();
+      case 'story-finalize':
+        return this.jobs.runStoryFinalize();
       case 'tutorial-assembly-poll':
         return this.jobs.runTutorialAssemblyPoll();
       case 'ui-snapshot-run':

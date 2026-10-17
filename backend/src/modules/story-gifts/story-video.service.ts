@@ -484,11 +484,6 @@ export class StoryVideoService {
         commands: planned.commands,
         retrySubmit: false,
       });
-      await this.usage.record({
-        operation: 'story-video-assembly',
-        model: 'ffmpeg-api',
-        userId,
-      });
       await this.prisma.storyVideoRender.updateMany({
         where: {
           id,
@@ -496,6 +491,11 @@ export class StoryVideoService {
           gift: { status: { in: ['READY', 'APPROVED'] } },
         },
         data: { status: 'PENDING', jobId: job.jobId },
+      });
+      await this.usage.record({
+        operation: 'story-video-assembly',
+        model: 'ffmpeg-api',
+        userId,
       });
     } catch {
       await this.prisma.storyVideoRender.updateMany({
@@ -519,8 +519,14 @@ export class StoryVideoService {
         where: { id, qaStatus: 'RUNNING', updatedAt: r.updatedAt },
         data: { qaStatus: 'UNKNOWN' },
       });
+    const job = await this.prisma.storyVideoRender.findUniqueOrThrow({
+      where: { id },
+      select: { jobId: true },
+    });
+    const recoverable = ['PREPARING', 'PENDING', 'UNKNOWN'];
     if (
-      ['PREPARING', 'PENDING'].includes(r.status) &&
+      recoverable.includes(r.status) &&
+      !job.jobId &&
       Date.now() - r.createdAt.getTime() > 30 * 60000
     ) {
       await this.prisma.storyVideoRender.updateMany({
@@ -528,80 +534,167 @@ export class StoryVideoService {
         data: {
           status: 'UNKNOWN',
           assetTokenHash: null,
-          error: 'Сборка не завершилась в срок; автоматического повтора нет.',
+          error:
+            'Нет сохранённого задания сборщика. Нужна сверка оператором; повторная оплата отключена.',
         },
       });
-    } else if (r.status === 'PENDING') {
-      const job = await this.prisma.storyVideoRender.findUniqueOrThrow({
-        where: { id },
-        select: { jobId: true },
-      });
-      if (job.jobId)
-        try {
-          const result = await this.ffmpeg.status(job.jobId, 20000);
-          if (result.status === 'failed')
-            await this.prisma.storyVideoRender.updateMany({
-              where: { id, status: 'PENDING' },
-              data: {
-                status: 'FAILED',
-                assetTokenHash: null,
-                error: `Внешняя сборка завершилась ошибкой: ${(result.error || 'детали не получены').replace(/https?:\/\/[^\s"'<>]+/g, '[источник]').slice(0, 300)}`,
-              },
-            });
-          else if (result.status === 'completed') {
-            const url = result.outputs?.['story.mp4'];
-            if (!url) throw new Error('Invalid container');
-            const res = await fetchPubliclyRoutable(url, {
-              signal: AbortSignal.timeout(20000),
-            });
-            if (!res.ok) throw new Error('Download failed');
-            const bytes = await readBodyWithLimit(res, MAX_VIDEO);
-            const probe = probeMp4(bytes),
-              video = probe?.tracks.find((t) => t.kind === 'video'),
-              audio = probe?.tracks.find((t) => t.kind === 'audio');
-            if (
-              !probe ||
-              bytes.length < 1024 ||
-              !video ||
-              !audio ||
-              video.width !== 1280 ||
-              video.height !== 720 ||
-              Math.abs(probe.durationSeconds - r.durationSeconds!) > 0.15 ||
-              audio.durationSeconds + 0.15 < r.durationSeconds!
-            )
-              throw new Error('Invalid container');
-            await this.prisma.storyVideoRender.updateMany({
-              where: {
-                id,
-                status: 'PENDING',
-                gift: { status: { in: ['READY', 'APPROVED'] } },
-              },
-              data: {
-                status: 'READY',
-                video: new Uint8Array(bytes),
-                videoHash: digest(bytes),
-                durationSeconds: probe.durationSeconds,
-                assetTokenHash: null,
-                error: null,
-              },
-            });
-          }
-        } catch (e) {
-          if (e instanceof Error && e.message === 'Invalid container')
-            await this.prisma.storyVideoRender.updateMany({
-              where: { id, status: 'PENDING' },
-              data: {
-                status: 'FAILED',
-                assetTokenHash: null,
-                error:
-                  'Готовое видео не прошло проверку формата, размера или длительности.',
-              },
-            });
-          // Network polling can retry; paid submit never does.
+    } else if (recoverable.includes(r.status) && job.jobId) {
+      try {
+        const result = await this.ffmpeg.status(job.jobId, 20000);
+        if (result.status === 'failed')
+          await this.prisma.storyVideoRender.updateMany({
+            where: { id, status: { in: recoverable } },
+            data: {
+              status: 'FAILED',
+              assetTokenHash: null,
+              error: `Внешняя сборка завершилась ошибкой: ${(result.error || 'детали не получены').replace(/https?:\/\/[^\s"'<>]+/g, '[источник]').slice(0, 300)}`,
+            },
+          });
+        else if (result.status === 'completed') {
+          const url = result.outputs?.['story.mp4'];
+          if (!url) throw new Error('Invalid container');
+          const res = await fetchPubliclyRoutable(url, {
+            signal: AbortSignal.timeout(20000),
+          });
+          if (!res.ok) throw new Error('Download failed');
+          const bytes = await readBodyWithLimit(res, MAX_VIDEO);
+          const probe = probeMp4(bytes),
+            video = probe?.tracks.find((t) => t.kind === 'video'),
+            audio = probe?.tracks.find((t) => t.kind === 'audio');
+          if (
+            !probe ||
+            bytes.length < 1024 ||
+            !video ||
+            !audio ||
+            video.width !== 1280 ||
+            video.height !== 720 ||
+            Math.abs(probe.durationSeconds - r.durationSeconds!) > 0.15 ||
+            audio.durationSeconds + 0.15 < r.durationSeconds!
+          )
+            throw new Error('Invalid container');
+          await this.prisma.storyVideoRender.updateMany({
+            where: {
+              id,
+              status: { in: recoverable },
+              gift: { status: { in: ['READY', 'APPROVED'] } },
+            },
+            data: {
+              status: 'READY',
+              video: new Uint8Array(bytes),
+              videoHash: digest(bytes),
+              durationSeconds: probe.durationSeconds,
+              assetTokenHash: null,
+              error: null,
+            },
+          });
+        } else if (Date.now() - r.createdAt.getTime() > 30 * 60000) {
+          await this.prisma.storyVideoRender.updateMany({
+            where: { id, status: { in: ['PREPARING', 'PENDING'] } },
+            data: {
+              status: 'UNKNOWN',
+              assetTokenHash: null,
+              error:
+                'Задание ещё не завершено; продолжим опрос без новой сборки и оплаты.',
+            },
+          });
         }
+      } catch (e) {
+        if (e instanceof Error && e.message === 'Invalid container')
+          await this.prisma.storyVideoRender.updateMany({
+            where: { id, status: { in: recoverable } },
+            data: {
+              status: 'FAILED',
+              assetTokenHash: null,
+              error:
+                'Готовое видео не прошло проверку формата, размера или длительности.',
+            },
+          });
+        // Keep a durable job id for a later read-only reconciliation.
+        if (Date.now() - r.createdAt.getTime() > 30 * 60000)
+          await this.prisma.storyVideoRender.updateMany({
+            where: { id, status: { in: ['PREPARING', 'PENDING'] } },
+            data: {
+              status: 'UNKNOWN',
+              assetTokenHash: null,
+              error:
+                'Статус сборщика пока не подтверждён; сохранённое задание будет проверено снова без оплаты.',
+            },
+          });
+      }
     }
     r = await this.own(userId, giftId, id);
     return r;
+  }
+  /** Read-only provider reconciliation: never synthesize, submit, run QA or publish. */
+  async finalizePending() {
+    const started = Date.now();
+    const result = {
+      scanned: 0,
+      ready: 0,
+      failed: 0,
+      unknown: 0,
+      blocked: 0,
+      staleAudio: 0,
+      staleQa: 0,
+    };
+    const stale = new Date(Date.now() - 10 * 60000);
+    const rows = await this.prisma.storyVideoRender.findMany({
+      where: {
+        gift: { status: { in: ['READY', 'APPROVED'] } },
+        OR: [
+          {
+            status: { in: ['PREPARING', 'PENDING', 'UNKNOWN'] },
+            jobId: { not: null },
+          },
+          {
+            status: 'PREPARING',
+            createdAt: { lt: new Date(Date.now() - 30 * 60000) },
+          },
+          { qaStatus: 'RUNNING', updatedAt: { lt: stale } },
+        ],
+      },
+      select: { id: true, giftId: true, gift: { select: { userId: true } } },
+      orderBy: { updatedAt: 'asc' },
+      take: 10,
+    });
+    for (const row of rows) {
+      if (Date.now() - started > 90000) break;
+      result.scanned++;
+      try {
+        const r = await this.status(row.gift.userId, row.giftId, row.id);
+        if (r.status === 'READY') result.ready++;
+        else if (r.status === 'FAILED') result.failed++;
+        else if (r.status === 'UNKNOWN') result.unknown++;
+        if (r.status !== 'UNKNOWN' && r.qaStatus === 'UNKNOWN')
+          result.unknown++;
+      } catch {
+        result.blocked++;
+      }
+      // Rotate even blocked/network-failed rows so a revoked voice cannot starve others.
+      await this.prisma.storyVideoRender.updateMany({
+        where: { id: row.id, status: { not: 'DELETED' } },
+        data: { updatedAt: new Date() },
+      });
+    }
+    const synth = await this.prisma.storyGift.updateMany({
+      where: { status: 'SYNTHESIZING', updatedAt: { lt: stale } },
+      data: {
+        status: 'UNKNOWN',
+        error:
+          'Ожидание синтеза истекло; нужна сверка оператором, повторная оплата отключена.',
+      },
+    });
+    result.staleAudio = synth.count;
+    const qa = await this.prisma.storyGift.updateMany({
+      where: {
+        status: { in: ['READY', 'APPROVED'] },
+        audioQaStatus: 'RUNNING',
+        updatedAt: { lt: stale },
+      },
+      data: { audioQaStatus: 'UNKNOWN' },
+    });
+    result.staleQa = qa.count;
+    return result;
   }
   async file(
     userId: string,

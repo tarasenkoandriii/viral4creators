@@ -445,6 +445,17 @@ export class CronController {
    * вызовов: один запрос в базу и несколько проверок статуса по HTTP,
    * поэтому частое расписание безопасно.
    */
+  @Get('story-finalize')
+  async storyFinalize(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'story-finalize',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runStoryFinalize(),
+    );
+  }
+
   @Get('tutorial-assembly-poll')
   async tutorialAssemblyPollCron(
     @Headers('authorization') authHeader?: string,

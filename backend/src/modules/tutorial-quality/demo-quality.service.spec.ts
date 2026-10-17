@@ -665,6 +665,37 @@ describe('тик очереди', () => {
     expect(aiUsage.recordGemini).not.toHaveBeenCalled();
   });
 
+  it('преамбула требует звука даже при немой основной части — до платной проверки', async () => {
+    assets.rows[0] = asset({
+      tempoManifest: {
+        ...MANIFEST,
+        narration: 'none',
+        preamble: {
+          version: 1,
+          manifestId: 'brand',
+          characterId: null,
+          imageUrl: null,
+          voiceId: null,
+          voiceProvider: null,
+          seconds: 6,
+          locale: 'ru',
+          approvedAt: '2026-10-16T10:00:00.000Z',
+          pathname: 'brand-manifests/brand/preambles/abc123.mp4',
+          url: 'https://store.public.blob.vercel-storage.com/brand-manifests/brand/preambles/abc123.mp4',
+        },
+      },
+    });
+    probeMock.mockReturnValue({
+      ...GOOD_PROBE,
+      tracks: [GOOD_PROBE.tracks[0]],
+    });
+    await svc.processQueue();
+    expect(only().verdict).toBe('fail');
+    expect(gemini.upload).not.toHaveBeenCalled();
+    expect(gemini.generate).not.toHaveBeenCalled();
+    expect(aiUsage.recordGemini).not.toHaveBeenCalled();
+  });
+
   it('тема съёмки не совпадает с заявленной — fail техпроверки', async () => {
     assets.rows[0] = asset({ theme: 'light' });
     await svc.processQueue();

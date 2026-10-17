@@ -1,6 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "regions": ["lhr1"],
+  "regions": [
+    "lhr1"
+  ],
   "ignoreCommand": "bash ../scripts/vercel-ignore-build.sh . ../landing/src/dictionaries ../frontend/src/dictionaries ../scripts/build-prisma-migrations.mjs",
   "crons": [
     {
@@ -106,6 +108,10 @@
     {
       "path": "/api/cron/ai-usage-rollup",
       "schedule": "0 4 * * 1"
+    },
+    {
+      "path": "/api/cron/story-finalize",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
