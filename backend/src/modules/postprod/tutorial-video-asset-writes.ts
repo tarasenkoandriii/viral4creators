@@ -75,3 +75,30 @@ export async function writeAssetManifest(
     },
   });
 }
+
+/** Import activation is inside the version transaction and compares both URL
+ * and active version so concurrent replacement rolls back the entire import.
+ * Its duration is measured from the uploaded MP4 rather than a render plan. */
+export function activateImportedOnAsset(
+  tx: Prisma.TransactionClient,
+  assetId: string,
+  expectedUrl: string,
+  expectedVersionId: string | null,
+  versionId: string,
+  blobUrl: string,
+  plan: ActivationPlan,
+) {
+  return tx.tutorialVideoAsset.updateMany({
+    where: {
+      id: assetId,
+      blobUrl: expectedUrl,
+      activeVersionId: expectedVersionId,
+      assemblyStatus: 'complete',
+    },
+    data: {
+      blobUrl,
+      activeVersionId: versionId,
+      durationMs: plan.durationMs,
+    },
+  });
+}

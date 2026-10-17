@@ -1,3 +1,6 @@
+import { createHash, randomUUID } from 'crypto';
+import { head } from '@vercel/blob';
+import { readBodyWithLimit } from '../../common/external-url-guard';
 import { gridSeconds } from '../tutorial-runner/tutorial-video-assembly';
 /**
  * Версии роликов обучалки с другим темпом — постпродакшен обучалок
@@ -117,6 +120,7 @@ import {
 import { checkTutorialVideo, probeMp4 } from '../tutorial-runner/mp4-probe';
 import {
   activateOnAsset,
+  activateImportedOnAsset,
   markActiveVersionIfUnset,
   writeAssetManifest,
 } from './tutorial-video-asset-writes';
@@ -159,7 +163,7 @@ export type TempoActor =
 
 export interface TutorialVersionView {
   id: string;
-  kind: 'source' | 'tempo';
+  kind: 'source' | 'tempo' | 'import';
   factor: number;
   preset: TempoPreset | null;
   status: VersionStatus;
@@ -309,6 +313,186 @@ export class TutorialVideoVersionsService {
     @Optional() private readonly landingVideos?: LandingVideosService,
   ) {}
 
+  /** Operator-only delivery of an already assembled client Tutorial. No AI,
+   * assembly job, usage or quota operation is involved. */
+  async importUpload(actor: TempoActor, assetId: string) {
+    if (actor.kind !== 'operator')
+      throw new BadRequestException('нужен оператор');
+    const { asset } = await this.requireAsset(actor, assetId);
+    if (
+      !asset.clientSiteDraftId ||
+      asset.assemblyStatus !== 'complete' ||
+      !asset.blobUrl
+    )
+      throw new ConflictException('нужна готовая обучалка клиента');
+    const pathname = `tutorial-video-sources/${assetId}/imports-upload/${randomUUID()}`;
+    return {
+      ...(await this.blob.createUploadUrl(
+        pathname,
+        'video/mp4',
+        20 * 1024 * 1024,
+      )),
+      pathname,
+      expectedUrl: asset.blobUrl,
+    };
+  }
+
+  async importAssembled(
+    actor: TempoActor,
+    assetId: string,
+    pathname: string,
+    expectedUrl: string,
+  ) {
+    if (actor.kind !== 'operator')
+      throw new BadRequestException('нужен оператор');
+    const { asset } = await this.requireAsset(actor, assetId);
+    if (
+      !asset.clientSiteDraftId ||
+      asset.assemblyStatus !== 'complete' ||
+      !asset.blobUrl
+    )
+      throw new ConflictException('нужна готовая обучалка клиента');
+    const prefix = `tutorial-video-sources/${assetId}/imports-upload/`;
+    if (
+      !pathname.startsWith(prefix) ||
+      !/^[a-f0-9-]{36}$/.test(pathname.slice(prefix.length))
+    )
+      throw new BadRequestException('чужая загрузка');
+    const meta = await head(pathname);
+    if (meta.size > 20 * 1024 * 1024 || meta.contentType !== 'video/mp4')
+      throw new BadRequestException('нужен MP4 до 20 МБ');
+    const response = await fetch(meta.url, {
+      redirect: 'error',
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!response.ok) throw new BadRequestException('загрузка недоступна');
+    const bytes = await readBodyWithLimit(response, 20 * 1024 * 1024);
+    const probe = probeMp4(bytes);
+    const video = probe?.tracks.find((t) => t.kind === 'video');
+    const audio = probe?.tracks.find((t) => t.kind === 'audio');
+    if (
+      !probe ||
+      !video ||
+      !audio ||
+      !video.samples ||
+      video.width !== 720 ||
+      video.height !== 1560 ||
+      !Number.isFinite(probe.durationSeconds) ||
+      probe.durationSeconds <= 0 ||
+      probe.durationSeconds > 600 ||
+      Math.abs(video.durationSeconds - audio.durationSeconds) > 0.15
+    )
+      throw new BadRequestException(
+        'нужен проверенный MP4 720×1560 со звуком без рассинхрона дорожек',
+      );
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const key = `import:${sha256}`;
+    const existing = await this.prisma.tutorialVideoVersion.findUnique({
+      where: { assetId_idempotencyKey: { assetId, idempotencyKey: key } },
+    });
+    // A network retry must not switch away from a newer version.
+    if (existing)
+      return {
+        version: this.view(existing as VersionRow, asset, true),
+        reused: true,
+        sha256,
+      };
+    if (asset.blobUrl !== expectedUrl)
+      throw new ConflictException('ролик уже изменился — обновите страницу');
+    const { url } = await this.blob.uploadBuffer(
+      `tutorial-videos/versions/${assetId}/import-${sha256}.mp4`,
+      bytes,
+      'video/mp4',
+    );
+    const durationMs = Math.round(probe.durationSeconds * 1000);
+    const row = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.tutorialVideoAsset.findUnique({
+        where: { id: assetId },
+      });
+      if (
+        !current ||
+        current.blobUrl !== expectedUrl ||
+        current.assemblyStatus !== 'complete' ||
+        current.activeVersionId !== asset.activeVersionId
+      )
+        throw new ConflictException(
+          'ролик уже изменился — импорт не активирован',
+        );
+      const pending = await tx.tutorialVideoVersion.count({
+        where: { assetId, status: { in: ['pending', 'preparing'] } },
+      });
+      if (pending) throw new ConflictException('дождитесь текущей сборки');
+      if (!current.activeVersionId) {
+        await tx.tutorialVideoVersion.upsert({
+          where: {
+            assetId_idempotencyKey: {
+              assetId,
+              idempotencyKey: SOURCE_VERSION_KEY,
+            },
+          },
+          update: {},
+          create: {
+            assetId,
+            kind: 'source',
+            motion: 'fade',
+            manifestVersion: 1,
+            idempotencyKey: SOURCE_VERSION_KEY,
+            status: 'complete',
+            blobUrl: current.blobUrl,
+            videoMs: current.durationMs,
+            requestedBy: actor.userId,
+          },
+        });
+      }
+      const version = await tx.tutorialVideoVersion.create({
+        data: {
+          assetId,
+          kind: 'import',
+          motion: 'fade',
+          manifestVersion: 1,
+          idempotencyKey: key,
+          status: 'complete',
+          blobUrl: url,
+          videoMs: durationMs,
+          requestedBy: actor.userId,
+          activatedAt: new Date(),
+          approvedBy: actor.userId,
+          approvedAt: new Date(),
+          probe: {
+            sha256,
+            bytes: bytes.length,
+            imported: true,
+            previousUrl: expectedUrl,
+            probe,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      const changed = await activateImportedOnAsset(
+        tx,
+        assetId,
+        expectedUrl,
+        asset.activeVersionId,
+        version.id,
+        url,
+        { durationMs },
+      );
+      if (changed.count !== 1)
+        throw new ConflictException('ролик изменился — импорт отменён');
+      return version;
+    });
+    if (asset.clientSiteDraftId && this.siteMedia)
+      await this.siteMedia.syncForDraft(asset.clientSiteDraftId);
+    return {
+      version: this.view(
+        row as VersionRow,
+        { ...asset, blobUrl: url, activeVersionId: row.id, durationMs },
+        true,
+      ),
+      reused: false,
+      sha256,
+    };
+  }
+
   // ── чтение ─────────────────────────────────────────────────────────
 
   /**
@@ -352,7 +536,10 @@ export class TutorialVideoVersionsService {
     for (const d of drafts) {
       const a = latest.get(d.id);
       if (!a || !a.blobUrl) continue;
-      const m = parseTutorialManifest(a.tempoManifest);
+      const imported = versions.some(
+        (v) => v.id === a.activeVersionId && v.kind === 'import',
+      );
+      const m = imported ? null : parseTutorialManifest(a.tempoManifest);
       const ed = this.editability(a, m, d.framesPurgedAt);
       const own = versions.filter((v) => v.assetId === a.id);
       out.push({
@@ -419,6 +606,15 @@ export class TutorialVideoVersionsService {
     ) {
       throw new NotFoundException('ролик не найден');
     }
+    // An imported cut has no matching per-frame timeline. Keep the original
+    // manifest in storage for a free revert, but never rebuild this cut from it.
+    if (asset.activeVersionId) {
+      const active = await this.prisma.tutorialVideoVersion.findFirst({
+        where: { id: asset.activeVersionId, assetId, kind: 'import' },
+        select: { id: true },
+      });
+      if (active) asset.tempoManifest = null;
+    }
     return { asset, framesPurgedAt, ownerUserId, projectId };
   }
 
@@ -457,7 +653,12 @@ export class TutorialVideoVersionsService {
       (v.kind === 'source' && asset.activeVersionId === null);
     return {
       id: v.id,
-      kind: v.kind === 'source' ? 'source' : 'tempo',
+      kind:
+        v.kind === 'source'
+          ? 'source'
+          : v.kind === 'import'
+            ? 'import'
+            : 'tempo',
       factor,
       preset: presetOfFactor(factor),
       status: (['preparing', 'pending', 'complete', 'failed'].includes(v.status)

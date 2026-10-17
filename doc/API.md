@@ -2420,3 +2420,8 @@ submit не оплачивается. Возвращает `{sessionId,state,reu
 - `PATCH /admin/landing-visits/settings` — только оператор, `{ipUniquenessEnabled:boolean}`. По умолчанию false. Включение требует серверного ключа; настройка применяется к будущим просмотрам, старые IP восстановить нельзя.
 
 Источники трафика не входят в этот контракт. Отчёт не утверждает страну проживания и не приравнивает IP к человеку.
+
+### Доставка готового клиентского Tutorial (оператор)
+
+- `POST /admin/tutorial-video-assets/:id/import-upload` — ограниченная загрузка MP4 (20 МБ), возвращает `uploadUrl`, `pathname`, `expectedUrl`.
+- `POST /admin/tutorial-video-assets/:id/import-assembled` — `{pathname, expectedUrl}`; проверка, SHA-256-идемпотентность, сохранение исходника и атомарная активация импортированной версии. Без TTS, генерации, сборки и списаний. Только готовые клиентские Tutorial, под `AdminSessionGuard` и `assertOperator`.

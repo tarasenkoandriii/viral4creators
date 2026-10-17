@@ -455,7 +455,7 @@ export function TutorialTempoScreen({ assetId }: { assetId: string }) {
                 className="flex items-center justify-between gap-2 text-sm"
               >
                 <span className="tabular">
-                  {v.kind === 'source' ? t.versionSource : `×${v.factor}`}
+                  {v.kind === 'source' ? t.versionSource : v.kind === 'import' ? 'MP4' : `×${v.factor}`}
                   {' · '}
                   {formatDuration(v.durationMs)}
                 </span>

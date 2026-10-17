@@ -1164,3 +1164,26 @@ describe('исходники до платной сборки (заход 7, а�
     ).toBeNull();
   });
 });
+
+describe('already assembled imports', () => {
+  it('does not offer tempo or rebuild an imported cut from the original manifest', async () => {
+    const { service, world, ffmpeg } = setup();
+    world.assets[0].activeVersionId = 'imported';
+    world.versions.push({
+      id: 'imported',
+      assetId: 'a1',
+      kind: 'import',
+      status: 'complete',
+      createdAt: new Date(),
+      tempoFactor: null,
+    });
+    expect(
+      (await service.estimate({ kind: 'user', userId: 'u1' }, 'a1', 1))
+        .editable,
+    ).toBe(false);
+    await expect(
+      service.requestVersion({ kind: 'user', userId: 'u1' }, 'a1', 0.4),
+    ).rejects.toThrow();
+    expect(ffmpeg.submit).not.toHaveBeenCalled();
+  });
+});

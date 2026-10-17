@@ -29,7 +29,7 @@ import type {
   TutorialTempoWarning,
   TutorialVersionRow,
 } from '../../lib/types';
-import { ApiRequestError } from '../../lib/admin-api';
+import { apiPost, ApiRequestError } from '../../lib/admin-api';
 import { hasSourceFile } from '../../lib/tutorial-tempo';
 
 const PRESETS: Array<{ key: string; label: string; factor: number }> = [
@@ -59,7 +59,7 @@ function reasonText(r: TutorialTempoUnavailableReason): string {
     case 'frames-purged':
       return 'Кадры черновика клиента стёрты по сроку хранения.';
     default:
-      return 'Ролик собран до монтажного плана — темп недоступен, нужна новая сборка.';
+      return 'Для этого файла нет соответствующего монтажного плана. Смена темпа отключена; готовый монтаж можно смотреть и вернуть исходный файл.';
   }
 }
 
@@ -160,6 +160,21 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 4px', maxWidth: 560 }}>
       <strong>Темп: меняет паузы, скорость речи сохраняется</strong>
+      <label>
+        Загрузить и заменить готовым MP4 (без генерации и оплаты)
+        <input type="file" accept="video/mp4" disabled={busy} onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          if (file.size > 20 * 1024 * 1024) { setError('MP4 до 20 МБ'); return; }
+          void run(async () => {
+            const upload = await apiPost<{ uploadUrl: string; pathname: string; expectedUrl: string }>(`/admin/tutorial-video-assets/${assetId}/import-upload`);
+            const sent = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: file });
+            if (!sent.ok) throw new Error('Загрузка не удалась');
+            await apiPost(`/admin/tutorial-video-assets/${assetId}/import-assembled`, { pathname: upload.pathname, expectedUrl: upload.expectedUrl });
+          });
+          e.target.value = '';
+        }} />
+      </label>
       {error && <p className="critical">{error}</p>}
       {!estimate && !error && <p className="muted">Загрузка…</p>}
       {estimate && !estimate.editable && estimate.reason && <p className="muted">{reasonText(estimate.reason)}</p>}
@@ -257,7 +272,7 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
           <tbody>
             {versions.map((v) => (
               <tr key={v.id}>
-                <td>{v.kind === 'source' ? 'исходный' : `×${v.factor}`}</td>
+                <td>{v.kind === 'source' ? 'исходный' : v.kind === 'import' ? 'готовый монтаж' : `×${v.factor}`}</td>
                 <td className="muted">{fmt(v.durationMs)}</td>
                 <td>
                   <span

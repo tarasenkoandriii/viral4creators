@@ -1640,7 +1640,7 @@ export type TutorialTempoUnavailableReason =
 
 export interface TutorialVersionRow {
   id: string;
-  kind: 'source' | 'tempo';
+  kind: 'source' | 'tempo' | 'import';
   factor: number;
   preset: 'calm' | 'normal' | 'fast' | null;
   status: 'preparing' | 'pending' | 'complete' | 'failed';

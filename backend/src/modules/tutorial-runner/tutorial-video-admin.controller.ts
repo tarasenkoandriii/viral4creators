@@ -32,6 +32,7 @@ import { SetTutorialVideoSiteTutorialDemoDto } from './dto/set-tutorial-video-si
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
 import { TutorialVideoVersionsService } from '../postprod/tutorial-video-versions.service';
 import { TutorialTempoRequestDto } from '../postprod/dto/tutorial-tempo.dto';
+import { TutorialImportDto } from '../postprod/dto/tutorial-import.dto';
 import { TutorialDemoQualityService } from '../tutorial-quality/demo-quality.service';
 
 function parseBool(v?: string): boolean | undefined {
@@ -136,6 +137,33 @@ export class TutorialVideoAdminController {
   // админки. Для публичного (сценарного) демо версия становится
   // активной ТОЛЬКО по «Одобрить версию» — это и есть повторное
   // одобрение оператором (решение владельца).
+
+  @Post(':id/import-upload')
+  async importUpload(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.importUpload(
+      { kind: 'operator', userId: req.userId },
+      id,
+    );
+  }
+
+  @Post(':id/import-assembled')
+  async importAssembled(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: TutorialImportDto,
+  ) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.versions.importAssembled(
+      { kind: 'operator', userId: req.userId },
+      id,
+      dto.pathname,
+      dto.expectedUrl,
+    );
+  }
 
   @Get(':id/tempo')
   async tempo(

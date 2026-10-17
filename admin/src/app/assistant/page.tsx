@@ -472,6 +472,7 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   const [qualityMsg, setQualityMsg] = useState<string | null>(null);
   const [reportId, setReportId] = useState<string | null>(init?.quality ?? null);
   const [ownAssetId, setOwnAssetId] = useState('');
+  const [ownDeliveryId, setOwnDeliveryId] = useState<string | null>(null);
   const [ownConsent, setOwnConsent] = useState(false);
   const [ownCheck, setOwnCheck] = useState<DemoQualityCheck | null>(null);
   const [ownBusy, setOwnBusy] = useState(false);
@@ -690,6 +691,8 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
         <label style={{ display: 'block' }}><input type="checkbox" checked={ownConsent} onChange={(e) => setOwnConsent(e.target.checked)} />Подтверждаю: это мой проект и разрешаю передать выбранное видео, включая преамбулу и звук, в Gemini для проверки качества.</label>
         <button disabled={ownBusy || !ownConsent || !ownAssetId.trim()} onClick={() => void ownQuality(true)}>Проверить собственный Tutorial</button>{' '}
         <button disabled={ownBusy || !ownAssetId.trim()} onClick={() => void ownQuality(false)}>Обновить собственную проверку</button>
+        <p><button disabled={!ownAssetId.trim()} onClick={() => setOwnDeliveryId(ownAssetId.trim())}>Готовый монтаж: загрузка и версии без генерации</button></p>
+        {ownDeliveryId && <TutorialTempoPanel key={ownDeliveryId} assetId={ownDeliveryId} onChanged={() => {}} />}
         {ownCheck && <QualityReportPanel check={ownCheck} canSeek={false} onSeek={() => {}} onChanged={setOwnCheck} />}
       </details>
 
