@@ -1,3 +1,7 @@
+import {
+  StoryGiftsController,
+  PublicStoryGiftController,
+} from './story-gifts.controller';
 import { ExecutionContext, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -51,6 +55,12 @@ describe('Story-Tales development access', () => {
     expect(findFirst).not.toHaveBeenCalled();
   });
   it('denies every public gift capability, including old media URLs', () => {
+    expect(Reflect.getMetadata('__guards__', StoryGiftsController)).toContain(
+      StoryDevelopmentGuard,
+    );
+    expect(
+      Reflect.getMetadata('__guards__', PublicStoryGiftController),
+    ).toContain(StoryPublicDisabledGuard);
     expect(() => new StoryPublicDisabledGuard().canActivate()).toThrow(
       NotFoundException,
     );

@@ -55,8 +55,7 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
     [introAudio, setIntroAudio] = useState<string | null>(null),
     [mainAudio, setMainAudio] = useState<string | null>(null),
     [profileId, setProfileId] = useState(''),
-    [voiceConsent, setVoiceConsent] = useState(false),
-    [reviewed, setReviewed] = useState(false);
+    [voiceConsent, setVoiceConsent] = useState(false);
   const lock = useRef(false);
   const render =
     view?.renders.find((r) => r.id === selected) || view?.renders[0];
@@ -89,7 +88,6 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
     setVideo(null);
     setIntroAudio(null);
     setMainAudio(null);
-    setReviewed(false);
     if (!renderId || renderStatus! !== 'READY') return;
     let active = true;
     const urls: string[] = [];
@@ -366,40 +364,10 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
           >
             Проверить речь готового видео
           </Button>
-          {render.approvedAt ? (
-            <p>Видео одобрено для ссылки на подарок.</p>
-          ) : (
-            <>
-              <label className="flex gap-2">
-                <input
-                  type="checkbox"
-                  checked={reviewed}
-                  onChange={(e) => setReviewed(e.target.checked)}
-                />
-                Видео просмотрено, преамбула и основная речь проверены. Разрешаю
-                показывать эту версию получателям ссылки на подарок; если ссылка
-                уже создана, видео по ней будет заменено.
-              </label>
-              <Button
-                disabled={
-                  busy ||
-                  !reviewed ||
-                  render.qaStatus !== 'PASS' ||
-                  !render.videoHash
-                }
-                onClick={() =>
-                  void action(() =>
-                    api.post(
-                      `/story-gifts/${giftId}/video/${render.id}/approve`,
-                      { videoHash: render.videoHash, reviewed: true }
-                    )
-                  )
-                }
-              >
-                Одобрить видео для ссылки на подарок
-              </Button>
-            </>
-          )}
+          <p>
+            Видео доступно только владельцу. Публикация отключена на этапе
+            разработки.
+          </p>
           <details>
             <summary>Независимые активы этого выпуска</summary>
             <p className="break-all text-xs">

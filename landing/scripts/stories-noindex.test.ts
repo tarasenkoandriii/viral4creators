@@ -135,33 +135,22 @@ async function main() {
     assert.equal(res.headers.get('X-Robots-Tag'), STORIES_ROBOTS, `${label}: X-Robots-Tag`);
     assert.equal(res.headers.get('Referrer-Policy'), STORIES_REFERRER_POLICY, `${label}: Referrer-Policy`);
   };
+  // Closed development: neither localized routes nor media redirect publicly.
   for (const l of locales) {
-    // Корень поддомена на локали — rewrite, адрес в строке остаётся коротким.
-    const rewrite = call(`${STORIES_SITE_URL}/${l}`);
-    assert.equal(rewrite.status, 200, `/${l}: rewrite`);
-    assert.equal(rewrite.headers.get('x-middleware-rewrite'), `${STORIES_SITE_URL}/${l}/stories`, `/${l}: rewrite`);
-    assertStories(rewrite, `поддомен /${l}`);
-    // Явный путь на поддомене — 308 в канон.
-    const explicit = call(`${STORIES_SITE_URL}/${l}/stories`);
-    assert.equal(explicit.status, 308, `/${l}/stories на поддомене`);
-    assert.equal(explicit.headers.get('location'), `${STORIES_SITE_URL}/${l}`);
-    assertStories(explicit, `поддомен /${l}/stories`);
-    // Главный домен — 308 на поддомен.
-    const main = call(`https://${MAIN}/${l}/stories`);
-    assert.equal(main.status, 308, `главный /${l}/stories`);
-    assert.equal(main.headers.get('location'), `${STORIES_SITE_URL}/${l}`);
-    assertStories(main, `главный /${l}/stories`);
+    for (const url of [`${STORIES_SITE_URL}/${l}`, `${STORIES_SITE_URL}/${l}/stories`, `https://${MAIN}/${l}/stories`]) {
+      const response = call(url);
+      assert.equal(response.status, 404, url);
+      assert.equal(response.headers.get('location'), null);
+      assert.equal(response.headers.get('x-middleware-rewrite'), null);
+      assertStories(response, url);
+    }
   }
-  // Корень поддомена без локали — редирект на локаль, тоже с заголовками.
   const root = call(`${STORIES_SITE_URL}/`);
-  assert.ok([307, 308].includes(root.status), `корень поддомена: ${root.status}`);
-  assert.equal(new URL(root.headers.get('location')!).pathname, '/ru');
-  assertStories(root, 'корень поддомена');
-  // Чужая страница на поддомене (SITE_URL не задан — отдаётся как есть) —
-  // всё равно не индексируется: это адрес поддомена Story‑Tales.
-  assertStories(call(`${STORIES_SITE_URL}/ru/blog`), 'чужая страница на поддомене');
-  // Порт dev-стенда отбрасывается.
-  assertStories(call(`http://${STORIES_HOST}:3003/ru`, `${STORIES_HOST}:3003`), 'порт');
+  assert.equal(root.status, 404);
+  assertStories(root, 'closed root');
+  assert.equal(call(`https://${MAIN}/stories-media/demo.mp4`).status, 404);
+  assertStories(call(`${STORIES_SITE_URL}/ru/blog`), 'closed subdomain');
+  assertStories(call(`http://${STORIES_HOST}:3003/ru`, `${STORIES_HOST}:3003`), 'port');
   // Соседи — как были, без noindex.
   const greet = call(`https://${GREETING_HOST}/ru`);
   assert.equal(greet.headers.get('x-middleware-rewrite'), `https://${GREETING_HOST}/ru/greetings`);
@@ -197,7 +186,7 @@ async function main() {
   const disallowed = /DISALLOWED_PATHS = \[([^\]]*)\]/.exec(robots)?.[1] ?? '';
   assert.doesNotMatch(disallowed, /'\/'|stories/, 'robots.txt запрещает обход Story‑Tales: robots не увидит noindex');
 
-  console.log('stories-noindex: заголовки next.config/middleware, rewrite/308 поддомена и главного домена, sitemap и robots проверены');
+  console.log('stories-noindex: заголовки next.config/middleware, закрытый доступ 404 для поддомена, маршрутов и медиа, sitemap и robots проверены');
 }
 
 void main().catch((error) => {
