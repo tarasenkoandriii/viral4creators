@@ -490,7 +490,7 @@ function VideoFragmentForm({
           Провайдер
           <select value={provider} onChange={(e) => setProvider(e.target.value as 'grok' | 'hedra')}>
             <option value="grok">Grok Imagine (image-to-video)</option>
-            {hedraEnabled && <option value="hedra">Hedra (говорящая голова)</option>}
+            {hedraEnabled && <option value="hedra">Hedra Character-3 (говорящая голова)</option>}
           </select>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
@@ -543,27 +543,36 @@ function VoiceFragmentForm({
   const [voices, setVoices] = useState<VirtualStudioVoiceOption[]>([]);
   const [voiceId, setVoiceId] = useState('');
   const [text, setText] = useState(defaultText);
+  const [language, setLanguage] = useState('ru');
   const [loadingVoices, setLoadingVoices] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     setLoadingVoices(true);
+    setVoiceId('');
+    setVoices([]);
     listVirtualStudioVoices(provider)
       .then((res) => {
+        if (!active) return;
         setVoices(res.voices);
-        setVoiceId(res.voices[0]?.voiceId ?? '');
+        // Catalogue order is not a voice preference. Never silently replace Nova.
+        setVoiceId(provider === 'resemble'
+          ? res.voices.find((v) => v.voiceId === 'a9fc5a41')?.voiceId ?? ''
+          : '');
       })
-      .catch(() => setVoices([]))
-      .finally(() => setLoadingVoices(false));
+      .catch(() => { if (active) setVoices([]); })
+      .finally(() => { if (active) setLoadingVoices(false); });
+    return () => { active = false; };
   }, [provider]);
 
   async function run() {
-    if (!voiceId || !text.trim()) return;
+    if (running || loadingVoices || !voiceId || !text.trim()) return;
     setRunning(true);
     setError(null);
     try {
-      await createVirtualStudioVoiceFragment(studioId, { provider, voiceId, text: text.trim() });
+      await createVirtualStudioVoiceFragment(studioId, { provider, voiceId, text: text.trim(), language });
       onCreated();
     } catch (err) {
       setError(err instanceof ApiRequestError ? err.message : 'Не удалось озвучить');
@@ -586,7 +595,8 @@ function VoiceFragmentForm({
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           Голос
-          <select value={voiceId} onChange={(e) => setVoiceId(e.target.value)} disabled={loadingVoices}>
+          <select value={voiceId} onChange={(e) => setVoiceId(e.target.value)} disabled={loadingVoices || running}>
+            <option value="">Выберите голос</option>
             {voices.map((v) => (
               <option key={v.voiceId} value={v.voiceId}>
                 {v.name}
@@ -595,11 +605,21 @@ function VoiceFragmentForm({
           </select>
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+          Язык реплики
+          <select value={language} disabled={running} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="ru">Русский</option>
+            <option value="uk">Українська</option>
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+            <option value="es">Español</option>
+          </select>
+        </label>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           Текст реплики
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} />
         </label>
         <div>
-          <button type="button" disabled={running || !voiceId} onClick={() => void run()}>
+          <button type="button" disabled={running || loadingVoices || !voiceId || !text.trim()} onClick={() => void run()}>
             {running ? 'Озвучиваем…' : 'Озвучить'}
           </button>
         </div>
