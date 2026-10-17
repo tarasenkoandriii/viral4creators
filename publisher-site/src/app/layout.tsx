@@ -1,3 +1,4 @@
+import LandingVisits from '../components/LandingVisits';
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
@@ -85,6 +86,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </p>
           </div>
         </footer>
+        <LandingVisits />
         <Track
           apiOrigin={env.apiOrigin}
           publicKey={env.publicKey}

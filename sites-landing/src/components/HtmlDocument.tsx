@@ -1,3 +1,4 @@
+import LandingVisits from './LandingVisits';
 import type { ReactNode } from 'react';
 import { assistEnv, eventsEndpoint } from '../lib/assist-env';
 import type { LoaderTag } from '../lib/widget-loader';
@@ -28,6 +29,7 @@ export function HtmlDocument({ lang, children, widget = null }: { lang: string; 
     <html lang={lang} dir="ltr">
       <body>
         {children}
+        <LandingVisits />
         <WebVitals />
         <Telemetry endpoint={events} />
         {widget && <LiveWidget src={widget.src} pk={widget.pk} lang={widget.lang} />}

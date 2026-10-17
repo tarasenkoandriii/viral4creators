@@ -1,3 +1,4 @@
+import LandingVisits from './LandingVisits';
 import type { ReactNode } from 'react';
 import { LOCALE_DIR, type Locale } from '../lib/i18n';
 
@@ -41,7 +42,7 @@ export function HtmlDocument({
       dir={LOCALE_DIR[locale]}
       data-scroll-behavior="smooth"
     >
-      <body>{children}</body>
+      <body>{children}<LandingVisits /></body>
     </html>
   );
 }

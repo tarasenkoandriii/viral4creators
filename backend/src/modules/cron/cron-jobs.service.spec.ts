@@ -107,6 +107,7 @@ function build() {
       .mockResolvedValue({ count: 0, hasMore: false }),
   };
   const prisma = {
+    landingVisit: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     adminSession: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     userSession: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     // Этап 140: короткие входы через Google убираются тем же прогоном.
@@ -450,6 +451,17 @@ describe('CronJobsService — уборка сессий партиями', () =>
     ]);
   });
 
+  it('removes landing views older than 90 days and reports the retention count', async () => {
+    const { service, prisma } = build();
+    prisma.landingVisit.deleteMany.mockResolvedValue({ count: 7 });
+    const before = Date.now();
+    const result = await service.runCleanupSessions();
+    expect(result.deletedLandingVisits).toBe(7);
+    const cutoff =
+      prisma.landingVisit.deleteMany.mock.calls[0][0].where.createdAt.lt.getTime();
+    expect(cutoff).toBeGreaterThanOrEqual(before - 90 * 86400000);
+    expect(cutoff).toBeLessThanOrEqual(Date.now() - 90 * 86400000);
+  });
   it('уборка идёт партиями до конца, а не одной (этап 40, А-1.5)', async () => {
     const { service, sessionService } = build();
     sessionService.cleanupExpiredSessions
@@ -590,6 +602,7 @@ describe('CronJobsService — уборка сессий партиями', () =>
 
     expect(result).toEqual({
       deletedCronLogs: 0,
+      deletedLandingVisits: 0,
       deletedCount: 0,
       deletedBlobs: 0,
       hasMoreSessions: false,

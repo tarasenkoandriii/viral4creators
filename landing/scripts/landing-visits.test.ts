@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { landingFor } from '../src/components/LandingVisits';
+assert.equal(landingFor('tutorial.viral4creators.app','/uk'),'tutorial');
+assert.equal(landingFor('welcome.viral4creators.app','/en/greetings'),'greeting');
+assert.equal(landingFor('welcome.viral4creators.app','/de'),'main');
+assert.equal(landingFor('ai-publisher.org','/'),'publisher');
+assert.equal(landingFor('assist.viral4creators.app','/en/pricing'),'assistant');
+assert.equal(landingFor('story-tales.viral4creators.app','/ru'),null);
+assert.equal(landingFor('welcome.viral4creators.app','/ru/stories'),null);
+assert.equal(landingFor('preview.vercel.app','/ru'),null);
+const canonical=readFileSync(resolve('src/components/LandingVisits.tsx'),'utf8');
+for(const app of ['sites-landing','publisher-site']) assert.equal(readFileSync(resolve('../'+app+'/src/components/LandingVisits.tsx'),'utf8'),canonical);
+assert.ok(canonical.includes("referrerPolicy: 'no-referrer'"));
+assert.ok(!canonical.includes('document.referrer') && !canonical.includes('location.search') && !canonical.includes('localStorage') && !canonical.includes('sessionStorage'));
+console.log('landing-visits: product classification, closed Story, production hosts, source-free transport and client parity checked');

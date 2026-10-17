@@ -1,3 +1,8 @@
+import {
+  LANDINGS,
+  visitOriginAllowed,
+} from './modules/landing-visits/landing-visits.contract';
+import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 /**
  * Глобальная настройка приложения backend: префикс, слои express,
  * CORS, pipe/фильтр/интерцептор. Вынесено из `main.ts` (заход 12, аудит
@@ -76,7 +81,7 @@ export function configureApp(
   // wildcard entry to cover previews. See doc/VERCEL-READINESS-AUDIT.md,
   // finding #7, and doc/DEPLOYMENT.md for the full two-project Vercel setup.
   const allowedOrigins = config.cors.origins;
-  app.enableCors({
+  const corsOptions: CorsOptions = {
     origin: (
       requestOrigin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
@@ -98,7 +103,31 @@ export function configureApp(
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true,
-  });
+  };
+  app.enableCors(
+    (
+      req: Request,
+      callback: (error: Error | null, options: CorsOptions) => void,
+    ) => {
+      // Only the cookie-free collection route accepts landing origins. This does
+      // not grant landing JavaScript access to authenticated/admin API routes.
+      if (
+        /^\/api\/public\/landing-visits\/?$/.test(req.path) &&
+        ['POST', 'OPTIONS'].includes(req.method) &&
+        LANDINGS.some((landing) =>
+          visitOriginAllowed(req.headers.origin, landing),
+        )
+      ) {
+        return callback(null, {
+          origin: true,
+          credentials: false,
+          methods: ['POST', 'OPTIONS'],
+          allowedHeaders: ['Content-Type'],
+        });
+      }
+      callback(null, corsOptions);
+    },
+  );
   // Сразу за `cors`: его `next(err)` при чужом Origin — 403, не 500.
   app.use(corsDeniedHandler);
 

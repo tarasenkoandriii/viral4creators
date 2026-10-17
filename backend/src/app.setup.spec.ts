@@ -230,4 +230,19 @@ describe('configureApp (backend): то, что включает main.ts', () => 
     expect(call).toBeGreaterThan(-1);
     expect(listen).toBeGreaterThan(call);
   });
+  it('landing collection preflight is cookie-free and does not open other API routes', async () => {
+    const origin = 'https://tutorial.viral4creators.app';
+    const allowed = await request(app.getHttpServer())
+      .options('/api/public/landing-visits')
+      .set('Origin', origin)
+      .set('Access-Control-Request-Method', 'POST');
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers['access-control-allow-origin']).toBe(origin);
+    expect(allowed.headers['access-control-allow-credentials']).toBeUndefined();
+    const denied = await request(app.getHttpServer())
+      .options('/api/admin/landing-visits')
+      .set('Origin', origin)
+      .set('Access-Control-Request-Method', 'GET');
+    expect(denied.status).toBe(403);
+  });
 });

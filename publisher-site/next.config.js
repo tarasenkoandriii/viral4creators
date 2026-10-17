@@ -163,7 +163,7 @@ function contentSecurityPolicy(apiOrigin) {
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    `connect-src 'self' ${apiOrigin}`,
+    `connect-src 'self' ${apiOrigin} https://backend-iota-ruddy-57.vercel.app`,
     "img-src 'self' https: data:",
     "font-src 'self'",
     "object-src 'none'",

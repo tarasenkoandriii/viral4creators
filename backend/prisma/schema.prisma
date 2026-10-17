@@ -5286,3 +5286,15 @@ model StoryVideoRender {
   @@index([parentNarrationKey])
   @@map("story_video_renders")
 }
+
+/// First-party landing page views. No source, URL, cookies or raw IP.
+model LandingVisit {
+  id          String   @id @db.Uuid
+  landing     String   @db.VarChar(20)
+  locale      String   @db.VarChar(5)
+  visitorHash String?  @db.VarChar(64)
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt, landing, locale])
+  @@map("landing_visits")
+}

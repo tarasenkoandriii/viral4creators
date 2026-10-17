@@ -174,6 +174,7 @@ export interface SweepOrphansResult {
 export interface CleanupSessionsResult {
   /** Строк журнала кронов удалено по ретенции (аудит 27.09.2026). */
   deletedCronLogs: number;
+  deletedLandingVisits: number;
   deletedCount: number;
   deletedBlobs: number;
   hasMoreSessions: boolean;
@@ -941,6 +942,7 @@ export class CronJobsService {
       );
       return {
         deletedCronLogs: 0,
+        deletedLandingVisits: 0,
         deletedCount: 0,
         deletedBlobs: 0,
         hasMoreSessions: false,
@@ -1004,6 +1006,17 @@ export class CronJobsService {
     //
     // Best-effort, как и уборка скетчей: сбой чистки журнала не должен
     // ронять уборку сессий, ради которой джоб и существует.
+    let deletedLandingVisits = 0;
+    try {
+      const removed = await this.prisma.landingVisit.deleteMany({
+        where: { createdAt: { lt: new Date(Date.now() - 90 * 86400000) } },
+      });
+      deletedLandingVisits = removed.count;
+    } catch {
+      this.logger.warn(
+        'Не удалось очистить статистику лендингов старше 90 дней',
+      );
+    }
     let cronLogsDeleted = 0;
     try {
       const cutoff = new Date(
@@ -1283,6 +1296,7 @@ export class CronJobsService {
 
     return {
       deletedCronLogs: cronLogsDeleted,
+      deletedLandingVisits,
       deletedCount,
       deletedBlobs,
       hasMoreSessions: expired.hasMore,

@@ -1,3 +1,4 @@
+import { LandingVisitsModule } from './modules/landing-visits/landing-visits.module';
 import { StoryGiftsModule } from './modules/story-gifts/story-gifts.module';
 import { SonioxObservabilityModule } from './modules/soniox-observability/soniox-observability.module';
 /**
@@ -117,6 +118,7 @@ import { SessionOwnerGuard } from './modules/telegram-auth/session-owner.guard';
     TelegramAuthModule,
     AdminAuthModule,
     AdminPanelModule,
+    LandingVisitsModule,
     TelegramLoginModule,
     ProjectModule,
     ProductAnalogModule,

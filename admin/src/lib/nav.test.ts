@@ -28,7 +28,7 @@ const appDir = path.join(__dirname, '..', 'app');
 
 // ── 1 ──
 const hrefs = ALL_NAV_LINKS.map((l) => l.href);
-assert.equal(hrefs.length, 33, 'в меню 33 рабочие страницы');
+assert.equal(hrefs.length, 34, 'в меню 34 рабочие страницы');
 assert.equal(new Set(hrefs).size, hrefs.length, 'без дублей');
 assert.equal(NAV_GROUPS.length, 8, 'восемь групп');
 for (const g of NAV_GROUPS) {
