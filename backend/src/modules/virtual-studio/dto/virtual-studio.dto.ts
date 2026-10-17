@@ -92,6 +92,10 @@ export class CreateVoiceFragmentDto {
 
 /** POST /admin/virtual-studio/:id/fragments/analysis (§3.3, §4.4, §5) */
 export class CreateAnalysisFragmentDto {
+  @IsOptional()
+  @IsIn(['content', 'quality'])
+  purpose?: 'content' | 'quality';
+
   @IsString()
   @MaxLength(2000)
   sourceVideoUrl!: string;

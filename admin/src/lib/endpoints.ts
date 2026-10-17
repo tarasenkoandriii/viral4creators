@@ -1268,7 +1268,7 @@ export function createVirtualStudioVoiceFragment(
 
 export function createVirtualStudioAnalysisFragment(
   studioId: string,
-  body: { sourceVideoUrl: string; brandManifestId?: string },
+  body: { sourceVideoUrl: string; brandManifestId?: string; purpose?: 'content' | 'quality' },
 ) {
   return apiPost<VirtualStudioFragment>(`/admin/virtual-studio/${studioId}/fragments/analysis`, body);
 }

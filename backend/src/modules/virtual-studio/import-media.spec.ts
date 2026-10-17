@@ -40,3 +40,91 @@ describe('approved studio imports', () => {
     expect(() => importedImageType(Buffer.from('not an image'))).toThrow();
   });
 });
+
+import {
+  VirtualStudioService,
+  STUDIO_QUALITY_PROMPT,
+} from './virtual-studio.service';
+
+describe('studio quality feedback', () => {
+  const fetchBefore = global.fetch;
+  afterEach(() => {
+    global.fetch = fetchBefore;
+  });
+
+  function setup() {
+    const generateContent = jest
+      .fn()
+      .mockResolvedValue({ text: 'WARN: проверить липсинк' });
+    const recordGemini = jest.fn();
+    const deleteFile = jest.fn().mockResolvedValue(undefined);
+    global.fetch = jest.fn().mockResolvedValue(
+      new Response(new Uint8Array([1, 2]), {
+        headers: { 'content-type': 'video/mp4' },
+      }),
+    );
+    const service = Object.assign(
+      Object.create(VirtualStudioService.prototype),
+      {
+        genai: { models: { generateContent } },
+        geminiFiles: {
+          uploadAndWaitActive: jest.fn().mockResolvedValue({
+            uri: 'gemini://test',
+            mimeType: 'video/mp4',
+            name: 'test',
+          }),
+          deleteFile,
+        },
+        aiUsage: { recordGemini },
+        settings: { get: jest.fn().mockResolvedValue('gemini-4-argon') },
+      },
+    ) as {
+      assessVideo(
+        url: string,
+        purpose?: 'content' | 'quality',
+      ): Promise<string>;
+    };
+    return { service, generateContent, recordGemini, deleteFile };
+  }
+
+  it('uses quality rubric and selected model, records actual model and cleans uploaded media', async () => {
+    const t = setup();
+    const result = await t.service.assessVideo(
+      'https://example.test/own.mp4',
+      'quality',
+    );
+    expect(t.generateContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'gemini-4-argon',
+        contents: expect.arrayContaining([{ text: STUDIO_QUALITY_PROMPT }]),
+      }),
+    );
+    expect(t.recordGemini).toHaveBeenCalledWith(expect.anything(), {
+      operation: 'virtual-studio-analysis',
+      model: 'gemini-4-argon',
+    });
+    expect(result).toContain('Модель: gemini-4-argon');
+    expect(
+      t.generateContent.mock.calls[0][0].contents[0].videoMetadata,
+    ).toEqual({ fps: 10 });
+    expect(t.deleteFile).toHaveBeenCalledWith('test');
+  });
+
+  it('preserves content analysis when purpose is omitted', async () => {
+    const t = setup();
+    await t.service.assessVideo('https://example.test/own.mp4');
+    expect(t.generateContent.mock.calls[0][0].contents[1].text).not.toBe(
+      STUDIO_QUALITY_PROMPT,
+    );
+  });
+
+  it('removes uploaded media even when Gemini fails, without inventing a quality result', async () => {
+    const t = setup();
+    t.generateContent.mockRejectedValue(new Error('unavailable'));
+    await expect(
+      t.service.assessVideo('https://example.test/own.mp4', 'quality'),
+    ).rejects.toThrow('unavailable');
+    expect(t.deleteFile).toHaveBeenCalledWith('test');
+    expect(t.recordGemini).not.toHaveBeenCalled();
+  });
+});

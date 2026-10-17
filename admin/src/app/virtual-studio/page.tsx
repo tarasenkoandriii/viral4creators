@@ -334,7 +334,7 @@ function StudioDetail({
   }
 
   const readyVoiceFragments = fragments.filter((f) => f.kind === 'VOICE' && f.status === 'complete');
-  const lastAnalysis = fragments.find((f) => f.kind === 'ANALYSIS' && f.status === 'complete');
+  const lastAnalysis = fragments.find((f) => f.kind === 'ANALYSIS' && f.status === 'complete' && f.text !== 'Проверка качества: липсинк, мимика, мерцание');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -630,6 +630,7 @@ function VoiceFragmentForm({
 
 function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCreated: () => void }) {
   const [sourceVideoUrl, setSourceVideoUrl] = useState('');
+  const [purpose, setPurpose] = useState<'content' | 'quality'>('content');
   const [brandManifestId, setBrandManifestId] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -641,6 +642,7 @@ function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCre
     try {
       await createVirtualStudioAnalysisFragment(studioId, {
         sourceVideoUrl: sourceVideoUrl.trim(),
+        purpose,
         brandManifestId: brandManifestId.trim() || undefined,
       });
       setSourceVideoUrl('');
@@ -658,6 +660,14 @@ function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCre
       {error && <p className="critical" style={{ fontSize: 13, marginBottom: 8 }}>{error}</p>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 480 }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+          Режим анализа
+          <select value={purpose} onChange={(e) => setPurpose(e.target.value as 'content' | 'quality')} disabled={running}>
+            <option value="content">Содержание и черновик реплики</option>
+            <option value="quality">Качество: липсинк, мимика, мерцание</option>
+          </select>
+        </label>
+        {purpose === 'quality' && <p className="muted">Видео со звуком будет передано Gemini. Отчёт с таймкодами — оценка модели, не одобрение владельца. Новый рендер и синтез речи не запускаются.</p>}
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           URL видео (свой видео-фрагмент или ролик из портфолио)
           <input type="text" value={sourceVideoUrl} onChange={(e) => setSourceVideoUrl(e.target.value)} />
         </label>
@@ -666,7 +676,7 @@ function AnalysisFragmentForm({ studioId, onCreated }: { studioId: string; onCre
           <input type="text" value={brandManifestId} onChange={(e) => setBrandManifestId(e.target.value)} />
         </label>
         <div>
-          <button type="button" disabled={running} onClick={() => void run()}>
+          <button type="button" disabled={running || !sourceVideoUrl.trim()} onClick={() => void run()}>
             {running ? 'Анализируем…' : 'Проанализировать'}
           </button>
         </div>
