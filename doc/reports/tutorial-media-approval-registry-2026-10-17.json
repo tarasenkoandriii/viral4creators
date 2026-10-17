@@ -25,6 +25,35 @@
         "sketch animation",
         "final Tutorial montage"
       ]
+    },
+    {
+      "kind": "audio_video_reference",
+      "path": "outputs/narrator-profile/approved/approved-audio-video-2026-10-17.mp4",
+      "originalFilename": "generated-e38e6c69-6989-4147-b8bd-8d05b0962c31.mp4",
+      "sha256": "4a74b9716065c57805c6eb04e3e4f3bcb38b6122f6d5dd41174de2dabf3b2cb0",
+      "userVerdict": "идеальное качество озвучки и видеоряда + хедра для липсинка",
+      "approvalScope": [
+        "audio quality of this exact file",
+        "video quality of this exact file"
+      ],
+      "durationSeconds": 9.08,
+      "video": {
+        "codec": "h264",
+        "width": 720,
+        "height": 1280,
+        "fps": 25
+      },
+      "audio": {
+        "codec": "aac",
+        "sampleRate": 22050,
+        "channels": 1
+      },
+      "lipSyncProviderChosen": "Hedra",
+      "limitations": [
+        "File does not identify synthesis model or voice; do not infer them from filename or codec.",
+        "Hedra is the user-selected lip-sync path; no new Hedra job was launched and no new output inherits approval."
+      ],
+      "storage": "Original bytes copied locally; no public upload, no media binary in Git."
     }
   ],
   "rejected": [
@@ -40,5 +69,5 @@
       "reason": "Owner rejected flickering, unnatural facial expression and speech quality."
     }
   ],
-  "nextGate": "Reproduce the approved audio quality through the server path on a short sample and obtain explicit user acceptance before another paid full montage. Animation approval is independent. Reddit publication remains paused."
+  "nextGate": "Use the user-approved audio/video file as the immutable reference. Hedra is the selected lip-sync path. Preserve audio bytes/tracks wherever possible; assess any new output separately before full montage or Reddit publication. Nova remains the default."
 }
