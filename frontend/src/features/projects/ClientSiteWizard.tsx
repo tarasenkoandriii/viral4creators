@@ -553,10 +553,18 @@ export function ClientSiteWizard({
    */
   const submitStep = async (click?: StepClick) => {
     if (!draft) return;
+    const checkboxSet = new Set(
+      exploration?.elements
+        .filter((e) => e.tag === 'input' && e.type === 'checkbox')
+        .map((e) => e.selector) ?? []
+    );
+    const checkboxSelectors = Object.keys(values).filter(
+      (selector) => checkboxSet.has(selector) && values[selector] === 'true'
+    );
     const fills = Object.entries(values)
-      .filter(([, v]) => v.length > 0)
+      .filter(([selector, v]) => v.length > 0 && !checkboxSet.has(selector))
       .map(([selector, value]) => ({ selector, value }));
-    if (fills.length === 0 && !click) {
+    if (fills.length === 0 && !click && checkboxSelectors.length === 0) {
       setError(t.nothingToDo);
       return;
     }
@@ -566,6 +574,7 @@ export function ClientSiteWizard({
         return await stepSite(projectId, {
           expectedVersion: draft.version,
           fills,
+          ...(checkboxSelectors.length ? { checkboxSelectors } : {}),
           ...click,
         });
       } catch (err) {
@@ -1710,12 +1719,19 @@ function PageStage(props: {
                 icon={el.danger ? <AlertTriangle size={14} /> : undefined}
                 disabled={busy}
                 onClick={() =>
-                  el.danger
-                    ? setConfirming(el)
-                    : props.onStep(stepClick(el, false))
+                  el.tag === 'input' && el.type === 'checkbox'
+                    ? set(
+                        el.selector,
+                        values[el.selector] === 'true' ? '' : 'true'
+                      )
+                    : el.danger
+                      ? setConfirming(el)
+                      : props.onStep(stepClick(el, false))
                 }
               >
-                {el.visibleText}
+                {el.tag === 'input' && el.type === 'checkbox'
+                  ? `${values[el.selector] === 'true' ? '☑' : '☐'} · ${el.label}`
+                  : el.visibleText}
               </Button>
             ))}
           </div>

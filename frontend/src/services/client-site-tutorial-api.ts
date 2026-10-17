@@ -77,6 +77,7 @@ export async function stepSite(
   input: {
     expectedVersion: number;
     fills: Array<{ selector: string; value: string }>;
+    checkboxSelectors?: string[];
   } & Partial<StepClick>
 ): Promise<ClientSiteRoundResult> {
   try {

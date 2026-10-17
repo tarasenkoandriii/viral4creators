@@ -502,6 +502,7 @@ export class ClientSiteTutorialService {
       expectedVersion: number;
       fills: Array<{ selector: string; value: string }>;
       clickSelector?: string;
+      checkboxSelectors?: string[];
       /** Видимый текст выбранной кнопки (из `elements[]` прошлого раунда). */
       clickText?: string;
       /** П-Т13: человек подтвердил «опасный» клик в диалоге мастера. */
@@ -511,7 +512,11 @@ export class ClientSiteTutorialService {
   ): Promise<RoundResult> {
     const { draft } = await this.loadEditableDraft(userId, projectId);
 
-    if (input.fills.length === 0 && !input.clickSelector) {
+    if (
+      input.fills.length === 0 &&
+      !input.clickSelector &&
+      !input.checkboxSelectors?.length
+    ) {
       throw new BadRequestException(
         'раунд должен что-то делать: заполните хотя бы одно поле или выберите кнопку',
       );
@@ -522,6 +527,10 @@ export class ClientSiteTutorialService {
         kind: 'fill' as const,
         selector: f.selector,
         value: f.value,
+      })),
+      ...(input.checkboxSelectors ?? []).map((selector) => ({
+        kind: 'click' as const,
+        selector,
       })),
       ...(input.clickSelector
         ? [{ kind: 'click' as const, selector: input.clickSelector }]
@@ -540,6 +549,13 @@ export class ClientSiteTutorialService {
     // дальше без галочки. До занятия версии, слота и браузера.
     const access = await this.gateDrive(userId, draft, ipHash);
     this.assertDangerConfirmed(access, input);
+    for (const selector of input.checkboxSelectors ?? []) {
+      this.assertDangerConfirmed(access, {
+        clickSelector: selector,
+        clickText: selector,
+        confirmDanger: input.confirmDanger,
+      });
+    }
 
     return this.runAndPersist(
       userId,

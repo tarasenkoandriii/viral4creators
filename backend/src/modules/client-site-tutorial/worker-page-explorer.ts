@@ -235,10 +235,22 @@ export class WorkerPageExplorer implements PageExplorer {
     }
     const fills = request.actions.filter((a) => a.kind === 'fill');
     const clicks = request.actions.filter((a) => a.kind === 'click');
-    if (clicks.length > 1 || fills.length > FILLS_MAX) {
+    if (clicks.length > 21 || fills.length > FILLS_MAX) {
       throw new BadRequestException(
         'слишком много действий за шаг для изолированного браузера',
       );
+    }
+    const batchedReplay: WorkerPlan['replay'] =
+      strict && clicks.length > 1
+        ? [
+            { kind: 'goto', url: request.url },
+            ...request.actions.map((a) =>
+              a.kind === 'fill' ? { ...a, passwordOnly: false } : a,
+            ),
+          ]
+        : null;
+    if (batchedReplay && batchedReplay.length > REPLAY_STEPS_MAX) {
+      throw new BadRequestException('слишком много действий за один раунд');
     }
     const last = request.actions[request.actions.length - 1];
     const reg = request.autoLogin?.registry;
@@ -249,12 +261,14 @@ export class WorkerPageExplorer implements PageExplorer {
         allowedOrigin: request.allowedOrigin,
         lockUrls: [request.url, request.allowedOrigin],
         cookies: request.cookies,
-        clicks: clicks.map((a) => a.selector),
-        fills: fills.map((a) => ({
-          selector: a.selector,
-          value: (a as { value: string }).value,
-        })),
-        replay: null,
+        clicks: batchedReplay ? [] : clicks.map((a) => a.selector),
+        fills: batchedReplay
+          ? []
+          : fills.map((a) => ({
+              selector: a.selector,
+              value: (a as { value: string }).value,
+            })),
+        replay: batchedReplay,
         registry: reg
           ? {
               telegramId: reg.telegramId,

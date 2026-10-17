@@ -568,6 +568,32 @@ describe('лимиты (§9)', () => {
 });
 
 describe('/step и оптимистичная блокировка', () => {
+  it('галочка и submit выполняются в одном раунде до снимка результата', async () => {
+    const { service, explorer, clientSiteTutorialDraft } = setup();
+    await service.step('user1', 'proj1', {
+      expectedVersion: 3,
+      fills: [{ selector: '#name', value: 'Demo' }],
+      checkboxSelectors: ['#consent'],
+      clickSelector: '#submit',
+      clickText: 'Отправить',
+    });
+    expect(explorer.runRound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actions: [
+          { kind: 'fill', selector: '#name', value: 'Demo' },
+          { kind: 'click', selector: '#consent' },
+          { kind: 'click', selector: '#submit' },
+        ],
+      }),
+    );
+    const data = clientSiteTutorialDraft.updateMany.mock.calls.at(-1)[0].data;
+    expect(data.stepsPerRound).toEqual([1, 3]);
+    expect(data.steps.slice(-2)).toEqual([
+      { kind: 'click', selector: '#consent' },
+      { kind: 'click', selector: '#submit' },
+    ]);
+  });
+
   it('раунд из двух полей и кнопки — три шага и ОДИН кадр', async () => {
     const { service, clientSiteTutorialDraft } = setup();
 

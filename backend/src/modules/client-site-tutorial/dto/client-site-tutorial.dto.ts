@@ -10,6 +10,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayUnique,
   ArrayMinSize,
   IsArray,
   Equals,
@@ -74,6 +75,16 @@ export class StepRequestDto {
   @IsString()
   @MaxLength(MAX_SELECTOR_LENGTH)
   clickSelector?: string;
+
+  /** Explicit checkbox clicks batched with this form submission. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_FIELDS_PER_ROUND)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(MAX_SELECTOR_LENGTH, { each: true })
+  checkboxSelectors?: string[];
 
   /**
    * П-Т13: видимый текст выбранной кнопки — тот, что сервер отдал в
