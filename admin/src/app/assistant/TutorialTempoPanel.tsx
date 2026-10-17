@@ -15,7 +15,7 @@
 // ffmpeg-api (расход пишется на оператора). Скорость речи не меняется —
 // только паузы.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   approveTutorialVersion,
   getTutorialTempo,
@@ -96,6 +96,17 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deliveryStage, setDeliveryStage] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewEnded, setPreviewEnded] = useState(false);
+  const [previewTime, setPreviewTime] = useState(0);
+  const previewVideo = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (!selectedFile) { setPreviewUrl(null); return; }
+    const url = URL.createObjectURL(selectedFile);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedFile]);
 
   const loadVersions = useCallback(() => {
     getTutorialVersions(assetId)
@@ -162,23 +173,38 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 4px', maxWidth: 560 }}>
       <strong>Темп: меняет паузы, скорость речи сохраняется</strong>
       <label>
-        Загрузить и заменить готовым MP4 (без генерации и оплаты)
+        Выбрать готовый MP4 для проверки (без генерации и оплаты)
         <input type="file" accept="video/mp4" disabled={busy} onChange={(e) => {
           const file = e.target.files?.[0];
           if (!file) return;
           if (file.size > 20 * 1024 * 1024) { setError('MP4 до 20 МБ'); return; }
-          void run(async () => {
-            setDeliveryStage('Получение адреса загрузки');
-            const upload = await apiPost<{ uploadUrl: string; pathname: string; expectedUrl: string }>(`/admin/tutorial-video-assets/${assetId}/import-upload`);
-            setDeliveryStage('Передача MP4 в хранилище');
-            const sent = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: file });
-            if (!sent.ok) throw new Error(`Хранилище ответило HTTP ${sent.status}`);
-            setDeliveryStage('Проверка MP4 и активация версии');
-            await apiPost(`/admin/tutorial-video-assets/${assetId}/import-assembled`, { pathname: upload.pathname, expectedUrl: upload.expectedUrl });
-          });
+          setSelectedFile(file); setPreviewEnded(false); setPreviewTime(0); setError(null); setDeliveryStage('');
           e.target.value = '';
         }} />
       </label>
+      {selectedFile && previewUrl && <div>
+        <p>{selectedFile.name} · {(selectedFile.size / 1024 / 1024).toFixed(2)} МБ</p>
+        <video ref={previewVideo} aria-label="Предпросмотр готового Tutorial" src={previewUrl} controls playsInline preload="auto" style={{ width: '100%', maxHeight: 520 }}
+          onTimeUpdate={(e) => setPreviewTime(e.currentTarget.currentTime)}
+          onEnded={() => setPreviewEnded(true)}
+          onError={() => setError('Плеер не смог прочитать выбранный MP4')} />
+        <p>{previewEnded ? 'Предпросмотр: воспроизведение завершено' : `Предпросмотр: ${previewTime.toFixed(1)} с`}. Файл пока не загружен, действующая версия не изменена.</p>
+        <button type="button" disabled={busy} onClick={() => {
+          setPreviewEnded(false);
+          const video = previewVideo.current;
+          if (video) { video.currentTime = 0; void video.play().catch(() => setError('Не удалось начать воспроизведение')); }
+        }}>Воспроизвести сначала</button>{' '}
+        <button type="button" disabled={busy || !!error} onClick={() => void run(async () => {
+          setDeliveryStage('Получение адреса загрузки');
+          const upload = await apiPost<{ uploadUrl: string; pathname: string; expectedUrl: string }>(`/admin/tutorial-video-assets/${assetId}/import-upload`);
+          setDeliveryStage('Передача MP4 в хранилище');
+          const sent = await fetch(upload.uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'video/mp4' }, body: selectedFile });
+          if (!sent.ok) throw new Error(`Хранилище ответило HTTP ${sent.status}`);
+          setDeliveryStage('Проверка MP4 и активация версии');
+          await apiPost(`/admin/tutorial-video-assets/${assetId}/import-assembled`, { pathname: upload.pathname, expectedUrl: upload.expectedUrl });
+          setSelectedFile(null);
+        })}>Загрузить и сделать действующим</button>
+      </div>}
       {deliveryStage && <p className="muted">{deliveryStage}{!busy && !error ? ' — готово' : ''}</p>}
       {error && <p className="critical">{error}</p>}
       {!estimate && !error && <p className="muted">Загрузка…</p>}
