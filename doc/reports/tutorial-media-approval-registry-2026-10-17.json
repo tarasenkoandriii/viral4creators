@@ -64,6 +64,34 @@
         "evidence": "doc/reports/greeting-performance-research-2026-10-15.md; explicit owner clarification 2026-10-17",
         "recipe": "doc/reports/approved-greeting-recipe-2026-10-17.md"
       }
+    },
+    {
+      "kind": "Tutorial preamble",
+      "assetId": "cmvc5k0br000a07jsihex7od7",
+      "sha256": "550aeb7cfceff097e150f838e5f09d3e963f25173721c5bc92eec7236bc2a9cf",
+      "durationSeconds": 8.76,
+      "voiceId": "a9fc5a41",
+      "performanceProfile": "greeting-tutorial-v1",
+      "approvalScope": [
+        "this exact standalone preamble, including audio/video"
+      ],
+      "approvalDoesNotCover": [
+        "final Tutorial montage"
+      ],
+      "modelDisagreement": "Argon returned FAIL for both this candidate and the unchanged owner-accepted Greeting reference; do not replace owner judgment with a binary model verdict.",
+      "userVerdict": "вот идеальный туториал преамбула",
+      "accepted": true,
+      "feedbackHistory": [
+        "Теперь совпадает",
+        "ужасно",
+        "вот идеальный туториал преамбула"
+      ],
+      "doesNotApprove": "The full assembled Tutorial remains rejected.",
+      "path": "outputs/narrator-profile/approved/tutorial-preamble-cmvc5k0br000a07jsihex7od7.mp4",
+      "pinned": true,
+      "latestOwnerInstruction": "Закрепить этот файл, без генерации",
+      "regenerateAllowed": false,
+      "revoiceAllowed": false
     }
   ],
   "rejected": [
@@ -83,28 +111,9 @@
       "preambleFragmentId": "cmvbvghm6001a08l3rjnkhrs8",
       "kind": "portrait Tutorial with reviewed Nova narration",
       "reason": "Owner rejected preamble flicker, facial expression not matching speech, slow and excessively smooth performance. Detached preamble from QA brandbook; no artistic acceptance."
-    },
-    {
-      "kind": "Tutorial preamble",
-      "assetId": "cmvc5k0br000a07jsihex7od7",
-      "sha256": "550aeb7cfceff097e150f838e5f09d3e963f25173721c5bc92eec7236bc2a9cf",
-      "durationSeconds": 8.76,
-      "voiceId": "a9fc5a41",
-      "performanceProfile": "greeting-tutorial-v1",
-      "approvalScope": [
-        "lip sync on this exact preamble"
-      ],
-      "approvalDoesNotCover": [
-        "final Tutorial montage"
-      ],
-      "modelDisagreement": "Argon returned FAIL for both this candidate and the unchanged owner-accepted Greeting reference; do not replace owner judgment with a binary model verdict.",
-      "historicalFeedback": "Теперь совпадает",
-      "userVerdict": "ужасно",
-      "accepted": false,
-      "reason": "Owner subsequently rejected the standalone preamble itself. Prior lip-sync feedback is superseded; no permission to reuse for montage or promotion."
     }
   ],
-  "nextGate": "Greeting e38e6c69 remains immutable. Prior preamble cmvc5k0br and full Tutorial remain rejected. Owner subsequently authorized exactly one new trial after comparison and pipeline fixes: tutorial-preamble-v2, same portrait and existing Nova speech, no new TTS or paid Gemini. Do not assemble or promote it without separate acceptance.",
+  "nextGate": "Pinned and accepted standalone Tutorial preamble cmvc5k0br000a07jsihex7od7, exact bytes only; do not generate or revoice a replacement. Greeting reference also stays immutable. The full Tutorial remains rejected and unapproved. V2 trial explicitly cancelled by owner. Nova unchanged; Reddit paused.",
   "pendingOwnerReview": [
     {
       "assetId": "cmvbwf79d000q08l0ctyektm8",
@@ -142,6 +151,7 @@
     "newTtsAllowed": false,
     "paidAnalysisAllowed": false,
     "replaceTutorialAllowed": false,
-    "status": "awaiting deployment"
+    "status": "cancelled by owner: Закрепить этот файл, без генерации",
+    "newGenerationAllowed": false
   }
 }
