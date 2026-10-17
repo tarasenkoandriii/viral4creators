@@ -124,6 +124,8 @@
     "sha256": "2a0214dcecb3ebec4a823441c2585f757b019a85080f62f8c85a5aa8b79f731f",
     "durationSeconds": 30.952993,
     "ownerAccepted": false,
-    "cabinetUpdated": false
+    "cabinetUpdated": true,
+    "cabinetUrl": "https://viral4creators.app/#/projects/cmvbvin6j000807jwt6gkuqj4/site-tutorial/review",
+    "delivery": "kind=import; exact SHA-256; old source retained; repeated delivery produced no duplicate version; no generation or paid assembly"
   }
 }

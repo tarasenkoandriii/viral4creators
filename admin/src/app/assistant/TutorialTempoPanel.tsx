@@ -303,6 +303,11 @@ export function TutorialTempoPanel({ assetId, onChanged }: { assetId: string; on
                       Просмотр
                     </a>
                   )}
+                  {v.status === 'complete' && !v.active && v.kind === 'source' && versions.some((x) => x.active && x.kind === 'import') && (
+                    <button type="button" disabled={busy} onClick={() => void run(() => revertTutorialTempo(assetId))}>
+                      Вернуть исходный без оплаты
+                    </button>
+                  )}
                   {v.status === 'complete' && !v.active && v.kind === 'tempo' && (
                     <button type="button" disabled={busy} onClick={() => approve(v)}>
                       Одобрить версию
