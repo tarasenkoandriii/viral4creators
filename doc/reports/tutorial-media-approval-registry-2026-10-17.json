@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-17",
+  "scope": "Manual acceptance record; not an implemented server enforcement gate",
+  "defaultVoice": {
+    "provider": "resemble",
+    "name": "Nova",
+    "voiceId": "a9fc5a41",
+    "changeAllowed": false
+  },
+  "approved": [
+    {
+      "kind": "audio_reference",
+      "path": "outputs/narrator-profile/nova-approved-reference-2026-10-16.wav",
+      "sha256": "099d405b678857fb321b5384c541810ea7a0f357fb5bb1fd7733a10a43adc04b",
+      "userVerdict": "теперь идеально",
+      "model": "Resemble Ultra (UI)",
+      "locale": "Russian (Russian Federation)",
+      "preset": "Normal",
+      "format": "WAV PCM16 48000 Hz",
+      "seconds": 4.47,
+      "text": "Здравствуйте! Сейчас я покажу, как отправить тестовую заявку на сайте.",
+      "approvalDoesNotCover": [
+        "new synthesis of different text",
+        "portrait animation",
+        "sketch animation",
+        "final Tutorial montage"
+      ]
+    }
+  ],
+  "rejected": [
+    {
+      "assetId": "cmvbtw9ar000o07l4w5ot78uh",
+      "kind": "sketch Tutorial",
+      "reason": "Owner rejected voice mismatch and sketch appearance; voice provenance actually Nova for all main tracks."
+    },
+    {
+      "assetId": "cmvbuij5i000o08l5f916met4",
+      "kind": "portrait Tutorial",
+      "sha256": "c892172481f7145069072e7b8075422416892210ff132648cf176bd74e3042ef",
+      "reason": "Owner rejected flickering, unnatural facial expression and speech quality."
+    }
+  ],
+  "nextGate": "Reproduce the approved audio quality through the server path on a short sample and obtain explicit user acceptance before another paid full montage. Animation approval is independent. Reddit publication remains paused."
+}
