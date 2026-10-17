@@ -293,3 +293,11 @@ export function clientFrameNarrations(input: {
     return text || null;
   });
 }
+
+/** Operator-reviewed text follows the same privacy and length rules as generated narration. */
+export function reviewedClientNarration(
+  text: string,
+  locale: NarrationLocale,
+): string {
+  return clamp(maskPersonalData(text, PHRASES[locale].mask));
+}

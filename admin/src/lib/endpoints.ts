@@ -931,9 +931,9 @@ export function getClientSiteDraft(id: string) {
 }
 
 /** Одобрение — ИМЕННО оно запускает платную сборку ролика (§8.3). */
-export function approveClientSiteDraft(id: string) {
+export function approveClientSiteDraft(id: string, narrations?: string[]) {
   return confirmTutorialApproval<ClientSiteDraftRow>(
-    () => apiPatch<ClientSiteDraftRow>(`/admin/site-tutorial-drafts/${id}/approve`),
+    () => apiPatch<ClientSiteDraftRow>(`/admin/site-tutorial-drafts/${id}/approve`, narrations ? { narrations } : undefined),
     () => getClientSiteDraft(id),
   );
 }

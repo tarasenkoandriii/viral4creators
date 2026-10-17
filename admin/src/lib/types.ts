@@ -1429,6 +1429,7 @@ export interface ClientSiteDraftRow {
 }
 
 export interface ClientSiteDraftDetails extends ClientSiteDraftRow {
+  narrations?: (string | null)[];
   /** Список шагов ScenarioStep — не исполняемый код. */
   steps: unknown;
   /** Прямые ссылки на кадры предпросмотра в Blob — та же серия, что

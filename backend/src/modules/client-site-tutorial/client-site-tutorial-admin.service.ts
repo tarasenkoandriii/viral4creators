@@ -65,6 +65,7 @@ import { TutorialVideoVersionsService } from '../postprod/tutorial-video-version
 import {
   clientFrameNarrations,
   narrationLocale,
+  reviewedClientNarration,
 } from './client-site-narration';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 import { DraftStatus } from './draft-rounds';
@@ -136,6 +137,7 @@ export interface DraftQueueItem {
 }
 
 export interface DraftDetails extends DraftQueueItem {
+  narrations: (string | null)[];
   steps: ScenarioStep[];
   /** Прямые ссылки на кадры предпросмотра в Blob — та же серия, что
    * пользователь видел на своём экране. Без них оператор одобрял бы
@@ -267,6 +269,17 @@ export class ClientSiteTutorialAdminService {
       ...toQueueItem(row),
       steps: (row.steps as ScenarioStep[] | null) ?? [],
       frameUrls,
+      narrations:
+        row.voiceEnabled === true
+          ? clientFrameNarrations({
+              steps: (row.steps as ScenarioStep[] | null) ?? [],
+              stepsPerRound: row.stepsPerRound,
+              frameCount: frameUrls.length,
+              locale: narrationLocale(row.locale),
+              title: row.title,
+              baseUrl: row.baseUrl,
+            })
+          : [],
       hasCredentials:
         row.credentialsEnc !== null || row.storeHasCredentials === true,
       stepsPerRound: row.stepsPerRound,
@@ -289,7 +302,11 @@ export class ClientSiteTutorialAdminService {
    * кем они заведены. Второй воркер специально под этот вид проекта
    * не нужен.
    */
-  async approve(id: string, approvedBy: string): Promise<DraftQueueItem> {
+  async approve(
+    id: string,
+    approvedBy: string,
+    narrations?: readonly string[],
+  ): Promise<DraftQueueItem> {
     const row = await this.require(id);
     // Validate before any paid speech synthesis or assembly claim.
     this.preambleOf(row.preambleSnapshot);
@@ -302,6 +319,25 @@ export class ClientSiteTutorialAdminService {
     if (frames === 0) {
       throw new BadRequestException(
         'у черновика нет залитых кадров — собирать нечего',
+      );
+    }
+
+    let reviewed: string[] | undefined;
+    if (narrations !== undefined) {
+      if (
+        !row.voiceEnabled ||
+        !Array.isArray(narrations) ||
+        narrations.length !== frames ||
+        narrations.some(
+          (t) => typeof t !== 'string' || !t.trim() || t.length > 220,
+        )
+      ) {
+        throw new BadRequestException(
+          'Нужна одна непустая реплика до 220 символов на каждый кадр озвученной обучалки',
+        );
+      }
+      reviewed = narrations.map((t) =>
+        reviewedClientNarration(t, narrationLocale(row.locale)),
       );
     }
 
@@ -354,7 +390,7 @@ export class ClientSiteTutorialAdminService {
     }
 
     try {
-      await this.submitAssembly(row, frames, prepared, approvedBy);
+      await this.submitAssembly(row, frames, prepared, approvedBy, reviewed);
     } catch (err) {
       // Одобрение ОТКАТЫВАЕТСЯ, если сборку отправить не удалось (аудит
       // этапа 116). Раньше неудача была best-effort: статус оставался
@@ -503,6 +539,7 @@ export class ClientSiteTutorialAdminService {
     frames: number,
     prepared: { frameUrls: string[]; pathnames: string[]; contentHash: string },
     approvedBy: string,
+    reviewed?: readonly string[],
   ): Promise<void> {
     const { frameUrls, contentHash } = prepared;
     // Озвучка по кадрам (решение владельца 06.10.2026) — отдельной
@@ -511,14 +548,15 @@ export class ClientSiteTutorialAdminService {
     const locale = narrationLocale(row.locale);
     const texts =
       row.voiceEnabled === true
-        ? clientFrameNarrations({
+        ? (reviewed ??
+          clientFrameNarrations({
             steps: (row.steps as ScenarioStep[] | null) ?? [],
             stepsPerRound: row.stepsPerRound,
             frameCount: frameUrls.length,
             locale,
             title: row.title,
             baseUrl: row.baseUrl,
-          })
+          }))
         : [];
     if (this.versions && texts.some(Boolean)) {
       await this.submitVoicedAssembly(

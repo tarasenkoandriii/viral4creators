@@ -138,6 +138,7 @@ export default function SiteTutorialDraftsPage() {
   // замыкания: ответ на open(A), пришедший после open(B), иначе
   // подменял бы детали B деталями A — и чек-лист с кнопкой «Одобрить»
   // оказывались под чужими кадрами (аудит 01.10.2026).
+  const [narrations, setNarrations] = useState<string[]>([]);
   const wantedId = useRef<string | null>(null);
 
   const open = useCallback(async (id: string) => {
@@ -151,6 +152,7 @@ export default function SiteTutorialDraftsPage() {
     setOpenId(id);
     setDetails(null);
     setReason('');
+    setNarrations([]);
     // Чек-лист — на каждую заявку заново: галочки от прошлой карточки
     // открыли бы кнопку для кадров, которых оператор не видел.
     setChecked({});
@@ -158,6 +160,7 @@ export default function SiteTutorialDraftsPage() {
       const loaded = await getClientSiteDraft(id);
       if (wantedId.current !== id) return;
       setDetails(loaded);
+      setNarrations((loaded.narrations ?? []).map((t) => t ?? ''));
     } catch (e) {
       if (wantedId.current !== id) return;
       setError(errText(e));
@@ -329,6 +332,21 @@ export default function SiteTutorialDraftsPage() {
                 </>
               )}
 
+              {narrations.length > 0 && (
+                <section>
+                  <h3>Реплики диктора — Nova</h3>
+                  <p>Вычитайте текст до платной сборки. Не добавляйте пароли и значения личных полей. Реплика описывает следующий шаг на показанном кадре.</p>
+                  {narrations.map((text, i) => (
+                    <label key={i} style={{ display: 'block', marginBottom: 8 }}>
+                      Реплика кадра {i + 1}
+                      <textarea aria-label={`Реплика кадра ${i + 1}`} maxLength={220} value={text} disabled={busy || row.status !== 'PENDING_REVIEW'}
+                        onChange={(e) => setNarrations((prev) => prev.map((t, k) => k === i ? e.target.value : t))}
+                        style={{ display: 'block', width: '100%' }} rows={3} />
+                    </label>
+                  ))}
+                </section>
+              )}
+
               <h3 style={{ marginBottom: 4 }}>Шаги сценария</h3>
               <pre
                 style={{
@@ -372,7 +390,7 @@ export default function SiteTutorialDraftsPage() {
                     disabled={
                       busy || !CHECKLIST.every((item) => checked[item.key])
                     }
-                    onClick={() => void act(() => approveClientSiteDraft(row.id))}
+                    onClick={() => void act(() => approveClientSiteDraft(row.id, narrations.length ? narrations : undefined))}
                   >
                     Одобрить и собрать ролик
                   </button>

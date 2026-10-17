@@ -300,3 +300,14 @@ export class RegisterSiteRequestDto {
   @Equals(true)
   linkAccount!: true;
 }
+
+export class ApproveDraftDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(220, { each: true })
+  narrations?: string[];
+}

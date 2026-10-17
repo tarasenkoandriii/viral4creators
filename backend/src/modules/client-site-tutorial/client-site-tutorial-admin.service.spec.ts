@@ -650,6 +650,43 @@ describe('озвучка обучалки по кадрам (решение вл
     return { ...base, service, versions };
   }
 
+  it('uses reviewed narration for speech and captions without reading machine selectors', async () => {
+    const { service, versions, tutorialVideoAsset } = voiced({ locale: 'ru' });
+    const texts = [
+      'Введите пароль и нажмите «Войти».',
+      'Готово! Заявка отправлена.',
+    ];
+    await service.approve('draft1', 'operator1', texts);
+    expect(versions.synthesizeClientVoices.mock.calls[0][0].texts).toEqual(
+      texts,
+    );
+    const manifest =
+      tutorialVideoAsset.update.mock.calls[0][0].data.tempoManifest;
+    expect(manifest.frames.map((f: any) => f.caption)).toEqual(texts);
+  });
+
+  it('rejects missing frame narration before claiming or paying', async () => {
+    const { service, versions, submit, prisma } = voiced();
+    await expect(
+      service.approve('draft1', 'operator1', ['Один кадр.']),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(versions.synthesizeClientVoices).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(prisma.clientSiteTutorialDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('masks personal data in reviewed narration before synthesis', async () => {
+    const { service, versions } = voiced({ locale: 'ru' });
+    await service.approve('draft1', 'operator1', [
+      'Адрес boss@corp.example.',
+      'Телефон +7 (999) 123-45-67.',
+    ]);
+    const text =
+      versions.synthesizeClientVoices.mock.calls[0][0].texts.join(' ');
+    expect(text).not.toContain('boss@corp.example');
+    expect(text).not.toContain('999');
+  });
+
   it('реплика на кадр на языке черновика, подписи и переходы, manifest с дорожками', async () => {
     const { service, versions, submit, tutorialVideoAsset } = voiced();
     await service.approve('draft1', 'operator1');

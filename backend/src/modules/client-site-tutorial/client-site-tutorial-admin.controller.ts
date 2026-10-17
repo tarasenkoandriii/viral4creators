@@ -30,7 +30,10 @@ import {
 import { AdminPanelService } from '../admin-panel/admin-panel.service';
 import { ClientSiteTutorialAdminService } from './client-site-tutorial-admin.service';
 import { DraftStatus } from './draft-rounds';
-import { RejectDraftDto } from './dto/client-site-tutorial.dto';
+import {
+  ApproveDraftDto,
+  RejectDraftDto,
+} from './dto/client-site-tutorial.dto';
 
 const STATUSES: readonly DraftStatus[] = [
   'DRAFTING',
@@ -90,10 +93,11 @@ export class ClientSiteTutorialAdminController {
   async approve(
     @Req() req: AdminAuthenticatedRequest,
     @Param('id') id: string,
+    @Body() dto: ApproveDraftDto,
   ) {
     await this.adminPanel.assertOperator(req.userId);
     if (!id) throw new BadRequestException('id обязателен');
-    return this.drafts.approve(id, req.userId);
+    return this.drafts.approve(id, req.userId, dto?.narrations);
   }
 
   @Patch(':id/reject')
