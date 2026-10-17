@@ -339,6 +339,11 @@ export class ClientSiteTutorialAdminService {
       reviewed = narrations.map((t) =>
         reviewedClientNarration(t, narrationLocale(row.locale)),
       );
+      if (reviewed.some((text) => !text)) {
+        throw new BadRequestException(
+          'После удаления служебной разметки реплика пуста',
+        );
+      }
     }
 
     // Дешёвые отказы — до скачивания кадров (аудит 01.10.2026): на

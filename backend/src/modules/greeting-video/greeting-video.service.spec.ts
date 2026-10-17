@@ -5,6 +5,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
   GREETING_AVATAR_SPEECH_FAILED_MESSAGE,
   avatarVoiceChoice,
+  greetingAvatarPerformancePrompt,
   GreetingVideoService,
 } from './greeting-video.service';
 import { RenderAccessService } from '../render-access/render-access.service';
@@ -1556,4 +1557,25 @@ it('Hedra wallet rejection after TTS exposes a safe actionable error', async () 
     Object.assign(new Error('provider diagnostic'), { status: 402 }),
   );
   await expect(svc.startVideo('s1')).rejects.toThrow('отдельно от Studio');
+});
+
+import { createHash } from 'node:crypto';
+import { tutorialPresenterPerformancePrompt } from '../../common/presenter-performance';
+it('preserves the accepted Greeting performance prompt byte for byte', () => {
+  const prompt = greetingAvatarPerformancePrompt({
+    occasion: 'NEW_YEAR',
+    tone: 'WARM',
+  });
+  expect(createHash('sha256').update(prompt).digest('hex')).toBe(
+    '51c67c4e99b3f2db67ef4c17d7dda12e0ada3a895eaa9b5fa5f73b16beda3cbb',
+  );
+});
+it('Tutorial shares all accepted performance instructions without a New Year context', () => {
+  const greeting = greetingAvatarPerformancePrompt({
+    occasion: 'NEW_YEAR',
+    tone: 'WARM',
+  });
+  const tutorial = tutorialPresenterPerformancePrompt();
+  expect(tutorial).toBe(greeting.replace('for NEW_YEAR,', 'for TUTORIAL,'));
+  expect(tutorial).not.toContain('NEW_YEAR');
 });

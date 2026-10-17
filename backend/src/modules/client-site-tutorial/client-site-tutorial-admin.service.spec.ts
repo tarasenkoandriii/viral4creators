@@ -665,10 +665,13 @@ describe('озвучка обучалки по кадрам (решение вл
     expect(manifest.frames.map((f: any) => f.caption)).toEqual(texts);
   });
 
-  it('rejects missing frame narration before claiming or paying', async () => {
+  it('rejects missing or non-spoken frame narration before claiming or paying', async () => {
     const { service, versions, submit, prisma } = voiced();
     await expect(
       service.approve('draft1', 'operator1', ['Один кадр.']),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.approve('draft1', 'operator1', ['Озвучка:', 'Готово.']),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(versions.synthesizeClientVoices).not.toHaveBeenCalled();
     expect(submit).not.toHaveBeenCalled();

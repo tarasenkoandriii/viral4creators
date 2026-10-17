@@ -1,3 +1,7 @@
+import { tutorialPresenterPerformancePrompt } from '../../common/presenter-performance';
+import { speakableText } from '../../common/voiceover-script';
+import { speechLanguage } from '../../common/greeting-language';
+import { isSupportedLocale } from '../../common/locale';
 import { createHash, randomUUID } from 'node:crypto';
 import { head } from '@vercel/blob';
 import { readBodyWithLimit } from '../../common/external-url-guard';
@@ -379,6 +383,14 @@ export class VirtualStudioService {
       );
     }
 
+    if (dto.performanceProfile && dto.provider !== 'hedra') {
+      throw new BadRequestException(
+        'Профиль Greeting для Tutorial доступен только с Hedra',
+      );
+    }
+    const performancePrompt = dto.performanceProfile
+      ? tutorialPresenterPerformancePrompt()
+      : dto.prompt;
     const durationSec = dto.durationSec ?? DEFAULT_VIDEO_DURATION_SEC;
     const aspectRatio = dto.aspectRatio ?? DEFAULT_ASPECT_RATIO;
 
@@ -413,7 +425,7 @@ export class VirtualStudioService {
       let jobId: string;
       try {
         const job = await this.hedra.submit({
-          prompt: dto.prompt,
+          prompt: performancePrompt,
           startImage: variant.imageUrl,
           audioUrl: voiceFragment.resultUrl,
           aspectRatio,
@@ -434,7 +446,7 @@ export class VirtualStudioService {
           kind: 'VIDEO',
           status: GenerationStatus.PROCESSING,
           provider: 'hedra',
-          text: dto.prompt,
+          text: performancePrompt,
           durationSec,
           providerJobId: jobId,
         },
@@ -487,10 +499,15 @@ export class VirtualStudioService {
       );
     }
 
+    const speech = speakableText(dto.text);
+    if (!speech) throw new BadRequestException('Нет произносимой реплики');
+    const language = isSupportedLocale(dto.language)
+      ? speechLanguage(dto.language, speech)
+      : dto.language;
     const outcome = await provider.synthesize({
-      text: dto.text,
+      text: speech,
       voiceId: dto.voiceId,
-      language: dto.language,
+      language,
     });
     if (!outcome.ok) {
       throw new BadRequestException(
@@ -518,7 +535,7 @@ export class VirtualStudioService {
         status: GenerationStatus.COMPLETE,
         provider: dto.provider,
         voiceId: dto.voiceId,
-        text: dto.text,
+        text: speech,
         resultUrl: url,
         readyAt: new Date(),
       },

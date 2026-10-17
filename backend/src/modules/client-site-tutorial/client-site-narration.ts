@@ -1,3 +1,4 @@
+import { speakableText } from '../../common/voiceover-script';
 /**
  * Тексты покадровой озвучки и подписей обучалки по сайту клиента
  * (решение владельца 06.10.2026: «обучалки клиента сейчас немые —
@@ -299,5 +300,5 @@ export function reviewedClientNarration(
   text: string,
   locale: NarrationLocale,
 ): string {
-  return clamp(maskPersonalData(text, PHRASES[locale].mask));
+  return clamp(maskPersonalData(speakableText(text), PHRASES[locale].mask));
 }

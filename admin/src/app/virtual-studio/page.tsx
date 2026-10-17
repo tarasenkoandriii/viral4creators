@@ -444,6 +444,7 @@ function VideoFragmentForm({
 }) {
   const [provider, setProvider] = useState<'grok' | 'hedra'>('grok');
   const [prompt, setPrompt] = useState('');
+  const [performanceProfile, setPerformanceProfile] = useState<'manual' | 'greeting-tutorial-v1'>('manual');
   const [durationSec, setDurationSec] = useState(12);
   const [voiceFragmentId, setVoiceFragmentId] = useState('');
   const [running, setRunning] = useState(false);
@@ -458,7 +459,7 @@ function VideoFragmentForm({
   }
 
   async function run() {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() && !(provider === 'hedra' && performanceProfile === 'greeting-tutorial-v1')) return;
     if (provider === 'hedra' && !voiceFragmentId) {
       setError('Для Hedra выберите готовый голосовой фрагмент — он ведёт лип-синк');
       return;
@@ -469,6 +470,7 @@ function VideoFragmentForm({
       await createVirtualStudioVideoFragment(studioId, {
         provider,
         prompt: prompt.trim(),
+        performanceProfile: provider === 'hedra' && performanceProfile !== 'manual' ? performanceProfile : undefined,
         durationSec,
         voiceFragmentId: provider === 'hedra' ? voiceFragmentId : undefined,
       });
@@ -493,9 +495,17 @@ function VideoFragmentForm({
             {hedraEnabled && <option value="hedra">Hedra Character-3 (говорящая голова)</option>}
           </select>
         </label>
+        {provider === 'hedra' && <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
+          Профиль исполнения
+          <select value={performanceProfile} onChange={(e) => setPerformanceProfile(e.target.value as 'manual' | 'greeting-tutorial-v1')} disabled={running}>
+            <option value="manual">Свой промпт</option>
+            <option value="greeting-tutorial-v1">Tutorial — профиль Greeting v1</option>
+          </select>
+        </label>}
+        {provider === 'hedra' && performanceProfile === 'greeting-tutorial-v1' && <p className="muted">Общие с Greeting инструкции: готовая речь задаёт артикуляцию, в паузах губы отдыхают, фон и образ сохраняются. Используется выбранный готовый голосовой фрагмент; повторного синтеза нет. Качество нового результата проверяется отдельно.</p>}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           Промпт движения
-          <input type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+          <input type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={provider === 'hedra' && performanceProfile === 'greeting-tutorial-v1'} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           Длительность, сек

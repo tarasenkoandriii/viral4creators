@@ -3,6 +3,7 @@ import {
   clientFrameNarrations,
   labelFromSelector,
   narrationLocale,
+  reviewedClientNarration,
 } from './client-site-narration';
 import { ScenarioStep } from '../tutorial-scenario/scenario-steps.types';
 
@@ -161,4 +162,11 @@ describe('labelFromSelector', () => {
     expect(labelFromSelector('#f-8a3b9c')).toBeNull();
     expect(labelFromSelector('#field12345')).toBeNull();
   });
+});
+
+it('Tutorial reviewed speech removes Greeting scene annotations before privacy masking', () => {
+  expect(
+    reviewedClientNarration('Scene 1 (0:00–0:03): Нажмите «Войти».', 'ru'),
+  ).toBe('Нажмите «Войти».');
+  expect(reviewedClientNarration('Озвучка:', 'ru')).toBe('');
 });

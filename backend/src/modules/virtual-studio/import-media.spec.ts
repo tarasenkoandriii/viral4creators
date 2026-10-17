@@ -128,3 +128,103 @@ describe('studio quality feedback', () => {
     expect(t.recordGemini).not.toHaveBeenCalled();
   });
 });
+
+describe('Greeting profile in Tutorial studio', () => {
+  it('uses server-owned performance instructions and existing voice, rejects Grok before payment', async () => {
+    const submit = jest.fn().mockResolvedValue({ jobId: 'job' });
+    const create = jest.fn().mockImplementation(({ data }) => data);
+    const service = Object.assign(
+      Object.create(VirtualStudioService.prototype),
+      {
+        getStudioOrThrow: jest
+          .fn()
+          .mockResolvedValue({ selectedVariantId: 'portrait' }),
+        getHedraEnabled: jest.fn().mockResolvedValue(true),
+        prisma: {
+          virtualStudioVariant: {
+            findFirst: jest
+              .fn()
+              .mockResolvedValue({ id: 'portrait', imageUrl: 'portrait.jpg' }),
+          },
+          virtualStudioFragment: {
+            findFirst: jest
+              .fn()
+              .mockResolvedValue({ resultUrl: 'approved-nova.mp3' }),
+            create,
+          },
+        },
+        hedra: { configured: () => true, submit },
+      },
+    ) as VirtualStudioService;
+    await service.createVideoFragment('studio', {
+      provider: 'hedra',
+      prompt: 'Do not speak',
+      performanceProfile: 'greeting-tutorial-v1',
+      voiceFragmentId: 'voice',
+    });
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          'supplied audio as the sole timing reference',
+        ),
+        audioUrl: 'approved-nova.mp3',
+      }),
+    );
+    expect(submit.mock.calls[0][0].prompt).not.toContain('Do not speak');
+    expect(create.mock.calls[0][0].data.text).toBe(
+      submit.mock.calls[0][0].prompt,
+    );
+    await expect(
+      service.createVideoFragment('studio', {
+        provider: 'grok',
+        prompt: '',
+        performanceProfile: 'greeting-tutorial-v1',
+      }),
+    ).rejects.toThrow('только с Hedra');
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+  it('cleans speech like Greeting and preserves explicit Ukrainian and selected Nova', async () => {
+    const synthesize = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        audio: Buffer.from('audio'),
+        mimeType: 'audio/mpeg',
+        characters: 20,
+      });
+    const service = Object.assign(
+      Object.create(VirtualStudioService.prototype),
+      {
+        getStudioOrThrow: jest.fn(),
+        tts: {
+          resolveByKey: () => ({
+            providerKey: 'resemble',
+            configured: () => true,
+            synthesize,
+          }),
+        },
+        aiUsage: { record: jest.fn() },
+        blob: {
+          uploadBuffer: jest.fn().mockResolvedValue({ url: 'nova.mp3' }),
+        },
+        prisma: {
+          virtualStudioFragment: {
+            create: jest.fn().mockImplementation(({ data }) => data),
+          },
+        },
+      },
+    ) as VirtualStudioService;
+    const result = await service.createVoiceFragment('studio', {
+      provider: 'resemble',
+      voiceId: 'a9fc5a41',
+      language: 'uk',
+      text: 'Scene 1 (0:00–0:03): Вітаю! Зараз покажу, як надіслати заявку.',
+    });
+    expect(synthesize).toHaveBeenCalledWith({
+      text: 'Вітаю! Зараз покажу, як надіслати заявку.',
+      language: 'uk',
+      voiceId: 'a9fc5a41',
+    });
+    expect(result.text).toBe('Вітаю! Зараз покажу, як надіслати заявку.');
+  });
+});
