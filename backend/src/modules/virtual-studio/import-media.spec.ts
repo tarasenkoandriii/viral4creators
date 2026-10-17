@@ -184,14 +184,12 @@ describe('Greeting profile in Tutorial studio', () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
   it('cleans speech like Greeting and preserves explicit Ukrainian and selected Nova', async () => {
-    const synthesize = jest
-      .fn()
-      .mockResolvedValue({
-        ok: true,
-        audio: Buffer.from('audio'),
-        mimeType: 'audio/mpeg',
-        characters: 20,
-      });
+    const synthesize = jest.fn().mockResolvedValue({
+      ok: true,
+      audio: Buffer.from('audio'),
+      mimeType: 'audio/mpeg',
+      characters: 20,
+    });
     const service = Object.assign(
       Object.create(VirtualStudioService.prototype),
       {
