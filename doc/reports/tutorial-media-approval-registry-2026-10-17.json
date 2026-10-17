@@ -34,7 +34,8 @@
       "userVerdict": "идеальное качество озвучки и видеоряда + хедра для липсинка",
       "approvalScope": [
         "audio quality of this exact file",
-        "video quality of this exact file"
+        "video quality of this exact file",
+        "completed Hedra lip-sync of this exact file"
       ],
       "durationSeconds": 9.08,
       "video": {
@@ -50,10 +51,18 @@
       },
       "lipSyncProviderChosen": "Hedra",
       "limitations": [
-        "File does not identify synthesis model or voice; do not infer them from filename or codec.",
-        "Hedra is the user-selected lip-sync path; no new Hedra job was launched and no new output inherits approval."
+        "Do not reprocess, revoice or run lip-sync again on this accepted file.",
+        "Approval covers this completed file; adapting the text creates a separate new asset."
       ],
-      "storage": "Original bytes copied locally; no public upload, no media binary in Git."
+      "storage": "Original bytes copied locally; no public upload, no media binary in Git.",
+      "lipSyncAlreadyCompleted": true,
+      "provenance": {
+        "provider": "Hedra",
+        "model": "Character-3",
+        "sessionId": "fixture-greeting-handsdown-v2-20261016",
+        "videoId": "e38e6c69-6989-4147-b8bd-8d05b0962c31",
+        "evidence": "doc/reports/greeting-performance-research-2026-10-15.md; explicit owner clarification 2026-10-17"
+      }
     }
   ],
   "rejected": [
@@ -69,5 +78,5 @@
       "reason": "Owner rejected flickering, unnatural facial expression and speech quality."
     }
   ],
-  "nextGate": "Use the user-approved audio/video file as the immutable reference. Hedra is the selected lip-sync path. Preserve audio bytes/tracks wherever possible; assess any new output separately before full montage or Reddit publication. Nova remains the default."
+  "nextGate": "The accepted audio/video file is already a completed Hedra Character-3 result. Preserve and reuse its exact bytes; no additional lip-sync or speech synthesis is needed for this asset. Any changed-text Tutorial is a separate task, not a correction of this accepted file. Nova remains unchanged; Reddit publication remains paused."
 }
