@@ -211,4 +211,27 @@ it('в разметке блок живого входа лежит ВНЕ ве�
   );
 });
 
+it('подписанная галочка доступна только как явный отдельный клик', () => {
+  const exploration = page([
+    {
+      selector: '#consent',
+      tag: 'input',
+      type: 'checkbox',
+      label: 'Только вымышленные данные',
+    },
+    { selector: '#unknown', tag: 'input', type: 'checkbox' },
+    { selector: '#file', tag: 'input', type: 'file', label: 'Файл' },
+    { selector: '#radio', tag: 'input', type: 'radio', label: 'Режим' },
+    { selector: '#submit', tag: 'button', visibleText: 'Отправить' },
+  ]);
+  assert.deepEqual(fillableFields(exploration), []);
+  const clicks = clickCandidates(exploration);
+  assert.deepEqual(
+    clicks.map((e) => e.selector),
+    ['#consent', '#submit']
+  );
+  assert.equal(clicks[0].visibleText, '☐ / ☑ · Только вымышленные данные');
+  assert.equal(exploration.elements[0].visibleText, undefined);
+});
+
 console.log(`client-site wizard: ${passed} проверок пройдено`);

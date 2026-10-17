@@ -38,9 +38,14 @@ export function fillableFields(exploration: PageExploration): PageElement[] {
 /** Кандидаты «продолжить с…». Без видимого текста кнопку невозможно
  * узнать на кадре — предлагать её бессмысленно. */
 export function clickCandidates(exploration: PageExploration): PageElement[] {
-  return exploration.elements.filter(
-    (e) => CLICKABLE.includes(e.tag) && Boolean(e.visibleText)
-  );
+  return exploration.elements.flatMap((e) => {
+    // A checkbox is a real click, never a text fill or an implicit consent.
+    // Keep it as a separate recorded action before the form's submit button.
+    if (e.tag === 'input' && e.type === 'checkbox' && e.label) {
+      return [{ ...e, visibleText: `☐ / ☑ · ${e.label}` }];
+    }
+    return CLICKABLE.includes(e.tag) && e.visibleText ? [e] : [];
+  });
 }
 
 export function fieldLabel(el: PageElement, fallback: string): string {
