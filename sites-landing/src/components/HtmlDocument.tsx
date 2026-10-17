@@ -30,7 +30,7 @@ export function HtmlDocument({ lang, children, widget = null }: { lang: string; 
     <html lang={lang} dir="ltr">
       <body>
         {children}
-        <LandingVisits locale={lang} endpoint="https://backend-iota-ruddy-57.vercel.app/api/public/landing-visits" landingsByHost={{ [new URL(siteUrl()).hostname]: 'assistant' }} />
+        <LandingVisits enabled={process.env.VERCEL_ENV === 'production'} locale={lang} endpoint="https://backend-iota-ruddy-57.vercel.app/api/public/landing-visits" landingsByHost={{ [new URL(siteUrl()).hostname]: 'assistant' }} />
         <WebVitals />
         <Telemetry endpoint={events} />
         {widget && <LiveWidget src={widget.src} pk={widget.pk} lang={widget.lang} />}

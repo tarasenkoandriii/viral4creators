@@ -1432,7 +1432,7 @@ publisher-site/
   src/app/not-found.tsx; src/app/materials/[slug]/route-410 — route handler со статусом 410 для slug с `withdrawn=true`
   src/app/.well-known/v4c-verify.txt/route.ts  (необязательно) токен подтверждения владения из PUBLISHER_OWNERSHIP_TOKEN
   src/app/robots.ts, src/app/sitemap.ts
-  src/components/LeadForm.tsx (client), Track.tsx (client, ≤ 2 КБ), Cta.tsx, Faq.tsx, Sources.tsx, Byline.tsx
+  src/components/LeadForm.tsx (client), Track.tsx (client; с 17.10.2026 общий layout-чанк двух каналов телеметрии ≤ 2.5 КБ gzip, отправка нового просмотра переиспользует существующий эффект; бюджеты страниц 118/130 КБ не меняются), Cta.tsx, Faq.tsx, Sources.tsx, Byline.tsx
   scripts/*.test.ts            unit (tsx): валидация ≡ backend, бренд-зеркало, атрибуция, markdown-безопасность, словарь
   scripts/built/check-built.ts SEO/носитель hash/noindex/секреты/внутренние ссылки без UTM
   scripts/built/first-load-js.mjs  бюджет JS

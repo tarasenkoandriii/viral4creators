@@ -43,7 +43,7 @@ export function HtmlDocument({
       dir={LOCALE_DIR[locale]}
       data-scroll-behavior="smooth"
     >
-      <body>{children}<LandingVisits locale={locale} {...landingVisitsConfig} /></body>
+      <body>{children}<LandingVisits enabled={process.env.VERCEL_ENV === 'production'} locale={locale} {...landingVisitsConfig} /></body>
     </html>
   );
 }

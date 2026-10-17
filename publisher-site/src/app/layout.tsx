@@ -1,4 +1,3 @@
-import LandingVisits from '../components/LandingVisits';
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
@@ -86,12 +85,12 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </p>
           </div>
         </footer>
-        <LandingVisits
-          locale={PUBLISHER_BRAND.lang}
-          endpoint="https://backend-iota-ruddy-57.vercel.app/api/public/landing-visits"
-          landingsByHost={{ [new URL(siteUrl()).hostname]: 'publisher' }}
-        />
         <Track
+          visits={{
+            enabled: process.env.VERCEL_ENV === 'production',
+            endpoint: 'https://backend-iota-ruddy-57.vercel.app/api/public/landing-visits',
+            locale: PUBLISHER_BRAND.lang,
+          }}
           apiOrigin={env.apiOrigin}
           publicKey={env.publicKey}
           analyticsStorage={cfg.analyticsStorage}

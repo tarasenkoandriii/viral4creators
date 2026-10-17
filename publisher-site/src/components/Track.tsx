@@ -1,5 +1,7 @@
 'use client';
 
+import { sendLandingVisit } from './LandingVisits';
+
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import type { ConsentState } from '@/lib/api-types';
@@ -21,6 +23,7 @@ import { buildEvent, sendEvent } from '@/lib/track';
  * приходят пропсами из site-config, клиент env не читает.
  */
 interface Props {
+  visits: { enabled: boolean; endpoint: string; locale: string };
   apiOrigin: string;
   publicKey: string;
   analyticsStorage: AnalyticsStorage;
@@ -31,7 +34,7 @@ let lastView = '';
 /** `referrerHost` — только у первого просмотра документа: при клиентском переходе `document.referrer` прежний (аудит S3-4). */
 let referrerSent = false;
 
-export default function Track({ apiOrigin, publicKey, analyticsStorage, consentState }: Props) {
+export default function Track({ apiOrigin, publicKey, analyticsStorage, consentState, visits }: Props) {
   const pathname = usePathname();
 
   useEffect(() => {
@@ -61,6 +64,7 @@ export default function Track({ apiOrigin, publicKey, analyticsStorage, consentS
     if (view !== lastView) {
       lastView = view;
       send('content_view');
+      if (visits.enabled) sendLandingVisit(visits.endpoint, 'publisher', visits.locale);
     }
     const onClick = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.('[data-cta]');
@@ -68,7 +72,7 @@ export default function Track({ apiOrigin, publicKey, analyticsStorage, consentS
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [pathname, apiOrigin, publicKey, analyticsStorage, consentState]);
+  }, [pathname, apiOrigin, publicKey, analyticsStorage, consentState, visits]);
 
   return null;
 }
