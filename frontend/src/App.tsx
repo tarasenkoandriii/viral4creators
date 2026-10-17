@@ -1,3 +1,4 @@
+import { GUIDE_IDENTITY_EVENT } from './lib/guide-assist';
 import { api } from './services/api';
 /**
  * App shell + hash router.
@@ -166,6 +167,15 @@ function App() {
     };
   }, [planNonce]);
   const refreshPlan = useCallback(() => setPlanNonce((n) => n + 1), []);
+  useEffect(() => {
+    const resetIdentity = () => {
+      setStoryAccess(false);
+      setPlanNonce((n) => n + 1);
+    };
+    window.addEventListener(GUIDE_IDENTITY_EVENT, resetIdentity);
+    return () =>
+      window.removeEventListener(GUIDE_IDENTITY_EVENT, resetIdentity);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -402,9 +412,12 @@ function App() {
             )}
             {(
               ['commerce', 'greetings', 'tutorials', 'stories'] as string[]
-            ).includes(route.name) && (
-              <ProductHub area={route.name as ProductArea} />
-            )}
+            ).includes(route.name) &&
+              (route.name === 'stories' && !storyAccess ? (
+                <p className="p-5">Раздел в закрытой разработке.</p>
+              ) : (
+                <ProductHub area={route.name as ProductArea} />
+              ))}
             {route.name === 'projects' && <ProjectsListScreen />}
             {route.name === 'project-new' && (
               <ProjectCreateScreen
