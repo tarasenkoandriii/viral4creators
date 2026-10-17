@@ -376,7 +376,9 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
                   checked={reviewed}
                   onChange={(e) => setReviewed(e.target.checked)}
                 />
-                Видео просмотрено, преамбула и основная речь проверены
+                Видео просмотрено, преамбула и основная речь проверены. Разрешаю
+                показывать эту версию получателям ссылки на подарок; если ссылка
+                уже создана, видео по ней будет заменено.
               </label>
               <Button
                 disabled={
@@ -394,7 +396,7 @@ export function StoryVideoPanel({ giftId }: { giftId: string }) {
                   )
                 }
               >
-                Одобрить видео для подарка
+                Одобрить видео для ссылки на подарок
               </Button>
             </>
           )}

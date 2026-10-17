@@ -210,6 +210,30 @@ describe('Story YouTube reference boundaries', () => {
       (await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM')).status,
     ).toBe('unavailable');
   });
+  it('allows an explicit retry of an existing reference at the storage cap', async () => {
+    const { service, rows, generateContent } = setup();
+    generateContent.mockRejectedValueOnce(new Error('503'));
+    await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM');
+    const entry = [...rows.values()].find((r) =>
+      r.key.startsWith('story-ref:v1:'),
+    )!;
+    const prefix = entry.key.slice(0, -11);
+    for (let i = 0; i < 19; i++)
+      rows.set(`${prefix}stored-${i}`, {
+        ...entry,
+        key: `${prefix}stored-${i}`,
+      });
+    expect(await service.list('owner')).toHaveLength(20);
+    await expect(
+      service.analyze('owner', 'https://youtu.be/Z7FgMniveRI'),
+    ).rejects.toThrow('20 сохранённых');
+    expect(
+      (await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM', true))
+        .status,
+    ).toBe('complete');
+    expect(generateContent).toHaveBeenCalledTimes(2);
+    expect(await service.list('owner')).toHaveLength(20);
+  });
   it('caps new paid calls at three a day', async () => {
     const { service, generateContent } = setup();
     await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM');

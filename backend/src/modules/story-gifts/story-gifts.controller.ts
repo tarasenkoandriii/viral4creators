@@ -81,7 +81,10 @@ export class StoryGiftsController {
     private readonly references: StoryReferencesService,
     private readonly videos: StoryVideoService,
   ) {}
-  @Get('references') referenceList(@Req() req: IdentifiedRequest) {
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get('references')
+  referenceList(@Req() req: IdentifiedRequest) {
     return this.references.list(req.telegramUserId);
   }
   @Post('references/analyze') referenceAnalyze(
@@ -90,10 +93,10 @@ export class StoryGiftsController {
   ) {
     return this.references.analyze(req.telegramUserId, dto.url, dto.retry);
   }
-  @Get(':id/video') videoList(
-    @Req() req: IdentifiedRequest,
-    @Param('id') id: string,
-  ) {
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get(':id/video')
+  videoList(@Req() req: IdentifiedRequest, @Param('id') id: string) {
     return this.videos.list(req.telegramUserId, id);
   }
   @Post(':id/video') videoCreate(
@@ -103,15 +106,19 @@ export class StoryGiftsController {
   ) {
     return this.videos.create(req.telegramUserId, id, dto.preambleText, dto);
   }
-  @Get(':id/video/:renderId') videoStatus(
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get(':id/video/:renderId')
+  videoStatus(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
     @Param('renderId') renderId: string,
   ) {
     return this.videos.status(req.telegramUserId, id, renderId);
   }
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get(':id/video/:renderId/file')
-  @Header('Cache-Control', 'no-store')
   videoFile(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
@@ -119,8 +126,9 @@ export class StoryGiftsController {
   ) {
     return this.videos.file(req.telegramUserId, id, renderId, 'video');
   }
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get(':id/video/:renderId/intro')
-  @Header('Cache-Control', 'no-store')
   videoIntro(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
@@ -128,8 +136,9 @@ export class StoryGiftsController {
   ) {
     return this.videos.file(req.telegramUserId, id, renderId, 'intro');
   }
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get(':id/video/:renderId/main')
-  @Header('Cache-Control', 'no-store')
   videoMain(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
@@ -152,10 +161,16 @@ export class StoryGiftsController {
   ) {
     return this.videos.approve(req.telegramUserId, id, renderId, dto.videoHash);
   }
-  @Get('catalog') catalog() {
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get('catalog')
+  catalog() {
     return this.service.catalog();
   }
-  @Get() list(@Req() req: IdentifiedRequest) {
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get()
+  list(@Req() req: IdentifiedRequest) {
     return this.service.list(req.telegramUserId);
   }
   @Post() create(@Req() req: IdentifiedRequest, @Body() dto: CreateStoryDto) {
@@ -169,7 +184,10 @@ export class StoryGiftsController {
       dto.countryCode,
     );
   }
-  @Get(':id') get(@Req() req: IdentifiedRequest, @Param('id') id: string) {
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get(':id')
+  get(@Req() req: IdentifiedRequest, @Param('id') id: string) {
     return this.service.own(req.telegramUserId, id);
   }
   @Post(':id/photo') photo(
@@ -179,10 +197,10 @@ export class StoryGiftsController {
   ) {
     return this.service.photo(req.telegramUserId, id, dto.base64);
   }
-  @Get(':id/photo') @Header('Cache-Control', 'no-store') photoGet(
-    @Req() req: IdentifiedRequest,
-    @Param('id') id: string,
-  ) {
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get(':id/photo')
+  photoGet(@Req() req: IdentifiedRequest, @Param('id') id: string) {
     return this.service.ownerPhoto(req.telegramUserId, id);
   }
   @Post(':id/render') render(
@@ -197,9 +215,9 @@ export class StoryGiftsController {
   ) {
     return this.service.quality(req.telegramUserId, id);
   }
-  @Get(':id/audio')
-  @Header('Cache-Control', 'no-store')
+  @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get(':id/audio')
   audio(@Req() req: IdentifiedRequest, @Param('id') id: string) {
     return this.service.audio(req.telegramUserId, id);
   }

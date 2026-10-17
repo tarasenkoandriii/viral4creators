@@ -269,7 +269,7 @@ export class StoryReferencesService {
       throw new BadRequestException(
         'Для пилота нужен публичный ролик до 5 минут, не трансляция',
       );
-    if ((await this.list(userId)).length >= 20)
+    if (!previous && (await this.list(userId)).length >= 20)
       throw new BadRequestException('Лимит пилота: 20 сохранённых референсов');
     const setting = await this.prisma.platformSetting.findUnique({
       where: { key: ANALYSIS_MODEL_SETTING },

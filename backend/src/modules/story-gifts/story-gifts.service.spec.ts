@@ -188,6 +188,12 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
         data: expect.objectContaining({
           video: null,
           preambleAudio: null,
+          mainAudio: null,
+          voiceId: '',
+          voiceLabel: null,
+          parentNarrationKey: null,
+          assetExpiresAt: null,
+          approvedAt: null,
           assetTokenHash: null,
         }),
       }),

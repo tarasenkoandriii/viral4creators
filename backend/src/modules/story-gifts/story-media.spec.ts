@@ -3,7 +3,8 @@ import { storyAudioReservation } from './story-budget';
 import { storySpeechScore } from './story-audio-qa';
 import { PNG } from 'pngjs';
 import { normalizeStoryPhoto } from './story-photo';
-import { audioRange } from './story-gifts.controller';
+import { audioRange, StoryGiftsController } from './story-gifts.controller';
+import { HEADERS_METADATA } from '@nestjs/common/constants';
 import { escapeStoryHtml, storyText } from './story-catalog';
 describe('Story public media boundary', () => {
   it('supports full, closed, open and suffix ranges while rejecting malformed ranges', () => {
@@ -20,6 +21,38 @@ describe('Story public media boundary', () => {
       'wat',
     ])
       expect(audioRange(value, 100)).toBe(false);
+  });
+  it('does not cache or index private owner metadata and media', () => {
+    for (const method of [
+      'referenceList',
+      'videoList',
+      'videoStatus',
+      'videoFile',
+      'videoIntro',
+      'videoMain',
+      'catalog',
+      'list',
+      'get',
+      'photoGet',
+      'audio',
+    ] as const) {
+      const headers = Reflect.getMetadata(
+        HEADERS_METADATA,
+        StoryGiftsController.prototype[method],
+      );
+      expect(headers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Cache-Control',
+            value: expect.stringContaining('no-store'),
+          }),
+          expect.objectContaining({
+            name: 'X-Robots-Tag',
+            value: 'noindex, nofollow, noarchive',
+          }),
+        ]),
+      );
+    }
   });
   it('normalizes a valid photo and rejects arbitrary or over-dimensioned files', () => {
     const source = PNG.sync.write(new PNG({ width: 2, height: 2 }));
