@@ -1,4 +1,9 @@
-import { tutorialPresenterPerformancePrompt } from '../../common/presenter-performance';
+import {
+  tutorialPresenterPerformancePrompt,
+  tutorialPreamblePromptV2,
+  TUTORIAL_PREAMBLE_PROFILE_V2,
+} from '../../common/presenter-performance';
+import { probeMp4 } from '../tutorial-runner/mp4-probe';
 import { speakableText } from '../../common/voiceover-script';
 import { speechLanguage } from '../../common/greeting-language';
 import { isSupportedLocale } from '../../common/locale';
@@ -388,9 +393,21 @@ export class VirtualStudioService {
         'Профиль Greeting для Tutorial доступен только с Hedra',
       );
     }
-    const performancePrompt = dto.performanceProfile
-      ? tutorialPresenterPerformancePrompt()
-      : dto.prompt;
+    const isPreambleV2 =
+      dto.performanceProfile === TUTORIAL_PREAMBLE_PROFILE_V2;
+    if (
+      isPreambleV2 &&
+      ((dto.aspectRatio && dto.aspectRatio !== '9:16') ||
+        (dto.resolution && dto.resolution !== '720p'))
+    )
+      throw new BadRequestException(
+        'Профиль Tutorial v2 фиксирует 9:16 и 720p',
+      );
+    const performancePrompt = isPreambleV2
+      ? tutorialPreamblePromptV2()
+      : dto.performanceProfile
+        ? tutorialPresenterPerformancePrompt()
+        : dto.prompt;
     const durationSec = dto.durationSec ?? DEFAULT_VIDEO_DURATION_SEC;
     const aspectRatio = dto.aspectRatio ?? DEFAULT_ASPECT_RATIO;
 
@@ -423,8 +440,13 @@ export class VirtualStudioService {
       }
 
       let jobId: string;
+      let receipt: Record<string, unknown> | undefined;
       try {
         const job = await this.hedra.submit({
+          model: 'hedra-character-3',
+          captureReceipt: true,
+          singleAttempt: true,
+          ...(isPreambleV2 ? { maxAudioSeconds: 10 } : {}),
           prompt: performancePrompt,
           startImage: variant.imageUrl,
           audioUrl: voiceFragment.resultUrl,
@@ -433,6 +455,7 @@ export class VirtualStudioService {
             (dto.resolution as '540p' | '720p' | '1080p' | undefined) ?? '720p',
         });
         jobId = job.jobId;
+        receipt = job.receipt;
       } catch (error) {
         throw new BadRequestException(
           `Не удалось запустить Hedra: ${this.extractErrorMessage(error)}`,
@@ -447,7 +470,16 @@ export class VirtualStudioService {
           status: GenerationStatus.PROCESSING,
           provider: 'hedra',
           text: performancePrompt,
-          durationSec,
+          // VIDEO resultText is an audit receipt, not an ANALYSIS narration.
+          resultText: JSON.stringify({
+            ...receipt,
+            performanceProfile: dto.performanceProfile ?? 'manual',
+            voiceFragmentId: dto.voiceFragmentId,
+            voiceId: voiceFragment.voiceId ?? null,
+            artisticStatus: 'unreviewed',
+            requestedDurationSec: dto.durationSec ?? null,
+          }),
+          durationSec: null,
           providerJobId: jobId,
         },
       });
@@ -778,22 +810,45 @@ export class VirtualStudioService {
         await this.prisma.virtualStudioFragment.findUniqueOrThrow({
           where: { id: fragmentId },
         });
-      if (fragment.durationSec) {
-        // Разрешение запроса не хранится отдельной колонкой на
-        // фрагменте (схема §2 её не заводит) — для составного ключа
-        // прайса (`{модель}:{разрешение}`, common/ai-pricing.ts) берём
-        // разрешение по умолчанию (720p). Расход по факту может
-        // отличаться, если оператор явно попросил другое разрешение —
-        // приемлемое приближение для admin-only инструмента с низким
-        // объёмом вызовов, не путать с тарификацией пользователя.
+      const probe = fragment.provider === 'hedra' ? probeMp4(bytes) : null;
+      if (
+        fragment.provider === 'hedra' &&
+        (!probe ||
+          !probe.tracks.some((t) => t.kind === 'audio') ||
+          !probe.tracks.some((t) => t.kind === 'video') ||
+          !Number.isFinite(probe.durationSeconds) ||
+          probe.durationSeconds <= 0)
+      )
+        throw new Error('Готовый Hedra MP4 не прошёл проверку дорожек');
+      const measuredSeconds = probe
+        ? Math.ceil(probe.durationSeconds)
+        : fragment.durationSec;
+      if (measuredSeconds) {
         await this.aiUsage.record({
           operation: 'virtual-studio-video',
           model:
             fragment.provider === 'hedra'
               ? 'hedra-character-3'
               : `${this.grokVideo.modelName}:${DEFAULT_RESOLUTION}`,
-          seconds: fragment.durationSec,
+          seconds: measuredSeconds,
         });
+      }
+      let receipt: Record<string, unknown> | null = null;
+      if (fragment.provider === 'hedra') {
+        try {
+          receipt = fragment.resultText ? JSON.parse(fragment.resultText) : {};
+        } catch {
+          receipt = {};
+        }
+        receipt = {
+          ...receipt,
+          output: {
+            sha256: createHash('sha256').update(bytes).digest('hex'),
+            durationMs: Math.round(probe!.durationSeconds * 1000),
+            tracks: probe!.tracks,
+          },
+          artisticStatus: 'unreviewed',
+        };
       }
       return this.prisma.virtualStudioFragment.update({
         where: { id: fragmentId },
@@ -801,6 +856,12 @@ export class VirtualStudioService {
           status: GenerationStatus.COMPLETE,
           resultUrl: url,
           readyAt: new Date(),
+          ...(fragment.provider === 'hedra'
+            ? {
+                durationSec: measuredSeconds,
+                resultText: JSON.stringify(receipt),
+              }
+            : {}),
         },
       });
     } catch (error) {

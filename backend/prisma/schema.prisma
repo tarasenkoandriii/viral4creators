@@ -4998,6 +4998,8 @@ model VirtualStudioFragment {
 
   /// Результат: VIDEO → resultUrl (mp4), VOICE → resultUrl (mp3),
   /// ANALYSIS → resultText (сводка + черновик сценария).
+  /// VIDEO Hedra → resultText: JSON receipt hedra-request-v1 с фактическими
+  /// входами, хешами медиа и probe результата; не текст для озвучки.
   resultUrl  String?
   resultText String? @db.Text
 

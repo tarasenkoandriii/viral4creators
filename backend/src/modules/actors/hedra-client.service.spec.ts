@@ -322,3 +322,60 @@ describe('Hedra media transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Hedra diagnostic receipts', () => {
+  beforeEach(() => {
+    jest
+      .spyOn(HedraClientService.prototype, 'uploadMedia')
+      .mockImplementation(async (url, kind, capture) => {
+        capture?.({
+          sha256: kind === 'image' ? 'image-hash' : 'audio-hash',
+          bytes: 123,
+          mimeType: kind === 'image' ? 'image/jpeg' : 'audio/mpeg',
+          ...(kind === 'audio' ? { durationSeconds: 8.7 } : {}),
+        });
+        return `https://uploads.hedra.com/${kind}`;
+      });
+  });
+  afterEach(() => jest.restoreAllMocks());
+  it('captures effective request and exact input identities without credentials', async () => {
+    fetchMock.mockResolvedValue(ok(202, { job_id: 'trial' }));
+    const out = await new HedraClientService().submit({
+      ...SUBMIT_OPTS,
+      captureReceipt: true,
+      singleAttempt: true,
+      maxAudioSeconds: 10,
+    });
+    expect(out.receipt).toMatchObject({
+      schema: 'hedra-request-v1',
+      model: 'hedra-character-3',
+      resolution: '720p',
+      aspectRatio: '9:16',
+      sourceImage: { sha256: 'image-hash' },
+      sourceAudio: { sha256: 'audio-hash', durationSeconds: 8.7 },
+      durationParameterSent: false,
+      seedParameterSent: false,
+      singlePaidPost: true,
+    });
+    expect(JSON.stringify(out.receipt)).not.toContain('ключ');
+    expect(JSON.stringify(out.receipt)).not.toContain('uploads.hedra.com');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('a single trial never repeats a paid POST after a 500', async () => {
+    fetchMock.mockResolvedValue(fail(500));
+    await expect(
+      new HedraClientService().submit({ ...SUBMIT_OPTS, singleAttempt: true }),
+    ).rejects.toThrow('500');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('rejects a too-long preamble before any paid model request', async () => {
+    await expect(
+      new HedraClientService().submit({
+        ...SUBMIT_OPTS,
+        captureReceipt: true,
+        maxAudioSeconds: 5,
+      }),
+    ).rejects.toThrow('measurable MP3');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -1249,7 +1249,7 @@ export function createVirtualStudioVideoFragment(
   studioId: string,
   body: {
     provider: 'grok' | 'hedra';
-    performanceProfile?: 'greeting-tutorial-v1';
+    performanceProfile?: 'greeting-tutorial-v1' | 'tutorial-preamble-v2';
     prompt: string;
     durationSec?: number;
     aspectRatio?: string;

@@ -21,3 +21,16 @@ export function presenterPerformancePrompt(
 export function tutorialPresenterPerformancePrompt(): string {
   return presenterPerformancePrompt('TUTORIAL', 'WARM');
 }
+
+/** Separate experiment: v1 and the accepted Greeting remain immutable. */
+export const TUTORIAL_PREAMBLE_PROFILE_V2 = 'tutorial-preamble-v2' as const;
+export function tutorialPreamblePromptV2(): string {
+  return [
+    'A clear, warm product tutorial introduction, delivered naturally to the viewer.',
+    'Preserve the exact person, outfit, background, lighting and camera framing from the source portrait. Locked camera. No cuts, zooms, relighting or changes to the scene.',
+    'The supplied speech audio is the sole timing reference. Speak only its actual words. Prioritize accurate, natural articulation over extra movement; do not stretch speech movements across pauses.',
+    'Keep the hands resting below the frame. Do not prescribe or exaggerate breathing, swaying, posture changes or gestures. Small spontaneous head movements are enough.',
+    'Use attentive, relaxed eye contact and a neutral-friendly expression matching an explanation, not a festive wish. Do not hold a broad smile while articulating. Blink naturally.',
+    'Rest the lips during audible pauses. After the last spoken syllable, close the mouth naturally and remain calm. No added dialogue, text or visual effects.',
+  ].join(' ');
+}

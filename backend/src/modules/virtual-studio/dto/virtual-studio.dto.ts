@@ -1,4 +1,7 @@
-import { TUTORIAL_GREETING_PERFORMANCE_PROFILE } from '../../../common/presenter-performance';
+import {
+  TUTORIAL_GREETING_PERFORMANCE_PROFILE,
+  TUTORIAL_PREAMBLE_PROFILE_V2,
+} from '../../../common/presenter-performance';
 /**
  * DTO для `VirtualStudioController`
  * (docs-tz/TZ-Virtualnaya-Studiya-i-AI-Vedushaya.md §5, Этап 1-3).
@@ -36,8 +39,10 @@ export class GenerateVariantDto {
 /** POST /admin/virtual-studio/:id/fragments/video (§3.3, §5) */
 export class CreateVideoFragmentDto {
   @IsOptional()
-  @IsIn([TUTORIAL_GREETING_PERFORMANCE_PROFILE])
-  performanceProfile?: typeof TUTORIAL_GREETING_PERFORMANCE_PROFILE;
+  @IsIn([TUTORIAL_GREETING_PERFORMANCE_PROFILE, TUTORIAL_PREAMBLE_PROFILE_V2])
+  performanceProfile?:
+    | typeof TUTORIAL_GREETING_PERFORMANCE_PROFILE
+    | typeof TUTORIAL_PREAMBLE_PROFILE_V2;
 
   /** Hedra видна в форме, только если включён флаг §3.5 — контроллер
    * перепроверяет это на сервере, не доверяя только скрытому пункту формы. */

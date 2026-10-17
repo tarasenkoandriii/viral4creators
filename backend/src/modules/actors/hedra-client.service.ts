@@ -17,10 +17,15 @@
  *    неопределённости.
  */
 
+import { createHash } from 'node:crypto';
+import { mp3DurationSeconds } from '../../common/mp3-duration';
 import { Injectable, Logger } from '@nestjs/common';
 import { isOwnBlobUrl } from '../../common/blob-url';
 
 export interface HedraSubmitOptions {
+  captureReceipt?: boolean;
+  singleAttempt?: boolean;
+  maxAudioSeconds?: number;
   prompt: string;
   /** Explicit benchmark opt-in; normal callers keep Character-3. */
   model?: 'hedra-character-3' | 'kling-ai-avatar-v2';
@@ -35,6 +40,7 @@ export interface HedraSubmitOptions {
 
 export interface HedraJobRef {
   jobId: string;
+  receipt?: Record<string, unknown>;
 }
 
 export interface HedraJobOutput {
@@ -148,7 +154,11 @@ export class HedraClientService {
   }
 
   /** Hedra accepts only URLs issued by its own /files endpoint. */
-  async uploadMedia(url: string, kind: 'image' | 'audio'): Promise<string> {
+  async uploadMedia(
+    url: string,
+    kind: 'image' | 'audio',
+    onSource?: (info: Record<string, unknown>) => void,
+  ): Promise<string> {
     const key = this.key();
     if (!key) throw new Error('HEDRA_API_KEY не задан');
     const parsed = new URL(url);
@@ -179,10 +189,19 @@ export class HedraClientService {
       await reader.cancel();
     }
     if (!size) throw new Error('Hedra source media is empty');
+    const bytes = Buffer.concat(chunks);
+    onSource?.({
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      bytes: size,
+      mimeType: mime,
+      ...(kind === 'audio'
+        ? { durationSeconds: mp3DurationSeconds(bytes) }
+        : {}),
+    });
     const form = new FormData();
     form.append(
       'file',
-      new Blob([Buffer.concat(chunks)], { type: mime }),
+      new Blob([bytes], { type: mime }),
       kind === 'image'
         ? mime === 'image/png'
           ? 'portrait.png'
@@ -220,8 +239,35 @@ export class HedraClientService {
       throw new Error('Kling avatar requires 720p');
     if (opts.quality && model !== 'kling-ai-avatar-v2')
       throw new Error('Quality tier is only supported for Kling avatar');
-    const startImage = await this.uploadMedia(opts.startImage, 'image');
-    const audioUrl = await this.uploadMedia(opts.audioUrl, 'audio');
+    let imageInfo: Record<string, unknown> | undefined;
+    let audioInfo: Record<string, unknown> | undefined;
+    const startImage = await this.uploadMedia(
+      opts.startImage,
+      'image',
+      opts.captureReceipt
+        ? (info) => {
+            imageInfo = info;
+          }
+        : undefined,
+    );
+    const audioUrl = await this.uploadMedia(
+      opts.audioUrl,
+      'audio',
+      opts.captureReceipt
+        ? (info) => {
+            audioInfo = info;
+          }
+        : undefined,
+    );
+    if (
+      opts.maxAudioSeconds !== undefined &&
+      (typeof audioInfo?.durationSeconds !== 'number' ||
+        audioInfo.durationSeconds <= 0 ||
+        audioInfo.durationSeconds > opts.maxAudioSeconds)
+    )
+      throw new Error(
+        'Tutorial preamble needs measurable MP3 audio up to 10 seconds',
+      );
     const body = {
       input: {
         prompt: opts.prompt,
@@ -233,23 +279,23 @@ export class HedraClientService {
       },
     };
 
-    const data = await this.withRetry(
-      () =>
-        this.call(
-          `/models/${model}`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Key ${key}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
+    const send = () =>
+      this.call(
+        `/models/${model}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Key ${key}`,
+            'Content-Type': 'application/json',
           },
-          [200, 201, 202],
-        ),
-      'hedra submit',
-      false,
-    );
+          body: JSON.stringify(body),
+        },
+        [200, 201, 202],
+      );
+    // A diagnostic trial is one paid model POST, even after explicit 5xx.
+    const data = opts.singleAttempt
+      ? await send()
+      : await this.withRetry(send, 'hedra submit', false);
 
     const jobId = (data.job_id ?? data.jobId ?? data.id) as string | undefined;
     if (!jobId) {
@@ -257,7 +303,28 @@ export class HedraClientService {
         'ответ Hedra не содержит id задачи — см. лог для формата ответа',
       );
     }
-    return { jobId };
+    return {
+      jobId,
+      ...(opts.captureReceipt
+        ? {
+            receipt: {
+              schema: 'hedra-request-v1',
+              submittedAt: new Date().toISOString(),
+              model,
+              endpoint: `/v3/models/${model}`,
+              prompt: opts.prompt,
+              aspectRatio: opts.aspectRatio,
+              resolution: opts.resolution,
+              sourceImage: { url: opts.startImage, ...imageInfo },
+              sourceAudio: { url: opts.audioUrl, ...audioInfo },
+              durationParameterSent: false,
+              seedParameterSent: false,
+              singlePaidPost: !!opts.singleAttempt,
+              // Provider upload URLs and credentials are deliberately not persisted.
+            },
+          }
+        : {}),
+    };
   }
 
   /**

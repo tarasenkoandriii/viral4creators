@@ -64,22 +64,6 @@
         "evidence": "doc/reports/greeting-performance-research-2026-10-15.md; explicit owner clarification 2026-10-17",
         "recipe": "doc/reports/approved-greeting-recipe-2026-10-17.md"
       }
-    },
-    {
-      "kind": "Tutorial preamble",
-      "assetId": "cmvc5k0br000a07jsihex7od7",
-      "sha256": "550aeb7cfceff097e150f838e5f09d3e963f25173721c5bc92eec7236bc2a9cf",
-      "durationSeconds": 8.76,
-      "voiceId": "a9fc5a41",
-      "performanceProfile": "greeting-tutorial-v1",
-      "userVerdict": "Теперь совпадает",
-      "approvalScope": [
-        "lip sync on this exact preamble"
-      ],
-      "approvalDoesNotCover": [
-        "final Tutorial montage"
-      ],
-      "modelDisagreement": "Argon returned FAIL for both this candidate and the unchanged owner-accepted Greeting reference; do not replace owner judgment with a binary model verdict."
     }
   ],
   "rejected": [
@@ -99,9 +83,28 @@
       "preambleFragmentId": "cmvbvghm6001a08l3rjnkhrs8",
       "kind": "portrait Tutorial with reviewed Nova narration",
       "reason": "Owner rejected preamble flicker, facial expression not matching speech, slow and excessively smooth performance. Detached preamble from QA brandbook; no artistic acceptance."
+    },
+    {
+      "kind": "Tutorial preamble",
+      "assetId": "cmvc5k0br000a07jsihex7od7",
+      "sha256": "550aeb7cfceff097e150f838e5f09d3e963f25173721c5bc92eec7236bc2a9cf",
+      "durationSeconds": 8.76,
+      "voiceId": "a9fc5a41",
+      "performanceProfile": "greeting-tutorial-v1",
+      "approvalScope": [
+        "lip sync on this exact preamble"
+      ],
+      "approvalDoesNotCover": [
+        "final Tutorial montage"
+      ],
+      "modelDisagreement": "Argon returned FAIL for both this candidate and the unchanged owner-accepted Greeting reference; do not replace owner judgment with a binary model verdict.",
+      "historicalFeedback": "Теперь совпадает",
+      "userVerdict": "ужасно",
+      "accepted": false,
+      "reason": "Owner subsequently rejected the standalone preamble itself. Prior lip-sync feedback is superseded; no permission to reuse for montage or promotion."
     }
   ],
-  "nextGate": "The accepted audio/video file is already a completed Hedra Character-3 result. Preserve and reuse its exact bytes; no additional lip-sync or speech synthesis is needed for this asset. Any changed-text Tutorial is a separate task, not a correction of this accepted file. Nova remains unchanged; Reddit publication remains paused.",
+  "nextGate": "Greeting e38e6c69 remains immutable. Prior preamble cmvc5k0br and full Tutorial remain rejected. Owner subsequently authorized exactly one new trial after comparison and pipeline fixes: tutorial-preamble-v2, same portrait and existing Nova speech, no new TTS or paid Gemini. Do not assemble or promote it without separate acceptance.",
   "pendingOwnerReview": [
     {
       "assetId": "cmvbwf79d000q08l0ctyektm8",
@@ -126,6 +129,19 @@
     "ownerAccepted": false,
     "cabinetUpdated": true,
     "cabinetUrl": "https://viral4creators.app/#/projects/cmvbvin6j000807jwt6gkuqj4/site-tutorial/review",
-    "delivery": "kind=import; exact SHA-256; old source retained; repeated delivery produced no duplicate version; no generation or paid assembly"
+    "delivery": "kind=import; exact SHA-256; old source retained; repeated delivery produced no duplicate version; no generation or paid assembly",
+    "status": "rejected",
+    "ownerVerdict": "полный рассинхрон и мерцание",
+    "additionalAssemblyAudioLagMs": 0,
+    "matchingPreambleFrames": 219
+  },
+  "authorizedTrial": {
+    "profile": "tutorial-preamble-v2",
+    "maximumPaidModelPosts": 1,
+    "reuseExistingNovaSpeech": true,
+    "newTtsAllowed": false,
+    "paidAnalysisAllowed": false,
+    "replaceTutorialAllowed": false,
+    "status": "awaiting deployment"
   }
 }

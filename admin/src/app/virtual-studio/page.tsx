@@ -419,6 +419,9 @@ function StudioDetail({
             {f.kind === 'VOICE' && f.status === 'complete' && f.resultUrl && (
               <audio src={f.resultUrl} controls style={{ marginTop: 6, width: '100%' }} />
             )}
+            {f.kind === 'VIDEO' && f.resultText && (
+              <details style={{ marginTop: 6 }}><summary>Фактические параметры запуска</summary><pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{f.resultText}</pre></details>
+            )}
             {f.kind === 'ANALYSIS' && f.resultText && (
               <p style={{ fontSize: 13, marginTop: 6, whiteSpace: 'pre-wrap' }}>{f.resultText}</p>
             )}
@@ -447,7 +450,7 @@ function VideoFragmentForm({
 }) {
   const [provider, setProvider] = useState<'grok' | 'hedra'>('grok');
   const [prompt, setPrompt] = useState('');
-  const [performanceProfile, setPerformanceProfile] = useState<'manual' | 'greeting-tutorial-v1'>('manual');
+  const [performanceProfile, setPerformanceProfile] = useState<'manual' | 'greeting-tutorial-v1' | 'tutorial-preamble-v2'>('manual');
   const [durationSec, setDurationSec] = useState(12);
   const [voiceFragmentId, setVoiceFragmentId] = useState('');
   const [running, setRunning] = useState(false);
@@ -462,7 +465,7 @@ function VideoFragmentForm({
   }
 
   async function run() {
-    if (!prompt.trim() && !(provider === 'hedra' && performanceProfile === 'greeting-tutorial-v1')) return;
+    if (!prompt.trim() && !(provider === 'hedra' && performanceProfile !== 'manual')) return;
     if (provider === 'hedra' && !voiceFragmentId) {
       setError('Для Hedra выберите готовый голосовой фрагмент — он ведёт лип-синк');
       return;
@@ -500,23 +503,25 @@ function VideoFragmentForm({
         </label>
         {provider === 'hedra' && <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           Профиль исполнения
-          <select value={performanceProfile} onChange={(e) => setPerformanceProfile(e.target.value as 'manual' | 'greeting-tutorial-v1')} disabled={running}>
+          <select value={performanceProfile} onChange={(e) => setPerformanceProfile(e.target.value as 'manual' | 'greeting-tutorial-v1' | 'tutorial-preamble-v2')} disabled={running}>
             <option value="manual">Свой промпт</option>
-            <option value="greeting-tutorial-v1">Tutorial — профиль Greeting v1</option>
+            <option value="greeting-tutorial-v1">Tutorial — прежний Greeting v1 (эксперимент)</option>
+            <option value="tutorial-preamble-v2">Tutorial — артикуляция и стабильный кадр v2</option>
           </select>
         </label>}
-        {provider === 'hedra' && performanceProfile === 'greeting-tutorial-v1' && <p className="muted">Общие с Greeting инструкции: готовая речь задаёт артикуляцию, в паузах губы отдыхают, фон и образ сохраняются. Используется выбранный готовый голосовой фрагмент; повторного синтеза нет. Качество нового результата проверяется отдельно.</p>}
+        {provider === 'hedra' && performanceProfile !== 'manual' && <p className="muted">Готовая речь задаёт артикуляцию. v2: 720p / 9:16, без заданных движений корпуса и праздничной улыбки. Это эксперимент, не гарантия качества. Используется выбранный готовый голосовой фрагмент; повторного синтеза нет. Качество нового результата проверяется отдельно.</p>}
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
           Промпт движения
-          <input type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={provider === 'hedra' && performanceProfile === 'greeting-tutorial-v1'} />
+          <input type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} disabled={provider === 'hedra' && performanceProfile !== 'manual'} />
         </label>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13 }}>
-          Длительность, сек
+          {provider === 'hedra' ? 'Длительность Hedra определяется готовой речью (поле не отправляется)' : 'Длительность, сек'}
           <input
             type="number"
             min={1}
             max={15}
             value={durationSec}
+            disabled={provider === 'hedra'}
             onChange={(e) => setDurationSec(Number(e.target.value) || 12)}
           />
         </label>

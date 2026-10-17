@@ -226,3 +226,139 @@ describe('Greeting profile in Tutorial studio', () => {
     expect(result.text).toBe('Вітаю! Зараз покажу, як надіслати заявку.');
   });
 });
+
+import { tutorialPreamblePromptV2 } from '../../common/presenter-performance';
+import * as mp4Probe from '../tutorial-runner/mp4-probe';
+describe('measured preamble delivery', () => {
+  afterEach(() => jest.restoreAllMocks());
+  it('locks the v2 request, preserves the chosen Nova audio, and rejects incompatible settings before payment', async () => {
+    const submit = jest.fn().mockResolvedValue({
+      jobId: 'trial',
+      receipt: { model: 'hedra-character-3' },
+    });
+    const create = jest.fn(async ({ data }) => data);
+    const service = Object.assign(
+      Object.create(VirtualStudioService.prototype),
+      {
+        getStudioOrThrow: jest
+          .fn()
+          .mockResolvedValue({ selectedVariantId: 'portrait' }),
+        getHedraEnabled: jest.fn().mockResolvedValue(true),
+        prisma: {
+          virtualStudioVariant: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: 'portrait',
+              imageUrl: 'same-portrait.jpg',
+            }),
+          },
+          virtualStudioFragment: {
+            findFirst: jest.fn().mockResolvedValue({
+              resultUrl: 'same-nova.mp3',
+              voiceId: 'a9fc5a41',
+            }),
+            create,
+          },
+        },
+        hedra: { configured: () => true, submit },
+      },
+    ) as VirtualStudioService;
+    await service.createVideoFragment('studio', {
+      provider: 'hedra',
+      performanceProfile: 'tutorial-preamble-v2',
+      prompt: '',
+      voiceFragmentId: 'voice',
+    });
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'hedra-character-3',
+        prompt: tutorialPreamblePromptV2(),
+        startImage: 'same-portrait.jpg',
+        audioUrl: 'same-nova.mp3',
+        aspectRatio: '9:16',
+        resolution: '720p',
+        maxAudioSeconds: 10,
+        singleAttempt: true,
+        captureReceipt: true,
+      }),
+    );
+    expect(create.mock.calls[0][0].data.durationSec).toBeNull();
+    expect(JSON.parse(create.mock.calls[0][0].data.resultText)).toMatchObject({
+      voiceId: 'a9fc5a41',
+      artisticStatus: 'unreviewed',
+    });
+    await expect(
+      service.createVideoFragment('studio', {
+        provider: 'hedra',
+        performanceProfile: 'tutorial-preamble-v2',
+        prompt: '',
+        resolution: '1080p',
+      }),
+    ).rejects.toThrow('фиксирует');
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(tutorialPreamblePromptV2()).not.toContain('warm wish');
+  });
+  function finalizer(probe: ReturnType<typeof mp4Probe.probeMp4>) {
+    jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue(probe);
+    const record = jest.fn();
+    const update = jest.fn(async ({ data }) => data);
+    const service = Object.assign(
+      Object.create(VirtualStudioService.prototype),
+      {
+        download: jest.fn().mockResolvedValue(Buffer.from('output')),
+        blob: {
+          uploadBuffer: jest.fn().mockResolvedValue({ url: 'result.mp4' }),
+        },
+        prisma: {
+          virtualStudioFragment: {
+            findUniqueOrThrow: jest.fn().mockResolvedValue({
+              provider: 'hedra',
+              durationSec: 12,
+              resultText: JSON.stringify({
+                schema: 'hedra-request-v1',
+                sourceAudio: { sha256: 'unchanged' },
+              }),
+            }),
+            update,
+          },
+        },
+        aiUsage: { record },
+      },
+    ) as unknown as {
+      finalizeVideo(id: string, url: string): Promise<unknown>;
+    };
+    return { service, record, update };
+  }
+  it('stores and accounts measured output duration instead of the 12-second form default', async () => {
+    const probe = {
+      durationSeconds: 8.76,
+      tracks: [{ kind: 'video' }, { kind: 'audio' }],
+    } as unknown as NonNullable<ReturnType<typeof mp4Probe.probeMp4>>;
+    const w = finalizer(probe);
+    await w.service.finalizeVideo('trial', 'output');
+    expect(w.record).toHaveBeenCalledWith(
+      expect.objectContaining({ seconds: 9 }),
+    );
+    expect(w.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'complete', durationSec: 9 }),
+      }),
+    );
+    expect(JSON.parse(w.update.mock.calls[0][0].data.resultText)).toMatchObject(
+      {
+        sourceAudio: { sha256: 'unchanged' },
+        output: { durationMs: 8760 },
+        artisticStatus: 'unreviewed',
+      },
+    );
+  });
+  it('does not label a broken provider MP4 complete', async () => {
+    const w = finalizer(null);
+    await w.service.finalizeVideo('trial', 'output');
+    expect(w.record).not.toHaveBeenCalled();
+    expect(w.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'failed' }),
+      }),
+    );
+  });
+});
