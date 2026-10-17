@@ -86,7 +86,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             </p>
           </div>
         </footer>
-        <LandingVisits />
+        <LandingVisits
+          locale={PUBLISHER_BRAND.lang}
+          endpoint="https://backend-iota-ruddy-57.vercel.app/api/public/landing-visits"
+          landingsByHost={{ [new URL(siteUrl()).hostname]: 'publisher' }}
+        />
         <Track
           apiOrigin={env.apiOrigin}
           publicKey={env.publicKey}
