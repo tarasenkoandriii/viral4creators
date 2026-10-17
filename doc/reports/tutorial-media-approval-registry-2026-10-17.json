@@ -86,12 +86,35 @@
         "ужасно",
         "вот идеальный туториал преамбула"
       ],
-      "doesNotApprove": "The full assembled Tutorial remains rejected.",
+      "doesNotApprove": "Standalone approval does not cover arbitrary exports; exact d066c15a export separately accepted by owner.",
       "path": "outputs/narrator-profile/approved/tutorial-preamble-cmvc5k0br000a07jsihex7od7.mp4",
       "pinned": true,
       "latestOwnerInstruction": "Закрепить этот файл, без генерации",
       "regenerateAllowed": false,
       "revoiceAllowed": false
+    },
+    {
+      "kind": "assembled Tutorial",
+      "assetId": "cmvbvx8tx000808l039v4vfjq",
+      "sha256": "d066c15a38cc6671aca38ea0809845460d6386d6881002281c46d62a4b2eed0b",
+      "durationSeconds": 30.96,
+      "path": "outputs/narrator-profile/approved/tutorial-accepted-d066c15a.mp4",
+      "url": "https://fkxhhfzwgy13x5rd.public.blob.vercel-storage.com/tutorial-videos/versions/cmvbvx8tx000808l039v4vfjq/import-d066c15a38cc6671aca38ea0809845460d6386d6881002281c46d62a4b2eed0b.mp4",
+      "voiceId": "a9fc5a41",
+      "preambleFragmentId": "cmvc5k0br000a07jsihex7od7",
+      "ownerAccepted": true,
+      "pinned": true,
+      "userVerdict": "Преамбула, синхрон и стык теперь устраивают — закрепи эту сборку как принятую версию Tutorial.",
+      "approvalScope": [
+        "this exact completed Tutorial",
+        "preamble",
+        "synchronization",
+        "join"
+      ],
+      "regenerateAllowed": false,
+      "revoiceAllowed": false,
+      "redditPublicationAuthorized": false,
+      "cabinetUpdated": true
     }
   ],
   "rejected": [
@@ -111,9 +134,22 @@
       "preambleFragmentId": "cmvbvghm6001a08l3rjnkhrs8",
       "kind": "portrait Tutorial with reviewed Nova narration",
       "reason": "Owner rejected preamble flicker, facial expression not matching speech, slow and excessively smooth performance. Detached preamble from QA brandbook; no artistic acceptance."
+    },
+    {
+      "path": "outputs/tutorial-final-2026-10-17/Tutorial-Nova-Greeting-v1.mp4",
+      "sha256": "2a0214dcecb3ebec4a823441c2585f757b019a85080f62f8c85a5aa8b79f731f",
+      "durationSeconds": 30.952993,
+      "ownerAccepted": false,
+      "cabinetUpdated": false,
+      "cabinetUrl": "https://viral4creators.app/#/projects/cmvbvin6j000807jwt6gkuqj4/site-tutorial/review",
+      "delivery": "kind=import; exact SHA-256; old source retained; repeated delivery produced no duplicate version; no generation or paid assembly",
+      "status": "rejected historical import; superseded",
+      "ownerVerdict": "полный рассинхрон и мерцание",
+      "additionalAssemblyAudioLagMs": 0,
+      "matchingPreambleFrames": 219
     }
   ],
-  "nextGate": "Pinned and accepted standalone Tutorial preamble cmvc5k0br000a07jsihex7od7, exact bytes only; do not generate or revoice a replacement. Greeting reference also stays immutable. The full Tutorial remains rejected and unapproved. V2 trial explicitly cancelled by owner. Nova unchanged; Reddit paused.",
+  "nextGate": "Exact assembled Tutorial d066c15a accepted and pinned by owner. Preserve this file, Nova and Greeting reference. No regeneration or revoice. Reddit remains paused; acceptance is not publication authorization.",
   "pendingOwnerReview": [
     {
       "assetId": "cmvbwf79d000q08l0ctyektm8",
@@ -131,19 +167,6 @@
       }
     }
   ],
-  "pendingFinalTutorial": {
-    "path": "outputs/tutorial-final-2026-10-17/Tutorial-Nova-Greeting-v1.mp4",
-    "sha256": "2a0214dcecb3ebec4a823441c2585f757b019a85080f62f8c85a5aa8b79f731f",
-    "durationSeconds": 30.952993,
-    "ownerAccepted": false,
-    "cabinetUpdated": true,
-    "cabinetUrl": "https://viral4creators.app/#/projects/cmvbvin6j000807jwt6gkuqj4/site-tutorial/review",
-    "delivery": "kind=import; exact SHA-256; old source retained; repeated delivery produced no duplicate version; no generation or paid assembly",
-    "status": "rejected",
-    "ownerVerdict": "полный рассинхрон и мерцание",
-    "additionalAssemblyAudioLagMs": 0,
-    "matchingPreambleFrames": 219
-  },
   "authorizedTrial": {
     "profile": "tutorial-preamble-v2",
     "maximumPaidModelPosts": 1,
@@ -153,5 +176,28 @@
     "replaceTutorialAllowed": false,
     "status": "cancelled by owner: Закрепить этот файл, без генерации",
     "newGenerationAllowed": false
+  },
+  "activeAcceptedTutorial": {
+    "kind": "assembled Tutorial",
+    "assetId": "cmvbvx8tx000808l039v4vfjq",
+    "sha256": "d066c15a38cc6671aca38ea0809845460d6386d6881002281c46d62a4b2eed0b",
+    "durationSeconds": 30.96,
+    "path": "outputs/narrator-profile/approved/tutorial-accepted-d066c15a.mp4",
+    "url": "https://fkxhhfzwgy13x5rd.public.blob.vercel-storage.com/tutorial-videos/versions/cmvbvx8tx000808l039v4vfjq/import-d066c15a38cc6671aca38ea0809845460d6386d6881002281c46d62a4b2eed0b.mp4",
+    "voiceId": "a9fc5a41",
+    "preambleFragmentId": "cmvc5k0br000a07jsihex7od7",
+    "ownerAccepted": true,
+    "pinned": true,
+    "userVerdict": "Преамбула, синхрон и стык теперь устраивают — закрепи эту сборку как принятую версию Tutorial.",
+    "approvalScope": [
+      "this exact completed Tutorial",
+      "preamble",
+      "synchronization",
+      "join"
+    ],
+    "regenerateAllowed": false,
+    "revoiceAllowed": false,
+    "redditPublicationAuthorized": false,
+    "cabinetUpdated": true
   }
 }
