@@ -61,7 +61,8 @@
         "model": "Character-3",
         "sessionId": "fixture-greeting-handsdown-v2-20261016",
         "videoId": "e38e6c69-6989-4147-b8bd-8d05b0962c31",
-        "evidence": "doc/reports/greeting-performance-research-2026-10-15.md; explicit owner clarification 2026-10-17"
+        "evidence": "doc/reports/greeting-performance-research-2026-10-15.md; explicit owner clarification 2026-10-17",
+        "recipe": "doc/reports/approved-greeting-recipe-2026-10-17.md"
       }
     }
   ],
