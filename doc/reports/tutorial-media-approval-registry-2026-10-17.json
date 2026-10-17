@@ -94,7 +94,13 @@
       "sha256": "05588ec8bfd16eaeaf26559508e9746c52985c5faa63f8ff69d1c7c552974cd1",
       "voiceId": "a9fc5a41",
       "model": "hedra-character-3",
-      "accepted": false
+      "accepted": false,
+      "userFeedback": "Намного лучше, но губы идут впереди звука",
+      "knownDefect": "Lip sync unresolved; do not assemble or publish",
+      "modelFeedback": {
+        "gemini-3.6-flash": "PASS contradicted by owner feedback and ending frames; not accepted",
+        "gemini-4-argon": "FAIL, nonuniform articulation mismatch; offset not measurable"
+      }
     }
   ]
 }
