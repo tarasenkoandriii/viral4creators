@@ -77,7 +77,24 @@
       "kind": "portrait Tutorial",
       "sha256": "c892172481f7145069072e7b8075422416892210ff132648cf176bd74e3042ef",
       "reason": "Owner rejected flickering, unnatural facial expression and speech quality."
+    },
+    {
+      "assetId": "cmvbvx8tx000808l039v4vfjq",
+      "preambleFragmentId": "cmvbvghm6001a08l3rjnkhrs8",
+      "kind": "portrait Tutorial with reviewed Nova narration",
+      "reason": "Owner rejected preamble flicker, facial expression not matching speech, slow and excessively smooth performance. Detached preamble from QA brandbook; no artistic acceptance."
     }
   ],
-  "nextGate": "The accepted audio/video file is already a completed Hedra Character-3 result. Preserve and reuse its exact bytes; no additional lip-sync or speech synthesis is needed for this asset. Any changed-text Tutorial is a separate task, not a correction of this accepted file. Nova remains unchanged; Reddit publication remains paused."
+  "nextGate": "The accepted audio/video file is already a completed Hedra Character-3 result. Preserve and reuse its exact bytes; no additional lip-sync or speech synthesis is needed for this asset. Any changed-text Tutorial is a separate task, not a correction of this accepted file. Nova remains unchanged; Reddit publication remains paused.",
+  "pendingOwnerReview": [
+    {
+      "assetId": "cmvbwf79d000q08l0ctyektm8",
+      "kind": "Tutorial preamble adapted from accepted Greeting recipe",
+      "durationSeconds": 8.76,
+      "sha256": "05588ec8bfd16eaeaf26559508e9746c52985c5faa63f8ff69d1c7c552974cd1",
+      "voiceId": "a9fc5a41",
+      "model": "hedra-character-3",
+      "accepted": false
+    }
+  ]
 }

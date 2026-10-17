@@ -332,7 +332,7 @@ export default function SiteTutorialDraftsPage() {
                 </>
               )}
 
-              {narrations.length > 0 && (
+              {row.status === 'PENDING_REVIEW' && narrations.length > 0 && (
                 <section>
                   <h3>Реплики диктора — Nova</h3>
                   <p>Вычитайте текст до платной сборки. Не добавляйте пароли и значения личных полей. Реплика описывает следующий шаг на показанном кадре.</p>
