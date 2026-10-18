@@ -625,7 +625,13 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
       setBusyId(row.id);
       setError(null);
       try {
-        await setTutorialVideoReviewed(row.id, !row.reviewed);
+        await setTutorialVideoReviewed(
+          row.id,
+          !row.reviewed,
+          row.blobUrl
+            ? { expectedBlobUrl: row.blobUrl, expectedVersionId: row.activeVersionId ?? null }
+            : undefined,
+        );
         load();
       } catch (e) {
         setError(errText(e));
@@ -852,7 +858,14 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
                       </td>
                       <td>
                         {row.reviewed ? (
-                          <span className="badge-status badge-status-ok">одобрено</span>
+                          <span
+                            className="badge-status badge-status-ok"
+                            title={row.reviewApproval?.sha256
+                              ? `SHA-256: ${row.reviewApproval.sha256}`
+                              : 'Историческая приёмка без сохранённого SHA-256; замена файла её снимет'}
+                          >
+                            {row.reviewApproval?.sha256 ? 'одобрено · SHA-256' : 'одобрено ранее'}
+                          </span>
                         ) : (
                           <span className="muted">нет</span>
                         )}

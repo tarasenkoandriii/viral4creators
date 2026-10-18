@@ -1024,9 +1024,14 @@ export function getTutorialVideoAssets(params: {
   });
 }
 
-export function setTutorialVideoReviewed(id: string, reviewed: boolean) {
+export function setTutorialVideoReviewed(
+  id: string,
+  reviewed: boolean,
+  expected?: { expectedBlobUrl: string; expectedVersionId: string | null },
+) {
   return apiPatch<TutorialVideoAssetRow>(`/admin/tutorial-video-assets/${id}/review`, {
     reviewed,
+    ...expected,
   });
 }
 

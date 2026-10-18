@@ -95,7 +95,7 @@ export class TutorialVideoAdminController {
   ) {
     await this.adminPanel.assertOperator(req.userId);
     if (!id) throw new BadRequestException('id обязателен');
-    return this.videoAdmin.setReviewed(id, dto.reviewed);
+    return this.videoAdmin.setReviewed(id, dto.reviewed, dto, req.userId);
   }
 
   /**

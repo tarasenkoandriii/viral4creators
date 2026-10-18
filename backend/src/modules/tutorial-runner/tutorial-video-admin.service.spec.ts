@@ -1,8 +1,41 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 jest.mock('../../prisma/prisma.service', () => ({ PrismaService: class {} }));
 
+import { Prisma } from '@prisma/client';
+import { createHash } from 'crypto';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
+
+const savedBlobHosts = process.env.BLOB_PUBLIC_HOSTS;
+beforeEach(() => {
+  process.env.BLOB_PUBLIC_HOSTS = 'blob.example';
+  jest
+    .spyOn(global, 'fetch')
+    .mockImplementation(async () => new Response('test mp4'));
+});
+afterEach(() => {
+  jest.restoreAllMocks();
+  if (savedBlobHosts === undefined) delete process.env.BLOB_PUBLIC_HOSTS;
+  else process.env.BLOB_PUBLIC_HOSTS = savedBlobHosts;
+});
+async function review(
+  service: TutorialVideoAdminService,
+  prisma: any,
+  id: string,
+  reviewed: boolean,
+) {
+  const row = await prisma.tutorialVideoAsset.findUnique({ where: { id } });
+  if (row && row.assemblyStatus === undefined) row.assemblyStatus = 'complete';
+  return service.setReviewed(
+    id,
+    reviewed,
+    {
+      expectedBlobUrl: row?.blobUrl,
+      expectedVersionId: row?.activeVersionId ?? null,
+    },
+    'operator',
+  );
+}
 
 function build() {
   const prisma = {
@@ -88,9 +121,9 @@ describe('TutorialVideoAdminService.setReviewed', () => {
   it('несуществующий id — NotFoundException', async () => {
     const { service, prisma } = build();
     prisma.tutorialVideoAsset.findUnique.mockResolvedValue(null);
-    await expect(service.setReviewed('missing', true)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      review(service, prisma, 'missing', true),
+    ).rejects.toBeInstanceOf(NotFoundException);
     expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
   });
 
@@ -98,16 +131,29 @@ describe('TutorialVideoAdminService.setReviewed', () => {
     const { service, prisma } = build();
     prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
       id: 'tva-1',
-      blobUrl: 'https://blob.example/tva-1.mp4',
+      blobUrl: 'https://blob.example/tutorial-videos/tva-1.mp4',
     });
     prisma.tutorialVideoAsset.update.mockResolvedValue({
       id: 'tva-1',
       reviewed: true,
     });
-    const result = await service.setReviewed('tva-1', true);
+    const result = await review(service, prisma, 'tva-1', true);
     expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith({
-      where: { id: 'tva-1' },
-      data: { reviewed: true },
+      where: expect.objectContaining({
+        id: 'tva-1',
+        blobUrl: 'https://blob.example/tutorial-videos/tva-1.mp4',
+        activeVersionId: null,
+        assemblyStatus: 'complete',
+      }),
+      data: expect.objectContaining({
+        reviewed: true,
+        reviewApproval: expect.objectContaining({
+          schema: 1,
+          sha256: createHash('sha256').update('test mp4').digest('hex'),
+          versionId: null,
+          approvedBy: 'operator',
+        }),
+      }),
     });
     expect(result).toEqual({ id: 'tva-1', reviewed: true });
   });
@@ -122,10 +168,10 @@ describe('TutorialVideoAdminService.setReviewed', () => {
       id: 'tva-1',
       reviewed: false,
     });
-    const result = await service.setReviewed('tva-1', false);
+    const result = await review(service, prisma, 'tva-1', false);
     expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith({
       where: { id: 'tva-1' },
-      data: { reviewed: false },
+      data: { reviewed: false, reviewApproval: Prisma.DbNull },
     });
     expect(result.reviewed).toBe(false);
   });
@@ -191,7 +237,7 @@ describe('ролики обучалки по сайту заказчика (ск
       clientSiteDraftId: 'draft-7',
     });
 
-    await expect(service.setReviewed('tva-1', true)).rejects.toThrow(
+    await expect(review(service, prisma, 'tva-1', true)).rejects.toThrow(
       /сайту заказчика/,
     );
     expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
@@ -202,10 +248,10 @@ describe('ролики обучалки по сайту заказчика (ск
     prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
       id: 'tva-2',
       clientSiteDraftId: null,
-      blobUrl: 'https://blob.example/tva-2.mp4',
+      blobUrl: 'https://blob.example/tutorial-videos/tva-2.mp4',
     });
 
-    await service.setReviewed('tva-2', true);
+    await review(service, prisma, 'tva-2', true);
     expect(prisma.tutorialVideoAsset.update).toHaveBeenCalled();
   });
 });
@@ -223,7 +269,7 @@ describe('одобрять можно только СОБРАННЫЙ ролик
       blobUrl: null,
     });
 
-    return expect(service.setReviewed('tva-3', true)).rejects.toThrow(
+    return expect(review(service, prisma, 'tva-3', true)).rejects.toThrow(
       /не собран/,
     );
   });
@@ -237,7 +283,9 @@ describe('одобрять можно только СОБРАННЫЙ ролик
       blobUrl: null,
     });
 
-    return expect(service.setReviewed('tva-4', false)).resolves.not.toThrow();
+    return expect(
+      review(service, prisma, 'tva-4', false),
+    ).resolves.not.toThrow();
   });
 });
 
@@ -257,20 +305,20 @@ describe('Э-С Ш5: одобрение → набор роликов сайта
     prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
       id: 'tva-9',
       clientSiteDraftId: null,
-      blobUrl: 'https://blob.example/tva-9.mp4',
+      blobUrl: 'https://blob.example/tutorial-videos/tva-9.mp4',
     });
-    await expect(service.setReviewed('tva-9', true)).resolves.toEqual({
+    await expect(review(service, prisma, 'tva-9', true)).resolves.toEqual({
       id: 'tva-9',
     });
-    await service.setReviewed('tva-9', false);
+    await review(service, prisma, 'tva-9', false);
     expect(landing.sync).toHaveBeenCalledTimes(2);
 
     prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
       id: 'tva-10',
       clientSiteDraftId: 'draft-1',
-      blobUrl: 'https://blob.example/tva-10.mp4',
+      blobUrl: 'https://blob.example/tutorial-videos/tva-10.mp4',
     });
-    await expect(service.setReviewed('tva-10', true)).rejects.toThrow(
+    await expect(review(service, prisma, 'tva-10', true)).rejects.toThrow(
       /сайту заказчика/,
     );
     expect(landing.sync).toHaveBeenCalledTimes(2);
@@ -282,7 +330,7 @@ describe('Э-С Ш5: одобрение → набор роликов сайта
         findUnique: jest.fn().mockResolvedValue({
           id: 'tva-11',
           clientSiteDraftId: null,
-          blobUrl: 'https://blob.example/tva-11.mp4',
+          blobUrl: 'https://blob.example/tutorial-videos/tva-11.mp4',
         }),
         update: jest.fn().mockResolvedValue({ id: 'tva-11' }),
       },
@@ -292,7 +340,7 @@ describe('Э-С Ш5: одобрение → набор роликов сайта
       prisma as any,
       landing as any,
     );
-    await expect(service.setReviewed('tva-11', true)).resolves.toEqual({
+    await expect(review(service, prisma, 'tva-11', true)).resolves.toEqual({
       id: 'tva-11',
     });
   });
@@ -305,7 +353,7 @@ describe('TutorialVideoAdminService.setReviewed — отметка одобре�
         findUnique: jest.fn().mockResolvedValue({
           id: 'tva-1',
           clientSiteDraftId: null,
-          blobUrl: 'https://blob.example.com/tutorial-videos/1/tva-1.mp4',
+          blobUrl: 'https://blob.example/tutorial-videos/1/tva-1.mp4',
         }),
         update: jest.fn().mockResolvedValue({ id: 'tva-1', reviewed: true }),
       },
@@ -323,9 +371,9 @@ describe('TutorialVideoAdminService.setReviewed — отметка одобре�
   }
 
   it('одобрение пишет время в карту — по нему подметальщик держит прежний ролик сутки', async () => {
-    const { service, settings } = withSettings();
+    const { service, prisma, settings } = withSettings();
     const before = Date.now();
-    await service.setReviewed('tva-1', true);
+    await review(service, prisma, 'tva-1', true);
     expect(settings.set).toHaveBeenCalledWith(
       'tutorial.videoApprovedAt',
       expect.any(String),
@@ -335,15 +383,15 @@ describe('TutorialVideoAdminService.setReviewed — отметка одобре�
   });
 
   it('снятие одобрения карту не трогает', async () => {
-    const { service, settings } = withSettings();
-    await service.setReviewed('tva-1', false);
+    const { service, prisma, settings } = withSettings();
+    await review(service, prisma, 'tva-1', false);
     expect(settings.set).not.toHaveBeenCalled();
   });
 
   it('сбой записи карты одобрение не роняет', async () => {
-    const { service, settings } = withSettings();
+    const { service, prisma, settings } = withSettings();
     settings.set.mockRejectedValue(new Error('база'));
-    await expect(service.setReviewed('tva-1', true)).resolves.toBeDefined();
+    await expect(review(service, prisma, 'tva-1', true)).resolves.toBeDefined();
   });
 });
 
@@ -380,7 +428,7 @@ describe('TutorialVideoAdminService.setSiteTutorialDemo — отметка «в 
     subjectKey: 'site-tutorial-demo-1',
     clientSiteDraftId: null,
     reviewed: true,
-    blobUrl: 'https://blob.example/demo.mp4',
+    blobUrl: 'https://blob.example/tutorial-videos/demo.mp4',
   };
 
   it('годная строка — id дописывается в отметку, повтор ничего не меняет', async () => {
@@ -486,7 +534,7 @@ describe('заход 7: блокировка публикации проверк
           subjectKey: 'site-tutorial-demo-1',
           clientSiteDraftId: null,
           reviewed: true,
-          blobUrl: 'https://blob.example/q.mp4',
+          blobUrl: 'https://blob.example/tutorial-videos/q.mp4',
         }),
         update: jest.fn().mockResolvedValue({ id: 'tva-q' }),
       },
@@ -507,15 +555,15 @@ describe('заход 7: блокировка публикации проверк
 
   it('fail без переопределения — одобрить нельзя, снять одобрение можно', async () => {
     const { service, prisma, quality } = withQuality(true);
-    await expect(service.setReviewed('tva-q', true)).rejects.toThrow(
+    await expect(review(service, prisma, 'tva-q', true)).rejects.toThrow(
       ConflictException,
     );
     expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
     expect(quality.assertPublishable).toHaveBeenCalledWith('tva-q');
-    await service.setReviewed('tva-q', false);
+    await review(service, prisma, 'tva-q', false);
     expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith({
       where: { id: 'tva-q' },
-      data: { reviewed: false },
+      data: { reviewed: false, reviewApproval: Prisma.DbNull },
     });
   });
 
@@ -531,9 +579,95 @@ describe('заход 7: блокировка публикации проверк
 
   it('блока нет (флаг выключен или переопределено) — как прежде', async () => {
     const { service, prisma } = withQuality(false);
-    await service.setReviewed('tva-q', true);
+    await review(service, prisma, 'tva-q', true);
     expect(prisma.tutorialVideoAsset.update).toHaveBeenCalled();
     const res = await service.setSiteTutorialDemo('tva-q', true, 'op');
     expect(res.siteTutorialDemoAssetIds).toEqual(['tva-q']);
+  });
+});
+
+describe('exact file/version approval', () => {
+  const url = 'https://blob.example/tutorial-videos/exact.mp4';
+  const expected = { expectedBlobUrl: url, expectedVersionId: 'v1' };
+  function exact() {
+    const s = build();
+    s.prisma.tutorialVideoAsset.findUnique.mockResolvedValue({
+      id: 'asset',
+      blobUrl: url,
+      activeVersionId: 'v1',
+      assemblyStatus: 'complete',
+      tempoManifest: { recipe: 'v1' },
+      contentHash: 'inputs',
+    });
+    s.prisma.tutorialVideoAsset.update.mockResolvedValue({ reviewed: true });
+    return s;
+  }
+  it('requires the UI snapshot and refuses a stale version before downloading', async () => {
+    const { service, prisma } = exact();
+    await expect(service.setReviewed('asset', true)).rejects.toThrow(
+      ConflictException,
+    );
+    await expect(
+      service.setReviewed(
+        'asset',
+        true,
+        { ...expected, expectedVersionId: 'v0' },
+        'op',
+      ),
+    ).rejects.toThrow(ConflictException);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
+  });
+  it('does not approve if the file/version/provenance changes while bytes are checked', async () => {
+    const { service, prisma } = exact();
+    prisma.tutorialVideoAsset.update.mockRejectedValue({ code: 'P2025' });
+    await expect(
+      service.setReviewed('asset', true, expected, 'op'),
+    ).rejects.toThrow(/приёмка отменена/);
+    expect(prisma.tutorialVideoAsset.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          blobUrl: url,
+          activeVersionId: 'v1',
+          contentHash: 'inputs',
+          tempoManifest: { equals: { recipe: 'v1' } },
+        }),
+      }),
+    );
+  });
+  it('refuses foreign or unreadable media without writing an approval', async () => {
+    const { service, prisma } = exact();
+    prisma.tutorialVideoAsset.findUnique.mockResolvedValueOnce({
+      blobUrl: 'https://localhost/private',
+      activeVersionId: 'v1',
+      assemblyStatus: 'complete',
+    });
+    await expect(
+      service.setReviewed(
+        'asset',
+        true,
+        { ...expected, expectedBlobUrl: 'https://localhost/private' },
+        'op',
+      ),
+    ).rejects.toThrow(/недоступен/);
+    expect(fetch).not.toHaveBeenCalled();
+    jest.mocked(fetch).mockResolvedValueOnce(new Response('', { status: 503 }));
+    await expect(
+      service.setReviewed('asset', true, expected, 'op'),
+    ).rejects.toThrow(/недоступен/);
+    expect(prisma.tutorialVideoAsset.update).not.toHaveBeenCalled();
+  });
+  it('retries only bind the same bytes; they do not create versions or paid work', async () => {
+    const { service, prisma } = exact();
+    for (let i = 0; i < 2; i++)
+      await service.setReviewed('asset', true, expected, 'op');
+    const proofs = prisma.tutorialVideoAsset.update.mock.calls.map(
+      ([arg]) => arg.data.reviewApproval,
+    );
+    expect(proofs).toHaveLength(2);
+    expect(proofs[0].sha256).toBe(proofs[1].sha256);
+    expect(proofs[0].provenanceSha256).toBe(proofs[1].provenanceSha256);
+    expect(proofs[0].versionId).toBe('v1');
+    expect(proofs[0].approvedBy).toBe('op');
   });
 });

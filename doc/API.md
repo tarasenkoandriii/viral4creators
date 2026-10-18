@@ -1649,7 +1649,17 @@ knowledge_api, secret: knsec_…, createdAt }` (только владелец, �
 знаний»; источник `api` в «Знания» — «API знаний».
 
 backend генератора (без новых маршрутов): одобрение ролика в админке
-(`PATCH /admin/tutorial-video-assets/:id/review`) отправляет полный набор роликов
+(`PATCH /admin/tutorial-video-assets/:id/review`) при `reviewed:true` требует
+`expectedBlobUrl` и `expectedVersionId` (явный null для исходника), сверяет
+снимок админки с текущей строкой и скачивает файл без редиректов с Blob
+(до 100 МБ). Атомарно сохраняет `reviewApproval`: URL, versionId, SHA-256
+байтов, fingerprint provenance, оператор и время. Изменение строки во время
+проверки — 409. При `reviewed:false` снимок не требуется, привязка снимается.
+DB-trigger снимает приёмку при смене файла, версии, manifest, input hash или
+статуса сборки у любого писателя, включая импорт/активацию/откат.
+Исторические одобрения без SHA не переодобряются автоматически и не
+наследуются заменой; админка отличает их от новой приёмки.
+Успешное действие отправляет полный набор роликов
 штатной обучалки на сайт тенанта (`ASSIST_LANDING_SITE_ID`) внутренним API
 Э6 `POST /internal/sites/tutorial/site-videos` — барьер лендинга
 (`reviewed`, собран, `clientSiteDraftId: null`); `PUT

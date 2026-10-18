@@ -3629,6 +3629,8 @@ model TutorialVideoAsset {
   /// Осмысленно только при assemblyStatus='complete' — незавершённая
   /// сборка не может быть одобрена, потому что показывать ещё нечего.
   reviewed Boolean @default(false)
+  /// Exact server-verified approval; legacy rows remain unchanged until next review/replacement.
+  reviewApproval Json?
 
   /// Состояние асинхронной сборки через внешний ffmpeg-api. Четыре
   /// значения, и опрос сборок выбирает только второе:

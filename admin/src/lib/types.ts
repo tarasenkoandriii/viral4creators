@@ -1478,6 +1478,7 @@ export interface TutorialVideoAssetRow {
   externalUrl: string | null;
   durationMs: number | null;
   reviewed: boolean;
+  reviewApproval?: { sha256: string; versionId: string | null; approvedBy: string; approvedAt: string } | null;
   assemblyStatus: TutorialVideoAssemblyStatus;
   assemblyError: string | null;
   assemblyJobId: string | null;

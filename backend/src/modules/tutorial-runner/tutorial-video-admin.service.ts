@@ -1,10 +1,14 @@
+import { createHash } from 'crypto';
+import { Prisma } from '@prisma/client';
+import { isOwnBlobHost } from '../../common/blob-url';
+import { readBodyWithLimit } from '../../common/external-url-guard';
 /**
  * TutorialVideoAdminService — вкладка «Видео-контент»/«Состояние данных»
  * админки (doc/TMA-UI-SNAPSHOT-AND-TUTORIAL-VIDEO-SPEC.md §4.9, этап 99).
  * Тот же приём, что `TutorialScenarioAdminService`
  * (tutorial-scenario/tutorial-scenario-admin.service.ts): собственный
  * сервис/контроллер внутри фиче-модуля, читающая часть отдаёт «как в
- * базе», пишущая — только флаг `reviewed`, ничего не пересчитывает.
+ * базе», приёмка фиксирует точную версию и SHA-256 файла без генерации.
  *
  * Без `reviewed:true` собранное видео физически недоступно никому, кроме
  * прямого запроса к базе — ни консультанту (`AssistantService.
@@ -15,6 +19,7 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -246,12 +251,24 @@ export class TutorialVideoAdminService {
    * публикации нашёлся брак в кадрах) — поэтому не идемпотентный
    * one-way, а обычная установка значения.
    */
-  async setReviewed(id: string, reviewed: boolean) {
+  async setReviewed(
+    id: string,
+    reviewed: boolean,
+    expected?: {
+      expectedBlobUrl?: string;
+      expectedVersionId?: string | null;
+    },
+    approvedBy?: string,
+  ) {
     const row = (await this.prisma.tutorialVideoAsset.findUnique({
       where: { id },
     })) as {
       clientSiteDraftId?: string | null;
       blobUrl?: string | null;
+      assemblyStatus?: string;
+      activeVersionId?: string | null;
+      contentHash?: string | null;
+      tempoManifest?: Prisma.InputJsonValue | null;
     } | null;
     if (!row) throw new NotFoundException('Видео не найдено');
     // Барьер И на самом действии, не только в выборке списка: прямой
@@ -276,10 +293,92 @@ export class TutorialVideoAdminService {
     // переопределения оператором — одобрить нельзя (только при флаге
     // `TUTORIAL_DEMO_QUALITY_BLOCK`). Снять одобрение можно всегда.
     if (reviewed && this.quality) await this.quality.assertPublishable(id);
-    const updated = await this.prisma.tutorialVideoAsset.update({
-      where: { id },
-      data: { reviewed },
-    });
+    let approval: Prisma.InputJsonObject | undefined;
+    if (reviewed) {
+      if (row.assemblyStatus !== 'complete')
+        throw new BadRequestException('Ролик ещё не собран — одобрять нечего');
+      if (
+        !approvedBy ||
+        !expected ||
+        expected?.expectedBlobUrl !== row.blobUrl ||
+        expected.expectedVersionId === undefined ||
+        expected.expectedVersionId !== (row.activeVersionId ?? null)
+      ) {
+        throw new ConflictException(
+          'Версия ролика изменилась — обновите список и проверьте файл заново',
+        );
+      }
+      let url: URL;
+      try {
+        url = new URL(row.blobUrl!);
+      } catch {
+        throw new BadRequestException('Файл ролика недоступен для приёмки');
+      }
+      if (
+        url.protocol !== 'https:' ||
+        url.username ||
+        url.password ||
+        (url.port && url.port !== '443') ||
+        !isOwnBlobHost(url.hostname) ||
+        !url.pathname.startsWith('/tutorial-videos/')
+      ) {
+        throw new BadRequestException('Файл ролика недоступен для приёмки');
+      }
+      const response = await fetch(row.blobUrl!, {
+        redirect: 'error',
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok)
+        throw new BadRequestException('Файл ролика недоступен для приёмки');
+      const bytes = await readBodyWithLimit(response, 100 * 1024 * 1024);
+      if (!bytes.length) throw new BadRequestException('Файл ролика пуст');
+      approval = {
+        schema: 1,
+        blobUrl: row.blobUrl!,
+        versionId: row.activeVersionId ?? null,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        provenanceSha256: createHash('sha256')
+          .update(
+            JSON.stringify({
+              contentHash: row.contentHash ?? null,
+              manifest: row.tempoManifest ?? null,
+            }),
+          )
+          .digest('hex'),
+        approvedBy,
+        approvedAt: new Date().toISOString(),
+        bytes: bytes.length,
+      };
+    }
+    let updated;
+    try {
+      updated = await this.prisma.tutorialVideoAsset.update({
+        where: {
+          id,
+          ...(reviewed
+            ? {
+                blobUrl: row.blobUrl,
+                activeVersionId: row.activeVersionId ?? null,
+                assemblyStatus: 'complete',
+                contentHash: row.contentHash ?? null,
+                tempoManifest: { equals: row.tempoManifest ?? Prisma.DbNull },
+              }
+            : {}),
+        },
+        data: {
+          reviewed,
+          ...(approval
+            ? { reviewApproval: approval }
+            : { reviewApproval: Prisma.DbNull }),
+        },
+      });
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2025')
+        throw new ConflictException(
+          'Версия ролика изменилась — приёмка отменена',
+        );
+      throw e;
+    }
     if (reviewed) await this.stampApproval(id);
     // Набор роликов лендинга в тенанте — тем же барьером (clientSiteDraftId
     // уже отсеян выше). Не ждём сети и не роняем одобрение: сбой — в лог,

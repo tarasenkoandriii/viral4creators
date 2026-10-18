@@ -1,7 +1,15 @@
-import { IsBoolean } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
-/** PATCH /admin/tutorial-video-assets/:id/review (§4.9, этап 99). */
+/** Approval identifies the version actually shown to the operator. */
 export class SetTutorialVideoReviewedDto {
   @IsBoolean()
   reviewed!: boolean;
+
+  @IsOptional()
+  @IsString()
+  expectedBlobUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  expectedVersionId?: string | null;
 }
