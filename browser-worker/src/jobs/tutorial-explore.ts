@@ -528,6 +528,62 @@ async function validateFormBatch(page: Page, clicks: string[]): Promise<void> {
   if (!valid) throw new JobError('click_refused');
 }
 
+/** Do not send again if checking the box already submitted or replaced the form. */
+async function executeClicks(
+  ctx: JobContext,
+  page: Page,
+  p: TutorialExploreParams,
+): Promise<void> {
+  if (p.clicks.length !== 2) {
+    for (const selector of p.clicks) await guardedClick(ctx, page, p, selector);
+    return;
+  }
+  const state = await page.evaluateHandle(([first, second]) => {
+    const checkbox = document.querySelector(
+      first.replace(/^css=/, ''),
+    ) as HTMLInputElement;
+    const submit = document.querySelector(
+      second.replace(/^css=/, ''),
+    ) as HTMLButtonElement;
+    const form = checkbox.form!;
+    const state = {
+      checkbox,
+      submit,
+      form,
+      submitted: false,
+      listener: () => {},
+    };
+    state.listener = () => {
+      state.submitted = true;
+    };
+    form.addEventListener('submit', state.listener, true);
+    return state;
+  }, p.clicks);
+  try {
+    await guardedClick(ctx, page, p, p.clicks[0]);
+    const ready = await state
+      .evaluate(
+        (s) =>
+          !s.submitted &&
+          s.form.isConnected &&
+          s.checkbox.isConnected &&
+          s.checkbox.checked &&
+          s.checkbox.form === s.form &&
+          s.submit.isConnected &&
+          s.submit.form === s.form &&
+          !s.submit.disabled,
+      )
+      .catch(() => false);
+    if (!ready) throw new JobError('click_refused');
+    await guardedClick(ctx, page, p, p.clicks[1]);
+  } finally {
+    await state
+      .evaluate((s) => s.form.removeEventListener('submit', s.listener, true))
+      .catch(() => undefined);
+    await state.dispose();
+  }
+}
+
 /** Клик со стоп-листом: цель «никогда» — `click_refused` ДО клика. */
 async function guardedClick(
   ctx: JobContext,
@@ -667,7 +723,7 @@ export async function runTutorialExplore(
       }
     }
     await validateFormBatch(page, p.clicks);
-    for (const selector of p.clicks) await guardedClick(ctx, page, p, selector);
+    await executeClicks(ctx, page, p);
     target =
       p.clicks[p.clicks.length - 1] ??
       p.fills[p.fills.length - 1]?.selector ??

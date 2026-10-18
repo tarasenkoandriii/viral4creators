@@ -101,6 +101,11 @@ d('tutorial-explore e2e (настоящий Chromium)', () => {
         '/batch',
         `<form method="post" action="/batch-done"><input name="name" required><input id="agree" name="agree" type="checkbox" required><button id="send" type="submit">Send demo</button><button id="other" type="button">Other</button><input id="checked" type="checkbox" checked></form><form><button id="foreign" type="submit">Send</button></form>`,
       )
+      .page(
+        SHOP,
+        '/batch-auto',
+        `<form onsubmit="event.preventDefault();fetch('/batch-done',{method:'POST'})"><input id="agree" type="checkbox" onchange="this.form.requestSubmit()"><button id="send" type="submit">Send demo</button></form>`,
+      )
       .on(SHOP, '/batch-done', (_q, res, body) => {
         formHits++;
         formBody = body;
@@ -271,6 +276,17 @@ d('tutorial-explore e2e (настоящий Chromium)', () => {
       expect(rejected.error).toBeTruthy();
     }
     expect(formHits).toBe(before + 1);
+    const auto = await sites.waitDone(
+      sites.add(
+        'tutorial-explore',
+        explore({
+          url: `https://${SHOP}/batch-auto`,
+          clicks: ['#agree', '#send'],
+        }),
+      ),
+    );
+    expect(auto.error).toBeTruthy();
+    expect(formHits).toBe(before + 2); // checkbox submitted once; no second submit click
   });
 
   it('сессия → клик «Далі» → новый экран, кадры, новая сессия конвертом', async () => {
