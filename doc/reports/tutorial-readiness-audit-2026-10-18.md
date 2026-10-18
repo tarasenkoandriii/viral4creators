@@ -94,3 +94,36 @@ P2: пользовательский клон и переозвучка, пол�
 Совместимость: миграция **не переписывает** старые ролики и не отзывает историческую приёмку неизменившихся файлов. У legacy нет серверно сохранённого byte hash; UI показывает «одобрено ранее». Замена такого файла тоже снимает reviewed. Backfill без повторного просмотра не делался. Это оставлено отдельным TODO, а не объявлено проверкой старых файлов задним числом. Принятая сборка, эталон и Nova не менялись; production-файлы не скачивались/не перезаливались в этом проходе.
 
 Проверки: 7 интеграционных тестов на настоящем PostgreSQL (включая настоящий Prisma+сервис, а не только SQL-фикстуру), stale snapshot/CAS, фактический byte hash, повтор, отказ для чужого/недоступного файла, отзыв и legacy. Все 140 миграций применены к локальному Postgres 16; `prisma migrate diff --exit-code` не обнаруживает расхождений. Тесты импорта и активации сохранены, платные провайдеры не вызываются. Миграция готова к доставке, ручного изменения production-БД не было.
+
+
+## Production-проверка exact approval — 18.10, 11:02:04 UTC
+
+Рабочая админка `https://admin-sandy-eight-75.vercel.app/assistant?tab=videos`:
+«Самопроверка привязки приёмки к файлу» → «Проверить привязку приёмки (без генерации)».
+Результат: **PASS, 9 проверок**, runId `qa-approval-906b4d13-743b-4ea5-96b0-3b1178cc52b8`.
+
+- Исходник: `d6f363b2c0e022768ccacca4638f4cf76eaadb1811d536ea8879170da31209c5`.
+- Замена: `bf487c7b7facb6fc7f1d67087b535e431b14211e48104324d6a510ca0a2d9d9c`.
+- `exact-file-version-sha`, `stale-version-rejected`, `real-activation-writer`, `replacement-revokes-approval`, `replacement-needs-new-sha`, `provenance-revokes-approval`, `test-row-rolled-back`, `test-versions-rolled-back`, `synthetic-blobs-removed` — все PASS.
+
+Прогон использует тот же TutorialVideoAdminService и тот же activateOnAsset,
+с настоящей production-БД и DB-trigger. Все тестовые изменения выполняются в
+транзакции с принудительным rollback; непрошедший откат/очистка не дают PASS.
+Ни settings/media sync, ни quality queue, ни TTS/Hedra/FFmpeg API не вызываются.
+Два встроенных MP4 — локально изготовленные FFmpeg цветные карточки 160×90,
+0,2 секунды, без изображения человека и без звука. Сервер сохранил только эти
+временные Blob-файлы под свежим runId и удалил их в finally. Принятая сборка,
+эталон, Nova и приватные семейные ролики в прогоне не читались и не менялись.
+
+Доставка: `d9f9fd3` в main; backend `viral-backend-h5v0af6cw-sibionics-ai.vercel.app`
+и admin `viral-admin-m9e7rja64-sibionics-ai.vercel.app` — Ready. Обнаружено,
+что legacy alias админки ещё указывал на предыдущий deployment; оба рабочих
+legacy aliases явно закреплены на этих проверенных сборках перед запуском.
+Новый `POST /api/admin/tutorial-video-assets/verify-exact-approval` требует
+AdminSessionGuard и assertOperator, не принимает произвольных URL/assetId.
+
+Локальные регрессии до выкладки: 12 тестов / 2 suites на Postgres 16,
+включая полный rollback-прогон, несовпадение byte hash, отказ очистки,
+проверку полномочий и cleanup после отказа upload. Типы, линт, check-docs — PASS.
+Снимок production-результата сохранён локально вне Git:
+`outputs/tutorial-exact-approval/production-pass-2026-10-18.png`.
