@@ -235,10 +235,18 @@ export class WorkerPageExplorer implements PageExplorer {
     }
     const fills = request.actions.filter((a) => a.kind === 'fill');
     const clicks = request.actions.filter((a) => a.kind === 'click');
-    if (clicks.length > 1 || fills.length > FILLS_MAX) {
+    if (clicks.length > 2 || fills.length > FILLS_MAX) {
       throw new BadRequestException(
         'слишком много действий за шаг для изолированного браузера',
       );
+    }
+    if (
+      clicks.length === 2 &&
+      (request.actions.slice(0, -2).some((a) => a.kind !== 'fill') ||
+        request.actions.slice(-2).some((a) => a.kind !== 'click') ||
+        clicks[0].selector === clicks[1].selector)
+    ) {
+      throw new BadRequestException('пакет требует ввод → checkbox → submit');
     }
     const last = request.actions[request.actions.length - 1];
     const reg = request.autoLogin?.registry;

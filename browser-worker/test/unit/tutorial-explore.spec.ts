@@ -94,7 +94,10 @@ describe('tutorial-explore: протокол', () => {
       ).toThrow(/clicks/);
     }
     expect(() =>
-      parseJobParams('tutorial-explore', params({ clicks: ['#a', '#b'] })),
+      parseJobParams(
+        'tutorial-explore',
+        params({ clicks: ['#a', '#b', '#c'] }),
+      ),
     ).toThrow(/clicks/);
     expect(() =>
       parseJobParams('tutorial-explore', { ...params(), fill: 'x' }),

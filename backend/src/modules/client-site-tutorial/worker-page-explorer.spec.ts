@@ -302,6 +302,43 @@ describe('режим A (подтверждённый сайт): как рань�
 });
 
 describe('режим B / неизвестен (аудит захода 7): откат — только «воркер выключен»', () => {
+  it('passes a bounded checkbox-submit batch, rejects reordered or excess clicks', async () => {
+    const { client, ex } = make('B');
+    client.statuses = [done({ sensitiveFill: true })];
+    await ex.runRound({
+      ...REQ,
+      actions: [
+        { kind: 'fill', selector: '#name', value: 'Demo' },
+        { kind: 'click', selector: '#agree' },
+        { kind: 'click', selector: '#send' },
+      ],
+    });
+    expect(client.bodies[0].clicks).toEqual(['#agree', '#send']);
+    expect(JSON.stringify(client.bodies[0])).not.toContain('Demo');
+    const count = client.bodies.length;
+    await expect(
+      ex.runRound({
+        ...REQ,
+        actions: [
+          { kind: 'click', selector: '#agree' },
+          { kind: 'fill', selector: '#name', value: 'Demo' },
+          { kind: 'click', selector: '#send' },
+        ],
+      }),
+    ).rejects.toThrow('пакет');
+    await expect(
+      ex.runRound({
+        ...REQ,
+        actions: [
+          { kind: 'click', selector: '#a' },
+          { kind: 'click', selector: '#b' },
+          { kind: 'click', selector: '#c' },
+        ],
+      }),
+    ).rejects.toThrow('слишком много');
+    expect(client.bodies).toHaveLength(count);
+  });
+
   it('ввод руками — на воркере: значения (и пароль) — конвертами по полям, сессия — конвертом', async () => {
     const { client, ex } = make('B');
     client.statuses = [done({ sensitiveFill: true })];

@@ -82,6 +82,8 @@ d('tutorial-explore e2e (настоящий Chromium)', () => {
   let pool: BrowserPool;
   let runner: Runner;
   let payHits = 0;
+  let formHits = 0;
+  let formBody = '';
 
   beforeAll(async () => {
     await stand.start();
@@ -94,6 +96,17 @@ d('tutorial-explore e2e (настоящий Chromium)', () => {
       sessionCookies: null,
     };
     stand
+      .page(
+        SHOP,
+        '/batch',
+        `<form method="post" action="/batch-done"><input name="name" required><input id="agree" name="agree" type="checkbox" required><button id="send" type="submit">Send demo</button><button id="other" type="button">Other</button><input id="checked" type="checkbox" checked></form><form><button id="foreign" type="submit">Send</button></form>`,
+      )
+      .on(SHOP, '/batch-done', (_q, res, body) => {
+        formHits++;
+        formBody = body;
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<h1>Demo saved</h1>');
+      })
       .page(SHOP, '/cart', CART)
       .on(SHOP, '/cart/step2', (_q, res) => {
         res.writeHead(200, {
@@ -222,6 +235,43 @@ d('tutorial-explore e2e (настоящий Chromium)', () => {
   });
   const sealFill = (p: Parameters<typeof aad>[0], v: string, i: number) =>
     sealForWorker(keys.publicKey, Buffer.from(v), exploreFillAad(aad(p), i));
+
+  it('fills → checkbox → submit once, invalid batch refuses before writes', async () => {
+    const p = explore({
+      url: `https://${SHOP}/batch`,
+      clicks: ['#agree', '#send'],
+    });
+    p.fills = [
+      { selector: '[name=name]', value: sealFill(p, 'Sandbox demo', 0) },
+    ] as never[];
+    const before = formHits;
+    const j = await sites.waitDone(sites.add('tutorial-explore', p));
+    expect(j.error).toBeNull();
+    expect(formHits).toBe(before + 1);
+    expect(new URLSearchParams(formBody).get('name')).toBe('Sandbox demo');
+    expect(new URLSearchParams(formBody).get('agree')).toBe('on');
+    const bad = explore({
+      url: `https://${SHOP}/batch`,
+      clicks: ['#other', '#send'],
+    });
+    const failed = await sites.waitDone(sites.add('tutorial-explore', bad));
+    expect(failed.error).toBeTruthy();
+    expect(formHits).toBe(before + 1);
+    for (const clicks of [
+      ['#agree', '#foreign'],
+      ['#checked', '#send'],
+      ['#missing', '#send'],
+    ]) {
+      const rejected = await sites.waitDone(
+        sites.add(
+          'tutorial-explore',
+          explore({ url: `https://${SHOP}/batch`, clicks }),
+        ),
+      );
+      expect(rejected.error).toBeTruthy();
+    }
+    expect(formHits).toBe(before + 1);
+  });
 
   it('сессия → клик «Далі» → новый экран, кадры, новая сессия конвертом', async () => {
     const params = explore({ clicks: ['#next'] });

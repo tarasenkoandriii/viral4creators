@@ -155,7 +155,7 @@ describe('протокол очереди браузерного воркера'
     expect(RETRYABLE_ERRORS.has('target_missing')).toBe(false);
   });
 
-  it('tutorial-explore: ≤ 1 клик CSS, ввод — только конвертами; сессия — конвертом; ≤ 4 хоста замка', () => {
+  it('tutorial-explore: ≤ 2 клика CSS, ввод — только конвертами; сессия — конвертом; ≤ 4 хоста замка', () => {
     const p = {
       url: 'https://shop.example.com/cart',
       allowedHosts: ['shop.example.com', 'www.example.com'],
@@ -171,6 +171,15 @@ describe('протокол очереди браузерного воркера'
       videoFrame: false,
     };
     expect(parseJobParams('tutorial-explore', p)).toEqual(p);
+    expect(
+      parseJobParams('tutorial-explore', {
+        ...p,
+        clicks: ['#check', '#submit'],
+      }),
+    ).toBeTruthy();
+    expect(() =>
+      parseJobParams('tutorial-explore', { ...p, clicks: ['#a', '#b', '#c'] }),
+    ).toThrow(/clicks/);
     expect(() =>
       parseJobParams('tutorial-explore', { ...p, actions: [] }),
     ).toThrow(ProtocolError);

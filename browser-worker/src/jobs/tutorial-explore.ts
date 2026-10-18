@@ -504,6 +504,30 @@ export async function videoFramePng(
   }
 }
 
+/** Validate the bounded native form batch before any fields are changed. */
+async function validateFormBatch(page: Page, clicks: string[]): Promise<void> {
+  if (clicks.length !== 2) return;
+  const valid = await page
+    .evaluate(([first, second]) => {
+      const checkbox = document.querySelector(first.replace(/^css=/, ''));
+      const submit = document.querySelector(second.replace(/^css=/, ''));
+      return (
+        checkbox instanceof HTMLInputElement &&
+        checkbox.type === 'checkbox' &&
+        !checkbox.checked &&
+        !checkbox.disabled &&
+        checkbox.form !== null &&
+        (submit instanceof HTMLButtonElement ||
+          submit instanceof HTMLInputElement) &&
+        submit.type === 'submit' &&
+        !submit.disabled &&
+        submit.form === checkbox.form
+      );
+    }, clicks)
+    .catch(() => false);
+  if (!valid) throw new JobError('click_refused');
+}
+
 /** Клик со стоп-листом: цель «никогда» — `click_refused` ДО клика. */
 async function guardedClick(
   ctx: JobContext,
@@ -631,6 +655,7 @@ export async function runTutorialExplore(
     await ctx.jb.goto(page, p.url);
     await floor(startedAt);
     urlBefore = page.url();
+    await validateFormBatch(page, p.clicks);
     if (p.login) {
       autoLogin = await loginWithRegistry(ctx, page, p);
       sensitiveFill = true;
@@ -641,6 +666,7 @@ export async function runTutorialExplore(
         sensitiveFill = true;
       }
     }
+    await validateFormBatch(page, p.clicks);
     for (const selector of p.clicks) await guardedClick(ctx, page, p, selector);
     target =
       p.clicks[p.clicks.length - 1] ??
