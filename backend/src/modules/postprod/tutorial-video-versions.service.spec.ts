@@ -733,7 +733,18 @@ describe('озвучка обучалки клиента', () => {
     expect(res.speech[1]).toBeNull();
     expect(res.speech[0]).toMatchObject({
       seconds: 2.5,
-      provenance: { provider: 'resemble', locale: 'uk' },
+      provenance: {
+        provider: 'resemble',
+        locale: 'uk',
+        synthesisRecipe: {
+          version: 'resemble-request-v1',
+          locale: 'uk-ua',
+          modelSelection: 'provider-default-unpinned',
+          normalization: 'trim-xml-escape-ssml-limit3000-v1',
+          promptVersion: 'none',
+          outputFormat: 'mp3',
+        },
+      },
     });
     expect(res.speech[0]!.pathname).toMatch(
       /^tutorial-video-sources\/a2\/voice\/0-[0-9a-f]{16}-2500\.mp3$/,
@@ -766,6 +777,28 @@ describe('озвучка обучалки клиента', () => {
     s.provider.configured.mockReturnValue(false);
     const res = await s.service.synthesizeClientVoices(input);
     expect(res.skipped).toBe('tts-not-configured');
+  });
+
+  it('does not reuse a legacy track with matching hash but no request recipe', async () => {
+    const s = setup();
+    const first = await s.service.synthesizeClientVoices({
+      ...input,
+      assetId: 'a1',
+    });
+    const legacy = JSON.parse(JSON.stringify(first.speech[0]));
+    delete legacy.provenance.synthesisRecipe;
+    s.world.assets[0].tempoManifest = manifest({
+      locale: 'uk',
+      frames: [{ ...frame(0, 2.5), speech: legacy }],
+    });
+    s.provider.synthesize.mockClear();
+    await s.service.synthesizeClientVoices({
+      ...input,
+      texts: [input.texts[0]],
+      stepIndexes: [0],
+    });
+    expect(s.provider.synthesize).toHaveBeenCalledTimes(1);
+    expect(s.blob.copyBlob).not.toHaveBeenCalled();
   });
 
   it('та же реплика из прошлой сборки черновика — копия, не новый синтез', async () => {

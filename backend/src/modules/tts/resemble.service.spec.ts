@@ -1,3 +1,8 @@
+import { createHash } from 'crypto';
+import {
+  prepareResembleSpeech,
+  parseResembleRecipe,
+} from './resemble-synthesis-recipe';
 /* eslint-disable @typescript-eslint/no-explicit-any -- test doubles */
 import {
   ResembleService,
@@ -90,6 +95,18 @@ describe('ResembleService (doc/TTS-PROVIDER-ALTERNATIVES-SPEC.md)', () => {
       data: 'Привіт, світ',
     });
     expect(body).not.toHaveProperty('project_uuid');
+    const prepared = prepareResembleSpeech('Привіт, світ');
+    expect(body.data).toBe(prepared.requestText);
+    expect(prepared.recipe.requestTextSha256).toBe(
+      createHash('sha256').update(body.data).digest('hex'),
+    );
+    expect(parseResembleRecipe(prepared.recipe)).toEqual(prepared.recipe);
+    expect(
+      parseResembleRecipe({ ...prepared.recipe, version: 'other' }),
+    ).toBeUndefined();
+    expect(
+      parseResembleRecipe({ ...prepared.recipe, requestTextSha256: 'bad' }),
+    ).toBeUndefined();
   });
 
   it('язык реплик уходит в SSML <lang>, лимит 3000 держится вместе с обёрткой', async () => {

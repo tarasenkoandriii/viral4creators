@@ -1,4 +1,8 @@
 import {
+  parseResembleRecipe,
+  ResembleSynthesisRecipe,
+} from '../tts/resemble-synthesis-recipe';
+import {
   NarratorPreamble,
   parseNarratorPreamble,
 } from '../brand-manifest/narrator-preamble';
@@ -115,6 +119,7 @@ export interface ManifestSpeech {
     voiceId: string | null;
     locale: string;
     textSha: string;
+    synthesisRecipe?: ResembleSynthesisRecipe;
   };
 }
 
@@ -255,6 +260,9 @@ export function parseTutorialManifest(
           voiceId: typeof p.voiceId === 'string' ? p.voiceId : null,
           locale: String(p.locale ?? raw.locale),
           textSha: String(p.textSha ?? ''),
+          ...(parseResembleRecipe(p.synthesisRecipe)
+            ? { synthesisRecipe: parseResembleRecipe(p.synthesisRecipe) }
+            : {}),
         },
       };
     }

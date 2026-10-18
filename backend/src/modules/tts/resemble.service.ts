@@ -59,6 +59,8 @@ export const RESEMBLE_PENDING_DELETE_PREFIX = 'resemble_pending_delete:';
 
 /** Лимит одного запроса — подтверждён `docs.resemble.ai/api-reference/text-to-speech/synthesize`. */
 const MAX_CHARACTERS = 3000;
+import { prepareResembleSpeech } from './resemble-synthesis-recipe';
+export { resembleLocale, withLanguage } from './resemble-synthesis-recipe';
 
 interface ResembleSynthesizeResponse {
   success?: boolean;
@@ -76,37 +78,6 @@ interface ResembleVoicesResponse {
   // не проверено вызовом с реальным ключом (см. находка аудита этого
   // этапа), читаем оба варианта защитно, ничего не теряя молча.
   voices?: Array<Record<string, unknown>>;
-}
-
-/** Язык реплик → локаль SSML Resemble. Только проверенные по списку
- * локалей документации; незнакомый язык — без обёртки, как раньше. */
-const RESEMBLE_LOCALES: Record<string, string> = {
-  uk: 'uk-ua',
-  ru: 'ru-ru',
-  en: 'en-us',
-  de: 'de-de',
-  es: 'es-es',
-  fr: 'fr-fr',
-  it: 'it-it',
-  pl: 'pl-pl',
-};
-
-export function resembleLocale(
-  language: string | null | undefined,
-): string | undefined {
-  const code = language?.trim().toLowerCase().split(/[-_]/)[0];
-  return code ? RESEMBLE_LOCALES[code] : undefined;
-}
-
-function escapeXml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-export function withLanguage(text: string, locale: string): string {
-  return `<speak><lang xml:lang="${locale}">${escapeXml(text)}</lang></speak>`;
 }
 
 /** М-6.5 седьмого аудита: таймаут внешних HTTP-вызовов. */
@@ -168,17 +139,10 @@ export class ResembleService implements TtsProvider {
       };
     }
 
-    const locale = resembleLocale(request.language);
-    // Обёртка SSML и экранирование тоже считаются в лимит.
-    let payloadText = text.slice(0, MAX_CHARACTERS);
-    let requestText = locale ? withLanguage(payloadText, locale) : payloadText;
-    if (requestText.length > MAX_CHARACTERS) {
-      payloadText = payloadText.slice(
-        0,
-        payloadText.length - (requestText.length - MAX_CHARACTERS),
-      );
-      requestText = withLanguage(payloadText, locale!);
-    }
+    const { payloadText, requestText } = prepareResembleSpeech(
+      text,
+      request.language,
+    );
     if (payloadText.length < text.length) {
       this.logger.warn(
         `текст озвучки обрезан до ${MAX_CHARACTERS} символов (было ${text.length})`,

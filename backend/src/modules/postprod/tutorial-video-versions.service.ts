@@ -1,3 +1,4 @@
+import { prepareResembleSpeech } from '../tts/resemble-synthesis-recipe';
 import { createHash, randomUUID } from 'crypto';
 import { head } from '@vercel/blob';
 import { readBodyWithLimit } from '../../common/external-url-guard';
@@ -1709,12 +1710,17 @@ export class TutorialVideoVersionsService {
         speech.push(null);
         continue;
       }
+      const { recipe } = prepareResembleSpeech(text, input.locale);
       const sha = textSha(
-        `${input.locale}\u0000${provider.providerKey}\u0000${CLIENT_TUTORIAL_VOICE_ID}\u0000${text}`,
+        `${input.locale}\u0000${provider.providerKey}\u0000${CLIENT_TUTORIAL_VOICE_ID}\u0000${text}\u0000${JSON.stringify(recipe)}`,
       );
       try {
         const prev = reuse.get(sha);
-        if (prev?.pathname) {
+        if (
+          prev?.pathname &&
+          JSON.stringify(prev.provenance.synthesisRecipe) ===
+            JSON.stringify(recipe)
+        ) {
           const to = sourceVoicePathname(
             input.assetId,
             stepIndex,
@@ -1783,6 +1789,7 @@ export class TutorialVideoVersionsService {
             voiceId: outcome.voiceId ?? null,
             locale: input.locale,
             textSha: sha,
+            synthesisRecipe: recipe,
           },
         });
       } catch (err) {
