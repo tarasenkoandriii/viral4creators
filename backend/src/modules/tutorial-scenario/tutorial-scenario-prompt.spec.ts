@@ -222,6 +222,15 @@ describe('buildScenarioPrompt', () => {
   });
 });
 
+it('warns the model that fixture gotos reset state and must not be mixed', () => {
+  const prompt = buildScenarioPrompt('8', 'de', step);
+  expect(prompt).toContain(
+    'В одном сценарии разрешён только ОДИН такой маршрут',
+  );
+  expect(prompt).toContain('переход пересоздаёт состояние');
+  expect(prompt).toContain('не переходи затем на generate-ready');
+});
+
 describe('parseScenarioResponse', () => {
   it('разбирает {"steps":[...]} внутри ```json ограждения', () => {
     const text =

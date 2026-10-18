@@ -2425,3 +2425,7 @@ submit не оплачивается. Возвращает `{sessionId,state,reu
 
 - `POST /admin/tutorial-video-assets/:id/import-upload` — ограниченная загрузка MP4 (20 МБ), возвращает `uploadUrl`, `pathname`, `expectedUrl`.
 - `POST /admin/tutorial-video-assets/:id/import-assembled` — `{pathname, expectedUrl}`; проверка, SHA-256-идемпотентность, сохранение исходника и атомарная активация импортированной версии. Без TTS, генерации, сборки и списаний. Только готовые клиентские Tutorial, под `AdminSessionGuard` и `assertOperator`.
+
+### Tutorial: общий остаток очереди качества (18.10.2026)
+
+`GET /api/admin/tutorial-demo-quality/queue` — только AdminSession + operator, `Cache-Control: no-store`. Ответ: `enabled`, `observedAt`, `due` (pending со сроком захвата или running с истёкшей арендой), `oldestOpenAt`, `groups[{status,phase,count}]` по всем сохранённым проверкам и до 10 последних `errors[{id,assetId,locale,phase,attempts,error}]`. Исторические/неактивные версии входят в статистику; это не число опубликованных роликов. Срез из нескольких запросов наблюдательный, не атомарный. Ошибка базы возвращается ошибкой, а не нулевыми счётчиками. Чтение не меняет записи и не вызывает Gemini/FFmpeg. В админке: ИИ-консультант → Видео-контент → «Очередь качества: общий остаток».

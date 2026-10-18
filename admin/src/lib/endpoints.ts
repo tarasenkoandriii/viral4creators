@@ -1100,6 +1100,18 @@ export function revertTutorialTempo(id: string) {
 // backend/src/modules/tutorial-quality/demo-quality-admin.controller.ts).
 // Кнопки только ставят проверку в очередь крона сборок. ──
 
+export interface DemoQualityQueueStatus {
+  enabled: boolean;
+  observedAt: string;
+  due: number;
+  oldestOpenAt: string | null;
+  groups: Array<{ status: string; phase: string; count: number }>;
+  errors: Array<{ id: string; assetId: string; locale: string; phase: string; attempts: number; error: string | null }>;
+}
+export function getDemoQualityQueueStatus() {
+  return apiGet<DemoQualityQueueStatus>('/admin/tutorial-demo-quality/queue');
+}
+
 export function getDemoQualityChecks(assetIds: string[]) {
   return apiGet<DemoQualityLatest>('/admin/tutorial-demo-quality', {
     assetIds: assetIds.join(','),

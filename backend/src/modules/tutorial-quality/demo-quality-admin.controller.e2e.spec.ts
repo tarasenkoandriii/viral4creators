@@ -46,6 +46,7 @@ const adminPanel = {
 };
 const quality = {
   latestForAssets: jest.fn(),
+  queueStatus: jest.fn(),
   enqueueByOperator: jest.fn(),
   enqueueApproved: jest.fn(),
   overrideVerdict: jest.fn(),
@@ -97,6 +98,10 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
   const server = () => app.getHttpServer();
   const routes: Array<[string, () => request.Test]> = [
     [
+      'GET queue',
+      () => request(server()).get('/api/admin/tutorial-demo-quality/queue'),
+    ],
+    [
       'GET /',
       () =>
         request(server()).get('/api/admin/tutorial-demo-quality?assetIds=a1'),
@@ -131,6 +136,7 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
     ],
   ];
   const untouched = () => {
+    expect(quality.queueStatus).not.toHaveBeenCalled();
     expect(quality.latestForAssets).not.toHaveBeenCalled();
     expect(quality.enqueueByOperator).not.toHaveBeenCalled();
     expect(quality.enqueueApproved).not.toHaveBeenCalled();
@@ -163,6 +169,19 @@ describe('admin/tutorial-demo-quality (e2e)', () => {
 
   const asOp = (t: request.Test) =>
     t.set('Cookie', 'admin_session=tok_operator');
+
+  it('queue is operator-only, uncached and read-only', async () => {
+    quality.queueStatus.mockResolvedValue({
+      due: 0,
+      groups: [{ status: 'pending', phase: 'upload', count: 3 }],
+    });
+    const res = await asOp(
+      request(server()).get('/api/admin/tutorial-demo-quality/queue'),
+    ).expect(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body.data.groups[0].count).toBe(3);
+    expect(quality.enqueueByOperator).not.toHaveBeenCalled();
+  });
 
   it('оператор: последние проверки по списку роликов, no-store', async () => {
     const res = await asOp(

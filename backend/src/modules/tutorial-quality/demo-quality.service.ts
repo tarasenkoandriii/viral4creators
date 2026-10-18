@@ -662,6 +662,52 @@ export class TutorialDemoQualityService {
   // ── чтение для админки ───────────────────────────────────────────
 
   /** Последняя проверка каждого из роликов страницы. */
+  /** Global queue state, not the amount of work performed by the last cron tick.
+   * Read only: never claims work, uploads media or calls a provider. */
+  async queueStatus() {
+    const now = new Date(this.clock());
+    const [groups, due, oldest, errors] = await Promise.all([
+      this.prisma.tutorialDemoQualityCheck.groupBy({
+        by: ['status', 'phase'],
+        _count: { _all: true },
+      }),
+      this.prisma.tutorialDemoQualityCheck.count({ where: this.dueWhere(now) }),
+      this.prisma.tutorialDemoQualityCheck.findFirst({
+        where: { status: { in: ['pending', 'running'] } },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
+      this.prisma.tutorialDemoQualityCheck.findMany({
+        where: { status: 'error' },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          assetId: true,
+          locale: true,
+          phase: true,
+          attempts: true,
+          error: true,
+        },
+      }),
+    ]);
+    return {
+      enabled: this.isEnabled(),
+      observedAt: now.toISOString(),
+      due,
+      oldestOpenAt: oldest?.createdAt.toISOString() ?? null,
+      groups: groups.map((g) => ({
+        status: g.status,
+        phase: g.phase,
+        count: g._count._all,
+      })),
+      errors: errors.map((e) => ({
+        ...e,
+        error: e.error ? scrubQualityText(e.error, 500) : null,
+      })),
+    };
+  }
+
   async latestForAssets(assetIds: string[]): Promise<{
     enabled: boolean;
     checks: Record<string, DemoQualityCheckView>;

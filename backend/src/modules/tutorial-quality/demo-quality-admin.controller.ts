@@ -56,6 +56,13 @@ export class DemoQualityAdminController {
     );
   }
 
+  @Get('queue')
+  @Header('Cache-Control', 'no-store')
+  async queue(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    return this.quality.queueStatus();
+  }
+
   /** «Проверить» — один ролик (или его версия темпа). */
   @Post('assets/:id/check')
   async check(

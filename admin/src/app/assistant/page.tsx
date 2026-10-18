@@ -23,6 +23,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   getAssistantAdmin,
   getDemoQualityChecks,
+  getDemoQualityQueueStatus,
+  type DemoQualityQueueStatus,
   getDemoQualityOverrides,
   getTutorialVideoAssets,
   getTutorialVideoDataStatus,
@@ -469,6 +471,15 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   const [quality, setQuality] = useState<Record<string, DemoQualityCheck>>({});
   const [qualityEnabled, setQualityEnabled] = useState<boolean | null>(null);
   const [qualityError, setQualityError] = useState<string | null>(null);
+  const [queueStatus, setQueueStatus] = useState<DemoQualityQueueStatus | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [queueBusy, setQueueBusy] = useState(false);
+  async function loadQueueStatus() {
+    setQueueBusy(true); setQueueError(null);
+    try { setQueueStatus(await getDemoQualityQueueStatus()); }
+    catch (e) { setQueueError(errText(e)); setQueueStatus(null); }
+    finally { setQueueBusy(false); }
+  }
   const [qualityMsg, setQualityMsg] = useState<string | null>(null);
   const [reportId, setReportId] = useState<string | null>(init?.quality ?? null);
   const [ownAssetId, setOwnAssetId] = useState('');
@@ -683,6 +694,18 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
         Ролики демо обучающего лендинга (<code>site-tutorial-demo-1..3</code>, витрина-полигон) консультанту
         не выдаются: на лендинг их выводит только галочка «В демо обучающего лендинга» у одобренного ролика.
       </p>
+
+      <details style={{ marginBottom: 16 }}>
+        <summary>Очередь качества: общий остаток</summary>
+        <p className="muted">Пустой тик cron не означает пустую очередь. Здесь весь остаток, включая отложенные проверки и окончательные ошибки. Чтение не запускает анализ и не расходует бюджет.</p>
+        <button disabled={queueBusy} onClick={() => void loadQueueStatus()}>{queueBusy ? 'Загрузка…' : 'Обновить очередь (без анализа)'}</button>
+        {queueError && <p className="critical">Очередь не прочитана: {queueError}</p>}
+        {queueStatus && <div role="status">
+          <p>Проверка {queueStatus.enabled ? 'включена' : 'выключена'}. Срез: {queueStatus.observedAt}. Готовы к захвату: {queueStatus.due}. Самая старая незавершённая: {queueStatus.oldestOpenAt ?? 'нет'}.</p>
+          <ul>{queueStatus.groups.map(g => <li key={`${g.status}/${g.phase}`}>{g.status} / {g.phase}: {g.count}</li>)}</ul>
+          {queueStatus.errors.length > 0 && <><p>Последние окончательные ошибки (до 10; не повторяются этой кнопкой):</p><ul>{queueStatus.errors.map(e => <li key={e.id}>{e.assetId} · {e.locale} · {e.phase} · попыток {e.attempts}: {e.error}</li>)}</ul></>}
+        </div>}
+      </details>
 
       <details style={{ marginBottom: 16 }}>
         <summary>Проверка собственного клиентского Tutorial с преамбулой</summary>
