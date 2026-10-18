@@ -1,3 +1,4 @@
+import { TutorialApprovalProbeService } from './tutorial-approval-probe.service';
 import { Module } from '@nestjs/common';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
@@ -66,7 +67,11 @@ import { FixtureSeedAdminController } from './fixture-seed-admin.controller';
     TutorialQualityModule,
   ],
   controllers: [TutorialVideoAdminController, FixtureSeedAdminController],
-  providers: [TutorialScenarioRunnerService, TutorialVideoAdminService],
+  providers: [
+    TutorialScenarioRunnerService,
+    TutorialVideoAdminService,
+    TutorialApprovalProbeService,
+  ],
   exports: [TutorialScenarioRunnerService],
 })
 export class TutorialRunnerModule {}

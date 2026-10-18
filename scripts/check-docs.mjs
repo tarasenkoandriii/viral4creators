@@ -2472,7 +2472,10 @@ function checkGuideSeams() {
   // (этап E). Запись этапа B предсказывала, что `.ass` попадёт под
   // этот шов «ничего не читая», — так и вышло: путь строится от
   // `scenarioFramePrefix`, и шов заметил только новое число.
-  const TRANSIT_UPLOADS_EXPECTED = 4;
+  // Two additional synthetic MP4s belong to the operator approval probe.
+  // They use tutorial-videos/<unique run id>/ and are deleted in finally;
+  // the real PostgreSQL regression verifies cleanup paths match uploads.
+  const TRANSIT_UPLOADS_EXPECTED = 6;
   let transitUploads = 0;
   for (const file of walk(
     path.join(ROOT, "backend/src/modules/tutorial-runner"),

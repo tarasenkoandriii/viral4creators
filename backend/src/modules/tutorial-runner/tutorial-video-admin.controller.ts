@@ -1,3 +1,4 @@
+import { TutorialApprovalProbeService } from './tutorial-approval-probe.service';
 /**
  * TutorialVideoAdminController — тот же приём, что
  * `TutorialScenarioAdminController`/`AssistantAdminController` (см. их
@@ -51,6 +52,7 @@ export class TutorialVideoAdminController {
     private readonly versions: TutorialVideoVersionsService,
     // Заход 7: блокировка публикации по ИИ-проверке (флаг, умолчание выкл.).
     @Optional() private readonly quality?: TutorialDemoQualityService,
+    @Optional() private readonly approvalProbe?: TutorialApprovalProbeService,
   ) {}
 
   @Get()
@@ -73,6 +75,14 @@ export class TutorialVideoAdminController {
         100,
       ),
     });
+  }
+
+  @Post('verify-exact-approval')
+  async verifyExactApproval(@Req() req: AdminAuthenticatedRequest) {
+    await this.adminPanel.assertOperator(req.userId);
+    if (!this.approvalProbe)
+      throw new BadRequestException('Самопроверка приёмки недоступна');
+    return this.approvalProbe.run(req.userId);
   }
 
   // Отдельный статический путь ДО динамического ':id/review' ниже —

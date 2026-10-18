@@ -33,6 +33,8 @@ import {
   requestDemoQualityCheck,
   overrideDemoQualityVerdict,
   setTutorialVideoReviewed,
+  runTutorialApprovalProbe,
+  type TutorialApprovalProbeResult,
   setTutorialVideoSiteTutorialDemo,
 } from '../../lib/endpoints';
 import type {
@@ -482,6 +484,16 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
   }
   const [qualityMsg, setQualityMsg] = useState<string | null>(null);
   const [reportId, setReportId] = useState<string | null>(init?.quality ?? null);
+  const [approvalProbe, setApprovalProbe] = useState<TutorialApprovalProbeResult | null>(null);
+  const [approvalProbeError, setApprovalProbeError] = useState<string | null>(null);
+  const [approvalProbeBusy, setApprovalProbeBusy] = useState(false);
+  async function verifyApproval() {
+    if (approvalProbeBusy) return;
+    setApprovalProbeBusy(true); setApprovalProbe(null); setApprovalProbeError(null);
+    try { setApprovalProbe(await runTutorialApprovalProbe()); }
+    catch (e) { setApprovalProbeError(errText(e)); }
+    finally { setApprovalProbeBusy(false); }
+  }
   const [ownAssetId, setOwnAssetId] = useState('');
   const [ownDeliveryId, setOwnDeliveryId] = useState<string | null>(null);
   const [ownConsent, setOwnConsent] = useState(false);
@@ -710,6 +722,21 @@ function VideoContentTab({ init }: { init: VideoTabInit | null }) {
           <p>Проверка {queueStatus.enabled ? 'включена' : 'выключена'}. Срез: {queueStatus.observedAt}. Готовы к захвату: {queueStatus.due}. Самая старая незавершённая: {queueStatus.oldestOpenAt ?? 'нет'}.</p>
           <ul>{queueStatus.groups.map(g => <li key={`${g.status}/${g.phase}`}>{g.status} / {g.phase}: {g.count}</li>)}</ul>
           {queueStatus.errors.length > 0 && <><p>Последние окончательные ошибки (до 10; не повторяются этой кнопкой):</p><ul>{queueStatus.errors.map(e => <li key={e.id}>{e.assetId} · {e.locale} · {e.phase} · попыток {e.attempts}: {e.error}</li>)}</ul></>}
+        </div>}
+      </details>
+
+      <details style={{ marginBottom: 16 }}>
+        <summary>Самопроверка привязки приёмки к файлу</summary>
+        <p className="muted">Два синтетических цветных MP4 без голоса. Проверяет версию, SHA-256 и снятие одобрения при замене. Все изменения БД откатываются, временные файлы удаляются. Не публикует контент и не запускает платные генерации.</p>
+        <button type="button" disabled={approvalProbeBusy} onClick={() => void verifyApproval()}>
+          {approvalProbeBusy ? 'Проверяем приёмку…' : 'Проверить привязку приёмки (без генерации)'}
+        </button>
+        {approvalProbeError && <p role="alert">{approvalProbeError}</p>}
+        {approvalProbe && <div role="status">
+          <p>PASS · {approvalProbe.checks.length} проверок · {approvalProbe.observedAt}</p>
+          <p>Прогон: {approvalProbe.runId}. БД: откат выполнен. Тестовые файлы: удалены.</p>
+          <p>SHA-256 исходника: <code>{approvalProbe.sha256.first}</code><br />SHA-256 замены: <code>{approvalProbe.sha256.replacement}</code></p>
+          <ul>{approvalProbe.checks.map(name => <li key={name}>{name}: PASS</li>)}</ul>
         </div>}
       </details>
 

@@ -1024,6 +1024,20 @@ export function getTutorialVideoAssets(params: {
   });
 }
 
+export interface TutorialApprovalProbeResult {
+  ok: true;
+  runId: string;
+  observedAt: string;
+  sha256: { first: string; replacement: string };
+  checks: string[];
+  rolledBack: true;
+  blobsRemoved: true;
+}
+
+export function runTutorialApprovalProbe() {
+  return apiPost<TutorialApprovalProbeResult>('/admin/tutorial-video-assets/verify-exact-approval');
+}
+
 export function setTutorialVideoReviewed(
   id: string,
   reviewed: boolean,

@@ -1,3 +1,5 @@
+import { TutorialApprovalProbeService } from './tutorial-approval-probe.service';
+import type { BlobService } from '../storage/blob.service';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { TutorialVideoAdminService } from './tutorial-video-admin.service';
@@ -219,6 +221,79 @@ db('exact Tutorial approval on PostgreSQL', () => {
     } finally {
       fetchMock?.mockRestore();
       await prisma.tutorialVideoAsset.deleteMany({ where: { id } });
+      await prisma.$disconnect();
+    }
+  });
+  function probeRig() {
+    const prisma = new PrismaClient({ adapter: new PrismaPg(dbUrl!) });
+    const buffers = new Map<string, Buffer>();
+    const blob = {
+      uploadBuffer: jest.fn(async (path: string, bytes: Buffer) => {
+        const url = `https://qa.public.blob.vercel-storage.com/${path}`;
+        buffers.set(url, bytes);
+        return { url };
+      }),
+      deleteMany: jest.fn(async (_paths: string[]) => 2),
+    };
+    const fetchMock = jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(
+        async (url) => new Response(new Uint8Array(buffers.get(String(url))!)),
+      );
+    const service = new TutorialApprovalProbeService(
+      prisma as unknown as PrismaService,
+      blob as unknown as BlobService,
+    );
+    return { prisma, blob, fetchMock, service };
+  }
+  it('runs the live probe using the real service and rolls back all synthetic rows', async () => {
+    const { prisma, blob, fetchMock, service } = probeRig();
+    try {
+      const report = await service.run('qa-operator');
+      expect(report).toMatchObject({
+        ok: true,
+        rolledBack: true,
+        blobsRemoved: true,
+      });
+      expect(report.checks).toHaveLength(9);
+      expect(report.sha256.first).not.toBe(report.sha256.replacement);
+      expect(
+        await prisma.tutorialVideoAsset.count({ where: { id: report.runId } }),
+      ).toBe(0);
+      expect(blob.uploadBuffer).toHaveBeenCalledTimes(2);
+      expect(blob.deleteMany).toHaveBeenCalledTimes(1);
+      expect(blob.deleteMany.mock.calls[0][0]).toEqual(
+        blob.uploadBuffer.mock.calls.map(([path]) => path),
+      );
+    } finally {
+      fetchMock.mockRestore();
+      await prisma.$disconnect();
+    }
+  });
+  it('rolls back and cleans up on an actual byte hash mismatch', async () => {
+    const { prisma, blob, fetchMock, service } = probeRig();
+    fetchMock.mockImplementation(async () => new Response('wrong bytes'));
+    try {
+      await expect(service.run('qa-operator')).rejects.toThrow(
+        /exact-file-version-sha/,
+      );
+      const id = blob.uploadBuffer.mock.calls[0][0].split('/')[1];
+      expect(await prisma.tutorialVideoAsset.count({ where: { id } })).toBe(0);
+      expect(blob.deleteMany).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchMock.mockRestore();
+      await prisma.$disconnect();
+    }
+  });
+  it('does not report PASS when temporary Blob cleanup fails', async () => {
+    const { prisma, blob, fetchMock, service } = probeRig();
+    blob.deleteMany.mockResolvedValue(0);
+    try {
+      await expect(service.run('qa-operator')).rejects.toThrow(
+        /synthetic-blobs-removed/,
+      );
+    } finally {
+      fetchMock.mockRestore();
       await prisma.$disconnect();
     }
   });
