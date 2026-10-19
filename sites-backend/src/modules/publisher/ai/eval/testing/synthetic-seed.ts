@@ -27,6 +27,7 @@ import {
   fixtureMismatches,
   fixtureRef,
 } from '../fixtures';
+import { auditSourceRef, type AuditSource } from '../tasks-file';
 
 export const SEED_ACTOR = 'system:eval';
 
@@ -108,4 +109,58 @@ export async function seedEvalFixtures(
     created++;
   }
   return { created };
+}
+
+/**
+ * Свои источники ЗАКРЫТОГО набора (`--tasks-file`, Р-IA-FXB-4) —
+ * синтетика eval-продукта, как S1–S7: `externalRef` от содержимого
+ * (`auditSourceRef`), повторный запуск переиспользует строку. Возвращает
+ * id по коду источника набора.
+ */
+export async function seedAuditSources(
+  db: SitesDb,
+  product: Pick<ProductCtx, 'id' | 'accountId' | 'kind'>,
+  sources: readonly AuditSource[],
+  now = new Date(),
+): Promise<Record<string, string>> {
+  if (product.kind !== 'eval') {
+    throw new Error('Источники закрытого набора — только в продукт kind=eval');
+  }
+  const t = db.forAccount(product.accountId);
+  const out: Record<string, string> = {};
+  for (const src of sources) {
+    const ref = auditSourceRef(src);
+    const found = await t.pubSource.findFirst({
+      where: { productId: product.id, externalRef: ref, isSynthetic: true },
+      select: { id: true },
+    });
+    if (found) {
+      out[src.code] = found.id;
+      continue;
+    }
+    const row = await t.pubSource.create({
+      data: {
+        accountId: product.accountId,
+        productId: product.id,
+        kind: src.kind,
+        externalRef: ref,
+        title: src.title,
+        author: 'Закритий набір аудиту (синтетика)',
+        fragment: src.fragment,
+        language: 'uk',
+        usage: src.usage,
+        visibility: src.visibility,
+        checkedAt: now,
+        freshness: 'current',
+        importedVia: 'manual',
+        contentHash: sourceContentHash(null, src.fragment),
+        injectionFlag: injectionFlagOf(src.fragment),
+        isSynthetic: true,
+        createdBy: SEED_ACTOR,
+      },
+      select: { id: true },
+    });
+    out[src.code] = row.id;
+  }
+  return out;
 }

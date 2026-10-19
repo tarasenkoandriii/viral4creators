@@ -213,6 +213,19 @@ ciDescribe('[P-R-ADM] Админка: импорт исследования CSV 
       ].sort(),
     );
     expect((await A.postRaw('import/plan', [])).status).toBe(400);
+    // IA-C-04: битый CSV — 400 по полю, строка и причина в details.csv
+    // (раньше исключение разбора уходило 500); содержимого строки нет.
+    const broken = await A.postRaw('import/apply', {
+      ...BODY,
+      opportunitiesCsv: 'thread_url,title\nx,y\n"private malformed text',
+    });
+    expect(broken.status).toBe(400);
+    expect(broken.body.error.code).toBe('PUB_VALIDATION');
+    expect(broken.body.error.details).toEqual({
+      fields: [{ field: 'opportunitiesCsv', code: 'format' }],
+      csv: { field: 'opportunitiesCsv', line: 3, reason: 'незакрытая кавычка' },
+    });
+    expect(JSON.stringify(broken.body)).not.toContain('private malformed');
     expect(await counts()).toEqual(before);
   });
 

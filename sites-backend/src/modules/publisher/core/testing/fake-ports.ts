@@ -269,9 +269,17 @@ export function fakeCronJob(
  * Фейк сводки прогонов qa-catalog (Р-PUB-Z2-27): прогонов нет, пока тест
  * их не положит (`passing`/`put`) — «успеха по умолчанию» нет.
  */
+/** Версия кода «процесса» в тестах (IA-AB-04): прогоны `passing` — на ней. */
+export const FAKE_RELEASE_SHA = 'f'.repeat(40);
+
 export class FakeQaRunEvidencePort implements QaRunEvidencePort {
   readonly runs = new Map<string, QaRunEvidence & { accountId: string }>();
   calls: Array<{ accountId: string; runId: string }> = [];
+  /** Версия выпускаемого кода (`null` — неизвестна). */
+  release: string | null = FAKE_RELEASE_SHA;
+  releaseSha(): string | null {
+    return this.release;
+  }
   async runEvidence(
     accountId: string,
     runId: string,
@@ -294,7 +302,11 @@ export class FakeQaRunEvidencePort implements QaRunEvidencePort {
       cases: Object.fromEntries(
         AT_CATALOG.map((c) => [
           c.id,
-          { version: AT_CATALOG_VERSION, status: 'passed' },
+          {
+            version: AT_CATALOG_VERSION,
+            status: 'passed',
+            codeSha: FAKE_RELEASE_SHA,
+          },
         ]),
       ),
     });

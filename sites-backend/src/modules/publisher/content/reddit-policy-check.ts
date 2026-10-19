@@ -3,7 +3,8 @@
  * (reddit-manual-mvp-adapted.md §M2.4, Р-RD-8, Р-RD-50/51). Правила
  * считает P-R (`REDDIT_PORT` → `reddit/checks.ts`, детерминированно, без
  * LLM), строку `pub_qa_checks` пишет пакет-владелец таблицы (P-B1): актёр
- * `system:reddit-policy`, BLOCK — `blockers` + `fail`, WARN — `warnings`.
+ * `system:reddit-policy`, BLOCK — `blockers` + `fail`, WARN — `warnings`,
+ * версия словарей (`markers@N`) — `rulesVersion` (IA-AB-08, Р-IA-FXC-4).
  *
  * Пишется при заморозке версии (`submit`), перед согласованием и перед
  * копированием (в транзакции операции: отказ откатывает и строку) и по
@@ -49,6 +50,8 @@ export async function writeRedditPolicyCheck(
       result: check.result,
       blockers: check.blockers as unknown as Prisma.InputJsonArray,
       warnings: check.warnings as unknown as Prisma.InputJsonArray,
+      // IA-AB-08: какими словарями получен BLOCK/WARN (markers@N).
+      rulesVersion: check.rulesVersion,
       checkedBy: REDDIT_POLICY_ACTOR,
       checkedAt: now,
       selfReview: false,

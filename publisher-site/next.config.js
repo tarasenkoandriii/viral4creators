@@ -20,6 +20,12 @@ const { PHASE_PRODUCTION_BUILD } = require('next/constants');
  *    запроса к API его не знает. Открытие/закрытие гейта — пересборка
  *    (meta robots страниц обновляет и ревалидация).
  *
+ * 4. Счётчик «Посещения лендингов» платформы (§13.5, Р-IA-FXA-1) —
+ *    `PUBLISHER_LANDING_VISITS_URL`, необязательно: без значения (и на
+ *    превью Vercel) канал выключен и его origin НЕ попадает в CSP;
+ *    неверное значение — ошибка сборки. Отправку дополнительно решает
+ *    site-config (`mode=live` и согласие) — `src/lib/landing-visits.ts`.
+ *
  * Проверенные значения впекаются в сборку (`env`): рантайм и ISR не
  * разойдутся со сборкой. Секреты (`PUBLISHER_REVALIDATE_SECRET`,
  * `PUBLISHER_OWNERSHIP_TOKEN`) НЕ впекаются — их читают route handlers в
@@ -112,6 +118,37 @@ function validatePublisherEnv(env) {
 }
 
 /**
+ * Адрес счётчика посещений лендингов (`''` — канал выключен). Правила —
+ * как `landingVisitsUrlOf` в `src/lib/landing-visits.ts`; совпадение
+ * держит `scripts/landing-visits.test.ts`.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string}
+ */
+function validateLandingVisitsUrl(env) {
+  const raw = (env.PUBLISHER_LANDING_VISITS_URL ?? '').trim();
+  if (!raw) return '';
+  if (env.VERCEL_ENV && env.VERCEL_ENV !== 'production') return '';
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`PUBLISHER_LANDING_VISITS_URL не URL: «${raw}»`);
+  }
+  const host = url.hostname.toLowerCase();
+  if (url.username || url.password || url.search || url.hash || url.pathname === '/' || !url.pathname) {
+    throw new Error(`PUBLISHER_LANDING_VISITS_URL — полный адрес приёма без параметров и учётных данных: «${raw}»`);
+  }
+  if (url.protocol === 'https:' && !url.port && !LOCAL_HOSTS.has(host)) return `https://${host}${url.pathname}`;
+  if (LOCAL_HOSTS.has(host) && !env.VERCEL && (url.protocol === 'http:' || url.protocol === 'https:')) {
+    return `${url.protocol}//${host}${url.port ? `:${url.port}` : ''}${url.pathname}`;
+  }
+  throw new Error(
+    `PUBLISHER_LANDING_VISITS_URL должен быть https://домен/путь без порта (http://localhost — только вне Vercel): «${raw}»`,
+  );
+}
+
+/**
  * Второй ключ индексации — `site-config.indexable` для хоста сборки.
  * Любой сбой — noindex (лишний noindex на сутки дешевле случайной
  * индексации тестовой сборки).
@@ -153,17 +190,23 @@ function resolveSiteUrl(env) {
  * Content-Security-Policy (аудит S3-2) — минимальная рабочая без nonce:
  * страницы статические (ISR), nonce потребовал бы динамического рендера.
  * Скрипты — только свои (`'unsafe-inline'` — встроенные скрипты гидратации
- * Next), запросы — свои и к API Publisher (форма, события), картинки — свои,
- * https и data:, без плагинов, фреймов и чужих форм.
+ * Next), запросы — свои, к API Publisher (форма, события) и — только если
+ * задан `PUBLISHER_LANDING_VISITS_URL` — к origin счётчика посещений
+ * лендингов платформы (§13.5); картинки — свои, https и data:, без
+ * плагинов, фреймов и чужих форм.
  *
  * @param {string} apiOrigin
+ * @param {string} [landingVisitsUrl] проверенный адрес счётчика или `''`
  */
-function contentSecurityPolicy(apiOrigin) {
+function contentSecurityPolicy(apiOrigin, landingVisitsUrl = '') {
+  const visitsOrigin = landingVisitsUrl ? new URL(landingVisitsUrl).origin : '';
+  const connect = [`'self'`, apiOrigin];
+  if (visitsOrigin && visitsOrigin !== apiOrigin) connect.push(visitsOrigin);
   return [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    `connect-src 'self' ${apiOrigin} https://backend-iota-ruddy-57.vercel.app`,
+    `connect-src ${connect.join(' ')}`,
     "img-src 'self' https: data:",
     "font-src 'self'",
     "object-src 'none'",
@@ -193,14 +236,20 @@ module.exports = (phase) => {
     validateSiteUrl(resolveSiteUrl(process.env), { production });
     validatePublisherEnv(process.env);
   }
-  /** @type {null | { site: string, pub: ReturnType<typeof validatePublisherEnv> }} */
+  if (isNextBuild(phase)) validateLandingVisitsUrl(process.env);
+  /** @type {null | { site: string, pub: ReturnType<typeof validatePublisherEnv>, visits: string }} */
   let baked = null;
   const site = resolveSiteUrl(process.env);
   if (phase === PHASE_PRODUCTION_BUILD && site && process.env.PUBLISHER_API_ORIGIN) {
     // Без `isNextBuild`: компиляцию Next ведёт воркер с другим argv, env тот же.
-    baked = { site: validateSiteUrl(site, { production }), pub: validatePublisherEnv(process.env) };
+    baked = {
+      site: validateSiteUrl(site, { production }),
+      pub: validatePublisherEnv(process.env),
+      visits: validateLandingVisitsUrl(process.env),
+    };
     env.SITE_URL = baked.site;
     Object.assign(env, baked.pub);
+    env.PUBLISHER_LANDING_VISITS_URL = baked.visits;
   }
   return {
     env,
@@ -218,7 +267,10 @@ module.exports = (phase) => {
       if (!indexable) common.push({ key: 'X-Robots-Tag', value: 'noindex, nofollow' });
       // CSP — у сборки (next dev без неё: HMR требует eval).
       if (baked)
-        common.push({ key: 'Content-Security-Policy', value: contentSecurityPolicy(baked.pub.PUBLISHER_API_ORIGIN) });
+        common.push({
+          key: 'Content-Security-Policy',
+          value: contentSecurityPolicy(baked.pub.PUBLISHER_API_ORIGIN, baked.visits),
+        });
       return [{ source: '/:path*', headers: common }];
     },
   };
@@ -230,3 +282,4 @@ module.exports.isNextBuild = isNextBuild;
 module.exports.buildIndexable = buildIndexable;
 module.exports.resolveSiteUrl = resolveSiteUrl;
 module.exports.contentSecurityPolicy = contentSecurityPolicy;
+module.exports.validateLandingVisitsUrl = validateLandingVisitsUrl;

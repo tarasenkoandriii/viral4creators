@@ -19,6 +19,43 @@ import { SitesDb } from '../../prisma/sites-db.service';
 
 export const QA_RUN_EVIDENCE_TOKEN = 'PUB_QA_RUN_EVIDENCE_PORT';
 
+const SHA = /^[a-f0-9]{40}$/i;
+
+/**
+ * Версия кода, которую сейчас выпускает этот процесс (внутренний аудит
+ * IA-AB-04, ТЗ §28): `PUBLISHER_RELEASE_SHA` (явно, вне Vercel), иначе
+ * `VERCEL_GIT_COMMIT_SHA` (системная переменная Vercel), иначе
+ * `GITHUB_SHA` (стенд в CI). Только полный sha (40 hex); иначе `null` —
+ * версия неизвестна, доказательство приёмки не принимается.
+ */
+export function releaseCodeSha(
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  for (const k of [
+    'PUBLISHER_RELEASE_SHA',
+    'VERCEL_GIT_COMMIT_SHA',
+    'GITHUB_SHA',
+  ]) {
+    const v = env[k]?.trim();
+    if (v) return SHA.test(v) ? v.toLowerCase() : null;
+  }
+  return null;
+}
+
+/**
+ * Commit, который удостоверяет попытка (IA-AB-04): `deployedSha` (код
+ * стенда, на котором шли e2e) или, без него, `testSourceSha` (jest в
+ * процессе — код теста и есть проверенный код). Ручная попытка и отчёт
+ * без sha — `null`.
+ */
+export function attemptCodeSha(meta: unknown): string | null {
+  if (!meta || typeof meta !== 'object') return null;
+  const m = meta as { deployedSha?: unknown; testSourceSha?: unknown };
+  const pick = (v: unknown): string | null =>
+    typeof v === 'string' && SHA.test(v) ? v.toLowerCase() : null;
+  return pick(m.deployedSha) ?? pick(m.testSourceSha);
+}
+
 export interface QaRunEvidenceView {
   runId: string;
   siteId: string;
@@ -28,7 +65,15 @@ export interface QaRunEvidenceView {
    * `caseKey` → версия кейса в снимке прогона и статус ПОСЛЕДНЕЙ попытки
    * (`null` — кейс в снимке, попыток нет). Кейса нет в снимке — нет ключа.
    */
-  cases: Record<string, { version: number; status: string | null }>;
+  cases: Record<
+    string,
+    {
+      version: number;
+      status: string | null;
+      /** Commit последней попытки (`attemptCodeSha`), IA-AB-04. */
+      codeSha: string | null;
+    }
+  >;
 }
 
 const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -36,6 +81,11 @@ const RUN_ID = /^[A-Za-z0-9_-]{1,64}$/;
 @Injectable()
 export class QaRunEvidenceReader {
   constructor(private readonly db: SitesDb) {}
+
+  /** Версия кода этого процесса (IA-AB-04) — см. `releaseCodeSha`. */
+  releaseSha(): string | null {
+    return releaseCodeSha();
+  }
 
   async runEvidence(
     accountId: string,
@@ -94,6 +144,7 @@ export class QaRunEvidenceReader {
           cases[item.caseKey] = {
             version: item.version,
             status: attempt ? acceptanceStatus(attempt) : null,
+            codeSha: attempt ? attemptCodeSha(attempt.sourceMetadata) : null,
           };
         }
         return {

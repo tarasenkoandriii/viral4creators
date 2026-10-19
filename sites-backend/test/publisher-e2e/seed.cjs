@@ -21,8 +21,14 @@ const at = require(`${dist}/modules/publisher/reports/qa/at-catalog.js`);
  * гейты запуска теперь требуют ссылку на СОХРАНЁННЫЙ прогон, — поэтому
  * протокол засевается как инфраструктура стенда, явно помеченной. Драйвер
  * отдельно проверяет, что свободная строка и неполный прогон не проходят.
+ * IA-AB-04: попытки — как импорт отчёта jest, commit отчёта
+ * (`testSourceSha`) = `PUBLISHER_RELEASE_SHA` стенда (её же читает сервер,
+ * `scripts/publisher-e2e.sh`); без неё сид падает.
  */
+const RELEASE_SHA = (process.env.PUBLISHER_RELEASE_SHA ?? '').toLowerCase();
 async function seedQaRun(db, accountId, siteId, memberId, opts = {}) {
+  if (!/^[a-f0-9]{40}$/.test(RELEASE_SHA))
+    throw new Error('PUBLISHER_RELEASE_SHA (40 hex) обязателен для сида протокола');
   const snapshot = [];
   for (const c of at.AT_CATALOG) {
     const tc = await db.qaTestCase.upsert({
@@ -78,6 +84,18 @@ async function seedQaRun(db, accountId, siteId, memberId, opts = {}) {
         comment:
           status === 'passed' ? '' : 'Стенд E2E: навмисно неповний протокол',
         createdByMemberId: memberId,
+        origin: 'automated',
+        project: 'jest',
+        sourceAttempt: 0,
+        reportHash: 'e'.repeat(64),
+        durationMs: 1,
+        sourceMetadata: {
+          source: 'jest',
+          startedAt: new Date().toISOString(),
+          testSourceSha: RELEASE_SHA,
+          deployedSha: null,
+          runnerStatus: 'passed',
+        },
       },
     });
   }

@@ -1,0 +1,239 @@
+# AI Publisher — живой прогон набора AI из браузера владельца (внутренний
+# аудит D2 §6, Р-IA-FXB-3). Запуск ТОЛЬКО вручную: Actions → «Publisher AI
+# eval (live)» → Run workflow.
+#
+# Что делает: одноразовый Postgres 16 + pgvector в раннере → все миграции →
+# eval-продукт и синтетика S1–S7 (`ai/eval/testing/ci-eval-product.ts`,
+# только localhost) → `npm run eval:publisher -- --mode=live` с ключом
+# `secrets.GEMINI_QA_API_KEY` (тот же секрет, что у sandbox-daily.yml) →
+# повторы в тот же прогон → артефакты `live-*.md/json` (первые ответы,
+# модель, версии инструкций, параметры вызова, стоимость) и итог в job summary.
+#
+# Чего НЕ делает: не трогает рабочую базу (строк подключения к ней здесь нет),
+# не ставит конфигурации `passed` и не привязывает её к продукту — база
+# исчезает вместе с раннером. Это измерение качества: оценку человека по
+# каждой строке ставят по артефактам; допуск конфигурации — по-прежнему
+# прогоном владельца в рабочей базе (IMPLEMENTATION-DESIGN §12.6).
+#
+# Деньги: лимит каждого запуска CLI — `--max-usd` (ограничитель перед
+# каждой задачей: потрачено + оценка сверху ≤ лимита); общий потолок
+# workflow — TOTAL_CAP_USD ($3): сумма лимитов проверяется до первого
+# вызова, а лимит каждого повтора = min(repeat_max_usd, TOTAL_CAP_USD −
+# фактически потрачено). Остаток < $0.12 — повторов больше нет.
+name: Publisher AI eval (live)
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: "configHash, который должен совпасть с кодом (по умолчанию — рабочая конфигурация 2.2, gemini-3.6-flash)"
+        required: true
+        default: "5f97b2597b02600556c3c328ca64bea97148add353e2f81157a990300ac58f1f"
+      eval_set:
+        description: "Версия набора: 2.2 (30 задач P0) или 2.3 (+ Reddit AI-31…42; hash 796be89d…a89d)"
+        required: true
+        type: choice
+        default: "2.2"
+        options: ["2.2", "2.3"]
+      max_usd:
+        description: "Лимит базового прогона, USD (≤ 3)"
+        required: true
+        default: "0.9"
+      only:
+        description: "Только эти задачи базового прогона (AI-01,AI-05; пусто — все задачи набора)"
+        required: false
+        default: ""
+      repeats:
+        description: "Повторов в тот же прогон (0–3)"
+        required: true
+        type: choice
+        default: "0"
+        options: ["0", "1", "2", "3"]
+      repeat_only:
+        description: "Задачи повторов (пусто — как в only; хотя бы одно из двух обязательно при repeats > 0)"
+        required: false
+        default: ""
+      repeat_max_usd:
+        description: "Лимит каждого повтора, USD"
+        required: true
+        default: "0.6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publisher-ai-eval
+  cancel-in-progress: false
+
+jobs:
+  live-eval:
+    name: живой прогон набора AI (измерение, не допуск)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    services:
+      # Как sites-backend в ci.yml: pgvector — первая миграция делает
+      # CREATE EXTENSION vector.
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sites
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Только база раннера. Рабочей базы у workflow нет.
+      SITES_DIRECT_URL: postgresql://postgres:postgres@localhost:5432/sites?schema=sites
+      SITES_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sites
+      TOTAL_CAP_USD: "3.00"
+      TS_NODE_TRANSPILE_ONLY: "1"
+      IN_CONFIG: ${{ inputs.config }}
+      IN_SET: ${{ inputs.eval_set }}
+      IN_MAX_USD: ${{ inputs.max_usd }}
+      IN_ONLY: ${{ inputs.only }}
+      IN_REPEATS: ${{ inputs.repeats }}
+      IN_REPEAT_ONLY: ${{ inputs.repeat_only }}
+      IN_REPEAT_MAX_USD: ${{ inputs.repeat_max_usd }}
+
+    defaults:
+      run:
+        working-directory: sites-backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: npm
+          cache-dependency-path: sites-backend/package-lock.json
+
+      # Входы — до установки и до любого расхода; в shell — только через env.
+      - name: проверка входов и общего потолка
+        run: |
+          set -euo pipefail
+          [[ "$IN_CONFIG" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::config — sha256 (64 hex)"; exit 1; }
+          [[ "$IN_SET" == "2.2" || "$IN_SET" == "2.3" ]] || { echo "::error::eval_set — 2.2|2.3"; exit 1; }
+          list='^(AI-[0-9]{2})(,AI-[0-9]{2})*$'
+          [[ -z "$IN_ONLY" || "$IN_ONLY" =~ $list ]] || { echo "::error::only — AI-NN,AI-NN"; exit 1; }
+          [[ -z "$IN_REPEAT_ONLY" || "$IN_REPEAT_ONLY" =~ $list ]] || { echo "::error::repeat_only — AI-NN,AI-NN"; exit 1; }
+          [[ "$IN_REPEATS" =~ ^[0-3]$ ]] || { echo "::error::repeats — 0…3"; exit 1; }
+          if [[ "$IN_REPEATS" != "0" && -z "$IN_REPEAT_ONLY$IN_ONLY" ]]; then
+            echo "::error::repeats > 0 — укажите repeat_only (или only)"; exit 1
+          fi
+          # shellcheck disable=SC2016 # JS в одинарных кавычках — намеренно
+          node -e '
+            const n = (k) => { const v = Number(process.env[k]); if (!(Number.isFinite(v) && v > 0)) { console.error(`::error::${k} — положительное число`); process.exit(1); } return v; };
+            const base = n("IN_MAX_USD"), rep = n("IN_REPEAT_MAX_USD"), cap = Number(process.env.TOTAL_CAP_USD);
+            const total = base + Number(process.env.IN_REPEATS) * rep;
+            if (total > cap + 1e-9) { console.error(`::error::сумма лимитов $${total.toFixed(2)} > потолка $${cap.toFixed(2)}`); process.exit(1); }
+            console.log(`Лимиты: база $${base}, повторы ${process.env.IN_REPEATS} × $${rep}; сумма $${total.toFixed(2)} ≤ $${cap.toFixed(2)}`);
+          '
+
+      - name: ключ провайдера задан
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_QA_API_KEY }}
+        run: |
+          [ -n "${GEMINI_API_KEY:-}" ] || { echo "::error::секрет GEMINI_QA_API_KEY не задан"; exit 1; }
+
+      # `postinstall` зовёт `prisma generate`.
+      - run: npm ci
+
+      - name: схемы sites и extensions
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/sites" -v ON_ERROR_STOP=1 \
+            -c 'CREATE SCHEMA IF NOT EXISTS sites' \
+            -c 'CREATE SCHEMA IF NOT EXISTS extensions'
+
+      - name: миграции
+        run: npx prisma migrate deploy
+
+      - name: eval-продукт и синтетика S1–S7 (одноразовая база)
+        id: seed
+        run: |
+          set -euo pipefail
+          pid=$(npx ts-node src/modules/publisher/ai/eval/testing/ci-eval-product.ts)
+          [[ "$pid" =~ ^[a-z0-9]{20,40}$ ]] || { echo "::error::нет id eval-продукта"; exit 1; }
+          echo "product=$pid" >> "$GITHUB_OUTPUT"
+
+      - name: базовый прогон (live)
+        id: base
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_QA_API_KEY }}
+          PRODUCT: ${{ steps.seed.outputs.product }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          args=(--mode=live "--product=$PRODUCT" "--config=$IN_CONFIG" "--set=$IN_SET" "--max-usd=$IN_MAX_USD"
+                --out=out/live-base.md --json=out/live-base.json)
+          [ -n "$IN_ONLY" ] && args+=("--only=$IN_ONLY")
+          npm run -s eval:publisher -- "${args[@]}"
+          run=$(node -p 'require("./out/live-base.json").run.id')
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+      - name: повторы в тот же прогон
+        if: inputs.repeats != '0'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_QA_API_KEY }}
+          PRODUCT: ${{ steps.seed.outputs.product }}
+          RUN: ${{ steps.base.outputs.run }}
+        run: |
+          set -euo pipefail
+          tasks=${IN_REPEAT_ONLY:-$IN_ONLY}
+          last=out/live-base.json
+          for i in $(seq 1 "$IN_REPEATS"); do
+            # Лимит повтора = min(repeat_max_usd, потолок − факт по журналу прогона).
+            cap=$(LAST="$last" node -p '
+              const spent = Number(require("./" + process.env.LAST).totals.costMicroUsd) / 1e6;
+              const left = Number(process.env.TOTAL_CAP_USD) - spent;
+              Math.min(Number(process.env.IN_REPEAT_MAX_USD), left).toFixed(2)')
+            if node -e "process.exit(Number('$cap') < 0.12 ? 0 : 1)"; then
+              echo "::warning::остаток потолка \$$cap < \$0.12 — повторы $i…$IN_REPEATS не запускаются (blocked)"
+              break
+            fi
+            npm run -s eval:publisher -- --mode=live "--product=$PRODUCT" "--config=$IN_CONFIG" "--set=$IN_SET" \
+              "--run=$RUN" "--only=$tasks" "--max-usd=$cap" \
+              "--out=out/live-repeat-$i.md" "--json=out/live-repeat-$i.json"
+            last=out/live-repeat-$i.json
+          done
+
+      - name: итог в job summary
+        if: always()
+        run: |
+          # shellcheck disable=SC2016 # JS в одинарных кавычках — намеренно
+          node -e '
+            const fs = require("fs");
+            const files = fs.existsSync("out") ? fs.readdirSync("out").filter((f) => /^live-.*\.json$/.test(f)).sort() : [];
+            const L = ["## Publisher AI eval (live) — измерение, не допуск", ""];
+            if (!files.length) L.push("Протоколов нет — прогон не состоялся (см. шаги выше).");
+            const last = files.length ? JSON.parse(fs.readFileSync("out/" + files[files.length - 1], "utf8")) : null;
+            if (last) {
+              const c = last.run.config, t = last.totals;
+              L.push(`- Прогон \`${last.run.id}\` (${last.run.mode}), набор ${last.evalSetVersion}`);
+              L.push(`- Конфигурация \`${c.configHash}\` — ${c.provider} / ${c.model}; контекст ${c.contextRulesVersion}, схемы ${c.schemaSetVersion}`);
+              L.push(`- Инструкции: ${Object.entries(c.instructionVersions).map(([g, v]) => g + " " + v).join(", ")}`);
+              L.push(`- Параметры вызова: \`${JSON.stringify(t.callParams)}\``);
+              L.push(`- Строк ${t.results} (задач ${t.tasks}); жёстких провалов ${t.hardFailed}; с флагами ${t.flagged}`);
+              L.push(`- Стоимость прогона: ${(Number(t.costMicroUsd) / 1e6).toFixed(4)} USD${t.costUnknown ? `, неизвестных ${t.costUnknown}` : ""} (потолок $${process.env.TOTAL_CAP_USD})`);
+              L.push("", "| Задача | Строк | Жёсткие провалы (первая) | Флаги (первая) |", "|---|---|---|---|");
+              for (const k of last.tasks) {
+                const r = k.results[0];
+                L.push(`| ${k.code} | ${k.results.length} | ${r ? (r.autoHardFail.map((h) => h.code).join(", ") || "—") : "не запускалась"} | ${r ? (r.autoFlags.map((f) => f.code).join(", ") || "—") : "—"} |`);
+              }
+              L.push("", "Оценка человека (critical/usefulness по первой строке) — по артефакту `publisher-ai-eval-<run>`: база раннера удалена, `passed` здесь не ставится.");
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, L.join("\n") + "\n");
+          '
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publisher-ai-eval-${{ github.run_id }}
+          path: sites-backend/out/live-*
+          if-no-files-found: warn
+          retention-days: 30

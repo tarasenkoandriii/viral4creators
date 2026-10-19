@@ -7,9 +7,11 @@
  * `rootMainFiles` (рантайм Next + React) ∪ чанки корневого layout ∪ чанки
  * layout'ов-предков ∪ чанк страницы (`app-build-manifest.json`).
  *
- * Плюс бюджет трекера (§13.1: суммарная телеметрия layout ≤ 2.5 КБ): собственный чанк
- * корневого layout (`app/layout-*.js` — старый трекер и новый счётчик лендингов, модули атрибуции и
- * отправки; общие чанки рантайма и `next/link` в него не входят).
+ * Плюс бюджет трекера (§13.1, §13.6: `Track.tsx` ≤ 2 КБ): собственный чанк
+ * корневого layout (`app/layout-*.js` — трекер, его модули атрибуции и
+ * отправки и отправка просмотра в счётчик посещений лендингов, §13.5;
+ * общие чанки рантайма и `next/link` в него не входят). Бюджет возвращён к
+ * 2048 Б (внутренний аудит 19.10.2026, IA-C-01: временно поднимался до 2560).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,7 +22,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const NEXT = path.join(ROOT, '.next');
 const BUDGET_KB = Number(process.env.FIRST_LOAD_BUDGET_KB ?? 118);
 const ROUTE_BUDGET_KB = { '/contact/page': Number(process.env.CONTACT_PAGE_BUDGET_KB ?? 130) };
-const TRACK_BUDGET_B = Number(process.env.TRACK_BUDGET_BYTES ?? 2560);
+const TRACK_BUDGET_B = Number(process.env.TRACK_BUDGET_BYTES ?? 2048);
 /** Маршруты, которые обязаны быть в сборке (иначе бюджет «прошёл» по пустому месту). */
 const REQUIRED = ['/page', '/materials/page', '/materials/[slug]/page', '/contact/page', '/privacy/page'];
 

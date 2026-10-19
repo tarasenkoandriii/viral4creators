@@ -72,14 +72,34 @@ import { policyGate } from './policy';
 
 // ── CSV ──────────────────────────────────────────────────────────────────
 
+/**
+ * Отказ разбора CSV: причина (фиксированный текст, без содержимого файла —
+ * в CSV бывают контакты и ники) и номер ФИЗИЧЕСКОЙ строки файла, 1-based
+ * (внутренний аудит 19.10, IA-C-04: CLI писал общий текст без строки).
+ * `message` начинается с `CSV:` — как раньше.
+ */
+export class CsvError extends Error {
+  constructor(
+    readonly reason: string,
+    readonly line: number,
+  ) {
+    super(`CSV: ${reason} (строка ${line})`);
+    this.name = 'CsvError';
+  }
+}
+
 /** CSV (RFC 4180): кавычки, `""`, переводы строк в кавычках, CRLF, BOM. */
 export function parseCsv(text: string): Array<Record<string, string | null>> {
-  const rows: string[][] = [];
+  const rows: Array<{ cells: string[]; line: number }> = [];
   let row: string[] = [];
   let cell = '';
   let quoted = false;
   let closedQuote = false;
-  const s = text.replace(/^﻿/, '');
+  /** Текущая физическая строка и строка начала записи/кавычки. */
+  let line = 1;
+  let rowLine = 1;
+  let quoteLine = 1;
+  const s = text.replace(/^\uFEFF/, '');
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (quoted) {
@@ -89,13 +109,17 @@ export function parseCsv(text: string): Array<Record<string, string | null>> {
       } else if (c === '"') {
         quoted = false;
         closedQuote = true;
-      } else cell += c;
+      } else {
+        if (c === '\n' || (c === '\r' && s[i + 1] !== '\n')) line++;
+        cell += c;
+      }
     } else if (closedQuote && c !== ',' && c !== '\n' && c !== '\r') {
       if (c !== ' ' && c !== '\t')
-        throw new Error('CSV: текст после закрывающей кавычки');
+        throw new CsvError('текст после закрывающей кавычки', line);
     } else if (c === '"') {
-      if (cell.length) throw new Error('CSV: кавычка внутри обычного поля');
+      if (cell.length) throw new CsvError('кавычка внутри обычного поля', line);
       quoted = true;
+      quoteLine = line;
     } else if (c === ',') {
       row.push(cell);
       cell = '';
@@ -103,28 +127,33 @@ export function parseCsv(text: string): Array<Record<string, string | null>> {
     } else if (c === '\n' || c === '\r') {
       if (c === '\r' && s[i + 1] === '\n') i++;
       row.push(cell);
-      rows.push(row);
+      rows.push({ cells: row, line: rowLine });
       row = [];
       cell = '';
       closedQuote = false;
+      line++;
+      rowLine = line;
     } else cell += c;
   }
-  if (quoted) throw new Error('CSV: незакрытая кавычка');
+  if (quoted) throw new CsvError('незакрытая кавычка', quoteLine);
   if (cell !== '' || row.length) {
     row.push(cell);
-    rows.push(row);
+    rows.push({ cells: row, line: rowLine });
   }
-  const data = rows.filter((r) => r.some((x) => x.trim() !== ''));
+  const data = rows.filter((r) => r.cells.some((x) => x.trim() !== ''));
   if (!data.length) return [];
-  const head = data[0].map((h) => h.trim());
+  const head = data[0].cells.map((h) => h.trim());
   if (head.some((h) => !h) || new Set(head).size !== head.length)
-    throw new Error('CSV: пустые или повторяющиеся заголовки');
+    throw new CsvError('пустые или повторяющиеся заголовки', data[0].line);
   return data.slice(1).map((r) => {
-    if (r.length > head.length)
-      throw new Error('CSV: полей больше, чем заголовков');
+    if (r.cells.length > head.length)
+      throw new CsvError(
+        `полей больше, чем заголовков (${r.cells.length} > ${head.length})`,
+        r.line,
+      );
     const o: Record<string, string | null> = {};
     head.forEach((h, k) => {
-      const v = (r[k] ?? '').trim();
+      const v = (r.cells[k] ?? '').trim();
       o[h] = v === '' || v.toLowerCase() === 'null' ? null : v;
     });
     return o;

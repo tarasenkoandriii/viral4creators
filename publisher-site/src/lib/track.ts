@@ -63,7 +63,7 @@ export interface Transport {
 
 /** Возвращает способ отправки: `beacon`, `fetch` или `none`. */
 export function sendEvent(apiOrigin: string, body: EventBody, t: Transport): 'beacon' | 'fetch' | 'none' {
-  const url = `${apiOrigin}${PUBLIC_API_PREFIX}/events`;
+  const url = apiOrigin + PUBLIC_API_PREFIX + '/events';
   const text = serializeEvent(body);
   try {
     if (t.sendBeacon && t.sendBeacon(url, new Blob([text], { type: 'text/plain' }))) return 'beacon';

@@ -30,6 +30,9 @@ import {
   stripRouteNotFoundQuery,
 } from '../../shared/http-error-helpers';
 
+/** Ответы-ошибки без своего заголовка кэша (Н-D1-1). */
+export const ERROR_CACHE_CONTROL = 'private, no-store';
+
 export const INTERNAL_ERROR_MESSAGE =
   'Внутренняя ошибка сервера. Если она повторяется, сообщите код обращения из ответа.';
 
@@ -86,21 +89,55 @@ export function safePath(request: { url?: string; path?: string }): string {
   return q === -1 ? url : url.slice(0, q);
 }
 
+/**
+ * Код по статусу — для каждого 4xx/5xx, который бросает Nest или наш код.
+ * Внутренний аудит 19.10 (IA-D1-01 = IA-C-03): без 405 штатный отказ метода
+ * (`GET` раскрытия контакта) уходил с кодом `INTERNAL_SERVER_ERROR` — клиент
+ * и мониторинг видели «сбой сервера». Р-IA-FXC-1: все 4xx перечислены явно;
+ * незнакомый 4xx — `CLIENT_ERROR` (отказ клиента, не авария), незнакомый
+ * 5xx — `INTERNAL_SERVER_ERROR`. Прежние коды (422 → `VALIDATION_ERROR`,
+ * 429 → `RATE_LIMIT_EXCEEDED`) не меняются: по ним ветвятся клиенты.
+ */
 const CODE_BY_STATUS: Record<number, string> = {
   [HttpStatus.BAD_REQUEST]: 'BAD_REQUEST',
   [HttpStatus.UNAUTHORIZED]: 'UNAUTHORIZED',
+  [HttpStatus.PAYMENT_REQUIRED]: 'PAYMENT_REQUIRED',
   [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
   [HttpStatus.NOT_FOUND]: 'NOT_FOUND',
+  [HttpStatus.METHOD_NOT_ALLOWED]: 'METHOD_NOT_ALLOWED',
+  [HttpStatus.NOT_ACCEPTABLE]: 'NOT_ACCEPTABLE',
+  [HttpStatus.PROXY_AUTHENTICATION_REQUIRED]: 'PROXY_AUTHENTICATION_REQUIRED',
+  [HttpStatus.REQUEST_TIMEOUT]: 'REQUEST_TIMEOUT',
   [HttpStatus.CONFLICT]: 'CONFLICT',
+  [HttpStatus.GONE]: 'GONE',
+  [HttpStatus.LENGTH_REQUIRED]: 'LENGTH_REQUIRED',
+  [HttpStatus.PRECONDITION_FAILED]: 'PRECONDITION_FAILED',
   [HttpStatus.PAYLOAD_TOO_LARGE]: 'PAYLOAD_TOO_LARGE',
+  [HttpStatus.URI_TOO_LONG]: 'URI_TOO_LONG',
   [HttpStatus.UNSUPPORTED_MEDIA_TYPE]: 'UNSUPPORTED_MEDIA_TYPE',
+  [HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE]: 'RANGE_NOT_SATISFIABLE',
+  [HttpStatus.EXPECTATION_FAILED]: 'EXPECTATION_FAILED',
+  [HttpStatus.I_AM_A_TEAPOT]: 'I_AM_A_TEAPOT',
+  [HttpStatus.MISDIRECTED]: 'MISDIRECTED_REQUEST',
   [HttpStatus.UNPROCESSABLE_ENTITY]: 'VALIDATION_ERROR',
+  [HttpStatus.LOCKED]: 'LOCKED',
+  [HttpStatus.FAILED_DEPENDENCY]: 'FAILED_DEPENDENCY',
+  [HttpStatus.PRECONDITION_REQUIRED]: 'PRECONDITION_REQUIRED',
   [HttpStatus.TOO_MANY_REQUESTS]: 'RATE_LIMIT_EXCEEDED',
+  431: 'REQUEST_HEADER_FIELDS_TOO_LARGE',
+  451: 'UNAVAILABLE_FOR_LEGAL_REASONS',
+  [HttpStatus.NOT_IMPLEMENTED]: 'NOT_IMPLEMENTED',
+  [HttpStatus.BAD_GATEWAY]: 'BAD_GATEWAY',
   [HttpStatus.SERVICE_UNAVAILABLE]: 'SERVICE_UNAVAILABLE',
+  [HttpStatus.GATEWAY_TIMEOUT]: 'GATEWAY_TIMEOUT',
 };
 
-function codeFromStatus(status: number): string {
-  return CODE_BY_STATUS[status] ?? 'INTERNAL_SERVER_ERROR';
+export function codeFromStatus(status: number): string {
+  const known = CODE_BY_STATUS[status];
+  if (known) return known;
+  return status >= 400 && status < 500
+    ? 'CLIENT_ERROR'
+    : 'INTERNAL_SERVER_ERROR';
 }
 
 /** `ValidationPipe` кладёт в `message` массив строк — склеиваем. */
@@ -185,6 +222,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
       },
     };
 
+    // Н-D1-1 (внутренний аудит 19.10): ответ-ошибка не кэшируется. 401
+    // глобального входа приходит раньше гвардов маршрута (`PubNoStoreGuard`
+    // кабинета Publisher), поэтому заголовок ставит фильтр; уже заданный
+    // маршрутом заголовок не трогаем.
+    if (
+      typeof response.getHeader === 'function' &&
+      !response.headersSent &&
+      response.getHeader('Cache-Control') === undefined
+    ) {
+      response.setHeader('Cache-Control', ERROR_CACHE_CONTROL);
+    }
     response.status(status).json(payload);
   }
 }

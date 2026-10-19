@@ -199,6 +199,13 @@ ciDescribe('Publisher P-A1: маршруты ядра по HTTP', () => {
       .set(asMember(team.noAccess.telegramId, w.a.accountId));
     expect(denied.status).toBe(403);
     expect(denied.headers['cache-control']).toBe('private, no-store');
+    // Н-D1-1 (внутренний аудит 19.10): 401 анонима — глобальный вход до
+    // гвардов кабинета; заголовок ставит общий фильтр.
+    const anon = await request(srv()).get(
+      `/publisher/products/${p.id}/parameters`,
+    );
+    expect(anon.status).toBe(401);
+    expect(anon.headers['cache-control']).toBe('private, no-store');
     expect(uk.body.error).toMatchObject({
       code: 'PUB_VALIDATION',
       message: 'Перевірте поля форми',

@@ -17,6 +17,9 @@
  *     `PUB_ROLE_REQUIRED` / `PUB_AI_NOT_EVALUATED` / `PUB_GATE_CLOSED` /
  *     `PUB_SOURCE_NOT_ALLOWED`), модель не зовётся, стоимость 0, резерв
  *     снимается (кроме оценки прерванной синхронной попытки, S1-4);
+ *     автор `admin:<userId>` (оператор Админки) — ещё и свежее подтверждение
+ *     backend по журналу доступа (`adminActorAttested`, IA-D1-03): нет —
+ *     `refused` `PUB_ROLE_REQUIRED`;
  *  3. исполняет модель в остатке бюджета прохода; не хватило — снова
  *     передача следующему проходу (идемпотентно: итог пишется только
  *     условным `UPDATE … WHERE status='running'`).
@@ -38,6 +41,7 @@ import {
   type PubCronContext,
   type PubTx,
 } from '../core/ports';
+import { adminActorAttested } from '../core/admin-attest';
 import { AiGatewayService } from './ai-gateway.service';
 import {
   LEASE_MS,
@@ -135,6 +139,11 @@ export class AiCallsRunJob implements CronJob {
       const tenant = this.db.forAccount(row.accountId);
       let plan: ExecPlan | null = null;
       try {
+        // IA-D1-03: право оператора живёт в базе backend — подтверждение
+        // по журналу доступа Админки (вне кабинета, до транзакции тенанта).
+        if (!(await adminActorAttested(this.db, row.requestedBy))) {
+          throw new PubError('PUB_ROLE_REQUIRED');
+        }
         plan = await tenant.$transaction(async (raw) => {
           const tx = raw as PubTx;
           const denied = await recheckCall(

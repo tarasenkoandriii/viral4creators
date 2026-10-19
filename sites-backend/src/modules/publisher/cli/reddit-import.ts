@@ -29,6 +29,7 @@ import {
   buildImportPlan,
   ImportError,
   offlineReport,
+  CsvError,
   parseCsv,
   runImport,
   type ImportHttp,
@@ -165,6 +166,24 @@ export function parseAuthHeaders(
   return out;
 }
 
+/**
+ * Отказ чтения CSV исследования: имя файла (только `<сегмент>-<вид>.csv`,
+ * сегмент — `[a-z0-9_]`), строка (1-based, если известна) и причина.
+ * Содержимого файла в тексте нет: в CSV бывают контакты и ники.
+ */
+export class CsvFileError extends Error {
+  constructor(
+    readonly file: string,
+    readonly line: number | null,
+    readonly reason: string,
+  ) {
+    super(
+      `Ошибка чтения CSV: ${file}${line !== null ? `, строка ${line}` : ''}: ${reason}`,
+    );
+    this.name = 'CsvFileError';
+  }
+}
+
 /** Сегменты из каталога: `<сегмент>-communities.csv` (+ opportunities, keywords). */
 export function loadSegments(
   dir: string,
@@ -176,15 +195,21 @@ export function loadSegments(
     .filter((s) => !only || only.includes(s))
     .sort();
   const read = (seg: string, kind: string) => {
+    const file = `${seg}-${kind}.csv`;
+    let text: string;
     try {
-      return parseCsv(readFileSync(join(dir, `${seg}-${kind}.csv`), 'utf8'));
+      text = readFileSync(join(dir, file), 'utf8');
     } catch (e) {
-      if (
-        kind !== 'communities' &&
-        (e as NodeJS.ErrnoException).code === 'ENOENT'
-      )
-        return [];
-      throw new Error(`Не удалось прочитать CSV ${seg}-${kind}.csv`);
+      const code = (e as NodeJS.ErrnoException).code;
+      if (kind !== 'communities' && code === 'ENOENT') return [];
+      throw new CsvFileError(file, null, `не читается (${code ?? 'ошибка'})`);
+    }
+    try {
+      return parseCsv(text);
+    } catch (e) {
+      // IA-C-04: файл, строка и причина; содержимое строки — никогда.
+      if (e instanceof CsvError) throw new CsvFileError(file, e.line, e.reason);
+      throw new CsvFileError(file, null, 'неверный формат');
     }
   };
   return names.map((segment) => ({
@@ -301,9 +326,12 @@ export async function main(
   let segments: ResearchSegment[];
   try {
     segments = loadSegments(args.dir, args.segments);
-  } catch {
+  } catch (e) {
+    // IA-C-04: «файл, строка: причина»; каталог не читается — общий текст.
     console.error(
-      'Ошибка чтения CSV: проверьте доступ к каталогу и формат файлов',
+      e instanceof CsvFileError
+        ? e.message
+        : 'Ошибка чтения CSV: проверьте доступ к каталогу и формат файлов',
     );
     return { code: 1, report: null };
   }

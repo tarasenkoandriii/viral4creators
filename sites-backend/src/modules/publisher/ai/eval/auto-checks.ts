@@ -47,6 +47,63 @@ export function normalizeText(text: string): string {
   return t.replace(/’|ʼ|`/g, "'");
 }
 
+/**
+ * Поля ответа — технические идентификаторы, а не текст (внутренний аудит
+ * IA-D2-01): id источников (cuid) и метки версий. Смысловые проверки
+ * (`EvalAnswer.text`) их не видят — иначе цифры и буквы cuid дают ложные
+ * флаги («…l2⏎оплати…», «5tb») и прячут настоящие (`hasNot(/2000/)`).
+ * Структурные проверки читают эти поля напрямую (`sourceCodes`,
+ * `str(a, 'parent_version')`).
+ */
+const ID_FIELDS = new Set([
+  'used_source_ids',
+  'source_ids',
+  'evidence_source_ids',
+  'parent_version',
+  'object_version',
+]);
+
+const NEEDS_VERIFICATION = 'needs_verification';
+
+/** cuid-образный токен (Prisma `cuid()`: `c` + 24 знака, есть цифра). */
+const CUID_LIKE =
+  /(?<![a-z0-9])c(?=[a-z0-9]*[0-9])[a-z0-9]{20,31}(?![a-z0-9])/g;
+
+/**
+ * Текст ответа для смысловых проверок (IA-D2-01): строки ответа без полей
+ * id/версий, без упоминаний id источников продукта (`ids`, точные строки) и
+ * без cuid-образных токенов в свободном тексте; нижний регистр, числа без
+ * разделителей тысяч (`normalizeText`). Один и тот же ответ даёт один и тот
+ * же текст при любых id прогона.
+ */
+export function checkText(
+  output: unknown,
+  ids: Readonly<Record<string, string>> = {},
+): string {
+  const known = Object.values(ids)
+    .filter((id) => typeof id === 'string' && id.length >= 8)
+    .sort((a, b) => b.length - a.length);
+  const out: string[] = [];
+  const walk = (v: unknown, key: string | null): void => {
+    if (key && ID_FIELDS.has(key)) {
+      // Пометка вместо id (`source_ids: "needs_verification"`, Reddit) —
+      // смысловой признак для флага, не идентификатор.
+      if (v === NEEDS_VERIFICATION) out.push(NEEDS_VERIFICATION);
+      return;
+    }
+    if (typeof v === 'string') {
+      let s = v;
+      for (const id of known) s = s.split(id).join(' ');
+      out.push(s);
+    } else if (Array.isArray(v)) v.forEach((x) => walk(x, null));
+    else if (v && typeof v === 'object') {
+      for (const [k, x] of Object.entries(v)) walk(x, k);
+    }
+  };
+  walk(output, null);
+  return normalizeText(out.join('\n')).replace(CUID_LIKE, ' ');
+}
+
 const UK_ONLY = /[іїєґ]/gu;
 const RU_ONLY = /[ыэъё]/gu;
 
@@ -234,7 +291,8 @@ export function autoCheck(
       : {};
   const answer: EvalAnswer = {
     output,
-    text: normalizeText(stringsOf(parsed).join('\n')),
+    // IA-D2-01: без id источников и меток версий (см. `checkText`).
+    text: checkText(parsed, ids),
     sourceCodes: sourceIdsOf(parsed)
       .map((id) => codeOf.get(id))
       .filter((c): c is FixtureCode => !!c),

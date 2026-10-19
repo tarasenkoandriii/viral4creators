@@ -16,7 +16,10 @@
  *  4. sitemap.xml: `/`, `/materials`, опубликованные материалы с
  *     `lastmod = updatedAt`; снятых нет. 404 — noindex; снятый (HTTP-режим)
  *     — 410.
- *  5. CSP: `default-src 'self'`, `connect-src` — сайт и API, без фреймов/плагинов.
+ *  5. CSP: `default-src 'self'`, `connect-src` — ровно сайт, API и (только
+ *     при заданном `PUBLISHER_LANDING_VISITS_URL`) origin счётчика посещений
+ *     лендингов; без фреймов/плагинов. Без переменной адреса счётчика нет и
+ *     в HTML (канал выключен, §13.5, Р-IA-FXA-1).
  *  6. Секреты: в `.next/static` нет имён `PUBLISHER_*` и значений ключа,
  *     секрета ревалидации и токена владения (CI собирает с приманками); в
  *     HTML нет секретов.
@@ -31,6 +34,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { landingVisitsUrlOf } from '../../src/lib/landing-visits';
 
 const ROOT = path.join(__dirname, '..', '..');
 const NEXT = path.join(ROOT, '.next');
@@ -50,6 +54,13 @@ const api = process.env.PUBLISHER_API_ORIGIN?.replace(/\/$/, '');
 const key = process.env.PUBLISHER_PUBLIC_KEY;
 assert.ok(api && key, 'задайте PUBLISHER_API_ORIGIN и PUBLISHER_PUBLIC_KEY (список материалов и hash версий)');
 if (!BASE) assert.ok(fs.existsSync(APP), 'нет .next/server/app — сначала `next build`');
+/** Счётчик посещений лендингов (§13.5): адрес или `''` — тот же env, что при сборке. */
+const visitsUrl = landingVisitsUrlOf(process.env);
+const connectSrc = [
+  "'self'",
+  api,
+  ...(visitsUrl && new URL(visitsUrl).origin !== api ? [new URL(visitsUrl).origin] : []),
+];
 
 interface Page {
   status: number;
@@ -173,14 +184,18 @@ async function main() {
     if (expectNoindex && xr !== 'noindex, nofollow')
       problems.push(`${route}: X-Robots-Tag «${xr}», ждали noindex, nofollow`);
     if (expectIndexable && xr) problems.push(`${route}: X-Robots-Tag «${xr}» у индексируемой сборки`);
-    // Аудит S3-2: CSP — свой origin + API Publisher, без фреймов и плагинов.
+    // Аудит S3-2: CSP — свой origin + API Publisher (+ счётчик посещений, если
+    // задан), без фреймов и плагинов. connect-src сверяется ЦЕЛИКОМ (IA-AB-03).
     const csp = p.headers['content-security-policy'] ?? '';
-    for (const d of [
-      `connect-src 'self' ${api}`,
-      "object-src 'none'",
-      "frame-ancestors 'none'",
-      "default-src 'self'",
-    ]) {
+    const connect = csp
+      .split(';')
+      .map((d) => d.trim())
+      .find((d) => d.startsWith('connect-src '));
+    if (connect !== `connect-src ${connectSrc.join(' ')}`)
+      problems.push(`${route}: CSP connect-src «${connect}», ждали «connect-src ${connectSrc.join(' ')}»`);
+    if (!visitsUrl && /landing-visits/.test(html))
+      problems.push(`${route}: адрес счётчика посещений в HTML при невыставленном PUBLISHER_LANDING_VISITS_URL`);
+    for (const d of ["object-src 'none'", "frame-ancestors 'none'", "default-src 'self'"]) {
       if (!csp.includes(d)) problems.push(`${route}: CSP без «${d}» (${csp || 'нет заголовка'})`);
     }
     for (const a of tags(html, 'a')) {

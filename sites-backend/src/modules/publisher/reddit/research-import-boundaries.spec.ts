@@ -46,9 +46,31 @@ describe('Reddit import boundaries', () => {
       expect(JSON.stringify(error.mock.calls)).not.toContain(
         'private malformed text',
       );
+      // IA-C-04: файл, строка и причина — не общий текст.
+      expect(error.mock.calls).toEqual([
+        [
+          'Ошибка чтения CSV: smb-communities.csv, строка 2: незакрытая кавычка',
+        ],
+      ]);
     } finally {
       error.mockRestore();
     }
+  });
+
+  it('IA-C-04: битый companion-файл (opportunities) — его имя, строка и причина; нечитаемый — имя и код ошибки', () => {
+    writeFileSync(join(dir, 'smb-communities.csv'), 'name\nr/SaaS\n');
+    writeFileSync(
+      join(dir, 'smb-opportunities.csv'),
+      'thread_url,title\nx,y\nx,y,z\n',
+    );
+    expect(() => loadSegments(dir, null)).toThrow(
+      'Ошибка чтения CSV: smb-opportunities.csv, строка 3: полей больше, чем заголовков (3 > 2)',
+    );
+    rmSync(join(dir, 'smb-opportunities.csv'));
+    mkdirSync(join(dir, 'smb-keywords.csv'));
+    expect(() => loadSegments(dir, null)).toThrow(
+      'Ошибка чтения CSV: smb-keywords.csv: не читается (EISDIR)',
+    );
   });
 
   it('rejects credentials and Reddit hostname aliases before sending session headers', () => {

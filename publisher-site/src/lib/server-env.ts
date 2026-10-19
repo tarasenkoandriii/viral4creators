@@ -1,3 +1,5 @@
+import { landingVisitsUrlOf } from './landing-visits';
+
 /**
  * Связь с публичным API (проектный документ §13.7). Значения проверены и
  * впечены `next.config.js` при сборке; здесь — чтение по литералам
@@ -10,6 +12,12 @@ export interface PublisherEnv {
   publicKey: string;
   /** Первый ключ индексации (§13.3): `PUBLISHER_INDEXING=on` в production. */
   indexingOn: boolean;
+  /**
+   * Адрес счётчика «Посещения лендингов» платформы (§13.5, Р-IA-FXA-1) или
+   * `''` — канал выключен. Включается ещё и site-config (live + согласие):
+   * `landingVisitsTarget`.
+   */
+  landingVisitsUrl: string;
 }
 
 export function publisherEnv(): PublisherEnv {
@@ -21,5 +29,10 @@ export function publisherEnv(): PublisherEnv {
   if (!/^pp_[A-Za-z0-9]{24}$/.test(publicKey)) {
     throw new Error('PUBLISHER_PUBLIC_KEY не задан или не `pp_…` (см. publisher-site/.env.example)');
   }
-  return { apiOrigin, publicKey, indexingOn: process.env.PUBLISHER_INDEXING === 'on' };
+  const landingVisitsUrl = landingVisitsUrlOf({
+    PUBLISHER_LANDING_VISITS_URL: process.env.PUBLISHER_LANDING_VISITS_URL,
+    VERCEL: process.env.VERCEL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+  });
+  return { apiOrigin, publicKey, indexingOn: process.env.PUBLISHER_INDEXING === 'on', landingVisitsUrl };
 }

@@ -91,6 +91,9 @@ if [ -z "${BACKEND_ROOT:-}" ] && { [ ! -f dist/main.js ] || [ ! -f "$STAMP" ] ||
   # Метка — время НАЧАЛА сборки: правка во время сборки даст пересборку.
   touch -r "$WORK/.build-start" "$STAMP"
 fi
+# IA-AB-04: версия кода стенда — её удостоверяет засеянный протокол приёмки
+# (`testSourceSha`) и сверяет сервер при утверждении launch_evidence_*.
+export PUBLISHER_RELEASE_SHA=${PUBLISHER_RELEASE_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'e%.0s' $(seq 1 40))}
 SITES_DATABASE_URL=$U node "$BACK/test/publisher-e2e/seed.cjs" "$WORK/seed.json" "${SITE_HOST:-pubsite.test}" || exit 1
 # Раздел Reddit (P-R) — только для `--reddit`; иначе флаг выключен (по умолчанию).
 # M2 (E2E-RD-02): генерация по HTTP — флаг генерации и стендовый

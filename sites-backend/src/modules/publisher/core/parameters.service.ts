@@ -455,10 +455,12 @@ export class ParametersService implements ParameterPort {
       // с обязательным списком шлюза в статусе passed, не свободная строка.
       if (isLaunchEvidenceKey(input.key)) {
         const runId = qaRunIdOf(value);
+        const qaRuns = this.ports.qaRuns();
         const run = runId
-          ? await this.ports.qaRuns().runEvidence(product.accountId, runId)
+          ? await qaRuns.runEvidence(product.accountId, runId)
           : null;
-        const check = launchEvidenceCheck(input.key, run);
+        // IA-AB-04: прогон — на ТОЙ версии кода, что выпускается сейчас.
+        const check = launchEvidenceCheck(input.key, run, qaRuns.releaseSha());
         if (!check.ok)
           throw new PubError('PUB_CONFLICT', {
             reason: check.reason,
@@ -466,6 +468,9 @@ export class ParametersService implements ParameterPort {
             qaRunId: runId,
             required: check.required,
             missing: check.missing,
+            ...(check.releaseSha !== undefined
+              ? { releaseSha: check.releaseSha }
+              : {}),
           });
       }
     }

@@ -2,7 +2,8 @@
  * Вкладка «Reddit» админки платформы (пакет P-R-ADM, Р-RD-ADM-1…5):
  * мост Админка → генератор → внутренний API sites-backend
  * `/internal/admin/reddit/*` (`AdminRedditClient`). Здесь — только вход
- * оператора (`AdminSessionGuard` + `assertOperator`; актор = его userId) и
+ * оператора (`AdminSessionGuard` + `assertOperator`; актор = его userId;
+ * мутация без `Origin` — 403, `AdminRedditOriginGuard`) и
  * форма запроса; продукт (платформенный), роли, правила Reddit, журнал и
  * аудит — на стороне sites-backend.
  *
@@ -30,6 +31,7 @@ import {
 } from '../admin-auth/admin-session.guard';
 import { AdminPanelService } from './admin-panel.service';
 import { AdminRedditCall, AdminRedditClient } from './admin-reddit.client';
+import { AdminRedditOriginGuard } from './admin-reddit.origin.guard';
 import type { AdminRedditRouteName } from './admin-reddit.routes';
 
 type Query_ = Record<string, unknown>;
@@ -38,7 +40,8 @@ type Query_ = Record<string, unknown>;
 export const CSV_EXPOSED_HEADERS = 'Content-Disposition, X-Next-Before';
 
 @Controller('admin/reddit')
-@UseGuards(AdminSessionGuard)
+// Сессия, затем строгий барьер CSRF мутаций (Н-D1-5: без Origin — 403).
+@UseGuards(AdminSessionGuard, AdminRedditOriginGuard)
 export class AdminRedditController {
   constructor(
     private readonly adminPanel: AdminPanelService,

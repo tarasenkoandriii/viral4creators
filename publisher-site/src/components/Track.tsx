@@ -1,7 +1,5 @@
 'use client';
 
-import { sendLandingVisit } from './LandingVisits';
-
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import type { ConsentState } from '@/lib/api-types';
@@ -13,6 +11,7 @@ import {
   safeSessionStorage,
   type AnalyticsStorage,
 } from '@/lib/attribution';
+import { sendLandingVisit } from '@/lib/landing-visits';
 import { buildEvent, sendEvent } from '@/lib/track';
 
 /**
@@ -20,10 +19,13 @@ import { buildEvent, sendEvent } from '@/lib/track';
  * страницы (после гидратации и на каждом клиентском переходе), `cta_click`
  * — по клику на элемент с `data-cta` (делегирование: сами CTA — серверная
  * разметка без JS). Ключ, адрес API, режим хранения и `consentState`
- * приходят пропсами из site-config, клиент env не читает.
+ * приходят пропсами из site-config, клиент env не читает. `visitsEndpoint` —
+ * адрес счётчика «Посещения лендингов» платформы или `null`: решение
+ * (env + `mode=live` + согласие) принимает сервер (`landingVisitsTarget`,
+ * §13.5, Р-IA-FXA-1); при `null` второй запрос не уходит.
  */
 interface Props {
-  visits: { enabled: boolean; endpoint: string; locale: string };
+  visitsEndpoint: string | null;
   apiOrigin: string;
   publicKey: string;
   analyticsStorage: AnalyticsStorage;
@@ -34,7 +36,7 @@ let lastView = '';
 /** `referrerHost` — только у первого просмотра документа: при клиентском переходе `document.referrer` прежний (аудит S3-4). */
 let referrerSent = false;
 
-export default function Track({ apiOrigin, publicKey, analyticsStorage, consentState, visits }: Props) {
+export default function Track({ apiOrigin, publicKey, analyticsStorage, consentState, visitsEndpoint }: Props) {
   const pathname = usePathname();
 
   useEffect(() => {
@@ -60,11 +62,11 @@ export default function Track({ apiOrigin, publicKey, analyticsStorage, consentS
         fetch: (u, i) => fetch(u, i),
       });
     };
-    const view = `${pathname}${window.location.search}`;
+    const view = pathname + window.location.search;
     if (view !== lastView) {
       lastView = view;
       send('content_view');
-      if (visits.enabled) sendLandingVisit(visits.endpoint, 'publisher', visits.locale);
+      if (visitsEndpoint) sendLandingVisit(visitsEndpoint);
     }
     const onClick = (e: MouseEvent) => {
       const el = (e.target as Element | null)?.closest?.('[data-cta]');
@@ -72,7 +74,7 @@ export default function Track({ apiOrigin, publicKey, analyticsStorage, consentS
     };
     document.addEventListener('click', onClick, true);
     return () => document.removeEventListener('click', onClick, true);
-  }, [pathname, apiOrigin, publicKey, analyticsStorage, consentState, visits]);
+  }, [pathname, apiOrigin, publicKey, analyticsStorage, consentState, visitsEndpoint]);
 
   return null;
 }

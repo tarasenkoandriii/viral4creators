@@ -278,6 +278,8 @@ ciDescribe(
           .set(asMember(team.sales.telegramId, w.account.accountId));
         expect({ what, status: r.status }).toEqual({ what, status: 405 });
         expect(r.headers.allow).toBe('POST');
+        // IA-D1-01 = IA-C-03: машинный код метода, а не INTERNAL_SERVER_ERROR.
+        expect(r.body.error.code).toBe('METHOD_NOT_ALLOWED');
         expect(JSON.stringify(r.body)).not.toContain(person.phone);
       }
       expect(await s.prisma.pubAuditEvent.count({ where })).toBe(before);

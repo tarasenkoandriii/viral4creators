@@ -195,6 +195,9 @@ ciDescribe('Publisher P-A1: гейты (§10) на базе', () => {
       'spend',
       'purchases',
       'ai_use',
+      // IA-AB-09 / Р-RD-53: копирование Reddit — только продукт test|working
+      // (restored — та же ветка `kind`, что eval).
+      'reddit_publish',
     ] as const) {
       expect(await gate(ev.id, g)).toEqual({
         gate: g,

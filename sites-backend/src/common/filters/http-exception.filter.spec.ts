@@ -1,12 +1,14 @@
 import {
   ConflictException,
   ForbiddenException,
+  HttpStatus,
+  MethodNotAllowedException,
   HttpException,
   Logger,
   type ArgumentsHost,
 } from '@nestjs/common';
 import { setupError } from '../../modules/assist-site-setup/errors';
-import { HttpExceptionFilter } from './http-exception.filter';
+import { codeFromStatus, HttpExceptionFilter } from './http-exception.filter';
 
 interface Out {
   status: number;
@@ -81,5 +83,93 @@ describe('HttpExceptionFilter: код ошибки', () => {
       code: 'WIDGET_CONFIG_INVALID',
       errors: [{ path: 'colors.accent', code: 'color' }],
     });
+  });
+
+  it('IA-D1-01 = IA-C-03: 405 (GET раскрытия контакта) — METHOD_NOT_ALLOWED, не INTERNAL_SERVER_ERROR; лог — warn', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    const error = jest.spyOn(Logger.prototype, 'error');
+    warn.mockClear();
+    error.mockClear();
+    const r = run(
+      new MethodNotAllowedException(
+        'раскрытие контакта и заметок — только POST из кабинета',
+      ),
+    );
+    expect(r.status).toBe(405);
+    expect(r.body.error).toEqual({
+      code: 'METHOD_NOT_ALLOWED',
+      message: 'раскрытие контакта и заметок — только POST из кабинета',
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('→ 405 METHOD_NOT_ALLOWED'),
+    );
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('Р-IA-FXC-1: ни один 4xx не получает INTERNAL_SERVER_ERROR; незнакомый 4xx — CLIENT_ERROR', () => {
+    const fourXx = Object.values(HttpStatus).filter(
+      (v): v is number => typeof v === 'number' && v >= 400 && v < 500,
+    );
+    for (const status of [...fourXx, 431, 451, 499]) {
+      const code = run(new HttpException('отказ', status)).body.error.code;
+      expect({ status, code }).not.toEqual({
+        status,
+        code: 'INTERNAL_SERVER_ERROR',
+      });
+      expect(code).toMatch(/^[A-Z][A-Z0-9_]+$/);
+    }
+    expect(codeFromStatus(499)).toBe('CLIENT_ERROR');
+    // Прежние коды, по которым ветвятся клиенты, — без изменений.
+    expect(codeFromStatus(422)).toBe('VALIDATION_ERROR');
+    expect(codeFromStatus(429)).toBe('RATE_LIMIT_EXCEEDED');
+    expect(codeFromStatus(503)).toBe('SERVICE_UNAVAILABLE');
+    // 5xx: известные — свой код, незнакомый — INTERNAL_SERVER_ERROR.
+    expect(codeFromStatus(502)).toBe('BAD_GATEWAY');
+    expect(codeFromStatus(500)).toBe('INTERNAL_SERVER_ERROR');
+    expect(codeFromStatus(599)).toBe('INTERNAL_SERVER_ERROR');
+  });
+
+  it('свой машинный код в `error` у 402/502 по-прежнему главнее кода по статусу', () => {
+    const e = new HttpException(
+      {
+        error: 'EDITOR_SUGGEST_BUDGET',
+        code: 'EDITOR_SUGGEST_BUDGET',
+        message: 'лимит',
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
+    expect(run(e).body.error.code).toBe('EDITOR_SUGGEST_BUDGET');
+  });
+
+  it('Н-D1-1: ответ-ошибка без своего Cache-Control получает private, no-store (401 глобального входа); заданный маршрутом — не трогается', () => {
+    const headers: Record<string, string> = {};
+    const res = {
+      headersSent: false,
+      getHeader: (k: string) => headers[k],
+      setHeader: (k: string, v: string) => {
+        headers[k] = v;
+      },
+      status() {
+        return this;
+      },
+      json() {
+        return this;
+      },
+    };
+    const host = (r: typeof res) =>
+      ({
+        switchToHttp: () => ({
+          getResponse: () => r,
+          getRequest: () => ({ method: 'GET', url: '/publisher/products' }),
+        }),
+      }) as unknown as ArgumentsHost;
+    new HttpExceptionFilter().catch(
+      new HttpException('Unauthorized', 401),
+      host(res),
+    );
+    expect(headers['Cache-Control']).toBe('private, no-store');
+    headers['Cache-Control'] = 'public, s-maxage=60';
+    new HttpExceptionFilter().catch(new HttpException('нет', 404), host(res));
+    expect(headers['Cache-Control']).toBe('public, s-maxage=60');
   });
 });

@@ -65,6 +65,11 @@ import {
   type RunInfo,
 } from './protocol';
 import { evalTasksOf, type EvalTask } from './tasks';
+import {
+  type AuditProtocol,
+  type AuditTaskResult,
+  type AuditTaskSet,
+} from './tasks-file';
 
 export const EVAL_ACTOR = 'system:eval';
 export const FAKE_PROVIDER = 'fake';
@@ -341,41 +346,12 @@ export class CliEvalGateway {
           });
           return r.id;
         });
-    const callMode: CallMode = {
-      kind: 'eval',
-      evalRun: true,
-      configId: config.id,
-      provider: this.deps.provider,
-      model: this.deps.modelName,
-      fake: this.deps.fake,
-    };
-    const runDeps: RunDeps = {
-      model: this.deps.model,
-      usage: this.deps.usage,
-      usageDb: (accountId) => this.db.forAccount(accountId),
-      transaction: (accountId, fn) => this.tx(accountId, fn),
-      audit: this.deps.audit,
-    };
+    const { callMode, runDeps } = this.callSetup(config.id);
     const capMicro =
       opts.maxUsd === undefined
         ? null
         : BigInt(Math.floor(opts.maxUsd * 1_000_000));
-    if (
-      !this.deps.fake &&
-      !opts.allowUnpriced &&
-      tasks.some(
-        (t) =>
-          !estimateCallMicroUsd(
-            this.deps.modelName,
-            GENERATORS[t.generator].maxOutputTokens,
-          ).priced,
-      )
-    ) {
-      // Аудит S2-4: неизвестная ставка — не ноль; без разрешения не тратим.
-      throw new Error(
-        `Модель ${this.deps.modelName} без ставки в прайсе — потолок --max-usd не проверить; --allow-unpriced считает по наибольшим ставкам`,
-      );
-    }
+    this.assertPriced(tasks, opts.allowUnpriced);
     // Потрачено: факт, а где он неизвестен (`unknown`/`unpriced`) — оценка
     // сверху (аудит S2-4: неизвестное не ноль).
     let spent = 0n;
@@ -400,67 +376,24 @@ export class CliEvalGateway {
             select: { id: true },
           })
         : [];
-      const input = this.inputOf(task, ids);
-      if (this.deps.model instanceof FakeEvalModel) {
-        const custom = opts.fakeAnswer?.(task, ids);
-        this.deps.model.next =
-          custom !== undefined && custom !== null
-            ? custom
-            : JSON.stringify(FAKE_ANSWERS[task.code](ids));
-      }
-      const allowedSourceIds = task.allowedSources.map((c) => ids[c]);
-      const opened = await this.tx(product.accountId, (tx) =>
-        openCall(
-          tx,
-          {
-            product,
-            actor: EVAL_ACTOR,
-            spec,
-            opKey: randomUUID(),
-            objectType: 'ai_eval_run',
-            objectId: `${runId}:${task.code}${prior.length ? `:r${prior.length}` : ''}`,
-            input: input.generatorInput,
-            context: { audience: task.mode, sourceIds: allowedSourceIds },
-            mode: callMode,
-            now: new Date(),
-          },
-          { gates: denyGates, audit: this.deps.audit },
-        ),
-      );
-      let parsed: unknown = undefined;
-      let raw: string | null = null;
-      let costStatus = 'unknown';
-      let costMicroUsd: bigint | null = null;
-      let first: AttemptOutcome | null = null;
-      if (opened.plan) {
-        const r = await runCall(opened.plan, runDeps);
-        first = r.first;
-        parsed = r.first.parsed;
-        raw = r.first.rawText;
-        costStatus = r.first.costStatus;
-        costMicroUsd = r.first.costMicroUsd;
-        spent +=
-          costMicroUsd !== null
-            ? costMicroUsd
-            : this.deps.fake
-              ? 0n
-              : opened.plan.est;
-      }
-      const keep = {
-        keep: maskKeep(input.generatorInput, opened.plan?.ctx ?? null),
-      };
-      const checks = autoCheck(task, parsed, raw, ids);
-      if (!opened.plan) {
-        checks.hardFails.push({
-          code: `not_run:${opened.status}`,
-          text: 'Модель не викликалась',
-        });
-      } else if (first && first.rawText === null) {
-        // Предаудит D2-01: «модель не ответила» — только когда провайдер не
-        // вернул ответа и расхода нет. Обрезанный/пустой ответ (в т. ч.
-        // фильтр безопасности) оплачен — это ПЕРВЫЙ ответ и провал.
-        checks.hardFails.push(noAnswerOf(first));
-      }
+      const {
+        input,
+        opened,
+        parsed,
+        raw,
+        costStatus,
+        costMicroUsd,
+        spentDelta,
+        keep,
+        checks,
+        allowedSourceIds,
+      } = await this.execTask(product, task, ids, {
+        objectId: `${runId}:${task.code}${prior.length ? `:r${prior.length}` : ''}`,
+        callMode,
+        runDeps,
+        fakeAnswer: opts.fakeAnswer,
+      });
+      spent += spentDelta;
       await this.tx(product.accountId, async (tx) => {
         const row = await tx.pubAiEvalResult.create({
           data: {
@@ -515,6 +448,316 @@ export class CliEvalGateway {
       });
     }
     return this.finish(product, runId);
+  }
+
+  /**
+   * Один вызов задачи через шлюз (`openCall` → `runCall`) и автопроверки
+   * первого ответа — общий для набора допуска и закрытого набора.
+   */
+  private async execTask(
+    product: ProductCtx,
+    task: EvalTask,
+    ids: Readonly<Record<string, string>>,
+    o: {
+      objectId: string;
+      callMode: CallMode;
+      runDeps: RunDeps;
+      fakeAnswer?: EvalRunOptions['fakeAnswer'];
+    },
+  ): Promise<{
+    input: { generatorInput: unknown; record: Record<string, unknown> };
+    opened: Awaited<ReturnType<typeof openCall>>;
+    first: AttemptOutcome | null;
+    parsed: unknown;
+    raw: string | null;
+    costStatus: string;
+    costMicroUsd: bigint | null;
+    spentDelta: bigint;
+    keep: { keep: Set<string> };
+    checks: ReturnType<typeof autoCheck>;
+    allowedSourceIds: string[];
+  }> {
+    const fixtureIds = ids as Readonly<Record<FixtureCode, string>>;
+    const spec = GENERATORS[task.generator];
+    const input = this.inputOf(task, fixtureIds);
+    if (this.deps.model instanceof FakeEvalModel) {
+      const custom = o.fakeAnswer?.(task, fixtureIds);
+      this.deps.model.next =
+        custom !== undefined && custom !== null
+          ? custom
+          : FAKE_ANSWERS[task.code]
+            ? JSON.stringify(FAKE_ANSWERS[task.code](fixtureIds))
+            : '{}';
+    }
+    const allowedSourceIds = task.allowedSources.map((c) => ids[c]);
+    const opened = await this.tx(product.accountId, (tx) =>
+      openCall(
+        tx,
+        {
+          product,
+          actor: EVAL_ACTOR,
+          spec,
+          opKey: randomUUID(),
+          objectType: 'ai_eval_run',
+          objectId: o.objectId,
+          input: input.generatorInput,
+          context: { audience: task.mode, sourceIds: allowedSourceIds },
+          mode: o.callMode,
+          now: new Date(),
+        },
+        { gates: denyGates, audit: this.deps.audit },
+      ),
+    );
+    let parsed: unknown = undefined;
+    let raw: string | null = null;
+    let costStatus = 'unknown';
+    let costMicroUsd: bigint | null = null;
+    let first: AttemptOutcome | null = null;
+    let spentDelta = 0n;
+    if (opened.plan) {
+      const r = await runCall(opened.plan, o.runDeps);
+      first = r.first;
+      parsed = r.first.parsed;
+      raw = r.first.rawText;
+      costStatus = r.first.costStatus;
+      costMicroUsd = r.first.costMicroUsd;
+      spentDelta =
+        costMicroUsd !== null
+          ? costMicroUsd
+          : this.deps.fake
+            ? 0n
+            : opened.plan.est;
+    }
+    const keep = {
+      keep: maskKeep(input.generatorInput, opened.plan?.ctx ?? null),
+    };
+    const checks = autoCheck(task, parsed, raw, fixtureIds);
+    if (!opened.plan) {
+      checks.hardFails.push({
+        code: `not_run:${opened.status}`,
+        text: 'Модель не викликалась',
+      });
+    } else if (first && first.rawText === null) {
+      // Предаудит D2-01: «модель не ответила» — только когда провайдер не
+      // вернул ответа и расхода нет. Обрезанный/пустой ответ (в т. ч.
+      // фильтр безопасности) оплачен — это ПЕРВЫЙ ответ и провал.
+      checks.hardFails.push(noAnswerOf(first));
+    }
+    return {
+      input,
+      opened,
+      first,
+      parsed,
+      raw,
+      costStatus,
+      costMicroUsd,
+      spentDelta,
+      keep,
+      checks,
+      allowedSourceIds,
+    };
+  }
+
+  /** Режим вызова набора (`evalRun` — только здесь, тест P3-12) и зависимости. */
+  private callSetup(configId: string): {
+    callMode: CallMode;
+    runDeps: RunDeps;
+  } {
+    return {
+      callMode: {
+        kind: 'eval',
+        evalRun: true,
+        configId,
+        provider: this.deps.provider,
+        model: this.deps.modelName,
+        fake: this.deps.fake,
+      },
+      runDeps: {
+        model: this.deps.model,
+        usage: this.deps.usage,
+        usageDb: (accountId) => this.db.forAccount(accountId),
+        transaction: (accountId, fn) => this.tx(accountId, fn),
+        audit: this.deps.audit,
+      },
+    };
+  }
+
+  /**
+   * Прогон ЗАКРЫТОГО набора из файла (Р-IA-FXB-4): тот же шлюз, схемы,
+   * маска и журнал вызовов; строк `pub_ai_eval_runs/results` нет —
+   * основанием `passed` закрытый набор не является. Потолок `--max-usd`
+   * — как у набора: перед каждой задачей «потрачено + оценка сверху».
+   */
+  async runAudit(
+    product: ProductCtx,
+    mode: 'fake' | 'live',
+    set: AuditTaskSet,
+    opts: Pick<
+      EvalRunOptions,
+      'maxUsd' | 'allowUnpriced' | 'fakeAnswer' | 'only'
+    > & {
+      /** id своих источников набора (`seedAuditSources`) по коду. */
+      sourceIds?: Readonly<Record<string, string>>;
+    } = {},
+  ): Promise<AuditProtocol> {
+    if ((mode === 'fake') !== this.deps.fake) {
+      throw new Error('CliEvalGateway: режим прогона не совпадает с моделью');
+    }
+    const startedAt = new Date().toISOString();
+    const fixtureIds = await this.fixtureIds(product);
+    const ids: Record<string, string> = {
+      ...fixtureIds,
+      ...(opts.sourceIds ?? {}),
+    };
+    const missing = set.sources.filter((x) => !ids[x.code]).map((x) => x.code);
+    if (missing.length) {
+      throw new Error(
+        `Свои источники набора не засеяны: ${missing.join(', ')} (seedAuditSources)`,
+      );
+    }
+    const config = await this.ensureConfig(product);
+    const tasks = set.tasks.filter(
+      (t) => !opts.only?.length || opts.only.includes(t.code),
+    );
+    if (opts.only?.some((c) => !set.tasks.some((t) => t.code === c))) {
+      throw new Error(`Неизвестная задача в --only: ${opts.only.join(',')}`);
+    }
+    this.assertPriced(tasks, opts.allowUnpriced);
+    const { callMode, runDeps } = this.callSetup(config.id);
+    const capMicro =
+      opts.maxUsd === undefined
+        ? null
+        : BigInt(Math.floor(opts.maxUsd * 1_000_000));
+    const label = `audit:${set.sha256.slice(0, 12)}:${randomUUID()}`;
+    const rows: AuditTaskResult[] = [];
+    let spent = 0n;
+    for (const task of tasks) {
+      const base = {
+        code: task.code,
+        generator: task.generator,
+        mode: task.mode,
+        allowedSources: task.allowedSources as string[],
+      };
+      if (capMicro !== null && !this.deps.fake) {
+        const est = estimateCallMicroUsd(
+          this.deps.modelName,
+          GENERATORS[task.generator].maxOutputTokens,
+        ).estMicroUsd;
+        if (spent + est > capMicro) {
+          rows.push({
+            ...base,
+            status: 'not_run:max_usd',
+            aiCallId: null,
+            hardFails: [],
+            flags: [],
+            firstAnswer: null,
+            firstAnswerRaw: null,
+            costStatus: 'unknown',
+            costMicroUsd: null,
+          });
+          continue;
+        }
+      }
+      const r = await this.execTask(product, task, ids, {
+        objectId: `${label}:${task.code}`,
+        callMode,
+        runDeps,
+        fakeAnswer: opts.fakeAnswer,
+      });
+      spent += r.spentDelta;
+      rows.push({
+        ...base,
+        status: r.first?.status ?? `not_run:${r.opened.status}`,
+        aiCallId: r.opened.callId ?? null,
+        hardFails: r.checks.hardFails,
+        flags: r.checks.flags,
+        firstAnswer:
+          r.parsed === undefined ? null : maskDeep(r.parsed, r.keep).value,
+        firstAnswerRaw:
+          r.raw === null
+            ? null
+            : maskContacts(r.raw.slice(0, 20_000), r.keep).text.slice(
+                0,
+                20_000,
+              ),
+        costStatus:
+          r.costStatus === 'priced' && r.costMicroUsd !== null
+            ? 'priced'
+            : r.costStatus === 'unpriced'
+              ? 'unpriced'
+              : 'unknown',
+        costMicroUsd:
+          r.costStatus === 'priced' && r.costMicroUsd !== null
+            ? r.costMicroUsd.toString()
+            : null,
+      });
+    }
+    const spec = currentConfigSpec(
+      this.deps.provider,
+      this.deps.modelName,
+      this.set,
+    );
+    return {
+      kind: 'closed_set',
+      admission: false,
+      set: {
+        name: set.name,
+        sha256: set.sha256,
+        tasks: set.tasks.length,
+        sources: set.sources.length,
+      },
+      mode,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      config: {
+        id: config.id,
+        configHash: config.configHash,
+        provider: spec.provider,
+        model: spec.model,
+        instructionVersions: spec.instructionVersions,
+        contextRulesVersion: spec.contextRulesVersion,
+        schemaSetVersion: spec.schemaSetVersion,
+        evalSetVersion: spec.evalSetVersion,
+      },
+      callParams: currentCallParams(this.set),
+      fixtureSetHash: EVAL_FIXTURE_SET_HASH,
+      totals: {
+        tasks: rows.length,
+        run: rows.filter((x) => !x.status.startsWith('not_run')).length,
+        notRun: rows.filter((x) => x.status.startsWith('not_run')).length,
+        hardFailed: rows.filter((x) => x.hardFails.length).length,
+        flagged: rows.filter((x) => x.flags.length).length,
+        costMicroUsd: rows
+          .reduce((a, x) => a + BigInt(x.costMicroUsd ?? '0'), 0n)
+          .toString(),
+        costUnknown: rows.filter((x) => x.aiCallId && x.costStatus !== 'priced')
+          .length,
+        maxUsd: opts.maxUsd ?? null,
+      },
+      tasks: rows,
+    };
+  }
+
+  /** Аудит S2-4: модель без ставки — без явного разрешения не тратим. */
+  private assertPriced(
+    tasks: readonly EvalTask[],
+    allowUnpriced?: boolean,
+  ): void {
+    if (
+      !this.deps.fake &&
+      !allowUnpriced &&
+      tasks.some(
+        (t) =>
+          !estimateCallMicroUsd(
+            this.deps.modelName,
+            GENERATORS[t.generator].maxOutputTokens,
+          ).priced,
+      )
+    ) {
+      throw new Error(
+        `Модель ${this.deps.modelName} без ставки в прайсе — потолок --max-usd не проверить; --allow-unpriced считает по наибольшим ставкам`,
+      );
+    }
   }
 
   private async existingRun(

@@ -5888,6 +5888,7 @@ model PubQaCheck {
   result                   String
   blockers                 Json
   warnings                 Json @default("[]") /// P-R M2: WARN reddit_policy [{code,text}] (Р-RD-8)
+  rulesVersion             String? /// reddit_policy: версия словарей markers@N (IA-AB-08); NULL — прочие виды и строки до 20261026100000
   checkedBy                String
   checkedAt                DateTime @default(now()) @db.Timestamptz(3)
   selfReview               Boolean @default(false)

@@ -6,6 +6,7 @@ import Track from '@/components/Track';
 import { PUBLISHER_BRAND } from '@/brand';
 import { altContactOf, getSiteConfig } from '@/lib/api';
 import { dict, fmt } from '@/lib/dict';
+import { landingVisitsTarget } from '@/lib/landing-visits';
 import { publisherEnv } from '@/lib/server-env';
 import { siteUrl } from '@/lib/site-url';
 import './globals.css';
@@ -14,7 +15,9 @@ import './globals.css';
  * Каркас (§13.1): `<html lang="uk">`, шапка «кто оказывает услугу»,
  * подвал с уведомлением о данных и альтернативным контактом, трекер.
  * Режим `test` честно помечен баннером. Виджета помощника и сторонней
- * аналитики нет (P0).
+ * аналитики нет (P0). Счётчик «Посещения лендингов» платформы (§13.5) —
+ * только при заданном `PUBLISHER_LANDING_VISITS_URL`, `mode=live` и
+ * согласии `granted|not_required` (`landingVisitsTarget`, Р-IA-FXA-1).
  */
 export const revalidate = 300;
 
@@ -42,6 +45,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const env = publisherEnv();
   const c = dict.chrome;
   const alt = altContactOf(cfg.altContact);
+  const visitsEndpoint = landingVisitsTarget(env.landingVisitsUrl, cfg);
   return (
     <html lang={PUBLISHER_BRAND.lang}>
       <body>
@@ -86,11 +90,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           </div>
         </footer>
         <Track
-          visits={{
-            enabled: process.env.VERCEL_ENV === 'production',
-            endpoint: 'https://backend-iota-ruddy-57.vercel.app/api/public/landing-visits',
-            locale: PUBLISHER_BRAND.lang,
-          }}
+          visitsEndpoint={visitsEndpoint}
           apiOrigin={env.apiOrigin}
           publicKey={env.publicKey}
           analyticsStorage={cfg.analyticsStorage}

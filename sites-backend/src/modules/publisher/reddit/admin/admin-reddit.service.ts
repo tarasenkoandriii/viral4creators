@@ -72,6 +72,7 @@ import { sendEnvelope } from '../../distribution/http';
 import { PublisherRedditController } from '../reddit.controller';
 import {
   buildImportPlan,
+  CsvError,
   parseCsv,
   runImport,
   stableOpKey,
@@ -183,6 +184,23 @@ export function redactReport(r: ImportReport): ImportReport {
         : {}),
     })),
   };
+}
+
+/**
+ * CSV импорта Админки: битый файл — 400 `PUB_VALIDATION` по полю тела
+ * (`format`) со строкой и причиной в `details.csv` (IA-C-04, как CLI;
+ * раньше исключение разбора уходило 500). Содержимого строки нет.
+ */
+function csvField(field: string, text: string): ReturnType<typeof parseCsv> {
+  try {
+    return parseCsv(text);
+  } catch (e) {
+    if (!(e instanceof CsvError)) throw e;
+    throw new PubError('PUB_VALIDATION', {
+      fields: [{ field, code: 'format' }],
+      csv: { field, line: e.line, reason: e.reason },
+    });
+  }
 }
 
 function sentOf(res: Response | CaptureResponse): boolean {
@@ -930,11 +948,13 @@ export class AdminRedditService {
       [
         {
           segment: input.segment,
-          communities: parseCsv(input.communities),
+          communities: csvField('communitiesCsv', input.communities),
           opportunities: input.opportunities
-            ? parseCsv(input.opportunities)
+            ? csvField('opportunitiesCsv', input.opportunities)
             : [],
-          keywords: input.keywords ? parseCsv(input.keywords) : [],
+          keywords: input.keywords
+            ? csvField('keywordsCsv', input.keywords)
+            : [],
         },
       ],
       {

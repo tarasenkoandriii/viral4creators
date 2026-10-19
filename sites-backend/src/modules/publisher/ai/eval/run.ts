@@ -13,6 +13,10 @@
  *     [--allow-unpriced — модель без ставки: потолок по наибольшим ставкам] \
  *     [--set=2.2|2.3 — версия набора: 2.2 (P0, умолчание), 2.3 — с задачами
  *      Reddit AI-31…42, только решением владельца, Р-RD-64]
+ *     [--tasks-file=<json вне репозитория> — ЗАКРЫТЫЙ набор аудитора
+ *      (`tasks-file.ts`): тот же шлюз и журнал вызовов, протокол только в
+ *      файлы, строк набора допуска нет — основанием passed не является;
+ *      несовместим с --run]
  *
  * Прогон пишет `pub_ai_eval_runs/results` и `pub_ai_calls` (операция
  * `pub-eval`) под eval-продуктом; первый ответ сохраняется. Оценку
@@ -25,7 +29,7 @@
  * его не получает.
  */
 /* eslint-disable no-console */
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 import {
@@ -50,7 +54,12 @@ import {
   FakeEvalModel,
 } from './cli-gateway';
 import { protocolMarkdown } from './protocol';
-import { seedEvalFixtures } from './testing/synthetic-seed';
+import {
+  auditFakeAnswer,
+  auditProtocolMarkdown,
+  parseTasksFile,
+} from './tasks-file';
+import { seedAuditSources, seedEvalFixtures } from './testing/synthetic-seed';
 
 export interface CliArgs {
   mode: 'fake' | 'live';
@@ -66,6 +75,8 @@ export interface CliArgs {
   json?: string;
   /** Версия набора (Р-RD-64): 2.2 — P0 (умолчание), 2.3 — с Reddit. */
   set: EvalSetVersion;
+  /** Закрытый набор аудитора (Р-IA-FXB-4) — путь к JSON. */
+  tasksFile?: string;
 }
 
 /** Разбор аргументов (`--key=value`, `--seed`). */
@@ -94,6 +105,15 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     ?.split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  const tasksFile = get('tasks-file');
+  if (tasksFile !== undefined && !tasksFile) {
+    throw new Error('--tasks-file=<путь к JSON>');
+  }
+  if (tasksFile && get('run')) {
+    throw new Error(
+      '--tasks-file несовместим с --run: закрытый набор не пишет строк прогона',
+    );
+  }
   return {
     mode,
     product,
@@ -107,6 +127,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     out: get('out'),
     json: get('json'),
     set,
+    tasksFile,
   };
 }
 
@@ -148,6 +169,31 @@ async function main(): Promise<void> {
       throw new Error(
         `Код соответствует конфигурации ${cfg.configHash}, а не ${args.config}: модель или версии инструкций отличаются`,
       );
+    }
+    if (args.tasksFile) {
+      const set = parseTasksFile(
+        readFileSync(args.tasksFile, 'utf8'),
+        args.set,
+      );
+      console.error(
+        `Закрытый набор «${set.name}» sha256 ${set.sha256}: задач ${set.tasks.length}, своих источников ${set.sources.length}`,
+      );
+      const sourceIds = await seedAuditSources(db, product, set.sources);
+      const audit = await gw.runAudit(product, args.mode, set, {
+        sourceIds,
+        only: args.only,
+        maxUsd: args.maxUsd,
+        allowUnpriced: args.allowUnpriced,
+        fakeAnswer: (task, ids) => auditFakeAnswer(set, task.code, ids),
+      });
+      const amd = auditProtocolMarkdown(audit);
+      if (args.out) writeFileSync(args.out, amd);
+      else console.log(amd);
+      if (args.json) writeFileSync(args.json, JSON.stringify(audit, null, 2));
+      console.error(
+        `Закрытый набор (${args.mode}): запущено ${audit.totals.run}/${audit.totals.tasks}, жёстких провалов ${audit.totals.hardFailed}, с флагами ${audit.totals.flagged}, затраты ${audit.totals.costMicroUsd} мкд USD — измерение, не допуск`,
+      );
+      return;
     }
     const protocol = await gw.run(product, args.mode, {
       only: args.only,

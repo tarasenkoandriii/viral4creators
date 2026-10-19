@@ -232,6 +232,11 @@ export interface RedditPolicyCheck {
   warnings: Array<{ code: string; text: string; params?: RedditFindingParams }>;
   /** Текущий снимок, на котором проверено (null — правил нет). */
   snapshotId: string | null;
+  /**
+   * Версия словарей проверки (`REDDIT_MARKERS_VERSION`, `markers@N`) —
+   * пишется в строку `pub_qa_checks.rulesVersion` (IA-AB-08).
+   */
+  rulesVersion: string;
 }
 export interface RedditRulesStale {
   reason: 'rules_changed' | 'rules_stale';
@@ -274,11 +279,22 @@ export interface QaRunEvidence {
   siteId: string;
   title: string;
   createdAt: Date;
-  /** `caseKey` → версия кейса в снимке и статус последней попытки. */
-  cases: Record<string, { version: number; status: string | null }>;
+  /**
+   * `caseKey` → версия кейса в снимке, статус последней попытки и commit,
+   * который она удостоверяет (`deployedSha` ?? `testSourceSha`; IA-AB-04).
+   */
+  cases: Record<
+    string,
+    { version: number; status: string | null; codeSha?: string | null }
+  >;
 }
 export interface QaRunEvidencePort {
   runEvidence(accountId: string, runId: string): Promise<QaRunEvidence | null>;
+  /**
+   * Версия кода, которую выпускает процесс (IA-AB-04, ТЗ §28): полный sha
+   * или `null` — неизвестна (доказательство тогда не принимается).
+   */
+  releaseSha(): string | null;
 }
 
 /** P-E: t0 эксперимента `pilot` ставится один раз (§3.2, ДТ-1). */

@@ -6,7 +6,8 @@
  *
  * Правила (§11.1, §1 п.7): ответы мутаций и списков НЕ несут контактов,
  * имени, текста задачи и шифрованных заметок; раскрытие — отдельные
- * `GET …/contact` и `GET …/notes` (с аудитом, без хранения ответа). Свободный
+ * `POST …/contact` и `POST …/notes` (с аудитом, без хранения ответа; после
+ * предаудита D1-02 прежний `GET` — 405). Свободный
  * текст заметок уходит только в шифр (`noteEnc`), ответ его не возвращает.
  * Суммы — строки цифр (`MinorJson`), даты — ISO.
  *
@@ -83,7 +84,7 @@ export interface LeadDecisionView {
   fromStatus: LeadStatus;
   toStatus: LeadStatus;
   reasonCode: string | null;
-  /** Есть шифрованная заметка (текст — только `GET …/notes`). */
+  /** Есть шифрованная заметка (текст — только `POST …/notes`). */
   hasNote: boolean;
   confirmedInterestAt: string | null;
   decidedBy: string;
@@ -135,7 +136,7 @@ export interface LeadListQuery {
   format?: 'csv';
 }
 
-/** Расшифрованный контакт (только `GET …/contact`, `no-store`, аудит). */
+/** Расшифрованный контакт (только `POST …/contact`, `no-store`, аудит). */
 export interface LeadContactView {
   leadId: string;
   publicRef: string;

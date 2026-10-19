@@ -43,6 +43,8 @@ type Upstream = {
   headers?: Record<string, string>;
 };
 
+const ADMIN_ORIGIN = 'https://admin.example.com';
+
 describe('admin/reddit (e2e)', () => {
   let app: INestApplication;
   let client: AdminRedditClient;
@@ -87,8 +89,12 @@ describe('admin/reddit (e2e)', () => {
 
   const server = () => app.getHttpServer();
   const URL = '/api/admin/reddit';
-  const asOp = (t: request.Test) =>
+  // Браузер Админки ставит Origin на каждый cross-origin запрос; без него
+  // мутация отклоняется (Н-D1-5, отдельный тест ниже).
+  const asOp = (t: request.Test) => {
     t.set('Cookie', 'admin_session=tok_operator');
+    return t.get('Origin') ? t : t.set('Origin', ADMIN_ORIGIN);
+  };
 
   describe.each([
     ['GET status', () => request(server()).get(`${URL}/status`)],
@@ -487,5 +493,48 @@ describe('admin/reddit (e2e)', () => {
     expect(res.body.error.code).toBe('ORIGIN_DENIED');
     expect(calls).toHaveLength(0);
     expect(prisma.adminSession.findUnique).not.toHaveBeenCalled();
+  });
+
+  describe('Н-D1-5: мутация по cookie без Origin — 403 (браузер Админки Origin ставит всегда)', () => {
+    const op = (t: request.Test) =>
+      t.set('Cookie', 'admin_session=tok_operator');
+
+    it.each([
+      ['POST setup', () => request(server()).post(`${URL}/setup`).send({})],
+      [
+        'POST rx/projects',
+        () => request(server()).post(`${URL}/rx/projects`).send({ opKey: 'k' }),
+      ],
+      [
+        'PATCH rx/projects/:id',
+        () =>
+          request(server())
+            .patch(`${URL}/rx/projects/${C1}`)
+            .send({ opKey: 'k' }),
+      ],
+    ] as Array<[string, () => request.Test]>)(
+      '%s без Origin — 403, оператор не проверяется, sites-backend не вызывается',
+      async (_n, call) => {
+        const res = await op(call()).expect(403);
+        expect(res.body.success).toBe(false);
+        expect(JSON.stringify(res.body)).toContain('CSRF');
+        expect(calls).toHaveLength(0);
+        expect(adminPanel.assertOperator).not.toHaveBeenCalled();
+      },
+    );
+
+    it('со своим Origin или Sec-Fetch-Site: same-origin — проходит; GET без Origin — как раньше', async () => {
+      await op(request(server()).post(`${URL}/setup`).send({}))
+        .set('Origin', ADMIN_ORIGIN)
+        .expect(200);
+      await op(request(server()).post(`${URL}/setup`).send({}))
+        .set('Sec-Fetch-Site', 'same-origin')
+        .expect(200);
+      await op(request(server()).post(`${URL}/setup`).send({}))
+        .set('Sec-Fetch-Site', 'cross-site')
+        .expect(403);
+      await op(request(server()).get(`${URL}/status`)).expect(200);
+      expect(calls).toHaveLength(3);
+    });
   });
 });

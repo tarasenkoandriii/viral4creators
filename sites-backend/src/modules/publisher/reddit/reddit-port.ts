@@ -29,7 +29,7 @@ import {
   keyPointsOf,
 } from './brief-rules';
 import { redditChecks, type RedditClaim } from './checks';
-import { DUPLICATE_WINDOW_DAYS } from './markers';
+import { DUPLICATE_WINDOW_DAYS, REDDIT_MARKERS_VERSION } from './markers';
 
 /** Сколько чужих Reddit-версий читается для проверки дублей (m2-15). */
 export const DUPLICATE_SCAN_LIMIT = 200;
@@ -296,7 +296,11 @@ export class RedditPortImpl implements RedditPort {
         text: `${o.format === 'reddit_post' ? o.title : ''}\n${o.body}`,
       })),
     });
-    return { ...r, snapshotId: rules?.snap.id ?? null };
+    return {
+      ...r,
+      snapshotId: rules?.snap.id ?? null,
+      rulesVersion: REDDIT_MARKERS_VERSION,
+    };
   }
 
   async rulesStale(

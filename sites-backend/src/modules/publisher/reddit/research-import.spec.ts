@@ -17,6 +17,7 @@ import {
 import {
   buildImportPlan,
   offlineReport,
+  CsvError,
   parseCsv,
   parseFlair,
   parseWhy,
@@ -78,6 +79,38 @@ describe('research-import: CSV и план (Р-RD-87)', () => {
       'a,b\nx,y,z',
     ])
       expect(() => parseCsv(csv)).toThrow('CSV:');
+  });
+
+  it('IA-C-04: отказ разбора CSV — причина и физическая строка файла (с учётом переводов строк в кавычках и CRLF)', () => {
+    const fail = (csv: string): string => {
+      let caught: unknown = null;
+      try {
+        parseCsv(csv);
+      } catch (e) {
+        caught = e;
+      }
+      if (!(caught instanceof CsvError))
+        return `не CsvError: ${String(caught)}`;
+      return `${caught.line}:${caught.reason}`;
+    };
+    expect(fail('a,b\n"unfinished,b')).toBe('2:незакрытая кавычка');
+    expect(fail('a,b\r\nx,y\r\n"multi\nline",z\r\n"open')).toBe(
+      '5:незакрытая кавычка',
+    );
+    expect(fail('a,b\nx,y\n"closed"garbage,b')).toBe(
+      '3:текст после закрывающей кавычки',
+    );
+    expect(fail('a,b\n"q\n\nq",1\nx"y,z')).toBe(
+      '5:кавычка внутри обычного поля',
+    );
+    expect(fail('\n\na,a\nx,y')).toBe('3:пустые или повторяющиеся заголовки');
+    expect(fail('a,b\nx,y\n\nx,y,z')).toBe(
+      '4:полей больше, чем заголовков (3 > 2)',
+    );
+    // Сообщение — без содержимого ячеек.
+    expect(() => parseCsv('a\n"secret@example.com')).toThrow(
+      'CSV: незакрытая кавычка (строка 2)',
+    );
   });
 
   it('обоснования факторов из колонки why; opKey — детерминированный UUID v4', () => {

@@ -23,7 +23,7 @@
  *                                              успешного прогона (джоба secrets)
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lastSuccessfulSha } from './ci-last-success.mjs';
@@ -79,6 +79,15 @@ export const WORKER_SHARED_SOURCES = WORKER_SHARED_ENTRIES.map((e) => e.from);
  * джобу admin (там `--check` копий в admin/src/lib/reddit-shared).
  */
 export const ADMIN_REDDIT_SOURCES = ADMIN_REDDIT_ENTRIES.map((e) => e.from);
+
+/**
+ * Миграция sites-backend, чьё имя содержит `publisher` или `reddit`
+ * (`20261016090000_publisher_core`, `20261020090000_publisher_reddit`,
+ * `20261023090000_publisher_admin_actor`, …): любой файл в её каталоге.
+ * Правило в FILTERS — строка-префикс (`…/` — каталог, иначе точный путь)
+ * или такой шаблон.
+ */
+export const PUBLISHER_MIGRATIONS = /^sites-backend\/prisma\/migrations\/\d{14}_[a-z0-9_]*(?:publisher|reddit)[a-z0-9_]*\//;
 
 export const FILTERS = {
   backend: [
@@ -162,9 +171,10 @@ export const FILTERS = {
   publisher_stand: [
     'sites-backend/src/modules/publisher/',
     'sites-backend/src/modules/qa-catalog/qa-run-evidence.ts',
-    'sites-backend/prisma/migrations/20261016090000_publisher_core/',
-    'sites-backend/prisma/migrations/20261016092000_publisher_budget_fn/',
-    'sites-backend/prisma/migrations/20261016093000_publisher_leads_fn/',
+    // Внутренний аудит 19.10 (IA-C-02): все миграции Publisher и Reddit
+    // (ядро, Reddit M1/M2, актор Админки, правки аудита, будущие) — по
+    // шаблону имени, а не списком дат: E2E-RD-01/02 исполняют их триггеры.
+    PUBLISHER_MIGRATIONS,
     'sites-backend/test/publisher-e2e/',
     'publisher-site/',
     'assist/src/lib/publisher/',
@@ -217,11 +227,17 @@ export const ALWAYS_JOBS = ['changes', 'repo', 'secrets', AGGREGATOR_JOB];
 /** Джобы матрицы next-apps (их имя в матрице = ключ FILTERS). */
 export const NEXT_APPS = ['admin', 'landing', 'marketplace'];
 
+/** Правило FILTERS: шаблон, каталог (`…/`) или точный путь. */
+function matches(rule, file) {
+  if (rule instanceof RegExp) return rule.test(file);
+  return rule.endsWith('/') ? file.startsWith(rule) : file === rule;
+}
+
 export function decide(files) {
   const all = files === null || files.some((f) => GLOBAL.includes(f));
   const out = {};
   for (const [job, prefixes] of Object.entries(FILTERS)) {
-    out[job] = all || files.some((f) => prefixes.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p)));
+    out[job] = all || files.some((f) => prefixes.some((p) => matches(p, f)));
   }
   out.next_apps = NEXT_APPS.filter((a) => out[a]);
   return out;
@@ -288,6 +304,32 @@ function selfTest() {
   // DEF-C-06: публичный приём и представления публичной роли — контракт сайта.
   eq('публичный контроллер Publisher — бэк, assist, сайт и E2E', on(['sites-backend/src/modules/publisher/public/lead-intake.ts']), ['sites_backend', 'assist', 'publisher_site', 'publisher_stand']);
   eq('миграция ядра Publisher — бэк, сайт и E2E', on(['sites-backend/prisma/migrations/20261016090000_publisher_core/migration.sql']), ['sites_backend', 'publisher_site', 'publisher_stand']);
+  // IA-C-02: миграции Reddit и Админки Publisher запускают сквозной стенд (E2E-RD) — по шаблону имени.
+  for (const m of [
+    '20261016092000_publisher_budget_fn',
+    '20261016093000_publisher_leads_fn',
+    '20261020090000_publisher_reddit',
+    '20261021090000_publisher_reddit_m2',
+    '20261023090000_publisher_admin_actor',
+    '20261024090000_publisher_reddit_audit_adm',
+    '20261024093000_publisher_reddit_audit_imp',
+    '20261024094500_publisher_reddit_audit_m2',
+    '20261026100000_publisher_reddit_policy_version',
+    '20991231000000_reddit_future',
+  ]) {
+    eq(`миграция ${m} — бэк и E2E`, on([`sites-backend/prisma/migrations/${m}/migration.sql`]), ['sites_backend', 'publisher_stand']);
+  }
+  eq('миграция не Publisher (qa_stands) — без E2E Publisher', on(['sites-backend/prisma/migrations/20261022090000_qa_stands/migration.sql']), ['sites_backend']);
+  eq('шаблон миграций — только каталог миграции, не похожие пути', on(['sites-backend/prisma/migrations/publisher_notes.md', 'sites-backend/prisma/migrations-old/20261020090000_publisher_reddit/migration.sql']), ['sites_backend']);
+  {
+    // Каждая существующая миграция Publisher/Reddit в репозитории — под правилом.
+    const dir = path.join(ROOT, 'sites-backend/prisma/migrations');
+    const names = readdirSync(dir).filter((n) => /publisher|reddit/.test(n));
+    eq('все миграции publisher|reddit в репозитории найдены', names.length >= 9, true);
+    for (const n of names) {
+      eq(`миграция ${n} (из репозитория) — publisher_stand`, decide([`sites-backend/prisma/migrations/${n}/migration.sql`]).publisher_stand, true);
+    }
+  }
   eq('стенд и драйвер E2E — только E2E (драйвер — и assist)', on(['scripts/publisher-e2e.sh', 'assist/scripts/publisher-e2e.ts']), ['assist', 'publisher_stand']);
   eq('драйвер Reddit E2E — стенд и assist', on(['assist/scripts/publisher-e2e-reddit.ts']), ['assist', 'publisher_stand']);
   eq('клиент кабинета Publisher — assist и E2E', on(['assist/src/lib/publisher/leads-api.ts']), ['assist', 'publisher_stand']);
