@@ -131,6 +131,8 @@ model Site {
   qaTestCases QaTestCase[]
   qaTestRuns QaTestRun[]
   qaFindings QaFinding[]
+  qaArtifacts QaArtifact[]
+  qaPlans QaPlan[]
   hosts SiteHost[]
 
   // Э1: обход (общий с QA) и знания помощника. Все — составным ключом
@@ -4998,6 +5000,7 @@ model QaTestCaseRevision {
 }
 
 model QaTestRun {
+  context Json?
   automationProject String?
   id String @id @default(cuid())
   accountId String
@@ -5050,12 +5053,14 @@ model QaFinding {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   revisions QaFindingRevision[]
+  artifacts QaArtifact[]
   @@unique([id, accountId])
   @@unique([siteId, fingerprint])
   @@index([accountId, siteId, id])
   @@map("qa_findings")
 }
 model QaFindingRevision {
+  artifacts QaArtifact[]
   id String @id @default(cuid())
   accountId String
   findingId String
@@ -7182,4 +7187,58 @@ model QaStand {
   @@index([accountId, siteId, createdAt])
   @@unique([accountId, siteId, requestId])
   @@map("qa_stands")
+}
+
+model QaArtifact {
+  id String @id @default(cuid())
+  accountId String
+  siteId String
+  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  findingId String
+  findingRevision Int
+  revision QaFindingRevision @relation(fields:[findingId,findingRevision],references:[findingId,version],onDelete:Restrict)
+  finding QaFinding @relation(fields: [findingId, accountId], references: [id, accountId], onDelete: Restrict)
+  requestId String
+  pathname String @unique
+  sha256 String
+  bytes Int
+  state String @default("pending")
+  expiresAt DateTime
+  createdByMemberId String
+  createdAt DateTime @default(now())
+  @@unique([siteId, requestId])
+  @@index([accountId, siteId, findingId, createdAt])
+  @@index([expiresAt])
+  @@map("qa_artifacts")
+}
+
+model QaPlan {
+  id String @id @default(cuid())
+  accountId String
+  siteId String
+  site Site @relation(fields: [siteId, accountId], references: [id, accountId], onDelete: Cascade)
+  planKey String
+  title String
+  currentVersion Int @default(1)
+  archived Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  revisions QaPlanRevision[]
+  @@unique([id, accountId])
+  @@unique([siteId, planKey])
+  @@index([accountId, siteId, id])
+  @@map("qa_plans")
+}
+model QaPlanRevision {
+  id String @id @default(cuid())
+  accountId String
+  planId String
+  plan QaPlan @relation(fields:[planId,accountId], references:[id,accountId],onDelete:Cascade)
+  version Int
+  payload Json
+  createdByMemberId String
+  createdAt DateTime @default(now())
+  @@unique([planId, version])
+  @@index([accountId,planId])
+  @@map("qa_plan_revisions")
 }

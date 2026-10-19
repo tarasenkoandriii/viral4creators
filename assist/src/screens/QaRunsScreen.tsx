@@ -1,3 +1,4 @@
+import { QaPlans } from '../components/QaPlans';
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, useKit } from '../kit';
 import { Button, Card, inputClass } from '../kit/ui';
@@ -56,6 +57,7 @@ function Runs({ siteId }: { siteId: string }) {
     [comment, setComment] = useState(''),
     [dirty, setDirty] = useState(false),
     [findingPending, setFindingPending] = useState(false),
+    [planDraft, setPlanDraft] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -63,7 +65,7 @@ function Runs({ siteId }: { siteId: string }) {
   const [report, setReport] = useState<unknown>(null),
     [reportName, setReportName] = useState(''),
     [project, setProject] = useState('');
-  const hasDraft = dirty || report !== null;
+  const hasDraft = dirty || report !== null || planDraft;
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -250,6 +252,21 @@ function Runs({ siteId }: { siteId: string }) {
         </Card>
       )}
       <Card>
+        <QaPlans
+          siteId={siteId}
+          selectedCaseIds={ids}
+          write={access.write}
+          disabled={busy || dirty || report !== null}
+          onDirtyChange={setPlanDraft}
+          onStarted={(head) => {
+            setRuns((old) => [head, ...old.filter((r) => r.id !== head.id)]);
+            setNotice(
+              'Запуск из плана создан с сохранёнными версиями и окружением. Выберите его в истории.'
+            );
+          }}
+        />
+      </Card>
+      <Card>
         <h2 className="font-semibold">История запусков</h2>
         {runs.map((r) => (
           <Button
@@ -284,6 +301,24 @@ function Runs({ siteId }: { siteId: string }) {
           <h2 className="font-semibold">
             {run.title} · ревизия {run.revision}
           </h2>
+          {run.context && (
+            <div className="text-sm">
+              <p>
+                План {run.context.planKey} v{run.context.planVersion}; группа:{' '}
+                {run.context.suite || 'без группы'}; ответственный:{' '}
+                {run.context.assigneeMemberId ?? 'не назначен'}.
+              </p>
+              <p>
+                Окружение: {run.context.environment.name} ·{' '}
+                {run.context.environment.browser} ·{' '}
+                {run.context.environment.device} ·{' '}
+                {run.context.environment.viewport} ·{' '}
+                {run.context.environment.theme} ·{' '}
+                {run.context.environment.locale}. Это параметры проверки, а не
+                подтверждение её выполнения.
+              </p>
+            </div>
+          )}
           <p>
             {Object.entries(summary)
               .map(([s, n]) => `${labels[s as keyof typeof labels]}: ${n}`)

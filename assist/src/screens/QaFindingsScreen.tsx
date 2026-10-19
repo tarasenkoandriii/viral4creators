@@ -1,3 +1,4 @@
+import { QaArtifacts } from '../components/QaArtifacts';
 import { useEffect, useState } from 'react';
 import { ApiError, useKit } from '../kit';
 import { Button, Card, inputClass } from '../kit/ui';
@@ -172,6 +173,19 @@ function Registry({ siteId }: { siteId: string }) {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Замечания QA</h1>
+      {selected && (
+        <Card>
+          <QaArtifacts
+            key={`${siteId}:${selected.id}`}
+            siteId={siteId}
+            findingId={selected.id}
+            write={access.write && !busy}
+            onAttach={(text) =>
+              edit('evidence', [...draft.evidence.filter(Boolean), text])
+            }
+          />
+        </Card>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           variant="outline"

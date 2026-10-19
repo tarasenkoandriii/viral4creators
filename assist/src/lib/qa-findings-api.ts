@@ -29,6 +29,33 @@ export interface FindingPayload {
     deployedSha: string | null;
   } | null;
 }
+export interface QaArtifact {
+  id: string;
+  findingRevision: number;
+  sha256: string;
+  bytes: number;
+  contentType: 'image/png';
+  expiresAt: string;
+  createdAt: string;
+}
+function artifact(v: unknown): QaArtifact {
+  const o = obj(v);
+  if (
+    typeof o.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(o.sha256) ||
+    o.contentType !== 'image/png'
+  )
+    return bad();
+  return {
+    id: str(o.id),
+    findingRevision: num(o.findingRevision),
+    sha256: o.sha256,
+    bytes: num(o.bytes),
+    contentType: 'image/png',
+    expiresAt: str(o.expiresAt),
+    createdAt: str(o.createdAt),
+  };
+}
 export interface FindingHead {
   id: string;
   title: string;
@@ -144,6 +171,60 @@ export function createQaFindingsApi(client: ApiClient) {
   const item = (site: string, id: string) =>
     `${base(site)}/${encodeURIComponent(id)}`;
   return {
+    artifacts: async (site: string, id: string) => {
+      const o = obj(await client.request('GET', item(site, id) + '/artifacts'));
+      if (!Array.isArray(o.items)) return bad();
+      return o.items.map(artifact);
+    },
+    uploadArtifact: async (
+      site: string,
+      id: string,
+      requestId: string,
+      contentBase64: string
+    ) =>
+      artifact(
+        await client.request('POST', item(site, id) + '/artifacts', {
+          requestId,
+          contentType: 'image/png',
+          contentBase64,
+          redacted: true,
+        })
+      ),
+    artifactLink: async (site: string, id: string, artifactId: string) => {
+      const o = obj(
+        await client.request(
+          'GET',
+          item(site, id) +
+            '/artifacts/' +
+            encodeURIComponent(artifactId) +
+            '/download'
+        )
+      );
+      const url = str(o.url);
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return bad();
+      }
+      if (
+        parsed.protocol !== 'https:' ||
+        parsed.username ||
+        parsed.password ||
+        !parsed.hostname.endsWith('.blob.vercel-storage.com')
+      )
+        return bad();
+      return { url, validUntil: str(o.validUntil) };
+    },
+    removeArtifact: async (site: string, id: string, artifactId: string) => {
+      const o = obj(
+        await client.request(
+          'DELETE',
+          item(site, id) + '/artifacts/' + encodeURIComponent(artifactId)
+        )
+      );
+      if (o.deleted !== true) return bad();
+    },
     list: async (site: string, before?: string) =>
       page(
         await client.request(

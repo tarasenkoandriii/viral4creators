@@ -1,3 +1,12 @@
+import { QaInventoryController } from './qa-inventory.controller';
+import { QaInventoryService } from './qa-inventory.service';
+import { QaPlanController } from './qa-plan.controller';
+import { QaPlanService } from './qa-plan.service';
+import {
+  QaArtifactController,
+  QaArtifactRetentionController,
+} from './qa-artifact.controller';
+import { QaArtifactService, QaArtifactStorage } from './qa-artifact.service';
 import {
   Body,
   Controller,
@@ -207,12 +216,24 @@ export class QaCiController {
 @Module({
   imports: [SiteCoreModule],
   exports: [QaCatalogService, QaFindingService],
-  controllers: [QaCatalogController, QaCiController, QaFindingsController],
+  controllers: [
+    QaCatalogController,
+    QaCiController,
+    QaFindingsController,
+    QaArtifactController,
+    QaPlanController,
+    QaInventoryController,
+    QaArtifactRetentionController,
+  ],
   providers: [
     QaCatalogService,
     QaRunService,
     QaCiService,
     QaFindingService,
+    QaArtifactService,
+    QaPlanService,
+    QaInventoryService,
+    QaArtifactStorage,
     // Сводка прогона для гейтов запуска AI Publisher (Р-PUB-Z2-27).
     { provide: QA_RUN_EVIDENCE_TOKEN, useClass: QaRunEvidenceReader },
   ],

@@ -1,3 +1,4 @@
+import { QaCatalogTools } from '../components/QaCatalogTools';
 import { useEffect, useRef, useState } from 'react';
 import { useKit } from '../kit';
 import { Button, Card, inputClass } from '../kit/ui';
@@ -182,6 +183,23 @@ function Catalog({ siteId }: { siteId: string }) {
   if (!access.read) return <p role="alert">{t.denied}</p>;
   return (
     <div className="space-y-4">
+      <QaCatalogTools
+        siteId={siteId}
+        write={access.write}
+        onImported={() => {
+          void api
+            .list(siteId)
+            .then((p) => {
+              setItems(p.items);
+              setAfter(p.nextAfterKey);
+            })
+            .catch(() =>
+              setNotice(
+                'Импорт сохранён, но список не обновился. Обновите каталог отдельно.'
+              )
+            );
+        }}
+      />
       <h1 className="text-xl font-semibold">{t.title}</h1>
       <p className="text-sm text-slate-500">
         {t.scope} {!access.write && t.readOnly}

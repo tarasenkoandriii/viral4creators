@@ -1,3 +1,4 @@
+import { createQaPlansApi } from './qa-plan-api';
 import { ApiError, type ApiClient } from '../kit';
 import { payload, type QaCasePayload } from './qa-catalog-api';
 export type QaResult = 'passed' | 'failed' | 'blocked' | 'skipped';
@@ -30,6 +31,20 @@ export interface QaSnapshot {
   payload: QaCasePayload;
 }
 export interface QaRun extends QaRunHead {
+  context?: {
+    planKey: string;
+    planVersion: number;
+    suite: string;
+    assigneeMemberId: string | null;
+    environment: {
+      name: string;
+      browser: string;
+      device: string;
+      theme: string;
+      locale: string;
+      viewport: string;
+    };
+  };
   automationProject: string | null;
   snapshot: QaSnapshot[];
   latestAttempts: QaAttempt[];
@@ -146,8 +161,31 @@ export function decodeQaRun(v: unknown): QaRun {
     )
   )
     return bad();
+  const context = o.context == null ? null : obj(o.context);
+  const environment = context ? obj(context.environment) : null;
   return {
     ...head(o),
+    ...(context && environment
+      ? {
+          context: {
+            planKey: str(context.planKey),
+            planVersion: num(context.planVersion),
+            suite: str(context.suite),
+            assigneeMemberId:
+              context.assigneeMemberId === null
+                ? null
+                : str(context.assigneeMemberId),
+            environment: {
+              name: str(environment.name),
+              browser: str(environment.browser),
+              device: str(environment.device),
+              theme: str(environment.theme),
+              locale: str(environment.locale),
+              viewport: str(environment.viewport),
+            },
+          },
+        }
+      : {}),
     snapshot,
     latestAttempts,
     flakyCaseKeys,
@@ -180,6 +218,7 @@ export function createQaRunsApi(client: ApiClient) {
     };
   };
   return {
+    plans: createQaPlansApi(client),
     list: async (site: string, before?: string) =>
       page(
         await client.request(

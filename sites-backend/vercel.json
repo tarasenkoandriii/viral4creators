@@ -82,6 +82,10 @@
     {
       "path": "/cron/publisher-daily",
       "schedule": "25 4 * * *"
+    },
+    {
+      "path": "/cron/qa-artifact-retention",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

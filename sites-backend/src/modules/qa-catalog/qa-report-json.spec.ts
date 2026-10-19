@@ -11,6 +11,12 @@ const app = () => {
   a.post('/qa/ci/reports', (req, res) =>
     res.json({ length: req.body.data.length }),
   );
+  a.post('/qa/sites/site/findings/finding/artifacts', (req, res) =>
+    res.json({ length: req.body.data.length }),
+  );
+  a.post('/qa/sites/site/inventory/import', (req, res) =>
+    res.json({ length: req.body.data.length }),
+  );
   a.post('/other', (req, res) => res.json(req.body));
   return a;
 };
@@ -45,5 +51,23 @@ describe('QA report scoped JSON transport', () => {
       .expect(400);
     expect(r.body.error.code).toBe('QA_REPORT_INVALID');
     expect(JSON.stringify(r.body)).not.toContain('private');
+  });
+});
+
+describe('QA artifact scoped body transport', () => {
+  it('accepts an evidence body above the report limit only on artifact upload', async () => {
+    await request(app())
+      .post('/qa/sites/site/findings/finding/artifacts')
+      .send({ data: 'x'.repeat(2600 * 1024) })
+      .expect(200, { length: 2600 * 1024 });
+    await request(app())
+      .post('/qa/sites/site/findings/finding/artifacts')
+      .send({ data: 'x'.repeat(2801 * 1024) })
+      .expect(413)
+      .expect((r) => expect(r.body.error.code).toBe('QA_ARTIFACT_TOO_LARGE'));
+    await request(app())
+      .post('/qa/sites/site/inventory/import')
+      .send({ data: 'x'.repeat(150 * 1024) })
+      .expect(200, { length: 150 * 1024 });
   });
 });

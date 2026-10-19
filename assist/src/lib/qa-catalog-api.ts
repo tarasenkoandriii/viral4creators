@@ -108,6 +108,36 @@ export function createQaCatalogApi(client: ApiClient) {
   const item = (site: string, id: string) =>
     `${base(site)}/${encodeURIComponent(id)}`;
   return {
+    inventory: async (site: string, search = '') => {
+      const o = object(
+        await client.request(
+          'GET',
+          `/qa/sites/${encodeURIComponent(site)}/inventory?search=${encodeURIComponent(search)}`
+        )
+      );
+      return {
+        items: list(o.items).map((v) => {
+          const c = object(v);
+          return { ...head(c), payload: payload(c.payload) };
+        }),
+        truncated: boolean(o.truncated),
+      };
+    },
+    importCases: async (
+      site: string,
+      cases: Array<{ caseKey: string; payload: QaCasePayload }>
+    ) => {
+      const o = object(
+        await client.request(
+          'POST',
+          `/qa/sites/${encodeURIComponent(site)}/inventory/import`,
+          { cases }
+        )
+      );
+      if (!Number.isSafeInteger(o.created) || (o.created as number) < 0)
+        throw bad();
+      return { created: o.created as number, replayed: boolean(o.replayed) };
+    },
     async list(site: string, after?: string) {
       const o = object(
         await client.request(
