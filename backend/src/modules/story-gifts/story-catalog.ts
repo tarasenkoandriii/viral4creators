@@ -1,34 +1,16 @@
-import { createHash } from 'node:crypto';
-/** Versioned story catalogue: original pilot, labelled adaptations and source-verified classics. */
+import {
+  STORY_EDITIONS,
+  storyEditionBlocker,
+  type StoryEdition,
+  type StoryEditionStatus,
+  type StoryLegalStatus,
+} from './story-editions';
+/**
+ * Wizard catalogue derived from the editorial registry (story-editions.ts).
+ * Only approved editions with confirmed rights and a matching text hash are
+ * offered; ids and the response shape stay backward compatible.
+ */
 export const STORY_VOICE = 'a9fc5a41'; // Approved Nova: never substitute silently.
-const ORIGINAL_STORY = [
-  {
-    id: 'little-lantern-ru-v1',
-    locale: 'ru',
-    title: 'Фонарик для звезды',
-    revision: '1',
-    ageBand: '4–8',
-    rights:
-      'Оригинальный текст платформы, редакция 1. Не адаптация стороннего издания.',
-    chapters: [
-      {
-        title: 'Тихий вечер',
-        scene: 'forest',
-        text: 'На краю леса стоял маленький домик. В нём жил лисёнок Тим. Каждый вечер он зажигал фонарик и ставил его на подоконник. Свет был тёплым, как чашка чая, и круглым, как маленькое солнце. Однажды Тим заметил: над большой сосной не видно звезды. Обычно она появлялась первой. Лисёнок открыл окно и тихонько позвал её. В ответ зашуршала только трава. Тогда он надел шарф, взял фонарик и вышел на тропинку. Спешить было некуда. Лес готовился ко сну, а Тим умел ходить очень тихо.',
-      },
-      {
-        title: 'Свет на тропинке',
-        scene: 'bridge',
-        text: 'У ручья сидел ёжик и рассматривал мостик. Между досками лежала шишка, и пройти с корзинкой было неудобно. Тим поставил фонарик рядом. Теперь ёжик хорошо видел дорожку. Вместе они убрали шишку и перешли ручей. За мостиком нашлась варежка бельчонка. Тим поднял её, а ёжик позвал хозяина. Бельчонок прибежал, обрадовался и показал друзьям короткую дорогу к холму. Фонарик покачивался в лапе лисёнка. Его свет не доставал до неба, зато освещал всё, что было рядом: гладкие камушки, жёлтые листья и маленькие следы на песке.',
-      },
-      {
-        title: 'Звезда нашлась',
-        scene: 'stars',
-        text: 'На вершине холма друзья остановились. Над сосной плыла пушистая тучка. Вот она сдвинулась, и из-за неё выглянула знакомая звезда. Никто её не потерял: она просто была за облаком. Тим поднял фонарик и помахал свободной лапой. Звезда мерцала, будто тоже отвечала ему. Друзья немного посидели вместе, слушая вечерний лес, а потом отправились домой. У двери Тим погасил фонарик. Сегодня его маленький свет помог ёжику пройти мостик, а бельчонку найти варежку. Этого было вполне достаточно. Лисёнок укрылся одеялом и посмотрел в окно. Звезда была на месте. Лес тихо дышал. Наступила спокойная ночь.',
-      },
-    ],
-  },
-] as const;
 export interface StoryCatalogEntry {
   id: string;
   locale: string;
@@ -39,6 +21,8 @@ export interface StoryCatalogEntry {
   countries: string[];
   targetSeconds: number;
   kind: 'classic' | 'adaptation' | 'original';
+  /** «классика» / «адаптация» / «авторская» — explicit label for UI and API. */
+  kindLabel: string;
   sourceUrl?: string;
   sourceEdition?: {
     author: string;
@@ -48,190 +32,71 @@ export interface StoryCatalogEntry {
     changes: string;
     textSha256: string;
   };
-
+  editionStatus: StoryEditionStatus;
+  legal: { status: StoryLegalStatus; basis: string; checkedAt: string };
+  textSha256: string;
+  /** Present only for adaptations: what differs from the classic/plot source. */
+  adaptation?: {
+    classicEditionId: string | null;
+    plotSourceTitle: string;
+    plotSourceUrl: string;
+    changes: string[];
+  };
   chapters: { title: string; scene: string; text: string }[];
 }
-const mittenSource =
-  'https://uk.wikisource.org/wiki/Народныя_южнорусскія_сказки/2/1';
-const pigsSource =
-  'https://en.wikisource.org/wiki/English_Fairy_Tales/The_Story_of_the_Three_Little_Pigs';
-const shortRights =
-  'Короткий авторский пересказ народного сюжета. Мягкий финал; не текст современного издания.';
-export const STORY_CATALOG: StoryCatalogEntry[] = [
-  {
-    id: 'turnip-ushinsky-ru-1949-v1',
-    locale: 'ru',
-    title: 'Репка',
-    revision: 'ushinsky-t6-1949-pages45-46-v1',
-    ageBand: '3–7',
-    countries: ['UA', 'OTHER', 'GB', 'US', 'DE', 'ES'],
-    targetSeconds: 65,
-    kind: 'classic',
-    rights:
-      'Народная сказка в обработке К. Д. Ушинского (1824–1871). Точный текст по изданию 1949 года, с. 45–46; без сокращений и новой морали. Используется текст автора в общественном достоянии, без редакционных комментариев и иллюстраций издания.',
-    sourceUrl:
-      'https://imwerden.de/pdf/ushinsky_sobranie_sochineny_tom06_1949_text.pdf#page=46',
-    sourceEdition: {
-      author: 'Константин Дмитриевич Ушинский',
-      edition:
-        'Собрание сочинений. Том 6. Родное слово. Москва — Ленинград: Издательство АПН РСФСР, 1949',
-      pages: '45–46 (PDF 46–47)',
-      verifiedAt: '2026-10-16',
-      changes:
-        'Убраны переносы строк/слов и типографские пробелы; текст, имя кошки Машка и финал сохранены. Заголовки трёх сцен — навигация, не озвучиваются.',
-      textSha256: '',
-    },
-    chapters: [
-      {
-        title: 'Большая репка',
-        scene: 'turnip',
-        text: 'Посадил дед репку — выросла большая, пребольшая. Стал дед репку из земли тащить: тянет-потянет, вытянуть не может. Позвал дед на помощь бабку. Бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут.',
-      },
-      {
-        title: 'Все на помощь',
-        scene: 'turnip',
-        text: 'Позвала бабка внучку. Внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут. Кликнула внучка Жучку. Жучка за внучку, внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут. Кликнула Жучка Машку. Машка за Жучку, Жучка за внучку, внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут, вытянуть не могут.',
-      },
-      {
-        title: 'Мышка помогла',
-        scene: 'turnip',
-        text: 'Кликнула Машка мышку. Мышка за Машку, Машка за Жучку, Жучка за внучку, внучка за бабку, бабка за дедку, дедка за репку: тянут-потянут — вытащили репку!',
-      },
-    ],
-  },
-
-  {
-    ...ORIGINAL_STORY[0],
-    chapters: ORIGINAL_STORY[0].chapters.map((c) => ({ ...c })),
-    countries: [],
-    targetSeconds: 180,
-    kind: 'original',
-  },
-  {
-    id: 'mitten-ru-short-v1',
-    locale: 'ru',
-    title: 'Рукавичка',
-    revision: '1-short',
-    ageBand: '3–7',
-    rights: shortRights,
-    sourceUrl: mittenSource,
-    countries: ['UA'],
-    targetSeconds: 35,
-    kind: 'adaptation',
-    chapters: [
-      {
-        title: 'На лесной тропинке',
-        scene: 'mitten',
-        text: 'Однажды дедушка потерял в лесу рукавичку. Мышка нашла её и устроилась внутри.',
-      },
-      {
-        title: 'Тёплый домик',
-        scene: 'mitten',
-        text: 'Потом попросились лягушка, зайчик и лисичка. Звери подвинулись и пустили соседей погреться.',
-      },
-      {
-        title: 'Пора домой',
-        scene: 'mitten',
-        text: 'Но тут вернулся дедушка с собакой. Собака гавкнула, гости разбежались, а дедушка поднял рукавичку. Всем нашлось место, пока каждый заботился о других.',
-      },
-    ],
-  },
-  {
-    id: 'mitten-uk-short-v1',
-    locale: 'uk',
-    title: 'Рукавичка',
-    revision: '1-short',
-    ageBand: '3–7',
-    rights: shortRights,
-    sourceUrl: mittenSource,
-    countries: ['UA'],
-    targetSeconds: 35,
-    kind: 'adaptation',
-    chapters: [
-      {
-        title: 'Лісова стежка',
-        scene: 'mitten',
-        text: 'Одного разу дідусь загубив у лісі рукавичку. Мишка знайшла її та вмостилася всередині.',
-      },
-      {
-        title: 'Теплий будиночок',
-        scene: 'mitten',
-        text: 'Згодом попросилися жабка, зайчик і лисичка. Звірята посунулися та впустили сусідів погрітися.',
-      },
-      {
-        title: 'Час додому',
-        scene: 'mitten',
-        text: 'Та ось повернувся дідусь із собакою. Собака загавкав, гості розбіглися, а дідусь підняв рукавичку. Усім знайшлося місце, доки кожен дбав про інших.',
-      },
-    ],
-  },
-  {
-    id: 'three-pigs-en-short-v1',
-    locale: 'en',
-    title: 'The Three Little Pigs',
-    revision: '1-short',
-    ageBand: '3–7',
-    rights: shortRights,
-    sourceUrl: pigsSource,
-    countries: ['GB', 'US'],
-    targetSeconds: 35,
-    kind: 'adaptation',
-    chapters: [
-      {
-        title: 'Three homes',
-        scene: 'pigs',
-        text: 'Three little pigs built homes from straw, sticks, and bricks.',
-      },
-      {
-        title: 'A windy visitor',
-        scene: 'pigs',
-        text: 'A wolf blew down the first two houses. The little pigs hurried to their brother’s sturdy brick home.',
-      },
-      {
-        title: 'Safe together',
-        scene: 'pigs',
-        text: 'The wolf huffed and puffed, but the brick house stayed firm. He gave up and left. Safe inside, the three brothers shared supper. Patient work and helping each other had made a good home.',
-      },
-    ],
-  },
-  {
-    id: 'three-pigs-ru-short-v1',
-    locale: 'ru',
-    title: 'Три поросёнка',
-    revision: '1-short',
-    ageBand: '3–7',
-    rights: shortRights,
-    sourceUrl: pigsSource,
-    countries: ['GB', 'US', 'OTHER', 'DE', 'ES'],
-    targetSeconds: 35,
-    kind: 'adaptation',
-    chapters: [
-      {
-        title: 'Три домика',
-        scene: 'pigs',
-        text: 'Три поросёнка построили домики из соломы, веток и кирпича.',
-      },
-      {
-        title: 'Нежданный гость',
-        scene: 'pigs',
-        text: 'Пришёл волк и сдул первые два домика. Поросята поспешили к брату в крепкий кирпичный дом.',
-      },
-      {
-        title: 'Вместе надёжнее',
-        scene: 'pigs',
-        text: 'Волк дул и пыхтел, но дом устоял. Тогда он ушёл. Братья спокойно поужинали вместе. Они поняли: терпеливая работа и помощь друг другу делают дом надёжным.',
-      },
-    ],
-  },
-];
-for (const story of STORY_CATALOG) {
-  if (story.sourceEdition)
-    story.sourceEdition.textSha256 = createHash('sha256')
-      .update(story.chapters.map((c) => c.text).join('\n\n'))
-      .digest('hex');
+export function storyCatalogEntry(e: StoryEdition): StoryCatalogEntry {
+  const sourceUrl =
+    e.kind === 'adaptation'
+      ? (e.adaptation?.plotSourceUrl ?? e.source.plotUrl)
+      : e.source.textUrl;
+  return {
+    id: e.id,
+    locale: e.locale,
+    title: e.title,
+    revision: e.revision,
+    ageBand: e.ageBand,
+    rights: e.rightsSummary,
+    countries: [...e.countries],
+    targetSeconds: e.targetSeconds,
+    kind: e.kind,
+    kindLabel:
+      e.kind === 'classic'
+        ? 'классика'
+        : e.kind === 'adaptation'
+          ? 'адаптация'
+          : 'авторская',
+    ...(sourceUrl ? { sourceUrl } : {}),
+    ...(e.kind === 'classic' && e.publication && e.textVerification
+      ? {
+          sourceEdition: {
+            author: e.author ?? '',
+            edition: e.publication.citation,
+            pages: e.publication.pages ?? '',
+            verifiedAt: e.textVerification.verifiedAt,
+            changes: e.textVerification.normalization,
+            textSha256: e.textSha256,
+          },
+        }
+      : {}),
+    editionStatus: e.status,
+    legal: { ...e.legal },
+    textSha256: e.textSha256,
+    ...(e.adaptation
+      ? {
+          adaptation: {
+            ...e.adaptation,
+            changes: [...e.adaptation.changes],
+          },
+        }
+      : {}),
+    chapters: e.chapters.map((c) => ({ ...c })),
+  };
 }
+export const STORY_CATALOG: StoryCatalogEntry[] = STORY_EDITIONS.filter(
+  (e) => storyEditionBlocker(e) === null,
+).map(storyCatalogEntry);
 export function storyText(catalogId = 'little-lantern-ru-v1') {
-  const story = STORY_CATALOG.find((s) => s.id === catalogId);
+  const story = STORY_EDITIONS.find((s) => s.id === catalogId);
   if (!story) throw new Error('Unknown story revision');
   return `${story.title}.\n\n${story.chapters.map((c) => c.text).join('\n\n')}`;
 }

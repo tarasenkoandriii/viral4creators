@@ -225,6 +225,10 @@ export type AiOperation =
   | 'story-audio-qa'
   | 'story-video-assembly'
   | 'story-voiceover'
+  // Образ рассказчика Story‑Tales (WP5): производный вариант одежды/makeup
+  // и его стилизация тем же скетч-промптом. Своя строка — по ней видна цена
+  // образов, квота считается по строкам вариантов (narrator-looks.rules.ts).
+  | 'story-narrator-look'
   | 'tutorial-voiceover'
   // Проверка качества готового демо обучалки через Gemini
   // (doc/TUTORIAL-DEMO-QUALITY-SPEC.md, 06.10.2026) — отдельно от
@@ -360,6 +364,7 @@ export const AI_OPERATION_LABEL: Record<AiOperation, string> = {
   'story-audio-qa': 'Проверка озвучки сказки',
   'story-video-assembly': 'Сказки: сборка видео',
   'story-voiceover': 'Озвучка сказки Story‑Tales',
+  'story-narrator-look': 'Сказки: образ рассказчика (одежда/makeup)',
   'tutorial-voiceover': 'Озвучка обучающего видео',
   'tutorial-demo-quality': 'Проверка качества демо обучалки',
   'auction-assessment': 'ИИ-оценка лота аукциона',

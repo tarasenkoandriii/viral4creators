@@ -3,6 +3,7 @@
 // `node scripts/sync-sites-shared.mjs`; CI сверяет копию флагом --check.
 
 import {
+  AI_OPERATION_LABEL,
   AI_PROVIDERS,
   estimateCost,
   formatMicroUsd,
@@ -1149,6 +1150,18 @@ describe('ai-pricing — крайние случаи (модальности, к
         'AI_PRICE_YOUTUBE_DATA_API_CACHED_AUDIO',
       ],
     });
+  });
+
+  it('WP5: образ рассказчика — своя операция с подписью и ценой картинки', () => {
+    expect(AI_OPERATION_LABEL['story-narrator-look']).toMatch(
+      /образ рассказчика/,
+    );
+    const cost = estimateCost('gemini-3.1-flash-image', {
+      inputTokens: 1800,
+      outputTokens: 1300,
+    });
+    expect(cost.unpriced).toBe(false);
+    expect(cost.costMicroUsd).toBe(78_000);
   });
 
   it('показ сумм на границе цента', () => {

@@ -2,6 +2,11 @@ import { confirmTutorialApproval } from './tutorial-approval';
 import { apiGet, apiGetBlob, apiPost, apiPatch, apiPut, apiDelete } from './admin-api';
 import type { AttentionView } from './attention';
 import type {
+  StoryTalesActionInput,
+  StoryTalesActionResult,
+  StoryTalesJournalEntry,
+  StoryTalesQueue,
+  StoryTalesRetentionPreview,
   GreetingFixtureVideoAction,
   GreetingFixtureVideoResult,
   GreetingFixtureVideoState,
@@ -1554,4 +1559,29 @@ export function getLandingVisits(days: number) {
 }
 export function setLandingIpUniqueness(ipUniquenessEnabled: boolean) {
   return apiPatch<LandingVisitsReport['settings']>('/admin/landing-visits/settings', { ipUniquenessEnabled });
+}
+
+// ── Story‑Tales (WP1): сверка UNKNOWN без платных повторов, журнал, сроки хранения ──
+export function getStoryTalesQueue() {
+  return apiGet<StoryTalesQueue>('/admin/story-tales/queue');
+}
+export function getStoryTalesJournal(targetId?: string) {
+  return apiGet<StoryTalesJournalEntry[]>('/admin/story-tales/journal', { targetId });
+}
+export function getStoryTalesRetention() {
+  return apiGet<StoryTalesRetentionPreview>('/admin/story-tales/retention');
+}
+export type StoryTalesActionPath =
+  | `gifts/${string}/close`
+  | `gifts/${string}/reopen`
+  | `gifts/${string}/qa-reset`
+  | `renders/${string}/bind-job`
+  | `renders/${string}/close`
+  | `renders/${string}/qa-reset`
+  | `references/${string}/close`
+  | `references/${string}/delete`
+  | `segments/${string}/close`;
+/** Одно действие оператора; `requestId` делает повтор (двойной клик, ретрай) безопасным. */
+export function runStoryTalesAction(path: StoryTalesActionPath, body: StoryTalesActionInput) {
+  return apiPost<StoryTalesActionResult>(`/admin/story-tales/${path}`, body);
 }

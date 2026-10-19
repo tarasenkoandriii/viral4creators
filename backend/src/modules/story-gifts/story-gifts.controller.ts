@@ -4,6 +4,8 @@ import {
 } from './story-development.guard';
 import { StoryVideoService } from './story-video.service';
 import { StoryReferencesService } from './story-references.service';
+import { StoryReferenceListQuery } from './story-reference.dto';
+import { storyEditionsList } from './story-editions';
 import {
   Body,
   Controller,
@@ -14,6 +16,7 @@ import {
   Headers,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -37,12 +40,13 @@ import {
 } from '../telegram-auth/telegram-identity.guard';
 import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
 import { StoryGiftsService } from './story-gifts.service';
-class StoryVideoDto {
-  @IsOptional() @IsString() @MaxLength(100) narratorManifestId?: string;
-  @IsOptional() @IsString() @MaxLength(80) voiceConsentVersion?: string;
-  @IsOptional() @IsBoolean() voiceConsentAccepted?: boolean;
-  @IsString() @MaxLength(180) preambleText!: string;
-}
+import {
+  STORY_OCCASION_KINDS,
+  STORY_THEMES,
+  type StoryOccasionKind,
+  type StoryTheme,
+} from './story-occasion'; // WP3
+import { StoryRecordingDto, StoryVideoDto } from './story-video.dto'; // WP4
 class StoryVideoApproveDto {
   @Matches(/^[a-f0-9]{64}$/) videoHash!: string;
   @Equals(true) reviewed!: boolean;
@@ -61,14 +65,35 @@ export class CreateStoryDto {
   @IsOptional()
   @IsIn(['UA', 'GB', 'US', 'DE', 'ES', 'OTHER'])
   countryCode?: string;
+  /** WP3: пресет повода; пропуск допустим. */
+  @IsOptional()
+  @IsIn([...STORY_OCCASION_KINDS])
+  occasionKind?: StoryOccasionKind;
+  /** Свободная подпись для `other` (у старых клиентов — единственное поле повода). */
   @IsOptional() @IsString() @MaxLength(80) occasion?: string;
+  /** WP3: тема обложки; по умолчанию — по поводу. */
+  @IsOptional() @IsIn([...STORY_THEMES]) theme?: StoryTheme;
+  /** WP3: явное включение реплики — обязательно, если giftNote задан. */
+  @IsOptional() @IsBoolean() giftNoteEnabled?: boolean;
   @IsOptional() @IsString() @MaxLength(180) giftNote?: string;
   @IsOptional() @IsIn(['beginning', 'end']) giftNotePosition?:
     | 'beginning'
     | 'end';
+  /** WP3: описание фото физического подарка (как описание товара). */
+  @IsOptional() @IsString() @MaxLength(200) giftPhotoDescription?: string;
 }
-class StoryPhotoDto {
-  @IsString() @MaxLength(1398104) base64!: string;
+/** WP3: тот же ввод + параметры сметы будущего видео; без побочных эффектов. */
+export class PreviewStoryDto extends CreateStoryDto {
+  @IsOptional() @IsBoolean() includeVideo?: boolean;
+  @IsOptional() @IsString() @MaxLength(180) preambleText?: string;
+  @IsOptional() @IsIn(['nova', 'parent']) videoVoice?: 'nova' | 'parent';
+  /** B-S3-4: завершение видео — отдельный сегмент в смете. */
+  @IsOptional() @IsString() @MaxLength(180) outroText?: string;
+}
+export class StoryPhotoDto {
+  @IsOptional() @IsString() @MaxLength(1398104) base64?: string;
+  /** WP3: '' очищает описание; отсутствие поля — не менять. */
+  @IsOptional() @IsString() @MaxLength(200) description?: string;
 }
 class ApproveStoryDto {
   @Matches(/^[a-f0-9]{64}$/) audioHash!: string;
@@ -88,8 +113,11 @@ export class StoryGiftsController {
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get('references')
-  referenceList(@Req() req: IdentifiedRequest) {
-    return this.references.list(req.telegramUserId);
+  referenceList(
+    @Req() req: IdentifiedRequest,
+    @Query() q: StoryReferenceListQuery,
+  ) {
+    return this.references.list(req.telegramUserId, q);
   }
   @Post('references/analyze') referenceAnalyze(
     @Req() req: IdentifiedRequest,
@@ -109,6 +137,33 @@ export class StoryGiftsController {
     @Body() dto: StoryVideoDto,
   ) {
     return this.videos.create(req.telegramUserId, id, dto.preambleText, dto);
+  }
+  // WP4: repeat-order estimate and segment preview, no side effects.
+  @Header('Cache-Control', 'private, no-store')
+  @Post(':id/video/quote')
+  videoQuote(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Body() dto: StoryVideoDto,
+  ) {
+    return this.videos.quote(req.telegramUserId, id, dto.preambleText, dto);
+  }
+  // WP4 ST-P1: the adult's own recorded preamble (private, per gift).
+  @Header('Cache-Control', 'private, no-store')
+  @Post(':id/video/recording')
+  videoRecording(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Body() dto: StoryRecordingDto,
+  ) {
+    return this.videos.uploadRecording(req.telegramUserId, id, dto);
+  }
+  @Delete(':id/video/recording/:recordingId') videoRecordingDelete(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('recordingId') recordingId: string,
+  ) {
+    return this.videos.deleteRecording(req.telegramUserId, id, recordingId);
   }
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
@@ -150,6 +205,24 @@ export class StoryGiftsController {
   ) {
     return this.videos.file(req.telegramUserId, id, renderId, 'main');
   }
+  // WP4: raw WebVTT (no JSON envelope) built from segment texts and layout.
+  @Get(':id/video/:renderId/subtitles.vtt')
+  async videoSubtitles(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+    @Param('renderId') renderId: string,
+    @Res() res: Response,
+  ) {
+    const vtt = await this.videos.subtitles(req.telegramUserId, id, renderId);
+    res
+      .set({
+        'Cache-Control': 'private, no-store',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Type': 'text/vtt; charset=utf-8',
+      })
+      .send(vtt);
+  }
   @Post(':id/video/:renderId/quality') videoQuality(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
@@ -171,6 +244,13 @@ export class StoryGiftsController {
   catalog() {
     return this.service.catalog();
   }
+  /** Editorial registry (WP2): rights, sources, adaptation differences. Before `:id`. */
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Get('editions')
+  editions() {
+    return storyEditionsList();
+  }
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get()
@@ -178,28 +258,44 @@ export class StoryGiftsController {
     return this.service.list(req.telegramUserId);
   }
   @Post() create(@Req() req: IdentifiedRequest, @Body() dto: CreateStoryDto) {
-    return this.service.create(
-      req.telegramUserId,
-      dto.catalogId,
-      dto.occasion,
-      dto.giftNote,
-      dto.giftNotePosition,
-      dto.budgetUsd,
-      dto.countryCode,
-    );
+    return this.service.create(req.telegramUserId, dto);
+  }
+  /** WP3: точная реплика, длительность и смета до создания; без записей и платных вызовов. */
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
+  @Post('preview')
+  preview(@Body() dto: PreviewStoryDto) {
+    const { includeVideo, preambleText, videoVoice, outroText, ...input } = dto;
+    return this.service.preview(input, {
+      includeVideo,
+      preambleText,
+      videoVoice,
+      outroText,
+    });
   }
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get(':id')
   get(@Req() req: IdentifiedRequest, @Param('id') id: string) {
-    return this.service.own(req.telegramUserId, id);
+    return this.service.view(req.telegramUserId, id);
   }
   @Post(':id/photo') photo(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
     @Body() dto: StoryPhotoDto,
   ) {
-    return this.service.photo(req.telegramUserId, id, dto.base64);
+    return this.service.photo(
+      req.telegramUserId,
+      id,
+      dto.base64,
+      dto.description,
+    );
+  }
+  @Delete(':id/photo') photoRemove(
+    @Req() req: IdentifiedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.service.removePhoto(req.telegramUserId, id);
   }
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')

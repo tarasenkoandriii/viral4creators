@@ -1,5 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { storyAudioReservation } from './story-budget';
+import {
+  normalizeStoryPhotoDescription,
+  prepareStoryDraft,
+  previewStoryDraft,
+  storedStoryEstimate,
+  type StoryDraftInput,
+  type StoryPreviewOptions,
+} from './story-draft'; // WP3
+import { storyOccasionTheme } from './story-occasion'; // WP3
 import { SonioxSttClient } from '../voice/soniox-stt.client';
 import { storySpeechScore } from './story-audio-qa';
 import { normalizeStoryPhoto } from './story-photo';
@@ -19,6 +28,57 @@ import { STORY_CATALOG, STORY_VOICE, storyText } from './story-catalog';
 
 const digest = (v: string | Uint8Array) =>
   createHash('sha256').update(v).digest('hex');
+/**
+ * Render media/voice wipe shared by owner deletion and retention (WP1).
+ *
+ * Retention of a single render on a live gift (F1, A-S2-1/A-S2-2):
+ * - `release` renames the (gift, config) slot to `<hash>:purged:<id>` so the
+ *   same configuration can be ordered again instead of returning DELETED;
+ * - `keepNarrationKey` keeps `parentNarrationKey` when the parent main
+ *   narration was never saved: an unconfirmed (maybe billed) main synthesis
+ *   stays blocked until an operator confirms, it is never re-bought silently.
+ */
+export function storyRenderWipe(
+  opts: {
+    release?: { id: string; configHash: string };
+    keepNarrationKey?: boolean;
+  } = {},
+): Prisma.StoryVideoRenderUpdateManyMutationInput {
+  const { parentNarrationKey, ...rest } = storyRenderWipeData();
+  return {
+    ...rest,
+    ...(opts.keepNarrationKey ? {} : { parentNarrationKey }),
+    ...(opts.release
+      ? {
+          configHash: `${opts.release.configHash}:purged:${opts.release.id}`,
+        }
+      : {}),
+  };
+}
+function storyRenderWipeData() {
+  return {
+    status: 'DELETED',
+    video: null,
+    videoHash: null,
+    preambleAudio: null,
+    mainAudio: null,
+    voiceConsentAt: null,
+    voiceConsentVersion: null,
+    userVoiceId: null,
+    narratorManifestId: null,
+    preambleText: '',
+    voiceId: '',
+    voiceLabel: null,
+    parentNarrationKey: null,
+    mainAudioHash: '',
+    mainDuration: null,
+    assetExpiresAt: null,
+    approvedAt: null,
+    assetTokenHash: null,
+    qa: Prisma.DbNull,
+    segments: Prisma.DbNull, // WP4: segment texts/hashes
+  } satisfies Prisma.StoryVideoRenderUpdateManyMutationInput;
+}
 const summary = {
   id: true,
   audioQaStatus: true,
@@ -32,6 +92,11 @@ const summary = {
   chapters: true,
   catalogId: true,
   occasion: true,
+  occasionKind: true, // WP3
+  occasionTheme: true,
+  giftNoteEnabled: true,
+  giftPhotoDescription: true,
+  narrationLayout: true,
   giftNote: true,
   giftNotePosition: true,
   status: true,
@@ -114,17 +179,37 @@ export class StoryGiftsService {
       take: 20,
     });
   }
-  async create(
-    userId: string,
-    catalogId: string,
-    occasion?: string,
-    giftNote?: string,
-    giftNotePosition: 'beginning' | 'end' = 'end',
-    budgetUsd = 1,
-    countryCode = 'UA',
-  ) {
-    const story = STORY_CATALOG.find((s) => s.id === catalogId);
-    if (!story) throw new BadRequestException('Редакция сказки недоступна');
+  /** WP3: ответ владельцу — строка + тема (с откатом для старых строк) + смета. */
+  present<
+    T extends {
+      occasionKind: string | null;
+      occasionTheme: string | null;
+      catalogId: string;
+      chapters: Prisma.JsonValue;
+      title: string;
+      giftNote: string | null;
+      narrationLayout: Prisma.JsonValue;
+      budgetCents: number;
+    },
+  >(row: T) {
+    return {
+      ...row,
+      occasionTheme: row.occasionTheme ?? storyOccasionTheme(row.occasionKind),
+      estimate: storedStoryEstimate(row),
+    };
+  }
+  async view(userId: string, id: string) {
+    return this.present(await this.own(userId, id));
+  }
+  /** WP3: точный текст озвучки, вставка, длительность и смета — без БД и провайдеров. */
+  preview(input: StoryDraftInput, options: StoryPreviewOptions = {}) {
+    return previewStoryDraft(input, options);
+  }
+  async create(userId: string, input: StoryDraftInput) {
+    // Validation (catalog, explicit gift-note opt-in, promise validator) runs
+    // before the transaction: a rejected draft takes no lock and no quota.
+    const draft = prepareStoryDraft(input);
+    const { story } = draft;
     return this.prisma.$transaction(async (tx) => {
       // Serialize quota checks for this owner across serverless instances.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story:${userId}`}))::text`;
@@ -140,50 +225,83 @@ export class StoryGiftsService {
         throw new BadRequestException(
           'Пилот: до трёх новых сказок в сутки и двадцати сохранённых',
         );
-      const note = giftNote?.trim() || null;
-      const text = [
-        giftNotePosition === 'beginning' ? note : null,
-        storyText(story.id),
-        giftNotePosition === 'end' ? note : null,
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-      const reserve = storyAudioReservation(text);
-      if (reserve > budgetUsd * 1e6)
+      const reserve = storyAudioReservation(draft.text);
+      if (reserve > draft.budgetUsd * 1e6)
         throw new BadRequestException(
           'Сократите текст: расчётный резерв превышает выбранный бюджет',
         );
-      return tx.storyGift.create({
+      const row = await tx.storyGift.create({
         data: {
           userId,
-          catalogId,
+          catalogId: story.id,
           chapters: story.chapters.map((c) => ({ ...c })),
           locale: story.locale,
-          countryCode,
-          budgetCents: Math.round(budgetUsd * 100),
+          countryCode: draft.countryCode,
+          budgetCents: Math.round(draft.budgetUsd * 100),
           reservedMicroUsd: reserve,
-          occasion: occasion?.trim() || null,
-          giftNote: note,
-          giftNotePosition: note ? giftNotePosition : null,
+          occasion: draft.occasion.label,
+          occasionKind: draft.occasion.kind,
+          occasionTheme: draft.occasion.theme,
+          giftNote: draft.giftNote,
+          giftNoteEnabled: draft.giftNoteEnabled,
+          giftNotePosition: draft.giftNotePosition,
+          giftPhotoDescription: draft.giftPhotoDescription,
+          narrationLayout: draft.layout,
           title: story.title,
-          text,
-          textHash: digest(text),
+          text: draft.text,
+          textHash: draft.textHash,
           voiceId: STORY_VOICE,
         },
         select: summary,
       });
+      return this.present(row);
     });
   }
-  async photo(userId: string, id: string, base64: string) {
-    await this.own(userId, id);
-    const bytes = normalizeStoryPhoto(base64);
+  /**
+   * WP3: фото и/или описание подарка (оба необязательны и независимы от
+   * реплики). `description` undefined — не менять; '' или null — очистить.
+   */
+  async photo(
+    userId: string,
+    id: string,
+    base64?: string,
+    description?: string | null,
+  ) {
+    const row = await this.own(userId, id);
+    if (base64 === undefined && description === undefined)
+      throw new BadRequestException('Нужно фото или описание подарка');
+    const bytes = base64 === undefined ? null : normalizeStoryPhoto(base64);
+    const text =
+      description === undefined
+        ? undefined
+        : normalizeStoryPhotoDescription(description, row.locale);
     const saved = await this.prisma.storyGift.updateMany({
       where: { id, userId, status: 'DRAFT' },
-      data: { giftPhoto: new Uint8Array(bytes), hasGiftPhoto: true },
+      data: {
+        ...(bytes
+          ? { giftPhoto: new Uint8Array(bytes), hasGiftPhoto: true }
+          : {}),
+        ...(text === undefined ? {} : { giftPhotoDescription: text }),
+      },
     });
     if (!saved.count)
       throw new ConflictException('Фото изменяется только до озвучки');
-    return this.own(userId, id);
+    return this.view(userId, id);
+  }
+  /** WP3: убрать фото подарка и его описание из черновика. */
+  async removePhoto(userId: string, id: string) {
+    await this.own(userId, id);
+    const saved = await this.prisma.storyGift.updateMany({
+      where: { id, userId, status: 'DRAFT' },
+      data: {
+        giftPhoto: null,
+        hasGiftPhoto: false,
+        giftPhotoDescription: null,
+      },
+    });
+    if (!saved.count)
+      throw new ConflictException('Фото изменяется только до озвучки');
+    return this.view(userId, id);
   }
   async ownerPhoto(userId: string, id: string) {
     await this.own(userId, id);
@@ -381,11 +499,31 @@ export class StoryGiftsService {
     });
     return { withdrawn: true };
   }
-  async remove(userId: string, id: string) {
+  /**
+   * Owner deletion; also the retention purge (WP1). Serialized with video
+   * create/segment claims by the same `story-video:<giftId>` advisory lock
+   * (F1, A-S3-6). `expect` makes the deletion conditional on the state the
+   * cron saw (A-S3-5): any change in between → `{ deleted: false, raced: true }`
+   * and nothing is written; `journal` runs in the same transaction.
+   */
+  async remove(
+    userId: string,
+    id: string,
+    opts: {
+      expect?: { status: string; updatedAt: Date };
+      journal?: (tx: Prisma.TransactionClient) => Promise<unknown>;
+    } = {},
+  ): Promise<{ deleted: boolean; raced?: boolean }> {
     await this.own(userId, id);
-    await this.prisma.$transaction(async (tx) => {
-      await tx.storyGift.updateMany({
-        where: { id, userId },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-video:${id}`}))::text`;
+      const gone = await tx.storyGift.updateMany({
+        where: {
+          id,
+          userId,
+          status: opts.expect?.status ?? { not: 'DELETED' },
+          ...(opts.expect ? { updatedAt: opts.expect.updatedAt } : {}),
+        },
         data: {
           status: 'DELETED',
           shareHash: null,
@@ -397,36 +535,35 @@ export class StoryGiftsService {
           giftNote: null,
           giftNotePosition: null,
           occasion: null,
+          occasionKind: null, // WP3
+          occasionTheme: null,
+          giftNoteEnabled: false,
+          giftPhotoDescription: null,
+          narrationLayout: Prisma.DbNull,
           text: '',
           chapters: [],
         },
       });
+      // Changed since the cron looked (or deleted concurrently): touch nothing.
+      if (!gone.count && opts.expect) return { deleted: false, raced: true };
       await tx.storyVideoRender.updateMany({
+        where: { giftId: id },
+        data: storyRenderWipe(),
+      });
+      // WP4: segment cache and the adult's own recordings of this gift.
+      await tx.storyVideoSegment.updateMany({
         where: { giftId: id },
         data: {
           status: 'DELETED',
-          video: null,
-          videoHash: null,
-          preambleAudio: null,
-          mainAudio: null,
-          voiceConsentAt: null,
-          voiceConsentVersion: null,
-          userVoiceId: null,
-          narratorManifestId: null,
-          preambleText: '',
-          voiceId: '',
-          voiceLabel: null,
-          parentNarrationKey: null,
-          mainAudioHash: '',
-          mainDuration: null,
-          assetExpiresAt: null,
-          approvedAt: null,
-          assetTokenHash: null,
-          qa: Prisma.DbNull,
+          audio: null,
+          audioHash: null,
+          durationSeconds: null,
+          text: '',
         },
       });
+      if (opts.journal) await opts.journal(tx);
+      return { deleted: true };
     });
-    return { deleted: true };
   }
   async publicGift(token: string, audio = false, photo = false) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundException();

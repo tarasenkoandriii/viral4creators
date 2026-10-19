@@ -3,6 +3,9 @@ import { Module } from '@nestjs/common';
 import { StorageModule } from '../storage/storage.module';
 import { BrandManifestController } from './brand-manifest.controller';
 import { BrandManifestService } from './brand-manifest.service';
+import { ImageSketchModule } from '../image-sketch/image-sketch.module';
+import { NarratorLooksController } from './narrator-looks.controller';
+import { NarratorLooksService } from './narrator-looks.service';
 
 /**
  * BrandManifestModule — the надпроектная сущность of
@@ -12,9 +15,20 @@ import { BrandManifestService } from './brand-manifest.service';
  * character-photo presigned flow.
  */
 @Module({
-  imports: [StorageModule],
-  controllers: [BrandManifestController],
-  providers: [BrandManifestService, NarratorPreambleService],
-  exports: [BrandManifestService, NarratorPreambleService],
+  // ImageSketchModule — тот же генератор картинок, что у скетча и образов
+  // персоны (WP5: образы рассказчика Story‑Tales).
+  imports: [StorageModule, ImageSketchModule],
+  controllers: [BrandManifestController, NarratorLooksController],
+  providers: [
+    BrandManifestService,
+    NarratorPreambleService,
+    NarratorLooksService,
+  ],
+  // NarratorLooksService.resolveNarratorImage — точка интеграции видео Story (WP4).
+  exports: [
+    BrandManifestService,
+    NarratorPreambleService,
+    NarratorLooksService,
+  ],
 })
 export class BrandManifestModule {}

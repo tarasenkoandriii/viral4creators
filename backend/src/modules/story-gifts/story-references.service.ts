@@ -1,7 +1,10 @@
 import { Schema, Type } from '@google/genai';
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
+  NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
@@ -20,6 +23,9 @@ import {
 import { parseYoutubeVideoId } from '../youtube-search/youtube-url';
 import { parseIsoDuration } from '../youtube-search/youtube-duration';
 import { loadConfiguration } from '../../config/configuration';
+import { YoutubeSearchService } from '../youtube-search/youtube-search.service';
+import { storyEdition, storyEditionBlocker } from './story-editions';
+import { planStoryReferenceProduction } from './story-reference-plan';
 
 export interface StoryReferenceAssessment {
   observed: boolean;
@@ -52,9 +58,49 @@ export interface StoryReferenceRecord {
   completedAt?: string;
   assessment?: StoryReferenceAssessment;
   error?: string;
+  /** Registered edition this reference is staged for (story-editions.ts). */
+  editionId?: string | null;
+  /** Paid analysis attempts of this record (first run + explicit retries). */
+  attempts?: number;
 }
+export type StoryReferenceStatus = StoryReferenceRecord['status'];
+export const STORY_REFERENCE_STATUSES: StoryReferenceStatus[] = [
+  'running',
+  'complete',
+  'partial',
+  'unavailable',
+  'unknown',
+];
+/**
+ * Retention terms, identical to WP1 StoryRetentionService (cron, journaled,
+ * dry-run unless STORY_RETENTION_PURGE_ENABLED): confirmed analyses live 180
+ * days without changes, unconfirmed ones (unknown/unavailable/running) 30.
+ * The owner sees `expiresAt`; deletion itself is the cron's job.
+ */
+export const STORY_REFERENCE_RETENTION_DAYS = 180;
+export const STORY_REFERENCE_STALE_DAYS = 30;
+export const STORY_REFERENCE_DAILY_QUOTA = 3;
+export const STORY_REFERENCE_LIMIT = 20;
+/** YouTube search candidates longer than this are hidden (pilot boundary). */
+export const STORY_REFERENCE_MAX_SECONDS = 300;
+const RECORD_PREFIX = 'story-ref:v1:';
+const QUOTA_PREFIX = 'story-ref-quota:';
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-const prefix = (userId: string) => `story-ref:v1:${hash(userId)}:`;
+const prefix = (userId: string) => `${RECORD_PREFIX}${hash(userId)}:`;
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+/** When the retention cron may delete this record (last change + term). */
+export function storyReferenceExpiresAt(
+  r: Pick<StoryReferenceRecord, 'status' | 'startedAt' | 'completedAt'>,
+  updatedAt?: Date,
+): string | null {
+  const base = updatedAt?.getTime() ?? Date.parse(r.completedAt ?? r.startedAt);
+  if (!Number.isFinite(base)) return null;
+  const days = ['complete', 'partial'].includes(r.status)
+    ? STORY_REFERENCE_RETENTION_DAYS
+    : STORY_REFERENCE_STALE_DAYS;
+  return new Date(base + days * 86_400_000).toISOString();
+}
+const fold = (s: string) => s.toLocaleLowerCase('ru').replace(/ё/g, 'е');
 export function parseStoryReference(
   text: string,
   duration: number,
@@ -156,34 +202,208 @@ export class StoryReferencesService {
     private readonly prisma: PrismaService,
     private readonly plan: PlanService,
     private readonly usage: AiUsageService,
+    @Optional() private readonly youtube?: YoutubeSearchService,
   ) {}
-  private decode(value: string): StoryReferenceRecord {
-    const { pendingAssessment: _pending, ...view } = JSON.parse(
+  private decode(value: string, updatedAt?: Date) {
+    const { pendingAssessment: _pending, ...stored } = JSON.parse(
       value,
     ) as StoryReferenceRecord;
-    if (
-      view.status === 'running' &&
-      Date.now() - Date.parse(view.startedAt) > 5 * 60_000
-    ) {
-      return {
-        ...view,
-        status: 'unknown',
-        error: 'Ожидание истекло; автоматический платный повтор отключён.',
-      };
-    }
-    return view;
+    const view: StoryReferenceRecord =
+      stored.status === 'running' &&
+      Date.now() - Date.parse(stored.startedAt) > 5 * 60_000
+        ? {
+            ...stored,
+            status: 'unknown',
+            error: 'Ожидание истекло; автоматический платный повтор отключён.',
+          }
+        : stored;
+    return {
+      ...view,
+      editionId: view.editionId ?? null,
+      attempts: view.attempts ?? 1,
+      expiresAt: storyReferenceExpiresAt(stored, updatedAt),
+      retryAllowed: ['unknown', 'unavailable'].includes(view.status),
+    };
   }
-  async list(userId: string) {
+  /** Owner's references, newest first, with search and status filter. */
+  async list(
+    userId: string,
+    filter: { query?: string; status?: StoryReferenceStatus } = {},
+  ) {
     const rows = await this.prisma.platformSetting.findMany({
       where: { key: { startsWith: prefix(userId) } },
       orderBy: { updatedAt: 'desc' },
-      take: 20,
+      take: STORY_REFERENCE_LIMIT,
     });
-    return rows.map((r) => this.decode(r.value));
+    const views = rows.map((r) =>
+      this.decode(r.value, (r as { updatedAt?: Date }).updatedAt),
+    );
+    const needle = fold(filter.query?.trim() ?? '');
+    return views.filter((r) => {
+      if (filter.status && r.status !== filter.status) return false;
+      if (!needle) return true;
+      const edition = r.editionId ? storyEdition(r.editionId) : undefined;
+      return fold(
+        [
+          r.title,
+          r.channel,
+          r.id,
+          r.assessment?.summary,
+          edition?.title,
+          ...(r.assessment?.scenes.map((s) => s.observation) ?? []),
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      ).includes(needle);
+    });
+  }
+  /** Today's paid-analysis slots (UTC), shared by new analyses and retries. */
+  async quota(userId: string) {
+    const day = new Date().toISOString().slice(0, 10);
+    const used = (
+      await this.prisma.platformSetting.findMany({
+        where: {
+          key: { startsWith: `${QUOTA_PREFIX}${hash(userId)}:${day}:` },
+        },
+        select: { key: true },
+      })
+    ).length;
+    return {
+      used: Math.min(used, STORY_REFERENCE_DAILY_QUOTA),
+      limit: STORY_REFERENCE_DAILY_QUOTA,
+      remaining: Math.max(0, STORY_REFERENCE_DAILY_QUOTA - used),
+      resetsAt: `${day}T23:59:59.999Z`,
+      retentionDays: STORY_REFERENCE_RETENTION_DAYS,
+      storageLimit: STORY_REFERENCE_LIMIT,
+    };
+  }
+  private key(userId: string, videoId: string) {
+    if (!VIDEO_ID.test(videoId))
+      throw new BadRequestException('Неверный идентификатор ролика');
+    return `${prefix(userId)}${videoId}`;
+  }
+  /** Deletes the record together with any pending model JSON. Quota is not refunded. */
+  async remove(userId: string, videoId: string) {
+    const key = this.key(userId, videoId);
+    const row = await this.prisma.platformSetting.findUnique({
+      where: { key },
+    });
+    if (!row) throw new NotFoundException('Референс не найден');
+    if (this.decode(row.value).status === 'running')
+      throw new ConflictException(
+        'Разбор ещё выполняется — удалите после завершения',
+      );
+    const done = await this.prisma.platformSetting.deleteMany({
+      where: { key, value: row.value },
+    });
+    if (!done.count)
+      throw new ConflictException('Запись изменилась — обновите список');
+    return { deleted: true, id: videoId };
+  }
+  /** Links (or unlinks with null) a registered edition for staging. */
+  async link(userId: string, videoId: string, editionId: string | null) {
+    const key = this.key(userId, videoId);
+    if (editionId) {
+      const edition = storyEdition(editionId);
+      if (!edition || edition.status === 'retired')
+        throw new BadRequestException('Редакция не найдена или снята');
+    }
+    const row = await this.prisma.platformSetting.findUnique({
+      where: { key },
+    });
+    if (!row) throw new NotFoundException('Референс не найден');
+    // B-S3-3: as in remove(). The analyzer finishes with a compare-and-set
+    // against its own running claim; rewriting the row now would make that
+    // final write miss and silently drop the paid analysis.
+    if (this.decode(row.value).status === 'running')
+      throw new ConflictException(
+        'Разбор ещё выполняется — привяжите редакцию после завершения',
+      );
+    const saved = JSON.parse(row.value) as StoryReferenceRecord;
+    saved.editionId = editionId;
+    const done = await this.prisma.platformSetting.updateMany({
+      where: { key, value: row.value },
+      data: { value: JSON.stringify(saved), updatedBy: userId },
+    });
+    if (!done.count)
+      throw new ConflictException('Запись изменилась — обновите список');
+    return this.decode(JSON.stringify(saved));
+  }
+  /** Own staging plan with timecodes and reserve; pure computation, no provider call. */
+  async stagingPlan(
+    userId: string,
+    videoId: string,
+    opts: { editionId?: string; budgetUsd?: number; preambleText?: string },
+  ) {
+    const key = this.key(userId, videoId);
+    const row = await this.prisma.platformSetting.findUnique({
+      where: { key },
+    });
+    if (!row) throw new NotFoundException('Референс не найден');
+    const reference = this.decode(row.value);
+    if (
+      !reference.assessment?.observed ||
+      !['complete', 'partial'].includes(reference.status)
+    )
+      throw new ConflictException(
+        'План строится только по подтверждённому разбору со сценами',
+      );
+    const editionId = opts.editionId ?? reference.editionId;
+    if (!editionId)
+      throw new BadRequestException('Выберите редакцию для постановки');
+    const edition = storyEdition(editionId);
+    const blocker = edition ? storyEditionBlocker(edition) : 'не найдена';
+    if (!edition || blocker)
+      throw new BadRequestException(`Редакция недоступна: ${blocker}`);
+    return planStoryReferenceProduction({
+      reference: {
+        id: reference.id,
+        durationSeconds: reference.durationSeconds,
+        assessment: reference.assessment,
+      },
+      edition,
+      budgetUsd: opts.budgetUsd ?? 1,
+      preambleText: opts.preambleText,
+    });
+  }
+  /**
+   * Finds new candidates through the existing YouTube search (its own daily
+   * search quota, no model billing). Only videos with a known duration of at
+   * most 5 minutes are returned; privacy/live are re-checked by analyze().
+   */
+  async search(userId: string, q: string, language?: string) {
+    if (!this.youtube?.configured())
+      throw new ServiceUnavailableException(
+        'Поиск YouTube не настроен — вставьте ссылку на ролик',
+      );
+    const found = await this.youtube.search(userId, q, { language });
+    const saved = new Set((await this.list(userId)).map((r) => r.id));
+    const results = found.results
+      .filter(
+        (r) =>
+          r.durationSeconds !== null &&
+          r.durationSeconds > 0 &&
+          r.durationSeconds <= STORY_REFERENCE_MAX_SECONDS,
+      )
+      .map((r) => ({
+        videoId: r.videoId,
+        url: r.url,
+        title: r.title,
+        channelTitle: r.channelTitle,
+        durationSeconds: r.durationSeconds as number,
+        publishedAt: r.publishedAt,
+        saved: saved.has(r.videoId),
+      }));
+    return {
+      query: found.query,
+      usage: found.usage,
+      hiddenLongOrUnknown: found.results.length - results.length,
+      results,
+    };
   }
   async analyze(userId: string, rawUrl: string, retry = false) {
     const videoId = parseYoutubeVideoId(rawUrl);
-    if (!videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId))
+    if (!videoId || !VIDEO_ID.test(videoId))
       throw new BadRequestException(
         'Нужна ссылка на один публичный ролик YouTube',
       );
@@ -191,7 +411,8 @@ export class StoryReferencesService {
     const previous = await this.prisma.platformSetting.findUnique({
       where: { key },
     });
-    if (previous && !retry) {
+    // A pending (unvalidated) answer is re-checked for free first, even on retry.
+    if (previous) {
       const saved = JSON.parse(previous.value) as StoryReferenceRecord;
       if (saved.pendingAssessment && saved.status === 'unknown') {
         try {
@@ -206,11 +427,18 @@ export class StoryReferencesService {
             : 'unavailable';
           delete saved.pendingAssessment;
           delete saved.error;
-          await this.prisma.platformSetting.update({
-            where: { key },
+          const done = await this.prisma.platformSetting.updateMany({
+            where: { key, value: previous.value },
             data: { value: JSON.stringify(saved), updatedBy: userId },
           });
-          return this.decode(JSON.stringify(saved));
+          if (done.count) return this.decode(JSON.stringify(saved));
+          return this.decode(
+            (
+              await this.prisma.platformSetting.findUniqueOrThrow({
+                where: { key },
+              })
+            ).value,
+          );
         } catch {
           /* Keep the candidate for a future validator fix; no provider call. */
         }
@@ -269,12 +497,15 @@ export class StoryReferencesService {
       throw new BadRequestException(
         'Для пилота нужен публичный ролик до 5 минут, не трансляция',
       );
-    if (!previous && (await this.list(userId)).length >= 20)
+    if (!previous && (await this.list(userId)).length >= STORY_REFERENCE_LIMIT)
       throw new BadRequestException('Лимит пилота: 20 сохранённых референсов');
     const setting = await this.prisma.platformSetting.findUnique({
       where: { key: ANALYSIS_MODEL_SETTING },
     });
     const model = resolveAnalysisModel(setting?.value);
+    const before = previous
+      ? (JSON.parse(previous.value) as StoryReferenceRecord)
+      : null;
     const r: StoryReferenceRecord = {
       id: videoId,
       url: `https://www.youtube.com/watch?v=${videoId}`,
@@ -284,19 +515,19 @@ export class StoryReferencesService {
       model,
       status: 'running',
       startedAt: new Date().toISOString(),
+      editionId: before?.editionId ?? null,
+      attempts: (before?.attempts ?? (before ? 1 : 0)) + 1,
     };
+    const claimed = JSON.stringify(r);
     // Database uniqueness owns both daily quota and call claim across instances.
-    let slot = false;
-    for (let i = 0; i < 3; i++) {
+    let slot = '';
+    for (let i = 0; i < STORY_REFERENCE_DAILY_QUOTA; i++) {
       try {
+        const slotKey = `${QUOTA_PREFIX}${hash(userId)}:${r.startedAt.slice(0, 10)}:${i}`;
         await this.prisma.platformSetting.create({
-          data: {
-            key: `story-ref-quota:${hash(userId)}:${r.startedAt.slice(0, 10)}:${i}`,
-            value: videoId,
-            updatedBy: userId,
-          },
+          data: { key: slotKey, value: videoId, updatedBy: userId },
         });
-        slot = true;
+        slot = slotKey;
         break;
       } catch (e) {
         if ((e as { code?: string }).code !== 'P2002') throw e;
@@ -304,14 +535,20 @@ export class StoryReferencesService {
     }
     if (!slot)
       throw new BadRequestException(
-        'Лимит пилота: три новых разбора в сутки UTC. Повтор сохранённого ролика бесплатный.',
+        'Лимит пилота: три новых платных разбора в сутки UTC, включая явные повторы. Обычный повтор сохранённой ссылки бесплатный.',
       );
+    // Lost a concurrent claim → no paid call happens, so the slot goes back.
+    const releaseSlot = () =>
+      this.prisma.platformSetting.deleteMany({
+        where: { key: slot, value: videoId },
+      });
     if (previous) {
       const claim = await this.prisma.platformSetting.updateMany({
         where: { key, value: previous.value },
-        data: { value: JSON.stringify(r), updatedBy: userId },
+        data: { value: claimed, updatedBy: userId },
       });
-      if (!claim.count)
+      if (!claim.count) {
+        await releaseSlot();
         return this.decode(
           (
             await this.prisma.platformSetting.findUniqueOrThrow({
@@ -319,13 +556,15 @@ export class StoryReferencesService {
             })
           ).value,
         );
+      }
     } else {
       try {
         await this.prisma.platformSetting.create({
-          data: { key, value: JSON.stringify(r), updatedBy: userId },
+          data: { key, value: claimed, updatedBy: userId },
         });
       } catch (e) {
         if ((e as { code?: string }).code !== 'P2002') throw e;
+        await releaseSlot();
         return this.decode(
           (
             await this.prisma.platformSetting.findUniqueOrThrow({
@@ -388,8 +627,10 @@ export class StoryReferencesService {
       r.error = `Разбор не подтверждён${typeof status === 'number' ? ` (Gemini HTTP ${status})` : detail ? ` (${detail})` : ' (сбой провайдера или соединения)'}. Автоматического повтора нет.`;
     }
     r.completedAt = new Date().toISOString();
-    await this.prisma.platformSetting.update({
-      where: { key },
+    // Compare-and-set against our own running claim: never resurrect a record
+    // the owner deleted meanwhile, never overwrite a newer claim.
+    await this.prisma.platformSetting.updateMany({
+      where: { key, value: claimed },
       data: { value: JSON.stringify(r), updatedBy: userId },
     });
     return this.decode(JSON.stringify(r));

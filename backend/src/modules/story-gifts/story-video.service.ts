@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { ResembleService } from '../tts/resemble.service';
@@ -16,19 +17,143 @@ import {
   fetchPubliclyRoutable,
   readBodyWithLimit,
 } from '../../common/external-url-guard';
-import { probeMp4 } from '../tutorial-runner/mp4-probe';
+import { downloadStoryVideo, STORY_MAX_VIDEO } from './story-video-result';
 import { storySpeechScore } from './story-audio-qa';
 import { STORY_VOICE } from './story-catalog';
-import { STORY_VIDEO_BASE as BASE } from './story-video-base';
 import {
-  planStoryVideo,
+  STORY_VIDEO_BASE as BASE,
+  storyVideoBaseFor,
+  storyVideoBaseRevision,
+} from './story-video-base';
+import {
+  planStorySegments,
   storyDigest as digest,
   storyVideoConfigHash,
   storyVideoReserve,
+  storyVideoTtsReserve,
+  StoryVideoInput,
   StoryVoiceChoice,
   STORY_PARENT_CONSENT_VERSION,
   STORY_PARENT_CONSENT_TEXT,
+  STORY_RECORDING_CONSENT_TEXT,
+  STORY_RECORDING_CONSENT_VERSION,
+  STORY_SEGMENT_MAX_SECONDS,
+  STORY_SEGMENT_MIN_SECONDS,
+  STORY_VIDEO_MAX_SECONDS,
 } from './story-video-plan';
+import {
+  applyStoryPronunciations,
+  buildStoryVtt,
+  parseStoryPronunciations,
+  parseStoryWav,
+  storyChaptersSha256,
+  storyRecordingKey,
+  storySegmentKey,
+  storyVideoLayout,
+  stripStoryLoneSurrogates,
+  STORY_PRONUNCIATION_CHARS,
+  STORY_PRONUNCIATION_MAX,
+  STORY_RECORDING_MAX_BYTES,
+  STORY_RECORDING_MAX_SECONDS,
+  STORY_RECORDING_MIN_SECONDS,
+  STORY_VIDEO_MIX,
+  type StoryManifestSegment,
+  type StoryVideoSegmentsManifest,
+} from './story-video-segments';
+import { storyNarrationParts } from './story-gift-note';
+import { assertStoryPromiseFree, checkStoryPromises } from './story-promise';
+import { storyOccasionLines, type StoryOccasionKind } from './story-occasion';
+import { STORY_SPEECH_CHARS_PER_SECOND } from './story-budget';
+import { storyEdition } from './story-editions';
+import {
+  NarratorLooksService,
+  type NarratorImage,
+} from '../brand-manifest/narrator-looks.service';
+import type { StoryNarratorImageSnapshot } from './story-video-segments';
+/** Intro still from the profile narrator image: formats FFmpeg reads, bounded size. */
+export const STORY_NARRATOR_IMAGE_MIMES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+] as const;
+/**
+ * A-S2-4: the provider fetches the still from our render-input route, whose
+ * response must stay under the 4.5 MB serverless limit. There is no image
+ * codec in the backend (no sharp), so a larger image is refused with a clear
+ * 409 before any paid call (quote and create) instead of being re-encoded.
+ */
+export const STORY_NARRATOR_IMAGE_MAX_BYTES = 4_000_000;
+function narratorSnapshot(image: NarratorImage): StoryNarratorImageSnapshot {
+  return {
+    manifestId: image.manifestId,
+    characterId: image.characterId,
+    kind: image.kind,
+    lookId: image.lookId,
+    asset: image.asset,
+    assetHash: image.assetHash,
+    style: image.style,
+    sketchRendering: image.sketchRendering,
+    consentVersion: image.consentVersion,
+    mimeType: image.mimeType,
+    bytes: image.bytes.length,
+  };
+}
+/**
+ * B-S2-1: the validator on the exact TTS input, also with the respelling
+ * stress marks («+», U+0301) removed — "за+втра" is still "завтра".
+ */
+function assertSpokenPromiseFree(text: string, locale: string) {
+  assertStoryPromiseFree(text, locale);
+  const plain = text
+    .replace(/\+/g, '')
+    .normalize('NFD')
+    .replace(/\u0301/g, '')
+    .normalize('NFC');
+  if (plain !== text) assertStoryPromiseFree(plain, locale);
+}
+/** Same image the adult saw at create time: identity, asset and consent snapshot. */
+function sameNarrator(
+  a: StoryNarratorImageSnapshot,
+  b: StoryNarratorImageSnapshot,
+) {
+  return (
+    a.manifestId === b.manifestId &&
+    a.kind === b.kind &&
+    a.lookId === b.lookId &&
+    a.assetHash === b.assetHash &&
+    a.consentVersion === b.consentVersion
+  );
+}
+/** Planned segment of one export before/after its speech is resolved. */
+type PlannedSegment = StoryManifestSegment & {
+  /** Recording row id (recorded intro). */
+  recordingId?: string;
+};
+type SegmentRow = {
+  id: string;
+  cacheKey: string;
+  status: string;
+  audioHash: string | null;
+  durationSeconds: number | null;
+};
+const segmentStage = {
+  intro: 'voice',
+  gift_note: 'note',
+  outro: 'outro',
+  main: 'main',
+} as const;
+/**
+ * A-S2-2: one rule for the (gift, configuration) slot. Only a live render
+ * occupies it — PREPARING, PENDING, READY or UNKNOWN (the latter blocks a
+ * paid repeat until an operator decides). DELETED and FAILED renders are
+ * history: create() moves them aside (`<hash>:retired:<id>`) under the gift
+ * lock and starts a new, explicitly requested attempt; quote() ignores them.
+ */
+const DEAD_RENDER = ['DELETED', 'FAILED'];
+function storyManifest(raw: unknown): StoryVideoSegmentsManifest | null {
+  const m = raw as StoryVideoSegmentsManifest | null;
+  return m && m.version === 1 && Array.isArray(m.segments) ? m : null;
+}
 const select = {
   id: true,
   giftId: true,
@@ -51,10 +176,11 @@ const select = {
   qaStatus: true,
   qa: true,
   error: true,
+  segments: true,
   createdAt: true,
   updatedAt: true,
 } as const;
-const MAX_VIDEO = 3 * 1024 * 1024;
+const MAX_VIDEO = STORY_MAX_VIDEO;
 function publicApi() {
   const u = new URL(
     process.env.API_PUBLIC_URL ||
@@ -66,12 +192,17 @@ function publicApi() {
     u.pathname === '/' ? '/api/' : `${u.pathname.replace(/\/$/, '')}/`;
   return u.toString();
 }
-export function storyAssetUrl(part: 'base' | 'cover') {
+export function storyAssetUrl(
+  part: 'base' | 'cover',
+  revision: string = BASE.revision,
+) {
   const u = new URL(process.env.TMA_PUBLIC_URL || 'https://viral4creators.app');
   if (u.protocol !== 'https:' || u.username || u.password)
     throw new ServiceUnavailableException('Адрес базового видео не настроен');
+  const base = storyVideoBaseRevision(revision);
+  if (!base) throw new NotFoundException('Базовый видеопакет не опубликован');
   return new URL(
-    `/story-assets/turnip-v1/${part === 'base' ? 'base.mp4' : 'cover.png'}`,
+    `/story-assets/${base.revision}/${part === 'base' ? base.tracks.video : base.tracks.cover}`,
     u,
   ).toString();
 }
@@ -84,7 +215,29 @@ export class StoryVideoService {
     private readonly plan: PlanService,
     private readonly usage: AiUsageService,
     private readonly stt: SonioxSttClient,
+    private readonly looks: NarratorLooksService,
   ) {}
+  /**
+   * WP5↔WP4: the profile narrator image (applied look, else the original
+   * photo/sketch of the narrator character). A 409 from WP5 (revoked image
+   * consent, deleted/stale look, no image) is returned as is: no silent
+   * fallback to the original or to the cover.
+   */
+  private async narratorImage(manifestId: string, userId: string) {
+    const image = await this.looks.resolveNarratorImage(manifestId, userId);
+    if (
+      !(STORY_NARRATOR_IMAGE_MIMES as readonly string[]).includes(
+        image.mimeType,
+      ) ||
+      !image.bytes.length ||
+      image.bytes.length > STORY_NARRATOR_IMAGE_MAX_BYTES ||
+      digest(image.bytes) !== image.assetHash
+    )
+      throw new ConflictException(
+        'Изображение рассказчика не подходит для кадра вступления (PNG/JPEG/WebP до 4 МБ); выберите другой образ или отключите его',
+      );
+    return image;
+  }
   private async gift(userId: string, giftId: string) {
     const g = await this.prisma.storyGift.findFirst({
       where: { id: giftId, userId, status: { in: ['READY', 'APPROVED'] } },
@@ -96,6 +249,11 @@ export class StoryVideoService {
         audioHash: true,
         durationSeconds: true,
         giftNote: true,
+        giftNotePosition: true,
+        narrationLayout: true,
+        hasGiftPhoto: true,
+        occasionKind: true,
+        chapters: true,
         audioQaStatus: true,
         locale: true,
         text: true,
@@ -199,11 +357,29 @@ export class StoryVideoService {
       where: { giftId },
       _sum: { reservedMicroUsd: true },
     });
+    const base = storyVideoBaseFor(g.catalogId);
+    const recordings = await this.prisma.storyVideoSegment.findMany({
+      where: { giftId, source: 'recorded', status: 'READY' },
+      select: {
+        id: true,
+        durationSeconds: true,
+        audioHash: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+    let giftNote: { text: string; position: string } | null = null;
+    try {
+      giftNote = storyNarrationParts(g).giftNote;
+    } catch {
+      giftNote = null;
+    }
     return {
-      supported: g.catalogId === BASE.catalogId && g.voiceId === STORY_VOICE,
-      base: BASE,
-      baseUrl: storyAssetUrl('base'),
-      coverUrl: storyAssetUrl('cover'),
+      supported: !!base && g.voiceId === STORY_VOICE,
+      base: base ?? BASE,
+      baseUrl: storyAssetUrl('base', (base ?? BASE).revision),
+      coverUrl: storyAssetUrl('cover', (base ?? BASE).revision),
       budgetUsd: g.budgetCents / 100,
       reservedUsd:
         (g.reservedMicroUsd + (sum._sum.reservedMicroUsd ?? 0)) / 1e6,
@@ -211,6 +387,32 @@ export class StoryVideoService {
       narratorProfiles: await this.profiles(userId),
       voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
       voiceConsentText: STORY_PARENT_CONSENT_TEXT,
+      recordingConsentVersion: STORY_RECORDING_CONSENT_VERSION,
+      recordingConsentText: STORY_RECORDING_CONSENT_TEXT,
+      recordings: recordings.map((r) => ({
+        id: r.id,
+        seconds: r.durationSeconds,
+        sha256: r.audioHash,
+        createdAt: r.createdAt,
+      })),
+      giftNote,
+      hasGiftPhoto: g.hasGiftPhoto,
+      preambleSuggestions: storyOccasionLines(
+        (g.occasionKind as StoryOccasionKind | null) ?? null,
+        g.locale,
+      ),
+      limits: {
+        preambleChars: 180,
+        outroChars: 180,
+        pronunciations: STORY_PRONUNCIATION_MAX,
+        pronunciationChars: STORY_PRONUNCIATION_CHARS,
+        recordingSeconds: {
+          min: STORY_RECORDING_MIN_SECONDS,
+          max: STORY_RECORDING_MAX_SECONDS,
+        },
+        recordingBytes: STORY_RECORDING_MAX_BYTES,
+        totalSeconds: STORY_VIDEO_MAX_SECONDS,
+      },
     };
   }
   private async own(userId: string, giftId: string, id: string) {
@@ -223,67 +425,515 @@ export class StoryVideoService {
     await this.assertParentActive(userId, r.userVoiceId, r.voiceId);
     return r;
   }
-  async create(
+  /**
+   * Р-ST-WP4-2. Resolves the ordered segment plan of one export without any
+   * write or provider call. Shared by `quote()` (preview) and `create()`.
+   * The video speaks exactly the approved gift words: preamble, the gift's
+   * own note (WP3 layout) and the exact edition text — only voice and
+   * segmentation differ.
+   */
+  private async prepare(
     userId: string,
     giftId: string,
     preambleText: string,
-    choice: StoryVoiceChoice = {},
+    choice: StoryVideoInput,
+    quote: boolean,
   ) {
     const g = await this.gift(userId, giftId);
-    const preamble = preambleText.trim();
+    // B-S3-7(2): lone surrogates are dropped at the video entry points.
+    const preamble = stripStoryLoneSurrogates(preambleText ?? '').trim();
     if (!preamble || preamble.length > 180)
       throw new BadRequestException('Преамбула: от 1 до 180 символов');
+    assertStoryPromiseFree(preamble, g.locale);
+    const outro =
+      stripStoryLoneSurrogates(choice.outroText ?? '').trim() || null;
+    if (outro && outro.length > 180)
+      throw new BadRequestException('Завершение: до 180 символов');
+    if (outro) assertStoryPromiseFree(outro, g.locale);
+    let pronunciations: ReturnType<typeof parseStoryPronunciations>;
+    try {
+      pronunciations = parseStoryPronunciations(choice.pronunciations);
+    } catch (e) {
+      throw new BadRequestException((e as Error).message);
+    }
+    const base = storyVideoBaseFor(g.catalogId);
     if (
-      g.catalogId !== BASE.catalogId ||
+      !base ||
       g.voiceId !== STORY_VOICE ||
       !g.audioHash ||
       !g.durationSeconds ||
-      g.giftNote ||
       g.audioQaStatus !== 'PASS'
     )
       throw new ConflictException(
-        'Нужна проверенная точная «Репка» Nova без дополнительных реплик внутри основной дорожки',
+        'Нужна проверенная точная сказка Nova с опубликованным базовым видеопакетом этой редакции',
       );
-    const parent = await this.parent(userId, choice);
+    if (storyChaptersSha256(g.chapters) !== base.textSha256)
+      throw new ConflictException(
+        'Текст подарка не совпадает с редакцией базового видео: нужна совместимая новая версия видеопакета',
+      );
+    let parts: ReturnType<typeof storyNarrationParts>;
+    try {
+      parts = storyNarrationParts(g);
+    } catch {
+      throw new ConflictException(
+        'Раскладка текста подарка не сходится с записью; сборка остановлена без оплаты',
+      );
+    }
+    // B-S3-6: the gift note enters the video (also inside the Nova MP3 of
+    // pre-WP3 gifts, narrationLayout = null) — same validator before any cost.
+    if (parts.giftNote) assertStoryPromiseFree(parts.giftNote.text, g.locale);
+    const consentMissing =
+      !!choice.narratorManifestId &&
+      (choice.voiceConsentAccepted !== true ||
+        choice.voiceConsentVersion !== STORY_PARENT_CONSENT_VERSION);
+    // A quote only resolves ownership/readiness; consent still gates paid work.
+    const parent = await this.parent(
+      userId,
+      quote && choice.narratorManifestId
+        ? {
+            ...choice,
+            voiceConsentAccepted: true,
+            voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
+          }
+        : choice,
+    );
+    if (choice.useNarratorImage === true && !parent)
+      throw new BadRequestException(
+        'Образ рассказчика в кадре вступления доступен только с голосом из профиля',
+      );
+    const narrator =
+      choice.useNarratorImage === true && parent
+        ? narratorSnapshot(await this.narratorImage(parent.manifestId, userId))
+        : null;
+    const introVisual = narrator ? ('narrator' as const) : ('cover' as const);
     const voiceId = parent?.voiceId ?? STORY_VOICE;
+    const userVoiceId = parent?.userVoiceId ?? null;
+    const consent = parent
+      ? `${STORY_PARENT_CONSENT_VERSION}:${parent.cloneConsentAt.toISOString()}`
+      : 'nova';
+    const synth = (
+      kind: 'intro' | 'gift_note' | 'outro',
+      text: string,
+      extra: Partial<PlannedSegment> = {},
+    ): PlannedSegment => {
+      const tts = applyStoryPronunciations(text, pronunciations);
+      if (tts.text.length > 400)
+        throw new BadRequestException('Текст для озвучки слишком длинный');
+      // B-S2-1: what TTS actually says passes the same validator.
+      assertSpokenPromiseFree(tts.text, g.locale);
+      return {
+        kind,
+        source: 'synth',
+        text,
+        ...(tts.text !== text ? { ttsText: tts.text } : {}),
+        ...(tts.applied.length ? { pronunciations: tts.applied } : {}),
+        cacheKey: storySegmentKey({
+          text: tts.text,
+          voiceId,
+          userVoiceId,
+          consent,
+          language: g.locale,
+        }),
+        voiceId,
+        visual: 'cover',
+        mime: 'audio/mpeg',
+        audioHash: null,
+        seconds: null,
+        ...extra,
+      };
+    };
+    // Main speech: pinned Nova MP3 of the gift, or the clone's narration of the
+    // exact edition text (reused by parentNarrationKey across preambles/notes).
+    const mainTts = applyStoryPronunciations(parts.main, pronunciations);
+    if (parent && mainTts.applied.length) {
+      // B-S2-1: a classic edition is spoken exactly as published.
+      if ((storyEdition(g.catalogId)?.kind ?? 'classic') === 'classic')
+        throw new BadRequestException(
+          `Произношение не применяется к тексту классической редакции: «${mainTts.applied.join('», «')}» есть в самой сказке, а она озвучивается точно по изданию. Уберите эти пары; для вступления, реплики и завершения подходят пары со словами, которых нет в тексте сказки`,
+        );
+      assertSpokenPromiseFree(mainTts.text, g.locale);
+    }
     const narrationKey = parent
       ? digest(
           JSON.stringify({
             giftId,
-            text: g.text,
+            text: parts.main,
             userVoiceId: parent.userVoiceId,
             voiceId,
             consentAt: parent.cloneConsentAt.toISOString(),
+            ...(mainTts.applied.length ? { tts: mainTts.text } : {}),
           }),
         )
       : null;
-    const configHash = parent
-      ? storyVideoConfigHash(
-          digest(
-            `${narrationKey}:${parent.manifestId}:${STORY_PARENT_CONSENT_VERSION}`,
-          ),
-          preamble,
+    const segments: PlannedSegment[] = [];
+    if (choice.preambleSource === 'recorded') {
+      const rec = choice.recordingId
+        ? await this.prisma.storyVideoSegment.findFirst({
+            where: {
+              id: choice.recordingId,
+              giftId,
+              source: 'recorded',
+              status: 'READY',
+            },
+            select: {
+              id: true,
+              cacheKey: true,
+              audioHash: true,
+              durationSeconds: true,
+            },
+          })
+        : null;
+      if (!rec)
+        throw new BadRequestException(
+          'Запись вступления не найдена: загрузите её снова',
+        );
+      segments.push({
+        kind: 'intro',
+        source: 'recorded',
+        text: preamble,
+        cacheKey: rec.cacheKey,
+        voiceId: null,
+        visual: introVisual,
+        mime: 'audio/wav',
+        audioHash: rec.audioHash,
+        seconds: rec.durationSeconds,
+        recordingId: rec.id,
+      });
+    } else segments.push(synth('intro', preamble, { visual: introVisual }));
+    // Nova: the note is already inside the approved, QA-checked gift MP3 (WP3
+    // keeps the glued text for the audio version) — reused as is, no new
+    // synthesis. A profile voice speaks it as a separate segment instead.
+    const separateNote = parent && parts.giftNote ? parts.giftNote : null;
+    const note = separateNote
+      ? synth('gift_note', separateNote.text, {
+          position: separateNote.position,
+          visual: g.hasGiftPhoto ? 'photo' : 'cover',
+        })
+      : null;
+    if (note?.position === 'beginning') segments.push(note);
+    segments.push(
+      parent
+        ? {
+            kind: 'main',
+            source: 'parent',
+            text: parts.main,
+            ...(mainTts.text !== parts.main ? { ttsText: mainTts.text } : {}),
+            ...(mainTts.applied.length
+              ? { pronunciations: mainTts.applied }
+              : {}),
+            cacheKey: narrationKey!,
+            voiceId,
+            visual: 'base',
+            mime: 'audio/mpeg',
+            audioHash: null,
+            seconds: null,
+          }
+        : {
+            kind: 'main',
+            source: 'gift',
+            text: g.text,
+            cacheKey: g.audioHash,
+            voiceId: STORY_VOICE,
+            visual: 'base',
+            mime: 'audio/mpeg',
+            audioHash: g.audioHash,
+            seconds: g.durationSeconds,
+            ...(parts.giftNote ? { includes: ['gift_note' as const] } : {}),
+          },
+    );
+    if (note?.position === 'end') segments.push(note);
+    if (outro) segments.push(synth('outro', outro));
+    const intro = segments[0];
+    const legacy =
+      segments.length === 2 &&
+      intro.source === 'synth' &&
+      intro.visual === 'cover' &&
+      !intro.ttsText &&
+      // Nova main speech is the pinned MP3: pairs matching its words change
+      // nothing audible, so they must not fork the legacy config hash.
+      !(parent && mainTts.applied.length);
+    const mainKey = parent
+      ? digest(
+          `${narrationKey}:${parent.manifestId}:${STORY_PARENT_CONSENT_VERSION}`,
         )
-      : storyVideoConfigHash(g.audioHash, preamble);
+      : g.audioHash;
+    // Version-1 key for the legacy layout keeps old renders deduplicating.
+    const configHash = storyVideoConfigHash(
+      mainKey,
+      preamble,
+      legacy
+        ? undefined
+        : segments.map((s) => [
+            s.kind,
+            s.position ?? null,
+            s.source,
+            s.cacheKey,
+            s.visual,
+            // Narrator frame only: the exact image and its consent snapshot.
+            // Absent from every earlier layout, so their keys stay unchanged.
+            ...(s.visual === 'narrator' && narrator
+              ? [narrator.assetHash, narrator.lookId, narrator.consentVersion]
+              : []),
+          ]),
+      base.baseSha256,
+    );
+    const hints = [preamble, outro]
+      .filter((t): t is string => !!t)
+      .flatMap((t) => checkStoryPromises(t, g.locale).hints);
+    return {
+      g,
+      base,
+      preamble,
+      parent,
+      voiceId,
+      narrationKey,
+      mainTts: mainTts.text,
+      segments,
+      configHash,
+      consentMissing,
+      hints,
+      narrator,
+    };
+  }
+  /** Cached synth segments of this gift only (never another owner/gift). */
+  private async segmentRows(
+    db: Pick<PrismaService, 'storyVideoSegment'>,
+    giftId: string,
+    keys: string[],
+  ) {
+    if (!keys.length) return new Map<string, SegmentRow>();
+    const rows = await db.storyVideoSegment.findMany({
+      where: { giftId, cacheKey: { in: keys } },
+      select: {
+        id: true,
+        cacheKey: true,
+        status: true,
+        audioHash: true,
+        durationSeconds: true,
+      },
+    });
+    return new Map<string, SegmentRow>(rows.map((r) => [r.cacheKey, r]));
+  }
+  /**
+   * A-S2-1: the parent main narration for `key`. A render that stored it is
+   * reused; otherwise any render still holding the key — in progress,
+   * UNKNOWN, FAILED or even purged by retention while unconfirmed — blocks a
+   * new paid synthesis (`mainAudio: null`). The key is released only by an
+   * operator with confirmed absence of a provider charge.
+   */
+  private async priorNarration(
+    db: Pick<PrismaService, 'storyVideoRender'>,
+    giftId: string,
+    key: string | null,
+  ) {
+    if (!key) return null;
+    const select = { mainAudio: true, mainAudioHash: true, mainDuration: true };
+    return (
+      (await db.storyVideoRender.findFirst({
+        where: {
+          giftId,
+          parentNarrationKey: key,
+          status: { not: 'DELETED' },
+          mainDuration: { not: null },
+        },
+        select,
+      })) ??
+      (await db.storyVideoRender.findFirst({
+        where: { giftId, parentNarrationKey: key },
+        select,
+      }))
+    );
+  }
+  /**
+   * Р-ST-WP4-6. Repeat-order estimate with no side effects: no writes, no
+   * provider calls. Shows which segments are reused, which would be
+   * synthesized, the reserve and whether the remaining budget covers it.
+   */
+  async quote(
+    userId: string,
+    giftId: string,
+    preambleText: string,
+    choice: StoryVideoInput = {},
+  ) {
+    const p = await this.prepare(userId, giftId, preambleText, choice, true);
+    const slot = await this.prisma.storyVideoRender.findUnique({
+      where: { giftId_configHash: { giftId, configHash: p.configHash } },
+      select: { id: true, status: true },
+    });
+    const existing = slot && !DEAD_RENDER.includes(slot.status) ? slot : null;
+    const synthKeys = p.segments
+      .filter((s) => s.source === 'synth')
+      .map((s) => s.cacheKey);
+    const rows = await this.segmentRows(this.prisma, giftId, synthKeys);
+    const prior = await this.priorNarration(
+      this.prisma,
+      giftId,
+      p.narrationKey,
+    );
+    const pending = new Set<string>();
+    const lines = p.segments.map((s) => {
+      const row = rows.get(s.cacheKey);
+      let state: 'reuse' | 'synthesize' | 'blocked' = 'reuse';
+      let seconds = s.seconds;
+      if (s.source === 'synth') {
+        if (row?.status === 'READY') seconds = row.durationSeconds;
+        else if (row && row.status !== 'DELETED') state = 'blocked';
+        else if (pending.has(s.cacheKey)) state = 'reuse';
+        else {
+          state = 'synthesize';
+          pending.add(s.cacheKey);
+        }
+      } else if (s.source === 'parent') {
+        if (!prior) state = 'synthesize';
+        else if (!prior.mainAudio) state = 'blocked';
+        else seconds = prior.mainDuration;
+      }
+      return {
+        kind: s.kind,
+        ...(s.position ? { position: s.position } : {}),
+        source: s.source,
+        text: s.text,
+        ttsText: s.ttsText ?? s.text,
+        pronunciations: s.pronunciations ?? [],
+        ...(s.includes ? { includes: s.includes } : {}),
+        visual: s.visual,
+        state,
+        seconds,
+        characters:
+          state === 'synthesize'
+            ? (s.source === 'parent' ? p.mainTts : (s.ttsText ?? s.text)).length
+            : 0,
+      };
+    });
+    const synthText = lines
+      .filter((l) => l.state === 'synthesize' && l.source === 'synth')
+      .map((l) => l.ttsText)
+      .join('');
+    const reserve = storyVideoReserve(
+      synthText,
+      lines.some((l) => l.source === 'parent' && l.state === 'synthesize')
+        ? p.mainTts
+        : '',
+    );
+    const day = new Date();
+    day.setUTCHours(0, 0, 0, 0);
+    const daily = await this.prisma.storyVideoRender.count({
+      where: { giftId, createdAt: { gte: day } },
+    });
+    const sum = await this.prisma.storyVideoRender.aggregate({
+      where: { giftId },
+      _sum: { reservedMicroUsd: true },
+    });
+    const reserved = p.g.reservedMicroUsd + (sum._sum.reservedMicroUsd ?? 0);
+    const budget = p.g.budgetCents * 10000;
+    const blockers: string[] = [];
+    if (p.consentMissing)
+      blockers.push(
+        'Нужно подтверждение согласия на озвучку выбранным голосом',
+      );
+    if (lines.some((l) => l.state === 'blocked'))
+      blockers.push(
+        'Часть речи этого голоса уже готовится либо требует проверки оператором; повторная оплата отключена',
+      );
+    if (!existing && daily >= 3)
+      blockers.push('Пилот: три сборки одного подарка в сутки');
+    if (!existing && reserved + reserve > budget)
+      blockers.push('Оставшегося бюджета не хватит на эту версию');
+    // Unknown durations (not synthesized yet) are estimated from the text:
+    // ≈14 characters per second of calm reading (story-budget.ts).
+    const estimated = lines.some((l) => !l.seconds);
+    const timed = lines.map((l) => ({
+      kind: l.kind,
+      position: l.position,
+      seconds:
+        l.seconds ||
+        Math.max(
+          1,
+          Math.round(
+            ((l.source === 'parent' ? p.mainTts : l.ttsText).length /
+              STORY_SPEECH_CHARS_PER_SECOND) *
+              10,
+          ) / 10,
+        ),
+    }));
+    const layout = storyVideoLayout(timed, p.base);
+    const warnings: string[] = [];
+    if (layout.durationSeconds > STORY_VIDEO_MAX_SECONDS)
+      warnings.push(
+        `Итог ${estimated ? 'по оценке ' : ''}${layout.durationSeconds.toFixed(1)} с — длиннее ${STORY_VIDEO_MAX_SECONDS} с: сократите вступление или завершение`,
+      );
+    return {
+      sideEffects: 'none' as const,
+      configHash: p.configHash,
+      existingRender: existing,
+      baseRevision: p.base.revision,
+      baseHash: p.base.baseSha256,
+      voice: {
+        label: p.parent?.label ?? 'Nova',
+        profile: p.parent ? ('parent' as const) : ('nova' as const),
+        /** The existing clone is reused; a repeat order never re-clones. */
+        cloning: false as const,
+      },
+      segments: lines,
+      narrator: p.narrator
+        ? {
+            kind: p.narrator.kind,
+            lookId: p.narrator.lookId,
+            asset: p.narrator.asset,
+            style: p.narrator.style,
+            assetHash: p.narrator.assetHash,
+            consentVersion: p.narrator.consentVersion,
+          }
+        : null,
+      tracks: { speech: lines.map((l) => l.kind), music: [], effects: [] },
+      layout,
+      layoutEstimated: estimated,
+      warnings,
+      reserveMicroUsd: existing ? 0 : reserve,
+      reservedMicroUsd: reserved,
+      budgetMicroUsd: budget,
+      remainingMicroUsd: Math.max(0, budget - reserved),
+      fits: !blockers.length,
+      blockers,
+      hints: p.hints,
+    };
+  }
+  async create(
+    userId: string,
+    giftId: string,
+    preambleText: string,
+    choice: StoryVideoInput = {},
+  ) {
+    const p = await this.prepare(userId, giftId, preambleText, choice, false);
+    const { g, base, parent, voiceId, narrationKey, configHash } = p;
+    // B-S3-7(1): a repeat of an existing configuration re-runs every current
+    // check above (validator, consent, voice, image) before it gets the
+    // existing render back — no paid call either way.
     const existing = await this.prisma.storyVideoRender.findUnique({
       where: { giftId_configHash: { giftId, configHash } },
       select,
     });
-    if (existing) return existing;
-    if (!this.ffmpeg.configured() || !this.tts.configured())
+    if (existing && !DEAD_RENDER.includes(existing.status)) return existing;
+    const needsTts = !!parent || p.segments.some((s) => s.source === 'synth');
+    if (!this.ffmpeg.configured() || (needsTts && !this.tts.configured()))
       throw new ServiceUnavailableException(
         'Сборка или озвучка временно недоступны',
       );
     const api = publicApi(); // Validate before spending.
     await this.plan.assertCanSpendUser(userId);
-
+    const synthKeys = [
+      ...new Set(
+        p.segments.filter((s) => s.source === 'synth').map((s) => s.cacheKey),
+      ),
+    ];
     const claim = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-video:${giftId}`}))::text`;
       const cached = await tx.storyVideoRender.findUnique({
         where: { giftId_configHash: { giftId, configHash } },
         select,
       });
-      if (cached) return { fresh: false, row: cached };
+      if (cached && !DEAD_RENDER.includes(cached.status))
+        return { fresh: false, row: cached, claimed: [] };
       const current = await tx.storyGift.findFirst({
         where: {
           id: giftId,
@@ -293,27 +943,41 @@ export class StoryVideoService {
         },
       });
       if (!current) throw new ConflictException('Выпуск изменился');
-      const prior = narrationKey
-        ? await tx.storyVideoRender.findFirst({
-            where: {
-              giftId,
-              parentNarrationKey: narrationKey,
-              status: { not: 'DELETED' },
-            },
-            select: {
-              mainAudio: true,
-              mainAudioHash: true,
-              mainDuration: true,
-            },
-          })
-        : null;
+      const prior = await this.priorNarration(tx, giftId, narrationKey);
       if (prior && !prior.mainAudio)
         throw new ConflictException(
           'Основная речь этого голоса уже готовится либо требует проверки; повторная оплата отключена',
         );
+      const rows = await this.segmentRows(tx, giftId, synthKeys);
+      const toSynth = synthKeys.filter((k) => {
+        const row = rows.get(k);
+        if (row && row.status !== 'READY' && row.status !== 'DELETED')
+          throw new ConflictException(
+            'Часть речи этого голоса уже готовится либо требует проверки оператором; повторная оплата отключена',
+          );
+        return !row || row.status === 'DELETED';
+      });
+      const recording = p.segments.find((s) => s.recordingId);
+      if (
+        recording &&
+        !(await tx.storyVideoSegment.findFirst({
+          where: {
+            id: recording.recordingId,
+            giftId,
+            status: 'READY',
+            audioHash: recording.audioHash,
+          },
+          select: { id: true },
+        }))
+      )
+        throw new BadRequestException('Запись вступления была удалена');
+      const ttsOf = (key: string) => {
+        const s = p.segments.find((x) => x.cacheKey === key)!;
+        return s.ttsText ?? s.text;
+      };
       const reserve = storyVideoReserve(
-        preamble,
-        parent && !prior ? g.text : '',
+        toSynth.map(ttsOf).join(''),
+        parent && !prior ? p.mainTts : '',
       );
       const day = new Date();
       day.setUTCHours(0, 0, 0, 0);
@@ -335,16 +999,69 @@ export class StoryVideoService {
         throw new BadRequestException(
           'Оставшегося бюджета не хватит на эту версию',
         );
+      // Claim each new segment once: a concurrent render sees PENDING and stops.
+      for (const key of toSynth) {
+        const data = {
+          source: 'synth',
+          status: 'PENDING',
+          text: ttsOf(key),
+          voiceId,
+          userVoiceId: parent?.userVoiceId ?? null,
+          mime: 'audio/mpeg',
+          audio: null,
+          audioHash: null,
+          durationSeconds: null,
+        };
+        const old = rows.get(key);
+        if (old)
+          await tx.storyVideoSegment.updateMany({
+            where: { id: old.id, status: 'DELETED' },
+            data,
+          });
+        else
+          await tx.storyVideoSegment.create({
+            data: { giftId, cacheKey: key, ...data },
+          });
+      }
+      const manifest: StoryVideoSegmentsManifest = {
+        version: 1,
+        baseRevision: base.revision,
+        baseHash: base.baseSha256,
+        segments: p.segments.map(({ recordingId: _r, ...s }) => {
+          void _r;
+          const row = rows.get(s.cacheKey);
+          return row?.status === 'READY'
+            ? { ...s, audioHash: row.audioHash, seconds: row.durationSeconds }
+            : s;
+        }),
+        tracks: {
+          speech: p.segments.map((s) => s.cacheKey),
+          music: [],
+          effects: [],
+        },
+        mix: STORY_VIDEO_MIX,
+        layout: null,
+        ...(p.narrator ? { narrator: p.narrator } : {}),
+      };
+      // A-S2-2: a FAILED/DELETED attempt of this configuration is history.
+      if (cached) {
+        const moved = await tx.storyVideoRender.updateMany({
+          where: { id: cached.id, status: cached.status, configHash },
+          data: { configHash: `${configHash}:retired:${cached.id}` },
+        });
+        if (!moved.count) throw new ConflictException('Сборка изменилась');
+      }
       const row = await tx.storyVideoRender.create({
         data: {
           giftId,
           configHash,
-          preambleText: preamble,
-          baseRevision: BASE.revision,
-          baseHash: BASE.baseSha256,
+          preambleText: p.preamble,
+          baseRevision: base.revision,
+          baseHash: base.baseSha256,
           mainAudioHash: g.audioHash!,
           voiceId,
           voiceLabel: parent?.label ?? 'Nova',
+          segments: manifest as unknown as Prisma.InputJsonValue,
           ...(parent
             ? {
                 narratorManifestId: parent.manifestId,
@@ -365,19 +1082,35 @@ export class StoryVideoService {
         },
         select,
       });
-      return { fresh: true, row };
+      return { fresh: true, row, claimed: toSynth };
     });
     const id = claim.row.id;
     if (!claim.fresh) return claim.row;
-    let stage: 'base' | 'main' | 'voice' | 'submit' = 'base';
+    const claimed = new Set(claim.claimed);
+    const attempted = new Set<string>();
+    let stage:
+      | 'base'
+      | 'main'
+      | 'voice'
+      | 'note'
+      | 'outro'
+      | 'spend'
+      | 'plan'
+      | 'narrator'
+      | 'submit' = 'base';
+    let narratorProblem = '';
+    let spendProblem = '';
+    /** Characters this attempt actually sent to TTS (A-S3-4). */
+    let paidChars = 0;
     try {
       // Fail before synthesis if the published master does not match the approved version.
-      const source = await fetchPubliclyRoutable(storyAssetUrl('base'), {
-        signal: AbortSignal.timeout(20000),
-      });
+      const source = await fetchPubliclyRoutable(
+        storyAssetUrl('base', base.revision),
+        { signal: AbortSignal.timeout(20000) },
+      );
       if (
         !source.ok ||
-        digest(await readBodyWithLimit(source, MAX_VIDEO)) !== BASE.baseSha256
+        digest(await readBodyWithLimit(source, MAX_VIDEO)) !== base.baseSha256
       )
         throw new Error('Base mismatch');
       let mainSeconds = g.durationSeconds!;
@@ -390,8 +1123,9 @@ export class StoryVideoService {
         if (row.mainAudio) mainSeconds = row.mainDuration!;
         else {
           stage = 'main';
+          paidChars += p.mainTts.length;
           const main = await this.tts.synthesize({
-            text: g.text,
+            text: p.mainTts,
             voiceId,
             language: g.locale,
           });
@@ -427,59 +1161,170 @@ export class StoryVideoService {
           if (!saved.count) throw new Error('Render cancelled');
         }
       }
-      stage = 'voice';
-      await this.assertParentActive(userId, parent?.userVoiceId, voiceId);
-      const audio = await this.tts.synthesize({
-        text: preamble,
-        voiceId,
-        language: g.locale,
+      const done = new Map<string, { audioHash: string; seconds: number }>();
+      let introAudio: Uint8Array<ArrayBuffer> | null = null;
+      for (const s of p.segments) {
+        if (s.source !== 'synth' || !claimed.has(s.cacheKey)) continue;
+        if (done.has(s.cacheKey) || attempted.has(s.cacheKey)) continue;
+        stage = segmentStage[s.kind];
+        await this.assertParentActive(userId, parent?.userVoiceId, voiceId);
+        attempted.add(s.cacheKey);
+        paidChars += (s.ttsText ?? s.text).length;
+        const audio = await this.tts.synthesize({
+          text: s.ttsText ?? s.text,
+          voiceId,
+          language: g.locale,
+        });
+        if (!audio.ok) throw new Error('Segment synthesis unconfirmed');
+        await this.usage.record({
+          operation: 'story-voiceover',
+          model: 'resemble-tts',
+          characters: audio.characters,
+          userId,
+        });
+        if (
+          audio.voiceId !== voiceId ||
+          audio.mimeType !== 'audio/mpeg' ||
+          !audio.durationSeconds ||
+          audio.durationSeconds < STORY_SEGMENT_MIN_SECONDS ||
+          audio.durationSeconds > STORY_SEGMENT_MAX_SECONDS ||
+          audio.audio.length > 1048576
+        )
+          throw new Error('Invalid segment media');
+        const audioHash = digest(audio.audio);
+        // A-S3-6: never store speech for a gift deleted meanwhile.
+        const saved = await this.prisma.storyVideoSegment.updateMany({
+          where: {
+            giftId,
+            cacheKey: s.cacheKey,
+            status: 'PENDING',
+            gift: { status: { in: ['READY', 'APPROVED'] } },
+          },
+          data: {
+            status: 'READY',
+            audio: new Uint8Array(audio.audio),
+            audioHash,
+            durationSeconds: audio.durationSeconds,
+          },
+        });
+        if (!saved.count) throw new Error('Segment cancelled');
+        done.set(s.cacheKey, { audioHash, seconds: audio.durationSeconds });
+        if (s.kind === 'intro') introAudio = new Uint8Array(audio.audio);
+      }
+      // A-S3-3: the plan's spend gate is its own stage (known stop, no submit).
+      stage = 'spend';
+      try {
+        await this.plan.assertCanSpendUser(userId);
+      } catch (e) {
+        spendProblem = e instanceof Error ? e.message : 'расходы недоступны';
+        throw e;
+      }
+      stage = 'plan';
+      const stored = storyManifest(
+        (
+          await this.prisma.storyVideoRender.findUniqueOrThrow({
+            where: { id },
+            select: { segments: true },
+          })
+        ).segments,
+      )!;
+      const segments = stored.segments.map((s) => {
+        const fresh = done.get(s.cacheKey);
+        if (fresh) return { ...s, ...fresh };
+        if (s.kind === 'main')
+          return {
+            ...s,
+            seconds: mainSeconds,
+            audioHash:
+              s.source === 'gift' ? g.audioHash : (s.audioHash ?? null),
+          };
+        return s;
       });
-      if (!audio.ok) throw new Error('Intro synthesis unconfirmed');
-      await this.usage.record({
-        operation: 'story-voiceover',
-        model: 'resemble-tts',
-        characters: audio.characters,
-        userId,
+      if (segments.some((s) => !s.seconds))
+        throw new Error('Segment duration unknown');
+      const introSeg = segments[0];
+      if (!introAudio) {
+        const row = await this.prisma.storyVideoSegment.findFirst({
+          where: {
+            giftId,
+            cacheKey: introSeg.cacheKey,
+            status: 'READY',
+            audioHash: introSeg.audioHash!,
+          },
+          select: { audio: true },
+        });
+        if (!row?.audio) throw new Error('Intro audio missing');
+        introAudio = new Uint8Array(row.audio);
+      }
+      if (digest(introAudio) !== introSeg.audioHash)
+        throw new Error('Intro audio mismatch');
+      const planned = planStorySegments({
+        segments: segments.map((s) => ({
+          kind: s.kind,
+          ...(s.position ? { position: s.position } : {}),
+          seconds: s.seconds!,
+          visual: s.visual,
+          ...(s.source === 'recorded' ? { normalize: true } : {}),
+        })),
+        baseSeconds: base.durationSeconds,
       });
-      if (
-        audio.voiceId !== voiceId ||
-        audio.mimeType !== 'audio/mpeg' ||
-        !audio.durationSeconds ||
-        audio.durationSeconds < 1 ||
-        audio.durationSeconds > 20 ||
-        audio.audio.length > 1048576
-      )
-        throw new Error('Invalid intro media');
+      const layout = storyVideoLayout(
+        segments.map((s) => ({
+          kind: s.kind,
+          position: s.position,
+          seconds: s.seconds!,
+        })),
+        base,
+      );
       const token = randomBytes(32).toString('base64url');
-      const total = mainSeconds + audio.durationSeconds;
-      const stored = await this.prisma.storyVideoRender.updateMany({
+      const saved = await this.prisma.storyVideoRender.updateMany({
         where: {
           id,
           status: 'PREPARING',
           gift: { status: { in: ['READY', 'APPROVED'] } },
         },
         data: {
-          preambleAudio: new Uint8Array(audio.audio),
-          preambleDuration: audio.durationSeconds,
-          durationSeconds: total,
+          preambleAudio: introAudio,
+          preambleDuration: introSeg.seconds,
+          durationSeconds: planned.durationSeconds,
+          segments: {
+            ...stored,
+            segments,
+            layout,
+          } as unknown as Prisma.InputJsonValue,
           assetTokenHash: digest(token),
           assetExpiresAt: new Date(Date.now() + 30 * 60000),
         },
       });
-      if (!stored.count) throw new Error('Render cancelled');
-      await this.plan.assertCanSpendUser(userId);
-      const planned = planStoryVideo(mainSeconds, audio.durationSeconds);
+      if (!saved.count) throw new Error('Render cancelled');
       const input = (kind: string) =>
         `${api}story-render-input/${token}/${kind}`;
+      if (p.narrator) {
+        // Re-check like assertParentActive: consent/look may change while TTS ran.
+        stage = 'narrator';
+        try {
+          const now = narratorSnapshot(
+            await this.narratorImage(p.narrator.manifestId, userId),
+          );
+          if (!sameNarrator(now, p.narrator))
+            throw new ConflictException(
+              'Образ рассказчика изменился после запуска сборки',
+            );
+        } catch (e) {
+          narratorProblem =
+            e instanceof Error ? e.message : 'Образ рассказчика недоступен';
+          throw e;
+        }
+      }
       stage = 'submit';
       await this.assertParentActive(userId, parent?.userVoiceId, voiceId);
       const job = await this.ffmpeg.submit({
-        inputs: {
-          base: input('base'),
-          main: input('main'),
-          cover: input('cover'),
-          intro: input('intro'),
-        },
+        inputs: Object.fromEntries(
+          Object.entries(planned.inputs).map(([key, part]) => [
+            key,
+            input(part),
+          ]),
+        ),
         outputs: planned.outputs,
         commands: planned.commands,
         retrySubmit: false,
@@ -498,16 +1343,198 @@ export class StoryVideoService {
         userId,
       });
     } catch {
+      // Unattempted claims cost nothing: release them. An attempted segment
+      // without a confirmed result may have been billed: UNKNOWN, no retry.
+      for (const key of claimed)
+        await this.prisma.storyVideoSegment
+          .updateMany({
+            where: { giftId, cacheKey: key, status: 'PENDING' },
+            data: attempted.has(key)
+              ? { status: 'UNKNOWN' }
+              : { status: 'DELETED', text: '' },
+          })
+          .catch(() => undefined);
+      const what = {
+        base: 'проверка базового видео',
+        main: 'озвучка основной сказки',
+        voice: 'озвучка преамбулы',
+        note: 'озвучка реплики о подарке',
+        outro: 'озвучка завершения',
+        spend: 'проверка лимита расходов',
+        plan: 'проверка длительностей сегментов',
+        narrator: 'проверка образа рассказчика',
+        submit: 'отправка сборщику',
+      }[stage];
+      // A-S3-4: stopped before the provider submit (spend/plan/narrator) is a
+      // known FAILED: FFmpeg never ran, so the assembly + QA reserve is
+      // released; only the speech this attempt really requested stays reserved
+      // (it is READY in the cache and the next attempt reuses it for free).
+      const stopped = {
+        status: 'FAILED',
+        assetTokenHash: null,
+        assetExpiresAt: null,
+        reservedMicroUsd: storyVideoTtsReserve(paidChars),
+      };
+      const kept =
+        ' Готовые сегменты речи сохранены и переиспользуются без новой оплаты; резерв сборки освобождён.';
       await this.prisma.storyVideoRender.updateMany({
         where: { id, status: 'PREPARING' },
-        data: {
-          status: 'UNKNOWN',
-          assetTokenHash: null,
-          error: `Сборка не подтверждена на этапе «${stage === 'base' ? 'проверка базового видео' : stage === 'main' ? 'озвучка основной сказки' : stage === 'voice' ? 'озвучка преамбулы' : 'отправка сборщику'}». Платный повтор отключён; нужна проверка оператором.`,
-        },
+        data:
+          stage === 'narrator'
+            ? {
+                ...stopped,
+                error: `Сборка остановлена до отправки: образ рассказчика недоступен (${narratorProblem.slice(0, 200)}). Обложка или оригинал молча не подставляются.${kept}`,
+              }
+            : stage === 'spend'
+              ? {
+                  ...stopped,
+                  error: `Сборка остановлена до отправки: тариф сейчас не разрешает новые расходы (${spendProblem.slice(0, 200)}).${kept}`,
+                }
+              : stage === 'plan'
+                ? {
+                    ...stopped,
+                    error: `Сборка остановлена до отправки: ${what} (итог до ${STORY_VIDEO_MAX_SECONDS} с, основная речь 40–90 с, остальные сегменты ${STORY_SEGMENT_MIN_SECONDS}–${STORY_SEGMENT_MAX_SECONDS} с).${kept}`,
+                  }
+                : {
+                    status: 'UNKNOWN',
+                    // A-S3-9: at submit the token hash stays as the job's input
+                    // fingerprint for bind-job; expired, so nothing is served.
+                    ...(stage === 'submit'
+                      ? { assetExpiresAt: new Date() }
+                      : { assetTokenHash: null }),
+                    error: `Сборка не подтверждена на этапе «${what}». Платный повтор отключён; нужна проверка оператором.`,
+                  },
       });
     }
     return this.own(userId, giftId, id);
+  }
+  /**
+   * ST-P1: the adult's own preamble recording. Canonical WAV only (the client
+   * re-encodes its MediaRecorder file), 1–20 s, not silent; stored privately
+   * in this gift, content-addressed, never sent anywhere until a render.
+   */
+  async uploadRecording(
+    userId: string,
+    giftId: string,
+    dto: { base64: string; consentVersion?: string; consentAccepted?: boolean },
+  ) {
+    await this.gift(userId, giftId);
+    if (
+      dto.consentAccepted !== true ||
+      dto.consentVersion !== STORY_RECORDING_CONSENT_VERSION
+    )
+      throw new BadRequestException(
+        'Подтвердите согласие на использование своей записи',
+      );
+    const raw = dto.base64 ?? '';
+    if (
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(raw) ||
+      raw.length > Math.ceil((STORY_RECORDING_MAX_BYTES * 4) / 3) + 4
+    )
+      throw new BadRequestException('Запись: до 1 МБ в base64');
+    const bytes = Buffer.from(raw, 'base64');
+    const wav =
+      bytes.length <= STORY_RECORDING_MAX_BYTES ? parseStoryWav(bytes) : null;
+    if (!wav)
+      throw new BadRequestException(
+        'Нужна запись WAV (PCM 16 бит, моно, 16–48 кГц) до 1 МБ',
+      );
+    if (
+      wav.seconds < STORY_RECORDING_MIN_SECONDS ||
+      wav.seconds > STORY_RECORDING_MAX_SECONDS
+    )
+      throw new BadRequestException(
+        `Длительность вступления — от ${STORY_RECORDING_MIN_SECONDS} до ${STORY_RECORDING_MAX_SECONDS} секунд`,
+      );
+    if (wav.peak < 0.02 || wav.rms < 0.003)
+      throw new BadRequestException(
+        'Запись почти беззвучна — проверьте микрофон',
+      );
+    const sha256 = digest(bytes);
+    const cacheKey = storyRecordingKey(sha256);
+    const data = {
+      source: 'recorded',
+      status: 'READY',
+      text: '',
+      voiceId: null,
+      userVoiceId: null,
+      mime: 'audio/wav',
+      audio: new Uint8Array(bytes),
+      audioHash: sha256,
+      durationSeconds: wav.seconds,
+      consentVersion: STORY_RECORDING_CONSENT_VERSION,
+      consentAt: new Date(),
+    };
+    // A-S3-11: limit check and write under the gift lock (no 6th via a race).
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-video:${giftId}`}))::text`;
+      if (
+        !(await tx.storyGift.findFirst({
+          where: { id: giftId, userId, status: { in: ['READY', 'APPROVED'] } },
+          select: { id: true },
+        }))
+      )
+        throw new NotFoundException('Готовая сказка не найдена');
+      const active = await tx.storyVideoSegment.count({
+        where: {
+          giftId,
+          source: 'recorded',
+          status: 'READY',
+          cacheKey: { not: cacheKey },
+        },
+      });
+      if (active >= 5)
+        throw new BadRequestException(
+          'Не больше пяти записей на подарок: удалите прежнюю',
+        );
+      return tx.storyVideoSegment.upsert({
+        where: { giftId_cacheKey: { giftId, cacheKey } },
+        create: { giftId, cacheKey, ...data },
+        update: data,
+        select: { id: true, durationSeconds: true, createdAt: true },
+      });
+    });
+    return {
+      id: row.id,
+      seconds: row.durationSeconds,
+      sha256,
+      createdAt: row.createdAt,
+    };
+  }
+  /** Erases the recording; renders keep their own private copy until the gift is deleted. */
+  async deleteRecording(userId: string, giftId: string, recordingId: string) {
+    await this.gift(userId, giftId);
+    const r = await this.prisma.storyVideoSegment.updateMany({
+      where: { id: recordingId, giftId, source: 'recorded' },
+      data: {
+        status: 'DELETED',
+        audio: null,
+        audioHash: null,
+        durationSeconds: null,
+      },
+    });
+    if (!r.count) throw new NotFoundException('Запись не найдена');
+    return { deleted: true };
+  }
+  /** WebVTT from segment texts and the export layout (no paid STT). */
+  async subtitles(userId: string, giftId: string, id: string) {
+    const r = await this.own(userId, giftId, id);
+    const g = await this.gift(userId, giftId);
+    const m = storyManifest(r.segments);
+    if (m?.layout)
+      return buildStoryVtt(
+        m.layout.segments.map((l, i) => ({
+          text: m.segments[i]?.text ?? '',
+          start: l.start,
+          end: l.end,
+        })),
+      );
+    if (!m && r.preambleDuration && r.durationSeconds)
+      return buildStoryVtt([
+        { text: r.preambleText, start: 0, end: r.preambleDuration },
+        { text: g.text, start: r.preambleDuration, end: r.durationSeconds },
+      ]);
+    throw new NotFoundException('Субтитры появятся после подготовки сборки');
   }
   async status(userId: string, giftId: string, id: string) {
     let r = await this.own(userId, giftId, id);
@@ -533,7 +1560,8 @@ export class StoryVideoService {
         where: { id, status: { in: ['PREPARING', 'PENDING'] } },
         data: {
           status: 'UNKNOWN',
-          assetTokenHash: null,
+          // A-S3-9: the token hash stays as the input fingerprint (expired).
+          assetExpiresAt: new Date(),
           error:
             'Нет сохранённого задания сборщика. Нужна сверка оператором; повторная оплата отключена.',
         },
@@ -551,27 +1579,11 @@ export class StoryVideoService {
             },
           });
         else if (result.status === 'completed') {
-          const url = result.outputs?.['story.mp4'];
-          if (!url) throw new Error('Invalid container');
-          const res = await fetchPubliclyRoutable(url, {
-            signal: AbortSignal.timeout(20000),
-          });
-          if (!res.ok) throw new Error('Download failed');
-          const bytes = await readBodyWithLimit(res, MAX_VIDEO);
-          const probe = probeMp4(bytes),
-            video = probe?.tracks.find((t) => t.kind === 'video'),
-            audio = probe?.tracks.find((t) => t.kind === 'audio');
-          if (
-            !probe ||
-            bytes.length < 1024 ||
-            !video ||
-            !audio ||
-            video.width !== 1280 ||
-            video.height !== 720 ||
-            Math.abs(probe.durationSeconds - r.durationSeconds!) > 0.15 ||
-            audio.durationSeconds + 0.15 < r.durationSeconds!
-          )
-            throw new Error('Invalid container');
+          // Same validation as the operator binding of a confirmed job (WP1).
+          const out = await downloadStoryVideo(
+            result.outputs?.['story.mp4'],
+            r.durationSeconds!,
+          );
           await this.prisma.storyVideoRender.updateMany({
             where: {
               id,
@@ -580,9 +1592,9 @@ export class StoryVideoService {
             },
             data: {
               status: 'READY',
-              video: new Uint8Array(bytes),
-              videoHash: digest(bytes),
-              durationSeconds: probe.durationSeconds,
+              video: new Uint8Array(out.bytes),
+              videoHash: out.videoHash,
+              durationSeconds: out.durationSeconds,
               assetTokenHash: null,
               error: null,
             },
@@ -694,6 +1706,12 @@ export class StoryVideoService {
       data: { audioQaStatus: 'UNKNOWN' },
     });
     result.staleQa = qa.count;
+    // A segment synthesis that never confirmed is as uncertain as a gift one.
+    const segments = await this.prisma.storyVideoSegment.updateMany({
+      where: { status: 'PENDING', updatedAt: { lt: stale } },
+      data: { status: 'UNKNOWN' },
+    });
+    result.staleAudio += segments.count;
     return result;
   }
   async file(
@@ -722,9 +1740,16 @@ export class StoryVideoService {
           : data.preambleAudio;
     if (!bytes || (kind === 'video' && r.status !== 'READY'))
       throw new NotFoundException('Файл ещё не готов');
+    const introMime =
+      storyManifest(r.segments)?.segments[0]?.mime ?? 'audio/mpeg';
     return {
       base64: Buffer.from(bytes).toString('base64'),
-      mime: kind === 'video' ? 'video/mp4' : 'audio/mpeg',
+      mime:
+        kind === 'video'
+          ? 'video/mp4'
+          : kind === 'intro'
+            ? introMime
+            : 'audio/mpeg',
     };
   }
   async quality(userId: string, giftId: string, id: string) {
@@ -762,8 +1787,12 @@ export class StoryVideoService {
           userId,
         });
       if (!result.text) throw new Error('No transcript');
+      // Same check for every segment layout: all spoken display texts in order.
+      const manifest = storyManifest(r.segments);
       const score = storySpeechScore(
-        `${r.preambleText}\n\n${g.text}`,
+        manifest
+          ? manifest.segments.map((s) => s.text).join('\n\n')
+          : `${r.preambleText}\n\n${g.text}`,
         result.text,
       );
       await this.prisma.storyVideoRender.updateMany({
@@ -810,7 +1839,16 @@ export class StoryVideoService {
   async input(token: string, part: string) {
     if (
       !/^[A-Za-z0-9_-]{43}$/.test(token) ||
-      !['base', 'cover', 'main', 'intro'].includes(part)
+      ![
+        'base',
+        'cover',
+        'main',
+        'intro',
+        'note',
+        'outro',
+        'photo',
+        'narrator',
+      ].includes(part)
     )
       throw new NotFoundException();
     const r = await this.prisma.storyVideoRender.findFirst({
@@ -830,12 +1868,69 @@ export class StoryVideoService {
         throw new NotFoundException();
       return { bytes: Buffer.from(audio), mime: 'audio/mpeg' };
     }
+    const manifest = storyManifest(r.segments);
     if (part === 'intro') {
-      if (!r.preambleAudio) throw new NotFoundException();
-      return { bytes: Buffer.from(r.preambleAudio), mime: 'audio/mpeg' };
+      const intro = manifest?.segments[0];
+      if (
+        !r.preambleAudio ||
+        (intro && digest(r.preambleAudio) !== intro.audioHash)
+      )
+        throw new NotFoundException();
+      return {
+        bytes: Buffer.from(r.preambleAudio),
+        mime: intro?.mime ?? 'audio/mpeg',
+      };
     }
+    if (part === 'note' || part === 'outro') {
+      // Only this gift's cached segment, pinned by the manifest hash.
+      const seg = manifest?.segments.find(
+        (s) => s.kind === (part === 'note' ? 'gift_note' : 'outro'),
+      );
+      const row = seg?.audioHash
+        ? await this.prisma.storyVideoSegment.findFirst({
+            where: {
+              giftId: r.giftId,
+              cacheKey: seg.cacheKey,
+              status: 'READY',
+              audioHash: seg.audioHash,
+            },
+            select: { audio: true, mime: true },
+          })
+        : null;
+      if (!row?.audio || digest(row.audio) !== seg!.audioHash)
+        throw new NotFoundException();
+      return { bytes: Buffer.from(row.audio), mime: row.mime };
+    }
+    if (part === 'narrator') {
+      // Owner-scoped re-resolve: exactly the pinned image, consent still active.
+      const pinned = manifest?.narrator;
+      if (
+        !pinned ||
+        manifest.segments[0]?.visual !== 'narrator' ||
+        pinned.manifestId !== r.narratorManifestId
+      )
+        throw new NotFoundException();
+      let image: NarratorImage;
+      try {
+        image = await this.narratorImage(pinned.manifestId, r.gift.userId);
+      } catch {
+        throw new NotFoundException();
+      }
+      if (!sameNarrator(narratorSnapshot(image), pinned))
+        throw new NotFoundException();
+      return { bytes: Buffer.from(image.bytes), mime: image.mimeType };
+    }
+    if (part === 'photo') {
+      const photo = manifest?.segments.some((s) => s.visual === 'photo')
+        ? r.gift.giftPhoto
+        : null;
+      if (!photo) throw new NotFoundException();
+      return { bytes: Buffer.from(photo), mime: 'image/png' };
+    }
+    const base = storyVideoBaseRevision(r.baseRevision);
+    if (!base) throw new NotFoundException();
     const response = await fetchPubliclyRoutable(
-      storyAssetUrl(part as 'base' | 'cover'),
+      storyAssetUrl(part as 'base' | 'cover', base.revision),
       { signal: AbortSignal.timeout(20000) },
     );
     if (!response.ok) throw new NotFoundException();
@@ -845,7 +1940,7 @@ export class StoryVideoService {
     );
     if (
       (part === 'base' && digest(bytes) !== r.baseHash) ||
-      (part === 'cover' && digest(bytes) !== BASE.coverSha256)
+      (part === 'cover' && digest(bytes) !== base.coverSha256)
     )
       throw new NotFoundException();
     return { bytes, mime: part === 'base' ? 'video/mp4' : 'image/png' };

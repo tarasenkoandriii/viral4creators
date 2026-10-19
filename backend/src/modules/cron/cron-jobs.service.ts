@@ -1,4 +1,5 @@
 import { StoryVideoService } from '../story-gifts/story-video.service';
+import { StoryRetentionService } from '../story-gifts/story-retention.service';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { CRON_LOG_RETENTION_DAYS } from './cron-retention';
 import { SessionService } from '../../common/session.service';
@@ -271,6 +272,7 @@ export class CronJobsService {
     @Optional()
     private readonly clientSiteMedia?: ClientSiteMediaService,
     @Optional() private readonly storyVideos?: StoryVideoService,
+    @Optional() private readonly storyRetention?: StoryRetentionService,
   ) {}
 
   /**
@@ -700,6 +702,25 @@ export class CronJobsService {
   async runStoryFinalize() {
     if (!this.storyVideos) throw new Error('Story finalizer is not configured');
     return this.storyVideos.finalizePending();
+  }
+
+  /**
+   * WP1 (ST-P0): сроки хранения Story-Tales. По умолчанию dry-run — только
+   * счётчики кандидатов; реальное удаление включается
+   * `STORY_RETENTION_PURGE_ENABLED`, готовые сказки — дополнительно
+   * `STORY_RETENTION_READY_PURGE_ENABLED`. Ручной запуск из админки с
+   * debug-режимом — всегда dry-run. Никаких вызовов провайдеров.
+   */
+  async runStoryRetention(opts: { dryRun?: boolean } = {}) {
+    if (!this.storyRetention)
+      throw new Error('Story retention is not configured');
+    const acquired = await tryAcquireJobLock(this.prisma, 'story-retention');
+    if (!acquired) return { skipped: true };
+    try {
+      return await this.storyRetention.run(opts);
+    } finally {
+      await releaseJobLock(this.prisma, 'story-retention', acquired);
+    }
   }
 
   async runTutorialAssemblyPoll(): Promise<TutorialAssemblyPollResult> {

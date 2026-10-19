@@ -89,6 +89,10 @@ function build() {
       framesPurged: 0,
       framesFailed: 0,
     }),
+    // WP1 Story-Tales: сроки хранения (по умолчанию dry-run).
+    runStoryRetention: jest
+      .fn()
+      .mockResolvedValue({ dryRun: true, purged: 0, errors: 0 }),
     // Пятый аудит, Д-4.3: контроллер больше не зовёт `runX()` напрямую —
     // каждый маршрут оборачивает его в `runAndLog`. Мок здесь просто
     // прозрачно выполняет переданную задачу — сама логика записи
@@ -213,6 +217,11 @@ describe('CronController — секрет закрывает каждый из �
       (c) => c.clientSiteRetention('Bearer подделка'),
       'runClientSiteRetention',
     ],
+    [
+      'story-retention',
+      (c) => c.storyRetention('Bearer подделка'),
+      'runStoryRetention',
+    ],
   ];
 
   it.each(cases)(
@@ -332,6 +341,7 @@ describe('CronController — каждый маршрут оборачивает 
       (c) => c.clientSiteRetention(),
       'client-site-retention',
     ],
+    ['story-retention', (c) => c.storyRetention(), 'story-retention'],
   ];
 
   it.each(cases)(

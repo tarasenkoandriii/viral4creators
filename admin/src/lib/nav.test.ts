@@ -3,7 +3,7 @@
 //   npx --prefix ../sites-landing tsx src/lib/nav.test.ts
 // Next не трогает этот файл: в app/ маршрутами становятся только
 // page/route/layout, а lib/ — не app/.
-//  1. Все 33 рабочие страницы в меню ровно по одному разу; каждая ссылка
+//  1. Все 35 рабочих страниц в меню ровно по одному разу; каждая ссылка
 //     ведёт на существующую страницу; групп восемь, в каждой 2–6.
 //  2. Активный пункт: root — только точное совпадение, вложенные
 //     маршруты отмечают родителя, соседи с общим началом — нет.
@@ -28,7 +28,7 @@ const appDir = path.join(__dirname, '..', 'app');
 
 // ── 1 ──
 const hrefs = ALL_NAV_LINKS.map((l) => l.href);
-assert.equal(hrefs.length, 34, 'в меню 34 рабочие страницы');
+assert.equal(hrefs.length, 35, 'в меню 35 рабочих страниц');
 assert.equal(new Set(hrefs).size, hrefs.length, 'без дублей');
 assert.equal(NAV_GROUPS.length, 8, 'восемь групп');
 for (const g of NAV_GROUPS) {

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- isolated in-memory database mock */
-import { StoryGiftsService } from './story-gifts.service';
+import { StoryGiftsService, storyRenderWipe } from './story-gifts.service';
 import { STORY_VOICE, storyText } from './story-catalog';
 function setup() {
   const row = {
@@ -45,6 +45,10 @@ function setup() {
   const tx = {
     storyGift: db,
     storyVideoRender: renderDb,
+    // WP4: segment cache / recordings wiped with the gift.
+    storyVideoSegment: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     $queryRaw: jest.fn(),
   };
   const prisma = {
@@ -158,13 +162,13 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
   });
   it('bounds creation under the owner transaction and freezes the optional gift note', async () => {
     const s = setup();
-    await s.service.create(
-      'u1',
-      'little-lantern-ru-v1',
-      'День рождения',
-      'Для тебя приготовлен подарок.',
-      'beginning',
-    );
+    await s.service.create('u1', {
+      catalogId: 'little-lantern-ru-v1',
+      occasion: 'День рождения',
+      giftNoteEnabled: true,
+      giftNote: 'Для тебя приготовлен подарок.',
+      giftNotePosition: 'beginning',
+    });
     expect(
       s.db.create.mock.calls[0][0].data.text.startsWith(
         'Для тебя приготовлен подарок.',
@@ -173,13 +177,17 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
     expect(s.tx.$queryRaw).toHaveBeenCalled();
     s.db.count.mockResolvedValueOnce(3);
     await expect(
-      s.service.create('u1', 'little-lantern-ru-v1'),
+      s.service.create('u1', { catalogId: 'little-lantern-ru-v1' }),
     ).rejects.toThrow('Пилот');
   });
   it('removes bytes and revokes access when deleting a gift', async () => {
     const s = setup();
     await s.service.remove('u1', 'g1');
     expect(s.row.status).toBe('DELETED');
+    expect(s.tx.storyVideoSegment.updateMany).toHaveBeenCalledWith({
+      where: { giftId: 'g1' },
+      data: expect.objectContaining({ status: 'DELETED', audio: null }),
+    });
     expect(s.row.shareHash).toBeNull();
     expect(s.row.audio).toBeNull();
     expect(s.tx.storyVideoRender.updateMany).toHaveBeenCalledWith(
@@ -198,6 +206,39 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
         }),
       }),
     );
+    // A-S3-6: serialized with video create / segment claims of this gift.
+    expect(String(s.tx.$queryRaw.mock.calls.at(-1)[1])).toBe('story-video:g1');
+  });
+  it('A-S3-5: retention deletion is conditional on the state the cron saw, journal in the same transaction', async () => {
+    const s = setup();
+    const journal = jest.fn(async () => undefined);
+    const raced = await s.service.remove('u1', 'g1', {
+      expect: { status: 'FAILED', updatedAt: new Date(0) },
+      journal,
+    });
+    expect(raced).toEqual({ deleted: false, raced: true });
+    expect(s.row.status).toBe('DRAFT');
+    expect(s.tx.storyVideoRender.updateMany).not.toHaveBeenCalled();
+    expect(journal).not.toHaveBeenCalled();
+    const done = await s.service.remove('u1', 'g1', {
+      expect: { status: 'DRAFT', updatedAt: new Date(0) },
+      journal,
+    });
+    expect(done).toEqual({ deleted: true });
+    expect(journal).toHaveBeenCalledWith(s.tx);
+  });
+  it('storyRenderWipe: retention renames the slot and may keep an unsaved narration key', () => {
+    expect(storyRenderWipe().parentNarrationKey).toBeNull();
+    expect('configHash' in storyRenderWipe()).toBe(false);
+    const kept = storyRenderWipe({
+      release: { id: 'r1', configHash: 'cfg' },
+      keepNarrationKey: true,
+    });
+    expect(kept).toMatchObject({
+      status: 'DELETED',
+      configHash: 'cfg:purged:r1',
+    });
+    expect('parentNarrationKey' in kept).toBe(false);
   });
 });
 
@@ -216,15 +257,12 @@ describe('Story server speech QA', () => {
 describe('Story country and user budget', () => {
   it('accepts a five-dollar budget and freezes the selected classical revision and locale', async () => {
     const s = setup();
-    const gift = await s.service.create(
-      'u1',
-      'mitten-uk-short-v1',
-      undefined,
-      undefined,
-      'end',
-      5,
-      'UA',
-    );
+    const gift = await s.service.create('u1', {
+      catalogId: 'mitten-uk-short-v1',
+      giftNotePosition: 'end',
+      budgetUsd: 5,
+      countryCode: 'UA',
+    });
     expect(gift.budgetCents).toBe(500);
     expect(gift.locale).toBe('uk');
     expect(gift.title).toBe('Рукавичка');

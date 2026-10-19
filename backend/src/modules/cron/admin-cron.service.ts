@@ -289,6 +289,12 @@ const JOB_REGISTRY: CronJobInfo[] = [
       'Story-Tales: проверка сохранённых заданий монтажа и восстановление UNKNOWN без синтеза, новой сборки, QA и публикации.',
   },
   {
+    jobKey: 'story-retention',
+    description:
+      'Story-Tales: сроки хранения — незавершённые сказки, неподтверждённые сборки и разборы референсов старше 30 дней, сборки с удалённым голосом; ' +
+      'готовые сказки старше 180 дней только в отчёте без отдельного флага. По умолчанию dry-run (STORY_RETENTION_PURGE_ENABLED), ручной запуск в debug — всегда dry-run. Раз в сутки.',
+  },
+  {
     jobKey: 'tutorial-assembly-poll',
     description:
       'Опрос сборок Tutorial без браузера и обработка очереди ИИ-проверки качества. Опрос статуса сборки не запускает новый рендер; анализ качества вызывает платный Gemini в пределах настроенных суточных лимитов.',
@@ -906,6 +912,8 @@ export class AdminCronService {
         return this.jobs.runTutorialScenarioRun();
       case 'story-finalize':
         return this.jobs.runStoryFinalize();
+      case 'story-retention':
+        return this.jobs.runStoryRetention({ dryRun: debugMode });
       case 'tutorial-assembly-poll':
         return this.jobs.runTutorialAssemblyPoll();
       case 'ui-snapshot-run':

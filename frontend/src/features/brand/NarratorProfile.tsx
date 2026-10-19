@@ -8,6 +8,7 @@ import {
   uploadNarratorPreamble,
 } from '../../services/projects-api';
 import type { BrandManifestView } from '../../types/project';
+import { NarratorLooksPanel } from './NarratorLooksPanel';
 
 /** The character's existing SketchSlotActions own image variants; voice stays in VoicePicker. */
 export function NarratorProfile({
@@ -111,6 +112,10 @@ export function NarratorProfile({
           Открыть сказки
         </a>
       </p>
+      <NarratorLooksPanel
+        manifestId={manifest.id}
+        narratorCharacterId={manifest.narratorCharacterId ?? null}
+      />
       <h3 className="font-medium">{t.preamble}</h3>
       <p className="text-xs text-silver-400">{t.recordingHint}</p>
       {(preview || manifest.tutorialPreamble?.url) && (

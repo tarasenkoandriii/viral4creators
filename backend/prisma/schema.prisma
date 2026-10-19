@@ -144,11 +144,12 @@ enum UserPlan {
 // урезанный до того, что реально нужно этому продукту — без ролей
 // модерации/онбординга, которых здесь нет.
 model User {
-  storyGifts StoryGift[]
-  id         String      @id @default(cuid())
-  telegramId String      @unique
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @default(now()) @updatedAt
+  storyGifts         StoryGift[]
+  storyNarratorLooks StoryNarratorLook[] // WP5
+  id                 String              @id @default(cuid())
+  telegramId         String              @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @default(now()) @updatedAt
 
   // Отображаемое имя — только для UI ("Вошли как ..." в frontend/admin),
   // ни на что не влияет. Приходит из Telegram Login Widget payload или
@@ -791,8 +792,17 @@ model ProductAnalog {
 // придётся.
 model BrandManifest {
   /// Explicit narrator image selection; voice uses the existing provider-tagged fields.
-  narratorCharacterId String?
-  tutorialPreamble    Json?
+  narratorCharacterId           String?
+  tutorialPreamble              Json?
+  /// WP5: consent `story-parent-image-v1` to synthetic narrator looks; revocation keeps history.
+  narratorImageConsentAt        DateTime?
+  narratorImageConsentVersion   String?
+  narratorImageConsentRevokedAt DateTime?
+  /// WP5: approved Story narrator look (null — original); asset photo | styled pins the approved image.
+  narratorLookId                String?
+  narratorLook                  StoryNarratorLook?  @relation("StoryNarratorActiveLook", fields: [narratorLookId], references: [id], onDelete: SetNull)
+  narratorLookAsset             String?
+  storyNarratorLooks            StoryNarratorLook[] @relation("StoryNarratorLookManifest")
 
   id     String  @id @default(cuid())
   userId String?
@@ -920,6 +930,9 @@ model BrandCharacter {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
+
+  /// WP5: derived Story narrator looks of this character.
+  storyNarratorLooks StoryNarratorLook[]
 
   @@index([brandManifestId])
   @@map("brand_characters")
@@ -5213,6 +5226,7 @@ model SonioxEvent {
 // Separate select projections keep audio out of list/status queries.
 model StoryGift {
   videoRenders     StoryVideoRender[]
+  videoSegments    StoryVideoSegment[] // WP4
   locale           String             @default("ru")
   countryCode      String             @default("UA")
   budgetCents      Int                @default(100)
@@ -5225,6 +5239,16 @@ model StoryGift {
   giftNote         String?
   giftNotePosition String?
   occasion         String?
+  /// WP3: birthday | bedtime | separation | support | other (null — повод пропущен).
+  occasionKind     String?
+  /// WP3: calm | celebration | night | warm | gentle — снимок темы обложки.
+  occasionTheme    String?
+  /// WP3: реплика о подарке озвучивается только после явного включения.
+  giftNoteEnabled  Boolean            @default(false)
+  /// WP3: описание фото физического подарка (≤200), без доставки/цены.
+  giftPhotoDescription String?
+  /// WP3: StoryNarrationLayout v1 — смещения основного текста и реплики в `text` (для видео-сегментов WP4).
+  narrationLayout  Json?
   id               String             @id @default(uuid())
   userId           String
   user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -5276,12 +5300,15 @@ model StoryVideoRender {
   reservedMicroUsd    Int
   assetTokenHash      String?   @unique
   assetExpiresAt      DateTime?
-  jobId               String?
+  /// F1 (A-S3-8): one provider job binds to at most one render (NULLs allowed).
+  jobId               String?   @unique
   video               Bytes?
   videoHash           String?
   durationSeconds     Float?
   approvedAt          DateTime?
   error               String?
+  /// WP4: StoryVideoSegmentsManifest v1 (ordered speech segments, tracks, layout); null — legacy render.
+  segments            Json?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @default(now()) @updatedAt
 
@@ -5289,6 +5316,115 @@ model StoryVideoRender {
   @@index([giftId, createdAt])
   @@index([parentNarrationKey])
   @@map("story_video_renders")
+}
+
+// WP4
+/// Private per-gift speech segment cache (ST-P2) and the adult's own recorded preamble (ST-P1).
+/// Never shared across gifts/owners; wiped with the gift.
+model StoryVideoSegment {
+  id              String    @id @default(uuid())
+  giftId          String
+  gift            StoryGift @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  /// sha256(text, voice, consent snapshot) for synth; sha256("recorded:v1:" + audio sha256) for recorded.
+  cacheKey        String
+  /// synth | recorded
+  source          String
+  /// PENDING | READY | UNKNOWN | DELETED
+  status          String    @default("PENDING")
+  /// Exact TTS input (synth); empty for recordings.
+  text            String    @default("")
+  voiceId         String?
+  userVoiceId     String?
+  mime            String    @default("audio/mpeg")
+  audio           Bytes?
+  audioHash       String?
+  durationSeconds Float?
+  consentVersion  String?
+  consentAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@unique([giftId, cacheKey])
+  @@index([status, updatedAt])
+  /// F1 (A-S2-3): retention finds speech of deleted voices.
+  @@index([userVoiceId])
+  @@map("story_video_segments")
+}
+
+// WP1
+/// Append-only Story-Tales operator reconciliation and retention journal. No story text, media or audio.
+model StoryOperatorAction {
+  id            String   @id @default(uuid())
+  /// Client-generated UUID: a repeated submit returns the first result.
+  requestId     String?  @unique
+  /// admin | cron
+  actorKind     String
+  actorUserId   String?
+  /// gift | render | reference | segment
+  targetType    String
+  targetId      String
+  action        String
+  reason        String
+  previousState Json
+  result        Json
+  createdAt     DateTime @default(now())
+
+  @@index([targetType, targetId, createdAt])
+  @@index([createdAt])
+  @@map("story_operator_actions")
+}
+
+// WP5
+/// Story-Tales narrator derived looks (outfit / light makeup) of a brand narrator photo.
+/// The original photo and its sketch are never modified; bytes stay private in Postgres.
+model StoryNarratorLook {
+  id               String          @id @default(uuid())
+  userId           String
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  manifestId       String
+  manifest         BrandManifest   @relation("StoryNarratorLookManifest", fields: [manifestId], references: [id], onDelete: Cascade)
+  characterId      String
+  character        BrandCharacter  @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  /// Restyle source (another look of the same manifest); photo bytes are copied, not shared.
+  parentLookId     String?
+  /// Original photo URL and sha256 at generation time — provenance and staleness check.
+  sourceUrl        String
+  sourceHash       String
+  /// casual | cozy-home | festive | business | winter
+  outfit           String
+  /// none | light | natural
+  makeup           String
+  configHash       String
+  promptHash       String
+  consentVersion   String
+  consentAt        DateTime
+  /// PENDING | READY | FAILED | UNKNOWN | DELETED
+  status           String          @default("PENDING")
+  /// Image-model calls started for this row (quota counts them, incl. UNKNOWN).
+  imageCalls       Int
+  reservedMicroUsd Int
+  photo            Bytes?
+  photoMime        String?
+  photoHash        String?
+  /// Sketch style of the styled asset; null — photo mode.
+  style            String?
+  styleOptions     Json?
+  /// NONE | PENDING | READY | FAILED | UNKNOWN
+  styleStatus      String          @default("NONE")
+  styled           Bytes?
+  styledMime       String?
+  styledHash       String?
+  model            String?
+  error            String?
+  deletedAt        DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @default(now()) @updatedAt
+  activeFor        BrandManifest[] @relation("StoryNarratorActiveLook")
+
+  @@index([userId, createdAt])
+  @@index([manifestId, createdAt])
+  @@index([characterId])
+  @@map("story_narrator_looks")
 }
 
 /// First-party landing page views. No source, URL, cookies or raw IP.

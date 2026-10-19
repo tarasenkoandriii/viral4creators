@@ -38,6 +38,7 @@ function build() {
       count: jest.Mock;
     };
     brandManifest: { updateMany: jest.Mock };
+    storyVideoSegment: { updateMany: jest.Mock };
     $executeRaw: jest.Mock;
     $transaction: jest.Mock;
   } = {
@@ -53,6 +54,10 @@ function build() {
     },
     // CONTRACT6 п.4: удалённый голос уходит из бренд-буков пользователя.
     brandManifest: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    // Story-Tales (F1): video speech of a deleted clone is erased with it.
+    storyVideoSegment: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     // Е-4.2 шестого аудита: `confirmClone` резервирует слот транзакцией
     // с advisory-lock — мок просто вызывает переданный колбэк с тем же
     // `prisma`, чтобы существующие моки `userVoice.count`/`.create` в
@@ -371,6 +376,17 @@ describe('UserVoicesService.remove', () => {
     );
     expect(prisma.userVoice.delete).toHaveBeenCalledWith({
       where: { id: 'v1' },
+    });
+    // Story-Tales video speech synthesized by this clone is wiped, not kept.
+    expect(prisma.storyVideoSegment.updateMany).toHaveBeenCalledWith({
+      where: { userVoiceId: 'v1', status: { not: 'DELETED' } },
+      data: {
+        status: 'DELETED',
+        audio: null,
+        audioHash: null,
+        durationSeconds: null,
+        text: '',
+      },
     });
   });
 

@@ -519,6 +519,19 @@ export class UserVoicesService {
     if (pathname) {
       await this.blob.deleteBlob(pathname);
     }
+    // Story-Tales (F1, A-S2-3): cached video speech synthesized by this clone
+    // is erased together with the voice (renders follow in the nightly
+    // story-retention run). Plain Prisma call — no module dependency.
+    await this.prisma.storyVideoSegment.updateMany({
+      where: { userVoiceId: id, status: { not: 'DELETED' } },
+      data: {
+        status: 'DELETED',
+        audio: null,
+        audioHash: null,
+        durationSeconds: null,
+        text: '',
+      },
+    });
     await this.prisma.userVoice.delete({ where: { id } });
     if (row.resembleVoiceId) {
       await forgetVoiceInBrandManifests(

@@ -31,6 +31,8 @@ export const NAV_GROUPS: NavGroup[] = [
     links: [
       { href: '/sessions', label: 'Сессии' },
       { href: '/users', label: 'Пользователи' },
+      // WP1: сверка UNKNOWN Story‑Tales без платных повторов и сроки хранения.
+      { href: '/story-tales', label: 'Story‑Tales: сверка' },
     ],
   },
   {

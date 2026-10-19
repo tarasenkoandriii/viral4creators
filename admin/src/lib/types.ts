@@ -2341,3 +2341,111 @@ export interface PersonaAgeState {
   /** Журнал снятий, новые сверху. */
   clears: PersonaAgeClear[];
 }
+
+// ── Story‑Tales: операторская сверка UNKNOWN и сроки хранения (WP1) ──
+/** `GET /admin/story-tales/queue`. Только id, этап, возраст и резерв — без текста, медиа и владельца. */
+export interface StoryTalesQueue {
+  generatedAt: string;
+  gifts: Array<{
+    id: string;
+    stage: 'synthesis' | 'qa';
+    status: string;
+    audioQaStatus: string;
+    catalogId: string;
+    reservedUsd: number;
+    budgetUsd: number;
+    ageHours: number;
+    idleHours: number;
+    error: string | null;
+  }>;
+  renders: Array<{
+    id: string;
+    giftId: string;
+    status: string;
+    qaStatus: string;
+    stage: 'base' | 'main' | 'voice' | 'submit' | 'no-job' | 'poll' | 'qa' | 'unknown';
+    hasJobId: boolean;
+    submitReached: boolean;
+    voice: 'nova' | 'parent';
+    reservedUsd: number;
+    ageHours: number;
+    idleHours: number;
+    error: string | null;
+  }>;
+  references: Array<{
+    ref: string;
+    videoId: string;
+    state: 'unknown' | 'running-stale';
+    hasPendingAssessment: boolean;
+    startedAt: string;
+    ageHours: number;
+    error: string | null;
+  }>;
+  /** WP4: сегменты речи видео в UNKNOWN (без текста и аудио). */
+  segments?: Array<{
+    id: string;
+    giftId: string;
+    renderId: string | null;
+    kind: 'intro' | 'gift_note' | 'main' | 'outro' | null;
+    source: string;
+    cacheKeyPrefix: string;
+    ageHours: number;
+    idleHours: number;
+  }>;
+}
+export interface StoryTalesJournalEntry {
+  id: string;
+  requestId: string | null;
+  actorKind: 'admin' | 'cron';
+  actorUserId: string | null;
+  targetType: 'gift' | 'render' | 'reference' | 'segment';
+  targetId: string;
+  action: string;
+  reason: string;
+  previousState: Record<string, unknown>;
+  result: Record<string, unknown>;
+  createdAt: string;
+}
+export interface StoryTalesActionResult {
+  journalId: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  result: Record<string, unknown>;
+  createdAt: string;
+  replayed: boolean;
+}
+/** `GET /admin/story-tales/retention` — всегда dry-run. */
+export interface StoryTalesRetentionPreview {
+  dryRun: boolean;
+  readyPurgeEnabled: boolean;
+  staleGifts: number;
+  staleRenders: number;
+  revokedVoiceRenders: number;
+  /** Сегменты речи, синтезированные удалённым голосом (F1, A-S2-3). */
+  revokedVoiceSegments: number;
+  staleReferences: number;
+  quotaKeys: number;
+  readyGifts: number;
+  readyReferences: number;
+  purged: number;
+  raced: number;
+  errors: number;
+  candidates?: {
+    gifts: string[];
+    renders: string[];
+    segments: string[];
+    references: string[];
+    readyGifts: string[];
+    readyReferences: string[];
+  };
+}
+export interface StoryTalesActionInput {
+  reason: string;
+  requestId: string;
+  providerChargeConfirmedAbsent?: boolean;
+  releaseReserve?: boolean;
+  jobId?: string;
+  /** bind-job: ссылка на вход задания из кабинета FFmpeg API — отпечаток отправки (≤2048). */
+  renderInputUrl?: string;
+}

@@ -407,3 +407,17 @@ it('reports unresolved Story-Tales recovery as failure rather than green', () =>
     }),
   ).toBe(false);
 });
+
+it('Story-Tales retention: only item errors mark the run failed; dry-run counters stay green', () => {
+  expect(cronResultFailed('story-retention', { errors: 1 })).toBe(true);
+  expect(
+    cronResultFailed('story-retention', {
+      dryRun: true,
+      staleGifts: 4,
+      readyGifts: 2,
+      raced: 1,
+      purged: 0,
+      errors: 0,
+    }),
+  ).toBe(false);
+});

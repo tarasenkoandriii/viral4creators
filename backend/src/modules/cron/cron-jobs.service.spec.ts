@@ -1970,3 +1970,42 @@ describe('CronJobsService — client-site-retention (Ш0.5/Ш0.6 аудита 02
     expect(slot!.schedule).toMatch(/^\d+ \d+ \* \* \*$/);
   });
 });
+
+describe('CronJobsService — story-retention (WP1 Story-Tales)', () => {
+  it('без сервиса сроков хранения — явная ошибка, а не тихий успех', async () => {
+    const { service } = build();
+    await expect(service.runStoryRetention()).rejects.toThrow(
+      'Story retention is not configured',
+    );
+  });
+
+  it('под замком передаёт dry-run в сервис и снимает замок', async () => {
+    const { service, prisma } = build();
+    const run = jest.fn().mockResolvedValue({ dryRun: true, errors: 0 });
+    (service as unknown as Record<string, unknown>).storyRetention = { run };
+    await expect(service.runStoryRetention({ dryRun: true })).resolves.toEqual({
+      dryRun: true,
+      errors: 0,
+    });
+    expect(run).toHaveBeenCalledWith({ dryRun: true });
+    expect(prisma.cronJobLock.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ jobKey: 'story-retention' }),
+      }),
+    );
+  });
+
+  it('замок занят — пропуск без удаления', async () => {
+    const { service, prisma } = build();
+    const run = jest.fn();
+    (service as unknown as Record<string, unknown>).storyRetention = { run };
+    prisma.cronJobLock.create.mockRejectedValue(
+      Object.assign(new Error('dup'), { code: 'P2002' }),
+    );
+    prisma.cronJobLock.updateMany.mockResolvedValue({ count: 0 });
+    await expect(service.runStoryRetention()).resolves.toEqual({
+      skipped: true,
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+});

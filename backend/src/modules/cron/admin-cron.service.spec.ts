@@ -161,6 +161,14 @@ function build() {
       blocked: 0,
     }),
     runTutorialAssemblyPoll: jest.fn().mockResolvedValue({ pending: 2 }),
+    // WP1 Story-Tales: сроки хранения.
+    runStoryRetention: jest.fn().mockResolvedValue({
+      dryRun: true,
+      staleGifts: 1,
+      purged: 0,
+      raced: 0,
+      errors: 0,
+    }),
   };
   const service = new AdminCronService(jobs as never, prisma as never);
   return { service, jobs, prisma };
@@ -337,6 +345,16 @@ describe('AdminCronService — debug у девяти джобов только �
     const row = await service.run('tutorial-scenario-run', 'admin-1', false);
     expect(row.outcome).toBeNull();
     expect(row.debugLog).toBeUndefined();
+  });
+
+  it('story-retention: ручной запуск в debug — всегда dry-run, обычный — по env', async () => {
+    const { service, jobs } = build();
+    await service.run('story-retention', 'admin-1', true);
+    expect(jobs.runStoryRetention).toHaveBeenLastCalledWith({ dryRun: true });
+    const row = await service.run('story-retention', 'admin-1', false);
+    expect(jobs.runStoryRetention).toHaveBeenLastCalledWith({ dryRun: false });
+    expect(row.status).toBe('SUCCESS');
+    expect(row.summary).toContain('staleGifts=1');
   });
 
   it('story-finalize delegates only read-only story recovery', async () => {

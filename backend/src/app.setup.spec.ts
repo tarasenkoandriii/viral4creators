@@ -37,6 +37,13 @@ class StoryPhotoProbeController {
   @Post(':id/photo') photo(@Body() body: { base64: string }) {
     return { length: body.base64?.length };
   }
+  // WP4: the adult's own preamble recording shares the bounded parser.
+  @Post(':id/video/recording') recording(@Body() body: { base64: string }) {
+    return { length: body.base64?.length };
+  }
+  @Post(':id/video/quote') quote(@Body() body: { base64: string }) {
+    return { length: body.base64?.length };
+  }
 }
 
 describe('configureApp (backend): то, что включает main.ts', () => {
@@ -189,6 +196,20 @@ describe('configureApp (backend): то, что включает main.ts', () => 
       .set('Cookie', 'user_session=presence-only')
       .send({ base64: 'a'.repeat(1500000) });
     expect(tooLarge.status).toBe(413);
+  });
+
+  it('Story preamble recording (WP4) uses the same bounded parser; other video routes do not', async () => {
+    const ok = await request(app.getHttpServer())
+      .post('/api/story-gifts/g1/video/recording')
+      .set('Cookie', 'user_session=presence-only')
+      .send({ base64: 'a'.repeat(1333336) });
+    expect(ok.status).toBe(201);
+    expect(ok.body.data.length).toBe(1333336);
+    const quote = await request(app.getHttpServer())
+      .post('/api/story-gifts/g1/video/quote')
+      .set('Cookie', 'user_session=presence-only')
+      .send({ base64: 'a'.repeat(200000) });
+    expect(quote.status).toBe(413);
   });
 
   it('неподдержанная Content-Encoding — 415, без ERROR в логе', async () => {

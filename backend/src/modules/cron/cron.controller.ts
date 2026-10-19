@@ -456,6 +456,23 @@ export class CronController {
     );
   }
 
+  /**
+   * GET /api/cron/story-retention — сроки хранения Story-Tales (WP1, ST-P0):
+   * незавершённые сказки/сборки/разборы — 30 дней, готовые — 180 дней
+   * (только отчёт без отдельного флага). По умолчанию dry-run, см.
+   * `StoryRetentionService`. Раз в сутки, без вызовов провайдеров.
+   */
+  @Get('story-retention')
+  async storyRetention(@Headers('authorization') authHeader?: string) {
+    assertCronSecret(authHeader);
+    return this.jobs.runAndLog(
+      'story-retention',
+      VERCEL_CRON_TRIGGERED_BY,
+      false,
+      () => this.jobs.runStoryRetention(),
+    );
+  }
+
   @Get('tutorial-assembly-poll')
   async tutorialAssemblyPollCron(
     @Headers('authorization') authHeader?: string,

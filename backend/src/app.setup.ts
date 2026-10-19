@@ -149,12 +149,13 @@ export function configureApp(
       importJson(req, res, next);
     },
   );
-  // Story photo: bounded JSON only on this route; keep Nest's 100 KB
-  // default elsewhere. Presence is not authentication: the controller guard
-  // still verifies the Telegram identity/cookie before reading any gift.
+  // Story photo and (WP4) the adult's own preamble recording: bounded JSON
+  // only on these routes; keep Nest's 100 KB default elsewhere. Presence is
+  // not authentication: the controller guard still verifies the Telegram
+  // identity/cookie before reading any gift.
   const storyPhotoJson = json({ limit: 1450000 });
   app.use(
-    /^\/api\/story-gifts\/[^/]+\/photo$/,
+    /^\/api\/story-gifts\/[^/]+\/(?:photo|video\/recording)$/,
     function storyGiftPhotoJson(
       req: Request,
       res: Response,

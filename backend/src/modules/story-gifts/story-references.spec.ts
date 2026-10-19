@@ -54,6 +54,12 @@ describe('Story YouTube reference boundaries', () => {
           rows.set(data.key, data);
           return data;
         }),
+        deleteMany: jest.fn(async ({ where }) => {
+          const old = rows.get(where.key);
+          if (!old || old.value !== where.value) return { count: 0 };
+          rows.delete(where.key);
+          return { count: 1 };
+        }),
         update: jest.fn(async ({ where: { key }, data }) => {
           const r = { ...rows.get(key)!, ...data };
           rows.set(key, r);
@@ -146,6 +152,8 @@ describe('Story YouTube reference boundaries', () => {
       (await service.analyze('owner', 'https://youtu.be/Q1hbf5TrWCM')).status,
     ).toBe('complete');
     expect(generateContent).toHaveBeenCalledTimes(1);
+    // The losing concurrent request returns its daily slot (no paid call).
+    expect((await service.quota('owner')).used).toBe(1);
   });
   it('isolates saved references by owner', async () => {
     const { service, rows, generateContent } = setup();

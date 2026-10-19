@@ -1,11 +1,37 @@
 import { exclusiveStoryPlayback } from './story-media-playback';
 import { StoryVideoPanel } from './StoryVideoPanel';
 import { StoryReferencesPanel } from './StoryReferencesPanel';
-import { useEffect, useRef, useState } from 'react';
-import { BookOpen } from 'lucide-react';
+import { StoryEditionsPanel } from './StoryEditionsPanel'; // WP2
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { BookOpen, Cake, Heart, Moon, Sun } from 'lucide-react';
+import {
+  OCCASION_KINDS,
+  OCCASION_LABELS,
+  STORY_THEME_IDS,
+  STORY_THEMES,
+  budgetWarning,
+  buildPreviewPayload,
+  buildStoryPayload,
+  canCreate,
+  draftParts,
+  estimateRows,
+  formatUsd,
+  occasionCaption,
+  previewKey,
+  themeFor,
+  type GiftNotePosition,
+  type OccasionKind,
+  type StoryEstimate,
+  type StoryPreview,
+  type StoryThemeIcon,
+  type StoryThemeId,
+  type WizardState,
+} from './story-wizard';
 import { Button, Card } from '../../components/ui';
 import { api } from '../../services/api';
 import { navigate, routes } from '../../lib/router';
+import { StoryClientError, storyErrorText } from './story-errors';
+import { parseUsdBudget } from './story-library';
 
 type Chapter = { title: string; text: string; scene: string };
 type Story = {
@@ -39,8 +65,14 @@ type Gift = {
   } | null;
   chapters: Chapter[];
   id: string;
+  catalogId?: string;
   title: string;
   occasion: string | null;
+  occasionKind: string | null;
+  occasionTheme: string | null;
+  giftNoteEnabled?: boolean;
+  giftPhotoDescription: string | null;
+  estimate?: StoryEstimate;
   giftNote: string | null;
   giftNotePosition: string | null;
   hasGiftPhoto: boolean;
@@ -60,21 +92,19 @@ const stateNames: Record<string, string> = {
 const inputStyle =
   'w-full rounded-lg border border-silver-700 bg-transparent p-3';
 function errorText(e: unknown): string {
-  const err = e as {
-    response?: { data?: { error?: { message?: string }; message?: string } };
-  };
-  return (
-    err.response?.data?.error?.message ||
-    err.response?.data?.message ||
-    'Не удалось выполнить действие. Обновите список — повторная озвучка автоматически не запускается.'
-  );
+  return storyErrorText(e, {
+    fallback:
+      'Не удалось выполнить действие. Обновите список — повторная озвучка автоматически не запускается.',
+    noResponse:
+      'Ответ сервера не получен. Обновите список: действие могло выполниться — повторная озвучка автоматически не запускается.',
+  });
 }
 async function photoPng(file: File): Promise<string> {
   if (
     !['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
     file.size > 10 * 1024 * 1024
   )
-    throw new Error('Фото PNG, JPEG или WebP до 10 МБ');
+    throw new StoryClientError('Фото PNG, JPEG или WebP до 10 МБ');
   const bitmap = await createImageBitmap(file);
   try {
     const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
@@ -86,13 +116,117 @@ async function photoPng(file: File): Promise<string> {
       .drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const value = canvas.toDataURL('image/png').split(',')[1];
     if (value.length > 1398104)
-      throw new Error(
+      throw new StoryClientError(
         'Слишком большое фото после обработки: выберите изображение поменьше'
       );
     return value;
   } finally {
     bitmap.close();
   }
+}
+const THEME_ICONS: Record<StoryThemeIcon, typeof BookOpen> = {
+  book: BookOpen,
+  cake: Cake,
+  moon: Moon,
+  heart: Heart,
+  sun: Sun,
+};
+function ThemeBadge({ theme }: { theme: StoryThemeId }) {
+  const t = STORY_THEMES[theme];
+  const Icon = THEME_ICONS[t.icon];
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-sm"
+      style={{ background: t.soft, color: t.accent }}
+    >
+      <Icon size={16} aria-hidden="true" /> {t.label}
+    </span>
+  );
+}
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1 text-sm ${active ? 'border-accent bg-accent/10' : 'border-silver-700'}`}
+    >
+      {children}
+    </button>
+  );
+}
+function SpokenText({
+  parts,
+}: {
+  parts: Array<{ kind: 'giftNote' | 'main'; text: string }>;
+}) {
+  return (
+    <div className="space-y-3 rounded-lg border border-silver-700 p-3">
+      {parts.map((p, i) =>
+        p.kind === 'giftNote' ? (
+          <p key={i}>
+            <mark className="rounded px-1">{p.text}</mark>{' '}
+            <span className="text-xs text-silver-400">· реплика о подарке</span>
+          </p>
+        ) : (
+          <p key={i} className="whitespace-pre-line">
+            {p.text}
+          </p>
+        )
+      )}
+    </div>
+  );
+}
+function EstimateTable({ estimate }: { estimate: StoryEstimate }) {
+  const warning = budgetWarning(estimate);
+  return (
+    <div className="space-y-2">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr>
+            <th className="py-1">Статья</th>
+            <th className="py-1">Оценка</th>
+            <th className="py-1">Резерв</th>
+          </tr>
+        </thead>
+        <tbody>
+          {estimateRows(estimate).map((row) => (
+            <tr
+              key={row.id}
+              className={row.muted ? 'text-silver-400' : undefined}
+              title={row.detail}
+            >
+              <td className="py-1">
+                {row.label}
+                {row.status ? ` · ${row.status}` : ''}
+                <div className="text-xs text-silver-400">{row.detail}</div>
+              </td>
+              <td className="py-1">{row.cost}</td>
+              <td className="py-1">{row.reserve}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-sm">
+        Итого резерв: {formatUsd(estimate.totalReserveMicroUsd)} из бюджета{' '}
+        {formatUsd(estimate.budgetMicroUsd)}. Оценка по внутреннему прайсу, не
+        счёт провайдера. {estimate.policy}
+      </p>
+      {warning && (
+        <p role="alert" className="rounded-lg border border-red-400 p-3">
+          {warning}
+        </p>
+      )}
+    </div>
+  );
 }
 function Illustration({ scene }: { scene: string }) {
   if (scene === 'turnip')
@@ -206,10 +340,22 @@ export function StoryGiftsScreen() {
   const [catalog, setCatalog] = useState<Story[]>([]),
     [gifts, setGifts] = useState<Gift[]>([]),
     [selected, setSelected] = useState<Gift | null>(null);
-  const [occasion, setOccasion] = useState(''),
+  const [occasionKind, setOccasionKind] = useState<OccasionKind | null>(null),
+    [occasionLabel, setOccasionLabel] = useState(''),
+    [theme, setTheme] = useState<StoryThemeId | null>(null);
+  const [noteEnabled, setNoteEnabled] = useState(false),
     [note, setNote] = useState(''),
-    [position, setPosition] = useState('end');
+    [position, setPosition] = useState<GiftNotePosition>('end'),
+    [photoDescription, setPhotoDescription] = useState(''),
+    [includeVideo, setIncludeVideo] = useState(false);
+  const [preview, setPreview] = useState<StoryPreview | null>(null),
+    [previewedKey, setPreviewedKey] = useState<string | null>(null),
+    [draftDescription, setDraftDescription] = useState('');
   const [photoBusy, setPhotoBusy] = useState(false);
+  /** Версия сохранённого фото: замена фото в черновике перезагружает превью. */
+  const [photoRev, setPhotoRev] = useState(0);
+  /** S3‑9: ввод, по которому уже создан черновик — повтор только после изменения. */
+  const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [photo, setPhoto] = useState<string | null>(null),
     [savedPhoto, setSavedPhoto] = useState<string | null>(null);
   const [audio, setAudio] = useState<string | null>(null),
@@ -225,6 +371,24 @@ export function StoryGiftsScreen() {
     variants.find((s) => s.id === storyId) ||
     variants.find((s) => s.countries.includes(country)) ||
     variants[0];
+  const wizard: WizardState = {
+    catalogId: story?.id || '',
+    budget,
+    country,
+    occasionKind,
+    occasionLabel,
+    theme,
+    giftNoteEnabled: noteEnabled,
+    giftNote: note,
+    giftNotePosition: position,
+    photoDescription,
+    includeVideo,
+  };
+  const createGate = canCreate(wizard, previewedKey);
+  const createKey = `${previewKey(wizard)}|${photo ? `${photo.length}:${photo.slice(-32)}` : ''}`;
+  const alreadyCreated = createdKey === createKey;
+  const budgetError = parseUsdBudget(budget).error;
+  const previewFresh = preview !== null && previewedKey === previewKey(wizard);
   function chooseRegion(nextCountry: string, nextLanguage: string) {
     setCountry(nextCountry);
     setStoryLanguage(nextLanguage);
@@ -257,44 +421,56 @@ export function StoryGiftsScreen() {
         setError(errorText(e));
       });
   }, []);
+  // S3‑8: медиа выпуска зависят только от выпуска и его статуса, а не от
+  // каждого нового объекта `selected` (GET карточки, ответ действия):
+  // иначе аудио качалось дважды, а галочка проверки сбрасывалась.
+  const selectedId = selected?.id ?? null;
+  const selectedStatus = selected?.status ?? null;
+  const selectedHasPhoto = selected?.hasGiftPhoto ?? false;
+  useEffect(() => {
+    setReviewed(false);
+  }, [selectedId, selectedStatus]);
   useEffect(() => {
     setAudio(null);
-    setSavedPhoto(null);
-    setReviewed(false);
-    if (!selected) return;
+    if (!selectedId || !['READY', 'APPROVED'].includes(selectedStatus ?? ''))
+      return;
     let disposed = false;
     let url: string | null = null;
-    if (['READY', 'APPROVED'].includes(selected.status))
-      void api
-        .get<{ base64: string; mime: string }>(
-          `/story-gifts/${selected.id}/audio`
-        )
-        .then((r) => {
-          if (disposed || !r.data) return;
-          const bytes = Uint8Array.from(atob(r.data.base64), (c) =>
-            c.charCodeAt(0)
-          );
-          url = URL.createObjectURL(new Blob([bytes], { type: r.data.mime }));
-          setAudio(url);
-        })
-        .catch((e) => {
-          if (!disposed) setError(errorText(e));
-        });
-    if (selected.hasGiftPhoto)
-      void api
-        .get<{ base64: string }>(`/story-gifts/${selected.id}/photo`)
-        .then((r) => {
-          if (!disposed && r.data)
-            setSavedPhoto(`data:image/png;base64,${r.data.base64}`);
-        })
-        .catch((e) => {
-          if (!disposed) setError(errorText(e));
-        });
+    void api
+      .get<{ base64: string; mime: string }>(`/story-gifts/${selectedId}/audio`)
+      .then((r) => {
+        if (disposed || !r.data) return;
+        const bytes = Uint8Array.from(atob(r.data.base64), (c) =>
+          c.charCodeAt(0)
+        );
+        url = URL.createObjectURL(new Blob([bytes], { type: r.data.mime }));
+        setAudio(url);
+      })
+      .catch((e) => {
+        if (!disposed) setError(errorText(e));
+      });
     return () => {
       disposed = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [selected]); // immutable edition; no repeat synthesis on reload
+  }, [selectedId, selectedStatus]); // immutable edition; no repeat synthesis on reload
+  useEffect(() => {
+    setSavedPhoto(null);
+    if (!selectedId || !selectedHasPhoto) return;
+    let disposed = false;
+    void api
+      .get<{ base64: string }>(`/story-gifts/${selectedId}/photo`)
+      .then((r) => {
+        if (!disposed && r.data)
+          setSavedPhoto(`data:image/png;base64,${r.data.base64}`);
+      })
+      .catch((e) => {
+        if (!disposed) setError(errorText(e));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [selectedId, selectedHasPhoto, photoRev]);
   async function run(action: () => Promise<void>) {
     if (actionLock.current) return;
     actionLock.current = true;
@@ -315,7 +491,24 @@ export function StoryGiftsScreen() {
       `/story-gifts/${selected!.id}/${path}`,
       body
     );
-    if (res.data) setSelected(res.data);
+    const next = res.data;
+    if (next)
+      setSelected((prev) => ({
+        ...next,
+        estimate: next.estimate ?? prev?.estimate,
+      }));
+  }
+  /** Список не несёт смету: подгружаем карточку целиком (GET :id). */
+  function selectGift(g: Gift) {
+    setSelected(g);
+    setDraftDescription(g.giftPhotoDescription || '');
+    void api
+      .get<Gift>(`/story-gifts/${g.id}`)
+      .then((r) => {
+        const full = r.data;
+        if (full) setSelected((cur) => (cur && cur.id === g.id ? full : cur));
+      })
+      .catch((e) => setError(errorText(e)));
   }
   if (access !== true)
     return (
@@ -346,6 +539,7 @@ export function StoryGiftsScreen() {
         </p>
       )}
       <StoryReferencesPanel />
+      <StoryEditionsPanel />
       {catalog.length > 0 && (
         <Card className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">Сказка и бюджет подарка</h2>
@@ -421,8 +615,18 @@ export function StoryGiftsScreen() {
               max="1000"
               step="0.01"
               value={budget}
+              aria-invalid={!!budgetError}
+              aria-describedby={budgetError ? 'story-budget-error' : undefined}
               onChange={(e) => setBudget(e.target.value)}
             />
+            {budgetError && (
+              <span
+                id="story-budget-error"
+                className="mt-1 block text-sm text-amber-500"
+              >
+                {budgetError}
+              </span>
+            )}
           </label>
           <p className="text-sm">
             Это выбранный потолок, не цена и не списание. Сначала создаются
@@ -468,108 +672,252 @@ export function StoryGiftsScreen() {
               </p>
             </details>
           )}
-          <label className="block">
-            Повод подарка — необязательно
-            <input
-              className={inputStyle}
-              maxLength={80}
-              placeholder="Например: день рождения или просто перед сном"
-              value={occasion}
-              onChange={(e) => setOccasion(e.target.value)}
-            />
-          </label>
-          <label className="block">
-            Упоминание физического подарка — необязательно
-            <textarea
-              className={inputStyle}
-              maxLength={180}
-              placeholder="Например: рядом с тобой лежит небольшой подарок. Открой его после сказки."
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-          </label>
-          <label className="block">
-            Где озвучить эту фразу
-            <select
-              className={inputStyle}
-              value={position}
-              onChange={(e) => setPosition(e.target.value)}
-            >
-              <option value="beginning">В начале</option>
-              <option value="end">В конце</option>
-            </select>
-          </label>
-          <label className="block">
-            Фото физического подарка — необязательно
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  setPhotoBusy(true);
-                  void photoPng(file)
-                    .then(setPhoto)
-                    .catch((err) => setError(err.message))
-                    .finally(() => setPhotoBusy(false));
-                }
-              }}
-            />
-          </label>
-          {photo && (
-            <>
-              <img
-                className="max-h-48 rounded-lg"
-                src={`data:image/png;base64,${photo}`}
-                alt="Выбранное фото подарка"
+          <fieldset className="min-w-0 space-y-2">
+            <legend>Повод — необязательно</legend>
+            <div className="flex flex-wrap gap-2">
+              <Chip
+                active={occasionKind === null}
+                onClick={() => setOccasionKind(null)}
+              >
+                Пропустить
+              </Chip>
+              {OCCASION_KINDS.map((kind) => (
+                <Chip
+                  key={kind}
+                  active={occasionKind === kind}
+                  onClick={() => setOccasionKind(kind)}
+                >
+                  {OCCASION_LABELS[kind]}
+                </Chip>
+              ))}
+            </div>
+            {occasionKind === 'other' && (
+              <label className="block">
+                Своя подпись повода (до 80 символов)
+                <input
+                  className={inputStyle}
+                  maxLength={80}
+                  placeholder="Например: первый день в садике"
+                  value={occasionLabel}
+                  onChange={(e) => setOccasionLabel(e.target.value)}
+                />
+              </label>
+            )}
+            <p className="text-sm">
+              Повод не меняет текст сказки: он задаёт оформление и подсказки для
+              обращения. Даты возвращения и обещания «вылечит»/«перестанешь
+              бояться» не принимаются.
+            </p>
+          </fieldset>
+          <fieldset className="min-w-0 space-y-2">
+            <legend>Оформление обложки</legend>
+            <div className="flex flex-wrap gap-2">
+              <Chip active={theme === null} onClick={() => setTheme(null)}>
+                По поводу
+              </Chip>
+              {STORY_THEME_IDS.map((id) => (
+                <Chip
+                  key={id}
+                  active={theme === id}
+                  onClick={() => setTheme(id)}
+                >
+                  {STORY_THEMES[id].label}
+                </Chip>
+              ))}
+            </div>
+            <ThemeBadge theme={themeFor(occasionKind, theme)} />
+          </fieldset>
+          <fieldset className="min-w-0 space-y-3 rounded-lg border border-silver-700 p-3">
+            <legend>Физический подарок — необязательно</legend>
+            <label className="flex gap-2">
+              <input
+                type="checkbox"
+                checked={noteEnabled}
+                onChange={(e) => setNoteEnabled(e.target.checked)}
               />
-              <Button variant="ghost" onClick={() => setPhoto(null)}>
-                Убрать выбранное фото
-              </Button>
-            </>
-          )}
-          <details>
-            <summary>Прочитать точный текст до создания</summary>
-            {position === 'beginning' && note && <p className="my-3">{note}</p>}
-            {story.chapters.map((c) => (
-              <p className="my-3" key={c.title}>
-                {c.text}
-              </p>
-            ))}
-            {position === 'end' && note && <p className="my-3">{note}</p>}
-          </details>
-          <p className="text-sm">
-            Повод показывается подписью. Фраза о подарке войдёт в озвучку. Фото
-            появляется отдельной карточкой. Все три поля можно пропустить.
-            Пилот: три новых сказки в сутки; до озвучки можно проверить
-            сохранённый черновик.
-          </p>
+              Упомянуть подарок в озвучке
+            </label>
+            {noteEnabled && (
+              <>
+                <label className="block">
+                  Точная реплика (до 180 символов)
+                  <textarea
+                    className={inputStyle}
+                    maxLength={180}
+                    placeholder="Например: рядом с тобой лежит небольшой подарок. Открой его после сказки."
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                  />
+                </label>
+                <label className="block">
+                  Где озвучить реплику
+                  <select
+                    className={inputStyle}
+                    value={position}
+                    onChange={(e) =>
+                      setPosition(e.target.value as GiftNotePosition)
+                    }
+                  >
+                    <option value="beginning">В начале</option>
+                    <option value="end">В конце</option>
+                  </select>
+                </label>
+                <p className="text-sm">
+                  Не пишите о доставке, курьере и сроках получения: сервис их не
+                  знает, а запись будут переслушивать.
+                </p>
+              </>
+            )}
+            <label className="block">
+              Фото подарка — необязательно
+              <input
+                className="block w-full max-w-full text-sm"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setPhotoBusy(true);
+                    void photoPng(file)
+                      .then(setPhoto)
+                      .catch((err) =>
+                        setError(
+                          storyErrorText(err, {
+                            fallback:
+                              'Не удалось прочитать фото — выберите другой файл PNG, JPEG или WebP.',
+                          })
+                        )
+                      )
+                      .finally(() => setPhotoBusy(false));
+                  }
+                }}
+              />
+            </label>
+            {photo && (
+              <>
+                <img
+                  className="max-h-48 rounded-lg"
+                  src={`data:image/png;base64,${photo}`}
+                  alt="Выбранное фото подарка"
+                />
+                <Button variant="ghost" onClick={() => setPhoto(null)}>
+                  Убрать выбранное фото
+                </Button>
+              </>
+            )}
+            <label className="block">
+              Описание подарка к фото (до 200 символов)
+              <input
+                className={inputStyle}
+                maxLength={200}
+                placeholder="Например: мягкий заяц в голубой коробке"
+                value={photoDescription}
+                onChange={(e) => setPhotoDescription(e.target.value)}
+              />
+            </label>
+            <p className="text-sm">
+              Фото и описание показываются отдельной карточкой и не
+              озвучиваются. Можно добавить фото без реплики или реплику без
+              фото.
+            </p>
+          </fieldset>
+          <label className="flex gap-2">
+            <input
+              type="checkbox"
+              checked={includeVideo}
+              onChange={(e) => setIncludeVideo(e.target.checked)}
+            />
+            Учесть в смете будущую видеоверсию (преамбула, сборка, проверка)
+          </label>
           <Button
-            disabled={
-              busy ||
-              photoBusy ||
-              !Number.isFinite(Number(budget)) ||
-              Number(budget) < 1 ||
-              Number(budget) > 1000
-            }
+            variant="ghost"
+            disabled={busy || !story}
             onClick={() =>
               void run(async () => {
-                const result = await api.post<Gift>('/story-gifts', {
-                  catalogId: story.id,
-                  budgetUsd: Number(budget),
-                  countryCode: country,
-                  occasion: occasion || undefined,
-                  giftNote: note || undefined,
-                  giftNotePosition: position,
-                });
+                const key = previewKey(wizard);
+                const res = await api.post<StoryPreview>(
+                  '/story-gifts/preview',
+                  buildPreviewPayload(wizard)
+                );
+                if (res.data) {
+                  setPreview(res.data);
+                  setPreviewedKey(key);
+                }
+              })
+            }
+          >
+            {noteEnabled
+              ? 'Показать точную реплику и смету'
+              : 'Показать текст озвучки и смету'}
+          </Button>
+          {preview && (
+            <div className="space-y-3">
+              {!previewFresh && (
+                <p role="status" className="text-sm">
+                  Ввод изменился — обновите предпросмотр.
+                </p>
+              )}
+              <h3 className="font-semibold">Точный текст озвучки</h3>
+              <SpokenText parts={preview.parts} />
+              <p className="text-sm">
+                Длительность ≈ {Math.round(preview.durationSeconds.estimated)} с
+                {preview.giftNote
+                  ? ` (реплика ≈ ${Math.round(preview.giftNote.seconds)} с, ${preview.giftNote.position === 'beginning' ? 'в начале' : 'в конце'})`
+                  : ''}
+                .{' '}
+                {!preview.durationSeconds.withinLimits &&
+                  `Озвучка вне допустимых ${preview.durationSeconds.min}–${preview.durationSeconds.max} с.`}
+              </p>
+              {preview.hints.map((h) => (
+                <p key={h.code} className="text-sm">
+                  {h.message}
+                </p>
+              ))}
+              {preview.occasion.lines.length > 0 && (
+                <details>
+                  <summary>Подсказки для обращения в преамбуле видео</summary>
+                  {preview.occasion.lines.map((line) => (
+                    <p key={line} className="my-2">
+                      «{line}»
+                    </p>
+                  ))}
+                </details>
+              )}
+              <EstimateTable estimate={preview.estimate} />
+            </div>
+          )}
+          <p className="text-sm">
+            Повод, подарок и фото независимы, всё можно пропустить. Пилот: три
+            новых сказки в сутки; до озвучки можно проверить сохранённый
+            черновик.
+          </p>
+          {createGate.reason && <p className="text-sm">{createGate.reason}</p>}
+          {alreadyCreated && (
+            <p role="status" className="text-sm">
+              Черновик с этими данными уже создан и открыт ниже в «Мои сказки».
+              Чтобы создать ещё один, измените ввод.
+            </p>
+          )}
+          <Button
+            disabled={busy || photoBusy || !createGate.ok || alreadyCreated}
+            onClick={() =>
+              void run(async () => {
+                const key = createKey;
+                const result = await api.post<Gift>(
+                  '/story-gifts',
+                  buildStoryPayload(wizard)
+                );
                 if (result.data) {
+                  setCreatedKey(key);
                   setSelected(result.data);
+                  setDraftDescription(result.data.giftPhotoDescription || '');
                   if (photo) {
                     const p = await api.post<Gift>(
                       `/story-gifts/${result.data.id}/photo`,
                       { base64: photo }
                     );
                     if (p.data) setSelected(p.data);
+                    setPhotoRev((n) => n + 1);
                   }
                 }
               })
@@ -587,30 +935,55 @@ export function StoryGiftsScreen() {
               key={g.id}
               type="button"
               className={`block w-full rounded-lg border p-3 text-left ${selected?.id === g.id ? 'border-accent' : 'border-silver-700'}`}
-              onClick={() => setSelected(g)}
+              onClick={() => selectGift(g)}
             >
+              <ThemeBadge
+                theme={themeFor(
+                  g.occasionKind as OccasionKind | null,
+                  g.occasionTheme
+                )}
+              />{' '}
               {g.title}
-              {g.occasion ? ` · ${g.occasion}` : ''} —{' '}
+              {occasionCaption(g) ? ` · ${occasionCaption(g)}` : ''} —{' '}
               {stateNames[g.status] || g.status}
             </button>
           ))}
         </Card>
       )}
       {selected && (
-        <Card className="space-y-4 p-5">
+        <Card
+          className="space-y-4 p-5"
+          style={{
+            borderTop: `6px solid ${STORY_THEMES[themeFor(selected.occasionKind as OccasionKind | null, selected.occasionTheme)].accent}`,
+          }}
+        >
           <h2 className="text-xl font-semibold">
             {selected.title} · {stateNames[selected.status]}
           </h2>
-          <p>{selected.occasion}</p>
+          <p>
+            <ThemeBadge
+              theme={themeFor(
+                selected.occasionKind as OccasionKind | null,
+                selected.occasionTheme
+              )}
+            />{' '}
+            {occasionCaption(selected)}
+          </p>
           <p>
             Бюджет: ${(selected.budgetCents / 100).toFixed(2)} · расчётный
             резерв аудиопилота с запасом: $
             {(selected.reservedMicroUsd / 1e6).toFixed(2)}. Это оценка, не счёт
             провайдера.
           </p>
-          {selected.giftNote && (
+          {selected.estimate && (
+            <details>
+              <summary>Смета по строкам</summary>
+              <EstimateTable estimate={selected.estimate} />
+            </details>
+          )}
+          {selected.giftNote && selected.status !== 'DRAFT' && (
             <p>
-              Фраза{' '}
+              Реплика о подарке{' '}
               {selected.giftNotePosition === 'beginning'
                 ? 'в начале'
                 : 'в конце'}
@@ -624,8 +997,19 @@ export function StoryGiftsScreen() {
               alt="Сохранённое фото физического подарка"
             />
           )}
+          {selected.giftPhotoDescription && (
+            <p>Подарок: {selected.giftPhotoDescription}</p>
+          )}
           {selected.status === 'DRAFT' && (
             <>
+              <details open={Boolean(selected.giftNote)}>
+                <summary>
+                  {selected.giftNote
+                    ? 'Точная озвучка с репликой о подарке'
+                    : 'Точный текст озвучки'}
+                </summary>
+                <SpokenText parts={draftParts(selected)} />
+              </details>
               <p>
                 Голос: Nova · Resemble. Текст и изображение будут зафиксированы
                 при запуске.
@@ -641,10 +1025,54 @@ export function StoryGiftsScreen() {
                   disabled={busy}
                   variant="ghost"
                   onClick={() =>
-                    void run(() => update('photo', { base64: photo }))
+                    void run(async () => {
+                      await update('photo', { base64: photo });
+                      setPhotoRev((n) => n + 1);
+                    })
                   }
                 >
                   Сохранить выбранное фото в черновик
+                </Button>
+              )}
+              <label className="block">
+                Описание подарка к фото
+                <input
+                  className={inputStyle}
+                  maxLength={200}
+                  value={draftDescription}
+                  onChange={(e) => setDraftDescription(e.target.value)}
+                />
+              </label>
+              <Button
+                disabled={
+                  busy ||
+                  draftDescription.trim() ===
+                    (selected.giftPhotoDescription || '')
+                }
+                variant="ghost"
+                onClick={() =>
+                  void run(() =>
+                    update('photo', { description: draftDescription.trim() })
+                  )
+                }
+              >
+                Сохранить описание
+              </Button>
+              {selected.hasGiftPhoto && (
+                <Button
+                  disabled={busy}
+                  variant="ghost"
+                  onClick={() =>
+                    void run(async () => {
+                      const r = await api.deleteWithBody<Gift>(
+                        `/story-gifts/${selected.id}/photo`
+                      );
+                      if (r.data) setSelected(r.data);
+                      setDraftDescription('');
+                    })
+                  }
+                >
+                  Убрать фото и описание из черновика
                 </Button>
               )}
             </>
@@ -760,7 +1188,14 @@ export function StoryGiftsScreen() {
             Выпуски доступны только в вашем кабинете.
           </p>
           {['READY', 'APPROVED'].includes(selected.status) && (
-            <StoryVideoPanel key={selected.id} giftId={selected.id} />
+            <StoryVideoPanel
+              key={selected.id}
+              giftId={selected.id}
+              classicText={
+                (catalog.find((s) => s.id === selected.catalogId)?.kind ??
+                  'classic') === 'classic'
+              }
+            />
           )}
           <Button
             variant="ghost"
