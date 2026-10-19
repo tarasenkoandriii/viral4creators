@@ -245,6 +245,9 @@ export const uk: Dictionary = {
     },
   },
   invite: {
+    qaViewerOnly: 'Лише QA: перегляд',
+    qaViewerHint:
+      'Оператор кабінету з QA viewer. Без доступу до Помічника, його Адмінки та Publisher.',
     title: 'Запросити учасника',
     roleLabel: 'Роль у кабінеті',
     roleHints: {

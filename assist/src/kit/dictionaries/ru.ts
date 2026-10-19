@@ -247,6 +247,9 @@ export const ru = {
     },
   },
   invite: {
+    qaViewerOnly: 'Только QA: просмотр',
+    qaViewerHint:
+      'Оператор кабинета с QA viewer. Без доступа к Помощнику, его Админке и Publisher.',
     title: 'Пригласить участника',
     roleLabel: 'Роль в кабинете',
     roleHints: {

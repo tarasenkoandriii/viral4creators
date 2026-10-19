@@ -246,6 +246,9 @@ export const en: Dictionary = {
     },
   },
   invite: {
+    qaViewerOnly: 'QA view only',
+    qaViewerHint:
+      'Account operator with QA viewer. No Assistant, Assistant Admin or Publisher access.',
     title: 'Invite a member',
     roleLabel: 'Account role',
     roleHints: {

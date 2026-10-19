@@ -43,6 +43,14 @@ export function inviteProductRoles(
   return { assist: role, assistAdmin };
 }
 
+/** Explicit QA-only invitation from the shared Assistant shell. */
+export function qaViewerInvite(): {
+  role: InviteRole;
+  productRoles: Partial<ProductRoles>;
+} {
+  return { role: 'operator', productRoles: { qa: 'viewer' } };
+}
+
 /** Коды отказов правок участников (сервер — site-core, агент H Э3). */
 export const MEMBER_ERROR_CODES = [
   'MEMBER_NOT_FOUND',

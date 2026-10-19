@@ -7,6 +7,7 @@ import { formatDate } from '../format';
 import { errorText } from '../errors';
 import {
   inviteProductRoles,
+  qaViewerInvite,
   telegramInviteLink,
   webInviteLink,
   type AdminRole,
@@ -20,6 +21,7 @@ export function InviteScreen() {
   const { api, dict, app, links, locale } = useKit();
   const t = dict.invite;
   const [role, setRole] = useState<InviteRole>('operator');
+  const [qaOnly, setQaOnly] = useState(false);
   const [admin, setAdmin] = useState<AdminRole>('none');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +32,12 @@ export function InviteScreen() {
     setError(null);
     try {
       setInvite(
-        await api.createInvite(role, inviteProductRoles(app, role, admin))
+        await api.createInvite(
+          qaOnly ? qaViewerInvite().role : role,
+          qaOnly
+            ? qaViewerInvite().productRoles
+            : inviteProductRoles(app, role, admin)
+        )
       );
     } catch (e) {
       setError(errorText(e, dict));
@@ -78,27 +85,45 @@ export function InviteScreen() {
     <div className="space-y-4">
       <ScreenTitle>{t.title}</ScreenTitle>
       <Card className="space-y-4">
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium mb-1">{t.roleLabel}</legend>
-          {(['manager', 'operator'] as const).map((r) => (
-            <label key={r} className="flex items-start gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="invite-role"
-                className="mt-1"
-                checked={role === r}
-                onChange={() => setRole(r)}
-              />
-              <span>
-                <span className="font-medium">{dict.members.roles[r]}</span>
-                <span className="block text-xs text-silver-500">
-                  {t.roleHints[r]}
-                </span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
         {app === 'assist' && (
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={qaOnly}
+              disabled={busy}
+              onChange={(e) => setQaOnly(e.target.checked)}
+            />
+            <span>
+              {t.qaViewerOnly}
+              <span className="block text-xs text-silver-500">
+                {t.qaViewerHint}
+              </span>
+            </span>
+          </label>
+        )}
+        {!qaOnly && (
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium mb-1">{t.roleLabel}</legend>
+            {(['manager', 'operator'] as const).map((r) => (
+              <label key={r} className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="invite-role"
+                  className="mt-1"
+                  checked={role === r}
+                  onChange={() => setRole(r)}
+                />
+                <span>
+                  <span className="font-medium">{dict.members.roles[r]}</span>
+                  <span className="block text-xs text-silver-500">
+                    {t.roleHints[r]}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+        {app === 'assist' && !qaOnly && (
           <label className="block">
             <span className="text-sm font-medium">{t.adminLabel}</span>
             <select
@@ -115,7 +140,7 @@ export function InviteScreen() {
           </label>
         )}
       </Card>
-      {app === 'assist' && role === 'manager' && (
+      {app === 'assist' && !qaOnly && role === 'manager' && (
         // О-14 (Э3): у агентства менеджер видит все сайты кабинета.
         <Alert tone="warning">{t.managerSeesAll}</Alert>
       )}

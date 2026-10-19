@@ -6,6 +6,7 @@ import {
 } from '../src/kit/account-select';
 import {
   inviteProductRoles,
+  qaViewerInvite,
   telegramInviteLink,
   webInviteLink,
 } from '../src/kit/invite';
@@ -144,3 +145,8 @@ assert.equal(shortAccountId('cku1234567890'), '…567890');
 assert.equal(shortAccountId('abc'), 'abc');
 
 console.log('invite: ok');
+
+assert.deepEqual(qaViewerInvite(), {
+  role: 'operator',
+  productRoles: { qa: 'viewer' },
+});
