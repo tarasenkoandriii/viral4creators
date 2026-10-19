@@ -355,6 +355,26 @@ function Runs({ siteId }: { siteId: string }) {
             }
           </p>
           {(() => {
+            const a = run.latestAttempts.find((a) => a.caseKey === key);
+            return a ? (
+              <div className="text-sm space-y-1">
+                <p>
+                  Источник замечания: запуск <code>{run.id}</code>; кейс{' '}
+                  <code>{key}</code>; попытка <code>{a.id}</code>.
+                </p>
+                {a.origin === 'automated' &&
+                  a.sourceMetadata?.runnerStatus !== 'passed' && (
+                    <p role="status">
+                      Запуск тестов завершился со статусом{' '}
+                      {a.sourceMetadata?.runnerStatus ?? 'неизвестен'}. Успешный
+                      результат отдельного кейса не считается приёмкой; в сводке
+                      он заблокирован.
+                    </p>
+                  )}
+              </div>
+            ) : null;
+          })()}
+          {(() => {
             const prompt = qaFixPrompt(
               selected,
               run.latestAttempts.find((a) => a.caseKey === key)

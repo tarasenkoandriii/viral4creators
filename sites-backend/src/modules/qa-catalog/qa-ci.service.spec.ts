@@ -133,3 +133,12 @@ test('disabled binding and changed catalog versions stop delivery', async () => 
     'CI report delivery is not configured',
   );
 });
+
+test('re-delivery uses the frozen run after catalog edit or archive', async () => {
+  const s = setup(true);
+  s.db.qaTestCase.findMany.mockResolvedValue([]);
+  await s.ci.deliver('Bearer synthetic', fixture());
+  expect(s.db.qaTestCase.findMany).not.toHaveBeenCalled();
+  expect(s.create).not.toHaveBeenCalled();
+  expect(s.importReport).toHaveBeenCalled();
+});

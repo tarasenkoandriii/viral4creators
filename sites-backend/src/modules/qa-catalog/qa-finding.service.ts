@@ -27,6 +27,45 @@ function id(v: string) {
 @Injectable()
 export class QaFindingService {
   constructor(private readonly catalog: QaCatalogService) {}
+  private async validateSource(
+    tx: Parameters<
+      Parameters<
+        Awaited<ReturnType<QaCatalogService['scoped']>>['$transaction']
+      >[0]
+    >[0],
+    m: AccountMembership,
+    siteId: string,
+    source: ReturnType<typeof parseFinding>['source'],
+  ) {
+    if (!source) return;
+    const run = await tx.qaTestRun.findFirst({
+      where: { id: source.runId, accountId: m.accountId, siteId },
+      select: { snapshot: true },
+    });
+    const snapshot = run?.snapshot;
+    if (
+      !Array.isArray(snapshot) ||
+      !snapshot.some(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          !Array.isArray(item) &&
+          item.caseKey === source.caseKey,
+      )
+    )
+      throw new BadRequestException({ code: 'QA_FINDING_SOURCE_INVALID' });
+    const attempt = await tx.qaTestRunAttempt.findFirst({
+      where: {
+        id: source.attemptId,
+        runId: source.runId,
+        accountId: m.accountId,
+        caseKey: source.caseKey,
+      },
+      select: { id: true },
+    });
+    if (!attempt)
+      throw new BadRequestException({ code: 'QA_FINDING_SOURCE_INVALID' });
+  }
   async list(m: AccountMembership, siteId: string, before?: string) {
     const db = await this.catalog.scoped(m, siteId);
     const rows = await db.qaFinding.findMany({
@@ -94,6 +133,7 @@ export class QaFindingService {
       fingerprint = findingFingerprint(payload);
     try {
       return await db.$transaction(async (tx) => {
+        await this.validateSource(tx, m, siteId, payload.source);
         const row = await tx.qaFinding.create({
           data: {
             accountId: m.accountId,
@@ -167,6 +207,7 @@ export class QaFindingService {
           }))
         )
           throw missing();
+        await this.validateSource(tx, m, siteId, payload.source);
         const changed = await tx.qaFinding.updateMany({
           where: { id: findingId, accountId: m.accountId, siteId, revision },
           data: {

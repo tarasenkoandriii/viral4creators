@@ -1,3 +1,4 @@
+import { QaRunEvidenceReader } from './qa-run-evidence';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SitesDb } from '../../prisma/sites-db.service';
@@ -367,4 +368,109 @@ ciDescribe('QA catalog on isolated CI Postgres', () => {
     const older = await findings.history(member(accountA), siteA, f.id, '2');
     expect(older.items.map((r) => r.version)).toEqual([1]);
   }, 30000);
+  it('links a finding to the exact saved attempt and rejects another tenant', async () => {
+    const run = await runs.create(member(accountA), siteA, {
+      title: 'Finding source',
+      caseIds: [caseId],
+    });
+    const recorded = await runs.record(member(accountA), siteA, run.id, {
+      expectedRevision: 1,
+      caseKey: 'QA-LOGIN',
+      status: 'failed',
+      comment: 'Source proof',
+    });
+    const source = {
+      runId: run.id,
+      caseKey: 'QA-LOGIN',
+      attemptId: recorded.attempt.id,
+    };
+    const payload = {
+      title: 'Linked observation',
+      category: 'logic',
+      severity: 'P2',
+      status: 'needs_confirmation',
+      url: 'https://example.com/source',
+      context: 'demo',
+      steps: 'submit',
+      expected: 'saved',
+      actual: 'rejected',
+      impact: 'cannot save',
+      evidence: [],
+      deployedSha: null,
+      observedAt: '2026-10-10T10:00:00Z',
+      verification: null,
+      source,
+    };
+    const row = await findings.create(member(accountA), siteA, payload);
+    expect(
+      (await findings.get(member(accountA), siteA, row.id)).payload,
+    ).toMatchObject({ source });
+    await expect(
+      findings.create(member(accountB), siteB, payload),
+    ).rejects.toMatchObject({
+      response: { code: 'QA_FINDING_SOURCE_INVALID' },
+    });
+    await expect(
+      findings.replace(member(accountA), siteA, row.id, {
+        expectedRevision: 1,
+        payload: { ...payload, source: { ...source, attemptId: 'missing' } },
+      }),
+    ).rejects.toMatchObject({
+      response: { code: 'QA_FINDING_SOURCE_INVALID' },
+    });
+    expect((await findings.get(member(accountA), siteA, row.id)).revision).toBe(
+      1,
+    );
+  });
+  it('retains passing test history but blocks acceptance after an interrupted runner', async () => {
+    const c = await service.create(member(accountA), siteA, {
+      caseKey: 'QA-INTERRUPTED',
+      payload: { ...payload(), type: 'automated' },
+    });
+    const run = await runs.create(member(accountA), siteA, {
+      title: 'Interrupted report',
+      caseIds: [c.id],
+    });
+    await runs.importReport(member(accountA), siteA, run.id, {
+      expectedRevision: 1,
+      project: 'desktop',
+      report: {
+        schemaVersion: 1,
+        unknownTests: 0,
+        runnerStatus: 'interrupted',
+        metadata: { source: 'playwright', startedAt: '2026-10-11T00:00:00Z' },
+        cases: [
+          {
+            id: 'QA-INTERRUPTED',
+            version: 1,
+            type: 'automated',
+            projects: ['desktop'],
+          },
+        ],
+        results: [
+          {
+            caseId: 'QA-INTERRUPTED',
+            caseVersion: 1,
+            project: 'desktop',
+            attempt: 0,
+            status: 'passed',
+            durationMs: 10,
+            origin: 'automated',
+          },
+        ],
+      },
+    });
+    const read = await runs.get(member(accountA), siteA, run.id);
+    expect(read.latestAttempts[0].status).toBe('passed');
+    expect(read.summary).toMatchObject({
+      passed: 0,
+      blocked: 1,
+      complete: false,
+    });
+    const reader = new QaRunEvidenceReader(new SitesDb(prisma));
+    expect(
+      (await reader.runEvidence(accountA, run.id))?.cases['QA-INTERRUPTED']
+        .status,
+    ).toBe('blocked');
+  });
 });

@@ -91,3 +91,11 @@ assert.equal(calls, 1);
 console.log(
   'QA finding contracts, route, prompt eligibility and conflict without retry passed'
 );
+
+const source = { runId: 'run', caseKey: 'QA-LOGIN', attemptId: 'attempt' };
+assert.deepEqual(decodeFindingPayload({ ...payload, source }).source, source);
+assert.ok(
+  findingFixPrompt({ ...f, payload: { ...payload, source } })?.includes(
+    'попытка attempt'
+  )
+);

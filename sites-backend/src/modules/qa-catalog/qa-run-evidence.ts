@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { acceptanceStatus } from './qa-attempt-status';
 /**
  * Сводка прогона qa-catalog для внешнего потребителя (Р-PUB-Z2-27,
  * предаудит DEF-C-07 / B1-F-03): гейты запуска AI Publisher принимают как
@@ -41,54 +43,68 @@ export class QaRunEvidenceReader {
   ): Promise<QaRunEvidenceView | null> {
     if (!RUN_ID.test(runId)) return null;
     const db = this.db.forAccount(accountId);
-    const run = await db.qaTestRun.findFirst({
-      where: { id: runId, accountId },
-      select: {
-        id: true,
-        siteId: true,
-        title: true,
-        createdAt: true,
-        snapshot: true,
-      },
-    });
-    if (!run) return null;
-    const heads = await db.qaTestRunAttempt.groupBy({
-      by: ['caseKey'],
-      where: { accountId, runId },
-      _max: { attemptNumber: true },
-    });
-    const latest = heads.length
-      ? await db.qaTestRunAttempt.findMany({
-          where: {
-            accountId,
-            runId,
-            OR: heads.map((h) => ({
-              caseKey: h.caseKey,
-              attemptNumber: h._max.attemptNumber!,
-            })),
+    return db.$transaction(
+      async (tx) => {
+        const run = await tx.qaTestRun.findFirst({
+          where: { id: runId, accountId },
+          select: {
+            id: true,
+            siteId: true,
+            title: true,
+            createdAt: true,
+            snapshot: true,
           },
-          select: { caseKey: true, status: true },
-        })
-      : [];
-    const cases: QaRunEvidenceView['cases'] = {};
-    const snapshot = Array.isArray(run.snapshot) ? run.snapshot : [];
-    for (const item of snapshot as Array<{
-      caseKey?: unknown;
-      version?: unknown;
-    }>) {
-      if (typeof item?.caseKey !== 'string' || typeof item.version !== 'number')
-        continue;
-      cases[item.caseKey] = {
-        version: item.version,
-        status: latest.find((a) => a.caseKey === item.caseKey)?.status ?? null,
-      };
-    }
-    return {
-      runId: run.id,
-      siteId: run.siteId,
-      title: run.title,
-      createdAt: run.createdAt,
-      cases,
-    };
+        });
+        if (!run) return null;
+        const heads = await tx.qaTestRunAttempt.groupBy({
+          by: ['caseKey'],
+          where: { accountId, runId },
+          _max: { attemptNumber: true },
+        });
+        const latest = heads.length
+          ? await tx.qaTestRunAttempt.findMany({
+              where: {
+                accountId,
+                runId,
+                OR: heads.map((h) => ({
+                  caseKey: h.caseKey,
+                  attemptNumber: h._max.attemptNumber!,
+                })),
+              },
+              select: {
+                caseKey: true,
+                status: true,
+                origin: true,
+                sourceMetadata: true,
+              },
+            })
+          : [];
+        const cases: QaRunEvidenceView['cases'] = {};
+        const snapshot = Array.isArray(run.snapshot) ? run.snapshot : [];
+        for (const item of snapshot as Array<{
+          caseKey?: unknown;
+          version?: unknown;
+        }>) {
+          if (
+            typeof item?.caseKey !== 'string' ||
+            typeof item.version !== 'number'
+          )
+            continue;
+          const attempt = latest.find((a) => a.caseKey === item.caseKey);
+          cases[item.caseKey] = {
+            version: item.version,
+            status: attempt ? acceptanceStatus(attempt) : null,
+          };
+        }
+        return {
+          runId: run.id,
+          siteId: run.siteId,
+          title: run.title,
+          createdAt: run.createdAt,
+          cases,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 }

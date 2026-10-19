@@ -1,3 +1,4 @@
+import { acceptanceStatus } from './qa-attempt-status';
 import {
   BadRequestException,
   ConflictException,
@@ -67,12 +68,18 @@ export function parseRunAttempt(input: unknown) {
 }
 export function runSummary(
   snapshot: unknown,
-  attempts: Array<{ caseKey: string; status: string }>,
+  attempts: Array<{
+    caseKey: string;
+    status: string;
+    origin?: string;
+    sourceMetadata?: unknown;
+  }>,
 ) {
   const cases = snapshot as Array<{ caseKey: string }>;
   const counts = { passed: 0, failed: 0, blocked: 0, skipped: 0, notRun: 0 };
   for (const item of cases) {
-    const status = attempts.find((a) => a.caseKey === item.caseKey)?.status;
+    const attempt = attempts.find((a) => a.caseKey === item.caseKey);
+    const status = attempt ? acceptanceStatus(attempt) : null;
     if (status && status in counts) counts[status as keyof typeof counts]++;
     else counts.notRun++;
   }

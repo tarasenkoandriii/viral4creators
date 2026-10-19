@@ -81,6 +81,14 @@ const member = {
 } as AccountMembership;
 function fixture() {
   const tx = {
+    qaTestRun: {
+      findFirst: jest
+        .fn()
+        .mockResolvedValue({ snapshot: [{ caseKey: 'QA-LOGIN', version: 1 }] }),
+    },
+    qaTestRunAttempt: {
+      findFirst: jest.fn().mockResolvedValue({ id: 'attempt' }),
+    },
     qaFinding: {
       findFirst: jest.fn().mockResolvedValue({ id: 'finding' }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -176,5 +184,64 @@ describe('QA findings tenant and revision boundary', () => {
         }),
       }),
     );
+  });
+});
+
+describe('QA finding source links', () => {
+  const source = { runId: 'run', caseKey: 'QA-LOGIN', attemptId: 'attempt' };
+  it('keeps a validated immutable attempt reference in the finding revision', async () => {
+    const f = fixture();
+    await f.service.create(member, 'site', { ...payload, source });
+    expect(f.tx.qaTestRun.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'run', accountId: 'account', siteId: 'site' },
+      }),
+    );
+    expect(f.tx.qaTestRunAttempt.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'attempt',
+          runId: 'run',
+          accountId: 'account',
+          caseKey: 'QA-LOGIN',
+        },
+      }),
+    );
+    expect(f.tx.qaFindingRevision.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payload: expect.objectContaining({ source }),
+        }),
+      }),
+    );
+  });
+  it.each(['foreign-run', 'wrong-case', 'foreign-attempt'])(
+    'rejects %s before saving a finding',
+    async (kind) => {
+      const f = fixture();
+      if (kind === 'foreign-run')
+        f.tx.qaTestRun.findFirst.mockResolvedValue(null);
+      if (kind === 'wrong-case')
+        f.tx.qaTestRun.findFirst.mockResolvedValue({
+          snapshot: [{ caseKey: 'OTHER' }],
+        });
+      if (kind === 'foreign-attempt')
+        f.tx.qaTestRunAttempt.findFirst.mockResolvedValue(null);
+      await expect(
+        f.service.create(member, 'site', { ...payload, source }),
+      ).rejects.toMatchObject({
+        response: { code: 'QA_FINDING_SOURCE_INVALID' },
+      });
+      expect(f.tx.qaFinding.create).not.toHaveBeenCalled();
+    },
+  );
+  it('rejects partial and caller-owned references', () => {
+    for (const bad of [
+      { runId: 'run' },
+      { ...source, accountId: 'other' },
+      { ...source, attemptId: '../x' },
+    ]) {
+      expect(() => parseFinding({ ...payload, source: bad })).toThrow();
+    }
   });
 });

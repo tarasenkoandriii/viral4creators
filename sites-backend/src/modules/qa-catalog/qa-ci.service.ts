@@ -56,30 +56,33 @@ export class QaCiService {
       productRoles: { qa: 'admin', assist: 'none', assistAdmin: 'none' },
     };
     const db = await this.catalog.scoped(m, siteId, true);
-    const cases = await db.qaTestCase.findMany({
-      where: {
-        accountId,
-        siteId,
-        archived: false,
-        caseKey: { in: parsed.cases.map((c) => c.caseKey) },
-      },
-    });
-    if (
-      cases.length !== parsed.cases.length ||
-      parsed.cases.some(
-        (c) =>
-          !cases.some(
-            (row) =>
-              row.caseKey === c.caseKey && row.currentVersion === c.version,
-          ),
-      )
-    )
-      throw new BadRequestException('CI case versions differ from the catalog');
     const id = `qaci${claims.runId.padStart(20, '0')}${createHash('sha256').update(`${accountId}:${siteId}:${repositoryId}:${claims.runAttempt}:${parsed.project}`).digest('hex').slice(0, 24)}`;
     let run = await db.qaTestRun.findFirst({
       where: { id, accountId, siteId },
     });
     if (!run) {
+      const cases = await db.qaTestCase.findMany({
+        where: {
+          accountId,
+          siteId,
+          archived: false,
+          caseKey: { in: parsed.cases.map((c) => c.caseKey) },
+        },
+      });
+      if (
+        cases.length !== parsed.cases.length ||
+        parsed.cases.some(
+          (c) =>
+            !cases.some(
+              (row) =>
+                row.caseKey === c.caseKey && row.currentVersion === c.version,
+            ),
+        )
+      )
+        throw new BadRequestException(
+          'CI case versions differ from the catalog',
+        );
+
       try {
         run = await this.runs.create(
           m,

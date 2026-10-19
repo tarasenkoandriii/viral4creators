@@ -9,6 +9,7 @@ export const findingStatuses = [
 ] as const;
 export type FindingStatus = (typeof findingStatuses)[number];
 export interface FindingPayload {
+  source?: { runId: string; caseKey: string; attemptId: string } | null;
   title: string;
   category: 'layout' | 'logic' | 'accessibility';
   severity: 'P0' | 'P1' | 'P2' | 'P3';
@@ -70,6 +71,7 @@ function date(v: unknown): string {
 }
 export function parseFinding(v: unknown): FindingPayload {
   const o = obj(v, [
+    'source',
     'title',
     'category',
     'severity',
@@ -85,6 +87,19 @@ export function parseFinding(v: unknown): FindingPayload {
     'observedAt',
     'verification',
   ]);
+  let source: FindingPayload['source'];
+  if (o.source !== undefined && o.source !== null) {
+    const ref = obj(o.source, ['runId', 'caseKey', 'attemptId']);
+    const runId = str(ref.runId, 64),
+      attemptId = str(ref.attemptId, 64),
+      caseKey = str(ref.caseKey, 64);
+    if (
+      ![runId, attemptId].every((v) => /^[A-Za-z0-9_-]{1,64}$/.test(v)) ||
+      !/^[A-Z][A-Z0-9-]{1,63}$/.test(caseKey)
+    )
+      throw invalid();
+    source = { runId, caseKey, attemptId };
+  }
   let url: URL;
   try {
     url = new URL(str(o.url, 500));
@@ -124,6 +139,7 @@ export function parseFinding(v: unknown): FindingPayload {
     throw invalid();
   if (status === 'fixed_verified' && !verification) throw invalid();
   const payload: FindingPayload = {
+    ...(source ? { source } : {}),
     title: str(o.title, 200),
     category: choice(o.category, ['layout', 'logic', 'accessibility']),
     severity: choice(o.severity, ['P0', 'P1', 'P2', 'P3']),

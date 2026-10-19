@@ -167,3 +167,32 @@ assert.deepEqual(calls[calls.length - 1][2], {
   project: 'desktop',
   report: { schemaVersion: 1 },
 });
+
+for (const runnerStatus of ['failed', 'interrupted', 'timedout']) {
+  const blocked = decodeQaRun({
+    ...run,
+    automationProject: 'desktop',
+    snapshot: [
+      {
+        ...snapshot[0],
+        payload: { ...snapshot[0].payload, type: 'automated' },
+      },
+    ],
+    latestAttempts: [
+      {
+        ...attempt,
+        origin: 'automated',
+        project: 'desktop',
+        status: 'passed',
+        sourceMetadata: {
+          testSourceSha: null,
+          deployedSha: null,
+          runnerStatus,
+        },
+      },
+    ],
+  });
+  assert.equal(qaRunSummary(blocked).passed, 0);
+  assert.equal(qaRunSummary(blocked).blocked, 1);
+  assert.equal(blocked.latestAttempts[0].status, 'passed');
+}

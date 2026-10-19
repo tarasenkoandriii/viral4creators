@@ -332,6 +332,48 @@ function Registry({ siteId }: { siteId: string }) {
             ))}
           </select>
         </label>
+        <fieldset className="space-y-2">
+          <legend>Связь с сохранённой попыткой QA (необязательно)</legend>
+          <p className="text-sm">
+            Укажите все три поля. Сервер проверит запуск, кейс и попытку в этом
+            сайте.
+          </p>
+          {(['runId', 'caseKey', 'attemptId'] as const).map((key) => (
+            <label key={key} className="block">
+              {
+                {
+                  runId: 'ID запуска',
+                  caseKey: 'Ключ кейса',
+                  attemptId: 'ID попытки',
+                }[key]
+              }
+              <input
+                className={inputClass}
+                disabled={busy || !access.write}
+                maxLength={64}
+                value={draft.source?.[key] ?? ''}
+                onChange={(e) =>
+                  edit('source', {
+                    runId: '',
+                    caseKey: '',
+                    attemptId: '',
+                    ...draft.source,
+                    [key]: e.target.value,
+                  })
+                }
+              />
+            </label>
+          ))}
+          {draft.source && access.write && (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => edit('source', null)}
+            >
+              Убрать связь
+            </Button>
+          )}
+        </fieldset>
         <label className="block">
           Доказательства: до 10 обезличенных описаний или ссылок, по одному на
           строку
