@@ -2,7 +2,8 @@
  * Structure-only: no page field values, business entries, credentials or network.
  */
 (() => {
-  if (location.protocol !== "https:") throw new Error("Откройте HTTPS-страницу с формой.");
+  if (location.protocol !== "https:")
+    throw new Error("Откройте HTTPS-страницу с формой.");
   const previous = globalThis.__qaStructureWorkbench;
   if (previous?.isConnected) return;
   const host = document.createElement("aside");
@@ -16,10 +17,47 @@
   panel.setAttribute("role", "region");
   panel.setAttribute("aria-label", "QA: структура формы — панель расширения");
   // Constant markup only. User/page/file strings are assigned with textContent.
-  panel.innerHTML = `<h2>QA Form Capture · 0.2.3</h2><button type="button" id="close">Закрыть панель QA</button><p>Панель открыта через Q. Только структура: без значений полей, заполнения и отправки формы. Сайт может видеть содержимое панели; не загружайте секреты.</p><label>Номер формы QA (с нуля)<input id="index" type="number" min="0" max="99" value="0"></label><button type="button" id="capture">Собрать структуру в панели</button><label>План для сверки структуры QA<input id="file" type="file" accept=".json,application/json"></label><p id="loaded"></p><button type="button" id="compare" disabled>Сверить структуру в панели</button><p id="status" role="status"></p><pre id="preview"></pre><a id="handoff" hidden target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Открыть QA со структурными изменениями</a><p>В QA сначала проверьте снимки. Открытие ссылки ничего не создаёт. Адрес содержит только origin; для нескольких форм уточните безопасный путь в кабинете. Не передаются варианты select, подписи, скрытые поля, iframe и Shadow DOM.</p>`;
+  panel.innerHTML = `<h2>QA Form Capture · 0.2.4</h2><button type="button" id="close">Закрыть панель QA</button><p>Панель открыта через Q. Только структура: без значений полей, заполнения и отправки формы. Сайт может видеть содержимое панели; не загружайте секреты.</p><h3>Быстрый аудит страницы</h3><p>Шесть локальных проверок без отправки форм и платных сервисов. Это не полный аудит сайта.</p><button type="button" id="audit">Проверить открытую страницу</button><button type="button" id="audit-download" disabled>Скачать отчёт страницы (.md)</button><pre id="audit-result" role="status"></pre><label>Номер формы QA (с нуля)<input id="index" type="number" min="0" max="99" value="0"></label><button type="button" id="capture">Собрать структуру в панели</button><label>План для сверки структуры QA<input id="file" type="file" accept=".json,application/json"></label><p id="loaded"></p><button type="button" id="compare" disabled>Сверить структуру в панели</button><p id="status" role="status"></p><pre id="preview"></pre><a id="handoff" hidden target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Открыть QA со структурными изменениями</a><p>В QA сначала проверьте снимки. Открытие ссылки ничего не создаёт. Адрес содержит только origin; для нескольких форм уточните безопасный путь в кабинете. Не передаются варианты select, подписи, скрытые поля, iframe и Shadow DOM.</p>`;
   root.append(panel);
   document.documentElement.append(host);
   const get = (id) => root.getElementById(id);
+  let auditReport = null;
+  get("audit").onclick = () => {
+    auditReport = null;
+    get("audit-download").disabled = true;
+    try {
+      const result = quickPageAudit();
+      auditReport = [
+        "# Быстрый аудит страницы",
+        "",
+        result.origin,
+        result.checkedAt,
+        "",
+        ...result.checks.map(
+          (c) =>
+            `${c.title}: ${c.count ? c.count + " — проверить" : "сигнал не найден"}. ${c.count ? c.action : ""}`,
+        ),
+        "",
+        "## Ограничения",
+        ...result.limitations,
+      ].join("\n");
+      get("audit-result").textContent = auditReport;
+      get("audit-download").disabled = false;
+    } catch (e) {
+      get("audit-result").textContent = e.message;
+    }
+  };
+  get("audit-download").onclick = () => {
+    if (!auditReport) return;
+    const url = URL.createObjectURL(
+      new Blob([auditReport], { type: "text/markdown;charset=utf-8" }),
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "qa-quick-page-audit.md";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   let plan = null;
   let fileGeneration = 0;
   const clear = () => {

@@ -192,16 +192,18 @@ export function decodeQaRun(v: unknown): QaRun {
     automationProject,
   };
 }
+export function qaAcceptanceStatus(a?: QaAttempt): QaResult | 'notRun' {
+  return a?.status === 'passed' &&
+    a.origin === 'automated' &&
+    a.sourceMetadata?.runnerStatus !== 'passed'
+    ? 'blocked'
+    : (a?.status ?? 'notRun');
+}
 export function qaRunSummary(run: QaRun) {
   const counts = { passed: 0, failed: 0, blocked: 0, skipped: 0, notRun: 0 };
   for (const s of run.snapshot) {
     const a = run.latestAttempts.find((a) => a.caseKey === s.caseKey);
-    const status =
-      a?.status === 'passed' &&
-      a.origin === 'automated' &&
-      a.sourceMetadata?.runnerStatus !== 'passed'
-        ? 'blocked'
-        : (a?.status ?? 'notRun');
+    const status = qaAcceptanceStatus(a);
     counts[status]++;
   }
   return counts;

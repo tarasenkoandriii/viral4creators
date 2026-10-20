@@ -486,3 +486,32 @@ test("page panel refuses missing access and does not report matching structures 
     await w.close();
   }
 });
+
+test("quick page audit downloads scoped findings without values, requests or duplicates", async () => {
+  const w = await setup(true);
+  try {
+    const panel = w.target.locator('#qa-form-structure-workbench');
+    await expect(panel).toHaveCount(1);
+    await w.target.evaluate(() => {
+      const img = document.createElement('img');
+      img.src='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+      document.body.append(img);
+      const input = document.createElement('input'); input.id='unlabelled'; input.value='PRIVATE_AUDIT_VALUE'; document.body.append(input);
+    });
+    await panel.getByRole('button',{name:'Проверить открытую страницу',exact:true}).click();
+    const result = await panel.locator('#audit-result').innerText();
+    expect(result).toContain('Поля без очевидной подписи: 1');
+    expect(result).toContain('не полный аудит сайта');
+    expect(result).not.toContain('PRIVATE_');
+    expect(result).not.toContain('/user/private');
+    expect(result).not.toContain('token=');
+    const download = w.target.waitForEvent('download');
+    await panel.locator('#audit-download').click();
+    const file = await download;
+    expect(await readFile(await file.path(),'utf8')).toBe(result);
+    await panel.getByRole('button',{name:'Проверить открытую страницу',exact:true}).click();
+    await expect(panel).toHaveCount(1);
+    expect(await w.target.locator('#email').inputValue()).toBe('PRIVATE_EMAIL');
+    expect(w.network.filter(url=>!url.startsWith('data:'))).toEqual([fixtureUrl]);
+  } finally { await w.close(); }
+});

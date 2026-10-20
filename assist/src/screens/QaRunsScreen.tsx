@@ -1,4 +1,5 @@
 import { QaPlans } from '../components/QaPlans';
+import { downloadQaRunReport } from '../lib/qa-run-report';
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, useKit } from '../kit';
 import { Button, Card, inputClass } from '../kit/ui';
@@ -11,6 +12,7 @@ import { FixPromptDraft } from '../components/FixPromptDraft';
 import { navigate } from '../lib/router';
 import {
   qaRunSummary,
+  qaAcceptanceStatus,
   type QaRun,
   type QaRunHead,
   type QaAttempt,
@@ -301,6 +303,26 @@ function Runs({ siteId }: { siteId: string }) {
           <h2 className="font-semibold">
             {run.title} · ревизия {run.revision}
           </h2>
+          <Button
+            variant="outline"
+            disabled={busy || hasDraft}
+            onClick={() =>
+              void act(async () => {
+                const fresh = await api.get(siteId, run.id);
+                if (!mounted.current) return;
+                setRun(fresh);
+                downloadQaRunReport(siteId, fresh);
+                setNotice(`Отчёт выгружен по ревизии ${fresh.revision}.`);
+              })
+            }
+          >
+            Скачать отчёт QA (.md)
+          </Button>
+          <p className="text-sm">
+            Отчёт включает только выбранные кейсы и последние сохранённые
+            результаты. Перед выгрузкой запуск обновляется с сервера; перед
+            передачей проверьте комментарии.
+          </p>
           {run.context && (
             <div className="text-sm">
               <p>
@@ -384,8 +406,9 @@ function Runs({ siteId }: { siteId: string }) {
             Текущий результат:{' '}
             {
               labels[
-                run.latestAttempts.find((a) => a.caseKey === key)?.status ??
-                  'notRun'
+                qaAcceptanceStatus(
+                  run.latestAttempts.find((a) => a.caseKey === key)
+                )
               ]
             }
           </p>
@@ -633,7 +656,7 @@ function Runs({ siteId }: { siteId: string }) {
             <p key={a.id} className="whitespace-pre-wrap break-words">
               {a.caseKey} · #{a.attemptNumber} · {labels[a.status]} ·{' '}
               {a.origin === 'automated'
-                ? `Playwright: ${a.project}`
+                ? `Автотесты: ${a.project}`
                 : 'Ручная попытка'}{' '}
               · {new Date(a.createdAt).toLocaleString()} · {a.comment}
               {a.sourceMetadata && (

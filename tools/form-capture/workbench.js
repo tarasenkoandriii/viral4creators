@@ -288,11 +288,106 @@ function captureFormStructure(formIndex = 0, transfer = null) {
   }
 }
 
+/** Local, read-only heuristics. No values, text samples, paths or network requests. */
+function quickPageAudit() {
+  if (location.protocol !== "https:")
+    throw new Error("Откройте HTTPS-страницу.");
+  const visible = (el) =>
+    !el.closest('[hidden],[inert],[aria-hidden="true"]') &&
+    el.getClientRects().length > 0 &&
+    getComputedStyle(el).visibility !== "hidden";
+  const elements = [...document.querySelectorAll("body *")];
+  if (elements.length > 20000)
+    throw new Error("Страница слишком большая для быстрого аудита.");
+  const checks = [];
+  const add = (id, title, count, action) =>
+    checks.push({
+      id,
+      title,
+      count,
+      status: count ? "review" : "no-signal",
+      action,
+    });
+  add(
+    "title",
+    "Отсутствует заголовок вкладки",
+    document.title.trim() ? 0 : 1,
+    "Укажите содержательный title страницы.",
+  );
+  add(
+    "lang",
+    "Не указан язык документа",
+    document.documentElement.lang.trim() ? 0 : 1,
+    "Укажите lang на элементе html.",
+  );
+  add(
+    "viewport",
+    "Нет настройки мобильного viewport",
+    document.querySelector('meta[name="viewport" i]') ? 0 : 1,
+    "Проверьте viewport и отображение на телефоне.",
+  );
+  const controls = [
+    ...document.querySelectorAll(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="reset"]):not([type="button"]):not([type="image"]),select,textarea',
+    ),
+  ].filter(visible);
+  const hasName = (el) =>
+    Boolean(
+      el.getAttribute("aria-label")?.trim() ||
+      el
+        .getAttribute("aria-labelledby")
+        ?.split(/\s+/)
+        .some((id) => document.getElementById(id)?.textContent?.trim()) ||
+      [...(el.labels || [])].some((label) => label.textContent?.trim()) ||
+      el.getAttribute("title")?.trim(),
+    );
+  add(
+    "labels",
+    "Поля без очевидной подписи",
+    controls.filter((el) => !hasName(el)).length,
+    "Добавьте связанную label или доступное имя; placeholder не заменяет подпись. Проверить дерево доступности вручную.",
+  );
+  add(
+    "alt",
+    "Видимые изображения без alt",
+    [...document.images].filter(
+      (el) =>
+        visible(el) &&
+        !el.hasAttribute("alt") &&
+        !["presentation", "none"].includes(el.getAttribute("role")),
+    ).length,
+    "Добавьте alt; для декоративных изображений используйте пустой alt.",
+  );
+  const ids = new Map();
+  for (const el of elements)
+    if (el.id) ids.set(el.id, (ids.get(el.id) || 0) + 1);
+  add(
+    "duplicate-id",
+    "Повторяющиеся ID в документе",
+    [...ids.values()].filter((n) => n > 1).length,
+    "Устраните неоднозначные ID; проверьте label и aria-labelledby.",
+  );
+  return {
+    schemaVersion: 1,
+    kind: "quick-page-audit",
+    origin: location.origin,
+    checkedAt: new Date().toISOString(),
+    checks,
+    limitations: [
+      "Проверена только открытая страница и её обычный DOM в текущем состоянии.",
+      "Не проверены отправка форм, бизнес-логика, безопасность, скорость сети, контраст, клавиатура, iframe и Shadow DOM.",
+      "Это эвристические сигналы для ручной проверки, не полный аудит сайта и не сертификат соответствия.",
+      "URL-путь, значения полей, подписи и содержимое страницы не включены. Серверу ничего не отправлено.",
+    ],
+  };
+}
+
 /** Runs only in the extension's isolated world after toolbar activeTab grant.
  * Structure-only: no page field values, business entries, credentials or network.
  */
 (() => {
-  if (location.protocol !== "https:") throw new Error("Откройте HTTPS-страницу с формой.");
+  if (location.protocol !== "https:")
+    throw new Error("Откройте HTTPS-страницу с формой.");
   const previous = globalThis.__qaStructureWorkbench;
   if (previous?.isConnected) return;
   const host = document.createElement("aside");
@@ -306,10 +401,47 @@ function captureFormStructure(formIndex = 0, transfer = null) {
   panel.setAttribute("role", "region");
   panel.setAttribute("aria-label", "QA: структура формы — панель расширения");
   // Constant markup only. User/page/file strings are assigned with textContent.
-  panel.innerHTML = `<h2>QA Form Capture · 0.2.3</h2><button type="button" id="close">Закрыть панель QA</button><p>Панель открыта через Q. Только структура: без значений полей, заполнения и отправки формы. Сайт может видеть содержимое панели; не загружайте секреты.</p><label>Номер формы QA (с нуля)<input id="index" type="number" min="0" max="99" value="0"></label><button type="button" id="capture">Собрать структуру в панели</button><label>План для сверки структуры QA<input id="file" type="file" accept=".json,application/json"></label><p id="loaded"></p><button type="button" id="compare" disabled>Сверить структуру в панели</button><p id="status" role="status"></p><pre id="preview"></pre><a id="handoff" hidden target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Открыть QA со структурными изменениями</a><p>В QA сначала проверьте снимки. Открытие ссылки ничего не создаёт. Адрес содержит только origin; для нескольких форм уточните безопасный путь в кабинете. Не передаются варианты select, подписи, скрытые поля, iframe и Shadow DOM.</p>`;
+  panel.innerHTML = `<h2>QA Form Capture · 0.2.4</h2><button type="button" id="close">Закрыть панель QA</button><p>Панель открыта через Q. Только структура: без значений полей, заполнения и отправки формы. Сайт может видеть содержимое панели; не загружайте секреты.</p><h3>Быстрый аудит страницы</h3><p>Шесть локальных проверок без отправки форм и платных сервисов. Это не полный аудит сайта.</p><button type="button" id="audit">Проверить открытую страницу</button><button type="button" id="audit-download" disabled>Скачать отчёт страницы (.md)</button><pre id="audit-result" role="status"></pre><label>Номер формы QA (с нуля)<input id="index" type="number" min="0" max="99" value="0"></label><button type="button" id="capture">Собрать структуру в панели</button><label>План для сверки структуры QA<input id="file" type="file" accept=".json,application/json"></label><p id="loaded"></p><button type="button" id="compare" disabled>Сверить структуру в панели</button><p id="status" role="status"></p><pre id="preview"></pre><a id="handoff" hidden target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">Открыть QA со структурными изменениями</a><p>В QA сначала проверьте снимки. Открытие ссылки ничего не создаёт. Адрес содержит только origin; для нескольких форм уточните безопасный путь в кабинете. Не передаются варианты select, подписи, скрытые поля, iframe и Shadow DOM.</p>`;
   root.append(panel);
   document.documentElement.append(host);
   const get = (id) => root.getElementById(id);
+  let auditReport = null;
+  get("audit").onclick = () => {
+    auditReport = null;
+    get("audit-download").disabled = true;
+    try {
+      const result = quickPageAudit();
+      auditReport = [
+        "# Быстрый аудит страницы",
+        "",
+        result.origin,
+        result.checkedAt,
+        "",
+        ...result.checks.map(
+          (c) =>
+            `${c.title}: ${c.count ? c.count + " — проверить" : "сигнал не найден"}. ${c.count ? c.action : ""}`,
+        ),
+        "",
+        "## Ограничения",
+        ...result.limitations,
+      ].join("\n");
+      get("audit-result").textContent = auditReport;
+      get("audit-download").disabled = false;
+    } catch (e) {
+      get("audit-result").textContent = e.message;
+    }
+  };
+  get("audit-download").onclick = () => {
+    if (!auditReport) return;
+    const url = URL.createObjectURL(
+      new Blob([auditReport], { type: "text/markdown;charset=utf-8" }),
+    );
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "qa-quick-page-audit.md";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   let plan = null;
   let fileGeneration = 0;
   const clear = () => {

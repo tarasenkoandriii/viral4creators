@@ -8,7 +8,7 @@ source = root / 'tools/form-capture'
 out = root / 'assist/public/downloads/qa-form-capture.zip'
 buffer = io.BytesIO()
 with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
-    for name in ['manifest.json', 'capture.js', 'popup.html', 'popup.js', 'workbench.js', 'workbench-ui.js', 'README.md', 'package.json']:
+    for name in ['manifest.json', 'capture.js', 'quick-audit.js', 'popup.html', 'popup.js', 'workbench.js', 'workbench-ui.js', 'README.md', 'package.json']:
         info = zipfile.ZipInfo(name, (2026, 10, 15, 0, 0, 0))
         info.compress_type = zipfile.ZIP_DEFLATED
         archive.writestr(info, (source / name).read_bytes())
