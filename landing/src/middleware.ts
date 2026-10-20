@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
+import { visitorLocale, locales, LOCALE_COOKIE } from './lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from './lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from './lib/tutorial-host';
 import {
@@ -236,15 +236,13 @@ function route(request: NextRequest): NextResponse {
     return NextResponse.next();
   }
 
-  // Единственный источник, который считается ЯВНЫМ выбором человека, —
-  // cookie, выставленная переключателем языка. Без неё — всегда
-  // defaultLocale, независимо от языка браузера или страны по IP: тот же
-  // принцип "не гадать", что уже применён в аналогичном месте solar-shop
-  // (см. комментарий в lib/i18n.ts).
-  const cookieLocale = request.cookies.get(LOCALE_COOKIE)?.value;
-  const locale = cookieLocale && (locales as readonly string[]).includes(cookieLocale) ? cookieLocale : defaultLocale;
+  // Saved explicit choice, then browser language; unknown languages fall back to English.
+  const locale = visitorLocale(request.cookies.get(LOCALE_COOKIE)?.value, request.headers.get('accept-language'), request.headers.get('x-vercel-ip-country'));
 
   const url = request.nextUrl.clone();
   url.pathname = `/${locale}${pathname === '/' ? '' : pathname}`;
-  return NextResponse.redirect(url);
+  const response = NextResponse.redirect(url);
+  response.headers.set('Vary', 'Accept-Language, Cookie, X-Vercel-IP-Country');
+  response.headers.set('Cache-Control', 'private, no-store');
+  return response;
 }

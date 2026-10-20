@@ -5,9 +5,8 @@
  * перенесён сюда без изменений в подходе — только свой набор словарей
  * под контент маркетплейса.
  *
- * defaultLocale = 'ru' — по той же причине, что и в landing: весь текущий
- * контент площадки написан по-русски, и без явного выбора cookie
- * поведение для всех существующих ссылок не должно меняться ни на бит.
+ * defaultLocale = 'ru' — внутренний fallback словарей. Для посетителя:
+ * явная локаль URL, cookie, страна Vercel, язык браузера, затем en.
  *
  * /embed/[id] (§20 №5) и /feed.xml, /feed.json (§20 №11) сознательно
  * ЖИВУТ ВНЕ [locale] — см. middleware.ts. Причины разные: у embed нет
@@ -46,3 +45,26 @@ export function isLocale(value: string): value is Locale {
 
 /** Имя cookie, в которую переключатель языка пишет явный выбор человека. */
 export const LOCALE_COOKIE = 'NEXT_LOCALE';
+
+/** Explicit choice, Vercel country, browser language, then English. */
+export function visitorLocale(cookie: string | undefined, header: string | null, country?: string | null): Locale {
+  if (cookie && (locales as readonly string[]).includes(cookie)) return cookie as Locale;
+  const countries: Record<string, string> = {
+    UA: 'uk', RU: 'ru', DE: 'de', AT: 'de', LI: 'de',
+    ES: 'es', MX: 'es', AR: 'es', BO: 'es', CL: 'es', CO: 'es', CR: 'es',
+    CU: 'es', DO: 'es', EC: 'es', SV: 'es', GT: 'es', HN: 'es', NI: 'es',
+    PA: 'es', PY: 'es', PE: 'es', UY: 'es', VE: 'es',
+    US: 'en', GB: 'en', AU: 'en', NZ: 'en', IE: 'en',
+  };
+  const regional = countries[country?.trim().toUpperCase() ?? ''];
+  if (regional && (locales as readonly string[]).includes(regional)) return regional as Locale;
+  const ranked = (header ?? '').split(',').map((part, index) => {
+    const [tag, ...params] = part.trim().toLowerCase().split(';');
+    const q = params.map(p => p.trim()).find(p => p.startsWith('q='));
+    const weight = q ? Number(q.slice(2)) : 1;
+    return { tag: tag.split('-')[0], weight, index };
+  }).filter(x => Number.isFinite(x.weight) && x.weight > 0 && x.weight <= 1)
+    .sort((a, b) => b.weight - a.weight || a.index - b.index);
+  const match = ranked.find(x => (locales as readonly string[]).includes(x.tag));
+  return match ? match.tag as Locale : 'en';
+}

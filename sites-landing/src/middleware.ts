@@ -3,7 +3,7 @@ import {
   isLocale,
   LOCALE_COOKIE,
   LOCALE_SWITCH_PARAM,
-  localeFromAcceptLanguage,
+  visitorLocale,
   type Locale,
 } from './lib/i18n';
 
@@ -15,7 +15,7 @@ import {
  *     действию) и 307 на тот же адрес без `hl` — дублей адресов нет.
  *  2. `/<loc>/…` — как есть.
  *  3. Всё остальное (`/`, `/assistant`) — 307 на `/<loc>/…`: локаль из
- *     cookie выбора, затем из `Accept-Language`, иначе `en` (= x-default).
+ *     cookie выбора, затем из страны Vercel и `Accept-Language`, иначе `en` (= x-default).
  *     307, а не 308: ответ зависит от человека, кэшировать навсегда нельзя.
  *
  * Вне локалей: `/_next`, `/api`, `/legal` (одна редакция, §3.15), файлы
@@ -51,10 +51,11 @@ export function middleware(request: NextRequest) {
   }
 
   const cookie = request.cookies.get(LOCALE_COOKIE)?.value;
-  const locale: Locale = isLocale(cookie) ? cookie : localeFromAcceptLanguage(request.headers.get('accept-language'));
+  const locale: Locale = visitorLocale(cookie, request.headers.get('accept-language'), request.headers.get('x-vercel-ip-country'));
   const url = request.nextUrl.clone();
   url.pathname = `/${locale}${pathname === '/' ? '' : pathname}`;
   const res = NextResponse.redirect(url, 307);
-  res.headers.set('Vary', 'Accept-Language, Cookie');
+  res.headers.set('Vary', 'Accept-Language, Cookie, X-Vercel-IP-Country');
+  res.headers.set('Cache-Control', 'private, no-store');
   return res;
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { defaultLocale, locales, LOCALE_COOKIE } from './lib/i18n';
+import { visitorLocale, locales, LOCALE_COOKIE } from './lib/i18n';
 
 /**
  * Локаль-редирект — тот же паттерн, что у landing/src/middleware.ts.
@@ -21,13 +21,12 @@ export function middleware(request: NextRequest) {
   );
   if (pathnameHasLocale) return NextResponse.next();
 
-  // Единственный сигнал, который считается ЯВНЫМ выбором человека, —
-  // cookie от переключателя языка. Без неё — всегда defaultLocale,
-  // независимо от языка браузера, тот же принцип, что в landing.
-  const cookieLocale = request.cookies.get(LOCALE_COOKIE)?.value;
-  const locale = cookieLocale && (locales as readonly string[]).includes(cookieLocale) ? cookieLocale : defaultLocale;
+  const locale = visitorLocale(request.cookies.get(LOCALE_COOKIE)?.value, request.headers.get('accept-language'), request.headers.get('x-vercel-ip-country'));
 
   const url = request.nextUrl.clone();
   url.pathname = `/${locale}${pathname === '/' ? '' : pathname}`;
-  return NextResponse.redirect(url);
+  const response = NextResponse.redirect(url);
+  response.headers.set('Vary', 'Accept-Language, Cookie, X-Vercel-IP-Country');
+  response.headers.set('Cache-Control', 'private, no-store');
+  return response;
 }

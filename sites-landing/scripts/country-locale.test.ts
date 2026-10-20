@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { NextRequest } from 'next/server';
+import { middleware } from '../src/middleware';
+import { visitorLocale } from '../src/lib/i18n';
+assert.equal(visitorLocale('ru', 'en', 'UA'), 'ru');
+assert.equal(visitorLocale(undefined, 'ru', 'UA'), 'uk');
+assert.equal(visitorLocale(undefined, 'uk', 'GB'), 'en');
+assert.equal(visitorLocale(undefined, 'ru', 'ZZ'), 'ru');
+assert.equal(visitorLocale(undefined, 'uk', 'CA'), 'uk');
+assert.equal(visitorLocale(undefined, null, null), 'en');
+const response = middleware(new NextRequest('https://example.test/', {headers: {'x-vercel-ip-country':'UA', 'accept-language':'en'}}));
+assert.equal(new URL(response.headers.get('location')!).pathname, '/uk');
+assert.equal(response.headers.get('cache-control'), 'private, no-store');
+assert.ok(response.headers.get('vary')?.includes('X-Vercel-IP-Country'));
+const explicit = middleware(new NextRequest('https://example.test/ru', {headers: {'x-vercel-ip-country':'UA'}}));
+assert.equal(explicit.headers.get('location'), null);
+console.log('country locale: cookie > Vercel > browser, explicit URL and private caching passed');

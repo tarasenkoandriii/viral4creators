@@ -8,7 +8,7 @@
  *    hreflang `x-default` здесь — `en`: версия для тех, чей язык не
  *    совпал ни с одной;
  *  - корень `/` выбирает язык по cookie явного выбора, затем по
- *    `Accept-Language` (§11), а без совпадений — тот же `en`.
+ *    `X-Vercel-IP-Country`, затем `Accept-Language` (§11), а без совпадений — тот же `en`.
  *
  * Юридические черновики — вне `[locale]`, одной редакцией (§3.15): без
  * проверенного юристом перевода машинный перевод юр-текста — риск, а не
@@ -78,4 +78,27 @@ export function localeFromAcceptLanguage(header: string | null | undefined): Loc
     if (isLocale(primary)) return primary;
   }
   return X_DEFAULT_LOCALE;
+}
+
+/** Explicit choice, Vercel country, browser language, then English. */
+export function visitorLocale(cookie: string | undefined, header: string | null, country?: string | null): Locale {
+  if (cookie && (locales as readonly string[]).includes(cookie)) return cookie as Locale;
+  const countries: Record<string, string> = {
+    UA: 'uk', RU: 'ru', DE: 'de', AT: 'de', LI: 'de',
+    ES: 'es', MX: 'es', AR: 'es', BO: 'es', CL: 'es', CO: 'es', CR: 'es',
+    CU: 'es', DO: 'es', EC: 'es', SV: 'es', GT: 'es', HN: 'es', NI: 'es',
+    PA: 'es', PY: 'es', PE: 'es', UY: 'es', VE: 'es',
+    US: 'en', GB: 'en', AU: 'en', NZ: 'en', IE: 'en',
+  };
+  const regional = countries[country?.trim().toUpperCase() ?? ''];
+  if (regional && (locales as readonly string[]).includes(regional)) return regional as Locale;
+  const ranked = (header ?? '').split(',').map((part, index) => {
+    const [tag, ...params] = part.trim().toLowerCase().split(';');
+    const q = params.map(p => p.trim()).find(p => p.startsWith('q='));
+    const weight = q ? Number(q.slice(2)) : 1;
+    return { tag: tag.split('-')[0], weight, index };
+  }).filter(x => Number.isFinite(x.weight) && x.weight > 0 && x.weight <= 1)
+    .sort((a, b) => b.weight - a.weight || a.index - b.index);
+  const match = ranked.find(x => (locales as readonly string[]).includes(x.tag));
+  return match ? match.tag as Locale : 'en';
 }
