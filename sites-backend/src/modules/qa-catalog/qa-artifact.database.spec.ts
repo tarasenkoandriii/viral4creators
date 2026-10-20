@@ -104,6 +104,29 @@ ciDescribe(
         finding,
         result.id,
       );
+      const content = await api.content(
+        member(account, 'viewer'),
+        site,
+        finding,
+        result.id,
+      );
+      expect(Buffer.from(content.contentBase64, 'base64')).toEqual(QA_TEST_PNG);
+      expect(content.sha256).toBe(result.sha256);
+      await expect(
+        api.content(member(account, 'none'), site, finding, result.id),
+      ).rejects.toMatchObject({ status: 403 });
+      await expect(
+        api.content(member(), site, finding, 'unknown'),
+      ).rejects.toMatchObject({ status: 404 });
+      const original = storage.files.get(row.pathname)!;
+      storage.files.set(row.pathname, {
+        ...original,
+        body: Buffer.from('corrupted'),
+      });
+      await expect(
+        api.content(member(account, 'viewer'), site, finding, result.id),
+      ).rejects.toMatchObject({ status: 503 });
+      storage.files.set(row.pathname, original);
       expect(link.validUntil.getTime()).toBeLessThanOrEqual(
         Date.now() + 300000,
       );

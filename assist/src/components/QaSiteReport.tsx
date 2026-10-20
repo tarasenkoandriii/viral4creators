@@ -26,7 +26,7 @@ export function QaSiteReport({
         if (!font.ok) throw new Error('Шрифт PDF недоступен.');
         const images = include
           ? await collectReportImages(report, (f, a) =>
-              api.artifactLink(siteId, f, a)
+              api.artifactContent(siteId, f, a)
             )
           : [];
         const bytes = await renderSiteQaPdf(

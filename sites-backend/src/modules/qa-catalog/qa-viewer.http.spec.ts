@@ -33,6 +33,7 @@ describe('QA viewer HTTP boundaries', () => {
       'start',
       'upload',
       'download',
+      'content',
       'remove',
       'import',
       'importReport',
@@ -53,6 +54,7 @@ describe('QA viewer HTTP boundaries', () => {
     '/findings/finding/history',
     '/findings/finding/artifacts',
     '/findings/finding/artifacts/file/download',
+    '/findings/finding/artifacts/file/content',
     '/plans',
     '/plans/plan',
     '/plans/plan/history',
@@ -134,6 +136,13 @@ describe('QA viewer HTTP boundaries', () => {
       .set('x-test-identity', '1')
       .expect(200);
     expect(hit).toHaveBeenCalledTimes(1);
+  });
+  it('private report bytes are never cacheable', async () => {
+    await request(app.getHttpServer())
+      .get(root + '/findings/finding/artifacts/file/content')
+      .set('x-test-identity', '1')
+      .expect('Cache-Control', 'private, no-store')
+      .expect(200);
   });
   it.each(writes)(
     'viewer cannot %s %s even with forged write fields',

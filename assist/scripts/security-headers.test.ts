@@ -211,15 +211,10 @@ console.log(
   'ok   security-headers: CSP/frame-ancestors/nosniff/Referrer-Policy'
 );
 
-// QA PDF reads the same private signed PNG origins already permitted for images.
+// Report bytes use authenticated API, not a broad direct Blob connection.
 assert.ok(
-  allows(
+  !allows(
     dir('connect-src'),
-    'https://abcd1234.private.blob.vercel-storage.com/qa/file.png?vercel-blob-signature=s'
+    'https://abcd1234.private.blob.vercel-storage.com/qa/file.png'
   )
 );
-for (const url of [
-  'https://abcd1234.public.blob.vercel-storage.com/x.png',
-  'https://evil.com/x.png',
-])
-  assert.ok(!allows(dir('connect-src'), url));

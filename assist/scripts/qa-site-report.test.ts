@@ -134,46 +134,40 @@ const imageReport: SiteQaReport = {
     },
   ],
 };
-const originalFetch = globalThis.fetch;
-try {
-  globalThis.fetch = async () => new Response(png);
-  const images = await collectReportImages(imageReport, async () => ({
-    url: 'https://private.blob.vercel-storage.com/proof',
-  }));
-  assert.equal(images.length, 1);
-  assert.ok(
-    (
-      await PDFDocument.load(await renderSiteQaPdf(report, font, images))
-    ).getPageCount() > 1
-  );
-  await assert.rejects(
-    collectReportImages(
-      {
-        ...imageReport,
-        entries: [
-          {
-            finding: f,
-            artifacts: [
-              {
-                ...imageReport.entries[0].artifacts[0],
-                sha256: '0'.repeat(64),
-              },
-            ],
-          },
-        ],
-      },
-      async () => ({ url: 'https://private.blob.vercel-storage.com/proof' })
-    )
-  );
-  globalThis.fetch = async () => new Response('', { status: 403 });
-  await assert.rejects(
-    collectReportImages(imageReport, async () => ({
-      url: 'https://private.blob.vercel-storage.com/proof',
-    }))
-  );
-} finally {
-  globalThis.fetch = originalFetch;
-}
+
+const contentBase64 = btoa(
+  Array.from(png, (c) => String.fromCharCode(c)).join('')
+);
+const images = await collectReportImages(imageReport, async () => ({
+  contentBase64,
+}));
+assert.equal(images.length, 1);
+assert.ok(
+  (
+    await PDFDocument.load(await renderSiteQaPdf(report, font, images))
+  ).getPageCount() > 1
+);
+await assert.rejects(
+  collectReportImages(
+    {
+      ...imageReport,
+      entries: [
+        {
+          finding: f,
+          artifacts: [
+            { ...imageReport.entries[0].artifacts[0], sha256: '0'.repeat(64) },
+          ],
+        },
+      ],
+    },
+    async () => ({ contentBase64 })
+  )
+);
+await assert.rejects(
+  collectReportImages(imageReport, async () => {
+    throw new Error('denied');
+  })
+);
 console.log(
-  'Private PNG inclusion: verified hash, appended image page, denied/mismatch abort passed'
+  'Private PNG: authenticated bytes, hash, embedding, denied/mismatch abort passed'
 );

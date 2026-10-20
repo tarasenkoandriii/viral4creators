@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Headers,
+  Header,
   Param,
   Post,
   UseGuards,
@@ -51,6 +52,17 @@ export class QaArtifactController {
     @Param('id') id: string,
   ) {
     return this.artifacts.download(m, site, finding, id);
+  }
+  @Get(':id/content')
+  @Header('Cache-Control', 'private, no-store')
+  @RequireProductRoles(QA_READ)
+  content(
+    @Membership() m: AccountMembership,
+    @Param('siteId') site: string,
+    @Param('findingId') finding: string,
+    @Param('id') id: string,
+  ) {
+    return this.artifacts.content(m, site, finding, id);
   }
   @Delete(':id')
   @RequireProductRoles(QA_WRITE)

@@ -99,3 +99,24 @@ assert.ok(
     'попытка attempt'
   )
 );
+
+const contentApi = createQaFindingsApi({
+  request: async (method: string, path: string) => {
+    assert.equal(method, 'GET');
+    assert.equal(path, '/qa/sites/site/findings/finding/artifacts/png/content');
+    return {
+      id: 'png',
+      findingRevision: 1,
+      sha256: 'a'.repeat(64),
+      bytes: 3,
+      contentType: 'image/png',
+      expiresAt: 'later',
+      createdAt: 'now',
+      contentBase64: 'YWJj',
+    };
+  },
+} as unknown as ApiClient);
+assert.equal(
+  (await contentApi.artifactContent('site', 'finding', 'png')).contentBase64,
+  'YWJj'
+);

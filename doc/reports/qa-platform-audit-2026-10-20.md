@@ -116,3 +116,8 @@ Production-приёмка viewer — после выкладки, записыв
 
 
 Production-проверка c34762d: CI 39454685335 success, assist-tma Ready. Viewer получил сводный MD четырёх прежних записей (11879 байт), без создания сущностей. PDF с PNG был корректно отменён: CSP разрешал приватный Blob только в img-src, но не в connect-src. Исправлено разрешением того же private Blob-origin для fetch; новые публичные/произвольные origin не разрешены. Регрессия CSP проверяет private allowed, public/evil denied. Подписанные ссылки по-прежнему короткие, права viewer и SHA-проверка не менялись. Повторная PDF-приёмка — после выкладки исправления.
+
+
+Уточнение production-исправления: прямое браузерное чтение signed Blob оказалось недоступным и после CSP-изменения. В итоговом варианте дополнительный connect-src удалён обратно. Новый GET `/qa/sites/:siteId/findings/:findingId/artifacts/:id/content` проходит прежний QA_READ/account/site/finding guard, возвращает PNG как base64 с `Cache-Control: private, no-store`. Сервер читает только pathname из scoped БД через приватный SDK, лимит 2 МБ/15 секунд, проверяет размер/SHA и повторно ready/TTL перед ответом. Клиент также сверяет размер/SHA перед PDF; signed URL вообще не нужен. Роли и публичность не расширены.
+
+Проверки коррекции: настоящие route/guard tests (viewer read, none denied, no-store), storage private-read bounds, изолированный PostgreSQL с миграциями (6 artifact tests, включая viewer content, corrupt hash, неизвестный ID), server typecheck/lint; Assist PDF/API/CSP регрессии, build/lint/types. Синтетическая тестовая БД не production; новых QA-сущностей в рабочем кабинете нет.

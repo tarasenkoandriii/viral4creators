@@ -20,6 +20,12 @@ export class FakeArtifactStorage extends BrowserArtifactStorage {
     );
   }
 
+  async read(pathname: string): Promise<Buffer> {
+    const file = this.files.get(pathname);
+    if (!file) throw new Error('missing');
+    return Buffer.from(file.body);
+  }
+
   override async remove(pathname: string) {
     this.removed.push(pathname);
     this.files.delete(pathname);

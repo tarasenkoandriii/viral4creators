@@ -86,7 +86,10 @@ export async function renderSiteQaPdf(
 }
 export async function collectReportImages(
   report: SiteQaReport,
-  getLink: (findingId: string, artifactId: string) => Promise<{ url: string }>
+  getContent: (
+    findingId: string,
+    artifactId: string
+  ) => Promise<{ contentBase64: string }>
 ) {
   const artifacts = report.entries.flatMap((e) =>
     e.artifacts.map((a) => ({ findingId: e.finding.id, artifact: a }))
@@ -100,13 +103,8 @@ export async function collectReportImages(
     );
   const images: ReportImage[] = [];
   for (const { findingId, artifact } of artifacts) {
-    const { url } = await getLink(findingId, artifact.id);
-    const response = await fetch(url, {
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-    });
-    if (!response.ok) throw new Error('Приватный PNG недоступен.');
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    const { contentBase64 } = await getContent(findingId, artifact.id);
+    const bytes = Uint8Array.from(atob(contentBase64), (c) => c.charCodeAt(0));
     if (bytes.length !== artifact.bytes || bytes.length > 2 * 1024 * 1024)
       throw new Error('Размер PNG изменился.');
     const hash = Array.from(

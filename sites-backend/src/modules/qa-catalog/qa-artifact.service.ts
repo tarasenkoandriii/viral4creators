@@ -6,7 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { put } from '@vercel/blob';
+import { get, put } from '@vercel/blob';
 import { SitesDb } from '../../prisma/sites-db.service';
 import { AccountMembership } from '../site-core/account/roles';
 import { BrowserArtifactStorage } from '../browser-jobs/artifact-storage';
@@ -18,6 +18,36 @@ import {
 } from './qa-artifact-input';
 @Injectable()
 export class QaArtifactStorage extends BrowserArtifactStorage {
+  async read(pathname: string): Promise<Buffer> {
+    const result = await get(pathname, {
+      access: 'private',
+      token: this.token(),
+      useCache: false,
+      abortSignal: AbortSignal.timeout(15000),
+    });
+    if (
+      !result ||
+      result.statusCode !== 200 ||
+      result.blob.size > 2 * 1024 * 1024
+    )
+      throw new Error('Private PNG unavailable');
+    const reader = result.stream.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 2 * 1024 * 1024) throw new Error('Private PNG too large');
+        chunks.push(value);
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+    return Buffer.concat(chunks);
+  }
+
   override async put(
     pathname: string,
     bytes: Buffer,
@@ -238,6 +268,50 @@ export class QaArtifactService {
       url: await this.storage.signedUrl(row.pathname, validUntil),
       validUntil,
     };
+  }
+
+  /** Authenticated, non-cacheable content for local report generation; no browser Blob CORS. */
+  async content(
+    m: AccountMembership,
+    siteId: string,
+    findingId: string,
+    id: string,
+  ) {
+    const db = await this.scoped(m, siteId, findingId);
+    const where = {
+      id,
+      accountId: m.accountId,
+      siteId,
+      findingId,
+      state: 'ready',
+      expiresAt: { gt: new Date() },
+    };
+    const row = await db.qaArtifact.findFirst({ where });
+    if (!row) throw missing();
+    let bytes: Buffer;
+    try {
+      bytes = await this.storage.read(row.pathname);
+    } catch {
+      throw new ServiceUnavailableException({
+        code: 'QA_ARTIFACT_READ_FAILED',
+        message: 'Не удалось прочитать приватный PNG.',
+      });
+    }
+    if (
+      bytes.length !== row.bytes ||
+      createHash('sha256').update(bytes).digest('hex') !== row.sha256
+    )
+      throw new ServiceUnavailableException({
+        code: 'QA_ARTIFACT_INTEGRITY',
+        message: 'Проверка доказательства не пройдена.',
+      });
+    if (
+      !(await db.qaArtifact.findFirst({
+        where: { ...where, expiresAt: { gt: new Date() } },
+      }))
+    )
+      throw missing();
+    return { ...metadata(row), contentBase64: bytes.toString('base64') };
   }
   async remove(
     m: AccountMembership,

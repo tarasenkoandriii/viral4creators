@@ -190,6 +190,22 @@ export function createQaFindingsApi(client: ApiClient) {
           redacted: true,
         })
       ),
+    artifactContent: async (site: string, id: string, artifactId: string) => {
+      const o = obj(
+        await client.request(
+          'GET',
+          item(site, id) +
+            '/artifacts/' +
+            encodeURIComponent(artifactId) +
+            '/content'
+        )
+      );
+      const a = artifact(o);
+      const base64 = str(o.contentBase64);
+      if (base64.length > 2800000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64))
+        return bad();
+      return { ...a, contentBase64: base64 };
+    },
     artifactLink: async (site: string, id: string, artifactId: string) => {
       const o = obj(
         await client.request(
