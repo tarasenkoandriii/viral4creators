@@ -188,6 +188,87 @@ test.describe('способ 2: WebAudio-хук тестовой сборки', (
       [Array.from(s)] as const
     );
 
+  test('hands-free: согласие, две фразы без повторного клика, голосовой Stop без третьей записи', async ({
+    page,
+  }) => {
+    const pk = newPk();
+    const question = 'розкажи про доставку';
+    await site(pk, { voice: VOICE, voiceTexts: [question, 'стоп'] });
+    await page.goto(`${A}/vc/polygon/?pk=${encodeURIComponent(pk)}&m=1`);
+    await openChat(page);
+    const hf = chat(page).getByRole('button', {
+      name: 'Hands-free · Beta',
+      exact: true,
+    });
+    await expect(hf).toHaveAttribute('aria-pressed', 'false');
+    await hf.click();
+    await chat(page)
+      .locator('.vconsent')
+      .getByRole('button', { name: 'Увімкнути' })
+      .click();
+    await expect.poll(() => opened(page)).toBe(1);
+    await feed(page, framed(mockSpeech(question, MOCK_VOICES[1])));
+    await expect.poll(() => opened(page), { timeout: 15000 }).toBe(2);
+    await page.waitForTimeout(300); // allow the new input graph to settle
+    await feed(page, concat(mockSpeech('стоп', MOCK_VOICES[2]), silence(2)));
+    await expect(hf).toHaveAttribute('aria-pressed', 'false', {
+      timeout: 15000,
+    });
+    await page.waitForTimeout(700);
+    expect(await opened(page)).toBe(2);
+    expect((await log()).voice.filter((v) => v.pk === pk)).toHaveLength(2);
+  });
+
+  test('hands-free: кнопка Stop во время STT отменяет поздний ответ и повторное прослушивание', async ({
+    page,
+  }) => {
+    const pk = newPk();
+    await site(pk, { voice: VOICE });
+    let requests = 0;
+    let release!: () => void;
+    await page.route('**/widget/v1/voice', async (route) => {
+      requests++;
+      await new Promise<void>((r) => {
+        release = r;
+      });
+      await route
+        .fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: { text: 'late-command', voiceTicket: 'v1.late' },
+          }),
+        })
+        .catch(() => undefined);
+    });
+    await page.goto(`${A}/vc/polygon/?pk=${encodeURIComponent(pk)}&m=1`);
+    await openChat(page);
+    const hf = chat(page).getByRole('button', {
+      name: 'Hands-free · Beta',
+      exact: true,
+    });
+    await hf.click();
+    await chat(page)
+      .locator('.vconsent')
+      .getByRole('button', { name: 'Увімкнути' })
+      .click();
+    await expect.poll(() => opened(page)).toBe(1);
+    await feed(page, framed(mockSpeech('команда', MOCK_VOICES[1])));
+    await expect.poll(() => requests, { timeout: 15000 }).toBe(1);
+    await chat(page)
+      .getByRole('button', { name: 'Stop — зупинити голос і дії', exact: true })
+      .click();
+    release();
+    await expect(hf).toHaveAttribute('aria-pressed', 'false');
+    await page.waitForTimeout(700);
+    expect(await opened(page)).toBe(1);
+    expect(requests).toBe(1);
+    await expect(
+      chat(page).getByText('late-command', { exact: true })
+    ).toHaveCount(0);
+  });
+
   test('«стоп» голосом посреди плана: пауза плана ≤ 150 мс от начала речи (до распознавания), затем стоп', async ({
     page,
   }) => {

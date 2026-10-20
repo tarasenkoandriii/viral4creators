@@ -1303,6 +1303,7 @@ export function App({
       </div>
       {!leadOnly &&
         (s.plan.phase === 'running' ||
+          s.plan.phase === 'thinking' ||
           (s.plan.phase === 'confirm' && s.plan.busy)) && (
           <div class="pbar" role="status" aria-live="polite">
             <span>{t.vcRunning}</span>
@@ -1314,6 +1315,32 @@ export function App({
               ■ {t.vcStop}
             </button>
           </div>
+        )}
+      {!leadOnly && s.voice.mic && (
+        <div class="note">
+          <button
+            type="button"
+            aria-pressed={s.voice.handsFree}
+            disabled={
+              !s.voice.handsFree &&
+              (s.phase !== 'ready' || s.busy || s.voice.phase === 'sending')
+            }
+            onClick={() => c.voice.toggleHandsFree()}
+          >
+            {t.voiceHandsFree}
+          </button>
+          <span>{t.voiceHandsFreeNote}</span>
+        </div>
+      )}
+      {!leadOnly &&
+        (s.voice.handsFree ||
+          s.voice.phase === 'recording' ||
+          s.voice.phase === 'sending' ||
+          s.voice.playing ||
+          s.voice.loading) && (
+          <button type="button" onClick={() => c.voice.stop()}>
+            {t.voiceStopAll}
+          </button>
         )}
       {!leadOnly &&
         (s.voice.phase === 'recording' || s.voice.phase === 'sending') && (

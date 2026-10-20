@@ -63,6 +63,12 @@ const uk = {
   // Э5: голос.
   voiceMic: 'Сказати голосом',
   voiceStop: 'Зупинити запис',
+  voiceHandsFree: 'Hands-free · Beta',
+  voiceHandsFreeNote:
+    'Слухати фрази без повторного натискання: до 5 хв або 20 фраз. Фрази витрачають квоту голосу. Stop скасовує запис і дії.',
+  voiceStopAll: 'Stop — зупинити голос і дії',
+  voiceHandsFreeLimit:
+    'Сеанс hands-free завершено. Увімкніть його знову для продовження.',
   voiceListening: 'Слухаю…',
   voiceSending: 'Розпізнаю…',
   voicePaused: 'Голос на паузі — натисніть, щоб говорити',
@@ -231,6 +237,12 @@ const ru: Dict = {
   next: 'Далее',
   voiceMic: 'Сказать голосом',
   voiceStop: 'Остановить запись',
+  voiceHandsFree: 'Hands-free · Beta',
+  voiceHandsFreeNote:
+    'Слушать фразы без повторного нажатия: до 5 мин или 20 фраз. Фразы расходуют квоту голоса. Stop отменяет запись и действия.',
+  voiceStopAll: 'Stop — остановить голос и действия',
+  voiceHandsFreeLimit:
+    'Сеанс hands-free завершён. Включите его снова для продолжения.',
   voiceListening: 'Слушаю…',
   voiceSending: 'Распознаю…',
   voicePaused: 'Голос на паузе — нажмите, чтобы говорить',
@@ -393,6 +405,12 @@ const en: Dict = {
   next: 'Next',
   voiceMic: 'Speak',
   voiceStop: 'Stop recording',
+  voiceHandsFree: 'Hands-free · Beta',
+  voiceHandsFreeNote:
+    'Listen without repeated taps: up to 5 minutes or 20 phrases. Phrases use your voice quota. Stop cancels recording and actions.',
+  voiceStopAll: 'Stop voice and actions',
+  voiceHandsFreeLimit:
+    'Hands-free session ended. Turn it on again to continue.',
   voiceListening: 'Listening…',
   voiceSending: 'Recognising…',
   voicePaused: 'Voice paused — tap to speak',

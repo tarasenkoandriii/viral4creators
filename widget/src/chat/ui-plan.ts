@@ -377,6 +377,7 @@ export interface UiPlanHost {
   pageUrl(): string | null;
   /** Микрофон на время плана (только если человек нажал его в этом документе). */
   listen(on: boolean): void;
+  haltVoice?(): void;
   random(): string;
   /** (г) Выпуск чанков (канарейка) — уходит в план для монитора. */
   release?(): string | null;
@@ -389,6 +390,7 @@ function fmt(s: string, vars: Record<string, string>): string {
 }
 
 export class UiPlanController {
+  private commandEpoch = 0;
   private snapWait: { rid: string; resolve: (s: unknown) => void } | null =
     null;
   private pendingCmd: {
@@ -482,13 +484,15 @@ export class UiPlanController {
       return false;
     // Одна команда за раз: новая ждёт, пока прошлая построится (снимок,
     // план); идущий план новая команда останавливает.
+    const epoch = this.commandEpoch;
     await this.building;
+    if (epoch !== this.commandEpoch) return true;
     this.closeOffer();
     if (
       this.host.ui().phase === 'running' ||
       this.host.ui().phase === 'confirm'
     )
-      this.stop('button');
+      this.stop('button', true);
     if (!this.consented()) {
       this.pendingCmd = { text, source, ticket };
       this.host.setUi({ phase: 'consent' });
@@ -598,8 +602,11 @@ export class UiPlanController {
     ticket: string | null
   ): Promise<boolean> {
     const t = this.host.t();
+    const epoch = this.commandEpoch;
+    this.plan = null;
     this.host.setUi({ phase: 'thinking', planId: null, confirmSteps: [] });
     const snap = await this.snapshot();
+    if (epoch !== this.commandEpoch) return true;
     if (!snap) {
       this.host.feed('visitor', text, source === 'voice');
       this.host.feed('assistant', t.vcNoSnapshot);
@@ -620,9 +627,18 @@ export class UiPlanController {
         })
       );
     } catch {
+      if (epoch !== this.commandEpoch) return true;
       this.host.setUi({ phase: 'idle' });
       // Режим выключили/упал — вопрос уйдёт в чат текстом.
       return false;
+    }
+    if (epoch !== this.commandEpoch) {
+      // Late response is never dispatched; retire its server plan once.
+      if (v?.planId)
+        void this.host
+          .api('POST', `/widget/v1/ui-plan/${v.planId}/stop`, { by: 'button' })
+          .catch(() => undefined);
+      return true;
     }
     if (!v || v.kind === 'not_command') {
       this.host.setUi({ phase: 'idle' });
@@ -1409,8 +1425,23 @@ export class UiPlanController {
   }
 
   /** Стоп из iframe: кнопка, «стоп» голосом, закрыли окно. */
-  stop(by: 'button' | 'esc' | 'voice' | 'close') {
+  stop(by: 'button' | 'esc' | 'voice' | 'close', keepVoice = false) {
+    if (!keepVoice) this.host.haltVoice?.();
+    this.commandEpoch++;
+    this.pendingCmd = null;
+    if (this.snapWait) {
+      const wait = this.snapWait;
+      this.snapWait = null;
+      wait.resolve(null);
+    }
     const v = this.plan;
+    if (
+      this.host.ui().phase === 'thinking' ||
+      this.host.ui().phase === 'consent'
+    ) {
+      this.finish('stopped');
+      return;
+    }
     if (!v || !v.planId) return;
     const p = this.host.ui().phase;
     if (p !== 'running' && p !== 'confirm' && p !== 'thinking') return;
@@ -1463,7 +1494,7 @@ export class UiPlanController {
       this.speech(false);
       return true;
     }
-    this.stop('voice');
+    this.stop('voice', true);
     return this.command(text, 'voice', ticket);
   }
 

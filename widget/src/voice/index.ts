@@ -151,9 +151,10 @@ export function createVoice(): VoiceEngine {
             ? new MediaRecorder(s, { mimeType: mime })
             : new MediaRecorder(s);
           rec.ondataavailable = (e) => {
-            if (e.data && e.data.size) chunks.push(e.data);
+            if (!ended && e.data && e.data.size) chunks.push(e.data);
           };
           rec.onstop = () => {
+            if (ended) return;
             if (cancelled) return finish({ reason: 'cancel' });
             if (!vad.heardSpeech || vad.speechMs < limits.minSpeechMs)
               return finish({ reason: 'short' });
@@ -202,8 +203,14 @@ export function createVoice(): VoiceEngine {
         stop: () => stopNow('ok'),
         cancel: () => {
           cancelled = true;
-          if (rec && rec.state !== 'inactive') rec.stop();
-          else finish({ reason: 'cancel' });
+          try {
+            if (rec && rec.state !== 'inactive') rec.stop();
+          } catch {
+            // Releasing tracks still wins if the recorder has already failed.
+          } finally {
+            // Stop releases tracks immediately, even if onstop is delayed/lost.
+            finish({ reason: 'cancel' });
+          }
         },
       };
     },

@@ -307,6 +307,8 @@ export class ChatController {
       // Идёт ответ — распознанное не теряется: в поле ввода (как V4CAssist('ask')).
       // Э6-бис: команда-действие голосом — план, а не вопрос.
       ask: (text, ticket) => void this.voiceText(text, ticket),
+      busy: () => this.state.busy,
+      stopPlan: () => this.plans.stop('button'),
       speech: (on) => this.plans.speech(on),
       planText: (text, ticket) => void this.plans.planSpeech(text, ticket),
       storage: (kind, name, value) =>
@@ -342,6 +344,7 @@ export class ChatController {
         kind === 'local' ? this.ls(name, value) : this.ss(name, value),
       pageUrl: () => this.page.url,
       listen: (on) => this.voice.planListen(on),
+      haltVoice: () => this.voice.cancel(),
       random: () => uuid().replace(/-/g, '').slice(0, 16),
     });
     document.addEventListener('visibilitychange', () => {

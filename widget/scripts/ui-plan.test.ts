@@ -811,6 +811,102 @@ void (async () => {
   console.log(
     'ui-plan (д)+(е): решения владельца, «отмени последнее», словарь без «откатил», протокол возврата, пометки ↺/⇄/⚠, второе «Да», «Вернуть/Оставить» — ok'
   );
+  for (const at of ['snapshot', 'plan', 'rejected-plan'] as const) {
+    let ui = uiPlanOff();
+    const parent: Array<Record<string, unknown>> = [];
+    const calls: string[] = [];
+    let release!: (v: unknown) => void;
+    let reject!: (e: Error) => void;
+    const pending = new Promise<unknown>((r, j) => {
+      release = r;
+      reject = j;
+    });
+    // A rejected-plan branch has an observer only after the snapshot arrives.
+    void pending.catch(() => undefined);
+    const cc = new UiPlanController({
+      ui: () => ui,
+      setUi: (p) => {
+        ui = { ...ui, ...p };
+      },
+      t: () => DICTS.uk,
+      lang: () => 'uk',
+      cfg: () => ({
+        mode: 'on',
+        maxSteps: 10,
+        memos: false,
+        denySelectors: [],
+        allowSelectors: [],
+      }),
+      api: async (_m, path) => {
+        calls.push(path);
+        return path.endsWith('/stop') ? null : pending;
+      },
+      toParent: (m) => {
+        parent.push(m as unknown as Record<string, unknown>);
+      },
+      conversationId: () => null,
+      setConversation: () => undefined,
+      feed: () => undefined,
+      storage: (_k, n) => (n === 'vcconsent' ? '1' : null),
+      pageUrl: () => 'https://shop.example.com/',
+      listen: () => undefined,
+      random: () => 's'.repeat(16),
+    });
+    const command = cc.command('надішли заявку', 'voice', 'v1.stop-test');
+    await new Promise((r) => setTimeout(r, 0));
+    if (at !== 'snapshot') {
+      const snap = parent.find((m) => m.type === 'ui-snap')!;
+      cc.onParent({
+        type: 'ui-snapshot',
+        rid: snap.rid as string,
+        snapshot: { url: 'https://shop.example.com/', elements: [] },
+      });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    cc.stop('button');
+    if (at === 'rejected-plan') reject(new Error('late error'));
+    else
+      release({
+        kind: 'plan',
+        planId: 'late-plan',
+        status: 'approved',
+        steps: [
+          {
+            i: 0,
+            kind: 'say',
+            risk: 'auto',
+            label: 'late',
+            text: 'late',
+            state: 'pending',
+          },
+        ],
+        currentStep: 0,
+      });
+    assert.equal(
+      await command,
+      true,
+      'cancelled command must not fall back to paid chat'
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(ui.phase, 'stopped');
+    assert.equal(
+      parent.filter((m) => m.type === 'ui-run').length,
+      0,
+      `no late run after Stop during ${at}`
+    );
+    if (at === 'plan')
+      assert.equal(
+        calls.filter((p) => p.endsWith('/late-plan/stop')).length,
+        1,
+        'late server plan retired once'
+      );
+    if (at === 'snapshot')
+      assert.equal(
+        calls.length,
+        0,
+        'no plan request after snapshot cancellation'
+      );
+  }
   finished = true;
 })().catch((e) => {
   console.error(e);

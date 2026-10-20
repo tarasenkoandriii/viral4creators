@@ -119,6 +119,8 @@ class FakeEngine implements VoiceEngine {
     onEnd: (e: RecordEnd) => void;
     stopped: boolean;
     cancelled: boolean;
+    speech?: () => void;
+    minSpeechMs: number;
   }> = [];
   unlocked = 0;
   played: ArrayBuffer[] = [];
@@ -127,8 +129,18 @@ class FakeEngine implements VoiceEngine {
   canRecord() {
     return true;
   }
-  record(_l: unknown, _lv: (n: number) => void, onEnd: (e: RecordEnd) => void) {
-    const r = { onEnd, stopped: false, cancelled: false };
+  record(
+    _l: { onSpeech?: () => void; minSpeechMs: number },
+    _lv: (n: number) => void,
+    onEnd: (e: RecordEnd) => void
+  ) {
+    const r = {
+      onEnd,
+      stopped: false,
+      cancelled: false,
+      speech: _l.onSpeech,
+      minSpeechMs: _l.minSpeechMs,
+    };
     this.recs.push(r);
     return {
       stop: () => {
@@ -157,7 +169,7 @@ class FakeEngine implements VoiceEngine {
   }
 }
 
-function harness() {
+function harness(limits?: { durationMs: number; turns: number }) {
   let ui: VoiceUi = voiceOff();
   const notices: string[] = [];
   const asked: Array<[string, string | null]> = [];
@@ -181,9 +193,13 @@ function harness() {
     },
     broadcast: (m) => sent.push(m),
   };
-  const vc = new VoiceController(host, async () => ({
-    createVoice: () => engine,
-  }));
+  const vc = new VoiceController(
+    host,
+    async () => ({
+      createVoice: () => engine,
+    }),
+    limits
+  );
   return {
     vc,
     engine,
@@ -227,6 +243,173 @@ g.fetch = async (
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 async function main() {
+  const settle = () => new Promise((r) => setTimeout(r, 240));
+  const answer = (text = 'hello') => ({
+    status: 200,
+    body: { success: true, data: { text, voiceTicket: 'v1.test' } },
+  });
+  // Explicit opt-in, consent, sequential phrases, quiet rearm without STT.
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    h.vc.toggleHandsFree();
+    assert.equal(h.ui.phase, 'consent');
+    assert.equal(h.engine.recs.length, 0);
+    h.vc.consent(false);
+    assert.equal(h.ui.handsFree, false);
+    h.store['local:vconsent'] = '1';
+    h.vc.toggleHandsFree();
+    assert.equal(h.ui.handsFree, true);
+    const count = fetches.length;
+    h.engine.recs[0].onEnd({ reason: 'short' });
+    await settle();
+    assert.equal(fetches.length, count, 'silence never calls STT');
+    replies = [answer()];
+    h.engine.recs[1].onEnd({
+      reason: 'ok',
+      blob: new Blob(['audio']),
+      speechMs: 900,
+    });
+    await tick();
+    await settle();
+    assert.equal(h.asked.length, 1);
+    assert.equal(
+      h.engine.recs.length,
+      3,
+      'hands-free rearmed without another gesture'
+    );
+    replies = [answer('stop')];
+    h.engine.recs[2].onEnd({
+      reason: 'ok',
+      blob: new Blob(['audio']),
+      speechMs: 900,
+    });
+    await tick();
+    await settle();
+    assert.equal(h.ui.handsFree, false);
+    assert.equal(h.asked.length, 1, 'Stop never becomes a new question');
+    assert.equal(h.engine.recs.length, 3);
+  }
+  // Re-arming waits for the answer; turning on during a plan keeps early pause.
+  {
+    const h = harness();
+    let busy = true;
+    h.host.busy = () => busy;
+    h.store['local:vconsent'] = '1';
+    h.vc.configure(cfg);
+    await tick();
+    h.vc.toggleHandsFree();
+    assert.equal(
+      h.engine.recs[0].minSpeechMs,
+      150,
+      'short Stop uses plan threshold'
+    );
+    replies = [answer()];
+    h.vc.press();
+    await tick();
+    await settle();
+    assert.equal(
+      h.engine.recs.length,
+      1,
+      'no next capture while answer is busy'
+    );
+    busy = false;
+    await settle();
+    assert.equal(h.engine.recs.length, 2);
+    h.vc.stop();
+    const p = harness();
+    const pauses: boolean[] = [];
+    p.host.speech = (on) => pauses.push(on);
+    p.store['local:vconsent'] = '1';
+    p.vc.configure(cfg);
+    await tick();
+    p.vc.press();
+    p.vc.planListen(true);
+    p.vc.toggleHandsFree();
+    p.engine.recs[1].speech?.();
+    assert.deepEqual(pauses, [true]);
+    p.vc.stop();
+  }
+  // Bound both time and utterance count. No persistent opt-in.
+  {
+    const h = harness({ durationMs: 10000, turns: 1 });
+    h.store['local:vconsent'] = '1';
+    h.vc.configure(cfg);
+    await tick();
+    h.vc.toggleHandsFree();
+    replies = [answer()];
+    h.vc.press();
+    await tick();
+    await settle();
+    assert.equal(h.ui.handsFree, false, 'turn budget stops rearm');
+    assert.equal(h.engine.recs.length, 1);
+    const k = harness({ durationMs: 40, turns: 20 });
+    k.store['local:vconsent'] = '1';
+    k.vc.configure(cfg);
+    await tick();
+    k.vc.toggleHandsFree();
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal(
+      k.ui.handsFree,
+      false,
+      'deadline stops even while waiting for speech'
+    );
+    assert.equal(k.engine.recs[0].cancelled, true);
+  }
+  // Speech interrupts playing AND in-flight TTS locally before STT.
+  for (const pending of [true, false]) {
+    const h = harness();
+    h.store['local:vconsent'] = '1';
+    h.vc.configure(cfg);
+    await tick();
+    let resolve!: (r: Response) => void;
+    const original = g.fetch;
+    g.fetch = () => new Promise<Response>((r) => (resolve = r));
+    h.vc.speak('answer');
+    if (!pending) {
+      resolve(new Response(new Uint8Array(8)));
+      await tick();
+    }
+    h.vc.toggleHandsFree();
+    h.engine.recs[0].speech?.();
+    assert.equal(h.ui.playing, null);
+    assert.equal(h.ui.loading, null);
+    if (pending) {
+      resolve(new Response(new Uint8Array(8)));
+      await tick();
+      assert.equal(h.engine.played.length, 0);
+    }
+    h.vc.stop();
+    g.fetch = original;
+  }
+  // STT failure during an interruption must halt actions, not resume them.
+  {
+    const h = harness();
+    let stops = 0;
+    const pauses: boolean[] = [];
+    h.host.stopPlan = () => {
+      stops++;
+    };
+    h.host.speech = (on) => pauses.push(on);
+    h.store['local:vconsent'] = '1';
+    h.vc.configure(cfg);
+    await tick();
+    h.vc.toggleHandsFree();
+    h.vc.planListen(true);
+    h.engine.recs[0].speech?.();
+    replies = [
+      { status: 502, body: { success: false, error: { code: 'UPSTREAM' } } },
+    ];
+    h.vc.press();
+    await tick();
+    await settle();
+    assert.equal(stops, 1);
+    assert.deepEqual(pauses, [true]);
+    assert.equal(h.ui.handsFree, false);
+    assert.equal(h.engine.recs.length, 1);
+  }
+
   // Заход 9 (P2-2): заголовок и язык по словарю — как ждёт сервер.
   {
     assert.equal(UI_LANG_HEADER, 'X-Assist-Lang');
@@ -412,6 +595,44 @@ async function main() {
     assert.equal(h.engine.played.length, 0, 'озвучка после закрытия чата');
     assert.equal(h.ui.loading, null);
     assert.equal(h.ui.playing, null);
+  }
+  for (const how of ['stop', 'hidden', 'other-tab', 'off'] as const) {
+    const h = harness();
+    h.store['local:vconsent'] = '1';
+    h.vc.configure(cfg);
+    await tick();
+    let signal: AbortSignal | null = null;
+    let resolve!: (r: Response) => void;
+    const original = g.fetch;
+    g.fetch = (_p: string, o: { signal: AbortSignal }) => {
+      signal = o.signal;
+      return new Promise<Response>((r) => (resolve = r));
+    };
+    h.vc.toggleHandsFree();
+    h.vc.press();
+    if (how === 'stop') h.vc.stop();
+    if (how === 'hidden') h.vc.hidden();
+    if (how === 'other-tab') h.vc.onChannel('voice-on:other');
+    if (how === 'off') h.vc.configure(null);
+    assert.equal((signal as AbortSignal | null)?.aborted, true, how);
+    resolve(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: { text: 'late', voiceTicket: 'v1.late' },
+        })
+      )
+    );
+    await tick();
+    await settle();
+    g.fetch = original;
+    assert.equal(h.ui.handsFree, false);
+    assert.equal(h.engine.recs.length, 1);
+    assert.deepEqual(
+      h.asked,
+      [],
+      'no late command after hands-free cancellation'
+    );
   }
   // Late STT must not send a question or reopen the microphone after cancellation.
   for (const cancel of ['close', 'hidden', 'off', 'other-tab'] as const) {
@@ -606,6 +827,27 @@ async function main() {
     assert.equal(ends[0].reason, 'ok', `запись потеряна: ${ends[0].reason}`);
     assert.equal(tracks.stopped, 1, 'трек микрофона остановлен');
     assert.equal(ctxs.open, 0, 'AudioContext индикатора закрыт');
+    const cancelledEnds: RecordEnd[] = [];
+    const cancelled = engine.record(
+      { minSpeechMs: 1, endSilenceMs: 60_000, maxRecordMs: 30_000 },
+      () => undefined,
+      (e) => cancelledEnds.push(e)
+    );
+    await tick();
+    cancelled.cancel();
+    assert.equal(
+      tracks.stopped,
+      2,
+      'Stop releases microphone before deferred onstop'
+    );
+    assert.equal(ctxs.open, 0);
+    assert.deepEqual(cancelledEnds, [{ reason: 'cancel' }]);
+    await new Promise((r) => setTimeout(r, 60));
+    assert.deepEqual(
+      cancelledEnds,
+      [{ reason: 'cancel' }],
+      'no late audio submission'
+    );
   }
   console.log('voice: детектор речи, формат, конфиг, контроллер голоса — ok');
 }

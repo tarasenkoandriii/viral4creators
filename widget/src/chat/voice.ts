@@ -3,7 +3,7 @@
  * §5-бис.7, Р-28, Р-29) — сторона чата; запись и звук — ленивый чанк
  * `/v1/voice.js` (src/voice/), в загрузчик и в chat.js не входит.
  *
- *  - Микрофон — ТОЛЬКО по нажатию (push-to-talk): первое нажатие — согласие,
+ *  - Микрофон — по явному нажатию (push-to-talk либо bounded hands-free): первое нажатие — согласие,
  *    которое называет, кто слушает («ИИ-помощник сайта, запись уходит на
  *    распознавание и сразу удаляется»); согласие — в localStorage iframe
  *    (наш origin), не на странице заказчика.
@@ -27,6 +27,7 @@ import type {
 } from '../shared/voice-api';
 import { ApiError, CHUNK_BASE, headers, unwrap, type Auth } from './api';
 import { DICTS, type Dict } from './i18n';
+import { replyKind } from '../shared/ui-plan';
 
 /**
  * Заход 9 (аудит P2-2): язык интерфейса виджета на запись голоса — один
@@ -49,6 +50,8 @@ export const VOICE_CHUNK_PATH = `${CHUNK_BASE}voice.js`;
 export interface VoiceUi {
   /** Кнопка микрофона (конфиг сайта + браузер умеет записывать). */
   mic: boolean;
+  /** Explicit opt-in; phrase capture bounded by time and request count. */
+  handsFree: boolean;
   /** Кнопка «озвучить ответ». */
   speak: boolean;
   phase: 'idle' | 'paused' | 'consent' | 'recording' | 'sending';
@@ -64,6 +67,7 @@ export interface VoiceUi {
 export function voiceOff(): VoiceUi {
   return {
     mic: false,
+    handsFree: false,
     speak: false,
     phase: 'idle',
     level: 0,
@@ -92,6 +96,8 @@ export interface VoiceHost {
     value?: string | null
   ): string | null;
   broadcast(msg: string): void;
+  busy?(): boolean;
+  stopPlan?(): void;
 }
 
 export interface VoiceCfg extends RecordLimits {
@@ -101,6 +107,8 @@ export interface VoiceCfg extends RecordLimits {
 
 /** Коды сервера, после которых голос до перезагрузки не предлагаем. */
 const GIVE_UP = ['VOICE_LIMIT', 'VOICE_UNAVAILABLE'];
+
+export const HANDS_FREE_LIMITS = { durationMs: 5 * 60_000, turns: 20 };
 
 export class VoiceController {
   private engine: VoiceEngine | null = null;
@@ -118,6 +126,10 @@ export class VoiceController {
   private playbackEpoch = 0;
   private sttRequest: AbortController | null = null;
   private audioRequest: AbortController | null = null;
+  private listenTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  private handsFreeUntil = 0;
+  private handsFreeTurns = 0;
   /** id вкладки — отличить своё сообщение канала от чужого. */
   readonly tab = Math.random().toString(36).slice(2, 10);
 
@@ -126,7 +138,8 @@ export class VoiceController {
     private readonly load: () => Promise<{ createVoice: CreateVoice }> = () =>
       import(/* @vite-ignore */ VOICE_CHUNK_PATH) as Promise<{
         createVoice: CreateVoice;
-      }>
+      }>,
+    private readonly handsFreeLimits = HANDS_FREE_LIMITS
   ) {}
 
   /** Конфиг сайта получен: показать кнопки и заранее загрузить чанк. */
@@ -168,6 +181,55 @@ export class VoiceController {
 
   // ── микрофон ────────────────────────────────────────────────────────────
 
+  /** Explicit bounded opt-in; never restored after navigation. */
+  toggleHandsFree() {
+    if (this.host.ui().handsFree) return this.stop();
+    if (!this.host.ui().mic || this.host.ui().phase === 'sending') return;
+    if (!this.engine) {
+      void this.ensure();
+      return this.host.notify(this.host.t().voiceRetry);
+    }
+    const wasPlan = this.planMode;
+    this.stopRecording();
+    this.planMode = wasPlan;
+    this.handsFreeUntil = Date.now() + this.handsFreeLimits.durationMs;
+    this.handsFreeTurns = 0;
+    this.host.setUi({ handsFree: true });
+    this.sessionTimer = setTimeout(() => {
+      this.stop();
+      this.host.notify(this.host.t().voiceHandsFreeLimit);
+    }, this.handsFreeLimits.durationMs);
+    this.press();
+  }
+
+  /** Discard recording, abort STT, stop TTS and halt actions locally. */
+  stop() {
+    this.cancel();
+    this.host.stopPlan?.();
+  }
+
+  private listenAgain() {
+    if (this.listenTimer) clearTimeout(this.listenTimer);
+    if (!this.host.ui().handsFree || !this.pressedHere) return;
+    if (
+      Date.now() >= this.handsFreeUntil ||
+      this.handsFreeTurns >= this.handsFreeLimits.turns
+    ) {
+      this.stop();
+      return this.host.notify(this.host.t().voiceHandsFreeLimit);
+    }
+    this.listenTimer = setTimeout(() => {
+      this.listenTimer = null;
+      if (!this.host.ui().handsFree || !this.pressedHere || this.rec) return;
+      if (
+        (!this.planMode && this.host.busy?.()) ||
+        this.host.ui().phase === 'sending'
+      )
+        return this.listenAgain();
+      this.start(this.planMode);
+    }, 200);
+  }
+
   /** Нажатие кнопки микрофона (жест пользователя). */
   press() {
     const ui = this.host.ui();
@@ -179,7 +241,7 @@ export class VoiceController {
   }
 
   consent(ok: boolean) {
-    if (!ok) return this.host.setUi({ phase: 'idle' });
+    if (!ok) return this.stopRecording();
     if (!this.host.ui().mic) return;
     this.host.storage('local', 'vconsent', '1');
     this.start();
@@ -188,7 +250,16 @@ export class VoiceController {
   private start(plan = false) {
     const cfg = this.cfg;
     const engine = this.engine;
-    if (!cfg?.input || this.gaveUp) return;
+    if (!cfg?.input || this.gaveUp || this.rec) return;
+    if (
+      this.host.ui().handsFree &&
+      (Date.now() >= this.handsFreeUntil ||
+        this.handsFreeTurns >= this.handsFreeLimits.turns)
+    ) {
+      this.stop();
+      this.host.notify(this.host.t().voiceHandsFreeLimit);
+      return;
+    }
     if (!plan) this.pressedHere = true;
     if (!engine) {
       // Чанк ещё не пришёл: догрузить и попросить нажать ещё раз (жест
@@ -208,14 +279,14 @@ export class VoiceController {
         ...cfg,
         // Пока ждём «да» на карточке — порог TMA 150 мс (короткое «да» —
         // законный ответ, §5-бис.7); во время плана — тоже.
-        minSpeechMs: plan ? Math.min(cfg.minSpeechMs, 150) : cfg.minSpeechMs,
+        minSpeechMs:
+          plan || this.host.ui().handsFree
+            ? Math.min(cfg.minSpeechMs, 150)
+            : cfg.minSpeechMs,
         onSpeech: () => {
-          if (
-            epoch === this.recordingEpoch &&
-            this.planMode &&
-            this.host.speech
-          )
-            this.host.speech(true);
+          if (epoch !== this.recordingEpoch) return;
+          this.stopSpeaking();
+          if (this.planMode) this.host.speech?.(true);
         },
       },
       (level) => {
@@ -239,7 +310,8 @@ export class VoiceController {
     if (!on) {
       const was = this.planMode;
       this.planMode = false;
-      if (was) this.stopRecording();
+      if (was && !this.host.ui().handsFree) this.stopRecording();
+      else if (!this.rec) this.listenAgain();
       return;
     }
     if (!this.pressedHere || !this.engine || !this.cfg || this.gaveUp) return;
@@ -259,6 +331,10 @@ export class VoiceController {
   }
 
   private stopRecording() {
+    if (this.listenTimer) clearTimeout(this.listenTimer);
+    if (this.sessionTimer) clearTimeout(this.sessionTimer);
+    this.listenTimer = this.sessionTimer = null;
+    this.host.setUi({ handsFree: false });
     this.recordingEpoch++;
     this.planMode = false;
     this.pressedHere = false;
@@ -300,15 +376,17 @@ export class VoiceController {
         if (this.host.speech) this.host.speech(false);
         return this.start(true);
       }
+      if (this.host.ui().handsFree) return this.listenAgain();
       return this.host.notify(t.voiceNotHeard);
     }
-    if (end.reason === 'error') this.planMode = false;
+    if (end.reason === 'error') this.stop();
     if (end.reason === 'error') {
       this.host.setUi({ phase: 'idle', level: 0 });
       return this.host.notify(
         end.code === 'denied' ? t.micDenied : t.micFailed
       );
     }
+    if (this.host.ui().handsFree) this.handsFreeTurns++;
     this.host.setUi({ phase: 'sending', level: 0 });
     const request = new AbortController();
     this.sttRequest = request;
@@ -333,20 +411,31 @@ export class VoiceController {
         typeof data.voiceTicket === 'string' && data.voiceTicket.length <= 200
           ? data.voiceTicket
           : null;
+      if (
+        !this.planMode &&
+        this.host.ui().handsFree &&
+        replyKind(text) === 'stop'
+      )
+        return this.stop();
       if (this.planMode && this.host.planText) {
         this.host.planText(text, ticket);
         // План ещё идёт — слушаем дальше («стоп» голосом доступен).
         if (this.planMode && !this.rec) this.start(true);
         return;
       }
-      if (!text) return this.host.notify(t.voiceNotHeard);
+      if (!text) {
+        this.stop();
+        return this.host.notify(t.voiceNotHeard);
+      }
       this.host.ask(text, ticket);
+      this.listenAgain();
     } catch (e) {
       if (epoch !== this.recordingEpoch) return;
       this.host.setUi({ phase: 'idle' });
+      // An unrecognized interruption might be Stop: halt, never resume or
+      // automatically retry a paid recognizer after a network/provider error.
+      this.stop();
       this.failed(e);
-      // Во время плана сбой распознавания не оставляет план на паузе.
-      if (this.planMode && this.host.speech) this.host.speech(false);
     } finally {
       if (this.sttRequest === request) this.sttRequest = null;
     }
