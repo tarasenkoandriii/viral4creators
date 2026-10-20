@@ -210,3 +210,16 @@ assert.ok(!allows(script, 'https://viral4creators.app.evil.example/x.js'));
 console.log(
   'ok   security-headers: CSP/frame-ancestors/nosniff/Referrer-Policy'
 );
+
+// QA PDF reads the same private signed PNG origins already permitted for images.
+assert.ok(
+  allows(
+    dir('connect-src'),
+    'https://abcd1234.private.blob.vercel-storage.com/qa/file.png?vercel-blob-signature=s'
+  )
+);
+for (const url of [
+  'https://abcd1234.public.blob.vercel-storage.com/x.png',
+  'https://evil.com/x.png',
+])
+  assert.ok(!allows(dir('connect-src'), url));
