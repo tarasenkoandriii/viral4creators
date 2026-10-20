@@ -30,17 +30,29 @@ import {
   storyVideoBaseRevision,
 } from './story-video-base';
 import {
+  StoryChargesService,
+  storyVideoChargeKey,
+} from './story-charges.service';
+import { STORY_CHARGE_NONE } from './story-pricing';
+import { withdrawStoryShares } from './story-share';
+import {
+  STORY_PARENT_CONSENT_TEXTS,
+  STORY_RECORDING_CONSENT_TEXTS,
+  type StoryTextLocale,
+} from './story-i18n';
+import {
   planStorySegments,
   storyDigest as digest,
   storyVideoConfigHash,
   storyVideoReserve,
+  storyPublicApiBase,
+  storyTtsUnbilled,
+  storyRenderNeedsPublicConsent,
   storyVideoQaEstimate,
   storyVideoTtsReserve,
   StoryVideoInput,
   StoryVoiceChoice,
   STORY_PARENT_CONSENT_VERSION,
-  STORY_PARENT_CONSENT_TEXT,
-  STORY_RECORDING_CONSENT_TEXT,
   STORY_RECORDING_CONSENT_VERSION,
   STORY_SEGMENT_MAX_SECONDS,
   STORY_SEGMENT_MIN_SECONDS,
@@ -187,17 +199,7 @@ const select = {
   updatedAt: true,
 } as const;
 const MAX_VIDEO = STORY_MAX_VIDEO;
-function publicApi() {
-  const u = new URL(
-    process.env.API_PUBLIC_URL ||
-      'https://backend-iota-ruddy-57.vercel.app/api',
-  );
-  if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash)
-    throw new ServiceUnavailableException('Публичный адрес сборки не настроен');
-  u.pathname =
-    u.pathname === '/' ? '/api/' : `${u.pathname.replace(/\/$/, '')}/`;
-  return u.toString();
-}
+const publicApi = storyPublicApiBase;
 export function storyAssetUrl(
   part: 'base' | 'cover',
   revision: string = BASE.revision,
@@ -222,7 +224,12 @@ export class StoryVideoService {
     private readonly usage: AiUsageService,
     private readonly stt: SonioxSttClient,
     private readonly looks: NarratorLooksService,
+    private readonly charges: StoryChargesService,
   ) {}
+  /** ST3: credits of a render that ended in a final FAILED go back. */
+  private refundRender(giftId: string, renderId: string) {
+    return this.charges.refundQuietly(storyVideoChargeKey(renderId));
+  }
   /**
    * WP5↔WP4: the profile narrator image (applied look, else the original
    * photo/sketch of the narrator character). A 409 from WP5 (revoked image
@@ -351,7 +358,7 @@ export class StoryVideoService {
         'Голос отозван или больше не готов; подмена на Nova не выполняется',
       );
   }
-  async list(userId: string, giftId: string) {
+  async list(userId: string, giftId: string, locale: StoryTextLocale = 'ru') {
     const g = await this.gift(userId, giftId);
     const renders = await this.prisma.storyVideoRender.findMany({
       where: { giftId, status: { not: 'DELETED' } },
@@ -398,9 +405,11 @@ export class StoryVideoService {
       })),
       narratorProfiles: await this.profiles(userId),
       voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
-      voiceConsentText: STORY_PARENT_CONSENT_TEXT,
+      // ST3: the consent texts in the request language (same version).
+      voiceConsentText: STORY_PARENT_CONSENT_TEXTS[locale],
+      voiceConsentLocale: locale,
       recordingConsentVersion: STORY_RECORDING_CONSENT_VERSION,
-      recordingConsentText: STORY_RECORDING_CONSENT_TEXT,
+      recordingConsentText: STORY_RECORDING_CONSENT_TEXTS[locale],
       recordings: recordings.map((r) => ({
         id: r.id,
         seconds: r.durationSeconds,
@@ -869,6 +878,14 @@ export class StoryVideoService {
         ),
     }));
     const layout = storyVideoLayout(timed, p.base);
+    // ST3 (Р-ST3-2): what this version costs in credits (0 — reused render, owner).
+    const charge = existing
+      ? { ...STORY_CHARGE_NONE }
+      : await this.charges.quote(await this.charges.facts(userId), userId, {
+          kind: 'video',
+          giftId,
+          reserveMicroUsd: reserve,
+        });
     const warnings: string[] = [];
     if (layout.durationSeconds > STORY_VIDEO_MAX_SECONDS)
       warnings.push(
@@ -902,6 +919,7 @@ export class StoryVideoService {
       layoutEstimated: estimated,
       warnings,
       reserveMicroUsd: existing ? 0 : reserve,
+      charge,
       /**
        * U-07: Soniox check of the finished video (by the layout length,
        * ai-pricing `soniox-stt-async`); the reserve holds a fixed
@@ -921,6 +939,8 @@ export class StoryVideoService {
     giftId: string,
     preambleText: string,
     choice: StoryVideoInput = {},
+    /** ST3: language of the consent text the adult confirmed. */
+    consentLocale: StoryTextLocale = 'ru',
   ) {
     const p = await this.prepare(userId, giftId, preambleText, choice, false);
     const { g, base, parent, voiceId, narrationKey, configHash } = p;
@@ -939,6 +959,7 @@ export class StoryVideoService {
       );
     const api = publicApi(); // Validate before spending.
     await this.plan.assertCanSpendUser(userId);
+    const facts = await this.charges.facts(userId);
     const synthKeys = [
       ...new Set(
         p.segments.filter((s) => s.source === 'synth').map((s) => s.cacheKey),
@@ -1086,6 +1107,7 @@ export class StoryVideoService {
                 userVoiceId: parent.userVoiceId,
                 voiceConsentAt: new Date(),
                 voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
+                voiceConsentLocale: consentLocale,
                 parentNarrationKey: narrationKey,
                 ...(prior
                   ? {
@@ -1100,6 +1122,20 @@ export class StoryVideoService {
         },
         select,
       });
+      // ST3 (Р-ST3-2): credits for this paid export, in the claim transaction
+      // (402 rolls the render and the segment claims back).
+      await this.charges.reserve(
+        tx,
+        facts,
+        userId,
+        {
+          kind: 'video',
+          giftId,
+          renderId: row.id,
+          reserveMicroUsd: reserve,
+        },
+        choice.expectedCredits,
+      );
       return { fresh: true, row, claimed: toSynth };
     });
     const id = claim.row.id;
@@ -1120,6 +1156,14 @@ export class StoryVideoService {
     let spendProblem = '';
     /** Characters this attempt actually sent to TTS (A-S3-4). */
     let paidChars = 0;
+    /**
+     * ST3-S-08/S-09: a paid call is in flight or ended without a certain
+     * outcome. False — every provider call so far either was not made or
+     * ended certainly (saved result, or skipped / final 4xx: not billed).
+     */
+    let uncertain = false;
+    /** Segment keys whose synthesis was certainly not billed. */
+    const unbilledKeys = new Set<string>();
     try {
       // Fail before synthesis if the published master does not match the approved version.
       const source = await fetchPubliclyRoutable(
@@ -1142,12 +1186,19 @@ export class StoryVideoService {
         else {
           stage = 'main';
           paidChars += p.mainTts.length;
+          uncertain = true;
           const main = await this.tts.synthesize({
             text: p.mainTts,
             voiceId,
             language: g.locale,
           });
-          if (!main.ok) throw new Error('Main synthesis unconfirmed');
+          if (!main.ok) {
+            if (storyTtsUnbilled(main)) {
+              uncertain = false;
+              paidChars -= p.mainTts.length;
+            }
+            throw new Error('Main synthesis unconfirmed');
+          }
           await this.usage.record({
             operation: 'story-voiceover',
             model: 'resemble-tts',
@@ -1180,6 +1231,7 @@ export class StoryVideoService {
             },
           });
           if (!saved.count) throw new Error('Render cancelled');
+          uncertain = false;
         }
       }
       const done = new Map<string, { audioHash: string; seconds: number }>();
@@ -1191,12 +1243,20 @@ export class StoryVideoService {
         await this.assertParentActive(userId, parent?.userVoiceId, voiceId);
         attempted.add(s.cacheKey);
         paidChars += (s.ttsText ?? s.text).length;
+        uncertain = true;
         const audio = await this.tts.synthesize({
           text: s.ttsText ?? s.text,
           voiceId,
           language: g.locale,
         });
-        if (!audio.ok) throw new Error('Segment synthesis unconfirmed');
+        if (!audio.ok) {
+          if (storyTtsUnbilled(audio)) {
+            uncertain = false;
+            unbilledKeys.add(s.cacheKey);
+            paidChars -= (s.ttsText ?? s.text).length;
+          }
+          throw new Error('Segment synthesis unconfirmed');
+        }
         await this.usage.record({
           operation: 'story-voiceover',
           model: 'resemble-tts',
@@ -1237,6 +1297,7 @@ export class StoryVideoService {
           },
         });
         done.set(s.cacheKey, { audioHash, seconds: audio.durationSeconds });
+        uncertain = false;
         if (s.kind === 'intro') introAudio = new Uint8Array(audio.audio);
       }
       // A-S3-3: the plan's spend gate is its own stage (known stop, no submit).
@@ -1346,6 +1407,7 @@ export class StoryVideoService {
       }
       stage = 'submit';
       await this.assertParentActive(userId, parent?.userVoiceId, voiceId);
+      uncertain = true;
       const job = await this.ffmpeg.submit({
         inputs: Object.fromEntries(
           Object.entries(planned.inputs).map(([key, part]) => [
@@ -1377,9 +1439,10 @@ export class StoryVideoService {
         await this.prisma.storyVideoSegment
           .updateMany({
             where: { giftId, cacheKey: key, status: 'PENDING' },
-            data: attempted.has(key)
-              ? { status: 'UNKNOWN' }
-              : { status: 'DELETED', text: '' },
+            data:
+              attempted.has(key) && !unbilledKeys.has(key)
+                ? { status: 'UNKNOWN' }
+                : { status: 'DELETED', text: '' },
           })
           .catch(() => undefined);
       const what = {
@@ -1404,8 +1467,10 @@ export class StoryVideoService {
         reservedMicroUsd: storyVideoTtsReserve(paidChars),
       };
       const kept =
-        ' Готовые сегменты речи сохранены и переиспользуются без новой оплаты; резерв сборки освобождён.';
-      await this.prisma.storyVideoRender.updateMany({
+        ' Готовые сегменты речи сохранены и переиспользуются без новой оплаты; резерв сборки освобождён; кредиты за эту попытку, если были списаны, возвращены.';
+      // ST3-S-08: no paid call in flight or uncertain → a known, final stop.
+      const stoppedBeforeSubmit = !uncertain;
+      const closed = await this.prisma.storyVideoRender.updateMany({
         where: { id, status: 'PREPARING' },
         data:
           stage === 'narrator'
@@ -1423,16 +1488,25 @@ export class StoryVideoService {
                     ...stopped,
                     error: `Сборка остановлена до отправки: ${what} (итог до ${STORY_VIDEO_MAX_SECONDS} с, основная речь 40–90 с, остальные сегменты ${STORY_SEGMENT_MIN_SECONDS}–${STORY_SEGMENT_MAX_SECONDS} с).${kept}`,
                   }
-                : {
-                    status: 'UNKNOWN',
-                    // A-S3-9: at submit the token hash stays as the job's input
-                    // fingerprint for bind-job; expired, so nothing is served.
-                    ...(stage === 'submit'
-                      ? { assetExpiresAt: new Date() }
-                      : { assetTokenHash: null }),
-                    error: `Сборка не подтверждена на этапе «${what}». Платный повтор отключён; нужна проверка оператором.`,
-                  },
+                : stoppedBeforeSubmit
+                  ? {
+                      ...stopped,
+                      error: `Сборка остановлена на этапе «${what}» без оплаты провайдеру (вызов не выполнялся или отклонён до списания).${kept}`,
+                    }
+                  : {
+                      status: 'UNKNOWN',
+                      // A-S3-9: at submit the token hash stays as the job's input
+                      // fingerprint for bind-job; expired, so nothing is served.
+                      ...(stage === 'submit'
+                        ? { assetExpiresAt: new Date() }
+                        : { assetTokenHash: null }),
+                      error: `Сборка не подтверждена на этапе «${what}». Платный повтор отключён; нужна проверка оператором.`,
+                    },
       });
+      // ST3: a known stop before the provider submit is final — refund; an
+      // UNKNOWN stage keeps the credits until the operator reconciles.
+      if (stoppedBeforeSubmit && closed.count)
+        await this.refundRender(giftId, id);
     }
     return this.own(userId, giftId, id);
   }
@@ -1445,6 +1519,7 @@ export class StoryVideoService {
     userId: string,
     giftId: string,
     dto: { base64: string; consentVersion?: string; consentAccepted?: boolean },
+    consentLocale: StoryTextLocale = 'ru',
   ) {
     await this.gift(userId, giftId);
     if (
@@ -1492,6 +1567,7 @@ export class StoryVideoService {
       durationSeconds: wav.seconds,
       consentVersion: STORY_RECORDING_CONSENT_VERSION,
       consentAt: new Date(),
+      consentLocale, // ST3: language of the consent text shown
     };
     // A-S3-11: limit check and write under the gift lock (no 6th via a race).
     const row = await this.prisma.$transaction(async (tx) => {
@@ -1566,6 +1642,7 @@ export class StoryVideoService {
             segments: true,
             parentNarrationKey: true,
             mainDuration: true,
+            approvedAt: true,
           },
         })
       ).filter((r) =>
@@ -1680,10 +1757,16 @@ export class StoryVideoService {
           });
         }
       }
+      // ST3-S-03/R-04: deleting the recording withdraws its consent — an
+      // approved release with it leaves the public link at once.
+      const linksWithdrawn = renders.some((r) => r.approvedAt)
+        ? await withdrawStoryShares(tx, { id: giftId })
+        : 0;
       return {
         deleted: true,
         rendersDeleted,
         segmentsErased,
+        linksWithdrawn,
         mainNarrationKept: mainNarrationKeptCount > 0,
         mainNarrationKeptCount,
       };
@@ -1748,8 +1831,8 @@ export class StoryVideoService {
     } else if (recoverable.includes(r.status) && job.jobId) {
       try {
         const result = await this.ffmpeg.status(job.jobId, 20000);
-        if (result.status === 'failed')
-          await this.prisma.storyVideoRender.updateMany({
+        if (result.status === 'failed') {
+          const failed = await this.prisma.storyVideoRender.updateMany({
             where: { id, status: { in: recoverable } },
             data: {
               status: 'FAILED',
@@ -1757,7 +1840,8 @@ export class StoryVideoService {
               error: `Внешняя сборка завершилась ошибкой: ${(result.error || 'детали не получены').replace(/https?:\/\/[^\s"'<>]+/g, '[источник]').slice(0, 300)}`,
             },
           });
-        else if (result.status === 'completed') {
+          if (failed.count) await this.refundRender(giftId, id);
+        } else if (result.status === 'completed') {
           // Same validation as the operator binding of a confirmed job (WP1).
           const out = await downloadStoryVideo(
             result.outputs?.['story.mp4'],
@@ -1778,6 +1862,8 @@ export class StoryVideoService {
               error: null,
             },
           });
+          // ST3-S-14: the export is delivered — its credits are captured.
+          await this.charges.captureQuietly({ key: storyVideoChargeKey(id) });
         } else if (Date.now() - r.createdAt.getTime() > 30 * 60000) {
           await this.prisma.storyVideoRender.updateMany({
             where: { id, status: { in: ['PREPARING', 'PENDING'] } },
@@ -1790,8 +1876,8 @@ export class StoryVideoService {
           });
         }
       } catch (e) {
-        if (e instanceof Error && e.message === 'Invalid container')
-          await this.prisma.storyVideoRender.updateMany({
+        if (e instanceof Error && e.message === 'Invalid container') {
+          const rejected = await this.prisma.storyVideoRender.updateMany({
             where: { id, status: { in: recoverable } },
             data: {
               status: 'FAILED',
@@ -1803,6 +1889,8 @@ export class StoryVideoService {
                   : 'Готовое видео не прошло проверку формата, размера или длительности.',
             },
           });
+          if (rejected.count) await this.refundRender(giftId, id);
+        }
         // Keep a durable job id for a later read-only reconciliation.
         if (Date.now() - r.createdAt.getTime() > 30 * 60000)
           await this.prisma.storyVideoRender.updateMany({
@@ -1830,6 +1918,10 @@ export class StoryVideoService {
       blocked: 0,
       staleAudio: 0,
       staleQa: 0,
+      /** ST3-S-02: steps UNKNOWN for 14 days — credits returned. */
+      autoRefunded: 0,
+      /** ST3-S-14: RESERVED charges of delivered steps captured. */
+      captured: 0,
     };
     const stale = new Date(Date.now() - 10 * 60000);
     const rows = await this.prisma.storyVideoRender.findMany({
@@ -1894,6 +1986,10 @@ export class StoryVideoService {
       data: { status: 'UNKNOWN' },
     });
     result.staleAudio += segments.count;
+    // ST3-S-14: delivered steps' RESERVED → CAPTURED (sweep / data fix).
+    result.captured = await this.charges.captureDelivered().catch(() => 0);
+    // ST3-S-02 (правила 7.5): UNKNOWN 14 days without an operator — refund.
+    result.autoRefunded = await this.charges.autoRefundStale().catch(() => 0);
     return result;
   }
   async file(
@@ -2127,13 +2223,26 @@ export class StoryVideoService {
       throw new NotFoundException();
     return { bytes, mime: part === 'base' ? 'video/mp4' : 'image/png' };
   }
-  async published(token: string, bytes = false) {
+  /**
+   * ST3: what a public link serves as video. 404 — a narrator consent was
+   * revoked (the voice clone deleted, the narrator image consent withdrawn):
+   * the release is off the link entirely, never swapped for Nova or an
+   * audio-only page (ST3-S-03/S-07). `awaitingConsent` — the latest approved
+   * release needs the narrator's consent and it covers another render
+   * (ST3-S-04): the page shows no video until it is confirmed again.
+   */
+  async publicRelease(token: string, bytes = false) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundException();
     const row = await this.prisma.storyVideoRender.findFirst({
       where: {
         approvedAt: { not: null },
         status: 'READY',
-        gift: { shareHash: digest(token), status: 'APPROVED' },
+        // ST3: a public link lives 90 days, then 404.
+        gift: {
+          shareHash: digest(token),
+          status: 'APPROVED',
+          shareExpiresAt: { gt: new Date() },
+        },
       },
       orderBy: { approvedAt: 'desc' },
       select: {
@@ -2143,16 +2252,61 @@ export class StoryVideoService {
         voiceLabel: true,
         voiceId: true,
         userVoiceId: true,
-        gift: { select: { userId: true } },
+        segments: true,
+        gift: {
+          select: { userId: true, narratorPublicConsentRenderId: true },
+        },
         ...(bytes ? { video: true } : {}),
       },
     });
-    if (!row) throw new NotFoundException('Видео по ссылке недоступно');
-    await this.assertParentActive(
-      row.gift.userId,
-      row.userVoiceId,
-      row.voiceId,
-    );
-    return row;
+    if (!row) return { video: null, awaitingConsent: false };
+    try {
+      await this.assertParentActive(
+        row.gift.userId,
+        row.userVoiceId,
+        row.voiceId,
+      );
+    } catch {
+      throw new NotFoundException('Ссылка недоступна');
+    }
+    const narrator = storyManifest(row.segments)?.narrator;
+    if (narrator?.manifestId) {
+      const consent = await this.prisma.brandManifest.findFirst({
+        where: {
+          id: narrator.manifestId,
+          userId: row.gift.userId,
+          narratorImageConsentAt: { not: null },
+          narratorImageConsentRevokedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!consent) throw new NotFoundException('Ссылка недоступна');
+      // ST3-S-15: a deleted variant is a withdrawn consent too.
+      if (narrator.lookId) {
+        const look = await this.prisma.storyNarratorLook.findFirst({
+          where: {
+            id: narrator.lookId,
+            manifestId: narrator.manifestId,
+            userId: row.gift.userId,
+            deletedAt: null,
+            status: { not: 'DELETED' },
+          },
+          select: { id: true },
+        });
+        if (!look) throw new NotFoundException('Ссылка недоступна');
+      }
+    }
+    if (
+      storyRenderNeedsPublicConsent(row) &&
+      row.gift.narratorPublicConsentRenderId !== row.id
+    )
+      return { video: null, awaitingConsent: true };
+    return { video: row, awaitingConsent: false };
+  }
+  async published(token: string, bytes = false) {
+    const release = await this.publicRelease(token, bytes);
+    if (!release.video)
+      throw new NotFoundException('Видео по ссылке недоступно');
+    return release.video;
   }
 }

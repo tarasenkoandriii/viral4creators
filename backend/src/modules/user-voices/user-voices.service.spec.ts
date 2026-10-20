@@ -39,6 +39,7 @@ function build() {
     };
     brandManifest: { updateMany: jest.Mock };
     storyVideoSegment: { updateMany: jest.Mock };
+    storyGift: { updateMany: jest.Mock };
     $executeRaw: jest.Mock;
     $transaction: jest.Mock;
   } = {
@@ -58,6 +59,8 @@ function build() {
     storyVideoSegment: {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // Story-Tales ST3-S-03: public links of releases with the voice go.
+    storyGift: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     // Е-4.2 шестого аудита: `confirmClone` резервирует слот транзакцией
     // с advisory-lock — мок просто вызывает переданный колбэк с тем же
     // `prisma`, чтобы существующие моки `userVoice.count`/`.create` в
@@ -388,6 +391,25 @@ describe('UserVoicesService.remove', () => {
         text: '',
       },
     });
+    // ST3-S-03/R-04: published Story releases with this voice leave the link.
+    expect(prisma.storyGift.updateMany).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          {
+            userId: USER,
+            videoRenders: {
+              some: { userVoiceId: 'v1', approvedAt: { not: null } },
+            },
+          },
+          { shareHash: { not: null } },
+        ],
+      },
+      data: expect.objectContaining({
+        shareHash: null,
+        narratorPublicConsentAt: null,
+        narratorPublicConsentRenderId: null,
+      }),
+    });
     // ST2-S-08: their cache keys (sha256 of the exact text) are replaced too.
     const raw = prisma.$executeRaw.mock.calls.find(([parts]: any[]) =>
       parts.join('?').includes('"story_video_segments" SET "cacheKey"'),
@@ -560,6 +582,14 @@ describe('UserVoicesService explicit retry of a rejected clone', () => {
       s.current.status = status;
       await s.svc.retry(USER, 'v1');
     }
+    expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
+  });
+  it('Story-Tales правила 9.6: a failed cloning whose recording was erased cannot be retried', async () => {
+    const s = retrySetup();
+    s.current.sampleUrl = '';
+    await expect(s.svc.retry(USER, 'v1')).rejects.toThrow(
+      'проверки оператором',
+    );
     expect(s.resemble.cloneVoice).not.toHaveBeenCalled();
   });
   it('holds the user slot limit before retry', async () => {

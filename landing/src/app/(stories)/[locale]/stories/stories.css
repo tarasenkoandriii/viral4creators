@@ -763,6 +763,36 @@ html:has(.st-root) body {
   margin-top: 8px;
 }
 
+/* Блок «что доступно» (режимы pilot/public, данные из API). */
+.st-capabilities {
+  margin-top: 20px;
+  max-width: 70ch;
+}
+
+.st-capabilities h3 {
+  margin: 0 0 8px;
+}
+
+.st-capability-list {
+  margin: 16px 0 0;
+  color: var(--st-muted);
+}
+
+.st-capability-list dt {
+  margin-top: 12px;
+  font-weight: 600;
+  color: var(--st-ink);
+}
+
+.st-capability-list dd {
+  margin: 4px 0 0;
+}
+
+.st-capability-list ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
 .st-status {
   display: inline-flex;
   flex-wrap: wrap;

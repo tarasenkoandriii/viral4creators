@@ -297,8 +297,26 @@ function setup() {
     status: jest.fn(),
     submit: jest.fn(),
   };
-  const service = new StoryOperatorService(prisma, ffmpeg);
+  const charges = {
+    capture: jest.fn(async (_key: string, _tx?: unknown) => 1),
+    refundAudio: jest.fn(
+      async (_giftId: string, _tx?: unknown) =>
+        ({ refunded: true, credits: 0 }) as {
+          refunded: boolean;
+          credits: number;
+        },
+    ),
+    refund: jest.fn(
+      async (_key: string, _tx?: unknown) =>
+        ({ refunded: true, credits: 0 }) as {
+          refunded: boolean;
+          credits: number;
+        },
+    ),
+  };
+  const service = new StoryOperatorService(prisma, ffmpeg, charges as any);
   return {
+    charges,
     service,
     prisma,
     ffmpeg,
@@ -618,7 +636,7 @@ describe('StoryOperatorService — привязка подтверждённог
   });
 
   it('успех: результат скачан и проверен той же логикой, READY с хешем; без submit/TTS', async () => {
-    const { service, ffmpeg, renders, journal } = setup();
+    const { service, ffmpeg, renders, journal, charges } = setup();
     mp4();
     ffmpeg.status.mockResolvedValue({
       status: 'completed',
@@ -642,6 +660,11 @@ describe('StoryOperatorService — привязка подтверждённог
       outcome: 'ready',
       videoHash: renders[0].videoHash,
     });
+    // ST3-S-14: the reconciled delivered export is paid — captured.
+    expect(charges.capture).toHaveBeenCalledWith(
+      'video:r-submit',
+      expect.anything(),
+    );
     expect(journal[0]).toMatchObject({
       action: 'render.bind-job',
       previousState: expect.objectContaining({
@@ -1047,5 +1070,38 @@ describe('StoryOperatorService — сегменты речи видео (WP4)', 
       ),
     ).rejects.toMatchObject({ status: 409 });
     expect(journal).toHaveLength(0);
+  });
+});
+
+describe('ST3: credits of a closed (final FAILED) attempt go back', () => {
+  it('gift close refunds the audio charge in the same transaction and reports it', async () => {
+    const { service, charges, prisma } = setup();
+    charges.refundAudio.mockResolvedValueOnce({ refunded: true, credits: 5 });
+    const res = await service.closeGift('admin', 'g-unknown', input());
+    // ST3-R-05: every RESERVED audio attempt of the gift.
+    expect(charges.refundAudio).toHaveBeenCalledWith('g-unknown', prisma);
+    expect(res.result).toMatchObject({ status: 'FAILED', creditsRefunded: 5 });
+  });
+  it('render close refunds the video charge of that render, with or without releaseReserve', async () => {
+    const { service, charges, renders } = setup();
+    charges.refund.mockResolvedValueOnce({ refunded: true, credits: 7 });
+    const res = await service.closeRender(
+      'admin',
+      'r-submit',
+      input({ releaseReserve: false }),
+    );
+    expect(charges.refund).toHaveBeenCalledWith(
+      `video:r-submit`,
+      expect.anything(),
+    );
+    expect(renders[0].id).toBe('r-submit');
+    expect(res.result).toMatchObject({ creditsRefunded: 7 });
+  });
+  it('a refused close refunds nothing', async () => {
+    const { service, charges } = setup();
+    await expect(
+      service.closeRender('admin', 'r-voice', input({ releaseReserve: true })),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(charges.refund).not.toHaveBeenCalled();
   });
 });

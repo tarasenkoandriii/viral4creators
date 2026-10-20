@@ -15,7 +15,8 @@
   "legalLinks": {
     "offer": "offer",
     "terms": "terms-of-use",
-    "privacy": "terms-of-use"
+    "privacy": "terms-of-use",
+    "narratorConsent": "story-tales-rules"
   },
-  "contentVersion": "2026-10-16.1"
+  "contentVersion": "2026-10-20.1"
 }

@@ -189,12 +189,15 @@ export function narratorLookCodeText(code: string | null): string | null {
   return (code && NARRATOR_LOOK_CODE_TEXT[code]) || null;
 }
 
-/** 404 — блок не для этого пользователя (Story закрыта): не показываем. */
+/**
+ * 404 — блок не для этого пользователя (Story закрыта); 403 — участник
+ * пилота: образы рассказчика в пилоте доступны только владельцу (ST3-U-07).
+ * В обоих случаях блок не показывается.
+ */
 export function isHiddenForUser(error: unknown): boolean {
-  return (
-    (error as { response?: { status?: number } } | null)?.response?.status ===
-    404
-  );
+  const status = (error as { response?: { status?: number } } | null)?.response
+    ?.status;
+  return status === 404 || status === 403;
 }
 
 export function formatUsd(micro: number): string {

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { estimateCost } from '../../common/ai-pricing';
 import { STORY_VIDEO_BASE } from './story-video-base';
 import type {
@@ -321,4 +322,58 @@ export type StoryVideoInput = StoryVoiceChoice & {
   pronunciations?: { written: string; spoken: string }[];
   /** WP5↔WP4: intro frame = profile narrator image (needs a profile voice). */
   useNarratorImage?: boolean;
+  /** ST3-S-12: confirmed price; not part of the configuration hash. */
+  expectedCredits?: number;
 };
+/**
+ * Public API base (`API_PUBLIC_URL`, https only, trailing `/api/`): render
+ * inputs for the provider and public gift links (ST3).
+ */
+export function storyPublicApiBase() {
+  const u = new URL(
+    process.env.API_PUBLIC_URL ||
+      'https://backend-iota-ruddy-57.vercel.app/api',
+  );
+  if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash)
+    throw new ServiceUnavailableException('Публичный адрес сборки не настроен');
+  u.pathname =
+    u.pathname === '/' ? '/api/' : `${u.pathname.replace(/\/$/, '')}/`;
+  return u.toString();
+}
+/**
+ * ТЗ §11.1: a release is narrated not only by Nova — a voice clone, the
+ * adult's own recorded intro or a narrator image. Publishing such a release
+ * by link needs the narrator's consent to that distribution.
+ */
+export function storyRenderNeedsPublicConsent(r: {
+  userVoiceId?: string | null;
+  segments?: unknown;
+}): boolean {
+  if (r.userVoiceId) return true;
+  const m = r.segments as {
+    segments?: Array<{ source?: string } | null>;
+    narrator?: unknown;
+  } | null;
+  if (!m || typeof m !== 'object') return false;
+  return (
+    !!m.narrator ||
+    (Array.isArray(m.segments) &&
+      m.segments.some((s) => s?.source === 'recorded'))
+  );
+}
+/**
+ * ST3-S-08/S-09: a TTS outcome that certainly cost nothing — the provider
+ * was never called (`skipped`: no key, empty text, no voice) or answered a
+ * final HTTP 4xx (rejected request, not billed). Everything else — 5xx,
+ * timeouts, a broken body, a result failing our checks — stays uncertain
+ * (UNKNOWN, operator; automatic refund after 14 days).
+ */
+export function storyTtsUnbilled(outcome: {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+}): boolean {
+  if (outcome.ok) return false;
+  if (outcome.skipped) return true;
+  return /^Resemble 4\d\d$/.test(outcome.reason ?? '');
+}

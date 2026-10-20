@@ -15,6 +15,10 @@ import type {
 } from '../types';
 import { getAuthHeaders, getTelegramWebApp } from '../lib/telegram';
 import { initialLocale } from '../lib/i18n';
+import {
+  isStoryApiPath,
+  storyAcceptLanguage,
+} from '../features/stories/story-pilot';
 
 /**
  * API response wrapper
@@ -77,9 +81,15 @@ class ApiClient {
     // страницы сразу меняет заголовок следующего запроса.
     this.client.interceptors.request.use((config) => {
       Object.assign(config.headers, getAuthHeaders());
-      config.headers['Accept-Language'] = initialLocale(
+      const locale = initialLocale(
         getTelegramWebApp()?.initDataUnsafe?.user?.language_code
       );
+      // Story‑Tales (ST3): сервер переводит тексты только на ru/uk/en —
+      // язык интерфейса передаётся явно, de/es → en. Остальные запросы
+      // не меняются.
+      config.headers['Accept-Language'] = isStoryApiPath(config.url)
+        ? storyAcceptLanguage(locale)
+        : locale;
       return config;
     });
 

@@ -13,7 +13,7 @@ import { STORY_VIDEO_BASE } from './story-video-base';
 import { StoryGiftsService } from './story-gifts.service';
 import { StoryGiftsController } from './story-gifts.controller';
 import { StoryReferenceLibraryController } from './story-reference-library.controller';
-import { StoryDevelopmentGuard } from './story-development.guard';
+import { StoryAccessGuard } from './story-access.guard';
 
 const TURNIP = 'turnip-ushinsky-ru-1949-v1';
 const turnip = () => STORY_EDITIONS.find((e) => e.id === TURNIP)!;
@@ -32,9 +32,11 @@ describe('Story editorial registry (WP2, §23.5)', () => {
       'turnip-ushinsky-ru-1949-v1',
       'little-lantern-ru-v1',
       'mitten-ru-short-v1',
+      'turnip-franko-uk-1918-v1',
       'mitten-uk-short-v1',
       'three-pigs-en-short-v1',
       'three-pigs-ru-short-v1',
+      'mitten-rudchenko-uk-1870-v1',
     ]);
     const t = turnip();
     expect(t.textSha256).toBe(
@@ -68,6 +70,9 @@ describe('Story editorial registry (WP2, §23.5)', () => {
       '1279cc0c7957211c4fdd1cc7c509e59539f2c9c2c93b95162b20cd891c854609',
     'three-pigs-ru-short-v1':
       '549e06fbfb9514a8753559e02a6e3f88b55d91827921da11b0e23cdaaee479ab',
+    // ST3: approved 20.10.2026.
+    'turnip-franko-uk-1918-v1':
+      '65f84f9b1b5ee928a283cc522648d90cbea79ba6be9b1d72641212da220fc579',
   };
   it('never changes the text of an approved edition under the same id (frozen hashes)', () => {
     for (const e of STORY_EDITIONS.filter(
@@ -100,6 +105,103 @@ describe('Story editorial registry (WP2, §23.5)', () => {
       expect(JSON.stringify(e.source)).not.toMatch(/base64|data:/);
   });
 
+  /**
+   * ST3 CONTENT (TODO 9995/9999/10033/10034): every classic pins the scan
+   * file it was compared with, and its rights record is complete.
+   * Hashes below were computed from the downloaded files on 2026-10-20
+   * (doc/reports/story-editions-2026-10-20.md).
+   */
+  const SCANS: Readonly<Record<string, string>> = {
+    'turnip-ushinsky-ru-1949-v1':
+      '6bca60042f73e16eadf1de2bd969096fae49e899f2f84fb6b9d492f942b4fa57',
+    'turnip-franko-uk-1918-v1':
+      '10d3abbbc68f1fb756f8e2486a4c2483ac7916828ae0d6a207c6183f29df3ae8',
+    'mitten-rudchenko-uk-1870-v1':
+      'bf83b1fd5bc548bb778ce9da2a31a86364f91a76b97a1a1a3a9ecfb1ea1ff8e9',
+  };
+  it('pins the scan file SHA-256 and full rights of every classic edition', () => {
+    const classics = STORY_EDITIONS.filter((e) => e.kind === 'classic');
+    expect(classics.map((e) => e.id).sort()).toEqual(Object.keys(SCANS).sort());
+    for (const e of classics) {
+      expect([e.id, e.source.scanSha256]).toEqual([e.id, SCANS[e.id]]);
+      expect(e.source.scanUrl).toMatch(
+        /^https:\/\/\S+\.(pdf|djvu)(#page=\d+)?$/,
+      );
+      expect(e.source.scanLocation).toMatch(/байт/);
+      expect(e.source.textUrl).toMatch(/^https:\/\//);
+      expect(e.author?.trim()).toBeTruthy();
+      expect(e.publication?.year).toBeLessThan(1950);
+      expect(e.publication?.pages).toBeTruthy();
+      expect(e.legal).toMatchObject({
+        status: 'public_domain',
+        checkedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      });
+      // Public domain must be argued by the author's/collector's death date.
+      expect(e.legal.basis).toMatch(/ум\. (18|19[0-4])\d/);
+      expect(e.textVerification?.verifiedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  it('pins the UK classic texts verified against their scans (Franko approved, mitten candidate)', () => {
+    const franko = STORY_EDITIONS.find(
+      (e) => e.id === 'turnip-franko-uk-1918-v1',
+    )!;
+    const mitten = STORY_EDITIONS.find(
+      (e) => e.id === 'mitten-rudchenko-uk-1870-v1',
+    )!;
+    expect([franko.locale, franko.textSha256]).toEqual([
+      'uk',
+      '65f84f9b1b5ee928a283cc522648d90cbea79ba6be9b1d72641212da220fc579',
+    ]);
+    expect([mitten.locale, mitten.textSha256]).toEqual([
+      'uk',
+      '112ae0a2bc8e83280e1be7bd4edb4b444e8d645561f39ba832adfc8edd1ace86',
+    ]);
+    expect(franko.chapters.at(-1)?.text).toMatch(/та й покотились\.$/);
+    expect(mitten.chapters.at(-1)?.text).toMatch(/от-скільки шкур!$/);
+    // Exact text: the recorder's Russian note and headings are not narrated.
+    expect(JSON.stringify(mitten.chapters)).not.toMatch(/Записана|РУКАВИЧКА/);
+    // Both fit one bounded Nova request with a 180-char preamble (≤3000).
+    for (const e of [franko, mitten])
+      expect(
+        e.title.length + 2 + e.chapters.map((c) => c.text).join('\n\n').length,
+      ).toBeLessThan(3000 - 180);
+    // ST3: Franko approved and offered first for UA/uk; the 1870 mitten
+    // stays a candidate (cruel ending) — a stated, not hidden, difference.
+    expect(franko.status).toBe('approved');
+    expect(storyEditionBlocker(franko)).toBeNull();
+    expect(
+      STORY_CATALOG.find((s) => s.locale === 'uk' && s.countries.includes('UA'))
+        ?.id,
+    ).toBe('turnip-franko-uk-1918-v1');
+    expect(mitten.status).toBe('candidate');
+    expect(storyEditionBlocker(mitten)).toMatch(/Кандидат/);
+    expect(STORY_CATALOG.some((s) => s.id === mitten.id)).toBe(false);
+    expect(mitten.rightsSummary).toMatch(/звери гибнут/);
+  });
+
+  it('rejects a scan-compared classic without a pinned scan hash', () => {
+    const t = turnip();
+    const unpinned = clone(t, {
+      id: 'turnip-unpinned-v1',
+      source: { ...t.source, scanSha256: null },
+    });
+    expect(validateStoryEditions([unpinned])).toEqual([
+      'turnip-unpinned-v1: сверенная классика без скана или его SHA-256',
+    ]);
+    expect(storyEditionBlocker(unpinned)).toMatch(/SHA-256 файла скана/);
+    const noAuthor = clone(t, { id: 'turnip-anon-v1', author: null });
+    expect(validateStoryEditions([noAuthor])).toEqual([
+      'turnip-anon-v1: классика без автора или собирателя',
+    ]);
+    // A candidate not yet compared with a scan may still lack the hash.
+    expect(
+      validateStoryEditions([
+        clone(unpinned, { status: 'candidate', textVerification: null }),
+      ]),
+    ).toEqual([]);
+  });
+
   it('labels every adaptation with its differences and source', () => {
     const adaptations = STORY_EDITIONS.filter((e) => e.kind === 'adaptation');
     expect(adaptations.length).toBeGreaterThan(0);
@@ -117,6 +219,39 @@ describe('Story editorial registry (WP2, §23.5)', () => {
     }
     for (const e of STORY_EDITIONS.filter((x) => x.kind !== 'adaptation'))
       expect(e.adaptation).toBeNull();
+  });
+
+  it('describes the «Рукавичка» adaptations against the registered 1870 classic', () => {
+    const classic = STORY_EDITIONS.find(
+      (e) => e.id === 'mitten-rudchenko-uk-1870-v1',
+    )!;
+    const source = classic.chapters.map((c) => c.text).join(' ');
+    for (const id of ['mitten-ru-short-v1', 'mitten-uk-short-v1']) {
+      const e = STORY_EDITIONS.find((x) => x.id === id)!;
+      expect(e.adaptation?.classicEditionId).toBe(classic.id);
+      expect(e.adaptation?.plotSourceTitle).toMatch(/1870/);
+      const changes = e.adaptation!.changes.join(' ');
+      expect(changes).not.toMatch(/1869/);
+      // Every animal of the source that the retelling drops is named…
+      for (const [animal, inSource] of [
+        ['волк', 'вовчик'],
+        ['медведь', 'ведмідь'],
+        ['кабан', 'кабан'],
+      ]) {
+        expect(source).toContain(inSource);
+        expect(changes).toContain(animal);
+      }
+      // …and the changed ending (the hunter in the source) is stated.
+      expect(source).toContain('стрілець');
+      expect(changes).toMatch(/стрелец.*гибнут/);
+      expect(storyEditionView(e).adaptation).toMatchObject({
+        comparedWith: 'registered-classic',
+        classic: { id: classic.id, status: 'candidate', chapters: 3 },
+      });
+    }
+    const pigs = STORY_EDITIONS.find((x) => x.id === 'three-pigs-en-short-v1')!;
+    expect(pigs.adaptation?.classicEditionId).toBeNull();
+    expect(pigs.adaptation?.changes.join(' ')).toMatch(/furze/);
   });
 
   it('offers in the wizard only approved, rights-cleared, hash-verified editions', () => {
@@ -205,6 +340,7 @@ describe('Catalogue API compatibility and editions route', () => {
       'turnip-ushinsky-ru-1949-v1',
       'little-lantern-ru-v1',
       'mitten-ru-short-v1',
+      'turnip-franko-uk-1918-v1',
       'mitten-uk-short-v1',
       'three-pigs-en-short-v1',
       'three-pigs-ru-short-v1',
@@ -302,7 +438,7 @@ describe('Catalogue API compatibility and editions route', () => {
       StoryReferenceLibraryController,
     ])
       expect(Reflect.getMetadata(GUARDS_METADATA, controller)).toContain(
-        StoryDevelopmentGuard,
+        StoryAccessGuard,
       );
   });
 });

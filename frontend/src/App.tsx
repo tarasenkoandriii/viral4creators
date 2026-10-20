@@ -66,6 +66,14 @@ import { FeedScreen } from './features/feed/FeedScreen';
 import { pollPlanState } from './services/billing-api';
 import { Alert, Button, EmptyState, Spinner } from './components/ui';
 import { storyLoadFailure } from './features/stories/story-errors';
+import {
+  parseStoryAccess,
+  storyAccessView,
+  storyNavVisible,
+  type StoryAccess,
+} from './features/stories/story-pilot';
+import { StoryAccessContext } from './features/stories/story-access-context';
+import { StoryAccessGate } from './features/stories/StoryAccessGate';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useI18n } from './lib/i18n-context';
@@ -154,23 +162,26 @@ function App() {
   const [planError, setPlanError] = useState<unknown>(null);
   const [planNonce, setPlanNonce] = useState(0);
   /**
-   * Вход в закрытый раздел Story‑Tales. `closed` — сервер ответил 404
-   * (401/403): раздела для этого человека нет, `#/stories` выглядит как
-   * любой несуществующий адрес (ST2-U-15: тексты из словаря, о закрытой
-   * разработке не сообщаем). `error` — сбой сети/сервера: показываем
-   * ошибку и «Повторить», а не «закрыто» (ST2-U-13).
+   * Вход в Story‑Tales — `GET /story-gifts/access` (проход 3). Режим
+   * владельца для остальных и 404/401/403 — `closed`: раздела нет,
+   * `#/stories` выглядит как любой несуществующий адрес (ST2-U-15).
+   * `error` — сбой сети/сервера: ошибка и «Повторить», а не «закрыто»
+   * (ST2-U-13). Иначе — ответ сервера: мастер (`allowed`) или экран
+   * заявки в пилот / статуса заявки / правил 18+ (`StoryAccessGate`).
    */
   const [storyAccess, setStoryAccess] = useState<
-    'checking' | 'open' | 'closed' | 'error'
+    'checking' | 'closed' | 'error' | StoryAccess
   >('checking');
   const [storyNonce, setStoryNonce] = useState(0);
+  const refreshStory = useCallback(() => setStoryNonce((n) => n + 1), []);
   useEffect(() => {
     let alive = true;
-    setStoryAccess('checking');
+    // Повтор после действия (заявка, правила) не мигает спиннером.
+    setStoryAccess((cur) => (typeof cur === 'object' ? cur : 'checking'));
     void api
-      .get('/story-gifts/catalog')
-      .then(() => {
-        if (alive) setStoryAccess('open');
+      .get<StoryAccess>('/story-gifts/access')
+      .then((res) => {
+        if (alive) setStoryAccess(parseStoryAccess(res.data));
       })
       .catch((e: unknown) => {
         if (alive) setStoryAccess(storyLoadFailure(e));
@@ -179,6 +190,19 @@ function App() {
       alive = false;
     };
   }, [planNonce, storyNonce]);
+  const storyView =
+    typeof storyAccess === 'object'
+      ? storyAccessView(storyAccess)
+      : storyAccess === 'closed'
+        ? 'closed'
+        : null;
+  const storyValue = useMemo(
+    () => ({
+      access: typeof storyAccess === 'object' ? storyAccess : null,
+      refresh: refreshStory,
+    }),
+    [storyAccess, refreshStory]
+  );
   const refreshPlan = useCallback(() => setPlanNonce((n) => n + 1), []);
   useEffect(() => {
     const resetIdentity = () => {
@@ -386,7 +410,7 @@ function App() {
                 >
                   {dict.productAreas.tutorials}
                 </NavTab>
-                {storyAccess === 'open' && (
+                {storyNavVisible(storyView) && (
                   <NavTab
                     active={activeArea === 'stories'}
                     onClick={() => navigate(routes.product('stories'))}
@@ -426,8 +450,17 @@ function App() {
             {(
               ['commerce', 'greetings', 'tutorials', 'stories'] as string[]
             ).includes(route.name) &&
-              (route.name !== 'stories' || storyAccess === 'open' ? (
+              (route.name !== 'stories' ? (
                 <ProductHub area={route.name as ProductArea} />
+              ) : storyView === 'allowed' || storyView === 'readonly' ? (
+                <StoryAccessContext.Provider value={storyValue}>
+                  <ProductHub area="stories" />
+                </StoryAccessContext.Provider>
+              ) : typeof storyAccess === 'object' && storyView !== 'closed' ? (
+                <StoryAccessGate
+                  access={storyAccess}
+                  onChanged={refreshStory}
+                />
               ) : storyAccess === 'checking' ? (
                 <div className="flex justify-center p-5" role="status">
                   <Spinner />
@@ -437,10 +470,7 @@ function App() {
                   title={dict.projectsShared.loadErrorTitle}
                   hint={dict.errors.network}
                   action={
-                    <Button
-                      variant="outline"
-                      onClick={() => setStoryNonce((n) => n + 1)}
-                    >
+                    <Button variant="outline" onClick={refreshStory}>
                       {dict.projectsShared.retryButton}
                     </Button>
                   }

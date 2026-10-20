@@ -162,10 +162,11 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   return handle<T>(await apiReq(path, { method: 'PATCH', body }));
 }
 
-export async function apiDelete<T>(path: string): Promise<T> {
+export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
   // 204 без тела — у DELETE это норма; handle() ждёт JSON, поэтому для
-  // пустого ответа возвращаем undefined как T.
-  const response = await apiReq(path, { method: 'DELETE' });
+  // пустого ответа возвращаем undefined как T. Тело — необязательное:
+  // отзыв доступа к пилоту Story‑Tales несёт причину для журнала.
+  const response = await apiReq(path, { method: 'DELETE', body });
   if (response.status === 204) return undefined as T;
   return handle<T>(response);
 }

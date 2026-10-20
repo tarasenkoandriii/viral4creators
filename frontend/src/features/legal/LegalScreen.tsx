@@ -1,5 +1,6 @@
 /**
- * LegalScreen — оферта и условия использования внутри TMA (spec §20).
+ * LegalScreen — оферта, условия использования и приложения к оферте
+ * (правила Story‑Tales) внутри TMA (spec §20).
  * Тексты приходят из общего сгенерированного модуля lib/legal-content.ts
  * (источник — doc/legal/*.md, синхронизация — scripts/sync-legal.mjs),
  * разметка — lib/legal-markdown.ts, общий с лендингом.
@@ -96,7 +97,7 @@ export function LegalScreen({ slug }: { slug: string }) {
           })}
         </div>
       </Card>
-      <div className="mt-3 flex gap-3 text-xs">
+      <div className="mt-3 flex flex-wrap gap-x-3 text-xs">
         {other.map((d) => (
           <button
             key={d.slug}

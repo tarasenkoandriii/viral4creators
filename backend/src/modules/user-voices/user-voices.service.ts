@@ -42,6 +42,7 @@ import {
   UserVoiceView,
 } from '../../common/types/user-voice.types';
 import { pathnameFromBlobUrl } from '../../common/blob-paths';
+import { withdrawStoryShares } from '../story-gifts/story-share';
 import {
   personaModeEnabled,
   personaSelfLikenessEligible,
@@ -106,6 +107,9 @@ function canRetryClone(row: UserVoiceRow) {
     !row.personaId &&
     !row.resembleVoiceId &&
     !!row.consentAt &&
+    // Story-Tales (правила 9.6): the recording of a failed cloning is erased
+    // 7 days after the last change — then a retry needs a new recording.
+    !!row.sampleUrl &&
     (row.error === 'Resemble 400' || row.error === RESEMBLE_NO_CLONE_SLOTS)
   );
 }
@@ -536,6 +540,12 @@ export class UserVoicesService {
     // personal text stays. A key that embeds this voice is never reusable.
     await this.prisma
       .$executeRaw`UPDATE "story_video_segments" SET "cacheKey" = encode(sha256(convert_to('story-deleted:' || "id", 'UTF8')), 'hex') WHERE "userVoiceId" = ${id} AND "status" = 'DELETED'`;
+    // Story-Tales ST3-S-03/R-04: deleting the voice withdraws the narrator's
+    // consent — published releases with it leave their public links at once.
+    await withdrawStoryShares(this.prisma, {
+      userId,
+      videoRenders: { some: { userVoiceId: id, approvedAt: { not: null } } },
+    });
     await this.prisma.userVoice.delete({ where: { id } });
     if (row.resembleVoiceId) {
       await forgetVoiceInBrandManifests(

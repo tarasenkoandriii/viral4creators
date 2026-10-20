@@ -32,7 +32,11 @@ export const MAX_HINT_ACTIONS = 3;
  * настоящим. Список короткий намеренно: в мастере уместна ссылка на
  * условия, а не экскурсия по сайту.
  */
-export const HINT_DOC_SLUGS: readonly string[] = ['offer', 'terms-of-use'];
+export const HINT_DOC_SLUGS: readonly string[] = [
+  'offer',
+  'terms-of-use',
+  'story-tales-rules',
+];
 
 export type GuideActionKind =
   /** Перейти на другой шаг ЭТОГО же мастера. */

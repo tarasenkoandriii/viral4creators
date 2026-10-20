@@ -9,6 +9,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { downloadStoryVideo } from './story-video-result';
 import { storyDigest, storyVideoTtsReserve } from './story-video-plan';
+import {
+  StoryChargesService,
+  storyVideoChargeKey,
+} from './story-charges.service';
 
 /**
  * WP1 (TODO 84): operator reconciliation of Story-Tales results left in
@@ -91,6 +95,7 @@ export class StoryOperatorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ffmpeg: FfmpegApiService,
+    private readonly charges: StoryChargesService,
   ) {}
 
   /** Records that need an operator. Ids, stage, age and reserve only: no text, media or owner identity. */
@@ -280,20 +285,30 @@ export class StoryOperatorService {
         select: this.giftState,
       });
       if (!prev) return null;
+      // ST3 (Р-ST3-2): a final FAILED returns the user's credits (and the
+      // free first gift) in the same transaction as the close.
+      const result = { status: 'FAILED', creditsRefunded: 0 };
       return {
         previous: prev,
-        mutate: async (tx: Tx) =>
-          (
-            await tx.storyGift.updateMany({
-              where: { id, status: 'UNKNOWN' },
-              data: {
-                status: 'FAILED',
-                error:
-                  'Закрыто оператором: результат озвучки не подтверждён и не восстанавливается. Создайте новую сказку или удалите эту.',
-              },
-            })
-          ).count === 1,
-        result: { status: 'FAILED' },
+        mutate: async (tx: Tx) => {
+          const done =
+            (
+              await tx.storyGift.updateMany({
+                where: { id, status: 'UNKNOWN' },
+                data: {
+                  status: 'FAILED',
+                  error:
+                    'Закрыто оператором: результат озвучки не подтверждён и не восстанавливается. Кредиты за озвучку возвращены. Создайте новую сказку или удалите эту.',
+                },
+              })
+            ).count === 1;
+          if (done)
+            result.creditsRefunded = (
+              await this.charges.refundAudio(id, tx)
+            ).credits;
+          return done;
+        },
+        result,
       };
     });
   }
@@ -509,8 +524,8 @@ export class StoryOperatorService {
       }
       return {
         previous,
-        mutate: (tx: Tx) =>
-          bind(tx, {
+        mutate: async (tx: Tx) => {
+          const bound = await bind(tx, {
             status: 'READY',
             jobId,
             video: new Uint8Array(out.bytes),
@@ -519,7 +534,11 @@ export class StoryOperatorService {
             assetTokenHash: null,
             assetExpiresAt: null,
             error: null,
-          }),
+          });
+          // ST3-S-14: the reconciled export is delivered — capture.
+          if (bound) await this.charges.capture(storyVideoChargeKey(id), tx);
+          return bound;
+        },
         result: {
           inputVerified,
           outcome: 'ready',
@@ -556,6 +575,7 @@ export class StoryOperatorService {
             parentNarrationKey: true,
             mainDuration: true,
             paidSpeechChars: true,
+            giftId: true,
           },
         });
         if (!r) return null;
@@ -574,8 +594,10 @@ export class StoryOperatorService {
           parentNarrationKey,
           mainDuration,
           paidSpeechChars,
+          giftId: _giftId,
           ...previous
         } = r;
+        void _giftId;
         // ST2-S-01: speech this render synthesized and saved is paid for and
         // reused for free by the next render — its TTS reserve (same 4×
         // factor as FAILED before submit, A-S3-4) stays; only the assembly/QA
@@ -594,39 +616,49 @@ export class StoryOperatorService {
         const releaseNarration =
           unsavedNarration &&
           (stage === 'base' || input.providerChargeConfirmedAbsent === true);
+        const result = {
+          status: 'FAILED',
+          stage,
+          releasedUsd: usd(r.reservedMicroUsd - keptMicroUsd),
+          keptUsd: usd(keptMicroUsd),
+          narrationKey: !unsavedNarration
+            ? 'none'
+            : releaseNarration
+              ? 'released'
+              : 'blocked',
+          providerChargeConfirmedAbsent:
+            input.providerChargeConfirmedAbsent === true,
+          // ST3: the user's credits of this attempt go back on the close.
+          creditsRefunded: 0,
+        };
         return {
           previous: { ...previous, stage },
-          mutate: async (tx: Tx) =>
-            (
-              await tx.storyVideoRender.updateMany({
-                where: { id, status: 'UNKNOWN', configHash },
-                data: {
-                  status: 'FAILED',
-                  assetTokenHash: null,
-                  assetExpiresAt: null,
-                  // Frees the (gift, config) slot so the owner may start a new attempt explicitly.
-                  configHash: `${configHash}:closed:${input.requestId}`,
-                  ...(input.releaseReserve
-                    ? { reservedMicroUsd: keptMicroUsd }
-                    : {}),
-                  ...(releaseNarration ? { parentNarrationKey: null } : {}),
-                  error: `Закрыто оператором: сборка не подтверждена. Новую сборку можно запустить вручную.${!input.releaseReserve ? ' Резерв бюджета этой попытки сохранён.' : keptMicroUsd > 0 ? ' Резерв сохранённой речи этой попытки оставлен (она переиспользуется без новой оплаты); резерв сборки освобождён.' : ''}${unsavedNarration && !releaseNarration ? ' Основная речь этим голосом не подтверждена и повторно не покупается.' : ''}`,
-                },
-              })
-            ).count === 1,
-          result: {
-            status: 'FAILED',
-            stage,
-            releasedUsd: usd(r.reservedMicroUsd - keptMicroUsd),
-            keptUsd: usd(keptMicroUsd),
-            narrationKey: !unsavedNarration
-              ? 'none'
-              : releaseNarration
-                ? 'released'
-                : 'blocked',
-            providerChargeConfirmedAbsent:
-              input.providerChargeConfirmedAbsent === true,
+          mutate: async (tx: Tx) => {
+            const done =
+              (
+                await tx.storyVideoRender.updateMany({
+                  where: { id, status: 'UNKNOWN', configHash },
+                  data: {
+                    status: 'FAILED',
+                    assetTokenHash: null,
+                    assetExpiresAt: null,
+                    // Frees the (gift, config) slot so the owner may start a new attempt explicitly.
+                    configHash: `${configHash}:closed:${input.requestId}`,
+                    ...(input.releaseReserve
+                      ? { reservedMicroUsd: keptMicroUsd }
+                      : {}),
+                    ...(releaseNarration ? { parentNarrationKey: null } : {}),
+                    error: `Закрыто оператором: сборка не подтверждена. Новую сборку можно запустить вручную.${!input.releaseReserve ? ' Резерв бюджета этой попытки сохранён.' : keptMicroUsd > 0 ? ' Резерв сохранённой речи этой попытки оставлен (она переиспользуется без новой оплаты); резерв сборки освобождён.' : ''}${unsavedNarration && !releaseNarration ? ' Основная речь этим голосом не подтверждена и повторно не покупается.' : ''}`,
+                  },
+                })
+              ).count === 1;
+            if (done)
+              result.creditsRefunded = (
+                await this.charges.refund(storyVideoChargeKey(id), tx)
+              ).credits;
+            return done;
           },
+          result,
         };
       },
     );

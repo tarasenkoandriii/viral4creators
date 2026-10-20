@@ -85,7 +85,7 @@ export function isStoryNoResponse(e: unknown): boolean {
 
 /**
  * ST2-U-13: почему не загрузился раздел. Закрытая разработка отвечает 404
- * (`StoryDevelopmentGuard`), без входа — 401/403: это «раздел закрыт».
+ * (`StoryAccessGuard`, режим `owner`), без входа — 401/403: это «раздел закрыт».
  * Всё остальное (сеть, таймаут, 5xx, 429) — сбой, который надо показать
  * текстом с кнопкой «Повторить», а не выдавать за закрытый раздел.
  */
@@ -114,14 +114,40 @@ const STATUS_TEXT: Record<number, string> = {
  */
 export function storyErrorText(
   e: unknown,
-  opts: { fallback?: string; noResponse?: string } = {}
+  opts: {
+    fallback?: string;
+    noResponse?: string;
+    /** Язык интерфейса: вне ru русский текст сервера не показывается. */
+    locale?: string;
+    /** Тексты `storyUi` (ошибки по статусу и по коду сервера). */
+    ui?: StoryErrorStrings;
+  } = {}
 ): string {
+  const locale = opts.locale ?? 'ru';
+  const ui = opts.ui;
+  const code = storyErrorCode(e);
+  const byCode = code && ui ? (ui.codes as Record<string, string>)[code] : '';
+  if (byCode && locale !== 'ru') return byCode;
   const server = storyServerMessage(e);
-  if (server) return server;
+  if (server && (locale === 'ru' || !CYRILLIC.test(server))) return server;
+  if (byCode) return byCode;
   const err = e as ErrorLike | null;
   if (err && typeof err === 'object' && err.response) {
     if (opts.fallback) return opts.fallback;
     const status = err.response.status ?? 0;
+    if (ui) {
+      const map: Record<number, string> = {
+        400: ui.errors.s400,
+        403: ui.errors.s403,
+        404: ui.errors.s404,
+        409: ui.errors.s409,
+        413: ui.errors.s413,
+        429: ui.errors.s429,
+      };
+      return (
+        map[status] ?? (status >= 500 ? ui.errors.s5xx : ui.errors.fallback)
+      );
+    }
     return (
       STATUS_TEXT[status] ??
       (status >= 500
@@ -129,18 +155,66 @@ export function storyErrorText(
         : STORY_FALLBACK)
     );
   }
-  if (isStoryNoResponse(e)) return opts.noResponse ?? STORY_NO_RESPONSE;
+  if (isStoryNoResponse(e))
+    return opts.noResponse ?? ui?.errors.noResponse ?? STORY_NO_RESPONSE;
   if (e instanceof StoryClientError) return e.message;
-  return opts.fallback ?? STORY_FALLBACK;
+  return opts.fallback ?? ui?.errors.fallback ?? STORY_FALLBACK;
 }
+
+/** Часть словаря `storyUi`, нужная для текстов ошибок. */
+export type StoryErrorStrings = {
+  errors: Record<
+    | 's400'
+    | 's403'
+    | 's404'
+    | 's409'
+    | 's413'
+    | 's429'
+    | 's5xx'
+    | 'fallback'
+    | 'noResponse'
+    | 'micUnsupported'
+    | 'micDenied'
+    | 'micNotFound'
+    | 'micBusy'
+    | 'micOther',
+    string
+  >;
+  codes: Record<string, string>;
+};
+const CYRILLIC = /[А-Яа-яЁёІіЇїЄєҐґ]/;
 
 /**
  * Ошибки микрофона (S3‑1): `getUserMedia`/`MediaRecorder` дают английские
  * имена DOMException — человеку нужна подсказка, где включить разрешение.
  */
 export const MIC_UNSUPPORTED = 'StoryMicUnsupported';
-export function storyMicErrorText(e: unknown): string {
+export function storyMicErrorText(
+  e: unknown,
+  ui?: Pick<StoryErrorStrings, 'errors'>
+): string {
   const name = (e as { name?: string } | null)?.name ?? '';
+  if (ui) {
+    const m = ui.errors;
+    switch (name) {
+      case MIC_UNSUPPORTED:
+        return m.micUnsupported;
+      case 'NotAllowedError':
+      case 'PermissionDeniedError':
+      case 'SecurityError':
+        return m.micDenied;
+      case 'NotFoundError':
+      case 'DevicesNotFoundError':
+      case 'OverconstrainedError':
+        return m.micNotFound;
+      case 'NotReadableError':
+      case 'TrackStartError':
+      case 'AbortError':
+        return m.micBusy;
+      default:
+        return m.micOther;
+    }
+  }
   switch (name) {
     case MIC_UNSUPPORTED:
       return 'Запись с микрофона здесь не поддерживается. Обновите Telegram или откройте раздел в браузере с поддержкой записи — либо выберите готовый аудиофайл.';

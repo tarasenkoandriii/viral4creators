@@ -10,7 +10,28 @@ import {
   runStoryTalesAction,
   type StoryTalesActionPath,
 } from '../../lib/endpoints';
+import {
+  PILOT_ACTION_EFFECT,
+  PILOT_ACTION_TITLE,
+  PILOT_APPLICATION_STATUS,
+  PILOT_DEFAULT_REASON,
+  PILOT_MODE_LABEL,
+  PILOT_OWNER_CHECKLIST,
+  approveBlockedReason,
+  approveStoryPilotApplication,
+  getStoryPilot,
+  kyivDate,
+  pilotErrorNeedsReload,
+  pilotErrorText,
+  pilotModeNote,
+  pilotUserLabel,
+  pilotSeats,
+  rejectStoryPilotApplication,
+  revokeStoryPilotMember,
+  type StoryPilotActionKind,
+} from '../../lib/story-pilot';
 import type {
+  StoryPilotOverview,
   StoryTalesJournalEntry,
   StoryTalesQueue,
   StoryTalesRetentionPreview,
@@ -81,6 +102,15 @@ const resultNote = (k: Kind, result: Record<string, unknown> | undefined): strin
   if (k === 'render-close' && typeof result.narrationKey === 'string')
     parts.push(NARRATION_KEY[result.narrationKey] ?? `ключ речи: ${result.narrationKey}`);
   return parts.length ? `; ${parts.join('; ')}` : '';
+};
+/** Объект записи журнала словами (решения по пилоту — проход 3). */
+const JOURNAL_TARGET: Record<string, string> = {
+  gift: 'сказка',
+  render: 'сборка',
+  reference: 'разбор',
+  segment: 'сегмент',
+  'pilot-application': 'заявка в пилот',
+  'pilot-member': 'участник пилота',
 };
 const needsNoCharge = (k: Kind) => k === 'gift-reopen' || k === 'gift-qa' || k === 'render-qa' || k === 'segment-close';
 const SEGMENT_KINDS: Record<string, string> = {
@@ -207,6 +237,250 @@ function ActionDialog({ pending, onDone, onCancel }: { pending: Pending; onDone:
   );
 }
 
+// ── Пилот по приглашению (проход 3, Р-ST3-1/7) ──
+interface PilotPending { kind: StoryPilotActionKind; id: string; label: string }
+
+function PilotDialog({
+  pending,
+  onDone,
+  onCancel,
+  onStale,
+}: {
+  pending: PilotPending;
+  onDone: (msg: string) => void;
+  onCancel: () => void;
+  onStale: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [requestId] = useState(uuid);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const k = pending.kind;
+  const dialogRef = useRef<HTMLElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
+  // Escape закрывает диалог, где бы ни был фокус (после ошибки кнопка
+  // успевала стать disabled, и фокус уходил на body — ST3-U-09).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [busy, onCancel]);
+  // Ошибка — фокус на её текст внутри диалога (экранный диктор прочтёт).
+  useEffect(() => {
+    if (error) errorRef.current?.focus();
+  }, [error]);
+  const trimmed = reason.trim();
+  // Пусто — сервер подставит стандартную причину; иначе 3–500 символов.
+  const ready = trimmed === '' || REASON_RE.test(trimmed);
+  const submit = async () => {
+    if (!ready || busy) return;
+    if (!window.confirm(`${PILOT_ACTION_TITLE[k]}: ${pending.label}?\n\n${PILOT_ACTION_EFFECT[k]}`)) return;
+    setBusy(true);
+    setError('');
+    try {
+      const body = { requestId, ...(trimmed ? { reason: trimmed } : {}) };
+      const res =
+        k === 'approve'
+          ? await approveStoryPilotApplication(pending.id, body)
+          : k === 'reject'
+            ? await rejectStoryPilotApplication(pending.id, body)
+            : await revokeStoryPilotMember(pending.id, body);
+      onDone(`${PILOT_ACTION_TITLE[k]} (${pending.label}): готово${res?.replayed ? ' (повтор того же запроса — возвращён прежний результат)' : ''}.`);
+    } catch (e) {
+      setError(pilotErrorText(e, k));
+      if (pilotErrorNeedsReload(e)) onStale();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section
+      ref={dialogRef}
+      tabIndex={-1}
+      className="card"
+      role="dialog"
+      aria-label={PILOT_ACTION_TITLE[k]}
+      style={{ borderColor: 'var(--signal-warning, #b58900)' }}
+    >
+      <h2>{PILOT_ACTION_TITLE[k]}</h2>
+      <p className="muted">Пользователь: <code>{pending.label}</code></p>
+      <p>{PILOT_ACTION_EFFECT[k]}</p>
+      <label style={{ display: 'block', marginBottom: 8 }}>
+        Причина для журнала (необязательно; без персональных данных). Пусто — «{PILOT_DEFAULT_REASON[k]}»
+        <textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} rows={2} style={{ width: '100%' }} />
+      </label>
+      {!ready && <p className="muted">Причина — не меньше трёх символов, не считая пробелов, или оставьте поле пустым.</p>}
+      {error && <p role="alert" ref={errorRef} tabIndex={-1} style={{ color: 'var(--signal-critical)' }}>{error}</p>}
+      <button onClick={() => void submit()} disabled={!ready || busy}>{busy ? 'Выполняется…' : PILOT_ACTION_TITLE[k]}</button>{' '}
+      <button onClick={onCancel} disabled={busy}>Отмена</button>
+    </section>
+  );
+}
+
+function PilotSection({ onChanged }: { onChanged: () => void }) {
+  const [pilot, setPilot] = useState<StoryPilotOverview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [pending, setPending] = useState<PilotPending | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const load = useCallback(async () => {
+    setBusy(true);
+    setError('');
+    try {
+      setPilot(await getStoryPilot());
+    } catch (e) {
+      setError(`Пилот: ${pilotErrorText(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const close = useCallback((msg?: string) => {
+    setPending(null);
+    if (msg) setNotice(msg);
+    const back = opener.current;
+    opener.current = null;
+    setTimeout(() => {
+      if (back?.isConnected && !(back as HTMLButtonElement).disabled) back.focus();
+      else noticeRef.current?.focus();
+    }, 0);
+  }, []);
+  const cancel = useCallback(() => close(), [close]);
+  const open = (p: PilotPending) => {
+    opener.current = document.activeElement as HTMLElement | null;
+    setNotice('');
+    setPending(p);
+  };
+  const seats = pilot ? pilotSeats(pilot) : null;
+  const modeNote = pilot ? pilotModeNote(pilot.mode) : null;
+  const pendingCount = pilot ? pilot.applications.filter((a) => a.status === 'pending').length : 0;
+  return (
+    <section className="card" aria-labelledby="story-pilot-title">
+      <h2 id="story-pilot-title">Пилот</h2>
+      <p className="muted">
+        Платный пилот по приглашению: заявки приходят из TMA, участник — после вашего одобрения. Каждое решение записывается в журнал ниже.
+      </p>
+      <button onClick={() => void load()} disabled={busy}>{busy ? 'Загрузка…' : 'Обновить пилот'}</button>
+      {error && <p role="alert" style={{ color: 'var(--signal-critical)' }}>{error}</p>}
+      <p role="status" ref={noticeRef} tabIndex={-1}>{notice}</p>
+      {pending && (
+        <PilotDialog
+          pending={pending}
+          onCancel={cancel}
+          onStale={() => void load()}
+          onDone={(msg) => {
+            close(msg);
+            void load();
+            onChanged();
+          }}
+        />
+      )}
+      <details style={{ margin: '12px 0' }}>
+        <summary><strong>Перед одобрением первых участников</strong> — чек-лист владельца</summary>
+        <p className="muted">Что сделать вне кода до первых одобрений. Отметки здесь не хранятся.</p>
+        <ol>
+          {PILOT_OWNER_CHECKLIST.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ol>
+      </details>
+      {pilot && seats && (
+        <>
+          <ul>
+            <li>Режим: {PILOT_MODE_LABEL[pilot.mode] ?? pilot.mode}</li>
+            <li>
+              Места: занято {seats.used} из {seats.max}
+              {seats.full ? ' — мест нет, новые заявки одобрить нельзя' : ` (свободно ${seats.left})`}
+            </li>
+            <li>Заявок ждёт решения: {pendingCount}</li>
+          </ul>
+          {modeNote && <p className="muted">{modeNote}</p>}
+          <h3>Участники ({pilot.members.length})</h3>
+          {pilot.members.length ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr><th>id</th><th>Telegram</th><th>Участник с (Киев)</th><th>Бесплатная сказка</th><th>Сказок</th><th>Действия</th></tr></thead>
+                <tbody>
+                  {pilot.members.map((m) => {
+                    const label = pilotUserLabel(m);
+                    return (
+                      <tr key={m.userId}>
+                        <td><code title={m.userId}>{m.shortId}</code></td>
+                        <td>{m.telegramUsername ? `@${m.telegramUsername}` : '—'}</td>
+                        <td>{kyivDate(m.since)}</td>
+                        <td>{m.freeGiftUsed ? 'использована' : 'не использована'}</td>
+                        <td>{m.giftsCount}</td>
+                        <td>
+                          <button onClick={() => open({ kind: 'revoke', id: m.userId, label })} disabled={!!pending}>Отозвать доступ</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>Участников пока нет.</p>
+          )}
+          <h3>Заявки ({pilot.applications.length})</h3>
+          {pilot.applications.length ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead><tr><th>id</th><th>Telegram</th><th>Сценарий</th><th>Дата (Киев)</th><th>Статус</th><th>Действия</th></tr></thead>
+                <tbody>
+                  {pilot.applications.map((a) => {
+                    const blocked = approveBlockedReason(pilot, a);
+                    return (
+                      <tr key={a.id}>
+                        <td><code title={a.userId}>{a.shortId}</code></td>
+                        <td>{a.telegramUsername ? `@${a.telegramUsername}` : '—'}</td>
+                        <td style={{ whiteSpace: 'pre-wrap', maxWidth: 420 }}>{a.scenario?.trim() ? a.scenario : <span className="muted">без сценария</span>}</td>
+                        <td>{kyivDate(a.createdAt)}</td>
+                        <td>{PILOT_APPLICATION_STATUS[a.status] ?? a.status}</td>
+                        <td>
+                          {a.status === 'pending' ? (
+                            <>
+                              <button
+                                onClick={() => open({ kind: 'approve', id: a.id, label: pilotUserLabel(a) })}
+                                disabled={!!pending || blocked !== null}
+                                title={blocked ?? undefined}
+                                style={{ marginRight: 6, marginBottom: 4 }}
+                              >
+                                Одобрить
+                              </button>
+                              <button onClick={() => open({ kind: 'reject', id: a.id, label: pilotUserLabel(a) })} disabled={!!pending} style={{ marginBottom: 4 }}>
+                                Отклонить
+                              </button>
+                              {blocked && <div className="muted">Одобрить нельзя: {blocked}</div>}
+                            </>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p>Заявок пока нет.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export default function StoryTalesPage() {
   const [queue, setQueue] = useState<StoryTalesQueue | null>(null);
   const [journal, setJournal] = useState<StoryTalesJournalEntry[]>([]);
@@ -255,7 +529,7 @@ export default function StoryTalesPage() {
   const empty = queue && !queue.gifts.length && !queue.renders.length && !queue.references.length && !segments.length;
   return (
     <div className="page">
-      <h1>Story‑Tales: сверка и сроки хранения</h1>
+      <h1>Story‑Tales: пилот, сверка и сроки хранения</h1>
       <p className="muted">
         Записи, у которых результат провайдера не подтверждён (UNKNOWN). Автоматических и платных повторов здесь нет: оператор либо привязывает подтверждённое задание сборщика,
         либо закрывает запись, либо — только при подтверждённом отсутствии списания — возвращает её владельцу для явного повтора. Текст сказок, медиа и владельцы не показываются.
@@ -278,6 +552,7 @@ export default function StoryTalesPage() {
           }}
         />
       )}
+      <PilotSection onChanged={() => void load()} />
       {empty && <p>Сейчас ничего не ждёт оператора.</p>}
       {queue && queue.gifts.length > 0 && (
         <section className="card">
@@ -419,7 +694,7 @@ export default function StoryTalesPage() {
                     <td>{new Date(j.createdAt).toLocaleString('ru', { timeZone: 'Europe/Kyiv' })}</td>
                     <td>{j.actorKind === 'cron' ? 'крон сроков хранения' : j.actorKind === 'owner' ? 'владелец (удаление записи)' : <code>{short(j.actorUserId ?? '')}</code>}</td>
                     <td><code>{j.action}</code></td>
-                    <td>{j.targetType}: <code title={j.targetId}>{short(j.targetId)}</code></td>
+                    <td>{JOURNAL_TARGET[j.targetType] ?? j.targetType}: <code title={j.targetId}>{short(j.targetId)}</code></td>
                     <td>{j.reason}</td>
                     <td className="muted"><code>{JSON.stringify(j.previousState)}</code> → <code>{JSON.stringify(j.result)}</code></td>
                   </tr>

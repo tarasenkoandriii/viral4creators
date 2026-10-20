@@ -6,7 +6,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BookOpen, Cake, Heart, Moon, Sun } from 'lucide-react';
 import {
   OCCASION_KINDS,
-  OCCASION_LABELS,
   STORY_THEME_IDS,
   STORY_THEMES,
   budgetWarning,
@@ -19,6 +18,7 @@ import {
   occasionCaption,
   previewKey,
   themeFor,
+  themeLabel,
   type GiftNotePosition,
   type OccasionKind,
   type StoryEstimate,
@@ -27,7 +27,7 @@ import {
   type StoryThemeId,
   type WizardState,
 } from './story-wizard';
-import { Button, Card } from '../../components/ui';
+import { Alert, Button, Card } from '../../components/ui';
 import { api } from '../../services/api';
 import { navigate, routes } from '../../lib/router';
 import {
@@ -41,10 +41,40 @@ import {
   deleteGiftConfirm,
   includedInReserve,
   novaConfirm,
+  novaConfirmMember,
+  qaConfirmMember,
   reserveSuffix,
 } from './story-confirm';
 import { useStoryConfirm } from './StoryConfirm';
 import { fitStoryPhoto } from './story-photo-fit';
+import { useI18n } from '../../lib/i18n-context';
+import { useStoryAccess } from './story-access-context';
+import {
+  storyCanShare,
+  storyChargeOf,
+  storyChargeParagraphs,
+  storyCode,
+  storyCreditsRequired,
+  storyPromiseText,
+  storyRetentionWarning,
+  storySharingEnabled,
+  storySharedUntil,
+  storyNarratorConsentPending,
+  type StoryCharge,
+  fill,
+  storyAccessCode,
+  storyIsOwner,
+  storyPriceChanged,
+  storyServerText,
+  type StoryUiStrings,
+} from './story-pilot';
+import {
+  StoryChargeLine,
+  StoryCreditsNotice,
+  StoryRetentionBadge,
+  StoryRetentionNotice,
+  StorySharePanel,
+} from './StoryPilotParts';
 
 type Chapter = { title: string; text: string; scene: string };
 type Story = {
@@ -93,31 +123,28 @@ type Gift = {
   durationSeconds: number | null;
   audioHash: string | null;
   error: string | null;
+  /** ST3: цена аудио-сборки в кредитах (смета карточки). */
+  charge?: StoryCharge | null;
 };
-const stateNames: Record<string, string> = {
-  DRAFT: 'Черновик',
-  SYNTHESIZING: 'Озвучивается',
-  READY: 'Готово к просмотру',
-  APPROVED: 'Одобрено',
-  UNKNOWN: 'Нужна проверка оператора',
-  FAILED: 'Ошибка',
-};
+/** Подпись статуса сказки на языке интерфейса. */
+const stateName = (u: StoryUiStrings, status: string) =>
+  (u.status as Record<string, string>)[status] ?? status;
 const inputStyle =
   'w-full rounded-lg border border-silver-700 bg-transparent p-3';
-function errorText(e: unknown): string {
+function errorText(e: unknown, u: StoryUiStrings, locale: string): string {
   return storyErrorText(e, {
-    fallback:
-      'Не удалось выполнить действие. Обновите список — повторная озвучка автоматически не запускается.',
-    noResponse:
-      'Ответ сервера не получен. Обновите список: действие могло выполниться — повторная озвучка автоматически не запускается.',
+    fallback: u.errors.actionFallback,
+    noResponse: u.errors.actionNoResponse,
+    locale,
+    ui: u,
   });
 }
-async function photoPng(file: File): Promise<string> {
+async function photoPng(file: File, u: StoryUiStrings): Promise<string> {
   if (
     !['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
     file.size > 10 * 1024 * 1024
   )
-    throw new StoryClientError('Фото PNG, JPEG или WebP до 10 МБ');
+    throw new StoryClientError(u.errors.photoType);
   const bitmap = await createImageBitmap(file);
   try {
     // ST2-U-02: сервер принимает только PNG ≤1024 px и ≤1 МиБ — размер
@@ -137,8 +164,8 @@ async function photoPng(file: File): Promise<string> {
     ).catch((e: unknown) => {
       throw new StoryClientError(
         e instanceof Error && e.name === 'StoryPhotoTooLarge'
-          ? e.message
-          : 'Не удалось сжать фото — выберите другой файл PNG, JPEG или WebP.'
+          ? u.errors.photoTooLarge
+          : u.errors.photoCompress
       );
     });
     return fitted.base64;
@@ -154,6 +181,7 @@ const THEME_ICONS: Record<StoryThemeIcon, typeof BookOpen> = {
   sun: Sun,
 };
 function ThemeBadge({ theme }: { theme: StoryThemeId }) {
+  const { dict } = useI18n();
   const t = STORY_THEMES[theme];
   const Icon = THEME_ICONS[t.icon];
   return (
@@ -161,7 +189,8 @@ function ThemeBadge({ theme }: { theme: StoryThemeId }) {
       className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-sm"
       style={{ background: t.soft, color: t.ink }}
     >
-      <Icon size={16} aria-hidden="true" /> {t.label}
+      <Icon size={16} aria-hidden="true" />{' '}
+      {themeLabel(theme, dict.storyUi.wiz)}
     </span>
   );
 }
@@ -190,13 +219,16 @@ function SpokenText({
 }: {
   parts: Array<{ kind: 'giftNote' | 'main'; text: string }>;
 }) {
+  const { dict } = useI18n();
   return (
     <div className="space-y-3 rounded-lg border border-silver-700 p-3">
       {parts.map((p, i) =>
         p.kind === 'giftNote' ? (
           <p key={i}>
             <mark className="rounded px-1">{p.text}</mark>{' '}
-            <span className="text-xs text-silver-400">· реплика о подарке</span>
+            <span className="text-xs text-silver-400">
+              · {dict.storyUi.wizard.giftNoteMark}
+            </span>
           </p>
         ) : (
           <p key={i} className="whitespace-pre-line">
@@ -208,19 +240,21 @@ function SpokenText({
   );
 }
 function EstimateTable({ estimate }: { estimate: StoryEstimate }) {
-  const warning = budgetWarning(estimate);
+  const { dict } = useI18n();
+  const w = dict.storyUi.wizard;
+  const warning = budgetWarning(estimate, dict.storyUi.wiz);
   return (
     <div className="space-y-2">
       <table className="w-full text-left text-sm">
         <thead>
           <tr>
-            <th className="py-1">Статья</th>
-            <th className="py-1">Оценка</th>
-            <th className="py-1">Резерв</th>
+            <th className="py-1">{w.colItem}</th>
+            <th className="py-1">{w.colCost}</th>
+            <th className="py-1">{w.colReserve}</th>
           </tr>
         </thead>
         <tbody>
-          {estimateRows(estimate).map((row) => (
+          {estimateRows(estimate, dict.storyUi.wiz).map((row) => (
             <tr
               key={row.id}
               className={row.muted ? 'text-silver-400' : undefined}
@@ -238,9 +272,11 @@ function EstimateTable({ estimate }: { estimate: StoryEstimate }) {
         </tbody>
       </table>
       <p className="text-sm">
-        Итого резерв: {formatUsd(estimate.totalReserveMicroUsd)} из бюджета{' '}
-        {formatUsd(estimate.budgetMicroUsd)}. Оценка по внутреннему прайсу, не
-        счёт провайдера. {estimate.policy}
+        {fill(w.estimateTotal, {
+          reserve: formatUsd(estimate.totalReserveMicroUsd),
+          budget: formatUsd(estimate.budgetMicroUsd),
+        })}{' '}
+        {estimate.policy}
       </p>
       {warning && (
         <p role="alert" className="rounded-lg border border-red-400 p-3">
@@ -251,13 +287,15 @@ function EstimateTable({ estimate }: { estimate: StoryEstimate }) {
   );
 }
 function Illustration({ scene }: { scene: string }) {
+  const { dict } = useI18n();
+  const w = dict.storyUi.wizard;
   if (scene === 'turnip')
     return (
       <svg
         viewBox="0 0 640 360"
         className="w-full rounded-xl"
         role="img"
-        aria-label="Большая репка на грядке"
+        aria-label={w.altTurnip}
       >
         <rect width="640" height="360" rx="24" fill="#d8e9e0" />
         <circle cx="530" cy="65" r="35" fill="#ffe29a" />
@@ -285,7 +323,7 @@ function Illustration({ scene }: { scene: string }) {
         viewBox="0 0 640 360"
         className="w-full rounded-xl"
         role="img"
-        aria-label="Рукавичка в зимнем лесу"
+        aria-label={w.altMitten}
       >
         <rect width="640" height="360" rx="24" fill="#dcebf0" />
         <path d="M0 285Q160 220 320 280T640 255V360H0" fill="#f9fcfc" />
@@ -309,7 +347,7 @@ function Illustration({ scene }: { scene: string }) {
         viewBox="0 0 640 360"
         className="w-full rounded-xl"
         role="img"
-        aria-label="Три поросёнка у кирпичного дома"
+        aria-label={w.altPigs}
       >
         <rect width="640" height="360" rx="24" fill="#cfe5e5" />
         <path d="M0 265Q320 190 640 250V360H0" fill="#86a986" />
@@ -333,7 +371,7 @@ function Illustration({ scene }: { scene: string }) {
     <svg
       viewBox="0 0 640 300"
       role="img"
-      aria-label="Иллюстрация сказки: лисёнок с фонариком"
+      aria-label={w.altFox}
       className="w-full rounded-xl"
     >
       <rect
@@ -359,6 +397,29 @@ function Illustration({ scene }: { scene: string }) {
   );
 }
 export function StoryGiftsScreen() {
+  const { dict, locale } = useI18n();
+  const t = dict.storyTales;
+  const u = dict.storyUi;
+  const w = u.wizard;
+  const c = u.card;
+  const storyAccess = useStoryAccess();
+  const mode = storyAccess.access?.mode ?? 'owner';
+  /** ST3-U-03/U-07: суммы провайдеров и внутренние инструменты — владельцу. */
+  const owner = storyIsOwner(storyAccess.access);
+  /** ST3-U-01: отозванный участник — только просмотр, скачивание, удаление. */
+  const readOnly = storyAccess.access?.readOnly === true;
+  const errText = (e: unknown) => errorText(e, u, locale);
+  /** Для эффектов загрузки медиа: текущий язык без лишних зависимостей. */
+  const errTextRef = useRef(errText);
+  errTextRef.current = errText;
+  /** 402 `STORY_CREDITS_REQUIRED` последнего запуска (бриф ST3, п. 2). */
+  const [credits, setCredits] = useState<{
+    required: number | null;
+    balance: number | null;
+  } | null>(null);
+  /** Текст ошибки: валидатор обещаний — на языке интерфейса по коду. */
+  const failText = (e: unknown) =>
+    storyPromiseText(storyCode(e), errText(e), t);
   const [catalog, setCatalog] = useState<Story[]>([]),
     [gifts, setGifts] = useState<Gift[]>([]),
     [selected, setSelected] = useState<Gift | null>(null);
@@ -385,9 +446,13 @@ export function StoryGiftsScreen() {
     [error, setError] = useState(''),
     [reviewed, setReviewed] = useState(false);
   const [country, setCountry] = useState('UA'),
-    [storyLanguage, setStoryLanguage] = useState('ru');
+    [storyLanguage, setStoryLanguage] = useState(
+      locale === 'uk' || locale === 'en' ? locale : 'ru'
+    );
   const [storyId, setStoryId] = useState('turnip-ushinsky-ru-1949-v1'),
-    [budget, setBudget] = useState('1');
+    // Не-владелец бюджет провайдера не выбирает (ST3-U-03): цена — в
+    // кредитах по смете, потолок резерва — максимальный пресет.
+    [budget, setBudget] = useState(owner ? '1' : '5');
   const variants = catalog.filter((s) => s.locale === storyLanguage);
   const story =
     variants.find((s) => s.id === storyId) ||
@@ -406,7 +471,7 @@ export function StoryGiftsScreen() {
     photoDescription,
     includeVideo,
   };
-  const createGate = canCreate(wizard, previewedKey);
+  const createGate = canCreate(wizard, previewedKey, u.wiz);
   const createKey = `${previewKey(wizard)}|${photo ? `${photo.length}:${photo.slice(-32)}` : ''}`;
   const alreadyCreated = createdKey === createKey;
   const budgetError = parseUsdBudget(budget).error;
@@ -424,7 +489,8 @@ export function StoryGiftsScreen() {
   }
   /** ST2-U-13: 404/401/403 — раздел закрыт; иной сбой — текст и «Повторить». */
   const [access, setAccess] = useState<boolean | null | 'error'>(null);
-  const [loadError, setLoadError] = useState('');
+  /** Сбой загрузки; текст — на языке интерфейса при отрисовке. */
+  const [loadError, setLoadError] = useState<unknown>(null);
   const [loadNonce, setLoadNonce] = useState(0);
   const actionLock = useRef(false);
   const confirm = useStoryConfirm();
@@ -435,15 +501,26 @@ export function StoryGiftsScreen() {
   useEffect(() => {
     let alive = true;
     setAccess(null);
-    setLoadError('');
+    setLoadError(null);
     void Promise.all([
-      api.get<Story[]>('/story-gifts/catalog'),
+      // Только чтение: каталог и мастер не нужны (ST3-U-01).
+      readOnly
+        ? Promise.resolve({ data: [] as Story[] })
+        : api.get<Story[]>('/story-gifts/catalog'),
       api.get<Gift[]>('/story-gifts'),
     ])
       .then(([c, g]) => {
         if (!alive) return;
         setAccess(true);
-        setCatalog(c.data || []);
+        const list = c.data || [];
+        setCatalog(list);
+        // Язык интерфейса — лишь начальный выбор: нет сказок на нём — первый
+        // язык каталога (иначе выбор сказки пропал бы целиком).
+        setStoryLanguage((l) =>
+          list.length === 0 || list.some((x) => x.locale === l)
+            ? l
+            : list[0].locale
+        );
         setGifts(g.data || []);
       })
       .catch((e) => {
@@ -453,18 +530,15 @@ export function StoryGiftsScreen() {
           return;
         }
         setAccess('error');
-        setLoadError(
-          storyErrorText(e, {
-            fallback: 'Не удалось загрузить раздел сказок.',
-            noResponse:
-              'Не удалось загрузить раздел сказок: ответ сервера не получен (нет связи или истекло ожидание).',
-          })
-        );
+        setLoadError(e);
       });
     return () => {
       alive = false;
     };
-  }, [loadNonce]);
+    // Смена языка интерфейса перечитывает каталог: права (`rights`) сервер
+    // отдаёт на языке запроса.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadNonce, locale]);
   // S3‑8: медиа выпуска зависят только от выпуска и его статуса, а не от
   // каждого нового объекта `selected` (GET карточки, ответ действия):
   // иначе аудио качалось дважды, а галочка проверки сбрасывалась.
@@ -491,7 +565,7 @@ export function StoryGiftsScreen() {
         setAudio(url);
       })
       .catch((e) => {
-        if (!disposed) setError(errorText(e));
+        if (!disposed) setError(errTextRef.current(e));
       });
     return () => {
       disposed = true;
@@ -509,7 +583,7 @@ export function StoryGiftsScreen() {
           setSavedPhoto(`data:image/png;base64,${r.data.base64}`);
       })
       .catch((e) => {
-        if (!disposed) setError(errorText(e));
+        if (!disposed) setError(errTextRef.current(e));
       });
     return () => {
       disposed = true;
@@ -520,11 +594,19 @@ export function StoryGiftsScreen() {
     actionLock.current = true;
     setBusy(true);
     setError('');
+    setCredits(null);
     try {
       await action();
       await refresh();
     } catch (e) {
-      setError(errorText(e));
+      const need = storyCreditsRequired(e);
+      if (need) setCredits(need);
+      else {
+        // Правила обновились или доступ отозван, пока экран был открыт:
+        // перечитать доступ — App покажет экран правил или режим чтения.
+        if (storyAccessCode(e)) storyAccess.refresh();
+        setError(failText(e));
+      }
     } finally {
       actionLock.current = false;
       setBusy(false);
@@ -542,6 +624,45 @@ export function StoryGiftsScreen() {
         estimate: next.estimate ?? prev?.estimate,
       }));
   }
+  /**
+   * Озвучка: подтверждение с ценой (владельцу — резерв провайдера, остальным —
+   * только кредиты, ST3-U-03). Сервер сверяет показанную цену
+   * (`expectedCredits`, ST3-U-04); при 409 `STORY_PRICE_CHANGED` карточка
+   * перечитывается и подтверждение открывается заново с новой ценой.
+   */
+  function launchNova(gift: Gift) {
+    const charge = storyChargeOf(gift);
+    const paragraphs = storyChargeParagraphs(charge, t, locale);
+    const ownerText = novaConfirm(gift, u.confirm);
+    const text = owner
+      ? { ...ownerText, body: [...ownerText.body, ...paragraphs] }
+      : novaConfirmMember(
+          paragraphs,
+          !!charge?.free,
+          t.charge.confirmTitleFree,
+          u.confirm
+        );
+    confirm.ask(
+      text,
+      () =>
+        void run(async () => {
+          try {
+            await update('render', { expectedCredits: charge?.credits ?? 0 });
+          } catch (e) {
+            const changed = storyPriceChanged(e);
+            if (!changed) throw e;
+            const fresh =
+              (await api.get<Gift>(`/story-gifts/${gift.id}`)).data ?? gift;
+            const next = changed.charge
+              ? { ...fresh, charge: changed.charge }
+              : fresh;
+            setSelected(next);
+            setError(u.codes.STORY_PRICE_CHANGED);
+            setTimeout(() => launchNova(next), 0);
+          }
+        })
+    );
+  }
   /** Список не несёт смету: подгружаем карточку целиком (GET :id). */
   function selectGift(g: Gift) {
     setSelected(g);
@@ -552,65 +673,83 @@ export function StoryGiftsScreen() {
         const full = r.data;
         if (full) setSelected((cur) => (cur && cur.id === g.id ? full : cur));
       })
-      .catch((e) => setError(errorText(e)));
+      .catch((e) => setError(errText(e)));
   }
   if (access === 'error')
     return (
       <Card className="space-y-3 p-5">
-        <p role="alert">{loadError}</p>
-        <Button onClick={() => setLoadNonce((n) => n + 1)}>Повторить</Button>
+        <p role="alert">
+          {storyErrorText(loadError, {
+            fallback: t.access.loadError,
+            noResponse: t.access.noResponse,
+            locale,
+            ui: u,
+          })}
+        </p>
+        <Button onClick={() => setLoadNonce((n) => n + 1)}>
+          {t.access.retry}
+        </Button>
       </Card>
     );
   if (access !== true)
     return (
       <Card className="p-5">
-        {access === null
-          ? 'Проверяем доступ…'
-          : 'Раздел в закрытой разработке.'}
+        {access === null ? t.access.checking : dict.notFound.title}
       </Card>
     );
   return (
     <div className="mx-auto max-w-3xl space-y-5">
-      <Card className="space-y-3 p-5">
-        <BookOpen className="text-accent" />
-        <h1 className="text-2xl font-semibold">Story‑Tales · Создать сказку</h1>
-        <p>
-          Первый формат: короткая классическая сказка с иллюстрациями и озвучкой
-          Nova по умолчанию. В видео «Репки» можно выбрать собственный готовый
-          голос из профиля рассказчика с подтверждением согласия. Основная речь
-          и преамбула сохраняются отдельно.
-        </p>
-        <Button variant="ghost" onClick={() => navigate(routes.manifests())}>
-          Профиль рассказчика в брендбуке
-        </Button>
-      </Card>
+      {readOnly ? (
+        <Card className="space-y-2 p-5">
+          <BookOpen className="text-accent" />
+          <div role="status">
+            <Alert tone="warning" title={c.readOnlyTitle}>
+              {c.readOnlyBody}
+            </Alert>
+          </div>
+          {gifts.length === 0 && <p>{c.readOnlyEmpty}</p>}
+        </Card>
+      ) : (
+        <Card className="space-y-3 p-5">
+          <BookOpen className="text-accent" />
+          <h1 className="text-2xl font-semibold">{w.title}</h1>
+          <p>{w.intro}</p>
+          <Button variant="ghost" onClick={() => navigate(routes.manifests())}>
+            {w.narratorProfile}
+          </Button>
+        </Card>
+      )}
       {error && (
         <p role="alert" className="rounded-lg border border-red-400 p-3">
           {error}
         </p>
       )}
-      <StoryReferencesPanel />
-      <StoryEditionsPanel />
-      {catalog.length > 0 && (
+      <StoryCreditsNotice info={credits} />
+      {/* ST3-U-07: разбор референсов и реестр редакций — инструменты владельца. */}
+      {owner && !readOnly && <StoryReferencesPanel />}
+      {owner && !readOnly && <StoryEditionsPanel />}
+      {!readOnly && catalog.length > 0 && (
         <Card className="space-y-4 p-5">
-          <h2 className="text-xl font-semibold">Сказка и бюджет подарка</h2>
+          <h2 className="text-xl font-semibold">
+            {owner ? w.catalogTitle : w.catalogTitleMember}
+          </h2>
           <label className="block">
-            Страна пользователя
+            {w.country}
             <select
               className={inputStyle}
               value={country}
               onChange={(e) => chooseRegion(e.target.value, storyLanguage)}
             >
-              <option value="UA">Украина</option>
-              <option value="GB">Великобритания</option>
-              <option value="US">США</option>
-              <option value="DE">Германия</option>
-              <option value="ES">Испания</option>
-              <option value="OTHER">Другая страна</option>
+              <option value="UA">{w.countryUA}</option>
+              <option value="GB">{w.countryGB}</option>
+              <option value="US">{w.countryUS}</option>
+              <option value="DE">{w.countryDE}</option>
+              <option value="ES">{w.countryES}</option>
+              <option value="OTHER">{w.countryOTHER}</option>
             </select>
           </label>
           <label className="block">
-            Язык сказки
+            {w.language}
             <select
               className={inputStyle}
               value={storyLanguage}
@@ -622,7 +761,7 @@ export function StoryGiftsScreen() {
             </select>
           </label>
           <label className="block">
-            Сказка
+            {w.tale}
             <select
               className={inputStyle}
               value={story?.id || ''}
@@ -630,73 +769,75 @@ export function StoryGiftsScreen() {
             >
               {variants.map((s) => (
                 <option key={s.id} value={s.id}>
-                  {s.title} · {s.targetSeconds} с{' '}
+                  {s.title} · {fill(w.seconds, { n: s.targetSeconds })} ·{' '}
                   {s.kind === 'original'
-                    ? '· длинный аудиообразец'
+                    ? w.optionOriginal
                     : s.kind === 'classic'
-                      ? '· точная классическая редакция'
-                      : '· короткая адаптация'}
+                      ? w.optionClassic
+                      : w.optionAdaptation}
                 </option>
               ))}
             </select>
           </label>
-          <p>
-            Страна подбирает рекомендуемую сказку; язык выбирается отдельно.
-            Каталог пока небольшой, его можно расширять без изменения ваших
-            сохранённых выпусков.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {[1, 2, 3, 5].map((value) => (
-              <Button
-                key={value}
-                size="sm"
-                variant="ghost"
-                onClick={() => setBudget(String(value))}
-              >
-                ${value}
-              </Button>
-            ))}
-          </div>
-          <label className="block">
-            Общий бюджет подарка, USD
-            <input
-              className={inputStyle}
-              type="number"
-              min="1"
-              max="1000"
-              step="0.01"
-              value={budget}
-              aria-invalid={!!budgetError}
-              aria-describedby={budgetError ? 'story-budget-error' : undefined}
-              onChange={(e) => setBudget(e.target.value)}
-            />
-            {budgetError && (
-              <span
-                id="story-budget-error"
-                className="mt-1 block text-sm text-amber-500"
-              >
-                {budgetError}
-              </span>
-            )}
-          </label>
-          <p className="text-sm">
-            Это выбранный потолок, не цена и не списание. Сначала создаются
-            озвучка и её проверка. Для «Репки» после этого доступна отдельная
-            сборка видео со сменной преамбулой. Перед озвучкой черновик покажет
-            расчётный резерв с запасом по внутреннему прайсу.
-          </p>
+          <p>{w.catalogNote}</p>
+          {owner && (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {[1, 2, 3, 5].map((value) => (
+                  <Button
+                    key={value}
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setBudget(String(value))}
+                  >
+                    ${value}
+                  </Button>
+                ))}
+              </div>
+              <label className="block">
+                {w.budgetLabel}
+                <input
+                  className={inputStyle}
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="0.01"
+                  value={budget}
+                  aria-invalid={!!budgetError}
+                  aria-describedby={
+                    budgetError ? 'story-budget-error' : undefined
+                  }
+                  onChange={(e) => setBudget(e.target.value)}
+                />
+                {budgetError && (
+                  <span
+                    id="story-budget-error"
+                    className="mt-1 block text-sm text-amber-500"
+                  >
+                    {budgetError}
+                  </span>
+                )}
+              </label>
+              <p className="text-sm">{w.budgetNote}</p>
+            </>
+          )}
         </Card>
       )}
-      {story && (
+      {!readOnly && story && (
         <Card className="space-y-4 p-5">
           <h2 className="text-xl font-semibold">{story.title}</h2>
           <p className="text-sm text-silver-400">
-            {story.kind === 'classic'
-              ? 'Классика · текст выбранной редакции'
-              : story.kind === 'adaptation'
-                ? 'Короткая адаптация народного сюжета'
-                : 'Авторская сказка'}{' '}
-            · ориентир {story.targetSeconds} с · {story.rights}
+            {[
+              story.kind === 'classic'
+                ? w.kindClassic
+                : story.kind === 'adaptation'
+                  ? w.kindAdaptation
+                  : w.kindOriginal,
+              fill(w.target, { n: story.targetSeconds }),
+              storyServerText(story.rights, locale, ''),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </p>
           {story.sourceUrl && (
             <a
@@ -705,32 +846,32 @@ export function StoryGiftsScreen() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              {story.kind === 'adaptation'
-                ? 'Источник сюжета (текст адаптации отличается)'
-                : 'Источник выбранного текста'}
+              {story.kind === 'adaptation' ? w.sourcePlot : w.sourceText}
             </a>
           )}
           {story.sourceEdition && (
             <details>
-              <summary>Проверенная редакция и происхождение текста</summary>
+              <summary>{w.editionSummary}</summary>
               <p>
-                {story.sourceEdition.author} · {story.sourceEdition.edition}, с.{' '}
-                {story.sourceEdition.pages}
+                {story.sourceEdition.author} · {story.sourceEdition.edition},{' '}
+                {fill(w.pages, { pages: story.sourceEdition.pages })}
               </p>
-              <p>{story.sourceEdition.changes}</p>
+              {storyServerText(story.sourceEdition.changes, locale, '') && (
+                <p>{story.sourceEdition.changes}</p>
+              )}
               <p className="break-all text-xs">
-                SHA-256 текста: {story.sourceEdition.textSha256}
+                {fill(w.textHash, { hash: story.sourceEdition.textSha256 })}
               </p>
             </details>
           )}
           <fieldset className="min-w-0 space-y-2">
-            <legend>Повод — необязательно</legend>
+            <legend>{w.occasionLegend}</legend>
             <div className="flex flex-wrap gap-2">
               <Chip
                 active={occasionKind === null}
                 onClick={() => setOccasionKind(null)}
               >
-                Пропустить
+                {w.skip}
               </Chip>
               {OCCASION_KINDS.map((kind) => (
                 <Chip
@@ -738,33 +879,29 @@ export function StoryGiftsScreen() {
                   active={occasionKind === kind}
                   onClick={() => setOccasionKind(kind)}
                 >
-                  {OCCASION_LABELS[kind]}
+                  {u.wiz[kind]}
                 </Chip>
               ))}
             </div>
             {occasionKind === 'other' && (
               <label className="block">
-                Своя подпись повода (до 80 символов)
+                {w.occasionOwn}
                 <input
                   className={inputStyle}
                   maxLength={80}
-                  placeholder="Например: первый день в садике"
+                  placeholder={w.occasionPlaceholder}
                   value={occasionLabel}
                   onChange={(e) => setOccasionLabel(e.target.value)}
                 />
               </label>
             )}
-            <p className="text-sm">
-              Повод не меняет текст сказки: он задаёт оформление и подсказки для
-              обращения. Даты возвращения и обещания «вылечит»/«перестанешь
-              бояться» не принимаются.
-            </p>
+            <p className="text-sm">{w.occasionNote}</p>
           </fieldset>
           <fieldset className="min-w-0 space-y-2">
-            <legend>Оформление обложки</legend>
+            <legend>{w.themeLegend}</legend>
             <div className="flex flex-wrap gap-2">
               <Chip active={theme === null} onClick={() => setTheme(null)}>
-                По поводу
+                {w.themeByOccasion}
               </Chip>
               {STORY_THEME_IDS.map((id) => (
                 <Chip
@@ -772,36 +909,36 @@ export function StoryGiftsScreen() {
                   active={theme === id}
                   onClick={() => setTheme(id)}
                 >
-                  {STORY_THEMES[id].label}
+                  {themeLabel(id, u.wiz)}
                 </Chip>
               ))}
             </div>
             <ThemeBadge theme={themeFor(occasionKind, theme)} />
           </fieldset>
           <fieldset className="min-w-0 space-y-3 rounded-lg border border-silver-700 p-3">
-            <legend>Физический подарок — необязательно</legend>
+            <legend>{w.giftLegend}</legend>
             <label className="flex gap-2">
               <input
                 type="checkbox"
                 checked={noteEnabled}
                 onChange={(e) => setNoteEnabled(e.target.checked)}
               />
-              Упомянуть подарок в озвучке
+              {w.mentionGift}
             </label>
             {noteEnabled && (
               <>
                 <label className="block">
-                  Точная реплика (до 180 символов)
+                  {w.noteLabel}
                   <textarea
                     className={inputStyle}
                     maxLength={180}
-                    placeholder="Например: рядом с тобой лежит небольшой подарок. Открой его после сказки."
+                    placeholder={w.notePlaceholder}
                     value={note}
                     onChange={(e) => setNote(e.target.value)}
                   />
                 </label>
                 <label className="block">
-                  Где озвучить реплику
+                  {w.notePosition}
                   <select
                     className={inputStyle}
                     value={position}
@@ -809,18 +946,15 @@ export function StoryGiftsScreen() {
                       setPosition(e.target.value as GiftNotePosition)
                     }
                   >
-                    <option value="beginning">В начале</option>
-                    <option value="end">В конце</option>
+                    <option value="beginning">{w.beginning}</option>
+                    <option value="end">{w.end}</option>
                   </select>
                 </label>
-                <p className="text-sm">
-                  Не пишите о доставке, курьере и сроках получения: сервис их не
-                  знает, а запись будут переслушивать.
-                </p>
+                <p className="text-sm">{w.noteWarn}</p>
               </>
             )}
             <label className="block">
-              Фото подарка — необязательно
+              {w.photoLabel}
               <input
                 className="block w-full max-w-full text-sm"
                 type="file"
@@ -829,13 +963,14 @@ export function StoryGiftsScreen() {
                   const file = e.target.files?.[0];
                   if (file) {
                     setPhotoBusy(true);
-                    void photoPng(file)
+                    void photoPng(file, u)
                       .then(setPhoto)
                       .catch((err) =>
                         setError(
                           storyErrorText(err, {
-                            fallback:
-                              'Не удалось прочитать фото — выберите другой файл PNG, JPEG или WebP.',
+                            fallback: u.errors.photoRead,
+                            locale,
+                            ui: u,
                           })
                         )
                       )
@@ -849,28 +984,24 @@ export function StoryGiftsScreen() {
                 <img
                   className="max-h-48 rounded-lg"
                   src={`data:image/png;base64,${photo}`}
-                  alt="Выбранное фото подарка"
+                  alt={w.photoAlt}
                 />
                 <Button variant="ghost" onClick={() => setPhoto(null)}>
-                  Убрать выбранное фото
+                  {w.photoRemove}
                 </Button>
               </>
             )}
             <label className="block">
-              Описание подарка к фото (до 200 символов)
+              {w.photoDescLabel}
               <input
                 className={inputStyle}
                 maxLength={200}
-                placeholder="Например: мягкий заяц в голубой коробке"
+                placeholder={w.photoDescPlaceholder}
                 value={photoDescription}
                 onChange={(e) => setPhotoDescription(e.target.value)}
               />
             </label>
-            <p className="text-sm">
-              Фото и описание показываются отдельной карточкой и не
-              озвучиваются. Можно добавить фото без реплики или реплику без
-              фото.
-            </p>
+            <p className="text-sm">{w.photoNote}</p>
           </fieldset>
           <label className="flex gap-2">
             <input
@@ -878,11 +1009,11 @@ export function StoryGiftsScreen() {
               checked={includeVideo}
               onChange={(e) => setIncludeVideo(e.target.checked)}
             />
-            Учесть в смете будущую видеоверсию (преамбула, сборка, проверка)
+            {w.includeVideo}
           </label>
           {budgetError && (
             <p id="story-preview-reason" className="text-sm">
-              Предпросмотр недоступен: {budgetError.toLowerCase()}.
+              {fill(w.previewBlocked, { reason: budgetError })}
             </p>
           )}
           <Button
@@ -904,35 +1035,50 @@ export function StoryGiftsScreen() {
             }
           >
             {noteEnabled
-              ? 'Показать точную реплику и смету'
-              : 'Показать текст озвучки и смету'}
+              ? owner
+                ? w.previewNote
+                : w.previewNoteMember
+              : owner
+                ? w.previewText
+                : w.previewTextMember}
           </Button>
           {preview && (
             <div className="space-y-3">
               {!previewFresh && (
                 <p role="status" className="text-sm">
-                  Ввод изменился — обновите предпросмотр.
+                  {w.previewStale}
                 </p>
               )}
-              <h3 className="font-semibold">Точный текст озвучки</h3>
+              <h3 className="font-semibold">{w.exactText}</h3>
               <SpokenText parts={preview.parts} />
               <p className="text-sm">
-                Длительность ≈ {Math.round(preview.durationSeconds.estimated)} с
+                {fill(w.duration, {
+                  n: Math.round(preview.durationSeconds.estimated),
+                })}
                 {preview.giftNote
-                  ? ` (реплика ≈ ${Math.round(preview.giftNote.seconds)} с, ${preview.giftNote.position === 'beginning' ? 'в начале' : 'в конце'})`
+                  ? ` (${fill(w.noteDuration, {
+                      n: Math.round(preview.giftNote.seconds),
+                      position:
+                        preview.giftNote.position === 'beginning'
+                          ? w.atBeginning
+                          : w.atEnd,
+                    })})`
                   : ''}
                 .{' '}
                 {!preview.durationSeconds.withinLimits &&
-                  `Озвучка вне допустимых ${preview.durationSeconds.min}–${preview.durationSeconds.max} с.`}
+                  fill(w.outOfLimits, {
+                    min: preview.durationSeconds.min,
+                    max: preview.durationSeconds.max,
+                  })}
               </p>
               {preview.hints.map((h) => (
                 <p key={h.code} className="text-sm">
-                  {h.message}
+                  {storyPromiseText(h.code, h.message, t)}
                 </p>
               ))}
               {preview.occasion.lines.length > 0 && (
                 <details>
-                  <summary>Подсказки для обращения в преамбуле видео</summary>
+                  <summary>{w.occasionLines}</summary>
                   {preview.occasion.lines.map((line) => (
                     <p key={line} className="my-2">
                       «{line}»
@@ -940,19 +1086,15 @@ export function StoryGiftsScreen() {
                   ))}
                 </details>
               )}
-              <EstimateTable estimate={preview.estimate} />
+              {owner && <EstimateTable estimate={preview.estimate} />}
+              <StoryChargeLine charge={storyChargeOf(preview)} />
             </div>
           )}
-          <p className="text-sm">
-            Повод, подарок и фото независимы, всё можно пропустить. Пилот: три
-            новых сказки в сутки; до озвучки можно проверить сохранённый
-            черновик.
-          </p>
+          <p className="text-sm">{w.pilotNote}</p>
           {createGate.reason && <p className="text-sm">{createGate.reason}</p>}
           {alreadyCreated && (
             <p role="status" className="text-sm">
-              Черновик с этими данными уже создан и открыт ниже в «Мои сказки».
-              Чтобы создать ещё один, измените ввод.
+              {w.alreadyCreated}
             </p>
           )}
           <Button
@@ -980,18 +1122,18 @@ export function StoryGiftsScreen() {
               })
             }
           >
-            {photoBusy ? 'Подготовка фото…' : 'Создать черновик'}
+            {photoBusy ? w.photoPreparing : w.createDraft}
           </Button>
         </Card>
       )}
       {gifts.length > 0 && (
         <Card className="space-y-3 p-5">
-          <h2 className="text-xl font-semibold">Мои сказки</h2>
+          <h2 className="text-xl font-semibold">{c.myTales}</h2>
           {gifts.map((g) => (
             <button
               key={g.id}
               type="button"
-              className={`block w-full rounded-lg border p-3 text-left ${selected?.id === g.id ? 'border-accent' : 'border-silver-700'}`}
+              className={`block w-full break-words rounded-lg border p-3 text-left ${selected?.id === g.id ? 'border-accent' : 'border-silver-700'}`}
               onClick={() => selectGift(g)}
             >
               <ThemeBadge
@@ -1001,8 +1143,13 @@ export function StoryGiftsScreen() {
                 )}
               />{' '}
               {g.title}
-              {occasionCaption(g) ? ` · ${occasionCaption(g)}` : ''} —{' '}
-              {stateNames[g.status] || g.status}
+              {occasionCaption(g, u.wiz)
+                ? ` · ${occasionCaption(g, u.wiz)}`
+                : ''}{' '}
+              — {stateName(u, g.status)}
+              <StoryRetentionBadge
+                text={storyRetentionWarning(g, t, locale)?.badge ?? null}
+              />
             </button>
           ))}
         </Card>
@@ -1015,7 +1162,7 @@ export function StoryGiftsScreen() {
           }}
         >
           <h2 className="text-xl font-semibold">
-            {selected.title} · {stateNames[selected.status]}
+            {selected.title} · {stateName(u, selected.status)}
           </h2>
           <p>
             <ThemeBadge
@@ -1024,63 +1171,61 @@ export function StoryGiftsScreen() {
                 selected.occasionTheme
               )}
             />{' '}
-            {occasionCaption(selected)}
+            {occasionCaption(selected, u.wiz)}
           </p>
-          <p>
-            Бюджет: ${(selected.budgetCents / 100).toFixed(2)} · расчётный
-            резерв аудиопилота с запасом: $
-            {(selected.reservedMicroUsd / 1e6).toFixed(2)}. Это оценка, не счёт
-            провайдера.
-          </p>
-          {selected.estimate && (
+          <StoryRetentionNotice
+            warning={storyRetentionWarning(selected, t, locale)}
+            audio={audio}
+          />
+          {owner && (
+            <p>
+              {fill(c.budgetLine, {
+                budget: `$${(selected.budgetCents / 100).toFixed(2)}`,
+                reserve: `$${(selected.reservedMicroUsd / 1e6).toFixed(2)}`,
+              })}
+            </p>
+          )}
+          {owner && selected.estimate && (
             <details>
-              <summary>Смета по строкам</summary>
+              <summary>{c.estimateSummary}</summary>
               <EstimateTable estimate={selected.estimate} />
             </details>
           )}
           {selected.giftNote && selected.status !== 'DRAFT' && (
             <p>
-              Реплика о подарке{' '}
-              {selected.giftNotePosition === 'beginning'
-                ? 'в начале'
-                : 'в конце'}
-              : «{selected.giftNote}»
+              {fill(c.giftNoteAt, {
+                position:
+                  selected.giftNotePosition === 'beginning'
+                    ? w.atBeginning
+                    : w.atEnd,
+                text: selected.giftNote,
+              })}
             </p>
           )}
           {savedPhoto && (
             <img
               className="max-h-64 rounded-lg"
               src={savedPhoto}
-              alt="Сохранённое фото физического подарка"
+              alt={c.savedPhotoAlt}
             />
           )}
           {selected.giftPhotoDescription && (
-            <p>Подарок: {selected.giftPhotoDescription}</p>
+            <p>{fill(c.giftDesc, { text: selected.giftPhotoDescription })}</p>
           )}
-          {selected.status === 'DRAFT' && (
+          {!readOnly && selected.status === 'DRAFT' && (
             <>
               <details open={Boolean(selected.giftNote)}>
                 <summary>
-                  {selected.giftNote
-                    ? 'Точная озвучка с репликой о подарке'
-                    : 'Точный текст озвучки'}
+                  {selected.giftNote ? c.exactWithNote : w.exactText}
                 </summary>
                 <SpokenText parts={draftParts(selected)} />
               </details>
-              <p>
-                Голос: Nova · Resemble. Текст и изображение будут зафиксированы
-                при запуске.
-              </p>
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  confirm.ask(
-                    novaConfirm(selected),
-                    () => void run(() => update('render'))
-                  )
-                }
-              >
-                Озвучить Nova{reserveSuffix(selected.reservedMicroUsd)}
+              <p>{c.voiceFixed}</p>
+              <StoryChargeLine charge={storyChargeOf(selected)} />
+              <Button disabled={busy} onClick={() => launchNova(selected)}>
+                {owner
+                  ? `${c.voiceNova}${reserveSuffix(selected.reservedMicroUsd, u.confirm)}`
+                  : c.voiceMember}
               </Button>
               {photo && (
                 <Button
@@ -1093,11 +1238,11 @@ export function StoryGiftsScreen() {
                     })
                   }
                 >
-                  Сохранить выбранное фото в черновик
+                  {c.savePhoto}
                 </Button>
               )}
               <label className="block">
-                Описание подарка к фото
+                {c.photoDesc}
                 <input
                   className={inputStyle}
                   maxLength={200}
@@ -1118,7 +1263,7 @@ export function StoryGiftsScreen() {
                   )
                 }
               >
-                Сохранить описание
+                {c.saveDesc}
               </Button>
               {selected.hasGiftPhoto && (
                 <Button
@@ -1134,18 +1279,19 @@ export function StoryGiftsScreen() {
                     })
                   }
                 >
-                  Убрать фото и описание из черновика
+                  {c.removePhoto}
                 </Button>
               )}
             </>
           )}
           {selected.status === 'SYNTHESIZING' && (
-            <p role="status">
-              Синтез ещё не завершён. Повторная отправка не создаёт новую
-              озвучку.
+            <p role="status">{c.synthesizing}</p>
+          )}
+          {selected.error && (
+            <p role="alert">
+              {storyServerText(selected.error, locale, u.errors.buildFailed)}
             </p>
           )}
-          {selected.error && <p role="alert">{selected.error}</p>}
           <Button
             variant="ghost"
             disabled={busy}
@@ -1156,13 +1302,14 @@ export function StoryGiftsScreen() {
               })
             }
           >
-            Обновить статус
+            {c.refresh}
           </Button>
           {audio && (
             <>
               <p>
-                Длительность: {Math.round(selected.durationSeconds || 0)} с ·
-                Nova · синтетическая озвучка
+                {fill(c.durationNova, {
+                  n: Math.round(selected.durationSeconds || 0),
+                })}
               </p>
               <audio
                 onPlay={exclusiveStoryPlayback}
@@ -1176,7 +1323,7 @@ export function StoryGiftsScreen() {
                 href={audio}
                 download="story-tales.mp3"
               >
-                Скачать MP3
+                {c.downloadMp3}
               </a>
             </>
           )}
@@ -1191,42 +1338,41 @@ export function StoryGiftsScreen() {
           {['READY', 'APPROVED'].includes(selected.status) && (
             <div className="space-y-2">
               <p>
-                Сверка речи с текстом:{' '}
-                {
-                  (
-                    {
-                      PENDING: 'ещё не запускалась',
-                      RUNNING: 'выполняется',
-                      PASS: 'пройдена',
-                      WARN: 'есть расхождения',
-                      UNKNOWN: 'результат не подтверждён',
-                    } as Record<string, string>
-                  )[selected.audioQaStatus]
-                }
+                {fill(c.qaLine, {
+                  status:
+                    (u.audioQa as Record<string, string>)[
+                      selected.audioQaStatus
+                    ] ?? '',
+                })}
               </p>
               {selected.audioQa && (
                 <p>
-                  Расхождение слов: {(selected.audioQa.wer * 100).toFixed(1)}%.
-                  Это проверка полноты текста; естественность и произношение
-                  оцениваются при прослушивании.
+                  {fill(c.wer, {
+                    n: (selected.audioQa.wer * 100).toFixed(1),
+                  })}
                 </p>
               )}
-              <Button
-                variant="ghost"
-                disabled={busy || selected.audioQaStatus !== 'PENDING'}
-                onClick={() =>
-                  confirm.ask(
-                    audioQaConfirm(selected),
-                    () => void run(() => update('quality'))
-                  )
-                }
-              >
-                Проверить озвучку через Soniox
-                {includedInReserve(selected.reservedMicroUsd)}
-              </Button>
+              {!readOnly && (
+                <Button
+                  variant="ghost"
+                  disabled={busy || selected.audioQaStatus !== 'PENDING'}
+                  onClick={() =>
+                    confirm.ask(
+                      owner
+                        ? audioQaConfirm(selected, u.confirm)
+                        : qaConfirmMember('audio', u.confirm),
+                      () => void run(() => update('quality'))
+                    )
+                  }
+                >
+                  {owner
+                    ? `${c.qaButton}${includedInReserve(selected.reservedMicroUsd, u.confirm)}`
+                    : c.qaButtonMember}
+                </Button>
+              )}
             </div>
           )}
-          {selected.status === 'READY' && (
+          {!readOnly && selected.status === 'READY' && (
             <>
               <label className="flex gap-2">
                 <input
@@ -1234,7 +1380,7 @@ export function StoryGiftsScreen() {
                   checked={reviewed}
                   onChange={(e) => setReviewed(e.target.checked)}
                 />
-                Подтверждаю этот выпуск: текст, фото и озвучка проверены
+                {c.reviewed}
               </label>
               <Button
                 disabled={busy || !reviewed || !audio}
@@ -1247,18 +1393,52 @@ export function StoryGiftsScreen() {
                   )
                 }
               >
-                Одобрить этот выпуск
+                {c.approve}
               </Button>
             </>
           )}
-          <p className="text-sm">
-            Закрытая разработка: публикация и доступ по ссылке отключены.
-            Выпуски доступны только в вашем кабинете.
-          </p>
+          {storyCanShare(mode, selected.status) ? (
+            <StorySharePanel
+              key={`share-${selected.id}`}
+              giftId={selected.id}
+              gift={selected}
+              readOnly={readOnly}
+              onChanged={() => {
+                const id = selected.id;
+                void Promise.all([
+                  api.get<Gift>(`/story-gifts/${id}`),
+                  refresh(),
+                ])
+                  .then(([r]) => {
+                    const full = r.data;
+                    if (full)
+                      setSelected((cur) => (cur && cur.id === id ? full : cur));
+                  })
+                  .catch(() => {});
+              }}
+            />
+          ) : readOnly ? null : (
+            <p className="text-sm">
+              {storySharingEnabled(mode)
+                ? t.share.afterApprove
+                : t.share.ownerClosed}
+            </p>
+          )}
           {['READY', 'APPROVED'].includes(selected.status) && (
             <StoryVideoPanel
               key={selected.id}
               giftId={selected.id}
+              owner={owner}
+              readOnly={readOnly}
+              publicNote={
+                !storySharingEnabled(mode)
+                  ? u.video.ownerOnly
+                  : storySharedUntil(selected)
+                    ? storyNarratorConsentPending(selected)
+                      ? u.video.publicConsent
+                      : u.video.publicLinked
+                    : u.video.publicNotShared
+              }
               classicText={
                 (catalog.find((s) => s.id === selected.catalogId)?.kind ??
                   'classic') === 'classic'
@@ -1273,7 +1453,7 @@ export function StoryGiftsScreen() {
               // сотрётся; DELETE уходит только после подтверждения.
               const target = selected;
               confirm.ask(
-                deleteGiftConfirm(target),
+                deleteGiftConfirm(target, u.confirm),
                 () =>
                   void run(async () => {
                     await api.delete(`/story-gifts/${target.id}`);
@@ -1282,7 +1462,7 @@ export function StoryGiftsScreen() {
               );
             }}
           >
-            Удалить сказку и её медиа
+            {c.delete}
           </Button>
         </Card>
       )}

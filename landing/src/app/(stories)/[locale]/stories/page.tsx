@@ -1,14 +1,26 @@
 import type { Metadata, Viewport } from 'next';
-import { isLocale, locales, type Locale } from '../../../lib/i18n';
-import { localeAlternates } from '../../../lib/alternates';
-import { SITE_URL, TELEGRAM_BOT_USERNAME, TMA_URL } from '../../../lib/content';
-import { isReachableOrigin } from '../../../lib/site-origin';
-import { browserEntryLink, normalizeBotUsername, telegramEntryLink } from '../../../lib/telegram-entry';
-import { ogImageUrl, socialMeta } from '../../../lib/social-meta';
-import { STORIES_REFERRER_POLICY, STORIES_ROBOTS, STORIES_SITE_URL, storiesPageUrl } from '../../../lib/stories-host';
-import { BRAND, getStoriesCopy, type StoriesCopy } from '../../../lib/stories/copy';
-import { loadStoryRelease, type LegalLinkKind, type StoryRelease } from '../../../lib/stories/release';
-import { ANCHORS, V1_READINESS, resolveStoryView, type CtaAction, type StoryAppLinks } from '../../../lib/stories/cta';
+import { isLocale, locales, type Locale } from '../../../../lib/i18n';
+import { localeAlternates } from '../../../../lib/alternates';
+import { SITE_URL, TELEGRAM_BOT_USERNAME, TMA_URL } from '../../../../lib/content';
+import { isReachableOrigin } from '../../../../lib/site-origin';
+import { browserEntryLink, normalizeBotUsername, telegramEntryLink } from '../../../../lib/telegram-entry';
+import { ogImageUrl, socialMeta } from '../../../../lib/social-meta';
+import { STORIES_REFERRER_POLICY, STORIES_ROBOTS, STORIES_SITE_URL, storiesPageUrl } from '../../../../lib/stories-host';
+import { BRAND, getStoriesCopy, type StoriesCopy } from '../../../../lib/stories/copy';
+import { loadStoryRelease, type LegalLinkKind, type StoryRelease } from '../../../../lib/stories/release';
+import { ANCHORS, V1_READINESS, resolveStoryView, type CtaAction, type StoryAppLinks } from '../../../../lib/stories/cta';
+import {
+  isStoriesIndexable,
+  isStoriesOpen,
+  storiesLandingMode,
+  type StoriesLandingMode,
+} from '../../../../lib/stories/landing-mode';
+import {
+  STATIC_STORY_CAPABILITIES,
+  loadStoryCapabilities,
+  taleTitle,
+  type StoryCapabilities,
+} from '../../../../lib/stories/capabilities';
 import { HeroIllustration } from './HeroIllustration';
 import { StoriesLocaleMenu } from './StoriesLocaleMenu';
 
@@ -45,7 +57,55 @@ import { StoriesLocaleMenu } from './StoriesLocaleMenu';
  *    ненавязчивая ссылка в подвале.
  *  - **Почти без JavaScript**: единственный клиентский компонент — выбор
  *    языка (сохраняет якорь); FAQ — `<details>`.
+ *
+ * ## Режим лендинга (`STORY_TALES_LANDING`, Р-ST3-6, 20.10.2026)
+ *
+ * Ортогонален режиму выпуска из `release.json` (тот — про демо, форму и
+ * мастер на САМОЙ странице и остаётся `prep`: ни плеера, ни формы, ни
+ * покупки здесь нет). Режим лендинга решает, отдаётся ли страница вообще
+ * (`closed` — 404 в middleware) и что о доступе говорят тексты:
+ *
+ *  - `closed` — тексты `prep` как были («Скоро запуск», без «пилота»);
+ *  - `pilot` — «пилот по приглашению, до 15 семей» (`copy.access.pilot`),
+ *    основное действие — тот же вход в раздел `#/stories` приложения
+ *    (`startapp=e_stories`), где оставляют заявку; формы с личными данными
+ *    на странице нет; noindex сохраняется;
+ *  - `public` — тексты `copy.access.public`, без noindex и без пункта о
+ *    закрытой индексации.
+ *
+ * В `pilot`/`public` каталог показывает блок «что доступно» из публичного
+ * API (`lib/stories/capabilities.ts`): на сборке и раз в
+ * `revalidate` секунд, с откатом на статические данные — сборка без
+ * backend'а не падает. Событий нет: у лендинга нет механизма событий с
+ * согласием (Р-ST3-ADM+LND-5), счётчик посещений Story‑Tales не учитывает.
  */
+
+/**
+ * ISR для блока «что доступно» — литералом (Next 15 читает конфиг
+ * сегмента по исходнику, см. `scripts/segment-config.test.ts`); равен
+ * `STORY_CAPABILITIES_REVALIDATE_SECONDS` и `max-age` ответа API. Явно, а
+ * не только через `fetch`: неудачный запрос на сборке не должен сделать
+ * страницу вечной статикой с откатом.
+ */
+export const revalidate = 300;
+
+/**
+ * Что в `pilot`/`public` замещается по месту (ответы и пункты, которые в
+ * `prep` говорят будущим временем о том, что уже работает): FAQ — голос,
+ * ссылка, языки, цена; рассказчик — семейный голос; приватность — снятие
+ * ссылки; синтетический образ рассказчика — только у владельца (ST3-U-16):
+ * FAQ о фото/скетче и предпросмотре, шаг проверки, блок «Фото или скетч».
+ * Вопросы и порядок — те же (сверяет `stories-copy.test.ts`).
+ */
+const FAQ_VOICE_INDEX = 1;
+const FAQ_LOOK_INDEX = 2;
+const FAQ_LINK_INDEX = 5;
+const FAQ_PREVIEW_INDEX = 7;
+const HOW_CHECK_STEP_INDEX = 2;
+const FAQ_LANGUAGES_INDEX = 6;
+const FAQ_PRICE_INDEX = 8;
+const NARRATOR_FAMILY_VOICE_INDEX = 2;
+const PRIVACY_LINK_INDEX = 3;
 
 /**
  * Готовность того, чего нет в конфиге: плеера (§9) и обработчика заявок
@@ -81,9 +141,11 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const locale = localeOf((await params).locale);
   const t = getStoriesCopy(locale);
+  const mode = storiesLandingMode();
+  const description = isStoriesOpen(mode) ? accessCopy(t, mode).metaDescription : t.meta.description;
   return {
     title: t.meta.title,
-    description: t.meta.description,
+    description,
     // Ключевые слова главной (`[locale]/layout.tsx`) сюда не наследуются.
     keywords: null,
     // Canonical — адрес на поддомене (адрес выбран, §12 это разрешает), и
@@ -96,14 +158,82 @@ export async function generateMetadata({
     // картинку главной от layout.
     ...socialMeta({
       title: t.meta.title,
-      description: t.meta.description,
+      description,
       url: storiesPageUrl(locale),
       locale,
       image: ogImageUrl(STORIES_SITE_URL, 'stories', locale),
     }),
-    robots: STORIES_ROBOTS,
+    // До `public` — noindex (второй замок — `X-Robots-Tag`); в `public`
+    // явное `index`, раз общий layout локали сюда больше не наследуется.
+    robots: isStoriesIndexable(mode) ? { index: true, follow: true } : STORIES_ROBOTS,
     referrer: STORIES_REFERRER_POLICY,
   };
+}
+
+/** Тексты доступа режима; в `closed` их нет — там тексты `prep`. */
+function accessCopy(t: StoriesCopy, mode: Exclude<StoriesLandingMode, 'closed'>) {
+  return mode === 'pilot' ? t.access.pilot : t.access.public;
+}
+
+/** Сумма «цена от» — в валюте API, по правилам языка страницы. */
+function formatUsd(value: number, locale: Locale): string {
+  return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(value);
+}
+
+/**
+ * Блок «что доступно»: языки, истории, форматы и «цена от» — из API;
+ * при откате — только языки и честная подпись, что список — в приложении.
+ */
+function CapabilitiesBlock({
+  caps,
+  title,
+  t,
+  locale,
+}: {
+  caps: StoryCapabilities;
+  title: string;
+  t: StoriesCopy['capabilities'];
+  locale: Locale;
+}) {
+  const formats = caps.formats.map((f) => t.formatNames[f]);
+  return (
+    <div className="st-card st-capabilities" data-capabilities={caps.source}>
+      <h3>{title}</h3>
+      <p className="st-note">{caps.source === 'api' ? t.lead : t.staticLead}</p>
+      <dl className="st-capability-list">
+        <dt>{t.languagesLabel}</dt>
+        <dd>{caps.languages.map((l) => t.languageNames[l]).join(', ')}</dd>
+        <dt>{t.talesLabel}</dt>
+        <dd>
+          {caps.tales.length ? (
+            <ul>
+              {caps.tales.map((tale) => (
+                <li key={tale.slug} data-tale={tale.slug}>
+                  {taleTitle(tale, locale)} ({tale.languages.map((l) => t.languageNames[l]).join(', ')})
+                </li>
+              ))}
+            </ul>
+          ) : (
+            t.talesEmpty
+          )}
+        </dd>
+        {formats.length ? (
+          <>
+            <dt>{t.formatsLabel}</dt>
+            <dd>{formats.join(', ')}</dd>
+          </>
+        ) : null}
+        {caps.priceFromUsd !== null ? (
+          <>
+            <dt>{t.priceLabel}</dt>
+            <dd data-price-from={caps.priceFromUsd}>
+              {t.priceFrom.replace('{price}', formatUsd(caps.priceFromUsd, locale))}. {t.priceNote}
+            </dd>
+          </>
+        ) : null}
+      </dl>
+    </div>
+  );
 }
 
 /** Ссылка на юридический документ: главный домен, если он известен. */
@@ -140,6 +270,31 @@ export default async function StoriesLandingPage({
 }) {
   const locale = localeOf((await params).locale);
   const t = getStoriesCopy(locale);
+  const mode = storiesLandingMode();
+  const access = isStoriesOpen(mode) ? accessCopy(t, mode) : null;
+  // В `closed` страница не отдаётся (404 в middleware) — в API не ходим.
+  const caps = access ? await loadStoryCapabilities() : STATIC_STORY_CAPABILITIES;
+  const openAnswers: Record<number, string> = access
+    ? {
+        [FAQ_VOICE_INDEX]: t.opened.faqVoice,
+        [FAQ_LOOK_INDEX]: t.opened.faqLook,
+        [FAQ_LINK_INDEX]: t.opened.faqLink,
+        [FAQ_PREVIEW_INDEX]: t.opened.faqPreview,
+        [FAQ_LANGUAGES_INDEX]: access.faqLanguages,
+        [FAQ_PRICE_INDEX]: access.faqPrice,
+      }
+    : {};
+  const faqItems = t.faq.items.map((item, i) => (openAnswers[i] ? { ...item, answer: openAnswers[i] } : item));
+  const narratorItems = access
+    ? t.narrator.items.map((item, i) => (i === NARRATOR_FAMILY_VOICE_INDEX ? { ...item, text: t.opened.narratorFamilyVoice } : item))
+    : t.narrator.items;
+  // ST3-U-16: синтетический образ рассказчика — только у владельца.
+  const howSteps = access ? t.how.steps.map((step, i) => (i === HOW_CHECK_STEP_INDEX ? t.opened.stepCheck : step)) : t.how.steps;
+  const sketchText = access ? t.opened.sketchText : t.narrator.sketch.text;
+  const basePrivacy = access
+    ? t.privacy.items.map((item, i) => (i === PRIVACY_LINK_INDEX ? t.opened.privacyLink : item))
+    : t.privacy.items;
+  const privacyItems = isStoriesIndexable(mode) ? basePrivacy : [...basePrivacy, t.privacy.noindex];
   const release = loadStoryRelease({ tmaUrl: TMA_URL, botUsername: TELEGRAM_BOT_USERNAME });
   /**
    * Раздел TMA `#/stories` (Р-STL-10/17): только метка `stories`, никаких
@@ -170,7 +325,7 @@ export default async function StoriesLandingPage({
   const contactBot = normalizeBotUsername(TELEGRAM_BOT_USERNAME);
 
   return (
-    <div className="st-root" data-release-mode={view.mode} data-content-version={release.contentVersion}>
+    <div className="st-root" data-release-mode={view.mode} data-landing-mode={mode} data-content-version={release.contentVersion}>
       <a className="st-skip" href="#content">
         {t.skipLink}
       </a>
@@ -207,7 +362,7 @@ export default async function StoriesLandingPage({
         <section className="st-hero" id="top">
           <div className="wrap st-hero-grid">
             <div>
-              <span className="badge">{t.hero.badge}</span>
+              <span className="badge">{access ? access.badge : t.hero.badge}</span>
               {/* Слоган владельца (Р-STL-16) — над заголовком, как надпись,
                   а не обещание. */}
               <p className="st-tagline">{t.tagline}</p>
@@ -224,7 +379,7 @@ export default async function StoriesLandingPage({
                 ))}
               </div>
               {/* Честная подпись у кнопки в приложение: что там уже есть. */}
-              {primaryIsApp ? <p className="st-app-note">{t.hero.appNote}</p> : null}
+              {primaryIsApp ? <p className="st-app-note">{access ? access.appNote : t.hero.appNote}</p> : null}
               <p className="st-micro">{t.hero.micro}</p>
             </div>
             <HeroIllustration
@@ -275,11 +430,11 @@ export default async function StoriesLandingPage({
         {/* 6.5 Как это работает — планируемый путь, не форма. */}
         <section className="st-section st-section-alt" id="how" aria-labelledby="st-how-title">
           <div className="wrap">
-            <span className="st-tag">{t.how.plannedBadge}</span>
+            <span className="st-tag">{access ? access.howBadge : t.how.plannedBadge}</span>
             <h2 id="st-how-title">{t.how.title}</h2>
-            <p className="st-lead">{t.how.lead}</p>
+            <p className="st-lead">{access ? access.howLead : t.how.lead}</p>
             <ol className="st-grid st-grid-4 st-steps">
-              {t.how.steps.map((step) => (
+              {howSteps.map((step) => (
                 <li className="st-card" key={step}>
                   <p>{step}</p>
                 </li>
@@ -289,7 +444,7 @@ export default async function StoriesLandingPage({
                 экране; здесь — только если основным стало другое. */}
             {howLinks.length ? (
               <div className="st-app">
-                <p>{t.how.appLead}</p>
+                <p>{access ? access.howAppLead : t.how.appLead}</p>
                 {howLinks.map((link) => (
                   <a key={link.href} className="cta cta-ghost cta-small" href={link.href} data-entry="stories">
                     {link.text}
@@ -306,7 +461,7 @@ export default async function StoriesLandingPage({
             <h2 id="st-narrator-title">{t.narrator.title}</h2>
             <p className="st-lead">{t.narrator.lead}</p>
             <ul className="st-grid st-grid-3">
-              {t.narrator.items.map((item) => (
+              {narratorItems.map((item) => (
                 <li className="st-card" key={item.title}>
                   <h3>{item.title}</h3>
                   <p>{item.text}</p>
@@ -315,7 +470,7 @@ export default async function StoriesLandingPage({
             </ul>
             <div className="st-card st-sketch">
               <h3>{t.narrator.sketch.title}</h3>
-              <p>{t.narrator.sketch.text}</p>
+              <p>{sketchText}</p>
             </div>
           </div>
         </section>
@@ -323,14 +478,18 @@ export default async function StoriesLandingPage({
         {/* 6.7 Каталог: «готовится», без декоративных обложек. */}
         <section className="st-section st-section-alt" id="catalog" aria-labelledby="st-catalog-title">
           <div className="wrap">
-            <span className="st-tag">{t.catalog.status}</span>
+            <span className="st-tag">{access ? access.catalogStatus : t.catalog.status}</span>
             <h2 id="st-catalog-title">{t.catalog.title}</h2>
-            <p className="st-lead">{t.catalog.text}</p>
-            <ul className="st-points">
-              {t.catalog.points.map((point) => (
-                <li key={point}>{point}</li>
-              ))}
-            </ul>
+            <p className="st-lead">{access ? access.catalogText : t.catalog.text}</p>
+            {access ? (
+              <CapabilitiesBlock caps={caps} title={access.capabilitiesTitle} t={t.capabilities} locale={locale} />
+            ) : (
+              <ul className="st-points">
+                {t.catalog.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </section>
 
@@ -339,7 +498,7 @@ export default async function StoriesLandingPage({
           <div className="wrap">
             <h2 id="st-privacy-title">{t.privacy.title}</h2>
             <ul className="st-grid st-grid-2">
-              {t.privacy.items.map((item) => (
+              {privacyItems.map((item) => (
                 <li className="st-card" key={item}>
                   <p>{item}</p>
                 </li>
@@ -349,13 +508,14 @@ export default async function StoriesLandingPage({
         </section>
 
         {/* 6.9 Запуск (Р-STL-15): честный статус — что есть сейчас и что
-            появится; без цен и без слова «пилот». */}
+            появится; без цен. Слово «пилот» — только в режиме `pilot`
+            (Р-ST3-6). */}
         <section className="st-section st-section-alt" id="launch" aria-labelledby="st-launch-title">
           <div className="wrap">
             <h2 id="st-launch-title">{t.launch.title}</h2>
             <p className="st-status">
               <span>{t.launch.statusLabel}:</span>
-              <strong>{t.launch.status}</strong>
+              <strong>{access ? access.status : t.launch.status}</strong>
             </p>
             <div className="st-grid st-grid-2">
               <div className="st-card">
@@ -363,21 +523,28 @@ export default async function StoriesLandingPage({
                 <ul className="st-points">
                   {/* Про приложение — только когда путь туда есть на
                       странице (находка S3-5 аудита). */}
-                  {(primaryIsApp ? t.launch.available : t.launch.availableNeutral).map((item) => (
+                  {(access
+                    ? primaryIsApp
+                      ? access.available
+                      : access.availableNeutral
+                    : primaryIsApp
+                      ? t.launch.available
+                      : t.launch.availableNeutral
+                  ).map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>
               <div className="st-card">
-                <h3>{t.launch.comingTitle}</h3>
+                <h3>{access ? access.comingTitle : t.launch.comingTitle}</h3>
                 <ul className="st-points">
-                  {t.launch.coming.map((item) => (
+                  {(access ? access.coming : t.launch.coming).map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
               </div>
             </div>
-            <p className="st-note">{t.launch.note}</p>
+            <p className="st-note">{access ? access.note : t.launch.note}</p>
           </div>
         </section>
 
@@ -386,7 +553,7 @@ export default async function StoriesLandingPage({
           <div className="wrap">
             <h2 id="st-faq-title">{t.faq.title}</h2>
             <div className="st-faq">
-              {t.faq.items.map((item) => (
+              {faqItems.map((item) => (
                 <details key={item.question}>
                   <summary>{item.question}</summary>
                   <p>{item.answer}</p>
@@ -401,7 +568,15 @@ export default async function StoriesLandingPage({
           <div className="wrap">
             <p className="st-tagline">{t.tagline}</p>
             <h2 id="st-final-title">{t.final.title}</h2>
-            <p>{primaryIsApp ? t.final.text : t.final.textNeutral}</p>
+            <p>
+              {access
+                ? primaryIsApp
+                  ? access.finalText
+                  : access.finalTextNeutral
+                : primaryIsApp
+                  ? t.final.text
+                  : t.final.textNeutral}
+            </p>
             <div className="st-actions">
               <a className="cta" href={view.primary.href} data-cta={view.primary.id} data-entry={primaryIsApp ? 'stories' : undefined}>
                 {label(view.primary)}
@@ -412,9 +587,11 @@ export default async function StoriesLandingPage({
       </main>
 
       {/* Подвал §6.11 / Р-STL-14: оператор — из опубликованной оферты,
-          ссылки — только на существующие `/legal/<slug>`; отдельных
-          правил Story‑Tales пока нет, и это сказано словами, а не пустой
-          ссылкой. Платформа — одна ненавязчивая ссылка. */}
+          ссылки — только на существующие `/legal/<slug>`. Правила
+          Story‑Tales (приложение к оферте, `/legal/story-tales-rules`,
+          20.10.2026) — ссылкой `narratorConsent` из `release.json`; без неё
+          — пометка словами, а не пустая ссылка. Платформа — одна
+          ненавязчивая ссылка. */}
       <footer>
         <div className="wrap st-footer-grid">
           <p>

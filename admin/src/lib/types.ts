@@ -2399,7 +2399,8 @@ export interface StoryTalesJournalEntry {
   requestId: string | null;
   actorKind: 'admin' | 'cron' | 'owner';
   actorUserId: string | null;
-  targetType: 'gift' | 'render' | 'reference' | 'segment';
+  /** `pilot-*` — решения по пилоту (проход 3, Р-ST3-7). */
+  targetType: 'gift' | 'render' | 'reference' | 'segment' | 'pilot-application' | 'pilot-member';
   targetId: string;
   action: string;
   reason: string;
@@ -2440,6 +2441,43 @@ export interface StoryTalesRetentionPreview {
     readyGifts: string[];
     readyReferences: string[];
   };
+}
+// ── Story‑Tales: платный пилот по приглашению (проход 3, Р-ST3-1/7) ──
+/** Режим доступа backend `STORY_TALES_ACCESS`. */
+export type StoryTalesAccessMode = 'owner' | 'pilot' | 'public';
+/** `GET /admin/story-tales/pilot`. Участники — только активные (без отозванных). */
+export interface StoryPilotOverview {
+  mode: StoryTalesAccessMode;
+  /** `STORY_PILOT_MAX_MEMBERS`, по умолчанию 15. */
+  maxMembers: number;
+  members: StoryPilotMember[];
+  /** Все ждущие решения (старые сверху, без лимита), затем последние 200 рассмотренных. */
+  applications: StoryPilotApplication[];
+}
+export interface StoryPilotMember {
+  userId: string;
+  shortId: string;
+  telegramUsername?: string;
+  /** С какого момента участник (ISO). */
+  since: string;
+  freeGiftUsed: boolean;
+  giftsCount: number;
+}
+export interface StoryPilotApplication {
+  id: string;
+  userId: string;
+  shortId: string;
+  telegramUsername?: string;
+  /** Необязательный короткий сценарий из TMA (≤500 символов); у `expired` стёрт. */
+  scenario: string | null;
+  /** `expired` — ждала решения дольше 90 дней (текст стёрт, можно подать снова). */
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  createdAt: string;
+}
+/** Тело approve/reject/revoke: причина в журнал (иначе — стандартная) и ключ повтора. */
+export interface StoryPilotActionInput {
+  reason?: string;
+  requestId?: string;
 }
 export interface StoryTalesActionInput {
   reason: string;

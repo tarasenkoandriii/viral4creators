@@ -32,6 +32,7 @@ import {
   type StoryMaterial,
   type StoryRelease,
 } from '../src/lib/stories/release';
+import { LEGAL_DOCS } from '../src/lib/legal-content';
 import {
   NO_APP_LINKS,
   V1_READINESS,
@@ -100,6 +101,11 @@ function rejected(value: unknown, why: RegExp, label: string): void {
   const loaded = loadStoryRelease({ tmaUrl: 'http://localhost:5173', botUsername: null });
   assert.equal(loaded.releaseMode, 'prep');
   assert.equal(loaded.contentVersion, (STORY_RELEASE_RAW as { contentVersion: string }).contentVersion);
+  // 20.10.2026: Правила Story‑Tales опубликованы (пакет LEGAL) — подвал
+  // ссылается на них; страница `/legal/story-tales-rules` собирается из
+  // `LEGAL_DOCS` (`app/legal/[slug]`, generateStaticParams).
+  assert.equal(config.legalLinks.narratorConsent, 'story-tales-rules');
+  assert.ok(LEGAL_DOCS.some((d) => d.slug === 'story-tales-rules'), 'нет документа story-tales-rules в legal-content.ts');
   // Р-STL-17: без бота и адреса TMA — безопасный откат на якорь.
   const view = resolveStoryView(loaded, V1_READINESS);
   assert.equal(view.mode, 'prep');
@@ -386,12 +392,17 @@ for (const mode of RELEASE_MODES) {
       else files.push(full);
     }
   };
-  walk(path.join(ROOT, 'src', 'app', '[locale]', 'stories'));
+  // С 20.10.2026 страница — в группе `(stories)` (S3-7); старого пути
+  // быть не должно, иначе обход молча пропустил бы файлы страницы.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'src', 'app', '[locale]', 'stories')), 'страница Story‑Tales вернулась под [locale]');
+  walk(path.join(ROOT, 'src', 'app', '(stories)'));
   walk(path.join(ROOT, 'src', 'lib', 'stories', 'copy'));
   walk(path.join(ROOT, 'public', 'stories-media'));
   files.push(
     path.join(ROOT, 'src', 'lib', 'stories', 'release.json'),
     path.join(ROOT, 'src', 'lib', 'stories', 'cta.ts'),
+    path.join(ROOT, 'src', 'lib', 'stories', 'landing-mode.ts'),
+    path.join(ROOT, 'src', 'lib', 'stories', 'capabilities.ts'),
     path.join(ROOT, 'src', 'lib', 'stories-host.ts'),
   );
   assert.ok(files.length >= 10, `файлов страницы подозрительно мало: ${files.length}`);

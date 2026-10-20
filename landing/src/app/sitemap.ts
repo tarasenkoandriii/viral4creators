@@ -4,6 +4,7 @@ import { locales } from '../lib/i18n';
 import { GREETING_SITE_URL, isGreetingHost } from '../lib/greeting-host';
 import { TUTORIAL_SITE_URL, isTutorialHost } from '../lib/tutorial-host';
 import { isStoriesHost } from '../lib/stories-host';
+import { storiesLandingMode, storiesSitemapUrls } from '../lib/stories/landing-mode';
 import { listAllBlogPosts } from '../lib/blog-api';
 import { SITE_URL } from '../lib/content';
 
@@ -68,13 +69,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       url: `${TUTORIAL_SITE_URL}/${locale}`,
     }));
   }
-  // Третий — Story‑Tales — наоборот: страница не индексируется никогда
-  // (ТЗ `doc/STORY-TALES-LANDING-SPEC.md` §12), и в карте сайта ей не
-  // место ни на поддомене, ни на главном домене ниже. Пустая карта, а не
-  // карта главного домена: чужие адреса здесь были бы той же ошибкой, что
-  // описана выше. Держит `scripts/stories-noindex.test.ts`.
+  // Третий — Story‑Tales — до режима `public` наоборот: страница не
+  // индексируется (ТЗ `doc/STORY-TALES-LANDING-SPEC.md` §12, Р-ST3-6), и в
+  // карте сайта ей не место ни на поддомене, ни на главном домене ниже.
+  // Пустая карта, а не карта главного домена: чужие адреса здесь были бы
+  // той же ошибкой, что описана выше. В `public` — та же карта из одной
+  // страницы на локаль, что у соседей; на главном домене её нет ни в
+  // одном режиме (там `/<locale>/stories` — 308 на поддомен). Держит
+  // `scripts/stories-noindex.test.ts`.
   if (isStoriesHost(host)) {
-    return [];
+    return storiesSitemapUrls(storiesLandingMode(), locales).map((url) => ({ url }));
   }
 
   const entries: MetadataRoute.Sitemap = [];

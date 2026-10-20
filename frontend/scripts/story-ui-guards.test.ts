@@ -127,7 +127,8 @@ it('U-13: 404/401/403 — закрыто; сеть, 5xx, 429 — ошибка с
   assert.equal(storyLoadFailure(new Error('x')), 'error');
   const screen = src('features/stories/StoryGiftsScreen.tsx');
   like(screen, /storyLoadFailure\(e\) === 'closed'/);
-  like(screen, /setLoadNonce\(\(n\) => n \+ 1\)\}>Повторить/);
+  // Проход 3: подпись «Повторить» — из словаря (`storyTales.access.retry`).
+  like(screen, /setLoadNonce\(\(n\) => n \+ 1\)\}>\s*\{t\.access\.retry\}/);
   const app = src('App.tsx');
   like(app, /setStoryAccess\(storyLoadFailure\(e\)\)/);
   like(app, /setStoryNonce\(\(n\) => n \+ 1\)/);
@@ -137,7 +138,8 @@ it('U-13: 404/401/403 — закрыто; сеть, 5xx, 429 — ошибка с
 it('U-15: App не пишет «закрытой разработке» — не-владельцу тот же «не найдено», что любой адрес', () => {
   const app = src('App.tsx');
   unlike(app, /закрытой разработке/, 'App.tsx');
-  like(app, /storyAccess === 'open' && \(\s*<NavTab/);
+  // Проход 3: вкладка — по ответу `GET /story-gifts/access` (не «closed»).
+  like(app, /storyNavVisible\(storyView\) && \(\s*<NavTab/);
   like(
     app,
     /title=\{dict\.notFound\.title\}\s*hint=\{`#\/\$\{route\.name\}`\}/
@@ -169,7 +171,7 @@ it('U-01: DELETE сказки — только внутри подтвержде
   const screen = src('features/stories/StoryGiftsScreen.tsx');
   const del = screen.indexOf('api.delete(`/story-gifts/${target.id}`)');
   assert.ok(del > 0, 'DELETE не найден');
-  const ask = screen.lastIndexOf('deleteGiftConfirm(target)', del);
+  const ask = screen.lastIndexOf('deleteGiftConfirm(target', del);
   assert.ok(ask > 0 && del - ask < 300, 'DELETE вне confirm.ask');
   assert.equal(
     screen.split('api.delete(`/story-gifts/').length,
@@ -180,22 +182,31 @@ it('U-01: DELETE сказки — только внутри подтвержде
 });
 it('U-07: Nova, Soniox и Gemini — через confirm.ask, на кнопках резерв', () => {
   const screen = src('features/stories/StoryGiftsScreen.tsx');
+  // Проход 3: в тот же диалог Nova добавляется цена в кредитах.
+  // Проход 3: озвучка — launchNova: confirm.ask, затем run(update('render', {expectedCredits})).
   like(
     screen,
-    /confirm\.ask\(\s*novaConfirm\(selected\),\s*\(\) =>\s*void run\(\(\) => update\('render'\)\)/
+    /confirm\.ask\(\s*text,\s*\(\) =>\s*void run\(async \(\) => \{\s*try \{\s*await update\('render', \{ expectedCredits:/
+  );
+  like(screen, /onClick=\{\(\) => launchNova\(selected\)\}/);
+  like(
+    screen,
+    /confirm\.ask\(\s*owner\s*\?\s*audioQaConfirm\(selected, u\.confirm\)\s*:\s*qaConfirmMember\('audio', u\.confirm\),\s*\(\) => void run\(\(\) => update\('quality'\)\)/
   );
   like(
     screen,
-    /confirm\.ask\(\s*audioQaConfirm\(selected\),\s*\(\) =>\s*void run\(\(\) => update\('quality'\)\)/
+    /`\$\{c\.voiceNova\}\$\{reserveSuffix\(selected\.reservedMicroUsd, u\.confirm\)\}`/
   );
-  like(screen, /Озвучить Nova\{reserveSuffix\(selected\.reservedMicroUsd\)\}/);
   unlike(
     screen,
     /onClick=\{\(\) => void run\(\(\) => update\('(render|quality)'\)\)\}/,
     'прямой платный вызов'
   );
   const video = src('features/stories/StoryVideoPanel.tsx');
-  like(video, /confirm\.ask\(\s*videoQaConfirm\(target\)/);
+  like(
+    video,
+    /confirm\.ask\(\s*owner\s*\?\s*videoQaConfirm\(target, u\.confirm\)/
+  );
   const refs = src('features/stories/StoryReferencesPanel.tsx');
   like(
     refs,
@@ -240,9 +251,9 @@ it('ST2-U-16: карточка ConfirmDialog непрозрачная в обе�
 it('удаление записи вступления — через подтверждение с числом удалённых сборок', () => {
   const video = src('features/stories/StoryVideoPanel.tsx');
   const del = video.indexOf('/video/recording/${r.id}');
-  const ask = video.lastIndexOf('deleteRecordingConfirm(r)', del);
+  const ask = video.lastIndexOf('deleteRecordingConfirm(r', del);
   assert.ok(ask > 0 && del - ask < 400, 'DELETE записи вне confirm.ask');
-  like(video, /recordingDeletedNotice\(res\.data\)/);
+  like(video, /recordingDeletedNotice\(res\.data, u\.confirm\)/);
   unlike(video, /Удаление записи не меняет/, 'устаревшая подсказка');
 });
 

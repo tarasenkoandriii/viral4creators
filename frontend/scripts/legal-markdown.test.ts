@@ -30,14 +30,43 @@ assert.deepEqual(parseInline('без разметки'), [
 ]);
 
 // Реальные документы разбираются и содержат обещанный пункт про права
-assert.equal(LEGAL_DOCS.length, 2);
+assert.deepEqual(
+  LEGAL_DOCS.map((d) => d.slug),
+  ['offer', 'terms-of-use', 'story-tales-rules']
+);
 for (const doc of LEGAL_DOCS) {
   const parsed = parseLegalMarkdown(doc.markdown);
   assert.ok(parsed.length > 20, `${doc.slug}: подозрительно мало блоков`);
   assert.equal(parsed[0].kind, 'h1');
-  assert.equal(doc.version, LEGAL_VERSION);
+  // Оферта и условия принимаются одной версией; у приложения — своя
+  // (правила Story‑Tales принимаются отдельно перед первой сказкой).
+  if (doc.appendixOf) {
+    assert.ok(
+      LEGAL_DOCS.some((d) => d.slug === doc.appendixOf && !d.appendixOf),
+      `${doc.slug}: приложение к несуществующему документу`
+    );
+    assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(doc.version), `${doc.slug}: версия`);
+  } else {
+    assert.equal(doc.version, LEGAL_VERSION);
+  }
 }
+// Правила Story‑Tales (Р-ST3-9): приложение к оферте, оферта на него
+// ссылается, пометка о внутренней проверке и предупреждение §11.3 ТЗ на месте.
+const found = LEGAL_DOCS.find((d) => d.slug === 'story-tales-rules');
+if (!found) throw new Error('нет документа story-tales-rules');
+assert.equal(found.appendixOf, 'offer');
+const story = found;
+assert.ok(/не заключение юриста/.test(story.markdown));
+assert.ok(!/ЧЕРНОВИК/.test(story.markdown));
+assert.ok(
+  /«Этот подарок будет доступен любому, у кого есть ссылка\.\s+Поисковым системам запрещается индексирование\. Ссылку можно\s+переслать»/.test(
+    story.markdown
+  )
+);
+assert.ok(/90 дней/.test(story.markdown));
+const offer = LEGAL_DOCS.find((d) => d.slug === 'offer');
+assert.ok(offer && offer.markdown.includes('/legal/story-tales-rules'));
 const ip = LEGAL_DOCS.map((d) => d.markdown).join('\n');
 assert.ok(/Разборы являются объектом интеллектуальной собственности/.test(ip));
 assert.ok(/Разборы принадлежат Сервису/.test(ip));
-console.log('legal-markdown: 14 cases ok');
+console.log('legal-markdown: 21 cases ok');

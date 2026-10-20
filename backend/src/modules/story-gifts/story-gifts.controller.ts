@@ -1,7 +1,10 @@
 import {
-  StoryDevelopmentGuard,
-  StoryPublicDisabledGuard,
-} from './story-development.guard';
+  StoryAccessGuard,
+  StoryOwnerOnlyGuard,
+  StoryPublicAccessGuard,
+  STORY_PUBLIC_HEADERS,
+} from './story-access.guard';
+import { storyTalesMode } from './story-access';
 import { StoryVideoService } from './story-video.service';
 import { StoryReferencesService } from './story-references.service';
 import { StoryReferenceListQuery } from './story-reference.dto';
@@ -38,7 +41,8 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import { escapeStoryHtml as esc, storyIllustration } from './story-catalog';
+import { storyPublicPageHtml } from './story-public-page';
+import { storyTextLocaleOf } from './story-i18n';
 import { StoryGiftsService } from './story-gifts.service';
 import {
   STORY_OCCASION_KINDS,
@@ -46,7 +50,11 @@ import {
   type StoryOccasionKind,
   type StoryTheme,
 } from './story-occasion'; // WP3
-import { StoryRecordingDto, StoryVideoDto } from './story-video.dto'; // WP4
+import {
+  StoryRecordingDto,
+  StoryRenderDto,
+  StoryVideoDto,
+} from './story-video.dto'; // WP4
 class StoryVideoApproveDto {
   @Matches(/^[a-f0-9]{64}$/) videoHash!: string;
   @Equals(true) reviewed!: boolean;
@@ -99,11 +107,18 @@ class ApproveStoryDto {
   @Matches(/^[a-f0-9]{64}$/) audioHash!: string;
   @Equals(true) reviewed!: boolean;
 }
-class ShareStoryDto {
-  @Equals(true) publicLinkAccepted!: boolean;
+/**
+ * Р-ST3-3 (ТЗ §11.3): explicit acknowledgement of the shown text «Этот
+ * подарок будет доступен любому, у кого есть ссылка. Поисковым системам
+ * запрещается индексирование. Ссылку можно переслать». Without it — 400.
+ */
+export class ShareStoryDto {
+  @Equals(true) acknowledgePublic!: boolean;
+  /** ТЗ §11.1: required when the release has a non-Nova narrator. */
+  @IsOptional() @IsBoolean() narratorPublicConsent?: boolean;
 }
 @Controller('story-gifts')
-@UseGuards(TelegramIdentityGuard, StoryDevelopmentGuard)
+@UseGuards(TelegramIdentityGuard, StoryAccessGuard)
 export class StoryGiftsController {
   constructor(
     private readonly service: StoryGiftsService,
@@ -113,13 +128,16 @@ export class StoryGiftsController {
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get('references')
+  @UseGuards(StoryOwnerOnlyGuard) // Р-ST3-BE-18: Gemini, not priced yet
   referenceList(
     @Req() req: IdentifiedRequest,
     @Query() q: StoryReferenceListQuery,
   ) {
     return this.references.list(req.telegramUserId, q);
   }
-  @Post('references/analyze') referenceAnalyze(
+  @Post('references/analyze')
+  @UseGuards(StoryOwnerOnlyGuard)
+  referenceAnalyze(
     @Req() req: IdentifiedRequest,
     @Body() dto: StoryReferenceDto,
   ) {
@@ -129,14 +147,20 @@ export class StoryGiftsController {
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get(':id/video')
   videoList(@Req() req: IdentifiedRequest, @Param('id') id: string) {
-    return this.videos.list(req.telegramUserId, id);
+    return this.videos.list(req.telegramUserId, id, storyTextLocaleOf(req));
   }
   @Post(':id/video') videoCreate(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
     @Body() dto: StoryVideoDto,
   ) {
-    return this.videos.create(req.telegramUserId, id, dto.preambleText, dto);
+    return this.videos.create(
+      req.telegramUserId,
+      id,
+      dto.preambleText,
+      dto,
+      storyTextLocaleOf(req),
+    );
   }
   // WP4: repeat-order estimate and segment preview, no side effects.
   @Header('Cache-Control', 'private, no-store')
@@ -156,7 +180,12 @@ export class StoryGiftsController {
     @Param('id') id: string,
     @Body() dto: StoryRecordingDto,
   ) {
-    return this.videos.uploadRecording(req.telegramUserId, id, dto);
+    return this.videos.uploadRecording(
+      req.telegramUserId,
+      id,
+      dto,
+      storyTextLocaleOf(req),
+    );
   }
   @Delete(':id/video/recording/:recordingId') videoRecordingDelete(
     @Req() req: IdentifiedRequest,
@@ -241,8 +270,8 @@ export class StoryGiftsController {
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Get('catalog')
-  catalog() {
-    return this.service.catalog();
+  catalog(@Req() req: IdentifiedRequest) {
+    return this.service.catalog(storyTextLocaleOf(req));
   }
   /** Editorial registry (WP2): rights, sources, adaptation differences. Before `:id`. */
   @Header('Cache-Control', 'private, no-store')
@@ -264,9 +293,9 @@ export class StoryGiftsController {
   @Header('Cache-Control', 'private, no-store')
   @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   @Post('preview')
-  preview(@Body() dto: PreviewStoryDto) {
+  preview(@Req() req: IdentifiedRequest, @Body() dto: PreviewStoryDto) {
     const { includeVideo, preambleText, videoVoice, outroText, ...input } = dto;
-    return this.service.preview(input, {
+    return this.service.previewFor(req.telegramUserId, input, {
       includeVideo,
       preambleText,
       videoVoice,
@@ -306,8 +335,11 @@ export class StoryGiftsController {
   @Post(':id/render') render(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
+    @Body() dto: StoryRenderDto,
   ) {
-    return this.service.render(req.telegramUserId, id);
+    return this.service.render(req.telegramUserId, id, {
+      expectedCredits: dto?.expectedCredits,
+    });
   }
   @Post(':id/quality') quality(
     @Req() req: IdentifiedRequest,
@@ -328,14 +360,22 @@ export class StoryGiftsController {
   ) {
     return this.service.approve(req.telegramUserId, id, dto.audioHash);
   }
-  @Post(':id/share') share(
+  /** Р-ST3-3: only in `pilot`/`public`; `owner` mode keeps the 404. */
+  @Header('Cache-Control', 'private, no-store')
+  @Post(':id/share')
+  async share(
     @Req() req: IdentifiedRequest,
     @Param('id') id: string,
-    @Body() _dto: ShareStoryDto,
+    @Body() dto: ShareStoryDto,
+    @Res({ passthrough: true }) res?: Response,
   ) {
-    void req;
-    void id;
-    throw new NotFoundException();
+    if (storyTalesMode() === 'owner') throw new NotFoundException();
+    const out = await this.service.share(req.telegramUserId, id, {
+      narratorPublicConsent: dto.narratorPublicConsent,
+    });
+    // A consent moved to a new release of a live link: 200, not 201.
+    if (out.narratorConsentUpdated) res?.status(200);
+    return out;
   }
   @Delete(':id/share') withdraw(
     @Req() req: IdentifiedRequest,
@@ -367,20 +407,21 @@ export function audioRange(
     ? { start, end }
     : false;
 }
+/**
+ * Р-ST3-3: «Публично по ссылке, без индексации» (ТЗ §11) — in `pilot` and
+ * `public` only (`StoryPublicAccessGuard`, 404 in `owner`). Every answer,
+ * including 404, carries noindex + Referrer-Policy no-referrer; media honour
+ * Range. A link lives 90 days, then 404; withdrawal — 404 at once.
+ */
 @Controller('story-gift')
-@UseGuards(StoryPublicDisabledGuard)
+@UseGuards(StoryPublicAccessGuard)
 export class PublicStoryGiftController {
   constructor(
     private readonly service: StoryGiftsService,
     private readonly videos: StoryVideoService,
   ) {}
   private headers(res: Response) {
-    res.set({
-      'X-Robots-Tag': 'noindex, nofollow, noarchive',
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'private, no-store',
-      'X-Content-Type-Options': 'nosniff',
-    });
+    res.set(STORY_PUBLIC_HEADERS);
   }
   @Get(':token') async page(
     @Param('token') token: string,
@@ -388,24 +429,21 @@ export class PublicStoryGiftController {
   ) {
     this.headers(res);
     const gift = await this.service.publicGift(token);
-    const publishedVideo = await this.videos.published(token).catch((e) => {
-      if (e instanceof NotFoundException) return null;
-      throw e;
-    });
-    const chapters = gift.chapters as unknown as Array<{
-      title: string;
-      text: string;
-      scene: string;
-    }>;
+    // ST3-S-03/S-07: a revoked voice/image takes the whole page off (404);
+    // a release waiting for the narrator's consent — page without video.
+    const release = await this.videos.publicRelease(token);
     res.set(
       'Content-Security-Policy',
       "default-src 'none'; style-src 'unsafe-inline'; media-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
     );
-    res
-      .type('html')
-      .send(
-        `<!doctype html><html lang="${esc(gift.locale)}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Story‑Tales — сказка</title><style>body{margin:auto;max-width:760px;padding:24px;background:#102b35;color:#f6ebd7;font:18px/1.7 system-ui}svg{width:100%;height:auto}audio{width:100%}section{margin:36px 0}h1,h2{line-height:1.2}small{opacity:.8}</style><main><small>Story‑Tales · ${publishedVideo ? 'Видеоподарок' : 'Аудиоподарок'}</small><h1>${esc(gift.title)}</h1>${gift.occasion ? `<p>${esc(gift.occasion)}</p>` : ''}<p>${publishedVideo?.userVoiceId ? 'Синтетическая озвучка выбранным голосом рассказчика.' : 'Синтетическая озвучка Nova.'} Включает подготовленное взрослым обращение, если оно было добавлено.</p>${publishedVideo ? `<video controls playsinline preload="metadata" style="width:100%;border-radius:18px" src="./${token}/video"></video>${publishedVideo.userVoiceId ? '' : `<p><a style="color:inherit" href="./${token}/audio">Основная озвучка отдельно (MP3)</a></p>`}` : `<audio controls preload="none" src="./${token}/audio"></audio>`}${gift.giftNote && gift.giftNotePosition === 'beginning' ? `<p>${esc(gift.giftNote)}</p>` : ''}${chapters.map((c) => `<section>${storyIllustration(c.scene)}<h2>${esc(c.title)}</h2><p>${esc(c.text)}</p></section>`).join('')}${gift.giftNote && gift.giftNotePosition === 'end' ? `<p>${esc(gift.giftNote)}</p>` : ''}${gift.hasGiftPhoto ? `<section><h2>Подарок к сказке</h2><img style="max-width:100%;border-radius:16px" src="./${token}/photo" alt="Физический подарок, добавленный создателем" loading="lazy"></section>` : ''}<p>Спокойной ночи.</p><small>Сказка одобрена создателем. Доступна любому, у кого есть ссылка; поисковая индексация запрещена. Создатель может отозвать ссылку.</small></main></html>`,
-      );
+    res.type('html').send(
+      storyPublicPageHtml({
+        token,
+        gift,
+        video: release.video,
+        awaitingConsent: release.awaitingConsent,
+      }),
+    );
   }
   @Get(':token/video') async video(
     @Param('token') token: string,
@@ -439,6 +477,7 @@ export class PublicStoryGiftController {
   ) {
     this.headers(res);
     const gift = await this.service.publicGift(token, false, true);
+    await this.videos.publicRelease(token); // revoked narrator → 404
     if (!gift.giftPhoto) {
       res.status(404).end();
       return;
@@ -452,6 +491,7 @@ export class PublicStoryGiftController {
   ) {
     this.headers(res);
     const gift = await this.service.publicGift(token, true);
+    await this.videos.publicRelease(token); // revoked narrator → 404
     const bytes = gift.audio ? Buffer.from(gift.audio) : Buffer.alloc(0);
     const part = audioRange(range, bytes.length);
     res.set({ 'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes' });

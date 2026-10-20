@@ -14,7 +14,7 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import { StoryDevelopmentGuard } from './story-development.guard';
+import { StoryAccessGuard, StoryOwnerOnlyGuard } from './story-access.guard';
 import { StoryReferencesService } from './story-references.service';
 import {
   StoryReferenceLinkDto,
@@ -29,7 +29,7 @@ import {
  * `GET story-gifts/references` (list) stays in StoryGiftsController.
  */
 @Controller('story-gifts/references')
-@UseGuards(TelegramIdentityGuard, StoryDevelopmentGuard)
+@UseGuards(TelegramIdentityGuard, StoryAccessGuard, StoryOwnerOnlyGuard)
 export class StoryReferenceLibraryController {
   constructor(private readonly references: StoryReferencesService) {}
   @Header('Cache-Control', 'private, no-store')

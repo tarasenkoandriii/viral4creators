@@ -19,12 +19,17 @@
  *
  * Серверные ответы собранного сайта (`next build` + `next start`, curl с
  * `Host:`) проверены вручную — команды в doc/DEPLOYMENT.md, §4.1.
+ *
+ * Здесь — режим лендинга `closed` (по умолчанию, `STORY_TALES_LANDING`
+ * снимается до импорта); `pilot`/`public` — `stories-landing-mode.test.ts`.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
 import { middleware } from '../src/middleware';
+
+delete process.env.STORY_TALES_LANDING;
 import {
   STORIES_HOST,
   STORIES_REFERRER_POLICY,
@@ -176,14 +181,21 @@ async function main() {
 
   // ── 3. sitemap / robots ──────────────────────────────────────────────
   const sitemap = read('src/app/sitemap.ts');
-  assert.match(sitemap, /if \(isStoriesHost\(host\)\) \{\s*return \[\];\s*\}/, 'sitemap.ts: у поддомена Story‑Tales должна быть пустая карта');
+  // Ветка поддомена — только `storiesSitemapUrls` (пустая до `public`,
+  // `stories-landing-mode.test.ts`); на главном домене Story‑Tales нет.
+  assert.match(
+    sitemap,
+    /if \(isStoriesHost\(host\)\) \{\s*return storiesSitemapUrls\(storiesLandingMode\(\), locales\)\.map\(\(url\) => \(\{ url \}\)\);\s*\}/,
+    'sitemap.ts: карта поддомена Story‑Tales — не из storiesSitemapUrls',
+  );
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-  assert.doesNotMatch(code(sitemap), /['"`/]stories['"`/]|STORIES_SITE_URL|storiesPageUrl/, 'sitemap.ts: Story‑Tales попала в карту сайта');
+  assert.doesNotMatch(code(sitemap).replace(/^import .*$/gm, ''), /['"`/]stories['"`/]|STORIES_SITE_URL|storiesPageUrl/, 'sitemap.ts: Story‑Tales попала в карту сайта');
   assert.doesNotMatch(code(read('src/app/sitemap-news.xml/route.ts')), /stories/i, 'sitemap-news: Story‑Tales');
   const robots = code(read('src/app/robots.ts'));
   const branch = /if \(isStoriesHost\(host\)\) \{([\s\S]*?)\n  \}/.exec(robots)?.[1] ?? '';
   assert.ok(branch, 'robots.ts: нет ветки поддомена Story‑Tales');
-  assert.doesNotMatch(branch, /sitemap/, 'robots.ts: поддомен Story‑Tales объявляет карту сайта');
+  assert.match(branch, /storiesRobotsSitemaps\(storiesLandingMode\(\)\)/, 'robots.ts: карта поддомена Story‑Tales — не из storiesRobotsSitemaps');
+  assert.doesNotMatch(branch, /sitemap\.xml|SITE_URL/, 'robots.ts: поддомен Story‑Tales объявляет карту сайта в обход режима');
   assert.match(branch, /allow: '\/'/, 'robots.ts: обход поддомена закрыт — робот не прочитает noindex');
   const disallowed = /DISALLOWED_PATHS = \[([^\]]*)\]/.exec(robots)?.[1] ?? '';
   assert.doesNotMatch(disallowed, /'\/'|stories/, 'robots.txt запрещает обход Story‑Tales: robots не увидит noindex');

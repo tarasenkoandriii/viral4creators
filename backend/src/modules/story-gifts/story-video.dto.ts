@@ -5,7 +5,10 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsInt,
   IsOptional,
+  Max,
+  Min,
   IsString,
   IsUUID,
   MaxLength,
@@ -42,6 +45,12 @@ export class StoryVideoDto {
   pronunciations?: StoryPronunciationDto[];
   /** WP5↔WP4: show the profile narrator image (applied look or original) as the intro frame; default false. */
   @IsOptional() @IsBoolean() useNarratorImage?: boolean;
+  /** ST3-S-12: the credits the user confirmed; differs → 409 STORY_PRICE_CHANGED. */
+  @IsOptional() @IsInt() @Min(0) @Max(100000) expectedCredits?: number;
+}
+/** `POST :id/render`: the confirmed price (optional, ST3-S-12). */
+export class StoryRenderDto {
+  @IsOptional() @IsInt() @Min(0) @Max(100000) expectedCredits?: number;
 }
 /** `POST :id/video/recording`: canonical WAV as base64 + explicit consent. */
 export class StoryRecordingDto {

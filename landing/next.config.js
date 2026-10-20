@@ -15,22 +15,34 @@
  * Хост — та же переменная `NEXT_PUBLIC_STORIES_HOST`, что у middleware;
  * условие `has: host` Next сравнивает с именем хоста без порта, целиком,
  * как регулярное выражение — поэтому точки экранированы.
+ *
+ * Режим лендинга — `STORY_TALES_LANDING` (`closed` | `pilot` | `public`,
+ * Р-ST3-6; разбор — копия `parseStoriesLandingMode` из
+ * `src/lib/stories/landing-mode.ts`, неизвестное значение = `closed`).
+ * Он передаётся в `env`, и Next вклеивает его литералом и в страницу, и в
+ * middleware: одна сборка — один режим, `next start` с другим окружением
+ * его не меняет. В `public` `X-Robots-Tag` здесь не ставится (страница
+ * индексируется), `Referrer-Policy` остаётся во всех режимах.
  */
 const STORIES_HOST = process.env.NEXT_PUBLIC_STORIES_HOST ?? 'story-tales.viral4creators.app';
 const STORIES_ROBOTS = 'noindex, nofollow, noarchive';
 const STORIES_REFERRER_POLICY = 'no-referrer';
 const LOCALES = 'ru|uk|en|de|es';
+const STORIES_LANDING_MODES = ['closed', 'pilot', 'public'];
+const storiesLandingRaw = String(process.env.STORY_TALES_LANDING ?? '').trim().toLowerCase();
+const STORY_TALES_LANDING = STORIES_LANDING_MODES.includes(storiesLandingRaw) ? storiesLandingRaw : 'closed';
 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const storiesHeaders = [
-  { key: 'X-Robots-Tag', value: STORIES_ROBOTS },
+  ...(STORY_TALES_LANDING === 'public' ? [] : [{ key: 'X-Robots-Tag', value: STORIES_ROBOTS }]),
   { key: 'Referrer-Policy', value: STORIES_REFERRER_POLICY },
 ];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  env: { STORY_TALES_LANDING },
   async headers() {
     return [
       // Весь поддомен: страница, её 308 (`/<locale>/stories`, хвостовой

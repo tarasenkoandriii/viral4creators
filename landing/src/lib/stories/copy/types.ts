@@ -2,7 +2,7 @@
  * Форма текстов лендинга Story‑Tales — одна на пять локалей.
  *
  * Тексты живут не в общих `dictionaries/*.json`, а отдельными модулями,
- * которые импортирует только серверная страница `app/[locale]/stories`.
+ * которые импортирует только серверная страница `app/(stories)/[locale]/stories`.
  * Причина та же, что у вырезки `persona` в `get-dictionary.ts`: общий
  * словарь целиком уходит клиентскому провайдеру и попадает в RSC-данные
  * КАЖДОЙ страницы лендинга — семейные тексты нечего возить в HTML
@@ -93,7 +93,12 @@ export interface StoriesCopy {
     sketch: TitledText;
   };
   catalog: { title: string; status: string; text: string; points: string[] };
-  privacy: { title: string; items: string[] };
+  privacy: {
+    title: string;
+    items: string[];
+    /** Пункт о запрете индексации — только пока он правда (не в `public`). */
+    noindex: string;
+  };
   /** Статус запуска (Р-STL-15): что есть сейчас и что появится. Без «пилота». */
   launch: {
     title: string;
@@ -116,6 +121,38 @@ export interface StoriesCopy {
     /** Нейтральный вариант для отката без ссылки в приложение. */
     textNeutral: string;
   };
+  /**
+   * Режимы лендинга `pilot`/`public` (`STORY_TALES_LANDING`, Р-ST3-6):
+   * строки, которые в этих режимах ЗАМЕЩАЮТ тексты `prep` — статус,
+   * подпись у кнопки, путь, каталог, «Запуск», финал и два ответа FAQ
+   * (языки и цена). Остальное — общее. В `pilot` и только в нём на
+   * странице есть слово «пилот» и число семей (Р-STL-15 заменено
+   * решением Р-ST3-6); прочие запреты текста те же (`stories-copy.test.ts`).
+   */
+  access: { pilot: StoriesAccessCopy; public: StoriesAccessCopy };
+  /**
+   * Тексты о том, что в `pilot`/`public` уже работает (аудит ST3-U-06/13/16):
+   * замещают пункт «Семейный синтетический голос» блока рассказчика,
+   * ответы FAQ о голосе (второй) и о ссылке (шестой) и пункт о снятии
+   * ссылки в блоке приватности — настоящим временем.
+   */
+  opened: {
+    narratorFamilyVoice: string;
+    faqVoice: string;
+    faqLink: string;
+    privacyLink: string;
+    /**
+     * ST3-U-16: синтетического образа рассказчика у участников нет (только
+     * у владельца) — FAQ о фото/скетче (третий), блок «Фото или скетч»,
+     * шаг проверки (третий) и FAQ о предпросмотре (восьмой) — без «образа».
+     */
+    faqLook: string;
+    faqPreview: string;
+    sketchText: string;
+    stepCheck: string;
+  };
+  /** Блок «что доступно» из `GET /api/public/story-capabilities` (итерация 2). */
+  capabilities: StoriesCapabilitiesCopy;
   footer: {
     navAriaLabel: string;
     platform: string;
@@ -134,4 +171,50 @@ export interface StoriesCopy {
     /** Юридические документы одноязычные (русские) — честная пометка. */
     legalNoticeOtherLocale: string;
   };
+}
+
+export interface StoriesAccessCopy {
+  metaDescription: string;
+  badge: string;
+  /** Значение строки «Статус» блока «Запуск». */
+  status: string;
+  /** Подпись у кнопки в приложение: где заявка/мастер; без личных данных здесь. */
+  appNote: string;
+  howBadge: string;
+  howLead: string;
+  /** Подводка к ссылкам в приложение, когда основным действием стала не она. */
+  howAppLead: string;
+  catalogStatus: string;
+  catalogText: string;
+  available: string[];
+  availableNeutral: string[];
+  comingTitle: string;
+  coming: string[];
+  note: string;
+  finalText: string;
+  finalTextNeutral: string;
+  /** Ответ на седьмой вопрос FAQ (языки и истории). */
+  faqLanguages: string;
+  /** Ответ на девятый вопрос FAQ (цена и сроки). */
+  faqPrice: string;
+  /** Заголовок блока «что доступно». */
+  capabilitiesTitle: string;
+}
+
+export interface StoriesCapabilitiesCopy {
+  /** Подпись, когда данные пришли из приложения. */
+  lead: string;
+  /** Подпись, когда API недоступен и показаны статические данные. */
+  staticLead: string;
+  languagesLabel: string;
+  talesLabel: string;
+  /** Список историй не получен — где его увидеть. */
+  talesEmpty: string;
+  formatsLabel: string;
+  priceLabel: string;
+  /** Шаблон с `{price}` — сумма форматируется страницей (`Intl`). */
+  priceFrom: string;
+  priceNote: string;
+  languageNames: { ru: string; uk: string; en: string; de: string; es: string };
+  formatNames: { audio: string; video: string };
 }

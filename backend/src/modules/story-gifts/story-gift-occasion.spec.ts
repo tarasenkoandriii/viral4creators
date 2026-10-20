@@ -65,6 +65,7 @@ function setup() {
     giftPhoto: null,
     hasGiftPhoto: false,
     giftPhotoDescription: null,
+    updatedAt: new Date(), // ST3: retention in the card
   };
   const db = {
     findFirst: jest.fn(async ({ where }: any) =>
@@ -83,7 +84,11 @@ function setup() {
   const tx = { storyGift: db, $queryRaw: jest.fn() };
   const prisma = {
     storyGift: db,
-    storyVideoRender: { updateMany: jest.fn() },
+    storyVideoRender: {
+      updateMany: jest.fn(),
+      groupBy: jest.fn(async () => []),
+      findFirst: jest.fn(async () => null),
+    },
     $transaction: jest.fn(async (fn: any) => fn(tx)),
     $queryRaw: jest.fn(),
     $executeRaw: jest.fn(),
@@ -98,6 +103,28 @@ function setup() {
     plan as any,
     usage as any,
     stt as any,
+    {
+      facts: jest.fn(async () => ({ mode: 'owner', isOwner: true })),
+      quote: jest.fn(async () => ({
+        credits: 0,
+        usdEquivalent: 0,
+        free: false,
+      })),
+      reserve: jest.fn(async () => ({
+        credits: 0,
+        usdEquivalent: 0,
+        free: false,
+      })),
+      audioCharges: jest.fn(async () => new Map()),
+      refund: jest.fn(async () => ({ refunded: false, credits: 0 })),
+      refundQuietly: jest.fn(async () => undefined),
+      refundAudio: jest.fn(async () => ({ refunded: false, credits: 0 })),
+      autoRefundStale: jest.fn(async () => 0),
+      capture: jest.fn(async () => 1),
+      captureAudio: jest.fn(async () => 1),
+      captureQuietly: jest.fn(async () => undefined),
+      captureDelivered: jest.fn(async () => 0),
+    } as any,
   );
   return { service, prisma, db, tx, tts, stt, plan, usage, row };
 }
@@ -265,6 +292,22 @@ describe('WP3 occasion: presets, theme, classic text untouched', () => {
     // Not a name: falls back to the neutral address instead of injecting markup.
     expect(storyOccasionLines(null, 'en', '<b>Bob</b>')[0]).toBe(
       'Hi, sweetheart! I have a story for you.',
+    );
+    // ST3: proof-read UK/EN lines (FE review, 20.10.2026).
+    expect(storyOccasionLines(null, 'uk', 'Оля')[0]).toBe(
+      'Привіт, Оля! У мене є для тебе казка.',
+    );
+    expect(storyOccasionLines('bedtime', 'uk')[1]).toBe(
+      'На добраніч, сонечко. Ось казка на ніч.',
+    );
+    expect(storyOccasionLines('separation', 'uk')[0]).toBe(
+      'Привіт, сонечко! Ця казка — тобі від мене.',
+    );
+    expect(storyOccasionLines('other', 'en')[1]).toBe(
+      'Sweetheart, get comfy — the story is about to begin.',
+    );
+    expect(storyOccasionLines('support', 'en')[1]).toBe(
+      "Sweetheart, let's listen to a gentle story together.",
     );
   });
 });
@@ -636,19 +679,23 @@ describe('WP3 preview has no side effects', () => {
     expect(s.prisma.$transaction).not.toHaveBeenCalled();
   });
   it('routes preview options separately from the draft input', () => {
-    const service = { preview: jest.fn(() => 'ok') };
+    const service = { previewFor: jest.fn(() => 'ok') };
     const controller = new StoryGiftsController(
       service as any,
       {} as any,
       {} as any,
     );
-    controller.preview({
-      catalogId: TURNIP,
-      includeVideo: true,
-      preambleText: 'Привет!',
-      videoVoice: 'nova',
-    } as PreviewStoryDto);
-    expect(service.preview).toHaveBeenCalledWith(
+    void controller.preview(
+      { telegramUserId: 'u1' } as any,
+      {
+        catalogId: TURNIP,
+        includeVideo: true,
+        preambleText: 'Привет!',
+        videoVoice: 'nova',
+      } as PreviewStoryDto,
+    );
+    expect(service.previewFor).toHaveBeenCalledWith(
+      'u1',
       { catalogId: TURNIP },
       { includeVideo: true, preambleText: 'Привет!', videoVoice: 'nova' },
     );

@@ -110,9 +110,11 @@ function useFirstGesture(listen: boolean): boolean {
 }
 
 /** Слаг документа → ключ словаря. Список закрыт на сервере (§5.7). */
-const DOC_KEYS: Record<string, 'offer' | 'termsOfUse'> = {
+type DocKey = 'offer' | 'termsOfUse' | 'storyTalesRules';
+const DOC_KEYS: Record<string, DocKey> = {
   offer: 'offer',
   'terms-of-use': 'termsOfUse',
+  'story-tales-rules': 'storyTalesRules',
 };
 
 export function HintLine({
@@ -549,7 +551,7 @@ function HintActions({
 }: {
   actions: GuideAction[];
   stepLabels: Record<string, string>;
-  docLabels: Record<'offer' | 'termsOfUse', string>;
+  docLabels: Record<DocKey, string>;
   gotoTemplate: string;
   openTemplate: string;
   onGoToStep: (stepId: string) => void;

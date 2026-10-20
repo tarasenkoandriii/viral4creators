@@ -12,6 +12,7 @@ import {
   applyPronunciations,
   arrayBufferToBase64,
   cleanPronunciations,
+  liveExistingRender,
   preambleFileError,
   storyPreambleWav,
   renderStatusLabel,
@@ -35,12 +36,31 @@ import {
 import {
   deleteRecordingConfirm,
   includedInReserve,
+  qaConfirmMember,
   recordingDeletedNotice,
   type RecordingDeleted,
   videoQaConfirm,
 } from './story-confirm';
 import { formatUsd } from './story-wizard';
 import { useStoryConfirm } from './StoryConfirm';
+import { useI18n } from '../../lib/i18n-context';
+import { useStoryAccess } from './story-access-context';
+import {
+  fill,
+  storyAccessCode,
+  storyBlockerText,
+  storyChargeConfirm,
+  storyChargeNeedsConfirm,
+  storyChargeOf,
+  storyCode,
+  storyCreditsRequired,
+  storyPriceChanged,
+  storyPromiseText,
+  storyServerText,
+  storyAcceptLanguage,
+} from './story-pilot';
+import { INTL_LOCALE } from '../../lib/intl-locale';
+import { StoryChargeLine, StoryCreditsNotice } from './StoryPilotParts';
 type Segment = {
   kind: 'intro' | 'gift_note' | 'main' | 'outro';
   position?: 'beginning' | 'end';
@@ -89,13 +109,12 @@ type View = {
   hasGiftPhoto: boolean;
   preambleSuggestions: string[];
 };
-const SEGMENT_NAME: Record<Segment['kind'], string> = {
-  intro: 'вступление',
-  gift_note: 'реплика о подарке',
-  main: 'сказка',
-  outro: 'завершение',
-};
-const errorText = (e: unknown) => storyErrorText(e);
+const SEGMENT_NAME_KEY = {
+  intro: 'segNameIntro',
+  gift_note: 'segNameGiftNote',
+  main: 'segNameMain',
+  outro: 'segNameOutro',
+} as const;
 function media(base64: string, mime: string) {
   return URL.createObjectURL(
     new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], {
@@ -104,10 +123,13 @@ function media(base64: string, mime: string) {
   );
 }
 /** WebVTT comes without the JSON envelope: a plain authorized fetch. */
-async function fetchSubtitles(path: string) {
+async function fetchSubtitles(path: string, locale: string) {
   const base = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
   const res = await fetch(`${base}${path}`, {
-    headers: getAuthHeaders(),
+    headers: {
+      ...getAuthHeaders(),
+      'Accept-Language': storyAcceptLanguage(locale),
+    },
     credentials: 'include',
     cache: 'no-store',
   });
@@ -119,15 +141,39 @@ async function fetchSubtitles(path: string) {
 export function StoryVideoPanel({
   giftId,
   classicText = true,
+  owner = true,
+  readOnly = false,
+  publicNote,
 }: {
   giftId: string;
   /** Текст сказки — классическая редакция (читается точно по изданию). */
   classicText?: boolean;
+  /** ST3-U-03/U-07: суммы провайдеров и образ рассказчика — только владельцу. */
+  owner?: boolean;
+  /** ST3-U-01: доступ отозван — готовые версии можно смотреть и скачать. */
+  readOnly?: boolean;
+  /** ST3-U-02: что происходит с видео при публикации (по режиму и ссылке). */
+  publicNote?: string;
 }) {
+  const { dict, locale } = useI18n();
+  const u = dict.storyUi;
+  const v = u.video;
+  const ps = { plan: u.plan, render: u.render };
+  const errorText = (e: unknown) => storyErrorText(e, { locale, ui: u });
+  const errorTextRef = useRef(errorText);
+  errorTextRef.current = errorText;
+  /** Язык для субтитров без перезагрузки медиа при смене языка. */
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
   const [view, setView] = useState<View | null>(null),
     [selected, setSelected] = useState<string | null>(null),
+    // Текст вступления звучит на языке сказки, а не интерфейса: русский
+    // пример — только в ru-интерфейсе; иначе — первая подсказка сервера
+    // (на языке сказки), см. эффект ниже.
     [intro, setIntro] = useState(
-      'Сегодня я расскажу тебе сказку «Репка». Давай послушаем её вместе.'
+      locale === 'ru'
+        ? 'Сегодня я расскажу тебе сказку «Репка». Давай послушаем её вместе.'
+        : ''
     ),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -153,6 +199,13 @@ export function StoryVideoPanel({
     [notice, setNotice] = useState('');
   const lock = useRef(false);
   const confirm = useStoryConfirm();
+  const t = dict.storyTales;
+  const storyAccess = useStoryAccess();
+  /** 402 `STORY_CREDITS_REQUIRED` запуска сборки (бриф ST3, п. 2). */
+  const [credits, setCredits] = useState<{
+    required: number | null;
+    balance: number | null;
+  } | null>(null);
   /** Запись, остановленная во время другого действия: отправится следом (S3‑3). */
   const queuedRecording = useRef<Blob | null>(null);
   const recorder = useRef<MediaRecorder | null>(null),
@@ -163,11 +216,18 @@ export function StoryVideoPanel({
     view?.renders.find((r) => r.id === selected) || view?.renders[0];
   const refresh = useCallback(async () => {
     const res = await api.get<View>(`/story-gifts/${giftId}/video`);
-    if (res.data) setView(res.data);
-  }, [giftId]);
+    const next = res.data;
+    if (next) {
+      setView(next);
+      setIntro((cur) => cur || next.preambleSuggestions[0] || '');
+    }
+    // Тексты согласий сервер отдаёт на языке запроса: смена языка
+    // интерфейса перечитывает панель.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [giftId, locale]);
   const renderId = render?.id;
   const renderStatus = render?.status;
-  const pronCheck = cleanPronunciations(pron);
+  const pronCheck = cleanPronunciations(pron, ps);
   const body = storyVideoRequest({
     preambleText: intro,
     preambleSource: source,
@@ -186,7 +246,7 @@ export function StoryVideoPanel({
     setQuoted((q) => (q && q.key !== bodyKey ? null : q));
   }, [bodyKey]);
   useEffect(() => {
-    void refresh().catch((e) => setError(errorText(e)));
+    void refresh().catch((e) => setError(errorTextRef.current(e)));
   }, [refresh]);
   useEffect(
     () => () => {
@@ -248,10 +308,11 @@ export function StoryVideoPanel({
         setMainAudio(main);
       })
       .catch((e) => {
-        if (active) setError(errorText(e));
+        if (active) setError(errorTextRef.current(e));
       });
     void fetchSubtitles(
-      `/story-gifts/${giftId}/video/${renderId}/subtitles.vtt`
+      `/story-gifts/${giftId}/video/${renderId}/subtitles.vtt`,
+      localeRef.current
     )
       .then((u) => {
         if (active) {
@@ -271,11 +332,17 @@ export function StoryVideoPanel({
     setBusy(true);
     setError('');
     setNotice('');
+    setCredits(null);
     try {
       await fn();
       await refresh();
     } catch (e) {
-      setError(errorText(e));
+      const need = storyCreditsRequired(e);
+      if (need) setCredits(need);
+      else {
+        if (storyAccessCode(e)) storyAccess.refresh();
+        setError(storyPromiseText(storyCode(e), errorText(e), t));
+      }
     } finally {
       lock.current = false;
       setBusy(false);
@@ -289,24 +356,18 @@ export function StoryVideoPanel({
   /** Decode → canonical WAV (mono 22.05 kHz, ≤20 s) → private upload. */
   async function acceptRecording(blob: Blob) {
     // ST2-U-12: лимит размера ДО чтения и декодирования всего файла.
-    const tooBig = preambleFileError(blob);
+    const tooBig = preambleFileError(blob, ps);
     if (tooBig) throw new StoryClientError(tooBig);
     const decode = browserAudioDecoder();
-    if (!decode)
-      throw new StoryClientError(
-        'Браузер не умеет декодировать звук — обновите Telegram или откройте раздел в другом браузере.'
-      );
+    if (!decode) throw new StoryClientError(u.errors.decodeUnsupported);
     let decoded: DecodedAudioLike;
     try {
       decoded = await decode(await blob.arrayBuffer());
     } catch {
-      throw new StoryClientError(
-        'Не удалось прочитать звук. Выберите аудиофайл MP3, M4A, WAV или OGG либо запишите вступление ещё раз.'
-      );
+      throw new StoryClientError(u.errors.decodeFailed);
     }
     const prepared = storyPreambleWav(decoded);
-    if (prepared.tooShort)
-      throw new StoryClientError('Запись короче секунды — запишите ещё раз');
+    if (prepared.tooShort) throw new StoryClientError(u.errors.tooShort);
     setRecPreview(
       URL.createObjectURL(new Blob([prepared.wav], { type: 'audio/wav' }))
     );
@@ -322,9 +383,7 @@ export function StoryVideoPanel({
     if (res.data) setRecordingId(res.data.id);
     // S3‑2: длинный файл обрезается до лимита — говорим об этом явно.
     if (prepared.trimmed)
-      setNotice(
-        `Запись длиннее ${STORY_PREAMBLE_MAX_SEC} с: сохранены только первые ${STORY_PREAMBLE_MAX_SEC} с. Прослушайте её перед сборкой.`
-      );
+      setNotice(fill(v.trimmed, { max: STORY_PREAMBLE_MAX_SEC }));
   }
   function stopRecording() {
     if (timer.current) clearInterval(timer.current);
@@ -367,9 +426,7 @@ export function StoryVideoPanel({
         // Идёт другое действие — запись не теряется, а ждёт своей очереди.
         if (lock.current) {
           queuedRecording.current = blob;
-          setNotice(
-            'Запись сохранена и отправится сразу после текущего действия.'
-          );
+          setNotice(v.queued);
         } else void action(() => acceptRecording(blob));
       };
       rec.start();
@@ -383,7 +440,7 @@ export function StoryVideoPanel({
     } catch (e) {
       releaseMicrophone(recorder.current, stream.current);
       release();
-      setError(storyMicErrorText(e));
+      setError(storyMicErrorText(e, u));
     }
   }
   // Auto-stop at the server limit (outside the state updater: no side effects there).
@@ -392,430 +449,484 @@ export function StoryVideoPanel({
   });
   if (!view?.supported) return null;
   const recordedReady = source !== 'recorded' || !!recordingId;
-  const gate = storyBuildGate(quote, !!profileId);
+  const gate = storyBuildGate(quote, !!profileId, ps, !owner);
+  const charge = storyChargeOf(quote);
+  /**
+   * ST3-U-04: сервер сверяет показанную цену (`expectedCredits`). При 409
+   * `STORY_PRICE_CHANGED` смета получает новую цену, и подтверждение
+   * открывается заново.
+   */
+  const build = (shown: StoryVideoQuote | null = quote) =>
+    void action(async () => {
+      const expected = storyChargeOf(shown)?.credits ?? 0;
+      try {
+        const r = await api.post<Render>(
+          `/story-gifts/${giftId}/video`,
+          { ...body, expectedCredits: expected },
+          { timeout: 240000 }
+        );
+        if (r.data) setSelected(r.data.id);
+        setQuoted(null);
+      } catch (e) {
+        const changed = storyPriceChanged(e);
+        if (!changed || !shown) throw e;
+        const key = bodyKey;
+        const fresh =
+          (
+            await api.post<StoryVideoQuote>(
+              `/story-gifts/${giftId}/video/quote`,
+              body
+            )
+          ).data ?? shown;
+        const next = changed.charge
+          ? { ...fresh, charge: changed.charge }
+          : fresh;
+        setQuoted({ key, quote: next });
+        setError(u.codes.STORY_PRICE_CHANGED);
+        const nextCharge = storyChargeOf(next);
+        if (nextCharge && storyChargeNeedsConfirm(nextCharge))
+          setTimeout(
+            () =>
+              confirm.ask(storyChargeConfirm(nextCharge, t, locale), () =>
+                build(next)
+              ),
+            0
+          );
+      }
+    });
   const spokenIntro =
     source === 'synth' ? applyPronunciations(intro, pronCheck.list) : intro;
   return (
     <section
       className="space-y-4 rounded-xl border border-silver-500/30 p-4"
-      aria-label="Базовое видео и персональные сегменты"
+      aria-label={v.aria}
     >
-      <h3 className="text-xl font-semibold">
-        Видео «Репки» · персональные сегменты
-      </h3>
-      <p>
-        Один неизменный видеоряд без речи. Голос и персональные части —
-        отдельные сегменты: вступление, реплика о подарке, сказка и
-        необязательное завершение. Уже озвученные сегменты переиспользуются без
-        новой оплаты; Nova остаётся по умолчанию.
-      </p>
-      <p className="text-sm">
-        Бюджет выпуска: ${view.budgetUsd.toFixed(2)} · общий расчётный резерв: $
-        {view.reservedUsd.toFixed(2)}. Точную смету показывает «Предпросмотр и
-        смета» — это оценка, не счёт провайдера; при нехватке лимита запуск
-        блокируется.
-      </p>
-      <label className="block">
-        Голос рассказчика
-        <select
-          className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
-          value={profileId}
-          disabled={busy}
-          onChange={(e) => {
-            setProfileId(e.target.value);
-            setVoiceConsent(false);
-            setNarratorImage(false);
-          }}
-        >
-          <option value="">Nova · по умолчанию</option>
-          {view.narratorProfiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.title} · {p.voiceLabel}
-            </option>
-          ))}
-        </select>
-      </label>
-      <p className="text-sm">
-        В списке — только ваши профили с готовым пользовательским клоном
-        Resemble и сохранённым согласием. Голос выбирается в брендбуке;
-        библиотечный голос не считается голосом родителя.{' '}
-        <a className="underline" href="#/brand-manifests">
-          Открыть брендбуки
-        </a>
-      </p>
-      {profileId && (
-        <label className="flex gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={voiceConsent}
-            disabled={busy}
-            onChange={(e) => setVoiceConsent(e.target.checked)}
-          />
-          {view.voiceConsentText}
-        </label>
+      <h3 className="text-xl font-semibold">{v.title}</h3>
+      {!readOnly && <p>{v.intro}</p>}
+      {owner && !readOnly && (
+        <p className="text-sm">
+          {fill(v.budget, {
+            budget: `$${view.budgetUsd.toFixed(2)}`,
+            reserve: `$${view.reservedUsd.toFixed(2)}`,
+          })}
+        </p>
       )}
-      {profileId && (
-        <label className="flex gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={narratorImage}
-            disabled={busy}
-            onChange={(e) => setNarratorImage(e.target.checked)}
-          />
-          Показать во вступлении образ рассказчика из этого профиля вместо
-          обложки (применённый вариант или оригинальное фото/скетч). Если
-          согласие на образ отозвано или вариант устарел, сборка не начнётся —
-          обложка молча не подставляется.
-        </label>
-      )}
-      <fieldset className="space-y-2">
-        <legend>Вступление</legend>
-        <label className="mr-4">
-          <input
-            type="radio"
-            name="story-preamble-source"
-            checked={source === 'synth'}
-            disabled={busy || recording}
-            onChange={() => setSource('synth')}
-          />{' '}
-          Озвучить выбранным голосом
-        </label>
-        <label>
-          <input
-            type="radio"
-            name="story-preamble-source"
-            checked={source === 'recorded'}
-            disabled={busy || recording}
-            onChange={() => setSource('recorded')}
-          />{' '}
-          Моя запись (без клонирования)
-        </label>
-        {view.preambleSuggestions.length > 0 && (
-          <div className="flex flex-wrap gap-2 text-sm">
-            {view.preambleSuggestions.map((line) => (
-              <Button
-                key={line}
-                variant="ghost"
-                disabled={busy}
-                onClick={() => setIntro(line)}
-              >
-                {line}
-              </Button>
-            ))}
-          </div>
-        )}
-        <label className="block">
-          {source === 'recorded'
-            ? 'Точный текст, который вы произносите (для субтитров и проверки речи)'
-            : 'Текст вступления'}
-          <textarea
-            className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
-            maxLength={180}
-            value={intro}
-            onChange={(e) => setIntro(e.target.value)}
-          />
-        </label>
-        {source === 'recorded' && (
-          <div className="space-y-2">
+      {!readOnly && (
+        <>
+          <label className="block">
+            {v.voice}
+            <select
+              className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
+              value={profileId}
+              disabled={busy}
+              onChange={(e) => {
+                setProfileId(e.target.value);
+                setVoiceConsent(false);
+                setNarratorImage(false);
+              }}
+            >
+              <option value="">{v.novaDefault}</option>
+              {view.narratorProfiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title} · {p.voiceLabel}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-sm">
+            {v.voiceNote}{' '}
+            <a className="underline" href="#/brand-manifests">
+              {v.openBrand}
+            </a>
+          </p>
+          {profileId && (
             <label className="flex gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={recConsent}
-                disabled={busy || recording}
-                onChange={(e) => setRecConsent(e.target.checked)}
+                checked={voiceConsent}
+                disabled={busy}
+                onChange={(e) => setVoiceConsent(e.target.checked)}
               />
-              {view.recordingConsentText}
+              {view.voiceConsentText}
             </label>
-            <div className="flex flex-wrap items-center gap-3">
-              {recording ? (
-                <Button onClick={stopRecording}>
-                  Стоп · {recSeconds} / {STORY_PREAMBLE_MAX_SEC} с
-                </Button>
-              ) : (
-                <Button
-                  disabled={busy || !recConsent}
-                  onClick={() => void startRecording()}
-                >
-                  Записать вступление (1–{STORY_PREAMBLE_MAX_SEC} с)
-                </Button>
-              )}
-              <label className="cursor-pointer rounded text-sm underline focus-within:outline-none focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-2">
-                или выбрать аудиофайл
-                <input
-                  className="sr-only"
-                  type="file"
-                  accept="audio/*"
-                  disabled={busy || recording || !recConsent}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = '';
-                    if (file) void action(() => acceptRecording(file));
-                  }}
-                />
-              </label>
-            </div>
-            {recPreview && (
-              <audio
-                controls
-                src={recPreview}
-                onPlay={exclusiveStoryPlayback}
-                className="w-full"
+          )}
+          {/* ST3-U-07: образы рассказчика в пилоте — только у владельца. */}
+          {owner && profileId && (
+            <label className="flex gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={narratorImage}
+                disabled={busy}
+                onChange={(e) => setNarratorImage(e.target.checked)}
               />
+              {v.narratorImage}
+            </label>
+          )}
+          <fieldset className="space-y-2">
+            <legend>{v.preamble}</legend>
+            <label className="mr-4">
+              <input
+                type="radio"
+                name="story-preamble-source"
+                checked={source === 'synth'}
+                disabled={busy || recording}
+                onChange={() => setSource('synth')}
+              />{' '}
+              {v.synth}
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="story-preamble-source"
+                checked={source === 'recorded'}
+                disabled={busy || recording}
+                onChange={() => setSource('recorded')}
+              />{' '}
+              {v.recorded}
+            </label>
+            {view.preambleSuggestions.length > 0 && (
+              <div className="flex flex-wrap gap-2 text-sm">
+                {view.preambleSuggestions.map((line) => (
+                  <Button
+                    key={line}
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => setIntro(line)}
+                  >
+                    {line}
+                  </Button>
+                ))}
+              </div>
             )}
-            {view.recordings.map((r) => (
-              <div key={r.id} className="flex items-center gap-2 text-sm">
-                <label>
+            <label className="block">
+              {source === 'recorded' ? v.recordedText : v.introText}
+              <textarea
+                className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
+                maxLength={180}
+                value={intro}
+                onChange={(e) => setIntro(e.target.value)}
+              />
+            </label>
+            {source === 'recorded' && (
+              <div className="space-y-2">
+                <label className="flex gap-2 text-sm">
                   <input
-                    type="radio"
-                    name="story-recording"
-                    checked={recordingId === r.id}
-                    onChange={() => setRecordingId(r.id)}
-                  />{' '}
-                  Запись {r.seconds.toFixed(1)} с ·{' '}
-                  {new Date(r.createdAt).toLocaleString()}
+                    type="checkbox"
+                    checked={recConsent}
+                    disabled={busy || recording}
+                    onChange={(e) => setRecConsent(e.target.checked)}
+                  />
+                  {view.recordingConsentText}
                 </label>
-                <Button
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() =>
-                    confirm.ask(
-                      deleteRecordingConfirm(r),
-                      () =>
-                        void action(async () => {
-                          const res =
-                            await api.deleteWithBody<RecordingDeleted>(
-                              `/story-gifts/${giftId}/video/recording/${r.id}`
-                            );
-                          if (recordingId === r.id) setRecordingId(null);
-                          setNotice(recordingDeletedNotice(res.data));
-                        })
+                <div className="flex flex-wrap items-center gap-3">
+                  {recording ? (
+                    <Button onClick={stopRecording}>
+                      {fill(v.stop, {
+                        n: recSeconds,
+                        max: STORY_PREAMBLE_MAX_SEC,
+                      })}
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled={busy || !recConsent}
+                      onClick={() => void startRecording()}
+                    >
+                      {fill(v.record, { max: STORY_PREAMBLE_MAX_SEC })}
+                    </Button>
+                  )}
+                  <label className="cursor-pointer rounded text-sm underline focus-within:outline-none focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-2">
+                    {v.pickFile}
+                    <input
+                      className="sr-only"
+                      type="file"
+                      accept="audio/*"
+                      disabled={busy || recording || !recConsent}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = '';
+                        if (file) void action(() => acceptRecording(file));
+                      }}
+                    />
+                  </label>
+                </div>
+                {recPreview && (
+                  <audio
+                    controls
+                    src={recPreview}
+                    onPlay={exclusiveStoryPlayback}
+                    className="w-full"
+                  />
+                )}
+                {view.recordings.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2 text-sm">
+                    <label>
+                      <input
+                        type="radio"
+                        name="story-recording"
+                        checked={recordingId === r.id}
+                        onChange={() => setRecordingId(r.id)}
+                      />{' '}
+                      {fill(v.recordingItem, {
+                        n: r.seconds.toFixed(1),
+                        date: new Date(r.createdAt).toLocaleString(
+                          INTL_LOCALE[locale] ?? 'ru-RU'
+                        ),
+                      })}
+                    </label>
+                    <Button
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() =>
+                        confirm.ask(
+                          deleteRecordingConfirm(r, u.confirm),
+                          () =>
+                            void action(async () => {
+                              const res =
+                                await api.deleteWithBody<RecordingDeleted>(
+                                  `/story-gifts/${giftId}/video/recording/${r.id}`
+                                );
+                              if (recordingId === r.id) setRecordingId(null);
+                              setNotice(
+                                recordingDeletedNotice(res.data, u.confirm)
+                              );
+                            })
+                        )
+                      }
+                    >
+                      {v.delete}
+                    </Button>
+                  </div>
+                ))}
+                <p className="text-xs">{v.recordingKept}</p>
+              </div>
+            )}
+          </fieldset>
+          {view.giftNote && (
+            <p className="text-sm">
+              {fill(v.giftNote, {
+                position:
+                  view.giftNote.position === 'beginning'
+                    ? u.wizard.atBeginning
+                    : u.wizard.atEnd,
+                text: view.giftNote.text,
+              })}{' '}
+              {profileId
+                ? view.hasGiftPhoto
+                  ? v.giftNoteProfilePhoto
+                  : v.giftNoteProfile
+                : v.giftNoteNova}
+            </p>
+          )}
+          <label className="block">
+            {v.outro}
+            <textarea
+              className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
+              maxLength={180}
+              value={outro}
+              onChange={(e) => setOutro(e.target.value)}
+            />
+          </label>
+          <details>
+            <summary>{v.pronSummary}</summary>
+            <p className="text-sm">
+              {fill(v.pronHelp, { max: STORY_PRONUNCIATION_CHARS })}
+            </p>
+            {profileId && classicText && (
+              <p role="note" className="text-sm">
+                {v.pronClassic}
+              </p>
+            )}
+            {pron.map((row, i) => (
+              <div key={i} className="mt-2 flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-lg border border-silver-500/30 bg-transparent p-2"
+                  aria-label={fill(v.wordWritten, { n: i + 1 })}
+                  placeholder={v.written}
+                  maxLength={40}
+                  value={row.written}
+                  onChange={(e) =>
+                    setPron(
+                      pron.map((p, j) =>
+                        j === i ? { ...p, written: e.target.value } : p
+                      )
                     )
                   }
+                />
+                <input
+                  className="min-w-0 flex-1 rounded-lg border border-silver-500/30 bg-transparent p-2"
+                  aria-label={fill(v.wordSpoken, { n: i + 1 })}
+                  placeholder={v.spoken}
+                  maxLength={40}
+                  value={row.spoken}
+                  onChange={(e) =>
+                    setPron(
+                      pron.map((p, j) =>
+                        j === i ? { ...p, spoken: e.target.value } : p
+                      )
+                    )
+                  }
+                />
+                <Button
+                  variant="ghost"
+                  aria-label={fill(v.removeWord, { n: i + 1 })}
+                  onClick={() => setPron(pron.filter((_, j) => j !== i))}
                 >
-                  Удалить
+                  ×
                 </Button>
               </div>
             ))}
-            <p className="text-xs">
-              Запись хранится только в этом подарке. После её удаления видео с
-              ней станут недоступны; оплаченная основная речь сохранится.
-            </p>
-          </div>
-        )}
-      </fieldset>
-      {view.giftNote && (
-        <p className="text-sm">
-          Реплика о подарке (
-          {view.giftNote.position === 'beginning' ? 'в начале' : 'в конце'}): «
-          {view.giftNote.text}».{' '}
-          {profileId
-            ? `С голосом из профиля она звучит отдельным сегментом${view.hasGiftPhoto ? ', на экране — фото подарка' : ''}.`
-            : 'С Nova она уже звучит внутри проверенной записи сказки.'}
-        </p>
-      )}
-      <label className="block">
-        Завершение (необязательно)
-        <textarea
-          className="mt-1 w-full rounded-lg border border-silver-500/30 bg-transparent p-2"
-          maxLength={180}
-          value={outro}
-          onChange={(e) => setOutro(e.target.value)}
-        />
-      </label>
-      <details>
-        <summary>Произношение имён (только для синтеза)</summary>
-        <p className="text-sm">
-          Подсказка голосу, как произнести слово: одно слово, близкое к
-          написанному (ударение — «+» перед гласной), до{' '}
-          {STORY_PRONUNCIATION_CHARS} символов, без пробелов. Субтитры и
-          проверка речи используют написание. Основная запись Nova не
-          пересинтезируется.
-        </p>
-        {profileId && classicText && (
-          <p role="note" className="text-sm">
-            Голос из профиля читает классическую редакцию точно по изданию: к
-            тексту сказки произношения не применяются — только к вступлению,
-            реплике о подарке и завершению. Пары со словами из самой сказки
-            сервер отклонит.
-          </p>
-        )}
-        {pron.map((row, i) => (
-          <div key={i} className="mt-2 flex gap-2">
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-silver-500/30 bg-transparent p-2"
-              aria-label={`Слово ${i + 1}: как написано`}
-              placeholder="Как написано"
-              maxLength={40}
-              value={row.written}
-              onChange={(e) =>
-                setPron(
-                  pron.map((p, j) =>
-                    j === i ? { ...p, written: e.target.value } : p
-                  )
-                )
-              }
-            />
-            <input
-              className="min-w-0 flex-1 rounded-lg border border-silver-500/30 bg-transparent p-2"
-              aria-label={`Слово ${i + 1}: как произнести`}
-              placeholder="Как произнести"
-              maxLength={40}
-              value={row.spoken}
-              onChange={(e) =>
-                setPron(
-                  pron.map((p, j) =>
-                    j === i ? { ...p, spoken: e.target.value } : p
-                  )
-                )
-              }
-            />
+            {pron.length < STORY_PRONUNCIATION_MAX && (
+              <Button
+                variant="ghost"
+                onClick={() => setPron([...pron, { written: '', spoken: '' }])}
+              >
+                {v.addWord}
+              </Button>
+            )}
+            {pronCheck.error && <p role="alert">{pronCheck.error}</p>}
+            {spokenIntro !== intro && (
+              <p className="text-sm">
+                {fill(v.voiceHears, { text: spokenIntro })}
+              </p>
+            )}
+          </details>
+          <div className="flex flex-wrap gap-3">
             <Button
               variant="ghost"
-              aria-label={`Убрать слово ${i + 1}`}
-              onClick={() => setPron(pron.filter((_, j) => j !== i))}
+              disabled={
+                busy ||
+                recording ||
+                !intro.trim() ||
+                !!pronCheck.error ||
+                !recordedReady
+              }
+              onClick={() =>
+                void action(async () => {
+                  const key = bodyKey;
+                  const r = await api.post<StoryVideoQuote>(
+                    `/story-gifts/${giftId}/video/quote`,
+                    body
+                  );
+                  if (r.data) setQuoted({ key, quote: r.data });
+                })
+              }
             >
-              ×
+              {owner ? v.quoteButton : v.quoteButtonMember}
+            </Button>
+            <Button
+              disabled={
+                busy ||
+                recording ||
+                !intro.trim() ||
+                !!pronCheck.error ||
+                !recordedReady ||
+                (!!profileId && !voiceConsent) ||
+                !gate.ok
+              }
+              aria-describedby={gate.reason ? 'story-build-reason' : undefined}
+              onClick={() =>
+                // Платный запуск (кредиты или первая бесплатная) — только после
+                // подтверждения с ценой; уже собранная версия открывается сразу.
+                quote &&
+                !liveExistingRender(quote) &&
+                storyChargeNeedsConfirm(charge)
+                  ? confirm.ask(storyChargeConfirm(charge!, t, locale), () =>
+                      build()
+                    )
+                  : build()
+              }
+            >
+              {gate.label}
             </Button>
           </div>
-        ))}
-        {pron.length < STORY_PRONUNCIATION_MAX && (
-          <Button
-            variant="ghost"
-            onClick={() => setPron([...pron, { written: '', spoken: '' }])}
-          >
-            Добавить слово
-          </Button>
-        )}
-        {pronCheck.error && <p role="alert">{pronCheck.error}</p>}
-        {spokenIntro !== intro && (
-          <p className="text-sm">Голос услышит: «{spokenIntro}»</p>
-        )}
-      </details>
-      <div className="flex flex-wrap gap-3">
-        <Button
-          variant="ghost"
-          disabled={
-            busy ||
-            recording ||
-            !intro.trim() ||
-            !!pronCheck.error ||
-            !recordedReady
-          }
-          onClick={() =>
-            void action(async () => {
-              const key = bodyKey;
-              const r = await api.post<StoryVideoQuote>(
-                `/story-gifts/${giftId}/video/quote`,
-                body
-              );
-              if (r.data) setQuoted({ key, quote: r.data });
-            })
-          }
-        >
-          Предпросмотр сегментов и смета
-        </Button>
-        <Button
-          disabled={
-            busy ||
-            recording ||
-            !intro.trim() ||
-            !!pronCheck.error ||
-            !recordedReady ||
-            (!!profileId && !voiceConsent) ||
-            !gate.ok
-          }
-          aria-describedby={gate.reason ? 'story-build-reason' : undefined}
-          onClick={() =>
-            void action(async () => {
-              const r = await api.post<Render>(
-                `/story-gifts/${giftId}/video`,
-                body,
-                { timeout: 240000 }
-              );
-              if (r.data) setSelected(r.data.id);
-              setQuoted(null);
-            })
-          }
-        >
-          {gate.label}
-        </Button>
-      </div>
-      {gate.reason && (
-        <p id="story-build-reason" className="text-sm">
-          {gate.reason}
-        </p>
-      )}
-      {notice && (
-        <p role="status" className="text-sm">
-          {notice}
-        </p>
-      )}
-      {quote && (
-        <div className="space-y-2 rounded-lg border border-silver-500/30 p-3 text-sm">
-          <p>{storyQuoteSummary(quote)}</p>
-          {typeof quote.qaEstimateMicroUsd === 'number' && (
-            <p>
-              Проверка речи готового видео (Soniox) — отдельной кнопкой после
-              сборки, оценка ≈ {formatUsd(quote.qaEstimateMicroUsd)}; входит в
-              резерв сборки.
+          {gate.reason && (
+            <p id="story-build-reason" className="text-sm">
+              {gate.reason}
             </p>
           )}
-          <ol className="list-decimal space-y-1 pl-5">
-            {storyQuoteRows(quote).map((row, i) => (
-              <li key={i}>
-                <b>{row.label}</b> · {row.source} · {row.state}
-                {row.seconds ? ` · ${row.seconds.toFixed(1)} с` : ''}
-                <div className="opacity-80">«{row.text}»</div>
-                {row.spoken && (
-                  <div className="opacity-80">
-                    Голос услышит: «{row.spoken}»
-                  </div>
-                )}
-                {row.note && <div className="opacity-80">{row.note}</div>}
-              </li>
-            ))}
-          </ol>
-          {quote.blockers.map((b) => (
-            <p key={b} role="alert">
-              {b}
+          {notice && (
+            <p role="status" className="text-sm">
+              {notice}
             </p>
-          ))}
-          {(quote.warnings ?? []).map((w) => (
-            <p key={w} role="alert">
-              {w}
-            </p>
-          ))}
-          {quote.hints.map((h) => (
-            <p key={h.code}>{h.message}</p>
-          ))}
+          )}
+          {quote && (
+            <div className="space-y-2 rounded-lg border border-silver-500/30 p-3 text-sm">
+              <p>{storyQuoteSummary(quote, ps, !owner)}</p>
+              {owner && typeof quote.qaEstimateMicroUsd === 'number' && (
+                <p>
+                  {fill(v.qaEstimate, {
+                    usd: formatUsd(quote.qaEstimateMicroUsd),
+                  })}
+                </p>
+              )}
+              <ol className="list-decimal space-y-1 pl-5">
+                {storyQuoteRows(quote, ps).map((row, i) => (
+                  <li key={i}>
+                    <b>{row.label}</b> · {row.source} · {row.state}
+                    {row.seconds
+                      ? ` · ${fill(v.secondsShort, { n: row.seconds.toFixed(1) })}`
+                      : ''}
+                    <div className="opacity-80">«{row.text}»</div>
+                    {row.spoken && (
+                      <div className="opacity-80">
+                        {fill(v.voiceHears, { text: row.spoken })}
+                      </div>
+                    )}
+                    {row.note && <div className="opacity-80">{row.note}</div>}
+                  </li>
+                ))}
+              </ol>
+              {quote.blockers.map((b) => (
+                <p key={b} role="alert">
+                  {storyBlockerText(b, u, locale)}
+                </p>
+              ))}
+              {(quote.warnings ?? []).map((w) => (
+                <p key={w} role="alert">
+                  {storyBlockerText(w, u, locale)}
+                </p>
+              ))}
+              {quote.hints.map((h) => (
+                <p key={h.code}>{storyPromiseText(h.code, h.message, t)}</p>
+              ))}
+              {!liveExistingRender(quote) && (
+                <StoryChargeLine charge={charge} />
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {owner && (
+        <div className="flex flex-wrap gap-3 text-sm">
+          <a
+            className="underline"
+            href={view.baseUrl}
+            download="repka-base-silent.mp4"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {v.baseMp4}
+          </a>
+          <a
+            className="underline"
+            href={`/story-assets/${view.base.revision}/manifest.json`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {v.manifest}
+          </a>
         </div>
       )}
-      <div className="flex flex-wrap gap-3 text-sm">
-        <a
-          className="underline"
-          href={view.baseUrl}
-          download="repka-base-silent.mp4"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Базовый MP4 без звука
-        </a>
-        <a
-          className="underline"
-          href={`/story-assets/${view.base.revision}/manifest.json`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Манифест сцен
-        </a>
-      </div>
-      <details>
-        <summary>Неизменная версия базового видео</summary>
-        <p className="break-all text-xs">
-          {view.base.revision} · SHA-256 {view.base.baseSha256}
-        </p>
-      </details>
+      {owner && (
+        <details>
+          <summary>{v.baseVersion}</summary>
+          <p className="break-all text-xs">
+            {view.base.revision} · SHA-256 {view.base.baseSha256}
+          </p>
+        </details>
+      )}
       {error && <p role="alert">{error}</p>}
+      <StoryCreditsNotice info={credits} />
       {view.renders.map((r) => (
         <Button
           key={r.id}
@@ -824,29 +935,36 @@ export function StoryVideoPanel({
           onClick={() => setSelected(r.id)}
         >
           {r.preambleText} · {r.voiceLabel || 'Nova'} ·{' '}
-          {renderStatusLabel(r.status)}
+          {renderStatusLabel(r.status, ps)}
         </Button>
       ))}
       {render && (
         <div className="space-y-3">
           <p>
-            Сборка: {renderStatusLabel(render.status)}
+            {fill(v.renderLine, {
+              status: renderStatusLabel(render.status, ps),
+            })}
             {render.durationSeconds
-              ? ` · ${render.durationSeconds.toFixed(2)} с`
+              ? ` · ${fill(v.secondsShort, { n: render.durationSeconds.toFixed(2) })}`
               : ''}
           </p>
           {render.segments && (
             <p className="text-sm">
-              Сегменты:{' '}
-              {render.segments.segments
-                .map(
-                  (s) =>
-                    `${SEGMENT_NAME[s.kind]}${s.source === 'recorded' ? ' (ваша запись)' : ''}${s.seconds ? ` ${s.seconds.toFixed(1)} с` : ''}`
-                )
-                .join(' → ')}
+              {fill(v.segments, {
+                list: render.segments.segments
+                  .map(
+                    (s) =>
+                      `${v[SEGMENT_NAME_KEY[s.kind]] ?? s.kind}${s.source === 'recorded' ? v.yourRecording : ''}${s.seconds ? ` ${fill(v.secondsShort, { n: s.seconds.toFixed(1) })}` : ''}`
+                  )
+                  .join(' → '),
+              })}
             </p>
           )}
-          {render.error && <p role="alert">{render.error}</p>}
+          {render.error && (
+            <p role="alert">
+              {storyServerText(render.error, locale, u.errors.buildFailed)}
+            </p>
+          )}
           <Button
             variant="ghost"
             disabled={busy}
@@ -856,7 +974,7 @@ export function StoryVideoPanel({
               )
             }
           >
-            Обновить сборку видео
+            {v.refresh}
           </Button>
           {video && (
             <>
@@ -872,7 +990,7 @@ export function StoryVideoPanel({
                   <track
                     kind="subtitles"
                     srcLang="ru"
-                    label="Субтитры"
+                    label={v.subtitles}
                     src={subtitles}
                     default
                   />
@@ -880,7 +998,7 @@ export function StoryVideoPanel({
               </video>
               <div className="flex flex-wrap gap-3">
                 <a href={video} download="repka.mp4" className="underline">
-                  Скачать готовый MP4
+                  {v.downloadMp4}
                 </a>
                 {introAudio && (
                   <a
@@ -888,7 +1006,7 @@ export function StoryVideoPanel({
                     download={`repka-preamble.${render.segments?.segments[0]?.source === 'recorded' ? 'wav' : 'mp3'}`}
                     className="underline"
                   >
-                    Вступление отдельно
+                    {v.introSeparate}
                   </a>
                 )}
                 {subtitles && (
@@ -897,7 +1015,7 @@ export function StoryVideoPanel({
                     download="repka.vtt"
                     className="underline"
                   >
-                    Субтитры (WebVTT)
+                    {v.vtt}
                   </a>
                 )}
               </div>
@@ -907,70 +1025,66 @@ export function StoryVideoPanel({
                   download="repka-main.mp3"
                   className="underline"
                 >
-                  Основная речь этой версии отдельно (MP3)
+                  {v.mainSeparate}
                 </a>
               )}
               <p className="text-sm">
-                Голос этой версии: {render.voiceLabel || 'Nova'}. Музыка и
-                эффекты — отдельные дорожки манифеста; сейчас не добавлялись и
-                не смешаны с голосом. Субтитры построены по тексту сегментов с
-                пропорциональным временем.
+                {fill(v.voiceOfVersion, { voice: render.voiceLabel || 'Nova' })}
               </p>
             </>
           )}
           <p>
-            Сверка полного видео с текстом:{' '}
-            {
-              (
-                {
-                  PENDING: 'не запускалась',
-                  RUNNING: 'проверяется',
-                  PASS: 'пройдена',
-                  WARN: 'нужен просмотр',
-                  UNKNOWN: 'не подтверждена',
-                } as Record<string, string>
-              )[render.qaStatus]
-            }
+            {fill(v.qaLine, {
+              status:
+                (u.videoQa as Record<string, string>)[render.qaStatus] ?? '',
+            })}
             {render.qa
-              ? ` · расхождение слов ${(render.qa.wer * 100).toFixed(1)}%`
+              ? fill(v.werSuffix, { n: (render.qa.wer * 100).toFixed(1) })
               : ''}
           </p>
-          <Button
-            disabled={
-              busy || render.status !== 'READY' || render.qaStatus !== 'PENDING'
-            }
-            onClick={() => {
-              const target = render;
-              confirm.ask(
-                videoQaConfirm(target),
-                () =>
-                  void action(() =>
-                    api.post(
-                      `/story-gifts/${giftId}/video/${target.id}/quality`,
-                      {},
-                      { timeout: 150000 }
+          {!readOnly && (
+            <Button
+              disabled={
+                busy ||
+                render.status !== 'READY' ||
+                render.qaStatus !== 'PENDING'
+              }
+              onClick={() => {
+                const target = render;
+                confirm.ask(
+                  owner
+                    ? videoQaConfirm(target, u.confirm)
+                    : qaConfirmMember('video', u.confirm),
+                  () =>
+                    void action(() =>
+                      api.post(
+                        `/story-gifts/${giftId}/video/${target.id}/quality`,
+                        {},
+                        { timeout: 150000 }
+                      )
                     )
-                  )
-              );
-            }}
-          >
-            Проверить речь готового видео
-            {includedInReserve(render.reservedMicroUsd)}
-          </Button>
-          <p>
-            Видео доступно только владельцу. Публикация отключена на этапе
-            разработки.
-          </p>
-          <details>
-            <summary>Независимые активы этого выпуска</summary>
-            <p className="break-all text-xs">
-              Базовый видеоряд: {render.baseHash}
-            </p>
-            <p className="break-all text-xs">
-              Основная аудиодорожка: {render.mainAudioHash}
-            </p>
-            <p>Вступление: {render.preambleText}</p>
-          </details>
+                );
+              }}
+            >
+              {v.qaButton}
+              {owner
+                ? includedInReserve(render.reservedMicroUsd, u.confirm)
+                : ''}
+            </Button>
+          )}
+          <p>{publicNote ?? v.ownerOnly}</p>
+          {owner && (
+            <details>
+              <summary>{v.assets}</summary>
+              <p className="break-all text-xs">
+                {fill(v.baseHash, { hash: render.baseHash })}
+              </p>
+              <p className="break-all text-xs">
+                {fill(v.mainHash, { hash: render.mainAudioHash })}
+              </p>
+              <p>{fill(v.preambleLine, { text: render.preambleText })}</p>
+            </details>
+          )}
         </div>
       )}
       {confirm.dialog}

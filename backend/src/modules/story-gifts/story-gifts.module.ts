@@ -1,12 +1,22 @@
 import {
-  StoryDevelopmentGuard,
-  StoryPublicDisabledGuard,
-} from './story-development.guard';
+  StoryAccessGuard,
+  StoryOwnerOnlyGuard,
+  StoryPublicAccessGuard,
+} from './story-access.guard';
+import { StoryChargesService } from './story-charges.service';
+import { StoryPilotService } from './story-pilot.service';
+import {
+  AdminStoryPilotController,
+  PublicStoryCapabilitiesController,
+  StoryAccessController,
+} from './story-pilot.controller';
 import { StoryVideoService } from './story-video.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { StoryReferencesService } from './story-references.service';
 import { SonioxSttClient } from '../voice/soniox-stt.client';
 import { Module } from '@nestjs/common';
+import { StoryPublicHeadersModule } from './story-public-headers.module'; // ST3-S-06
+import { StorageModule } from '../storage/storage.module'; // ST3: voice sample retention
 import { AdminPanelModule } from '../admin-panel/admin-panel.module';
 import { AdminAuthModule } from '../admin-auth/admin-auth.module';
 import { AdminStoryTalesController } from './story-operator.controller';
@@ -27,18 +37,26 @@ import {
     AdminPanelModule,
     AdminAuthModule,
     BrandManifestModule,
+    StorageModule,
+    StoryPublicHeadersModule,
   ], // WP2: reference search reuses the existing quota; WP1: admin guard + operator check
   controllers: [
+    StoryAccessController, // ST3: before StoryGiftsController (`access` ≠ `:id`)
     StoryReferenceLibraryController, // WP2
     StoryGiftsController,
     PublicStoryGiftController,
     StoryRenderInputController,
     AdminStoryTalesController, // WP1
+    AdminStoryPilotController, // ST3
+    PublicStoryCapabilitiesController, // ST3
   ],
   exports: [StoryVideoService, StoryRetentionService],
   providers: [
-    StoryDevelopmentGuard,
-    StoryPublicDisabledGuard,
+    StoryAccessGuard,
+    StoryOwnerOnlyGuard,
+    StoryPublicAccessGuard,
+    StoryChargesService, // ST3
+    StoryPilotService, // ST3
     StoryVideoService,
     FfmpegApiService,
     StoryGiftsService,

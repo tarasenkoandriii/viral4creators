@@ -19,12 +19,30 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ResembleService } from '../tts/resemble.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { STORY_CATALOG, STORY_VOICE, storyText } from './story-catalog';
+import {
+  StoryChargesService,
+  storyVideoChargeKey,
+} from './story-charges.service';
+import {
+  STORY_TERMS_VERSION,
+  storyTalesMode,
+  type StoryAccessFacts,
+} from './story-access';
+import { STORY_SHARE_DAYS, storyGiftRetention } from './story-retention-view';
+import {
+  storyPublicApiBase,
+  storyRenderNeedsPublicConsent,
+  storyTtsUnbilled,
+} from './story-video-plan';
+import { STORY_CHARGE_NONE } from './story-pricing';
+import { STORY_SHARE_CLEARED } from './story-share';
+import { storyRightsText, type StoryTextLocale } from './story-i18n';
 
 const digest = (v: string | Uint8Array) =>
   createHash('sha256').update(v).digest('hex');
@@ -64,6 +82,7 @@ function storyRenderWipeData() {
     mainAudio: null,
     voiceConsentAt: null,
     voiceConsentVersion: null,
+    voiceConsentLocale: null,
     userVoiceId: null,
     narratorManifestId: null,
     preambleText: '',
@@ -106,9 +125,18 @@ const summary = {
   audioHash: true,
   error: true,
   approvedAt: true,
+  sharedAt: true, // ST3: public link window (90 days)
+  shareExpiresAt: true,
+  narratorPublicConsentRenderId: true, // ST3-S-04: the consented release
   createdAt: true,
   updatedAt: true,
 } as const;
+// ST3: re-exported for older imports; the source is story-share.ts.
+export { STORY_SHARE_CLEARED } from './story-share';
+/** Public URL of a gift link: `<API_PUBLIC_URL>/story-gift/<token>`. */
+export function storyGiftUrl(token: string) {
+  return new URL(`story-gift/${token}`, storyPublicApiBase()).toString();
+}
 @Injectable()
 export class StoryGiftsService {
   constructor(
@@ -117,12 +145,15 @@ export class StoryGiftsService {
     private readonly plan: PlanService,
     private readonly usage: AiUsageService,
     private readonly stt: SonioxSttClient,
+    private readonly charges: StoryChargesService,
   ) {
     this.stt.attemptDeadlineMs = 90_000;
   }
-  catalog() {
+  /** ST3: `rights` in the request language (ru/uk/en). */
+  catalog(locale: StoryTextLocale = 'ru') {
     return STORY_CATALOG.map((s) => ({
       ...s,
+      rights: storyRightsText(s.rights, locale),
       audioReserveUsd: storyAudioReservation(storyText(s.id)) / 1e6,
     }));
   }
@@ -171,13 +202,57 @@ export class StoryGiftsService {
     }
     return row;
   }
-  list(userId: string) {
-    return this.prisma.storyGift.findMany({
+  async list(userId: string) {
+    const rows = await this.prisma.storyGift.findMany({
       where: { userId, status: { not: 'DELETED' } },
       select: summary,
       orderBy: { createdAt: 'desc' },
       take: 20,
     });
+    return this.decorate(userId, rows);
+  }
+  /**
+   * ST3: `retention` (the cron's deletion date / end of the public link,
+   * warning 14 days before) and `charge` of the audio step (Р-ST3-2).
+   */
+  private async decorate<
+    T extends {
+      id: string;
+      status: string;
+      updatedAt: Date;
+      shareExpiresAt: Date | null;
+      reservedMicroUsd: number;
+    },
+  >(userId: string, rows: T[]) {
+    if (!rows.length) return [];
+    const ids = rows.map((r) => r.id);
+    const renders = (await this.prisma.storyVideoRender.groupBy({
+      by: ['giftId'],
+      where: { giftId: { in: ids } },
+      _max: { updatedAt: true },
+    })) as unknown as Array<{
+      giftId: string;
+      _max: { updatedAt: Date | null };
+    }>;
+    const last = new Map(renders.map((r) => [r.giftId, r._max.updatedAt]));
+    const facts = await this.charges.facts(userId);
+    const charged = await this.charges.audioCharges(ids);
+    const now = new Date();
+    return Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        retention: storyGiftRetention(row, last.get(row.id) ?? null, now),
+        charge:
+          charged.get(row.id) ??
+          (row.status === 'DRAFT'
+            ? await this.charges.quote(facts, userId, {
+                kind: 'audio',
+                giftId: row.id,
+                reserveMicroUsd: row.reservedMicroUsd,
+              })
+            : { ...STORY_CHARGE_NONE }),
+      })),
+    );
   }
   /** WP3: ответ владельцу — строка + тема (с откатом для старых строк) + смета. */
   present<
@@ -199,18 +274,75 @@ export class StoryGiftsService {
     };
   }
   async view(userId: string, id: string) {
-    return this.present(await this.own(userId, id));
+    const [row] = await this.decorate(userId, [
+      this.present(await this.own(userId, id)),
+    ]);
+    const release = await this.latestRelease(id);
+    const linkLive =
+      !!row.shareExpiresAt && row.shareExpiresAt.getTime() > Date.now();
+    return {
+      ...row,
+      narratorPublicConsentRequired: !!release?.needsConsent,
+      // ST3-S-04: a live link serves the video only after the consent for
+      // exactly this release; until then — the page without the video.
+      narratorPublicConsentPending:
+        !!release?.needsConsent &&
+        linkLive &&
+        row.narratorPublicConsentRenderId !== release.id,
+    };
   }
-  /** WP3: точный текст озвучки, вставка, длительность и смета — без БД и провайдеров. */
+  /**
+   * ТЗ §11.1: the release a link would serve (the latest approved READY
+   * video) has a non-Nova narrator — the share needs `narratorPublicConsent`.
+   */
+  async narratorPublicConsentRequired(giftId: string): Promise<boolean> {
+    return !!(await this.latestRelease(giftId))?.needsConsent;
+  }
+  /** The release a link serves: the latest approved READY video, if any. */
+  private async latestRelease(giftId: string) {
+    const render = await this.prisma.storyVideoRender.findFirst({
+      where: { giftId, status: 'READY', approvedAt: { not: null } },
+      orderBy: { approvedAt: 'desc' },
+      select: { id: true, userVoiceId: true, segments: true },
+    });
+    return render
+      ? { id: render.id, needsConsent: storyRenderNeedsPublicConsent(render) }
+      : null;
+  }
+  /**
+   * WP3: точный текст озвучки, вставка, длительность и смета — без записей и
+   * провайдеров. ST3: `charge` — цена аудио-сборки, `videoCharge` — видео.
+   */
   preview(input: StoryDraftInput, options: StoryPreviewOptions = {}) {
     return previewStoryDraft(input, options);
+  }
+  async previewFor(
+    userId: string,
+    input: StoryDraftInput,
+    options: StoryPreviewOptions = {},
+  ) {
+    const draft = this.preview(input, options);
+    const facts = await this.charges.facts(userId);
+    const charge = await this.charges.quote(facts, userId, {
+      kind: 'audio',
+      giftId: '',
+      reserveMicroUsd: draft.estimate.audioReserveMicroUsd,
+    });
+    const videoCharge = options.includeVideo
+      ? await this.charges.quote(facts, userId, {
+          kind: 'video',
+          giftId: '',
+          reserveMicroUsd: draft.estimate.videoReserveMicroUsd,
+        })
+      : null;
+    return { ...draft, charge, videoCharge };
   }
   async create(userId: string, input: StoryDraftInput) {
     // Validation (catalog, explicit gift-note opt-in, promise validator) runs
     // before the transaction: a rejected draft takes no lock and no quota.
     const draft = prepareStoryDraft(input);
     const { story } = draft;
-    return this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
       // Serialize quota checks for this owner across serverless instances.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story:${userId}`}))::text`;
       const day = new Date();
@@ -256,6 +388,8 @@ export class StoryGiftsService {
       });
       return this.present(row);
     });
+    const [decorated] = await this.decorate(userId, [created]);
+    return decorated;
   }
   /**
    * WP3: фото и/или описание подарка (оба необязательны и независимы от
@@ -312,7 +446,11 @@ export class StoryGiftsService {
     if (!row?.giftPhoto) throw new NotFoundException();
     return { base64: Buffer.from(row.giftPhoto).toString('base64') };
   }
-  async render(userId: string, id: string) {
+  async render(
+    userId: string,
+    id: string,
+    opts: { expectedCredits?: number } = {},
+  ) {
     const row = await this.own(userId, id);
     if (row.status !== 'DRAFT') return row; // A retry never buys a second synthesis.
     if (!this.tts.configured())
@@ -320,11 +458,31 @@ export class StoryGiftsService {
     if (row.reservedMicroUsd > row.budgetCents * 10000)
       throw new BadRequestException('Расчётный бюджет превышен');
     await this.plan.assertCanSpendUser(userId);
-    const claim = await this.prisma.storyGift.updateMany({
-      where: { id, userId, status: 'DRAFT' },
-      data: { status: 'SYNTHESIZING' },
+    // ST3 (Р-ST3-2): the claim and the credit reserve commit together; a 402
+    // rolls the claim back, a repeat of the same gift never charges twice.
+    const facts: StoryAccessFacts = await this.charges.facts(userId);
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.storyGift.updateMany({
+        where: { id, userId, status: 'DRAFT' },
+        data: { status: 'SYNTHESIZING' },
+      });
+      if (!claim.count) return false;
+      await this.charges.reserve(
+        tx,
+        facts,
+        userId,
+        {
+          kind: 'audio',
+          giftId: id,
+          reserveMicroUsd: row.reservedMicroUsd,
+        },
+        opts.expectedCredits,
+      );
+      return true;
     });
-    if (!claim.count) return this.own(userId, id);
+    if (!claimed) return this.own(userId, id);
+    /** ST3-S-09: the provider certainly did not bill (skipped / final 4xx). */
+    let unbilled = false;
     try {
       const input = await this.prisma.storyGift.findUniqueOrThrow({
         where: { id },
@@ -335,8 +493,10 @@ export class StoryGiftsService {
         voiceId: row.voiceId,
         language: row.locale,
       });
-      if (!audio.ok)
+      if (!audio.ok) {
+        unbilled = storyTtsUnbilled(audio);
         throw new Error('Не удалось подтвердить результат синтеза');
+      }
       await this.usage.record({
         operation: 'story-voiceover',
         model: 'resemble-tts',
@@ -354,7 +514,7 @@ export class StoryGiftsService {
         throw new Error(
           'Результат не прошёл проверку голоса, длительности или формата',
         );
-      await this.prisma.storyGift.updateMany({
+      const ready = await this.prisma.storyGift.updateMany({
         where: { id, userId, status: 'SYNTHESIZING' },
         data: {
           status: 'READY',
@@ -364,8 +524,24 @@ export class StoryGiftsService {
           audioHash: digest(audio.audio),
         },
       });
+      // ST3-S-14: delivered — the credits are captured (never auto-refunded).
+      if (ready.count) await this.charges.captureQuietly({ audioGiftId: id });
       return this.own(userId, id);
     } catch {
+      if (unbilled) {
+        // Final: nothing was billed — FAILED and the credits go back.
+        const failed = await this.prisma.storyGift.updateMany({
+          where: { id, userId, status: 'SYNTHESIZING' },
+          data: {
+            status: 'FAILED',
+            error:
+              'Озвучка не выполнена: сервис синтеза отклонил запрос без оплаты. Кредиты возвращены; создайте сказку заново.',
+          },
+        });
+        if (failed.count)
+          await this.charges.refundAudio(id).catch(() => undefined);
+        return this.own(userId, id);
+      }
       // No blind repeat after a provider timeout: it may already have billed.
       await this.prisma.storyGift.updateMany({
         where: { id, userId, status: 'SYNTHESIZING' },
@@ -477,22 +653,100 @@ export class StoryGiftsService {
     return this.own(userId, id);
   }
   /**
-   * ST2-R-02: Story-Tales is in closed development — public gift links are
-   * not issued at all (the controller route answers 404 too). No token is
-   * generated or stored here, whatever the caller; `withdraw` still clears an
-   * old link and every public route stays behind `StoryPublicDisabledGuard`.
+   * Р-ST3-3: «Публично по ссылке, без индексации» (ТЗ §11) — only in
+   * `pilot`/`public` (in `owner` — 404, no token is generated). Approved
+   * gifts only; the explicit acknowledgement is checked by the DTO. The
+   * token is returned once, only its sha256 is stored; the link lives 90
+   * days. A second link needs the previous one withdrawn (or expired).
    */
-  async share(userId: string, id: string): Promise<never> {
-    await this.own(userId, id);
-    throw new NotFoundException(
-      'Публичные ссылки закрыты: Story-Tales в закрытой разработке',
-    );
+  async share(
+    userId: string,
+    id: string,
+    opts: { narratorPublicConsent?: boolean } = {},
+  ) {
+    const row = await this.own(userId, id);
+    if (storyTalesMode() === 'owner') throw new NotFoundException();
+    if (row.status !== 'APPROVED')
+      throw new ConflictException('Сначала одобрите готовую сказку');
+    const release = await this.latestRelease(id);
+    const needsConsent = !!release?.needsConsent;
+    const consent = needsConsent && opts.narratorPublicConsent === true;
+    if (needsConsent && !consent)
+      throw new BadRequestException({
+        code: 'STORY_NARRATOR_PUBLIC_CONSENT_REQUIRED',
+        message:
+          'В выпуске голос, запись или образ рассказчика: подтвердите, что рассказчик согласен на распространение по ссылке',
+      });
+    const token = randomBytes(32).toString('base64url');
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + STORY_SHARE_DAYS * 86_400_000);
+    // The fact, the rules version and the exact release (§11.1, ST3-S-04).
+    const consentData = consent
+      ? {
+          narratorPublicConsentAt: now,
+          narratorPublicConsentVersion: STORY_TERMS_VERSION,
+          narratorPublicConsentRenderId: release!.id,
+        }
+      : {
+          narratorPublicConsentAt: null,
+          narratorPublicConsentVersion: null,
+          narratorPublicConsentRenderId: null,
+        };
+    const done = await this.prisma.storyGift.updateMany({
+      where: {
+        id,
+        userId,
+        status: 'APPROVED',
+        OR: [{ shareHash: null }, { shareExpiresAt: { lte: now } }],
+      },
+      data: {
+        shareHash: digest(token),
+        sharedAt: now,
+        shareExpiresAt: expiresAt,
+        ...consentData,
+      },
+    });
+    if (!done.count) {
+      // ST3-S-04: a live link + the narrator's consent for the NEW release —
+      // the consent moves to it, the link (and its date) stay the same.
+      if (consent) {
+        const updated = await this.prisma.storyGift.updateMany({
+          where: {
+            id,
+            userId,
+            status: 'APPROVED',
+            shareHash: { not: null },
+            shareExpiresAt: { gt: now },
+          },
+          data: consentData,
+        });
+        if (updated.count) {
+          const live = await this.prisma.storyGift.findFirst({
+            where: { id, userId },
+            select: { shareExpiresAt: true },
+          });
+          return {
+            url: null,
+            expiresAt: live?.shareExpiresAt?.toISOString() ?? null,
+            narratorConsentUpdated: true,
+          };
+        }
+      }
+      throw new ConflictException(
+        'Ссылка уже создана либо выпуск изменён. Для новой ссылки сначала снимите прежнюю с публикации',
+      );
+    }
+    return {
+      url: storyGiftUrl(token),
+      expiresAt: expiresAt.toISOString(),
+      narratorConsentUpdated: false,
+    };
   }
   async withdraw(userId: string, id: string) {
     await this.own(userId, id);
     await this.prisma.storyGift.updateMany({
       where: { id, userId },
-      data: { shareHash: null },
+      data: STORY_SHARE_CLEARED,
     });
     return { withdrawn: true };
   }
@@ -510,10 +764,20 @@ export class StoryGiftsService {
       expect?: { status: string; updatedAt: Date };
       journal?: (tx: Prisma.TransactionClient) => Promise<unknown>;
     } = {},
-  ): Promise<{ deleted: boolean; raced?: boolean }> {
-    await this.own(userId, id);
+  ): Promise<{ deleted: boolean; raced?: boolean; creditsRefunded?: number }> {
+    const current = await this.own(userId, id);
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-video:${id}`}))::text`;
+      // ST3-S-02: steps the user never received (in flight or UNKNOWN) are
+      // refunded with the deletion; the risk of a provider charge is ours.
+      const steps = await tx.storyVideoRender.findMany({
+        where: {
+          giftId: id,
+          status: { in: ['PREPARING', 'PENDING', 'UNKNOWN', 'READY'] },
+        },
+        select: { id: true, status: true },
+      });
+      const unfinished = steps.filter((r) => r.status !== 'READY');
       const gone = await tx.storyGift.updateMany({
         where: {
           id,
@@ -523,7 +787,7 @@ export class StoryGiftsService {
         },
         data: {
           status: 'DELETED',
-          shareHash: null,
+          ...STORY_SHARE_CLEARED,
           audio: null,
           audioHash: null,
           giftPhoto: null,
@@ -566,15 +830,68 @@ export class StoryGiftsService {
       // only: unique per (gift, key) and matching the 64-hex CHECK of keys.
       await tx.$executeRaw`UPDATE "story_video_renders" SET "configHash" = 'deleted:' || "id" WHERE "giftId" = ${id}`;
       await tx.$executeRaw`UPDATE "story_video_segments" SET "cacheKey" = encode(sha256(convert_to('story-deleted:' || "id", 'UTF8')), 'hex') WHERE "giftId" = ${id}`;
+      let creditsRefunded = 0;
+      const refunds: Array<{
+        targetType: 'gift' | 'render';
+        targetId: string;
+        status: string;
+        credits: number;
+      }> = [];
+      if (['SYNTHESIZING', 'UNKNOWN'].includes(current.status)) {
+        const r = await this.charges.refundAudio(id, tx);
+        if (r.refunded)
+          refunds.push({
+            targetType: 'gift',
+            targetId: id,
+            status: current.status,
+            credits: r.credits,
+          });
+      }
+      for (const render of unfinished) {
+        const r = await this.charges.refund(storyVideoChargeKey(render.id), tx);
+        if (r.refunded)
+          refunds.push({
+            targetType: 'render',
+            targetId: render.id,
+            status: render.status,
+            credits: r.credits,
+          });
+      }
+      // ST3-S-14: delivered steps of the deleted gift stay paid (CAPTURED).
+      if (['READY', 'APPROVED'].includes(current.status))
+        await this.charges.captureAudio(id, tx);
+      for (const render of steps.filter((r) => r.status === 'READY'))
+        await this.charges.capture(storyVideoChargeKey(render.id), tx);
+      for (const r of refunds) {
+        creditsRefunded += r.credits;
+        await tx.storyOperatorAction.create({
+          data: {
+            actorKind: opts.journal ? 'cron' : 'owner',
+            targetType: r.targetType,
+            targetId: r.targetId,
+            action: 'charge.auto-refund',
+            reason:
+              'Сказка удалена до получения результата: кредиты за незавершённый шаг возвращены автоматически',
+            previousState: { status: r.status, charge: 'RESERVED' },
+            result: { creditsRefunded: r.credits },
+          },
+        });
+      }
       if (opts.journal) await opts.journal(tx);
-      return { deleted: true };
+      return { deleted: true, creditsRefunded };
     });
   }
   async publicGift(token: string, audio = false, photo = false) {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new NotFoundException();
     const row = await this.prisma.storyGift.findFirst({
-      where: { shareHash: digest(token), status: 'APPROVED' },
+      where: {
+        shareHash: digest(token),
+        status: 'APPROVED',
+        // ST3: 90 days, then 404 (ТЗ §11.4).
+        shareExpiresAt: { gt: new Date() },
+      },
       select: {
+        shareExpiresAt: true,
         title: true,
         locale: true,
         chapters: true,

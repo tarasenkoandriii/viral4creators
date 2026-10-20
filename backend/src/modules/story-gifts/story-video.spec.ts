@@ -14,6 +14,8 @@ import {
   storyVideoTtsReserve,
   STORY_PARENT_CONSENT_VERSION,
   STORY_RECORDING_CONSENT_VERSION,
+  storyRenderNeedsPublicConsent,
+  storyTtsUnbilled,
 } from './story-video-plan';
 import {
   STORY_VIDEO_BASES,
@@ -50,6 +52,10 @@ import {
 import { VALIDATION_PIPE_OPTIONS } from '../../common/validation-pipe';
 import { StoryRecordingDto, StoryVideoDto } from './story-video.dto';
 import { storyRenderWipe } from './story-gifts.service';
+import {
+  STORY_PARENT_CONSENT_TEXTS,
+  STORY_RECORDING_CONSENT_TEXTS,
+} from './story-i18n';
 jest.mock('../../common/external-url-guard', () => ({
   fetchPubliclyRoutable: jest.fn(),
   readBodyWithLimit: jest.fn(),
@@ -174,6 +180,14 @@ function setup() {
           ? null
           : { ...gift },
       ),
+      // ST3-S-03: link withdrawal (only the share fields matter here).
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const id = where.AND?.[0]?.id ?? where.id;
+        if (id && id !== gift.id) return { count: 0 };
+        if (!gift.shareHash) return { count: 0 };
+        Object.assign(gift, data);
+        return { count: 1 };
+      }),
     },
     $queryRaw: jest.fn(),
   };
@@ -344,6 +358,24 @@ function setup() {
   (fetchPubliclyRoutable as jest.Mock).mockResolvedValue({ ok: true });
   (readBodyWithLimit as jest.Mock).mockResolvedValue(baseBytes);
   const plan = { assertCanSpendUser: jest.fn() };
+  const charges = {
+    facts: jest.fn(async () => ({ mode: 'owner', isOwner: true })),
+    quote: jest.fn(async () => ({ credits: 0, usdEquivalent: 0, free: false })),
+    reserve: jest.fn(async () => ({
+      credits: 0,
+      usdEquivalent: 0,
+      free: false,
+    })),
+    audioCharges: jest.fn(async () => new Map()),
+    refund: jest.fn(async () => ({ refunded: false, credits: 0 })),
+    refundQuietly: jest.fn(async () => undefined),
+    refundAudio: jest.fn(async () => ({ refunded: false, credits: 0 })),
+    autoRefundStale: jest.fn(async () => 0),
+    capture: jest.fn(async () => 1),
+    captureAudio: jest.fn(async () => 1),
+    captureQuietly: jest.fn(async () => undefined),
+    captureDelivered: jest.fn(async () => 0),
+  };
   return {
     plan,
     journal,
@@ -355,7 +387,9 @@ function setup() {
       { record: jest.fn() } as never,
       stt,
       looks,
+      charges as never,
     ),
+    charges,
     looks,
     narrator,
     gift,
@@ -718,8 +752,9 @@ describe('Parent narration from owned narrator profiles', () => {
     await expect(s.service.file('u', 'g', 'r1', 'main')).rejects.toThrow(
       'отозван',
     );
+    // ST3-S-07: a deleted voice takes the link off — 404, no service text.
     await expect(s.service.published('s'.repeat(43))).rejects.toThrow(
-      'отозван',
+      'Ссылка недоступна',
     );
     await expect(
       s.service.approve('u', 'g', 'r1', 'b'.repeat(64)),
@@ -788,7 +823,18 @@ describe('Story read-only background recovery', () => {
     const s = setup();
     await s.service.create('u', 'g', 'Привет');
     s.rows[0].createdAt = new Date(Date.now() - 3600000);
-    const probe = completed(s);
+    s.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'story.mp4': 'https://result.test/story.mp4' },
+    });
+    (readBodyWithLimit as jest.Mock).mockResolvedValue(Buffer.alloc(2048, 1));
+    const probe = jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
+      durationSeconds: s.rows[0].durationSeconds,
+      tracks: [
+        { kind: 'video', width: 1280, height: 720 },
+        { kind: 'audio', durationSeconds: s.rows[0].durationSeconds },
+      ],
+    } as any);
     try {
       expect((await s.service.status('u', 'g', 'r1')).status).toBe('READY');
     } finally {
@@ -835,6 +881,8 @@ describe('Story read-only background recovery', () => {
         blocked: 0,
         staleAudio: 1,
         staleQa: 1,
+        autoRefunded: 0,
+        captured: 0,
       });
       expect(s.db.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 10, orderBy: { updatedAt: 'asc' } }),
@@ -1311,6 +1359,8 @@ describe('WP4 segment cache and repeat-order quote', () => {
       blocked: 0,
       staleAudio: 1,
       staleQa: 0,
+      autoRefunded: 0,
+      captured: 0,
     });
     expect(s.segs[0].status).toBe('UNKNOWN');
     expect(s.tts.synthesize).not.toHaveBeenCalled();
@@ -1649,6 +1699,7 @@ describe('WP4 own recorded preamble (ST-P1)', () => {
       deleted: true,
       rendersDeleted: 1,
       segmentsErased: 1,
+      linksWithdrawn: 0,
       mainNarrationKept: false,
       mainNarrationKeptCount: 0,
     });
@@ -1708,12 +1759,22 @@ describe('WP4 own recorded preamble (ST-P1)', () => {
       s.tts.synthesize.mock.calls.filter((c: any) => c[0].text === s.gift.text)
         .length;
     expect(mains()).toBe(1);
-    Object.assign(s.rows[0], { status: 'READY', video: Buffer.from('mp4') });
+    Object.assign(s.rows[0], {
+      status: 'READY',
+      video: Buffer.from('mp4'),
+      approvedAt: new Date(),
+    });
     const res = await s.service.deleteRecording('u', 'g', rec.id);
     expect(res).toMatchObject({
       rendersDeleted: 1,
       mainNarrationKept: true,
       mainNarrationKeptCount: 1,
+      // ST3-S-03/R-04: the approved release with the recording leaves the link.
+      linksWithdrawn: 1,
+    });
+    expect(s.gift).toMatchObject({
+      shareHash: null,
+      narratorPublicConsentRenderId: null,
     });
     expect(s.rows[0]).toMatchObject({
       status: 'FAILED',
@@ -2381,5 +2442,279 @@ describe('F1 audit: render lifecycle, budget and races', () => {
     await expect(
       s.service.quote('u', 'g', 'Привет', choice),
     ).resolves.toMatchObject({ narrator: { assetHash: storyDigest(ok) } });
+  });
+});
+
+describe('ST3 credits for the video export (Р-ST3-2)', () => {
+  it('quotes the charge of a new version and 0 for an existing render', async () => {
+    const s = setup();
+    s.charges.quote.mockResolvedValue({
+      credits: 5,
+      usdEquivalent: 3.38,
+      free: false,
+    });
+    const q = await s.service.quote('u', 'g', 'Привет');
+    expect(q.charge).toEqual({ credits: 5, usdEquivalent: 3.38, free: false });
+    expect(s.charges.quote).toHaveBeenCalledWith(
+      expect.anything(),
+      'u',
+      expect.objectContaining({
+        kind: 'video',
+        giftId: 'g',
+        reserveMicroUsd: q.reserveMicroUsd,
+      }),
+    );
+    await s.service.create('u', 'g', 'Привет');
+    const again = await s.service.quote('u', 'g', 'Привет');
+    expect(again.existingRender).not.toBeNull();
+    expect(again.charge).toEqual({ credits: 0, usdEquivalent: 0, free: false });
+  });
+  it('reserves in the claim transaction with the render id; a repeat never reserves again', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    await s.service.create('u', 'g', 'Привет');
+    expect(s.charges.reserve).toHaveBeenCalledTimes(1);
+    expect(s.charges.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'u',
+      expect.objectContaining({ kind: 'video', giftId: 'g', renderId: 'r1' }),
+      undefined,
+    );
+  });
+  it('402 STORY_CREDITS_REQUIRED stops before any paid call', async () => {
+    const s = setup();
+    const { HttpException } = jest.requireActual('@nestjs/common');
+    s.charges.reserve.mockRejectedValueOnce(
+      new HttpException({ code: 'STORY_CREDITS_REQUIRED' }, 402),
+    );
+    await expect(s.service.create('u', 'g', 'Привет')).rejects.toMatchObject({
+      status: 402,
+    });
+    expect(s.tts.synthesize).not.toHaveBeenCalled();
+    expect(s.ffmpeg.submit).not.toHaveBeenCalled();
+  });
+  it('refunds a final FAILED (provider failed), keeps UNKNOWN reserved', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    s.ffmpeg.status.mockResolvedValue({ status: 'failed', error: 'boom' });
+    expect((await s.service.status('u', 'g', 'r1')).status).toBe('FAILED');
+    expect(s.charges.refundQuietly).toHaveBeenCalledWith('video:r1');
+    const u = setup();
+    u.tts.synthesize.mockRejectedValueOnce(new Error('timeout'));
+    expect(
+      ((await u.service.create('u', 'g', 'Привет', parentChoice)) as any)
+        .status,
+    ).toBe('UNKNOWN');
+    expect(u.charges.refundQuietly).not.toHaveBeenCalled();
+  });
+  it('refunds a known stop before submit (spend gate)', async () => {
+    const s = setup();
+    s.plan.assertCanSpendUser
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('лимит'));
+    const r: any = await s.service.create('u', 'g', 'Привет');
+    expect(r.status).toBe('FAILED');
+    expect(s.charges.refundQuietly).toHaveBeenCalledWith('video:r1');
+  });
+  it('a public link expired after 90 days serves no video', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    const where = (s.prisma.storyVideoRender.findFirst as jest.Mock).mock;
+    await s.service.published('s'.repeat(43)).catch(() => undefined);
+    const last = where.calls.at(-1)?.[0]?.where;
+    expect(last.gift.shareExpiresAt.gt).toBeInstanceOf(Date);
+  });
+});
+
+describe('ST3 §11.1: public video only with the narrator consent', () => {
+  it('a non-Nova release is not served by link without the consent; Nova is', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    Object.assign(s.rows[0], {
+      status: 'READY',
+      qaStatus: 'PASS',
+      videoHash: 'b'.repeat(64),
+      video: Buffer.from('mp4'),
+    });
+    await s.service.approve('u', 'g', 'r1', 'b'.repeat(64));
+    expect((await s.service.published('s'.repeat(43))).id).toBe('r1');
+    s.rows[0].segments = {
+      ...s.rows[0].segments,
+      narrator: { kind: 'look' },
+    };
+    await expect(s.service.published('s'.repeat(43))).rejects.toThrow();
+    // ST3-S-04: the consent covers exactly this release.
+    s.gift.narratorPublicConsentRenderId = 'r2';
+    await expect(s.service.published('s'.repeat(43))).rejects.toThrow();
+    expect(
+      (await s.service.publicRelease('s'.repeat(43))).awaitingConsent,
+    ).toBe(true);
+    s.gift.narratorPublicConsentRenderId = 'r1';
+    expect((await s.service.published('s'.repeat(43))).id).toBe('r1');
+  });
+  it('storyRenderNeedsPublicConsent: clone, recorded intro, narrator image', () => {
+    expect(storyRenderNeedsPublicConsent({ userVoiceId: 'v' })).toBe(true);
+    expect(
+      storyRenderNeedsPublicConsent({
+        segments: { segments: [{ source: 'recorded' }] },
+      }),
+    ).toBe(true);
+    expect(storyRenderNeedsPublicConsent({ segments: { narrator: {} } })).toBe(
+      true,
+    );
+    expect(
+      storyRenderNeedsPublicConsent({
+        segments: { segments: [{ source: 'synth' }, { source: 'gift' }] },
+      }),
+    ).toBe(false);
+    expect(storyRenderNeedsPublicConsent({ segments: null })).toBe(false);
+  });
+});
+
+describe('ST3-S-08/S-09: certain stops are FAILED with a refund, uncertain stay UNKNOWN', () => {
+  it('base master mismatch (nothing paid ran) → FAILED + refund', async () => {
+    const s = setup();
+    (readBodyWithLimit as jest.Mock).mockResolvedValueOnce(Buffer.from('x'));
+    const r: any = await s.service.create('u', 'g', 'Привет');
+    expect(r.status).toBe('FAILED');
+    expect(r.error).toMatch(/без оплаты провайдеру/);
+    expect(s.charges.refundQuietly).toHaveBeenCalledWith('video:r1');
+    expect(s.tts.synthesize).not.toHaveBeenCalled();
+  });
+  it('a final Resemble 4xx on a segment → FAILED + refund, the claim is released (not UNKNOWN)', async () => {
+    const s = setup();
+    s.tts.synthesize.mockResolvedValueOnce({
+      ok: false,
+      skipped: false,
+      reason: 'Resemble 400',
+    });
+    const r: any = await s.service.create('u', 'g', 'Привет');
+    expect(r.status).toBe('FAILED');
+    expect(s.charges.refundQuietly).toHaveBeenCalledWith('video:r1');
+    expect(s.segs.every((x: any) => x.status !== 'UNKNOWN')).toBe(true);
+    expect(s.rows[0].reservedMicroUsd).toBe(0);
+  });
+  it('Resemble 5xx on a segment → UNKNOWN, credits held', async () => {
+    const s = setup();
+    s.tts.synthesize.mockResolvedValueOnce({
+      ok: false,
+      skipped: false,
+      reason: 'Resemble 503',
+    });
+    const r: any = await s.service.create('u', 'g', 'Привет');
+    expect(r.status).toBe('UNKNOWN');
+    expect(s.charges.refundQuietly).not.toHaveBeenCalled();
+    expect(s.segs.some((x: any) => x.status === 'UNKNOWN')).toBe(true);
+  });
+  it('storyTtsUnbilled: skipped and 4xx only', () => {
+    expect(storyTtsUnbilled({ ok: false, skipped: true })).toBe(true);
+    expect(storyTtsUnbilled({ ok: false, reason: 'Resemble 404' })).toBe(true);
+    expect(storyTtsUnbilled({ ok: false, reason: 'Resemble 500' })).toBe(false);
+    expect(
+      storyTtsUnbilled({ ok: false, reason: 'Resemble вернул пустой файл' }),
+    ).toBe(false);
+    expect(storyTtsUnbilled({ ok: true })).toBe(false);
+  });
+  it('the 14-day auto-refund runs from the finalize cron', async () => {
+    const s = setup();
+    s.charges.autoRefundStale.mockResolvedValueOnce(2);
+    expect((await s.service.finalizePending()).autoRefunded).toBe(2);
+  });
+});
+
+describe('ST3: consent texts in the request language, the language kept with the consent', () => {
+  it('list returns the texts of the locale (same versions)', async () => {
+    const s = setup();
+    const uk: any = await s.service.list('u', 'g', 'uk');
+    expect(uk.voiceConsentText).toBe(STORY_PARENT_CONSENT_TEXTS.uk);
+    expect(uk.recordingConsentText).toBe(STORY_RECORDING_CONSENT_TEXTS.uk);
+    expect(uk.voiceConsentVersion).toBe(STORY_PARENT_CONSENT_VERSION);
+    expect(uk.voiceConsentLocale).toBe('uk');
+    const ru: any = await s.service.list('u', 'g');
+    expect(ru.voiceConsentText).toBe(STORY_PARENT_CONSENT_TEXTS.ru);
+  });
+  it('a parent-voice render and an own recording store the language of the text shown', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет', parentChoice, 'en');
+    expect(s.rows[0]).toMatchObject({
+      voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
+      voiceConsentLocale: 'en',
+    });
+    const t = setup();
+    await t.service.uploadRecording(
+      'u',
+      'g',
+      { base64: wav(4).toString('base64'), ...recConsent },
+      'uk',
+    );
+    expect(t.segs.find((x: any) => x.source === 'recorded')).toMatchObject({
+      consentVersion: STORY_RECORDING_CONSENT_VERSION,
+      consentLocale: 'uk',
+    });
+  });
+});
+
+describe('ST3-S-14/S-15: capture on delivery; a deleted narrator variant is not served', () => {
+  it('a completed export captures its credits; the finalize cron sweeps leftovers', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    s.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'story.mp4': 'https://result.test/story.mp4' },
+    });
+    (readBodyWithLimit as jest.Mock).mockResolvedValue(Buffer.alloc(2048, 1));
+    const probe = jest.spyOn(mp4Probe, 'probeMp4').mockReturnValue({
+      durationSeconds: s.rows[0].durationSeconds,
+      tracks: [
+        { kind: 'video', width: 1280, height: 720 },
+        { kind: 'audio', durationSeconds: s.rows[0].durationSeconds },
+      ],
+    } as any);
+    try {
+      expect((await s.service.status('u', 'g', 'r1')).status).toBe('READY');
+    } finally {
+      probe.mockRestore();
+    }
+    expect(s.charges.captureQuietly).toHaveBeenCalledWith({ key: 'video:r1' });
+    s.charges.captureDelivered.mockResolvedValueOnce(3);
+    expect((await s.service.finalizePending()).captured).toBe(3);
+  });
+  it('publicRelease: the variant of the release deleted → 404', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    Object.assign(s.rows[0], {
+      status: 'READY',
+      qaStatus: 'PASS',
+      videoHash: 'b'.repeat(64),
+      video: Buffer.from('mp4'),
+    });
+    await s.service.approve('u', 'g', 'r1', 'b'.repeat(64));
+    s.rows[0].segments = {
+      ...s.rows[0].segments,
+      narrator: {
+        manifestId: (s as any).manifest.id,
+        lookId: 'look-1',
+        kind: 'variant',
+      },
+    };
+    s.gift.narratorPublicConsentRenderId = 'r1';
+    const looks: any[] = [{ id: 'look-1', deleted: false }];
+    (s.prisma as any).storyNarratorLook = {
+      findFirst: jest.fn(
+        async ({ where }: any) =>
+          looks.find((l) => l.id === where.id && !l.deleted) ?? null,
+      ),
+    };
+    (s.prisma as any).brandManifest.findFirst = jest.fn(async () => ({
+      id: 'm',
+    }));
+    expect((await s.service.publicRelease('s'.repeat(43))).video?.id).toBe(
+      'r1',
+    );
+    looks[0].deleted = true;
+    await expect(s.service.publicRelease('s'.repeat(43))).rejects.toThrow(
+      'Ссылка недоступна',
+    );
   });
 });

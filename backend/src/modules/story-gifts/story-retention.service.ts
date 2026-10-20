@@ -28,9 +28,25 @@ import { STORY_REF_PREFIX } from './story-operator.service';
  * `STORY_RETENTION_READY_PURGE_ENABLED=true`. Gift deletion is exactly the
  * owner's `remove()`; render deletion uses the same wipe.
  */
-export const STORY_RETENTION_STALE_DAYS = 30;
-export const STORY_RETENTION_READY_DAYS = 180;
-export const STORY_RETENTION_QUOTA_DAYS = 3;
+import {
+  STORY_JOURNAL_DAYS,
+  STORY_PILOT_SCENARIO_DAYS,
+  STORY_RETENTION_QUOTA_DAYS,
+  STORY_RETENTION_READY_DAYS,
+  STORY_RETENTION_STALE_DAYS,
+  STORY_VOICE_SAMPLE_DAYS,
+} from './story-retention-view';
+import { BlobService } from '../storage/blob.service';
+import { pathnameFromBlobUrl } from '../../common/blob-paths';
+// ST3: the cabinet shows the same terms (story-retention-view.ts).
+export {
+  STORY_JOURNAL_DAYS,
+  STORY_PILOT_SCENARIO_DAYS,
+  STORY_VOICE_SAMPLE_DAYS,
+  STORY_RETENTION_QUOTA_DAYS,
+  STORY_RETENTION_READY_DAYS,
+  STORY_RETENTION_STALE_DAYS,
+};
 const BATCH = 50;
 const DEADLINE_MS = 120_000;
 const DAY = 86_400_000;
@@ -73,6 +89,14 @@ export interface StoryRetentionResult {
   quotaKeys: number;
   readyGifts: number;
   readyReferences: number;
+  /** ST3 (ТЗ §11.4): source recordings of READY voice clones older than 7 days. */
+  voiceSamples: number;
+  /** ST3: scenario texts of pilot applications decided over 90 days ago. */
+  pilotScenarios: number;
+  /** ST3-S-10: pending applications older than 90 days → expired. */
+  pilotExpired: number;
+  /** ST3: journal entries older than one year (deleted, not journaled). */
+  journalEntries: number;
   purged: number;
   raced: number;
   errors: number;
@@ -83,6 +107,9 @@ export interface StoryRetentionResult {
     references: string[];
     readyGifts: string[];
     readyReferences: string[];
+    voiceSamples: string[];
+    pilotScenarios: string[];
+    pilotExpired: string[];
   };
 }
 
@@ -92,6 +119,7 @@ export class StoryRetentionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly gifts: StoryGiftsService,
+    private readonly blob: BlobService,
   ) {}
 
   async run(
@@ -105,7 +133,7 @@ export class StoryRetentionService {
     const ready = new Date(started - STORY_RETENTION_READY_DAYS * DAY);
     const quota = new Date(started - STORY_RETENTION_QUOTA_DAYS * DAY);
 
-    const staleGifts = await this.prisma.storyGift.findMany({
+    const staleGiftRows = await this.prisma.storyGift.findMany({
       where: {
         status: { in: ['DRAFT', 'FAILED', 'UNKNOWN'] },
         updatedAt: { lt: stale },
@@ -124,7 +152,7 @@ export class StoryRetentionService {
       orderBy: { updatedAt: 'asc' },
       take: BATCH,
     });
-    const staleRenders = await this.prisma.storyVideoRender.findMany({
+    const staleRenderRows = await this.prisma.storyVideoRender.findMany({
       where: {
         status: { in: ['FAILED', 'UNKNOWN'] },
         createdAt: { lt: stale },
@@ -134,6 +162,14 @@ export class StoryRetentionService {
       orderBy: { createdAt: 'asc' },
       take: BATCH,
     });
+    // ST3-S-02: an UNKNOWN step with RESERVED credits is never purged before
+    // its charge is closed (operator decision or the 14-day auto-refund).
+    const held = await this.reservedUnknown(
+      staleGiftRows.filter((g) => g.status === 'UNKNOWN').map((g) => g.id),
+      staleRenderRows.filter((r) => r.status === 'UNKNOWN').map((r) => r.id),
+    );
+    const staleGifts = staleGiftRows.filter((g) => !held.gifts.has(g.id));
+    const staleRenders = staleRenderRows.filter((r) => !held.renders.has(r.id));
     // Deleted narrator voices (UserVoice row gone): filtered in the query by
     // the distinct voice ids still referenced, never "the first N renders".
     const dead = await this.deadVoiceIds();
@@ -215,6 +251,53 @@ export class StoryRetentionService {
       take: 500,
     });
 
+    // ST3 (ТЗ §11.4, правила 9.6): the consented source recording is needed
+    // only to clone. It lives 7 days after the last change of the voice —
+    // after a READY clone, and also of an unfinished or failed cloning (the
+    // explicit retry after HTTP 400 is possible within those 7 days; then it
+    // needs a new recording). Persona voices keep their own flow.
+    const voiceSamples = await this.prisma.userVoice.findMany({
+      where: {
+        personaId: null,
+        // ST3-S-05: only users who accepted the Story rules (9.6); the rest
+        // of the product keeps its own terms.
+        user: { storyTermsAcceptances: { some: {} } },
+        sampleUrl: { not: '' },
+        updatedAt: { lt: new Date(started - STORY_VOICE_SAMPLE_DAYS * DAY) },
+      },
+      select: { id: true, status: true, sampleUrl: true, updatedAt: true },
+      orderBy: { updatedAt: 'asc' },
+      take: BATCH,
+    });
+    const pilotScenarios = await this.prisma.storyPilotApplication.findMany({
+      where: {
+        status: { in: ['approved', 'rejected'] },
+        scenario: { not: null },
+        decidedAt: {
+          lt: new Date(started - STORY_PILOT_SCENARIO_DAYS * DAY),
+        },
+      },
+      select: { id: true, status: true },
+      orderBy: { decidedAt: 'asc' },
+      take: BATCH,
+    });
+    // ST3-S-10: pending applications older than 90 days expire, text erased.
+    const pilotExpired = await this.prisma.storyPilotApplication.findMany({
+      where: {
+        status: 'pending',
+        createdAt: {
+          lt: new Date(started - STORY_PILOT_SCENARIO_DAYS * DAY),
+        },
+      },
+      select: { id: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+      take: BATCH,
+    });
+    const journalCutoff = new Date(started - STORY_JOURNAL_DAYS * DAY);
+    const journalEntries = await this.prisma.storyOperatorAction.count({
+      where: { createdAt: { lt: journalCutoff } },
+    });
+
     const refId = (key: string) =>
       key.slice(STORY_REF_PREFIX.length).replace(':', '');
     const result: StoryRetentionResult = {
@@ -229,6 +312,10 @@ export class StoryRetentionService {
       quotaKeys: quotaRows.length,
       readyGifts: readyGifts.length,
       readyReferences: oldReadyRefs.length,
+      voiceSamples: voiceSamples.length,
+      pilotScenarios: pilotScenarios.length,
+      pilotExpired: pilotExpired.length,
+      journalEntries,
       purged: 0,
       raced: 0,
       errors: 0,
@@ -241,12 +328,21 @@ export class StoryRetentionService {
         references: staleRefs.map((r) => refId(r.key)),
         readyGifts: readyGifts.map((g) => g.id),
         readyReferences: oldReadyRefs.map((r) => refId(r.key)),
+        voiceSamples: voiceSamples.map((v) => v.id),
+        pilotScenarios: pilotScenarios.map((a) => a.id),
+        pilotExpired: pilotExpired.map((a) => a.id),
       };
     if (dryRun) return result;
 
     const late = () => Date.now() - started > DEADLINE_MS;
     const journal = (
-      targetType: 'gift' | 'render' | 'reference' | 'segment',
+      targetType:
+        | 'gift'
+        | 'render'
+        | 'reference'
+        | 'segment'
+        | 'voice-sample'
+        | 'pilot-application',
       targetId: string,
       previousState: object,
       reason: string,
@@ -469,6 +565,76 @@ export class StoryRetentionService {
       );
       result.purged++;
     };
+    const purgeVoiceSample = async (v: (typeof voiceSamples)[number]) => {
+      const pathname = pathnameFromBlobUrl(v.sampleUrl, 'users/');
+      // Not our Blob (no `users/` path): only the reference is dropped.
+      if (pathname && !(await this.blob.deleteBlob(pathname))) {
+        result.errors++;
+        return;
+      }
+      const done = await this.prisma.$transaction(async (tx) => {
+        const cleared = await tx.userVoice.updateMany({
+          where: {
+            id: v.id,
+            status: v.status,
+            sampleUrl: v.sampleUrl,
+            updatedAt: v.updatedAt,
+          },
+          data: { sampleUrl: '' },
+        });
+        if (!cleared.count) return false;
+        await journal(
+          'voice-sample',
+          v.id,
+          { status: v.status, hadBlob: !!pathname },
+          v.status === 'READY'
+            ? `Срок хранения: исходная запись голоса удаляется через ${STORY_VOICE_SAMPLE_DAYS} дней после готового клона`
+            : `Срок хранения: запись незавершённого или неудачного клонирования удаляется через ${STORY_VOICE_SAMPLE_DAYS} дней после последнего изменения`,
+          tx,
+        );
+        return true;
+      });
+      if (!done) return void result.raced++;
+      result.purged++;
+    };
+    const purgeScenario = async (a: (typeof pilotScenarios)[number]) => {
+      const done = await this.prisma.$transaction(async (tx) => {
+        const erased = await tx.storyPilotApplication.updateMany({
+          where: { id: a.id, status: a.status, scenario: { not: null } },
+          data: { scenario: null },
+        });
+        if (!erased.count) return false;
+        await journal(
+          'pilot-application',
+          a.id,
+          { status: a.status },
+          `Срок хранения: текст заявки в пилот удаляется через ${STORY_PILOT_SCENARIO_DAYS} дней после решения`,
+          tx,
+        );
+        return true;
+      });
+      if (!done) return void result.raced++;
+      result.purged++;
+    };
+    const expireApplication = async (a: (typeof pilotExpired)[number]) => {
+      const done = await this.prisma.$transaction(async (tx) => {
+        const expired = await tx.storyPilotApplication.updateMany({
+          where: { id: a.id, status: 'pending', createdAt: a.createdAt },
+          data: { status: 'expired', decidedAt: new Date(), scenario: null },
+        });
+        if (!expired.count) return false;
+        await journal(
+          'pilot-application',
+          a.id,
+          { status: 'pending' },
+          `Срок хранения: заявка в пилот без решения ${STORY_PILOT_SCENARIO_DAYS} дней — закрыта, текст удалён`,
+          tx,
+        );
+        return true;
+      });
+      if (!done) return void result.raced++;
+      result.purged++;
+    };
     const steps: (() => Promise<void>)[] = [
       ...staleGifts.map((g) => () => purgeGift(g, 'stale')),
       ...staleRenders.map(
@@ -488,6 +654,9 @@ export class StoryRetentionService {
       ...revokedSegments.map((s) => () => purgeSegment(s)),
       ...staleSegments.map((s) => () => purgeStaleSegment(s)),
       ...staleRefs.map((r) => () => purgeRef(r, 'stale')),
+      ...voiceSamples.map((v) => () => purgeVoiceSample(v)),
+      ...pilotScenarios.map((a) => () => purgeScenario(a)),
+      ...pilotExpired.map((a) => () => expireApplication(a)),
       ...(readyPurgeEnabled
         ? [
             ...readyGifts.map((g) => () => purgeGift(g, 'ready')),
@@ -519,7 +688,45 @@ export class StoryRetentionService {
         result.errors++;
       }
     }
+    // The journal itself lives at most a year (append-only: DELETE only).
+    if (journalEntries && !late()) {
+      try {
+        const old = await this.prisma.storyOperatorAction.deleteMany({
+          where: { createdAt: { lt: journalCutoff } },
+        });
+        result.purged += old.count;
+      } catch {
+        result.errors++;
+      }
+    }
     return result;
+  }
+
+  /** UNKNOWN gifts/renders whose credits are still RESERVED. */
+  private async reservedUnknown(giftIds: string[], renderIds: string[]) {
+    const rows =
+      giftIds.length || renderIds.length
+        ? await this.prisma.storyCreditCharge.findMany({
+            where: {
+              status: 'RESERVED',
+              OR: [
+                { kind: 'audio', giftId: { in: giftIds } },
+                { kind: 'video', renderId: { in: renderIds } },
+              ],
+            },
+            select: { kind: true, giftId: true, renderId: true },
+          })
+        : [];
+    return {
+      gifts: new Set(
+        rows.filter((r) => r.kind === 'audio').map((r) => r.giftId),
+      ),
+      renders: new Set(
+        rows
+          .filter((r) => r.kind === 'video' && r.renderId)
+          .map((r) => r.renderId!),
+      ),
+    };
   }
 
   /** Voice ids referenced by renders/segments whose UserVoice row is gone. */

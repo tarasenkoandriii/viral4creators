@@ -25,6 +25,10 @@ import { GREETING_HOST } from '../src/lib/greeting-host';
 import { TUTORIAL_HOST } from '../src/lib/tutorial-host';
 import { locales } from '../src/lib/i18n';
 
+// Режим лендинга `closed` — по умолчанию; переменная из окружения запуска
+// не должна подменить проверку (pilot/public — stories-landing-mode.test.ts).
+delete process.env.STORY_TALES_LANDING;
+
 type Matcher = { regexp: string; has?: unknown; missing?: unknown };
 const { getMiddlewareMatchers } = require('next/dist/build/analysis/get-page-static-info') as {
   getMiddlewareMatchers: (m: unknown, cfg: { basePath?: string; i18n?: unknown }) => Matcher[];

@@ -16,8 +16,10 @@ export function useStoryConfirm() {
     action: () => void;
   } | null>(null);
   const back = useRef<HTMLElement | null>(null);
+  const [checked, setChecked] = useState(false);
   const ask = (text: StoryConfirmText, action: () => void) => {
     back.current = document.activeElement as HTMLElement | null;
+    setChecked(false);
     setPending({ text, action });
   };
   const close = () => {
@@ -32,9 +34,11 @@ export function useStoryConfirm() {
       danger={pending?.text.danger ?? true}
       title={pending?.text.title ?? ''}
       confirmLabel={pending?.text.confirmLabel}
+      confirmDisabled={!!pending?.text.requiredCheck && !checked}
       onCancel={close}
       onConfirm={() => {
         const current = pending;
+        if (current?.text.requiredCheck && !checked) return;
         close();
         current?.action();
       }}
@@ -52,6 +56,19 @@ export function useStoryConfirm() {
             </ul>
           )}
           {pending.text.note && <p>{pending.text.note}</p>}
+          {pending.text.requiredCheck && (
+            <label className="flex min-h-[44px] items-start gap-2 pt-1 font-medium">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-5 w-5 shrink-0"
+                checked={checked}
+                onChange={(e) => setChecked(e.target.checked)}
+              />
+              <span className="min-w-0 break-words">
+                {pending.text.requiredCheck}
+              </span>
+            </label>
+          )}
         </div>
       )}
     </ConfirmDialog>

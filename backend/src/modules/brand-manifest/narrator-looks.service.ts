@@ -11,7 +11,7 @@
  * Вариант — отдельная строка `story_narrator_looks` со ссылкой на
  * исходник (`characterId`, `sourceUrl`, `sourceHash`), пресетами, хешами
  * изображений и версией согласия; байты лежат в Postgres и наружу идут
- * только владельцу (Story закрыта, `StoryDevelopmentGuard`).
+ * только тем, кому открыт Story (`StoryAccessGuard`, режим `STORY_TALES_ACCESS`).
  *
  * ## Деньги
  *
@@ -98,6 +98,7 @@ import {
   NarratorImageConsentDto,
   RestyleNarratorLookDto,
 } from './dto/narrator-looks.dto';
+import { withdrawStoryShares } from '../story-gifts/story-share';
 
 /** Операция журнала расходов (`ai-pricing.ts`). */
 export const NARRATOR_LOOK_OPERATION = 'story-narrator-look' as const;
@@ -541,6 +542,17 @@ export class NarratorLooksService {
           where: { id: m.id, userId, narratorImageConsentRevokedAt: null },
           data: { narratorImageConsentRevokedAt: new Date() },
         });
+        // ST3-S-03/R-04: Story releases with this narrator image leave the
+        // public link at once (no silent substitute).
+        await withdrawStoryShares(tx, {
+          userId,
+          videoRenders: {
+            some: {
+              approvedAt: { not: null },
+              segments: { path: ['narrator', 'manifestId'], equals: m.id },
+            },
+          },
+        });
       });
     }
     return this.view(userId, manifestId);
@@ -895,6 +907,17 @@ export class NarratorLooksService {
       await tx.brandManifest.updateMany({
         where: { id: m.id, userId, narratorLookId: look.id },
         data: { narratorLookId: null, narratorLookAsset: null },
+      });
+      // ST3-S-15/R-13 (правила 10.1–10.2): deleting the variant withdraws
+      // its consent — Story releases with it leave the public link at once.
+      await withdrawStoryShares(tx, {
+        userId,
+        videoRenders: {
+          some: {
+            approvedAt: { not: null },
+            segments: { path: ['narrator', 'lookId'], equals: look.id },
+          },
+        },
       });
     });
     return this.view(userId, manifestId);

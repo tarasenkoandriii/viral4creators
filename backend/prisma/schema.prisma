@@ -147,6 +147,10 @@ model User {
   storyGifts         StoryGift[]
   storyNarratorLooks StoryNarratorLook[] // WP5
   storyNarratorLookCalls StoryNarratorLookCall[] // ST2-S-02: quota ledger
+  storyPilotMember       StoryPilotMember? // ST3: invite-only paid pilot
+  storyPilotApplication  StoryPilotApplication? // ST3
+  storyTermsAcceptances  StoryTermsAcceptance[] // ST3: Story rules + 18+
+  storyCreditCharges     StoryCreditCharge[] // ST3: credits for paid steps
   id                 String              @id @default(cuid())
   telegramId         String              @unique
   createdAt          DateTime            @default(now())
@@ -5266,6 +5270,15 @@ model StoryGift {
   error            String?
   approvedAt       DateTime?
   shareHash        String?            @unique
+  /// ST3 (ТЗ §11.4): a public link lives 90 days; set together with shareHash.
+  sharedAt         DateTime?
+  shareExpiresAt   DateTime?
+  /// ST3 (ТЗ §11.1): the narrator (voice clone / own recorded intro / narrator image)
+  /// agreed to distribution by link; recorded with the Story rules version, cleared with the link.
+  narratorPublicConsentAt      DateTime?
+  narratorPublicConsentVersion String?
+  /// ST3-S-04: the approved render the narrator's consent covers.
+  narratorPublicConsentRenderId String?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @default(now()) @updatedAt
 
@@ -5284,6 +5297,8 @@ model StoryVideoRender {
   voiceLabel          String?
   voiceConsentAt      DateTime?
   voiceConsentVersion String?
+  /// ST3: language of the consent text shown (ru | uk | en).
+  voiceConsentLocale  String?
   qaStatus            String    @default("PENDING")
   qa                  Json?
   id                  String    @id @default(uuid())
@@ -5345,6 +5360,8 @@ model StoryVideoSegment {
   durationSeconds Float?
   consentVersion  String?
   consentAt       DateTime?
+  /// ST3: language of the recording consent text shown (ru | uk | en).
+  consentLocale   String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @default(now()) @updatedAt
 
@@ -5446,6 +5463,88 @@ model StoryNarratorLookCall {
 
   @@index([userId, createdAt])
   @@map("story_narrator_look_calls")
+}
+
+// ST3
+/// Story-Tales invite-only paid pilot participant (`STORY_TALES_ACCESS=pilot`).
+/// One row per user; revocation keeps the row (data stay, new builds — 404).
+model StoryPilotMember {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Application that admitted the member.
+  applicationId  String?   @unique
+  since          DateTime  @default(now())
+  /// The one free first gift (Р-ST3-2): set with freeGiftId when its first paid step starts.
+  freeGiftUsedAt DateTime?
+  freeGiftId     String?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  @@index([revokedAt])
+  @@map("story_pilot_members")
+}
+
+/// ST3: application to the pilot from the TMA (one per user; repeat returns it).
+model StoryPilotApplication {
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Optional short scenario (≤500), no children's names asked for.
+  scenario  String?
+  /// pending | approved | rejected | expired (pending > 90 days)
+  status    String    @default("pending")
+  decidedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+
+  @@index([status, createdAt])
+  @@map("story_pilot_applications")
+}
+
+/// ST3: acceptance of the Story rules (versioned) with the 18+ confirmation. Append-only per version.
+model StoryTermsAcceptance {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  termsVersion String
+  adult        Boolean
+  acceptedAt   DateTime @default(now())
+
+  @@unique([userId, termsVersion])
+  @@map("story_terms_acceptances")
+}
+
+/// ST3 (Р-ST3-2): credits reserved for one paid Story step. `key` — audio:<giftId>:<attempt> |
+/// video:<renderId>; the ledger row uses CreditLedger.generatedVideoId = "story:" + key.
+/// RESERVED → REFUNDED on a final FAILED; UNKNOWN keeps the reserve until the operator.
+model StoryCreditCharge {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key             String    @unique
+  /// audio | video
+  kind            String
+  /// Plain ids, no FK: gift/render rows may be wiped; the charge is financial history.
+  giftId          String
+  renderId        String?
+  credits         Int
+  /// Provider reserve the price was computed from and the price itself (micro-USD).
+  reserveMicroUsd Int
+  priceMicroUsd   Int
+  /// The member's free first gift: credits 0.
+  free            Boolean   @default(false)
+  /// RESERVED (held) | CAPTURED (the step delivered) | REFUNDED
+  status          String    @default("RESERVED")
+  refundedAt      DateTime?
+  capturedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([giftId])
+  @@index([status, createdAt])
+  @@map("story_credit_charges")
 }
 
 /// First-party landing page views. No source, URL, cookies or raw IP.

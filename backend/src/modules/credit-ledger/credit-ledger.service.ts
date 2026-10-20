@@ -136,6 +136,83 @@ export class CreditLedgerService {
   }
 
   /**
+   * Р-ST3-2 (Story‑Tales): списать СРАЗУ `credits` кредитов за один платный
+   * шаг внутри транзакции вызывающего (`tx`) — шаг и списание фиксируются
+   * или откатываются вместе. Ключ идемпотентности — `generatedVideoId`
+   * (`story:<key>`, тот же уникальный индекс `(generatedVideoId, reason)`):
+   * повтор с тем же ключом ничего не списывает второй раз и отвечает
+   * `reserved: true`. Под `credit:<userId>` (тот же замок, что
+   * `reserveForGeneration`) проверка «уже есть» и вставка не ловят P2002
+   * внутри транзакции: в Postgres ошибка обрывает всю транзакцию.
+   * Нехватка — `reserved: false` и текущий баланс, ничего не пишется.
+   */
+  async reserveKeyed(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    key: string,
+    credits: number,
+  ): Promise<{ reserved: boolean; balance: number }> {
+    if (!Number.isInteger(credits) || credits <= 0)
+      throw new Error('reserveKeyed: credits must be a positive integer');
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`credit:${userId}`}))`;
+    const r = (await tx.creditLedger.aggregate({
+      where: { userId },
+      _sum: { delta: true },
+    })) as { _sum: { delta: number | null } };
+    const balance = r._sum.delta ?? 0;
+    const existing = await tx.creditLedger.findFirst({
+      where: { generatedVideoId: key, reason: 'CONSUME' },
+      select: { userId: true },
+    });
+    if (existing) {
+      if (existing.userId !== userId)
+        throw new Error('reserveKeyed: key belongs to another user');
+      return { reserved: true, balance };
+    }
+    if (balance < credits) return { reserved: false, balance };
+    await tx.creditLedger.create({
+      data: {
+        userId,
+        delta: -credits,
+        reason: 'CONSUME',
+        generatedVideoId: key,
+      },
+    });
+    return { reserved: true, balance: balance - credits };
+  }
+
+  /**
+   * Возврат РОВНО списанного по ключу `reserveKeyed` (а не одного кредита,
+   * как `refundIfReserved`). Возвращает число возвращённых кредитов: 0 —
+   * списания не было или возврат уже сделан. В транзакции вызывающего.
+   */
+  async refundKeyed(
+    tx: Prisma.TransactionClient,
+    key: string,
+  ): Promise<number> {
+    const consumed = await tx.creditLedger.findFirst({
+      where: { generatedVideoId: key, reason: 'CONSUME' },
+      select: { userId: true, delta: true },
+    });
+    if (!consumed || consumed.delta >= 0) return 0;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`credit:${consumed.userId}`}))`;
+    const refunded = await tx.creditLedger.findFirst({
+      where: { generatedVideoId: key, reason: 'REFUND' },
+      select: { id: true },
+    });
+    if (refunded) return 0;
+    await tx.creditLedger.create({
+      data: {
+        userId: consumed.userId,
+        delta: -consumed.delta,
+        reason: 'REFUND',
+        generatedVideoId: key,
+      },
+    });
+    return -consumed.delta;
+  }
+
+  /**
    * Приветственная генерация — одна на пользователя, навсегда
    * («Условно бесплатный Lite» §4.1, этап 132).
    *

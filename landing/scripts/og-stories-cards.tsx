@@ -14,6 +14,10 @@
  *  - рисунок — тот же `HeroIllustration`, что в первом экране, с теми же
  *    стилями `stories.css` (светлая тема): карточка не обещает ничего
  *    сверх страницы — марка, слоган, бейдж и заголовок первого экрана;
+ *  - бейдж — пилотный (`copy.access.pilot.badge`, «Пилот по приглашению»,
+ *    20.10.2026): карточки отдаются только в режимах лендинга `pilot` и
+ *    `public` (в `closed` — 404), и «Скоро запуск» в превью было бы
+ *    неправдой. Перед режимом `public` — перерисовать с его бейджем;
  *  - отпечаток строк — `scripts/og-stories-cards.lock.json`, сверяет
  *    `scripts/stories-page.test.ts` (поменяли заголовок, слоган или бейдж
  *    и не перезапустили генератор — `npm test` скажет).
@@ -30,7 +34,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { HeroIllustration } from '../src/app/[locale]/stories/HeroIllustration';
+import { HeroIllustration } from '../src/app/(stories)/[locale]/stories/HeroIllustration';
 import { locales } from '../src/lib/i18n';
 import { BRAND, STORIES_COPY } from '../src/lib/stories/copy';
 import { OG_CARD_BYTES_MAX, ogCardFingerprint } from '../src/lib/stories/og';
@@ -40,7 +44,7 @@ import { OG_CARD_BYTES_MAX, ogCardFingerprint } from '../src/lib/stories/og';
 const ROOT = path.join(__dirname, '..');
 const WIDTH = 1200;
 const HEIGHT = 630;
-const css = readFileSync(path.join(ROOT, 'src', 'app', '[locale]', 'stories', 'stories.css'), 'utf8')
+const css = readFileSync(path.join(ROOT, 'src', 'app', '(stories)', '[locale]', 'stories', 'stories.css'), 'utf8')
   // Карточка — всегда светлая: превью мессенджера темы страницы не знает.
   .replace(/@media \(prefers-color-scheme: dark\) \{[\s\S]*?\n\}\n/g, '');
 
@@ -67,7 +71,7 @@ h1{font-family:var(--st-serif);font-size:48px;line-height:1.12;margin:0 0 24px;c
 .st-ill-label{font-size:18px}
 .st-figure figcaption{font-size:18px}
 </style></head><body><div class="st-root"><div class="card">
-<div><p class="brand">${escape(BRAND)}</p><p class="tagline">${escape(t.tagline)}</p><h1>${escape(t.hero.title)}</h1><span class="badge">${escape(t.hero.badge)}</span></div>
+<div><p class="brand">${escape(BRAND)}</p><p class="tagline">${escape(t.tagline)}</p><h1>${escape(t.hero.title)}</h1><span class="badge">${escape(t.access.pilot.badge)}</span></div>
 <div>${figure}</div>
 </div></div></body></html>`;
 }

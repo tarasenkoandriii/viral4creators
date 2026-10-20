@@ -32,6 +32,7 @@ export function ConfirmDialog({
   cancelLabel,
   danger = true,
   busy = false,
+  confirmDisabled = false,
   secondaryAction,
   onConfirm,
   onCancel,
@@ -57,6 +58,8 @@ export function ConfirmDialog({
   danger?: boolean;
   /** Само удаление в полёте — блокирует обе кнопки, крутит спиннер на «Удалить». */
   busy?: boolean;
+  /** Кнопка подтверждения неактивна (например, не отмечен обязательный флажок). */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -75,8 +78,10 @@ export function ConfirmDialog({
     if (!open) return;
     const focusables = () =>
       Array.from(
-        dialogRef.current?.querySelectorAll<HTMLButtonElement>(
-          'button:not(:disabled)'
+        // Флажки внутри тела (обязательное согласие) — тоже в Tab-цикле,
+        // иначе до них нельзя добраться с клавиатуры.
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled)'
         ) ?? []
       );
     focusables()[0]?.focus();
@@ -178,7 +183,7 @@ export function ConfirmDialog({
             data-assist={danger ? 'never' : 'confirm'}
             onClick={onConfirm}
             loading={busy}
-            disabled={loadingBody}
+            disabled={loadingBody || confirmDisabled}
           >
             {confirmLabel ?? dict.common.delete}
           </Button>

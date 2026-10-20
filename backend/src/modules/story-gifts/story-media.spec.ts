@@ -1,4 +1,5 @@
 import { STORY_CATALOG } from './story-catalog';
+import { STORY_EDITIONS } from './story-editions';
 import { storyAudioReservation } from './story-budget';
 import { storySpeechScore } from './story-audio-qa';
 import { PNG } from 'pngjs';
@@ -77,15 +78,26 @@ describe('Short catalogue budget and speech scoring', () => {
   it('keeps classic editions short and priced, while detecting missing narration', () => {
     expect(STORY_CATALOG.some((s) => s.kind === 'classic')).toBe(true);
     for (const story of STORY_CATALOG.filter((s) => s.kind === 'classic')) {
-      expect(story.sourceEdition?.textSha256).toBe(
-        '39207ca8c60f88adf5cc9085cf2677fb82dd6da3c7ad41715ea17f7bf3cdaeb7',
-      );
-      expect(story.chapters.at(-1)?.text).toContain('вытащили репку!');
-      expect(storyText(story.id).length).toBeLessThan(1800);
-      expect(story.targetSeconds).toBeLessThanOrEqual(90);
+      // The card shows exactly the registry hash of that edition.
+      const edition = STORY_EDITIONS.find((e) => e.id === story.id)!;
+      expect(story.sourceEdition?.textSha256).toBe(edition.textSha256);
+      expect(story.textSha256).toBe(edition.textSha256);
+      // One bounded Nova request with a 180-char note (≤3000 characters)
+      // and within the audio render limit (8–240 s).
+      expect(storyText(story.id).length + 182).toBeLessThan(3000);
+      expect(story.targetSeconds).toBeLessThanOrEqual(240);
       expect(story.sourceUrl).toMatch(/^https:/);
       expect(storyAudioReservation(storyText(story.id))).toBeLessThan(1000000);
     }
+    // ST3: the RU and UK classic turnips are both offered.
+    expect(
+      STORY_CATALOG.filter((s) => s.kind === 'classic').map((s) => s.id),
+    ).toEqual(
+      expect.arrayContaining([
+        'turnip-ushinsky-ru-1949-v1',
+        'turnip-franko-uk-1918-v1',
+      ]),
+    );
     expect(storySpeechScore('Ёжик идёт домой.', 'ежик идет домой').wer).toBe(0);
     expect(storySpeechScore('раз два три четыре', 'раз два').wer).toBe(0.5);
   });

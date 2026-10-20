@@ -4,7 +4,30 @@
  * `scripts/story-wizard.test.ts`. Сервер остаётся источником истины:
  * здесь только подсказки до запроса и разбор ответа.
  */
+import ru from '../../dictionaries/ru.json';
 import { parseUsdBudget } from './story-library';
+
+/** Тексты мастера (`storyUi.wiz`); по умолчанию — русские. */
+export type StoryWizStrings = typeof RU_WIZ;
+const RU_WIZ = ru.storyUi.wiz;
+const fillT = (t: string, vars: Record<string, string | number>) =>
+  t.replace(/\{\{(\w+)\}\}/g, (m, k: string) =>
+    k in vars ? String(vars[k]) : m
+  );
+/** Подпись повода на языке интерфейса. */
+export function occasionLabel(
+  kind: OccasionKind,
+  s: StoryWizStrings = RU_WIZ
+): string {
+  return s[kind];
+}
+/** Название темы обложки на языке интерфейса. */
+export function themeLabel(
+  id: StoryThemeId,
+  s: StoryWizStrings = RU_WIZ
+): string {
+  return s[id];
+}
 
 export const OCCASION_KINDS = [
   'birthday',
@@ -100,15 +123,19 @@ export function themeFor(
   return kind ? THEME_BY_KIND[kind] : 'calm';
 }
 /** Подпись повода для списка/карточки: пресет по коду, `other` — своя подпись. */
-export function occasionCaption(gift: {
-  occasionKind?: string | null;
-  occasion?: string | null;
-}): string | null {
+export function occasionCaption(
+  gift: {
+    occasionKind?: string | null;
+    occasion?: string | null;
+  },
+  s: StoryWizStrings = RU_WIZ
+): string | null {
   const kind = gift.occasionKind as OccasionKind | null | undefined;
-  if (kind && kind !== 'other') return OCCASION_LABELS[kind] ?? null;
-  return (
-    gift.occasion?.trim() || (kind === 'other' ? OCCASION_LABELS.other : null)
-  );
+  if (kind && kind !== 'other')
+    return (OCCASION_KINDS as readonly string[]).includes(kind)
+      ? s[kind]
+      : null;
+  return gift.occasion?.trim() || (kind === 'other' ? s.other : null);
 }
 
 export type GiftNotePosition = 'beginning' | 'end';
@@ -143,7 +170,10 @@ export function squashSpaces(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 /** Ошибки, которые видно до запроса; итоговое решение — за сервером. */
-export function wizardIssues(state: WizardState): string[] {
+export function wizardIssues(
+  state: WizardState,
+  s: StoryWizStrings = RU_WIZ
+): string[] {
   const issues: string[] = [];
   const budget = parseUsdBudget(state.budget);
   if (budget.error) issues.push(budget.error);
@@ -151,14 +181,12 @@ export function wizardIssues(state: WizardState): string[] {
     state.occasionKind === 'other' &&
     squashSpaces(state.occasionLabel).length > 80
   )
-    issues.push('Подпись повода — до 80 символов');
+    issues.push(s.occasionTooLong);
   const note = squashSpaces(state.giftNote);
-  if (state.giftNoteEnabled && !note)
-    issues.push('Введите реплику о подарке или выключите упоминание');
-  if (state.giftNoteEnabled && note.length > 180)
-    issues.push('Реплика о подарке — до 180 символов');
+  if (state.giftNoteEnabled && !note) issues.push(s.noteEmpty);
+  if (state.giftNoteEnabled && note.length > 180) issues.push(s.noteTooLong);
   if (squashSpaces(state.photoDescription).length > 200)
-    issues.push('Описание фото — до 200 символов');
+    issues.push(s.photoTooLong);
   return issues;
 }
 /** Тело `POST /story-gifts` (и основа `POST /story-gifts/preview`). */
@@ -192,14 +220,15 @@ export function previewKey(state: WizardState): string {
  */
 export function canCreate(
   state: WizardState,
-  lastPreviewKey: string | null
+  lastPreviewKey: string | null,
+  s: StoryWizStrings = RU_WIZ
 ): { ok: boolean; reason: string | null } {
-  const issues = wizardIssues(state);
+  const issues = wizardIssues(state, s);
   if (issues.length) return { ok: false, reason: issues[0] };
   if (state.giftNoteEnabled && lastPreviewKey !== previewKey(state))
     return {
       ok: false,
-      reason: 'Сначала посмотрите точную реплику: она войдёт в озвучку',
+      reason: s.previewFirst,
     };
   return { ok: true, reason: null };
 }
@@ -264,12 +293,16 @@ export function formatUsd(micro: number): string {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
 }
-const STATUS_TEXT: Record<EstimateLine['status'], string> = {
-  included: '',
-  'not-selected': 'не выбрано',
-  unavailable: 'недоступно',
-  'not-included': 'не входит',
-};
+const statusText = (
+  status: EstimateLine['status'],
+  s: StoryWizStrings
+): string =>
+  ({
+    included: '',
+    'not-selected': s.notSelected,
+    unavailable: s.unavailable,
+    'not-included': s.notIncluded,
+  })[status];
 export type EstimateRow = {
   id: EstimateLine['id'];
   label: string;
@@ -279,18 +312,21 @@ export type EstimateRow = {
   detail: string;
   muted: boolean;
 };
-export function estimateRows(estimate: StoryEstimate): EstimateRow[] {
+export function estimateRows(
+  estimate: StoryEstimate,
+  s: StoryWizStrings = RU_WIZ
+): EstimateRow[] {
   return estimate.lines.map((line) => ({
     id: line.id,
     label: line.label,
     cost: line.status === 'included' ? formatUsd(line.costMicroUsd) : '—',
     reserve: line.status === 'included' ? formatUsd(line.reserveMicroUsd) : '—',
-    status: STATUS_TEXT[line.status],
+    status: statusText(line.status, s),
     detail: [
       line.items
         .map(
           (i) =>
-            `${i.label}${i.characters !== undefined ? ` · ${i.characters} симв.` : ''}${i.seconds ? ` · ≈${Math.round(i.seconds)} с` : ''}`
+            `${i.label}${i.characters !== undefined ? fillT(s.chars, { n: i.characters }) : ''}${i.seconds ? fillT(s.approxSeconds, { n: Math.round(i.seconds) }) : ''}`
         )
         .join('; '),
       line.note,
@@ -301,9 +337,16 @@ export function estimateRows(estimate: StoryEstimate): EstimateRow[] {
   }));
 }
 /** Предупреждение о выходе резерва за бюджет (null — укладывается). */
-export function budgetWarning(estimate: StoryEstimate): string | null {
+export function budgetWarning(
+  estimate: StoryEstimate,
+  s: StoryWizStrings = RU_WIZ
+): string | null {
   if (estimate.withinBudget) return null;
-  return `Резерв ${formatUsd(estimate.totalReserveMicroUsd)} превышает бюджет ${formatUsd(estimate.budgetMicroUsd)} на ${formatUsd(estimate.overByMicroUsd)}. Увеличьте бюджет, сократите реплику или откажитесь от видеоверсии — превышение не допускается.`;
+  return fillT(s.budgetWarning, {
+    reserve: formatUsd(estimate.totalReserveMicroUsd),
+    budget: formatUsd(estimate.budgetMicroUsd),
+    over: formatUsd(estimate.overByMicroUsd),
+  });
 }
 /**
  * Сегменты озвучки сохранённого черновика для показа: реплика выделяется.

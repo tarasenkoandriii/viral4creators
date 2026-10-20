@@ -81,19 +81,19 @@ const LINES: Readonly<Record<StoryLineLocale, Lines>> = {
   },
   uk: {
     none: [
-      'Привіт, {name}! У мене для тебе казка.',
+      'Привіт, {name}! У мене є для тебе казка.',
       '{name}, вмощуйся зручніше — починаємо казку.',
     ],
     birthday: [
-      '{name}, з днем народження! У мене для тебе казка.',
+      '{name}, з днем народження! У мене є для тебе казка.',
       'З днем народження, {name}! Послухаймо казку.',
     ],
     bedtime: [
       '{name}, час готуватися до сну. Послухаємо казку?',
-      'На добраніч, {name}. Ось казка перед сном.',
+      'На добраніч, {name}. Ось казка на ніч.',
     ],
     separation: [
-      'Привіт, {name}! Ця казка — від мене для тебе.',
+      'Привіт, {name}! Ця казка — тобі від мене.',
       '{name}, цю казку можна вмикати знову, коли захочеться.',
     ],
     support: [
@@ -101,14 +101,14 @@ const LINES: Readonly<Record<StoryLineLocale, Lines>> = {
       '{name}, послухаймо разом спокійну казку.',
     ],
     other: [
-      'Привіт, {name}! У мене для тебе казка.',
+      'Привіт, {name}! У мене є для тебе казка.',
       '{name}, вмощуйся зручніше — починаємо казку.',
     ],
   },
   en: {
     none: [
       'Hi, {name}! I have a story for you.',
-      '{name}, get cosy — the story is about to begin.',
+      '{name}, get comfy — the story is about to begin.',
     ],
     birthday: [
       'Happy birthday, {name}! I have a story for you.',
@@ -124,11 +124,11 @@ const LINES: Readonly<Record<StoryLineLocale, Lines>> = {
     ],
     support: [
       "{name}, I'm thinking of you. Here is a story for you.",
-      "{name}, let's listen to a calm story together.",
+      "{name}, let's listen to a gentle story together.",
     ],
     other: [
       'Hi, {name}! I have a story for you.',
-      '{name}, get cosy — the story is about to begin.',
+      '{name}, get comfy — the story is about to begin.',
     ],
   },
 };

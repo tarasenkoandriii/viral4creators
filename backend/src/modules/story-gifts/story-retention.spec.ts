@@ -9,6 +9,10 @@ const DAY = 86_400_000;
 const ago = (days: number) => new Date(Date.now() - days * DAY);
 
 function setup() {
+  // ST3 (ТЗ §11.4): filled by the ST3 tests only.
+  const voices: any[] = [];
+  const apps: any[] = [];
+  const charges: any[] = [];
   const gifts: any[] = [
     {
       id: 'g-draft',
@@ -195,10 +199,62 @@ function setup() {
     },
     userVoice: {
       findMany: jest.fn(async ({ where }: any) =>
-        where.id.in
-          .filter((id: string) => id === 'pv')
-          .map((id: string) => ({ id })),
+        where.id?.in
+          ? where.id.in
+              .filter((id: string) => id === 'pv')
+              .map((id: string) => ({ id }))
+          : voices
+              .filter(
+                (v) =>
+                  (where.status === undefined || v.status === where.status) &&
+                  v.personaId === where.personaId &&
+                  v.sampleUrl !== where.sampleUrl.not &&
+                  v.updatedAt < where.updatedAt.lt,
+              )
+              .map((v) => ({ ...v })),
       ),
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const v = voices.find(
+          (x) =>
+            x.id === where.id &&
+            x.status === where.status &&
+            x.sampleUrl === where.sampleUrl &&
+            x.updatedAt === where.updatedAt,
+        );
+        if (!v) return { count: 0 };
+        Object.assign(v, data);
+        return { count: 1 };
+      }),
+    },
+    storyPilotApplication: {
+      findMany: jest.fn(async ({ where }: any) =>
+        typeof where.status === 'string'
+          ? apps
+              .filter(
+                (a) =>
+                  a.status === where.status && a.createdAt < where.createdAt.lt,
+              )
+              .map((a) => ({ id: a.id, createdAt: a.createdAt }))
+          : apps
+              .filter(
+                (a) =>
+                  where.status.in.includes(a.status) &&
+                  a.scenario !== null &&
+                  a.decidedAt < where.decidedAt.lt,
+              )
+              .map((a) => ({ id: a.id, status: a.status })),
+      ),
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const a = apps.find(
+          (x) =>
+            x.id === where.id &&
+            x.status === where.status &&
+            (where.createdAt ? x.createdAt === where.createdAt : x.scenario),
+        );
+        if (!a) return { count: 0 };
+        Object.assign(a, data);
+        return { count: 1 };
+      }),
     },
     platformSetting: {
       findMany: jest.fn(async ({ where }: any) =>
@@ -222,10 +278,33 @@ function setup() {
         return { count };
       }),
     },
+    storyCreditCharge: {
+      findMany: jest.fn(async ({ where }: any) =>
+        charges.filter(
+          (c) =>
+            c.status === where.status &&
+            where.OR.some((o: any) =>
+              o.kind === 'audio'
+                ? c.kind === 'audio' && o.giftId.in.includes(c.giftId)
+                : c.kind === 'video' && o.renderId.in.includes(c.renderId),
+            ),
+        ),
+      ),
+    },
     storyOperatorAction: {
       create: jest.fn(async ({ data }: any) => {
-        journal.push(data);
+        journal.push({ createdAt: new Date(), ...data });
         return data;
+      }),
+      count: jest.fn(
+        async ({ where }: any) =>
+          journal.filter((j) => j.createdAt < where.createdAt.lt).length,
+      ),
+      deleteMany: jest.fn(async ({ where }: any) => {
+        const before = journal.length;
+        for (let i = journal.length - 1; i >= 0; i--)
+          if (journal[i].createdAt < where.createdAt.lt) journal.splice(i, 1);
+        return { count: before - journal.length };
       }),
     },
     $queryRaw: jest.fn(),
@@ -246,7 +325,8 @@ function setup() {
       return { deleted: true };
     }),
   };
-  const service = new StoryRetentionService(prisma, giftsService);
+  const blob = { deleteBlob: jest.fn(async () => true) };
+  const service = new StoryRetentionService(prisma, giftsService, blob as any);
   return {
     service,
     prisma,
@@ -256,6 +336,10 @@ function setup() {
     segments,
     settings,
     journal,
+    voices,
+    apps,
+    charges,
+    blob,
   };
 }
 
@@ -575,5 +659,212 @@ describe('StoryRetentionService', () => {
       keyBlocked: true,
     });
     expect(JSON.stringify(journal)).not.toContain('Милана');
+  });
+});
+
+const VOICES = () => [
+  {
+    id: 'v-old',
+    status: 'READY',
+    personaId: null,
+    sampleUrl: 'https://x.public.blob.vercel-storage.com/users/u/voice/a.wav',
+    updatedAt: ago(8),
+  },
+  {
+    id: 'v-new',
+    status: 'READY',
+    personaId: null,
+    sampleUrl: 'https://x.public.blob.vercel-storage.com/users/u/voice/b.wav',
+    updatedAt: ago(6),
+  },
+  {
+    id: 'v-failed',
+    status: 'FAILED',
+    personaId: null,
+    sampleUrl: 'https://x.public.blob.vercel-storage.com/users/u/voice/c.wav',
+    updatedAt: ago(30),
+  },
+  {
+    id: 'v-persona',
+    status: 'READY',
+    personaId: 'p1',
+    sampleUrl: 'https://x.public.blob.vercel-storage.com/users/u/voice/d.wav',
+    updatedAt: ago(30),
+  },
+];
+const APPS = () => [
+  {
+    id: 'a-old',
+    status: 'rejected',
+    scenario: 'Для бабушки',
+    decidedAt: ago(91),
+  },
+  {
+    id: 'a-new',
+    status: 'approved',
+    scenario: 'Для сына',
+    decidedAt: ago(10),
+  },
+  { id: 'a-pending', status: 'pending', scenario: 'Ждёт', decidedAt: null },
+];
+describe('ST3 retention (ТЗ §11.4): voice samples, pilot scenarios, journal', () => {
+  const setup3 = () => {
+    const s = setup();
+    s.voices.push(...VOICES());
+    s.apps.push(...APPS());
+    return s;
+  };
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+  it('dry-run counts only: nothing deleted', async () => {
+    delete process.env.STORY_RETENTION_PURGE_ENABLED;
+    const s = setup3();
+    s.journal.push({ createdAt: ago(400), action: 'gift.close-failed' });
+    const r = await s.service.run({ withCandidates: true });
+    expect(r).toMatchObject({
+      dryRun: true,
+      voiceSamples: 2,
+      pilotScenarios: 1,
+      journalEntries: 1,
+    });
+    expect(r.candidates).toMatchObject({
+      voiceSamples: ['v-old', 'v-failed'],
+      pilotScenarios: ['a-old'],
+    });
+    expect(s.blob.deleteBlob).not.toHaveBeenCalled();
+    expect(s.voices[0].sampleUrl).not.toBe('');
+    expect(s.apps[0].scenario).toBe('Для бабушки');
+    expect(s.journal).toHaveLength(1);
+  });
+  it('purge: READY clone sample after 7 days (blob + reference), decided scenario after 90 days, journal over a year', async () => {
+    process.env.STORY_RETENTION_PURGE_ENABLED = 'true';
+    const s = setup3();
+    s.journal.push({ createdAt: ago(400), action: 'gift.close-failed' });
+    await s.service.run();
+    expect(s.blob.deleteBlob).toHaveBeenCalledWith('users/u/voice/a.wav');
+    expect(s.voices.map((v) => [v.id, v.sampleUrl === ''])).toEqual([
+      ['v-old', true],
+      ['v-new', false],
+      // Правила 9.6: an unfinished/failed cloning — 7 days after the last
+      // change too (the retry after HTTP 400 is possible only before that).
+      ['v-failed', true],
+      ['v-persona', false],
+    ]);
+    expect(s.apps.map((a) => a.scenario)).toEqual([null, 'Для сына', 'Ждёт']);
+    expect(s.journal.some((j) => j.action === 'gift.close-failed')).toBe(false);
+    expect(s.journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorKind: 'cron',
+          targetType: 'voice-sample',
+          targetId: 'v-old',
+          action: 'retention.purge',
+        }),
+        expect.objectContaining({
+          targetType: 'pilot-application',
+          targetId: 'a-old',
+          previousState: { status: 'rejected' },
+        }),
+      ]),
+    );
+    expect(JSON.stringify(s.journal)).not.toMatch(/бабушки|blob/);
+  });
+  it('a failed blob deletion keeps the reference for the next run', async () => {
+    process.env.STORY_RETENTION_PURGE_ENABLED = 'true';
+    const s = setup3();
+    s.blob.deleteBlob.mockResolvedValueOnce(false);
+    const r = await s.service.run();
+    expect(s.voices[0].sampleUrl).not.toBe('');
+    expect(r.errors).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('ST3 audit: retention holds RESERVED UNKNOWN, expires pending, samples only of Story users', () => {
+  const saved = { ...process.env };
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+  it('ST3-S-02: an UNKNOWN gift/render with RESERVED credits is not purged until the charge closes', async () => {
+    process.env.STORY_RETENTION_PURGE_ENABLED = 'true';
+    const s = setup();
+    s.charges.push(
+      {
+        kind: 'audio',
+        giftId: 'g-unknown',
+        renderId: null,
+        status: 'RESERVED',
+      },
+      ...s.renders
+        .filter((r: any) => r.status === 'UNKNOWN')
+        .map((r: any) => ({
+          kind: 'video',
+          giftId: r.giftId,
+          renderId: r.id,
+          status: 'RESERVED',
+        })),
+    );
+    const r = await s.service.run({ withCandidates: true });
+    expect(r.candidates!.gifts).not.toContain('g-unknown');
+    for (const render of s.renders.filter((x: any) => x.status === 'UNKNOWN'))
+      expect(r.candidates!.renders).not.toContain(render.id);
+    expect(s.gifts.find((g: any) => g.id === 'g-unknown').status).toBe(
+      'UNKNOWN',
+    );
+    // A refunded charge no longer holds it.
+    s.charges.forEach((c: any) => (c.status = 'REFUNDED'));
+    const again = await s.service.run({ withCandidates: true, dryRun: true });
+    expect(again.candidates!.gifts).toContain('g-unknown');
+  });
+  it('ST3-S-10: pending older than 90 days → expired, text erased, journaled', async () => {
+    process.env.STORY_RETENTION_PURGE_ENABLED = 'true';
+    const s = setup();
+    s.apps.push(
+      {
+        id: 'p-old',
+        status: 'pending',
+        scenario: 'Для внука',
+        createdAt: ago(91),
+        decidedAt: null,
+      },
+      {
+        id: 'p-new',
+        status: 'pending',
+        scenario: 'Для дочки',
+        createdAt: ago(5),
+        decidedAt: null,
+      },
+    );
+    const r = await s.service.run();
+    expect(r.pilotExpired).toBe(1);
+    expect(s.apps.find((a: any) => a.id === 'p-old')).toMatchObject({
+      status: 'expired',
+      scenario: null,
+      decidedAt: expect.any(Date),
+    });
+    expect(s.apps.find((a: any) => a.id === 'p-new').status).toBe('pending');
+    expect(s.journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          targetType: 'pilot-application',
+          targetId: 'p-old',
+          action: 'retention.purge',
+        }),
+      ]),
+    );
+  });
+  it('ST3-S-05: voice samples only of users who accepted the Story rules, never personas', async () => {
+    const s = setup();
+    await s.service.run({ dryRun: true });
+    const call = s.prisma.userVoice.findMany.mock.calls.find(
+      ([a]: any) => a.where.personaId === null,
+    );
+    // Any status: READY, TRAINING, FAILED (правила 9.6).
+    expect(call[0].where.status).toBeUndefined();
+    expect(call[0].where).toMatchObject({
+      personaId: null,
+      user: { storyTermsAcceptances: { some: {} } },
+    });
   });
 });

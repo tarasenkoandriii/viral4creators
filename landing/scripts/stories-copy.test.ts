@@ -10,6 +10,10 @@
  *     дефицит, обещания сна/речи/терапии, «полностью приватно», военная
  *     лексика и страх; подпись «Иллюстрация формата» есть на всех языках.
  *  4. Марка — с неразрывным дефисом (Р-STL-11).
+ *  5. Режимы лендинга (Р-ST3-6): тексты `access.pilot` — единственное
+ *     место, где разрешены слово «пилот» и число семей (ровно «15»);
+ *     остальные запреты п. 3 действуют и там; в `access.public` «пилота»
+ *     нет. Шаблон «цена от» — с `{price}`, без суммы и валюты в тексте.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -239,15 +243,69 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [word('навсегда|назавжди|forever|für immer|para siempre'), '«навсегда» (обещание сохранить привязанность)'],
   [word('отзывы|оценка|бестселлер|хит продаж|№'), 'социальное доказательство'],
 ];
+const PILOT_WORD = FORBIDDEN[0][0];
 for (const [locale, list] of strings) {
   for (const [at, value] of list) {
     // Имя платформы содержит цифру — это марка, а не число.
-    const text = value.replace(/viral4creators/g, 'viralcreators');
+    let text = value.replace(/viral4creators/g, 'viralcreators');
+    // Р-ST3-6: «пилот по приглашению, до 15 семей» — только в `access.pilot`.
+    const pilot = at.startsWith('ru.access.pilot.');
+    if (pilot) text = text.replace(/(?<!\d)15(?!\d)/g, '');
     for (const [re, why] of FORBIDDEN) {
+      if (pilot && re === PILOT_WORD) continue;
       assert.ok(!re.test(text), `${locale} ${at}: запрещено (${why}): «${value}»`);
     }
   }
 }
+// ── 5. Режимы лендинга ─────────────────────────────────────────────────
+for (const locale of locales) {
+  const { pilot, public: open } = STORIES_COPY[locale].access;
+  for (const field of ['status', 'badge', 'metaDescription'] as const) {
+    assert.match(pilot[field], PILOT_WORD, `${locale}: access.pilot.${field} без «пилота»`);
+  }
+  assert.match(pilot.status, /(?<!\d)15(?!\d)/, `${locale}: статус пилота без «до 15 семей»`);
+  assert.match(pilot.metaDescription, /(?<!\d)15(?!\d)/, `${locale}: описание пилота без числа семей`);
+  // Где заявка — в приложении; формы на странице нет.
+  assert.ok(pilot.appNote.includes(BRAND), `${locale}: подпись у кнопки не называет раздел ${BRAND}`);
+  const c = STORIES_COPY[locale].capabilities;
+  assert.equal((c.priceFrom.match(/\{price\}/g) ?? []).length, 1, `${locale}: шаблон «цена от» без {price}`);
+  for (const [at, value] of Object.entries({ ...open, available: open.available.join(' '), coming: open.coming.join(' ') })) {
+    assert.doesNotMatch(String(value), PILOT_WORD, `${locale}: «пилот» в access.public.${at}`);
+  }
+  // FAQ: заменяются ответы седьмого (языки) и девятого (цена) вопросов.
+  assert.notEqual(pilot.faqPrice, STORIES_COPY[locale].faq.items[8].answer);
+}
+assert.match(ru.faq.items[6].question, /языки и истории/u, 'седьмой вопрос FAQ — не о языках (FAQ_LANGUAGES_INDEX)');
+// ST3-U-06/13: что в pilot/public уже работает — настоящим временем.
+assert.match(ru.faq.items[1].question, /голосом/u, 'второй вопрос FAQ — не о голосе (FAQ_VOICE_INDEX)');
+assert.match(ru.faq.items[5].question, /ссылку/u, 'шестой вопрос FAQ — не о ссылке (FAQ_LINK_INDEX)');
+assert.match(ru.narrator.items[2].title, /Семейный синтетический голос/u, 'NARRATOR_FAMILY_VOICE_INDEX');
+assert.match(ru.privacy.items[3], /отозвать/u, 'PRIVACY_LINK_INDEX');
+const FUTURE = /будет|появится|можно будет|предусмотрит|з’явиться|буде |will |wird |se podrá|llegará/u;
+for (const locale of locales) {
+  const o = STORIES_COPY[locale].opened;
+  for (const [k, v] of Object.entries(o)) assert.doesNotMatch(v, FUTURE, `${locale}: opened.${k} — будущим временем`);
+  assert.match(o.narratorFamilyVoice, /клон|clon|Klon/u, `${locale}: клон собственного голоса`);
+  assert.match(STORIES_COPY[locale].capabilities.priceFrom, /\{price\}[^;]+;/u, `${locale}: «за шаг сборки; видео — отдельный шаг»`);
+}
+// ST3-U-16: образ рассказчика участникам не обещается; клон — голоса
+// взрослого рассказчика с его согласием, а не «собственного».
+assert.match(ru.faq.items[2].question, /фото или скетч/u, 'FAQ_LOOK_INDEX');
+assert.match(ru.faq.items[7].question, /до публикации/u, 'FAQ_PREVIEW_INDEX');
+assert.match(ru.how.steps[2], /образ/u, 'HOW_CHECK_STEP_INDEX');
+const LOOK_OFFER = /образ \(фото (или|чи) скетч\) (и|і) голос|look \(photo or sketch\) and voice|Aussehen \(Foto oder Skizze\) und Stimme|apariencia \(foto o boceto\) y voz/u;
+for (const locale of locales) {
+  const { access, opened } = STORIES_COPY[locale];
+  for (const mode of ['pilot', 'public'] as const) {
+    for (const item of access[mode].available) assert.doesNotMatch(item, LOOK_OFFER, `${locale}: access.${mode} обещает образ рассказчика`);
+  }
+  for (const v of [opened.stepCheck, opened.faqPreview]) assert.doesNotMatch(v, /образ|look|Aussehen|apariencia/u, `${locale}: образ в «${v}»`);
+  for (const v of [opened.narratorFamilyVoice, opened.faqVoice]) {
+    assert.doesNotMatch(v, /собствен|власн(ого|ий) голос|\bown\b|eigenen|propia/u, `${locale}: «собственный голос» вместо голоса взрослого рассказчика`);
+  }
+}
+assert.equal(ru.capabilities.priceFrom, 'от {price} за шаг сборки; видео — отдельный шаг');
+assert.match(ru.faq.items[8].question, /стоит/u, 'девятый вопрос FAQ — не о цене (FAQ_PRICE_INDEX)');
 
 // «На службе» — один раз на локаль, как пример дистанции (§3), не тема.
 const duty: Record<string, RegExp> = {

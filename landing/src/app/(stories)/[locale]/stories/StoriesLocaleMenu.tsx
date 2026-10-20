@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef } from 'react';
-import { LOCALE_COOKIE, LOCALE_LABELS, locales, type Locale } from '../../../lib/i18n';
+import { LOCALE_COOKIE, LOCALE_LABELS, locales, type Locale } from '../../../../lib/i18n';
 
 /**
  * Выбор языка Story‑Tales: `<details>` со ссылками на пять локалей.

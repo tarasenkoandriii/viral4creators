@@ -7,6 +7,7 @@
  * `reservedMicroUsd`); если сервер цену не прислал, диалог прямо говорит
  * «платная операция» без суммы — цифра не выдумывается на клиенте.
  */
+import ru from '../../dictionaries/ru.json';
 import { formatUsd, type StoryEstimate } from './story-wizard';
 
 export type StoryConfirmText = {
@@ -19,35 +20,44 @@ export type StoryConfirmText = {
   note?: string;
   confirmLabel: string;
   danger: boolean;
+  /**
+   * Обязательный флажок в диалоге (ST3: согласие рассказчика на публикацию):
+   * пока он не отмечен, кнопка подтверждения неактивна.
+   */
+  requiredCheck?: string;
 };
 
+/** Тексты подтверждений (`storyUi.confirm`); по умолчанию — русские. */
+export type StoryConfirmStrings = typeof RU_CONFIRM;
+const RU_CONFIRM = ru.storyUi.confirm;
+const f = (t: string, vars: Record<string, string | number>) =>
+  t.replace(/\{\{(\w+)\}\}/g, (m, k: string) =>
+    k in vars ? String(vars[k]) : m
+  );
+
 /** Удаление сказки (ST2-U-01): перечень того, что стирается без возврата. */
-export function deleteGiftConfirm(gift: {
-  title: string;
-  status: string;
-  hasGiftPhoto: boolean;
-}): StoryConfirmText {
+export function deleteGiftConfirm(
+  gift: {
+    title: string;
+    status: string;
+    hasGiftPhoto: boolean;
+  },
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
   const voiced = ['READY', 'APPROVED'].includes(gift.status);
   const items = [
-    voiced
-      ? 'озвучка (MP3) и результат её проверки — новая озвучка оплачивается заново;'
-      : null,
-    voiced
-      ? 'все сборки видео этого подарка с отдельными дорожками и субтитрами;'
-      : null,
-    'ваши записи вступления и озвученные сегменты этого подарка;',
-    gift.hasGiftPhoto ? 'фото подарка и его описание;' : null,
-    'текст выпуска, повод и реплика о подарке.',
+    voiced ? s.deleteVoice : null,
+    voiced ? s.deleteRenders : null,
+    s.deleteRecordings,
+    gift.hasGiftPhoto ? s.deletePhoto : null,
+    s.deleteText,
   ].filter((v): v is string => v !== null);
   return {
-    title: `Удалить сказку «${gift.title}» и всё её медиа?`,
-    body: ['Будут стёрты без возможности восстановления:'],
+    title: f(s.deleteTitle, { title: gift.title }),
+    body: [s.deleteBody],
     items,
-    note:
-      gift.status === 'APPROVED'
-        ? 'Выпуск уже одобрен. Уже потраченное на озвучку и сборки не возвращается; восстановить выпуск нельзя — только создать и оплатить заново.'
-        : 'Уже потраченное на озвучку и сборки не возвращается.',
-    confirmLabel: 'Удалить сказку и медиа',
+    note: gift.status === 'APPROVED' ? s.deleteNoteApproved : s.deleteNote,
+    confirmLabel: s.deleteLabel,
     danger: true,
   };
 }
@@ -57,37 +67,86 @@ function line(estimate: StoryEstimate | undefined, id: string) {
 }
 
 /** Подпись на кнопке: « · резерв $X» или пусто, если суммы нет. */
-export function reserveSuffix(microUsd: number | null | undefined): string {
+export function reserveSuffix(
+  microUsd: number | null | undefined,
+  s: StoryConfirmStrings = RU_CONFIRM
+): string {
   return typeof microUsd === 'number' && microUsd > 0
-    ? ` · резерв ${formatUsd(microUsd)}`
+    ? f(s.reserveSuffix, { usd: formatUsd(microUsd) })
     : '';
 }
 
 /** Подпись проверки, оплаченной из уже созданного резерва. */
-export function includedInReserve(microUsd: number | null | undefined): string {
+export function includedInReserve(
+  microUsd: number | null | undefined,
+  s: StoryConfirmStrings = RU_CONFIRM
+): string {
   return typeof microUsd === 'number' && microUsd > 0
-    ? ` · входит в резерв ${formatUsd(microUsd)}`
-    : ' · входит в резерв';
+    ? f(s.includedSuffix, { usd: formatUsd(microUsd) })
+    : s.includedSuffixBare;
 }
 
 /** Озвучка Nova (ST2-U-07): резерв аудиопилота сказки — из ответа сервера. */
-export function novaConfirm(gift: {
-  reservedMicroUsd: number;
-  budgetCents: number;
-  estimate?: StoryEstimate;
-}): StoryConfirmText {
+export function novaConfirm(
+  gift: {
+    reservedMicroUsd: number;
+    budgetCents: number;
+    estimate?: StoryEstimate;
+  },
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
   const voice = line(gift.estimate, 'voice');
   const body = [
     gift.reservedMicroUsd > 0
-      ? `Платная операция: синтез голосом Nova (Resemble) с одной проверкой речи. Резерв ${formatUsd(gift.reservedMicroUsd)} из бюджета ${formatUsd(gift.budgetCents * 10_000)}${voice ? `, оценка синтеза ≈ ${formatUsd(voice.costMicroUsd)}` : ''}.`
-      : 'Платная операция: синтез голосом Nova (Resemble). Сумма резерва не пришла с сервера — обновите статус, если хотите увидеть её до запуска.',
-    'Текст и фото фиксируются при запуске. Повторная озвучка автоматически не запускается — повтор той же кнопки не оплачивается второй раз.',
+      ? f(s.novaReserve, {
+          reserve: formatUsd(gift.reservedMicroUsd),
+          budget: formatUsd(gift.budgetCents * 10_000),
+          estimate: voice
+            ? f(s.novaEstimate, { usd: formatUsd(voice.costMicroUsd) })
+            : '',
+        })
+      : s.novaNoReserve,
+    s.novaFixed,
   ];
   return {
-    title: 'Озвучить сказку голосом Nova?',
+    title: s.novaTitle,
     body,
     items: [],
-    confirmLabel: 'Озвучить',
+    confirmLabel: s.novaLabel,
+    danger: false,
+  };
+}
+
+/**
+ * ST3-U-03: подтверждение озвучки для не-владельца — только цена в
+ * кредитах (абзацы `charge`, их собирает вызывающий) без резерва и бюджета
+ * провайдера; бесплатная — «Запустить бесплатную сборку?».
+ */
+export function novaConfirmMember(
+  chargeParagraphs: string[],
+  free: boolean,
+  freeTitle: string,
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
+  return {
+    title: free ? freeTitle : s.novaTitleMember,
+    body: [...chargeParagraphs, s.launchFixed],
+    items: [],
+    confirmLabel: s.novaLabel,
+    danger: false,
+  };
+}
+
+/** ST3-U-03: проверка речи для не-владельца — входит в цену, без сумм. */
+export function qaConfirmMember(
+  kind: 'audio' | 'video',
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
+  return {
+    title: kind === 'audio' ? s.audioQaTitleMember : s.videoQaTitleMember,
+    body: [kind === 'audio' ? s.qaMember : s.videoQaMember, s.qaOnce],
+    items: [],
+    confirmLabel: s.qaLabel,
     danger: false,
   };
 }
@@ -96,21 +155,32 @@ export function novaConfirm(gift: {
  * Проверка озвучки Soniox (ST2-U-07). Её резерв уже входит в резерв
  * аудиопилота (строка `qa` сметы), отдельного списания резерва нет.
  */
-export function audioQaConfirm(gift: {
-  reservedMicroUsd: number;
-  estimate?: StoryEstimate;
-}): StoryConfirmText {
+export function audioQaConfirm(
+  gift: {
+    reservedMicroUsd: number;
+    estimate?: StoryEstimate;
+  },
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
   const qa = line(gift.estimate, 'qa');
   return {
-    title: 'Проверить озвучку через Soniox?',
+    title: s.audioQaTitle,
     body: [
       qa
-        ? `Платная операция: распознавание речи Soniox, оценка ≈ ${formatUsd(qa.costMicroUsd)}. Она уже входит в резерв выпуска ${formatUsd(gift.reservedMicroUsd)} — новый резерв не создаётся.`
-        : `Платная операция: распознавание речи Soniox. Она входит в резерв выпуска${gift.reservedMicroUsd > 0 ? ` ${formatUsd(gift.reservedMicroUsd)}` : ''}; точной оценки в ответе сервера нет.`,
-      'Проверка запускается один раз; автоматического повтора нет.',
+        ? f(s.audioQaEstimate, {
+            usd: formatUsd(qa.costMicroUsd),
+            reserve: formatUsd(gift.reservedMicroUsd),
+          })
+        : f(s.audioQaNoEstimate, {
+            reserve:
+              gift.reservedMicroUsd > 0
+                ? ` ${formatUsd(gift.reservedMicroUsd)}`
+                : '',
+          }),
+      s.qaOnce,
     ],
     items: [],
-    confirmLabel: 'Проверить',
+    confirmLabel: s.qaLabel,
     danger: false,
   };
 }
@@ -119,24 +189,30 @@ export function audioQaConfirm(gift: {
  * Проверка речи готового видео (ST2-U-07): входит в резерв этой сборки;
  * оценку Soniox по длине экспорта присылает сервер (`qaEstimateMicroUsd`).
  */
-export function videoQaConfirm(render: {
-  reservedMicroUsd: number;
-  qaEstimateMicroUsd?: number | null;
-}): StoryConfirmText {
+export function videoQaConfirm(
+  render: {
+    reservedMicroUsd: number;
+    qaEstimateMicroUsd?: number | null;
+  },
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
   const estimate =
     typeof render.qaEstimateMicroUsd === 'number'
-      ? `, оценка ≈ ${formatUsd(render.qaEstimateMicroUsd)}`
+      ? f(s.videoQaEstimate, { usd: formatUsd(render.qaEstimateMicroUsd) })
       : '';
   return {
-    title: 'Проверить речь готового видео через Soniox?',
+    title: s.videoQaTitle,
     body: [
       render.reservedMicroUsd > 0
-        ? `Платная операция: распознавание речи Soniox по итоговому MP4${estimate}. Она входит в резерв этой сборки ${formatUsd(render.reservedMicroUsd)} — новый резерв не создаётся.`
-        : `Платная операция: распознавание речи Soniox по итоговому MP4${estimate}.`,
-      'Проверка запускается один раз; автоматического повтора нет.',
+        ? f(s.videoQaReserve, {
+            estimate,
+            reserve: formatUsd(render.reservedMicroUsd),
+          })
+        : f(s.videoQaNoReserve, { estimate }),
+      s.qaOnce,
     ],
     items: [],
-    confirmLabel: 'Проверить',
+    confirmLabel: s.qaLabel,
     danger: false,
   };
 }
@@ -202,18 +278,18 @@ export function analyzeConfirm(opts: {
  * сборка с записью идёт или ждёт оператора — 409 `STORY_RECORDING_IN_USE`
  * (текст сервера показывается как есть).
  */
-export function deleteRecordingConfirm(recording: {
-  seconds: number;
-}): StoryConfirmText {
+export function deleteRecordingConfirm(
+  recording: {
+    seconds: number;
+  },
+  s: StoryConfirmStrings = RU_CONFIRM
+): StoryConfirmText {
   return {
-    title: `Удалить запись вступления (${recording.seconds.toFixed(1)} с)?`,
-    body: ['Без возможности восстановления:'],
-    items: [
-      'запись вашего голоса и озвученные с ней сегменты будут стёрты;',
-      'версии видео, собранные с этой записью, станут недоступны — новую сборку придётся заказать заново.',
-    ],
-    note: 'Уже оплаченная основная речь сказки сохраняется и переиспользуется в новой сборке без новой оплаты. Пока сборка с этой записью идёт или ждёт проверки оператора, удалить запись нельзя.',
-    confirmLabel: 'Удалить запись',
+    title: f(s.recordingTitle, { n: recording.seconds.toFixed(1) }),
+    body: [s.recordingBody],
+    items: [s.recordingItemVoice, s.recordingItemVideos],
+    note: s.recordingNote,
+    confirmLabel: s.recordingLabel,
     danger: true,
   };
 }
@@ -224,17 +300,14 @@ export type RecordingDeleted = {
   mainNarrationKept?: boolean;
 };
 export function recordingDeletedNotice(
-  res: RecordingDeleted | null | undefined
+  res: RecordingDeleted | null | undefined,
+  s: StoryConfirmStrings = RU_CONFIRM
 ): string {
   const n = typeof res?.rendersDeleted === 'number' ? res.rendersDeleted : 0;
   return [
-    'Запись удалена.',
-    n > 0
-      ? `Видео с ней стали недоступны: ${n}.`
-      : 'Собранных с ней видео не было.',
-    res?.mainNarrationKept
-      ? 'Основная речь сохранена — новая сборка переиспользует её без новой оплаты.'
-      : null,
+    s.recordingDeleted,
+    n > 0 ? f(s.recordingVideos, { n }) : s.recordingNoVideos,
+    res?.mainNarrationKept ? s.recordingKept : null,
   ]
     .filter(Boolean)
     .join(' ');

@@ -10,6 +10,21 @@ import {
   resampleLinear,
   type DecodedAudioLike,
 } from '../../lib/wav';
+import ru from '../../dictionaries/ru.json';
+
+/** Тексты видеопанели (`storyUi.plan` + `storyUi.render`); по умолчанию — русские. */
+export type StoryPlanStrings = {
+  plan: typeof ru.storyUi.plan;
+  render: typeof ru.storyUi.render;
+};
+const RU_PLAN: StoryPlanStrings = {
+  plan: ru.storyUi.plan,
+  render: ru.storyUi.render,
+};
+const fp = (t: string, vars: Record<string, string | number>) =>
+  t.replace(/\{\{(\w+)\}\}/g, (m, k: string) =>
+    k in vars ? String(vars[k]) : m
+  );
 
 export const STORY_PRONUNCIATION_MAX = 5;
 export const STORY_PRONUNCIATION_CHARS = 40;
@@ -25,9 +40,12 @@ export const STORY_PREAMBLE_MAX_SEC = 20;
  */
 export const STORY_PREAMBLE_FILE_MAX_BYTES = 15 * 1024 * 1024;
 /** Текст отказа для слишком большого файла вступления (или `null`). */
-export function preambleFileError(file: { size: number }): string | null {
+export function preambleFileError(
+  file: { size: number },
+  s: StoryPlanStrings = RU_PLAN
+): string | null {
   if (file.size <= STORY_PREAMBLE_FILE_MAX_BYTES) return null;
-  return `Аудиофайл больше 15 МБ — для вступления нужно не больше ${STORY_PREAMBLE_MAX_SEC} с. Обрежьте запись или запишите вступление здесь.`;
+  return fp(s.plan.fileTooBig, { max: STORY_PREAMBLE_MAX_SEC });
 }
 
 export type PronunciationRow = { written: string; spoken: string };
@@ -100,17 +118,21 @@ export type StoryVideoQuote = {
 
 const clean = (v: string) => v.normalize('NFC').replace(/\s+/g, ' ').trim();
 /** Та же проверка, что на сервере; пустые строки формы пропускаются. */
-export function cleanPronunciations(rows: readonly PronunciationRow[]): {
+export function cleanPronunciations(
+  rows: readonly PronunciationRow[],
+  str: StoryPlanStrings = RU_PLAN
+): {
   list: PronunciationRow[];
   error: string | null;
 } {
+  const t = str.plan;
   const list = rows
     .map((r) => ({ written: clean(r.written), spoken: clean(r.spoken) }))
     .filter((r) => r.written || r.spoken);
   if (list.length > STORY_PRONUNCIATION_MAX)
     return {
       list: [],
-      error: `Не больше ${STORY_PRONUNCIATION_MAX} пар «как написано → как произнести»`,
+      error: fp(t.pronMax, { max: STORY_PRONUNCIATION_MAX }),
     };
   const seen = new Set<string>();
   for (const r of list) {
@@ -122,25 +144,23 @@ export function cleanPronunciations(rows: readonly PronunciationRow[]): {
     )
       return {
         list: [],
-        error: `Обе части — от 1 до ${STORY_PRONUNCIATION_CHARS} символов`,
+        error: fp(t.pronLength, { max: STORY_PRONUNCIATION_CHARS }),
       };
     if (!/^[\p{L}\p{N}][\p{L}\p{M}\p{N} '’ʼ.-]*$/u.test(r.written))
-      return { list: [], error: '«Как написано» — слово или имя из текста' };
+      return { list: [], error: t.pronWritten };
     if (!/^[\p{L}\p{M} '’ʼ+-]+$/u.test(r.spoken))
       return {
         list: [],
-        error:
-          '«Как произнести» — только буквы, ударение (+), дефис и апостроф',
+        error: t.pronSpoken,
       };
     // Как на сервере: одно слово (пересказ написания), не новая фраза.
     if (/\s/u.test(r.spoken))
       return {
         list: [],
-        error: '«Как произнести» — одно слово без пробелов',
+        error: t.pronOneWord,
       };
     const key = r.written.toLocaleLowerCase();
-    if (seen.has(key))
-      return { list: [], error: 'Каждое слово указывается один раз' };
+    if (seen.has(key)) return { list: [], error: t.pronOnce };
     seen.add(key);
   }
   return { list, error: null };
@@ -208,21 +228,42 @@ export const STATE_LABEL: Record<StoryQuoteSegment['state'], string> = {
   blocked: 'требует проверки',
 };
 const usd = (micro: number) => `$${(micro / 1e6).toFixed(2)}`;
-export function storyQuoteRows(q: StoryVideoQuote) {
+const SEG_KEY = {
+  intro: 'segIntro',
+  gift_note: 'segGiftNote',
+  main: 'segMain',
+  outro: 'segOutro',
+} as const;
+const SRC_KEY = {
+  synth: 'srcSynth',
+  recorded: 'srcRecorded',
+  gift: 'srcGift',
+  parent: 'srcParent',
+} as const;
+const STATE_KEY = {
+  reuse: 'stateReuse',
+  synthesize: 'stateSynthesize',
+  blocked: 'stateBlocked',
+} as const;
+export function storyQuoteRows(
+  q: StoryVideoQuote,
+  str: StoryPlanStrings = RU_PLAN
+) {
+  const t = str.plan;
   return q.segments.map((s) => ({
-    label: `${SEGMENT_LABEL[s.kind]}${s.position ? (s.position === 'beginning' ? ' (в начале)' : ' (в конце)') : ''}`,
-    source: SOURCE_LABEL[s.source],
-    state: STATE_LABEL[s.state],
+    label: `${t[SEG_KEY[s.kind]] ?? SEGMENT_LABEL[s.kind]}${s.position ? (s.position === 'beginning' ? t.posBeginning : t.posEnd) : ''}`,
+    source: t[SRC_KEY[s.source]] ?? SOURCE_LABEL[s.source],
+    state: t[STATE_KEY[s.state]] ?? STATE_LABEL[s.state],
     text: s.text,
     /** Показывается только когда произношение изменило текст для синтеза. */
     spoken: s.ttsText !== s.text ? s.ttsText : null,
     seconds: s.seconds,
     note: s.includes?.includes('gift_note')
-      ? 'Реплика о подарке уже звучит внутри этой записи'
+      ? t.noteInRecording
       : s.visual === 'photo'
-        ? 'На экране — фото подарка'
+        ? t.notePhoto
         : s.visual === 'narrator'
-          ? 'На экране — образ рассказчика из профиля'
+          ? t.noteNarrator
           : null,
   }));
 }
@@ -237,18 +278,42 @@ export function liveExistingRender(
   const r = q.existingRender;
   return r && !['FAILED', 'DELETED'].includes(r.status) ? r : null;
 }
-export function storyQuoteSummary(q: StoryVideoQuote): string {
+/**
+ * `member` (ST3-U-03): не-владельцу — без сумм резерва и остатка бюджета
+ * провайдера; его цена — строка `charge` в кредитах.
+ */
+export function storyQuoteSummary(
+  q: StoryVideoQuote,
+  str: StoryPlanStrings = RU_PLAN,
+  member = false
+): string {
+  const t = str.plan;
   const existing = liveExistingRender(q);
   if (existing)
     return existing.status === 'READY'
-      ? 'Такая версия уже собрана: повторный запрос вернёт её без новых оплат.'
-      : `Такая версия уже запущена (${renderStatusLabel(existing.status)}): повторный запрос вернёт её без новых оплат.`;
+      ? t.existsReady
+      : fp(t.existsRunning, {
+          status: renderStatusLabel(existing.status, str),
+        });
   const reuse = q.segments.filter((s) => s.state === 'reuse').length;
   const fresh = q.segments.filter((s) => s.state === 'synthesize').length;
   const length = q.layout
-    ? ` · длительность ${q.layoutEstimated ? '≈ ' : ''}${q.layout.durationSeconds.toFixed(1)} с`
+    ? fp(t.length, {
+        approx: q.layoutEstimated ? '≈ ' : '',
+        n: q.layout.durationSeconds.toFixed(1),
+      })
     : '';
-  return `Переиспользуется: ${reuse} · синтезируется заново: ${fresh}${length} · резерв ${usd(q.reserveMicroUsd)} · остаток бюджета ${usd(q.remainingMicroUsd)}${q.voice.profile === 'parent' ? ' · голос не клонируется повторно' : ''}`;
+  const parent = q.voice.profile === 'parent' ? t.parentNoClone : '';
+  return member
+    ? fp(t.summaryMember, { reuse, fresh, length, parent })
+    : fp(t.summary, {
+        reuse,
+        fresh,
+        length,
+        reserve: usd(q.reserveMicroUsd),
+        remaining: usd(q.remainingMicroUsd),
+        parent,
+      });
 }
 
 /** Русские подписи статусов сборки (S3‑12): внутренние коды человеку не показываются. */
@@ -260,8 +325,11 @@ export const RENDER_STATUS_LABEL: Record<string, string> = {
   FAILED: 'ошибка',
   DELETED: 'удалено',
 };
-export function renderStatusLabel(status: string): string {
-  return RENDER_STATUS_LABEL[status] ?? 'статус уточняется';
+export function renderStatusLabel(
+  status: string,
+  str: StoryPlanStrings = RU_PLAN
+): string {
+  return (str.render as Record<string, string>)[status] ?? str.render.other;
 }
 
 /**
@@ -271,41 +339,44 @@ export function renderStatusLabel(status: string): string {
  */
 export function storyBuildGate(
   quote: StoryVideoQuote | null,
-  withProfile: boolean
+  withProfile: boolean,
+  str: StoryPlanStrings = RU_PLAN,
+  member = false
 ): { ok: boolean; label: string; reason: string | null } {
-  const base = withProfile ? 'Собрать с голосом из профиля' : 'Собрать с Nova';
+  const t = str.plan;
+  const base = withProfile ? t.buildProfile : t.buildNova;
   if (!quote)
     return {
       ok: false,
       label: base,
-      reason:
-        'Сначала нажмите «Предпросмотр сегментов и смета»: сборка запускается только по свежей смете.',
+      reason: member ? t.needQuoteMember : t.needQuote,
     };
   if (quote.blockers.length)
-    return {
-      ok: false,
-      label: base,
-      reason: 'Смета показывает препятствия — исправьте их и обновите смету.',
-    };
+    return { ok: false, label: base, reason: t.hasBlockers };
   if (!quote.fits)
     return {
       ok: false,
       label: base,
-      reason: `Резерв ${usd(quote.reserveMicroUsd)} больше остатка бюджета ${usd(quote.remainingMicroUsd)} — сборка не запустится.`,
+      reason: member
+        ? t.overBudgetMember
+        : fp(t.overBudget, {
+            reserve: usd(quote.reserveMicroUsd),
+            remaining: usd(quote.remainingMicroUsd),
+          }),
     };
   const existing = liveExistingRender(quote);
   if (existing)
     return {
       ok: true,
-      label:
-        existing.status === 'READY'
-          ? 'Открыть уже собранную версию · без новых оплат'
-          : 'Открыть уже запущенную версию · без новых оплат',
+      label: existing.status === 'READY' ? t.openReady : t.openRunning,
       reason: null,
     };
   return {
     ok: true,
-    label: `${base} · резерв ${usd(quote.reserveMicroUsd)}`,
+    // ST3-U-03: не-владельцу — без резерва провайдера (цена — в кредитах).
+    label: member
+      ? base
+      : fp(t.withReserve, { label: base, usd: usd(quote.reserveMicroUsd) }),
     reason: null,
   };
 }

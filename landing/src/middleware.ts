@@ -11,6 +11,12 @@ import {
 } from './lib/stories-host';
 import { SITE_URL } from './lib/content';
 import { isReachableOrigin } from './lib/site-origin';
+import {
+  isStoriesIndexable,
+  isStoriesOpen,
+  storiesLandingMode,
+  type StoriesLandingMode,
+} from './lib/stories/landing-mode';
 
 /**
  * Локаль-редирект (этап 55) — паттерн перенесён из архитектуры блога
@@ -113,7 +119,8 @@ const SUBDOMAIN_SITES: ReadonlyArray<{
   { matches: isGreetingHost, siteUrl: GREETING_SITE_URL, slug: 'greetings' },
   { matches: isTutorialHost, siteUrl: TUTORIAL_SITE_URL, slug: 'site-tutorial' },
   // Story‑Tales (решение 16.10, вечер): то же правило, что у соседей, но
-  // страница НИКОГДА не индексируется — см. `withStoriesHeaders` ниже.
+  // страница не индексируется до режима `public` (Р-ST3-6), а в `closed`
+  // не отдаётся вовсе — см. `withStoriesHeaders` и `middleware` ниже.
   { matches: isStoriesHost, siteUrl: STORIES_SITE_URL, slug: 'stories' },
 ];
 
@@ -129,18 +136,27 @@ const SUBDOMAIN_SITES: ReadonlyArray<{
  * него заголовки конфига, значит проверять это на проде. Здесь он
  * ставится явно; на rewrite заголовки middleware переходят в итоговый
  * ответ страницы. Медиа (`/stories-media/*`), OG-карточки
- * (`/og/stories-*`) и весь хост story-tales.* matcher теперь пропускает
- * сюда отдельными строками — им middleware отвечает 404 (аудит 2,
- * ST2-U-04/05); `next.config.js` остаётся вторым замком заголовков.
+ * (`/og/stories-*`) и весь хост story-tales.* matcher пропускает сюда
+ * отдельными строками — в `closed` им middleware отвечает 404 (аудит 2,
+ * ST2-U-04/05), в `pilot`/`public` пропускает дальше с этими же
+ * заголовками; `next.config.js` остаётся вторым замком заголовков.
+ *
+ * `X-Robots-Tag` снимается только в `public` (Р-ST3-6): там страница
+ * индексируется. `Referrer-Policy: no-referrer` остаётся во всех режимах
+ * (Р-STL-7).
  */
-function withStoriesHeaders(response: NextResponse): NextResponse {
-  response.headers.set('X-Robots-Tag', STORIES_ROBOTS);
+function withStoriesHeaders(response: NextResponse, mode: StoriesLandingMode): NextResponse {
+  if (!isStoriesIndexable(mode)) response.headers.set('X-Robots-Tag', STORIES_ROBOTS);
   response.headers.set('Referrer-Policy', STORIES_REFERRER_POLICY);
   return response;
 }
 
-/** Закрытая разработка Story‑Tales: всё, что к ней относится, — 404. */
-function isClosedStoriesRequest(host: string | null, pathname: string): boolean {
+/**
+ * Всё, что относится к Story‑Tales: хост целиком, `/<locale>/stories`,
+ * медиа и OG-карточки. В `closed` — 404; в остальных режимах — обычная
+ * маршрутизация с заголовками Story‑Tales.
+ */
+function isStoriesRequest(host: string | null, pathname: string): boolean {
   return (
     isStoriesHost(host) ||
     isStoriesPath(pathname, locales) ||
@@ -150,21 +166,31 @@ function isClosedStoriesRequest(host: string | null, pathname: string): boolean 
 }
 
 export function middleware(request: NextRequest) {
-  // Closed development: no public Story landing, promo cards or media —
-  // on the Story host every path, including /legal, /qa, robots, sitemap
-  // and static files (ST2-U-04/05).
-  if (isClosedStoriesRequest(request.headers.get('host'), request.nextUrl.pathname)) {
-    return withStoriesHeaders(new NextResponse('Not Found', { status: 404 }));
+  const mode = storiesLandingMode();
+  const host = request.headers.get('host');
+  const { pathname } = request.nextUrl;
+  if (isStoriesRequest(host, pathname)) {
+    // Closed development (STORY_TALES_LANDING=closed, the default): no
+    // public Story landing, promo cards or media — on the Story host every
+    // path, including /legal, /qa, robots, sitemap and static files
+    // (ST2-U-04/05).
+    if (!isStoriesOpen(mode)) {
+      return withStoriesHeaders(new NextResponse('Not Found', { status: 404 }), mode);
+    }
+    // Pilot/public: OG-карточки, медиа, статика и `_next` поддомена — как
+    // без middleware, но с заголовками Story‑Tales (noindex до `public`).
+    if (!LOCALIZED_PATH.test(pathname)) {
+      return withStoriesHeaders(NextResponse.next(), mode);
+    }
   }
-  // Пришёл только через строки matcher для Story‑Tales, но не закрыт —
-  // не локализуем (см. LOCALIZED_PATH).
-  if (!LOCALIZED_PATH.test(request.nextUrl.pathname)) {
+  // Пришёл только через строки matcher для Story‑Tales, но не относится к
+  // ней — не локализуем (см. LOCALIZED_PATH).
+  if (!LOCALIZED_PATH.test(pathname)) {
     return NextResponse.next();
   }
   const response = route(request);
-  const host = request.headers.get('host');
-  return isStoriesHost(host) || isStoriesPath(request.nextUrl.pathname, locales)
-    ? withStoriesHeaders(response)
+  return isStoriesHost(host) || isStoriesPath(pathname, locales)
+    ? withStoriesHeaders(response, mode)
     : response;
 }
 

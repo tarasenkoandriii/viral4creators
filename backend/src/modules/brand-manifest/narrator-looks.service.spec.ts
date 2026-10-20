@@ -22,7 +22,10 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { createHash } from 'node:crypto';
 import { NarratorLooksService } from './narrator-looks.service';
 import { NarratorLooksController } from './narrator-looks.controller';
-import { StoryDevelopmentGuard } from '../story-gifts/story-development.guard';
+import {
+  StoryAccessGuard,
+  StoryOwnerOnlyGuard,
+} from '../story-gifts/story-access.guard';
 import { TelegramIdentityGuard } from '../telegram-auth/telegram-identity.guard';
 import {
   NARRATOR_IDENTITY_LINE,
@@ -167,6 +170,8 @@ function build(o: Opts = {}) {
     }),
   };
   const prisma: any = {
+    // ST3-S-03: revoking the image consent withdraws Story public links.
+    storyGift: { updateMany: jest.fn(async () => ({ count: 0 })) },
     brandManifest: {
       findFirst: jest.fn(async ({ where }: any) => {
         const m = manifests[where.id];
@@ -266,7 +271,12 @@ describe('NarratorLooksService (WP5)', () => {
       GUARDS_METADATA,
       NarratorLooksController,
     );
-    expect(guards).toEqual([TelegramIdentityGuard, StoryDevelopmentGuard]);
+    // Р-ST3-BE-18: Gemini, not priced in credits — owner-only beyond `owner`.
+    expect(guards).toEqual([
+      TelegramIdentityGuard,
+      StoryAccessGuard,
+      StoryOwnerOnlyGuard,
+    ]);
   });
 
   describe('создание варианта', () => {
@@ -629,6 +639,24 @@ describe('NarratorLooksService (WP5)', () => {
       expect(preview.hash).toBe(look.photoHash);
       await t.service.apply('u1', 'm1', look.id);
       const view = await t.service.remove('u1', 'm1', look.id);
+      // ST3-S-15/R-13: deleting the variant withdraws Story links with it.
+      expect(t.prisma.storyGift.updateMany).toHaveBeenCalledWith({
+        where: {
+          AND: [
+            {
+              userId: 'u1',
+              videoRenders: {
+                some: {
+                  approvedAt: { not: null },
+                  segments: { path: ['narrator', 'lookId'], equals: look.id },
+                },
+              },
+            },
+            { shareHash: { not: null } },
+          ],
+        },
+        data: expect.objectContaining({ shareHash: null }),
+      });
       expect(view.active.kind).toBe('original');
       expect(view.items).toHaveLength(0);
       expect(t.looks[0]).toMatchObject({
@@ -656,6 +684,24 @@ describe('NarratorLooksService (WP5)', () => {
       await t.service.apply('u1', 'm1', look.id);
       const revoked = await t.service.revokeConsent('u1', 'm1');
       expect(revoked.consent.active).toBe(false);
+      // ST3-S-03/R-04: releases with this narrator image leave the link.
+      expect(t.prisma.storyGift.updateMany).toHaveBeenCalledWith({
+        where: {
+          AND: [
+            {
+              userId: 'u1',
+              videoRenders: {
+                some: {
+                  approvedAt: { not: null },
+                  segments: { path: ['narrator', 'manifestId'], equals: 'm1' },
+                },
+              },
+            },
+            { shareHash: { not: null } },
+          ],
+        },
+        data: expect.objectContaining({ shareHash: null }),
+      });
       expect(revoked.active).toMatchObject({
         kind: 'variant',
         problem: 'consent',

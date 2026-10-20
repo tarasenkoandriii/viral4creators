@@ -14,8 +14,9 @@
  *   DELETE /brand-manifests/:manifestId/narrator-looks/:lookId               удалить вариант (байты стираются)
  *
  * Брендбук общий (TelegramIdentityGuard, владелец по userId), но функция
- * — только для Story: закрытая разработка, поэтому ещё и
- * `StoryDevelopmentGuard` (не владелец Story — 404). Р-ST-WP5-1.
+ * — только для Story, поэтому ещё и `StoryAccessGuard` (режим
+ * `STORY_TALES_ACCESS`: нет доступа к Story — 404, нет правил Story — 403
+ * `STORY_TERMS_REQUIRED` на POST). Р-ST-WP5-1, Р-ST3-1.
  */
 
 import {
@@ -36,7 +37,10 @@ import {
   IdentifiedRequest,
   TelegramIdentityGuard,
 } from '../telegram-auth/telegram-identity.guard';
-import { StoryDevelopmentGuard } from '../story-gifts/story-development.guard';
+import {
+  StoryAccessGuard,
+  StoryOwnerOnlyGuard,
+} from '../story-gifts/story-access.guard';
 import {
   NarratorLooksService,
   NarratorLooksView,
@@ -57,7 +61,7 @@ export const PRIVATE_IMAGE_HEADERS: Readonly<Record<string, string>> = {
 };
 
 @Controller('brand-manifests')
-@UseGuards(TelegramIdentityGuard, StoryDevelopmentGuard)
+@UseGuards(TelegramIdentityGuard, StoryAccessGuard, StoryOwnerOnlyGuard)
 export class NarratorLooksController {
   constructor(private readonly looks: NarratorLooksService) {}
 

@@ -10,6 +10,11 @@
  * «**Версия: YYYY-MM-DD.**» и должна совпадать с TERMS_VERSION в
  * backend/src/modules/legal/legal.service.ts (скрипт это проверяет).
  *
+ * Приложения к оферте (`appendixOf`) — со своей версией: их принимают
+ * отдельно (правила Story‑Tales — `POST /story-gifts/terms/accept`), и
+ * новая редакция приложения не должна заставлять всех заново принимать
+ * оферту. Версия приложения сверяется со своей константой backend.
+ *
  *   node scripts/sync-legal.mjs        # записать
  *   node scripts/sync-legal.mjs --check # только проверить (CI)
  */
@@ -22,6 +27,19 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = [
   { key: 'offer', file: 'offer.md', slug: 'offer', title: 'Договор публичной оферты' },
   { key: 'termsOfUse', file: 'terms-of-use.md', slug: 'terms-of-use', title: 'Условия использования' },
+  {
+    key: 'storyTalesRules',
+    file: 'story-tales-rules.md',
+    slug: 'story-tales-rules',
+    title: 'Правила Story‑Tales (приложение к оферте)',
+    appendixOf: 'offer',
+    // STORY_TERMS_VERSION = 'story-rules-<версия документа>'.
+    backend: {
+      file: 'backend/src/modules/story-gifts/story-access.ts',
+      constant: 'STORY_TERMS_VERSION',
+      expect: (v) => `story-rules-${v}`,
+    },
+  },
 ];
 
 function versionOf(md, file) {
@@ -35,7 +53,9 @@ const docs = DOCS.map((d) => {
   return { ...d, markdown: md, version: versionOf(md, d.file) };
 });
 
-const versions = [...new Set(docs.map((d) => d.version))];
+const versions = [
+  ...new Set(docs.filter((d) => !d.appendixOf).map((d) => d.version)),
+];
 if (versions.length !== 1) {
   throw new Error(`Версии документов расходятся: ${versions.join(', ')}`);
 }
@@ -52,6 +72,19 @@ if (backendVersion !== version) {
   );
 }
 
+for (const d of docs.filter((x) => x.backend)) {
+  const src = readFileSync(join(root, d.backend.file), 'utf8');
+  const actual = src.match(
+    new RegExp(`${d.backend.constant}\\s*=\\s*'([^']+)'`)
+  )?.[1];
+  const expected = d.backend.expect(d.version);
+  if (actual !== expected) {
+    throw new Error(
+      `${d.backend.constant} в ${d.backend.file} (${actual}) не совпадает с версией ${d.file} (ожидается ${expected})`
+    );
+  }
+}
+
 const header = `/**
  * СГЕНЕРИРОВАНО scripts/sync-legal.mjs — не редактировать руками.
  * Источник: doc/legal/*.md. После правки документов запустите
@@ -64,6 +97,8 @@ export interface LegalDoc {
   slug: string;
   title: string;
   version: string;
+  /** Приложение к документу с этим слагом; версия у приложения своя. */
+  appendixOf?: string;
   markdown: string;
 }
 
@@ -73,7 +108,7 @@ const body =
   docs
     .map(
       (d) =>
-        `export const ${d.key.toUpperCase()}_DOC: LegalDoc = {\n  slug: '${d.slug}',\n  title: ${JSON.stringify(d.title)},\n  version: '${d.version}',\n  markdown: ${JSON.stringify(d.markdown)},\n};\n`
+        `export const ${d.key.toUpperCase()}_DOC: LegalDoc = {\n  slug: '${d.slug}',\n  title: ${JSON.stringify(d.title)},\n  version: '${d.version}',\n${d.appendixOf ? `  appendixOf: '${d.appendixOf}',\n` : ''}  markdown: ${JSON.stringify(d.markdown)},\n};\n`
     )
     .join('\n') +
   `\nexport const LEGAL_DOCS: LegalDoc[] = [${docs

@@ -11,9 +11,13 @@ import type { StoriesCopy } from './copy';
  */
 export const OG_CARD_BYTES_MAX = 95 * 1024;
 
+/**
+ * Бейдж карточки — пилотный (`access.pilot.badge`): карточки отдаются
+ * только в режимах лендинга `pilot`/`public` (`landing-mode.ts`).
+ */
 export function ogCardFingerprint(t: StoriesCopy): string {
   return createHash('sha256')
-    .update(`${t.tagline}\n${t.hero.title}\n${t.hero.badge}\n${t.hero.illustrationCaption}`)
+    .update(`${t.tagline}\n${t.hero.title}\n${t.access.pilot.badge}\n${t.hero.illustrationCaption}`)
     .digest('hex')
     .slice(0, 16);
 }
