@@ -32,6 +32,7 @@ declare module 'node:fs' {
   // `new URL('…', import.meta.url)`, и объявление только под строку
   // отвергало бы рабочий код.
   export function readFileSync(path: string | URL, encoding: 'utf8'): string;
+  export function readFileSync(path: string | URL): Uint8Array;
   export function existsSync(path: string | URL): boolean;
   export function readdirSync(path: string | URL): string[];
   // Z-2b: драйвер сквозных маршрутов `publisher-e2e.ts` пишет итог в файл.

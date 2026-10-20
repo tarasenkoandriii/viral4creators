@@ -1,3 +1,4 @@
+import { QaSiteReport } from '../components/QaSiteReport';
 import { loadQaFindingReport } from '../lib/qa-finding-report';
 import { QaArtifacts } from '../components/QaArtifacts';
 import { useEffect, useState } from 'react';
@@ -175,6 +176,7 @@ function Registry({ siteId }: { siteId: string }) {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Замечания QA</h1>
+      <QaSiteReport siteId={siteId} disabled={busy || dirty} />
       {selected && (
         <Card>
           <QaArtifacts
