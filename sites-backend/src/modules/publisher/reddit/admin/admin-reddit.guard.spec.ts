@@ -40,7 +40,23 @@ function deferred() {
   return { promise, resolve };
 }
 
-const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
+/** Synchronize on the event under test, not CI scheduling speed. */
+async function reached(event: ReturnType<typeof deferred>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      event.promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('request barrier timed out')),
+          5000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 describe('P-R-ADM: журнал доступа — до ответа, обрыв — 499 (аудит adm-1)', () => {
   const saved = process.env.SITES_INTERNAL_SECRET;
@@ -50,6 +66,9 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
   let gate: ReturnType<typeof deferred> | null;
   let release: ReturnType<typeof deferred>;
   let handlerDone: number;
+  let writeStarted: ReturnType<typeof deferred>;
+  let handlerStarted: ReturnType<typeof deferred>;
+  let handlerFinished: ReturnType<typeof deferred>;
 
   beforeAll(async () => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
@@ -57,6 +76,7 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
     const log = {
       write: jest.fn(async (e: AdminAccessEntry) => {
         writes.push(e);
+        writeStarted.resolve();
         if (gate) await gate.promise;
       }),
     } as unknown as AdminAccessLog;
@@ -79,9 +99,11 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
     });
     // Медленный обработчик (импорт): отвечает, когда тест отпустит.
     app.post(`${BASE}/import/apply`, async (_req, res) => {
+      handlerStarted.resolve();
       await release.promise;
       handlerDone++;
       res.status(200).json({ success: true, data: { late: true } });
+      handlerFinished.resolve();
     });
     // Ошибка (как ответ фильтра PubExceptionFilter).
     app.post(`${BASE}/cx/sources/:id/revoke`, (_req, res) => {
@@ -104,6 +126,14 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
     gate = null;
     release = deferred();
     handlerDone = 0;
+    writeStarted = deferred();
+    handlerStarted = deferred();
+    handlerFinished = deferred();
+  });
+
+  afterEach(() => {
+    gate?.resolve();
+    release.resolve();
   });
 
   function send(method: string, p: string, signal?: AbortSignal) {
@@ -126,12 +156,13 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
     ] as const) {
       writes = [];
       gate = deferred();
+      writeStarted = deferred();
       let body: string | null = null;
       const res = send(method, p).then(async (r) => {
         body = await r.text();
         return r;
       });
-      await tick(100);
+      await reached(writeStarted);
       // Строка уже записывается, а тело ответа клиент ещё не получил.
       expect(writes).toEqual([{ actor: 'admin:u1', method, route, status }]);
       expect(body).toBeNull();
@@ -148,11 +179,11 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
     const res = send('POST', 'import/apply', ac.signal).catch(
       (e: unknown) => e,
     );
-    await tick(100);
+    await reached(handlerStarted);
     expect(writes).toEqual([]);
     ac.abort();
     await res;
-    for (let i = 0; i < 50 && writes.length === 0; i++) await tick();
+    await reached(writeStarted);
     expect(writes).toEqual([
       {
         actor: 'admin:u1',
@@ -162,8 +193,7 @@ describe('P-R-ADM: журнал доступа — до ответа, обрыв
       },
     ]);
     release.resolve();
-    for (let i = 0; i < 50 && handlerDone === 0; i++) await tick();
-    await tick(100);
+    await reached(handlerFinished);
     expect(handlerDone).toBe(1);
     expect(writes).toHaveLength(1);
   });
