@@ -1,3 +1,4 @@
+import { voiceAffirmationNeedsRetry } from '../assist-ui-core/action-words';
 import { sonioxScope } from '../soniox-observability/soniox-context';
 /**
  * Голосовой ввод команды сотрудника «Админки» (Э6-бис (б), §4.10, §5-бис.7;
@@ -115,6 +116,13 @@ export class AdminVoiceInputService {
       this.logger.log(
         `admin voice site=${s.siteId} bytes=${audio.length} s=${r.seconds} ok=${!!r.text} reason=${r.reason ?? '-'}`,
       );
+      if (voiceAffirmationNeedsRetry(r.text ?? '', r.speechConfidence)) {
+        throw adminVoiceError(
+          422,
+          'ADMIN_VC_NOT_HEARD',
+          'Не расслышал подтверждение — повторите или нажмите кнопку',
+        );
+      }
       if (!r.text) {
         throw r.reason === 'no_speech' || r.reason === 'empty'
           ? adminVoiceError(

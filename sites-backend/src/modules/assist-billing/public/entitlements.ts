@@ -41,6 +41,11 @@ export interface RawDb {
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
 }
 
+// A transaction callback only exposes SQL; no provider call belongs inside it.
+export interface TransactionalRawDb extends RawDb {
+  $transaction<T>(body: (tx: RawDb) => Promise<T>): Promise<T>;
+}
+
 const SUBS = '"sites"."assist_subscriptions"';
 const USAGE = '"sites"."assist_account_usage"';
 const ASSIST_SITES = '"sites"."assist_sites"';

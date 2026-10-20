@@ -237,3 +237,19 @@ export function replyKind(raw: string): 'yes' | 'no' | 'stop' | null {
   if (YES.has(w[0]) && tail(YES)) return 'yes';
   return null;
 }
+
+/** A positive spoken reply authorizes actions only with an explicit reliable STT score.
+ * No/Stop stay fail-safe even when the score is low or absent.
+ */
+export function voiceAffirmationNeedsRetry(
+  raw: string,
+  confidence: number | undefined,
+): boolean {
+  return (
+    replyKind(raw) === 'yes' &&
+    (confidence === undefined ||
+      !Number.isFinite(confidence) ||
+      confidence < 0.8 ||
+      confidence > 1)
+  );
+}

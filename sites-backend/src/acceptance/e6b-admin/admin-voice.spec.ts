@@ -187,6 +187,35 @@ describeE6bAdmin('Э6-бис (б) — голосовое управление «
       expect(c).toMatchObject({ mode: 'on', maxSteps: 10, voice: true });
     });
 
+    it.each(['Так', 'Да', 'Yes'])(
+      'admin low-confidence %s cannot receive a confirmation ticket',
+      async (text) => {
+        const isolated = await readySite(st, shop);
+        await forceOn(st, isolated);
+        const a = await employeeSession(st, isolated, 'emp-low-confirm');
+        st.soniox.reset();
+        const saved = st.soniox.transcript;
+        try {
+          st.soniox.transcript = text;
+          st.soniox.confidence = { [text]: 0.2 };
+          const audio = Buffer.concat([
+            Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+            Buffer.alloc(3000, 7),
+          ]);
+          await request(st.srv())
+            .post('/assist-admin/v1/voice')
+            .set(ADMIN_SESSION_HEADER, a)
+            .set('content-type', 'audio/webm')
+            .send(audio)
+            .expect(422);
+          expect(st.soniox.count('DELETE', '/files/')).toBe(1);
+          expect(st.soniox.count('DELETE', '/transcriptions/')).toBe(1);
+        } finally {
+          st.soniox.transcript = saved;
+        }
+      },
+    );
+
     it('голос: запись → текст и билет (Soniox убран в finally) → план с источником voice', async () => {
       const a = await employeeSession(st, R, 'emp-voice');
       st.soniox.reset();

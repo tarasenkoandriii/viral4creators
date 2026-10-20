@@ -2,6 +2,9 @@
  * «В диалоге был голос» — вес 2 (Э5; ТЗ §7.1 Р-58: «диалог с голосом —
  * распознавание или озвучка хотя бы одного ответа — 2»; assist-billing/units).
  *
+ * Флаг и доплата фиксируются одной транзакцией, с блокировкой строки диалога.
+ * Исключение БД откатывает оба изменения; параллельный запрос не видит
+ * неоплаченный флаг. Провайдеры внутри транзакции не вызываются.
  * Отметка — один условный UPDATE `… SET "voice" = true WHERE NOT "voice"`:
  * первым ставит один запрос (параллельные озвучки одного диалога не
  * доплатят дважды). Дальше два случая:
@@ -20,7 +23,7 @@
 import type { SubscriptionState } from '../../assist-billing/subscription-state';
 import {
   claimUnits,
-  type RawDb,
+  type TransactionalRawDb,
 } from '../../assist-billing/public/entitlements';
 import { dialogUnits } from '../../assist-billing/units';
 import { VOICE_DEFAULTS } from '../voice-config';
@@ -38,7 +41,7 @@ export function voiceUpgradeUnits(answers: number): number {
 export type VoiceMark = 'marked' | 'already' | 'denied';
 
 export async function markVoiceDialog(
-  db: RawDb,
+  db: TransactionalRawDb,
   p: {
     accountId: string;
     conversationId: string;
@@ -46,28 +49,30 @@ export async function markVoiceDialog(
     preview: boolean;
   },
 ): Promise<VoiceMark> {
-  const won = await db.$queryRawUnsafe<
-    Array<{ answers: number; dialogCounted: boolean }>
-  >(
-    `UPDATE ${CONV} SET "voice" = true WHERE "id" = $1 AND NOT "voice"
+  return db.$transaction(async (tx) => {
+    const won = await tx.$queryRawUnsafe<
+      Array<{ answers: number; dialogCounted: boolean }>
+    >(
+      `UPDATE ${CONV} SET "voice" = true WHERE "id" = $1 AND NOT "voice"
       RETURNING "answers", "dialogCounted"`,
-    p.conversationId,
-  );
-  if (!won.length) return 'already';
-  const { answers, dialogCounted } = won[0];
-  if (!dialogCounted || p.preview) return 'marked';
-  const units = voiceUpgradeUnits(Number(answers));
-  if (units === 0) return 'marked';
-  const ok = await claimUnits(db, {
-    accountId: p.accountId,
-    state: p.state,
-    units,
-    dialogs: 0,
+      p.conversationId,
+    );
+    if (!won.length) return 'already';
+    const { answers, dialogCounted } = won[0];
+    if (!dialogCounted || p.preview) return 'marked';
+    const units = voiceUpgradeUnits(Number(answers));
+    if (units === 0) return 'marked';
+    const ok = await claimUnits(tx, {
+      accountId: p.accountId,
+      state: p.state,
+      units,
+      dialogs: 0,
+    });
+    if (ok) return 'marked';
+    await tx.$executeRawUnsafe(
+      `UPDATE ${CONV} SET "voice" = false WHERE "id" = $1`,
+      p.conversationId,
+    );
+    return 'denied';
   });
-  if (ok) return 'marked';
-  await db.$executeRawUnsafe(
-    `UPDATE ${CONV} SET "voice" = false WHERE "id" = $1`,
-    p.conversationId,
-  );
-  return 'denied';
 }

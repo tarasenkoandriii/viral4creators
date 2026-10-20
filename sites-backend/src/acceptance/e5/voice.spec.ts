@@ -123,6 +123,63 @@ describeDb('Приёмка Э5 — голос виджета', () => {
     return st.owner.siteAiUsage.findMany({ where: { siteId, operation } });
   }
 
+  it.each(['Так', 'Да', 'Yes'])(
+    'does not issue confirmation authority for low-confidence %s',
+    async (text) => {
+      const s = await voiceSite();
+      const saved = fake.transcript;
+      try {
+        fake.transcript = text;
+        fake.confidence = { [text]: 0.2 };
+        expect(
+          await voice.transcribe(ctx(s), fakeRecording(), 'audio/webm'),
+        ).toEqual({ ok: false, failure: 'not_heard' });
+      } finally {
+        fake.transcript = saved;
+      }
+    },
+  );
+
+  it.each([undefined, 0.79, 0.8, 0.98])(
+    'positive confirmation confidence %s is enforced before issuing a ticket',
+    async (score) => {
+      const s = await voiceSite();
+      const saved = fake.transcript;
+      try {
+        fake.transcript = 'Так';
+        fake.confidence = score === undefined ? {} : { Так: score };
+        const r = await voice.transcribe(ctx(s), fakeRecording(), 'audio/webm');
+        const accepted = { ok: true, text: 'Так', ticket: expect.any(String) };
+        const expected =
+          score === undefined || score < 0.8
+            ? { ok: false, failure: 'not_heard' }
+            : accepted;
+        expect(r).toMatchObject(expected);
+        expect(fake.count('DELETE', '/files/')).toBe(1);
+        expect(fake.count('DELETE', '/transcriptions/')).toBe(1);
+      } finally {
+        fake.transcript = saved;
+      }
+    },
+  );
+
+  it.each(['Ні', 'Нет', 'No', 'Стоп', 'Stop'])(
+    'low confidence cannot block the safe reply %s',
+    async (text) => {
+      const s = await voiceSite();
+      const saved = fake.transcript;
+      try {
+        fake.transcript = text;
+        fake.confidence = { [text]: 0.2 };
+        expect(
+          await voice.transcribe(ctx(s), fakeRecording(), 'audio/webm'),
+        ).toMatchObject({ ok: true, text });
+      } finally {
+        fake.transcript = saved;
+      }
+    },
+  );
+
   // ── п.1: запись не остаётся ни у нас, ни у провайдера ───────────────────
 
   it('п.1 успех: текст и билет; файл и транскрипция удалены у Soniox ПОСЛЕ разбора; звук у нас затёрт; расход — секунды Soniox', async () => {

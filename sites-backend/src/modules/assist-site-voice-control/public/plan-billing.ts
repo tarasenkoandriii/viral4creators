@@ -5,13 +5,16 @@
  * механика, что `claimDialog` конвейера чата (assist-site-chat): первый
  * ответ диалога засчитывает диалог одним условным UPDATE флага, единицы —
  * условным UPDATE счётчика подписки; не поместились — откат флага и счёта,
- * плана нет (мягкий стоп). Под assist_public (права — миграции Э2–Э5).
+ * плана нет (мягкий стоп). Флаг, счётчик и квота — в одной транзакции:
+ * конкурентный запрос не принимает промежуточный флаг за оплаченный диалог.
+ * Под assist_public (права — миграции Э2–Э5).
  */
 import {
   claimUnits,
   effectiveLimit,
   readUsage,
   type RawDb,
+  type TransactionalRawDb,
 } from '../../assist-billing/public/entitlements';
 import type { SubscriptionState } from '../../assist-billing/subscription-state';
 import { DIALOG_BASE_UNITS, unitsDelta } from '../../assist-billing/units';
@@ -30,41 +33,43 @@ export async function quotaLeft(
 }
 
 export async function claimPlanAnswer(
-  db: RawDb,
+  db: TransactionalRawDb,
   p: { accountId: string; conversationId: string; state: SubscriptionState },
 ): Promise<boolean> {
-  const won = await db.$queryRawUnsafe<Array<{ id: string }>>(
-    `UPDATE ${CONV} SET "dialogCounted" = true
+  return db.$transaction(async (tx) => {
+    const won = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+      `UPDATE ${CONV} SET "dialogCounted" = true
       WHERE "id" = $1 AND NOT "dialogCounted" RETURNING "id"`,
-    p.conversationId,
-  );
-  const counted = await db.$queryRawUnsafe<
-    Array<{ answers: number; voice: boolean }>
-  >(
-    `UPDATE ${CONV} SET "answers" = "answers" + 1
-      WHERE "id" = $1 RETURNING "answers", "voice"`,
-    p.conversationId,
-  );
-  const n = counted[0]?.answers ?? 1;
-  const units = unitsDelta(
-    DIALOG_BASE_UNITS[counted[0]?.voice ? 'voice' : 'text'],
-    n,
-    won.length > 0,
-  );
-  if (units === 0) return true;
-  const ok = await claimUnits(db, {
-    accountId: p.accountId,
-    state: p.state,
-    units,
-    dialogs: won.length ? 1 : 0,
-  });
-  if (!ok) {
-    await db.$executeRawUnsafe(
-      `UPDATE ${CONV}
-          SET "answers" = GREATEST(0, "answers" - 1)${won.length ? ', "dialogCounted" = false' : ''}
-        WHERE "id" = $1`,
       p.conversationId,
     );
-  }
-  return ok;
+    const counted = await tx.$queryRawUnsafe<
+      Array<{ answers: number; voice: boolean }>
+    >(
+      `UPDATE ${CONV} SET "answers" = "answers" + 1
+      WHERE "id" = $1 RETURNING "answers", "voice"`,
+      p.conversationId,
+    );
+    const n = counted[0]?.answers ?? 1;
+    const units = unitsDelta(
+      DIALOG_BASE_UNITS[counted[0]?.voice ? 'voice' : 'text'],
+      n,
+      won.length > 0,
+    );
+    if (units === 0) return true;
+    const ok = await claimUnits(tx, {
+      accountId: p.accountId,
+      state: p.state,
+      units,
+      dialogs: won.length ? 1 : 0,
+    });
+    if (!ok) {
+      await tx.$executeRawUnsafe(
+        `UPDATE ${CONV}
+          SET "answers" = GREATEST(0, "answers" - 1)${won.length ? ', "dialogCounted" = false' : ''}
+        WHERE "id" = $1`,
+        p.conversationId,
+      );
+    }
+    return ok;
+  });
 }

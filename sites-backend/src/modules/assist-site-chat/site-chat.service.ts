@@ -1583,81 +1583,84 @@ export class SiteChatService {
    * флага: два параллельных вопроса одного диалога не засчитают его
    * дважды), 31-й и 61-й — ещё по весу. Единицы — счётчик периода
    * ПОДПИСКИ кабинета (условный UPDATE); не поместились — флаг и счёт
-   * ответов откатываются, модель не зовётся (мягкий стоп).
+   * ответов откатываются, модель не зовётся (мягкий стоп). Все SQL — в
+   * одной транзакции: параллельный запрос ждёт решения по квоте, исключение
+   * БД не оставляет промежуточные флаги/счётчики. Вызов модели — снаружи.
    */
   private async claimDialog(
     accountId: string,
     convId: string,
     plan: SubscriptionState,
   ): Promise<boolean> {
-    const db = this.db;
-    const won = await db.$queryRawUnsafe<Array<{ id: string }>>(
-      `UPDATE "sites"."assist_site_conversations" SET "dialogCounted" = true
+    return this.db.$transaction(async (db) => {
+      const won = await db.$queryRawUnsafe<Array<{ id: string }>>(
+        `UPDATE "sites"."assist_site_conversations" SET "dialogCounted" = true
         WHERE "id" = $1 AND NOT "dialogCounted" RETURNING "id"`,
-      convId,
-    );
-    const counted = await db.$queryRawUnsafe<
-      Array<{ answers: number; voice: boolean }>
-    >(
-      `UPDATE "sites"."assist_site_conversations" SET "answers" = "answers" + 1
-        WHERE "id" = $1 RETURNING "answers", "voice"`,
-      convId,
-    );
-    const n = counted[0]?.answers ?? 1;
-    // Э4: режим «Сайт» текстом — вес 1; Э5: в диалоге был голос — 2
-    // (assist-site-voice/public/voice-dialog.ts; «Админка» Э7 — свой вес).
-    const units = unitsDelta(
-      DIALOG_BASE_UNITS[counted[0]?.voice ? 'voice' : 'text'],
-      n,
-      won.length > 0,
-    );
-    if (units === 0) return true;
-    let ok = await this.quota.claim(db, {
-      accountId,
-      state: plan,
-      units,
-      dialogs: won.length ? 1 : 0,
-    });
-    // Р-З10-3 (а): первый вопрос диалога задан голосом, а на вес 2 места нет
-    // (осталась одна единица) — не мягкий стоп: голос снимается, диалог
-    // засчитывается текстом (вес 1), ответ идёт текстом (приёмка Э5 «чат
-    // продолжает текстом»). Озвучка этого ответа затем откажет `limit` на
-    // доплате (voice-dialog.ts) — до синтеза. Только при первом засчёте:
-    // диалог, уже оплаченный голосом, голос не теряет (иначе доплата снова).
-    if (!ok && won.length && counted[0]?.voice) {
-      const textUnits = unitsDelta(DIALOG_BASE_UNITS.text, n, true);
-      if (textUnits < units) {
-        await db.$executeRawUnsafe(
-          `UPDATE "sites"."assist_site_conversations" SET "voice" = false
-            WHERE "id" = $1`,
-          convId,
-        );
-        ok = await this.quota.claim(db, {
-          accountId,
-          state: plan,
-          units: textUnits,
-          dialogs: 1,
-        });
-        // Не поместился и вес 1 — мягкий стоп как раньше; отметка голоса
-        // возвращается (распознавание в этом диалоге было).
-        if (!ok)
-          await db.$executeRawUnsafe(
-            `UPDATE "sites"."assist_site_conversations" SET "voice" = true
-              WHERE "id" = $1`,
-            convId,
-          );
-        this.logger.warn(`ask: voice_downgraded ok=${ok} units=${textUnits}`);
-      }
-    }
-    if (!ok) {
-      await db.$executeRawUnsafe(
-        `UPDATE "sites"."assist_site_conversations"
-            SET "answers" = GREATEST(0, "answers" - 1)${won.length ? ', "dialogCounted" = false' : ''}
-          WHERE "id" = $1`,
         convId,
       );
-    }
-    return ok;
+      const counted = await db.$queryRawUnsafe<
+        Array<{ answers: number; voice: boolean }>
+      >(
+        `UPDATE "sites"."assist_site_conversations" SET "answers" = "answers" + 1
+        WHERE "id" = $1 RETURNING "answers", "voice"`,
+        convId,
+      );
+      const n = counted[0]?.answers ?? 1;
+      // Э4: режим «Сайт» текстом — вес 1; Э5: в диалоге был голос — 2
+      // (assist-site-voice/public/voice-dialog.ts; «Админка» Э7 — свой вес).
+      const units = unitsDelta(
+        DIALOG_BASE_UNITS[counted[0]?.voice ? 'voice' : 'text'],
+        n,
+        won.length > 0,
+      );
+      if (units === 0) return true;
+      let ok = await this.quota.claim(db, {
+        accountId,
+        state: plan,
+        units,
+        dialogs: won.length ? 1 : 0,
+      });
+      // Р-З10-3 (а): первый вопрос диалога задан голосом, а на вес 2 места нет
+      // (осталась одна единица) — не мягкий стоп: голос снимается, диалог
+      // засчитывается текстом (вес 1), ответ идёт текстом (приёмка Э5 «чат
+      // продолжает текстом»). Озвучка этого ответа затем откажет `limit` на
+      // доплате (voice-dialog.ts) — до синтеза. Только при первом засчёте:
+      // диалог, уже оплаченный голосом, голос не теряет (иначе доплата снова).
+      if (!ok && won.length && counted[0]?.voice) {
+        const textUnits = unitsDelta(DIALOG_BASE_UNITS.text, n, true);
+        if (textUnits < units) {
+          await db.$executeRawUnsafe(
+            `UPDATE "sites"."assist_site_conversations" SET "voice" = false
+            WHERE "id" = $1`,
+            convId,
+          );
+          ok = await this.quota.claim(db, {
+            accountId,
+            state: plan,
+            units: textUnits,
+            dialogs: 1,
+          });
+          // Не поместился и вес 1 — мягкий стоп как раньше; отметка голоса
+          // возвращается (распознавание в этом диалоге было).
+          if (!ok)
+            await db.$executeRawUnsafe(
+              `UPDATE "sites"."assist_site_conversations" SET "voice" = true
+              WHERE "id" = $1`,
+              convId,
+            );
+          this.logger.warn(`ask: voice_downgraded ok=${ok} units=${textUnits}`);
+        }
+      }
+      if (!ok) {
+        await db.$executeRawUnsafe(
+          `UPDATE "sites"."assist_site_conversations"
+            SET "answers" = GREATEST(0, "answers" - 1)${won.length ? ', "dialogCounted" = false' : ''}
+          WHERE "id" = $1`,
+          convId,
+        );
+      }
+      return ok;
+    });
   }
 
   /** Есть ли место для ещё одного диалога (чтение; захват — claimDialog). */

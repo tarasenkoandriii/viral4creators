@@ -1,3 +1,4 @@
+import { voiceAffirmationNeedsRetry } from '../../assist-ui-core/action-words';
 import { ttsFailureBudgetCost } from './tts-budget';
 import { sonioxScope } from '../../soniox-observability/soniox-context';
 /**
@@ -265,14 +266,26 @@ export class SiteVoiceService {
         `voice site=${site.siteId} bytes=${audio.length} s=${r.seconds} ok=${!!r.text} reason=${r.reason ?? '-'} terms=${termsCount}`,
       );
       // (заход 9) Метрика Т-4 «не расслышал» по языкам (§5-бис.14).
-      const heard = !!r.text;
-      if (heard || r.reason === 'no_speech' || r.reason === 'empty')
+      // A low-confidence "yes" must not acquire a signed confirmation ticket.
+      // Unknown confidence also requires a retry or the explicit button; Stop/No remain available.
+      const uncertainYes = voiceAffirmationNeedsRetry(
+        r.text ?? '',
+        r.speechConfidence,
+      );
+      const heard = !!r.text && !uncertainYes;
+      if (
+        heard ||
+        uncertainYes ||
+        r.reason === 'no_speech' ||
+        r.reason === 'empty'
+      )
         await this.countStt(
           site.siteId,
           sttLang(uiLang, r.language, heard, hints),
           heard,
           now,
         );
+      if (uncertainYes) return { ok: false, failure: 'not_heard' };
       if (!r.text) {
         return {
           ok: false,

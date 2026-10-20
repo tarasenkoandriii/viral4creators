@@ -49,6 +49,7 @@ import { KNOWLEDGE_DEFAULTS } from '../../config/assist-defaults';
 import {
   claimUnits,
   releaseUnits,
+  type RawDb,
 } from '../assist-billing/public/entitlements';
 import type { SubscriptionState } from '../assist-billing/subscription-state';
 
@@ -325,7 +326,7 @@ export class SiteBudget {
 @Injectable()
 export class DialogQuota {
   async claim(
-    db: BudgetDb,
+    db: RawDb,
     p: {
       accountId: string;
       state: SubscriptionState;
