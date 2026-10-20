@@ -139,7 +139,7 @@ it('хост под шаблоном story-tales.*, но не Story‑Tales: п�
     assert.equal(res.headers.get('location'), null, `${other}${p}: лишний редирект`);
   }
   // Внутри локализации — прежнее поведение (редирект на локаль).
-  assert.equal(serve(other, '/blog')?.headers.get('location'), `https://${other}/ru/blog`);
+  assert.equal(serve(other, '/blog')?.headers.get('location'), `https://${other}/en/blog`);
 });
 
 console.log(`stories-closed: ${passed} проверок пройдено`);
