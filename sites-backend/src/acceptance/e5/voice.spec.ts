@@ -140,6 +140,30 @@ describeDb('Приёмка Э5 — голос виджета', () => {
     },
   );
 
+  it.each(['Да пожалуйста', 'Так будь ласка', 'Yes please'])(
+    'does not issue confirmation authority when a word in %s is unscored',
+    async (text) => {
+      const s = await voiceSite();
+      const saved = fake.transcript;
+      try {
+        fake.transcript = text;
+        fake.confidence = Object.fromEntries(
+          text
+            .split(' ')
+            .slice(1)
+            .map((word) => [word, 0.99]),
+        );
+        expect(
+          await voice.transcribe(ctx(s), fakeRecording(), 'audio/webm'),
+        ).toEqual({ ok: false, failure: 'not_heard' });
+        expect(fake.count('DELETE', '/files/')).toBe(1);
+        expect(fake.count('DELETE', '/transcriptions/')).toBe(1);
+      } finally {
+        fake.transcript = saved;
+      }
+    },
+  );
+
   it.each([undefined, 0.79, 0.8, 0.98])(
     'positive confirmation confidence %s is enforced before issuing a ticket',
     async (score) => {

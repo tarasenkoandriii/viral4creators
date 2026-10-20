@@ -187,8 +187,15 @@ describeE6bAdmin('Э6-бис (б) — голосовое управление «
       expect(c).toMatchObject({ mode: 'on', maxSteps: 10, voice: true });
     });
 
-    it.each(['Так', 'Да', 'Yes'])(
-      'admin low-confidence %s cannot receive a confirmation ticket',
+    it.each([
+      'Так',
+      'Да',
+      'Yes',
+      'Да пожалуйста',
+      'Так будь ласка',
+      'Yes please',
+    ])(
+      'admin low-confidence or partially scored %s cannot receive a confirmation ticket',
       async (text) => {
         const isolated = await readySite(st, shop);
         await forceOn(st, isolated);
@@ -197,7 +204,14 @@ describeE6bAdmin('Э6-бис (б) — голосовое управление «
         const saved = st.soniox.transcript;
         try {
           st.soniox.transcript = text;
-          st.soniox.confidence = { [text]: 0.2 };
+          st.soniox.confidence = text.includes(' ')
+            ? Object.fromEntries(
+                text
+                  .split(' ')
+                  .slice(1)
+                  .map((word) => [word, 0.99]),
+              )
+            : { [text]: 0.2 };
           const audio = Buffer.concat([
             Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
             Buffer.alloc(3000, 7),

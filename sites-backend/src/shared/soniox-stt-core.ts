@@ -81,19 +81,27 @@ export function sonioxTranscriptText(transcript: {
 export function sonioxSpeechConfidence(
   tokens: readonly SonioxToken[],
 ): number | null {
-  const scores = tokens
-    .filter(
-      (t) =>
-        t.is_audio_event !== true &&
-        /[\p{L}\p{N}]/u.test(t.text ?? '') &&
-        !/^<[^>]+>$/.test(t.text ?? ''),
+  const spoken = tokens.filter(
+    (t) =>
+      t.is_audio_event !== true &&
+      /[\p{L}\p{N}]/u.test(t.text ?? '') &&
+      !/^<[^>]+>$/.test(t.text ?? ''),
+  );
+  let minimum = 1;
+  if (!spoken.length) return null;
+  for (const token of spoken) {
+    const score = token.confidence;
+    // A confident neighbour must not hide an unscored confirmation word.
+    if (
+      typeof score !== 'number' ||
+      !Number.isFinite(score) ||
+      score < 0 ||
+      score > 1
     )
-    .map((t) => t.confidence)
-    .filter(
-      (n): n is number =>
-        typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1,
-    );
-  return scores.length ? Math.min(...scores) : null;
+      return null;
+    minimum = Math.min(minimum, score);
+  }
+  return minimum;
 }
 
 /**

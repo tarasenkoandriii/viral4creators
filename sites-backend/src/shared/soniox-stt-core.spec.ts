@@ -82,6 +82,18 @@ describe('speech confidence and service markers', () => {
       ]),
     ).toBeNull();
   });
+  it.each([undefined, NaN, Infinity, -0.1, 1.1])(
+    'неполная оценка слова %s не скрывается уверенным соседним словом',
+    (confidence) => {
+      expect(
+        sonioxSpeechConfidence([
+          { text: 'да', confidence },
+          { text: ' пожалуйста', confidence: 0.99 },
+          { text: '<end>' },
+        ]),
+      ).toBeNull();
+    },
+  );
   it('финализация не попадает в речь', () => {
     expect(
       sonioxTranscriptText({
