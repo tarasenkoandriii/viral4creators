@@ -89,7 +89,7 @@ jobs:
   backend:
     name: backend — тесты, типы, линт
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: needs.changes.outputs.backend != ''
     runs-on: ubuntu-latest
 
     services:
@@ -113,8 +113,13 @@ jobs:
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/viral4creators
 
     steps:
+      - name: unchanged application
+        if: needs.changes.outputs.backend == 'false'
+        run: echo "No changes since the last successful CI; verification reused by path selection." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.backend == 'true'
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.backend == 'true'
         with:
           node-version-file: ".nvmrc"
           cache: npm
@@ -124,20 +129,24 @@ jobs:
       # в песочнице нет, и отсюда все «Property 'x' does not exist on
       # type 'PrismaService'» в локальном tsc.
       - run: npm ci
+        if: needs.changes.outputs.backend == 'true'
         working-directory: backend
       # `npm audit` на высоких (этап 53, В-6.17): TODO вёл 14 предупреждений
       # руками, и новое высокое никто не заметил бы до следующего аудита.
       # Обязательный с захода 12 (Р-З12-А7): после NestJS 11 / Express 5
       # high/critical в рантайм-дереве 0 — новое высокое красит CI сразу.
       - name: npm audit (high)
+        if: needs.changes.outputs.backend == 'true'
         run: npm audit --audit-level=high --omit=dev
         working-directory: backend
 
       - name: prisma validate
+        if: needs.changes.outputs.backend == 'true'
         run: npx prisma validate
         working-directory: backend
 
       - name: миграции накатываются на чистый Postgres 16
+        if: needs.changes.outputs.backend == 'true'
         run: npx prisma migrate deploy
         working-directory: backend
 
@@ -152,6 +161,7 @@ jobs:
       # в этом файле не работала вовсе (найдено на этапе 38). Источник
       # строки подключения — prisma.config.ts (там DIRECT_URL).
       - name: схема и миграции не разошлись
+        if: needs.changes.outputs.backend == 'true'
         run: |
           npx prisma migrate diff \
             --from-config-datasource \
@@ -169,15 +179,18 @@ jobs:
       # корневой `tsconfig.json`: он покрывает `src`, `test` и
       # `scripts` целиком.
       - name: типы (включая тесты и скрипты)
+        if: needs.changes.outputs.backend == 'true'
         run: npx tsc --noEmit
         working-directory: backend
 
       - name: линт
+        if: needs.changes.outputs.backend == 'true'
         run: npx eslint "src/**/*.ts" --max-warnings 0
         working-directory: backend
 
       # Jest transforms ESM; verify the CommonJS production dependency separately.
       - name: HTML sanitizer loads without experimental require ESM
+        if: needs.changes.outputs.backend == 'true'
         working-directory: backend
         run: >-
           node --no-experimental-require-module -e
@@ -205,6 +218,7 @@ jobs:
       #  - modules/plan — кто и что вправе делать за деньги;
       #  - квоты SerpApi/YouTube и служебный канал (этап 49).
       - name: тесты и покрытие опасных файлов
+        if: needs.changes.outputs.backend == 'true'
         run: npx jest --ci --coverage --coverageReporters=text-summary --json --outputFile=jest-results.json --reporters=default --reporters=github-actions
         working-directory: backend
         env:
@@ -219,6 +233,7 @@ jobs:
       # `--require-jest`: здесь отчёт jest обязан быть и быть честным
       # (success, ноль упавших, наборов = spec-файлов) — иначе падение, а не skip.
       - name: счётчики в документах совпадают с реальностью
+        if: needs.changes.outputs.backend == 'true'
         run: node scripts/check-docs.mjs --require-jest
 
   # Бэкенд клиентских сайтов (Э0 ИИ-помощника, ядро site-core общее с QA).
@@ -801,24 +816,32 @@ jobs:
   frontend:
     name: frontend (TMA) — типы, линт, unit-скрипты, сборка
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    if: needs.changes.outputs.frontend != ''
     runs-on: ubuntu-latest
     steps:
+      - name: unchanged application
+        if: needs.changes.outputs.frontend == 'false'
+        run: echo "No changes since the last successful CI; verification reused by path selection." >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
+        if: needs.changes.outputs.frontend == 'true'
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.frontend == 'true'
         with:
           node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+        if: needs.changes.outputs.frontend == 'true'
         working-directory: frontend
       # Строго с захода 13 (Р-З13-В6): high/critical в рантайме — 0.
       - name: npm audit (high)
+        if: needs.changes.outputs.frontend == 'true'
         run: npm audit --audit-level=high --omit=dev
         working-directory: frontend
 
       - name: типы
+        if: needs.changes.outputs.frontend == 'true'
         run: npx tsc --noEmit -p tsconfig.json
         working-directory: frontend
 
@@ -830,10 +853,12 @@ jobs:
       # `diagnostics: false` у ts-jest на бэкенде, из-за которого
       # однажды упала прод-сборка.
       - name: типы проверочных скриптов
+        if: needs.changes.outputs.frontend == 'true'
         run: npm run typecheck:scripts
         working-directory: frontend
 
       - name: линт
+        if: needs.changes.outputs.frontend == 'true'
         # Через npm-скрипт, а не своей строкой: у него есть
         # `--report-unused-disable-directives`, и расхождение означало,
         # что локальная проверка СТРОЖЕ CI — то есть зелёный CI ничего
@@ -847,10 +872,12 @@ jobs:
       # здесь, прогнать фронтенд-тесты локально было нечем, и они
       # проверялись только в CI (аудит 2026-09-06, §5).
       - name: unit-скрипты
+        if: needs.changes.outputs.frontend == 'true'
         run: npm test
         working-directory: frontend
 
       - name: сборка
+        if: needs.changes.outputs.frontend == 'true'
         run: npx vite build
         working-directory: frontend
 

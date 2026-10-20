@@ -43,3 +43,21 @@ test("unchanged apps avoid installs and builds, changed apps retain every verifi
     assert.ok(block.includes(command), command);
   }
 });
+
+for (const job of ["backend", "frontend"]) {
+  test(`${job}: required check succeeds without expensive work when unchanged`, () => {
+    const block = workflow.split(`  ${job}:\n`)[1].split(/\n  (?:[a-z][a-z-]*:|#)/)[0];
+    assert.ok(block.includes(`if: needs.changes.outputs.${job} != ''`));
+    const steps = block.split(/\n      - /).slice(1);
+    assert.ok(steps.length > 5);
+    for (const step of steps) {
+      const selected = step.startsWith("name: unchanged application") ? "false" : "true";
+      assert.ok(step.includes(`\n        if: needs.changes.outputs.${job} == '${selected}'`));
+    }
+    assert.ok(block.includes("npm ci"));
+    assert.ok(block.includes("npm audit"));
+    assert.ok(block.includes("tsc --noEmit"));
+    assert.ok(block.includes("eslint") || block.includes("npm run lint"));
+    assert.ok(block.includes("npx jest") || block.includes("npm test"));
+  });
+}
