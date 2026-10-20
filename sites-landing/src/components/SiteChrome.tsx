@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { brandDisplayName } from '../brand';
 import { pathFor } from '../lib/alternates';
 import { fmt } from '../lib/format';
-import { isVisible } from '../lib/claims';
+import { isVisible, claimStatus } from '../lib/claims';
 import { getDictionary } from '../lib/get-dictionary';
 import { LOCALE_LABELS, LOCALE_SHORT, LOCALE_SWITCH_PARAM, locales, type Locale } from '../lib/i18n';
 import { href, hrefLang, type PageKey } from '../lib/pages';
@@ -93,6 +93,7 @@ export function SiteChrome({
         </div>
         <nav className="wrap main-nav" aria-label={dict.common.nav.label}>
           <ul>
+            {claimStatus('qa-product') === 'live' && <li><a href={`${href(locale, 'home')}#qa`}>QA</a></li>}
             {nav.map((item) => (
               <li key={item.key}>
                 <a href={href(locale, item.key)} hrefLang={hrefLang(locale, item.key)} aria-current={item.key === navCurrent ? 'page' : undefined}>

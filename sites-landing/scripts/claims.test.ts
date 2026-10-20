@@ -29,6 +29,7 @@ import assert from 'node:assert/strict';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { CLAIMS, heroVariant, type ClaimDef, type ClaimId, type ClaimRegistry } from '../src/lib/claims';
+import { QA_LINKS } from '../src/brand';
 import { getDictionary } from '../src/lib/get-dictionary';
 import { locales, type Locale } from '../src/lib/i18n';
 import { claimViolations } from './lib/html';
@@ -113,6 +114,19 @@ async function main() {
   const expectedRendered = Object.keys(PAGES).length * locales.length + Object.keys(DOC_PAGES).length * DOCS_LOCALES.length;
   assert.equal(rendered, expectedRendered);
   assert.ok(soonBlocks > 100, `soon-блоков подозрительно мало: ${soonBlocks}`);
+  for (const locale of locales) {
+    const html = await render(HomePage, locale);
+    assert.ok(html.includes(QA_LINKS.extension) && html.includes(QA_LINKS.dashboard));
+    assert.ok(html.includes(getDictionary(locale).home.qa.limits));
+  }
+  const qaStatus = registry['qa-product'].status;
+  try {
+    for (const status of ['soon', 'hidden'] as const) {
+      registry['qa-product'].status = status;
+      const html = await render(HomePage, 'en');
+      assert.ok(!html.includes(QA_LINKS.extension) && !html.includes(QA_LINKS.dashboard));
+    }
+  } finally { registry['qa-product'].status = qaStatus; }
 
   // ── 2. Точки С1 и С3 ──
   const C0 = ['brand', 'landing-no-trackers', 'pilot-form'];
@@ -122,7 +136,7 @@ async function main() {
   /** С3 (план §5): живой человек, отчёт недели, статистика целей, страницы платформ (Л5). */
   const C3 = ['telegram-handoff', 'weekly-report', 'goal-stats', 'goal-webhook', 'integrations', 'install-snippet', 'install-guides', 'ownership-verification', 'js-api', 'docs'];
   const live = (Object.keys(CLAIMS) as ClaimId[]).filter((id) => CLAIMS[id].status === 'live').sort();
-  assert.deepEqual(live, [...C0, ...C2, ...C1, ...C3].sort(), `С1+С3: live — ровно С0 + С2 + С1 + С3; сейчас: ${live}`);
+  assert.deepEqual(live, [...C0, ...C2, ...C1, ...C3, 'qa-product'].sort(), `С1+С3: live — ровно С0 + С2 + С1 + С3; сейчас: ${live}`);
   for (const id of ['tma-connect', 'web-login', 'cases', 'compare', 'blog', 'shopify-app', 'order-status'] as ClaimId[]) {
     assert.equal(CLAIMS[id].status, 'hidden', `${id} должен быть hidden`);
   }

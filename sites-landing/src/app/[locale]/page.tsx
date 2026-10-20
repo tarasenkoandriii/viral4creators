@@ -1,15 +1,16 @@
 import type { Metadata } from 'next';
+import { QA_LINKS } from '../../brand';
 import { ClaimCard } from '../../components/Claim';
 import { SiteChrome } from '../../components/SiteChrome';
 import { fmt } from '../../lib/format';
+import { claimStatus } from '../../lib/claims';
 import { getDictionary } from '../../lib/get-dictionary';
 import type { Locale } from '../../lib/i18n';
 import { href, pageMetadata } from '../../lib/pages';
 
 /**
  * Главная домена (§3.1): короткая витрина двух продуктов семейства —
- * Помощник (посадочная — `/assistant`) и QA (`soon`, раздел делает автор
- * QA-ТЗ в этой же оболочке).
+ * Помощник и работающий QA MVP; полный аудит клиентских сайтов отделён от MVP.
  */
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
   return pageMetadata('home', (await params).locale);
@@ -19,6 +20,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
   const { locale } = await params;
   const dict = getDictionary(locale);
   const h = dict.home;
+  const qaLive = claimStatus('qa-product') === 'live';
   return (
     <SiteChrome locale={locale} path="" current="home">
       <section className="hero wrap">
@@ -44,10 +46,29 @@ export default async function HomePage({ params }: { params: Promise<{ locale: L
             </div>
             <div className="card">
               <ClaimCard as="div" claim={h.qa.claim} dict={dict} title={h.qa.title} text={h.qa.text} />
+              {qaLive && <p><a href="#qa">{h.qa.more}</a></p>}
             </div>
           </div>
         </div>
       </section>
+      {qaLive && <section id="qa" className="section wrap" aria-labelledby="qa-heading" data-claim="qa-product" data-claim-status="live">
+        <h2 id="qa-heading">{h.qa.heading}</h2>
+        <ul>{h.qa.features.map((feature) => <li key={feature}>{feature}</li>)}</ul>
+        <p>{h.qa.report}</p>
+        <div className="card">
+          <h3>{h.qa.quickTitle}</h3>
+          <p>{h.qa.quickText}</p>
+          <p className="actions">
+            <a className="button" href={QA_LINKS.extension}>{h.qa.download}</a>
+            <a className="button" href={QA_LINKS.dashboard}>{h.qa.cabinet}</a>
+          </p>
+          <h3>{h.qa.flowTitle}</h3>
+          <ol>{h.qa.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+        </div>
+        <p>{h.qa.limits}</p>
+        <p>{h.qa.privacy}</p>
+        <p>{h.qa.roadmap}</p>
+      </section>}
       <section className="section wrap" aria-labelledby="pilot-heading">
         <ClaimCard
           as="div"

@@ -132,7 +132,7 @@ export const CLAIMS = {
   agency: { stage: 'TMA-Э9+ / не решено', status: 'soon' },
 
   // ── Другой продукт семейства ──
-  'qa-product': { stage: 'QA-ТЗ', status: 'soon' },
+  'qa-product': { stage: 'QA MVP: catalog/runs/findings, acceptance 20.10.2026', status: 'live' },
 
   // ── hidden: нет в ближайших этапах или лендинг ещё не умеет показать ──
   /** «Подключить в Telegram»: читатели payload в TMA и открытый продукт (§7.2, урок Б-1). */

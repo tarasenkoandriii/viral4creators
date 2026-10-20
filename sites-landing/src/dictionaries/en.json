@@ -26,7 +26,7 @@
     },
     "footer": {
       "label": "Site footer",
-      "about": "{brand} is an AI assistant for websites that answers visitors from your site’s own content. In development. The browser infrastructure for Tutorial, QA and the AI assistant is running. Customer-site workflows are undergoing pilot validation.",
+      "about": "The AI assistant answers from your website content. QA helps your team manage checks, record findings and share results. One dashboard; automated auditing of every customer-site workflow is still in development.",
       "productHeading": "Assistant",
       "legalHeading": "Documents",
       "draftNote": "Legal pages are drafts pending legal review.",
@@ -41,7 +41,7 @@
   "pages": {
     "home": {
       "title": "{brand} — AI assistant and website QA",
-      "description": "{brand}: an AI assistant that answers from your website’s content, and website QA checks. Both in development — we are looking for pilot users."
+      "description": "Website QA: test catalog, plans, manual and CI checks, findings and reports. Quick local checks of an open page with Q; full site audits are in development."
     },
     "assistant": {
       "title": "AI assistant for your website — {brand}",
@@ -146,7 +146,7 @@
   "home": {
     "hero": {
       "title": "Assistants for your website — by {brand}",
-      "lead": "Two products, one dashboard: an AI assistant that answers visitors from your website’s content, and website QA. The assistant is an early version, QA is in development — and we are looking for our first pilot users.",
+      "lead": "The AI assistant answers from your website content. QA helps your team manage checks, record findings and share results. One dashboard; automated auditing of every customer-site workflow is still in development.",
       "cta": "Join the assistant pilot"
     },
     "productsHeading": "Products",
@@ -158,8 +158,31 @@
     },
     "qa": {
       "claim": "qa-product",
-      "title": "QA: website checks",
-      "text": "Will check your website the way a visitor sees it and show you what broke."
+      "title": "QA for websites and teams · Beta",
+      "text": "The test catalog, versioned plans, manual and CI runs, findings and private evidence are available. Start with one workflow and keep a verifiable result.",
+      "more": "What QA can do today",
+      "heading": "Check a page. Keep the evidence. Share the result.",
+      "quickTitle": "Quick page check — no payment",
+      "quickText": "The Q extension checks the title, language, mobile viewport, field labels, image alt attributes and duplicate IDs. Download a Markdown report locally. One open HTTPS page, with no form submissions or paid services.",
+      "features": [
+        "Checks and plans: case versions, environment, assignee and history.",
+        "Results: manual checks and Playwright/Jest CI imports; skipped tests and a failed runner cannot certify acceptance.",
+        "Findings: priority, the exact source attempt, private PNG evidence and a fix prompt.",
+        "Test stands: synthetic forms and mock APIs, OpenAPI, form-structure comparison and duplicate protection."
+      ],
+      "flowTitle": "How to start",
+      "steps": [
+        "Download Q, unzip it and choose Load unpacked in chrome://extensions with Developer mode enabled.",
+        "On the HTTPS page, click Q, close the popup and choose “Проверить открытую страницу” (Check open page). Download the .md report. The extension UI is currently in Russian.",
+        "To check a business workflow, open your site in the dashboard → QA catalog → plan and run. Record the observed result and findings."
+      ],
+      "limits": "The quick check uses 6 heuristics. It is not a full website, security or accessibility audit. It does not test form submission, business logic, speed, contrast, keyboard access, iframe/Shadow DOM or other pages. No signals does not mean no defects.",
+      "privacy": "Q does not send the report to a server or include field values or the page path. Dashboard QA uses role-based access: viewers read, admins edit. PNG evidence is private, with links lasting up to 5 minutes and retention up to 30 days. Review comments for personal data before sharing Markdown.",
+      "roadmap": "Next: multi-page and state audits by URL, real mobile devices, a consolidated findings report/PDF, GitLab/JUnit and PR integrations. These are not advertised as available today.",
+      "download": "Download Q · ZIP",
+      "cabinet": "Open QA dashboard",
+      "report": "Run reports include a fresh revision, case versions, recorded and acceptance statuses, latest attempts and SHAs. Untested cases stay untested; a passing retry does not hide the earlier failure.",
+      "description": "Website QA: test catalog, plans, manual and CI checks, findings and reports. Quick local checks of an open page with Q; full site audits are in development."
     },
     "pilot": {
       "claim": "pilot-form",
@@ -1308,10 +1331,8 @@
     }
   },
   "brandFallback": {
-    "common.footer.about": "An AI assistant for websites that answers visitors from your site’s own content. In development. The browser infrastructure for Tutorial, QA and the AI assistant is running. Customer-site workflows are undergoing pilot validation.",
     "common.footer.copyright": "© {year}",
     "pages.home.title": "AI assistant and website QA",
-    "pages.home.description": "An AI assistant that answers from your website’s content, and website QA checks. Both in development — we are looking for pilot users.",
     "pages.assistant.title": "AI assistant for your website",
     "pages.how-it-works.description": "How connecting the AI assistant will work: your site address, ownership verification, reading the site, one line of code. What it reads, how it answers and when it calls a human.",
     "pages.widget.description": "Customise the AI assistant widget without signing up: colour, corner, theme, texts, avatar, WCAG AA contrast check and the code for your site.",
