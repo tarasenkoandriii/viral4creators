@@ -121,3 +121,15 @@ Production-проверка c34762d: CI 39454685335 success, assist-tma Ready. V
 Уточнение production-исправления: прямое браузерное чтение signed Blob оказалось недоступным и после CSP-изменения. В итоговом варианте дополнительный connect-src удалён обратно. Новый GET `/qa/sites/:siteId/findings/:findingId/artifacts/:id/content` проходит прежний QA_READ/account/site/finding guard, возвращает PNG как base64 с `Cache-Control: private, no-store`. Сервер читает только pathname из scoped БД через приватный SDK, лимит 2 МБ/15 секунд, проверяет размер/SHA и повторно ready/TTL перед ответом. Клиент также сверяет размер/SHA перед PDF; signed URL вообще не нужен. Роли и публичность не расширены.
 
 Проверки коррекции: настоящие route/guard tests (viewer read, none denied, no-store), storage private-read bounds, изолированный PostgreSQL с миграциями (6 artifact tests, включая viewer content, corrupt hash, неизвестный ID), server typecheck/lint; Assist PDF/API/CSP регрессии, build/lint/types. Синтетическая тестовая БД не production; новых QA-сущностей в рабочем кабинете нет.
+
+
+### Финальная production-приёмка сводного PDF — 20.10, 16:24 UTC
+
+`f4ff8c6`: assist-api и assist-tma Ready. В прежней Telegram viewer-сессии на рабочем домене поставлена галочка включения PNG и нажата штатная кнопка PDF. Успешный UI: «Скачивание начато: 4 замечаний. Публичная ссылка не создавалась». Локальный файл `Downloads/qa-site-cmv2cbl5m000306lbwoo1svzx.pdf`: 326745 байт, 5 страниц, 4 раздела замечаний и 1 встроенный PNG из прежней записи cmveybyba000008jp2cpy02fx v1. pypdf подтвердил текст/кириллицу/число разделов/изображение/SHA-256 и отсутствие https URL; все 5 страниц отрендерены Poppler и просмотрены. Изображение — прежний синтетический 2×2 PNG, потому в приложении PDF выглядит маленькой точкой; это не новый или пропущенный файл. Метаданные относятся к исходной ревизии доказательства.
+
+Сводный MD: 4 записи, P0=0/P1=2/P2=0/P3=2, все ID/ревизии прежние. Два одинаковых заголовка drift относятся к двум историческим разным наблюдениям, новых дублей этот экспорт не создавал. Viewer-поля disabled, мутации недоступны. Экспорт выполнялся только GET, без новых приглашений/прогонов/findings/загрузок. Ошибки предыдущих попыток не выдавали частичный PDF. Приватные файлы не публиковались; платные генерации отсутствуют.
+
+Proof вне Git: `outputs/qa-site-pdf-viewer-production.png`, `qa-site-pdf-production.png`, `qa-site-pdf-pages-2.png`…`-5.png`. Временная PostgreSQL удалена после проверки. Известные границы: 200 замечаний, 20 PNG/20 МБ, последовательный snapshot с повторной сверкой (не атомарный), локальный скачанный PDF вне TTL/доступов кабинета. Публичная выдача остаётся отдельной задачей с согласием.
+
+
+Финальный код `f4ff8c6`: [CI 39456641420](https://github.com/tarasenkoandriii/viral4creators/actions/runs/39456641420) completed/success, включая полный sites-backend/PostgreSQL, Assist и проверку схемы. Предыдущие кодовые CI c34762d и 4387892 также success. Итог: приватный сводный MD/PDF и PNG приняты под viewer; документация/TODO синхронизированы с реальной production-проверкой.
