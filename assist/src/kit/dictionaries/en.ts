@@ -17,6 +17,10 @@ export const en: Dictionary = {
   auth: {
     openInTelegram:
       'Open the app in Telegram — your workspace is tied to your Telegram account.',
+    webPopupLogin: 'Sign in with Telegram',
+    webPopupHint:
+      'If the widget is blank, open sign-in in a separate window. Choose the intended Telegram account.',
+    webPopupBlocked: 'Allow the Telegram popup, then try again.',
     webTitle: 'Sign in to your account',
     webIntro:
       'Sign in with Telegram — it is the same account as in the Telegram app: the same sites and verifications.',

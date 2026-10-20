@@ -19,6 +19,11 @@ export const ru = {
   auth: {
     openInTelegram:
       'Откройте приложение в Telegram — кабинет привязан к вашему аккаунту Telegram.',
+    webPopupLogin: 'Войти через Telegram',
+    webPopupHint:
+      'Если кнопка виджета не появилась, откройте вход в отдельном окне. Выберите нужный аккаунт Telegram.',
+    webPopupBlocked:
+      'Разрешите всплывающее окно Telegram и нажмите кнопку ещё раз.',
     webTitle: 'Вход в кабинет',
     webIntro:
       'Войдите через Telegram — это тот же кабинет, что в приложении в Telegram: те же сайты и подтверждения.',

@@ -73,6 +73,7 @@ import { getAppDictionary, type AppDictionary } from './i18n';
 import {
   APP_ID,
   ASSIST_BOT_USERNAME,
+  ASSIST_BOT_ID,
   DEV_AUTH,
   SITES_API_URL,
 } from './lib/config';
@@ -488,6 +489,7 @@ export function App({ startParam }: { startParam: string | null }) {
       <WebLoginScreen
         dict={dict}
         botUsername={ASSIST_BOT_USERNAME}
+        botId={ASSIST_BOT_ID}
         onAuth={onLogin}
         hint={
           pendingInviteToken(inviteFlow) ? dict.auth.inviteWaiting : undefined

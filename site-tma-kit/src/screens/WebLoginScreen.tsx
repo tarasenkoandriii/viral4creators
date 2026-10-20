@@ -4,8 +4,12 @@ import {
   TELEGRAM_LOGIN_WIDGET_SRC,
   type TelegramLoginPayload,
 } from '../web-auth';
-import { Alert, Card, Spinner } from '../ui';
-import { readTelegramWidgetMessage } from '../telegram-widget-message';
+import { Alert, Button, Card, Spinner } from '../ui';
+import {
+  readTelegramWidgetMessage,
+  readTelegramPopupMessage,
+  telegramPopupUrl,
+} from '../telegram-widget-message';
 
 /**
  * Вход в веб-кабинет — Telegram Login Widget, как у главной админки
@@ -23,11 +27,13 @@ import { readTelegramWidgetMessage } from '../telegram-widget-message';
 export function WebLoginScreen({
   dict,
   botUsername,
+  botId,
   onAuth,
   hint,
 }: {
   dict: Dictionary;
   botUsername: string | null;
+  botId?: string | null;
   /** Колбэк виджета → `POST /sites/auth/web-login`; бросает при отказе. */
   onAuth: (payload: TelegramLoginPayload) => Promise<void>;
   /** Дополнительная строка (например, «вы войдёте по приглашению»). */
@@ -35,6 +41,8 @@ export function WebLoginScreen({
 }) {
   const t = dict.auth;
   const ref = useRef<HTMLDivElement | null>(null);
+  const popup = useRef<Window | null>(null);
+  const authInFlight = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Обработчик сообщений читает свежий onAuth через ref.
@@ -54,14 +62,16 @@ export function WebLoginScreen({
     // same signed payload through its iframe message instead; keep CSP strict.
     const handleMessage = (event: MessageEvent) => {
       const frame = box.querySelector('iframe');
-      const user = readTelegramWidgetMessage(
-        event,
-        frame?.contentWindow ?? null
-      );
-      if (!user) return;
+      const user =
+        readTelegramWidgetMessage(event, frame?.contentWindow ?? null) ??
+        readTelegramPopupMessage(event, popup.current);
+      if (!user || authInFlight.current) return;
+      authInFlight.current = true;
+      popup.current = null;
       setBusy(true);
       setError(null);
       onAuthRef.current(user).catch(() => {
+        authInFlight.current = false;
         setError(failText);
         setBusy(false);
       });
@@ -70,9 +80,26 @@ export function WebLoginScreen({
     box.appendChild(script);
     return () => {
       window.removeEventListener('message', handleMessage);
+      popup.current = null;
       box.innerHTML = '';
     };
   }, [botUsername, failText]);
+
+  const openTelegram = () => {
+    if (!botId) return;
+    setError(null);
+    try {
+      const opened = window.open(
+        telegramPopupUrl(botId, location.origin),
+        'qa_telegram_login_' + botId,
+        'width=550,height=550,popup=yes'
+      );
+      if (!opened) setError(t.webPopupBlocked);
+      popup.current = opened;
+    } catch {
+      setError(failText);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-md px-4 pt-16 md:pt-24">
@@ -84,6 +111,14 @@ export function WebLoginScreen({
           <div ref={ref} className="flex justify-center min-h-[48px]" />
         ) : (
           <Alert tone="danger">{t.webNoBot}</Alert>
+        )}
+        {botUsername && botId && (
+          <div className="space-y-2">
+            <Button onClick={openTelegram} disabled={busy}>
+              {t.webPopupLogin}
+            </Button>
+            <p className="text-sm text-silver-500">{t.webPopupHint}</p>
+          </div>
         )}
         {busy && <Spinner label={t.signingIn} />}
         {error && <Alert tone="danger">{error}</Alert>}

@@ -49,3 +49,55 @@ assert.equal(
 console.log(
   'Telegram login message: trusted iframe accepted; spoofed and malformed messages rejected'
 );
+
+// Popup fallback accepts only the official envelope from its exact window.
+const { readTelegramPopupMessage, telegramPopupUrl } =
+  await import('../src/kit/telegram-widget-message');
+const popup = {};
+const popupEvent = {
+  origin: 'https://oauth.telegram.org',
+  source: popup,
+  data: JSON.stringify({ event: 'auth_result', result: user }),
+};
+assert.deepEqual(readTelegramPopupMessage(popupEvent, popup), user);
+assert.equal(readTelegramPopupMessage(popupEvent, {}), null);
+assert.equal(
+  readTelegramPopupMessage(
+    { ...popupEvent, origin: 'https://evil.example' },
+    popup
+  ),
+  null
+);
+assert.equal(readTelegramPopupMessage(event, frame), null);
+assert.equal(readTelegramWidgetMessage(popupEvent, popup), null);
+assert.equal(
+  readTelegramPopupMessage(
+    {
+      ...popupEvent,
+      data: JSON.stringify({ event: 'auth_result', result: false }),
+    },
+    popup
+  ),
+  null
+);
+const popupUrl = new URL(
+  telegramPopupUrl('8927439906', 'https://assist-app.viral4creators.app')
+);
+assert.equal(popupUrl.origin, 'https://oauth.telegram.org');
+assert.equal(
+  popupUrl.searchParams.get('return_to'),
+  'https://assist-app.viral4creators.app/'
+);
+assert.equal(popupUrl.searchParams.get('request_access'), null);
+assert.throws(() =>
+  telegramPopupUrl('evil', 'https://assist-app.viral4creators.app')
+);
+assert.throws(() =>
+  telegramPopupUrl('8927439906', 'http://assist-app.viral4creators.app')
+);
+assert.throws(() =>
+  telegramPopupUrl(
+    '8927439906',
+    'https://assist-app.viral4creators.app/?invite=secret'
+  )
+);

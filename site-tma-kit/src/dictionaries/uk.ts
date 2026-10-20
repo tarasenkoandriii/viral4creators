@@ -16,6 +16,11 @@ export const uk: Dictionary = {
   auth: {
     openInTelegram:
       'Відкрийте застосунок у Telegram — кабінет привʼязаний до вашого акаунта Telegram.',
+    webPopupLogin: 'Увійти через Telegram',
+    webPopupHint:
+      'Якщо віджет порожній, відкрийте вхід в окремому вікні. Виберіть потрібний акаунт Telegram.',
+    webPopupBlocked:
+      'Дозвольте спливне вікно Telegram і натисніть кнопку ще раз.',
     webTitle: 'Вхід до кабінету',
     webIntro:
       'Увійдіть через Telegram — це той самий кабінет, що й у застосунку в Telegram: ті самі сайти й підтвердження.',

@@ -5,6 +5,7 @@ interface ImportMetaEnv {
   readonly VITE_SITES_API_URL?: string;
   /** Бот Помощника (без «@»): Login Widget веба и ссылки-приглашения. */
   readonly VITE_ASSIST_BOT_USERNAME?: string;
+  readonly VITE_ASSIST_BOT_ID?: string;
   /** https-origin sites-backend для адресов на сервере заказчика (вебхук целей). */
   readonly VITE_ASSIST_PUBLIC_API_ORIGIN?: string;
   /** Дев-вход вне Telegram — только локальный стенд. */

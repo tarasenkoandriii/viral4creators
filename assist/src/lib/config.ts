@@ -43,3 +43,10 @@ export const DEV_AUTH: DevAuth = {
   enabled: import.meta.env.VITE_ALLOW_DEV_AUTH === 'true',
   userId: import.meta.env.VITE_DEV_USER_ID,
 };
+
+/** Public ID verified from Telegram's official embed for this exact bot name. */
+export const ASSIST_BOT_ID: string | null =
+  import.meta.env.VITE_ASSIST_BOT_ID ||
+  (ASSIST_BOT_USERNAME?.toLowerCase() === 'v4caiassistbot'
+    ? '8927439906'
+    : null);
