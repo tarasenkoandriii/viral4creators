@@ -3,7 +3,13 @@
 - [x] Причина красных статусов `370a159`: неизменённые frontend/backend пропускались на уровне jobs, хотя Vercel требует их как Deployment Checks. Admin/landing уже выдавали стабильные успешные результаты. Сами Vercel-сборки корректно отменялись Ignored Build Step.
 - [x] Frontend/backend сохраняют имена обязательных проверок и выдают явный результат «изменений нет». Все установочные, тестовые и сборочные шаги выполняются только при выборе проекта существующим фильтром; проверки изменённого кода не ослаблены.
 - [x] В настройках Vercel для `viral4creators-sandbox` добавлен Ignored Build Step `bash ../scripts/vercel-ignore-build.sh .` (Root Directory `sandbox`). Раньше стоял Automatic, поэтому sandbox собирался на каждом коммите. Приложение/разрешения не менялись, Redeploy не запускался.
-- [ ] Подтвердить финальный CI и Vercel-статусы исправления. Исторические статусы отменённых deployment не подменять ручным success и не восстанавливать повторным деплоем.
+- [x] Полный CI `0e8bc27` прошёл: [39480014471](https://github.com/tarasenkoandriii/viral4creators/actions/runs/39480014471). Все 11 Vercel-проектов пропущены Ignored Build Step, включая sandbox; новых сборок приложений нет.
+- [x] Дополнительная причина: отменённые встроенные Lint/TypeCheck оставляли красный commit status даже при 5/5 зелёных GitHub Deployment Checks. В `viral-frontend`, `viral-backend`, `viral-admin`, `viral-landing` удалены только эти дубли; сохранены все пять обязательных GitHub-проверок (repo/admin/backend/frontend/landing), включая типы и линтер. Настройки можно восстановить через Add Checks; защиты доступа и требования CI не отключались.
+- [ ] Проверить итоговые Vercel-статусы следующего коммита с новой конфигурацией. Исторические статусы отменённых deployment не подменять ручным success и не восстанавливать повторным деплоем.
+
+## LinkedIn — услуги компании (20.10.2026)
+
+- [x] Опубликована [страница услуг viral4creators.org](https://www.linkedin.com/services/page/b14259347b9937760b): Custom Software Development, SaaS Development, Software Testing, Video Editing. В описании — Tutorial, помощник, голосовой диалог и управление как пилотные услуги, QA; удалённо, цена по запросу. Добавлена одна карточка со ссылкой на Tutorial, без новых постов/генераций. Hands-free лендинг остаётся отдельной задачей.
 
 ## ИИ-помощник и голосовое управление — аудит 20.10.2026
 
