@@ -764,39 +764,43 @@ test('аудит D3 (мок = сервис): режим выключили по�
   expect(l.steps).toHaveLength(0);
 });
 
-test('early Esc while confirm is in flight prevents a late run and duplicate execution', async ({
-  page,
-}) => {
-  await polygon(page, {
-    model: {
-      'закрий банер': [{ kind: 'click', find: { text: 'Закрити банер' } }],
-    },
+for (const stop of ['Escape', 'button'] as const) {
+  test(`early ${stop} while confirm is in flight prevents a late run and duplicate execution`, async ({
+    page,
+  }) => {
+    await polygon(page, {
+      model: {
+        'закрий банер': [{ kind: 'click', find: { text: 'Закрити банер' } }],
+      },
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const confirming = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    await page.route('**/widget/v1/ui-plan/*/confirm', async (route) => {
+      reached();
+      await held;
+      await route.continue();
+    });
+    await command(page, 'закрий банер');
+    const card = chat(page).locator('.pconfirm');
+    await expect(card).toBeVisible();
+    await card.locator('button.pyes').click();
+    await confirming;
+    if (stop === 'Escape') await page.locator('body').press('Escape');
+    else await chat(page).locator('.pbar button.pstop').click();
+    await expect
+      .poll(async () => (await vcLog()).stops.length)
+      .toBeGreaterThan(0);
+    release();
+    await expect(card).toBeHidden();
+    await expect(page.locator('#cookie-banner')).toBeVisible();
+    await page.waitForTimeout(300);
+    await expect(page.locator('#cookie-banner')).toBeVisible();
+    expect((await vcLog()).steps).toHaveLength(0);
   });
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let reached!: () => void;
-  const confirming = new Promise<void>((resolve) => {
-    reached = resolve;
-  });
-  await page.route('**/widget/v1/ui-plan/*/confirm', async (route) => {
-    reached();
-    await held;
-    await route.continue();
-  });
-  await command(page, 'закрий банер');
-  const card = chat(page).locator('.pconfirm');
-  await expect(card).toBeVisible();
-  await card.locator('button.pyes').click();
-  await confirming;
-  await page.locator('body').press('Escape');
-  await expect
-    .poll(async () => (await vcLog()).stops.length)
-    .toBeGreaterThan(0);
-  release();
-  await expect(card).toBeHidden();
-  await expect(page.locator('#cookie-banner')).toBeVisible();
-  await page.waitForTimeout(300);
-  await expect(page.locator('#cookie-banner')).toBeVisible();
-});
+}

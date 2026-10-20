@@ -1301,18 +1301,20 @@ export function App({
           </div>
         )}
       </div>
-      {!leadOnly && s.plan.phase === 'running' && (
-        <div class="pbar" role="status" aria-live="polite">
-          <span>{t.vcRunning}</span>
-          <button
-            type="button"
-            class="pstop"
-            onClick={() => c.plans.stop('button')}
-          >
-            ■ {t.vcStop}
-          </button>
-        </div>
-      )}
+      {!leadOnly &&
+        (s.plan.phase === 'running' ||
+          (s.plan.phase === 'confirm' && s.plan.busy)) && (
+          <div class="pbar" role="status" aria-live="polite">
+            <span>{t.vcRunning}</span>
+            <button
+              type="button"
+              class="pstop"
+              onClick={() => c.plans.stop('button')}
+            >
+              ■ {t.vcStop}
+            </button>
+          </div>
+        )}
       {!leadOnly &&
         (s.voice.phase === 'recording' || s.voice.phase === 'sending') && (
           <VoiceBar s={s} c={c} />

@@ -191,6 +191,7 @@ function harness() {
     asked,
     store,
     sent,
+    host,
     get ui() {
       return ui;
     },
@@ -411,6 +412,119 @@ async function main() {
     assert.equal(h.engine.played.length, 0, 'озвучка после закрытия чата');
     assert.equal(h.ui.loading, null);
     assert.equal(h.ui.playing, null);
+  }
+  // Late STT must not send a question or reopen the microphone after cancellation.
+  for (const cancel of ['close', 'hidden', 'off', 'other-tab'] as const) {
+    const h = harness();
+    h.store['local:vconsent'] = '1';
+    h.vc.configure(cfg);
+    await tick();
+    let resolve!: (r: Response) => void;
+    const originalFetch = g.fetch;
+    g.fetch = () => new Promise<Response>((r) => (resolve = r));
+    h.vc.press();
+    h.vc.press();
+    assert.equal(h.ui.phase, 'sending');
+    if (cancel === 'close') h.vc.cancel();
+    if (cancel === 'hidden') h.vc.hidden();
+    if (cancel === 'off') h.vc.configure(null);
+    if (cancel === 'other-tab') h.vc.onChannel('voice-on:other');
+    resolve(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            text: 'закрий банер',
+            voiceTicket: 'v1.late',
+          },
+        })
+      )
+    );
+    await tick();
+    await tick();
+    g.fetch = originalFetch;
+    assert.deepEqual(h.asked, [], `late STT after ${cancel}`);
+    assert.equal(h.ui.phase, 'idle', cancel);
+    h.vc.planListen(true);
+    assert.equal(
+      h.engine.recs.length,
+      1,
+      `mic must need a fresh gesture after ${cancel}`
+    );
+  }
+  // A superseded TTS failure must not clear the newer answer or show a stale error.
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    let reject!: (e: Error) => void;
+    const originalFetch = g.fetch;
+    let calls = 0;
+    g.fetch = () =>
+      ++calls === 1
+        ? new Promise<Response>((_r, j) => (reject = j))
+        : Promise.resolve(new Response(new Uint8Array(8)));
+    h.vc.speak('old');
+    h.vc.speak('new');
+    await tick();
+    await tick();
+    assert.equal(h.ui.playing, 'new');
+    reject(new Error('late failure'));
+    await tick();
+    g.fetch = originalFetch;
+    assert.equal(h.ui.playing, 'new');
+    assert.deepEqual(h.notices, []);
+  }
+  // Stop/start of the SAME message: an older response must not play twice (ABA).
+  {
+    const h = harness();
+    h.vc.configure(cfg);
+    await tick();
+    const originalFetch = g.fetch;
+    const pending: Array<(r: Response) => void> = [];
+    g.fetch = () => new Promise<Response>((r) => pending.push(r));
+    h.vc.speak('same');
+    h.vc.speak('same');
+    h.vc.speak('same');
+    pending[0](new Response(new Uint8Array(4)));
+    await tick();
+    await tick();
+    assert.equal(h.engine.played.length, 0, 'stopped TTS must stay stopped');
+    pending[1](new Response(new Uint8Array(8)));
+    await tick();
+    await tick();
+    g.fetch = originalFetch;
+    assert.equal(h.engine.played.length, 1);
+    assert.equal(h.engine.played[0].byteLength, 8);
+  }
+  // WebAudio decoding is asynchronous too: Stop invalidates its pending callback.
+  {
+    let decoded!: (b: AudioBuffer) => void;
+    let started = 0;
+    class DecodeContext {
+      state = 'running';
+      destination = {};
+      decodeAudioData(_b: ArrayBuffer, done: (b: AudioBuffer) => void) {
+        decoded = done;
+      }
+      createBufferSource() {
+        return {
+          connect() {},
+          start() {
+            started++;
+          },
+          stop() {},
+          onended: null,
+        };
+      }
+    }
+    g.window = { AudioContext: DecodeContext };
+    const engine = createVoice();
+    engine.unlock();
+    engine.play(new ArrayBuffer(4), () => assert.fail('stopped audio ended'));
+    engine.stopPlayback();
+    decoded({} as AudioBuffer);
+    assert.equal(started, 0, 'late decoding must not start stopped audio');
   }
   // Движок записи (src/voice) на подделках браузера: «Стоп» дважды подряд
   // (двойное нажатие; или тик детектора между rec.stop() и onstop — state

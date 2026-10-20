@@ -54,8 +54,10 @@ export function createVoice(): VoiceEngine {
   let source: AudioBufferSourceNode | null = null;
   let element: HTMLAudioElement | null = null;
   let elementUrl: string | null = null;
+  let playbackEpoch = 0;
 
   const stopPlayback = () => {
+    playbackEpoch++;
     if (source) {
       try {
         source.onended = null;
@@ -219,7 +221,9 @@ export function createVoice(): VoiceEngine {
 
     play(bytes: ArrayBuffer, onEnd: () => void) {
       stopPlayback();
+      const epoch = playbackEpoch;
       const viaElement = () => {
+        if (epoch !== playbackEpoch) return;
         try {
           elementUrl = URL.createObjectURL(
             new Blob([bytes], { type: 'audio/mpeg' })
@@ -227,11 +231,13 @@ export function createVoice(): VoiceEngine {
           const el = new Audio();
           element = el;
           el.onended = () => {
+            if (epoch !== playbackEpoch) return;
             stopPlayback();
             onEnd();
           };
           el.src = elementUrl;
           el.play().catch(() => {
+            if (epoch !== playbackEpoch) return;
             stopPlayback();
             onEnd();
           });
@@ -244,11 +250,13 @@ export function createVoice(): VoiceEngine {
       ctx.decodeAudioData(
         bytes.slice(0),
         (decoded) => {
+          if (epoch !== playbackEpoch) return;
           const node = ctx.createBufferSource();
           node.buffer = decoded;
           node.connect(ctx.destination);
           node.onended = () => {
-            if (source === node) source = null;
+            if (epoch !== playbackEpoch || source !== node) return;
+            source = null;
             onEnd();
           };
           source = node;

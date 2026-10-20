@@ -114,6 +114,10 @@ export class VoiceController {
    */
   private pressedHere = false;
   private planMode = false;
+  private recordingEpoch = 0;
+  private playbackEpoch = 0;
+  private sttRequest: AbortController | null = null;
+  private audioRequest: AbortController | null = null;
   /** id вкладки — отличить своё сообщение канала от чужого. */
   readonly tab = Math.random().toString(36).slice(2, 10);
 
@@ -128,7 +132,12 @@ export class VoiceController {
   /** Конфиг сайта получен: показать кнопки и заранее загрузить чанк. */
   configure(cfg: VoiceCfg | null) {
     this.cfg = cfg;
-    if (!cfg || this.gaveUp) return this.host.setUi(voiceOff());
+    if (!cfg || this.gaveUp) {
+      this.cancel();
+      return this.host.setUi(voiceOff());
+    }
+    if (!cfg.input) this.stopRecording();
+    if (!cfg.output) this.stopSpeaking();
     const md =
       typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined;
     const canMic =
@@ -171,6 +180,7 @@ export class VoiceController {
 
   consent(ok: boolean) {
     if (!ok) return this.host.setUi({ phase: 'idle' });
+    if (!this.host.ui().mic) return;
     this.host.storage('local', 'vconsent', '1');
     this.start();
   }
@@ -178,7 +188,7 @@ export class VoiceController {
   private start(plan = false) {
     const cfg = this.cfg;
     const engine = this.engine;
-    if (!cfg) return;
+    if (!cfg?.input || this.gaveUp) return;
     if (!plan) this.pressedHere = true;
     if (!engine) {
       // Чанк ещё не пришёл: догрузить и попросить нажать ещё раз (жест
@@ -191,19 +201,32 @@ export class VoiceController {
     this.host.broadcast(`voice-on:${this.tab}`);
     this.host.storage('session', 'voice', 'armed');
     this.host.setUi({ phase: 'recording', since: Date.now(), level: 0 });
-    this.rec = engine.record(
+    const epoch = ++this.recordingEpoch;
+    let ended = false;
+    const rec = engine.record(
       {
         ...cfg,
         // Пока ждём «да» на карточке — порог TMA 150 мс (короткое «да» —
         // законный ответ, §5-бис.7); во время плана — тоже.
         minSpeechMs: plan ? Math.min(cfg.minSpeechMs, 150) : cfg.minSpeechMs,
         onSpeech: () => {
-          if (this.planMode && this.host.speech) this.host.speech(true);
+          if (
+            epoch === this.recordingEpoch &&
+            this.planMode &&
+            this.host.speech
+          )
+            this.host.speech(true);
         },
       },
-      (level) => this.host.setUi({ level }),
-      (end) => void this.ended(end)
+      (level) => {
+        if (epoch === this.recordingEpoch) this.host.setUi({ level });
+      },
+      (end) => {
+        ended = true;
+        void this.ended(end, epoch);
+      }
     );
+    if (!ended) this.rec = rec;
   }
 
   /**
@@ -216,22 +239,41 @@ export class VoiceController {
     if (!on) {
       const was = this.planMode;
       this.planMode = false;
-      if (was && this.rec) this.rec.cancel();
+      if (was) this.stopRecording();
       return;
     }
     if (!this.pressedHere || !this.engine || !this.cfg || this.gaveUp) return;
     this.planMode = true;
-    if (!this.rec) this.start(true);
+    if (!this.rec && this.host.ui().phase !== 'sending') this.start(true);
   }
 
   /** Вкладку скрыли: запись бросается (озвучка доигрывает — это не микрофон). */
   hidden() {
-    if (this.rec) this.rec.cancel();
+    this.stopRecording();
   }
 
   /** Бросить запись без отправки: закрыли чат, ушли, другая вкладка. */
   cancel() {
-    if (this.rec) this.rec.cancel();
+    this.stopRecording();
+    this.stopSpeaking();
+  }
+
+  private stopRecording() {
+    this.recordingEpoch++;
+    this.planMode = false;
+    this.pressedHere = false;
+    this.sttRequest?.abort();
+    this.sttRequest = null;
+    const rec = this.rec;
+    this.rec = null;
+    rec?.cancel();
+    this.host.setUi({ phase: 'idle', level: 0 });
+  }
+
+  private stopSpeaking() {
+    this.playbackEpoch++;
+    this.audioRequest?.abort();
+    this.audioRequest = null;
     this.engine?.stopPlayback();
     // И озвучка «в полёте»: байты придут после закрытия — не играть.
     const ui = this.host.ui();
@@ -242,10 +284,11 @@ export class VoiceController {
   /** Сообщение канала вкладок. */
   onChannel(msg: string) {
     const m = /^voice-on:([a-z0-9]{1,16})$/.exec(msg);
-    if (m && m[1] !== this.tab && this.rec) this.rec.cancel();
+    if (m && m[1] !== this.tab) this.stopRecording();
   }
 
-  private async ended(end: RecordEnd) {
+  private async ended(end: RecordEnd, epoch: number) {
+    if (epoch !== this.recordingEpoch) return;
     this.rec = null;
     const t = this.host.t();
     if (end.reason === 'cancel')
@@ -267,18 +310,22 @@ export class VoiceController {
       );
     }
     this.host.setUi({ phase: 'sending', level: 0 });
+    const request = new AbortController();
+    this.sttRequest = request;
     try {
       const lang = uiLangOfDict(this.host.t());
       const r = await this.post(
         '/widget/v1/voice',
         end.blob.type || 'audio/webm',
         end.blob,
-        lang ? { [UI_LANG_HEADER]: lang } : {}
+        lang ? { [UI_LANG_HEADER]: lang } : {},
+        request.signal
       );
       const data = unwrap(r.status, await r.json().catch(() => null)) as {
         text?: unknown;
         voiceTicket?: unknown;
       };
+      if (epoch !== this.recordingEpoch) return;
       this.host.setUi({ phase: 'idle' });
       const text =
         typeof data.text === 'string' ? data.text.trim().slice(0, 600) : '';
@@ -295,10 +342,13 @@ export class VoiceController {
       if (!text) return this.host.notify(t.voiceNotHeard);
       this.host.ask(text, ticket);
     } catch (e) {
+      if (epoch !== this.recordingEpoch) return;
       this.host.setUi({ phase: 'idle' });
       this.failed(e);
       // Во время плана сбой распознавания не оставляет план на паузе.
       if (this.planMode && this.host.speech) this.host.speech(false);
+    } finally {
+      if (this.sttRequest === request) this.sttRequest = null;
     }
   }
 
@@ -310,37 +360,50 @@ export class VoiceController {
     if (!ui.speak) return;
     const engine = this.engine;
     if (ui.playing === messageId || ui.loading === messageId) {
-      engine?.stopPlayback();
-      return this.host.setUi({ playing: null, loading: null });
+      return this.stopSpeaking();
     }
     if (!engine) {
       void this.ensure();
       return this.host.notify(this.host.t().voiceRetry);
     }
-    engine.stopPlayback();
+    this.stopSpeaking();
     engine.unlock();
     this.host.setUi({ loading: messageId, playing: null });
-    void this.fetchAudio(engine, messageId);
+    void this.fetchAudio(engine, messageId, this.playbackEpoch);
   }
 
-  private async fetchAudio(engine: VoiceEngine, messageId: string) {
+  private async fetchAudio(
+    engine: VoiceEngine,
+    messageId: string,
+    epoch: number
+  ) {
+    const request = new AbortController();
+    this.audioRequest = request;
     try {
       const r = await this.post(
         '/widget/v1/tts',
         'application/json',
-        JSON.stringify({ messageId })
+        JSON.stringify({ messageId }),
+        {},
+        request.signal
       );
       if (!r.ok) unwrap(r.status, await r.json().catch(() => null));
       const bytes = await r.arrayBuffer();
-      if (this.host.ui().loading !== messageId) return; // нажали «стоп»
+      if (epoch !== this.playbackEpoch) return;
       this.host.setUi({ loading: null, playing: messageId });
       engine.play(bytes, () => {
-        if (this.host.ui().playing === messageId)
+        if (
+          epoch === this.playbackEpoch &&
+          this.host.ui().playing === messageId
+        )
           this.host.setUi({ playing: null });
       });
     } catch (e) {
+      if (epoch !== this.playbackEpoch) return;
       this.host.setUi({ loading: null, playing: null });
       this.failed(e);
+    } finally {
+      if (this.audioRequest === request) this.audioRequest = null;
     }
   }
 
@@ -350,7 +413,8 @@ export class VoiceController {
     path: string,
     type: string,
     body: BodyInit,
-    extra: Record<string, string> = {}
+    extra: Record<string, string> = {},
+    signal?: AbortSignal
   ): Promise<Response> {
     const once = () =>
       fetch(path, {
@@ -358,11 +422,14 @@ export class VoiceController {
         credentials: 'include',
         headers: headers(this.host.auth(), { 'Content-Type': type, ...extra }),
         body,
+        signal,
       });
     let r = await once();
     if (r.status === 401) {
       // Сессия истекла — один повтор с новой (как у остальных вызовов чата).
+      signal?.throwIfAborted();
       await this.host.refreshSession();
+      signal?.throwIfAborted();
       r = await once();
     }
     return r;
