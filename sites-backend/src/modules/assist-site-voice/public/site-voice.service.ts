@@ -1,7 +1,12 @@
 import {
+  sonioxTranscriptText,
+  sonioxSpeechConfidence,
+} from '../../../shared/soniox-stt-core';
+import {
   streamSettings,
   signStreamGrant,
   STREAM_SECONDS,
+  readStreamFinal,
 } from './stream-grant';
 import { voiceAffirmationNeedsRetry } from '../../assist-ui-core/action-words';
 import { ttsFailureBudgetCost } from './tts-budget';
@@ -209,7 +214,8 @@ export class SiteVoiceService {
     | { ok: false; failure: VoiceFailure }
   > {
     const settings = streamSettings(this.env);
-    if (!settings) return { ok: false, failure: 'unavailable' };
+    if (!settings || !voiceTicketKey(this.env))
+      return { ok: false, failure: 'unavailable' };
     const now = this.now();
     const state = await readState(this.db, ctx.site.accountId, now);
     const access = await this.access(ctx.site, state);
@@ -261,12 +267,73 @@ export class SiteVoiceService {
       id: reserved.reservation.id,
       expires,
       seconds: STREAM_SECONDS,
+      siteId: ctx.site.siteId,
+      visitorId: ctx.visitor.visitorId,
     });
     return {
       ok: true,
       url: settings.url.replace(/^https:/, 'wss:') + '/voice/stream',
       ...signed,
       expires,
+    };
+  }
+
+  async finishStream(
+    ctx: VoiceCtx,
+    body: {
+      grant: string;
+      receipt: string;
+      signature: string;
+    },
+  ): Promise<TranscribeResult> {
+    const settings = streamSettings(this.env);
+    const key = voiceTicketKey(this.env);
+    if (!settings || !key) return { ok: false, failure: 'unavailable' };
+    const now = this.now();
+    const final = readStreamFinal(
+      settings.secret,
+      body,
+      ctx.site.siteId,
+      ctx.visitor.visitorId,
+      now.getTime(),
+    );
+    if (!final) return { ok: false, failure: 'not_heard' };
+    const state = await readState(this.db, ctx.site.accountId, now);
+    if (!(await this.access(ctx.site, state)).input)
+      return { ok: false, failure: 'unavailable' };
+    const r = sonioxTranscriptText({ tokens: final.tokens });
+    const text = (r.text ?? '')
+      .slice(0, WIDGET_DEFAULTS.maxQuestionChars)
+      .trim();
+    if (
+      !text ||
+      voiceAffirmationNeedsRetry(
+        text,
+        sonioxSpeechConfidence(final.tokens) ?? undefined,
+      )
+    ) {
+      return { ok: false, failure: 'not_heard' };
+    }
+    // Consume once across backend replicas using existing counters; fail closed on DB error.
+    const claimed = await this.db.$queryRawUnsafe<unknown[]>(
+      `INSERT INTO "sites"."assist_daily_counters" ("scope", "key", "day", "value", "updatedAt")
+       VALUES ('stt-stream-final', $1, $2, 1, now())
+       ON CONFLICT ("scope", "key", "day") DO NOTHING RETURNING 1 AS ok`,
+      `${ctx.site.siteId}:${final.id}`,
+      new Date(final.expires).toISOString().slice(0, 10),
+    );
+    if (!claimed.length) return { ok: false, failure: 'not_heard' };
+    return {
+      ok: true,
+      text,
+      lang: r.language,
+      ticket: issueVoiceTicket(key, {
+        siteId: ctx.site.siteId,
+        visitorId: ctx.visitor.visitorId,
+        text,
+        now,
+        ttlMs: VOICE_DEFAULTS.ticketTtlMs,
+      }),
     };
   }
 

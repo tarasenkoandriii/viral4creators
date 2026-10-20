@@ -30,6 +30,7 @@ export type RateScope =
   | 'landing-event-ip-min'
   | 'landing-draft-ip-day'
   // Э5: голос посетителя (распознавание и озвучка) — в минуту и в сутки.
+  | 'widget-stream-final-min'
   | 'widget-stt-visitor-min'
   | 'widget-stt-visitor-day'
   | 'widget-tts-visitor-min'

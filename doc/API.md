@@ -2564,6 +2564,12 @@ charges a conservative maximum before authorization is returned. Missing enable
 flag/rate gives `VOICE_UNAVAILABLE`, exhausted cap gives `VOICE_LIMIT`.
 Use the grant once on the existing relay `/voice/stream` WS; stop on disconnect,
 never automatically retry audio or start another paid session. Grant is not a
-voice ticket or an authorization to run a UI action. Current widget remains async;
-PCM capture/final-token-to-ticket integration is still pending (doc/TODO.md).
+voice ticket or an authorization to run a UI action. Default remains async.
+When `voice.streaming` is enabled, the widget streams 16kHz signed 16-bit LE mono PCM
+from its capture AudioContext and redeems the relay-signed final at `POST /widget/v1/voice/stream/final`.
+Body `{grant,receipt,signature}`; visitor/origin must match. Only authenticated
+final tokens pass text/confidence guards; an atomic existing-counter claim prevents
+replay. Response is the same `{text,lang,voiceTicket}` as async STT. No ticket for
+partial/forged/expired/wrong-visitor/uncertain-yes results. Production rollout and
+real-device/provider acceptance remain pending (doc/TODO.md).
 See the streaming section in doc/DEPLOYMENT.md for the wire format and limits.

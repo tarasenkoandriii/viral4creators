@@ -1,3 +1,4 @@
+import { streamSettings } from '../assist-site-voice/public/stream-grant';
 /**
  * Публичный конфиг, картинки бренда, пинг загрузчика, обмен токена
  * предпросмотра — W2 (ТЗ §3-бис.1, §3-бис.2, §3-бис.4).
@@ -269,6 +270,7 @@ export class WidgetPublicConfigService {
         if (a.input || a.output) {
           out.voice = {
             input: a.input,
+            ...(streamSettings(process.env) ? { streaming: true } : {}),
             output: a.output,
             maxRecordMs: VOICE_DEFAULTS.maxRecordMs,
             minSpeechMs: VOICE_DEFAULTS.minSpeechMs,

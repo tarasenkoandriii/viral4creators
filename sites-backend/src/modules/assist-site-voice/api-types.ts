@@ -10,6 +10,7 @@ export type { VoiceConfig, VoiceOffReason };
 
 /** GET /widget/v1/config → `voice` (необязательное: кэш 5 мин и старые загрузчики). */
 export interface WidgetVoiceConfig {
+  streaming?: boolean;
   /** Кнопка микрофона (push-to-talk). */
   input: boolean;
   /** Кнопка «озвучить ответ». */

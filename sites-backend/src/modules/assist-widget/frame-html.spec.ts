@@ -120,3 +120,21 @@ describe('frameCsp — Э6: хосты роликов в media-src', () => {
     expect(csp).not.toMatch(/unsafe-/);
   });
 });
+
+describe('streaming CSP allowlist', () => {
+  it('allows only a specific wss relay origin, never arbitrary schemes or injected directives', () => {
+    expect(
+      frameCsp('https://site.example', [], 'wss://relay.example'),
+    ).toContain("connect-src 'self' wss://relay.example;");
+    for (const bad of [
+      'wss://*',
+      'https://relay.example',
+      'wss://relay.example; script-src *',
+      'wss://relay.example/path',
+    ]) {
+      expect(frameCsp('https://site.example', [], bad)).toContain(
+        "connect-src 'self';",
+      );
+    }
+  });
+});

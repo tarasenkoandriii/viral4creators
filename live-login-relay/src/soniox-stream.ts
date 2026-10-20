@@ -2,7 +2,7 @@
  * Grants are issued ONLY after sites-backend has charged its existing SiteBudget.
  * A process-specific boot id prevents grant replay after a VPS restart.
  */
-import { randomUUID, createHmac } from 'node:crypto';
+import { randomUUID, createHmac, createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -67,6 +67,8 @@ export class SonioxStream {
     let bytes = 0;
     let started = 0;
     let maxBytes = 0;
+    const finals: Record<string, unknown>[] = [];
+    let finalChars = 0;
     let deadline: ReturnType<typeof setTimeout>;
     const send = (data: string) => {
       if (client.readyState !== WebSocket.OPEN) return;
@@ -158,11 +160,59 @@ export class SonioxStream {
                 error_code?: number;
                 error_type?: string;
                 finished?: boolean;
+                tokens?: Record<string, unknown>[];
               };
               // Don't leak provider diagnostic text, keys or request content.
               if (result.error_code || result.error_type) return stop();
-              send(raw.toString());
-              if (result.finished) stop();
+              if (result.tokens !== undefined && !Array.isArray(result.tokens))
+                return stop();
+              for (const token of result.tokens ?? []) {
+                if (
+                  !token ||
+                  typeof token !== 'object' ||
+                  typeof token.text !== 'string' ||
+                  typeof token.is_final !== 'boolean'
+                )
+                  return stop();
+                if (token.is_final) {
+                  finalChars += token.text.length;
+                  if (finalChars > 4000 || finals.length >= 1024) return stop();
+                  // Keep only fields needed for server text/confidence validation.
+                  finals.push({
+                    text: token.text,
+                    is_final: true,
+                    confidence:
+                      typeof token.confidence === 'number' &&
+                      Number.isFinite(token.confidence)
+                        ? token.confidence
+                        : undefined,
+                    is_audio_event: token.is_audio_event === true,
+                    language:
+                      typeof token.language === 'string'
+                        ? token.language.slice(0, 32)
+                        : undefined,
+                  });
+                }
+              }
+              if (result.finished) {
+                if (ready) return stop();
+                const receipt = Buffer.from(
+                  JSON.stringify({
+                    grantHash: createHash('sha256')
+                      .update(p.grant)
+                      .digest('hex'),
+                    expires: g.expires + 60_000,
+                    tokens: finals,
+                  }),
+                ).toString('base64url');
+                if (receipt.length > 100_000) return stop();
+                const signature = createHmac('sha256', this.secret)
+                  .update(`soniox-final-v1:${receipt}`)
+                  .digest('base64url');
+                send(JSON.stringify({ type: 'final', receipt, signature }));
+                stop();
+              }
+              // Provisional provider messages never leave relay as authorizations.
             } catch {
               stop();
             }
@@ -187,7 +237,7 @@ export class SonioxStream {
       if (
         !ready ||
         !chunk.length ||
-        chunk.length % 2 ||
+        chunk.length % 2 !== 0 ||
         bytes > maxBytes ||
         bytes > (Date.now() - started + 1000) * 32 ||
         upstream.bufferedAmount > 64_000

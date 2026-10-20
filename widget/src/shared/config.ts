@@ -164,6 +164,7 @@ export interface VoiceControlPublic {
 
 /** Э5: `voice` публичного конфига (assist-site-voice/api-types.ts WidgetVoiceConfig). */
 export interface VoiceConfigPublic {
+  streaming?: boolean;
   input: boolean;
   output: boolean;
   maxRecordMs: number;
@@ -471,6 +472,7 @@ export function parseVoice(v: unknown): VoiceConfigPublic | null {
   if (!isObj(v) || (v.input !== true && v.output !== true)) return null;
   return {
     input: v.input === true,
+    ...(v.streaming === true ? { streaming: true } : {}),
     output: v.output === true,
     maxRecordMs: ms(v.maxRecordMs, 3_000, 60_000, 30_000),
     minSpeechMs: ms(v.minSpeechMs, 100, 3_000, 400),

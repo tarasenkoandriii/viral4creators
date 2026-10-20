@@ -304,3 +304,134 @@ test('закрыли чат во время записи — запись бро
 test.afterAll(() => {
   fs.rmSync(WAV, { force: true });
 });
+
+test('streaming: real PCM chunks, one final redemption, no async upload', async ({
+  page,
+}) => {
+  const errors = cspErrors(page);
+  const pk = await voiceSite({ voice: { ...VOICE, streaming: true } });
+  let grants = 0,
+    finals = 0,
+    audio = 0,
+    asyncUploads = 0;
+  page.on('request', (r) => {
+    if (new URL(r.url()).pathname === '/widget/v1/voice') asyncUploads++;
+  });
+  await page.route('**/widget/v1/voice/stream', async (route) => {
+    grants++;
+    await route.fulfill({
+      json: {
+        success: true,
+        data: {
+          url: 'wss://relay.example/voice/stream',
+          grant: 'bound-grant',
+          signature: 'mock-signature',
+        },
+      },
+    });
+  });
+  await page.route('**/widget/v1/voice/stream/final', async (route) => {
+    finals++;
+    expect(route.request().postDataJSON()).toEqual({
+      grant: 'bound-grant',
+      receipt: 'signed-final',
+      signature: 'sealed',
+    });
+    await route.fulfill({
+      json: {
+        success: true,
+        data: { text: 'Як оплатити?', voiceTicket: 'mock-final-ticket' },
+      },
+    });
+  });
+  await page.routeWebSocket('wss://relay.example/voice/stream', (ws) => {
+    ws.onMessage((message) => {
+      if (typeof message !== 'string') {
+        expect(message.length % 2).toBe(0);
+        audio += message.length;
+        return;
+      }
+      if (message === '')
+        ws.send(
+          JSON.stringify({
+            type: 'final',
+            receipt: 'signed-final',
+            signature: 'sealed',
+          })
+        );
+      else if (message.startsWith('{'))
+        ws.send(JSON.stringify({ type: 'ready' }));
+    });
+  });
+  await open(page, pk);
+  await mic(page).click();
+  await chat(page)
+    .locator('.vconsent')
+    .getByRole('button', { name: 'Увімкнути' })
+    .click();
+  await expect.poll(() => finals, { timeout: 15000 }).toBe(1);
+  await expect.poll(() => audio).toBeGreaterThan(0);
+  await expect(bar(page)).toBeHidden();
+  expect(grants).toBe(1);
+  expect(asyncUploads).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test('streaming Stop cancels capture and never creates fallback or another stream', async ({
+  page,
+}) => {
+  const pk = await voiceSite({ voice: { ...VOICE, streaming: true } });
+  let grants = 0,
+    finals = 0,
+    sockets = 0,
+    chunks = 0;
+  const uploads: string[] = [];
+  page.on('request', (r) => {
+    if (new URL(r.url()).pathname === '/widget/v1/voice') uploads.push(r.url());
+  });
+  await page.route('**/widget/v1/voice/stream', async (route) => {
+    grants++;
+    await route.fulfill({
+      json: {
+        success: true,
+        data: {
+          url: 'wss://relay.example/voice/stream',
+          grant: 'g',
+          signature: 's',
+        },
+      },
+    });
+  });
+  await page.route('**/widget/v1/voice/stream/final', async (route) => {
+    finals++;
+    await route.fulfill({
+      json: { success: true, data: { text: 'late', voiceTicket: 'ticket' } },
+    });
+  });
+  await page.routeWebSocket('wss://relay.example/voice/stream', (ws) => {
+    sockets++;
+    ws.onMessage((message) => {
+      if (typeof message !== 'string') chunks++;
+      else if (message.startsWith('{'))
+        ws.send(JSON.stringify({ type: 'ready' }));
+    });
+  });
+  await open(page, pk);
+  await mic(page).click();
+  await chat(page)
+    .locator('.vconsent')
+    .getByRole('button', { name: 'Увімкнути' })
+    .click();
+  await expect.poll(() => chunks).toBeGreaterThan(0);
+  await chat(page)
+    .getByRole('button', { name: 'Stop — зупинити голос і дії', exact: true })
+    .click();
+  await expect(bar(page)).toBeHidden();
+  const before = chunks;
+  await page.waitForTimeout(1000);
+  expect(chunks).toBe(before);
+  expect(grants).toBe(1);
+  expect(sockets).toBe(1);
+  expect(finals).toBe(0);
+  expect(uploads).toEqual([]);
+});

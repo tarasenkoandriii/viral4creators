@@ -12,6 +12,7 @@ describe('stream grant uses existing budgets before authorization leaves backend
   } as never;
   const env = {
     ASSIST_STREAM_ENABLED: 'true',
+    ASSIST_SECRETS_KEY: Buffer.alloc(32, 3).toString('base64'),
     LIVE_LOGIN_RELAY_URL: 'https://relay.example',
     LIVE_LOGIN_RELAY_SECRET: 'mock-secret',
     ASSIST_STREAM_MICRO_USD_PER_MINUTE: '100',

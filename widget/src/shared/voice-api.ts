@@ -16,6 +16,8 @@ export interface RecordLimits {
    * распознавания (детектор на устройстве ставит план на паузу).
    */
   onSpeech?: () => void;
+  /** Raw 16kHz signed 16-bit LE mono, from the existing capture AudioContext. */
+  onAudio?: (chunk: Blob) => void;
 }
 
 export type RecordEnd =

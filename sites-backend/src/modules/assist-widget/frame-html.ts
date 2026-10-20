@@ -68,6 +68,7 @@ const MEDIA_SOURCE =
 export function frameCsp(
   ancestors: string,
   mediaSources: string[] = [],
+  streamOrigin: string | null = null,
 ): string {
   const sources = ancestors
     .split(/\s+/)
@@ -82,7 +83,13 @@ export function frameCsp(
     "style-src 'self'",
     "img-src 'self'",
     "font-src 'self'",
-    "connect-src 'self'",
+    [
+      "connect-src 'self'",
+      ...(streamOrigin &&
+      /^wss:\/\/[a-z0-9.-]+(?::[0-9]{1,5})?$/.test(streamOrigin)
+        ? [streamOrigin]
+        : []),
+    ].join(' '),
     // Э5: озвучка ответа — Blob-URL из байтов `POST /widget/v1/tts`.
     // Э6: ролик — подписанная ссылка своего origin и редирект на хранилище
     // роликов (только источники правильной формы — как frame-ancestors).

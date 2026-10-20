@@ -1,3 +1,4 @@
+import { createHash, createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once, EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
@@ -89,8 +90,8 @@ describe('Soniox in the existing relay (no provider network)', () => {
         '{"tokens":[{"text":"yes","confidence":0.3,"is_final":true}]}',
       ),
     );
-    await until(() => messages.length === 2);
-    expect(JSON.parse(messages[1]).tokens[0].confidence).toBe(0.3);
+    await pause(10);
+    expect(messages).toHaveLength(1);
     ws.send('stop');
     await once(ws, 'close');
     expect(upstreams[0].terminated).toBe(true);
@@ -137,6 +138,57 @@ describe('Soniox in the existing relay (no provider network)', () => {
     await once(ws, 'close');
     expect(upstreams[0].terminated).toBe(true);
   });
+  it('stream seals only final tokens after finish, never partial text', async () => {
+    const auth = grant();
+    const { ws, messages } = await attach(auth);
+    await until(() => messages.length === 1);
+    ws.send(Buffer.alloc(320));
+    upstreams[0].emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          tokens: [{ text: 'wrong', is_final: false, confidence: 1 }],
+        }),
+      ),
+    );
+    upstreams[0].emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          tokens: [{ text: 'hello', is_final: true, confidence: 0.95 }],
+        }),
+      ),
+    );
+    await pause(10);
+    expect(messages).toHaveLength(1);
+    ws.send('');
+    await until(() => upstreams[0].sent.includes(''));
+    upstreams[0].emit(
+      'message',
+      Buffer.from(JSON.stringify({ tokens: [], finished: true })),
+    );
+    await once(ws, 'close');
+    const final = JSON.parse(messages[1]);
+    const body = JSON.parse(Buffer.from(final.receipt, 'base64url').toString());
+    expect(final.type).toBe('final');
+    expect(body.tokens).toEqual([
+      {
+        text: 'hello',
+        is_final: true,
+        confidence: 0.95,
+        is_audio_event: false,
+      },
+    ]);
+    expect(body.grantHash).toBe(
+      createHash('sha256').update(auth.grant).digest('hex'),
+    );
+    expect(final.signature).toBe(
+      createHmac('sha256', secret)
+        .update(`soniox-final-v1:${final.receipt}`)
+        .digest('base64url'),
+    );
+  });
+
   it('overspeed PCM fails closed and is not forwarded', async () => {
     const { ws, messages } = await attach();
     await until(() => messages.length > 0);

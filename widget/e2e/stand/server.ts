@@ -371,7 +371,7 @@ function frameCsp(site: Site | undefined): string {
     "style-src 'self'",
     "img-src 'self'",
     "font-src 'self'",
-    "connect-src 'self'",
+    `connect-src 'self'${(site?.voice as { streaming?: boolean } | undefined)?.streaming ? ' wss://relay.example' : ''}`,
     // Э5/Э6: как frame-html.ts sites-backend — звук озвучки из Blob-URL,
     // ролик — подписанная ссылка своего origin и её редирект (в моке — на
     // свой же origin; в проде — хосты роликов ASSIST_VIDEO_HOSTS).

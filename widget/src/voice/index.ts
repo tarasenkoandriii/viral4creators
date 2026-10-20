@@ -86,6 +86,7 @@ export function createVoice(): VoiceEngine {
       let stream: MediaStream | null = null;
       let rec: MediaRecorder | null = null;
       let meter: AudioContext | null = null;
+      let encoder: ScriptProcessorNode | null = null;
       let timer = 0;
       let cancelled = false;
       const chunks: Blob[] = [];
@@ -103,6 +104,11 @@ export function createVoice(): VoiceEngine {
         clearInterval(timer);
         if (stream) for (const t of stream.getTracks()) t.stop();
         stream = null;
+        if (encoder) {
+          encoder.onaudioprocess = null;
+          encoder.disconnect();
+          encoder = null;
+        }
         if (meter) void meter.close().catch(() => undefined);
         meter = null;
       };
@@ -151,7 +157,9 @@ export function createVoice(): VoiceEngine {
             ? new MediaRecorder(s, { mimeType: mime })
             : new MediaRecorder(s);
           rec.ondataavailable = (e) => {
-            if (!ended && e.data && e.data.size) chunks.push(e.data);
+            if (!ended && e.data && e.data.size) {
+              chunks.push(e.data);
+            }
           };
           rec.onstop = () => {
             if (ended) return;
@@ -168,10 +176,42 @@ export function createVoice(): VoiceEngine {
           };
           rec.onerror = () => finish({ reason: 'error', code: 'failed' });
           rec.start(250);
-          meter = new C();
+          meter = limits.onAudio ? new C({ sampleRate: 16000 }) : new C();
           const an = meter.createAnalyser();
           an.fftSize = 1024;
-          meter.createMediaStreamSource(s).connect(an);
+          const input = meter.createMediaStreamSource(s);
+          input.connect(an);
+          if (limits.onAudio) {
+            // Reuse this capture context. Raw 16kHz mono permits a hard server
+            // sample-count ceiling; compressed bytes cannot prove audio duration.
+            encoder = meter.createScriptProcessor(2048, 1, 1);
+            let offset = 0;
+            const ratio = meter.sampleRate / 16000;
+            encoder.onaudioprocess = (event) => {
+              if (ended || stopping) return;
+              const samples = event.inputBuffer.getChannelData(0);
+              const pcm = new ArrayBuffer(
+                (Math.ceil(samples.length / ratio) + 1) * 2
+              );
+              const view = new DataView(pcm);
+              let bytes = 0;
+              let i = offset;
+              for (; i < samples.length; i += ratio) {
+                const v = Math.max(-1, Math.min(1, samples[Math.floor(i)]));
+                view.setInt16(
+                  bytes,
+                  Math.round(v * (v < 0 ? 32768 : 32767)),
+                  true
+                );
+                bytes += 2;
+              }
+              offset = i - samples.length;
+              event.outputBuffer.getChannelData(0).fill(0);
+              limits.onAudio?.(new Blob([pcm.slice(0, bytes)]));
+            };
+            input.connect(encoder);
+            encoder.connect(meter.destination);
+          }
           const buf = new Float32Array(an.fftSize);
           const t0 = Date.now();
           timer = window.setInterval(() => {

@@ -1,3 +1,4 @@
+import { streamSettings } from '../assist-site-voice/public/stream-grant';
 /**
  * GET /w/v1/frame?pk=…[&pv=1] — HTML iframe-чата с динамическим
  * `frame-ancestors` (ТЗ §4.12) — W2. Через @Res(): text/html, без конверта.
@@ -45,7 +46,11 @@ export class WidgetFrameController {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader(
       'Content-Security-Policy',
-      frameCsp(ancestors, videoMediaSources()),
+      frameCsp(
+        ancestors,
+        videoMediaSources(),
+        streamSettings(process.env)?.url.replace(/^https:/, 'wss:') ?? null,
+      ),
     );
     res.setHeader(
       'Cache-Control',

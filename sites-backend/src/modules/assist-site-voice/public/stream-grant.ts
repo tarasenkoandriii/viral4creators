@@ -1,7 +1,7 @@
 /** Short-lived authorization for the existing VPS relay; never a voice/action ticket.
  * Caller must authorize access and settle the existing SiteBudget BEFORE signing.
  */
-import { createHmac } from 'crypto';
+import { createHmac, createHash, timingSafeEqual } from 'crypto';
 export const STREAM_SECONDS = 30;
 export function streamSettings(env: NodeJS.ProcessEnv): {
   url: string;
@@ -43,6 +43,8 @@ export function signStreamGrant(
     id: string;
     expires: number;
     seconds: number;
+    siteId?: string;
+    visitorId?: string;
   },
 ): { grant: string; signature: string } {
   const grant = Buffer.from(JSON.stringify(p)).toString('base64url');
@@ -52,4 +54,67 @@ export function signStreamGrant(
       .update(`soniox-stream-v1:${grant}`)
       .digest('base64url'),
   };
+}
+
+/** Authenticated relay result, scoped to the original visitor/site grant. */
+export function readStreamFinal(
+  secret: string,
+  p: {
+    grant: string;
+    receipt: string;
+    signature: string;
+  },
+  siteId: string,
+  visitorId: string,
+  now: number,
+): {
+  id: string;
+  expires: number;
+  tokens: import('../../../shared/soniox-stt-core').SonioxToken[];
+} | null {
+  try {
+    if (
+      typeof p.grant !== 'string' ||
+      typeof p.receipt !== 'string' ||
+      typeof p.signature !== 'string' ||
+      p.grant.length > 2048 ||
+      p.receipt.length > 100_000
+    )
+      return null;
+    const expected = createHmac('sha256', secret)
+      .update(`soniox-final-v1:${p.receipt}`)
+      .digest('base64url');
+    if (
+      Buffer.byteLength(expected) !== Buffer.byteLength(p.signature) ||
+      !timingSafeEqual(Buffer.from(expected), Buffer.from(p.signature))
+    )
+      return null;
+    const grant = JSON.parse(Buffer.from(p.grant, 'base64url').toString());
+    const result = JSON.parse(Buffer.from(p.receipt, 'base64url').toString());
+    if (
+      grant.siteId !== siteId ||
+      grant.visitorId !== visitorId ||
+      typeof grant.id !== 'string' ||
+      !/^[a-zA-Z0-9_-]{1,128}$/.test(grant.id) ||
+      !Number.isSafeInteger(grant.expires) ||
+      result.grantHash !== createHash('sha256').update(p.grant).digest('hex') ||
+      result.expires !== grant.expires + 60_000 ||
+      result.expires <= now ||
+      result.expires > now + 95_000 ||
+      !Array.isArray(result.tokens) ||
+      result.tokens.length > 1024 ||
+      result.tokens.some(
+        (t: { text?: unknown; is_final?: unknown }) =>
+          !t || typeof t.text !== 'string' || t.is_final !== true,
+      ) ||
+      result.tokens.reduce(
+        (n: number, t: { text: string }) => n + t.text.length,
+        0,
+      ) > 4000
+    )
+      return null;
+    return { id: grant.id, expires: grant.expires, tokens: result.tokens };
+  } catch {
+    return null;
+  }
 }

@@ -180,6 +180,32 @@ export class WidgetVoiceController {
     };
   }
 
+  @Post('voice/stream/final')
+  @HttpCode(200)
+  async streamFinal(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Body() body: { grant: string; receipt: string; signature: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<WidgetVoiceResponse> {
+    res.setHeader('Cache-Control', 'no-store');
+    const ctx = await this.sessions.authenticate({
+      token,
+      requestOrigin: tokenRequestOrigin(req),
+    });
+    await this.rate.enforce([
+      {
+        scope: 'widget-stream-final-min',
+        key: `${ctx.site.siteId}:${ctx.visitor.visitorId}`,
+        limit: 30,
+        windowMs: MINUTE,
+      },
+    ]);
+    const r = await this.voice.finishStream(ctx, body ?? ({} as never));
+    if (!r.ok) throw widgetError(FAILURE_CODE[r.failure]);
+    return { text: r.text, lang: r.lang, voiceTicket: r.ticket };
+  }
+
   @Post('tts')
   async speak(
     @Headers(TOKEN_HEADER) token: string | undefined,

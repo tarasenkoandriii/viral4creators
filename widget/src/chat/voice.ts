@@ -1,3 +1,4 @@
+import { VoiceStream } from './voice-stream';
 /**
  * Голос в iframe-чате (Э5, ТЗ помощника §4.10, §4-бис.6, §4-бис.10 п.5,
  * §5-бис.7, Р-28, Р-29) — сторона чата; запись и звук — ленивый чанк
@@ -103,6 +104,7 @@ export interface VoiceHost {
 export interface VoiceCfg extends RecordLimits {
   input: boolean;
   output: boolean;
+  streaming?: boolean;
 }
 
 /** Коды сервера, после которых голос до перезагрузки не предлагаем. */
@@ -124,6 +126,7 @@ export class VoiceController {
   private planMode = false;
   private recordingEpoch = 0;
   private playbackEpoch = 0;
+  private stream: VoiceStream | null = null;
   private sttRequest: AbortController | null = null;
   private audioRequest: AbortController | null = null;
   private listenTimer: ReturnType<typeof setTimeout> | null = null;
@@ -273,10 +276,42 @@ export class VoiceController {
     this.host.storage('session', 'voice', 'armed');
     this.host.setUi({ phase: 'recording', since: Date.now(), level: 0 });
     const epoch = ++this.recordingEpoch;
+    if (cfg.streaming) {
+      const request = new AbortController();
+      this.sttRequest = request;
+      this.stream = new VoiceStream(
+        async () => {
+          const r = await this.post(
+            '/widget/v1/voice/stream',
+            'application/json',
+            '{}',
+            {},
+            request.signal
+          );
+          return unwrap(r.status, await r.json().catch(() => null)) as {
+            url: string;
+            grant: string;
+            signature: string;
+          };
+        },
+        () => {
+          if (epoch === this.recordingEpoch) {
+            this.stop();
+            this.host.notify(this.host.t().micFailed);
+          }
+        }
+      );
+    }
     let ended = false;
     const rec = engine.record(
       {
         ...cfg,
+        ...(cfg.streaming
+          ? {
+              maxRecordMs: Math.min(cfg.maxRecordMs, 25_000),
+              onAudio: (chunk: Blob) => this.stream?.audio(chunk),
+            }
+          : {}),
         // Пока ждём «да» на карточке — порог TMA 150 мс (короткое «да» —
         // законный ответ, §5-бис.7); во время плана — тоже.
         minSpeechMs:
@@ -336,6 +371,9 @@ export class VoiceController {
     this.listenTimer = this.sessionTimer = null;
     this.host.setUi({ handsFree: false });
     this.recordingEpoch++;
+    const stream = this.stream;
+    this.stream = null;
+    stream?.stop();
     this.planMode = false;
     this.pressedHere = false;
     this.sttRequest?.abort();
@@ -370,6 +408,10 @@ export class VoiceController {
     if (end.reason === 'cancel')
       return this.host.setUi({ phase: 'idle', level: 0 });
     if (end.reason === 'short') {
+      if (this.cfg?.streaming) {
+        this.stop();
+        return this.host.notify(t.voiceNotHeard);
+      }
       this.host.setUi({ phase: 'idle', level: 0 });
       if (this.planMode) {
         // Шум во время плана — снять паузу и слушать дальше, без уведомления.
@@ -388,14 +430,18 @@ export class VoiceController {
     }
     if (this.host.ui().handsFree) this.handsFreeTurns++;
     this.host.setUi({ phase: 'sending', level: 0 });
-    const request = new AbortController();
+    const request = this.sttRequest ?? new AbortController();
     this.sttRequest = request;
     try {
       const lang = uiLangOfDict(this.host.t());
+      const stream = this.stream;
+      const receipt = stream ? await stream.finish() : null;
+      if (epoch !== this.recordingEpoch) return;
+      this.stream = null;
       const r = await this.post(
-        '/widget/v1/voice',
-        end.blob.type || 'audio/webm',
-        end.blob,
+        receipt ? '/widget/v1/voice/stream/final' : '/widget/v1/voice',
+        receipt ? 'application/json' : end.blob.type || 'audio/webm',
+        receipt ? JSON.stringify(receipt) : end.blob,
         lang ? { [UI_LANG_HEADER]: lang } : {},
         request.signal
       );
@@ -411,6 +457,8 @@ export class VoiceController {
         typeof data.voiceTicket === 'string' && data.voiceTicket.length <= 200
           ? data.voiceTicket
           : null;
+      if (this.cfg?.streaming && !ticket)
+        throw new Error('missing voice ticket');
       if (
         !this.planMode &&
         this.host.ui().handsFree &&
