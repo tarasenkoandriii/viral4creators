@@ -2554,3 +2554,16 @@ submit не оплачивается. Возвращает `{sessionId,state,reu
 ### Tutorial: общий остаток очереди качества (18.10.2026)
 
 `GET /api/admin/tutorial-demo-quality/queue` — только AdminSession + operator, `Cache-Control: no-store`. Ответ: `enabled`, `observedAt`, `due` (pending со сроком захвата или running с истёкшей арендой), `oldestOpenAt`, `groups[{status,phase,count}]` по всем сохранённым проверкам и до 10 последних `errors[{id,assetId,locale,phase,attempts,error}]`. Исторические/неактивные версии входят в статистику; это не число опубликованных роликов. Срез из нескольких запросов наблюдательный, не атомарный. Ошибка базы возвращается ошибкой, а не нулевыми счётчиками. Чтение не меняет записи и не вызывает Gemini/FFmpeg. В админке: ИИ-консультант → Видео-контент → «Очередь качества: общий остаток».
+
+### Optional streaming voice transport (disabled by default)
+
+`POST /widget/v1/voice/stream`: existing widget visitor-token/origin authentication
+and STT visitor/IP counters; no audio body. Returns `{url, grant, signature, expires}`
+after voice access and existing site/voice/platform budget checks. Internal budget
+charges a conservative maximum before authorization is returned. Missing enable
+flag/rate gives `VOICE_UNAVAILABLE`, exhausted cap gives `VOICE_LIMIT`.
+Use the grant once on the existing relay `/voice/stream` WS; stop on disconnect,
+never automatically retry audio or start another paid session. Grant is not a
+voice ticket or an authorization to run a UI action. Current widget remains async;
+PCM capture/final-token-to-ticket integration is still pending (doc/TODO.md).
+See the streaming section in doc/DEPLOYMENT.md for the wire format and limits.

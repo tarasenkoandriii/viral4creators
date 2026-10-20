@@ -127,6 +127,59 @@ export class WidgetVoiceController {
     return { text: r.text, lang: r.lang, voiceTicket: r.ticket };
   }
 
+  @Post('voice/stream')
+  @HttpCode(200)
+  async streamIn(
+    @Headers(TOKEN_HEADER) token: string | undefined,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    res.setHeader('Cache-Control', 'no-store');
+    const ctx = await this.sessions.authenticate({
+      token,
+      requestOrigin: tokenRequestOrigin(req),
+    });
+    const key = `${ctx.site.siteId}:${ctx.visitor.visitorId}`;
+    const ipKey = `${ctx.site.siteId}:${ctx.visitor.ipHash}`;
+    // Same counters as async STT: changing transport cannot bypass its limits.
+    await this.rate.enforce([
+      {
+        scope: 'widget-stt-visitor-min',
+        key,
+        limit: VOICE_DEFAULTS.sttPerVisitorPerMinute,
+        windowMs: MINUTE,
+      },
+      {
+        scope: 'widget-stt-ip-site-min',
+        key: ipKey,
+        limit: VOICE_DEFAULTS.sttPerIpPerMinute,
+        windowMs: MINUTE,
+      },
+    ]);
+    await this.dayLimits([
+      {
+        scope: 'widget-stt-visitor-day',
+        key,
+        limit: VOICE_DEFAULTS.sttPerVisitorPerDay,
+        windowMs: DAY,
+      },
+      {
+        scope: 'widget-stt-ip-site-day',
+        key: ipKey,
+        limit: VOICE_DEFAULTS.sttPerIpPerDay,
+        windowMs: DAY,
+      },
+    ]);
+    const r = await this.voice.openStream(ctx);
+    if (!r.ok) throw widgetError(FAILURE_CODE[r.failure]);
+    return {
+      url: r.url,
+      grant: r.grant,
+      signature: r.signature,
+      expires: r.expires,
+    };
+  }
+
   @Post('tts')
   async speak(
     @Headers(TOKEN_HEADER) token: string | undefined,

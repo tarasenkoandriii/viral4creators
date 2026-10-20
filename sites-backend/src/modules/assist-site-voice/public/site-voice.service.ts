@@ -1,3 +1,8 @@
+import {
+  streamSettings,
+  signStreamGrant,
+  STREAM_SECONDS,
+} from './stream-grant';
 import { voiceAffirmationNeedsRetry } from '../../assist-ui-core/action-words';
 import { ttsFailureBudgetCost } from './tts-budget';
 import { sonioxScope } from '../../soniox-observability/soniox-context';
@@ -190,6 +195,79 @@ export class SiteVoiceService {
       voiceConfig: row?.voiceConfig ?? null,
       capOverrideMicroUsd: row?.voiceDailyCapMicroUsd ?? null,
     });
+  }
+
+  /** Opt-in streaming transport grant. No provider call or automatic retry here. */
+  async openStream(ctx: VoiceCtx): Promise<
+    | {
+        ok: true;
+        url: string;
+        grant: string;
+        signature: string;
+        expires: number;
+      }
+    | { ok: false; failure: VoiceFailure }
+  > {
+    const settings = streamSettings(this.env);
+    if (!settings) return { ok: false, failure: 'unavailable' };
+    const now = this.now();
+    const state = await readState(this.db, ctx.site.accountId, now);
+    const access = await this.access(ctx.site, state);
+    if (!access.input) return { ok: false, failure: 'unavailable' };
+    if (
+      !ctx.site.preview &&
+      !(await this.unitsLeft(ctx.site.accountId, state))
+    ) {
+      return { ok: false, failure: 'limit' };
+    }
+    // Read relay boot BEFORE reserving money; this is authenticated health metadata,
+    // not a Soniox request. A relay restart invalidates all earlier grants.
+    let boot: string;
+    try {
+      const response = await fetch(`${settings.url}/voice/boot`, {
+        headers: { 'X-Relay-Secret': settings.secret },
+        signal: AbortSignal.timeout(3000),
+        redirect: 'error',
+      });
+      if (!response.ok) return { ok: false, failure: 'upstream' };
+      const body = (await response.json()) as { boot?: unknown };
+      if (typeof body.boot !== 'string' || !/^[a-f0-9-]{36}$/.test(body.boot)) {
+        return { ok: false, failure: 'upstream' };
+      }
+      boot = body.boot;
+    } catch {
+      return { ok: false, failure: 'upstream' };
+    }
+    const capRow = await this.siteCap(ctx.site.siteId);
+    const reserved = await this.budget.reserve(this.db, {
+      siteId: ctx.site.siteId,
+      siteCapMicroUsd: siteDailyCapMicroUsd(capRow, state),
+      voiceCapMicroUsd: access.capMicroUsd,
+      estMicroUsd: settings.chargeMicroUsd,
+      now,
+    });
+    if (!reserved.ok) return { ok: false, failure: 'limit' };
+    // Charge the upper bound before issuing anything usable. Existing Postgres
+    // locks enforce site + voice + platform limits across backend replicas.
+    // A failed/ambiguous settle produces NO grant; never retry it automatically.
+    await this.budget.settle(
+      this.db,
+      reserved.reservation,
+      settings.chargeMicroUsd,
+    );
+    const expires = this.now().getTime() + STREAM_SECONDS * 1000;
+    const signed = signStreamGrant(settings.secret, {
+      boot,
+      id: reserved.reservation.id,
+      expires,
+      seconds: STREAM_SECONDS,
+    });
+    return {
+      ok: true,
+      url: settings.url.replace(/^https:/, 'wss:') + '/voice/stream',
+      ...signed,
+      expires,
+    };
   }
 
   // ── Распознавание ───────────────────────────────────────────────────────

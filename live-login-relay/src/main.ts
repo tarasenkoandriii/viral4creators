@@ -3,6 +3,8 @@
  * HTTP-сервер с WS-апгрейдом на нём же (не два отдельных порта).
  */
 
+import { SonioxStream } from './soniox-stream';
+import { assertRelaySecret } from './auth';
 import { createServer } from 'node:http';
 import { loadConfig, ConfigError, egressStartupWarnings } from './config';
 import { createLogger } from './logger';
@@ -51,9 +53,31 @@ async function main(): Promise<void> {
     proxyAuth: network.proxyAuth,
   });
 
+  // Off by default; the helper key is independent of video generation/Nova.
+  const voice =
+    process.env.ASSIST_STREAM_ENABLED === 'true'
+      ? new SonioxStream(config.relaySecret, requireVoiceKey())
+      : null;
   let shuttingDown = false;
 
   const server = createServer((req, res) => {
+    if (req.url === '/voice/boot' && req.method === 'GET') {
+      res.setHeader('Cache-Control', 'no-store');
+      try {
+        assertRelaySecret(
+          req.headers['x-relay-secret'] as string | undefined,
+          config.relaySecret,
+        );
+        res.writeHead(voice && !shuttingDown ? 200 : 503, {
+          'Content-Type': 'application/json',
+        });
+        res.end(JSON.stringify({ boot: voice?.boot ?? null }));
+      } catch {
+        res.writeHead(401);
+        res.end();
+      }
+      return;
+    }
     handleHttpRequest(req, res, {
       relaySecret: config.relaySecret,
       sessionManager,
@@ -69,14 +93,19 @@ async function main(): Promise<void> {
     });
   });
 
-  server.on(
-    'upgrade',
-    createWsUpgradeHandler({
-      sessionManager,
-      wsAuthTimeoutMs: config.wsAuthTimeoutMs,
-      logger,
-    }),
-  );
+  const loginUpgrade = createWsUpgradeHandler({
+    sessionManager,
+    wsAuthTimeoutMs: config.wsAuthTimeoutMs,
+    logger,
+  });
+  server.on('upgrade', (req, socket, head) => {
+    if (req.url === '/voice/stream') {
+      if (voice && !shuttingDown) voice.upgrade(req, socket, head);
+      else socket.destroy();
+      return;
+    }
+    loginUpgrade(req, socket, head);
+  });
 
   server.listen(config.port, () => {
     logger.info('live-login-relay listening', {
@@ -95,6 +124,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    voice?.close();
     logger.info('shutting down', { signal });
     server.close();
     // Потолок §13 спеки («ждёт завершения всех закрытий не дольше 10с,
@@ -163,3 +193,10 @@ main().catch((err) => {
   );
   process.exit(1);
 });
+
+function requireVoiceKey(): string {
+  const key = process.env.SONIOX_API_KEY?.trim();
+  if (!key)
+    throw new ConfigError('SONIOX_API_KEY required for voice streaming');
+  return key;
+}
