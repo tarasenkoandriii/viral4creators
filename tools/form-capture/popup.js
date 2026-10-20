@@ -248,3 +248,26 @@ get("transfer-apply").addEventListener("click", async () => {
     get("transfer-preview").disabled = !transferPlan;
   }
 });
+
+// The actual toolbar click grants activeTab. Mount a structure-only panel in
+// the same authorized tab; no host permissions, messages or extra grants.
+(async () => {
+  try {
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
+    if (!tab?.id) throw new Error("Откройте HTTPS-страницу с формой.");
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["workbench.js"],
+    });
+    get("workbench-status").textContent =
+      "Панель QA открыта на странице. Закройте popup, чтобы работать с ней. Старый режим переноса ниже сохранён.";
+  } catch (e) {
+    get("workbench-status").textContent = readableError(
+      e,
+      "Панель QA не открыта.",
+    );
+  }
+})();

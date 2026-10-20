@@ -336,18 +336,152 @@ test("archive and structure snapshot are rejected as transfer plans with actiona
         "Нужен JSON плана переноса",
       ],
     ]) {
-      await w.popup
-        .getByLabel("План переноса", { exact: true })
-        .setInputFiles({
-          name,
-          mimeType: "application/octet-stream",
-          buffer: Buffer.from(body),
-        });
+      await w.popup.getByLabel("План переноса", { exact: true }).setInputFiles({
+        name,
+        mimeType: "application/octet-stream",
+        buffer: Buffer.from(body),
+      });
       await expect(w.popup.locator("#transfer-status")).toContainText(message);
       await expect(w.popup.locator("#transfer-preview")).toBeDisabled();
       await expect(w.popup.locator("#transfer-apply")).toBeDisabled();
       await expect(w.popup.locator("#drift-open")).toBeDisabled();
     }
+  } finally {
+    await w.close();
+  }
+});
+
+test("toolbar-authorized scripting mounts a structure-only page panel with bounded handoff", async () => {
+  const w = await setup(true);
+  try {
+    const panel = w.target.getByRole("region", {
+      name: "QA: структура формы — панель расширения",
+      exact: true,
+    });
+    await expect(panel).toBeVisible();
+    await panel
+      .getByRole("button", { name: "Собрать структуру в панели", exact: true })
+      .click();
+    const preview = await panel.locator("#preview").textContent();
+    expect(preview).not.toContain("PRIVATE_");
+    const baseline = JSON.parse(preview);
+    baseline.fields.find((x) => x.type === "email").required = false;
+    const plan = {
+      version: 1,
+      source: { siteId: "site-test", standId: "stand-test" },
+      target: {
+        url: "https://capture-fixture.invalid/",
+        formIndex: 0,
+        fields: baseline.fields,
+      },
+      entries: [{ targetId: "ignored", value: "PRIVATE_PLANNED_VALUE" }],
+    };
+    await panel
+      .locator("#file")
+      .setInputFiles({
+        name: "plan.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(plan)),
+      });
+    await panel
+      .getByRole("button", { name: "Сверить структуру в панели", exact: true })
+      .click();
+    const link = panel.getByRole("link", {
+      name: "Открыть QA со структурными изменениями",
+      exact: true,
+    });
+    await expect(link).toBeVisible();
+    const url = new URL(await link.getAttribute("href"));
+    expect(url.origin).toBe("https://assist-app.viral4creators.app");
+    const payload = JSON.parse(
+      decodeURIComponent(url.hash.split("handoff=")[1]),
+    );
+    expect(payload.standId).toBe("stand-test");
+    expect(
+      payload.baseline.fields.find((x) => x.type === "email").required,
+    ).toBe(false);
+    expect(
+      payload.current.fields.find((x) => x.type === "email").required,
+    ).toBe(true);
+    expect(JSON.stringify(payload)).not.toContain("PRIVATE_");
+    expect(await panel.innerText()).not.toContain("PRIVATE_");
+    expect(await w.target.locator("#email").inputValue()).toBe("PRIVATE_EMAIL");
+    expect(await w.target.locator("#password").inputValue()).toBe(
+      "PRIVATE_PASSWORD",
+    );
+    // Reopening the popup injects the same source but must not duplicate the panel.
+    await w.target.locator("iframe").evaluate((el) => {
+      el.src = el.src;
+    });
+    await expect(w.popup.locator("#workbench-status")).toContainText(
+      "Панель QA открыта",
+    );
+    await expect(panel).toHaveCount(1);
+    await panel
+      .locator("#file")
+      .setInputFiles({
+        name: "bad.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify({
+            ...plan,
+            target: { ...plan.target, url: "https://other.invalid/" },
+          }),
+        ),
+      });
+    await expect(panel.locator("#status")).toContainText("этому HTTPS-сайту");
+    await expect(link).toBeHidden();
+    await expect(panel.locator("#compare")).toBeDisabled();
+    expect(w.network).toEqual([fixtureUrl]);
+  } finally {
+    await w.close();
+  }
+});
+
+test("page panel refuses missing access and does not report matching structures as drift", async () => {
+  const denied = await setup(false);
+  try {
+    await expect(denied.popup.locator("#workbench-status")).not.toBeEmpty();
+    await expect(
+      denied.target.getByRole("region", {
+        name: "QA: структура формы — панель расширения",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  } finally {
+    await denied.close();
+  }
+  const w = await setup(true);
+  try {
+    const panel = w.target.getByRole("region", {
+      name: "QA: структура формы — панель расширения",
+      exact: true,
+    });
+    await expect(panel).toBeVisible();
+    await panel.locator("#capture").click();
+    const fields = JSON.parse(
+      await panel.locator("#preview").textContent(),
+    ).fields;
+    const plan = {
+      version: 1,
+      source: { siteId: "site-test", standId: "stand-test" },
+      target: { url: "https://capture-fixture.invalid/", formIndex: 0, fields },
+      entries: [],
+    };
+    await panel
+      .locator("#file")
+      .setInputFiles({
+        name: "same.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(plan)),
+      });
+    await panel.locator("#compare").click();
+    await expect(panel.locator("#status")).toContainText(
+      "Изменений структуры нет",
+    );
+    await expect(panel.locator("#handoff")).toBeHidden();
+    await panel.locator("#close").click();
+    await expect(panel).toHaveCount(0);
   } finally {
     await w.close();
   }

@@ -5,12 +5,14 @@ on:
     paths:
       - 'tools/form-capture/**'
       - 'scripts/package-form-capture.py'
+      - 'scripts/build-form-workbench.py'
       - 'assist/public/downloads/qa-form-capture.zip'
       - '.github/workflows/form-capture.yml'
   pull_request:
     paths:
       - 'tools/form-capture/**'
       - 'scripts/package-form-capture.py'
+      - 'scripts/build-form-workbench.py'
       - 'assist/public/downloads/qa-form-capture.zip'
       - '.github/workflows/form-capture.yml'
   workflow_dispatch:
@@ -35,6 +37,8 @@ jobs:
           cache-dependency-path: tools/form-capture/tests/package-lock.json
       - run: npm ci
       - run: npm audit --audit-level=high
+      - name: Isolated panel matches sources
+        run: python3 ../../../scripts/build-form-workbench.py --check
       - name: Archive matches reviewed sources
         run: python3 ../../../scripts/package-form-capture.py --check
       - name: Collector privacy tests
