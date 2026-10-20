@@ -68,8 +68,32 @@ export const config = {
   matcher: [
     '/((?!_next|legal|feed|video|r/|qa/|icon|favicon.ico|robots.txt|sitemap.xml|.*\\..*).*)',
     '/stories-media/:path*',
+    // ST2-U-04: OG-карточки Story‑Tales (`public/og/stories-<locale>.jpg`)
+    // — на ЛЮБОМ хосте; иначе путь с точкой шёл мимо middleware и отдавал
+    // промо «Скоро запуск» с 200.
+    '/og/stories-:card',
+    // ST2-U-05: поддомен Story‑Tales закрыт ЦЕЛИКОМ — и пути, исключённые
+    // первой строкой (`/legal/*`, `/qa/*`, robots.txt, sitemap.xml,
+    // статика, `_next`). Значение matcher должно быть литералом (Next
+    // разбирает его при сборке), поэтому здесь шаблон «любой хост
+    // story-tales.*», а точный хост (`NEXT_PUBLIC_STORIES_HOST`) сверяет
+    // `isStoriesHost` ниже; прочие хосты под этот шаблон не попадают.
+    { source: '/:path*', has: [{ type: 'host', value: 'story-tales\\..+' }] },
   ],
 };
+
+/**
+ * Пути, которые идут в локализацию (`route`) — ровно первая строка
+ * matcher. Путь, попавший в middleware только через строки Story‑Tales
+ * (OG-карточки, хост story-tales.*), но не закрытый ими, дальше не
+ * трогаем: иначе `/og/main-ru.jpg` уехал бы в `/ru/og/main-ru.jpg`.
+ * Совпадение с matcher держит `scripts/stories-noindex.test.ts`.
+ */
+const LOCALIZED_PATH =
+  /^\/(?!_next|legal|feed|video|r\/|qa\/|icon|favicon.ico|robots.txt|sitemap.xml|.*\..*).*$/;
+
+/** OG-карточки Story‑Tales: `/og/stories-<что угодно>` на любом хосте. */
+const STORIES_OG_PREFIX = '/og/stories-';
 
 /**
  * Мини-лендинги на собственных поддоменах.
@@ -104,8 +128,10 @@ const SUBDOMAIN_SITES: ReadonlyArray<{
  * отсюда — отдельный ответ, и полагаться на то, что платформа допишет в
  * него заголовки конфига, значит проверять это на проде. Здесь он
  * ставится явно; на rewrite заголовки middleware переходят в итоговый
- * ответ страницы. Статику (`/stories-media/*`) middleware не видит
- * (matcher исключает пути с точкой) — она только за `next.config.js`.
+ * ответ страницы. Медиа (`/stories-media/*`), OG-карточки
+ * (`/og/stories-*`) и весь хост story-tales.* matcher теперь пропускает
+ * сюда отдельными строками — им middleware отвечает 404 (аудит 2,
+ * ST2-U-04/05); `next.config.js` остаётся вторым замком заголовков.
  */
 function withStoriesHeaders(response: NextResponse): NextResponse {
   response.headers.set('X-Robots-Tag', STORIES_ROBOTS);
@@ -113,10 +139,27 @@ function withStoriesHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+/** Закрытая разработка Story‑Tales: всё, что к ней относится, — 404. */
+function isClosedStoriesRequest(host: string | null, pathname: string): boolean {
+  return (
+    isStoriesHost(host) ||
+    isStoriesPath(pathname, locales) ||
+    pathname.startsWith('/stories-media/') ||
+    pathname.startsWith(STORIES_OG_PREFIX)
+  );
+}
+
 export function middleware(request: NextRequest) {
-  // Closed development: no public Story landing or promotional media.
-  if (isStoriesHost(request.headers.get('host')) || isStoriesPath(request.nextUrl.pathname, locales) || request.nextUrl.pathname.startsWith('/stories-media/')) {
+  // Closed development: no public Story landing, promo cards or media —
+  // on the Story host every path, including /legal, /qa, robots, sitemap
+  // and static files (ST2-U-04/05).
+  if (isClosedStoriesRequest(request.headers.get('host'), request.nextUrl.pathname)) {
     return withStoriesHeaders(new NextResponse('Not Found', { status: 404 }));
+  }
+  // Пришёл только через строки matcher для Story‑Tales, но не закрыт —
+  // не локализуем (см. LOCALIZED_PATH).
+  if (!LOCALIZED_PATH.test(request.nextUrl.pathname)) {
+    return NextResponse.next();
   }
   const response = route(request);
   const host = request.headers.get('host');

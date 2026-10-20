@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FfmpegApiService } from '../postprod/ffmpeg-api.service';
 import { downloadStoryVideo } from './story-video-result';
-import { storyDigest } from './story-video-plan';
+import { storyDigest, storyVideoTtsReserve } from './story-video-plan';
 
 /**
  * WP1 (TODO 84): operator reconciliation of Story-Tales results left in
@@ -254,13 +254,15 @@ export class StoryOperatorService {
         renderId,
         kind,
         source: row.source,
-        cacheKeyPrefix: row.cacheKey.slice(0, 12),
+        /** Short segment id for the operator (ST2: prefer it over the key). */
+        shortId: row.id.slice(0, 8),
         ageHours: hours(row.createdAt, now),
         idleHours: hours(row.updatedAt, now),
       };
     });
   }
 
+  /** ST2-R-04: newest first, `limit` 1–200 (default 100). */
   journal(targetId?: string, limit = 100) {
     return this.prisma.storyOperatorAction.findMany({
       where: targetId ? { targetId } : {},
@@ -553,6 +555,7 @@ export class StoryOperatorService {
             configHash: true,
             parentNarrationKey: true,
             mainDuration: true,
+            paidSpeechChars: true,
           },
         });
         if (!r) return null;
@@ -566,7 +569,23 @@ export class StoryOperatorService {
           throw new BadRequestException(
             'Резерв освобождается только при подтверждении, что провайдеры не списали средства',
           );
-        const { configHash, parentNarrationKey, mainDuration, ...previous } = r;
+        const {
+          configHash,
+          parentNarrationKey,
+          mainDuration,
+          paidSpeechChars,
+          ...previous
+        } = r;
+        // ST2-S-01: speech this render synthesized and saved is paid for and
+        // reused for free by the next render — its TTS reserve (same 4×
+        // factor as FAILED before submit, A-S3-4) stays; only the assembly/QA
+        // part and unconfirmed stages are released.
+        const keptMicroUsd = input.releaseReserve
+          ? Math.min(
+              r.reservedMicroUsd,
+              storyVideoTtsReserve(paidSpeechChars ?? 0),
+            )
+          : r.reservedMicroUsd;
         // A-S2-1: the main-narration key is released only when nothing paid
         // could have run (base) or the operator confirmed no provider charge.
         // Otherwise it stays: every new parent render with the same narration
@@ -587,16 +606,19 @@ export class StoryOperatorService {
                   assetExpiresAt: null,
                   // Frees the (gift, config) slot so the owner may start a new attempt explicitly.
                   configHash: `${configHash}:closed:${input.requestId}`,
-                  ...(input.releaseReserve ? { reservedMicroUsd: 0 } : {}),
+                  ...(input.releaseReserve
+                    ? { reservedMicroUsd: keptMicroUsd }
+                    : {}),
                   ...(releaseNarration ? { parentNarrationKey: null } : {}),
-                  error: `Закрыто оператором: сборка не подтверждена. Новую сборку можно запустить вручную.${input.releaseReserve ? '' : ' Резерв бюджета этой попытки сохранён.'}${unsavedNarration && !releaseNarration ? ' Основная речь этим голосом не подтверждена и повторно не покупается.' : ''}`,
+                  error: `Закрыто оператором: сборка не подтверждена. Новую сборку можно запустить вручную.${!input.releaseReserve ? ' Резерв бюджета этой попытки сохранён.' : keptMicroUsd > 0 ? ' Резерв сохранённой речи этой попытки оставлен (она переиспользуется без новой оплаты); резерв сборки освобождён.' : ''}${unsavedNarration && !releaseNarration ? ' Основная речь этим голосом не подтверждена и повторно не покупается.' : ''}`,
                 },
               })
             ).count === 1,
           result: {
             status: 'FAILED',
             stage,
-            releasedUsd: input.releaseReserve ? usd(r.reservedMicroUsd) : 0,
+            releasedUsd: usd(r.reservedMicroUsd - keptMicroUsd),
+            keptUsd: usd(keptMicroUsd),
             narrationKey: !unsavedNarration
               ? 'none'
               : releaseNarration
@@ -672,7 +694,9 @@ export class StoryOperatorService {
         if (!row) return null;
         const { cacheKey, ...rest } = row;
         return {
-          previous: { ...rest, cacheKeyPrefix: cacheKey.slice(0, 12) },
+          // ST2: no key prefix in the append-only journal (it is a digest
+          // of the exact text and outlives the gift); id + status suffice.
+          previous: rest,
           mutate: async (tx: Tx) =>
             (
               await tx.storyVideoSegment.updateMany({

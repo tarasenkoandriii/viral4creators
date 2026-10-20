@@ -30,8 +30,21 @@ import {
 import { Button, Card } from '../../components/ui';
 import { api } from '../../services/api';
 import { navigate, routes } from '../../lib/router';
-import { StoryClientError, storyErrorText } from './story-errors';
+import {
+  StoryClientError,
+  storyErrorText,
+  storyLoadFailure,
+} from './story-errors';
 import { parseUsdBudget } from './story-library';
+import {
+  audioQaConfirm,
+  deleteGiftConfirm,
+  includedInReserve,
+  novaConfirm,
+  reserveSuffix,
+} from './story-confirm';
+import { useStoryConfirm } from './StoryConfirm';
+import { fitStoryPhoto } from './story-photo-fit';
 
 type Chapter = { title: string; text: string; scene: string };
 type Story = {
@@ -107,19 +120,28 @@ async function photoPng(file: File): Promise<string> {
     throw new StoryClientError('Фото PNG, JPEG или WebP до 10 МБ');
   const bitmap = await createImageBitmap(file);
   try {
-    const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-    canvas
-      .getContext('2d')!
-      .drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const value = canvas.toDataURL('image/png').split(',')[1];
-    if (value.length > 1398104)
+    // ST2-U-02: сервер принимает только PNG ≤1024 px и ≤1 МиБ — размер
+    // подбирается шагами, пока PNG не уложится в лимит (story-photo-fit).
+    const fitted = await fitStoryPhoto(
+      bitmap.width,
+      bitmap.height,
+      async (width, height) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        return canvas.toDataURL('image/png').split(',')[1] ?? '';
+      }
+    ).catch((e: unknown) => {
       throw new StoryClientError(
-        'Слишком большое фото после обработки: выберите изображение поменьше'
+        e instanceof Error && e.name === 'StoryPhotoTooLarge'
+          ? e.message
+          : 'Не удалось сжать фото — выберите другой файл PNG, JPEG или WebP.'
       );
-    return value;
+    });
+    return fitted.base64;
   } finally {
     bitmap.close();
   }
@@ -137,7 +159,7 @@ function ThemeBadge({ theme }: { theme: StoryThemeId }) {
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-sm"
-      style={{ background: t.soft, color: t.accent }}
+      style={{ background: t.soft, color: t.ink }}
     >
       <Icon size={16} aria-hidden="true" /> {t.label}
     </span>
@@ -400,27 +422,49 @@ export function StoryGiftsScreen() {
       catalog.find((s) => s.locale === nextLanguage && s.kind === 'adaptation');
     if (candidate) setStoryId(candidate.id);
   }
-  const [access, setAccess] = useState<boolean | null>(null);
+  /** ST2-U-13: 404/401/403 — раздел закрыт; иной сбой — текст и «Повторить». */
+  const [access, setAccess] = useState<boolean | null | 'error'>(null);
+  const [loadError, setLoadError] = useState('');
+  const [loadNonce, setLoadNonce] = useState(0);
   const actionLock = useRef(false);
+  const confirm = useStoryConfirm();
   async function refresh() {
     const res = await api.get<Gift[]>('/story-gifts');
     setGifts(res.data || []);
   }
   useEffect(() => {
+    let alive = true;
+    setAccess(null);
+    setLoadError('');
     void Promise.all([
       api.get<Story[]>('/story-gifts/catalog'),
       api.get<Gift[]>('/story-gifts'),
     ])
       .then(([c, g]) => {
+        if (!alive) return;
         setAccess(true);
         setCatalog(c.data || []);
         setGifts(g.data || []);
       })
       .catch((e) => {
-        setAccess(false);
-        setError(errorText(e));
+        if (!alive) return;
+        if (storyLoadFailure(e) === 'closed') {
+          setAccess(false);
+          return;
+        }
+        setAccess('error');
+        setLoadError(
+          storyErrorText(e, {
+            fallback: 'Не удалось загрузить раздел сказок.',
+            noResponse:
+              'Не удалось загрузить раздел сказок: ответ сервера не получен (нет связи или истекло ожидание).',
+          })
+        );
       });
-  }, []);
+    return () => {
+      alive = false;
+    };
+  }, [loadNonce]);
   // S3‑8: медиа выпуска зависят только от выпуска и его статуса, а не от
   // каждого нового объекта `selected` (GET карточки, ответ действия):
   // иначе аудио качалось дважды, а галочка проверки сбрасывалась.
@@ -510,6 +554,13 @@ export function StoryGiftsScreen() {
       })
       .catch((e) => setError(errorText(e)));
   }
+  if (access === 'error')
+    return (
+      <Card className="space-y-3 p-5">
+        <p role="alert">{loadError}</p>
+        <Button onClick={() => setLoadNonce((n) => n + 1)}>Повторить</Button>
+      </Card>
+    );
   if (access !== true)
     return (
       <Card className="p-5">
@@ -829,9 +880,15 @@ export function StoryGiftsScreen() {
             />
             Учесть в смете будущую видеоверсию (преамбула, сборка, проверка)
           </label>
+          {budgetError && (
+            <p id="story-preview-reason" className="text-sm">
+              Предпросмотр недоступен: {budgetError.toLowerCase()}.
+            </p>
+          )}
           <Button
             variant="ghost"
-            disabled={busy || !story}
+            disabled={busy || !story || !!budgetError}
+            aria-describedby={budgetError ? 'story-preview-reason' : undefined}
             onClick={() =>
               void run(async () => {
                 const key = previewKey(wizard);
@@ -1016,9 +1073,14 @@ export function StoryGiftsScreen() {
               </p>
               <Button
                 disabled={busy}
-                onClick={() => void run(() => update('render'))}
+                onClick={() =>
+                  confirm.ask(
+                    novaConfirm(selected),
+                    () => void run(() => update('render'))
+                  )
+                }
               >
-                Озвучить Nova
+                Озвучить Nova{reserveSuffix(selected.reservedMicroUsd)}
               </Button>
               {photo && (
                 <Button
@@ -1152,9 +1214,15 @@ export function StoryGiftsScreen() {
               <Button
                 variant="ghost"
                 disabled={busy || selected.audioQaStatus !== 'PENDING'}
-                onClick={() => void run(() => update('quality'))}
+                onClick={() =>
+                  confirm.ask(
+                    audioQaConfirm(selected),
+                    () => void run(() => update('quality'))
+                  )
+                }
               >
                 Проверить озвучку через Soniox
+                {includedInReserve(selected.reservedMicroUsd)}
               </Button>
             </div>
           )}
@@ -1200,17 +1268,25 @@ export function StoryGiftsScreen() {
           <Button
             variant="ghost"
             disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                await api.delete(`/story-gifts/${selected.id}`);
-                setSelected(null);
-              })
-            }
+            onClick={() => {
+              // ST2-U-01: необратимо — сначала диалог с перечнем того, что
+              // сотрётся; DELETE уходит только после подтверждения.
+              const target = selected;
+              confirm.ask(
+                deleteGiftConfirm(target),
+                () =>
+                  void run(async () => {
+                    await api.delete(`/story-gifts/${target.id}`);
+                    setSelected((cur) => (cur?.id === target.id ? null : cur));
+                  })
+              );
+            }}
           >
             Удалить сказку и её медиа
           </Button>
         </Card>
       )}
+      {confirm.dialog}
     </div>
   );
 }

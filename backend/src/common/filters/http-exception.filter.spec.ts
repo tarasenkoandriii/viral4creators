@@ -191,3 +191,72 @@ describe('Story‑Tales bearer link redaction', () => {
     );
   });
 });
+
+describe('ST2-S-06: тексты Story не попадают в журнал сервера', () => {
+  const storyRun = (exception: unknown, url: string) => {
+    const warn = jest.mocked(Logger.prototype.warn);
+    const error = jest.mocked(Logger.prototype.error);
+    warn.mockClear();
+    error.mockClear();
+    const json = jest.fn();
+    const status = jest.fn().mockReturnValue({ json });
+    new HttpExceptionFilter().catch(exception, {
+      switchToHttp: () => ({
+        getResponse: () => ({ status }),
+        getRequest: () => ({ url, path: url, method: 'POST', headers: {} }),
+      }),
+    } as never);
+    return {
+      body: json.mock.calls[0][0],
+      logged: JSON.stringify([...warn.mock.calls, ...error.mock.calls]),
+    };
+  };
+  const pair =
+    'Произношение: «Бармалей» не похоже на «Миланочка». Укажите то же слово';
+
+  it('пары произношения: клиенту — текст, в лог — только статус и код', () => {
+    const r = storyRun(
+      new BadRequestException(pair),
+      '/api/story-gifts/g1/video/quote',
+    );
+    expect(r.body.error.message).toBe(pair);
+    expect(r.logged).not.toContain('Миланочка');
+    expect(r.logged).not.toContain('Бармалей');
+    expect(r.logged).toContain('→ 400 Bad Request');
+    expect(r.logged).toContain('[текст Story скрыт]');
+  });
+
+  it('преамбула/реплика/образ: все маршруты Story, машинный код остаётся; 5xx — без текста и в стеке', () => {
+    for (const url of [
+      '/api/story-gifts/g1/video',
+      '/api/story-gift/abc/audio',
+      '/api/story-render-input/tok/intro',
+      '/api/admin/story-tales/renders/r1/close',
+      '/api/brand-manifests/m1/narrator-looks',
+    ]) {
+      const r = storyRun(
+        new ConflictException({
+          code: 'STORY_PROMISE',
+          message: 'Вступление «Папа вернётся завтра» содержит обещание',
+        }),
+        url,
+      );
+      expect(r.logged).not.toContain('Папа');
+      expect(r.logged).toContain('STORY_PROMISE');
+    }
+    const e = storyRun(
+      new HttpException('Милана: сбой', 503),
+      '/api/story-gifts/g1',
+    );
+    expect(e.logged).not.toContain('Милана');
+    expect(e.logged).toContain('at ');
+  });
+
+  it('прочие маршруты логируют текст как раньше', () => {
+    const r = storyRun(
+      new BadRequestException('Неверный формат'),
+      '/api/brand-manifests/m1',
+    );
+    expect(r.logged).toContain('Неверный формат');
+  });
+});

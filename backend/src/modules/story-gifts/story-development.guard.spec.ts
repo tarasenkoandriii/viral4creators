@@ -65,4 +65,23 @@ describe('Story-Tales development access', () => {
       NotFoundException,
     );
   });
+  it('ST2-R-02: POST :id/share — 404, сервис не вызывается и токен не выпускается', () => {
+    const service = { share: jest.fn(), withdraw: jest.fn() };
+    const controller = new StoryGiftsController(
+      service as never,
+      {} as never,
+      {} as never,
+    );
+    expect(() =>
+      controller.share(
+        { telegramUserId: 'owner-db-id' } as never,
+        'g1',
+        {} as never,
+      ),
+    ).toThrow(NotFoundException);
+    expect(service.share).not.toHaveBeenCalled();
+    expect(Reflect.getMetadata('__guards__', StoryGiftsController)).toContain(
+      StoryDevelopmentGuard,
+    );
+  });
 });

@@ -104,14 +104,9 @@ export function NarratorProfile({
       >
         {t.save}
       </Button>
-      <p className="text-sm text-silver-400">
-        Для Story‑Tales выберите свой готовый клон в настройке голоса брендбука.
-        В «Репке» он появится как отдельный вариант с подтверждением согласия;
-        Nova по умолчанию не меняется.{' '}
-        <a className="underline" href="#/stories">
-          Открыть сказки
-        </a>
-      </p>
+      {/* ST2-U-03: упоминание Story‑Tales и ссылка на раздел — внутри
+          NarratorLooksPanel: блок виден только владельцу Story (остальным
+          сервер отвечает 404). */}
       <NarratorLooksPanel
         manifestId={manifest.id}
         narratorCharacterId={manifest.narratorCharacterId ?? null}
@@ -132,8 +127,11 @@ export function NarratorProfile({
           {manifest.tutorialPreamble.seconds.toFixed(2)} s
         </p>
       )}
+      {/* ST2-U-11: без w-full/max-w-full input шириной ≈344 px выходил
+          за карточку на 320/360 px — горизонтальная прокрутка. */}
       <input
         ref={fileInput}
+        className="block w-full max-w-full text-sm"
         type="file"
         accept="video/mp4"
         disabled={busy}

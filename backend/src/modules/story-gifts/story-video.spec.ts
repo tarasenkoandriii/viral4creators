@@ -10,6 +10,7 @@ import {
   storyDigest,
   storyVideoConfigHash,
   storyVideoReserve,
+  storyVideoQaEstimate,
   storyVideoTtsReserve,
   STORY_PARENT_CONSENT_VERSION,
   STORY_RECORDING_CONSENT_VERSION,
@@ -30,6 +31,7 @@ import {
   STORY_VIDEO_MIX,
 } from './story-video-segments';
 import { STORY_VOICE } from './story-catalog';
+import { estimateCost } from '../../common/ai-pricing';
 import { STORY_EDITIONS } from './story-editions';
 import {
   fetchPubliclyRoutable,
@@ -51,6 +53,8 @@ import { storyRenderWipe } from './story-gifts.service';
 jest.mock('../../common/external-url-guard', () => ({
   fetchPubliclyRoutable: jest.fn(),
   readBodyWithLimit: jest.fn(),
+  BodyTooLargeError: jest.requireActual('../../common/external-url-guard')
+    .BodyTooLargeError,
 }));
 const baseBytes = readFileSync(
   join(
@@ -147,7 +151,15 @@ function setup() {
       let count = 0;
       for (const r of rows)
         if (match(r, where)) {
-          Object.assign(r, data, { updatedAt: new Date() });
+          const plain = Object.fromEntries(
+            Object.entries(data).map(([k, v]: [string, any]) => [
+              k,
+              v && typeof v === 'object' && 'increment' in v
+                ? (r[k] ?? 0) + v.increment
+                : v,
+            ]),
+          );
+          Object.assign(r, plain, { updatedAt: new Date() });
           count++;
         }
       return { count };
@@ -263,6 +275,13 @@ function setup() {
     }),
   };
   tx.storyVideoSegment = segDb;
+  const journal: any[] = [];
+  tx.storyOperatorAction = {
+    create: jest.fn(async ({ data }: any) => {
+      journal.push(data);
+      return data;
+    }),
+  };
   let chain = Promise.resolve();
   const prisma: any = {
     ...tx,
@@ -327,6 +346,7 @@ function setup() {
   const plan = { assertCanSpendUser: jest.fn() };
   return {
     plan,
+    journal,
     service: new StoryVideoService(
       prisma,
       ffmpeg,
@@ -504,6 +524,44 @@ describe('Reusable story master, separate speech and preamble', () => {
     expect((await s.service.status('u', 'g', 'r1')).status).toBe('FAILED');
     expect(s.rows[0].assetTokenHash).toBeNull();
   });
+  it('ST2-S-05: a completed MP4 over 3 MiB is a final FAILED, never downloaded again', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    Object.assign(s.rows[0], { createdAt: new Date(Date.now() - 3600000) });
+    s.ffmpeg.status.mockResolvedValue({
+      status: 'completed',
+      outputs: { 'story.mp4': 'https://result.test/out.mp4' },
+    });
+    const { BodyTooLargeError } = jest.requireActual(
+      '../../common/external-url-guard',
+    );
+    (readBodyWithLimit as jest.Mock).mockRejectedValue(new BodyTooLargeError());
+    const r = await s.service.status('u', 'g', 'r1');
+    expect(r.status).toBe('FAILED');
+    expect(s.rows[0].error).toContain('больше 3 МиБ');
+    expect(s.rows[0].assetTokenHash).toBeNull();
+    const downloads = (readBodyWithLimit as jest.Mock).mock.calls.length;
+    // FAILED is not polled again: no provider status, no second download.
+    await s.service.status('u', 'g', 'r1');
+    expect(s.ffmpeg.status).toHaveBeenCalledTimes(1);
+    expect((readBodyWithLimit as jest.Mock).mock.calls.length).toBe(downloads);
+  });
+  it('ST2-S-05: a declared Content-Length over the limit is refused before reading', async () => {
+    const { downloadStoryVideo, StoryVideoRejectedError } = jest.requireActual(
+      './story-video-result',
+    );
+    (fetchPubliclyRoutable as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-length': String(3 * 1024 * 1024 + 1) }),
+    });
+    (readBodyWithLimit as jest.Mock).mockClear();
+    const e = await downloadStoryVideo('https://result.test/out.mp4', 60).catch(
+      (x: unknown) => x,
+    );
+    expect(e).toBeInstanceOf(StoryVideoRejectedError);
+    expect(e).toMatchObject({ message: 'Invalid container', tooLarge: true });
+    expect(readBodyWithLimit).not.toHaveBeenCalled();
+  });
   it('checks preamble plus main text once and only from the actual MP4', async () => {
     const s = setup();
     await s.service.create('u', 'g', 'Привет.');
@@ -595,6 +653,37 @@ describe('Parent narration from owned narrator profiles', () => {
     const main = await s.service.file('u', 'g', 'r2', 'main');
     expect(Buffer.from(main.base64, 'base64').toString()).toBe('parent-main');
     await expect(s.service.file('other', 'g', 'r2', 'main')).rejects.toThrow();
+  });
+  it('ST2-S-01: counts only speech this render synthesized and saved (reused main is not)', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет', parentChoice);
+    await s.service.create('u', 'g', 'Добрый вечер', parentChoice);
+    const [main, intro1, intro2] = s.tts.synthesize.mock.calls.map(
+      (c: any) => c[0].text.length,
+    );
+    expect(s.rows[0].paidSpeechChars).toBe(main + intro1);
+    expect(s.rows[1].paidSpeechChars).toBe(intro2);
+    // An unconfirmed (failed) synthesis is not counted as saved speech.
+    const t = setup();
+    t.tts.synthesize.mockRejectedValueOnce(new Error('socket hang up'));
+    await t.service.create('u', 'g', 'Привет', parentChoice).catch(() => null);
+    expect(t.rows[0].paidSpeechChars ?? 0).toBe(0);
+  });
+  it('U-07: quote and list carry the Soniox QA price of the export, without paid calls', async () => {
+    const s = setup();
+    const q = await s.service.quote('u', 'g', 'Привет');
+    const expected = estimateCost('soniox-stt-async', {
+      seconds: q.layout.durationSeconds,
+    }).costMicroUsd;
+    expect(q.qaEstimateMicroUsd).toBe(expected);
+    expect(q.qaEstimateMicroUsd).toBeGreaterThan(0);
+    expect(storyVideoQaEstimate(0)).toBe(0);
+    await s.service.create('u', 'g', 'Привет');
+    const list = await s.service.list('u', 'g');
+    expect(list.renders[0].qaEstimateMicroUsd).toBe(
+      storyVideoQaEstimate(s.rows[0].durationSeconds),
+    );
+    expect(s.stt.transcribe).not.toHaveBeenCalled();
   });
   it('does not duplicate main synthesis for concurrent different preambles', async () => {
     const s = setup();
@@ -1366,6 +1455,7 @@ describe('WP4 gift note segment and photo', () => {
     expect((await s.service.input(token, 'note')).bytes.toString()).toBe(
       `seg:${note}`,
     );
+    s.rows[0].status = 'READY';
     const vtt = await s.service.subtitles('u', 'g', 'r1');
     expect(vtt.indexOf('Привет')).toBeLessThan(vtt.indexOf('Под подушкой'));
     expect(vtt.indexOf('Под подушкой')).toBeLessThan(vtt.indexOf('Репка'));
@@ -1408,6 +1498,11 @@ describe('WP4 subtitles', () => {
   it('serves subtitles for new and pre-WP4 renders behind owner checks', async () => {
     const s = setup();
     await s.service.create('u', 'g', 'Привет.');
+    // ST2-S-12: only a finished render serves subtitles.
+    await expect(s.service.subtitles('u', 'g', 'r1')).rejects.toThrow(
+      'только для готовой',
+    );
+    s.rows[0].status = 'READY';
     const vtt = await s.service.subtitles('u', 'g', 'r1');
     expect(vtt).toContain('00:00:00.000 --> 00:00:05.000\nПривет.');
     expect(vtt).toContain('Репка.');
@@ -1520,10 +1615,73 @@ describe('WP4 own recorded preamble (ST-P1)', () => {
       text: 'Привет, это мама.',
       voiceId: null,
     });
-    // Deleting the recording keeps the render's own copy; a new render needs it again.
-    await s.service.deleteRecording('u', 'g', rec.id);
-    expect(s.segs.find((x) => x.id === rec.id).audio).toBeNull();
+    // ST2-S-11: the render with this recording is still running (PENDING) —
+    // 409, nothing deleted.
+    expect(s.rows[0].status).toBe('PENDING');
+    await expect(
+      s.service.deleteRecording('u', 'g', rec.id),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(s.segs.find((x) => x.id === rec.id).audio).not.toBeNull();
     expect(s.rows[0].preambleAudio).toBeTruthy();
+    Object.assign(s.rows[0], { status: 'READY', video: Buffer.from('mp4') });
+    // ST2-S-09 (a): deleting the recording withdraws consent to it — the
+    // renders that used it lose their copy too (FAILED, slot freed); the
+    // answer counts them. A new render needs the recording again.
+    // An UNKNOWN synth segment of this render (exact text of an unconfirmed
+    // attempt) loses its text at once; its key stays blocked (UNKNOWN).
+    const outroKey = 'f'.repeat(64);
+    s.rows[0].segments.segments.push({
+      kind: 'outro',
+      source: 'synth',
+      cacheKey: outroKey,
+      text: 'Милана, спокойной ночи',
+    });
+    s.segs.push({
+      id: 'seg-outro',
+      giftId: 'g',
+      cacheKey: outroKey,
+      source: 'synth',
+      status: 'UNKNOWN',
+      text: 'Милана, спокойной ночи',
+      audio: null,
+    });
+    await expect(s.service.deleteRecording('u', 'g', rec.id)).resolves.toEqual({
+      deleted: true,
+      rendersDeleted: 1,
+      segmentsErased: 1,
+      mainNarrationKept: false,
+      mainNarrationKeptCount: 0,
+    });
+    expect(s.segs.find((x) => x.id === 'seg-outro')).toMatchObject({
+      status: 'UNKNOWN',
+      text: '',
+      audio: null,
+    });
+    expect(s.journal).toEqual([
+      expect.objectContaining({
+        actorKind: 'owner',
+        targetType: 'segment',
+        targetId: 'seg-outro',
+        action: 'owner.recording-delete',
+        previousState: { status: 'UNKNOWN', renderId: 'r1', keyBlocked: true },
+      }),
+    ]);
+    expect(JSON.stringify(s.journal)).not.toContain('Милана');
+    expect(JSON.stringify(s.journal)).not.toContain(outroKey.slice(0, 12));
+    expect(s.segs.find((x) => x.id === rec.id).audio).toBeNull();
+    expect(s.rows[0]).toMatchObject({
+      status: 'FAILED',
+      preambleAudio: null,
+      video: null,
+      preambleText: '',
+    });
+    expect(s.rows[0].configHash).toMatch(/:purged:r1$/);
+    await expect(s.service.file('u', 'g', 'r1', 'intro')).rejects.toThrow();
+    // ST2-S-12: no subtitles (story text) for the FAILED render; no intro timing left.
+    expect(s.rows[0].preambleDuration).toBeNull();
+    await expect(s.service.subtitles('u', 'g', 'r1')).rejects.toThrow(
+      'только для готовой',
+    );
     await expect(
       s.service.create('u', 'g', 'Другое вступление.', {
         preambleSource: 'recorded',
@@ -1533,6 +1691,80 @@ describe('WP4 own recorded preamble (ST-P1)', () => {
     await expect(
       s.service.deleteRecording('other', 'g', rec.id),
     ).rejects.toThrow();
+  });
+  it('ST2-S-10: deleting the recording keeps the paid parent main narration for reuse', async () => {
+    const s = setup();
+    const rec = await s.service.uploadRecording('u', 'g', {
+      base64: wav(4).toString('base64'),
+      ...recConsent,
+    });
+    const withRec = {
+      ...parentChoice,
+      preambleSource: 'recorded',
+      recordingId: rec.id,
+    };
+    await s.service.create('u', 'g', 'Привет, это мама.', withRec as any);
+    const mains = () =>
+      s.tts.synthesize.mock.calls.filter((c: any) => c[0].text === s.gift.text)
+        .length;
+    expect(mains()).toBe(1);
+    Object.assign(s.rows[0], { status: 'READY', video: Buffer.from('mp4') });
+    const res = await s.service.deleteRecording('u', 'g', rec.id);
+    expect(res).toMatchObject({
+      rendersDeleted: 1,
+      mainNarrationKept: true,
+      mainNarrationKeptCount: 1,
+    });
+    expect(s.rows[0]).toMatchObject({
+      status: 'FAILED',
+      preambleAudio: null,
+      video: null,
+      parentNarrationKey: expect.any(String),
+    });
+    expect(s.rows[0].mainAudio).toBeTruthy();
+    expect(s.rows[0].error).toContain('Основная речь сохранена');
+    // The next parent order reuses the saved main narration — no new purchase.
+    const q = await s.service.quote('u', 'g', 'Добрый вечер', parentChoice);
+    expect(q.segments.find((x: any) => x.kind === 'main')?.state).toBe('reuse');
+    await s.service.create('u', 'g', 'Добрый вечер', parentChoice);
+    expect(mains()).toBe(1);
+    expect(Buffer.from(s.rows[1].mainAudio).toString()).toBe('parent-main');
+  });
+  it('ST2-S-11: deleting the recording during the main TTS of its render is refused, the paid synthesis is kept', async () => {
+    const s = setup();
+    const rec = await s.service.uploadRecording('u', 'g', {
+      base64: wav(4).toString('base64'),
+      ...recConsent,
+    });
+    let refused: unknown = null;
+    const real = s.tts.synthesize.getMockImplementation()!;
+    s.tts.synthesize.mockImplementation(async (a: any) => {
+      if (a.text === s.gift.text)
+        refused = await s.service
+          .deleteRecording('u', 'g', rec.id)
+          .catch((e: unknown) => e);
+      return real(a);
+    });
+    const r: any = await s.service.create('u', 'g', 'Привет, это мама.', {
+      ...parentChoice,
+      preambleSource: 'recorded',
+      recordingId: rec.id,
+    } as any);
+    expect(refused).toMatchObject({ status: 409 });
+    expect((refused as any).getResponse().code).toBe('STORY_RECORDING_IN_USE');
+    expect(r.status).toBe('PENDING');
+    expect(s.rows[0].mainAudio).toBeTruthy();
+    expect(s.segs.find((x) => x.id === rec.id).status).toBe('READY');
+    // UNKNOWN with an unconfirmed main narration: also refused (operator first).
+    Object.assign(s.rows[0], {
+      status: 'UNKNOWN',
+      mainDuration: null,
+      mainAudio: null,
+    });
+    await expect(
+      s.service.deleteRecording('u', 'g', rec.id),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(s.rows[0].status).toBe('UNKNOWN');
   });
   it('blocks promises in preamble and outro before any paid call', async () => {
     const s = setup();
@@ -1602,6 +1834,7 @@ describe('WP4 pronunciations (ST-P2)', () => {
     const m = s.rows[0].segments.segments;
     expect(m[0].text).toBe('Привет, Маша!');
     expect(m[1].text).toBe(story);
+    s.rows[0].status = 'READY';
     const vtt = await s.service.subtitles('u', 'g', 'r1');
     expect(vtt).toContain('Маша');
     expect(vtt).not.toContain('Ма+ша');

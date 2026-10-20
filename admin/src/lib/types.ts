@@ -2388,7 +2388,8 @@ export interface StoryTalesQueue {
     renderId: string | null;
     kind: 'intro' | 'gift_note' | 'main' | 'outro' | null;
     source: string;
-    cacheKeyPrefix: string;
+    /** Короткий id сегмента (8 знаков); ключ кэша наружу не отдаётся. */
+    shortId: string;
     ageHours: number;
     idleHours: number;
   }>;
@@ -2396,7 +2397,7 @@ export interface StoryTalesQueue {
 export interface StoryTalesJournalEntry {
   id: string;
   requestId: string | null;
-  actorKind: 'admin' | 'cron';
+  actorKind: 'admin' | 'cron' | 'owner';
   actorUserId: string | null;
   targetType: 'gift' | 'render' | 'reference' | 'segment';
   targetId: string;

@@ -388,6 +388,15 @@ describe('UserVoicesService.remove', () => {
         text: '',
       },
     });
+    // ST2-S-08: their cache keys (sha256 of the exact text) are replaced too.
+    const raw = prisma.$executeRaw.mock.calls.find(([parts]: any[]) =>
+      parts.join('?').includes('"story_video_segments" SET "cacheKey"'),
+    );
+    expect(raw).toBeDefined();
+    expect(raw![0].join('?')).toContain(
+      `encode(sha256(convert_to('story-deleted:' || "id", 'UTF8')), 'hex')`,
+    );
+    expect(raw!.slice(1)).toEqual(['v1']);
   });
 
   it('CONTRACT6 п.4: голос уходит из бренд-буков ЭТОГО пользователя (голос и провайдер)', async () => {

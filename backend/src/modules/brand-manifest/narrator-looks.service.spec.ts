@@ -117,6 +117,12 @@ function build(o: Opts = {}) {
   };
   const characterBefore = JSON.stringify(character);
   const looks: any[] = (o.looks ?? []).map((l) => ({ ...l }));
+  const calls: any[] = looks.map((l) => ({
+    userId: l.userId,
+    lookId: l.id,
+    imageCalls: l.imageCalls,
+    createdAt: l.createdAt,
+  }));
   let seq = 0;
   const delegate = {
     findMany: jest.fn(async ({ where }: any) =>
@@ -182,6 +188,21 @@ function build(o: Opts = {}) {
       ),
     },
     storyNarratorLook: delegate,
+    // ST2-S-02: quota ledger (seeded looks = migration backfill).
+    storyNarratorLookCall: {
+      findMany: jest.fn(async ({ where }: any) =>
+        calls.filter((r) => matches(r, where)).map((r) => ({ ...r })),
+      ),
+      create: jest.fn(async ({ data }: any) => {
+        calls.push({ createdAt: new Date(), ...data });
+        return { ...data };
+      }),
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const hit = calls.filter((r) => matches(r, where));
+        hit.forEach((r) => Object.assign(r, data));
+        return { count: hit.length };
+      }),
+    },
     $queryRaw: jest.fn(async () => [{ pg_advisory_xact_lock: '' }]),
   };
   prisma.$transaction = jest.fn(async (fn: any) => fn(prisma));
@@ -212,6 +233,7 @@ function build(o: Opts = {}) {
     character,
     characterBefore,
     looks,
+    calls,
     generator,
     aiUsage,
     plans,
@@ -900,5 +922,133 @@ describe('NarratorLooksService (WP5)', () => {
         accepted: 'yes',
       });
     });
+  });
+});
+
+describe('Story-Tales pass 2 (ST2-S-02/04/07, ST2-R-01)', () => {
+  it('ST2-S-02: удаление брендбука/вариантов не обнуляет квоту — журнал вызовов остаётся', async () => {
+    const t = build();
+    const presets: Array<[string, string]> = [
+      ['casual', 'none'],
+      ['cozy-home', 'none'],
+      ['festive', 'none'],
+      ['business', 'none'],
+      ['winter', 'none'],
+      ['casual', 'light'],
+    ];
+    for (const [outfit, makeup] of presets)
+      await t.service.create('u1', 'm1', createDto({ outfit, makeup }));
+    expect(t.generator.generate).toHaveBeenCalledTimes(6);
+    // = BrandManifestService.remove(): the looks cascade away with the manifest.
+    t.looks.splice(0, t.looks.length);
+    const e = await rejects(
+      t.service.create(
+        'u1',
+        'm1',
+        createDto({ outfit: 'winter', makeup: 'light' }),
+      ),
+    );
+    expect(e.getStatus()).toBe(429);
+    expect(bodyOf(e)).toMatchObject({
+      code: 'NARRATOR_LOOK_QUOTA',
+      quota: { dayUsed: 6, dayLimit: 6 },
+    });
+    expect(t.generator.generate).toHaveBeenCalledTimes(6);
+    expect(t.calls).toHaveLength(6);
+    expect(t.calls.every((c: any) => c.userId === 'u1')).toBe(true);
+  });
+
+  it('ST2-S-04: отзыв согласия во время чтения фото — бронь его видит, модель не вызывается', async () => {
+    const t = build();
+    t.blob.downloadBuffer.mockImplementationOnce(async () => {
+      await t.service.revokeConsent('u1', 'm1'); // concurrent DELETE …/consent
+      return ORIGINAL;
+    });
+    const e = await rejects(t.service.create('u1', 'm1', createDto()));
+    expect(e.getStatus()).toBe(409);
+    expect(bodyOf(e).code).toBe('NARRATOR_IMAGE_CONSENT_REQUIRED');
+    expect(t.generator.generate).not.toHaveBeenCalled();
+    expect(t.looks).toHaveLength(0);
+    expect(t.calls).toHaveLength(0);
+    // revokeConsent takes the same advisory lock as reserve().
+    expect(
+      t.prisma.$queryRaw.mock.calls.some((c: any[]) =>
+        String(c[1]).startsWith('story-narrator-look:u1'),
+      ),
+    ).toBe(true);
+  });
+
+  it('ST2-S-04: отзыв между фото и стилизацией — второй вызов не начинается, квота держит один', async () => {
+    const t = build({ sketch: { style: 'cartoon' } });
+    t.generator.generate.mockImplementationOnce(async () => {
+      await t.service.revokeConsent('u1', 'm1');
+      return ok('photo-before-revoke');
+    });
+    const e = await rejects(t.service.create('u1', 'm1', createDto()));
+    expect(e.getStatus()).toBe(409);
+    expect(bodyOf(e).code).toBe('NARRATOR_IMAGE_CONSENT_REQUIRED');
+    expect(t.generator.generate).toHaveBeenCalledTimes(1);
+    expect(t.looks[0]).toMatchObject({
+      status: 'FAILED',
+      styleStatus: 'FAILED',
+      imageCalls: 1,
+    });
+    expect(t.calls[0]).toMatchObject({ lookId: t.looks[0].id, imageCalls: 1 });
+  });
+
+  it('ST2-S-04: согласие проверяется прямо перед вызовом модели (после брони)', async () => {
+    const t = build();
+    const real = t.prisma.storyNarratorLook.create;
+    t.prisma.storyNarratorLook.create = jest.fn(async (a: any) => {
+      const r = await real(a);
+      // Revoked right after the reservation, before the call (lock released).
+      t.manifests.m1.narratorImageConsentRevokedAt = new Date();
+      return r;
+    });
+    const e = await rejects(t.service.create('u1', 'm1', createDto()));
+    expect(bodyOf(e).code).toBe('NARRATOR_IMAGE_CONSENT_REQUIRED');
+    expect(t.generator.generate).not.toHaveBeenCalled();
+    expect(t.looks[0]).toMatchObject({ status: 'FAILED', imageCalls: 0 });
+    expect(t.calls[0]).toMatchObject({ imageCalls: 0 });
+  });
+
+  it('ST2-S-07: ответ модели больше 4 000 000 байт — FAILED (видео его не примет)', async () => {
+    const big = Buffer.concat([png('big'), Buffer.alloc(4_000_001)]);
+    const t = build({ outcomes: [{ ...ok('x'), bytes: big }] });
+    const e = await rejects(t.service.create('u1', 'm1', createDto()));
+    expect(bodyOf(e).code).toBe('NARRATOR_LOOK_INVALID_IMAGE');
+    expect(t.looks[0]).toMatchObject({ status: 'FAILED', photo: null });
+    expect(t.looks[0].error).toContain('4 000 000');
+  });
+
+  it('ST2-S-07: старый вариант > 4 000 000 байт не применяется (409 до любого рендера)', async () => {
+    const t = build();
+    await t.service.create('u1', 'm1', createDto());
+    t.prisma.$queryRaw.mockResolvedValueOnce([
+      { photo: 4_100_000, styled: null },
+    ]);
+    const e = await rejects(t.service.apply('u1', 'm1', t.looks[0].id));
+    expect(e.getStatus()).toBe(409);
+    expect(bodyOf(e).code).toBe('NARRATOR_LOOK_TOO_LARGE');
+    expect(t.manifests.m1.narratorLookId).toBeNull();
+    // Within the limit — applied.
+    t.prisma.$queryRaw.mockResolvedValueOnce([
+      { photo: 4_000_000, styled: null },
+    ]);
+    await t.service.apply('u1', 'm1', t.looks[0].id);
+    expect(t.manifests.m1.narratorLookId).toBe(t.looks[0].id);
+  });
+
+  it('ST2-R-01: GET состояния образов — private, no-store и X-Robots-Tag', () => {
+    const headers = Reflect.getMetadata(
+      '__headers__',
+      NarratorLooksController.prototype.view,
+    );
+    expect(headers).toEqual(
+      expect.arrayContaining([
+        { name: 'Cache-Control', value: 'private, no-store' },
+        { name: 'X-Robots-Tag', value: 'noindex, nofollow, noarchive' },
+      ]),
+    );
   });
 });

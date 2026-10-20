@@ -45,7 +45,12 @@ const variants: Record<Variant, string> = {
     'text-silver-600 dark:text-silver-300 hover:bg-silver-200/60 dark:hover:bg-silver-800/60',
   outline:
     'border border-silver-300 dark:border-silver-700 text-silver-700 dark:text-silver-200 hover:border-accent',
-  danger: 'border border-rose-500/40 text-rose-500 hover:bg-rose-500/10',
+  // Аудит Story‑Tales 2 (axe): `text-rose-500` давал 2.3–2.6:1 в светлой
+  // теме (в диалоге поверх затемнения) и 4.37:1 в тёмной. Текст — rose-800
+  // / rose-300 (≥4.5:1 и на белом, и на затемнённой карточке диалога);
+  // рамка и подсветка — прежний rose-500.
+  danger:
+    'border border-rose-500/40 text-rose-800 dark:text-rose-300 hover:bg-rose-500/10',
 };
 
 export function Button({

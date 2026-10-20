@@ -17,6 +17,18 @@ export const STORY_PRONUNCIATION_CHARS = 40;
 export const STORY_PREAMBLE_WAV_RATE = 22050;
 export const STORY_PREAMBLE_MIN_SEC = 1;
 export const STORY_PREAMBLE_MAX_SEC = 20;
+/**
+ * ST2-U-12: файл вступления декодируется в браузере целиком (Float32 PCM),
+ * хотя нужны только первые 20 с — 10 мин стерео 48 кГц ≈ 230 МБ памяти,
+ * что роняет WebView Telegram. Файл больше 15 МБ отклоняется ДО чтения:
+ * 20 с даже несжатого WAV 48 кГц стерео 16 бит — ≈3,8 МБ, MP3/M4A — сотни КБ.
+ */
+export const STORY_PREAMBLE_FILE_MAX_BYTES = 15 * 1024 * 1024;
+/** Текст отказа для слишком большого файла вступления (или `null`). */
+export function preambleFileError(file: { size: number }): string | null {
+  if (file.size <= STORY_PREAMBLE_FILE_MAX_BYTES) return null;
+  return `Аудиофайл больше 15 МБ — для вступления нужно не больше ${STORY_PREAMBLE_MAX_SEC} с. Обрежьте запись или запишите вступление здесь.`;
+}
 
 export type PronunciationRow = { written: string; spoken: string };
 export type StoryVideoChoice = {
@@ -76,6 +88,8 @@ export type StoryVideoQuote = {
   layoutEstimated?: boolean;
   warnings?: string[];
   reserveMicroUsd: number;
+  /** Оценка проверки речи Soniox итогового MP4 (сервер). */
+  qaEstimateMicroUsd?: number | null;
   reservedMicroUsd: number;
   budgetMicroUsd: number;
   remainingMicroUsd: number;

@@ -1,7 +1,11 @@
 import {
   StoryReferencesService,
   parseStoryReference,
+  storyReferenceAnalysisPrice,
+  STORY_REFERENCE_OUTPUT_TOKENS,
 } from './story-references.service';
+import { estimateCost } from '../../common/ai-pricing';
+import { GEMINI_MODEL } from '../../common/gemini-model';
 import { createGeminiClient } from '../../common/gemini-client';
 import { loadConfiguration } from '../../config/configuration';
 jest.mock('../../common/gemini-client', () => ({
@@ -154,6 +158,40 @@ describe('Story YouTube reference boundaries', () => {
     expect(generateContent).toHaveBeenCalledTimes(1);
     // The losing concurrent request returns its daily slot (no paid call).
     expect((await service.quota('owner')).used).toBe(1);
+  });
+  it('U-07: quota carries the server price of a 300 s analysis, no provider call', async () => {
+    const { service, generateContent, rows } = setup();
+    const q = await service.quota('owner');
+    expect(q.analysis).toEqual({
+      estimateMicroUsd: expect.any(Number),
+      reserveMicroUsd: q.analysis.estimateMicroUsd,
+      maxSeconds: 300,
+      model: GEMINI_MODEL,
+    });
+    expect(q.analysis.estimateMicroUsd).toBeGreaterThan(0);
+    // 300 s × (258 video + 32 audio tokens/s) + prompt, output at its ceiling.
+    const floor = estimateCost(GEMINI_MODEL, {
+      inputTokens: 300 * 290,
+      inputByModality: { VIDEO: 300 * 258, AUDIO: 300 * 32 },
+      outputTokens: STORY_REFERENCE_OUTPUT_TOKENS,
+    }).costMicroUsd;
+    expect(q.analysis.estimateMicroUsd).toBeGreaterThanOrEqual(floor);
+    expect(q.analysis.estimateMicroUsd! - floor).toBeLessThan(2000);
+    expect(generateContent).not.toHaveBeenCalled();
+    // The analysis model setting is honoured; unpriced → no amount.
+    rows.set('analysis.geminiModel', {
+      key: 'analysis.geminiModel',
+      value: 'gemini-3.6-flash',
+    });
+    expect((await service.quota('owner')).analysis.model).toBe(
+      'gemini-3.6-flash',
+    );
+    expect(storyReferenceAnalysisPrice('no-such-model')).toEqual({
+      estimateMicroUsd: null,
+      reserveMicroUsd: null,
+      maxSeconds: 300,
+      model: 'no-such-model',
+    });
   });
   it('isolates saved references by owner', async () => {
     const { service, rows, generateContent } = setup();

@@ -254,8 +254,8 @@ separate limits document in [doc/API-LIMITS.md](doc/API-LIMITS.md);
 
 `.github/workflows/ci.yml` runs on every push: backend (Prisma client,
 migrations against a real Postgres 16, **`prisma migrate diff`** to catch
-a hand-written migration drifting from the schema, types, lint, 10925
-tests with per-file coverage thresholds), frontend (types, lint, 94 unit
+a hand-written migration drifting from the schema, types, lint, 10954
+tests with per-file coverage thresholds), frontend (types, lint, 97 unit
 scripts, build), admin, landing and marketplace
 (types + lint + build), `npm audit --audit-level=high --omit=dev` in every
 job (blocking everywhere except `live-login-relay`, since pass 13), plus the legal-text sync check and a script that

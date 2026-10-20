@@ -194,8 +194,14 @@ export const NARRATOR_LOOK_DAY_LIMIT = 6;
 export const NARRATOR_LOOK_MONTH_LIMIT = 40;
 /** PENDING дольше — исход неизвестен (UNKNOWN), автоповтора нет. */
 export const NARRATOR_LOOK_STALE_MS = 10 * 60 * 1000;
-/** Потолок байтов одного изображения (CHECK в миграции такой же). */
-export const NARRATOR_LOOK_MAX_BYTES = 4 * 1024 * 1024;
+/**
+ * Потолок байтов одного изображения варианта. ST2-S-07: ровно порог кадра
+ * видео (`STORY_NARRATOR_IMAGE_MAX_BYTES`, 4 000 000 — ответ маршрута
+ * story-render-input под лимитом Vercel 4,5 МБ с запасом): вариант, который
+ * видео не примет, не становится READY. CHECK в миграции (4 МиБ) — только
+ * потолок хранения.
+ */
+export const NARRATOR_LOOK_MAX_BYTES = 4_000_000;
 /**
  * A-S3-10: потолок изображения в JSON-превью (`{ base64, mime, hash }`).
  * base64 раздувает байты в 4/3: 3 МиБ → ≈4 МиБ JSON, под лимитом ответа

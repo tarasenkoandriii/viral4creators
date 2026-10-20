@@ -10,16 +10,21 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   activeLabel,
   consentTitle,
   formatUsd,
   generationOffer,
+  hasPendingLook,
   isHiddenForUser,
   isImageTooLarge,
   itemAction,
   lookTitle,
   modeKeepNote,
+  narratorLookCodeText,
+  NARRATOR_LOOK_POLL_MAX_MS,
+  NARRATOR_LOOK_POLL_MS,
   narratorLookImagePath,
   narratorLooksPath,
   needsRepeatConfirm,
@@ -473,6 +478,43 @@ it('статусы, превью и явный повтор после FAILED/UN
     ),
     true
   );
+});
+
+// ST2-U-14 (аудит Story‑Tales 2): после таймаута клиента вариант остаётся
+// PENDING — блок опрашивает (GET) и показывает «Обновить блок».
+it('PENDING после таймаута: опрос и подсказка про «Обновить блок»', () => {
+  assert.equal(hasPendingLook(null), false);
+  assert.equal(hasPendingLook({ items: [item({ status: 'READY' })] }), false);
+  assert.equal(hasPendingLook({ items: [item({ status: 'PENDING' })] }), true);
+  assert.ok(NARRATOR_LOOK_POLL_MS >= 5_000 && NARRATOR_LOOK_POLL_MS <= 30_000);
+  // Сервер переводит PENDING старше 10 мин в UNKNOWN — опрос не дольше 15 мин.
+  assert.equal(NARRATOR_LOOK_POLL_MAX_MS, 15 * 60_000);
+  const panel = readFileSync(
+    new URL('../src/features/brand/NarratorLooksPanel.tsx', import.meta.url),
+    'utf8'
+  );
+  like(panel, /setInterval\(/);
+  like(panel, /Обновить блок/);
+  // Опрос только читает: в таймере нет POST.
+  const timer = panel.slice(
+    panel.indexOf('const timer = setInterval('),
+    panel.indexOf('}, NARRATOR_LOOK_POLL_MS);')
+  );
+  like(timer, /void load\(true\)/);
+  assert.ok(!/api\.post/.test(timer), 'опрос не должен отправлять POST');
+});
+
+it('новые коды отказа сервера — своими словами', () => {
+  like(
+    narratorLookCodeText('NARRATOR_LOOK_TOO_LARGE') ?? '',
+    /слишком большой для видео/
+  );
+  like(
+    narratorLookCodeText('NARRATOR_CHARACTER_CHANGED') ?? '',
+    /обновите блок/
+  );
+  assert.equal(narratorLookCodeText('OTHER'), null);
+  assert.equal(narratorLookCodeText(null), null);
 });
 
 console.log(`narrator-looks: ${passed} проверок пройдено`);

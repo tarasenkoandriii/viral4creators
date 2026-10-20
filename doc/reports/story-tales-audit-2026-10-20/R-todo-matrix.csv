@@ -1,0 +1,69 @@
+todo_line,status_in_todo,item,fact,evidence,discrepancy
+63,[ ],ST-LP: отдельный лендинг (родительский пункт),Не код: заблокирован закрытием; лендинг отдаёт 404,landing/src/middleware.ts:118; landing/scripts/stories-noindex.test.ts:142-152 (прогон 20.10 — ok),нет
+64,[x],ТЗ лендинга адаптировано (STORY-TALES-LANDING-ADAPTED.md),Документ есть,doc/STORY-TALES-LANDING-ADAPTED.md,нет (исторический пункт; страница теперь закрыта)
+65,[x],"Реализация лендинга v1 (prep), тексты 5 локалей, noindex","Код есть, но маршрут закрыт 404 в middleware",landing/src/app/[locale]/stories/*; landing/scripts/stories-copy|page|release|noindex.test.ts — все 4 прошли 20.10,"нет (код сохранён, недостижим из-за закрытия — по решению)"
+66,[x],Правки 2 (Р-STL-15…18),Код/копи есть; тесты stories-page/stories-copy прошли,landing/src/lib/stories/copy; landing/scripts/stories-page.test.ts,нет
+67,[ ],"После выкладки: поддомен, curl noindex, LCP/CLS/INP, axe",Не код (операционная приёмка); при закрытии частично неактуально (404),—,нет; формулировка устарела — замеры LCP невозможны на 404
+68,[x],"Правки 3 (S3-1…S3-10, кроме S3-7)",Код есть; тесты лендинга прошли,landing/scripts/stories-*.test.ts,нет
+69,[x],Выкладка 16.10 e4bc63e на проде viral-landing,Не код (факт выкладки); не проверялось на проде в этом аудите,—,не проверено (прод)
+70,[x],"Telegram/Vercel: bot username, /setdomain, Mini App app",Не код (настройки); не проверялось,—,не проверено (прод)
+71,[x],"Лендинги: NEXT_PUBLIC_TMA_URL, выпуск Ready",Не код,—,не проверено (прод)
+72,[x],Приёмка Telegram 16.10 (startapp=e_stories),Не код (живая приёмка),—,не проверено (прод)
+73,[ ],Владелец: реквизиты оферты §12,Не код (контент владельца),doc/legal/offer.md,нет
+74,[ ],S3-7 словарь главной в RSC — отложено,Код не менялся — верно; страница 404,landing/src/middleware.ts:118,нет
+75,[ ],"Итерация 2 лендинга (демо, story-capabilities, события, заявка)",Кода нет — верно (GET /api/public/story-capabilities отсутствует в контроллерах),R-routes.csv (маршрута нет),нет
+76,[x],"Сквозной аудиопилот 16.10 («Рукавичка» 27,25 с)",Код аудиопилота есть (render/quality/approve); публичная выдача с 17.10 закрыта,"backend/src/modules/story-gifts/story-gifts.service.ts:315 render, :381 quality; story-gifts.service.spec.ts:99-183, :246; story-media.spec.ts","нет; «отзывная публикация» — исторический факт, сейчас 404"
+77,[ ],ST-P0 (родительский),"Частично код (сроки/права), публикация закрыта решением",см. 78-81,нет
+78,[x],"Сроки хранения: крон story-retention, класс A/B, dry-run, операторская сверка и журнал (WP1)",Код есть и покрыт тестами,"backend/src/modules/story-gifts/story-retention.service.ts:38,79; cron.controller.ts:465; backend/vercel.json:117 (57 3 * * *); миграция 20270124180000; story-retention.spec.ts:270-447; admin-cron.service.spec.ts:350; story-operator-journal.pg.spec.ts:71-132",нет
+79,[x],"Механизм прав редакций — реестр story-editions.ts, блок мастера при unknown",Код есть,"backend/src/modules/story-gifts/story-editions.ts:107,443,592; story-editions.spec.ts:24-272",нет
+80,[ ],Публикация/согласие на публикацию/снятие — закрыто решением,"Верно: share POST → 404 (story-gifts.controller.ts:331-339), публичный контроллер под StoryPublicDisabledGuard","backend/src/modules/story-gifts/story-gifts.controller.ts:331,371; story-development.guard.spec.ts:57; проба R (share-probe) — 404 без вызова сервиса",нет (но см. ST2-R-02: 404 share не покрыт тестом репозитория)
+81,[ ],Утвердить черновик правил и юр. проверка,Не код,doc/legal/drafts/story-tales-rules.md,нет (см. ST2-R-05: в п.6.6 черновика не указан Gemini-образ)
+82,[x],ST-P1: семейное вступление + иллюстрированная сказка + аудио (код WP4),"Код есть: своя запись, завершение, сегменты, субтитры, образ в интро","backend/src/modules/story-gifts/story-video.service.ts:1416 uploadRecording, :1520 subtitles, :226 narratorImage; story-video.spec.ts:1388-1537, 1760-1980",нет; публикация по ссылке закрыта решением (оговорено в пункте)
+83,[ ],Приёмка: живая сборка со своей записью,"Не код (живой прогон, платный)",—,нет
+84,[x],"Родитель как рассказчик: образы, согласие story-parent-image-v1, резерв/квота, useNarratorImage",Код есть,"narrator-looks.service.ts:486,520,536,661,772,811,824,867; narrator-looks.rules.ts:106; миграция 20270124220000; narrator-looks.service.spec.ts:241-887; narrator-looks.rules.spec.ts; narrator-looks.pg.spec.ts:79-125; story-video.spec.ts:1760-1980, 1073 (без повторного клона)",нет (см. ST2-R-01: GET состояния образов без no-store)
+85,[ ],Приёмка образов на реальных вызовах Gemini,Не код (платная приёмка),—,нет
+86,[x],"Необязательный повод: пресеты, строки ru/uk/en, тема, текст не меняется, валидатор",Код есть,backend/src/modules/story-gifts/story-occasion.ts:151; story-promise.ts:417; миграция 20270124200000; story-gift-occasion.spec.ts:115-454; story-gift-occasion.pg.spec.ts:60-106,нет
+87,[ ],"Утвердить границу валидатора, вычитать uk/en",Не код (решение/вычитка),—,нет
+88,[x],17.10 частный тест родительской озвучки «Репки»,Не код (живой прогон); протокол есть,doc/reports/story-parent-narration-2026-10-17.md,нет
+89,[x],Сквозной аудит 17.10 + исправления,Отчёт есть; исправления (no-store приватных GET) — в коде story-gifts,doc/reports/story-tales-audit-2026-10-17.md; story-media.spec.ts:25,нет (новый GET WP5 без no-store — ST2-R-01)
+90,[x],"Крон story-finalize каждые 5 мин, опрос jobId, восстановление UNKNOWN без submit/TTS/QA",Код есть,"cron.controller.ts:448; backend/vercel.json:113 (*/5); story-video.service.ts:1641 finalizePending; story-video.spec.ts:662-761, 1204; admin-cron.service.spec.ts:360; cron-wiring.spec.ts:90-111",нет; прод-прогон 03:50 — не проверялся
+91,[x],"UNKNOWN без квитанции: операторская сверка, журнал, bind-job только чтением",Код есть,"backend/src/modules/story-gifts/story-operator.controller.ts:56-159; story-operator.service.ts:97,274,299,366,532,647; story-operator.spec.ts:321-1018; story-operator.controller.e2e.spec.ts:64-233",нет
+92,[ ],Решить про «снять блок основной речи»,Не код (решение); действия нет — верно (нет в CHECK story_operator_action и контроллере),миграция 20270124180000 (CHECK action),нет
+93,[ ],"Операционная приёмка: счета провайдеров, два профиля, сходство голоса",Не код,—,нет
+94,[x],"ST-P2: произношения, сегментный кэш, смета повторного заказа",Код есть,"backend/src/modules/story-gifts/story-video-segments.ts:91,188,233; story-video.service.ts:752 quote; миграция 20270124210000; story-video.spec.ts:1072-1204, 1551-1695; story-video-segments.pg.spec.ts:62-141",нет
+95,[ ],Прослушивание владельцем,Не код,—,нет
+96,[ ],ST-P3 преамбула; ST-P4 библиотека и серии,ST-P3 — решение (Hedra выключена; гард анимации готов: story-budget.ts:96); ST-P4 — кода нет,backend/src/modules/story-gifts/story-budget.ts:96; story-gift-occasion.spec.ts:866,нет
+9988,[x],"Физический подарок: явное включение реплики, предпросмотр, описание фото ≤200, позиция в манифесте",Код есть,"backend/src/modules/story-gifts/story-draft.ts:90,167; story-gifts.service.ts:264,292; story-gifts.controller.ts:58-97; story-gift-occasion.spec.ts:154, 534-654, 938-975; story-video.spec.ts:1320; frontend/scripts/story-wizard.test.ts:99",нет
+9989,[ ],Вычитка uk/en строк повода и подсказок,Не код,—,нет
+9991,[x],"Бюджет: смета по строкам, анимация unavailable, гард",Код есть,"backend/src/modules/story-gifts/story-budget.ts:96,227; story-gift-occasion.spec.ts:658-911",нет
+9992,[ ],Сверить константы сметы со счетами,Не код,backend/src/modules/story-gifts/story-budget.ts:40 (14 симв/с),нет
+9994,[x],"Точные редакции и YouTube-референсы: реестр, экран «Редакции», план ролика",Код есть,backend/src/modules/story-gifts/story-editions.ts; story-reference-plan.ts:59; story-reference-library.controller.ts; frontend/src/features/stories/StoryEditionsPanel.tsx; story-editions.spec.ts; story-reference-plan.spec.ts:33-162; frontend/scripts/story-library.test.ts,нет
+9995,[ ],"Сверить отличия адаптаций, решить про 1869/Jacobs",Не код (редакторское решение),—,нет
+9997,[x],Разбор публичного YouTube; точная «Репка» Ушинского,Код есть,backend/src/modules/story-gifts/story-references.service.ts:404; story-references.spec.ts:105-245,нет
+9998,[x],"Библиотека референсов, CRUD, сроки, повтор unknown; «проверенные точные редакции UK и других языков»",Библиотека — код есть; точных редакций UK НЕТ (только адаптация mitten-uk-short-v1),backend/src/modules/story-gifts/story-references.service.ts:261-404; story-reference-library.spec.ts:128-407; story-editions.ts:276 (mitten-uk-short-v1 — adaptation),ДА: заголовок [x] включает невыполненную часть (ST2-R-06); подпункт 9999 [ ] это признаёт
+9999,[ ],"Точные редакции UK и других языков, хеш скана Ушинского",Не код (контент/права); scanSha256 null — верно,backend/src/modules/story-gifts/story-editions.ts (scanSha256: null),нет
+10001,[x],Повторно используемое видео + родительская озвучка (§23.7),"Код есть: реестр пакетов, манифест, кэш, дорожки, VTT, quote, тест двух профилей",backend/src/modules/story-gifts/story-video-base.ts:73-79; story-video-plan.ts; story-video.spec.ts:803-1302 (1233 — два профиля на одном baseHash),нет
+10002,[ ],Новые базовые пакеты; музыка/эффекты с лицензиями,Не код/контент (генератор обобщён: scripts/build-story-turnip-assets.mjs),—,нет
+10003,[ ],Живые прогоны loudnorm/sidechaincompress/amix; два разных профиля вживую,Не код (живые прогоны),backend/src/modules/story-gifts/story-video.spec.ts:940 — только план команды,нет
+10005,[x],"Живой выпуск «Репки» Nova 55.745 с, WER 0",Не код; отчёт есть,doc/reports/story-tales-classics-and-youtube-2026-10-16.md,нет
+10007,[x],Базовое видео «Репки» и сменная преамбула (§23.8),"Код + ассеты есть; хеши совпадают с файлами (sha256 base.mp4 a3a6ee4b…, cover e5907463…; 653095/62898 байт)",backend/src/modules/story-gifts/story-video-base.ts:47-70; frontend/public/story-assets/turnip-v1/*; story-video.spec.ts:804; doc/reports/story-turnip-video-live-2026-10-17.md,нет
+10009,[x],Свой голос из профиля к «Репке» (§23.9),Код есть,backend/src/modules/story-gifts/story-video.service.ts:556 (ключ основной речи); story-video.spec.ts:538-644,нет
+10011,[x],Клонирование: понятный отказ и явный повтор,Код есть,user-voices.service.spec.ts:508-640,нет
+10015,[x],Доступ только STORY_TALES_OWNER_TELEGRAM_ID; без настройки закрыто,Код есть,backend/src/modules/story-gifts/story-development.guard.ts:11-27; story-development.guard.spec.ts:30-51,нет
+10016,[x],Публичные страницы и медиа отключены; новые ссылки запрещены,Код есть (StoryPublicDisabledGuard; share POST → 404),"backend/src/modules/story-gifts/story-development.guard.ts:32; story-gifts.controller.ts:331-339,371; story-development.guard.spec.ts:57; проба R share-probe",частично: запрет share POST не покрыт тестом репозитория (ST2-R-02)
+10017,[x],Публичный лендинг закрыт,Код есть,landing/src/middleware.ts:117-119; landing/scripts/stories-noindex.test.ts:142-152,нет
+10018,[ ],Открытие другим — после решения и аудита,Не код (решение),—,нет
+10024,[ ],Перед деплоем: дубли jobId на production,Не код (операционная проверка); проба R: при дубле миграция 210000 падает на индексе,миграция 20270124210000:41; проба sta2_r_legacy_dup,нет (см. R-prod-checklist.md п.3)
+10025,[ ],Утвердить черновик правил,Не код,doc/legal/drafts/story-tales-rules.md,нет
+10026,[ ],Решить о STORY_RETENTION_PURGE_ENABLED / READY,Не код (решение); по умолчанию dry-run — верно,"backend/src/modules/story-gifts/story-retention.service.ts:38-43,85",нет
+10027,[ ],«Провайдер не списал» — ручная сверка,Не код (процедура),—,нет
+10028,[ ],Решить про «снять блок основной речи»,Не код (решение) — дубль п.92,—,нет
+10029,[ ],Приёмка образов; решить про байты после отзыва согласия,Не код; байты при отзыве не стираются — верно,narrator-looks.service.ts:520-535,нет
+10030,[ ],Приёмка голоса на слух; транслитерация отклоняется,Не код; отклонение латиница→кириллица в коде есть,backend/src/modules/story-gifts/story-video-segments.ts:188; story-video.spec.ts:1632,нет
+10031,[ ],"Живые прогоны FFmpeg-фильтров, размер MP4 ~110 с",Не код,—,нет
+10032,[ ],Новые базовые видеопакеты; музыка/эффекты,Не код/контент,—,нет
+10033,[ ],Точные редакции UK и др.; хеш скана; решение 1869/Jacobs,Не код,—,нет
+10034,[ ],Сверить отличия адаптаций,Не код,—,нет
+10035,[ ],Вычитка uk/en; константы сметы,Не код,—,нет
+10036,[ ],Утвердить границу валидатора обещаний,Не код (решение); граница в коде соответствует описанию,backend/src/modules/story-gifts/story-promise.ts; story-gift-occasion.spec.ts:272-454,нет
+10037,[ ],Оператор не ограничен владельцем Story,Не код (решение); факт подтверждён: только AdminSessionGuard+assertOperator,"backend/src/modules/story-gifts/story-operator.controller.ts:57,67",нет

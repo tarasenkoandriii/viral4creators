@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- isolated in-memory database mock */
+import { createHash } from 'node:crypto';
+import { NotFoundException } from '@nestjs/common';
 import { StoryGiftsService, storyRenderWipe } from './story-gifts.service';
 import { STORY_VOICE, storyText } from './story-catalog';
 function setup() {
@@ -50,6 +52,7 @@ function setup() {
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     $queryRaw: jest.fn(),
+    $executeRaw: jest.fn().mockResolvedValue(0),
   };
   const prisma = {
     storyVideoRender: renderDb,
@@ -154,11 +157,25 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
     await expect(s.service.approve('u1', 'g1', 'old')).rejects.toThrow();
     await expect(s.service.share('u1', 'g1')).rejects.toThrow();
     await s.service.approve('u1', 'g1', s.row.audioHash!);
-    const shared = await s.service.share('u1', 'g1');
-    expect(s.row.shareHash).not.toBe(shared.token);
-    await expect(s.service.publicGift(shared.token)).resolves.toBeTruthy();
+    expect(s.row.status).toBe('APPROVED');
+    // A link made before the lockdown is still revocable.
+    const token = 'a'.repeat(43);
+    s.row.shareHash = createHash('sha256').update(token).digest('hex');
+    await expect(s.service.publicGift(token)).resolves.toBeTruthy();
     await s.service.withdraw('u1', 'g1');
-    await expect(s.service.publicGift(shared.token)).rejects.toThrow();
+    await expect(s.service.publicGift(token)).rejects.toThrow();
+  });
+  it('ST2-R-02: never issues a public link token, even for an approved gift', async () => {
+    const s = setup();
+    await s.service.render('u1', 'g1');
+    await s.service.approve('u1', 'g1', s.row.audioHash!);
+    await expect(s.service.share('u1', 'g1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(s.row.shareHash).toBeNull();
+    expect(
+      s.db.updateMany.mock.calls.some(([a]: any) => 'shareHash' in a.data),
+    ).toBe(false);
   });
   it('bounds creation under the owner transaction and freezes the optional gift note', async () => {
     const s = setup();
@@ -208,6 +225,30 @@ describe('Story‑Tales owner, cost and edition boundaries', () => {
     );
     // A-S3-6: serialized with video create / segment claims of this gift.
     expect(String(s.tx.$queryRaw.mock.calls.at(-1)[1])).toBe('story-video:g1');
+  });
+  it('ST2-S-08: no digest of the personal text survives gift deletion', async () => {
+    const s = setup();
+    (s.row as any).textHash = 'f'.repeat(64);
+    await s.service.remove('u1', 'g1');
+    expect((s.row as any).textHash).toBe('');
+    const sql = s.tx.$executeRaw.mock.calls.map(
+      ([parts, ...values]: any[]) => ({ sql: parts.join('?'), values }),
+    );
+    // Render configuration hashes and segment cache keys → derived from the row id.
+    expect(sql).toEqual([
+      {
+        sql: expect.stringMatching(
+          /UPDATE "story_video_renders" SET "configHash" = 'deleted:' \|\| "id" WHERE "giftId" = \?/,
+        ),
+        values: ['g1'],
+      },
+      {
+        sql: expect.stringMatching(
+          /UPDATE "story_video_segments" SET "cacheKey" = encode\(sha256\(convert_to\('story-deleted:' \|\| "id"/,
+        ),
+        values: ['g1'],
+      },
+    ]);
   });
   it('A-S3-5: retention deletion is conditional on the state the cron saw, journal in the same transaction', async () => {
     const s = setup();

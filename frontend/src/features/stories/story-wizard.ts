@@ -30,25 +30,58 @@ export const STORY_THEME_IDS = [
 ] as const;
 export type StoryThemeId = (typeof STORY_THEME_IDS)[number];
 export type StoryThemeIcon = 'book' | 'cake' | 'moon' | 'heart' | 'sun';
+/**
+ * `accent` — цвет оформления (полоса карточки, обложка); для ТЕКСТА он
+ * слишком светлый (2,5:1 на `soft`, ST2-U-10). Текст бейджа — `ink`:
+ * тот же тон, затемнённый до ≥4,5:1 на `soft` (проверяет
+ * `scripts/story-wizard.test.ts`). Фон бейджа свой, поэтому одинаково в
+ * светлой и тёмной теме.
+ */
 export const STORY_THEMES: Record<
   StoryThemeId,
-  { label: string; accent: string; soft: string; icon: StoryThemeIcon }
+  {
+    label: string;
+    accent: string;
+    soft: string;
+    ink: string;
+    icon: StoryThemeIcon;
+  }
 > = {
   calm: {
     label: 'Спокойная',
     accent: '#5f9ea0',
     soft: '#e3f0ef',
+    ink: '#2f6466',
     icon: 'book',
   },
   celebration: {
     label: 'Праздничная',
     accent: '#d9822b',
     soft: '#fbead6',
+    ink: '#8a4b12',
     icon: 'cake',
   },
-  night: { label: 'Ночная', accent: '#5b6bbf', soft: '#e3e6f7', icon: 'moon' },
-  warm: { label: 'Тёплая', accent: '#c45c66', soft: '#f7e1e3', icon: 'heart' },
-  gentle: { label: 'Мягкая', accent: '#7a9a4a', soft: '#e9f1dc', icon: 'sun' },
+  night: {
+    label: 'Ночная',
+    accent: '#5b6bbf',
+    soft: '#e3e6f7',
+    ink: '#3d4a9e',
+    icon: 'moon',
+  },
+  warm: {
+    label: 'Тёплая',
+    accent: '#c45c66',
+    soft: '#f7e1e3',
+    ink: '#9a3540',
+    icon: 'heart',
+  },
+  gentle: {
+    label: 'Мягкая',
+    accent: '#7a9a4a',
+    soft: '#e9f1dc',
+    ink: '#4b6427',
+    icon: 'sun',
+  },
 };
 const THEME_BY_KIND: Record<OccasionKind, StoryThemeId> = {
   birthday: 'celebration',

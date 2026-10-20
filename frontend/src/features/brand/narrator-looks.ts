@@ -173,6 +173,22 @@ export function isImageTooLarge(error: unknown): boolean {
   );
 }
 
+/**
+ * Коды отказа сервера, которые блок объясняет своими словами (аудит 2):
+ * `NARRATOR_LOOK_TOO_LARGE` — 409 на «Применить», вариант больше лимита
+ * видео; `NARRATOR_CHARACTER_CHANGED` — 409, рассказчик брендбука сменился
+ * во время запроса (блок после ошибки перечитывается сам).
+ */
+export const NARRATOR_LOOK_CODE_TEXT: Record<string, string> = {
+  NARRATOR_LOOK_TOO_LARGE:
+    'Вариант слишком большой для видео — создайте новый вариант.',
+  NARRATOR_CHARACTER_CHANGED:
+    'Рассказчик брендбука сменился — обновите блок и выберите вариант заново.',
+};
+export function narratorLookCodeText(code: string | null): string | null {
+  return (code && NARRATOR_LOOK_CODE_TEXT[code]) || null;
+}
+
 /** 404 — блок не для этого пользователя (Story закрыта): не показываем. */
 export function isHiddenForUser(error: unknown): boolean {
   return (
@@ -262,7 +278,8 @@ export function generationOffer(
   else if (!price)
     disabledReason = 'Нет ставки модели изображений — генерация выключена.';
   else if (state.items.some((i) => i.status === 'PENDING'))
-    disabledReason = 'Вариант уже генерируется — дождитесь результата.';
+    disabledReason =
+      'Вариант уже генерируется — дождитесь результата: блок обновляется сам, можно нажать «Обновить блок».';
   else if (
     !existing &&
     (q.dayUsed + calls > q.dayLimit || q.monthUsed + calls > q.monthLimit)
@@ -363,6 +380,21 @@ export function restyleRepeatNeeded(
       (i.status === 'FAILED' || i.status === 'UNKNOWN') &&
       i.style === mode
   );
+}
+
+/**
+ * ST2-U-14: генерация дольше таймаута клиента (axios 120 с) оставляет
+ * вариант в PENDING — без опроса блок «залипал» до перезагрузки. Пока
+ * есть PENDING, блок перечитывает состояние (только GET, без повтора
+ * генерации) каждые 15 с, но не дольше 15 мин: сервер сам переводит
+ * PENDING старше 10 мин в UNKNOWN, дальше опрашивать нечего.
+ */
+export const NARRATOR_LOOK_POLL_MS = 15_000;
+export const NARRATOR_LOOK_POLL_MAX_MS = 15 * 60_000;
+export function hasPendingLook(
+  state: Pick<NarratorLooksState, 'items'> | null
+): boolean {
+  return !!state?.items.some((i) => i.status === 'PENDING');
 }
 
 /** Что показать превью: стилизованный ассет, если есть, иначе фото. */

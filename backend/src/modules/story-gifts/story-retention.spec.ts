@@ -121,6 +121,7 @@ function setup() {
         if ('in' in v) return v.in.includes(r[k]);
         if ('notIn' in v) return !v.notIn.includes(r[k]);
         if ('not' in v) return v.not === null ? r[k] != null : r[k] !== v.not;
+        if ('lt' in v) return r[k] < v.lt;
         return true;
       }
       return r[k] === v;
@@ -355,9 +356,11 @@ describe('StoryRetentionService', () => {
     expect(journal).toHaveLength(6);
     expect(journal.find((j) => j.targetType === 'segment')).toMatchObject({
       targetId: 'seg-gone',
-      previousState: { status: 'READY', cacheKeyPrefix: 'a'.repeat(12) },
+      previousState: { status: 'READY' },
     });
     expect(JSON.stringify(journal)).not.toContain('речь удалённого голоса');
+    // ST2: no cache-key prefix (digest of the exact text) in new records.
+    expect(JSON.stringify(journal)).not.toContain('cacheKeyPrefix');
     expect(
       journal.every(
         (j) => j.actorKind === 'cron' && j.action === 'retention.purge',
@@ -464,5 +467,113 @@ describe('StoryRetentionService', () => {
         where: expect.objectContaining({ userVoiceId: { in: ['gone'] } }),
       }),
     );
+  });
+
+  it('ST2-S-03: текст UNKNOWN/PENDING-сегментов стирается через 30 дней; ключ остаётся заблокирован', async () => {
+    const { service, segments, journal } = setup();
+    segments.push(
+      {
+        id: 'seg-unknown-old',
+        giftId: 'g-live',
+        source: 'synth',
+        status: 'UNKNOWN',
+        cacheKey: 'd'.repeat(64),
+        userVoiceId: null,
+        text: 'Милана, это мама. Я рядом с тобой.',
+        audio: null,
+        updatedAt: ago(STORY_RETENTION_STALE_DAYS + 1),
+      },
+      {
+        id: 'seg-pending-old',
+        giftId: 'g-live',
+        source: 'synth',
+        status: 'PENDING',
+        cacheKey: 'e'.repeat(64),
+        userVoiceId: null,
+        text: 'Зависшая попытка',
+        audio: null,
+        updatedAt: ago(40),
+      },
+      {
+        id: 'seg-unknown-fresh',
+        giftId: 'g-live',
+        source: 'synth',
+        status: 'UNKNOWN',
+        cacheKey: 'f'.repeat(64),
+        userVoiceId: null,
+        text: 'Свежая неизвестная попытка',
+        audio: null,
+        updatedAt: ago(5),
+      },
+    );
+    const dry = await service.run({ withCandidates: true });
+    expect(dry.staleSegments).toBe(2);
+    expect(dry.candidates!.segments).toEqual(
+      expect.arrayContaining(['seg-unknown-old', 'seg-pending-old']),
+    );
+    expect(segments.find((x) => x.id === 'seg-unknown-old').text).not.toBe('');
+    process.env.STORY_RETENTION_PURGE_ENABLED = 'true';
+    await service.run();
+    for (const id of ['seg-unknown-old', 'seg-pending-old'])
+      expect(segments.find((x) => x.id === id)).toMatchObject({
+        // Never DELETED: the maybe billed key is not freed for a new purchase.
+        status: 'UNKNOWN',
+        text: '',
+        audio: null,
+      });
+    expect(segments.find((x) => x.id === 'seg-unknown-fresh').text).toBe(
+      'Свежая неизвестная попытка',
+    );
+    const rows = journal.filter(
+      (j) => j.targetType === 'segment' && j.targetId.startsWith('seg-'),
+    );
+    expect(rows.map((j) => j.targetId)).toEqual(
+      expect.arrayContaining(['seg-unknown-old', 'seg-pending-old']),
+    );
+    expect(
+      rows.find((j) => j.targetId === 'seg-unknown-old').previousState,
+    ).toMatchObject({ status: 'UNKNOWN', class: 'stale', keyBlocked: true });
+    expect(JSON.stringify(journal)).not.toContain('Милана');
+    // A second run finds nothing more to erase.
+    expect((await service.run()).staleSegments).toBe(0);
+  });
+
+  it('ST2-S-03 (p3a): UNKNOWN-сегмент сборки теряет текст вместе с её удалением, даже если ему меньше 30 дней', async () => {
+    process.env.STORY_RETENTION_PURGE_ENABLED = 'true';
+    const { service, segments, renders, journal } = setup();
+    Object.assign(renders[0], {
+      segments: {
+        version: 1,
+        segments: [
+          { kind: 'intro', source: 'synth', cacheKey: 'd'.repeat(64) },
+          { kind: 'main', source: 'gift', cacheKey: 'e'.repeat(64) },
+        ],
+      },
+    });
+    segments.push({
+      id: 'seg-of-render',
+      giftId: 'g-live',
+      source: 'synth',
+      status: 'UNKNOWN',
+      cacheKey: 'd'.repeat(64),
+      userVoiceId: null,
+      text: 'Милана, это мама. Я рядом с тобой.',
+      audio: null,
+      updatedAt: ago(1),
+    });
+    await service.run();
+    expect(renders[0].status).toBe('DELETED');
+    expect(segments.find((x) => x.id === 'seg-of-render')).toMatchObject({
+      status: 'UNKNOWN',
+      text: '',
+    });
+    expect(
+      journal.find((j) => j.targetId === 'seg-of-render').previousState,
+    ).toMatchObject({
+      class: 'with-render',
+      renderId: 'r-old-unknown',
+      keyBlocked: true,
+    });
+    expect(JSON.stringify(journal)).not.toContain('Милана');
   });
 });

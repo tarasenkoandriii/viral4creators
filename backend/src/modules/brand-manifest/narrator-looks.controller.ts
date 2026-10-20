@@ -23,6 +23,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Post,
   Query,
@@ -60,7 +61,10 @@ export const PRIVATE_IMAGE_HEADERS: Readonly<Record<string, string>> = {
 export class NarratorLooksController {
   constructor(private readonly looks: NarratorLooksService) {}
 
+  /** ST2-R-01: личные метаданные образа — не кешировать, не индексировать. */
   @Get(':manifestId/narrator-looks')
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow, noarchive')
   view(
     @Req() req: IdentifiedRequest,
     @Param('manifestId') manifestId: string,
@@ -125,7 +129,7 @@ export class NarratorLooksController {
   }
 
   /**
-   * Те же байты без base64 (≤4 МиБ — под лимитом ответа Vercel): ответ —
+   * Те же байты без base64 (≤4 000 000 байт — под лимитом ответа Vercel): ответ —
    * само изображение, мимо JSON-конверта. Хеш — в `X-Narrator-Look-Hash`.
    */
   @Get(':manifestId/narrator-looks/:lookId/image/raw')

@@ -168,8 +168,10 @@ async function main() {
   assert.equal(isStoriesPath('/ru/storiesx', locales), false);
   assert.equal(isStoriesPath('/fr/stories', locales), false);
 
-  // matcher middleware не пропускает медиа (у них точка) — значит, за них
-  // отвечает только next.config.js, и правило там обязано быть (п. 1).
+  // Первая (локализационная) строка matcher по-прежнему исключает пути с
+  // точкой; медиа, OG-карточки и весь хост Story‑Tales попадают в
+  // middleware отдельными строками (404 — `stories-closed.test.ts`), а
+  // правило next.config.js остаётся вторым замком заголовков (п. 1).
   assert.match(read('src/middleware.ts'), /\.\*\\\\\.\.\*/, 'matcher перестал исключать пути с точкой — перепроверить медиа');
 
   // ── 3. sitemap / robots ──────────────────────────────────────────────

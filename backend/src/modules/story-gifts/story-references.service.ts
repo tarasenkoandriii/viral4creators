@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PlanService } from '../plan/plan.service';
 import { AiUsageService } from '../ai-usage/ai-usage.service';
 import { createGeminiClient } from '../../common/gemini-client';
+import { estimateCost } from '../../common/ai-pricing';
 import {
   ANALYSIS_MODEL_SETTING,
   resolveAnalysisModel,
@@ -83,6 +84,40 @@ export const STORY_REFERENCE_DAILY_QUOTA = 3;
 export const STORY_REFERENCE_LIMIT = 20;
 /** YouTube search candidates longer than this are hidden (pilot boundary). */
 export const STORY_REFERENCE_MAX_SECONDS = 300;
+/**
+ * U-07: server price of one Gemini reference analysis for the longest
+ * allowed video, pure computation (no provider call). Gemini video
+ * understanding at the default media resolution: 258 tokens per frame at
+ * fps 1 (the analysis call sets `videoMetadata.fps: 1`) plus 32 audio tokens
+ * per second; the prompt is counted at ≈3 characters per token (upper bound)
+ * and the output at its full ceiling `geminiOutputCeiling(5000)`. Video and
+ * audio go by their own model rates when ai-pricing has them. The analysis
+ * holds no separate budget reserve, so `reserveMicroUsd` = the estimate.
+ * Unpriced model → both null (UI shows no amount).
+ */
+export const STORY_REFERENCE_VIDEO_TOKENS_PER_SECOND = 258;
+export const STORY_REFERENCE_AUDIO_TOKENS_PER_SECOND = 32;
+export const STORY_REFERENCE_OUTPUT_TOKENS = geminiOutputCeiling(5000);
+export function storyReferenceAnalysisPrice(
+  model: string,
+  seconds: number = STORY_REFERENCE_MAX_SECONDS,
+) {
+  const video = seconds * STORY_REFERENCE_VIDEO_TOKENS_PER_SECOND;
+  const audio = seconds * STORY_REFERENCE_AUDIO_TOKENS_PER_SECOND;
+  const text = Math.ceil((PROMPT.length + 64) / 3);
+  const cost = estimateCost(model, {
+    inputTokens: video + audio + text,
+    inputByModality: { VIDEO: video, AUDIO: audio },
+    outputTokens: STORY_REFERENCE_OUTPUT_TOKENS,
+  });
+  const estimateMicroUsd = cost.unpriced ? null : cost.costMicroUsd;
+  return {
+    estimateMicroUsd,
+    reserveMicroUsd: estimateMicroUsd,
+    maxSeconds: seconds,
+    model,
+  };
+}
 const RECORD_PREFIX = 'story-ref:v1:';
 const QUOTA_PREFIX = 'story-ref-quota:';
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -259,6 +294,12 @@ export class StoryReferencesService {
   }
   /** Today's paid-analysis slots (UTC), shared by new analyses and retries. */
   async quota(userId: string) {
+    const setting = await this.prisma.platformSetting.findUnique({
+      where: { key: ANALYSIS_MODEL_SETTING },
+    });
+    const analysis = storyReferenceAnalysisPrice(
+      resolveAnalysisModel(setting?.value),
+    );
     const day = new Date().toISOString().slice(0, 10);
     const used = (
       await this.prisma.platformSetting.findMany({
@@ -275,6 +316,7 @@ export class StoryReferencesService {
       resetsAt: `${day}T23:59:59.999Z`,
       retentionDays: STORY_REFERENCE_RETENTION_DAYS,
       storageLimit: STORY_REFERENCE_LIMIT,
+      analysis,
     };
   }
   private key(userId: string, videoId: string) {

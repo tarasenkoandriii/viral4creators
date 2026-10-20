@@ -1,0 +1,65 @@
+method,path,file:line,controller,guards,в API.md
+GET,/api/story-gifts/references,modules/story-gifts/story-gifts.controller.ts:115,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/references/analyze,modules/story-gifts/story-gifts.controller.ts:122,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/video,modules/story-gifts/story-gifts.controller.ts:130,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/video,modules/story-gifts/story-gifts.controller.ts:134,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/video/quote,modules/story-gifts/story-gifts.controller.ts:143,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/video/recording,modules/story-gifts/story-gifts.controller.ts:153,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/story-gifts/:id/video/recording/:recordingId,modules/story-gifts/story-gifts.controller.ts:161,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/video/:renderId,modules/story-gifts/story-gifts.controller.ts:170,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/video/:renderId/file,modules/story-gifts/story-gifts.controller.ts:180,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/video/:renderId/intro,modules/story-gifts/story-gifts.controller.ts:190,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/video/:renderId/main,modules/story-gifts/story-gifts.controller.ts:200,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/video/:renderId/subtitles.vtt,modules/story-gifts/story-gifts.controller.ts:209,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/video/:renderId/quality,modules/story-gifts/story-gifts.controller.ts:226,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/video/:renderId/approve,modules/story-gifts/story-gifts.controller.ts:233,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/catalog,modules/story-gifts/story-gifts.controller.ts:243,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/editions,modules/story-gifts/story-gifts.controller.ts:250,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts,modules/story-gifts/story-gifts.controller.ts:256,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts,modules/story-gifts/story-gifts.controller.ts:260,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/preview,modules/story-gifts/story-gifts.controller.ts:266,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id,modules/story-gifts/story-gifts.controller.ts:278,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/photo,modules/story-gifts/story-gifts.controller.ts:282,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/story-gifts/:id/photo,modules/story-gifts/story-gifts.controller.ts:294,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/photo,modules/story-gifts/story-gifts.controller.ts:302,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/render,modules/story-gifts/story-gifts.controller.ts:306,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/quality,modules/story-gifts/story-gifts.controller.ts:312,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/:id/audio,modules/story-gifts/story-gifts.controller.ts:320,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/approve,modules/story-gifts/story-gifts.controller.ts:324,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/story-gifts/:id/share,modules/story-gifts/story-gifts.controller.ts:331,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/story-gifts/:id/share,modules/story-gifts/story-gifts.controller.ts:340,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/story-gifts/:id,modules/story-gifts/story-gifts.controller.ts:346,StoryGiftsController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gift/:token,modules/story-gifts/story-gifts.controller.ts:385,PublicStoryGiftController,StoryPublicDisabledGuard (всегда 404),да
+GET,/api/story-gift/:token/video,modules/story-gifts/story-gifts.controller.ts:410,PublicStoryGiftController,StoryPublicDisabledGuard (всегда 404),да
+GET,/api/story-gift/:token/photo,modules/story-gifts/story-gifts.controller.ts:436,PublicStoryGiftController,StoryPublicDisabledGuard (всегда 404),да
+GET,/api/story-gift/:token/audio,modules/story-gifts/story-gifts.controller.ts:448,PublicStoryGiftController,StoryPublicDisabledGuard (всегда 404),да
+GET,/api/story-render-input/:token/:part,modules/story-gifts/story-gifts.controller.ts:479,StoryRenderInputController,"токен (хеш, ≤30 мин, PREPARING/PENDING)",да
+GET,/api/admin/story-tales/queue,modules/story-gifts/story-operator.controller.ts:65,AdminStoryTalesController,AdminSessionGuard+assertOperator,да
+GET,/api/admin/story-tales/journal,modules/story-gifts/story-operator.controller.ts:71,AdminStoryTalesController,AdminSessionGuard+assertOperator,да
+GET,/api/admin/story-tales/retention,modules/story-gifts/story-operator.controller.ts:81,AdminStoryTalesController,AdminSessionGuard+assertOperator,да
+POST,/api/admin/story-tales/gifts/:id/close,modules/story-gifts/story-operator.controller.ts:86,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/gifts/:id/reopen,modules/story-gifts/story-operator.controller.ts:94,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/gifts/:id/qa-reset,modules/story-gifts/story-operator.controller.ts:102,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/renders/:id/bind-job,modules/story-gifts/story-operator.controller.ts:110,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/renders/:id/close,modules/story-gifts/story-operator.controller.ts:118,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/renders/:id/qa-reset,modules/story-gifts/story-operator.controller.ts:126,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/segments/:id/close,modules/story-gifts/story-operator.controller.ts:135,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/references/:ref/close,modules/story-gifts/story-operator.controller.ts:143,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+POST,/api/admin/story-tales/references/:ref/delete,modules/story-gifts/story-operator.controller.ts:151,AdminStoryTalesController,AdminSessionGuard+assertOperator,да (API.md:2490–2497 — вложенный список «Действия — POST»)
+GET,/api/story-gifts/references/quota,modules/story-gifts/story-reference-library.controller.ts:37,StoryReferenceLibraryController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/references/youtube,modules/story-gifts/story-reference-library.controller.ts:43,StoryReferenceLibraryController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+PATCH,/api/story-gifts/references/:videoId,modules/story-gifts/story-reference-library.controller.ts:50,StoryReferenceLibraryController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/story-gifts/references/:videoId,modules/story-gifts/story-reference-library.controller.ts:61,StoryReferenceLibraryController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/story-gifts/references/:videoId/plan,modules/story-gifts/story-reference-library.controller.ts:69,StoryReferenceLibraryController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/brand-manifests/:manifestId/narrator-looks,modules/brand-manifest/narrator-looks.controller.ts:63,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/brand-manifests/:manifestId/narrator-looks/consent,modules/brand-manifest/narrator-looks.controller.ts:71,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/brand-manifests/:manifestId/narrator-looks/consent,modules/brand-manifest/narrator-looks.controller.ts:80,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/brand-manifests/:manifestId/narrator-looks,modules/brand-manifest/narrator-looks.controller.ts:88,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/brand-manifests/:manifestId/narrator-looks/revert,modules/brand-manifest/narrator-looks.controller.ts:97,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/brand-manifests/:manifestId/narrator-looks/:lookId/image,modules/brand-manifest/narrator-looks.controller.ts:110,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/brand-manifests/:manifestId/narrator-looks/:lookId/image/raw,modules/brand-manifest/narrator-looks.controller.ts:131,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/brand-manifests/:manifestId/narrator-looks/:lookId/apply,modules/brand-manifest/narrator-looks.controller.ts:155,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+POST,/api/brand-manifests/:manifestId/narrator-looks/:lookId/restyle,modules/brand-manifest/narrator-looks.controller.ts:164,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+DELETE,/api/brand-manifests/:manifestId/narrator-looks/:lookId,modules/brand-manifest/narrator-looks.controller.ts:174,NarratorLooksController,TelegramIdentityGuard+StoryDevelopmentGuard,да
+GET,/api/cron/story-finalize,modules/cron/cron.controller.ts:448,CronController,CRON_SECRET,да
+GET,/api/cron/story-retention,modules/cron/cron.controller.ts:465,CronController,CRON_SECRET,да

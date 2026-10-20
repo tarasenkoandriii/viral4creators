@@ -532,6 +532,10 @@ export class UserVoicesService {
         text: '',
       },
     });
+    // ST2-S-08: the cache key is sha256 of the exact text — no digest of
+    // personal text stays. A key that embeds this voice is never reusable.
+    await this.prisma
+      .$executeRaw`UPDATE "story_video_segments" SET "cacheKey" = encode(sha256(convert_to('story-deleted:' || "id", 'UTF8')), 'hex') WHERE "userVoiceId" = ${id} AND "status" = 'DELETED'`;
     await this.prisma.userVoice.delete({ where: { id } });
     if (row.resembleVoiceId) {
       await forgetVoiceInBrandManifests(

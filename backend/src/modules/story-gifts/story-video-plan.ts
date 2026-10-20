@@ -16,8 +16,19 @@ export function storyVideoReserve(preamble: string, mainText = ''): number {
   if (tts.unpriced || assembly.unpriced)
     throw new Error('Story assembly rate unavailable');
   return Math.ceil(
-    tts.costMicroUsd * 4 + Math.max(500000, assembly.costMicroUsd * 50) + 20000,
+    tts.costMicroUsd * 4 +
+      Math.max(500000, assembly.costMicroUsd * 50) +
+      STORY_VIDEO_QA_RESERVE_MICRO_USD,
   );
+}
+/** QA part of `storyVideoReserve` (one Soniox check of the export). */
+export const STORY_VIDEO_QA_RESERVE_MICRO_USD = 20000;
+/** Soniox price of the export check by its length; null — rate unavailable. */
+export function storyVideoQaEstimate(seconds: number): number | null {
+  const qa = estimateCost('soniox-stt-async', {
+    seconds: Math.max(0, seconds),
+  });
+  return qa.unpriced ? null : qa.costMicroUsd;
 }
 /**
  * Speech-only part of `storyVideoReserve` (same 4× safety factor). A render

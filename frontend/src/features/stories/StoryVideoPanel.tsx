@@ -12,6 +12,7 @@ import {
   applyPronunciations,
   arrayBufferToBase64,
   cleanPronunciations,
+  preambleFileError,
   storyPreambleWav,
   renderStatusLabel,
   storyBuildGate,
@@ -31,6 +32,15 @@ import {
   storyMicErrorText,
   storyMicSupported,
 } from './story-errors';
+import {
+  deleteRecordingConfirm,
+  includedInReserve,
+  recordingDeletedNotice,
+  type RecordingDeleted,
+  videoQaConfirm,
+} from './story-confirm';
+import { formatUsd } from './story-wizard';
+import { useStoryConfirm } from './StoryConfirm';
 type Segment = {
   kind: 'intro' | 'gift_note' | 'main' | 'outro';
   position?: 'beginning' | 'end';
@@ -54,6 +64,8 @@ type Render = {
   reservedMicroUsd: number;
   approvedAt: string | null;
   qaStatus: string;
+  /** Оценка проверки Soniox по длине экспорта (сервер; null — нет длины). */
+  qaEstimateMicroUsd?: number | null;
   qa: { wer: number } | null;
   error: string | null;
   segments: { segments: Segment[]; layout: unknown } | null;
@@ -140,6 +152,7 @@ export function StoryVideoPanel({
     } | null>(null),
     [notice, setNotice] = useState('');
   const lock = useRef(false);
+  const confirm = useStoryConfirm();
   /** Запись, остановленная во время другого действия: отправится следом (S3‑3). */
   const queuedRecording = useRef<Blob | null>(null);
   const recorder = useRef<MediaRecorder | null>(null),
@@ -275,6 +288,9 @@ export function StoryVideoPanel({
   }
   /** Decode → canonical WAV (mono 22.05 kHz, ≤20 s) → private upload. */
   async function acceptRecording(blob: Blob) {
+    // ST2-U-12: лимит размера ДО чтения и декодирования всего файла.
+    const tooBig = preambleFileError(blob);
+    if (tooBig) throw new StoryClientError(tooBig);
     const decode = browserAudioDecoder();
     if (!decode)
       throw new StoryClientError(
@@ -562,12 +578,18 @@ export function StoryVideoPanel({
                   variant="ghost"
                   disabled={busy}
                   onClick={() =>
-                    void action(async () => {
-                      await api.deleteWithBody(
-                        `/story-gifts/${giftId}/video/recording/${r.id}`
-                      );
-                      if (recordingId === r.id) setRecordingId(null);
-                    })
+                    confirm.ask(
+                      deleteRecordingConfirm(r),
+                      () =>
+                        void action(async () => {
+                          const res =
+                            await api.deleteWithBody<RecordingDeleted>(
+                              `/story-gifts/${giftId}/video/recording/${r.id}`
+                            );
+                          if (recordingId === r.id) setRecordingId(null);
+                          setNotice(recordingDeletedNotice(res.data));
+                        })
+                    )
                   }
                 >
                   Удалить
@@ -575,8 +597,8 @@ export function StoryVideoPanel({
               </div>
             ))}
             <p className="text-xs">
-              Запись хранится только в этом подарке. Удаление записи не меняет
-              уже собранные версии — они удаляются вместе с подарком.
+              Запись хранится только в этом подарке. После её удаления видео с
+              ней станут недоступны; оплаченная основная речь сохранится.
             </p>
           </div>
         )}
@@ -731,6 +753,13 @@ export function StoryVideoPanel({
       {quote && (
         <div className="space-y-2 rounded-lg border border-silver-500/30 p-3 text-sm">
           <p>{storyQuoteSummary(quote)}</p>
+          {typeof quote.qaEstimateMicroUsd === 'number' && (
+            <p>
+              Проверка речи готового видео (Soniox) — отдельной кнопкой после
+              сборки, оценка ≈ {formatUsd(quote.qaEstimateMicroUsd)}; входит в
+              резерв сборки.
+            </p>
+          )}
           <ol className="list-decimal space-y-1 pl-5">
             {storyQuoteRows(quote).map((row, i) => (
               <li key={i}>
@@ -910,17 +939,23 @@ export function StoryVideoPanel({
             disabled={
               busy || render.status !== 'READY' || render.qaStatus !== 'PENDING'
             }
-            onClick={() =>
-              void action(() =>
-                api.post(
-                  `/story-gifts/${giftId}/video/${render.id}/quality`,
-                  {},
-                  { timeout: 150000 }
-                )
-              )
-            }
+            onClick={() => {
+              const target = render;
+              confirm.ask(
+                videoQaConfirm(target),
+                () =>
+                  void action(() =>
+                    api.post(
+                      `/story-gifts/${giftId}/video/${target.id}/quality`,
+                      {},
+                      { timeout: 150000 }
+                    )
+                  )
+              );
+            }}
           >
             Проверить речь готового видео
+            {includedInReserve(render.reservedMicroUsd)}
           </Button>
           <p>
             Видео доступно только владельцу. Публикация отключена на этапе
@@ -938,6 +973,7 @@ export function StoryVideoPanel({
           </details>
         </div>
       )}
+      {confirm.dialog}
     </section>
   );
 }

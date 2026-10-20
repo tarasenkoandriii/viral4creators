@@ -4,6 +4,7 @@ import { api } from '../../services/api';
 import {
   REFERENCE_STATUS_LABELS,
   canRetryReference,
+  confidenceNote,
   editionOptionLabel,
   formatMicroUsd,
   parseUsdBudget,
@@ -14,6 +15,12 @@ import {
   storyTime as time,
 } from './story-library';
 import { storyErrorText } from './story-errors';
+import {
+  analyzeButtonSuffix,
+  analyzeConfirm,
+  type StoryAnalysisPrice,
+} from './story-confirm';
+import { useStoryConfirm } from './StoryConfirm';
 type Reference = {
   id: string;
   title: string;
@@ -53,7 +60,13 @@ type Edition = {
   locale: string;
   availableInWizard: boolean;
 };
-type Quota = { used: number; limit: number; remaining: number };
+type Quota = {
+  used: number;
+  limit: number;
+  remaining: number;
+  /** Цена одного разбора для ролика до 5 мин (сервер); код модели не показываем. */
+  analysis?: StoryAnalysisPrice;
+};
 type Candidate = {
   videoId: string;
   url: string;
@@ -101,6 +114,7 @@ export function StoryReferencesPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const lock = useRef(false);
+  const confirm = useStoryConfirm();
   async function refresh(q = query, s = status) {
     const [list, left] = await Promise.all([
       api.get<Reference[]>(referenceListPath(q, s)),
@@ -141,6 +155,12 @@ export function StoryReferencesPanel() {
       setBusy(false);
     }
   }
+  /** ST2-U-07: разбор и явный повтор — платные, только после подтверждения. */
+  const askAnalyze = (referenceUrl = url, retry = false) =>
+    confirm.ask(
+      analyzeConfirm({ retry, quota, analysis: quota?.analysis }),
+      () => void analyze(referenceUrl, retry)
+    );
   const analyze = (referenceUrl = url, retry = false) =>
     run(
       async () => {
@@ -154,19 +174,24 @@ export function StoryReferencesPanel() {
       'Разбор не выполнен.',
       'Ответ сервера не получен. Обновите список: сервер мог сохранить разбор. Повтор той же ссылки не запускает второй платный вызов.'
     );
-  const remove = (r: Reference) => {
-    if (
-      !window.confirm(
-        `Удалить разбор «${r.title}»? Запись и промежуточный ответ модели будут удалены, суточная квота не вернётся.`
-      )
-    )
-      return;
-    void run(async () => {
-      await api.delete(`/story-gifts/references/${r.id}`);
-      setPlans((p) => withoutKey(p, r.id));
-      await refresh();
-    }, 'Не удалось удалить референс');
-  };
+  const remove = (r: Reference) =>
+    confirm.ask(
+      {
+        title: `Удалить разбор «${r.title}»?`,
+        body: [
+          'Запись и промежуточный ответ модели будут удалены, суточная квота не вернётся.',
+        ],
+        items: [],
+        confirmLabel: 'Удалить разбор',
+        danger: true,
+      },
+      () =>
+        void run(async () => {
+          await api.delete(`/story-gifts/references/${r.id}`);
+          setPlans((p) => withoutKey(p, r.id));
+          await refresh();
+        }, 'Не удалось удалить референс')
+    );
   const link = (r: Reference, editionId: string) =>
     run(async () => {
       await api.patch(`/story-gifts/references/${r.id}`, {
@@ -225,8 +250,10 @@ export function StoryReferencesPanel() {
         />
       </label>
       <div className="flex flex-wrap gap-2">
-        <Button disabled={busy || !url.trim()} onClick={() => void analyze()}>
-          {busy ? 'Подождите…' : 'Разобрать референс'}
+        <Button disabled={busy || !url.trim()} onClick={() => askAnalyze()}>
+          {busy
+            ? 'Подождите…'
+            : `Разобрать референс${analyzeButtonSuffix(quota?.analysis)}`}
         </Button>
         <Button
           variant="ghost"
@@ -363,7 +390,7 @@ export function StoryReferencesPanel() {
             </a>
           </h3>
           <p className="text-sm">
-            {r.channel} · {time(r.durationSeconds)} · {r.model} ·{' '}
+            {r.channel} · {time(r.durationSeconds)} ·{' '}
             {referenceStatusLabel(r.status)}
             {r.attempts && r.attempts > 1
               ? ` · платных попыток: ${r.attempts}`
@@ -381,7 +408,7 @@ export function StoryReferencesPanel() {
                 aria-describedby={
                   quota?.remaining === 0 ? `retry-quota-${r.id}` : undefined
                 }
-                onClick={() => void analyze(r.url, true)}
+                onClick={() => askAnalyze(r.url, true)}
               >
                 Повторить разбор явно (новый платный вызов)
               </Button>
@@ -423,9 +450,11 @@ export function StoryReferencesPanel() {
                       {time(s.start)}–{time(s.end)}
                     </strong>{' '}
                     · {s.observation}{' '}
-                    <span className="text-sm">
-                      (уверенность: {s.confidence})
-                    </span>
+                    {confidenceNote(s.confidence) && (
+                      <span className="text-sm">
+                        ({confidenceNote(s.confidence)})
+                      </span>
+                    )}
                   </li>
                 ))}
               </ol>
@@ -475,6 +504,7 @@ export function StoryReferencesPanel() {
           )}
         </article>
       ))}
+      {confirm.dialog}
     </Card>
   );
 }
@@ -494,7 +524,7 @@ function PlanView({ plan }: { plan: Plan }) {
             </strong>{' '}
             · {s.chapterTitle} · {s.staging}
             {s.reference
-              ? ` (референс ${time(s.reference.start)}–${time(s.reference.end)}, уверенность: ${s.reference.confidence})`
+              ? ` (референс ${time(s.reference.start)}–${time(s.reference.end)}${confidenceNote(s.reference.confidence) ? `, ${confidenceNote(s.reference.confidence)}` : ''})`
               : ''}
           </li>
         ))}

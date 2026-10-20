@@ -17,7 +17,11 @@ import {
   fetchPubliclyRoutable,
   readBodyWithLimit,
 } from '../../common/external-url-guard';
-import { downloadStoryVideo, STORY_MAX_VIDEO } from './story-video-result';
+import {
+  downloadStoryVideo,
+  STORY_MAX_VIDEO,
+  StoryVideoRejectedError,
+} from './story-video-result';
 import { storySpeechScore } from './story-audio-qa';
 import { STORY_VOICE } from './story-catalog';
 import {
@@ -30,6 +34,7 @@ import {
   storyDigest as digest,
   storyVideoConfigHash,
   storyVideoReserve,
+  storyVideoQaEstimate,
   storyVideoTtsReserve,
   StoryVideoInput,
   StoryVoiceChoice,
@@ -65,6 +70,7 @@ import { assertStoryPromiseFree, checkStoryPromises } from './story-promise';
 import { storyOccasionLines, type StoryOccasionKind } from './story-occasion';
 import { STORY_SPEECH_CHARS_PER_SECOND } from './story-budget';
 import { storyEdition } from './story-editions';
+import { NARRATOR_LOOK_MAX_BYTES } from '../brand-manifest/narrator-looks.rules';
 import {
   NarratorLooksService,
   type NarratorImage,
@@ -82,7 +88,7 @@ export const STORY_NARRATOR_IMAGE_MIMES = [
  * codec in the backend (no sharp), so a larger image is refused with a clear
  * 409 before any paid call (quote and create) instead of being re-encoded.
  */
-export const STORY_NARRATOR_IMAGE_MAX_BYTES = 4_000_000;
+export const STORY_NARRATOR_IMAGE_MAX_BYTES = NARRATOR_LOOK_MAX_BYTES; // 4 000 000 (ST2-S-07: one threshold)
 function narratorSnapshot(image: NarratorImage): StoryNarratorImageSnapshot {
   return {
     manifestId: image.manifestId,
@@ -383,7 +389,13 @@ export class StoryVideoService {
       budgetUsd: g.budgetCents / 100,
       reservedUsd:
         (g.reservedMicroUsd + (sum._sum.reservedMicroUsd ?? 0)) / 1e6,
-      renders,
+      // U-07: Soniox QA price of each render by its export length.
+      renders: renders.map((r) => ({
+        ...r,
+        qaEstimateMicroUsd: r.durationSeconds
+          ? storyVideoQaEstimate(r.durationSeconds)
+          : null,
+      })),
       narratorProfiles: await this.profiles(userId),
       voiceConsentVersion: STORY_PARENT_CONSENT_VERSION,
       voiceConsentText: STORY_PARENT_CONSENT_TEXT,
@@ -890,6 +902,12 @@ export class StoryVideoService {
       layoutEstimated: estimated,
       warnings,
       reserveMicroUsd: existing ? 0 : reserve,
+      /**
+       * U-07: Soniox check of the finished video (by the layout length,
+       * ai-pricing `soniox-stt-async`); the reserve holds a fixed
+       * STORY_VIDEO_QA_RESERVE_MICRO_USD for it.
+       */
+      qaEstimateMicroUsd: storyVideoQaEstimate(layout.durationSeconds),
       reservedMicroUsd: reserved,
       budgetMicroUsd: budget,
       remainingMicroUsd: Math.max(0, budget - reserved),
@@ -1156,6 +1174,9 @@ export class StoryVideoService {
               mainAudio: new Uint8Array(main.audio),
               mainAudioHash: digest(main.audio),
               mainDuration: mainSeconds,
+              // ST2-S-01: confirmed, saved speech of this render — an
+              // operator close keeps its TTS reserve.
+              paidSpeechChars: { increment: p.mainTts.length },
             },
           });
           if (!saved.count) throw new Error('Render cancelled');
@@ -1208,6 +1229,13 @@ export class StoryVideoService {
           },
         });
         if (!saved.count) throw new Error('Segment cancelled');
+        // ST2-S-01: the saved segment was bought by this render.
+        await this.prisma.storyVideoRender.updateMany({
+          where: { id, status: { not: 'DELETED' } },
+          data: {
+            paidSpeechChars: { increment: (s.ttsText ?? s.text).length },
+          },
+        });
         done.set(s.cacheKey, { audioHash, seconds: audio.durationSeconds });
         if (s.kind === 'intro') introAudio = new Uint8Array(audio.audio);
       }
@@ -1501,24 +1529,175 @@ export class StoryVideoService {
       createdAt: row.createdAt,
     };
   }
-  /** Erases the recording; renders keep their own private copy until the gift is deleted. */
+  /**
+   * ST2-S-09 (variant a): deleting the adult's own recorded preamble withdraws
+   * consent to it, so every render that used it loses its copy: the intro
+   * audio, the finished video, its subtitles text and manifest. Under the gift
+   * lock, like render create and the segment claims.
+   *
+   * ST2-S-10: the parent main narration (TTS of the gift text by the profile
+   * voice, its own consent) is not part of the recording. The render becomes
+   * FAILED (the slot renamed `:purged:`) and keeps `mainAudio` and
+   * `parentNarrationKey`: priorNarration() reuses it for the next order for
+   * free, exactly like a FAILED-before-submit render. Retention, voice
+   * deletion and gift deletion still erase it as before.
+   *
+   * ST2-S-11: a render with this recording that is still running
+   * (PREPARING/PENDING) or awaits the operator with an unconfirmed main
+   * narration (UNKNOWN, main not saved) is not touched — 409 and nothing is
+   * deleted, so a paid synthesis is never lost and its key never orphaned.
+   */
   async deleteRecording(userId: string, giftId: string, recordingId: string) {
     await this.gift(userId, giftId);
-    const r = await this.prisma.storyVideoSegment.updateMany({
-      where: { id: recordingId, giftId, source: 'recorded' },
-      data: {
-        status: 'DELETED',
-        audio: null,
-        audioHash: null,
-        durationSeconds: null,
-      },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-video:${giftId}`}))::text`;
+      const rec = await tx.storyVideoSegment.findFirst({
+        where: { id: recordingId, giftId, source: 'recorded' },
+        select: { cacheKey: true },
+      });
+      if (!rec) throw new NotFoundException('Запись не найдена');
+      const renders = (
+        await tx.storyVideoRender.findMany({
+          where: { giftId, status: { not: 'DELETED' } },
+          select: {
+            id: true,
+            status: true,
+            configHash: true,
+            segments: true,
+            parentNarrationKey: true,
+            mainDuration: true,
+          },
+        })
+      ).filter((r) =>
+        storyManifest(r.segments)?.segments.some(
+          (s) => s.source === 'recorded' && s.cacheKey === rec.cacheKey,
+        ),
+      );
+      if (renders.some((r) => ['PREPARING', 'PENDING'].includes(r.status)))
+        throw new ConflictException({
+          code: 'STORY_RECORDING_IN_USE',
+          message:
+            'Сборка с этой записью выполняется — дождитесь окончания и удалите запись снова',
+        });
+      if (
+        renders.some(
+          (r) =>
+            r.status === 'UNKNOWN' &&
+            !!r.parentNarrationKey &&
+            r.mainDuration == null,
+        )
+      )
+        throw new ConflictException({
+          code: 'STORY_RECORDING_IN_USE',
+          message:
+            'Сборка с этой записью ждёт сверки оператора (основная речь не подтверждена) — удалите запись после её закрытия',
+        });
+      await tx.storyVideoSegment.updateMany({
+        where: { id: recordingId, giftId, source: 'recorded' },
+        data: {
+          status: 'DELETED',
+          audio: null,
+          audioHash: null,
+          durationSeconds: null,
+        },
+      });
+      let rendersDeleted = 0;
+      let segmentsErased = 0;
+      let mainNarrationKeptCount = 0;
+      for (const r of renders) {
+        const m = storyManifest(r.segments)!;
+        const wiped = await tx.storyVideoRender.updateMany({
+          where: { id: r.id, status: r.status, configHash: r.configHash },
+          data: {
+            status: 'FAILED',
+            configHash: `${r.configHash}:purged:${r.id}`,
+            preambleAudio: null,
+            preambleDuration: null,
+            preambleText: '',
+            video: null,
+            videoHash: null,
+            approvedAt: null,
+            assetTokenHash: null,
+            assetExpiresAt: null,
+            qa: Prisma.DbNull,
+            segments: Prisma.DbNull,
+            error:
+              r.mainDuration != null
+                ? 'Запись вступления удалена владельцем: сборка недоступна. Основная речь сохранена и переиспользуется без новой оплаты.'
+                : 'Запись вступления удалена владельцем: сборка недоступна.',
+          },
+        });
+        if (!wiped.count) continue;
+        rendersDeleted++;
+        if (r.mainDuration != null) mainNarrationKeptCount++;
+        // Their UNKNOWN synth segments (exact text of an unconfirmed attempt)
+        // lose text/audio at once, like retention; the key stays blocked.
+        const keys = [
+          ...new Set(
+            m.segments
+              .filter((s) => s.source === 'synth')
+              .map((s) => s.cacheKey),
+          ),
+        ];
+        if (!keys.length) continue;
+        const unknown = await tx.storyVideoSegment.findMany({
+          where: {
+            giftId,
+            cacheKey: { in: keys },
+            source: 'synth',
+            status: 'UNKNOWN',
+            text: { not: '' },
+          },
+          select: { id: true, cacheKey: true },
+        });
+        for (const seg of unknown) {
+          const erased = await tx.storyVideoSegment.updateMany({
+            where: { id: seg.id, status: 'UNKNOWN', cacheKey: seg.cacheKey },
+            data: {
+              audio: null,
+              audioHash: null,
+              durationSeconds: null,
+              text: '',
+            },
+          });
+          if (!erased.count) continue;
+          segmentsErased++;
+          await tx.storyOperatorAction.create({
+            data: {
+              actorKind: 'owner',
+              targetType: 'segment',
+              targetId: seg.id,
+              action: 'owner.recording-delete',
+              reason:
+                'Владелец удалил запись вступления: сборка с ней удалена, текст её неподтверждённой озвучки стёрт; ключ остаётся заблокирован до решения оператора',
+              previousState: {
+                status: 'UNKNOWN',
+                renderId: r.id,
+                keyBlocked: true,
+              },
+              result: { textErased: true },
+            },
+          });
+        }
+      }
+      return {
+        deleted: true,
+        rendersDeleted,
+        segmentsErased,
+        mainNarrationKept: mainNarrationKeptCount > 0,
+        mainNarrationKeptCount,
+      };
     });
-    if (!r.count) throw new NotFoundException('Запись не найдена');
-    return { deleted: true };
   }
   /** WebVTT from segment texts and the export layout (no paid STT). */
   async subtitles(userId: string, giftId: string, id: string) {
     const r = await this.own(userId, giftId, id);
+    // ST2-S-12: only a finished render (like its video file); a FAILED one —
+    // e.g. after its recording was deleted — never serves the story text.
+    if (r.status !== 'READY')
+      throw new NotFoundException(
+        'Субтитры доступны только для готовой сборки',
+      );
     const g = await this.gift(userId, giftId);
     const m = storyManifest(r.segments);
     if (m?.layout)
@@ -1617,8 +1796,11 @@ export class StoryVideoService {
             data: {
               status: 'FAILED',
               assetTokenHash: null,
+              // ST2-S-05: final — the same output is never downloaded again.
               error:
-                'Готовое видео не прошло проверку формата, размера или длительности.',
+                e instanceof StoryVideoRejectedError && e.tooLarge
+                  ? `Готовое видео больше ${STORY_MAX_VIDEO / 1048576} МиБ и не может быть принято; повторного скачивания не будет. Новую сборку можно запустить вручную.`
+                  : 'Готовое видео не прошло проверку формата, размера или длительности.',
             },
           });
         // Keep a durable job id for a later read-only reconciliation.

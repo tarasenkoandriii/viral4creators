@@ -23,6 +23,25 @@ export const EDITION_STATUS_LABELS: Record<string, string> = {
   approved: 'Утверждена',
   retired: 'Снята с каталога',
 };
+/**
+ * ST2-U-08: уверенность модели в сцене — человеческими словами, без сырых
+ * `high`/`medium`/`low`. Неизвестное значение не показывается вовсе.
+ */
+export const CONFIDENCE_LABEL: Record<string, string> = {
+  high: 'высокая',
+  medium: 'средняя',
+  low: 'низкая',
+};
+export function confidenceLabel(
+  value: string | null | undefined
+): string | null {
+  return (value && CONFIDENCE_LABEL[value.toLowerCase()]) || null;
+}
+/** Подпись уверенности в скобках для сцены: «(уверенность модели: высокая)». */
+export function confidenceNote(value: string | null | undefined): string {
+  const label = confidenceLabel(value);
+  return label ? `уверенность модели: ${label}` : '';
+}
 export function referenceStatusLabel(status: string): string {
   return REFERENCE_STATUS_LABELS[status as StoryReferenceStatus] ?? status;
 }

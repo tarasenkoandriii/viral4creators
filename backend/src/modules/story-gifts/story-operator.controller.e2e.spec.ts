@@ -230,4 +230,18 @@ describe('admin/story-tales (e2e)', () => {
       body,
     );
   });
+
+  it('ST2-R-04: журнал — limit 1–200 из запроса (по умолчанию 100)', async () => {
+    await asOp(request(server()).get(`${URL}/journal`)).expect(200);
+    expect(operator.journal).toHaveBeenLastCalledWith(undefined, 100);
+    await asOp(
+      request(server()).get(`${URL}/journal?limit=200&targetId=r1`),
+    ).expect(200);
+    expect(operator.journal).toHaveBeenLastCalledWith('r1', 200);
+    for (const bad of ['0', '201', 'abc', '1.5'])
+      await asOp(request(server()).get(`${URL}/journal?limit=${bad}`)).expect(
+        400,
+      );
+    expect(operator.journal).toHaveBeenCalledTimes(2);
+  });
 });

@@ -83,6 +83,19 @@ export function isStoryNoResponse(e: unknown): boolean {
   );
 }
 
+/**
+ * ST2-U-13: почему не загрузился раздел. Закрытая разработка отвечает 404
+ * (`StoryDevelopmentGuard`), без входа — 401/403: это «раздел закрыт».
+ * Всё остальное (сеть, таймаут, 5xx, 429) — сбой, который надо показать
+ * текстом с кнопкой «Повторить», а не выдавать за закрытый раздел.
+ */
+export function storyLoadFailure(e: unknown): 'closed' | 'error' {
+  const status = (e as ErrorLike | null)?.response?.status;
+  return status === 404 || status === 401 || status === 403
+    ? 'closed'
+    : 'error';
+}
+
 const STATUS_TEXT: Record<number, string> = {
   400: 'Сервер отклонил запрос.',
   403: 'Доступ закрыт.',

@@ -146,6 +146,7 @@ enum UserPlan {
 model User {
   storyGifts         StoryGift[]
   storyNarratorLooks StoryNarratorLook[] // WP5
+  storyNarratorLookCalls StoryNarratorLookCall[] // ST2-S-02: quota ledger
   id                 String              @id @default(cuid())
   telegramId         String              @unique
   createdAt          DateTime            @default(now())
@@ -5298,6 +5299,9 @@ model StoryVideoRender {
   mainAudioHash       String
   voiceId             String
   reservedMicroUsd    Int
+  /// ST2-S-01: characters of speech this render synthesized and saved
+  /// (confirmed result). An operator close with releaseReserve keeps their TTS reserve.
+  paidSpeechChars     Int       @default(0)
   assetTokenHash      String?   @unique
   assetExpiresAt      DateTime?
   /// F1 (A-S3-8): one provider job binds to at most one render (NULLs allowed).
@@ -5357,7 +5361,7 @@ model StoryOperatorAction {
   id            String   @id @default(uuid())
   /// Client-generated UUID: a repeated submit returns the first result.
   requestId     String?  @unique
-  /// admin | cron
+  /// admin | cron | owner (ST2-S-09: the owner's recording deletion; no user id)
   actorKind     String
   actorUserId   String?
   /// gift | render | reference | segment
@@ -5425,6 +5429,23 @@ model StoryNarratorLook {
   @@index([manifestId, createdAt])
   @@index([characterId])
   @@map("story_narrator_looks")
+}
+
+/// ST2-S-02: image-model call ledger of narrator looks. Quota (6/day, 40/month)
+/// counts these rows, which survive deletion of the look, its brand manifest and
+/// character (no FK to them); only account deletion removes them.
+model StoryNarratorLookCall {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Look row at reservation time; plain id, no FK (the look may be deleted).
+  lookId     String   @unique
+  /// Image-model calls started for the look (1–2; 0 when none started).
+  imageCalls Int
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@map("story_narrator_look_calls")
 }
 
 /// First-party landing page views. No source, URL, cookies or raw IP.

@@ -10,14 +10,18 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Type } from 'class-transformer';
 import {
   Equals,
   IsBoolean,
+  IsInt,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import {
@@ -50,6 +54,8 @@ class StoryCloseRenderDto extends StoryOperatorDto {
 }
 class StoryJournalQuery {
   @IsOptional() @IsString() @MaxLength(80) targetId?: string;
+  /** ST2-R-04: 1–200 newest records (default 100). */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
 }
 
 /** WP1: operator reconciliation of Story-Tales UNKNOWN results and retention preview. */
@@ -74,7 +80,7 @@ export class AdminStoryTalesController {
     @Query() query: StoryJournalQuery,
   ) {
     await this.admin.assertOperator(req.userId);
-    return this.operator.journal(query.targetId);
+    return this.operator.journal(query.targetId, query.limit ?? 100);
   }
   /** Dry-run only: what the retention cron would delete now. */
   @Header('Cache-Control', 'no-store')

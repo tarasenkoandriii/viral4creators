@@ -17,8 +17,11 @@
  *
  * Платный вызов модели картинок — только по явному действию взрослого
  * (POST create / restyle), с показанным резервом (`maxReserveMicroUsd`),
- * под advisory-lock пользователя: квота считается по строкам вариантов
- * вместе с бронью в полёте и с неизвестными исходами. Сбой без ответа —
+ * под advisory-lock пользователя: квота считается по журналу вызовов
+ * `story_narrator_look_calls` (ST2-S-02: он не удаляется вместе с
+ * вариантом, брендбуком или персонажем) вместе с бронью в полёте и с
+ * неизвестными исходами. Согласие перечитывается под тем же lock и ещё раз
+ * прямо перед каждым вызовом модели (ST2-S-04). Сбой без ответа —
  * UNKNOWN, без автоповтора; повтор того же запроса — только с `repeat`.
  * Готовый такой же вариант возвращается без оплаты.
  *
@@ -278,7 +281,8 @@ export interface NarratorImage {
   bytes: Buffer;
 }
 
-type PassFailure = 'unknown' | 'refused' | 'invalid';
+/** `consent` — согласие отозвано до вызова: модель не вызывалась (ST2-S-04). */
+type PassFailure = 'unknown' | 'refused' | 'invalid' | 'consent';
 
 class NarratorPassError extends Error {
   constructor(
@@ -290,6 +294,12 @@ class NarratorPassError extends Error {
 }
 
 function passHttpError(error: NarratorPassError, pass: string): HttpException {
+  if (error.kind === 'consent') {
+    return new ConflictException({
+      code: 'NARRATOR_IMAGE_CONSENT_REQUIRED',
+      message: `Согласие на синтетический образ отозвано — ${pass} не генерировался, вызов модели не начат.`,
+    });
+  }
   if (error.kind === 'refused') {
     return new HttpException(
       {
@@ -523,9 +533,14 @@ export class NarratorLooksService {
   ): Promise<NarratorLooksView> {
     const m = await this.own(userId, manifestId);
     if (m.narratorImageConsentAt && !m.narratorImageConsentRevokedAt) {
-      await this.prisma.brandManifest.updateMany({
-        where: { id: m.id, userId },
-        data: { narratorImageConsentRevokedAt: new Date() },
+      // ST2-S-04: the same lock as reserve(): a reservation either finishes
+      // before the revocation or sees it and starts nothing.
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-narrator-look:${userId}`}))::text`;
+        await tx.brandManifest.updateMany({
+          where: { id: m.id, userId, narratorImageConsentRevokedAt: null },
+          data: { narratorImageConsentRevokedAt: new Date() },
+        });
       });
     }
     return this.view(userId, manifestId);
@@ -619,6 +634,7 @@ export class NarratorLooksService {
       try {
         photo = await this.pass(
           userId,
+          m.id,
           prompt,
           source,
           sourceMime,
@@ -626,13 +642,16 @@ export class NarratorLooksService {
         );
       } catch (error) {
         if (!(error instanceof NarratorPassError)) throw error;
+        // Второй вызов не начинался — квота его не держит; при отзыве
+        // согласия до вызова не было ни одного (ST2-S-04).
+        const started = error.kind === 'consent' ? 0 : 1;
         await this.finish(id, {
           status: error.kind === 'unknown' ? 'UNKNOWN' : 'FAILED',
-          // Второй вызов не начинался — квота его не держит.
-          imageCalls: 1,
+          imageCalls: started,
           ...(mode === 'photo' ? {} : { styleStatus: 'FAILED' }),
           error: error.message.slice(0, 500),
         });
+        await this.ledger(id, started);
         throw passHttpError(error, 'образ');
       }
       const photoHash = sha256Hex(photo.bytes);
@@ -644,9 +663,11 @@ export class NarratorLooksService {
         ...(mode === 'photo' ? { status: 'READY', error: null } : {}),
       });
       if (mode !== 'photo') {
-        await this.stylePass(userId, id, mode, options!, photo);
+        await this.stylePass(userId, m.id, id, mode, options!, photo, 1);
       }
-      return { look: await this.lookById(id, m, ch, mode), reused: false };
+      // Вид — по свежему брендбуку (согласие могли отозвать во время вызова).
+      const fresh = await this.own(userId, manifestId);
+      return { look: await this.lookById(id, fresh, ch, mode), reused: false };
     } catch (error) {
       await this.abandon(id, error);
       throw error;
@@ -752,12 +773,21 @@ export class NarratorLooksService {
       };
     }
     try {
-      await this.stylePass(userId, reserved.id, mode, options!, {
-        bytes: Buffer.from(parent.photo),
-        mime: parent.photoMime ?? 'image/png',
-      });
+      await this.stylePass(
+        userId,
+        m.id,
+        reserved.id,
+        mode,
+        options!,
+        {
+          bytes: Buffer.from(parent.photo),
+          mime: parent.photoMime ?? 'image/png',
+        },
+        0,
+      );
+      const fresh = await this.own(userId, manifestId);
       return {
-        look: await this.lookById(reserved.id, m, ch, mode),
+        look: await this.lookById(reserved.id, fresh, ch, mode),
         reused: false,
       };
     } catch (error) {
@@ -800,6 +830,20 @@ export class NarratorLooksService {
       mode,
     });
     if (problem) this.problemConflict(problem);
+    // ST2-S-07: a variant the video cannot take (> 4 000 000 bytes, e.g. one
+    // stored before the shared threshold) is not applied; refused before any
+    // paid render instead of a 409 at the order.
+    const sizes = await this.prisma.$queryRaw<
+      Array<{ photo: number | null; styled: number | null }>
+    >`SELECT octet_length("photo")::int AS "photo", octet_length("styled")::int AS "styled" FROM "story_narrator_looks" WHERE "id" = ${look.id}`;
+    const bytes = Array.isArray(sizes) ? sizes[0]?.[asset] : undefined;
+    if (typeof bytes === 'number' && bytes > NARRATOR_LOOK_MAX_BYTES) {
+      throw new ConflictException({
+        code: 'NARRATOR_LOOK_TOO_LARGE',
+        message:
+          'Вариант больше 4 000 000 байт — видео его не примет. Сделайте новый вариант.',
+      });
+    }
     await this.prisma.brandManifest.updateMany({
       where: { id: m.id, userId },
       data: { narratorLookId: look.id, narratorLookAsset: asset },
@@ -1031,15 +1075,39 @@ export class NarratorLooksService {
     });
   }
 
+  /**
+   * ST2-S-02: квота — по журналу вызовов пользователя, а не по строкам
+   * вариантов: те удаляются каскадом с брендбуком/персонажем, журнал — нет.
+   */
   private async quotaRows(
     userId: string,
     now: Date,
-    client: Pick<PrismaService, 'storyNarratorLook'> = this.prisma,
+    client: Pick<PrismaService, 'storyNarratorLookCall'> = this.prisma,
   ): Promise<Array<{ createdAt: Date; imageCalls: number }>> {
-    return (await client.storyNarratorLook.findMany({
+    return (await client.storyNarratorLookCall.findMany({
       where: { userId, createdAt: { gte: startOfMonthUtc(now) } },
       select: { createdAt: true, imageCalls: true },
     })) as Array<{ createdAt: Date; imageCalls: number }>;
+  }
+
+  /** Сколько вызовов модели реально начато для варианта (журнал квоты). */
+  private async ledger(lookId: string, imageCalls: number): Promise<void> {
+    await this.prisma.storyNarratorLookCall.updateMany({
+      where: { lookId },
+      data: { imageCalls },
+    });
+  }
+
+  /** Согласие перед самым вызовом модели (ST2-S-04). */
+  private async consentActive(
+    userId: string,
+    manifestId: string,
+  ): Promise<boolean> {
+    const m = (await this.prisma.brandManifest.findFirst({
+      where: { id: manifestId, userId },
+      select: MANIFEST_SELECT,
+    })) as ManifestRow | null;
+    return !!m && imageConsentActive(m);
   }
 
   /** PENDING без ответа дольше 10 минут — UNKNOWN навсегда, без повтора. */
@@ -1077,6 +1145,21 @@ export class NarratorLooksService {
   ): Promise<{ id: string } | { reused: LookRow }> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-narrator-look:${userId}`}))::text`;
+      // ST2-S-04: consent (and the narrator) re-read under the lock that
+      // revokeConsent() takes too — a revocation during the photo read stops
+      // here, before any paid call; the row gets the current consent time.
+      const fresh = (await tx.brandManifest.findFirst({
+        where: { id: manifestId, userId },
+        select: MANIFEST_SELECT,
+      })) as ManifestRow | null;
+      if (!fresh) throw new NotFoundException('Бренд-бук не найден');
+      this.assertConsent(fresh);
+      if (fresh.narratorCharacterId !== input.data.characterId) {
+        throw new ConflictException({
+          code: 'NARRATOR_CHARACTER_CHANGED',
+          message: 'Рассказчик брендбука изменился — обновите экран',
+        });
+      }
       const now = new Date();
       await this.expireStale(userId, now, tx);
       const inflight = await tx.storyNarratorLook.findFirst({
@@ -1144,8 +1227,19 @@ export class NarratorLooksService {
         );
       }
       const row = await tx.storyNarratorLook.create({
-        data: input.data as never,
+        data: {
+          ...input.data,
+          consentAt: fresh.narratorImageConsentAt!,
+        } as never,
         select: { id: true },
+      });
+      await tx.storyNarratorLookCall.create({
+        data: {
+          userId,
+          lookId: row.id,
+          imageCalls: input.calls,
+          createdAt: now,
+        },
       });
       return { id: row.id };
     });
@@ -1154,11 +1248,18 @@ export class NarratorLooksService {
   /** Один вызов модели картинок. Расход пишется за любой ответ модели. */
   private async pass(
     userId: string,
+    manifestId: string,
     prompt: string,
     bytes: Buffer,
     mimeType: string,
     model: string,
   ): Promise<{ bytes: Buffer; mime: string }> {
+    if (!(await this.consentActive(userId, manifestId))) {
+      throw new NarratorPassError(
+        'consent',
+        'согласие отозвано — вызов модели не начат',
+      );
+    }
     const outcome = await this.generator.generate({
       prompt,
       source: { bytes, mimeType },
@@ -1192,23 +1293,28 @@ export class NarratorLooksService {
       throw new NarratorPassError('refused', `модель отказалась${code}`);
     }
     if (outcome.bytes.length > NARRATOR_LOOK_MAX_BYTES) {
-      throw new NarratorPassError('invalid', 'больше 4 МБ');
+      // ST2-S-07: тот же порог, что у кадра видео (4 000 000 байт).
+      throw new NarratorPassError('invalid', 'больше 4 000 000 байт');
     }
     const mime = imageMimeOf(outcome.bytes);
     if (!mime) throw new NarratorPassError('invalid', 'неизвестный формат');
     return { bytes: outcome.bytes, mime };
   }
 
+  /** `before` — вызовов модели этого варианта до стилизации (0 или 1). */
   private async stylePass(
     userId: string,
+    manifestId: string,
     id: string,
     style: SketchStyle,
     options: SketchOptions,
     photo: { bytes: Buffer; mime: string },
+    before: number,
   ): Promise<void> {
     try {
       const styled = await this.pass(
         userId,
+        manifestId,
         buildNarratorStylePrompt(style, options),
         photo.bytes,
         photo.mime,
@@ -1225,11 +1331,14 @@ export class NarratorLooksService {
     } catch (error) {
       if (!(error instanceof NarratorPassError)) throw error;
       const state = error.kind === 'unknown' ? 'UNKNOWN' : 'FAILED';
+      const calls = error.kind === 'consent' ? before : undefined;
       await this.finish(id, {
         status: state,
         styleStatus: state,
+        ...(calls === undefined ? {} : { imageCalls: calls }),
         error: `Стилизация: ${error.message}`.slice(0, 500),
       });
+      if (calls !== undefined) await this.ledger(id, calls);
       throw passHttpError(error, 'стиль образа');
     }
   }

@@ -8,18 +8,22 @@ import {
 } from '../../components/ui';
 import { api } from '../../services/api';
 import { getAuthHeaders } from '../../lib/telegram';
-import { storyErrorText } from '../stories/story-errors';
+import { storyErrorCode, storyErrorText } from '../stories/story-errors';
 import {
   activeLabel,
   consentTitle,
   generationOffer,
+  hasPendingLook,
   isHiddenForUser,
   isImageTooLarge,
   itemAction,
   lookTitle,
   MAKEUP_LABEL,
+  NARRATOR_LOOK_POLL_MAX_MS,
+  NARRATOR_LOOK_POLL_MS,
   modeKeepNote,
   modeLabel,
+  narratorLookCodeText,
   narratorLookImagePath,
   narratorLooksPath,
   needsRepeatConfirm,
@@ -46,6 +50,7 @@ async function fetchRawImage(path: string): Promise<string> {
   return URL.createObjectURL(await res.blob());
 }
 const errorText = (e: unknown) =>
+  narratorLookCodeText(storyErrorCode(e)) ??
   storyErrorText(e, {
     noResponse:
       'Ответ сервера не получен. Обновите блок: действие могло выполниться — платный повтор без вашего подтверждения не запускается.',
@@ -93,21 +98,40 @@ export function NarratorLooksPanel({
     if (back?.isConnected) setTimeout(() => back.focus(), 0);
   };
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.get<NarratorLooksState>(
-        narratorLooksPath(manifestId)
-      );
-      if (res.data) setState(res.data);
-    } catch (e) {
-      if (isHiddenForUser(e)) setHidden(true);
-      else setError(errorText(e));
-    }
-  }, [manifestId]);
+  const load = useCallback(
+    async (quiet = false) => {
+      try {
+        const res = await api.get<NarratorLooksState>(
+          narratorLooksPath(manifestId)
+        );
+        if (res.data) setState(res.data);
+      } catch (e) {
+        if (isHiddenForUser(e)) setHidden(true);
+        else if (!quiet) setError(errorText(e));
+      }
+    },
+    [manifestId]
+  );
 
   useEffect(() => {
     void load();
   }, [load, narratorCharacterId]);
+
+  // ST2-U-14: вариант в PENDING (например, после таймаута клиента) —
+  // перечитываем состояние, только GET; повтор генерации не запускается.
+  const pending = hasPendingLook(state);
+  useEffect(() => {
+    if (!pending) return;
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - started > NARRATOR_LOOK_POLL_MAX_MS) {
+        clearInterval(timer);
+        return;
+      }
+      if (!lock.current) void load(true);
+    }, NARRATOR_LOOK_POLL_MS);
+    return () => clearInterval(timer);
+  }, [pending, load]);
 
   // Превью: байты приватные (Postgres), отдаются только владельцу.
   // Ключ — вариант+ассет: файл варианта неизменен, качаем один раз.
@@ -184,7 +208,38 @@ export function NarratorLooksPanel({
 
   return (
     <section className="space-y-3 border-t border-white/10 pt-4">
-      <h3 className="font-medium">Образ для сказок</h3>
+      {/* ST2-U-03: упоминание Story‑Tales — только владельцу раздела:
+          блок рендерится лишь после успешного GET (остальным сервер
+          отвечает 404, и блока нет вовсе). Тексты Story — по-русски. */}
+      <p className="text-sm text-silver-400">
+        Для Story‑Tales выберите свой готовый клон в настройке голоса брендбука.
+        В «Репке» он появится как отдельный вариант с подтверждением согласия;
+        Nova по умолчанию не меняется.{' '}
+        <a className="underline" href="#/stories">
+          Открыть сказки
+        </a>
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-medium">Образ для сказок</h3>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await load();
+            })
+          }
+        >
+          Обновить блок
+        </Button>
+      </div>
+      {pending && (
+        <p role="status" className="text-xs text-silver-400">
+          Вариант генерируется — блок обновляется сам каждые{' '}
+          {NARRATOR_LOOK_POLL_MS / 1000} с.
+        </p>
+      )}
       <p className="text-xs text-silver-400">
         Одежда и лёгкий макияж — отдельные производные изображения от фото
         рассказчика. Оригинал не меняется; вариант становится активным только
@@ -203,7 +258,7 @@ export function NarratorLooksPanel({
           {ch?.sketchRendering === 'stylized' && ' (стилизованный)'}.
         </p>
         {state.active.modeChanged && (
-          <p className="text-xs text-amber-300">
+          <p className="text-xs text-amber-700 dark:text-amber-300">
             Режим персонажа сменился после применения: в сказке остаётся
             одобренный образ ({modeLabel(state.active.mode)}). Перестилизуйте
             вариант ниже, если нужен новый режим.
@@ -240,7 +295,7 @@ export function NarratorLooksPanel({
         <p className="text-xs text-silver-400">{state.consent.text}</p>
         {state.consent.active ? (
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-emerald-300">
+            <span className="text-emerald-700 dark:text-emerald-300">
               Согласие ({consentTitle(state.consent.acceptedVersion)}) действует
             </span>
             <Button
@@ -255,7 +310,7 @@ export function NarratorLooksPanel({
         ) : (
           <div className="space-y-2">
             {state.consent.revokedAt && (
-              <p className="text-xs text-amber-300">
+              <p className="text-xs text-amber-700 dark:text-amber-300">
                 Согласие отозвано: прежние варианты недоступны для сказок
                 навсегда — новое согласие их не вернёт, понадобятся новые
                 варианты.
@@ -346,7 +401,9 @@ export function NarratorLooksPanel({
           </label>
         )}
         {offer.disabledReason && (
-          <p className="text-xs text-amber-300">{offer.disabledReason}</p>
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            {offer.disabledReason}
+          </p>
         )}
         {offer.existing ? (
           <Button
@@ -427,12 +484,20 @@ export function NarratorLooksPanel({
                   <div className="aspect-square w-full rounded-lg bg-white/5" />
                 )}
                 <p className="font-medium">{lookTitle(item)}</p>
-                <p className="text-silver-400">
+                <p
+                  className={
+                    item.active
+                      ? 'text-silver-500 dark:text-silver-200'
+                      : 'text-silver-400'
+                  }
+                >
                   {item.style ? modeLabel(item.style) : 'фото'} ·{' '}
                   {statusText(item)}
                 </p>
                 {action.kind === 'blocked' && (
-                  <p className="text-amber-300">{action.reason}</p>
+                  <p className="text-amber-700 dark:text-amber-300">
+                    {action.reason}
+                  </p>
                 )}
                 {action.kind === 'restyle' && action.repeatNeeded && (
                   <label className="flex gap-2">
@@ -498,7 +563,9 @@ export function NarratorLooksPanel({
                     </Button>
                   )}
                   {action.kind === 'active' && (
-                    <span className="text-emerald-300">{action.label}</span>
+                    <span className="text-emerald-700 dark:text-emerald-300">
+                      {action.label}
+                    </span>
                   )}
                   {item.status !== 'PENDING' && (
                     <Button

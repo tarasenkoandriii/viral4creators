@@ -132,6 +132,17 @@ export function redactStoryToken(value: string): string {
     '$1[redacted]',
   );
 }
+/**
+ * ST2-S-06: Story-Tales routes answer with texts built from the adult's input
+ * (pronunciation pairs, preamble/outro, gift note — often a child's name).
+ * The client still gets the message; the server log keeps only the status,
+ * the machine code and the requestId.
+ */
+const STORY_ROUTE =
+  /\/(?:story-gifts?|story-render-input|admin\/story-tales)(?:\/|$)|\/brand-manifests\/[^/]+\/narrator-looks/;
+export function isStoryRoute(path: string): boolean {
+  return STORY_ROUTE.test(path);
+}
 function safePath(request: { url?: string; path?: string }): string {
   const url = request.path || request.url || '';
   return redactStoryToken(url.split('?')[0]);
@@ -170,8 +181,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
       errorMessage = redactStoryToken(stripRouteNotFoundQuery(errorMessage));
       // 4xx — ожидаемые ответы, им хватает warn; 5xx, брошенные нами
       // намеренно, — всё равно авария.
-      const line = `${request.method} ${safePath(request)} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
-      if (status >= 500) this.logger.error(line, stackOf(exception));
+      const path = safePath(request);
+      const story = isStoryRoute(path);
+      const machine =
+        typeof errorDetails?.code === 'string' ? ` ${errorDetails.code}` : '';
+      const line = story
+        ? `${request.method} ${path} → ${status} ${errorCode}${machine}: [текст Story скрыт] [${requestId}]`
+        : `${request.method} ${path} → ${status} ${errorCode}: ${errorMessage} [${requestId}]`;
+      if (status >= 500)
+        this.logger.error(
+          line,
+          story ? redactedStack(exception) : stackOf(exception),
+        );
       else this.logger.warn(line);
     } else if (bodyParserStatus(exception) !== null) {
       // Заход 12 (аудит P3-3): 413/415/400 body-parser — отказ клиенту,
@@ -249,4 +270,14 @@ function messageOf(value: unknown): string | undefined {
 
 function stackOf(exception: unknown): string | undefined {
   return exception instanceof Error ? exception.stack : undefined;
+}
+
+/** Stack frames without the message line(s) (ST2-S-06). */
+function redactedStack(exception: unknown): string | undefined {
+  const stack = stackOf(exception);
+  if (!stack) return undefined;
+  const frames = stack.split('\n').filter((l) => /^\s+at /.test(l));
+  return [`${(exception as Error).name}: [текст Story скрыт]`, ...frames].join(
+    '\n',
+  );
 }

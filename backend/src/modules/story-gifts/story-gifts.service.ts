@@ -19,7 +19,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ResembleService } from '../tts/resemble.service';
 import { PlanService } from '../plan/plan.service';
@@ -476,20 +476,17 @@ export class StoryGiftsService {
     if (!done.count) throw new ConflictException('Выпуск ещё не готов');
     return this.own(userId, id);
   }
-  async share(userId: string, id: string) {
-    const row = await this.own(userId, id);
-    if (row.status !== 'APPROVED')
-      throw new ConflictException('Сначала одобрите готовую сказку');
-    const token = randomBytes(32).toString('base64url');
-    const done = await this.prisma.storyGift.updateMany({
-      where: { id, userId, status: 'APPROVED', shareHash: null },
-      data: { shareHash: digest(token) },
-    });
-    if (!done.count)
-      throw new ConflictException(
-        'Ссылка уже создана либо выпуск изменён. Для новой ссылки сначала отзовите прежнюю',
-      );
-    return { token };
+  /**
+   * ST2-R-02: Story-Tales is in closed development — public gift links are
+   * not issued at all (the controller route answers 404 too). No token is
+   * generated or stored here, whatever the caller; `withdraw` still clears an
+   * old link and every public route stays behind `StoryPublicDisabledGuard`.
+   */
+  async share(userId: string, id: string): Promise<never> {
+    await this.own(userId, id);
+    throw new NotFoundException(
+      'Публичные ссылки закрыты: Story-Tales в закрытой разработке',
+    );
   }
   async withdraw(userId: string, id: string) {
     await this.own(userId, id);
@@ -541,6 +538,8 @@ export class StoryGiftsService {
           giftPhotoDescription: null,
           narrationLayout: Prisma.DbNull,
           text: '',
+          // ST2-S-08: no digest of the personal text survives deletion.
+          textHash: '',
           chapters: [],
         },
       });
@@ -561,6 +560,12 @@ export class StoryGiftsService {
           text: '',
         },
       });
+      // ST2-S-08: configuration hashes (preamble, segment texts) and segment
+      // cache keys (sha256 of the exact text) are digests of personal text,
+      // checkable by dictionary. Replaced by values derived from the row id
+      // only: unique per (gift, key) and matching the 64-hex CHECK of keys.
+      await tx.$executeRaw`UPDATE "story_video_renders" SET "configHash" = 'deleted:' || "id" WHERE "giftId" = ${id}`;
+      await tx.$executeRaw`UPDATE "story_video_segments" SET "cacheKey" = encode(sha256(convert_to('story-deleted:' || "id", 'UTF8')), 'hex') WHERE "giftId" = ${id}`;
       if (opts.journal) await opts.journal(tx);
       return { deleted: true };
     });

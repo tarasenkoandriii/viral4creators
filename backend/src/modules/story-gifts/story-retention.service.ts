@@ -11,7 +11,11 @@ import { STORY_REF_PREFIX } from './story-operator.service';
  * FAILED/UNKNOWN renders of a live gift (by creation: the cron poll rotates
  * `updatedAt`), renders whose parent voice was deleted (consent withdrawn, any
  * age) and cached speech segments synthesized by a deleted voice (any age),
- * unknown/unavailable/stuck references and stale reference quota keys.
+ * unknown/unavailable/stuck references and stale reference quota keys, and
+ * (ST2-S-03) the exact text of speech segments left UNKNOWN/PENDING (an
+ * unconfirmed TTS attempt) together with the purge of their render, or after
+ * 30 days without changes: text '' and a journal record; the row stays UNKNOWN so the cache key remains blocked (a maybe
+ * billed synthesis is never re-bought without an operator).
  * A purged render frees its configuration slot (`<hash>:purged:<id>`) and
  * keeps `parentNarrationKey` while the parent main narration was never saved
  * (an unconfirmed main synthesis is never re-bought without an operator).
@@ -32,6 +36,18 @@ const DEADLINE_MS = 120_000;
 const DAY = 86_400_000;
 const QUOTA_PREFIX = 'story-ref-quota:';
 
+/** Cache keys of synthesized segments in a render manifest (WP4 v1). */
+function storyManifestSynthKeys(raw: unknown): string[] {
+  const m = raw as { version?: number; segments?: unknown } | null;
+  if (!m || m.version !== 1 || !Array.isArray(m.segments)) return [];
+  return [
+    ...new Set(
+      (m.segments as Array<{ source?: string; cacheKey?: unknown }>)
+        .filter((x) => x.source === 'synth' && typeof x.cacheKey === 'string')
+        .map((x) => x.cacheKey as string),
+    ),
+  ];
+}
 const enabled = (value: string | undefined) =>
   ['1', 'true', 'yes', 'on'].includes((value ?? '').trim().toLowerCase());
 /** Literal reads so `scripts/check-docs.mjs` sees both variables. */
@@ -51,6 +67,8 @@ export interface StoryRetentionResult {
   revokedVoiceRenders: number;
   /** Cached speech segments synthesized by a deleted voice (F1, A-S2-3). */
   revokedVoiceSegments: number;
+  /** ST2-S-03: UNKNOWN/PENDING segments whose text is erased (30 days). */
+  staleSegments: number;
   staleReferences: number;
   quotaKeys: number;
   readyGifts: number;
@@ -145,6 +163,30 @@ export class StoryRetentionService {
         })
       : [];
 
+    // ST2-S-03: an unconfirmed attempt keeps the exact text (a child's name,
+    // the address) only as long as class A allows. `updatedAt`: a reused
+    // DELETED row keeps its old `createdAt`; nothing touches UNKNOWN later.
+    const revokedSegmentIds = new Set(revokedSegments.map((r) => r.id));
+    const staleSegments = (
+      await this.prisma.storyVideoSegment.findMany({
+        where: {
+          status: { in: ['UNKNOWN', 'PENDING'] },
+          source: 'synth',
+          text: { not: '' },
+          updatedAt: { lt: stale },
+        },
+        select: {
+          id: true,
+          giftId: true,
+          status: true,
+          cacheKey: true,
+          updatedAt: true,
+        },
+        orderBy: { updatedAt: 'asc' },
+        take: BATCH,
+      })
+    ).filter((r) => !revokedSegmentIds.has(r.id));
+
     const refRows = await this.prisma.platformSetting.findMany({
       where: {
         key: { startsWith: STORY_REF_PREFIX },
@@ -182,6 +224,7 @@ export class StoryRetentionService {
       staleRenders: staleRenders.length,
       revokedVoiceRenders: revoked.length,
       revokedVoiceSegments: revokedSegments.length,
+      staleSegments: staleSegments.length,
       staleReferences: staleRefs.length,
       quotaKeys: quotaRows.length,
       readyGifts: readyGifts.length,
@@ -194,7 +237,7 @@ export class StoryRetentionService {
       result.candidates = {
         gifts: staleGifts.map((g) => g.id),
         renders: [...staleRenders, ...revoked].map((r) => r.id),
-        segments: revokedSegments.map((r) => r.id),
+        segments: [...revokedSegments, ...staleSegments].map((r) => r.id),
         references: staleRefs.map((r) => refId(r.key)),
         readyGifts: readyGifts.map((g) => g.id),
         readyReferences: oldReadyRefs.map((r) => refId(r.key)),
@@ -264,9 +307,25 @@ export class StoryRetentionService {
             jobId: true,
             parentNarrationKey: true,
             mainDuration: true,
+            segments: true,
           },
         });
         if (!row) return false;
+        // ST2-S-03: synth segments this render left UNKNOWN (exact text of an
+        // unconfirmed attempt) lose their text together with the render.
+        const keys = storyManifestSynthKeys(row.segments);
+        const unknown = keys.length
+          ? await tx.storyVideoSegment.findMany({
+              where: {
+                giftId: r.giftId,
+                cacheKey: { in: keys },
+                source: 'synth',
+                status: 'UNKNOWN',
+                text: { not: '' },
+              },
+              select: { id: true, cacheKey: true },
+            })
+          : [];
         const wiped = await tx.storyVideoRender.updateMany({
           where: {
             id: r.id,
@@ -295,6 +354,30 @@ export class StoryRetentionService {
           reason,
           tx,
         );
+        for (const seg of unknown) {
+          const erased = await tx.storyVideoSegment.updateMany({
+            where: { id: seg.id, status: 'UNKNOWN', cacheKey: seg.cacheKey },
+            data: {
+              audio: null,
+              audioHash: null,
+              durationSeconds: null,
+              text: '',
+            },
+          });
+          if (!erased.count) continue;
+          await journal(
+            'segment',
+            seg.id,
+            {
+              status: 'UNKNOWN',
+              class: 'with-render',
+              renderId: r.id,
+              keyBlocked: true,
+            },
+            'Срок хранения: текст неподтверждённой озвучки удаляется вместе с её сборкой; ключ остаётся заблокирован до решения оператора',
+            tx,
+          );
+        }
         return true;
       });
       if (!done) return void result.raced++;
@@ -317,8 +400,44 @@ export class StoryRetentionService {
         await journal(
           'segment',
           s.id,
-          { status: s.status, cacheKeyPrefix: s.cacheKey.slice(0, 12) },
+          { status: s.status },
           'Голос рассказчика удалён (согласие отозвано): речь, синтезированная им, удаляется',
+          tx,
+        );
+        return true;
+      });
+      if (!done) return void result.raced++;
+      result.purged++;
+    };
+    const purgeStaleSegment = async (s: (typeof staleSegments)[number]) => {
+      const done = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`story-video:${s.giftId}`}))::text`;
+        // Conditional on the state seen: a claim/save in between is a skip.
+        const wiped = await tx.storyVideoSegment.updateMany({
+          where: {
+            id: s.id,
+            status: s.status,
+            cacheKey: s.cacheKey,
+            updatedAt: s.updatedAt,
+          },
+          data: {
+            status: 'UNKNOWN',
+            audio: null,
+            audioHash: null,
+            durationSeconds: null,
+            text: '',
+          },
+        });
+        if (!wiped.count) return false;
+        await journal(
+          'segment',
+          s.id,
+          {
+            status: s.status,
+            class: 'stale',
+            keyBlocked: true,
+          },
+          `Срок хранения: текст неподтверждённой озвучки сегмента старше ${STORY_RETENTION_STALE_DAYS} дней удаляется; ключ остаётся заблокирован до решения оператора`,
           tx,
         );
         return true;
@@ -367,6 +486,7 @@ export class StoryRetentionService {
           ),
       ),
       ...revokedSegments.map((s) => () => purgeSegment(s)),
+      ...staleSegments.map((s) => () => purgeStaleSegment(s)),
       ...staleRefs.map((r) => () => purgeRef(r, 'stale')),
       ...(readyPurgeEnabled
         ? [

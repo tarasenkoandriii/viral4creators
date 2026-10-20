@@ -117,7 +117,10 @@ export function ConfirmDialog({
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
-        className="w-full max-w-sm p-5"
+        // ST2-U-16: карточка непрозрачная (обе темы) — сквозь bg-white/70
+        // просвечивали кнопки страницы, и контраст текста зависел от того,
+        // что оказалось под диалогом (4.49:1 над акцентной кнопкой).
+        className="w-full max-w-sm p-5 !bg-white dark:!bg-silver-900"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-3">
@@ -130,7 +133,7 @@ export function ConfirmDialog({
             <h3 id="confirm-dialog-title" className="text-sm font-bold">
               {title}
             </h3>
-            <div className="mt-1.5 text-xs leading-relaxed text-silver-500 dark:text-silver-300">
+            <div className="mt-1.5 text-xs leading-relaxed text-silver-700 dark:text-silver-300">
               {loadingBody ? (
                 <span className="inline-flex items-center gap-1.5">
                   <Spinner size={12} />
@@ -143,7 +146,18 @@ export function ConfirmDialog({
           </div>
         </div>
         <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
+          {/* Аудит Story‑Tales 2 (axe): ghost-текст silver-600 поверх
+              затемнения давал 4.17:1, тело диалога silver-500 — 4.42:1
+              (карточка bg-white/70 над bg-black/50 ≈ #d8d8d9). В светлой
+              теме оба — silver-700; в тёмной
+              остаётся ghost-вариант (`dark:text-silver-300`, ≥4.5:1). */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-silver-700"
+            onClick={onCancel}
+            disabled={busy}
+          >
             {cancelLabel ?? dict.common.cancel}
           </Button>
           {/* Э-С Ш6: помощник платформы («Админка») не подтверждает за

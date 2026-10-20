@@ -345,16 +345,15 @@ export default function StoryTalesPage() {
           </p>
           <div style={{ overflowX: 'auto' }}>
             <table>
-              <thead><tr><th>id</th><th>Сказка</th><th>Сборка</th><th>Вид</th><th>Источник</th><th>Ключ</th><th>Возраст, ч</th><th>Действия</th></tr></thead>
+              <thead><tr><th>id</th><th>Сказка</th><th>Сборка</th><th>Вид</th><th>Источник</th><th>Возраст, ч</th><th>Действия</th></tr></thead>
               <tbody>
                 {segments.map((s) => (
                   <tr key={s.id}>
-                    <td><code title={s.id}>{short(s.id)}</code></td>
+                    <td><code title={s.id}>{s.shortId}</code></td>
                     <td><code title={s.giftId}>{short(s.giftId)}</code></td>
                     <td>{s.renderId ? <code title={s.renderId}>{short(s.renderId)}</code> : '—'}</td>
                     <td>{s.kind ? SEGMENT_KINDS[s.kind] ?? s.kind : 'не определён'}</td>
                     <td>{s.source === 'recorded' ? 'запись взрослого' : 'синтез'}</td>
-                    <td><code>{s.cacheKeyPrefix}…</code></td>
                     <td>{s.ageHours} (без изменений {s.idleHours})</td>
                     <td>{act('segment-close', s.id, 'Закрыть и освободить ключ')}</td>
                   </tr>
@@ -418,7 +417,7 @@ export default function StoryTalesPage() {
                 {journal.map((j) => (
                   <tr key={j.id}>
                     <td>{new Date(j.createdAt).toLocaleString('ru', { timeZone: 'Europe/Kyiv' })}</td>
-                    <td>{j.actorKind === 'cron' ? 'крон сроков хранения' : <code>{short(j.actorUserId ?? '')}</code>}</td>
+                    <td>{j.actorKind === 'cron' ? 'крон сроков хранения' : j.actorKind === 'owner' ? 'владелец (удаление записи)' : <code>{short(j.actorUserId ?? '')}</code>}</td>
                     <td><code>{j.action}</code></td>
                     <td>{j.targetType}: <code title={j.targetId}>{short(j.targetId)}</code></td>
                     <td>{j.reason}</td>

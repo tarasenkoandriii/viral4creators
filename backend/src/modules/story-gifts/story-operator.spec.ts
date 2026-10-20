@@ -9,6 +9,7 @@ import {
   StoryOperatorService,
   storyRenderStage,
 } from './story-operator.service';
+import { storyVideoTtsReserve } from './story-video-plan';
 jest.mock('../../common/external-url-guard', () => ({
   fetchPubliclyRoutable: jest.fn(),
   readBodyWithLimit: jest.fn(),
@@ -815,6 +816,36 @@ describe('StoryOperatorService — закрытие сборки', () => {
     expect(res.result).toMatchObject({ releasedUsd: 0.6, stage: 'voice' });
   });
 
+  it('ST2-S-01: releaseReserve оставляет резерв речи, синтезированной и сохранённой этой сборкой', async () => {
+    const { service, renders } = setup();
+    // p1: main + intro TTS confirmed and saved (745 chars), lost at submit.
+    Object.assign(renders[0], { paidSpeechChars: 745 });
+    const kept = storyVideoTtsReserve(745);
+    expect(kept).toBeGreaterThan(0);
+    const res = await service.closeRender(
+      'admin',
+      'r-submit',
+      input({ releaseReserve: true, providerChargeConfirmedAbsent: true }),
+    );
+    expect(renders[0]).toMatchObject({
+      status: 'FAILED',
+      reservedMicroUsd: kept,
+    });
+    expect(res.result).toMatchObject({
+      releasedUsd: (600000 - kept) / 1e6,
+      keptUsd: kept / 1e6,
+    });
+    expect(renders[0].error).toContain('Резерв сохранённой речи');
+    // Never more than the render reserved.
+    Object.assign(renders[1], { paidSpeechChars: 10_000_000 });
+    await service.closeRender(
+      'admin',
+      'r-voice',
+      input({ releaseReserve: true, providerChargeConfirmedAbsent: true }),
+    );
+    expect(renders[1].reservedMicroUsd).toBe(600000);
+  });
+
   it('до проверки базового видео платных вызовов не было — резерв освобождается без подтверждения', async () => {
     const { service, renders } = setup();
     await service.closeRender(
@@ -925,7 +956,7 @@ describe('StoryOperatorService — референсы', () => {
 });
 
 describe('StoryOperatorService — сегменты речи видео (WP4)', () => {
-  it('очередь: UNKNOWN-сегменты живых сказок — id, вид, источник, возраст, префикс ключа; без текста и аудио', async () => {
+  it('очередь: UNKNOWN-сегменты живых сказок — id, вид, источник, возраст, короткий id; без ключа, текста и аудио', async () => {
     const { service } = setup();
     const q = await service.queue();
     expect(q.segments).toEqual([
@@ -935,7 +966,7 @@ describe('StoryOperatorService — сегменты речи видео (WP4)', 
         renderId: 'r-voice',
         kind: 'intro',
         source: 'synth',
-        cacheKeyPrefix: '0123456789ab',
+        shortId: 'seg-unkn',
         ageHours: 2,
         idleHours: 2,
       },
@@ -976,7 +1007,6 @@ describe('StoryOperatorService — сегменты речи видео (WP4)', 
         status: 'UNKNOWN',
         source: 'synth',
         giftId: 'g-live',
-        cacheKeyPrefix: '0123456789ab',
       }),
       result: expect.objectContaining({
         status: 'DELETED',
@@ -986,6 +1016,9 @@ describe('StoryOperatorService — сегменты речи видео (WP4)', 
     const text = JSON.stringify(journal[0]);
     expect(text).not.toContain('СЕКРЕТНАЯ');
     expect(text).not.toContain(SEG_KEY);
+    // ST2: no key prefix (a digest of the exact text) in the journal.
+    expect(text).not.toContain('cacheKeyPrefix');
+    expect(text).not.toContain(SEG_KEY.slice(0, 12));
     const again = await service.closeSegment('admin-3', 'seg-unknown', req);
     expect(again).toMatchObject({ replayed: true, journalId: first.journalId });
     expect(journal).toHaveLength(1);

@@ -64,7 +64,8 @@ import { claimStoredReferral } from './services/invite-api';
 import { InviteScreen } from './features/invite/InviteScreen';
 import { FeedScreen } from './features/feed/FeedScreen';
 import { pollPlanState } from './services/billing-api';
-import { Alert, Button, EmptyState } from './components/ui';
+import { Alert, Button, EmptyState, Spinner } from './components/ui';
+import { storyLoadFailure } from './features/stories/story-errors';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useI18n } from './lib/i18n-context';
@@ -152,24 +153,36 @@ function App() {
    */
   const [planError, setPlanError] = useState<unknown>(null);
   const [planNonce, setPlanNonce] = useState(0);
-  const [storyAccess, setStoryAccess] = useState(false);
+  /**
+   * Вход в закрытый раздел Story‑Tales. `closed` — сервер ответил 404
+   * (401/403): раздела для этого человека нет, `#/stories` выглядит как
+   * любой несуществующий адрес (ST2-U-15: тексты из словаря, о закрытой
+   * разработке не сообщаем). `error` — сбой сети/сервера: показываем
+   * ошибку и «Повторить», а не «закрыто» (ST2-U-13).
+   */
+  const [storyAccess, setStoryAccess] = useState<
+    'checking' | 'open' | 'closed' | 'error'
+  >('checking');
+  const [storyNonce, setStoryNonce] = useState(0);
   useEffect(() => {
     let alive = true;
-    setStoryAccess(false);
+    setStoryAccess('checking');
     void api
       .get('/story-gifts/catalog')
       .then(() => {
-        if (alive) setStoryAccess(true);
+        if (alive) setStoryAccess('open');
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (alive) setStoryAccess(storyLoadFailure(e));
+      });
     return () => {
       alive = false;
     };
-  }, [planNonce]);
+  }, [planNonce, storyNonce]);
   const refreshPlan = useCallback(() => setPlanNonce((n) => n + 1), []);
   useEffect(() => {
     const resetIdentity = () => {
-      setStoryAccess(false);
+      setStoryAccess('checking');
       setPlanNonce((n) => n + 1);
     };
     window.addEventListener(GUIDE_IDENTITY_EVENT, resetIdentity);
@@ -373,7 +386,7 @@ function App() {
                 >
                   {dict.productAreas.tutorials}
                 </NavTab>
-                {storyAccess && (
+                {storyAccess === 'open' && (
                   <NavTab
                     active={activeArea === 'stories'}
                     onClick={() => navigate(routes.product('stories'))}
@@ -413,10 +426,38 @@ function App() {
             {(
               ['commerce', 'greetings', 'tutorials', 'stories'] as string[]
             ).includes(route.name) &&
-              (route.name === 'stories' && !storyAccess ? (
-                <p className="p-5">Раздел в закрытой разработке.</p>
-              ) : (
+              (route.name !== 'stories' || storyAccess === 'open' ? (
                 <ProductHub area={route.name as ProductArea} />
+              ) : storyAccess === 'checking' ? (
+                <div className="flex justify-center p-5" role="status">
+                  <Spinner />
+                </div>
+              ) : storyAccess === 'error' ? (
+                <EmptyState
+                  title={dict.projectsShared.loadErrorTitle}
+                  hint={dict.errors.network}
+                  action={
+                    <Button
+                      variant="outline"
+                      onClick={() => setStoryNonce((n) => n + 1)}
+                    >
+                      {dict.projectsShared.retryButton}
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  title={dict.notFound.title}
+                  hint={`#/${route.name}`}
+                  action={
+                    <Button
+                      variant="outline"
+                      onClick={() => navigate(routes.projects(), true)}
+                    >
+                      {dict.notFound.action}
+                    </Button>
+                  }
+                />
               ))}
             {route.name === 'projects' && <ProjectsListScreen />}
             {route.name === 'project-new' && (
