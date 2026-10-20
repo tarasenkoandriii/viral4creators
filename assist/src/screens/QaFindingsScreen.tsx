@@ -1,3 +1,4 @@
+import { loadQaFindingReport } from '../lib/qa-finding-report';
 import { QaArtifacts } from '../components/QaArtifacts';
 import { useEffect, useState } from 'react';
 import { ApiError, useKit } from '../kit';
@@ -103,7 +104,7 @@ function Registry({ siteId }: { siteId: string }) {
     setDirty(true);
     setNotice('');
   }
-  async function act(fn: () => Promise<void>) {
+  async function act(fn: () => Promise<void>, fallback?: string) {
     setBusy(true);
     setError('');
     setDuplicateId(null);
@@ -126,7 +127,8 @@ function Registry({ siteId }: { siteId: string }) {
             ? 'Такое наблюдение уже есть. Откройте существующее замечание и дополните доказательства.'
             : code === 'QA_FINDING_SOURCE_INVALID'
               ? 'Не удалось подтвердить связь с попыткой. Проверьте ID запуска, ключ кейса и ID попытки: они должны относиться к этому сайту. Черновик сохранён.'
-              : 'Не удалось сохранить или загрузить. Проверьте обязательные поля, дату, SHA и доказательства. Черновик сохранён.'
+              : (fallback ??
+                'Не удалось сохранить или загрузить. Проверьте обязательные поля, дату, SHA и доказательства. Черновик сохранён.')
       );
     } finally {
       setBusy(false);
@@ -196,6 +198,31 @@ function Registry({ siteId }: { siteId: string }) {
         >
           Запуски QA
         </Button>
+        {selected && (
+          <Button
+            variant="outline"
+            disabled={busy || dirty}
+            onClick={() =>
+              void act(async () => {
+                const { finding, report } = await loadQaFindingReport(
+                  api,
+                  siteId,
+                  selected.id
+                );
+                download(
+                  report,
+                  `qa-finding-${finding.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-r${finding.revision}.md`,
+                  'text/markdown'
+                );
+                setNotice(
+                  'Скачивание отчёта начато. Приватные ссылки и PNG в файл не включены.'
+                );
+              }, 'Отчёт не выгружен: не удалось прочитать свежие данные либо замечание изменилось. Повторите скачивание.')
+            }
+          >
+            Скачать отчёт замечания (.md)
+          </Button>
+        )}
         {access.write && (
           <Button
             disabled={busy}
