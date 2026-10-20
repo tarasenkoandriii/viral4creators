@@ -131,7 +131,12 @@ export function InviteAcceptScreen({
         >
           {t.decline}
         </Button>
-        <Button icon={<Check size={16} />} loading={busy} onClick={accept}>
+        <Button
+          icon={<Check size={16} />}
+          loading={busy}
+          disabled={p.alreadyMember}
+          onClick={accept}
+        >
           {t.accept}
         </Button>
       </div>

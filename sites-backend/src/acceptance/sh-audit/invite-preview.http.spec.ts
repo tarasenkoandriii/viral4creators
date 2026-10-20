@@ -330,6 +330,26 @@ describeDb(
       expect(self.body.data.alreadyMember).toBe(true);
     });
 
+    it('владелец не расходует ссылку для нового участника и не меняет свои права', async () => {
+      const a = await owner();
+      const inv = await invite(a.tg, 'operator');
+      const before = await prisma.siteAccountInvite.findFirst({
+        where: { accountId: a.accountId },
+      });
+      expect((await accept(a.tg, inv.token)).status).toBe(200);
+      const after = await prisma.siteAccountInvite.findUnique({
+        where: { id: before!.id },
+      });
+      expect(after?.usedAt).toBeNull();
+      expect(after?.usedByTelegramId).toBeNull();
+      expect(after?.expiresAt).toEqual(before?.expiresAt);
+      const newcomer = person();
+      expect((await preview(newcomer, inv.token)).status).toBe(200);
+      expect((await accept(newcomer, inv.token)).status).toBe(200);
+      expect((await preview(person(), inv.token)).status).toBe(403);
+      expect((await membershipsOf(a.tg))[0].role).toBe('owner');
+    });
+
     it('недействительное — один и тот же 403 INVITE_INVALID', async () => {
       const a = await owner();
       const inv = await invite(a.tg);

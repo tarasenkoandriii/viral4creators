@@ -463,14 +463,14 @@ export class AccountService {
     const existing = (await this.memberships(identity.telegramId)).find(
       (m) => m.accountId === invite.accountId,
     );
+    // Opening one's own/existing membership must not spend the invite meant
+    // for a new participant. Keep the existing role and original expiry.
+    if (existing) return existing;
     const claimed = await system.siteAccountInvite.updateMany({
       where: { id: invite.id, usedAt: null },
       data: { usedAt: now, usedByTelegramId: identity.telegramId },
     });
     if (claimed.count !== 1) throw invalid();
-    // Уже участник — права не понижаем и не повышаем приглашением.
-    if (existing) return existing;
-
     const role = parseAccountRole(invite.role);
     if (role !== 'manager' && role !== 'operator') throw invalid();
     const row = (await this.db
