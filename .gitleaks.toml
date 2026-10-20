@@ -46,6 +46,8 @@ paths = [
 description = "Документы и код: известные не-секреты (точное значение)"
 targetRules = ["generic-api-key"]
 regexes = [
+  # SHA-256 selector for one owner-authorized QA invite repair; not the bearer token.
+  '''^c45d1024146e064de72e1eb751c2e2673ca521495b1fc33541e184c71712469e$''',
   # RFC 6455, пример ключа рукопожатия WebSocket («the sample nonce»).
   '''^dGhlIHNhbXBsZSBub25jZQ==$''',
   # doc/AUDIT-2026-09-07-round3.md цитирует подделки из notify.spec.ts.
