@@ -494,7 +494,11 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
       });
       expect(row!.costMicroUsd).toBeNull();
       const usage = await s.prisma.siteAiUsage.findFirst({
-        where: { accountId: acc.accountId, siteId: p.siteId, model: 'gemini-4-argon' },
+        where: {
+          accountId: acc.accountId,
+          siteId: p.siteId,
+          model: 'gemini-4-argon',
+        },
       });
       expect(usage).toMatchObject({ unpriced: true, product: 'publisher' });
     } finally {
