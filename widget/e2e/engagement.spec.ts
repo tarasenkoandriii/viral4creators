@@ -11,6 +11,8 @@ import {
   A,
   OTHER,
   WIDGET,
+  WIDGET_MESSAGE_NS,
+  WIDGET_PROTOCOL_VERSION,
   ask,
   chat,
   eventKinds,
@@ -672,16 +674,40 @@ test('сценарий: шаги (выбор, текст), финал «заяв
   await chat(page).getByRole('button', { name: 'Море' }).click();
   const n = chat(page).locator('.scen input');
   await n.fill('3');
+  // The form can render before the iframe's queued count message reaches
+  // the host. Observe delivery before unloading; otherwise pagehide may
+  // flush the earlier batch without scenario_done on a busy CI runner.
+  const countReceived = page.evaluate(
+    ({ origin, ns, version }) =>
+      new Promise<void>((resolve) => {
+        const received = (event: MessageEvent) => {
+          const data = event.data as Record<string, unknown> | null;
+          if (
+            event.origin === origin &&
+            data?.ns === ns &&
+            data?.v === version &&
+            data?.type === 'count' &&
+            data?.kind === 'scenario_done' &&
+            data?.key === 'pick-tour'
+          ) {
+            window.removeEventListener('message', received);
+            resolve();
+          }
+        };
+        window.addEventListener('message', received);
+      }),
+    { origin: WIDGET, ns: WIDGET_MESSAGE_NS, version: WIDGET_PROTOCOL_VERSION }
+  );
   await chat(page).locator('.scen button[type=submit]').click();
+  await countReceived;
   await expect(chat(page).locator('textarea[name=comment]')).toHaveValue(
     'Куда хотите? — Море; Сколько человек? — 3'
   );
   // Ответы сценария в сеть не ушли (только в памяти iframe до заявки).
   expect(JSON.stringify((await log()).requests)).not.toContain('Море');
   await leave(page);
-  const kinds = await eventKinds();
-  expect(kinds).toContain('scenario_started:pick-tour');
-  expect(kinds).toContain('scenario_done:pick-tour');
+  await expect.poll(eventKinds).toContain('scenario_started:pick-tour');
+  await expect.poll(eventKinds).toContain('scenario_done:pick-tour');
 });
 
 test('мок проверяет Origin на маршрутах по visitor-token (как sites-backend)', async ({
