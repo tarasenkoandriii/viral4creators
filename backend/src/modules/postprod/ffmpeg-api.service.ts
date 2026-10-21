@@ -981,7 +981,13 @@ export class FfmpegApiService {
     if (outcome.kind === 'refused') {
       this.logger.warn(`${label}: отказ до приёма (${outcome.code})`);
       await this.markOutcome(ctx, 'refused');
-      await this.breakerFailure();
+      // A rejected command/source is job-specific, not a server outage.
+      if (
+        !['UNSUPPORTED_COMMAND', 'FORBIDDEN_SOURCE'].includes(
+          outcome.code ?? '',
+        )
+      )
+        await this.breakerFailure();
       return this.fallbackOrThrow(ctx, 'refused', outcome.code, outcome.error);
     }
 

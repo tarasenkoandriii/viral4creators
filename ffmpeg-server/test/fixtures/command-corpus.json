@@ -428,6 +428,36 @@
       "textInputs": {}
     },
     {
+      "id": "tutorial-runner/fractional-frame-grid",
+      "product": "tutorial-runner",
+      "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",
+      "callSite": "backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly",
+      "note": "Production regression: native JS fractional frame seconds, per-frame audio, pointer and ASS; no rounding or policy-limit change",
+      "live": true,
+      "request": {
+        "input_files": {
+          "frame1": "https://inputs.test/tutorial-runner/frame1.png",
+          "frame2": "https://inputs.test/tutorial-runner/frame2.png",
+          "frame3": "https://inputs.test/tutorial-runner/frame3.png",
+          "frame4": "https://inputs.test/tutorial-runner/frame4.png",
+          "voice1": "https://inputs.test/tutorial-runner/voice1.mp3",
+          "voice2": "https://inputs.test/tutorial-runner/voice2.mp3",
+          "voice3": "https://inputs.test/tutorial-runner/voice3.mp3",
+          "voice4": "https://inputs.test/tutorial-runner/voice4.mp3",
+          "captions": "https://inputs.test/tutorial-runner/captions.ass"
+        },
+        "output_files": [
+          "tutorial.mp4"
+        ],
+        "ffmpeg_commands": [
+          "-framerate 30 -loop 1 -t 2.9 -i {{frame1}} -framerate 30 -loop 1 -t 2.25 -i {{frame2}} -framerate 30 -loop 1 -t 3.87 -i {{frame3}} -framerate 30 -loop 1 -t 3.5300000000000002 -i {{frame4}} -i {{voice1}} -i {{voice2}} -i {{voice3}} -i {{voice4}} -filter_complex \"[0:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];[1:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v2];[2:v]scale=720:1560:force_original_aspect_ratio=decrease[sc3];color=c=black@0:s=96x96:r=30:d=3.8666666666666667,format=rgba,geq=r=255:g=106:b=0:a=255*exp(-(sqrt((X-47.5)*(X-47.5)+(Y-47.5)*(Y-47.5))-36)*(sqrt((X-47.5)*(X-47.5)+(Y-47.5)*(Y-47.5))-36)/10)[pr3];[sc3][pr3]overlay=x=main_w*0.5-overlay_w/2+1:y=main_h*0.7713-overlay_h/2+1:enable=1+sgn(t-2.85),pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v3];[3:v]scale=720:1560:force_original_aspect_ratio=decrease,pad=720:1560:(ow-iw)/2:(oh-ih)/2,setsar=1[v4];[4:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:2.9,asetpts=N/SR/TB[a1];[5:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:2.2666666666666666,asetpts=N/SR/TB[a2];[6:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:3.8666666666666667,asetpts=N/SR/TB[a3];[7:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,apad,atrim=0:3.533333333333333,asetpts=N/SR/TB[a4];[v1][a1][v2][a2][v3][a3][v4][a4]concat=n=4:v=1:a=1[outv][acat];[acat]apad=pad_len=1470[outa];[outv]subtitles={{captions}}[outc]\" -map \"[outc]\" -map \"[outa]\" -r 30 -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 192k -shortest -movflags +faststart {{tutorial.mp4}}"
+        ]
+      },
+      "textInputs": {
+        "captions": "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 2340\nWrapStyle: 0\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: caption,Arial,44,&H00FFFFFF,&H000000FF,&H30000000,&H00000000,0,0,0,0,100,100,0,0,3,6,0,2,90,90,164,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.90,caption,,0,0,0,,Перевірка точності монтажу\nDialogue: 0,0:00:02.90,0:00:05.16,caption,,0,0,0,,Перевірка точності монтажу\nDialogue: 0,0:00:05.16,0:00:09.03,caption,,0,0,0,,Перевірка точності монтажу\nDialogue: 0,0:00:09.03,0:00:12.56,caption,,0,0,0,,Перевірка точності монтажу\n"
+      }
+    },
+    {
       "id": "tutorial-runner/single-voiceover",
       "product": "tutorial-runner",
       "source": "backend/src/modules/tutorial-runner/tutorial-video-assembly.ts:planSlideshow",

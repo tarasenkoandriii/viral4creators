@@ -326,7 +326,7 @@ function processGraph(graph: string, ctx: Ctx, step: StepState): string {
 }
 
 const RE = {
-  time: /^(\d{1,6}(\.\d{1,6})?|\d{1,2}:\d{2}:\d{2}(\.\d{1,6})?)$/,
+  time: /^(\d{1,6}(\.\d{1,17})?|\d{1,2}:\d{2}:\d{2}(\.\d{1,17})?)$/,
   rate: /^\d{1,4}(\.\d{1,6})?(\/\d{1,6})?$/,
   loop: /^(0|1|-1)$/,
   streamLoop: /^(-1|\d{1,4})$/,

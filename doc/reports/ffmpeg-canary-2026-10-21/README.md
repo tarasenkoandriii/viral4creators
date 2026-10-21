@@ -235,3 +235,21 @@ CI `8fb5201` — [success](https://github.com/tarasenkoandriii/viral4creators/ac
 Установленная systemd-служба приведена к уже исправленному файлу из репозитория: ExecStop останавливает только два именованных FFmpeg-контейнера и больше не требует loop-переменной для интерполяции compose. `systemd-analyze verify` и `daemon-reload` прошли; контейнеры не перезапускались. Проверено совпадение SHA-256 исполняемого `dist/probe/outputs.js` с проверенной сборкой. Relay здоров, root свободно около 29 GiB.
 
 Продовая проверка экспортера обнаружила потерю имени входа: общий sanitizer обоснованно удалял поле `key`, но старый UI связывал метаданные только по нему. Исправление сохраняет ограниченный логический alias как `name` исключительно внутри `inputs_metadata`; API-ключи, токены, URL и глобальное правило для `key` остаются закрытыми. Нормализатор поддерживает новый `name` и прежний `key`. Регрессии проверяют реальный GET-контракт, повторную очистку и UI-разбор; профильные backend-тесты **60/60**, admin transport/typecheck/lint проходят. Дополнительных рендеров или платных вызовов это исправление не создаёт.
+
+### Реальные автоматические задачи и дробные секунды (22.10)
+
+После включения основной схемы три штатные задачи `tutorial-runner` получили доказанный `422 UNSUPPORTED_COMMAND` до приёма. Fallback завершил все три на hosted; это не второй рендер на VPS и не повтор принятых выпусков. По `ai_usage`: 3 вызова `tutorial-video-assembly`, расчёт $0.03 (не подтверждённый счёт провайдера). Мои ручные проверки и Gemini не создавали платных вызовов; общий расчёт остаётся ниже лимита $1.
+
+Причина воспроизведена локально на числовой структуре трёх manifest (4/3/9 кадров), без URL, речи, картинок или повторной отправки: `gridSeconds()` выдаёт корректные IEEE-754 секунды `2.2666666666666666`, а CLI-валидатор допускал лишь 6 знаков, фильтры — 9. Код теперь принимает ограниченную дробную часть до 17 знаков; максимальная длительность, размеры, FPS, длина команды и запрет выражений в числовых полях сохранены. Все три структуры проходят тот же parser без округления монтажного плана. Корпус дополнен настоящим вызовом генератора с дробными кадрами, голосом, указателем и ASS; превышение 600 с даже малой дробью и чрезмерная точность остаются запрещены.
+
+Также `UNSUPPORTED_COMMAND`/`FORBIDDEN_SOURCE` больше не увеличивают счётчик неисправности всего сервера: это отказ конкретной задачи, безопасный fallback для неё сохраняется. Отказы доступности, сети, очереди и терминальные ошибки по-прежнему учитываются breaker. История трёх старых событий не удаляется.
+
+Продовый advisory exporter уже проверен на `2e540d8`: правильный SHA → детерминированный manifest; нулевой подменённый SHA → явный 400; после восстановления правильного документа скачан JSON и локально пересчитан `manifestSha256` — совпадает. Повторные проверки и экспорт не увеличили число FFmpeg-задач. Приватный player воспроизвёл двухсекундный smoke до конца (readyState 4, 640×360, error null); прямой URL того же файла без подписи — 401.
+
+### Final precision verification — 22 October
+
+Pinned Linux regression: **396/396 tests, 15/15 suites**, including the generated fractional-frame Tutorial corpus rendered by the real executor. API updated to `sha256:679ad6ed9e231a469ca15c9d2b5a1de7ef988560830dee6ea37acba840d89408`; executor unchanged. Owner-journaled drain/resume completed with an empty queue.
+
+Live original-source test `17534fb3-743d-4bdb-a0b0-db4674e788cc` accepted both `-t 2.2666666666666666` and matching `atrim`; succeeded once. Repeating the same idempotency key returned the same job. MP4: 141509 bytes, SHA-256 `fa3c7512a35fc64438a6440425bbdc3f8d99f93467e7f083109c9ad6de592cdf`, H.264 640×360/24 fps, video 2.291667 s, AAC 2.266984 s (within one video frame). No external paid call was made by this smoke test. Own server remains primary; hosted fallback remains enabled. The three earlier completed hosted jobs were not resubmitted. Their aggregate platform-ledger estimate is $0.03 of the $1 budget, not a verified provider invoice.
+
+The owner waived the pre-switch 24-hour waiting period; TTL observation and always-on off-host backup remain separate operational follow-ups, not prerequisites that silently disable primary routing.

@@ -358,6 +358,11 @@ describe('доказанный отказ до приёма → hosted тем ж
       async ({ svc, db, self, hosted }) => {
         const ref = await svc.submit({ ...JOB(), product: 'postprod' });
         expect(ref.provider).toBe('hosted');
+        expect(db.routing.breakerFailures).toBe(
+          ['UNSUPPORTED_COMMAND', 'FORBIDDEN_SOURCE'].includes(String(code))
+            ? 0
+            : 1,
+        );
         expect([posts(self), posts(hosted), byKeys(self).length]).toEqual([
           1, 1, 0,
         ]);

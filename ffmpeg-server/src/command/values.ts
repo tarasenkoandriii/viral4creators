@@ -20,7 +20,9 @@ export const DEFAULT_VALUE_LIMITS: ValueLimits = {
   maxInputDurationSec: 600,
 };
 
-const NUMBER = /^-?\d{1,9}(\.\d{1,9})?$/;
+// Frame-grid seconds serialize as IEEE-754 decimals (e.g. 2.2666666666666666).
+// Precision is bounded; all numeric/resource limits below still apply.
+const NUMBER = /^-?\d{1,9}(\.\d{1,17})?$/;
 const MAX_SAMPLE_RATE = 192_000;
 const MAX_EXPR_LENGTH = 512;
 

@@ -591,6 +591,62 @@ function tutorialEntries(): FfmpegCorpusEntry[] {
     }),
   );
 
+  // Production regression: integer/short-decimal examples missed frame-grid precision.
+  const fractionalFrames: SlideshowFrame[] = [
+    {
+      stepIndex: 1,
+      url: frameUrl(1),
+      seconds: 2.9,
+      audioUrl: `${BLOB}/v/1.mp3`,
+    },
+    {
+      stepIndex: 2,
+      url: frameUrl(2),
+      seconds: 2.25,
+      audioUrl: `${BLOB}/v/2.mp3`,
+    },
+    {
+      stepIndex: 3,
+      url: frameUrl(3),
+      seconds: 3.87,
+      audioUrl: `${BLOB}/v/3.mp3`,
+      pointer: { x: 0.5, y: 0.7713 },
+    },
+    {
+      stepIndex: 4,
+      url: frameUrl(4),
+      seconds: 3.5300000000000002,
+      audioUrl: `${BLOB}/v/4.mp3`,
+    },
+  ];
+  const fractionalAss = buildTutorialCaptionsAss(
+    fractionalFrames.map((f) => ({
+      seconds: f.seconds,
+      narration: 'Перевірка точності монтажу',
+    })),
+    'none',
+  );
+  const fractional = planSlideshow(fractionalFrames, {
+    motion: 'none',
+    captionsUrl: `${BLOB}/fractional/captions.ass`,
+  });
+  if (!fractional) throw new Error('corpus: fractional slideshow plan is null');
+  out.push(
+    entry({
+      id: 'tutorial-runner/fractional-frame-grid',
+      product: 'tutorial-runner',
+      source: src,
+      callSite:
+        'backend/src/modules/tutorial-runner/tutorial-scenario-runner.service.ts:submitVideoAssembly',
+      note: 'Production regression: native JS fractional frame seconds, per-frame audio, pointer and ASS; no rounding or policy-limit change',
+      live: true,
+      inputs: fractional.inputs,
+      outputs: fractional.outputs,
+      commands: fractional.commands,
+      textInputs: { captions: fractionalAss },
+    }),
+  );
+
   // Одна дорожка на весь ролик (вариант А).
   const voFrames = uniformFrames([0, 1].map(frameUrl), 2.4);
   const vo = planSlideshow(voFrames, {

@@ -424,6 +424,18 @@ describe('аудит SEC: регрессии FF-SEC-01/02/03', () => {
     // FF-SEC-03: бесконечные источники и длительности.
     ['-stream_loop -1 без -t', 'ffmpeg -stream_loop -1 -i {{v}} {{o.mp4}}'],
     ['-loop 1 -t 999999', 'ffmpeg -loop 1 -t 999999 -i {{v}} {{o.mp4}}'],
+    [
+      '-t fractional above profile',
+      'ffmpeg -i {{v}} -t 600.000000000001 {{o.mp4}}',
+    ],
+    [
+      '-t excessive precision',
+      'ffmpeg -i {{v}} -t 2.123456789012345678 {{o.mp4}}',
+    ],
+    [
+      'atrim fractional above profile',
+      'ffmpeg -i {{v}} -filter_complex "[0:a]atrim=0:600.000000000001[a]" -map 0:v -map [a] {{o.mp4}}',
+    ],
     ['-loop 1 без -t', 'ffmpeg -loop 1 -i {{v}} {{o.mp4}}'],
     ['-ss больше профиля', 'ffmpeg -ss 601 -i {{v}} {{o.mp4}}'],
     ['-t HH:MM:SS больше профиля', 'ffmpeg -i {{v}} -t 01:00:00 {{o.mp4}}'],
