@@ -802,7 +802,7 @@ db(
       await prisma.storyCreditCharge.create({
         data: {
           userId: 'refund-race-user',
-          key: 'refund-race-charge',
+          key: 'audio:refund-race-gift:1',
           kind: 'audio',
           giftId: 'refund-race-gift',
           credits: 0,
@@ -833,7 +833,7 @@ db(
       expect(
         (
           await prisma.storyCreditCharge.findUniqueOrThrow({
-            where: { key: 'refund-race-charge' },
+            where: { key: 'audio:refund-race-gift:1' },
           })
         ).status,
       ).toBe('RESERVED');
@@ -846,7 +846,7 @@ db(
       expect(
         (
           await prisma.storyCreditCharge.findUniqueOrThrow({
-            where: { key: 'refund-race-charge' },
+            where: { key: 'audio:refund-race-gift:1' },
           })
         ).status,
       ).toBe('CAPTURED');
