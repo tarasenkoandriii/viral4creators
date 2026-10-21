@@ -445,9 +445,16 @@ describe('executor: цикл, heartbeat, capability self-test', () => {
         return p.kind === 'done' ? p.done : null;
       });
       expect(done.outcome).toBe('succeeded');
-      const status = await h3.client.executorStatus(5000);
-      expect(status?.fresh).toBe(true);
-      expect(status?.heartbeat.busyAttemptId).toBeNull();
+      // done.json is published before the executor's finally block clears
+      // busyAttemptId and atomically updates the global heartbeat.
+      const status = await waitFor(async () => {
+        const current = await h3.client.executorStatus(5000);
+        return current?.fresh && current.heartbeat.busyAttemptId === null
+          ? current
+          : null;
+      });
+      expect(status.fresh).toBe(true);
+      expect(status.heartbeat.busyAttemptId).toBeNull();
       ac.abort();
       await loop;
     } finally {
