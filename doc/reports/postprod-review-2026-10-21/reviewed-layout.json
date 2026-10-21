@@ -1,0 +1,29 @@
+{
+  "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+  "width": 1280,
+  "height": 720,
+  "durationSeconds": 55.76,
+  "layout": {
+    "width": 1280,
+    "height": 720,
+    "box": {
+      "x": 80,
+      "y": 140,
+      "width": 1120,
+      "height": 120
+    },
+    "fontSize": 28
+  },
+  "cues": [
+    {
+      "startSeconds": 2,
+      "endSeconds": 8,
+      "text": "Репка: проверяем читаемость титров"
+    },
+    {
+      "startSeconds": 10,
+      "endSeconds": 16,
+      "text": "Вместе легче справиться с задачей"
+    }
+  ]
+}

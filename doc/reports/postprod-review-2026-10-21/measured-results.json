@@ -1,0 +1,47 @@
+[
+  {
+    "file": "base-silent.mp4",
+    "sha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 55.76,
+    "videoFrames": "1394",
+    "audioStreams": 0
+  },
+  {
+    "file": "01-portrait.mp4",
+    "sha256": "874bfc1ea427b1197c635ff36a5d08781f23e9592965ad69d318b34cafbef1d2",
+    "width": 576,
+    "height": 720,
+    "durationSeconds": 55.76,
+    "videoFrames": "1394",
+    "audioStreams": 0
+  },
+  {
+    "file": "02-native-titles.mp4",
+    "sha256": "83aac60adee77dc9d7c4e5400ed02bf7c512376b1691fdb470ed9ec316a68126",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 55.76,
+    "videoFrames": "1394",
+    "audioStreams": 0
+  },
+  {
+    "file": "03-safe-titles.mp4",
+    "sha256": "38a0a7d7715b4b663fcfa53e7c6b07ce9782d293a91897fcea9940c09ae0345d",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 55.76,
+    "videoFrames": "1394",
+    "audioStreams": 0
+  },
+  {
+    "file": "04-explicit-safe-area.mp4",
+    "sha256": "ca8613ed414a507e3c410d27956036a7c34ddd603e2e78be4b769165019750b3",
+    "width": 1280,
+    "height": 720,
+    "durationSeconds": 55.76,
+    "videoFrames": "1394",
+    "audioStreams": 0
+  }
+]

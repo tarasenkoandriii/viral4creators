@@ -1,0 +1,11 @@
+[
+  {
+    "id": "04-explicit-safe-area",
+    "exitCode": 0,
+    "elapsedSeconds": 14.573,
+    "stderr": "",
+    "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+    "outputSha256": "ca8613ed414a507e3c410d27956036a7c34ddd603e2e78be4b769165019750b3",
+    "bytes": 824367
+  }
+]

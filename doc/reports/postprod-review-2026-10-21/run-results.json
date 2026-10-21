@@ -1,0 +1,29 @@
+[
+  {
+    "id": "01-portrait",
+    "exitCode": 0,
+    "elapsedSeconds": 8.675,
+    "stderr": "",
+    "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+    "outputSha256": "874bfc1ea427b1197c635ff36a5d08781f23e9592965ad69d318b34cafbef1d2",
+    "bytes": 658198
+  },
+  {
+    "id": "02-native-titles",
+    "exitCode": 0,
+    "elapsedSeconds": 13.861,
+    "stderr": "",
+    "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+    "outputSha256": "83aac60adee77dc9d7c4e5400ed02bf7c512376b1691fdb470ed9ec316a68126",
+    "bytes": 843900
+  },
+  {
+    "id": "03-safe-titles",
+    "exitCode": 0,
+    "elapsedSeconds": 13.479,
+    "stderr": "",
+    "sourceSha256": "a3a6ee4b67f9f33b5b665d5230316ffce3b98394bc434a500a2b4369e19e8b46",
+    "outputSha256": "38a0a7d7715b4b663fcfa53e7c6b07ce9782d293a91897fcea9940c09ae0345d",
+    "bytes": 825791
+  }
+]

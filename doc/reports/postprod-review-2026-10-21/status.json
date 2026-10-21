@@ -1,0 +1,40 @@
+{
+  "status": "renders_verified_gemini_pending",
+  "scope": "4 isolated executor-image runs on VPS, not product/API routing acceptance",
+  "source": "existing Story-Tales silent animation; source unchanged; no Nova or accepted asset mutation",
+  "renderer": "pinned canary executor image, network none, read-only root, 2 CPU/3 GiB, sequential",
+  "results": "4 outputs, same 55.76 seconds and 1394 frames; intentional crop 576x720, others1280x720, all silent",
+  "findings": [
+    "4:5 center crop cuts embedded title/logo and turnip; keep native framing for this source",
+    "SRT force_style font/margins use implicit ASS geometry; smaller/top titles still overlap scene",
+    "explicit PlayRes 1280x720 + pixel safe rectangle fixes inspected frames"
+  ],
+  "implemented": "offline safe-title ASS+manifest compiler with source SHA-256 and ffprobe geometry guard; no automatic rendering or AI patch application",
+  "gemini": {
+    "completedAnalyses": 0,
+    "attempts": [
+      {
+        "model": "gemini-2.5-flash",
+        "status": 404
+      },
+      {
+        "model": "gemini-3.8-flash",
+        "status": 503
+      },
+      {
+        "model": "gemini-3.6-flash",
+        "status": 503
+      }
+    ],
+    "usageMetadataReceived": false,
+    "billedAmountVerified": false,
+    "pending": "user offered paid profile; connected Chrome does not have that account; waiting for access",
+    "budgetApprovedUSD": 0.5
+  },
+  "open": [
+    "Gemini live review source+final+manifest",
+    "approved structured patch -> one verification render from source, never chain re-encodes",
+    "audio/voice/sync and multi-scene generated clips not tested by silent animation",
+    "admin review UI and persisted CAS/idempotency/budget integration are not implemented by this offline utility"
+  ]
+}
