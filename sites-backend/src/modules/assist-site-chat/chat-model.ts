@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 /**
- * Стрим ответа модели для виджета — W3 (ТЗ §4.5: `gemini-3.6-flash` =
+ * Стрим ответа модели для виджета — W3 (ТЗ §4.5: `gemini-4-argon` =
  * GEMINI_MODEL). GeminiText (site-ai, Э1) стрима не умеет — здесь только
  * открытие `generateContentStream` с сигналом отмены; таймауты, разделитель
  * действий и токены — runChatStream (shared/assist-chat-core).

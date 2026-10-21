@@ -149,7 +149,7 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
 
   const estHelper = () =>
     estimateCallMicroUsd(
-      'gemini-3.6-flash',
+      'gemini-4-argon',
       GENERATORS['pub.helper.answer'].maxOutputTokens,
     ).estMicroUsd;
 
@@ -266,14 +266,14 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
     });
     expect(row).toMatchObject({
       configId,
-      model: 'gemini-3.6-flash',
+      model: 'gemini-4-argon',
       provider: 'gemini',
       instructionVersion: 'pub.helper.answer@1',
       contextRulesVersion: 'ctx@1',
       inputTokens: 1000,
       outputTokens: 200,
     });
-    const cost = estimateCost('gemini-3.6-flash', {
+    const cost = estimateCost('gemini-4-argon', {
       inputTokens: 1000,
       cachedInputTokens: 0,
       outputTokens: 200,
@@ -295,7 +295,7 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
     expect(req).toMatchObject({
       json: true,
       temperature: 0.2,
-      model: 'gemini-3.6-flash',
+      model: 'gemini-4-argon',
     });
     expect(req.user).toContain(`<source id="${src}" trust="untrusted"`);
     expect(req.user).toContain('<request kind="question" trust="untrusted">');
@@ -486,7 +486,7 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
     const noMonth = await freshProduct({ month: null });
     expect((await start(noMonth.p)).status).toBe('budget_blocked');
     const est = estimateCallMicroUsd(
-      'gemini-3.6-flash',
+      'gemini-4-argon',
       GENERATORS['pub.helper.answer'].maxOutputTokens,
     ).estMicroUsd;
     const { p, src } = await freshProduct({ month: est * 2n + est / 2n });
@@ -586,7 +586,7 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
     // пізня відповідь: підсумок завдання не перезаписано, факт дописано
     release();
     await pending;
-    const cost = estimateCost('gemini-3.6-flash', {
+    const cost = estimateCost('gemini-4-argon', {
       inputTokens: 1000,
       cachedInputTokens: 0,
       outputTokens: 200,
@@ -651,7 +651,7 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
     ).toBe('running');
     // повторний прохід — нічого (ідемпотентно)
     expect((await runJob(p)).details).toMatchObject({ executed: 0 });
-    const cost = estimateCost('gemini-3.6-flash', {
+    const cost = estimateCost('gemini-4-argon', {
       inputTokens: 1000,
       cachedInputTokens: 0,
       outputTokens: 200,
@@ -734,6 +734,7 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
       ['contextRulesVersion', { contextRulesVersion: 'ctx@0' }],
       ['schemaSetVersion', { schemaSetVersion: 'schemas@0' }],
       ['provider', { provider: 'other-provider' }],
+      ['model', { model: 'gemini-3.6-flash' }],
     ] as const) {
       const { p } = await freshProduct();
       await seedBoundConfig(s.prisma, owner(), evalProduct.id, p.id, over);

@@ -15,6 +15,48 @@ import {
 } from './ai-pricing';
 
 describe('ai-pricing (ТЗ §26)', () => {
+  it('prices Argon multimodal input, implicit cache and output at the published introductory rates', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-21T12:00:00Z'));
+    try {
+      expect(
+        estimateCost(
+          'gemini-4-argon',
+          {
+            inputTokens: 1_000_000,
+            cachedInputTokens: 100_000,
+            outputTokens: 1_000_000,
+          },
+          {},
+        ),
+      ).toMatchObject({ unpriced: false, costMicroUsd: 11_810_000 });
+      expect(rateFor('gemini-4-argon', {})).toMatchObject({
+        inputPerMTok: 2_000_000,
+        cachedInputPerMTok: 100_000,
+        outputPerMTok: 10_000_000,
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+  it('applies the published Argon price transition without mislabelling it as an env override', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-12-01T00:00:00Z'));
+    try {
+      expect(rateFor('gemini-4-argon', {})).toMatchObject({
+        inputPerMTok: 4_000_000,
+        cachedInputPerMTok: 200_000,
+        outputPerMTok: 20_000_000,
+      });
+      expect(
+        pricingTable({}).find((r) => r.model === 'gemini-4-argon')?.overridden,
+      ).toBe(false);
+      expect(
+        rateFor('gemini-4-argon', { AI_PRICE_GEMINI_4_ARGON_INPUT: '3' })
+          ?.inputPerMTok,
+      ).toBe(3_000_000);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
   it('токены считаются по ставке за миллион', () => {
     // gemini-2.5-flash: $0.30 вход / $2.50 выход за 1M.
     const { costMicroUsd, unpriced } = estimateCost(
@@ -856,6 +898,18 @@ describe('ai-pricing — крайние случаи (модальности, к
         'AI_PRICE_GEMINI_3_6_FLASH_IMAGE_INPUT',
         'AI_PRICE_GEMINI_3_6_FLASH_VIDEO_INPUT',
         'AI_PRICE_GEMINI_3_6_FLASH_CACHED_AUDIO',
+      ],
+      'gemini-4-argon': [
+        'AI_PRICE_GEMINI_4_ARGON_INPUT',
+        'AI_PRICE_GEMINI_4_ARGON_CACHED',
+        'AI_PRICE_GEMINI_4_ARGON_OUTPUT',
+        'AI_PRICE_GEMINI_4_ARGON_SECOND',
+        'AI_PRICE_GEMINI_4_ARGON_CALL',
+        'AI_PRICE_GEMINI_4_ARGON_CHARS',
+        'AI_PRICE_GEMINI_4_ARGON_AUDIO_INPUT',
+        'AI_PRICE_GEMINI_4_ARGON_IMAGE_INPUT',
+        'AI_PRICE_GEMINI_4_ARGON_VIDEO_INPUT',
+        'AI_PRICE_GEMINI_4_ARGON_CACHED_AUDIO',
       ],
       'gemini-2.5-flash-lite': [
         'AI_PRICE_GEMINI_2_5_FLASH_LITE_INPUT',

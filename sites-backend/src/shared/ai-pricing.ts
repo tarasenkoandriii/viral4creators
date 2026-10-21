@@ -32,7 +32,7 @@
  */
 
 /** Версия прайса. Пишется в каждую строку расхода. Менять при правке ставок. */
-export const PRICING_VERSION = '2026-10-07';
+export const PRICING_VERSION = '2026-10-21';
 
 export type AiProvider =
   | 'GEMINI'
@@ -555,6 +555,16 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
     outputPerMTok: 1.5 * USD,
     note: 'ai.google.dev/gemini-api/docs/pricing, Standard, сверено 2026-10-13',
   },
+  // Official Standard rates, verified 2026-10-21. Argon supports text,
+  // image/video/audio input and text output; embeddings/image generation
+  // are separate models. Promotional rates change 2026-12-01 UTC.
+  'gemini-4-argon': {
+    provider: 'GEMINI',
+    inputPerMTok: 2 * USD,
+    cachedInputPerMTok: 0.1 * USD,
+    outputPerMTok: 10 * USD,
+    note: 'ai.google.dev/gemini-api/docs/pricing, Standard: $2/$10 until 2026-11-30; $4/$20 from 2026-12-01; implicit cache $0.10/$0.20',
+  },
   // Найдено при аудите (Gemini API вернул 404 на новый ключ — `gemini-2.5-flash`
   // недоступна новым пользователям, Google сам указал заменить на эту модель).
   // Официальная страница cloud.google.com/gemini-enterprise-agent-platform:
@@ -843,12 +853,26 @@ export const MODEL_RATES: Readonly<Record<string, ModelRate>> = {
   // добавить запись, когда ставка будет сверена с console.x.ai/докой.
 };
 
+/** Resolve the published Argon price transition before env overrides.
+ * Existing usage rows retain their recorded cost and pricing version. */
+function effectiveModelRate(model: string): ModelRate | undefined {
+  const base = MODEL_RATES[model];
+  if (model !== 'gemini-4-argon' || Date.now() < Date.UTC(2026, 11, 1))
+    return base;
+  return {
+    ...base,
+    inputPerMTok: 4 * USD,
+    cachedInputPerMTok: 0.2 * USD,
+    outputPerMTok: 20 * USD,
+  };
+}
+
 /** Ставка модели с учётом переопределения переменными окружения. */
 export function rateFor(
   model: string,
   env: NodeJS.ProcessEnv = process.env,
 ): ModelRate | null {
-  const base = MODEL_RATES[model];
+  const base = effectiveModelRate(model);
   if (!base) return null;
 
   const override = (
@@ -1104,7 +1128,7 @@ export function pricingTable(env: NodeJS.ProcessEnv = process.env): Array<{
   note: string;
 }> {
   return Object.keys(MODEL_RATES).map((model) => {
-    const base = MODEL_RATES[model];
+    const base = effectiveModelRate(model)!;
     const rate = rateFor(model, env)!;
     const overridden =
       rate.inputPerMTok !== base.inputPerMTok ||

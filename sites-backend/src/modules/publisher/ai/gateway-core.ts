@@ -605,8 +605,10 @@ export async function openCall(
   const callId = aiRowId('aic');
   const bound =
     mode.kind === 'cabinet' ? await boundConfig(tx, product.id) : null;
-  const model =
-    mode.kind === 'eval' ? mode.model : (bound?.model ?? GEMINI_MODEL);
+  const model = mode.kind === 'eval' ? mode.model : GEMINI_MODEL;
+  // Cabinet follows the project model. Immutable evaluations remain attached
+  // to their original model: the existing model-mismatch gate rejects an old
+  // binding until the selected model has its own approved evaluation.
   // Провайдер — тот, кого шлюз кабинета вызывает на самом деле (Gemini), а
   // не строка конфигурации: расхождение закрывает гейт (аудит S2-5).
   const provider = mode.kind === 'eval' ? mode.provider : AI_PROVIDER;

@@ -1,3 +1,4 @@
+import { DEFAULT_GEMINI_MODEL } from '../common/gemini-model';
 /**
  * Configuration Module
  *
@@ -384,7 +385,7 @@ export const loadConfiguration = (): Configuration => {
       // раз это не мой объём аудита, но держу значение по умолчанию тем же,
       // что и там, чтобы не вводить в заблуждение, если это когда-то
       // подключат.
-      model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+      model: process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
     },
 
     // Найдено при аудите (по прямому запросу, 2026-09-13): вся эта секция

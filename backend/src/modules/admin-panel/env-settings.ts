@@ -45,6 +45,7 @@ import {
   dailyLimitForAnonymous,
   dailyLimitForPlan,
 } from '../../common/spend-limits';
+import { DEFAULT_GEMINI_MODEL } from '../../common/gemini-model';
 import { PLAN_IDS } from '../../common/plans';
 import { MODEL_RATES, PRICE_KINDS, priceEnvKey } from '../../common/ai-pricing';
 import { isDevAuthAllowed } from '../admin-auth/dev-login';
@@ -310,7 +311,7 @@ export function getEnvSettings(
       severity: 'ok',
       message:
         'Серверная модель Gemini по умолчанию. Для разбора референса её можно переопределить селектором выше; остальные процессы сохраняют свои настройки. Модели вне прайса пишутся в расход как unpriced.',
-      value: raw ?? 'gemini-3.6-flash (по умолчанию)',
+      value: raw?.trim() || `${DEFAULT_GEMINI_MODEL} (по умолчанию)`,
     });
   }
 

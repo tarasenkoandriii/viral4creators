@@ -906,7 +906,7 @@ ciDescribe('[AI-EVAL] прогін набору 30 задач (2.2) на баз�
       audit: new AuditService(),
       model: liveModel,
       provider: 'gemini',
-      modelName: 'gemini-3.6-flash',
+      modelName: 'gemini-4-argon',
       fake: false,
     });
     const p = await live.run(ev, 'live', { maxUsd: 50 });

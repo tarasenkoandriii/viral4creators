@@ -33,6 +33,7 @@ import {
 } from '@nestjs/common';
 import { AnalysisService } from './analysis.service';
 import { GEMINI_MODEL } from '../../common/gemini-model';
+import { analysisModelCacheKey } from '../../common/analysis-model';
 import { GEMINI_THINKING_HEADROOM } from '../../common/gemini-output';
 import {
   AnalysisStatus,
@@ -296,7 +297,9 @@ describe('AnalysisService — кеш библиотеки экономит са�
 
     expect(generateContent).not.toHaveBeenCalled();
     expect(geminiFilesService.uploadAndWaitActive).not.toHaveBeenCalled();
-    expect(library.findAnalysis).toHaveBeenCalledWith('yt:abcdefghijk');
+    expect(library.findAnalysis).toHaveBeenCalledWith(
+      analysisModelCacheKey('yt:abcdefghijk', GEMINI_MODEL),
+    );
     expect(result.status).toBe(AnalysisStatus.COMPLETE);
   });
 
@@ -317,9 +320,11 @@ describe('AnalysisService — кеш библиотеки экономит са�
     expect(stored.analysisId).not.toBe('из-библиотеки');
     expect(result.analysisId).toBe(stored.analysisId);
     // Счётчик использований — то, на чём стоят рекомендации (§21).
-    expect(library.markUsed).toHaveBeenCalledWith('yt:abcdefghijk');
+    expect(library.markUsed).toHaveBeenCalledWith(
+      analysisModelCacheKey('yt:abcdefghijk', GEMINI_MODEL),
+    );
     expect(sessionService.updateSession).toHaveBeenCalledWith('s1', {
-      librarySourceKey: 'yt:abcdefghijk',
+      librarySourceKey: analysisModelCacheKey('yt:abcdefghijk', GEMINI_MODEL),
     });
     expect(read()).toMatchObject({
       status: SessionStatus.ANALYSIS_COMPLETE,
@@ -342,7 +347,7 @@ describe('AnalysisService — кеш библиотеки экономит са�
     // Ключ считается от содержимого, а не от имени файла: два одинаковых
     // ролика с разными именами обязаны попасть в одну запись.
     const key = library.findAnalysis.mock.calls[0][0] as string;
-    expect(key).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(key).toMatch(/^sha256:[0-9a-f]{64}:model:gemini-4-argon$/);
   });
 
   it('промах кеша ведёт к настоящему разбору и запись уходит в библиотеку', async () => {
@@ -356,7 +361,7 @@ describe('AnalysisService — кеш библиотеки экономит са�
     expect(generateContent).toHaveBeenCalledTimes(1);
     expect(library.save).toHaveBeenCalledWith(
       expect.objectContaining({
-        sourceKey: 'yt:abcdefghijk',
+        sourceKey: analysisModelCacheKey('yt:abcdefghijk', GEMINI_MODEL),
         sourceType: 'youtube',
         sourceUrl: 'https://youtu.be/abcdefghijk',
         sessionId: 's1',

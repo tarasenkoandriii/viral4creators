@@ -26,9 +26,9 @@ on:
   workflow_dispatch:
     inputs:
       config:
-        description: "configHash, который должен совпасть с кодом (по умолчанию — рабочая конфигурация 2.2, gemini-3.6-flash)"
+        description: "configHash, который должен совпасть с кодом (по умолчанию — рабочая конфигурация 2.2, gemini-4-argon)"
         required: true
-        default: "5f97b2597b02600556c3c328ca64bea97148add353e2f81157a990300ac58f1f"
+        default: "278c8d9ce5e407bbd9fdbd86a242e3e4709e3c300039ea0404e267d1c92e5475"
       eval_set:
         description: "Версия набора: 2.2 (30 задач P0) или 2.3 (+ Reddit AI-31…42; hash 796be89d…a89d)"
         required: true

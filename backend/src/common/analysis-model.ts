@@ -12,7 +12,9 @@ export const ANALYSIS_MODELS = [
 export function resolveAnalysisModel(value: string | null | undefined): string {
   return value && ANALYSIS_MODELS.includes(value) ? value : GEMINI_MODEL;
 }
-/** Preserve existing default-model library entries; isolate other models. */
+/** Unscoped library entries were created by the legacy 3.6 Flash default.
+ * Never reinterpret them as Argon results when the default changes. */
+const LEGACY_UNSCOPED_MODEL = 'gemini-3.6-flash';
 export function analysisModelCacheKey(key: string, model: string): string;
 export function analysisModelCacheKey(
   key: string | null,
@@ -22,5 +24,7 @@ export function analysisModelCacheKey(
   key: string | null,
   model: string,
 ): string | null {
-  return key === null || model === GEMINI_MODEL ? key : `${key}:model:${model}`;
+  return key === null || model === LEGACY_UNSCOPED_MODEL
+    ? key
+    : `${key}:model:${model}`;
 }

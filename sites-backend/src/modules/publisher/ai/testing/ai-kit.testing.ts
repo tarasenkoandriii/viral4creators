@@ -59,7 +59,7 @@ export class ScriptedModel {
     if (next === null) throw new Error('ScriptedModel: ответ не задан тестом');
     if (next instanceof TextModelError) throw next;
     const text = typeof next === 'function' ? await next(req) : next;
-    return { text, model: req.model ?? 'gemini-3.6-flash', ...this.usage };
+    return { text, model: req.model ?? 'gemini-4-argon', ...this.usage };
   }
 }
 
@@ -207,7 +207,7 @@ export async function seedBoundConfig(
   const spec: AiConfigSpec = {
     ...currentConfigSpec(
       opts.provider ?? 'gemini',
-      opts.model ?? 'gemini-3.6-flash',
+      opts.model ?? 'gemini-4-argon',
       opts.evalSet,
     ),
     ...(opts.contextRulesVersion
