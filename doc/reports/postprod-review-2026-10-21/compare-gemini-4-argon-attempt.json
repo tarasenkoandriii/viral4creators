@@ -1,0 +1,8 @@
+{
+  "model": "gemini-4-argon",
+  "countedInputTokens": 17746,
+  "reservedUSD": 0.126285,
+  "payloadSha256": "bdc77274ea02a001d1392b02e0ac2d79e8d6997a6a4260acce2c8e10f84c9d98",
+  "thinkingLevel": "MEDIUM",
+  "maxOutputTokens": 8192
+}

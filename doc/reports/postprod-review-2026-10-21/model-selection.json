@@ -1,0 +1,58 @@
+{
+  "selectedModel": "gemini-4-argon",
+  "scope": "pilot final postproduction visual QA; no global production model change",
+  "alternativeEvaluated": "gemini-3.8-flash",
+  "samePayloadSha256": "bdc77274ea02a001d1392b02e0ac2d79e8d6997a6a4260acce2c8e10f84c9d98",
+  "sameInputsPromptAndConfig": true,
+  "thinkingLevel": "MEDIUM",
+  "maxOutputTokens": 8192,
+  "independentGenerateCalls": 2,
+  "newRenders": 0,
+  "costBudgetUSD": 0.5,
+  "earlierAnalysesEstimatedUSD": 0.0420048,
+  "comparisonEstimatedUSD": 0.07605575,
+  "wholeExperimentEstimatedUSD": 0.11806055000000001,
+  "billingInvoiceVerified": false,
+  "pricingDate": "2026-10-21",
+  "pricingURL": "https://ai.google.dev/gemini-api/docs/pricing",
+  "candidates": [
+    {
+      "model": "gemini-3.8-flash",
+      "latencySecondsSingleCall": 41.45,
+      "estimatedUSD": 0.02930175,
+      "verdicts": {
+        "clip-A": "revise",
+        "clip-B": "revise",
+        "clip-C": "pass"
+      },
+      "matchesInspectedCaseVerdicts": 3,
+      "structuredEnvelopeValid": true,
+      "actualModelVerified": true
+    },
+    {
+      "model": "gemini-4-argon",
+      "latencySecondsSingleCall": 24.329,
+      "estimatedUSD": 0.046754,
+      "verdicts": {
+        "clip-A": "revise",
+        "clip-B": "revise",
+        "clip-C": "pass"
+      },
+      "matchesInspectedCaseVerdicts": 3,
+      "structuredEnvelopeValid": true,
+      "actualModelVerified": true
+    }
+  ],
+  "selectionReason": "Both matched all three inspected case verdicts. Argon provided explicit header/turnip losses, separate late-character time ranges and geometric explanation for the corrected title area. Its observed batch price was about 1.6x Flash; for final review this modest absolute difference is accepted. This is a pilot judgment, not statistically demonstrated superiority.",
+  "limitations": [
+    "One silent animation, three correlated output variants; no speech, lip sync, music, cuts, live camera or other generated content benchmark.",
+    "One request per model: latency is an observation, not a speed/SLA comparison.",
+    "Earlier 2.5 Flash review used a different prompt and per-clip requests: not a controlled old-vs-new comparison.",
+    "Model-proposed SRT style strings remain untrusted; do not execute them. The explicit ASS title safe area is verified, but proposed alternative styles were not rendered.",
+    "No automated approval, no changes to Nova, no accepted-media overwrite, no global GEMINI_MODEL change."
+  ],
+  "next": [
+    "Integrate the selected model behind the postprod-only review setting and provenance/CAS/idempotency/budget guards.",
+    "Broaden controlled benchmark to existing generated clips with speech, audio mix and scene changes before production default acceptance."
+  ]
+}

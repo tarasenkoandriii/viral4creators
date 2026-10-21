@@ -1,0 +1,198 @@
+{
+  "requestedModel": "gemini-4-argon",
+  "actualModel": "gemini-4-argon",
+  "latencySeconds": 24.329,
+  "finishReason": [
+    "STOP"
+  ],
+  "usage": {
+    "promptTokenCount": 17497,
+    "candidatesTokenCount": 1176,
+    "totalTokenCount": 18673,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1761
+      },
+      {
+        "modality": "VIDEO",
+        "tokenCount": 15736
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1176
+      }
+    ]
+  },
+  "estimatedUSD": 0.046754,
+  "billingVerified": false,
+  "review": {
+    "clips": [
+      {
+        "id": "clip-A",
+        "verdict": "revise",
+        "summary": "Horizontal center-crop from 1280x720 to 576x720 (4:5 aspect ratio) cuts off the burned-in top header labels, the house on the left, the left side of the turnip, and the characters entering on the right later in the video.",
+        "findings": [
+          {
+            "category": "crop",
+            "severity": "high",
+            "startSeconds": 0,
+            "endSeconds": 55.76,
+            "observation": "Horizontal cropping to 576x720 removes the left and right burned-in header text ('Репка' and 'STORY-TALES') inside the top banner, truncates the turnip on the left edge, and removes the house.",
+            "confidence": 0.98,
+            "boxes": [
+              {
+                "label": "cropped_top_banner",
+                "x": 0,
+                "y": 0.04,
+                "width": 1,
+                "height": 0.1
+              },
+              {
+                "label": "truncated_turnip",
+                "x": 0,
+                "y": 0.45,
+                "width": 0.22,
+                "height": 0.41
+              }
+            ]
+          },
+          {
+            "category": "crop",
+            "severity": "high",
+            "startSeconds": 33,
+            "endSeconds": 55.76,
+            "observation": "As more characters join the line on the right, the narrow 576px width cuts off the dog and completely omits the cat and mouse that are visible in the source video.",
+            "confidence": 0.98,
+            "boxes": [
+              {
+                "label": "truncated_dog_at_right_edge",
+                "x": 0.89,
+                "y": 0.62,
+                "width": 0.11,
+                "height": 0.16
+              }
+            ]
+          }
+        ],
+        "suggestions": [
+          {
+            "parameter": "options.targetAspectRatio",
+            "currentValue": "4:5",
+            "proposedValue": "16:9",
+            "reason": "Preserve the original 1280x720 horizontal span so the wide character lineup, turnip, and top header labels are not cut off."
+          }
+        ],
+        "limitations": [
+          "No audio streams exist in source or clip-A."
+        ]
+      },
+      {
+        "id": "clip-B",
+        "verdict": "revise",
+        "summary": "Added editorial SRT subtitles at 2-8s and 10-16s are large and positioned at MarginV=70 (bottom-center), causing them to collide directly with the main characters and turnip illustration.",
+        "findings": [
+          {
+            "category": "titles",
+            "severity": "high",
+            "startSeconds": 2,
+            "endSeconds": 8,
+            "observation": "New editorial subtitle ('Репка: проверяем читаемость титров') overlaps with the turnip, house, and grandfather character in the middle-lower area of the frame.",
+            "confidence": 0.96,
+            "boxes": [
+              {
+                "label": "editorial_subtitle_1",
+                "x": 0.03,
+                "y": 0.66,
+                "width": 0.94,
+                "height": 0.08
+              },
+              {
+                "label": "turnip_and_characters",
+                "x": 0.23,
+                "y": 0.46,
+                "width": 0.23,
+                "height": 0.39
+              }
+            ]
+          },
+          {
+            "category": "titles",
+            "severity": "high",
+            "startSeconds": 10,
+            "endSeconds": 16,
+            "observation": "New editorial subtitle ('Вместе легче справиться с задачей') overlaps with the turnip, grandfather, and grandmother (at 15s).",
+            "confidence": 0.96,
+            "boxes": [
+              {
+                "label": "editorial_subtitle_2",
+                "x": 0.05,
+                "y": 0.66,
+                "width": 0.9,
+                "height": 0.08
+              },
+              {
+                "label": "turnip_and_characters",
+                "x": 0.23,
+                "y": 0.46,
+                "width": 0.35,
+                "height": 0.39
+              }
+            ]
+          }
+        ],
+        "suggestions": [
+          {
+            "parameter": "options.subtitleForceStyle",
+            "currentValue": "FontName=DejaVu Sans,FontSize=28,Outline=2,Alignment=2,MarginV=70",
+            "proposedValue": "FontName=DejaVu Sans,FontSize=18,Outline=2,Alignment=8,MarginV=120",
+            "reason": "Move subtitles to top-center (Alignment=8) below the existing top header bar (MarginV=120) and reduce font size to 18 so they sit cleanly in the sky area without overlapping characters or burned-in banners."
+          }
+        ],
+        "limitations": [
+          "No audio streams exist in source or clip-B."
+        ]
+      },
+      {
+        "id": "clip-C",
+        "verdict": "pass",
+        "summary": "Explicit safe-area card layout places the editorial text at y=140..260 cleanly in the open sky area below the top burned-in banner and above the characters and lower burned-in caption bar, with no visual overlap.",
+        "findings": [
+          {
+            "category": "titles",
+            "severity": "low",
+            "startSeconds": 2,
+            "endSeconds": 16,
+            "observation": "Editorial card text at 2-8s and 10-16s is positioned in the upper sky safe area (around y=0.22..0.27), completely separate from the burned-in top header bar (y=0.04..0.14) and the characters below.",
+            "confidence": 0.97,
+            "boxes": [
+              {
+                "label": "burned_in_top_header",
+                "x": 0.03,
+                "y": 0.04,
+                "width": 0.94,
+                "height": 0.1
+              },
+              {
+                "label": "editorial_card_text",
+                "x": 0.31,
+                "y": 0.22,
+                "width": 0.38,
+                "height": 0.05
+              }
+            ]
+          }
+        ],
+        "suggestions": [],
+        "limitations": [
+          "No audio streams exist in source or clip-C."
+        ]
+      }
+    ],
+    "limitations": [
+      "All files contain zero audio streams; assessment is strictly visual based on sampled frames and ffprobe metadata."
+    ]
+  }
+}

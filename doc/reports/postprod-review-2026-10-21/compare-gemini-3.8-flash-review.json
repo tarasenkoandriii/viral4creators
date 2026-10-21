@@ -1,0 +1,121 @@
+{
+  "requestedModel": "gemini-3.8-flash",
+  "actualModel": "gemini-3.8-flash",
+  "latencySeconds": 41.45,
+  "finishReason": [
+    "STOP"
+  ],
+  "usage": {
+    "promptTokenCount": 15829,
+    "candidatesTokenCount": 936,
+    "totalTokenCount": 20477,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 1213
+      },
+      {
+        "modality": "VIDEO",
+        "tokenCount": 14616
+      }
+    ],
+    "thoughtsTokenCount": 3712,
+    "serviceTier": "standard"
+  },
+  "estimatedUSD": 0.02930175,
+  "billingVerified": false,
+  "review": {
+    "clips": [
+      {
+        "id": "clip-A",
+        "verdict": "revise",
+        "summary": "Horizontal center cropping to a 4:5 aspect ratio cuts off narrative elements and characters on the screen edges.",
+        "findings": [
+          {
+            "category": "crop",
+            "severity": "high",
+            "startSeconds": 0,
+            "endSeconds": 55.76,
+            "observation": "Cropping the 1280x720 source horizontally to 576x720 (4:5) eliminates the cottage on the left and crops characters entering from the right, leaving the dog partially cut off and the cat and mouse completely off-screen.",
+            "confidence": 0.95,
+            "boxes": [
+              {
+                "label": "dog_partially_cropped",
+                "x": 0.88,
+                "y": 0.61,
+                "width": 0.12,
+                "height": 0.19
+              }
+            ]
+          }
+        ],
+        "suggestions": [
+          {
+            "parameter": "targetAspectRatio",
+            "currentValue": "4:5",
+            "proposedValue": "16:9",
+            "reason": "Preserve the original 16:9 framing so all sequential characters and background elements remain fully visible."
+          }
+        ],
+        "limitations": [
+          "Assessment based on visual frame inspection; audio streams are absent."
+        ]
+      },
+      {
+        "id": "clip-B",
+        "verdict": "revise",
+        "summary": "Editorial subtitles rendered via subtitleForceStyle are placed in the lower-middle frame, occluding the main characters and crowding the existing burned-in subtitle bar.",
+        "findings": [
+          {
+            "category": "composition",
+            "severity": "medium",
+            "startSeconds": 2,
+            "endSeconds": 16,
+            "observation": "Bottom-centered subtitle placement (Alignment=2, MarginV=70) renders editorial text directly across the turnip and character bodies, visually obstructing the primary subject action.",
+            "confidence": 0.9,
+            "boxes": [
+              {
+                "label": "editorial_title",
+                "x": 0.03,
+                "y": 0.67,
+                "width": 0.94,
+                "height": 0.08
+              },
+              {
+                "label": "character_focal_area",
+                "x": 0.22,
+                "y": 0.46,
+                "width": 0.26,
+                "height": 0.34
+              }
+            ]
+          }
+        ],
+        "suggestions": [
+          {
+            "parameter": "subtitleForceStyle",
+            "currentValue": "FontName=DejaVu Sans,FontSize=28,Outline=2,Alignment=2,MarginV=70",
+            "proposedValue": "FontName=DejaVu Sans,FontSize=28,Outline=2,Alignment=8,MarginV=140",
+            "reason": "Reposition editorial subtitles to top-center (Alignment=8) with sufficient vertical margin to sit cleanly within the sky area without obscuring the characters or header."
+          }
+        ],
+        "limitations": [
+          "Assessment based on visual frame inspection; audio streams are absent."
+        ]
+      },
+      {
+        "id": "clip-C",
+        "verdict": "pass",
+        "summary": "Editorial titles are cleanly placed in the upper safe region below the top banner and above character heads, with no framing or aspect ratio issues.",
+        "findings": [],
+        "suggestions": [],
+        "limitations": [
+          "Assessment based on visual frame inspection; audio streams are absent."
+        ]
+      }
+    ],
+    "limitations": [
+      "All clips contain zero audio streams; quality control was performed strictly on visual rendering and layout manifests."
+    ]
+  }
+}

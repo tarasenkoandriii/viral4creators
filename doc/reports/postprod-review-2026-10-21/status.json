@@ -1,5 +1,5 @@
 {
-  "status": "live_gemini_experiment_complete_product_integration_pending",
+  "status": "current_models_compared_argon_selected_for_pilot",
   "scope": "4 isolated executor-image runs on VPS, not product/API routing acceptance",
   "source": "existing Story-Tales silent animation; source unchanged; no Nova or accepted asset mutation",
   "renderer": "pinned canary executor image, network none, read-only root, 2 CPU/3 GiB, sequential",
@@ -11,7 +11,7 @@
   ],
   "implemented": "offline safe-title ASS+manifest compiler with source SHA-256 and ffprobe geometry guard; no automatic rendering or AI patch application",
   "gemini": {
-    "completedAnalyses": 3,
+    "completedAnalyses": 5,
     "attempts": [
       {
         "model": "gemini-2.5-flash",
@@ -30,9 +30,15 @@
     "billedAmountVerified": false,
     "pending": null,
     "budgetApprovedUSD": 0.5,
-    "model": "gemini-2.5-flash",
-    "estimatedUSD": 0.0420048,
-    "paidAccountTier": "Tier 1; existing key, no new permissions or production env changes"
+    "estimatedUSD": 0.11806055,
+    "paidAccountTier": "Tier 1; existing key, no new permissions or production env changes",
+    "initialModel": "gemini-2.5-flash",
+    "modelVersions": [
+      "gemini-2.5-flash",
+      "gemini-3.8-flash",
+      "gemini-4-argon"
+    ],
+    "initialThreeAnalysesEstimatedUSD": 0.0420048
   },
   "open": [
     "approved structured patch -> one verification render from source, never chain re-encodes",
@@ -55,7 +61,10 @@
       "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash",
       "https://ai.google.dev/gemini-api/docs/models/gemini-4-argon"
     ],
-    "conclusion": "This experiment evaluates the older 2.5 Flash only, not the capability of current Gemini models. No paid-account comparison with 3.8 Flash or 4 Argon was performed. Earlier 3.8/3.6 503 occurred on a different, free-tier account.",
-    "callsAfterAudit": 0
-  }
+    "conclusion": "4 Argon selected for pilot final visual review. Both current models correctly classified these three inspected cases; do not claim general superiority or production readiness.",
+    "callsAfterAudit": 2,
+    "comparison": "Completed 3.8 Flash vs 4 Argon, identical payload, actual modelVersion checked"
+  },
+  "wholeExperimentEstimatedUSD": 0.11806055000000001,
+  "selectedPilotModel": "gemini-4-argon"
 }
