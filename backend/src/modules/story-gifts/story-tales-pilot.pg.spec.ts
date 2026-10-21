@@ -86,13 +86,14 @@ db(
     };
 
     beforeAll(async () => {
-      expect(migrations.at(-1)).toBe(LAST);
+      const at = migrations.indexOf(LAST);
+      expect(at).toBeGreaterThanOrEqual(0);
       admin = new Client({ connectionString: dbUrl });
       await admin.connect();
       await admin.query(`CREATE DATABASE "${name}"`);
       client = new Client({ connectionString: url() });
       await client.connect();
-      for (const m of migrations.slice(0, -1))
+      for (const m of migrations.slice(0, at))
         for (const statement of splitSql(sql(m))) await q(statement);
       // A link issued before the lockdown must not come back with the pilot.
       await q(
@@ -104,6 +105,9 @@ db(
         ['f'.repeat(64), 'e'.repeat(64)],
       );
       for (const statement of splitSql(sql(LAST))) await q(statement);
+      // Later migrations (e.g. FFmpeg self-hosted) apply on top of the pilot one.
+      for (const m of migrations.slice(at + 1))
+        for (const statement of splitSql(sql(m))) await q(statement);
       prisma = new PrismaClient({ adapter: new PrismaPg(url()) });
     }, 240_000);
     afterAll(async () => {

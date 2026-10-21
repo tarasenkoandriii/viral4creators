@@ -272,11 +272,16 @@ function requestOnce(
         opts.deadlineAt !== undefined ? opts.deadlineAt - Date.now() : Infinity,
       );
     const overall = remaining();
+    // Which limit is binding is decided when the timer is armed: the timer
+    // clock is monotonic, Date.now() is not, so re-reading Date.now() at
+    // fire time could misclassify the pipeline deadline (FF CI flake).
+    const pipelineBinding =
+      opts.deadlineAt !== undefined && opts.deadlineAt <= fileDeadline;
     timers.push(
       setTimeout(
         () =>
           done(
-            opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt
+            pipelineBinding
               ? new DownloadError(
                   'TIMEOUT',
                   'pipeline deadline reached during download',
@@ -375,10 +380,12 @@ function streamBody(
       fileDeadline - Date.now(),
       opts.deadlineAt !== undefined ? opts.deadlineAt - Date.now() : Infinity,
     );
+    const pipelineBinding =
+      opts.deadlineAt !== undefined && opts.deadlineAt <= fileDeadline;
     const overall = setTimeout(
       () =>
         fail(
-          opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt
+          pipelineBinding
             ? new DownloadError(
                 'TIMEOUT',
                 'pipeline deadline reached during download',
