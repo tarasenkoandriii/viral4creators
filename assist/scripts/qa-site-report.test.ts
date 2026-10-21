@@ -223,3 +223,31 @@ await assert.rejects(
 console.log(
   'Final export gate: late revision, artifact addition and revoked access rejected'
 );
+
+await assert.rejects(
+  assertSiteQaReportCurrent(
+    {
+      ...api,
+      get: async () => ({
+        ...f,
+        recheck: {
+          runId: 'run-new',
+          caseKey: 'SBX-TUTORIAL',
+          caseVersion: 1,
+          attemptId: 'attempt-new',
+          project: 'desktop',
+          reportHash: 'a'.repeat(64),
+          status: 'passed' as const,
+          recordedStatus: 'passed' as const,
+          runnerStatus: 'passed' as const,
+          checkedAt: '2026-10-21T12:00:00Z',
+          testSourceSha: null,
+          deployedSha: null,
+          requiresReview: true as const,
+        },
+      }),
+    },
+    report
+  ),
+  'a new automatic receipt without a finding revision change must cancel export'
+);

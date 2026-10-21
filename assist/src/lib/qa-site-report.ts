@@ -67,6 +67,7 @@ export async function assertSiteQaReportCurrent(
         .map(({ finding, artifacts }) => [
           finding.id,
           finding.revision,
+          finding.recheck ?? null,
           artifacts
             .map((a) => [
               a.id,

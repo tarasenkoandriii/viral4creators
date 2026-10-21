@@ -309,7 +309,9 @@ export class VoiceController {
         ...(cfg.streaming
           ? {
               maxRecordMs: Math.min(cfg.maxRecordMs, 25_000),
-              onAudio: (chunk: Blob) => this.stream?.audio(chunk),
+              onAudio: (chunk: Blob) => {
+                if (epoch === this.recordingEpoch) this.stream?.audio(chunk);
+              },
             }
           : {}),
         // Пока ждём «да» на карточке — порог TMA 150 мс (короткое «да» —

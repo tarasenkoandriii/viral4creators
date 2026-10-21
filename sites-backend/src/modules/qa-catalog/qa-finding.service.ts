@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { AccountMembership } from '../site-core/account/roles';
 import { QaCatalogService } from './qa-catalog.service';
 import { findingFingerprint, parseFinding } from './qa-finding-input';
+import { readFindingRecheck } from './qa-finding-recheck';
 const missing = () =>
   new NotFoundException({
     code: 'QA_FINDING_NOT_FOUND',
@@ -92,7 +93,13 @@ export class QaFindingService {
       where: { accountId: m.accountId, findingId, version: finding.revision },
     });
     if (!revision) throw missing();
-    return { ...finding, payload: revision.payload };
+    const recheck = await readFindingRecheck(
+      db,
+      m.accountId,
+      siteId,
+      revision.payload,
+    );
+    return { ...finding, payload: revision.payload, recheck };
   }
   async history(
     m: AccountMembership,

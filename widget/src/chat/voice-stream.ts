@@ -5,6 +5,7 @@ export class VoiceStream {
   private bytes = 0;
   private ready = false;
   private finished = false;
+  private finishSent = false;
   private closed = false;
   private grant = '';
   private timer: ReturnType<typeof setTimeout>;
@@ -52,7 +53,7 @@ export class VoiceStream {
           if (this.closed) return;
           try {
             const r = JSON.parse(String(e.data));
-            if (r.type === 'ready') {
+            if (r.type === 'ready' && !this.ready && !this.finishSent) {
               this.ready = true;
               this.flush();
             }
@@ -82,7 +83,7 @@ export class VoiceStream {
       .catch(() => this.stop());
   }
   audio(chunk: Blob) {
-    if (this.closed) return;
+    if (this.closed || this.finished) return;
     this.bytes += chunk.size;
     if (
       this.bytes > 1_000_000 ||
@@ -112,7 +113,8 @@ export class VoiceStream {
       this.ws.send(chunk);
     }
     this.queue = [];
-    if (this.finished) {
+    if (this.finished && !this.finishSent) {
+      this.finishSent = true;
       this.ws.send('');
       this.ready = false;
     }

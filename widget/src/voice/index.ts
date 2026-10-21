@@ -176,7 +176,9 @@ export function createVoice(): VoiceEngine {
           };
           rec.onerror = () => finish({ reason: 'error', code: 'failed' });
           rec.start(250);
-          meter = limits.onAudio ? new C({ sampleRate: 16000 }) : new C();
+          // Use the device rate: PCM below is resampled to 16 kHz. Forcing
+          // the output context to 16 kHz can fail on otherwise working devices.
+          meter = new C();
           const an = meter.createAnalyser();
           an.fftSize = 1024;
           const input = meter.createMediaStreamSource(s);

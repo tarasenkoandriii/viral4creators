@@ -3,6 +3,7 @@ import { ApiError, type ApiClient } from '../src/kit';
 import {
   createQaFindingsApi,
   decodeFindingPayload,
+  decodeFindingRecheck,
   findingFixPrompt,
   type Finding,
 } from '../src/lib/qa-findings-api';
@@ -120,3 +121,56 @@ assert.equal(
   (await contentApi.artifactContent('site', 'finding', 'png')).contentBase64,
   'YWJj'
 );
+
+const recheck = {
+  runId: 'run2',
+  caseKey: 'SBX-TUTORIAL',
+  caseVersion: 1,
+  attemptId: 'attempt2',
+  project: 'desktop',
+  reportHash: 'a'.repeat(64),
+  status: 'passed',
+  recordedStatus: 'passed',
+  runnerStatus: 'passed',
+  checkedAt: '2026-10-21T12:00:00Z',
+  testSourceSha: 'b'.repeat(40),
+  deployedSha: null,
+  requiresReview: true,
+};
+assert.equal(decodeFindingRecheck(undefined), null);
+assert.equal(decodeFindingRecheck(null), null);
+assert.deepEqual(decodeFindingRecheck(recheck), recheck);
+assert.equal(
+  decodeFindingRecheck({
+    ...recheck,
+    status: 'blocked',
+    runnerStatus: 'failed',
+  })?.status,
+  'blocked'
+);
+for (const invalid of [
+  { ...recheck, requiresReview: false },
+  { ...recheck, status: 'passed', runnerStatus: 'failed' },
+  { ...recheck, status: 'passed', runnerStatus: null },
+  { ...recheck, status: 'fixed_verified' },
+  { ...recheck, reportHash: 'bad' },
+  { ...recheck, project: 'https://private/?token=secret' },
+  { ...recheck, checkedAt: 'invalid' },
+  { ...recheck, deployedSha: 'unknown' },
+]) {
+  let caught: unknown;
+  try {
+    decodeFindingRecheck(invalid);
+  } catch (e) {
+    caught = e;
+  }
+  assert.ok(caught instanceof ApiError);
+}
+const readApi = createQaFindingsApi({
+  request: async (method: string) => {
+    assert.equal(method, 'GET');
+    return { ...f, recheck };
+  },
+} as unknown as ApiClient);
+assert.deepEqual((await readApi.get('site', 'finding')).recheck, recheck);
+console.log('QA recheck receipt decoding passed');

@@ -21,6 +21,7 @@ import {
 } from '../src/chat/voice';
 import type { RecordEnd, VoiceEngine } from '../src/shared/voice-api';
 import { createVoice } from '../src/voice';
+import { VoiceStream } from '../src/chat/voice-stream';
 
 // ── детектор речи ──────────────────────────────────────────────────────────
 {
@@ -121,6 +122,7 @@ class FakeEngine implements VoiceEngine {
     cancelled: boolean;
     speech?: () => void;
     minSpeechMs: number;
+    audio?: (chunk: Blob) => void;
   }> = [];
   unlocked = 0;
   played: ArrayBuffer[] = [];
@@ -130,7 +132,11 @@ class FakeEngine implements VoiceEngine {
     return true;
   }
   record(
-    _l: { onSpeech?: () => void; minSpeechMs: number },
+    _l: {
+      onSpeech?: () => void;
+      minSpeechMs: number;
+      onAudio?: (chunk: Blob) => void;
+    },
     _lv: (n: number) => void,
     onEnd: (e: RecordEnd) => void
   ) {
@@ -139,6 +145,7 @@ class FakeEngine implements VoiceEngine {
       stopped: false,
       cancelled: false,
       speech: _l.onSpeech,
+      audio: _l.onAudio,
       minSpeechMs: _l.minSpeechMs,
     };
     this.recs.push(r);
@@ -248,6 +255,43 @@ async function main() {
     status: 200,
     body: { success: true, data: { text, voiceTicket: 'v1.test' } },
   });
+  // Late recorder callbacks after Stop cannot feed the next paid stream.
+  {
+    const savedFetch = g.fetch;
+    const savedSocket = g.WebSocket;
+    const savedAudio = VoiceStream.prototype.audio;
+    const chunks: Blob[] = [];
+    g.fetch = () => new Promise(() => {}); // Pending authorization, no network.
+    g.WebSocket = class {};
+    VoiceStream.prototype.audio = (chunk) => {
+      chunks.push(chunk);
+    };
+    const h = harness();
+    try {
+      h.vc.configure({ ...cfg, streaming: true });
+      await tick();
+      h.store['local:vconsent'] = '1';
+      h.vc.press();
+      const old = h.engine.recs[0];
+      h.vc.stop();
+      h.vc.press();
+      const current = h.engine.recs[1];
+      old.audio?.(new Blob(['stale']));
+      assert.equal(
+        chunks.length,
+        0,
+        'old capture must not enter new utterance'
+      );
+      const fresh = new Blob(['fresh']);
+      current.audio?.(fresh);
+      assert.deepEqual(chunks, [fresh]);
+    } finally {
+      h.vc.stop();
+      VoiceStream.prototype.audio = savedAudio;
+      g.WebSocket = savedSocket;
+      g.fetch = savedFetch;
+    }
+  }
   // Explicit opt-in, consent, sequential phrases, quiet rearm without STT.
   {
     const h = harness();

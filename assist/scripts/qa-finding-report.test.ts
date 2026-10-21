@@ -114,3 +114,27 @@ await assert.rejects(
 console.log(
   'QA finding report: privacy, revision consistency, verification and read-only export passed'
 );
+
+const withRecheck: Finding = {
+  ...f,
+  recheck: {
+    runId: 'run2',
+    caseKey: 'SBX-TUTORIAL',
+    caseVersion: 1,
+    attemptId: 'attempt2',
+    project: 'desktop',
+    reportHash: 'a'.repeat(64),
+    status: 'blocked',
+    recordedStatus: 'passed',
+    runnerStatus: 'failed',
+    checkedAt: '2026-10-21T12:00:00Z',
+    testSourceSha: 'b'.repeat(40),
+    deployedSha: null,
+    requiresReview: true,
+  },
+};
+const receiptReport = qaFindingReport('site', withRecheck, []);
+assert.ok(receiptReport.includes('Результат: blocked'));
+assert.ok(receiptReport.includes('Требуется ручная проверка'));
+assert.ok(receiptReport.includes('a'.repeat(64)));
+assert.ok(!receiptReport.includes('https://'));

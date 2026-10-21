@@ -53,6 +53,20 @@ export function qaFindingReport(
     lines.push(
       'Повторная проверка не записана. Не считать исправленным на основании экспорта.'
     );
+  if (finding.recheck) {
+    const r = finding.recheck;
+    lines.push(
+      '',
+      '## Сохранённая автоматическая перепроверка',
+      `Кейс: ${text(r.caseKey)} · v${r.caseVersion} · ${text(r.project)}`,
+      `Сохранено: ${text(r.checkedAt)} · запуск ${text(r.runId)} · попытка ${text(r.attemptId)}`,
+      `Результат: ${r.status} · записано: ${r.recordedStatus} · runner: ${r.runnerStatus ?? 'не подтверждён'}`,
+      `SHA тестов: ${text(r.testSourceSha ?? 'не подтверждён')}`,
+      `SHA деплоя: ${text(r.deployedSha ?? 'не подтверждён')}`,
+      `SHA-256 отчёта: ${text(r.reportHash)}`,
+      'Требуется ручная проверка. Статус замечания не изменён; успешная попытка не закрывает его автоматически.'
+    );
+  }
   lines.push('', '## Приватные доказательства');
   if (!artifacts.length)
     lines.push('Файлы не приложены или уже удалены по сроку хранения.');

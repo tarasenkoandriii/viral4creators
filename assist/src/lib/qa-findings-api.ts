@@ -65,8 +65,24 @@ export interface FindingHead {
   createdAt: string;
   updatedAt: string;
 }
+export interface FindingRecheck {
+  runId: string;
+  caseKey: string;
+  caseVersion: number;
+  attemptId: string;
+  project: string;
+  reportHash: string;
+  status: 'passed' | 'failed' | 'blocked' | 'skipped';
+  recordedStatus: 'passed' | 'failed' | 'blocked' | 'skipped';
+  runnerStatus: 'passed' | 'failed' | 'timedout' | 'interrupted' | null;
+  checkedAt: string;
+  testSourceSha: string | null;
+  deployedSha: string | null;
+  requiresReview: true;
+}
 export interface Finding extends FindingHead {
   payload: FindingPayload;
+  recheck?: FindingRecheck | null;
 }
 export interface FindingRevision {
   id: string;
@@ -101,6 +117,47 @@ function sha(v: unknown) {
 }
 function choice<T extends string>(v: unknown, keys: readonly T[]): T {
   return typeof v === 'string' && keys.includes(v as T) ? (v as T) : bad();
+}
+export function decodeFindingRecheck(v: unknown): FindingRecheck | null {
+  // Older API deployments do not return this read-only projection yet.
+  if (v == null) return null;
+  const o = obj(v);
+  const id = (v: unknown) =>
+    typeof v === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(v) ? v : bad();
+  const statuses = ['passed', 'failed', 'blocked', 'skipped'] as const;
+  const status = choice(o.status, statuses);
+  const recordedStatus = choice(o.recordedStatus, statuses);
+  const runnerStatus =
+    o.runnerStatus === null
+      ? null
+      : choice(o.runnerStatus, ['passed', 'failed', 'timedout', 'interrupted']);
+  if (
+    o.requiresReview !== true ||
+    typeof o.reportHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(o.reportHash) ||
+    typeof o.checkedAt !== 'string' ||
+    !Number.isFinite(Date.parse(o.checkedAt)) ||
+    status !==
+      (recordedStatus === 'passed' && runnerStatus !== 'passed'
+        ? 'blocked'
+        : recordedStatus)
+  )
+    return bad();
+  return {
+    runId: id(o.runId),
+    caseKey: id(o.caseKey),
+    caseVersion: num(o.caseVersion),
+    attemptId: id(o.attemptId),
+    project: id(o.project),
+    reportHash: o.reportHash,
+    status,
+    recordedStatus,
+    runnerStatus,
+    checkedAt: o.checkedAt,
+    testSourceSha: sha(o.testSourceSha),
+    deployedSha: sha(o.deployedSha),
+    requiresReview: true,
+  };
 }
 export function decodeFindingPayload(v: unknown): FindingPayload {
   const o = obj(v);
@@ -251,7 +308,11 @@ export function createQaFindingsApi(client: ApiClient) {
       ),
     get: async (site: string, id: string): Promise<Finding> => {
       const v = await client.request('GET', item(site, id));
-      return { ...head(v), payload: decodeFindingPayload(obj(v).payload) };
+      return {
+        ...head(v),
+        payload: decodeFindingPayload(obj(v).payload),
+        recheck: decodeFindingRecheck(obj(v).recheck),
+      };
     },
     create: async (site: string, payload: FindingPayload) =>
       head(await client.request('POST', base(site), payload)),

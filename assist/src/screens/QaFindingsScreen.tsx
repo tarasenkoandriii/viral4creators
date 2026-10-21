@@ -1,3 +1,4 @@
+import { QaFindingRecheck } from '../components/QaFindingRecheck';
 import { QaSiteReport } from '../components/QaSiteReport';
 import { loadQaFindingReport } from '../lib/qa-finding-report';
 import { QaArtifacts } from '../components/QaArtifacts';
@@ -179,6 +180,14 @@ function Registry({ siteId }: { siteId: string }) {
       <QaSiteReport siteId={siteId} disabled={busy || dirty} />
       {selected && (
         <Card>
+          <QaFindingRecheck recheck={selected.recheck} />
+          <Button
+            variant="outline"
+            disabled={busy || dirty}
+            onClick={() => void open(selected.id)}
+          >
+            Обновить сохранённый результат
+          </Button>
           <QaArtifacts
             key={`${siteId}:${selected.id}`}
             siteId={siteId}

@@ -46,6 +46,13 @@ async function main() {
   ws.message({ tokens: [{ text: 'yes', is_final: false }] });
   const result = stream.finish();
   assert.equal(ws.sent.at(-1), '');
+  // Capture has ended: late PCM or repeated ready/finish must not corrupt
+  // the drain phase or send a second provider terminator.
+  stream.audio(new Blob(['late audio']));
+  stream.finish();
+  ws.message({ type: 'ready' });
+  assert.equal(ws.sent.filter((v) => v === '').length, 1);
+  assert.equal(ws.sent.length, 3);
   ws.message({ type: 'final', receipt: 'receipt', signature: 'signed' });
   assert.deepEqual(await result, {
     grant: 'grant',
