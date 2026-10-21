@@ -74,6 +74,15 @@ describe('stream grant uses existing budgets before authorization leaves backend
     expect(request).toHaveBeenCalledTimes(1);
     expect(request.mock.calls[0][0]).toBe('https://relay.example/voice/boot');
   });
+  it('a site outside canary scope cannot contact relay or reserve budget', async () => {
+    voice.env = { ...env, ASSIST_STREAM_SITE_IDS: 'other-site' };
+    expect(await voice.openStream(ctx)).toEqual({
+      ok: false,
+      failure: 'unavailable',
+    });
+    expect(request).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  });
   it('denied budget produces no grant and no settle', async () => {
     reserve.mockResolvedValue({ ok: false, denied: 'voice_budget' });
     expect(await voice.openStream(ctx)).toEqual({

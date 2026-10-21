@@ -270,7 +270,9 @@ export class WidgetPublicConfigService {
         if (a.input || a.output) {
           out.voice = {
             input: a.input,
-            ...(streamSettings(process.env) ? { streaming: true } : {}),
+            ...(streamSettings(process.env, site.siteId)
+              ? { streaming: true }
+              : {}),
             output: a.output,
             maxRecordMs: VOICE_DEFAULTS.maxRecordMs,
             minSpeechMs: VOICE_DEFAULTS.minSpeechMs,

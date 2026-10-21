@@ -213,7 +213,7 @@ export class SiteVoiceService {
       }
     | { ok: false; failure: VoiceFailure }
   > {
-    const settings = streamSettings(this.env);
+    const settings = streamSettings(this.env, ctx.site.siteId);
     if (!settings || !voiceTicketKey(this.env))
       return { ok: false, failure: 'unavailable' };
     const now = this.now();
@@ -286,7 +286,7 @@ export class SiteVoiceService {
       signature: string;
     },
   ): Promise<TranscribeResult> {
-    const settings = streamSettings(this.env);
+    const settings = streamSettings(this.env, ctx.site.siteId);
     const key = voiceTicketKey(this.env);
     if (!settings || !key) return { ok: false, failure: 'unavailable' };
     const now = this.now();

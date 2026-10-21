@@ -29,6 +29,20 @@ describe('streaming uses current relay and an explicit bounded price', () => {
     expect(streamSettings({ ...env, LIVE_LOGIN_RELAY_SECRET: '' })).toBeNull();
     expect(streamSettings(env)?.chargeMicroUsd).toBe(17);
   });
+  it('limits a canary to exact configured site IDs, failing closed for empty scope', () => {
+    const scoped = {
+      ...env,
+      ASSIST_STREAM_SITE_IDS: ' sandbox-site, another-site ',
+    };
+    expect(streamSettings(scoped, 'sandbox-site')).not.toBeNull();
+    expect(streamSettings(scoped, 'another-site')).not.toBeNull();
+    for (const id of [undefined, '', 'sandbox', 'sandbox-site-extra']) {
+      expect(streamSettings(scoped, id)).toBeNull();
+    }
+    expect(
+      streamSettings({ ...env, ASSIST_STREAM_SITE_IDS: '' }, 'sandbox-site'),
+    ).toBeNull();
+  });
   it('signs exactly the VPS protocol with a domain-separated secret', () => {
     const p = {
       boot: 'mock-boot',

@@ -3,12 +3,27 @@
  */
 import { createHmac, createHash, timingSafeEqual } from 'crypto';
 export const STREAM_SECONDS = 30;
-export function streamSettings(env: NodeJS.ProcessEnv): {
+export function streamSettings(
+  env: NodeJS.ProcessEnv,
+  siteId?: string,
+): {
   url: string;
   secret: string;
   chargeMicroUsd: number;
 } | null {
   if (env.ASSIST_STREAM_ENABLED !== 'true') return null;
+  // Optional canary scope: an empty or unknown site always fails closed.
+  const sites = env.ASSIST_STREAM_SITE_IDS;
+  if (
+    sites !== undefined &&
+    (!siteId ||
+      !sites
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .includes(siteId))
+  )
+    return null;
   const secret = env.LIVE_LOGIN_RELAY_SECRET?.trim();
   const rate = Number(env.ASSIST_STREAM_MICRO_USD_PER_MINUTE);
   try {
