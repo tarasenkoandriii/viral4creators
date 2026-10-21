@@ -43,3 +43,20 @@ test("a test absent from the catalog is visible as unmapped", () => {
   );
   assert.equal(reporter.run.unknownTests, 1);
 });
+
+test("reporter records configured target origin without URL path, query or credentials", () => {
+  const reporter = new Reporter();
+  reporter.onBegin({
+    projects: [
+      { use: { baseURL: "https://sandbox.viral4creators.app/?private=x" } },
+    ],
+  });
+  assert.equal(
+    reporter.run.metadata.targetOrigin,
+    "https://sandbox.viral4creators.app",
+  );
+  reporter.onBegin({
+    projects: [{ use: { baseURL: "https://user:secret@example.test/" } }],
+  });
+  assert.equal(reporter.run.metadata.targetOrigin, null);
+});

@@ -8,10 +8,23 @@ class QaReporter {
       options.outputFile ||
       path.resolve(__dirname, "../test-results/qa-run.json");
   }
-  onBegin() {
+  onBegin(config) {
+    let targetOrigin = null;
+    try {
+      const target = new URL(config?.projects?.[0]?.use?.baseURL);
+      if (
+        ["http:", "https:"].includes(target.protocol) &&
+        !target.username &&
+        !target.password
+      )
+        targetOrigin = target.origin;
+    } catch {
+      /* Missing target stays unknown, never assumed to be production. */
+    }
     const sha = (value) => (/^[a-f0-9]{40}$/i.test(value || "") ? value : null);
     this.run = createRun(catalog, {
       source: "playwright",
+      targetOrigin,
       startedAt: new Date().toISOString(),
       testSourceSha: sha(process.env.GITHUB_SHA),
       // The CI checkout is not proof of what is deployed.

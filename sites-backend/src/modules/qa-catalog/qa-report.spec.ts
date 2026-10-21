@@ -183,3 +183,46 @@ describe('QA report import validation', () => {
     expect(scoped).toHaveBeenCalledWith(m, 's', true);
   });
 });
+
+describe('QA target provenance', () => {
+  it('binds canonical report hash to target origin while preserving legacy reports', () => {
+    const report = reportFixture();
+    const old = parseQaReport({
+      expectedRevision: 1,
+      project: 'desktop',
+      report,
+    });
+    Object.assign(report.metadata, { targetOrigin: null });
+    expect(
+      parseQaReport({ expectedRevision: 1, project: 'desktop', report })
+        .reportHash,
+    ).toBe(old.reportHash);
+    Object.assign(report.metadata, {
+      targetOrigin: 'https://sandbox.viral4creators.app',
+    });
+    const bound = parseQaReport({
+      expectedRevision: 1,
+      project: 'desktop',
+      report,
+    });
+    expect(bound.metadata.targetOrigin).toBe(
+      'https://sandbox.viral4creators.app',
+    );
+    expect(bound.reportHash).not.toBe(old.reportHash);
+  });
+  it.each([
+    'https://u:p@example.test',
+    'https://example.test/?token=x',
+    'https://example.test/path',
+    'file:///tmp/x',
+  ])(
+    'rejects target secrets, paths and unsupported protocols: %s',
+    (targetOrigin) => {
+      const report = reportFixture();
+      Object.assign(report.metadata, { targetOrigin });
+      expect(() =>
+        parseQaReport({ expectedRevision: 1, project: 'desktop', report }),
+      ).toThrow();
+    },
+  );
+});

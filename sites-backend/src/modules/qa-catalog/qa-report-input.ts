@@ -125,7 +125,32 @@ export function parseQaReport(input: unknown) {
     !Number.isFinite(Date.parse(rawMeta.startedAt))
   )
     return invalid();
+  let targetOrigin: string | undefined;
+  if (rawMeta.targetOrigin !== undefined && rawMeta.targetOrigin !== null) {
+    if (
+      typeof rawMeta.targetOrigin !== 'string' ||
+      rawMeta.targetOrigin.length > 300
+    )
+      return invalid();
+    try {
+      const target = new URL(rawMeta.targetOrigin);
+      if (
+        !['http:', 'https:'].includes(target.protocol) ||
+        target.username ||
+        target.password ||
+        target.search ||
+        target.hash ||
+        target.pathname !== '/' ||
+        target.origin !== rawMeta.targetOrigin
+      )
+        return invalid();
+      targetOrigin = target.origin;
+    } catch {
+      return invalid();
+    }
+  }
   const metadata = {
+    ...(targetOrigin ? { targetOrigin } : {}),
     source: rawMeta.source as 'playwright' | 'jest',
     startedAt: new Date(rawMeta.startedAt).toISOString(),
     testSourceSha: sha(rawMeta.testSourceSha),
