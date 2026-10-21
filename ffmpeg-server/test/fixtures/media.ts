@@ -82,3 +82,14 @@ export function makeImage(
     file,
   ]);
 }
+
+/** FFmpeg 5.1 writes the MP4 matrix through metadata; 6+ supports input rotation. */
+export function rotateVideo(source: string, output: string): void {
+  const version = spawnSync(FFMPEG, ['-version'], { encoding: 'utf8' });
+  const major = Number(/ffmpeg version (\d+)/.exec(version.stdout ?? '')?.[1]);
+  if (!Number.isFinite(major))
+    throw new Error('Cannot determine fixture FFmpeg version');
+  if (major >= 6)
+    ff(['-display_rotation:v', '90', '-i', source, '-c', 'copy', output]);
+  else ff(['-i', source, '-c', 'copy', '-metadata:s:v:0', 'rotate=90', output]);
+}

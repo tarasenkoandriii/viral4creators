@@ -438,6 +438,68 @@ describe('/api/admin/ffmpeg (e2e)', () => {
     });
   });
 
+  describe('review draft', () => {
+    const path = '/jobs/selfhosted:job-1/review-draft';
+    const sourceSha = 'a'.repeat(64);
+    const outputSha = 'b'.repeat(64);
+    const document = {
+      sourceInputKey: 'source',
+      sourceSha256: sourceSha,
+      outputSha256: outputSha,
+      recipe: {},
+      suggestions: [],
+      selectedParameters: [],
+    };
+    it('requires owner session and same-origin CSRF', async () => {
+      const body = { file: 'out.mp4', document };
+      await post(path, body, '').expect(401);
+      await post(path, body, 'tok_qa').expect(403);
+      await post(path, body, 'tok_user').expect(403);
+      await post(path, body, 'tok_owner', 'https://evil.test').expect(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+    it('binds fresh metadata without render, journal mutation or paid call', async () => {
+      routes['GET /ops/jobs/job-1'] = () => ({
+        status: 200,
+        body: {
+          data: {
+            execution_status: 'succeeded',
+            expires_at: '2030-01-01',
+            inputs_metadata: [
+              {
+                key: 'source',
+                mime: 'video/mp4',
+                sha256: sourceSha,
+                streams: [{ type: 'video' }],
+              },
+            ],
+            artifacts: [
+              { name: 'out.mp4', sha256: outputSha, mime: 'video/mp4' },
+            ],
+          },
+        },
+      });
+      const res = await post(path, { file: 'out.mp4', document }).expect(200);
+      expect(res.body.data.manifest.reviewedOutput.sha256).toBe(outputSha);
+      expect(res.body.data.manifest.plan).toBeNull();
+      await post(path, {
+        file: 'out.mp4',
+        document: { ...document, outputSha256: sourceSha },
+      }).expect(400);
+      expect(calls.every((call) => call.method === 'GET')).toBe(true);
+      expect(db.journal).toHaveLength(0);
+      noSecrets(JSON.stringify(res.body));
+      routes['GET /ops/jobs/job-1'] = () => {
+        throw new Error('ops-secret-key');
+      };
+      const unavailable = await post(path, {
+        file: 'out.mp4',
+        document,
+      }).expect(503);
+      noSecrets(JSON.stringify(unavailable.body));
+    });
+  });
+
   describe('чтение', () => {
     it('overview: данные сервера + маршрутизация backend, без секретов', async () => {
       const res = await get('/overview').expect(200);

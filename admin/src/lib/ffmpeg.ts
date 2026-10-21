@@ -1424,3 +1424,7 @@ export function mutationResultText(title: string, r: FfmpegMutationResult): stri
   if (r.correlationId) parts.push(`журнал: ${r.correlationId.slice(0, 8)}`);
   return `${title}: ${parts.join('; ')}.`;
 }
+
+export async function compileFfmpegDraft(id: string, file: string, document: unknown): Promise<unknown> {
+  return ffmpegRequest(`/jobs/${enc(id)}/review-draft`, { method: 'POST', body: { file, document } });
+}

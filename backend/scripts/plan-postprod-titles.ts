@@ -39,12 +39,25 @@ const probe = JSON.parse(
     { encoding: 'utf8', timeout: 30000, maxBuffer: 1024 * 1024 },
   ),
 ) as {
-  streams: { codec_type: string; width?: number; height?: number }[];
+  streams: {
+    codec_type: string;
+    width?: number;
+    height?: number;
+    sample_aspect_ratio?: string;
+    tags?: { rotate?: string };
+    side_data_list?: { rotation?: number }[];
+  }[];
   format: { duration: string };
 };
 const videos = probe.streams.filter((s) => s.codec_type === 'video');
 if (
   videos.length !== 1 ||
+  (videos[0].sample_aspect_ratio !== undefined &&
+    !['1:1', 'N/A'].includes(videos[0].sample_aspect_ratio)) ||
+  Number(videos[0].tags?.rotate ?? 0) !== 0 ||
+  videos[0].side_data_list?.some(
+    (entry) => Number(entry.rotation ?? 0) !== 0,
+  ) ||
   videos[0].width !== review.width ||
   videos[0].height !== review.height ||
   review.layout.width !== review.width ||

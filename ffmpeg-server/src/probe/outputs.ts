@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import type { ExecPlan, LimitsProfile, ProbeResult } from '../contracts';
 import { OUTPUT_EXTENSIONS } from '../command/allowlist';
 import { mimeFor, probeFile, sha256File } from './probe';
+import { checkInputLimits, displaySize } from './limits';
 
 export interface VerifiedOutput {
   name: string;
@@ -147,17 +148,68 @@ export async function verifyOutputs(
         message: `output ${f.name}: ${m}`,
       });
       if (!pr) return bad('ffprobe cannot read it');
+      if (pr.bytes !== f.bytes || !/^[a-f0-9]{64}$/.test(pr.sha256))
+        return bad('probe does not match the measured output');
+      // Parser bounds are not enough: expressions, SAR and copied streams
+      // may produce a different actual geometry/rate. Check the result too.
+      const checked = checkInputLimits(pr, {
+        ...limits,
+        maxInputBytes: limits.maxTotalOutputBytes,
+        // This is a per-input limit, not a limit on a legitimate concat.
+        maxInputDurationSec: Math.max(
+          limits.maxInputDurationSec,
+          pr.durationSec ?? 0,
+          ...pr.streams.map((stream) => stream.durationSec ?? 0),
+        ),
+      });
+      if (!checked.ok) return bad(checked.message);
+      for (const stream of pr.streams.filter(
+        (stream) => stream.type === 'video',
+      )) {
+        const display = displaySize(stream);
+        const fits = (width: number, height: number) =>
+          Number.isInteger(width) &&
+          Number.isInteger(height) &&
+          width > 0 &&
+          height > 0 &&
+          Math.max(width, height) <=
+            Math.max(limits.maxWidth, limits.maxHeight) &&
+          Math.min(width, height) <=
+            Math.min(limits.maxWidth, limits.maxHeight);
+        if (
+          !display ||
+          !fits(stream.width ?? 0, stream.height ?? 0) ||
+          !fits(display.width, display.height)
+        )
+          return bad('output frame exceeds the profile');
+      }
+
       const video = pr.streams.filter((s) => s.type === 'video');
       const audio = pr.streams.filter((s) => s.type === 'audio');
       if (ext === '.mp4') {
+        if (pr.mime !== 'video/mp4') return bad('not a playable MP4 video');
         if (!video.length) return bad('no video stream');
-        if (!pr.durationSec || pr.durationSec <= 0) return bad('zero duration');
+        if (
+          !Number.isFinite(pr.durationSec) ||
+          !pr.durationSec ||
+          pr.durationSec <= 0
+        )
+          return bad('invalid duration');
       }
       if (ext === '.m4a') {
+        if (pr.mime !== 'audio/mp4') return bad('not playable M4A audio');
         if (!audio.length) return bad('no audio stream');
-        if (!pr.durationSec || pr.durationSec <= 0) return bad('zero duration');
+        if (
+          !Number.isFinite(pr.durationSec) ||
+          !pr.durationSec ||
+          pr.durationSec <= 0
+        )
+          return bad('invalid duration');
       }
-      if (ext === '.jpg' && (!video.length || !video[0].width))
+      if (
+        ext === '.jpg' &&
+        (pr.mime !== 'image/jpeg' || !video.length || !video[0].width)
+      )
         return bad('not an image');
       result.push({
         name: f.name,

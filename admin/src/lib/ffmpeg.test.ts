@@ -20,6 +20,7 @@ import {
   FfmpegFailedOutcome,
   FfmpegTimeoutError,
   FfmpegUnknownOutcome,
+  compileFfmpegDraft,
   cancelFfmpegJob,
   canCancel,
   canPurge,
@@ -155,6 +156,12 @@ async function main() {
   assert.deepEqual(calls[13].body, { operationId: op, reason: 'canary', expectedRevision: 7, defaultProvider: 'hosted', canaryProducts: ['story'] });
   assert.deepEqual(calls[14].body, { operationId: op, file: 'poster.jpg', reason: 'проверка' });
   assert.deepEqual(link, { file: 'poster.jpg', url: 'https://ff.example/f?token=t', expiresAt: '2026-10-21T10:30:00.000Z', mime: 'image/jpeg' });
+
+  reply = () => ok({ manifest: { advisoryOnly: true } });
+  await compileFfmpegDraft('selfhosted:x', 'out.mp4', { sourceSha256: 'a'.repeat(64) });
+  assert.deepEqual(calls.at(-1)?.body, { file: 'out.mp4', document: { sourceSha256: 'a'.repeat(64) } });
+  assert.ok(calls.at(-1)?.url.endsWith('/jobs/selfhosted%3Ax/review-draft'));
+  assert.equal(calls.at(-1)?.method, 'POST');
 
   // Backend: исход неизвестен (200 + outcome unknown) и записанный отказ.
   reply = () => ok(outcome({ outcome: 'unknown', message: 'Результат неизвестен, сверяем: timeout' }));

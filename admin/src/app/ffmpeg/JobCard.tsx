@@ -8,6 +8,7 @@
 // встраиваются. Кнопки повторного рендера нет: новая версия делается
 // только из исходной операции продукта.
 import Link from 'next/link';
+import { ReviewDraftPanel } from './ReviewDraftPanel';
 import { useEffect, useRef, useState } from 'react';
 import {
   ACTION_LABEL,
@@ -376,6 +377,8 @@ export function JobCard({
           ) : (
             <p className="muted">Результатов нет.</p>
           )}
+
+          {outputsAvailable && job.provider === 'selfhosted' && <ReviewDraftPanel key={`${job.id}:${job.outputs.map((file) => file.sha256).join(':')}`} job={job} />}
 
           <h3 style={{ fontSize: 15 }}>Пиковые ресурсы</h3>
           {job.resources ? (

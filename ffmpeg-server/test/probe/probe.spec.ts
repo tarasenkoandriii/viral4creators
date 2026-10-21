@@ -19,7 +19,7 @@ import {
 import { checkInputLimits, displaySize } from '../../src/probe/limits';
 import { verifyOutputs } from '../../src/probe/outputs';
 import { PILOT_LIMITS } from '../fixtures/limits';
-import { ff, FFPROBE } from '../fixtures/media';
+import { ff, FFPROBE, rotateVideo } from '../fixtures/media';
 
 let dir: string;
 const p = (n: string) => join(dir, n);
@@ -44,15 +44,7 @@ beforeAll(() => {
     '-shortest',
     p('ok.mp4'),
   ]);
-  ff([
-    '-display_rotation:v',
-    '90',
-    '-i',
-    p('ok.mp4'),
-    '-c',
-    'copy',
-    p('rot.mp4'),
-  ]);
+  rotateVideo(p('ok.mp4'), p('rot.mp4'));
   ff([
     '-f',
     'lavfi',
@@ -91,15 +83,7 @@ beforeAll(() => {
     p('vertical.mp4'),
   ]);
   // FF-SEC2-01: повёрнутые кадры (display matrix 90°).
-  ff([
-    '-display_rotation:v',
-    '90',
-    '-i',
-    p('vertical.mp4'),
-    '-c',
-    'copy',
-    p('vertical-rot90.mp4'),
-  ]);
+  rotateVideo(p('vertical.mp4'), p('vertical-rot90.mp4'));
   ff([
     '-f',
     'lavfi',
@@ -111,15 +95,7 @@ beforeAll(() => {
     'yuv420p',
     p('landscape.mp4'),
   ]);
-  ff([
-    '-display_rotation:v',
-    '90',
-    '-i',
-    p('landscape.mp4'),
-    '-c',
-    'copy',
-    p('landscape-rot90.mp4'),
-  ]);
+  rotateVideo(p('landscape.mp4'), p('landscape-rot90.mp4'));
   ff([
     '-f',
     'lavfi',
@@ -131,15 +107,7 @@ beforeAll(() => {
     'yuv420p',
     p('qhd.mp4'),
   ]);
-  ff([
-    '-display_rotation:v',
-    '90',
-    '-i',
-    p('qhd.mp4'),
-    '-c',
-    'copy',
-    p('qhd-rot90.mp4'),
-  ]);
+  rotateVideo(p('qhd.mp4'), p('qhd-rot90.mp4'));
   ff([
     '-f',
     'lavfi',
@@ -445,6 +413,36 @@ describe('verifyOutputs', () => {
         maxTotalOutputBytes: 100,
       }),
     ).toMatchObject({ code: 'OUTPUT_TOO_LARGE' });
+  });
+
+  it.each([
+    'dimensions',
+    'fps',
+    'sar',
+    'duration',
+    'probe-bytes',
+    'probe-hash',
+    'mime',
+  ])('rejects actual output beyond the contract: %s', async (kind) => {
+    const a = attempt();
+    const file = join(a, 'outputs', 'final.mp4');
+    copyFileSync(p('ok.mp4'), file);
+    const pr = await probeFile(file);
+    if (kind === 'dimensions') pr.streams[0].width = 4000;
+    if (kind === 'fps') pr.streams[0].fps = 120;
+    if (kind === 'sar') Object.assign(pr.streams[0], { sar: 20 });
+    if (kind === 'duration') pr.durationSec = Infinity;
+    if (kind === 'probe-bytes') pr.bytes++;
+    if (kind === 'probe-hash') pr.sha256 = 'not-a-hash';
+    if (kind === 'mime') pr.mime = 'audio/mp4';
+    expect(
+      await verifyOutputs(
+        a,
+        [{ name: 'final.mp4', localName: 'outputs/final.mp4' }],
+        PILOT_LIMITS,
+        { probe: async () => [pr] },
+      ),
+    ).toMatchObject({ code: 'OUTPUT_INVALID_MEDIA' });
   });
 
   it('m4a без аудио и mp4 без видео — невалидны', async () => {

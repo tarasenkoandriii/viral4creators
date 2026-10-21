@@ -80,6 +80,10 @@ class FfmpegReconcileDto extends FfmpegControlDto {
 class FfmpegDownloadDto extends FfmpegControlDto {
   @IsString() @MaxLength(128) file!: string;
 }
+class FfmpegReviewDraftDto {
+  @IsString() @MaxLength(128) file!: string;
+  @IsObject() document!: Record<string, unknown>;
+}
 class FfmpegLimitsDto extends FfmpegOperationDto {
   @Type(() => Number) @IsInt() @Min(1) expectedRevision!: number;
   @IsObject() limits!: Record<string, unknown>;
@@ -158,6 +162,18 @@ export class FfmpegAdminController {
   async limits(@Req() req: AdminAuthenticatedRequest) {
     await this.access.assert(req.userId, 'ffmpeg.read');
     return this.service.limits();
+  }
+
+  @Header('Cache-Control', 'no-store')
+  @Post('jobs/:id/review-draft')
+  @HttpCode(200)
+  async reviewDraft(
+    @Req() req: AdminAuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: FfmpegReviewDraftDto,
+  ) {
+    await this.access.assert(req.userId, 'ffmpeg.read');
+    return this.service.reviewDraft(id, dto.file, dto.document);
   }
 
   @Post('pause') @HttpCode(200) async pause(

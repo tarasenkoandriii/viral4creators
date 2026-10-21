@@ -47,6 +47,7 @@ import {
   FfmpegOperatorJournal,
 } from './ffmpeg-operator-journal';
 import { findFfmpegJobOwners } from './ffmpeg-job-owner';
+import { compileFfmpegReviewDraft } from '../../common/ffmpeg-review-draft';
 
 /** id задачи в маршруте: hosted как есть или `selfhosted:<id сервера>`. */
 export const FFMPEG_ADMIN_JOB_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
@@ -468,6 +469,30 @@ export class FfmpegAdminService {
       owners,
       actions,
     };
+  }
+
+  /** Pure editorial draft; requires fresh VPS metadata, never the stale cache. */
+  async reviewDraft(id: string, file: string, document: unknown) {
+    if (this.assertJobId(id) !== 'selfhosted' || !FILE_NAME.test(file))
+      throw new BadRequestException(
+        'Проверка доступна для файла собственного сервера',
+      );
+    const raw = await this.ops
+      .request('GET', `/ops/jobs/${encodeURIComponent(this.serverId(id))}`, {
+        role: 'ops',
+      })
+      .catch(() => {
+        throw new ServiceUnavailableException(
+          'Нет свежих метаданных FFmpeg: повторите проверку позже',
+        );
+      });
+    try {
+      return compileFfmpegReviewDraft(id, file, document, raw);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Некорректный план проверки',
+      );
+    }
   }
 
   async limits() {
