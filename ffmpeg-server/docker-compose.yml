@@ -140,7 +140,12 @@ volumes:
   ffmpeg-data: {}
   # Backup SQLite — отдельный volume (копируется площадкой off-host).
   ffmpeg-backup: {}
-  ffmpeg-outputs: {}
+  ffmpeg-outputs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${FFMPEG_SERVER_OUTPUTS_HOST_DIR:?нужна ограниченная ФС результатов}
   ffmpeg-fonts: {}
   # Workspace — на отдельной ФС фиксированного размера (квота §9).
   ffmpeg-workspace:

@@ -1,0 +1,32 @@
+{
+  "id": "245afc39-70a0-4336-83c9-f768cf56293b",
+  "elapsedSec": 31.2397638913244,
+  "status": "succeeded",
+  "metadata": {
+    "canary.mp4": {
+      "bytes": 852536,
+      "sha256": "e5f14bb8afc468586c5c105142dcacf97d48278974caeda9363395a3b0bd820f",
+      "mime": "video/mp4",
+      "format": "mov,mp4,m4a,3gp,3g2,mj2",
+      "durationSec": 110,
+      "streams": [
+        {
+          "type": "video",
+          "codec": "h264",
+          "width": 1280,
+          "height": 720,
+          "fps": 25,
+          "durationSec": 110
+        },
+        {
+          "type": "audio",
+          "codec": "aac",
+          "sampleRate": 96000,
+          "channels": 1,
+          "durationSec": 110
+        }
+      ]
+    }
+  },
+  "successfulShortJobs": 20
+}

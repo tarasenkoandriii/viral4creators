@@ -186,20 +186,33 @@ openssl rand -base64 32
 размера под workspace, чтобы заполнение не задело relay и Dokploy:
 
 ```bash
-sudo fallocate -l 20G /srv/ffmpeg-quota.img
+# Общее ограниченное хранилище: workspace + опубликованные результаты.
+# До создания проверить: после резервирования остаётся >15 GiB на /.
+sudo fallocate -l 30G /srv/ffmpeg-quota.img
 sudo mkfs.xfs -m reflink=0 /srv/ffmpeg-quota.img
 sudo mkdir -p /srv/ffmpeg-quota
-echo '/srv/ffmpeg-quota.img /srv/ffmpeg-quota xfs loop,noatime,nodev,nosuid,noexec 0 0' | sudo tee -a /etc/fstab
-sudo mount /srv/ffmpeg-quota
-sudo mkdir -p /srv/ffmpeg-quota/workspace
-sudo chown 1000:10000 /srv/ffmpeg-quota/workspace && sudo chmod 2770 /srv/ffmpeg-quota/workspace
+# Сначала пробный mount; fstab добавлять после успешной приёмки.
+sudo mount -o loop,noatime,nodev,nosuid,noexec /srv/ffmpeg-quota.img /srv/ffmpeg-quota
+sudo mkdir -p /srv/ffmpeg-quota/{workspace,outputs}
+sudo chown 1000:10000 /srv/ffmpeg-quota/{workspace,outputs}
+sudo chmod 2770 /srv/ffmpeg-quota/workspace
+sudo chmod 0750 /srv/ffmpeg-quota/outputs
 ```
 
-`FFMPEG_SERVER_WORKSPACE_HOST_DIR=/srv/ffmpeg-quota/workspace`. Проверка
-на этапе C: заполнить ФС из executor (`dd` до ENOSPC) и убедиться, что
-свободное место `/` хоста не изменилось, relay жив. Outputs при желании —
-вторым loop-файлом на 12 GiB тем же способом. I/O-лимиты cgroup v2
-(`blkio_config`/`device_write_bps`) проверить в runtime площадки.
+Задать обе переменные: `FFMPEG_SERVER_WORKSPACE_HOST_DIR` и
+`FFMPEG_SERVER_OUTPUTS_HOST_DIR`. Результаты на общем неограниченном Docker
+volume не допускаются. При общем томе 30 GiB порог minFree=15 GiB
+консервативно останавливает приём раньше суммарных квот 15+10 GiB;
+не снижать порог ради заполнения тома. Том data остаётся на корневой ФС,
+поэтому `DiskMonitor` проверяет свободное место также на хостовом диске.
+Перед каждым стартом проверить `mountpoint -q /srv/ffmpeg-quota`:
+при отсутствующем mount нельзя писать в одноимённый каталог корневой ФС.
+
+Проверка этапа C: заполнение ограниченного тома до ENOSPC не меняет
+свободное место `/` (loop-файл заранее выделен), relay остаётся здоров.
+I/O-лимиты (`blkio_config`) проверить в cgroup v2 `io.max`, включая
+фактическое устройство loop и лежащий под ним диск. Наличие полей
+в compose само по себе не подтверждает ограничение.
 
 ## 8. Pause / drain / cancel / purge / rollback
 

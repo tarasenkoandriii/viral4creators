@@ -1,0 +1,7 @@
+{
+  "health": 200,
+  "ready": 200,
+  "unauthorized": 401,
+  "client_no_ops": 403,
+  "ops": 200
+}

@@ -16,6 +16,8 @@ import { INPUT_DEMUXERS, OUTPUT_EXTENSIONS } from '../command/allowlist';
 export interface ProbeStreamEx extends ProbeStream {
   /** sample_aspect_ratio числом (1 — квадратный пиксель). */
   sar?: number;
+  /** Embedded artwork is one image, not a timed video stream. */
+  attachedPic?: boolean;
   pixFmt?: string | null;
   nbFrames?: number | null;
 }
@@ -183,6 +185,9 @@ export function probeFromFfprobeJson(
       durationSec: num(s.duration),
     };
     if (type === 'video') {
+      st.attachedPic =
+        (s.disposition as Record<string, unknown> | undefined)?.attached_pic ===
+        1;
       const w = num(s.width);
       const h = num(s.height);
       if (w !== null) st.width = w;

@@ -459,3 +459,39 @@ describe('verifyOutputs', () => {
     ).toMatchObject({ code: 'OUTPUT_INVALID_MEDIA' });
   });
 });
+
+describe('embedded MP3 artwork', () => {
+  const artwork = (attached: number, width = 300) =>
+    probeFromFfprobeJson(
+      {
+        format: { format_name: 'mp3', duration: '2' },
+        streams: [
+          {
+            codec_type: 'audio',
+            codec_name: 'mp3',
+            sample_rate: '44100',
+            channels: 2,
+          },
+          {
+            codec_type: 'video',
+            codec_name: 'mjpeg',
+            width,
+            height: 300,
+            r_frame_rate: '90000/1',
+            disposition: { attached_pic: attached },
+          },
+        ],
+      },
+      { bytes: 10000, sha256: 'a'.repeat(64), mime: 'audio/mpeg' },
+    );
+
+  it('accepts a bounded attached image without treating its time base as video fps', () => {
+    expect(checkInputLimits(artwork(1), PILOT_LIMITS)).toEqual({ ok: true });
+  });
+  it('continues rejecting excessive fps on timed video', () => {
+    expect(checkInputLimits(artwork(0), PILOT_LIMITS).ok).toBe(false);
+  });
+  it('continues checking dimensions of attached artwork', () => {
+    expect(checkInputLimits(artwork(1, 30000), PILOT_LIMITS).ok).toBe(false);
+  });
+});

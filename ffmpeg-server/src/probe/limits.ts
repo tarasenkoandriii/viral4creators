@@ -135,7 +135,11 @@ export function checkInputLimits(
             `video is larger than ${limits.maxWidth}x${limits.maxHeight}`,
           );
         }
-        if (s.fps !== undefined && s.fps > limits.maxFps + 0.01) {
+        if (
+          !s.attachedPic &&
+          s.fps !== undefined &&
+          s.fps > limits.maxFps + 0.01
+        ) {
           return exceeded(`video frame rate is above ${limits.maxFps} fps`);
         }
         // Бомба: заявлено больше кадров, чем допускают fps×длительность.
@@ -145,7 +149,8 @@ export function checkInputLimits(
         }
         // Бомба: огромный декодированный объём на крошечный файл.
         const d = s.durationSec ?? probe.durationSec ?? 0;
-        const decoded = s.width * s.height * 1.5 * (s.fps ?? 30) * d;
+        const frames = s.attachedPic ? 1 : (s.fps ?? 30) * d;
+        const decoded = s.width * s.height * 1.5 * frames;
         if (decoded / Math.max(probe.bytes, 1) > 1e6) {
           return exceeded('suspicious compression ratio (decompression bomb)');
         }
