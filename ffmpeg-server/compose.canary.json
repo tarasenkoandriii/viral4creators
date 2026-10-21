@@ -1,0 +1,148 @@
+{
+  "name": "v4c-ffmpeg-canary",
+  "services": {
+    "api": {
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "restart": "no",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "blkio_config": {
+        "device_read_bps": [
+          {
+            "path": "/dev/sda",
+            "rate": "40mb"
+          },
+          {
+            "path": "${FFMPEG_CANARY_LOOP_DEVICE:?bounded loop device required}",
+            "rate": "40mb"
+          }
+        ],
+        "device_write_bps": [
+          {
+            "path": "/dev/sda",
+            "rate": "20mb"
+          },
+          {
+            "path": "${FFMPEG_CANARY_LOOP_DEVICE:?bounded loop device required}",
+            "rate": "20mb"
+          }
+        ]
+      },
+      "image": "sha256:6c229bf72ce8b1513446420d536ddfeb56e9d285ff9beb4b6204782a4a71fad7",
+      "env_file": ".env",
+      "environment": {
+        "FFMPEG_SERVER_BACKUP_DIR": "/backup",
+        "FFMPEG_SERVER_IMAGE_DIGEST": "sha256:211dc4b4a7d6e08084e1fde606f638a890f1ba5315ae4b4614cbd654f2e694de"
+      },
+      "volumes": [
+        "data:/data",
+        "backup:/backup",
+        "/srv/v4c-ffmpeg-canary/workspace:/workspace",
+        "/srv/v4c-ffmpeg-canary/outputs:/outputs"
+      ],
+      "tmpfs": [
+        "/tmp:size=64m,mode=1777"
+      ],
+      "mem_limit": "256m",
+      "memswap_limit": "256m",
+      "cpus": 0.5,
+      "pids_limit": 128,
+      "ports": [
+        "127.0.0.1:18090:8080"
+      ],
+      "networks": [
+        "dokploy-network"
+      ],
+      "labels": {
+        "traefik.enable": "true",
+        "traefik.docker.network": "dokploy-network",
+        "traefik.http.routers.ffmpeg-canary.rule": "Host(`ffmpeg.viral4creators.app`)",
+        "traefik.http.routers.ffmpeg-canary.entrypoints": "websecure",
+        "traefik.http.routers.ffmpeg-canary.tls": "true",
+        "traefik.http.routers.ffmpeg-canary.tls.certresolver": "letsencrypt",
+        "traefik.http.services.ffmpeg-canary.loadbalancer.server.port": "8080",
+        "traefik.http.routers.ffmpeg-canary.middlewares": "ffmpeg-canary-nometrics,ffmpeg-canary-rate",
+        "traefik.http.middlewares.ffmpeg-canary-nometrics.replacepathregex.regex": "^/metrics.*",
+        "traefik.http.middlewares.ffmpeg-canary-nometrics.replacepathregex.replacement": "/api/not-found",
+        "traefik.http.middlewares.ffmpeg-canary-rate.ratelimit.average": "20",
+        "traefik.http.middlewares.ffmpeg-canary-rate.ratelimit.burst": "40"
+      }
+    },
+    "executor": {
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "restart": "no",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      },
+      "blkio_config": {
+        "device_read_bps": [
+          {
+            "path": "/dev/sda",
+            "rate": "40mb"
+          },
+          {
+            "path": "${FFMPEG_CANARY_LOOP_DEVICE:?bounded loop device required}",
+            "rate": "40mb"
+          }
+        ],
+        "device_write_bps": [
+          {
+            "path": "/dev/sda",
+            "rate": "20mb"
+          },
+          {
+            "path": "${FFMPEG_CANARY_LOOP_DEVICE:?bounded loop device required}",
+            "rate": "20mb"
+          }
+        ]
+      },
+      "image": "sha256:211dc4b4a7d6e08084e1fde606f638a890f1ba5315ae4b4614cbd654f2e694de",
+      "network_mode": "none",
+      "user": "10001:10000",
+      "environment": {
+        "WORKSPACE_ROOT": "/workspace"
+      },
+      "volumes": [
+        "/srv/v4c-ffmpeg-canary/workspace:/workspace"
+      ],
+      "tmpfs": [
+        "/tmp:size=256m,mode=1777"
+      ],
+      "mem_limit": "3g",
+      "memswap_limit": "3g",
+      "cpus": 2,
+      "pids_limit": 128,
+      "init": true
+    }
+  },
+  "volumes": {
+    "data": {},
+    "backup": {}
+  },
+  "networks": {
+    "dokploy-network": {
+      "external": true
+    }
+  }
+}

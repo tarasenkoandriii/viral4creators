@@ -1,0 +1,11 @@
+# Install as: systemd-escape -p --suffix=mount /srv/v4c-ffmpeg-canary
+[Unit]
+Description=Bounded XFS storage for FFmpeg canary
+Before=v4c-ffmpeg-canary.service
+[Mount]
+What=/srv/v4c-ffmpeg-canary.img
+Where=/srv/v4c-ffmpeg-canary
+Type=xfs
+Options=loop,noatime,nodev,nosuid,noexec
+[Install]
+WantedBy=local-fs.target

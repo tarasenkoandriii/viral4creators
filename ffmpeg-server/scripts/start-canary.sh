@@ -19,6 +19,13 @@ if (( root_free < 16106127360 )); then
   echo 'Refusing start: less than 15 GiB available on root filesystem.' >&2
   exit 1
 fi
+# Loop-backed I/O is accounted on the loop device, not just its parent disk.
+loop_device=$(findmnt -n -o SOURCE --target "$quota_mount")
+if [[ $loop_device != /dev/loop* || ! -b $loop_device ]]; then
+  echo 'Refusing start: expected a loop-backed media filesystem.' >&2
+  exit 1
+fi
+export FFMPEG_CANARY_LOOP_DEVICE="$loop_device"
 # Validation must not print interpolated secrets.
 docker compose -f "$compose_file" config --quiet
 docker compose -f "$compose_file" up -d

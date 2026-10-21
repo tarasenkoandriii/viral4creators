@@ -1,0 +1,6 @@
+[Unit]
+Description=Read-only FFmpeg canary observation
+After=v4c-ffmpeg-canary.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/v4c-ffmpeg-canary/observe.py

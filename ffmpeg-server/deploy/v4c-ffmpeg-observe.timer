@@ -1,0 +1,8 @@
+[Unit]
+Description=Observe FFmpeg TTL for 25 hours, then stop
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=10s
+[Install]
+WantedBy=timers.target

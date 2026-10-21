@@ -288,3 +288,26 @@ Production default остаётся `hosted` на всём этапе.
 - [ ] Restore drill §4 пройден, RTO/RPO записаны.
 - [ ] 24 часа canary: cleanup TTL отработал, orphan-workspaces нет, `/` хоста не растёт.
 - [ ] Замеры wall/CPU/RAM/диск записаны в отчёт этапа C; решение о переходе — владелец.
+
+## 12. Первый VPS: canary 21.10.2026
+
+Зафиксированная конфигурация: `compose.canary.json` (локальные image IDs),
+`deploy/v4c-ffmpeg-canary.service` и `deploy/ffmpeg-canary.mount.example`.
+Файл mount устанавливается под именем, которое возвращает
+`systemd-escape -p --suffix=mount /srv/v4c-ffmpeg-canary`.
+Не запускать compose напрямую: `scripts/start-canary.sh` проверяет XFS,
+15 GiB на корневой ФС, определяет актуальный loop-device и передаёт его
+compose для I/O-лимитов. Лимит только на родительском диске в этой
+конфигурации не ограничивал запись: измерено 221 MiB/s вместо 20.
+После добавления loop-device direct write — 19.63 MiB/s.
+
+Systemd управляет стартом и требует mount; Docker restart=no. При
+неисправном mount контейнеры не должны стартовать в подлежащий каталог.
+`systemctl stop v4c-ffmpeg-canary.service` останавливает только FFmpeg.
+Остановка не отключает DNS и не меняет production-провайдера платформы.
+
+`scripts/observe-canary.py` и `deploy/v4c-ffmpeg-observe.*` — ограниченный
+read-only замер на 25 часов. После завершения таймер выключает себя.
+Наблюдения и credentials лежат в root-only `/opt/v4c-ffmpeg-canary`;
+скрипт сохраняет только статусы/сроки и число файлов, без подписанных URL.
+Полный протокол и оставшиеся условия: `doc/reports/ffmpeg-canary-2026-10-21`.

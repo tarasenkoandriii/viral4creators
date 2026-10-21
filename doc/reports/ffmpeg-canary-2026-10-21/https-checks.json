@@ -1,0 +1,10 @@
+{
+  "health": 200,
+  "ready": 200,
+  "unauth": 401,
+  "client_no_ops": 403,
+  "ops": 200,
+  "privateDownloadSha256Verified": true,
+  "range": 206,
+  "anonymousFileDenied": true
+}
