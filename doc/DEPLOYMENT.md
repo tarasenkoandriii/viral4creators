@@ -4368,3 +4368,34 @@ wildcard. Аудио/транскрипты не сохраняются в Blob,
 
 Протокол: [Soniox WebSocket API](https://soniox.com/docs/api-reference/stt/websocket-api),
 [поддерживаемые контейнеры](https://soniox.com/docs/stt/rt/real-time-transcription#audio-formats).
+
+
+**Staged rollout 21.10.2026 (без платных вызовов).** Коммит `3ceedfb`:
+API `dpl_ATDzTBe8wegUQqqj6dphHHJuRDmt`, widget
+`dpl_D5A9kKx7Uozo4kRhh9WE5Yhj9be4` — Ready, GitHub Vercel statuses success.
+CDN `chat.js` SHA-256 `61a64985cd7a3988035899341882f3ce04d073d2620f7920bd9f5ef3852e4f36`,
+`voice.js` SHA-256 `68f3baa85ece9ac7420472399ef87dc618a2d316aa70fbf7680f46939ff4a995`;
+совпадают с локальной проверенной production-сборкой.
+
+VPS-реле собрано из `git archive 3ceedfb live-login-relay` в
+`/opt/v4c-relay-releases/3ceedfb/live-login-relay`, образ
+`viral4creators-liveloginrelay-h8avkz-live-login-relay:3ceedfb`, image id
+`sha256:5955e474113829452e1246caf4b16eb6c583cd55f911451b15898fddc0c2cd78`.
+Перед заменой проверено отсутствие активных сессий, полное совпадение
+настроек окружения/labels compose с контейнером. Старый образ сохранён как
+`viral4creators-liveloginrelay-h8avkz-live-login-relay:rollback-pre-3ceedfb`.
+Прежний compose и окружение сохранены, заменён образ через его существующее
+имя и `compose up --no-build --no-deps live-login-relay`. Docker health healthy.
+Для повторной сборки этого выпуска использовать указанный архивный каталог:
+checkout Dokploy не обновлялся, его локальные изменения не перезаписывались.
+При дальнейшем деплое через Dokploy сверять ревизию исходников/контекст сборки;
+старый checkout не считать источником выпуска `3ceedfb`.
+
+Изолированный smoke именно этого Docker-образа (`--network none`, fake key и
+инъецированный fake upstream) проверил PCM, исключение partial-токенов и HMAC
+final; внешняя сеть технически отсутствовала. Рабочий контейнер содержит модуль,
+`ASSIST_STREAM_ENABLED` не задан, `SONIOX_API_KEY` отсутствует. Boot даёт 401 без
+секрета и 503 с корректным секретом при выключенном streaming. API health 200,
+оба streaming POST без visitor-token дают 401. Новые платные запросы не делались,
+Nova/TTS/принятый Tutorial не менялись. Настоящая речь, задержка и включение флага
+не проверены и не объявляются принятыми.
