@@ -285,6 +285,16 @@ async function main() {
     assert.equal(sent.generationConfig.responseMimeType, 'application/json');
     assert.match(sent.contents[0].parts[0].text, /Доставка/);
     assert.match(sent.contents[0].parts[0].text, /відкрий доставку/);
+    await liveModelPlan(
+      { text: 'відкрий доставку', snapshot: snapshot as never, lang: 'uk' },
+      { GEMINI_API_KEY: 'secret-k' },
+      answer('{"command": true, "steps": [{"kind": "click", "target": "e1"}]}')
+    );
+    assert.match(
+      calls.at(-1)!.url,
+      /\/models\/gemini-4-argon:generateContent$/
+    );
+
     assert.equal(
       await liveModelPlan(
         { text: 'привіт', snapshot: snapshot as never, lang: 'uk' },

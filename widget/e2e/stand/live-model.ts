@@ -19,7 +19,7 @@ const cjs = <T>(ns: T): T => (ns as T & { default?: T }).default ?? ns;
 const { buildPlanPrompt, parseModelPlan } = cjs(promptNs);
 
 /** Модель плана сервера по умолчанию (`shared/gemini-model.ts`). */
-export const LIVE_DEFAULT_MODEL = 'gemini-3.6-flash';
+export const LIVE_DEFAULT_MODEL = 'gemini-4-argon';
 const API = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export function liveKey(env: NodeJS.ProcessEnv = process.env): string | null {
