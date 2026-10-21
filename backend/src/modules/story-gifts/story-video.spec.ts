@@ -110,7 +110,12 @@ function setup() {
             : v.not === r.status;
       if (k === 'assetExpiresAt') return !(r.assetExpiresAt > v.gt);
       if (k === 'createdAt') return false;
-      if (k === 'approvedAt') return v.not === null ? !r.approvedAt : false;
+      if (k === 'approvedAt')
+        return v === null
+          ? r.approvedAt != null
+          : v.not === null
+            ? !r.approvedAt
+            : false;
       if (v && typeof v === 'object' && !(v instanceof Date) && 'not' in v)
         return v.not === null ? r[k] == null : r[k] === v.not;
       return r[k] !== v;
@@ -531,6 +536,22 @@ describe('Reusable story master, separate speech and preamble', () => {
     s.rows[0].assetExpiresAt = new Date(Date.now() + 60000);
     s.gift.status = 'DELETED';
     await expect(s.service.input(token, 'main')).rejects.toThrow();
+  });
+  it('repeated approval preserves the exact approval time and cannot promote an old release', async () => {
+    const s = setup();
+    await s.service.create('u', 'g', 'Привет');
+    const approvedAt = new Date('2026-01-01T00:00:00Z');
+    Object.assign(s.rows[0], {
+      status: 'READY',
+      qaStatus: 'PASS',
+      videoHash: 'b'.repeat(64),
+      approvedAt,
+    });
+    await s.service.approve('u', 'g', 'r1', 'b'.repeat(64));
+    expect(s.rows[0].approvedAt).toEqual(approvedAt);
+    await expect(
+      s.service.approve('u', 'g', 'r1', 'c'.repeat(64)),
+    ).rejects.toThrow();
   });
   it('never publishes an unapproved render, and revocation also blocks video', async () => {
     const s = setup();

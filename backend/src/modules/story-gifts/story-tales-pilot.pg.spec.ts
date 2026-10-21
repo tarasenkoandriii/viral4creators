@@ -9,7 +9,7 @@ import { Client } from 'pg';
 import { randomUUID } from 'crypto';
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { join, resolve } from 'path';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { StoryPilotService } from './story-pilot.service';
 import { StoryRetentionService } from './story-retention.service';
@@ -780,6 +780,76 @@ db(
         `INSERT INTO "story_video_segments" (id,"giftId","cacheKey",source,mime,"consentVersion","consentAt","consentLocale") VALUES ('sl2',$1,$2,'recorded','audio/wav','story-preamble-recording-v1',now(),'en')`,
         [giftId, 'd'.repeat(64)],
       );
+    });
+
+    it('does not refund an UNKNOWN candidate delivered before the refund transaction', async () => {
+      await prisma.user.create({
+        data: { id: 'refund-race-user', telegramId: 'refund-race-telegram' },
+      });
+      await prisma.storyGift.create({
+        data: {
+          id: 'refund-race-gift',
+          userId: 'refund-race-user',
+          catalogId: 'turnip',
+          title: 'Fixture',
+          text: 'x',
+          chapters: [],
+          textHash: 'h',
+          voiceId: 'fixture',
+          status: 'UNKNOWN',
+        },
+      });
+      await prisma.storyCreditCharge.create({
+        data: {
+          userId: 'refund-race-user',
+          key: 'refund-race-charge',
+          kind: 'audio',
+          giftId: 'refund-race-gift',
+          credits: 0,
+          reserveMicroUsd: 1,
+          priceMicroUsd: 1,
+          createdAt: new Date(Date.now() - 15 * 864e5),
+        },
+      });
+      // Deliver after the sweep selected UNKNOWN but before the transaction begins.
+      const racedDb = {
+        $queryRaw: prisma.$queryRaw.bind(prisma),
+        $transaction: async (
+          fn: (tx: Prisma.TransactionClient) => Promise<boolean>,
+        ) => {
+          await prisma.storyGift.update({
+            where: { id: 'refund-race-gift' },
+            data: { status: 'READY' },
+          });
+          return prisma.$transaction(fn);
+        },
+      };
+      const ledger = new CreditLedgerService(
+        prisma as never,
+        { alert: async () => true } as never,
+      );
+      const charges = new StoryChargesService(racedDb as never, ledger);
+      expect(await charges.autoRefundStale()).toBe(0);
+      expect(
+        (
+          await prisma.storyCreditCharge.findUniqueOrThrow({
+            where: { key: 'refund-race-charge' },
+          })
+        ).status,
+      ).toBe('RESERVED');
+      expect(
+        await prisma.storyOperatorAction.count({
+          where: { targetId: 'refund-race-gift', action: 'charge.auto-refund' },
+        }),
+      ).toBe(0);
+      await new StoryChargesService(prisma as never, ledger).captureDelivered();
+      expect(
+        (
+          await prisma.storyCreditCharge.findUniqueOrThrow({
+            where: { key: 'refund-race-charge' },
+          })
+        ).status,
+      ).toBe('CAPTURED');
     });
 
     it('ST3-S-14/R-14: 55 old delivered RESERVED + 1 UNKNOWN — the UNKNOWN is refunded; the sweep captures the delivered', async () => {

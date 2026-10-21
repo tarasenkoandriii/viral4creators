@@ -400,6 +400,18 @@ export class StoryChargesService {
     for (const r of rows) {
       try {
         const done = await this.prisma.$transaction(async (tx) => {
+          // The sweep's SELECT is only a candidate list. A provider/operator
+          // may have delivered the step since then, before captureQuietly.
+          // Lock and recheck the actual step before touching its charge.
+          const current =
+            r.kind === 'audio'
+              ? await tx.$queryRaw<
+                  Array<{ status: string }>
+                >`SELECT "status" FROM "story_gifts" WHERE "id" = ${r.giftId} FOR UPDATE`
+              : await tx.$queryRaw<
+                  Array<{ status: string }>
+                >`SELECT "status" FROM "story_video_renders" WHERE "id" = ${r.renderId} FOR UPDATE`;
+          if (current[0]?.status !== 'UNKNOWN') return false;
           const res = await this.refund(r.key, tx);
           if (!res.refunded) return false;
           await tx.storyOperatorAction.create({

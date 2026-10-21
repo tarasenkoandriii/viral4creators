@@ -2096,18 +2096,27 @@ export class StoryVideoService {
   }
   async approve(userId: string, giftId: string, id: string, videoHash: string) {
     await this.own(userId, giftId, id);
+    const where = {
+      id,
+      giftId,
+      status: 'READY',
+      qaStatus: 'PASS',
+      videoHash,
+      gift: { userId, status: 'APPROVED' },
+    };
     const r = await this.prisma.storyVideoRender.updateMany({
-      where: {
-        id,
-        giftId,
-        status: 'READY',
-        qaStatus: 'PASS',
-        videoHash,
-        gift: { userId, status: 'APPROVED' },
-      },
+      where: { ...where, approvedAt: null },
       data: { approvedAt: new Date() },
     });
-    if (!r.count)
+    // A delayed retry must not move an older release ahead of a newer one.
+    // Still require the exact hash, READY/PASS and the approved parent gift.
+    const alreadyApproved =
+      !r.count &&
+      (await this.prisma.storyVideoRender.findFirst({
+        where: { ...where, approvedAt: { not: null } },
+        select: { id: true },
+      }));
+    if (!r.count && !alreadyApproved)
       throw new ConflictException(
         'Нужны одобренная сказка и пройденная проверка видео',
       );

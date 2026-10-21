@@ -423,3 +423,32 @@ describe('ST3 StoryChargesService (Р-ST3-2)', () => {
     expect(await w.service.audioCharges([])).toEqual(new Map());
   });
 });
+
+describe('Story stale refund rechecks the step after the sweep selected it', () => {
+  it.each(['audio', 'video'])(
+    '%s delivered before refund transaction is not refunded',
+    async (kind) => {
+      const tx = {
+        $queryRaw: jest.fn().mockResolvedValue([{ status: 'READY' }]),
+        storyOperatorAction: { create: jest.fn() },
+      };
+      const db = {
+        $queryRaw: jest
+          .fn()
+          .mockResolvedValue([
+            { key: 'selected', kind, giftId: 'g', renderId: 'r' },
+          ]),
+        $transaction: jest.fn(async (fn: (t: typeof tx) => Promise<unknown>) =>
+          fn(tx),
+        ),
+      };
+      const service = new StoryChargesService(db as never, {} as never);
+      const refund = jest
+        .spyOn(service, 'refund')
+        .mockResolvedValue({ refunded: true, credits: 5 });
+      expect(await service.autoRefundStale()).toBe(0);
+      expect(refund).not.toHaveBeenCalled();
+      expect(tx.storyOperatorAction.create).not.toHaveBeenCalled();
+    },
+  );
+});
