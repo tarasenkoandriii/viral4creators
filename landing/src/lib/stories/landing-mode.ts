@@ -7,12 +7,10 @@ import { STORIES_SITE_URL, storiesPageUrl } from '../stories-host';
  *  - `closed` (по умолчанию) — закрытая разработка: поддомен, страница
  *    `/<locale>/stories`, медиа и OG-карточки отвечают 404 с noindex
  *    (`middleware.ts`, аудит 2 ST2-U-04/05/06);
- *  - `pilot` — платный пилот по приглашению: страница и поддомен открыты,
- *    OG-карточки отдаются, но `noindex` (meta + `X-Robots-Tag`) остаётся и
- *    в картах сайта страницы нет;
+ *  - `pilot` — страница открыта и индексируется; доступ к продукту
+ *    по приглашению остаётся отдельным серверным ограничением;
  *  - `public` — как `pilot`, но без noindex и со страницами в карте сайта
- *    поддомена. Реализован и покрыт тестами, включается только после
- *    пилота и проверки юристом.
+ *    поддомена. Сам режим public не включается этим SEO-изменением.
  *
  * Значение вклеивается при сборке: `next.config.js` передаёт его в `env`,
  * и Next подставляет `process.env.STORY_TALES_LANDING` литералом и в
@@ -43,13 +41,14 @@ export function isStoriesOpen(mode: StoriesLandingMode): mode is Exclude<Stories
   return mode !== 'closed';
 }
 
-/** Индексация разрешена: без noindex, страницы в карте сайта поддомена. */
+/** Решение владельца 21.10: открытый лендинг индексируется и в pilot.
+ * Это не переключает STORY_TALES_ACCESS и не включает оплату/генерации. */
 export function isStoriesIndexable(mode: StoriesLandingMode): boolean {
-  return mode === 'public';
+  return mode !== 'closed';
 }
 
 /**
- * Карта сайта ПОДДОМЕНА Story‑Tales: пустая до `public`, в `public` — по
+ * Карта сайта ПОДДОМЕНА Story‑Tales: пустая в `closed`, в открытых режимах — по
  * странице на локаль (как у соседних поддоменов). На главном домене
  * Story‑Tales нет ни в одном режиме: там `/<locale>/stories` — 308 на
  * поддомен, а редирект в карте сайта — ошибка (`app/sitemap.ts`).
@@ -58,7 +57,7 @@ export function storiesSitemapUrls(mode: StoriesLandingMode, locales: readonly s
   return isStoriesIndexable(mode) ? locales.map(storiesPageUrl) : [];
 }
 
-/** Строка `Sitemap:` в `robots.txt` поддомена — только в `public`. */
+/** Строка `Sitemap:` в `robots.txt` поддомена — во всех открытых режимах. */
 export function storiesRobotsSitemaps(mode: StoriesLandingMode): string[] {
   return isStoriesIndexable(mode) ? [`${STORIES_SITE_URL}/sitemap.xml`] : [];
 }

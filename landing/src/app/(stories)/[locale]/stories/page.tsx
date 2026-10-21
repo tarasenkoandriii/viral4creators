@@ -36,10 +36,9 @@ import { StoriesLocaleMenu } from './StoriesLocaleMenu';
  *
  * ## Чем эта страница отличается от соседних
  *
- *  - **Не индексируется никогда** (§12): meta robots здесь, HTTP
- *    `X-Robots-Tag` — `next.config.js` + `middleware.ts`, в картах сайта
- *    её нет. `robots: { index: true }` из `[locale]/layout.tsx` здесь
- *    ЗАМЕЩАЕТСЯ строкой `STORIES_ROBOTS` — это и есть исключение.
+ *  - **Индексируется в открытых режимах** (решение владельца 21.10):
+ *    canonical/hreflang и sitemap поддомена, без noindex. Закрытая
+ *    разработка closed сохраняет 404/noindex. Доступ к продукту отдельно.
  *  - **Режим выпуска из конфига** (`lib/stories/release.json`): в v1 —
  *    технический `prep` (§5.1). Без демо, без Play, без формы, без цены и
  *    покупки. В текстах — «Скоро запуск», слова «пилот» на странице нет
@@ -69,7 +68,7 @@ import { StoriesLocaleMenu } from './StoriesLocaleMenu';
  *  - `pilot` — «пилот по приглашению, до 15 семей» (`copy.access.pilot`),
  *    основное действие — тот же вход в раздел `#/stories` приложения
  *    (`startapp=e_stories`), где оставляют заявку; формы с личными данными
- *    на странице нет; noindex сохраняется;
+ *    на странице нет; индексация разрешена;
  *  - `public` — тексты `copy.access.public`, без noindex и без пункта о
  *    закрытой индексации.
  *
@@ -163,8 +162,7 @@ export async function generateMetadata({
       locale,
       image: ogImageUrl(STORIES_SITE_URL, 'stories', locale),
     }),
-    // До `public` — noindex (второй замок — `X-Robots-Tag`); в `public`
-    // явное `index`, раз общий layout локали сюда больше не наследуется.
+    // Открытый лендинг индексируется независимо от доступа к продукту.
     robots: isStoriesIndexable(mode) ? { index: true, follow: true } : STORIES_ROBOTS,
     referrer: STORIES_REFERRER_POLICY,
   };

@@ -4,15 +4,15 @@
  *  1. Разбор: по умолчанию и на неизвестном значении — `closed`; тот же
  *     разбор в `next.config.js` (CommonJS-копия) — и значение, которое он
  *     передаёт в `env` (вклеивается в страницу и middleware при сборке).
- *  2. `next.config.js` `headers()`: `X-Robots-Tag` — в `closed`/`pilot`,
- *     в `public` нет; `Referrer-Policy: no-referrer` — всегда.
+ *  2. `next.config.js` `headers()`: `X-Robots-Tag` — только в `closed`,
+ *     в `pilot`/`public` нет; `Referrer-Policy: no-referrer` — всегда.
  *  3. middleware в `pilot`: поддомен открыт (rewrite корня локали, 308 со
  *     `/<locale>/stories`, корень → локаль), главный домен уводит на
  *     поддомен, OG-карточки, медиа, статика, robots/sitemap поддомена
- *     проходят дальше — и КАЖДЫЙ ответ с noindex и no-referrer; соседи не
+ *     проходят дальше — и КАЖДЫЙ ответ с no-referrer; соседи не
  *     задеты. Matcher — тот же, что применяет Next.
  *  4. middleware в `public`: то же, без `X-Robots-Tag`.
- *  5. Карта сайта и `robots.txt` поддомена: пусто до `public`, в `public`
+ *  5. Карта сайта и `robots.txt` поддомена: пусто в `closed`, в открытых режимах
  *     — страница на локаль и строка `Sitemap:`.
  *
  * `closed` — `stories-closed.test.ts` и `stories-noindex.test.ts`.
@@ -92,7 +92,7 @@ async function main() {
       (['closed', 'pilot', 'public'] as const).map((m) => [isStoriesOpen(m), isStoriesIndexable(m)]),
       [
         [false, false],
-        [true, false],
+        [true, true],
         [true, true],
       ],
     );
@@ -109,7 +109,7 @@ async function main() {
         const robots = rule.headers.find((h) => h.key === 'X-Robots-Tag');
         const referrer = rule.headers.find((h) => h.key === 'Referrer-Policy');
         assert.equal(referrer?.value, STORIES_REFERRER_POLICY, `${rule.source} (${mode}): Referrer-Policy`);
-        if (mode === 'public') assert.equal(robots, undefined, `${rule.source}: noindex в public`);
+        if (mode !== 'closed') assert.equal(robots, undefined, `${rule.source}: noindex в public`);
         else assert.equal(robots?.value, STORIES_ROBOTS, `${rule.source} (${mode}): X-Robots-Tag`);
       }
     }
@@ -117,7 +117,7 @@ async function main() {
   });
 
   for (const mode of ['pilot', 'public'] as const satisfies readonly StoriesLandingMode[]) {
-    const robots = mode === 'public' ? null : STORIES_ROBOTS;
+    const robots = null;
     const assertStories = (res: Response | null, label: string) => {
       assert.ok(res, `${label}: мимо middleware`);
       assert.notEqual(res.status, 404, `${label}: 404 в ${mode}`);
@@ -178,15 +178,15 @@ async function main() {
       }));
   }
 
-  await it('карта сайта и robots.txt поддомена: пусто до public', () => {
+  await it('карта сайта и robots.txt: closed пуст, pilot/public содержат локали', () => {
     assert.deepEqual(storiesSitemapUrls('closed', locales), []);
-    assert.deepEqual(storiesSitemapUrls('pilot', locales), []);
+    assert.deepEqual(storiesSitemapUrls('pilot', locales), locales.map((l) => `${STORIES_SITE_URL}/${l}`));
     assert.deepEqual(
       storiesSitemapUrls('public', locales),
       locales.map((l) => `${STORIES_SITE_URL}/${l}`),
     );
     assert.deepEqual(storiesRobotsSitemaps('closed'), []);
-    assert.deepEqual(storiesRobotsSitemaps('pilot'), []);
+    assert.deepEqual(storiesRobotsSitemaps('pilot'), [`${STORIES_SITE_URL}/sitemap.xml`]);
     assert.deepEqual(storiesRobotsSitemaps('public'), [`${STORIES_SITE_URL}/sitemap.xml`]);
   });
 

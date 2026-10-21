@@ -196,7 +196,7 @@ async function main() {
       assert.ok(!html.includes(t.launch.note), `${locale}: «ничего не продаётся» prep в ${MODE}`);
     }
     // Пункт о закрытой индексации — пока она правда закрыта.
-    assert.equal(html.includes(t.privacy.noindex), MODE !== 'public', `${locale}: пункт о noindex в ${MODE}`);
+    assert.equal(html.includes(t.privacy.noindex), MODE === 'closed', `${locale}: пункт о noindex в ${MODE}`);
     // ST3-U-06/13: семейный голос, голос в FAQ и снятие ссылки — как есть.
     for (const v of Object.values(t.opened)) assert.equal(decode(html).includes(v), MODE !== 'closed', `${locale}: «${v.slice(0, 40)}…» в ${MODE}`);
     if (A) {
@@ -283,7 +283,7 @@ async function main() {
 
     // ── метаданные ──
     const meta = await generateMetadata({ params: Promise.resolve({ locale }) });
-    if (MODE === 'public') {
+    if (MODE !== 'closed') {
       assert.deepEqual(meta.robots, { index: true, follow: true }, `${locale}: robots в public`);
     } else {
       assert.equal(meta.robots, STORIES_ROBOTS, `${locale}: robots`);
@@ -349,7 +349,7 @@ async function main() {
     .filter((f) => /^['"]use client['"]/.test(fs.readFileSync(path.join(PAGE_DIR, f), 'utf8').trimStart()));
   assert.deepEqual(client, ['StoriesLocaleMenu.tsx'], 'клиентских компонентов больше одного');
 
-  console.log(`stories-page [${MODE}/${SCENARIO}${MODE === 'closed' ? '' : `/caps:${CAPS_API}`}]: 5 локалей — lang, режим prep без Play/формы/покупки, основной CTA, «Запуск», слоган, FAQ, язык, подвал, метаданные ${MODE === "public" ? "index" : "noindex"}, OG-карточка, без аналитики`);
+  console.log(`stories-page [${MODE}/${SCENARIO}${MODE === 'closed' ? '' : `/caps:${CAPS_API}`}]: 5 локалей — lang, режим prep без Play/формы/покупки, основной CTA, «Запуск», слоган, FAQ, язык, подвал, метаданные ${MODE !== "closed" ? "index" : "noindex"}, OG-карточка, без аналитики`);
 
   if (SCENARIO === 'telegram' && MODE === 'closed') {
     const runChild = (extra: Record<string, string>, label: string, drop: string[] = []) => {

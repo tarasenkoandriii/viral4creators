@@ -21,7 +21,7 @@
  * `src/lib/stories/landing-mode.ts`, неизвестное значение = `closed`).
  * Он передаётся в `env`, и Next вклеивает его литералом и в страницу, и в
  * middleware: одна сборка — один режим, `next start` с другим окружением
- * его не меняет. В `public` `X-Robots-Tag` здесь не ставится (страница
+ * его не меняет. В `pilot`/`public` `X-Robots-Tag` здесь не ставится (страница
  * индексируется), `Referrer-Policy` остаётся во всех режимах.
  */
 const STORIES_HOST = process.env.NEXT_PUBLIC_STORIES_HOST ?? 'story-tales.viral4creators.app';
@@ -35,7 +35,7 @@ const STORY_TALES_LANDING = STORIES_LANDING_MODES.includes(storiesLandingRaw) ? 
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const storiesHeaders = [
-  ...(STORY_TALES_LANDING === 'public' ? [] : [{ key: 'X-Robots-Tag', value: STORIES_ROBOTS }]),
+  ...(STORY_TALES_LANDING !== 'closed' ? [] : [{ key: 'X-Robots-Tag', value: STORIES_ROBOTS }]),
   { key: 'Referrer-Policy', value: STORIES_REFERRER_POLICY },
 ];
 

@@ -58,11 +58,8 @@ export default async function robots(): Promise<MetadataRoute.Robots> {
       sitemap: [`${TUTORIAL_SITE_URL}/sitemap.xml`],
     };
   }
-  // Story‑Tales (§12 ТЗ): обход НЕ закрыт — робот должен дойти до
-  // страницы и прочитать её `noindex` (meta + `X-Robots-Tag`); `Disallow`
-  // спрятал бы от него сам запрет, и адрес мог бы попасть в выдачу по
-  // внешним ссылкам. Карты сайта у поддомена нет (`sitemap.ts`) — до
-  // режима `public` (Р-ST3-6), где она объявляется, как у соседей.
+  // Открытый Story-лендинг объявляет собственную карту (pilot/public).
+  // closed остаётся закрыт middleware; служебные /qa/ и /r/ не открываем.
   if (isStoriesHost(host)) {
     const sitemap = storiesRobotsSitemaps(storiesLandingMode());
     return {

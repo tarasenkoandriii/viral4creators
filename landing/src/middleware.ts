@@ -119,7 +119,7 @@ const SUBDOMAIN_SITES: ReadonlyArray<{
   { matches: isGreetingHost, siteUrl: GREETING_SITE_URL, slug: 'greetings' },
   { matches: isTutorialHost, siteUrl: TUTORIAL_SITE_URL, slug: 'site-tutorial' },
   // Story‑Tales (решение 16.10, вечер): то же правило, что у соседей, но
-  // страница не индексируется до режима `public` (Р-ST3-6), а в `closed`
+  // страница индексируется в pilot/public (решение 21.10), а в `closed`
   // не отдаётся вовсе — см. `withStoriesHeaders` и `middleware` ниже.
   { matches: isStoriesHost, siteUrl: STORIES_SITE_URL, slug: 'stories' },
 ];
@@ -141,7 +141,7 @@ const SUBDOMAIN_SITES: ReadonlyArray<{
  * ST2-U-04/05), в `pilot`/`public` пропускает дальше с этими же
  * заголовками; `next.config.js` остаётся вторым замком заголовков.
  *
- * `X-Robots-Tag` снимается только в `public` (Р-ST3-6): там страница
+ * `X-Robots-Tag` снимается в pilot/public (решение 21.10): страница
  * индексируется. `Referrer-Policy: no-referrer` остаётся во всех режимах
  * (Р-STL-7).
  */
@@ -178,7 +178,7 @@ export function middleware(request: NextRequest) {
       return withStoriesHeaders(new NextResponse('Not Found', { status: 404 }), mode);
     }
     // Pilot/public: OG-карточки, медиа, статика и `_next` поддомена — как
-    // без middleware, но с заголовками Story‑Tales (noindex до `public`).
+    // без middleware, но с заголовками Story‑Tales (noindex только в closed).
     if (!LOCALIZED_PATH.test(pathname)) {
       return withStoriesHeaders(NextResponse.next(), mode);
     }

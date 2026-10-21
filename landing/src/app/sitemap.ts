@@ -69,14 +69,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       url: `${TUTORIAL_SITE_URL}/${locale}`,
     }));
   }
-  // Третий — Story‑Tales — до режима `public` наоборот: страница не
-  // индексируется (ТЗ `doc/STORY-TALES-LANDING-SPEC.md` §12, Р-ST3-6), и в
-  // карте сайта ей не место ни на поддомене, ни на главном домене ниже.
-  // Пустая карта, а не карта главного домена: чужие адреса здесь были бы
-  // той же ошибкой, что описана выше. В `public` — та же карта из одной
-  // страницы на локаль, что у соседей; на главном домене её нет ни в
-  // одном режиме (там `/<locale>/stories` — 308 на поддомен). Держит
-  // `scripts/stories-noindex.test.ts`.
+  // Открытый Story-лендинг (pilot/public) индексируется по решению
+  // владельца 21.10. В closed карта пустая; основной домен ниже не
+  // перечисляет его редиректы. Реальные canonical — только на поддомене.
   if (isStoriesHost(host)) {
     return storiesSitemapUrls(storiesLandingMode(), locales).map((url) => ({ url }));
   }
