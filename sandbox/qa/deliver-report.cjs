@@ -47,10 +47,14 @@ async function deliver({ env = process.env, report, fetchImpl = fetch }) {
     });
     if (!response.ok)
       throw new Error(`QA delivery rejected (${response.status})`);
-    const body = await response.json();
+    const envelope = await response.json();
+    // sites-backend wraps successful controllers in the shared response envelope.
+    if (envelope?.success === false)
+      throw new Error("QA delivery was not accepted");
+    const body = envelope?.success === true ? envelope.data : envelope;
     const id = (v) =>
       typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : null;
-    if (!id(body.runId)) throw new Error("QA delivery confirmation missing");
+    if (!id(body?.runId)) throw new Error("QA delivery confirmation missing");
     const audit = body.audit;
     const status = [
       "passed",

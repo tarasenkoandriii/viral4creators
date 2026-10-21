@@ -115,3 +115,46 @@ test("success HTTP without saved run confirmation is not delivery confirmation",
     /confirmation missing/,
   );
 });
+
+test("production success envelope is unwrapped before confirming saved delivery", async () => {
+  let n = 0;
+  const receipts = await deliver({
+    env,
+    report,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () =>
+        ++n === 1
+          ? { value: "synthetic" }
+          : {
+              success: true,
+              data: { runId: "run", audit: { status: "out_of_scope" } },
+              meta: { requestId: "not-part-of-receipt" },
+            },
+    }),
+  });
+  assert.equal(receipts[0].runId, "run");
+  assert.equal(receipts[0].audit.status, "out_of_scope");
+  assert.equal(JSON.stringify(receipts).includes("not-part-of-receipt"), false);
+});
+test("error envelope cannot act as a saved delivery confirmation", async () => {
+  let n = 0;
+  await assert.rejects(
+    deliver({
+      env,
+      report,
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () =>
+          ++n === 1
+            ? { value: "synthetic" }
+            : {
+                success: false,
+                runId: "run",
+                data: { runId: "run" },
+              },
+      }),
+    }),
+    /not accepted/,
+  );
+});
