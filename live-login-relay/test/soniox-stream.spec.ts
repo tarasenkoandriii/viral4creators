@@ -3,6 +3,10 @@ import { createServer } from 'node:http';
 import { once, EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
 import { SonioxStream, streamSignature } from '../src/soniox-stream';
+import {
+  signStreamGrant,
+  readStreamFinal,
+} from '../../sites-backend/src/modules/assist-site-voice/public/stream-grant';
 
 const secret = 'mock-relay-secret';
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -187,6 +191,73 @@ describe('Soniox in the existing relay (no provider network)', () => {
         .update(`soniox-final-v1:${final.receipt}`)
         .digest('base64url'),
     );
+  });
+
+  it('accepts the backend grant and returns a receipt the backend validates', async () => {
+    const auth = signStreamGrant(secret, {
+      boot: relay.boot,
+      id: 'backend-reservation',
+      expires: Date.now() + 5000,
+      seconds: 5,
+      siteId: 'sandbox-site',
+      visitorId: 'sandbox-visitor',
+    });
+    const { ws, messages } = await attach(auth);
+    await until(() => messages.length === 1);
+    ws.send(Buffer.alloc(320));
+    ws.send('');
+    await until(() => upstreams[0].sent.includes(''));
+    upstreams[0].emit(
+      'message',
+      Buffer.from(
+        JSON.stringify({
+          tokens: [
+            { text: 'partial command', is_final: false, confidence: 1 },
+            { text: 'Stop', is_final: true, confidence: 0.99 },
+            { text: '<end>', is_final: true },
+          ],
+          finished: true,
+        }),
+      ),
+    );
+    await once(ws, 'close');
+    const receipt = { ...JSON.parse(messages[1]), grant: auth.grant };
+    const now = Date.now();
+    const parsed = readStreamFinal(
+      secret,
+      receipt,
+      'sandbox-site',
+      'sandbox-visitor',
+      now,
+    );
+    expect(parsed?.id).toBe('backend-reservation');
+    expect(parsed?.tokens.map((t) => t.text)).toEqual(['Stop', '<end>']);
+    expect(
+      readStreamFinal(secret, receipt, 'other-site', 'sandbox-visitor', now),
+    ).toBeNull();
+    expect(
+      readStreamFinal(secret, receipt, 'sandbox-site', 'other-visitor', now),
+    ).toBeNull();
+    expect(
+      readStreamFinal(
+        secret,
+        { ...receipt, grant: receipt.grant + 'x' },
+        'sandbox-site',
+        'sandbox-visitor',
+        now,
+      ),
+    ).toBeNull();
+    expect(
+      readStreamFinal(
+        secret,
+        receipt,
+        'sandbox-site',
+        'sandbox-visitor',
+        now + 70_000,
+      ),
+    ).toBeNull();
+    expect(upstreams).toHaveLength(1);
+    expect(upstreams[0].terminated).toBe(true);
   });
 
   it('overspeed PCM fails closed and is not forwarded', async () => {
