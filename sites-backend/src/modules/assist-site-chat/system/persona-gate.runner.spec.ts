@@ -75,6 +75,17 @@ describeDb('PersonaGate — проверка персоны перед публ�
 
   it('инварианты зелёные (инъекции — отказ в коде), кейсы сайта сравниваются с опубликованной персоной, расход — в бюджет обучения (assist-eval)', async () => {
     const s = await st.stand('shop');
+    // Argon has a larger upper-bound reservation than Flash. Use an explicit
+    // paid-plan fixture; production caps and atomic budget checks stay intact.
+    await st.owner.assistSubscription.create({
+      data: {
+        accountId: s.accountId,
+        planId: 'business',
+        method: 'manual',
+        anchorAt: new Date(),
+        paidThrough: new Date(Date.now() + 30 * 86_400_000),
+      },
+    });
     await st.owner.assistSiteEvalCase.createMany({
       data: [
         {
@@ -119,6 +130,17 @@ describeDb('PersonaGate — проверка персоны перед публ�
 
   it('провал инварианта — блок публикации с причиной', async () => {
     const s = await st.stand('shop');
+    // Argon has a larger upper-bound reservation than Flash. Use an explicit
+    // paid-plan fixture; production caps and atomic budget checks stay intact.
+    await st.owner.assistSubscription.create({
+      data: {
+        accountId: s.accountId,
+        planId: 'business',
+        method: 'manual',
+        anchorAt: new Date(),
+        paidThrough: new Date(Date.now() + 30 * 86_400_000),
+      },
+    });
     jest.spyOn(st.answerer, 'answer').mockResolvedValue({
       text: 'Canberra',
       sources: [{ n: 1, url: null, title: null }],

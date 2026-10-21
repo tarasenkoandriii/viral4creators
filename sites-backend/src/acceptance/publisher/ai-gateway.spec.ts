@@ -12,6 +12,7 @@
 import { randomUUID } from 'crypto';
 import { ciDescribe } from '../../prisma/ci-describe.testing';
 import { estimateCost } from '../../shared/ai-pricing';
+import * as pricing from '../../shared/ai-pricing';
 import { TextModelError } from '../../modules/site-ai/text-model';
 import {
   P0_ENABLED_GENERATORS,
@@ -454,31 +455,52 @@ ciDescribe('[AI-GW] P-B2: AI-шлюз на базі (§12.1)', () => {
 
   it('невідома ціна моделі — `unpriced_blocked`; дозволено параметром — `unpriced`, NULL (не нуль)', async () => {
     const { p, src } = await freshProduct();
-    await seedBoundConfig(s.prisma, owner(), evalProduct.id, p.id, {
-      model: 'mystery-model-x',
-    });
-    const r = await start(p);
-    expect(r.status).toBe('unpriced_blocked');
-    expect(errorCodeOfStatus(r.status, r.missing)).toBe('PUB_AI_UNPRICED');
-    await approveParams(s.prisma, owner(), p.id, {
-      ai_unpriced_allowed: { allowed: true },
-    });
-    model.reply(helperJson([src]));
-    const r2 = await start(p, { objectId: 'helper:u' });
-    const v = await done(p, r2.callId);
-    expect(v).toMatchObject({
-      status: 'ok',
-      costStatus: 'unpriced',
-      costMicroUsd: null,
-    });
-    const row = await s.prisma.pubAiCall.findUnique({
-      where: { id: r2.callId },
-    });
-    expect(row!.costMicroUsd).toBeNull();
-    const usage = await s.prisma.siteAiUsage.findFirst({
-      where: { accountId: acc.accountId, model: 'mystery-model-x' },
-    });
-    expect(usage).toMatchObject({ unpriced: true, product: 'publisher' });
+    // A configured model stays Argon. Simulate a missing price entry rather
+    // than selecting a different, unevaluated model through the binding.
+    await seedBoundConfig(s.prisma, owner(), evalProduct.id, p.id);
+    const realRate = pricing.rateFor;
+    const realCost = pricing.estimateCost;
+    const rate = jest
+      .spyOn(pricing, 'rateFor')
+      .mockImplementation((name, env) =>
+        name === 'gemini-4-argon' ? null : realRate(name, env),
+      );
+    const cost = jest
+      .spyOn(pricing, 'estimateCost')
+      .mockImplementation((name, units, env) =>
+        realCost(
+          name === 'gemini-4-argon' ? 'mystery-model-x' : name,
+          units,
+          env,
+        ),
+      );
+    try {
+      const r = await start(p);
+      expect(r.status).toBe('unpriced_blocked');
+      expect(errorCodeOfStatus(r.status, r.missing)).toBe('PUB_AI_UNPRICED');
+      await approveParams(s.prisma, owner(), p.id, {
+        ai_unpriced_allowed: { allowed: true },
+      });
+      model.reply(helperJson([src]));
+      const r2 = await start(p, { objectId: 'helper:u' });
+      const v = await done(p, r2.callId);
+      expect(v).toMatchObject({
+        status: 'ok',
+        costStatus: 'unpriced',
+        costMicroUsd: null,
+      });
+      const row = await s.prisma.pubAiCall.findUnique({
+        where: { id: r2.callId },
+      });
+      expect(row!.costMicroUsd).toBeNull();
+      const usage = await s.prisma.siteAiUsage.findFirst({
+        where: { accountId: acc.accountId, siteId: p.siteId, model: 'gemini-4-argon' },
+      });
+      expect(usage).toMatchObject({ unpriced: true, product: 'publisher' });
+    } finally {
+      rate.mockRestore();
+      cost.mockRestore();
+    }
   });
 
   it('потолок місяця: місяць не відкрито / вичерпано — `budget_blocked`; паралельні виклики не перевищують стелю', async () => {
